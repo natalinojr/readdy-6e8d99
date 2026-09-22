@@ -9,6 +9,9 @@
 //  2. Zeros à esquerda são removidos ANTES do onChange do React ("014" → "14",
 //     "00" → "0"; "0,5"/"0.5" ficam como estão). O listener fica em captura no
 //     document, que roda antes do listener que o React registra no #root.
+//  3. Rolar a roda do mouse em cima de um campo numérico focado NÃO muda o valor
+//     (dono, 2026-09-22: somava/subtraía sem querer ao rolar a tela). O campo perde
+//     o foco antes do navegador aplicar o passo, e a rolagem segue para a página.
 
 const LEADING_ZEROS = /^(-?)0+(?=\d)/;
 const nativeValueSetter = typeof HTMLInputElement !== 'undefined'
@@ -37,4 +40,9 @@ export function installNumberInputFix() {
     // do React, que passaria a achar que nada mudou e não chamaria o onChange.
     if (LEADING_ZEROS.test(v)) nativeValueSetter?.call(el, v.replace(LEADING_ZEROS, '$1'));
   }, true);
+
+  document.addEventListener('wheel', (e) => {
+    const el = e.target;
+    if (el instanceof HTMLInputElement && el.type === 'number' && document.activeElement === el) el.blur();
+  }, { capture: true, passive: true });
 }
