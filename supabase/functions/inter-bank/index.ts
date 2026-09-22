@@ -39,6 +39,9 @@
 
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
 import { copiaValida, lerCopia } from '../_shared/guias.ts';
+// Leitura/validação de boleto: mora em _shared porque a caixa de boletos por e-mail usa a
+// MESMA conferência de dígitos. Movido daqui em 2026-09-22, sem mudança de comportamento.
+import { decodeBoleto } from '../_shared/boleto.ts';
 import { isFinanceiroRole } from '../_shared/tenant-auth.ts';
 
 type Admin = SupabaseClient;
@@ -399,64 +402,6 @@ const PIX_COPIA_HOSTS = new Set(['pix-qrcode.caixa.gov.br']);
 const onlyDigits = (s: unknown) => String(s ?? '').replace(/\D/g, '');
 const brl = (n: unknown) => Number(n ?? 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
-function mod10(num: string): number {
-  let sum = 0, w = 2;
-  for (let i = num.length - 1; i >= 0; i--) { let p = Number(num[i]) * w; if (p > 9) p = Math.floor(p / 10) + (p % 10); sum += p; w = w === 2 ? 1 : 2; }
-  return (10 - (sum % 10)) % 10;
-}
-function mod11Banco(num: string): number {
-  let sum = 0, w = 2;
-  for (let i = num.length - 1; i >= 0; i--) { sum += Number(num[i]) * w; w = w === 9 ? 2 : w + 1; }
-  const dv = 11 - (sum % 11);
-  return dv === 0 || dv === 10 || dv === 11 ? 1 : dv;
-}
-function mod11Conv(num: string): number {
-  let sum = 0, w = 2;
-  for (let i = num.length - 1; i >= 0; i--) { sum += Number(num[i]) * w; w = w === 9 ? 2 : w + 1; }
-  const r = sum % 11;
-  return r <= 1 ? 0 : 11 - r;
-}
-// Fator de vencimento: base 07/10/1997; chegou a 9999 em 21/02/2025 e recomeçou em 1000 no dia 22/02/2025.
-function dueFromFactor(f: number): string | null {
-  if (!f) return null;
-  const a = addDays('1997-10-07', f);
-  if (f < 1000) return a;
-  const b = addDays('2025-02-22', f - 1000);
-  const now = Date.now();
-  return Math.abs(new Date(`${a}T12:00:00Z`).getTime() - now) <= Math.abs(new Date(`${b}T12:00:00Z`).getTime() - now) ? a : b;
-}
-type Decoded = { kind: 'bancario' | 'convenio'; barcode: string; digitavel: string | null; valor: number | null; vencimento: string | null; banco: string | null };
-function decodeBancario(bc: string): Decoded {
-  if (mod11Banco(bc.slice(0, 4) + bc.slice(5)) !== Number(bc[4])) throw new Error('Código de barras inválido (o dígito verificador não confere). Confira os números.');
-  const valor = Number(bc.slice(9, 19)) / 100;
-  return { kind: 'bancario', barcode: bc, digitavel: null, valor: valor > 0 ? round2(valor) : null, vencimento: dueFromFactor(Number(bc.slice(5, 9))), banco: bc.slice(0, 3) };
-}
-const convDv = (ref: string) => (ref === '6' || ref === '7' ? mod10 : mod11Conv);
-function decodeConvenio(bc: string): Decoded {
-  const ref = bc[2];
-  if (convDv(ref)(bc.slice(0, 3) + bc.slice(4)) !== Number(bc[3])) throw new Error('Código de barras de convênio inválido (o dígito verificador não confere).');
-  const real = ref === '6' || ref === '8';
-  const valor = Number(bc.slice(4, 15)) / 100;
-  return { kind: 'convenio', barcode: bc, digitavel: null, valor: real && valor > 0 ? round2(valor) : null, vencimento: null, banco: null };
-}
-function decodeBoleto(raw: string): Decoded {
-  const d = onlyDigits(raw);
-  if (d.length === 47) {
-    if (mod10(d.slice(0, 9)) !== Number(d[9]) || mod10(d.slice(10, 20)) !== Number(d[20]) || mod10(d.slice(21, 31)) !== Number(d[31])) {
-      throw new Error('Linha digitável inválida (um dígito verificador não confere). Confira os números.');
-    }
-    const bc = d.slice(0, 4) + d[32] + d.slice(33, 47) + d.slice(4, 9) + d.slice(10, 20) + d.slice(21, 31);
-    return { ...decodeBancario(bc), digitavel: d };
-  }
-  if (d.length === 48 && d[0] === '8') {
-    const blocks = [0, 12, 24, 36].map((i) => d.slice(i, i + 12));
-    const dv = convDv(d[2]);
-    for (const b of blocks) if (dv(b.slice(0, 11)) !== Number(b[11])) throw new Error('Linha do convênio inválida (o dígito de um bloco não confere).');
-    return { ...decodeConvenio(blocks.map((b) => b.slice(0, 11)).join('')), digitavel: d };
-  }
-  if (d.length === 44) return d[0] === '8' ? decodeConvenio(d) : decodeBancario(d);
-  throw new Error(`Esperava a linha digitável (47 ou 48 números) ou o código de barras (44 números). Recebi ${d.length}.`);
-}
 function normPixKey(k: string): { key: string; kind: string } {
   const s = String(k ?? '').trim();
   if (/@/.test(s)) return { key: s.toLowerCase(), kind: 'email' };
