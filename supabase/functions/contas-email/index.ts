@@ -152,6 +152,31 @@ async function receber(admin: Admin, token: string, body: any) {
     return json({ success: false, error: 'formato não reconhecido' }, 422);
   }
 
+  // ── Confirmação de encaminhamento do Gmail ────────────────────────────────
+  // Ao cadastrar um endereço de encaminhamento, o Gmail manda um código para ELE — e esse
+  // e-mail cai aqui, não numa caixa que o dono consiga abrir. Sem isto, a pessoa trava no
+  // meio da configuração sem entender por quê. Então reconhecemos e mostramos o código.
+  if (/forwarding-noreply@google\.com/i.test(email.fromEmail)) {
+    const corpo = `${email.subject}
+${email.texto}`;
+    // O codigo do Gmail tem 9 digitos. Os limites (?<!\d) e (?!\d) evitam pegar 9 digitos
+    // de DENTRO de um numero maior (id de rastreio, telefone) e mostrar um codigo errado.
+    const codigo = corpo.match(/(?<!\d)(\d{9})(?!\d)/)?.[1] ?? null;
+    const link = corpo.match(/https:\/\/mail-settings\.google\.com[^\s"'<>]*/i)?.[0] ?? null;
+    await admin.from('fin_mail_messages').upsert({
+      tenant_id: tenantId, message_id: email.messageId,
+      from_email: email.fromEmail, from_name: 'Gmail', subject: email.subject.slice(0, 500) || null,
+      received_at: new Date().toISOString(), status: 'ignored',
+      reason: codigo
+        ? `Código de confirmação do Gmail: ${codigo} — digite no Gmail para liberar o encaminhamento.`
+        : 'Confirmação de encaminhamento do Gmail (não achei o código; veja o link no detalhe).',
+      attachments: 0, raw: { kind: 'gmail_forwarding_confirmation', codigo, link },
+    }, { onConflict: 'tenant_id,message_id', ignoreDuplicates: true });
+    await admin.from('fin_mail_config').update({ last_received_at: new Date().toISOString() }).eq('tenant_id', tenantId);
+    log('INFO', 'webhook', 'confirmação de encaminhamento do Gmail', { tenantId, temCodigo: Boolean(codigo) });
+    return json({ success: true, gmail_confirmation: true, codigo });
+  }
+
   // O fornecedor já é conhecido? É isso que decide entre lançar direto e virar pendência.
   const { data: forn } = await admin.from('fin_suppliers')
     .select('id, name, cnpj, email').eq('tenant_id', tenantId).is('deleted_at', null)
