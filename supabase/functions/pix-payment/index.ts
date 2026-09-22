@@ -476,7 +476,10 @@ type PixRow = {
 };
 const PIX_COLS = 'id, tenant_id, status, amount, txid, provider, provider_payment_id, expires_at, confirmed_at, updated_at';
 
-async function reconcileRow(admin: Admin, row: PixRow): Promise<string> {
+// `out.pointStatus` devolve o estado da order na maquininha (`created` = nenhum terminal
+// pegou ainda, `at_terminal` = está no visor). É o que deixa o totem dizer ao cliente que a
+// maquininha ainda não acordou, em vez de mandar aproximar o cartão numa tela apagada.
+async function reconcileRow(admin: Admin, row: PixRow, out?: { pointStatus?: string }): Promise<string> {
   if (row.status !== 'pending' || !row.provider_payment_id || !PROVIDERS.includes(row.provider)) return row.status;
   const p = await loadProviderCfgs(admin, row.tenant_id);
   const now = new Date().toISOString();
@@ -503,6 +506,7 @@ async function reconcileRow(admin: Admin, row: PixRow): Promise<string> {
     const r = await mpFetch(p.point.access_token, `/v1/orders/${row.provider_payment_id}`);
     if (!r.ok) { log('WARN', 'reconcile', 'GET order Point falhou', { id: row.id, http: r.status }); return row.status; }
     const st = String(r.body.status ?? '');
+    if (out) out.pointStatus = st;
     const pay = r.body.transactions?.payments?.[0] ?? {};
     paid = st === 'processed';
     failed = st === 'failed';
@@ -777,12 +781,13 @@ Deno.serve(async (req: Request) => {
       let status = row.status;
       const expired = new Date(row.expires_at) < new Date();
 
+      const out: { pointStatus?: string } = {};
       if (PROVIDERS.includes(row.provider) && status === 'pending') {
         const auth = await requireMember(req, supabase, row.tenant_id);
         if (auth.error) return auth.error;
         // Vencido: ainda consulta uma última vez (pode ter pago no último segundo).
         if (expired || Date.now() - new Date(row.updated_at).getTime() >= RECONCILE_EVERY_MS) {
-          try { status = await reconcileRow(supabase, row); } catch (e) { log('WARN', 'check_status', 'reconcile falhou', { id: row.id, error: friendlyError(e) }); }
+          try { status = await reconcileRow(supabase, row, out); } catch (e) { log('WARN', 'check_status', 'reconcile falhou', { id: row.id, error: friendlyError(e) }); }
         }
       }
       if (status === 'pending' && expired) {
@@ -796,6 +801,9 @@ Deno.serve(async (req: Request) => {
       return json({
         status, confirmed_at: status === 'confirmed' ? (row.confirmed_at ?? new Date().toISOString()) : null, amount: row.amount, txid: row.txid,
         method: fresh?.method ?? null, error: status === 'failed' ? (fresh?.error ?? null) : null,
+        // `created` = nenhuma maquininha pegou a cobrança ainda (tela apagada, por exemplo);
+        // `at_terminal` = já está no visor. Só existe para mp_point.
+        point_status: out.pointStatus ?? null,
       });
     }
 

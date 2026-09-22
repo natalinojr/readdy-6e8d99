@@ -38,6 +38,11 @@ export default function TelaCartaoKiosk({ total, tenantId, method, onPago, onVol
   const [sandbox, setSandbox] = useState(false);
   const [simulando, setSimulando] = useState(false);
   const [aviso, setAviso] = useState('');
+  // A cobrança pode estar criada no Mercado Pago sem estar no visor: se a maquininha está com
+  // a tela apagada, ela não acorda sozinha (medido na loja em 2026-09-22 — a cobrança ficava
+  // em `created` e o cliente encarava uma tela preta achando que era o totem que travou).
+  const [naMaquininha, setNaMaquininha] = useState(false);
+  const [demorou, setDemorou] = useState(false);
   const chargeRef = useRef<string | null>(null);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const onPagoRef = useRef(onPago);
@@ -56,9 +61,10 @@ export default function TelaCartaoKiosk({ total, tenantId, method, onPago, onVol
     pararPolling();
     pollingRef.current = setInterval(async () => {
       try {
-        const { data: st } = await invokeWithAuth<{ status?: string; method?: string; error?: string | null }>('pix-payment', {
+        const { data: st } = await invokeWithAuth<{ status?: string; method?: string; error?: string | null; point_status?: string | null }>('pix-payment', {
           body: { action: 'check_status', pix_payment_id: id },
         });
+        if (st?.point_status === 'at_terminal') setNaMaquininha(true);
         if (st?.status === 'confirmed') {
           pararPolling();
           vivaRef.current = false;
@@ -94,6 +100,8 @@ export default function TelaCartaoKiosk({ total, tenantId, method, onPago, onVol
     setEstado('criando');
     setErro('');
     setAviso('');
+    setNaMaquininha(false);
+    setDemorou(false);
     const { data, error } = await invokeWithAuth<{ pix_payment_id?: string; sandbox?: boolean }>('pix-payment', {
       body: { action: 'create_card_charge', tenant_id: tenantId, amount: total, method },
     });
@@ -132,6 +140,13 @@ export default function TelaCartaoKiosk({ total, tenantId, method, onPago, onVol
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Passou tempo demais sem a maquininha pegar a cobrança: quase sempre é a tela dela apagada.
+  useEffect(() => {
+    if (estado !== 'aguardando' || naMaquininha) return;
+    const t = setTimeout(() => setDemorou(true), 6000);
+    return () => clearTimeout(t);
+  }, [estado, naMaquininha]);
 
   // Sair: só libera a tela DEPOIS que a maquininha soltar o valor. Antes o totem voltava na
   // hora e a cobrança continuava no visor — o cliente escolhia outra forma e corria o risco de
@@ -185,6 +200,9 @@ export default function TelaCartaoKiosk({ total, tenantId, method, onPago, onVol
   };
 
   const rotulo = method === 'debit_card' ? 'débito' : 'crédito';
+  // A cobrança existe no Mercado Pago, mas nenhuma maquininha pegou: manda acordar a tela em
+  // vez de pedir o cartão numa máquina apagada.
+  const precisaAcordar = estado === 'aguardando' && demorou && !naMaquininha;
 
   if (estado === 'aprovado') {
     return (
@@ -246,11 +264,13 @@ export default function TelaCartaoKiosk({ total, tenantId, method, onPago, onVol
         <h2 className="text-2xl md:text-5xl font-black text-white">
           {estado === 'criando' ? 'Enviando para a maquininha…'
             : estado === 'cancelando' ? 'Cancelando na maquininha…'
+            : precisaAcordar ? 'Toque na tela da maquininha'
             : 'Pague na maquininha ao lado'}
         </h2>
         <p className="text-zinc-400 text-base md:text-2xl mt-2">
           {estado === 'criando' ? 'Só um instante'
             : estado === 'cancelando' ? 'Aguarde o valor sair do visor'
+            : precisaAcordar ? 'Ela está com a tela apagada. Toque nela e o valor aparece.'
             : `Aproxime ou insira o cartão de ${rotulo}`}
         </p>
       </div>
