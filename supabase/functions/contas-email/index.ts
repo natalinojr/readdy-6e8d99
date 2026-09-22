@@ -5,23 +5,30 @@
 // alguém — em 2026-09-22 um condomínio de R$ 2.181,55 venceu sem estar no sistema, descoberto
 // por acaso no app do banco. Esta função fecha esse buraco.
 //
-// Gmail lido pela API do Google com OAuth do próprio dono e escopo **somente leitura**
-// (`gmail.readonly`): o sistema não envia, não apaga e não marca nada na caixa dele. Sem
-// domínio próprio e sem provedor de e-mail no meio.
+// COMO O E-MAIL CHEGA (decisão do dono, 2026-09-22): por ENCAMINHAMENTO, não pela API do
+// Gmail. O Gmail da loja é o endereço bonito que se dá aos fornecedores e encaminha sozinho
+// para um serviço de recebimento, que entrega aqui por webhook. O caminho pela API do Google
+// foi descartado porque app OAuth em "Testing" tem o refresh_token expirado em 7 DIAS, e
+// publicar exige verificação (gmail.readonly é escopo restrito) — só não morde com Google
+// Workspace, que a loja não tem. Uma integração que morre calada em uma semana é o oposto do
+// que este módulo existe para resolver.
 //
-// Ações (POST JSON { action, tenant_id, ... }):
-//   get_config        {}                                 estado da conexão (nunca devolve segredo)
-//   save_credentials  { client_id, client_secret, query? }  guarda a credencial do Google Cloud
-//   oauth_url         { redirect_uri }                    monta o link de autorização
-//   exchange          { code, redirect_uri }              troca o code pelo refresh_token e liga
-//   test              {}                                  pergunta ao Gmail quantos e-mails o filtro pega
-//   disconnect        {}                                  apaga a conexão (a caixa continua intacta)
+// Ações com JWT (POST JSON { action, tenant_id, ... }):
+//   get_config     {}                          estado + a URL do webhook para colar no serviço
+//   save_config    { inbound_address? }        gera o segredo na primeira vez
+//   rotate_token   {}                          troca o segredo (invalida a config no serviço)
+//   list_messages  { limit? }                  o que chegou e o que virou conta
+//   disconnect     {}
 //
-// Autenticação: JWT do usuário (vínculo em user_tenants). Escrita exige admin/gerente/financeiro.
+// Webhook SEM JWT:  POST /contas-email?inbound=<segredo>
+//   Aceita o formato JSON dos serviços de recebimento mais comuns (Postmark e CloudMailin) e
+//   um formato simples. O segredo na URL é o que impede alguém de empurrar "boleto" para
+//   dentro do financeiro — é o mesmo desenho do webhook da maquininha.
 // deno-lint-ignore-file no-explicit-any
 
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
 import { isFinanceiroRole } from '../_shared/tenant-auth.ts';
+import { findBoletos } from '../_shared/boleto.ts';
 
 type Admin = SupabaseClient;
 
@@ -29,13 +36,7 @@ const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-internal-key',
 };
-
-const GOOGLE_AUTH = 'https://accounts.google.com/o/oauth2/v2/auth';
-const GOOGLE_TOKEN = 'https://oauth2.googleapis.com/token';
-const GMAIL = 'https://gmail.googleapis.com/gmail/v1/users/me';
-// Somente leitura, de propósito: mesmo comprometida, a credencial não apaga nem envia e-mail.
-const SCOPE = 'https://www.googleapis.com/auth/gmail.readonly';
-const TIMEOUT_MS = 20_000;
+const MAX_BODY_CHARS = 200_000;
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
@@ -46,58 +47,172 @@ function log(level: 'INFO' | 'WARN' | 'ERROR', action: string, msg: string, ctx?
   if (level === 'ERROR') console.error(e); else if (level === 'WARN') console.warn(e); else console.log(e);
 }
 
-async function httpJson(url: string, init: RequestInit = {}) {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
-  try {
-    const res = await fetch(url, { ...init, signal: ctrl.signal });
-    const text = await res.text();
-    let body: any = {};
-    try { body = text ? JSON.parse(text) : {}; } catch { body = { raw: text }; }
-    return { ok: res.ok, status: res.status, body };
-  } finally { clearTimeout(timer); }
+function newToken(): string {
+  const b = new Uint8Array(24);
+  crypto.getRandomValues(b);
+  return Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
 }
 
-/** Erro do Google em português, dizendo o que dá para fazer. */
-function googleError(r: { status: number; body: any }): string {
-  const code = String(r.body?.error ?? '');
-  const desc = String(r.body?.error_description ?? r.body?.error?.message ?? '').slice(0, 200);
-  if (code === 'invalid_client') return 'O Google recusou o ID ou a chave do cliente. Confira os dois em Google Cloud › Credenciais.';
-  if (code === 'redirect_uri_mismatch') return 'O endereço de retorno não está autorizado na credencial. Adicione a URL exata em "URIs de redirecionamento autorizados".';
-  if (code === 'invalid_grant') return 'A autorização expirou ou foi revogada. Conecte a caixa de novo.';
-  if (r.status === 403) return `O Google recusou o acesso (403). A Gmail API está ativada no projeto?${desc ? ` [${desc}]` : ''}`;
-  return `Google respondeu ${r.status}${code ? `: ${code}` : ''}${desc ? ` — ${desc}` : ''}`;
+const webhookUrl = (token: string) =>
+  `${Deno.env.get('SUPABASE_URL') ?? ''}/functions/v1/contas-email?inbound=${token}`;
+
+// ── Normalização do e-mail recebido ─────────────────────────────────────────
+// Cada serviço entrega num formato. Em vez de amarrar a loja a um fornecedor, aceitamos os
+// formatos comuns e reduzimos todos à mesma forma. Attachment vem em base64 no JSON.
+interface Anexo { nome: string; tipo: string; base64: string }
+interface EmailRecebido {
+  messageId: string;
+  fromEmail: string;
+  fromName: string | null;
+  subject: string;
+  receivedAt: string | null;
+  texto: string;
+  anexos: Anexo[];
+  formato: string;
 }
 
-/** Troca o refresh_token por um access_token novo (eles duram ~1h). */
-async function accessToken(cfg: any): Promise<{ token?: string; error?: string }> {
-  if (!cfg?.refresh_token || !cfg?.client_id || !cfg?.client_secret) return { error: 'Caixa de e-mail não conectada.' };
-  const r = await httpJson(GOOGLE_TOKEN, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      client_id: cfg.client_id, client_secret: cfg.client_secret,
-      refresh_token: cfg.refresh_token, grant_type: 'refresh_token',
-    }).toString(),
+const str = (v: unknown) => (v == null ? '' : String(v));
+/** "Fulano <a@b.com>" → a@b.com */
+function soEmail(v: unknown): string {
+  const s = str(v);
+  const m = s.match(/<([^>]+)>/);
+  return (m ? m[1] : s).trim().toLowerCase();
+}
+function soNome(v: unknown): string | null {
+  const s = str(v).trim();
+  const m = s.match(/^\s*"?([^"<]+?)"?\s*</);
+  return m ? m[1].trim() : null;
+}
+
+function normalizar(body: any): EmailRecebido | null {
+  // Postmark: campos capitalizados, anexos em Attachments[].Content (base64)
+  if (body?.MessageID || body?.FromFull || Array.isArray(body?.Attachments)) {
+    return {
+      messageId: str(body.MessageID) || `pm-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`,
+      fromEmail: soEmail(body?.FromFull?.Email ?? body?.From),
+      fromName: str(body?.FromFull?.Name) || soNome(body?.From),
+      subject: str(body.Subject),
+      receivedAt: str(body.Date) || null,
+      texto: `${str(body.TextBody)}\n${str(body.StrippedTextReply ?? '')}`.slice(0, MAX_BODY_CHARS),
+      anexos: (body.Attachments ?? []).map((a: any) => ({
+        nome: str(a?.Name), tipo: str(a?.ContentType), base64: str(a?.Content),
+      })),
+      formato: 'postmark',
+    };
+  }
+  // CloudMailin (JSON normalizado): headers em headers{}, anexos em attachments[]
+  if (body?.headers || body?.envelope) {
+    const h = body.headers ?? {};
+    return {
+      messageId: str(h.message_id ?? h['Message-ID']) || `cm-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`,
+      fromEmail: soEmail(body?.envelope?.from ?? h.from),
+      fromName: soNome(h.from),
+      subject: str(h.subject),
+      receivedAt: str(h.date) || null,
+      texto: str(body.plain ?? body.text ?? '').slice(0, MAX_BODY_CHARS),
+      anexos: (body.attachments ?? []).map((a: any) => ({
+        nome: str(a?.file_name ?? a?.name), tipo: str(a?.content_type), base64: str(a?.content),
+      })),
+      formato: 'cloudmailin',
+    };
+  }
+  // Formato simples (teste manual, ou serviço que a gente configure à mão)
+  if (body?.from || body?.subject) {
+    return {
+      messageId: str(body.message_id) || `sm-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`,
+      fromEmail: soEmail(body.from),
+      fromName: soNome(body.from),
+      subject: str(body.subject),
+      receivedAt: str(body.date) || null,
+      texto: str(body.text ?? body.body ?? '').slice(0, MAX_BODY_CHARS),
+      anexos: (body.attachments ?? []).map((a: any) => ({
+        nome: str(a?.name), tipo: str(a?.content_type ?? a?.type), base64: str(a?.content ?? a?.base64),
+      })),
+      formato: 'simples',
+    };
+  }
+  return null;
+}
+
+// ── Webhook: e-mail chegou ──────────────────────────────────────────────────
+async function receber(admin: Admin, token: string, body: any) {
+  const { data: cfg } = await admin.from('fin_mail_config')
+    .select('tenant_id, is_active').eq('inbound_token', token).maybeSingle();
+  // Resposta igual para segredo errado e caixa desligada: não confirma para quem tentar
+  // adivinhar que o endereço existe.
+  if (!cfg?.tenant_id || cfg.is_active !== true) {
+    log('WARN', 'webhook', 'segredo inválido ou caixa desligada');
+    return json({ success: false }, 404);
+  }
+  const tenantId = String(cfg.tenant_id);
+
+  const email = normalizar(body);
+  if (!email) {
+    log('WARN', 'webhook', 'formato não reconhecido', { tenantId, chaves: Object.keys(body ?? {}).slice(0, 12) });
+    return json({ success: false, error: 'formato não reconhecido' }, 422);
+  }
+
+  // O fornecedor já é conhecido? É isso que decide entre lançar direto e virar pendência.
+  const { data: forn } = await admin.from('fin_suppliers')
+    .select('id, name, cnpj, email').eq('tenant_id', tenantId).is('deleted_at', null)
+    .ilike('email', email.fromEmail).limit(1).maybeSingle();
+
+  // Boleto no CORPO do e-mail: só entra o que passa nos dígitos verificadores. O anexo em PDF
+  // é lido na etapa seguinte (a IA lê, e a conferência dos dígitos é quem aprova).
+  const doTexto = findBoletos(`${email.subject}\n${email.texto}`);
+  const boleto = doTexto[0] ?? null;
+
+  const row = {
+    tenant_id: tenantId,
+    message_id: email.messageId,
+    from_email: email.fromEmail || null,
+    from_name: email.fromName,
+    subject: email.subject.slice(0, 500) || null,
+    received_at: email.receivedAt ? new Date(email.receivedAt).toISOString() : new Date().toISOString(),
+    status: 'pending',
+    supplier_id: forn?.id ?? null,
+    boleto_digitavel: boleto?.digitavel ?? boleto?.barcode ?? null,
+    amount: boleto?.valor ?? null,
+    due_date: boleto?.vencimento ?? null,
+    attachments: email.anexos.length,
+    reason: forn ? null : 'Remetente ainda não é fornecedor cadastrado',
+    raw: {
+      formato: email.formato,
+      anexos: email.anexos.map((a) => ({ nome: a.nome, tipo: a.tipo, bytes: Math.floor(a.base64.length * 0.75) })),
+      boletos_no_texto: doTexto.length,
+    },
+  };
+
+  // Mesmo e-mail entregue duas vezes (o serviço reenvia quando não recebe 200) não vira duas
+  // linhas: a chave é o message_id.
+  const { error } = await admin.from('fin_mail_messages')
+    .upsert(row, { onConflict: 'tenant_id,message_id', ignoreDuplicates: true });
+  if (error) {
+    log('ERROR', 'webhook', 'gravar mensagem falhou', { tenantId, error: error.message });
+    // 500 de propósito: o serviço reenvia, e aí a mensagem não se perde.
+    return json({ success: false }, 500);
+  }
+
+  await admin.from('fin_mail_config').update({
+    last_received_at: new Date().toISOString(), last_error: null,
+  }).eq('tenant_id', tenantId);
+
+  log('INFO', 'webhook', 'recebido', {
+    tenantId, de: email.fromEmail, anexos: email.anexos.length,
+    fornecedor: forn?.name ?? null, boleto: Boolean(boleto),
   });
-  if (!r.ok || !r.body?.access_token) return { error: googleError(r) };
-  return { token: String(r.body.access_token) };
+  return json({ success: true, boleto: Boolean(boleto), fornecedor_conhecido: Boolean(forn) });
 }
 
 function safeConfig(cfg: any) {
   if (!cfg) return null;
   return {
-    configured: Boolean(cfg.client_id && cfg.client_secret),
-    connected: Boolean(cfg.refresh_token),
+    configured: Boolean(cfg.inbound_token),
     is_active: cfg.is_active === true,
-    auto_sync: cfg.auto_sync !== false,
-    email_address: cfg.email_address ?? null,
-    query: cfg.query ?? '',
-    // só a "cara" do client_id, para ele conferir que é o certo sem o segredo voltar
-    client_id_hint: cfg.client_id ? `${String(cfg.client_id).slice(0, 12)}…` : null,
-    last_check_at: cfg.last_check_at ?? null,
+    inbound_address: cfg.inbound_address ?? null,
+    webhook_url: cfg.inbound_token ? webhookUrl(cfg.inbound_token) : null,
+    last_received_at: cfg.last_received_at ?? null,
     last_error: cfg.last_error ?? null,
-    connected_at: cfg.connected_at ?? null,
   };
 }
 
@@ -108,164 +223,79 @@ Deno.serve(async (req: Request) => {
   if (!supabaseUrl || serviceRoleKey.length < 40) return errResp('Server misconfiguration', 500);
   const admin: Admin = createClient(supabaseUrl, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
 
-  const token = (req.headers.get('Authorization') ?? '').replace(/^Bearer\s+/i, '').trim();
-  const internalKey = Deno.env.get('FISCAL_INTERNAL_KEY') ?? '';
-  const internal = internalKey.length >= 20 && (req.headers.get('x-internal-key') ?? '') === internalKey;
+  // ── Webhook: vem do serviço de recebimento, sem JWT ──
+  const inbound = new URL(req.url).searchParams.get('inbound');
+  if (inbound) {
+    if (req.method !== 'POST') return json({ success: false }, 405);
+    let body: any;
+    try { body = await req.json(); } catch { return json({ success: false, error: 'corpo inválido' }, 400); }
+    try { return await receber(admin, inbound, body); }
+    catch (e) {
+      log('ERROR', 'webhook', 'falha inesperada', { error: String((e as Error)?.message ?? e) });
+      return json({ success: false }, 500);
+    }
+  }
 
+  const token = (req.headers.get('Authorization') ?? '').replace(/^Bearer\s+/i, '').trim();
   let body: Record<string, any>;
   try { body = await req.json(); } catch { return errResp('Invalid JSON body'); }
   const action = String(body.action ?? '');
 
   try {
     const requested: string | null = body.tenant_id ?? body.active_tenant_id ?? null;
-    let tenantId: string;
-    let userId: string | null = null;
-    let role = 'admin';
-    if (internal) {
-      if (!requested) return errResp('tenant_id required');
-      tenantId = requested;
-    } else {
-      if (!token) return errResp('Unauthorized', 401);
-      const { data: u, error: uErr } = await admin.auth.getUser(token);
-      if (uErr || !u?.user) return errResp('Unauthorized', 401);
-      userId = u.user.id;
-      const { data: rows } = await admin.from('user_tenants').select('tenant_id, role').eq('user_id', userId);
-      const match = requested ? (rows ?? []).find((r) => r.tenant_id === requested) : ((rows ?? []).length === 1 ? rows![0] : null);
-      if (!match) return errResp('Sem acesso a esta loja', 403);
-      tenantId = match.tenant_id;
-      role = String(match.role ?? '');
-    }
-    const canWrite = internal || isFinanceiroRole(role);
+    if (!token) return errResp('Unauthorized', 401);
+    const { data: u, error: uErr } = await admin.auth.getUser(token);
+    if (uErr || !u?.user) return errResp('Unauthorized', 401);
+    const { data: rows } = await admin.from('user_tenants').select('tenant_id, role').eq('user_id', u.user.id);
+    const match = requested ? (rows ?? []).find((r) => r.tenant_id === requested) : ((rows ?? []).length === 1 ? rows![0] : null);
+    if (!match) return errResp('Sem acesso a esta loja', 403);
+    const tenantId = match.tenant_id as string;
+    const canWrite = isFinanceiroRole(String(match.role ?? ''));
 
     const { data: cfg } = await admin.from('fin_mail_config').select('*').eq('tenant_id', tenantId).maybeSingle();
 
     if (action === 'get_config') return json({ success: true, config: safeConfig(cfg) });
 
-    if (action === 'save_credentials') {
+    if (action === 'save_config') {
       if (!canWrite) return errResp('Só administrador, gerente ou financeiro pode configurar', 403);
-      const clientId = String(body.client_id ?? '').trim();
-      const clientSecret = String(body.client_secret ?? '').trim();
-      if (!clientId || !clientSecret) return errResp('Informe o ID e a chave do cliente OAuth do Google.');
-      if (!/\.apps\.googleusercontent\.com$/.test(clientId)) {
-        return errResp('O ID do cliente do Google termina em ".apps.googleusercontent.com". Confira se copiou o campo certo.');
-      }
-      const query = String(body.query ?? '').trim() || 'has:attachment newer_than:30d';
+      const endereco = String(body.inbound_address ?? '').trim().toLowerCase();
+      if (endereco && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(endereco)) return errResp('Endereço de recebimento inválido.');
       const { error } = await admin.from('fin_mail_config').upsert({
-        tenant_id: tenantId, provider: 'gmail', client_id: clientId, client_secret: clientSecret,
-        query, last_error: null, updated_at: new Date().toISOString(),
+        tenant_id: tenantId, provider: 'inbound',
+        inbound_token: cfg?.inbound_token ?? newToken(),
+        inbound_address: endereco || null,
+        is_active: true, last_error: null, updated_at: new Date().toISOString(),
       }, { onConflict: 'tenant_id' });
-      if (error) return errResp(`Salvar credencial: ${error.message}`);
+      if (error) return errResp(`Salvar: ${error.message}`);
       const { data: fresh } = await admin.from('fin_mail_config').select('*').eq('tenant_id', tenantId).maybeSingle();
-      log('INFO', 'save_credentials', 'ok', { tenantId, by: userId });
+      log('INFO', 'save_config', 'ok', { tenantId, by: u.user.id });
       return json({ success: true, config: safeConfig(fresh) });
     }
 
-    if (action === 'oauth_url') {
-      if (!canWrite) return errResp('Só administrador, gerente ou financeiro pode conectar', 403);
-      if (!cfg?.client_id) return errResp('Salve primeiro o ID e a chave do cliente do Google.');
-      const redirectUri = String(body.redirect_uri ?? '').trim();
-      if (!/^https:\/\//.test(redirectUri)) return errResp('Endereço de retorno inválido.');
-      const qs = new URLSearchParams({
-        client_id: cfg.client_id,
-        redirect_uri: redirectUri,
-        response_type: 'code',
-        scope: SCOPE,
-        // offline + consent é o que faz o Google devolver o refresh_token; sem isso a
-        // conexão morre em 1h e ninguém entende por quê.
-        access_type: 'offline',
-        prompt: 'consent',
-        include_granted_scopes: 'true',
-        state: `erpos:${tenantId.slice(0, 8)}`,
-      });
-      return json({ success: true, url: `${GOOGLE_AUTH}?${qs.toString()}` });
-    }
-
-    if (action === 'exchange') {
-      if (!canWrite) return errResp('Só administrador, gerente ou financeiro pode conectar', 403);
-      if (!cfg?.client_id || !cfg?.client_secret) return errResp('Salve primeiro o ID e a chave do cliente do Google.');
-      const code = String(body.code ?? '').trim();
-      const redirectUri = String(body.redirect_uri ?? '').trim();
-      if (!code || !redirectUri) return errResp('code e redirect_uri são obrigatórios');
-
-      const r = await httpJson(GOOGLE_TOKEN, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          client_id: cfg.client_id, client_secret: cfg.client_secret,
-          code, redirect_uri: redirectUri, grant_type: 'authorization_code',
-        }).toString(),
-      });
-      if (!r.ok) return errResp(googleError(r));
-      const refresh = String(r.body?.refresh_token ?? '');
-      if (!refresh) {
-        // Acontece quando a conta já autorizou antes: o Google só manda o refresh_token na
-        // primeira vez, a não ser com prompt=consent (que o oauth_url já força).
-        return errResp('O Google não devolveu a autorização de longo prazo. Remova o acesso do app em myaccount.google.com/permissions e conecte de novo.');
-      }
-
-      // Confirma de qual caixa é o acesso — e já prova que o token funciona.
-      const prof = await httpJson(`${GMAIL}/profile`, { headers: { Authorization: `Bearer ${r.body.access_token}` } });
-      if (!prof.ok) return errResp(googleError(prof));
-
-      const { error } = await admin.from('fin_mail_config').update({
-        refresh_token: refresh,
-        email_address: String(prof.body?.emailAddress ?? '') || null,
-        is_active: true, last_error: null,
-        connected_by: userId, connected_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      }).eq('tenant_id', tenantId);
-      if (error) return errResp(`Salvar conexão: ${error.message}`);
-
+    if (action === 'rotate_token') {
+      if (!canWrite) return errResp('Só administrador, gerente ou financeiro pode trocar o segredo', 403);
+      const { error } = await admin.from('fin_mail_config')
+        .update({ inbound_token: newToken(), updated_at: new Date().toISOString() })
+        .eq('tenant_id', tenantId);
+      if (error) return errResp(error.message);
       const { data: fresh } = await admin.from('fin_mail_config').select('*').eq('tenant_id', tenantId).maybeSingle();
-      log('INFO', 'exchange', 'conectado', { tenantId, email: prof.body?.emailAddress, by: userId });
       return json({ success: true, config: safeConfig(fresh) });
     }
 
-    if (action === 'test') {
-      if (!cfg?.refresh_token) return json({ success: false, not_connected: true });
-      const at = await accessToken(cfg);
-      if (at.error) {
-        await admin.from('fin_mail_config').update({ last_error: at.error }).eq('tenant_id', tenantId);
-        return errResp(at.error);
-      }
-      const q = encodeURIComponent(String(cfg.query ?? ''));
-      const r = await httpJson(`${GMAIL}/messages?maxResults=10&q=${q}`, { headers: { Authorization: `Bearer ${at.token}` } });
-      if (!r.ok) return errResp(googleError(r));
-      const ids: any[] = Array.isArray(r.body?.messages) ? r.body.messages : [];
-
-      // Mostra os remetentes dos últimos para ele conferir que o filtro pegou o que devia.
-      const remetentes: string[] = [];
-      for (const m of ids.slice(0, 5)) {
-        const d = await httpJson(
-          `${GMAIL}/messages/${m.id}?format=metadata&metadataHeaders=From&metadataHeaders=Subject`,
-          { headers: { Authorization: `Bearer ${at.token}` } },
-        );
-        if (!d.ok) continue;
-        const h: any[] = d.body?.payload?.headers ?? [];
-        const from = h.find((x) => String(x.name).toLowerCase() === 'from')?.value ?? '';
-        const subj = h.find((x) => String(x.name).toLowerCase() === 'subject')?.value ?? '';
-        remetentes.push(`${String(from).slice(0, 60)} — ${String(subj).slice(0, 60)}`);
-      }
-
-      await admin.from('fin_mail_config').update({
-        last_check_at: new Date().toISOString(), last_error: null,
-      }).eq('tenant_id', tenantId);
-      return json({
-        success: true, email_address: cfg.email_address ?? null,
-        encontrados: Number(r.body?.resultSizeEstimate ?? ids.length), amostra: remetentes,
-      });
+    if (action === 'list_messages') {
+      const limit = Math.min(Math.max(Number(body.limit ?? 30), 1), 100);
+      const { data } = await admin.from('fin_mail_messages')
+        .select('id, from_email, from_name, subject, received_at, status, reason, amount, due_date, attachments, boleto_digitavel, bill_id')
+        .eq('tenant_id', tenantId).order('received_at', { ascending: false }).limit(limit);
+      return json({ success: true, messages: data ?? [] });
     }
 
     if (action === 'disconnect') {
-      if (!canWrite) return errResp('Só administrador, gerente ou financeiro pode desconectar', 403);
-      // Só solta o acesso: o histórico do que já entrou continua, e a caixa dele fica intacta.
-      const { error } = await admin.from('fin_mail_config').update({
-        refresh_token: null, is_active: false, email_address: null,
-        connected_at: null, connected_by: null, last_error: null,
-        updated_at: new Date().toISOString(),
-      }).eq('tenant_id', tenantId);
+      if (!canWrite) return errResp('Só administrador, gerente ou financeiro pode desligar', 403);
+      // Desliga a entrada sem apagar o histórico do que já chegou.
+      const { error } = await admin.from('fin_mail_config')
+        .update({ is_active: false, updated_at: new Date().toISOString() }).eq('tenant_id', tenantId);
       if (error) return errResp(error.message);
-      log('INFO', 'disconnect', 'ok', { tenantId, by: userId });
       return json({ success: true });
     }
 

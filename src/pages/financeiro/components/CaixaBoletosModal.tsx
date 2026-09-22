@@ -1,148 +1,116 @@
 import { useState, useEffect, useCallback } from 'react';
 import { invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
+import { formatCurrency } from '@/lib/formatters';
 
 // ── Caixa de boletos por e-mail ─────────────────────────────────────────────
-// Liga um Gmail da loja ao Contas a Pagar. O acesso é SOMENTE LEITURA: o sistema não
-// envia, não apaga e não marca nada na caixa. A chave do Google fica no banco e nunca
-// volta para cá — a tela só mostra o começo do ID para conferência.
+// O Gmail da loja é o endereço que se dá aos fornecedores e encaminha sozinho para um
+// serviço de recebimento, que entrega o e-mail aqui por webhook.
 //
-// O passo do OAuth usa o mesmo desenho da conexão com a Meta: o Google volta para esta
-// mesma página com ?code=..., e a tela troca esse código pela autorização de longo prazo.
+// Por que não pela API do Gmail: app OAuth em "Testing" tem o acesso expirado em 7 dias pelo
+// Google, e publicar exige verificação (o escopo de leitura do Gmail é restrito). Uma
+// integração que morre calada depois de uma semana é o oposto do que este módulo resolve.
+//
+// O endereço do webhook carrega um segredo: sem ele, qualquer um que o descobrisse poderia
+// empurrar "boleto" para dentro do financeiro.
 
 interface MailConfig {
   configured: boolean;
-  connected: boolean;
   is_active: boolean;
-  auto_sync: boolean;
-  email_address: string | null;
-  query: string;
-  client_id_hint: string | null;
-  last_check_at: string | null;
+  inbound_address: string | null;
+  webhook_url: string | null;
+  last_received_at: string | null;
   last_error: string | null;
-  connected_at: string | null;
 }
 
-interface Props {
-  onClose: () => void;
+interface MailMessage {
+  id: string;
+  from_email: string | null;
+  from_name: string | null;
+  subject: string | null;
+  received_at: string | null;
+  status: string;
+  reason: string | null;
+  amount: number | null;
+  due_date: string | null;
+  attachments: number | null;
+  boleto_digitavel: string | null;
+  bill_id: string | null;
 }
 
-type Resp = {
-  success?: boolean; error?: string; config?: MailConfig | null; url?: string;
-  not_connected?: boolean; encontrados?: number; amostra?: string[]; email_address?: string | null;
+interface Props { onClose: () => void }
+
+type Resp = { success?: boolean; error?: string; config?: MailConfig | null; messages?: MailMessage[] };
+
+const STATUS: Record<string, { label: string; cls: string }> = {
+  pending: { label: 'Aguardando leitura', cls: 'bg-zinc-100 text-zinc-600' },
+  bill: { label: 'Virou conta', cls: 'bg-green-100 text-green-700' },
+  pendencia: { label: 'Esperando você', cls: 'bg-amber-100 text-amber-700' },
+  ignored: { label: 'Não era boleto', cls: 'bg-zinc-100 text-zinc-400' },
+  error: { label: 'Falhou', cls: 'bg-red-100 text-red-700' },
 };
-
-/** O Google exige que o endereço de retorno seja EXATAMENTE um dos autorizados na credencial. */
-const redirectUri = () => window.location.origin + window.location.pathname;
 
 export default function CaixaBoletosModal({ onClose }: Props) {
   const { user } = useAuth();
   const [config, setConfig] = useState<MailConfig | null>(null);
+  const [mensagens, setMensagens] = useState<MailMessage[]>([]);
   const [loading, setLoading] = useState(true);
-  const [clientId, setClientId] = useState('');
-  const [clientSecret, setClientSecret] = useState('');
-  const [query, setQuery] = useState('has:attachment newer_than:30d');
-  const [busy, setBusy] = useState<null | 'salvar' | 'conectar' | 'testar' | 'desconectar'>(null);
-  const [result, setResult] = useState<{ ok: boolean; msg: string; details?: string[] } | null>(null);
-  const [passo, setPasso] = useState(1);
+  const [endereco, setEndereco] = useState('');
+  const [busy, setBusy] = useState<null | 'salvar' | 'trocar' | 'desligar'>(null);
+  const [copiado, setCopiado] = useState(false);
+  const [result, setResult] = useState<{ ok: boolean; msg: string } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
-    const { data } = await invokeWithAuth<Resp>('contas-email', { body: { action: 'get_config', tenant_id: user?.tenantId } });
-    const c = data?.config ?? null;
+    const [cfg, msgs] = await Promise.all([
+      invokeWithAuth<Resp>('contas-email', { body: { action: 'get_config', tenant_id: user?.tenantId } }),
+      invokeWithAuth<Resp>('contas-email', { body: { action: 'list_messages', tenant_id: user?.tenantId, limit: 30 } }),
+    ]);
+    const c = cfg.data?.config ?? null;
     setConfig(c);
-    if (c?.query) setQuery(c.query);
-    setPasso(c?.connected ? 3 : c?.configured ? 2 : 1);
+    setEndereco(c?.inbound_address ?? '');
+    setMensagens(msgs.data?.messages ?? []);
     setLoading(false);
   }, [user?.tenantId]);
 
   useEffect(() => { load(); }, [load]);
 
-  // Volta do Google com ?code=... nesta mesma página: troca pela autorização de longo prazo.
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const code = params.get('code');
-    const state = params.get('state') ?? '';
-    if (!code || !state.startsWith('erpos:') || !user?.tenantId) return;
-    // limpa a URL antes de trocar: recarregar a página não pode tentar usar o code de novo
-    window.history.replaceState({}, '', window.location.origin + window.location.pathname);
-    (async () => {
-      setBusy('conectar');
-      const { data, error } = await invokeWithAuth<Resp>('contas-email', {
-        body: { action: 'exchange', tenant_id: user.tenantId, code, redirect_uri: redirectUri() },
-      });
-      setBusy(null);
-      const err = error?.message ?? (data?.success ? undefined : data?.error);
-      if (err) { setResult({ ok: false, msg: err }); return; }
-      setConfig(data?.config ?? null);
-      setPasso(3);
-      setResult({ ok: true, msg: `Caixa conectada: ${data?.config?.email_address ?? 'conta do Google'}.` });
-    })();
-  }, [user?.tenantId]);
-
-  const salvarCredencial = async () => {
-    if (!clientId.trim() || !clientSecret.trim()) { setResult({ ok: false, msg: 'Preencha o ID e a chave do cliente.' }); return; }
+  const salvar = async () => {
     setBusy('salvar');
     setResult(null);
     const { data, error } = await invokeWithAuth<Resp>('contas-email', {
-      body: { action: 'save_credentials', tenant_id: user?.tenantId, client_id: clientId.trim(), client_secret: clientSecret.trim(), query: query.trim() },
+      body: { action: 'save_config', tenant_id: user?.tenantId, inbound_address: endereco.trim() },
     });
     setBusy(null);
     const err = error?.message ?? (data?.success ? undefined : data?.error);
     if (err) { setResult({ ok: false, msg: err }); return; }
-    setClientId(''); setClientSecret('');
     setConfig(data?.config ?? null);
-    setPasso(2);
-    setResult({ ok: true, msg: 'Credencial guardada. Agora é autorizar o acesso à caixa.' });
+    setResult({ ok: true, msg: 'Caixa ligada. Agora cole o endereço do webhook no serviço de recebimento.' });
   };
 
-  const conectar = async () => {
-    setBusy('conectar');
-    setResult(null);
-    const { data, error } = await invokeWithAuth<Resp>('contas-email', {
-      body: { action: 'oauth_url', tenant_id: user?.tenantId, redirect_uri: redirectUri() },
-    });
+  const trocarSegredo = async () => {
+    if (!window.confirm('Gerar um endereço novo? O atual para de funcionar na hora — você vai precisar atualizar no serviço de recebimento.')) return;
+    setBusy('trocar');
+    const { data } = await invokeWithAuth<Resp>('contas-email', { body: { action: 'rotate_token', tenant_id: user?.tenantId } });
     setBusy(null);
-    const err = error?.message ?? (data?.success ? undefined : data?.error);
-    if (err || !data?.url) { setResult({ ok: false, msg: err || 'Não foi possível montar o link de autorização.' }); return; }
-    window.location.href = data.url;
+    setConfig(data?.config ?? null);
+    setResult({ ok: true, msg: 'Endereço novo gerado. Atualize no serviço de recebimento.' });
   };
 
-  const testar = async () => {
-    setBusy('testar');
-    setResult(null);
-    const { data, error } = await invokeWithAuth<Resp>('contas-email', { body: { action: 'test', tenant_id: user?.tenantId } });
-    setBusy(null);
-    const err = error?.message ?? (data?.success ? undefined : data?.error);
-    if (err) { setResult({ ok: false, msg: err }); return; }
-    setResult({
-      ok: true,
-      msg: `Leitura funcionando em ${data?.email_address ?? 'a caixa'}: ${data?.encontrados ?? 0} e-mail(s) batem com o filtro.`,
-      details: data?.amostra?.length ? data.amostra : undefined,
-    });
-    load();
-  };
-
-  const desconectar = async () => {
-    if (!window.confirm('Desconectar a caixa de e-mail? O que já foi lançado continua; a caixa do Gmail não é alterada.')) return;
-    setBusy('desconectar');
+  const desligar = async () => {
+    if (!window.confirm('Desligar a caixa? Os e-mails param de entrar. O que já virou conta continua.')) return;
+    setBusy('desligar');
     await invokeWithAuth<Resp>('contas-email', { body: { action: 'disconnect', tenant_id: user?.tenantId } });
     setBusy(null);
-    setResult({ ok: true, msg: 'Caixa desconectada.' });
     load();
   };
 
-  const Passo = ({ n, titulo, children }: { n: number; titulo: string; children: React.ReactNode }) => (
-    <div className={`rounded-xl border p-4 ${passo === n ? 'border-amber-300 bg-amber-50/40' : 'border-zinc-200'}`}>
-      <div className="flex items-center gap-2 mb-2">
-        <span className={`w-6 h-6 flex items-center justify-center rounded-full text-xs font-bold ${passo > n ? 'bg-green-100 text-green-700' : passo === n ? 'bg-amber-500 text-white' : 'bg-zinc-100 text-zinc-400'}`}>
-          {passo > n ? <i className="ri-check-line" /> : n}
-        </span>
-        <p className="text-sm font-bold text-zinc-800">{titulo}</p>
-      </div>
-      {children}
-    </div>
-  );
+  const copiar = () => {
+    if (!config?.webhook_url) return;
+    navigator.clipboard?.writeText(config.webhook_url);
+    setCopiado(true);
+    setTimeout(() => setCopiado(false), 2000);
+  };
 
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
@@ -168,103 +136,127 @@ export default function CaixaBoletosModal({ onClose }: Props) {
           </div>
         ) : (
           <div className="p-6 space-y-4 overflow-y-auto">
-            {config?.connected && (
-              <div className={`flex items-start gap-2 px-3 py-2.5 rounded-xl border ${config.last_error ? 'bg-red-50 border-red-200' : 'bg-green-50 border-green-200'}`}>
-                <i className={`${config.last_error ? 'ri-error-warning-fill text-red-600' : 'ri-checkbox-circle-fill text-green-600'} mt-0.5`} />
+            {config?.configured && (
+              <div className={`flex items-start gap-2 px-3 py-2.5 rounded-xl border ${config.is_active ? 'bg-green-50 border-green-200' : 'bg-zinc-50 border-zinc-200'}`}>
+                <i className={`${config.is_active ? 'ri-checkbox-circle-fill text-green-600' : 'ri-pause-circle-fill text-zinc-400'} mt-0.5`} />
                 <div className="flex-1 text-xs">
-                  <p className={`font-semibold ${config.last_error ? 'text-red-700' : 'text-green-700'}`}>
-                    Conectada · {config.email_address ?? 'conta do Google'}
+                  <p className={`font-semibold ${config.is_active ? 'text-green-700' : 'text-zinc-600'}`}>
+                    {config.is_active ? 'Caixa ligada' : 'Caixa desligada'}
                   </p>
-                  {config.last_check_at && <p className="text-zinc-600">Última leitura: {new Date(config.last_check_at).toLocaleString('pt-BR')}</p>}
+                  <p className="text-zinc-600">
+                    {config.last_received_at
+                      ? `Último e-mail: ${new Date(config.last_received_at).toLocaleString('pt-BR')}`
+                      : 'Nenhum e-mail recebido ainda.'}
+                  </p>
                   {config.last_error && <p className="text-red-700 mt-1">{config.last_error}</p>}
                 </div>
               </div>
             )}
 
             <div className="bg-zinc-50 rounded-xl p-4 text-xs text-zinc-600 space-y-1.5">
-              <p className="font-semibold text-zinc-700 flex items-center gap-1.5"><i className="ri-shield-check-line text-zinc-400" /> O que o sistema pode e não pode</p>
-              <p>O acesso é <strong>somente leitura</strong>: o sistema lê os e-mails e os anexos, e não envia, não apaga nem marca nada na sua caixa.</p>
-              <p>Boleto de fornecedor <strong>já cadastrado</strong>, com o beneficiário batendo, é lançado direto em Contas a Pagar. Remetente novo ou beneficiário diferente vira <strong>pendência no chat</strong> para você olhar.</p>
+              <p className="font-semibold text-zinc-700 flex items-center gap-1.5"><i className="ri-shield-check-line text-zinc-400" /> As travas</p>
+              <p>Boleto de fornecedor <strong>já cadastrado</strong>, com o beneficiário batendo, é lançado direto em Contas a Pagar. Remetente novo ou beneficiário diferente fica <strong>esperando você</strong>.</p>
+              <p>Todo boleto passa pela conferência dos <strong>dígitos verificadores</strong>: número que não fecha não vira conta, mesmo que tenha sido lido de um PDF.</p>
               <p className="text-zinc-400">O pagamento nunca é automático — continua sendo seu clique no Banco Inter.</p>
             </div>
 
-            <Passo n={1} titulo="Credencial do Google">
-              <div className="space-y-2.5">
+            {/* Passo 1 */}
+            <div className="rounded-xl border border-zinc-200 p-4 space-y-2.5">
+              <p className="text-sm font-bold text-zinc-800">1. Endereço que recebe os e-mails</p>
+              <p className="text-xs text-zinc-500">
+                Crie uma conta num serviço de recebimento de e-mail (o plano grátis dá conta do volume de uma loja).
+                Ele te dá um endereço — cole aqui só para registro.
+              </p>
+              <input value={endereco} onChange={(e) => setEndereco(e.target.value)}
+                placeholder="endereco-que-o-servico-deu@..."
+                className="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-amber-400" />
+              <button onClick={salvar} disabled={busy !== null}
+                className="px-4 py-2 bg-amber-500 text-white rounded-lg text-sm font-semibold hover:bg-amber-600 cursor-pointer whitespace-nowrap disabled:opacity-50">
+                {busy === 'salvar' ? 'Salvando…' : config?.configured ? 'Salvar' : 'Ligar a caixa'}
+              </button>
+            </div>
+
+            {/* Passo 2 */}
+            {config?.webhook_url && (
+              <div className="rounded-xl border border-zinc-200 p-4 space-y-2.5">
+                <p className="text-sm font-bold text-zinc-800">2. Para onde o serviço entrega</p>
                 <p className="text-xs text-zinc-500">
-                  No <strong>Google Cloud Console</strong>: crie um projeto, ative a <strong>Gmail API</strong> e crie uma credencial <strong>OAuth — aplicativo da Web</strong>.
-                  Em "URIs de redirecionamento autorizados", cole exatamente:
+                  No serviço de recebimento, cole este endereço como destino (webhook) dos e-mails que chegarem:
                 </p>
                 <div className="flex items-center gap-2">
-                  <code className="flex-1 text-[11px] bg-zinc-900 text-zinc-100 rounded-lg px-3 py-2 font-mono break-all">{redirectUri()}</code>
-                  <button onClick={() => navigator.clipboard?.writeText(redirectUri())}
+                  <code className="flex-1 text-[11px] bg-zinc-900 text-zinc-100 rounded-lg px-3 py-2 font-mono break-all">{config.webhook_url}</code>
+                  <button onClick={copiar}
                     className="px-3 py-2 text-xs font-semibold border border-zinc-200 rounded-lg hover:bg-zinc-50 cursor-pointer whitespace-nowrap">
-                    Copiar
+                    {copiado ? 'Copiado!' : 'Copiar'}
                   </button>
                 </div>
-                {config?.configured && (
-                  <p className="text-[11px] text-green-700"><i className="ri-checkbox-circle-line" /> Credencial guardada {config.client_id_hint ? `(${config.client_id_hint})` : ''}. Preencha de novo só se quiser trocar.</p>
-                )}
-                <div className="grid gap-2">
-                  <input value={clientId} onChange={(e) => setClientId(e.target.value)} placeholder="ID do cliente (…apps.googleusercontent.com)"
-                    className="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-amber-400" />
-                  <input type="password" value={clientSecret} onChange={(e) => setClientSecret(e.target.value)} placeholder="Chave secreta do cliente"
-                    className="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-amber-400" />
-                </div>
-                <div>
-                  <label className="block text-[11px] font-semibold text-zinc-600 mb-1">Quais e-mails olhar (filtro do Gmail)</label>
-                  <input value={query} onChange={(e) => setQuery(e.target.value)}
-                    className="w-full border border-zinc-200 rounded-lg px-3 py-2 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-amber-400" />
-                  <p className="text-[11px] text-zinc-400 mt-1">Padrão: e-mails com anexo dos últimos 30 dias. Dá para restringir, ex.: <code>has:attachment from:condominio.com.br</code>.</p>
-                </div>
-                <button onClick={salvarCredencial} disabled={busy !== null}
-                  className="px-4 py-2 bg-zinc-800 text-white rounded-lg text-sm font-semibold hover:bg-zinc-900 cursor-pointer whitespace-nowrap disabled:opacity-50">
-                  {busy === 'salvar' ? 'Guardando…' : 'Guardar credencial'}
+                <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                  <i className="ri-alert-line" /> Esse endereço é uma senha: quem tiver ele consegue mandar e-mail para dentro do seu financeiro. Não publique em lugar nenhum.
+                </p>
+                <button onClick={trocarSegredo} disabled={busy !== null}
+                  className="text-xs text-zinc-500 hover:text-zinc-700 underline cursor-pointer">
+                  {busy === 'trocar' ? 'Gerando…' : 'Gerar um endereço novo (se este tiver vazado)'}
                 </button>
               </div>
-            </Passo>
+            )}
 
-            <Passo n={2} titulo="Autorizar o acesso à caixa">
-              <p className="text-xs text-zinc-500 mb-2.5">
-                Você vai para o Google, escolhe <strong>a conta da loja</strong> (não a sua pessoal) e autoriza a leitura. Depois volta para esta tela sozinho.
-              </p>
-              <button onClick={conectar} disabled={busy !== null || !config?.configured}
-                className="flex items-center gap-2 px-4 py-2 bg-amber-500 text-white rounded-lg text-sm font-semibold hover:bg-amber-600 cursor-pointer whitespace-nowrap disabled:opacity-40">
-                <i className="ri-google-fill" /> {busy === 'conectar' ? 'Conectando…' : config?.connected ? 'Conectar outra caixa' : 'Conectar com o Google'}
-              </button>
-            </Passo>
-
-            <Passo n={3} titulo="Conferir a leitura">
-              <p className="text-xs text-zinc-500 mb-2.5">Pergunta ao Gmail quantos e-mails o filtro pega e mostra os últimos remetentes — para você ver se está olhando o lugar certo.</p>
-              <div className="flex items-center gap-3 flex-wrap">
-                <button onClick={testar} disabled={busy !== null || !config?.connected}
-                  className="flex items-center gap-2 px-4 py-2 border border-amber-300 text-amber-700 rounded-lg text-sm font-semibold hover:bg-amber-50 cursor-pointer whitespace-nowrap disabled:opacity-40">
-                  {busy === 'testar' ? 'Consultando…' : 'Testar leitura'}
-                </button>
-                {config?.connected && (
-                  <button onClick={desconectar} disabled={busy !== null}
-                    className="px-4 py-2 text-sm text-red-600 hover:bg-red-50 rounded-lg cursor-pointer whitespace-nowrap disabled:opacity-50">
-                    Desconectar
-                  </button>
-                )}
+            {/* Passo 3 */}
+            {config?.configured && (
+              <div className="rounded-xl border border-zinc-200 p-4 space-y-2">
+                <p className="text-sm font-bold text-zinc-800">3. Encaminhamento no Gmail</p>
+                <p className="text-xs text-zinc-500">
+                  No Gmail da loja: <strong>Configurações → Encaminhamento e POP/IMAP → Adicionar endereço de encaminhamento</strong>,
+                  aponte para o endereço do passo 1 e confirme. Depois crie um filtro para encaminhar só o que interessa
+                  (por exemplo, e-mails com anexo dos fornecedores), ou encaminhe tudo — o sistema ignora o que não for boleto.
+                </p>
               </div>
-            </Passo>
+            )}
 
             {result && (
               <div className={`flex items-start gap-2 px-3 py-2.5 rounded-xl text-xs font-medium ${result.ok ? 'bg-green-50 border border-green-200 text-green-700' : 'bg-red-50 border border-red-200 text-red-700'}`}>
                 <i className={`${result.ok ? 'ri-checkbox-circle-fill' : 'ri-error-warning-fill'} text-sm flex-shrink-0 mt-0.5`} />
-                <div className="break-words min-w-0">
-                  <p>{result.msg}</p>
-                  {result.details && (
-                    <ul className="mt-1.5 space-y-0.5 opacity-80">
-                      {result.details.map((d, i) => <li key={i} className="truncate">· {d}</li>)}
-                    </ul>
-                  )}
+                <span className="break-words">{result.msg}</span>
+              </div>
+            )}
+
+            {/* Histórico */}
+            {mensagens.length > 0 && (
+              <div className="rounded-xl border border-zinc-200 overflow-hidden">
+                <p className="text-xs font-semibold text-zinc-700 px-4 py-2.5 bg-zinc-50">E-mails recebidos ({mensagens.length})</p>
+                <div className="divide-y divide-zinc-100 max-h-64 overflow-y-auto">
+                  {mensagens.map((m) => {
+                    const st = STATUS[m.status] ?? STATUS.pending;
+                    return (
+                      <div key={m.id} className="px-4 py-2.5 text-xs">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-medium text-zinc-700 truncate">{m.from_name || m.from_email || 'desconhecido'}</span>
+                          <span className={`px-2 py-0.5 rounded-full font-semibold flex-shrink-0 ${st.cls}`}>{st.label}</span>
+                        </div>
+                        <p className="text-zinc-500 truncate">{m.subject || '(sem assunto)'}</p>
+                        <div className="flex items-center gap-2 text-[11px] text-zinc-400 mt-0.5 flex-wrap">
+                          {m.received_at && <span>{new Date(m.received_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>}
+                          {m.amount != null && <span className="text-zinc-600 font-semibold">{formatCurrency(Number(m.amount))}</span>}
+                          {m.due_date && <span>vence {new Date(m.due_date + 'T00:00:00').toLocaleDateString('pt-BR')}</span>}
+                          {(m.attachments ?? 0) > 0 && <span><i className="ri-attachment-2" /> {m.attachments}</span>}
+                          {m.reason && <span className="text-amber-700">{m.reason}</span>}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             )}
 
+            {config?.configured && config.is_active && (
+              <button onClick={desligar} disabled={busy !== null}
+                className="text-xs text-red-600 hover:underline cursor-pointer">
+                Desligar a caixa
+              </button>
+            )}
+
             <p className="text-[11px] text-zinc-400">
-              Por enquanto esta tela só liga a caixa. A leitura dos boletos e o lançamento automático entram na próxima etapa — até lá nada é lançado sozinho.
+              Nesta etapa o sistema já lê o boleto que vem no <strong>corpo</strong> do e-mail e identifica o fornecedor pelo remetente.
+              Ler o boleto de <strong>anexo em PDF</strong> e lançar a conta sozinho entram na próxima — até lá os e-mails ficam listados aqui.
             </p>
           </div>
         )}
