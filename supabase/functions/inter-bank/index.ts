@@ -120,9 +120,15 @@ async function interFetch(creds: InterCreds, client: HttpClient, path: string, i
 
 function providerError(r: { status: number; data: any; raw: string }, what: string): string {
   const d = r.data;
-  const detail = d?.detail ?? d?.message ?? d?.error_description ?? d?.error ?? d?.title
+  let detail = d?.detail ?? d?.message ?? d?.error_description ?? d?.error ?? d?.title
     ?? (Array.isArray(d?.violacoes) ? d.violacoes.map((v: any) => v.razao ?? v.propriedade).join('; ') : null)
     ?? (r.raw ? r.raw.slice(0, 200) : '');
+  // As violações trazem o porquê (ex.: faixa de valor aceita) e sumiam atrás do título (2026-09-22:
+  // boleto vencido recusado 3× só com "Campo(s) inválido(s): Valor a pagar").
+  if (Array.isArray(d?.violacoes) && d.violacoes.length) {
+    const extra = d.violacoes.map((v: any) => [v.propriedade, v.razao, v.valor].filter((x) => x != null && x !== '').join(' ')).filter(Boolean).join('; ');
+    if (extra && !String(detail).includes(extra)) detail = `${detail} (${extra})`;
+  }
   if (r.status === 401 || r.status === 403) return `${what}: credenciais recusadas pelo Inter (${r.status}). Confira client_id/secret, escopo "extrato.read" e o certificado. ${detail}`.trim();
   return `${what}: Inter respondeu ${r.status}. ${detail}`.trim();
 }
@@ -758,6 +764,9 @@ async function executePayment(admin: Admin, tenantId: string, id: string) {
       if (p.kind === 'boleto' && /valor/i.test(msg) && boletoVencido(p.due_date, todayBR())) {
         msg += `. Boleto vencido: o Inter exige o valor atualizado (multa + juros). Confira o valor no app do Inter ao ler o código e peça de novo com ele.`;
       }
+      // Resposta crua guardada: a recusa não move dinheiro, e sem ela não dá para saber o que o Inter quis.
+      log('WARN', 'execute_payment', 'recusado', { id, status: r.status, data: r.data ?? r.raw?.slice(0, 1000), enviado: p.kind === 'boleto' ? { valorPagar: Number(p.amount), dataVencimento: vencimento } : undefined });
+      await admin.from('fin_inter_payments').update({ response: r.data ?? { raw: r.raw?.slice(0, 2000) ?? null } }).eq('id', id);
       throw await fail(msg, 'rejected');
     }
     const raw = p.kind === 'boleto' ? (r.data?.statusPagamento ?? r.data?.status) : (r.data?.tipoRetorno ?? r.data?.status);
