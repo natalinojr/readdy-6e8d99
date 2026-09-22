@@ -109,7 +109,10 @@ function normalizar(body: any): EmailRecebido | null {
       fromName: soNome(h.from),
       subject: str(h.subject),
       receivedAt: str(h.date) || null,
-      texto: str(body.plain ?? body.text ?? '').slice(0, MAX_BODY_CHARS),
+      // e-mail só em HTML (o do Gmail é assim): sem tirar as tags o corpo vem vazio e
+      // nem o código nem o boleto são encontrados
+      texto: (str(body.plain ?? body.text) || str(body.html).replace(/<[^>]*>/g, ' '))
+        .slice(0, MAX_BODY_CHARS),
       anexos: (body.attachments ?? []).map((a: any) => ({
         nome: str(a?.file_name ?? a?.name), tipo: str(a?.content_type), base64: str(a?.content),
       })),
@@ -159,9 +162,10 @@ async function receber(admin: Admin, token: string, body: any) {
   if (/forwarding-noreply@google\.com/i.test(email.fromEmail)) {
     const corpo = `${email.subject}
 ${email.texto}`;
-    // O codigo do Gmail tem 9 digitos. Os limites (?<!\d) e (?!\d) evitam pegar 9 digitos
-    // de DENTRO de um numero maior (id de rastreio, telefone) e mostrar um codigo errado.
-    const codigo = corpo.match(/(?<!\d)(\d{9})(?!\d)/)?.[1] ?? null;
+    // O codigo do Gmail costuma ter 9 digitos, mas nem sempre vem no texto puro (o e-mail
+    // real de 2026-09-22 so trouxe o link). Aceita 6 a 12 digitos isolados; os limites
+    // (?<!\d) e (?!\d) evitam pegar digitos de DENTRO de um numero maior.
+    const codigo = corpo.match(/(?<!\d)(\d{6,12})(?!\d)/)?.[1] ?? null;
     const link = corpo.match(/https:\/\/mail-settings\.google\.com[^\s"'<>]*/i)?.[0] ?? null;
     await admin.from('fin_mail_messages').upsert({
       tenant_id: tenantId, message_id: email.messageId,
@@ -169,8 +173,10 @@ ${email.texto}`;
       received_at: new Date().toISOString(), status: 'ignored',
       reason: codigo
         ? `Código de confirmação do Gmail: ${codigo} — digite no Gmail para liberar o encaminhamento.`
-        : 'Confirmação de encaminhamento do Gmail (não achei o código; veja o link no detalhe).',
-      attachments: 0, raw: { kind: 'gmail_forwarding_confirmation', codigo, link },
+        : link
+          ? `Confirmação de encaminhamento do Gmail: abra este link para autorizar — ${link}`
+          : 'Confirmação de encaminhamento do Gmail, mas não achei nem o código nem o link.',
+      attachments: 0, raw: { kind: 'gmail_forwarding_confirmation', codigo, link, trecho: corpo.slice(0, 1500) },
     }, { onConflict: 'tenant_id,message_id', ignoreDuplicates: true });
     await admin.from('fin_mail_config').update({ last_received_at: new Date().toISOString() }).eq('tenant_id', tenantId);
     log('INFO', 'webhook', 'confirmação de encaminhamento do Gmail', { tenantId, temCodigo: Boolean(codigo) });
