@@ -155,6 +155,7 @@ function payCard(p: any) {
   return {
     id: p.id, kind: p.kind, amount: Number(p.amount), beneficiary_name: p.beneficiary_name ?? null,
     pix_key: p.kind === 'pix' ? masked : null, due_date: p.due_date ?? null, description: p.description ?? null,
+    face_value: p.face_value == null ? null : Number(p.face_value),
     status, status_label: PAY_STATUS[status] ?? status, error: p.error ?? null,
     created_at: p.created_at, paid_at: p.paid_at ?? null, has_bill: !!p.bill_id,
     recebido: null as boolean | null, recebido_em: null as string | null,
@@ -444,6 +445,16 @@ Deno.serve(async (req) => {
       if (op === 'st') {
         const out = await callInter('payment_status', { tenant_id: p.tenant_id, payment_id: p.id });
         return json({ success: true, data: { payment: await payCard1(admin, { ...p, ...out.payment }) } });
+      }
+      // "Preparar de novo" no cartão (2026-09-22): o Telegram tinha o botão e o chat não — pedido
+      // recusado/expirado ficava sem saída. Mesmo caminho do Telegram: inter-bank › reprepare_payment
+      // (pedido NOVO, revalida tudo; boleto vencido sai recalculado com multa e juros).
+      if (op === 're') {
+        if (!['expired', 'failed', 'rejected'].includes(p.status)) return fail(`Esse já está: ${PAY_STATUS[p.status] ?? p.status}.`);
+        const out = await callInter('reprepare_payment', { tenant_id: p.tenant_id, payment_id: p.id });
+        const novo = out.payment;
+        if (novo.chat_id !== chatKey) await admin.from('fin_inter_payments').update({ chat_id: chatKey }).eq('id', novo.id);
+        return json({ success: true, data: { payment: await payCard1(admin, { ...novo, chat_id: chatKey }) } });
       }
       if (op !== 'ok') return fail('Opção inválida.');
 

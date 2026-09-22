@@ -49,6 +49,8 @@ interface Payment {
   due_date: string | null; description: string | null; status: string; status_label: string; error: string | null; created_at: string;
   /** Pagamento de compra lançada: a mercadoria já chegou? null/ausente = não se aplica. */
   recebido?: boolean | null; recebido_em?: string | null;
+  /** Boleto: valor do código. Diferente de amount = juros/desconto (vencido: multa + juros). */
+  face_value?: number | null;
 }
 interface Attach { base64: string; media_type: string; name: string; preview: string | null }
 
@@ -209,7 +211,7 @@ function centroFab(x: number, y: number) {
   return { x: Math.min(Math.max(x, min), w - min), y: Math.min(Math.max(y, min), h - min) };
 }
 
-function PaymentCard({ p, onAction }: { p: Payment; onAction: (p: Payment, op: 'ok' | 'no' | 'st') => void | Promise<void> }) {
+function PaymentCard({ p, onAction }: { p: Payment; onAction: (p: Payment, op: 'ok' | 'no' | 'st' | 're') => void | Promise<void> }) {
   // "Ver status" sem mudança parecia não fazer nada (dono, 2026-09-18): mostra que conferiu e quando.
   const [conferindo, setConferindo] = useState(false);
   const [conferido, setConferido] = useState<string | null>(null);
@@ -223,6 +225,17 @@ function PaymentCard({ p, onAction }: { p: Payment; onAction: (p: Payment, op: '
   };
   const aberto = ['draft', 'awaiting_pin'].includes(p.status);
   const andamento = ['sending', 'sent', 'pending_approval', 'approved', 'scheduled'].includes(p.status);
+  // Recusado/expirado: "Preparar de novo" (2026-09-22) — só o Telegram tinha, e o cartão ficava sem saída.
+  const refazer = ['expired', 'failed', 'rejected'].includes(p.status);
+  const [refazendo, setRefazendo] = useState(false);
+  const prepararDeNovo = async () => {
+    if (refazendo) return;
+    setRefazendo(true);
+    try { await onAction(p, 're'); } finally { setRefazendo(false); }
+  };
+  const hojeBR = new Date(Date.now() - 3 * 3600_000).toISOString().slice(0, 10);
+  const comEncargos = p.kind === 'boleto' && p.face_value != null && p.amount - p.face_value > 0.005;
+  const vencidoComEncargos = comEncargos && !!p.due_date && p.due_date.slice(0, 10) < hojeBR;
   const cor = p.status === 'paid' ? 'border-emerald-200 bg-emerald-50' : ['failed', 'rejected'].includes(p.status) ? 'border-red-200 bg-red-50' : ['cancelled', 'expired'].includes(p.status) ? 'border-zinc-200 bg-zinc-50 opacity-70' : 'border-violet-200 bg-white';
   return (
     <div className={`rounded-2xl border px-3.5 py-3 text-sm ${cor}`}>
@@ -238,6 +251,11 @@ function PaymentCard({ p, onAction }: { p: Payment; onAction: (p: Payment, op: '
             </p>
           )}
           {p.due_date && <p className="text-xs text-zinc-500">Vence {p.due_date.slice(0, 10).split('-').reverse().join('/')}</p>}
+          {comEncargos && (
+            <p className="text-xs text-amber-700 font-semibold">
+              Valor do boleto {brl(p.face_value!)}{vencidoComEncargos ? ' — vencido: inclui multa e juros' : ''}
+            </p>
+          )}
           {/* Mercadoria já chegou? Só quando o pagamento é de uma compra lançada (null = não se aplica). */}
           {p.recebido != null && (
             <p className={`text-xs font-semibold mt-0.5 ${p.recebido ? 'text-emerald-700' : 'text-amber-700'}`}>
@@ -260,6 +278,11 @@ function PaymentCard({ p, onAction }: { p: Payment; onAction: (p: Payment, op: '
           {conferido && <p className="text-[11px] text-zinc-500 mt-1"><i className="ri-check-line" /> Conferido no Inter às {conferido}: {p.status_label}.</p>}
         </div>
       </div>
+      {refazer && (
+        <button onClick={prepararDeNovo} disabled={refazendo} className="w-full h-9 mt-2.5 rounded-xl bg-violet-600 hover:bg-violet-500 text-white text-sm font-bold cursor-pointer disabled:opacity-60">
+          <i className={`ri-repeat-line ${refazendo ? 'inline-block animate-spin' : ''}`} /> {refazendo ? 'Preparando…' : 'Preparar de novo'}
+        </button>
+      )}
       {(aberto || andamento) && (
         <div className="flex gap-2 mt-2.5">
           {aberto && (
@@ -810,7 +833,18 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
     } finally { setPaying(false); }
   };
 
-  const acaoPagamento = async (p: Payment, op: 'ok' | 'no' | 'st') => {
+  const acaoPagamento = async (p: Payment, op: 'ok' | 'no' | 'st' | 're') => {
+    if (op === 're') {
+      // Pedido NOVO no lugar do recusado/expirado: some o antigo, o novo vira o cartão fixo e já pede o PIN.
+      try {
+        const out = await call<{ payment: Payment }>('pay', { id: p.id, op: 're' });
+        setPays((prev) => [out.payment, ...prev.filter((x) => x.id !== p.id && x.id !== out.payment.id)]);
+        setPagFixo(out.payment.id);
+        setPendVersao((v) => v + 1);
+        if (['draft', 'awaiting_pin'].includes(out.payment.status)) await acaoPagamento(out.payment, 'ok');
+      } catch (e) { setErro(e instanceof Error ? e.message : String(e)); }
+      return;
+    }
     if (op === 'ok') {
       setPin(''); setPinErr(null);
       // Digital primeiro; o modal do PIN só abre se não houver digital, se ela for cancelada ou se falhar.
