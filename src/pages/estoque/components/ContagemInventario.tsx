@@ -39,6 +39,9 @@ const arred = (n: number, casas: number) => Math.round(n * 10 ** casas) / 10 ** 
 const preenchido = (i: Insumo) => String(arred(i.estoqueAtual / fatorDe(i), 3));
 const qtdBR = (n: number) => n.toLocaleString('pt-BR', { maximumFractionDigits: 3 });
 
+// Busca sem acento e sem diferença de maiúscula ("acucar" acha "Açúcar").
+const normalizar = (t: string) => t.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+
 const fmt = (v: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
 
@@ -133,6 +136,7 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
   };
 
   const [categoriaFiltro, setCategoriaFiltro] = useState('Todas');
+  const [busca, setBusca] = useState('');
   const [apenasComDiff, setApenasComDiff] = useState(false);
   const [showConfirmar, setShowConfirmar] = useState(false);
   const [confirmado, setConfirmado] = useState(false);
@@ -161,9 +165,13 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
   const insumosFiltrados = useMemo(() => {
     return insumos
       .filter((i) => categoriaFiltro === 'Todas' || catDe(i.categoria) === categoriaFiltro)
+      .filter((i) => {
+        const q = normalizar(busca);
+        return !q || normalizar(i.nome).includes(q);
+      })
       .filter((i) => !apenasComDiff || temDiferenca(i));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [insumos, categoriaFiltro, apenasComDiff, contagens]);
+  }, [insumos, categoriaFiltro, busca, apenasComDiff, contagens]);
 
   // Contagem em sequência: insumos da mesma categoria sempre juntos (categoria em ordem
   // alfabética, "Sem categoria" por último; nome em ordem alfabética dentro dela).
@@ -295,6 +303,28 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
             Cancelar contagem
           </button>
         </div>
+      </div>
+
+      {/* Busca: filtra pelo nome enquanto digita */}
+      <div className="relative">
+        <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 text-sm pointer-events-none" />
+        <input
+          type="search"
+          value={busca}
+          onChange={(e) => setBusca(e.target.value)}
+          placeholder="Buscar insumo..."
+          className="w-full h-10 md:h-9 pl-9 pr-9 text-base md:text-sm border border-zinc-200 rounded-lg bg-white text-zinc-800 focus:outline-none focus:border-amber-400"
+        />
+        {busca && (
+          <button
+            type="button"
+            onClick={() => setBusca('')}
+            title="Limpar busca"
+            className="absolute right-2 top-1/2 -translate-y-1/2 w-6 h-6 flex items-center justify-center rounded-md text-zinc-400 hover:text-zinc-600 hover:bg-zinc-100 cursor-pointer"
+          >
+            <i className="ri-close-line text-sm" />
+          </button>
+        )}
       </div>
 
       {/* Filtros */}
