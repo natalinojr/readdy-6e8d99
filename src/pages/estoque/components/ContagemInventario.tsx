@@ -1,10 +1,13 @@
 import { useState, useMemo, useEffect, Fragment } from 'react';
-import { useEstoque, type InventarioItemContado } from '../../../contexts/EstoqueContext';
+import { useEstoque, type InventarioItemContado, type Insumo } from '../../../contexts/EstoqueContext';
 import { useAuth } from '../../../contexts/AuthContext';
 import ConfirmarInventarioModal from './ConfirmarInventarioModal';
 
 interface InventarioDraft {
+  /** Valores digitados, na unidade de CONTAGEM de cada insumo. */
   contagens: Record<string, string>;
+  /** Fator de contagem de cada insumo quando o rascunho foi salvo (ausente = 1, rascunho antigo). */
+  fatores?: Record<string, number>;
   savedAt: string;
   operador: string;
 }
@@ -27,6 +30,15 @@ const compararCategoria = (a: string, b: string) => {
   return a.localeCompare(b, 'pt-BR');
 };
 
+// Unidade de contagem: a equipe pode contar em pacote e o estoque ficar em kg.
+// O digitado fica na unidade de contagem; tudo que é gravado/comparado volta para a do estoque.
+const fatorDe = (i: Insumo) => (i.unidadeContagem && i.fatorContagem && i.fatorContagem > 0 ? i.fatorContagem : 1);
+const rotuloDe = (i: Insumo) => (fatorDe(i) !== 1 ? (i.unidadeContagem as string) : i.unidade);
+const arred = (n: number, casas: number) => Math.round(n * 10 ** casas) / 10 ** casas;
+/** Valor inicial do campo: o teórico convertido para a unidade de contagem. */
+const preenchido = (i: Insumo) => String(arred(i.estoqueAtual / fatorDe(i), 3));
+const qtdBR = (n: number) => n.toLocaleString('pt-BR', { maximumFractionDigits: 3 });
+
 const fmt = (v: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
 
@@ -48,7 +60,17 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
       if (!raw) return null;
       const draft: InventarioDraft = JSON.parse(raw);
       if (!draft.contagens || Object.keys(draft.contagens).length === 0) return null;
-      return draft.contagens;
+      // Se a unidade de contagem mudou desde que o rascunho foi salvo, reconverte o número
+      // (ex.: salvo em kg, agora conta em pacote) para não gravar pacote como se fosse kg.
+      const convertido: Record<string, string> = {};
+      for (const [id, valor] of Object.entries(draft.contagens)) {
+        const ins = insumos.find((i) => i.id === id);
+        const fatorAntes = draft.fatores?.[id] ?? 1;
+        const n = parseFloat(valor);
+        if (!ins || valor === '' || isNaN(n) || fatorAntes === fatorDe(ins)) { convertido[id] = valor; continue; }
+        convertido[id] = String(arred((n * fatorAntes) / fatorDe(ins), 3));
+      }
+      return convertido;
     } catch {
       return null;
     }
@@ -59,6 +81,7 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
     try {
       const draft: InventarioDraft = {
         contagens,
+        fatores: Object.fromEntries(insumos.map((i) => [i.id, fatorDe(i)])),
         savedAt: new Date().toISOString(),
         operador,
       };
@@ -79,7 +102,7 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
     if (startFresh) {
       if (tenantId) { try { localStorage.removeItem(getDraftKey()); } catch { /* ignore */ } }
       const init: Record<string, string> = {};
-      insumos.forEach((i) => { init[i.id] = i.estoqueAtual.toString(); });
+      insumos.forEach((i) => { init[i.id] = preenchido(i); });
       return init;
     }
     const draft = carregarRascunho();
@@ -87,14 +110,27 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
       // Garante que novos insumos (não presentes no rascunho) tenham valor padrão
       const merged: Record<string, string> = {};
       insumos.forEach((i) => {
-        merged[i.id] = draft[i.id] ?? i.estoqueAtual.toString();
+        merged[i.id] = draft[i.id] ?? preenchido(i);
       });
       return merged;
     }
     const init: Record<string, string> = {};
-    insumos.forEach((i) => { init[i.id] = i.estoqueAtual.toString(); });
+    insumos.forEach((i) => { init[i.id] = preenchido(i); });
     return init;
   });
+
+  /** Contado convertido para a unidade do ESTOQUE (NaN = vazio/inválido). Campo intocado = teórico exato. */
+  const contadoEstoque = (i: Insumo): number => {
+    const raw = contagens[i.id] ?? '';
+    if (raw === '') return NaN;
+    if (raw === preenchido(i)) return i.estoqueAtual;
+    const n = parseFloat(raw);
+    return isNaN(n) ? NaN : arred(n * fatorDe(i), 4);
+  };
+  const temDiferenca = (i: Insumo) => {
+    const c = contadoEstoque(i);
+    return !isNaN(c) && Math.abs(c - i.estoqueAtual) > 0.00005;
+  };
 
   const [categoriaFiltro, setCategoriaFiltro] = useState('Todas');
   const [apenasComDiff, setApenasComDiff] = useState(false);
@@ -125,11 +161,8 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
   const insumosFiltrados = useMemo(() => {
     return insumos
       .filter((i) => categoriaFiltro === 'Todas' || catDe(i.categoria) === categoriaFiltro)
-      .filter((i) => {
-        if (!apenasComDiff) return true;
-        const contado = parseFloat(contagens[i.id] ?? '');
-        return !isNaN(contado) && contado !== i.estoqueAtual;
-      });
+      .filter((i) => !apenasComDiff || temDiferenca(i));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [insumos, categoriaFiltro, apenasComDiff, contagens]);
 
   // Contagem em sequência: insumos da mesma categoria sempre juntos (categoria em ordem
@@ -157,24 +190,19 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
 
   // Calcula os itens com diferença para o resumo inferior
   const itensComDiferenca = useMemo(() => {
-    return insumos.filter((i) => {
-      const contado = parseFloat(contagens[i.id] ?? '');
-      return !isNaN(contado) && contado !== i.estoqueAtual;
-    });
+    return insumos.filter(temDiferenca);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [insumos, contagens]);
 
   const valorImpacto = useMemo(() => {
-    return itensComDiferenca.reduce((s, i) => {
-      const contado = parseFloat(contagens[i.id] ?? '0');
-      return s + (contado - i.estoqueAtual) * i.precoUnitario;
-    }, 0);
+    return itensComDiferenca.reduce((s, i) => s + (contadoEstoque(i) - i.estoqueAtual) * i.precoUnitario, 0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [itensComDiferenca, contagens]);
 
   // Monta a lista final de itens para confirmar
   const itensParaConfirmar: InventarioItemContado[] = useMemo(() => {
     return insumos.map((i) => {
-      const raw = contagens[i.id] ?? '';
-      const contado = raw === '' ? i.estoqueAtual : parseFloat(raw);
+      const contado = contadoEstoque(i);
       const qtdContada = isNaN(contado) ? i.estoqueAtual : contado;
       return {
         insumoId: i.id,
@@ -186,6 +214,7 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
         precoUnitario: i.precoUnitario,
       };
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [insumos, contagens]);
 
   const handleConfirmar = () => {
@@ -306,10 +335,11 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
             </li>
         {itens.map((insumo) => {
           const rawVal = contagens[insumo.id] ?? '';
-          const contado = rawVal === '' ? NaN : parseFloat(rawVal);
+          const contado = contadoEstoque(insumo);
           const diff = isNaN(contado) ? 0 : parseFloat((contado - insumo.estoqueAtual).toFixed(4));
-          const temDiff = !isNaN(contado) && contado !== insumo.estoqueAtual;
+          const temDiff = temDiferenca(insumo);
           const impacto = temDiff ? diff * insumo.precoUnitario : 0;
+          const emOutraUnidade = fatorDe(insumo) !== 1;
 
           return (
             <li key={insumo.id}>
@@ -323,9 +353,17 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
                     {insumo.categoria}
                   </span>
                 </div>
-                <p className="text-xs text-zinc-500 mt-1.5">Sistema (teórico): <span className="font-semibold text-zinc-600">{insumo.estoqueAtual} {insumo.unidade}</span></p>
+                <p className="text-xs text-zinc-500 mt-1.5">
+                  Sistema (teórico): <span className="font-semibold text-zinc-600">
+                    {emOutraUnidade
+                      ? `${qtdBR(insumo.estoqueAtual / fatorDe(insumo))} ${rotuloDe(insumo)} (${qtdBR(insumo.estoqueAtual)} ${insumo.unidade})`
+                      : `${insumo.estoqueAtual} ${insumo.unidade}`}
+                  </span>
+                </p>
                 <div className="mt-2">
-                  <label className="block text-[11px] font-semibold text-zinc-500 mb-1">Contagem real</label>
+                  <label className="block text-[11px] font-semibold text-zinc-500 mb-1">
+                    Contagem real{emOutraUnidade && <> — em <span className="text-amber-700">{rotuloDe(insumo)}</span> (1 = {qtdBR(fatorDe(insumo))} {insumo.unidade})</>}
+                  </label>
                   <div className="flex items-center gap-1.5">
                     <input
                       type="number"
@@ -340,8 +378,11 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
                           : 'border-zinc-200 bg-white text-zinc-700 focus:border-amber-400'
                       }`}
                     />
-                    <span className="text-zinc-400 text-xs flex-shrink-0">{insumo.unidade}</span>
+                    <span className={`text-xs flex-shrink-0 ${emOutraUnidade ? 'text-amber-700 font-semibold' : 'text-zinc-400'}`}>{rotuloDe(insumo)}</span>
                   </div>
+                  {emOutraUnidade && !isNaN(contado) && (
+                    <p className="text-[11px] text-zinc-500 mt-1 text-right">= {qtdBR(contado)} {insumo.unidade}</p>
+                  )}
                 </div>
                 {temDiff && (
                   <div className="flex items-center gap-1.5 flex-wrap mt-2">
@@ -391,10 +432,11 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
                   </tr>
               {itens.map((insumo) => {
                 const rawVal = contagens[insumo.id] ?? '';
-                const contado = rawVal === '' ? NaN : parseFloat(rawVal);
+                const contado = contadoEstoque(insumo);
                 const diff = isNaN(contado) ? 0 : parseFloat((contado - insumo.estoqueAtual).toFixed(4));
-                const temDiff = !isNaN(contado) && contado !== insumo.estoqueAtual;
+                const temDiff = temDiferenca(insumo);
                 const impacto = temDiff ? diff * insumo.precoUnitario : 0;
+                const emOutraUnidade = fatorDe(insumo) !== 1;
 
                 return (
                   <tr
@@ -411,7 +453,14 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
                       </span>
                     </td>
                     <td className="px-4 py-3 text-right font-semibold text-zinc-600">
-                      {insumo.estoqueAtual} {insumo.unidade}
+                      {emOutraUnidade ? (
+                        <>
+                          {qtdBR(insumo.estoqueAtual / fatorDe(insumo))} {rotuloDe(insumo)}
+                          <p className="text-[10px] font-normal text-zinc-400">{qtdBR(insumo.estoqueAtual)} {insumo.unidade}</p>
+                        </>
+                      ) : (
+                        <>{insumo.estoqueAtual} {insumo.unidade}</>
+                      )}
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-1">
@@ -427,8 +476,13 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
                               : 'border-zinc-200 bg-white text-zinc-700 focus:border-amber-400'
                           }`}
                         />
-                        <span className="text-zinc-400 text-[10px] flex-shrink-0">{insumo.unidade}</span>
+                        <span className={`text-[10px] flex-shrink-0 ${emOutraUnidade ? 'text-amber-700 font-semibold' : 'text-zinc-400'}`}>{rotuloDe(insumo)}</span>
                       </div>
+                      {emOutraUnidade && (
+                        <p className="text-[10px] text-zinc-400 mt-0.5 text-right">
+                          {isNaN(contado) ? `1 ${rotuloDe(insumo)} = ${qtdBR(fatorDe(insumo))} ${insumo.unidade}` : `= ${qtdBR(contado)} ${insumo.unidade}`}
+                        </p>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-right">
                       {temDiff ? (

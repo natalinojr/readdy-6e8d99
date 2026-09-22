@@ -299,7 +299,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
     }
 
     if (action === 'upsert_ingredient') {
-      const { id, name, unit, unit_price, min_stock, current_stock, category, supplier, supplier_id, purchase_unit, purchase_factor, dre_category_id, usage_type, price_source, track_stock, count_inventory } = body;
+      const { id, name, unit, unit_price, min_stock, current_stock, category, supplier, supplier_id, purchase_unit, purchase_factor, dre_category_id, usage_type, price_source, track_stock, count_inventory, count_unit, count_factor } = body;
 
       // Em edicao, campo AUSENTE no body preserva o valor atual do banco
       // (null explicito continua limpando). fn_upsert_ingredient sobrescreve
@@ -345,10 +345,19 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         throw new Error(extractErrorMessage(rpcErr));
       }
 
-      // fn_upsert_ingredient nao conhece track_stock/count_inventory — grava as colunas à parte.
-      const extras: Record<string, boolean> = {};
+      // fn_upsert_ingredient nao conhece track_stock/count_inventory/count_* — grava as colunas à parte.
+      const extras: Record<string, unknown> = {};
       if (typeof track_stock === 'boolean') extras.track_stock = track_stock;
       if (typeof count_inventory === 'boolean') extras.count_inventory = count_inventory;
+      // Unidade de contagem do inventário: nome + quanto vale na unidade do estoque. Sem os dois
+      // válidos, volta a contar na unidade do estoque (null/null).
+      if (count_unit !== undefined || count_factor !== undefined) {
+        const nomeCont = typeof count_unit === 'string' ? count_unit.trim() : '';
+        const fatorCont = Number(count_factor);
+        const valido = nomeCont !== '' && Number.isFinite(fatorCont) && fatorCont > 0;
+        extras.count_unit = valido ? nomeCont : null;
+        extras.count_factor = valido ? fatorCont : null;
+      }
       if (Object.keys(extras).length > 0) {
         const savedId = (rpcData as Record<string, unknown> | null)?.id ?? id;
         if (savedId) {

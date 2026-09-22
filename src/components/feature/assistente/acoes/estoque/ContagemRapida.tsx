@@ -14,6 +14,8 @@ const catDe = (i: InsumoLido) => (i.categoria && i.categoria.trim() ? i.categori
 // Categorias em ordem alfabética, "Sem categoria" por último (mesma ordem da tela de contagem).
 const compararCategoria = (a: string, b: string) =>
   a === b ? 0 : a === SEM_CAT ? 1 : b === SEM_CAT ? -1 : a.localeCompare(b, 'pt-BR');
+// Unidade de contagem (ex.: estoque em kg, conta em pacote de 0,5 kg): pergunta em pacote, grava em kg.
+const fatorDe = (i: InsumoLido) => (i.unidadeContagem && i.fatorContagem ? i.fatorContagem : 1);
 // Unidade do banco → UnidadeEstoque do front (formato dos itens que a tela envia)
 const unidadeFront = (u: string) => (u === 'unit' ? 'un' : u === 'L' ? 'l' : u);
 
@@ -49,7 +51,10 @@ export default function ContagemRapida({ onFechar, irPara }: AcaoProps) {
   }, []);
 
   const perguntar = (i: InsumoLido, n: number, total: number) => {
-    r.bot(`(${n}/${total}) ${catDe(i)} › *${i.nome}*\nNo sistema: ${qtdBR(i.estoque)} ${rotuloUnidade(i.unidadeDb)}. Quanto tem?`);
+    const f = fatorDe(i);
+    r.bot(f !== 1
+      ? `(${n}/${total}) ${catDe(i)} › *${i.nome}*\nNo sistema: ${qtdBR(i.estoque / f)} ${i.unidadeContagem} (${qtdBR(i.estoque)} ${rotuloUnidade(i.unidadeDb)}). Quantos ${i.unidadeContagem} tem? (1 ${i.unidadeContagem} = ${qtdBR(f)} ${rotuloUnidade(i.unidadeDb)})`
+      : `(${n}/${total}) ${catDe(i)} › *${i.nome}*\nNo sistema: ${qtdBR(i.estoque)} ${rotuloUnidade(i.unidadeDb)}. Quanto tem?`);
   };
 
   const escolherCategoria = (c: string) => {
@@ -75,7 +80,8 @@ export default function ContagemRapida({ onFechar, irPara }: AcaoProps) {
     r.eu(t);
     if (!(n >= 0)) { r.bot('Número inválido (zero ou mais). Ex.: 3,5'); return; }
     const i = fila[pos];
-    const nova = { ...contagens, [i.id]: n };
+    // Contado em pacote → grava na unidade do estoque.
+    const nova = { ...contagens, [i.id]: Math.round(n * fatorDe(i) * 10000) / 10000 };
     setContagens(nova);
     avancar(nova);
   };
@@ -155,7 +161,7 @@ export default function ContagemRapida({ onFechar, irPara }: AcaoProps) {
       )}
       {passo === 'contando' && atual && (
         <>
-          <Campo key={atual.id} placeholder={`Contado em ${rotuloUnidade(atual.unidadeDb)}`} modo="decimal" onEnviar={contar} />
+          <Campo key={atual.id} placeholder={`Contado em ${fatorDe(atual) !== 1 ? atual.unidadeContagem : rotuloUnidade(atual.unidadeDb)}`} modo="decimal" onEnviar={contar} />
           {atual.estoque >= 0 && <Opcao onClick={confere}>Confere ({qtdBR(atual.estoque)} {rotuloUnidade(atual.unidadeDb)})</Opcao>}
           <OpcaoNeutra onClick={pular}>Pular</OpcaoNeutra>
           {contadosAteAgora > 0 && <OpcaoNeutra onClick={encerrar}>Encerrar aqui ({contadosAteAgora} contado{contadosAteAgora > 1 ? 's' : ''})</OpcaoNeutra>}

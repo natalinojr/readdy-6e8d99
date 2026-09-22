@@ -26,6 +26,9 @@ export default function InsumoModal({ insumo, nomeInicial, categoriasDisponiveis
   const [estoqueMinimo, setEstoqueMinimo] = useState(insumo?.estoqueMinimo?.toString() ?? '');
   const [rastrearEstoque, setRastrearEstoque] = useState(insumo?.rastrearEstoque ?? true);
   const [contaInventario, setContaInventario] = useState(insumo?.contaInventario ?? true);
+  // Unidade de contagem do inventário (ex.: estoque em kg, equipe conta pacotes de 500 g → pacote, 0.5)
+  const [unidadeContagem, setUnidadeContagem] = useState(insumo?.unidadeContagem ?? '');
+  const [fatorContagem, setFatorContagem] = useState(insumo?.fatorContagem ? String(insumo.fatorContagem) : '');
   const [purchaseUnit, setPurchaseUnit] = useState(insumo?.purchaseUnit ?? '');
   const [purchaseFactor, setPurchaseFactor] = useState(insumo?.purchaseFactor?.toString() ?? '1');
   const [purchaseUnitOpen, setPurchaseUnitOpen] = useState(false);
@@ -63,6 +66,9 @@ export default function InsumoModal({ insumo, nomeInicial, categoriasDisponiveis
   }, []);
 
   const usePurchaseUnit = purchaseUnit.trim() !== '' && purchaseUnit.trim() !== unidade;
+  const fatorContagemNum = parseFloat(fatorContagem.replace(',', '.'));
+  const contagemValida = unidadeContagem.trim() !== '' && unidadeContagem.trim() !== unidade
+    && Number.isFinite(fatorContagemNum) && fatorContagemNum > 0;
   const podeSubmeter = nome.trim().length > 0;
 
   const handleSalvar = () => {
@@ -80,6 +86,8 @@ export default function InsumoModal({ insumo, nomeInicial, categoriasDisponiveis
       estoqueMinimo: parseFloat(estoqueMinimo.replace(',', '.')) || 0,
       rastrearEstoque,
       contaInventario,
+      unidadeContagem: contagemValida ? unidadeContagem.trim() : null,
+      fatorContagem: contagemValida ? fatorContagemNum : null,
       purchaseUnit: usePurchaseUnit ? purchaseUnit.trim() : null,
       purchaseFactor: usePurchaseUnit ? (parseFloat(purchaseFactor) || 1) : 1,
       dreCategoryId: insumo?.dreCategoryId ?? null,
@@ -376,6 +384,73 @@ export default function InsumoModal({ insumo, nomeInicial, categoriasDisponiveis
                 <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full transition-all ${contaInventario ? 'left-[18px]' : 'left-0.5'}`} />
               </span>
             </button>
+
+            {contaInventario && (
+              <div className="mt-3 border border-zinc-100 rounded-xl p-3 bg-zinc-50 space-y-2">
+                <p className="text-xs font-semibold text-zinc-700 flex items-center gap-1.5">
+                  <i className="ri-list-check-3 text-amber-500" />
+                  Contar em <span className="text-zinc-400 font-normal">(opcional)</span>
+                </p>
+                <p className="text-[10px] text-zinc-400 leading-relaxed">
+                  Na prateleira está em embalagem? Ex.: estoque em <strong>kg</strong>, mas a equipe conta
+                  <strong> pacotes de 500 g</strong>. Deixe vazio para contar em {unidade}.
+                </p>
+                <div className="flex flex-wrap gap-1.5">
+                  {['pacote', 'caixa', 'balde', 'saco', 'fardo', 'garrafa', 'lata'].map((u) => (
+                    <button
+                      key={u}
+                      type="button"
+                      onClick={() => setUnidadeContagem(unidadeContagem === u ? '' : u)}
+                      className={`px-2.5 py-1 text-[10px] font-semibold rounded-full border transition-all cursor-pointer ${
+                        unidadeContagem === u
+                          ? 'bg-amber-500 text-white border-amber-500'
+                          : 'bg-white text-zinc-600 border-zinc-200 hover:border-amber-300 hover:text-amber-600'
+                      }`}
+                    >
+                      {u}
+                    </button>
+                  ))}
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[10px] font-medium text-zinc-500 mb-1">Unidade de contagem</label>
+                    <input
+                      value={unidadeContagem}
+                      onChange={(e) => setUnidadeContagem(e.target.value)}
+                      placeholder="Ou digite..."
+                      className="w-full text-xs border border-zinc-200 rounded-lg px-2.5 py-2 text-zinc-800 focus:outline-none focus:border-amber-400 bg-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-medium text-zinc-500 mb-1">
+                      Qtd de <strong>{unidade}</strong> em 1 {unidadeContagem.trim() || 'unidade'}
+                    </label>
+                    <input
+                      type="number"
+                      min="0.001"
+                      step="0.001"
+                      value={fatorContagem}
+                      onChange={(e) => setFatorContagem(e.target.value)}
+                      disabled={unidadeContagem.trim() === ''}
+                      className="w-full text-xs border border-zinc-200 rounded-lg px-2.5 py-2 text-zinc-800 focus:outline-none focus:border-amber-400 bg-white disabled:opacity-40"
+                      placeholder={unidade === 'kg' ? 'Ex: 0,5' : 'Ex: 6'}
+                    />
+                  </div>
+                </div>
+                {contagemValida ? (
+                  <div className="flex items-center gap-1.5 px-2.5 py-2 bg-amber-50 border border-amber-200 rounded-lg">
+                    <i className="ri-exchange-line text-amber-500 text-xs" />
+                    <p className="text-[10px] text-amber-700 font-semibold">
+                      1 {unidadeContagem.trim()} = {fatorContagemNum.toLocaleString('pt-BR', { maximumFractionDigits: 3 })} {unidade} — a equipe conta em {unidadeContagem.trim()}, o estoque grava em {unidade}
+                    </p>
+                  </div>
+                ) : unidadeContagem.trim() !== '' && (
+                  <p className="text-[10px] text-red-500">
+                    {unidadeContagem.trim() === unidade ? `Já é a unidade do estoque.` : `Informe quanto 1 ${unidadeContagem.trim()} vale em ${unidade}.`}
+                  </p>
+                )}
+              </div>
+            )}
           </div>
         </div>
         <div className="flex gap-2 mt-5">

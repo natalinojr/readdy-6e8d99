@@ -44,6 +44,8 @@ interface DBIngredient {
   usage_type?: string | null;
   track_stock?: boolean | null;
   count_inventory?: boolean | null;
+  count_unit?: string | null;
+  count_factor?: number | string | null;
 }
 
 interface DBStockMovement {
@@ -110,6 +112,10 @@ export interface Insumo {
    * Compra, entrada, saída, ficha técnica e CMV continuam normais. Padrão true.
    */
   contaInventario: boolean;
+  /** Unidade em que a equipe conta no inventário (ex: 'pacote'). null = conta na unidade do estoque. */
+  unidadeContagem?: string | null;
+  /** Quanto 1 unidade de contagem vale na unidade do estoque (pacote de 500 g, estoque em kg → 0.5). */
+  fatorContagem?: number | null;
 }
 
 export interface PerdaItem {
@@ -192,6 +198,8 @@ function dbToInsumo(row: DBIngredient): Insumo | null {
     usageType: (row.usage_type as 'final' | 'production') ?? 'final',
     rastrearEstoque: row.track_stock ?? true,
     contaInventario: row.count_inventory ?? true,
+    unidadeContagem: row.count_unit ?? null,
+    fatorContagem: row.count_factor != null ? Number(row.count_factor) : null,
   };
 }
 
@@ -796,6 +804,10 @@ export function EstoqueProvider({ children }: { children: ReactNode }) {
     if (insumo.usageType !== undefined || isNew) body.usage_type = insumo.usageType ?? 'final';
     if (insumo.rastrearEstoque !== undefined || isNew) body.track_stock = insumo.rastrearEstoque ?? true;
     if (insumo.contaInventario !== undefined || isNew) body.count_inventory = insumo.contaInventario ?? true;
+    if ('unidadeContagem' in insumo || 'fatorContagem' in insumo) {
+      body.count_unit = insumo.unidadeContagem ?? null;
+      body.count_factor = insumo.fatorContagem ?? null;
+    }
     if ('dreCategoryId' in insumo) body.dre_category_id = insumo.dreCategoryId ?? null;
     if ('supplierId' in insumo) body.supplier_id = insumo.supplierId ?? null;
     if ('fornecedor' in insumo) body.supplier = insumo.fornecedor ?? '';

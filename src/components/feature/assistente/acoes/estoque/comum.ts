@@ -17,6 +17,9 @@ export interface InsumoLido {
   categoria: string;
   /** false = fora da contagem de inventário (ingredients.count_inventory). */
   contaInventario: boolean;
+  /** Unidade em que a equipe conta (ex.: 'pacote') e quanto 1 dela vale na unidade do estoque. */
+  unidadeContagem: string | null;
+  fatorContagem: number | null;
 }
 
 /** Unidade do banco → rótulo curto. */
@@ -41,6 +44,8 @@ export async function lerInsumos(tenantId: string): Promise<{ insumos: InsumoLid
       esgotado: Boolean(r.is_depleted ?? false),
       categoria: String(r.category ?? ''),
       contaInventario: r.count_inventory !== false,
+      unidadeContagem: r.count_unit ? String(r.count_unit) : null,
+      fatorContagem: r.count_factor != null && Number(r.count_factor) > 0 ? Number(r.count_factor) : null,
     }))
     .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
   return { insumos, erro: null };
