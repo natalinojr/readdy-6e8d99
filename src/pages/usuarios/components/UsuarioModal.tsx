@@ -50,8 +50,9 @@ export default function UsuarioModal({ modo, usuario, onClose, onSalvar, onDefin
         }
         // Senha obrigatória para não-totem
         if (!isTotem && senha.length < 6) e.senha = 'Mínimo 6 caracteres';
-        // Para totem, PIN é obrigatório
+        // Para totem, PIN é obrigatório; para os demais é opcional, mas se preenchido precisa valer
         if (isTotem && pin.trim().length < 4) e.pin = 'PIN obrigatório (mínimo 4 dígitos)';
+        else if (pin.trim() && !/^\d{4,8}$/.test(pin.trim())) e.pin = 'PIN deve ter entre 4 e 8 dígitos';
       }
     }
     if (modo === 'senha' && senha.length < 6) e.senha = 'Mínimo 6 caracteres';
@@ -74,7 +75,7 @@ export default function UsuarioModal({ modo, usuario, onClose, onSalvar, onDefin
           perfil,
           training_mode: modoTreino,
           matricula: matricula.trim() || undefined,
-          pin: isTotem ? pin.trim() : undefined,
+          pin: pin.trim() || undefined,
         });
       } else if (modo === 'editar') {
         // Se PIN preenchido, salvar separadamente primeiro
@@ -257,37 +258,39 @@ export default function UsuarioModal({ modo, usuario, onClose, onSalvar, onDefin
                         </div>
                       )}
 
-                      {/* PIN — obrigatório para totem, opcional para outros */}
-                      {isTotem ? (
-                        <div>
-                          <label className="block text-xs font-semibold text-zinc-600 mb-1.5">
-                            PIN de acesso
-                            <span className="text-orange-500 ml-1">*</span>
-                          </label>
-                          <div className="relative">
-                            <div className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 flex items-center justify-center text-zinc-400">
-                              <Hash size={13} />
-                            </div>
-                            <input
-                              type="password"
-                              inputMode="numeric"
-                              value={pin}
-                              onChange={(e) => {
-                                const v = e.target.value.replace(/\D/g, '').slice(0, 8);
-                                setPin(v);
-                                setErros((p) => ({ ...p, pin: '' }));
-                              }}
-                              placeholder="4 a 8 dígitos"
-                              maxLength={8}
-                              className={`w-full text-sm border rounded-lg pl-8 pr-3 py-2.5 tracking-widest text-zinc-800 focus:outline-none focus:border-amber-400 ${erros.pin ? 'border-red-300 bg-red-50' : 'border-zinc-200'}`}
-                            />
+                      {/* PIN — obrigatório para totem, opcional (mas recomendado) para os outros */}
+                      <div>
+                        <label className="block text-xs font-semibold text-zinc-600 mb-1.5">
+                          PIN de acesso
+                          {isTotem
+                            ? <span className="text-orange-500 ml-1">*</span>
+                            : <span className="text-zinc-400 font-normal ml-1">— opcional</span>}
+                        </label>
+                        <div className="relative">
+                          <div className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 flex items-center justify-center text-zinc-400">
+                            <Hash size={13} />
                           </div>
-                          {erros.pin && <p className="text-xs text-red-500 mt-1">{erros.pin}</p>}
-                          <p className="text-[11px] text-zinc-400 mt-1">
-                            O totem faz login pela matrícula + este PIN. Não precisa de email ou senha.
-                          </p>
+                          <input
+                            type="password"
+                            inputMode="numeric"
+                            value={pin}
+                            onChange={(e) => {
+                              const v = e.target.value.replace(/\D/g, '').slice(0, 8);
+                              setPin(v);
+                              setErros((p) => ({ ...p, pin: '' }));
+                            }}
+                            placeholder="4 a 8 dígitos"
+                            maxLength={8}
+                            className={`w-full text-sm border rounded-lg pl-8 pr-3 py-2.5 tracking-widest text-zinc-800 focus:outline-none focus:border-amber-400 ${erros.pin ? 'border-red-300 bg-red-50' : 'border-zinc-200'}`}
+                          />
                         </div>
-                      ) : null}
+                        {erros.pin && <p className="text-xs text-red-500 mt-1">{erros.pin}</p>}
+                        <p className="text-[11px] text-zinc-400 mt-1">
+                          {isTotem
+                            ? 'O totem faz login pela matrícula + este PIN. Não precisa de email ou senha.'
+                            : 'Login rápido no PDV pela matrícula + PIN. Sem PIN, só dá para entrar por e-mail e senha.'}
+                        </p>
+                      </div>
                     </>
                   )}
                 </div>

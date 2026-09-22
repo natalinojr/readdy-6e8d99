@@ -123,9 +123,12 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         badgeNumber = await gerarProximaMatricula(db);
       }
 
-      // Garante unicidade da matrícula
-      const { data: existingBadge } = await db.from('users').select('id').eq('badge_number', badgeNumber).maybeSingle();
-      if (existingBadge) {
+      // Garante unicidade da matrícula. Se o operador digitou uma matrícula já usada,
+      // avisa em vez de trocar por outra em silêncio (2026-09-21: o usuário nascia com
+      // outra matrícula e o login por matrícula + PIN nunca funcionava).
+      const { data: existingBadge } = await db.from('users').select('id').eq('badge_number', badgeNumber).limit(1);
+      if (existingBadge && existingBadge.length > 0) {
+        if (matricula?.trim()) return errResp(`Matrícula ${badgeNumber} já está em uso por outro usuário`);
         badgeNumber = await gerarProximaMatricula(db);
       }
 
