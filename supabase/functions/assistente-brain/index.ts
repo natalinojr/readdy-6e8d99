@@ -499,7 +499,8 @@ TOOLS.push({
       copia_e_cola: { type: 'string', description: 'Pix copia e cola (BR Code) copiado do documento. Só é aceito de guia do governo (FGTS Digital); para as guias do mês prefira lancar_guia.' },
       chave_pix: { type: 'string', description: 'Pix: chave SÓ quando ela veio num documento (boleto, QR, copia e cola, nota do fornecedor). NUNCA peça, sugira ou aceite chave digitada na conversa — nem do Natalino. Para pagar uma pessoa ou fornecedor sem chave no documento, use favorecido.' },
       favorecido: { type: 'string', description: 'Pix para PESSOA ou fornecedor pelo NOME (ex.: "Eduardo Oriente" num reembolso). A chave sai do cadastro: Pix permitidos (tela Assistente) ou fornecedor com chave Pix. Se não estiver cadastrado, a ferramenta avisa — aí diga para cadastrar em Assistente › Pix permitidos.' },
-      valor: { type: 'number', description: 'Reais. Boleto: só se diferente do valor do código (juros/desconto) ou se o código não traz valor. Pix: obrigatório.' },
+      valor: { type: 'number', description: 'Reais. Boleto: só se diferente do valor do código (juros/desconto) ou se o código não traz valor. Boleto VENCIDO: não calcule multa/juros você — mande instrucoes_boleto e a ferramenta calcula. Pix: obrigatório.' },
+      instrucoes_boleto: { type: 'string', description: 'Boleto: texto das INSTRUÇÕES impressas (ex.: "Cobrar multa 2% após o vencimento. Juros de 1% ao mês"), copiado do documento. Boleto vencido só é aceito pelo Inter com multa e juros: com isso a ferramenta calcula o valor atualizado. Vindo de grupo (solicitacao_grupo_id), o texto do pedido já é usado sozinho.' },
       descricao: { type: 'string', description: 'Descrição curta (vai no Pix e no histórico).' },
       conta_a_pagar_id: { type: 'string', description: 'uuid da conta a pagar correspondente, se houver (busque com consultar_banco/buscar_nome).' },
       categoria_dre: { type: 'string', description: 'OBRIGATÓRIA quando NÃO houver conta_a_pagar_id: nome (ou uuid) da categoria de despesa da DRE (ex.: "Internet", "Energia"). Quando o Inter confirmar, a despesa é lançada pelo extrato com ela e já sai conciliada. Sem conta e sem categoria, o pagamento não é preparado: pergunte ao Natalino a categoria.' },
@@ -1137,9 +1138,17 @@ async function runTool(ctx: Ctx, name: string, input: any): Promise<string> {
         }
         dreCategoryId = achados[0].id;
       }
+      // Boleto vencido (2026-09-22): o inter-bank calcula multa + juros pelas instruções do boleto.
+      // Vindo de grupo, o texto lido do documento já está no pedido — não depende do modelo copiar.
+      let instrucoes: string | undefined = input.instrucoes_boleto ? String(input.instrucoes_boleto) : undefined;
+      if (input.tipo === 'boleto' && input.solicitacao_grupo_id) {
+        const { data: g } = await ctx.admin.from('asst_group_requests').select('data').eq('id', Number(input.solicitacao_grupo_id)).maybeSingle();
+        const texto = g?.data?.texto ?? g?.data?.extraido?.texto;
+        if (texto) instrucoes = [instrucoes, String(texto)].filter(Boolean).join('\n');
+      }
       const out = await callInter('prepare_payment', {
         tenant_id: tenantId, tipo: input.tipo, linha: input.linha_digitavel, chave, copia_e_cola: input.copia_e_cola || undefined, valor: input.valor,
-        descricao: input.descricao, bill_id: input.conta_a_pagar_id, requested_by: ctx.ownerId, channel: 'telegram', chat_id: ctx.chatId,
+        instrucoes, descricao: input.descricao, bill_id: input.conta_a_pagar_id, requested_by: ctx.ownerId, channel: 'telegram', chat_id: ctx.chatId,
       });
       const p = out.payment;
       if (dreCategoryId && !p.bill_id) await ctx.admin.from('fin_inter_payments').update({ dre_category_id: dreCategoryId }).eq('id', p.id);
@@ -1178,6 +1187,7 @@ async function runTool(ctx: Ctx, name: string, input: any): Promise<string> {
         ...(p.ja_existia ? { ja_existia: 'Esse boleto JÁ estava preparado (o mesmo pedido, não um novo): não prepare de novo e não diga que são dois pagamentos.' } : {}),
         ...(grupo ? { comprovante_no_grupo: `Ligado ao pedido do grupo "${grupo}": quando o Inter confirmar, o comprovante vai sozinho no grupo. Pode avisar isso em meia frase.` } : {}),
         pagamento: { id: p.id, tipo: p.kind, valor: Number(p.amount), valor_do_boleto: p.face_value, vencimento: p.due_date, beneficiario: p.beneficiary_name, saldo_inter: p.saldo_inter },
+        ...(p.encargos ? { vencido: `Boleto vencido há ${p.encargos.dias} dia(s): valor atualizado com ${p.encargos.regra} (multa ${p.encargos.multa}, juros ${p.encargos.juros}). Diga isso em meia frase; se o Inter recusar por centavos, o app do Inter mostra o valor exato.` } : {}),
         instrucao: 'O resumo com os botões Pagar/Cancelar será enviado logo abaixo. Diga só uma frase curta (ex.: se o vencimento já passou ou o saldo não cobre). Não repita os dados e não peça PIN.',
       });
     }

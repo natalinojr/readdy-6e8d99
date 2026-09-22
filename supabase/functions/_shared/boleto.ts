@@ -122,3 +122,76 @@ export function findBoletos(texto: string): Decoded[] {
   }
   return achados;
 }
+
+// ── Boleto vencido: multa e juros (2026-09-22) ──
+// O Inter recusa pagar boleto vencido pelo valor do código ("Campo(s) inválido(s): Valor a pagar"):
+// exige o valor atualizado. O 1º caso foi um DLR Alimentos (Itaú, R$ 220,00, 12 dias de atraso),
+// recusado duas vezes. O valor atualizado sai das INSTRUÇÕES impressas no boleto ("multa 2% após
+// o vencimento", "juros de 1% ao mês"). Sem instrução legível, devolve null: quem chama pede o valor
+// ao dono (o app do Inter mostra ao ler o código) — nunca chuta.
+//
+// Regras do cálculo (as da cobrança bancária):
+//   • vencimento em sábado/domingo pode ser pago no dia útil seguinte sem encargo (feriado não entra:
+//     no pior caso sai uma cobrança a mais e o Inter recusa, sem mover dinheiro);
+//   • multa: uma vez, sobre o valor do documento;
+//   • juros simples por dia corrido desde o vencimento; "% ao mês" vira ao dia dividindo por 30.
+export type Encargos = { dias: number; multa: number; juros: number; total: number; regra: string };
+
+const diaSemana = (iso: string) => new Date(`${iso}T00:00:00Z`).getUTCDay();
+const diasEntre = (de: string, ate: string) => Math.round((Date.parse(`${ate}T00:00:00Z`) - Date.parse(`${de}T00:00:00Z`)) / 86_400_000);
+
+/** Vencido para efeito de pagamento? (sábado/domingo passam para a segunda-feira). */
+export function boletoVencido(vencimento: string | null | undefined, hoje: string): boolean {
+  if (!vencimento || !/^\d{4}-\d{2}-\d{2}$/.test(vencimento)) return false;
+  let limite = vencimento;
+  while (diaSemana(limite) === 0 || diaSemana(limite) === 6) limite = addDays(limite, 1);
+  return hoje > limite;
+}
+
+const numBR = (s: string) => {
+  const t = s.includes(',') ? s.replace(/\./g, '').replace(',', '.') : s;
+  const n = Number(t);
+  return Number.isFinite(n) ? n : NaN;
+};
+
+/**
+ * Valor atualizado de um boleto vencido, pelas instruções do próprio boleto.
+ * null = vencido mas não deu para ler a regra (ou o resultado não é plausível).
+ * Não vencido → encargos zero (total = valor).
+ */
+export function encargosAtraso(valor: number, vencimento: string | null | undefined, hoje: string, instrucoes: string | null | undefined): Encargos | null {
+  if (!boletoVencido(vencimento, hoje)) return { dias: 0, multa: 0, juros: 0, total: round2(valor), regra: 'no prazo' };
+  const t = String(instrucoes ?? '').normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase().replace(/\s+/g, ' ');
+  if (!t.trim()) return null;
+  const R = String.raw;
+  const N = R`(\d{1,4}(?:[.,]\d{1,4})?)`;
+  const m = (src: string) => t.match(new RegExp(src));
+  const dias = diasEntre(vencimento!, hoje);
+
+  let multa = 0; let regraMulta = '';
+  const mPct = m(R`multa[^%\d]{0,30}${N}\s*%`) ?? m(R`${N}\s*%\s*(?:de\s+)?multa`);
+  const mRs = m(R`multa[^%\d]{0,30}r\$\s*${N}`);
+  if (mRs) { multa = numBR(mRs[1]); regraMulta = `multa R$ ${mRs[1]}`; }
+  else if (mPct) { multa = valor * numBR(mPct[1]) / 100; regraMulta = `multa ${mPct[1]}%`; }
+  else if (/multa/.test(t)) return null;
+
+  let juros = 0; let regraJuros = '';
+  const MES = R`(?:ao\s+mes|a\.?\s?m\.?(?![a-z])|mensa)`;
+  const DIA = R`(?:ao\s+dia|por\s+dia|a\.?\s?d\.?(?![a-z])|diari)`;
+  const JM = '(?:juros|mora)';
+  const jRsDia = m(R`${JM}[^%\d]{0,40}r\$\s*${N}\s*(?:de\s+\w+\s+)?${DIA}`) ?? m(R`${JM}\s+${DIA}\w*[^%\d]{0,20}r\$\s*${N}`);
+  const jPctMes = m(R`${JM}[^%\d]{0,40}${N}\s*%\s*(?:de\s+\w+\s+)?${MES}`) ?? m(R`${N}\s*%\s*${MES}[^.]{0,20}${JM}`);
+  const jPctDia = m(R`${JM}[^%\d]{0,40}${N}\s*%\s*(?:de\s+\w+\s+)?${DIA}`) ?? m(R`${N}\s*%\s*${DIA}[^.]{0,20}${JM}`);
+  if (jRsDia) { juros = numBR(jRsDia[1]) * dias; regraJuros = `juros R$ ${jRsDia[1]} ao dia`; }
+  else if (jPctDia) { juros = valor * numBR(jPctDia[1]) / 100 * dias; regraJuros = `juros ${jPctDia[1]}% ao dia`; }
+  else if (jPctMes) { juros = valor * numBR(jPctMes[1]) / 100 / 30 * dias; regraJuros = `juros ${jPctMes[1]}% ao mês`; }
+  else if (/juros|mora/.test(t)) return null;
+
+  if (!Number.isFinite(multa) || !Number.isFinite(juros) || multa < 0 || juros < 0) return null;
+  multa = round2(multa); juros = round2(juros);
+  const total = round2(valor + multa + juros);
+  // Trava de plausibilidade: encargo acima de 30% do documento é leitura errada, não boleto.
+  if (total > valor * 1.3) return null;
+  const regra = [regraMulta, regraJuros].filter(Boolean).join(' + ') || 'sem multa/juros nas instruções';
+  return { dias, multa, juros, total, regra };
+}

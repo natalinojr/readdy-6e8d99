@@ -453,7 +453,10 @@ function payText(p: any, extra = ''): string {
   if (p.kind === 'boleto') {
     if (p.bank_code) lines.push(`Banco do boleto: ${p.bank_code}`);
     if (p.due_date) lines.push(`Vencimento: ${fmtDate(p.due_date)}`);
-    if (p.face_value != null && Math.abs(Number(p.face_value) - Number(p.amount)) > 0.005) lines.push(`Valor do boleto: ${brl(p.face_value)}`);
+    if (p.face_value != null && Math.abs(Number(p.face_value) - Number(p.amount)) > 0.005) {
+      const vencido = !!p.due_date && Number(p.amount) > Number(p.face_value) && String(p.due_date) < new Date(Date.now() - 3 * 3600_000).toISOString().slice(0, 10);
+      lines.push(`Valor do boleto: ${brl(p.face_value)}${vencido ? ' (vencido: a pagar inclui multa e juros)' : ''}`);
+    }
   }
   lines.push(`*Valor a pagar: ${brl(p.amount)}*`);
   if (p.description) lines.push(`Descrição: ${p.description}`);

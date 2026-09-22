@@ -17,8 +17,9 @@
 //                                                  o front também chama `sync` ao abrir a Conciliação, e o pagamento pago dispara `sync` na hora
 //   probe_mtls     { cert_pem, key_pem }           (interno) diagnóstico do suporte a mTLS no runtime
 //   ── Pagamentos (2026-09-12) — só o assistente (x-internal-key), depois do botão Pagar + PIN no Telegram:
-//   prepare_payment  { tipo: 'boleto'|'pix', linha?, chave?, valor?, descricao?, bill_id?, requested_by?, channel?, chat_id? }
+//   prepare_payment  { tipo: 'boleto'|'pix', linha?, chave?, valor?, instrucoes?, descricao?, bill_id?, requested_by?, channel?, chat_id? }
 //                    valida (DV do boleto, fornecedor do Pix, limites) e grava fin_inter_payments em 'draft'
+//                    boleto vencido sem valor informado: valor = código + multa + juros das `instrucoes` (texto do boleto)
 //   decode_boleto    { linha }        só decodifica e confere os DVs (valor, vencimento, digitável) — nada é gravado
 //   reprepare_payment { payment_id }  remonta um pedido expirado/falhado como pedido NOVO (revalida tudo)
 //   execute_payment  { payment_id }   envia ao Inter (x-id-idempotente = idempotency_key da linha)
@@ -41,7 +42,7 @@ import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-
 import { copiaValida, lerCopia } from '../_shared/guias.ts';
 // Leitura/validação de boleto: mora em _shared porque a caixa de boletos por e-mail usa a
 // MESMA conferência de dígitos. Movido daqui em 2026-09-22, sem mudança de comportamento.
-import { decodeBoleto } from '../_shared/boleto.ts';
+import { boletoVencido, decodeBoleto, encargosAtraso } from '../_shared/boleto.ts';
 import { isFinanceiroRole } from '../_shared/tenant-auth.ts';
 
 type Admin = SupabaseClient;
@@ -522,10 +523,26 @@ async function preparePayment(admin: Admin, tenantId: string, body: Record<strin
     description: String(body.descricao ?? '').trim().slice(0, 140) || (bill ? String(bill.description ?? '').slice(0, 140) : null),
     requested_by: body.requested_by ?? null, channel: body.channel ?? 'assistente', chat_id: body.chat_id ?? null,
   };
+  let encargos: ReturnType<typeof encargosAtraso> = null;
   if (tipo === 'boleto') {
     const dec = decodeBoleto(String(body.linha ?? ''));
-    const valor = body.valor != null && Number(body.valor) > 0 ? round2(Number(body.valor)) : dec.valor;
+    let valor = body.valor != null && Number(body.valor) > 0 ? round2(Number(body.valor)) : dec.valor;
     if (!valor || valor <= 0) throw new Error('Esse código não traz o valor: informe quanto pagar.');
+    // Boleto VENCIDO (2026-09-22): o Inter recusa o valor do código ("Valor a pagar" inválido) —
+    // quer o valor com multa e juros. Sem valor informado (ou informado igual ao do código), calcula
+    // pelas instruções do boleto; sem instrução legível, recusa aqui pedindo o valor, em vez de
+    // montar um cartão "Pagar" que o Inter vai devolver.
+    const hoje = todayBR();
+    const valorDoCodigo = dec.valor != null && Math.abs(valor - dec.valor) < 0.005;
+    if (valorDoCodigo && dec.valor && boletoVencido(dec.vencimento, hoje)) {
+      const enc = encargosAtraso(dec.valor, dec.vencimento, hoje, body.instrucoes == null ? null : String(body.instrucoes));
+      const [a, m, d] = String(dec.vencimento).split('-');
+      if (!enc) {
+        throw new Error(`Boleto vencido em ${d}/${m}/${a}: o Inter só aceita o valor atualizado (com multa e juros) e não achei as instruções do boleto para calcular. Informe o valor a pagar — o app do Inter mostra o valor certo ao ler o código.`);
+      }
+      valor = enc.total;
+      encargos = enc; // não é coluna: vai só na resposta (o cartão e o assistente mostram)
+    }
     const { data: dup } = await admin.from('fin_inter_payments').select('id, status').eq('tenant_id', tenantId).eq('barcode', dec.barcode).in('status', PAY_LIVE).limit(1);
     if (dup?.length) throw new Error('Esse boleto já foi enviado para pagamento pelo assistente.');
     // Rascunho aberto do mesmo boleto (2026-09-18): devolve o que já existe em vez de criar outro —
@@ -591,7 +608,7 @@ async function preparePayment(admin: Admin, tenantId: string, body: Record<strin
     if (outro) return { ...outro, ja_existia: true, saldo_inter: cfg.last_balance == null ? null : Number(cfg.last_balance) };
   }
   if (error || !ins) throw new Error(`Gravar pedido: ${error?.message ?? 'sem retorno'}`);
-  return { ...ins, saldo_inter: cfg.last_balance == null ? null : Number(cfg.last_balance) };
+  return { ...ins, saldo_inter: cfg.last_balance == null ? null : Number(cfg.last_balance), ...(encargos ? { encargos } : {}) };
 }
 
 // Prepara DE NOVO um pedido que expirou/falhou (2026-09-18). O rascunho vale 30 minutos
@@ -621,6 +638,18 @@ async function reparePayment(admin: Admin, tenantId: string, id: string) {
     if (cur?.replaced_by && cur.replaced_by !== velho.id) return await getPayment(admin, tenantId, cur.replaced_by);
     throw new Error('Esse pedido já está sendo preparado de novo. Aguarde um instante.');
   }
+  // Boleto vencido (2026-09-22): o valor do pedido antigo ficou velho (os juros correm por dia, e o
+  // pedido recusado pode ter ido pelo valor do código). Com as instruções do boleto em mãos — o texto
+  // do pedido do grupo —, o valor é recalculado para hoje; sem elas, fica o valor que o pedido tinha.
+  let instrucoes: string | null = null;
+  let valor: number | undefined = Number(velho.amount);
+  if (velho.kind === 'boleto' && velho.face_value != null && boletoVencido(velho.due_date, todayBR())) {
+    if (velho.group_request_id) {
+      const { data: g } = await admin.from('asst_group_requests').select('data').eq('id', velho.group_request_id).maybeSingle();
+      instrucoes = g?.data?.texto ?? g?.data?.extraido?.texto ?? null;
+    }
+    if (encargosAtraso(Number(velho.face_value), velho.due_date, todayBR(), instrucoes)) valor = undefined;
+  }
   // deno-lint-ignore no-explicit-any
   let novo: any;
   try {
@@ -629,7 +658,8 @@ async function reparePayment(admin: Admin, tenantId: string, id: string) {
       linha: velho.digitavel ?? undefined,
       chave: velho.pix_key ?? undefined,
       copia_e_cola: velho.pix_copia_e_cola ?? undefined,
-      valor: velho.amount,
+      valor,
+      instrucoes: instrucoes ?? undefined,
       descricao: velho.description ?? undefined,
       bill_id: velho.bill_id ?? undefined,
       requested_by: velho.requested_by ?? undefined,
@@ -722,7 +752,14 @@ async function executePayment(admin: Admin, tenantId: string, id: string) {
       client = op2.client; creds = op2.creds; token = op2.token;
       r = await send(token);
     }
-    if (!r.ok) throw await fail(providerError(r, p.kind === 'boleto' ? 'Pagamento do boleto' : 'Pix'), 'rejected');
+    if (!r.ok) {
+      let msg = providerError(r, p.kind === 'boleto' ? 'Pagamento do boleto' : 'Pix');
+      // O Inter só diz "Valor a pagar" inválido; o motivo quase sempre é o boleto vencido.
+      if (p.kind === 'boleto' && /valor/i.test(msg) && boletoVencido(p.due_date, todayBR())) {
+        msg += `. Boleto vencido: o Inter exige o valor atualizado (multa + juros). Confira o valor no app do Inter ao ler o código e peça de novo com ele.`;
+      }
+      throw await fail(msg, 'rejected');
+    }
     const raw = p.kind === 'boleto' ? (r.data?.statusPagamento ?? r.data?.status) : (r.data?.tipoRetorno ?? r.data?.status);
     const code = p.kind === 'boleto' ? (r.data?.codigoTransacao ?? r.data?.codigoSolicitacao) : (r.data?.codigoSolicitacao ?? r.data?.endToEndId);
     const status = mapPayStatus(raw);
