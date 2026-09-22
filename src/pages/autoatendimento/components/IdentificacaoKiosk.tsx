@@ -99,12 +99,13 @@ export default function IdentificacaoKiosk({ modo, total, pagarNaEntrega, onCont
     }
 
     return (
-      <div className="flex flex-col items-center justify-center h-full p-4 text-center overflow-hidden">
-        {/* Layout em duas colunas: info à esquerda, teclado à direita */}
-        <div className="flex items-center gap-6 w-full max-w-3xl">
+      <div className="flex flex-col items-center justify-center h-full p-4 text-center overflow-hidden portrait:overflow-y-auto portrait:py-6">
+        {/* Tablet deitado: duas colunas (info à esquerda, teclado à direita).
+            Tablet em pé: tudo empilhado, instruções em cima e teclado embaixo. */}
+        <div className="flex portrait:flex-col items-center gap-6 portrait:gap-4 w-full max-w-3xl portrait:max-w-sm">
 
           {/* Coluna esquerda — instruções */}
-          <div className="flex-1 flex flex-col gap-3 text-left">
+          <div className="flex-1 portrait:flex-none flex flex-col gap-3 text-left portrait:text-center portrait:items-center">
             <div className="flex items-center gap-3">
               <div className={`w-12 h-12 flex items-center justify-center ${isSenhaBalcao ? 'bg-emerald-500/20' : 'bg-amber-500/20'} rounded-2xl flex-shrink-0`}>
                 <i className={`${icone} text-2xl ${isSenhaBalcao ? 'text-emerald-400' : 'text-amber-400'}`} />
@@ -117,9 +118,9 @@ export default function IdentificacaoKiosk({ modo, total, pagarNaEntrega, onCont
           </div>
 
           {/* Coluna direita — display + teclado */}
-          <div className="flex flex-col items-center gap-2">
+          <div className="flex flex-col items-center gap-2 portrait:w-full">
             {/* Display do número */}
-            <div className="w-64 bg-zinc-800 rounded-2xl px-4 py-3 text-center border border-zinc-700">
+            <div className="w-64 portrait:w-full bg-zinc-800 rounded-2xl px-4 py-3 text-center border border-zinc-700">
               <p className="text-zinc-500 text-xs font-semibold mb-1">{labelDisplay}</p>
               <p className={`font-black leading-none ${numeroPager ? 'text-white text-6xl' : 'text-zinc-600 text-4xl'}`}>
                 {numeroPager || placeholderDisplay}
@@ -137,7 +138,7 @@ export default function IdentificacaoKiosk({ modo, total, pagarNaEntrega, onCont
                     else if (d !== '') { setNumeroPager((v) => (v + d).slice(0, 3)); setErro(''); }
                   }}
                   disabled={d === ''}
-                  className={`w-20 h-14 flex items-center justify-center rounded-xl text-xl font-bold cursor-pointer transition-all select-none ${
+                  className={`w-20 h-14 portrait:w-24 portrait:h-16 portrait:text-2xl flex items-center justify-center rounded-xl text-xl font-bold cursor-pointer transition-all select-none ${
                     d === ''
                       ? 'opacity-0 pointer-events-none'
                       : d === '⌫'

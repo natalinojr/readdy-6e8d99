@@ -39,11 +39,12 @@ export default function CpfKiosk({ total, onContinuar, onVoltar }: Props) {
   };
 
   return (
-    <div className="flex flex-col items-center justify-center h-full p-4 text-center overflow-hidden">
-      <div className="flex items-center gap-6 w-full max-w-3xl">
+    <div className="flex flex-col items-center justify-center h-full p-4 text-center overflow-hidden portrait:overflow-y-auto portrait:py-6">
+      {/* Tablet deitado: duas colunas. Tablet em pé: explicação em cima, teclado embaixo. */}
+      <div className="flex portrait:flex-col items-center gap-6 portrait:gap-4 w-full max-w-3xl portrait:max-w-sm">
 
         {/* Coluna esquerda — explicação */}
-        <div className="flex-1 flex flex-col gap-3 text-left">
+        <div className="flex-1 portrait:flex-none flex flex-col gap-3 text-left portrait:text-center portrait:items-center">
           <div className="flex items-center gap-3">
             <div className="w-12 h-12 flex items-center justify-center bg-amber-500/20 rounded-2xl flex-shrink-0">
               <i className="ri-file-text-line text-2xl text-amber-400" />
@@ -51,22 +52,22 @@ export default function CpfKiosk({ total, onContinuar, onVoltar }: Props) {
             <h2 className="text-2xl font-black text-white">{t('cliente.cpfNaNota')}</h2>
           </div>
           <p className="text-zinc-400 text-base">{t('cliente.cpfExplicacao')}</p>
-          <div className="bg-zinc-800 rounded-2xl px-6 py-3 self-start">
+          <div className="bg-zinc-800 rounded-2xl px-6 py-3 self-start portrait:self-center">
             <p className="text-zinc-400 text-sm mb-0.5">{t('cliente.totalPedido')}</p>
             <p className="text-amber-400 font-black text-2xl">{fmt(total)}</p>
           </div>
         </div>
 
         {/* Coluna direita — display + teclado */}
-        <div className="flex flex-col items-center gap-2">
-          <div className="w-64 bg-zinc-800 rounded-2xl px-3 py-3 text-center border border-zinc-700 overflow-hidden">
+        <div className="flex flex-col items-center gap-2 portrait:w-full">
+          <div className="w-64 portrait:w-full bg-zinc-800 rounded-2xl px-3 py-3 text-center border border-zinc-700 overflow-hidden">
             <p className="text-zinc-500 text-xs font-semibold mb-1">
               {ehCnpj ? 'CNPJ' : 'CPF'}
             </p>
             {/* CNPJ formatado tem 18 caracteres: em uma linha só, com fonte menor,
                 senão o final ("-75") some na borda do display. */}
             <p className={`font-black leading-none whitespace-nowrap tracking-tight ${
-              !digitos ? 'text-zinc-600 text-xl' : ehCnpj ? 'text-white text-xl' : 'text-white text-2xl'
+              !digitos ? 'text-zinc-600 text-xl portrait:text-2xl' : ehCnpj ? 'text-white text-xl portrait:text-2xl' : 'text-white text-2xl portrait:text-3xl'
             }`}>
               {digitos ? mascaraCpfCnpj(digitos) : '000.000.000-00'}
             </p>
@@ -79,7 +80,7 @@ export default function CpfKiosk({ total, onContinuar, onVoltar }: Props) {
                 key={i}
                 onClick={() => teclar(d)}
                 disabled={d === ''}
-                className={`w-20 h-14 flex items-center justify-center rounded-xl text-xl font-bold cursor-pointer transition-all select-none ${
+                className={`w-20 h-14 portrait:w-24 portrait:h-16 portrait:text-2xl flex items-center justify-center rounded-xl text-xl font-bold cursor-pointer transition-all select-none ${
                   d === ''
                     ? 'opacity-0 pointer-events-none'
                     : d === '⌫'
