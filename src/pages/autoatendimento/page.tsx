@@ -28,7 +28,7 @@ import { type ItemPedidoCliente } from '../../types/mesaCliente';
 import { useIdiomaCardapio } from '../../hooks/useIdiomaCardapio';
 import { edgeUrl } from '../../lib/idiomaCardapio';
 import SeletorIdioma from '../../components/SeletorIdioma';
-import { haVersaoNova, recarregarApp } from '../../lib/versaoApp';
+import { haVersaoNova, recarregarAppSozinho } from '../../lib/versaoApp';
 import type { DestinoInfo } from '../../contexts/PDVContext';
 
 // ── ErrorBoundary local para a página de autoatendimento ────────────────────
@@ -238,7 +238,7 @@ function AutoatendimentoPageInner() {
   }, []);
   const ocioso = etapa === 'welcome' && carrinho.length === 0;
   useEffect(() => {
-    if (versaoNova && ocioso) recarregarApp();
+    if (versaoNova && ocioso) recarregarAppSozinho();
   }, [versaoNova, ocioso]);
 
   useEffect(() => {
