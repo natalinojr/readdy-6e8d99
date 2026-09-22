@@ -11,6 +11,9 @@ import { lerInsumos, gravarNaEdge, rotuloUnidade, qtdBR, type InsumoLido } from 
 type Passo = 'carregando' | 'categoria' | 'contando' | 'resumo' | 'gravando' | 'fim';
 const SEM_CAT = 'Sem categoria';
 const catDe = (i: InsumoLido) => (i.categoria && i.categoria.trim() ? i.categoria : SEM_CAT);
+// Categorias em ordem alfabética, "Sem categoria" por último (mesma ordem da tela de contagem).
+const compararCategoria = (a: string, b: string) =>
+  a === b ? 0 : a === SEM_CAT ? 1 : b === SEM_CAT ? -1 : a.localeCompare(b, 'pt-BR');
 // Unidade do banco → UnidadeEstoque do front (formato dos itens que a tela envia)
 const unidadeFront = (u: string) => (u === 'unit' ? 'un' : u === 'L' ? 'l' : u);
 
@@ -27,7 +30,7 @@ export default function ContagemRapida({ onFechar, irPara }: AcaoProps) {
   const categorias = useMemo(() => {
     const m = new Map<string, number>();
     insumos.forEach((i) => m.set(catDe(i), (m.get(catDe(i)) ?? 0) + 1));
-    return [...m.entries()].sort((a, b) => a[0].localeCompare(b[0], 'pt-BR'));
+    return [...m.entries()].sort((a, b) => compararCategoria(a[0], b[0]));
   }, [insumos]);
 
   useEffect(() => {
@@ -46,12 +49,14 @@ export default function ContagemRapida({ onFechar, irPara }: AcaoProps) {
   }, []);
 
   const perguntar = (i: InsumoLido, n: number, total: number) => {
-    r.bot(`(${n}/${total}) *${i.nome}*\nNo sistema: ${qtdBR(i.estoque)} ${rotuloUnidade(i.unidadeDb)}. Quanto tem?`);
+    r.bot(`(${n}/${total}) ${catDe(i)} › *${i.nome}*\nNo sistema: ${qtdBR(i.estoque)} ${rotuloUnidade(i.unidadeDb)}. Quanto tem?`);
   };
 
   const escolherCategoria = (c: string) => {
     r.eu(c);
-    const lista = c === 'Todas' ? insumos : insumos.filter((i) => catDe(i) === c);
+    // "Todas" percorre categoria por categoria: insumos da mesma categoria sempre em sequência.
+    const lista = (c === 'Todas' ? [...insumos] : insumos.filter((i) => catDe(i) === c))
+      .sort((a, b) => compararCategoria(catDe(a), catDe(b)) || a.nome.localeCompare(b.nome, 'pt-BR'));
     setFila(lista);
     setPos(0);
     perguntar(lista[0], 1, lista.length);

@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, Fragment } from 'react';
 import { useEstoque, type InventarioItemContado } from '../../../contexts/EstoqueContext';
 import { useAuth } from '../../../contexts/AuthContext';
 import ConfirmarInventarioModal from './ConfirmarInventarioModal';
@@ -16,6 +16,16 @@ interface Props {
   /** Se true, ignora rascunho existente e começa do zero */
   startFresh?: boolean;
 }
+
+const SEM_CATEGORIA = 'Sem categoria';
+const catDe = (c: string | undefined) => (c && c.trim() ? c.trim() : SEM_CATEGORIA);
+// Ordem das categorias: alfabética, "Sem categoria" por último.
+const compararCategoria = (a: string, b: string) => {
+  if (a === b) return 0;
+  if (a === SEM_CATEGORIA) return 1;
+  if (b === SEM_CATEGORIA) return -1;
+  return a.localeCompare(b, 'pt-BR');
+};
 
 const fmt = (v: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
@@ -114,13 +124,36 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
 
   const insumosFiltrados = useMemo(() => {
     return insumos
-      .filter((i) => categoriaFiltro === 'Todas' || i.categoria === categoriaFiltro)
+      .filter((i) => categoriaFiltro === 'Todas' || catDe(i.categoria) === categoriaFiltro)
       .filter((i) => {
         if (!apenasComDiff) return true;
         const contado = parseFloat(contagens[i.id] ?? '');
         return !isNaN(contado) && contado !== i.estoqueAtual;
       });
   }, [insumos, categoriaFiltro, apenasComDiff, contagens]);
+
+  // Contagem em sequência: insumos da mesma categoria sempre juntos (categoria em ordem
+  // alfabética, "Sem categoria" por último; nome em ordem alfabética dentro dela).
+  const grupos = useMemo(() => {
+    const porCategoria = new Map<string, typeof insumosFiltrados>();
+    for (const i of insumosFiltrados) {
+      const c = catDe(i.categoria);
+      const arr = porCategoria.get(c) ?? [];
+      arr.push(i);
+      porCategoria.set(c, arr);
+    }
+    return Array.from(porCategoria.entries())
+      .sort(([a], [b]) => compararCategoria(a, b))
+      .map(([categoria, itens]) => ({
+        categoria,
+        itens: [...itens].sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR')),
+      }));
+  }, [insumosFiltrados]);
+
+  const categoriasDisponiveis = useMemo(
+    () => Array.from(new Set(insumos.map((i) => catDe(i.categoria)))).sort(compararCategoria),
+    [insumos],
+  );
 
   // Calcula os itens com diferença para o resumo inferior
   const itensComDiferenca = useMemo(() => {
@@ -238,7 +271,7 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
       {/* Filtros */}
       <div className="flex items-center gap-3 flex-wrap">
         <div className="flex items-center gap-1 bg-zinc-100 rounded-lg p-1 overflow-x-auto">
-          {['Todas', ...Array.from(new Set(insumos.map(i => i.categoria).filter(Boolean)))].map((c) => (
+          {['Todas', ...categoriasDisponiveis].map((c) => (
             <button
               key={c}
               onClick={() => setCategoriaFiltro(c)}
@@ -264,7 +297,14 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
       {/* Tabela de contagem */}
       {/* Celular: cartão por insumo, com input grande para digitar andando pelo estoque */}
       <ul className="md:hidden space-y-2">
-        {insumosFiltrados.map((insumo) => {
+        {grupos.map(({ categoria, itens }) => (
+          <Fragment key={categoria}>
+            <li className="pt-2 first:pt-0 flex items-center gap-2">
+              <span className="text-[11px] font-bold uppercase tracking-wide text-zinc-500">{categoria}</span>
+              <span className="text-[10px] text-zinc-400">({itens.length})</span>
+              <span className="flex-1 h-px bg-zinc-200" />
+            </li>
+        {itens.map((insumo) => {
           const rawVal = contagens[insumo.id] ?? '';
           const contado = rawVal === '' ? NaN : parseFloat(rawVal);
           const diff = isNaN(contado) ? 0 : parseFloat((contado - insumo.estoqueAtual).toFixed(4));
@@ -317,6 +357,8 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
             </li>
           );
         })}
+          </Fragment>
+        ))}
         {insumosFiltrados.length === 0 && (
           <div className="text-center py-8">
             <i className="ri-search-line text-2xl text-zinc-300 block mb-1" />
@@ -339,7 +381,15 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-50">
-              {insumosFiltrados.map((insumo) => {
+              {grupos.map(({ categoria, itens }) => (
+                <Fragment key={categoria}>
+                  <tr className="bg-zinc-50/80">
+                    <td colSpan={6} className="px-4 py-2">
+                      <span className="text-[11px] font-bold uppercase tracking-wide text-zinc-500">{categoria}</span>
+                      <span className="ml-1.5 text-[10px] text-zinc-400">({itens.length})</span>
+                    </td>
+                  </tr>
+              {itens.map((insumo) => {
                 const rawVal = contagens[insumo.id] ?? '';
                 const contado = rawVal === '' ? NaN : parseFloat(rawVal);
                 const diff = isNaN(contado) ? 0 : parseFloat((contado - insumo.estoqueAtual).toFixed(4));
@@ -401,6 +451,8 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
                   </tr>
                 );
               })}
+                </Fragment>
+              ))}
             </tbody>
           </table>
           {insumosFiltrados.length === 0 && (
