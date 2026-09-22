@@ -519,10 +519,13 @@ async function fetchReports(admin: Admin, tenantId: string, cfg: any, token: str
     .select('file_name, status').eq('tenant_id', tenantId).limit(2000);
   const done = new Set((known ?? []).filter((k: any) => k.status === 'success').map((k: any) => k.file_name));
 
+  // CUIDADO: o MP não usa o prefixo no começo do nome — ele PREFIXA o nosso prefixo. Pedimos
+  // `erpos-7221d7f3` e o arquivo saiu `reserve-erpos-7221d7f3-2026-09-22-054037.csv`. Por isso
+  // aqui é `includes`, não `startsWith` (com `startsWith` nenhum relatório era importado).
   const prefix = String(cfg.release_prefix ?? '').trim().toLowerCase();
   const pending = items
     .map((it) => ({ it, name: reportFileName(it) }))
-    .filter(({ name }) => name && !done.has(name) && (!prefix || name.toLowerCase().startsWith(prefix)))
+    .filter(({ name }) => name && !done.has(name) && (!prefix || name.toLowerCase().includes(prefix)))
     .sort((a, b) => String(b.it?.created_at ?? b.it?.date_created ?? '').localeCompare(String(a.it?.created_at ?? a.it?.date_created ?? '')))
     .slice(0, MAX_REPORTS_PER_RUN);
 

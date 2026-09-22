@@ -323,7 +323,12 @@ Pedido do dono: Paranaguá passa a usar a maquininha do Mercado Pago; "vamos ter
 
 E, principalmente: **salvar a configuração NÃO liga o agendamento** — ela volta com `scheduled: false`. Quem agenda é um segundo passo, `POST /v1/account/release_report/schedule` (201, já enfileira o primeiro arquivo). Só depois o `GET /config` mostra `scheduled: true`.
 
-**Não verificado ainda** (precisa da loja): cobrança real na maquininha pelo caixa (`pdv_terminal_id` ainda não escolhido) e o parse de um CSV real — o primeiro arquivo do relatório só é gerado pelo MP no dia seguinte.
+**Relatório de Liberações FUNCIONANDO de ponta a ponta (2026-09-22)** — e o caminho até lá tinha dois defeitos meus, os dois silenciosos:
+1. **O cron nunca rodou.** `fn_mp_sync_all` saiu com `search_path = public`, mas a extensão `http` está em `extensions` e os segredos em `vault`: todo dia às 07h20 o job morria com `type "http_request" does not exist` e nada avisava. Stone e Inter já usavam `public, extensions, vault` — copiar esse search_path em TODO cron que chama Edge Function. Diagnóstico: `cron.job_run_details` guarda o erro de cada execução; é o primeiro lugar a olhar quando "o automático não rodou".
+2. **O MP PREFIXA o prefixo.** Pedimos `file_name_prefix = 'erpos-<tenant8>'` e o arquivo nasceu `reserve-erpos-7221d7f3-2026-09-22-054037.csv`. O filtro usava `startsWith(prefixo)` e descartava justamente o arquivo certo — virou `includes`.
+Depois dos dois: arquivo baixado, 20 linhas lidas, **4 movimentos** gravados no extrato (as linhas de `payment`/`refund` são puladas de propósito, porque já entram pela busca de pagamentos). Ainda não houve saque na conta, então o casamento saque × crédito no banco segue sem ser exercitado.
+
+**Não verificado ainda** (precisa da loja): cobrança real na maquininha pelo caixa e o casamento de um saque de verdade.
 
 ### 2026-09-16 — Tráfego Pago › Agente: gestor de tráfego pago com IA (regras de mercado + Claude + escrita na Meta)
 
