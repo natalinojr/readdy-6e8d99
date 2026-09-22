@@ -148,7 +148,7 @@ function OpcoesKiosk({ item, onAdicionar, onClose, tr }: OpcoesKioskProps) {
   const [avisoMax, setAvisoMax] = useState('');
   const [tentouAdicionar, setTentouAdicionar] = useState(false);
   const grupoFaltando = primeiroGrupoFaltando(item.opcoes, selecionadas);
-  const erro = avisoMax || (tentouAdicionar && grupoFaltando ? mensagemGrupoFaltando(grupoFaltando) : '');
+  const erro = avisoMax || (tentouAdicionar && grupoFaltando ? mensagemGrupoFaltando(grupoFaltando, t, tr('option_group', grupoFaltando.grupoId) ?? undefined) : '');
   const [mostrarScrollHint, setMostrarScrollHint] = useState(true);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -166,7 +166,7 @@ function OpcoesKiosk({ item, onAdicionar, onClose, tr }: OpcoesKioskProps) {
 
   const toggleOpcao = (grupo: NonNullable<ItemCardapioPublico['opcoes']>[number], opcao: OpcaoTrackKiosk) => {
     const r = toggleOpcaoGrupo(selecionadas[grupo.grupo] ?? [], opcao, grupo);
-    setAvisoMax(r.bloqueado ? mensagemMaximoAtingido(grupo) : '');
+    setAvisoMax(r.bloqueado ? mensagemMaximoAtingido(grupo, t, tr('option_group', grupo.grupoId) ?? undefined) : '');
     if (!r.bloqueado) setSelecionadas((prev) => ({ ...prev, [grupo.grupo]: r.selecao }));
   };
 

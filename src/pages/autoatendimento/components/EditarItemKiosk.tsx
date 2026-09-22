@@ -178,12 +178,12 @@ export default function EditarItemKiosk({ itemCarrinho, itemCardapio, index, onS
   const [avisoMax, setAvisoMax] = useState('');
   const [tentouSalvar, setTentouSalvar] = useState(false);
   const grupoFaltando = primeiroGrupoFaltando(itemCardapio?.opcoes, selecionadas);
-  const erro = avisoMax || (tentouSalvar && grupoFaltando ? mensagemGrupoFaltando(grupoFaltando) : '');
+  const erro = avisoMax || (tentouSalvar && grupoFaltando ? mensagemGrupoFaltando(grupoFaltando, t, tr('option_group', grupoFaltando.grupoId) ?? undefined) : '');
 
   type GrupoKiosk = NonNullable<ItemCardapioPublico['opcoes']>[number];
   const toggleOpcao = (grupo: GrupoKiosk, opcao: { id?: string; nome: string; precoAdicional: number; grupoNome: string }) => {
     const r = toggleOpcaoGrupo(selecionadas[grupo.grupo] ?? [], opcao, grupo);
-    setAvisoMax(r.bloqueado ? mensagemMaximoAtingido(grupo) : '');
+    setAvisoMax(r.bloqueado ? mensagemMaximoAtingido(grupo, t, tr('option_group', grupo.grupoId) ?? undefined) : '');
     if (!r.bloqueado) setSelecionadas((prev) => ({ ...prev, [grupo.grupo]: r.selecao }));
   };
 

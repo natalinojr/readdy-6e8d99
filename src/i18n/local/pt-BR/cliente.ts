@@ -133,4 +133,7 @@ export default {
   'cliente.pixConfirmado': "PIX Confirmado!",
   'cliente.pagamentoRecebido': "Pagamento recebido com sucesso",
   'cliente.aguardandoPagamento': "Aguardando pagamento",
+  'cliente.escolhaGrupo': "Escolha: {{grupo}}",
+  'cliente.escolhaGrupoMin': "Escolha: {{grupo}} (mínimo {{min}})",
+  'cliente.maximoOpcoes': "Máximo de {{max}} opções em: {{grupo}}",
 };

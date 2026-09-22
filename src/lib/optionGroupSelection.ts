@@ -61,11 +61,25 @@ export function primeiroGrupoFaltando<G extends GrupoSelecaoRegra>(
   return null;
 }
 
-export function mensagemGrupoFaltando(g: GrupoSelecaoRegra): string {
+/**
+ * Tradutor opcional. Sem ele a mensagem sai em português — é o que as telas do
+ * ERP e os testes esperam. `rotulo` é o nome do grupo já no idioma do cliente:
+ * sem isso o aviso saía metade em inglês e metade em português
+ * ("Choose your second Burrito!!" na tela, "Escolha seu segundo Burrito!!" no
+ * erro logo abaixo).
+ */
+type Tradutor = (chave: string, valores?: Record<string, unknown>) => string;
+
+export function mensagemGrupoFaltando(g: GrupoSelecaoRegra, t?: Tradutor, rotulo?: string): string {
   const min = minExigidoGrupo(g);
-  return min > 1 ? `Escolha: ${g.grupo} (mínimo ${min})` : `Escolha: ${g.grupo}`;
+  const grupo = rotulo ?? g.grupo;
+  if (!t) return min > 1 ? `Escolha: ${grupo} (mínimo ${min})` : `Escolha: ${grupo}`;
+  return min > 1 ? t('cliente.escolhaGrupoMin', { grupo, min }) : t('cliente.escolhaGrupo', { grupo });
 }
 
-export function mensagemMaximoAtingido(g: GrupoSelecaoRegra): string {
-  return `Máximo de ${maxPermitidoGrupo(g)} opções em: ${g.grupo}`;
+export function mensagemMaximoAtingido(g: GrupoSelecaoRegra, t?: Tradutor, rotulo?: string): string {
+  const max = maxPermitidoGrupo(g);
+  const grupo = rotulo ?? g.grupo;
+  if (!t) return `Máximo de ${max} opções em: ${grupo}`;
+  return t('cliente.maximoOpcoes', { max, grupo });
 }

@@ -130,4 +130,7 @@ export default {
   'cliente.pixConfirmado': "PIX confirmed!",
   'cliente.pagamentoRecebido': "Payment received",
   'cliente.aguardandoPagamento': "Waiting for payment",
+  'cliente.escolhaGrupo': "Choose: {{grupo}}",
+  'cliente.escolhaGrupoMin': "Choose: {{grupo}} (at least {{min}})",
+  'cliente.maximoOpcoes': "At most {{max}} options in: {{grupo}}",
 };
