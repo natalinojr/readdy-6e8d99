@@ -20,6 +20,7 @@ export default function CpfKiosk({ total, onContinuar, onVoltar }: Props) {
   const [digitos, setDigitos] = useState('');
   const [erro, setErro] = useState('');
 
+  const ehCnpj = tipoDoc(digitos) === 'CNPJ' || digitos.length > 11;
   const completo = digitos.length === 11 || digitos.length === 14;
   const valido = completo && isValidCpfCnpj(digitos);
 
@@ -58,11 +59,15 @@ export default function CpfKiosk({ total, onContinuar, onVoltar }: Props) {
 
         {/* Coluna direita — display + teclado */}
         <div className="flex flex-col items-center gap-2">
-          <div className="w-64 bg-zinc-800 rounded-2xl px-4 py-3 text-center border border-zinc-700">
+          <div className="w-64 bg-zinc-800 rounded-2xl px-3 py-3 text-center border border-zinc-700 overflow-hidden">
             <p className="text-zinc-500 text-xs font-semibold mb-1">
-              {tipoDoc(digitos) === 'CNPJ' ? 'CNPJ' : 'CPF'}
+              {ehCnpj ? 'CNPJ' : 'CPF'}
             </p>
-            <p className={`font-black leading-none ${digitos ? 'text-white text-3xl' : 'text-zinc-600 text-2xl'}`}>
+            {/* CNPJ formatado tem 18 caracteres: em uma linha só, com fonte menor,
+                senão o final ("-75") some na borda do display. */}
+            <p className={`font-black leading-none whitespace-nowrap tracking-tight ${
+              !digitos ? 'text-zinc-600 text-xl' : ehCnpj ? 'text-white text-xl' : 'text-white text-2xl'
+            }`}>
               {digitos ? mascaraCpfCnpj(digitos) : '000.000.000-00'}
             </p>
             {erro && <p className="text-red-400 text-sm mt-1 font-semibold">{erro}</p>}
