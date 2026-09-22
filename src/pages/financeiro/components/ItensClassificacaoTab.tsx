@@ -234,6 +234,8 @@ export default function ItensClassificacaoTab() {
       nome: data.nome, unidade: data.unidade, categoria: data.categoria, usageType: data.usageType,
       precoUnitario: data.precoUnitario, priceSource: data.priceSource, estoqueMinimo: data.estoqueMinimo,
       purchaseUnit: data.purchaseUnit, purchaseFactor: data.purchaseFactor ?? 1, dreCategoryId: data.dreCategoryId,
+      rastrearEstoque: data.rastrearEstoque, contaInventario: data.contaInventario,
+      unidadeContagem: data.unidadeContagem ?? null, fatorContagem: data.fatorContagem ?? null,
     });
     setBusy(false);
     if (!id) { toastErr('Não foi possível criar o insumo', 'Confira se já não existe um insumo com este nome.'); return; }

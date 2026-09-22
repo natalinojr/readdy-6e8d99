@@ -244,6 +244,11 @@ const STATUS_RANK: Record<string, number> = { Esgotado: 0, 'Crítico': 1, Baixo:
       purchaseUnit: data.purchaseUnit,
       purchaseFactor: data.purchaseFactor ?? 1,
       dreCategoryId: data.dreCategoryId,
+      // Chaves do modal que também não eram repassadas (a edição mostrava e não gravava).
+      rastrearEstoque: data.rastrearEstoque,
+      contaInventario: data.contaInventario,
+      unidadeContagem: data.unidadeContagem ?? null,
+      fatorContagem: data.fatorContagem ?? null,
     });
     await reloadInsumos();
   };
