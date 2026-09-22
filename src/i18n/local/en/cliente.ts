@@ -133,4 +133,10 @@ export default {
   'cliente.escolhaGrupo': "Choose: {{grupo}}",
   'cliente.escolhaGrupoMin': "Choose: {{grupo}} (at least {{min}})",
   'cliente.maximoOpcoes': "At most {{max}} options in: {{grupo}}",
+  'cliente.etapaCpf': "Tax ID",
+  'cliente.cpfNaNota': "Add your tax ID (CPF) to the receipt?",
+  'cliente.cpfExplicacao': "Optional. Enter your CPF (or CNPJ) to get the invoice in your name — or continue without it.",
+  'cliente.semCpf': "Continue without CPF",
+  'cliente.cpfInvalido': "Invalid document, check the numbers",
+  'cliente.cpfFaltamDigitos': "Missing digits",
 };

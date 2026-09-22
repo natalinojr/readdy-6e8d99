@@ -133,4 +133,10 @@ export default {
   'cliente.escolhaGrupo': "Elige: {{grupo}}",
   'cliente.escolhaGrupoMin': "Elige: {{grupo}} (mínimo {{min}})",
   'cliente.maximoOpcoes': "Máximo de {{max}} opciones en: {{grupo}}",
+  'cliente.etapaCpf': "CPF en la nota",
+  'cliente.cpfNaNota': "¿Quieres el CPF en la nota?",
+  'cliente.cpfExplicacao': "Es opcional. Escribe el CPF (o CNPJ) para que la nota salga a tu nombre — o sigue sin informarlo.",
+  'cliente.semCpf': "Continuar sin CPF",
+  'cliente.cpfInvalido': "Documento inválido, revisa los números",
+  'cliente.cpfFaltamDigitos': "Faltan números",
 };

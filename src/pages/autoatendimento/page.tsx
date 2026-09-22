@@ -19,6 +19,7 @@ import CarrinhoKiosk from './components/CarrinhoKiosk';
 import PagamentoKiosk from './components/PagamentoKiosk';
 import DestinoKiosk from './components/DestinoKiosk';
 import IdentificacaoKiosk from './components/IdentificacaoKiosk';
+import CpfKiosk from './components/CpfKiosk';
 import FormaPagamentoKiosk from './components/FormaPagamentoKiosk';
 import KioskConfigModal from './components/KioskConfigModal';
 import PINGate, { isPINAtivo } from './components/PINGate';
@@ -74,16 +75,17 @@ class KioskErrorBoundary extends Component<{ children: ReactNode }, { hasError: 
   }
 }
 
-type Etapa = 'welcome' | 'destino' | 'cardapio' | 'carrinho' | 'identificacao' | 'forma_pagamento' | 'pagamento';
+type Etapa = 'welcome' | 'destino' | 'cardapio' | 'carrinho' | 'identificacao' | 'cpf' | 'forma_pagamento' | 'pagamento';
 type Destino = 'aqui' | 'viagem' | null;
 
-const ETAPAS_FLUXO: Etapa[] = ['cardapio', 'carrinho', 'identificacao', 'forma_pagamento', 'pagamento'];
+const ETAPAS_FLUXO: Etapa[] = ['cardapio', 'carrinho', 'identificacao', 'cpf', 'forma_pagamento', 'pagamento'];
 // Rotulos do passo a passo. Recebem o tradutor porque esta funcao roda fora do
 // componente — o totem inteiro fala o idioma que o cliente escolheu.
 const getEtapasLabel = (pagarNaEntrega: boolean, t: (k: string) => string): Record<string, string> => ({
   cardapio: t('cliente.cardapio'),
   carrinho: t('cliente.etapaRevisar'),
   identificacao: t('cliente.etapaIdentificacao'),
+  cpf: t('cliente.etapaCpf'),
   forma_pagamento: t('cliente.etapaPagamento'),
   pagamento: pagarNaEntrega ? t('cliente.etapaConfirmacao') : t('cliente.etapaPagar'),
 });
@@ -140,6 +142,10 @@ function AutoatendimentoPageInner() {
   const [carrinho, setCarrinho] = useState<ItemPedidoCliente[]>([]);
   const [identifNome, setIdentifNome] = useState('');
   const [identifSenha, setIdentifSenha] = useState('');
+  // CPF/CNPJ que o cliente escolheu colocar na nota (só dígitos). null = sem CPF.
+  const [cpfNota, setCpfNota] = useState<string | null>(null);
+  // A pergunta do CPF só existe onde a nota existe: loja com NFC-e ligada e emissão no balcão.
+  const [perguntarCpf, setPerguntarCpf] = useState(false);
   const [pendingOrderId, setPendingOrderId] = useState<string | null>(null);
   const [pendingOrderNumber, setPendingOrderNumber] = useState<number | null>(null);
   // Pedido pendente já pago (Pix confirmado ou pagamento gravado): não pode mais ser cancelado no totem.
@@ -157,6 +163,23 @@ function AutoatendimentoPageInner() {
   const modoIdentificacao = settings.self_service_id_type;
   const modoPagamento = settings.self_service_payment_type;
   const pularIdentificacao = modoIdentificacao === 'nenhum';
+
+  // Loja emite NFC-e no balcão? Só então o totem pergunta o CPF. Falha de leitura
+  // (RLS, offline) = não pergunta: sem nota, o CPF não teria para onde ir.
+  const tenantIdFiscal = kioskSession?.tenantId ?? user?.tenantId ?? null;
+  useEffect(() => {
+    let vivo = true;
+    if (!tenantIdFiscal) { setPerguntarCpf(false); return; }
+    supabase
+      .from('fiscal_settings')
+      .select('enabled, emit_on_counter')
+      .eq('tenant_id', tenantIdFiscal)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (vivo) setPerguntarCpf(!!data?.enabled && data?.emit_on_counter !== false);
+      }, () => { if (vivo) setPerguntarCpf(false); });
+    return () => { vivo = false; };
+  }, [tenantIdFiscal]);
   const pagarNaEntrega = modoPagamento === 'entrega';
 
   // ── Polling de fallback: verifica sessão a cada 8s quando offline ─────────
@@ -265,6 +288,7 @@ function AutoatendimentoPageInner() {
 
   const etapasVisiveis = ETAPAS_FLUXO.filter((e) => {
     if (e === 'identificacao' && pularIdentificacao) return false;
+    if (e === 'cpf' && !perguntarCpf) return false;
     // Tela de forma de pagamento só aparece no modo "entrega"
     if (e === 'forma_pagamento' && !pagarNaEntrega) return false;
     // Tela de pagamento não aparece no modo "entrega" (vai direto pra confirmação)
@@ -329,9 +353,13 @@ function AutoatendimentoPageInner() {
     setCarrinho((prev) => prev.map((item, i) => (i === index ? { ...item, ...updates } : item)));
   }, []);
 
+  // Depois da identificação (ou direto do carrinho, quando não há identificação)
+  // vem o CPF na nota — se a loja emite NFC-e. Senão, segue para o pagamento.
+  const etapaDepoisDoCpf = (): Etapa => (pagarNaEntrega ? 'forma_pagamento' : 'pagamento');
+
   const handleAvancarCarrinho = () => {
     if (pularIdentificacao) {
-      setEtapa(pagarNaEntrega ? 'forma_pagamento' : 'pagamento');
+      setEtapa(perguntarCpf ? 'cpf' : etapaDepoisDoCpf());
     } else {
       setEtapa('identificacao');
     }
@@ -340,7 +368,12 @@ function AutoatendimentoPageInner() {
   const handleIdentificacaoConcluida = (nome: string, senha: string) => {
     setIdentifNome(nome);
     setIdentifSenha(senha);
-    setEtapa(pagarNaEntrega ? 'forma_pagamento' : 'pagamento');
+    setEtapa(perguntarCpf ? 'cpf' : etapaDepoisDoCpf());
+  };
+
+  const handleCpfConcluido = (cpf: string | null) => {
+    setCpfNota(cpf);
+    setEtapa(etapaDepoisDoCpf());
   };
 
   const handleFormaPagamentoConcluida = (methodId: string, methodName: string) => {
@@ -510,6 +543,8 @@ function AutoatendimentoPageInner() {
           subtotal,
           total_amount: subtotal,
           is_training: user?.modoTreino ?? false,
+          // CPF na nota: a NFC-e automática (order-write › triggerFiscalEmit) lê orders.customer_cpf.
+          customer_cpf: cpfNota,
           notes: notasPedido,
           // Pix já pago: o pedido nasce pago em vez de ficar "em aberto" até o record_payment.
           ...(typeof paidPixPaymentId === 'string' ? { paid_pix_payment_id: paidPixPaymentId } : {}),
@@ -532,7 +567,7 @@ function AutoatendimentoPageInner() {
       console.error('[Autoatendimento] Exceção ao criar pedido após retries:', e);
       return null;
     }
-  }, [carrinho, identifNome, identifSenha, modoIdentificacao, pagarNaEntrega, formaPagamentoNome, destino, getTenantAndSession, submitOrder, user?.modoTreino, kioskSession?.accessToken]);
+  }, [carrinho, identifNome, identifSenha, cpfNota, modoIdentificacao, pagarNaEntrega, formaPagamentoNome, destino, getTenantAndSession, submitOrder, user?.modoTreino, kioskSession?.accessToken]);
 
 
   // paidPixPaymentId só vale como texto: esta função também é usada direto em botões (recebe o evento).
@@ -740,6 +775,9 @@ function AutoatendimentoPageInner() {
           total_amount: subtotal,
           cash_register_id: caixa?.id ?? null,
           is_training: user?.modoTreino ?? false,
+          // buildOfflineCreateOrderBody espalha o create_payload antes dos campos legados:
+          // o CPF da nota sobrevive à sincronização.
+          create_payload: cpfNota ? { customer_cpf: cpfNota } : undefined,
           payments: [],
         };
 
@@ -758,6 +796,7 @@ function AutoatendimentoPageInner() {
     setDestino(null);
     setIdentifNome('');
     setIdentifSenha('');
+    setCpfNota(null);
     setPendingOrderId(null);
     setPendingOrderNumber(null);
     marcarPedidoPago(false);
@@ -767,7 +806,7 @@ function AutoatendimentoPageInner() {
     setEtapa('welcome');
   }, [
     pendingOrderId, caixa, getTenantAndSession, carrinho,
-    identifNome, identifSenha, modoIdentificacao,
+    identifNome, identifSenha, cpfNota, modoIdentificacao,
     addPedido, reloadOrders, kioskInvoke, registrarPagamento,
   ]);
 
@@ -791,6 +830,7 @@ function AutoatendimentoPageInner() {
     setDestino(null);
     setIdentifNome('');
     setIdentifSenha('');
+    setCpfNota(null);
     setPendingOrderId(null);
     setPendingOrderNumber(null);
     marcarPedidoPago(false);
@@ -1266,11 +1306,18 @@ function AutoatendimentoPageInner() {
             onVoltar={() => setEtapa('carrinho')}
           />
         )}
+        {etapa === 'cpf' && (
+          <CpfKiosk
+            total={carrinho.reduce((s, i) => s + i.preco * i.quantidade, 0)}
+            onContinuar={handleCpfConcluido}
+            onVoltar={() => setEtapa(pularIdentificacao ? 'carrinho' : 'identificacao')}
+          />
+        )}
         {etapa === 'forma_pagamento' && (
           <FormaPagamentoKiosk
             total={carrinho.reduce((s, i) => s + i.preco * i.quantidade, 0)}
             onContinuar={handleFormaPagamentoConcluida}
-            onVoltar={() => setEtapa(pularIdentificacao ? 'carrinho' : 'identificacao')}
+            onVoltar={() => setEtapa(perguntarCpf ? 'cpf' : (pularIdentificacao ? 'carrinho' : 'identificacao'))}
           />
         )}
         {etapa === 'pagamento' && (

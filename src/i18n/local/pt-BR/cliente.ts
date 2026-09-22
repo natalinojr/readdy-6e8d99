@@ -136,4 +136,10 @@ export default {
   'cliente.escolhaGrupo': "Escolha: {{grupo}}",
   'cliente.escolhaGrupoMin': "Escolha: {{grupo}} (mínimo {{min}})",
   'cliente.maximoOpcoes': "Máximo de {{max}} opções em: {{grupo}}",
+  'cliente.etapaCpf': "CPF na nota",
+  'cliente.cpfNaNota': "Quer CPF na nota?",
+  'cliente.cpfExplicacao': "É opcional. Digite o CPF (ou CNPJ) para a nota fiscal sair identificada — ou siga sem informar.",
+  'cliente.semCpf': "Continuar sem CPF",
+  'cliente.cpfInvalido': "Documento inválido, confira os números",
+  'cliente.cpfFaltamDigitos': "Faltam números",
 };
