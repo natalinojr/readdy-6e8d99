@@ -426,9 +426,11 @@ const pointErr = (b: any) => {
 // `externalRef` é o que aparece em EXTERNAL_REFERENCE no Relatório de Liberações e na busca de
 // pagamentos: com o número do pedido ali, a conciliação casa venda × pedido sem adivinhar valor.
 async function createPointOrder(cfg: ProviderCfg, chargeId: string, amount: number, method: string, desc: string, externalRef?: string) {
-  // `default_type` é OPCIONAL na order do Point. Com Pix, se o Mercado Pago recusar a forma,
-  // mandamos a order SEM forma definida e a própria maquininha mostra o menu ao cliente.
-  const tipo = method === 'debit_card' ? 'debit_card' : method === 'pix' ? 'pix' : 'credit_card';
+  // Formas aceitas em `config.payment_method.default_type`, ditas pelo próprio Mercado Pago
+  // (erro `property_value` em 2026-09-21): 'credit_card', 'debit_card', 'qr', 'voucher_card'.
+  // Pix na maquininha é **'qr'** — 'pix' é recusado. `default_type` é opcional: se a forma for
+  // recusada, reenviamos sem forma definida e a própria maquininha mostra o menu ao cliente.
+  const tipo = method === 'debit_card' ? 'debit_card' : method === 'pix' ? 'qr' : 'credit_card';
   const montar = (defaultType: string | null) => JSON.stringify({
       type: 'point', external_reference: (externalRef ?? chargeId).slice(0, 60), expiration_time: POINT_EXPIRATION, description: desc.slice(0, 150),
       transactions: { payments: [{ amount: amount.toFixed(2) }] },
@@ -452,8 +454,8 @@ async function createPointOrder(cfg: ProviderCfg, chargeId: string, amount: numb
   let r = await mpFetch(String(cfg.access_token), '/v1/orders', {
     method: 'POST', headers: { 'X-Idempotency-Key': chargeId }, body: montar(tipo),
   });
-  if (!r.ok && tipo === 'pix') {
-    log('WARN', 'create_point_order', 'pix recusado como default_type; reenviando sem forma definida', { chargeId, status: r.status, body: r.body });
+  if (!r.ok && tipo === 'qr') {
+    log('WARN', 'create_point_order', 'qr recusado como default_type; reenviando sem forma definida', { chargeId, status: r.status, body: r.body });
     r = await mpFetch(String(cfg.access_token), '/v1/orders', {
       method: 'POST', headers: { 'X-Idempotency-Key': `${chargeId}-open` }, body: montar(null),
     });
