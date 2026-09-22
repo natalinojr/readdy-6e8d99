@@ -141,12 +141,16 @@ export default function TelaCartaoKiosk({ total, tenantId, method, onPago, onVol
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Passou tempo demais sem a maquininha pegar a cobrança: quase sempre é a tela dela apagada.
+  // Demorou e ninguém pagou. Duas causas, as duas medidas na loja em 2026-09-22: a maquininha
+  // não pegou a cobrança (tela apagada) OU pegou e não trouxe a tela para a frente — depois de
+  // um cancelamento a Point fica na tela principal e a cobrança entra calada em "Vendas
+  // vinculadas". Por isso o aviso não depende de `at_terminal`: nos dois casos a saída é a
+  // mesma, tocar na maquininha.
   useEffect(() => {
-    if (estado !== 'aguardando' || naMaquininha) return;
-    const t = setTimeout(() => setDemorou(true), 6000);
+    if (estado !== 'aguardando') return;
+    const t = setTimeout(() => setDemorou(true), 8000);
     return () => clearTimeout(t);
-  }, [estado, naMaquininha]);
+  }, [estado]);
 
   // Sair: só libera a tela DEPOIS que a maquininha soltar o valor. Antes o totem voltava na
   // hora e a cobrança continuava no visor — o cliente escolhia outra forma e corria o risco de
@@ -203,6 +207,8 @@ export default function TelaCartaoKiosk({ total, tenantId, method, onPago, onVol
   // A cobrança existe no Mercado Pago, mas nenhuma maquininha pegou: manda acordar a tela em
   // vez de pedir o cartão numa máquina apagada.
   const precisaAcordar = estado === 'aguardando' && demorou && !naMaquininha;
+  // Pegou a cobrança mas o cliente continua parado: a tela dela provavelmente não abriu.
+  const naoAbriu = estado === 'aguardando' && demorou && naMaquininha;
 
   if (estado === 'aprovado') {
     return (
@@ -274,6 +280,11 @@ export default function TelaCartaoKiosk({ total, tenantId, method, onPago, onVol
             : `Aproxime ou insira o cartão de ${rotulo}`}
         </p>
       </div>
+      {naoAbriu && !aviso && (
+        <p className="max-w-md text-amber-400 text-sm md:text-xl bg-amber-500/10 border border-amber-500/30 rounded-xl px-4 py-3">
+          A maquininha não abriu sozinha? <span className="font-bold">Toque na tela dela</span> que o valor aparece.
+        </p>
+      )}
       {aviso && (
         <p className="max-w-md text-amber-400 text-sm md:text-lg bg-amber-500/10 border border-amber-500/30 rounded-xl px-4 py-3">
           {aviso}
