@@ -51,6 +51,7 @@ const PrivacidadePage = lazy(() => import('@/pages/privacidade/page'));
 const ContratacaoPage = lazy(() => import('@/pages/contratacao/page'));
 const NfsePage = lazy(() => import('@/pages/nfse/page'));
 const AssistentePage = lazy(() => import('@/pages/assistente/page'));
+const ReceberPage = lazy(() => import('@/pages/receber/page'));
 
 const MesaQRPage = lazy(() => import('../pages/mesa-qr/page'));
 const VoucherLinkPage = lazy(() => import('../pages/voucher-link/page'));
@@ -102,6 +103,8 @@ const routes: RouteObject[] = [
       // espera ação. Ficam lado a lado, em listas separadas, de propósito.
       { path: 'pendencias', element: <PendenciasPage /> },
       { path: 'estoque', element: <EstoquePage /> },
+      // Celular da loja: receber mercadoria por etapas (nota, compra, cupom, sem nota)
+      { path: 'receber', element: <ReceberPage /> },
       { path: 'aprovacoes', element: <AprovacoesPage /> },
       { path: 'configuracoes', element: <ConfiguracoesPage /> },
       { path: 'config-delivery', element: <ConfigDeliveryPage /> },

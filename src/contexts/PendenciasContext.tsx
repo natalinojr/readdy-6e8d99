@@ -54,6 +54,9 @@ export const KIND_CONFIG: Record<string, { label: string; icone: string; corBg: 
   // Sangria do PDV × cupom (2026-09-19): fornecedor pago em dinheiro sem cupom / compra em dinheiro que não saiu do caixa.
   sangria_sem_cupom: { label: 'Sangria sem cupom', icone: 'ri-camera-line', corBg: 'bg-amber-100', corTexto: 'text-amber-700' },
   sangria_nao_saiu: { label: 'Compra em dinheiro', icone: 'ri-wallet-3-line', corBg: 'bg-amber-100', corTexto: 'text-amber-700' },
+  recebimento_sem_nota: { label: 'Chegou sem nota', icone: 'ri-truck-line', corBg: 'bg-orange-100', corTexto: 'text-orange-700' },
+  recebimento_parado: { label: 'Recebimento parado', icone: 'ri-truck-line', corBg: 'bg-orange-100', corTexto: 'text-orange-700' },
+  compra_pelo_celular: { label: 'Compra pelo celular', icone: 'ri-smartphone-line', corBg: 'bg-sky-100', corTexto: 'text-sky-700' },
 };
 export const KIND_FALLBACK = { label: 'Pendência', icone: 'ri-inbox-line', corBg: 'bg-zinc-100', corTexto: 'text-zinc-700' };
 export const kindConfig = (kind: string) => KIND_CONFIG[kind] ?? KIND_FALLBACK;

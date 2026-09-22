@@ -25,7 +25,7 @@ const PUBLIC_ROUTES = ['/login', '/onboarding', '/invite', '/autoatendimento', '
 // Rotas full-screen protegidas — sem sidebar/topbar, MAS exigem auth + tenant
 const FULL_SCREEN_PROTECTED = ['/modulos'];
 // Terminais — full-screen com UI propria
-const TERMINAL_ROUTES = ['/pdv/', '/kds', '/gestor-pedidos', '/gestor-entregas', '/tarefas'];
+const TERMINAL_ROUTES = ['/pdv/', '/kds', '/gestor-pedidos', '/gestor-entregas', '/tarefas', '/receber'];
 // Usuário sem loja com acesso só a módulo (user_module_access): rotas que funcionam sem tenant
 const NO_TENANT_ROUTES = ['/contratacao', '/notas-servico'];
 

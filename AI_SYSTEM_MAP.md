@@ -80,6 +80,7 @@ Rotas dentro do layout autenticado:
 - `/pedidos`: `src/pages/pedidos/page.tsx`
 - `/tarefas`: `src/pages/tarefas/page.tsx` (gestão de tarefas: Lista/Kanban/Calendário/Minhas + campos personalizados — ver PLANO-MODULO-TAREFAS.md)
 - `/estoque`: `src/pages/estoque/page.tsx`
+- `/receber`: `src/pages/receber/page.tsx` (celular da loja: receber mercadoria por etapas — nota, compra lançada, cupom, sem nota; atalho no app instalado e card em Módulos)
 - `/financeiro`: `src/pages/financeiro/page.tsx`
 - `/configuracoes`: `src/pages/configuracoes/page.tsx`
 - `/config-delivery`: `src/pages/config-delivery/page.tsx`
@@ -132,7 +133,7 @@ Estoque, compras e CMV:
 - Contexts/hooks: `EstoqueContext`, `ProducaoContext`, `useCmvReport`, `useCmvRelatorio`, `useItensSemEstoque`, `useStockCriticalAlerts`, `useIngredientCategories`, `useIngredientPriceHistory`, `useSuppliers`.
 - Tabelas: `ingredients`, `ingredient_categories`, `ingredient_batches`, `stock_movements`, `inventory_sessions`, `fin_suppliers`, `fin_purchases`, `fin_purchase_items`.
 - RPCs: `fn_get_ingredients`, `fn_get_stock_movements`, `fn_get_items_sem_estoque`, `fn_get_stock_critical_alerts`, `fn_get_cmv_report`.
-- Edge Functions: `stock-write`, `purchase-write`, `purchase-confirm-delivery`.
+- Edge Functions: `stock-write`, `purchase-write`, `purchase-confirm-delivery`, `receber-mercadoria` (orquestra o recebimento do celular).
 
 Financeiro, RH e conciliacao:
 - **Referencia detalhada: `FINANCEIRO_MAP.md`** (arquitetura, fluxos venda->financeiro e compra->estoque, DRE, problemas conhecidos). Manter atualizado.
@@ -262,6 +263,14 @@ Quando o usuario pedir "muda X":
 ## Historico de solucoes e criterios
 
 Secao viva: registrar aqui padroes, decisoes e pegadinhas reutilizaveis conforme o sistema evolui. Cada entrada com data, contexto e onde foi aplicado.
+
+### 2026-09-22 — Receber mercadoria pelo celular da loja (`/receber`)
+- Tela mobile em tela cheia (rota terminal) com passo a passo: **o que chegou?** → conferir item a item (chegou tudo / chegou diferente + em qual insumo entra) → **como foi pago?** (só se ainda não está lançado) → confirmar. Entradas: lista "Esperando chegar" (NF-e de Notas de entrada ainda não recebidas + compras lançadas sem recebimento), foto do código de barras da DANFE (chave de 44 dígitos via `BarcodeDetector`), foto do cupom (QR da NFC-e → SEFAZ; sem QR → IA do `purchase-receipt-scan`), digitar número, e "chegou sem nota".
+- Edge `receber-mercadoria` **não tem regra de compra própria**: nota nova → `fiscal-inbound import_purchase` (compra sai do XML, nunca da foto); cupom/sem nota → `purchase-write create_purchase`; estoque → `purchase-confirm-delivery` (com o JWT do usuário, grava quem recebeu); pago em dinheiro → `fn_sangria_da_compra` (sangria prevista no PDV). Para as duas primeiras usa a chave interna, porque elas exigem papel de financeiro.
+- **Quem pode:** admin/gerente/financeiro ou papel com `estoque_movimentar` na matriz de permissões (a Edge confere na tabela `permissions`, EN e PT). Para o celular da loja com login de caixa/cozinha, o dono liga "Registrar movimentação de estoque" para o papel.
+- **"Sem nota, mas a nota vem depois"** não lança nada (senão duplica quando a NF-e chegar): cria pendência `recebimento_sem_nota` para o financeiro; o estoque entra quando a nota aparecer na lista e alguém confirmar.
+- Cupom duplicado (o grupo do WhatsApp também lança cupom): barrado pela chave da NFC-e gravada nas notas da compra e por número+fornecedor; compra com o mesmo total (±R$ 0,05) em ±3 dias → a tela pergunta "é a mesma?" antes de lançar (`forcar`).
+- **Pegadinhas resolvidas na revisão (Opus):** (1) a sangria roda LOGO APÓS lançar e antes do recebimento — o "chegou diferente" reduz `total_amount` e a retirada do caixa foi do valor cheio; (2) `lancar` exige `ref` do rascunho (`[ref:…]` em `notes`): reenviar depois de timeout não lança de novo; (3) nota de remessa/devolução ou "nota do mês" (última `settlement='monthly'`) não é lançada pelo celular — vira pendência `recebimento_parado`; (4) quem não é do financeiro não troca o boleto da NF-e por pago/bonificação, e compra a pagar lançada por ele abre pendência `compra_pelo_celular`; (5) "já pago por Pix/cartão" entra PENDENTE (vence hoje) — a conciliação baixa pelo extrato, `paid` aqui contaria a saída duas vezes; (6) número digitado: ponto só é milhar quando também há vírgula (`lerNumeroBR`); (7) cupom sem fator escolhido não manda `units_per_package` — o `purchase-write` converte kg↔g sozinho.
 
 ### 2026-09-21 — Mercado Pago vira a maquininha da loja: conciliação (Fase 1) + cobrança pelo Caixa (Fase 2)
 

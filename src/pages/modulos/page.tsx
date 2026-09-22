@@ -100,6 +100,19 @@ const MODULOS: ModuloCard[] = [
     // Sem `perfis`: quem vê é quem tem 'gestor_pedidos_acessar' (checado abaixo).
   },
   {
+    id: 'receber',
+    titulo: 'Receber mercadoria',
+    descricao: 'Chegou fornecedor? Confere a nota e dá entrada no estoque',
+    icon: 'ri-truck-line',
+    rota: '/receber',
+    acento: '#d97706',
+    acentoText: 'text-amber-700',
+    acentoBg: 'bg-amber-50',
+    acentoBorder: 'border-amber-200/70',
+    tag: 'Cozinha',
+    // Sem `perfis`: quem vê é quem tem 'estoque_movimentar' (checado abaixo).
+  },
+  {
     id: 'gestor_delivery',
     titulo: 'Gestor de Entregas',
     descricao: 'Kanban das entregas por fase, em tempo real',
@@ -488,6 +501,7 @@ export default function ModulosPage() {
     if (m.id === 'gestor_pedidos' && kitchenView !== 'gestor' && kitchenView !== 'ambos') cfgOk = false;
     if (m.id === 'kds' && !hasPermissao('kds_acessar')) cfgOk = false;
     if (m.id === 'gestor_pedidos' && !hasPermissao('gestor_pedidos_acessar')) cfgOk = false;
+    if (m.id === 'receber' && !hasPermissao('estoque_movimentar')) cfgOk = false;
     if (m.id === 'gestao' && !GESTAO_ENTRADA_KEYS.some((k) => hasPermissao(k as PermissaoKey))) cfgOk = false;
     const visible = perfilOk && cfgOk;
     console.log('[Modulos]', m.id, '| perfil:', user?.perfil, '| perfilOk:', perfilOk, '| cfgOk:', cfgOk, '| pdvCfg:', JSON.stringify(pdvCfg), '| visible:', visible);

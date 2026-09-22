@@ -38,6 +38,12 @@
       "short_name": "Minhas",
       "url": "/tarefas",
       "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Receber mercadoria",
+      "short_name": "Receber",
+      "url": "/receber",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
     }
   ]
 }
