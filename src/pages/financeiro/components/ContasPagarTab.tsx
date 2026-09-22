@@ -9,6 +9,7 @@ import { todayBrasilia } from '@/lib/dateUtils';
 import AgingContasPagar from '@/pages/financeiro/components/AgingContasPagar';
 import ContasPagarDREModal from '@/pages/financeiro/components/ContasPagarDREModal';
 import ContasPagarDetalheModal from '@/pages/financeiro/components/ContasPagarDetalheModal';
+import CaixaBoletosModal from '@/pages/financeiro/components/CaixaBoletosModal';
 import DreClassificacaoSelect, { precisaClassificarDRE, useDreEscolha } from '@/pages/financeiro/components/DreClassificacaoSelect';
 import PerguntarAoAssistente from '@/components/feature/PerguntarAoAssistente';
 import { useFocoTela } from '@/lib/assistenteFoco';
@@ -143,6 +144,7 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
   const [agingBucket, setAgingBucket] = useState<string | null>(null);
   const [showAging, setShowAging] = useState(false);
   const [showDREModal, setShowDREModal] = useState(false);
+  const [showCaixaBoletos, setShowCaixaBoletos] = useState(false);
 
   const [showModal, setShowModal] = useState(false);
   const [payModal, setPayModal] = useState<BillPayable | null>(null);
@@ -624,6 +626,14 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
             </button>
           )}
 
+          <button
+            onClick={() => setShowCaixaBoletos(true)}
+            className="hidden sm:flex items-center gap-2 bg-white border border-zinc-200 hover:bg-zinc-50 text-zinc-700 px-3 py-2 rounded-lg text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors"
+            title="Boleto que chega por e-mail vira conta a pagar"
+          >
+            <i className="ri-mail-download-line text-amber-500" /> E-mail
+          </button>
+
           <button onClick={() => exportCSV(filtered)}
             className="hidden sm:flex items-center gap-2 bg-white border border-zinc-200 hover:bg-zinc-50 text-zinc-700 px-3 py-2 rounded-lg text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors">
             <i className="ri-download-2-line" /> CSV
@@ -1074,6 +1084,8 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
       </div>
 
       {/* Modal DRE em massa */}
+      {showCaixaBoletos && <CaixaBoletosModal onClose={() => setShowCaixaBoletos(false)} />}
+
       {showDREModal && (
         <ContasPagarDREModal
           bills={bills}
