@@ -63,9 +63,42 @@ export const EMPTY_MONEY_FLOW: MoneyFlowSettings = {
 };
 
 /** Nomes para as telas (DRE, Receitas...) a partir da configuração. */
-export function moneyFlowLabels(flow?: Partial<MoneyFlowSettings> | null) {
-  const cp = flow?.card_provider ?? null;
-  const card = cp === 'stone' || cp === 'mercadopago' ? CARD_PROVIDERS[cp].label : 'maquininha';
+// ─── Maquininhas da loja (fin_card_providers) ────────────────────────────────
+// A loja pode ter MAIS DE UMA ao mesmo tempo (Paranaguá roda Stone e Mercado Pago
+// juntas). As vendas das duas já caem no mesmo lugar (fin_cash_flow origin
+// 'stone_sale'); o que é por maquininha é a conta onde cai o repasse, o texto do
+// repasse no extrato e o modo do Pix — é isso que o casamento da conciliação lê
+// (fn_card_providers → fn_match_card_deposits / fn_match_mp_payouts).
+export interface CardProviderConfig {
+  provider: CardProvider;
+  deposit_account_id: string | null;
+  deposit_match: string | null;
+  pix_mode: CardPixMode;
+}
+
+export async function fetchCardProviders(tenantId: string): Promise<{ providers: CardProviderConfig[]; error: string | null }> {
+  const { data, error } = await supabase
+    .from('fin_card_providers')
+    .select('provider, deposit_account_id, deposit_match, pix_mode')
+    .eq('tenant_id', tenantId)
+    .eq('is_active', true)
+    .order('provider');
+  if (error) return { providers: [], error: error.message };
+  return { providers: (data ?? []) as CardProviderConfig[], error: null };
+}
+
+/** Nome das maquininhas para as telas: "Stone", "Stone + Mercado Pago", "maquininha". */
+export function cardLabel(providers: { provider: CardProvider }[] | null | undefined, fallback?: CardProvider | null): string {
+  const nomes = (providers ?? [])
+    .map(p => p.provider)
+    .filter(p => p === 'stone' || p === 'mercadopago')
+    .map(p => CARD_PROVIDERS[p].label);
+  if (nomes.length > 0) return nomes.join(' + ');
+  return fallback === 'stone' || fallback === 'mercadopago' ? CARD_PROVIDERS[fallback].label : 'maquininha';
+}
+
+export function moneyFlowLabels(flow?: Partial<MoneyFlowSettings> | null, providers?: { provider: CardProvider }[] | null) {
+  const card = cardLabel(providers, flow?.card_provider ?? null);
   const bank = flow?.bank_provider === 'inter' ? 'Banco Inter' : 'banco principal';
   const pixMode: CardPixMode = flow?.card_pix_mode ?? 'transfer';
   return { card, bank, pixMode };
@@ -182,12 +215,13 @@ export const sumAmount = (rows: { amount: number }[]) => rows.reduce((s, r) => s
 // Fontes da loja + totais de Pix e iFood do período (só busca o que estiver ligado).
 export async function loadRevenueExtras(tenantId: string, startDate: string, endDate: string, kind?: string | null) {
   const { sources, flow } = await fetchRevenueSettings(tenantId, kind);
-  const [pix, ifood, cash] = await Promise.all([
+  const [pix, ifood, cash, cards] = await Promise.all([
     sources.includes('pix') ? fetchPixRecebidos(tenantId, startDate, endDate).then(r => sumAmount(r.rows)) : Promise.resolve(0),
     sources.includes('ifood') ? fetchIfoodSales(tenantId, startDate, endDate).then(r => sumAmount(r.rows)) : Promise.resolve(0),
     sources.includes('cash') ? fetchCashSales(tenantId, startDate, endDate).then(r => sumAmount(r.rows)) : Promise.resolve(0),
+    sources.includes('stone') ? fetchCardProviders(tenantId).then(r => r.providers) : Promise.resolve([] as CardProviderConfig[]),
   ]);
-  return { sources, pix, ifood, cash, labels: moneyFlowLabels(flow) };
+  return { sources, pix, ifood, cash, labels: moneyFlowLabels(flow, cards) };
 }
 
 // Aplica a regra dos recebidos a um snapshot de DRE: zera o que a loja não

@@ -1817,6 +1817,66 @@ Deno.serve(async (req) => {
         break;
       }
 
+      // Maquininhas da loja (fin_card_providers) — a loja pode ter MAIS DE UMA ao mesmo
+      // tempo (Paranaguá roda Stone e Mercado Pago juntas). Cada uma tem a sua conta de
+      // repasse, o seu texto no extrato e o seu modo de Pix. Lista vazia = nenhuma
+      // maquininha (as linhas antigas são apagadas).
+      case 'set_card_providers': {
+        const PROVIDERS = ['stone', 'mercadopago', 'outra'];
+        const PIX_MODES = ['transfer', 'direct', 'none'];
+        const raw = ((payload ?? {}) as { providers?: unknown }).providers;
+        if (!Array.isArray(raw)) {
+          return new Response(JSON.stringify({ error: 'providers deve ser uma lista' }), { status: 400, headers: corsHeaders });
+        }
+        const rows: Record<string, unknown>[] = [];
+        const ids: string[] = [];
+        for (const item of raw) {
+          const p2 = (item ?? {}) as Record<string, unknown>;
+          const provider = String(p2.provider ?? '');
+          if (!PROVIDERS.includes(provider)) {
+            return new Response(JSON.stringify({ error: `Maquininha inválida: ${provider}` }), { status: 400, headers: corsHeaders });
+          }
+          if (rows.some(r => r.provider === provider)) {
+            return new Response(JSON.stringify({ error: `Maquininha repetida: ${provider}` }), { status: 400, headers: corsHeaders });
+          }
+          const pixMode = p2.pix_mode == null ? 'transfer' : String(p2.pix_mode);
+          if (!PIX_MODES.includes(pixMode)) {
+            return new Response(JSON.stringify({ error: `Modo de Pix inválido: ${pixMode}` }), { status: 400, headers: corsHeaders });
+          }
+          const acc = p2.deposit_account_id == null || p2.deposit_account_id === '' ? null : String(p2.deposit_account_id);
+          if (acc) ids.push(acc);
+          const match = p2.deposit_match == null ? '' : String(p2.deposit_match).trim().slice(0, 60);
+          rows.push({
+            tenant_id, provider, deposit_account_id: acc, deposit_match: match || null,
+            pix_mode: pixMode, is_active: true, updated_at: new Date().toISOString(),
+          });
+        }
+        if (ids.length > 0) {
+          const { data: contas, error: contasErr } = await supabase.from('fin_bank_accounts')
+            .select('id').eq('tenant_id', tenant_id).in('id', [...new Set(ids)]);
+          if (contasErr) {
+            return new Response(JSON.stringify({ error: extractErrorMessage(contasErr) }), { status: 500, headers: corsHeaders });
+          }
+          const ok = new Set((contas ?? []).map((c: { id: string }) => c.id));
+          if (ids.some(id => !ok.has(id))) {
+            return new Response(JSON.stringify({ error: 'Conta bancária não encontrada nesta loja' }), { status: 400, headers: corsHeaders });
+          }
+        }
+        const keep = rows.map(r => String(r.provider));
+        // Apaga primeiro o que saiu: sem isso a maquininha removida continuaria casando repasse.
+        let del = supabase.from('fin_card_providers').delete().eq('tenant_id', tenant_id);
+        if (keep.length > 0) del = del.not('provider', 'in', `(${keep.join(',')})`);
+        const { error: delErr } = await del;
+        if (delErr) {
+          return new Response(JSON.stringify({ error: extractErrorMessage(delErr) }), { status: 500, headers: corsHeaders });
+        }
+        if (rows.length === 0) { result = { data: [], error: null }; break; }
+        result = await supabase.from('fin_card_providers')
+          .upsert(rows, { onConflict: 'tenant_id,provider' })
+          .select();
+        break;
+      }
+
       default:
         return new Response(JSON.stringify({ error: `Unknown action: ${action}` }), { status: 400, headers: corsHeaders });
     }
