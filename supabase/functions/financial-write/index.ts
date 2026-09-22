@@ -1755,7 +1755,7 @@ Deno.serve(async (req) => {
 
       // ── Fontes dos recebidos (aba Receitas) ─────────────────────────────
       case 'set_revenue_sources': {
-        const ALLOWED = ['orders', 'stone', 'pix', 'ifood', 'manual'];
+        const ALLOWED = ['orders', 'stone', 'pix', 'ifood', 'cash', 'manual'];
         const raw = (payload ?? {}) as { sources?: unknown };
         const sources = Array.isArray(raw.sources)
           ? [...new Set(raw.sources.map(String))].filter(s => ALLOWED.includes(s))

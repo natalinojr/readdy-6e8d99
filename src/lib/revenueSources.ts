@@ -11,7 +11,7 @@ import { fontesPadrao } from '@/lib/tipoEmpresa';
 // gravam na mesma origin `stone_sale`, justamente para que DRE, Receitas e Visão Geral não
 // precisem saber qual maquininha a loja usa. Não renomear no banco: o front publicado e a
 // edge ifood-financial gravam/leem essas chaves.
-export type RevenueSettingSource = 'orders' | 'stone' | 'pix' | 'ifood' | 'manual';
+export type RevenueSettingSource = 'orders' | 'stone' | 'pix' | 'ifood' | 'cash' | 'manual';
 
 export const DEFAULT_REVENUE_SOURCES: RevenueSettingSource[] = ['orders', 'manual'];
 
@@ -83,6 +83,7 @@ export function revenueSourceInfo(flow?: Partial<MoneyFlowSettings> | null): Rec
         (l.pixMode === 'transfer' ? ' Inclui o Pix da maquininha transferido da conta dela (e qualquer transferência de outra conta da empresa).' : ' Transferências entre contas da empresa ficam de fora.') +
         ' Repasses do iFood e da maquininha já conciliados ficam de fora. Pix classificado na Conciliação como "Aporte de sócio" ou "Estorno / devolução de fornecedor" fica de fora.',
     },
+    cash: { label: 'Dinheiro (vendas no caixa)', desc: 'Vendas pagas em dinheiro no PDV/totem, na data da venda. Dinheiro não passa por banco nem maquininha: sem esta fonte, a venda em espécie não entra em Receitas nem na DRE. Com "Pedidos do sistema" ligado não faz efeito (o dinheiro já vem junto).' },
     ifood: { label: 'Vendas iFood', desc: 'Vendas do iFood (antes das comissões e taxas), na data do repasse. Exige a integração iFood com "lançar no financeiro" ligado; as comissões entram como Taxas iFood.' },
     manual: { label: 'Lançamentos manuais', desc: 'Receitas lançadas à mão pelo botão "Nova Receita" (eventos, aluguel etc.).' },
   };
@@ -150,6 +151,18 @@ export async function fetchStoneSales(tenantId: string, startDate: string, endDa
   return { rows: ((data ?? []) as { date: string; amount: number }[]).map(r => ({ ...r, amount: Number(r.amount) })), error: error?.message ?? null };
 }
 
+// Vendas pagas em dinheiro no PDV/totem (fin_cash_flow origin auto_sale cujo
+// pagamento é de um método type='cash'). Via RPC porque o filtro precisa juntar
+// payments + payment_methods — ver fin_dinheiro_recebidos.
+export async function fetchCashSales(tenantId: string, startDate: string, endDate: string) {
+  const { data, error } = await supabase.rpc('fin_dinheiro_recebidos', {
+    p_tenant: tenantId, p_start: startDate, p_end: endDate,
+  });
+  const rows = ((data ?? []) as { id: string; date: string; amount: number; description: string | null; created_at: string }[])
+    .map(r => ({ ...r, amount: Number(r.amount) }));
+  return { rows, error: error?.message ?? null };
+}
+
 // Vendas do iFood por dia de repasse (fin_cash_flow origin ifood_sale, lançadas
 // pela edge ifood-financial com post_to_ledger ligado).
 export async function fetchIfoodSales(tenantId: string, startDate: string, endDate: string) {
@@ -169,19 +182,20 @@ export const sumAmount = (rows: { amount: number }[]) => rows.reduce((s, r) => s
 // Fontes da loja + totais de Pix e iFood do período (só busca o que estiver ligado).
 export async function loadRevenueExtras(tenantId: string, startDate: string, endDate: string, kind?: string | null) {
   const { sources, flow } = await fetchRevenueSettings(tenantId, kind);
-  const [pix, ifood] = await Promise.all([
+  const [pix, ifood, cash] = await Promise.all([
     sources.includes('pix') ? fetchPixRecebidos(tenantId, startDate, endDate).then(r => sumAmount(r.rows)) : Promise.resolve(0),
     sources.includes('ifood') ? fetchIfoodSales(tenantId, startDate, endDate).then(r => sumAmount(r.rows)) : Promise.resolve(0),
+    sources.includes('cash') ? fetchCashSales(tenantId, startDate, endDate).then(r => sumAmount(r.rows)) : Promise.resolve(0),
   ]);
-  return { sources, pix, ifood, labels: moneyFlowLabels(flow) };
+  return { sources, pix, ifood, cash, labels: moneyFlowLabels(flow) };
 }
 
 // Aplica a regra dos recebidos a um snapshot de DRE: zera o que a loja não
 // escolheu e acrescenta Pix e iFood. Pedidos = as linhas por destino (auto_sale).
 export function applyRevenueSources<T extends {
   receitaBalcao: number; receitaDelivery: number; receitaMesa: number; receitaAutoatendimento: number;
-  receitaStone: number; receitaManual?: number; receitaPix?: number; receitaIfood?: number;
-}>(d: T, sources: RevenueSettingSource[], pix: number, ifood = 0): T {
+  receitaStone: number; receitaManual?: number; receitaPix?: number; receitaIfood?: number; receitaDinheiro?: number;
+}>(d: T, sources: RevenueSettingSource[], pix: number, ifood = 0, cash = 0): T {
   const on = (s: RevenueSettingSource) => sources.includes(s);
   return {
     ...d,
@@ -193,5 +207,7 @@ export function applyRevenueSources<T extends {
     ...(d.receitaManual !== undefined ? { receitaManual: on('manual') ? d.receitaManual : 0 } : {}),
     receitaPix: on('pix') ? pix : 0,
     receitaIfood: on('ifood') ? ifood : 0,
+    // 'orders' já traz o dinheiro junto (auto_sale de todas as formas): evita contar 2x.
+    receitaDinheiro: on('cash') && !on('orders') ? cash : 0,
   };
 }

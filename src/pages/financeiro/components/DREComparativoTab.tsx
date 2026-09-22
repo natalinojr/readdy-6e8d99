@@ -34,6 +34,8 @@ interface DRESnapshot {
   receitaPix?: number;
   /** Vendas do iFood (origin ifood_sale) — só com a fonte "ifood" ligada. */
   receitaIfood?: number;
+  /** Vendas pagas em dinheiro no PDV/totem — só com a fonte "cash" ligada (e "orders" desligada). */
+  receitaDinheiro?: number;
   receitaAReceber: number;
   cancelamentos: number;
   descontos: number;
@@ -225,7 +227,7 @@ async function fetchCompetencia(tenantId: string, startDate: string, endDate: st
 }
 
 function calcDRE(d: DRESnapshot, _mode: 'caixa' | 'competencia') {
-  const receitaRecebida = d.receitaBalcao + d.receitaDelivery + d.receitaMesa + d.receitaAutoatendimento + (d.receitaStone ?? 0) + (d.receitaPix ?? 0) + (d.receitaIfood ?? 0);
+  const receitaRecebida = d.receitaBalcao + d.receitaDelivery + d.receitaMesa + d.receitaAutoatendimento + (d.receitaStone ?? 0) + (d.receitaPix ?? 0) + (d.receitaIfood ?? 0) + (d.receitaDinheiro ?? 0);
   // BUG-41 (intencional, mesmo critério do DRETab): recebível pendente é SALDO, não receita
   // adicional. A venda a prazo já está no `payments`/`auto_sale`; somar `receitaAReceber` na
   // competência contava a mesma venda duas vezes. `receitaAReceber` segue exibido à parte.
@@ -418,14 +420,14 @@ export default function DREComparativoTab() {
       // Regra dos recebidos da loja (Financeiro › Receitas › Fontes) — igual à DRE
       loadRevenueExtras(user.tenantId, start, end, user.tenantKind),
     ]);
-    setCaixaData(applyRevenueSources(caixa, extras.sources, extras.pix, extras.ifood));
+    setCaixaData(applyRevenueSources(caixa, extras.sources, extras.pix, extras.ifood, extras.cash));
     // Competência: iFood pela data do PEDIDO e Stone pela data da VENDA; caixa segue pela data do repasse
     const c = await fetchCartoesCompetencia(user.tenantId, start, end);
     setCompData(applyRevenueSources({
       ...comp,
       receitaStone: comp.receitaStone + c.stone_bruto,
       taxasMaquininha: comp.taxasMaquininha + c.stone_mdr + (extras.sources.includes('ifood') ? c.ifood_custo : 0),
-    }, extras.sources, extras.pix, c.ifood_receita));
+    }, extras.sources, extras.pix, c.ifood_receita, extras.cash));
     setDreCats(catsRes.data ?? []);
     setLoading(false);
   }, [user?.tenantId, user?.tenantKind, mes]);
@@ -584,6 +586,9 @@ export default function DREComparativoTab() {
               )}
               {(caixaData.receitaStone > 0 || compData.receitaStone > 0) && (
                 <CompRow label={`Vendas em cartão (${flowLabels.card})`} caixaVal={caixaData.receitaStone} compVal={compData.receitaStone} {...rowBase} />
+              )}
+              {((caixaData.receitaDinheiro ?? 0) > 0 || (compData.receitaDinheiro ?? 0) > 0) && (
+                <CompRow label="Vendas em dinheiro (caixa)" caixaVal={caixaData.receitaDinheiro ?? 0} compVal={compData.receitaDinheiro ?? 0} {...rowBase} />
               )}
               {((caixaData.receitaPix ?? 0) > 0 || (compData.receitaPix ?? 0) > 0) && (
                 <CompRow label={`Pix recebido (${flowLabels.bank})`} caixaVal={caixaData.receitaPix ?? 0} compVal={compData.receitaPix ?? 0} {...rowBase} />

@@ -3,7 +3,7 @@ import { supabase, SUPABASE_URL } from '@/lib/supabase';
 import { fetchAllRows } from '@/lib/fetchAllRows';
 import { dateKeyBrasilia } from '@/lib/dateUtils';
 import {
-  DEFAULT_REVENUE_SOURCES, EMPTY_MONEY_FLOW, fetchRevenueSettings, fetchPixRecebidos, moneyFlowLabels,
+  DEFAULT_REVENUE_SOURCES, EMPTY_MONEY_FLOW, fetchRevenueSettings, fetchPixRecebidos, fetchCashSales, moneyFlowLabels,
   type MoneyFlowSettings, type RevenueSettingSource,
 } from '@/lib/revenueSources';
 
@@ -24,7 +24,7 @@ interface CashFlowRow {
 import { useAuth } from '@/contexts/AuthContext';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
-export type ReceitaSource = 'order' | 'stone' | 'pix' | 'ifood' | 'manual';
+export type ReceitaSource = 'order' | 'stone' | 'pix' | 'ifood' | 'cash' | 'manual';
 
 // Fontes configuráveis por loja (fin_revenue_settings.sources) — regra única
 // compartilhada com DRE e Visão Geral, em src/lib/revenueSources.ts.
@@ -53,6 +53,7 @@ export interface ReceitasSummary {
   fromStone: number;
   fromPix: number;
   fromIfood: number;
+  fromDinheiro: number;
   fromManual: number;
   byCategory: { category: string; total: number; count: number }[];
   bySource: { source: ReceitaSource; total: number; count: number }[];
@@ -75,6 +76,7 @@ export const SOURCE_LABELS_R: Record<ReceitaSource, string> = {
   stone: 'Cartão (maquininha)',
   pix: 'Pix recebido',
   ifood: 'iFood',
+  cash: 'Dinheiro (caixa)',
   manual: 'Lançamento Manual',
 };
 
@@ -83,6 +85,7 @@ export const SOURCE_COLORS_R: Record<ReceitaSource, string> = {
   stone: '#0ea5e9',
   pix: '#8b5cf6',
   ifood: '#ea1d2c',
+  cash: '#22c55e',
   manual: '#f59e0b',
 };
 
@@ -138,7 +141,7 @@ export function useReceitas(filters: ReceitasFilters) {
     // PAGINADO: sem .range() o PostgREST corta em ~1000 linhas SEM ERRO, e o
     // total da aba simplesmente parava de crescer em períodos longos
     // ("Últimos 3 Meses", "Este Ano") sem nada indicar o truncamento.
-    const [ordersRes, manualRes, stoneRes, pixRes, ifoodRes] = await Promise.all([
+    const [ordersRes, manualRes, stoneRes, pixRes, ifoodRes, cashRes] = await Promise.all([
       // Pedidos entregues (fonte única de verdade: status = 'delivered')
       !enabled.includes('orders') ? empty : fetchAllRows<OrderRow>((from, to) => supabase
         .from('orders')
@@ -208,9 +211,15 @@ export function useReceitas(filters: ReceitasFilters) {
         .lte('date', endDate)
         .order('date', { ascending: false })
         .range(from, to)),
+
+      // Vendas pagas em dinheiro no PDV/totem. Só quando 'orders' está DESLIGADO:
+      // com 'orders' ligado o auto_sale já traz o dinheiro junto (contaria 2x).
+      !enabled.includes('cash') || enabled.includes('orders')
+        ? Promise.resolve({ rows: [], error: null })
+        : fetchCashSales(user.tenantId, startDate, endDate),
     ]);
 
-    const falha = ordersRes.error ?? manualRes.error ?? stoneRes.error ?? ifoodRes.error ?? (pixRes.error ? { message: pixRes.error } : null);
+    const falha = ordersRes.error ?? manualRes.error ?? stoneRes.error ?? ifoodRes.error ?? (pixRes.error ? { message: pixRes.error } : null) ?? (cashRes.error ? { message: cashRes.error } : null);
     if (falha) {
       console.error('[useReceitas] Falha ao carregar receitas:', falha.message);
       setError(falha.message);
@@ -304,6 +313,23 @@ export function useReceitas(filters: ReceitasFilters) {
       });
     });
 
+    // Vendas em dinheiro no caixa (mesma linha do razão, na data da venda)
+    cashRes.rows.forEach(c => {
+      allItems.push({
+        id: `cash_${c.id}`,
+        source: 'cash',
+        description: c.description || 'Venda em dinheiro',
+        category: 'Vendas',
+        amount: c.amount,
+        date: c.date,
+        status: 'received',
+        payment_method: 'Dinheiro',
+        origin_detail: 'PDV / Caixa',
+        reference_id: c.id,
+        created_at: c.created_at,
+      });
+    });
+
     // Vendas iFood (uma linha por dia de repasse, antes das comissões)
     (ifoodRes.rows ?? []).forEach(c => {
       allItems.push({
@@ -391,6 +417,7 @@ export function useReceitas(filters: ReceitasFilters) {
     const fromStone = filtered.filter(r => r.source === 'stone').reduce((s, r) => s + r.amount, 0);
     const fromPix = filtered.filter(r => r.source === 'pix').reduce((s, r) => s + r.amount, 0);
     const fromIfood = filtered.filter(r => r.source === 'ifood').reduce((s, r) => s + r.amount, 0);
+    const fromDinheiro = filtered.filter(r => r.source === 'cash').reduce((s, r) => s + r.amount, 0);
 
     setItems(filtered);
     setSummary({
@@ -399,6 +426,7 @@ export function useReceitas(filters: ReceitasFilters) {
       fromStone,
       fromPix,
       fromIfood,
+      fromDinheiro,
       fromManual,
       byCategory,
       bySource,

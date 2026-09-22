@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase, SUPABASE_URL, invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { translateSupabaseError } from '@/hooks/useQueryError';
-import { fetchRevenueSources, fetchStoneSales, fetchPixRecebidos, fetchIfoodSales } from '@/lib/revenueSources';
+import { fetchRevenueSources, fetchStoneSales, fetchPixRecebidos, fetchIfoodSales, fetchCashSales } from '@/lib/revenueSources';
 import { empresaTemPdv } from '@/lib/tipoEmpresa';
 import type {
   CostCenter, BillPayable, CashFlowEntry, Purchase,
@@ -774,15 +774,18 @@ export function useFinanceiroDashboard(): { dashboard: FinanceiroDashboard | nul
       const { sources } = await fetchRevenueSources(user.tenantId, user.tenantKind);
       const on = (s: string) => (sources as string[]).includes(s);
       const extraStart = prevMonthStartDate < thirtyDaysAgoDate ? prevMonthStartDate : thirtyDaysAgoDate;
-      const [stoneRes, pixRes, ifoodRes] = await Promise.all([
+      const [stoneRes, pixRes, ifoodRes, cashRes] = await Promise.all([
         on('stone') ? fetchStoneSales(user.tenantId, extraStart, monthEndDate) : Promise.resolve({ rows: [], error: null }),
         on('pix') ? fetchPixRecebidos(user.tenantId, extraStart, monthEndDate) : Promise.resolve({ rows: [], error: null }),
         on('ifood') ? fetchIfoodSales(user.tenantId, extraStart, monthEndDate) : Promise.resolve({ rows: [], error: null }),
+        // Dinheiro do caixa: só quando 'orders' está desligado (com ele o auto_sale já traz tudo).
+        on('cash') && !on('orders') ? fetchCashSales(user.tenantId, extraStart, monthEndDate) : Promise.resolve({ rows: [], error: null }),
       ]);
       const extraRows = [
         ...stoneRes.rows.map(r => ({ date: r.date, amount: r.amount, label: 'Cartão (maquininha)' })),
         ...pixRes.rows.map(r => ({ date: r.transaction_date, amount: r.amount, label: 'Pix recebido' })),
         ...ifoodRes.rows.map(r => ({ date: r.date, amount: r.amount, label: 'iFood' })),
+        ...cashRes.rows.map(r => ({ date: r.date, amount: r.amount, label: 'Dinheiro (caixa)' })),
       ];
       const extraIn = (from: string, to: string) =>
         extraRows.filter(r => r.date >= from && r.date <= to).reduce((s, r) => s + r.amount, 0);

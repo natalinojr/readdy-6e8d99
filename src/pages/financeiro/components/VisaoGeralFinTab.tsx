@@ -8,7 +8,7 @@ import type { SessionInfo } from '@/hooks/useSessions';
 import { formatCurrency } from '@/lib/formatters';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
-import { fetchRevenueSources, fetchPixRecebidos } from '@/lib/revenueSources';
+import { fetchRevenueSources, fetchPixRecebidos, fetchCashSales } from '@/lib/revenueSources';
 import { empresaTemPdv } from '@/lib/tipoEmpresa';
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -98,7 +98,7 @@ function useReceitaVsDespesa(meses: number) {
         sources.includes('ifood') ? 'ifood_sale' : null,
       ].filter(Boolean) as string[];
 
-      const [{ data: ledgerIncome }, pixRes] = await Promise.all([
+      const [{ data: ledgerIncome }, pixRes, cashRes] = await Promise.all([
         origins.length === 0
           ? Promise.resolve({ data: [] as { date: string; amount: number }[] })
           : supabase
@@ -111,10 +111,16 @@ function useReceitaVsDespesa(meses: number) {
         sources.includes('pix')
           ? fetchPixRecebidos(user.tenantId, startDateStr, '2999-12-31')
           : Promise.resolve({ rows: [], error: null }),
+        // Vendas em dinheiro: só quando 'orders' está desligado (com ele, o auto_sale
+        // acima já traz o dinheiro junto e contaria 2x).
+        sources.includes('cash') && !sources.includes('orders')
+          ? fetchCashSales(user.tenantId, startDateStr, '2999-12-31')
+          : Promise.resolve({ rows: [], error: null }),
       ]);
       const incomeData = [
         ...(ledgerIncome ?? []),
         ...pixRes.rows.map(r => ({ date: r.transaction_date, amount: r.amount })),
+        ...cashRes.rows.map(r => ({ date: r.date, amount: r.amount })),
       ];
 
       // Despesas: fin_cash_flow saídas (já inclui auto_purchase, auto_bill_payment, auto_payroll)

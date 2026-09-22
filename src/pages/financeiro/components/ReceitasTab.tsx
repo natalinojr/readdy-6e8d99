@@ -9,7 +9,7 @@ import FormasPagamentoPanel from './FormasPagamentoPanel';
 import { revenueSourceInfo, moneyFlowLabels } from '@/lib/revenueSources';
 
 // Fonte da configuração da loja → fonte da linha exibida
-const SETTING_TO_ITEM: Record<RevenueSettingSource, ReceitaSource> = { orders: 'order', stone: 'stone', pix: 'pix', ifood: 'ifood', manual: 'manual' };
+const SETTING_TO_ITEM: Record<RevenueSettingSource, ReceitaSource> = { orders: 'order', stone: 'stone', pix: 'pix', ifood: 'ifood', cash: 'cash', manual: 'manual' };
 import { formatCurrency } from '@/lib/formatters';
 import { todayBrasilia } from '@/lib/dateUtils';
 import {
@@ -455,14 +455,16 @@ export default function ReceitasTab() {
               enabledSources.includes('stone') ? `Cartão (${flowLbl.card})` : null,
               enabledSources.includes('pix') ? 'Pix' : null,
               enabledSources.includes('ifood') ? 'iFood' : null,
+              enabledSources.includes('cash') && !enabledSources.includes('orders') ? 'Dinheiro' : null,
             ].filter(Boolean).join(' / ')}
-            value={formatCurrency((summary?.fromStone ?? 0) + (summary?.fromPix ?? 0) + (summary?.fromIfood ?? 0))}
+            value={formatCurrency((summary?.fromStone ?? 0) + (summary?.fromPix ?? 0) + (summary?.fromIfood ?? 0) + (summary?.fromDinheiro ?? 0))}
             icon="ri-bank-card-line"
             color="bg-sky-100 text-sky-600"
             sub={[
               enabledSources.includes('stone') ? `Cartão ${formatCurrency(summary?.fromStone ?? 0)}` : null,
               enabledSources.includes('pix') ? `Pix ${formatCurrency(summary?.fromPix ?? 0)}` : null,
               enabledSources.includes('ifood') ? `iFood ${formatCurrency(summary?.fromIfood ?? 0)}` : null,
+              enabledSources.includes('cash') && !enabledSources.includes('orders') ? `Dinheiro ${formatCurrency(summary?.fromDinheiro ?? 0)}` : null,
               enabledSources.includes('orders') ? `Pedidos ${formatCurrency(summary?.fromOrders ?? 0)}` : null,
             ].filter(Boolean).join(' · ')}
           />
@@ -946,7 +948,7 @@ export default function ReceitasTab() {
               const avgDaily = summary.total / days;
               const avgPerItem = items.length > 0 ? summary.total / items.length : 0;
               const maxDay = summary.dailyTrend.reduce((max, d) => d.amount > max.amount ? d : max, summary.dailyTrend[0] ?? { date: '', amount: 0 });
-              const ordersPct = summary.total > 0 ? ((summary.fromOrders + summary.fromStone + summary.fromPix) / summary.total) * 100 : 0;
+              const ordersPct = summary.total > 0 ? ((summary.fromOrders + summary.fromStone + summary.fromPix + summary.fromDinheiro) / summary.total) * 100 : 0;
               return (
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   <div className="bg-zinc-50 rounded-xl p-4 text-center">
@@ -967,7 +969,7 @@ export default function ReceitasTab() {
                   <div className="bg-zinc-50 rounded-xl p-4 text-center">
                     <p className="text-xs text-zinc-500 mb-1">% de Vendas</p>
                     <p className="text-lg font-bold text-green-600">{ordersPct.toFixed(1)}%</p>
-                    <p className="text-xs text-zinc-400 mt-0.5">{enabledSources.includes('orders') ? 'via pedidos' : 'via cartão/Pix'}</p>
+                    <p className="text-xs text-zinc-400 mt-0.5">{enabledSources.includes('orders') ? 'via pedidos' : 'via cartão/Pix/dinheiro'}</p>
                   </div>
                 </div>
               );
@@ -988,7 +990,7 @@ export default function ReceitasTab() {
                       <span className="text-sm font-bold text-green-700">{formatCurrency(item.amount)}</span>
                       <span className="text-xs px-2 py-0.5 rounded-full font-medium"
                         style={{ backgroundColor: SOURCE_COLORS_R[item.source] + '22', color: SOURCE_COLORS_R[item.source] }}>
-                        {item.source === 'order' ? 'Pedido' : item.source === 'stone' ? 'Cartão' : item.source === 'pix' ? 'Pix' : item.source === 'ifood' ? 'iFood' : 'Manual'}
+                        {item.source === 'order' ? 'Pedido' : item.source === 'stone' ? 'Cartão' : item.source === 'pix' ? 'Pix' : item.source === 'ifood' ? 'iFood' : item.source === 'cash' ? 'Dinheiro' : 'Manual'}
                       </span>
                     </div>
                   </div>

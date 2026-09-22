@@ -59,6 +59,8 @@ interface DREData {
   receitaPix?: number;
   /** Vendas do iFood por dia de repasse (fin_cash_flow origin ifood_sale) — só com a fonte "ifood" ligada. */
   receitaIfood?: number;
+  /** Vendas pagas em dinheiro no PDV/totem — só com a fonte "cash" ligada (e "orders" desligada). */
+  receitaDinheiro?: number;
   cancelamentos: number;
   descontos: number;
   /** Compras do período que são MERCADORIA — é a linha CMV da DRE. */
@@ -816,7 +818,7 @@ export default function DRETab() {
           : fetchDREData(tenantId, start, end, temPdv),
         loadRevenueExtras(tenantId, start, end, user?.tenantKind),
       ]);
-      if (dreMode !== 'competencia') return applyRevenueSources(d, extras.sources, extras.pix, extras.ifood);
+      if (dreMode !== 'competencia') return applyRevenueSources(d, extras.sources, extras.pix, extras.ifood, extras.cash);
       // Competência: iFood pela data do PEDIDO e Stone pela data da VENDA (caixa segue pela data do repasse)
       const c = await fetchCartoesCompetencia(tenantId, start, end);
       const ifoodOn = extras.sources.includes('ifood');
@@ -824,7 +826,7 @@ export default function DRETab() {
         ...d,
         receitaStone: d.receitaStone + c.stone_bruto,
         taxasMaquininha: d.taxasMaquininha + c.stone_mdr + (ifoodOn ? c.ifood_custo : 0),
-      }, extras.sources, extras.pix, c.ifood_receita);
+      }, extras.sources, extras.pix, c.ifood_receita, extras.cash);
     },
     [dreMode, user?.tenantKind, temPdv]
   );
@@ -867,7 +869,7 @@ export default function DRETab() {
       const d = await fetchFn(user.tenantId, start, end);
       // Mesma receita da tabela (antes o gráfico ignorava manuais e Stone).
       const receitaBase = d.receitaBalcao + d.receitaDelivery + d.receitaMesa + d.receitaAutoatendimento
-        + d.receitaManual + (d.receitaStone ?? 0) + (d.receitaPix ?? 0) + (d.receitaIfood ?? 0);
+        + d.receitaManual + (d.receitaStone ?? 0) + (d.receitaPix ?? 0) + (d.receitaIfood ?? 0) + (d.receitaDinheiro ?? 0);
       // BUG-41: receitaAReceber não soma na receita (é saldo, não receita adicional)
       const receita = receitaBase;
       const cmv = d.cmvCompras ?? 0; // CMV = compras realizadas (2026-09-05)
@@ -897,7 +899,7 @@ export default function DRETab() {
   }
   if (!data) return null;
 
-  const receitaRecebida = data.receitaBalcao + data.receitaDelivery + data.receitaMesa + data.receitaAutoatendimento + data.receitaManual + (data.receitaStone ?? 0) + (data.receitaPix ?? 0) + (data.receitaIfood ?? 0);
+  const receitaRecebida = data.receitaBalcao + data.receitaDelivery + data.receitaMesa + data.receitaAutoatendimento + data.receitaManual + (data.receitaStone ?? 0) + (data.receitaPix ?? 0) + (data.receitaIfood ?? 0) + (data.receitaDinheiro ?? 0);
 
   // BUG-41: receitaAReceber é saldo (balanço), não receita adicional.
   // No regime de competência a receita já está no auto_sale do fin_cash_flow
@@ -959,7 +961,7 @@ export default function DRETab() {
   const margemBruta = receitaBruta > 0 ? (lucroBruto / receitaBruta) * 100 : 0;
 
   const prevReceitaRecebida = (prevData?.receitaBalcao ?? 0) + (prevData?.receitaDelivery ?? 0)
-    + (prevData?.receitaMesa ?? 0) + (prevData?.receitaAutoatendimento ?? 0) + (prevData?.receitaManual ?? 0) + (prevData?.receitaStone ?? 0) + (prevData?.receitaPix ?? 0) + (prevData?.receitaIfood ?? 0);
+    + (prevData?.receitaMesa ?? 0) + (prevData?.receitaAutoatendimento ?? 0) + (prevData?.receitaManual ?? 0) + (prevData?.receitaStone ?? 0) + (prevData?.receitaPix ?? 0) + (prevData?.receitaIfood ?? 0) + (prevData?.receitaDinheiro ?? 0);
 
   const prevReceitaBruta = prevReceitaRecebida;
 
@@ -1316,6 +1318,10 @@ export default function DRETab() {
                 {(data.receitaPix ?? 0) > 0 && (
                   <DRERow label={`Pix recebido (${flowLabels.bank})`} atual={data.receitaPix ?? 0} anterior={prevData?.receitaPix} receitaBruta={receitaBruta} depth={1}
                     origin={`Extrato do ${flowLabels.bank} → créditos Pix${flowLabels.pixMode === 'transfer' ? ' (inclui o Pix da maquininha transferido da conta dela)' : ''}`} />
+                )}
+                {(data.receitaDinheiro ?? 0) > 0 && (
+                  <DRERow label="Vendas em dinheiro (caixa)" atual={data.receitaDinheiro ?? 0} anterior={prevData?.receitaDinheiro} receitaBruta={receitaBruta} depth={1}
+                    origin="Livro-razão: fin_cash_flow → auto_sale dos pagamentos em dinheiro (data da venda)" />
                 )}
                 {(data.receitaIfood ?? 0) > 0 && (
                   <DRERow label="Vendas iFood" atual={data.receitaIfood ?? 0} anterior={prevData?.receitaIfood} receitaBruta={receitaBruta} depth={1}
