@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { useState, useEffect, useRef } from 'react';
 import { useSystemSettings } from '@/hooks/useSystemSettings';
 
@@ -17,8 +18,10 @@ function gerarSenha(): string {
 }
 
 export default function IdentificacaoKiosk({ modo, total, pagarNaEntrega, onContinuar, onVoltar }: Props) {
+  const { t, i18n } = useTranslation();
   const { settings } = useSystemSettings();
-  const mensagemRetorno = settings.welcome_message_returning || 'Que bom te ver de volta!';
+  const emPortugues = String(i18n.language || 'pt-BR').toLowerCase().startsWith('pt');
+  const mensagemRetorno = (emPortugues && settings.welcome_message_returning) || t('cliente.bomTeVerDeVolta');
   const pagerCount = settings.pager_count ?? 50;
 
   const [nome, setNome] = useState('');
@@ -42,7 +45,7 @@ export default function IdentificacaoKiosk({ modo, total, pagarNaEntrega, onCont
       <div className="flex items-center justify-center h-full">
         <div className="flex items-center gap-3 text-zinc-400">
           <i className="ri-loader-4-line text-2xl animate-spin" />
-          <span className="text-lg font-semibold">Preparando pedido...</span>
+          <span className="text-lg font-semibold">{t('cliente.preparandoPedido')}</span>
         </div>
       </div>
     );
@@ -51,13 +54,13 @@ export default function IdentificacaoKiosk({ modo, total, pagarNaEntrega, onCont
   // ── MODO COMANDA (PAGER) E SENHA DO BALCÃO ──
   if (modo === 'comanda' || modo === 'senha_balcao') {
     const isSenhaBalcao = modo === 'senha_balcao';
-    const titulo = isSenhaBalcao ? 'Senha do Balcão' : 'Número do Pager';
+    const titulo = isSenhaBalcao ? t('cliente.senhaBalcao') : t('cliente.numeroPager');
     const icone = isSenhaBalcao ? 'ri-ticket-line' : 'ri-wireless-charging-line';
-    const labelDisplay = isSenhaBalcao ? 'Nº da Senha' : 'Nº do Pager';
+    const labelDisplay = isSenhaBalcao ? t('cliente.nSenha') : t('cliente.nPager');
     const placeholderDisplay = isSenhaBalcao ? `1–${pagerCount}` : `1–${pagerCount}`;
     const textoInfo = isSenhaBalcao
-      ? 'Pegue uma senha no balcão e digite o número impresso nela'
-      : 'Pegue um pager no balcão e digite o número impresso nele';
+      ? t('cliente.pegueSenha')
+      : t('cliente.peguePager');
     const textoSucesso = isSenhaBalcao
       ? `Senha Nº ${numeroPager} registrada!`
       : `Pager Nº ${numeroPager} registrado!`;
@@ -85,11 +88,11 @@ export default function IdentificacaoKiosk({ modo, total, pagarNaEntrega, onCont
           </div>
           <div>
             <p className="text-2xl font-black text-white">{textoSucesso}</p>
-            <p className="text-zinc-400 text-base mt-1">Aguarde ser chamado</p>
+            <p className="text-zinc-400 text-base mt-1">{t('cliente.aguardeChamado')}</p>
           </div>
           <div className="flex items-center gap-2 text-zinc-600">
             <i className={`ri-loader-4-line text-lg animate-spin ${isSenhaBalcao ? 'text-emerald-500' : 'text-amber-500'}`} />
-            <span className="text-sm">Finalizando pedido...</span>
+            <span className="text-sm">{t('cliente.finalizandoPedido')}</span>
           </div>
         </div>
       );
@@ -151,7 +154,7 @@ export default function IdentificacaoKiosk({ modo, total, pagarNaEntrega, onCont
               <button onClick={onVoltar}
                 className="px-4 py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-bold text-base rounded-xl cursor-pointer whitespace-nowrap transition-colors">
                 <i className="ri-arrow-left-line mr-1" />
-                Voltar
+                {t('cliente.voltar')}
               </button>
               <button
                 onClick={handleConfirmarPager}
@@ -159,7 +162,7 @@ export default function IdentificacaoKiosk({ modo, total, pagarNaEntrega, onCont
                 className="flex-1 py-3 bg-amber-500 hover:bg-amber-400 disabled:opacity-40 disabled:cursor-not-allowed text-zinc-950 text-xl font-black rounded-xl cursor-pointer active:scale-95 transition-all whitespace-nowrap"
               >
                 <i className="ri-checkbox-circle-line mr-1" />
-                Confirmar
+                {t('cliente.confirmar')}
               </button>
             </div>
           </div>
@@ -173,8 +176,8 @@ export default function IdentificacaoKiosk({ modo, total, pagarNaEntrega, onCont
     return (
       <div className="flex flex-col items-center justify-center h-full gap-5 p-6 text-center">
         <div className="text-center">
-          <h2 className="text-4xl font-black text-white mb-2">Sua senha</h2>
-          <p className="text-zinc-400 text-xl">Anote o número abaixo — ele será chamado na retirada</p>
+          <h2 className="text-4xl font-black text-white mb-2">{t('cliente.suaSenha')}</h2>
+          <p className="text-zinc-400 text-xl">{t('cliente.anoteNumero')}</p>
         </div>
 
         <div className="bg-amber-500/10 border-4 border-amber-500/50 rounded-3xl px-20 py-8">
@@ -182,12 +185,12 @@ export default function IdentificacaoKiosk({ modo, total, pagarNaEntrega, onCont
         </div>
 
         <div className="bg-zinc-800 rounded-2xl px-6 py-3 text-center max-w-sm">
-          <p className="text-zinc-400 text-sm mb-0.5">Total do pedido</p>
+          <p className="text-zinc-400 text-sm mb-0.5">{t('cliente.totalPedido')}</p>
           <p className="text-amber-400 font-black text-2xl">{fmt(total)}</p>
         </div>
 
         <div className="flex flex-col items-center gap-3 w-full max-w-sm">
-          <p className="text-zinc-500 text-sm">Confirme que anotou sua senha para continuar</p>
+          <p className="text-zinc-500 text-sm">{t('cliente.confirmeAnotou')}</p>
           <button
             onClick={() => onContinuar('Cliente', senhaGerada)}
             className="w-full py-4 bg-amber-500 hover:bg-amber-400 text-zinc-950 text-xl font-black rounded-2xl cursor-pointer active:scale-95 transition-all whitespace-nowrap"
@@ -200,7 +203,7 @@ export default function IdentificacaoKiosk({ modo, total, pagarNaEntrega, onCont
             className="w-full py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-bold text-base rounded-2xl cursor-pointer active:scale-95 transition-all whitespace-nowrap"
           >
             <i className="ri-arrow-left-line mr-2" />
-            Voltar ao carrinho
+            {t('cliente.voltar')}
           </button>
         </div>
       </div>
@@ -210,7 +213,7 @@ export default function IdentificacaoKiosk({ modo, total, pagarNaEntrega, onCont
   // ── MODO NOME ──
   const handleConfirmar = () => {
     if (!nome.trim() || nome.trim().length < 2) {
-      setErro('Por favor, informe seu nome (mínimo 2 caracteres).');
+      setErro(t('cliente.informeNome'));
       return;
     }
     setConfirmado(true);
@@ -229,7 +232,7 @@ export default function IdentificacaoKiosk({ modo, total, pagarNaEntrega, onCont
         </div>
         <div className="flex items-center gap-2 text-zinc-600">
           <i className="ri-loader-4-line text-lg animate-spin text-amber-500" />
-          <span className="text-sm">Preparando seu pedido...</span>
+          <span className="text-sm">{t('cliente.preparandoPedido')}</span>
         </div>
       </div>
     );
@@ -238,12 +241,12 @@ export default function IdentificacaoKiosk({ modo, total, pagarNaEntrega, onCont
   return (
     <div className="flex flex-col items-center justify-center h-full gap-4 p-6">
       <div className="text-center">
-        <h2 className="text-4xl font-black text-white mb-2">Qual é o seu nome?</h2>
-        <p className="text-zinc-400 text-xl">Vamos chamar você quando o pedido estiver pronto</p>
+        <h2 className="text-4xl font-black text-white mb-2">{t('cliente.qualSeuNome')}</h2>
+        <p className="text-zinc-400 text-xl">{t('cliente.chamamosQuandoPronto')}</p>
       </div>
 
       <div className="bg-zinc-800 rounded-2xl px-6 py-3 text-center">
-        <p className="text-zinc-400 text-sm mb-0.5">Total do pedido</p>
+        <p className="text-zinc-400 text-sm mb-0.5">{t('cliente.totalPedido')}</p>
         <p className="text-amber-400 font-black text-2xl">{fmt(total)}</p>
       </div>
 
@@ -254,7 +257,7 @@ export default function IdentificacaoKiosk({ modo, total, pagarNaEntrega, onCont
           value={nome}
           onChange={(e) => { setNome(e.target.value); setErro(''); }}
           onKeyDown={(e) => e.key === 'Enter' && handleConfirmar()}
-          placeholder="Digite seu nome aqui..."
+          placeholder={t('cliente.digiteNomeAqui')}
           autoFocus
           maxLength={50}
           className="w-full bg-zinc-800 text-white text-2xl font-bold text-center rounded-2xl px-6 py-4 placeholder-zinc-600 focus:outline-none focus:ring-4 focus:ring-amber-500/50 transition-all"
@@ -292,11 +295,11 @@ export default function IdentificacaoKiosk({ modo, total, pagarNaEntrega, onCont
       <div className="flex gap-3 w-full max-w-sm">
         <button onClick={onVoltar}
           className="px-8 py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-bold text-lg rounded-2xl cursor-pointer whitespace-nowrap transition-colors">
-          Voltar
+          {t('cliente.voltar')}
         </button>
         <button onClick={handleConfirmar} disabled={!nome.trim()}
           className="flex-1 py-3 bg-amber-500 hover:bg-amber-400 disabled:opacity-40 disabled:cursor-not-allowed text-zinc-950 text-xl font-black rounded-2xl cursor-pointer active:scale-95 transition-all whitespace-nowrap">
-          Confirmar
+          {t('cliente.confirmar')}
         </button>
       </div>
     </div>

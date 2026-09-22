@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { useState, useMemo, useEffect } from 'react';
 import { X, Check, Minus, Plus } from 'lucide-react';
 import type { ItemPedidoCliente, ItemCardapioPublico } from '@/types/mesaCliente';
@@ -10,6 +11,8 @@ interface Props {
   itemCardapio?: ItemCardapioPublico;
   index: number;
   onSalvar: (index: number, updates: Partial<ItemPedidoCliente>) => void;
+  /** Só de vitrine — ver CardapioKiosk. */
+  traduzir?: (tipo: 'item' | 'category' | 'option_group' | 'option' | 'preset_obs', id: string | null | undefined, campo?: 'n' | 'd') => string | null;
   onFechar: () => void;
 }
 
@@ -25,11 +28,13 @@ const LETRAS_KB = [
 const NUMEROS_KB = ['1','2','3','4','5','6','7','8','9','0'];
 
 interface TecladoVirtualProps {
+  /** Texto de exemplo, já no idioma escolhido. */
+  placeholder: string;
   value: string;
   onChange: (v: string) => void;
 }
 
-function TecladoVirtual({ value, onChange }: TecladoVirtualProps) {
+function TecladoVirtual({ value, onChange, placeholder }: TecladoVirtualProps) {
   const [modo, setModo] = useState<'letras' | 'numeros'>('letras');
 
   return (
@@ -37,7 +42,7 @@ function TecladoVirtual({ value, onChange }: TecladoVirtualProps) {
       {/* Display */}
       <div className="flex items-center justify-between mb-3">
         <div className={`flex-1 min-h-[3.5rem] bg-zinc-800 text-white text-lg font-semibold rounded-xl px-4 py-3 border-2 transition-colors mr-3 ${value ? 'border-amber-500/40' : 'border-transparent'}`}>
-          {value || <span className="text-zinc-600 font-normal text-base">Ex: sem cebola, molho à parte...</span>}
+          {value || <span className="text-zinc-600 font-normal text-base">{placeholder}</span>}
         </div>
         <div className="flex items-center gap-1 bg-zinc-800 rounded-xl p-1 flex-shrink-0">
           <button onClick={() => setModo('letras')}
@@ -107,7 +112,9 @@ function TecladoVirtual({ value, onChange }: TecladoVirtualProps) {
   );
 }
 
-export default function EditarItemKiosk({ itemCarrinho, itemCardapio, index, onSalvar, onFechar }: Props) {
+export default function EditarItemKiosk({ itemCarrinho, itemCardapio, index, onSalvar, onFechar, traduzir }: Props) {
+  const { t } = useTranslation();
+  const tr = traduzir ?? ((): string | null => null);
   const [qtd, setQtd] = useState(itemCarrinho.quantidade);
 
   // Se temos o item completo do cardápio, usamos modo completo
@@ -226,7 +233,7 @@ export default function EditarItemKiosk({ itemCarrinho, itemCardapio, index, onS
       <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-6">
         <div className="bg-zinc-900 rounded-3xl w-full max-w-4xl flex flex-col overflow-hidden border border-zinc-700 max-h-[95vh]">
           <div className="flex items-center justify-between px-8 py-6 border-b border-zinc-800 flex-shrink-0">
-            <h2 className="text-4xl font-black text-white">{itemCarrinho.nome}</h2>
+            <h2 className="text-4xl font-black text-white">{tr('item', itemCarrinho.itemId) ?? itemCarrinho.nome}</h2>
             <button onClick={onFechar}
               className="w-14 h-14 flex items-center justify-center bg-zinc-800 hover:bg-zinc-700 rounded-2xl cursor-pointer transition-colors text-zinc-400">
               <X size={28} />
@@ -236,7 +243,7 @@ export default function EditarItemKiosk({ itemCarrinho, itemCardapio, index, onS
           <div className="p-8 [@media(max-height:820px)]:p-4 flex flex-col gap-6 overflow-y-auto flex-1 min-h-0">
             {/* Quantidade */}
             <div>
-              <p className="text-sm font-bold text-zinc-500 uppercase tracking-widest mb-4">Quantidade</p>
+              <p className="text-sm font-bold text-zinc-500 uppercase tracking-widest mb-4">{t('cliente.quantidade')}</p>
               <div className="flex items-center gap-6">
                 <button onClick={() => setQtd((q) => Math.max(1, q - 1))}
                   className="w-18 h-18 flex items-center justify-center bg-zinc-800 hover:bg-zinc-700 rounded-2xl cursor-pointer transition-colors text-white text-3xl font-black">
@@ -248,7 +255,7 @@ export default function EditarItemKiosk({ itemCarrinho, itemCardapio, index, onS
                   <Plus size={28} />
                 </button>
                 <div className="ml-4">
-                  <p className="text-zinc-500 text-base">Subtotal</p>
+                  <p className="text-zinc-500 text-base">{t('cliente.subtotal')}</p>
                   <p className="text-amber-400 font-black text-4xl">{fmt(itemCarrinho.preco * qtd)}</p>
                 </div>
               </div>
@@ -256,8 +263,8 @@ export default function EditarItemKiosk({ itemCarrinho, itemCardapio, index, onS
 
             {/* Observação */}
             <div>
-              <p className="text-sm font-bold text-zinc-500 uppercase tracking-widest mb-4">Observação</p>
-              <TecladoVirtual value={obsLivre} onChange={setObsLivre} />
+              <p className="text-sm font-bold text-zinc-500 uppercase tracking-widest mb-4">{t('cliente.observacao')}</p>
+              <TecladoVirtual value={obsLivre} onChange={setObsLivre} placeholder={t('cliente.exObservacao')} />
             </div>
           </div>
 
@@ -269,7 +276,7 @@ export default function EditarItemKiosk({ itemCarrinho, itemCardapio, index, onS
             <button onClick={handleSalvar}
               className="flex-1 py-6 bg-amber-500 hover:bg-amber-400 text-zinc-950 text-3xl font-black rounded-2xl cursor-pointer active:scale-95 transition-all whitespace-nowrap">
               <i className="ri-save-line mr-2" />
-              Salvar alterações
+              {t('cliente.salvar')}
             </button>
           </div>
         </div>
@@ -283,15 +290,15 @@ export default function EditarItemKiosk({ itemCarrinho, itemCardapio, index, onS
       <div className="bg-zinc-900 rounded-3xl w-full max-w-4xl max-h-[90vh] [@media(max-height:820px)]:max-h-[96vh] overflow-hidden flex flex-col">
         {/* Header com imagem */}
         <div className="relative h-72 [@media(max-height:820px)]:h-32 flex-shrink-0">
-          <ItemImage src={itemCardapio!.foto} alt={itemCardapio!.nome} className="w-full h-full" imgClassName="object-contain" />
+          <ItemImage src={itemCardapio!.foto} alt={tr('item', itemCardapio!.id) ?? itemCardapio!.nome} className="w-full h-full" imgClassName="object-contain" />
           <div className="absolute inset-0 bg-gradient-to-t from-zinc-900 via-zinc-900/40 to-transparent" />
           <button onClick={onFechar}
             className="absolute top-4 right-4 w-16 h-16 flex items-center justify-center bg-zinc-800/90 rounded-2xl cursor-pointer hover:bg-zinc-700 transition-colors">
             <X size={28} className="text-white" />
           </button>
           <div className="absolute bottom-4 left-6">
-            <h2 className="text-4xl [@media(max-height:820px)]:text-2xl font-black text-white">{itemCardapio!.nome}</h2>
-            <p className="text-zinc-400 text-lg">{itemCardapio!.descricao}</p>
+            <h2 className="text-4xl [@media(max-height:820px)]:text-2xl font-black text-white">{tr('item', itemCardapio!.id) ?? itemCardapio!.nome}</h2>
+            <p className="text-zinc-400 text-lg">{tr('item', itemCardapio!.id, 'd') ?? itemCardapio!.descricao}</p>
           </div>
         </div>
 
@@ -300,9 +307,9 @@ export default function EditarItemKiosk({ itemCarrinho, itemCardapio, index, onS
           {itemCardapio!.opcoes?.map((grupo) => (
             <div key={grupo.grupo}>
               <div className="flex items-center gap-2 mb-3">
-                <h3 className="text-xl font-bold text-white">{grupo.grupo}</h3>
+                <h3 className="text-xl font-bold text-white">{tr('option_group', grupo.grupoId) ?? grupo.grupo}</h3>
                 {grupo.obrigatorio && (
-                  <span className="text-base font-bold text-amber-500 bg-amber-500/10 px-3 py-1 rounded-full">Obrigatório</span>
+                  <span className="text-base font-bold text-amber-500 bg-amber-500/10 px-3 py-1 rounded-full">{t('cliente.obrigatorio')}</span>
                 )}
               </div>
               <div className="grid grid-cols-2 gap-3">
@@ -320,7 +327,7 @@ export default function EditarItemKiosk({ itemCarrinho, itemCardapio, index, onS
                         <div className={`w-8 h-8 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${sel ? 'border-amber-500 bg-amber-500' : 'border-zinc-600'}`}>
                           {sel && <Check size={16} className="text-white" />}
                         </div>
-                        <span className="text-lg font-semibold text-white min-w-0 break-words">{comQuebraAposVirgula(opcao.nome)}</span>
+                        <span className="text-lg font-semibold text-white min-w-0 break-words">{comQuebraAposVirgula(tr('option', opcao.id) ?? opcao.nome)}</span>
                       </div>
                       {opcao.precoAdicional > 0 && (
                         <span className="text-lg font-bold text-amber-400 flex-shrink-0 whitespace-nowrap">+{fmt(opcao.precoAdicional)}</span>
@@ -335,9 +342,9 @@ export default function EditarItemKiosk({ itemCarrinho, itemCardapio, index, onS
           {/* Observações pré-configuradas */}
           {itemCardapio!.observacoesPadrao && itemCardapio!.observacoesPadrao.length > 0 && (
             <div>
-              <h3 className="text-xl font-bold text-white mb-3">Observações</h3>
+              <h3 className="text-xl font-bold text-white mb-3">{t('cliente.observacoes')}</h3>
               <div className="flex flex-wrap gap-3">
-                {itemCardapio!.observacoesPadrao.map((obsPadrao) => {
+                {itemCardapio!.observacoesPadrao.map((obsPadrao, idxObs) => {
                   const ativa = obsTags.includes(obsPadrao);
                   return (
                     <button
@@ -348,7 +355,7 @@ export default function EditarItemKiosk({ itemCarrinho, itemCardapio, index, onS
                       }`}
                     >
                       {ativa && <i className="ri-check-line mr-1" />}
-                      {obsPadrao}
+                      {tr('preset_obs', itemCardapio!.observacoesPadraoIds?.[idxObs]) ?? obsPadrao}
                     </button>
                   );
                 })}
@@ -359,9 +366,9 @@ export default function EditarItemKiosk({ itemCarrinho, itemCardapio, index, onS
           {/* Observação livre */}
           <div className={itemCardapio!.observacoesPadrao && itemCardapio!.observacoesPadrao.length > 0 ? 'border-t border-zinc-800 pt-5' : ''}>
             <h3 className={`text-lg font-bold text-zinc-500 mb-4 uppercase tracking-wider ${itemCardapio!.observacoesPadrao && itemCardapio!.observacoesPadrao.length > 0 ? '' : 'text-xl text-white mb-4 normal-case tracking-normal'}`}>
-              {itemCardapio!.observacoesPadrao && itemCardapio!.observacoesPadrao.length > 0 ? 'Outra observação' : 'Observações (opcional)'}
+              {itemCardapio!.observacoesPadrao && itemCardapio!.observacoesPadrao.length > 0 ? t('cliente.outraObservacao') : t('cliente.observacoes')}
             </h3>
-            <TecladoVirtual value={obsLivre} onChange={setObsLivre} />
+            <TecladoVirtual value={obsLivre} onChange={setObsLivre} placeholder={t('cliente.exObservacao')} />
           </div>
         </div>
 
@@ -387,7 +394,7 @@ export default function EditarItemKiosk({ itemCarrinho, itemCardapio, index, onS
           <button onClick={handleSalvar}
             className="flex items-center gap-2 bg-amber-500 hover:bg-amber-400 text-zinc-950 px-8 py-6 rounded-2xl font-black text-2xl cursor-pointer active:scale-95 transition-all whitespace-nowrap">
             <i className="ri-save-line" />
-            Salvar
+            {t('cliente.salvar')}
           </button>
         </div>
       </div>

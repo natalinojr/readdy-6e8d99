@@ -345,6 +345,7 @@ interface CardapioKioskProps {
 
 export default function CardapioKiosk({ carrinho, onAdicionar, onDiminuir, onVerCarrinho, traduzir }: CardapioKioskProps) {
   const { itensPublicos, categorias: categoriasCtx, loading, erroCarregamento, recarregar } = useCardapio();
+  const { t } = useTranslation();
   // Sem tradutor (loja so em portugues) a funcao devolve o proprio texto.
   const tr: Traduzir = traduzir ?? (() => null);
   // A categoria e identificada pelo NOME em portugues (filtro e estado da tela),
@@ -515,7 +516,7 @@ export default function CardapioKiosk({ carrinho, onAdicionar, onDiminuir, onVer
                   type="text"
                   value={busca}
                   onChange={(e) => setBusca(e.target.value)}
-                  placeholder="Buscar no cardápio..."
+                  placeholder={t('cliente.buscar')}
                   className="w-full pl-12 pr-12 py-4 text-lg bg-zinc-800 text-white placeholder-zinc-500 rounded-2xl border-2 border-zinc-700 focus:outline-none focus:border-amber-500"
                 />
                 {busca ? (
@@ -536,7 +537,7 @@ export default function CardapioKiosk({ carrinho, onAdicionar, onDiminuir, onVer
                 className="flex-shrink-0 flex items-center gap-2 px-5 py-4 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white font-semibold text-base rounded-2xl border-2 border-zinc-700 cursor-pointer transition-colors disabled:opacity-60 disabled:cursor-not-allowed whitespace-nowrap"
               >
                 <i className={`ri-refresh-line text-lg ${atualizando ? 'animate-spin' : ''}`} />
-                {atualizando ? 'Atualizando...' : 'Atualizar'}
+                {atualizando ? t('cliente.carregando') : t('cliente.atualizar')}
               </button>
             </div>
 
@@ -669,7 +670,7 @@ export default function CardapioKiosk({ carrinho, onAdicionar, onDiminuir, onVer
             className="w-full flex items-center justify-between bg-amber-500 hover:bg-amber-400 text-zinc-950 px-12 py-7 rounded-2xl cursor-pointer active:scale-[0.99] transition-all">
             <div className="flex items-center gap-4">
               <span className="w-12 h-12 flex items-center justify-center bg-zinc-950/15 rounded-xl text-lg font-black">{totalItens}</span>
-              <span className="text-3xl font-black">Ver Pedido</span>
+              <span className="text-3xl font-black">{t('cliente.verPedido')}</span>
             </div>
             <div className="flex items-center gap-3">
               <span className="text-3xl font-black">{fmt(totalValor)}</span>

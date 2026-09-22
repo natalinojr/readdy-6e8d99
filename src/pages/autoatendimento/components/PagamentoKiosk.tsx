@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import QRCodeImport from 'react-qr-code';
 const QRCode = ((QRCodeImport as unknown as { default: typeof QRCodeImport }).default || QRCodeImport) as typeof QRCodeImport;
@@ -80,12 +81,13 @@ function TelaConfirmacao({
   alertaParcial?: string;
   onNovoPedido: () => void;
 }) {
+  const { t } = useTranslation();
   const [countdown, setCountdown] = useState(15);
 
   useEffect(() => {
     if (countdown <= 0) { onNovoPedido(); return; }
-    const t = setInterval(() => setCountdown((v) => v - 1), 1000);
-    return () => clearInterval(t);
+    const timer = setInterval(() => setCountdown((v) => v - 1), 1000);
+    return () => clearInterval(timer);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [countdown]);
 
@@ -142,7 +144,7 @@ function TelaConfirmacao({
         <div className="bg-zinc-800 border border-zinc-700 rounded-xl px-5 py-3 max-w-3xl w-full text-center">
           <div className="flex items-center justify-center gap-2 text-amber-400 mb-1">
             <i className="ri-information-line text-sm flex-shrink-0" />
-            <p className="text-sm md:text-base font-semibold">Pague no balcão ao retirar o pedido</p>
+            <p className="text-sm md:text-base font-semibold">{t('cliente.pagueNoBalcao')}</p>
           </div>
           {formaPagamentoNome ? (
             <div className="flex items-center justify-center gap-2">
@@ -204,6 +206,7 @@ function TelaPix({
   onVoltar: () => void;
   onConcluir: () => void;
 }) {
+  const { t } = useTranslation();
   const [pixData, setPixData] = useState<PixPaymentData | null>(null);
   const [loading, setLoading] = useState(true);
   const [pixError, setPixError] = useState('');
@@ -330,7 +333,7 @@ function TelaPix({
         <div className="w-16 h-16 md:w-24 md:h-24 flex items-center justify-center bg-emerald-500/10 rounded-2xl">
           <div className="w-8 h-8 md:w-12 md:h-12 border-3 border-emerald-500 border-t-transparent rounded-full animate-spin" style={{ borderWidth: 3 }} />
         </div>
-        <p className="text-zinc-400 text-base md:text-xl font-semibold">Gerando QR Code PIX...</p>
+        <p className="text-zinc-400 text-base md:text-xl font-semibold">{t('cliente.gerandoPix')}</p>
       </div>
     );
   }
@@ -369,13 +372,13 @@ function TelaPix({
           <div className="absolute inset-0 rounded-full border-4 border-emerald-500/30 animate-ping" />
         </div>
         <div>
-          <h3 className="text-3xl md:text-5xl font-black text-white">PIX Confirmado!</h3>
-          <p className="text-emerald-400 font-semibold text-base md:text-xl mt-1">Pagamento recebido com sucesso</p>
+          <h3 className="text-3xl md:text-5xl font-black text-white">{t('cliente.pixConfirmado')}</h3>
+          <p className="text-emerald-400 font-semibold text-base md:text-xl mt-1">{t('cliente.pagamentoRecebido')}</p>
         </div>
         <p className="text-amber-400 font-black text-4xl md:text-5xl">{fmt(total)}</p>
         <div className="flex gap-2 items-center bg-zinc-800 px-4 py-2 rounded-xl">
           <div className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse" />
-          <p className="text-zinc-300 text-base md:text-lg">Registrando pedido...</p>
+          <p className="text-zinc-300 text-base md:text-lg">{t('cliente.registrandoPedido')}</p>
         </div>
       </div>
     );
@@ -389,8 +392,8 @@ function TelaPix({
           <i className="ri-time-line text-3xl md:text-5xl text-amber-400" />
         </div>
         <div>
-          <h3 className="text-xl md:text-3xl font-bold text-white mb-1">QR Code expirado</h3>
-          <p className="text-zinc-400 text-sm md:text-lg">O tempo para pagamento esgotou. Gere um novo QR Code.</p>
+          <h3 className="text-xl md:text-3xl font-bold text-white mb-1">{t('cliente.qrExpirado')}</h3>
+          <p className="text-zinc-400 text-sm md:text-lg">{t('cliente.tempoEsgotou')}</p>
         </div>
         <div className="flex gap-3">
           <button onClick={onVoltar} className="px-5 md:px-8 py-2.5 md:py-4 bg-zinc-700 hover:bg-zinc-600 text-white font-semibold text-sm md:text-lg rounded-xl cursor-pointer transition-colors whitespace-nowrap">
@@ -413,9 +416,9 @@ function TelaPix({
           <div className="w-10 h-10 flex items-center justify-center bg-emerald-500/20 rounded-lg">
             <i className="ri-qr-code-line text-emerald-400 text-lg" />
           </div>
-          <h2 className="text-3xl md:text-5xl font-black text-white">Pague com PIX</h2>
+          <h2 className="text-3xl md:text-5xl font-black text-white">{t('cliente.pagueComPix')}</h2>
         </div>
-        <p className="text-zinc-400 text-base md:text-lg">Abra o app do seu banco e escaneie o QR Code</p>
+        <p className="text-zinc-400 text-base md:text-lg">{t('cliente.abraAppBanco')}</p>
       </div>
 
       {/* QR Code + info lado a lado em telas maiores */}
@@ -435,7 +438,7 @@ function TelaPix({
           {/* Indicador de polling */}
           <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-1.5 bg-zinc-900 border border-zinc-700 rounded-full px-3 py-1">
             <div className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse" />
-            <span className="text-zinc-400 text-xs font-semibold">Aguardando pagamento</span>
+            <span className="text-zinc-400 text-xs font-semibold">{t('cliente.aguardandoPagamento')}</span>
           </div>
         </div>
 
@@ -443,7 +446,7 @@ function TelaPix({
         <div className="flex flex-col gap-3 w-full md:flex-1">
           {/* Valor */}
           <div className="bg-zinc-800 rounded-xl px-5 py-4 text-center">
-            <p className="text-zinc-500 text-xs mb-1">Valor a pagar</p>
+            <p className="text-zinc-500 text-xs mb-1">{t('cliente.valorAPagar')}</p>
             <p className="text-amber-400 font-black text-4xl md:text-5xl">{fmt(total)}</p>
           </div>
 
@@ -464,7 +467,7 @@ function TelaPix({
       {/* Timer */}
       <div className="w-full max-w-3xl">
         <div className="flex items-center justify-between mb-1.5">
-          <span className="text-zinc-500 text-xs">Expira em</span>
+          <span className="text-zinc-500 text-xs">{t('cliente.expiraEm')}</span>
           <span className={`text-base font-black ${timeLeft < 60 ? 'text-red-400' : timeLeft < 180 ? 'text-amber-400' : 'text-zinc-300'}`}>
             {mins}:{secs}
           </span>
@@ -515,6 +518,7 @@ export default function PagamentoKiosk({
   onCobrancaEmAndamento,
 }: PagamentoKioskProps) {
   const { user } = useAuth();
+  const { t } = useTranslation();
   const { kioskSession } = useKioskAuth();
   const [forma, setForma] = useState<PaymentMethod | null>(null);
   const [confirmado, setConfirmado] = useState(false);
@@ -675,7 +679,7 @@ export default function PagamentoKiosk({
             <div key={i} className="w-4 h-4 md:w-5 md:h-5 bg-amber-500 rounded-full animate-bounce" style={{ animationDelay: `${i * 0.15}s` }} />
           ))}
         </div>
-        <p className="text-zinc-400 text-base md:text-2xl">Registrando seu pedido...</p>
+        <p className="text-zinc-400 text-base md:text-2xl">{t('cliente.registrandoPedido')}</p>
       </div>
     );
   }
@@ -705,7 +709,7 @@ export default function PagamentoKiosk({
     return (
       <div className="flex flex-col items-center justify-center h-full gap-4 md:gap-6 p-5 md:p-8">
         <div className="text-center">
-          <h2 className="text-3xl md:text-6xl font-black text-white mb-2">Quando deseja pagar?</h2>
+          <h2 className="text-3xl md:text-6xl font-black text-white mb-2">{t('cliente.quandoDesejaPagar')}</h2>
           <p className="text-zinc-400 text-base md:text-2xl">Total: <span className="text-amber-400 font-black">{fmt(total)}</span></p>
           {!hasCaixa && (
             <div className="mt-3 flex items-center justify-center gap-2 text-amber-400 bg-amber-500/10 rounded-full px-4 py-1.5 mx-auto w-fit">
@@ -728,7 +732,7 @@ export default function PagamentoKiosk({
               <i className={`ri-secure-payment-line text-4xl md:text-5xl ${!hasCaixa ? 'text-zinc-600' : ''}`} />
             </div>
             <div className="text-center">
-              <p className="text-xl md:text-3xl font-black">Pagar agora</p>
+              <p className="text-xl md:text-3xl font-black">{t('cliente.pagarAgora')}</p>
               <p className={`text-sm md:text-lg mt-1 ${hasCaixa ? 'text-zinc-950/60' : 'text-zinc-600'}`}>
                 {hasCaixa ? 'PIX, cartão ou dinheiro' : 'Caixa fechado — indisponível'}
               </p>
@@ -743,7 +747,7 @@ export default function PagamentoKiosk({
               <i className="ri-store-2-line text-4xl md:text-5xl text-zinc-300" />
             </div>
             <div className="text-center">
-              <p className="text-xl md:text-3xl font-black">Pagar na entrega</p>
+              <p className="text-xl md:text-3xl font-black">{t('cliente.pagarNaEntrega')}</p>
               <p className="text-zinc-500 text-sm md:text-lg mt-1">Pague ao retirar no balcão</p>
             </div>
           </button>
@@ -817,7 +821,7 @@ export default function PagamentoKiosk({
             </div>
           </div>
           <div className="bg-zinc-800 rounded-xl px-5 py-3">
-            <p className="text-zinc-500 text-xs">Total do pedido</p>
+            <p className="text-zinc-500 text-xs">{t('cliente.totalPedido')}</p>
             <p className="text-amber-400 font-black text-2xl md:text-3xl">{fmt(total)}</p>
           </div>
           {modoPagamento === 'ambos' || pagarNaEntrega ? (
@@ -845,16 +849,29 @@ export default function PagamentoKiosk({
       return 'ri-bank-card-2-line';
     };
 
+    // Nome da forma pelo TIPO (estavel) em vez do nome cadastrado, que esta em
+    // portugues. Tipo desconhecido cai no nome da loja.
+    const getMethodName = (method: { type: string; name: string }) => {
+      const porTipo: Record<string, string> = {
+        pix: 'PIX',
+        credit_card: t('cliente.cartaoCredito'),
+        debit_card: t('cliente.cartaoDebito'),
+        cash: t('cliente.formaDinheiro'),
+        meal_voucher: t('cliente.formaVale'),
+      };
+      return porTipo[method.type] ?? method.name;
+    };
+
     const getMethodDesc = (type: string) => {
-      if (type === 'pix') return 'QR Code instantâneo';
-      if ((type === 'credit_card' || type === 'debit_card') && cartaoNaMaquininha) return 'Na maquininha ao lado';
-      return 'Pague no balcão';
+      if (type === 'pix') return t('cliente.qrInstantaneo');
+      if ((type === 'credit_card' || type === 'debit_card') && cartaoNaMaquininha) return t('cliente.naMaquininha');
+      return t('cliente.pagarNoBalcao');
     };
 
     return (
       <div className="flex flex-col items-center justify-center h-full gap-5 md:gap-6 p-5 md:p-8">
         <div className="text-center">
-          <h2 className="text-3xl md:text-6xl font-black text-white mb-2">Como deseja pagar?</h2>
+          <h2 className="text-3xl md:text-6xl font-black text-white mb-2">{t('cliente.comoDesejaPagar')}</h2>
           <p className="text-zinc-400 text-base md:text-2xl">Total: <span className="text-amber-400 font-black">{fmt(total)}</span></p>
         </div>
         {/* BUG-11: Banner de erro de pagamento */}
@@ -898,13 +915,13 @@ export default function PagamentoKiosk({
                   <i className={`${getMethodIcon(method.type)} text-xl md:text-3xl`} />
                 </div>
                 <div className="text-center">
-                  <p className="text-sm md:text-xl font-black">{method.name}</p>
+                  <p className="text-sm md:text-xl font-black">{getMethodName(method)}</p>
                   <p className={`text-xs mt-0.5 hidden sm:block ${isPix ? 'text-white/70' : 'text-zinc-500'}`}>
                     {getMethodDesc(method.type)}
                   </p>
                 </div>
                 {isPix && (
-                  <span className="text-xs bg-white/20 px-2 py-0.5 rounded-full font-semibold">Recomendado</span>
+                  <span className="text-xs bg-white/20 px-2 py-0.5 rounded-full font-semibold">{t('cliente.recomendado')}</span>
                 )}
               </button>
             );
@@ -943,7 +960,7 @@ export default function PagamentoKiosk({
         <i className={`text-3xl md:text-5xl text-amber-400 ${forma.type === 'cash' ? 'ri-money-dollar-circle-line' : 'ri-bank-card-line'}`} />
       </div>
       <div>
-        <h2 className="text-xl md:text-5xl font-black text-white">Pague no balcão</h2>
+        <h2 className="text-xl md:text-5xl font-black text-white">{t('cliente.pagarNoBalcao')}</h2>
         <p className="text-zinc-400 text-sm md:text-2xl mt-2 max-w-xl">
           Seu pedido vai para a cozinha agora. Pague com <span className="text-white font-bold">{forma.name}</span> ao retirar.
         </p>

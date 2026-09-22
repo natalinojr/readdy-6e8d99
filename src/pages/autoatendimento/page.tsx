@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { useState, useCallback, useEffect, useRef, Component } from 'react';
 import type { ReactNode, ErrorInfo } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -77,12 +78,14 @@ type Etapa = 'welcome' | 'destino' | 'cardapio' | 'carrinho' | 'identificacao' |
 type Destino = 'aqui' | 'viagem' | null;
 
 const ETAPAS_FLUXO: Etapa[] = ['cardapio', 'carrinho', 'identificacao', 'forma_pagamento', 'pagamento'];
-const getEtapasLabel = (pagarNaEntrega: boolean): Record<string, string> => ({
-  cardapio: 'Cardápio',
-  carrinho: 'Revisar',
-  identificacao: 'Identificação',
-  forma_pagamento: 'Pagamento',
-  pagamento: pagarNaEntrega ? 'Confirmação' : 'Pagar',
+// Rotulos do passo a passo. Recebem o tradutor porque esta funcao roda fora do
+// componente — o totem inteiro fala o idioma que o cliente escolheu.
+const getEtapasLabel = (pagarNaEntrega: boolean, t: (k: string) => string): Record<string, string> => ({
+  cardapio: t('cliente.cardapio'),
+  carrinho: t('cliente.etapaRevisar'),
+  identificacao: t('cliente.etapaIdentificacao'),
+  forma_pagamento: t('cliente.etapaPagamento'),
+  pagamento: pagarNaEntrega ? t('cliente.etapaConfirmacao') : t('cliente.etapaPagar'),
 });
 
 let pedidoSeq = 1000;
@@ -110,6 +113,7 @@ function AutoatendimentoPageInner() {
   const { settings } = useSystemSettings();
   const { kioskSession } = useKioskAuth();
   const { recarregar: recarregarCardapio } = useCardapio();
+  const { t } = useTranslation();
   // Idioma do cardapio no totem. A traducao e so de vitrine: o pedido continua
   // sendo montado com o nome em portugues, que e o que a cozinha le.
   const idiomaCardapio = useIdiomaCardapio(edgeUrl('mesa-write'), kioskSession?.tenantId ?? user?.tenantId ?? null);
@@ -1106,7 +1110,7 @@ function AutoatendimentoPageInner() {
   }
 
   const etapaIndex = etapasVisiveis.indexOf(etapa as typeof etapasVisiveis[number]);
-  const ETAPAS_LABEL = getEtapasLabel(pagarNaEntrega);
+  const ETAPAS_LABEL = getEtapasLabel(pagarNaEntrega, t);
 
   return (
     <div className="fixed inset-0 bg-zinc-950 flex flex-col overflow-hidden">
@@ -1133,7 +1137,7 @@ function AutoatendimentoPageInner() {
                   destino === 'aqui' ? 'bg-amber-500/20 text-amber-400' : 'bg-zinc-700 text-zinc-300'
                 }`}>
                   <i className={`mr-1 ${destino === 'aqui' ? 'ri-store-2-line' : 'ri-shopping-bag-3-line'}`} />
-                  {destino === 'aqui' ? 'Comer aqui' : 'Para viagem'}
+                  {destino === 'aqui' ? t('cliente.comerAqui') : t('cliente.paraViagem')}
                 </span>
               )}
             </div>
@@ -1250,6 +1254,7 @@ function AutoatendimentoPageInner() {
             onEditarItem={handleEditarItem}
             onVoltar={() => setEtapa('cardapio')}
             onPagar={handleAvancarCarrinho}
+            traduzir={idiomaCardapio.traduzir}
           />
         )}
         {etapa === 'identificacao' && (

@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
@@ -33,6 +34,7 @@ const TYPE_LABEL: Record<string, string> = {
 };
 
 export default function FormaPagamentoKiosk({ total, onContinuar, onVoltar }: FormaPagamentoKioskProps) {
+  const { t } = useTranslation();
   const { user } = useAuth();
   const { kioskSession } = useKioskAuth();
   const [methods, setMethods] = useState<PaymentMethod[]>([]);
@@ -66,13 +68,13 @@ export default function FormaPagamentoKiosk({ total, onContinuar, onVoltar }: Fo
       {/* Título + Total lado a lado */}
       <div className="flex items-center justify-between w-full max-w-2xl">
         <div>
-          <h2 className="text-3xl md:text-6xl font-black text-white leading-tight">Como vai pagar?</h2>
+          <h2 className="text-3xl md:text-6xl font-black text-white leading-tight">{t('cliente.comoVaiPagar')}</h2>
           <p className="text-zinc-500 text-sm md:text-xl mt-1">
             Pagamento feito <span className="text-amber-400 font-semibold">na entrega</span> — não agora
           </p>
         </div>
         <div className="bg-zinc-800 rounded-xl md:rounded-2xl px-4 md:px-6 py-2 md:py-4 text-right flex-shrink-0">
-          <p className="text-zinc-500 text-sm font-semibold">Total</p>
+          <p className="text-zinc-500 text-sm font-semibold">{t('cliente.total')}</p>
           <p className="text-amber-400 font-black text-xl md:text-4xl">{fmt(total)}</p>
         </div>
       </div>
