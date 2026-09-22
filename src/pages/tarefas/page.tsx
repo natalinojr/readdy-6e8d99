@@ -1,9 +1,10 @@
 import { useState, useMemo, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Navigate, useNavigate } from 'react-router-dom';
 import { Plus, ListTodo, LayoutGrid, CalendarDays, ClipboardList, UserCheck, Users, Layers, SlidersHorizontal, ListChecks, Waypoints, ArrowLeft } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { useAppMode } from '@/contexts/AppModeContext';
+import { useModuleAccess } from '@/hooks/useModuleAccess';
 import { useUsuarios } from '@/hooks/useUsuarios';
 import PullToRefresh from '@/components/feature/PullToRefresh';
 import { useTarefas } from './hooks/useTarefas';
@@ -52,6 +53,12 @@ export default function TarefasPage() {
   const { setMode } = useAppMode();
   const navigate = useNavigate();
   const celular = useIsMobile();
+  // Tarefas é liberado por PESSOA no Admin Master (user_module_access), igual a
+  // Contratação e Notas de Serviço. Sem esta trava a rota ficava aberta a
+  // qualquer um autenticado: o card sumia de /modulos, mas quem caísse em
+  // /tarefas (ex.: o login devolve para a última rota do aparelho) entrava.
+  const { hasModule, loading: acessoLoading } = useModuleAccess();
+  const temAcessoTarefas = hasModule('tarefas');
 
   // A rota /tarefas roda em modo terminal (sem sidebar/topbar do ERPOS) — o
   // único jeito de sair é este botão.
@@ -294,6 +301,8 @@ export default function TarefasPage() {
       )}
     </div>
   );
+
+  if (!acessoLoading && !temAcessoTarefas) return <Navigate to="/modulos" replace />;
 
   return (
     <div className="flex h-full min-h-0">
