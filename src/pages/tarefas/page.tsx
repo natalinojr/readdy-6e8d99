@@ -79,7 +79,7 @@ export default function TarefasPage() {
     typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches ? 'minhas' : 'pasta',
   );
   const [display, setDisplay] = useState<Display>('lista');
-  const [groupBy, setGroupBy] = useState<GroupBy>('status');
+  const [groupBySalvo, setGroupBySalvo] = useState<GroupBy>('status');
   const [filtros, setFiltros] = useState({ ...FILTROS_VAZIOS });
   const [selectedListId, setSelectedListId] = useState<string | null>(null);
   const [openTaskId, setOpenTaskId] = useState<string | null>(null);
@@ -95,6 +95,23 @@ export default function TarefasPage() {
   const [pastaExcluindo, setPastaExcluindo] = useState<{ no: NoPasta; ids: Set<string>; descricao: string } | null>(null);
 
   const arvorePastas = useMemo(() => montarArvorePastas(lists), [lists]);
+
+  // Agrupamento é por pasta (e por visão Minhas/Compartilhadas/Todas): trocar o
+  // agrupamento numa pasta não mexe nas outras, e ao voltar pra ela ele volta
+  // como foi deixado. Fica no localStorage de quem usa, como colunas e larguras.
+  const chaveAgrupamento = `erpos_tarefas_agrupar_${origem === 'pasta' ? selectedListId ?? 'nenhuma' : origem}`;
+  useEffect(() => {
+    let salvo: GroupBy = 'status';
+    try { salvo = (localStorage.getItem(chaveAgrupamento) as GroupBy | null) ?? 'status'; } catch { /* sem localStorage */ }
+    setGroupBySalvo(salvo);
+  }, [chaveAgrupamento]);
+  const setGroupBy = (g: GroupBy) => {
+    setGroupBySalvo(g);
+    try { localStorage.setItem(chaveAgrupamento, g); } catch { /* sem localStorage */ }
+  };
+  // Campo personalizado apagado (ou de outra pasta) não pode deixar a tela vazia.
+  const groupBy: GroupBy = groupBySalvo.startsWith('field:') && !campos.some((c) => c.id === groupBySalvo.slice('field:'.length))
+    ? 'status' : groupBySalvo;
 
   // Clique na notificação push abre em /tarefas?task=<id>: abre a tarefa e
   // limpa o parâmetro, para um F5 depois não reabrir o mesmo drawer.
@@ -484,9 +501,16 @@ export default function TarefasPage() {
                 write={write}
                 onAplicar={(v) => {
                   setDisplay(v.view_type as Display);
-                  setGroupBy(v.group_by as GroupBy);
                   setFiltros({ ...FILTROS_VAZIOS, ...(v.filters as Partial<Filtros>) });
-                  if (v.list_id) irParaPasta(v.list_id);
+                  if (v.list_id) {
+                    // Grava o agrupamento da view na pasta de DESTINO antes de ir
+                    // pra ela — senão o agrupamento salvo da pasta sobrescreve.
+                    try { localStorage.setItem(`erpos_tarefas_agrupar_${v.list_id}`, v.group_by); } catch { /* sem localStorage */ }
+                    irParaPasta(v.list_id);
+                    setGroupBySalvo(v.group_by as GroupBy); // se já estava nessa pasta, a chave não muda
+                  } else {
+                    setGroupBy(v.group_by as GroupBy);
+                  }
                 }}
               />
             </div>
