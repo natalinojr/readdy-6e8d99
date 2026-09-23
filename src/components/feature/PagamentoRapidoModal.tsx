@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import CpfCnpjInput from '@/components/base/CpfCnpjInput';
 import { usePaymentMethods } from '@/hooks/usePaymentMethods';
 import { invokeWithAuth, supabase, type EdgeHttpError } from '@/lib/supabase';
@@ -31,6 +31,8 @@ interface Props {
   tituloContexto?: string;
   /** IDs de pedidos para auto-vincular na abertura — soma os totais automaticamente */
   autoLinkOrderIds?: string[];
+  /** Forma que o cliente escolheu no tablet ("Dinheiro"): já vem selecionada, com o valor preenchido. */
+  formaInicialNome?: string;
 }
 
 interface ItemPedido {
@@ -40,7 +42,7 @@ interface ItemPedido {
   opcoes?: string[];
 }
 
-export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, destinoDisplay, destino, onClose, onSuccess, paidByPdv = 'cashier', valorInicial, tituloContexto, autoLinkOrderIds }: Props) {
+export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, destinoDisplay, destino, onClose, onSuccess, paidByPdv = 'cashier', valorInicial, tituloContexto, autoLinkOrderIds, formaInicialNome }: Props) {
   const { formasAtivas, loading: loadingFormas } = usePaymentMethods();
   const { user } = useAuth();
   const { success: toastSuccess, error: toastError, warning: toastWarning } = useToast();
@@ -240,12 +242,17 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
     buscarItens();
   }, [orderId, user?.tenantId]);
 
-  // Seleciona a primeira forma ao carregar
+  // Seleciona a forma escolhida no tablet (se houver) ou a primeira ao carregar
   useEffect(() => {
     if (formasAtivas.length > 0 && !formaId) {
-      setFormaId(formasAtivas[0].id);
+      const alvo = formaInicialNome?.trim().toLowerCase();
+      const escolhida = alvo
+        ? formasAtivas.find((f) => f.nome.trim().toLowerCase() === alvo)
+          ?? (alvo === 'dinheiro' ? formasAtivas.find((f) => f.tipo === 'dinheiro') : undefined)
+        : undefined;
+      setFormaId((escolhida ?? formasAtivas[0]).id);
     }
-  }, [formasAtivas, formaId]);
+  }, [formasAtivas, formaId, formaInicialNome]);
 
   // Pedidos relacionados (excluindo o próprio pedido atual)
   const pedidosRelacionadosFiltrados = pedidosRelacionados.filter((p) => p.id !== orderId);
@@ -274,6 +281,13 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
 
   const totalPago = pagamentos.reduce((acc, p) => acc + p.valor, 0);
   const restante = Math.max(0, totalAPagar - totalPago);
+  // Pedido do tablet com forma escolhida: o valor acompanha o total (que muda quando os
+  // pedidos vinculados carregam) até o operador digitar — aí é só confirmar.
+  const valorEditadoRef = useRef(false);
+  useEffect(() => {
+    if (!formaInicialNome || valorInicial != null || valorEditadoRef.current || pagamentos.length > 0) return;
+    if (restante > 0) setValorInput(restante.toFixed(2));
+  }, [formaInicialNome, valorInicial, restante, pagamentos.length]);
   // Dinheiro acima do restante já entra com valor = restante e o troco em p.troco (ver handleAddPagamento).
   const troco = (totalPago > totalAPagar ? totalPago - totalAPagar : 0)
     + pagamentos.reduce((acc, p) => acc + (p.troco ?? 0), 0);
@@ -954,6 +968,11 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
             <p className="text-xs text-zinc-500 mt-0.5">
               #{String(numeroDisplay).padStart(4, '0')} · {destinoDisplay}
             </p>
+            {formaInicialNome && (
+              <p className="text-xs font-semibold text-teal-700 mt-1">
+                <i className="ri-tablet-line mr-1" />Cliente escolheu no tablet: {formaInicialNome}
+              </p>
+            )}
           </div>
           <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-zinc-200 cursor-pointer text-zinc-400 transition-colors">
             <i className="ri-close-line text-lg" />
@@ -1204,7 +1223,7 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
                     min="0"
                     step="0.01"
                     value={valorInput}
-                    onChange={(e) => setValorInput(e.target.value)}
+                    onChange={(e) => { valorEditadoRef.current = true; setValorInput(e.target.value); }}
                     onKeyDown={(e) => { if (e.key === 'Enter' && valorInput && restante > 0) handleAddPagamento(); }}
                     placeholder={restante.toFixed(2).replace('.', ',')}
                     className="w-full pl-10 pr-4 py-2.5 border border-zinc-200 rounded-lg text-sm focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-200"

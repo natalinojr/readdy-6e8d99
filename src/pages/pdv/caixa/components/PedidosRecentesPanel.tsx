@@ -576,6 +576,7 @@ function kdsToRecente(p: KDSPedido): PedidoRecenteComParticipant {
     senha: p.senha,
     status: kdsStatusToRecente(p.status, p.isCancelled),
     pago: p.isPaid ?? false,
+    formaAPagar: p.isPaid ? undefined : p.paymentMethodName,
     kdsStatus: p.status,
     total: p.totalAmount ?? 0,
     deliveryFee: p.deliveryFee ?? 0,
@@ -942,6 +943,7 @@ function PedidoCardAgrupado({ pedido, onEntregarRemote, onEditarItem, onRecarreg
           destinoDisplay={destinoLabel(primeiroNaoPago)}
           destino={pedidoRecenteToDestino(primeiroNaoPago)}
           paidByPdv="cashier"
+          formaInicialNome={primeiroNaoPago.formaAPagar}
           onClose={() => { setShowPagamento(false); setPagamentoAutoLinkIds([]); }}
           onSuccess={(_orderId, _paymentMethodId) => {
             setPagoLocal(true);
@@ -1522,6 +1524,7 @@ function PedidoCard({ pedido, onEntregarRemote, onEditarItem, onRecarregar }: Pe
         destinoDisplay={destinoLabel(pedido)}
         destino={pedidoRecenteToDestino(pedido)}
         paidByPdv="cashier"
+        formaInicialNome={pedido.formaAPagar}
         onClose={() => setShowPagamento(false)}
         onSuccess={(_orderId, _paymentMethodId) => {
           setPagoLocal(true);
@@ -1666,7 +1669,12 @@ function PedidoCard({ pedido, onEntregarRemote, onEditarItem, onRecarregar }: Pe
         )}
         {/* Pedido não pago: botão de cobrar visível no header sem precisar expandir */}
         {!isPago && !isCancelado && pedido.total > 0 && (
-          <div className="mt-2 flex items-center justify-end">
+          <div className={`mt-2 flex items-center ${pedido.formaAPagar ? 'justify-between' : 'justify-end'}`}>
+            {pedido.formaAPagar && (
+              <span className="flex items-center gap-1 text-[10px] font-bold text-teal-700 bg-teal-50 border border-teal-200 px-2 py-0.5 rounded-full whitespace-nowrap">
+                <i className="ri-tablet-line text-[10px]" />Paga no caixa: {pedido.formaAPagar}
+              </span>
+            )}
             <button
               onClick={(e) => { e.stopPropagation(); setShowPagamento(true); }}
               className="flex-shrink-0 flex items-center gap-1 text-[10px] font-black bg-emerald-500 hover:bg-emerald-600 text-white px-3 py-1 rounded-lg cursor-pointer whitespace-nowrap transition-colors"

@@ -120,6 +120,8 @@ export default {
   'cliente.pagarNaEntrega': "Pagar al recibir",
   'cliente.pagarNoBalcao': "Pagar en el mostrador",
   'cliente.pagueNoBalcao': "Paga en el mostrador al retirar el pedido",
+  'cliente.pagarNoCaixa': "Paga en la caja",
+  'cliente.vaAoCaixaDinheiro': "Ve a la caja y paga en efectivo. Di el número de tu pedido.",
   'cliente.valorAPagar': "Importe a pagar",
   'cliente.pagueComPix': "Paga con PIX",
   'cliente.abraAppBanco': "Abre la app de tu banco y escanea el código QR",

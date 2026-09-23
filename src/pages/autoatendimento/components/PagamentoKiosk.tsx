@@ -65,6 +65,7 @@ function TelaConfirmacao({
   pagarNaEntrega,
   modoEscolhido,
   formaPagamentoNome,
+  irAoCaixa,
   alertaParcial,
   onNovoPedido,
 }: {
@@ -78,6 +79,8 @@ function TelaConfirmacao({
   pagarNaEntrega: boolean;
   modoEscolhido: 'hora' | 'entrega' | null;
   formaPagamentoNome?: string;
+  /** Escolheu dinheiro: o cliente vai ao caixa pagar (o pedido fica em aberto no PDV). */
+  irAoCaixa?: boolean;
   alertaParcial?: string;
   onNovoPedido: () => void;
 }) {
@@ -112,7 +115,7 @@ function TelaConfirmacao({
           {numeroDisplay && <span className="ml-2 text-amber-400">{numeroDisplay}</span>}
         </h2>
         <p className="text-zinc-400 text-base md:text-2xl mt-1">
-          {pago ? 'Retire no balcão quando chamarmos' : 'Pague na retirada do pedido'}
+          {pago ? 'Retire no balcão quando chamarmos' : irAoCaixa ? t('cliente.pagarNoCaixa') : 'Pague na retirada do pedido'}
         </p>
       </div>
 
@@ -140,7 +143,16 @@ function TelaConfirmacao({
         </div>
       </div>
 
-      {!pago && (
+      {!pago && irAoCaixa && (
+        <div className="bg-amber-500/15 border-2 border-amber-500/60 rounded-xl px-5 py-4 max-w-3xl w-full text-center">
+          <div className="flex items-center justify-center gap-3 text-amber-300">
+            <i className="ri-money-dollar-circle-line text-2xl md:text-4xl flex-shrink-0" />
+            <p className="text-base md:text-2xl font-black">{t('cliente.vaAoCaixaDinheiro')}</p>
+          </div>
+        </div>
+      )}
+
+      {!pago && !irAoCaixa && (
         <div className="bg-zinc-800 border border-zinc-700 rounded-xl px-5 py-3 max-w-3xl w-full text-center">
           <div className="flex items-center justify-center gap-2 text-amber-400 mb-1">
             <i className="ri-information-line text-sm flex-shrink-0" />
@@ -540,6 +552,7 @@ export default function PagamentoKiosk({
   const [cartaoNaMaquininha, setCartaoNaMaquininha] = useState(false);
   // Forma escolhida para pagar no balcão (cartão/dinheiro): só informativa na confirmação.
   const [balcaoFormaNome, setBalcaoFormaNome] = useState<string | null>(null);
+  const [balcaoEmDinheiro, setBalcaoEmDinheiro] = useState(false);
 
   const total = carrinho.reduce((s, i) => s + i.preco * i.quantidade, 0);
   const tenantId = kioskSession?.tenantId ?? user?.tenantId ?? '';
@@ -616,6 +629,7 @@ export default function PagamentoKiosk({
   // integrada), então o pedido vai em aberto e o operador dá baixa no balcão.
   const handlePagarNoBalcao = async (method: PaymentMethod) => {
     setBalcaoFormaNome(method.name);
+    setBalcaoEmDinheiro(method.type === 'cash');
     await handlePagarNaEntregaEscolhido(method.name);
   };
 
@@ -698,6 +712,7 @@ export default function PagamentoKiosk({
         pagarNaEntrega={pagarNaEntrega}
         modoEscolhido={modoEscolhido}
         formaPagamentoNome={formaPagamentoNome ?? balcaoFormaNome ?? undefined}
+        irAoCaixa={balcaoEmDinheiro}
         alertaParcial={alertaParcial}
         onNovoPedido={() => onConcluir()}
       />
@@ -865,6 +880,7 @@ export default function PagamentoKiosk({
     const getMethodDesc = (type: string) => {
       if (type === 'pix') return t('cliente.qrInstantaneo');
       if ((type === 'credit_card' || type === 'debit_card') && cartaoNaMaquininha) return t('cliente.naMaquininha');
+      if (type === 'cash') return t('cliente.pagarNoCaixa');
       return t('cliente.pagarNoBalcao');
     };
 
@@ -960,9 +976,11 @@ export default function PagamentoKiosk({
         <i className={`text-3xl md:text-5xl text-amber-400 ${forma.type === 'cash' ? 'ri-money-dollar-circle-line' : 'ri-bank-card-line'}`} />
       </div>
       <div>
-        <h2 className="text-xl md:text-5xl font-black text-white">{t('cliente.pagarNoBalcao')}</h2>
+        <h2 className="text-xl md:text-5xl font-black text-white">{forma.type === 'cash' ? t('cliente.pagarNoCaixa') : t('cliente.pagarNoBalcao')}</h2>
         <p className="text-zinc-400 text-sm md:text-2xl mt-2 max-w-xl">
-          Seu pedido vai para a cozinha agora. Pague com <span className="text-white font-bold">{forma.name}</span> ao retirar.
+          {forma.type === 'cash'
+            ? <>Confirme e vá ao caixa pagar em <span className="text-white font-bold">dinheiro</span>. Seu pedido já fica lá esperando.</>
+            : <>Seu pedido vai para a cozinha agora. Pague com <span className="text-white font-bold">{forma.name}</span> ao retirar.</>}
         </p>
       </div>
       <p className="text-zinc-400 text-sm md:text-2xl">Total: <span className="text-amber-400 font-black">{fmt(total)}</span></p>

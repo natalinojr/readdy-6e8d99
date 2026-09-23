@@ -120,6 +120,8 @@ export default {
   'cliente.pagarNaEntrega': "Pay on delivery",
   'cliente.pagarNoBalcao': "Pay at the counter",
   'cliente.pagueNoBalcao': "Pay at the counter when you pick up your order",
+  'cliente.pagarNoCaixa': "Pay at the cashier",
+  'cliente.vaAoCaixaDinheiro': "Go to the cashier and pay in cash. Tell them your order number.",
   'cliente.valorAPagar': "Amount to pay",
   'cliente.pagueComPix': "Pay with PIX",
   'cliente.abraAppBanco': "Open your banking app and scan the QR code",

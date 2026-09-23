@@ -237,6 +237,8 @@ export interface PedidoRecente {
   participantName?: string | null;
   status: PedidoStatus;
   pago?: boolean;
+  /** Forma que o cliente escolheu no tablet para pagar no caixa (ex.: "Dinheiro") */
+  formaAPagar?: string;
   total: number;
   criadoEm: string;
   dataPedido?: string;
