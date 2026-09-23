@@ -89,6 +89,19 @@ export function calcularCarga(
     // Fração já feita: concluída = 1; aberta = cronometrado ÷ estimado (até 1).
     const fracaoFeita = concluida ? 1 : Math.min(1, (estimativa - minutosRestantes(t)) / estimativa);
 
+    // Plano por dia definido na tarefa: usa exatamente os minutos de cada dia.
+    const plano = t.time_plan?.dias ? Object.entries(t.time_plan.dias).filter(([, m]) => m > 0) : [];
+    if (plano.length) {
+      const mapaP = porPessoa.get(pessoa) ?? new Map<string, Parcela[]>();
+      porPessoa.set(pessoa, mapaP);
+      for (const [dia, minutos] of plano) {
+        const lista = mapaP.get(dia) ?? [];
+        lista.push({ task: t, minutos, feitos: minutos * fracaoFeita, atrasada, concluida });
+        mapaP.set(dia, lista);
+      }
+      continue;
+    }
+
     let inicio = t.start_date ? diaLocal(t.start_date) : prazo;
     if (inicio > prazo) inicio = prazo;
     let fim = prazo;

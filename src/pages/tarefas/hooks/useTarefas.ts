@@ -103,6 +103,8 @@ export interface TaskRow {
   field_values: Record<string, unknown>;
   /** Estimativa em minutos (null = sem estimativa). */
   time_estimate_minutes: number | null;
+  /** Horas planejadas por dia (minutos por data). null = automático: a Carga espalha a estimativa. */
+  time_plan?: { dias: Record<string, number> } | null;
   /** Tempo já registrado no cronômetro (trechos encerrados, de todos). */
   time_tracked_seconds: number;
   /** Início do MEU cronômetro rodando nesta tarefa (null = parado). */
@@ -336,7 +338,15 @@ export function useTarefas() {
     if (p.due_has_time !== undefined) n.due_has_time = Boolean(p.due_has_time);
     if (p.sort_order !== undefined) n.sort_order = Number(p.sort_order);
     if (p.recurrence !== undefined) n.recurrence = (p.recurrence as TaskRow['recurrence']) ?? null;
-    if (p.time_estimate_minutes !== undefined) n.time_estimate_minutes = (p.time_estimate_minutes as number | null) ?? null;
+    if (p.time_plan !== undefined) {
+      n.time_plan = (p.time_plan as TaskRow['time_plan']) ?? null;
+      // Mesma regra do task-write: com plano, a estimativa é a soma dos dias.
+      if (n.time_plan) n.time_estimate_minutes = Object.values(n.time_plan.dias).reduce((a, b) => a + b, 0);
+    }
+    if (p.time_estimate_minutes !== undefined && p.time_plan === undefined) {
+      n.time_estimate_minutes = (p.time_estimate_minutes as number | null) ?? null;
+      n.time_plan = null; // mudou só a estimativa: plano por dia volta pro automático
+    }
     if (p.list_id !== undefined && lista) {
       n.list_id = lista.id;
       n.list_name = lista.name;

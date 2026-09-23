@@ -17,6 +17,7 @@ import CampoInput from './campos/CampoInput';
 import ComentarioInput from './ComentarioInput';
 import ConfirmDialog from './ConfirmDialog';
 import EditorCelula from './EditorCelula';
+import PlanoPorDia from './PlanoPorDia';
 import StatusPicker from './StatusPicker';
 import { iniciais, rotuloVencimento } from './TaskCard';
 
@@ -406,6 +407,15 @@ export default function TaskDrawer({
                 </Propriedade>
               ))}
             </div>
+
+            {/* Tarefa de vários dias: quanto trabalhar em cada dia (a Carga usa isso). */}
+            <PlanoPorDia
+              task={{
+                id: taskId, start_date: detail.start_date, due_date: detail.due_date,
+                time_plan: linha.time_plan ?? null, time_estimate_minutes: linha.time_estimate_minutes,
+              }}
+              gravar={update}
+            />
 
             {editor && (
               <EditorCelula

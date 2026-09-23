@@ -60,6 +60,22 @@ function validateFieldValue(fieldType: string, value: unknown, options: Array<{ 
   }
 }
 
+/** Plano de horas por dia: {dias: {"YYYY-MM-DD": minutos}} (0 a 24h por dia, até 366 dias) ou null. */
+function validarPlano(v: unknown): string | null {
+  if (v === undefined || v === null) return null;
+  const dias = (v as { dias?: unknown })?.dias;
+  if (typeof v !== 'object' || Array.isArray(v) || !dias || typeof dias !== 'object' || Array.isArray(dias)) {
+    return 'time_plan deve ser {dias: {data: minutos}}';
+  }
+  const entradas = Object.entries(dias as Record<string, unknown>);
+  if (entradas.length > 366) return 'time_plan: no máximo 366 dias';
+  for (const [dia, min] of entradas) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dia) || isNaN(Date.parse(dia))) return `time_plan: data inválida ${dia}`;
+    if (typeof min !== 'number' || !Number.isInteger(min) || min < 0 || min > 1440) return `time_plan: minutos inválidos em ${dia}`;
+  }
+  return null;
+}
+
 /** Estimativa em minutos: inteiro de 0 a 1000 h, ou null pra limpar. */
 function validarEstimativa(v: unknown): string | null {
   if (v === undefined || v === null) return null;
@@ -505,13 +521,26 @@ Deno.serve({ verify_jwt: false }, async (req) => {
           await assertResponsavelValido((rest.list_id ?? current.list_id) as string, rest.assignee_id);
         }
         const patch: Record<string, unknown> = {};
-        const editable = ['title', 'description', 'status_id', 'priority', 'assignee_id', 'start_date', 'due_date', 'due_has_time', 'list_id', 'sort_order', 'recurrence', 'is_archived', 'parent_task_id', 'time_estimate_minutes'];
+        const editable = ['title', 'description', 'status_id', 'priority', 'assignee_id', 'start_date', 'due_date', 'due_has_time', 'list_id', 'sort_order', 'recurrence', 'is_archived', 'parent_task_id', 'time_estimate_minutes', 'time_plan'];
         for (const k of editable) {
           if (rest[k] !== undefined) patch[k] = rest[k];
         }
         if (patch.time_estimate_minutes !== undefined) {
           const estimativaErro = validarEstimativa(patch.time_estimate_minutes);
           if (estimativaErro) return json({ error: estimativaErro }, 400);
+        }
+        if (patch.time_plan !== undefined) {
+          const planoErro = validarPlano(patch.time_plan);
+          if (planoErro) return json({ error: planoErro }, 400);
+          // Com plano, a estimativa é SEMPRE a soma dos dias (nunca ficam contraditórios).
+          if (patch.time_plan) {
+            const soma = Object.values((patch.time_plan as { dias: Record<string, number> }).dias).reduce((a, b) => a + b, 0);
+            patch.time_estimate_minutes = soma;
+          }
+        } else if (patch.time_estimate_minutes !== undefined && current.time_plan) {
+          // Mudou só a estimativa (ex.: pela coluna da lista): o plano por dia deixa de
+          // bater, então volta pro automático.
+          patch.time_plan = null;
         }
 
         // Resolve o status pelo NOME DA CATEGORIA em vez do id — necessário

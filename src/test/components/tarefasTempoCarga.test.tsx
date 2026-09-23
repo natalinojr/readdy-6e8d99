@@ -193,3 +193,16 @@ describe('Carga: resumo concluído e falta', () => {
     expect(screen.getByText('falta 1,5h')).toBeTruthy();
   });
 });
+
+describe('Horas por dia (plano)', () => {
+  const hoje = new Date(2026, 8, 23);
+  it('Carga usa exatamente os minutos de cada dia do plano', () => {
+    const r = calcularCarga([tarefa('p', {
+      time_estimate_minutes: 180, start_date: '2026-09-24', due_date: '2026-09-26T12:00:00Z',
+      time_plan: { dias: { '2026-09-24': 120, '2026-09-26': 60 } },
+    })], hoje, () => CAPACIDADE_PADRAO);
+    expect(minutosNoDia(r, 'u1', '2026-09-24')).toBe(120);
+    expect(minutosNoDia(r, 'u1', '2026-09-25')).toBe(0);
+    expect(minutosNoDia(r, 'u1', '2026-09-26')).toBe(60); // sábado, mas foi o que a pessoa definiu
+  });
+});
