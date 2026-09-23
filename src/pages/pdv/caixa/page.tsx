@@ -7,6 +7,7 @@ import { usePermissoes } from '@/hooks/usePermissoes';
 import { PDVProvider, usePDV } from '../../../contexts/PDVContext';
 import { useSessao } from '../../../contexts/SessaoContext';
 import { useKDS } from '../../../contexts/KDSContext';
+import { useMesas } from '../../../contexts/MesasContext';
 import { useToast } from '../../../contexts/ToastContext';
 import type { DestinoInfo } from '../../../contexts/PDVContext';
 import type { Item } from '@/types/cardapio';
@@ -251,6 +252,7 @@ function CaixaFechadoView({
 /* ─── Dropdown de atalhos de teclado ─── */
 function AtalhosTeclado() {
   const [open, setOpen] = useState(false);
+  const { mesas } = useMesas();
 
   const atalhos = [
     { tecla: 'F2',     desc: 'Abrir pagamento',       icon: 'ri-money-dollar-circle-line', color: 'text-amber-600' },
@@ -258,7 +260,7 @@ function AtalhosTeclado() {
     { tecla: 'F3',     desc: 'Selecionar destino',    icon: 'ri-map-pin-line',             color: 'text-teal-600' },
     { tecla: 'F4',     desc: 'Limpar carrinho',       icon: 'ri-delete-bin-line',          color: 'text-red-500' },
     { tecla: 'F5',     desc: 'Ir para Carrinho',      icon: 'ri-shopping-cart-line',       color: 'text-zinc-500' },
-    { tecla: 'F6',     desc: 'Ir para Mesas',         icon: 'ri-layout-grid-line',         color: 'text-zinc-500' },
+    ...(mesas.length > 0 ? [{ tecla: 'F6', desc: 'Ir para Mesas', icon: 'ri-layout-grid-line', color: 'text-zinc-500' }] : []),
     { tecla: 'Espaço', desc: 'Focar busca',           icon: 'ri-search-line',              color: 'text-zinc-500' },
     { tecla: 'Esc',    desc: 'Fechar modal',          icon: 'ri-close-circle-line',        color: 'text-zinc-400' },
   ];
@@ -320,6 +322,10 @@ function PDVOperacional({ onAbrirFechamento }: PDVOperacionalProps) {
   const { total, clearCart, destino, setDestino, addItem, carrinho, removeItem, enviarParaCozinha, finalizarPedido } = usePDV();
   const { success: toastSuccess, error: toastError } = useToast();
   const { pedidos: kdsPedidos } = useKDS();
+  // Mesa 0 (QR universal) já fica fora do MesasContext: loja só com o QR universal
+  // não tem mesa de salão, então a aba/atalho de Mesas nem aparece.
+  const { mesas } = useMesas();
+  const temMesas = mesas.length > 0;
   // Count real orders from KDS (not the local sequential counter that resets on reload)
   const numeroPedidos = kdsPedidos.filter((p) => !p.itens.every((i) => i.skip_kds)).length;
   const { itensAtivos, categorias, obsGlobais } = useCardapio();
@@ -469,14 +475,21 @@ function PDVOperacional({ onAbrirFechamento }: PDVOperacionalProps) {
       // F6 — alterna para aba Mesas
       if (e.key === 'F6') {
         e.preventDefault();
-        setTabRight('mesas');
+        if (temMesas) setTabRight('mesas');
         return;
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [carrinho.length, modal]);
+  }, [carrinho.length, modal, temMesas]);
+
+  // Loja deixou de ter mesa (ou trocou de loja) com a aba Mesas aberta: volta pro carrinho.
+  useEffect(() => {
+    if (temMesas) return;
+    setTabRight((t) => (t === 'mesas' ? 'carrinho' : t));
+    setMobileTab((t) => (t === 'mesas' ? 'carrinho' : t));
+  }, [temMesas]);
 
 
   // After destino is confirmed and we were waiting to pay
@@ -865,7 +878,7 @@ function PDVOperacional({ onAbrirFechamento }: PDVOperacionalProps) {
               { key: 'carrinho', icon: 'ri-shopping-cart-line', label: 'Carrinho', badge: carrinhoCount },
               { key: 'mesas',    icon: 'ri-layout-grid-line',   label: 'Mesas' },
               { key: 'pedidos',  icon: 'ri-file-list-3-line',   label: 'Pedidos', badge: numeroPedidos },
-            ] as const).map(({ key, icon, label, badge }) => (
+            ] as const).filter((t) => t.key !== 'mesas' || temMesas).map(({ key, icon, label, badge }) => (
               <button
                 key={key}
                 onClick={() => setTabRight(key)}
@@ -973,7 +986,7 @@ function PDVOperacional({ onAbrirFechamento }: PDVOperacionalProps) {
             { key: 'carrinho', icon: 'ri-shopping-cart-line', label: 'Carrinho', badge: carrinhoCount },
             { key: 'mesas',    icon: 'ri-layout-grid-line',   label: 'Mesas' },
             { key: 'pedidos',  icon: 'ri-file-list-3-line',   label: 'Pedidos', badge: numeroPedidos },
-          ] as const).map(({ key, icon, label, badge }) => (
+          ] as const).filter((t) => t.key !== 'mesas' || temMesas).map(({ key, icon, label, badge }) => (
             <button
               key={key}
               onClick={() => setMobileTab(key)}

@@ -22,6 +22,9 @@ const TIPOS: { tipo: DestinoType; label: string; icon: string; desc: string }[] 
 
 export default function DestinoModal({ current, onConfirm, onClose, onAbrirMesa }: Props) {
   const { mesas } = useMesas();
+  // Loja sem mesa de salão (só o QR universal, mesa 0 — já fora do MesasContext): sem opção Mesa.
+  const temMesas = mesas.length > 0;
+  const tipos = temMesas ? TIPOS : TIPOS.filter((t) => t.tipo !== 'mesa');
   const { user } = useAuth();
   const { senhaCounter, consumirSenha } = usePDV();
   // Delivery: cliente + endereco + taxa vem do modal proprio (cadastro do delivery).
@@ -29,7 +32,9 @@ export default function DestinoModal({ current, onConfirm, onClose, onAbrirMesa 
     current?.tipo === 'delivery' ? current : null,
   );
   const [showClienteDelivery, setShowClienteDelivery] = useState(false);
-  const [tipo, setTipo] = useState<DestinoType>(current?.tipo && current.tipo !== 'hora' ? current.tipo : 'mesa');
+  const [tipo, setTipo] = useState<DestinoType>(
+    current?.tipo && current.tipo !== 'hora' ? current.tipo : (temMesas ? 'mesa' : 'nome'),
+  );
   const [mesaId, setMesaId] = useState(current?.mesaId ?? '');
   const [nomeCliente, setNomeCliente] = useState(current?.nomeCliente ?? '');
   const [senha, setSenha] = useState(current?.senha ?? '');
@@ -95,8 +100,8 @@ export default function DestinoModal({ current, onConfirm, onClose, onAbrirMesa 
 
         <div className="p-5 space-y-4">
           {/* Tipo selector */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-            {TIPOS.map((t) => (
+          <div className={`grid gap-2 ${tipos.length === 4 ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-3'}`}>
+            {tipos.map((t) => (
               <button
                 key={t.tipo}
                 onClick={() => {
