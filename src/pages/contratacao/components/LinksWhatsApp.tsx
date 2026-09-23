@@ -1,6 +1,6 @@
 // Aba Links WhatsApp: canais públicos (links wa.me com texto pronto e código). Quem manda mensagem
 // com o código cai no atendimento público (edge canal-publico): recebe o currículo, tira dúvidas só
-// com o que foi liberado aqui e avisa o dono no Telegram. O número é o mesmo do assistente.
+// com o que foi liberado aqui e avisa o dono no chat do ERPOS. O número é o mesmo do assistente.
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import QRCode from 'react-qr-code';
 import { supabase } from '@/lib/supabase';
@@ -161,7 +161,7 @@ export default function LinksWhatsApp({ companies, jobs, onOpenCandidate, escopo
         <div className="flex-1 min-w-[220px] text-sm text-emerald-900">
           <p className="font-bold">Links de candidatura pelo WhatsApp</p>
           <p className="text-xs text-emerald-800/80">
-            Cada link abre o WhatsApp da pessoa com uma mensagem pronta. O atendente recebe o currículo (PDF ou foto), responde dúvidas só com o que você liberar e te avisa no Telegram.
+            Cada link abre o WhatsApp da pessoa com uma mensagem pronta. O atendente recebe o currículo (PDF ou foto), responde dúvidas só com o que você liberar e te avisa no chat do assistente.
           </p>
         </div>
         <label className="flex items-center gap-2 text-xs font-semibold text-emerald-900">
@@ -360,7 +360,7 @@ function CanalModal({ ch, companies, jobs, escopo, onClose, onSave }: {
             <input value={d.forbidden ?? ''} onChange={(e) => set('forbidden', e.target.value)} placeholder="Ex.: salário, nomes de funcionários" className={inputCls} />
           </Field>
           <div className="space-y-2 pt-1">
-            <Toggle on={!!d.notify_owner} onChange={(v) => set('notify_owner', v)} label="Me avisar no Telegram a cada currículo recebido" />
+            <Toggle on={!!d.notify_owner} onChange={(v) => set('notify_owner', v)} label="Me avisar no chat a cada currículo recebido" />
             {escopo.tipo !== 'vaga' && (
               <Toggle on={!!d.is_default} onChange={(v) => set('is_default', v)} label="Link padrão: atender também quem escrever no número SEM código" />
             )}
@@ -368,7 +368,7 @@ function CanalModal({ ch, companies, jobs, escopo, onClose, onSave }: {
           </div>
           <p className="text-[11px] text-zinc-400">
             O atendente nunca promete vaga, não pergunta idade, estado civil ou documentos e não tem acesso a nada além disto.
-            Dúvida que ele não pode responder vira aviso para você no Telegram.
+            Dúvida que ele não pode responder vira aviso para você no chat do assistente.
           </p>
           {erro && <p className="text-xs text-red-600">{erro}</p>}
         </div>
