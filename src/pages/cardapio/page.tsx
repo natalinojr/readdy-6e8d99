@@ -9,6 +9,9 @@ import TraducoesTab from './components/TraducoesTab';
 import CardapioExportImportModal from '../../components/feature/CardapioExportImportModal';
 
 import { notifyReload } from '@/lib/reloadSignal';
+import { useAuth } from '@/contexts/AuthContext';
+import { useToast } from '@/contexts/ToastContext';
+import { publicarCardapio } from '@/hooks/useMenuPing';
 
 type Tab = 'destaques' | 'itens' | 'categorias' | 'combos' | 'obsGlobais' | 'traducoes';
 
@@ -16,6 +19,21 @@ export default function CardapioPage() {
   const { itens, categorias, combos, obsGlobais, destaques, loading, recarregar } = useCardapio();
   const [activeTab, setActiveTab] = useState<Tab>('destaques');
   const [showExportImport, setShowExportImport] = useState(false);
+  const { user } = useAuth();
+  const { addToast } = useToast();
+  const [publicando, setPublicando] = useState(false);
+
+  // As alterações já ficam salvas no banco; publicar avisa as telas abertas
+  // (PDV, garçom, totem, mesa, QR universal, delivery) para recarregarem agora.
+  const handlePublicar = async () => {
+    if (!user?.tenantId || publicando) return;
+    setPublicando(true);
+    const ok = await publicarCardapio(user.tenantId);
+    setPublicando(false);
+    addToast(ok
+      ? { type: 'success', title: 'Cardápio publicado', message: 'As telas abertas atualizam em alguns segundos.' }
+      : { type: 'error', title: 'Não consegui publicar', message: 'Verifique a internet e tente de novo.' });
+  };
 
   const tabs: { id: Tab; label: string; shortLabel: string; icon: string; count: number }[] = [
     { id: 'destaques', label: 'Destaques', shortLabel: 'Dest.', icon: 'ri-star-line', count: destaques.length },
@@ -62,6 +80,15 @@ export default function CardapioPage() {
             >
               <i className="ri-exchange-line" />
               Exportar / Importar
+            </button>
+            <button
+              onClick={handlePublicar}
+              disabled={publicando || !user?.tenantId}
+              title="Atualiza agora o cardápio em todas as telas abertas: PDV, garçom, totem, mesa, QR universal e delivery"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-orange-500 rounded-full hover:bg-orange-600 disabled:opacity-60 transition-colors cursor-pointer whitespace-nowrap"
+            >
+              <i className={publicando ? 'ri-loader-4-line animate-spin' : 'ri-broadcast-line'} />
+              {publicando ? 'Publicando…' : 'Publicar alterações'}
             </button>
           </div>
         </div>

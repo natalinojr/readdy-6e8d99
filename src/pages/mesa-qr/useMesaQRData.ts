@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, type MutableRefObject } from 'react';
+import { useMenuPing, comJitter } from '@/hooks/useMenuPing';
 import { useParams } from 'react-router-dom';
 import { queueOrderForPrint, type OrderItemForPrint, type OrderPrintDestino } from '@/lib/printOrderQueue';
 import { rawPromoAtivaHoje } from '@/lib/promoUtils';
@@ -287,6 +288,13 @@ export function useMesaQRData() {
   const [categoriaAtiva, setCategoriaAtiva] = useState<string | null>(null);
   const [outOfStockIds, setOutOfStockIds] = useState<string[]>([]);
   const [opcoesIndisponiveisIds, setOpcoesIndisponiveisIds] = useState<string[]>([]);
+
+  // "Publicar cardápio" (aba Cardápio) → recarrega sem F5. Mantém a categoria
+  // em que o cliente está (setter no-op) e espalha os pedidos no tempo.
+  useMenuPing(tenantId, comJitter(function () {
+    if (!tenantId) return;
+    fetchCardapioData(tenantId, { setCategories, setItems, setOptionGroups, setOptions, setObservations, setOutOfStockIds, setOpcoesIndisponiveisIds, setCategoriaAtiva: function () {}, productionPartsRef });
+  }));
 
   // Carrinho (persistido em localStorage p/ sobreviver ao refresh/reload)
   const cartKey = 'qr_' + (qrToken || 'default');

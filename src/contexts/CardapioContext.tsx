@@ -11,6 +11,7 @@ import { empresaTemPdv } from '@/lib/tipoEmpresa';
 import type { Categoria, Item, Combo, ObservacaoGlobal, GrupoOpcoes, OpcaoItem, PromocaoItem, Destaque } from '@/types/cardapio';
 import type { ItemCardapioPublico } from '@/types/mesaCliente';
 import { saveMenuCache, getMenuCache } from '@/lib/offlineDB';
+import { useMenuPing } from '@/hooks/useMenuPing';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -578,6 +579,9 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
 
   // Item tirado do cardápio por resposta ao aviso de insumo zerado (useAlertasInsumoZerado)
   useEffect(() => subscribeReload('cardapio', () => { recarregar({ silent: true }); }), [recarregar]);
+
+  // "Publicar cardápio" (aba Cardápio) → PDV, garçom, totem e mesa recarregam sem F5
+  useMenuPing(effectiveTenantId, () => { recarregar({ silent: true }); });
 
   // ── Category CRUD ─────────────────────────────────────────────────────────
 

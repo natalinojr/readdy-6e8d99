@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, type MutableRefObject } from 'react';
+import { useMenuPing, comJitter } from '@/hooks/useMenuPing';
 import { supabase } from '@/lib/supabase';
 import { rawPromoAtivaHoje } from '@/lib/promoUtils';
 import { loadCart, saveCart } from '@/lib/cartStorage';
@@ -753,6 +754,22 @@ export function useDeliveryData(storeSlug?: string) {
 
   const prevStoreSlugRef = useRef<string | undefined>(storeSlug);
   const productionPartsRef = useRef<ProductionPartsMap | undefined>();
+
+  // "Publicar cardápio" (aba Cardápio) → recarrega itens/preços sem F5. Só os
+  // dados do cardápio (e aberto/fechado) — taxa, endereço, loja e a categoria
+  // em que o cliente está ficam como estão (setters no-op).
+  useMenuPing(tenant?.id, comJitter(function () {
+    const nada = function () {};
+    fetchDeliveryConfig(storeSlug, {
+      setTenant: nada, setCity: nada, setNeighborhoods: nada, setCategoriaAtiva: nada,
+      setDeliveryFee: nada, setPaymentMethods: nada, setRetiradaAtivo: nada, setStoreWhatsapp: nada,
+      setStoreLocation: nada, setTiers: nada,
+      setCategories, setItems, setOptionGroups, setOptions, setObservations,
+      setOutOfStockIds, setOpcoesIndisponiveisIds, setLocales,
+      setDeliveryOpenNow, setDeliveryClosedReason,
+      productionPartsRef,
+    }).catch(function () { /* mantém o que já está na tela */ });
+  }));
 
   // ── Inicializar ──────────────────────────────────────────────────────────────
 
