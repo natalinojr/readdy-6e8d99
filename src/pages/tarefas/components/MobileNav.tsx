@@ -1,4 +1,4 @@
-import { UserCheck, ListTodo, CalendarDays, ClipboardList, Plus, X, SlidersHorizontal, ListChecks, Users, Layers, Waypoints } from 'lucide-react';
+import { UserCheck, ListTodo, CalendarDays, ClipboardList, Plus, X, SlidersHorizontal, ListChecks, Users, Layers, Waypoints, LayoutTemplate } from 'lucide-react';
 import type { NoPasta } from '../lib/pastas';
 import { useVoltarFecha } from '../lib/mobile';
 import ArvorePastas from './ArvorePastas';
@@ -68,6 +68,8 @@ interface ListasSheetProps {
   onStatus: () => void;
   onCampos: () => void;
   onTemplates: () => void;
+  /** Modelos de estrutura de pastas. */
+  onModelos?: () => void;
   onClose: () => void;
 }
 
@@ -79,7 +81,7 @@ interface ListasSheetProps {
  */
 export function ListasSheet({
   arvorePastas, temPastas, selectedId, onSelecionar, onNovaLista, onNovaSubpasta, onExcluir,
-  onCompartilhadas, onTodas, onStatus, onCampos, onTemplates, onClose,
+  onCompartilhadas, onTodas, onStatus, onCampos, onTemplates, onModelos, onClose,
 }: ListasSheetProps) {
   useVoltarFecha(true, onClose);
 
@@ -186,6 +188,18 @@ export function ListasSheet({
               <ListChecks size={16} className="shrink-0 text-slate-400" />
               <span className="text-sm">Templates de checklist</span>
             </button>
+            {onModelos && (
+              <button
+                onClick={() => {
+                  onClose();
+                  onModelos();
+                }}
+                className="w-full flex items-center gap-3 px-4 py-3 text-left text-slate-600 active:bg-slate-50"
+              >
+                <LayoutTemplate size={16} className="shrink-0 text-slate-400" />
+                <span className="text-sm">Modelos de pastas</span>
+              </button>
+            )}
           </div>
         </div>
       </div>

@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
-import { Plus, ListTodo, LayoutGrid, CalendarDays, ClipboardList, UserCheck, Users, Layers, SlidersHorizontal, ListChecks, Waypoints, ArrowLeft, Gauge, Share2 } from 'lucide-react';
+import { Plus, ListTodo, LayoutGrid, CalendarDays, ClipboardList, UserCheck, Users, Layers, SlidersHorizontal, ListChecks, Waypoints, ArrowLeft, Gauge, Share2, LayoutTemplate } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { useAppMode } from '@/contexts/AppModeContext';
@@ -16,6 +16,7 @@ import ViewCarga from './components/ViewCarga';
 import TaskDrawer from './components/TaskDrawer';
 import CamposCustomManager from './components/CamposCustomManager';
 import TemplatesManager from './components/TemplatesManager';
+import ModelosPastas, { type TelaModelos } from './components/modelos/ModelosPastas';
 import StatusManager from './components/StatusManager';
 import NotificacoesInbox, { calcularVencimentos } from './components/NotificacoesInbox';
 import ViewsSalvas from './components/ViewsSalvas';
@@ -88,6 +89,7 @@ export default function TarefasPage() {
   const [showNewList, setShowNewList] = useState(false);
   const [showCampos, setShowCampos] = useState(false);
   const [showTemplates, setShowTemplates] = useState(false);
+  const [telaModelos, setTelaModelos] = useState<TelaModelos | null>(null);
   const [showStatus, setShowStatus] = useState(false);
   const [showListasSheet, setShowListasSheet] = useState(false);
   const [compartilhando, setCompartilhando] = useState<TaskList | null>(null);
@@ -445,6 +447,12 @@ export default function TarefasPage() {
             >
               <ListChecks size={13} /> Templates de checklist
             </button>
+            <button
+              onClick={() => setTelaModelos({ tipo: 'lista' })}
+              className="w-full flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs text-slate-500 hover:bg-slate-50 hover:text-indigo-600"
+            >
+              <LayoutTemplate size={13} /> Modelos de pastas
+            </button>
         </div>
       </aside>
 
@@ -483,6 +491,15 @@ export default function TarefasPage() {
                   >
                     <Share2 size={13} />
                     {(selectedList.share_count ?? 0) > 0 && <span>{selectedList.share_count}</span>}
+                  </button>
+                )}
+                {selectedList && (
+                  <button
+                    onClick={() => setTelaModelos({ tipo: 'salvar', listId: selectedList.id })}
+                    className="shrink-0 hidden md:flex items-center gap-1 text-xs font-normal px-2 py-1 rounded-lg text-slate-500 hover:bg-slate-200 hover:text-indigo-600"
+                    title="Salvar esta pasta (com subpastas e tarefas) como modelo"
+                  >
+                    <LayoutTemplate size={13} />
                   </button>
                 )}
               </>
@@ -595,6 +612,7 @@ export default function TarefasPage() {
           onStatus={() => setShowStatus(true)}
           onCampos={() => setShowCampos(true)}
           onTemplates={() => setShowTemplates(true)}
+          onModelos={() => setTelaModelos({ tipo: 'lista' })}
           onClose={() => setShowListasSheet(false)}
         />
       )}
@@ -624,7 +642,17 @@ export default function TarefasPage() {
                 />
               ))}
             </div>
-            <div className="flex justify-end gap-2">
+            <div className="flex items-center justify-end gap-2">
+              <button
+                onClick={() => {
+                  setShowNewList(false);
+                  setTelaModelos({ tipo: 'aplicar', parentId: newListParentId });
+                  setNewListParentId(null);
+                }}
+                className="mr-auto flex items-center gap-1 text-xs text-indigo-600 hover:underline"
+              >
+                <LayoutTemplate size={13} /> Usar um modelo
+              </button>
               <button onClick={() => { setShowNewList(false); setNewListParentId(null); }} className="px-3 py-2 rounded-lg text-sm text-slate-500 hover:bg-slate-100">
                 Cancelar
               </button>
@@ -715,6 +743,23 @@ export default function TarefasPage() {
           templates={templates}
           write={write}
           onClose={() => setShowTemplates(false)}
+        />
+      )}
+
+      {/* ── Modelos de estrutura de pastas ── */}
+      {telaModelos && (
+        <ModelosPastas
+          inicial={telaModelos}
+          lists={lists}
+          tenantId={user?.tenantId ?? null}
+          usuarios={usuariosAtivos}
+          pastaAtualId={origem === 'pasta' ? selectedList?.id ?? null : null}
+          onCriado={(id) => {
+            setTelaModelos(null);
+            reload();
+            irParaPasta(id);
+          }}
+          onFechar={() => setTelaModelos(null)}
         />
       )}
 

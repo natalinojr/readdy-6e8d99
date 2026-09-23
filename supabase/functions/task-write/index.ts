@@ -1,6 +1,7 @@
 // task-write — escritas do módulo de Gestão de Tarefas (ver PLANO-MODULO-TAREFAS.md)
 // Padrão do projeto: service_role + validação de membership (igual stock-write).
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
+import { ACOES_MODELOS, acaoModelos } from './modelos.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -299,6 +300,11 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       if (error) throw new Error(errMsg(error));
       if (!ok) throw new Error('Esse responsável não é de nenhuma loja do dono da pasta');
     };
+
+    // ═══ Modelos de estrutura de pastas (ações em ./modelos.ts) ═══
+    if (ACOES_MODELOS.has(action)) {
+      return await acaoModelos(action, { admin, userId: user.id, tenantId, body, json, errMsg, notify });
+    }
 
     switch (action) {
       // ═══ Listas ═══

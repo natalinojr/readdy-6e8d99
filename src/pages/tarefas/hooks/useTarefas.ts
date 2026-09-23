@@ -272,16 +272,21 @@ export function useTarefas() {
     reload();
   }, [reload]);
 
-  // Realtime: broadcast tasks-ping (trigger no banco)
+  // Realtime: broadcast tasks-ping (trigger no banco). O gatilho é por linha:
+  // aplicar um modelo ou excluir uma pasta manda dezenas de avisos seguidos —
+  // junta tudo num reload só.
   useEffect(() => {
     if (!tenantId) return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
     const channel = supabase
       .channel(`tasks-ping:${tenantId}`)
       .on('broadcast', { event: 'task_change' }, () => {
-        reload();
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(() => { timer = null; reload(); }, 400);
       })
       .subscribe();
     return () => {
+      if (timer) clearTimeout(timer);
       supabase.removeChannel(channel);
     };
   }, [tenantId, reload]);
