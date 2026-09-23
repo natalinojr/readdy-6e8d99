@@ -10,6 +10,7 @@ import { useIfoodVendas } from '@/hooks/useIfoodVendas';
 import { useModoFaturamento } from '@/contexts/ModoFaturamentoContext';
 import { getPeriodDateObjects, getPeriodoAnterior } from '@/lib/dateUtils';
 import type { SessionInfo } from '@/hooks/useSessions';
+import FaturamentoAcumuladoCard from './FaturamentoAcumuladoCard';
 
 // Alias local para compatibilidade
 const getPeriodDates = getPeriodDateObjects;
@@ -400,6 +401,9 @@ export default function VisaoGeralTab({ periodo, externalSession, onSessionChang
           )}
         </div>
       </div>
+
+      {/* Faturamento acumulado: mês atual × anterior — apenas modo calendário */}
+      {!isSessao && <FaturamentoAcumuladoCard periodo={periodo} />}
 
       {/* Vendas por hora (gráfico de linha) — apenas modo calendário */}
       {!isSessao && (
