@@ -838,7 +838,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       if (!sessionId) return new Response(JSON.stringify({ data: [] }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       // Inclui os já pagos que ficaram presos (liberação falhou): o PDV mostra "Mandar pra cozinha".
       const { data, error } = await admin.from("orders")
-        .select("id, number, created_at, destination_type, destination_name, total_amount, notes, is_paid, order_items(id, item_id, item_name, item_price, quantity, skip_kds, station_id, notes, status, order_item_options(option_name, additional_price), order_item_observations(text))")
+        .select("id, number, created_at, destination_type, destination_name, total_amount, notes, is_paid, payments(amount, is_refunded), order_items(id, item_id, item_name, item_price, quantity, skip_kds, station_id, notes, status, order_item_options(option_name, additional_price), order_item_observations(text))")
         .eq("tenant_id", tenantId).eq("session_id", sessionId).eq("origin_type", "self_service")
         .eq("is_draft", true).eq("status", "draft")
         .order("created_at", { ascending: true }).limit(50);

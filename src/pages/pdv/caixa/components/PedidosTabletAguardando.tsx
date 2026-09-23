@@ -5,7 +5,6 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useSessao } from '@/contexts/SessaoContext';
 import { useKDS } from '@/contexts/KDSContext';
 import { useImpressoras } from '@/contexts/ImpressorasContext';
-import { usePermissoes } from '@/hooks/usePermissoes';
 import { queueOrderForPrint, type OrderItemForPrint } from '@/lib/printOrderQueue';
 import PagamentoRapidoModal from '@/components/feature/PagamentoRapidoModal';
 import CancelamentoModal from '@/components/feature/CancelamentoModal';
@@ -37,12 +36,15 @@ interface HeldOrder {
   total_amount: number;
   notes: string | null;
   is_paid: boolean | null;
+  payments?: Array<{ amount: number; is_refunded: boolean | null }>;
   order_items: HeldItem[];
 }
 
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const numeroCurto = (n: string) => parseInt(String(n).replace(/\D/g, '').slice(-4), 10) || 0;
 const formaDasNotas = (notes: string | null) => notes?.match(/Pagar no balcão:\s*([^·]+)/i)?.[1]?.trim();
+// Cancelar só vale para o dinheiro que ainda não foi recebido (nenhum pagamento lançado).
+const recebeuAlgo = (o: HeldOrder) => !!o.is_paid || (o.payments ?? []).some((p) => !p.is_refunded && Number(p.amount) > 0);
 const itensAtivos = (o: HeldOrder) => (o.order_items ?? []).filter((i) => i.status !== 'cancelled');
 
 function destinoTexto(o: HeldOrder) {
@@ -56,7 +58,6 @@ export default function PedidosTabletAguardando() {
   const { sessao } = useSessao();
   const { reloadOrders } = useKDS();
   const { mapaEstacoes } = useImpressoras();
-  const { hasPermissao } = usePermissoes();
   const [pedidos, setPedidos] = useState<HeldOrder[]>([]);
   const [pagando, setPagando] = useState<HeldOrder | null>(null);
   const [cancelando, setCancelando] = useState<HeldOrder | null>(null);
@@ -170,7 +171,8 @@ export default function PedidosTabletAguardando() {
               </button>
             ) : (
             <div className="flex items-center gap-2 mt-1.5">
-              {hasPermissao('pdv_cancelar_pedido') && (
+              {/* Só antes de receber qualquer valor. Qualquer operador vê: o modal pede o motivo e a senha/aprovação do gerente. */}
+              {!recebeuAlgo(o) && (
                 <button
                   onClick={() => setCancelando(o)}
                   className="px-2.5 py-1.5 text-[11px] font-bold text-red-600 border border-red-200 hover:bg-red-50 rounded-lg cursor-pointer whitespace-nowrap"
