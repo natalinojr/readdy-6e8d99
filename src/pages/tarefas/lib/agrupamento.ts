@@ -140,14 +140,27 @@ export function agruparTarefas(
   }
 
   if (groupBy === 'assignee') {
-    const comResponsavel = usuarios
-      .filter((u) => tasks.some((t) => t.assignee_id === u.id))
-      .map((u) => ({
-        key: u.id,
-        label: u.nome,
+    // Grupos saem das PRÓPRIAS tarefas, não de `usuarios`: essa lista só tem
+    // os ativos da loja atual, e tarefa de responsável inativo ou de outra
+    // loja (Tarefas é por pessoa, cruza lojas) não caía em grupo nenhum —
+    // sumia da tela. Quem está em `usuarios` vem primeiro, na ordem dela.
+    const ids = [...new Set(tasks.map((t) => t.assignee_id).filter((id): id is string => !!id))];
+    const posicao = (id: string) => {
+      const i = usuarios.findIndex((u) => u.id === id);
+      return i === -1 ? Number.MAX_SAFE_INTEGER : i;
+    };
+    const nomeDe = (id: string) =>
+      usuarios.find((u) => u.id === id)?.nome
+      ?? tasks.find((t) => t.assignee_id === id && t.assignee_name)?.assignee_name
+      ?? 'Usuário sem nome';
+    const comResponsavel = ids
+      .map((id) => ({
+        key: id as string | null,
+        label: nomeDe(id),
         color: '#6366f1',
-        tasks: ordenar(tasks.filter((t) => t.assignee_id === u.id)),
-      }));
+        tasks: ordenar(tasks.filter((t) => t.assignee_id === id)),
+      }))
+      .sort((a, b) => posicao(a.key!) - posicao(b.key!) || a.label.localeCompare(b.label, 'pt-BR'));
     return [
       ...comResponsavel,
       {

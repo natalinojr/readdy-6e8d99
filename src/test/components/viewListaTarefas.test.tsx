@@ -93,3 +93,40 @@ describe('ViewLista (tarefas)', () => {
     expect(salvo.responsavel).toBe(200); // 140 + 60
   });
 });
+
+import { agruparTarefas } from '@/pages/tarefas/lib/agrupamento';
+import ViewCalendario from '@/pages/tarefas/components/ViewCalendario';
+
+describe('Agrupar por responsável', () => {
+  it('não some com tarefa de responsável fora da lista de usuários da loja', () => {
+    const ts = [
+      tarefa('1', 'Tarefa A', { assignee_id: 'u1', assignee_name: 'Maria Silva' }),
+      tarefa('2', 'Tarefa B', { assignee_id: 'u9', assignee_name: 'João de Outra Loja' }),
+      tarefa('3', 'Tarefa C'),
+    ];
+    const grupos = agruparTarefas(ts, 'assignee', lista, [{ id: 'u1', nome: 'Maria Silva' }], []);
+    expect(grupos.map((g) => [g.label, g.tasks.length])).toEqual([
+      ['Maria Silva', 1], ['João de Outra Loja', 1], ['Sem responsável', 1],
+    ]);
+  });
+});
+
+describe('Calendário', () => {
+  // jsdom não tem matchMedia; tela larga = modo Mês.
+  window.matchMedia = ((q: string) => ({ matches: false, media: q, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} })) as unknown as typeof window.matchMedia;
+
+  it('"+N mais" abre as tarefas escondidas do dia', () => {
+    const hoje = new Date();
+    const dia = `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, '0')}-${String(hoje.getDate()).padStart(2, '0')}T12:00:00Z`;
+    const ts = [1, 2, 3, 4, 5].map((n) => tarefa(`d${n}`, `Tarefa Dia ${n}`, { due_date: dia }));
+    render(
+      <ViewCalendario list={lista} tasks={ts} campos={[]} usuarios={[]}
+        write={vi.fn().mockResolvedValue({ success: true })} onOpenTask={vi.fn()} />,
+    );
+    expect(screen.queryByText('Tarefa Dia 5')).toBeNull();
+    fireEvent.click(screen.getByText('+2 mais'));
+    expect(screen.getByText('Tarefa Dia 5')).toBeTruthy();
+    fireEvent.click(screen.getByText('mostrar menos'));
+    expect(screen.queryByText('Tarefa Dia 5')).toBeNull();
+  });
+});

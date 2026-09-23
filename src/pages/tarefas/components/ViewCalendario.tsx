@@ -16,6 +16,8 @@ interface ViewCalendarioProps {
 }
 
 const DIAS_SEMANA = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
+/** Tarefas visíveis por dia no modo Mês antes do "+N mais". */
+const LIMITE_MES = 3;
 
 /** Chave local YYYY-MM-DD (evita o deslocamento de fuso do toISOString). */
 function chaveDia(d: Date): string {
@@ -62,6 +64,7 @@ export default function ViewCalendario({
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   });
   const [arrastandoId, setArrastandoId] = useState<string | null>(null);
+  const [expandidos, setExpandidos] = useState<Set<string>>(new Set());
   const [diaAlvo, setDiaAlvo] = useState<string | null>(null);
   const [criandoEm, setCriandoEm] = useState<string | null>(null);
   const [novoTitulo, setNovoTitulo] = useState('');
@@ -339,7 +342,7 @@ export default function ViewCalendario({
                   </span>
 
                   <div className="space-y-0.5 flex-1">
-                    {doDia.slice(0, modo === 'mes' ? 3 : 12).map((task) => (
+                    {(modo === 'mes' && !expandidos.has(chave) ? doDia.slice(0, LIMITE_MES) : doDia).map((task) => (
                       <TaskCard
                         key={task.id}
                         task={task}
@@ -359,8 +362,23 @@ export default function ViewCalendario({
                         }}
                       />
                     ))}
-                    {modo === 'mes' && doDia.length > 3 && (
-                      <span className="text-[10px] text-slate-400 pl-1.5">+{doDia.length - 3} mais</span>
+                    {/* Antes era só texto: as tarefas depois da 3ª ficavam inacessíveis pelo calendário. */}
+                    {modo === 'mes' && doDia.length > LIMITE_MES && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setExpandidos((prev) => {
+                            const p = new Set(prev);
+                            if (p.has(chave)) p.delete(chave);
+                            else p.add(chave);
+                            return p;
+                          });
+                        }}
+                        className="text-[10px] font-medium text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50 rounded px-1.5 py-0.5"
+                      >
+                        {expandidos.has(chave) ? 'mostrar menos' : `+${doDia.length - LIMITE_MES} mais`}
+                      </button>
                     )}
 
                     {criandoEm === chave && (
