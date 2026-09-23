@@ -129,7 +129,7 @@ export default function CompartilharPasta({ list, meuId, write, onClose }: Compa
               {enviando ? <Loader2 size={14} className="animate-spin" /> : <UserPlus size={14} />}
               Compartilhar
             </button>
-            <p className="text-[10px] text-slate-400">Só dá para compartilhar com quem é de alguma das suas lojas.</p>
+            <p className="text-[10px] text-slate-400">Só aparece quem tem acesso ao módulo Tarefas (liberado no Admin Master).</p>
           </form>
         )}
 

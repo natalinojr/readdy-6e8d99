@@ -290,15 +290,15 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       throw new Error(acesso === 'view' ? 'Você só tem acesso de leitura nesta pasta' : 'Você não tem permissão para editar esta tarefa');
     };
 
-    // Responsável de tarefa: só quem divide alguma loja com o DONO da pasta.
-    // Sem isso, quem tem "editar" podia atribuir a tarefa a qualquer id e dar
-    // acesso a ela pra alguém de fora.
+    // Responsável de tarefa: quem divide alguma loja com o DONO da pasta ou tem
+    // acesso ao módulo Tarefas. Sem isso, quem tem "editar" podia atribuir a
+    // tarefa a qualquer id e dar acesso a ela pra alguém de fora.
     const assertResponsavelValido = async (listId: string, assigneeId: unknown) => {
       if (!assigneeId) return;
       const { data: pasta } = await admin.from('task_lists').select('created_by').eq('id', listId).maybeSingle();
-      const { data: ok, error } = await admin.rpc('fn_users_dividem_loja', { p_a: pasta?.created_by ?? user.id, p_b: assigneeId });
+      const { data: ok, error } = await admin.rpc('fn_task_responsavel_valido', { p_dono: pasta?.created_by ?? user.id, p_responsavel: assigneeId });
       if (error) throw new Error(errMsg(error));
-      if (!ok) throw new Error('Esse responsável não é de nenhuma loja do dono da pasta');
+      if (!ok) throw new Error('Esse responsável não tem acesso ao módulo Tarefas');
     };
 
     // ═══ Modelos de estrutura de pastas (ações em ./modelos.ts) ═══
@@ -360,19 +360,19 @@ Deno.serve({ verify_jwt: false }, async (req) => {
 
       // ═══ Compartilhar pasta ═══
       // Vale pra pasta e toda a subárvore. Só o dono compartilha. A pessoa é
-      // achada por e-mail ou matrícula, e só entre quem divide alguma loja com
-      // o dono (não dá pra "procurar" gente de outras empresas).
+      // achada por e-mail exato ou matrícula, entre quem tem acesso ao módulo
+      // Tarefas (decisão do dono 2026-09-23: não precisa ser da mesma loja).
       case 'share_list': {
         const { list_id, identificador, permission } = body;
         if (!list_id || !identificador) return json({ error: 'Informe a pasta e o e-mail ou matrícula' }, 400);
         if (permission !== 'view' && permission !== 'edit') return json({ error: 'Permissão deve ser view ou edit' }, 400);
         const pasta = await assertListOwner(list_id);
-        // E-mail EXATO (sem curinga — ilike deixava "a%@%" varrer e-mails de
-        // colegas) ou matrícula, só entre quem divide loja comigo.
+        // E-mail EXATO (sem curinga — ilike deixava "a%@%" varrer e-mails) ou
+        // matrícula, só entre quem tem o módulo Tarefas.
         const termo = String(identificador).trim();
         const { data: achados, error: buscaErr } = await admin.rpc('fn_task_share_lookup', { p_requester: user.id, p_termo: termo });
         if (buscaErr) return json({ error: errMsg(buscaErr) }, 500);
-        if (!achados?.length) return json({ error: 'Ninguém com esse e-mail ou matrícula nas suas lojas' }, 404);
+        if (!achados?.length) return json({ error: 'Ninguém com esse e-mail ou matrícula com acesso ao módulo Tarefas' }, 404);
         if (achados.length > 1) return json({ error: 'Mais de uma pessoa com essa matrícula — use o e-mail' }, 409);
         const alvo = achados[0] as { id: string; name: string | null; email: string | null };
         if (alvo.id === user.id || alvo.id === pasta.created_by) return json({ error: 'Essa pessoa já é dona da pasta' }, 400);
