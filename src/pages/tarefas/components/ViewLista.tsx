@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
-import { Plus, Flag, MessageSquare, CheckSquare, GitBranch, Repeat, ChevronDown, ChevronRight, Check, Trash2, X, ArrowUp, ArrowDown } from 'lucide-react';
+import { Plus, Flag, MessageSquare, CheckSquare, GitBranch, Repeat, ChevronDown, ChevronRight, Check, Trash2, X, ArrowUp, ArrowDown, Play, Pause, Timer } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
 import type { CampoCustom, TaskList, TaskRow, TaskTag } from '../hooks/useTarefas';
 import { PRIORIDADES } from '../hooks/useTarefas';
@@ -12,6 +12,7 @@ import {
   salvarColunasVisiveis, salvarLarguras,
 } from '../lib/colunas';
 import { rotuloRecorrencia, DICA_RECORRENCIA } from '../lib/recorrencia';
+import { formatarDuracao, formatarRelogio, segundosRegistrados, useAgora } from '../lib/tempo';
 import CampoBadge from './campos/CampoBadge';
 import ColumnsMenu from './ColumnsMenu';
 import ConfirmDialog from './ConfirmDialog';
@@ -69,6 +70,8 @@ function valorOrdenacao(
     case 'comentarios': return task.comment_count > 0 ? task.comment_count : null;
     case 'criada_em': return task.created_at;
     case 'pasta': return task.list_name;
+    case 'estimado': return task.time_estimate_minutes;
+    case 'cronometro': return task.time_tracked_seconds > 0 || task.timer_started_at ? segundosRegistrados(task, Date.now()) : null;
     default: return null;
   }
 }
@@ -79,6 +82,7 @@ function celulaColuna(
   subtarefasCount: number,
   usuarios: UsuarioOption[],
   campos: CampoCustom[],
+  agora: number = Date.now(),
 ) {
   if (coluna.id.startsWith('campo:')) {
     const fieldId = coluna.id.slice('campo:'.length);
@@ -151,6 +155,27 @@ function celulaColuna(
           <span className="truncate">{task.list_name}</span>
         </span>
       ) : <span className="text-slate-300">—</span>;
+
+    case 'estimado':
+      return task.time_estimate_minutes
+        ? <span className="flex items-center gap-1 justify-end"><Timer size={11} />{formatarDuracao(task.time_estimate_minutes * 60)}</span>
+        : <span className="text-slate-300">—</span>;
+
+    case 'cronometro': {
+      const seg = segundosRegistrados(task, agora);
+      const estourou = !!task.time_estimate_minutes && seg > task.time_estimate_minutes * 60;
+      if (task.timer_started_at) {
+        return (
+          <span className="flex items-center gap-1.5 justify-end text-emerald-600 font-medium tabular-nums">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+            {formatarRelogio(seg)}
+          </span>
+        );
+      }
+      return seg > 0
+        ? <span className={`tabular-nums ${estourou ? 'text-red-500' : ''}`} title={estourou ? 'Passou do tempo estimado' : undefined}>{formatarDuracao(seg)}</span>
+        : <span className="text-slate-300">—</span>;
+    }
 
     default:
       return null;
@@ -270,6 +295,9 @@ export default function ViewLista({
   const grupos = agruparTarefas(raizes, groupBy, list, usuarios, campos);
   const todasColunas = colunasDisponiveis(campos, list?.id ?? null);
   const colunas = todasColunas.filter((c) => colunasVisiveis.includes(c.id));
+  const temCronometro = colunas.some((c) => c.id === 'cronometro');
+  const agora = useAgora(temCronometro && tasks.some((t) => t.timer_started_at));
+  const somaEstimado = colunas.some((c) => c.id === 'estimado');
 
   // Visão agregada mistura tarefas de pastas diferentes — não dá pra saber
   // em qual criar uma tarefa nova aqui, então quem quer criar usa o botão
@@ -353,6 +381,40 @@ export default function ViewLista({
     if (groupBy !== 'status' || !grupo.key) return null;
     if (!list) return grupo.key; // cross-pasta: a chave já é a categoria
     return list.statuses.find((s) => s.id === grupo.key)?.category ?? null;
+  };
+
+  // Soma do grupo: as tarefas dele + as subtarefas delas (o trabalho da
+  // subtarefa também é trabalho do grupo). Alinha com as colunas da linha.
+  const renderTotais = (raizesDoGrupo: TaskRow[]) => {
+    const ids = new Set(raizesDoGrupo.map((t) => t.id));
+    const todas = [...raizesDoGrupo, ...tasks.filter((t) => t.parent_task_id && ids.has(t.parent_task_id))];
+    const minEstimado = todas.reduce((acc, t) => acc + (t.time_estimate_minutes ?? 0), 0);
+    const segRegistrado = todas.reduce((acc, t) => acc + segundosRegistrados(t, agora), 0);
+    const semEstimativa = todas.filter((t) => !t.time_estimate_minutes).length;
+    return (
+      <div className="hidden md:flex items-center px-4 py-2 bg-slate-50/80 text-xs">
+        <span className="flex-1 text-slate-400 font-medium">
+          Total
+          {somaEstimado && semEstimativa > 0 && (
+            <span className="font-normal text-slate-300"> · {semEstimativa} sem estimativa</span>
+          )}
+        </span>
+        {colunas.map((c) => (
+          <div key={c.id} style={{ width: largura(c) }} className="px-2 shrink-0 text-right tabular-nums">
+            {c.id === 'estimado' && <span className="font-semibold text-slate-600">{formatarDuracao(minEstimado * 60)}</span>}
+            {c.id === 'cronometro' && (
+              <span className={`font-semibold ${minEstimado > 0 && segRegistrado > minEstimado * 60 ? 'text-red-500' : 'text-slate-600'}`}>
+                {formatarDuracao(segRegistrado)}
+                {minEstimado > 0 && (
+                  <span className="font-normal text-slate-400"> · {Math.round((segRegistrado / (minEstimado * 60)) * 100)}%</span>
+                )}
+              </span>
+            )}
+          </div>
+        ))}
+        <span className="ml-1 w-[21px] shrink-0" />
+      </div>
+    );
   };
 
   const renderLinha = (task: TaskRow, nivel: number) => {
@@ -444,17 +506,31 @@ export default function ViewLista({
               const editavel = ehEditavel(c.id);
               const emEdicao = editando?.taskId === task.id && editando.col === c.id;
               return (
-                <div key={c.id} style={{ width: largura(c) }} className="relative px-2 shrink-0">
+                <div key={c.id} style={{ width: largura(c) }} className="relative px-2 shrink-0 flex items-center gap-1">
+                  {c.id === 'cronometro' && (
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); gravar(task.timer_started_at ? 'stop_timer' : 'start_timer', { task_id: task.id }); }}
+                      title={task.timer_started_at ? 'Parar cronômetro' : 'Iniciar cronômetro'}
+                      className={`shrink-0 w-5 h-5 rounded-full flex items-center justify-center transition ${
+                        task.timer_started_at
+                          ? 'bg-red-500 text-white hover:bg-red-600'
+                          : 'text-slate-300 opacity-0 group-hover:opacity-100 hover:text-emerald-600 hover:bg-emerald-50'
+                      }`}
+                    >
+                      {task.timer_started_at ? <Pause size={10} /> : <Play size={11} className="ml-px" />}
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={editavel ? (e) => { e.stopPropagation(); setEditando({ taskId: task.id, col: c.id, rect: e.currentTarget.getBoundingClientRect() }); } : undefined}
-                    className={`w-full text-xs text-slate-500 text-right truncate rounded px-1 -mx-1 ${
+                    className={`flex-1 min-w-0 text-xs text-slate-500 text-right truncate rounded px-1 -mx-1 ${
                       emEdicao ? 'bg-indigo-50 ring-1 ring-indigo-200 text-slate-700' : ''
                     } ${editavel ? 'hover:bg-slate-100 hover:text-slate-700 cursor-pointer' : 'cursor-default'}`}
                   >
                     {c.id === 'comentarios' && task.comment_count === 0 && editavel
                       ? <span className="text-slate-300 opacity-0 group-hover:opacity-100 flex items-center gap-1 justify-end"><MessageSquare size={11} />Comentar</span>
-                      : celulaColuna(c, task, subtarefas.length, usuarios, campos)}
+                      : celulaColuna(c, task, subtarefas.length, usuarios, campos, agora)}
                   </button>
                   {emEdicao && (
                     <EditorCelula
@@ -484,7 +560,7 @@ export default function ViewLista({
           {/* No celular não há espaço pra tabela — mantém um resumo compacto das colunas ativas (edição continua só pelo desktop) */}
           <div className="flex md:hidden items-center gap-2.5 text-xs text-slate-400 shrink-0">
             {colunas.map((c) => (
-              <span key={c.id}>{celulaColuna(c, task, subtarefas.length, usuarios, campos)}</span>
+              <span key={c.id}>{celulaColuna(c, task, subtarefas.length, usuarios, campos, agora)}</span>
             ))}
           </div>
         </div>
@@ -655,6 +731,8 @@ export default function ViewLista({
             {!recolhido && (
               <div className="bg-white rounded-xl border border-slate-200 divide-y divide-slate-100 overflow-hidden">
                 {ordenar(grupo.tasks).map((task) => renderLinha(task, 0))}
+
+                {(somaEstimado || temCronometro) && grupo.tasks.length > 0 && renderTotais(grupo.tasks)}
 
                 {podeAdicionar && (
                   <form

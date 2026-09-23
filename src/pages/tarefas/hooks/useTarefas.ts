@@ -95,6 +95,12 @@ export interface TaskRow {
   subtask_total: number;
   comment_count: number;
   field_values: Record<string, unknown>;
+  /** Estimativa em minutos (null = sem estimativa). */
+  time_estimate_minutes: number | null;
+  /** Tempo já registrado no cronômetro (trechos encerrados, de todos). */
+  time_tracked_seconds: number;
+  /** Início do MEU cronômetro rodando nesta tarefa (null = parado). */
+  timer_started_at: string | null;
 }
 
 export interface ChecklistItem {
@@ -319,6 +325,7 @@ export function useTarefas() {
     if (p.due_has_time !== undefined) n.due_has_time = Boolean(p.due_has_time);
     if (p.sort_order !== undefined) n.sort_order = Number(p.sort_order);
     if (p.recurrence !== undefined) n.recurrence = (p.recurrence as TaskRow['recurrence']) ?? null;
+    if (p.time_estimate_minutes !== undefined) n.time_estimate_minutes = (p.time_estimate_minutes as number | null) ?? null;
     if (p.list_id !== undefined && lista) {
       n.list_id = lista.id;
       n.list_name = lista.name;
@@ -355,6 +362,19 @@ export function useTarefas() {
       } else if (action === 'delete_task' && typeof payload.task_id === 'string') {
         const id = payload.task_id;
         setTasks((prev) => prev.filter((t) => t.id !== id && t.parent_task_id !== id));
+      } else if (action === 'start_timer' || action === 'stop_timer') {
+        // Um cronômetro por pessoa: o que estiver rodando em qualquer tarefa
+        // para (e soma ao registrado); no start, liga na tarefa pedida.
+        const agora = new Date();
+        setTasks((prev) => prev.map((t) => {
+          let n = t;
+          if (t.timer_started_at) {
+            const seg = Math.max(0, Math.round((agora.getTime() - new Date(t.timer_started_at).getTime()) / 1000));
+            n = { ...t, timer_started_at: null, time_tracked_seconds: (t.time_tracked_seconds ?? 0) + seg };
+          }
+          if (action === 'start_timer' && t.id === payload.task_id) n = { ...n, timer_started_at: agora.toISOString() };
+          return n;
+        }));
       }
 
       const { data, error: fnError } = await invokeWithAuth<{ success?: boolean; id?: string; error?: string; next_occurrence_id?: string | null }>('task-write', {
@@ -363,7 +383,7 @@ export function useTarefas() {
       if (fnError || !data?.success) {
         const msg = data?.error ?? fnError?.message ?? 'Erro desconhecido';
         console.error(`[useTarefas] ${action} falhou:`, msg);
-        if (action === 'update_task' || action === 'delete_task') reload(); // desfaz o otimista
+        if (['update_task', 'delete_task', 'start_timer', 'stop_timer'].includes(action)) reload(); // desfaz o otimista
         return { success: false, error: msg };
       }
 
@@ -408,6 +428,9 @@ export function useTarefas() {
           subtask_total: 0,
           comment_count: 0,
           field_values: {},
+          time_estimate_minutes: (payload.time_estimate_minutes as number | undefined) ?? null,
+          time_tracked_seconds: 0,
+          timer_started_at: null,
         };
         setTasks((prev) => [...prev, otimista]);
       }

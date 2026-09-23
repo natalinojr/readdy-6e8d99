@@ -8,6 +8,7 @@ import type { CampoCustom } from '../hooks/useTarefas';
 export type ColunaId =
   | 'responsavel' | 'vencimento' | 'prioridade' | 'etiquetas'
   | 'checklist' | 'subtarefas' | 'comentarios' | 'criada_em' | 'pasta'
+  | 'estimado' | 'cronometro'
   | `campo:${string}`;
 
 export interface ColunaDef {
@@ -26,6 +27,8 @@ export const COLUNAS_NATIVAS: ColunaDef[] = [
   { id: 'comentarios', label: 'Comentários', larguraPx: 100 },
   { id: 'criada_em', label: 'Criada em', larguraPx: 100 },
   { id: 'pasta', label: 'Pasta', larguraPx: 140 },
+  { id: 'estimado', label: 'Tempo estimado', larguraPx: 120 },
+  { id: 'cronometro', label: 'Cronômetro', larguraPx: 130 },
 ];
 
 /** Default = o que já aparecia antes de existir esse menu (não muda a experiência de quem já usa). */

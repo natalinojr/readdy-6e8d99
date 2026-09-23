@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
-import { Plus, ListTodo, LayoutGrid, CalendarDays, ClipboardList, UserCheck, Users, Layers, SlidersHorizontal, ListChecks, Waypoints, ArrowLeft } from 'lucide-react';
+import { Plus, ListTodo, LayoutGrid, CalendarDays, ClipboardList, UserCheck, Users, Layers, SlidersHorizontal, ListChecks, Waypoints, ArrowLeft, Gauge } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { useAppMode } from '@/contexts/AppModeContext';
@@ -11,6 +11,7 @@ import { useTarefas } from './hooks/useTarefas';
 import ViewLista from './components/ViewLista';
 import ViewKanban from './components/ViewKanban';
 import ViewCalendario from './components/ViewCalendario';
+import ViewCarga from './components/ViewCarga';
 import TaskDrawer from './components/TaskDrawer';
 import CamposCustomManager from './components/CamposCustomManager';
 import TemplatesManager from './components/TemplatesManager';
@@ -33,12 +34,13 @@ const CORES_LISTA = ['#6366f1', '#0ea5e9', '#10b981', '#f59e0b', '#ef4444', '#8b
 type Origem = 'pasta' | 'minhas' | 'compartilhadas' | 'todas';
 /** COMO mostrar essas tarefas — independente da origem (pedido do usuário: a
  *  visualização lista/kanban/calendário deve valer pra qualquer origem). */
-type Display = 'lista' | 'kanban' | 'calendario';
+type Display = 'lista' | 'kanban' | 'calendario' | 'carga';
 
 const DISPLAYS: Array<{ id: Display; label: string; icon: typeof ListTodo }> = [
   { id: 'lista', label: 'Lista', icon: ListTodo },
   { id: 'kanban', label: 'Kanban', icon: LayoutGrid },
   { id: 'calendario', label: 'Calendário', icon: CalendarDays },
+  { id: 'carga', label: 'Carga', icon: Gauge },
 ];
 
 const ORIGEM_INFO: Record<Exclude<Origem, 'pasta'>, { label: string; icon: typeof UserCheck }> = {
@@ -274,6 +276,14 @@ export default function TarefasPage() {
               onOpenTask={setOpenTaskId}
             />
           )}
+          {display === 'carga' && (
+            <ViewCarga
+              tasks={tarefasVisiveis}
+              usuarios={usuariosAtivos}
+              write={write}
+              onOpenTask={setOpenTaskId}
+            />
+          )}
           {display === 'calendario' && (
             <ViewCalendario
               list={listParaView}
@@ -499,7 +509,8 @@ export default function TarefasPage() {
 
       {/* ── Navegação inferior (celular) ── */}
       <BottomNav
-        view={origem === 'minhas' ? 'minhas' : display}
+        // Carga é só desktop (tabela larga): no celular a barra marca Lista.
+        view={origem === 'minhas' ? 'minhas' : display === 'carga' ? 'lista' : display}
         onView={(v) => {
           if (v === 'minhas') setOrigem('minhas');
           else setDisplay(v as Display);

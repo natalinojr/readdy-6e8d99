@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { Check, Flag, Search, X } from 'lucide-react';
+import { Check, Flag, Minus, Pause, Play, Plus, Search, X } from 'lucide-react';
 import type { CampoCustom, TaskRow, TaskTag } from '../hooks/useTarefas';
 import { PRIORIDADES } from '../hooks/useTarefas';
 import type { UsuarioOption } from '../lib/agrupamento';
@@ -8,6 +8,7 @@ import type { ColunaId } from '../lib/colunas';
 import CampoInput from './campos/CampoInput';
 import ComentarioInput from './ComentarioInput';
 import { iniciais } from './TaskCard';
+import { formatarDuracao, formatarRelogio, lerDuracao, segundosRegistrados, useAgora } from '../lib/tempo';
 
 const MARGEM_TELA = 8;
 
@@ -191,7 +192,7 @@ interface EditorCelulaProps {
 /** Colunas que abrem um editor ao clicar na célula. */
 export function ehEditavel(id: ColunaId): boolean {
   return id === 'responsavel' || id === 'vencimento' || id === 'prioridade' || id === 'etiquetas'
-    || id === 'comentarios' || id.startsWith('campo:');
+    || id === 'comentarios' || id === 'estimado' || id === 'cronometro' || id.startsWith('campo:');
 }
 
 export default function EditorCelula({ coluna, task, anchorRect, campos, usuarios, tags, gravar, onClose }: EditorCelulaProps) {
@@ -298,6 +299,23 @@ export default function EditorCelula({ coluna, task, anchorRect, campos, usuario
         </Popover>
       );
 
+    case 'estimado':
+      return (
+        <Popover anchorRect={anchorRect} largura={230} onClose={onClose}>
+          <EditorEstimativa
+            atual={task.time_estimate_minutes}
+            onEscolher={(min) => atualizar({ time_estimate_minutes: min })}
+          />
+        </Popover>
+      );
+
+    case 'cronometro':
+      return (
+        <Popover anchorRect={anchorRect} largura={250} onClose={onClose}>
+          <EditorCronometro task={task} gravar={gravar} />
+        </Popover>
+      );
+
     case 'etiquetas':
       return <EditorEtiquetas task={task} tags={tags} anchorRect={anchorRect} gravar={gravar} onClose={onClose} />;
 
@@ -372,5 +390,130 @@ function EditorEtiquetas({ task, tags, anchorRect, gravar, onClose }: {
         })}
       </div>
     </Popover>
+  );
+}
+
+const PRESETS_ESTIMATIVA = [15, 30, 60, 120, 240, 480];
+
+function EditorEstimativa({ atual, onEscolher }: { atual: number | null; onEscolher: (min: number | null) => void }) {
+  const [texto, setTexto] = useState(atual ? formatarDuracao(atual * 60) : '');
+  const lido = lerDuracao(texto);
+  const invalido = texto.trim() !== '' && lido === null;
+
+  return (
+    <div className="p-1">
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (texto.trim() === '') onEscolher(null);
+          else if (lido !== null) onEscolher(lido);
+        }}
+      >
+        <input
+          autoFocus
+          value={texto}
+          onChange={(e) => setTexto(e.target.value)}
+          placeholder="Ex.: 1h30, 45m, 2d"
+          className={`w-full border rounded-lg px-2 py-1.5 text-xs bg-white outline-none ${
+            invalido ? 'border-red-300 focus:border-red-400' : 'border-slate-200 focus:border-indigo-300'
+          }`}
+        />
+        <p className={`text-[10px] mt-1 px-0.5 ${invalido ? 'text-red-500' : 'text-slate-400'}`}>
+          {invalido ? 'Não entendi — use 1h30, 45m ou 2d (dia = 8h)'
+            : lido !== null ? `= ${formatarDuracao(lido * 60)} · Enter para salvar` : 'Enter para salvar'}
+        </p>
+      </form>
+      <div className="grid grid-cols-3 gap-1 mt-2">
+        {PRESETS_ESTIMATIVA.map((min) => (
+          <button
+            key={min}
+            type="button"
+            onClick={() => onEscolher(min)}
+            className={`px-2 py-1.5 rounded-lg text-xs border transition ${
+              atual === min ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'border-slate-200 text-slate-600 hover:bg-slate-50'
+            }`}
+          >
+            {min === 480 ? '1 dia' : formatarDuracao(min * 60)}
+          </button>
+        ))}
+      </div>
+      {atual !== null && (
+        <button
+          type="button"
+          onClick={() => onEscolher(null)}
+          className="w-full mt-1.5 px-2 py-1.5 rounded-lg text-xs text-left text-red-500 hover:bg-red-50"
+        >
+          Remover estimativa
+        </button>
+      )}
+    </div>
+  );
+}
+
+function EditorCronometro({ task, gravar }: { task: TaskRow; gravar: EditorCelulaProps['gravar'] }) {
+  const rodando = !!task.timer_started_at;
+  const agora = useAgora(rodando);
+  const total = segundosRegistrados(task, agora);
+  const estimado = task.time_estimate_minutes ? task.time_estimate_minutes * 60 : null;
+  const [texto, setTexto] = useState('');
+  const lido = lerDuracao(texto);
+
+  const lancar = (sinal: 1 | -1) => {
+    if (!lido) return;
+    gravar('add_time_entry', { task_id: task.id, minutes: sinal * lido });
+    setTexto('');
+  };
+
+  return (
+    <div className="p-1.5">
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => gravar(rodando ? 'stop_timer' : 'start_timer', { task_id: task.id })}
+          className={`w-9 h-9 rounded-full flex items-center justify-center text-white shrink-0 transition ${
+            rodando ? 'bg-red-500 hover:bg-red-600' : 'bg-emerald-500 hover:bg-emerald-600'
+          }`}
+          title={rodando ? 'Parar' : 'Iniciar'}
+        >
+          {rodando ? <Pause size={15} /> : <Play size={15} className="ml-0.5" />}
+        </button>
+        <div className="min-w-0">
+          <p className={`text-lg font-semibold tabular-nums leading-tight ${rodando ? 'text-emerald-600' : 'text-slate-700'}`}>
+            {formatarRelogio(total)}
+          </p>
+          <p className="text-[10px] text-slate-400">
+            {estimado ? `de ${formatarDuracao(estimado)} estimado` : 'sem estimativa'}
+          </p>
+        </div>
+      </div>
+
+      {estimado !== null && (
+        <div className="h-1.5 rounded-full bg-slate-100 mt-2 overflow-hidden">
+          <div
+            className={`h-full rounded-full ${total > estimado ? 'bg-red-500' : 'bg-emerald-500'}`}
+            style={{ width: `${Math.min(100, (total / estimado) * 100)}%` }}
+          />
+        </div>
+      )}
+
+      <div className="border-t border-slate-100 mt-2.5 pt-2">
+        <span className="block text-[10px] text-slate-400 mb-1">Esqueceu de ligar? Lance o tempo</span>
+        <div className="flex items-center gap-1">
+          <input
+            value={texto}
+            onChange={(e) => setTexto(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') lancar(1); }}
+            placeholder="Ex.: 30m, 1h15"
+            className="flex-1 min-w-0 border border-slate-200 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-indigo-300"
+          />
+          <button type="button" disabled={!lido} onClick={() => lancar(1)} title="Somar" className="p-1.5 rounded-lg border border-slate-200 text-emerald-600 hover:bg-emerald-50 disabled:opacity-40">
+            <Plus size={13} />
+          </button>
+          <button type="button" disabled={!lido} onClick={() => lancar(-1)} title="Descontar" className="p-1.5 rounded-lg border border-slate-200 text-red-500 hover:bg-red-50 disabled:opacity-40">
+            <Minus size={13} />
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }

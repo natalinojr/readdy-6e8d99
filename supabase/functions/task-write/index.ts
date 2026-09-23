@@ -59,6 +59,13 @@ function validateFieldValue(fieldType: string, value: unknown, options: Array<{ 
   }
 }
 
+/** Estimativa em minutos: inteiro de 0 a 1000 h, ou null pra limpar. */
+function validarEstimativa(v: unknown): string | null {
+  if (v === undefined || v === null) return null;
+  return typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 60000
+    ? null : 'time_estimate_minutes deve ser inteiro entre 0 e 60000';
+}
+
 // Próxima ocorrência de recorrência {freq: daily|weekly|monthly, interval: n}
 function nextDueDate(current: string | null, recurrence: { freq?: string; interval?: number }): string | null {
   const base = current ? new Date(current) : new Date();
@@ -348,8 +355,10 @@ Deno.serve({ verify_jwt: false }, async (req) => {
 
       // ═══ Tarefas ═══
       case 'create_task': {
-        const { list_id, title, description, status_id, priority, assignee_id, start_date, due_date, due_has_time, parent_task_id, recurrence, sort_order, tag_ids } = body;
+        const { list_id, title, description, status_id, priority, assignee_id, start_date, due_date, due_has_time, parent_task_id, recurrence, sort_order, tag_ids, time_estimate_minutes } = body;
         if (!list_id || !title) return json({ error: 'list_id and title are required' }, 400);
+        const estimativaErro = validarEstimativa(time_estimate_minutes);
+        if (estimativaErro) return json({ error: estimativaErro }, 400);
         await assertListOwner(list_id);
         let resolvedStatus = status_id ?? null;
         if (!resolvedStatus) {
@@ -369,6 +378,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
           parent_task_id: parent_task_id ?? null,
           recurrence: recurrence ?? null,
           sort_order: sort_order ?? Date.now(),
+          time_estimate_minutes: time_estimate_minutes ?? null,
           created_by: user.id,
         }).select('id').single();
         if (error) return json({ error: errMsg(error) }, 500);
@@ -386,9 +396,13 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         const { task_id, ...rest } = body;
         const current = await assertTaskAccess(task_id);
         const patch: Record<string, unknown> = {};
-        const editable = ['title', 'description', 'status_id', 'priority', 'assignee_id', 'start_date', 'due_date', 'due_has_time', 'list_id', 'sort_order', 'recurrence', 'is_archived', 'parent_task_id'];
+        const editable = ['title', 'description', 'status_id', 'priority', 'assignee_id', 'start_date', 'due_date', 'due_has_time', 'list_id', 'sort_order', 'recurrence', 'is_archived', 'parent_task_id', 'time_estimate_minutes'];
         for (const k of editable) {
           if (rest[k] !== undefined) patch[k] = rest[k];
+        }
+        if (patch.time_estimate_minutes !== undefined) {
+          const estimativaErro = validarEstimativa(patch.time_estimate_minutes);
+          if (estimativaErro) return json({ error: estimativaErro }, 400);
         }
 
         // Resolve o status pelo NOME DA CATEGORIA em vez do id — necessário
@@ -466,6 +480,9 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         if (patch.priority !== undefined && patch.priority !== current.priority) {
           await logActivity(task_id, 'priority_changed', { to: patch.priority });
         }
+        if (patch.time_estimate_minutes !== undefined && patch.time_estimate_minutes !== current.time_estimate_minutes) {
+          await logActivity(task_id, 'estimate_changed', { to: patch.time_estimate_minutes });
+        }
 
         if (Object.keys(patch).length) {
           const { error } = await admin.from('tasks').update(patch).eq('id', task_id);
@@ -490,6 +507,79 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         if (current.created_by !== user.id) return json({ error: 'Só quem criou a tarefa pode arquivá-la' }, 403);
         const { error } = await admin.from('tasks').update({ is_archived: true }).eq('id', task_id);
         if (error) return json({ error: errMsg(error) }, 500);
+        return json({ success: true });
+      }
+
+      // ═══ Cronômetro ═══
+      // Um cronômetro rodando por pessoa (índice único parcial no banco):
+      // iniciar numa tarefa encerra o que estiver rodando em outra.
+      case 'start_timer': {
+        const { task_id } = body;
+        if (!task_id) return json({ error: 'task_id is required' }, 400);
+        await assertTaskAccess(task_id);
+        const agora = new Date().toISOString();
+        const { data: rodando } = await admin.from('task_time_entries')
+          .select('id, task_id').eq('user_id', user.id).is('ended_at', null).maybeSingle();
+        if (rodando && rodando.task_id === task_id) return json({ success: true, id: rodando.id });
+        if (rodando) {
+          await admin.from('task_time_entries').update({ ended_at: agora }).eq('id', rodando.id);
+        }
+        const { data, error } = await admin.from('task_time_entries')
+          .insert({ tenant_id: tenantId, task_id, user_id: user.id, started_at: agora })
+          .select('id').single();
+        if (error) return json({ error: errMsg(error) }, 500);
+        return json({ success: true, id: data.id, stopped_task_id: rodando?.task_id ?? null });
+      }
+      case 'stop_timer': {
+        const { data: rodando } = await admin.from('task_time_entries')
+          .select('id, task_id, started_at').eq('user_id', user.id).is('ended_at', null).maybeSingle();
+        if (!rodando) return json({ success: true, seconds: 0 });
+        const fim = new Date();
+        const { error } = await admin.from('task_time_entries').update({ ended_at: fim.toISOString() }).eq('id', rodando.id);
+        if (error) return json({ error: errMsg(error) }, 500);
+        const segundos = Math.max(0, Math.round((fim.getTime() - new Date(rodando.started_at).getTime()) / 1000));
+        await logActivity(rodando.task_id, 'time_tracked', { seconds: segundos });
+        return json({ success: true, seconds: segundos, task_id: rodando.task_id });
+      }
+      case 'add_time_entry': {
+        // Lançamento manual ("esqueci de ligar o cronômetro"). Minutos > 0
+        // somam; negativos descontam do tempo que a PRÓPRIA pessoa registrou.
+        const { task_id, minutes } = body;
+        const min = Number(minutes);
+        if (!task_id || !Number.isInteger(min) || min === 0 || Math.abs(min) > 24 * 60) {
+          return json({ error: 'minutes deve ser inteiro, diferente de 0, até 24h' }, 400);
+        }
+        await assertTaskAccess(task_id);
+        if (min < 0) {
+          let falta = -min * 60;
+          const { data: minhas } = await admin.from('task_time_entries')
+            .select('id, started_at, ended_at').eq('task_id', task_id).eq('user_id', user.id)
+            .not('ended_at', 'is', null).order('ended_at', { ascending: false });
+          const meuTotal = (minhas ?? []).reduce((acc: number, e: { started_at: string; ended_at: string }) =>
+            acc + (new Date(e.ended_at).getTime() - new Date(e.started_at).getTime()) / 1000, 0);
+          if (meuTotal < falta) return json({ error: 'Só dá pra descontar do tempo que você mesmo registrou' }, 400);
+          for (const e of minhas ?? []) {
+            if (falta <= 0) break;
+            const dur = (new Date(e.ended_at).getTime() - new Date(e.started_at).getTime()) / 1000;
+            if (dur <= falta) {
+              await admin.from('task_time_entries').delete().eq('id', e.id);
+              falta -= dur;
+            } else {
+              await admin.from('task_time_entries')
+                .update({ ended_at: new Date(new Date(e.ended_at).getTime() - falta * 1000).toISOString() }).eq('id', e.id);
+              falta = 0;
+            }
+          }
+        } else {
+          const fim = new Date();
+          const inicio = new Date(fim.getTime() - min * 60 * 1000);
+          const { error } = await admin.from('task_time_entries').insert({
+            tenant_id: tenantId, task_id, user_id: user.id,
+            started_at: inicio.toISOString(), ended_at: fim.toISOString(),
+          });
+          if (error) return json({ error: errMsg(error) }, 500);
+        }
+        await logActivity(task_id, 'time_added', { minutes: min });
         return json({ success: true });
       }
 
