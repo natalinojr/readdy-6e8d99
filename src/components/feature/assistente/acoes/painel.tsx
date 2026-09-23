@@ -2,7 +2,7 @@
 // resposta vira um painel — números em destaque, barras com a participação e ranking. Mostrado com
 // `painel()` do useRoteiro (kit.tsx). Uma cor por série; o número vem escrito ao lado da barra
 // (nada de legenda para decifrar) e tudo cabe na largura do celular.
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { brl } from './kit';
 
 export function Painel({ titulo, subtitulo, children, rodape }: { titulo: string; subtitulo?: string; children: ReactNode; rodape?: string }) {
@@ -151,6 +151,70 @@ export function Ranking({ titulo, itens }: { titulo: string; itens: Array<{ nome
           </li>
         ))}
       </ol>
+    </div>
+  );
+}
+
+/**
+ * Gráfico de linha (2026-09-23, Vendas do dia por hora): uma série principal (violeta, com área) e,
+ * opcional, uma de comparação tracejada (ex.: mesmo dia da semana passada). Tocar ou passar o dedo
+ * escolhe o ponto e o valor aparece em cima — começa no pico. SVG puro, cabe no celular.
+ */
+export function GraficoLinha({ titulo, pontos, rotuloBase, formatar = brl }: {
+  titulo: string;
+  pontos: Array<{ rotulo: string; valor: number; base?: number | null }>;
+  rotuloBase?: string;
+  formatar?: (n: number) => string;
+}) {
+  const pico = pontos.reduce((m, p, i) => (p.valor > pontos[m].valor ? i : m), 0);
+  const [sel, setSel] = useState(pico);
+  if (pontos.length < 2 || !pontos.some((p) => p.valor > 0)) return null;
+  const temBase = pontos.some((p) => (p.base ?? 0) > 0);
+  const W = 320; const H = 130; const E = 6; const D = 6; const T = 8; const B = 18;
+  const max = Math.max(...pontos.map((p) => Math.max(p.valor, temBase ? p.base ?? 0 : 0)), 1);
+  const x = (i: number) => E + (i * (W - E - D)) / (pontos.length - 1);
+  const y = (v: number) => T + (1 - v / max) * (H - T - B);
+  const linha = (vals: number[]) => vals.map((v, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+  const principal = linha(pontos.map((p) => p.valor));
+  const area = `${principal} L${x(pontos.length - 1).toFixed(1)},${H - B} L${x(0).toFixed(1)},${H - B} Z`;
+  const passo = Math.ceil(pontos.length / 7);
+  const escolher = (clientX: number, alvo: SVGSVGElement) => {
+    const r = alvo.getBoundingClientRect();
+    const px = ((clientX - r.left) / r.width) * W;
+    setSel(Math.max(0, Math.min(pontos.length - 1, Math.round(((px - E) / (W - E - D)) * (pontos.length - 1)))));
+  };
+  const p = pontos[Math.min(sel, pontos.length - 1)];
+  return (
+    <div>
+      <div className="flex items-baseline justify-between gap-2 mb-1">
+        <p className="text-xs font-bold text-zinc-700">{titulo}</p>
+        <p className="text-xs tabular-nums text-right">
+          <span className="font-semibold text-zinc-500">{p.rotulo} · </span>
+          <span className="font-black text-zinc-900">{formatar(p.valor)}</span>
+          {temBase && <span className="text-zinc-400"> · {rotuloBase ?? 'base'} {formatar(p.base ?? 0)}</span>}
+        </p>
+      </div>
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto touch-none select-none" role="img" aria-label={titulo}
+        onPointerDown={(e) => escolher(e.clientX, e.currentTarget)}
+        onPointerMove={(e) => { if (e.buttons || e.pointerType === 'mouse') escolher(e.clientX, e.currentTarget); }}>
+        <line x1={E} x2={W - D} y1={H - B} y2={H - B} className="stroke-zinc-200" strokeWidth={1} />
+        <line x1={E} x2={W - D} y1={T} y2={T} className="stroke-zinc-100" strokeWidth={1} strokeDasharray="2 3" />
+        <text x={W - D} y={T - 1} textAnchor="end" className="fill-zinc-400" fontSize={8}>{formatar(max)}</text>
+        {temBase && <path d={linha(pontos.map((q) => q.base ?? 0))} fill="none" className="stroke-zinc-400" strokeWidth={1.5} strokeDasharray="4 3" />}
+        <path d={area} className="fill-violet-500/10" />
+        <path d={principal} fill="none" className="stroke-violet-600" strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+        <line x1={x(sel)} x2={x(sel)} y1={T} y2={H - B} className="stroke-violet-300" strokeWidth={1} />
+        <circle cx={x(sel)} cy={y(p.valor)} r={3.5} className="fill-violet-600 stroke-white" strokeWidth={1.5} />
+        {pontos.map((q, i) => (i === pontos.length - 1 || (i % passo === 0 && pontos.length - 1 - i >= passo)) ? (
+          <text key={i} x={x(i)} y={H - 5} textAnchor={i === 0 ? 'start' : i === pontos.length - 1 ? 'end' : 'middle'} className="fill-zinc-400" fontSize={9}>{q.rotulo}</text>
+        ) : null)}
+      </svg>
+      {temBase && (
+        <p className="flex items-center gap-3 text-[11px] text-zinc-500 mt-0.5">
+          <span className="flex items-center gap-1"><span className="inline-block w-3 h-0.5 bg-violet-600 rounded" />Dia escolhido</span>
+          <span className="flex items-center gap-1"><span className="inline-block w-3 border-t border-dashed border-zinc-400" />{rotuloBase ?? 'Base'}</span>
+        </p>
+      )}
     </div>
   );
 }
