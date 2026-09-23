@@ -75,6 +75,9 @@ function kdsToPedidoAgrupado(p: KDSPedido): PedidoAgrupado {
   };
 }
 
+// Botões de extras (vincular / desconto / voucher / cliente) na coluna do resumo
+const EXTRA_BTN = 'flex flex-col md:flex-row items-center justify-center gap-1 md:gap-1.5 px-1.5 py-2 rounded-lg border text-[11px] md:text-xs font-semibold cursor-pointer transition-colors min-w-0';
+
 export default function PagamentoModal({ onClose, onSuccess }: Props) {
   const { total, destino, carrinho, finalizarPedido, marcarComoPago } = usePDV();
   const { success: toastSuccess, error: toastError, warning: toastWarning } = useToast();
@@ -123,21 +126,22 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
   const [foiCortesia, setFoiCortesia] = useState(false);
 
   // ── Voucher state ──────────────────────────────────────────────────────────
-  const [voucherOpen, setVoucherOpen] = useState(false);
   const [voucherCode, setVoucherCode] = useState('');
   const [voucherLoading, setVoucherLoading] = useState(false);
   const [voucherAplicado, setVoucherAplicado] = useState<VoucherAplicado | null>(null);
   const [voucherError, setVoucherError] = useState('');
 
   // Box de dados do cliente (campos avulsos — nome/telefone/CPF/e-mail)
-  const [dadosClienteOpen, setDadosClienteOpen] = useState(false);
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
   const [customerCpf, setCustomerCpf] = useState('');
   const [customerEmail, setCustomerEmail] = useState('');
 
   // ── Desconto manual (com autorização de gerente/admin) ──────────────────────
-  const [descontoOpen, setDescontoOpen] = useState(false);
+  // Desconto / voucher / dados do cliente abrem numa janelinha por cima (não empurram a tela)
+  const [extraAberto, setExtraAberto] = useState<'desconto' | 'voucher' | 'cliente' | null>(null);
+  // Celular: lista de itens do resumo começa recolhida
+  const [resumoAberto, setResumoAberto] = useState(false);
   const [descontoInput, setDescontoInput] = useState('');
   const [descontoTipoManual, setDescontoTipoManual] = useState<'valor' | 'percentual'>('valor');
   const [descontoManual, setDescontoManual] = useState(0);
@@ -174,6 +178,9 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
   }, [reloadPedidosAgrupados]);
 
   const totalEfetivo = etapa === 'pagar' ? totalSelecionado : total;
+  const qtdItens = carrinho.reduce((n, i) => n + i.quantidade, 0);
+  const qtdVinculados = pedidosExistentesSelecionados.filter((p) => !p.isCarrinho).length;
+  const temDadosCliente = !!(customerName || customerPhone || customerCpf || customerEmail);
 
   // Total com desconto de voucher + desconto manual aplicados
   // Voucher limitado ao que sobra depois do desconto manual (senão o desconto total passa
@@ -959,8 +966,12 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
   }
 
   return (
-    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
-      <div className="relative bg-white rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-2 sm:p-4">
+      {/* Duas colunas (md+): à esquerda o que se paga, à direita como se paga. O rodapé
+          (restante/troco + confirmar) fica sempre visível — nada importante atrás de rolagem.
+          No celular vira uma coluna, com a lista de itens recolhida. */}
+      <div className="relative bg-white rounded-2xl w-full max-w-lg md:max-w-4xl shadow-2xl overflow-hidden flex flex-col max-h-[96dvh] md:h-[min(660px,94dvh)]">
+        {/* Header */}
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-200 bg-zinc-50">
           <div className="flex items-center gap-2">
@@ -996,43 +1007,37 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
           </button>
         </div>
 
-        <div className="overflow-y-auto flex-1 p-5 space-y-4">
-          {/* Botão Vincular Pedidos — destacado no topo, sempre visível */}
-          <button
-            onClick={() => {
-              setModoVincularManual(true);
-              setEtapa('selecionar_conta');
-              setPagamentos([]);
-            }}
-            className="w-full flex items-center justify-center gap-2 py-3 text-sm font-bold text-amber-700 bg-amber-50 hover:bg-amber-100 border-2 border-amber-300 rounded-xl cursor-pointer whitespace-nowrap transition-colors"
-          >
-            <div className="w-5 h-5 flex items-center justify-center">
-              <i className="ri-link-m text-amber-600 text-base" />
-            </div>
-            Vincular Pedidos
-            <span className="text-xs font-normal text-amber-500">(unir com outros pedidos)</span>
-          </button>
-
-          {/* Order summary */}
-          <div className="bg-zinc-50 rounded-xl p-4">
-            <div className="flex items-center justify-between mb-2">
-              <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wider">Resumo do Pedido</p>
-              {/* Badge indicando pedidos vinculados já selecionados */}
-              {pedidosExistentesSelecionados.filter((p) => !p.isCarrinho).length > 0 && (
-                <span className="text-[10px] font-bold text-amber-600 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full">
-                  {pedidosExistentesSelecionados.filter((p) => !p.isCarrinho).length} pedido(s) vinculado(s)
+        <div className="flex-1 min-h-0 flex flex-col md:flex-row overflow-y-auto md:overflow-hidden">
+          {/* ── Esquerda: resumo + extras ─────────────────────────────────── */}
+          <div className="md:w-[44%] md:min-h-0 flex flex-col gap-3 p-4 md:border-r border-zinc-200 bg-zinc-50/60">
+            <div className="bg-white border border-zinc-200 rounded-xl p-3 flex flex-col md:flex-1 md:min-h-0">
+              <button
+                type="button"
+                onClick={() => setResumoAberto((v) => !v)}
+                className="flex items-center justify-between gap-2 mb-2 cursor-pointer md:cursor-default text-left"
+              >
+                <span className="text-xs font-semibold text-zinc-500 uppercase tracking-wider">
+                  Resumo · {qtdItens} {qtdItens === 1 ? 'item' : 'itens'}
                 </span>
-              )}
-            </div>
-            <div className="space-y-1.5 max-h-28 overflow-y-auto">
+                <span className="flex items-center gap-1.5">
+                  {qtdVinculados > 0 && (
+                    <span className="text-[10px] font-bold text-amber-600 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full">
+                      +{qtdVinculados} vinculado(s)
+                    </span>
+                  )}
+                  <i className={`${resumoAberto ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-zinc-400 md:hidden`} />
+                </span>
+              </button>
+              {/* Só a lista rola, e só quando é longa */}
+              <div className={`${resumoAberto ? 'block' : 'hidden'} md:block max-h-40 md:max-h-none md:flex-1 md:min-h-0 overflow-y-auto pr-1 mb-1`}>
+                <div className="space-y-1.5">
               {carrinho.map((item) => (
                 <div key={item.cartId} className="flex justify-between text-sm">
                   <span className="text-zinc-700">{item.quantidade}x {item.nome}</span>
                   <span className="font-medium text-zinc-900">{formatPrice(item.precoTotal * item.quantidade)}</span>
                 </div>
               ))}
-            </div>
-            {/* Pedidos vinculados manualmente */}
+                </div>
             {pedidosExistentesSelecionados.filter((p) => !p.isCarrinho).length > 0 && (
               <div className="mt-2 pt-2 border-t border-zinc-200 space-y-1">
                 <p className="text-[10px] font-bold text-amber-600 flex items-center gap-1">
@@ -1050,6 +1055,7 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
                 ))}
               </div>
             )}
+              </div>
             <div className="mt-3 pt-3 border-t border-zinc-200 space-y-1">
               <div className="flex justify-between text-sm text-zinc-500">
                 <span>Subtotal</span>
@@ -1068,253 +1074,47 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
                 <span className="text-amber-600">{formatPrice(totalComDesconto)}</span>
               </div>
             </div>
+            </div>
+
+            {/* Extras: cada um abre uma janelinha por cima; aplicado, o botão mostra o valor */}
+            <div className="grid grid-cols-4 md:grid-cols-2 gap-2 shrink-0">
+              <button
+                onClick={() => {
+                  setModoVincularManual(true);
+                  setEtapa('selecionar_conta');
+                  setPagamentos([]);
+                }}
+                className={`${EXTRA_BTN} ${qtdVinculados > 0 ? 'border-amber-400 bg-amber-50 text-amber-700' : 'border-zinc-200 bg-white text-zinc-600 hover:border-amber-300'}`}
+              >
+                <i className="ri-link-m text-base text-amber-600" />
+                <span className="truncate">{qtdVinculados > 0 ? `${qtdVinculados} vinculado(s)` : 'Vincular'}</span>
+              </button>
+              <button
+                onClick={() => setExtraAberto('desconto')}
+                className={`${EXTRA_BTN} ${descontoManual > 0 ? 'border-amber-400 bg-amber-50 text-amber-700' : 'border-zinc-200 bg-white text-zinc-600 hover:border-amber-300'}`}
+              >
+                <i className="ri-percent-line text-base text-amber-500" />
+                <span className="truncate">{descontoManual > 0 ? `-${formatPrice(descontoManual)}` : 'Desconto'}</span>
+              </button>
+              <button
+                onClick={() => setExtraAberto('voucher')}
+                className={`${EXTRA_BTN} ${voucherAplicado ? 'border-rose-300 bg-rose-50 text-rose-700' : 'border-zinc-200 bg-white text-zinc-600 hover:border-rose-300'}`}
+              >
+                <i className="ri-gift-line text-base text-rose-500" />
+                <span className="truncate">{voucherAplicado ? `-${formatPrice(desconto)}` : 'Voucher'}</span>
+              </button>
+              <button
+                onClick={() => setExtraAberto('cliente')}
+                className={`${EXTRA_BTN} ${temDadosCliente ? 'border-emerald-300 bg-emerald-50 text-emerald-700' : 'border-zinc-200 bg-white text-zinc-600 hover:border-zinc-300'}`}
+              >
+                <i className={`ri-user-3-line text-base ${temDadosCliente ? 'text-emerald-600' : 'text-zinc-400'}`} />
+                <span className="truncate">{temDadosCliente ? 'Cliente salvo' : 'CPF / Cliente'}</span>
+              </button>
+            </div>
           </div>
 
-          {/* ── Desconto (com autorização) ──────────────────────────────────── */}
-          <div className="border border-zinc-200 rounded-xl overflow-hidden">
-            <button
-              onClick={() => setDescontoOpen((v) => !v)}
-              className="w-full flex items-center justify-between px-4 py-3 bg-zinc-50 hover:bg-zinc-100 cursor-pointer transition-colors"
-            >
-              <div className="flex items-center gap-2">
-                <div className="w-6 h-6 flex items-center justify-center text-amber-500">
-                  <i className="ri-percent-line text-base" />
-                </div>
-                <span className="text-sm font-semibold text-zinc-700">
-                  {descontoManual > 0 ? (
-                    <span className="text-amber-600">Desconto aplicado: -{formatPrice(descontoManual)}</span>
-                  ) : (
-                    'Desconto'
-                  )}
-                </span>
-              </div>
-              <i className={`${descontoOpen ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-zinc-400`} />
-            </button>
-
-            {descontoOpen && (
-              <div className="px-4 py-3 space-y-3 border-t border-zinc-100">
-                {descontoManual > 0 ? (
-                  <div className="flex items-center justify-between bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
-                    <div>
-                      <p className="text-sm font-bold text-amber-700">-{formatPrice(descontoManual)}</p>
-                      <p className="text-xs text-amber-500">
-                        {descontoAutorizadoPor ? `Autorizado por ${descontoAutorizadoPor}` : 'Autorizado'}
-                      </p>
-                    </div>
-                    <button
-                      onClick={handleRemoverDesconto}
-                      className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-amber-100 text-amber-400 cursor-pointer transition-colors"
-                      title="Remover desconto"
-                    >
-                      <i className="ri-close-line text-sm" />
-                    </button>
-                  </div>
-                ) : (
-                  <>
-                    <div className="flex items-center gap-1 bg-zinc-100 rounded-lg p-1">
-                      {(['valor', 'percentual'] as const).map((t) => (
-                        <button
-                          key={t}
-                          type="button"
-                          onClick={() => setDescontoTipoManual(t)}
-                          className={`flex-1 py-1.5 rounded-md text-xs font-semibold cursor-pointer transition-colors ${descontoTipoManual === t ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500'}`}
-                        >
-                          {t === 'valor' ? 'Valor (R$)' : 'Percentual (%)'}
-                        </button>
-                      ))}
-                    </div>
-                    <div className="flex gap-2">
-                      <input
-                        type="number"
-                        min={0}
-                        step="0.01"
-                        value={descontoInput}
-                        onChange={(e) => { setDescontoInput(e.target.value); setDescontoError(''); }}
-                        onKeyDown={(e) => e.key === 'Enter' && handleAplicarDesconto()}
-                        placeholder={descontoTipoManual === 'percentual' ? '10' : '5,00'}
-                        className="flex-1 px-3 py-2 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400"
-                      />
-                      <button
-                        onClick={handleAplicarDesconto}
-                        disabled={!descontoInput.trim()}
-                        className="px-4 py-2 bg-amber-500 hover:bg-amber-600 disabled:opacity-40 text-white text-sm font-semibold rounded-lg cursor-pointer whitespace-nowrap transition-colors flex items-center gap-1.5"
-                      >
-                        <i className="ri-shield-check-line" />
-                        Aplicar
-                      </button>
-                    </div>
-                    {descontoError && (
-                      <div className="flex items-center gap-2 text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
-                        <i className="ri-error-warning-line" />
-                        {descontoError}
-                      </div>
-                    )}
-                    <p className="text-[10px] text-zinc-400">
-                      O desconto exige autorização de gerente/admin (PIN ou notificação).
-                    </p>
-                  </>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* ── Voucher / Gift Card ─────────────────────────────────────────── */}
-          <div className="border border-zinc-200 rounded-xl overflow-hidden">
-            <button
-              onClick={() => setVoucherOpen((v) => !v)}
-              className="w-full flex items-center justify-between px-4 py-3 bg-zinc-50 hover:bg-zinc-100 cursor-pointer transition-colors"
-            >
-              <div className="flex items-center gap-2">
-                <div className="w-6 h-6 flex items-center justify-center text-rose-500">
-                  <i className="ri-gift-line text-base" />
-                </div>
-                <span className="text-sm font-semibold text-zinc-700">
-                  {voucherAplicado ? (
-                    <span className="text-rose-600">Voucher aplicado: -{formatPrice(desconto)}</span>
-                  ) : (
-                    'Voucher / Gift Card'
-                  )}
-                </span>
-              </div>
-              <i className={`${voucherOpen ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-zinc-400`} />
-            </button>
-
-            {voucherOpen && (
-              <div className="px-4 py-3 space-y-3 border-t border-zinc-100">
-                {voucherAplicado ? (
-                  /* Voucher já aplicado */
-                  <div className="flex items-center justify-between bg-rose-50 border border-rose-200 rounded-xl px-4 py-3">
-                    <div>
-                      <div className="flex items-center gap-2 mb-0.5">
-                        <i className="ri-gift-fill text-rose-500 text-sm" />
-                        <span className="font-mono font-bold text-rose-700 text-sm tracking-wider">
-                          {voucherAplicado.voucher.code}
-                        </span>
-                      </div>
-                      <p className="text-xs text-rose-500">
-                        {voucherAplicado.voucher.voucher_type === 'gift_card' ? 'Gift Card' :
-                         voucherAplicado.voucher.voucher_type === 'discount' ? 'Desconto' :
-                         voucherAplicado.voucher.voucher_type === 'cashback' ? 'Cashback' : 'Item Grátis'}
-                        {' · '}Desconto: <strong>{formatPrice(desconto)}</strong>
-                      </p>
-                    </div>
-                    <button
-                      onClick={handleRemoverVoucher}
-                      className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-rose-100 text-rose-400 cursor-pointer transition-colors"
-                      title="Remover voucher"
-                    >
-                      <i className="ri-close-line text-sm" />
-                    </button>
-                  </div>
-                ) : (
-                  /* Input de código */
-                  <>
-                    <div className="flex gap-2">
-                      <input
-                        type="text"
-                        value={voucherCode}
-                        onChange={(e) => { setVoucherCode(e.target.value.toUpperCase()); setVoucherError(''); }}
-                        onKeyDown={(e) => e.key === 'Enter' && handleValidarVoucher()}
-                        placeholder="Ex: GC-A3F9-X2K1"
-                        className="flex-1 px-3 py-2 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-rose-400 font-mono tracking-wider uppercase"
-                      />
-                      <button
-                        onClick={handleValidarVoucher}
-                        disabled={!voucherCode.trim() || voucherLoading}
-                        className="px-4 py-2 bg-rose-500 hover:bg-rose-600 disabled:opacity-40 text-white text-sm font-semibold rounded-lg cursor-pointer whitespace-nowrap transition-colors flex items-center gap-1.5"
-                      >
-                        {voucherLoading ? (
-                          <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                        ) : (
-                          <i className="ri-check-line" />
-                        )}
-                        Aplicar
-                      </button>
-                    </div>
-                    {voucherError && (
-                      <div className="flex items-center gap-2 text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
-                        <i className="ri-error-warning-line" />
-                        {voucherError}
-                      </div>
-                    )}
-                    <p className="text-[10px] text-zinc-400">
-                      Digite o código do voucher ou gift card e clique em Aplicar para obter o desconto.
-                    </p>
-                  </>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* BUG 3.8: Dados do cliente (CPF/email) */}
-          <div className="border border-zinc-200 rounded-xl overflow-hidden">
-            <button
-              onClick={() => setDadosClienteOpen((v) => !v)}
-              className="w-full flex items-center justify-between px-4 py-3 bg-zinc-50 hover:bg-zinc-100 cursor-pointer transition-colors"
-            >
-              <div className="flex items-center gap-2">
-                <div className="w-6 h-6 flex items-center justify-center text-zinc-400">
-                  <i className="ri-user-3-line text-base" />
-                </div>
-                <span className="text-sm font-semibold text-zinc-700">
-                  {customerName || customerPhone || customerCpf || customerEmail
-                    ? <span className="text-emerald-600">Dados do cliente salvos</span>
-                    : 'Dados do cliente'}
-                </span>
-                <span className="text-[10px] text-zinc-400 font-medium">Opcional</span>
-              </div>
-              <i className={`${dadosClienteOpen ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-zinc-400`} />
-            </button>
-
-            {dadosClienteOpen && (
-              <div className="px-4 py-3 space-y-3 border-t border-zinc-100">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-[10px] font-semibold text-zinc-500 mb-1 uppercase tracking-wide">Nome</label>
-                    <input
-                      type="text"
-                      value={customerName}
-                      onChange={(e) => setCustomerName(e.target.value)}
-                      placeholder="Nome do cliente"
-                      maxLength={80}
-                      className="w-full px-3 py-2 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-semibold text-zinc-500 mb-1 uppercase tracking-wide">Telefone</label>
-                    <input
-                      type="tel"
-                      value={customerPhone}
-                      onChange={(e) => setCustomerPhone(e.target.value)}
-                      placeholder="(00) 00000-0000"
-                      maxLength={20}
-                      className="w-full px-3 py-2 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400"
-                    />
-                  </div>
-                  <CpfCnpjInput
-                    compact
-                    label="CPF/CNPJ na nota"
-                    value={customerCpf}
-                    onChange={setCustomerCpf}
-                  />
-                  <div>
-                    <label className="block text-[10px] font-semibold text-zinc-500 mb-1 uppercase tracking-wide">E-mail</label>
-                    <input
-                      type="email"
-                      value={customerEmail}
-                      onChange={(e) => setCustomerEmail(e.target.value)}
-                      placeholder="cliente@email.com"
-                      className="w-full px-3 py-2 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400"
-                    />
-                  </div>
-                </div>
-                <p className="text-[10px] text-zinc-400">
-                  Salvos junto ao pedido para nota fiscal e histórico do cliente.
-                </p>
-              </div>
-            )}
-          </div>
-
+          {/* ── Direita: pagamento ─────────────────────────────────────────── */}
+          <div className="flex-1 md:min-h-0 md:overflow-y-auto p-4 space-y-3">
           {/* Payment methods */}
           <div>
             <p className="text-xs font-semibold text-zinc-500 mb-2 uppercase tracking-wider">Forma de Pagamento</p>
@@ -1399,7 +1199,13 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
               </div>
             </div>
           )}
+          </div>
+        </div>
 
+        {/* Footer — sempre visível */}
+        <div className="flex border-t border-zinc-200 shrink-0">
+          <div className="hidden md:block md:w-[44%] bg-zinc-50/60 border-r border-zinc-200" />
+          <div className="flex-1 min-w-0 px-4 py-3 space-y-2">
           {/* Restante / Troco */}
           {restante > 0.01 && (
             <div className="flex items-center justify-between bg-red-50 border border-red-200 rounded-xl px-4 py-3">
@@ -1413,10 +1219,6 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
               <span className="text-lg font-bold text-green-600">{formatPrice(troco)}</span>
             </div>
           )}
-        </div>
-
-        {/* Footer */}
-        <div className="px-5 py-4 border-t border-zinc-200 space-y-2">
           {/* Cortesia — só para o carrinho atual (sem pedidos vinculados) e com liberação gerente/admin */}
           {carrinho.length > 0 && pedidosExistentesSelecionados.filter((p) => !p.isCarrinho).length === 0 && (
             <button
@@ -1455,7 +1257,209 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
               )
             )}
           </button>
+          </div>
         </div>
+
+        {/* Extras abertos por cima da janela */}
+        {extraAberto && (
+          <div className="absolute inset-0 z-20 bg-black/40 flex items-center justify-center p-4" onClick={() => setExtraAberto(null)}>
+            <div className="bg-white rounded-xl w-full max-w-sm max-h-full overflow-y-auto shadow-xl" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between px-4 py-3 bg-zinc-50 border-b border-zinc-100">
+                <p className="text-sm font-bold text-zinc-800">
+                  {extraAberto === 'desconto' ? 'Desconto' : extraAberto === 'voucher' ? 'Voucher / Gift Card' : 'Dados do cliente (opcional)'}
+                </p>
+                <button onClick={() => setExtraAberto(null)} className="w-7 h-7 flex items-center justify-center rounded-full hover:bg-zinc-200 cursor-pointer text-zinc-400">
+                  <i className="ri-close-line" />
+                </button>
+              </div>
+              {extraAberto === 'desconto' && (
+              <div className="px-4 py-3 space-y-3 border-t border-zinc-100">
+                {descontoManual > 0 ? (
+                  <div className="flex items-center justify-between bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
+                    <div>
+                      <p className="text-sm font-bold text-amber-700">-{formatPrice(descontoManual)}</p>
+                      <p className="text-xs text-amber-500">
+                        {descontoAutorizadoPor ? `Autorizado por ${descontoAutorizadoPor}` : 'Autorizado'}
+                      </p>
+                    </div>
+                    <button
+                      onClick={handleRemoverDesconto}
+                      className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-amber-100 text-amber-400 cursor-pointer transition-colors"
+                      title="Remover desconto"
+                    >
+                      <i className="ri-close-line text-sm" />
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex items-center gap-1 bg-zinc-100 rounded-lg p-1">
+                      {(['valor', 'percentual'] as const).map((t) => (
+                        <button
+                          key={t}
+                          type="button"
+                          onClick={() => setDescontoTipoManual(t)}
+                          className={`flex-1 py-1.5 rounded-md text-xs font-semibold cursor-pointer transition-colors ${descontoTipoManual === t ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500'}`}
+                        >
+                          {t === 'valor' ? 'Valor (R$)' : 'Percentual (%)'}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="flex gap-2">
+                      <input
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        value={descontoInput}
+                        onChange={(e) => { setDescontoInput(e.target.value); setDescontoError(''); }}
+                        onKeyDown={(e) => e.key === 'Enter' && handleAplicarDesconto()}
+                        placeholder={descontoTipoManual === 'percentual' ? '10' : '5,00'}
+                        className="flex-1 px-3 py-2 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400"
+                      />
+                      <button
+                        onClick={handleAplicarDesconto}
+                        disabled={!descontoInput.trim()}
+                        className="px-4 py-2 bg-amber-500 hover:bg-amber-600 disabled:opacity-40 text-white text-sm font-semibold rounded-lg cursor-pointer whitespace-nowrap transition-colors flex items-center gap-1.5"
+                      >
+                        <i className="ri-shield-check-line" />
+                        Aplicar
+                      </button>
+                    </div>
+                    {descontoError && (
+                      <div className="flex items-center gap-2 text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                        <i className="ri-error-warning-line" />
+                        {descontoError}
+                      </div>
+                    )}
+                    <p className="text-[10px] text-zinc-400">
+                      O desconto exige autorização de gerente/admin (PIN ou notificação).
+                    </p>
+                  </>
+                )}
+              </div>
+              )}
+              {extraAberto === 'voucher' && (
+              <div className="px-4 py-3 space-y-3 border-t border-zinc-100">
+                {voucherAplicado ? (
+                  /* Voucher já aplicado */
+                  <div className="flex items-center justify-between bg-rose-50 border border-rose-200 rounded-xl px-4 py-3">
+                    <div>
+                      <div className="flex items-center gap-2 mb-0.5">
+                        <i className="ri-gift-fill text-rose-500 text-sm" />
+                        <span className="font-mono font-bold text-rose-700 text-sm tracking-wider">
+                          {voucherAplicado.voucher.code}
+                        </span>
+                      </div>
+                      <p className="text-xs text-rose-500">
+                        {voucherAplicado.voucher.voucher_type === 'gift_card' ? 'Gift Card' :
+                         voucherAplicado.voucher.voucher_type === 'discount' ? 'Desconto' :
+                         voucherAplicado.voucher.voucher_type === 'cashback' ? 'Cashback' : 'Item Grátis'}
+                        {' · '}Desconto: <strong>{formatPrice(desconto)}</strong>
+                      </p>
+                    </div>
+                    <button
+                      onClick={handleRemoverVoucher}
+                      className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-rose-100 text-rose-400 cursor-pointer transition-colors"
+                      title="Remover voucher"
+                    >
+                      <i className="ri-close-line text-sm" />
+                    </button>
+                  </div>
+                ) : (
+                  /* Input de código */
+                  <>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={voucherCode}
+                        onChange={(e) => { setVoucherCode(e.target.value.toUpperCase()); setVoucherError(''); }}
+                        onKeyDown={(e) => e.key === 'Enter' && handleValidarVoucher()}
+                        placeholder="Ex: GC-A3F9-X2K1"
+                        className="flex-1 px-3 py-2 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-rose-400 font-mono tracking-wider uppercase"
+                      />
+                      <button
+                        onClick={handleValidarVoucher}
+                        disabled={!voucherCode.trim() || voucherLoading}
+                        className="px-4 py-2 bg-rose-500 hover:bg-rose-600 disabled:opacity-40 text-white text-sm font-semibold rounded-lg cursor-pointer whitespace-nowrap transition-colors flex items-center gap-1.5"
+                      >
+                        {voucherLoading ? (
+                          <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        ) : (
+                          <i className="ri-check-line" />
+                        )}
+                        Aplicar
+                      </button>
+                    </div>
+                    {voucherError && (
+                      <div className="flex items-center gap-2 text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                        <i className="ri-error-warning-line" />
+                        {voucherError}
+                      </div>
+                    )}
+                    <p className="text-[10px] text-zinc-400">
+                      Digite o código do voucher ou gift card e clique em Aplicar para obter o desconto.
+                    </p>
+                  </>
+                )}
+              </div>
+              )}
+              {extraAberto === 'cliente' && (
+              <div className="px-4 py-3 space-y-3 border-t border-zinc-100">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[10px] font-semibold text-zinc-500 mb-1 uppercase tracking-wide">Nome</label>
+                    <input
+                      type="text"
+                      value={customerName}
+                      onChange={(e) => setCustomerName(e.target.value)}
+                      placeholder="Nome do cliente"
+                      maxLength={80}
+                      className="w-full px-3 py-2 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-semibold text-zinc-500 mb-1 uppercase tracking-wide">Telefone</label>
+                    <input
+                      type="tel"
+                      value={customerPhone}
+                      onChange={(e) => setCustomerPhone(e.target.value)}
+                      placeholder="(00) 00000-0000"
+                      maxLength={20}
+                      className="w-full px-3 py-2 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400"
+                    />
+                  </div>
+                  <CpfCnpjInput
+                    compact
+                    label="CPF/CNPJ na nota"
+                    value={customerCpf}
+                    onChange={setCustomerCpf}
+                  />
+                  <div>
+                    <label className="block text-[10px] font-semibold text-zinc-500 mb-1 uppercase tracking-wide">E-mail</label>
+                    <input
+                      type="email"
+                      value={customerEmail}
+                      onChange={(e) => setCustomerEmail(e.target.value)}
+                      placeholder="cliente@email.com"
+                      className="w-full px-3 py-2 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400"
+                    />
+                  </div>
+                </div>
+                <p className="text-[10px] text-zinc-400">
+                  Salvos junto ao pedido para nota fiscal e histórico do cliente.
+                </p>
+              </div>
+              )}
+              <div className="px-4 pb-4">
+                <button
+                  onClick={() => setExtraAberto(null)}
+                  className="w-full py-2.5 bg-zinc-800 hover:bg-zinc-900 text-white text-sm font-semibold rounded-lg cursor-pointer"
+                >
+                  Pronto
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Overlay de loading global */}
