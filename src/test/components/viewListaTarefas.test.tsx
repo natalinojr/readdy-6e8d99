@@ -70,6 +70,20 @@ describe('ViewLista (tarefas)', () => {
     expect(write).toHaveBeenCalledWith('update_task', { task_id: 'b', assignee_id: 'u1' });
   });
 
+  it('data: atalhos Hoje/Ontem/Amanhã e escolher qualquer data', () => {
+    localStorage.setItem('erpos_tarefas_colunas_L1', JSON.stringify(['vencimento']));
+    const write = montar();
+    const linha = screen.getByText('Tarefa Sem').parentElement!;
+    fireEvent.click(within(linha).getAllByText('—')[0]); // [0] = célula do desktop (o resumo do celular vem depois)
+    expect(screen.getByText('Hoje')).toBeTruthy();
+    expect(screen.getByText('Amanhã')).toBeTruthy();
+    expect(screen.getByText('Escolher data')).toBeTruthy();
+    fireEvent.click(screen.getByText('Ontem'));
+    const d = new Date(); d.setDate(d.getDate() - 1);
+    const ontem = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    expect(write).toHaveBeenCalledWith('update_task', { task_id: 'b', due_date: `${ontem}T12:00:00Z` });
+  });
+
   it('coluna de comentários aceita digitar direto', async () => {
     localStorage.setItem('erpos_tarefas_colunas_L1', JSON.stringify(['comentarios']));
     const write = montar();

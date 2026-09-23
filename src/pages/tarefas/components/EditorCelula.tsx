@@ -139,13 +139,10 @@ function hojeMais(dias: number): string {
 }
 
 function EditorData({ atual, onEscolher }: { atual: string | null; onEscolher: (dia: string | null) => void }) {
-  const diaSemana = new Date().getDay();
-  const ateSegunda = ((8 - diaSemana) % 7) || 7;
   const atalhos = [
     { label: 'Hoje', dia: hojeMais(0) },
+    { label: 'Ontem', dia: hojeMais(-1) },
     { label: 'Amanhã', dia: hojeMais(1) },
-    { label: 'Próxima segunda', dia: hojeMais(ateSegunda) },
-    { label: 'Daqui 1 semana', dia: hojeMais(7) },
   ];
 
   return (
@@ -157,9 +154,12 @@ function EditorData({ atual, onEscolher }: { atual: string | null; onEscolher: (
         </Opcao>
       ))}
       <div className="border-t border-slate-100 mt-1 pt-1.5 px-1">
+        <span className="block text-[10px] text-slate-400 px-1 mb-1">Escolher data</span>
         <input
           type="date"
           defaultValue={atual ?? ''}
+          // Abre o calendário com um clique em qualquer ponto do campo (não só no ícone).
+          onClick={(e) => { try { e.currentTarget.showPicker(); } catch { /* navegador sem showPicker */ } }}
           onChange={(e) => onEscolher(e.target.value || null)}
           className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-indigo-300"
         />
