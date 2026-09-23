@@ -130,7 +130,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       const { data: taskRow } = await admin
         .from('tasks').select('id, created_by, assignee_id, list_id').eq('id', taskId).maybeSingle();
       if (!taskRow) return json({ error: 'Tarefa não encontrada' }, 404);
-      if (taskRow.created_by !== user.id && taskRow.assignee_id !== user.id) {
+      if (taskRow.assignee_id !== user.id) {
         const { data: acessoUp } = await admin.rpc('fn_task_list_access', { p_list_id: taskRow.list_id, p_user_id: user.id });
         if (acessoUp !== 'owner' && acessoUp !== 'edit') {
           return json({ error: 'Você não tem permissão para anexar arquivos nesta tarefa' }, 403);
@@ -276,15 +276,28 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       return list;
     };
 
-    // Tarefa: quem criou e o responsável fazem tudo (como antes). Pela pasta:
-    // 'edit' edita; 'view' só vê e comenta.
+    // Tarefa: o responsável faz tudo (é assim que se delega uma tarefa avulsa).
+    // O resto vem da PASTA: dono/'edit' editam, 'view' só vê e comenta. Ter
+    // CRIADO a tarefa não basta — senão quem perdeu o compartilhamento de uma
+    // pasta continuava mexendo nas tarefas que criou nela.
     const assertTaskAccess = async (taskId: string, nivel: 'edit' | 'comment' | 'view' = 'edit'): Promise<Record<string, unknown>> => {
       const task = await assertOwned('tasks', taskId);
-      if (task.created_by === user.id || task.assignee_id === user.id) return task;
+      if (task.assignee_id === user.id) return task;
       const acesso = await acessoPasta(task.list_id as string);
       if (acesso === 'owner' || acesso === 'edit') return task;
       if (acesso === 'view' && nivel !== 'edit') return task;
       throw new Error(acesso === 'view' ? 'Você só tem acesso de leitura nesta pasta' : 'Você não tem permissão para editar esta tarefa');
+    };
+
+    // Responsável de tarefa: só quem divide alguma loja com o DONO da pasta.
+    // Sem isso, quem tem "editar" podia atribuir a tarefa a qualquer id e dar
+    // acesso a ela pra alguém de fora.
+    const assertResponsavelValido = async (listId: string, assigneeId: unknown) => {
+      if (!assigneeId) return;
+      const { data: pasta } = await admin.from('task_lists').select('created_by').eq('id', listId).maybeSingle();
+      const { data: ok, error } = await admin.rpc('fn_users_dividem_loja', { p_a: pasta?.created_by ?? user.id, p_b: assigneeId });
+      if (error) throw new Error(errMsg(error));
+      if (!ok) throw new Error('Esse responsável não é de nenhuma loja do dono da pasta');
     };
 
     switch (action) {
@@ -348,13 +361,10 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         if (!list_id || !identificador) return json({ error: 'Informe a pasta e o e-mail ou matrícula' }, 400);
         if (permission !== 'view' && permission !== 'edit') return json({ error: 'Permissão deve ser view ou edit' }, 400);
         const pasta = await assertListOwner(list_id);
+        // E-mail EXATO (sem curinga — ilike deixava "a%@%" varrer e-mails de
+        // colegas) ou matrícula, só entre quem divide loja comigo.
         const termo = String(identificador).trim();
-        const meusTenants = tenantRows.map((r) => r.tenant_id);
-        const { data: colegas } = await admin.from('user_tenants').select('user_id').in('tenant_id', meusTenants);
-        const idsColegas = [...new Set((colegas ?? []).map((c: { user_id: string }) => c.user_id))];
-        let q = admin.from('users').select('id, name, email').in('id', idsColegas).is('deleted_at', null);
-        q = termo.includes('@') ? q.ilike('email', termo) : q.eq('badge_number', termo);
-        const { data: achados, error: buscaErr } = await q;
+        const { data: achados, error: buscaErr } = await admin.rpc('fn_task_share_lookup', { p_requester: user.id, p_termo: termo });
         if (buscaErr) return json({ error: errMsg(buscaErr) }, 500);
         if (!achados?.length) return json({ error: 'Ninguém com esse e-mail ou matrícula nas suas lojas' }, 404);
         if (achados.length > 1) return json({ error: 'Mais de uma pessoa com essa matrícula — use o e-mail' }, 409);
@@ -448,6 +458,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         const estimativaErro = validarEstimativa(time_estimate_minutes);
         if (estimativaErro) return json({ error: estimativaErro }, 400);
         await assertListEdit(list_id);
+        await assertResponsavelValido(list_id, assignee_id);
         let resolvedStatus = status_id ?? null;
         if (!resolvedStatus) {
           const { data: st } = await admin.from('task_statuses')
@@ -484,6 +495,9 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         const { task_id, ...rest } = body;
         const current = await assertTaskAccess(task_id);
         if (rest.list_id !== undefined && rest.list_id !== current.list_id) await assertListEdit(rest.list_id);
+        if (rest.assignee_id !== undefined && rest.assignee_id !== current.assignee_id) {
+          await assertResponsavelValido((rest.list_id ?? current.list_id) as string, rest.assignee_id);
+        }
         const patch: Record<string, unknown> = {};
         const editable = ['title', 'description', 'status_id', 'priority', 'assignee_id', 'start_date', 'due_date', 'due_has_time', 'list_id', 'sort_order', 'recurrence', 'is_archived', 'parent_task_id', 'time_estimate_minutes'];
         for (const k of editable) {
@@ -593,10 +607,8 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       case 'delete_task': {
         const { task_id } = body;
         const current = await assertOwned('tasks', task_id);
-        if (current.created_by !== user.id) {
-          const acesso = await acessoPasta(current.list_id as string);
-          if (acesso !== 'owner' && acesso !== 'edit') return json({ error: 'Só quem criou a tarefa (ou quem edita a pasta) pode arquivá-la' }, 403);
-        }
+        const acessoArq = await acessoPasta(current.list_id as string);
+        if (acessoArq !== 'owner' && acessoArq !== 'edit') return json({ error: 'Só quem edita a pasta pode arquivar a tarefa' }, 403);
         const { error } = await admin.from('tasks').update({ is_archived: true }).eq('id', task_id);
         if (error) return json({ error: errMsg(error) }, 500);
         return json({ success: true });
