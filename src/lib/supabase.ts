@@ -183,7 +183,10 @@ export function clearLogoutIntencional(): void {
 export async function safeSignOut(): Promise<void> {
   logoutIntencional = true;
   try {
-    const { error } = await supabase.auth.signOut();
+    // scope 'local': sai só deste aparelho. O padrão do supabase-js ('global') revoga
+    // TODAS as sessões do usuário — sair num celular derrubava o tablet da loja logado
+    // com o mesmo usuário (cardápio vazio no totem, 2026-09-23).
+    const { error } = await supabase.auth.signOut({ scope: 'local' });
     // Com erro de rede/servidor o supabase-js NÃO emite SIGNED_OUT: a flag ficaria pendurada e
     // o próximo SIGNED_OUT "surpresa" seria tratado como intencional, pulando a checagem.
     if (error) logoutIntencional = false;

@@ -179,7 +179,8 @@ export function KioskAuthProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem(STORAGE_KEY);
     localStorage.removeItem(TOKEN_STORAGE_KEY);
     // Limpa também a sessão do Supabase (logout silencioso)
-    supabase.auth.signOut().catch(() => {});
+    // Só deste aparelho (ver safeSignOut): 'global' derrubaria os outros tablets do mesmo usuário
+    supabase.auth.signOut({ scope: 'local' }).catch(() => {});
   }, []);
 
   // Autentica no kiosk-auth, injeta no Supabase e guarda. Lança erro em falha.

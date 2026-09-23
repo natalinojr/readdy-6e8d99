@@ -8,6 +8,9 @@ import { useItensSemEstoque } from '@/hooks/useItensSemEstoque';
 import { toggleOpcaoGrupo, primeiroGrupoFaltando, mensagemGrupoFaltando, mensagemMaximoAtingido } from '@/lib/optionGroupSelection';
 import { comQuebraAposVirgula } from '../../../lib/quebraTexto';
 import { useTranslation } from 'react-i18next';
+import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../../../contexts/AuthContext';
+import { useKioskAuth } from '../../../contexts/KioskAuthContext';
 
 // ── Teclado virtual para observações ──────────────────────────────────────────
 const LETRAS_KB = [
@@ -346,6 +349,12 @@ interface CardapioKioskProps {
 export default function CardapioKiosk({ carrinho, onAdicionar, onDiminuir, onVerCarrinho, traduzir }: CardapioKioskProps) {
   const { itensPublicos, categorias: categoriasCtx, loading, erroCarregamento, recarregar } = useCardapio();
   const { t } = useTranslation();
+  const navigate = useNavigate();
+  // Sem usuário e sem sessão de totem o CardapioContext não sabe a loja e zera o cardápio
+  // sem erro — o tablet mostrava "Cardápio vazio" quando na verdade a sessão tinha caído.
+  const { user, loading: authLoading } = useAuth();
+  const { kioskSession } = useKioskAuth();
+  const semSessao = !authLoading && !user && !kioskSession;
   // Sem tradutor (loja so em portugues) a funcao devolve o proprio texto.
   const tr: Traduzir = traduzir ?? (() => null);
   // A categoria e identificada pelo NOME em portugues (filtro e estado da tela),
@@ -477,8 +486,28 @@ export default function CardapioKiosk({ carrinho, onAdicionar, onDiminuir, onVer
         </div>
       )}
 
+      {/* ── Tablet sem sessão (caiu ou saiu em outro aparelho) ──────────── */}
+      {!loading && !erroCarregamento && itensPublicos.length === 0 && semSessao && (
+        <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
+          <div className="w-20 h-20 flex items-center justify-center rounded-3xl bg-amber-500/20 mb-6">
+            <i className="ri-lock-line text-4xl text-amber-400" />
+          </div>
+          <h2 className="text-2xl font-black text-white mb-2">Sessão expirada</h2>
+          <p className="text-zinc-500 text-base max-w-sm mb-6">
+            Este tablet saiu do sistema. Entre de novo com a matrícula e o PIN do tablet.
+          </p>
+          <button
+            onClick={() => navigate('/login')}
+            className="px-8 py-3 bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold rounded-2xl cursor-pointer transition-colors whitespace-nowrap flex items-center gap-2"
+          >
+            <i className="ri-login-box-line" />
+            Entrar de novo
+          </button>
+        </div>
+      )}
+
       {/* ── Estado vazio (sem itens no cardápio) ───────────────────────── */}
-      {!loading && !erroCarregamento && itensPublicos.length === 0 && (
+      {!loading && !erroCarregamento && itensPublicos.length === 0 && !semSessao && (
         <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
           <div className="w-20 h-20 flex items-center justify-center rounded-3xl bg-zinc-800 mb-6">
             <i className="ri-restaurant-2-line text-4xl text-zinc-600" />
