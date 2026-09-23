@@ -379,6 +379,12 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
     const forma = formasPagamento.find((f) => f.id === formaAtiva);
     if (!forma) return;
     const isCash = forma.tipo === 'cash';
+    // Troco só existe em dinheiro: cartão, Pix, vale etc. não podem passar do que falta pagar.
+    if (!isCash && v > restante + 0.005) {
+      toastWarning('Valor maior que o restante', `${forma.nome} não tem troco: o máximo é ${formatPrice(restante)}.`);
+      setValorInput(restante.toFixed(2).replace('.', ','));
+      return;
+    }
     if (isCash && v > restante) {
       // Dinheiro com troco: amount = restante, troco = v - restante, valorRecebido = v
       const trocoCalc = v - restante;
