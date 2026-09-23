@@ -110,7 +110,7 @@ const MODULOS: ModuloCard[] = [
     acentoBg: 'bg-amber-50',
     acentoBorder: 'border-amber-200/70',
     tag: 'Cozinha',
-    // Sem `perfis`: quem vê é quem tem 'estoque_movimentar' (checado abaixo).
+    // Sem `perfis`: quem vê é quem tem 'estoque_receber' ou 'estoque_movimentar' (checado abaixo).
   },
   {
     id: 'gestor_delivery',
@@ -501,7 +501,7 @@ export default function ModulosPage() {
     if (m.id === 'gestor_pedidos' && kitchenView !== 'gestor' && kitchenView !== 'ambos') cfgOk = false;
     if (m.id === 'kds' && !hasPermissao('kds_acessar')) cfgOk = false;
     if (m.id === 'gestor_pedidos' && !hasPermissao('gestor_pedidos_acessar')) cfgOk = false;
-    if (m.id === 'receber' && !hasPermissao('estoque_movimentar')) cfgOk = false;
+    if (m.id === 'receber' && !hasPermissao('estoque_receber') && !hasPermissao('estoque_movimentar')) cfgOk = false;
     if (m.id === 'gestao' && !GESTAO_ENTRADA_KEYS.some((k) => hasPermissao(k as PermissaoKey))) cfgOk = false;
     const visible = perfilOk && cfgOk;
     console.log('[Modulos]', m.id, '| perfil:', user?.perfil, '| perfilOk:', perfilOk, '| cfgOk:', cfgOk, '| pdvCfg:', JSON.stringify(pdvCfg), '| visible:', visible);

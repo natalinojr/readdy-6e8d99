@@ -14,7 +14,8 @@ import { rotaForcada } from '@/lib/acessoRota';
 const ROTA_PERMISSAO: Record<string, PermissaoKey | readonly PermissaoKey[]> = {
   '/cardapio': 'cardapio_editar',
   '/estoque': 'estoque_movimentar',
-  '/receber': 'estoque_movimentar',
+  // estoque_receber abre só esta tela; quem movimenta estoque continua entrando
+  '/receber': ['estoque_receber', 'estoque_movimentar'],
   '/relatorios': REL_KEYS,
   '/financeiro': FIN_KEYS,
   '/usuarios': 'usuarios_gerenciar',

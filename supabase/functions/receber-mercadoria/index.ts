@@ -8,7 +8,7 @@
 //   • estoque                → purchase-confirm-delivery (única porta de entrada no estoque)
 //   • pago em dinheiro       → fn_sangria_da_compra (sangria prevista para o caixa confirmar)
 //
-// Quem pode: admin/gerente/financeiro, ou o papel com 'estoque_movimentar' marcado na matriz de
+// Quem pode: admin/gerente/financeiro, ou o papel com 'estoque_receber' ou 'estoque_movimentar' marcado na matriz de
 // permissões da loja. purchase-write e fiscal-inbound são chamados pela chave interna porque
 // exigem papel de financeiro; o recebimento vai com o JWT do usuário (grava quem recebeu).
 //
@@ -58,7 +58,8 @@ async function podeReceber(admin: Admin, tenantId: string, role: string): Promis
   if (isFinanceiroRole(role)) return true;
   const roles = ROLE_ALIASES[role] ?? [role];
   const { data } = await admin.from('permissions').select('allowed')
-    .eq('tenant_id', tenantId).in('role', roles).eq('permission_key', 'estoque_movimentar');
+    // estoque_receber (só esta tela, liberável para o Caixa) ou estoque_movimentar (legado)
+    .eq('tenant_id', tenantId).in('role', roles).in('permission_key', ['estoque_receber', 'estoque_movimentar']);
   return (data ?? []).some((r: any) => r.allowed === true);
 }
 
@@ -618,7 +619,7 @@ Deno.serve(async (req) => {
     const role = await tenantRole(admin, caller.userId, tenantId);
     if (!role) return erro('Sem acesso a esta loja', 403);
     if (!(await podeReceber(admin, tenantId, role))) {
-      return erro('Seu perfil não pode receber mercadoria. Peça ao dono para liberar "Registrar movimentação de estoque" em Configurações › Permissões.', 403);
+      return erro('Seu perfil não pode receber mercadoria. Peça ao dono para liberar "Receber mercadoria" em Configurações › Permissões.', 403);
     }
     const ctx: Ctx = { admin, url, tenantId, userToken: bearerToken(req), email: caller.email, financeiro: isFinanceiroRole(role) };
 

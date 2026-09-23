@@ -67,7 +67,7 @@ const navSections: NavSection[] = [
       { label: 'Tráfego Pago',          icon: Megaphone,       path: '/trafego-pago',  permissao: 'relatorio_financeiro' },
       { label: 'Cardápio',              icon: UtensilsCrossed, path: '/cardapio',      permissao: 'cardapio_editar' },
       { label: 'Estoque',               icon: Package,         path: '/estoque',       permissao: 'estoque_movimentar' },
-      { label: 'Receber mercadoria',    icon: Truck,           path: '/receber',       permissao: 'estoque_movimentar' },
+      { label: 'Receber mercadoria',    icon: Truck,           path: '/receber',       permissao: ['estoque_receber', 'estoque_movimentar'] },
       { label: 'Financeiro',            icon: DollarSign,      path: '/financeiro',    permissao: FIN_KEYS },
       { label: 'Usuários',              icon: Users,           path: '/usuarios',      permissao: 'usuarios_gerenciar' },
       { label: 'Mesas',                 icon: LayoutGrid,      path: '/mesas',         permissao: 'gestao_mesas' },

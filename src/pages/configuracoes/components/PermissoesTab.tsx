@@ -42,6 +42,9 @@ const permissoes: Permissao[] = [
   { id: 'cardapio_alterar_preco', categoria: 'Cardápio', descricao: 'Alterar preços' },
   { id: 'estoque_movimentar', categoria: 'Estoque', descricao: 'Registrar movimentação de estoque' },
   { id: 'estoque_inventario', categoria: 'Estoque', descricao: 'Realizar inventário' },
+  // Qualquer papel pode ter (dono, 2026-09-22): abre só a tela Receber mercadoria (/receber),
+  // sem dar a página de Estoque — é o que o Caixa da loja precisa para receber fornecedor.
+  { id: 'estoque_receber', categoria: 'Estoque', descricao: 'Receber mercadoria (tela do celular da loja)' },
   { id: 'kds_acessar', categoria: 'Cozinha', descricao: 'Acessar KDS (Display de Cozinha)' },
   { id: 'gestor_pedidos_acessar', categoria: 'Cozinha', descricao: 'Acessar Gestor de Pedidos' },
   { id: 'gestor_pedidos_entregar', categoria: 'Cozinha', descricao: 'Marcar pedidos como entregues no Gestor' },
@@ -74,7 +77,7 @@ const defaultPermissoes: Record<Papel, string[]> = {
     'pdv_abrir_caixa', 'pdv_fechar_caixa', 'pdv_sangria', 'pdv_desconto',
     'pdv_cancelar_pedido', 'pdv_cancelar_item', 'pdv_estornar_pagamento',
     'garcom_fechar_mesa', 'garcom_transferir_mesa', 'cardapio_editar',
-    'estoque_movimentar', 'estoque_inventario',
+    'estoque_movimentar', 'estoque_inventario', 'estoque_receber',
     'kds_acessar', 'gestor_pedidos_acessar', 'gestor_pedidos_entregar',
     'relatorio_financeiro', 'relatorio_estoque', 'clientes_ver', 'auditoria_ver',
     // Sem `configuracoes_editar`: as abas só valem se o dono abrir a tela para o Gerente.
