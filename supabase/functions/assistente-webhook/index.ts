@@ -629,7 +629,7 @@ async function lancarCompraPendente(admin: SupabaseClient, cfg: Record<string, a
 // deno-lint-ignore no-explicit-any
 // tipo 'compra' (2026-09-13): cupom/nota de compra postado SEM pedido de pagamento (ex.: "chegou",
 // mercado pago em dinheiro) → o brain (modo 'entrada_compra_grupo') lança a compra e avisa o dono.
-async function triarPagamento(admin: SupabaseClient, cfg: Record<string, any>, g: any, msg: { messageId: string | null; sender: string | null; content: string; extracted: any; sentAt: string }, tipo: 'pagamento' | 'compra' = 'pagamento') {
+async function triarPagamento(admin: SupabaseClient, cfg: Record<string, any>, g: any, msg: { messageId: string | null; sender: string | null; content: string; extracted: any; sentAt: string; legenda?: string }, tipo: 'pagamento' | 'compra' = 'pagamento') {
   const conf = { ...GROUP_WATCH_DEFAULTS, ...(cfg.group_watch && typeof cfg.group_watch === 'object' ? cfg.group_watch : {}) };
   if (tipo === 'pagamento' && conf.pay_requests === false) return;
   if (tipo === 'compra' && conf.purchase_entries === false) return;
@@ -703,7 +703,7 @@ async function triarPagamento(admin: SupabaseClient, cfg: Record<string, any>, g
   // Fila (2026-09-23): um documento por vez. Vários postados juntos iam ao assistente em paralelo,
   // cada um sem ver o outro — buscas repetidas, custo dobrado e respostas "Não entendi".
   await admin.from('asst_group_requests').update({
-    status: 'fila', data: { texto: msg.content, extraido: msg.extracted, sent_at: msg.sentAt, prompt }, updated_at: new Date().toISOString(),
+    status: 'fila', data: { texto: msg.content, extraido: msg.extracted, sent_at: msg.sentAt, legenda: msg.legenda ?? null, prompt }, updated_at: new Date().toISOString(),
   }).eq('id', req.id);
   await processarFilaGrupo(admin, cfg);
 }
@@ -720,7 +720,7 @@ async function processarFilaGrupo(admin: SupabaseClient, cfg: Record<string, any
     const { data: rq } = await admin.from('asst_group_requests').select('id, message_id, group_jid, group_name, sender_name, kind, data').eq('id', Number(id)).maybeSingle();
     if (!rq) continue;
     const g = { group_jid: rq.group_jid, name: rq.group_name };
-    const msg = { messageId: rq.message_id, sender: rq.sender_name, content: String(rq.data?.texto ?? ''), extracted: rq.data?.extraido ?? null, sentAt: String(rq.data?.sent_at ?? new Date().toISOString()) };
+    const msg = { messageId: rq.message_id, sender: rq.sender_name, content: String(rq.data?.texto ?? ''), extracted: rq.data?.extraido ?? null, sentAt: String(rq.data?.sent_at ?? new Date().toISOString()), legenda: String(rq.data?.legenda ?? '') };
     const tipo: 'pagamento' | 'compra' = rq.kind === 'compra' ? 'compra' : 'pagamento';
     await executarTriagem(admin, cfg, g, msg, tipo, { id: Number(rq.id) }, String(rq.data?.prompt ?? ''))
       .catch((e) => log('ERROR', 'fila do grupo: item', { id: rq.id, error: errMsg(e) }));
@@ -735,10 +735,43 @@ async function processarFilaGrupo(admin: SupabaseClient, cfg: Record<string, any
   (globalThis as any).EdgeRuntime?.waitUntil?.(p);
 }
 
+// Legenda de quem postou o cupom que muda a regra "postou sem pedir pagamento = dinheiro": forma de
+// pagamento, outra loja, devolução. Nesses casos quem decide é o modelo.
+const LEGENDA_DECIDE = /cart[aã]o|cr[eé]dito|d[eé]bito|\bpix\b|boleto|\bpag(ar|a|ue|uei|ou)\b|fiado|\bprazo\b|outra loja|devolu|troca/i;
 // deno-lint-ignore no-explicit-any
-async function executarTriagem(admin: SupabaseClient, cfg: Record<string, any>, g: any, msg: { messageId: string | null; sender: string | null; content: string; extracted: any; sentAt: string }, tipo: 'pagamento' | 'compra', req: { id: number }, prompt: string) {
+async function tentarDireto(admin: SupabaseClient, cfg: Record<string, any>, g: any, msg: { messageId: string | null; sender: string | null; content: string; extracted: any; sentAt: string; legenda?: string }, tipo: 'pagamento' | 'compra', reqId: number, ownerChat: string): Promise<boolean> {
+  if (!msg.extracted) return false;
+  if (tipo === 'compra' && LEGENDA_DECIDE.test(msg.legenda ?? '')) return false;
+  const { data: gr } = await admin.from('asst_groups').select('tenant_id').eq('group_jid', g.group_jid).maybeSingle();
+  if (!gr?.tenant_id) return false;
+  const out = await brainCall({
+    action: tipo === 'compra' ? 'compra_direta' : 'pagamento_direto', tenant_id: gr.tenant_id, lido: msg.extracted,
+    grupo: g.name, group_jid: g.group_jid, autor: msg.sender, chat_id: ownerChat, solicitacao_grupo_id: reqId,
+  });
+  if (!out?.feito) { log('INFO', 'caminho direto não serve; segue o modelo', { tipo, motivo: out?.motivo ?? null }); return false; }
+  // deno-lint-ignore no-explicit-any
+  const actions: any[] = Array.isArray(out.actions) ? out.actions : [];
+  const texto = String(out.texto ?? '');
+  await avisarDono(admin, ownerChat, texto, actions); // o brain já gravou a mensagem na conversa
+  const pid = actions.find((a) => a?.type === 'payment')?.id ?? null;
+  const agora = new Date().toISOString();
+  await admin.from('asst_group_requests').update({
+    status: tipo === 'compra' ? 'lancado' : 'preparado', payment_id: pid, reply: texto.slice(0, 2000), notified_at: agora, updated_at: agora,
+  }).eq('id', reqId);
+  if (tipo === 'pagamento') await abrirPendenciaPagamento(admin, cfg, reqId, g, msg, texto, pid ? [String(pid)] : []);
+  log('INFO', 'documento do grupo resolvido sem o modelo', { tipo, group: g.name });
+  return true;
+}
+
+// deno-lint-ignore no-explicit-any
+async function executarTriagem(admin: SupabaseClient, cfg: Record<string, any>, g: any, msg: { messageId: string | null; sender: string | null; content: string; extracted: any; sentAt: string; legenda?: string }, tipo: 'pagamento' | 'compra', req: { id: number }, prompt: string) {
   const ownerChat = ownerChatOf(cfg);
   if (!ownerChat) { await admin.from('asst_group_requests').update({ status: 'erro', error: 'sem destino', updated_at: new Date().toISOString() }).eq('id', req.id); return; }
+  // Caminho sem modelo (2026-09-24): cupom de "chegou" legível e boleto com conta já lançada. O que
+  // não fechar (ou qualquer erro) segue para o modelo como antes.
+  const direto = await tentarDireto(admin, cfg, g, msg, tipo, req.id, ownerChat)
+    .catch((e) => { log('WARN', 'caminho direto falhou; segue o modelo', { tipo, error: errMsg(e) }); return false; });
+  if (direto) return;
   try {
     const out = await brainCall({ text: prompt, chat_id: ownerChat, channel: ownerChat.startsWith('tg:') ? 'telegram' : 'whatsapp', modo: tipo === 'compra' ? 'entrada_compra_grupo' : 'triagem_grupo', group_jid: g.group_jid });
     const reply = String(out?.reply ?? '').trim();
@@ -1273,11 +1306,11 @@ async function handleGroup(admin: SupabaseClient, data: any, allowed: string[], 
   const pedido = extracted?.pagamento
     ? extracted.pagamento.e_solicitacao === true
     : PAY_HINT.test(baseText);
-  if (pedido) { await triarPagamento(admin, cfg, g, { messageId, sender, content, extracted, sentAt }); return; }
+  if (pedido) { await triarPagamento(admin, cfg, g, { messageId, sender, content, extracted, sentAt, legenda: baseText }); return; }
   // Cupom/nota de compra sem pedido de pagamento ("chegou", mercado pago em dinheiro): dar entrada em Compras.
   const compra = !!extracted && ['nota_fiscal', 'cupom', 'pedido'].includes(String(extracted.tipo_documento ?? ''))
     && Array.isArray(extracted.itens) && extracted.itens.length > 0;
-  if (compra) await triarPagamento(admin, cfg, g, { messageId, sender, content, extracted, sentAt }, 'compra');
+  if (compra) await triarPagamento(admin, cfg, g, { messageId, sender, content, extracted, sentAt, legenda: baseText }, 'compra');
 }
 
 // deno-lint-ignore no-explicit-any
@@ -1777,6 +1810,12 @@ Deno.serve(async (req) => {
       if (!m) return json({ error: 'mensagem não encontrada' }, 404);
       const b64 = await mediaBase64({ key: { id: m.message_id, remoteJid: m.group_jid, fromMe: false, participant: m.sender_jid ?? undefined } });
       if (!b64) return json({ error: 'Evolution não devolveu a mídia' }, 502);
+      // Comparação de modelos da leitura (2026-09-24): lê com os dois e devolve, sem gravar nada.
+      if (pl.comparar === true) {
+        const ler = (modelo: string) => brainCall({ action: 'ler_midia', attachment: { base64: b64, media_type: m.media_mime ?? 'image/jpeg' }, legenda: '', contexto: `Mensagem de grupo${m.sender_name ? `, mandada por ${m.sender_name}` : ''}.`, modelo, so_ler: true });
+        const [haiku, sonnet] = await Promise.all([ler('haiku'), ler('sonnet')]);
+        return json({ ok: true, haiku: { lido: haiku?.lido, usage: haiku?.usage }, sonnet: { lido: sonnet?.lido, usage: sonnet?.usage } });
+      }
       const extracted = await lerMidia(b64, m.media_mime ?? 'image/jpeg', '', `Mensagem de grupo${m.sender_name ? `, mandada por ${m.sender_name}` : ''}.`, `grupo:${m.group_jid}`);
       const cabeca = String(m.content ?? '').split('\n')[0];
       const resumo = String(extracted?.resumo ?? '').trim();
