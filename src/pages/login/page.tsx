@@ -185,7 +185,7 @@ export default function Login() {
               </label>
               <input
                 type={mode === 'email' ? 'email' : 'text'}
-                inputMode={mode === 'matricula' ? 'none' : undefined}
+                inputMode={mode === 'matricula' ? 'numeric' : undefined}
                 pattern={mode === 'matricula' ? '[0-9]*' : undefined}
                 data-keyboard={mode === 'matricula' ? 'numeric' : undefined}
                 data-native-keyboard="false"
@@ -228,7 +228,7 @@ export default function Login() {
                 <input
                   ref={senhaRef}
                   type={showSenha ? 'text' : 'password'}
-                  inputMode={mode === 'matricula' ? 'none' : undefined}
+                  inputMode={mode === 'matricula' ? 'numeric' : undefined}
                   pattern={mode === 'matricula' ? '[0-9]*' : undefined}
                   data-keyboard={mode === 'matricula' ? 'numeric' : undefined}
                   data-native-keyboard="false"
