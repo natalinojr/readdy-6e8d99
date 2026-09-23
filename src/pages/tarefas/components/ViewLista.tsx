@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
-import { Plus, Flag, MessageSquare, CheckSquare, GitBranch, Repeat, ChevronDown, ChevronRight, Check, Trash2, X, ArrowUp, ArrowDown, Play, Pause, Timer } from 'lucide-react';
+import { Plus, Flag, MessageSquare, CheckSquare, GitBranch, Repeat, ChevronDown, ChevronRight, Check, Trash2, X, ArrowUp, ArrowDown, Play, Pause, Timer, GripVertical } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
 import type { CampoCustom, TaskList, TaskRow, TaskTag } from '../hooks/useTarefas';
 import { PRIORIDADES } from '../hooks/useTarefas';
 import type { GroupBy, Grupo, UsuarioOption } from '../lib/agrupamento';
-import { agruparTarefas, payloadMoverGrupo } from '../lib/agrupamento';
+import { agruparTarefas, calcularSortOrder, payloadMoverGrupo } from '../lib/agrupamento';
 import type { ColunaDef, ColunaId, LargurasColunas } from '../lib/colunas';
 import {
   carregarColunasVisiveis, carregarLarguras, colunasDisponiveis, LARGURA_MAX_PX, LARGURA_MIN_PX,
@@ -202,6 +202,10 @@ export default function ViewLista({
   const [larguras, setLarguras] = useState<LargurasColunas>(() => carregarLarguras(chaveArmazenamento));
   const [redimensionando, setRedimensionando] = useState<ColunaId | null>(null);
   const [ordenacao, setOrdenacao] = useState<{ col: ColunaId; dir: 'asc' | 'desc' } | null>(null);
+  // Arrastar pra reordenar: qual tarefa está sendo arrastada (e de qual grupo)
+  // e onde ela vai cair (antes/depois de qual linha, ou no fim do grupo).
+  const [arrasto, setArrasto] = useState<{ taskId: string; grupoKey: string | null } | null>(null);
+  const [alvoArrasto, setAlvoArrasto] = useState<{ taskId: string | null; grupoKey: string | null; antes: boolean } | null>(null);
   const [editando, setEditando] = useState<{ taskId: string; col: ColunaId; rect: DOMRect } | null>(null);
   const [statusPickerAberto, setStatusPickerAberto] = useState<{ taskId: string; rect: DOMRect } | null>(null);
   const [confirmandoExclusao, setConfirmandoExclusao] = useState<TaskRow | null>(null);
@@ -417,22 +421,92 @@ export default function ViewLista({
     );
   };
 
-  const renderLinha = (task: TaskRow, nivel: number) => {
+  // Solta a tarefa arrastada antes/depois de `alvoId` (null = fim do grupo).
+  // Mesma regra do Kanban: sort_order fracionário entre os vizinhos, e trocar
+  // de grupo muda o que o agrupamento representa (status, prioridade…).
+  const soltar = async (grupo: Grupo, alvoId: string | null, antes: boolean) => {
+    const a = arrasto;
+    setArrasto(null);
+    setAlvoArrasto(null);
+    if (!a || a.taskId === alvoId) return;
+    const task = tasks.find((t) => t.id === a.taskId);
+    if (!task) return;
+
+    const destino = grupo.tasks.filter((t) => t.id !== task.id);
+    let pos = alvoId ? destino.findIndex((t) => t.id === alvoId) : destino.length;
+    if (pos === -1) pos = destino.length;
+    else if (alvoId && !antes) pos += 1;
+    const novoSort = calcularSortOrder(destino[pos - 1], destino[pos]);
+
+    if (a.grupoKey === grupo.key) {
+      await gravar('update_task', { task_id: task.id, sort_order: novoSort });
+      return;
+    }
+    const mov = payloadMoverGrupo(groupBy, grupo.key, list);
+    if (!mov) {
+      toast.error('Não dá pra mover para este grupo');
+      return;
+    }
+    if (mov.action === 'set_field_value') {
+      const res = await gravar('set_field_value', { task_id: task.id, ...mov.patch });
+      if (res.success) await gravar('update_task', { task_id: task.id, sort_order: novoSort });
+      return;
+    }
+    await gravar('update_task', { task_id: task.id, ...mov.patch, sort_order: novoSort });
+  };
+
+  const renderLinha = (task: TaskRow, nivel: number, grupo?: Grupo) => {
     const concluida = task.status_category === 'done';
     const subtarefas = tasks.filter((t) => t.parent_task_id === task.id);
     const aberta = expandidas.has(task.id);
     const selecionada = selecionadas.has(task.id);
     const haSelecao = selecionadas.size > 0;
 
+    // Só tarefas-raiz arrastam (subtarefa fica presa na tarefa-pai). Com a
+    // lista ordenada por coluna a ordem manual não aparece — arrastar ali
+    // confundiria, então fica desligado.
+    const arrastavel = nivel === 0 && !!grupo && !ordenacao;
+    const alvoAqui = alvoArrasto?.taskId === task.id && arrasto?.taskId !== task.id;
+
     return (
       <div key={task.id}>
         <div
+          draggable={arrastavel}
+          onDragStart={arrastavel ? (e) => {
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', task.id); // alguns navegadores exigem
+            setArrasto({ taskId: task.id, grupoKey: grupo!.key });
+          } : undefined}
+          onDragEnd={() => { setArrasto(null); setAlvoArrasto(null); }}
+          onDragOver={arrastavel ? (e) => {
+            if (!arrasto) return;
+            e.preventDefault();
+            e.stopPropagation();
+            const r = e.currentTarget.getBoundingClientRect();
+            const antes = e.clientY < r.top + r.height / 2;
+            if (alvoArrasto?.taskId !== task.id || alvoArrasto.antes !== antes) {
+              setAlvoArrasto({ taskId: task.id, grupoKey: grupo!.key, antes });
+            }
+          } : undefined}
+          onDrop={arrastavel ? (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            soltar(grupo!, task.id, alvoArrasto?.antes ?? true);
+          } : undefined}
           onClick={() => onOpenTask(task.id)}
-          className={`flex items-center gap-3 px-4 py-3.5 md:py-2.5 hover:bg-slate-50 active:bg-slate-100 cursor-pointer group ${
+          className={`relative flex items-center gap-3 px-4 py-3.5 md:py-2.5 hover:bg-slate-50 active:bg-slate-100 cursor-pointer group ${
             selecionada ? 'bg-indigo-50/60 hover:bg-indigo-50/60' : ''
-          }`}
+          } ${arrasto?.taskId === task.id ? 'opacity-40' : ''}`}
           style={{ paddingLeft: `${16 + nivel * 22}px` }}
         >
+          {alvoAqui && (
+            <span className={`pointer-events-none absolute left-2 right-2 h-0.5 rounded bg-indigo-500 z-10 ${alvoArrasto!.antes ? '-top-px' : '-bottom-px'}`} />
+          )}
+          {arrastavel && (
+            <span className="hidden md:block absolute left-0.5 top-1/2 -translate-y-1/2 text-slate-300 opacity-0 group-hover:opacity-100 cursor-grab" title="Arraste para mudar a ordem">
+              <GripVertical size={12} />
+            </span>
+          )}
           {/* Seleção — só aparece no hover (ou já com alguma seleção ativa) pra não poluir a linha à toa. */}
           {nivel === 0 && (
             <button
@@ -729,8 +803,24 @@ export default function ViewLista({
             </button>
 
             {!recolhido && (
-              <div className="bg-white rounded-xl border border-slate-200 divide-y divide-slate-100 overflow-hidden">
-                {ordenar(grupo.tasks).map((task) => renderLinha(task, 0))}
+              <div
+                onDragOver={(e) => {
+                  if (!arrasto || ordenacao) return;
+                  e.preventDefault();
+                  if (alvoArrasto?.taskId !== null || alvoArrasto.grupoKey !== grupo.key) {
+                    setAlvoArrasto({ taskId: null, grupoKey: grupo.key, antes: false });
+                  }
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  if (arrasto && !ordenacao) soltar(grupo, null, false);
+                }}
+                className={`bg-white rounded-xl border divide-y divide-slate-100 overflow-hidden transition ${
+                  arrasto && alvoArrasto?.grupoKey === grupo.key && alvoArrasto.taskId === null
+                    ? 'border-indigo-400 ring-1 ring-indigo-200' : 'border-slate-200'
+                }`}
+              >
+                {ordenar(grupo.tasks).map((task) => renderLinha(task, 0, grupo))}
 
                 {(somaEstimado || temCronometro) && grupo.tasks.length > 0 && renderTotais(grupo.tasks)}
 

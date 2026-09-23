@@ -44,6 +44,8 @@ function montar(write = vi.fn().mockResolvedValue({ success: true })) {
 const titulos = () => screen.getAllByText(/^Tarefa /).map((el) => el.textContent);
 
 // jsdom não tem PointerEvent — sem isto o clientX do arraste chega undefined.
+// Idem DragEvent: sem isto o clientY (antes/depois da linha) chega undefined.
+if (!('DragEvent' in window)) (window as unknown as { DragEvent: typeof MouseEvent }).DragEvent = MouseEvent;
 if (!('PointerEvent' in window)) (window as unknown as { PointerEvent: typeof MouseEvent }).PointerEvent = MouseEvent;
 
 describe('ViewLista (tarefas)', () => {
@@ -82,6 +84,27 @@ describe('ViewLista (tarefas)', () => {
     const d = new Date(); d.setDate(d.getDate() - 1);
     const ontem = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
     expect(write).toHaveBeenCalledWith('update_task', { task_id: 'b', due_date: `${ontem}T12:00:00Z` });
+  });
+
+  it('arrastar muda a ordem: soltar antes da primeira linha', () => {
+    const write = vi.fn().mockResolvedValue({ success: true });
+    render(
+      <ViewLista
+        list={lista} campos={[]} tags={[]} usuarios={[]} groupBy="status" write={write} onOpenTask={vi.fn()}
+        tasks={[tarefa('a', 'Tarefa A', { sort_order: 1 }), tarefa('b', 'Tarefa B', { sort_order: 2 }), tarefa('c', 'Tarefa C', { sort_order: 3 })]}
+      />,
+    );
+    const linha = (t: string) => screen.getByText(t).parentElement!;
+    fireEvent.dragStart(linha('Tarefa C'), { dataTransfer: { setData: vi.fn(), effectAllowed: '' } });
+    fireEvent.dragOver(linha('Tarefa A'), { clientY: -1 }); // metade de cima = antes
+    fireEvent.drop(linha('Tarefa A'), { clientY: -1 });
+    expect(write).toHaveBeenCalledWith('update_task', { task_id: 'c', sort_order: -999 });
+  });
+
+  it('arrastar desliga com a lista ordenada por coluna', () => {
+    montar();
+    fireEvent.click(screen.getByRole('button', { name: 'Prioridade' }));
+    expect(screen.getByText('Tarefa Alta').parentElement!.getAttribute('draggable')).toBe('false');
   });
 
   it('coluna de comentários aceita digitar direto', async () => {
