@@ -422,7 +422,7 @@ export function resumirModelo(c: ModeloConteudo): ResumoModelo {
 // ─── Aplicar: conteúdo → linhas a inserir ────────────────────────────────────
 
 export interface ContextoAplicacao {
-  tenant_id: string;
+  tenant_id: string | null;
   user_id: string;
   /** Pasta onde o modelo vai ser criado (null = raiz). */
   parent_list_id: string | null;

@@ -46,7 +46,7 @@ export async function chamarModelos(
   action: string,
   payload: Record<string, unknown>,
 ): Promise<{ ok: true; data: RespostaModelos } | { ok: false; error: string }> {
-  if (!tenantId) return { ok: false, error: 'Sem loja ativa' };
+  // tenantId nulo = sem loja (Tarefas é por pessoa); o task-write decide o acesso.
   const { data, error } = await invokeWithAuth<RespostaModelos>('task-write', {
     body: { action, active_tenant_id: tenantId, ...payload },
   });

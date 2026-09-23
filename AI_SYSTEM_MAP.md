@@ -3199,3 +3199,16 @@ Contratação, NFS-e = módulo por usuário; demais = `PermissaoKey`). O filtro 
 dono. **Pegadinha:** ação nova em `acoes/index.tsx` sem regra em `acesso.ts` não aparece para
 ninguém — o teste `acoesRapidasAcesso.test.ts` falha para lembrar. Os atalhos "Ir para uma tela"
 filtram por `rotaLiberada` (inclui papel preso). A gravação continua conferida na edge/RLS.
+
+### Tarefas sem loja (2026-09-23)
+
+Quem tem o módulo Tarefas liberado no Admin Master (`fn_user_tem_tarefas`) usa Tarefas **sem
+estar em nenhuma loja** — antes caía na tela de código de convite. Tarefas já era por pessoa
+(created_by / responsável / pasta compartilhada); a loja só sobrava como trava. Agora:
+`tenant_id` das tabelas `task*` é anulável (registro de quem não tem loja fica nulo);
+`fn_tasks_assert_member(null)` exige o módulo; o `task-write` aceita quem não tem loja mas tem o
+módulo. No front, `useEuTarefas` dá id/nome da sessão quando o `AuthContext` deixa `user=null`
+(sem loja), `/tarefas` entrou em `NO_TENANT_ROUTES` (tela cheia) e o card aparece em
+`ModulosSemLoja`. **Limites:** sem loja não há canal `tasks-ping` (a tela recarrega depois de
+cada gravação); notificação para quem é de fora da loja só sai se a pessoa for responsável ou
+tiver acesso à pasta — nunca qualquer id vindo do corpo (menção).

@@ -82,7 +82,7 @@ export async function ativarPush(tenantId: string | null | undefined): Promise<{
   return { ok: true };
 }
 
-export async function desativarPush(tenantId: string): Promise<{ ok: boolean; erro?: string }> {
+export async function desativarPush(tenantId: string | null): Promise<{ ok: boolean; erro?: string }> {
   if (!pushSuportado()) return { ok: true };
   const reg = await navigator.serviceWorker.ready;
   const sub = await reg.pushManager.getSubscription();
@@ -96,7 +96,7 @@ export async function desativarPush(tenantId: string): Promise<{ ok: boolean; er
   return { ok: true };
 }
 
-export async function enviarPushTeste(tenantId: string): Promise<{ ok: boolean; erro?: string }> {
+export async function enviarPushTeste(tenantId: string | null): Promise<{ ok: boolean; erro?: string }> {
   const { data, error } = await invokeWithAuth<{ success?: boolean; enviados?: number; error?: string }>('send-push', {
     body: { action: 'test', active_tenant_id: tenantId },
   });

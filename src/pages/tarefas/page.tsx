@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { Plus, ListTodo, LayoutGrid, CalendarDays, ClipboardList, UserCheck, Users, Layers, SlidersHorizontal, ListChecks, Waypoints, ArrowLeft, Gauge, Share2, LayoutTemplate } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
-import { useAuth } from '@/contexts/AuthContext';
+import { useEuTarefas } from './hooks/useEuTarefas';
 import { useAppMode } from '@/contexts/AppModeContext';
 import { useModuleAccess } from '@/hooks/useModuleAccess';
 import { useUsuarios } from '@/hooks/useUsuarios';
@@ -54,7 +54,7 @@ const ORIGEM_INFO: Record<Exclude<Origem, 'pasta'>, { label: string; icon: typeo
 
 export default function TarefasPage() {
   const toast = useToast();
-  const { user } = useAuth();
+  const eu = useEuTarefas();
   const { setMode } = useAppMode();
   const navigate = useNavigate();
   const celular = useIsMobile();
@@ -153,7 +153,7 @@ export default function TarefasPage() {
   const usuariosAtivos = useMemo(() => {
     const lista = usuarios.filter((u) => u.ativo).map((u) => ({ id: u.id, nome: u.nome }));
     const ids = new Set(lista.map((u) => u.id));
-    if (user?.id && !ids.has(user.id)) { lista.push({ id: user.id, nome: user.nome || 'Eu' }); ids.add(user.id); }
+    if (eu.id && !ids.has(eu.id)) { lista.push({ id: eu.id, nome: eu.nome || 'Eu' }); ids.add(eu.id); }
     for (const t of tasks) {
       if (t.assignee_id && t.assignee_name && !ids.has(t.assignee_id)) {
         lista.push({ id: t.assignee_id, nome: t.assignee_name });
@@ -161,10 +161,10 @@ export default function TarefasPage() {
       }
     }
     return lista.sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
-  }, [usuarios, user?.id, user?.nome, tasks]);
+  }, [usuarios, eu.id, eu.nome, tasks]);
 
   const selectedList = lists.find((l) => l.id === selectedListId) ?? lists[0] ?? null;
-  const meuId = user?.id ?? null;
+  const meuId = eu.id;
 
   // A pasta que vira o prop `list` das views — null em origem cross-pasta,
   // onde as tarefas vêm de várias pastas ao mesmo tempo.
@@ -585,7 +585,7 @@ export default function TarefasPage() {
               notificacoes={notificacoes}
               tasks={tasks}
               meuId={meuId}
-              tenantId={user?.tenantId ?? null}
+              tenantId={eu.tenantId}
               write={write}
               onOpenTask={setOpenTaskId}
             />
@@ -763,7 +763,7 @@ export default function TarefasPage() {
         <ModelosPastas
           inicial={telaModelos}
           lists={lists}
-          tenantId={user?.tenantId ?? null}
+          tenantId={eu.tenantId}
           usuarios={usuariosAtivos}
           pastaAtualId={origem === 'pasta' ? selectedList?.id ?? null : null}
           onCriado={(id) => {

@@ -27,7 +27,7 @@ export interface CtxModelos {
   // deno-lint-ignore no-explicit-any
   admin: any;
   userId: string;
-  tenantId: string;
+  tenantId: string | null;
   body: Record<string, unknown>;
   json: (b: unknown, status?: number) => Response;
   errMsg: (e: unknown) => string;

@@ -77,7 +77,6 @@ export default function NotificacoesInbox({
   }, [aberto, atualizarEstadoPush]);
 
   const alternarPush = async () => {
-    if (!tenantId) return;
     setOcupado(true);
     const r = push === 'ativo' ? await desativarPush(tenantId) : await ativarPush(tenantId);
     setOcupado(false);
@@ -163,7 +162,6 @@ export default function NotificacoesInbox({
                   {push === 'ativo' && (
                     <button
                       onClick={async () => {
-                        if (!tenantId) return;
                         setOcupado(true);
                         const r = await enviarPushTeste(tenantId);
                         setOcupado(false);

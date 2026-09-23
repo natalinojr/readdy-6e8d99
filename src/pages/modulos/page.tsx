@@ -530,8 +530,8 @@ export default function ModulosPage() {
   // ── Render: sem loja ──
   if (hasNoTenants) {
     // Liberado só para módulo (Admin Master → Módulos): entra sem código de convite.
-    // Tarefas fica de fora porque os dados dele são por loja.
-    const livres = MODULOS.filter((m) => m.modulo && m.modulo !== 'tarefas' && hasModule(m.modulo));
+    // Tarefas também: é por pessoa, funciona sem loja desde 2026-09-23.
+    const livres = MODULOS.filter((m) => m.modulo && hasModule(m.modulo));
     if (moduleLoading) {
       return (
         <div className="min-h-screen flex items-center justify-center">

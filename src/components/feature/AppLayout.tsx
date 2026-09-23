@@ -27,7 +27,7 @@ const FULL_SCREEN_PROTECTED = ['/modulos'];
 // Terminais — full-screen com UI propria
 const TERMINAL_ROUTES = ['/pdv/', '/kds', '/gestor-pedidos', '/gestor-entregas', '/tarefas', '/receber'];
 // Usuário sem loja com acesso só a módulo (user_module_access): rotas que funcionam sem tenant
-const NO_TENANT_ROUTES = ['/contratacao', '/notas-servico'];
+const NO_TENANT_ROUTES = ['/contratacao', '/notas-servico', '/tarefas'];
 
 export default function AppLayout() {
   const { isAuthenticated, needsTenantSelection, loading, hasNoTenants, logout, user } = useAuth();
@@ -86,6 +86,16 @@ export default function AppLayout() {
   if (hasNoTenants && !isFullScreenProtected) {
     if (!NO_TENANT_ROUTES.some((r) => location.pathname.startsWith(r))) {
       return <Navigate to="/modulos" replace />;
+    }
+    // Tarefas tem a própria barra (com "voltar para Módulos") e ocupa a tela toda.
+    if (isTerminal) {
+      return (
+        <div className="h-screen overflow-hidden">
+          <Suspense fallback={<PageLoader />}>
+            <Outlet />
+          </Suspense>
+        </div>
+      );
     }
     return (
       <div className="flex flex-col h-screen overflow-hidden bg-white">

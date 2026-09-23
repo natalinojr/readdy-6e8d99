@@ -670,9 +670,9 @@ export function CreateUserModal({ invites, onClose, onCreated }: CreateUserModal
   const mensagem = created
     ? `Olá, ${saudacao}! Seu acesso ao ERPOS V2 foi criado.\n\n*Dados de acesso:*\nE-mail: ${created.email}\nSenha: ${senha}${
         created.invite_code
-          ? `\n\n*Código de convite (para criar sua loja):*\n${created.invite_code}`
+          ? `\n\n*Código de convite (para criar sua loja):*\n${created.invite_code}\n\nNo primeiro acesso, faça login e insira o código de convite para configurar sua loja.`
           : ''
-      }\n\nNo primeiro acesso, faça login e insira o código de convite para configurar sua loja.\n\n*Acesse agora:*\n${SYSTEM_URL}`
+      }\n\n*Acesse agora:*\n${SYSTEM_URL}`
     : '';
 
   return (
@@ -1171,8 +1171,8 @@ export function ResendCredentialsModal({ user, onClose }: ResendCredentialsModal
       if (!res.ok) { setError(data.error ?? 'Erro ao redefinir senha'); setLoading(false); return; }
 
       const mensagem = `Olá, ${saudacao}! Seus dados de acesso ao ERPOS V2 foram atualizados.\n\n*Dados de acesso:*\nE-mail: ${user.email}\nSenha: ${novaSenha}${
-        inviteCode ? `\n\n*Código de convite (para criar sua loja):*\n${inviteCode}` : ''
-      }\n\nNo primeiro acesso, faça login e insira o código de convite para configurar sua loja.\n\n*Acesse agora:*\n${SYSTEM_URL}`;
+        inviteCode ? `\n\n*Código de convite (para criar sua loja):*\n${inviteCode}\n\nNo primeiro acesso, faça login e insira o código de convite para configurar sua loja.` : ''
+      }\n\n*Acesse agora:*\n${SYSTEM_URL}`;
 
       if (channel === 'whatsapp') {
         window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(mensagem)}`, '_blank');

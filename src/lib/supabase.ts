@@ -704,7 +704,7 @@ export async function uploadMenuImage(
  */
 export async function uploadTaskAttachment(
   file: File,
-  tenantId: string,
+  tenantId: string | null,
   taskId: string,
 ): Promise<{ id: string | null; error: Error | null }> {
   try {
@@ -731,7 +731,7 @@ export async function uploadTaskAttachment(
 
     const form = new FormData();
     form.append('file', enviar, nomeFinal);
-    form.append('tenant_id', tenantId);
+    if (tenantId) form.append('tenant_id', tenantId); // sem loja: o task-write resolve
     form.append('task_id', taskId);
 
     const res = await fetch(`${SUPABASE_URL}/functions/v1/task-write`, {

@@ -123,9 +123,16 @@ Deno.serve({ verify_jwt: false }, async (req) => {
     const { data: tenantRows, error: tenantErr } = await admin
       .from('user_tenants').select('tenant_id, role').eq('user_id', user.id);
     if (tenantErr) return json({ error: `Tenant lookup failed: ${errMsg(tenantErr)}` }, 500);
-    if (!tenantRows?.length) return json({ error: 'User does not belong to any tenant' }, 403);
+    // Sem loja: vale para quem tem o módulo Tarefas liberado no Admin Master
+    // (Tarefas é por pessoa). Os registros dessa pessoa ficam com tenant_id nulo.
+    if (!tenantRows?.length) {
+      const { data: temTarefas, error: modErr } = await admin.rpc('fn_user_tem_tarefas', { p_user_id: user.id });
+      if (modErr) return json({ error: errMsg(modErr) }, 500);
+      if (!temTarefas) return json({ error: 'User does not belong to any tenant' }, 403);
+    }
 
-    const resolveTenant = (requested: string | null): string => {
+    const resolveTenant = (requested: string | null): string | null => {
+      if (!tenantRows?.length) return null;
       const match = requested ? tenantRows.find((r) => r.tenant_id === requested) : null;
       return match?.tenant_id ?? tenantRows[0].tenant_id;
     };
@@ -155,7 +162,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       }
 
       const nomeSeguro = (file.name.replace(/[^a-zA-Z0-9.\-_ ]/g, '') || 'arquivo').slice(0, 120);
-      const filePath = `${tenantId}/${taskId}/${Date.now()}-${nomeSeguro}`;
+      const filePath = `${tenantId ?? 'sem-loja'}/${taskId}/${Date.now()}-${nomeSeguro}`;
       const bytes = new Uint8Array(await file.arrayBuffer());
 
       const { error: upErr } = await admin.storage
@@ -190,7 +197,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
     const { action } = body;
     if (!action) return json({ error: 'action is required' }, 400);
 
-    const tenantId: string = resolveTenant(body.active_tenant_id ?? body.tenant_id ?? null);
+    const tenantId: string | null = resolveTenant(body.active_tenant_id ?? body.tenant_id ?? null);
 
     console.log('[task-write]', action, 'user:', user.id, 'tenant:', tenantId);
 
@@ -213,10 +220,23 @@ Deno.serve({ verify_jwt: false }, async (req) => {
     ) => {
       const destinos = [...new Set(userIds.filter((id): id is string => !!id && id !== user.id))];
       if (!destinos.length) return;
-      // Só notifica quem realmente pertence ao tenant
-      const { data: membros } = await admin
-        .from('user_tenants').select('user_id').eq('tenant_id', tenantId).in('user_id', destinos);
+      // Só notifica quem pertence à loja ou enxerga a tarefa (responsável ou
+      // acesso à pasta) — pasta compartilhada junta gente de outra loja ou sem
+      // loja. Nunca qualquer id: a menção vem do corpo da requisição.
+      const { data: membros } = tenantId
+        ? await admin.from('user_tenants').select('user_id').eq('tenant_id', tenantId).in('user_id', destinos)
+        : { data: [] };
       const validos = (membros ?? []).map((m: { user_id: string }) => m.user_id);
+      const fora = destinos.filter((uid) => !validos.includes(uid));
+      if (fora.length) {
+        const { data: tarefa } = await admin.from('tasks').select('list_id, assignee_id').eq('id', taskId).maybeSingle();
+        for (const uid of fora) {
+          if (tarefa?.assignee_id === uid) { validos.push(uid); continue; }
+          if (!tarefa?.list_id) continue;
+          const { data: acesso } = await admin.rpc('fn_task_list_access', { p_list_id: tarefa.list_id, p_user_id: uid });
+          if (acesso) validos.push(uid);
+        }
+      }
       if (!validos.length) return;
       await admin.from('task_notifications').insert(
         validos.map((uid) => ({

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase, invokeWithAuth, uploadTaskAttachment } from '@/lib/supabase';
-import { useAuth } from '@/contexts/AuthContext';
+import { useEuTarefas } from './useEuTarefas';
 import { useToast } from '@/contexts/ToastContext';
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
@@ -212,9 +212,12 @@ export const PRIORIDADES: Array<{ value: number; label: string; color: string }>
 // ─── Hook principal ───────────────────────────────────────────────────────────
 
 export function useTarefas() {
-  const { user } = useAuth();
+  const eu = useEuTarefas();
   const toast = useToast();
-  const tenantId = user?.tenantId ?? null;
+  const tenantId = eu.tenantId;
+  // Sem loja o tenantId é nulo de propósito: o que libera carregar é saber quem é.
+  const pronto = eu.pronto;
+  const chaveEscopo = pronto ? (tenantId ?? 'sem-loja') : null;
 
   const [lists, setLists] = useState<TaskList[]>([]);
   const [tasks, setTasks] = useState<TaskRow[]>([]);
@@ -226,12 +229,12 @@ export function useTarefas() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   // Reset na troca de loja: o tenantId em ref garante que respostas antigas não vazem
-  const tenantRef = useRef(tenantId);
-  tenantRef.current = tenantId;
+  const tenantRef = useRef(chaveEscopo);
+  tenantRef.current = chaveEscopo;
 
   const reload = useCallback(async () => {
-    if (!tenantId) return;
-    const requestTenant = tenantId;
+    if (!pronto) return;
+    const requestTenant = chaveEscopo;
     try {
       const [listsRes, tasksRes, tagsRes, camposRes, notifRes, viewsRes, tplRes] = await Promise.all([
         supabase.rpc('fn_get_task_lists', { p_tenant_id: tenantId }),
@@ -259,7 +262,7 @@ export function useTarefas() {
     } finally {
       if (tenantRef.current === requestTenant) setLoading(false);
     }
-  }, [tenantId]);
+  }, [pronto, chaveEscopo, tenantId]);
 
   useEffect(() => {
     // Troca de loja: limpa estado antes de recarregar (pegadinha conhecida)
@@ -274,7 +277,8 @@ export function useTarefas() {
     reload();
   }, [reload]);
 
-  // Realtime: broadcast tasks-ping (trigger no banco). O gatilho é por linha:
+  // Realtime: broadcast tasks-ping (trigger no banco; canal por loja — sem loja
+  // não há canal, a tela recarrega depois de cada gravação). O gatilho é por linha:
   // aplicar um modelo ou excluir uma pasta manda dezenas de avisos seguidos —
   // junta tudo num reload só.
   useEffect(() => {
@@ -294,20 +298,20 @@ export function useTarefas() {
   }, [tenantId, reload]);
 
   // Realtime: notificações endereçadas a mim (canal por usuário)
-  const meuId = user?.id ?? null;
+  const meuId = eu.id;
   useEffect(() => {
-    if (!meuId || !tenantId) return;
+    if (!meuId || !chaveEscopo) return;
     const channel = supabase
       .channel(`task-notify:${meuId}`)
       .on('broadcast', { event: 'task_notification' }, async () => {
         const { data } = await supabase.rpc('fn_get_task_notifications', { p_tenant_id: tenantId });
-        if (tenantRef.current === tenantId) setNotificacoes((data as TaskNotificacao[]) ?? []);
+        if (tenantRef.current === chaveEscopo) setNotificacoes((data as TaskNotificacao[]) ?? []);
       })
       .subscribe();
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [meuId, tenantId]);
+  }, [meuId, chaveEscopo, tenantId]);
 
   /**
    * Aplica um `update_task` localmente antes da resposta do servidor — o
@@ -374,7 +378,7 @@ export function useTarefas() {
 
   const write = useCallback(
     async (action: string, payload: Record<string, unknown> = {}): Promise<{ success: boolean; id?: string; error?: string; next_occurrence_id?: string | null }> => {
-      if (!tenantId) return { success: false, error: 'Sem loja ativa' };
+      if (!pronto) return { success: false, error: 'Sessão ainda carregando' };
 
       // Otimista: aplica antes de ir ao servidor. Erro abaixo chama reload() e desfaz.
       if (action === 'update_task' && typeof payload.task_id === 'string') {
@@ -442,7 +446,7 @@ export function useTarefas() {
           recurrence: (payload.recurrence as TaskRow['recurrence']) ?? null,
           completed_at: null,
           created_at: new Date().toISOString(),
-          created_by: user?.id ?? null,
+          created_by: meuId,
           tags: [],
           checklist_total: 0,
           checklist_done: 0,
@@ -460,12 +464,12 @@ export function useTarefas() {
       reload();
       return { success: true, id: data.id, next_occurrence_id: data.next_occurrence_id ?? null };
     },
-    [tenantId, reload, lists, user?.id, patchOtimista, toast],
+    [pronto, tenantId, reload, lists, meuId, patchOtimista, toast],
   );
 
   const fetchDetail = useCallback(
     async (taskId: string): Promise<TaskDetail | null> => {
-      if (!tenantId) return null;
+      if (!pronto) return null;
       const { data, error: rpcError } = await supabase.rpc('fn_get_task_detail', {
         p_tenant_id: tenantId,
         p_task_id: taskId,
@@ -476,13 +480,13 @@ export function useTarefas() {
       }
       return data as TaskDetail;
     },
-    [tenantId],
+    [pronto, tenantId],
   );
 
   // ── Anexos ──
   const fetchAnexos = useCallback(
     async (taskId: string): Promise<TaskAnexo[]> => {
-      if (!tenantId) return [];
+      if (!pronto) return [];
       const { data, error: rpcError } = await supabase.rpc('fn_get_task_attachments', {
         p_tenant_id: tenantId,
         p_task_id: taskId,
@@ -493,29 +497,29 @@ export function useTarefas() {
       }
       return (data as TaskAnexo[]) ?? [];
     },
-    [tenantId],
+    [pronto, tenantId],
   );
 
   const enviarAnexo = useCallback(
     async (file: File, taskId: string): Promise<{ success: boolean; error?: string }> => {
-      if (!tenantId) return { success: false, error: 'Sem loja ativa' };
+      if (!pronto) return { success: false, error: 'Sessão ainda carregando' };
       const { id, error: upError } = await uploadTaskAttachment(file, tenantId, taskId);
       if (upError || !id) return { success: false, error: upError?.message ?? 'Falha no upload' };
       return { success: true };
     },
-    [tenantId],
+    [pronto, tenantId],
   );
 
   /** Bucket privado: a URL de download é assinada sob demanda (1h). */
   const abrirAnexo = useCallback(
     async (attachmentId: string): Promise<string | null> => {
-      if (!tenantId) return null;
+      if (!pronto) return null;
       const { data } = await invokeWithAuth<{ success?: boolean; url?: string }>('task-write', {
         body: { action: 'sign_attachment', active_tenant_id: tenantId, attachment_id: attachmentId },
       });
       return data?.url ?? null;
     },
-    [tenantId],
+    [pronto, tenantId],
   );
 
   return {
