@@ -6,7 +6,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import type { TaskRow } from '@/pages/tarefas/hooks/useTarefas';
 import { formatarDuracao, formatarRelogio, segundosRegistrados, useAgora } from '@/pages/tarefas/lib/tempo';
 import { Roteiro, useRoteiro, Opcao, OpcaoNeutra, Fim, type AcaoProps } from '../kit';
-import { BuscaTarefa, COR_TAREFAS, OpcaoTarefa, carregarTarefas, filtrarPorTexto, gravarTarefa, minha, ordenarPorPrazo } from './comum';
+import { COR_TAREFAS, OpcaoTarefa, carregarTarefas, gravarTarefa, minha, ordenarPorPrazo, ListaPorPasta } from './comum';
 
 type Passo = 'carregando' | 'lista' | 'gravando' | 'fim';
 
@@ -17,7 +17,6 @@ export default function Cronometro({ onFechar, irPara }: AcaoProps) {
   const r = useRoteiro();
   const [passo, setPasso] = useState<Passo>('carregando');
   const [tarefas, setTarefas] = useState<TaskRow[]>([]);
-  const [busca, setBusca] = useState('');
   const rodando = tarefas.find((t) => t.timer_started_at) ?? null;
   const agora = useAgora(!!rodando);
 
@@ -66,7 +65,6 @@ export default function Cronometro({ onFechar, irPara }: AcaoProps) {
     setPasso('lista');
   };
 
-  const outras = filtrarPorTexto(tarefas.filter((t) => t.id !== rodando?.id), busca);
 
   return (
     <Roteiro titulo="Cronômetro" icone="ri-timer-line" cor={COR_TAREFAS} baloes={r.baloes}
@@ -83,11 +81,10 @@ export default function Cronometro({ onFechar, irPara }: AcaoProps) {
             </div>
           )}
           {rodando && <Opcao perigo onClick={parar}>⏹ Parar cronômetro</Opcao>}
-          {tarefas.length > 8 && <BuscaTarefa valor={busca} onMudar={setBusca} />}
-          {outras.map((t) => (
-            <OpcaoTarefa key={t.id} t={t} icone="ri-play-circle-line" onClick={() => iniciar(t)}
+          <ListaPorPasta tarefas={tarefas.filter((t) => t.id !== rodando?.id)} renderTarefa={(t) => (
+            <OpcaoTarefa t={t} icone="ri-play-circle-line" onClick={() => iniciar(t)}
               extra={t.time_tracked_seconds ? `${formatarDuracao(t.time_tracked_seconds)} feitos` : undefined} />
-          ))}
+          )} />
           <Opcao onClick={() => irPara('/tarefas')}>Abrir Tarefas</Opcao>
           <OpcaoNeutra onClick={onFechar}>Fechar</OpcaoNeutra>
         </>

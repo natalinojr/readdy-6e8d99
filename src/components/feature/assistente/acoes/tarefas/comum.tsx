@@ -4,10 +4,12 @@
 //
 // Visibilidade: fn_get_tasks devolve as tarefas das pastas que eu acesso (minhas + compartilhadas
 // comigo, task_list_shares) e as que estão comigo. "Da equipe" aqui é sempre esse alcance.
+import { useState } from 'react';
+import type { ReactNode } from 'react';
 import { supabase } from '@/lib/supabase';
 import { dateKeyBrasilia, todayBrasilia } from '@/lib/dateUtils';
 import type { TaskRow } from '@/pages/tarefas/hooks/useTarefas';
-import { Opcao, dataBR, horaBR, invokeUmaVez, somaDias } from '../kit';
+import { Opcao, OpcaoNeutra, dataBR, horaBR, invokeUmaVez, somaDias } from '../kit';
 
 export const COR_TAREFAS = 'bg-indigo-50 text-indigo-600';
 
@@ -113,3 +115,78 @@ export const filtrarPorTexto = (lista: TaskRow[], termo: string) => {
   const q = n(termo.trim());
   return q ? lista.filter((t) => n(`${t.title} ${t.list_name ?? ''} ${t.assignee_name ?? ''}`).includes(q)) : lista;
 };
+
+/**
+ * Escolher uma tarefa em dois passos: primeiro a PASTA, depois a tarefa dela
+ * (pedido do dono, 2026-09-23 — lista única de tarefas de todas as pastas era
+ * difícil de achar). Uma pasta só = vai direto pras tarefas. Com mais de 8
+ * tarefas aparece a busca, que procura em todas as pastas de uma vez.
+ * `renderTarefa` desenha cada tarefa do jeito da ação (extra, ícone, responsável).
+ */
+export function ListaPorPasta({ tarefas, renderTarefa }: {
+  tarefas: TaskRow[];
+  renderTarefa: (t: TaskRow) => ReactNode;
+}) {
+  const [pastaId, setPastaId] = useState<string | null>(null);
+  const [busca, setBusca] = useState('');
+
+  const pastas = new Map<string, { id: string; nome: string; cor: string; total: number; atrasadas: number }>();
+  for (const t of tarefas) {
+    const p = pastas.get(t.list_id) ?? { id: t.list_id, nome: t.list_name ?? 'Pasta', cor: t.list_color ?? '#94a3b8', total: 0, atrasadas: 0 };
+    p.total += 1;
+    if (atrasada(t)) p.atrasadas += 1;
+    pastas.set(t.list_id, p);
+  }
+  const listaPastas = [...pastas.values()].sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+  const buscando = busca.trim() !== '';
+  const umaPasta = listaPastas.length <= 1;
+  const pastaAtual = pastaId ? pastas.get(pastaId) ?? null : null;
+
+  // Buscando: tarefas de todas as pastas que batem com o texto.
+  if (buscando) {
+    const achadas = filtrarPorTexto(tarefas, busca);
+    return (
+      <>
+        <BuscaTarefa valor={busca} onMudar={setBusca} />
+        {achadas.map((t) => <div key={t.id}>{renderTarefa(t)}</div>)}
+        {!achadas.length && <p className="px-1 text-xs text-zinc-500">Nenhuma tarefa com esse nome.</p>}
+      </>
+    );
+  }
+
+  if (!umaPasta && !pastaAtual) {
+    return (
+      <>
+        {tarefas.length > 8 && <BuscaTarefa valor={busca} onMudar={setBusca} />}
+        <p className="px-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Escolha a pasta</p>
+        {listaPastas.map((p) => (
+          <Opcao
+            key={p.id}
+            onClick={() => setPastaId(p.id)}
+            detalhe={`(${p.total} tarefa${p.total > 1 ? 's' : ''}${p.atrasadas ? ` · ${p.atrasadas} atrasada${p.atrasadas > 1 ? 's' : ''}` : ''})`}
+          >
+            <span className="inline-block w-2.5 h-2.5 rounded-full mr-2 align-middle" style={{ backgroundColor: p.cor }} />
+            {p.nome}
+          </Opcao>
+        ))}
+      </>
+    );
+  }
+
+  const daPasta = pastaAtual ? tarefas.filter((t) => t.list_id === pastaAtual.id) : tarefas;
+  return (
+    <>
+      {pastaAtual && !umaPasta && (
+        <>
+          <OpcaoNeutra onClick={() => setPastaId(null)}>← Outra pasta</OpcaoNeutra>
+          <p className="px-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-400 flex items-center gap-1.5">
+            <span className="inline-block w-2 h-2 rounded-full" style={{ backgroundColor: pastaAtual.cor }} />
+            {pastaAtual.nome}
+          </p>
+        </>
+      )}
+      {umaPasta && tarefas.length > 8 && <BuscaTarefa valor={busca} onMudar={setBusca} />}
+      {daPasta.map((t) => <div key={t.id}>{renderTarefa(t)}</div>)}
+    </>
+  );
+}

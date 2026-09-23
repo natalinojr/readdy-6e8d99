@@ -6,7 +6,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import type { TaskRow } from '@/pages/tarefas/hooks/useTarefas';
 import { formatarDuracao, lerDuracao, segundosRegistrados } from '@/pages/tarefas/lib/tempo';
 import { Campo, Fim, Opcao, OpcaoNeutra, Roteiro, useRoteiro, type AcaoProps } from '../kit';
-import { BuscaTarefa, COR_TAREFAS, OpcaoTarefa, carregarTarefas, filtrarPorTexto, gravarTarefa, minha, ordenarPorPrazo } from './comum';
+import { COR_TAREFAS, OpcaoTarefa, carregarTarefas, gravarTarefa, minha, ordenarPorPrazo, ListaPorPasta } from './comum';
 
 type Passo = 'carregando' | 'lista' | 'quanto' | 'gravando' | 'fim';
 
@@ -19,7 +19,6 @@ export default function ApontarHoras({ onFechar, irPara }: AcaoProps) {
   const r = useRoteiro();
   const [passo, setPasso] = useState<Passo>('carregando');
   const [tarefas, setTarefas] = useState<TaskRow[]>([]);
-  const [busca, setBusca] = useState('');
   const [alvo, setAlvo] = useState<TaskRow | null>(null);
 
   useEffect(() => {
@@ -70,7 +69,6 @@ export default function ApontarHoras({ onFechar, irPara }: AcaoProps) {
     setPasso('lista');
   };
 
-  const outras = filtrarPorTexto(tarefas, busca);
 
   return (
     <Roteiro titulo="Apontar horas" icone="ri-time-line" cor={COR_TAREFAS} baloes={r.baloes}
@@ -78,11 +76,10 @@ export default function ApontarHoras({ onFechar, irPara }: AcaoProps) {
       onFechar={onFechar} travarFechar={passo === 'gravando'}>
       {passo === 'lista' && (
         <>
-          {tarefas.length > 8 && <BuscaTarefa valor={busca} onMudar={setBusca} />}
-          {outras.map((t) => (
-            <OpcaoTarefa key={t.id} t={t} onClick={() => escolher(t)}
+          <ListaPorPasta tarefas={tarefas} renderTarefa={(t) => (
+            <OpcaoTarefa t={t} onClick={() => escolher(t)}
               extra={t.time_tracked_seconds ? `${formatarDuracao(t.time_tracked_seconds)} feitos` : undefined} />
-          ))}
+          )} />
           <Opcao onClick={() => irPara('/tarefas')}>Abrir Tarefas</Opcao>
           <OpcaoNeutra onClick={onFechar}>Fechar</OpcaoNeutra>
         </>

@@ -6,7 +6,7 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import type { ChecklistItem, TaskDetail, TaskRow } from '@/pages/tarefas/hooks/useTarefas';
 import { Campo, Fim, Opcao, OpcaoNeutra, Roteiro, useRoteiro, type AcaoProps } from '../kit';
-import { BuscaTarefa, COR_TAREFAS, OpcaoTarefa, carregarTarefas, filtrarPorTexto, gravarTarefa, ordenarPorPrazo } from './comum';
+import { COR_TAREFAS, OpcaoTarefa, carregarTarefas, gravarTarefa, ordenarPorPrazo, ListaPorPasta } from './comum';
 
 type Passo = 'carregando' | 'lista' | 'abrindo' | 'checklist' | 'adicionando' | 'gravando' | 'fim';
 
@@ -17,7 +17,6 @@ export default function ChecklistTarefa({ onFechar, irPara }: AcaoProps) {
   const r = useRoteiro();
   const [passo, setPasso] = useState<Passo>('carregando');
   const [tarefas, setTarefas] = useState<TaskRow[]>([]);
-  const [busca, setBusca] = useState('');
   const [alvo, setAlvo] = useState<TaskRow | null>(null);
   const [itens, setItens] = useState<ChecklistItem[]>([]);
   const [ocupado, setOcupado] = useState<string | null>(null); // item_id em gravação
@@ -86,7 +85,6 @@ export default function ChecklistTarefa({ onFechar, irPara }: AcaoProps) {
     setPasso('lista');
   };
 
-  const outras = filtrarPorTexto(tarefas, busca);
   const tudoFeito = itens.length > 0 && itens.every((i) => i.is_done);
 
   return (
@@ -96,10 +94,9 @@ export default function ChecklistTarefa({ onFechar, irPara }: AcaoProps) {
       onFechar={onFechar} travarFechar={passo === 'gravando'}>
       {passo === 'lista' && (
         <>
-          {tarefas.length > 8 && <BuscaTarefa valor={busca} onMudar={setBusca} />}
-          {outras.map((t) => (
-            <OpcaoTarefa key={t.id} t={t} onClick={() => abrir(t)} extra={`${t.checklist_done}/${t.checklist_total}`} />
-          ))}
+          <ListaPorPasta tarefas={tarefas} renderTarefa={(t) => (
+            <OpcaoTarefa t={t} onClick={() => abrir(t)} extra={`${t.checklist_done}/${t.checklist_total}`} />
+          )} />
           <Opcao onClick={() => irPara('/tarefas')}>Abrir Tarefas</Opcao>
           <OpcaoNeutra onClick={onFechar}>Fechar</OpcaoNeutra>
         </>

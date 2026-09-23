@@ -6,7 +6,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { todayBrasilia } from '@/lib/dateUtils';
 import type { TaskRow } from '@/pages/tarefas/hooks/useTarefas';
 import { Roteiro, useRoteiro, Opcao, OpcaoNeutra, Campo, Fim, dataBR, somaDias, type AcaoProps } from '../kit';
-import { COR_TAREFAS, OpcaoTarefa, atrasada, carregarTarefas, gravarTarefa, minha, novoPrazo, ordenarPorPrazo, proximaSegunda, venceHoje } from './comum';
+import { COR_TAREFAS, OpcaoTarefa, atrasada, carregarTarefas, gravarTarefa, minha, novoPrazo, ordenarPorPrazo, proximaSegunda, venceHoje, ListaPorPasta } from './comum';
 
 type Passo = 'carregando' | 'lista' | 'quando' | 'data_campo' | 'gravando' | 'fim';
 
@@ -83,7 +83,7 @@ export default function AdiarTarefa({ onFechar, irPara }: AcaoProps) {
       onFechar={onFechar} travarFechar={passo === 'gravando'}>
       {passo === 'lista' && (
         <>
-          {tarefas.map((t) => <OpcaoTarefa key={t.id} t={t} onClick={() => escolher(t)} />)}
+          <ListaPorPasta tarefas={tarefas} renderTarefa={(t) => <OpcaoTarefa t={t} onClick={() => escolher(t)} />} />
           {!tarefas.length && <p className="px-1 text-xs text-zinc-500">Nada por aqui.</p>}
           {!mostrarTodas && <OpcaoNeutra onClick={verTodas}>Ver todas com prazo</OpcaoNeutra>}
           <Opcao onClick={() => irPara('/tarefas')}>Abrir Tarefas</Opcao>

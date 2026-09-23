@@ -345,3 +345,35 @@ describe('Carga da equipe', () => {
     expect(global.fetch).not.toHaveBeenCalled();
   });
 });
+
+describe('Escolher tarefa pela pasta', () => {
+  const duasPastas = () => mockRpc({
+    fn_get_tasks: () => ({
+      data: [
+        tarefa({ id: 'a1', title: 'Trocar filtro', list_id: 'LA', list_name: 'Manutenção', due_date: `${ontem}T12:00:00Z` }),
+        tarefa({ id: 'b1', title: 'Pedir carne', list_id: 'LB', list_name: 'Compras' }),
+        tarefa({ id: 'b2', title: 'Pedir pão', list_id: 'LB', list_name: 'Compras' }),
+      ],
+      error: null,
+    }),
+  });
+
+  it('com mais de uma pasta, pede a pasta primeiro e depois a tarefa', async () => {
+    duasPastas();
+    render(<Cronometro onFechar={onFechar} irPara={irPara} />);
+
+    expect(await screen.findByText('Escolha a pasta')).toBeTruthy();
+    expect(screen.queryByText('Pedir carne')).toBeNull();
+    expect(screen.getByText(/1 tarefa · 1 atrasada/)).toBeTruthy(); // Manutenção
+
+    fireEvent.click(screen.getByText('Compras'));
+    expect(screen.getByText('Pedir carne')).toBeTruthy();
+    expect(screen.queryByText('Trocar filtro')).toBeNull();
+
+    fireEvent.click(screen.getByText('← Outra pasta'));
+    fireEvent.click(screen.getByText('Manutenção'));
+    fireEvent.click(screen.getByText('Trocar filtro'));
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(1));
+    expect(ultimoCorpo()).toMatchObject({ action: 'start_timer', task_id: 'a1' });
+  });
+});

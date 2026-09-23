@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import type { TaskRow } from '@/pages/tarefas/hooks/useTarefas';
 import { Roteiro, useRoteiro, Opcao, OpcaoNeutra, Campo, Fim, type AcaoProps } from '../kit';
-import { BuscaTarefa, COR_TAREFAS, OpcaoTarefa, Pessoa, carregarEquipe, carregarTarefas, filtrarPorTexto, gravarTarefa, ordenarPorPrazo } from './comum';
+import { BuscaTarefa, COR_TAREFAS, OpcaoTarefa, Pessoa, carregarEquipe, carregarTarefas, gravarTarefa, ordenarPorPrazo, ListaPorPasta } from './comum';
 
 type Passo = 'carregando' | 'lista' | 'pessoa' | 'confirmar' | 'gravando' | 'recado' | 'gravando_recado' | 'fim';
 
@@ -89,8 +89,7 @@ export default function PassarTarefa({ onFechar, irPara }: AcaoProps) {
       onFechar={onFechar} travarFechar={passo === 'gravando' || passo === 'gravando_recado'}>
       {passo === 'lista' && (
         <>
-          {tarefas.length > 8 && <BuscaTarefa valor={busca} onMudar={setBusca} />}
-          {filtrarPorTexto(tarefas, busca).map((t) => <OpcaoTarefa key={t.id} t={t} mostrarResponsavel onClick={() => escolherTarefa(t)} />)}
+          <ListaPorPasta tarefas={tarefas} renderTarefa={(t) => <OpcaoTarefa t={t} mostrarResponsavel onClick={() => escolherTarefa(t)} />} />
           <Opcao onClick={() => irPara('/tarefas')}>Abrir Tarefas</Opcao>
           <OpcaoNeutra onClick={onFechar}>Fechar</OpcaoNeutra>
         </>
