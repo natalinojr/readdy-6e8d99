@@ -700,6 +700,45 @@ async function triarPagamento(admin: SupabaseClient, cfg: Record<string, any>, g
     }
   }
 
+  // Fila (2026-09-23): um documento por vez. Vários postados juntos iam ao assistente em paralelo,
+  // cada um sem ver o outro — buscas repetidas, custo dobrado e respostas "Não entendi".
+  await admin.from('asst_group_requests').update({
+    status: 'fila', data: { texto: msg.content, extraido: msg.extracted, sent_at: msg.sentAt, prompt }, updated_at: new Date().toISOString(),
+  }).eq('id', req.id);
+  await processarFilaGrupo(admin, cfg);
+}
+
+// Trabalhador da fila: pega o próximo (fn_asst_fila_proximo só entrega se ninguém estiver
+// processando) até esvaziar. Passou de ~60 s, chama outra execução para continuar (limite da Edge).
+// deno-lint-ignore no-explicit-any
+async function processarFilaGrupo(admin: SupabaseClient, cfg: Record<string, any>) {
+  const inicio = Date.now();
+  while (Date.now() - inicio < 60_000) {
+    const { data: id, error } = await admin.rpc('fn_asst_fila_proximo');
+    if (error) { log('ERROR', 'fila do grupo: próximo', { error: error.message }); return; }
+    if (!id) return;
+    const { data: rq } = await admin.from('asst_group_requests').select('id, message_id, group_jid, group_name, sender_name, kind, data').eq('id', Number(id)).maybeSingle();
+    if (!rq) continue;
+    const g = { group_jid: rq.group_jid, name: rq.group_name };
+    const msg = { messageId: rq.message_id, sender: rq.sender_name, content: String(rq.data?.texto ?? ''), extracted: rq.data?.extraido ?? null, sentAt: String(rq.data?.sent_at ?? new Date().toISOString()) };
+    const tipo: 'pagamento' | 'compra' = rq.kind === 'compra' ? 'compra' : 'pagamento';
+    await executarTriagem(admin, cfg, g, msg, tipo, { id: Number(rq.id) }, String(rq.data?.prompt ?? ''))
+      .catch((e) => log('ERROR', 'fila do grupo: item', { id: rq.id, error: errMsg(e) }));
+    // Segurança: se a execução não gravou um status final, não deixa o item preso em 'processando'.
+    await admin.from('asst_group_requests').update({ status: 'erro', error: 'terminou sem status', updated_at: new Date().toISOString() }).eq('id', rq.id).eq('status', 'processando');
+  }
+  // Sobrou tempo curto: continua noutra execução (o próximo pega a partir de onde parou).
+  const p = fetch(`${supabaseUrl}/functions/v1/assistente-webhook`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${serviceRoleKey}` }, body: JSON.stringify({ action: 'processar_fila' }),
+  }).catch((e) => log('WARN', 'fila do grupo: continuar', { error: errMsg(e) }));
+  // deno-lint-ignore no-explicit-any
+  (globalThis as any).EdgeRuntime?.waitUntil?.(p);
+}
+
+// deno-lint-ignore no-explicit-any
+async function executarTriagem(admin: SupabaseClient, cfg: Record<string, any>, g: any, msg: { messageId: string | null; sender: string | null; content: string; extracted: any; sentAt: string }, tipo: 'pagamento' | 'compra', req: { id: number }, prompt: string) {
+  const ownerChat = ownerChatOf(cfg);
+  if (!ownerChat) { await admin.from('asst_group_requests').update({ status: 'erro', error: 'sem destino', updated_at: new Date().toISOString() }).eq('id', req.id); return; }
   try {
     const out = await brainCall({ text: prompt, chat_id: ownerChat, channel: ownerChat.startsWith('tg:') ? 'telegram' : 'whatsapp', modo: tipo === 'compra' ? 'entrada_compra_grupo' : 'triagem_grupo', group_jid: g.group_jid });
     const reply = String(out?.reply ?? '').trim();
@@ -1748,6 +1787,19 @@ Deno.serve(async (req) => {
     } catch (e) {
       return json({ error: errMsg(e) }, 500);
     }
+  }
+
+  // Continuação da fila de documentos de grupo (o trabalhador anterior passou do tempo) ou a
+  // varredura do assistente-cron para pedido que ficou parado na fila.
+  if (pl?.action === 'processar_fila') {
+    const admin = createClient(supabaseUrl, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
+    const job = (async () => {
+      const { data: st } = await admin.from('asst_settings').select('key, value');
+      await processarFilaGrupo(admin, Object.fromEntries((st ?? []).map((s) => [s.key, s.value])));
+    })().catch((e) => log('ERROR', 'processar_fila', { error: errMsg(e) }));
+    // deno-lint-ignore no-explicit-any
+    (globalThis as any).EdgeRuntime?.waitUntil?.(job);
+    return json({ ok: true });
   }
 
   const p = handle(payload).catch((e) => log('ERROR', 'unhandled', { error: errMsg(e) }));

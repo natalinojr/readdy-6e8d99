@@ -265,6 +265,15 @@ Quando o usuario pedir "muda X":
 
 Secao viva: registrar aqui padroes, decisoes e pegadinhas reutilizaveis conforme o sistema evolui. Cada entrada com data, contexto e onde foi aplicado.
 
+### 2026-09-23 — Custo do assistente (Sonnet 5): trabalho repetitivo sai do modelo
+
+Diagnóstico pelo `asst_messages.usage` (7 dias, ~US$ 8/semana, 1 usuário): **cada rodada de ferramenta relê o bloco fixo inteiro** (~31 mil tokens: instruções + mapa do banco + mapa de ações + ferramentas), e o cache de 1 h é **regravado a 2× o preço** toda vez que vence (~35% do gasto). O que mais pesava era o lançamento de cupom do grupo: o modelo casava item por item com `buscar_nome`/`consultar_banco` — **8 a 21 rodadas por cupom**, ~US$ 0,11–0,25 cada.
+- **Regra que ficou:** tarefa com passos fixos vira **uma ferramenta que o código resolve**; o modelo só lê o documento e decide as dúvidas. Exemplo: `lancar_compra` no `assistente-brain` confere duplicidade, casa os itens (memória `purchase_receipt_item_links` → compra anterior com a mesma descrição em `fin_purchase_items` → nome parecido com `word_similarity`, só quando um candidato se destaca), lança, liga à sangria (dinheiro) e dá entrada no estoque. Item em dúvida segura o estoque até a resposta (segunda chamada só com `vinculos`, compra achada pela descrição — o histórico do chat não guarda resultado de ferramenta, então o modelo não tem o `compra_id` na mensagem seguinte).
+- **Resumo da manhã** montado em SQL no `assistente-cron` (`morningBriefText`, `POST {preview:'brief'}` para ver sem enviar) — era ~US$ 0,18/dia no modelo.
+- **Mapa de ações fora do bloco fixo:** fica só o índice; o contrato vem por `ver_mapa_acoes` e junto do erro do `erpos_executar`. Medido: o bloco caiu de ~31,2 mil para ~25,3 mil tokens — o grosso que sobra são as definições das ferramentas.
+- **Fila de documentos de grupo:** `assistente-webhook` põe o pedido em `status='fila'`; `fn_asst_fila_proximo()` (advisory lock) entrega um por vez; `assistente-cron › filaGrupo` acorda fila parada (>2 min) e marca `processando` preso (>10 min) como erro. Antes, 12 cupons postados juntos iam em paralelo, cada um repetindo as buscas do outro.
+- **Testar edge interna sem a chave em mãos:** `net.http_post` com `(select decrypted_secret from vault.decrypted_secrets where name='assistente_internal_key')` no header — a chave não passa por você.
+
 ### 2026-09-23 — Cardápio: botão "Publicar alterações" (telas abertas recarregam sem F5)
 
 - **Problema:** editar o cardápio grava na hora (menu-write), mas cada tela carrega o cardápio 1x ao abrir — PDV, garçom, totem, mesa, QR universal e delivery só viam depois de recarregar.

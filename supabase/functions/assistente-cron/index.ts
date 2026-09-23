@@ -7,7 +7,8 @@
 //    ticks simultâneos nunca mandarem o mesmo lembrete; se o envio falha,
 //    devolve sent_at = null e o próximo tick tenta de novo.
 // 2. Resumo da manhã: uma vez por dia, a partir de asst_settings.morning_brief.time
-//    (padrão 07:30, fuso de SP), pede o resumo ao assistente-brain e envia.
+//    (padrão 07:30, fuso de SP), monta o resumo em SQL (sem modelo desde 2026-09-23) e envia.
+//    POST { preview: 'brief' } gera sem enviar.
 //
 // 3. Proatividade determinística (asst_settings.proactive): fechamento do dia,
 //    anomalia de venda, vencimentos de amanhã, estoque crítico que mudou e
@@ -169,6 +170,22 @@ async function payWatch(admin: SupabaseClient): Promise<unknown> {
   return out;
 }
 
+// Fila dos documentos de grupo (assistente-webhook, 2026-09-23): item em 'processando' há mais de
+// 10 min (execução caiu) vira erro; item esperando na 'fila' há mais de 2 min sem ninguém
+// processando → acorda o trabalhador.
+async function filaGrupo(admin: SupabaseClient): Promise<unknown> {
+  const { data: presos } = await admin.from('asst_group_requests').update({ status: 'erro', error: 'processamento interrompido', updated_at: new Date().toISOString() })
+    .eq('status', 'processando').lt('updated_at', new Date(Date.now() - 10 * 60_000).toISOString()).select('id');
+  const { count } = await admin.from('asst_group_requests').select('id', { count: 'exact', head: true })
+    .eq('status', 'fila').lt('updated_at', new Date(Date.now() - 2 * 60_000).toISOString());
+  if (!count) return presos?.length ? { presos: presos.length } : null;
+  const r = await fetch(`${supabaseUrl}/functions/v1/assistente-webhook`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${serviceRoleKey}` }, body: JSON.stringify({ action: 'processar_fila' }),
+  });
+  if (!r.ok) throw new Error(`assistente-webhook ${r.status}`);
+  return { acordou: count, ...(presos?.length ? { presos: presos.length } : {}) };
+}
+
 async function getSettings(admin: SupabaseClient) {
   const { data } = await admin.from('asst_settings').select('key, value');
   // deno-lint-ignore no-explicit-any
@@ -212,31 +229,120 @@ async function morningBrief(admin: SupabaseClient, cfg: Record<string, any>, own
   const limit = `${String(Math.min(h + 3, 23)).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
   if (now < time || now > limit || cfg.last_brief_date === today) return false;
 
-  // Marca antes de gerar (evita duplicar se o brain demorar mais que 1 tick)
+  // Marca antes de gerar (evita duplicar se demorar mais que 1 tick)
   await admin.from('asst_settings').upsert({ key: 'last_brief_date', value: today, updated_at: new Date().toISOString() });
 
-  const r = await fetch(`${supabaseUrl}/functions/v1/assistente-brain`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-internal-key': internalKey },
-    body: JSON.stringify({
-      chat_id: ownerChat,
-      channel: 'cron',
-      text: '[Mensagem automática das 7h30, não foi o Natalino que escreveu] Monte o resumo da manhã dele: '
-        // A caixa vem primeiro no resumo: é o único lugar onde o que ficou por fazer sobrevive
-        // à noite. Uma linha só; o detalhe ele vê em /pendencias.
-        + 'comece pelas pendências em aberto (tabela pendencias, status aberta, da loja dele) — quantas são e o que é dinheiro, em UMA linha, dizendo que a lista está em Pendências; '
-        + 'tarefas de hoje e atrasadas, lembretes de hoje, contas a pagar vencendo nos próximos 3 dias (e atrasadas) '
-        + 'e previsão do tempo de hoje para a loja principal (previsao_tempo: uma linha, destaque chuva no horário de movimento). '
-        + 'Estoque crítico só se algo novo (o cron já avisa o que muda). Comece com "Bom dia". Curto, só o que pede atenção; se não houver nada num item, pule.',
-    }),
-  });
-  const out = await r.json().catch(() => ({}));
-  if (!r.ok || !out?.reply) {
+  // Montado aqui, sem modelo (2026-09-23): o resumo pedido ao assistente-brain custava ~US$ 0,18 por
+  // dia (8–9 ferramentas relendo o prompt inteiro) para juntar listas que o SQL já entrega prontas.
+  let texto: string;
+  try {
+    texto = await morningBriefText(admin, cfg, today);
+  } catch (e) {
     await admin.from('asst_settings').upsert({ key: 'last_brief_date', value: null, updated_at: new Date().toISOString() });
-    throw new Error(`brain ${r.status}: ${JSON.stringify(out).slice(0, 300)}`);
+    throw e;
   }
-  await deliver(ownerChat, String(out.reply));
+  await deliver(ownerChat, texto);
+  await admin.from('asst_messages').insert({ channel: 'cron', chat_id: ownerChat, role: 'assistant', content: texto, topic: 'avisos' });
   return true;
+}
+
+// Resumo da manhã: pendências (caixa) → contas a pagar → tarefas → lembretes → tempo. Só o que pede
+// atenção; item vazio some. Mesmo conteúdo que o assistente montava, na mesma ordem.
+// deno-lint-ignore no-explicit-any
+async function morningBriefText(admin: SupabaseClient, cfg: Record<string, any>, today: string): Promise<string> {
+  const tenants = await getTenants(admin, cfg);
+  const ids = tenants.map((t) => t.id);
+  const nome = (id: string) => tenants.find((t) => t.id === id)?.name ?? 'loja';
+  const ownerId = String(cfg.owner_user_id ?? '');
+  const ddmm = (iso: string) => iso.slice(0, 10).split('-').reverse().slice(0, 2).join('/');
+  const ate3 = addDays(today, 3);
+  const [pend, contas, tarefas, lembretes] = await Promise.all([
+    admin.from('pendencias').select('titulo, urgencia, acao_requerida, snooze_until').in('tenant_id', ids).eq('status', 'aberta'),
+    admin.from('fin_accounts_payable').select('tenant_id, supplier, description, amount, due_date')
+      .in('tenant_id', ids).in('status', ['pending', 'overdue', 'partial']).lte('due_date', ate3).limit(500),
+    ownerId
+      ? admin.from('tasks').select('title, due_date').or(`created_by.eq.${ownerId},assignee_id.eq.${ownerId}`)
+        .eq('is_archived', false).is('completed_at', null).lte('due_date', `${today}T23:59:59-03:00`).order('due_date').limit(60)
+      : Promise.resolve({ data: [] as Array<{ title: string; due_date: string }> }),
+    admin.from('asst_reminders').select('text, due_at').is('sent_at', null)
+      .gte('due_at', `${today}T00:00:00-03:00`).lte('due_at', `${today}T23:59:59-03:00`).order('due_at').limit(20),
+  ]);
+  const linhas: string[] = ['Bom dia!'];
+
+  // Pendências: quantas e quais pedem dinheiro/ação urgente, em uma linha — a lista está na caixa.
+  const abertas = (pend.data ?? []).filter((p) => !p.snooze_until || Date.parse(String(p.snooze_until)) < Date.now());
+  if (abertas.length) {
+    const urgentes = abertas.filter((p) => p.urgencia === 'alta');
+    const quais = urgentes.slice(0, 3).map((p) => String(p.titulo ?? '').trim()).filter(Boolean).join('; ');
+    linhas.push(`*${abertas.length} pendência${abertas.length === 1 ? '' : 's'}* em aberto${urgentes.length ? ` — urgentes: ${quais}${urgentes.length > 3 ? ` e mais ${urgentes.length - 3}` : ''}` : ''}. Lista completa em Pendências.`);
+  }
+
+  // Contas: vencendo hoje até +3 dias e atrasadas, por loja.
+  const cs = (contas.data ?? []).map((c) => ({ ...c, amount: Number(c.amount ?? 0), due: String(c.due_date ?? '') }));
+  const vencendo = cs.filter((c) => c.due >= today);
+  const atrasadas = cs.filter((c) => c.due < today);
+  const porLoja = (lista: typeof cs) => {
+    const m = new Map<string, { n: number; v: number }>();
+    for (const c of lista) { const k = String(c.tenant_id); const a = m.get(k) ?? { n: 0, v: 0 }; a.n++; a.v += c.amount; m.set(k, a); }
+    return [...m.entries()].map(([k, a]) => `${tenants.length > 1 ? `${nome(k)}: ` : ''}${a.n} conta${a.n === 1 ? '' : 's'} / ${brl(a.v)}`).join(' · ');
+  };
+  if (vencendo.length || atrasadas.length) {
+    const partes: string[] = [];
+    if (vencendo.length) {
+      const lista = vencendo.sort((a, b) => a.due.localeCompare(b.due)).slice(0, 4)
+        .map((c) => `${c.supplier || c.description} ${brl(c.amount)} (${c.due === today ? 'hoje' : ddmm(c.due)})`).join('; ');
+      partes.push(`vencendo até ${ddmm(ate3)}: ${lista}${vencendo.length > 4 ? ` e mais ${vencendo.length - 4}` : ''}`);
+    }
+    if (atrasadas.length) partes.push(`atrasadas: ${porLoja(atrasadas)}`);
+    linhas.push(`*Contas a pagar:* ${partes.join('; ')}.`);
+  }
+
+  // Tarefas: de hoje (lista) e atrasadas (quantas, desde quando).
+  const ts = (tarefas.data ?? []).map((t) => ({ titulo: String(t.title ?? ''), dia: new Date(String(t.due_date)).toLocaleDateString('en-CA', { timeZone: TZ }) }));
+  const deHoje = ts.filter((t) => t.dia === today);
+  const velhas = ts.filter((t) => t.dia < today);
+  if (deHoje.length) linhas.push(`*Tarefas de hoje (${deHoje.length}):* ${deHoje.slice(0, 6).map((t) => t.titulo).join('; ')}${deHoje.length > 6 ? ` e mais ${deHoje.length - 6}` : ''}.`);
+  if (velhas.length) linhas.push(`*Atrasadas (${velhas.length}):* ${velhas.slice(0, 3).map((t) => t.titulo).join('; ')}${velhas.length > 3 ? '…' : ''} — a mais antiga de ${ddmm(velhas[0].dia)}.`);
+
+  const lem = lembretes.data ?? [];
+  if (lem.length) linhas.push(`*Lembretes de hoje:* ${lem.map((l) => `${new Date(String(l.due_at)).toLocaleTimeString('pt-BR', { timeZone: TZ, hour: '2-digit', minute: '2-digit' })} ${l.text}`).join('; ')}.`);
+
+  const tempo = await tempoDeHoje(admin, cfg, tenants).catch((e) => { log('WARN', 'resumo: previsão do tempo', { error: errMsg(e) }); return null; });
+  if (tempo) linhas.push(tempo);
+
+  if (linhas.length === 1) linhas.push('Nada pedindo atenção hoje.');
+  return linhas.join('\n\n');
+}
+
+// Previsão de hoje para a loja principal (Open-Meteo, grátis), em uma linha, destacando chuva no
+// horário de movimento (almoço 11–14h, noite 18–22h).
+// deno-lint-ignore no-explicit-any
+async function tempoDeHoje(admin: SupabaseClient, cfg: Record<string, any>, tenants: Array<{ id: string; name: string }>): Promise<string | null> {
+  const principal = tenants.find((t) => t.id === String(cfg.default_tenant_id ?? '')) ?? tenants[0];
+  if (!principal) return null;
+  const { data: ss } = await admin.from('system_settings').select('delivery_config, delivery_city').eq('tenant_id', principal.id).maybeSingle();
+  // deno-lint-ignore no-explicit-any
+  const loc = (ss?.delivery_config as any)?.store_location;
+  let lat: number, lng: number, lugar: string;
+  if (loc && typeof loc.lat === 'number' && typeof loc.lng === 'number') { lat = loc.lat; lng = loc.lng; lugar = principal.name; }
+  else if (ss?.delivery_city) {
+    const g = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(String(ss.delivery_city))}&count=1&language=pt&format=json`, { signal: AbortSignal.timeout(8000) }).then((r) => r.json());
+    const r0 = g?.results?.[0];
+    if (!r0) return null;
+    lat = r0.latitude; lng = r0.longitude; lugar = String(r0.name);
+  } else return null;
+  const w = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&timezone=America%2FSao_Paulo&forecast_days=1`
+    + '&hourly=precipitation_probability,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max',
+    { signal: AbortSignal.timeout(8000) }).then((r) => { if (!r.ok) throw new Error(`open-meteo ${r.status}`); return r.json(); });
+  const WMO: Record<number, string> = { 0: 'céu limpo', 1: 'quase limpo', 2: 'parcialmente nublado', 3: 'nublado', 45: 'nevoeiro', 48: 'nevoeiro', 51: 'garoa fraca', 53: 'garoa', 55: 'garoa forte', 61: 'chuva fraca', 63: 'chuva', 65: 'chuva forte', 80: 'pancadas fracas', 81: 'pancadas', 82: 'pancadas fortes', 95: 'trovoada', 96: 'trovoada com granizo', 99: 'trovoada forte' };
+  const cond = WMO[Number(w?.daily?.weather_code?.[0])] ?? 'tempo variável';
+  const min = Math.round(Number(w?.daily?.temperature_2m_min?.[0])), max = Math.round(Number(w?.daily?.temperature_2m_max?.[0]));
+  const horas: string[] = w?.hourly?.time ?? [];
+  const prob: number[] = w?.hourly?.precipitation_probability ?? [];
+  const chuvaEm = (de: number, ate: number) => Math.max(0, ...horas.map((t, i) => ({ h: Number(t.slice(11, 13)), p: Number(prob[i] ?? 0) })).filter((x) => x.h >= de && x.h < ate).map((x) => x.p));
+  const almoco = chuvaEm(11, 14), noite = chuvaEm(18, 22);
+  const alertas = [almoco >= 50 ? `chuva no almoço (${almoco}%)` : '', noite >= 50 ? `chuva à noite (${noite}%)` : ''].filter(Boolean);
+  return `*Tempo em ${lugar}:* ${cond}, ${min}–${max}°C${alertas.length ? ` — ${alertas.join(' e ')}, pode afetar o movimento` : ''}.`;
 }
 
 // Mantém vivo o cache de 1 h do assistente enquanto o dono está usando: uma
@@ -1139,6 +1245,10 @@ Deno.serve(async (req) => {
   const ownerChat = (cfg.primary_channel === 'telegram' && tgOwnerChat) ? tgOwnerChat : waOwnerChat;
   // deno-lint-ignore no-explicit-any
   const body: any = await req.json().catch(() => ({}));
+  if (body.preview === 'brief') {
+    try { return json({ ok: true, preview: await morningBriefText(admin, cfg, localDate()) }); }
+    catch (e) { return json({ error: errMsg(e) }, 500); }
+  }
   if (typeof body.preview === 'string') {
     try { return json({ ok: true, preview: await proactive(admin, cfg, ownerChat, body.preview) }); }
     catch (e) { return json({ error: errMsg(e) }, 500); }
@@ -1225,6 +1335,7 @@ Deno.serve(async (req) => {
   try { const pr = await proactive(admin, cfg, ownerChat); if (Object.keys(pr).length) result.proactive = pr; } catch (e) { result.proactive_error = errMsg(e); log('ERROR', 'proactive', { error: errMsg(e) }); }
   try { const pw = await payWatch(admin); if (pw) result.pay_watch = pw; } catch (e) { result.pay_watch_error = errMsg(e); log('ERROR', 'pay_watch', { error: errMsg(e) }); }
   try { const pp = await pagamentosParados(admin); if (pp) result.pagamentos_parados = pp; } catch (e) { result.pagamentos_parados_error = errMsg(e); log('ERROR', 'pagamentos_parados', { error: errMsg(e) }); }
+  try { const fg = await filaGrupo(admin); if (fg) result.fila_grupo = fg; } catch (e) { result.fila_grupo_error = errMsg(e); log('ERROR', 'fila_grupo', { error: errMsg(e) }); }
   // Agendamento de entrevistas (Contratação): convites, cobrança e lembretes — regras no hiring-scheduler
   try {
     const r = await fetch(`${supabaseUrl}/functions/v1/hiring-scheduler`, {
