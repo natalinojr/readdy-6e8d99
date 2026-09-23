@@ -195,7 +195,7 @@ export function CandidateCard({ c, companies, stage, empresa, entrevista, onOpen
   const ultima = c.experiences[0];
   const card = (
     <button onClick={onOpen} className={`w-full text-left ${compact ? 'p-3' : 'p-4'} rounded-2xl border border-zinc-200 bg-white hover:border-rose-300 hover:shadow-sm transition-all cursor-pointer`}>
-      <div className="flex items-start gap-3">
+      <div className={`flex items-start gap-3 ${onToggleSelecao ? 'pr-6' : ''}`}>
         {!compact && (
           <div className="w-10 h-10 rounded-full bg-rose-100 text-rose-700 font-black flex items-center justify-center flex-shrink-0">
             {(c.full_name || '?').charAt(0).toUpperCase()}
