@@ -74,6 +74,7 @@ interface DBInventorySession {
   valor_ajuste_liquido: number | null;
   items: unknown;
   created_at: string | null;
+  edicoes?: unknown;
 }
 
 export interface Insumo {
@@ -214,6 +215,19 @@ function dbToInventarioSession(row: DBInventorySession): InventarioSession | nul
     qtdContada: Number(item.qtd_contada ?? item.qtdContada ?? 0),
     diferenca: Number(item.diferenca ?? 0),
     precoUnitario: Number(item.preco_unitario ?? item.precoUnitario ?? 0),
+    qtdOriginal: item.qtd_original != null ? Number(item.qtd_original) : undefined,
+  }));
+  const edicoesRaw = Array.isArray(row.edicoes) ? row.edicoes : [];
+  const edicoes = edicoesRaw.map((e: Record<string, unknown>) => ({
+    em: String(e.em ?? ''),
+    por: String(e.por ?? 'Operador'),
+    motivo: e.motivo ? String(e.motivo) : null,
+    itens: (Array.isArray(e.itens) ? e.itens : []).map((x: Record<string, unknown>) => ({
+      insumoId: String(x.ingredient_id ?? ''),
+      nome: String(x.nome ?? ''),
+      de: Number(x.de ?? 0),
+      para: Number(x.para ?? 0),
+    })),
   }));
   return {
     id: row.id,
@@ -226,6 +240,7 @@ function dbToInventarioSession(row: DBInventorySession): InventarioSession | nul
     itensContados: row.itens_contados ?? 0,
     itensComDiferenca: row.itens_com_diferenca ?? 0,
     valorAjusteLiquido: Number(row.valor_ajuste_liquido ?? 0),
+    edicoes,
   };
 }
 
@@ -246,6 +261,12 @@ interface EstoqueContextValue {
   }) => Promise<void>;
   registrarPerda: (itensPerda: PerdaItem[], motivo: string, operador: string) => Promise<void>;
   confirmarInventario: (itens: InventarioItemContado[], operador: string) => Promise<void>;
+  /**
+   * Corrige quantidades de uma contagem já confirmada (na unidade do estoque). O estoque atual
+   * recebe só a diferença. Itens contados de novo numa contagem mais nova voltam em `bloqueados`.
+   */
+  editarInventario: (sessionId: string, itens: Array<{ insumoId: string; qtdContada: number }>, motivo: string) =>
+    Promise<{ editados: number; bloqueados: Array<{ nome: string; contagemMaisNova: number }> }>;
   marcarInsumoEsgotado: (insumoId: string, operador?: string) => Promise<void>;
   /** Liga/desliga todos os avisos e bloqueios deste insumo (não mexe em estoque nem CMV). */
   setRastrearEstoque: (insumoId: string, rastrear: boolean) => Promise<void>;
@@ -779,6 +800,52 @@ export function EstoqueProvider({ children }: { children: ReactNode }) {
     });
   }, [user?.tenantId, registrarEvento, broadcastStockUpdate, loadInsumos, loadMovimentacoes, loadInventarioSessions]);
 
+  const editarInventario = useCallback(async (
+    sessionId: string,
+    itens: Array<{ insumoId: string; qtdContada: number }>,
+    motivo: string,
+  ) => {
+    if (!user?.tenantId) throw new Error('Loja não identificada. Entre novamente.');
+    // Seguro repetir: vai o valor FINAL de cada item, então uma segunda chamada vê diferença zero.
+    const { data, error } = await invokeWithAuth<{ ok?: boolean; error?: string; editados?: number; bloqueados?: Array<Record<string, unknown>> }>('stock-write', {
+      body: {
+        action: 'edit_inventory',
+        tenant_id: user.tenantId,
+        session_id: sessionId,
+        items: itens.map((i) => ({ ingredient_id: i.insumoId, qtd_contada: i.qtdContada })),
+        operator_name: user.nome,
+        motivo: motivo.trim() || null,
+      },
+    });
+    const errMsg = error?.message ?? (typeof data?.error === 'string' ? data.error : null);
+    if (errMsg) throw new Error(errMsg);
+
+    broadcastStockUpdate();
+    await loadInsumos();
+    await loadMovimentacoes();
+    await loadInventarioSessions();
+
+    const editados = Number(data?.editados ?? 0);
+    const bloqueados = (data?.bloqueados ?? []).map((b) => ({
+      nome: String(b.nome ?? ''),
+      contagemMaisNova: Number(b.contagem_mais_nova ?? 0),
+    }));
+    if (editados > 0) {
+      registrarEvento({
+        tipo: 'estoque_ajustado',
+        severidade: 'aviso',
+        usuario: user.nome,
+        perfil: user.perfil,
+        descricao: `Contagem de inventário editada: ${editados} item(ns) corrigido(s)`,
+        entidade: 'Inventário',
+        entidadeId: sessionId,
+        detalhes: motivo || undefined,
+        depois: { editados },
+      });
+    }
+    return { editados, bloqueados };
+  }, [user, registrarEvento, broadcastStockUpdate, loadInsumos, loadMovimentacoes, loadInventarioSessions]);
+
   const upsertInsumo = useCallback(async (insumo: Partial<Insumo> & { nome: string }): Promise<string | undefined> => {
     if (!user?.tenantId) return;
     const isNew = !insumo.id;
@@ -876,7 +943,7 @@ export function EstoqueProvider({ children }: { children: ReactNode }) {
       insumos, movimentacoes, inventarioSessions,
       insumosEsgotados, itensDesabilitadosIds, loading, setRastrearEstoque, setContaInventario,
       addMovimentacao, registrarPerda,
-      confirmarInventario, marcarInsumoEsgotado, upsertInsumo,
+      confirmarInventario, editarInventario, marcarInsumoEsgotado, upsertInsumo,
       setInsumos, reloadInsumos: loadInsumos, reloadMovimentacoes: loadMovimentacoes,
       reloadInventarioSessions: loadInventarioSessions,
     }}>

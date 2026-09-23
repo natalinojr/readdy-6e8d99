@@ -386,6 +386,39 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       });
     }
 
+    // Corrige quantidades de uma contagem já confirmada. O estoque atual recebe só o delta e o
+    // ajuste é corrigido na data da contagem (fn_edit_inventory_session). Item contado de novo
+    // numa contagem mais nova volta em "bloqueados".
+    if (action === 'edit_inventory') {
+      const { session_id, items, operator_id, operator_name, motivo } = body;
+      if (!session_id || !Array.isArray(items)) {
+        return new Response(JSON.stringify({ error: 'session_id e items (array) sao obrigatorios' }), {
+          status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      const { data: rpcData, error: rpcErr } = await admin.rpc('fn_edit_inventory_session', {
+        p_tenant_id: tenantId,
+        p_session_id: session_id,
+        p_operator_id: operator_id ?? user.id,
+        p_operator_name: operator_name ?? 'Operador',
+        p_items: items,
+        p_motivo: motivo ?? null,
+      });
+      if (rpcErr) throw new Error(extractErrorMessage(rpcErr));
+      const result = rpcData as Record<string, unknown> | null;
+      if (!result || result.success !== true) {
+        throw new Error((result?.error as string) ?? 'Falha ao editar a contagem');
+      }
+      return new Response(JSON.stringify({
+        ok: true,
+        editados: result.editados ?? 0,
+        itens: result.itens ?? [],
+        bloqueados: result.bloqueados ?? [],
+      }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     if (action === 'confirm_inventory') {
       const { items, operator_id, operator_name } = body;
       if (!Array.isArray(items)) throw new Error('items must be array');

@@ -136,6 +136,15 @@ export interface InventarioItemContado {
   qtdContada: number;
   diferenca: number;
   precoUnitario: number;
+  /** Primeira quantidade contada, quando o item foi editado depois de confirmado. */
+  qtdOriginal?: number;
+}
+
+export interface InventarioEdicao {
+  em: string;
+  por: string;
+  motivo: string | null;
+  itens: Array<{ insumoId: string; nome: string; de: number; para: number }>;
 }
 
 export interface InventarioSession {
@@ -149,6 +158,8 @@ export interface InventarioSession {
   itensContados: number;
   itensComDiferenca: number;
   valorAjusteLiquido: number;
+  /** Correções feitas depois de confirmada (mais antiga primeiro). */
+  edicoes: InventarioEdicao[];
 }
 
 // ─── Producao (Produtos Produzidos) ────────────────────────────────────────────────
