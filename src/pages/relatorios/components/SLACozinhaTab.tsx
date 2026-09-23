@@ -205,11 +205,16 @@ export default function SLACozinhaTab({ periodo = 'Hoje' }: Props) {
   const { pedidos } = useKDS();
   const { data: historico, loading: historicoLoading } = useSLAHistorico(periodo);
 
-  const unidades = useMemo(() => deriveUnidades(pedidos), [pedidos]);
-  const slaEstacaoLive = useMemo(() => computeSLAPorEstacao(pedidos), [pedidos]);
-  const slaItemLive = useMemo(() => computeSLAPorItem(pedidos), [pedidos]);
-  const rankingOperadoresLive = useMemo(() => computeRankingOperadores(pedidos), [pedidos]);
-  const evolucaoHorariaLive = useMemo(() => computeEvolucaoHoraria(pedidos), [pedidos]);
+  // Itens sem produção (skip_kds) não entram no SLA nem aparecem na aba.
+  const pedidosProducao = useMemo(
+    () => pedidos.map((p) => ({ ...p, itens: p.itens.filter((i) => !i.semPreparo && !i.skip_kds) })),
+    [pedidos],
+  );
+  const unidades = useMemo(() => deriveUnidades(pedidosProducao), [pedidosProducao]);
+  const slaEstacaoLive = useMemo(() => computeSLAPorEstacao(pedidosProducao), [pedidosProducao]);
+  const slaItemLive = useMemo(() => computeSLAPorItem(pedidosProducao), [pedidosProducao]);
+  const rankingOperadoresLive = useMemo(() => computeRankingOperadores(pedidosProducao), [pedidosProducao]);
+  const evolucaoHorariaLive = useMemo(() => computeEvolucaoHoraria(pedidosProducao), [pedidosProducao]);
 
   const isHoje = periodo === 'Hoje';
   const temHistorico = historico.totalItens > 0;

@@ -91,6 +91,9 @@ export function useSLAHistorico(periodo: string) {
         .neq('orders.status', 'cancelled')
         .eq('orders.is_training', false)
         .eq('orders.is_draft', false)
+        // Item sem produção (skip_kds: bebida, água...) já nasce pronto com 0 min:
+        // não entra no SLA nem no tempo médio.
+        .not('skip_kds', 'is', true)
         .not('started_preparing_at', 'is', null)
         .not('ready_at', 'is', null)
         .gte('orders.created_at', from)
