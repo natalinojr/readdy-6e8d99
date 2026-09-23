@@ -19,6 +19,8 @@ interface DocRow {
   status: 'new' | 'imported' | 'ignored'; import_type: 'purchase' | 'bill' | 'bonus' | null; purchase_id: string | null;
   payable_ids: string[]; ignore_reason: string | null; manifest_status: string | null; error_message: string | null;
   imported_at: string | null;
+  /** Lançamento automático desfeito: não entra mais sozinha */
+  auto_launch_blocked?: boolean;
   /** Lançada sozinha: pela conciliação (auto_import_ref = linha do extrato) ou, sem ref,
    *  logo após a busca na SEFAZ porque o fornecedor já tinha nota lançada antes */
   auto_imported?: boolean;
@@ -27,7 +29,7 @@ interface DocRow {
   settlement?: 'monthly' | null;
   settlement_statement_ids?: string[] | null;
 }
-const COLS = 'id, chave, modelo, numero, serie, emitente_cnpj, emitente_nome, natureza, cfops, valor_total, emitted_at, sefaz_status, xml_status, parcelas, itens, frete, desconto, pagamento, status, import_type, purchase_id, payable_ids, ignore_reason, manifest_status, error_message, imported_at, auto_imported, auto_import_ref, settlement, settlement_statement_ids';
+const COLS = 'id, chave, modelo, numero, serie, emitente_cnpj, emitente_nome, natureza, cfops, valor_total, emitted_at, sefaz_status, xml_status, parcelas, itens, frete, desconto, pagamento, status, import_type, purchase_id, payable_ids, ignore_reason, manifest_status, error_message, imported_at, auto_imported, auto_import_ref, auto_launch_blocked, settlement, settlement_statement_ids';
 interface PagtoExtrato { id: string; data: string; valor: number; nome: string; tipo: string }
 
 // Nota do mês (1 nota ↔ vários pagamentos): edge conciliacao-pagamentos
@@ -72,6 +74,39 @@ function formaResumo(pag: Pag[] | undefined): string {
   return [...new Set((pag ?? []).map((p) => TPAG[p.forma] ?? 'Outros'))].join(', ');
 }
 
+// Boleto da nota parada: nota sem lançamento não tem conta a pagar, então o vencimento
+// só aparece aqui. Primeiro vencimento da nota e quantos dias faltam (negativo = vencido).
+const diasAte = (iso: string) => Math.round((new Date(`${iso}T12:00:00`).getTime() - new Date(`${hoje()}T12:00:00`).getTime()) / 86_400_000);
+function urgencia(d: DocRow): { venc: string; dias: number } | null {
+  if (d.status !== 'new' || d.sefaz_status === 2) return null;
+  const venc = (d.parcelas ?? []).map((p) => p.vencimento).filter(Boolean).sort()[0];
+  return venc ? { venc, dias: diasAte(venc) } : null;
+}
+function UrgenciaTag({ d }: { d: DocRow }) {
+  const u = urgencia(d);
+  if (!u || u.dias > 3) return null;
+  const txt = u.dias < 0 ? `vencida há ${-u.dias} dia${u.dias === -1 ? '' : 's'}` : u.dias === 0 ? 'vence hoje' : `vence em ${u.dias} dia${u.dias === 1 ? '' : 's'}`;
+  return <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${u.dias < 0 ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-800'}`} title={`1º vencimento: ${dataBR(u.venc)}`}>{txt}</span>;
+}
+
+// Por que a nota não entrou sozinha: as mesmas regras do lançamento automático
+// (fiscal-inbound › autoLaunchTenant), para o usuário não ter de adivinhar.
+interface Historico { ultima: DocRow; teto: number }
+function motivoParada(d: DocRow, h: Historico | undefined): { txt: string; dica: string } | null {
+  if (d.status !== 'new' || d.sefaz_status === 2) return null;
+  const servico = isServico(d);
+  if (d.xml_status !== 'full') return { txt: 'Aguardando XML completo', dica: 'Sem o XML não dá para ver itens e boletos. Use "Pedir XML" ou espere a próxima busca.' };
+  if (d.auto_launch_blocked) return { txt: 'Lançamento automático desfeito', dica: 'Alguém desfez o lançamento automático desta nota: ela só entra conferindo à mão.' };
+  if (!servico && isBonificacao(d)) return { txt: 'Bonificação', dica: 'Bonificação entra sozinha na próxima busca (06h e 12h). Se continuar aqui, confira o erro.' };
+  if (!h) return { txt: 'Fornecedor novo nesta loja', dica: 'Primeira nota deste CNPJ nesta loja (lançamentos de outra loja não contam). Depois que você lançar uma, as próximas entram sozinhas do mesmo jeito.' };
+  if (h.ultima.settlement === 'monthly') return { txt: 'Nota do mês', dica: 'A última nota deste fornecedor foi quitada pelos pagamentos do extrato. Esta também precisa ser vinculada aos pagamentos em Conferir.' };
+  if (servico && DESCONTA_NO_REPASSE.test(d.emitente_nome ?? '')) return { txt: 'Taxa já descontada no repasse', dica: 'Nota da comissão da plataforma: lançar pode duplicar a despesa.' };
+  if (!servico && pareceNaoVenda(d)) return { txt: 'Parece remessa/devolução', dica: `CFOP ${d.cfops ?? '—'} ou nota sem pagamento: normalmente se ignora.` };
+  if (!servico && h.ultima.import_type !== 'purchase') return { txt: 'Última foi lançada como despesa', dica: 'NF-e só entra sozinha como compra. Confira como lançar esta.' };
+  if (h.teto > 0 && Number(d.valor_total ?? 0) > h.teto * 3) return { txt: 'Valor fora do normal', dica: `Mais de 3× a maior nota já lançada deste fornecedor (${brl(h.teto)}).` };
+  return { txt: 'Entra sozinha na próxima busca', dica: 'Fornecedor conhecido: o lançamento automático pega esta nota na próxima busca (06h, 12h ou "Buscar notas agora").' };
+}
+
 export default function NotasEntradaTab() {
   const { user } = useAuth();
   const { success: toastOk, error: toastErr } = useToast();
@@ -89,6 +124,10 @@ export default function NotasEntradaTab() {
   const [ultimaSync, setUltimaSync] = useState<{ at: string | null; erro: string | null; temToken: boolean }>({ at: null, erro: null, temToken: false });
   const [aberto, setAberto] = useState<DocRow | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [ordem, setOrdem] = useState<'emissao' | 'vencimento'>('emissao');
+  const [sel, setSel] = useState<Set<string>>(new Set());
+  const [ignorandoLote, setIgnorandoLote] = useState(false);
+  useEffect(() => { setSel(new Set()); }, [filtro, tipoDoc, busca]);
 
   const call = useCallback(async <T,>(body: Record<string, unknown>) => {
     const { data, error } = await invokeWithAuth<T & { success?: boolean; error?: string }>('fiscal-inbound', { body: { tenant_id: tenantId, ...body } });
@@ -136,19 +175,65 @@ export default function NotasEntradaTab() {
 
   const filtrados = useMemo(() => {
     const q = busca.trim().toLowerCase();
-    return docs.filter((d) => {
+    const lista = docs.filter((d) => {
       if (filtro !== 'all' && d.status !== filtro) return false;
       if (tipoDoc === 'nfe' && isServico(d)) return false;
       if (tipoDoc === 'nfse' && !isServico(d)) return false;
       if (!q) return true;
       return (d.emitente_nome ?? '').toLowerCase().includes(q) || (d.emitente_cnpj ?? '').includes(q.replace(/\D/g, '') || '§') || String(d.numero ?? '').includes(q);
     });
-  }, [docs, filtro, busca, tipoDoc]);
+    if (ordem === 'vencimento') {
+      // Parada com boleto primeiro (mais vencida no topo); o resto mantém a ordem de emissão
+      const venc = (d: DocRow) => urgencia(d)?.venc ?? '9999-12-31';
+      lista.sort((a, b) => venc(a).localeCompare(venc(b)));
+    }
+    return lista;
+  }, [docs, filtro, busca, tipoDoc, ordem]);
+
+  // Última nota lançada e maior valor por fornecedor NESTA loja (base do "por que parou")
+  const historico = useMemo(() => {
+    const m = new Map<string, Historico>();
+    const lancadas = docs.filter((d) => d.status === 'imported' && d.emitente_cnpj)
+      .sort((a, b) => (b.imported_at ?? '').localeCompare(a.imported_at ?? ''));
+    for (const d of lancadas) {
+      const k = d.emitente_cnpj as string;
+      const h = m.get(k);
+      if (!h) m.set(k, { ultima: d, teto: Number(d.valor_total ?? 0) });
+      else h.teto = Math.max(h.teto, Number(d.valor_total ?? 0));
+    }
+    return m;
+  }, [docs]);
+
+  const selecionaveis = filtrados.filter((d) => d.status === 'new');
+  const todasSel = selecionaveis.length > 0 && selecionaveis.every((d) => sel.has(d.id));
+  const toggleSel = (id: string) => setSel((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  const toggleTodas = () => setSel(todasSel ? new Set() : new Set(selecionaveis.map((d) => d.id)));
+
+  const ignorarSelecionadas = async () => {
+    const alvo = docs.filter((d) => sel.has(d.id) && d.status === 'new');
+    if (alvo.length === 0) return;
+    if (!window.confirm(`Ignorar ${alvo.length} nota(s)?\n\nElas saem de "A conferir" e não viram compra nem despesa. Dá para desfazer depois no filtro "Ignoradas".`)) return;
+    setIgnorandoLote(true);
+    let ok = 0;
+    const falhas: string[] = [];
+    for (const d of alvo) {
+      const r = await call<{ motivo?: string }>({ document_id: d.id, action: 'ignore', reason: d.sefaz_status === 2 ? 'Cancelada pelo fornecedor' : 'Ignorada na conferência (em lote)' });
+      if (r.success) ok++; else falhas.push(`${d.numero ?? '—'}: ${r.error || r.motivo || 'erro'}`);
+    }
+    setIgnorandoLote(false);
+    setSel(new Set());
+    if (falhas.length) toastErr(`${ok} ignorada(s), ${falhas.length} com erro`, falhas.slice(0, 3).join(' · '));
+    else toastOk(`${ok} nota(s) ignorada(s)`);
+    await carregar();
+  };
 
   const resumo = useMemo(() => {
     const novas = docs.filter((d) => d.status === 'new' && d.sefaz_status !== 2);
+    const vencidas = novas.filter((d) => (urgencia(d)?.dias ?? 0) < 0);
     return {
       novas: novas.length,
+      vencidas: vencidas.length,
+      valorVencidas: vencidas.reduce((s, d) => s + Number(d.valor_total ?? 0), 0),
       valorNovas: novas.reduce((s, d) => s + Number(d.valor_total ?? 0), 0),
       semXml: novas.filter((d) => d.xml_status !== 'full').length,
       canceladas: docs.filter((d) => d.sefaz_status === 2 && d.status !== 'ignored').length,
@@ -186,6 +271,10 @@ export default function NotasEntradaTab() {
                     : 'Lançada automaticamente: este fornecedor já tinha nota lançada antes, e esta entrou do mesmo jeito. Se estiver errada, use "Desfazer".'}>automática</span>}{d.settlement === 'monthly' && <span className="ml-1 text-[11px] font-bold px-2 py-0.5 rounded-full bg-violet-50 text-violet-700" title="Nota do mês: quitada pelos pagamentos do extrato">paga no mês · {(d.settlement_statement_ids ?? []).length} pagto(s)</span>}</>
                   : d.status === 'ignored' ? <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-zinc-100 text-zinc-500" title={d.ignore_reason ?? ''}>Ignorada</span>
                   : <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700">A conferir</span>}
+      {(() => {
+        const m = motivoParada(d, d.emitente_cnpj ? historico.get(d.emitente_cnpj) : undefined);
+        return m && <span className="block w-full mt-0.5 text-[10px] text-zinc-500 cursor-help" title={m.dica}><i className="ri-question-line mr-0.5" />{m.txt}</span>;
+      })()}
     </>
   );
 
@@ -253,7 +342,7 @@ export default function NotasEntradaTab() {
         <div>
           <h2 className="text-sm font-bold text-zinc-800">Notas de entrada (SEFAZ)</h2>
           <p className="text-xs text-zinc-500 mt-0.5 max-w-2xl">
-            NF-e emitidas pelos fornecedores contra o CNPJ da loja. Nota de fornecedor que já teve nota lançada entra sozinha, do mesmo jeito da última vez (selo "automática"); aqui ficam só as que precisam de você: fornecedor novo, remessa/bonificação, taxa de plataforma e valor fora do normal.
+            NF-e emitidas pelos fornecedores contra o CNPJ da loja. Nota de fornecedor que já teve nota lançada nesta loja entra sozinha, do mesmo jeito da última vez (selo "automática"); aqui ficam só as que precisam de você: fornecedor novo, remessa/bonificação, taxa de plataforma e valor fora do normal.
           </p>
           <p className="text-[11px] text-zinc-400 mt-1">
             {ultimaSync.at ? `Última busca: ${new Date(ultimaSync.at).toLocaleString('pt-BR')}` : 'Ainda não buscamos notas nesta loja.'}
@@ -273,6 +362,12 @@ export default function NotasEntradaTab() {
           <p className="text-[11px] font-semibold text-zinc-400 uppercase">A conferir</p>
           <p className="text-xl font-bold text-amber-600 mt-1">{resumo.novas}</p>
           <p className="text-xs text-zinc-500">{brl(resumo.valorNovas)}</p>
+          {resumo.vencidas > 0 && (
+            <button onClick={() => { setFiltro('new'); setOrdem('vencimento'); }} title="Nota parada não vira conta a pagar: o boleto dela não aparece em Contas a Pagar"
+              className="mt-1 text-[11px] font-semibold text-red-600 hover:underline cursor-pointer text-left">
+              {resumo.vencidas} com boleto vencido · {brl(resumo.valorVencidas)}
+            </button>
+          )}
         </div>
         <div className="bg-white rounded-xl border border-zinc-100 p-4">
           <p className="text-[11px] font-semibold text-zinc-400 uppercase">Sem XML completo</p>
@@ -308,7 +403,23 @@ export default function NotasEntradaTab() {
         ))}
         <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Fornecedor, CNPJ ou nº da nota"
           className="flex-1 min-w-[180px] text-sm border border-zinc-200 rounded-lg px-3 py-1.5 focus:outline-none focus:border-amber-400" />
+        <select value={ordem} onChange={(e) => setOrdem(e.target.value as 'emissao' | 'vencimento')}
+          className="text-xs border border-zinc-200 rounded-lg px-2 py-1.5 focus:outline-none focus:border-amber-400 cursor-pointer">
+          <option value="emissao">Mais recentes</option>
+          <option value="vencimento">Boleto mais urgente</option>
+        </select>
       </div>
+
+      {sel.size > 0 && (
+        <div className="bg-zinc-900 text-white rounded-xl px-4 py-2.5 flex flex-wrap items-center gap-3 text-xs">
+          <span className="font-semibold">{sel.size} selecionada(s)</span>
+          <button onClick={ignorarSelecionadas} disabled={ignorandoLote}
+            className="inline-flex items-center gap-1 font-semibold px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 disabled:opacity-50 cursor-pointer">
+            <i className={ignorandoLote ? 'ri-loader-4-line animate-spin' : 'ri-eye-off-line'} />{ignorandoLote ? 'Ignorando…' : 'Ignorar selecionadas'}
+          </button>
+          <button onClick={() => setSel(new Set())} className="ml-auto text-zinc-300 hover:text-white cursor-pointer">Limpar seleção</button>
+        </div>
+      )}
 
       {/* Lista */}
       <div className="bg-white rounded-xl border border-zinc-100 overflow-hidden">
@@ -331,7 +442,12 @@ export default function NotasEntradaTab() {
               return (
                 <li key={d.id} className={`rounded-xl border bg-white px-3 py-3 ${cancelada ? 'border-red-200 bg-red-50/40' : d.status === 'new' ? 'border-amber-200' : 'border-zinc-200'}`}>
                   <div className="flex items-baseline justify-between gap-2">
-                    <span className="text-[11px] text-zinc-400 whitespace-nowrap">{dataBR(d.emitted_at)}</span>
+                    <span className="text-[11px] text-zinc-400 whitespace-nowrap inline-flex items-center gap-2">
+                      {d.status === 'new' && (
+                        <input type="checkbox" checked={sel.has(d.id)} onChange={() => toggleSel(d.id)} aria-label="Selecionar nota" className="w-4 h-4 cursor-pointer" />
+                      )}
+                      {dataBR(d.emitted_at)}
+                    </span>
                     <span className="text-base font-bold text-zinc-900 whitespace-nowrap">{brl(d.valor_total)}</span>
                   </div>
                   <p className="text-sm font-medium text-zinc-800 break-words line-clamp-2">{d.emitente_nome ?? '—'}</p>
@@ -340,7 +456,7 @@ export default function NotasEntradaTab() {
                     {d.numero ?? '—'}{d.serie ? `/${d.serie}` : ''} · {cnpjFmt(d.emitente_cnpj)}
                   </p>
                   {(d.parcelas ?? []).length > 0 && (
-                    <p className="text-[11px] text-zinc-500 mt-0.5">{(d.parcelas ?? []).length}× · próx. {dataBR(proxima?.vencimento)}</p>
+                    <p className="text-[11px] text-zinc-500 mt-0.5">{(d.parcelas ?? []).length}× · próx. {dataBR(proxima?.vencimento)} <UrgenciaTag d={d} /></p>
                   )}
                   {d.error_message && d.status === 'new' && <p className="text-[11px] text-red-500 break-words line-clamp-2 mt-0.5">{d.error_message}</p>}
                   <div className="flex items-center gap-1.5 flex-wrap mt-2">
@@ -358,6 +474,11 @@ export default function NotasEntradaTab() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-[11px] uppercase text-zinc-400 border-b border-zinc-100">
+                  <th className="pl-4 py-2.5 w-6">
+                    {selecionaveis.length > 0 && (
+                      <input type="checkbox" checked={todasSel} onChange={toggleTodas} title="Selecionar todas as notas a conferir da lista" className="cursor-pointer" />
+                    )}
+                  </th>
                   <th className="text-left px-4 py-2.5 font-semibold">Emissão</th>
                   <th className="text-left px-4 py-2.5 font-semibold">Fornecedor</th>
                   <th className="text-left px-4 py-2.5 font-semibold">Nota</th>
@@ -373,7 +494,10 @@ export default function NotasEntradaTab() {
                   const proxima = (d.parcelas ?? []).find((p) => p.vencimento >= hoje()) ?? (d.parcelas ?? [])[0];
                   const isBusy = busy === d.id;
                   return (
-                    <tr key={d.id} className={`border-b border-zinc-50 hover:bg-zinc-50/60 ${cancelada ? 'bg-red-50/40' : ''}`}>
+                    <tr key={d.id} className={`border-b border-zinc-50 hover:bg-zinc-50/60 ${cancelada ? 'bg-red-50/40' : sel.has(d.id) ? 'bg-amber-50/50' : ''}`}>
+                      <td className="pl-4 py-2.5 w-6">
+                        {d.status === 'new' && <input type="checkbox" checked={sel.has(d.id)} onChange={() => toggleSel(d.id)} aria-label="Selecionar nota" className="cursor-pointer" />}
+                      </td>
                       <td className="px-4 py-2.5 text-zinc-600 whitespace-nowrap">{dataBR(d.emitted_at)}</td>
                       <td className="px-4 py-2.5 min-w-[200px]">
                         <p className="font-medium text-zinc-800 truncate max-w-[260px]" title={d.emitente_nome ?? ''}>{d.emitente_nome ?? '—'}</p>
@@ -396,6 +520,7 @@ export default function NotasEntradaTab() {
                           : (d.parcelas ?? []).length === 0 ? <span className="text-[11px] text-zinc-500">sem boleto · {formaResumo(d.pagamento) || 'pago na hora?'}</span>
                           : <>
                               <span className="text-xs">{(d.parcelas ?? []).length}× · próx. {dataBR(proxima?.vencimento)}</span>
+                              <span className="block mt-0.5"><UrgenciaTag d={d} /></span>
                             </>}
                       </td>
                       <td className="px-4 py-2.5 whitespace-nowrap">
