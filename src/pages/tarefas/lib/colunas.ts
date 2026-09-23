@@ -15,6 +15,8 @@ export interface ColunaDef {
   id: ColunaId;
   label: string;
   larguraPx: number;
+  /** Campo personalizado (o menu de colunas mostra esses numa seção própria, primeiro). */
+  personalizado?: boolean;
 }
 
 export const COLUNAS_NATIVAS: ColunaDef[] = [
@@ -34,11 +36,29 @@ export const COLUNAS_NATIVAS: ColunaDef[] = [
 /** Default = o que já aparecia antes de existir esse menu (não muda a experiência de quem já usa). */
 const COLUNAS_PADRAO: ColunaId[] = ['responsavel', 'vencimento', 'prioridade', 'etiquetas'];
 
-export function colunasDisponiveis(campos: CampoCustom[], listId: string | null): ColunaDef[] {
+/**
+ * Numa pasta: os campos dela + os globais. Numa visão que junta várias pastas
+ * (Minhas/Compartilhadas/Todas, `listId` null): TODOS os campos — antes só os
+ * globais, e um campo criado dentro de uma pasta nunca aparecia ali. Nesse caso
+ * o nome da pasta vai junto, pra diferenciar campos de mesmo nome.
+ */
+export function colunasDisponiveis(
+  campos: CampoCustom[],
+  listId: string | null,
+  nomePasta: (listId: string) => string | null = () => null,
+): ColunaDef[] {
   const doCampos: ColunaDef[] = campos
-    .filter((c) => c.list_id === null || c.list_id === listId)
+    .filter((c) => listId === null || c.list_id === null || c.list_id === listId)
     .sort((a, b) => a.sort_order - b.sort_order)
-    .map((c) => ({ id: `campo:${c.id}` as ColunaId, label: c.name, larguraPx: 150 }));
+    .map((c) => {
+      const pasta = listId === null && c.list_id ? nomePasta(c.list_id) : null;
+      return {
+        id: `campo:${c.id}` as ColunaId,
+        label: pasta ? `${c.name} · ${pasta}` : c.name,
+        larguraPx: 150,
+        personalizado: true,
+      };
+    });
   return [...COLUNAS_NATIVAS, ...doCampos];
 }
 

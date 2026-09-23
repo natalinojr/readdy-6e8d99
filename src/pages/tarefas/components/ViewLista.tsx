@@ -318,7 +318,10 @@ export default function ViewLista({
   // Só tarefas-raiz nos grupos; subtarefas aparecem aninhadas na sua tarefa-pai.
   const raizes = tasks.filter((t) => !t.parent_task_id);
   const grupos = agruparTarefas(raizes, groupBy, list, usuarios, campos);
-  const todasColunas = colunasDisponiveis(campos, list?.id ?? null);
+  const todasColunas = colunasDisponiveis(
+    campos, list?.id ?? null,
+    (listId) => tasks.find((t) => t.list_id === listId)?.list_name ?? null,
+  );
   const colunas = ordenarColunas(todasColunas.filter((c) => colunasVisiveis.includes(c.id)), ordemColunas);
   const temCronometro = colunas.some((c) => c.id === 'cronometro');
   const agora = useAgora(temCronometro && tasks.some((t) => t.timer_started_at));

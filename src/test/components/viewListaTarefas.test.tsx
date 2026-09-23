@@ -186,3 +186,28 @@ describe('Ordem das colunas', () => {
     expect(ordemTela).toEqual(['Etiquetas', 'Responsável', 'Vencimento', 'Prioridade']);
   });
 });
+
+describe('Menu de colunas: campos personalizados', () => {
+  beforeEach(() => localStorage.clear());
+  const campo = {
+    id: 'f1', list_id: 'L1', name: 'Disciplina', field_type: 'dropdown', options: [], show_on_card: false, sort_order: 1,
+  } as unknown as import('@/pages/tarefas/hooks/useTarefas').CampoCustom;
+
+  it('campo da pasta aparece primeiro no menu, e também na visão Todas (com o nome da pasta)', () => {
+    const { unmount } = render(
+      <ViewLista list={lista} tasks={[tarefa('a', 'Tarefa A')]} campos={[campo]} tags={[]} usuarios={[]}
+        groupBy="status" write={vi.fn()} onOpenTask={vi.fn()} />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /Colunas/ }));
+    const itens = screen.getAllByRole('button').map((b) => b.textContent).filter((t) => t === 'Disciplina' || t === 'Responsável');
+    expect(itens.slice(0, 2)).toEqual(['Disciplina', 'Responsável']); // o menu vem antes do cabeçalho da lista
+    unmount();
+
+    render(
+      <ViewLista list={null} chaveColunas="todas" tasks={[tarefa('a', 'Tarefa A')]} campos={[campo]} tags={[]} usuarios={[]}
+        groupBy="status" write={vi.fn()} onOpenTask={vi.fn()} />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /Colunas/ }));
+    expect(screen.getByText('Disciplina · Pasta')).toBeTruthy();
+  });
+});
