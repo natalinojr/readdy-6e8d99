@@ -2,8 +2,8 @@
 // leitura por RPC fn_get_tasks / fn_get_task_detail / fn_get_users_list / fn_get_task_capacities e
 // gravação pela Edge task-write (sempre com invokeUmaVez — gravação nunca repete).
 //
-// Visibilidade: fn_get_tasks devolve só o que eu criei ou sou responsável (o módulo é por pessoa),
-// então "da equipe" aqui é sempre "da equipe que passa por mim".
+// Visibilidade: fn_get_tasks devolve as tarefas das pastas que eu acesso (minhas + compartilhadas
+// comigo, task_list_shares) e as que estão comigo. "Da equipe" aqui é sempre esse alcance.
 import { supabase } from '@/lib/supabase';
 import { dateKeyBrasilia, todayBrasilia } from '@/lib/dateUtils';
 import type { TaskRow } from '@/pages/tarefas/hooks/useTarefas';
@@ -13,11 +13,12 @@ export const COR_TAREFAS = 'bg-indigo-50 text-indigo-600';
 
 export const aberta = (t: TaskRow) => t.status_category !== 'done' && t.status_category !== 'cancelled';
 
-/** Tarefas abertas (e não arquivadas) da loja ativa que eu enxergo. Só tarefas-raiz e subtarefas, como na tela. */
-export async function carregarTarefas(tenantId: string): Promise<{ tarefas: TaskRow[]; erro: string | null }> {
+/** Tarefas abertas (e não arquivadas) da loja ativa que eu enxergo. `incluirConcluidas` traz também as fechadas (Carga). */
+export async function carregarTarefas(tenantId: string, incluirConcluidas = false): Promise<{ tarefas: TaskRow[]; erro: string | null }> {
   const { data, error } = await supabase.rpc('fn_get_tasks', { p_tenant_id: tenantId });
   if (error) return { tarefas: [], erro: error.message };
-  return { tarefas: ((data as TaskRow[]) ?? []).filter(aberta), erro: null };
+  const todas = (data as TaskRow[]) ?? [];
+  return { tarefas: incluirConcluidas ? todas : todas.filter(aberta), erro: null };
 }
 
 export interface Pessoa { id: string; nome: string }

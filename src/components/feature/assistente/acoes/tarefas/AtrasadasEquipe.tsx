@@ -1,5 +1,5 @@
-// Ação rápida: ranking das tarefas atrasadas por responsável (sem IA). fn_get_tasks só devolve o
-// que eu criei ou sou responsável — "da equipe" aqui é sempre a equipe que passa por mim. Cobrar e
+// Ação rápida: ranking das tarefas atrasadas por responsável (sem IA). fn_get_tasks devolve as das
+// pastas que eu acesso (minhas + compartilhadas) e as que estão comigo — "da equipe" é esse alcance. Cobrar e
 // adiar usam os mesmos caminhos das outras ações de tarefa (add_comment / update_task).
 import { useEffect, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
@@ -29,7 +29,7 @@ export default function AtrasadasEquipe({ onFechar, irPara }: AcaoProps) {
       const atrasadas = todas.filter(atrasada);
       setTarefas(atrasadas);
       if (!atrasadas.length) { r.bot('Nada atrasado. 👌'); setPasso('fim'); return; }
-      r.bot('Tarefas que você criou ou é responsável.');
+      r.bot('Tarefas das suas pastas, das pastas compartilhadas com você e as que estão com você.');
       setPasso('lista');
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
