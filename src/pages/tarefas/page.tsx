@@ -651,6 +651,7 @@ export default function TarefasPage() {
       {openTaskId && (
         <TaskDrawer
           taskId={openTaskId}
+          task={tasks.find((t) => t.id === openTaskId)}
           lists={lists}
           tags={tags}
           campos={campos}
