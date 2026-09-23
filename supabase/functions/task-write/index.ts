@@ -583,6 +583,28 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         return json({ success: true });
       }
 
+      // ═══ Carga de trabalho: horas por dia de cada pessoa ═══
+      case 'set_capacity': {
+        // hours[0] = domingo … hours[6] = sábado. Qualquer um pode ajustar as
+        // próprias horas ou as de quem divide alguma loja com ele.
+        const { user_id: alvo, hours } = body;
+        if (!alvo) return json({ error: 'user_id is required' }, 400);
+        const valido = Array.isArray(hours) && hours.length === 7
+          && hours.every((h: unknown) => typeof h === 'number' && Number.isFinite(h) && h >= 0 && h <= 24);
+        if (!valido) return json({ error: 'hours deve ter 7 números entre 0 e 24' }, 400);
+        if (alvo !== user.id) {
+          const meusTenants = tenantRows.map((r) => r.tenant_id);
+          const { data: comum } = await admin.from('user_tenants')
+            .select('tenant_id').eq('user_id', alvo).in('tenant_id', meusTenants).limit(1);
+          if (!comum?.length) return json({ error: 'Essa pessoa não é de nenhuma das suas lojas' }, 403);
+        }
+        const { error } = await admin.from('task_user_capacity').upsert({
+          user_id: alvo, hours, updated_by: user.id, updated_at: new Date().toISOString(),
+        }, { onConflict: 'user_id' });
+        if (error) return json({ error: errMsg(error) }, 500);
+        return json({ success: true });
+      }
+
       // ═══ Checklist ═══
       case 'add_checklist_item': {
         const { task_id, title } = body;

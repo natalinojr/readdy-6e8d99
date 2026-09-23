@@ -1,12 +1,13 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, CalendarOff, ChevronLeft, ChevronRight, Clock, Settings2, Timer, UserX, X } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
+import { supabase } from '@/lib/supabase';
 import type { TaskRow } from '../hooks/useTarefas';
 import type { UsuarioOption } from '../lib/agrupamento';
 import type { Capacidade, Parcela } from '../lib/carga';
 import {
-  CAPACIDADE_PADRAO, SEM_RESPONSAVEL, calcularCarga, carregarCapacidades, chaveDia, minutosNoDia,
-  minutosRestantes, salvarCapacidades, somarDias,
+  CAPACIDADE_PADRAO, SEM_RESPONSAVEL, calcularCarga, capacidadesLocaisAntigas, chaveDia, esquecerCapacidadesLocais,
+  minutosNoDia, minutosRestantes, somarDias,
 } from '../lib/carga';
 import { formatarHoras } from '../lib/tempo';
 import { iniciais } from './TaskCard';
@@ -44,7 +45,9 @@ export default function ViewCarga({ tasks, usuarios, write, onOpenTask }: ViewCa
   const toast = useToast();
   const [periodo, setPeriodo] = useState<Periodo>('semana');
   const [inicio, setInicio] = useState(() => segundaDaSemana(new Date()));
-  const [capacidades, setCapacidades] = useState<Record<string, Capacidade>>(() => carregarCapacidades());
+  // Horas de trabalho por pessoa — vêm do banco (task_user_capacity), valem pra todo mundo.
+  const [capacidades, setCapacidades] = useState<Record<string, Capacidade>>({});
+  const salvarTimers = useRef<Record<string, number>>({});
   const [celula, setCelula] = useState<{ pessoa: string; dia: string } | null>(null);
   const [pendencia, setPendencia] = useState<'estimativa' | 'data' | 'atrasadas' | null>(null);
   const [editandoCap, setEditandoCap] = useState<string | null>(null);
@@ -85,14 +88,43 @@ export default function ViewCarga({ tasks, usuarios, write, onOpenTask }: ViewCa
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tasks, usuarios]);
 
+  // Carrega as horas das pessoas da tela. Na primeira vez, leva pro banco o
+  // que a pessoa tinha configurado só no navegador (versão antiga).
+  const idsPessoas = pessoas.filter((p) => p !== SEM_RESPONSAVEL).sort().join(',');
+  useEffect(() => {
+    if (!idsPessoas) return;
+    let cancelado = false;
+    (async () => {
+      const ids = idsPessoas.split(',');
+      const { data, error } = await supabase.rpc('fn_get_task_capacities', { p_user_ids: ids });
+      if (cancelado || error) return;
+      const doBanco = (data ?? {}) as Record<string, Capacidade>;
+      const locais = capacidadesLocaisAntigas();
+      const levar = ids.filter((id) => locais[id] && !doBanco[id]);
+      setCapacidades({ ...doBanco, ...Object.fromEntries(levar.map((id) => [id, locais[id]])) });
+      const levados: string[] = [];
+      for (const id of levar) {
+        const res = await write('set_capacity', { user_id: id, hours: locais[id] });
+        if (res.success) levados.push(id);
+      }
+      if (levados.length) esquecerCapacidadesLocais(levados);
+    })();
+    return () => { cancelado = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [idsPessoas]);
+
   const navegar = (sentido: 1 | -1) => setInicio((d) => somarDias(d, sentido * (periodo === 'mes' ? 28 : 7)));
 
   const alterarCapacidade = (pessoa: string, dow: number, horas: number) => {
     const nova = [...capacidadeDe(pessoa)] as Capacidade;
     nova[dow] = Math.max(0, Math.min(24, horas));
-    const todas = { ...capacidades, [pessoa]: nova };
-    setCapacidades(todas);
-    salvarCapacidades(todas);
+    setCapacidades((prev) => ({ ...prev, [pessoa]: nova }));
+    // Grava 600 ms depois da última mudança (cada tecla no campo não vira uma escrita).
+    window.clearTimeout(salvarTimers.current[pessoa]);
+    salvarTimers.current[pessoa] = window.setTimeout(async () => {
+      const res = await write('set_capacity', { user_id: pessoa, hours: nova });
+      if (!res.success) toast.error('Não foi possível salvar as horas', res.error);
+    }, 600);
   };
 
   const passarPara = async (task: TaskRow, pessoa: string) => {

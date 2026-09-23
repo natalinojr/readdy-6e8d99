@@ -3,8 +3,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/react';
 
 vi.mock('@/contexts/ToastContext', () => ({ useToast: () => ({ error: vi.fn(), success: vi.fn() }) }));
+const rpc = vi.hoisted(() => vi.fn());
+vi.mock('@/lib/supabase', () => ({ supabase: { rpc } }));
 
 import ViewLista from '@/pages/tarefas/components/ViewLista';
+import ViewCarga from '@/pages/tarefas/components/ViewCarga';
 import type { TaskList, TaskRow } from '@/pages/tarefas/hooks/useTarefas';
 import { lerDuracao, formatarDuracao } from '@/pages/tarefas/lib/tempo';
 import { calcularCarga, minutosNoDia, CAPACIDADE_PADRAO, type Capacidade } from '@/pages/tarefas/lib/carga';
@@ -122,5 +125,35 @@ describe('Lista: colunas de tempo', () => {
     fireEvent.change(input, { target: { value: '1h30' } });
     fireEvent.submit(input.closest('form')!);
     expect(write).toHaveBeenCalledWith('update_task', { task_id: 'a', time_estimate_minutes: 90 });
+  });
+});
+
+describe('Carga: horas de trabalho no banco', () => {
+  beforeEach(() => { localStorage.clear(); rpc.mockReset(); });
+
+  const tarefas = [
+    tarefa('a', { assignee_id: 'u1', assignee_name: 'Maria', time_estimate_minutes: 60, due_date: new Date().toISOString() }),
+    tarefa('b', { assignee_id: 'u2', assignee_name: 'João', time_estimate_minutes: 60, due_date: new Date().toISOString() }),
+  ];
+
+  it('lê do banco, leva o que só estava no navegador e grava ao editar', async () => {
+    rpc.mockResolvedValue({ data: { u1: [0, 4, 4, 4, 4, 4, 0] }, error: null });
+    localStorage.setItem('erpos_tarefas_capacidade', JSON.stringify({ u2: [0, 6, 6, 6, 6, 6, 6] }));
+    const write = vi.fn().mockResolvedValue({ success: true });
+    render(<ViewCarga tasks={tarefas} usuarios={[]} write={write} onOpenTask={vi.fn()} />);
+
+    await vi.waitFor(() => expect(rpc).toHaveBeenCalledWith('fn_get_task_capacities', { p_user_ids: ['u1', 'u2'] }));
+    // u2 só existia no navegador → vai pro banco e sai do navegador
+    await vi.waitFor(() => expect(write).toHaveBeenCalledWith('set_capacity', { user_id: 'u2', hours: [0, 6, 6, 6, 6, 6, 6] }));
+    await vi.waitFor(() => expect(localStorage.getItem('erpos_tarefas_capacidade')).toBeNull());
+    expect(await screen.findByText(/\/ 20h/)).toBeTruthy(); // Maria: 5 × 4h, vindo do banco
+
+    vi.useFakeTimers();
+    fireEvent.click(screen.getAllByTitle('Horas de trabalho por dia')[1]); // Maria (ordem alfabética: João, Maria)
+    const seg = screen.getAllByRole('spinbutton')[0];
+    fireEvent.change(seg, { target: { value: '8' } });
+    vi.advanceTimersByTime(700);
+    vi.useRealTimers();
+    expect(write).toHaveBeenCalledWith('set_capacity', { user_id: 'u1', hours: [0, 8, 4, 4, 4, 4, 0] });
   });
 });

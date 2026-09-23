@@ -116,22 +116,28 @@ export function minutosNoDia(r: ResultadoCarga, pessoa: string, dia: string): nu
   return (r.porPessoa.get(pessoa)?.get(dia) ?? []).reduce((s, p) => s + p.minutos, 0);
 }
 
-// ── Capacidade: preferência de quem olha a tela (localStorage) ──
-const CHAVE_CAPACIDADE = 'erpos_tarefas_capacidade';
+// ── Capacidade antiga no localStorage ──
+// Até 2026-09-23 as horas ficavam só no navegador de quem configurava. Hoje
+// ficam no banco (task_user_capacity); isto só serve pra levar o que já tinha
+// sido configurado pro banco na primeira vez que a Carga abre.
+const CHAVE_CAPACIDADE_LOCAL = 'erpos_tarefas_capacidade';
 
-export function carregarCapacidades(): Record<string, Capacidade> {
+export function capacidadesLocaisAntigas(): Record<string, Capacidade> {
   try {
-    const obj = JSON.parse(localStorage.getItem(CHAVE_CAPACIDADE) ?? '{}');
+    const obj = JSON.parse(localStorage.getItem(CHAVE_CAPACIDADE_LOCAL) ?? '{}');
     return obj && typeof obj === 'object' ? obj as Record<string, Capacidade> : {};
   } catch {
     return {};
   }
 }
 
-export function salvarCapacidades(caps: Record<string, Capacidade>): void {
+export function esquecerCapacidadesLocais(ids: string[]): void {
   try {
-    localStorage.setItem(CHAVE_CAPACIDADE, JSON.stringify(caps));
+    const resto = capacidadesLocaisAntigas();
+    for (const id of ids) delete resto[id];
+    if (Object.keys(resto).length) localStorage.setItem(CHAVE_CAPACIDADE_LOCAL, JSON.stringify(resto));
+    else localStorage.removeItem(CHAVE_CAPACIDADE_LOCAL);
   } catch {
-    /* sem localStorage — vale só nesta sessão */
+    /* sem localStorage */
   }
 }
