@@ -4,11 +4,12 @@
 //
 // Visibilidade: fn_get_tasks devolve as tarefas das pastas que eu acesso (minhas + compartilhadas
 // comigo, task_list_shares) e as que estão comigo. "Da equipe" aqui é sempre esse alcance.
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { supabase } from '@/lib/supabase';
 import { dateKeyBrasilia, todayBrasilia } from '@/lib/dateUtils';
-import type { TaskRow } from '@/pages/tarefas/hooks/useTarefas';
+import { useAuth } from '@/contexts/AuthContext';
+import type { TaskList, TaskRow } from '@/pages/tarefas/hooks/useTarefas';
 import { Opcao, OpcaoNeutra, dataBR, horaBR, invokeUmaVez, somaDias } from '../kit';
 
 export const COR_TAREFAS = 'bg-indigo-50 text-indigo-600';
@@ -117,33 +118,69 @@ export const filtrarPorTexto = (lista: TaskRow[], termo: string) => {
 };
 
 /**
- * Escolher uma tarefa em dois passos: primeiro a PASTA, depois a tarefa dela
- * (pedido do dono, 2026-09-23 — lista única de tarefas de todas as pastas era
- * difícil de achar). Uma pasta só = vai direto pras tarefas. Com mais de 8
- * tarefas aparece a busca, que procura em todas as pastas de uma vez.
+ * Escolher uma tarefa pela PASTA (pedido do dono, 2026-09-23 — lista única de tarefas de todas as
+ * pastas era difícil de achar). Navega pela árvore como a barra lateral da tela Tarefas: primeiro só
+ * as pastas-mãe, na mesma ordem (sort_order de fn_get_task_lists); tocar numa mostra as subpastas
+ * dela e as tarefas que estão direto nela. Só aparecem pastas com tarefa na subárvore. Enquanto só
+ * houver um caminho (uma pasta e nada solto), desce sozinho. Tarefa de pasta que não vem em
+ * fn_get_task_lists (ex.: está comigo numa pasta de outra pessoa) vira pasta-mãe pelo nome.
+ * Com mais de 8 tarefas aparece a busca, que procura em todas as pastas de uma vez.
  * `renderTarefa` desenha cada tarefa do jeito da ação (extra, ícone, responsável).
  */
+interface NoPastaNav { id: string; nome: string; cor: string; ordem: number; pai: string | null }
+
 export function ListaPorPasta({ tarefas, renderTarefa }: {
   tarefas: TaskRow[];
   renderTarefa: (t: TaskRow) => ReactNode;
 }) {
+  const { user } = useAuth();
+  const tenantId = user?.tenantId ?? null;
+  const [listas, setListas] = useState<TaskList[] | null>(null);
   const [pastaId, setPastaId] = useState<string | null>(null);
   const [busca, setBusca] = useState('');
 
-  const pastas = new Map<string, { id: string; nome: string; cor: string; total: number; atrasadas: number }>();
-  for (const t of tarefas) {
-    const p = pastas.get(t.list_id) ?? { id: t.list_id, nome: t.list_name ?? 'Pasta', cor: t.list_color ?? '#94a3b8', total: 0, atrasadas: 0 };
-    p.total += 1;
-    if (atrasada(t)) p.atrasadas += 1;
-    pastas.set(t.list_id, p);
-  }
-  const listaPastas = [...pastas.values()].sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
-  const buscando = busca.trim() !== '';
-  const umaPasta = listaPastas.length <= 1;
-  const pastaAtual = pastaId ? pastas.get(pastaId) ?? null : null;
+  useEffect(() => {
+    let vivo = true;
+    (async () => {
+      const { data, error } = tenantId
+        ? await supabase.rpc('fn_get_task_lists', { p_tenant_id: tenantId })
+        : { data: null, error: null };
+      // Sem a árvore (erro), cada pasta das tarefas vira pasta-mãe — ainda dá para escolher.
+      if (vivo) setListas(!error && Array.isArray(data) ? (data as TaskList[]) : []);
+    })();
+    return () => { vivo = false; };
+  }, [tenantId]);
 
-  // Buscando: tarefas de todas as pastas que batem com o texto.
-  if (buscando) {
+  const arvore = useMemo(() => {
+    const nos = new Map<string, NoPastaNav>();
+    (listas ?? []).forEach((l, i) => nos.set(l.id, { id: l.id, nome: l.name, cor: l.color, ordem: l.sort_order ?? i, pai: l.parent_list_id }));
+    for (const t of tarefas) {
+      if (!nos.has(t.list_id)) nos.set(t.list_id, { id: t.list_id, nome: t.list_name ?? 'Pasta', cor: t.list_color ?? '#94a3b8', ordem: Number.MAX_SAFE_INTEGER, pai: null });
+    }
+    for (const n of nos.values()) if (n.pai && !nos.has(n.pai)) n.pai = null; // mãe arquivada/sem acesso
+    // Total e atrasadas de cada pasta contando a subárvore inteira.
+    const conta = new Map<string, { total: number; atrasadas: number }>();
+    for (const t of tarefas) {
+      const vistos = new Set<string>();
+      for (let id: string | null = t.list_id; id && !vistos.has(id); id = nos.get(id)?.pai ?? null) {
+        vistos.add(id);
+        const c = conta.get(id) ?? { total: 0, atrasadas: 0 };
+        c.total += 1;
+        if (atrasada(t)) c.atrasadas += 1;
+        conta.set(id, c);
+      }
+    }
+    const filhas = (pai: string | null) => [...nos.values()]
+      .filter((n) => n.pai === pai && conta.has(n.id))
+      .sort((a, b) => a.ordem - b.ordem || a.nome.localeCompare(b.nome, 'pt-BR'));
+    const soltas = (id: string | null) => (id ? tarefas.filter((t) => t.list_id === id) : []);
+    // Desce sozinho enquanto só houver um caminho.
+    let raiz: string | null = null;
+    for (let f = filhas(null); f.length === 1 && !soltas(raiz).length; f = filhas(raiz)) raiz = f[0].id;
+    return { nos, conta, filhas, soltas, raiz };
+  }, [listas, tarefas]);
+
+  if (busca.trim() !== '') {
     const achadas = filtrarPorTexto(tarefas, busca);
     return (
       <>
@@ -153,39 +190,49 @@ export function ListaPorPasta({ tarefas, renderTarefa }: {
       </>
     );
   }
+  if (listas === null) return <p className="px-1 text-xs text-zinc-400">Carregando pastas…</p>;
 
-  if (!umaPasta && !pastaAtual) {
-    return (
-      <>
-        {tarefas.length > 8 && <BuscaTarefa valor={busca} onMudar={setBusca} />}
-        <p className="px-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Escolha a pasta</p>
-        {listaPastas.map((p) => (
-          <Opcao
-            key={p.id}
-            onClick={() => setPastaId(p.id)}
-            detalhe={`(${p.total} tarefa${p.total > 1 ? 's' : ''}${p.atrasadas ? ` · ${p.atrasadas} atrasada${p.atrasadas > 1 ? 's' : ''}` : ''})`}
-          >
-            <span className="inline-block w-2.5 h-2.5 rounded-full mr-2 align-middle" style={{ backgroundColor: p.cor }} />
-            {p.nome}
-          </Opcao>
-        ))}
-      </>
-    );
+  const { nos, conta, filhas, soltas, raiz } = arvore;
+  const atual = pastaId && nos.has(pastaId) ? pastaId : raiz;
+  const subpastas = filhas(atual);
+  const daPasta = soltas(atual);
+  // Caminho da raiz efetiva até a pasta atual, para o título "Mãe › Filha".
+  const caminho: NoPastaNav[] = [];
+  for (let id: string | null = atual; id; id = nos.get(id)?.pai ?? null) {
+    caminho.unshift(nos.get(id)!);
+    if (id === raiz) break;
   }
+  const pai = atual ? nos.get(atual)?.pai ?? null : null;
+  const voltarPara = pai && pai !== raiz ? nos.get(pai) ?? null : null;
+  const rotulo = (texto: string) => <p className="px-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">{texto}</p>;
 
-  const daPasta = pastaAtual ? tarefas.filter((t) => t.list_id === pastaAtual.id) : tarefas;
   return (
     <>
-      {pastaAtual && !umaPasta && (
-        <>
-          <OpcaoNeutra onClick={() => setPastaId(null)}>← Outra pasta</OpcaoNeutra>
-          <p className="px-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-400 flex items-center gap-1.5">
-            <span className="inline-block w-2 h-2 rounded-full" style={{ backgroundColor: pastaAtual.cor }} />
-            {pastaAtual.nome}
-          </p>
-        </>
+      {tarefas.length > 8 && <BuscaTarefa valor={busca} onMudar={setBusca} />}
+      {atual !== raiz && (
+        <OpcaoNeutra onClick={() => setPastaId(voltarPara ? voltarPara.id : null)}>
+          {voltarPara ? `← ${voltarPara.nome}` : '← Outra pasta'}
+        </OpcaoNeutra>
       )}
-      {umaPasta && tarefas.length > 8 && <BuscaTarefa valor={busca} onMudar={setBusca} />}
+      {caminho.length > 0 && (subpastas.length > 0 || atual !== raiz) && (
+        <p className="px-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-400 flex items-center gap-1.5">
+          <span className="inline-block w-2 h-2 rounded-full" style={{ backgroundColor: caminho[caminho.length - 1].cor }} />
+          {caminho.map((n) => n.nome).join(' › ')}
+        </p>
+      )}
+      {subpastas.length > 0 && rotulo(atual ? 'Subpastas' : 'Escolha a pasta')}
+      {subpastas.map((p) => {
+        const c = conta.get(p.id)!;
+        const temFilhas = filhas(p.id).length > 0;
+        return (
+          <Opcao key={p.id} onClick={() => setPastaId(p.id)}
+            detalhe={`(${c.total} tarefa${c.total > 1 ? 's' : ''}${c.atrasadas ? ` · ${c.atrasadas} atrasada${c.atrasadas > 1 ? 's' : ''}` : ''})`}>
+            <span className="inline-block w-2.5 h-2.5 rounded-full mr-2 align-middle" style={{ backgroundColor: p.cor }} />
+            {p.nome}{temFilhas && <i className="ri-folder-open-line ml-1.5 text-zinc-400" aria-label="tem subpastas" />}
+          </Opcao>
+        );
+      })}
+      {subpastas.length > 0 && daPasta.length > 0 && rotulo('Tarefas desta pasta')}
       {daPasta.map((t) => <div key={t.id}>{renderTarefa(t)}</div>)}
     </>
   );

@@ -376,4 +376,45 @@ describe('Escolher tarefa pela pasta', () => {
     await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(1));
     expect(ultimoCorpo()).toMatchObject({ action: 'start_timer', task_id: 'a1' });
   });
+  it('mostra só as pastas-mãe, na ordem da tela, e desce pelas subpastas', async () => {
+    const lista = (id: string, name: string, sort_order: number, parent_list_id: string | null = null) =>
+      ({ id, name, color: '#888', icon: null, sort_order, parent_list_id, statuses: [], open_count: 0 });
+    mockRpc({
+      fn_get_task_lists: () => ({
+        data: [
+          lista('LZ', 'Zeladoria', 1), lista('LA', 'Administrativo', 2),
+          lista('LC', 'Cozinha', 1, 'LZ'), lista('LF', 'Freezer', 1, 'LC'),
+        ],
+        error: null,
+      }),
+      fn_get_tasks: () => ({
+        data: [
+          tarefa({ id: 'f1', title: 'Degelar freezer', list_id: 'LF', list_name: 'Freezer', due_date: `${ontem}T12:00:00Z` }),
+          tarefa({ id: 'c1', title: 'Limpar coifa', list_id: 'LC', list_name: 'Cozinha' }),
+          tarefa({ id: 'a1', title: 'Pagar aluguel', list_id: 'LA', list_name: 'Administrativo' }),
+        ],
+        error: null,
+      }),
+    });
+    render(<Cronometro onFechar={onFechar} irPara={irPara} />);
+
+    expect(await screen.findByText('Escolha a pasta')).toBeTruthy();
+    const nomes = screen.getAllByRole('button').map((b) => b.textContent ?? '');
+    expect(nomes.findIndex((t) => t.includes('Zeladoria'))).toBeLessThan(nomes.findIndex((t) => t.includes('Administrativo')));
+    expect(screen.queryByText('Cozinha')).toBeNull(); // subpasta não aparece na raiz
+    expect(screen.getByText(/2 tarefas · 1 atrasada/)).toBeTruthy(); // Zeladoria conta a subárvore
+
+    fireEvent.click(screen.getByText('Zeladoria'));
+    // Zeladoria não tem tarefa solta e só uma subpasta: mostra Cozinha
+    fireEvent.click(screen.getByText('Cozinha'));
+    expect(screen.getByText('Limpar coifa')).toBeTruthy();
+    expect(screen.getByText('Tarefas desta pasta')).toBeTruthy();
+    expect(screen.getByText(/Zeladoria › Cozinha/)).toBeTruthy();
+    fireEvent.click(screen.getByText('Freezer'));
+    expect(screen.getByText('Degelar freezer')).toBeTruthy();
+    fireEvent.click(screen.getByText('← Cozinha'));
+    fireEvent.click(screen.getByText('← Zeladoria'));
+    fireEvent.click(screen.getByText('← Outra pasta'));
+    expect(screen.getByText('Escolha a pasta')).toBeTruthy();
+  });
 });
