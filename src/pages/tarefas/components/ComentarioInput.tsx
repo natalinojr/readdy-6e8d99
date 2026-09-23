@@ -5,13 +5,15 @@ import type { UsuarioOption } from '../lib/agrupamento';
 interface ComentarioInputProps {
   usuarios: UsuarioOption[];
   onEnviar: (body: string, mentions: string[]) => Promise<void>;
+  /** Já abre com o cursor no campo (ex.: comentar pela coluna da Lista). */
+  autoFocus?: boolean;
 }
 
 /**
  * Campo de comentário com menção por "@". As menções viram uma lista de ids
  * enviada ao backend, que dispara a notificação para cada mencionado.
  */
-export default function ComentarioInput({ usuarios, onEnviar }: ComentarioInputProps) {
+export default function ComentarioInput({ usuarios, onEnviar, autoFocus }: ComentarioInputProps) {
   const [texto, setTexto] = useState('');
   const [buscaMencao, setBuscaMencao] = useState<string | null>(null);
   const [indiceAtivo, setIndiceAtivo] = useState(0);
@@ -100,6 +102,7 @@ export default function ComentarioInput({ usuarios, onEnviar }: ComentarioInputP
       >
         <input
           ref={inputRef}
+          autoFocus={autoFocus}
           value={texto}
           onChange={(e) => {
             setTexto(e.target.value);

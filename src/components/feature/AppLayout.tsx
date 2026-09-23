@@ -144,6 +144,9 @@ export default function AppLayout() {
             </Suspense>
           </RotaProtegida>
         </div>
+        {/* Tarefas roda como terminal (tela cheia), mas não é caixa/cozinha: o
+            balão do assistente aparece lá também (pedido do dono, 2026-09-23). */}
+        {location.pathname.startsWith('/tarefas') && <AssistenteChat variant="floating" />}
       </div>
     );
   }

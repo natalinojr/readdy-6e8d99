@@ -1,17 +1,21 @@
-import { useEffect, useState } from 'react';
-import { Plus, Flag, MessageSquare, CheckSquare, GitBranch, Repeat, ChevronDown, ChevronRight, Check, Trash2, X } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import type { PointerEvent as ReactPointerEvent } from 'react';
+import { Plus, Flag, MessageSquare, CheckSquare, GitBranch, Repeat, ChevronDown, ChevronRight, Check, Trash2, X, ArrowUp, ArrowDown } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
 import type { CampoCustom, TaskList, TaskRow, TaskTag } from '../hooks/useTarefas';
 import { PRIORIDADES } from '../hooks/useTarefas';
 import type { GroupBy, Grupo, UsuarioOption } from '../lib/agrupamento';
 import { agruparTarefas, payloadMoverGrupo } from '../lib/agrupamento';
-import type { ColunaDef, ColunaId } from '../lib/colunas';
-import { carregarColunasVisiveis, colunasDisponiveis, salvarColunasVisiveis } from '../lib/colunas';
+import type { ColunaDef, ColunaId, LargurasColunas } from '../lib/colunas';
+import {
+  carregarColunasVisiveis, carregarLarguras, colunasDisponiveis, LARGURA_MAX_PX, LARGURA_MIN_PX,
+  salvarColunasVisiveis, salvarLarguras,
+} from '../lib/colunas';
 import { rotuloRecorrencia, DICA_RECORRENCIA } from '../lib/recorrencia';
 import CampoBadge from './campos/CampoBadge';
-import CampoInput from './campos/CampoInput';
 import ColumnsMenu from './ColumnsMenu';
 import ConfirmDialog from './ConfirmDialog';
+import EditorCelula, { ehEditavel } from './EditorCelula';
 import StatusPicker from './StatusPicker';
 import { iniciais, rotuloVencimento } from './TaskCard';
 
@@ -29,9 +33,44 @@ interface ViewListaProps {
   onOpenTask: (taskId: string) => void;
 }
 
-/** Colunas cujo valor dá pra editar direto na linha, sem abrir a tarefa. */
-function ehEditavel(id: ColunaId): boolean {
-  return id === 'responsavel' || id === 'vencimento' || id === 'prioridade' || id === 'etiquetas' || id.startsWith('campo:');
+/**
+ * Valor usado pra ordenar pela coluna. `null` = vazio (sempre vai pro fim,
+ * seja crescente ou decrescente).
+ */
+function valorOrdenacao(
+  coluna: ColunaId,
+  task: TaskRow,
+  subtarefasCount: number,
+  usuarios: UsuarioOption[],
+  campos: CampoCustom[],
+): string | number | null {
+  if (coluna.startsWith('campo:')) {
+    const fieldId = coluna.slice('campo:'.length);
+    const campo = campos.find((c) => c.id === fieldId);
+    const v = task.field_values?.[fieldId];
+    if (v === undefined || v === null || v === '' || !campo) return null;
+    if (typeof v === 'number') return v;
+    if (typeof v === 'boolean') return v ? 1 : 0;
+    if (campo.field_type === 'dropdown') return campo.options.find((o) => o.id === v)?.label ?? null;
+    if (campo.field_type === 'user') return usuarios.find((u) => u.id === v)?.nome ?? null;
+    if (Array.isArray(v)) {
+      const rotulos = v.map((id) => campo.options.find((o) => o.id === id)?.label ?? '').filter(Boolean).sort();
+      return rotulos[0] ?? null;
+    }
+    return String(v);
+  }
+  switch (coluna) {
+    case 'responsavel': return task.assignee_name;
+    case 'vencimento': return task.due_date;
+    case 'prioridade': return task.priority > 0 ? task.priority : null;
+    case 'etiquetas': return task.tags.map((t) => t.name).sort()[0] ?? null;
+    case 'checklist': return task.checklist_total > 0 ? task.checklist_done / task.checklist_total : null;
+    case 'subtarefas': return subtarefasCount > 0 ? subtarefasCount : null;
+    case 'comentarios': return task.comment_count > 0 ? task.comment_count : null;
+    case 'criada_em': return task.created_at;
+    case 'pasta': return task.list_name;
+    default: return null;
+  }
 }
 
 function celulaColuna(
@@ -118,8 +157,6 @@ function celulaColuna(
   }
 }
 
-const EDITOR_INPUT_CLS = 'w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-indigo-300';
-
 export default function ViewLista({
   list, chaveColunas, tasks, campos, usuarios, tags, groupBy, write, onOpenTask,
 }: ViewListaProps) {
@@ -137,7 +174,10 @@ export default function ViewLista({
   const [colunasVisiveis, setColunasVisiveis] = useState<ColunaId[]>(() =>
     carregarColunasVisiveis(chaveArmazenamento, colunasPadrao),
   );
-  const [editando, setEditando] = useState<{ taskId: string; col: ColunaId } | null>(null);
+  const [larguras, setLarguras] = useState<LargurasColunas>(() => carregarLarguras(chaveArmazenamento));
+  const [redimensionando, setRedimensionando] = useState<ColunaId | null>(null);
+  const [ordenacao, setOrdenacao] = useState<{ col: ColunaId; dir: 'asc' | 'desc' } | null>(null);
+  const [editando, setEditando] = useState<{ taskId: string; col: ColunaId; rect: DOMRect } | null>(null);
   const [statusPickerAberto, setStatusPickerAberto] = useState<{ taskId: string; rect: DOMRect } | null>(null);
   const [confirmandoExclusao, setConfirmandoExclusao] = useState<TaskRow | null>(null);
   const [selecionadas, setSelecionadas] = useState<Set<string>>(new Set());
@@ -148,6 +188,8 @@ export default function ViewLista({
   // Ao trocar de pasta/visão, recarrega a preferência salva (cada uma tem a sua).
   useEffect(() => {
     setColunasVisiveis(carregarColunasVisiveis(chaveArmazenamento, colunasPadrao));
+    setOrdenacao(null);
+    setLarguras(carregarLarguras(chaveArmazenamento));
     setEditando(null);
     setStatusPickerAberto(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -156,6 +198,71 @@ export default function ViewLista({
   const alterarColunas = (colunas: ColunaId[]) => {
     setColunasVisiveis(colunas);
     salvarColunasVisiveis(chaveArmazenamento, colunas);
+  };
+
+  const largura = (c: ColunaDef) => larguras[c.id] ?? c.larguraPx;
+
+  // Clique no título: crescente → decrescente → sem ordenação (volta à ordem
+  // manual). Ordena dentro de cada grupo; vazios sempre no fim.
+  const alternarOrdenacao = (id: ColunaId) => {
+    setOrdenacao((atual) => {
+      if (atual?.col !== id) return { col: id, dir: 'asc' };
+      if (atual.dir === 'asc') return { col: id, dir: 'desc' };
+      return null;
+    });
+  };
+
+  const ordenar = (lista: TaskRow[]): TaskRow[] => {
+    if (!ordenacao || !colunasVisiveis.includes(ordenacao.col)) return lista;
+    const sinal = ordenacao.dir === 'asc' ? 1 : -1;
+    const contagemSub = (id: string) => tasks.filter((t) => t.parent_task_id === id).length;
+    const comValor = lista.map((t) => ({ t, v: valorOrdenacao(ordenacao.col, t, contagemSub(t.id), usuarios, campos) }));
+    comValor.sort((a, b) => {
+      if (a.v === null && b.v === null) return 0;
+      if (a.v === null) return 1;
+      if (b.v === null) return -1;
+      const cmp = typeof a.v === 'number' && typeof b.v === 'number'
+        ? a.v - b.v
+        : String(a.v).localeCompare(String(b.v), 'pt-BR', { sensitivity: 'base', numeric: true });
+      return cmp * sinal;
+    });
+    return comValor.map((x) => x.t);
+  };
+
+  // As colunas ficam presas à direita (o título ocupa o resto), então a alça
+  // fica na borda ESQUERDA da coluna: arrastar pra esquerda alarga. Grava só
+  // ao soltar; duplo clique volta pro tamanho padrão.
+  const iniciarRedimensionamento = (e: ReactPointerEvent, coluna: ColunaDef) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const inicioX = e.clientX;
+    const inicioLargura = largura(coluna);
+    let atual = larguras;
+    setRedimensionando(coluna.id);
+
+    const mover = (ev: PointerEvent) => {
+      const nova = Math.round(Math.min(LARGURA_MAX_PX, Math.max(LARGURA_MIN_PX, inicioLargura + (inicioX - ev.clientX))));
+      atual = { ...atual, [coluna.id]: nova };
+      setLarguras(atual);
+    };
+    const soltar = () => {
+      window.removeEventListener('pointermove', mover);
+      window.removeEventListener('pointerup', soltar);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      setRedimensionando(null);
+      salvarLarguras(chaveArmazenamento, atual);
+    };
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    window.addEventListener('pointermove', mover);
+    window.addEventListener('pointerup', soltar);
+  };
+
+  const restaurarLargura = (coluna: ColunaDef) => {
+    const { [coluna.id]: _removida, ...resto } = larguras;
+    setLarguras(resto);
+    salvarLarguras(chaveArmazenamento, resto);
   };
 
   // Só tarefas-raiz nos grupos; subtarefas aparecem aninhadas na sua tarefa-pai.
@@ -197,18 +304,13 @@ export default function ViewLista({
   };
 
   const excluir = (task: TaskRow) => setConfirmandoExclusao(task);
+  const fecharEditor = useCallback(() => setEditando(null), []);
 
   const confirmarExclusao = async () => {
     if (!confirmandoExclusao) return;
     const res = await write('delete_task', { task_id: confirmandoExclusao.id });
     if (!res.success) toast.error('Não foi possível arquivar', res.error);
     setConfirmandoExclusao(null);
-  };
-
-  const toggleTag = async (task: TaskRow, tagId: string) => {
-    const atuais = task.tags.map((t) => t.id);
-    const proximas = atuais.includes(tagId) ? atuais.filter((t) => t !== tagId) : [...atuais, tagId];
-    await gravar('update_task', { task_id: task.id, tag_ids: proximas });
   };
 
   // ── Seleção em massa ──────────────────────────────────────────────────────
@@ -251,102 +353,6 @@ export default function ViewLista({
     if (groupBy !== 'status' || !grupo.key) return null;
     if (!list) return grupo.key; // cross-pasta: a chave já é a categoria
     return list.statuses.find((s) => s.id === grupo.key)?.category ?? null;
-  };
-
-  const renderEditor = (coluna: ColunaDef, task: TaskRow) => {
-    if (coluna.id.startsWith('campo:')) {
-      const fieldId = coluna.id.slice('campo:'.length);
-      const campo = campos.find((c) => c.id === fieldId);
-      if (!campo) return null;
-      return (
-        <CampoInput
-          campo={campo}
-          value={task.field_values?.[fieldId]}
-          usuarios={usuarios}
-          onChange={async (value) => {
-            await gravar('set_field_value', { task_id: task.id, field_id: fieldId, value });
-            setEditando(null);
-          }}
-        />
-      );
-    }
-
-    switch (coluna.id) {
-      case 'responsavel':
-        return (
-          <select
-            autoFocus
-            value={task.assignee_id ?? ''}
-            onChange={(e) => {
-              gravar('update_task', { task_id: task.id, assignee_id: e.target.value || null });
-              setEditando(null);
-            }}
-            className={EDITOR_INPUT_CLS}
-          >
-            <option value="">Ninguém</option>
-            {usuarios.map((u) => (
-              <option key={u.id} value={u.id}>{u.nome}</option>
-            ))}
-          </select>
-        );
-
-      case 'vencimento':
-        return (
-          <input
-            autoFocus
-            type="date"
-            defaultValue={task.due_date ? task.due_date.slice(0, 10) : ''}
-            onChange={(e) => {
-              gravar('update_task', { task_id: task.id, due_date: e.target.value ? `${e.target.value}T12:00:00Z` : null });
-              setEditando(null);
-            }}
-            className={EDITOR_INPUT_CLS}
-          />
-        );
-
-      case 'prioridade':
-        return (
-          <select
-            autoFocus
-            value={task.priority}
-            onChange={(e) => {
-              gravar('update_task', { task_id: task.id, priority: Number(e.target.value) });
-              setEditando(null);
-            }}
-            className={EDITOR_INPUT_CLS}
-          >
-            {PRIORIDADES.map((p) => (
-              <option key={p.value} value={p.value}>{p.label}</option>
-            ))}
-          </select>
-        );
-
-      case 'etiquetas':
-        return (
-          <div className="flex flex-col gap-1 max-h-56 overflow-y-auto w-44">
-            {tags.length === 0 && <span className="text-xs text-slate-400 px-1 py-1">Nenhuma etiqueta criada</span>}
-            {tags.map((t) => {
-              const on = task.tags.some((tt) => tt.id === t.id);
-              return (
-                <button
-                  key={t.id}
-                  type="button"
-                  onClick={() => toggleTag(task, t.id)}
-                  className="w-full flex items-center gap-2 px-1.5 py-1 rounded-lg text-xs text-left hover:bg-slate-50"
-                >
-                  <span className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 ${on ? '' : 'border-slate-300'}`} style={on ? { backgroundColor: t.color, borderColor: t.color } : undefined}>
-                    {on && <Check size={10} className="text-white" />}
-                  </span>
-                  <span className="truncate text-slate-600">{t.name}</span>
-                </button>
-              );
-            })}
-          </div>
-        );
-
-      default:
-        return null;
-    }
   };
 
   const renderLinha = (task: TaskRow, nivel: number) => {
@@ -438,22 +444,29 @@ export default function ViewLista({
               const editavel = ehEditavel(c.id);
               const emEdicao = editando?.taskId === task.id && editando.col === c.id;
               return (
-                <div key={c.id} style={{ width: c.larguraPx }} className="relative px-2 shrink-0">
-                  {emEdicao ? (
-                    <div onClick={(e) => e.stopPropagation()}>
-                      <div className="fixed inset-0 z-40" onClick={() => setEditando(null)} />
-                      <div className="absolute right-0 top-1/2 -translate-y-1/2 z-50 bg-white rounded-lg border border-slate-200 shadow-lg p-1.5">
-                        {renderEditor(c, task)}
-                      </div>
-                    </div>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={editavel ? (e) => { e.stopPropagation(); setEditando({ taskId: task.id, col: c.id }); } : undefined}
-                      className={`w-full text-xs text-slate-500 text-right truncate ${editavel ? 'rounded px-1 -mx-1 hover:bg-slate-100 hover:text-slate-700 cursor-pointer' : 'cursor-default'}`}
-                    >
-                      {celulaColuna(c, task, subtarefas.length, usuarios, campos)}
-                    </button>
+                <div key={c.id} style={{ width: largura(c) }} className="relative px-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={editavel ? (e) => { e.stopPropagation(); setEditando({ taskId: task.id, col: c.id, rect: e.currentTarget.getBoundingClientRect() }); } : undefined}
+                    className={`w-full text-xs text-slate-500 text-right truncate rounded px-1 -mx-1 ${
+                      emEdicao ? 'bg-indigo-50 ring-1 ring-indigo-200 text-slate-700' : ''
+                    } ${editavel ? 'hover:bg-slate-100 hover:text-slate-700 cursor-pointer' : 'cursor-default'}`}
+                  >
+                    {c.id === 'comentarios' && task.comment_count === 0 && editavel
+                      ? <span className="text-slate-300 opacity-0 group-hover:opacity-100 flex items-center gap-1 justify-end"><MessageSquare size={11} />Comentar</span>
+                      : celulaColuna(c, task, subtarefas.length, usuarios, campos)}
+                  </button>
+                  {emEdicao && (
+                    <EditorCelula
+                      coluna={c.id}
+                      task={task}
+                      anchorRect={editando.rect}
+                      campos={campos}
+                      usuarios={usuarios}
+                      tags={tags}
+                      gravar={gravar}
+                      onClose={fecharEditor}
+                    />
                   )}
                 </div>
               );
@@ -579,11 +592,29 @@ export default function ViewLista({
       )}
 
       {colunas.length > 0 && (
-        <div className="hidden md:flex items-center px-4 -mb-4">
+        <div className="hidden md:flex items-center px-4 -mb-4 group/cab">
           <span className="flex-1" />
           {colunas.map((c) => (
-            <div key={c.id} style={{ width: c.larguraPx }} className="px-2 text-[11px] font-medium text-slate-400 text-right truncate">
-              {c.label}
+            <div key={c.id} style={{ width: largura(c) }} className="relative px-2 text-[11px] font-medium text-slate-400 text-right truncate shrink-0">
+              <span
+                onPointerDown={(e) => iniciarRedimensionamento(e, c)}
+                onDoubleClick={() => restaurarLargura(c)}
+                title="Arraste para ajustar a largura (duplo clique volta ao padrão)"
+                className="absolute left-0 top-0 bottom-0 w-2 -ml-1 cursor-col-resize group/alca flex justify-center touch-none"
+              >
+                <span className={`w-0.5 h-full rounded transition ${
+                  redimensionando === c.id ? 'bg-indigo-400' : 'bg-slate-200 opacity-0 group-hover/cab:opacity-100 group-hover/alca:bg-indigo-300'
+                }`} />
+              </span>
+              <button
+                type="button"
+                onClick={() => alternarOrdenacao(c.id)}
+                title="Ordenar por esta coluna"
+                className={`inline-flex items-center gap-0.5 max-w-full hover:text-slate-600 transition ${ordenacao?.col === c.id ? 'text-indigo-600' : ''}`}
+              >
+                {ordenacao?.col === c.id && (ordenacao.dir === 'asc' ? <ArrowUp size={10} className="shrink-0" /> : <ArrowDown size={10} className="shrink-0" />)}
+                <span className="truncate">{c.label}</span>
+              </button>
             </div>
           ))}
           {/* mesma largura do botão de arquivar da linha, pra manter o alinhamento */}
@@ -623,7 +654,7 @@ export default function ViewLista({
 
             {!recolhido && (
               <div className="bg-white rounded-xl border border-slate-200 divide-y divide-slate-100 overflow-hidden">
-                {grupo.tasks.map((task) => renderLinha(task, 0))}
+                {ordenar(grupo.tasks).map((task) => renderLinha(task, 0))}
 
                 {podeAdicionar && (
                   <form

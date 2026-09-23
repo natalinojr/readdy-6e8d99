@@ -61,3 +61,33 @@ export function salvarColunasVisiveis(chave: string, colunas: ColunaId[]): void 
     /* localStorage indisponível (modo privado etc.) — segue sem persistir */
   }
 }
+
+/** Limites do arrastar da borda da coluna. */
+export const LARGURA_MIN_PX = 60;
+export const LARGURA_MAX_PX = 600;
+
+/** Larguras que o usuário ajustou arrastando (só as alteradas; o resto usa `larguraPx`). */
+export type LargurasColunas = Partial<Record<ColunaId, number>>;
+
+function chaveLarguras(chave: string): string {
+  return `erpos_tarefas_larguras_${chave}`;
+}
+
+export function carregarLarguras(chave: string): LargurasColunas {
+  try {
+    const bruto = localStorage.getItem(chaveLarguras(chave));
+    if (!bruto) return {};
+    const obj = JSON.parse(bruto);
+    return obj && typeof obj === 'object' && !Array.isArray(obj) ? (obj as LargurasColunas) : {};
+  } catch {
+    return {};
+  }
+}
+
+export function salvarLarguras(chave: string, larguras: LargurasColunas): void {
+  try {
+    localStorage.setItem(chaveLarguras(chave), JSON.stringify(larguras));
+  } catch {
+    /* localStorage indisponível — segue sem persistir */
+  }
+}

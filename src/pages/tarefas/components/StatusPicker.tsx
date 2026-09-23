@@ -30,7 +30,9 @@ const MARGEM_TELA = 8;
 export default function StatusPicker({ list, anchorRect, onEscolher, onClose }: StatusPickerProps) {
   const opcoes = list
     ? [...list.statuses].sort((a, b) => a.sort_order - b.sort_order).map((s) => ({ key: s.id, label: s.name, color: s.color }))
-    : CATEGORIAS_GENERICAS.map((c) => ({ key: c.key, label: c.label, color: c.color }));
+    // Backlog fica fora na visão agregada: é categoria opcional (nem toda pasta
+    // tem um status nela) e confundia quem só usa A fazer/Em andamento/Concluído.
+    : CATEGORIAS_GENERICAS.filter((c) => c.key !== 'backlog').map((c) => ({ key: c.key, label: c.label, color: c.color }));
 
   // Rolar a página invalida o retângulo capturado no clique — fechar em vez
   // de arriscar um popover flutuando no lugar errado.
