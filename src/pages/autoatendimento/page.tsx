@@ -413,7 +413,7 @@ function AutoatendimentoPageInner() {
   const criacaoEmAndamentoRef = useRef<Promise<string | null> | null>(null);
 
   // Cria o pedido no banco e retorna o ID e número
-  const criarPedidoBanco = useCallback(async (paidPixPaymentId?: string, formaBalcaoNome?: string): Promise<{ id: string; numero: number } | null> => {
+  const criarPedidoBanco = useCallback(async (paidPixPaymentId?: string, formaBalcaoNome?: string, segurarAtePagar?: boolean): Promise<{ id: string; numero: number } | null> => {
     let { tenantId, sessionId } = getTenantAndSession();
 
     console.log('[Autoatendimento] criarPedidoBanco iniciando:', {
@@ -548,8 +548,10 @@ function AutoatendimentoPageInner() {
           notes: notasPedido,
           // Pix já pago: o pedido nasce pago em vez de ficar "em aberto" até o record_payment.
           ...(typeof paidPixPaymentId === 'string' ? { paid_pix_payment_id: paidPixPaymentId } : {}),
+          // Dinheiro: só vai pra cozinha quando o caixa receber (o PDV libera e imprime).
+          ...(segurarAtePagar ? { hold_until_paid: true } : {}),
         },
-        { externalToken: kioskToken, paraViagem },
+        { externalToken: kioskToken, paraViagem, enqueuePrint: !segurarAtePagar },
       );
 
       const orderNumber = parseInt(result.number.replace(/\D/g, '').slice(-4), 10) || 0;
@@ -571,7 +573,7 @@ function AutoatendimentoPageInner() {
 
 
   // paidPixPaymentId só vale como texto: esta função também é usada direto em botões (recebe o evento).
-  const handleAvancarPagamento = useCallback(async (paidPixPaymentId?: unknown, formaBalcaoNome?: unknown): Promise<string | null> => {
+  const handleAvancarPagamento = useCallback(async (paidPixPaymentId?: unknown, formaBalcaoNome?: unknown, segurarAtePagar?: unknown): Promise<string | null> => {
     // Padrão ref+state duplo:
     // - criarPedidoRef bloqueia no mesmo tick (state não atualiza rápido o suficiente)
     // - pendingOrderId bloqueia chamadas subsequentes após o primeiro ciclo
@@ -589,6 +591,7 @@ function AutoatendimentoPageInner() {
       const result = await criarPedidoBanco(
         typeof paidPixPaymentId === 'string' ? paidPixPaymentId : undefined,
         typeof formaBalcaoNome === 'string' ? formaBalcaoNome : undefined,
+        segurarAtePagar === true,
       );
       console.log('[Autoatendimento] handleAvancarPagamento: pedido criado =', result);
       if (result) {

@@ -44,7 +44,8 @@ interface PagamentoKioskProps {
   orderNumber?: number;
   alertaParcial?: string;
   // formaBalcaoNome: forma escolhida para pagar no balcão (vai gravada no pedido).
-  onEntrarPagamento: (paidPixPaymentId?: string, formaBalcaoNome?: string) => Promise<string | null>;
+  // segurarAtePagar: dinheiro — o pedido só vai pra cozinha quando o caixa receber.
+  onEntrarPagamento: (paidPixPaymentId?: string, formaBalcaoNome?: string, segurarAtePagar?: boolean) => Promise<string | null>;
   // Grava o pagamento no caixa SEM voltar o tablet pro início (quem encerra é onConcluir).
   onRegistrarPagamento: (paymentMethodId: string, orderId: string) => Promise<void>;
   onConcluir: (paymentMethodId?: string, orderId?: string) => Promise<void>;
@@ -611,13 +612,13 @@ export default function PagamentoKiosk({
   }, []);
 
   // formaNome só vale como texto: esta função também é usada direto em botões (recebe o evento).
-  const handlePagarNaEntregaEscolhido = async (formaNome?: unknown) => {
+  const handlePagarNaEntregaEscolhido = async (formaNome?: unknown, segurarAtePagar?: boolean) => {
     if (pagarEntregaRef.current) return;
     pagarEntregaRef.current = true;
     setModoEscolhido('entrega');
     setProcessandoPedido(true);
     try {
-      await onEntrarPagamento(undefined, typeof formaNome === 'string' ? formaNome : undefined);
+      await onEntrarPagamento(undefined, typeof formaNome === 'string' ? formaNome : undefined, segurarAtePagar === true);
       setConfirmado(true);
     } finally {
       pagarEntregaRef.current = false;
@@ -630,7 +631,7 @@ export default function PagamentoKiosk({
   const handlePagarNoBalcao = async (method: PaymentMethod) => {
     setBalcaoFormaNome(method.name);
     setBalcaoEmDinheiro(method.type === 'cash');
-    await handlePagarNaEntregaEscolhido(method.name);
+    await handlePagarNaEntregaEscolhido(method.name, method.type === 'cash');
   };
 
   const pagosTratadosRef = useRef<Set<string>>(new Set());
@@ -979,7 +980,7 @@ export default function PagamentoKiosk({
         <h2 className="text-xl md:text-5xl font-black text-white">{forma.type === 'cash' ? t('cliente.pagarNoCaixa') : t('cliente.pagarNoBalcao')}</h2>
         <p className="text-zinc-400 text-sm md:text-2xl mt-2 max-w-xl">
           {forma.type === 'cash'
-            ? <>Confirme e vá ao caixa pagar em <span className="text-white font-bold">dinheiro</span>. Seu pedido já fica lá esperando.</>
+            ? <>Confirme e vá ao caixa pagar em <span className="text-white font-bold">dinheiro</span>. Seu pedido vai para a cozinha assim que o caixa receber.</>
             : <>Seu pedido vai para a cozinha agora. Pague com <span className="text-white font-bold">{forma.name}</span> ao retirar.</>}
         </p>
       </div>

@@ -14,6 +14,7 @@ import { formatOrderTime } from '@/lib/dateUtils';
 import { precosEfetivos } from '@/lib/precoItemPedido';
 import PagamentoRapidoModal from '@/components/feature/PagamentoRapidoModal';
 import EditarItemCaixaModal from './EditarItemCaixaModal';
+import PedidosTabletAguardando from './PedidosTabletAguardando';
 
 // ── Hook: cronômetro live ────────────────────────────────────────────────────
 
@@ -2129,6 +2130,8 @@ export default function PedidosRecentesPanel() {
           </p>
         </div>
       )}
+
+      <PedidosTabletAguardando />
 
       <div className="flex gap-1 px-2 py-2.5 border-b border-zinc-200 bg-zinc-50 overflow-x-auto flex-shrink-0">
         {filtros.map(({ key, label, badge, activeCls }) => (

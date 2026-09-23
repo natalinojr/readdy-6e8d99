@@ -124,7 +124,7 @@ export default {
   'cliente.pagarNoBalcao': "Pagar no balcão",
   'cliente.pagueNoBalcao': "Pague no balcão ao retirar o pedido",
   'cliente.pagarNoCaixa': "Pague no caixa",
-  'cliente.vaAoCaixaDinheiro': "Vá ao caixa e pague em dinheiro. Diga o número do seu pedido.",
+  'cliente.vaAoCaixaDinheiro': "Vá ao caixa e pague em dinheiro. Diga o número do seu pedido — ele vai para a cozinha assim que o caixa receber.",
   'cliente.valorAPagar': "Valor a pagar",
   'cliente.pagueComPix': "Pague com PIX",
   'cliente.abraAppBanco': "Abra o app do seu banco e escaneie o QR Code",

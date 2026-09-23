@@ -36,6 +36,8 @@ export interface CreateOrderPayload {
   session_id: string;
   // Autoatendimento: Pix já confirmado pelo banco — o pedido nasce pago (order-write › create_order).
   paid_pix_payment_id?: string | null;
+  // Autoatendimento em dinheiro: pedido segurado (fora da cozinha) até o caixa receber.
+  hold_until_paid?: boolean;
   tenant_id: string;
   origin: 'cashier' | 'waiter' | 'self_service' | 'delivery';
   destination: string;
