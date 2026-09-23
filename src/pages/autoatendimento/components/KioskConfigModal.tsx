@@ -3,7 +3,7 @@ import { invokeWithAuth, supabase, SUPABASE_URL, SUPABASE_ANON_KEY } from '@/lib
 import { useAuth } from '@/contexts/AuthContext';
 import { useSessao } from '@/contexts/SessaoContext';
 import { useKioskAuth } from '@/contexts/KioskAuthContext';
-import { validarPinGerente, MAX_TENTATIVAS_PIN_GERENTE } from '@/lib/kioskManagerPin';
+import { validarPinGerente, validarPinTablet, buscarMatriculaTablet, MAX_TENTATIVAS_PIN_GERENTE } from '@/lib/kioskManagerPin';
 import { haVersaoNova, recarregarApp } from '@/lib/versaoApp';
 
 const fmt = (v: number) =>
@@ -35,9 +35,11 @@ export default function KioskConfigModal({ onClose }: KioskConfigModalProps) {
   const { user } = useAuth();
   const { sessao } = useSessao();
   const { kioskSession } = useKioskAuth();
-  // AuthUser não tem matrícula hoje (sempre undefined) — então o totem sempre cai no
-  // fluxo matrícula + PIN de gerente. Mantido o caminho antigo caso o campo volte.
-  const matriculaUsuario = (user as { matricula?: string } | null)?.matricula;
+  // Matrícula do próprio tablet (public.users): com ela, abrir as configurações pede só o
+  // PIN de login do tablet (dono, 2026-09-23). Sem ela (totem antigo por token) segue
+  // matrícula + PIN de gerente.
+  const [matriculaUsuario, setMatriculaUsuario] = useState<string | null>(null);
+  const tabletUserId = kioskSession?.kioskUserId ?? user?.id ?? null;
 
   const [step, setStep] = useState<'pin' | 'info'>('pin');
   // Buscar a versão nova é o motivo nº 1 de alguém abrir esta tela: o totem fica dias
@@ -53,6 +55,16 @@ export default function KioskConfigModal({ onClose }: KioskConfigModalProps) {
   const [matricula, setMatricula] = useState('');
   const [tentativas, setTentativas] = useState(0);
   const bloqueado = tentativas >= MAX_TENTATIVAS_PIN_GERENTE;
+
+  useEffect(() => {
+    let vivo = true;
+    void buscarMatriculaTablet(tabletUserId).then((m) => {
+      if (!vivo) return;
+      setMatriculaUsuario(m);
+      if (m) setCampo('pin');
+    });
+    return () => { vivo = false; };
+  }, [tabletUserId]);
 
   useEffect(() => {
     if (step !== 'info') return;
@@ -134,11 +146,10 @@ export default function KioskConfigModal({ onClose }: KioskConfigModalProps) {
     if (bloqueado) return;
     if (!pin.trim()) { setPinErro('Digite o PIN'); return; }
 
-    // Mesmo critério do modo totem: PIN válido + gerente/admin DESTA loja (login-pin
-    // verify_only). Antes exigia data.user, que o login-pin nunca devolve.
+    // PIN do próprio tablet, conferido no servidor (login-pin verify_only) nesta loja.
     setLoading(true);
     try {
-      const r = await validarPinGerente(kioskInvoke, { matricula: matriculaUsuario, pin, tenantId });
+      const r = await validarPinTablet(kioskInvoke, { matricula: matriculaUsuario, pin, tenantId });
       if (!r.ok) {
         if (r.contaTentativa) { setTentativas((t) => t + 1); setPin(''); }
         setPinErro(r.erro);
@@ -218,12 +229,12 @@ export default function KioskConfigModal({ onClose }: KioskConfigModalProps) {
             </div>
             <div className="text-center">
               <p className="text-white font-bold text-lg">
-                {campo === 'matricula' ? 'Matrícula do gerente' : 'Digite seu PIN'}
+                {campo === 'matricula' ? 'Matrícula do gerente' : matriculaUsuario ? 'PIN do tablet' : 'PIN do gerente'}
               </p>
               <p className="text-zinc-500 text-sm mt-1">
                 {!matriculaUsuario
                   ? 'Apenas gerente ou administrador da loja'
-                  : 'Apenas operadores autorizados podem acessar'}
+                  : 'O mesmo PIN usado para entrar neste tablet'}
               </p>
             </div>
 

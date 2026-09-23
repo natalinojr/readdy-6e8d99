@@ -23,7 +23,7 @@ import CpfKiosk from './components/CpfKiosk';
 import FormaPagamentoKiosk from './components/FormaPagamentoKiosk';
 import KioskConfigModal from './components/KioskConfigModal';
 import PINGate, { isPINAtivo } from './components/PINGate';
-import { validarPinGerente, MAX_TENTATIVAS_PIN_GERENTE } from '../../lib/kioskManagerPin';
+import { validarPinGerente, validarPinTablet, buscarMatriculaTablet, MAX_TENTATIVAS_PIN_GERENTE } from '../../lib/kioskManagerPin';
 import { type ItemPedidoCliente } from '../../types/mesaCliente';
 import { useIdiomaCardapio } from '../../hooks/useIdiomaCardapio';
 import { edgeUrl } from '../../lib/idiomaCardapio';
@@ -138,6 +138,19 @@ function AutoatendimentoPageInner() {
   const logoutBloqueado = logoutTentativas >= MAX_TENTATIVAS_PIN_GERENTE;
   const logoutDisplay = logoutCampo === 'matricula' ? logoutMatricula : logoutPin;
   const [showConfigModal, setShowConfigModal] = useState(false);
+  // Matrícula do próprio tablet: com ela, sair pede só o PIN do tablet. Sem ela (totem
+  // antigo por token) continua matrícula + PIN de gerente.
+  const [matriculaTablet, setMatriculaTablet] = useState<string | null>(null);
+  const tabletUserId = kioskSession?.kioskUserId ?? user?.id ?? null;
+  useEffect(() => {
+    let vivo = true;
+    void buscarMatriculaTablet(tabletUserId).then((m) => {
+      if (!vivo) return;
+      setMatriculaTablet(m);
+      if (m) setLogoutCampo('pin');
+    });
+    return () => { vivo = false; };
+  }, [tabletUserId]);
   const [destino, setDestino] = useState<Destino>(null);
   const [carrinho, setCarrinho] = useState<ItemPedidoCliente[]>([]);
   const [identifNome, setIdentifNome] = useState('');
@@ -901,7 +914,7 @@ function AutoatendimentoPageInner() {
   const apagarLogout = () => {
     setLogoutErro('');
     if (logoutCampo === 'matricula') { setLogoutMatricula((m) => m.slice(0, -1)); return; }
-    if (!logoutPin) { setLogoutCampo('matricula'); return; }
+    if (!logoutPin) { if (!matriculaTablet) setLogoutCampo('matricula'); return; }
     setLogoutPin((p) => p.slice(0, -1));
   };
   const limparLogout = () => {
@@ -914,7 +927,7 @@ function AutoatendimentoPageInner() {
     setShowLogoutPin(false);
     setLogoutPin('');
     setLogoutMatricula('');
-    setLogoutCampo('matricula');
+    setLogoutCampo(matriculaTablet ? 'pin' : 'matricula');
     setLogoutErro(logoutBloqueado ? 'Muitas tentativas. Tente novamente mais tarde.' : '');
   };
 
@@ -929,11 +942,10 @@ function AutoatendimentoPageInner() {
     if (!logoutPin.trim()) { setLogoutErro('Digite o PIN'); return; }
     setLogoutLoading(true);
     try {
-      const r = await validarPinGerente(kioskInvoke, {
-        matricula: logoutMatricula,
-        pin: logoutPin,
-        tenantId: kioskSession?.tenantId ?? user?.tenantId,
-      });
+      const tenantId = kioskSession?.tenantId ?? user?.tenantId;
+      const r = matriculaTablet
+        ? await validarPinTablet(kioskInvoke, { matricula: matriculaTablet, pin: logoutPin, tenantId })
+        : await validarPinGerente(kioskInvoke, { matricula: logoutMatricula, pin: logoutPin, tenantId });
       if (!r.ok) {
         if (r.contaTentativa) {
           const n = logoutTentativas + 1;
@@ -951,7 +963,7 @@ function AutoatendimentoPageInner() {
     } finally {
       setLogoutLoading(false);
     }
-  }, [logoutBloqueado, logoutCampo, logoutMatricula, logoutPin, logoutTentativas, kioskInvoke, kioskSession?.tenantId, user?.tenantId, logout, navigate, marcarTotemOffline]);
+  }, [logoutBloqueado, logoutCampo, logoutMatricula, logoutPin, logoutTentativas, matriculaTablet, kioskInvoke, kioskSession?.tenantId, user?.tenantId, logout, navigate, marcarTotemOffline]);
 
   if (estado === 'sem_sessao') {
     return (
@@ -995,7 +1007,7 @@ function AutoatendimentoPageInner() {
           </button>
         ) : (
           <div className="mt-8 flex flex-col items-center gap-4 w-full max-w-xs">
-            <p className="text-zinc-400 text-sm font-semibold">{logoutCampo === 'matricula' ? 'Matrícula do gerente para sair' : 'PIN do gerente para sair'}</p>
+            <p className="text-zinc-400 text-sm font-semibold">{matriculaTablet ? 'PIN do tablet para sair' : logoutCampo === 'matricula' ? 'Matrícula do gerente para sair' : 'PIN do gerente para sair'}</p>
             {/* Display do PIN */}
             <div className="flex gap-3 justify-center">
               {Array.from({ length: Math.max(4, logoutDisplay.length) }).map((_, i) => (
@@ -1098,7 +1110,7 @@ function AutoatendimentoPageInner() {
           </button>
         ) : (
           <div className="fixed bottom-5 left-5 z-[100] flex flex-col items-center gap-3 w-72 bg-zinc-900 border border-zinc-700 rounded-2xl p-4 shadow-2xl">
-            <p className="text-zinc-300 text-sm font-semibold self-start">{logoutCampo === 'matricula' ? 'Matrícula do gerente para sair' : 'PIN do gerente para sair'}</p>
+            <p className="text-zinc-300 text-sm font-semibold self-start">{matriculaTablet ? 'PIN do tablet para sair' : logoutCampo === 'matricula' ? 'Matrícula do gerente para sair' : 'PIN do gerente para sair'}</p>
             {/* Display do PIN */}
             <div className="flex gap-2 justify-center w-full">
               {Array.from({ length: Math.max(4, logoutDisplay.length) }).map((_, i) => (
