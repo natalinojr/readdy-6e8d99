@@ -138,6 +138,10 @@ export default function ViewCarga({ tasks, usuarios, write, onOpenTask }: ViewCa
   const compacto = periodo === 'mes';
   const totalPeriodo = (pessoa: string) => dias.reduce((s, d) => s + minutosNoDia(carga, pessoa, chaveDia(d)), 0);
   const feitoPeriodo = (pessoa: string) => dias.reduce((s, d) => s + feitosNoDia(carga, pessoa, chaveDia(d)), 0);
+  // Resumo do período mostrado (todas as pessoas da tela).
+  const resumoTotal = pessoas.reduce((s, p) => s + totalPeriodo(p), 0);
+  const resumoFeito = pessoas.reduce((s, p) => s + feitoPeriodo(p), 0);
+  const resumoFalta = Math.max(0, resumoTotal - resumoFeito);
   const capPeriodo = (pessoa: string) => dias.reduce((s, d) => s + capacidadeDe(pessoa)[d.getDay()], 0);
 
   const parcelasCelula: Parcela[] = celula ? (carga.porPessoa.get(celula.pessoa)?.get(celula.dia) ?? []) : [];
@@ -180,6 +184,30 @@ export default function ViewCarga({ tasks, usuarios, write, onOpenTask }: ViewCa
             ))}
           </div>
         </div>
+
+        {/* Resumo do período: planejado, concluído e o que falta */}
+        {resumoTotal > 0 && (
+          <div className="grid grid-cols-3 gap-2 mb-3">
+            <div className="rounded-xl border border-slate-200 bg-white px-3 py-2">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Planejado</p>
+              <p className="text-lg font-semibold text-slate-800 tabular-nums">{formatarHoras(resumoTotal)}</p>
+            </div>
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 px-3 py-2">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-emerald-600">Concluído</p>
+              <p className="text-lg font-semibold text-emerald-700 tabular-nums">
+                {formatarHoras(resumoFeito)}
+                <span className="ml-1.5 text-xs font-medium text-emerald-600/80">{Math.round((resumoFeito / resumoTotal) * 100)}%</span>
+              </p>
+            </div>
+            <div className="rounded-xl border border-amber-200 bg-amber-50/60 px-3 py-2">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-amber-600">Falta</p>
+              <p className="text-lg font-semibold text-amber-700 tabular-nums">{formatarHoras(resumoFalta)}</p>
+            </div>
+            <div className="col-span-3 h-1.5 rounded-full bg-amber-100 overflow-hidden">
+              <div className="h-full rounded-full bg-emerald-500" style={{ width: `${(resumoFeito / resumoTotal) * 100}%` }} />
+            </div>
+          </div>
+        )}
 
         {/* Pendências que tiram a precisão da carga */}
         {(carga.semEstimativa.length > 0 || carga.semData.length > 0 || carga.atrasadas.length > 0) && (
@@ -269,11 +297,10 @@ export default function ViewCarga({ tasks, usuarios, write, onOpenTask }: ViewCa
                               <span className={`tabular-nums text-[10px] ${uso > 1 ? 'text-red-600 font-medium' : 'text-slate-400'}`}>
                                 {formatarHoras(total)}{pessoa !== SEM_RESPONSAVEL && ` / ${cap}h`}
                               </span>
-                              {feitoPeriodo(pessoa) > 0 && (
-                                <span className="text-[10px] text-emerald-600 tabular-nums" title="Já feito no período">
-                                  ✓ {formatarHoras(feitoPeriodo(pessoa))}
-                                </span>
-                              )}
+                            </div>
+                            <div className="flex items-center gap-2 mt-0.5 text-[10px] tabular-nums">
+                              <span className="text-emerald-600" title="Concluído no período">✓ {formatarHoras(feitoPeriodo(pessoa))}</span>
+                              <span className="text-amber-600" title="Falta no período">falta {formatarHoras(Math.max(0, total - feitoPeriodo(pessoa)))}</span>
                             </div>
                           </div>
                         </div>

@@ -171,3 +171,25 @@ describe('Carga: horas de trabalho no banco', () => {
     expect(write).toHaveBeenCalledWith('set_capacity', { user_id: 'u1', hours: [0, 8, 4, 4, 4, 4, 0] });
   });
 });
+
+describe('Carga: resumo concluído e falta', () => {
+  beforeEach(() => { localStorage.clear(); rpc.mockReset(); rpc.mockResolvedValue({ data: {}, error: null }); });
+
+  it('mostra planejado, concluído e falta do período e por pessoa', async () => {
+    const hojeIso = new Date().toISOString();
+    render(<ViewCarga
+      tasks={[
+        tarefa('feita', { time_estimate_minutes: 60, due_date: hojeIso, status_category: 'done' }),
+        tarefa('aberta', { time_estimate_minutes: 120, time_tracked_seconds: 1800, due_date: hojeIso }),
+      ]}
+      usuarios={[]} write={vi.fn().mockResolvedValue({ success: true })} onOpenTask={vi.fn()} />);
+    // 60 + 120 = 3h planejadas; feito 60 + 30 = 1,5h; falta 1,5h
+    const planejado = (await screen.findByText('Planejado')).parentElement!;
+    expect(within(planejado).getByText('3h')).toBeTruthy();
+    const concluido = screen.getByText('Concluído').parentElement!;
+    expect(within(concluido).getByText(/1,5h/)).toBeTruthy();
+    expect(within(concluido).getByText('50%')).toBeTruthy();
+    expect(within(screen.getByText('Falta').parentElement!).getByText('1,5h')).toBeTruthy();
+    expect(screen.getByText('falta 1,5h')).toBeTruthy();
+  });
+});
