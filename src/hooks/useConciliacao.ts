@@ -66,6 +66,14 @@ export interface StatementImport {
   reconciled: boolean;
   reconciled_at?: string;
   created_at: string;
+  /** Registro original do provedor (Inter: dataInclusao traz a hora, em horário de Brasília) */
+  raw?: Record<string, unknown> | null;
+}
+
+/** Hora da transação ("18:28") quando o provedor informa — hoje só o Inter (raw.dataInclusao). */
+export function horaTransacao(s: Pick<StatementImport, 'raw'>): string | null {
+  const m = /[ T](\d{2}):(\d{2})/.exec(String(s.raw?.dataInclusao ?? ''));
+  return m ? `${m[1]}:${m[2]}` : null;
 }
 
 export interface BillMatch {

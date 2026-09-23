@@ -12,6 +12,7 @@ import RastreioPagamento from './RastreioPagamento';
 import { tipoDaNota } from './ConfirmarVinculosModal';
 import { situacaoRepasse, type RepasseStone } from './RepassesStoneModal';
 import type { StatementImport, BillMatch, ReceivableMatch, ReconciliationRule } from '@/hooks/useConciliacao';
+import { horaTransacao } from '@/hooks/useConciliacao';
 
 const fmtDoc = (d: string) =>
   d.length === 11 ? d.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4')
@@ -248,6 +249,7 @@ export default function TransacaoDetalheModal({
               <h3 className="font-bold text-zinc-900 text-base">Detalhe da Transação</h3>
               <p className="text-xs text-zinc-500 break-all line-clamp-2">
                 {new Date(transaction.transaction_date + 'T00:00:00').toLocaleDateString('pt-BR')}
+                {horaTransacao(transaction) && ` às ${horaTransacao(transaction)}`}
                 {transaction.external_id && ` · ID: ${transaction.external_id}`}
               </p>
             </div>

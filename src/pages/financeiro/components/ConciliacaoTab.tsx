@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useBankAccounts } from '@/hooks/useFinanceiro';
-import { useConciliacao } from '@/hooks/useConciliacao';
+import { useConciliacao, horaTransacao } from '@/hooks/useConciliacao';
 import { parseOFX, parseCSV, findMatches } from '@/utils/ofxParser';
 import { formatCurrency } from '@/lib/formatters';
 import RegrasConciliacaoModal from './conciliacao/RegrasConciliacaoModal';
@@ -919,6 +919,10 @@ export default function ConciliacaoTab() {
     if (filterStatus !== 'all') result = result.filter(s => situacao(s) === filterStatus);
     if (filterType !== 'all') result = result.filter(s => s.transaction_type === filterType);
     if (filterCategory !== 'all') result = result.filter(s => (s.classificacao?.categoria ?? s.category) === filterCategory);
+    // Dia mais recente primeiro e, no mesmo dia, pela hora (quando o banco informa); sem hora mantém a ordem do servidor
+    result.sort((a, b) =>
+      b.transaction_date.localeCompare(a.transaction_date)
+      || (horaTransacao(b) ?? '').localeCompare(horaTransacao(a) ?? ''));
     return result;
   }, [imports, search, filterStatus, filterType, filterCategory]);
 
@@ -1490,6 +1494,7 @@ export default function ConciliacaoTab() {
                         <div className="flex items-baseline justify-between gap-2">
                           <span className="text-[11px] text-zinc-400 whitespace-nowrap">
                             {new Date(s.transaction_date + 'T00:00:00').toLocaleDateString('pt-BR')}
+                            {horaTransacao(s) && ` · ${horaTransacao(s)}`}
                           </span>
                           <span className={`text-base font-bold whitespace-nowrap ${s.transaction_type === 'credit' ? 'text-green-700' : 'text-red-600'}`}>
                             {s.transaction_type === 'debit' ? '−' : '+'}{fmtCur(Number(s.amount))}
@@ -1578,6 +1583,7 @@ export default function ConciliacaoTab() {
                       </td>
                       <td className="px-4 py-3 text-zinc-700 font-medium whitespace-nowrap text-xs">
                         {new Date(s.transaction_date + 'T00:00:00').toLocaleDateString('pt-BR')}
+                        {horaTransacao(s) && <span className="block text-[11px] text-zinc-400 font-normal">{horaTransacao(s)}</span>}
                       </td>
                       <td className="px-4 py-3 max-w-xs">
                         <p className="text-xs font-medium text-zinc-800 truncate">{s.description || '—'}</p>
