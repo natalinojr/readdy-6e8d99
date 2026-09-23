@@ -162,11 +162,11 @@ async function receber(admin: Admin, token: string, body: any) {
   if (/forwarding-noreply@google\.com/i.test(email.fromEmail)) {
     const corpo = `${email.subject}
 ${email.texto}`;
-    // O codigo do Gmail costuma ter 9 digitos, mas nem sempre vem no texto puro (o e-mail
-    // real de 2026-09-22 so trouxe o link). Aceita 6 a 12 digitos isolados; os limites
-    // (?<!\d) e (?!\d) evitam pegar digitos de DENTRO de um numero maior.
-    const codigo = corpo.match(/(?<!\d)(\d{6,12})(?!\d)/)?.[1] ?? null;
-    const link = corpo.match(/https:\/\/mail-settings\.google\.com[^\s"'<>]*/i)?.[0] ?? null;
+    // O codigo SO vale quando vem rotulado. Sem isso, um numero qualquer do corpo vira
+    // "codigo": em 2026-09-22 o id de um link de ajuda do Google (answer=184973) foi
+    // apresentado como codigo de confirmacao. Numero solto no texto nao e codigo.
+    const codigo = corpo.match(/c[o\u00f3]digo[^\n]{0,40}?(?<!\d)(\d{6,12})(?!\d)/i)?.[1] ?? null;
+    const link = corpo.match(/https:\/\/mail(-settings)?\.google\.com[^\s"'<>]*/i)?.[0] ?? null;
     await admin.from('fin_mail_messages').upsert({
       tenant_id: tenantId, message_id: email.messageId,
       from_email: email.fromEmail, from_name: 'Gmail', subject: email.subject.slice(0, 500) || null,
