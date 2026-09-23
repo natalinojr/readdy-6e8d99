@@ -158,13 +158,17 @@ export default function VisaoGeralTab({ periodo, externalSession, onSessionChang
 
   if (!hasRealData && !isSessao && !(ifood && ifood.pedidos > 0)) {
     return (
-      <div className="flex flex-col items-center justify-center py-24 text-zinc-400">
-        <div className="w-16 h-16 flex items-center justify-center bg-zinc-100 rounded-2xl mb-4">
-          <i className="ri-bar-chart-2-line text-3xl text-zinc-300" />
+      <div className="space-y-4 md:space-y-6">
+        {/* O acumulado do mês aparece mesmo sem pedido no período (ex.: "Hoje" antes da 1ª venda). */}
+        <FaturamentoAcumuladoCard periodo={periodo} />
+        <div className="flex flex-col items-center justify-center py-12 text-zinc-400">
+          <div className="w-16 h-16 flex items-center justify-center bg-zinc-100 rounded-2xl mb-4">
+            <i className="ri-bar-chart-2-line text-3xl text-zinc-300" />
+          </div>
+          <p className="text-sm font-semibold text-zinc-500">Nenhum pedido no período selecionado</p>
+          <p className="text-xs text-zinc-400 mt-1">Registre vendas no PDV para ver os dados aqui</p>
+          <p className="text-xs text-zinc-300 mt-1">Período: <strong className="text-zinc-400">{periodo}</strong></p>
         </div>
-        <p className="text-sm font-semibold text-zinc-500">Nenhum pedido no período selecionado</p>
-        <p className="text-xs text-zinc-400 mt-1">Registre vendas no PDV para ver os dados aqui</p>
-        <p className="text-xs text-zinc-300 mt-1">Período: <strong className="text-zinc-400">{periodo}</strong></p>
       </div>
     );
   }

@@ -6,7 +6,8 @@ import { getPeriodDates, todayBrasilia } from '@/lib/dateUtils';
 const fmt = (v: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
 
-const MESES = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+const MESES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+const cap = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
 const pad = (n: number) => String(n).padStart(2, '0');
 const diasNoMes = (y: number, m: number) => new Date(Date.UTC(y, m, 0)).getUTCDate(); // m = 1..12
 
@@ -67,8 +68,11 @@ export default function FaturamentoAcumuladoCard({ periodo }: { periodo: string 
   const varPct = antMesmoDia > 0 ? ((totalAtual - antMesmoDia) / antMesmoDia) * 100 : null;
   const temDados = accAtual > 0 || accAnt > 0;
 
-  const labelAtual = `${MESES[m - 1]}/${String(y).slice(2)}`;
-  const labelAnt = `${MESES[ma - 1]}/${String(ya).slice(2)}`;
+  // Ano só aparece quando os dois meses são de anos diferentes (janeiro × dezembro).
+  const comAno = y !== ya;
+  const labelAtual = cap(MESES[m - 1]) + (comAno ? ` ${y}` : '');
+  const labelAnt = cap(MESES[ma - 1]) + (comAno ? ` ${ya}` : '');
+  const diaFim = ultimoDiaAtual || 1;
 
   return (
     <div className="bg-white border border-zinc-100 rounded-xl p-4 md:p-5">
@@ -76,20 +80,23 @@ export default function FaturamentoAcumuladoCard({ periodo }: { periodo: string 
         <div>
           <h3 className="text-sm font-semibold text-zinc-800">Faturamento acumulado</h3>
           <p className="text-xs text-zinc-400">
-            {labelAtual} até o dia {pad(ultimoDiaAtual || 1)} × {labelAnt} no mesmo dia
-            {varPct !== null && (
-              <span className={`ml-1.5 font-bold ${varPct >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-                {varPct >= 0 ? '+' : '−'}{Math.abs(varPct).toFixed(1)}%
-              </span>
-            )}
+            {varPct !== null ? (
+              <>
+                <span className={`font-bold ${varPct >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                  {varPct >= 0 ? '+' : '−'}{Math.abs(varPct).toFixed(1).replace('.', ',')}%
+                </span>
+                {` sobre ${MESES[ma - 1]}`}
+              </>
+            ) : cap(MESES[m - 1])}
+            {diaFim === 1 ? ' (dia 1)' : ` (dias 1 a ${diaFim})`}
           </p>
         </div>
         <div className="flex items-center gap-3 text-[11px] text-zinc-500 flex-shrink-0">
           <span className="flex items-center gap-1.5">
-            <span className="w-3 border-t-2 border-dashed border-zinc-400" /> Mês anterior
+            <span className="w-3 border-t-2 border-dashed border-zinc-400" /> {labelAnt}
           </span>
           <span className="flex items-center gap-1.5">
-            <span className="w-3 border-t-2 border-amber-500" /> Mês atual
+            <span className="w-3 border-t-2 border-amber-500" /> {labelAtual}
           </span>
         </div>
       </div>
@@ -108,7 +115,7 @@ export default function FaturamentoAcumuladoCard({ periodo }: { periodo: string 
               />
               <Tooltip
                 formatter={(val: number, name: string) => [fmt(val), name === 'atual' ? labelAtual : labelAnt]}
-                labelFormatter={(label) => `Até o dia ${label}`}
+                labelFormatter={(label) => `Acumulado até o dia ${Number(label)}`}
                 contentStyle={{ borderRadius: 8, border: '1px solid #e4e4e7', fontSize: 11 }}
               />
               <Line type="monotone" dataKey="anterior" stroke="#a1a1aa" strokeWidth={1.5} strokeDasharray="4 3" dot={false} activeDot={{ r: 3, fill: '#a1a1aa' }} connectNulls={false} />
