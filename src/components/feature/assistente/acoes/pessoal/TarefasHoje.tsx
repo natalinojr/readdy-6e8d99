@@ -2,14 +2,18 @@
 // "Minhas" = assignee_id = eu (page.tsx) e vencimento como calcularVencimentos (NotificacoesInbox),
 // aqui com o dia em Brasília. Leitura por RPC fn_get_tasks; concluir pela Edge task-write ›
 // update_task { status_category: 'done' } — o mesmo payload da visão "Minhas" (sem pasta única).
+//
+// 2026-09-23: tocar a tarefa abre o que dá para fazer com ela — concluir, cronômetro (start_timer /
+// stop_timer) e adiar (update_task due_date, mantendo o horário). Escolher "Concluir" já é a confirmação.
 import { useEffect, useState } from 'react';
-import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { dateKeyBrasilia, todayBrasilia } from '@/lib/dateUtils';
 import type { TaskRow } from '@/pages/tarefas/hooks/useTarefas';
-import { Roteiro, useRoteiro, Opcao, OpcaoNeutra, Fim, dataBR, horaBR, invokeUmaVez, type AcaoProps } from '../kit';
+import { formatarRelogio, useAgora } from '@/pages/tarefas/lib/tempo';
+import { Roteiro, useRoteiro, Opcao, OpcaoNeutra, Campo, Fim, dataBR, somaDias, type AcaoProps } from '../kit';
+import { carregarTarefas, gravarTarefa, novoPrazo, rotuloPrazo } from '../tarefas/comum';
 
-type Passo = 'carregando' | 'lista' | 'confirmar' | 'gravando' | 'fim';
+type Passo = 'carregando' | 'lista' | 'acoes' | 'outra_data' | 'gravando' | 'fim';
 
 export default function TarefasHoje({ onFechar, irPara }: AcaoProps) {
   const { user } = useAuth();
@@ -19,82 +23,131 @@ export default function TarefasHoje({ onFechar, irPara }: AcaoProps) {
   const [passo, setPasso] = useState<Passo>('carregando');
   const [tarefas, setTarefas] = useState<TaskRow[]>([]);
   const [alvo, setAlvo] = useState<TaskRow | null>(null);
-  const [concluidas, setConcluidas] = useState<Set<string>>(new Set());
+  // Concluídas e adiadas saem da lista.
+  const [resolvidas, setResolvidas] = useState<Set<string>>(new Set());
+  const rodando = tarefas.find((t) => t.timer_started_at) ?? null;
+  const agora = useAgora(!!rodando);
 
   useEffect(() => {
     if (!tenantId || !meuId) { r.bot('Sem loja ativa.'); setPasso('fim'); return; }
     (async () => {
-      const { data, error } = await supabase.rpc('fn_get_tasks', { p_tenant_id: tenantId });
-      if (error) { r.bot(`Não consegui abrir as Tarefas: ${error.message}`); setPasso('fim'); return; }
+      const { tarefas: abertas, erro } = await carregarTarefas(tenantId);
+      if (erro) { r.bot(`Não consegui abrir as Tarefas: ${erro}`); setPasso('fim'); return; }
       const hoje = todayBrasilia();
-      const lista = ((data as TaskRow[]) ?? [])
-        .filter((t) => t.assignee_id === meuId && t.due_date && t.status_category !== 'done' && t.status_category !== 'cancelled')
+      const lista = abertas
+        .filter((t) => t.assignee_id === meuId && t.due_date)
         .filter((t) => dateKeyBrasilia(t.due_date!) <= hoje)
         .sort((a, b) => (a.due_date! < b.due_date! ? -1 : a.due_date! > b.due_date! ? 1 : b.priority - a.priority));
       setTarefas(lista);
       const atrasadas = lista.filter((t) => dateKeyBrasilia(t.due_date!) < hoje).length;
       if (!lista.length) { r.bot('Nada para hoje e nada atrasado. 👌'); setPasso('fim'); return; }
-      r.bot(`${lista.length - atrasadas} para hoje${atrasadas ? ` · ${atrasadas} atrasada${atrasadas > 1 ? 's' : ''}` : ''}. Toque para concluir.`);
+      r.bot(`${lista.length - atrasadas} para hoje${atrasadas ? ` · ${atrasadas} atrasada${atrasadas > 1 ? 's' : ''}` : ''}. Toque numa tarefa para concluir, cronometrar ou adiar.`);
       setPasso('lista');
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const prazo = (t: TaskRow) => {
-    const hoje = todayBrasilia();
-    const dia = dateKeyBrasilia(t.due_date!);
-    if (dia < hoje) return `atrasada · ${dataBR(dia)}`;
-    return t.due_has_time ? `hoje ${horaBR(t.due_date)}` : 'hoje';
+  const abrir = (t: TaskRow) => {
+    setAlvo(t);
+    r.eu(t.title);
+    setPasso('acoes');
   };
 
-  const pedirConfirmacao = (t: TaskRow) => {
-    setAlvo(t);
-    r.eu(`Concluir "${t.title}"`);
-    r.bot(`Marcar "${t.title}" como concluída?`);
-    setPasso('confirmar');
-  };
+  const voltar = () => { setAlvo(null); setPasso('lista'); };
 
   const concluir = async () => {
-    if (!alvo || !tenantId || passo !== 'confirmar') return;
+    if (!alvo || !tenantId || passo !== 'acoes') return;
     const t = alvo;
-    r.eu('Sim');
+    r.eu('Concluir');
     setPasso('gravando');
-    const { data, error } = await invokeUmaVez<{ success?: boolean; error?: string; next_occurrence_id?: string | null }>('task-write', {
-      body: { action: 'update_task', active_tenant_id: tenantId, task_id: t.id, status_category: 'done' },
-    });
-    if (error || !data?.success) {
-      r.bot(`❌ Não concluí: ${data?.error ?? error?.message ?? 'erro desconhecido'}.`);
+    const { erro, data } = await gravarTarefa<{ success?: boolean; next_occurrence_id?: string | null }>(tenantId, 'update_task', { task_id: t.id, status_category: 'done' });
+    if (erro) {
+      r.bot(`❌ Não concluí: ${erro}.`);
     } else {
-      setConcluidas((s) => new Set(s).add(t.id));
-      r.bot(`✅ "${t.title}" concluída.${data.next_occurrence_id ? ' É recorrente: a próxima já foi criada.' : ''}`);
+      setResolvidas((s) => new Set(s).add(t.id));
+      // Concluir com o cronômetro rodando nela não para o cronômetro (igual à tela); só avisa.
+      r.bot(`✅ "${t.title}" concluída.${data?.next_occurrence_id ? ' É recorrente: a próxima já foi criada.' : ''}${t.timer_started_at ? ' O cronômetro dela continua rodando.' : ''}`);
     }
-    setAlvo(null);
-    setPasso('lista');
+    voltar();
   };
 
-  const restantes = tarefas.filter((t) => !concluidas.has(t.id));
+  const cronometro = async () => {
+    if (!alvo || !tenantId || passo !== 'acoes') return;
+    const t = alvo;
+    const parar = !!t.timer_started_at;
+    r.eu(parar ? '⏹ Parar cronômetro' : '▶ Iniciar cronômetro');
+    setPasso('gravando');
+    const { erro, data } = parar
+      ? await gravarTarefa<{ success?: boolean; seconds?: number }>(tenantId, 'stop_timer', {})
+      : await gravarTarefa<{ success?: boolean; stopped_task_id?: string | null }>(tenantId, 'start_timer', { task_id: t.id });
+    if (erro) {
+      r.bot(`❌ ${parar ? 'Não parei' : 'Não iniciei'}: ${erro}.`);
+    } else if (parar) {
+      setTarefas((l) => l.map((x) => (x.id === t.id ? { ...x, timer_started_at: null } : x)));
+      r.bot(`⏹ Parado em "${t.title}".`);
+    } else {
+      const inicio = new Date().toISOString();
+      setTarefas((l) => l.map((x) => (x.id === t.id ? { ...x, timer_started_at: inicio } : x.timer_started_at ? { ...x, timer_started_at: null } : x)));
+      const anterior = (data as { stopped_task_id?: string | null } | null)?.stopped_task_id;
+      r.bot(`⏱ Cronômetro rodando em "${t.title}".${anterior ? ' O anterior foi parado.' : ''}`);
+    }
+    voltar();
+  };
+
+  const adiar = async (dia: string) => {
+    if (!alvo || !tenantId || (passo !== 'acoes' && passo !== 'outra_data')) return;
+    const t = alvo;
+    if (dia < todayBrasilia()) { r.bot('Escolha hoje ou uma data depois.'); return; }
+    r.eu(`Adiar para ${dataBR(dia)}`);
+    setPasso('gravando');
+    const { erro } = await gravarTarefa(tenantId, 'update_task', { task_id: t.id, ...novoPrazo(t, dia) });
+    if (erro) {
+      r.bot(`❌ Não adiei: ${erro}.`);
+    } else {
+      if (dia > todayBrasilia()) setResolvidas((s) => new Set(s).add(t.id));
+      r.bot(`📅 "${t.title}" agora vence em ${dataBR(dia)}.`);
+    }
+    voltar();
+  };
+
+  const restantes = tarefas.filter((t) => !resolvidas.has(t.id));
+  const amanha = somaDias(todayBrasilia(), 1);
 
   return (
     <Roteiro titulo="Minhas tarefas de hoje" icone="ri-list-check-3" cor="bg-indigo-50 text-indigo-600" baloes={r.baloes}
-      carregando={passo === 'carregando' || passo === 'gravando'} textoCarregando={passo === 'gravando' ? 'Concluindo…' : undefined}
+      carregando={passo === 'carregando' || passo === 'gravando'} textoCarregando={passo === 'gravando' ? 'Gravando…' : undefined}
       onFechar={onFechar} travarFechar={passo === 'gravando'}>
       {passo === 'lista' && (
         <>
           {restantes.map((t) => (
-            <Opcao key={t.id} onClick={() => pedirConfirmacao(t)} detalhe={`(${prazo(t)}${t.list_name ? ` · ${t.list_name}` : ''})`}>
-              <i className="ri-checkbox-blank-circle-line mr-1.5" />{t.title}
+            <Opcao key={t.id} onClick={() => abrir(t)} detalhe={`(${rotuloPrazo(t)}${t.list_name ? ` · ${t.list_name}` : ''})`}>
+              <i className={`${t.timer_started_at ? 'ri-timer-flash-line text-indigo-500' : 'ri-checkbox-blank-circle-line'} mr-1.5`} />{t.title}
+              {t.timer_started_at && <span className="ml-1.5 text-xs font-bold tabular-nums text-indigo-500">{formatarRelogio((agora - new Date(t.timer_started_at).getTime()) / 1000)}</span>}
             </Opcao>
           ))}
-          {!restantes.length && <p className="px-1 text-xs text-zinc-500">Tudo concluído por hoje.</p>}
+          {!restantes.length && <p className="px-1 text-xs text-zinc-500">Tudo resolvido por hoje.</p>}
           <Opcao onClick={() => irPara('/tarefas')}>Abrir Tarefas</Opcao>
           <OpcaoNeutra onClick={onFechar}>Fechar</OpcaoNeutra>
         </>
       )}
 
-      {passo === 'confirmar' && (
+      {passo === 'acoes' && alvo && (
         <>
-          <Opcao onClick={concluir}>Sim, concluir</Opcao>
-          <OpcaoNeutra onClick={() => { r.eu('Não'); setAlvo(null); setPasso('lista'); }}>Não</OpcaoNeutra>
+          <Opcao onClick={concluir}><i className="ri-checkbox-circle-line mr-1.5" />Concluir</Opcao>
+          <Opcao onClick={cronometro}>
+            <i className={`${alvo.timer_started_at ? 'ri-stop-circle-line' : 'ri-play-circle-line'} mr-1.5`} />{alvo.timer_started_at ? 'Parar cronômetro' : 'Iniciar cronômetro'}
+          </Opcao>
+          <Opcao onClick={() => adiar(amanha)} detalhe={`(${dataBR(amanha)})`}><i className="ri-skip-forward-line mr-1.5" />Adiar para amanhã</Opcao>
+          <Opcao onClick={() => { r.bot('Para qual data?'); setPasso('outra_data'); }}><i className="ri-calendar-event-line mr-1.5" />Outra data</Opcao>
+          <Opcao onClick={() => irPara(`/tarefas?task=${alvo.id}`)}><i className="ri-external-link-line mr-1.5" />Abrir a tarefa</Opcao>
+          <OpcaoNeutra onClick={voltar}>Voltar</OpcaoNeutra>
+        </>
+      )}
+
+      {passo === 'outra_data' && (
+        <>
+          <Campo placeholder="Data" tipo="date" onEnviar={adiar} />
+          <OpcaoNeutra onClick={() => setPasso('acoes')}>Voltar</OpcaoNeutra>
         </>
       )}
 
