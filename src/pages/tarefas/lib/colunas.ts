@@ -94,3 +94,40 @@ export function salvarLarguras(chave: string, larguras: LargurasColunas): void {
     /* localStorage indisponível — segue sem persistir */
   }
 }
+
+// ── Ordem das colunas (arrastando o título) ──
+// Guardada à parte da lista de visíveis: antes disso a ordem era sempre a
+// canônica, e reaproveitar a ordem em que a pessoa marcou as colunas no menu
+// embaralharia a tela de quem já usa.
+function chaveOrdem(chave: string): string {
+  return `erpos_tarefas_ordem_${chave}`;
+}
+
+export function carregarOrdemColunas(chave: string): ColunaId[] {
+  try {
+    const arr = JSON.parse(localStorage.getItem(chaveOrdem(chave)) ?? '[]');
+    return Array.isArray(arr) ? (arr as ColunaId[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function salvarOrdemColunas(chave: string, ordem: ColunaId[]): void {
+  try {
+    localStorage.setItem(chaveOrdem(chave), JSON.stringify(ordem));
+  } catch {
+    /* sem localStorage — vale só nesta sessão */
+  }
+}
+
+/** Colunas na ordem escolhida; as que nunca foram arrastadas vêm depois, na ordem canônica. */
+export function ordenarColunas(colunas: ColunaDef[], ordem: ColunaId[]): ColunaDef[] {
+  const pos = (id: ColunaId) => {
+    const i = ordem.indexOf(id);
+    return i === -1 ? Number.MAX_SAFE_INTEGER : i;
+  };
+  return colunas
+    .map((c, i) => ({ c, i }))
+    .sort((a, b) => pos(a.c.id) - pos(b.c.id) || a.i - b.i)
+    .map((x) => x.c);
+}

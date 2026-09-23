@@ -8,8 +8,8 @@ import type { GroupBy, Grupo, UsuarioOption } from '../lib/agrupamento';
 import { agruparTarefas, calcularSortOrder, payloadMoverGrupo } from '../lib/agrupamento';
 import type { ColunaDef, ColunaId, LargurasColunas } from '../lib/colunas';
 import {
-  carregarColunasVisiveis, carregarLarguras, colunasDisponiveis, LARGURA_MAX_PX, LARGURA_MIN_PX,
-  salvarColunasVisiveis, salvarLarguras,
+  carregarColunasVisiveis, carregarLarguras, carregarOrdemColunas, colunasDisponiveis, LARGURA_MAX_PX, LARGURA_MIN_PX,
+  ordenarColunas, salvarColunasVisiveis, salvarLarguras, salvarOrdemColunas,
 } from '../lib/colunas';
 import { rotuloRecorrencia, DICA_RECORRENCIA } from '../lib/recorrencia';
 import { formatarDuracao, formatarRelogio, segundosRegistrados, useAgora } from '../lib/tempo';
@@ -201,6 +201,10 @@ export default function ViewLista({
   );
   const [larguras, setLarguras] = useState<LargurasColunas>(() => carregarLarguras(chaveArmazenamento));
   const [redimensionando, setRedimensionando] = useState<ColunaId | null>(null);
+  const [ordemColunas, setOrdemColunas] = useState<ColunaId[]>(() => carregarOrdemColunas(chaveArmazenamento));
+  // Arrastar o título da coluna pra mudar a ordem: qual coluna e onde cai.
+  const [arrastoColuna, setArrastoColuna] = useState<ColunaId | null>(null);
+  const [alvoColuna, setAlvoColuna] = useState<{ id: ColunaId; antes: boolean } | null>(null);
   const [ordenacao, setOrdenacao] = useState<{ col: ColunaId; dir: 'asc' | 'desc' } | null>(null);
   // Arrastar pra reordenar: qual tarefa está sendo arrastada (e de qual grupo)
   // e onde ela vai cair (antes/depois de qual linha, ou no fim do grupo).
@@ -219,6 +223,7 @@ export default function ViewLista({
     setColunasVisiveis(carregarColunasVisiveis(chaveArmazenamento, colunasPadrao));
     setOrdenacao(null);
     setLarguras(carregarLarguras(chaveArmazenamento));
+    setOrdemColunas(carregarOrdemColunas(chaveArmazenamento));
     setEditando(null);
     setStatusPickerAberto(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -288,6 +293,22 @@ export default function ViewLista({
     window.addEventListener('pointerup', soltar);
   };
 
+  const soltarColuna = (alvo: ColunaId, antes: boolean) => {
+    const origem = arrastoColuna;
+    setArrastoColuna(null);
+    setAlvoColuna(null);
+    if (!origem || origem === alvo) return;
+    const ids = colunas.map((c) => c.id).filter((id) => id !== origem);
+    const i = ids.indexOf(alvo);
+    ids.splice(antes ? i : i + 1, 0, origem);
+    // Guarda a ordem de TODAS as disponíveis (as ocultas mantêm o lugar relativo
+    // quando voltarem a aparecer).
+    const resto = ordenarColunas(todasColunas, ordemColunas).map((c) => c.id).filter((id) => !ids.includes(id));
+    const nova = [...ids, ...resto];
+    setOrdemColunas(nova);
+    salvarOrdemColunas(chaveArmazenamento, nova);
+  };
+
   const restaurarLargura = (coluna: ColunaDef) => {
     const { [coluna.id]: _removida, ...resto } = larguras;
     setLarguras(resto);
@@ -298,7 +319,7 @@ export default function ViewLista({
   const raizes = tasks.filter((t) => !t.parent_task_id);
   const grupos = agruparTarefas(raizes, groupBy, list, usuarios, campos);
   const todasColunas = colunasDisponiveis(campos, list?.id ?? null);
-  const colunas = todasColunas.filter((c) => colunasVisiveis.includes(c.id));
+  const colunas = ordenarColunas(todasColunas.filter((c) => colunasVisiveis.includes(c.id)), ordemColunas);
   const temCronometro = colunas.some((c) => c.id === 'cronometro');
   const agora = useAgora(temCronometro && tasks.some((t) => t.timer_started_at));
   const somaEstimado = colunas.some((c) => c.id === 'estimado');
@@ -745,7 +766,37 @@ export default function ViewLista({
         <div className="hidden md:flex items-center px-4 -mb-4 group/cab">
           <span className="flex-1" />
           {colunas.map((c) => (
-            <div key={c.id} style={{ width: largura(c) }} className="relative px-2 text-[11px] font-medium text-slate-400 text-right truncate shrink-0">
+            <div
+              key={c.id}
+              style={{ width: largura(c) }}
+              draggable
+              onDragStart={(e) => {
+                // Começou na alça de largura: é redimensionamento, não arrasto.
+                if (redimensionando) { e.preventDefault(); return; }
+                e.dataTransfer.effectAllowed = 'move';
+                e.dataTransfer.setData('text/plain', c.id);
+                setArrastoColuna(c.id);
+              }}
+              onDragEnd={() => { setArrastoColuna(null); setAlvoColuna(null); }}
+              onDragOver={(e) => {
+                if (!arrastoColuna) return;
+                e.preventDefault();
+                const r = e.currentTarget.getBoundingClientRect();
+                const antes = e.clientX < r.left + r.width / 2;
+                if (alvoColuna?.id !== c.id || alvoColuna.antes !== antes) setAlvoColuna({ id: c.id, antes });
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                soltarColuna(c.id, alvoColuna?.antes ?? true);
+              }}
+              title="Arraste para mudar a ordem da coluna"
+              className={`relative px-2 text-[11px] font-medium text-slate-400 text-right truncate shrink-0 cursor-grab active:cursor-grabbing ${
+                arrastoColuna === c.id ? 'opacity-40' : ''
+              }`}
+            >
+              {alvoColuna?.id === c.id && arrastoColuna && arrastoColuna !== c.id && (
+                <span className={`pointer-events-none absolute top-0 bottom-0 w-0.5 rounded bg-indigo-500 z-10 ${alvoColuna.antes ? 'left-0' : 'right-0'}`} />
+              )}
               <span
                 onPointerDown={(e) => iniciarRedimensionamento(e, c)}
                 onDoubleClick={() => restaurarLargura(c)}

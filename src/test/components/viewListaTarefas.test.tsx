@@ -167,3 +167,22 @@ describe('Calendário', () => {
     expect(screen.queryByText('Tarefa Dia 5')).toBeNull();
   });
 });
+
+describe('Ordem das colunas', () => {
+  beforeEach(() => localStorage.clear());
+
+  it('arrastar o título muda a ordem e salva', () => {
+    render(
+      <ViewLista list={lista} tasks={[tarefa('a', 'Tarefa A')]} campos={[]} tags={[]} usuarios={[]}
+        groupBy="status" write={vi.fn()} onOpenTask={vi.fn()} />,
+    );
+    const cab = (n: string) => screen.getByRole('button', { name: n }).parentElement!;
+    fireEvent.dragStart(cab('Etiquetas'), { dataTransfer: { setData: vi.fn(), effectAllowed: '' } });
+    fireEvent.dragOver(cab('Responsável'), { clientX: -1 }); // metade esquerda = antes
+    fireEvent.drop(cab('Responsável'), { clientX: -1 });
+    const salvo = JSON.parse(localStorage.getItem('erpos_tarefas_ordem_L1') ?? '[]');
+    expect(salvo.slice(0, 4)).toEqual(['etiquetas', 'responsavel', 'vencimento', 'prioridade']);
+    const ordemTela = screen.getAllByRole('button', { name: /^(Responsável|Vencimento|Prioridade|Etiquetas)$/ }).map((b) => b.textContent);
+    expect(ordemTela).toEqual(['Etiquetas', 'Responsável', 'Vencimento', 'Prioridade']);
+  });
+});
