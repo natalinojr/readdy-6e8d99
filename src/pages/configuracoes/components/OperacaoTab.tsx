@@ -49,6 +49,7 @@ const CFG_DEFAULTS: ConfigOperacao = {
   timerAmbarMax: 90,
   bloquearItemSemInsumo: false,
   bloquearItemSemInsumoReserva: false,
+  caixaEnviarCozinha: true,
 };
 
 interface ToggleProps { checked: boolean; onChange: (v: boolean) => void; }
@@ -162,6 +163,7 @@ export default function OperacaoTab() {
       deliveryTempoEstimado: settings.delivery_eta_minutes ?? prev.deliveryTempoEstimado,
       bloquearItemSemInsumo: settings.bloquear_item_sem_insumo ?? prev.bloquearItemSemInsumo,
       bloquearItemSemInsumoReserva: settings.bloquear_item_sem_insumo_reserva ?? prev.bloquearItemSemInsumoReserva,
+      caixaEnviarCozinha: settings.pdv_config?.caixa_enviar_cozinha !== false,
     }));
     setPixCfg((prev) => ({
       ...prev,
@@ -233,6 +235,7 @@ export default function OperacaoTab() {
         // O terminal 'kds' saiu da tela: só acompanha a Visão da Cozinha para não
         // voltar a esconder o Gestor de Pedidos junto com o KDS.
         kds: cfg.visaoCozinha !== 'nenhum',
+        caixa_enviar_cozinha: cfg.caixaEnviarCozinha,
       } as Record<string, boolean>,
     });
     setSalvando(false);
@@ -593,6 +596,13 @@ export default function OperacaoTab() {
                 </button>
               ))}
             </div>
+          </div>
+          <div className="border-t border-zinc-50 pt-4 flex items-center justify-between">
+            <div>
+              <p className="text-sm font-semibold text-zinc-700">Botão "Enviar para Cozinha" no Caixa</p>
+              <p className="text-xs text-zinc-400 max-w-sm">Permite lançar o pedido no Caixa sem receber na hora (paga depois), pelo botão ou pelo atalho Shift+F2. Desligado, o Caixa só fecha pedido com pagamento.</p>
+            </div>
+            <Toggle checked={cfg.caixaEnviarCozinha} onChange={(v) => set('caixaEnviarCozinha', v)} />
           </div>
           <div className="border-t border-zinc-50 pt-4 flex items-center justify-between">
             <div>

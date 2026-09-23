@@ -59,11 +59,14 @@ export interface PdvConfig {
   kds: boolean;
   autoatendimento: boolean;
   mesa_qr: boolean;
+  /** Botão "Enviar para Cozinha" (e Shift+F2) no PDV Caixa — pedido sem pagamento, paga depois. */
+  caixa_enviar_cozinha: boolean;
 }
 
 export const DEFAULT_PDV_CONFIG: PdvConfig = {
   caixa: true, garcom: true, delivery: true,
   kds: true, autoatendimento: false, mesa_qr: true,
+  caixa_enviar_cozinha: true,
 };
 
 export interface SystemSettings {

@@ -15,7 +15,7 @@ interface Props {
 
 const TIPOS: { tipo: DestinoType; label: string; icon: string; desc: string }[] = [
   { tipo: 'mesa', label: 'Mesa', icon: 'ri-table-line', desc: 'Lançar em mesa do salão' },
-  { tipo: 'nome', label: 'Nome', icon: 'ri-user-line', desc: 'Chamado pelo nome no balcão' },
+  { tipo: 'nome', label: 'Nome / Pager / Comanda', icon: 'ri-user-line', desc: 'Chamado pelo nome, pager ou comanda no balcão' },
   { tipo: 'senha', label: 'Senha', icon: 'ri-ticket-line', desc: 'Chamado por senha' },
   { tipo: 'delivery', label: 'Delivery', icon: 'ri-e-bike-line', desc: 'Entrega em domicílio' },
 ];
@@ -168,12 +168,12 @@ export default function DestinoModal({ current, onConfirm, onClose, onAbrirMesa 
 
           {tipo === 'nome' && (
             <div>
-              <label className="block text-sm font-medium text-zinc-700 mb-1">Nome do Cliente</label>
+              <label className="block text-sm font-medium text-zinc-700 mb-1">Nome do cliente / Pager / Comanda</label>
               <input
                 type="text"
                 value={nomeCliente}
                 onChange={(e) => setNomeCliente(e.target.value)}
-                placeholder="Ex: João Silva"
+                placeholder="Ex: João Silva, Pager 12 ou Comanda 34"
                 className="w-full border border-zinc-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
               />
             </div>

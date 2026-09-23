@@ -9,6 +9,7 @@ import { useSessao } from '../../../contexts/SessaoContext';
 import { useKDS } from '../../../contexts/KDSContext';
 import { useMesas } from '../../../contexts/MesasContext';
 import { useToast } from '../../../contexts/ToastContext';
+import { useSystemSettings } from '@/hooks/useSystemSettings';
 import type { DestinoInfo } from '../../../contexts/PDVContext';
 import type { Item } from '@/types/cardapio';
 import { useCardapio } from '../../../contexts/CardapioContext';
@@ -253,10 +254,12 @@ function CaixaFechadoView({
 function AtalhosTeclado() {
   const [open, setOpen] = useState(false);
   const { mesas } = useMesas();
+  const { settings } = useSystemSettings();
+  const enviarCozinhaAtivo = settings.pdv_config.caixa_enviar_cozinha !== false;
 
   const atalhos = [
     { tecla: 'F2',     desc: 'Abrir pagamento',       icon: 'ri-money-dollar-circle-line', color: 'text-amber-600' },
-    { tecla: 'Shift+F2', desc: 'Enviar p/ Cozinha',   icon: 'ri-restaurant-line',          color: 'text-stone-600' },
+    ...(enviarCozinhaAtivo ? [{ tecla: 'Shift+F2', desc: 'Enviar p/ Cozinha', icon: 'ri-restaurant-line', color: 'text-stone-600' }] : []),
     { tecla: 'F3',     desc: 'Selecionar destino',    icon: 'ri-map-pin-line',             color: 'text-teal-600' },
     { tecla: 'F4',     desc: 'Limpar carrinho',       icon: 'ri-delete-bin-line',          color: 'text-red-500' },
     { tecla: 'F5',     desc: 'Ir para Carrinho',      icon: 'ri-shopping-cart-line',       color: 'text-zinc-500' },
@@ -322,6 +325,9 @@ function PDVOperacional({ onAbrirFechamento }: PDVOperacionalProps) {
   const { total, clearCart, destino, setDestino, addItem, carrinho, removeItem, enviarParaCozinha, finalizarPedido } = usePDV();
   const { success: toastSuccess, error: toastError } = useToast();
   const { pedidos: kdsPedidos } = useKDS();
+  // Configurações › Operação: a loja pode desligar o "Enviar para Cozinha" (pedido sem pagamento).
+  const { settings: sysSettings } = useSystemSettings();
+  const enviarCozinhaAtivo = sysSettings.pdv_config.caixa_enviar_cozinha !== false;
   // Mesa 0 (QR universal) já fica fora do MesasContext: loja só com o QR universal
   // não tem mesa de salão, então a aba/atalho de Mesas nem aparece.
   const { mesas } = useMesas();
@@ -447,7 +453,7 @@ function PDVOperacional({ onAbrirFechamento }: PDVOperacionalProps) {
       // Shift+F2 — enviar para cozinha (sem pagamento)
       if (e.key === 'F2' && e.shiftKey) {
         e.preventDefault();
-        if (carrinho.length > 0) handleEnviarCozinha();
+        if (carrinho.length > 0 && enviarCozinhaAtivo) handleEnviarCozinha();
         return;
       }
 
@@ -482,7 +488,7 @@ function PDVOperacional({ onAbrirFechamento }: PDVOperacionalProps) {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [carrinho.length, modal, temMesas]);
+  }, [carrinho.length, modal, temMesas, enviarCozinhaAtivo]);
 
   // Loja deixou de ter mesa (ou trocou de loja) com a aba Mesas aberta: volta pro carrinho.
   useEffect(() => {
@@ -905,7 +911,7 @@ function PDVOperacional({ onAbrirFechamento }: PDVOperacionalProps) {
                 onPagar={handlePagar}
                 onLimpar={handleLimpar}
                 onEditItem={handleEditItem}
-                onEnviarCozinha={handleEnviarCozinha}
+                onEnviarCozinha={enviarCozinhaAtivo ? handleEnviarCozinha : undefined}
                 onVincularPedidos={handlePagar}
               />
             )}
@@ -959,7 +965,7 @@ function PDVOperacional({ onAbrirFechamento }: PDVOperacionalProps) {
               onPagar={handlePagar}
               onLimpar={handleLimpar}
               onEditItem={handleEditItem}
-              onEnviarCozinha={handleEnviarCozinha}
+              onEnviarCozinha={enviarCozinhaAtivo ? handleEnviarCozinha : undefined}
               onVincularPedidos={handlePagar}
             />
           )}

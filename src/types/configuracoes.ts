@@ -24,6 +24,8 @@ export interface ConfigOperacao {
   bloquearItemSemInsumo: boolean;
   /** Só importa com bloquearItemSemInsumo ligado: conta também o consumo de pedidos ainda não prontos. */
   bloquearItemSemInsumoReserva: boolean;
+  /** Mostra o botão "Enviar para Cozinha" (e o atalho Shift+F2) no PDV Caixa. Fica em pdv_config.caixa_enviar_cozinha. */
+  caixaEnviarCozinha: boolean;
 }
 
 export type PDVTerminalId = 'caixa' | 'garcom' | 'kds' | 'autoatendimento' | 'mesa_qr' | 'delivery';
