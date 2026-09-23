@@ -1,4 +1,5 @@
-// Passo "Conferir o que chegou": item a item, chegou tudo ou diferente, e em qual insumo entra.
+// Passo "Conferir o que chegou": item a item, chegou tudo ou diferente (cada item precisa ser marcado).
+// Nota/compra: o vínculo com o insumo fica por conta do sistema (memória); cupom e sem nota escolhem o insumo aqui.
 import { useEffect, useState } from 'react';
 import InsumoPicker from './InsumoPicker';
 import { brl, lerNumeroBR, qtd, un } from '../api';
@@ -20,6 +21,7 @@ export default function Conferir({ r, onItens, onContinuar }: Props) {
   const entram = r.itens.filter((i) => i.ingredient_id && i.recebido > 0).length;
   const diferentes = r.itens.filter((i) => Math.abs(i.recebido - i.quantidade) > 1e-9).length;
   const itemPicker = r.itens.find((i) => i.key === picker);
+  const faltam = mudaQtd ? r.itens.filter((i) => !i.conferido).length : 0;
 
   return (
     <div className="pb-28">
@@ -32,7 +34,13 @@ export default function Conferir({ r, onItens, onContinuar }: Props) {
           </p>
           <div className="flex flex-wrap gap-2 mt-3">
             <span className="text-xs font-semibold bg-zinc-100 text-zinc-600 rounded-full px-2.5 py-1">{r.itens.length} itens</span>
-            <span className="text-xs font-semibold bg-emerald-50 text-emerald-700 rounded-full px-2.5 py-1">{entram} entram no estoque</span>
+            {mudaQtd ? (
+              <span className={`text-xs font-semibold rounded-full px-2.5 py-1 ${faltam > 0 ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700'}`}>
+                {r.itens.length - faltam} de {r.itens.length} conferidos
+              </span>
+            ) : (
+              <span className="text-xs font-semibold bg-emerald-50 text-emerald-700 rounded-full px-2.5 py-1">{entram} entram no estoque</span>
+            )}
             {diferentes > 0 && <span className="text-xs font-semibold bg-orange-50 text-orange-700 rounded-full px-2.5 py-1">{diferentes} diferente(s)</span>}
           </div>
         </div>
@@ -48,7 +56,7 @@ export default function Conferir({ r, onItens, onContinuar }: Props) {
           </div>
         )}
         {mudaQtd && r.itens.length > 0 && (
-          <p className="text-sm text-zinc-500 mt-4 mb-1 px-1">Confira cada item. Se veio a menos (ou a mais), toque em <b>Chegou diferente</b>.</p>
+          <p className="text-sm text-zinc-500 mt-4 mb-1 px-1">Confira e marque cada item: <b>Chegou tudo</b> ou, se veio a menos (ou a mais), <b>Chegou diferente</b>.</p>
         )}
       </div>
 
@@ -57,9 +65,10 @@ export default function Conferir({ r, onItens, onContinuar }: Props) {
           const ins = nomeIns(it.ingredient_id);
           const diferente = Math.abs(it.recebido - it.quantidade) > 1e-9;
           const modoDif = diferente || !!it.marcadoDiferente;
-          const setModoDif = (v: boolean) => mudar(it.key, { marcadoDiferente: v, recebido: v ? it.recebido : it.quantidade });
+          const tudoOk = !!it.conferido && !modoDif;
+          const setModoDif = (v: boolean) => mudar(it.key, { conferido: true, marcadoDiferente: v, recebido: v ? it.recebido : it.quantidade });
           return (
-            <div key={it.key} className={`bg-white rounded-3xl border p-4 ${diferente ? 'border-orange-300' : 'border-zinc-100'}`}>
+            <div key={it.key} className={`bg-white rounded-3xl border p-4 ${diferente ? 'border-orange-300' : tudoOk ? 'border-emerald-300' : 'border-zinc-100'}`}>
               <p className="text-[15px] font-semibold text-zinc-800 leading-snug">{it.descricao}</p>
               <p className="text-sm text-zinc-500 mt-0.5">
                 {r.origem === 'cupom' || r.origem === 'sem_nota' ? '' : 'Na nota: '}
@@ -71,7 +80,7 @@ export default function Conferir({ r, onItens, onContinuar }: Props) {
                   <div className="grid grid-cols-2 gap-2">
                     <button
                       onClick={() => setModoDif(false)}
-                      className={`py-3 rounded-2xl text-sm font-semibold flex items-center justify-center gap-1.5 cursor-pointer ${!modoDif ? 'bg-emerald-500 text-white' : 'bg-zinc-100 text-zinc-600'}`}
+                      className={`py-3 rounded-2xl text-sm font-semibold flex items-center justify-center gap-1.5 cursor-pointer ${tudoOk ? 'bg-emerald-500 text-white' : 'bg-zinc-100 text-zinc-600'}`}
                     >
                       <i className="ri-check-line" /> Chegou tudo
                     </button>
@@ -86,12 +95,12 @@ export default function Conferir({ r, onItens, onContinuar }: Props) {
                     <div className="mt-3 flex items-center gap-3">
                       <span className="text-sm text-zinc-600">Chegou</span>
                       <button
-                        onClick={() => mudar(it.key, { recebido: Math.max(0, +(it.recebido - 1).toFixed(3)), marcadoDiferente: true })}
+                        onClick={() => mudar(it.key, { recebido: Math.max(0, +(it.recebido - 1).toFixed(3)), conferido: true, marcadoDiferente: true })}
                         className="w-11 h-11 rounded-2xl bg-zinc-100 text-xl font-bold text-zinc-600 cursor-pointer" aria-label="Menos"
                       >−</button>
-                      <CampoQtd valor={it.recebido} onValor={(n) => mudar(it.key, { recebido: n, marcadoDiferente: true })} />
+                      <CampoQtd valor={it.recebido} onValor={(n) => mudar(it.key, { recebido: n, conferido: true, marcadoDiferente: true })} />
                       <button
-                        onClick={() => mudar(it.key, { recebido: +(it.recebido + 1).toFixed(3), marcadoDiferente: true })}
+                        onClick={() => mudar(it.key, { recebido: +(it.recebido + 1).toFixed(3), conferido: true, marcadoDiferente: true })}
                         className="w-11 h-11 rounded-2xl bg-zinc-100 text-xl font-bold text-zinc-600 cursor-pointer" aria-label="Mais"
                       >+</button>
                       <span className="text-sm text-zinc-500">{it.unidade}</span>
@@ -101,7 +110,7 @@ export default function Conferir({ r, onItens, onContinuar }: Props) {
                 </div>
               )}
 
-              <button
+              {!mudaQtd && <button
                 onClick={() => setPicker(it.key)}
                 className={`mt-3 w-full text-left rounded-2xl px-3.5 py-3 flex items-center gap-3 cursor-pointer ${ins ? 'bg-emerald-50' : 'bg-zinc-50 border border-dashed border-zinc-300'}`}
               >
@@ -123,15 +132,19 @@ export default function Conferir({ r, onItens, onContinuar }: Props) {
                   )}
                 </div>
                 <i className="ri-arrow-right-s-line text-zinc-400" />
-              </button>
+              </button>}
             </div>
           );
         })}
       </div>
 
       <div className="fixed bottom-0 inset-x-0 bg-white/95 backdrop-blur border-t border-zinc-100 px-4 pt-3" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 12px)' }}>
-        <button onClick={onContinuar} className="w-full py-4 rounded-2xl bg-amber-500 active:bg-amber-600 text-white text-base font-bold cursor-pointer">
-          Continuar
+        <button
+          onClick={onContinuar}
+          disabled={faltam > 0}
+          className="w-full py-4 rounded-2xl bg-amber-500 active:bg-amber-600 text-white text-base font-bold cursor-pointer disabled:bg-zinc-200 disabled:text-zinc-500 disabled:cursor-not-allowed"
+        >
+          {faltam > 0 ? `Falta conferir ${faltam} ${faltam === 1 ? 'item' : 'itens'}` : 'Continuar'}
         </button>
       </div>
 

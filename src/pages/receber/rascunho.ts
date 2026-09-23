@@ -14,6 +14,8 @@ export interface ItemR {
   fonte: string | null;
   /** Usuário tocou em "Chegou diferente" (mantém o campo aberto mesmo com a quantidade igual). */
   marcadoDiferente?: boolean;
+  /** Usuário conferiu o item (tocou em "Chegou tudo" ou "Chegou diferente"); nada vem marcado. */
+  conferido?: boolean;
   /** Usuário escolheu o insumo/fator na tela (senão o purchase-write converte sozinho). */
   fatorManual?: boolean;
   /** Linha lida do cupom (para lançar e memorizar o vínculo). */
