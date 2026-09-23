@@ -965,6 +965,64 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
     );
   }
 
+  // Restante/troco + Cortesia + Confirmar: sempre à vista. No tablet/desktop fica embaixo da
+  // coluna do pagamento (a esquerda desce até o fim); no celular, preso no rodapé da janela.
+  const rodape = (
+    <>
+      {/* Restante / Troco */}
+      {restante > 0.01 && (
+        <div className="flex items-center justify-between bg-red-50 border border-red-200 rounded-xl px-4 py-3">
+          <span className="text-sm font-semibold text-red-600">Restante a pagar</span>
+          <span className="text-lg font-bold text-red-600">{formatPrice(restante)}</span>
+        </div>
+      )}
+      {restante <= 0.01 && troco > 0 && (
+        <div className="flex items-center justify-between bg-green-50 border border-green-200 rounded-xl px-4 py-3">
+          <span className="text-sm font-semibold text-green-600">Troco</span>
+          <span className="text-lg font-bold text-green-600">{formatPrice(troco)}</span>
+        </div>
+      )}
+      {/* Cortesia — só para o carrinho atual (sem pedidos vinculados) e com liberação gerente/admin */}
+      {carrinho.length > 0 && pedidosExistentesSelecionados.filter((p) => !p.isCarrinho).length === 0 && (
+        <button
+          onClick={() => setShowAutorizacaoCortesia(true)}
+          disabled={confirmando}
+          className="w-full py-2.5 border-2 border-violet-300 text-violet-700 bg-violet-50 hover:bg-violet-100 disabled:opacity-40 disabled:cursor-not-allowed font-bold rounded-xl transition-colors cursor-pointer whitespace-nowrap text-sm flex items-center justify-center gap-2"
+        >
+          <i className="ri-gift-line text-base" />
+          Lançar como Cortesia (R$ 0,00)
+        </button>
+      )}
+      <button
+        onClick={handleConfirmar}
+        disabled={restante > 0.01 || confirmando}
+        className={`w-full py-3 ${precisaCobrar ? 'bg-sky-600 hover:bg-sky-700' : 'bg-green-500 hover:bg-green-600'} disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold rounded-xl transition-colors cursor-pointer whitespace-nowrap text-base flex items-center justify-center gap-2`}
+      >
+        {confirmando ? (
+          <>
+            <svg className="animate-spin w-5 h-5 text-white flex-shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+            </svg>
+            Confirmando pedido...
+          </>
+        ) : (
+          precisaCobrar ? (
+          <>
+            <i className="ri-bank-card-line" />
+            Cobrar na maquininha · {formatPrice(totalACobrar)}
+          </>
+          ) : (
+          <>
+            <i className="ri-check-double-line" />
+            Confirmar Pagamento · {formatPrice(totalComDesconto)}
+          </>
+          )
+        )}
+      </button>
+    </>
+  );
+
   return (
     <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-2 sm:p-4">
       {/* Duas colunas (md+): à esquerda o que se paga, à direita como se paga. O rodapé
@@ -1114,7 +1172,8 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
           </div>
 
           {/* ── Direita: pagamento ─────────────────────────────────────────── */}
-          <div className="flex-1 md:min-h-0 md:overflow-y-auto p-4 space-y-3">
+          <div className="flex-1 md:min-h-0 flex flex-col">
+          <div className="md:flex-1 md:min-h-0 md:overflow-y-auto p-4 space-y-3">
           {/* Payment methods */}
           <div>
             <p className="text-xs font-semibold text-zinc-500 mb-2 uppercase tracking-wider">Forma de Pagamento</p>
@@ -1200,64 +1259,15 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
             </div>
           )}
           </div>
+          <div className="hidden md:block shrink-0 border-t border-zinc-200 px-4 py-3 space-y-2">
+            {rodape}
+          </div>
+          </div>
         </div>
 
-        {/* Footer — sempre visível */}
-        <div className="flex border-t border-zinc-200 shrink-0">
-          <div className="hidden md:block md:w-[44%] bg-zinc-50/60 border-r border-zinc-200" />
-          <div className="flex-1 min-w-0 px-4 py-3 space-y-2">
-          {/* Restante / Troco */}
-          {restante > 0.01 && (
-            <div className="flex items-center justify-between bg-red-50 border border-red-200 rounded-xl px-4 py-3">
-              <span className="text-sm font-semibold text-red-600">Restante a pagar</span>
-              <span className="text-lg font-bold text-red-600">{formatPrice(restante)}</span>
-            </div>
-          )}
-          {restante <= 0.01 && troco > 0 && (
-            <div className="flex items-center justify-between bg-green-50 border border-green-200 rounded-xl px-4 py-3">
-              <span className="text-sm font-semibold text-green-600">Troco</span>
-              <span className="text-lg font-bold text-green-600">{formatPrice(troco)}</span>
-            </div>
-          )}
-          {/* Cortesia — só para o carrinho atual (sem pedidos vinculados) e com liberação gerente/admin */}
-          {carrinho.length > 0 && pedidosExistentesSelecionados.filter((p) => !p.isCarrinho).length === 0 && (
-            <button
-              onClick={() => setShowAutorizacaoCortesia(true)}
-              disabled={confirmando}
-              className="w-full py-2.5 border-2 border-violet-300 text-violet-700 bg-violet-50 hover:bg-violet-100 disabled:opacity-40 disabled:cursor-not-allowed font-bold rounded-xl transition-colors cursor-pointer whitespace-nowrap text-sm flex items-center justify-center gap-2"
-            >
-              <i className="ri-gift-line text-base" />
-              Lançar como Cortesia (R$ 0,00)
-            </button>
-          )}
-          <button
-            onClick={handleConfirmar}
-            disabled={restante > 0.01 || confirmando}
-            className={`w-full py-3 ${precisaCobrar ? 'bg-sky-600 hover:bg-sky-700' : 'bg-green-500 hover:bg-green-600'} disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold rounded-xl transition-colors cursor-pointer whitespace-nowrap text-base flex items-center justify-center gap-2`}
-          >
-            {confirmando ? (
-              <>
-                <svg className="animate-spin w-5 h-5 text-white flex-shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
-                </svg>
-                Confirmando pedido...
-              </>
-            ) : (
-              precisaCobrar ? (
-              <>
-                <i className="ri-bank-card-line" />
-                Cobrar na maquininha · {formatPrice(totalACobrar)}
-              </>
-              ) : (
-              <>
-                <i className="ri-check-double-line" />
-                Confirmar Pagamento · {formatPrice(totalComDesconto)}
-              </>
-              )
-            )}
-          </button>
-          </div>
+        {/* Rodapé no celular */}
+        <div className="md:hidden shrink-0 border-t border-zinc-200 px-4 py-3 space-y-2">
+          {rodape}
         </div>
 
         {/* Extras abertos por cima da janela */}
