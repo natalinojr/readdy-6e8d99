@@ -265,6 +265,14 @@ Quando o usuario pedir "muda X":
 
 Secao viva: registrar aqui padroes, decisoes e pegadinhas reutilizaveis conforme o sistema evolui. Cada entrada com data, contexto e onde foi aplicado.
 
+### 2026-09-23 — Cardápio: botão "Publicar alterações" (telas abertas recarregam sem F5)
+
+- **Problema:** editar o cardápio grava na hora (menu-write), mas cada tela carrega o cardápio 1x ao abrir — PDV, garçom, totem, mesa, QR universal e delivery só viam depois de recarregar.
+- **Solução:** `src/hooks/useMenuPing.ts` — canal Realtime PÚBLICO `menu-ping:<tenantId>`, evento `menu_published`, payload mínimo. `publicarCardapio()` (botão no header de `pages/cardapio/page.tsx`) envia; se a aba já assina o tópico, manda pelo canal existente e NÃO o remove (`supabase.channel()` devolve o canal já existente — remover derrubaria a assinatura); senão vai pelo REST de broadcast (funciona com a anon key, testado).
+- **Quem escuta (os 3 loaders de cardápio):** `CardapioContext` (PDV caixa/garçom/delivery, totem, mesa, KDS) → `recarregar({silent:true})`; `useMesaQRData` → `fetchCardapioData` com `setCategoriaAtiva` no-op; `useDeliveryData` → `fetchDeliveryConfig` só com os setters do cardápio + aberto/fechado (taxa, endereço, loja, categoria = no-op). Públicas usam `comJitter` (até 4 s).
+- **Reconexão:** ao re-inscrever depois de queda, o hook dispara o recarregamento (broadcast enviado com o aparelho offline se perde).
+- **Critério:** tela nova que monte cardápio próprio precisa assinar `useMenuPing`, senão fica fora do "Publicar".
+
 ### 2026-09-23 — Tarefas: modelos de estrutura de pastas (salvar pasta como modelo, aplicar, atualizar, versões)
 - **O modelo guarda a cópia COMPLETA da pasta** (subpastas, status, campos com opções, tarefas com descrição/checklist/subtarefas/etiquetas/estimativa/recorrência/responsável/valores de campo, visões salvas e agrupamento/colunas do navegador de quem gravou) em `content` jsonb. **O que entra ao aplicar é decidido por `options`** (liga/desliga + `excluidos` = refs desmarcadas na árvore). Por isso "editar o que está incluído" não exige regravar a partir da pasta, e marcar de volta funciona. Padrão: sem concluídas, sem responsável, status volta ao 1º, checklist desmarcado.
 - **Refs = ids originais** (pasta/tarefa/status/campo): estáveis entre pré-visualizar e gravar, e servem pra remapear `field:<id>` (agrupamento/visões) e `campo:<id>` (colunas) pro campo novo. Campo global reaproveita o mesmo id se ainda existir; valor de campo de outra pasta fora da árvore é descartado.
