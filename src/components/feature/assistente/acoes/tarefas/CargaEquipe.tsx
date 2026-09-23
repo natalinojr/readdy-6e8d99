@@ -40,7 +40,7 @@ export default function CargaEquipe({ onFechar, irPara }: AcaoProps) {
     (async () => {
       const [{ tarefas: todas, erro }, { pessoas: equipe }] = await Promise.all([
         carregarTarefas(tenantId, true),
-        carregarEquipe(tenantId),
+        carregarEquipe(tenantId, user ? { id: user.id, nome: user.nome } : null),
       ]);
       if (erro) { r.bot(`Não consegui abrir as Tarefas: ${erro}`); setPasso('fim'); return; }
       setTarefas(todas);

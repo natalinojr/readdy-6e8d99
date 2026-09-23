@@ -26,14 +26,16 @@ export async function carregarTarefas(tenantId: string, incluirConcluidas = fals
 
 export interface Pessoa { id: string; nome: string }
 
-/** Equipe ativa da loja (mesma lista do seletor de responsável da tela Tarefas). */
-export async function carregarEquipe(tenantId: string): Promise<{ pessoas: Pessoa[]; erro: string | null }> {
+/** Equipe ativa da loja (mesma lista do seletor de responsável da tela Tarefas).
+ *  `eu` entra sempre: fn_get_users_list esconde o dono da plataforma. */
+export async function carregarEquipe(tenantId: string, eu?: Pessoa | null): Promise<{ pessoas: Pessoa[]; erro: string | null }> {
   const { data, error } = await supabase.rpc('fn_get_users_list', { p_tenant_id: tenantId });
   if (error) return { pessoas: [], erro: error.message };
   const pessoas = ((data as Array<{ id: string; nome: string; ativo: boolean }>) ?? [])
     .filter((u) => u.ativo)
-    .map((u) => ({ id: u.id, nome: u.nome }))
-    .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+    .map((u) => ({ id: u.id, nome: u.nome }));
+  if (eu && !pessoas.some((p) => p.id === eu.id)) pessoas.push({ id: eu.id, nome: eu.nome || 'Eu' });
+  pessoas.sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
   return { pessoas, erro: null };
 }
 

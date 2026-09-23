@@ -418,3 +418,18 @@ describe('Escolher tarefa pela pasta', () => {
     expect(screen.getByText('Escolha a pasta')).toBeTruthy();
   });
 });
+
+describe('Eu mesmo como responsável', () => {
+  it('a lista de pessoas inclui quem está usando, mesmo fora do fn_get_users_list (dono da plataforma)', async () => {
+    mockRpc({
+      fn_get_tasks: () => ({ data: [tarefa({ id: 't1', title: 'Emitir nota', assignee_id: null, assignee_name: null })], error: null }),
+      fn_get_users_list: () => ({ data: [{ id: 'u-ana', nome: 'Ana Souza', ativo: true }], error: null }),
+    });
+    render(<PassarTarefa onFechar={onFechar} irPara={irPara} />);
+    fireEvent.click(await screen.findByText('Emitir nota'));
+    fireEvent.click(await screen.findByText('Eu'));
+    fireEvent.click(await screen.findByText('Confirmar'));
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(1));
+    expect(ultimoCorpo()).toMatchObject({ action: 'update_task', task_id: 't1', assignee_id: 'u-eu' });
+  });
+});

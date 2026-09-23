@@ -146,10 +146,22 @@ export default function TarefasPage() {
     };
   }, [celular]);
 
-  const usuariosAtivos = useMemo(
-    () => usuarios.filter((u) => u.ativo).map((u) => ({ id: u.id, nome: u.nome })),
-    [usuarios],
-  );
+  // Quem pode ser responsável: equipe ativa da loja + EU (fn_get_users_list esconde
+  // o dono da plataforma — sem isto ele não conseguia se atribuir tarefa) + quem já
+  // é responsável por alguma tarefa que eu vejo (ex.: pessoa de outra loja numa
+  // pasta compartilhada), pra ela não sumir do seletor.
+  const usuariosAtivos = useMemo(() => {
+    const lista = usuarios.filter((u) => u.ativo).map((u) => ({ id: u.id, nome: u.nome }));
+    const ids = new Set(lista.map((u) => u.id));
+    if (user?.id && !ids.has(user.id)) { lista.push({ id: user.id, nome: user.nome || 'Eu' }); ids.add(user.id); }
+    for (const t of tasks) {
+      if (t.assignee_id && t.assignee_name && !ids.has(t.assignee_id)) {
+        lista.push({ id: t.assignee_id, nome: t.assignee_name });
+        ids.add(t.assignee_id);
+      }
+    }
+    return lista.sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+  }, [usuarios, user?.id, user?.nome, tasks]);
 
   const selectedList = lists.find((l) => l.id === selectedListId) ?? lists[0] ?? null;
   const meuId = user?.id ?? null;

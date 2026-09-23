@@ -128,7 +128,7 @@ export default function NovaTarefa({ onFechar, irPara, recorrente = false }: Aca
     r.eu('Mudar responsável');
     if (!equipe) {
       if (!tenantId) return;
-      const { pessoas, erro } = await carregarEquipe(tenantId);
+      const { pessoas, erro } = await carregarEquipe(tenantId, user ? { id: user.id, nome: user.nome } : null);
       if (erro) { r.bot(`Não consegui abrir a equipe: ${erro}`); return; }
       setEquipe(pessoas);
     }

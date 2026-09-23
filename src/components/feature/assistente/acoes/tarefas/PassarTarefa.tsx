@@ -27,7 +27,7 @@ export default function PassarTarefa({ onFechar, irPara }: AcaoProps) {
     if (!tenantId || !meuId) { r.bot('Sem loja ativa.'); setPasso('fim'); return; }
     (async () => {
       const [{ tarefas: todas, erro }, { pessoas: equipe, erro: erroEquipe }] = await Promise.all([
-        carregarTarefas(tenantId), carregarEquipe(tenantId),
+        carregarTarefas(tenantId), carregarEquipe(tenantId, user ? { id: user.id, nome: user.nome } : null),
       ]);
       if (erro) { r.bot(`Não consegui abrir as Tarefas: ${erro}`); setPasso('fim'); return; }
       if (erroEquipe) { r.bot(`Não consegui abrir a equipe: ${erroEquipe}`); setPasso('fim'); return; }

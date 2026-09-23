@@ -10,7 +10,7 @@ const lista = (id: string, name: string) => ({
 });
 
 vi.mock('@/contexts/ToastContext', () => ({ useToast: () => ({ error: vi.fn(), success: vi.fn() }) }));
-vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => ({ user: { id: 'eu', tenantId: 't1' } }) }));
+vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => ({ user: { id: 'eu', nome: 'Natalino', tenantId: 't1' } }) }));
 vi.mock('@/contexts/AppModeContext', () => ({ useAppMode: () => ({ setMode: vi.fn() }) }));
 vi.mock('@/hooks/useModuleAccess', () => ({ useModuleAccess: () => ({ hasModule: () => true, loading: false }) }));
 vi.mock('@/hooks/useUsuarios', () => ({ useUsuarios: () => ({ usuarios: [] }) }));
@@ -48,5 +48,16 @@ describe('Agrupamento por pasta', () => {
     expect(agrupar().value).toBe('priority'); // a A voltou como estava
     fireEvent.click(screen.getAllByText('Pasta B')[0]);
     expect(agrupar().value).toBe('assignee');
+  });
+});
+
+describe('Responsável: eu sempre na lista', () => {
+  it('o filtro de responsável oferece o próprio usuário mesmo sem vir da equipe da loja', () => {
+    render(<MemoryRouter><TarefasPage /></MemoryRouter>);
+    fireEvent.click(screen.getAllByText('Pasta A')[0]);
+    fireEvent.change(screen.getAllByTitle(/^Agrupar por/)[0], { target: { value: 'assignee' } });
+    // Sem nenhuma tarefa não há grupo; o que importa é o nome estar entre as opções do filtro.
+    fireEvent.click(screen.getAllByRole('button', { name: /Filtr/ })[0]);
+    expect(screen.getAllByText('Natalino').length).toBeGreaterThan(0);
   });
 });
