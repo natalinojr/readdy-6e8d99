@@ -665,7 +665,8 @@ export function CreateUserModal({ invites, onClose, onCreated }: CreateUserModal
   };
 
   const SYSTEM_URL = 'https://erpos.vercel.app/';
-  const saudacao = created?.apelido || created?.nome?.split(' ')[0] || created?.nome || '';
+  // Saudação pelo primeiro nome (pedido do dono, 2026-09-23) — nunca pelo apelido.
+  const saudacao = created?.nome?.trim().split(/\s+/)[0] || '';
 
   const mensagem = created
     ? `Olá, ${saudacao}! Seu acesso ao ERPOS V2 foi criado.\n\n*Dados de acesso:*\nE-mail: ${created.email}\nSenha: ${senha}${
@@ -710,7 +711,6 @@ export function CreateUserModal({ invites, onClose, onCreated }: CreateUserModal
                 <div>
                   <label className="block text-xs font-semibold text-zinc-600 mb-1.5">
                     Apelido
-                    <span className="text-zinc-400 font-normal ml-1">(saud.)</span>
                   </label>
                   <input type="text" value={apelido} onChange={e => setApelido(e.target.value)}
                     placeholder="Ex: Joãozinho"
@@ -719,7 +719,7 @@ export function CreateUserModal({ invites, onClose, onCreated }: CreateUserModal
               </div>
               <p className="text-[10px] text-zinc-400 -mt-2 flex items-center gap-1">
                 <i className="ri-chat-smile-2-line" />
-                O apelido aparece na mensagem: &quot;Olá, <strong>{apelido || nome.split(' ')[0] || 'nome'}!</strong>&quot;
+                A mensagem chama pelo primeiro nome: &quot;Olá, <strong>{nome.trim().split(/\s+/)[0] || 'nome'}!</strong>&quot;
               </p>
 
               {/* E-mail */}
@@ -951,7 +951,6 @@ export function EditUserModal({ user, onClose, onSaved }: EditUserModalProps) {
                 <div>
                   <label className="block text-xs font-semibold text-zinc-600 mb-1.5">
                     Apelido
-                    <span className="text-zinc-400 font-normal ml-1">(saud.)</span>
                   </label>
                   <input type="text" value={apelido} onChange={e => setApelido(e.target.value)}
                     placeholder={nome.split(' ')[0]}
@@ -960,7 +959,7 @@ export function EditUserModal({ user, onClose, onSaved }: EditUserModalProps) {
               </div>
               <p className="text-[10px] text-zinc-400 -mt-2 flex items-center gap-1">
                 <i className="ri-chat-smile-2-line" />
-                Mensagem: &quot;Olá, <strong>{apelido || nome.split(' ')[0] || '...'}!</strong>&quot;
+                Mensagem: &quot;Olá, <strong>{nome.trim().split(/\s+/)[0] || '...'}!</strong>&quot;
               </p>
               <div>
                 <label className="block text-xs font-semibold text-zinc-600 mb-1.5">E-mail</label>
@@ -1134,7 +1133,7 @@ export function ResendCredentialsModal({ user, onClose }: ResendCredentialsModal
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
-  const saudacao = user.nickname || user.name.split(' ')[0];
+  const saudacao = (user.name ?? '').trim().split(/\s+/)[0];
 
   const generatePassword = () => {
     const chars = 'abcdefghjkmnpqrstuvwxyz23456789';
