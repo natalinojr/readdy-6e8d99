@@ -128,10 +128,13 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       if (!taskId) return json({ error: 'task_id é obrigatório' }, 400);
 
       const { data: taskRow } = await admin
-        .from('tasks').select('id, created_by, assignee_id').eq('id', taskId).maybeSingle();
+        .from('tasks').select('id, created_by, assignee_id, list_id').eq('id', taskId).maybeSingle();
       if (!taskRow) return json({ error: 'Tarefa não encontrada' }, 404);
       if (taskRow.created_by !== user.id && taskRow.assignee_id !== user.id) {
-        return json({ error: 'Você não tem permissão para anexar arquivos nesta tarefa' }, 403);
+        const { data: acessoUp } = await admin.rpc('fn_task_list_access', { p_list_id: taskRow.list_id, p_user_id: user.id });
+        if (acessoUp !== 'owner' && acessoUp !== 'edit') {
+          return json({ error: 'Você não tem permissão para anexar arquivos nesta tarefa' }, 403);
+        }
       }
 
       const nomeSeguro = (file.name.replace(/[^a-zA-Z0-9.\-_ ]/g, '') || 'arquivo').slice(0, 120);
@@ -248,22 +251,40 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       return data as Record<string, unknown>;
     };
 
-    // Listas (e o que pertence só a elas: status, campos por lista) são
-    // pessoais — só quem criou pode gerenciar.
+    // Acesso à pasta (sobe pelos ancestrais): 'owner' = criou ela ou uma pasta
+    // acima; 'edit'/'view' = compartilhada (task_list_shares); null = nenhum.
+    const acessoPasta = async (listId: string): Promise<'owner' | 'edit' | 'view' | null> => {
+      const { data, error } = await admin.rpc('fn_task_list_access', { p_list_id: listId, p_user_id: user.id });
+      if (error) throw new Error(errMsg(error));
+      return (data as 'owner' | 'edit' | 'view' | null) ?? null;
+    };
+
+    // Gerenciar a pasta (status, campos, excluir, compartilhar): só o dono.
     const assertListOwner = async (listId: string): Promise<Record<string, unknown>> => {
       const list = await assertOwned('task_lists', listId);
-      if (list.created_by !== user.id) throw new Error('Você não tem permissão para editar esta lista');
+      if ((await acessoPasta(listId)) !== 'owner') throw new Error('Só o dono da pasta pode fazer isso');
       return list;
     };
 
-    // Tarefa é visível/editável por quem criou (dono da lista) OU pelo
-    // responsável (é assim que ela "compartilha" com outro usuário).
-    const assertTaskAccess = async (taskId: string): Promise<Record<string, unknown>> => {
-      const task = await assertOwned('tasks', taskId);
-      if (task.created_by !== user.id && task.assignee_id !== user.id) {
-        throw new Error('Você não tem permissão para editar esta tarefa');
+    // Criar/editar tarefas e subpastas: dono ou compartilhada com "editar".
+    const assertListEdit = async (listId: string): Promise<Record<string, unknown>> => {
+      const list = await assertOwned('task_lists', listId);
+      const acesso = await acessoPasta(listId);
+      if (acesso !== 'owner' && acesso !== 'edit') {
+        throw new Error(acesso === 'view' ? 'Você só tem acesso de leitura nesta pasta' : 'Você não tem acesso a esta pasta');
       }
-      return task;
+      return list;
+    };
+
+    // Tarefa: quem criou e o responsável fazem tudo (como antes). Pela pasta:
+    // 'edit' edita; 'view' só vê e comenta.
+    const assertTaskAccess = async (taskId: string, nivel: 'edit' | 'comment' | 'view' = 'edit'): Promise<Record<string, unknown>> => {
+      const task = await assertOwned('tasks', taskId);
+      if (task.created_by === user.id || task.assignee_id === user.id) return task;
+      const acesso = await acessoPasta(task.list_id as string);
+      if (acesso === 'owner' || acesso === 'edit') return task;
+      if (acesso === 'view' && nivel !== 'edit') return task;
+      throw new Error(acesso === 'view' ? 'Você só tem acesso de leitura nesta pasta' : 'Você não tem permissão para editar esta tarefa');
     };
 
     switch (action) {
@@ -271,11 +292,13 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       case 'create_list': {
         const { name, color, icon, parent_list_id } = body;
         if (!name) return json({ error: 'name is required' }, 400);
-        if (parent_list_id) await assertListOwner(parent_list_id);
+        // Subpasta criada por quem só tem "editar" fica do DONO da pasta-mãe —
+        // senão quem a criou viraria dono dela (e o dono de verdade, só por herança).
+        const pai = parent_list_id ? await assertListEdit(parent_list_id) : null;
         const { data, error } = await admin.from('task_lists')
           .insert({
             tenant_id: tenantId, name, color: color ?? '#6366f1', icon: icon ?? null,
-            parent_list_id: parent_list_id ?? null, created_by: user.id,
+            parent_list_id: parent_list_id ?? null, created_by: (pai?.created_by as string | undefined) ?? user.id,
           })
           .select('id').single();
         if (error) return json({ error: errMsg(error) }, 500);
@@ -314,6 +337,71 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         const { error: lErr } = await admin.from('task_lists').update({ is_archived: true }).in('id', ids);
         if (lErr) return json({ error: errMsg(lErr) }, 500);
         return json({ success: true, deleted_lists: ids.length });
+      }
+
+      // ═══ Compartilhar pasta ═══
+      // Vale pra pasta e toda a subárvore. Só o dono compartilha. A pessoa é
+      // achada por e-mail ou matrícula, e só entre quem divide alguma loja com
+      // o dono (não dá pra "procurar" gente de outras empresas).
+      case 'share_list': {
+        const { list_id, identificador, permission } = body;
+        if (!list_id || !identificador) return json({ error: 'Informe a pasta e o e-mail ou matrícula' }, 400);
+        if (permission !== 'view' && permission !== 'edit') return json({ error: 'Permissão deve ser view ou edit' }, 400);
+        const pasta = await assertListOwner(list_id);
+        const termo = String(identificador).trim();
+        const meusTenants = tenantRows.map((r) => r.tenant_id);
+        const { data: colegas } = await admin.from('user_tenants').select('user_id').in('tenant_id', meusTenants);
+        const idsColegas = [...new Set((colegas ?? []).map((c: { user_id: string }) => c.user_id))];
+        let q = admin.from('users').select('id, name, email').in('id', idsColegas).is('deleted_at', null);
+        q = termo.includes('@') ? q.ilike('email', termo) : q.eq('badge_number', termo);
+        const { data: achados, error: buscaErr } = await q;
+        if (buscaErr) return json({ error: errMsg(buscaErr) }, 500);
+        if (!achados?.length) return json({ error: 'Ninguém com esse e-mail ou matrícula nas suas lojas' }, 404);
+        if (achados.length > 1) return json({ error: 'Mais de uma pessoa com essa matrícula — use o e-mail' }, 409);
+        const alvo = achados[0] as { id: string; name: string | null; email: string | null };
+        if (alvo.id === user.id || alvo.id === pasta.created_by) return json({ error: 'Essa pessoa já é dona da pasta' }, 400);
+        const { data: share, error } = await admin.from('task_list_shares')
+          .upsert({ list_id, user_id: alvo.id, permission, invited_by: user.id }, { onConflict: 'list_id,user_id' })
+          .select('id').single();
+        if (error) return json({ error: errMsg(error) }, 500);
+
+        // Aviso no celular (push). Falha aqui não desfaz o compartilhamento.
+        try {
+          const { data: eu } = await admin.from('users').select('name').eq('id', user.id).maybeSingle();
+          await fetch(`${supabaseUrl}/functions/v1/send-push`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${serviceRoleKey}` },
+            body: JSON.stringify({
+              action: 'send', user_ids: [alvo.id], tenant_id: tenantId,
+              payload: {
+                titulo: 'Pasta compartilhada com você',
+                corpo: `${eu?.name ?? 'Alguém'} compartilhou "${pasta.name}" (${permission === 'edit' ? 'pode editar' : 'só ver'})`,
+                url: '/tarefas',
+              },
+            }),
+          });
+        } catch (e) {
+          console.error('[task-write] push de compartilhamento falhou (ignorado):', e instanceof Error ? e.message : e);
+        }
+        return json({ success: true, id: share.id, user: { id: alvo.id, name: alvo.name, email: alvo.email } });
+      }
+      case 'update_share': {
+        const { share_id, permission } = body;
+        if (permission !== 'view' && permission !== 'edit') return json({ error: 'Permissão deve ser view ou edit' }, 400);
+        const share = await assertOwned('task_list_shares', share_id);
+        await assertListOwner(share.list_id as string);
+        const { error } = await admin.from('task_list_shares').update({ permission }).eq('id', share_id);
+        if (error) return json({ error: errMsg(error) }, 500);
+        return json({ success: true });
+      }
+      case 'remove_share': {
+        // O dono tira alguém; ou a própria pessoa "sai" da pasta.
+        const { share_id } = body;
+        const share = await assertOwned('task_list_shares', share_id);
+        if (share.user_id !== user.id) await assertListOwner(share.list_id as string);
+        const { error } = await admin.from('task_list_shares').delete().eq('id', share_id);
+        if (error) return json({ error: errMsg(error) }, 500);
+        return json({ success: true });
       }
 
       // ═══ Status ═══
@@ -359,7 +447,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         if (!list_id || !title) return json({ error: 'list_id and title are required' }, 400);
         const estimativaErro = validarEstimativa(time_estimate_minutes);
         if (estimativaErro) return json({ error: estimativaErro }, 400);
-        await assertListOwner(list_id);
+        await assertListEdit(list_id);
         let resolvedStatus = status_id ?? null;
         if (!resolvedStatus) {
           const { data: st } = await admin.from('task_statuses')
@@ -395,6 +483,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       case 'update_task': {
         const { task_id, ...rest } = body;
         const current = await assertTaskAccess(task_id);
+        if (rest.list_id !== undefined && rest.list_id !== current.list_id) await assertListEdit(rest.list_id);
         const patch: Record<string, unknown> = {};
         const editable = ['title', 'description', 'status_id', 'priority', 'assignee_id', 'start_date', 'due_date', 'due_has_time', 'list_id', 'sort_order', 'recurrence', 'is_archived', 'parent_task_id', 'time_estimate_minutes'];
         for (const k of editable) {
@@ -504,7 +593,10 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       case 'delete_task': {
         const { task_id } = body;
         const current = await assertOwned('tasks', task_id);
-        if (current.created_by !== user.id) return json({ error: 'Só quem criou a tarefa pode arquivá-la' }, 403);
+        if (current.created_by !== user.id) {
+          const acesso = await acessoPasta(current.list_id as string);
+          if (acesso !== 'owner' && acesso !== 'edit') return json({ error: 'Só quem criou a tarefa (ou quem edita a pasta) pode arquivá-la' }, 403);
+        }
         const { error } = await admin.from('tasks').update({ is_archived: true }).eq('id', task_id);
         if (error) return json({ error: errMsg(error) }, 500);
         return json({ success: true });
@@ -641,7 +733,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       case 'add_comment': {
         const { task_id, body: commentBody, mentions } = body;
         if (!task_id || !commentBody) return json({ error: 'task_id and body are required' }, 400);
-        await assertTaskAccess(task_id);
+        await assertTaskAccess(task_id, 'comment');
         const listaMencoes: string[] = Array.isArray(mentions) ? mentions : [];
         const { data, error } = await admin.from('task_comments')
           .insert({ tenant_id: tenantId, task_id, user_id: user.id, body: commentBody, mentions: listaMencoes })
@@ -762,7 +854,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       case 'create_view': {
         const { name, list_id, view_type, group_by, filters } = body;
         if (!name) return json({ error: 'name is required' }, 400);
-        if (list_id) await assertListOwner(list_id);
+        if (list_id && !(await acessoPasta(list_id))) return json({ error: 'Você não tem acesso a esta pasta' }, 403);
         const { data, error } = await admin.from('task_views').insert({
           tenant_id: tenantId,
           list_id: list_id ?? null,
@@ -802,7 +894,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       case 'sign_attachment': {
         const { attachment_id } = body;
         const att = await assertOwned('task_attachments', attachment_id);
-        await assertTaskAccess(att.task_id as string);
+        await assertTaskAccess(att.task_id as string, 'view');
         // Bucket privado: gera URL temporária em vez de expor o arquivo
         const { data, error } = await admin.storage
           .from('task-attachments')

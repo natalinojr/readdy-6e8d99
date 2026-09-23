@@ -831,7 +831,8 @@ export default function ViewLista({
         const cat = categoriaDoGrupo(grupo);
         const recolhidoPadrao = cat === 'done' || cat === 'cancelled';
         const recolhido = recolhidoPadrao !== alternados.has(chave);
-        const podeAdicionar = list !== null && (payloadMoverGrupo(groupBy, grupo.key, list) !== null || groupBy === 'status');
+        // Pasta compartilhada só pra ver: sem "Nova tarefa…" (o servidor recusaria).
+        const podeAdicionar = list !== null && list.access !== 'view' && (payloadMoverGrupo(groupBy, grupo.key, list) !== null || groupBy === 'status');
 
         return (
           <div key={chave}>

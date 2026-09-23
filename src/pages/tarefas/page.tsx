@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
-import { Plus, ListTodo, LayoutGrid, CalendarDays, ClipboardList, UserCheck, Users, Layers, SlidersHorizontal, ListChecks, Waypoints, ArrowLeft, Gauge } from 'lucide-react';
+import { Plus, ListTodo, LayoutGrid, CalendarDays, ClipboardList, UserCheck, Users, Layers, SlidersHorizontal, ListChecks, Waypoints, ArrowLeft, Gauge, Share2 } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { useAppMode } from '@/contexts/AppModeContext';
@@ -8,6 +8,7 @@ import { useModuleAccess } from '@/hooks/useModuleAccess';
 import { useUsuarios } from '@/hooks/useUsuarios';
 import PullToRefresh from '@/components/feature/PullToRefresh';
 import { useTarefas } from './hooks/useTarefas';
+import type { TaskList } from './hooks/useTarefas';
 import ViewLista from './components/ViewLista';
 import ViewKanban from './components/ViewKanban';
 import ViewCalendario from './components/ViewCalendario';
@@ -21,6 +22,7 @@ import ViewsSalvas from './components/ViewsSalvas';
 import FiltrosBar from './components/FiltrosBar';
 import ArvorePastas from './components/ArvorePastas';
 import ConfirmDialog from './components/ConfirmDialog';
+import CompartilharPasta from './components/CompartilharPasta';
 import { BottomNav, ListasSheet } from './components/MobileNav';
 import type { Filtros, GroupBy } from './lib/agrupamento';
 import { FILTROS_VAZIOS, aplicarFiltros } from './lib/agrupamento';
@@ -88,6 +90,7 @@ export default function TarefasPage() {
   const [showTemplates, setShowTemplates] = useState(false);
   const [showStatus, setShowStatus] = useState(false);
   const [showListasSheet, setShowListasSheet] = useState(false);
+  const [compartilhando, setCompartilhando] = useState<TaskList | null>(null);
   const [showEscolherPasta, setShowEscolherPasta] = useState(false);
   const [newListName, setNewListName] = useState('');
   const [newListColor, setNewListColor] = useState(CORES_LISTA[0]);
@@ -95,6 +98,9 @@ export default function TarefasPage() {
   const [pastaExcluindo, setPastaExcluindo] = useState<{ no: NoPasta; ids: Set<string>; descricao: string } | null>(null);
 
   const arvorePastas = useMemo(() => montarArvorePastas(lists), [lists]);
+  // Na barra lateral: as minhas pastas e, à parte, as compartilhadas comigo.
+  const minhasRaizes = useMemo(() => arvorePastas.filter((n) => (n.access ?? 'owner') === 'owner'), [arvorePastas]);
+  const raizesCompartilhadas = useMemo(() => arvorePastas.filter((n) => (n.access ?? 'owner') !== 'owner'), [arvorePastas]);
 
   // Agrupamento é por pasta (e por visão Minhas/Compartilhadas/Todas): trocar o
   // agrupamento numa pasta não mexe nas outras, e ao voltar pra ela ele volta
@@ -154,7 +160,8 @@ export default function TarefasPage() {
     let base: typeof tasks;
     if (origem === 'minhas') base = tasks.filter((t) => t.assignee_id === meuId);
     else if (origem === 'compartilhadas') base = tasks.filter((t) => t.assignee_id === meuId && t.created_by !== meuId);
-    else if (origem === 'todas') base = tasks.filter((t) => t.created_by === meuId || t.assignee_id === meuId);
+    // Todas = tudo o que eu enxergo, inclusive as tarefas das pastas compartilhadas comigo.
+    else if (origem === 'todas') base = tasks;
     else base = tasks.filter((t) => t.list_id === selectedList?.id);
     return aplicarFiltros(base, filtros);
   }, [tasks, origem, selectedList?.id, meuId, filtros]);
@@ -385,12 +392,28 @@ export default function TarefasPage() {
           </div>
 
           <ArvorePastas
-            nos={arvorePastas}
+            nos={minhasRaizes}
             selectedId={origem === 'pasta' ? selectedList?.id ?? null : null}
             onSelecionar={irParaPasta}
             onNovaSubpasta={abrirNovaPasta}
             onExcluir={excluirPasta}
+            onCompartilhar={setCompartilhando}
           />
+
+          {raizesCompartilhadas.length > 0 && (
+            <>
+              <div className="px-4 pt-4 pb-1">
+                <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Compartilhadas comigo</span>
+              </div>
+              <ArvorePastas
+                nos={raizesCompartilhadas}
+                selectedId={origem === 'pasta' ? selectedList?.id ?? null : null}
+                onSelecionar={irParaPasta}
+                onNovaSubpasta={abrirNovaPasta}
+                onCompartilhar={setCompartilhando}
+              />
+            </>
+          )}
 
           {!loading && lists.length === 0 && (
             <p className="px-4 py-6 text-xs text-slate-400 text-center">
@@ -404,8 +427,8 @@ export default function TarefasPage() {
         <div className="px-3 py-2.5 border-t border-slate-100 space-y-0.5">
             <button
               onClick={() => setShowStatus(true)}
-              disabled={!selectedList}
-              title={selectedList ? undefined : 'Selecione uma pasta primeiro'}
+              disabled={!selectedList || (selectedList.access ?? 'owner') !== 'owner'}
+              title={!selectedList ? 'Selecione uma pasta primeiro' : (selectedList.access ?? 'owner') !== 'owner' ? 'Só o dono da pasta muda os status' : undefined}
               className="w-full flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs text-slate-500 hover:bg-slate-50 hover:text-indigo-600 disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-slate-500"
             >
               <Waypoints size={13} /> Status da pasta
@@ -447,6 +470,21 @@ export default function TarefasPage() {
                   <span className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: selectedList.color }} />
                 )}
                 <span className="truncate">{selectedList?.name ?? 'Tarefas'}</span>
+                {selectedList && (selectedList.access ?? 'owner') !== 'owner' && (
+                  <span className="shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-slate-200/70 text-slate-500">
+                    {selectedList.access === 'edit' ? 'pode editar' : 'só ver'} · de {selectedList.owner_name ?? 'outra pessoa'}
+                  </span>
+                )}
+                {selectedList && (
+                  <button
+                    onClick={() => setCompartilhando(selectedList)}
+                    className="shrink-0 hidden md:flex items-center gap-1 text-xs font-normal px-2 py-1 rounded-lg text-slate-500 hover:bg-slate-200 hover:text-indigo-600"
+                    title={(selectedList.access ?? 'owner') === 'owner' ? 'Compartilhar pasta' : 'Quem tem acesso'}
+                  >
+                    <Share2 size={13} />
+                    {(selectedList.share_count ?? 0) > 0 && <span>{selectedList.share_count}</span>}
+                  </button>
+                )}
               </>
             )}
           </h1>
@@ -644,6 +682,15 @@ export default function TarefasPage() {
       )}
 
       {/* ── Status da pasta ── */}
+      {compartilhando && (
+        <CompartilharPasta
+          list={lists.find((l) => l.id === compartilhando.id) ?? compartilhando}
+          meuId={meuId}
+          write={write}
+          onClose={() => setCompartilhando(null)}
+        />
+      )}
+
       {showStatus && selectedList && (
         <StatusManager
           list={selectedList}

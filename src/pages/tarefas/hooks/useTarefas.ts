@@ -23,6 +23,12 @@ export interface TaskList {
   parent_list_id: string | null;
   statuses: TaskStatus[];
   open_count: number;
+  /** Meu acesso: dono (criei ela ou uma pasta acima) ou compartilhada comigo. */
+  access?: 'owner' | 'edit' | 'view';
+  owner_id?: string | null;
+  owner_name?: string | null;
+  /** Quantas pessoas têm acesso direto a ESTA pasta (compartilhamentos dela). */
+  share_count?: number;
 }
 
 export interface TaskTag {
