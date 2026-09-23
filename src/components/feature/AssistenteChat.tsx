@@ -14,6 +14,8 @@ import { EVENTO_ASSISTENTE, getFoco, limparFocoItem, resumirFoco, setFocoItem, t
 import { useVoltarFecha } from '@/lib/voltarAndroid';
 import BotaoAvisos from '@/components/feature/BotaoAvisos';
 import { ACOES, GRUPOS } from '@/components/feature/assistente/acoes';
+import { acaoLiberada, useAcessoAcoes } from '@/components/feature/assistente/acoes/acesso';
+import AcoesRapidasFlutuante from '@/components/feature/assistente/AcoesRapidasFlutuante';
 import ItensClassificarCard from '@/components/feature/assistente/ItensClassificarCard';
 import PainelMensagem, { painelDoTexto } from '@/components/feature/assistente/PainelMensagem';
 import PendenciasChat, { type PendenciaChat } from '@/components/feature/assistente/PendenciasChat';
@@ -310,6 +312,7 @@ function PaymentCard({ p, onAction }: { p: Payment; onAction: (p: Payment, op: '
 export default function AssistenteChat({ variant }: { variant: 'floating' | 'embedded' }) {
   const { user, selectTenant } = useAuth();
   const location = useLocation();
+  const acesso = useAcessoAcoes();
   const navigate = useNavigate();
   // Três estágios no modo flutuante (pedido do dono, 2026-09-16): botão redondo → barra pequena
   // (digitar rápido, sem cobrir a tela) → conversa inteira. Arrastar a barra para cima abre a
@@ -928,7 +931,9 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
     await pagarComPin(pinFor, pin, false);
   };
 
-  if (user?.email?.toLowerCase() !== ASSISTENTE_OWNER_EMAIL) return null;
+  // Os demais usuários (2026-09-23): só a página de ações rápidas, com o que o acesso deles permite.
+  if (!user) return null;
+  if (user.email?.toLowerCase() !== ASSISTENTE_OWNER_EMAIL) return <AcoesRapidasFlutuante variant={variant} />;
 
   // Rodapé = só o que espera decisão ou está em andamento. Concluído (pago, cancelado, recusado)
   // sai do rodapé: o resultado fica registrado na conversa. Antes, pago ficava fixo por 24 h e
@@ -943,7 +948,9 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
   // Sem acento e sem maiúscula: "conciliacao" acha "Atualizar conciliação". Casa no nome e no grupo.
   const semAcento = (t: string) => t.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
   const termo = semAcento(filtroAcoes.trim());
-  const acoesFiltradas = termo ? ACOES.filter((a) => semAcento(`${a.label} ${a.grupo}`).includes(termo)) : ACOES;
+  // Só as ações que o acesso na loja ativa permite (acoes/acesso.ts) — vale para o dono também.
+  const acoesLiberadas = ACOES.filter((a) => acaoLiberada(a.id, acesso));
+  const acoesFiltradas = termo ? acoesLiberadas.filter((a) => semAcento(`${a.label} ${a.grupo}`).includes(termo)) : acoesLiberadas;
   const campoFiltroAcoes = (grande: boolean) => (
     <div className={`relative ${grande ? 'pt-3' : 'px-1 pb-1'}`}>
       <i className={`ri-search-line absolute ${grande ? 'left-3 top-[1.35rem]' : 'left-3.5 top-2'} text-zinc-400`} />

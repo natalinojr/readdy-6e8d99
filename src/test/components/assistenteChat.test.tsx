@@ -18,6 +18,11 @@ vi.mock('@/lib/supabase', () => ({
   SUPABASE_URL: 'http://localhost',
 }));
 vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => h.auth }));
+// Ações rápidas filtradas pelo acesso (2026-09-23): sem provider de permissões o contexto libera
+// tudo; os módulos por usuário vêm daqui.
+vi.mock('@/hooks/useModuleAccess', () => ({
+  useModuleAccess: () => ({ modules: ['tarefas', 'contratacao', 'nfse'], loading: false, hasModule: () => true }),
+}));
 
 import AssistenteChat from '@/components/feature/AssistenteChat';
 import { getFoco, perguntarAoAssistente, setFocoTela } from '@/lib/assistenteFoco';
@@ -113,7 +118,7 @@ function fakeServer(fn: string, opts: { body: Body }) {
   return Promise.resolve(erro('Ação desconhecida.'));
 }
 
-const OWNER = { id: 'u1', email: 'natalinojr.engel@gmail.com', tenantId: 't1', loja: 'El Patrón Paranaguá' };
+const OWNER = { id: 'u1', email: 'natalinojr.engel@gmail.com', tenantId: 't1', loja: 'El Patrón Paranaguá', perfil: 'admin' };
 const pixEduardo = (): Pay => ({
   id: 'p1', kind: 'pix', amount: 115.96, beneficiary_name: 'Eduardo Oriente', pix_key: 'edua…1234', due_date: null,
   description: 'Reembolso', status: 'draft', status_label: 'aguardando você tocar em Pagar', error: null, created_at: new Date().toISOString(),
@@ -138,10 +143,14 @@ afterEach(() => { delete (window as unknown as { Capacitor?: unknown }).Capacito
 
 // ── Testes ──────────────────────────────────────────────────────────────────
 describe('AssistenteChat — conversa', () => {
-  it('não aparece para quem não é o dono', () => {
-    h.auth.user = { ...OWNER, email: 'gerente@loja.com' };
-    const { container } = renderChat();
-    expect(container).toBeEmptyDOMElement();
+  it('quem não é o dono vê só as ações rápidas, sem a conversa', async () => {
+    h.auth.user = { ...OWNER, email: 'gerente@loja.com', perfil: 'gerente' };
+    renderChat();
+    expect(await screen.findByText('Ações rápidas')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Vendas do dia/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Todas as mensagens/ })).not.toBeInTheDocument();
+    // Aprovar sugestão do tráfego é só do Admin.
+    expect(screen.queryByRole('button', { name: /Sugestões do tráfego/ })).not.toBeInTheDocument();
     expect(h.invoke).not.toHaveBeenCalled();
   });
 

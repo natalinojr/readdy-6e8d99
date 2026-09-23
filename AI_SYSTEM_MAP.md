@@ -3188,3 +3188,14 @@ admin/gerente — liberar a aba para outro papel mostra a tela, mas salvar dá 4
 Outro: `config-write` autoriza pela chave da tela (`configuracoes_editar`), não por aba —
 `upsert_system_settings` serve Operação, Impressoras e Mesas ao mesmo tempo, então não dá
 para amarrar ação → aba sem quebrar as três.
+
+### Ações rápidas do assistente para todos os usuários (2026-09-23)
+
+O chat do assistente (`AssistenteChat`) continua só do dono; **quem não é o dono** recebe o
+`AcoesRapidasFlutuante` (botão ⚡ → só a página de ações rápidas, nada do `assistente-app`).
+Quem vê cada ação: `src/components/feature/assistente/acoes/acesso.ts` — a mesma permissão da
+tela de onde a ação copia o caminho (Financeiro = Admin/Gerente/Financeiro + aba; Tarefas,
+Contratação, NFS-e = módulo por usuário; demais = `PermissaoKey`). O filtro vale também para o
+dono. **Pegadinha:** ação nova em `acoes/index.tsx` sem regra em `acesso.ts` não aparece para
+ninguém — o teste `acoesRapidasAcesso.test.ts` falha para lembrar. Os atalhos "Ir para uma tela"
+filtram por `rotaLiberada` (inclui papel preso). A gravação continua conferida na edge/RLS.
