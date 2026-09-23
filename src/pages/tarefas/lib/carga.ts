@@ -3,14 +3,14 @@ import type { TaskRow } from '../hooks/useTarefas';
 /**
  * Carga de trabalho: quanto de trabalho ESTIMADO cada pessoa tem por dia.
  *
- * Diferente do ClickUp (que joga a estimativa inteira no dia do prazo ou
- * espalha igual entre início e prazo), aqui:
- * - conta o que FALTA (estimativa − tempo já cronometrado), não a estimativa cheia;
- * - espalha entre início e prazo PROPORCIONAL à capacidade de cada dia da pessoa
- *   (sábado de meio período recebe metade do trabalho de um dia cheio);
- * - tarefa atrasada não some: o que falta dela cai em "hoje", marcada como atrasada;
- * - sem estimativa / sem prazo / sem responsável aparecem como pendências à parte,
- *   em vez de ficarem invisíveis.
+ * Cada dia mostra o TOTAL planejado (inclusive tarefas já concluídas — pedido do
+ * dono 2026-09-23) e quanto desse total já está FEITO:
+ * - concluída: a estimativa inteira conta como feita, nos dias em que estava planejada;
+ * - aberta: a estimativa inteira conta no total; o que já foi cronometrado é a parte feita.
+ * Diferente do ClickUp, espalha entre início e prazo PROPORCIONAL à capacidade de
+ * cada dia (sábado de meio período recebe metade de um dia cheio); tarefa aberta
+ * atrasada não some — cai em "hoje", marcada; sem estimativa / sem prazo aparecem
+ * como pendências à parte.
  */
 
 /** Horas por dia da semana, índice 0 = domingo (igual a Date.getDay()). */
@@ -22,8 +22,12 @@ export const SEM_RESPONSAVEL = '__sem_responsavel';
 
 export interface Parcela {
   task: TaskRow;
+  /** Minutos planejados pra esse dia. */
   minutos: number;
+  /** Quanto desses minutos já está feito (concluída = tudo; aberta = proporção cronometrada). */
+  feitos: number;
   atrasada: boolean;
+  concluida: boolean;
 }
 
 export interface ResultadoCarga {
@@ -60,10 +64,6 @@ export function minutosRestantes(task: TaskRow): number {
   return Math.max(0, task.time_estimate_minutes - feitos);
 }
 
-function aberta(t: TaskRow): boolean {
-  return t.status_category !== 'done' && t.status_category !== 'cancelled';
-}
-
 export function calcularCarga(
   tasks: TaskRow[],
   hoje: Date,
@@ -76,21 +76,28 @@ export function calcularCarga(
   const hoje0 = new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate());
 
   for (const t of tasks) {
-    if (!aberta(t)) continue;
-    if (!t.time_estimate_minutes) { semEstimativa.push(t); continue; }
-    const falta = minutosRestantes(t);
-    if (falta <= 0) continue; // já cronometrou tudo o que estimou
-    if (!t.due_date) { semData.push(t); continue; }
+    if (t.status_category === 'cancelled') continue;
+    const concluida = t.status_category === 'done';
+    const estimativa = t.time_estimate_minutes ?? 0;
+    if (!estimativa) { if (!concluida) semEstimativa.push(t); continue; }
+    if (!t.due_date) { if (!concluida) semData.push(t); continue; }
 
     const pessoa = t.assignee_id ?? SEM_RESPONSAVEL;
     const prazo = diaLocal(t.due_date);
-    const atrasada = prazo < hoje0;
+    const atrasada = !concluida && prazo < hoje0;
     if (atrasada) atrasadas.push(t);
+    // Fração já feita: concluída = 1; aberta = cronometrado ÷ estimado (até 1).
+    const fracaoFeita = concluida ? 1 : Math.min(1, (estimativa - minutosRestantes(t)) / estimativa);
 
     let inicio = t.start_date ? diaLocal(t.start_date) : prazo;
     if (inicio > prazo) inicio = prazo;
-    if (inicio < hoje0) inicio = hoje0;
-    const fim = prazo < hoje0 ? hoje0 : prazo;
+    let fim = prazo;
+    // Concluída fica onde estava planejada (é histórico). Aberta não planeja o
+    // passado: começa hoje, e a atrasada cai inteira em hoje.
+    if (!concluida) {
+      if (inicio < hoje0) inicio = hoje0;
+      if (fim < hoje0) fim = hoje0;
+    }
 
     const cap = capacidadeDe(pessoa);
     const dias: Array<{ chave: string; peso: number }> = [];
@@ -103,9 +110,9 @@ export function calcularCarga(
     porPessoa.set(pessoa, mapa);
     for (const d of dias) {
       if (d.peso === 0) continue;
-      const minutos = (falta * d.peso) / pesoTotal;
+      const minutos = (estimativa * d.peso) / pesoTotal;
       const lista = mapa.get(d.chave) ?? [];
-      lista.push({ task: t, minutos, atrasada });
+      lista.push({ task: t, minutos, feitos: minutos * fracaoFeita, atrasada, concluida });
       mapa.set(d.chave, lista);
     }
   }
@@ -114,6 +121,10 @@ export function calcularCarga(
 
 export function minutosNoDia(r: ResultadoCarga, pessoa: string, dia: string): number {
   return (r.porPessoa.get(pessoa)?.get(dia) ?? []).reduce((s, p) => s + p.minutos, 0);
+}
+
+export function feitosNoDia(r: ResultadoCarga, pessoa: string, dia: string): number {
+  return (r.porPessoa.get(pessoa)?.get(dia) ?? []).reduce((s, p) => s + p.feitos, 0);
 }
 
 // ── Capacidade antiga no localStorage ──

@@ -7,7 +7,7 @@ import type { UsuarioOption } from '../lib/agrupamento';
 import type { Capacidade, Parcela } from '../lib/carga';
 import {
   CAPACIDADE_PADRAO, SEM_RESPONSAVEL, calcularCarga, capacidadesLocaisAntigas, chaveDia, esquecerCapacidadesLocais,
-  minutosNoDia, minutosRestantes, somarDias,
+  feitosNoDia, minutosNoDia, minutosRestantes, somarDias,
 } from '../lib/carga';
 import { formatarHoras } from '../lib/tempo';
 import { iniciais } from './TaskCard';
@@ -80,13 +80,15 @@ export default function ViewCarga({ tasks, usuarios, write, onOpenTask }: ViewCa
       if (t.status_category === 'done' || t.status_category === 'cancelled') continue;
       ids.add(t.assignee_id ?? SEM_RESPONSAVEL);
     }
+    // Quem só tem tarefa concluída também aparece (o dia mostra o que foi feito).
+    for (const p of carga.porPessoa.keys()) ids.add(p);
     return [...ids].sort((a, b) => {
       if (a === SEM_RESPONSAVEL) return 1;
       if (b === SEM_RESPONSAVEL) return -1;
       return nomeDe(a).localeCompare(nomeDe(b), 'pt-BR');
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tasks, usuarios]);
+  }, [tasks, usuarios, carga]);
 
   // Carrega as horas das pessoas da tela. Na primeira vez, leva pro banco o
   // que a pessoa tinha configurado só no navegador (versão antiga).
@@ -135,6 +137,7 @@ export default function ViewCarga({ tasks, usuarios, write, onOpenTask }: ViewCa
 
   const compacto = periodo === 'mes';
   const totalPeriodo = (pessoa: string) => dias.reduce((s, d) => s + minutosNoDia(carga, pessoa, chaveDia(d)), 0);
+  const feitoPeriodo = (pessoa: string) => dias.reduce((s, d) => s + feitosNoDia(carga, pessoa, chaveDia(d)), 0);
   const capPeriodo = (pessoa: string) => dias.reduce((s, d) => s + capacidadeDe(pessoa)[d.getDay()], 0);
 
   const parcelasCelula: Parcela[] = celula ? (carga.porPessoa.get(celula.pessoa)?.get(celula.dia) ?? []) : [];
@@ -266,6 +269,11 @@ export default function ViewCarga({ tasks, usuarios, write, onOpenTask }: ViewCa
                               <span className={`tabular-nums text-[10px] ${uso > 1 ? 'text-red-600 font-medium' : 'text-slate-400'}`}>
                                 {formatarHoras(total)}{pessoa !== SEM_RESPONSAVEL && ` / ${cap}h`}
                               </span>
+                              {feitoPeriodo(pessoa) > 0 && (
+                                <span className="text-[10px] text-emerald-600 tabular-nums" title="Já feito no período">
+                                  ✓ {formatarHoras(feitoPeriodo(pessoa))}
+                                </span>
+                              )}
                             </div>
                           </div>
                         </div>
@@ -294,6 +302,8 @@ export default function ViewCarga({ tasks, usuarios, write, onOpenTask }: ViewCa
                       {dias.map((d) => {
                         const chave = chaveDia(d);
                         const min = minutosNoDia(carga, pessoa, chave);
+                        const feito = Math.min(min, feitosNoDia(carga, pessoa, chave));
+                        const tudoFeito = min > 0 && feito >= min - 0.5;
                         const capDia = pessoa === SEM_RESPONSAVEL ? 8 : capacidadeDe(pessoa)[d.getDay()];
                         const cor = corOcupacao(min, capDia);
                         const folga = pessoa !== SEM_RESPONSAVEL && capDia === 0;
@@ -314,9 +324,21 @@ export default function ViewCarga({ tasks, usuarios, write, onOpenTask }: ViewCa
                                   ? 'repeating-linear-gradient(135deg, transparent 0 4px, rgba(148,163,184,0.15) 4px 8px)'
                                   : undefined,
                               }}
-                              title={min > 0 ? `${formatarHoras(min)} de ${capDia}h` : folga ? 'Folga' : undefined}
+                              title={min > 0
+                                ? `${formatarHoras(min)} de ${capDia}h${feito > 0 ? ` · ${formatarHoras(feito)} feitas, ${formatarHoras(min - feito)} faltam` : ''}`
+                                : folga ? 'Folga' : undefined}
                             >
-                              {min > 0 ? (compacto ? Math.round(min / 60) || '·' : formatarHoras(min)) : ''}
+                              {min > 0 && (
+                                <span className={`leading-none ${tudoFeito ? 'line-through decoration-1 opacity-70' : ''}`}>
+                                  {compacto ? Math.round(min / 60) || '·' : formatarHoras(min)}
+                                </span>
+                              )}
+                              {/* Barra do dia: parte verde = já feito (concluído ou cronometrado). */}
+                              {min > 0 && (
+                                <span className="absolute left-1 right-1 bottom-1 h-1 rounded-full bg-white/70 overflow-hidden">
+                                  <span className="block h-full rounded-full bg-emerald-600" style={{ width: `${(feito / min) * 100}%` }} />
+                                </span>
+                              )}
                               {temAtraso && <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-red-500" />}
                             </button>
                           </td>
@@ -330,8 +352,8 @@ export default function ViewCarga({ tasks, usuarios, write, onOpenTask }: ViewCa
           </div>
         )}
         <p className="text-[11px] text-slate-400 mt-2">
-          Conta o que falta de cada tarefa (estimado − já cronometrado), distribuído entre o início e o prazo conforme as horas de trabalho de cada dia.
-          Clique num dia para ver as tarefas e redistribuir.
+          Cada dia mostra o tempo estimado das tarefas planejadas nele (concluídas inclusive), distribuído entre o início e o prazo conforme as horas de
+          trabalho de cada dia. A barra verde é o que já foi feito (concluído ou cronometrado). Clique num dia para ver as tarefas e redistribuir.
         </p>
       </div>
 
@@ -367,7 +389,10 @@ export default function ViewCarga({ tasks, usuarios, write, onOpenTask }: ViewCa
                 <ItemCarga
                   key={p.task.id}
                   task={p.task}
-                  detalhe={`${formatarHoras(p.minutos)} neste dia · falta ${formatarHoras(minutosRestantes(p.task))}`}
+                  detalhe={p.concluida
+                    ? `Concluída · ${formatarHoras(p.minutos)} neste dia`
+                    : `${formatarHoras(p.minutos)} neste dia · falta ${formatarHoras(minutosRestantes(p.task))}`}
+                  concluida={p.concluida}
                   atrasada={p.atrasada}
                   pessoas={pessoas}
                   usuarios={usuarios}
@@ -400,10 +425,11 @@ export default function ViewCarga({ tasks, usuarios, write, onOpenTask }: ViewCa
   );
 }
 
-function ItemCarga({ task, detalhe, atrasada, pessoas, usuarios, nomeDe, livreNoDia, onAbrir, onPassar }: {
+function ItemCarga({ task, detalhe, atrasada, concluida = false, pessoas, usuarios, nomeDe, livreNoDia, onAbrir, onPassar }: {
   task: TaskRow;
   detalhe: string;
   atrasada: boolean;
+  concluida?: boolean;
   pessoas: string[];
   usuarios: UsuarioOption[];
   nomeDe: (id: string) => string;
@@ -418,12 +444,12 @@ function ItemCarga({ task, detalhe, atrasada, pessoas, usuarios, nomeDe, livreNo
   return (
     <div className="rounded-lg border border-slate-100 p-2 hover:border-slate-200">
       <button onClick={onAbrir} className="text-left w-full">
-        <p className="text-xs font-medium text-slate-700 line-clamp-2 hover:text-indigo-600">{task.title}</p>
-        <p className={`text-[10px] mt-0.5 ${atrasada ? 'text-red-500' : 'text-slate-400'}`}>
+        <p className={`text-xs font-medium line-clamp-2 hover:text-indigo-600 ${concluida ? 'line-through text-slate-400' : 'text-slate-700'}`}>{task.title}</p>
+        <p className={`text-[10px] mt-0.5 ${atrasada ? 'text-red-500' : concluida ? 'text-emerald-600' : 'text-slate-400'}`}>
           {atrasada && 'Atrasada · '}{detalhe}
         </p>
       </button>
-      <select
+      {!concluida && <select
         value=""
         onChange={(e) => { if (e.target.value) onPassar(e.target.value); }}
         className="mt-1.5 w-full text-[11px] border border-slate-200 rounded-md px-1.5 py-1 bg-white text-slate-500 outline-none focus:border-indigo-300"
@@ -437,7 +463,7 @@ function ItemCarga({ task, detalhe, atrasada, pessoas, usuarios, nomeDe, livreNo
             </option>
           );
         })}
-      </select>
+      </select>}
     </div>
   );
 }

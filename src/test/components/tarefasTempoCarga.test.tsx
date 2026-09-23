@@ -10,7 +10,7 @@ import ViewLista from '@/pages/tarefas/components/ViewLista';
 import ViewCarga from '@/pages/tarefas/components/ViewCarga';
 import type { TaskList, TaskRow } from '@/pages/tarefas/hooks/useTarefas';
 import { lerDuracao, formatarDuracao } from '@/pages/tarefas/lib/tempo';
-import { calcularCarga, minutosNoDia, CAPACIDADE_PADRAO, type Capacidade } from '@/pages/tarefas/lib/carga';
+import { calcularCarga, feitosNoDia, minutosNoDia, CAPACIDADE_PADRAO, type Capacidade } from '@/pages/tarefas/lib/carga';
 
 const lista = {
   id: 'L1', name: 'Pasta', color: '#000',
@@ -54,9 +54,23 @@ describe('calcularCarga', () => {
     expect(minutosNoDia(r, 'u1', '2026-09-25')).toBe(120);
   });
 
-  it('conta só o que falta (estimado − cronometrado)', () => {
+  it('mostra o total do dia; o cronometrado entra como parte feita', () => {
     const r = calcularCarga([tarefa('a', { time_estimate_minutes: 120, time_tracked_seconds: 3600, due_date: '2026-09-25T12:00:00Z' })], hoje, cap);
-    expect(minutosNoDia(r, 'u1', '2026-09-25')).toBe(60);
+    expect(minutosNoDia(r, 'u1', '2026-09-25')).toBe(120);
+    expect(feitosNoDia(r, 'u1', '2026-09-25')).toBe(60);
+  });
+
+  it('concluída continua contando no dia planejado, toda como feita (mesmo no passado)', () => {
+    const r = calcularCarga([
+      tarefa('feita', { time_estimate_minutes: 90, due_date: '2026-09-21T12:00:00Z', status_category: 'done' }),
+      tarefa('aberta', { time_estimate_minutes: 30, due_date: '2026-09-25T12:00:00Z' }),
+      tarefa('feita2', { time_estimate_minutes: 60, due_date: '2026-09-25T12:00:00Z', status_category: 'done' }),
+    ], hoje, cap);
+    expect(minutosNoDia(r, 'u1', '2026-09-21')).toBe(90);
+    expect(feitosNoDia(r, 'u1', '2026-09-21')).toBe(90);
+    expect(minutosNoDia(r, 'u1', '2026-09-25')).toBe(90);
+    expect(feitosNoDia(r, 'u1', '2026-09-25')).toBe(60);
+    expect(r.atrasadas).toEqual([]); // concluída no passado não é atrasada
   });
 
   it('espalha do início ao prazo pelos dias de trabalho, pulando a folga', () => {
@@ -74,12 +88,12 @@ describe('calcularCarga', () => {
     expect(minutosNoDia(r, 'u1', '2026-09-25')).toBe(60);
   });
 
-  it('atrasada conta em hoje; sem estimativa, sem prazo e concluída ficam fora', () => {
+  it('atrasada conta em hoje; sem estimativa e sem prazo ficam fora; cancelada some', () => {
     const r = calcularCarga([
       tarefa('atrasada', { time_estimate_minutes: 60, due_date: '2026-09-20T12:00:00Z' }),
       tarefa('semEst', { due_date: '2026-09-25T12:00:00Z' }),
       tarefa('semData', { time_estimate_minutes: 30 }),
-      tarefa('feita', { time_estimate_minutes: 30, due_date: '2026-09-25T12:00:00Z', status_category: 'done' }),
+      tarefa('cancelada', { time_estimate_minutes: 30, due_date: '2026-09-25T12:00:00Z', status_category: 'cancelled' }),
     ], hoje, cap);
     expect(minutosNoDia(r, 'u1', '2026-09-23')).toBe(60);
     expect(r.atrasadas.map((t) => t.id)).toEqual(['atrasada']);
