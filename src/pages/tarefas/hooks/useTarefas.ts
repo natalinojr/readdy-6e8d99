@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase, invokeWithAuth, uploadTaskAttachment } from '@/lib/supabase';
 import { useEuTarefas } from './useEuTarefas';
 import { useToast } from '@/contexts/ToastContext';
+import { MODO_DEMO } from '../demo/modoDemo';
+import { useTarefasDemo } from '../demo/useTarefasDemo';
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -212,6 +214,15 @@ export const PRIORIDADES: Array<{ value: number; label: string; color: string }>
 // ─── Hook principal ───────────────────────────────────────────────────────────
 
 export function useTarefas() {
+  // Modo demonstração (só em dev, rota /dev/tarefas): dados em memória. MODO_DEMO
+  // é constante durante toda a vida da página, então a ordem dos hooks não muda.
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  if (MODO_DEMO) return useTarefasDemo() as unknown as ReturnType<typeof useTarefasReal>;
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  return useTarefasReal();
+}
+
+function useTarefasReal() {
   const eu = useEuTarefas();
   const toast = useToast();
   const tenantId = eu.tenantId;

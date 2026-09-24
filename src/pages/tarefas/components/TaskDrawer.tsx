@@ -437,7 +437,7 @@ export default function TaskDrawer({
                 onChange={(e) => setDescription(e.target.value)}
                 onBlur={() => (description || null) !== (detail.description ?? null) && update({ description: description || null })}
                 rows={Math.min(12, Math.max(3, description.split('\n').length + 1))}
-                className="w-full rounded-xl border border-transparent bg-slate-50 hover:border-slate-200 focus:border-indigo-300 focus:bg-white px-3 py-2.5 text-sm text-slate-700 resize-y outline-none transition"
+                className="w-full rounded-xl border border-transparent bg-slate-50 hover:border-slate-200 focus:border-indigo-300 focus:bg-white px-3 py-2.5 text-sm max-md:text-base text-slate-700 resize-y outline-none transition"
                 placeholder="Adicione detalhes, instruções, links…"
               />
             </Secao>
@@ -523,7 +523,7 @@ export default function TaskDrawer({
                   value={newChecklistItem}
                   onChange={(e) => setNewChecklistItem(e.target.value)}
                   placeholder="Adicionar item…"
-                  className="flex-1 text-sm bg-transparent outline-none placeholder:text-slate-400"
+                  className="flex-1 text-sm max-md:text-base bg-transparent outline-none placeholder:text-slate-400"
                 />
               </form>
             </Secao>
@@ -568,7 +568,7 @@ export default function TaskDrawer({
                       value={newSubtask}
                       onChange={(e) => setNewSubtask(e.target.value)}
                       placeholder="Adicionar subtarefa…"
-                      className="flex-1 text-sm bg-transparent outline-none placeholder:text-slate-400"
+                      className="flex-1 text-sm max-md:text-base bg-transparent outline-none placeholder:text-slate-400"
                     />
                   </form>
                 </div>

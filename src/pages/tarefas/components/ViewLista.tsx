@@ -182,6 +182,44 @@ function celulaColuna(
   }
 }
 
+/**
+ * Resumo da tarefa no celular (abaixo do título): prazo, prioridade, responsável,
+ * pasta (nas visões que juntam pastas), checklist, subtarefas, comentários e
+ * cronômetro rodando. Fixo — o menu de colunas é do computador.
+ */
+function MetaCelular({ task, mostrarPasta, subtarefas }: { task: TaskRow; mostrarPasta: boolean; subtarefas: number }) {
+  const due = rotuloVencimento(task);
+  const prio = task.priority > 0 ? PRIORIDADES.find((p) => p.value === task.priority) : null;
+  const itens = [
+    due && <span key="due" className={`font-medium ${due.className}`}>{due.text}</span>,
+    prio && <span key="prio" className="flex items-center gap-0.5"><Flag size={11} style={{ color: prio.color }} />{prio.label}</span>,
+    task.assignee_name && (
+      <span key="resp" className="flex items-center gap-1 min-w-0">
+        <span className="w-4 h-4 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center text-[8px] font-semibold shrink-0">{iniciais(task.assignee_name)}</span>
+        <span className="truncate max-w-[90px]">{task.assignee_name.split(' ')[0]}</span>
+      </span>
+    ),
+    mostrarPasta && task.list_name && (
+      <span key="pasta" className="flex items-center gap-1 min-w-0">
+        <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: task.list_color ?? '#94a3b8' }} />
+        <span className="truncate max-w-[110px]">{task.list_name}</span>
+      </span>
+    ),
+    task.checklist_total > 0 && <span key="chk" className="flex items-center gap-0.5"><CheckSquare size={11} />{task.checklist_done}/{task.checklist_total}</span>,
+    subtarefas > 0 && <span key="sub" className="flex items-center gap-0.5"><GitBranch size={11} />{subtarefas}</span>,
+    task.comment_count > 0 && <span key="com" className="flex items-center gap-0.5"><MessageSquare size={11} />{task.comment_count}</span>,
+    task.timer_started_at && <span key="timer" className="flex items-center gap-1 text-emerald-600 font-medium"><span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />rodando</span>,
+    task.tags.length > 0 && (
+      <span key="tags" className="flex items-center gap-1">
+        {task.tags.slice(0, 2).map((t) => <span key={t.id} className="px-1.5 rounded-full text-[10px] font-medium text-white" style={{ backgroundColor: t.color }}>{t.name}</span>)}
+        {task.tags.length > 2 && <span>+{task.tags.length - 2}</span>}
+      </span>
+    ),
+  ].filter(Boolean);
+  if (!itens.length) return null;
+  return <div className="md:hidden mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-400">{itens}</div>;
+}
+
 export default function ViewLista({
   list, chaveColunas, tasks, campos, usuarios, tags, groupBy, write, onOpenTask,
 }: ViewListaProps) {
@@ -518,7 +556,7 @@ export default function ViewLista({
             soltar(grupo!, task.id, alvoArrasto?.antes ?? true);
           } : undefined}
           onClick={() => onOpenTask(task.id)}
-          className={`relative flex items-center gap-3 px-4 py-3.5 md:py-2.5 hover:bg-slate-50 active:bg-slate-100 cursor-pointer group ${
+          className={`relative flex items-start md:items-center gap-3 px-4 py-3 md:py-2.5 hover:bg-slate-50 active:bg-slate-100 cursor-pointer group ${
             selecionada ? 'bg-indigo-50/60 hover:bg-indigo-50/60' : ''
           } ${arrasto?.taskId === task.id ? 'opacity-40' : ''}`}
           style={{ paddingLeft: `${16 + nivel * 22}px` }}
@@ -536,7 +574,7 @@ export default function ViewLista({
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); alternarSelecao(task.id); }}
-              className={`shrink-0 w-4 h-4 rounded border flex items-center justify-center transition ${
+              className={`shrink-0 w-4 h-4 rounded border hidden md:flex items-center justify-center transition ${
                 selecionada
                   ? 'bg-indigo-600 border-indigo-600 opacity-100'
                   : `border-slate-300 hover:border-indigo-400 ${haSelecao ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`
@@ -558,17 +596,17 @@ export default function ViewLista({
                   return p;
                 });
               }}
-              className="text-slate-300 hover:text-slate-500 -ml-1"
+              className="text-slate-300 hover:text-slate-500 -ml-1 mt-1 md:mt-0 p-1 -m-1 md:p-0 md:m-0"
             >
-              {aberta ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+              {aberta ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
             </button>
           ) : (
-            nivel === 0 && <span className="w-[13px] shrink-0" />
+            nivel === 0 && <span className="hidden md:block w-[13px] shrink-0" />
           )}
 
           {/* Clicar abre o seletor de status — antes ia direto pra "concluído",
               sem deixar escolher outro destino (ex.: "Em andamento"). */}
-          <div className="shrink-0">
+          <div className="shrink-0 mt-0.5 md:mt-0">
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); setStatusPickerAberto({ taskId: task.id, rect: e.currentTarget.getBoundingClientRect() }); }}
@@ -589,9 +627,14 @@ export default function ViewLista({
             )}
           </div>
 
-          <span className={`flex-1 text-sm truncate ${concluida ? 'line-through text-slate-400' : 'text-slate-700'}`}>
-            {task.title}
-          </span>
+          <div className="flex-1 min-w-0">
+            {/* Celular: título em até 2 linhas + um resumo embaixo. Antes o resumo
+                das colunas ficava na MESMA linha e espremia o título até sumir. */}
+            <span className={`block text-[15px] md:text-sm leading-snug line-clamp-2 md:line-clamp-none md:truncate ${concluida ? 'line-through text-slate-400' : 'text-slate-700'}`}>
+              {task.title}
+            </span>
+            <MetaCelular task={task} mostrarPasta={list === null} subtarefas={subtarefas.length} />
+          </div>
 
           {task.recurrence?.freq && (
             <span title={`${rotuloRecorrencia(task.recurrence)}. ${DICA_RECORRENCIA}`} className="shrink-0 text-slate-300">
@@ -655,12 +698,6 @@ export default function ViewLista({
             </button>
           </div>
 
-          {/* No celular não há espaço pra tabela — mantém um resumo compacto das colunas ativas (edição continua só pelo desktop) */}
-          <div className="flex md:hidden items-center gap-2.5 text-xs text-slate-400 shrink-0">
-            {colunas.map((c) => (
-              <span key={c.id}>{celulaColuna(c, task, subtarefas.length, usuarios, campos, agora)}</span>
-            ))}
-          </div>
         </div>
 
         {aberta && subtarefas.map((sub) => renderLinha(sub, nivel + 1))}
@@ -892,7 +929,7 @@ export default function ViewLista({
                       value={quickAdd[chave] ?? ''}
                       onChange={(e) => setQuickAdd((prev) => ({ ...prev, [chave]: e.target.value }))}
                       placeholder="Nova tarefa…"
-                      className="flex-1 text-sm bg-transparent outline-none placeholder:text-slate-300"
+                      className="flex-1 text-sm max-md:text-base max-md:py-1 bg-transparent outline-none placeholder:text-slate-300"
                     />
                   </form>
                 )}

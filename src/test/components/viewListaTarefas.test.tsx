@@ -65,7 +65,7 @@ describe('ViewLista (tarefas)', () => {
 
   it('clique no responsável abre a lista direto e grava ao escolher', () => {
     const write = montar();
-    const linha = screen.getByText('Tarefa Sem').parentElement!;
+    const linha = (screen.getByText('Tarefa Sem').closest('.group') as HTMLElement);
     const celulas = within(linha).getAllByRole('button').filter((b) => b.textContent === '—');
     fireEvent.click(celulas[0]); // Responsável é a primeira coluna padrão
     fireEvent.click(screen.getByText('Maria Silva'));
@@ -75,7 +75,7 @@ describe('ViewLista (tarefas)', () => {
   it('data: atalhos Hoje/Ontem/Amanhã e escolher qualquer data', () => {
     localStorage.setItem('erpos_tarefas_colunas_L1', JSON.stringify(['vencimento']));
     const write = montar();
-    const linha = screen.getByText('Tarefa Sem').parentElement!;
+    const linha = (screen.getByText('Tarefa Sem').closest('.group') as HTMLElement);
     fireEvent.click(within(linha).getAllByText('—')[0]); // [0] = célula do desktop (o resumo do celular vem depois)
     expect(screen.getByText('Hoje')).toBeTruthy();
     expect(screen.getByText('Amanhã')).toBeTruthy();
@@ -94,7 +94,7 @@ describe('ViewLista (tarefas)', () => {
         tasks={[tarefa('a', 'Tarefa A', { sort_order: 1 }), tarefa('b', 'Tarefa B', { sort_order: 2 }), tarefa('c', 'Tarefa C', { sort_order: 3 })]}
       />,
     );
-    const linha = (t: string) => screen.getByText(t).parentElement!;
+    const linha = (t: string) => screen.getByText(t).closest('.group') as HTMLElement;
     fireEvent.dragStart(linha('Tarefa C'), { dataTransfer: { setData: vi.fn(), effectAllowed: '' } });
     fireEvent.dragOver(linha('Tarefa A'), { clientY: -1 }); // metade de cima = antes
     fireEvent.drop(linha('Tarefa A'), { clientY: -1 });
@@ -104,13 +104,13 @@ describe('ViewLista (tarefas)', () => {
   it('arrastar desliga com a lista ordenada por coluna', () => {
     montar();
     fireEvent.click(screen.getByRole('button', { name: 'Prioridade' }));
-    expect(screen.getByText('Tarefa Alta').parentElement!.getAttribute('draggable')).toBe('false');
+    expect((screen.getByText('Tarefa Alta').closest('.group') as HTMLElement).getAttribute('draggable')).toBe('false');
   });
 
   it('coluna de comentários aceita digitar direto', async () => {
     localStorage.setItem('erpos_tarefas_colunas_L1', JSON.stringify(['comentarios']));
     const write = montar();
-    const linha = screen.getByText('Tarefa Sem').parentElement!;
+    const linha = (screen.getByText('Tarefa Sem').closest('.group') as HTMLElement);
     fireEvent.click(within(linha).getByText('Comentar'));
     const input = screen.getByPlaceholderText(/coment/i);
     fireEvent.change(input, { target: { value: 'Olá' } });

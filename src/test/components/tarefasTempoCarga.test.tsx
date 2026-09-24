@@ -133,7 +133,7 @@ describe('Lista: colunas de tempo', () => {
     fireEvent.click(screen.getByTitle('Iniciar cronômetro'));
     expect(write).toHaveBeenCalledWith('start_timer', { task_id: 'a' });
 
-    const linha = screen.getByText('Tarefa a').parentElement!;
+    const linha = (screen.getByText('Tarefa a').closest('.group') as HTMLElement);
     fireEvent.click(within(linha).getAllByText('—')[0]);
     const input = screen.getByPlaceholderText(/1h30/);
     fireEvent.change(input, { target: { value: '1h30' } });

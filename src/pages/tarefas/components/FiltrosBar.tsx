@@ -1,4 +1,7 @@
 import { useState } from 'react';
+import type { ReactNode } from 'react';
+import { createPortal } from 'react-dom';
+import { useIsMobile } from '../lib/mobile';
 import { Search, SlidersHorizontal, X, Check } from 'lucide-react';
 import type { CampoCustom, TaskList, TaskTag } from '../hooks/useTarefas';
 import { PRIORIDADES } from '../hooks/useTarefas';
@@ -22,6 +25,10 @@ export default function FiltrosBar({
   filtros, onFiltros, groupBy, onGroupBy, mostrarAgrupamento, tags, usuarios, campos, list,
 }: FiltrosBarProps) {
   const [aberto, setAberto] = useState(false);
+  // No celular a folha de filtros vai direto pro <body>: o cabeçalho tem
+  // backdrop-blur, que prende o `fixed` dentro dele (a folha abria fora da tela).
+  const celular = useIsMobile();
+  const portalSeCelular = (n: ReactNode) => (celular ? createPortal(n, document.body) : n);
   const ativos = filtrosAtivos(filtros);
   const agrupaveis = camposAgrupaveis(campos, list?.id ?? null);
 
@@ -78,16 +85,18 @@ export default function FiltrosBar({
           )}
         </button>
 
-        {aberto && (
+        {aberto && portalSeCelular(
           <>
-            <div className="fixed inset-0 z-20" onClick={() => setAberto(false)} />
-            <div className="absolute right-0 top-full mt-1 z-30 w-64 bg-white rounded-xl border border-slate-200 shadow-lg p-3 space-y-3">
+            <div className="fixed inset-0 z-20 max-md:z-[70] max-md:bg-slate-900/30" onClick={() => setAberto(false)} />
+            {/* Celular: folha que sobe de baixo, com toques maiores. */}
+            <div className="absolute right-0 top-full mt-1 z-30 w-64 bg-white rounded-xl border border-slate-200 shadow-lg p-3 space-y-3 max-md:fixed max-md:inset-x-0 max-md:bottom-0 max-md:top-auto max-md:mt-0 max-md:w-auto max-md:z-[71] max-md:rounded-b-none max-md:rounded-t-2xl max-md:max-h-[80vh] max-md:overflow-y-auto max-md:px-4 max-md:pb-[max(env(safe-area-inset-bottom),16px)] max-md:space-y-4">
+              <div className="md:hidden mx-auto -mt-1 h-1 w-10 rounded-full bg-slate-200" />
               <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-slate-700">Filtrar tarefas</span>
+                <span className="text-xs max-md:text-base font-semibold text-slate-700">Filtrar tarefas</span>
                 {ativos > 0 && (
                   <button
                     onClick={() => onFiltros({ ...FILTROS_VAZIOS })}
-                    className="text-[11px] text-indigo-600 hover:text-indigo-700"
+                    className="text-[11px] max-md:text-sm text-indigo-600 hover:text-indigo-700"
                   >
                     Limpar
                   </button>
@@ -101,14 +110,14 @@ export default function FiltrosBar({
                   value={filtros.busca}
                   onChange={(e) => onFiltros({ ...filtros, busca: e.target.value })}
                   placeholder="Buscar tarefa…"
-                  className="w-full pl-7 pr-2 py-2 text-xs rounded-lg border border-slate-200 outline-none focus:border-indigo-300"
+                  className="w-full pl-7 pr-2 py-2 max-md:py-2.5 text-xs max-md:text-base rounded-lg border border-slate-200 outline-none focus:border-indigo-300"
                 />
               </div>
               {mostrarAgrupamento && (
                 <select
                   value={groupBy}
                   onChange={(e) => onGroupBy(e.target.value as GroupBy)}
-                  className="md:hidden w-full text-xs px-2 py-2 rounded-lg border border-slate-200 bg-white outline-none focus:border-indigo-300 text-slate-600"
+                  className="md:hidden w-full text-base px-2 py-2.5 rounded-lg border border-slate-200 bg-white outline-none focus:border-indigo-300 text-slate-600"
                 >
                   <option value="status">Agrupar: Status</option>
                   <option value="priority">Agrupar: Prioridade</option>
@@ -119,7 +128,7 @@ export default function FiltrosBar({
                 </select>
               )}
 
-              <label className="flex items-center gap-2 text-xs text-slate-600 cursor-pointer">
+              <label className="flex items-center gap-2 text-xs max-md:text-[15px] max-md:py-1 text-slate-600 cursor-pointer">
                 <input
                   type="checkbox"
                   checked={filtros.ocultarConcluidas}
@@ -131,15 +140,15 @@ export default function FiltrosBar({
 
               {/* Prioridade */}
               <div>
-                <span className="text-[11px] text-slate-400 block mb-1">Prioridade</span>
-                <div className="flex flex-wrap gap-1">
+                <span className="text-[11px] max-md:text-xs max-md:font-semibold max-md:uppercase max-md:tracking-wide text-slate-400 block mb-1 max-md:mb-2">Prioridade</span>
+                <div className="flex flex-wrap gap-1 max-md:gap-2">
                   {PRIORIDADES.map((p) => {
                     const on = filtros.prioridades.includes(p.value);
                     return (
                       <button
                         key={p.value}
                         onClick={() => onFiltros({ ...filtros, prioridades: alternar(filtros.prioridades, p.value) })}
-                        className={`px-1.5 py-0.5 rounded text-[10px] font-medium border transition ${
+                        className={`px-1.5 py-0.5 max-md:px-3 max-md:py-1.5 rounded max-md:rounded-lg text-[10px] max-md:text-sm font-medium border transition ${
                           on ? 'text-white' : 'text-slate-500 bg-white border-slate-200'
                         }`}
                         style={on ? { backgroundColor: p.color, borderColor: p.color } : undefined}
@@ -154,15 +163,15 @@ export default function FiltrosBar({
               {/* Responsável */}
               {usuarios.length > 0 && (
                 <div>
-                  <span className="text-[11px] text-slate-400 block mb-1">Responsável</span>
-                  <div className="max-h-28 overflow-y-auto space-y-0.5">
+                  <span className="text-[11px] max-md:text-xs max-md:font-semibold max-md:uppercase max-md:tracking-wide text-slate-400 block mb-1 max-md:mb-2">Responsável</span>
+                  <div className="max-h-28 max-md:max-h-56 overflow-y-auto space-y-0.5">
                     {usuarios.map((u) => {
                       const on = filtros.assigneeIds.includes(u.id);
                       return (
                         <button
                           key={u.id}
                           onClick={() => onFiltros({ ...filtros, assigneeIds: alternar(filtros.assigneeIds, u.id) })}
-                          className="w-full flex items-center gap-1.5 px-1.5 py-1 rounded text-xs text-left hover:bg-slate-50"
+                          className="w-full flex items-center gap-1.5 max-md:gap-3 px-1.5 py-1 max-md:px-2 max-md:py-2.5 rounded text-xs max-md:text-[15px] text-left hover:bg-slate-50"
                         >
                           <span className={`w-3.5 h-3.5 rounded border flex items-center justify-center ${on ? 'bg-indigo-600 border-indigo-600' : 'border-slate-300'}`}>
                             {on && <Check size={10} className="text-white" />}
@@ -178,15 +187,15 @@ export default function FiltrosBar({
               {/* Etiquetas */}
               {tags.length > 0 && (
                 <div>
-                  <span className="text-[11px] text-slate-400 block mb-1">Etiquetas</span>
-                  <div className="flex flex-wrap gap-1">
+                  <span className="text-[11px] max-md:text-xs max-md:font-semibold max-md:uppercase max-md:tracking-wide text-slate-400 block mb-1 max-md:mb-2">Etiquetas</span>
+                  <div className="flex flex-wrap gap-1 max-md:gap-2">
                     {tags.map((t) => {
                       const on = filtros.tagIds.includes(t.id);
                       return (
                         <button
                           key={t.id}
                           onClick={() => onFiltros({ ...filtros, tagIds: alternar(filtros.tagIds, t.id) })}
-                          className={`px-1.5 py-0.5 rounded-full text-[10px] font-medium border transition ${
+                          className={`px-1.5 py-0.5 max-md:px-3 max-md:py-1.5 rounded-full text-[10px] max-md:text-sm font-medium border transition ${
                             on ? 'text-white' : 'text-slate-500 bg-white border-slate-200'
                           }`}
                           style={on ? { backgroundColor: t.color, borderColor: t.color } : undefined}
@@ -198,6 +207,13 @@ export default function FiltrosBar({
                   </div>
                 </div>
               )}
+
+              <button
+                onClick={() => setAberto(false)}
+                className="md:hidden w-full rounded-xl bg-indigo-600 text-white text-[15px] font-medium py-3 active:bg-indigo-700"
+              >
+                Pronto
+              </button>
             </div>
           </>
         )}

@@ -126,6 +126,8 @@ const routes: RouteObject[] = [
   },
   { path: '/selecionar-loja', element: <SelecionarLojaPage /> },
   { path: '/supabase-debug', element: <SupabaseDebugPage /> },
+  // Só em desenvolvimento: Tarefas com dados fictícios, sem login (testar layout/celular).
+  ...(import.meta.env.DEV ? [{ path: '/dev/tarefas', element: <TarefasPage /> }] : []),
   { path: '*', element: <NotFound /> },
 ];
 

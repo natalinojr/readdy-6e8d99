@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
+import { EU_DEMO, MODO_DEMO } from '../demo/modoDemo';
 import { useAuth } from '@/contexts/AuthContext';
 
 /**
@@ -19,6 +20,8 @@ export interface EuTarefas {
 
 export function useEuTarefas(): EuTarefas {
   const { user, hasNoTenants } = useAuth();
+  // Modo demonstração (só dev): usuário fictício, sem sessão.
+  const demo = MODO_DEMO ? { id: EU_DEMO.id, nome: EU_DEMO.nome, tenantId: 'demo', pronto: true, semLoja: false } : null;
   const [sessao, setSessao] = useState<{ id: string; nome: string } | null>(null);
 
   useEffect(() => {
@@ -33,6 +36,7 @@ export function useEuTarefas(): EuTarefas {
     return () => { vivo = false; };
   }, [user, hasNoTenants]);
 
+  if (demo) return demo;
   if (user) return { id: user.id, nome: user.nome, tenantId: user.tenantId, pronto: true, semLoja: false };
   if (hasNoTenants && sessao) return { id: sessao.id, nome: sessao.nome, tenantId: null, pronto: true, semLoja: true };
   return { id: null, nome: '', tenantId: null, pronto: false, semLoja: hasNoTenants };

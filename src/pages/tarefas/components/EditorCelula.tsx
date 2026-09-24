@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { Check, Flag, Minus, Pause, Play, Plus, Search, X } from 'lucide-react';
 import type { CampoCustom, TaskRow, TaskTag } from '../hooks/useTarefas';
 import { PRIORIDADES } from '../hooks/useTarefas';
@@ -8,6 +9,7 @@ import type { ColunaId } from '../lib/colunas';
 import CampoInput from './campos/CampoInput';
 import ComentarioInput from './ComentarioInput';
 import { iniciais } from './TaskCard';
+import { useIsMobile } from '../lib/mobile';
 import { formatarDuracao, formatarRelogio, lerDuracao, segundosRegistrados, useAgora } from '../lib/tempo';
 
 const MARGEM_TELA = 8;
@@ -25,21 +27,27 @@ function Popover({ anchorRect, largura, onClose, children }: {
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [top, setTop] = useState(anchorRect.bottom + 4);
+  // Celular: vira folha que sobe de baixo (largura toda, opções grandes pro dedo).
+  const celular = useIsMobile();
 
   useEffect(() => {
     const fechar = () => onClose();
     const tecla = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     // Rolagem DENTRO do popover (lista longa) não fecha.
     const rolar = (e: Event) => { if (!ref.current?.contains(e.target as Node)) onClose(); };
-    window.addEventListener('scroll', rolar, true);
-    window.addEventListener('resize', fechar);
     window.addEventListener('keydown', tecla);
+    // Na folha do celular não fecha por rolagem/resize: o teclado abrindo muda o
+    // tamanho da tela e fecharia a folha no meio da digitação.
+    if (!celular) {
+      window.addEventListener('scroll', rolar, true);
+      window.addEventListener('resize', fechar);
+    }
     return () => {
       window.removeEventListener('scroll', rolar, true);
       window.removeEventListener('resize', fechar);
       window.removeEventListener('keydown', tecla);
     };
-  }, [onClose]);
+  }, [onClose, celular]);
 
   // Depois de medir: se não couber abaixo da célula, abre pra cima.
   useEffect(() => {
@@ -47,6 +55,23 @@ function Popover({ anchorRect, largura, onClose, children }: {
     const cabeAbaixo = anchorRect.bottom + 4 + altura <= window.innerHeight - MARGEM_TELA;
     if (!cabeAbaixo && anchorRect.top - altura - 4 > MARGEM_TELA) setTop(anchorRect.top - altura - 4);
   }, [anchorRect]);
+
+  if (celular) {
+    // Direto no <body>: um ancestral com transform/backdrop-blur prenderia o `fixed`.
+    return createPortal(
+      <div onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 z-[70] bg-slate-900/30" onClick={onClose} />
+        <div
+          ref={ref}
+          className="fixed inset-x-0 bottom-0 z-[71] bg-white rounded-t-2xl shadow-2xl px-3 pt-2 pb-[max(env(safe-area-inset-bottom),16px)] max-h-[75vh] overflow-y-auto text-left"
+        >
+          <div className="mx-auto mb-2 h-1 w-10 rounded-full bg-slate-200" />
+          {children}
+        </div>
+      </div>,
+      document.body,
+    );
+  }
 
   // Alinha pela direita da célula (as colunas são alinhadas à direita).
   const left = Math.min(
@@ -73,7 +98,7 @@ function Opcao({ ativo, onClick, children }: { ativo?: boolean; onClick: () => v
     <button
       type="button"
       onClick={onClick}
-      className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-left transition ${
+      className={`w-full flex items-center gap-2 px-2 py-1.5 max-md:px-3 max-md:py-3 rounded-lg text-xs max-md:text-[15px] text-left transition ${
         ativo ? 'bg-indigo-50 text-indigo-700' : 'text-slate-700 hover:bg-slate-50'
       }`}
     >
@@ -92,7 +117,7 @@ function Busca({ valor, onChange }: { valor: string; onChange: (v: string) => vo
         value={valor}
         onChange={(e) => onChange(e.target.value)}
         placeholder="Buscar…"
-        className="flex-1 min-w-0 text-xs outline-none bg-transparent placeholder:text-slate-300"
+        className="flex-1 min-w-0 text-xs max-md:text-base outline-none bg-transparent placeholder:text-slate-300"
       />
     </div>
   );
@@ -162,7 +187,7 @@ function EditorData({ atual, onEscolher }: { atual: string | null; onEscolher: (
           // Abre o calendário com um clique em qualquer ponto do campo (não só no ícone).
           onClick={(e) => { try { e.currentTarget.showPicker(); } catch { /* navegador sem showPicker */ } }}
           onChange={(e) => onEscolher(e.target.value || null)}
-          className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-indigo-300"
+          className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs max-md:text-base max-md:py-2.5 bg-white outline-none focus:border-indigo-300"
         />
       </div>
       {atual && (
@@ -374,7 +399,7 @@ function EditorEtiquetas({ task, tags, anchorRect, gravar, onClose }: {
               key={tag.id}
               type="button"
               onClick={() => alternar(tag.id)}
-              className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-left hover:bg-slate-50"
+              className="w-full flex items-center gap-2 px-2 py-1.5 max-md:px-3 max-md:py-3 rounded-lg text-xs max-md:text-[15px] text-left hover:bg-slate-50"
             >
               <span
                 className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 ${on ? '' : 'border-slate-300'}`}
@@ -414,7 +439,7 @@ function EditorEstimativa({ atual, onEscolher }: { atual: number | null; onEscol
           value={texto}
           onChange={(e) => setTexto(e.target.value)}
           placeholder="Ex.: 1h30, 45m, 2d"
-          className={`w-full border rounded-lg px-2 py-1.5 text-xs bg-white outline-none ${
+          className={`w-full border rounded-lg px-2 py-1.5 text-xs max-md:text-base max-md:py-2.5 bg-white outline-none ${
             invalido ? 'border-red-300 focus:border-red-400' : 'border-slate-200 focus:border-indigo-300'
           }`}
         />
@@ -429,7 +454,7 @@ function EditorEstimativa({ atual, onEscolher }: { atual: number | null; onEscol
             key={min}
             type="button"
             onClick={() => onEscolher(min)}
-            className={`px-2 py-1.5 rounded-lg text-xs border transition ${
+            className={`px-2 py-1.5 max-md:py-2.5 rounded-lg text-xs max-md:text-sm border transition ${
               atual === min ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'border-slate-200 text-slate-600 hover:bg-slate-50'
             }`}
           >
@@ -504,7 +529,7 @@ function EditorCronometro({ task, gravar }: { task: TaskRow; gravar: EditorCelul
             onChange={(e) => setTexto(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') lancar(1); }}
             placeholder="Ex.: 30m, 1h15"
-            className="flex-1 min-w-0 border border-slate-200 rounded-lg px-2 py-1.5 text-xs bg-white outline-none focus:border-indigo-300"
+            className="flex-1 min-w-0 border border-slate-200 rounded-lg px-2 py-1.5 text-xs max-md:text-base max-md:py-2.5 bg-white outline-none focus:border-indigo-300"
           />
           <button type="button" disabled={!lido} onClick={() => lancar(1)} title="Somar" className="p-1.5 rounded-lg border border-slate-200 text-emerald-600 hover:bg-emerald-50 disabled:opacity-40">
             <Plus size={13} />

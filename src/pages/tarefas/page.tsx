@@ -8,6 +8,7 @@ import { useModuleAccess } from '@/hooks/useModuleAccess';
 import { useUsuarios } from '@/hooks/useUsuarios';
 import PullToRefresh from '@/components/feature/PullToRefresh';
 import { useTarefas } from './hooks/useTarefas';
+import { MODO_DEMO, USUARIOS_DEMO } from './demo/modoDemo';
 import type { TaskList } from './hooks/useTarefas';
 import ViewLista from './components/ViewLista';
 import ViewKanban from './components/ViewKanban';
@@ -63,7 +64,7 @@ export default function TarefasPage() {
   // qualquer um autenticado: o card sumia de /modulos, mas quem caísse em
   // /tarefas (ex.: o login devolve para a última rota do aparelho) entrava.
   const { hasModule, loading: acessoLoading } = useModuleAccess();
-  const temAcessoTarefas = hasModule('tarefas');
+  const temAcessoTarefas = MODO_DEMO || hasModule('tarefas');
 
   // A rota /tarefas roda em modo terminal (sem sidebar/topbar do ERPOS) — o
   // único jeito de sair é este botão.
@@ -75,7 +76,8 @@ export default function TarefasPage() {
     lists, tasks, tags, campos, notificacoes, views, templates,
     loading, error, reload, write, fetchDetail, fetchAnexos, enviarAnexo, abrirAnexo,
   } = useTarefas();
-  const { usuarios } = useUsuarios();
+  const { usuarios: usuariosLoja } = useUsuarios();
+  const usuarios = MODO_DEMO ? USUARIOS_DEMO : usuariosLoja;
 
   // No celular a pergunta ao abrir é "o que eu tenho pra fazer?" — Minhas é a home.
   const [origem, setOrigem] = useState<Origem>(() =>
@@ -350,7 +352,7 @@ export default function TarefasPage() {
     </div>
   );
 
-  if (!acessoLoading && !temAcessoTarefas) return <Navigate to="/modulos" replace />;
+  if (!MODO_DEMO && !acessoLoading && !temAcessoTarefas) return <Navigate to="/modulos" replace />;
 
   return (
     <div className="flex h-full min-h-0">

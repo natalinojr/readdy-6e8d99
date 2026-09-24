@@ -124,7 +124,7 @@ export default function ComentarioInput({ usuarios, onEnviar, autoFocus }: Comen
             }
           }}
           placeholder="Comentar… use @ para mencionar"
-          className="flex-1 text-sm border border-slate-200 rounded-lg px-3 py-2 outline-none focus:border-indigo-300"
+          className="flex-1 text-sm max-md:text-base border border-slate-200 rounded-lg px-3 py-2 outline-none focus:border-indigo-300"
         />
         <button
           type="submit"

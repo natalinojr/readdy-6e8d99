@@ -1,6 +1,8 @@
 import { useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import type { TaskList } from '../hooks/useTarefas';
 import { CATEGORIAS_GENERICAS } from '../lib/agrupamento';
+import { useIsMobile } from '../lib/mobile';
 
 interface StatusPickerProps {
   /** null = várias pastas ao mesmo tempo (visão agregada ou seleção em massa) — usa categorias genéricas. */
@@ -34,9 +36,12 @@ export default function StatusPicker({ list, anchorRect, onEscolher, onClose }: 
     // tem um status nela) e confundia quem só usa A fazer/Em andamento/Concluído.
     : CATEGORIAS_GENERICAS.filter((c) => c.key !== 'backlog').map((c) => ({ key: c.key, label: c.label, color: c.color }));
 
+  const celular = useIsMobile();
+
   // Rolar a página invalida o retângulo capturado no clique — fechar em vez
-  // de arriscar um popover flutuando no lugar errado.
+  // de arriscar um popover flutuando no lugar errado (no celular é folha fixa embaixo).
   useEffect(() => {
+    if (celular) return;
     const fechar = () => onClose();
     window.addEventListener('scroll', fechar, true);
     window.addEventListener('resize', fechar);
@@ -44,7 +49,36 @@ export default function StatusPicker({ list, anchorRect, onEscolher, onClose }: 
       window.removeEventListener('scroll', fechar, true);
       window.removeEventListener('resize', fechar);
     };
-  }, [onClose]);
+  }, [onClose, celular]);
+
+  const escolher = (key: string) => {
+    onEscolher(list ? { status_id: key } : { status_category: key });
+    onClose();
+  };
+
+  if (celular) {
+    return createPortal(
+      <div onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 z-[70] bg-slate-900/30" onClick={onClose} />
+        <div className="fixed inset-x-0 bottom-0 z-[71] bg-white rounded-t-2xl shadow-2xl px-3 pt-2 pb-[max(env(safe-area-inset-bottom),16px)] max-h-[75vh] overflow-y-auto">
+          <div className="mx-auto mb-2 h-1 w-10 rounded-full bg-slate-200" />
+          <p className="px-3 pb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Mudar status</p>
+          {opcoes.map((o) => (
+            <button
+              key={o.key}
+              type="button"
+              onClick={() => escolher(o.key)}
+              className="w-full flex items-center gap-3 px-3 py-3.5 rounded-xl text-[15px] text-left active:bg-slate-100"
+            >
+              <span className="w-3.5 h-3.5 rounded-full shrink-0" style={{ backgroundColor: o.color }} />
+              <span className="truncate text-slate-700">{o.label}</span>
+            </button>
+          ))}
+        </div>
+      </div>,
+      document.body,
+    );
+  }
 
   const alturaEstimada = Math.min(280, opcoes.length * 34 + 12);
   const espacoAbaixo = window.innerHeight - anchorRect.bottom;
