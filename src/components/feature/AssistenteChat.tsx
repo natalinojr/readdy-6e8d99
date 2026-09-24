@@ -16,6 +16,7 @@ import BotaoAvisos from '@/components/feature/BotaoAvisos';
 import { ACOES, GRUPOS } from '@/components/feature/assistente/acoes';
 import { acaoLiberada, useAcessoAcoes } from '@/components/feature/assistente/acoes/acesso';
 import AcoesRapidasFlutuante from '@/components/feature/assistente/AcoesRapidasFlutuante';
+import { useEquipeNoChat } from '@/components/feature/equipe/useEquipeNoChat';
 import ItensClassificarCard from '@/components/feature/assistente/ItensClassificarCard';
 import PainelMensagem, { painelDoTexto } from '@/components/feature/assistente/PainelMensagem';
 import PendenciasChat, { type PendenciaChat } from '@/components/feature/assistente/PendenciasChat';
@@ -321,6 +322,12 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
   const [modo, setModo] = useState<Modo>(variant === 'embedded' ? 'full' : 'fab');
   const open = modo !== 'fab';
   const setOpen = (v: boolean) => setModo(v ? 'full' : 'fab');
+  // Conversa com as pessoas da loja (2026-09-23): seção na lista + camada por cima do painel.
+  const equipe = useEquipeNoChat({
+    ativo: user?.email?.toLowerCase() === ASSISTENTE_OWNER_EMAIL,
+    abrirPainel: () => { setVista('lista'); setModo('full'); },
+    fecharPainel: variant === 'floating' ? () => setModo('fab') : undefined,
+  });
   // null = este toque não conta como "puxar para abrir" (começou numa lista que rola, campo, botão).
   const arrasteY = useRef<number | null>(null);
   // Arrastar o botão redondo: só vira arrasto depois de 8 px, senão um toque tremido não abriria.
@@ -1159,6 +1166,8 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
           <span className="block text-xs text-zinc-400 truncate">A conversa inteira, sem separar por assunto</span>
         </span>
       </button>
+      {/* Pessoas da loja (2026-09-23): conversa direta com alguém da equipe. */}
+      {equipe.secao}
       {/* Grupos do WhatsApp (2026-09-17): cada grupo é uma conversa, com tudo que veio dele. */}
       {grupos.length > 0 && (
         <p className="px-4 pt-3 pb-1 text-[11px] font-bold uppercase tracking-wide text-zinc-400">Grupos do WhatsApp</p>
@@ -1175,7 +1184,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
     <div data-no-pull className={variant === 'floating'
       ? `fixed z-[60] inset-0 sm:inset-auto sm:bottom-5 sm:right-5 sm:w-[420px] sm:h-[min(720px,calc(100vh-40px))] flex flex-col bg-white sm:rounded-2xl sm:border sm:border-zinc-200 shadow-2xl overflow-hidden
          transition-transform duration-200 ease-out sm:translate-y-0 ${subindo ? 'translate-y-0' : 'translate-y-full'}`
-      : 'flex flex-col h-[70vh] rounded-2xl border border-zinc-200 bg-white overflow-hidden'}>
+      : 'relative flex flex-col h-[70vh] rounded-2xl border border-zinc-200 bg-white overflow-hidden'}>
       {/* Cabeçalho */}
       <div className="flex items-center gap-2.5 px-4 h-14 border-b border-zinc-100 flex-shrink-0">
         {vista === 'conversa' ? (
@@ -1401,6 +1410,8 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
         </div>
       )}
 
+      {equipe.camada}
+
       {acao && (() => {
         const def = ACOES.find((a) => a.id === acao);
         if (!def) return null;
@@ -1593,10 +1604,13 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
         if (ignorarCliqueFab.current) { ignorarCliqueFab.current = false; return; }
         if (temNovidade && naoLidas.topic) { setAba(naoLidas.topic); setVista('conversa'); }
         else if (temNovidade) setVista('lista'); // veio de assuntos diferentes: escolha na lista
+        // Mensagem de alguém da equipe: abre na lista, onde está a conversa com a pessoa.
+        const irEquipe = !temNovidade && equipe.naoLidas > 0;
+        if (irEquipe) setVista('lista');
         // Pendência esperando: abre na lista, com a caixa aberta no topo.
-        const irPendencias = !temNovidade && pendNovas > 0;
+        const irPendencias = !temNovidade && !irEquipe && pendNovas > 0;
         if (irPendencias) setPendAberta(true);
-        setModo(temNovidade || irPendencias ? 'full' : 'mini');
+        setModo(temNovidade || irEquipe || irPendencias ? 'full' : 'mini');
       }}
       style={centro ? { left: centro.x - FAB_R, top: centro.y - FAB_R, touchAction: 'none' } : { touchAction: 'none' }}
       className={`fixed z-[55] ${centro ? '' : 'bottom-5 right-5'} w-14 h-14 rounded-full bg-violet-600 hover:bg-violet-500 text-white shadow-lg flex items-center justify-center ${arrastandoFab ? 'cursor-grabbing scale-110' : 'cursor-pointer'} select-none`}
@@ -1609,7 +1623,12 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
           {naoLidas.count > 9 ? '9+' : naoLidas.count}
         </span>
       )}
-      {!temNovidade && (pendNovas > 0 || pagamentosVisiveis.some((p) => p.status === 'draft')) && <span className="absolute top-1 right-1 w-3 h-3 rounded-full bg-red-500 border-2 border-white" />}
+      {!temNovidade && equipe.naoLidas > 0 && (
+        <span className="absolute -top-1 -right-1 min-w-[22px] h-[22px] px-1 flex items-center justify-center rounded-full bg-sky-600 text-white text-xs font-black border-2 border-white" aria-label={`${equipe.naoLidas} de pessoas da equipe`}>
+          {equipe.naoLidas > 9 ? '9+' : equipe.naoLidas}
+        </span>
+      )}
+      {!temNovidade && !equipe.naoLidas && (pendNovas > 0 || pagamentosVisiveis.some((p) => p.status === 'draft')) && <span className="absolute top-1 right-1 w-3 h-3 rounded-full bg-red-500 border-2 border-white" />}
     </button>
   );
 }

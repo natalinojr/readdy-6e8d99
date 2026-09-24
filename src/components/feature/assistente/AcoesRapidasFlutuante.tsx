@@ -2,12 +2,15 @@
 // Sem conversa, sem pendências, sem pagamentos — nada que passe pelo assistente-app (que é só do
 // dono). Cada ação roda pelo mesmo caminho da tela, com a permissão do próprio usuário, e o menu
 // mostra só as ações liberadas para ele (acoes/acesso.ts).
+// Conversas com a equipe (2026-09-23): o painel ganhou a aba Conversas — falar com as pessoas da
+// loja (equipe/). Ela aparece para todo mundo; a aba de ações só para quem tem alguma liberada.
 import { Suspense, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useVoltarFecha } from '@/lib/voltarAndroid';
 import { ACOES, GRUPOS } from './acoes';
 import { acaoLiberada, useAcessoAcoes } from './acoes/acesso';
 import { useFabArrastavel } from './useFabArrastavel';
+import { useEquipeNoChat } from '@/components/feature/equipe/useEquipeNoChat';
 
 const semAcento = (t: string) => t.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
 
@@ -17,17 +20,22 @@ export default function AcoesRapidasFlutuante({ variant }: { variant: 'floating'
   const [aberto, setAberto] = useState(variant === 'embedded');
   const [acao, setAcao] = useState<string | null>(null);
   const [filtro, setFiltro] = useState('');
+  const [aba, setAba] = useState<'conversas' | 'acoes'>('conversas');
   useEffect(() => { if (!aberto) { setFiltro(''); setAcao(null); } }, [aberto]);
+  const equipe = useEquipeNoChat({
+    abrirPainel: () => { setAba('conversas'); setAberto(true); },
+    fecharPainel: variant === 'floating' ? () => setAberto(false) : undefined,
+  });
 
   useVoltarFecha(variant === 'floating' && aberto, () => setAberto(false), 'acoes-rapidas-painel');
   useVoltarFecha(aberto && !!acao, () => setAcao(null), 'acoes-rapidas-acao');
   // O botão fechado anda pela tela como o do assistente do dono (arrasta e ele fica lá).
-  const fab = useFabArrastavel(() => setAberto(true));
+  const fab = useFabArrastavel(() => { if (equipe.naoLidas) setAba('conversas'); setAberto(true); });
 
   const liberadas = acesso.carregando ? [] : ACOES.filter((a) => acaoLiberada(a.id, acesso));
-  // Sem nenhuma ação liberada não há o que mostrar: nem o botão aparece.
-  if (!acesso.carregando && !liberadas.length) return null;
-  if (acesso.carregando && !aberto) return null;
+  // Sem ação liberada o botão continua: as conversas com a equipe são para todo mundo.
+  const temAcoes = acesso.carregando || liberadas.length > 0;
+  const abaAtual = temAcoes ? aba : 'conversas';
 
   const termo = semAcento(filtro.trim());
   const filtradas = termo ? liberadas.filter((a) => semAcento(`${a.label} ${a.grupo}`).includes(termo)) : liberadas;
@@ -37,8 +45,13 @@ export default function AcoesRapidasFlutuante({ variant }: { variant: 'floating'
     return (
       <button {...fab.props}
         className={`fixed z-[55] ${fab.classePosicao} w-14 h-14 rounded-full bg-violet-600 hover:bg-violet-500 text-white shadow-lg flex items-center justify-center ${fab.arrastando ? 'cursor-grabbing scale-110' : 'cursor-pointer'} select-none`}
-        aria-label="Ações rápidas">
-        <i className="ri-flashlight-line text-2xl" />
+        aria-label={equipe.naoLidas ? `Chat: ${equipe.naoLidas} ${equipe.naoLidas === 1 ? 'mensagem nova' : 'mensagens novas'}` : 'Chat e ações rápidas'}>
+        <i className="ri-chat-3-line text-2xl" />
+        {equipe.naoLidas > 0 && (
+          <span className="absolute -top-1 -right-1 min-w-[22px] h-[22px] px-1 flex items-center justify-center rounded-full bg-red-500 text-white text-xs font-black border-2 border-white">
+            {equipe.naoLidas > 9 ? '9+' : equipe.naoLidas}
+          </span>
+        )}
       </button>
     );
   }
@@ -51,11 +64,11 @@ export default function AcoesRapidasFlutuante({ variant }: { variant: 'floating'
       : 'relative flex flex-col h-[70vh] rounded-2xl border border-zinc-200 bg-zinc-50 overflow-hidden'}>
       <div className="flex items-center gap-2.5 px-4 h-14 border-b border-zinc-100 bg-white flex-shrink-0">
         <div className="w-8 h-8 flex items-center justify-center rounded-xl bg-violet-50 border border-violet-200">
-          <i className="ri-flashlight-line text-violet-600" />
+          <i className={`${abaAtual === 'conversas' ? 'ri-chat-3-line' : 'ri-flashlight-line'} text-violet-600`} />
         </div>
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-black text-zinc-900 leading-tight">Ações rápidas</p>
-          <p className="text-[11px] text-zinc-400 leading-tight">Só o que o seu acesso permite</p>
+          <p className="text-sm font-black text-zinc-900 leading-tight">{abaAtual === 'conversas' ? 'Conversas' : 'Ações rápidas'}</p>
+          <p className="text-[11px] text-zinc-400 leading-tight">{abaAtual === 'conversas' ? 'Fale com as pessoas da loja' : 'Só o que o seu acesso permite'}</p>
         </div>
         {variant === 'floating' && (
           <button onClick={() => setAberto(false)} className="w-9 h-9 flex items-center justify-center rounded-xl text-zinc-400 hover:bg-zinc-100 cursor-pointer" aria-label="Fechar ações rápidas">
@@ -63,6 +76,24 @@ export default function AcoesRapidasFlutuante({ variant }: { variant: 'floating'
           </button>
         )}
       </div>
+      {temAcoes && (
+        <div className="flex gap-1 px-3 py-2 border-b border-zinc-100 bg-white flex-shrink-0" role="tablist">
+          {([['conversas', 'ri-chat-3-line', 'Conversas'], ['acoes', 'ri-flashlight-line', 'Ações rápidas']] as const).map(([id, icone, rotulo]) => (
+            <button key={id} role="tab" aria-selected={abaAtual === id} onClick={() => setAba(id)}
+              className={`flex-1 h-9 flex items-center justify-center gap-1.5 rounded-xl text-sm font-semibold cursor-pointer ${abaAtual === id ? 'bg-violet-100 text-violet-700' : 'text-zinc-500 hover:bg-zinc-100'}`}>
+              <i className={`${icone} text-base`} /> {rotulo}
+              {id === 'conversas' && equipe.naoLidas > 0 && (
+                <span className="min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full bg-red-500 text-white text-[10px] font-black">
+                  {equipe.naoLidas > 9 ? '9+' : equipe.naoLidas}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+      {abaAtual === 'conversas' ? (
+        <div className="flex-1 overflow-y-auto bg-white">{equipe.secao}</div>
+      ) : (
       <div className="flex-1 overflow-y-auto px-3 pb-4">
         {acesso.carregando ? (
           <div className="py-10 flex justify-center"><span className="w-6 h-6 border-2 border-violet-500 border-t-transparent rounded-full animate-spin" /></div>
@@ -100,6 +131,8 @@ export default function AcoesRapidasFlutuante({ variant }: { variant: 'floating'
           </>
         )}
       </div>
+      )}
+      {equipe.camada}
       {/* A ação cobre o painel inteiro (tem cabeçalho próprio com o X), como no chat do dono. */}
       {C && (
         <Suspense fallback={<div className="absolute inset-0 z-20 flex items-center justify-center bg-zinc-50"><span className="w-6 h-6 border-2 border-violet-500 border-t-transparent rounded-full animate-spin" /></div>}>

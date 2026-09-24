@@ -3261,3 +3261,16 @@ tiver acesso à pasta — nunca qualquer id vindo do corpo (menção).
   `fn_update_user`, 1–10 dígitos, recusa repetida com mensagem; o índice único global
   `users_badge_number_unique` é a garantia final). O PIN não depende da matrícula
   (`sha256(pin + user_id)`), então trocar a matrícula não invalida o PIN.
+
+### Conversa entre pessoas da mesma loja no chat — `chat-equipe` (2026-09-23)
+
+Tabelas `chat_threads` / `chat_participants` / `chat_messages` (migração `20260923200000_chat_equipe`).
+**Uma conversa por par de pessoas** (`direct_key` = os dois user_id em ordem), mesmo que trabalhem
+juntas em várias lojas; só dá para começar com quem está numa loja sua (`user_tenants`), e login de
+`tablet` fica fora da lista. Tudo que grava passa pela Edge `chat-equipe` (verify_jwt false, confere o
+usuário por dentro; `client_id` evita mensagem dupla no reenvio; manda Web Push via `send-push` com
+url `/modulos?conversa=<id>`). O front **lê pelo Realtime** (`chat_messages` na publicação) com RLS
+por participante (`fn_chat_participa`), **nunca por `auth_tenant_id`** (admin com várias lojas quebraria).
+Front: `src/components/feature/equipe/` — `useEquipeNoChat` devolve a seção da lista, a camada por
+cima do painel e as não lidas; ligado no `AssistenteChat` (dono) e no `AcoesRapidasFlutuante` (demais,
+aba Conversas). Teste: `src/test/components/chatEquipe.test.tsx`.

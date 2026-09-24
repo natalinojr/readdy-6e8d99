@@ -13,7 +13,12 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock('@/lib/supabase', () => ({
-  supabase: { functions: { invoke: h.invoke } },
+  supabase: {
+    functions: { invoke: h.invoke },
+    // Conversa com a equipe escuta o Realtime (equipe/useConversasEquipe).
+    channel: () => { const c = { on: () => c, subscribe: () => c }; return c; },
+    removeChannel: () => undefined,
+  },
   invokeWithAuth: vi.fn().mockResolvedValue({ data: {}, error: null }),
   SUPABASE_URL: 'http://localhost',
 }));
@@ -146,8 +151,10 @@ describe('AssistenteChat — conversa', () => {
   it('quem não é o dono vê só as ações rápidas, sem a conversa', async () => {
     h.auth.user = { ...OWNER, email: 'gerente@loja.com', perfil: 'gerente' };
     renderChat();
-    expect(await screen.findByText('Ações rápidas')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Vendas do dia/ })).toBeInTheDocument();
+    // Abre nas conversas com a equipe (2026-09-23); as ações ficam na outra aba.
+    expect(await screen.findByRole('tab', { name: /Conversas/ })).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole('tab', { name: /Ações rápidas/ }));
+    expect(await screen.findByRole('button', { name: /Vendas do dia/ })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Todas as mensagens/ })).not.toBeInTheDocument();
     // Aprovar sugestão do tráfego é só do Admin.
     expect(screen.queryByRole('button', { name: /Sugestões do tráfego/ })).not.toBeInTheDocument();
