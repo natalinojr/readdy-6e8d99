@@ -7,6 +7,7 @@ import { useEstoque, type Insumo as InsumoEstoque } from '@/contexts/EstoqueCont
 import { useIngredientCategories } from '@/hooks/useIngredientCategories';
 import InsumoModal from '@/pages/estoque/components/insumos/InsumoModal';
 import CategoriaCombobox from './CategoriaCombobox';
+import EntradaTardiaModal from './EntradaTardiaModal';
 
 // ── Classificação de itens (base de correlações) ──
 // Cada item comprado (fornecedor + código do produto; sem código, descrição) tem UMA
@@ -19,7 +20,9 @@ import CategoriaCombobox from './CategoriaCombobox';
 // itens de compra já lançados, e é dela que a DRE abre o CMV por categoria.
 // Vínculo com insumo do estoque (fn_item_link_ingredient): o item vira CMV na categoria do insumo
 // e, com CNPJ + código do produto, fica memorizado para as próximas notas e recebimentos
-// (fiscal_inbound_item_links). O estoque só entra no recebimento — compras antigas não mudam.
+// (fiscal_inbound_item_links). O estoque só entra no recebimento — compras antigas não mudam
+// sozinhas: desde 2026-09-24 o item mostra os recebimentos que ficaram fora do estoque
+// (fn_item_unstocked_summary) e o usuário escolhe quais entram (EntradaTardiaModal).
 // Notas de serviço (NFS-e) também entram aqui desde 2026-09-18 (is_service), sem insumo. Despesa
 // grava a categoria nas contas a pagar das notas desse serviço e nota nova já vira conta com ela.
 // CMV = fornecedor de produto que emite nota de serviço: as próximas notas entram como COMPRA.
@@ -50,7 +53,10 @@ interface Row {
 interface Cat { id: string; name: string; group_type: string }
 interface Merc { id: string; name: string }
 interface Insumo { id: string; name: string; unit: string; merchandise_category_id: string | null; category: string | null }
-type Filtro = 'pendentes' | 'estoque' | 'cmv' | 'cmv_sem' | 'despesa' | 'servicos' | 'todos';
+type Filtro = 'pendentes' | 'estoque' | 'sem_insumo' | 'fora_estoque' | 'cmv' | 'cmv_sem' | 'despesa' | 'servicos' | 'todos';
+interface Fora { receipts: number; last: string | null }
+// Produto que deveria estar ligado a insumo e não está (CMV ou ainda sem classificação; serviço e despesa ficam de fora)
+const semInsumo = (r: Row) => !r.ingredient_id && !r.is_service && r.classe !== 'despesa';
 
 const brl = (n: number | null | undefined) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number(n ?? 0));
 const dataBR = (s: string | null | undefined) => (s ? new Date(s).toLocaleDateString('pt-BR') : '—');
@@ -84,12 +90,15 @@ export default function ItensClassificacaoTab() {
   const [vinc, setVinc] = useState<{ rowId: string; ingId: string; upp: string } | null>(null);
   // Criar insumo a partir do vínculo (mesma janela do Estoque); ao salvar, já fica escolhido
   const [novoInsumo, setNovoInsumo] = useState<{ rowId: string; nome: string } | null>(null);
+  // Recebimentos fora do estoque por item (recebido sem insumo ligado) e a janela para escolher quais entram
+  const [fora, setFora] = useState<Map<string, Fora>>(new Map());
+  const [tardia, setTardia] = useState<string | null>(null);
   const { upsertInsumo, reloadInsumos } = useEstoque();
   const { names: categoriasInsumo, addCategory } = useIngredientCategories();
 
   const carregar = useCallback(async () => {
     if (!tenantId) return;
-    const [{ data, error }, { data: c }, { data: m }, { data: ins, error: insErr }] = await Promise.all([
+    const [{ data, error }, { data: c }, { data: m }, { data: ins, error: insErr }, { data: fe }] = await Promise.all([
       supabase.from('fin_item_classifications').select('*').eq('tenant_id', tenantId)
         .order('last_seen_at', { ascending: false, nullsFirst: false }).range(0, 4999),
       supabase.from('fin_dre_categories').select('id, name, group_type').eq('tenant_id', tenantId)
@@ -98,6 +107,7 @@ export default function ItensClassificacaoTab() {
         .eq('is_active', true).order('sort_order').order('name'),
       // Por RPC: a leitura direta de ingredients segue a última loja do login (admin multi-loja)
       supabase.rpc('fn_item_link_options', { p_tenant: tenantId }),
+      supabase.rpc('fn_item_unstocked_summary', { p_tenant: tenantId }),
     ]);
     if (error) toastErr('Não foi possível carregar os itens', error.message);
     if (insErr) toastErr('Não foi possível carregar os insumos', insErr.message);
@@ -105,7 +115,11 @@ export default function ItensClassificacaoTab() {
     setCats(((c ?? []) as Cat[]).filter((x) => isGrupoDespesa(x.group_type)));
     setMercs((m ?? []) as Merc[]);
     setInsumos((ins ?? []) as Insumo[]);
+    const novoFora = new Map(((fe ?? []) as { classification_id: string; receipts: number; last_received_at: string | null }[])
+      .map((x) => [x.classification_id, { receipts: Number(x.receipts), last: x.last_received_at }]));
+    setFora(novoFora);
     setLoading(false);
+    return novoFora;
   }, [tenantId, toastErr]);
 
   useEffect(() => { carregar(); }, [carregar]);
@@ -152,19 +166,23 @@ export default function ItensClassificacaoTab() {
   const resumo = useMemo(() => ({
     pendentes: rows.filter((r) => !r.classe).length,
     estoque: rows.filter((r) => r.ingredient_id).length,
+    semInsumo: rows.filter((r) => semInsumo(r)).length,
+    foraEstoque: rows.filter((r) => r.ingredient_id && fora.has(r.id)).length,
     cmv: rows.filter((r) => r.classe === 'cmv').length,
     cmvSem: rows.filter((r) => r.classe === 'cmv' && !cmvCat(r)).length,
     despesa: rows.filter((r) => r.classe === 'despesa').length,
     servicos: rows.filter((r) => r.is_service).length,
-  }), [rows, cmvCat]);
+  }), [rows, cmvCat, fora]);
 
   const fornecedores = useMemo(() => [...new Set(rows.map((r) => r.supplier_name ?? '').filter(Boolean))].sort(), [rows]);
 
   const filtrados = useMemo(() => {
     const q = busca.trim().toLowerCase();
-    return rows.filter((r) => {
+    const lista = rows.filter((r) => {
       if (filtro === 'pendentes' && r.classe) return false;
       if (filtro === 'estoque' && !r.ingredient_id) return false;
+      if (filtro === 'sem_insumo' && !semInsumo(r)) return false;
+      if (filtro === 'fora_estoque' && !(r.ingredient_id && fora.has(r.id))) return false;
       if (filtro === 'cmv' && r.classe !== 'cmv') return false;
       if (filtro === 'cmv_sem' && (r.classe !== 'cmv' || cmvCat(r))) return false;
       if (filtro === 'despesa' && r.classe !== 'despesa') return false;
@@ -174,7 +192,9 @@ export default function ItensClassificacaoTab() {
       const ingNome = r.ingredient_id ? insMap.get(r.ingredient_id)?.name : null;
       return [r.description, r.supplier_name, r.supplier_code, r.ncm, ingNome, cmvCat(r)].some((v) => (v ?? '').toLowerCase().includes(q));
     });
-  }, [rows, filtro, fornecedor, busca, cmvCat, insMap]);
+    // Sem insumo: primeiro os que já chegaram e ficaram fora do estoque
+    return filtro === 'sem_insumo' ? lista.sort((a, b) => Number(fora.has(b.id)) - Number(fora.has(a.id))) : lista;
+  }, [rows, filtro, fornecedor, busca, cmvCat, insMap, fora]);
 
   // merc = categoria de mercadoria do CMV; sem ela, o item mantém a que já tinha.
   const classificar = async (ids: string[], classe: 'cmv' | 'despesa' | null, cat: string | null = null, merc: string | null = null) => {
@@ -221,7 +241,9 @@ export default function ItensClassificacaoTab() {
       toastOk('Vínculo removido', d.memorizado ? 'As próximas notas deixam de sugerir este insumo.' : '');
     }
     setVinc(null);
-    await carregar();
+    const atual = await carregar();
+    // Recebimentos que chegaram antes do vínculo: pergunta quais entram no estoque agora
+    if (ingId && atual?.has(r.id)) setTardia(r.id);
   };
 
   // Cria o insumo (mesmo caminho da tela de Estoque) e abre o vínculo com ele já escolhido
@@ -268,6 +290,13 @@ export default function ItensClassificacaoTab() {
     await carregar();
   };
 
+  const filtrosLista: [Filtro, string][] = [
+    ['pendentes', 'Pendentes'], ['cmv', 'CMV'], ['cmv_sem', 'CMV sem categoria'], ['estoque', 'Ligados ao estoque'], ['sem_insumo', 'Sem insumo'],
+    ...(resumo.foraEstoque > 0 || filtro === 'fora_estoque' ? [['fora_estoque', 'Fora do estoque'] as [Filtro, string]] : []),
+    ['despesa', 'Despesa'], ['servicos', 'Serviços'], ['todos', 'Todos'],
+  ];
+  const itemTardia = tardia ? rows.find((r) => r.id === tardia) : undefined;
+
   const toggle = (id: string) => setSel((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const todosMarcados = filtrados.length > 0 && filtrados.every((r) => sel.has(r.id));
   const selecionados = rows.filter((r) => sel.has(r.id));
@@ -276,7 +305,13 @@ export default function ItensClassificacaoTab() {
     if (r.is_service) return <span className="text-[11px] text-zinc-400">nota de serviço: sem vínculo com o estoque</span>;
     const ing = r.ingredient_id ? insMap.get(r.ingredient_id) : undefined;
     if (!podeClassificar) {
-      return ing ? <span className="inline-flex items-center gap-1"><i className="ri-links-line text-emerald-600" />{ing.name}</span> : <span className="text-zinc-300">—</span>;
+      const p = fora.get(r.id);
+      return (
+        <div>
+          {ing ? <span className="inline-flex items-center gap-1"><i className="ri-links-line text-emerald-600" />{ing.name}</span> : <span className="text-zinc-300">—</span>}
+          {p && <ForaAviso pend={p} />}
+        </div>
+      );
     }
     if (vinc?.rowId === r.id) {
       const alvo = insMap.get(vinc.ingId);
@@ -299,9 +334,11 @@ export default function ItensClassificacaoTab() {
         </div>
       );
     }
+    const pend = fora.get(r.id);
     if (ing) {
       const upp = Number(r.units_per_package ?? 1) || 1;
       return (
+        <div>
         <div className="flex items-center gap-1 group">
           <span className="inline-flex items-center gap-1 min-w-0"><i className="ri-links-line text-emerald-600" /><span className="truncate max-w-[150px]" title={ing.name}>{ing.name}</span></span>
           <span className="text-[10px] text-zinc-400">1 {r.unit_label || 'un'} = {num(upp)} {un(ing.unit)}</span>
@@ -315,14 +352,24 @@ export default function ItensClassificacaoTab() {
             <i className="ri-link-unlink" />
           </button>
         </div>
+        {pend && (
+          <button disabled={busy} onClick={() => setTardia(r.id)}
+            className="mt-1 text-[11px] font-semibold text-orange-700 bg-orange-50 hover:bg-orange-100 rounded px-1.5 py-0.5 cursor-pointer">
+            <i className="ri-error-warning-line" /> {pend.receipts} recebimento(s) fora do estoque
+          </button>
+        )}
+        </div>
       );
     }
     return (
+      <div>
       <CategoriaCombobox value="" options={insOptions} disabled={busy} placeholder="Vincular insumo…"
         onChange={(id) => { if (id) setVinc({ rowId: r.id, ingId: id, upp: '1' }); }}
         onCreate={(texto) => setNovoInsumo({ rowId: r.id, nome: texto || r.description })}
         createLabel={(texto) => (texto ? `Criar insumo “${texto}”` : 'Criar novo insumo')}
         buttonClassName="text-[11px] font-semibold rounded-lg px-1.5 py-1 w-[170px] cursor-pointer bg-zinc-50 text-zinc-500 border border-dashed border-zinc-200 hover:border-emerald-300" />
+      {pend && <ForaAviso pend={pend} />}
+      </div>
     );
   };
 
@@ -402,11 +449,21 @@ export default function ItensClassificacaoTab() {
         ))}
       </div>
 
+      {resumo.foraEstoque > 0 && (
+        <div className="bg-orange-50 border border-orange-200 rounded-xl p-3 flex flex-wrap items-center gap-2 text-xs text-orange-800">
+          <i className="ri-error-warning-line text-base" />
+          <span className="flex-1 min-w-[200px]">
+            <b>{resumo.foraEstoque} produto(s) ligado(s) a insumo</b> têm recebimentos que não entraram no estoque (chegaram antes do vínculo ou foram confirmados sem ele).
+          </span>
+          <button onClick={() => setFiltro('fora_estoque')} className="px-3 py-1.5 rounded-lg bg-orange-600 text-white font-semibold hover:bg-orange-700 cursor-pointer">Ver e escolher</button>
+        </div>
+      )}
+
       <div className="bg-white rounded-xl border border-zinc-100 p-3 flex flex-wrap items-center gap-2">
-        {([['pendentes', 'Pendentes'], ['cmv', 'CMV'], ['cmv_sem', 'CMV sem categoria'], ['estoque', 'Ligados ao estoque'], ['despesa', 'Despesa'], ['servicos', 'Serviços'], ['todos', 'Todos']] as const).map(([id, label]) => (
+        {filtrosLista.map(([id, label]) => (
           <button key={id} onClick={() => setFiltro(id)}
             className={`px-3 py-1.5 text-xs font-semibold rounded-lg cursor-pointer ${filtro === id ? 'bg-zinc-900 text-white' : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'}`}>
-            {label}{id === 'cmv_sem' && resumo.cmvSem > 0 ? ` (${resumo.cmvSem})` : ''}{id === 'servicos' && resumo.servicos > 0 ? ` (${resumo.servicos})` : ''}
+            {label}{id === 'cmv_sem' && resumo.cmvSem > 0 ? ` (${resumo.cmvSem})` : ''}{id === 'sem_insumo' && resumo.semInsumo > 0 ? ` (${resumo.semInsumo})` : ''}{id === 'fora_estoque' ? ` (${resumo.foraEstoque})` : ''}{id === 'servicos' && resumo.servicos > 0 ? ` (${resumo.servicos})` : ''}
           </button>
         ))}
         <select value={fornecedor} onChange={(e) => setFornecedor(e.target.value)}
@@ -448,7 +505,7 @@ export default function ItensClassificacaoTab() {
         ) : filtrados.length === 0 ? (
           <div className="p-10 text-center">
             <i className="ri-price-tag-3-line text-3xl text-zinc-300" />
-            <p className="text-sm text-zinc-500 mt-2">{rows.length === 0 ? 'Nenhum item ainda: eles aparecem quando chegam notas de entrada ou compras.' : filtro === 'pendentes' ? 'Nenhum item pendente. Tudo classificado.' : filtro === 'cmv_sem' ? 'Todo item de CMV já tem categoria.' : 'Nada neste filtro.'}</p>
+            <p className="text-sm text-zinc-500 mt-2">{rows.length === 0 ? 'Nenhum item ainda: eles aparecem quando chegam notas de entrada ou compras.' : filtro === 'pendentes' ? 'Nenhum item pendente. Tudo classificado.' : filtro === 'cmv_sem' ? 'Todo item de CMV já tem categoria.' : filtro === 'sem_insumo' ? 'Todo produto de CMV já está ligado a um insumo.' : filtro === 'fora_estoque' ? 'Nenhum recebimento pendente de entrada no estoque.' : 'Nada neste filtro.'}</p>
           </div>
         ) : (
           <>
@@ -532,6 +589,17 @@ export default function ItensClassificacaoTab() {
       </div>
       {filtrados.length > 0 && <p className="text-[11px] text-zinc-400">{filtrados.length} de {rows.length} itens</p>}
 
+      {itemTardia && tenantId && (
+        <EntradaTardiaModal
+          tenantId={tenantId}
+          item={{ id: itemTardia.id, description: itemTardia.description, unit_label: itemTardia.unit_label }}
+          insumo={itemTardia.ingredient_id ? (() => { const i = insMap.get(itemTardia.ingredient_id); return i ? { name: i.name, unit: i.unit } : null; })() : null}
+          upp={Number(itemTardia.units_per_package ?? 1) || 1}
+          onFechar={() => setTardia(null)}
+          onFeito={() => { carregar(); }}
+        />
+      )}
+
       {novoInsumo && (() => {
         const alvo = novoInsumo;
         return (
@@ -545,5 +613,14 @@ export default function ItensClassificacaoTab() {
         );
       })()}
     </div>
+  );
+}
+
+// Item sem insumo que já chegou: o estoque não mudou nesses recebimentos
+function ForaAviso({ pend }: { pend: Fora }) {
+  return (
+    <p className="text-[10px] text-orange-700 mt-1 whitespace-normal">
+      <i className="ri-error-warning-line" /> Chegou {pend.receipts}× sem entrar no estoque{pend.last ? ` (último em ${new Date(pend.last).toLocaleDateString('pt-BR')})` : ''}
+    </p>
   );
 }
