@@ -72,8 +72,14 @@ export default function TarefasPendencia({ tenantId, meuId, onAbrir, onMudou: av
 
   const carregar = useCallback(async () => {
     let lojas: string[] = tenantId ? [tenantId] : [];
+    // Loja de cada tarefa (tasks.tenant_id): fn_get_tasks não devolve a loja
+    const lojaDa = new Map<string, string>();
     if (!tenantId) {
-      try { lojas = [...new Set((await minhasTarefasPendentes(meuId)).map((x) => x.tenant_id))]; }
+      try {
+        const minhas = await minhasTarefasPendentes(meuId);
+        minhas.forEach((x) => lojaDa.set(x.id, x.tenant_id));
+        lojas = [...new Set(minhas.map((x) => x.tenant_id))];
+      }
       catch (e) { setErro(e instanceof Error ? e.message : String(e)); setTarefas([]); return; }
     }
     const res = await Promise.all(lojas.map(async (tid) => {
@@ -89,7 +95,14 @@ export default function TarefasPendencia({ tenantId, meuId, onAbrir, onMudou: av
     setListas(res.flatMap((r) => (r.l.data as TaskList[]) ?? []));
     // Com loja: só as vencidas (pendência "tarefas vencidas" daquela loja). Sem loja: vencidas e de hoje.
     const limite = tenantId ? Date.now() : fimDeHoje();
-    setTarefas(res.flatMap((r) => ((r.t.data ?? []) as TarefaVencida[]).map((x) => ({ ...x, tenant_id: r.tid })))
+    // fn_get_tasks devolve as tarefas de TODAS as pastas acessíveis, não só as da loja pedida: com
+    // duas lojas cada tarefa vinha duas vezes (chave repetida no React = filtro que não some com
+    // os cartões, dono 2026-09-24). Uma por id, na loja onde ela mora.
+    const unicas = new Map<string, TarefaVencida>();
+    res.forEach((r) => ((r.t.data ?? []) as TarefaVencida[]).forEach((x) => {
+      if (!unicas.has(x.id)) unicas.set(x.id, { ...x, tenant_id: lojaDa.get(x.id) ?? r.tid });
+    }));
+    setTarefas([...unicas.values()]
       .filter((x) => !x.completed_at && x.due_date && new Date(x.due_date).getTime() <= limite)
       .filter((x) => !meuId || x.assignee_id === meuId || x.created_by === meuId)
       .sort((a, b) => String(a.due_date).localeCompare(String(b.due_date))));

@@ -9,7 +9,8 @@ const h = vi.hoisted(() => ({ tasks: [] as Record<string, unknown>[] }));
 vi.mock('@/lib/supabase', () => {
   const q = {
     select: () => q, is: () => q, eq: () => q, not: () => q, lte: () => q, or: () => q,
-    limit: () => Promise.resolve({ data: h.tasks.map((t) => ({ id: t.id, tenant_id: 't1' })), error: null }),
+    // Minhas tarefas em DUAS lojas; fn_get_tasks devolve todas as acessíveis em cada chamada (como no banco)
+    limit: () => Promise.resolve({ data: h.tasks.map((t, i) => ({ id: t.id, tenant_id: i % 2 ? 't2' : 't1' })), error: null }),
   };
   return {
     supabase: {
@@ -40,6 +41,12 @@ beforeEach(() => {
 });
 
 describe('TarefasPendencia — filtros das minhas tarefas', () => {
+  it('com duas lojas, cada tarefa aparece uma vez só', async () => {
+    render(<TarefasPendencia meuId={ME} onAbrir={vi.fn()} />);
+    await screen.findByText(/Atrasadas/);
+    expect(titulos()).toHaveLength(3);
+  });
+
   it('filtra por prazo, de quem é e prioridade, com contagem', async () => {
     render(<TarefasPendencia meuId={ME} onAbrir={vi.fn()} />);
     expect(await screen.findByText(/Atrasadas · 2/)).toBeTruthy();
