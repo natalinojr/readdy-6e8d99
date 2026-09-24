@@ -169,6 +169,68 @@ async function criar(ctx: Ctx, body: Record<string, any>) {
   return json({ ok: true, id: novo.id });
 }
 
+const brl = (n: number) => `R$ ${Number(n).toFixed(2).replace('.', ',')}`;
+const ROTULO: Record<string, string> = { reembolso: 'Reembolso', freelancer: 'Freelancer', fornecedor: 'Fornecedor sem nota' };
+
+/**
+ * Depois de aprovado: prepara o Pix no Inter (inter-bank prepare_payment, ligado à conta) e põe no 📥
+ * do chat como "pagamento_pendente" — o botão Pagar pede o PIN, igual aos pagamentos do grupo.
+ * A trava continua valendo: chave fora de Fornecedores / Pix permitidos não é preparada; aí a
+ * pendência avisa para pagar pelo app do banco (a conciliação dá baixa).
+ */
+async function prepararPagamento(ctx: Ctx, pedidoId: string): Promise<{ preparado: boolean; motivo?: string }> {
+  const { data: p } = await ctx.admin.from('fin_payment_requests')
+    .select('id, tipo, status, valor, favorecido_nome, pix_chave, freelancer_id, bill_id, descricao')
+    .eq('id', pedidoId).eq('tenant_id', ctx.tenantId).maybeSingle();
+  if (!p || p.status !== 'aprovada' || !p.bill_id) return { preparado: false, motivo: 'pedido sem conta a pagar' };
+  const { data: bill } = await ctx.admin.from('fin_accounts_payable').select('id, amount, paid_amount, status').eq('id', p.bill_id).maybeSingle();
+  if (!bill || bill.status === 'paid') return { preparado: false, motivo: 'conta já paga' };
+  let chave: string | null = p.pix_chave;
+  if (!chave && p.freelancer_id) {
+    const { data: f } = await ctx.admin.from('hr_freelancers').select('pix_favorecido_id').eq('id', p.freelancer_id).maybeSingle();
+    if (f?.pix_favorecido_id) {
+      const { data: fav } = await ctx.admin.from('fin_pix_favorecidos').select('pix_key').eq('id', f.pix_favorecido_id).maybeSingle();
+      chave = fav?.pix_key ?? null;
+    }
+  }
+  const valor = round2(Number(bill.amount) - Number(bill.paid_amount ?? 0));
+  const titulo = `${ROTULO[p.tipo] ?? 'Pagamento'} aprovado: Pix de ${brl(valor)} para ${p.favorecido_nome}`;
+  let motivo = '';
+  if (chave) {
+    const r = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/inter-bank`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-internal-key': Deno.env.get('FISCAL_INTERNAL_KEY') ?? '' },
+      body: JSON.stringify({
+        action: 'prepare_payment', tenant_id: ctx.tenantId, tipo: 'pix', chave, valor, bill_id: bill.id,
+        descricao: `${ROTULO[p.tipo] ?? 'Pedido'} — ${p.descricao}`.slice(0, 140), requested_by: ctx.userId, channel: 'app',
+      }),
+    }).catch((e) => ({ ok: false, status: 0, json: async () => ({ error: String(e) }) }) as unknown as Response);
+    const out: any = await r.json().catch(() => ({}));
+    const pay = out?.payment;
+    if (r.ok && out?.success !== false && pay?.id) {
+      await ctx.admin.rpc('fn_pendencia_upsert', {
+        p_tenant: ctx.tenantId, p_kind: 'pagamento_pendente', p_ref: String(pay.id),
+        p_titulo: titulo, p_detalhe: `Chave ${chave}. Toque em Pagar e confirme com o PIN.`,
+        p_payload: { payment_id: pay.id, bill_id: bill.id, pedido_id: p.id }, p_rota: null,
+        p_urgencia: 'alta', p_acao_requerida: true, p_origem: 'app', p_reabrir: true,
+      });
+      return { preparado: true };
+    }
+    motivo = String(out?.error ?? `Inter respondeu ${r.status}`);
+  } else {
+    motivo = 'pedido sem chave Pix';
+  }
+  // Não deu para preparar (trava do Pix, Inter sem configuração…): avisa para pagar por fora
+  await ctx.admin.rpc('fn_pendencia_upsert', {
+    p_tenant: ctx.tenantId, p_kind: 'pedido_pagamento_pagar', p_ref: p.id,
+    p_titulo: titulo,
+    p_detalhe: `${chave ? `Chave ${chave}. ` : ''}O assistente não preparou o Pix: ${motivo}. Pague pelo app do banco — a conciliação dá baixa na conta.`,
+    p_payload: { pedido_id: p.id, bill_id: bill.id, chave }, p_rota: '/receber?aprovar=1',
+    p_urgencia: 'alta', p_acao_requerida: true, p_origem: 'app', p_reabrir: true,
+  });
+  return { preparado: false, motivo };
+}
+
 async function carregarPedido(ctx: Ctx, id: string) {
   const { data } = await ctx.admin.from('fin_payment_requests').select(CAMPOS).eq('id', id).eq('tenant_id', ctx.tenantId).maybeSingle();
   return data;
@@ -282,7 +344,16 @@ Deno.serve(async (req) => {
           p_dre: dre, p_valor: p.purchase_id ? null : valor,
         });
         if (error) return erro(error.message.replace(/^.*?:\s*/, ''), 400);
-        return json(data);
+        const pagamento = await prepararPagamento(ctx, p.id).catch((e) => ({ preparado: false, motivo: String((e as Error)?.message ?? e) }));
+        return json({ ...(data as Record<string, unknown>), pagamento });
+      }
+      case 'preparar_pagamento': {
+        // Aprovado antes (ou o preparo falhou): manda de novo para o 📥 com o botão Pagar
+        if (!aprovador) return erro('Só o financeiro paga pedidos de pagamento.', 403);
+        const p = await carregarPedido(ctx, String(body.id ?? ''));
+        if (!p) return erro('Pedido não encontrado', 404);
+        if (p.status !== 'aprovada') return erro('Só pedido aprovado vai para pagamento');
+        return json({ ok: true, pagamento: await prepararPagamento(ctx, p.id) });
       }
       case 'recusar': {
         if (!aprovador) return erro('Só o financeiro recusa pedidos de pagamento.', 403);

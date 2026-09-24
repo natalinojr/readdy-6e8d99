@@ -67,8 +67,9 @@ export default function NovoPedido({ tipo, tenantId, contexto, onEnviado, onErro
 
   const listaBusca = useMemo(() => {
     const q = normalizar(busca);
-    if (!q) return [];
     const base = tipo === 'freelancer' ? (freelas ?? []) : (fornecedores ?? []);
+    // Freela: os cadastrados já aparecem (são poucos); fornecedor só filtrando (são centenas)
+    if (!q) return tipo === 'freelancer' ? base.slice(0, 30) : [];
     return base.filter((f) => normalizar(f.nome).includes(q)).slice(0, 8);
   }, [busca, tipo, freelas, fornecedores]);
 

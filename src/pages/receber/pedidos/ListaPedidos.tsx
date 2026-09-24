@@ -52,7 +52,7 @@ export default function ListaPedidos({ modo, tenantId, onErro, onMudou }: Props)
   return (
     <div className="px-4 pt-4 pb-10 space-y-3">
       {modo === 'aprovar' && (
-        <p className="text-sm text-zinc-500 px-1">Aprovado vira conta a pagar em aberto. Faça o Pix como sempre — a conciliação dá baixa pelo extrato.</p>
+        <p className="text-sm text-zinc-500 px-1">Aprovado vira conta a pagar e o Pix vai para o 📥 do chat do assistente com o botão Pagar. A conciliação dá baixa pelo extrato.</p>
       )}
       {pedidos.length === 0 && (
         <p className="text-center text-sm text-zinc-400 py-10">{modo === 'meus' ? 'Você não fez pedidos nos últimos 60 dias.' : 'Nenhum pedido esperando aprovação.'}</p>
@@ -163,6 +163,32 @@ function VerComprovante({ url, pdf, titulo, onFechar }: { url: string; pdf: bool
   );
 }
 
+interface ResultadoPagamento { preparado: boolean; motivo?: string }
+
+/** Depois de aprovar: o Pix vai para o 📥 do chat com o botão Pagar (PIN), ou avisa por que não foi. */
+function avisarPagamento(r: ResultadoPagamento | undefined, onErro: (m: string | null) => void) {
+  if (!r) return;
+  if (r.preparado) window.alert('Aprovado. O Pix está pronto no 📥 do chat do assistente: toque em Pagar e confirme com o PIN.');
+  else onErro(`Aprovado, mas o Pix não foi preparado (${r.motivo ?? 'motivo desconhecido'}). Pague pelo app do banco — a conciliação dá baixa. Ficou um aviso no 📥 do chat.`);
+}
+
+function PagarDeNovo({ p, tenantId, onErro }: { p: Pedido; tenantId: string; onErro: (m: string | null) => void }) {
+  const [indo, setIndo] = useState(false);
+  const mandar = async () => {
+    setIndo(true);
+    onErro(null);
+    const { data, erro } = await chamarPedidos<{ pagamento: ResultadoPagamento }>('preparar_pagamento', tenantId, { id: p.id });
+    setIndo(false);
+    if (erro) { onErro(erro); return; }
+    avisarPagamento(data?.pagamento, onErro);
+  };
+  return (
+    <button type="button" onClick={mandar} disabled={indo} className="mt-3 w-full py-3 rounded-2xl bg-violet-600 active:bg-violet-700 disabled:bg-zinc-200 text-white text-sm font-bold flex items-center justify-center gap-1.5 cursor-pointer">
+      <i className="ri-send-plane-line" /> {indo ? 'Preparando…' : 'Mandar para pagar (assistente)'}
+    </button>
+  );
+}
+
 function Pix({ chave }: { chave: string | null }) {
   const [copiou, setCopiou] = useState(false);
   if (!chave) return null;
@@ -191,6 +217,7 @@ function CartaoMeu({ p, tenantId, onErro, onFeito, mostrarQuem }: { p: Pedido; t
       <Cabecalho p={p} mostrarQuem={mostrarQuem} />
       {p.status === 'recusada' && p.motivo_recusa && <p className="mt-2 text-sm text-red-700 bg-red-50 rounded-xl px-3 py-2">Motivo: {p.motivo_recusa}</p>}
       {p.status === 'aprovada' && p.decidido_por_nome && <p className="mt-2 text-xs text-zinc-500">Aprovado por {p.decidido_por_nome}{p.pago_em ? ` · pago em ${dataBR(p.pago_em)}` : ''}</p>}
+      {mostrarQuem && p.status === 'aprovada' && !p.pago && <PagarDeNovo p={p} tenantId={tenantId} onErro={onErro} />}
       {!mostrarQuem && p.status === 'pendente' && !p.purchase_id && (
         <button type="button" onClick={cancelar} disabled={cancelando} className="mt-3 w-full py-3 rounded-2xl border-2 border-zinc-200 text-zinc-600 text-sm font-bold cursor-pointer">
           {cancelando ? 'Cancelando…' : 'Cancelar pedido'}
@@ -211,9 +238,10 @@ function CartaoAprovar({ p, tenantId, categorias, onErro, onFeito }: { p: Pedido
     if (precisaDre && !dre) { onErro('Escolha a classificação antes de aprovar'); return; }
     setGravando(true);
     onErro(null);
-    const { erro } = await chamarPedidos('aprovar', tenantId, { id: p.id, dre_category_id: precisaDre ? dre : null });
+    const { data, erro } = await chamarPedidos<{ pagamento?: ResultadoPagamento }>('aprovar', tenantId, { id: p.id, dre_category_id: precisaDre ? dre : null });
     setGravando(false);
     if (erro) { onErro(erro); return; }
+    avisarPagamento(data?.pagamento, onErro);
     onFeito();
   };
   const recusar = async () => {
