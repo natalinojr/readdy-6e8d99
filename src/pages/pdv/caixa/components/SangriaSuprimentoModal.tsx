@@ -3,6 +3,7 @@ import { invokeWithAuth } from '@/lib/supabase';
 import { useSessao } from '@/contexts/SessaoContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { useAuditoria } from '@/contexts/AuditoriaContext';
+import { useCaixaPing } from '@/hooks/useCaixaPing';
 
 type TipoMovimento = 'sangria' | 'suprimento';
 
@@ -84,6 +85,7 @@ export default function SangriaSuprimentoModal({
     setPrevistas(data?.data ?? []);
   }, [user?.tenantId]);
   useEffect(() => { carregarPrevistas(); }, [carregarPrevistas]);
+  useCaixaPing(user?.tenantId, carregarPrevistas);
 
   // Confirmar a prevista: o valor e a compra vêm do servidor, o operador só confirma que o dinheiro saiu.
   const confirmarPrevista = async (pv: SangriaPrevista) => {
