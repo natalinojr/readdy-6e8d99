@@ -274,6 +274,11 @@ Secao viva: registrar aqui padroes, decisoes e pegadinhas reutilizaveis conforme
 - **Link usa `window.location.origin`**, não `getAppBaseUrl()`: o `VITE_APP_URL` do `.env` local ainda aponta para o domínio do Readdy (pausado).
 - **Pegadinha de teste:** módulo importado por `tarefas/page.tsx` não pode ler export de `@/lib/supabase` no topo do arquivo (os testes mockam o módulo sem `SUPABASE_URL`) — por isso `urlFn()` é função.
 
+### 2026-09-24 — Ações rápidas: fechamento do dia = painel do turno; recebimento abre o módulo
+- **Fechamento do dia** (`acoes/financeiro/FechamentoDia.tsx`) monta o MESMO `DadosPainel` do fechamento do turno (`assistente-cron` › `sessaoText`) e desenha com `PainelMensagem` — mesmos blocos e ordem, só números do dia inteiro. Mudou o painel do turno? Mude o do dia junto. Por hora/categoria vêm de `pedidosPagosDoDia`/`porHora`/`porCategoria` de `operacao/vendasDoDia.ts` (compartilhadas com "Vendas do dia").
+- **Mais vendidos por faturamento** (dono): `Ranking por="valor"`; no painel do servidor, `rk.p = 'v'`. Mensagens antigas sem `p` seguem por quantidade.
+- **Ação rápida que repetiria um módulo inteiro só abre o módulo**: "Confirmar recebimento" virou "Receber mercadoria" → `irPara('/receber')`; permissão = `rotaLiberada('/receber')` (`estoque_receber` ou `estoque_movimentar`). Dois caminhos para a mesma entrada de estoque divergem.
+
 ### 2026-09-23 — Custo do assistente (Sonnet 5): trabalho repetitivo sai do modelo
 
 Diagnóstico pelo `asst_messages.usage` (7 dias, ~US$ 8/semana, 1 usuário): **cada rodada de ferramenta relê o bloco fixo inteiro** (~31 mil tokens: instruções + mapa do banco + mapa de ações + ferramentas), e o cache de 1 h é **regravado a 2× o preço** toda vez que vence (~35% do gasto). O que mais pesava era o lançamento de cupom do grupo: o modelo casava item por item com `buscar_nome`/`consultar_banco` — **8 a 21 rodadas por cupom**, ~US$ 0,11–0,25 cada.

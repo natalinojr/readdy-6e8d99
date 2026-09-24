@@ -36,6 +36,8 @@ export function rotaLiberada(rota: string, c: ContextoAcesso): boolean {
   if (caminho.startsWith('/notas-servico')) return c.modulo('nfse');
   if (caminho.startsWith('/tarefas')) return c.modulo('tarefas');
   if (caminho.startsWith('/contratacao')) return c.modulo('contratacao');
+  // estoque_receber abre só o /receber (celular da loja); quem movimenta estoque também entra.
+  if (caminho.startsWith('/receber')) return algum(c, 'estoque_receber', 'estoque_movimentar');
   if (caminho.startsWith('/estoque')) return c.pode('estoque_movimentar');
   if (caminho.startsWith('/cardapio')) return c.pode('cardapio_editar');
   if (caminho.startsWith('/pedidos')) return c.pode('gestao_pedidos');
@@ -66,8 +68,8 @@ const REGRAS: Record<string, (c: ContextoAcesso) => boolean> = {
   'pedidos-atrasados': (c) => algum(c, 'gestao_pedidos', 'gestor_pedidos_acessar', 'kds_acessar'),
   'impressora-parada': (c) => (c.pode('configuracoes_editar') && c.pode('cfg_impressoras')) || c.pode('gestao_pedidos'),
   'caixa-aberto': (c) => algum(c, 'pdv_abrir_caixa', 'pdv_fechar_caixa', 'rel_caixa'),
-  // Confirmar recebimento vai pela Edge da compra (Financeiro › Compras).
-  'confirmar-recebimento': (c) => fin(c, 'fin_compras'),
+  // Receber mercadoria só abre o /receber: mesma regra da rota (RotaProtegida/Sidebar).
+  'receber-mercadoria': (c) => rotaLiberada('/receber', c),
   'registrar-perda': (c) => c.pode('estoque_movimentar'),
   'contagem-rapida': (c) => c.pode('estoque_inventario'),
   'estoque-critico': (c) => algum(c, 'estoque_movimentar', 'relatorio_estoque'),
