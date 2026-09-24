@@ -22,6 +22,7 @@ import { iniciais, rotuloVencimento } from './TaskCard';
 import { responsaveis, rotuloResponsaveis } from '../lib/responsaveis';
 import AvataresResponsaveis from './AvataresResponsaveis';
 import SeletorPasta from './SeletorPasta';
+import { useVoltarFecha } from '@/lib/voltarAndroid';
 
 /** O que está na "área de transferência" interna de tarefas (Ctrl+C/Ctrl+V, 2026-09-24). */
 export interface ClipboardTarefas { ids: string[]; label: string }
@@ -260,6 +261,8 @@ export default function ViewLista({
   const [acaoEmMassaAberta, setAcaoEmMassaAberta] = useState<'prioridade' | 'responsavel' | null>(null);
   const [statusEmMassaAberto, setStatusEmMassaAberto] = useState<DOMRect | null>(null);
   const [seletorPasta, setSeletorPasta] = useState<'mover' | 'copiar' | null>(null);
+  // Menus da ação em massa são camadas: o voltar fecha o menu, não a tela.
+  useVoltarFecha(!!acaoEmMassaAberta, () => setAcaoEmMassaAberta(null), 'tarefas-acao-massa');
 
   // Ao trocar de pasta/visão, recarrega a preferência salva (cada uma tem a sua).
   useEffect(() => {

@@ -37,6 +37,21 @@ import { FILTROS_VAZIOS, aplicarFiltros } from './lib/agrupamento';
 import { montarArvorePastas, achatarArvore, type NoPasta } from './lib/pastas';
 import { useIsMobile } from './lib/mobile';
 import { atualizarBadge } from '@/lib/pwa';
+import { sairDasCamadas, useVoltarFecha } from '@/lib/voltarAndroid';
+
+/** Onde a pessoa está no módulo — o que o voltar desfaz passo a passo. */
+interface EstadoNav {
+  origem: Origem;
+  selectedListId: string | null;
+  display: Display;
+  relatorioAberto: string | null;
+}
+
+/** Um passo de navegação = uma entrada no histórico do voltar. */
+function CamadaNav({ onVoltar }: { onVoltar: () => void }) {
+  useVoltarFecha(true, onVoltar, 'tarefas-nav');
+  return null;
+}
 
 const CORES_LISTA = ['#6366f1', '#0ea5e9', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#64748b'];
 
@@ -78,10 +93,12 @@ export default function TarefasPage() {
 
   // A rota /tarefas roda em modo terminal (sem sidebar/topbar do ERPOS) — o
   // único jeito de sair é este botão.
-  const voltarModulos = () => {
+  // Sai do módulo limpando as entradas do voltar desta tela (pastas/visões visitadas),
+  // senão o voltar em Módulos voltaria várias vezes para Tarefas.
+  const voltarModulos = () => sairDasCamadas(() => {
     setMode('modulos');
     navigate('/modulos');
-  };
+  });
   const {
     lists, tasks, tags, campos, notificacoes, views, templates,
     loading, error, reload, write, fetchDetail, fetchAnexos, enviarAnexo, abrirAnexo,
@@ -128,6 +145,32 @@ export default function TarefasPage() {
   const [newListParentId, setNewListParentId] = useState<string | null>(null);
   // Relatório aberto direto (push de resposta nova → /tarefas?relatorio=<id>, ou vindo de uma tarefa).
   const [relatorioAberto, setRelatorioAberto] = useState<string | null>(null);
+
+  // ── Voltar dentro do módulo (2026-09-25) ──
+  // Trocar de pasta, de visão (Lista/Agenda/Carga…) ou de origem (Minhas, Todas…) pela tela
+  // empilha o estado anterior; o voltar do celular/navegador e a seta ← desfazem um passo
+  // de cada vez. Antes o voltar saía do módulo direto, mesmo depois de navegar por pastas.
+  const [historicoNav, setHistoricoNav] = useState<EstadoNav[]>([]);
+  const navAtual: EstadoNav = { origem, selectedListId, display, relatorioAberto };
+  const aplicarNav = (e: EstadoNav) => {
+    setOrigem(e.origem);
+    setSelectedListId(e.selectedListId);
+    setDisplay(e.display);
+    setRelatorioAberto(e.relatorioAberto);
+  };
+  const navegar = (mudanca: Partial<EstadoNav>) => {
+    const depois = { ...navAtual, ...mudanca };
+    if (depois.origem === navAtual.origem && depois.selectedListId === navAtual.selectedListId
+      && depois.display === navAtual.display && depois.relatorioAberto === navAtual.relatorioAberto) return;
+    setHistoricoNav((h) => [...h, navAtual]);
+    aplicarNav(depois);
+  };
+  const voltarNav = () => {
+    const anterior = historicoNav[historicoNav.length - 1];
+    if (!anterior) return;
+    setHistoricoNav((h) => h.slice(0, -1));
+    aplicarNav(anterior);
+  };
   const [pastaExcluindo, setPastaExcluindo] = useState<{ no: NoPasta; ids: Set<string>; descricao: string } | null>(null);
   // "Área de transferência" interna de tarefas (Ctrl+C numa pasta, Ctrl+V em
   // outra) — mora aqui pra sobreviver à troca de pasta/visão (2026-09-24).
@@ -259,10 +302,7 @@ export default function TarefasPage() {
     setShowNewList(false);
     setNewListName('');
     setNewListParentId(null);
-    if (res.id) {
-      setSelectedListId(res.id);
-      setOrigem('pasta');
-    }
+    if (res.id) navegar({ selectedListId: res.id, origem: 'pasta', relatorioAberto: null });
   };
 
   const abrirNovaPasta = (parentId: string | null) => {
@@ -309,10 +349,7 @@ export default function TarefasPage() {
     }
     if (!pasta) return;
     setOpenTaskId(null);
-    setSelectedListId(pasta);
-    setOrigem('pasta');
-    setDisplay('relatorios');
-    setRelatorioAberto(id);
+    navegar({ selectedListId: pasta, origem: 'pasta', display: 'relatorios', relatorioAberto: id });
   }
 
   useEffect(() => {
@@ -321,11 +358,13 @@ export default function TarefasPage() {
 
   // Celular: tocou em Relatórios sem pasta aberta → a próxima pasta escolhida abre nos relatórios.
   const [relatoriosAoEscolher, setRelatoriosAoEscolher] = useState(false);
-  const irParaPasta = (id: string) => {
-    setRelatorioAberto(null);
-    setSelectedListId(id);
-    setOrigem('pasta');
-    if (relatoriosAoEscolher) { setDisplay('relatorios'); setRelatoriosAoEscolher(false); }
+  const irParaPasta = (id: string, extra: Partial<EstadoNav> = {}) => {
+    navegar({
+      relatorioAberto: null, selectedListId: id, origem: 'pasta',
+      ...(relatoriosAoEscolher ? { display: 'relatorios' as Display } : {}),
+      ...extra,
+    });
+    setRelatoriosAoEscolher(false);
   };
 
   // Cria a tarefa e já abre o drawer completo pra configurar tudo (data,
@@ -480,7 +519,7 @@ export default function TarefasPage() {
             return (
               <button
                 key={id}
-                onClick={() => setOrigem(id)}
+                onClick={() => navegar({ origem: id })}
                 className={`w-full flex items-center gap-2 px-4 py-2 text-sm text-left transition ${
                   origem === id ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-slate-600 hover:bg-slate-50'
                 }`}
@@ -583,9 +622,9 @@ export default function TarefasPage() {
       <main className="flex-1 min-w-0 overflow-auto bg-slate-50">
         <div className="sticky top-0 z-10 bg-slate-50/95 backdrop-blur border-b border-slate-200 px-4 md:px-6 py-2.5 md:py-3 flex flex-wrap items-center gap-2 md:gap-3">
           <button
-            onClick={voltarModulos}
+            onClick={() => (historicoNav.length ? window.history.back() : voltarModulos())}
             className="md:hidden p-1.5 -ml-1.5 rounded-lg text-slate-500 active:bg-slate-200 shrink-0"
-            title="Voltar aos módulos"
+            title={historicoNav.length ? 'Voltar' : 'Voltar aos módulos'}
           >
             <ArrowLeft size={18} />
           </button>
@@ -635,7 +674,7 @@ export default function TarefasPage() {
             {DISPLAYS.map(({ id, label, icon: Icon }) => (
               <button
                 key={id}
-                onClick={() => setDisplay(id)}
+                onClick={() => navegar({ display: id })}
                 disabled={id === 'relatorios' ? origem !== 'pasta' || !selectedList : origem === 'pasta' && !selectedList}
                 title={id === 'relatorios' && (origem !== 'pasta' || !selectedList) ? 'Abra uma pasta para ver os relatórios dela' : undefined}
                 className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg transition disabled:opacity-40 disabled:cursor-not-allowed ${
@@ -679,15 +718,15 @@ export default function TarefasPage() {
                 meuId={meuId}
                 write={write}
                 onAplicar={(v) => {
-                  setDisplay(v.view_type as Display);
                   setFiltros({ ...FILTROS_VAZIOS, ...(v.filters as Partial<Filtros>) });
                   if (v.list_id) {
                     // Grava o agrupamento da view na pasta de DESTINO antes de ir
                     // pra ela — senão o agrupamento salvo da pasta sobrescreve.
                     try { localStorage.setItem(`erpos_tarefas_agrupar_${v.list_id}`, v.group_by); } catch { /* sem localStorage */ }
-                    irParaPasta(v.list_id);
+                    irParaPasta(v.list_id, { display: v.view_type as Display });
                     setGroupBySalvo(v.group_by as GroupBy); // se já estava nessa pasta, a chave não muda
                   } else {
+                    navegar({ display: v.view_type as Display });
                     setGroupBy(v.group_by as GroupBy);
                   }
                 }}
@@ -710,19 +749,21 @@ export default function TarefasPage() {
         </PullToRefresh>
       </main>
 
+      {/* Uma camada do voltar por passo de navegação (pasta/visão/origem). */}
+      {historicoNav.map((_, i) => <CamadaNav key={i} onVoltar={voltarNav} />)}
+
       {/* ── Navegação inferior (celular) ── */}
       <BottomNav
         view={origem === 'minhas' && (display === 'lista' || display === 'kanban') ? 'minhas' : display === 'kanban' ? 'lista' : display}
         onView={(v) => {
-          if (v === 'minhas') { setOrigem('minhas'); if (display === 'carga' || display === 'relatorios') setDisplay('lista'); }
+          if (v === 'minhas') navegar({ origem: 'minhas', ...(display === 'carga' || display === 'relatorios' ? { display: 'lista' as Display } : {}) });
           else if (v === 'relatorios' && (origem !== 'pasta' || !selectedList)) {
             // Relatórios são da pasta: escolhe a pasta e já abre os relatórios dela.
             setRelatoriosAoEscolher(true);
             setShowListasSheet(true);
           } else {
             // Carga a partir de "Minhas" mostraria só eu: abre com todas as tarefas.
-            if (v === 'carga' && origem === 'minhas') setOrigem('todas');
-            setDisplay(v as Display);
+            navegar({ display: v as Display, ...(v === 'carga' && origem === 'minhas' ? { origem: 'todas' as Origem } : {}) });
           }
         }}
         onAbrirListas={() => setShowListasSheet(true)}
@@ -738,9 +779,9 @@ export default function TarefasPage() {
           onNovaLista={() => abrirNovaPasta(null)}
           onNovaSubpasta={abrirNovaPasta}
           onExcluir={excluirPasta}
-          onCompartilhadas={() => setOrigem('compartilhadas')}
-          onTodas={() => setOrigem('todas')}
-          onAtribuidas={() => setOrigem('atribuidas')}
+          onCompartilhadas={() => navegar({ origem: 'compartilhadas' })}
+          onTodas={() => navegar({ origem: 'todas' })}
+          onAtribuidas={() => navegar({ origem: 'atribuidas' })}
           onStatus={() => setShowStatus(true)}
           onCampos={() => setShowCampos(true)}
           onTemplates={() => setShowTemplates(true)}

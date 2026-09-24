@@ -601,7 +601,8 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
   // volta para a lista, depois o painel fecha. No chat embutido (página Assistente) não vale — lá
   // o voltar tem de sair da página, como em qualquer tela.
   useVoltarFecha(variant === 'floating' && open, () => setModo('fab'), 'assistente-painel');
-  useVoltarFecha(open && vista === 'conversa', () => setVista('lista'), 'assistente-conversa');
+  // Na barrinha pequena (mini) não há lista à vista: o voltar fecha a barrinha direto.
+  useVoltarFecha(open && vista === 'conversa' && (modo === 'full' || variant === 'embedded'), () => setVista('lista'), 'assistente-conversa');
   // Ações rápidas em tela cheia são mais uma camada: o voltar fecha só elas.
   useVoltarFecha(open && menuAcoes && (modo === 'full' || variant === 'embedded'), () => setMenuAcoes(false), 'assistente-acoes');
   useVoltarFecha(open && pendAberta, () => setPendAberta(false), 'assistente-pendencias');

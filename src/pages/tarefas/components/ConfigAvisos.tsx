@@ -5,6 +5,7 @@ import { useToast } from '@/contexts/ToastContext';
 import { supabase } from '@/lib/supabase';
 import BotaoAvisos from '@/components/feature/BotaoAvisos';
 import { modoDemo } from '../demo/modoDemo';
+import { useVoltarFecha } from '@/lib/voltarAndroid';
 
 export interface PrefsAvisos {
   ativo: boolean;
@@ -38,6 +39,7 @@ export default function ConfigAvisos({ tenantId, write, onClose }: {
   write: (action: string, payload?: Record<string, unknown>) => Promise<{ success: boolean; error?: string }>;
   onClose: () => void;
 }) {
+  useVoltarFecha(true, onClose, 'tarefas-avisos');
   const toast = useToast();
   const [prefs, setPrefs] = useState<PrefsAvisos | null>(null);
   const [salvando, setSalvando] = useState(false);

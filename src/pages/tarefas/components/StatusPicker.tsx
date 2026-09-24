@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import type { TaskList } from '../hooks/useTarefas';
 import { CATEGORIAS_GENERICAS } from '../lib/agrupamento';
-import { useIsMobile } from '../lib/mobile';
+import { useIsMobile, useVoltarFecha } from '../lib/mobile';
 
 interface StatusPickerProps {
   /** null = várias pastas ao mesmo tempo (visão agregada ou seleção em massa) — usa categorias genéricas. */
@@ -30,6 +30,7 @@ const MARGEM_TELA = 8;
  * `fixed` com coordenadas de viewport escapa desse corte.
  */
 export default function StatusPicker({ list, anchorRect, onEscolher, onClose }: StatusPickerProps) {
+  useVoltarFecha(true, onClose, 'tarefas-status-picker');
   const opcoes = list
     ? [...list.statuses].sort((a, b) => a.sort_order - b.sort_order).map((s) => ({ key: s.id, label: s.name, color: s.color }))
     // Backlog fica fora na visão agregada: é categoria opcional (nem toda pasta

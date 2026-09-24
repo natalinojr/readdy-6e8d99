@@ -3,6 +3,7 @@ import { X, Plus, Trash2, GripVertical, Eye, EyeOff, Globe } from 'lucide-react'
 import { useToast } from '@/contexts/ToastContext';
 import type { CampoCustom, CampoOpcao, CampoTipo, TaskList } from '../hooks/useTarefas';
 import { CAMPO_TIPOS } from '../hooks/useTarefas';
+import { useVoltarFecha } from '@/lib/voltarAndroid';
 
 interface CamposCustomManagerProps {
   campos: CampoCustom[];
@@ -19,6 +20,7 @@ function novaOpcao(index: number): CampoOpcao {
 }
 
 export default function CamposCustomManager({ campos, list, write, onClose }: CamposCustomManagerProps) {
+  useVoltarFecha(true, onClose, 'tarefas-campos');
   const toast = useToast();
   const [criando, setCriando] = useState(false);
   const [nome, setNome] = useState('');

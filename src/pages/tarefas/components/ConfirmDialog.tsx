@@ -1,4 +1,5 @@
 import { AlertTriangle } from 'lucide-react';
+import { useVoltarFecha } from '@/lib/voltarAndroid';
 
 interface ConfirmDialogProps {
   titulo: string;
@@ -16,6 +17,7 @@ export default function ConfirmDialog({
   titulo, descricao, textoConfirmar = 'Confirmar', textoCancelar = 'Cancelar',
   perigo = true, onConfirmar, onCancelar,
 }: ConfirmDialogProps) {
+  useVoltarFecha(true, onCancelar, 'tarefas-confirmar');
   return (
     <div
       className="fixed inset-0 z-[60] flex items-center justify-center bg-black/30 p-4"

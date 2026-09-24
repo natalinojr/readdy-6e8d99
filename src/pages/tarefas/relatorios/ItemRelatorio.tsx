@@ -8,6 +8,7 @@ import { ImagePlus, Loader2, Send, X, PencilLine, CheckCircle2, RotateCcw, Messa
 import { STATUS_INFO, dataHora, type CampoRel, type ImagemRel, type ItemRel, type LinkRel, type StatusItem, type ValorCampo } from './api';
 import { ChipsLinks, useLinks } from './LinksRelatorio';
 import { EditorCampos, PreencherCampos, erroPreenchimento, formatarValor, limparCampos, respostasMudadas, valoresAtuais } from './CamposResposta';
+import { useVoltarFecha } from '@/lib/voltarAndroid';
 
 /** Faixa colorida na lateral do item, pela situação. */
 const COR_LATERAL: Record<StatusItem, string> = {
@@ -28,6 +29,7 @@ export function GradeImagens({ imagens, onRemover, onLegenda }: {
   onLegenda?: (i: number, legenda: string) => void;
 }) {
   const [aberta, setAberta] = useState<ImagemRel | null>(null);
+  useVoltarFecha(aberta !== null, () => setAberta(null), 'relatorio-imagem');
   if (!imagens.length) return null;
   return (
     <>

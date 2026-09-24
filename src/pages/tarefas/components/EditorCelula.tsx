@@ -10,7 +10,7 @@ import CampoInput from './campos/CampoInput';
 import ComentarioInput from './ComentarioInput';
 import { iniciais } from './TaskCard';
 import { idsResponsaveis } from '../lib/responsaveis';
-import { useIsMobile } from '../lib/mobile';
+import { useIsMobile, useVoltarFecha } from '../lib/mobile';
 import { formatarDuracao, formatarRelogio, lerDuracao, segundosRegistrados, useAgora } from '../lib/tempo';
 
 const MARGEM_TELA = 8;
@@ -26,6 +26,7 @@ export function Popover({ anchorRect, largura, onClose, children }: {
   onClose: () => void;
   children: ReactNode;
 }) {
+  useVoltarFecha(true, onClose, 'tarefas-menu');
   const ref = useRef<HTMLDivElement>(null);
   const [top, setTop] = useState(anchorRect.bottom + 4);
   // Celular: vira folha que sobe de baixo (largura toda, opções grandes pro dedo).
