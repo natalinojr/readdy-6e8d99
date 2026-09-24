@@ -8,7 +8,7 @@
 //   x-tenant-id dessa loja (src/lib/supabase.ts), então outra loja voltaria vazia. Mostre o nome.
 // - Ação que mexe em dinheiro, estoque, cardápio ou pessoas: termine num resumo + botão de confirmar.
 // - Nada vai para o histórico do assistente.
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { SUPABASE_URL, SUPABASE_ANON_KEY, ensureFreshSession } from '@/lib/supabase';
 
 export interface AcaoProps {
@@ -64,8 +64,37 @@ export function Roteiro({ titulo, subtitulo, icone, cor = 'bg-violet-50 text-vio
   /** Controles do passo atual (botões/campos), fixos embaixo. */
   children?: ReactNode;
 }) {
-  const fimRef = useRef<HTMLDivElement>(null);
-  useEffect(() => { fimRef.current?.scrollIntoView({ block: 'end' }); }, [baloes, carregando, children]);
+  // Rolagem (dono, 2026-09-24): antes descia para o fim a CADA render (children é um objeto novo a
+  // cada render), e o celular pulava para baixo enquanto a pessoa subia para ler. Agora:
+  // - ao abrir: vai para o fim;
+  // - a pessoa tocou/digitou (balão "eu"): vai para o fim — ela quer ver a resposta;
+  // - chegou resposta: só acompanha se a pessoa já estava no fim; painel novo aparece pelo COMEÇO;
+  // - subiu para ler: fica onde está.
+  const rolagemRef = useRef<HTMLDivElement>(null);
+  const noFim = useRef(true);
+  const vistos = useRef(-1); // -1 = ainda não desenhou
+  const aoRolar = () => {
+    const el = rolagemRef.current;
+    if (el) noFim.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+  };
+  const irProFim = () => { const el = rolagemRef.current; if (el) el.scrollTop = el.scrollHeight; };
+  useLayoutEffect(() => {
+    const el = rolagemRef.current;
+    if (!el) return;
+    const antes = vistos.current;
+    vistos.current = baloes.length;
+    if (antes < 0 || baloes.length < antes) { irProFim(); return; } // abriu (ou a ação recomeçou)
+    const novos = baloes.slice(antes);
+    if (novos.some((b) => b.de === 'eu')) { irProFim(); return; }
+    if (!noFim.current) return;
+    const painel = novos.findIndex((b) => b.painel);
+    if (painel >= 0) {
+      // Conta dentro da área de rolagem (scrollIntoView no celular arrasta a página inteira junto).
+      const alvo = el.querySelector<HTMLElement>(`[data-balao="${antes + painel}"]`);
+      if (alvo) { el.scrollTop += alvo.getBoundingClientRect().top - el.getBoundingClientRect().top - 8; return; }
+    }
+    irProFim();
+  }, [baloes, carregando]);
   const negrito = (t: string) => t.split('\n').map((l, i) => (
     <span key={i} className="block">{l.startsWith('*') && l.endsWith('*') && l.length > 1 ? <b>{l.slice(1, -1)}</b> : l}</span>
   ));
@@ -81,9 +110,9 @@ export function Roteiro({ titulo, subtitulo, icone, cor = 'bg-violet-50 text-vio
           <i className="ri-close-line text-xl" />
         </button>
       </div>
-      <div className="flex-1 overflow-y-auto px-3 py-3 space-y-2">
-        {baloes.map((b, i) => b.painel ? <div key={i}>{b.painel}</div> : (
-          <div key={i} className={`flex ${b.de === 'eu' ? 'justify-end' : 'justify-start'}`}>
+      <div ref={rolagemRef} onScroll={aoRolar} className="flex-1 overflow-y-auto px-3 py-3 space-y-2">
+        {baloes.map((b, i) => b.painel ? <div key={i} data-balao={i}>{b.painel}</div> : (
+          <div key={i} data-balao={i} className={`flex ${b.de === 'eu' ? 'justify-end' : 'justify-start'}`}>
             <div className={`max-w-[88%] rounded-2xl px-3.5 py-2 text-sm whitespace-pre-wrap break-words ${b.de === 'eu' ? 'rounded-br-md bg-violet-600 text-white' : 'rounded-bl-md bg-white border border-zinc-200 text-zinc-800'}`}>
               {negrito(b.texto)}
             </div>
@@ -97,7 +126,6 @@ export function Roteiro({ titulo, subtitulo, icone, cor = 'bg-violet-50 text-vio
             </div>
           </div>
         )}
-        <div ref={fimRef} />
       </div>
       {children && (
         <div className="border-t border-zinc-100 bg-white p-2.5 space-y-1.5 flex-shrink-0 max-h-[55%] overflow-y-auto">{children}</div>
