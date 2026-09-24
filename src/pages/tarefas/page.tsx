@@ -405,6 +405,7 @@ export default function TarefasPage() {
           {display === 'carga' && (
             <ViewCarga
               meuId={meuId}
+              lists={lists}
               tasks={tarefasVisiveis}
               usuarios={usuariosAtivos}
               write={write}

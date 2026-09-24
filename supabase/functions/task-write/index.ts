@@ -342,6 +342,16 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       }
     };
 
+    // Horas/folgas de outra pessoa: só de quem divide alguma loja comigo.
+    const podeMexerHoras = async (alvo: string): Promise<boolean> => {
+      if (alvo === user.id) return true;
+      const meusTenants = (tenantRows ?? []).map((r) => r.tenant_id);
+      if (!meusTenants.length) return false;
+      const { data: comum } = await admin.from('user_tenants')
+        .select('tenant_id').eq('user_id', alvo).in('tenant_id', meusTenants).limit(1);
+      return !!comum?.length;
+    };
+
     const assertTaskAccess = async (taskId: string, nivel: 'edit' | 'comment' | 'view' = 'edit'): Promise<Record<string, unknown>> => {
       const task = await assertOwned('tasks', taskId);
       if (task.assignee_id === user.id || (await responsaveisDe(taskId)).includes(user.id)) return task;
@@ -840,15 +850,36 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         const valido = Array.isArray(hours) && hours.length === 7
           && hours.every((h: unknown) => typeof h === 'number' && Number.isFinite(h) && h >= 0 && h <= 24);
         if (!valido) return json({ error: 'hours deve ter 7 números entre 0 e 24' }, 400);
-        if (alvo !== user.id) {
-          const meusTenants = tenantRows.map((r) => r.tenant_id);
-          const { data: comum } = await admin.from('user_tenants')
-            .select('tenant_id').eq('user_id', alvo).in('tenant_id', meusTenants).limit(1);
-          if (!comum?.length) return json({ error: 'Essa pessoa não é de nenhuma das suas lojas' }, 403);
-        }
+        if (!(await podeMexerHoras(alvo))) return json({ error: 'Essa pessoa não é de nenhuma das suas lojas' }, 403);
         const { error } = await admin.from('task_user_capacity').upsert({
           user_id: alvo, hours, updated_by: user.id, updated_at: new Date().toISOString(),
         }, { onConflict: 'user_id' });
+        if (error) return json({ error: errMsg(error) }, 500);
+        return json({ success: true });
+      }
+
+      // Folga/ausência em dias específicos (Carga). horas = quanto trabalha no dia (0 = não trabalha).
+      case 'set_absence':
+      case 'remove_absence': {
+        const { user_id: alvo, dias, horas, motivo } = body;
+        if (!alvo) return json({ error: 'user_id is required' }, 400);
+        const lista = Array.isArray(dias) ? [...new Set(dias as unknown[])] : [];
+        if (!lista.length || lista.length > 62 || !lista.every((d) => typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d))) {
+          return json({ error: 'dias deve ter de 1 a 62 datas AAAA-MM-DD' }, 400);
+        }
+        if (!(await podeMexerHoras(alvo))) return json({ error: 'Essa pessoa não é de nenhuma das suas lojas' }, 403);
+        if (action === 'remove_absence') {
+          const { error } = await admin.from('task_user_absences').delete().eq('user_id', alvo).in('dia', lista as string[]);
+          if (error) return json({ error: errMsg(error) }, 500);
+          return json({ success: true });
+        }
+        const h = horas === undefined || horas === null ? 0 : Number(horas);
+        if (!Number.isFinite(h) || h < 0 || h > 24) return json({ error: 'horas deve ser entre 0 e 24' }, 400);
+        const texto = typeof motivo === 'string' ? motivo.trim().slice(0, 80) || null : null;
+        const { error } = await admin.from('task_user_absences').upsert(
+          (lista as string[]).map((dia) => ({ user_id: alvo, dia, horas: h, motivo: texto, created_by: user.id })),
+          { onConflict: 'user_id,dia' },
+        );
         if (error) return json({ error: errMsg(error) }, 500);
         return json({ success: true });
       }
