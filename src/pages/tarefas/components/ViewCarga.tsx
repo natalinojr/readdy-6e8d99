@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, CalendarOff, ChevronLeft, ChevronRight, Clock, Settings2, Timer, UserX, X } from 'lucide-react';
+import { AlertTriangle, CalendarOff, Check, ChevronLeft, ChevronRight, Clock, Flame, Settings2, Timer, Users, UserX, X } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
 import { supabase } from '@/lib/supabase';
 import type { TaskRow } from '../hooks/useTarefas';
@@ -12,13 +12,17 @@ import {
 import { formatarHoras } from '../lib/tempo';
 import { idsResponsaveis, responsaveis, rotuloResponsaveis } from '../lib/responsaveis';
 import { iniciais } from './TaskCard';
+import { Popover } from './EditorCelula';
 
 interface ViewCargaProps {
   tasks: TaskRow[];
   usuarios: UsuarioOption[];
   write: (action: string, payload?: Record<string, unknown>) => Promise<{ success: boolean; error?: string }>;
   onOpenTask: (taskId: string) => void;
+  meuId?: string | null;
 }
+
+const CHAVE_FILTRO_PESSOAS = 'erpos_tarefas_carga_pessoas';
 
 type Periodo = 'semana' | 'duas' | 'mes';
 const DIAS_PERIODO: Record<Periodo, number> = { semana: 7, duas: 14, mes: 28 };
@@ -42,7 +46,7 @@ function corOcupacao(minutos: number, capHoras: number): { fundo: string; texto:
   return { fundo: '#dcfce7', texto: 'text-emerald-700' };
 }
 
-export default function ViewCarga({ tasks, usuarios, write, onOpenTask }: ViewCargaProps) {
+export default function ViewCarga({ tasks, usuarios, write, onOpenTask, meuId }: ViewCargaProps) {
   const toast = useToast();
   const [periodo, setPeriodo] = useState<Periodo>('semana');
   const [inicio, setInicio] = useState(() => segundaDaSemana(new Date()));
@@ -52,6 +56,18 @@ export default function ViewCarga({ tasks, usuarios, write, onOpenTask }: ViewCa
   const [celula, setCelula] = useState<{ pessoa: string; dia: string } | null>(null);
   const [pendencia, setPendencia] = useState<'estimativa' | 'data' | 'atrasadas' | null>(null);
   const [editandoCap, setEditandoCap] = useState<string | null>(null);
+  // Filtro da Carga: quais pessoas aparecem (vazio = todas; fica salvo no navegador)
+  // e "só quem passa da capacidade" em algum dia do período.
+  const [filtroPessoas, setFiltroPessoasEstado] = useState<string[]>(() => {
+    try { return JSON.parse(localStorage.getItem(CHAVE_FILTRO_PESSOAS) ?? '[]') as string[]; } catch { return []; }
+  });
+  const setFiltroPessoas = (ids: string[]) => {
+    setFiltroPessoasEstado(ids);
+    try { localStorage.setItem(CHAVE_FILTRO_PESSOAS, JSON.stringify(ids)); } catch { /* sem localStorage */ }
+  };
+  const [soAcima, setSoAcima] = useState(false);
+  const [menuPessoas, setMenuPessoas] = useState<DOMRect | null>(null);
+  const [buscaPessoa, setBuscaPessoa] = useState('');
 
   const hoje = new Date();
   const hojeChave = chaveDia(hoje);
@@ -140,15 +156,31 @@ export default function ViewCarga({ tasks, usuarios, write, onOpenTask }: ViewCa
   const compacto = periodo === 'mes';
   const totalPeriodo = (pessoa: string) => dias.reduce((s, d) => s + minutosNoDia(carga, pessoa, chaveDia(d)), 0);
   const feitoPeriodo = (pessoa: string) => dias.reduce((s, d) => s + feitosNoDia(carga, pessoa, chaveDia(d)), 0);
-  // Resumo do período mostrado (todas as pessoas da tela).
-  const resumoTotal = pessoas.reduce((s, p) => s + totalPeriodo(p), 0);
-  const resumoFeito = pessoas.reduce((s, p) => s + feitoPeriodo(p), 0);
+  const passaDaCapacidade = (pessoa: string) => pessoa !== SEM_RESPONSAVEL && dias.some((d) => {
+    const chave = chaveDia(d);
+    return minutosNoDia(carga, pessoa, chave) - feitosNoDia(carga, pessoa, chave) > capacidadeDe(pessoa)[d.getDay()] * 60 + 0.5;
+  });
+  // Quem sumiu da carga (sem tarefa) não conta no filtro salvo.
+  const filtroValido = filtroPessoas.filter((id) => pessoas.includes(id));
+  const pessoasVisiveis = pessoas.filter((p) =>
+    (!filtroValido.length || filtroValido.includes(p)) && (!soAcima || passaDaCapacidade(p)));
+  const daTela = (t: TaskRow) => {
+    if (!filtroValido.length) return true;
+    const rs = idsResponsaveis(t);
+    return rs.length ? rs.some((id) => filtroValido.includes(id)) : filtroValido.includes(SEM_RESPONSAVEL);
+  };
+  const atrasadas = carga.atrasadas.filter(daTela);
+  const semEstimativa = carga.semEstimativa.filter(daTela);
+  const semData = carga.semData.filter(daTela);
+  // Resumo do período mostrado (pessoas visíveis com o filtro).
+  const resumoTotal = pessoasVisiveis.reduce((s, p) => s + totalPeriodo(p), 0);
+  const resumoFeito = pessoasVisiveis.reduce((s, p) => s + feitoPeriodo(p), 0);
   const resumoFalta = Math.max(0, resumoTotal - resumoFeito);
   const capPeriodo = (pessoa: string) => dias.reduce((s, d) => s + capacidadeDe(pessoa)[d.getDay()], 0);
 
   const parcelasCelula: Parcela[] = celula ? (carga.porPessoa.get(celula.pessoa)?.get(celula.dia) ?? []) : [];
   const listaPendencia =
-    pendencia === 'estimativa' ? carga.semEstimativa : pendencia === 'data' ? carga.semData : pendencia === 'atrasadas' ? carga.atrasadas : [];
+    pendencia === 'estimativa' ? semEstimativa : pendencia === 'data' ? semData : pendencia === 'atrasadas' ? atrasadas : [];
 
   const semNada = pessoas.length === 0;
 
@@ -187,6 +219,94 @@ export default function ViewCarga({ tasks, usuarios, write, onOpenTask }: ViewCa
           </div>
         </div>
 
+        {/* Filtro da Carga */}
+        {!semNada && (
+          <div className="flex flex-wrap items-center gap-2 mb-3">
+            <button
+              type="button"
+              onClick={(e) => { setBuscaPessoa(''); setMenuPessoas(e.currentTarget.getBoundingClientRect()); }}
+              className={`flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border transition ${
+                filtroValido.length ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+              }`}
+            >
+              <Users size={13} />
+              {filtroValido.length === 0 ? 'Todas as pessoas'
+                : filtroValido.length === 1 ? nomeDe(filtroValido[0])
+                : `${filtroValido.length} pessoas`}
+            </button>
+            {meuId && pessoas.includes(meuId) && !(filtroValido.length === 1 && filtroValido[0] === meuId) && (
+              <button type="button" onClick={() => setFiltroPessoas([meuId])}
+                className="text-xs px-2.5 py-1.5 rounded-lg text-slate-500 hover:bg-slate-200">
+                Só eu
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setSoAcima((v) => !v)}
+              className={`flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border transition ${
+                soAcima ? 'bg-red-50 border-red-200 text-red-700' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+              }`}
+              title="Só quem tem algum dia com mais trabalho que horas disponíveis"
+            >
+              <Flame size={13} /> Acima da capacidade
+            </button>
+            {(filtroValido.length > 0 || soAcima) && (
+              <button type="button" onClick={() => { setFiltroPessoas([]); setSoAcima(false); }}
+                className="flex items-center gap-1 text-xs px-2 py-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-200">
+                <X size={12} /> Limpar
+              </button>
+            )}
+            {menuPessoas && (
+              <Popover anchorRect={menuPessoas} largura={240} onClose={() => setMenuPessoas(null)}>
+                {pessoas.length > 6 && (
+                  <input
+                    autoFocus
+                    value={buscaPessoa}
+                    onChange={(e) => setBuscaPessoa(e.target.value)}
+                    placeholder="Buscar pessoa…"
+                    className="w-full mb-1 text-xs max-md:text-base border border-slate-200 rounded-lg px-2 py-1.5 outline-none focus:border-indigo-300"
+                  />
+                )}
+                <div className="max-h-64 max-md:max-h-[50vh] overflow-y-auto">
+                  {pessoas
+                    .filter((p) => !buscaPessoa.trim() || nomeDe(p).toLowerCase().includes(buscaPessoa.trim().toLowerCase()))
+                    .map((p) => {
+                      const on = filtroValido.includes(p);
+                      return (
+                        <button
+                          key={p}
+                          type="button"
+                          onClick={() => setFiltroPessoas(on ? filtroValido.filter((x) => x !== p) : [...filtroValido, p])}
+                          className={`w-full flex items-center gap-2 px-2 py-1.5 max-md:px-3 max-md:py-3 rounded-lg text-xs max-md:text-[15px] text-left transition ${
+                            on ? 'bg-indigo-50 text-indigo-700' : 'text-slate-700 hover:bg-slate-50'
+                          }`}
+                        >
+                          <span className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 ${on ? 'bg-indigo-600 border-indigo-600' : 'border-slate-300'}`}>
+                            {on && <Check size={11} className="text-white" />}
+                          </span>
+                          <span className="truncate flex-1">{nomeDe(p)}{p === meuId && !/você/i.test(nomeDe(p)) ? ' (você)' : ''}</span>
+                          {passaDaCapacidade(p) && <Flame size={11} className="text-red-500 shrink-0" />}
+                        </button>
+                      );
+                    })}
+                </div>
+                <div className="flex gap-1.5 mt-1.5 pt-1.5 border-t border-slate-100">
+                  {filtroValido.length > 0 && (
+                    <button type="button" onClick={() => setFiltroPessoas([])}
+                      className="px-2 py-1.5 rounded-lg text-xs text-slate-500 hover:bg-slate-100">
+                      Todas
+                    </button>
+                  )}
+                  <button type="button" onClick={() => setMenuPessoas(null)}
+                    className="ml-auto px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-xs font-medium hover:bg-indigo-700">
+                    Pronto
+                  </button>
+                </div>
+              </Popover>
+            )}
+          </div>
+        )}
+
         {/* Resumo do período: planejado, concluído e o que falta */}
         {resumoTotal > 0 && (
           <div className="grid grid-cols-3 gap-2 mb-3">
@@ -212,21 +332,21 @@ export default function ViewCarga({ tasks, usuarios, write, onOpenTask }: ViewCa
         )}
 
         {/* Pendências que tiram a precisão da carga */}
-        {(carga.semEstimativa.length > 0 || carga.semData.length > 0 || carga.atrasadas.length > 0) && (
+        {(semEstimativa.length > 0 || semData.length > 0 || atrasadas.length > 0) && (
           <div className="flex flex-wrap gap-2 mb-3">
-            {carga.atrasadas.length > 0 && (
+            {atrasadas.length > 0 && (
               <button onClick={() => { setCelula(null); setPendencia('atrasadas'); }} className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg bg-red-50 text-red-700 hover:bg-red-100">
-                <AlertTriangle size={12} /> {carga.atrasadas.length} atrasada{carga.atrasadas.length > 1 ? 's' : ''} (contando em hoje)
+                <AlertTriangle size={12} /> {atrasadas.length} atrasada{atrasadas.length > 1 ? 's' : ''} (contando em hoje)
               </button>
             )}
-            {carga.semEstimativa.length > 0 && (
+            {semEstimativa.length > 0 && (
               <button onClick={() => { setCelula(null); setPendencia('estimativa'); }} className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg bg-amber-50 text-amber-800 hover:bg-amber-100">
-                <Timer size={12} /> {carga.semEstimativa.length} sem estimativa (fora da conta)
+                <Timer size={12} /> {semEstimativa.length} sem estimativa (fora da conta)
               </button>
             )}
-            {carga.semData.length > 0 && (
+            {semData.length > 0 && (
               <button onClick={() => { setCelula(null); setPendencia('data'); }} className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg bg-slate-100 text-slate-600 hover:bg-slate-200">
-                <CalendarOff size={12} /> {carga.semData.length} sem prazo (fora da conta)
+                <CalendarOff size={12} /> {semData.length} sem prazo (fora da conta)
               </button>
             )}
           </div>
@@ -237,6 +357,12 @@ export default function ViewCarga({ tasks, usuarios, write, onOpenTask }: ViewCa
             <Clock size={36} className="mx-auto text-slate-300 mb-3" />
             <p className="text-sm text-slate-500">Nenhuma tarefa aberta aqui.</p>
             <p className="text-xs text-slate-400 mt-1">Coloque tempo estimado e prazo nas tarefas para ver a carga de cada pessoa.</p>
+          </div>
+        ) : pessoasVisiveis.length === 0 ? (
+          <div className="text-center py-12 bg-white rounded-xl border border-slate-200">
+            <p className="text-sm text-slate-500">
+              {soAcima ? 'Ninguém passa da capacidade neste período.' : 'Nenhuma pessoa com esse filtro.'}
+            </p>
           </div>
         ) : (
           <div className="bg-white rounded-xl border border-slate-200 overflow-x-auto">
@@ -263,7 +389,7 @@ export default function ViewCarga({ tasks, usuarios, write, onOpenTask }: ViewCa
                 </tr>
               </thead>
               <tbody>
-                {pessoas.map((pessoa) => {
+                {pessoasVisiveis.map((pessoa) => {
                   const total = totalPeriodo(pessoa);
                   const cap = capPeriodo(pessoa);
                   const uso = cap > 0 ? total / (cap * 60) : total > 0 ? 2 : 0;
