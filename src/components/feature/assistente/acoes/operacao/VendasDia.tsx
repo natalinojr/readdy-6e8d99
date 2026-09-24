@@ -134,7 +134,7 @@ export default function VendasDia({ onFechar, irPara }: AcaoProps) {
       prev.valor += Number(it.total_revenue ?? 0);
       mapa.set(nome, prev);
     }
-    const top = [...mapa.entries()].sort((x, y) => y[1].qtd - x[1].qtd).slice(0, 5).map(([nome, v]) => ({ nome, ...v }));
+    const top = [...mapa.entries()].sort((x, y) => y[1].valor - x[1].valor).slice(0, 5).map(([nome, v]) => ({ nome, ...v }));
     const diaSemana = new Date(`${semanaPassada}T12:00:00-03:00`).toLocaleDateString('pt-BR', { weekday: 'short' }).replace('.', '');
     const base = (n: number | undefined) => (a && Number(a.total_orders) > 0 ? Number(n ?? 0) : null);
     // Eixo das horas: da primeira à última hora com venda (em qualquer dos dois dias).
@@ -168,7 +168,7 @@ export default function VendasDia({ onFechar, irPara }: AcaoProps) {
         <Barras titulo="Por canal" cor="bg-sky-500"
           itens={[...(r.by_destination ?? [])].sort((x, y) => Number(y.revenue) - Number(x.revenue))
             .map((c) => ({ label: CANAL[c.destination] ?? c.destination, valor: Number(c.revenue), detalhe: `${c.orders} pedido${Number(c.orders) === 1 ? '' : 's'}` }))} />
-        <Ranking titulo="Mais vendidos" itens={top} />
+        <Ranking titulo="Mais vendidos" itens={top} por="valor" />
       </Painel>,
     );
     setPasso('fim');

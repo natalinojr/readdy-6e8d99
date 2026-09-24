@@ -78,7 +78,7 @@ export default function FechamentoDia({ onFechar, irPara }: AcaoProps) {
       prev.valor += Number(it.total_revenue ?? 0);
       somaItens.set(nome, prev);
     }
-    const top = [...somaItens.entries()].sort((x, y) => y[1].qtd - x[1].qtd).slice(0, 5).map(([nome, v]) => ({ nome, ...v }));
+    const top = [...somaItens.entries()].sort((x, y) => y[1].valor - x[1].valor).slice(0, 5).map(([nome, v]) => ({ nome, ...v }));
     const difs = (caixas.data ?? []) as Array<{ closing_difference: number | null }>;
     const somaDif = difs.reduce((s, c) => s + Number(c.closing_difference ?? 0), 0);
     const difPagFat = Math.round((totalPag - rev) * 100) / 100;
@@ -98,7 +98,7 @@ export default function FechamentoDia({ onFechar, irPara }: AcaoProps) {
           <Barras titulo="Por canal" cor="bg-sky-500"
             itens={canais.map((c) => ({ label: CANAL[c.destination] ?? c.destination, valor: Number(c.revenue), detalhe: `${c.orders} pedido${Number(c.orders) === 1 ? '' : 's'}` }))} />
         )}
-        {top.length > 0 && <Ranking titulo="Mais vendidos" itens={top} />}
+        {top.length > 0 && <Ranking titulo="Mais vendidos" itens={top} por="valor" />}
         {difs.length > 0 && (
           <Linhas titulo="Caixas" itens={[{
             label: `${difs.length} caixa${difs.length === 1 ? '' : 's'} do dia`,

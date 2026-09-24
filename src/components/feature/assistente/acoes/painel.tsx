@@ -129,8 +129,11 @@ export function Chip({ texto, status = 'neutro' }: { texto: string; status?: Sta
 }
 
 /** Ranking numerado com barra pela quantidade. */
-export function Ranking({ titulo, itens }: { titulo: string; itens: Array<{ nome: string; qtd: number; valor: number }> }) {
-  const max = Math.max(...itens.map((i) => i.qtd), 0);
+// `por`: o que manda na barra e no destaque. A mensagem do servidor (fechamento do turno) só traz a
+// quantidade; as ações rápidas ordenam por faturamento (dono, 2026-09-23).
+export function Ranking({ titulo, itens, por = 'qtd' }: { titulo: string; itens: Array<{ nome: string; qtd: number; valor: number }>; por?: 'qtd' | 'valor' }) {
+  const medida = (i: { qtd: number; valor: number }) => (por === 'valor' ? i.valor : i.qtd);
+  const max = Math.max(...itens.map(medida), 0);
   if (!itens.length) return null;
   return (
     <div>
@@ -142,10 +145,10 @@ export function Ranking({ titulo, itens }: { titulo: string; itens: Array<{ nome
             <div className="flex-1 min-w-0">
               <div className="flex items-baseline justify-between gap-2 text-xs">
                 <span className="font-semibold text-zinc-800 truncate">{i.nome}</span>
-                <span className="flex-shrink-0 tabular-nums text-zinc-500"><b className="text-zinc-900">{i.qtd} un</b> · {brl(i.valor)}</span>
+                <span className="flex-shrink-0 tabular-nums text-zinc-500">{por === 'valor' ? <>{i.qtd} un · <b className="text-zinc-900">{brl(i.valor)}</b></> : <><b className="text-zinc-900">{i.qtd} un</b> · {brl(i.valor)}</>}</span>
               </div>
               <div className="mt-1 h-1.5 rounded-full bg-zinc-100 overflow-hidden">
-                <div className="h-full rounded-full bg-emerald-500" style={{ width: `${Math.max(3, (i.qtd / max) * 100)}%` }} />
+                <div className="h-full rounded-full bg-emerald-500" style={{ width: `${Math.max(3, (max > 0 ? medida(i) / max : 0) * 100)}%` }} />
               </div>
             </div>
           </li>
