@@ -166,6 +166,10 @@ export default function ReceberPage() {
       if (!podeReceber) { setErro('Isso é uma nota fiscal (DANFE), não cupom de mercado. Peça a quem recebe mercadoria para dar entrada.'); return; }
       return buscarCodigo(l.chave);
     }
+    if (l.tipo === 'qr' && /fazenda\.pr\.gov\.br/i.test(l.url)) {
+      setErro('Esse link é da página da nota, não do QR. No leitor do celular, copie o link ANTES de abrir (ele tem "nfce/qrcode?p=").');
+      return;
+    }
     setErro('Esse QR Code não é de cupom fiscal do Paraná. Use "Tirar foto da notinha".');
   };
   const abrirLeitorCupom = () => { setErro(null); setScanner(true); };
@@ -342,7 +346,7 @@ export default function ReceberPage() {
       <input ref={inputCupom} type="file" accept="image/*,application/pdf" capture="environment" className="hidden"
         onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; onFotoCupom(f); }} />
 
-      {scanner && <ScannerQR onLido={onLidoAoVivo} onFoto={() => { setScanner(false); inputCupom.current?.click(); }} onFechar={() => setScanner(false)} />}
+      {scanner && <ScannerQR onLido={onLidoAoVivo} onLink={(url) => onLidoAoVivo({ tipo: 'qr', url })} onFoto={() => { setScanner(false); inputCupom.current?.click(); }} onFechar={() => setScanner(false)} />}
 
       <div className="flex-1 overflow-y-auto">
         {erro && (
