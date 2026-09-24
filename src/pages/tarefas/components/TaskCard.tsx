@@ -1,5 +1,7 @@
 import { Flag, MessageSquare, CheckSquare, GitBranch, Repeat } from 'lucide-react';
 import type { CampoCustom, TaskRow } from '../hooks/useTarefas';
+import { responsaveis } from '../lib/responsaveis';
+import AvataresResponsaveis from './AvataresResponsaveis';
 import { PRIORIDADES } from '../hooks/useTarefas';
 import type { UsuarioOption } from '../lib/agrupamento';
 import { rotuloRecorrencia, DICA_RECORRENCIA } from '../lib/recorrencia';
@@ -124,12 +126,9 @@ export default function TaskCard({
           <span className="flex items-center gap-0.5"><MessageSquare size={11} />{task.comment_count}</span>
         )}
         {due && <span className={`ml-auto ${due.className}`}>{due.text}</span>}
-        {task.assignee_name && (
-          <span
-            className={`w-5 h-5 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center text-[9px] font-semibold shrink-0 ${due ? '' : 'ml-auto'}`}
-            title={task.assignee_name}
-          >
-            {iniciais(task.assignee_name)}
+        {responsaveis(task).length > 0 && (
+          <span className={due ? '' : 'ml-auto'}>
+            <AvataresResponsaveis pessoas={responsaveis(task)} comNome={false} />
           </span>
         )}
       </div>

@@ -1,5 +1,6 @@
 import type { CampoCustom, TaskList, TaskRow, TaskStatus } from '../hooks/useTarefas';
 import { PRIORIDADES } from '../hooks/useTarefas';
+import { idsResponsaveis, responsaveis } from './responsaveis';
 
 /** Rótulo/cor genéricos por categoria — usados quando as tarefas vêm de mais
  *  de uma pasta (Minhas/Compartilhadas/Todas) e não há um `list.statuses` único
@@ -62,7 +63,7 @@ export function aplicarFiltros(tasks: TaskRow[], f: Filtros): TaskRow[] {
   const busca = f.busca.trim().toLowerCase();
   return tasks.filter((t) => {
     if (busca && !t.title.toLowerCase().includes(busca)) return false;
-    if (f.assigneeIds.length && !f.assigneeIds.includes(t.assignee_id ?? '')) return false;
+    if (f.assigneeIds.length && !idsResponsaveis(t).some((id) => f.assigneeIds.includes(id))) return false;
     if (f.prioridades.length && !f.prioridades.includes(t.priority)) return false;
     if (f.tagIds.length && !t.tags.some((tag) => f.tagIds.includes(tag.id))) return false;
     if (f.ocultarConcluidas && (t.status_category === 'done' || t.status_category === 'cancelled')) return false;
@@ -144,21 +145,22 @@ export function agruparTarefas(
     // os ativos da loja atual, e tarefa de responsável inativo ou de outra
     // loja (Tarefas é por pessoa, cruza lojas) não caía em grupo nenhum —
     // sumia da tela. Quem está em `usuarios` vem primeiro, na ordem dela.
-    const ids = [...new Set(tasks.map((t) => t.assignee_id).filter((id): id is string => !!id))];
+    // Tarefa com vários responsáveis aparece no grupo de cada um.
+    const ids = [...new Set(tasks.flatMap((t) => idsResponsaveis(t)))];
     const posicao = (id: string) => {
       const i = usuarios.findIndex((u) => u.id === id);
       return i === -1 ? Number.MAX_SAFE_INTEGER : i;
     };
     const nomeDe = (id: string) =>
       usuarios.find((u) => u.id === id)?.nome
-      ?? tasks.find((t) => t.assignee_id === id && t.assignee_name)?.assignee_name
+      ?? tasks.flatMap((t) => responsaveis(t)).find((r) => r.id === id && r.name)?.name
       ?? 'Usuário sem nome';
     const comResponsavel = ids
       .map((id) => ({
         key: id as string | null,
         label: nomeDe(id),
         color: '#6366f1',
-        tasks: ordenar(tasks.filter((t) => t.assignee_id === id)),
+        tasks: ordenar(tasks.filter((t) => idsResponsaveis(t).includes(id))),
       }))
       .sort((a, b) => posicao(a.key!) - posicao(b.key!) || a.label.localeCompare(b.label, 'pt-BR'));
     return [
@@ -167,7 +169,7 @@ export function agruparTarefas(
         key: null,
         label: 'Sem responsável',
         color: '#94a3b8',
-        tasks: ordenar(tasks.filter((t) => !t.assignee_id)),
+        tasks: ordenar(tasks.filter((t) => !idsResponsaveis(t).length)),
       },
     ];
   }

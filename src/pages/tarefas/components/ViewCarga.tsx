@@ -10,6 +10,7 @@ import {
   feitosNoDia, minutosNoDia, minutosRestantes, somarDias,
 } from '../lib/carga';
 import { formatarHoras } from '../lib/tempo';
+import { idsResponsaveis, responsaveis, rotuloResponsaveis } from '../lib/responsaveis';
 import { iniciais } from './TaskCard';
 
 interface ViewCargaProps {
@@ -72,13 +73,14 @@ export default function ViewCarga({ tasks, usuarios, write, onOpenTask }: ViewCa
   const nomeDe = (id: string) =>
     id === SEM_RESPONSAVEL ? 'Sem responsável'
       : usuarios.find((u) => u.id === id)?.nome
-      ?? tasks.find((t) => t.assignee_id === id && t.assignee_name)?.assignee_name
+      ?? tasks.flatMap((t) => responsaveis(t)).find((r) => r.id === id && r.name)?.name
       ?? 'Usuário';
   const pessoas = useMemo(() => {
     const ids = new Set<string>();
     for (const t of tasks) {
       if (t.status_category === 'done' || t.status_category === 'cancelled') continue;
-      ids.add(t.assignee_id ?? SEM_RESPONSAVEL);
+      const rs = idsResponsaveis(t);
+      if (rs.length) rs.forEach((id) => ids.add(id)); else ids.add(SEM_RESPONSAVEL);
     }
     // Quem só tem tarefa concluída também aparece (o dia mostra o que foi feito).
     for (const p of carga.porPessoa.keys()) ids.add(p);
@@ -436,7 +438,7 @@ export default function ViewCarga({ tasks, usuarios, write, onOpenTask }: ViewCa
               <ItemCarga
                 key={t.id}
                 task={t}
-                detalhe={t.assignee_name ?? 'Sem responsável'}
+                detalhe={rotuloResponsaveis(t) ?? 'Sem responsável'}
                 atrasada={pendencia === 'atrasadas'}
                 pessoas={pessoas}
                 usuarios={usuarios}

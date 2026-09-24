@@ -144,7 +144,9 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       const { data: taskRow } = await admin
         .from('tasks').select('id, created_by, assignee_id, list_id').eq('id', taskId).maybeSingle();
       if (!taskRow) return json({ error: 'Tarefa não encontrada' }, 404);
-      if (taskRow.assignee_id !== user.id) {
+      const { data: souResp } = await admin.from('task_assignees')
+        .select('user_id').eq('task_id', taskId).eq('user_id', user.id).maybeSingle();
+      if (taskRow.assignee_id !== user.id && !souResp) {
         const { data: acessoUp } = await admin.rpc('fn_task_list_access', { p_list_id: taskRow.list_id, p_user_id: user.id });
         if (acessoUp !== 'owner' && acessoUp !== 'edit') {
           return json({ error: 'Você não tem permissão para anexar arquivos nesta tarefa' }, 403);
@@ -220,8 +222,10 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       const fora = destinos.filter((uid) => !validos.includes(uid));
       if (fora.length) {
         const { data: tarefa } = await admin.from('tasks').select('list_id, assignee_id').eq('id', taskId).maybeSingle();
+        const { data: resps } = await admin.from('task_assignees').select('user_id').eq('task_id', taskId);
+        const idsResp = new Set([tarefa?.assignee_id, ...(resps ?? []).map((r: { user_id: string }) => r.user_id)]);
         for (const uid of fora) {
-          if (tarefa?.assignee_id === uid) { validos.push(uid); continue; }
+          if (idsResp.has(uid)) { validos.push(uid); continue; }
           if (!tarefa?.list_id) continue;
           const { data: acesso } = await admin.rpc('fn_task_list_access', { p_list_id: tarefa.list_id, p_user_id: uid });
           if (acesso) validos.push(uid);
@@ -307,9 +311,33 @@ Deno.serve({ verify_jwt: false }, async (req) => {
     // O resto vem da PASTA: dono/'edit' editam, 'view' só vê e comenta. Ter
     // CRIADO a tarefa não basta — senão quem perdeu o compartilhamento de uma
     // pasta continuava mexendo nas tarefas que criou nela.
+    // Todos os responsáveis da tarefa (task_assignees; o principal fica em tasks.assignee_id).
+    const responsaveisDe = async (taskId: string): Promise<string[]> => {
+      const { data } = await admin.from('task_assignees').select('user_id').eq('task_id', taskId);
+      return (data ?? []).map((r: { user_id: string }) => r.user_id);
+    };
+
+    // Troca a lista de responsáveis (tabela), avisa quem entrou e registra.
+    const sincronizarResponsaveis = async (taskId: string, ids: string[], titulo: unknown) => {
+      const antes = await responsaveisDe(taskId);
+      const sair = antes.filter((id) => !ids.includes(id));
+      const entrar = ids.filter((id) => !antes.includes(id));
+      if (sair.length) await admin.from('task_assignees').delete().eq('task_id', taskId).in('user_id', sair);
+      if (entrar.length) {
+        await admin.from('task_assignees').upsert(
+          entrar.map((id) => ({ task_id: taskId, user_id: id, added_by: user.id })),
+          { onConflict: 'task_id,user_id', ignoreDuplicates: true },
+        );
+      }
+      if (sair.length || entrar.length) {
+        await logActivity(taskId, 'assignee_changed', { to: ids, entraram: entrar, sairam: sair });
+        if (entrar.length) await notify(entrar, taskId, 'assigned', { title: titulo });
+      }
+    };
+
     const assertTaskAccess = async (taskId: string, nivel: 'edit' | 'comment' | 'view' = 'edit'): Promise<Record<string, unknown>> => {
       const task = await assertOwned('tasks', taskId);
-      if (task.assignee_id === user.id) return task;
+      if (task.assignee_id === user.id || (await responsaveisDe(taskId)).includes(user.id)) return task;
       const acesso = await acessoPasta(task.list_id as string);
       if (acesso === 'owner' || acesso === 'edit') return task;
       if (acesso === 'view' && nivel !== 'edit') return task;
@@ -485,14 +513,20 @@ Deno.serve({ verify_jwt: false }, async (req) => {
 
       // ═══ Tarefas ═══
       case 'create_task': {
-        const { list_id, title, description, status_id, priority, assignee_id, start_date, due_date, due_has_time, parent_task_id, recurrence, sort_order, tag_ids, time_estimate_minutes } = body;
+        const { list_id, title, description, status_id, priority, start_date, due_date, due_has_time, parent_task_id, recurrence, sort_order, tag_ids, time_estimate_minutes } = body;
+        // Vários responsáveis (assignee_ids) ou um só (assignee_id, como antes).
+        const idsResp: string[] = Array.isArray(body.assignee_ids)
+          ? [...new Set((body.assignee_ids as unknown[]).filter((x): x is string => typeof x === 'string' && !!x))]
+          : body.assignee_id ? [String(body.assignee_id)] : [];
+        if (idsResp.length > 20) return json({ error: 'No máximo 20 responsáveis' }, 400);
+        const assignee_id = idsResp[0] ?? null;
         if (!list_id || !title) return json({ error: 'list_id and title are required' }, 400);
         const estimativaErro = validarEstimativa(time_estimate_minutes);
         if (estimativaErro) return json({ error: estimativaErro }, 400);
         const recErroNovo = validarRecorrencia(recurrence);
         if (recErroNovo) return json({ error: recErroNovo }, 400);
         await assertListEdit(list_id);
-        await assertResponsavelValido(list_id, assignee_id);
+        for (const id of idsResp) await assertResponsavelValido(list_id, id);
         let resolvedStatus = status_id ?? null;
         if (!resolvedStatus) {
           const { data: st } = await admin.from('task_statuses')
@@ -521,7 +555,14 @@ Deno.serve({ verify_jwt: false }, async (req) => {
           );
         }
         await logActivity(data.id, 'created', { title });
-        if (assignee_id) await notify([assignee_id], data.id, 'assigned', { title });
+        // O gatilho já colocou o principal na lista; aqui entram os demais.
+        if (idsResp.length > 1) {
+          await admin.from('task_assignees').upsert(
+            idsResp.slice(1).map((id) => ({ task_id: data.id, user_id: id, added_by: user.id })),
+            { onConflict: 'task_id,user_id', ignoreDuplicates: true },
+          );
+        }
+        if (idsResp.length) await notify(idsResp, data.id, 'assigned', { title });
         return json({ success: true, id: data.id });
       }
 
@@ -529,8 +570,23 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         const { task_id, ...rest } = body;
         const current = await assertTaskAccess(task_id);
         if (rest.list_id !== undefined && rest.list_id !== current.list_id) await assertListEdit(rest.list_id);
-        if (rest.assignee_id !== undefined && rest.assignee_id !== current.assignee_id) {
-          await assertResponsavelValido((rest.list_id ?? current.list_id) as string, rest.assignee_id);
+        // Lista nova de responsáveis: assignee_ids (vários) ou assignee_id (um só, como
+        // antes — substitui todos). O principal (tasks.assignee_id) continua o mesmo se
+        // ainda estiver na lista; senão vira o primeiro.
+        let novosResp: string[] | null = null;
+        if (Array.isArray(rest.assignee_ids)) {
+          novosResp = [...new Set((rest.assignee_ids as unknown[]).filter((x): x is string => typeof x === 'string' && !!x))];
+          if (novosResp.length > 20) return json({ error: 'No máximo 20 responsáveis' }, 400);
+          rest.assignee_id = novosResp.includes(current.assignee_id as string) ? current.assignee_id : (novosResp[0] ?? null);
+        } else if (rest.assignee_id !== undefined && rest.assignee_id !== current.assignee_id) {
+          // Só o responsável (formato antigo) e ele MUDOU: passa a tarefa pra essa pessoa.
+          novosResp = rest.assignee_id ? [String(rest.assignee_id)] : [];
+        }
+        if (novosResp) {
+          const jaEram = await responsaveisDe(task_id);
+          for (const id of novosResp) {
+            if (!jaEram.includes(id)) await assertResponsavelValido((rest.list_id ?? current.list_id) as string, id);
+          }
         }
         const patch: Record<string, unknown> = {};
         const editable = ['title', 'description', 'status_id', 'priority', 'assignee_id', 'start_date', 'due_date', 'due_has_time', 'list_id', 'sort_order', 'recurrence', 'is_archived', 'parent_task_id', 'time_estimate_minutes', 'time_plan'];
@@ -616,6 +672,13 @@ Deno.serve({ verify_jwt: false }, async (req) => {
                     .select('id').eq('list_id', current.list_id).order('sort_order').limit(1).maybeSingle();
                   if (st) await admin.from('tasks').update({ status_id: st.id }).eq('id', next.id);
                   createdNextId = next.id;
+                  const respsRec = await responsaveisDe(task_id);
+                  if (respsRec.length) {
+                    await admin.from('task_assignees').upsert(
+                      respsRec.map((id) => ({ task_id: next.id, user_id: id, added_by: user.id })),
+                      { onConflict: 'task_id,user_id', ignoreDuplicates: true },
+                    );
+                  }
                   await logActivity(next.id, 'created_from_recurrence', { source_task_id: task_id });
                 }
               }
@@ -624,10 +687,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
             patch.completed_at = null;
           }
         }
-        if (patch.assignee_id !== undefined && patch.assignee_id !== current.assignee_id) {
-          await logActivity(task_id, 'assignee_changed', { to: patch.assignee_id });
-          await notify([patch.assignee_id as string | null], task_id, 'assigned', { title: current.title });
-        }
+        // (a troca de responsáveis é registrada/avisada em sincronizarResponsaveis, depois de gravar)
         if (patch.due_date !== undefined && patch.due_date !== current.due_date) {
           await logActivity(task_id, 'due_date_changed', { to: patch.due_date });
         }
@@ -642,6 +702,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
           const { error } = await admin.from('tasks').update(patch).eq('id', task_id);
           if (error) return json({ error: errMsg(error) }, 500);
         }
+        if (novosResp) await sincronizarResponsaveis(task_id, novosResp, current.title);
 
         // Tags: substituição completa quando tag_ids vier no body
         if (Array.isArray(rest.tag_ids)) {
@@ -831,10 +892,9 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         const trecho = String(commentBody).slice(0, 140);
         // Mencionados têm prioridade; o responsável recebe o aviso genérico de comentário
         await notify(listaMencoes, task_id, 'mentioned', { title: tarefa?.title, trecho });
-        const responsavel = tarefa?.assignee_id as string | null | undefined;
-        if (responsavel && !listaMencoes.includes(responsavel)) {
-          await notify([responsavel], task_id, 'commented', { title: tarefa?.title, trecho });
-        }
+        const resps = [...new Set([tarefa?.assignee_id as string | null, ...(await responsaveisDe(task_id))])]
+          .filter((id): id is string => !!id && !listaMencoes.includes(id));
+        if (resps.length) await notify(resps, task_id, 'commented', { title: tarefa?.title, trecho });
         return json({ success: true, id: data.id });
       }
       case 'delete_comment': {

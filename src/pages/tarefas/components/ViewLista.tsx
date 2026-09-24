@@ -19,6 +19,8 @@ import ConfirmDialog from './ConfirmDialog';
 import EditorCelula, { ehEditavel } from './EditorCelula';
 import StatusPicker from './StatusPicker';
 import { iniciais, rotuloVencimento } from './TaskCard';
+import { responsaveis, rotuloResponsaveis } from '../lib/responsaveis';
+import AvataresResponsaveis from './AvataresResponsaveis';
 
 interface ViewListaProps {
   /** null = tarefas de mais de uma pasta (Minhas/Compartilhadas/Todas). */
@@ -61,7 +63,7 @@ function valorOrdenacao(
     return String(v);
   }
   switch (coluna) {
-    case 'responsavel': return task.assignee_name;
+    case 'responsavel': return rotuloResponsaveis(task);
     case 'vencimento': return task.due_date;
     case 'prioridade': return task.priority > 0 ? task.priority : null;
     case 'etiquetas': return task.tags.map((t) => t.name).sort()[0] ?? null;
@@ -95,13 +97,8 @@ function celulaColuna(
 
   switch (coluna.id) {
     case 'responsavel':
-      return task.assignee_name ? (
-        <span className="flex items-center gap-1.5 justify-end">
-          <span className="w-5 h-5 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center text-[9px] font-semibold shrink-0">
-            {iniciais(task.assignee_name)}
-          </span>
-          <span className="truncate">{task.assignee_name}</span>
-        </span>
+      return responsaveis(task).length ? (
+        <span className="flex justify-end"><AvataresResponsaveis pessoas={responsaveis(task)} /></span>
       ) : <span className="text-slate-300">—</span>;
 
     case 'vencimento': {
@@ -193,11 +190,8 @@ function MetaCelular({ task, mostrarPasta, subtarefas }: { task: TaskRow; mostra
   const itens = [
     due && <span key="due" className={`font-medium ${due.className}`}>{due.text}</span>,
     prio && <span key="prio" className="flex items-center gap-0.5"><Flag size={11} style={{ color: prio.color }} />{prio.label}</span>,
-    task.assignee_name && (
-      <span key="resp" className="flex items-center gap-1 min-w-0">
-        <span className="w-4 h-4 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center text-[8px] font-semibold shrink-0">{iniciais(task.assignee_name)}</span>
-        <span className="truncate max-w-[90px]">{task.assignee_name.split(' ')[0]}</span>
-      </span>
+    responsaveis(task).length > 0 && (
+      <span key="resp" className="min-w-0 max-w-[140px]"><AvataresResponsaveis pessoas={responsaveis(task)} tamanho={4} /></span>
     ),
     mostrarPasta && task.list_name && (
       <span key="pasta" className="flex items-center gap-1 min-w-0">

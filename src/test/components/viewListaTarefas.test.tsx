@@ -69,7 +69,7 @@ describe('ViewLista (tarefas)', () => {
     const celulas = within(linha).getAllByRole('button').filter((b) => b.textContent === '—');
     fireEvent.click(celulas[0]); // Responsável é a primeira coluna padrão
     fireEvent.click(screen.getByText('Maria Silva'));
-    expect(write).toHaveBeenCalledWith('update_task', { task_id: 'b', assignee_id: 'u1' });
+    expect(write).toHaveBeenCalledWith('update_task', { task_id: 'b', assignee_ids: ['u1'] });
   });
 
   it('data: atalhos Hoje/Ontem/Amanhã e escolher qualquer data', () => {

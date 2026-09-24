@@ -1,4 +1,5 @@
 import type { TaskRow } from '../hooks/useTarefas';
+import { idsResponsaveis } from './responsaveis';
 
 /**
  * Carga de trabalho: quanto de trabalho ESTIMADO cada pessoa tem por dia.
@@ -82,51 +83,56 @@ export function calcularCarga(
     if (!estimativa) { if (!concluida) semEstimativa.push(t); continue; }
     if (!t.due_date) { if (!concluida) semData.push(t); continue; }
 
-    const pessoa = t.assignee_id ?? SEM_RESPONSAVEL;
+    // Vários responsáveis: o tempo é dividido igualmente entre eles.
+    const pessoasDaTarefa = idsResponsaveis(t);
+    const pessoas = pessoasDaTarefa.length ? pessoasDaTarefa : [SEM_RESPONSAVEL];
+    const fatia = 1 / pessoas.length;
     const prazo = diaLocal(t.due_date);
     const atrasada = !concluida && prazo < hoje0;
     if (atrasada) atrasadas.push(t);
     // Fração já feita: concluída = 1; aberta = cronometrado ÷ estimado (até 1).
     const fracaoFeita = concluida ? 1 : Math.min(1, (estimativa - minutosRestantes(t)) / estimativa);
 
-    // Plano por dia definido na tarefa: usa exatamente os minutos de cada dia.
-    const plano = t.time_plan?.dias ? Object.entries(t.time_plan.dias).filter(([, m]) => m > 0) : [];
-    if (plano.length) {
-      const mapaP = porPessoa.get(pessoa) ?? new Map<string, Parcela[]>();
-      porPessoa.set(pessoa, mapaP);
-      for (const [dia, minutos] of plano) {
-        const lista = mapaP.get(dia) ?? [];
-        lista.push({ task: t, minutos, feitos: minutos * fracaoFeita, atrasada, concluida });
-        mapaP.set(dia, lista);
+    for (const pessoa of pessoas) {
+      const mapa = porPessoa.get(pessoa) ?? new Map<string, Parcela[]>();
+      porPessoa.set(pessoa, mapa);
+
+      // Plano por dia definido na tarefa: usa exatamente os minutos de cada dia.
+      const plano = t.time_plan?.dias ? Object.entries(t.time_plan.dias).filter(([, m]) => m > 0) : [];
+      if (plano.length) {
+        for (const [dia, total] of plano) {
+          const minutos = total * fatia;
+          const lista = mapa.get(dia) ?? [];
+          lista.push({ task: t, minutos, feitos: minutos * fracaoFeita, atrasada, concluida });
+          mapa.set(dia, lista);
+        }
+        continue;
       }
-      continue;
-    }
 
-    let inicio = t.start_date ? diaLocal(t.start_date) : prazo;
-    if (inicio > prazo) inicio = prazo;
-    let fim = prazo;
-    // Concluída fica onde estava planejada (é histórico). Aberta não planeja o
-    // passado: começa hoje, e a atrasada cai inteira em hoje.
-    if (!concluida) {
-      if (inicio < hoje0) inicio = hoje0;
-      if (fim < hoje0) fim = hoje0;
-    }
+      let inicio = t.start_date ? diaLocal(t.start_date) : prazo;
+      if (inicio > prazo) inicio = prazo;
+      let fim = prazo;
+      // Concluída fica onde estava planejada (é histórico). Aberta não planeja o
+      // passado: começa hoje, e a atrasada cai inteira em hoje.
+      if (!concluida) {
+        if (inicio < hoje0) inicio = hoje0;
+        if (fim < hoje0) fim = hoje0;
+      }
 
-    const cap = capacidadeDe(pessoa);
-    const dias: Array<{ chave: string; peso: number }> = [];
-    for (let d = inicio; d <= fim; d = somarDias(d, 1)) dias.push({ chave: chaveDia(d), peso: cap[d.getDay()] });
-    let pesoTotal = dias.reduce((s, d) => s + d.peso, 0);
-    // Nenhum dia útil no intervalo (ex.: prazo num domingo de folga): divide igual.
-    if (pesoTotal === 0) { dias.forEach((d) => { d.peso = 1; }); pesoTotal = dias.length; }
+      const cap = capacidadeDe(pessoa);
+      const dias: Array<{ chave: string; peso: number }> = [];
+      for (let d = inicio; d <= fim; d = somarDias(d, 1)) dias.push({ chave: chaveDia(d), peso: cap[d.getDay()] });
+      let pesoTotal = dias.reduce((acc, d) => acc + d.peso, 0);
+      // Nenhum dia útil no intervalo (ex.: prazo num domingo de folga): divide igual.
+      if (pesoTotal === 0) { dias.forEach((d) => { d.peso = 1; }); pesoTotal = dias.length; }
 
-    const mapa = porPessoa.get(pessoa) ?? new Map<string, Parcela[]>();
-    porPessoa.set(pessoa, mapa);
-    for (const d of dias) {
-      if (d.peso === 0) continue;
-      const minutos = (estimativa * d.peso) / pesoTotal;
-      const lista = mapa.get(d.chave) ?? [];
-      lista.push({ task: t, minutos, feitos: minutos * fracaoFeita, atrasada, concluida });
-      mapa.set(d.chave, lista);
+      for (const d of dias) {
+        if (d.peso === 0) continue;
+        const minutos = (estimativa * fatia * d.peso) / pesoTotal;
+        const lista = mapa.get(d.chave) ?? [];
+        lista.push({ task: t, minutos, feitos: minutos * fracaoFeita, atrasada, concluida });
+        mapa.set(d.chave, lista);
+      }
     }
   }
   return { porPessoa, semEstimativa, semData, atrasadas };

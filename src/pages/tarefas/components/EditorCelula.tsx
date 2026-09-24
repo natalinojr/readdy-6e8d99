@@ -9,6 +9,7 @@ import type { ColunaId } from '../lib/colunas';
 import CampoInput from './campos/CampoInput';
 import ComentarioInput from './ComentarioInput';
 import { iniciais } from './TaskCard';
+import { idsResponsaveis } from '../lib/responsaveis';
 import { useIsMobile } from '../lib/mobile';
 import { formatarDuracao, formatarRelogio, lerDuracao, segundosRegistrados, useAgora } from '../lib/tempo';
 
@@ -153,6 +154,69 @@ function ListaUsuarios({ usuarios, atual, onEscolher }: {
           </Opcao>
         ))}
         {filtrados.length === 0 && <p className="px-2 py-2 text-xs text-slate-400">Ninguém encontrado</p>}
+      </div>
+    </>
+  );
+}
+
+/**
+ * Vários responsáveis: marca/desmarca e já grava (não fecha a cada toque).
+ * O primeiro marcado vira o principal.
+ */
+function ListaResponsaveis({ usuarios, iniciais: idsIniciais, onMudar, onPronto }: {
+  usuarios: UsuarioOption[];
+  iniciais: string[];
+  onMudar: (ids: string[]) => void;
+  onPronto: () => void;
+}) {
+  const [ids, setIds] = useState<string[]>(idsIniciais);
+  const [busca, setBusca] = useState('');
+  const t = busca.trim().toLowerCase();
+  const filtrados = t ? usuarios.filter((u) => u.nome.toLowerCase().includes(t)) : usuarios;
+  const alternar = (id: string) => {
+    const novos = ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id];
+    setIds(novos);
+    onMudar(novos);
+  };
+  return (
+    <>
+      {usuarios.length > 6 && <Busca valor={busca} onChange={setBusca} />}
+      <div className="max-h-64 max-md:max-h-[50vh] overflow-y-auto">
+        {filtrados.map((u) => {
+          const on = ids.includes(u.id);
+          return (
+            <button
+              key={u.id}
+              type="button"
+              onClick={() => alternar(u.id)}
+              className={`w-full flex items-center gap-2 px-2 py-1.5 max-md:px-3 max-md:py-3 rounded-lg text-xs max-md:text-[15px] text-left transition ${
+                on ? 'bg-indigo-50 text-indigo-700' : 'text-slate-700 hover:bg-slate-50'
+              }`}
+            >
+              <span className={`w-4 h-4 max-md:w-5 max-md:h-5 rounded border flex items-center justify-center shrink-0 ${on ? 'bg-indigo-600 border-indigo-600' : 'border-slate-300'}`}>
+                {on && <Check size={11} className="text-white" />}
+              </span>
+              <span className="w-5 h-5 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center text-[9px] font-semibold shrink-0">
+                {iniciais(u.nome)}
+              </span>
+              <span className="truncate flex-1">{u.nome}</span>
+              {on && ids[0] === u.id && ids.length > 1 && <span className="text-[10px] text-indigo-400 shrink-0">principal</span>}
+            </button>
+          );
+        })}
+        {filtrados.length === 0 && <p className="px-2 py-2 text-xs text-slate-400">Ninguém encontrado</p>}
+      </div>
+      <div className="flex gap-1.5 mt-1.5 pt-1.5 border-t border-slate-100">
+        {ids.length > 0 && (
+          <button type="button" onClick={() => { setIds([]); onMudar([]); }}
+            className="px-2 py-1.5 max-md:py-2.5 rounded-lg text-xs max-md:text-sm text-slate-500 hover:bg-slate-100">
+            Tirar todos
+          </button>
+        )}
+        <button type="button" onClick={onPronto}
+          className="ml-auto px-3 py-1.5 max-md:py-2.5 rounded-lg bg-indigo-600 text-white text-xs max-md:text-sm font-medium hover:bg-indigo-700">
+          Pronto
+        </button>
       </div>
     </>
   );
@@ -346,8 +410,13 @@ export default function EditorCelula({ coluna, task, anchorRect, campos, usuario
   switch (coluna) {
     case 'responsavel':
       return (
-        <Popover anchorRect={anchorRect} largura={220} onClose={onClose}>
-          <ListaUsuarios usuarios={usuarios} atual={task.assignee_id} onEscolher={(id) => atualizar({ assignee_id: id })} />
+        <Popover anchorRect={anchorRect} largura={240} onClose={onClose}>
+          <ListaResponsaveis
+            usuarios={usuarios}
+            iniciais={idsResponsaveis(task)}
+            onMudar={(ids) => gravar('update_task', { task_id: task.id, assignee_ids: ids })}
+            onPronto={onClose}
+          />
         </Popover>
       );
 

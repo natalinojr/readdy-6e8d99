@@ -8,8 +8,10 @@ import { useModuleAccess } from '@/hooks/useModuleAccess';
 import { useUsuarios } from '@/hooks/useUsuarios';
 import PullToRefresh from '@/components/feature/PullToRefresh';
 import { useTarefas } from './hooks/useTarefas';
+import { supabase } from '@/lib/supabase';
 import { MODO_DEMO, USUARIOS_DEMO } from './demo/modoDemo';
 import type { TaskList } from './hooks/useTarefas';
+import { ehResponsavel, idsResponsaveis, responsaveis } from './lib/responsaveis';
 import ViewLista from './components/ViewLista';
 import ViewKanban from './components/ViewKanban';
 import ViewCalendario from './components/ViewCalendario';
@@ -84,7 +86,23 @@ export default function TarefasPage() {
     loading, error, reload, write, fetchDetail, fetchAnexos, enviarAnexo, abrirAnexo,
   } = useTarefas();
   const { usuarios: usuariosLoja } = useUsuarios();
-  const usuarios = MODO_DEMO ? USUARIOS_DEMO : usuariosLoja;
+  // Quem pode ser responsável: fn_get_task_pessoas (quem tem Tarefas + quem divide
+  // loja comigo). useUsuarios só responde a admin da loja — gerente via a lista
+  // vazia e quem tem Tarefas sem loja nunca aparecia.
+  const [pessoasTarefas, setPessoasTarefas] = useState<Array<{ id: string; nome: string; ativo: boolean }>>([]);
+  useEffect(() => {
+    if (MODO_DEMO || !eu.id) return;
+    supabase.rpc('fn_get_task_pessoas').then(({ data, error }) => {
+      if (!error && Array.isArray(data)) setPessoasTarefas((data as Array<{ id: string; nome: string }>).map((p) => ({ ...p, ativo: true })));
+    });
+  }, [eu.id]);
+  const usuarios = useMemo(() => {
+    if (MODO_DEMO) return USUARIOS_DEMO;
+    const porId = new Map<string, { id: string; nome: string; ativo: boolean }>();
+    for (const u of usuariosLoja) porId.set(u.id, { id: u.id, nome: u.nome, ativo: u.ativo });
+    for (const p of pessoasTarefas) if (!porId.has(p.id)) porId.set(p.id, p);
+    return [...porId.values()];
+  }, [usuariosLoja, pessoasTarefas]);
 
   // No celular a pergunta ao abrir é "o que eu tenho pra fazer?" — Minhas é a home.
   const [origem, setOrigem] = useState<Origem>(() =>
@@ -172,9 +190,8 @@ export default function TarefasPage() {
     const ids = new Set(lista.map((u) => u.id));
     if (eu.id && !ids.has(eu.id)) { lista.push({ id: eu.id, nome: eu.nome || 'Eu' }); ids.add(eu.id); }
     for (const t of tasks) {
-      if (t.assignee_id && t.assignee_name && !ids.has(t.assignee_id)) {
-        lista.push({ id: t.assignee_id, nome: t.assignee_name });
-        ids.add(t.assignee_id);
+      for (const r of responsaveis(t)) {
+        if (r.name && !ids.has(r.id)) { lista.push({ id: r.id, nome: r.name }); ids.add(r.id); }
       }
     }
     return lista.sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
@@ -185,7 +202,7 @@ export default function TarefasPage() {
   // Contagem ao lado de "Tarefas que atribuí": em aberto e quantas já passaram do prazo.
   const diaLocal = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   const resumoAtribuidas = useMemo(() => {
-    const minhasDelegadas = tasks.filter((t) => t.created_by === meuId && !!t.assignee_id && t.assignee_id !== meuId
+    const minhasDelegadas = tasks.filter((t) => t.created_by === meuId && idsResponsaveis(t).some((id) => id !== meuId)
       && t.status_category !== 'done' && t.status_category !== 'cancelled' && !t.parent_task_id);
     const agora = Date.now();
     const atrasadas = minhasDelegadas.filter((t) => t.due_date && (t.due_has_time
@@ -200,9 +217,10 @@ export default function TarefasPage() {
 
   const tarefasVisiveis = useMemo(() => {
     let base: typeof tasks;
-    if (origem === 'minhas') base = tasks.filter((t) => t.assignee_id === meuId);
-    else if (origem === 'compartilhadas') base = tasks.filter((t) => t.assignee_id === meuId && t.created_by !== meuId);
-    else if (origem === 'atribuidas') base = tasks.filter((t) => t.created_by === meuId && !!t.assignee_id && t.assignee_id !== meuId);
+    // Responsável = qualquer um da lista (uma tarefa pode ter vários).
+    if (origem === 'minhas') base = tasks.filter((t) => ehResponsavel(t, meuId));
+    else if (origem === 'compartilhadas') base = tasks.filter((t) => ehResponsavel(t, meuId) && t.created_by !== meuId);
+    else if (origem === 'atribuidas') base = tasks.filter((t) => t.created_by === meuId && idsResponsaveis(t).some((id) => id !== meuId));
     // Todas = tudo o que eu enxergo, inclusive as tarefas das pastas compartilhadas comigo.
     else if (origem === 'todas') base = tasks;
     else base = tasks.filter((t) => t.list_id === selectedList?.id);

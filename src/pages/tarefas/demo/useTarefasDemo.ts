@@ -49,6 +49,7 @@ function tarefa(p: Partial<TaskRow> & { id: string; list_id: string; title: stri
     ...p,
   };
   t.assignee_name = p.assignee_name ?? nome(p.assignee_id ?? null);
+  t.assignees = p.assignees ?? (t.assignee_id ? [{ id: t.assignee_id, name: t.assignee_name }] : []);
   return t;
 }
 
@@ -68,6 +69,14 @@ function inicial(): TaskRow[] {
     tarefa({ id: 't12', list_id: 'manut', title: 'Comprar tinta', parent_task_id: 't11', assignee_id: 'demo-carla', due_date: prazo(2) }),
   ];
 }
+
+// Funções fixas (mesma referência sempre): a janela da tarefa recarrega quando elas mudam.
+const FIXOS = {
+  reload: async () => {},
+  fetchAnexos: async (): Promise<TaskAnexo[]> => [],
+  enviarAnexo: async () => ({ success: false, error: 'Anexo não funciona no modo demonstração' }),
+  abrirAnexo: async (): Promise<string | null> => null,
+};
 
 interface Extra { description: string | null; checklist: ChecklistItem[]; comments: TaskComment[] }
 
@@ -119,7 +128,15 @@ export function useTarefasDemo() {
           for (const k of ['title', 'priority', 'assignee_id', 'start_date', 'due_date', 'due_has_time', 'sort_order', 'recurrence', 'time_estimate_minutes', 'time_plan', 'list_id'] as const) {
             if (p[k] !== undefined) (n as unknown as Record<string, unknown>)[k] = p[k];
           }
-          if (p.assignee_id !== undefined) n.assignee_name = nome(p.assignee_id as string | null);
+          if (Array.isArray(p.assignee_ids)) {
+            const ids = p.assignee_ids as string[];
+            n.assignees = ids.map((uid) => ({ id: uid, name: nome(uid) }));
+            n.assignee_id = t.assignee_id && ids.includes(t.assignee_id) ? t.assignee_id : (ids[0] ?? null);
+            n.assignee_name = nome(n.assignee_id);
+          } else if (p.assignee_id !== undefined) {
+            n.assignee_name = nome(p.assignee_id as string | null);
+            n.assignees = p.assignee_id ? [{ id: p.assignee_id as string, name: n.assignee_name }] : [];
+          }
           if (Array.isArray(p.tag_ids)) n.tags = TAGS.filter((tg) => (p.tag_ids as string[]).includes(tg.id));
           const lista = lists.find((l) => l.id === n.list_id)!;
           const st = typeof p.status_id === 'string'
@@ -197,7 +214,7 @@ export function useTarefasDemo() {
     const e = extrasRef.current[taskId] ?? extra(taskId);
     return {
       id: t.id, list_id: t.list_id, parent_task_id: t.parent_task_id, title: t.title, description: e.description,
-      status_id: t.status_id, priority: t.priority, assignee_id: t.assignee_id, assignee_name: t.assignee_name,
+      status_id: t.status_id, priority: t.priority, assignee_id: t.assignee_id, assignee_name: t.assignee_name, assignees: t.assignees,
       start_date: t.start_date, due_date: t.due_date, due_has_time: t.due_has_time, recurrence: t.recurrence,
       completed_at: t.completed_at, created_at: t.created_at, created_by: t.created_by, created_by_name: EU_DEMO.nome,
       tags: t.tags, checklist: e.checklist, comments: e.comments, activity: [],
@@ -208,7 +225,7 @@ export function useTarefasDemo() {
       field_values: t.field_values,
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tasks, extras]);
+  }, []); // estável (lê pelas refs): a janela da tarefa reinicia quando esta função muda
 
   const listasComContagem = lists.map((l) => ({
     ...l,
@@ -217,9 +234,7 @@ export function useTarefasDemo() {
 
   return {
     lists: listasComContagem, tasks, tags: TAGS, campos: [], notificacoes: [], views: [], templates: [],
-    loading: false, error: null as string | null, reload: async () => {}, write, fetchDetail,
-    fetchAnexos: async (): Promise<TaskAnexo[]> => [],
-    enviarAnexo: async () => ({ success: false, error: 'Anexo não funciona no modo demonstração' }),
-    abrirAnexo: async () => null,
+    loading: false, error: null as string | null, reload: FIXOS.reload, write, fetchDetail,
+    fetchAnexos: FIXOS.fetchAnexos, enviarAnexo: FIXOS.enviarAnexo, abrirAnexo: FIXOS.abrirAnexo,
   };
 }

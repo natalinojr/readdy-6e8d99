@@ -21,6 +21,8 @@ import EditorRecorrencia from './EditorRecorrencia';
 import { DICA_RECORRENCIA, descreverRecorrencia } from '../lib/recorrencia';
 import PlanoPorDia from './PlanoPorDia';
 import StatusPicker from './StatusPicker';
+import { responsaveis } from '../lib/responsaveis';
+import AvataresResponsaveis from './AvataresResponsaveis';
 import { iniciais, rotuloVencimento } from './TaskCard';
 import RelatoriosDaTarefa from '../relatorios/RelatoriosDaTarefa';
 
@@ -191,7 +193,7 @@ export default function TaskDrawer({
     time_estimate_minutes: null, time_tracked_seconds: 0, timer_started_at: null,
   };
   // Campos que mudam por aqui vêm sempre do detalhe recém-carregado.
-  const atual: TaskRow = { ...linha, assignee_id: detail.assignee_id, assignee_name: detail.assignee_name, priority: detail.priority, due_date: detail.due_date, tags: detail.tags };
+  const atual: TaskRow = { ...linha, assignee_id: detail.assignee_id, assignee_name: detail.assignee_name, assignees: detail.assignees ?? linha.assignees, priority: detail.priority, due_date: detail.due_date, tags: detail.tags };
 
   const nomeStatus = statusAtual?.name
     ?? CATEGORIAS_GENERICAS.find((c) => c.key === linha.status_category)?.label ?? 'Sem status';
@@ -292,13 +294,8 @@ export default function TaskDrawer({
             <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-0.5">
               <Propriedade icone={<UserIcon size={14} />} rotulo="Responsável">
                 <button onClick={abrirEditor('responsavel')} className={VALOR_CLS}>
-                  {detail.assignee_name ? (
-                    <>
-                      <span className="w-6 h-6 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center text-[10px] font-semibold shrink-0">
-                        {iniciais(detail.assignee_name)}
-                      </span>
-                      <span className="truncate text-slate-700">{detail.assignee_name}</span>
-                    </>
+                  {responsaveis(detail).length ? (
+                    <span className="text-slate-700 min-w-0"><AvataresResponsaveis pessoas={responsaveis(detail)} tamanho={6} max={4} /></span>
                   ) : VAZIO}
                 </button>
               </Propriedade>

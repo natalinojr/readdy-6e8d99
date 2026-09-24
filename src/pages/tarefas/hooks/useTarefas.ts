@@ -4,6 +4,7 @@ import { useEuTarefas } from './useEuTarefas';
 import { useToast } from '@/contexts/ToastContext';
 import { MODO_DEMO } from '../demo/modoDemo';
 import type { Recorrencia } from '../lib/recorrencia';
+import type { Responsavel } from '../lib/responsaveis';
 import { useTarefasDemo } from '../demo/useTarefasDemo';
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
@@ -90,6 +91,8 @@ export interface TaskRow {
   priority: number;
   assignee_id: string | null;
   assignee_name: string | null;
+  /** Todos os responsáveis (o principal primeiro). Ver lib/responsaveis. */
+  assignees?: Responsavel[];
   start_date: string | null;
   due_date: string | null;
   due_has_time: boolean;
@@ -148,6 +151,7 @@ export interface TaskDetail {
   priority: number;
   assignee_id: string | null;
   assignee_name: string | null;
+  assignees?: Responsavel[];
   start_date: string | null;
   due_date: string | null;
   due_has_time: boolean;
@@ -344,9 +348,20 @@ function useTarefasReal() {
 
     if (typeof p.title === 'string') n.title = p.title;
     if (p.priority !== undefined) n.priority = Number(p.priority);
-    if (p.assignee_id !== undefined) {
+    if (Array.isArray(p.assignee_ids)) {
+      // Vários responsáveis: mesma regra do task-write (principal fica se continuar na lista).
+      const ids = p.assignee_ids as string[];
+      const nomes = new Map((t.assignees ?? []).map((a) => [a.id, a.name]));
+      if (t.assignee_id) nomes.set(t.assignee_id, t.assignee_name);
+      n.assignees = ids.map((id) => ({ id, name: nomes.get(id) ?? null }));
+      n.assignee_id = t.assignee_id && ids.includes(t.assignee_id) ? t.assignee_id : (ids[0] ?? null);
+      n.assignee_name = n.assignee_id ? (nomes.get(n.assignee_id) ?? null) : null;
+    } else if (p.assignee_id !== undefined) {
       const novo = (p.assignee_id as string | null) ?? null;
-      if (novo !== t.assignee_id) n.assignee_name = null; // o reload traz o nome
+      if (novo !== t.assignee_id) {
+        n.assignee_name = null; // o reload traz o nome
+        n.assignees = novo ? [{ id: novo, name: null }] : [];
+      }
       n.assignee_id = novo;
     }
     if (p.due_date !== undefined) n.due_date = (p.due_date as string | null) ?? null;
