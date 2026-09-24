@@ -39,6 +39,7 @@ export const ACOES: AcaoDef[] = [
   { id: 'fechamento-dia', grupo: 'Financeiro', label: 'Fechamento do dia', icone: 'ri-scales-3-line', cor: 'bg-emerald-50 text-emerald-600', Componente: lazy(() => import('./financeiro/FechamentoDia')) },
   { id: 'vendas-dia', grupo: 'Operação', label: 'Vendas do dia', icone: 'ri-line-chart-line', cor: 'bg-orange-50 text-orange-600', Componente: lazy(() => import('./operacao/VendasDia')) },
   { id: 'pausar-item', grupo: 'Operação', label: 'Pausar/ativar item', icone: 'ri-pause-circle-line', cor: 'bg-orange-50 text-orange-600', Componente: lazy(() => import('./operacao/PausarItem')) },
+  { id: 'itens-pausados', grupo: 'Operação', label: 'Itens pausados', icone: 'ri-pause-mini-line', cor: 'bg-orange-50 text-orange-600', Componente: lazy(() => import('./operacao/ItensPausados')) },
   { id: 'pausar-delivery', grupo: 'Operação', label: 'Pausar delivery', icone: 'ri-motorbike-line', cor: 'bg-orange-50 text-orange-600', Componente: lazy(() => import('./operacao/PausarDelivery')) },
   { id: 'pedidos-atrasados', grupo: 'Operação', label: 'Pedidos atrasados', icone: 'ri-timer-flash-line', cor: 'bg-orange-50 text-orange-600', Componente: lazy(() => import('./operacao/PedidosAtrasados')) },
   { id: 'impressora-parada', grupo: 'Operação', label: 'Impressora parada', icone: 'ri-printer-line', cor: 'bg-orange-50 text-orange-600', Componente: lazy(() => import('./operacao/ImpressoraParada')) },

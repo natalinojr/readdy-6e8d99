@@ -59,6 +59,8 @@ const REGRAS: Record<string, (c: ContextoAcesso) => boolean> = {
   'fechamento-dia': (c) => fin(c, 'fin_conciliacao', 'fin_receitas'),
   'vendas-dia': (c) => algum(c, 'rel_geral', 'relatorio_financeiro', 'gestao_dashboard'),
   'pausar-item': (c) => c.pode('cardapio_editar'),
+  // Só leitura (a mesma RPC do cardápio que o PDV usa): quem edita o cardápio e quem atende precisa saber o que está fora.
+  'itens-pausados': (c) => algum(c, 'cardapio_editar', 'gestao_pedidos', 'pdv_abrir_caixa', 'kds_acessar'),
   // O botão Delivery do PDV Caixa não tem trava: quem abre caixa também pausa.
   'pausar-delivery': (c) => algum(c, 'gestao_delivery', 'pdv_abrir_caixa'),
   'pedidos-atrasados': (c) => algum(c, 'gestao_pedidos', 'gestor_pedidos_acessar', 'kds_acessar'),
