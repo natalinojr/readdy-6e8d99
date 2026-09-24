@@ -185,15 +185,24 @@ export default function ReceberPage() {
     fotoCupom.current = file;
     carregando('Procurando o QR Code…');
     const lido = await lerCodigoDaFoto(file).catch(() => ({ tipo: 'nada' as const }));
-    if (lido.tipo === 'qr' && isNfcePrQr(lido.url)) return lerCupomQr(lido.url);
+    let chaveDoQr: string | null = null;
+    if (lido.tipo === 'qr' && isNfcePrQr(lido.url)) {
+      carregando('Lendo o cupom na SEFAZ…');
+      try { await abrirCupom(await lerCupom(tenantId, { action: 'qrcode', url: lido.url })); return; } catch {
+        // SEFAZ fora do ar (24/09: "mal formatado" até para QR válido): lê a MESMA foto pela IA.
+        // Guarda a chave do QR para a trava de cupom repetido continuar valendo.
+        chaveDoQr = lido.url.match(/p=(\d{44})/)?.[1] ?? null;
+      }
+    }
     if (lido.tipo === 'chave') {
       if (!podeReceber) { setErro('Isso é uma nota fiscal (DANFE), não cupom de mercado. Peça a quem recebe mercadoria para dar entrada.'); setTela('inicio'); return; }
       return buscarCodigo(lido.chave);
     }
-    carregando('Lendo a notinha (leva uns segundos)…');
+    carregando(chaveDoQr ? 'A SEFAZ não respondeu — lendo pela foto (leva uns segundos)…' : 'Lendo a notinha (leva uns segundos)…');
     try {
       const { base64, mediaType } = await fotoParaEnvio(file);
-      await abrirCupom(await lerCupom(tenantId, { action: 'scan', file_base64: base64, media_type: mediaType }));
+      const scan = await lerCupom(tenantId, { action: 'scan', file_base64: base64, media_type: mediaType });
+      await abrirCupom(chaveDoQr && !scan.access_key ? { ...scan, access_key: chaveDoQr } : scan);
     } catch (e) { setErro((e as Error).message); setTela('inicio'); }
   };
 
@@ -349,7 +358,7 @@ export default function ReceberPage() {
 
       <input ref={inputCodigo} type="file" accept="image/*" capture="environment" className="hidden"
         onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; onFotoCodigo(f); }} />
-      <input ref={inputCupom} type="file" accept="image/*,application/pdf" capture="environment" className="hidden"
+      <input ref={inputCupom} type="file" accept="image/*" capture="environment" className="hidden"
         onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; onFotoCupom(f); }} />
 
       {scanner && <ScannerQR onLido={onLidoAoVivo} onLink={(url) => onLidoAoVivo({ tipo: 'qr', url })} onFoto={() => { setScanner(false); inputCupom.current?.click(); }} onFechar={() => setScanner(false)} />}
