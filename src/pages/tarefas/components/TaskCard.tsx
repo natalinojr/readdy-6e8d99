@@ -31,11 +31,14 @@ export function rotuloVencimento(task: TaskRow): { text: string; className: stri
   dueDay.setHours(0, 0, 0, 0);
   const diffDays = Math.round((dueDay.getTime() - hoje.getTime()) / 86400000);
   const concluida = task.status_category === 'done' || task.status_category === 'cancelled';
-  const text = due.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' });
+  // Com horário: mostra a hora e fica "atrasada" assim que passa dela (não só no dia seguinte).
+  const hora = task.due_has_time ? ` ${due.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}` : '';
+  const text = due.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' }) + hora;
+  const passou = task.due_has_time ? due.getTime() < Date.now() : diffDays < 0;
   if (concluida) return { text, className: 'text-slate-400' };
-  if (diffDays < 0) return { text, className: 'text-red-600 font-medium' };
-  if (diffDays === 0) return { text: 'Hoje', className: 'text-amber-600 font-medium' };
-  if (diffDays === 1) return { text: 'Amanhã', className: 'text-amber-500' };
+  if (passou) return { text: diffDays === 0 ? `Hoje${hora}` : text, className: 'text-red-600 font-medium' };
+  if (diffDays === 0) return { text: `Hoje${hora}`, className: 'text-amber-600 font-medium' };
+  if (diffDays === 1) return { text: `Amanhã${hora}`, className: 'text-amber-500' };
   return { text, className: 'text-slate-500' };
 }
 

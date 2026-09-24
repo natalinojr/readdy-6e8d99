@@ -5,6 +5,7 @@ import type { CampoCustom, TaskList, TaskRow } from '../hooks/useTarefas';
 import type { UsuarioOption } from '../lib/agrupamento';
 import { useIsMobile } from '../lib/mobile';
 import TaskCard from './TaskCard';
+import { partesDoPrazo, prazoParaGravar } from './EditorCelula';
 
 interface ViewCalendarioProps {
   list: TaskList | null;
@@ -104,8 +105,11 @@ export default function ViewCalendario({
   const remarcar = async (taskId: string, chave: string) => {
     setArrastandoId(null);
     setDiaAlvo(null);
-    // Meio-dia UTC mantém a data estável em qualquer fuso do Brasil
-    const res = await write('update_task', { task_id: taskId, due_date: `${chave}T12:00:00Z` });
+    // Sem horário: meio-dia UTC (dia estável em qualquer fuso do Brasil). Com
+    // horário: mantém a hora e só troca o dia.
+    const task = tasks.find((t) => t.id === taskId);
+    const hora = task?.due_has_time ? partesDoPrazo(task.due_date, true).hora : null;
+    const res = await write('update_task', { task_id: taskId, ...prazoParaGravar(chave, hora) });
     if (!res.success) toast.error('Erro ao remarcar tarefa', res.error);
   };
 

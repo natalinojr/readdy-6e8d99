@@ -742,6 +742,29 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         return json({ success: true });
       }
 
+      // ═══ Avisos de vencimento: preferências da própria pessoa ═══
+      case 'set_notification_prefs': {
+        const { ativo, lembretes, hora_dia_todo, vibrar, incluir_criadas_sem_resp } = body;
+        const lista = Array.isArray(lembretes) ? [...new Set(lembretes as unknown[])] : [];
+        if (lista.length > 8 || !lista.every((m) => typeof m === 'number' && Number.isInteger(m) && m >= 0 && m <= 10080)) {
+          return json({ error: 'lembretes: até 8 valores em minutos, de 0 a 7 dias' }, 400);
+        }
+        if (typeof hora_dia_todo !== 'string' || !/^([01]\d|2[0-3]):[0-5]\d$/.test(hora_dia_todo)) {
+          return json({ error: 'hora_dia_todo deve ser HH:MM' }, 400);
+        }
+        const { error } = await admin.from('task_notification_prefs').upsert({
+          user_id: user.id,
+          ativo: ativo !== false,
+          lembretes: (lista as number[]).sort((a, b) => b - a),
+          hora_dia_todo,
+          vibrar: vibrar !== false,
+          incluir_criadas_sem_resp: incluir_criadas_sem_resp !== false,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'user_id' });
+        if (error) return json({ error: errMsg(error) }, 500);
+        return json({ success: true });
+      }
+
       // ═══ Carga de trabalho: horas por dia de cada pessoa ═══
       case 'set_capacity': {
         // hours[0] = domingo … hours[6] = sábado. Qualquer um pode ajustar as

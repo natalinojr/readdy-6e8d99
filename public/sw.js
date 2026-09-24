@@ -140,6 +140,11 @@ self.addEventListener('push', (event) => {
     renotify: true,
     data: { url: dados.url || '/tarefas' },
   };
+  // Aviso de vencimento: padrão de vibração (Android; iPhone ignora) e fica na
+  // tela até tocar quando é "vence agora".
+  if (Array.isArray(dados.vibrate) && dados.vibrate.length) opcoes.vibrate = dados.vibrate;
+  if (dados.requireInteraction) opcoes.requireInteraction = true;
+  if (dados.silencioso) opcoes.silent = true; // pessoa desligou som/vibração dos avisos
 
   event.waitUntil((async () => {
     await self.registration.showNotification(titulo, opcoes);

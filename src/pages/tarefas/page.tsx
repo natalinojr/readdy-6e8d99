@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
-import { Plus, ListTodo, LayoutGrid, CalendarDays, ClipboardList, UserCheck, Users, Layers, SlidersHorizontal, ListChecks, Waypoints, ArrowLeft, Gauge, Share2, LayoutTemplate } from 'lucide-react';
+import { Plus, ListTodo, LayoutGrid, CalendarDays, ClipboardList, UserCheck, Users, Layers, SlidersHorizontal, ListChecks, Waypoints, ArrowLeft, Gauge, Share2, LayoutTemplate, BellRing } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
 import { useEuTarefas } from './hooks/useEuTarefas';
 import { useAppMode } from '@/contexts/AppModeContext';
@@ -25,6 +25,7 @@ import FiltrosBar from './components/FiltrosBar';
 import ArvorePastas from './components/ArvorePastas';
 import ConfirmDialog from './components/ConfirmDialog';
 import CompartilharPasta from './components/CompartilharPasta';
+import ConfigAvisos from './components/ConfigAvisos';
 import { BottomNav, ListasSheet } from './components/MobileNav';
 import type { Filtros, GroupBy } from './lib/agrupamento';
 import { FILTROS_VAZIOS, aplicarFiltros } from './lib/agrupamento';
@@ -91,6 +92,7 @@ export default function TarefasPage() {
   const [showNewList, setShowNewList] = useState(false);
   const [showCampos, setShowCampos] = useState(false);
   const [showTemplates, setShowTemplates] = useState(false);
+  const [showAvisos, setShowAvisos] = useState(false);
   const [telaModelos, setTelaModelos] = useState<TelaModelos | null>(null);
   const [showStatus, setShowStatus] = useState(false);
   const [showListasSheet, setShowListasSheet] = useState(false);
@@ -467,6 +469,12 @@ export default function TarefasPage() {
             >
               <LayoutTemplate size={13} /> Modelos de pastas
             </button>
+            <button
+              onClick={() => setShowAvisos(true)}
+              className="w-full flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs text-slate-500 hover:bg-slate-50 hover:text-indigo-600"
+            >
+              <BellRing size={13} /> Avisos de vencimento
+            </button>
         </div>
       </aside>
 
@@ -626,6 +634,7 @@ export default function TarefasPage() {
           onStatus={() => setShowStatus(true)}
           onCampos={() => setShowCampos(true)}
           onTemplates={() => setShowTemplates(true)}
+          onAvisos={() => setShowAvisos(true)}
           onModelos={() => setTelaModelos({ tipo: 'lista' })}
           onClose={() => setShowListasSheet(false)}
         />
@@ -750,6 +759,8 @@ export default function TarefasPage() {
           onClose={() => setShowCampos(false)}
         />
       )}
+
+      {showAvisos && <ConfigAvisos tenantId={eu.tenantId} write={write} onClose={() => setShowAvisos(false)} />}
 
       {/* ── Templates de checklist ── */}
       {showTemplates && (

@@ -164,37 +164,86 @@ function hojeMais(dias: number): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-function EditorData({ atual, onEscolher }: { atual: string | null; onEscolher: (dia: string | null) => void }) {
+/** Dia (YYYY-MM-DD) e hora (HH:MM) LOCAIS de um vencimento guardado em ISO. */
+export function partesDoPrazo(iso: string | null, comHora: boolean): { dia: string | null; hora: string | null } {
+  if (!iso) return { dia: null, hora: null };
+  const d = new Date(iso);
+  const dia = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  return { dia, hora: comHora ? `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}` : null };
+}
+
+/** Grava o vencimento: com hora = instante local exato; sem hora = meio-dia UTC (dia estável em qualquer fuso do Brasil). */
+export function prazoParaGravar(dia: string | null, hora: string | null): { due_date: string | null; due_has_time: boolean } {
+  if (!dia) return { due_date: null, due_has_time: false };
+  if (hora) return { due_date: new Date(`${dia}T${hora}:00`).toISOString(), due_has_time: true };
+  return { due_date: `${dia}T12:00:00Z`, due_has_time: false };
+}
+
+function EditorData({ atual, onEscolher, comHorario = false, horaAtual = null }: {
+  atual: string | null;
+  onEscolher: (dia: string | null, hora?: string | null) => void;
+  /** Vencimento de tarefa: mostra o campo de horário (opcional). */
+  comHorario?: boolean;
+  horaAtual?: string | null;
+}) {
+  const [hora, setHora] = useState<string>(horaAtual ?? '');
   const atalhos = [
     { label: 'Hoje', dia: hojeMais(0) },
     { label: 'Ontem', dia: hojeMais(-1) },
     { label: 'Amanhã', dia: hojeMais(1) },
   ];
+  const escolher = (dia: string | null) => onEscolher(dia, comHorario ? (hora || null) : undefined);
 
   return (
     <div>
+      {comHorario && (
+        <div className="px-1 pb-2 mb-1 border-b border-slate-100">
+          <span className="block text-[10px] max-md:text-xs text-slate-400 px-1 mb-1">Horário (opcional)</span>
+          <div className="flex items-center gap-1.5">
+            <input
+              type="time"
+              value={hora}
+              onChange={(e) => setHora(e.target.value)}
+              className="flex-1 min-w-0 border border-slate-200 rounded-lg px-2 py-1.5 text-xs max-md:text-base max-md:py-2.5 bg-white outline-none focus:border-indigo-300"
+              aria-label="Horário do vencimento"
+            />
+            {atual && hora && hora !== horaAtual && (
+              <button type="button" onClick={() => onEscolher(atual, hora)} title="Salvar horário"
+                className="p-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 shrink-0">
+                <Check size={13} />
+              </button>
+            )}
+            {horaAtual && (
+              <button type="button" onClick={() => onEscolher(atual, null)}
+                className="px-2 py-1.5 rounded-lg text-[11px] max-md:text-sm text-slate-500 hover:bg-slate-100 shrink-0">
+                Sem horário
+              </button>
+            )}
+          </div>
+        </div>
+      )}
       {atalhos.map((a) => (
-        <Opcao key={a.label} ativo={atual === a.dia} onClick={() => onEscolher(a.dia)}>
+        <Opcao key={a.label} ativo={atual === a.dia} onClick={() => escolher(a.dia)}>
           <span>{a.label}</span>
-          <span className="ml-auto text-[10px] text-slate-400">{a.dia.slice(8, 10)}/{a.dia.slice(5, 7)}</span>
+          <span className="ml-auto text-[10px] text-slate-400">{a.dia.slice(8, 10)}/{a.dia.slice(5, 7)}{comHorario && hora ? ` ${hora}` : ''}</span>
         </Opcao>
       ))}
       <div className="border-t border-slate-100 mt-1 pt-1.5 px-1">
-        <span className="block text-[10px] text-slate-400 px-1 mb-1">Escolher data</span>
+        <span className="block text-[10px] max-md:text-xs text-slate-400 px-1 mb-1">Escolher data</span>
         <input
           type="date"
           defaultValue={atual ?? ''}
           // Abre o calendário com um clique em qualquer ponto do campo (não só no ícone).
           onClick={(e) => { try { e.currentTarget.showPicker(); } catch { /* navegador sem showPicker */ } }}
-          onChange={(e) => onEscolher(e.target.value || null)}
+          onChange={(e) => escolher(e.target.value || null)}
           className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs max-md:text-base max-md:py-2.5 bg-white outline-none focus:border-indigo-300"
         />
       </div>
       {atual && (
         <button
           type="button"
-          onClick={() => onEscolher(null)}
-          className="w-full mt-1 px-2 py-1.5 rounded-lg text-xs text-left text-red-500 hover:bg-red-50"
+          onClick={() => onEscolher(null, null)}
+          className="w-full mt-1 px-2 py-1.5 max-md:py-3 rounded-lg text-xs max-md:text-[15px] text-left text-red-500 hover:bg-red-50"
         >
           Remover data
         </button>
@@ -316,10 +365,12 @@ export default function EditorCelula({ coluna, task, anchorRect, campos, usuario
 
     case 'vencimento':
       return (
-        <Popover anchorRect={anchorRect} largura={210} onClose={onClose}>
+        <Popover anchorRect={anchorRect} largura={230} onClose={onClose}>
           <EditorData
-            atual={task.due_date ? task.due_date.slice(0, 10) : null}
-            onEscolher={(dia) => atualizar({ due_date: dia ? `${dia}T12:00:00Z` : null })}
+            comHorario
+            atual={partesDoPrazo(task.due_date, task.due_has_time).dia}
+            horaAtual={partesDoPrazo(task.due_date, task.due_has_time).hora}
+            onEscolher={(dia, hora) => atualizar(prazoParaGravar(dia, hora ?? null))}
           />
         </Popover>
       );

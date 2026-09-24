@@ -83,7 +83,7 @@ describe('ViewLista (tarefas)', () => {
     fireEvent.click(screen.getByText('Ontem'));
     const d = new Date(); d.setDate(d.getDate() - 1);
     const ontem = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    expect(write).toHaveBeenCalledWith('update_task', { task_id: 'b', due_date: `${ontem}T12:00:00Z` });
+    expect(write).toHaveBeenCalledWith('update_task', { task_id: 'b', due_date: `${ontem}T12:00:00Z`, due_has_time: false });
   });
 
   it('arrastar muda a ordem: soltar antes da primeira linha', () => {

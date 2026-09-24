@@ -17,12 +17,23 @@ const ICONE: Record<TaskNotificacao['type'], typeof AtSign> = {
   assigned: UserPlus,
   mentioned: AtSign,
   commented: MessageSquare,
+  due: AlertCircle,
 };
+
+/** "Vence em 1h", "Vence agora"… a partir do payload gravado pela edge task-lembretes. */
+function textoVencimento(p: Record<string, unknown>): string {
+  const m = Number(p.minutos_antes ?? 0);
+  if (m === 0) return p.due_has_time ? 'Vence agora' : 'Vence hoje';
+  if (m % 1440 === 0) return m === 1440 ? 'Vence amanhã' : `Vence em ${m / 1440} dias`;
+  if (m % 60 === 0) return `Vence em ${m / 60}h`;
+  return `Vence em ${m} min`;
+}
 
 const ROTULO: Record<TaskNotificacao['type'], string> = {
   assigned: 'atribuiu esta tarefa a você',
   mentioned: 'mencionou você',
   commented: 'comentou na sua tarefa',
+  due: '',
 };
 
 /**
@@ -230,7 +241,9 @@ export default function NotificacoesInbox({
                     <Icone size={14} className={`mt-0.5 shrink-0 ${n.is_read ? 'text-slate-400' : 'text-indigo-500'}`} />
                     <div className="flex-1 min-w-0">
                       <p className="text-xs text-slate-700 leading-snug">
-                        <strong>{n.actor_name ?? 'Alguém'}</strong> {ROTULO[n.type]}
+                        {n.type === 'due'
+                          ? <strong>⏰ {textoVencimento(n.payload)}</strong>
+                          : <><strong>{n.actor_name ?? 'Alguém'}</strong> {ROTULO[n.type]}</>}
                       </p>
                       <p className="text-xs text-slate-500 truncate">{n.task_title ?? 'Tarefa'}</p>
                       {trecho && <p className="text-[11px] text-slate-400 truncate italic">"{trecho}"</p>}

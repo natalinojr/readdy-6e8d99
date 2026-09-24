@@ -3,7 +3,7 @@
  * Mesmo formato de retorno; `write` aplica as ações principais do task-write
  * localmente pra dar pra criar, editar, concluir e cronometrar de verdade.
  */
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import type {
   ChecklistItem, TaskAnexo, TaskComment, TaskDetail, TaskList, TaskRow, TaskStatus, TaskTag,
 } from '../hooks/useTarefas';
@@ -86,11 +86,18 @@ export function useTarefasDemo() {
     },
   });
 
+  // A janela da tarefa relê o detalhe logo depois de gravar: lê sempre o estado
+  // mais novo (ref), e o write espera o React aplicar antes de responder.
+  const tasksRef = useRef(tasks);
+  tasksRef.current = tasks;
+  const extrasRef = useRef(extras);
+  extrasRef.current = extras;
+
   const extra = (id: string): Extra => extras[id] ?? { description: null, checklist: [], comments: [] };
   const mudarExtra = (id: string, f: (e: Extra) => Extra) => setExtras((prev) => ({ ...prev, [id]: f(prev[id] ?? { description: null, checklist: [], comments: [] }) }));
   const mudarTarefa = (id: string, f: (t: TaskRow) => TaskRow) => setTasks((prev) => prev.map((t) => (t.id === id ? f(t) : t)));
 
-  const write = useCallback(async (action: string, p: Record<string, unknown> = {}): Promise<{ success: boolean; id?: string; error?: string }> => {
+  const aplicar = useCallback(async (action: string, p: Record<string, unknown> = {}): Promise<{ success: boolean; id?: string; error?: string }> => {
     const id = p.task_id as string | undefined;
     switch (action) {
       case 'create_task': {
@@ -176,20 +183,25 @@ export function useTarefasDemo() {
       default:
         return { success: true }; // demais ações: aceitas sem efeito no demo
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lists]);
 
+  const write = useCallback(async (action: string, p: Record<string, unknown> = {}) => {
+    const res = await aplicar(action, p);
+    await new Promise((r) => setTimeout(r, 50));
+    return res;
+  }, [aplicar]);
+
   const fetchDetail = useCallback(async (taskId: string): Promise<TaskDetail | null> => {
-    const t = tasks.find((x) => x.id === taskId);
+    const t = tasksRef.current.find((x) => x.id === taskId);
     if (!t) return null;
-    const e = extra(taskId);
+    const e = extrasRef.current[taskId] ?? extra(taskId);
     return {
       id: t.id, list_id: t.list_id, parent_task_id: t.parent_task_id, title: t.title, description: e.description,
       status_id: t.status_id, priority: t.priority, assignee_id: t.assignee_id, assignee_name: t.assignee_name,
       start_date: t.start_date, due_date: t.due_date, due_has_time: t.due_has_time, recurrence: t.recurrence,
       completed_at: t.completed_at, created_at: t.created_at, created_by: t.created_by, created_by_name: EU_DEMO.nome,
       tags: t.tags, checklist: e.checklist, comments: e.comments, activity: [],
-      subtasks: tasks.filter((s) => s.parent_task_id === t.id).map((s) => ({
+      subtasks: tasksRef.current.filter((s) => s.parent_task_id === t.id).map((s) => ({
         id: s.id, title: s.title, status_id: s.status_id, status_category: s.status_category,
         assignee_id: s.assignee_id, due_date: s.due_date, priority: s.priority,
       })),
