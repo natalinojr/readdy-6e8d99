@@ -467,7 +467,7 @@ export default function ConciliacaoTab() {
   const [showInterConfig, setShowInterConfig] = useState(false);
   const [showInicioFin, setShowInicioFin] = useState(false);
   // false = fechada; true = abre na aba que precisa de atenção; ou a aba escolhida
-  const [showIntegracoes, setShowIntegracoes] = useState<boolean | AbaIntegracao>(false);
+  const [showIntegracoes, setShowIntegracoes] = useState<boolean | AbaIntegracao | 'mp-taxas'>(false);
   const [showComoEntra, setShowComoEntra] = useState(false);
   const [showRepassesStone, setShowRepassesStone] = useState<false | 'repasses' | 'taxas'>(false);
   const { flow: moneyFlow, reload: reloadMoneyFlow } = useMoneyFlow();
@@ -1176,7 +1176,7 @@ export default function ConciliacaoTab() {
             <div className="border-t border-zinc-100 my-1" />
             <p className="px-3 pt-1 pb-0.5 text-[11px] font-semibold text-zinc-400 uppercase tracking-wide">Integrações</p>
             <MenuItem icon="ri-pulse-line" label="Banco e maquininhas" hint="Situação, atualizar e histórico (Inter, Stone, Mercado Pago)" onClick={() => { setMenuConfig(false); setShowIntegracoes(true); }} />
-            <MenuItem icon="ri-percent-line" label="Taxas do Mercado Pago" hint="Taxa efetiva por tipo de cartão" onClick={() => { setMenuConfig(false); setShowIntegracoes('mp'); }} />
+            <MenuItem icon="ri-percent-line" label="Taxas do Mercado Pago" hint="Taxa efetiva por tipo de cartão" onClick={() => { setMenuConfig(false); setShowIntegracoes('mp-taxas'); }} />
             <MenuItem icon="ri-restaurant-2-line" label="iFood" onClick={() => { setMenuConfig(false); setShowIfoodConfig(true); }} />
           </DropMenu>
         </div>
@@ -1781,7 +1781,8 @@ export default function ConciliacaoTab() {
       {showIntegracoes !== false && (
         <IntegracoesModal
           maquininha={usaMp ? 'mercadopago' : usaStone ? 'stone' : null}
-          abaInicial={showIntegracoes === true ? undefined : showIntegracoes}
+          abaInicial={showIntegracoes === true ? undefined : showIntegracoes === 'mp-taxas' ? 'mp' : showIntegracoes}
+          mpParteInicial={showIntegracoes === 'mp-taxas' ? 'taxas' : undefined}
           interRefreshKey={interRefreshKey}
           onClose={() => setShowIntegracoes(false)}
           onChanged={() => { refresh(); }}

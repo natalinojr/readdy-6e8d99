@@ -53,6 +53,7 @@ interface MpConfig {
 interface Props {
   onImportDone: () => void;
   onConfigureClick: () => void;
+  parteInicial?: ParteMp;
 }
 
 type ImportResp = {
@@ -65,7 +66,8 @@ type ReleaseResp = {
   results?: Array<{ file: string; error?: string; rows?: number; movements?: number; inserted?: number }>;
 };
 
-type Parte = 'vendas' | 'taxas' | 'saques';
+export type ParteMp = 'vendas' | 'taxas' | 'saques';
+type Parte = ParteMp;
 const PARTES: Array<{ id: Parte; label: string; icon: string }> = [
   { id: 'vendas', label: 'Vendas por dia', icon: 'ri-calendar-2-line' },
   { id: 'taxas', label: 'Taxas por cartão', icon: 'ri-percent-line' },
@@ -79,7 +81,7 @@ function addDaysISO(iso: string, days: number) {
 }
 const fmtDia = (iso: string) => new Date(iso + 'T00:00:00').toLocaleDateString('pt-BR');
 
-export default function MpImportPanel({ onImportDone, onConfigureClick }: Props) {
+export default function MpImportPanel({ onImportDone, onConfigureClick, parteInicial = 'vendas' }: Props) {
   const { user } = useAuth();
   const hoje = todayBrasilia();
   const [config, setConfig] = useState<MpConfig | null>(null);
@@ -88,7 +90,7 @@ export default function MpImportPanel({ onImportDone, onConfigureClick }: Props)
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<null | 'import' | 'fetch' | 'request'>(null);
   const [result, setResult] = useState<Resultado>(null);
-  const [parte, setParte] = useState<Parte>('vendas');
+  const [parte, setParte] = useState<Parte>(parteInicial);
   const [relFrom, setRelFrom] = useState(addDaysISO(hoje, -6));
   const [relTo, setRelTo] = useState(hoje);
 

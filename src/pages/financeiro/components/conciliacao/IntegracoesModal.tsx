@@ -3,7 +3,7 @@ import { invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import InterSyncPanel from './InterSyncPanel';
 import StoneImportPanel from './StoneImportPanel';
-import MpImportPanel from './MpImportPanel';
+import MpImportPanel, { type ParteMp } from './MpImportPanel';
 import { quando } from './integracoesUi';
 
 // Janela "Integrações" da Conciliação: uma aba por integração (Inter, Stone, Mercado Pago), cada uma
@@ -25,6 +25,8 @@ interface Props {
   /** Maquininha principal da loja ("Como o dinheiro entra") — vem logo depois do banco */
   maquininha: 'stone' | 'mercadopago' | null;
   abaInicial?: AbaIntegracao;
+  /** Parte da aba Mercado Pago que abre primeiro (atalho "Taxas do Mercado Pago" → 'taxas') */
+  mpParteInicial?: ParteMp;
   interRefreshKey?: number;
   onClose: () => void;
   onChanged: () => void;
@@ -33,7 +35,7 @@ interface Props {
   onVerRepassesStone: () => void;
 }
 
-export default function IntegracoesModal({ maquininha, abaInicial, interRefreshKey, onClose, onChanged, onInterSynced, onConfig, onVerRepassesStone }: Props) {
+export default function IntegracoesModal({ maquininha, abaInicial, mpParteInicial, interRefreshKey, onClose, onChanged, onInterSynced, onConfig, onVerRepassesStone }: Props) {
   const { user } = useAuth();
   const [situacao, setSituacao] = useState<Partial<Record<AbaIntegracao, Situacao>>>({});
   const [aba, setAba] = useState<AbaIntegracao | null>(abaInicial ?? null);
@@ -105,7 +107,7 @@ export default function IntegracoesModal({ maquininha, abaInicial, interRefreshK
             <StoneImportPanel onImportDone={depois} onConfigureClick={() => onConfig('stone')} onVerRepasses={onVerRepassesStone} />
           )}
           {aba === 'mp' && (
-            <MpImportPanel onImportDone={depois} onConfigureClick={() => onConfig('mp')} />
+            <MpImportPanel onImportDone={depois} onConfigureClick={() => onConfig('mp')} parteInicial={mpParteInicial} />
           )}
           {aba === null && (
             <div className="flex justify-center py-10"><div className="w-5 h-5 border-2 border-zinc-400 border-t-transparent rounded-full animate-spin" /></div>

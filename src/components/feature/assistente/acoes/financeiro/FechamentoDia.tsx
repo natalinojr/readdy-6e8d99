@@ -13,7 +13,7 @@ import { Roteiro, useRoteiro, EscolhaData, Fim, OpcaoNeutra, brl, dataBR, hojeIS
 import { Painel, Kpis, Linhas, Chip, type Status } from '../painel';
 
 interface ByPayment { payment_method: string; payment_type: string; total: number; count: number }
-interface StoneDia { reference_date: string; status: string; sales_count?: number | null; sales_gross?: number | null; payments_total?: number | null; error_message?: string | null }
+interface StoneDia { reference_date: string; status: string; sales_count?: number | null; sales_gross?: number | null; payments_total?: number | null; total_credit?: number | null; total_debit?: number | null; error_message?: string | null }
 const TOLERANCIA = 1; // R$: diferença menor que isso é arredondamento/gorjeta miúda
 const CARTAO = ['credit_card', 'debit_card'];
 
@@ -96,7 +96,8 @@ export default function FechamentoDia({ onFechar, irPara }: AcaoProps) {
               principal={{ label: 'Stone vendas brutas', valor: brl(stone), extra: <Chip texto={`Stone − ERPOS: ${d.texto}`} status={d.status} /> }}
               outros={[{ label: 'ERPOS crédito+débito', valor: brl(cartaoErp) }, { label: 'Vendas Stone', valor: String(Number(s.sales_count ?? 0)) }]}
             />
-            {s.payments_total != null && <Linhas itens={[{ label: 'Depósitos da Stone no dia', valor: brl(Number(s.payments_total)) }]} />}
+            {/* Sem a seção <Payments> no arquivo (Paranaguá nunca teve), o liquidado é créditos − débitos do dia. */}
+            <Linhas itens={[{ label: 'Stone liquidou no dia', valor: brl(Number(s.payments_total ?? 0) > 0 ? Number(s.payments_total) : Number(s.total_credit ?? 0) - Number(s.total_debit ?? 0)) }]} />
           </Painel>,
         );
       }

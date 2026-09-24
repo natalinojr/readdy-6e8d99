@@ -50,6 +50,10 @@ function addDaysISO(iso: string, days: number) {
   return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
 }
 const fmtDia = (iso: string) => new Date(iso + 'T00:00:00').toLocaleDateString('pt-BR');
+// Quanto a Stone liquidou no dia. O arquivo nem sempre traz a seção <Payments> (na Paranaguá nunca
+// trouxe: payments_total ficava 0 em todos os dias); aí o liquidado é créditos − débitos das linhas,
+// que bate com o depósito no banco.
+const liquidado = (credito: number, debito: number, payments: number) => (payments > 0 ? payments : credito - debito);
 
 export default function StoneImportPanel({ onImportDone, onConfigureClick, onVerRepasses }: Props) {
   const { user } = useAuth();
@@ -88,7 +92,7 @@ export default function StoneImportPanel({ onImportDone, onConfigureClick, onVer
       const erros = (d.results ?? []).filter((r) => r.error);
       setImportResult({
         ok: erros.length === 0,
-        msg: `${d.days_ok}/${d.days} dia(s) · ${d.inserted ?? 0} lançamento(s) novo(s) · ${d.matched ?? 0} conciliado(s) sozinhos · repasses ${formatCurrency(Number(d.payments_total ?? 0))}`,
+        msg: `${d.days_ok}/${d.days} dia(s) · ${d.inserted ?? 0} lançamento(s) novo(s) · ${d.matched ?? 0} conciliado(s) sozinhos · liquidado ${formatCurrency(liquidado(Number(d.credit ?? 0), Number(d.debit ?? 0), Number(d.payments_total ?? 0)))}`,
         details: erros.length > 0 ? erros.map((e) => `${fmtDia(e.date)}: ${e.error}`).join(' | ') : (d.credit || d.debit) ? `Créditos ${formatCurrency(Number(d.credit ?? 0))} · Débitos (tarifas/chargebacks) ${formatCurrency(Number(d.debit ?? 0))}` : undefined,
       });
     }
@@ -149,7 +153,7 @@ export default function StoneImportPanel({ onImportDone, onConfigureClick, onVer
           <tr>
             <th className="text-left px-4 py-2 text-zinc-500 font-semibold">Dia</th>
             <th className="text-right px-4 py-2 text-zinc-500 font-semibold">Vendas</th>
-            <th className="text-right px-4 py-2 text-zinc-500 font-semibold">Repasse</th>
+            <th className="text-right px-4 py-2 text-zinc-500 font-semibold" title="Quanto a Stone liquidou no dia (vai para o banco)">Liquidado</th>
             <th className="text-right px-4 py-2 text-zinc-500 font-semibold hidden sm:table-cell">Tarifas/chargebacks</th>
             <th className="text-right px-4 py-2 text-zinc-500 font-semibold hidden sm:table-cell">Buscado em</th>
           </tr>
@@ -165,7 +169,7 @@ export default function StoneImportPanel({ onImportDone, onConfigureClick, onVer
               )}
             </td>
             <td className="px-4 py-2.5 text-right text-zinc-600 whitespace-nowrap">{h.sales_count != null ? `${h.sales_count} · ${formatCurrency(Number(h.sales_gross ?? 0))}` : '—'}</td>
-            <td className="px-4 py-2.5 text-right text-zinc-800 font-semibold">{h.payments_total != null ? formatCurrency(Number(h.payments_total)) : '—'}</td>
+            <td className="px-4 py-2.5 text-right text-zinc-800 font-semibold">{(() => { const v = liquidado(Number(h.total_credit ?? 0), Number(h.total_debit ?? 0), Number(h.payments_total ?? 0)); return v !== 0 ? formatCurrency(v) : '—'; })()}</td>
             <td className="px-4 py-2.5 text-right text-red-600 hidden sm:table-cell">{Number(h.total_debit ?? 0) > 0 ? formatCurrency(Number(h.total_debit)) : '—'}</td>
             <td className="px-4 py-2.5 text-right text-zinc-400 hidden sm:table-cell">{quando(h.imported_at)}</td>
           </tr>
