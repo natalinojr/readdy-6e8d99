@@ -19,6 +19,41 @@ interface TaskCardProps {
   variante?: 'card' | 'pill';
   /** Pílula de tarefa de vários dias: em que dia do período está (ex.: 2 de 5). */
   trecho?: { dia: number; total: number } | null;
+  /** Pílula: alças nas pontas para arrastar o início/o vencimento para outro dia. */
+  onRedimensionar?: (lado: 'inicio' | 'fim', e: React.DragEvent) => void;
+  /**
+   * Pílula de vários dias emendada com o dia anterior/seguinte da mesma semana:
+   * vira uma barra contínua (sem borda arredondada nem título repetido).
+   */
+  emenda?: { antes: boolean; depois: boolean };
+  /** Todos os pedaços da mesma tarefa acendem juntos ao passar o mouse. */
+  realcado?: boolean;
+  onRealcar?: (ligado: boolean) => void;
+}
+
+/** Ponta da pílula do calendário: arrastar muda o início (esquerda) ou o vencimento (direita). */
+function AlcaPilula({ lado, onRedimensionar, visivel }: {
+  lado: 'inicio' | 'fim';
+  visivel?: boolean;
+  onRedimensionar: (lado: 'inicio' | 'fim', e: React.DragEvent) => void;
+}) {
+  return (
+    <span
+      draggable
+      data-alca={lado}
+      title={lado === 'inicio' ? 'Arraste para mudar o início' : 'Arraste para mudar o vencimento'}
+      onDragStart={(e) => {
+        e.stopPropagation(); // não dispara o "mover" da pílula
+        onRedimensionar(lado, e);
+      }}
+      onClick={(e) => e.stopPropagation()}
+      className={`absolute top-0 bottom-0 w-2 cursor-ew-resize ${visivel ? 'opacity-100' : 'opacity-0'} group-hover/pilula:opacity-100 transition flex items-center justify-center ${
+        lado === 'inicio' ? '-left-0.5' : '-right-0.5'
+      }`}
+    >
+      <span className="w-0.5 h-3/5 rounded-full bg-indigo-400" />
+    </span>
+  );
 }
 
 export function iniciais(nome: string): string {
@@ -47,7 +82,8 @@ export function rotuloVencimento(task: TaskRow): { text: string; className: stri
 }
 
 export default function TaskCard({
-  task, campos, usuarios, onOpen, onDragStart, onDragEnd, arrastando = false, variante = 'card', trecho = null,
+  task, campos, usuarios, onOpen, onDragStart, onDragEnd, arrastando = false, variante = 'card', trecho = null, onRedimensionar,
+  emenda, realcado = false, onRealcar,
 }: TaskCardProps) {
   const due = rotuloVencimento(task);
   const prio = PRIORIDADES.find((p) => p.value === task.priority);
@@ -64,15 +100,26 @@ export default function TaskCard({
           e.stopPropagation(); // a célula do calendário abaixo cria tarefa ao clicar
           onOpen(task.id);
         }}
-        className={`px-1.5 py-0.5 rounded text-[11px] cursor-pointer border-l-2 transition flex items-center gap-1 min-w-0 ${
-          trecho ? 'bg-indigo-50 hover:bg-indigo-100' : 'bg-white hover:bg-slate-50'
+        onMouseEnter={onRealcar ? () => onRealcar(true) : undefined}
+        onMouseLeave={onRealcar ? () => onRealcar(false) : undefined}
+        className={`group/pilula relative py-0.5 text-[11px] cursor-pointer transition flex items-center gap-1 min-w-0 ${
+          trecho
+            ? `${realcado ? 'bg-indigo-200' : 'bg-indigo-100'} ${trecho.dia === 1 ? 'border-l-2' : ''} ${
+                emenda?.antes ? '-ml-1.5 pl-1.5' : 'rounded-l pl-1.5'
+              } ${emenda?.depois ? '-mr-[7px] pr-[7px]' : 'rounded-r pr-1.5'}`
+            : 'px-1.5 rounded border-l-2 bg-white hover:bg-slate-50'
         } ${arrastando ? 'opacity-40' : ''} ${concluida ? 'text-slate-400 line-through' : 'text-slate-700'}`}
-        style={{ borderLeftColor: prio && task.priority > 0 ? prio.color : trecho ? '#a5b4fc' : '#cbd5e1' }}
+        style={{ borderLeftColor: prio && task.priority > 0 ? prio.color : trecho ? '#6366f1' : '#cbd5e1' }}
         title={trecho ? `${task.title} — dia ${trecho.dia} de ${trecho.total}` : task.title}
       >
-        {trecho && trecho.dia > 1 && <span className="text-indigo-300 shrink-0">↳</span>}
-        <span className="truncate flex-1">{task.title}</span>
-        {trecho && <span className="text-[9px] text-indigo-400 shrink-0 no-underline">{trecho.dia}/{trecho.total}</span>}
+        {/* Barra contínua: o título aparece no começo e no começo de cada semana. */}
+        <span className="truncate flex-1">{emenda?.antes ? ' ' : task.title}</span>
+        {onRedimensionar && task.due_date && (!trecho || trecho.dia === 1) && (
+          <AlcaPilula lado="inicio" onRedimensionar={onRedimensionar} visivel={realcado} />
+        )}
+        {onRedimensionar && task.due_date && (!trecho || trecho.dia === trecho.total) && (
+          <AlcaPilula lado="fim" onRedimensionar={onRedimensionar} visivel={realcado} />
+        )}
       </div>
     );
   }

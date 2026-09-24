@@ -6,7 +6,7 @@ import type { UsuarioOption } from '../lib/agrupamento';
 import { useIsMobile } from '../lib/mobile';
 import TaskCard from './TaskCard';
 import { partesDoPrazo, prazoParaGravar } from './EditorCelula';
-import { chaveDia, diferencaDias, tarefasPorDia } from '../lib/calendario';
+import { ajustarPeriodo, chaveDia, diasDaTarefa, diferencaDias, linhasDoDia, tarefasPorDia } from '../lib/calendario';
 import { diaLocal, somarDias } from '../lib/carga';
 
 interface ViewCalendarioProps {
@@ -62,7 +62,11 @@ export default function ViewCalendario({
   const [arrastandoId, setArrastandoId] = useState<string | null>(null);
   // Dia de onde a pílula foi puxada: tarefa de vários dias anda o período inteiro.
   const [arrastandoDe, setArrastandoDe] = useState<string | null>(null);
+  // Arrastando uma PONTA da pílula: muda só o início ou só o vencimento.
+  const [puxando, setPuxando] = useState<'inicio' | 'fim' | null>(null);
   const [expandidos, setExpandidos] = useState<Set<string>>(new Set());
+  // Tarefa de vários dias sob o mouse: todos os pedaços da barra acendem juntos.
+  const [realcadoId, setRealcadoId] = useState<string | null>(null);
   const [diaAlvo, setDiaAlvo] = useState<string | null>(null);
   const [criandoEm, setCriandoEm] = useState<string | null>(null);
   const [novoTitulo, setNovoTitulo] = useState('');
@@ -81,6 +85,18 @@ export default function ViewCalendario({
   );
 
   const hojeChave = chaveDia(new Date());
+
+  // Enquanto puxa uma ponta: dias que o período vai ocupar (pra pintar a prévia).
+  const previa = useMemo(() => {
+    if (!puxando || !arrastandoId || !diaAlvo) return null;
+    const t = tasks.find((x) => x.id === arrastandoId);
+    if (!t) return null;
+    const r = ajustarPeriodo(t, puxando, diaAlvo);
+    if (!r || r.erro) return null;
+    const inicio = r.start_date !== undefined ? r.start_date : t.start_date;
+    const fim = r.diaVencimento ? `${r.diaVencimento}T12:00:00Z` : t.due_date;
+    return new Set(diasDaTarefa({ start_date: inicio, due_date: fim }));
+  }, [puxando, arrastandoId, diaAlvo, tasks]);
   const mesAtual = referencia.getMonth();
 
   const navegar = (delta: number) => {
@@ -92,9 +108,26 @@ export default function ViewCalendario({
 
   const remarcar = async (taskId: string, chave: string) => {
     const de = arrastandoDe;
+    const lado = puxando;
     setArrastandoId(null);
     setArrastandoDe(null);
+    setPuxando(null);
     setDiaAlvo(null);
+    if (lado) {
+      const alvoTask = tasks.find((t) => t.id === taskId);
+      if (!alvoTask) return;
+      const r = ajustarPeriodo(alvoTask, lado, chave);
+      if (!r) return;
+      if (r.erro) { toast.error(r.erro); return; }
+      const horaFim = alvoTask.due_has_time ? partesDoPrazo(alvoTask.due_date, true).hora : null;
+      const res = await write('update_task', {
+        task_id: taskId,
+        ...(r.start_date !== undefined ? { start_date: r.start_date } : {}),
+        ...(r.diaVencimento ? prazoParaGravar(r.diaVencimento, horaFim) : {}),
+      });
+      if (!res.success) toast.error('Erro ao mudar o período', res.error);
+      return;
+    }
     // Sem horário: meio-dia UTC (dia estável em qualquer fuso do Brasil). Com
     // horário: mantém a hora e só troca o dia.
     const task = tasks.find((t) => t.id === taskId);
@@ -316,9 +349,13 @@ export default function ViewCalendario({
             {dias.map((dia) => {
               const chave = chaveDia(dia);
               const doDia = porDia.get(chave) ?? [];
+              // Vários dias ficam na mesma linha em todo o período (buracos = null).
+              const linhas = linhasDoDia(doDia);
+              const recolhido = modo === 'mes' && !expandidos.has(chave);
+              const ocultas = linhas.slice(LIMITE_MES).filter(Boolean).length;
               const foraDoMes = modo === 'mes' && dia.getMonth() !== mesAtual;
               const ehHoje = chave === hojeChave;
-              const alvo = diaAlvo === chave && arrastandoId !== null;
+              const alvo = previa ? previa.has(chave) : diaAlvo === chave && arrastandoId !== null;
               return (
                 <div
                   key={chave}
@@ -349,31 +386,49 @@ export default function ViewCalendario({
                   </span>
 
                   <div className="space-y-0.5 flex-1">
-                    {(modo === 'mes' && !expandidos.has(chave) ? doDia.slice(0, LIMITE_MES) : doDia).map(({ task, trecho }) => (
+                    {(recolhido ? linhas.slice(0, LIMITE_MES) : linhas).map((o, i) => o === null ? (
+                      <div key={`vazio-${i}`} aria-hidden className="py-0.5 text-[11px]">{' '}</div>
+                    ) : (
                       <TaskCard
-                        key={task.id}
-                        task={task}
-                        trecho={trecho}
+                        key={o.task.id}
+                        task={o.task}
+                        trecho={o.trecho}
+                        emenda={o.trecho ? {
+                          // Emenda só dentro da mesma linha da grade (dom → sáb).
+                          antes: o.trecho.dia > 1 && dia.getDay() !== 0,
+                          depois: o.trecho.dia < o.trecho.total && dia.getDay() !== 6,
+                        } : undefined}
+                        realcado={realcadoId === o.task.id}
+                        onRealcar={o.trecho ? (ligado) => setRealcadoId(ligado ? o.task.id : null) : undefined}
                         campos={campos}
                         usuarios={usuarios}
                         onOpen={onOpenTask}
                         variante="pill"
-                        arrastando={arrastandoId === task.id}
+                        arrastando={arrastandoId === o.task.id}
                         onDragStart={(e) => {
                           e.dataTransfer.effectAllowed = 'move';
-                          e.dataTransfer.setData('text/plain', task.id);
-                          setArrastandoId(task.id);
+                          e.dataTransfer.setData('text/plain', o.task.id);
+                          setArrastandoId(o.task.id);
                           setArrastandoDe(chave);
+                          setPuxando(null);
+                        }}
+                        onRedimensionar={(lado, e) => {
+                          e.dataTransfer.effectAllowed = 'move';
+                          e.dataTransfer.setData('text/plain', o.task.id);
+                          setArrastandoId(o.task.id);
+                          setArrastandoDe(chave);
+                          setPuxando(lado);
                         }}
                         onDragEnd={() => {
                           setArrastandoId(null);
                           setArrastandoDe(null);
+                          setPuxando(null);
                           setDiaAlvo(null);
                         }}
                       />
                     ))}
                     {/* Antes era só texto: as tarefas depois da 3ª ficavam inacessíveis pelo calendário. */}
-                    {modo === 'mes' && doDia.length > LIMITE_MES && (
+                    {modo === 'mes' && (ocultas > 0 || (expandidos.has(chave) && linhas.length > LIMITE_MES)) && (
                       <button
                         type="button"
                         onClick={(e) => {
@@ -387,7 +442,7 @@ export default function ViewCalendario({
                         }}
                         className="text-[10px] font-medium text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50 rounded px-1.5 py-0.5"
                       >
-                        {expandidos.has(chave) ? 'mostrar menos' : `+${doDia.length - LIMITE_MES} mais`}
+                        {expandidos.has(chave) ? 'mostrar menos' : `+${ocultas} mais`}
                       </button>
                     )}
 
@@ -422,7 +477,7 @@ export default function ViewCalendario({
           </div>
         </div>
         <p className="text-[11px] text-slate-400 mt-2">
-          Arraste uma tarefa para outro dia para remarcar (tarefa de vários dias leva o período junto). Clique num dia vazio para criar.
+          Arraste uma tarefa para outro dia para remarcar (tarefa de vários dias leva o período junto). Puxe a ponta esquerda ou direita da tarefa para mudar o início ou o vencimento. Clique num dia vazio para criar.
         </p>
       </div>
 
@@ -436,15 +491,16 @@ export default function ViewCalendario({
         <div
           className="space-y-1.5 bg-slate-100/60 rounded-xl border border-slate-200 p-2 min-h-[120px]"
           onDragOver={(e) => {
-            if (!arrastandoId) return;
+            if (!arrastandoId || puxando) return;
             e.preventDefault();
           }}
           onDrop={async (e) => {
             e.preventDefault();
-            if (!arrastandoId) return;
+            if (!arrastandoId || puxando) return;
             const id = arrastandoId;
             setArrastandoId(null);
             setArrastandoDe(null);
+            setPuxando(null);
             setDiaAlvo(null);
             const res = await write('update_task', { task_id: id, due_date: null });
             if (!res.success) toast.error('Erro ao remover data', res.error);

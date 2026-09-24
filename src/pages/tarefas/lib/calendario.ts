@@ -14,7 +14,12 @@ export function chaveDia(d: Date): string {
 /** Em que ponto do período a tarefa está naquele dia (tarefa de vários dias). */
 export interface TrechoPeriodo { dia: number; total: number }
 
-export interface OcorrenciaDia { task: TaskRow; trecho: TrechoPeriodo | null }
+export interface OcorrenciaDia {
+  task: TaskRow;
+  trecho: TrechoPeriodo | null;
+  /** Tarefa de vários dias: linha fixa (mesma altura em todos os dias do período). */
+  faixa?: number;
+}
 
 /**
  * Dias (chave local) que a tarefa ocupa no calendário: do início ao vencimento.
@@ -50,8 +55,27 @@ export function tarefasPorDia(tasks: TaskRow[]): Map<string, OcorrenciaDia[]> {
       mapa.set(chave, lista);
     });
   }
+  // Faixas: cada tarefa de vários dias pega a menor linha livre em TODOS os seus dias.
+  const multi = tasks
+    .map((t) => ({ t, dias: diasDaTarefa(t) }))
+    .filter((x) => x.dias.length > 1)
+    .sort((a, b) => a.dias[0].localeCompare(b.dias[0]) || b.dias.length - a.dias.length);
+  const ocupadas = new Map<string, Set<number>>();
+  const faixaDe = new Map<string, number>();
+  for (const { t, dias } of multi) {
+    let f = 0;
+    while (dias.some((d) => ocupadas.get(d)?.has(f))) f++;
+    faixaDe.set(t.id, f);
+    for (const d of dias) {
+      const set = ocupadas.get(d) ?? new Set<number>();
+      set.add(f);
+      ocupadas.set(d, set);
+    }
+  }
   for (const lista of mapa.values()) {
+    for (const o of lista) if (o.trecho) o.faixa = faixaDe.get(o.task.id);
     lista.sort((a, b) => {
+      if (a.faixa !== undefined && b.faixa !== undefined) return a.faixa - b.faixa;
       const va = a.trecho ? 0 : 1;
       const vb = b.trecho ? 0 : 1;
       if (va !== vb) return va - vb;
@@ -69,4 +93,43 @@ export function tarefasPorDia(tasks: TaskRow[]): Map<string, OcorrenciaDia[]> {
 /** Diferença em dias entre duas chaves YYYY-MM-DD. */
 export function diferencaDias(de: string, para: string): number {
   return Math.round((diaLocal(para).getTime() - diaLocal(de).getTime()) / 86400000);
+}
+
+/**
+ * Arrastar a ponta da tarefa no calendário. Devolve o que gravar (start_date e/ou
+ * o dia do vencimento) ou um erro. Tarefa de um dia só vira período ao puxar uma ponta.
+ */
+export function ajustarPeriodo(
+  t: Pick<TaskRow, 'start_date' | 'due_date'>,
+  lado: 'inicio' | 'fim',
+  chave: string,
+): { start_date?: string | null; diaVencimento?: string; erro?: string } | null {
+  if (!t.due_date) return null;
+  const fim = chaveDia(diaLocal(t.due_date));
+  const inicio = t.start_date ? chaveDia(diaLocal(t.start_date)) : null;
+  if (lado === 'inicio') {
+    if (chave > fim) return { erro: 'O início não pode ficar depois do vencimento.' };
+    if (chave === (inicio ?? fim)) return null;
+    return { start_date: chave === fim ? null : chave };
+  }
+  if (inicio && chave < inicio) return { erro: 'O vencimento não pode ficar antes do início.' };
+  if (chave === fim) return null;
+  // Um dia só puxado pra frente: o dia antigo vira o início.
+  if (!inicio && chave > fim) return { start_date: fim, diaVencimento: chave };
+  if (inicio && chave === inicio) return { start_date: null, diaVencimento: chave };
+  return { diaVencimento: chave };
+}
+
+/**
+ * Linhas de um dia na grade: tarefas de vários dias na sua faixa (com buraco
+ * `null` onde a faixa está vazia naquele dia) e depois as de um dia só.
+ */
+export function linhasDoDia(lista: OcorrenciaDia[]): (OcorrenciaDia | null)[] {
+  const linhas: (OcorrenciaDia | null)[] = [];
+  for (const o of lista) {
+    if (o.faixa === undefined) continue;
+    while (linhas.length < o.faixa) linhas.push(null);
+    linhas[o.faixa] = o;
+  }
+  return [...linhas, ...lista.filter((o) => o.faixa === undefined)];
 }
