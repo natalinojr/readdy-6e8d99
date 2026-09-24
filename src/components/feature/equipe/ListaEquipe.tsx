@@ -2,6 +2,7 @@
 // mensagem, a hora e as não lidas, e o botão "Nova conversa" que abre as pessoas da loja.
 import { useEffect, useMemo, useState } from 'react';
 import { useVoltarFecha } from '@/lib/voltarAndroid';
+import BotaoAvisos from '@/components/feature/BotaoAvisos';
 import { chatEquipe, horaCurta, type ConversaResumo, type PessoaEquipe } from './api';
 import { AvatarPessoa, estadoVisto, Vistos } from './ConversaEquipe';
 
@@ -23,6 +24,9 @@ export function ListaEquipe({ conversas, onAbrir, onNova, lojas, lojaSel, onLoja
     <>
       <div className="flex items-center gap-2 px-4 pt-3 pb-1">
         <p className="flex-1 text-[11px] font-bold uppercase tracking-wide text-zinc-400">Equipe</p>
+        {/* Aviso no celular quando chega mensagem (2026-09-24): sem este aparelho inscrito o send-push não
+            tem para onde mandar — quem não é o dono não tinha onde ligar. Some quando já está ativo. */}
+        <BotaoAvisos tenantId={lojaSel} titulo="Receber aviso no celular quando chegar mensagem" />
         <button onClick={onNova} className="flex items-center gap-1 text-xs font-bold text-sky-700 hover:text-sky-600 cursor-pointer">
           <i className="ri-chat-new-line text-base" /> Nova conversa
         </button>
