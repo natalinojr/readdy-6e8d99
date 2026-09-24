@@ -9,6 +9,7 @@ import SelecionarLojaPage from '../../pages/selecionar-loja/page';
 import RotaProtegida from './RotaProtegida';
 import InstallPWA from './InstallPWA';
 import AssistenteChat from './AssistenteChat';
+import ConviteAvisos from './ConviteAvisos';
 
 // Fallback leve enquanto o chunk da página (lazy) carrega — mantém a moldura
 // (sidebar/topbar) visível em vez de piscar a tela inteira.
@@ -130,6 +131,8 @@ export default function AppLayout() {
       <>
         <Outlet />
         <AssistenteChat variant="floating" />
+        {/* Convite para ligar os avisos no celular (some quando ligado; "Agora não" = 3 dias). */}
+        <ConviteAvisos />
       </>
     );
   }
@@ -157,6 +160,7 @@ export default function AppLayout() {
         {/* Tarefas roda como terminal (tela cheia), mas não é caixa/cozinha: o
             balão do assistente aparece lá também (pedido do dono, 2026-09-23). */}
         {location.pathname.startsWith('/tarefas') && <AssistenteChat variant="floating" />}
+        {location.pathname.startsWith('/tarefas') && <ConviteAvisos />}
       </div>
     );
   }
@@ -205,6 +209,7 @@ export default function AppLayout() {
       <InstallPWA />
       {/* Chat do assistente (só o dono; na própria tela Assistente ele já está embutido) */}
       {!location.pathname.startsWith('/assistente') && <AssistenteChat variant="floating" />}
+      <ConviteAvisos />
     </div>
   );
 }

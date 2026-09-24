@@ -2,12 +2,23 @@
 // Firebase no app Android). Nasceu no chat do assistente; virou componente em 2026-09-16 para a
 // Contratação, onde entrevistador que é usuário do ERPOS precisa ligar os avisos de entrevista.
 // Sem loja também funciona: o send-push aceita quem só tem módulo liberado (tenant nulo).
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 
-export default function BotaoAvisos({ tenantId, titulo }: { tenantId: string | null | undefined; titulo?: string }) {
+export default function BotaoAvisos({ tenantId, titulo, onEstado, grande }: {
+  tenantId: string | null | undefined;
+  titulo?: string;
+  /** Avisa o estado deste aparelho ('ativo', 'inativo', 'negado', 'nao-suportado', 'precisa-instalar')
+   *  — o convite da primeira vez (ConviteAvisos, 2026-09-24) decide se aparece por aqui. */
+  onEstado?: (estado: string) => void;
+  /** Botão grande, de largura cheia (convite). */
+  grande?: boolean;
+}) {
   const [estado, setEstado] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
+  const avisar = useRef(onEstado);
+  avisar.current = onEstado;
+  useEffect(() => { if (estado) avisar.current?.(estado); }, [estado]);
   // Dentro do app Android (Capacitor) o Web Push não existe: usa a notificação nativa (Firebase),
   // e só quando o servidor diz que o Firebase está configurado (send-push › fcm_status).
   type PN = { [k: string]: (a?: unknown, b?: unknown) => Promise<unknown> };
@@ -65,7 +76,9 @@ export default function BotaoAvisos({ tenantId, titulo }: { tenantId: string | n
     <button
       onClick={ativar}
       title={msg ?? (estado === 'negado' ? 'Notificações bloqueadas: libere nas configurações do navegador' : (titulo ?? 'Receber os avisos no celular'))}
-      className={`flex items-center gap-1 px-2.5 h-8 rounded-lg text-[11px] font-bold cursor-pointer ${msg || estado === 'negado' ? 'text-red-600 bg-red-50' : 'text-violet-700 bg-violet-50 hover:bg-violet-100'}`}
+      className={grande
+        ? `w-full flex items-center justify-center gap-1.5 h-11 rounded-xl text-sm font-bold cursor-pointer ${msg || estado === 'negado' ? 'text-red-600 bg-red-50' : 'text-white bg-violet-600 hover:bg-violet-500'}`
+        : `flex items-center gap-1 px-2.5 h-8 rounded-lg text-[11px] font-bold cursor-pointer ${msg || estado === 'negado' ? 'text-red-600 bg-red-50' : 'text-violet-700 bg-violet-50 hover:bg-violet-100'}`}
     >
       <i className="ri-notification-3-line" /> {estado === 'negado' ? 'Bloqueadas' : msg ? 'Tentar de novo' : 'Ativar avisos'}
     </button>
