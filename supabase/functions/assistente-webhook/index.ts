@@ -1191,7 +1191,7 @@ async function toPublicChannel(chatId: string, number: string, msgKey: MsgKey | 
 async function handleGroup(admin: SupabaseClient, data: any, allowed: string[], cfg: Record<string, any> = {}) {
   const groupJid = String(data.key.remoteJid);
   const ownerNums = allowed.map((a) => a.replace(/@.*$/, ''));
-  let { data: g } = await admin.from('asst_groups').select('group_jid, name, is_enabled').eq('group_jid', groupJid).maybeSingle();
+  let { data: g } = await admin.from('asst_groups').select('group_jid, name, is_enabled, task_list_id, read_media').eq('group_jid', groupJid).maybeSingle();
   if (!g) {
     let name: string = groupJid;
     let ownerIn = false;
@@ -1205,14 +1205,20 @@ async function handleGroup(admin: SupabaseClient, data: any, allowed: string[], 
     } catch (e) {
       log('WARN', 'findGroupInfos falhou', { groupJid, error: errMsg(e) });
     }
-    g = { group_jid: groupJid, name, is_enabled: ownerIn };
-    await admin.from('asst_groups').upsert(g, { onConflict: 'group_jid', ignoreDuplicates: true });
+    await admin.from('asst_groups').upsert({ group_jid: groupJid, name, is_enabled: ownerIn }, { onConflict: 'group_jid', ignoreDuplicates: true });
+    g = { group_jid: groupJid, name, is_enabled: ownerIn, task_list_id: null, read_media: true };
     log('INFO', 'grupo novo', { groupJid, name, is_enabled: ownerIn });
   }
   if (!g.is_enabled) return;
 
   const conf = { ...GROUP_WATCH_DEFAULTS, ...(cfg.group_watch && typeof cfg.group_watch === 'object' ? cfg.group_watch : {}) };
+  if (g.read_media === false) conf.read_media = false; // grupo de obra: foto/PDF sem IA (custo)
   const p = parseMessage(data.message);
+  // Reação: só o 📌 interessa (vira item na caixa da pasta de tarefas do grupo). O resto é ignorado.
+  if (p.inner?.reactionMessage) {
+    if (g.task_list_id) await pinParaTarefa(admin, g, data).catch((e) => log('ERROR', '📌 para tarefa', { groupJid, error: errMsg(e) }));
+    return;
+  }
   const legenda = p.text ? p.text.trim() : '';
   let content = legenda;
   let baseText = legenda;          // o que a pessoa escreveu/falou (sem a leitura da mídia)
@@ -1311,6 +1317,153 @@ async function handleGroup(admin: SupabaseClient, data: any, allowed: string[], 
   const compra = !!extracted && ['nota_fiscal', 'cupom', 'pedido'].includes(String(extracted.tipo_documento ?? ''))
     && Array.isArray(extracted.itens) && extracted.itens.length > 0;
   if (compra) await triarPagamento(admin, cfg, g, { messageId, sender, content, extracted, sentAt, legenda: baseText }, 'compra');
+}
+
+// ── 📌 no grupo → caixa da pasta de tarefas (2026-09-24, pedido do dono) ──
+// Alguém reage 📌 numa mensagem de um grupo ligado a uma pasta (asst_groups.task_list_id): a mensagem
+// vai para task_whatsapp_items e quem edita a pasta decide na tela (tarefa nova, anotação ou descarta).
+// Sem IA: o texto é o que já foi gravado do grupo (áudio já transcrito pelo Whisper). Foto/PDF/áudio/
+// vídeo são salvos no Storage AGORA — o WhatsApp apaga a mídia do servidor depois de um tempo.
+// Tirar o 📌 (ou trocar por outro emoji) antes de alguém decidir tira da caixa. O assistente reage 📥
+// quando pega a mensagem e ✅ quando ela vira tarefa (task-write › group_react).
+const PIN_EMOJI = '📌';
+const PIN_MIDIA_MAX = 25 * 1024 * 1024;
+const PIN_CAIXA_MAX = 200; // pendentes por pasta: acima disso o 📌 é ignorado (grupo com gente de fora)
+const PIN_EXT: Record<string, string> = {
+  'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif', 'application/pdf': 'pdf',
+  'audio/ogg': 'ogg', 'audio/mpeg': 'mp3', 'audio/mp4': 'm4a', 'video/mp4': 'mp4',
+};
+const reagirNoGrupo = (key: Record<string, unknown>, emoji: string) =>
+  evo(`/message/sendReaction/${evoInstance}`, { key, reaction: emoji }).catch((e) => log('WARN', 'sendReaction no grupo falhou', { error: errMsg(e) }));
+
+// deno-lint-ignore no-explicit-any
+async function pinParaTarefa(admin: SupabaseClient, g: { group_jid: string; name: string | null; task_list_id: string | null }, data: any) {
+  const reacao = parseMessage(data.message).inner?.reactionMessage ?? {};
+  const emoji = String(reacao.text ?? '').replace(/️/g, '').trim();
+  const alvo = reacao.key ?? {};
+  const alvoId = String(alvo.id ?? '');
+  if (!alvoId || alvo.fromMe || !g.task_list_id) return; // reação em mensagem do próprio assistente: fora
+  const quemJid = String(data.key?.participantAlt ?? data.key?.participant ?? '') || null;
+  const quem = data.pushName ? String(data.pushName) : null;
+  const chave = { remoteJid: g.group_jid, fromMe: false, id: alvoId, ...(alvo.participant ? { participant: String(alvo.participant) } : {}) };
+
+  const { data: existe } = await admin.from('task_whatsapp_items')
+    .select('id, status, pinned_by_jid, media_path').eq('message_id', alvoId).maybeSingle();
+
+  if (emoji !== PIN_EMOJI) {
+    // Reação removida chega com texto vazio. Só quem marcou tira, e só enquanto ninguém decidiu
+    // (sem saber quem marcou, só pela tela).
+    if (existe?.status === 'pendente' && quemJid && existe.pinned_by_jid === quemJid) {
+      const { data: apagado } = await admin.from('task_whatsapp_items').delete().eq('id', existe.id).eq('status', 'pendente').select('id');
+      if (apagado?.length) {
+        if (existe.media_path) await admin.storage.from('task-attachments').remove([existe.media_path]);
+        await reagirNoGrupo(chave, '');
+        log('INFO', '📌 retirado', { group: g.name, message_id: alvoId });
+      }
+    }
+    return;
+  }
+  if (existe && existe.status !== 'descartado') return; // já está na caixa ou já foi resolvido
+  const { count } = await admin.from('task_whatsapp_items').select('id', { count: 'exact', head: true })
+    .eq('list_id', g.task_list_id).eq('status', 'pendente');
+  if ((count ?? 0) >= PIN_CAIXA_MAX) { log('WARN', '📌 ignorado: caixa da pasta cheia', { group: g.name }); return; }
+
+  // A mensagem marcada: a que já foi gravada do grupo; se não houver (chegou antes de ligar o grupo
+  // ou o webhook falhou), busca na Evolution.
+  const { data: gravada } = await admin.from('asst_group_messages')
+    .select('content, kind, sender_name, sender_jid, media_mime, sent_at').eq('message_id', alvoId).maybeSingle();
+  // deno-lint-ignore no-explicit-any
+  let bruta: any = null;
+  if (!gravada) {
+    // deno-lint-ignore no-explicit-any
+    const out: any = await evo(`/chat/findMessages/${evoInstance}`, { where: { key: { id: alvoId } }, limit: 1 }).catch(() => null);
+    bruta = out?.messages?.records?.[0] ?? null;
+    if (!bruta) { log('WARN', '📌 em mensagem que não achei', { group: g.name, message_id: alvoId }); return; }
+  }
+  const pb = bruta ? parseMessage(bruta.message) : null;
+  const kind = String(gravada?.kind ?? pb?.kind ?? 'other');
+  let content: string = String(gravada?.content ?? pb?.text ?? '').trim();
+  const mime = String(gravada?.media_mime ?? pb?.mime ?? '').split(';')[0].toLowerCase() || null;
+  const nomeArquivo = String(pb?.inner?.documentMessage?.fileName ?? '').trim()
+    || (content.match(/^\[Arquivo\]\s*(\S+\.\w{2,5})/)?.[1] ?? '') || null;
+
+  // Mídia: baixa e guarda. Áudio que não estava gravado ainda é transcrito aqui.
+  let mediaPath: string | null = null;
+  let mediaSize: number | null = null;
+  if (['image', 'document', 'audio', 'video'].includes(kind)) {
+    const b64 = await mediaBase64(bruta ?? { key: chave }).catch(() => null);
+    if (b64) {
+      if (kind === 'audio' && !gravada) {
+        const t = await transcribe(b64, mime ?? 'audio/ogg').catch(() => '');
+        content = t ? `[Áudio] ${t}` : '[Áudio não transcrito]';
+      }
+      const bytes = Uint8Array.from(atob(b64.replace(/^data:[^;]+;base64,/, '')), (c) => c.charCodeAt(0));
+      if (bytes.length <= PIN_MIDIA_MAX) {
+        const ext = PIN_EXT[mime ?? ''] ?? (nomeArquivo?.match(/\.(\w{2,5})$/)?.[1] ?? 'bin');
+        const path = `whatsapp/${g.task_list_id}/${alvoId.replace(/[^A-Za-z0-9_-]/g, '')}.${ext}`;
+        const { error: upErr } = await admin.storage.from('task-attachments')
+          .upload(path, bytes, { contentType: mime ?? 'application/octet-stream', upsert: true });
+        if (upErr) log('WARN', '📌: salvar mídia falhou', { error: upErr.message });
+        else { mediaPath = path; mediaSize = bytes.length; }
+      } else {
+        log('INFO', '📌: mídia grande demais, fica só o texto', { bytes: bytes.length });
+        content = [content, '(arquivo grande demais para guardar — veja no WhatsApp)'].filter(Boolean).join('\n');
+      }
+    } else {
+      log('WARN', '📌: mídia não disponível na Evolution', { message_id: alvoId });
+      content = [content, '(o arquivo não estava mais disponível no WhatsApp)'].filter(Boolean).join('\n');
+    }
+  }
+  if (!content && !mediaPath) { log('INFO', '📌 em mensagem vazia', { message_id: alvoId }); return; }
+
+  const ts = Number(bruta?.messageTimestamp);
+  const item = {
+    list_id: g.task_list_id,
+    group_jid: g.group_jid,
+    group_name: g.name,
+    message_id: alvoId,
+    sender_name: gravada?.sender_name ?? (bruta?.pushName ? String(bruta.pushName) : null),
+    sender_jid: gravada?.sender_jid ?? (String(bruta?.key?.participantAlt ?? bruta?.key?.participant ?? '') || null),
+    kind,
+    content: content.slice(0, 4000) || null,
+    sent_at: gravada?.sent_at ?? (ts > 0 ? new Date(ts * 1000).toISOString() : null),
+    media_path: mediaPath,
+    media_mime: mediaPath ? mime : null,
+    media_name: mediaPath ? nomeArquivo : null,
+    media_size: mediaSize,
+    pinned_by_name: quem,
+    pinned_by_jid: quemJid,
+    pinned_at: new Date().toISOString(),
+    status: 'pendente',
+    task_id: null, decided_by: null, decided_at: null,
+  };
+  const { error } = await admin.from('task_whatsapp_items').upsert(item, { onConflict: 'message_id' });
+  if (error) throw new Error(error.message);
+  await reagirNoGrupo(chave, '📥');
+  log('INFO', '📌 na caixa da pasta', { group: g.name, list_id: g.task_list_id, kind });
+
+  // Aviso para quem pode decidir (dono da pasta + quem tem "editar"). Falha aqui não desfaz nada.
+  try {
+    const { data: eds } = await admin.rpc('fn_task_list_editores', { p_list_id: g.task_list_id });
+    // deno-lint-ignore no-explicit-any
+    const ids = [...new Set(((eds ?? []) as any[]).map((r) => String(r.user_id ?? r)).filter(Boolean))];
+    if (ids.length) {
+      await fetch(`${supabaseUrl}/functions/v1/send-push`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${serviceRoleKey}` },
+        body: JSON.stringify({
+          action: 'send', user_ids: ids, tenant_id: null,
+          payload: {
+            titulo: `📌 ${g.name ?? 'Grupo do WhatsApp'}`,
+            corpo: `${quem ?? 'Alguém'} marcou: ${(content || '[arquivo]').replace(/\s+/g, ' ').slice(0, 120)}`,
+            url: `/tarefas?pasta=${g.task_list_id}&caixa=1`,
+          },
+        }),
+      });
+    }
+  } catch (e) {
+    log('WARN', '📌: aviso push falhou', { error: errMsg(e) });
+  }
 }
 
 // deno-lint-ignore no-explicit-any

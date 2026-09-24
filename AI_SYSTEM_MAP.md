@@ -3310,3 +3310,15 @@ Relatórios/DRE/detalhe de conta continuam mostrando a linha (é dinheiro gasto)
 - Comprovantes no bucket privado `pedidos-pagamento` (upload/URL assinada só pela Edge). Ações rápidas novas: "Pedir reembolso" (`/receber?pedido=reembolso`) e "Aprovar pedidos de pagamento".
 - Edge `pedidos-pagamento` (verify_jwt true) + `receber-mercadoria` atualizada; migration `20260925200000_pedidos_pagamento.sql`.
 
+### 📌 no grupo do WhatsApp → caixa da pasta de Tarefas (2026-09-24)
+Grupo do assistente ligado a uma pasta (`asst_groups.task_list_id`, tela Assistente › Grupos). Quem reage
+📌 numa mensagem manda ela para `task_whatsapp_items` (texto/áudio transcrito já gravado em
+`asst_group_messages`; foto/PDF/áudio/vídeo salvos na hora no bucket `task-attachments` em
+`whatsapp/<list_id>/<message_id>.<ext>`, porque o WhatsApp apaga a mídia depois). Sem IA. O assistente reage
+📥; push para `fn_task_list_editores`. Na pasta, `CaixaWhatsApp` (quem tem owner/edit) decide:
+tarefa (`create_task` + `task-write › wa_item_resolve mode:'tarefa'`, ✅ no grupo), anotação
+(`wa_item_resolve mode:'anotacao'` → `task_comments`, 📝) ou descarta (`wa_item_discard`, tira a reação).
+Pegadinhas: a reação chega como `messages.upsert` com `message.reactionMessage` (texto vazio = reação
+removida; só quem marcou tira, e só se o jid dele veio); ao resolver, o arquivo passa a ser do
+`task_attachments` e o item solta `media_path` (apagar o anexo apaga o arquivo). `asst_groups.read_media=false`
+desliga a leitura de foto/PDF com IA só naquele grupo (grupo de obra = muita foto = custo).

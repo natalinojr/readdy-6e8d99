@@ -1,6 +1,6 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
-import { Plus, ListTodo, LayoutGrid, CalendarDays, ClipboardList, UserCheck, Users, Layers, Send, SlidersHorizontal, ListChecks, Waypoints, ArrowLeft, Gauge, Share2, LayoutTemplate, BellRing, FileText } from 'lucide-react';
+import { Plus, Pin, ListTodo, LayoutGrid, CalendarDays, ClipboardList, UserCheck, Users, Layers, Send, SlidersHorizontal, ListChecks, Waypoints, ArrowLeft, Gauge, Share2, LayoutTemplate, BellRing, FileText } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
 import { useEuTarefas } from './hooks/useEuTarefas';
 import { useAppMode } from '@/contexts/AppModeContext';
@@ -23,6 +23,7 @@ import TemplatesManager from './components/TemplatesManager';
 import ModelosPastas, { type TelaModelos } from './components/modelos/ModelosPastas';
 import StatusManager from './components/StatusManager';
 import NotificacoesInbox, { calcularVencimentos } from './components/NotificacoesInbox';
+import CaixaWhatsApp from './components/CaixaWhatsApp';
 import ViewsSalvas from './components/ViewsSalvas';
 import FiltrosBar from './components/FiltrosBar';
 import ArvorePastas from './components/ArvorePastas';
@@ -176,6 +177,27 @@ export default function TarefasPage() {
   // outra) — mora aqui pra sobreviver à troca de pasta/visão (2026-09-24).
   const [clipboardTarefas, setClipboardTarefas] = useState<ClipboardTarefas | null>(null);
 
+  // 📌 do WhatsApp esperando decisão, por pasta (só as que posso editar). A caixa da pasta aberta
+  // atualiza o número dela; as outras aparecem no botão 📌 da barra de cima.
+  const [caixaWhats, setCaixaWhats] = useState<Record<string, number>>({});
+  const [menuCaixa, setMenuCaixa] = useState(false);
+  useEffect(() => {
+    if (modoDemo() || !eu.id) return;
+    const carregar = () => {
+      if (document.visibilityState !== 'visible') return;
+      supabase.rpc('fn_get_task_whatsapp_counts').then(({ data, error }) => {
+        if (!error && data && typeof data === 'object') setCaixaWhats(data as Record<string, number>);
+      });
+    };
+    carregar();
+    document.addEventListener('visibilitychange', carregar);
+    const t = setInterval(carregar, 60_000);
+    return () => { document.removeEventListener('visibilitychange', carregar); clearInterval(t); };
+  }, [eu.id]);
+  const contarCaixa = useCallback((listId: string, n: number) => {
+    setCaixaWhats((prev) => (prev[listId] === n ? prev : { ...prev, [listId]: n }));
+  }, []);
+
   const arvorePastas = useMemo(() => montarArvorePastas(lists), [lists]);
   // Na barra lateral: as minhas pastas e, à parte, as compartilhadas comigo.
   const minhasRaizes = useMemo(() => arvorePastas.filter((n) => (n.access ?? 'owner') === 'owner'), [arvorePastas]);
@@ -206,11 +228,16 @@ export default function TarefasPage() {
     const params = new URLSearchParams(window.location.search);
     const taskId = params.get('task');
     const relatorioId = params.get('relatorio');
-    if (!taskId && !relatorioId) return;
+    // Push do 📌 no grupo do WhatsApp → /tarefas?pasta=<id>&caixa=1: abre a pasta (a caixa fica em cima).
+    const pastaId = params.get('pasta');
+    if (!taskId && !relatorioId && !pastaId) return;
     if (taskId) setOpenTaskId(taskId);
     if (relatorioId) abrirRelatorio(relatorioId);
+    if (pastaId) { setSelectedListId(pastaId); setOrigem('pasta'); }
     params.delete('task');
     params.delete('relatorio');
+    params.delete('pasta');
+    params.delete('caixa');
     const query = params.toString();
     window.history.replaceState(
       {},
@@ -410,6 +437,17 @@ export default function TarefasPage() {
 
       {!loading && !error && (origem !== 'pasta' || selectedList) && (
         <>
+          {origem === 'pasta' && selectedList && display !== 'relatorios'
+            && ['owner', 'edit'].includes(selectedList.access ?? 'owner') && (
+            <CaixaWhatsApp
+              key={selectedList.id}
+              listId={selectedList.id}
+              tasks={tasks}
+              write={write}
+              onOpenTask={setOpenTaskId}
+              onCount={contarCaixa}
+            />
+          )}
           {display === 'lista' && (
             <ViewLista
               list={listParaView}
@@ -732,6 +770,43 @@ export default function TarefasPage() {
                 }}
               />
             </div>
+            {(() => {
+              // 📌 esperando em OUTRAS pastas (a aberta já mostra a caixa em cima da lista).
+              const outras = Object.entries(caixaWhats)
+                .filter(([id, n]) => n > 0 && !(origem === 'pasta' && id === selectedList?.id))
+                .map(([id, n]) => ({ id, n, nome: lists.find((l) => l.id === id)?.name ?? 'Pasta' }));
+              const total = outras.reduce((a, o) => a + o.n, 0);
+              if (!total) return null;
+              return (
+                <div className="relative">
+                  <button
+                    onClick={() => (outras.length === 1 ? irParaPasta(outras[0].id) : setMenuCaixa((m) => !m))}
+                    className="flex items-center gap-1 text-xs px-2 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100"
+                    title="Mensagens do WhatsApp marcadas com 📌 esperando decisão"
+                  >
+                    <Pin size={13} /> {total}
+                  </button>
+                  {menuCaixa && outras.length > 1 && (
+                    <>
+                      <div className="fixed inset-0 z-30" onClick={() => setMenuCaixa(false)} />
+                      <ul className="absolute right-0 mt-1 z-40 w-56 bg-white border border-slate-200 rounded-lg shadow-lg py-1">
+                        {outras.map((o) => (
+                          <li key={o.id}>
+                            <button
+                              onClick={() => { setMenuCaixa(false); irParaPasta(o.id); }}
+                              className="w-full flex items-center gap-2 px-3 py-2 text-sm text-left hover:bg-slate-50"
+                            >
+                              <span className="truncate flex-1">{o.nome}</span>
+                              <span className="text-xs font-semibold text-emerald-700">📌 {o.n}</span>
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    </>
+                  )}
+                </div>
+              );
+            })()}
             <NotificacoesInbox
               notificacoes={notificacoes}
               tasks={tasks}
