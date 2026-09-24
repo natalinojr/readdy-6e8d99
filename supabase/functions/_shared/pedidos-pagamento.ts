@@ -11,38 +11,29 @@ export const PERM_DO_TIPO: Record<TipoPedido, PermPedido> = {
 };
 export const BUCKET_PEDIDOS = 'pedidos-pagamento';
 
-// Mesmos papéis EN↔PT que o front grava na tabela permissions
-const ROLE_ALIASES: Record<string, string[]> = {
-  admin: ['admin'],
-  manager: ['manager', 'gerente'], gerente: ['manager', 'gerente'],
-  supervisor: ['supervisor', 'supervisao'], supervisao: ['supervisor', 'supervisao'],
-  cashier: ['cashier', 'caixa'], caixa: ['cashier', 'caixa'],
-  waiter: ['waiter', 'garcom'], garcom: ['waiter', 'garcom'],
-  kitchen: ['kitchen', 'cozinha'], cozinha: ['kitchen', 'cozinha'],
-  financeiro: ['financeiro'],
+// permissions.role é o enum user_role (só EN). Filtrar por grafia PT ('caixa') faz o Postgres
+// recusar a consulta inteira ("invalid input value for enum") — e a permissão parecia desligada.
+export const PT_PARA_EN: Record<string, string> = {
+  gerente: 'manager', supervisao: 'supervisor', caixa: 'cashier', garcom: 'waiter', cozinha: 'kitchen',
 };
 
 /** Sem linha na matriz vale o padrão do front (DEFAULT_PERMISSOES): pedir = admin/gerente; aprovar = só admin. */
 function padrao(role: string, key: PermPedido): boolean {
   if (role === 'admin') return true;
   if (key === 'pag_aprovar') return false;
-  return role === 'manager' || role === 'gerente';
+  return role === 'manager';
 }
 
 /** Permissões de pedido de pagamento do papel na loja. Admin tem todas (o dono aprova). */
 export async function permissoesPedido(admin: any, tenantId: string, role: string): Promise<Record<PermPedido, boolean>> {
   const keys: PermPedido[] = ['pag_reembolso', 'pag_freelancer', 'pag_fornecedor', 'pag_aprovar'];
-  const out = Object.fromEntries(keys.map((k) => [k, padrao(role, k)])) as Record<PermPedido, boolean>;
-  if (role === 'admin') return out;
-  const { data } = await admin.from('permissions').select('permission_key, allowed')
-    .eq('tenant_id', tenantId).in('role', ROLE_ALIASES[role] ?? [role]).in('permission_key', keys);
-  const vistos = new Set<string>();
-  for (const r of data ?? []) {
-    const k = r.permission_key as PermPedido;
-    // Duas grafias do papel (EN/PT): basta uma liberar
-    out[k] = vistos.has(k) ? out[k] || r.allowed === true : r.allowed === true;
-    vistos.add(k);
-  }
+  const papel = PT_PARA_EN[role] ?? role;
+  const out = Object.fromEntries(keys.map((k) => [k, padrao(papel, k)])) as Record<PermPedido, boolean>;
+  if (papel === 'admin') return out;
+  const { data, error } = await admin.from('permissions').select('permission_key, allowed')
+    .eq('tenant_id', tenantId).eq('role', papel).in('permission_key', keys);
+  if (error) throw new Error(`Falha ao ler permissões: ${error.message}`);
+  for (const r of data ?? []) out[r.permission_key as PermPedido] = r.allowed === true;
   return out;
 }
 

@@ -27,7 +27,7 @@
 // deno-lint-ignore-file no-explicit-any
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { authenticate, bearerToken, isFinanceiroRole, tenantRole } from '../_shared/tenant-auth.ts';
-import { nomeDoUsuario, pendenciaDoPedido, permissoesPedido, salvarComprovante } from '../_shared/pedidos-pagamento.ts';
+import { PT_PARA_EN, nomeDoUsuario, pendenciaDoPedido, permissoesPedido, salvarComprovante } from '../_shared/pedidos-pagamento.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -51,20 +51,13 @@ const hojeBR = () => new Date(Date.now() - 3 * 3600_000).toISOString().slice(0, 
 const diasAtras = (d: number) => new Date(Date.now() - d * 86400_000).toISOString().slice(0, 10);
 const normKey = (s: unknown) => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
 
-// Mesmos papéis EN↔PT que o front grava na tabela permissions
-const ROLE_ALIASES: Record<string, string[]> = {
-  manager: ['manager', 'gerente'], gerente: ['manager', 'gerente'],
-  cashier: ['cashier', 'caixa'], caixa: ['cashier', 'caixa'],
-  waiter: ['waiter', 'garcom'], garcom: ['waiter', 'garcom'],
-  kitchen: ['kitchen', 'cozinha'], cozinha: ['kitchen', 'cozinha'],
-};
-
 async function podeReceber(admin: Admin, tenantId: string, role: string): Promise<boolean> {
   if (isFinanceiroRole(role)) return true;
-  const roles = ROLE_ALIASES[role] ?? [role];
-  const { data } = await admin.from('permissions').select('allowed')
+  // permissions.role é enum (só EN): 'caixa' no filtro derrubava a consulta e o Caixa nunca recebia
+  const { data, error } = await admin.from('permissions').select('allowed')
     // estoque_receber (só esta tela, liberável para o Caixa) ou estoque_movimentar (legado)
-    .eq('tenant_id', tenantId).in('role', roles).in('permission_key', ['estoque_receber', 'estoque_movimentar']);
+    .eq('tenant_id', tenantId).eq('role', PT_PARA_EN[role] ?? role).in('permission_key', ['estoque_receber', 'estoque_movimentar']);
+  if (error) throw new Error(`Falha ao ler permissões: ${error.message}`);
   return (data ?? []).some((r: any) => r.allowed === true);
 }
 
