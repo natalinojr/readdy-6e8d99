@@ -1,14 +1,17 @@
 // Ação rápida (só leitura): fechamento de um dia da loja — sem IA e sem gravar nada.
-// Mesma cara do "Fechamento do turno" que o assistente manda ao fechar a sessão (assistente-cron ›
-// sessaoText), só que para o dia inteiro: faturamento × mesmo dia da semana passada, barras por
-// pagamento/canal, mais vendidos, caixas do dia e cancelados/descontos.
-// Vendas: RPC fn_get_sales_report (mesma do Relatórios › detalhe do dia), sem pedidos de treino.
-// 2026-09-23 (dono): saíram os cartões Cartão × Stone e iFood — a conferência fica na Conciliação.
+// IGUAL ao "Fechamento do turno" que o assistente manda ao fechar a sessão (assistente-cron ›
+// sessaoText), só que para o dia inteiro (todos os turnos): monta os MESMOS dados (DadosPainel) e
+// desenha com o MESMO componente do chat (PainelMensagem) — mesmos blocos, mesma ordem; só mudam os
+// números (dono, 2026-09-24). Mudou o painel do turno? Mude aqui junto.
+// Vendas: RPC fn_get_sales_report (mesma do Relatórios › detalhe do dia). Por hora e por categoria:
+// as mesmas contas da ação "Vendas do dia" (pedidosPagosDoDia / porHora / porCategoria).
+// Caixas: os que ABRIRAM no dia e já fecharam. Cancelados/descontos: pedidos do dia sem treino.
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { Roteiro, useRoteiro, EscolhaData, Fim, OpcaoNeutra, brl, dataBR, hojeISO, somaDias, type AcaoProps } from '../kit';
-import { Painel, Kpis, Linhas, Barras, Ranking, Variacao } from '../painel';
+import PainelMensagem, { type DadosPainel } from '../../PainelMensagem';
+import { pedidosPagosDoDia, porHora, porCategoria } from '../operacao/vendasDoDia';
 
 interface Relatorio {
   total_revenue?: number; total_orders?: number; avg_ticket?: number;
@@ -18,7 +21,8 @@ interface Relatorio {
 }
 // Mesmos nomes de canal do "Fechamento do turno" (assistente-cron › sessaoText).
 const CANAL: Record<string, string> = { delivery: 'Delivery', table: 'Mesa', qr_universal: 'QR Code', cashier: 'Caixa', immediate: 'Balcão', name: 'Senha', password: 'Senha', self_service: 'Autoatendimento', waiter: 'Garçom' };
-const TOLERANCIA = 1; // R$: diferença menor que isso é arredondamento/gorjeta miúda
+const DIA_SEMANA = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
+const diffTexto = (d: number) => (Math.abs(d) < 0.01 ? 'bateu certinho' : d > 0 ? `sobrou ${brl(d)}` : `faltou ${brl(Math.abs(d))}`);
 
 export default function FechamentoDia({ onFechar, irPara }: AcaoProps) {
   const { user } = useAuth();
@@ -37,13 +41,15 @@ export default function FechamentoDia({ onFechar, irPara }: AcaoProps) {
     const from = `${dia}T00:00:00-03:00`;
     const to = `${dia}T23:59:59-03:00`;
     const semanaPassada = somaDias(dia, -7);
-    const [rep, anterior, extras, caixas] = await Promise.all([
+    const [rep, anterior, extras, caixas, pedidosDia, pedidosAnterior] = await Promise.all([
       supabase.rpc('fn_get_sales_report', { p_tenant_id: tenantId, p_date_from: from, p_date_to: to, p_session_id: null }),
       supabase.rpc('fn_get_sales_report', { p_tenant_id: tenantId, p_date_from: `${semanaPassada}T00:00:00-03:00`, p_date_to: `${semanaPassada}T23:59:59-03:00`, p_session_id: null }),
       supabase.from('orders').select('status, total_amount, discount_amount')
         .eq('tenant_id', tenantId).gte('created_at', from).lte('created_at', to).eq('is_training', false).eq('is_draft', false),
       supabase.from('cash_registers').select('closing_difference')
         .eq('tenant_id', tenantId).gte('opened_at', from).lte('opened_at', to).not('closed_at', 'is', null),
+      pedidosPagosDoDia(tenantId, dia),
+      pedidosPagosDoDia(tenantId, semanaPassada),
     ]);
 
     if (rep.error) {
@@ -65,52 +71,52 @@ export default function FechamentoDia({ onFechar, irPara }: AcaoProps) {
     }
 
     const rev = Number(r.total_revenue ?? 0);
-    const base = a && Number(a.total_orders) > 0 ? Number(a.total_revenue ?? 0) : null;
-    const diaSemana = new Date(`${semanaPassada}T12:00:00-03:00`).toLocaleDateString('pt-BR', { weekday: 'short' }).replace('.', '');
-    const formas = [...(r.by_payment ?? [])].sort((x, y) => Number(y.total) - Number(x.total));
-    const totalPag = formas.reduce((s, p) => s + Number(p.total ?? 0), 0);
+    const lwRev = Number(a?.total_revenue ?? 0);
+    const rotuloSemana = `${DIA_SEMANA[new Date(`${semanaPassada}T12:00:00-03:00`).getDay()]} passada`;
+    const pagos = [...(r.by_payment ?? [])].sort((x, y) => Number(y.total) - Number(x.total));
     const canais = [...(r.by_destination ?? [])].sort((x, y) => Number(y.revenue) - Number(x.revenue));
-    const somaItens = new Map<string, { qtd: number; valor: number }>();
+    const somaItens = new Map<string, { q: number; v: number }>();
     for (const it of r.top_items ?? []) {
       const nome = String(it.item_name ?? '').replace(/\s*\(Un\.\s*\d+\)\s*$/i, '').trim();
-      const prev = somaItens.get(nome) ?? { qtd: 0, valor: 0 };
-      prev.qtd += Number(it.total_qty ?? 0);
-      prev.valor += Number(it.total_revenue ?? 0);
-      somaItens.set(nome, prev);
+      const acc = somaItens.get(nome) ?? { q: 0, v: 0 };
+      acc.q += Number(it.total_qty ?? 0);
+      acc.v += Number(it.total_revenue ?? 0);
+      somaItens.set(nome, acc);
     }
-    const top = [...somaItens.entries()].sort((x, y) => y[1].valor - x[1].valor).slice(0, 5).map(([nome, v]) => ({ nome, ...v }));
+    const top = [...somaItens.entries()].sort((x, y) => y[1].v - x[1].v).slice(0, 5);
+    const categorias = pedidosDia?.length ? await porCategoria(tenantId, pedidosDia.map((o) => o.id)) : null;
+    // Eixo das horas: da 1ª à última hora com venda (no dia ou na semana passada), como no turno.
+    const horas = porHora(pedidosDia);
+    const horasBase = porHora(pedidosAnterior);
+    const comVenda = [...Array(24).keys()].filter((h) => (horas?.[h] ?? 0) > 0 || (horasBase?.[h] ?? 0) > 0);
+    const grafico = horas && comVenda.length >= 2
+      ? Array.from({ length: comVenda[comVenda.length - 1] - comVenda[0] + 1 }, (_, i) => comVenda[0] + i)
+        .map((h) => ({ l: `${h}h`, v: horas[h], ...(horasBase ? { b: horasBase[h] } : {}) }))
+      : [];
     const difs = (caixas.data ?? []) as Array<{ closing_difference: number | null }>;
     const somaDif = difs.reduce((s, c) => s + Number(c.closing_difference ?? 0), 0);
-    const difPagFat = Math.round((totalPag - rev) * 100) / 100;
     const alertas: string[] = [];
     if (cancelados.length) alertas.push(`${cancelados.length} cancelado(s) (${brl(valorCancelado)})`);
     if (descontos > 0) alertas.push(`descontos ${brl(descontos)}`);
-    if (formas.length && Math.abs(difPagFat) >= TOLERANCIA) alertas.push(`pagamentos × faturamento: diferença ${difPagFat > 0 ? '+' : '−'}${brl(Math.abs(difPagFat))}`);
 
-    painel(
-      <Painel titulo="Fechamento do dia" subtitulo={user?.loja || 'Loja ativa'} rodape={`${dataBR(dia)} · dia inteiro, todos os turnos`}>
-        <Kpis
-          principal={{ label: 'Faturamento', valor: brl(rev), extra: <Variacao atual={rev} base={base} rotulo={`vs ${diaSemana} passada`} /> }}
-          outros={[{ label: 'Pedidos', valor: String(n) }, { label: 'Ticket médio', valor: brl(Number(r.avg_ticket ?? 0)) }]}
-        />
-        {formas.length > 0 && <Barras titulo="Por forma de pagamento" itens={formas.map((p) => ({ label: p.payment_method, valor: Number(p.total) }))} />}
-        {canais.length > 0 && (
-          <Barras titulo="Por canal" cor="bg-sky-500"
-            itens={canais.map((c) => ({ label: CANAL[c.destination] ?? c.destination, valor: Number(c.revenue), detalhe: `${c.orders} pedido${Number(c.orders) === 1 ? '' : 's'}` }))} />
-        )}
-        {top.length > 0 && <Ranking titulo="Mais vendidos" itens={top} por="valor" />}
-        {difs.length > 0 && (
-          <Linhas titulo="Caixas" itens={[{
-            label: `${difs.length} caixa${difs.length === 1 ? '' : 's'} do dia`,
-            valor: Math.abs(somaDif) < 0.01 ? 'bateu certinho' : somaDif > 0 ? `sobrou ${brl(somaDif)}` : `faltou ${brl(Math.abs(somaDif))}`,
-            status: Math.abs(somaDif) < 0.01 ? 'ok' : 'perigo',
-          }]} />
-        )}
-        {alertas.map((al) => (
-          <p key={al} className="text-xs font-semibold text-amber-700 bg-amber-50 rounded-xl px-3 py-2">⚠️ {al}</p>
-        ))}
-      </Painel>,
-    );
+    const dados: DadosPainel = {
+      t: 'Fechamento do dia', s: user?.loja || 'Loja ativa',
+      r: `${dataBR(dia)} · dia inteiro, todos os turnos`,
+      kpi: {
+        p: { l: 'Faturamento', v: brl(rev), ...(lwRev > 0 ? { var: { a: rev, b: lwRev, r: `vs ${rotuloSemana}` } } : {}) },
+        o: [{ l: 'Pedidos', v: String(n) }, { l: 'Ticket médio', v: brl(Number(r.avg_ticket ?? 0)) }],
+      },
+      ...(grafico.length >= 2 ? { gl: { t: 'Faturado por hora', rb: rotuloSemana, i: grafico } } : {}),
+      b: [
+        ...(pagos.length ? [{ t: 'Por forma de pagamento', i: pagos.map((p) => ({ l: p.payment_method, v: Number(p.total) })) }] : []),
+        ...(canais.length ? [{ t: 'Por canal', c: 'bg-sky-500', i: canais.map((c) => ({ l: CANAL[c.destination] ?? c.destination, v: Number(c.revenue), d: `${Number(c.orders)} pedido${Number(c.orders) === 1 ? '' : 's'}` })) }] : []),
+        ...(categorias?.length ? [{ t: 'Por categoria (itens)', c: 'bg-amber-500', i: categorias.map((c) => ({ l: c.nome, v: c.valor, d: `${c.qtd} ${c.qtd === 1 ? 'item' : 'itens'}` })) }] : []),
+      ],
+      ...(top.length ? { rk: { t: 'Mais vendidos', p: 'v' as const, i: top.map(([nome, it]) => ({ n: nome, q: it.q, v: it.v })) } } : {}),
+      ...(difs.length ? { lin: [{ t: 'Caixas', i: [{ l: `${difs.length} caixa${difs.length === 1 ? '' : 's'} do dia`, v: diffTexto(somaDif), st: (Math.abs(somaDif) < 0.01 ? 'ok' : 'perigo') as 'ok' | 'perigo' }] }] } : {}),
+      ...(alertas.length ? { al: alertas } : {}),
+    };
+    painel(<PainelMensagem dados={dados} />);
     setPasso('fim');
   };
 
