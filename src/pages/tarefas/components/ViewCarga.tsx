@@ -235,12 +235,8 @@ export default function ViewCarga({ tasks, usuarios, write, onOpenTask, meuId, l
     if (dia !== a.dia) Object.assign(payload, moverDia(task, a.dia, dia) ?? {});
     if (Object.keys(payload).length === 1) return;
     const res = await write('update_task', payload);
-    if (!res.success) { toast.error('Não foi possível mover a tarefa', res.error); return; }
-    const partes = [
-      pessoa !== a.pessoa ? `para ${nomeDe(pessoa)}` : null,
-      dia !== a.dia ? `para ${dataCurta(dia)}` : null,
-    ].filter(Boolean).join(' e ');
-    toast.success('Tarefa movida', `"${task.title}" ${partes}`);
+    // Sem aviso de sucesso: quem arrastou já vê a tarefa no lugar novo.
+    if (!res.success) toast.error('Não foi possível mover a tarefa', res.error);
   };
 
   const compacto = periodo === 'mes';
@@ -295,8 +291,9 @@ export default function ViewCarga({ tasks, usuarios, write, onOpenTask, meuId, l
   const feitosLinha = (linha: string, dia: string) => parcelasDe(linha, dia).reduce((s, p) => s + p.feitos, 0);
   const totalLinha = (linha: string) => dias.reduce((s, d) => s + minutosLinha(linha, chaveDia(d)), 0);
 
+  // "Sem responsável" só aparece se tiver tarefa no período mostrado.
   const linhas = agrupar === 'pessoa'
-    ? pessoasVisiveis
+    ? pessoasVisiveis.filter((p) => p !== SEM_RESPONSAVEL || totalPeriodo(p) > 0)
     : [...porPasta.keys()]
       .filter((pasta) => totalLinha(pasta) > 0)
       .sort((a, b) => totalLinha(b) - totalLinha(a));
