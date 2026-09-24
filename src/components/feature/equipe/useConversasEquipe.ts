@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
-import { chatEquipe, EVENTO_MSG_EQUIPE, type ConversaResumo, type MensagemEquipe } from './api';
+import { chatEquipe, EVENTO_MSG_EQUIPE, EVENTO_VISTO_EQUIPE, type ConversaResumo, type MensagemEquipe } from './api';
 
 /**
  * Lista das conversas com a equipe + total de não lidas (badge do botão do chat).
@@ -33,6 +33,14 @@ export function useConversasEquipe(userId: string | undefined) {
         const m = p.new as MensagemEquipe & { thread_id: string };
         window.dispatchEvent(new CustomEvent(EVENTO_MSG_EQUIPE, { detail: m }));
         // Várias chegando juntas: uma recarga só.
+        if (timer.current) clearTimeout(timer.current);
+        timer.current = setTimeout(recarregar, 400);
+      })
+      // Vistos (2026-09-24): a outra pessoa recebeu ou leu — o ✓✓ muda na hora.
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'chat_participants' }, (p) => {
+        const r = p.new as { thread_id: string; user_id: string; last_read_id: number; last_delivered_id: number };
+        if (r.user_id === userId) return;
+        window.dispatchEvent(new CustomEvent(EVENTO_VISTO_EQUIPE, { detail: r }));
         if (timer.current) clearTimeout(timer.current);
         timer.current = setTimeout(recarregar, 400);
       })

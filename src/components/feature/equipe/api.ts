@@ -5,14 +5,24 @@ import { invokeWithAuth } from '@/lib/supabase';
 export interface PessoaEquipe { id: string; nome: string; foto: string | null; papel?: string }
 export interface ConversaResumo {
   thread_id: string;
+  /** Loja da conversa: o mesmo par de pessoas tem uma conversa em cada loja (2026-09-24). */
+  tenant_id?: string;
   loja: string;
   pessoa: PessoaEquipe | null;
   lido_pelo_outro: number;
+  /** Até onde chegou no aparelho da outra pessoa (✓✓ cinza). */
+  entregue_ao_outro?: number;
   nao_lidas: number;
   ultima: { id: number; minha: boolean; texto: string; created_at: string } | null;
   quando: string;
 }
-export interface MensagemEquipe { id: number; sender_id: string; body: string; created_at: string; temp?: boolean; falhou?: boolean }
+export interface CitacaoEquipe { id: number; sender_id: string; body: string }
+export interface MensagemEquipe {
+  id: number; sender_id: string; body: string; created_at: string;
+  /** Resposta a uma mensagem (como no WhatsApp): o id e a citação. */
+  reply_to_id?: number | null; resposta?: CitacaoEquipe | null;
+  temp?: boolean; falhou?: boolean;
+}
 
 export async function chatEquipe<T>(action: string, extra: Record<string, unknown> = {}): Promise<T> {
   const { data, error } = await invokeWithAuth<{ success?: boolean; data?: T; error?: string }>('chat-equipe', { body: { action, ...extra } });
@@ -22,6 +32,8 @@ export async function chatEquipe<T>(action: string, extra: Record<string, unknow
 
 /** Evento de janela: mensagem nova chegou pelo Realtime (a conversa aberta escuta). */
 export const EVENTO_MSG_EQUIPE = 'erpos:chat-equipe-msg';
+/** Evento de janela: a outra pessoa recebeu/leu (linha de chat_participants pelo Realtime). */
+export const EVENTO_VISTO_EQUIPE = 'erpos:chat-equipe-visto';
 /** Evento de janela: abrir uma conversa (vem do link do aviso no celular). */
 export const EVENTO_ABRIR_EQUIPE = 'erpos:chat-equipe-abrir';
 

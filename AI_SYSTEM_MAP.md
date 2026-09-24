@@ -3280,6 +3280,8 @@ Front: `src/components/feature/equipe/` — `useEquipeNoChat` devolve a seção 
 cima do painel e as não lidas; ligado no `AssistenteChat` (dono) e no `AcoesRapidasFlutuante` (demais,
 aba Conversas). Teste: `src/test/components/chatEquipe.test.tsx`.
 
+**2026-09-24 — igual ao WhatsApp + por loja.** (1) **Uma conversa por par EM CADA LOJA** (`unique (tenant_id, direct_key)`): antes era uma por par e misturava Vila e Paranaguá; a lista tem uma aba por loja com as não lidas de cada uma e começa na loja aberta. (2) **Vistos**: `chat_participants.last_delivered_id` — `fn_chat_marcar_entregue` roda quando o app da pessoa busca `conversas`/`mensagens` (✓✓ cinza), `lido` (✓✓ azul); `chat_participants` entrou no Realtime para o visto mudar na hora. Limite: com o app FECHADO fica ✓ até a pessoa abrir (o push não confirma entrega). (3) **Responder**: `chat_messages.reply_to_id` (mesma conversa), citação em `resposta`. (4) **Pesquisa**: `fn_chat_buscar` (unaccent + lower, % e _ literais, 50 mais novas); `mensagens.around_id` traz o trecho em volta do resultado e `has_newer` mostra "Mais recentes".
+
 ### "Acréscimos da nota" não é produto (2026-09-24)
 O `fiscal-inbound` grava a diferença entre o vNF e os itens (ICMS-ST, IPI, seguro, outras despesas) como
 uma linha `fin_purchase_items` "Acréscimos da nota (...)", sem insumo — ela entra no total/CMV, mas **não

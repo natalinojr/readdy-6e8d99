@@ -4,16 +4,21 @@ import { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useVoltarFecha } from '@/lib/voltarAndroid';
 import { chatEquipe, horaCurta, type ConversaResumo, type PessoaEquipe } from './api';
-import { AvatarPessoa } from './ConversaEquipe';
+import { AvatarPessoa, estadoVisto, Vistos } from './ConversaEquipe';
 
 export interface ConversaAberta { threadId: string; pessoa: PessoaEquipe | null; loja?: string }
 
-export function ListaEquipe({ conversas, onAbrir, onNova, mostrarLoja }: {
+export interface LojaEquipe { id: string; nome: string; naoLidas: number }
+
+export function ListaEquipe({ conversas, onAbrir, onNova, lojas, lojaSel, onLoja }: {
+  /** Só as conversas da loja escolhida. */
   conversas: ConversaResumo[];
   onAbrir: (c: ConversaAberta) => void;
   onNova: () => void;
-  /** Quem trabalha em mais de uma loja vê de qual loja é a conversa. */
-  mostrarLoja?: boolean;
+  /** Quem trabalha em mais de uma loja escolhe a loja aqui; o número mostra o que chegou em cada uma. */
+  lojas: LojaEquipe[];
+  lojaSel: string;
+  onLoja: (id: string) => void;
 }) {
   return (
     <>
@@ -23,27 +28,44 @@ export function ListaEquipe({ conversas, onAbrir, onNova, mostrarLoja }: {
           <i className="ri-chat-new-line text-base" /> Nova conversa
         </button>
       </div>
+      {lojas.length > 1 && (
+        <div className="flex gap-1.5 px-4 pb-2 overflow-x-auto" role="tablist" aria-label="Loja das conversas">
+          {lojas.map((l) => (
+            <button key={l.id} role="tab" aria-selected={l.id === lojaSel} onClick={() => onLoja(l.id)}
+              className={`flex-shrink-0 flex items-center gap-1.5 h-8 px-3 rounded-full text-xs font-semibold border cursor-pointer ${l.id === lojaSel ? 'bg-sky-600 border-sky-600 text-white' : 'bg-white border-zinc-200 text-zinc-600 hover:bg-zinc-50'}`}>
+              <i className="ri-store-2-line" /> {l.nome}
+              {l.naoLidas > 0 && (
+                <span className={`min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full text-[10px] font-black ${l.id === lojaSel ? 'bg-white text-sky-700' : 'bg-red-500 text-white'}`}
+                  aria-label={`${l.naoLidas} não lida(s) em ${l.nome}`}>
+                  {l.naoLidas > 99 ? '99+' : l.naoLidas}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
       {conversas.length === 0 && (
         <button onClick={onNova} className="w-full px-4 py-3 text-left text-xs text-zinc-400 border-b border-zinc-100 hover:bg-zinc-50 cursor-pointer">
           Fale com alguém da loja: toque em <b className="text-sky-700">Nova conversa</b>.
         </button>
       )}
       {conversas.map((c) => {
-        const previa = c.ultima ? `${c.ultima.minha ? 'Você: ' : ''}${c.ultima.texto}` : 'Nenhuma mensagem ainda';
+        // Como no WhatsApp: a sua última mensagem vem com os vistos na frente, sem "Você:".
+        const previa = c.ultima ? c.ultima.texto : 'Nenhuma mensagem ainda';
         return (
           <button key={c.thread_id} onClick={() => onAbrir({ threadId: c.thread_id, pessoa: c.pessoa, loja: c.loja })}
             className="w-full flex items-center gap-3 px-4 py-3 border-b border-zinc-100 hover:bg-zinc-50 cursor-pointer text-left">
             <AvatarPessoa pessoa={c.pessoa} />
             <span className="flex-1 min-w-0">
               <span className="flex items-baseline gap-2">
-                <span className="flex-1 text-sm font-bold text-zinc-900 truncate">
-                  {c.pessoa?.nome ?? 'Conversa'}
-                  {mostrarLoja && c.loja && <span className="ml-1.5 text-[11px] font-semibold text-zinc-400">· {c.loja}</span>}
-                </span>
+                <span className="flex-1 text-sm font-bold text-zinc-900 truncate">{c.pessoa?.nome ?? 'Conversa'}</span>
                 {c.ultima && <span className={`text-[11px] flex-shrink-0 ${c.nao_lidas ? 'text-sky-700 font-bold' : 'text-zinc-400'}`}>{horaCurta(c.ultima.created_at)}</span>}
               </span>
               <span className="flex items-center gap-2">
-                <span className={`flex-1 text-xs truncate ${c.nao_lidas ? 'text-zinc-700 font-semibold' : 'text-zinc-400'}`}>{previa}</span>
+                <span className={`flex-1 flex items-center gap-1 min-w-0 text-xs ${c.nao_lidas ? 'text-zinc-700 font-semibold' : 'text-zinc-400'}`}>
+                  {c.ultima?.minha && <Vistos estado={estadoVisto(c.ultima.id, Math.max(c.entregue_ao_outro ?? 0, c.lido_pelo_outro), c.lido_pelo_outro)} className="flex-shrink-0 text-sm leading-none" />}
+                  <span className="truncate">{previa}</span>
+                </span>
                 {c.nao_lidas > 0 && (
                   <span className="flex-shrink-0 min-w-[20px] h-5 px-1.5 flex items-center justify-center rounded-full bg-sky-600 text-white text-[11px] font-black" aria-label={`${c.nao_lidas} não lida(s)`}>
                     {c.nao_lidas > 99 ? '99+' : c.nao_lidas}
@@ -64,14 +86,14 @@ const PAPEL: Record<string, string> = {
   delivery_manager: 'Entregas', financeiro: 'Financeiro', tarefas: 'Tarefas', supervisao: 'Supervisão',
 };
 
-/** Escolher com quem falar: as pessoas da loja aberta (ou de outra loja sua, pelo seletor). */
-export function NovaConversaEquipe({ onEscolher, onVoltar }: {
+/** Escolher com quem falar: as pessoas da loja escolhida nas abas (a conversa nasce nessa loja). */
+export function NovaConversaEquipe({ loja, onEscolher, onVoltar }: {
+  loja: string;
   onEscolher: (c: ConversaAberta) => void;
   onVoltar: () => void;
 }) {
-  const { user, availableTenants: lojas } = useAuth();
+  const { availableTenants: lojas } = useAuth();
   const availableTenants = lojas ?? [];
-  const [loja, setLoja] = useState(user?.tenantId ?? availableTenants[0]?.tenantId ?? '');
   const [colegas, setColegas] = useState<PessoaEquipe[] | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [filtro, setFiltro] = useState('');
@@ -116,12 +138,6 @@ export function NovaConversaEquipe({ onEscolher, onVoltar }: {
         </div>
       </div>
       <div className="px-3 pt-3 pb-2 space-y-2 flex-shrink-0">
-        {availableTenants.length > 1 && (
-          <select value={loja} onChange={(e) => setLoja(e.target.value)} aria-label="Loja"
-            className="w-full h-10 px-3 text-sm rounded-xl border border-zinc-200 bg-white focus:outline-none focus:border-sky-400">
-            {availableTenants.map((t) => <option key={t.tenantId} value={t.tenantId}>{t.tenantName}</option>)}
-          </select>
-        )}
         <div className="relative">
           <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
           <input type="text" value={filtro} onChange={(e) => setFiltro(e.target.value)} placeholder="Procurar pessoa…"
