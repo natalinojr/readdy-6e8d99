@@ -35,6 +35,21 @@ describe('ItemRelatorio', () => {
     await waitFor(() => expect(onResponder).toHaveBeenCalledWith('Feito ontem', [], null));
   });
 
+  it('na tela da equipe marca "você" pelo usuário e diferencia autor do relatório e equipe da pasta', () => {
+    const comEquipe: ItemRel = {
+      ...item,
+      responses: [
+        { id: 'e1', kind: 'reply', body: 'Olhei', images: [], new_status: null, author_name: 'Ana', author_type: 'owner', author_guest_id: null, author_is_creator: true, author_user_id: 'u-ana', created_at: '2026-09-24T11:00:00Z' },
+        { id: 'e2', kind: 'reply', body: 'Eu também', images: [], new_status: null, author_name: 'Bruno', author_type: 'owner', author_guest_id: null, author_is_creator: false, author_user_id: 'u-bruno', created_at: '2026-09-24T12:00:00Z' },
+      ],
+    };
+    render(<ItemRelatorio item={comEquipe} numero={1} podeResponder meuUserId="u-bruno" onResponder={vi.fn()} onEnviarImagem={vi.fn()} />);
+    expect(screen.getByText('Bruno (você)')).toBeTruthy();
+    expect(screen.getByText('Ana')).toBeTruthy();
+    expect(screen.getByText('autor do relatório')).toBeTruthy();
+    expect(screen.getByText('equipe')).toBeTruthy();
+  });
+
   it('sem permissão de responder (relatório encerrado) não mostra a caixa', () => {
     render(<ItemRelatorio item={item} numero={1} podeResponder={false} onResponder={vi.fn()} onEnviarImagem={vi.fn()} />);
     expect(screen.queryByText('Responder')).toBeNull();

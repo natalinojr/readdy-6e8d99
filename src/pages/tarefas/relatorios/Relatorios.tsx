@@ -1,34 +1,65 @@
 /**
- * Relatórios compartilháveis (Tarefas) — visão do dono.
+ * Relatórios compartilháveis (Tarefas) — visão da equipe (quem criou e quem divide a pasta).
  * Monta o relatório (itens com texto e imagens), manda o link para quem está
  * fora do sistema e acompanha as respostas, cada uma com nome e horário.
  */
 import { useCallback, useEffect, useState } from 'react';
 import {
   ArrowLeft, Plus, Link2, Copy, MessageCircle, RefreshCw, Loader2, Trash2, Pencil, ChevronUp, ChevronDown,
-  Lock, Unlock, Users, FileText, Check, X,
+  Lock, Unlock, Users, FileText, Check, X, Folder,
 } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
 import ConfirmDialog from '../components/ConfirmDialog';
 import ItemRelatorio, { GradeImagens, NovoItem, useAnexos } from './ItemRelatorio';
 import {
   chamarDono, enviarImagemDono, linkPublico, dataHora,
+  podeEditar, podeExcluir,
   type ImagemRel, type ItemRel, type RelatorioCompleto, type ResumoRelatorio,
 } from './api';
+
+/** Pasta de Tarefas (o suficiente para escolher onde o relatório fica). */
+export interface PastaRel { id: string; name: string; color: string; access?: 'owner' | 'edit' | 'view' }
+
+/** Pastas onde posso pôr relatório: as minhas e as compartilhadas comigo com 'pode editar'. */
+const pastasPermitidas = (pastas: PastaRel[]) => pastas.filter((p) => (p.access ?? 'owner') !== 'view');
+
+function SeletorPasta({ pastas, valor, onChange }: { pastas: PastaRel[]; valor: string; onChange: (v: string) => void }) {
+  return (
+    <select
+      value={valor}
+      onChange={(e) => onChange(e.target.value)}
+      className="rounded-lg border border-slate-200 px-2 py-2 text-base md:text-sm bg-white max-w-full"
+      title="Quem divide a pasta também vê o relatório"
+    >
+      <option value="">Sem pasta (só eu)</option>
+      {pastasPermitidas(pastas).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+    </select>
+  );
+}
 
 interface Props {
   /** Abre direto num relatório (ex.: clique no push → /tarefas?relatorio=<id>). */
   abrirId?: string | null;
   /** Celular: volta para o menu de Tarefas. */
   onVoltar?: () => void;
+  /** Pastas de Tarefas que eu vejo (para pôr o relatório numa pasta). */
+  pastas: PastaRel[];
+  /** Pasta aberta em Tarefas — já vem escolhida ao criar. */
+  pastaAtualId?: string | null;
+  meuId: string | null;
 }
 
-export default function Relatorios({ abrirId, onVoltar }: Props) {
+export default function Relatorios({ abrirId, onVoltar, pastas, pastaAtualId, meuId }: Props) {
   const toast = useToast();
   const [lista, setLista] = useState<ResumoRelatorio[] | null>(null);
   const [selecionado, setSelecionado] = useState<string | null>(abrirId ?? null);
   const [criando, setCriando] = useState(false);
   const [novoTitulo, setNovoTitulo] = useState('');
+  const [novaPasta, setNovaPasta] = useState('');
+  const abrirCriacao = () => {
+    setNovaPasta(pastasPermitidas(pastas).some((p) => p.id === pastaAtualId) ? pastaAtualId! : '');
+    setCriando(true);
+  };
 
   const carregarLista = useCallback(async () => {
     const r = await chamarDono<{ reports: ResumoRelatorio[] }>('list');
@@ -41,7 +72,7 @@ export default function Relatorios({ abrirId, onVoltar }: Props) {
 
   const criar = async () => {
     if (!novoTitulo.trim()) return;
-    const r = await chamarDono<{ id: string }>('create', { title: novoTitulo.trim() });
+    const r = await chamarDono<{ id: string }>('create', { title: novoTitulo.trim(), list_id: novaPasta || null });
     if (!r.ok) { toast.error('Erro ao criar relatório', r.error); return; }
     setNovoTitulo('');
     setCriando(false);
@@ -53,6 +84,8 @@ export default function Relatorios({ abrirId, onVoltar }: Props) {
     return (
       <DetalheRelatorio
         id={selecionado}
+        pastas={pastas}
+        meuId={meuId}
         onVoltar={() => { setSelecionado(null); carregarLista(); }}
       />
     );
@@ -68,6 +101,7 @@ export default function Relatorios({ abrirId, onVoltar }: Props) {
       </div>
       <p className="text-sm text-slate-500 mb-4">
         Monte uma lista de pontos (texto e fotos), mande o link para quem está fora do sistema e receba as respostas item a item — cada uma com nome e horário.
+        Relatório dentro de uma pasta aparece também para quem divide a pasta.
       </p>
 
       {criando ? (
@@ -81,12 +115,13 @@ export default function Relatorios({ abrirId, onVoltar }: Props) {
             placeholder="Ex.: Vistoria da obra — pendências do empreiteiro"
             className="flex-1 min-w-[200px] rounded-lg border border-slate-200 px-3 py-2 text-base md:text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200"
           />
+          <SeletorPasta pastas={pastas} valor={novaPasta} onChange={setNovaPasta} />
           <button onClick={() => setCriando(false)} className="px-3 py-2 rounded-lg text-sm text-slate-500 hover:bg-slate-100">Cancelar</button>
           <button onClick={criar} disabled={!novoTitulo.trim()} className="px-4 py-2 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50">Criar</button>
         </div>
       ) : (
         <button
-          onClick={() => setCriando(true)}
+          onClick={abrirCriacao}
           className="mb-4 flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700"
         >
           <Plus size={16} /> Novo relatório
@@ -114,6 +149,16 @@ export default function Relatorios({ abrirId, onVoltar }: Props) {
               {r.status === 'closed' && <span className="shrink-0 text-[11px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-500">encerrado</span>}
               {r.status === 'open' && !r.link_enabled && <span className="shrink-0 text-[11px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-500">link desligado</span>}
             </div>
+            {(r.list_name || r.access !== 'creator') && (
+              <p className="text-xs text-slate-500 mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                {r.list_name && (
+                  <span className="flex items-center gap-1">
+                    <Folder size={12} style={{ color: r.list_color ?? undefined }} /> {r.list_name}
+                  </span>
+                )}
+                {r.access !== 'creator' && <span>de {r.owner_name ?? 'outra pessoa'}{r.access === 'view' ? ' · só ver e responder' : ''}</span>}
+              </p>
+            )}
             <p className="text-xs text-slate-500 mt-1">
               {r.items_total} {r.items_total === 1 ? 'item' : 'itens'} · {r.items_open} aguardando · {r.items_resolved} resolvido{r.items_resolved === 1 ? '' : 's'}
               {' · '}{r.guest_responses} resposta{r.guest_responses === 1 ? '' : 's'} de fora · atualizado {dataHora(r.updated_at)}
@@ -125,7 +170,7 @@ export default function Relatorios({ abrirId, onVoltar }: Props) {
   );
 }
 
-function DetalheRelatorio({ id, onVoltar }: { id: string; onVoltar: () => void }) {
+function DetalheRelatorio({ id, onVoltar, pastas, meuId }: { id: string; onVoltar: () => void; pastas: PastaRel[]; meuId: string | null }) {
   const toast = useToast();
   const [dados, setDados] = useState<RelatorioCompleto | null>(null);
   const [editandoCabecalho, setEditandoCabecalho] = useState(false);
@@ -169,6 +214,11 @@ function DetalheRelatorio({ id, onVoltar }: { id: string; onVoltar: () => void }
   const { report, items, guests } = dados;
   const link = report.share_token ? linkPublico(report.share_token) : '';
   const aberto = report.status === 'open';
+  // O que dá pra mexer depende do acesso: quem só vê a pasta lê e responde.
+  const edita = podeEditar(report.access);
+  const exclui = podeExcluir(report.access);
+  const criador = report.access === 'creator';
+  const nomePasta = pastas.find((p) => p.id === report.list_id)?.name ?? null;
 
   const copiar = async () => {
     try {
@@ -238,15 +288,38 @@ function DetalheRelatorio({ id, onVoltar }: { id: string; onVoltar: () => void }
                 : <p className="text-sm text-slate-400 mt-1">Sem explicação para quem vai responder.</p>}
               {!aberto && <p className="mt-2 text-xs inline-block px-2 py-0.5 rounded-full bg-slate-100 text-slate-500">Encerrado — o link só mostra, não aceita respostas</p>}
             </div>
-            <button
-              onClick={() => { setTitulo(report.title); setDescricao(report.description ?? ''); setEditandoCabecalho(true); }}
-              className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-indigo-600"
-              title="Editar título e explicação"
-            >
-              <Pencil size={16} />
-            </button>
+            {edita && (
+              <button
+                onClick={() => { setTitulo(report.title); setDescricao(report.description ?? ''); setEditandoCabecalho(true); }}
+                className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-indigo-600"
+                title="Editar título e explicação"
+              >
+                <Pencil size={16} />
+              </button>
+            )}
           </div>
         )}
+        <div className="mt-3 pt-3 border-t border-slate-100 flex flex-wrap items-center gap-2 text-sm text-slate-600">
+          <Folder size={15} className="text-slate-400 shrink-0" />
+          {criador ? (
+            <>
+              <SeletorPasta
+                pastas={report.list_id && !pastasPermitidas(pastas).some((p) => p.id === report.list_id)
+                  ? [...pastas, { id: report.list_id, name: nomePasta ?? 'Pasta atual', color: '' }]
+                  : pastas}
+                valor={report.list_id ?? ''}
+                onChange={(v) => acao('update', { list_id: v || null }, v ? 'Relatório agora está na pasta' : 'Relatório tirado da pasta')}
+              />
+              <span className="text-xs text-slate-400">{report.list_id ? 'Quem divide essa pasta também vê este relatório.' : 'Só você vê este relatório.'}</span>
+            </>
+          ) : (
+            <span>
+              {nomePasta ? <>Na pasta <strong className="font-medium">{nomePasta}</strong> · </> : null}
+              criado por {report.owner_name ?? 'outra pessoa'}
+              {report.access === 'view' && <span className="text-slate-400"> · você pode ver e responder</span>}
+            </span>
+          )}
+        </div>
       </section>
 
       {/* Link */}
@@ -264,26 +337,31 @@ function DetalheRelatorio({ id, onVoltar }: { id: string; onVoltar: () => void }
               <button onClick={whatsapp} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm bg-emerald-600 text-white hover:bg-emerald-700">
                 <MessageCircle size={15} /> Mandar no WhatsApp
               </button>
+              {edita && <>
               <button onClick={() => setTrocandoLink(true)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm text-slate-600 border border-slate-200 hover:bg-slate-50">
                 <RefreshCw size={14} /> Trocar link
               </button>
               <button onClick={() => acao('update', { link_enabled: false }, 'Link desligado')} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm text-slate-600 border border-slate-200 hover:bg-slate-50">
                 <Lock size={14} /> Desligar link
               </button>
+              </>}
             </div>
           </>
         ) : (
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <p className="text-sm text-slate-500 flex-1">O link está desligado — quem tiver o endereço não consegue abrir.</p>
-            <button onClick={() => acao('update', { link_enabled: true }, 'Link ligado')} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm border border-slate-200 hover:bg-slate-50">
-              <Unlock size={14} /> Ligar link
-            </button>
+            {edita && (
+              <button onClick={() => acao('update', { link_enabled: true }, 'Link ligado')} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm border border-slate-200 hover:bg-slate-50">
+                <Unlock size={14} /> Ligar link
+              </button>
+            )}
           </div>
         )}
-        <label className="mt-3 flex items-center gap-2 text-sm text-slate-600">
+        <label className={`mt-3 flex items-center gap-2 text-sm text-slate-600 ${edita ? '' : 'opacity-60'}`}>
           <input
             type="checkbox"
             checked={report.guests_can_add_items}
+            disabled={!edita}
             onChange={(e) => acao('update', { guests_can_add_items: e.target.checked })}
             className="w-4 h-4"
           />
@@ -330,10 +408,10 @@ function DetalheRelatorio({ id, onVoltar }: { id: string; onVoltar: () => void }
             item={item}
             numero={i + 1}
             podeResponder
-            souDono
+            meuUserId={meuId}
             onEnviarImagem={enviarImagem}
             onResponder={(body, images, st) => acao('reply', { item_id: item.id, body, images, new_status: st })}
-            acoes={(
+            acoes={edita && (
               <div className="shrink-0 flex items-center">
                 <button disabled={i === 0} onClick={() => mover(i, -1)} className="p-1 rounded text-slate-400 hover:bg-slate-100 disabled:opacity-30" title="Subir"><ChevronUp size={16} /></button>
                 <button disabled={i === items.length - 1} onClick={() => mover(i, 1)} className="p-1 rounded text-slate-400 hover:bg-slate-100 disabled:opacity-30" title="Descer"><ChevronDown size={16} /></button>
@@ -343,13 +421,16 @@ function DetalheRelatorio({ id, onVoltar }: { id: string; onVoltar: () => void }
             )}
           />
         ))}
-        <NovoItem
-          onEnviarImagem={enviarImagem}
-          onCriar={(title, body, images) => acao('add_item', { title, body, images })}
-        />
+        {edita && (
+          <NovoItem
+            onEnviarImagem={enviarImagem}
+            onCriar={(title, body, images) => acao('add_item', { title, body, images })}
+          />
+        )}
       </div>
 
       {/* Rodapé */}
+      {edita && (
       <div className="mt-6 flex flex-wrap gap-2 border-t border-slate-200 pt-4">
         {aberto ? (
           <button onClick={() => acao('update', { status: 'closed' }, 'Relatório encerrado')} className="px-3 py-2 rounded-lg text-sm text-slate-600 border border-slate-200 hover:bg-slate-50">
@@ -360,10 +441,13 @@ function DetalheRelatorio({ id, onVoltar }: { id: string; onVoltar: () => void }
             Reabrir relatório
           </button>
         )}
-        <button onClick={() => setExcluindoRelatorio(true)} className="px-3 py-2 rounded-lg text-sm text-red-600 border border-red-200 hover:bg-red-50">
-          Excluir relatório
-        </button>
+        {exclui && (
+          <button onClick={() => setExcluindoRelatorio(true)} className="px-3 py-2 rounded-lg text-sm text-red-600 border border-red-200 hover:bg-red-50">
+            Excluir relatório
+          </button>
+        )}
       </div>
+      )}
 
       {excluindoItem && (
         <ConfirmDialog

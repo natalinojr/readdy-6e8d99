@@ -503,6 +503,9 @@ export default function TarefasPage() {
             key={relatorioAberto ?? 'lista'}
             abrirId={relatorioAberto}
             onVoltar={() => setVerRelatorios(false)}
+            pastas={lists}
+            pastaAtualId={selectedListId}
+            meuId={meuId}
           />
         </main>
       ) : (

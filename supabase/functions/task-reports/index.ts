@@ -1,7 +1,9 @@
 // task-reports — relatório compartilhável por link, do módulo Tarefas (2026-09-25).
 //
-// Dono (JWT, módulo Tarefas): monta o relatório (itens com texto e imagens),
-// liga/desliga o link, responde e muda status dos itens.
+// Equipe (JWT, módulo Tarefas): quem criou monta o relatório (itens com texto e
+// imagens), liga/desliga o link, responde e muda status dos itens. Relatório
+// dentro de uma pasta vale também para quem divide a pasta (fn_task_report_access:
+// creator > owner da pasta > edit > view; view só lê e responde).
 // Público (sem login, pelo share_token): quem abre o link se identifica com
 // nome (+ contato opcional) e recebe um guest_token que fica no aparelho; com
 // ele responde os itens. Toda resposta, mudança de status e edição de item vira
@@ -106,6 +108,8 @@ async function montarRelatorio(admin: SupabaseClient, report: Row, publico: bool
       id: r.id, kind: r.kind, body: r.body, images: comUrl(r.images), new_status: r.new_status,
       author_name: r.author_name, author_type: r.author_user_id ? 'owner' : 'guest',
       author_guest_id: r.author_guest_id, created_at: r.created_at,
+      author_is_creator: !!r.author_user_id && r.author_user_id === report.created_by,
+      ...(publico ? {} : { author_user_id: r.author_user_id }),
     });
     porItem.set(r.item_id, lista);
   }
@@ -116,7 +120,8 @@ async function montarRelatorio(admin: SupabaseClient, report: Row, publico: bool
       guests_can_add_items: report.guests_can_add_items, owner_name: donoR.data?.name ?? null,
       created_at: report.created_at, updated_at: report.updated_at,
       ...(publico ? {} : {
-        share_token: report.share_token, link_enabled: report.link_enabled, owner_seen_at: report.owner_seen_at,
+        share_token: report.share_token, link_enabled: report.link_enabled, created_by: report.created_by,
+        list_id: report.list_id ?? null, access: report.access ?? null,
       }),
     },
     items: itens.map((i) => ({
@@ -313,12 +318,31 @@ Deno.serve({ verify_jwt: false }, async (req) => {
     const lojaPedida = body.tenant_id ? lojas?.find((l) => l.tenant_id === body.tenant_id)?.tenant_id : null;
     const tenantId = lojaPedida ?? lojas?.[0]?.tenant_id ?? null;
 
-    const meuRelatorio = async (id: unknown): Promise<Row> => {
-      const { data } = await admin.from('task_reports').select('*')
-        .eq('id', String(id ?? '')).eq('created_by', user.id).is('archived_at', null).maybeSingle();
-      if (!data) throw new Recusa('Relatório não encontrado', 404);
-      return data;
+    // Nível mínimo por ação: view (ler/responder) < edit (itens, link) < owner (excluir) < creator (trocar pasta).
+    const NIVEL: Record<string, number> = { view: 1, edit: 2, owner: 3, creator: 4 };
+    const meuRelatorio = async (id: unknown, minimo: 'view' | 'edit' | 'owner' | 'creator' = 'view'): Promise<Row> => {
+      const reportId = String(id ?? '');
+      const [{ data }, { data: acesso }] = await Promise.all([
+        admin.from('task_reports').select('*').eq('id', reportId).is('archived_at', null).maybeSingle(),
+        admin.rpc('fn_task_report_access', { p_report_id: reportId, p_user_id: user.id }),
+      ]);
+      if (!data || !acesso) throw new Recusa('Relatório não encontrado', 404);
+      if ((NIVEL[acesso as string] ?? 0) < NIVEL[minimo]) {
+        throw new Recusa(minimo === 'edit'
+          ? 'Você só pode ver e responder este relatório'
+          : 'Só quem criou o relatório (ou o dono da pasta) pode fazer isso', 403);
+      }
+      return { ...data, access: acesso };
     };
+    /** Pasta onde a pessoa pode pôr relatório: dona ou com permissão de editar. */
+    const pastaPermitida = async (listId: unknown): Promise<string | null> => {
+      if (listId === null || listId === undefined || listId === '') return null;
+      const { data: acesso } = await admin.rpc('fn_task_list_access', { p_list_id: String(listId), p_user_id: user.id });
+      if (acesso !== 'owner' && acesso !== 'edit') throw new Recusa('Você não pode pôr relatório nessa pasta', 403);
+      return String(listId);
+    };
+    const marcarVisto = (reportId: string) => admin.from('task_report_seen')
+      .upsert({ report_id: reportId, user_id: user.id, seen_at: new Date().toISOString() }, { onConflict: 'report_id,user_id' });
     const meuItem = async (reportId: string, itemId: unknown): Promise<Row> => {
       const { data } = await admin.from('task_report_items').select('*')
         .eq('id', String(itemId ?? '')).eq('report_id', reportId).is('archived_at', null).maybeSingle();
@@ -327,30 +351,47 @@ Deno.serve({ verify_jwt: false }, async (req) => {
     };
     const meuNome = async () => {
       const { data } = await admin.from('users').select('name').eq('id', user.id).maybeSingle();
-      return (data?.name as string | undefined) ?? user.email ?? 'Dono do relatório';
+      return (data?.name as string | undefined) ?? user.email ?? 'Equipe';
     };
 
     switch (action) {
       case 'list': {
+        const { data: acessos, error: acErr } = await admin.rpc('fn_task_reports_acessiveis', { p_user_id: user.id });
+        if (acErr) throw acErr;
+        const acessoDe = new Map(((acessos ?? []) as Row[]).map((a) => [a.report_id, a.access]));
+        const ids = [...acessoDe.keys()];
+        if (!ids.length) return json({ success: true, reports: [] });
         const { data: reps, error } = await admin.from('task_reports')
-          .select('id, title, status, link_enabled, share_token, owner_seen_at, created_at, updated_at')
-          .eq('created_by', user.id).is('archived_at', null).order('updated_at', { ascending: false });
+          .select('id, title, status, link_enabled, share_token, created_by, list_id, created_at, updated_at')
+          .in('id', ids).order('updated_at', { ascending: false });
         if (error) throw error;
-        const ids = (reps ?? []).map((r) => r.id);
-        const [itensR, respR] = ids.length ? await Promise.all([
+        const listaIds = [...new Set((reps ?? []).map((r) => r.list_id).filter(Boolean))];
+        const donos = [...new Set((reps ?? []).map((r) => r.created_by))];
+        const [itensR, respR, vistoR, pastasR, nomesR] = await Promise.all([
           admin.from('task_report_items').select('report_id, status').in('report_id', ids).is('archived_at', null),
           admin.from('task_report_responses').select('report_id, created_at, author_guest_id').in('report_id', ids).not('author_guest_id', 'is', null),
-        ]) : [{ data: [] }, { data: [] }];
+          admin.from('task_report_seen').select('report_id, seen_at').in('report_id', ids).eq('user_id', user.id),
+          listaIds.length ? admin.from('task_lists').select('id, name, color').in('id', listaIds) : Promise.resolve({ data: [] }),
+          admin.from('users').select('id, name').in('id', donos),
+        ]);
+        const visto = new Map(((vistoR.data ?? []) as Row[]).map((v) => [v.report_id, v.seen_at]));
+        const pasta = new Map(((pastasR.data ?? []) as Row[]).map((l) => [l.id, l]));
+        const nome = new Map(((nomesR.data ?? []) as Row[]).map((u) => [u.id, u.name]));
         const lista = (reps ?? []).map((r) => {
           const itens = ((itensR.data ?? []) as Row[]).filter((i) => i.report_id === r.id);
           const resp = ((respR.data ?? []) as Row[]).filter((x) => x.report_id === r.id);
+          const vistoEm = visto.get(r.id) as string | undefined;
           return {
             ...r,
+            access: acessoDe.get(r.id),
+            owner_name: nome.get(r.created_by) ?? null,
+            list_name: r.list_id ? pasta.get(r.list_id)?.name ?? null : null,
+            list_color: r.list_id ? pasta.get(r.list_id)?.color ?? null : null,
             items_total: itens.length,
             items_open: itens.filter((i) => i.status === 'open').length,
             items_resolved: itens.filter((i) => i.status === 'resolved').length,
             guest_responses: resp.length,
-            unseen: resp.filter((x) => !r.owner_seen_at || x.created_at > r.owner_seen_at).length,
+            unseen: resp.filter((x) => !vistoEm || x.created_at > vistoEm).length,
           };
         });
         return json({ success: true, reports: lista });
@@ -358,7 +399,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       case 'get': {
         const r = await meuRelatorio(body.report_id);
         const dados = await montarRelatorio(admin, r, false);
-        if (body.mark_seen) await admin.from('task_reports').update({ owner_seen_at: new Date().toISOString() }).eq('id', r.id);
+        if (body.mark_seen) await marcarVisto(r.id);
         return json({ success: true, ...dados });
       }
       case 'create': {
@@ -366,13 +407,14 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         if (!titulo) throw new Recusa('Informe o título');
         const { data, error } = await admin.from('task_reports').insert({
           tenant_id: tenantId, created_by: user.id, title: titulo, description: texto(body.description, MAX_TEXTO),
-          share_token: tokenAleatorio(18),
+          share_token: tokenAleatorio(18), list_id: await pastaPermitida(body.list_id),
         }).select('id').single();
         if (error) throw error;
         return json({ success: true, id: data.id });
       }
       case 'update': {
-        const r = await meuRelatorio(body.report_id);
+        // Trocar a pasta muda quem enxerga o relatório: só quem criou.
+        const r = await meuRelatorio(body.report_id, body.list_id !== undefined ? 'creator' : 'edit');
         const patch: Row = { updated_at: new Date().toISOString() };
         if (body.title !== undefined) {
           const t = texto(body.title, 200);
@@ -382,6 +424,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         if (body.description !== undefined) patch.description = texto(body.description, MAX_TEXTO);
         if (body.link_enabled !== undefined) patch.link_enabled = !!body.link_enabled;
         if (body.guests_can_add_items !== undefined) patch.guests_can_add_items = !!body.guests_can_add_items;
+        if (body.list_id !== undefined) patch.list_id = await pastaPermitida(body.list_id);
         if (body.status !== undefined) {
           if (!['open', 'closed'].includes(String(body.status))) throw new Recusa('Status inválido');
           patch.status = body.status;
@@ -391,14 +434,14 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         return json({ success: true });
       }
       case 'regenerate_link': {
-        const r = await meuRelatorio(body.report_id);
+        const r = await meuRelatorio(body.report_id, 'edit');
         const novo = tokenAleatorio(18);
         const { error } = await admin.from('task_reports').update({ share_token: novo, updated_at: new Date().toISOString() }).eq('id', r.id);
         if (error) throw error;
         return json({ success: true, share_token: novo });
       }
       case 'archive': {
-        const r = await meuRelatorio(body.report_id);
+        const r = await meuRelatorio(body.report_id, 'owner');
         const { error } = await admin.from('task_reports').update({ archived_at: new Date().toISOString(), link_enabled: false }).eq('id', r.id);
         if (error) throw error;
         return json({ success: true });
@@ -409,7 +452,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         return json({ success: true, image: await gravarImagem(admin, r.id, arquivo) });
       }
       case 'add_item': {
-        const r = await meuRelatorio(body.report_id);
+        const r = await meuRelatorio(body.report_id, 'edit');
         const titulo = texto(body.title, 300);
         if (!titulo) throw new Recusa('Informe o título do item');
         const { data: ultimo } = await admin.from('task_report_items').select('position')
@@ -423,7 +466,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         return json({ success: true, id: data.id });
       }
       case 'update_item': {
-        const r = await meuRelatorio(body.report_id);
+        const r = await meuRelatorio(body.report_id, 'edit');
         const item = await meuItem(r.id, body.item_id);
         const patch: Row = {};
         if (body.title !== undefined) {
@@ -466,7 +509,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         return json({ success: true });
       }
       case 'delete_item': {
-        const r = await meuRelatorio(body.report_id);
+        const r = await meuRelatorio(body.report_id, 'edit');
         const item = await meuItem(r.id, body.item_id);
         const { error } = await admin.from('task_report_items').update({ archived_at: new Date().toISOString() }).eq('id', item.id);
         if (error) throw error;
@@ -476,7 +519,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         const r = await meuRelatorio(body.report_id);
         const item = await meuItem(r.id, body.item_id);
         const id = await registrar(admin, r.id, item, { user: user.id, nome: await meuNome() }, body);
-        await admin.from('task_reports').update({ owner_seen_at: new Date().toISOString() }).eq('id', r.id);
+        await marcarVisto(r.id);
         return json({ success: true, id });
       }
       default:

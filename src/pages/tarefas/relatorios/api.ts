@@ -19,7 +19,16 @@ export interface RespostaRel {
   author_type: 'owner' | 'guest';
   author_guest_id: string | null;
   created_at: string;
+  /** Resposta de quem criou o relatório (as da equipe da pasta aparecem como "equipe"). */
+  author_is_creator?: boolean;
+  /** Só na tela da equipe: quem da equipe respondeu. */
+  author_user_id?: string | null;
 }
+
+/** Meu acesso ao relatório: criei; sou dono da pasta; a pasta é compartilhada comigo. */
+export type AcessoRelatorio = 'creator' | 'owner' | 'edit' | 'view';
+export const podeEditar = (a?: AcessoRelatorio | null) => a === 'creator' || a === 'owner' || a === 'edit';
+export const podeExcluir = (a?: AcessoRelatorio | null) => a === 'creator' || a === 'owner';
 
 export interface ItemRel {
   id: string;
@@ -45,7 +54,9 @@ export interface Relatorio {
   updated_at: string;
   share_token?: string;
   link_enabled?: boolean;
-  owner_seen_at?: string | null;
+  created_by?: string;
+  list_id?: string | null;
+  access?: AcessoRelatorio | null;
 }
 
 export interface Convidado { id: string; name: string; contact?: string | null; created_at?: string; last_seen_at?: string }
@@ -58,7 +69,12 @@ export interface ResumoRelatorio {
   status: 'open' | 'closed';
   link_enabled: boolean;
   share_token: string;
-  owner_seen_at: string | null;
+  created_by: string;
+  access: AcessoRelatorio;
+  owner_name: string | null;
+  list_id: string | null;
+  list_name: string | null;
+  list_color: string | null;
   created_at: string;
   updated_at: string;
   items_total: number;

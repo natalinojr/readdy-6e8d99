@@ -13,7 +13,7 @@ const novoId = () => `demo-${++seq}`;
 const relatorios: Rel[] = [{
   id: 'demo-rel-1', title: 'Vistoria da reforma — pendências', description: 'Responda cada ponto com prazo ou foto do serviço feito.',
   status: 'open', guests_can_add_items: false, owner_name: 'Você (demo)', created_at: agora(), updated_at: agora(),
-  share_token: 'demo_token_abc', link_enabled: true, owner_seen_at: null,
+  share_token: 'demo_token_abc', link_enabled: true, created_by: 'demo-eu', list_id: 'manut', access: 'creator',
   guests: [{ id: 'g1', name: 'Carlos (empreiteiro)', contact: '41 99999-0000', created_at: agora(), last_seen_at: agora() }],
   items: [
     {
@@ -23,7 +23,24 @@ const relatorios: Rel[] = [{
     },
     { id: 'i2', position: 2, title: 'Tomada da cozinha sem energia', body: null, images: [], status: 'open', created_by_guest_name: null, created_at: agora(), updated_at: agora(), responses: [] },
   ],
+}, {
+  // Relatório de outra pessoa numa pasta compartilhada comigo com "só ver".
+  id: 'demo-rel-2', title: 'Auditoria da cozinha (Ana)', description: null,
+  status: 'open', guests_can_add_items: false, owner_name: 'Ana Souza', created_at: agora(), updated_at: agora(),
+  share_token: 'demo_token_ana', link_enabled: true, created_by: 'demo-ana', list_id: 'cozinha', access: 'view',
+  guests: [],
+  items: [{
+    id: 'a1', position: 1, title: 'Validade dos molhos', body: 'Conferir etiquetas.', images: [], status: 'open',
+    created_by_guest_name: null, created_at: agora(), updated_at: agora(),
+    responses: [{ id: 'ar1', kind: 'reply', body: 'Vou ver amanhã cedo.', images: [], new_status: null, author_name: 'Ana Souza', author_type: 'owner', author_guest_id: null, author_is_creator: true, author_user_id: 'demo-ana', created_at: agora() }],
+  }],
 }];
+
+const PASTAS_DEMO: Record<string, { name: string; color: string }> = {
+  manut: { name: 'Manutenção', color: '#6366f1' },
+  cozinha: { name: 'Cozinha', color: '#f59e0b' },
+};
+const vistos = new Map<string, string>();
 
 function achar(id: unknown) {
   const r = relatorios.find((x) => x.id === id);
@@ -37,16 +54,19 @@ export async function demoDono(action: string, p: Record<string, unknown>): Prom
       return {
         reports: relatorios.map((r): ResumoRelatorio => ({
           id: r.id, title: r.title, status: r.status, link_enabled: !!r.link_enabled, share_token: r.share_token ?? '',
-          owner_seen_at: r.owner_seen_at ?? null, created_at: r.created_at, updated_at: r.updated_at,
+          created_by: r.created_by ?? 'demo-eu', access: r.access ?? 'creator', owner_name: r.owner_name,
+          list_id: r.list_id ?? null, list_name: r.list_id ? PASTAS_DEMO[r.list_id]?.name ?? null : null,
+          list_color: r.list_id ? PASTAS_DEMO[r.list_id]?.color ?? null : null,
+          created_at: r.created_at, updated_at: r.updated_at,
           items_total: r.items.length, items_open: r.items.filter((i) => i.status === 'open').length,
           items_resolved: r.items.filter((i) => i.status === 'resolved').length,
           guest_responses: r.items.flatMap((i) => i.responses).filter((x) => x.author_type === 'guest').length,
-          unseen: r.owner_seen_at ? 0 : 1,
+          unseen: vistos.has(r.id) ? 0 : 1,
         })),
       };
     case 'get': {
       const r = achar(p.report_id);
-      if (p.mark_seen) r.owner_seen_at = agora();
+      if (p.mark_seen) vistos.set(r.id, agora());
       const { items, guests, ...report } = r;
       return { report, items: structuredClone(items), guests };
     }
@@ -54,13 +74,13 @@ export async function demoDono(action: string, p: Record<string, unknown>): Prom
       const id = novoId();
       relatorios.unshift({
         id, title: String(p.title), description: null, status: 'open', guests_can_add_items: false, owner_name: 'Você (demo)',
-        created_at: agora(), updated_at: agora(), share_token: `demo_${id}`, link_enabled: true, owner_seen_at: null, items: [], guests: [],
+        created_at: agora(), updated_at: agora(), share_token: `demo_${id}`, link_enabled: true, created_by: 'demo-eu', list_id: (p.list_id as string) || null, access: 'creator', items: [], guests: [],
       });
       return { id };
     }
     case 'update': {
       const r = achar(p.report_id);
-      for (const k of ['title', 'description', 'link_enabled', 'guests_can_add_items', 'status'] as const) {
+      for (const k of ['title', 'description', 'link_enabled', 'guests_can_add_items', 'status', 'list_id'] as const) {
         if (p[k] !== undefined) (r as unknown as Record<string, unknown>)[k] = p[k];
       }
       r.updated_at = agora();
@@ -88,11 +108,12 @@ export async function demoDono(action: string, p: Record<string, unknown>): Prom
     }
     case 'delete_item': { const r = achar(p.report_id); r.items = r.items.filter((i) => i.id !== p.item_id); return {}; }
     case 'reply': {
-      const it = achar(p.report_id).items.find((i) => i.id === p.item_id)!;
+      const rel = achar(p.report_id);
+      const it = rel.items.find((i) => i.id === p.item_id)!;
       const st = (p.new_status as StatusItem | null) ?? null;
       const resp: RespostaRel = {
         id: novoId(), kind: p.body ? 'reply' : 'status', body: (p.body as string) || null, images: (p.images as ImagemRel[]) ?? [],
-        new_status: st, author_name: 'Você (demo)', author_type: 'owner', author_guest_id: null, created_at: agora(),
+        new_status: st, author_name: 'Você (demo)', author_type: 'owner', author_guest_id: null, author_is_creator: rel.created_by === 'demo-eu', author_user_id: 'demo-eu', created_at: agora(),
       };
       it.responses.push(resp);
       if (st) it.status = st;

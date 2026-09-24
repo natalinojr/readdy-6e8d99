@@ -100,14 +100,15 @@ interface Props {
   podeResponder: boolean;
   /** id do convidado atual (link) — as respostas dele aparecem como "você". */
   meuGuestId?: string | null;
-  souDono?: boolean;
+  /** Na tela da equipe: meu id de usuário — as minhas respostas aparecem como "você". */
+  meuUserId?: string | null;
   onResponder: (body: string, imagens: ImagemRel[], novoStatus: StatusItem | null) => Promise<boolean>;
   onEnviarImagem: (f: File) => Promise<ImagemRel | null>;
   /** Ações do dono (editar/excluir) no cabeçalho do item. */
   acoes?: ReactNode;
 }
 
-export default function ItemRelatorio({ item, numero, podeResponder, meuGuestId, souDono, onResponder, onEnviarImagem, acoes }: Props) {
+export default function ItemRelatorio({ item, numero, podeResponder, meuGuestId, meuUserId, onResponder, onEnviarImagem, acoes }: Props) {
   const [texto, setTexto] = useState('');
   const [gravando, setGravando] = useState(false);
   const [aberto, setAberto] = useState(false);
@@ -152,7 +153,7 @@ export default function ItemRelatorio({ item, numero, podeResponder, meuGuestId,
       {respostas.length > 0 && (
         <ol className="border-t border-slate-100 bg-slate-50/60 px-4 py-3 space-y-3">
           {respostas.map((r) => {
-            const minha = (meuGuestId && r.author_guest_id === meuGuestId) || (souDono && r.author_type === 'owner');
+            const minha = (meuGuestId && r.author_guest_id === meuGuestId) || (!!meuUserId && r.author_user_id === meuUserId);
             const quem = <strong className="font-semibold text-slate-700">{r.author_name}{minha ? ' (você)' : ''}</strong>;
             if (r.kind === 'edit') {
               return (
@@ -173,7 +174,11 @@ export default function ItemRelatorio({ item, numero, podeResponder, meuGuestId,
                 <div className="flex-1 min-w-0">
                   <p className="text-xs text-slate-500">
                     {quem}
-                    {r.author_type === 'owner' && <span className="ml-1 text-[10px] px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-600">autor do relatório</span>}
+                    {r.author_type === 'owner' && (
+                      <span className="ml-1 text-[10px] px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-600">
+                        {r.author_is_creator ? 'autor do relatório' : 'equipe'}
+                      </span>
+                    )}
                     <span className="ml-1">· {dataHora(r.created_at)}</span>
                   </p>
                   {r.body && <p className="text-sm text-slate-700 whitespace-pre-wrap break-words mt-0.5">{r.body}</p>}
