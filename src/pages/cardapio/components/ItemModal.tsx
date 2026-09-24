@@ -19,6 +19,9 @@ import { useProducao } from '@/contexts/ProducaoContext';
 import type { Insumo } from '@/contexts/EstoqueContext';
 import type { ProductionRecipe } from '@/types/estoque';
 
+// Busca sem diferenciar maiúscula/minúscula nem acento ("pao" acha "PÃO").
+const semAcento = (t: string) => t.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase().trim();
+
 // ── Unidades suportadas ────────────────────────────────────────────────────
 const ALL_UNITS = ['g', 'kg', 'ml', 'l', 'un'];
 
@@ -1587,14 +1590,14 @@ function OpcoesTab({
                     <div className="max-h-40 overflow-y-auto space-y-0.5">
                       {vinculoTab === 'ingredient' ? (
                         insumos.filter(ins =>
-                          ins.nome.toLowerCase().includes(buscaInsumo.toLowerCase())
+                          semAcento(ins.nome).includes(semAcento(buscaInsumo))
                         ).length === 0 ? (
                           <p className="text-xs text-zinc-400 text-center py-2">
                             {insumos.length === 0 ? 'Nenhum insumo cadastrado' : 'Nenhum insumo encontrado'}
                           </p>
                         ) : (
                           insumos.filter(ins =>
-                            ins.nome.toLowerCase().includes(buscaInsumo.toLowerCase())
+                            semAcento(ins.nome).includes(semAcento(buscaInsumo))
                           ).map(ins => (
                             <button
                               key={ins.id}
@@ -1611,7 +1614,7 @@ function OpcoesTab({
                       ) : (
                         recipes.filter(r =>
                           r.outputIngredientId &&
-                          r.name.toLowerCase().includes(buscaInsumo.toLowerCase())
+                          semAcento(r.name).includes(semAcento(buscaInsumo))
                         ).length === 0 ? (
                           <p className="text-xs text-zinc-400 text-center py-2">
                             {recipes.length === 0 ? 'Nenhuma produção cadastrada' : 'Nenhum produto encontrado'}
@@ -1619,7 +1622,7 @@ function OpcoesTab({
                         ) : (
                           recipes.filter(r =>
                             r.outputIngredientId &&
-                            r.name.toLowerCase().includes(buscaInsumo.toLowerCase())
+                            semAcento(r.name).includes(semAcento(buscaInsumo))
                           ).map(recipe => {
                             const unitCost = getRecipeUnitCost(recipe.id);
                             return (

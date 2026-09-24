@@ -6,6 +6,9 @@ import { useProducao } from '@/contexts/ProducaoContext';
 import type { Insumo } from '@/contexts/EstoqueContext';
 import type { ProductionRecipe } from '@/types/estoque';
 
+// Busca sem diferenciar maiúscula/minúscula nem acento ("pao" acha "PÃO").
+const semAcento = (t: string) => t.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase().trim();
+
 // ── Unidades suportadas ───────────────────────────────────────────────────────
 const ALL_UNITS = ['g', 'kg', 'ml', 'l', 'un'];
 
@@ -250,7 +253,7 @@ export default function FichaTecnicaTab({ itemId, precoVenda, onCountChange }: P
   // Insumos de uso final (excluindo os já adicionados)
   const insumosFinaisFiltrados = insumos.filter(
     (ins) =>
-      ins.nome.toLowerCase().includes(busca.toLowerCase()) &&
+      semAcento(ins.nome).includes(semAcento(busca)) &&
       !fichas.find((f) => f.ingredient_id === ins.id),
   );
 
@@ -258,7 +261,7 @@ export default function FichaTecnicaTab({ itemId, precoVenda, onCountChange }: P
   const produtosProducaoFiltrados = recipes.filter(
     (recipe) =>
       recipe.outputIngredientId &&
-      recipe.name.toLowerCase().includes(busca.toLowerCase()) &&
+      semAcento(recipe.name).includes(semAcento(busca)) &&
       !fichas.find((f) => f.ingredient_id === recipe.outputIngredientId),
   );
 

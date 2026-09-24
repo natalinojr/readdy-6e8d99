@@ -6,6 +6,9 @@ import type { ProductionRecipe, UnidadeEstoque } from '@/types/estoque';
 import { convertUnit, sameUnitGroup, convertUnitCost } from '@/lib/unitConversion';
 import { formatCurrencyPreciso } from '@/lib/formatters';
 
+// Busca sem diferenciar maiúscula/minúscula nem acento ("pao" acha "PÃO").
+const semAcento = (t: string) => t.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase().trim();
+
 interface Props {
   recipe: ProductionRecipe | null;
   onClose: () => void;
@@ -99,7 +102,7 @@ export default function FichaProducaoModal({ recipe, onClose }: Props) {
     let filtrados = insumosDisponiveis;
     if (buscaInsumo.trim()) {
       filtrados = filtrados.filter((i) =>
-        i.nome.toLowerCase().includes(buscaInsumo.toLowerCase())
+        semAcento(i.nome).includes(semAcento(buscaInsumo))
       );
     }
     if (categoriaFiltro) {
