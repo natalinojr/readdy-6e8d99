@@ -72,6 +72,9 @@ const REGRAS: Record<string, (c: ContextoAcesso) => boolean> = {
   // Receber mercadoria só abre o /receber: mesma regra da rota (RotaProtegida/Sidebar).
   'receber-mercadoria': (c) => rotaLiberada('/receber', c) && algum(c, 'estoque_receber', 'estoque_movimentar'),
   // Pedidos de pagamento (2026-09-24): mesma permissão da tela
+  // Mesma permissão do botão "Publicar alterações" da aba Cardápio; atualizar aparelhos é só do Admin
+  'publicar-cardapio': (c) => c.pode('cardapio_editar'),
+  'atualizar-aparelhos': (c) => c.perfil === 'admin',
   'pedir-reembolso': (c) => rotaLiberada('/receber', c) && c.pode('pag_reembolso'),
   'aprovar-pedidos': (c) => rotaLiberada('/receber', c) && c.pode('pag_aprovar'),
   'registrar-perda': (c) => c.pode('estoque_movimentar'),
