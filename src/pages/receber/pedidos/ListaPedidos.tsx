@@ -114,20 +114,52 @@ function Detalhes({ p }: { p: Pedido }) {
 
 function BotaoComprovante({ p, tenantId, onErro }: { p: Pedido; tenantId: string; onErro: (m: string | null) => void }) {
   const [abrindo, setAbrindo] = useState(false);
+  const [ver, setVer] = useState<{ url: string; pdf: boolean } | null>(null);
   if (!p.tem_comprovante) return null;
+  // Mostra dentro do app: abrir em aba nova tirava do app instalado e a foto vinha no tamanho original (com zoom)
   const abrir = async () => {
-    // Abre a aba antes do await: navegador de celular bloqueia pop-up aberto depois de uma espera
-    const janela = window.open('', '_blank');
     setAbrindo(true);
-    const { data, erro } = await chamarPedidos<{ url: string }>('comprovante', tenantId, { id: p.id });
+    const { data, erro } = await chamarPedidos<{ url: string; pdf?: boolean }>('comprovante', tenantId, { id: p.id });
     setAbrindo(false);
-    if (erro || !data?.url) { janela?.close(); onErro(erro ?? 'Não consegui abrir o comprovante'); return; }
-    if (janela) janela.location.href = data.url; else window.location.href = data.url;
+    if (erro || !data?.url) { onErro(erro ?? 'Não consegui abrir o comprovante'); return; }
+    setVer({ url: data.url, pdf: !!data.pdf });
   };
   return (
-    <button type="button" onClick={abrir} className="flex-1 py-3 rounded-2xl border-2 border-zinc-200 text-zinc-700 text-sm font-bold flex items-center justify-center gap-1.5 cursor-pointer">
-      <i className="ri-image-line" /> {abrindo ? 'Abrindo…' : 'Comprovante'}
-    </button>
+    <>
+      <button type="button" onClick={abrir} className="flex-1 py-3 rounded-2xl border-2 border-zinc-200 text-zinc-700 text-sm font-bold flex items-center justify-center gap-1.5 cursor-pointer">
+        <i className="ri-image-line" /> {abrindo ? 'Abrindo…' : 'Comprovante'}
+      </button>
+      {ver && <VerComprovante url={ver.url} pdf={ver.pdf} titulo={`${p.favorecido_nome} · ${brl(p.valor)}`} onFechar={() => setVer(null)} />}
+    </>
+  );
+}
+
+function VerComprovante({ url, pdf, titulo, onFechar }: { url: string; pdf: boolean; titulo: string; onFechar: () => void }) {
+  useEffect(() => {
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') onFechar(); };
+    window.addEventListener('keydown', esc);
+    return () => window.removeEventListener('keydown', esc);
+  }, [onFechar]);
+  return (
+    <div className="fixed inset-0 z-[100] bg-black/90 flex flex-col" role="dialog" aria-modal="true" onClick={onFechar}>
+      <div className="flex items-center gap-2 px-3 text-white flex-shrink-0" style={{ paddingTop: 'calc(env(safe-area-inset-top) + 8px)', paddingBottom: 8 }}>
+        <p className="flex-1 min-w-0 text-sm font-semibold truncate">{titulo}</p>
+        <button type="button" onClick={onFechar} className="w-11 h-11 flex items-center justify-center rounded-full active:bg-white/20 cursor-pointer" aria-label="Fechar">
+          <i className="ri-close-line text-2xl" />
+        </button>
+      </div>
+      <div className="flex-1 min-h-0 flex items-center justify-center p-3" onClick={(e) => e.stopPropagation()}>
+        {pdf ? (
+          <div className="text-center text-white space-y-4">
+            <i className="ri-file-pdf-2-line text-6xl text-red-400" />
+            <p className="text-sm">O comprovante é um PDF.</p>
+            <a href={url} target="_blank" rel="noreferrer" className="inline-block px-5 py-3 rounded-2xl bg-white text-zinc-800 font-bold">Abrir o PDF</a>
+          </div>
+        ) : (
+          <img src={url} alt="Comprovante" className="max-w-full max-h-full object-contain rounded-lg" />
+        )}
+      </div>
+    </div>
   );
 }
 

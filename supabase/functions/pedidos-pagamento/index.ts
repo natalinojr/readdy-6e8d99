@@ -264,7 +264,8 @@ Deno.serve(async (req) => {
         if (!p.comprovante_path) return erro('Esse pedido não tem comprovante', 404);
         const { data, error } = await admin.storage.from(BUCKET_PEDIDOS).createSignedUrl(p.comprovante_path, 600);
         if (error) throw new Error(error.message);
-        return json({ url: data.signedUrl });
+        // A tela mostra dentro do app (imagem ajustada à tela); PDF abre pelo visualizador do celular
+        return json({ url: data.signedUrl, pdf: /\.pdf$/i.test(p.comprovante_path) });
       }
       case 'aprovar': {
         if (!aprovador) return erro('Só o financeiro aprova pedidos de pagamento.', 403);
