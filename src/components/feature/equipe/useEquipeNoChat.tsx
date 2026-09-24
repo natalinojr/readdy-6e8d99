@@ -13,12 +13,14 @@ import ConversaEquipe from './ConversaEquipe';
 import { ListaEquipe, NovaConversaEquipe, type ConversaAberta, type LojaEquipe } from './ListaEquipe';
 import { useConversasEquipe } from './useConversasEquipe';
 
-export function useEquipeNoChat({ ativo = true, abrirPainel, fecharPainel }: {
+export function useEquipeNoChat({ ativo = true, abrirPainel, fecharPainel, semTitulo }: {
   /** false = não carrega nem escuta nada (o mesmo componente monta para quem não usa). */
   ativo?: boolean;
   /** O link do aviso no celular (?conversa=<id>) abre o painel do chat já na conversa. */
   abrirPainel: () => void;
   fecharPainel?: () => void;
+  /** A lista fica numa aba própria (chat do dono): sem o título "Equipe". */
+  semTitulo?: boolean;
 }) {
   const { user } = useAuth();
   // Sem loja o user do AuthContext é nulo: o id vem da sessão (useEuTarefas, 2026-09-24).
@@ -85,6 +87,7 @@ export function useEquipeNoChat({ ativo = true, abrirPainel, fecharPainel }: {
       lojas={lojas}
       lojaSel={lojaSel}
       onLoja={setLojaSel}
+      semTitulo={semTitulo}
     />
   );
 

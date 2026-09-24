@@ -10,7 +10,7 @@ export interface ConversaAberta { threadId: string; pessoa: PessoaEquipe | null;
 
 export interface LojaEquipe { id: string; nome: string; naoLidas: number }
 
-export function ListaEquipe({ conversas, onAbrir, onNova, lojas, lojaSel, onLoja }: {
+export function ListaEquipe({ conversas, onAbrir, onNova, lojas, lojaSel, onLoja, semTitulo }: {
   /** Só as conversas da loja escolhida. */
   conversas: ConversaResumo[];
   onAbrir: (c: ConversaAberta) => void;
@@ -19,24 +19,27 @@ export function ListaEquipe({ conversas, onAbrir, onNova, lojas, lojaSel, onLoja
   lojas: LojaEquipe[];
   lojaSel: string;
   onLoja: (id: string) => void;
+  /** Dentro da aba "Equipe" do chat do dono o título e o botão de avisos se repetiam (2026-09-24). */
+  semTitulo?: boolean;
 }) {
   return (
     <>
       <div className="flex items-center gap-2 px-4 pt-3 pb-1">
-        <p className="flex-1 text-[11px] font-bold uppercase tracking-wide text-zinc-400">Equipe</p>
+        {semTitulo ? <span className="flex-1" /> : <p className="flex-1 text-[11px] font-bold uppercase tracking-wide text-zinc-400">Equipe</p>}
         {/* Aviso no celular quando chega mensagem (2026-09-24): sem este aparelho inscrito o send-push não
             tem para onde mandar — quem não é o dono não tinha onde ligar. Some quando já está ativo. */}
-        <BotaoAvisos tenantId={lojaSel === ESCOPO_TAREFAS ? null : lojaSel} titulo="Receber aviso no celular quando chegar mensagem" />
+        {/* No chat do dono (semTitulo) o cabeçalho já tem o mesmo botão: não repete. */}
+        {!semTitulo && <BotaoAvisos tenantId={lojaSel === ESCOPO_TAREFAS ? null : lojaSel} titulo="Receber aviso no celular quando chegar mensagem" />}
         <button onClick={onNova} className="flex items-center gap-1 text-xs font-bold text-sky-700 hover:text-sky-600 cursor-pointer">
           <i className="ri-chat-new-line text-base" /> Nova conversa
         </button>
       </div>
       {lojas.length > 1 && (
-        <div className="flex gap-1.5 px-4 pb-2 overflow-x-auto" role="tablist" aria-label="Loja das conversas">
+        <div className="flex flex-wrap gap-1.5 px-4 pb-2" role="tablist" aria-label="Loja das conversas">
           {lojas.map((l) => (
             <button key={l.id} role="tab" aria-selected={l.id === lojaSel} onClick={() => onLoja(l.id)}
-              className={`flex-shrink-0 flex items-center gap-1.5 h-8 px-3 rounded-full text-xs font-semibold border cursor-pointer ${l.id === lojaSel ? 'bg-sky-600 border-sky-600 text-white' : 'bg-white border-zinc-200 text-zinc-600 hover:bg-zinc-50'}`}>
-              <i className={l.id === ESCOPO_TAREFAS ? 'ri-task-line' : 'ri-store-2-line'} /> {l.nome}
+              className={`max-w-full flex items-center gap-1.5 h-8 px-3 rounded-full text-xs font-semibold border cursor-pointer ${l.id === lojaSel ? 'bg-sky-600 border-sky-600 text-white' : 'bg-white border-zinc-200 text-zinc-600 hover:bg-zinc-50'}`}>
+              <i className={`flex-shrink-0 ${l.id === ESCOPO_TAREFAS ? 'ri-task-line' : 'ri-store-2-line'}`} /> <span className="truncate">{l.nome}</span>
               {l.naoLidas > 0 && (
                 <span className={`min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full text-[10px] font-black ${l.id === lojaSel ? 'bg-white text-sky-700' : 'bg-red-500 text-white'}`}
                   aria-label={`${l.naoLidas} não lida(s) em ${l.nome}`}>
