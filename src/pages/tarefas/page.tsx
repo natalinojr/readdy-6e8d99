@@ -13,6 +13,7 @@ import { MODO_DEMO, USUARIOS_DEMO } from './demo/modoDemo';
 import type { TaskList } from './hooks/useTarefas';
 import { ehResponsavel, idsResponsaveis, responsaveis } from './lib/responsaveis';
 import ViewLista from './components/ViewLista';
+import type { ClipboardTarefas } from './components/ViewLista';
 import ViewKanban from './components/ViewKanban';
 import ViewCalendario from './components/ViewCalendario';
 import ViewCarga from './components/ViewCarga';
@@ -128,6 +129,9 @@ export default function TarefasPage() {
   // Relatório aberto direto (push de resposta nova → /tarefas?relatorio=<id>, ou vindo de uma tarefa).
   const [relatorioAberto, setRelatorioAberto] = useState<string | null>(null);
   const [pastaExcluindo, setPastaExcluindo] = useState<{ no: NoPasta; ids: Set<string>; descricao: string } | null>(null);
+  // "Área de transferência" interna de tarefas (Ctrl+C numa pasta, Ctrl+V em
+  // outra) — mora aqui pra sobreviver à troca de pasta/visão (2026-09-24).
+  const [clipboardTarefas, setClipboardTarefas] = useState<ClipboardTarefas | null>(null);
 
   const arvorePastas = useMemo(() => montarArvorePastas(lists), [lists]);
   // Na barra lateral: as minhas pastas e, à parte, as compartilhadas comigo.
@@ -378,6 +382,9 @@ export default function TarefasPage() {
               groupBy={groupBy}
               write={write}
               onOpenTask={setOpenTaskId}
+              lists={lists}
+              clipboard={clipboardTarefas}
+              onClipboardChange={setClipboardTarefas}
             />
           )}
           {display === 'kanban' && (

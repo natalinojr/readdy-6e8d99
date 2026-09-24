@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
-import { Plus, Flag, MessageSquare, CheckSquare, GitBranch, Repeat, ChevronDown, ChevronRight, Check, Trash2, X, ArrowUp, ArrowDown, Play, Pause, Timer, GripVertical } from 'lucide-react';
+import { Plus, Flag, MessageSquare, CheckSquare, GitBranch, Repeat, ChevronDown, ChevronRight, Check, Trash2, X, ArrowUp, ArrowDown, Play, Pause, Timer, GripVertical, FolderInput, Copy, ClipboardPaste } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
 import type { CampoCustom, TaskList, TaskRow, TaskTag } from '../hooks/useTarefas';
 import { PRIORIDADES } from '../hooks/useTarefas';
@@ -21,6 +21,10 @@ import StatusPicker from './StatusPicker';
 import { iniciais, rotuloVencimento } from './TaskCard';
 import { responsaveis, rotuloResponsaveis } from '../lib/responsaveis';
 import AvataresResponsaveis from './AvataresResponsaveis';
+import SeletorPasta from './SeletorPasta';
+
+/** O que está na "área de transferência" interna de tarefas (Ctrl+C/Ctrl+V, 2026-09-24). */
+export interface ClipboardTarefas { ids: string[]; label: string }
 
 interface ViewListaProps {
   /** null = tarefas de mais de uma pasta (Minhas/Compartilhadas/Todas). */
@@ -34,6 +38,11 @@ interface ViewListaProps {
   groupBy: GroupBy;
   write: (action: string, payload?: Record<string, unknown>) => Promise<{ success: boolean; id?: string; error?: string }>;
   onOpenTask: (taskId: string) => void;
+  /** Todas as pastas — usado pro seletor de "Mover para…"/"Copiar para…". */
+  lists?: TaskList[];
+  /** Tarefas copiadas (Ctrl+C) — compartilhado com a página pra sobreviver à troca de visão. */
+  clipboard?: ClipboardTarefas | null;
+  onClipboardChange?: (c: ClipboardTarefas | null) => void;
 }
 
 /**
@@ -216,6 +225,7 @@ function MetaCelular({ task, mostrarPasta, subtarefas }: { task: TaskRow; mostra
 
 export default function ViewLista({
   list, chaveColunas, tasks, campos, usuarios, tags, groupBy, write, onOpenTask,
+  lists = [], clipboard = null, onClipboardChange = () => {},
 }: ViewListaProps) {
   const toast = useToast();
   const chaveArmazenamento = list?.id ?? chaveColunas ?? 'agregado';
@@ -249,6 +259,7 @@ export default function ViewLista({
   const [confirmandoExclusaoEmMassa, setConfirmandoExclusaoEmMassa] = useState(false);
   const [acaoEmMassaAberta, setAcaoEmMassaAberta] = useState<'prioridade' | 'responsavel' | null>(null);
   const [statusEmMassaAberto, setStatusEmMassaAberto] = useState<DOMRect | null>(null);
+  const [seletorPasta, setSeletorPasta] = useState<'mover' | 'copiar' | null>(null);
 
   // Ao trocar de pasta/visão, recarrega a preferência salva (cada uma tem a sua).
   useEffect(() => {
@@ -434,6 +445,56 @@ export default function ViewLista({
     setConfirmandoExclusaoEmMassa(false);
     limparSelecao();
   };
+
+  // ── Mover/copiar entre pastas (2026-09-24) ──────────────────────────────
+  const moverSelecaoParaPasta = async (destino: string) => {
+    const ids = [...selecionadas];
+    const res = await write('move_task', { task_ids: ids, to_list_id: destino });
+    if (!res.success) toast.error('Não foi possível mover', res.error);
+    else toast.success('Tarefa movida', `${ids.length} tarefa${ids.length > 1 ? 's' : ''} movida${ids.length > 1 ? 's' : ''}`);
+    limparSelecao();
+  };
+  const copiarSelecaoParaPasta = async (destino: string) => {
+    const ids = [...selecionadas];
+    const res = await write('copy_task', { task_ids: ids, to_list_id: destino });
+    if (!res.success) toast.error('Não foi possível copiar', res.error);
+    else toast.success('Cópia criada', `${ids.length} tarefa${ids.length > 1 ? 's' : ''} copiada${ids.length > 1 ? 's' : ''}`);
+    limparSelecao();
+  };
+
+  // Ctrl+C guarda a seleção na "área de transferência" interna (sobrevive à
+  // troca de pasta/visão — o estado mora na página); Ctrl+V cola na pasta
+  // aberta agora. Nunca mexe em campo de texto (título, comentário…).
+  const copiarSelecaoParaClipboard = useCallback(() => {
+    if (!selecionadas.size) return;
+    const ids = [...selecionadas];
+    onClipboardChange({ ids, label: `${ids.length} tarefa${ids.length > 1 ? 's' : ''}` });
+    toast.success('Copiado', 'Abra outra pasta e aperte Ctrl+V (ou o botão "Colar") pra colar');
+  }, [selecionadas, onClipboardChange, toast]);
+
+  const colarClipboard = useCallback(async () => {
+    if (!clipboard || !list || list.access === 'view') return;
+    const res = await write('copy_task', { task_ids: clipboard.ids, to_list_id: list.id });
+    if (!res.success) toast.error('Não foi possível colar', res.error);
+    else toast.success('Tarefa colada', `Copiada pra "${list.name}"`);
+  }, [clipboard, list, write, toast]);
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const alvo = e.target as HTMLElement | null;
+      const emCampo = !!alvo && (alvo.tagName === 'INPUT' || alvo.tagName === 'TEXTAREA' || alvo.isContentEditable);
+      if (emCampo || !(e.ctrlKey || e.metaKey)) return;
+      if (e.key === 'c' && selecionadas.size > 0) {
+        e.preventDefault();
+        copiarSelecaoParaClipboard();
+      } else if (e.key === 'v' && clipboard && list && list.access !== 'view') {
+        e.preventDefault();
+        colarClipboard();
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [selecionadas, clipboard, list, copiarSelecaoParaClipboard, colarClipboard]);
 
   // Categoria de um grupo (só faz sentido agrupando por status): decide se
   // ele começa recolhido — concluídas/canceladas acumulam e só atrapalham.
@@ -780,6 +841,20 @@ export default function ViewLista({
           </div>
 
           <button
+            onClick={() => setSeletorPasta('mover')}
+            className="text-xs px-2.5 py-1.5 rounded-lg bg-indigo-500 hover:bg-indigo-400 transition flex items-center gap-1"
+          >
+            <FolderInput size={12} /> Mover
+          </button>
+
+          <button
+            onClick={() => setSeletorPasta('copiar')}
+            className="text-xs px-2.5 py-1.5 rounded-lg bg-indigo-500 hover:bg-indigo-400 transition flex items-center gap-1"
+          >
+            <Copy size={12} /> Copiar
+          </button>
+
+          <button
             onClick={() => setConfirmandoExclusaoEmMassa(true)}
             className="text-xs px-2.5 py-1.5 rounded-lg bg-red-500 hover:bg-red-400 transition flex items-center gap-1"
           >
@@ -791,8 +866,19 @@ export default function ViewLista({
           </button>
         </div>
       ) : (
-        <div className="hidden md:flex items-center justify-end gap-1">
-          <ColumnsMenu disponiveis={todasColunas} visiveis={colunasVisiveis} onChange={alterarColunas} />
+        <div className="flex items-center justify-end gap-2">
+          {clipboard && list && list.access !== 'view' && (
+            <button
+              onClick={colarClipboard}
+              className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg bg-indigo-50 text-indigo-600 hover:bg-indigo-100 transition"
+              title="Ctrl+V também funciona"
+            >
+              <ClipboardPaste size={13} /> Colar {clipboard.label}
+            </button>
+          )}
+          <div className="hidden md:flex items-center justify-end gap-1">
+            <ColumnsMenu disponiveis={todasColunas} visiveis={colunasVisiveis} onChange={alterarColunas} />
+          </div>
         </div>
       )}
 
@@ -954,6 +1040,16 @@ export default function ViewLista({
           textoConfirmar="Arquivar"
           onConfirmar={confirmarExclusaoEmMassa}
           onCancelar={() => setConfirmandoExclusaoEmMassa(false)}
+        />
+      )}
+
+      {seletorPasta && (
+        <SeletorPasta
+          titulo={seletorPasta === 'mover' ? `Mover ${selecionadas.size} tarefa(s) para…` : `Copiar ${selecionadas.size} tarefa(s) para…`}
+          lists={lists}
+          desabilitarIds={seletorPasta === 'mover' && list ? new Set([list.id]) : undefined}
+          onEscolher={(id) => (seletorPasta === 'mover' ? moverSelecaoParaPasta(id) : copiarSelecaoParaPasta(id))}
+          onClose={() => setSeletorPasta(null)}
         />
       )}
     </div>

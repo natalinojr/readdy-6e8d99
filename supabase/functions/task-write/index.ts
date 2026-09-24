@@ -372,6 +372,167 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       if (!ok) throw new Error('Esse responsável não tem acesso ao módulo Tarefas');
     };
 
+    // Campos personalizados que fazem sentido na pasta destino: os globais do
+    // tenant (list_id nulo) + os da própria pasta destino. Usado em mover/copiar
+    // (2026-09-24) — campo de outra pasta é descartado, senão ficava um valor
+    // órfão que ninguém enxerga nem edita mais.
+    const camposCompativeis = async (destListId: string): Promise<Set<string>> => {
+      const { data } = await admin.from('task_custom_fields').select('id')
+        .or(`list_id.is.null,list_id.eq.${destListId}`);
+      return new Set((data ?? []).map((f: { id: string }) => f.id));
+    };
+
+    // Status equivalente na pasta destino: casa pela CATEGORIA (backlog/todo/…);
+    // se a destino não tiver nenhum status daquela categoria, cai no primeiro
+    // status "aberto" dela (não concluído/cancelado) — é o pedido do dono
+    // ("mover pra pasta sem aquele status cai no primeiro status aberto").
+    const statusEquivalente = async (
+      origemStatusId: unknown,
+      statusesDestino: Array<{ id: string; category: string; sort_order: number }>,
+      statusAbertoDestino: { id: string } | null,
+    ): Promise<string | null> => {
+      if (origemStatusId) {
+        const { data: statusAtual } = await admin.from('task_statuses')
+          .select('category').eq('id', origemStatusId as string).maybeSingle();
+        if (statusAtual) {
+          const match = statusesDestino.find((s) => s.category === statusAtual.category);
+          if (match) return match.id;
+        }
+      }
+      return statusAbertoDestino?.id ?? null;
+    };
+
+    // ═══ Mover/copiar tarefas entre pastas (2026-09-24) ═══
+    if (action === 'move_task' || action === 'copy_task') {
+      const isMove = action === 'move_task';
+      const { task_ids, to_list_id } = body;
+      const ids: string[] = Array.isArray(task_ids)
+        ? [...new Set((task_ids as unknown[]).filter((x): x is string => typeof x === 'string' && !!x))]
+        : [];
+      if (!ids.length || !to_list_id) return json({ error: 'task_ids e to_list_id são obrigatórios' }, 400);
+      if (ids.length > 100) return json({ error: 'No máximo 100 tarefas por vez' }, 400);
+
+      // Acesso de edição na pasta DESTINO — vale pras duas ações.
+      await assertListEdit(to_list_id);
+
+      const { data: statusesDestinoRaw, error: stErr } = await admin.from('task_statuses')
+        .select('id, category, sort_order').eq('list_id', to_list_id).order('sort_order');
+      if (stErr) return json({ error: errMsg(stErr) }, 500);
+      const statusesDestino = (statusesDestinoRaw ?? []) as Array<{ id: string; category: string; sort_order: number }>;
+      const statusAbertoDestino = statusesDestino.find((s) => s.category !== 'done' && s.category !== 'cancelled')
+        ?? statusesDestino[0] ?? null;
+      const compat = await camposCompativeis(to_list_id);
+
+      if (isMove) {
+        let movidas = 0;
+        for (const taskId of ids) {
+          const current = await assertOwned('tasks', taskId);
+          // Acesso de edição na pasta de ORIGEM — só pra mover (copiar não tira nada de lá).
+          await assertListEdit(current.list_id as string);
+          if (current.list_id === to_list_id) continue; // já está lá, nada a fazer
+
+          const mudarDePasta = async (id: string, statusOrigemId: unknown) => {
+            const novoStatus = await statusEquivalente(statusOrigemId, statusesDestino, statusAbertoDestino);
+            const { error } = await admin.from('tasks').update({ list_id: to_list_id, status_id: novoStatus }).eq('id', id);
+            if (error) throw new Error(errMsg(error));
+            await logActivity(id, 'moved', { to_list_id });
+            const { data: valores } = await admin.from('task_field_values').select('field_id').eq('task_id', id);
+            const remover = (valores ?? []).map((v: { field_id: string }) => v.field_id).filter((fid: string) => !compat.has(fid));
+            if (remover.length) await admin.from('task_field_values').delete().eq('task_id', id).in('field_id', remover);
+          };
+
+          await mudarDePasta(taskId, current.status_id);
+          // Subtarefas vão junto — senão ficavam órfãs numa pasta que ninguém mais vê.
+          const { data: subs } = await admin.from('tasks').select('id, status_id')
+            .eq('parent_task_id', taskId).eq('is_archived', false);
+          for (const sub of (subs ?? []) as Array<{ id: string; status_id: string | null }>) {
+            await mudarDePasta(sub.id, sub.status_id);
+          }
+          movidas++;
+        }
+        return json({ success: true, moved: movidas });
+      }
+
+      // ── Copiar ──
+      // Copia título/descrição/prioridade/datas/responsáveis/etiquetas/checklist/
+      // subtarefas/campos compatíveis. NÃO copia comentários, histórico (activity)
+      // nem tempo apontado (cronômetro) — são registros da tarefa original, não
+      // do trabalho que a cópia ainda vai ter. Também não copia recorrência (senão
+      // duas tarefas recorrentes independentes nasciam da mesma regra) nem
+      // estimativa/plano de horas (decisão própria: a cópia começa "limpa" nesses
+      // campos, quem colar decide de novo).
+      const copiarTarefa = async (origId: string, novoParentId: string | null): Promise<string> => {
+        const orig = await assertOwned('tasks', origId);
+        const novoStatus = await statusEquivalente(orig.status_id, statusesDestino, statusAbertoDestino);
+        const { data: nova, error } = await admin.from('tasks').insert({
+          tenant_id: tenantId,
+          list_id: to_list_id,
+          parent_task_id: novoParentId,
+          title: orig.title,
+          description: orig.description ?? null,
+          status_id: novoStatus,
+          priority: orig.priority ?? 0,
+          assignee_id: orig.assignee_id ?? null,
+          start_date: orig.start_date ?? null,
+          due_date: orig.due_date ?? null,
+          due_has_time: orig.due_has_time ?? false,
+          sort_order: Date.now(),
+          created_by: user.id,
+        }).select('id').single();
+        if (error || !nova) throw new Error(errMsg(error));
+
+        const resps = await responsaveisDe(origId);
+        if (resps.length) {
+          await admin.from('task_assignees').upsert(
+            resps.map((id) => ({ task_id: nova.id, user_id: id, added_by: user.id })),
+            { onConflict: 'task_id,user_id', ignoreDuplicates: true },
+          );
+          await notify(resps, nova.id, 'assigned', { title: orig.title });
+        }
+
+        const { data: tagsOrig } = await admin.from('task_tag_links').select('tag_id').eq('task_id', origId);
+        if (tagsOrig?.length) {
+          await admin.from('task_tag_links').insert(
+            (tagsOrig as Array<{ tag_id: string }>).map((t) => ({ tenant_id: tenantId, task_id: nova.id, tag_id: t.tag_id })),
+          );
+        }
+
+        const { data: itensOrig } = await admin.from('task_checklist_items')
+          .select('title, is_done, sort_order').eq('task_id', origId).order('sort_order');
+        if (itensOrig?.length) {
+          await admin.from('task_checklist_items').insert(
+            (itensOrig as Array<{ title: string; is_done: boolean; sort_order: number }>).map((i) => ({
+              tenant_id: tenantId, task_id: nova.id, title: i.title, is_done: i.is_done, sort_order: i.sort_order,
+            })),
+          );
+        }
+
+        const { data: valoresOrig } = await admin.from('task_field_values').select('field_id, value').eq('task_id', origId);
+        const valoresCompativeis = (valoresOrig ?? []).filter((v: { field_id: string }) => compat.has(v.field_id));
+        if (valoresCompativeis.length) {
+          await admin.from('task_field_values').insert(
+            (valoresCompativeis as Array<{ field_id: string; value: unknown }>).map((v) => ({
+              tenant_id: tenantId, task_id: nova.id, field_id: v.field_id, value: v.value,
+            })),
+          );
+        }
+
+        await logActivity(nova.id, 'copied', { source_task_id: origId });
+
+        const { data: subs } = await admin.from('tasks').select('id').eq('parent_task_id', origId).eq('is_archived', false);
+        for (const sub of (subs ?? []) as Array<{ id: string }>) await copiarTarefa(sub.id, nova.id);
+
+        return nova.id as string;
+      };
+
+      const novasIds: string[] = [];
+      for (const id of ids) {
+        await assertTaskAccess(id, 'view'); // basta enxergar a tarefa de origem pra copiar
+        novasIds.push(await copiarTarefa(id, null));
+      }
+      return json({ success: true, copied: novasIds.length, ids: novasIds });
+    }
+
     // ═══ Modelos de estrutura de pastas (ações em ./modelos.ts) ═══
     if (ACOES_MODELOS.has(action)) {
       return await acaoModelos(action, { admin, userId: user.id, tenantId, body, json, errMsg, notify });

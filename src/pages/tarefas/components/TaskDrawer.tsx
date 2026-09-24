@@ -3,7 +3,7 @@ import type { MouseEvent as ReactMouseEvent, ReactNode } from 'react';
 import {
   X, Plus, Trash2, Flag, CalendarDays, CalendarClock, User as UserIcon, Tag, CircleDot, Clock, Repeat, GitBranch,
   SlidersHorizontal, Paperclip, Download, ListChecks, Loader2, Camera, Timer, Play, Pause, MessageSquare,
-  ChevronDown, ChevronRight, AlignLeft, CheckSquare, Check,
+  ChevronDown, ChevronRight, AlignLeft, CheckSquare, Check, FolderInput, Copy,
 } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
 import type { CampoCustom, ChecklistTemplate, TaskAnexo, TaskDetail, TaskList, TaskRow, TaskTag } from '../hooks/useTarefas';
@@ -25,6 +25,7 @@ import { responsaveis } from '../lib/responsaveis';
 import AvataresResponsaveis from './AvataresResponsaveis';
 import { iniciais, rotuloVencimento } from './TaskCard';
 import RelatoriosDaTarefa from '../relatorios/RelatoriosDaTarefa';
+import SeletorPasta from './SeletorPasta';
 
 /**
  * Quem dá pra marcar com @: a lista geral + quem criou a tarefa, os responsáveis
@@ -141,6 +142,7 @@ export default function TaskDrawer({
   const [statusAberto, setStatusAberto] = useState<DOMRect | null>(null);
   const [atividadeAberta, setAtividadeAberta] = useState(false);
   const [recAberta, setRecAberta] = useState<DOMRect | null>(null);
+  const [pastaAlvo, setPastaAlvo] = useState<'mover' | 'copiar' | null>(null);
 
   const load = useCallback(async () => {
     const [d, a] = await Promise.all([fetchDetail(taskId), fetchAnexos(taskId)]);
@@ -178,6 +180,19 @@ export default function TaskDrawer({
     return res;
   };
   const update = (payload: Record<string, unknown>) => gravar('update_task', { task_id: taskId, ...payload });
+
+  // Mover/copiar pra outra pasta (2026-09-24). Mover fecha a tarefa (ela pode
+  // sair da visão atual); copiar deixa aberta na original e só avisa.
+  const moverOuCopiar = async (destino: string, tipo: 'mover' | 'copiar') => {
+    setSaving(true);
+    const res = await write(tipo === 'mover' ? 'move_task' : 'copy_task', { task_ids: [taskId], to_list_id: destino });
+    setSaving(false);
+    if (!res.success) { toast.error(`Não foi possível ${tipo === 'mover' ? 'mover' : 'copiar'}`, res.error); return; }
+    const nomeDestino = lists.find((l) => l.id === destino)?.name ?? 'outra pasta';
+    toast.success(tipo === 'mover' ? 'Tarefa movida' : 'Cópia criada', `Agora em "${nomeDestino}"`);
+    if (tipo === 'mover') onClose();
+    else load();
+  };
 
   if (loading || !detail) {
     return (
@@ -247,6 +262,20 @@ export default function TaskDrawer({
                 <Loader2 size={11} className="animate-spin" /> salvando
               </span>
             )}
+            <button
+              onClick={() => setPastaAlvo('mover')}
+              className="p-2 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-indigo-500"
+              title="Mover para outra pasta"
+            >
+              <FolderInput size={15} />
+            </button>
+            <button
+              onClick={() => setPastaAlvo('copiar')}
+              className="p-2 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-indigo-500"
+              title="Copiar para outra pasta"
+            >
+              <Copy size={15} />
+            </button>
             <button
               onClick={() => setConfirmandoExclusao(true)}
               className="p-2 rounded-lg hover:bg-red-50 text-slate-400 hover:text-red-500"
@@ -745,6 +774,16 @@ export default function TaskDrawer({
             else toast.error('Não foi possível arquivar', res.error);
           }}
           onCancelar={() => setConfirmandoExclusao(false)}
+        />
+      )}
+
+      {pastaAlvo && (
+        <SeletorPasta
+          titulo={pastaAlvo === 'mover' ? 'Mover tarefa para…' : 'Copiar tarefa para…'}
+          lists={lists}
+          desabilitarIds={pastaAlvo === 'mover' ? new Set([detail.list_id]) : undefined}
+          onEscolher={(id) => moverOuCopiar(id, pastaAlvo)}
+          onClose={() => setPastaAlvo(null)}
         />
       )}
     </div>
