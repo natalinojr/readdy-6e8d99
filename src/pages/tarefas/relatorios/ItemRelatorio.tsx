@@ -173,16 +173,23 @@ export default function ItemRelatorio({ item, numero, podeResponder, meuGuestId,
   };
   const fechar = () => { setAberto(false); setTexto(''); setRascunho({}); setErro(null); anexos.limpar(); lk.limpar(); };
 
+  // Trava por ref: dois cliques no mesmo instante passariam pelo estado `gravando` (ainda não re-renderizou).
+  const enviandoRef = useRef(false);
   const enviar = async (novoStatus: StatusItem | null) => {
-    if (gravando || anexos.enviando) return;
+    if (enviandoRef.current || gravando || anexos.enviando) return;
     if (!texto.trim() && !anexos.imagens.length && !lk.links.length && !novoStatus && !temMudancas) return;
     const e = erroPreenchimento(campos, mudancas);
     setErro(e);
     if (e) return;
+    enviandoRef.current = true;
     setGravando(true);
-    const ok = await onResponder(texto.trim(), anexos.paraGravar(), novoStatus, temMudancas ? mudancas : null, lk.links);
-    setGravando(false);
-    if (ok) fechar();
+    try {
+      const ok = await onResponder(texto.trim(), anexos.paraGravar(), novoStatus, temMudancas ? mudancas : null, lk.links);
+      if (ok) fechar();
+    } finally {
+      enviandoRef.current = false;
+      setGravando(false);
+    }
   };
 
   const respostas = item.responses;
@@ -263,8 +270,6 @@ export default function ItemRelatorio({ item, numero, podeResponder, meuGuestId,
             const antes = anteriores.get(r.id) ?? {};
             const respondidos = campos.filter((c) => r.answers && c.id in r.answers);
             const vazio = (x: ValorCampo | undefined) => x === null || x === undefined || x === '' || (Array.isArray(x) && !x.length);
-            const preencheu = respondidos.filter((c) => vazio(antes[c.id]));
-            const mudou = respondidos.filter((c) => !vazio(antes[c.id]));
             return (
               <li key={r.id} className="flex gap-2">
                 <span className={`shrink-0 w-7 h-7 rounded-full text-xs font-semibold flex items-center justify-center ${r.author_type === 'owner' ? 'bg-indigo-100 text-indigo-700' : 'bg-amber-100 text-amber-800'}`}>
@@ -280,22 +285,28 @@ export default function ItemRelatorio({ item, numero, podeResponder, meuGuestId,
                     )}
                     <span className="ml-1">· {dataHora(r.created_at)}</span>
                   </p>
-                  {preencheu.length > 0 && (
-                    <p className="text-xs text-slate-500 mt-0.5">
-                      Preencheu {preencheu.length === campos.length && campos.length > 1 ? 'todos os campos' : preencheu.map((c) => c.label).join(', ')}
-                    </p>
-                  )}
-                  {mudou.length > 0 && (
-                    <ul className="mt-0.5 space-y-0.5">
-                      {mudou.map((c) => (
-                        <li key={c.id} className="text-sm text-slate-700 flex flex-wrap items-center gap-1">
-                          <span className="text-slate-500">{c.label}:</span>
-                          <span className="text-slate-400 line-through">{formatarValor(c, antes[c.id] ?? null)}</span>
-                          <ArrowRight size={12} className="text-slate-400" />
-                          <strong className="font-medium">{formatarValor(c, r.answers![c.id])}</strong>
-                        </li>
-                      ))}
-                    </ul>
+                  {/* O que a pessoa respondeu nesta vez — fica no histórico mesmo que o valor mude depois. */}
+                  {respondidos.length > 0 && (
+                    <div className="mt-1 flex flex-wrap gap-1.5">
+                      {respondidos.map((c) => {
+                        const novo = r.answers![c.id];
+                        const anterior = antes[c.id];
+                        return (
+                          <span key={c.id} className="inline-flex flex-wrap items-center gap-1 rounded-lg bg-white border border-slate-200 px-2 py-0.5 text-xs">
+                            <span className="text-slate-500">{c.label}:</span>
+                            {!vazio(anterior) && (
+                              <>
+                                <span className="text-slate-400 line-through">{formatarValor(c, anterior ?? null)}</span>
+                                <ArrowRight size={11} className="text-slate-400" />
+                              </>
+                            )}
+                            {vazio(novo)
+                              ? <span className="italic text-slate-400">apagou</span>
+                              : <strong className="font-medium text-slate-800">{formatarValor(c, novo)}</strong>}
+                          </span>
+                        );
+                      })}
+                    </div>
                   )}
                   {r.body && <p className="text-sm text-slate-700 whitespace-pre-wrap break-words mt-0.5">{r.body}</p>}
                   <GradeImagens imagens={r.images} />

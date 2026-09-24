@@ -46,12 +46,38 @@ describe('ItemRelatorio', () => {
     ],
   };
 
-  it('mostra o valor atual uma vez só; a sequência diz o que foi preenchido, sem repetir o valor', () => {
+  it('mostra o valor atual no resumo e o que foi respondido no histórico', () => {
     render(<ItemRelatorio item={comCampos} numero={1} podeResponder={false} onResponder={vi.fn()} onEnviarImagem={vi.fn()} />);
-    expect(screen.getAllByText('Ok').length).toBe(1);
+    expect(screen.getAllByText('Ok').length).toBe(2); // resumo + etiqueta da resposta
     expect(screen.getByText('sem resposta')).toBeTruthy(); // Cômodos ainda vazio
-    expect(screen.getByText('Preencheu Situação')).toBeTruthy();
+    expect(screen.getByText('Situação:')).toBeTruthy();
     expect(screen.getByText(/Respondido por Carlos/)).toBeTruthy();
+  });
+
+  it('valor apagado continua no histórico (antes riscado + "apagou")', () => {
+    const apagado: ItemRel = {
+      ...comCampos,
+      responses: [
+        ...comCampos.responses,
+        { id: 'x3', kind: 'reply', body: null, images: [], new_status: null, answers: { c1: null }, author_name: 'Maria', author_type: 'guest', author_guest_id: 'g2', created_at: '2026-09-24T12:00:00Z' },
+      ],
+    };
+    render(<ItemRelatorio item={apagado} numero={1} podeResponder={false} onResponder={vi.fn()} onEnviarImagem={vi.fn()} />);
+    expect(screen.getAllByText('Ok').some((e) => /line-through/.test(e.className))).toBe(true);
+    expect(screen.getByText('apagou')).toBeTruthy();
+  });
+
+  it('dois cliques seguidos em Enviar mandam uma resposta só', async () => {
+    let terminar: (v: boolean) => void = () => {};
+    const onResponder = vi.fn(() => new Promise<boolean>((res) => { terminar = res; }));
+    render(<ItemRelatorio item={{ ...item, responses: [] }} numero={1} podeResponder onResponder={onResponder} onEnviarImagem={vi.fn()} />);
+    fireEvent.click(screen.getByText('Responder'));
+    fireEvent.change(screen.getByPlaceholderText('Escreva sua resposta…'), { target: { value: 'Oi' } });
+    const enviarBtn = screen.getByText('Enviar');
+    fireEvent.click(enviarBtn);
+    fireEvent.click(enviarBtn);
+    terminar(true);
+    await waitFor(() => expect(onResponder).toHaveBeenCalledTimes(1));
   });
 
   it('mudança de valor aparece como antes → depois', () => {
@@ -63,7 +89,7 @@ describe('ItemRelatorio', () => {
       ],
     };
     render(<ItemRelatorio item={mudou} numero={1} podeResponder={false} onResponder={vi.fn()} onEnviarImagem={vi.fn()} />);
-    expect(screen.getByText('Ok').className).toMatch(/line-through/);
+    expect(screen.getAllByText('Ok').some((e) => /line-through/.test(e.className))).toBe(true);
     expect(screen.getAllByText('Refazer').length).toBe(2); // valor atual + "→ Refazer"
   });
 
