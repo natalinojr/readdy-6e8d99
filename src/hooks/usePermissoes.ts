@@ -5,7 +5,7 @@ import { useKioskAuth } from '@/contexts/KioskAuthContext';
 import { FIN_KEYS, REL_KEYS, CFG_KEYS, CFG_KEYS_GERENTE, CFG_MAQUININHA_KEY, type FinPermissaoKey, type RelPermissaoKey, type CfgPermissaoKey, type CfgMaquininhaKey } from '@/constants/permissoesAbas';
 import { GESTAO_KEYS, type GestaoPermissaoKey } from '@/constants/permissoesGestao';
 
-export type Papel = 'admin' | 'gerente' | 'caixa' | 'garcom' | 'cozinha' | 'gestor_entregas' | 'tarefas' | 'financeiro';
+export type Papel = 'admin' | 'gerente' | 'caixa' | 'garcom' | 'cozinha' | 'gestor_entregas' | 'tarefas' | 'financeiro' | 'supervisao';
 
 export type PermissaoKey =
   | 'pdv_abrir_caixa'
@@ -45,6 +45,7 @@ export type PermissaoKey =
 export const PAPEL_TO_DB_ROLE: Record<string, string> = {
   admin: 'admin',
   gerente: 'manager',
+  supervisao: 'supervisor',
   caixa: 'cashier',
   garcom: 'waiter',
   cozinha: 'kitchen',
@@ -73,6 +74,16 @@ export const DEFAULT_PERMISSOES: Record<Papel, PermissaoKey[]> = {
     // As abas de Configurações só entram em cena se o dono ligar
     // `configuracoes_editar` para o Gerente — a tela inteira depende dela.
     ...FIN_KEYS, ...REL_KEYS, ...CFG_KEYS_GERENTE, CFG_MAQUININHA_KEY, ...GESTAO_KEYS,
+  ],
+  // Entre caixa e gerente: tudo do caixa + desconto/cancelamento (e autoriza os
+  // do caixa pelo PIN), mesas, cozinha e os relatórios do turno. Sem cardápio,
+  // estoque, financeiro, usuários nem configurações.
+  supervisao: [
+    'pdv_abrir_caixa', 'pdv_fechar_caixa', 'pdv_sangria', 'pdv_desconto',
+    'pdv_cancelar_pedido', 'pdv_cancelar_item',
+    'garcom_fechar_mesa', 'garcom_transferir_mesa', 'kds_acessar', 'gestor_pedidos_acessar',
+    'gestor_pedidos_entregar', 'gestor_entregas_acessar', 'clientes_ver',
+    'rel_caixa', 'rel_cancelamentos', 'rel_sla', 'gestao_pedidos', 'gestao_mesas',
   ],
   caixa: [
     'pdv_abrir_caixa', 'pdv_fechar_caixa', 'pdv_sangria', 'pdv_cancelar_item',

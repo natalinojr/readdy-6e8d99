@@ -108,7 +108,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       const { nome, email, senha, perfil, tenant_id, training_mode, matricula, pin } = body;
 
       const roleMap: Record<string, string> = {
-        admin: 'admin', gerente: 'manager', caixa: 'cashier',
+        admin: 'admin', gerente: 'manager', supervisao: 'supervisor', caixa: 'cashier',
         garcom: 'waiter', cozinha: 'kitchen', gestor_entregas: 'delivery_manager',
         tarefas: 'tasks_only', totem: 'tablet', financeiro: 'financeiro',
       };

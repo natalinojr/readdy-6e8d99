@@ -12,7 +12,7 @@ import { invokeWithAuth } from '@/lib/supabase';
  *  do usuário atual (usamos uma chamada direta ao supabase que não altera a sessão ativa).
  */
 
-export type NivelAutorizacao = 'gerente' | 'admin';
+export type NivelAutorizacao = 'supervisao' | 'gerente' | 'admin';
 
 interface Props {
   titulo?: string;
@@ -33,6 +33,9 @@ export default function AutorizacaoGerenteModal({
   onAutorizado,
   onCancelar,
 }: Props) {
+  const quemPodeAutorizar = niveisPermitidos.includes('supervisao')
+    ? 'Apenas supervisão, gerente ou administrador podem autorizar.'
+    : 'Apenas gerentes ou administradores podem autorizar.';
   const [modo, setModo] = useState<Modo>('pin');
   const [matricula, setMatricula] = useState('');
   const [senha, setSenha] = useState('');
@@ -97,11 +100,12 @@ export default function AutorizacaoGerenteModal({
       const roleMapa: Record<string, NivelAutorizacao> = {
         admin: 'admin',
         manager: 'gerente',
+        supervisor: 'supervisao',
       };
       const nivelUsuario = roleMapa[data.role ?? ''];
 
       if (!nivelUsuario || !niveisPermitidos.includes(nivelUsuario)) {
-        throw new Error('Usuário não tem permissão para esta ação.\nApenas gerentes ou administradores podem autorizar.');
+        throw new Error(`Usuário não tem permissão para esta ação.\n${quemPodeAutorizar}`);
       }
 
       onAutorizado(data.name ?? matricula.trim());
@@ -149,11 +153,12 @@ export default function AutorizacaoGerenteModal({
       const roleMapa: Record<string, NivelAutorizacao> = {
         admin: 'admin',
         manager: 'gerente',
+        supervisor: 'supervisao',
       };
       const nivelFrontend = roleMapa[nivelUsuario ?? ''];
 
       if (!nivelFrontend || !niveisPermitidos.includes(nivelFrontend)) {
-        throw new Error('Usuário não tem permissão para esta ação.\nApenas gerentes ou administradores podem autorizar.');
+        throw new Error(`Usuário não tem permissão para esta ação.\n${quemPodeAutorizar}`);
       }
 
       onAutorizado(nomeUsuario);

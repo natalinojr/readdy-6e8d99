@@ -221,7 +221,8 @@ export default function CancelamentoModal({
     return (
       <AutorizacaoGerenteModal
         titulo={tipo === 'pedido' ? 'Autorizar Cancelamento de Pedido' : 'Autorizar Cancelamento de Item'}
-        descricao={`Este cancelamento requer autorização de um gerente ou administrador.`}
+        descricao={`Este cancelamento requer autorização da supervisão, de um gerente ou administrador.`}
+        niveisPermitidos={['supervisao', 'gerente', 'admin']}
         tenantId={tenantId}
         onAutorizado={handleSenhaAprovada}
         onCancelar={handleSenhaRejeitada}

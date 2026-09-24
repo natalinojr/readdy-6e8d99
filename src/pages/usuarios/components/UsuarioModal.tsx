@@ -12,13 +12,13 @@ interface Props {
   onLimparPIN?: () => Promise<{ success: boolean; error?: string }>;
 }
 
-const PERFIS_NORMAIS: PerfilUsuario[] = ['admin', 'gerente', 'caixa', 'garcom', 'cozinha', 'gestor_entregas', 'tarefas'];
+const PERFIS_NORMAIS: PerfilUsuario[] = ['admin', 'gerente', 'supervisao', 'caixa', 'garcom', 'cozinha', 'gestor_entregas', 'tarefas'];
 const PERFIS_TODOS: PerfilUsuario[] = [...PERFIS_NORMAIS, 'totem'];
 
 export default function UsuarioModal({ modo, usuario, onClose, onSalvar, onDefinirPIN, onLimparPIN }: Props) {
   const [nome, setNome] = useState(usuario?.nome ?? '');
   const [email, setEmail] = useState(usuario?.email?.includes('@totem.erpos.local') ? '' : (usuario?.email ?? ''));
-  const [matricula, setMatricula] = useState('');
+  const [matricula, setMatricula] = useState(modo === 'editar' ? (usuario?.matricula ?? '') : '');
   const [perfil, setPerfil] = useState<PerfilUsuario>(usuario?.perfil ?? 'garcom');
   const [modoTreino, setModoTreino] = useState(usuario?.modoTreino ?? false);
   const [ativo, setAtivo] = useState(usuario?.ativo ?? true);
@@ -58,6 +58,9 @@ export default function UsuarioModal({ modo, usuario, onClose, onSalvar, onDefin
     if (modo === 'senha' && senha.length < 6) e.senha = 'Mínimo 6 caracteres';
     // No modo editar, senha é opcional — só validar se preenchida
     if (modo === 'editar' && senha && senha.length < 6) e.senha = 'Mínimo 6 caracteres';
+    // Editar: apagar a matrícula de quem já tem não é permitido (só trocar).
+    if (modo === 'editar' && usuario?.matricula && !matricula.trim()) e.matricula = 'Informe a matrícula';
+    if (modo === 'editar' && matricula.trim() && !/^\d{1,10}$/.test(matricula.trim())) e.matricula = 'Matrícula deve ter apenas dígitos';
     return e;
   };
 
@@ -93,7 +96,7 @@ export default function UsuarioModal({ modo, usuario, onClose, onSalvar, onDefin
           }
         }
         // Salvar dados do usuário
-        const payload: Record<string, unknown> = { nome, perfil, modoTreino, ativo };
+        const payload: Record<string, unknown> = { nome, perfil, modoTreino, ativo, matricula: matricula.trim() };
         if (senha && senha.length >= 6) {
           payload.senha = senha;
         }
@@ -200,6 +203,28 @@ export default function UsuarioModal({ modo, usuario, onClose, onSalvar, onDefin
                       className={`w-full text-sm border rounded-lg px-3 py-2.5 text-zinc-800 focus:outline-none focus:border-amber-400 ${erros.nome ? 'border-red-300 bg-red-50' : 'border-zinc-200'}`} />
                     {erros.nome && <p className="text-xs text-red-500 mt-1">{erros.nome}</p>}
                   </div>
+
+                  {modo === 'editar' && (
+                    <div>
+                      <label className="block text-xs font-semibold text-zinc-600 mb-1.5">
+                        Matrícula
+                        <span className="text-zinc-400 font-normal ml-1">— usada no login com PIN; não pode repetir</span>
+                      </label>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={matricula}
+                        onChange={(e) => {
+                          const v = e.target.value.replace(/\D/g, '').slice(0, 10);
+                          setMatricula(v);
+                          setErros((p) => ({ ...p, matricula: '' }));
+                        }}
+                        placeholder="Ex: 0001"
+                        className={`w-full text-sm border rounded-lg px-3 py-2.5 text-zinc-800 focus:outline-none focus:border-amber-400 ${erros.matricula ? 'border-red-300 bg-red-50' : 'border-zinc-200'}`}
+                      />
+                      {erros.matricula && <p className="text-xs text-red-500 mt-1">{erros.matricula}</p>}
+                    </div>
+                  )}
 
                   {modo === 'novo' && (
                     <>

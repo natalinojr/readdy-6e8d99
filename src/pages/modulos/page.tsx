@@ -44,7 +44,7 @@ const MODULOS: ModuloCard[] = [
     acentoBg: 'bg-amber-50',
     acentoBorder: 'border-amber-200/70',
     tag: 'Terminal',
-    perfis: ['admin', 'gerente', 'caixa'],
+    perfis: ['admin', 'gerente', 'supervisao', 'caixa'],
   },
   {
     id: 'pdv_garcom',
@@ -57,7 +57,7 @@ const MODULOS: ModuloCard[] = [
     acentoBg: 'bg-teal-50',
     acentoBorder: 'border-teal-200/70',
     tag: 'Terminal',
-    perfis: ['admin', 'gerente', 'garcom'],
+    perfis: ['admin', 'gerente', 'supervisao', 'garcom'],
   },
   {
     id: 'pdv_delivery',
@@ -70,7 +70,7 @@ const MODULOS: ModuloCard[] = [
     acentoBg: 'bg-orange-50',
     acentoBorder: 'border-orange-200/70',
     tag: 'Terminal',
-    perfis: ['admin', 'gerente', 'caixa'],
+    perfis: ['admin', 'gerente', 'supervisao', 'caixa'],
   },
   {
     id: 'kds',
@@ -123,7 +123,7 @@ const MODULOS: ModuloCard[] = [
     acentoBg: 'bg-orange-50',
     acentoBorder: 'border-orange-200/70',
     tag: 'Cozinha',
-    perfis: ['admin', 'gerente', 'caixa'],
+    perfis: ['admin', 'gerente', 'supervisao', 'caixa'],
   },
   {
     id: 'tarefas',

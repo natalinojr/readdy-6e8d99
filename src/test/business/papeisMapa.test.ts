@@ -23,3 +23,23 @@ describe('papel financeiro nos mapas', () => {
     for (const k of perms) expect(k.startsWith('fin_')).toBe(true);
   });
 });
+
+describe('papel supervisão nos mapas', () => {
+  it('traduz nos dois sentidos (supervisao ↔ supervisor)', () => {
+    expect(ROLE_MAP['supervisor']).toBe('supervisao');
+    expect(ROLE_MAP_REVERSE['supervisao']).toBe('supervisor');
+    expect(PAPEL_TO_DB_ROLE['supervisao']).toBe('supervisor');
+    expect(perfilConfig['supervisao'].label).toBe('Supervisão');
+  });
+
+  it('fica entre caixa e gerente', () => {
+    const sup = DEFAULT_PERMISSOES['supervisao'];
+    for (const k of DEFAULT_PERMISSOES['caixa']) expect(sup).toContain(k);
+    for (const k of sup) expect(DEFAULT_PERMISSOES['gerente']).toContain(k);
+    expect(sup).toContain('pdv_desconto');
+    expect(sup).toContain('pdv_cancelar_pedido');
+    expect(sup).not.toContain('configuracoes_editar');
+    expect(sup).not.toContain('usuarios_gerenciar');
+    expect(sup.some((k) => k.startsWith('fin_'))).toBe(false);
+  });
+});

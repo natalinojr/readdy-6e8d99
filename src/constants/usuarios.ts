@@ -1,8 +1,9 @@
-export type PerfilUsuario = 'admin' | 'gerente' | 'caixa' | 'garcom' | 'cozinha' | 'gestor_entregas' | 'tarefas' | 'totem' | 'financeiro';
+export type PerfilUsuario = 'admin' | 'gerente' | 'caixa' | 'garcom' | 'cozinha' | 'gestor_entregas' | 'tarefas' | 'totem' | 'financeiro' | 'supervisao';
 
 export const perfilConfig: Record<PerfilUsuario, { label: string; cor: string; bg: string; desc: string }> = {
   admin:           { label: 'Administrador',       cor: 'text-red-600',    bg: 'bg-red-50',    desc: 'Acesso total ao sistema' },
   gerente:         { label: 'Gerente',             cor: 'text-violet-600', bg: 'bg-violet-50', desc: 'Gestão da loja e relatórios' },
+  supervisao:      { label: 'Supervisão',          cor: 'text-fuchsia-600', bg: 'bg-fuchsia-50', desc: 'Supervisiona o turno: caixa, autoriza cancelamento/desconto e vê relatórios do dia' },
   caixa:           { label: 'Caixa',               cor: 'text-amber-600',  bg: 'bg-amber-50',  desc: 'PDV e operação de caixa' },
   garcom:          { label: 'Garçom',              cor: 'text-emerald-600',bg: 'bg-emerald-50',desc: 'PDV garçom e mesas' },
   cozinha:         { label: 'Cozinha',             cor: 'text-sky-600',    bg: 'bg-sky-50',    desc: 'KDS e produção' },

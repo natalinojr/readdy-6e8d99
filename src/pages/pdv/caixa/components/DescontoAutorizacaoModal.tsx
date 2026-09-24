@@ -32,7 +32,7 @@ export default function DescontoAutorizacaoModal({
   const autorizadores = useMemo(() => {
     const perfisPermitidos = settings.discount_profile === 'admin'
       ? ['admin']
-      : ['gerente', 'admin'];
+      : ['supervisao', 'gerente', 'admin'];
     return usuarios.filter((u) => perfisPermitidos.includes(u.perfil) && u.ativo);
   }, [usuarios, settings.discount_profile]);
   const [tab, setTab] = useState<'senha' | 'notificacao'>('senha');
@@ -83,6 +83,7 @@ export default function DescontoAutorizacaoModal({
   const perfilCor: Record<string, string> = {
     admin: 'text-red-600 bg-red-50 border-red-200',
     gerente: 'text-violet-600 bg-violet-50 border-violet-200',
+    supervisao: 'text-fuchsia-600 bg-fuchsia-50 border-fuchsia-200',
   };
 
   return (
@@ -177,7 +178,7 @@ export default function DescontoAutorizacaoModal({
                         <div className="flex-1 min-w-0">
                           <p className="text-xs font-semibold text-zinc-800 truncate">{u.nome}</p>
                           <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full border ${perfilCor[u.perfil] ?? 'text-zinc-600 bg-zinc-50 border-zinc-200'}`}>
-                            {u.perfil === 'admin' ? 'Administrador' : 'Gerente'}
+                            {u.perfil === 'admin' ? 'Administrador' : u.perfil === 'supervisao' ? 'Supervisão' : 'Gerente'}
                           </span>
                         </div>
                         {selectedUserId === u.id && (
@@ -263,8 +264,8 @@ export default function DescontoAutorizacaoModal({
                           <span className="text-[7px] font-black text-zinc-600">{u.nome[0]}</span>
                         </div>
                         {u.nome.split(' ')[0]}
-                        <span className={`text-[8px] font-bold px-1 rounded ${u.perfil === 'admin' ? 'text-red-600' : 'text-violet-600'}`}>
-                          {u.perfil === 'admin' ? 'ADM' : 'GER'}
+                        <span className={`text-[8px] font-bold px-1 rounded ${u.perfil === 'admin' ? 'text-red-600' : u.perfil === 'supervisao' ? 'text-fuchsia-600' : 'text-violet-600'}`}>
+                          {u.perfil === 'admin' ? 'ADM' : u.perfil === 'supervisao' ? 'SUP' : 'GER'}
                         </span>
                       </span>
                     ))}

@@ -2,12 +2,12 @@ import { useState, useEffect, useCallback } from 'react';
 import { Shield } from 'lucide-react';
 import { invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
-import { usePermissoes, mesclarComPadrao } from '@/hooks/usePermissoes';
+import { usePermissoes, mesclarComPadrao, DEFAULT_PERMISSOES } from '@/hooks/usePermissoes';
 import { FIN_ABAS, FIN_KEYS, REL_ABAS, REL_KEYS, CFG_ABAS, CFG_KEYS_GERENTE, CFG_MAQUININHA_KEY } from '@/constants/permissoesAbas';
 import { GESTAO_TELAS, GESTAO_KEYS } from '@/constants/permissoesGestao';
 import { useToast } from '@/contexts/ToastContext';
 
-type Papel = 'admin' | 'gerente' | 'caixa' | 'garcom' | 'cozinha' | 'financeiro';
+type Papel = 'admin' | 'gerente' | 'supervisao' | 'caixa' | 'garcom' | 'cozinha' | 'financeiro';
 
 interface Permissao {
   id: string;
@@ -22,6 +22,7 @@ interface Permissao {
 const papeis: { id: Papel; label: string; cor: string }[] = [
   { id: 'admin', label: 'Admin', cor: 'text-red-600 bg-red-50' },
   { id: 'gerente', label: 'Gerente', cor: 'text-orange-600 bg-orange-50' },
+  { id: 'supervisao', label: 'Supervisão', cor: 'text-fuchsia-600 bg-fuchsia-50' },
   { id: 'caixa', label: 'Caixa', cor: 'text-amber-600 bg-amber-50' },
   { id: 'garcom', label: 'Garçom', cor: 'text-green-600 bg-green-50' },
   { id: 'cozinha', label: 'Cozinha', cor: 'text-sky-600 bg-sky-50' },
@@ -83,6 +84,7 @@ const defaultPermissoes: Record<Papel, string[]> = {
     // Sem `configuracoes_editar`: as abas só valem se o dono abrir a tela para o Gerente.
     ...FIN_KEYS, ...REL_KEYS, ...CFG_KEYS_GERENTE, CFG_MAQUININHA_KEY, ...GESTAO_KEYS,
   ],
+  supervisao: [...DEFAULT_PERMISSOES.supervisao],
   caixa: [
     'pdv_abrir_caixa', 'pdv_fechar_caixa', 'pdv_sangria', 'pdv_cancelar_item',
   ],
@@ -102,6 +104,7 @@ const categorias = [...new Set(permissoes.map((p) => p.categoria))];
 const papeisToDbRole: Record<Papel, string> = {
   admin: 'admin',
   gerente: 'manager',
+  supervisao: 'supervisor',
   caixa: 'cashier',
   garcom: 'waiter',
   cozinha: 'kitchen',
@@ -111,6 +114,7 @@ const papeisToDbRole: Record<Papel, string> = {
 const dbRoleToPapel: Record<string, Papel> = {
   admin: 'admin',
   manager: 'gerente',
+  supervisor: 'supervisao',
   cashier: 'caixa',
   waiter: 'garcom',
   kitchen: 'cozinha',
@@ -143,6 +147,7 @@ export default function PermissoesTab() {
         const newMatrix: Record<Papel, string[]> = {
           admin: permissoes.map(p => p.id),
           gerente: mesclarComPadrao(defaultPermissoes.gerente, linhas('gerente')),
+          supervisao: mesclarComPadrao(defaultPermissoes.supervisao, linhas('supervisao')),
           caixa: mesclarComPadrao(defaultPermissoes.caixa, linhas('caixa')),
           garcom: mesclarComPadrao(defaultPermissoes.garcom, linhas('garcom')),
           cozinha: mesclarComPadrao(defaultPermissoes.cozinha, linhas('cozinha')),
@@ -186,7 +191,7 @@ export default function PermissoesTab() {
 
     // Build flat array of all permissions (excluding admin — always full)
     const permissionsPayload: { role: string; permission_key: string; allowed: boolean }[] = [];
-    const papeisSalvar: Papel[] = ['gerente', 'caixa', 'garcom', 'cozinha'];
+    const papeisSalvar: Papel[] = ['gerente', 'supervisao', 'caixa', 'garcom', 'cozinha'];
     for (const papel of papeisSalvar) {
       for (const perm of permissoes) {
         permissionsPayload.push({

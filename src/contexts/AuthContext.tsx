@@ -7,7 +7,7 @@ import type { TipoEmpresa } from '@/lib/tipoEmpresa';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-export type UserPerfil = 'admin' | 'gerente' | 'caixa' | 'garcom' | 'cozinha' | 'gestor_entregas' | 'tarefas' | 'totem' | 'financeiro';
+export type UserPerfil = 'admin' | 'gerente' | 'caixa' | 'garcom' | 'cozinha' | 'gestor_entregas' | 'tarefas' | 'totem' | 'financeiro' | 'supervisao';
 
 export interface TenantOption {
   tenantId: string;
@@ -70,6 +70,7 @@ interface AuthContextType {
 const DB_TO_FRONTEND_ROLE: Record<string, UserPerfil> = {
   admin: 'admin',
   manager: 'gerente',
+  supervisor: 'supervisao',
   cashier: 'caixa',
   waiter: 'garcom',
   kitchen: 'cozinha',

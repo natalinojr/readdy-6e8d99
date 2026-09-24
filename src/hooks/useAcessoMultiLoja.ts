@@ -6,6 +6,7 @@ import type { PerfilUsuario } from '@/constants/usuarios';
 const ROLE_MAP: Record<string, PerfilUsuario> = {
   admin: 'admin',
   manager: 'gerente',
+  supervisor: 'supervisao',
   cashier: 'caixa',
   waiter: 'garcom',
   kitchen: 'cozinha',
@@ -18,6 +19,7 @@ const ROLE_MAP: Record<string, PerfilUsuario> = {
 const ROLE_MAP_REVERSE: Record<PerfilUsuario, string> = {
   admin: 'admin',
   gerente: 'manager',
+  supervisao: 'supervisor',
   caixa: 'cashier',
   garcom: 'waiter',
   cozinha: 'kitchen',

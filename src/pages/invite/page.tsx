@@ -16,6 +16,7 @@ interface InviteToken {
 const PERFIL_LABEL: Record<UserPerfil, string> = {
   admin: 'Administrador',
   gerente: 'Gerente',
+  supervisao: 'Supervisão',
   caixa: 'Operador de Caixa',
   garcom: 'Garçom',
   cozinha: 'Cozinha / KDS',
@@ -28,6 +29,7 @@ const PERFIL_LABEL: Record<UserPerfil, string> = {
 const PERFIL_ROTA: Record<UserPerfil, string> = {
   admin: '/dashboard',
   gerente: '/dashboard',
+  supervisao: '/pdv/caixa',
   caixa: '/pdv/caixa',
   garcom: '/pdv/garcom',
   cozinha: '/kds',
@@ -40,6 +42,7 @@ const PERFIL_ROTA: Record<UserPerfil, string> = {
 const PERFIL_COLOR: Record<UserPerfil, string> = {
   admin: 'text-red-600 bg-red-50',
   gerente: 'text-violet-600 bg-violet-50',
+  supervisao: 'text-fuchsia-600 bg-fuchsia-50',
   caixa: 'text-amber-600 bg-amber-50',
   garcom: 'text-emerald-600 bg-emerald-50',
   cozinha: 'text-sky-600 bg-sky-50',

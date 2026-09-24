@@ -3232,3 +3232,17 @@ módulo. No front, `useEuTarefas` dá id/nome da sessão quando o `AuthContext` 
 `ModulosSemLoja`. **Limites:** sem loja não há canal `tasks-ping` (a tela recarrega depois de
 cada gravação); notificação para quem é de fora da loja só sai se a pessoa for responsável ou
 tiver acesso à pasta — nunca qualquer id vindo do corpo (menção).
+
+- **2026-09-23 — Perfil "Supervisão" + matrícula editável.** Papel novo `supervisao` (front) ↔
+  `supervisor` (enum `user_role`), entre caixa e gerente: nasce com o do caixa + desconto,
+  cancelamento, mesas, cozinha, `rel_caixa`/`rel_cancelamentos`/`rel_sla`, `gestao_pedidos`/`gestao_mesas`
+  (ajustável em Configurações › Permissões). Nas Edges tem rank 1 (igual ao caixa): o que ele
+  "autoriza" é pelo `AutorizacaoGerenteModal` com `niveisPermitidos` incluindo `'supervisao'` —
+  só cancelamento (PDV e Gestor de Pedidos) e desconto; **cortesia continua só gerente/admin**
+  (default do modal). `DescontoAutorizacaoModal` também lista supervisão, salvo `discount_profile='admin'`.
+  **Pegadinha:** além das 4 cópias do mapa PT↔EN, `PermissoesTab.tsx` tem a 5ª (`papeisToDbRole`,
+  `dbRoleToPapel`, `defaultPermissoes`, `papeisSalvar`) e `fn_admin_set_user_tenant` valida a lista
+  de papéis no banco. Matrícula: `fn_set_user_badge(user, tenant, badge)` (mesmas travas de
+  `fn_update_user`, 1–10 dígitos, recusa repetida com mensagem; o índice único global
+  `users_badge_number_unique` é a garantia final). O PIN não depende da matrícula
+  (`sha256(pin + user_id)`), então trocar a matrícula não invalida o PIN.

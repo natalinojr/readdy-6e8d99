@@ -8,6 +8,7 @@ import { ADMIN_MASTER_EMAIL, type AdminUser, type TenantInfo } from './modals';
 export const ROLE_OPTIONS = [
   { value: 'admin', label: 'Administrador' },
   { value: 'manager', label: 'Gerente' },
+  { value: 'supervisor', label: 'Supervisão' },
   { value: 'cashier', label: 'Caixa' },
   { value: 'waiter', label: 'Garçom' },
   { value: 'kitchen', label: 'Cozinha' },

@@ -1524,7 +1524,7 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
         <AutorizacaoGerenteModal
           titulo="Autorizar Desconto"
           descricao={`Libere o desconto de ${formatPrice(descontoPendente)} com credenciais de gerente ou admin.`}
-          niveisPermitidos={['gerente', 'admin']}
+          niveisPermitidos={['supervisao', 'gerente', 'admin']}
           tenantId={user?.tenantId ?? ''}
           onAutorizado={(autorizadoPor) => {
             setDescontoManual(descontoPendente);

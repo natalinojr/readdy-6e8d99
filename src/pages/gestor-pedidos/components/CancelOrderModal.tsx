@@ -208,7 +208,8 @@ export default function CancelOrderModal({
       {passo === 'autorizacao' && tenantId && (
         <AutorizacaoGerenteModal
           titulo="Autorizar Cancelamento"
-          descricao="Informe as credenciais de um gerente ou administrador para cancelar este pedido."
+          descricao="Informe as credenciais da supervisão, de um gerente ou administrador para cancelar este pedido."
+          niveisPermitidos={['supervisao', 'gerente', 'admin']}
           tenantId={tenantId}
           onAutorizado={handleAutorizado}
           onCancelar={() => setPasso('motivo')}

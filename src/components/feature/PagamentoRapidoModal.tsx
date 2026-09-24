@@ -1362,7 +1362,7 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
         <AutorizacaoGerenteModal
           titulo="Autorizar Desconto"
           descricao={`Libere o desconto de ${fmt(descontoPendente)} com credenciais de gerente ou admin.`}
-          niveisPermitidos={['gerente', 'admin']}
+          niveisPermitidos={['supervisao', 'gerente', 'admin']}
           tenantId={user?.tenantId ?? ''}
           onAutorizado={(autorizadoPor) => {
             setDescontoManual(descontoPendente);

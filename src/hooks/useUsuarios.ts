@@ -6,6 +6,7 @@ import type { PerfilUsuario } from '@/constants/usuarios';
 export const ROLE_MAP: Record<string, PerfilUsuario> = {
   admin: 'admin',
   manager: 'gerente',
+  supervisor: 'supervisao',
   cashier: 'caixa',
   waiter: 'garcom',
   kitchen: 'cozinha',
@@ -18,6 +19,7 @@ export const ROLE_MAP: Record<string, PerfilUsuario> = {
 export const ROLE_MAP_REVERSE: Record<PerfilUsuario, string> = {
   admin: 'admin',
   gerente: 'manager',
+  supervisao: 'supervisor',
   caixa: 'cashier',
   garcom: 'waiter',
   cozinha: 'kitchen',
@@ -217,6 +219,22 @@ export function useUsuarios() {
     [],
   );
 
+  /** Troca a matrícula (login por PIN). O banco recusa matrícula já usada por outro usuário. */
+  const alterarMatricula = useCallback(
+    async (userId: string, matricula: string): Promise<{ success: boolean; error?: string }> => {
+      if (!user?.tenantId) return { success: false, error: 'Nenhuma loja selecionada' };
+      const { error: rpcError } = await supabase.rpc('fn_set_user_badge', {
+        p_user_id: userId,
+        p_tenant_id: user.tenantId,
+        p_badge: matricula,
+      });
+      if (rpcError) return { success: false, error: rpcError.message };
+      setUsuarios((prev) => prev.map((u) => (u.id === userId ? { ...u, matricula } : u)));
+      return { success: true };
+    },
+    [user?.tenantId],
+  );
+
   const limparPIN = useCallback(
     async (userId: string): Promise<{ success: boolean; error?: string }> => {
       try {
@@ -234,5 +252,5 @@ export function useUsuarios() {
     [],
   );
 
-  return { usuarios, loading, error, recarregar: carregar, toggleAtivo, editarUsuario, criarUsuario, excluirUsuario, redefinirSenha, definirPIN, limparPIN };
+  return { usuarios, loading, error, recarregar: carregar, toggleAtivo, editarUsuario, criarUsuario, excluirUsuario, redefinirSenha, definirPIN, limparPIN, alterarMatricula };
 }

@@ -157,7 +157,7 @@ type ModalState =
   | null;
 
 export default function UsuariosPage() {
-  const { usuarios, loading, error, toggleAtivo, editarUsuario, criarUsuario, excluirUsuario, redefinirSenha, definirPIN, limparPIN } = useUsuarios();
+  const { usuarios, loading, error, toggleAtivo, editarUsuario, criarUsuario, excluirUsuario, redefinirSenha, definirPIN, limparPIN, alterarMatricula } = useUsuarios();
   const [busca, setBusca] = useState('');
   const [perfilFiltro, setPerfilFiltro] = useState<'todos' | PerfilUsuario>('todos');
   const [statusFiltro, setStatusFiltro] = useState<'todos' | 'ativo' | 'inativo'>('todos');
@@ -491,6 +491,15 @@ export default function UsuariosPage() {
               }
             } else if (modal.tipo === 'editar' && modal.usuario) {
               const payloadRaw = payload as Record<string, unknown>;
+              // Matrícula trocada: grava antes, para a repetida barrar o resto do salvamento.
+              const novaMatricula = typeof payloadRaw.matricula === 'string' ? payloadRaw.matricula : '';
+              if (novaMatricula && novaMatricula !== modal.usuario.matricula) {
+                const matRes = await alterarMatricula(modal.usuario.id, novaMatricula);
+                if (!matRes.success) {
+                  showToast(matRes.error ?? 'Erro ao alterar matrícula', 'erro');
+                  return;
+                }
+              }
               // Se senha foi fornecida, redefinir separadamente primeiro
               if (payloadRaw.senha && typeof payloadRaw.senha === 'string') {
                 const senhaRes = await redefinirSenha(modal.usuario.id, payloadRaw.senha);
