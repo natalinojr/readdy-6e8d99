@@ -471,7 +471,11 @@ async function caixaText(admin: SupabaseClient, cashRegisterId: string): Promise
   l.push(`Esperado na gaveta: ${brl(cr.closing_value_expected)}`);
   l.push(`Contado: ${brl(cr.closing_value_actual)}`);
   l.push(`Diferença: ${diffTexto(dif)}`);
-  if (cr.closing_notes) l.push(`Obs.: ${String(cr.closing_notes).slice(0, 200)}`);
+  // Conferência que não bateu: a observação do fechamento É a justificativa do operador (dono, 2026-09-24).
+  const temDif = Math.abs(dif) >= 0.01;
+  const notas = String(cr.closing_notes ?? '').trim();
+  const obs = notas ? `${temDif ? 'Justificativa' : 'Obs.'}: ${notas.slice(0, 300)}` : temDif ? 'Justificativa: não preenchida pelo operador' : '';
+  if (obs) l.push(obs);
   const painel = {
     t: 'Caixa fechado', s: String(loja?.name ?? ''),
     r: `${op?.name ?? 'Operador'} · ${diaHora(cr.opened_at)} → ${diaHora(cr.closed_at)}`,
@@ -488,13 +492,75 @@ async function caixaText(admin: SupabaseClient, cashRegisterId: string): Promise
         { l: 'Conferência', v: diffTexto(dif).replace(' ✅', '').replace(' ⚠️', ''), st: (Math.abs(dif) < 0.01 ? 'ok' : 'perigo') as 'ok' | 'perigo' },
       ],
     }],
-    ...(cr.closing_notes ? { al: [String(cr.closing_notes).slice(0, 200)] } : {}),
+    ...(obs ? { al: [obs] } : {}),
   };
   return {
     texto: l.join('\n'),
-    resumo: `💵 Caixa fechado — ${String(loja?.name ?? '')}: contado ${brl(cr.closing_value_actual)}, ${diffTexto(dif)}`,
+    resumo: `💵 Caixa fechado — ${String(loja?.name ?? '')}: contado ${brl(cr.closing_value_actual)}, ${diffTexto(dif)}${temDif && notas ? ` — ${notas.slice(0, 120)}` : ''}`,
     painel,
   };
+}
+
+// ── Aviso do caixa espera a justificativa (dono, 2026-09-24) ─────────────────
+// O PDV fecha o caixa ANTES de pedir a justificativa (FechamentoCaixaModal grava depois, por
+// fn_update_cash_register_notes). Então: caixa com diferença e sem justificativa não avisa no
+// fechamento; avisa quando a justificativa é gravada (gatilho trg_cash_register_justificou) ou, se
+// ela não vier, pela rodada periódica depois de CAIXA_ESPERA_MIN, dizendo que ficou sem justificativa.
+// "Já avisado" fica numa chave própria de asst_settings — proactive_state é regravado inteiro por
+// outras rotinas e apagaria a marca.
+const CAIXA_ESPERA_MIN = 10;
+const CAIXA_AVISO_DESDE = '2026-09-24T00:53:00Z';
+const CHAVE_CAIXA_AVISADO = 'cash_closing_sent';
+
+async function caixasAvisados(admin: SupabaseClient): Promise<Record<string, string>> {
+  const { data } = await admin.from('asst_settings').select('value').eq('key', CHAVE_CAIXA_AVISADO).maybeSingle();
+  return ((data?.value ?? {}) as Record<string, string>);
+}
+async function marcarCaixasAvisados(admin: SupabaseClient, ids: string[]) {
+  const atual = await caixasAvisados(admin);
+  const agora = new Date().toISOString();
+  const limite = Date.now() - 7 * 86_400_000; // guarda uma semana
+  const novo = Object.fromEntries(Object.entries({ ...atual, ...Object.fromEntries(ids.map((id) => [id, agora])) })
+    .filter(([, quando]) => Date.parse(quando) >= limite));
+  await admin.from('asst_settings').upsert({ key: CHAVE_CAIXA_AVISADO, value: novo, updated_at: agora });
+}
+
+/** Manda o aviso de um caixa fechado. `semEsperar` = rodada periódica (manda mesmo sem justificativa). */
+async function avisarCaixa(admin: SupabaseClient, ownerChat: string | null, id: string, semEsperar: boolean): Promise<Record<string, unknown>> {
+  if ((await caixasAvisados(admin))[id]) return { ok: true, skipped: 'já avisado' };
+  if (!semEsperar) {
+    const { data: cr } = await admin.from('cash_registers').select('closing_difference, closing_notes').eq('id', id).maybeSingle();
+    if (cr && Math.abs(Number(cr.closing_difference ?? 0)) >= 0.01 && !String(cr.closing_notes ?? '').trim()) {
+      return { ok: true, skipped: 'aguardando justificativa' };
+    }
+  }
+  const aviso = await caixaText(admin, id);
+  if (!aviso) return { ok: true, skipped: 'sem conteúdo' };
+  if (!ownerChat) return { ok: true, skipped: 'sem canal do dono' };
+  await marcarCaixasAvisados(admin, [id]); // antes de mandar: dois gatilhos quase juntos não duplicam
+  await (isTg(ownerChat) ? sendTelegram(ownerChat, aviso.texto) : sendText(toNumber(ownerChat), aviso.texto));
+  await admin.from('asst_messages').insert({
+    channel: 'cron', chat_id: ownerChat, role: 'assistant', topic: 'pagamentos',
+    content: `${aviso.resumo}\n[painel]${JSON.stringify(aviso.painel)}[/painel]`,
+  });
+  return { ok: true, sent: true };
+}
+
+/** Rodada periódica: caixas fechados com diferença cuja justificativa não veio em CAIXA_ESPERA_MIN. */
+async function caixasSemJustificativa(admin: SupabaseClient, tenants: Array<{ id: string }>, ownerChat: string | null, dry: boolean) {
+  const { data } = await admin.from('cash_registers').select('id, closing_difference, closing_notes')
+    .in('tenant_id', tenants.map((t) => t.id)).eq('status', 'closed')
+    // Fechou antes desta regra existir = já recebeu o aviso na hora do fechamento.
+    .gte('closed_at', new Date(Math.max(Date.now() - 86_400_000, Date.parse(CAIXA_AVISO_DESDE))).toISOString())
+    .lte('closed_at', new Date(Date.now() - CAIXA_ESPERA_MIN * 60_000).toISOString());
+  const pendentes = ((data ?? []) as Array<{ id: string; closing_difference: number | null; closing_notes: string | null }>)
+    .filter((c) => Math.abs(Number(c.closing_difference ?? 0)) >= 0.01 && !String(c.closing_notes ?? '').trim());
+  if (!pendentes.length) return 'nenhum';
+  const avisados = await caixasAvisados(admin);
+  const faltam = pendentes.filter((c) => !avisados[c.id]);
+  if (dry) return faltam.length ? `${faltam.length} caixa(s) sem justificativa para avisar` : 'nenhum';
+  for (const c of faltam) await avisarCaixa(admin, ownerChat, c.id, true);
+  return faltam.length;
 }
 
 async function sessaoText(admin: SupabaseClient, sessionId: string): Promise<Aviso | null> {
@@ -1138,6 +1204,10 @@ async function proactive(admin: SupabaseClient, cfg: Record<string, any>, ownerC
     const t = faltam.length ? await closingText(admin, faltam, today) : null;
     if (t) await deliver('closing', t); else res.closing = faltam.length ? 'sem movimento' : 'cada loja já recebeu ao fechar o caixa';
   }
+  // Caixa que fechou com diferença e o operador não justificou: avisa assim mesmo depois da espera.
+  if (only ? only === 'caixa_sem_justificativa' : !!ownerChat) {
+    res.caixa_sem_justificativa = await caixasSemJustificativa(admin, tenants, ownerChat, dry);
+  }
   if (want('anomaly')) {
     const lastCheck = state.anomaly_checked_at ? Date.parse(state.anomaly_checked_at) : 0;
     if (dry || (now >= pro.anomaly.from && now <= pro.anomaly.to && Date.now() - lastCheck >= Number(pro.anomaly.every_min) * 60_000)) {
@@ -1255,11 +1325,18 @@ Deno.serve(async (req) => {
   }
   // Gatilhos do PDV (2026-09-20): caixa fechado → mensagem do DINHEIRO daquele caixa; sessão fechada →
   // fechamento do turno da loja. Uma mensagem por caixa e uma por sessão.
-  if (body.run === 'closing_cash' || body.run === 'closing_session') {
+  if (body.run === 'closing_cash') {
     try {
       const id = String(body.id ?? '');
       if (!id) return json({ error: 'id obrigatório' }, 400);
-      const aviso = body.run === 'closing_cash' ? await caixaText(admin, id) : await sessaoText(admin, id);
+      return json(await avisarCaixa(admin, ownerChat, id, false));
+    } catch (e) { return json({ error: errMsg(e) }, 500); }
+  }
+  if (body.run === 'closing_session') {
+    try {
+      const id = String(body.id ?? '');
+      if (!id) return json({ error: 'id obrigatório' }, 400);
+      const aviso = await sessaoText(admin, id);
       if (!aviso) return json({ ok: true, skipped: 'sem conteúdo' });
       if (!ownerChat) return json({ ok: true, skipped: 'sem canal do dono' });
       // WhatsApp/Telegram não desenham painel: lá vai o texto inteiro. No chat do ERPOS vai UMA linha de
