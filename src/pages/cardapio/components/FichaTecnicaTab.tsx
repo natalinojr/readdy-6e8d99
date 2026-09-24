@@ -250,9 +250,12 @@ export default function FichaTecnicaTab({ itemId, precoVenda, onCountChange }: P
   const margemBruta = precoVenda > 0 ? ((precoVenda - custoTotal) / precoVenda) * 100 : 0;
   const corMargem = margemBruta >= 60 ? 'text-green-600' : margemBruta >= 40 ? 'text-yellow-600' : 'text-red-500';
 
-  // Insumos de uso final (excluindo os já adicionados)
+  // Insumos de uso final (excluindo os já adicionados). O que sai de uma produção
+  // aparece só em 'Produtos de produção', uma vez por receita.
   const insumosFinaisFiltrados = insumos.filter(
     (ins) =>
+      ins.usageType !== 'production' &&
+      !recipes.some((r) => r.outputIngredientId === ins.id) &&
       semAcento(ins.nome).includes(semAcento(busca)) &&
       !fichas.find((f) => f.ingredient_id === ins.id),
   );

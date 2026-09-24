@@ -445,7 +445,8 @@ export default function RegistroProducaoModal({ recipeId, onClose, operador }: P
 
       if (!outputInsumoId) {
         // Fallback: buscar por nome no estado local
-        outputInsumoId = insumos.find((i) => i.nome === recipe.name)?.id;
+        const nomeReceita = recipe.name.trim().toLowerCase();
+        outputInsumoId = insumos.find((i) => i.nome.trim().toLowerCase() === nomeReceita)?.id;
         console.log('[RegistroProducaoModal] outputInsumoId from local insumos by name:', outputInsumoId);
 
         if (!outputInsumoId) {
