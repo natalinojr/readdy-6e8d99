@@ -6,7 +6,7 @@
 export type Lido = { tipo: 'chave'; chave: string } | { tipo: 'qr'; url: string } | { tipo: 'nada' };
 
 // QR de NFC-e do Paraná (única SEFAZ que a Edge purchase-receipt-scan consulta por enquanto)
-export const isNfcePrQr = (s: string) => /^https?:\/\/(www\.)?fazenda\.pr\.gov\.br\/nfce\/qrcode\?p=\d{44}/i.test(s.trim());
+export const isNfcePrQr = (s: string) => /^https?:\/\/(www\.)?fazenda\.pr\.gov\.br\/nfce\/qrcode\/?\?p=\d{44}/i.test(s.trim());
 
 function loadImage(url: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
@@ -17,7 +17,7 @@ function loadImage(url: string): Promise<HTMLImageElement> {
   });
 }
 
-function interpretar(valor: string): Lido | null {
+export function interpretar(valor: string): Lido | null {
   const v = valor.trim();
   if (/^https?:\/\//i.test(v)) return { tipo: 'qr', url: v };
   const d = v.replace(/\D/g, '');
@@ -25,9 +25,9 @@ function interpretar(valor: string): Lido | null {
   return null;
 }
 
-type Detector = { detect: (src: HTMLCanvasElement) => Promise<{ rawValue: string }[]> };
+type Detector = { detect: (src: HTMLCanvasElement | HTMLVideoElement) => Promise<{ rawValue: string }[]> };
 
-async function detectorNativo(): Promise<Detector | null> {
+export async function detectorNativo(): Promise<Detector | null> {
   const BD = (window as unknown as { BarcodeDetector?: { new (o: { formats: string[] }): Detector; getSupportedFormats?: () => Promise<string[]> } }).BarcodeDetector;
   if (!BD) return null;
   try {
@@ -72,6 +72,23 @@ export async function lerCodigoDaFoto(file: File): Promise<Lido> {
       }
       if (scale === 1) break;
     }
+    // Foto de longe: o QR fica pequeno na foto inteira. Procura em pedaços (centro e quadrantes),
+    // cada um ampliado — é o que faz a câmera do celular achar o QR onde a foto inteira falha.
+    const W = img.width, H = img.height;
+    const pedacos: [number, number, number, number][] = [
+      [0.2, 0.2, 0.6, 0.6], [0.1, 0.1, 0.8, 0.8], [0, 0, 0.55, 0.55], [0.45, 0, 0.55, 0.55],
+      [0, 0.45, 0.55, 0.55], [0.45, 0.45, 0.55, 0.55], [0, 0.25, 1, 0.5], [0.25, 0, 0.5, 1],
+    ];
+    if (!jsQR) jsQR = (await import('jsqr')).default;
+    for (const [x, y, w, h] of pedacos) {
+      const sw = Math.round(W * w), sh = Math.round(H * h);
+      const scale = Math.min(1.5, 1400 / Math.max(sw, sh));
+      canvas.width = Math.round(sw * scale);
+      canvas.height = Math.round(sh * scale);
+      ctx.drawImage(img, Math.round(W * x), Math.round(H * y), sw, sh, 0, 0, canvas.width, canvas.height);
+      const r = await lerQrDoCanvas(canvas, nativo, jsQR);
+      if (r) return r;
+    }
     return { tipo: 'nada' };
   } finally {
     URL.revokeObjectURL(url);
@@ -101,4 +118,20 @@ export async function fotoParaEnvio(file: File): Promise<{ base64: string; media
   } finally {
     URL.revokeObjectURL(url);
   }
+}
+
+/** Um quadro (foto recortada ou vídeo da câmera) → código lido, ou null. */
+export async function lerQrDoCanvas(canvas: HTMLCanvasElement, nativo: Detector | null, jsQR: typeof import('jsqr').default): Promise<Lido | null> {
+  if (nativo) {
+    try {
+      for (const a of await nativo.detect(canvas)) {
+        const r = interpretar(a.rawValue);
+        if (r) return r;
+      }
+    } catch { /* cai no jsQR */ }
+  }
+  const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
+  const px = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const code = jsQR(px.data, px.width, px.height, { inversionAttempts: 'attemptBoth' });
+  return code?.data ? interpretar(code.data) : null;
 }

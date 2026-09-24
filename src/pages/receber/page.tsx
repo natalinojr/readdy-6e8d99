@@ -15,13 +15,14 @@ import { chamarPedidos, comprovanteParaEnvio, ROTULO_TIPO, type ContextoPedidos,
 import Conferir from './components/Conferir';
 import Pagamento, { descreverPagamento } from './components/Pagamento';
 import SemNota from './components/SemNota';
+import ScannerQR from './components/ScannerQR';
 import JaChegaram from './components/JaChegaram';
 import {
   brl, chamar, dataBR, hojeISO, lerCupom, memorizarCupom, normalizar, qtd, somaDias, un,
   type Aberto, type Insumo, type Pendente, type Resultado, type ScanResult,
 } from './api';
 import { deAberto, deCupom, novoSemNota, precisaPagamento, type Rascunho } from './rascunho';
-import { fotoParaEnvio, isNfcePrQr, lerCodigoDaFoto } from './leitura';
+import { fotoParaEnvio, isNfcePrQr, lerCodigoDaFoto, type Lido } from './leitura';
 
 type Tela =
   | 'inicio' | 'carregando' | 'conferir' | 'pagamento' | 'resumo' | 'gravando' | 'feito'
@@ -44,6 +45,7 @@ export default function ReceberPage() {
   /** Mercadoria paga do bolso: o recebimento já abre com "Paguei do meu bolso" marcado. */
   const modoReembolso = useRef(false);
   const fotoCupom = useRef<File | null>(null);
+  const [scanner, setScanner] = useState(false);
 
   const [tela, setTela] = useState<Tela>('inicio');
   const [msgCarregando, setMsgCarregando] = useState('');
@@ -155,6 +157,18 @@ export default function ReceberPage() {
     setErro('Não consegui ler o código. Tire a foto mais perto, reta e com luz — ou digite o número da nota.');
     setTela('inicio');
   };
+
+  // Leitor ao vivo (cupom): QR da SEFAZ ou, por engano, o código da DANFE
+  const onLidoAoVivo = (l: Lido) => {
+    setScanner(false);
+    if (l.tipo === 'qr' && isNfcePrQr(l.url)) { fotoCupom.current = null; return lerCupomQr(l.url); }
+    if (l.tipo === 'chave') {
+      if (!podeReceber) { setErro('Isso é uma nota fiscal (DANFE), não cupom de mercado. Peça a quem recebe mercadoria para dar entrada.'); return; }
+      return buscarCodigo(l.chave);
+    }
+    setErro('Esse QR Code não é de cupom fiscal do Paraná. Use "Tirar foto da notinha".');
+  };
+  const abrirLeitorCupom = () => { setErro(null); setScanner(true); };
 
   const onFotoCupom = async (file: File | undefined) => {
     if (!file) return;
@@ -328,6 +342,8 @@ export default function ReceberPage() {
       <input ref={inputCupom} type="file" accept="image/*,application/pdf" capture="environment" className="hidden"
         onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; onFotoCupom(f); }} />
 
+      {scanner && <ScannerQR onLido={onLidoAoVivo} onFoto={() => { setScanner(false); inputCupom.current?.click(); }} onFechar={() => setScanner(false)} />}
+
       <div className="flex-1 overflow-y-auto">
         {erro && (
           <div className="mx-4 mt-4 bg-red-50 border border-red-200 text-red-700 rounded-2xl p-3.5 text-sm flex gap-2">
@@ -379,7 +395,7 @@ export default function ReceberPage() {
             {podePedir && <p className="text-sm font-bold text-zinc-700 px-1 mb-2">Chegou mercadoria</p>}
             <div className="grid grid-cols-2 gap-3">
               <BotaoGrande cor="bg-amber-500 text-white" icone="ri-barcode-line" titulo="Ler código da nota" sub="Foto do código de barras da DANFE" onClick={() => inputCodigo.current?.click()} destaque />
-              <BotaoGrande cor="bg-white text-zinc-800" icone="ri-receipt-line" titulo="Cupom / notinha" sub="Foto do cupom de mercado" onClick={() => inputCupom.current?.click()} />
+              <BotaoGrande cor="bg-white text-zinc-800" icone="ri-receipt-line" titulo="Cupom / notinha" sub="Lê o QR Code do cupom de mercado" onClick={abrirLeitorCupom} />
               <BotaoGrande cor="bg-white text-zinc-800" icone="ri-inbox-unarchive-line" titulo="Chegou sem nota" sub="Lançar ou avisar o financeiro" onClick={() => setTela('sem_nota_pergunta')} />
               <BotaoGrande cor="bg-white text-zinc-800" icone="ri-keyboard-line" titulo="Digitar nº da nota" sub="Se o código não ler" onClick={() => { setDigitado(''); setTela('digitar'); }} />
             </div>
@@ -432,7 +448,7 @@ export default function ReceberPage() {
             <p className="text-xl font-bold text-zinc-900 px-1">O que você comprou?</p>
             <p className="text-sm text-zinc-500 px-1 mb-2">Mercadoria entra no estoque e no custo (CMV); o resto vira despesa.</p>
             <BotaoGrande cor="bg-white text-zinc-800" icone="ri-receipt-line" titulo="Mercadoria com cupom" sub="Insumo, bebida, embalagem — foto do cupom do mercado"
-              onClick={() => { modoReembolso.current = true; setErro(null); inputCupom.current?.click(); }} largo />
+              onClick={() => { modoReembolso.current = true; abrirLeitorCupom(); }} largo />
             <BotaoGrande cor="bg-white text-zinc-800" icone="ri-inbox-unarchive-line" titulo="Mercadoria sem cupom" sub="Digito o que comprei e anexo a foto do recibo"
               onClick={() => { modoReembolso.current = true; abrirSemNota(); }} largo />
             <BotaoGrande cor="bg-white text-zinc-800" icone="ri-tools-line" titulo="Outra coisa" sub="Limpeza, manutenção, material, transporte…" onClick={() => abrirPedido('reembolso')} largo />
