@@ -19,6 +19,7 @@ export interface OrigemHoraItem {
   caixa: number;
   garcom: number;
   mesa: number;
+  qr: number;
   auto: number;
   delivery: number;
   /** Pedidos do iFood (relatório de conciliação importado em Financeiro › iFood). */
@@ -47,8 +48,8 @@ const ORIGEM_COR: Record<string, string> = {
   waiter: '#10b981',
   table: '#06b6d4',
   qr_universal: '#8b5cf6',
-  self_service: '#f97316',
-  delivery: '#ef4444',
+  self_service: '#ec4899',
+  delivery: '#3b82f6',
   ifood: '#ea1d2c',
 };
 
@@ -141,55 +142,59 @@ export function useOrigemReport(periodo: string) {
         o.pct = totalValor > 0 ? Math.round((o.valor / totalValor) * 1000) / 10 : 0;
       });
 
-      // ── Agregar por hora — busca pedidos direto para ter a hora exata ──
-      // Usamos query direta APENAS para o detalhe de hora, com fallback seguro
-      let porHora: OrigemHoraItem[] = [];
+      // ── Agregar por hora cheia (0–23h) — busca pedidos direto para ter a hora exata ──
+      // Em períodos de vários dias soma cada hora de todos os dias (perfil do dia por canal).
+      const porHora: OrigemHoraItem[] = [];
       try {
-        const { data: ordersData, error: ordersErr } = await supabase
-          .from('orders')
-          .select('origin_type, total_amount, created_at')
-          .eq('tenant_id', user.tenantId)
-          .not('status', 'in', '(cancelled,draft)')
-          .eq('is_training', false)
-          .eq('is_draft', false)
-          .gte('created_at', from)
-          .lte('created_at', to);
+        const horaMap: Record<string, Omit<OrigemHoraItem, 'hora'>> = {};
+        const vazio = () => ({ caixa: 0, garcom: 0, mesa: 0, qr: 0, auto: 0, delivery: 0, ifood: 0 });
+        const slot = (h: string) => (horaMap[h] ??= vazio());
+        for (const [hm, valor] of Object.entries(ifood.porHora)) slot(hm.slice(0, 2)).ifood += valor;
 
-        const horaMap: Record<string, { caixa: number; garcom: number; mesa: number; auto: number; delivery: number; ifood: number }> = {};
-        const vazio = () => ({ caixa: 0, garcom: 0, mesa: 0, auto: 0, delivery: 0, ifood: 0 });
-        for (const [hora, valor] of Object.entries(ifood.porHora)) {
-          if (!horaMap[hora]) horaMap[hora] = vazio();
-          horaMap[hora].ifood += valor;
-        }
-        if (!ordersErr && ordersData && ordersData.length > 0) {
-          ordersData.forEach((o: any) => {
-            const hora = new Date(o.created_at).toLocaleTimeString('pt-BR', {
-              timeZone: 'America/Sao_Paulo',
-              hour: '2-digit',
-              minute: '2-digit',
-            });
-            const origem = o.origin_type ?? 'cashier';
+        // Paginado: o PostgREST devolve no máximo 1000 linhas por chamada.
+        const PAGINA = 1000;
+        for (let ini = 0; ; ini += PAGINA) {
+          const { data: ordersData, error: ordersErr } = await supabase
+            .from('orders')
+            .select('origin_type, total_amount, created_at')
+            .eq('tenant_id', user.tenantId)
+            .not('status', 'in', '(cancelled,draft)')
+            .eq('is_training', false)
+            .eq('is_draft', false)
+            .gte('created_at', from)
+            .lte('created_at', to)
+            .order('created_at')
+            .range(ini, ini + PAGINA - 1);
+          if (ordersErr) throw ordersErr;
+          for (const o of (ordersData ?? []) as Array<{ origin_type: string | null; total_amount: number | null; created_at: string }>) {
+            // Hora de Brasília (UTC−3, sem horário de verão desde 2019).
+            const h = String((new Date(o.created_at).getUTCHours() + 21) % 24).padStart(2, '0');
             const valor = Number(o.total_amount ?? 0);
-            if (!horaMap[hora]) horaMap[hora] = vazio();
-            if (origem === 'cashier') horaMap[hora].caixa += valor;
-            else if (origem === 'waiter') horaMap[hora].garcom += valor;
-            else if (origem === 'table') horaMap[hora].mesa += valor;
-            else if (origem === 'self_service') horaMap[hora].auto += valor;
-            else if (origem === 'delivery') horaMap[hora].delivery += valor;
-          });
+            const v = slot(h);
+            switch (o.origin_type ?? 'cashier') {
+              case 'cashier': v.caixa += valor; break;
+              case 'waiter': v.garcom += valor; break;
+              case 'table': v.mesa += valor; break;
+              case 'qr_universal': v.qr += valor; break;
+              case 'self_service': v.auto += valor; break;
+              case 'delivery': v.delivery += valor; break;
+            }
+          }
+          if ((ordersData?.length ?? 0) < PAGINA) break;
         }
-        if (Object.keys(horaMap).length > 0) {
-          porHora = Object.entries(horaMap)
-            .sort(([a], [b]) => a.localeCompare(b))
-            .map(([hora, v]) => ({
-              hora,
-              caixa: Math.round(v.caixa * 100) / 100,
-              garcom: Math.round(v.garcom * 100) / 100,
-              mesa: Math.round(v.mesa * 100) / 100,
-              auto: Math.round(v.auto * 100) / 100,
-              delivery: Math.round(v.delivery * 100) / 100,
-              ifood: Math.round(v.ifood * 100) / 100,
-            }));
+
+        const horas = Object.keys(horaMap).map(Number).sort((a, b) => a - b);
+        if (horas.length > 0) {
+          const r = (n: number) => Math.round(n * 100) / 100;
+          // Faixa contínua da 1ª à última hora com venda (horas vazias no meio aparecem zeradas).
+          for (let h = horas[0]; h <= horas[horas.length - 1]; h++) {
+            const v = horaMap[String(h).padStart(2, '0')] ?? vazio();
+            porHora.push({
+              hora: `${String(h).padStart(2, '0')}h`,
+              caixa: r(v.caixa), garcom: r(v.garcom), mesa: r(v.mesa), qr: r(v.qr),
+              auto: r(v.auto), delivery: r(v.delivery), ifood: r(v.ifood),
+            });
+          }
         }
       } catch (horaErr) {
         console.warn('[useOrigemReport] Falha ao carregar hora, usando sem gráfico de hora:', horaErr);

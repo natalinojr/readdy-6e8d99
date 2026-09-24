@@ -1,8 +1,9 @@
 import { useState, useMemo } from 'react';
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
-import { useOrigemReport, getPeriodoAnteriorOrigem, labelPeriodoAnteriorOrigem } from '@/hooks/useOrigemReport';
+import { useOrigemReport, getPeriodoAnteriorOrigem, labelPeriodoAnteriorOrigem, type OrigemHoraItem } from '@/hooks/useOrigemReport';
+import { periodoDias } from '@/lib/dateUtils';
 import { useSalesReportBySession } from '@/hooks/useSalesReport';
 import { useModoFaturamento } from '@/contexts/ModoFaturamentoContext';
 import type { SessionInfo } from '@/hooks/useSessions';
@@ -22,7 +23,16 @@ const ICONES: Record<string, string> = {
   'iFood': 'ri-restaurant-2-line',
 };
 
-const LEGENDA_HORA: Record<string, string> = { caixa: 'Caixa', garcom: 'Garçom', mesa: 'Mesa (QR)', auto: 'Autoatendimento', delivery: 'Delivery', ifood: 'iFood' };
+// Canais do gráfico por horário, na ordem da pilha (de baixo para cima); mesmas cores dos cards.
+const CANAIS_HORA: Array<{ key: Exclude<keyof OrigemHoraItem, 'hora'>; label: string; cor: string }> = [
+  { key: 'caixa', label: 'Caixa', cor: '#f59e0b' },
+  { key: 'garcom', label: 'Garçom', cor: '#10b981' },
+  { key: 'mesa', label: 'Mesa (QR)', cor: '#06b6d4' },
+  { key: 'qr', label: 'QR CODE', cor: '#8b5cf6' },
+  { key: 'auto', label: 'Autoatendimento', cor: '#ec4899' },
+  { key: 'delivery', label: 'Delivery', cor: '#3b82f6' },
+  { key: 'ifood', label: 'iFood', cor: '#ea1d2c' },
+];
 
 // Badge de variação
 function VarBadge({ atual, anterior }: { atual: number; anterior: number }) {
@@ -51,8 +61,8 @@ const ORIGEM_COR: Record<string, string> = {
   waiter: '#10b981',
   table: '#06b6d4',
   qr_universal: '#8b5cf6',
-  self_service: '#f97316',
-  delivery: '#ef4444',
+  self_service: '#ec4899',
+  delivery: '#3b82f6',
 };
 
 export default function OrigemTab({ periodo, externalSession }: Props) {
@@ -247,38 +257,50 @@ export default function OrigemTab({ periodo, externalSession }: Props) {
         </div>
       </div>
 
-      {/* Gráfico por hora — apenas no modo calendário (sessão não tem dados de hora) */}
-      {!isSessao && porHora.length > 0 && (
-        <div className="bg-white border border-zinc-100 rounded-xl p-5">
-          <div className="mb-4">
-            <h3 className="text-sm font-semibold text-zinc-800">Faturamento por Hora e Canal</h3>
-            <p className="text-xs text-zinc-400">Evolução ao longo do dia por origem do pedido</p>
+      {/* Canais por horário (hora cheia, empilhado) — apenas no modo calendário (sessão não tem dados de hora) */}
+      {!isSessao && porHora.length > 0 && (() => {
+        const canais = CANAIS_HORA.filter((c) => porHora.some((h) => h[c.key] > 0));
+        const variosDias = periodoDias(periodo) > 1;
+        return (
+          <div className="bg-white border border-zinc-100 rounded-xl p-5">
+            <div className="flex items-start justify-between gap-3 mb-4">
+              <div>
+                <h3 className="text-sm font-semibold text-zinc-800">Canais por horário</h3>
+                <p className="text-xs text-zinc-400">
+                  Faturamento de cada hora, separado por canal{variosDias ? ' — soma de todos os dias do período' : ''}
+                </p>
+              </div>
+              <div className="flex flex-wrap justify-end gap-x-3 gap-y-1 text-[11px] text-zinc-500">
+                {canais.map((c) => (
+                  <span key={c.key} className="flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-sm" style={{ backgroundColor: c.cor }} /> {c.label}
+                  </span>
+                ))}
+              </div>
+            </div>
+            <div className="h-60">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={porHora} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f4f4f5" vertical={false} />
+                  <XAxis dataKey="hora" tick={{ fontSize: 10, fill: '#a1a1aa' }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fontSize: 10, fill: '#a1a1aa' }} axisLine={false} tickLine={false}
+                    tickFormatter={(v) => (v >= 1000 ? `${(v / 1000).toFixed(1)}k` : String(v))} width={36} />
+                  <Tooltip
+                    cursor={{ fill: '#f4f4f5' }}
+                    formatter={(val: number, name: string) => [fmt(val), CANAIS_HORA.find((c) => c.key === name)?.label ?? name]}
+                    labelFormatter={(label) => `Das ${label} às ${String(parseInt(label, 10) + 1).padStart(2, '0')}h`}
+                    contentStyle={{ borderRadius: 8, fontSize: 11, border: '1px solid #e4e4e7' }}
+                  />
+                  {canais.map((c, i) => (
+                    <Bar key={c.key} dataKey={c.key} stackId="a" fill={c.cor} maxBarSize={36}
+                      radius={i === canais.length - 1 ? [4, 4, 0, 0] : undefined} />
+                  ))}
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
           </div>
-          <div className="h-60">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={porHora} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f4f4f5" vertical={false} />
-                <XAxis dataKey="hora" tick={{ fontSize: 10, fill: '#a1a1aa' }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fontSize: 10, fill: '#a1a1aa' }} axisLine={false} tickLine={false}
-                  tickFormatter={(v) => `R$${v >= 1000 ? `${(v / 1000).toFixed(0)}k` : v}`} width={44} />
-                <Tooltip
-                  formatter={(val: number, name: string) => [fmt(val), LEGENDA_HORA[name] ?? name]}
-                  contentStyle={{ borderRadius: 8, fontSize: 11, border: '1px solid #e4e4e7' }}
-                />
-                <Legend iconSize={8} wrapperStyle={{ fontSize: 10 }}
-                  formatter={(v) => LEGENDA_HORA[v] ?? v}
-                />
-                <Bar dataKey="caixa" stackId="a" fill="#f59e0b" />
-                <Bar dataKey="garcom" stackId="a" fill="#10b981" />
-                <Bar dataKey="mesa" stackId="a" fill="#06b6d4" />
-                <Bar dataKey="auto" stackId="a" fill="#f97316" />
-                <Bar dataKey="delivery" stackId="a" fill="#ef4444" />
-                <Bar dataKey="ifood" stackId="a" fill="#ea1d2c" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Tabela comparativa */}
       <div className="bg-white border border-zinc-100 rounded-xl overflow-hidden">
