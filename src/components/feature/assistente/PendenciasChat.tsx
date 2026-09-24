@@ -14,7 +14,7 @@
 //   exige ação                → Não vou fazer (com motivo) — nunca some por tempo.
 // Resolver no celular sem abrir tabela grande foi o pedido do dono (2026-09-18); a tela continua
 // a um toque para quem está no computador.
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { kindConfig } from '@/contexts/PendenciasContext';
 import ItensClassificarCard from '@/components/feature/assistente/ItensClassificarCard';
@@ -124,9 +124,10 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
   const [verTarefasTela, setVerTarefas] = useState(false);
   // Agrupar por chegada (dia a dia) ou por tipo (dono, 2026-09-24). Lembrado neste aparelho.
   const [agrupar, setAgrupar] = useState<'chegada' | 'tipo'>(() => { try { return localStorage.getItem(AGRUPAR_KEY) === 'tipo' ? 'tipo' : 'chegada'; } catch { return 'chegada'; } });
-  const escolherAgrupar = (a: 'chegada' | 'tipo') => { setAgrupar(a); try { localStorage.setItem(AGRUPAR_KEY, a); } catch { /* sem storage */ } };
-  const [fechados, setFechados] = useState<Set<string>>(new Set());
-  const alternarGrupo = (g: string) => setFechados((f) => { const n = new Set(f); if (n.has(g)) n.delete(g); else n.add(g); return n; });
+  // Por tipo, os grupos começam FECHADOS (dono, 2026-09-24): primeiro o panorama, depois abre o que quer.
+  const [abertos, setAbertos] = useState<Set<string>>(new Set());
+  const escolherAgrupar = (a: 'chegada' | 'tipo') => { setAgrupar(a); setAbertos(new Set()); try { localStorage.setItem(AGRUPAR_KEY, a); } catch { /* sem storage */ } };
+  const alternarGrupo = (g: string) => setAbertos((f) => { const n = new Set(f); if (n.has(g)) n.delete(g); else n.add(g); return n; });
   const [ignorarDe, setIgnorarDe] = useState<string | null>(null);
   const escolherLoja = (id: string) => { setLoja(id); try { localStorage.setItem(FILTRO_KEY, id); } catch { /* sem storage */ } };
   const [lista, setLista] = useState<PendenciaChat[] | null>(null);
@@ -137,8 +138,6 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
   // Ordem de chegada: mais antiga primeiro (fila) ou mais nova primeiro. Lembrada neste aparelho.
   const [ordem, setOrdem] = useState<'antigas' | 'novas'>(() => { try { return localStorage.getItem(ORDEM_KEY) === 'novas' ? 'novas' : 'antigas'; } catch { return 'antigas'; } });
   const trocarOrdem = () => { const o = ordem === 'antigas' ? 'novas' : 'antigas'; setOrdem(o); try { localStorage.setItem(ORDEM_KEY, o); } catch { /* sem storage */ } };
-  const [destaque, setDestaque] = useState<string | null>(null);
-  const listaRef = useRef<HTMLDivElement>(null);
 
   const [nTarefas, setNTarefas] = useState(0);
   // Pendência de pagamento: para quem vai e se a mercadoria já chegou (assistente-app, dono 2026-09-18)
@@ -219,7 +218,6 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
   const cmp = (a: PendenciaChat, b: PendenciaChat) => (ordem === 'antigas' ? a.criadaEm.localeCompare(b.criadaEm) : b.criadaEm.localeCompare(a.criadaEm));
   const itens = (filtro ? todas.filter((p) => p.tenantId === filtro) : todas).slice().sort(cmp);
   const urgentes = itens.filter((p) => p.urgencia === 'alta').length;
-  const maisAntiga = itens.reduce<PendenciaChat | null>((m, p) => (!m || p.criadaEm < m.criadaEm ? p : m), null);
 
   // Por tipo: um grupo por rótulo (os dois tipos de pagamento viram "Pagamento"), na ordem do
   // item mais antigo (ou mais novo) de cada grupo; dentro dele, a mesma ordem de chegada.
@@ -229,16 +227,6 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
     return [...m.entries()].map(([label, ps]) => ({ label, cfg: kindConfig(ps[0].kind), itens: ps }));
   })();
 
-  // Botão "Mais antiga": rola até ela e pisca o cartão, em qualquer ordem, filtro ou agrupamento.
-  const irParaMaisAntiga = () => {
-    if (!maisAntiga) return;
-    const g = kindConfig(maisAntiga.kind).label;
-    if (agrupar === 'tipo' && fechados.has(g)) alternarGrupo(g);
-    setTimeout(() => listaRef.current?.querySelector(`[data-pend="${maisAntiga.id}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 50);
-    setDestaque(maisAntiga.id);
-    setTimeout(() => setDestaque((d) => (d === maisAntiga.id ? null : d)), 2500);
-  };
-
   const cartao = (p: PendenciaChat) => {
     const cfg = kindConfig(p.kind);
     const ehPagamento = p.kind === 'pagamento_grupo' || p.kind === 'pagamento_pendente';
@@ -246,7 +234,7 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
     const busy = ocupada === p.id;
     return (
       <div key={p.id} data-pend={p.id}
-        className={`rounded-2xl border bg-white px-3.5 py-3 text-sm shadow-[0_1px_2px_rgba(0,0,0,0.04)] transition-shadow ${p.urgencia === 'alta' ? 'border-red-200 border-l-4 border-l-red-500' : 'border-zinc-200'} ${destaque === p.id ? 'ring-4 ring-violet-300' : ''}`}>
+        className={`rounded-2xl border bg-white px-3.5 py-3 text-sm shadow-[0_1px_2px_rgba(0,0,0,0.04)] transition-shadow ${p.urgencia === 'alta' ? 'border-red-200 border-l-4 border-l-red-500' : 'border-zinc-200'}`}>
         <div className="flex items-start gap-2.5">
           <span className={`w-9 h-9 flex-shrink-0 flex items-center justify-center rounded-xl ${cfg.corBg}`}>
             <i className={`${cfg.icone} ${cfg.corTexto} text-lg`} />
@@ -383,8 +371,9 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
         </button>
       </div>
 
-      {!verTarefas && lista !== null && todas.length > 0 && (
+      {!verTarefas && lista !== null && (todas.length > 0 || nTarefas > 0) && (
         <div className="px-3 py-2.5 border-b border-zinc-100 bg-white flex-shrink-0 space-y-2">
+          {todas.length > 0 && (
           <div className="flex items-center gap-2">
             {lojas.length > 1 ? (
               <label className="relative flex-1 min-w-0">
@@ -406,17 +395,21 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
               ))}
             </div>
           </div>
-          {itens.length > 1 && (
+          )}
+          {(itens.length > 1 || nTarefas > 0) && (
             <div className="flex items-center gap-2">
+              {itens.length > 1 && (
               <button onClick={trocarOrdem} title="Ordem de chegada"
                 className="h-7 px-2.5 flex items-center gap-1 rounded-lg text-xs font-semibold text-zinc-500 hover:bg-zinc-100 cursor-pointer whitespace-nowrap">
                 <i className={ordem === 'antigas' ? 'ri-sort-asc' : 'ri-sort-desc'} />
                 {ordem === 'antigas' ? 'Mais antigas primeiro' : 'Mais novas primeiro'}
               </button>
-              {maisAntiga && (
-                <button onClick={irParaMaisAntiga}
-                  className={`ml-auto h-7 px-2.5 flex items-center gap-1 rounded-lg border text-xs font-bold cursor-pointer whitespace-nowrap ${corIdade(maisAntiga.criadaEm)}`}>
-                  <i className="ri-history-line" /> Mais antiga · {idade(maisAntiga.criadaEm)}
+              )}
+              {/* No lugar do antigo "Mais antiga" (a ordem já resolve): atalho para as minhas tarefas. */}
+              {nTarefas > 0 && (
+                <button onClick={() => setVerTarefas(true)}
+                  className="ml-auto h-7 px-2.5 flex items-center gap-1 rounded-lg border border-amber-200 bg-amber-50 text-amber-800 text-xs font-bold cursor-pointer whitespace-nowrap hover:bg-amber-100">
+                  <i className="ri-task-line" /> {nTarefas} tarefa{nTarefas > 1 ? 's' : ''} vencida{nTarefas > 1 ? 's' : ''} ou hoje <i className="ri-arrow-right-s-line" />
                 </button>
               )}
             </div>
@@ -434,18 +427,7 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
       ) : !itens.length && !nTarefas ? (
         <p className="text-sm text-zinc-400 text-center py-16"><i className="ri-check-double-line text-2xl block mb-1 text-emerald-500" />Nada pendente.</p>
       ) : (
-        <div ref={listaRef} className="flex-1 overflow-y-auto px-3 py-3 space-y-2">
-          {nTarefas > 0 && (
-            <button onClick={() => setVerTarefas(true)}
-              className="w-full flex items-center gap-2.5 rounded-2xl border border-amber-200 bg-amber-50/60 px-3.5 py-3 text-left cursor-pointer hover:bg-amber-50">
-              <span className="w-9 h-9 flex-shrink-0 flex items-center justify-center rounded-xl bg-amber-100"><i className="ri-task-line text-amber-700 text-lg" /></span>
-              <span className="flex-1 min-w-0">
-                <span className="block text-sm font-bold text-zinc-900">{nTarefas} {nTarefas === 1 ? 'tarefa sua vencida ou para hoje' : 'tarefas suas vencidas ou para hoje'}</span>
-                <span className="block text-[11px] text-zinc-500">De qualquer loja · toque para ver</span>
-              </span>
-              <i className="ri-arrow-right-s-line text-zinc-400" />
-            </button>
-          )}
+        <div className="flex-1 overflow-y-auto px-3 py-3 space-y-2">
           {!itens.length && <p className="text-sm text-zinc-400 text-center py-10"><i className="ri-check-double-line text-xl block mb-1 text-emerald-500" />Nenhuma pendência {filtro ? 'nesta loja' : ''}.</p>}
           {agrupar === 'chegada'
             ? itens.map((p, i) => (
@@ -461,7 +443,7 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
               </div>
             ))
             : grupos.map((g) => {
-              const aberto = !fechados.has(g.label);
+              const aberto = abertos.has(g.label);
               const velha = g.itens.reduce((m, p) => (p.criadaEm < m ? p.criadaEm : m), g.itens[0].criadaEm);
               return (
                 <section key={g.label} className="space-y-2">

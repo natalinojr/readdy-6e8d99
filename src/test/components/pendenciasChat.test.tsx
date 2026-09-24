@@ -1,5 +1,5 @@
 // Caixa de pendências do chat (PendenciasChat) — ordem de chegada, data/hora de cada uma, botão
-// "Mais antiga", agrupar por tipo, filtro de loja e "Recebimento parado" (dono, 2026-09-24).
+// de ordem, agrupar por tipo (grupos começam fechados), atalho de tarefas, filtro de loja e "Recebimento parado" (dono, 2026-09-24).
 // Banco falso em memória; nada vai para produção.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
@@ -9,6 +9,7 @@ const h = vi.hoisted(() => ({
   notas: [] as Array<{ id: string; status: string }>,
   rpc: vi.fn(),
   invoke: vi.fn(),
+  tarefas: [] as Array<{ id: string; tenant_id: string }>,
 }));
 
 vi.mock('@/lib/supabase', () => {
@@ -26,7 +27,7 @@ vi.mock('@/lib/supabase', () => {
 });
 vi.mock('@/components/feature/assistente/TarefasPendencia', () => ({
   default: () => null,
-  minhasTarefasPendentes: () => Promise.resolve([]),
+  minhasTarefasPendentes: () => Promise.resolve(h.tarefas),
 }));
 
 import PendenciasChat from '@/components/feature/assistente/PendenciasChat';
@@ -53,6 +54,7 @@ beforeEach(() => {
   h.invoke.mockReset().mockResolvedValue({ data: { success: true }, error: null });
   onAbrir.mockReset();
   h.notas = [];
+  h.tarefas = [];
   h.rows = [
     linha('b', 'Conta nova urgente', 1, { urgencia: 'alta' }),
     linha('a', 'Conta antiga', 100),
@@ -78,27 +80,36 @@ describe('PendenciasChat — ordem de chegada', () => {
     expect(screen.getAllByText('há 4 dias').length).toBeGreaterThan(0);
   });
 
-  it('inverte a ordem e o botão "Mais antiga" rola até ela', async () => {
+  it('inverte a ordem; não há mais o botão "Mais antiga" (a ordem já resolve)', async () => {
     render(<PendenciasChat {...props} />);
     await screen.findByText('Conta antiga');
     fireEvent.click(screen.getByText('Mais antigas primeiro'));
     expect(titulos()).toEqual(['Conta nova urgente', 'Conta de ontem', 'Conta antiga']);
-    fireEvent.click(screen.getByText(/Mais antiga ·/));
-    await waitFor(() => expect(Element.prototype.scrollIntoView).toHaveBeenCalled());
-    expect(document.querySelector('[data-pend="a"]')?.className).toContain('ring-4');
+    expect(screen.queryByText(/Mais antiga ·/)).toBeNull();
+  });
+
+  it('atalho das minhas tarefas no lugar do "Mais antiga"', async () => {
+    h.tarefas = [{ id: 'x', tenant_id: 't1' }, { id: 'y', tenant_id: 't1' }];
+    render(<PendenciasChat {...props} />);
+    fireEvent.click(await screen.findByText(/2 tarefas vencidas ou hoje/));
+    expect(screen.getByText('Minhas tarefas')).toBeTruthy();
+    fireEvent.click(screen.getByLabelText('Voltar às pendências'));
+    expect(screen.getByText('Pendências')).toBeTruthy();
   });
 });
 
 describe('PendenciasChat — agrupar e filtrar', () => {
-  it('agrupa por tipo, com contagem, e recolhe o grupo', async () => {
+  it('agrupa por tipo com os grupos FECHADOS, contagem, e abre ao tocar', async () => {
     render(<PendenciasChat {...props} />);
     await screen.findByText('Conta antiga');
     fireEvent.click(screen.getByRole('button', { name: /Tipo/ }));
+    expect(titulos()).toEqual([]);
     const grupo = screen.getByRole('button', { name: /Conta atrasada/ });
     expect(grupo.textContent).toContain('2');
-    expect(titulos()).toEqual(['Conta antiga', 'Conta nova urgente', 'Conta de ontem']);
     fireEvent.click(grupo);
-    expect(titulos()).toEqual(['Conta de ontem']);
+    expect(titulos()).toEqual(['Conta antiga', 'Conta nova urgente']);
+    fireEvent.click(grupo);
+    expect(titulos()).toEqual([]);
   });
 
   it('filtra pela loja no seletor', async () => {
