@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
-import { Bell, AtSign, UserPlus, MessageSquare, AlertCircle, Sun, CheckCheck, BellRing, BellOff, Send, Loader2 } from 'lucide-react';
+import { Bell, AtSign, UserPlus, MessageSquare, AlertCircle, Sun, CheckCheck, BellRing, BellOff, Send, Loader2, Flame } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
 import { ativarPush, desativarPush, enviarPushTeste, estadoPush, type EstadoPush } from '@/lib/push';
 import type { TaskNotificacao, TaskRow } from '../hooks/useTarefas';
@@ -18,6 +18,7 @@ const ICONE: Record<TaskNotificacao['type'], typeof AtSign> = {
   mentioned: AtSign,
   commented: MessageSquare,
   due: AlertCircle,
+  overload: Flame,
 };
 
 /** "Vence em 1h", "Vence agora"… a partir do payload gravado pela edge task-lembretes. */
@@ -29,11 +30,20 @@ function textoVencimento(p: Record<string, unknown>): string {
   return `Vence em ${m} min`;
 }
 
+/** "Ana está com 130% de carga nos próximos 7 dias" — payload da edge task-sobrecarga. */
+function textoSobrecarga(p: Record<string, unknown>): string {
+  const pct = typeof p.pct === 'number' ? ` (${p.pct}%)` : '';
+  return p.propria
+    ? `Seus próximos 7 dias estão acima do que cabe${pct}`
+    : `${String(p.nome ?? 'Alguém')} está com carga acima do que cabe nos próximos 7 dias${pct}`;
+}
+
 const ROTULO: Record<TaskNotificacao['type'], string> = {
   assigned: 'atribuiu esta tarefa a você',
   mentioned: 'mencionou você',
   commented: 'comentou na sua tarefa',
   due: '',
+  overload: '',
 };
 
 /**
@@ -243,6 +253,8 @@ export default function NotificacoesInbox({
                       <p className="text-xs text-slate-700 leading-snug">
                         {n.type === 'due'
                           ? <strong>⏰ {textoVencimento(n.payload)}</strong>
+                          : n.type === 'overload'
+                          ? <strong>🔥 {textoSobrecarga(n.payload)}</strong>
                           : <><strong>{n.actor_name ?? 'Alguém'}</strong> {ROTULO[n.type]}</>}
                       </p>
                       <p className="text-xs text-slate-500 truncate">{n.task_title ?? 'Tarefa'}</p>

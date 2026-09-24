@@ -170,7 +170,7 @@ export interface TaskDetail {
 
 export interface TaskNotificacao {
   id: string;
-  type: 'assigned' | 'mentioned' | 'commented' | 'due';
+  type: 'assigned' | 'mentioned' | 'commented' | 'due' | 'overload';
   task_id: string;
   task_title: string | null;
   actor_id: string | null;

@@ -111,3 +111,18 @@ describe('ViewCarga: totais da equipe e agrupar por pasta', () => {
     await vi.waitFor(() => expect(write).toHaveBeenCalledWith('set_absence', expect.objectContaining({ user_id: 'u1', horas: 0 })));
   });
 });
+
+describe('ocupacaoRestante (régua do aviso de sobrecarga)', () => {
+  it('soma o que falta e as horas disponíveis, com folga contando zero', async () => {
+    const { ocupacaoRestante } = await import('@/pages/tarefas/lib/carga');
+    const hoje = new Date(2026, 8, 21); // segunda
+    const ate = new Date(2026, 8, 27);
+    const t = tarefa('a', { assignee_id: 'u1', time_estimate_minutes: 2700, start_date: '2026-09-21', due_date: '2026-09-25T12:00:00Z' });
+    const folga = (p: string, d: string) => (d === '2026-09-23' ? 0 : undefined);
+    const r = calcularCarga([t], hoje, () => CAPACIDADE_PADRAO, folga);
+    const o = ocupacaoRestante(r, 'u1', hoje, ate, CAPACIDADE_PADRAO, folga);
+    expect(o.faltam).toBe(2700);
+    expect(o.disponivel).toBe(4 * 8 * 60); // 5 dias úteis − 1 folga
+    expect(o.faltam > o.disponivel * 1.1).toBe(true);
+  });
+});
