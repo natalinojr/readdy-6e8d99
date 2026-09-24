@@ -14,7 +14,7 @@
 //   exige ação                → Não vou fazer (com motivo) — nunca some por tempo.
 // Resolver no celular sem abrir tabela grande foi o pedido do dono (2026-09-18); a tela continua
 // a um toque para quem está no computador.
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { kindConfig } from '@/contexts/PendenciasContext';
 import ItensClassificarCard from '@/components/feature/assistente/ItensClassificarCard';
@@ -27,15 +27,14 @@ export interface PendenciaChat {
   rota: string | null; urgencia: 'alta' | 'normal' | 'baixa'; acaoRequerida: boolean; status: string; criadaEm: string;
 }
 
-const PESO = { alta: 0, normal: 1, baixa: 2 } as const;
-
 export async function carregarPendenciasChat(): Promise<PendenciaChat[]> {
   const { data, error } = await supabase
     .from('pendencias')
     .select('id, tenant_id, kind, titulo, detalhe, rota, urgencia, acao_requerida, status, criada_em, tenants(name)')
     .in('status', ['aberta', 'vista'])
-    .order('criada_em', { ascending: false })
-    .limit(100);
+    // Ordem de chegada (dono, 2026-09-24): a mais antiga não pode cair fora do limite.
+    .order('criada_em', { ascending: true })
+    .limit(300);
   if (error) throw new Error(error.message);
   return (data ?? []).map((r) => {
     const t = (r as { tenants?: { name?: string } | { name?: string }[] | null }).tenants;
@@ -49,14 +48,35 @@ export async function carregarPendenciasChat(): Promise<PendenciaChat[]> {
     // O que exige ação continua listado mesmo visto: só sai resolvendo ou com "Não vou fazer".
     .filter((p) => p.acaoRequerida || p.status !== 'vista')
     // Tarefas têm aba própria, por pessoa (a linha por loja do cron seria a mesma coisa duas vezes).
-    .filter((p) => p.kind !== 'tarefa_vencida')
-    .sort((a, b) => (PESO[a.urgencia] - PESO[b.urgencia]) || (b.criadaEm < a.criadaEm ? -1 : 1));
+    .filter((p) => p.kind !== 'tarefa_vencida');
 }
 
-const quando = (iso: string) => {
+// Data e hora de chegada de cada pendência (dono, 2026-09-24): "24/09 · 14:32" + "há 3 h".
+const dataHora = (iso: string) => {
   const d = new Date(iso);
-  const hoje = new Date().toDateString() === d.toDateString();
-  return d.toLocaleString('pt-BR', hoje ? { hour: '2-digit', minute: '2-digit' } : { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+  return `${d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })} · ${d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`;
+};
+const idadeMin = (iso: string) => Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 60000));
+const idade = (iso: string) => {
+  const m = idadeMin(iso);
+  if (m < 1) return 'agora';
+  if (m < 60) return `há ${m} min`;
+  if (m < 1440) return `há ${Math.floor(m / 60)} h`;
+  const d = Math.floor(m / 1440);
+  return `há ${d} dia${d > 1 ? 's' : ''}`;
+};
+// Esperando há mais de 1 dia fica âmbar; mais de 3, vermelho — o que envelhece salta aos olhos.
+const corIdade = (iso: string) => {
+  const m = idadeMin(iso);
+  return m >= 3 * 1440 ? 'bg-red-50 text-red-700 border-red-200' : m >= 1440 ? 'bg-amber-50 text-amber-800 border-amber-200' : 'bg-zinc-50 text-zinc-500 border-zinc-200';
+};
+const chaveDia = (iso: string) => new Date(iso).toDateString();
+const rotuloDia = (iso: string) => {
+  const d = new Date(iso);
+  if (d.toDateString() === new Date().toDateString()) return 'Hoje';
+  if (d.toDateString() === new Date(Date.now() - 86400000).toDateString()) return 'Ontem';
+  const s = d.toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: '2-digit' });
+  return s.charAt(0).toUpperCase() + s.slice(1);
 };
 
 interface Props {
@@ -86,6 +106,11 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
   const [erros, setErros] = useState<Record<string, string>>({});
   const [motivoDe, setMotivoDe] = useState<string | null>(null);
   const [motivo, setMotivo] = useState('');
+  // Ordem de chegada: mais antiga primeiro (fila) ou mais nova primeiro. Lembrada neste aparelho.
+  const [ordem, setOrdem] = useState<'antigas' | 'novas'>(() => { try { return localStorage.getItem(ORDEM_KEY) === 'novas' ? 'novas' : 'antigas'; } catch { return 'antigas'; } });
+  const trocarOrdem = () => { const o = ordem === 'antigas' ? 'novas' : 'antigas'; setOrdem(o); try { localStorage.setItem(ORDEM_KEY, o); } catch { /* sem storage */ } };
+  const [destaque, setDestaque] = useState<string | null>(null);
+  const listaRef = useRef<HTMLDivElement>(null);
 
   const [nTarefas, setNTarefas] = useState(0);
   // Pendência de pagamento: para quem vai e se a mercadoria já chegou (assistente-app, dono 2026-09-18)
@@ -146,7 +171,16 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
   // Loja escolhida que sumiu da lista (tudo resolvido lá): volta para Todas em vez de mostrar vazio.
   const verTarefas = loja === ABA_TAREFAS && nTarefas > 0;
   const filtro = lojas.some(([id]) => id === loja) ? loja : '';
-  const itens = verTarefas ? [] : filtro ? todas.filter((p) => p.tenantId === filtro) : todas;
+  const itens = (verTarefas ? [] : filtro ? todas.filter((p) => p.tenantId === filtro) : todas)
+    .slice().sort((a, b) => (ordem === 'antigas' ? a.criadaEm.localeCompare(b.criadaEm) : b.criadaEm.localeCompare(a.criadaEm)));
+  const maisAntiga = itens.reduce<PendenciaChat | null>((m, p) => (!m || p.criadaEm < m.criadaEm ? p : m), null);
+  // Botão "Mais antiga": rola até ela e pisca o cartão, em qualquer ordem ou filtro.
+  const irParaMaisAntiga = () => {
+    if (!maisAntiga) return;
+    listaRef.current?.querySelector(`[data-pend="${maisAntiga.id}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setDestaque(maisAntiga.id);
+    setTimeout(() => setDestaque((d) => (d === maisAntiga.id ? null : d)), 2500);
+  };
   const urgentes = itens.filter((p) => p.urgencia === 'alta').length;
   const abas: Array<[string, string, number]> = [
     ['', 'Todas', todas.length + nTarefas],
@@ -195,7 +229,23 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
       ) : !totalVisivel ? (
         <p className="text-sm text-zinc-400 text-center py-16"><i className="ri-check-double-line text-2xl block mb-1 text-emerald-500" />Nada pendente.</p>
       ) : (
-        <div className="flex-1 overflow-y-auto px-3 py-3 space-y-2">
+        <>
+        {itens.length > 1 && (
+          <div className="flex items-center gap-2 px-3 py-2 border-b border-zinc-100 bg-white flex-shrink-0">
+            <button onClick={trocarOrdem} title="Ordem de chegada"
+              className="h-8 px-3 flex items-center gap-1.5 rounded-full border border-zinc-200 text-xs font-bold text-zinc-600 hover:bg-zinc-50 cursor-pointer whitespace-nowrap">
+              <i className={ordem === 'antigas' ? 'ri-sort-asc' : 'ri-sort-desc'} />
+              {ordem === 'antigas' ? 'Mais antigas primeiro' : 'Mais novas primeiro'}
+            </button>
+            {maisAntiga && (
+              <button onClick={irParaMaisAntiga}
+                className={`ml-auto h-8 px-3 flex items-center gap-1.5 rounded-full border text-xs font-bold cursor-pointer whitespace-nowrap ${corIdade(maisAntiga.criadaEm)}`}>
+                <i className="ri-history-line" /> Mais antiga · {idade(maisAntiga.criadaEm)}
+              </button>
+            )}
+          </div>
+        )}
+        <div ref={listaRef} className="flex-1 overflow-y-auto px-3 py-3 space-y-2">
           {nTarefas > 0 && !filtro && (
             <button onClick={() => escolherLoja(ABA_TAREFAS)}
               className="w-full flex items-center gap-2.5 rounded-2xl border border-amber-200 bg-white px-3.5 py-3 text-left cursor-pointer hover:bg-amber-50/40">
@@ -207,26 +257,43 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
               <i className="ri-arrow-right-s-line text-zinc-400" />
             </button>
           )}
-          {itens.map((p) => {
+          {itens.map((p, i) => {
             const cfg = kindConfig(p.kind);
             const ehPagamento = p.kind === 'pagamento_grupo' || p.kind === 'pagamento_pendente';
             const busy = ocupada === p.id;
+            // Separador por dia de chegada (Hoje / Ontem / Segunda-feira, 22/09).
+            const novoDia = i === 0 || chaveDia(itens[i - 1].criadaEm) !== chaveDia(p.criadaEm);
             return (
-              <div key={p.id} className={`rounded-2xl border bg-white px-3.5 py-3 text-sm ${p.urgencia === 'alta' ? 'border-red-200' : 'border-indigo-100'}`}>
+              <div key={p.id}>
+              {novoDia && (
+                <div className={`flex items-center gap-2 pb-1 ${i === 0 ? '' : 'pt-2'}`}>
+                  <span className="text-[11px] font-black uppercase tracking-wide text-zinc-400">{rotuloDia(p.criadaEm)}</span>
+                  <span className="flex-1 h-px bg-zinc-200" />
+                </div>
+              )}
+              <div data-pend={p.id}
+                className={`rounded-2xl border bg-white px-3.5 py-3 text-sm transition-shadow ${p.urgencia === 'alta' ? 'border-red-200 border-l-4 border-l-red-500' : 'border-zinc-200'} ${destaque === p.id ? 'ring-4 ring-violet-300' : ''}`}>
                 <div className="flex items-start gap-2.5">
-                  <span className={`w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-xl ${cfg.corBg}`}>
-                    <i className={`${cfg.icone} ${cfg.corTexto}`} />
+                  <span className={`w-9 h-9 flex-shrink-0 flex items-center justify-center rounded-xl ${cfg.corBg}`}>
+                    <i className={`${cfg.icone} ${cfg.corTexto} text-lg`} />
                   </span>
                   <div className="flex-1 min-w-0">
-                    <p className="font-bold text-zinc-900 leading-snug">{p.titulo}</p>
-                    <p className="text-[11px] text-zinc-500 mt-0.5">
-                      {p.loja && <span className="font-semibold text-zinc-600">{p.loja}</span>}
-                      {p.loja ? ' · ' : ''}{cfg.label} · {quando(p.criadaEm)}
-                      {p.status === 'vista' ? ' · vista' : ''}
+                    <p className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] leading-tight">
+                      <span className={`font-bold ${cfg.corTexto}`}>{cfg.label}</span>
+                      {p.loja && <span className="text-zinc-500">· {p.loja}</span>}
+                      {p.urgencia === 'alta' && <span className="px-1.5 rounded bg-red-100 text-red-700 font-bold">Urgente</span>}
+                      {p.status === 'vista' && <span className="text-zinc-400"><i className="ri-eye-line" /> vista</span>}
                     </p>
+                    <p className="font-bold text-zinc-900 leading-snug mt-0.5">{p.titulo}</p>
+                  </div>
+                  <div className="flex-shrink-0 text-right" title={`Chegou em ${new Date(p.criadaEm).toLocaleString('pt-BR')}`}>
+                    <p className="text-[11px] font-bold text-zinc-700 whitespace-nowrap tabular-nums">{dataHora(p.criadaEm)}</p>
+                    <span className={`inline-block mt-0.5 px-1.5 rounded-full border text-[10px] font-semibold whitespace-nowrap ${corIdade(p.criadaEm)}`}>{idade(p.criadaEm)}</span>
+                  </div>
+                </div>
+                <div className="pl-[46px]">
                     {ehPagamento && infoPag[p.id] && <LinhaPagamento info={infoPag[p.id]} />}
                     {p.detalhe && <p className="text-xs text-zinc-500 mt-1 line-clamp-3 whitespace-pre-wrap">{p.detalhe}</p>}
-                  </div>
                 </div>
 
                 {erros[p.id] && (
@@ -293,9 +360,11 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
                   <TarefasPendencia tenantId={p.tenantId} meuId={meuId} onAbrir={onAbrirTarefa} />
                 )}
               </div>
+              </div>
             );
           })}
         </div>
+        </>
       )}
     </div>
   );
@@ -333,6 +402,7 @@ function LinhaPagamento({ info }: { info: InfoPagamento }) {
 }
 
 const FILTRO_KEY = 'erpos.pendencias.loja';
+const ORDEM_KEY = 'erpos.pendencias.ordem';
 const ABA_TAREFAS = '__tarefas';
 const BOTAO = 'h-10 px-2 flex items-center justify-center gap-1.5 rounded-xl text-sm font-bold whitespace-nowrap disabled:opacity-50 cursor-pointer';
 const PRINCIPAL = `${BOTAO} bg-violet-600 hover:bg-violet-500 text-white`;
