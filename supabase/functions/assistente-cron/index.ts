@@ -609,17 +609,39 @@ async function sessaoText(admin: SupabaseClient, sessionId: string): Promise<Avi
     // deno-lint-ignore no-explicit-any
     for (const p of pagos as any[]) l.push(`· ${p.payment_method}: ${brl(p.total)}`);
   }
-  const somaItens = new Map<string, number>();
+  // Quantidade E valor por item (o painel mostrava R$ 0,00: só ia a quantidade — dono, 2026-09-24).
+  const somaItens = new Map<string, { q: number; v: number }>();
   // deno-lint-ignore no-explicit-any
   for (const i of (Array.isArray(r.top_items) ? r.top_items : []) as any[]) {
     const nome = String(i.item_name ?? '').replace(/\s*\(Un\.\s*\d+\)\s*$/i, '').trim();
-    somaItens.set(nome, (somaItens.get(nome) ?? 0) + Number(i.total_qty ?? 0));
+    const acc = somaItens.get(nome) ?? { q: 0, v: 0 };
+    acc.q += Number(i.total_qty ?? 0);
+    acc.v += Number(i.total_revenue ?? 0);
+    somaItens.set(nome, acc);
   }
-  const top = [...somaItens.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);
+  const top = [...somaItens.entries()].sort((a, b) => b[1].q - a[1].q).slice(0, 5);
   if (top.length) {
     l.push('');
     l.push('*Mais vendidos*');
-    top.forEach(([nome, qtd], i) => l.push(`${i + 1}. ${nome} — ${qtd}`));
+    top.forEach(([nome, it], i) => l.push(`${i + 1}. ${nome} — ${it.q} · ${brl(it.v)}`));
+  }
+  // Por categoria do cardápio (dono, 2026-09-24): mesma conta da Visão Geral e da ação "Vendas do dia" —
+  // itens não cancelados dos pedidos pagos do turno, preço × quantidade. Só itens: taxa de serviço/
+  // entrega e descontos ficam fora, então a soma não fecha com o faturamento.
+  const categorias = await db()<Array<{ nome: string; valor: number; qtd: number }>>`
+    select coalesce(mc.name, 'Sem categoria') as nome,
+           coalesce(sum(oi.item_price * oi.quantity), 0)::float as valor,
+           coalesce(sum(oi.quantity), 0)::int as qtd
+    from orders o
+    join order_items oi on oi.order_id = o.id and oi.status <> 'cancelled'
+    left join menu_items mi on mi.id = oi.item_id
+    left join menu_categories mc on mc.id = mi.category_id
+    where o.session_id = ${sessionId} and o.is_paid and o.status <> 'cancelled' and not o.is_training and not o.is_draft
+    group by 1 order by 2 desc`;
+  if (categorias.length) {
+    l.push('');
+    l.push('*Por categoria* (itens)');
+    for (const c of categorias) l.push(`· ${c.nome}: ${brl(c.valor)} (${c.qtd})`);
   }
   const difs = (caixas ?? []) as Array<{ closing_difference: number | null }>;
   const somaDif = difs.reduce((a, c) => a + Number(c.closing_difference ?? 0), 0);
@@ -640,8 +662,9 @@ async function sessaoText(admin: SupabaseClient, sessionId: string): Promise<Avi
       ...(pagos.length ? [{ t: 'Por forma de pagamento', i: (pagos as any[]).map((p) => ({ l: String(p.payment_method), v: Number(p.total) })) }] : []),
       // deno-lint-ignore no-explicit-any
       ...(canais.length ? [{ t: 'Por canal', c: 'bg-sky-500', i: (canais as any[]).map((c) => ({ l: CANAL_NOME[String(c.destination)] ?? String(c.destination), v: Number(c.revenue), d: `${Number(c.orders)} pedido${Number(c.orders) === 1 ? '' : 's'}` })) }] : []),
+      ...(categorias.length ? [{ t: 'Por categoria (itens)', c: 'bg-amber-500', i: categorias.map((c) => ({ l: c.nome, v: c.valor, d: `${c.qtd} ${c.qtd === 1 ? 'item' : 'itens'}` })) }] : []),
     ],
-    ...(top.length ? { rk: { t: 'Mais vendidos', i: top.map(([nome, qtd]) => ({ n: nome, q: qtd })) } } : {}),
+    ...(top.length ? { rk: { t: 'Mais vendidos', i: top.map(([nome, it]) => ({ n: nome, q: it.q, v: it.v })) } } : {}),
     ...(difs.length ? { lin: [{ t: 'Caixas', i: [{ l: `${difs.length} caixa${difs.length === 1 ? '' : 's'} do turno`, v: diffTexto(somaDif).replace(' ✅', '').replace(' ⚠️', ''), st: (Math.abs(somaDif) < 0.01 ? 'ok' : 'perigo') as 'ok' | 'perigo' }] }] } : {}),
     ...(alertas.length ? { al: alertas } : {}),
   };
