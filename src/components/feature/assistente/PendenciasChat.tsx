@@ -20,6 +20,7 @@ import { kindConfig } from '@/contexts/PendenciasContext';
 import ItensClassificarCard from '@/components/feature/assistente/ItensClassificarCard';
 import TarefasPendencia, { minhasTarefasPendentes } from '@/components/feature/assistente/TarefasPendencia';
 import { chamarPedidos } from '@/pages/receber/pedidos/api';
+import { LigarSangria, ProcurarNota, ResumoCompra } from '@/components/feature/assistente/PendenciaDireta';
 
 type Call = <T>(action: string, extra?: Record<string, unknown>) => Promise<T>;
 
@@ -56,6 +57,15 @@ export async function carregarPendenciasChat(): Promise<PendenciaChat[]> {
 }
 
 const notaDa = (p: PendenciaChat) => (typeof p.payload?.document_id === 'string' ? p.payload.document_id : null);
+const compraDa = (p: PendenciaChat) => (typeof p.payload?.purchase_id === 'string' ? p.payload.purchase_id : null);
+// Tipos que se resolvem no próprio cartão (2026-09-24): não levam "Não vou fazer" genérico — cada um
+// tem a sua saída ("Não era compra", "Veio sem nota", "Está certa"…).
+const DIRETO = ['compra_pelo_celular', 'sangria_sem_cupom', 'sangria_nao_saiu', 'sangria_valor_diferente', 'recebimento_sem_nota'];
+// Fechar com um motivo digitado: o texto do campo e como a pendência fecha.
+const MOTIVO: Record<string, { placeholder: string; acao: 'resolvida' | 'descartada' }> = {
+  sangria_sem_cupom: { placeholder: 'O que foi esse dinheiro?', acao: 'resolvida' },
+  recebimento_sem_nota: { placeholder: 'Por que veio sem nota?', acao: 'resolvida' },
+};
 // Pedido de pagamento do /receber (reembolso, freelancer, fornecedor sem nota).
 const pedidoDa = (p: PendenciaChat) => (typeof p.payload?.pedido_id === 'string' ? p.payload.pedido_id : null);
 
@@ -161,7 +171,7 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
     return () => clearInterval(t);
   }, [recarregar, versao]);
 
-  const marcar = async (p: PendenciaChat, acao: 'vista' | 'descartada', m?: string) => {
+  const marcar = async (p: PendenciaChat, acao: 'vista' | 'descartada' | 'resolvida', m?: string) => {
     setOcupada(p.id);
     const { error } = await supabase.rpc('fn_pendencia_marcar', { p_id: p.id, p_acao: acao, p_motivo: m ?? null });
     if (error) setErros((e) => ({ ...e, [p.id]: error.message }));
@@ -217,6 +227,21 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
       setErros((x) => ({ ...x, [p.id]: e instanceof Error ? e.message : String(e) }));
       await recarregar();
     } finally { setOcupada(null); }
+  };
+
+  // Ação direta no servidor (assistente-app › pendencia_acao) e fecha o cartão.
+  const acaoDireta = async (p: PendenciaChat, acao: string) => {
+    setOcupada(p.id);
+    setErros((e) => { const n = { ...e }; delete n[p.id]; return n; });
+    try { await call('pendencia_acao', { id: p.id, acao }); await recarregar(); onMudou?.(); }
+    catch (e) { setErros((x) => ({ ...x, [p.id]: e instanceof Error ? e.message : String(e) })); }
+    finally { setOcupada(null); setConfirmar(null); }
+  };
+  // Mudança de dinheiro pede um segundo toque ("Confirmar?") no próprio botão.
+  const [confirmar, setConfirmar] = useState<string | null>(null);
+  const depoisDeResolver = async (msg: string | null, p: PendenciaChat) => {
+    setExpandida(null); await recarregar(); onMudou?.();
+    if (msg) setErros((x) => ({ ...x, [p.id]: msg }));
   };
 
   // Recusar pedido: o motivo é obrigatório e a pessoa que pediu vê.
@@ -277,6 +302,13 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
     const ehRecebimento = p.kind === 'recebimento_parado' && !!notaDa(p);
     const ehPedido = p.kind === 'pedido_pagamento' && !!pedidoDa(p);
     const ehPedidoPagar = p.kind === 'pedido_pagamento_pagar' && !!pedidoDa(p);
+    const direto = DIRETO.includes(p.kind);
+    const compraId = compraDa(p);
+    const verCompra = compraId ? () => onAbrir({ ...p, rota: `/financeiro?tab=compras&foco=${encodeURIComponent(compraId)}` }) : null;
+    const pedeConfirmar = (chave: string, fn: () => void) => () => { if (confirmar === `${p.id}:${chave}`) fn(); else setConfirmar(`${p.id}:${chave}`); };
+    const confirmando = (chave: string) => confirmar === `${p.id}:${chave}`;
+    const saiu = Number(p.payload?.valor_saiu ?? 0);
+    const nota = Number(p.payload?.valor_nota ?? 0);
     // A frase do servidor é para quem pede; aqui o botão já diz o que acontece.
     const detalhe = ehPedido ? p.detalhe?.replace(/\s*Só vira conta a pagar depois de aprovado\.?/i, '') : p.detalhe;
     const busy = ocupada === p.id;
@@ -303,7 +335,15 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
         </div>
         <div className="pl-[42px]">
           {ehPagamento && infoPag[p.id] && <LinhaPagamento info={infoPag[p.id]} />}
-          {detalhe && <p className="text-xs text-zinc-500 mt-1 line-clamp-3 whitespace-pre-wrap">{detalhe}</p>}
+          {p.kind === 'sangria_valor_diferente' ? (
+            // Saiu × nota lado a lado: o texto longo do servidor dizia o mesmo em três linhas.
+            <div className="mt-1.5 grid grid-cols-3 gap-1 rounded-lg bg-amber-50 border border-amber-100 px-2.5 py-1.5 text-center">
+              <span><span className="block text-[10px] text-amber-800">Saiu do caixa</span><b className="text-xs text-zinc-900">{brl(saiu)}</b></span>
+              <span><span className="block text-[10px] text-amber-800">Nota</span><b className="text-xs text-zinc-900">{brl(nota)}</b></span>
+              <span><span className="block text-[10px] text-amber-800">Diferença</span><b className="text-xs text-amber-800">{brl(Math.abs(saiu - nota))}</b></span>
+            </div>
+          ) : detalhe && <p className="text-xs text-zinc-500 mt-1 line-clamp-3 whitespace-pre-wrap">{detalhe}</p>}
+          {['compra_pelo_celular', 'sangria_nao_saiu'].includes(p.kind) && compraId && <ResumoCompra call={call} pendId={p.id} />}
         </div>
 
         {erros[p.id] && (
@@ -322,9 +362,9 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
             e.preventDefault();
             const m = motivo.trim();
             if (!m) return;
-            if (ehPedido) { if (m.length >= 3) recusarPedido(p, m); } else marcar(p, 'descartada', m);
+            if (ehPedido) { if (m.length >= 3) recusarPedido(p, m); } else marcar(p, MOTIVO[p.kind]?.acao ?? 'descartada', m);
           }}>
-            <input autoFocus value={motivo} onChange={(e) => setMotivo(e.target.value)} placeholder={ehPedido ? 'Motivo da recusa (a pessoa vai ver)' : 'Por que não vai fazer?'}
+            <input autoFocus value={motivo} onChange={(e) => setMotivo(e.target.value)} placeholder={ehPedido ? 'Motivo da recusa (a pessoa vai ver)' : MOTIVO[p.kind]?.placeholder ?? 'Por que não vai fazer?'}
               className="flex-1 min-w-0 h-9 px-3 rounded-xl border border-zinc-200 text-sm focus:outline-none focus:border-violet-400" />
             <button type="submit" disabled={busy || motivo.trim().length < (ehPedido ? 3 : 1)} className="px-3 h-9 rounded-xl bg-zinc-800 text-white text-xs font-bold disabled:opacity-40 cursor-pointer">OK</button>
             <button type="button" onClick={() => { setMotivoDe(null); setMotivo(''); }} className="px-2 h-9 rounded-xl text-zinc-400 cursor-pointer" aria-label="Cancelar"><i className="ri-close-line" /></button>
@@ -370,9 +410,64 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
               </>
             )}
             {ehPedidoPagar && (
-              <button onClick={() => aprovarEPagar(p, true)} disabled={busy} className={PRINCIPAL}>
-                {busy ? 'Preparando…' : <><i className="ri-refresh-line" /> Preparar o Pix de novo</>}
-              </button>
+              <>
+                <button onClick={() => aprovarEPagar(p, true)} disabled={busy} className={PRINCIPAL}>
+                  {busy ? 'Preparando…' : <><i className="ri-refresh-line" /> Preparar o Pix de novo</>}
+                </button>
+                <button onClick={() => marcar(p, 'resolvida', 'pago pelo app do banco')} disabled={busy} className={SECUNDARIO}>
+                  <i className="ri-bank-line" /> Já paguei pelo banco
+                </button>
+              </>
+            )}
+            {/* Compra lançada pelo celular por quem não é do financeiro: confere e dá o ok. */}
+            {p.kind === 'compra_pelo_celular' && (
+              <>
+                <button onClick={() => marcar(p, 'resolvida', 'compra conferida')} disabled={busy} className={PRINCIPAL}><i className="ri-check-line" /> Está certa</button>
+                {verCompra && <button onClick={verCompra} disabled={busy} className={SECUNDARIO}><i className="ri-edit-line" /> Corrigir</button>}
+              </>
+            )}
+            {/* Fornecedor pago em dinheiro do caixa sem cupom. */}
+            {p.kind === 'sangria_sem_cupom' && (
+              <>
+                <button onClick={() => setExpandida((x) => (x === p.id ? null : p.id))} disabled={busy} className={expandida === p.id ? `${SECUNDARIO} bg-violet-100` : PRINCIPAL}>
+                  <i className="ri-links-line" /> {expandida === p.id ? 'Fechar' : 'Ligar a uma compra'}
+                </button>
+                <button onClick={() => onPedir(`Cupom da sangria de ${brl(Number(p.payload?.valor ?? 0))}${p.loja ? ` (${p.loja})` : ''}: `)} disabled={busy} className={SECUNDARIO}>
+                  <i className="ri-camera-line" /> Mandar o cupom
+                </button>
+                <button onClick={() => { setMotivoDe(p.id); setMotivo(''); }} disabled={busy} className={NEUTRO}>Não era compra</button>
+              </>
+            )}
+            {/* Compra lançada paga em dinheiro, mas o dinheiro não saiu do caixa: de onde saiu? */}
+            {p.kind === 'sangria_nao_saiu' && (
+              <>
+                <button onClick={pedeConfirmar('nao_paga', () => acaoDireta(p, 'nao_paga'))} disabled={busy} className={PRINCIPAL}>
+                  <i className="ri-file-list-3-line" /> {confirmando('nao_paga') ? 'Confirmar: vira conta a pagar' : 'Ainda não foi paga'}
+                </button>
+                <button onClick={pedeConfirmar('pago_banco', () => acaoDireta(p, 'pago_banco'))} disabled={busy} className={SECUNDARIO}>
+                  <i className="ri-bank-line" /> {confirmando('pago_banco') ? 'Confirmar: pago pelo banco' : 'Foi pago pelo banco'}
+                </button>
+                {verCompra && <button onClick={verCompra} disabled={busy} className={NEUTRO}>Ver compra</button>}
+              </>
+            )}
+            {/* Saiu do caixa um valor diferente da nota. A compra paga não se edita pela tela (exclui e
+                lança de novo): "Corrigir a compra" abre ela; "A nota está certa" fecha com a diferença anotada. */}
+            {p.kind === 'sangria_valor_diferente' && (
+              <>
+                <button onClick={() => marcar(p, 'resolvida', `nota confere; diferença de ${brl(Math.abs(saiu - nota))} fica no caixa`)} disabled={busy} className={PRINCIPAL}>
+                  <i className="ri-check-line" /> A nota está certa
+                </button>
+                {verCompra && <button onClick={verCompra} disabled={busy} className={SECUNDARIO}><i className="ri-edit-line" /> Corrigir a compra</button>}
+              </>
+            )}
+            {/* Mercadoria chegou e a nota não estava no sistema. */}
+            {p.kind === 'recebimento_sem_nota' && (
+              <>
+                <button onClick={() => setExpandida((x) => (x === p.id ? null : p.id))} disabled={busy} className={expandida === p.id ? `${SECUNDARIO} bg-violet-100` : PRINCIPAL}>
+                  <i className="ri-search-line" /> {expandida === p.id ? 'Fechar' : 'Procurar a nota'}
+                </button>
+                <button onClick={() => { setMotivoDe(p.id); setMotivo(''); }} disabled={busy} className={NEUTRO}>Veio sem nota</button>
+              </>
             )}
             {/* Recebimento parado (2026-09-24): "Abrir" levava à lista inteira de notas e não resolvia.
                 Agora abre a PRÓPRIA nota já na conferência, ou ignora se não for compra. */}
@@ -393,12 +488,12 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
                 <i className={RESOLVE_AQUI[p.kind].icone} /> {expandida === p.id ? 'Fechar' : RESOLVE_AQUI[p.kind].label}
               </button>
             )}
-            {!ehPagamento && !ehRecebimento && !ehPedido && p.rota && (
+            {!ehPagamento && !ehRecebimento && !ehPedido && !direto && p.rota && (
               <button onClick={() => onAbrir(p)} className={RESOLVE_AQUI[p.kind] || ehPedidoPagar ? SECUNDARIO : PRINCIPAL}>
                 <i className="ri-arrow-right-up-line" /> {RESOLVE_AQUI[p.kind] ? 'Abrir na tela' : 'Abrir'}
               </button>
             )}
-            {ehPedido ? null : !p.acaoRequerida ? (
+            {ehPedido || direto ? null : !p.acaoRequerida ? (
               <button onClick={() => marcar(p, 'vista')} disabled={busy} className={NEUTRO}><i className="ri-check-line" /> OK</button>
             ) : (
               <button onClick={() => { setMotivoDe(p.id); setMotivo(''); }} disabled={busy} className={NEUTRO}>Não vou fazer</button>
@@ -413,6 +508,13 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
           <ItensClassificarCard call={call} tenantId={p.tenantId} abertoInicial onFeito={() => onMudou?.()} onTudo={() => { setExpandida(null); recarregar(); onMudou?.(); }} />
         )}
         {expandida === p.id && p.kind === 'conta_atrasada' && <ContasAtrasadasInline tenantId={p.tenantId} />}
+        {expandida === p.id && p.kind === 'sangria_sem_cupom' && <LigarSangria call={call} pendId={p.id} onFeito={(msg) => depoisDeResolver(msg, p)} />}
+        {expandida === p.id && p.kind === 'recebimento_sem_nota' && (
+          <ProcurarNota call={call} pendId={p.id} onAchou={(doc) => {
+            setExpandida(null); recarregar(); onMudou?.();
+            onAbrir({ ...p, rota: `/financeiro?tab=notas-entrada&nota=${encodeURIComponent(doc)}` });
+          }} />
+        )}
         {expandida === p.id && p.kind === 'tarefa_vencida' && (
           <TarefasPendencia tenantId={p.tenantId} meuId={meuId} onAbrir={onAbrirTarefa} />
         )}

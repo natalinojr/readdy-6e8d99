@@ -532,6 +532,154 @@ Deno.serve(async (req) => {
     // "Não vou pagar" na caixa de pendências (dono, 2026-09-20): fechar a pendência não bastava —
     // os Pix já preparados continuavam no rodapé do chat esperando o toque em Pagar. Aqui os
     // pagamentos ligados à pendência são CANCELADOS no Inter e o pedido do grupo vira 'recusado'.
+    // Ação direta no cartão da pendência (dono, 2026-09-24): em vez de "Abrir" e procurar na tela,
+    // o cartão mostra o que precisa ser conferido e resolve ali. Tudo pelo servidor: o dono atende
+    // várias lojas e a leitura direta esbarra no auth_tenant_id() (última loja).
+    //   compra_pelo_celular   → resumo da compra (itens, pagamento) para conferir
+    //   sangria_sem_cupom     → compras pagas em dinheiro sem sangria ligada, para ligar
+    //   sangria_nao_saiu      → resumo da compra; vira conta a pagar ou "foi pelo banco"
+    //   sangria_valor_diferente → resumo da compra (saiu × nota)
+    //   recebimento_sem_nota  → notas de entrada novas do período, a do fornecedor primeiro
+    if (action === 'pendencia_detalhe' || action === 'pendencia_acao') {
+      const { data: pend } = await admin.from('pendencias').select('id, tenant_id, kind, ref, status, payload, criada_em').eq('id', String(body.id ?? '')).maybeSingle();
+      if (!pend) return fail('Pendência não encontrada.', 404);
+      if (!(await ehGestor(admin, user.id, String(pend.tenant_id)))) return fail('Sem acesso a essa loja.', 403);
+      const tenant = String(pend.tenant_id);
+      // deno-lint-ignore no-explicit-any
+      const pl = (pend.payload ?? {}) as any;
+      const resolver = async (motivo: string) => {
+        await admin.from('pendencias').update({ status: 'resolvida', resolvida_em: nowIso(), resolvida_por: user.id, motivo, updated_at: nowIso() })
+          .eq('id', pend.id).in('status', ['aberta', 'vista']);
+      };
+      const compra = async (id: string) => {
+        if (!id) return null;
+        const { data: c } = await admin.from('fin_purchases')
+          .select('id, supplier, total_amount, payment_status, payment_method, purchase_date, due_date, invoice_number, notes, created_by, created_at')
+          .eq('id', id).eq('tenant_id', tenant).maybeSingle();
+        if (!c) return null;
+        const [{ data: itens }, { data: quem }, { data: contas }] = await Promise.all([
+          admin.from('fin_purchase_items').select('description, quantity, unit_label, total_price').eq('purchase_id', id).eq('tenant_id', tenant).limit(40),
+          c.created_by ? admin.from('users').select('name').eq('id', c.created_by).maybeSingle() : Promise.resolve({ data: null }),
+          admin.from('fin_accounts_payable').select('id, amount, due_date, status').eq('reference_id', id).eq('tenant_id', tenant),
+        ]);
+        // deno-lint-ignore no-explicit-any
+        return { ...c, itens: itens ?? [], lancada_por: (quem as any)?.name ?? null, contas: contas ?? [] };
+      };
+
+      if (action === 'pendencia_detalhe') {
+        if (['compra_pelo_celular', 'sangria_nao_saiu', 'sangria_valor_diferente'].includes(pend.kind)) {
+          return json({ success: true, data: { compra: await compra(String(pl.purchase_id ?? '')) } });
+        }
+        if (pend.kind === 'sangria_sem_cupom') {
+          const { data: mov } = await admin.from('cash_movements').select('id, amount, reason, created_at, purchase_id').eq('id', String(pl.cash_movement_id ?? pend.ref)).eq('tenant_id', tenant).maybeSingle();
+          if (!mov) return fail('A sangria não existe mais.', 404);
+          // Compras pagas em dinheiro de 7 dias antes a 3 depois da sangria, ainda sem sangria ligada.
+          const dia = (d: Date) => d.toISOString().slice(0, 10);
+          const base = new Date(mov.created_at);
+          const { data: cands } = await admin.from('fin_purchases').select('id, supplier, total_amount, purchase_date, payment_method')
+            .eq('tenant_id', tenant).eq('payment_status', 'paid')
+            .gte('purchase_date', dia(new Date(base.getTime() - 7 * 86400000))).lte('purchase_date', dia(new Date(base.getTime() + 3 * 86400000)))
+            .order('purchase_date', { ascending: false }).limit(60);
+          const emDinheiro = (cands ?? []).filter((c) => /dinheiro|cash|esp[ée]cie/i.test(String(c.payment_method ?? '')));
+          const ids = emDinheiro.map((c) => c.id);
+          const { data: ligadas } = ids.length ? await admin.from('cash_movements').select('purchase_id').in('purchase_id', ids) : { data: [] };
+          const usadas = new Set((ligadas ?? []).map((l) => l.purchase_id));
+          const valor = Number(mov.amount);
+          const lista = emDinheiro.filter((c) => !usadas.has(c.id))
+            .sort((a, b) => Math.abs(Number(a.total_amount) - valor) - Math.abs(Number(b.total_amount) - valor)).slice(0, 8);
+          return json({ success: true, data: { sangria: mov, compras: lista } });
+        }
+        if (pend.kind === 'recebimento_sem_nota') {
+          const desde = new Date(new Date(pend.criada_em).getTime() - 15 * 86400000).toISOString();
+          const { data: notas } = await admin.from('fiscal_inbound_documents').select('id, emitente_nome, emitente_cnpj, valor_total, emitted_at, numero')
+            .eq('tenant_id', tenant).eq('status', 'new').gte('emitted_at', desde).order('emitted_at', { ascending: false }).limit(40);
+          const semAcento = (t: string) => t.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
+          const palavras = semAcento(String(pl.fornecedor ?? '')).split(/[^a-z0-9]+/).filter((w) => w.length >= 3);
+          const nota = (n: { emitente_nome: string | null }) => palavras.filter((w) => semAcento(n.emitente_nome ?? '').includes(w)).length;
+          const lista = (notas ?? []).map((n) => ({ ...n, parecida: nota(n) > 0 }))
+            .sort((a, b) => nota(b) - nota(a)).slice(0, 10);
+          return json({ success: true, data: { notas: lista } });
+        }
+        return json({ success: true, data: {} });
+      }
+
+      // pendencia_acao
+      if (!['aberta', 'vista'].includes(pend.status)) return fail('Essa pendência já foi fechada.');
+      const acao = String(body.acao ?? '');
+
+      // Sangria sem cupom → liga a uma compra já lançada paga em dinheiro. Mesmo efeito do
+      // fn_sangria_da_compra quando o valor bate: a compra já lançou 'auto_purchase', então a linha
+      // 'auto_sangria' sai (senão o mesmo dinheiro conta duas vezes).
+      if (pend.kind === 'sangria_sem_cupom' && acao === 'ligar') {
+        const movId = String(pl.cash_movement_id ?? pend.ref);
+        const compraId = String(body.purchase_id ?? '');
+        const { data: c } = await admin.from('fin_purchases').select('id, supplier, total_amount, payment_status, payment_method').eq('id', compraId).eq('tenant_id', tenant).maybeSingle();
+        if (!c) return fail('Compra não encontrada.', 404);
+        if (c.payment_status !== 'paid' || !/dinheiro|cash|esp[ée]cie/i.test(String(c.payment_method ?? ''))) return fail('Essa compra não está lançada como paga em dinheiro.');
+        const { data: ja } = await admin.from('cash_movements').select('id').eq('purchase_id', c.id).limit(1);
+        if (ja?.length) return fail('Essa compra já está ligada a outra sangria.');
+        const { data: mov } = await admin.from('cash_movements').update({ purchase_id: c.id, needs_receipt: false, category: 'fornecedor', updated_at: nowIso() })
+          .eq('id', movId).eq('tenant_id', tenant).is('purchase_id', null).select('id, amount').maybeSingle();
+        if (!mov) return fail('Essa sangria já foi ligada a uma compra.');
+        await admin.from('fin_cash_flow').delete().eq('origin', 'auto_sangria').eq('reference_id', movId).eq('tenant_id', tenant);
+        // A prevista que esperava o caixa confirmar essa compra deixa de esperar: o dinheiro já saiu.
+        await admin.from('cash_sangrias_previstas').update({ status: 'confirmada', cash_movement_id: movId, resolved_at: nowIso(), resolved_by: user.id, notes: 'Ligada pela caixa de pendências' })
+          .eq('purchase_id', c.id).eq('tenant_id', tenant).eq('status', 'pendente');
+        const dif = Math.round((Number(mov.amount) - Number(c.total_amount)) * 100) / 100;
+        await resolver(`ligada à compra ${c.supplier ?? ''} ${brl(Number(c.total_amount))}${dif ? ` (diferença de ${brl(Math.abs(dif))})` : ''}`.trim());
+        log('INFO', 'sangria ligada à compra', { pendencia: pend.id, cash_movement: movId, compra: c.id, dif });
+        return json({ success: true, data: { diferenca: dif } });
+      }
+
+      // Compra "paga em dinheiro" cujo dinheiro não saiu do caixa.
+      if (pend.kind === 'sangria_nao_saiu' && (acao === 'nao_paga' || acao === 'pago_banco')) {
+        const c = await compra(String(pl.purchase_id ?? ''));
+        if (!c) return fail('Compra não encontrada.', 404);
+        if (c.payment_status !== 'paid') return fail('Essa compra já não está como paga.');
+        const { data: mov } = await admin.from('cash_movements').select('id').eq('purchase_id', c.id).limit(1);
+        if (mov?.length) return fail('Essa compra tem sangria ligada no caixa — o dinheiro saiu. Confira pela tela de Compras.');
+        if (acao === 'pago_banco') {
+          // Continua paga (o gasto já está no fluxo); só a forma muda. O débito do banco é conferido na conciliação.
+          const { error: eu } = await admin.from('fin_purchases').update({ payment_method: 'Pix', notes: [c.notes, 'Paga pelo banco (não saiu do caixa) — ajustado pela caixa de pendências'].filter(Boolean).join(' · ') })
+            .eq('id', c.id).eq('tenant_id', tenant);
+          if (eu) return fail(`Não consegui ajustar a compra: ${eu.message}`, 500);
+          await resolver('paga pelo banco');
+          return json({ success: true, data: {} });
+        }
+        // Ainda não paga: desfaz o "pago" (sai o gasto do fluxo) e cria a conta a pagar, igual ao create_purchase.
+        if (c.contas.length) return fail('Essa compra já tem conta a pagar. Confira pela tela de Compras.');
+        const amanha = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+        // A compra muda primeiro (só se ainda estiver paga): dois toques seguidos não criam duas contas.
+        const { data: mudou, error: e0 } = await admin.from('fin_purchases').update({ payment_status: 'pending', payment_method: null })
+          .eq('id', c.id).eq('tenant_id', tenant).eq('payment_status', 'paid').select('id');
+        if (e0 || !mudou?.length) return fail(`Não consegui ajustar a compra${e0 ? `: ${e0.message}` : ' (ela mudou enquanto isso)'}.`, 500);
+        const { error: e1 } = await admin.from('fin_accounts_payable').insert({
+          tenant_id: tenant, supplier: c.supplier,
+          description: `Compra - ${c.supplier}${c.invoice_number ? ` NF ${c.invoice_number}` : ''}`,
+          category: 'Compras', amount: c.total_amount, due_date: c.due_date ?? amanha, status: 'pending', is_recurring: false,
+          notes: 'Não saiu do caixa — virou conta a pagar pela caixa de pendências', reference_id: c.id, reference_type: 'purchase',
+        });
+        if (e1) {
+          await admin.from('fin_purchases').update({ payment_status: 'paid', payment_method: c.payment_method }).eq('id', c.id).eq('tenant_id', tenant);
+          return fail(`Não consegui criar a conta a pagar: ${e1.message}`, 500);
+        }
+        await admin.from('fin_cash_flow').delete().eq('reference_id', c.id).eq('tenant_id', tenant).eq('origin', 'auto_purchase');
+        await resolver('virou conta a pagar');
+        log('INFO', 'compra em dinheiro virou conta a pagar', { pendencia: pend.id, compra: c.id });
+        return json({ success: true, data: {} });
+      }
+
+      // Nota encontrada para a mercadoria que chegou sem nota: a pendência fecha e a tela abre a nota.
+      if (pend.kind === 'recebimento_sem_nota' && acao === 'nota') {
+        const { data: n } = await admin.from('fiscal_inbound_documents').select('id, emitente_nome, numero').eq('id', String(body.document_id ?? '')).eq('tenant_id', tenant).maybeSingle();
+        if (!n) return fail('Nota não encontrada.', 404);
+        await resolver(`nota ${n.numero ?? ''} de ${n.emitente_nome ?? ''} encontrada`.replace(/\s+/g, ' ').trim());
+        return json({ success: true, data: { document_id: n.id } });
+      }
+
+      return fail('Ação não disponível para essa pendência.');
+    }
+
     if (action === 'pendencia_recusar') {
       const { data: pend } = await admin.from('pendencias').select('id, tenant_id, kind, ref, payload').eq('id', String(body.id ?? '')).maybeSingle();
       if (!pend) return fail('Pendência não encontrada.', 404);
