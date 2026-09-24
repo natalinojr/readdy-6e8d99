@@ -145,7 +145,13 @@ export default function ReceberPage() {
 
   const lerCupomQr = async (url: string) => {
     carregando('Lendo o cupom na SEFAZ…');
-    try { await abrirCupom(await lerCupom(tenantId, { action: 'qrcode', url })); } catch (e) { setErro((e as Error).message); setTela('inicio'); }
+    try { await abrirCupom(await lerCupom(tenantId, { action: 'qrcode', url })); } catch (e) {
+      // A consulta da SEFAZ-PR às vezes sai do ar (ex.: 24/09 respondia "mal formatado" até para QR válido):
+      // a foto da notinha é lida por IA e não depende dela
+      const msg = (e as Error).message;
+      setErro(/SEFAZ/i.test(msg) ? `${msg} — a consulta da SEFAZ está com problema. Toque em "Cupom / notinha" › "Tirar foto da notinha" para lançar pela foto.` : msg);
+      setTela('inicio');
+    }
   };
 
   const onFotoCodigo = async (file: File | undefined) => {
