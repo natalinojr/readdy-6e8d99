@@ -13,7 +13,7 @@ export interface DadosPainel {
   gl?: { t: string; rb?: string; i: Array<{ l: string; v: number; b?: number | null }> };  // gráfico de linha (ex.: por hora; b = comparação)
   b?: Array<{ t: string; c?: string; i: Array<{ l: string; v: number; d?: string }> }>;  // barras
   lin?: Array<{ t: string; i: Array<{ l: string; v?: string; d?: string; st?: 'ok' | 'alerta' | 'perigo' | 'neutro' }> }>; // linhas label → valor
-  rk?: { t: string; i: Array<{ n: string; q: number; v?: number }> };                    // ranking
+  rk?: { t: string; p?: 'v'; i: Array<{ n: string; q: number; v?: number }> };                    // ranking (p: 'v' = por faturamento)
   al?: string[];                                                                         // alertas
 }
 
@@ -50,7 +50,7 @@ export default function PainelMensagem({ dados }: { dados: DadosPainel }) {
       {(dados.lin ?? []).map((g) => (
         <Linhas key={g.t} titulo={g.t} itens={g.i.map((x) => ({ label: x.l, valor: x.v, detalhe: x.d, status: x.st }))} />
       ))}
-      {dados.rk && <Ranking titulo={dados.rk.t} itens={dados.rk.i.map((x) => ({ nome: x.n, qtd: x.q, valor: Number(x.v ?? 0) }))} />}
+      {dados.rk && <Ranking titulo={dados.rk.t} itens={dados.rk.i.map((x) => ({ nome: x.n, qtd: x.q, valor: Number(x.v ?? 0) }))} por={dados.rk.p === 'v' ? 'valor' : 'qtd'} />}
       {(dados.al ?? []).map((a) => (
         <p key={a} className="text-xs font-semibold text-amber-700 bg-amber-50 rounded-xl px-3 py-2">⚠️ {a}</p>
       ))}

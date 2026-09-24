@@ -619,11 +619,12 @@ async function sessaoText(admin: SupabaseClient, sessionId: string): Promise<Avi
     acc.v += Number(i.total_revenue ?? 0);
     somaItens.set(nome, acc);
   }
-  const top = [...somaItens.entries()].sort((a, b) => b[1].q - a[1].q).slice(0, 5);
+  // Ordem por faturamento do item, não por quantidade (dono, 2026-09-24).
+  const top = [...somaItens.entries()].sort((a, b) => b[1].v - a[1].v).slice(0, 5);
   if (top.length) {
     l.push('');
     l.push('*Mais vendidos*');
-    top.forEach(([nome, it], i) => l.push(`${i + 1}. ${nome} — ${it.q} · ${brl(it.v)}`));
+    top.forEach(([nome, it], i) => l.push(`${i + 1}. ${nome} — ${brl(it.v)} · ${it.q} un`));
   }
   // Por categoria do cardápio (dono, 2026-09-24): mesma conta da Visão Geral e da ação "Vendas do dia" —
   // itens não cancelados dos pedidos pagos do turno, preço × quantidade. Só itens: taxa de serviço/
@@ -687,7 +688,7 @@ async function sessaoText(admin: SupabaseClient, sessionId: string): Promise<Avi
       ...(canais.length ? [{ t: 'Por canal', c: 'bg-sky-500', i: (canais as any[]).map((c) => ({ l: CANAL_NOME[String(c.destination)] ?? String(c.destination), v: Number(c.revenue), d: `${Number(c.orders)} pedido${Number(c.orders) === 1 ? '' : 's'}` })) }] : []),
       ...(categorias.length ? [{ t: 'Por categoria (itens)', c: 'bg-amber-500', i: categorias.map((c) => ({ l: c.nome, v: c.valor, d: `${c.qtd} ${c.qtd === 1 ? 'item' : 'itens'}` })) }] : []),
     ],
-    ...(top.length ? { rk: { t: 'Mais vendidos', i: top.map(([nome, it]) => ({ n: nome, q: it.q, v: it.v })) } } : {}),
+    ...(top.length ? { rk: { t: 'Mais vendidos', p: 'v', i: top.map(([nome, it]) => ({ n: nome, q: it.q, v: it.v })) } } : {}),
     ...(difs.length ? { lin: [{ t: 'Caixas', i: [{ l: `${difs.length} caixa${difs.length === 1 ? '' : 's'} do turno`, v: diffTexto(somaDif).replace(' ✅', '').replace(' ⚠️', ''), st: (Math.abs(somaDif) < 0.01 ? 'ok' : 'perigo') as 'ok' | 'perigo' }] }] } : {}),
     ...(alertas.length ? { al: alertas } : {}),
   };
