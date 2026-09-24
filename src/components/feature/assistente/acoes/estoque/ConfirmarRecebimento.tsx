@@ -9,6 +9,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
 import { Roteiro, useRoteiro, Opcao, OpcaoNeutra, EscolhaData, Fim, brl, dataBR, hojeISO, type AcaoProps } from '../kit';
 import { gravarNaEdge, rotuloUnidade, qtdBR } from './comum';
+import { ehAcrescimoNota } from '@/lib/acrescimoNota';
 
 interface Item {
   id: string; description: string | null; quantity: number | null; total_price: number | null;
@@ -66,7 +67,8 @@ export default function ConfirmarRecebimento({ onFechar, irPara }: AcaoProps) {
     if (erro || !data) { r.bot(`Não consegui abrir a compra: ${erro ?? 'erro'}`); setPasso('fim'); return; }
     setCtx(data);
     const nomeIns = (id: string) => data.ingredients.find((i) => i.id === id);
-    const linhas = (c.items ?? []).map((it) => {
+    const produtos = (c.items ?? []).filter((it) => !ehAcrescimoNota(it.description));
+    const linhas = produtos.map((it) => {
       const s = data.suggestions[it.id];
       const ing = s?.ingredient_id ? nomeIns(s.ingredient_id) : null;
       const estoque = ing && data.stock_already_applied && it.ingredient_id
@@ -76,7 +78,7 @@ export default function ConfirmarRecebimento({ onFechar, irPara }: AcaoProps) {
         : '→ não entra no estoque';
       return `• ${qtdBR(Number(it.quantity ?? 0))} ${it.unit_label || 'un'} ${it.description || '—'} (${brl(it.total_price)})\n   ${estoque}`;
     });
-    const semInsumo = (c.items ?? []).filter((it) => !data.suggestions[it.id]?.ingredient_id).length;
+    const semInsumo = produtos.filter((it) => !data.suggestions[it.id]?.ingredient_id).length;
     r.bot([
       `*${c.supplier}*${c.invoice_number ? ` · NF ${c.invoice_number}` : ''}`,
       `Compra de ${dataBR(c.purchase_date)} · ${brl(c.total_amount)}`,

@@ -94,7 +94,7 @@ async function pendentes(ctx: Ctx) {
       .gte('emitted_at', diasAtras(DIAS_NOTAS))
       .order('emitted_at', { ascending: false }).limit(150),
     admin.from('fin_purchases')
-      .select('id, supplier, invoice_number, purchase_date, total_amount, payment_method, payment_status, is_bonus, created_at, items:fin_purchase_items(id)')
+      .select('id, supplier, invoice_number, purchase_date, total_amount, payment_method, payment_status, is_bonus, created_at, items:fin_purchase_items(id, description)')
       .eq('tenant_id', tenantId).is('delivery_confirmed_at', null)
       .gte('purchase_date', diasAtras(DIAS_COMPRAS))
       .order('purchase_date', { ascending: false }).limit(150),
@@ -127,7 +127,7 @@ async function pendentes(ctx: Ctx) {
     lista.push({
       tipo: 'compra', id: c.id, fornecedor: c.supplier ?? 'Fornecedor', numero: c.invoice_number ?? null,
       valor: Number(c.total_amount ?? 0), data: String(c.purchase_date ?? '').slice(0, 10), lancada: true,
-      itens_qtd: (c.items ?? []).length,
+      itens_qtd: (c.items ?? []).filter((it: any) => !ehAcrescimo(it)).length,
       pagamento: c.is_bonus ? 'Bonificação' : `${c.payment_method ?? ''}${c.payment_status === 'paid' ? ' (pago)' : ''}`.trim() || null,
     });
   }
@@ -142,6 +142,9 @@ async function insumos(admin: Admin, tenantId: string) {
   return (data ?? []).map((i: any) => ({ id: i.id, nome: i.name, unidade: i.unit ?? 'unit', categoria: i.category ?? '' }));
 }
 
+// Linha que o fiscal-inbound cria com a diferença entre o total da nota e os itens
+const ehAcrescimo = (it: any) => String(it?.description ?? '').startsWith('Acréscimos da nota');
+
 // ── Abrir: itens para conferir ──────────────────────────────────────────────
 async function abrirCompra(ctx: Ctx, purchaseId: string, extra: Record<string, unknown> = {}) {
   const { admin, tenantId } = ctx;
@@ -155,7 +158,8 @@ async function abrirCompra(ctx: Ctx, purchaseId: string, extra: Record<string, u
   const sug = (rc.data?.suggestions ?? {}) as Record<string, { ingredient_id: string; units_per_package: number; source?: string }>;
   const { data: contas } = await admin.from('fin_accounts_payable').select('due_date, amount, status')
     .eq('tenant_id', tenantId).eq('reference_id', purchaseId).order('due_date');
-  const itens = ((p.items ?? []) as any[]).map((it) => {
+  // A linha "Acréscimos da nota" (ICMS-ST, IPI...) é valor, não produto: não vai para a conferência
+  const itens = ((p.items ?? []) as any[]).filter((it) => !ehAcrescimo(it)).map((it) => {
     const s = sug[it.id];
     return {
       key: String(it.id), descricao: it.description ?? '—', unidade: it.unit_label ?? 'un',
@@ -307,7 +311,7 @@ async function receber(ctx: Ctx, purchaseId: string, porItemId: Map<string, Item
   const semEstoque = ((its ?? []) as any[]).filter((it) => {
     const c = porItemId.get(String(it.id));
     const link = c ? c.ingredient_id : it.ingredient_id;
-    return !link && !String(it.description ?? '').startsWith('Acréscimos da nota');
+    return !link && !ehAcrescimo(it);
   }).length;
   return { ok: true as const, aviso: r.data?.data?.aviso ?? null, faltas, sem_estoque: semEstoque };
 }

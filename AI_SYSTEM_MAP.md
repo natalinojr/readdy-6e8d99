@@ -3274,3 +3274,13 @@ por participante (`fn_chat_participa`), **nunca por `auth_tenant_id`** (admin co
 Front: `src/components/feature/equipe/` — `useEquipeNoChat` devolve a seção da lista, a camada por
 cima do painel e as não lidas; ligado no `AssistenteChat` (dono) e no `AcoesRapidasFlutuante` (demais,
 aba Conversas). Teste: `src/test/components/chatEquipe.test.tsx`.
+
+### "Acréscimos da nota" não é produto (2026-09-24)
+O `fiscal-inbound` grava a diferença entre o vNF e os itens (ICMS-ST, IPI, seguro, outras despesas) como
+uma linha `fin_purchase_items` "Acréscimos da nota (...)", sem insumo — ela entra no total/CMV, mas **não
+é produto**. Todo lugar que lista itens para ação (vincular insumo, conferir no recebimento, classificar)
+tem que pular essa linha: front usa `ehAcrescimoNota()` de `src/lib/acrescimoNota.ts`; edges/SQL filtram
+por `description` começando com `'Acréscimos da nota'`. Já filtram: `receber-mercadoria` (lista e contagem),
+`purchase-confirm-delivery` (receipt_context), `DetalhePurchaseModal` (mostra como linha de valor à parte),
+`ConfirmarRecebimento` do assistente, `vinculos-memorizados`, registro de classificação e entrada tardia.
+Relatórios/DRE/detalhe de conta continuam mostrando a linha (é dinheiro gasto).

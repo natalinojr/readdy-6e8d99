@@ -4,6 +4,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { SUPABASE_URL } from '@/lib/supabase';
 import { formatCurrency } from '@/lib/formatters';
 import type { Purchase } from '@/types/financeiro';
+import { ehAcrescimoNota } from '@/lib/acrescimoNota';
 
 interface BillInstallment {
   id: string;
@@ -104,7 +105,10 @@ export default function DetalhePurchaseModal({ purchase, installments, loadingIn
       return { ...prev, [itemId]: next };
     });
   };
-  const semInsumo = ctxLoaded ? (purchase.items ?? []).filter(i => !links[i.id]?.ingredient_id).length : 0;
+  // Produtos da compra (sem a linha "Acréscimos da nota", que é valor e entra no total mas não no estoque)
+  const produtos = (purchase.items ?? []).filter(i => !ehAcrescimoNota(i.description));
+  const acrescimos = (purchase.items ?? []).filter(i => ehAcrescimoNota(i.description)).reduce((t, i) => t + Number(i.total_price ?? 0), 0);
+  const semInsumo = ctxLoaded ? produtos.filter(i => !links[i.id]?.ingredient_id).length : 0;
 
   // Calcular novo total da compra baseado nas quantidades recebidas
   const newTotalAmount = useMemo(() => {
@@ -464,9 +468,9 @@ export default function DetalhePurchaseModal({ purchase, installments, loadingIn
                   </p>
 
                   {/* Celular: cartão por item recebido (a tabela com select de insumo não cabe em 375px) */}
-                  {purchase.items && purchase.items.length > 0 && (
+                  {produtos.length > 0 && (
                     <ul className="md:hidden space-y-2">
-                      {purchase.items.map((item) => {
+                      {produtos.map((item) => {
                         const received = receivedItems[item.id];
                         const originalQty = Number(item.quantity ?? 0);
                         const originalTotal = Number(item.total_price ?? 0);
@@ -538,6 +542,12 @@ export default function DetalhePurchaseModal({ purchase, installments, loadingIn
                           </li>
                         );
                       })}
+                      {acrescimos >= 0.01 && (
+                        <li className="flex items-center justify-between px-1 text-xs text-zinc-500">
+                          <span>Acréscimos da nota (impostos/despesas, não é produto)</span>
+                          <span className="font-semibold">{formatCurrency(acrescimos)}</span>
+                        </li>
+                      )}
                       <li className="rounded-xl border border-green-200 bg-green-50/50 px-3 py-2 space-y-1">
                         <div className="flex items-center justify-between text-xs font-bold text-zinc-600">
                           <span>Total Original</span>
@@ -557,7 +567,7 @@ export default function DetalhePurchaseModal({ purchase, installments, loadingIn
                   )}
 
                   {/* Tabela de itens com quantidade recebida */}
-                  {purchase.items && purchase.items.length > 0 && (
+                  {produtos.length > 0 && (
                     <div className="hidden md:block rounded-xl border border-green-200 overflow-hidden bg-white">
                       <table className="w-full text-sm">
                         <thead className="bg-green-50">
@@ -570,7 +580,7 @@ export default function DetalhePurchaseModal({ purchase, installments, loadingIn
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-green-100">
-                          {purchase.items.map((item) => {
+                          {produtos.map((item) => {
                             const received = receivedItems[item.id];
                             const originalQty = Number(item.quantity ?? 0);
                             const originalTotal = Number(item.total_price ?? 0);
@@ -654,6 +664,14 @@ export default function DetalhePurchaseModal({ purchase, installments, loadingIn
                           })}
                         </tbody>
                         <tfoot className="border-t-2 border-green-200 bg-green-50/50">
+                          {acrescimos >= 0.01 && (
+                            <tr>
+                              <td colSpan={4} className="px-3 py-2 text-right text-xs text-zinc-500">
+                                Acréscimos da nota (impostos/despesas, não é produto)
+                              </td>
+                              <td className="px-3 py-2 text-right text-xs font-semibold text-zinc-600">{formatCurrency(acrescimos)}</td>
+                            </tr>
+                          )}
                           <tr>
                             <td colSpan={4} className="px-3 py-2 text-right text-xs font-bold text-zinc-600">
                               Total Original

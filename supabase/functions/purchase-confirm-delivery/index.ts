@@ -55,7 +55,9 @@ Deno.serve(async (req) => {
     // Tela de recebimento: lista de insumos + sugestão de vínculo para cada item.
     // Ordem: o que já está na compra → memorizado do fornecedor (código/EAN) → histórico pela descrição.
     if (body.action === 'receipt_context') {
-      const its = (purchase.items ?? []) as Array<Record<string, any>>;
+      // "Acréscimos da nota" (ICMS-ST, IPI...) é valor, não produto: sem sugestão de insumo
+      const its = ((purchase.items ?? []) as Array<Record<string, any>>)
+        .filter((i) => !String(i.description ?? '').startsWith('Acréscimos da nota'));
       const codes = [...new Set(its.map((i) => String(i.supplier_code ?? '').trim()).filter(Boolean))];
       const eans = [...new Set(its.map((i) => String(i.ean ?? '').trim()).filter(Boolean))];
       const descs = [...new Set(its.filter((i) => !i.ingredient_id).map((i) => String(i.description ?? '')).filter(Boolean))].slice(0, 80);
