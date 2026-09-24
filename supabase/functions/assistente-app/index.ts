@@ -111,6 +111,30 @@ const chaveGrupo = (jid: string) => `g:${jid}`;
 // deno-lint-ignore no-explicit-any
 const vistoDaMsg = (visto: (k: string) => number, r: any): number =>
   Math.max(visto(String(r.topic ?? 'geral')), r.group_jid ? visto(chaveGrupo(String(r.group_jid))) : 0);
+// Resposta silenciosa (dono, 2026-09-24): o brain grava "NO_REPLY" quando decide não responder —
+// "ok"/"valeu" do dono e, principalmente, a triagem automática dos grupos ("[Sistema] Mensagem no
+// grupo … que parece pedido de pagamento") quando não era pedido. No chat isso virava um balão
+// "NO_REPLY" e a última mensagem da conversa, no lugar do painel do fechamento. Fica no banco (o
+// modelo usa o histórico), mas o chat não mostra: nem o silêncio, nem a triagem que deu em nada.
+const SILENCIO = 'NO_REPLY';
+// deno-lint-ignore no-explicit-any
+const ehSilencio = (r: any) => r.role === 'assistant' && String(r.content ?? '').trim() === SILENCIO;
+/** Linhas em ordem CRESCENTE de id. Tira os silêncios e a triagem automática que os gerou. */
+function semSilencio<T extends { role: string; content: unknown; created_at?: string }>(rows: T[]): T[] {
+  const fora = new Set<number>();
+  rows.forEach((r, i) => {
+    if (!ehSilencio(r)) return;
+    fora.add(i);
+    // A pergunta é a última mensagem do dono antes dela (um aviso do cron pode ter caído no meio).
+    for (let j = i - 1; j >= 0; j--) {
+      if (rows[j].role !== 'user') continue;
+      const perto = !r.created_at || !rows[j].created_at || Date.parse(r.created_at) - Date.parse(rows[j].created_at!) < 5 * 60_000;
+      if (perto && String(rows[j].content ?? '').startsWith('[Sistema]')) fora.add(j);
+      break;
+    }
+  });
+  return rows.filter((_, i) => !fora.has(i));
+}
 // deno-lint-ignore no-explicit-any
 const pisoDosVistos = (v: any): number => {
   const base = Number(v?.id ?? 0);
@@ -262,7 +286,7 @@ Deno.serve(async (req) => {
       }
       const { data, error } = await q;
       if (error) throw new Error(error.message);
-      const rows = body.after_id ? (data ?? []) : (data ?? []).reverse();
+      const rows = semSilencio(body.after_id ? (data ?? []) : (data ?? []).reverse());
       return json({ success: true, data: { messages: rows, has_more: !body.after_id && (data ?? []).length === 60 } });
     }
 
@@ -329,7 +353,7 @@ Deno.serve(async (req) => {
       const marca = await getSetting(admin, 'app_last_seen');
       const visto = vistosDe(marca);
       const { data, error } = await admin.from('asst_messages').select('id, content, topic, group_jid')
-        .eq('chat_id', chatKey).eq('role', 'assistant').gt('id', pisoDosVistos(marca))
+        .eq('chat_id', chatKey).eq('role', 'assistant').neq('content', SILENCIO).gt('id', pisoDosVistos(marca))
         .order('id', { ascending: false }).limit(60);
       if (error) throw new Error(error.message);
       // O piso é o menor dos assuntos: filtra aqui o que já foi lido no assunto (ou no grupo) de cada uma.
@@ -353,12 +377,12 @@ Deno.serve(async (req) => {
       const visto = vistosDe(marca);
       const ultimas = await Promise.all(TOPICS.map(async (t) => {
         const { data } = await admin.from('asst_messages').select('id, role, content, created_at, topic')
-          .eq('chat_id', chatKey).eq('topic', t).order('id', { ascending: false }).limit(1);
-        return (data ?? [])[0] ?? null;
+          .eq('chat_id', chatKey).eq('topic', t).order('id', { ascending: false }).limit(8);
+        return semSilencio((data ?? []).reverse()).pop() ?? null;
       }));
       // Não lidas por assunto: uma consulta só, teto de 200 (acima disso o número já não ajuda).
       const { data: novas } = await admin.from('asst_messages').select('id, topic, group_jid')
-        .eq('chat_id', chatKey).eq('role', 'assistant').gt('id', pisoDosVistos(marca)).limit(200);
+        .eq('chat_id', chatKey).eq('role', 'assistant').neq('content', SILENCIO).gt('id', pisoDosVistos(marca)).limit(200);
       const porTopico = new Map<string, number>();
       const porGrupo = new Map<string, number>();
       for (const n of novas ?? []) {
@@ -374,8 +398,8 @@ Deno.serve(async (req) => {
       const { data: nomes } = jids.length ? await admin.from('asst_groups').select('group_jid, name').in('group_jid', jids) : { data: [] };
       const grupos = await Promise.all(jids.map(async (jid) => {
         const { data: ult } = await admin.from('asst_messages').select('role, content, created_at')
-          .eq('chat_id', chatKey).eq('group_jid', jid).order('id', { ascending: false }).limit(1);
-        const u = (ult ?? [])[0];
+          .eq('chat_id', chatKey).eq('group_jid', jid).order('id', { ascending: false }).limit(8);
+        const u = semSilencio((ult ?? []).reverse()).pop();
         return {
           group_jid: jid,
           name: (nomes ?? []).find((n) => n.group_jid === jid)?.name ?? 'Grupo do WhatsApp',

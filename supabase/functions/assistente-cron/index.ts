@@ -643,6 +643,28 @@ async function sessaoText(admin: SupabaseClient, sessionId: string): Promise<Avi
     l.push('*Por categoria* (itens)');
     for (const c of categorias) l.push(`· ${c.nome}: ${brl(c.valor)} (${c.qtd})`);
   }
+  // Faturado por hora (dono, 2026-09-24): mesma regra do faturamento (pedidos pagos, sem cancelado,
+  // treino ou rascunho), pela hora do pedido em Brasília. Comparação = mesmo dia da semana passada
+  // (o dia inteiro da loja, como no "vs … passada" do faturamento). Eixo: da 1ª à última hora com venda.
+  const [horasTurno, horasBase] = await Promise.all([
+    db()<Array<{ h: number; v: number }>>`
+      select extract(hour from o.created_at at time zone 'America/Sao_Paulo')::int as h, coalesce(sum(o.total_amount), 0)::float as v
+      from orders o where o.session_id = ${sessionId} and o.is_paid and o.status <> 'cancelled' and not o.is_training and not o.is_draft group by 1`,
+    db()<Array<{ h: number; v: number }>>`
+      select extract(hour from o.created_at at time zone 'America/Sao_Paulo')::int as h, coalesce(sum(o.total_amount), 0)::float as v
+      from orders o where o.tenant_id = ${s.tenant_id}
+        and o.created_at >= ${`${lwDay}T00:00:00-03:00`}::timestamptz and o.created_at < ${`${addDays(lwDay, 1)}T00:00:00-03:00`}::timestamptz
+        and o.is_paid and o.status <> 'cancelled' and not o.is_training and not o.is_draft group by 1`,
+  ]);
+  const porHora = new Map(horasTurno.map((x) => [Number(x.h), Number(x.v)]));
+  const porHoraBase = new Map(horasBase.map((x) => [Number(x.h), Number(x.v)]));
+  const horasComVenda = [...new Set([...porHora.keys(), ...porHoraBase.keys()])].sort((x, y) => x - y);
+  const grafico = horasComVenda.length >= 2
+    ? Array.from({ length: horasComVenda[horasComVenda.length - 1] - horasComVenda[0] + 1 }, (_, i) => horasComVenda[0] + i)
+      .map((h) => ({ l: `${h}h`, v: porHora.get(h) ?? 0, ...(horasBase.length ? { b: porHoraBase.get(h) ?? 0 } : {}) }))
+    : [];
+  const pico = grafico.reduce<{ l: string; v: number } | null>((m, p) => (!m || p.v > m.v ? p : m), null);
+  if (pico && pico.v > 0) { l.push(''); l.push(`*Pico*: ${pico.l} (${brl(pico.v)})`); }
   const difs = (caixas ?? []) as Array<{ closing_difference: number | null }>;
   const somaDif = difs.reduce((a, c) => a + Number(c.closing_difference ?? 0), 0);
   if (difs.length) { l.push(''); l.push(`*Caixas*: ${difs.length} · dinheiro ${diffTexto(somaDif)}`); }
@@ -657,6 +679,7 @@ async function sessaoText(admin: SupabaseClient, sessionId: string): Promise<Avi
       p: { l: 'Faturamento', v: brl(rev), ...(lwRev > 0 ? { var: { a: rev, b: lwRev, r: `vs ${['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'][weekday(lwDay)]} passada` } } : {}) },
       o: [{ l: 'Pedidos', v: String(n) }, { l: 'Ticket médio', v: brl(r.avg_ticket) }],
     },
+    ...(grafico.length >= 2 ? { gl: { t: 'Faturado por hora', rb: `${['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'][weekday(lwDay)]} passada`, i: grafico } } : {}),
     b: [
       // deno-lint-ignore no-explicit-any
       ...(pagos.length ? [{ t: 'Por forma de pagamento', i: (pagos as any[]).map((p) => ({ l: String(p.payment_method), v: Number(p.total) })) }] : []),

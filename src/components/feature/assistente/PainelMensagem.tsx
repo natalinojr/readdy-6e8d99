@@ -3,13 +3,14 @@
 // ranking — em vez de texto corrido. O servidor manda o texto (que vai para o WhatsApp/Telegram) e,
 // junto, um marcador `[painel]{...}[/painel]` com os dados; no app o balão vira este painel.
 // As peças são as mesmas de acoes/painel.tsx, para não existirem dois estilos de dashboard.
-import { Painel, Kpis, Barras, Linhas, Ranking, Variacao } from './acoes/painel';
+import { Painel, Kpis, Barras, Linhas, Ranking, Variacao, GraficoLinha } from './acoes/painel';
 
 export interface DadosPainel {
   t: string;                                              // título
   s?: string;                                             // subtítulo (loja)
   r?: string;                                             // rodapé
   kpi?: { p: { l: string; v: string; var?: { a: number; b: number; r: string } }; o?: Array<{ l: string; v: string }> };
+  gl?: { t: string; rb?: string; i: Array<{ l: string; v: number; b?: number | null }> };  // gráfico de linha (ex.: por hora; b = comparação)
   b?: Array<{ t: string; c?: string; i: Array<{ l: string; v: number; d?: string }> }>;  // barras
   lin?: Array<{ t: string; i: Array<{ l: string; v?: string; d?: string; st?: 'ok' | 'alerta' | 'perigo' | 'neutro' }> }>; // linhas label → valor
   rk?: { t: string; i: Array<{ n: string; q: number; v?: number }> };                    // ranking
@@ -38,6 +39,10 @@ export default function PainelMensagem({ dados }: { dados: DadosPainel }) {
           }}
           outros={(dados.kpi.o ?? []).map((k) => ({ label: k.l, valor: k.v }))}
         />
+      )}
+      {dados.gl && (
+        <GraficoLinha titulo={dados.gl.t} rotuloBase={dados.gl.rb}
+          pontos={dados.gl.i.map((p) => ({ rotulo: p.l, valor: Number(p.v ?? 0), base: p.b ?? null }))} />
       )}
       {(dados.b ?? []).map((g) => (
         <Barras key={g.t} titulo={g.t} cor={g.c} itens={g.i.map((x) => ({ label: x.l, valor: x.v, detalhe: x.d }))} />
