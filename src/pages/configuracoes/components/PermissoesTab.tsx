@@ -268,7 +268,7 @@ export default function PermissoesTab() {
 
       <div className="bg-white rounded-2xl border border-zinc-100 overflow-hidden">
         {/* Header de papéis */}
-        <div className="grid border-b border-zinc-100" style={{ gridTemplateColumns: '1fr repeat(5, 90px)' }}>
+        <div className="grid border-b border-zinc-100" style={{ gridTemplateColumns: `1fr repeat(${papeis.length}, 90px)` }}>
           <div className="px-5 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wider">Permissão</div>
           {papeis.map((p) => (
             <div key={p.id} className="py-3 flex flex-col items-center gap-1">
@@ -298,7 +298,7 @@ export default function PermissoesTab() {
                 <div
                   key={perm.id}
                   className={`grid border-b border-zinc-50 hover:bg-zinc-50/60 transition-colors ${idx === itens.length - 1 ? 'border-zinc-100' : ''}`}
-                  style={{ gridTemplateColumns: '1fr repeat(5, 90px)' }}
+                  style={{ gridTemplateColumns: `1fr repeat(${papeis.length}, 90px)` }}
                 >
                   <div className="px-5 py-3">
                     <span className="text-sm text-zinc-700">{perm.descricao}</span>
