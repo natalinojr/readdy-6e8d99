@@ -234,10 +234,10 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
     const busy = ocupada === p.id;
     return (
       <div key={p.id} data-pend={p.id}
-        className={`rounded-2xl border bg-white px-3.5 py-3 text-sm shadow-[0_1px_2px_rgba(0,0,0,0.04)] transition-shadow ${p.urgencia === 'alta' ? 'border-red-200 border-l-4 border-l-red-500' : 'border-zinc-200'}`}>
+        className={`rounded-2xl border bg-white px-3 py-2.5 text-[13px] shadow-[0_1px_2px_rgba(0,0,0,0.04)] transition-shadow ${p.urgencia === 'alta' ? 'border-red-200 border-l-4 border-l-red-500' : 'border-zinc-200'}`}>
         <div className="flex items-start gap-2.5">
-          <span className={`w-9 h-9 flex-shrink-0 flex items-center justify-center rounded-xl ${cfg.corBg}`}>
-            <i className={`${cfg.icone} ${cfg.corTexto} text-lg`} />
+          <span className={`w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-lg ${cfg.corBg}`}>
+            <i className={`${cfg.icone} ${cfg.corTexto} text-base`} />
           </span>
           <div className="flex-1 min-w-0">
             <p className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] leading-tight">
@@ -246,14 +246,14 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
               {p.urgencia === 'alta' && <span className="px-1.5 rounded bg-red-100 text-red-700 font-bold">Urgente</span>}
               {p.status === 'vista' && <span className="text-zinc-400"><i className="ri-eye-line" /> vista</span>}
             </p>
-            <p className="font-bold text-zinc-900 leading-snug mt-0.5">{p.titulo}</p>
+            <p className="font-semibold text-zinc-900 leading-snug mt-0.5">{p.titulo}</p>
           </div>
           <div className="flex-shrink-0 text-right" title={`Chegou em ${new Date(p.criadaEm).toLocaleString('pt-BR')}`}>
-            <p className="text-[11px] font-bold text-zinc-700 whitespace-nowrap tabular-nums">{dataHora(p.criadaEm)}</p>
+            <p className="text-[11px] font-semibold text-zinc-600 whitespace-nowrap tabular-nums">{dataHora(p.criadaEm)}</p>
             <span className={`inline-block mt-0.5 px-1.5 rounded-full border text-[10px] font-semibold whitespace-nowrap ${corIdade(p.criadaEm)}`}>{idade(p.criadaEm)}</span>
           </div>
         </div>
-        <div className="pl-[46px]">
+        <div className="pl-[42px]">
           {ehPagamento && infoPag[p.id] && <LinhaPagamento info={infoPag[p.id]} />}
           {p.detalhe && <p className="text-xs text-zinc-500 mt-1 line-clamp-3 whitespace-pre-wrap">{p.detalhe}</p>}
         </div>
@@ -279,18 +279,18 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
         ) : ignorarDe === p.id ? (
           <div className="mt-2.5 rounded-xl bg-amber-50 border border-amber-200 px-3 py-2.5">
             <p className="text-xs text-amber-900">Ignorar a nota? Ela sai de "A conferir" e a loja não recebe por ela no estoque. Use quando for remessa, devolução ou comodato — não compra.</p>
-            <div className="grid grid-cols-2 gap-2 mt-2">
+            <div className="flex flex-wrap gap-1.5 mt-2">
               <button onClick={() => ignorarNota(p)} disabled={busy} className={`${BOTAO} bg-amber-600 hover:bg-amber-500 text-white`}>{busy ? 'Ignorando…' : 'Ignorar a nota'}</button>
               <button onClick={() => setIgnorarDe(null)} disabled={busy} className={NEUTRO}>Voltar</button>
             </div>
           </div>
         ) : (
-          // Três botões não cabem numa linha do celular (o texto quebrava e vazava, 2026-09-18):
-          // com três, a ação principal ocupa a linha de cima e as outras duas dividem a de baixo.
-          <div className="grid grid-cols-2 gap-2 mt-2.5">
+          // Botões baixos e numa linha só (dono, 2026-09-24: "grandes demais, desproporcionais"); se não
+          // couberem no celular, quebram para a linha de baixo (flex-wrap) em vez de vazar.
+          <div className="flex flex-wrap gap-1.5 mt-2.5">
             {ehPagamento && (
               <>
-                <button onClick={() => pagar(p)} disabled={busy} className={p.kind === 'pagamento_grupo' ? `${PRINCIPAL} col-span-2` : PRINCIPAL}>
+                <button onClick={() => pagar(p)} disabled={busy} className={p.kind === 'pagamento_grupo' ? `${PRINCIPAL}` : PRINCIPAL}>
                   {busy ? 'Preparando…' : <><i className="ri-check-line" /> Pagar</>}
                 </button>
                 {p.kind === 'pagamento_grupo' && (
@@ -305,7 +305,7 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
             {ehRecebimento && (
               <>
                 <button onClick={() => onAbrir({ ...p, rota: `/financeiro?tab=notas-entrada&nota=${encodeURIComponent(notaDa(p) as string)}` })}
-                  className={`${PRINCIPAL} col-span-2`}>
+                  className={`${PRINCIPAL}`}>
                   <i className="ri-file-check-line" /> Conferir e lançar a nota
                 </button>
                 <button onClick={() => setIgnorarDe(p.id)} disabled={busy} className={SECUNDARIO}>
@@ -315,7 +315,7 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
             )}
             {RESOLVE_AQUI[p.kind] && (
               <button onClick={() => setExpandida((x) => (x === p.id ? null : p.id))}
-                className={expandida === p.id ? `${SECUNDARIO} col-span-2 bg-violet-100` : `${PRINCIPAL} col-span-2`}>
+                className={expandida === p.id ? `${SECUNDARIO} bg-violet-100` : `${PRINCIPAL}`}>
                 <i className={RESOLVE_AQUI[p.kind].icone} /> {expandida === p.id ? 'Fechar' : RESOLVE_AQUI[p.kind].label}
               </button>
             )}
@@ -379,7 +379,7 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
               <label className="relative flex-1 min-w-0">
                 <i className="ri-store-2-line absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" />
                 <select value={filtro} onChange={(e) => escolherLoja(e.target.value)} aria-label="Loja"
-                  className="w-full h-9 pl-9 pr-8 rounded-xl border border-zinc-200 bg-zinc-50 text-sm font-semibold text-zinc-700 appearance-none truncate cursor-pointer focus:outline-none focus:border-violet-400">
+                  className="w-full h-9 pl-9 pr-8 rounded-xl border border-zinc-200 bg-zinc-50 text-xs font-semibold text-zinc-700 appearance-none truncate cursor-pointer focus:outline-none focus:border-violet-400">
                   <option value="">Todas as lojas · {todas.length}</option>
                   {lojas.map(([id, nome]) => <option key={id} value={id}>{nome} · {todas.filter((p) => p.tenantId === id).length}</option>)}
                 </select>
@@ -435,7 +435,7 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
                 {/* Separador por dia de chegada (Hoje / Ontem / Segunda-feira, 22/09). */}
                 {(i === 0 || chaveDia(itens[i - 1].criadaEm) !== chaveDia(p.criadaEm)) && (
                   <div className={`flex items-center gap-2 pb-1 ${i === 0 ? '' : 'pt-2'}`}>
-                    <span className="text-[11px] font-black uppercase tracking-wide text-zinc-400">{rotuloDia(p.criadaEm)}</span>
+                    <span className="text-[11px] font-bold uppercase tracking-wide text-zinc-400">{rotuloDia(p.criadaEm)}</span>
                     <span className="flex-1 h-px bg-zinc-200" />
                   </div>
                 )}
@@ -450,7 +450,7 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
                   <button onClick={() => alternarGrupo(g.label)} aria-expanded={aberto}
                     className="w-full flex items-center gap-2 rounded-xl px-2 py-1.5 text-left cursor-pointer hover:bg-zinc-100">
                     <span className={`w-7 h-7 flex-shrink-0 flex items-center justify-center rounded-lg ${g.cfg.corBg}`}><i className={`${g.cfg.icone} ${g.cfg.corTexto}`} /></span>
-                    <span className="flex-1 min-w-0 text-sm font-black text-zinc-800 truncate">{g.label}</span>
+                    <span className="flex-1 min-w-0 text-[13px] font-bold text-zinc-800 truncate">{g.label}</span>
                     <span className={`px-1.5 rounded-full border text-[10px] font-semibold whitespace-nowrap ${corIdade(velha)}`}>{idade(velha)}</span>
                     <span className="min-w-[22px] h-[22px] px-1.5 flex items-center justify-center rounded-full bg-zinc-800 text-white text-[11px] font-bold">{g.itens.length}</span>
                     <i className={`${aberto ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-zinc-400`} />
@@ -474,18 +474,18 @@ interface InfoPagamento {
 // Para quem vai (em destaque) e se a mercadoria já chegou — o que se confere antes de pagar.
 function LinhaPagamento({ info }: { info: InfoPagamento }) {
   return (
-    <div className="mt-2 rounded-xl bg-violet-50 border border-violet-100 px-3 py-2">
-      <p className="text-sm text-zinc-800 break-words">
+    <div className="mt-1.5 rounded-lg bg-violet-50 border border-violet-100 px-2.5 py-1.5">
+      <p className="text-xs text-zinc-800 break-words">
         {info.tipo === 'boleto' ? 'Boleto' : info.tipo === 'pix' ? 'Pix' : 'Pagar'}
         {info.valor ? <> de <b>{brl(info.valor)}</b></> : null} para{' '}
-        <b className="font-black text-violet-800">{info.para || 'destinatário não identificado'}</b>
+        <b className="font-bold text-violet-800">{info.para || 'destinatário não identificado'}</b>
       </p>
       {info.guia ? (
-        <p className="text-xs font-semibold mt-0.5 text-zinc-600">
+        <p className="text-[11px] font-semibold mt-0.5 text-zinc-600">
           <i className="ri-government-line" /> {info.guia}
         </p>
       ) : (
-      <p className={`text-xs font-semibold mt-0.5 ${info.recebido ? 'text-emerald-700' : info.recebido === false ? 'text-amber-700' : 'text-zinc-500'}`}>
+      <p className={`text-[11px] font-semibold mt-0.5 ${info.recebido ? 'text-emerald-700' : info.recebido === false ? 'text-amber-700' : 'text-zinc-500'}`}>
         <i className={info.recebido ? 'ri-checkbox-circle-line' : info.recebido === false ? 'ri-truck-line' : 'ri-question-line'} />{' '}
         {info.recebido
           ? `Mercadoria recebida${info.recebido_em ? ` em ${new Date(info.recebido_em).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}` : ''}`
@@ -499,7 +499,7 @@ function LinhaPagamento({ info }: { info: InfoPagamento }) {
 const FILTRO_KEY = 'erpos.pendencias.loja';
 const ORDEM_KEY = 'erpos.pendencias.ordem';
 const AGRUPAR_KEY = 'erpos.pendencias.agrupar';
-const BOTAO = 'h-10 px-2 flex items-center justify-center gap-1.5 rounded-xl text-sm font-bold whitespace-nowrap disabled:opacity-50 cursor-pointer';
+const BOTAO = 'flex-1 h-8 px-3 flex items-center justify-center gap-1 rounded-lg text-xs font-semibold whitespace-nowrap disabled:opacity-50 cursor-pointer';
 const PRINCIPAL = `${BOTAO} bg-violet-600 hover:bg-violet-500 text-white`;
 const SECUNDARIO = `${BOTAO} border border-violet-200 text-violet-700 hover:bg-violet-50`;
 const NEUTRO = `${BOTAO} border border-zinc-200 text-zinc-500 hover:bg-zinc-50`;

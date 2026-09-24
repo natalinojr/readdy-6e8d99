@@ -22,34 +22,58 @@ export function ListaEquipe({ conversas, onAbrir, onNova, lojas, lojaSel, onLoja
   /** Dentro da aba "Equipe" do chat do dono o título e o botão de avisos se repetiam (2026-09-24). */
   semTitulo?: boolean;
 }) {
+  const tarefas = lojas.find((l) => l.id === ESCOPO_TAREFAS);
+  const lojasReais = lojas.filter((l) => l.id !== ESCOPO_TAREFAS);
+  const naLoja = lojasReais.some((l) => l.id === lojaSel);
+  const naoLidasOutras = lojasReais.reduce((t, l) => t + (l.id === lojaSel ? 0 : l.naoLidas), 0);
   return (
     <>
-      <div className="flex items-center gap-2 px-4 pt-3 pb-1">
-        {semTitulo ? <span className="flex-1" /> : <p className="flex-1 text-[11px] font-bold uppercase tracking-wide text-zinc-400">Equipe</p>}
-        {/* Aviso no celular quando chega mensagem (2026-09-24): sem este aparelho inscrito o send-push não
-            tem para onde mandar — quem não é o dono não tinha onde ligar. Some quando já está ativo. */}
-        {/* No chat do dono (semTitulo) o cabeçalho já tem o mesmo botão: não repete. */}
-        {!semTitulo && <BotaoAvisos tenantId={lojaSel === ESCOPO_TAREFAS ? null : lojaSel} titulo="Receber aviso no celular quando chegar mensagem" />}
-        <button onClick={onNova} className="flex items-center gap-1 text-xs font-bold text-sky-700 hover:text-sky-600 cursor-pointer">
+      {!semTitulo && (
+        <div className="flex items-center gap-2 px-4 pt-3">
+          <p className="flex-1 text-[11px] font-bold uppercase tracking-wide text-zinc-400">Equipe</p>
+          {/* Aviso no celular quando chega mensagem (2026-09-24): sem este aparelho inscrito o send-push não
+              tem para onde mandar — quem não é o dono não tinha onde ligar. Some quando já está ativo.
+              No chat do dono (semTitulo) o cabeçalho já tem o mesmo botão: não repete. */}
+          <BotaoAvisos tenantId={lojaSel === ESCOPO_TAREFAS ? null : lojaSel} titulo="Receber aviso no celular quando chegar mensagem" />
+        </div>
+      )}
+      {/* Uma linha só (dono, 2026-09-24): lojas numa lista suspensa (podem ser muitas), Tarefas é fixo
+          como botão ao lado, e "Nova conversa" no fim. */}
+      <div className="flex items-center gap-2 px-4 pt-3 pb-2">
+        {lojasReais.length > 1 ? (
+          <div className="relative flex-1 min-w-0">
+            <i className={`ri-store-2-line absolute left-2.5 top-1/2 -translate-y-1/2 text-sm pointer-events-none ${naLoja ? 'text-sky-700' : 'text-zinc-400'}`} />
+            <select value={naLoja ? lojaSel : ''} onChange={(e) => e.target.value && onLoja(e.target.value)} aria-label="Loja das conversas"
+              className={`w-full h-8 pl-7 pr-2 rounded-full text-xs font-semibold border truncate cursor-pointer focus:outline-none ${naLoja ? 'bg-sky-50 border-sky-300 text-sky-800' : 'bg-white border-zinc-200 text-zinc-500'}`}>
+              {!naLoja && <option value="">Escolher loja…</option>}
+              {lojasReais.map((l) => (
+                <option key={l.id} value={l.id}>{l.nome}{l.naoLidas > 0 ? ` (${l.naoLidas > 99 ? '99+' : l.naoLidas})` : ''}</option>
+              ))}
+            </select>
+            {naoLidasOutras > 0 && (
+              <span className="absolute -top-1.5 -right-1 min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full bg-red-500 text-white text-[10px] font-black border-2 border-white"
+                aria-label={`${naoLidasOutras} não lida(s) em outras lojas`}>
+                {naoLidasOutras > 99 ? '99+' : naoLidasOutras}
+              </span>
+            )}
+          </div>
+        ) : <span className="flex-1" />}
+        {tarefas && lojas.length > 1 && (
+          <button role="tab" aria-selected={lojaSel === ESCOPO_TAREFAS} onClick={() => onLoja(ESCOPO_TAREFAS)}
+            className={`flex-shrink-0 flex items-center gap-1.5 h-8 px-3 rounded-full text-xs font-semibold border cursor-pointer ${lojaSel === ESCOPO_TAREFAS ? 'bg-sky-600 border-sky-600 text-white' : 'bg-white border-zinc-200 text-zinc-600 hover:bg-zinc-50'}`}>
+            <i className="ri-task-line" /> Tarefas
+            {tarefas.naoLidas > 0 && (
+              <span className={`min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full text-[10px] font-black ${lojaSel === ESCOPO_TAREFAS ? 'bg-white text-sky-700' : 'bg-red-500 text-white'}`}
+                aria-label={`${tarefas.naoLidas} não lida(s) em Tarefas`}>
+                {tarefas.naoLidas > 99 ? '99+' : tarefas.naoLidas}
+              </span>
+            )}
+          </button>
+        )}
+        <button onClick={onNova} className="flex-shrink-0 flex items-center gap-1 h-8 px-2 text-xs font-bold text-sky-700 hover:text-sky-600 cursor-pointer">
           <i className="ri-chat-new-line text-base" /> Nova conversa
         </button>
       </div>
-      {lojas.length > 1 && (
-        <div className="flex flex-wrap gap-1.5 px-4 pb-2" role="tablist" aria-label="Loja das conversas">
-          {lojas.map((l) => (
-            <button key={l.id} role="tab" aria-selected={l.id === lojaSel} onClick={() => onLoja(l.id)}
-              className={`max-w-full flex items-center gap-1.5 h-8 px-3 rounded-full text-xs font-semibold border cursor-pointer ${l.id === lojaSel ? 'bg-sky-600 border-sky-600 text-white' : 'bg-white border-zinc-200 text-zinc-600 hover:bg-zinc-50'}`}>
-              <i className={`flex-shrink-0 ${l.id === ESCOPO_TAREFAS ? 'ri-task-line' : 'ri-store-2-line'}`} /> <span className="truncate">{l.nome}</span>
-              {l.naoLidas > 0 && (
-                <span className={`min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full text-[10px] font-black ${l.id === lojaSel ? 'bg-white text-sky-700' : 'bg-red-500 text-white'}`}
-                  aria-label={`${l.naoLidas} não lida(s) em ${l.nome}`}>
-                  {l.naoLidas > 99 ? '99+' : l.naoLidas}
-                </span>
-              )}
-            </button>
-          ))}
-        </div>
-      )}
       {conversas.length === 0 && (
         <button onClick={onNova} className="w-full px-4 py-3 text-left text-xs text-zinc-400 border-b border-zinc-100 hover:bg-zinc-50 cursor-pointer">
           {lojaSel === ESCOPO_TAREFAS ? 'Fale com quem divide pastas ou tarefas com você' : 'Fale com alguém da loja'}: toque em <b className="text-sky-700">Nova conversa</b>.
