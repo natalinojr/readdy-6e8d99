@@ -8,6 +8,13 @@ import { ImagePlus, Loader2, Send, X, PencilLine, CheckCircle2, RotateCcw, Messa
 import { STATUS_INFO, dataHora, type CampoRel, type ImagemRel, type ItemRel, type StatusItem, type ValorCampo } from './api';
 import { EditorCampos, PreencherCampos, erroPreenchimento, formatarValor, limparCampos, respostasMudadas, valoresAtuais } from './CamposResposta';
 
+/** Faixa colorida na lateral do item, pela situação. */
+const COR_LATERAL: Record<StatusItem, string> = {
+  open: 'border-l-amber-300',
+  answered: 'border-l-sky-400',
+  resolved: 'border-l-emerald-500',
+};
+
 export function StatusBadge({ status }: { status: StatusItem }) {
   const s = STATUS_INFO[status];
   return <span className={`shrink-0 text-[11px] font-medium px-2 py-0.5 rounded-full ${s.cor}`}>{s.label}</span>;
@@ -191,9 +198,9 @@ export default function ItemRelatorio({ item, numero, podeResponder, meuGuestId,
   const temRascunho = !!texto.trim() || anexos.imagens.length > 0 || temMudancas;
 
   return (
-    <article className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+    <article className={`bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden border-l-4 ${COR_LATERAL[item.status]}`}>
       <header className="px-4 pt-4 flex items-start gap-3">
-        <span className="shrink-0 w-7 h-7 rounded-full bg-indigo-50 text-indigo-600 text-sm font-semibold flex items-center justify-center">{numero}</span>
+        <span className="shrink-0 w-7 h-7 rounded-lg bg-slate-100 text-slate-600 text-sm font-semibold flex items-center justify-center">{numero}</span>
         <div className="flex-1 min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="font-semibold text-slate-800 break-words">{item.title}</h3>
@@ -409,7 +416,7 @@ export function FormItem({ inicial, comCampos, rotuloSalvar, aviso, onSalvar, on
   };
 
   return (
-    <div className={`bg-white rounded-xl border p-4 space-y-2 ${inicial ? 'border-2 border-indigo-200' : 'border-slate-200'}`} onPaste={anexos.aoColar}>
+    <div className={`bg-white rounded-2xl border shadow-sm p-4 space-y-2 ${inicial ? 'border-2 border-indigo-200' : 'border-indigo-200'}`} onPaste={anexos.aoColar}>
       <input
         value={titulo}
         onChange={(e) => setTitulo(e.target.value)}
@@ -465,7 +472,7 @@ export function NovoItem({ onCriar, onEnviarImagem, comCampos = false }: {
     return (
       <button
         onClick={() => setAberto(true)}
-        className="w-full flex items-center justify-center gap-1.5 py-3 rounded-xl border-2 border-dashed border-slate-300 text-sm text-slate-500 hover:border-indigo-300 hover:text-indigo-600"
+        className="w-full flex items-center justify-center gap-1.5 py-3.5 rounded-2xl border-2 border-dashed border-slate-300 text-sm font-medium text-slate-500 hover:border-indigo-300 hover:text-indigo-600 hover:bg-indigo-50/40 transition"
       >
         <Plus size={16} /> Incluir item
       </button>

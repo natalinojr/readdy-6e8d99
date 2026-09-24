@@ -22,10 +22,12 @@ export function servicoDoLink(url: string): string {
   }
 }
 
-export default function LinksRelatorio({ links, podeEditar, onSalvar }: {
+export default function LinksRelatorio({ links, podeEditar, onSalvar, className }: {
   links: LinkRel[];
   podeEditar: boolean;
   onSalvar?: (links: LinkRel[]) => Promise<boolean>;
+  /** Moldura do cartão (a coluna lateral do relatório usa outra). */
+  className?: string;
 }) {
   const [adicionando, setAdicionando] = useState(false);
   const [url, setUrl] = useState('');
@@ -47,25 +49,26 @@ export default function LinksRelatorio({ links, podeEditar, onSalvar }: {
   };
 
   return (
-    <section className="bg-white rounded-xl border border-slate-200 p-4 mt-3">
+    <section className={className ?? 'bg-white rounded-2xl border border-slate-200 shadow-sm p-4 mt-3'}>
       <div className="flex items-center gap-2">
-        <h2 className="text-sm font-semibold text-slate-700 flex items-center gap-1.5 flex-1"><Cloud size={15} /> Arquivos ({links.length})</h2>
+        <span className="w-7 h-7 rounded-lg bg-sky-50 text-sky-500 flex items-center justify-center shrink-0"><Cloud size={15} /></span>
+        <h2 className="text-sm font-semibold text-slate-700 flex-1">Arquivos · {links.length}</h2>
         {podeEditar && !adicionando && (
-          <button onClick={() => setAdicionando(true)} className="text-sm text-indigo-600 hover:underline flex items-center gap-1"><Plus size={14} /> Link de arquivo</button>
+          <button onClick={() => setAdicionando(true)} className="p-1 rounded-lg text-indigo-600 hover:bg-indigo-50" title="Adicionar link de arquivo"><Plus size={16} /></button>
         )}
       </div>
       {!links.length && !adicionando && (
-        <p className="text-sm text-slate-400 mt-1">Para mandar um arquivo, cole o link de compartilhamento da nuvem (Drive, OneDrive, Dropbox…).</p>
+        <p className="text-xs text-slate-400 mt-2">Para mandar um arquivo, cole o link de compartilhamento da nuvem (Drive, OneDrive, Dropbox…).</p>
       )}
       {links.length > 0 && (
-        <ul className="mt-2 space-y-1.5">
+        <ul className="mt-2.5 space-y-1.5">
           {links.map((l, i) => (
             <li key={`${l.url}-${i}`} className="flex items-center gap-2">
               <a
                 href={l.url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="flex-1 min-w-0 flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-200 hover:border-indigo-300 hover:bg-indigo-50/40"
+                className="flex-1 min-w-0 flex items-center gap-2.5 px-3 py-2 rounded-xl border border-slate-200 hover:border-indigo-300 hover:bg-indigo-50/40 transition"
               >
                 <ExternalLink size={15} className="text-indigo-500 shrink-0" />
                 <span className="min-w-0">
