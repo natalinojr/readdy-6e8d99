@@ -17,6 +17,8 @@ interface TaskCardProps {
   arrastando?: boolean;
   /** Kanban usa card completo; calendário usa uma pílula de uma linha. */
   variante?: 'card' | 'pill';
+  /** Pílula de tarefa de vários dias: em que dia do período está (ex.: 2 de 5). */
+  trecho?: { dia: number; total: number } | null;
 }
 
 export function iniciais(nome: string): string {
@@ -45,7 +47,7 @@ export function rotuloVencimento(task: TaskRow): { text: string; className: stri
 }
 
 export default function TaskCard({
-  task, campos, usuarios, onOpen, onDragStart, onDragEnd, arrastando = false, variante = 'card',
+  task, campos, usuarios, onOpen, onDragStart, onDragEnd, arrastando = false, variante = 'card', trecho = null,
 }: TaskCardProps) {
   const due = rotuloVencimento(task);
   const prio = PRIORIDADES.find((p) => p.value === task.priority);
@@ -62,13 +64,15 @@ export default function TaskCard({
           e.stopPropagation(); // a célula do calendário abaixo cria tarefa ao clicar
           onOpen(task.id);
         }}
-        className={`px-1.5 py-0.5 rounded text-[11px] truncate cursor-pointer border-l-2 bg-white hover:bg-slate-50 transition ${
-          arrastando ? 'opacity-40' : ''
-        } ${concluida ? 'text-slate-400 line-through' : 'text-slate-700'}`}
-        style={{ borderLeftColor: prio && task.priority > 0 ? prio.color : '#cbd5e1' }}
-        title={task.title}
+        className={`px-1.5 py-0.5 rounded text-[11px] cursor-pointer border-l-2 transition flex items-center gap-1 min-w-0 ${
+          trecho ? 'bg-indigo-50 hover:bg-indigo-100' : 'bg-white hover:bg-slate-50'
+        } ${arrastando ? 'opacity-40' : ''} ${concluida ? 'text-slate-400 line-through' : 'text-slate-700'}`}
+        style={{ borderLeftColor: prio && task.priority > 0 ? prio.color : trecho ? '#a5b4fc' : '#cbd5e1' }}
+        title={trecho ? `${task.title} — dia ${trecho.dia} de ${trecho.total}` : task.title}
       >
-        {task.title}
+        {trecho && trecho.dia > 1 && <span className="text-indigo-300 shrink-0">↳</span>}
+        <span className="truncate flex-1">{task.title}</span>
+        {trecho && <span className="text-[9px] text-indigo-400 shrink-0 no-underline">{trecho.dia}/{trecho.total}</span>}
       </div>
     );
   }
@@ -106,6 +110,10 @@ export default function TaskCard({
       <p className={`text-sm leading-snug mb-2 ${concluida ? 'line-through text-slate-400' : 'text-slate-700'}`}>
         {task.title}
       </p>
+
+      {trecho && (
+        <p className="text-[11px] text-indigo-500 -mt-1 mb-2">Dia {trecho.dia} de {trecho.total}</p>
+      )}
 
       <div className="flex items-center gap-2 text-[11px] text-slate-400">
         {task.priority > 0 && prio && <Flag size={11} style={{ color: prio.color }} />}
