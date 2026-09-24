@@ -9,10 +9,12 @@ interface Props {
   /** Link do QR colado (lido pela câmera do próprio celular). */
   onLink: (url: string) => void;
   onFoto: () => void;
+  /** Foto ou PDF que já está no celular (galeria, arquivos, WhatsApp). */
+  onGaleria: () => void;
   onFechar: () => void;
 }
 
-export default function ScannerQR({ onLido, onLink, onFoto, onFechar }: Props) {
+export default function ScannerQR({ onLido, onLink, onFoto, onGaleria, onFechar }: Props) {
   const video = useRef<HTMLVideoElement>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [status, setStatus] = useState('Abrindo a câmera…');
@@ -129,9 +131,14 @@ export default function ScannerQR({ onLido, onLink, onFoto, onFechar }: Props) {
             <i className="ri-clipboard-line text-xl" /> Colar o link do QR
           </button>
         )}
-        <button type="button" onClick={onFoto} className="w-full py-4 rounded-2xl bg-white text-zinc-800 font-bold flex items-center justify-center gap-2 cursor-pointer">
-          <i className="ri-camera-line text-xl" /> Tirar foto da notinha
-        </button>
+        <div className="flex gap-2">
+          <button type="button" onClick={onFoto} className="flex-1 py-4 rounded-2xl bg-white text-zinc-800 font-bold flex items-center justify-center gap-2 cursor-pointer">
+            <i className="ri-camera-line text-xl" /> Tirar foto
+          </button>
+          <button type="button" onClick={onGaleria} className="flex-1 py-4 rounded-2xl bg-white text-zinc-800 font-bold flex items-center justify-center gap-2 cursor-pointer">
+            <i className="ri-image-line text-xl" /> Da galeria
+          </button>
+        </div>
       </div>
     </div>
   );

@@ -64,6 +64,7 @@ export default function ReceberPage() {
   const [digitado, setDigitado] = useState('');
   const inputCodigo = useRef<HTMLInputElement>(null);
   const inputCupom = useRef<HTMLInputElement>(null);
+  const inputCupomGaleria = useRef<HTMLInputElement>(null);
 
   const carregarPendentes = useCallback(async () => {
     if (!tenantId || !podeReceber) return;
@@ -360,8 +361,11 @@ export default function ReceberPage() {
         onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; onFotoCodigo(f); }} />
       <input ref={inputCupom} type="file" accept="image/*" capture="environment" className="hidden"
         onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; onFotoCupom(f); }} />
+      {/* Galeria/arquivos (sem capture): foto já tirada, print ou PDF do cupom */}
+      <input ref={inputCupomGaleria} type="file" accept="image/*,application/pdf" className="hidden"
+        onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; onFotoCupom(f); }} />
 
-      {scanner && <ScannerQR onLido={onLidoAoVivo} onLink={(url) => onLidoAoVivo({ tipo: 'qr', url })} onFoto={() => { setScanner(false); inputCupom.current?.click(); }} onFechar={() => setScanner(false)} />}
+      {scanner && <ScannerQR onLido={onLidoAoVivo} onLink={(url) => onLidoAoVivo({ tipo: 'qr', url })} onFoto={() => { setScanner(false); inputCupom.current?.click(); }} onGaleria={() => { setScanner(false); inputCupomGaleria.current?.click(); }} onFechar={() => setScanner(false)} />}
 
       <div className="flex-1 overflow-y-auto">
         {erro && (
