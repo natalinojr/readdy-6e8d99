@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
 import { useOrigemReport, getPeriodoAnteriorOrigem, labelPeriodoAnteriorOrigem, type OrigemHoraItem } from '@/hooks/useOrigemReport';
 import { periodoDias } from '@/lib/dateUtils';
@@ -69,6 +69,7 @@ export default function OrigemTab({ periodo, externalSession }: Props) {
   const { modo } = useModoFaturamento();
   const isSessao = modo === 'sessao';
   const selectedSession = externalSession ?? null;
+  const [graficoHora, setGraficoHora] = useState<'barras' | 'linhas'>('barras');
 
   // ── Modo calendário: usa o hook de origem por data ──
   const { dados: dadosData, loading: loadingData } = useOrigemReport(isSessao ? '' : periodo);
@@ -270,16 +271,28 @@ export default function OrigemTab({ periodo, externalSession }: Props) {
                   Faturamento de cada hora, separado por canal{variosDias ? ' — soma de todos os dias do período' : ''}
                 </p>
               </div>
-              <div className="flex flex-wrap justify-end gap-x-3 gap-y-1 text-[11px] text-zinc-500">
-                {canais.map((c) => (
-                  <span key={c.key} className="flex items-center gap-1.5">
-                    <span className="w-2 h-2 rounded-sm" style={{ backgroundColor: c.cor }} /> {c.label}
-                  </span>
+              <div className="flex bg-zinc-100 rounded-lg p-0.5 flex-shrink-0">
+                {([['barras', 'ri-bar-chart-2-line', 'Barras'], ['linhas', 'ri-line-chart-line', 'Linhas']] as const).map(([k, icone, titulo]) => (
+                  <button key={k} type="button" title={titulo} onClick={() => setGraficoHora(k)}
+                    className={`w-7 h-6 flex items-center justify-center rounded-md text-sm cursor-pointer transition-colors ${graficoHora === k ? 'bg-white text-amber-600 shadow-sm' : 'text-zinc-400 hover:text-zinc-600'}`}>
+                    <i className={icone} />
+                  </button>
                 ))}
               </div>
             </div>
+            <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-zinc-500 -mt-2 mb-3">
+              {canais.map((c) => (
+                <span key={c.key} className="flex items-center gap-1.5">
+                  {graficoHora === 'barras'
+                    ? <span className="w-2 h-2 rounded-sm" style={{ backgroundColor: c.cor }} />
+                    : <span className="w-3 border-t-2" style={{ borderColor: c.cor }} />}
+                  {c.label}
+                </span>
+              ))}
+            </div>
             <div className="h-60">
               <ResponsiveContainer width="100%" height="100%">
+                {graficoHora === 'barras' ? (
                 <BarChart data={porHora} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f4f4f5" vertical={false} />
                   <XAxis dataKey="hora" tick={{ fontSize: 10, fill: '#a1a1aa' }} axisLine={false} tickLine={false} />
@@ -296,6 +309,23 @@ export default function OrigemTab({ periodo, externalSession }: Props) {
                       radius={i === canais.length - 1 ? [4, 4, 0, 0] : undefined} />
                   ))}
                 </BarChart>
+                ) : (
+                <LineChart data={porHora} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f4f4f5" vertical={false} />
+                  <XAxis dataKey="hora" tick={{ fontSize: 10, fill: '#a1a1aa' }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fontSize: 10, fill: '#a1a1aa' }} axisLine={false} tickLine={false}
+                    tickFormatter={(v) => (v >= 1000 ? `${(v / 1000).toFixed(1)}k` : String(v))} width={36} />
+                  <Tooltip
+                    formatter={(val: number, name: string) => [fmt(val), CANAIS_HORA.find((c) => c.key === name)?.label ?? name]}
+                    labelFormatter={(label) => `Das ${label} às ${String(parseInt(label, 10) + 1).padStart(2, '0')}h`}
+                    contentStyle={{ borderRadius: 8, fontSize: 11, border: '1px solid #e4e4e7' }}
+                  />
+                  {canais.map((c) => (
+                    <Line key={c.key} type="monotone" dataKey={c.key} stroke={c.cor} strokeWidth={2}
+                      dot={false} activeDot={{ r: 4, fill: c.cor }} />
+                  ))}
+                </LineChart>
+                )}
               </ResponsiveContainer>
             </div>
           </div>
