@@ -2,7 +2,7 @@
 // fn_get_tasks (comum.carregarTarefas); "cobrar" e "recado" são um comentário pela task-write ›
 // add_comment — o comentário já avisa o responsável (notify() na Edge), sem endpoint novo.
 import { useEffect, useState } from 'react';
-import { useAuth } from '@/contexts/AuthContext';
+import { useEuTarefas } from '@/pages/tarefas/hooks/useEuTarefas';
 import type { TaskRow } from '@/pages/tarefas/hooks/useTarefas';
 import { Roteiro, useRoteiro, Opcao, OpcaoNeutra, Campo, Fim, type AcaoProps } from '../kit';
 import { COR_TAREFAS, OpcaoTarefa, atrasada, carregarTarefas, gravarTarefa, venceHoje } from './comum';
@@ -12,16 +12,17 @@ type Passo = 'carregando' | 'lista' | 'opcoes' | 'recado' | 'gravando' | 'fim';
 const primeiroNome = (nome: string) => nome.trim().split(' ')[0] || 'responsável';
 
 export default function TarefasQuePassei({ onFechar, irPara }: AcaoProps) {
-  const { user } = useAuth();
-  const tenantId = user?.tenantId ?? null;
-  const meuId = user?.id ?? null;
+  // Sem loja também (2026-09-24): quem só tem o módulo Tarefas usa com tenant nulo.
+  const eu = useEuTarefas();
+  const tenantId = eu.tenantId;
+  const meuId = eu.id;
   const r = useRoteiro();
   const [passo, setPasso] = useState<Passo>('carregando');
   const [tarefas, setTarefas] = useState<TaskRow[]>([]);
   const [alvo, setAlvo] = useState<TaskRow | null>(null);
 
   useEffect(() => {
-    if (!tenantId || !meuId) { r.bot('Sem loja ativa.'); setPasso('fim'); return; }
+    if (!eu.pronto || !meuId) return;
     (async () => {
       const { tarefas: todas, erro } = await carregarTarefas(tenantId);
       if (erro) { r.bot(`Não consegui abrir as Tarefas: ${erro}`); setPasso('fim'); return; }
@@ -32,7 +33,7 @@ export default function TarefasQuePassei({ onFechar, irPara }: AcaoProps) {
       setPasso('lista');
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [eu.pronto]);
 
   const atrasadas = tarefas.filter(atrasada);
   const hoje = tarefas.filter((t) => !atrasada(t) && venceHoje(t));
@@ -47,7 +48,7 @@ export default function TarefasQuePassei({ onFechar, irPara }: AcaoProps) {
   };
 
   const cobrar = async () => {
-    if (!alvo || !tenantId || passo !== 'opcoes') return;
+    if (!alvo || !eu.pronto || passo !== 'opcoes') return;
     r.eu('Cobrar');
     setPasso('gravando');
     const texto = `Oi, ${primeiroNome(alvo.assignee_name ?? '')}! Como está essa tarefa?`;
@@ -59,7 +60,7 @@ export default function TarefasQuePassei({ onFechar, irPara }: AcaoProps) {
   };
 
   const enviarRecado = async (texto: string) => {
-    if (!alvo || !tenantId || passo !== 'recado') return;
+    if (!alvo || !eu.pronto || passo !== 'recado') return;
     r.eu(texto);
     setPasso('gravando');
     const { erro } = await gravarTarefa(tenantId, 'add_comment', { task_id: alvo.id, body: texto });

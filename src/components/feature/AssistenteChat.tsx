@@ -311,7 +311,7 @@ function PaymentCard({ p, onAction }: { p: Payment; onAction: (p: Payment, op: '
 // Some quando já está ativa; lib/push carregada só aqui (import dinâmico).
 
 export default function AssistenteChat({ variant }: { variant: 'floating' | 'embedded' }) {
-  const { user, selectTenant } = useAuth();
+  const { user, selectTenant, hasNoTenants } = useAuth();
   const location = useLocation();
   const acesso = useAcessoAcoes();
   const navigate = useNavigate();
@@ -939,7 +939,9 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
   };
 
   // Os demais usuários (2026-09-23): só a página de ações rápidas, com o que o acesso deles permite.
-  if (!user) return null;
+  // Sem loja (só o módulo Tarefas, 2026-09-24): o AuthContext deixa user nulo — o painel aparece
+  // igual, com as ações de Tarefas e as conversas com quem divide pasta/tarefa.
+  if (!user) return hasNoTenants ? <AcoesRapidasFlutuante variant={variant} /> : null;
   if (user.email?.toLowerCase() !== ASSISTENTE_OWNER_EMAIL) return <AcoesRapidasFlutuante variant={variant} />;
 
   // Rodapé = só o que espera decisão ou está em andamento. Concluído (pago, cancelado, recusado)

@@ -14,12 +14,16 @@ const h = vi.hoisted(() => ({
   resultados: [] as Msg[],
   janela: [] as Msg[],
   lojas: [{ tenantId: 'loja-1', tenantName: 'Vila Leste', role: 'gerente' }] as Array<{ tenantId: string; tenantName: string; role: string }>,
+  // Conversas de Tarefas (2026-09-24): módulo liberado e usuário sem loja.
+  modulos: [] as string[],
+  semLoja: false,
 }));
 
 vi.mock('@/lib/supabase', () => ({
   supabase: {
     channel: () => { const c = { on: () => c, subscribe: () => c }; return c; },
     removeChannel: () => undefined,
+    auth: { getSession: async () => ({ data: { session: { user: { id: 'u-eu', email: 'eu@x.com', user_metadata: { name: 'Eu' } } } } }) },
   },
   invokeWithAuth: vi.fn(async (_fn: string, { body }: { body: Record<string, unknown> }) => {
     const action = String(body.action);
@@ -51,7 +55,12 @@ vi.mock('@/lib/supabase', () => ({
 vi.mock('@/contexts/AuthContext', () => ({
   // Como na vida real: depois de entrar numa loja, availableTenants volta VAZIO (só a tela de escolher
   // loja usa). As abas saem da loja aberta + das conversas (bug de 2026-09-24).
-  useAuth: () => ({ user: { id: 'u-eu', nome: 'Eu', tenantId: 'loja-1', loja: 'Vila Leste' }, availableTenants: [] }),
+  useAuth: () => (h.semLoja
+    ? { user: null, hasNoTenants: true, availableTenants: [] }
+    : { user: { id: 'u-eu', nome: 'Eu', tenantId: 'loja-1', loja: 'Vila Leste' }, hasNoTenants: false, availableTenants: [] }),
+}));
+vi.mock('@/hooks/useModuleAccess', () => ({
+  useModuleAccess: () => ({ modules: h.modulos, loading: false, hasModule: (m: string) => h.modulos.includes(m) }),
 }));
 
 import { useEquipeNoChat } from '@/components/feature/equipe/useEquipeNoChat';
@@ -80,6 +89,8 @@ beforeEach(() => {
   h.mensagens = [];
   h.vistos = { lido: 0, entregue: 0 };
   h.lojas = [{ tenantId: 'loja-1', tenantName: 'Vila Leste', role: 'gerente' }];
+  h.modulos = [];
+  h.semLoja = false;
 });
 
 describe('Conversas com a equipe', () => {
@@ -310,5 +321,37 @@ describe('Abas por loja sem conversa em outra loja', () => {
     await user.click(await screen.findByText('Oi de Paranaguá'));
     const cabecalho = (await screen.findByRole('button', { name: 'Voltar para as conversas' })).parentElement!;
     expect(within(cabecalho).getByText('El Patron Paranaguá')).toBeInTheDocument();
+  });
+});
+
+describe('Conversas de Tarefas (quem divide pasta ou tarefa)', () => {
+  it('sem loja: só a aba Tarefas, e a Nova conversa abre com tenant "tarefas"', async () => {
+    h.semLoja = true;
+    h.modulos = ['tarefas'];
+    const user = userEvent.setup();
+    renderPainel();
+    // Uma aba só: sem a fileira de abas.
+    expect(screen.queryByRole('tablist', { name: 'Loja das conversas' })).not.toBeInTheDocument();
+    await user.click((await screen.findAllByRole('button', { name: /Nova conversa/ }))[0]);
+    expect(await screen.findByText('Quem divide pastas ou tarefas com você')).toBeInTheDocument();
+    expect(h.chamadas.find((c) => c.action === 'colegas')?.body).toMatchObject({ tenant_id: 'tarefas' });
+    await user.click(await screen.findByText('Ana Souza'));
+    expect(h.chamadas.find((c) => c.action === 'abrir')?.body).toMatchObject({ tenant_id: 'tarefas', user_id: 'u-ana' });
+  });
+
+  it('com loja e módulo Tarefas: aba da loja + aba Tarefas, cada uma com as suas conversas', async () => {
+    h.modulos = ['tarefas'];
+    h.conversas = [
+      conversa({ ultima: { id: 5, minha: false, texto: 'Da loja', created_at: agora() } }),
+      conversa({ thread_id: 't-bia', tenant_id: 'tarefas', loja: 'Tarefas', pessoa: { id: 'u-bia', nome: 'Beatriz', foto: null },
+        nao_lidas: 1, ultima: { id: 6, minha: false, texto: 'Da pasta', created_at: agora() } }),
+    ];
+    const user = userEvent.setup();
+    renderPainel();
+    expect(await screen.findByText('Da loja')).toBeInTheDocument();
+    expect(screen.queryByText('Da pasta')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('tab', { name: /Tarefas/ }));
+    expect(await screen.findByText('Da pasta')).toBeInTheDocument();
+    expect(screen.queryByText('Da loja')).not.toBeInTheDocument();
   });
 });

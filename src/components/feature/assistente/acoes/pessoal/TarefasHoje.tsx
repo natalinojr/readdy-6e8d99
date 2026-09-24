@@ -6,7 +6,7 @@
 // 2026-09-23: tocar a tarefa abre o que dá para fazer com ela — concluir, cronômetro (start_timer /
 // stop_timer) e adiar (update_task due_date, mantendo o horário). Escolher "Concluir" já é a confirmação.
 import { useEffect, useState } from 'react';
-import { useAuth } from '@/contexts/AuthContext';
+import { useEuTarefas } from '@/pages/tarefas/hooks/useEuTarefas';
 import { dateKeyBrasilia, todayBrasilia } from '@/lib/dateUtils';
 import type { TaskRow } from '@/pages/tarefas/hooks/useTarefas';
 import { formatarRelogio, useAgora } from '@/pages/tarefas/lib/tempo';
@@ -16,9 +16,10 @@ import { carregarTarefas, gravarTarefa, novoPrazo, rotuloPrazo } from '../tarefa
 type Passo = 'carregando' | 'lista' | 'acoes' | 'outra_data' | 'gravando' | 'fim';
 
 export default function TarefasHoje({ onFechar, irPara }: AcaoProps) {
-  const { user } = useAuth();
-  const tenantId = user?.tenantId ?? null;
-  const meuId = user?.id ?? null;
+  // Sem loja também (2026-09-24): quem só tem o módulo Tarefas usa com tenant nulo.
+  const eu = useEuTarefas();
+  const tenantId = eu.tenantId;
+  const meuId = eu.id;
   const r = useRoteiro();
   const [passo, setPasso] = useState<Passo>('carregando');
   const [tarefas, setTarefas] = useState<TaskRow[]>([]);
@@ -29,7 +30,7 @@ export default function TarefasHoje({ onFechar, irPara }: AcaoProps) {
   const agora = useAgora(!!rodando);
 
   useEffect(() => {
-    if (!tenantId || !meuId) { r.bot('Sem loja ativa.'); setPasso('fim'); return; }
+    if (!eu.pronto || !meuId) return;
     (async () => {
       const { tarefas: abertas, erro } = await carregarTarefas(tenantId);
       if (erro) { r.bot(`Não consegui abrir as Tarefas: ${erro}`); setPasso('fim'); return; }
@@ -45,7 +46,7 @@ export default function TarefasHoje({ onFechar, irPara }: AcaoProps) {
       setPasso('lista');
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [eu.pronto]);
 
   const abrir = (t: TaskRow) => {
     setAlvo(t);
@@ -56,7 +57,7 @@ export default function TarefasHoje({ onFechar, irPara }: AcaoProps) {
   const voltar = () => { setAlvo(null); setPasso('lista'); };
 
   const concluir = async () => {
-    if (!alvo || !tenantId || passo !== 'acoes') return;
+    if (!alvo || !eu.pronto || passo !== 'acoes') return;
     const t = alvo;
     r.eu('Concluir');
     setPasso('gravando');
@@ -72,7 +73,7 @@ export default function TarefasHoje({ onFechar, irPara }: AcaoProps) {
   };
 
   const cronometro = async () => {
-    if (!alvo || !tenantId || passo !== 'acoes') return;
+    if (!alvo || !eu.pronto || passo !== 'acoes') return;
     const t = alvo;
     const parar = !!t.timer_started_at;
     r.eu(parar ? '⏹ Parar cronômetro' : '▶ Iniciar cronômetro');
@@ -95,7 +96,7 @@ export default function TarefasHoje({ onFechar, irPara }: AcaoProps) {
   };
 
   const adiar = async (dia: string) => {
-    if (!alvo || !tenantId || (passo !== 'acoes' && passo !== 'outra_data')) return;
+    if (!alvo || !eu.pronto || (passo !== 'acoes' && passo !== 'outra_data')) return;
     const t = alvo;
     if (dia < todayBrasilia()) { r.bot('Escolha hoje ou uma data depois.'); return; }
     r.eu(`Adiar para ${dataBR(dia)}`);

@@ -2,7 +2,7 @@
 // da janela da tarefa: task-write › update_task { assignee_id } (a Edge já notifica quem recebeu) e,
 // opcionalmente, add_comment { body } com um recado — notify() do add_comment avisa o novo responsável.
 import { useEffect, useState } from 'react';
-import { useAuth } from '@/contexts/AuthContext';
+import { useEuTarefas } from '@/pages/tarefas/hooks/useEuTarefas';
 import type { TaskRow } from '@/pages/tarefas/hooks/useTarefas';
 import { Roteiro, useRoteiro, Opcao, OpcaoNeutra, Campo, Fim, type AcaoProps } from '../kit';
 import { BuscaTarefa, COR_TAREFAS, OpcaoTarefa, Pessoa, carregarEquipe, carregarTarefas, gravarTarefa, ordenarPorPrazo, ListaPorPasta } from './comum';
@@ -12,9 +12,10 @@ type Passo = 'carregando' | 'lista' | 'pessoa' | 'confirmar' | 'gravando' | 'rec
 const primeiroNome = (nome: string) => nome.trim().split(' ')[0] || 'responsável';
 
 export default function PassarTarefa({ onFechar, irPara }: AcaoProps) {
-  const { user } = useAuth();
-  const tenantId = user?.tenantId ?? null;
-  const meuId = user?.id ?? null;
+  // Sem loja também (2026-09-24): quem só tem o módulo Tarefas usa com tenant nulo.
+  const eu = useEuTarefas();
+  const tenantId = eu.tenantId;
+  const meuId = eu.id;
   const r = useRoteiro();
   const [passo, setPasso] = useState<Passo>('carregando');
   const [tarefas, setTarefas] = useState<TaskRow[]>([]);
@@ -24,10 +25,10 @@ export default function PassarTarefa({ onFechar, irPara }: AcaoProps) {
   const [destino, setDestino] = useState<Pessoa | null>(null);
 
   useEffect(() => {
-    if (!tenantId || !meuId) { r.bot('Sem loja ativa.'); setPasso('fim'); return; }
+    if (!eu.pronto || !meuId) return;
     (async () => {
       const [{ tarefas: todas, erro }, { pessoas: equipe, erro: erroEquipe }] = await Promise.all([
-        carregarTarefas(tenantId), carregarEquipe(tenantId, user ? { id: user.id, nome: user.nome } : null),
+        carregarTarefas(tenantId), carregarEquipe(tenantId, eu.id ? { id: eu.id, nome: eu.nome } : null),
       ]);
       if (erro) { r.bot(`Não consegui abrir as Tarefas: ${erro}`); setPasso('fim'); return; }
       if (erroEquipe) { r.bot(`Não consegui abrir a equipe: ${erroEquipe}`); setPasso('fim'); return; }
@@ -39,7 +40,7 @@ export default function PassarTarefa({ onFechar, irPara }: AcaoProps) {
       setPasso('lista');
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [eu.pronto]);
 
   const escolherTarefa = (t: TaskRow) => {
     setAlvo(t);
@@ -57,7 +58,7 @@ export default function PassarTarefa({ onFechar, irPara }: AcaoProps) {
   };
 
   const passar = async () => {
-    if (!alvo || !destino || !tenantId || passo !== 'confirmar') return;
+    if (!alvo || !destino || !eu.pronto || passo !== 'confirmar') return;
     r.eu('Confirmar');
     setPasso('gravando');
     const { erro } = await gravarTarefa(tenantId, 'update_task', { task_id: alvo.id, assignee_id: destino.id });
@@ -69,7 +70,7 @@ export default function PassarTarefa({ onFechar, irPara }: AcaoProps) {
   };
 
   const enviarRecado = async (texto: string) => {
-    if (!alvo || !tenantId || passo !== 'recado') return;
+    if (!alvo || !eu.pronto || passo !== 'recado') return;
     r.eu(texto);
     setPasso('gravando_recado');
     const { erro } = await gravarTarefa(tenantId, 'add_comment', { task_id: alvo.id, body: texto });

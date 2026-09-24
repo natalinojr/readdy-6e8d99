@@ -4,7 +4,7 @@
 // por isso carrega também as concluídas. Alcance = fn_get_tasks (minhas pastas, compartilhadas, comigo).
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
-import { useAuth } from '@/contexts/AuthContext';
+import { useEuTarefas } from '@/pages/tarefas/hooks/useEuTarefas';
 import type { TaskRow } from '@/pages/tarefas/hooks/useTarefas';
 import { CAPACIDADE_PADRAO, chaveDia, calcularCarga, type Capacidade, type ResultadoCarga } from '@/pages/tarefas/lib/carga';
 import { formatarDuracao, formatarHoras } from '@/pages/tarefas/lib/tempo';
@@ -24,8 +24,9 @@ function corLinha(minutos: number, capHoras: number): { barra: string; texto: st
 }
 
 export default function CargaEquipe({ onFechar, irPara }: AcaoProps) {
-  const { user } = useAuth();
-  const tenantId = user?.tenantId ?? null;
+  // Sem loja também (2026-09-24): quem só tem o módulo Tarefas usa com tenant nulo.
+  const eu = useEuTarefas();
+  const tenantId = eu.tenantId;
   const r = useRoteiro();
   const [passo, setPasso] = useState<Passo>('carregando');
   const [carga, setCarga] = useState<ResultadoCarga | null>(null);
@@ -36,11 +37,11 @@ export default function CargaEquipe({ onFechar, irPara }: AcaoProps) {
   const hojeChave = chaveDia(hoje);
 
   useEffect(() => {
-    if (!tenantId) { r.bot('Sem loja ativa.'); setPasso('fim'); return; }
+    if (!eu.pronto) return;
     (async () => {
       const [{ tarefas: todas, erro }, { pessoas: equipe }] = await Promise.all([
         carregarTarefas(tenantId, true),
-        carregarEquipe(tenantId, user ? { id: user.id, nome: user.nome } : null),
+        carregarEquipe(tenantId, eu.id ? { id: eu.id, nome: eu.nome } : null),
       ]);
       if (erro) { r.bot(`Não consegui abrir as Tarefas: ${erro}`); setPasso('fim'); return; }
       setTarefas(todas);
@@ -88,7 +89,7 @@ export default function CargaEquipe({ onFechar, irPara }: AcaoProps) {
       setPasso('painel');
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [eu.pronto]);
 
   const verPessoa = (l: Linha) => {
     setPessoa(l);

@@ -3,7 +3,7 @@
 // update_task (pra oferecer concluir quando tudo fica marcado).
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
-import { useAuth } from '@/contexts/AuthContext';
+import { useEuTarefas } from '@/pages/tarefas/hooks/useEuTarefas';
 import type { ChecklistItem, TaskDetail, TaskRow } from '@/pages/tarefas/hooks/useTarefas';
 import { Campo, Fim, Opcao, OpcaoNeutra, Roteiro, useRoteiro, type AcaoProps } from '../kit';
 import { COR_TAREFAS, OpcaoTarefa, carregarTarefas, gravarTarefa, ordenarPorPrazo, ListaPorPasta } from './comum';
@@ -11,9 +11,10 @@ import { COR_TAREFAS, OpcaoTarefa, carregarTarefas, gravarTarefa, ordenarPorPraz
 type Passo = 'carregando' | 'lista' | 'abrindo' | 'checklist' | 'adicionando' | 'gravando' | 'fim';
 
 export default function ChecklistTarefa({ onFechar, irPara }: AcaoProps) {
-  const { user } = useAuth();
-  const tenantId = user?.tenantId ?? null;
-  const meuId = user?.id ?? null;
+  // Sem loja também (2026-09-24): quem só tem o módulo Tarefas usa com tenant nulo.
+  const eu = useEuTarefas();
+  const tenantId = eu.tenantId;
+  const meuId = eu.id;
   const r = useRoteiro();
   const [passo, setPasso] = useState<Passo>('carregando');
   const [tarefas, setTarefas] = useState<TaskRow[]>([]);
@@ -22,7 +23,7 @@ export default function ChecklistTarefa({ onFechar, irPara }: AcaoProps) {
   const [ocupado, setOcupado] = useState<string | null>(null); // item_id em gravação
 
   useEffect(() => {
-    if (!tenantId || !meuId) { r.bot('Sem loja ativa.'); setPasso('fim'); return; }
+    if (!eu.pronto || !meuId) return;
     (async () => {
       const { tarefas: todas, erro } = await carregarTarefas(tenantId);
       if (erro) { r.bot(`Não consegui abrir as Tarefas: ${erro}`); setPasso('fim'); return; }
@@ -35,10 +36,10 @@ export default function ChecklistTarefa({ onFechar, irPara }: AcaoProps) {
       setPasso('lista');
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [eu.pronto]);
 
   const abrir = async (t: TaskRow) => {
-    if (!tenantId || passo !== 'lista') return;
+    if (!eu.pronto || passo !== 'lista') return;
     setAlvo(t);
     r.eu(t.title);
     setPasso('abrindo');
@@ -51,7 +52,7 @@ export default function ChecklistTarefa({ onFechar, irPara }: AcaoProps) {
   };
 
   const alternar = async (item: ChecklistItem) => {
-    if (!tenantId || ocupado) return;
+    if (!eu.pronto || ocupado) return;
     setOcupado(item.id);
     const { erro } = await gravarTarefa(tenantId, 'update_checklist_item', { item_id: item.id, is_done: !item.is_done });
     setOcupado(null);
@@ -60,7 +61,7 @@ export default function ChecklistTarefa({ onFechar, irPara }: AcaoProps) {
   };
 
   const adicionar = async (titulo: string) => {
-    if (!tenantId || !alvo || passo !== 'adicionando') return;
+    if (!eu.pronto || !alvo || passo !== 'adicionando') return;
     setPasso('gravando');
     const { erro, data } = await gravarTarefa<{ success?: boolean; id?: string }>(tenantId, 'add_checklist_item', { task_id: alvo.id, title: titulo });
     if (erro) { r.bot(`❌ Não consegui adicionar: ${erro}.`); setPasso('checklist'); return; }
@@ -69,7 +70,7 @@ export default function ChecklistTarefa({ onFechar, irPara }: AcaoProps) {
   };
 
   const concluirTarefa = async () => {
-    if (!tenantId || !alvo || passo !== 'checklist') return;
+    if (!eu.pronto || !alvo || passo !== 'checklist') return;
     setPasso('gravando');
     const { erro } = await gravarTarefa(tenantId, 'update_task', { task_id: alvo.id, status_category: 'done' });
     if (erro) { r.bot(`❌ Não consegui concluir: ${erro}.`); setPasso('checklist'); return; }

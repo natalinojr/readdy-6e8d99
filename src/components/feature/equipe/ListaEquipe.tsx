@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useVoltarFecha } from '@/lib/voltarAndroid';
 import BotaoAvisos from '@/components/feature/BotaoAvisos';
-import { chatEquipe, horaCurta, type ConversaResumo, type PessoaEquipe } from './api';
+import { chatEquipe, horaCurta, ESCOPO_TAREFAS, type ConversaResumo, type PessoaEquipe } from './api';
 import { AvatarPessoa, estadoVisto, Vistos } from './ConversaEquipe';
 
 export interface ConversaAberta { threadId: string; pessoa: PessoaEquipe | null; loja?: string }
@@ -26,7 +26,7 @@ export function ListaEquipe({ conversas, onAbrir, onNova, lojas, lojaSel, onLoja
         <p className="flex-1 text-[11px] font-bold uppercase tracking-wide text-zinc-400">Equipe</p>
         {/* Aviso no celular quando chega mensagem (2026-09-24): sem este aparelho inscrito o send-push não
             tem para onde mandar — quem não é o dono não tinha onde ligar. Some quando já está ativo. */}
-        <BotaoAvisos tenantId={lojaSel} titulo="Receber aviso no celular quando chegar mensagem" />
+        <BotaoAvisos tenantId={lojaSel === ESCOPO_TAREFAS ? null : lojaSel} titulo="Receber aviso no celular quando chegar mensagem" />
         <button onClick={onNova} className="flex items-center gap-1 text-xs font-bold text-sky-700 hover:text-sky-600 cursor-pointer">
           <i className="ri-chat-new-line text-base" /> Nova conversa
         </button>
@@ -36,7 +36,7 @@ export function ListaEquipe({ conversas, onAbrir, onNova, lojas, lojaSel, onLoja
           {lojas.map((l) => (
             <button key={l.id} role="tab" aria-selected={l.id === lojaSel} onClick={() => onLoja(l.id)}
               className={`flex-shrink-0 flex items-center gap-1.5 h-8 px-3 rounded-full text-xs font-semibold border cursor-pointer ${l.id === lojaSel ? 'bg-sky-600 border-sky-600 text-white' : 'bg-white border-zinc-200 text-zinc-600 hover:bg-zinc-50'}`}>
-              <i className="ri-store-2-line" /> {l.nome}
+              <i className={l.id === ESCOPO_TAREFAS ? 'ri-task-line' : 'ri-store-2-line'} /> {l.nome}
               {l.naoLidas > 0 && (
                 <span className={`min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full text-[10px] font-black ${l.id === lojaSel ? 'bg-white text-sky-700' : 'bg-red-500 text-white'}`}
                   aria-label={`${l.naoLidas} não lida(s) em ${l.nome}`}>
@@ -49,7 +49,7 @@ export function ListaEquipe({ conversas, onAbrir, onNova, lojas, lojaSel, onLoja
       )}
       {conversas.length === 0 && (
         <button onClick={onNova} className="w-full px-4 py-3 text-left text-xs text-zinc-400 border-b border-zinc-100 hover:bg-zinc-50 cursor-pointer">
-          Fale com alguém da loja: toque em <b className="text-sky-700">Nova conversa</b>.
+          {lojaSel === ESCOPO_TAREFAS ? 'Fale com quem divide pastas ou tarefas com você' : 'Fale com alguém da loja'}: toque em <b className="text-sky-700">Nova conversa</b>.
         </button>
       )}
       {conversas.map((c) => {
@@ -102,6 +102,7 @@ export function NovaConversaEquipe({ loja, nomeLoja, onEscolher, onVoltar }: {
   const [abrindo, setAbrindo] = useState<string | null>(null);
 
   useVoltarFecha(true, onVoltar, 'chat-equipe-nova');
+  const tarefas = loja === ESCOPO_TAREFAS;
 
   useEffect(() => {
     if (!loja) return;
@@ -135,7 +136,7 @@ export function NovaConversaEquipe({ loja, nomeLoja, onEscolher, onVoltar }: {
         </button>
         <div className="flex-1 min-w-0">
           <p className="text-sm font-black text-zinc-900 leading-tight">Nova conversa</p>
-          <p className="text-[11px] text-zinc-400 leading-tight truncate">Pessoas da loja {nomeLoja ?? ''}</p>
+          <p className="text-[11px] text-zinc-400 leading-tight truncate">{tarefas ? 'Quem divide pastas ou tarefas com você' : `Pessoas da loja ${nomeLoja ?? ''}`}</p>
         </div>
       </div>
       <div className="px-3 pt-3 pb-2 space-y-2 flex-shrink-0">
@@ -150,7 +151,7 @@ export function NovaConversaEquipe({ loja, nomeLoja, onEscolher, onVoltar }: {
         {erro && <p className="mx-3 my-2 px-3 py-2 rounded-xl text-xs text-red-600 bg-red-50 border border-red-100">{erro}</p>}
         {colegas === null && !erro && <div className="mx-auto my-12 w-6 h-6 border-2 border-sky-500 border-t-transparent rounded-full animate-spin" />}
         {colegas !== null && lista.length === 0 && (
-          <p className="text-sm text-zinc-400 text-center py-10">{colegas.length ? 'Ninguém com esse nome.' : 'Ainda não há outras pessoas nesta loja.'}</p>
+          <p className="text-sm text-zinc-400 text-center py-10">{colegas.length ? 'Ninguém com esse nome.' : tarefas ? 'Ninguém divide pasta ou tarefa com você ainda.' : 'Ainda não há outras pessoas nesta loja.'}</p>
         )}
         {lista.map((p) => (
           <button key={p.id} onClick={() => escolher(p)} disabled={!!abrindo}

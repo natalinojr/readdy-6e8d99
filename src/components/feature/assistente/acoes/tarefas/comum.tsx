@@ -8,7 +8,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { supabase } from '@/lib/supabase';
 import { dateKeyBrasilia, todayBrasilia } from '@/lib/dateUtils';
-import { useAuth } from '@/contexts/AuthContext';
+import { useEuTarefas } from '@/pages/tarefas/hooks/useEuTarefas';
 import type { TaskList, TaskRow } from '@/pages/tarefas/hooks/useTarefas';
 import { Opcao, OpcaoNeutra, dataBR, horaBR, invokeUmaVez, somaDias } from '../kit';
 
@@ -17,7 +17,7 @@ export const COR_TAREFAS = 'bg-indigo-50 text-indigo-600';
 export const aberta = (t: TaskRow) => t.status_category !== 'done' && t.status_category !== 'cancelled';
 
 /** Tarefas abertas (e não arquivadas) da loja ativa que eu enxergo. `incluirConcluidas` traz também as fechadas (Carga). */
-export async function carregarTarefas(tenantId: string, incluirConcluidas = false): Promise<{ tarefas: TaskRow[]; erro: string | null }> {
+export async function carregarTarefas(tenantId: string | null, incluirConcluidas = false): Promise<{ tarefas: TaskRow[]; erro: string | null }> {
   const { data, error } = await supabase.rpc('fn_get_tasks', { p_tenant_id: tenantId });
   if (error) return { tarefas: [], erro: error.message };
   const todas = (data as TaskRow[]) ?? [];
@@ -27,12 +27,15 @@ export async function carregarTarefas(tenantId: string, incluirConcluidas = fals
 export interface Pessoa { id: string; nome: string }
 
 /** Equipe ativa da loja (mesma lista do seletor de responsável da tela Tarefas).
- *  `eu` entra sempre: fn_get_users_list esconde o dono da plataforma. */
-export async function carregarEquipe(tenantId: string, eu?: Pessoa | null): Promise<{ pessoas: Pessoa[]; erro: string | null }> {
-  const { data, error } = await supabase.rpc('fn_get_users_list', { p_tenant_id: tenantId });
+ *  `eu` entra sempre: fn_get_users_list esconde o dono da plataforma.
+ *  Sem loja (2026-09-24): fn_get_task_pessoas, a lista que a tela Tarefas usa (quem tem Tarefas). */
+export async function carregarEquipe(tenantId: string | null, eu?: Pessoa | null): Promise<{ pessoas: Pessoa[]; erro: string | null }> {
+  const { data, error } = tenantId
+    ? await supabase.rpc('fn_get_users_list', { p_tenant_id: tenantId })
+    : await supabase.rpc('fn_get_task_pessoas');
   if (error) return { pessoas: [], erro: error.message };
-  const pessoas = ((data as Array<{ id: string; nome: string; ativo: boolean }>) ?? [])
-    .filter((u) => u.ativo)
+  const pessoas = ((data as Array<{ id: string; nome: string; ativo?: boolean }>) ?? [])
+    .filter((u) => u.ativo !== false)
     .map((u) => ({ id: u.id, nome: u.nome }));
   if (eu && !pessoas.some((p) => p.id === eu.id)) pessoas.push({ id: eu.id, nome: eu.nome || 'Eu' });
   pessoas.sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
@@ -84,7 +87,7 @@ export function proximaSegunda(): string {
 type Resposta = { success?: boolean; error?: string } & Record<string, unknown>;
 
 /** Uma gravação na task-write. Devolve a mensagem de erro (ou null se deu certo) e o retorno. */
-export async function gravarTarefa<T extends Resposta = Resposta>(tenantId: string, action: string, corpo: Record<string, unknown>): Promise<{ erro: string | null; data: T | null }> {
+export async function gravarTarefa<T extends Resposta = Resposta>(tenantId: string | null, action: string, corpo: Record<string, unknown>): Promise<{ erro: string | null; data: T | null }> {
   const { data, error } = await invokeUmaVez<T>('task-write', { body: { action, active_tenant_id: tenantId, ...corpo } });
   if (error || !data?.success) return { erro: data?.error ?? error?.message ?? 'erro desconhecido', data };
   return { erro: null, data };
@@ -135,23 +138,23 @@ export function ListaPorPasta({ tarefas, renderTarefa }: {
   tarefas: TaskRow[];
   renderTarefa: (t: TaskRow) => ReactNode;
 }) {
-  const { user } = useAuth();
-  const tenantId = user?.tenantId ?? null;
+  const eu = useEuTarefas();
+  const tenantId = eu.tenantId;
   const [listas, setListas] = useState<TaskList[] | null>(null);
   const [pastaId, setPastaId] = useState<string | null>(null);
   const [busca, setBusca] = useState('');
 
   useEffect(() => {
+    if (!eu.pronto) return;
     let vivo = true;
     (async () => {
-      const { data, error } = tenantId
-        ? await supabase.rpc('fn_get_task_lists', { p_tenant_id: tenantId })
-        : { data: null, error: null };
+      // Sem loja o tenant vai nulo (o banco aceita para quem tem o módulo, 2026-09-24).
+      const { data, error } = await supabase.rpc('fn_get_task_lists', { p_tenant_id: tenantId });
       // Sem a árvore (erro), cada pasta das tarefas vira pasta-mãe — ainda dá para escolher.
       if (vivo) setListas(!error && Array.isArray(data) ? (data as TaskList[]) : []);
     })();
     return () => { vivo = false; };
-  }, [tenantId]);
+  }, [eu.pronto, tenantId]);
 
   const arvore = useMemo(() => {
     const nos = new Map<string, NoPastaNav>();

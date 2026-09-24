@@ -2,7 +2,7 @@
 // task-write › start_timer / stop_timer. Um cronômetro por pessoa: iniciar noutra tarefa encerra o
 // que estava rodando (a Edge faz isso e devolve stopped_task_id). O rodando aparece no topo, contando.
 import { useEffect, useState } from 'react';
-import { useAuth } from '@/contexts/AuthContext';
+import { useEuTarefas } from '@/pages/tarefas/hooks/useEuTarefas';
 import type { TaskRow } from '@/pages/tarefas/hooks/useTarefas';
 import { formatarDuracao, formatarRelogio, segundosRegistrados, useAgora } from '@/pages/tarefas/lib/tempo';
 import { Roteiro, useRoteiro, Opcao, OpcaoNeutra, Fim, type AcaoProps } from '../kit';
@@ -11,9 +11,10 @@ import { COR_TAREFAS, OpcaoTarefa, carregarTarefas, gravarTarefa, minha, ordenar
 type Passo = 'carregando' | 'lista' | 'gravando' | 'fim';
 
 export default function Cronometro({ onFechar, irPara }: AcaoProps) {
-  const { user } = useAuth();
-  const tenantId = user?.tenantId ?? null;
-  const meuId = user?.id ?? null;
+  // Sem loja também (2026-09-24): quem só tem o módulo Tarefas usa com tenant nulo.
+  const eu = useEuTarefas();
+  const tenantId = eu.tenantId;
+  const meuId = eu.id;
   const r = useRoteiro();
   const [passo, setPasso] = useState<Passo>('carregando');
   const [tarefas, setTarefas] = useState<TaskRow[]>([]);
@@ -21,7 +22,7 @@ export default function Cronometro({ onFechar, irPara }: AcaoProps) {
   const agora = useAgora(!!rodando);
 
   useEffect(() => {
-    if (!tenantId || !meuId) { r.bot('Sem loja ativa.'); setPasso('fim'); return; }
+    if (!eu.pronto || !meuId) return;
     (async () => {
       const { tarefas: todas, erro } = await carregarTarefas(tenantId);
       if (erro) { r.bot(`Não consegui abrir as Tarefas: ${erro}`); setPasso('fim'); return; }
@@ -34,10 +35,10 @@ export default function Cronometro({ onFechar, irPara }: AcaoProps) {
       setPasso('lista');
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [eu.pronto]);
 
   const iniciar = async (t: TaskRow) => {
-    if (!tenantId || passo !== 'lista') return;
+    if (!eu.pronto || passo !== 'lista') return;
     r.eu(`▶ ${t.title}`);
     setPasso('gravando');
     const { erro, data } = await gravarTarefa<{ success?: boolean; stopped_task_id?: string | null }>(tenantId, 'start_timer', { task_id: t.id });
@@ -54,7 +55,7 @@ export default function Cronometro({ onFechar, irPara }: AcaoProps) {
   };
 
   const parar = async () => {
-    if (!tenantId || !rodando || passo !== 'lista') return;
+    if (!eu.pronto || !rodando || passo !== 'lista') return;
     r.eu('⏹ Parar');
     setPasso('gravando');
     const { erro, data } = await gravarTarefa<{ success?: boolean; seconds?: number }>(tenantId, 'stop_timer', {});

@@ -6,6 +6,9 @@
 import { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
+import { useModuleAccess } from '@/hooks/useModuleAccess';
+import { useEuTarefas } from '@/pages/tarefas/hooks/useEuTarefas';
+import { ESCOPO_TAREFAS } from './api';
 import ConversaEquipe from './ConversaEquipe';
 import { ListaEquipe, NovaConversaEquipe, type ConversaAberta, type LojaEquipe } from './ListaEquipe';
 import { useConversasEquipe } from './useConversasEquipe';
@@ -18,10 +21,14 @@ export function useEquipeNoChat({ ativo = true, abrirPainel, fecharPainel }: {
   fecharPainel?: () => void;
 }) {
   const { user } = useAuth();
-  const { conversas, naoLidas, recarregar } = useConversasEquipe(ativo ? user?.id : undefined);
+  // Sem loja o user do AuthContext é nulo: o id vem da sessão (useEuTarefas, 2026-09-24).
+  const eu = useEuTarefas();
+  const { hasModule } = useModuleAccess();
+  const { conversas, naoLidas, recarregar } = useConversasEquipe(ativo ? (user?.id ?? eu.id ?? undefined) : undefined);
   const [aberta, setAberta] = useState<ConversaAberta | null>(null);
   const [nova, setNova] = useState(false);
-  const lojaAtiva = user?.tenantId ?? '';
+  // Sem loja, a única aba é Tarefas.
+  const lojaAtiva = user?.tenantId ?? (hasModule('tarefas') ? ESCOPO_TAREFAS : '');
   const [lojaSel, setLojaSel] = useState(lojaAtiva);
   // Trocou de loja no ERPOS: a lista acompanha.
   useEffect(() => { if (lojaAtiva) setLojaSel(lojaAtiva); }, [lojaAtiva]);
@@ -60,7 +67,9 @@ export function useEquipeNoChat({ ativo = true, abrirPainel, fecharPainel }: {
     const l = lojas.find((x) => x.id === id);
     if (l) { l.naoLidas += n; if (!l.nome && nome) l.nome = nome; } else lojas.push({ id, nome, naoLidas: n });
   };
-  if (lojaAtiva) somar(lojaAtiva, user?.loja ?? '', 0);
+  if (lojaAtiva) somar(lojaAtiva, lojaAtiva === ESCOPO_TAREFAS ? 'Tarefas' : (user?.loja ?? ''), 0);
+  // Quem tem Tarefas ganha a aba Tarefas: conversa com quem divide pasta/tarefa, mesmo sem loja em comum.
+  if (hasModule('tarefas')) somar(ESCOPO_TAREFAS, 'Tarefas', 0);
   for (const c of conversas) if (c.tenant_id) somar(c.tenant_id, c.loja, c.nao_lidas);
   for (const l of lojas) if (!l.nome) l.nome = 'Loja';
   const multiLoja = lojas.length > 1;

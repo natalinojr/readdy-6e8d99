@@ -96,8 +96,11 @@ export function acaoLiberada(id: string, c: ContextoAcesso): boolean {
 
 /** Contexto de acesso do usuário logado. `carregando` = permissões/módulos ainda chegando. */
 export function useAcessoAcoes(): ContextoAcesso & { carregando: boolean } {
-  const { user } = useAuth();
+  const { user, hasNoTenants } = useAuth();
   const { hasPermissao, loading } = usePermissoes();
   const { hasModule, loading: carregandoModulos } = useModuleAccess();
+  // Sem loja (só módulo, 2026-09-24): nenhuma permissão de loja. Sem isto o usePermissoes cai no
+  // padrão do papel "caixa" e mostraria ações de caixa/cozinha para quem só tem Tarefas.
+  if (!user && hasNoTenants) return { perfil: null, pode: () => false, modulo: hasModule, carregando: carregandoModulos };
   return { perfil: user?.perfil ?? null, pode: hasPermissao, modulo: hasModule, carregando: loading || carregandoModulos };
 }

@@ -2,7 +2,7 @@
 // janela da tarefa: task-write › add_time_entry. O backend só grava terminando AGORA (started_at
 // = agora − minutos), então não dá para escolher outro dia — não oferecemos essa opção.
 import { useEffect, useState } from 'react';
-import { useAuth } from '@/contexts/AuthContext';
+import { useEuTarefas } from '@/pages/tarefas/hooks/useEuTarefas';
 import type { TaskRow } from '@/pages/tarefas/hooks/useTarefas';
 import { formatarDuracao, lerDuracao, segundosRegistrados } from '@/pages/tarefas/lib/tempo';
 import { Campo, Fim, Opcao, OpcaoNeutra, Roteiro, useRoteiro, type AcaoProps } from '../kit';
@@ -13,16 +13,17 @@ type Passo = 'carregando' | 'lista' | 'quanto' | 'gravando' | 'fim';
 const ATALHOS = [15, 30, 60, 120];
 
 export default function ApontarHoras({ onFechar, irPara }: AcaoProps) {
-  const { user } = useAuth();
-  const tenantId = user?.tenantId ?? null;
-  const meuId = user?.id ?? null;
+  // Sem loja também (2026-09-24): quem só tem o módulo Tarefas usa com tenant nulo.
+  const eu = useEuTarefas();
+  const tenantId = eu.tenantId;
+  const meuId = eu.id;
   const r = useRoteiro();
   const [passo, setPasso] = useState<Passo>('carregando');
   const [tarefas, setTarefas] = useState<TaskRow[]>([]);
   const [alvo, setAlvo] = useState<TaskRow | null>(null);
 
   useEffect(() => {
-    if (!tenantId || !meuId) { r.bot('Sem loja ativa.'); setPasso('fim'); return; }
+    if (!eu.pronto || !meuId) return;
     (async () => {
       const { tarefas: todas, erro } = await carregarTarefas(tenantId);
       if (erro) { r.bot(`Não consegui abrir as Tarefas: ${erro}`); setPasso('fim'); return; }
@@ -33,7 +34,7 @@ export default function ApontarHoras({ onFechar, irPara }: AcaoProps) {
       setPasso('lista');
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [eu.pronto]);
 
   const escolher = (t: TaskRow) => {
     setAlvo(t);
@@ -43,7 +44,7 @@ export default function ApontarHoras({ onFechar, irPara }: AcaoProps) {
   };
 
   const registrar = async (minutos: number) => {
-    if (!tenantId || !alvo || passo !== 'quanto') return;
+    if (!eu.pronto || !alvo || passo !== 'quanto') return;
     r.eu(formatarDuracao(minutos * 60));
     setPasso('gravando');
     const { erro } = await gravarTarefa(tenantId, 'add_time_entry', { task_id: alvo.id, minutes: minutos });

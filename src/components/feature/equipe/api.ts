@@ -30,6 +30,10 @@ export async function chatEquipe<T>(action: string, extra: Record<string, unknow
   throw new Error(data?.error ?? error?.message ?? 'Não foi possível falar com o servidor.');
 }
 
+/** Conversas de Tarefas (2026-09-24): sem loja — com quem divide pasta ou tarefa comigo. A Edge usa
+ * este valor no lugar do tenant_id (a conversa fica com tenant_id nulo no banco). */
+export const ESCOPO_TAREFAS = 'tarefas';
+
 /** Evento de janela: mensagem nova chegou pelo Realtime (a conversa aberta escuta). */
 export const EVENTO_MSG_EQUIPE = 'erpos:chat-equipe-msg';
 /** Evento de janela: a outra pessoa recebeu/leu (linha de chat_participants pelo Realtime). */

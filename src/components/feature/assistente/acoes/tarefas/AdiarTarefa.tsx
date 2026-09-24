@@ -2,7 +2,7 @@
 // task-write › update_task com due_date/due_has_time (novoPrazo mantém o horário, se tinha).
 // É reversível (só muda o prazo), então grava direto ao escolher a data — sem tela de confirmação.
 import { useEffect, useState } from 'react';
-import { useAuth } from '@/contexts/AuthContext';
+import { useEuTarefas } from '@/pages/tarefas/hooks/useEuTarefas';
 import { todayBrasilia } from '@/lib/dateUtils';
 import type { TaskRow } from '@/pages/tarefas/hooks/useTarefas';
 import { Roteiro, useRoteiro, Opcao, OpcaoNeutra, Campo, Fim, dataBR, somaDias, type AcaoProps } from '../kit';
@@ -11,9 +11,10 @@ import { COR_TAREFAS, OpcaoTarefa, atrasada, carregarTarefas, gravarTarefa, minh
 type Passo = 'carregando' | 'lista' | 'quando' | 'data_campo' | 'gravando' | 'fim';
 
 export default function AdiarTarefa({ onFechar, irPara }: AcaoProps) {
-  const { user } = useAuth();
-  const tenantId = user?.tenantId ?? null;
-  const meuId = user?.id ?? null;
+  // Sem loja também (2026-09-24): quem só tem o módulo Tarefas usa com tenant nulo.
+  const eu = useEuTarefas();
+  const tenantId = eu.tenantId;
+  const meuId = eu.id;
   const r = useRoteiro();
   const [passo, setPasso] = useState<Passo>('carregando');
   const [tarefas, setTarefas] = useState<TaskRow[]>([]);
@@ -22,7 +23,7 @@ export default function AdiarTarefa({ onFechar, irPara }: AcaoProps) {
   const [alvo, setAlvo] = useState<TaskRow | null>(null);
 
   useEffect(() => {
-    if (!tenantId || !meuId) { r.bot('Sem loja ativa.'); setPasso('fim'); return; }
+    if (!eu.pronto || !meuId) return;
     (async () => {
       const { tarefas: todas, erro } = await carregarTarefas(tenantId);
       if (erro) { r.bot(`Não consegui abrir as Tarefas: ${erro}`); setPasso('fim'); return; }
@@ -40,7 +41,7 @@ export default function AdiarTarefa({ onFechar, irPara }: AcaoProps) {
       setPasso('lista');
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [eu.pronto]);
 
   const escolher = (t: TaskRow) => {
     setAlvo(t);
@@ -50,7 +51,7 @@ export default function AdiarTarefa({ onFechar, irPara }: AcaoProps) {
   };
 
   const adiar = async (dia: string) => {
-    if (!alvo || !tenantId || passo !== 'quando') return;
+    if (!alvo || !eu.pronto || passo !== 'quando') return;
     const hoje = todayBrasilia();
     if (dia < hoje) { r.bot('Escolha hoje ou depois.'); return; }
     r.eu(dataBR(dia));

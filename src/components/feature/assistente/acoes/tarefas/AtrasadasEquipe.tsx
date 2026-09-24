@@ -2,7 +2,7 @@
 // pastas que eu acesso (minhas + compartilhadas) e as que estão comigo — "da equipe" é esse alcance. Cobrar e
 // adiar usam os mesmos caminhos das outras ações de tarefa (add_comment / update_task).
 import { useEffect, useState } from 'react';
-import { useAuth } from '@/contexts/AuthContext';
+import { useEuTarefas } from '@/pages/tarefas/hooks/useEuTarefas';
 import { todayBrasilia } from '@/lib/dateUtils';
 import type { TaskRow } from '@/pages/tarefas/hooks/useTarefas';
 import { Roteiro, useRoteiro, Opcao, OpcaoNeutra, Fim, dataBR, somaDias, type AcaoProps } from '../kit';
@@ -13,16 +13,17 @@ type Passo = 'carregando' | 'lista' | 'opcoes' | 'gravando' | 'fim';
 const primeiroNome = (nome: string) => nome.trim().split(' ')[0] || 'responsável';
 
 export default function AtrasadasEquipe({ onFechar, irPara }: AcaoProps) {
-  const { user } = useAuth();
-  const tenantId = user?.tenantId ?? null;
-  const meuId = user?.id ?? null;
+  // Sem loja também (2026-09-24): quem só tem o módulo Tarefas usa com tenant nulo.
+  const eu = useEuTarefas();
+  const tenantId = eu.tenantId;
+  const meuId = eu.id;
   const r = useRoteiro();
   const [passo, setPasso] = useState<Passo>('carregando');
   const [tarefas, setTarefas] = useState<TaskRow[]>([]);
   const [alvo, setAlvo] = useState<TaskRow | null>(null);
 
   useEffect(() => {
-    if (!tenantId || !meuId) { r.bot('Sem loja ativa.'); setPasso('fim'); return; }
+    if (!eu.pronto || !meuId) return;
     (async () => {
       const { tarefas: todas, erro } = await carregarTarefas(tenantId);
       if (erro) { r.bot(`Não consegui abrir as Tarefas: ${erro}`); setPasso('fim'); return; }
@@ -33,7 +34,7 @@ export default function AtrasadasEquipe({ onFechar, irPara }: AcaoProps) {
       setPasso('lista');
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [eu.pronto]);
 
   const grupos = agrupar(tarefas);
   const maiorGrupo = Math.max(1, ...grupos.map((g) => g.itens.length));
@@ -46,7 +47,7 @@ export default function AtrasadasEquipe({ onFechar, irPara }: AcaoProps) {
   };
 
   const cobrar = async () => {
-    if (!alvo || !tenantId || passo !== 'opcoes') return;
+    if (!alvo || !eu.pronto || passo !== 'opcoes') return;
     r.eu('Cobrar');
     setPasso('gravando');
     const texto = `Oi, ${primeiroNome(alvo.assignee_name ?? '')}! Como está essa tarefa?`;
@@ -58,7 +59,7 @@ export default function AtrasadasEquipe({ onFechar, irPara }: AcaoProps) {
   };
 
   const adiarAmanha = async () => {
-    if (!alvo || !tenantId || passo !== 'opcoes') return;
+    if (!alvo || !eu.pronto || passo !== 'opcoes') return;
     r.eu('Adiar para amanhã');
     setPasso('gravando');
     const amanha = somaDias(todayBrasilia(), 1);

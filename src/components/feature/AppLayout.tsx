@@ -95,6 +95,8 @@ export default function AppLayout() {
           <Suspense fallback={<PageLoader />}>
             <Outlet />
           </Suspense>
+          {/* Balão do assistente também sem loja (2026-09-24): ações de Tarefas + conversas. */}
+          {location.pathname.startsWith('/tarefas') && <AssistenteChat variant="floating" />}
         </div>
       );
     }

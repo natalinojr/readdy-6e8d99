@@ -20,6 +20,10 @@
 // Uma conversa por PAR de pessoas EM CADA LOJA (tenant_id + direct_key, 2026-09-24): quem trabalha
 // junto na Vila e em Paranaguá tem duas conversas, uma por loja — antes era uma só e misturava.
 // Só dá para começar com quem é da loja, e só na loja onde os dois estão.
+//
+// Conversas de TAREFAS (2026-09-24): tenant_id = "tarefas" em colegas/abrir. Para quem tem o módulo
+// Tarefas (inclusive sem loja): as pessoas que dividem pasta ou tarefa comigo (fn_chat_colegas_tarefas).
+// A conversa fica com tenant_id nulo no banco; em "conversas" volta como tenant_id "tarefas".
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
 
 const corsHeaders = {
@@ -41,6 +45,7 @@ const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 // Login de tablet/totem é aparelho, não pessoa: fica fora da lista.
 const PAPEIS_FORA = ['tablet'];
+const TAREFAS = 'tarefas';
 
 type Pessoa = { id: string; nome: string; foto: string | null };
 const nomeDe = (u: { name?: string | null; nickname?: string | null } | null | undefined) =>
@@ -49,6 +54,18 @@ const nomeDe = (u: { name?: string | null; nickname?: string | null } | null | u
 async function lojasDe(admin: SupabaseClient, userId: string): Promise<string[]> {
   const { data } = await admin.from('user_tenants').select('tenant_id').eq('user_id', userId);
   return (data ?? []).map((r) => String(r.tenant_id));
+}
+
+async function temTarefas(admin: SupabaseClient, userId: string): Promise<boolean> {
+  const { data } = await admin.rpc('fn_user_tem_tarefas', { p_user_id: userId });
+  return data === true;
+}
+
+async function colegasTarefas(admin: SupabaseClient, userId: string): Promise<string[]> {
+  const { data, error } = await admin.rpc('fn_chat_colegas_tarefas', { p_user: userId });
+  if (error) throw new Error(error.message);
+  // deno-lint-ignore no-explicit-any
+  return (data ?? []).map((r: any) => String(r.user_id ?? r));
 }
 
 async function pessoas(admin: SupabaseClient, ids: string[]): Promise<Map<string, Pessoa>> {
@@ -95,6 +112,12 @@ Deno.serve(async (req) => {
   try {
     if (action === 'colegas') {
       const tenantId = String(body.tenant_id ?? '');
+      if (tenantId === TAREFAS) {
+        if (!(await temTarefas(admin, eu))) return fail('Sem acesso ao módulo Tarefas.', 403);
+        const gente = await pessoas(admin, await colegasTarefas(admin, eu));
+        const lista = [...gente.values()].sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+        return json({ success: true, data: { colegas: lista } });
+      }
       if (!UUID.test(tenantId)) return fail('Loja não informada.');
       if (!(await lojasDe(admin, eu)).includes(tenantId)) return fail('Sem acesso a essa loja.', 403);
       const { data, error } = await admin.from('user_tenants').select('user_id, role, users(id, name, nickname, photo_url, is_active, deleted_at)')
@@ -112,17 +135,29 @@ Deno.serve(async (req) => {
     if (action === 'abrir') {
       const tenantId = String(body.tenant_id ?? '');
       const outro = String(body.user_id ?? '');
-      if (!UUID.test(tenantId) || !UUID.test(outro) || outro === eu) return fail('Pessoa inválida.');
-      if (!(await lojasDe(admin, eu)).includes(tenantId)) return fail('Sem acesso a essa loja.', 403);
-      if (!(await lojasDe(admin, outro)).includes(tenantId)) return fail('Essa pessoa não é da loja.', 403);
+      const deTarefas = tenantId === TAREFAS;
+      if ((!deTarefas && !UUID.test(tenantId)) || !UUID.test(outro) || outro === eu) return fail('Pessoa inválida.');
+      if (deTarefas) {
+        if (!(await temTarefas(admin, eu))) return fail('Sem acesso ao módulo Tarefas.', 403);
+        if (!(await colegasTarefas(admin, eu)).includes(outro)) return fail('Essa pessoa não divide pasta nem tarefa com você.', 403);
+      } else {
+        if (!(await lojasDe(admin, eu)).includes(tenantId)) return fail('Sem acesso a essa loja.', 403);
+        if (!(await lojasDe(admin, outro)).includes(tenantId)) return fail('Essa pessoa não é da loja.', 403);
+      }
       const chave = [eu, outro].sort().join(':');
-      let { data: t } = await admin.from('chat_threads').select('id').eq('tenant_id', tenantId).eq('direct_key', chave).maybeSingle();
+      const lojaDb = deTarefas ? null : tenantId;
+      // Conversa de Tarefas = tenant_id nulo (.is), a da loja = .eq.
+      const daConversa = () => {
+        const q = admin.from('chat_threads').select('id').eq('direct_key', chave);
+        return (lojaDb ? q.eq('tenant_id', lojaDb) : q.is('tenant_id', null)).maybeSingle();
+      };
+      let { data: t } = await daConversa();
       if (!t) {
-        const ins = await admin.from('chat_threads').insert({ tenant_id: tenantId, kind: 'direct', direct_key: chave, created_by: eu })
+        const ins = await admin.from('chat_threads').insert({ tenant_id: lojaDb, kind: 'direct', direct_key: chave, created_by: eu })
           .select('id').single();
         if (ins.error) {
           // Os dois abriram ao mesmo tempo: a outra chamada criou primeiro.
-          const again = await admin.from('chat_threads').select('id').eq('tenant_id', tenantId).eq('direct_key', chave).maybeSingle();
+          const again = await daConversa();
           if (!again.data) throw new Error(ins.error.message);
           t = again.data;
         } else {
@@ -159,9 +194,9 @@ Deno.serve(async (req) => {
         const u = (ult.data ?? [])[0];
         return {
           thread_id: tid,
-          tenant_id: String(t.tenant_id),
+          tenant_id: t.tenant_id ? String(t.tenant_id) : TAREFAS,
           // deno-lint-ignore no-explicit-any
-          loja: String((t as any).tenants?.name ?? ''),
+          loja: t.tenant_id ? String((t as any).tenants?.name ?? '') : 'Tarefas',
           pessoa: o ? (gente.get(String(o.user_id)) ?? { id: String(o.user_id), nome: 'Sem nome', foto: null }) : null,
           // Até onde a outra pessoa leu: o "✓✓" das suas mensagens.
           lido_pelo_outro: o ? Number(o.last_read_id) : 0,

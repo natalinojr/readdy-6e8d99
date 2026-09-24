@@ -8,7 +8,7 @@
 // logo depois do título e exige data — é dela que a próxima ocorrência é calculada.
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
-import { useAuth } from '@/contexts/AuthContext';
+import { useEuTarefas } from '@/pages/tarefas/hooks/useEuTarefas';
 import type { TaskList, TaskRow } from '@/pages/tarefas/hooks/useTarefas';
 import { montarArvorePastas, achatarArvore } from '@/pages/tarefas/lib/pastas';
 import { rotuloRecorrencia } from '@/pages/tarefas/lib/recorrencia';
@@ -31,9 +31,10 @@ const REPETICOES: Array<{ label: string; rec: Recorrencia }> = [
 const normalizar = (t: string) => t.trim().toLowerCase().replace(/\s+/g, ' ');
 
 export default function NovaTarefa({ onFechar, irPara, recorrente = false }: AcaoProps & { recorrente?: boolean }) {
-  const { user } = useAuth();
-  const tenantId = user?.tenantId ?? null;
-  const meuId = user?.id ?? null;
+  // Sem loja também (2026-09-24): quem só tem o módulo Tarefas usa com tenant nulo.
+  const eu = useEuTarefas();
+  const tenantId = eu.tenantId;
+  const meuId = eu.id;
   const r = useRoteiro();
   const [passo, setPasso] = useState<Passo>('carregando');
   const [pastas, setPastas] = useState<(TaskList & { profundidade: number })[]>([]);
@@ -50,7 +51,7 @@ export default function NovaTarefa({ onFechar, irPara, recorrente = false }: Aca
   const [repeticao, setRepeticao] = useState<Recorrencia | null>(null);
 
   useEffect(() => {
-    if (!tenantId) { r.bot('Sem loja ativa.'); setPasso('fim'); return; }
+    if (!eu.pronto) return;
     (async () => {
       const [l, t] = await Promise.all([
         supabase.rpc('fn_get_task_lists', { p_tenant_id: tenantId }),
@@ -66,7 +67,7 @@ export default function NovaTarefa({ onFechar, irPara, recorrente = false }: Aca
       setPasso('titulo');
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [eu.pronto]);
 
   const enviarTitulo = (t: string) => {
     const limpo = t.trim().slice(0, 200);
@@ -127,8 +128,8 @@ export default function NovaTarefa({ onFechar, irPara, recorrente = false }: Aca
   const pedirResponsavel = async () => {
     r.eu('Mudar responsável');
     if (!equipe) {
-      if (!tenantId) return;
-      const { pessoas, erro } = await carregarEquipe(tenantId, user ? { id: user.id, nome: user.nome } : null);
+      if (!eu.pronto) return;
+      const { pessoas, erro } = await carregarEquipe(tenantId, eu.id ? { id: eu.id, nome: eu.nome } : null);
       if (erro) { r.bot(`Não consegui abrir a equipe: ${erro}`); return; }
       setEquipe(pessoas);
     }
@@ -166,7 +167,7 @@ export default function NovaTarefa({ onFechar, irPara, recorrente = false }: Aca
   }, [passo]);
 
   const criar = async () => {
-    if (!tenantId || !pasta || passo !== 'confirmar') return;
+    if (!eu.pronto || !pasta || passo !== 'confirmar') return;
     r.eu('Criar');
     setPasso('gravando');
     const due_date = data ? (hora ? `${data}T${hora}:00-03:00` : `${data}T12:00:00Z`) : null;
