@@ -3322,3 +3322,12 @@ Pegadinhas: a reação chega como `messages.upsert` com `message.reactionMessage
 removida; só quem marcou tira, e só se o jid dele veio); ao resolver, o arquivo passa a ser do
 `task_attachments` e o item solta `media_path` (apagar o anexo apaga o arquivo). `asst_groups.read_media=false`
 desliga a leitura de foto/PDF com IA só naquele grupo (grupo de obra = muita foto = custo).
+
+### Compartilhar → ERPOS no Android (Web Share Target, 2026-09-24)
+`manifest.webmanifest › share_target` (POST multipart para `/tarefas/compartilhar`, campo de arquivos
+`arquivos`). Quem atende é o `public/sw.js › receberCompartilhado`: guarda texto e arquivos no cache
+`erpos-compartilhado` (um compartilhamento por vez) e redireciona (303) para `/tarefas?compartilhado=1`;
+`CompartilhadoParaTarefa.tsx` lê o cache e cria tarefa (pasta lembrada em localStorage) ou junta a uma
+tarefa (comentário + anexos via upload normal). Só funciona com o app **instalado** no Android (Chrome
+atualiza o manifest do app instalado sozinho, mas pode levar ~1 dia; reinstalar força). iPhone não tem.
+Sem SW ativo o POST cai no Vercel e falha — por isso o destino só existe no SW.

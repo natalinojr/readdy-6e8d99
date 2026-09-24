@@ -24,6 +24,7 @@ import ModelosPastas, { type TelaModelos } from './components/modelos/ModelosPas
 import StatusManager from './components/StatusManager';
 import NotificacoesInbox, { calcularVencimentos } from './components/NotificacoesInbox';
 import CaixaWhatsApp from './components/CaixaWhatsApp';
+import CompartilhadoParaTarefa from './components/CompartilhadoParaTarefa';
 import ViewsSalvas from './components/ViewsSalvas';
 import FiltrosBar from './components/FiltrosBar';
 import ArvorePastas from './components/ArvorePastas';
@@ -181,6 +182,7 @@ export default function TarefasPage() {
   // atualiza o número dela; as outras aparecem no botão 📌 da barra de cima.
   const [caixaWhats, setCaixaWhats] = useState<Record<string, number>>({});
   const [menuCaixa, setMenuCaixa] = useState(false);
+  const [compartilhado, setCompartilhado] = useState(false);
   useEffect(() => {
     if (modoDemo() || !eu.id) return;
     const carregar = () => {
@@ -230,7 +232,10 @@ export default function TarefasPage() {
     const relatorioId = params.get('relatorio');
     // Push do 📌 no grupo do WhatsApp → /tarefas?pasta=<id>&caixa=1: abre a pasta (a caixa fica em cima).
     const pastaId = params.get('pasta');
-    if (!taskId && !relatorioId && !pastaId) return;
+    // "Compartilhar → ERPOS" no Android (sw.js › receberCompartilhado) → /tarefas?compartilhado=1.
+    const compartilhou = params.get('compartilhado');
+    if (!taskId && !relatorioId && !pastaId && !compartilhou) return;
+    if (compartilhou) setCompartilhado(true);
     if (taskId) setOpenTaskId(taskId);
     if (relatorioId) abrirRelatorio(relatorioId);
     if (pastaId) { setSelectedListId(pastaId); setOrigem('pasta'); }
@@ -238,6 +243,7 @@ export default function TarefasPage() {
     params.delete('relatorio');
     params.delete('pasta');
     params.delete('caixa');
+    params.delete('compartilhado');
     const query = params.toString();
     window.history.replaceState(
       {},
@@ -967,6 +973,17 @@ export default function TarefasPage() {
           meuId={meuId}
           write={write}
           onClose={() => setCompartilhando(null)}
+        />
+      )}
+
+      {compartilhado && !loading && (
+        <CompartilhadoParaTarefa
+          lists={lists}
+          tasks={tasks}
+          write={write}
+          enviarAnexo={enviarAnexo}
+          onOpenTask={setOpenTaskId}
+          onClose={() => setCompartilhado(false)}
         />
       )}
 
