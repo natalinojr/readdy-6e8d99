@@ -484,7 +484,10 @@ export default function ViewLista({
       const alvo = e.target as HTMLElement | null;
       const emCampo = !!alvo && (alvo.tagName === 'INPUT' || alvo.tagName === 'TEXTAREA' || alvo.isContentEditable);
       if (emCampo || !(e.ctrlKey || e.metaKey)) return;
-      if (e.key === 'c' && selecionadas.size > 0) {
+      // Com texto selecionado na página, Ctrl+C é a cópia de texto normal do
+      // navegador — não rouba pra área de transferência de tarefas (2026-09-24).
+      const haTextoSelecionado = !!window.getSelection()?.toString();
+      if (e.key === 'c' && selecionadas.size > 0 && !haTextoSelecionado) {
         e.preventDefault();
         copiarSelecaoParaClipboard();
       } else if (e.key === 'v' && clipboard && list && list.access !== 'view') {

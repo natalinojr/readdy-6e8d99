@@ -443,9 +443,15 @@ Deno.serve({ verify_jwt: false }, async (req) => {
 
           await mudarDePasta(taskId, current.status_id);
           // Subtarefas vão junto — senão ficavam órfãs numa pasta que ninguém mais vê.
-          const { data: subs } = await admin.from('tasks').select('id, status_id')
+          // parent_task_id e list_id são independentes: uma subtarefa pode estar em
+          // pasta diferente da tarefa-pai. Só move a que eu também posso editar —
+          // as outras ficam onde estão (revisão 2026-09-24).
+          const { data: subs } = await admin.from('tasks').select('id, status_id, list_id')
             .eq('parent_task_id', taskId).eq('is_archived', false);
-          for (const sub of (subs ?? []) as Array<{ id: string; status_id: string | null }>) {
+          for (const sub of (subs ?? []) as Array<{ id: string; status_id: string | null; list_id: string }>) {
+            if (sub.list_id !== current.list_id) {
+              try { await assertListEdit(sub.list_id); } catch { continue; }
+            }
             await mudarDePasta(sub.id, sub.status_id);
           }
           movidas++;
@@ -461,6 +467,12 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       // duas tarefas recorrentes independentes nasciam da mesma regra) nem
       // estimativa/plano de horas (decisão própria: a cópia começa "limpa" nesses
       // campos, quem colar decide de novo).
+      // Base fixa + contador crescente: Date.now() sozinho podia repetir entre
+      // cópias feitas na mesma virada de milissegundo (recursão de subtarefas),
+      // embaralhando a ordem manual da pasta destino (revisão 2026-09-24).
+      const baseSortOrder = Date.now();
+      let contadorSortOrder = 0;
+
       const copiarTarefa = async (origId: string, novoParentId: string | null): Promise<string> => {
         const orig = await assertOwned('tasks', origId);
         const novoStatus = await statusEquivalente(orig.status_id, statusesDestino, statusAbertoDestino);
@@ -476,7 +488,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
           start_date: orig.start_date ?? null,
           due_date: orig.due_date ?? null,
           due_has_time: orig.due_has_time ?? false,
-          sort_order: Date.now(),
+          sort_order: baseSortOrder + contadorSortOrder++,
           created_by: user.id,
         }).select('id').single();
         if (error || !nova) throw new Error(errMsg(error));
@@ -519,8 +531,19 @@ Deno.serve({ verify_jwt: false }, async (req) => {
 
         await logActivity(nova.id, 'copied', { source_task_id: origId });
 
+        // Subtarefas: list_id é independente do parent_task_id, então uma
+        // subtarefa pode estar numa pasta que eu não enxergo — checa acesso de
+        // leitura em CADA uma antes de copiar; sem acesso, pula ela (e o que
+        // estiver embaixo dela) sem derrubar a cópia da tarefa-pai (revisão 2026-09-24).
         const { data: subs } = await admin.from('tasks').select('id').eq('parent_task_id', origId).eq('is_archived', false);
-        for (const sub of (subs ?? []) as Array<{ id: string }>) await copiarTarefa(sub.id, nova.id);
+        for (const sub of (subs ?? []) as Array<{ id: string }>) {
+          try {
+            await assertTaskAccess(sub.id, 'view');
+          } catch {
+            continue;
+          }
+          await copiarTarefa(sub.id, nova.id);
+        }
 
         return nova.id as string;
       };
