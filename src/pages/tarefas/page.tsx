@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
-import { Plus, ListTodo, LayoutGrid, CalendarDays, ClipboardList, UserCheck, Users, Layers, SlidersHorizontal, ListChecks, Waypoints, ArrowLeft, Gauge, Share2, LayoutTemplate, BellRing, FileText } from 'lucide-react';
+import { Plus, ListTodo, LayoutGrid, CalendarDays, ClipboardList, UserCheck, Users, Layers, Send, SlidersHorizontal, ListChecks, Waypoints, ArrowLeft, Gauge, Share2, LayoutTemplate, BellRing, FileText } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
 import { useEuTarefas } from './hooks/useEuTarefas';
 import { useAppMode } from '@/contexts/AppModeContext';
@@ -37,7 +37,7 @@ import { atualizarBadge } from '@/lib/pwa';
 const CORES_LISTA = ['#6366f1', '#0ea5e9', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#64748b'];
 
 /** De ONDE vêm as tarefas mostradas — uma pasta específica, ou um recorte cross-pasta. */
-type Origem = 'pasta' | 'minhas' | 'compartilhadas' | 'todas';
+type Origem = 'pasta' | 'minhas' | 'compartilhadas' | 'atribuidas' | 'todas';
 /** COMO mostrar essas tarefas — independente da origem (pedido do usuário: a
  *  visualização lista/kanban/calendário deve valer pra qualquer origem). */
 type Display = 'lista' | 'kanban' | 'calendario' | 'carga';
@@ -52,6 +52,8 @@ const DISPLAYS: Array<{ id: Display; label: string; icon: typeof ListTodo }> = [
 const ORIGEM_INFO: Record<Exclude<Origem, 'pasta'>, { label: string; icon: typeof UserCheck }> = {
   minhas: { label: 'Minhas tarefas', icon: UserCheck },
   compartilhadas: { label: 'Tarefas compartilhadas', icon: Users },
+  // Que EU criei e passei pra outra pessoa — pra acompanhar o que delegou.
+  atribuidas: { label: 'Tarefas que atribuí', icon: Send },
   todas: { label: 'Todas as tarefas', icon: Layers },
 };
 
@@ -119,8 +121,10 @@ export default function TarefasPage() {
   // como foi deixado. Fica no localStorage de quem usa, como colunas e larguras.
   const chaveAgrupamento = `erpos_tarefas_agrupar_${origem === 'pasta' ? selectedListId ?? 'nenhuma' : origem}`;
   useEffect(() => {
-    let salvo: GroupBy = 'status';
-    try { salvo = (localStorage.getItem(chaveAgrupamento) as GroupBy | null) ?? 'status'; } catch { /* sem localStorage */ }
+    // "Que atribuí" abre agrupada por responsável (quem está com o quê); o resto, por status.
+    const padrao: GroupBy = origem === 'atribuidas' ? 'assignee' : 'status';
+    let salvo: GroupBy = padrao;
+    try { salvo = (localStorage.getItem(chaveAgrupamento) as GroupBy | null) ?? padrao; } catch { /* sem localStorage */ }
     setGroupBySalvo(salvo);
   }, [chaveAgrupamento]);
   const setGroupBy = (g: GroupBy) => {
@@ -176,6 +180,17 @@ export default function TarefasPage() {
 
   const selectedList = lists.find((l) => l.id === selectedListId) ?? lists[0] ?? null;
   const meuId = eu.id;
+  // Contagem ao lado de "Tarefas que atribuí": em aberto e quantas já passaram do prazo.
+  const diaLocal = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const resumoAtribuidas = useMemo(() => {
+    const minhasDelegadas = tasks.filter((t) => t.created_by === meuId && !!t.assignee_id && t.assignee_id !== meuId
+      && t.status_category !== 'done' && t.status_category !== 'cancelled' && !t.parent_task_id);
+    const agora = Date.now();
+    const atrasadas = minhasDelegadas.filter((t) => t.due_date && (t.due_has_time
+      ? new Date(t.due_date).getTime() < agora
+      : diaLocal(new Date(t.due_date)) < diaLocal(new Date()))).length;
+    return { abertas: minhasDelegadas.length, atrasadas };
+  }, [tasks, meuId]);
 
   // A pasta que vira o prop `list` das views — null em origem cross-pasta,
   // onde as tarefas vêm de várias pastas ao mesmo tempo.
@@ -185,6 +200,7 @@ export default function TarefasPage() {
     let base: typeof tasks;
     if (origem === 'minhas') base = tasks.filter((t) => t.assignee_id === meuId);
     else if (origem === 'compartilhadas') base = tasks.filter((t) => t.assignee_id === meuId && t.created_by !== meuId);
+    else if (origem === 'atribuidas') base = tasks.filter((t) => t.created_by === meuId && !!t.assignee_id && t.assignee_id !== meuId);
     // Todas = tudo o que eu enxergo, inclusive as tarefas das pastas compartilhadas comigo.
     else if (origem === 'todas') base = tasks;
     else base = tasks.filter((t) => t.list_id === selectedList?.id);
@@ -402,6 +418,14 @@ export default function TarefasPage() {
               >
                 <Icon size={14} className="shrink-0" />
                 <span className="flex-1">{label}</span>
+                {id === 'atribuidas' && resumoAtribuidas.abertas > 0 && (
+                  <span
+                    className={`text-xs ${resumoAtribuidas.atrasadas > 0 ? 'text-red-500 font-medium' : 'text-slate-400'}`}
+                    title={resumoAtribuidas.atrasadas > 0 ? `${resumoAtribuidas.atrasadas} atrasada(s)` : 'Em aberto'}
+                  >
+                    {resumoAtribuidas.abertas}
+                  </span>
+                )}
               </button>
             );
           })}
@@ -663,6 +687,7 @@ export default function TarefasPage() {
           onExcluir={excluirPasta}
           onCompartilhadas={() => { setVerRelatorios(false); setOrigem('compartilhadas'); }}
           onTodas={() => { setVerRelatorios(false); setOrigem('todas'); }}
+          onAtribuidas={() => { setVerRelatorios(false); setOrigem('atribuidas'); }}
           onRelatorios={() => { setRelatorioAberto(null); setVerRelatorios(true); }}
           onStatus={() => setShowStatus(true)}
           onCampos={() => setShowCampos(true)}

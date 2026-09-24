@@ -61,3 +61,34 @@ describe('Responsável: eu sempre na lista', () => {
     expect(screen.getAllByText('Natalino').length).toBeGreaterThan(0);
   });
 });
+
+describe('Tarefas que atribuí', () => {
+  it('lista o que eu criei e passei pra outra pessoa, agrupado por responsável, com contagem', async () => {
+    const mod = await import('@/pages/tarefas/hooks/useTarefas');
+    const tarefa = (id: string, extra: Record<string, unknown>) => ({
+      id, list_id: 'A', list_name: 'Pasta A', list_color: '#000', parent_task_id: null, title: `T ${id}`, status_id: 'A-s',
+      status_category: 'todo', priority: 0, assignee_id: null, assignee_name: null, start_date: null, due_date: null,
+      due_has_time: false, sort_order: 0, recurrence: null, completed_at: null, created_at: '2026-09-01T12:00:00Z',
+      created_by: 'eu', tags: [], checklist_total: 0, checklist_done: 0, subtask_total: 0, comment_count: 0, field_values: {},
+      time_estimate_minutes: null, time_tracked_seconds: 0, timer_started_at: null, ...extra,
+    });
+    vi.spyOn(mod, 'useTarefas').mockReturnValue({
+      lists: [lista('A', 'Pasta A')], tags: [], campos: [], notificacoes: [], views: [], templates: [],
+      loading: false, error: null, reload: vi.fn(), write: vi.fn(), fetchDetail: vi.fn(), fetchAnexos: vi.fn(),
+      enviarAnexo: vi.fn(), abrirAnexo: vi.fn(),
+      tasks: [
+        tarefa('delegada', { assignee_id: 'ana', assignee_name: 'Ana Souza', due_date: '2020-01-01T12:00:00Z' }),
+        tarefa('minha', { assignee_id: 'eu', assignee_name: 'Natalino' }),
+        tarefa('dos-outros', { created_by: 'bruno', assignee_id: 'ana', assignee_name: 'Ana Souza' }),
+      ],
+    } as never);
+    render(<MemoryRouter><TarefasPage /></MemoryRouter>);
+    const botao = screen.getAllByText('Tarefas que atribuí')[0].closest('button')!;
+    expect(botao.textContent).toContain('1'); // 1 em aberto (e atrasada)
+    fireEvent.click(botao);
+    expect(screen.getByText('T delegada')).toBeTruthy();
+    expect(screen.queryByText('T minha')).toBeNull();
+    expect(screen.queryByText('T dos-outros')).toBeNull();
+    expect(screen.getAllByText('Ana Souza').length).toBeGreaterThan(0); // grupo do responsável
+  });
+});
