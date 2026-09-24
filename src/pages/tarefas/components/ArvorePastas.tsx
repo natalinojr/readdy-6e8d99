@@ -35,7 +35,7 @@ export default function ArvorePastas({ nos, selectedId, onSelecionar, onNovaSubp
     const acesso = no.access ?? 'owner';
     const podeEditar = acesso === 'owner' || acesso === 'edit';
     const compartilhada = acesso !== 'owner' || (no.share_count ?? 0) > 0;
-    const acaoCls = `shrink-0 p-1.5 rounded text-slate-300 ${compacto ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`;
+    const acaoCls = `shrink-0 rounded text-slate-300 ${compacto ? 'p-2.5 opacity-100 text-slate-400' : 'p-1.5 opacity-0 group-hover:opacity-100'}`;
 
     return (
       <div key={no.id}>

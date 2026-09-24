@@ -99,3 +99,22 @@ describe('ArvorePastas por permissão', () => {
     expect(screen.queryByTitle('Excluir pasta')).toBeNull();
   });
 });
+
+describe('Compartilhar pelo celular (menu de pastas)', () => {
+  it('o menu de pastas tem o botão de compartilhar e fecha o menu antes de abrir', async () => {
+    const { ListasSheet } = await import('@/pages/tarefas/components/MobileNav');
+    const onCompartilhar = vi.fn();
+    const onClose = vi.fn();
+    render(
+      <ListasSheet
+        arvorePastas={montarArvorePastas([pasta({ access: 'owner' })])} temPastas selectedId={null}
+        onSelecionar={vi.fn()} onNovaLista={vi.fn()} onNovaSubpasta={vi.fn()} onExcluir={vi.fn()}
+        onCompartilhadas={vi.fn()} onTodas={vi.fn()} onStatus={vi.fn()} onCampos={vi.fn()} onTemplates={vi.fn()}
+        onCompartilhar={onCompartilhar} onClose={onClose}
+      />,
+    );
+    fireEvent.click(screen.getByTitle('Compartilhar'));
+    expect(onClose).toHaveBeenCalled();
+    expect(onCompartilhar).toHaveBeenCalledWith(expect.objectContaining({ id: 'P1' }));
+  });
+});

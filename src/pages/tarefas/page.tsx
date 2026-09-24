@@ -535,7 +535,7 @@ export default function TarefasPage() {
                 {selectedList && (
                   <button
                     onClick={() => setCompartilhando(selectedList)}
-                    className="shrink-0 hidden md:flex items-center gap-1 text-xs font-normal px-2 py-1 rounded-lg text-slate-500 hover:bg-slate-200 hover:text-indigo-600"
+                    className="shrink-0 flex items-center gap-1 text-xs font-normal p-2 md:px-2 md:py-1 rounded-lg text-slate-500 hover:bg-slate-200 hover:text-indigo-600 active:bg-slate-200"
                     title={(selectedList.access ?? 'owner') === 'owner' ? 'Compartilhar pasta' : 'Quem tem acesso'}
                   >
                     <Share2 size={13} />
@@ -665,6 +665,7 @@ export default function TarefasPage() {
           onCampos={() => setShowCampos(true)}
           onTemplates={() => setShowTemplates(true)}
           onAvisos={() => setShowAvisos(true)}
+          onCompartilhar={setCompartilhando}
           onModelos={() => setTelaModelos({ tipo: 'lista' })}
           onClose={() => setShowListasSheet(false)}
         />

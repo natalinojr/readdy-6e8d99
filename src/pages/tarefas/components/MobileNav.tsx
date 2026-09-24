@@ -74,6 +74,8 @@ interface ListasSheetProps {
   onModelos?: () => void;
   /** Avisos de vencimento. */
   onAvisos?: () => void;
+  /** Compartilhar a pasta (ou ver quem tem acesso). */
+  onCompartilhar?: (no: NoPasta) => void;
   onClose: () => void;
 }
 
@@ -85,7 +87,7 @@ interface ListasSheetProps {
  */
 export function ListasSheet({
   arvorePastas, temPastas, selectedId, onSelecionar, onNovaLista, onNovaSubpasta, onExcluir,
-  onCompartilhadas, onTodas, onRelatorios, onStatus, onCampos, onTemplates, onModelos, onAvisos, onClose,
+  onCompartilhadas, onTodas, onRelatorios, onStatus, onCampos, onTemplates, onModelos, onAvisos, onCompartilhar, onClose,
 }: ListasSheetProps) {
   useVoltarFecha(true, onClose);
 
@@ -131,6 +133,7 @@ export function ListasSheet({
               onNovaSubpasta(parentId);
             }}
             onExcluir={onExcluir}
+            onCompartilhar={onCompartilhar ? (no) => { onClose(); onCompartilhar(no); } : undefined}
             compacto
           />
 
