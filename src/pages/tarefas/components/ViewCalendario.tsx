@@ -465,6 +465,8 @@ export default function ViewCalendario({
                               setNovoTitulo('');
                             }
                           }}
+                          name="titulo-tarefa"
+                          autoComplete="off"
                           placeholder="Nova tarefa…"
                           className="w-full text-[11px] px-1.5 py-0.5 rounded border border-indigo-300 outline-none"
                         />

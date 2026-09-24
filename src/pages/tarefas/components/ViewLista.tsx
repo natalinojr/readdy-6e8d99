@@ -1011,6 +1011,8 @@ export default function ViewLista({
                     <input
                       value={quickAdd[chave] ?? ''}
                       onChange={(e) => setQuickAdd((prev) => ({ ...prev, [chave]: e.target.value }))}
+                      name="titulo-tarefa"
+                      autoComplete="off"
                       placeholder="Nova tarefa…"
                       className="flex-1 text-sm max-md:text-base max-md:py-1 bg-transparent outline-none placeholder:text-slate-300"
                     />
