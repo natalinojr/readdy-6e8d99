@@ -315,10 +315,13 @@ export default function TarefasPage() {
     if (display === 'relatorios' && origem !== 'pasta') setDisplay('lista');
   }, [display, origem]);
 
+  // Celular: tocou em Relatórios sem pasta aberta → a próxima pasta escolhida abre nos relatórios.
+  const [relatoriosAoEscolher, setRelatoriosAoEscolher] = useState(false);
   const irParaPasta = (id: string) => {
     setRelatorioAberto(null);
     setSelectedListId(id);
     setOrigem('pasta');
+    if (relatoriosAoEscolher) { setDisplay('relatorios'); setRelatoriosAoEscolher(false); }
   };
 
   // Cria a tarefa e já abre o drawer completo pra configurar tudo (data,
@@ -618,17 +621,6 @@ export default function TarefasPage() {
             )}
           </h1>
 
-          {origem === 'pasta' && selectedList && (
-            <button
-              onClick={() => setDisplay(display === 'relatorios' ? 'lista' : 'relatorios')}
-              className={`md:hidden shrink-0 flex items-center gap-1 text-xs px-2 py-1.5 rounded-lg border ${
-                display === 'relatorios' ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'border-slate-200 text-slate-500'
-              }`}
-            >
-              <FileText size={14} /> Relatórios
-            </button>
-          )}
-
           {/* Seletor de visualização — vale pra qualquer origem (pasta ou cross-pasta).
               No celular quem faz isso é a barra inferior. */}
           <div className="hidden md:flex items-center gap-1 text-xs">
@@ -712,11 +704,18 @@ export default function TarefasPage() {
 
       {/* ── Navegação inferior (celular) ── */}
       <BottomNav
-        // Carga é só desktop (tabela larga) e Relatórios fica no cabeçalho: no celular a barra marca Lista.
-        view={origem === 'minhas' ? 'minhas' : display === 'carga' || display === 'relatorios' ? 'lista' : display}
+        view={origem === 'minhas' && (display === 'lista' || display === 'kanban') ? 'minhas' : display === 'kanban' ? 'lista' : display}
         onView={(v) => {
-          if (v === 'minhas') setOrigem('minhas');
-          else setDisplay(v as Display);
+          if (v === 'minhas') { setOrigem('minhas'); if (display === 'carga' || display === 'relatorios') setDisplay('lista'); }
+          else if (v === 'relatorios' && (origem !== 'pasta' || !selectedList)) {
+            // Relatórios são da pasta: escolhe a pasta e já abre os relatórios dela.
+            setRelatoriosAoEscolher(true);
+            setShowListasSheet(true);
+          } else {
+            // Carga a partir de "Minhas" mostraria só eu: abre com todas as tarefas.
+            if (v === 'carga' && origem === 'minhas') setOrigem('todas');
+            setDisplay(v as Display);
+          }
         }}
         onAbrirListas={() => setShowListasSheet(true)}
         pendencias={pendencias}
@@ -740,7 +739,7 @@ export default function TarefasPage() {
           onAvisos={() => setShowAvisos(true)}
           onCompartilhar={setCompartilhando}
           onModelos={() => setTelaModelos({ tipo: 'lista' })}
-          onClose={() => setShowListasSheet(false)}
+          onClose={() => { setShowListasSheet(false); setRelatoriosAoEscolher(false); }}
         />
       )}
 

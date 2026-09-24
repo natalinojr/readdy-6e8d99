@@ -1,9 +1,9 @@
-import { UserCheck, ListTodo, CalendarDays, ClipboardList, Plus, X, SlidersHorizontal, ListChecks, Users, Layers, Waypoints, LayoutTemplate, BellRing, Send } from 'lucide-react';
+import { UserCheck, ListTodo, CalendarDays, ClipboardList, Plus, X, SlidersHorizontal, ListChecks, Users, Layers, Waypoints, LayoutTemplate, BellRing, Send, Gauge, FileText } from 'lucide-react';
 import type { NoPasta } from '../lib/pastas';
 import { useVoltarFecha } from '../lib/mobile';
 import ArvorePastas from './ArvorePastas';
 
-export type ViewTarefas = 'lista' | 'kanban' | 'calendario' | 'minhas' | 'compartilhadas' | 'todas';
+export type ViewTarefas = 'lista' | 'kanban' | 'calendario' | 'carga' | 'relatorios' | 'minhas' | 'compartilhadas' | 'todas';
 
 interface BottomNavProps {
   view: ViewTarefas;
@@ -17,6 +17,8 @@ const ABAS: Array<{ id: ViewTarefas | 'listas'; label: string; icon: typeof User
   { id: 'minhas', label: 'Minhas', icon: UserCheck },
   { id: 'lista', label: 'Lista', icon: ListTodo },
   { id: 'calendario', label: 'Agenda', icon: CalendarDays },
+  { id: 'carga', label: 'Carga', icon: Gauge },
+  { id: 'relatorios', label: 'Relatórios', icon: FileText },
   { id: 'listas', label: 'Pastas', icon: ClipboardList },
 ];
 
@@ -34,7 +36,7 @@ export function BottomNav({ view, onView, onAbrirListas, pendencias }: BottomNav
             <button
               key={id}
               onClick={() => (id === 'listas' ? onAbrirListas() : onView(id as ViewTarefas))}
-              className={`flex-1 flex flex-col items-center gap-0.5 py-2 active:bg-slate-50 transition ${
+              className={`flex-1 min-w-0 flex flex-col items-center gap-0.5 py-2 active:bg-slate-50 transition ${
                 ativo ? 'text-indigo-600' : 'text-slate-400'
               }`}
             >
@@ -46,7 +48,7 @@ export function BottomNav({ view, onView, onAbrirListas, pendencias }: BottomNav
                   </span>
                 )}
               </span>
-              <span className="text-[10px] font-medium">{label}</span>
+              <span className="text-[10px] font-medium truncate max-w-full px-0.5">{label}</span>
             </button>
           );
         })}
