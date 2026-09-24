@@ -4,7 +4,8 @@
 // divide a pasta (fn_task_report_access: creator > owner da pasta > edit > view;
 // view só lê e responde). Itens têm texto, imagens com legenda e campos de
 // resposta (lista suspensa, caixas de seleção, sim/não, texto, número, data).
-// O relatório pode ser ligado a tarefas (task_report_tasks).
+// O relatório pode ser ligado a tarefas (task_report_tasks), ter links de
+// arquivos na nuvem e virar modelo (task_report_templates, imagens copiadas).
 // Público (sem login, pelo share_token): quem abre o link se identifica com
 // nome (+ contato opcional) e recebe um guest_token que fica no aparelho; com
 // ele responde os itens. Toda resposta, mudança de status e edição de item vira
@@ -79,7 +80,7 @@ function validarImagens(v: unknown, reportId: string): Imagem[] {
 // ── Campos de resposta por item ──
 const TIPOS_CAMPO = ['escolha', 'multipla', 'sim_nao', 'texto', 'numero', 'data'];
 type Opcao = { id: string; label: string };
-type Campo = { id: string; type: string; label: string; options?: Opcao[] };
+type Campo = { id: string; type: string; label: string; options?: Opcao[]; min?: number | null; max?: number | null };
 
 function validarCampos(v: unknown): Campo[] {
   if (v === undefined || v === null) return [];
@@ -106,7 +107,31 @@ function validarCampos(v: unknown): Campo[] {
       if (!ol) throw new Recusa(`"${label}": opção sem texto`);
       return { id: oid, label: ol };
     });
-    return { id, type, label, options };
+    // Caixas de seleção: quantas opções no mínimo/no máximo (vazio = sem limite).
+    if (type !== 'multipla') return { id, type, label, options };
+    const lim = (x: unknown, nome: string) => {
+      if (x === undefined || x === null || x === '') return null;
+      const n = Number(x);
+      if (!Number.isInteger(n) || n < 0 || n > options.length) throw new Recusa(`"${label}": ${nome} deve ser de 0 a ${options.length}`);
+      return n;
+    };
+    const min = lim(c?.min, 'mínimo');
+    const max = lim(c?.max, 'máximo');
+    if (min !== null && max !== null && min > max) throw new Recusa(`"${label}": o mínimo é maior que o máximo`);
+    if (max === 0) throw new Recusa(`"${label}": o máximo precisa ser pelo menos 1`);
+    return { id, type, label, options, ...(min ? { min } : {}), ...(max ? { max } : {}) };
+  });
+}
+
+/** Links de arquivos na nuvem: [{url, title}], só http/https. */
+function validarLinks(v: unknown): Array<{ url: string; title: string | null }> {
+  if (v === undefined || v === null) return [];
+  if (!Array.isArray(v)) throw new Recusa('links deve ser uma lista');
+  if (v.length > 30) throw new Recusa('No máximo 30 links');
+  return v.map((l: Row) => {
+    const url = texto(l?.url, 1000);
+    if (!url || !/^https?:\/\/[^\s]+$/i.test(url)) throw new Recusa('Link inválido — use o endereço completo (https://…)');
+    return { url, title: texto(l?.title, 200) };
   });
 }
 
@@ -125,6 +150,9 @@ function validarRespostas(v: unknown, campos: Campo[]): Row | null {
       case 'escolha': if (typeof valor !== 'string' || !opcoes.has(valor)) throw new Recusa(erro); break;
       case 'multipla':
         if (!Array.isArray(valor) || !valor.every((x) => typeof x === 'string' && opcoes.has(x))) throw new Recusa(erro);
+        if (new Set(valor).size !== valor.length) throw new Recusa(erro);
+        if (campo.min && valor.length < campo.min) throw new Recusa(`"${campo.label}": marque pelo menos ${campo.min}`);
+        if (campo.max && valor.length > campo.max) throw new Recusa(`"${campo.label}": marque no máximo ${campo.max}`);
         break;
       case 'sim_nao': if (valor !== 'sim' && valor !== 'nao') throw new Recusa(erro); break;
       case 'texto': if (typeof valor !== 'string' || valor.length > 1000) throw new Recusa(erro); break;
@@ -181,7 +209,7 @@ async function montarRelatorio(admin: SupabaseClient, report: Row, publico: bool
   return {
     report: {
       id: report.id, title: report.title, description: report.description, status: report.status,
-      guests_can_add_items: report.guests_can_add_items, owner_name: donoR.data?.name ?? null,
+      guests_can_add_items: report.guests_can_add_items, owner_name: donoR.data?.name ?? null, links: report.links ?? [],
       created_at: report.created_at, updated_at: report.updated_at,
       ...(publico ? {} : {
         share_token: report.share_token, link_enabled: report.link_enabled, created_by: report.created_by,
@@ -209,6 +237,19 @@ async function gravarImagem(admin: SupabaseClient, reportId: string, file: File)
   const { error } = await admin.storage.from(BUCKET).upload(path, file, { contentType: file.type, upsert: false });
   if (error) throw error;
   return { path, name: (file.name || `imagem.${ext}`).slice(0, 120) };
+}
+
+/** Copia imagens para outra pasta do bucket (modelo ⇄ relatório); legenda vai junto. */
+async function copiarImagens(admin: SupabaseClient, imagens: Imagem[], destino: string): Promise<Imagem[]> {
+  const saida: Imagem[] = [];
+  for (const img of imagens) {
+    const ext = img.path.split('.').pop() ?? 'jpg';
+    const novo = `${destino}/${crypto.randomUUID()}.${ext}`;
+    const { error } = await admin.storage.from(BUCKET).copy(img.path, novo);
+    if (error) { console.error('[task-reports] copiar imagem', img.path, errMsg(error)); continue; }
+    saida.push({ ...img, path: novo });
+  }
+  return saida;
 }
 
 /** Grava uma resposta/evento e, se veio status, atualiza o item. */
@@ -485,12 +526,82 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       case 'create': {
         const titulo = texto(body.title, 200);
         if (!titulo) throw new Recusa('Informe o título');
+        const listId = await pastaPermitida(body.list_id);
+        let modelo: Row | null = null;
+        if (body.template_id) {
+          const { data: t } = await admin.from('task_report_templates').select('*')
+            .eq('id', String(body.template_id)).eq('created_by', user.id).maybeSingle();
+          if (!t) throw new Recusa('Modelo não encontrado', 404);
+          modelo = t.content ?? {};
+        }
         const { data, error } = await admin.from('task_reports').insert({
-          tenant_id: tenantId, created_by: user.id, title: titulo, description: texto(body.description, MAX_TEXTO),
-          share_token: tokenAleatorio(18), list_id: await pastaPermitida(body.list_id),
+          tenant_id: tenantId, created_by: user.id, title: titulo,
+          description: texto(body.description, MAX_TEXTO) ?? modelo?.description ?? null,
+          links: modelo?.links ?? [], share_token: tokenAleatorio(18), list_id: listId,
         }).select('id').single();
         if (error) throw error;
+        if (modelo?.items?.length) {
+          const itens = [];
+          for (const [i, it] of (modelo.items as Row[]).entries()) {
+            itens.push({
+              report_id: data.id, position: i + 1, title: it.title, body: it.body ?? null, fields: it.fields ?? [],
+              images: await copiarImagens(admin, it.images ?? [], data.id), created_by_user: user.id,
+            });
+          }
+          const { error: eItens } = await admin.from('task_report_items').insert(itens);
+          if (eItens) throw eItens;
+        }
         return json({ success: true, id: data.id });
+      }
+      // ── Modelos de relatório (pessoais) ──
+      case 'list_templates': {
+        const { data, error } = await admin.from('task_report_templates').select('id, name, content, created_at, updated_at')
+          .eq('created_by', user.id).order('name');
+        if (error) throw error;
+        return json({
+          success: true,
+          templates: (data ?? []).map((t) => ({
+            id: t.id, name: t.name, created_at: t.created_at, updated_at: t.updated_at,
+            items_total: (t.content?.items ?? []).length, links_total: (t.content?.links ?? []).length,
+          })),
+        });
+      }
+      case 'save_template': {
+        // Guarda uma cópia do relatório como está (sem respostas): explicação, links e itens.
+        const r = await meuRelatorio(body.report_id);
+        const nome = texto(body.name, 200) ?? r.title;
+        const { data: itens, error: eI } = await admin.from('task_report_items').select('title, body, images, fields')
+          .eq('report_id', r.id).is('archived_at', null).order('position').order('created_at');
+        if (eI) throw eI;
+        const { data: t, error } = await admin.from('task_report_templates')
+          .insert({ created_by: user.id, name: nome, content: {} }).select('id').single();
+        if (error) throw error;
+        const itensModelo = [];
+        for (const it of itens ?? []) {
+          itensModelo.push({ title: it.title, body: it.body, fields: it.fields ?? [], images: await copiarImagens(admin, it.images ?? [], `modelos/${t.id}`) });
+        }
+        await admin.from('task_report_templates').update({
+          content: { description: r.description ?? null, links: r.links ?? [], items: itensModelo },
+        }).eq('id', t.id);
+        return json({ success: true, id: t.id });
+      }
+      case 'rename_template': {
+        const nome = texto(body.name, 200);
+        if (!nome) throw new Recusa('Informe o nome do modelo');
+        const { error } = await admin.from('task_report_templates').update({ name: nome, updated_at: new Date().toISOString() })
+          .eq('id', String(body.template_id ?? '')).eq('created_by', user.id);
+        if (error) throw error;
+        return json({ success: true });
+      }
+      case 'delete_template': {
+        const { data: t } = await admin.from('task_report_templates').select('id, content')
+          .eq('id', String(body.template_id ?? '')).eq('created_by', user.id).maybeSingle();
+        if (!t) throw new Recusa('Modelo não encontrado', 404);
+        const caminhos = ((t.content?.items ?? []) as Row[]).flatMap((it) => ((it.images ?? []) as Imagem[]).map((i) => i.path));
+        if (caminhos.length) await admin.storage.from(BUCKET).remove(caminhos);
+        const { error } = await admin.from('task_report_templates').delete().eq('id', t.id);
+        if (error) throw error;
+        return json({ success: true });
       }
       case 'update': {
         // Trocar a pasta muda quem enxerga o relatório: só quem criou.
@@ -505,6 +616,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         if (body.link_enabled !== undefined) patch.link_enabled = !!body.link_enabled;
         if (body.guests_can_add_items !== undefined) patch.guests_can_add_items = !!body.guests_can_add_items;
         if (body.list_id !== undefined) patch.list_id = await pastaPermitida(body.list_id);
+        if (body.links !== undefined) patch.links = validarLinks(body.links);
         if (body.status !== undefined) {
           if (!['open', 'closed'].includes(String(body.status))) throw new Recusa('Status inválido');
           patch.status = body.status;

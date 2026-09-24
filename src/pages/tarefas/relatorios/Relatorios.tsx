@@ -8,16 +8,17 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ArrowLeft, Plus, Link2, Copy, MessageCircle, RefreshCw, Loader2, Trash2, Pencil, ChevronUp, ChevronDown,
-  Lock, Unlock, Users, FileText, Check, Folder, ListTodo, X, CheckCircle2, Circle, Search,
+  Lock, Unlock, Users, FileText, Check, Folder, ListTodo, X, CheckCircle2, Circle, Search, LayoutTemplate,
 } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
 import ConfirmDialog from '../components/ConfirmDialog';
 import type { TaskRow } from '../hooks/useTarefas';
 import ItemRelatorio, { FormItem, NovoItem } from './ItemRelatorio';
+import LinksRelatorio from './LinksRelatorio';
 import {
   chamarDono, enviarImagemDono, linkPublico, dataHora,
   podeEditar, podeExcluir,
-  type ImagemRel, type ItemRel, type RelatorioCompleto, type ResumoRelatorio,
+  type ImagemRel, type ItemRel, type ModeloRel, type RelatorioCompleto, type ResumoRelatorio,
 } from './api';
 
 /** Pasta de Tarefas (o suficiente para escolher onde o relatório fica). */
@@ -45,6 +46,10 @@ export default function Relatorios({ pasta, abrirId, pastas, meuId, tarefas, onO
   const [selecionado, setSelecionado] = useState<string | null>(abrirId ?? null);
   const [criando, setCriando] = useState(false);
   const [novoTitulo, setNovoTitulo] = useState('');
+  const [modelos, setModelos] = useState<ModeloRel[] | null>(null);
+  const [modeloId, setModeloId] = useState('');
+  const [gerenciandoModelos, setGerenciandoModelos] = useState(false);
+  const [excluindoModelo, setExcluindoModelo] = useState<ModeloRel | null>(null);
   const podeCriar = (pasta.access ?? 'owner') !== 'view';
 
   const carregarLista = useCallback(async () => {
@@ -54,15 +59,22 @@ export default function Relatorios({ pasta, abrirId, pastas, meuId, tarefas, onO
   }, [toast]);
 
   useEffect(() => { carregarLista(); }, [carregarLista]);
+
+  const carregarModelos = useCallback(async () => {
+    const r = await chamarDono<{ templates: ModeloRel[] }>('list_templates');
+    setModelos(r.ok ? r.data.templates : []);
+  }, []);
+  useEffect(() => { if (criando || gerenciandoModelos) carregarModelos(); }, [criando, gerenciandoModelos, carregarModelos]);
   useEffect(() => { setSelecionado(abrirId ?? null); }, [abrirId, pasta.id]);
 
   const daPasta = useMemo(() => (lista ?? []).filter((r) => r.list_id === pasta.id), [lista, pasta.id]);
 
   const criar = async () => {
     if (!novoTitulo.trim()) return;
-    const r = await chamarDono<{ id: string }>('create', { title: novoTitulo.trim(), list_id: pasta.id });
+    const r = await chamarDono<{ id: string }>('create', { title: novoTitulo.trim(), list_id: pasta.id, template_id: modeloId || null });
     if (!r.ok) { toast.error('Erro ao criar relatório', r.error); return; }
     setNovoTitulo('');
+    setModeloId('');
     setCriando(false);
     setSelecionado(r.data.id);
     carregarLista();
@@ -101,17 +113,73 @@ export default function Relatorios({ pasta, abrirId, pastas, meuId, tarefas, onO
             placeholder="Ex.: Vistoria da obra — pendências do empreiteiro"
             className="flex-1 min-w-[200px] rounded-lg border border-slate-200 px-3 py-2 text-base md:text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200"
           />
+          <select
+            value={modeloId}
+            onChange={(e) => {
+              setModeloId(e.target.value);
+              const m = modelos?.find((x) => x.id === e.target.value);
+              if (m && !novoTitulo.trim()) setNovoTitulo(m.name);
+            }}
+            className="rounded-lg border border-slate-200 px-2 py-2 text-base md:text-sm bg-white"
+            title="Começar com os itens, campos e links de um modelo"
+          >
+            <option value="">Em branco</option>
+            {(modelos ?? []).map((m) => <option key={m.id} value={m.id}>Modelo: {m.name}</option>)}
+          </select>
           <button onClick={() => setCriando(false)} className="px-3 py-2 rounded-lg text-sm text-slate-500 hover:bg-slate-100">Cancelar</button>
           <button onClick={criar} disabled={!novoTitulo.trim()} className="px-4 py-2 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50">Criar</button>
         </div>
       ) : (
-        <button
-          onClick={() => setCriando(true)}
-          className="mb-4 flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700"
-        >
-          <Plus size={16} /> Novo relatório
-        </button>
+        <div className="mb-4 flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => setCriando(true)}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700"
+          >
+            <Plus size={16} /> Novo relatório
+          </button>
+          <button
+            onClick={() => setGerenciandoModelos((v) => !v)}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm text-slate-600 border border-slate-200 bg-white hover:bg-slate-50"
+          >
+            <LayoutTemplate size={15} /> Modelos
+          </button>
+        </div>
       ))}
+
+      {gerenciandoModelos && (
+        <div className="bg-white rounded-xl border border-slate-200 p-3 mb-4">
+          <p className="text-sm font-semibold text-slate-700 mb-1">Meus modelos de relatório</p>
+          <p className="text-xs text-slate-400 mb-2">Para criar um modelo, abra um relatório e use "Salvar como modelo". Os modelos são só seus e valem para qualquer pasta.</p>
+          {modelos === null && <Loader2 size={15} className="animate-spin text-slate-300" />}
+          {modelos?.length === 0 && <p className="text-sm text-slate-400">Nenhum modelo ainda.</p>}
+          <ul className="divide-y divide-slate-100">
+            {(modelos ?? []).map((m) => (
+              <li key={m.id} className="py-1.5 flex items-center gap-2 text-sm">
+                <LayoutTemplate size={14} className="text-slate-400 shrink-0" />
+                <span className="flex-1 min-w-0 truncate text-slate-700">{m.name}</span>
+                <span className="text-xs text-slate-400 shrink-0">{m.items_total} {m.items_total === 1 ? 'item' : 'itens'}{m.links_total ? ` · ${m.links_total} link${m.links_total > 1 ? 's' : ''}` : ''}</span>
+                <button onClick={() => setExcluindoModelo(m)} className="p-1 text-slate-300 hover:text-red-500" title="Excluir modelo"><Trash2 size={14} /></button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {excluindoModelo && (
+        <ConfirmDialog
+          titulo="Excluir modelo?"
+          descricao={`"${excluindoModelo.name}" sai da lista. Os relatórios criados com ele continuam iguais.`}
+          textoConfirmar="Excluir"
+          perigo
+          onCancelar={() => setExcluindoModelo(null)}
+          onConfirmar={async () => {
+            const m = excluindoModelo;
+            setExcluindoModelo(null);
+            const r = await chamarDono('delete_template', { template_id: m.id });
+            if (!r.ok) { toast.error('Não foi possível excluir', r.error); return; }
+            carregarModelos();
+          }}
+        />
+      )}
 
       {lista === null && <div className="py-10 flex justify-center"><Loader2 className="animate-spin text-slate-400" /></div>}
       {lista !== null && daPasta.length === 0 && !criando && (
@@ -167,6 +235,7 @@ function DetalheRelatorio({ id, onVoltar, pastas, meuId, tarefas, onOpenTask }: 
   const [excluindoRelatorio, setExcluindoRelatorio] = useState(false);
   const [trocandoLink, setTrocandoLink] = useState(false);
   const [copiado, setCopiado] = useState(false);
+  const [nomeModelo, setNomeModelo] = useState<string | null>(null);
 
   const carregar = useCallback(async (marcarVisto = false) => {
     const r = await chamarDono<RelatorioCompleto>('get', { report_id: id, mark_seen: marcarVisto });
@@ -365,6 +434,13 @@ function DetalheRelatorio({ id, onVoltar, pastas, meuId, tarefas, onOpenTask }: 
         </label>
       </section>
 
+      {/* Arquivos (links da nuvem) */}
+      <LinksRelatorio
+        links={report.links ?? []}
+        podeEditar={edita}
+        onSalvar={(links) => acao('update', { links })}
+      />
+
       {/* Tarefas ligadas */}
       <TarefasLigadas
         ids={report.linked_task_ids ?? []}
@@ -443,8 +519,43 @@ function DetalheRelatorio({ id, onVoltar, pastas, meuId, tarefas, onOpenTask }: 
       </div>
 
       {/* Rodapé */}
+      <div className="mt-6 flex flex-wrap gap-2 border-t border-slate-200 pt-4">
+        {nomeModelo === null ? (
+          <button
+            onClick={() => setNomeModelo(report.title)}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm text-slate-600 border border-slate-200 hover:bg-slate-50"
+            title="Guarda itens, campos, imagens e links (sem as respostas) para criar outros relatórios iguais"
+          >
+            <LayoutTemplate size={15} /> Salvar como modelo
+          </button>
+        ) : (
+          <div className="flex flex-wrap items-center gap-2 w-full">
+            <input
+              value={nomeModelo}
+              onChange={(e) => setNomeModelo(e.target.value)}
+              autoFocus
+              maxLength={200}
+              placeholder="Nome do modelo"
+              className="flex-1 min-w-[200px] rounded-lg border border-slate-200 px-3 py-2 text-base md:text-sm"
+            />
+            <button onClick={() => setNomeModelo(null)} className="px-3 py-2 rounded-lg text-sm text-slate-500 hover:bg-slate-100">Cancelar</button>
+            <button
+              disabled={!nomeModelo.trim()}
+              onClick={async () => {
+                const r = await chamarDono('save_template', { report_id: id, name: nomeModelo.trim() });
+                if (!r.ok) { toast.error('Não foi possível salvar o modelo', r.error); return; }
+                toast.success('Modelo salvo', 'Use em "Novo relatório" de qualquer pasta.');
+                setNomeModelo(null);
+              }}
+              className="px-4 py-2 rounded-lg text-sm font-medium bg-indigo-600 text-white disabled:opacity-50"
+            >
+              Salvar modelo
+            </button>
+          </div>
+        )}
+      </div>
       {edita && (
-        <div className="mt-6 flex flex-wrap gap-2 border-t border-slate-200 pt-4">
+        <div className="mt-2 flex flex-wrap gap-2">
           {aberto ? (
             <button onClick={() => acao('update', { status: 'closed' }, 'Relatório encerrado')} className="px-3 py-2 rounded-lg text-sm text-slate-600 border border-slate-200 hover:bg-slate-50">
               Encerrar relatório

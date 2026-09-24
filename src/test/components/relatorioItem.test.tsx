@@ -46,10 +46,44 @@ describe('ItemRelatorio', () => {
     ],
   };
 
-  it('mostra o valor atual de cada campo e a resposta do campo na sequência', () => {
+  it('mostra o valor atual uma vez só; a sequência diz o que foi preenchido, sem repetir o valor', () => {
     render(<ItemRelatorio item={comCampos} numero={1} podeResponder={false} onResponder={vi.fn()} onEnviarImagem={vi.fn()} />);
-    expect(screen.getAllByText('Ok').length).toBe(2); // resumo do campo + linha da resposta
+    expect(screen.getAllByText('Ok').length).toBe(1);
     expect(screen.getByText('sem resposta')).toBeTruthy(); // Cômodos ainda vazio
+    expect(screen.getByText('Preencheu Situação')).toBeTruthy();
+    expect(screen.getByText(/Respondido por Carlos/)).toBeTruthy();
+  });
+
+  it('mudança de valor aparece como antes → depois', () => {
+    const mudou: ItemRel = {
+      ...comCampos,
+      responses: [
+        ...comCampos.responses,
+        { id: 'x2', kind: 'reply', body: null, images: [], new_status: null, answers: { c1: 'o2' }, author_name: 'Maria', author_type: 'guest', author_guest_id: 'g2', created_at: '2026-09-24T12:00:00Z' },
+      ],
+    };
+    render(<ItemRelatorio item={mudou} numero={1} podeResponder={false} onResponder={vi.fn()} onEnviarImagem={vi.fn()} />);
+    expect(screen.getByText('Ok').className).toMatch(/line-through/);
+    expect(screen.getAllByText('Refazer').length).toBe(2); // valor atual + "→ Refazer"
+  });
+
+  it('caixas de seleção respeitam o máximo e o mínimo', async () => {
+    const limitado: ItemRel = {
+      ...item, responses: [],
+      fields: [{ id: 'm', type: 'multipla', label: 'Cômodos', min: 2, max: 2, options: [{ id: 'a', label: 'Sala' }, { id: 'b', label: 'Cozinha' }, { id: 'c', label: 'Quarto' }] }],
+    };
+    const onResponder = vi.fn().mockResolvedValue(true);
+    render(<ItemRelatorio item={limitado} numero={1} podeResponder onResponder={onResponder} onEnviarImagem={vi.fn()} />);
+    fireEvent.click(screen.getByText('Responder'));
+    expect(screen.getByText('Marque 2')).toBeTruthy();
+    fireEvent.click(screen.getByLabelText('Sala'));
+    fireEvent.click(screen.getByText('Enviar'));
+    expect(await screen.findByText('"Cômodos": marque pelo menos 2')).toBeTruthy();
+    expect(onResponder).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByLabelText('Cozinha'));
+    expect((screen.getByLabelText('Quarto') as HTMLInputElement).disabled).toBe(true);
+    fireEvent.click(screen.getByText('Enviar'));
+    await waitFor(() => expect(onResponder).toHaveBeenCalledWith('', [], null, { m: ['a', 'b'] }));
   });
 
   it('responder campos envia só o que mudou', async () => {

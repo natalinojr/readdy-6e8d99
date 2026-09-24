@@ -14,6 +14,7 @@ const relatorios: Rel[] = [{
   id: 'demo-rel-1', title: 'Vistoria da reforma — pendências', description: 'Responda cada ponto com prazo ou foto do serviço feito.',
   status: 'open', guests_can_add_items: false, owner_name: 'Você (demo)', created_at: agora(), updated_at: agora(),
   share_token: 'demo_token_abc', link_enabled: true, created_by: 'demo-eu', list_id: 'manut', access: 'creator',
+  links: [{ url: 'https://drive.google.com/drive/folders/exemplo', title: 'Projeto elétrico rev. 2' }],
   guests: [{ id: 'g1', name: 'Carlos (empreiteiro)', contact: '41 99999-0000', created_at: agora(), last_seen_at: agora() }],
   items: [
     {
@@ -25,7 +26,7 @@ const relatorios: Rel[] = [{
       id: 'i2', position: 2, title: 'Tomada da cozinha sem energia', body: null, images: [], status: 'open', created_by_guest_name: null, created_at: agora(), updated_at: agora(), responses: [],
       fields: [
         { id: 'c1', type: 'escolha', label: 'Situação', options: [{ id: 'o1', label: 'Resolvido' }, { id: 'o2', label: 'Precisa de eletricista' }] },
-        { id: 'c2', type: 'multipla', label: 'Tomadas afetadas', options: [{ id: 'a', label: 'Bancada' }, { id: 'b', label: 'Geladeira' }, { id: 'c', label: 'Micro-ondas' }] },
+        { id: 'c2', type: 'multipla', label: 'Tomadas afetadas', options: [{ id: 'a', label: 'Bancada' }, { id: 'b', label: 'Geladeira' }, { id: 'c', label: 'Micro-ondas' }], min: 1, max: 2 },
         { id: 'c3', type: 'data', label: 'Prazo' },
       ],
     },
@@ -48,6 +49,7 @@ const PASTAS_DEMO: Record<string, { name: string; color: string }> = {
   cozinha: { name: 'Cozinha', color: '#f59e0b' },
 };
 const vistos = new Map<string, string>();
+const modelos: Array<{ id: string; name: string; content: { description: string | null; links: unknown[]; items: ItemRel[] } }> = [];
 const ligacoes = new Map<string, Set<string>>();
 const ligadas = (id: string) => { if (!ligacoes.has(id)) ligacoes.set(id, new Set()); return ligacoes.get(id)!; };
 
@@ -81,15 +83,18 @@ export async function demoDono(action: string, p: Record<string, unknown>): Prom
     }
     case 'create': {
       const id = novoId();
+      const modelo = modelos.find((m) => m.id === p.template_id);
       relatorios.unshift({
         id, title: String(p.title), description: null, status: 'open', guests_can_add_items: false, owner_name: 'Você (demo)',
-        created_at: agora(), updated_at: agora(), share_token: `demo_${id}`, link_enabled: true, created_by: 'demo-eu', list_id: (p.list_id as string) || null, access: 'creator', items: [], guests: [],
+        created_at: agora(), updated_at: agora(), share_token: `demo_${id}`, link_enabled: true, created_by: 'demo-eu', list_id: (p.list_id as string) || null, access: 'creator',
+        items: modelo ? structuredClone(modelo.content.items).map((i) => ({ ...i, id: novoId() })) : [], guests: [],
+        links: (modelo?.content.links as Relatorio['links']) ?? [], ...(modelo ? { description: modelo.content.description } : {}),
       });
       return { id };
     }
     case 'update': {
       const r = achar(p.report_id);
-      for (const k of ['title', 'description', 'link_enabled', 'guests_can_add_items', 'status', 'list_id'] as const) {
+      for (const k of ['title', 'description', 'link_enabled', 'guests_can_add_items', 'status', 'list_id', 'links'] as const) {
         if (p[k] !== undefined) (r as unknown as Record<string, unknown>)[k] = p[k];
       }
       r.updated_at = agora();
@@ -130,6 +135,14 @@ export async function demoDono(action: string, p: Record<string, unknown>): Prom
       if (st) it.status = st;
       return { id: resp.id };
     }
+    case 'list_templates':
+      return { templates: modelos.map((m) => ({ id: m.id, name: m.name, items_total: m.content.items.length, links_total: m.content.links.length, created_at: agora(), updated_at: agora() })) };
+    case 'save_template': {
+      const r = achar(p.report_id);
+      modelos.push({ id: novoId(), name: String(p.name), content: { description: r.description, links: r.links ?? [], items: structuredClone(r.items).map((i) => ({ ...i, responses: [], status: 'open' as const })) } });
+      return {};
+    }
+    case 'delete_template': modelos.splice(modelos.findIndex((m) => m.id === p.template_id), 1); return {};
     case 'link_task': ligadas(String(p.report_id)).add(String(p.task_id)); return {};
     case 'unlink_task': ligadas(String(p.report_id)).delete(String(p.task_id)); return {};
     case 'task_links':

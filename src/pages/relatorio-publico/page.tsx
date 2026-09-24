@@ -7,6 +7,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { Loader2, Lock, UserRound, ClipboardList } from 'lucide-react';
 import ItemRelatorio, { NovoItem } from '../tarefas/relatorios/ItemRelatorio';
+import LinksRelatorio from '../tarefas/relatorios/LinksRelatorio';
 import {
   chamarPublico, enviarImagemPublico, lerConvidado, salvarConvidado,
   type Convidado, type ImagemRel, type ItemRel, type Relatorio, type StatusItem, type ValorCampo,
@@ -113,6 +114,8 @@ export default function RelatorioPublicoPage() {
           <p className="mt-3 text-sm bg-slate-100 text-slate-600 rounded-lg px-3 py-2">Este relatório foi encerrado — dá para ler, mas não recebe mais respostas.</p>
         )}
       </header>
+
+      <LinksRelatorio links={report.links ?? []} podeEditar={false} />
 
       <div className="space-y-3 mt-3">
         {items.map((item, i) => (

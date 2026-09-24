@@ -11,7 +11,21 @@ export interface ImagemRel { path: string; name: string; caption?: string | null
 
 /** Campo de resposta de um item: o que quem responde preenche. */
 export type TipoCampo = 'escolha' | 'multipla' | 'sim_nao' | 'texto' | 'numero' | 'data';
-export interface CampoRel { id: string; type: TipoCampo; label: string; options?: Array<{ id: string; label: string }> }
+export interface CampoRel {
+  id: string;
+  type: TipoCampo;
+  label: string;
+  options?: Array<{ id: string; label: string }>;
+  /** Caixas de seleção: quantas marcar no mínimo/no máximo (vazio = sem limite). */
+  min?: number | null;
+  max?: number | null;
+}
+
+/** Link de arquivo na nuvem anexado ao relatório. */
+export interface LinkRel { url: string; title: string | null }
+
+/** Modelo de relatório (pessoal). */
+export interface ModeloRel { id: string; name: string; items_total: number; links_total: number; created_at: string; updated_at: string }
 export type ValorCampo = string | number | string[] | null;
 
 export interface RespostaRel {
@@ -58,6 +72,7 @@ export interface Relatorio {
   status: 'open' | 'closed';
   guests_can_add_items: boolean;
   owner_name: string | null;
+  links?: LinkRel[];
   created_at: string;
   updated_at: string;
   share_token?: string;

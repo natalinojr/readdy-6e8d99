@@ -4,9 +4,9 @@
  */
 import { useRef, useState, type ClipboardEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { ImagePlus, Loader2, Send, X, PencilLine, CheckCircle2, RotateCcw, MessageCircle, Plus, ListChecks } from 'lucide-react';
+import { ImagePlus, Loader2, Send, X, PencilLine, CheckCircle2, RotateCcw, MessageCircle, Plus, ArrowRight } from 'lucide-react';
 import { STATUS_INFO, dataHora, type CampoRel, type ImagemRel, type ItemRel, type StatusItem, type ValorCampo } from './api';
-import { EditorCampos, PreencherCampos, formatarValor, limparCampos, respostasMudadas, valoresAtuais } from './CamposResposta';
+import { EditorCampos, PreencherCampos, erroPreenchimento, formatarValor, limparCampos, respostasMudadas, valoresAtuais } from './CamposResposta';
 
 export function StatusBadge({ status }: { status: StatusItem }) {
   const s = STATUS_INFO[status];
@@ -149,6 +149,7 @@ export default function ItemRelatorio({ item, numero, podeResponder, meuGuestId,
   const [gravando, setGravando] = useState(false);
   const [aberto, setAberto] = useState(false);
   const [rascunho, setRascunho] = useState<Record<string, ValorCampo>>({});
+  const [erro, setErro] = useState<string | null>(null);
   const anexos = useAnexos(onEnviarImagem);
 
   const campos = item.fields ?? [];
@@ -161,11 +162,14 @@ export default function ItemRelatorio({ item, numero, podeResponder, meuGuestId,
     setRascunho(valorAtual);
     setAberto(true);
   };
-  const fechar = () => { setAberto(false); setTexto(''); setRascunho({}); anexos.limpar(); };
+  const fechar = () => { setAberto(false); setTexto(''); setRascunho({}); setErro(null); anexos.limpar(); };
 
   const enviar = async (novoStatus: StatusItem | null) => {
     if (gravando || anexos.enviando) return;
     if (!texto.trim() && !anexos.imagens.length && !novoStatus && !temMudancas) return;
+    const e = erroPreenchimento(campos, mudancas);
+    setErro(e);
+    if (e) return;
     setGravando(true);
     const ok = await onResponder(texto.trim(), anexos.paraGravar(), novoStatus, temMudancas ? mudancas : null);
     setGravando(false);
@@ -173,8 +177,18 @@ export default function ItemRelatorio({ item, numero, podeResponder, meuGuestId,
   };
 
   const respostas = item.responses;
+  const anteriores = new Map<string, Record<string, ValorCampo>>();
+  {
+    const corrente: Record<string, ValorCampo> = {};
+    for (const r of respostas) {
+      anteriores.set(r.id, { ...corrente });
+      for (const [cid, v] of Object.entries(r.answers ?? {})) corrente[cid] = v;
+    }
+  }
+  // Quem preencheu o resumo: se foi uma pessoa só, num momento só, vira uma linha no rodapé.
+  const autorias = Object.values(atuais).filter((a) => a.valor !== null);
+  const autoriaUnica = autorias.length > 0 && autorias.every((a) => a.autor === autorias[0].autor && a.em === autorias[0].em);
   const temRascunho = !!texto.trim() || anexos.imagens.length > 0 || temMudancas;
-  const nomeCampo = (cid: string) => campos.find((c) => c.id === cid);
 
   return (
     <article className="bg-white rounded-xl border border-slate-200 overflow-hidden">
@@ -195,20 +209,28 @@ export default function ItemRelatorio({ item, numero, podeResponder, meuGuestId,
         {item.body && <p className="text-sm text-slate-600 whitespace-pre-wrap break-words mt-1">{item.body}</p>}
         <GradeImagens imagens={item.images} />
         {campos.length > 0 && (
-          <dl className="mt-3 rounded-lg border border-slate-200 divide-y divide-slate-100 text-sm">
-            {campos.map((c) => {
-              const a = atuais[c.id];
-              return (
-                <div key={c.id} className="px-3 py-2 flex flex-wrap gap-x-3 gap-y-0.5">
-                  <dt className="text-slate-500 flex items-center gap-1"><ListChecks size={13} /> {c.label}</dt>
-                  <dd className={`font-medium ${a && a.valor !== null ? 'text-slate-800' : 'text-slate-300'}`}>
-                    {a ? formatarValor(c, a.valor) : 'sem resposta'}
-                  </dd>
-                  {a && a.valor !== null && <dd className="text-[11px] text-slate-400 w-full md:w-auto md:ml-auto">{a.autor} · {dataHora(a.em)}</dd>}
-                </div>
-              );
-            })}
-          </dl>
+          <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50/50 px-3 py-2.5">
+            <dl className="grid grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-2.5">
+              {campos.map((c) => {
+                const a = atuais[c.id];
+                const vazio = !a || a.valor === null;
+                return (
+                  <div key={c.id} className="min-w-0" title={!vazio && !autoriaUnica ? `${a.autor} · ${dataHora(a.em)}` : undefined}>
+                    <dt className="text-[11px] text-slate-500 truncate">{c.label}</dt>
+                    <dd className={`text-sm font-medium break-words ${vazio ? 'text-slate-300' : 'text-slate-800'}`}>
+                      {vazio ? 'sem resposta' : formatarValor(c, a.valor)}
+                    </dd>
+                    {!vazio && !autoriaUnica && <dd className="text-[10px] text-slate-400 truncate">{a.autor} · {dataHora(a.em)}</dd>}
+                  </div>
+                );
+              })}
+            </dl>
+            {autoriaUnica && (
+              <p className="mt-2 pt-2 border-t border-slate-200/70 text-[11px] text-slate-400">
+                Respondido por {autorias[0].autor} · {dataHora(autorias[0].em)}
+              </p>
+            )}
+          </div>
         )}
       </div>
 
@@ -228,7 +250,11 @@ export default function ItemRelatorio({ item, numero, podeResponder, meuGuestId,
                 </li>
               );
             }
-            const respostasCampos = Object.entries(r.answers ?? {});
+            const antes = anteriores.get(r.id) ?? {};
+            const respondidos = campos.filter((c) => r.answers && c.id in r.answers);
+            const vazio = (x: ValorCampo | undefined) => x === null || x === undefined || x === '' || (Array.isArray(x) && !x.length);
+            const preencheu = respondidos.filter((c) => vazio(antes[c.id]));
+            const mudou = respondidos.filter((c) => !vazio(antes[c.id]));
             return (
               <li key={r.id} className="flex gap-2">
                 <span className={`shrink-0 w-7 h-7 rounded-full text-xs font-semibold flex items-center justify-center ${r.author_type === 'owner' ? 'bg-indigo-100 text-indigo-700' : 'bg-amber-100 text-amber-800'}`}>
@@ -244,17 +270,21 @@ export default function ItemRelatorio({ item, numero, podeResponder, meuGuestId,
                     )}
                     <span className="ml-1">· {dataHora(r.created_at)}</span>
                   </p>
-                  {respostasCampos.length > 0 && (
-                    <ul className="mt-1 space-y-0.5">
-                      {respostasCampos.map(([cid, valor]) => {
-                        const c = nomeCampo(cid);
-                        return (
-                          <li key={cid} className="text-sm text-slate-700">
-                            <span className="text-slate-500">{c?.label ?? 'Campo removido'}:</span>{' '}
-                            <strong className="font-medium">{c ? formatarValor(c, valor) : String(valor)}</strong>
-                          </li>
-                        );
-                      })}
+                  {preencheu.length > 0 && (
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Preencheu {preencheu.length === campos.length && campos.length > 1 ? 'todos os campos' : preencheu.map((c) => c.label).join(', ')}
+                    </p>
+                  )}
+                  {mudou.length > 0 && (
+                    <ul className="mt-0.5 space-y-0.5">
+                      {mudou.map((c) => (
+                        <li key={c.id} className="text-sm text-slate-700 flex flex-wrap items-center gap-1">
+                          <span className="text-slate-500">{c.label}:</span>
+                          <span className="text-slate-400 line-through">{formatarValor(c, antes[c.id] ?? null)}</span>
+                          <ArrowRight size={12} className="text-slate-400" />
+                          <strong className="font-medium">{formatarValor(c, r.answers![c.id])}</strong>
+                        </li>
+                      ))}
                     </ul>
                   )}
                   {r.body && <p className="text-sm text-slate-700 whitespace-pre-wrap break-words mt-0.5">{r.body}</p>}
@@ -320,6 +350,7 @@ export default function ItemRelatorio({ item, numero, podeResponder, meuGuestId,
               />
               <GradeImagens imagens={anexos.imagens} onRemover={anexos.remover} onLegenda={anexos.legendar} />
               {DICA_COLAR}
+              {erro && <p className="text-sm text-red-600">{erro}</p>}
               <div className="flex flex-wrap items-center gap-2">
                 {anexos.botao}
                 <div className="flex-1" />

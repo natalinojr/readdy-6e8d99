@@ -104,6 +104,30 @@ export function EditorCampos({ campos, onChange }: { campos: CampoRel[]; onChang
                 </div>
               ))}
               <button type="button" onClick={() => mudar(i, { options: [...(c.options ?? []), { id: novoId(), label: '' }] })} className="text-xs text-indigo-600 hover:underline">+ opção</button>
+              {c.type === 'multipla' && (
+                <div className="flex flex-wrap items-center gap-2 pt-1 text-xs text-slate-500">
+                  <span>Marcar</span>
+                  <label className="flex items-center gap-1">no mínimo
+                    <input
+                      type="number" min={0} max={(c.options ?? []).length} inputMode="numeric"
+                      value={c.min ?? ''}
+                      onChange={(e) => mudar(i, { min: e.target.value === '' ? null : Math.max(0, Math.floor(Number(e.target.value))) })}
+                      placeholder="—"
+                      className="w-14 rounded border border-slate-200 px-1.5 py-0.5 text-base md:text-xs bg-white"
+                    />
+                  </label>
+                  <label className="flex items-center gap-1">no máximo
+                    <input
+                      type="number" min={1} max={(c.options ?? []).length} inputMode="numeric"
+                      value={c.max ?? ''}
+                      onChange={(e) => mudar(i, { max: e.target.value === '' ? null : Math.max(1, Math.floor(Number(e.target.value))) })}
+                      placeholder="—"
+                      className="w-14 rounded border border-slate-200 px-1.5 py-0.5 text-base md:text-xs bg-white"
+                    />
+                  </label>
+                  <span className="text-slate-400">(vazio = sem limite)</span>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -130,6 +154,14 @@ export function limparCampos(campos: CampoRel[]): { campos: CampoRel[]; erro: st
   if (limpos.some((c) => !c.label)) return { campos: limpos, erro: 'Todo campo de resposta precisa da pergunta' };
   const semOpcao = limpos.find((c) => temOpcoes(c.type) && !c.options?.length);
   if (semOpcao) return { campos: limpos, erro: `"${semOpcao.label}": inclua ao menos uma opção` };
+  for (const c of limpos) {
+    if (c.type !== 'multipla') { delete c.min; delete c.max; continue; }
+    const n = c.options?.length ?? 0;
+    if ((c.min ?? 0) > n || (c.max ?? 0) > n) return { campos: limpos, erro: `"${c.label}": o limite passa do número de opções (${n})` };
+    if (c.min && c.max && c.min > c.max) return { campos: limpos, erro: `"${c.label}": o mínimo é maior que o máximo` };
+    if (!c.min) delete c.min;
+    if (!c.max) delete c.max;
+  }
   return { campos: limpos, erro: null };
 }
 
@@ -158,13 +190,16 @@ export function PreencherCampos({ campos, valores, onChange }: {
             )}
             {c.type === 'multipla' && (
               <div className="flex flex-col gap-1.5">
+                {dicaLimite(c) && <p className="text-xs text-slate-400 -mt-0.5">{dicaLimite(c)}</p>}
                 {c.options?.map((o) => {
                   const marcados = Array.isArray(v) ? v : [];
+                  const cheio = !!c.max && marcados.length >= c.max && !marcados.includes(o.id);
                   return (
-                    <label key={o.id} className="flex items-center gap-2 text-sm text-slate-700">
+                    <label key={o.id} className={`flex items-center gap-2 text-sm ${cheio ? 'text-slate-300' : 'text-slate-700'}`}>
                       <input
                         type="checkbox"
                         className="w-4 h-4"
+                        disabled={cheio}
                         checked={marcados.includes(o.id)}
                         onChange={(e) => onChange(c.id, e.target.checked ? [...marcados, o.id] : marcados.filter((x) => x !== o.id))}
                       />
@@ -218,6 +253,24 @@ export function PreencherCampos({ campos, valores, onChange }: {
       })}
     </div>
   );
+}
+
+/** "Marque de 1 a 3", "Marque pelo menos 2"… (null = sem limite). */
+export function dicaLimite(c: CampoRel): string | null {
+  if (c.type !== 'multipla' || (!c.min && !c.max)) return null;
+  if (c.min && c.max) return c.min === c.max ? `Marque ${c.min}` : `Marque de ${c.min} a ${c.max}`;
+  return c.min ? `Marque pelo menos ${c.min}` : `Marque até ${c.max}`;
+}
+
+/** Erro de preenchimento (mínimo de caixas de seleção) antes de enviar. */
+export function erroPreenchimento(campos: CampoRel[], mudancas: Record<string, ValorCampo>): string | null {
+  for (const c of campos) {
+    const v = mudancas[c.id];
+    if (c.type !== 'multipla' || !Array.isArray(v) || !v.length) continue;
+    if (c.min && v.length < c.min) return `"${c.label}": marque pelo menos ${c.min}`;
+    if (c.max && v.length > c.max) return `"${c.label}": marque no máximo ${c.max}`;
+  }
+  return null;
 }
 
 /** Só o que mudou em relação ao valor atual — cada resposta registra só as mudanças. */
