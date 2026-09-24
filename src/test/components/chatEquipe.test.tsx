@@ -49,7 +49,9 @@ vi.mock('@/lib/supabase', () => ({
   }),
 }));
 vi.mock('@/contexts/AuthContext', () => ({
-  useAuth: () => ({ user: { id: 'u-eu', nome: 'Eu', tenantId: 'loja-1' }, availableTenants: h.lojas }),
+  // Como na vida real: depois de entrar numa loja, availableTenants volta VAZIO (só a tela de escolher
+  // loja usa). As abas saem da loja aberta + das conversas (bug de 2026-09-24).
+  useAuth: () => ({ user: { id: 'u-eu', nome: 'Eu', tenantId: 'loja-1', loja: 'Vila Leste' }, availableTenants: [] }),
 }));
 
 import { useEquipeNoChat } from '@/components/feature/equipe/useEquipeNoChat';
@@ -215,6 +217,7 @@ describe('Conversas separadas por loja', () => {
   });
 
   it('mostra só a loja aberta; a aba da outra loja avisa que tem mensagem nova', async () => {
+    // (as abas vêm das conversas: o AuthContext não lista as lojas depois de entrar)
     const user = userEvent.setup();
     renderPainel();
     expect(await screen.findByText('Assunto da Vila')).toBeInTheDocument();
@@ -284,5 +287,28 @@ describe('Pesquisar na conversa', () => {
     expect(await screen.findByText('Nenhuma mensagem com esse texto')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Fechar pesquisa' }));
     expect(screen.queryByLabelText('Pesquisar na conversa', { selector: 'input' })).not.toBeInTheDocument();
+  });
+});
+
+describe('Abas por loja sem conversa em outra loja', () => {
+  it('só a loja aberta: sem abas, e a conversa de outra loja não aparece misturada', async () => {
+    h.conversas = [conversa({ thread_id: 't-v', tenant_id: 'loja-1', ultima: { id: 1, minha: false, texto: 'Oi da Vila', created_at: agora() } })];
+    renderPainel();
+    expect(await screen.findByText('Oi da Vila')).toBeInTheDocument();
+    expect(screen.queryByRole('tablist', { name: 'Loja das conversas' })).not.toBeInTheDocument();
+  });
+
+  it('conversa em outra loja cria a aba dela, e o cabeçalho da conversa diz a loja', async () => {
+    h.conversas = [conversa({ thread_id: 't-p', tenant_id: 'loja-2', loja: 'El Patron Paranaguá', nao_lidas: 1,
+      ultima: { id: 2, minha: false, texto: 'Oi de Paranaguá', created_at: agora() } })];
+    const user = userEvent.setup();
+    renderPainel();
+    const abas = await screen.findByRole('tablist', { name: 'Loja das conversas' });
+    expect(within(abas).getByRole('tab', { name: /Vila Leste/, selected: true })).toBeInTheDocument();
+    expect(screen.queryByText('Oi de Paranaguá')).not.toBeInTheDocument();
+    await user.click(within(abas).getByRole('tab', { name: /Paranaguá/ }));
+    await user.click(await screen.findByText('Oi de Paranaguá'));
+    const cabecalho = (await screen.findByRole('button', { name: 'Voltar para as conversas' })).parentElement!;
+    expect(within(cabecalho).getByText('El Patron Paranaguá')).toBeInTheDocument();
   });
 });

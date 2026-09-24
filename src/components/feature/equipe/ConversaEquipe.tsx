@@ -281,7 +281,13 @@ export default function ConversaEquipe({ threadId, pessoa, loja, onVoltar, onFec
     if (m.temp) return;
     const t = e.touches[0];
     const ref = { id: m.id, x: t.clientX, y: t.clientY, timer: null as ReturnType<typeof setTimeout> | null, longo: false };
-    ref.timer = setTimeout(() => { ref.longo = true; setMenu(m); }, 500);
+    ref.timer = setTimeout(() => {
+      ref.longo = true;
+      // O Android começa a selecionar o texto no mesmo toque longo (barra Traduzir/Copiar por cima
+      // do menu — visto no Galaxy em 2026-09-24): limpa a seleção e abre só o nosso menu.
+      window.getSelection()?.removeAllRanges();
+      setMenu(m);
+    }, 500);
     toque.current = ref;
   };
   const moveToque = (e: React.TouchEvent) => {
@@ -395,8 +401,9 @@ export default function ConversaEquipe({ threadId, pessoa, loja, onVoltar, onFec
                     onTouchMove={moveToque}
                     onTouchEnd={() => fimToque(m)}
                     onTouchCancel={() => { toque.current = null; setArraste(null); }}
-                    style={dx ? { transform: `translateX(${dx}px)` } : undefined}
-                    className={`group relative max-w-[80%] rounded-2xl px-3 py-2 text-sm whitespace-pre-wrap break-words select-text transition-colors
+                    // Sem seleção nativa nem menu do sistema no toque longo: copiar é pelo nosso menu.
+                    style={{ WebkitTouchCallout: 'none', ...(dx ? { transform: `translateX(${dx}px)` } : {}) }}
+                    className={`group relative max-w-[80%] rounded-2xl px-3 py-2 text-sm whitespace-pre-wrap break-words select-none transition-colors
                       ${minha ? 'bg-emerald-100 text-zinc-800 rounded-br-md' : 'bg-white border border-zinc-200 text-zinc-800 rounded-bl-md'}
                       ${destaque === m.id ? 'ring-2 ring-sky-400' : ''} ${m.falhou ? 'opacity-60' : ''}`}
                   >
@@ -479,7 +486,7 @@ export default function ConversaEquipe({ threadId, pessoa, loja, onVoltar, onFec
       {/* Segurar a mensagem (ou botão direito): Responder / Copiar */}
       {menu && (
         <div className="absolute inset-0 z-40 flex items-end sm:items-center justify-center bg-black/30 p-3" onClick={() => setMenu(null)}>
-          <div className="w-full max-w-sm rounded-2xl bg-white shadow-xl overflow-hidden" onClick={(e) => e.stopPropagation()} role="menu">
+          <div className="w-full max-w-sm rounded-2xl bg-white shadow-xl overflow-hidden select-none" style={{ WebkitTouchCallout: 'none' }} onClick={(e) => e.stopPropagation()} role="menu">
             <p className="px-4 pt-3 pb-2 text-xs text-zinc-500 line-clamp-3">{menu.body}</p>
             <button role="menuitem" onClick={() => responder(menu)} className="w-full flex items-center gap-3 px-4 py-3 border-t border-zinc-100 text-sm font-semibold text-zinc-800 hover:bg-zinc-50 cursor-pointer">
               <i className="ri-reply-line text-lg text-sky-600" /> Responder

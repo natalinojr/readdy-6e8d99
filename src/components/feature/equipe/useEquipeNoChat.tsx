@@ -17,12 +17,11 @@ export function useEquipeNoChat({ ativo = true, abrirPainel, fecharPainel }: {
   abrirPainel: () => void;
   fecharPainel?: () => void;
 }) {
-  const { user, availableTenants: lojasAuth } = useAuth();
-  const availableTenants = lojasAuth ?? [];
+  const { user } = useAuth();
   const { conversas, naoLidas, recarregar } = useConversasEquipe(ativo ? user?.id : undefined);
   const [aberta, setAberta] = useState<ConversaAberta | null>(null);
   const [nova, setNova] = useState(false);
-  const lojaAtiva = user?.tenantId ?? availableTenants[0]?.tenantId ?? '';
+  const lojaAtiva = user?.tenantId ?? '';
   const [lojaSel, setLojaSel] = useState(lojaAtiva);
   // Trocou de loja no ERPOS: a lista acompanha.
   useEffect(() => { if (lojaAtiva) setLojaSel(lojaAtiva); }, [lojaAtiva]);
@@ -52,22 +51,22 @@ export function useEquipeNoChat({ ativo = true, abrirPainel, fecharPainel }: {
     }
   }, [conversas, aberta]);
 
-  // Uma aba por loja do usuário, na ordem do seletor de lojas. Conversa de loja que não está mais
-  // na lista dele (saiu da loja) ainda aparece, para não sumir sem aviso.
-  const lojas: LojaEquipe[] = availableTenants.map((t) => ({
-    id: t.tenantId, nome: t.tenantName,
-    naoLidas: conversas.filter((c) => c.tenant_id === t.tenantId).reduce((s, c) => s + c.nao_lidas, 0),
-  }));
-  for (const c of conversas) {
-    if (c.tenant_id && !lojas.some((l) => l.id === c.tenant_id)) lojas.push({ id: c.tenant_id, nome: c.loja || 'Outra loja', naoLidas: 0 });
-    if (c.tenant_id && c.nao_lidas) {
-      const l = lojas.find((x) => x.id === c.tenant_id);
-      if (l && !availableTenants.some((t) => t.tenantId === c.tenant_id)) l.naoLidas += c.nao_lidas;
-    }
-  }
+  // Abas: a loja aberta no ERPOS + toda loja onde já existe conversa (com as não lidas de cada uma).
+  // NÃO usar availableTenants do AuthContext: ele só fica preenchido na tela de escolher loja e volta
+  // vazio depois de entrar — as abas nunca apareciam e a lista misturava as lojas (visto em 2026-09-24).
+  // Para começar conversa numa loja sem conversa ainda, troca-se a loja no ERPOS (a aba vem junto).
+  const lojas: LojaEquipe[] = [];
+  const somar = (id: string, nome: string, n: number) => {
+    const l = lojas.find((x) => x.id === id);
+    if (l) { l.naoLidas += n; if (!l.nome && nome) l.nome = nome; } else lojas.push({ id, nome, naoLidas: n });
+  };
+  if (lojaAtiva) somar(lojaAtiva, user?.loja ?? '', 0);
+  for (const c of conversas) if (c.tenant_id) somar(c.tenant_id, c.loja, c.nao_lidas);
+  for (const l of lojas) if (!l.nome) l.nome = 'Loja';
   const multiLoja = lojas.length > 1;
-  // Uma loja só: mostra tudo (inclui conversa antiga sem tenant_id na resposta).
-  const daLoja = multiLoja ? conversas.filter((c) => c.tenant_id === lojaSel) : conversas;
+  // Sempre só a loja escolhida; conversa sem tenant_id (Edge antiga) aparece em qualquer aba.
+  const daLoja = conversas.filter((c) => !c.tenant_id || c.tenant_id === lojaSel);
+  const nomeLojaSel = lojas.find((l) => l.id === lojaSel)?.nome;
 
   const secao = (
     <ListaEquipe
@@ -85,6 +84,7 @@ export function useEquipeNoChat({ ativo = true, abrirPainel, fecharPainel }: {
       key={aberta.threadId}
       threadId={aberta.threadId}
       pessoa={aberta.pessoa}
+      // Nome da loja no cabeçalho sempre que há mais de uma aba — para não confundir as conversas.
       loja={multiLoja ? aberta.loja : undefined}
       onVoltar={() => { setAberta(null); recarregar(); }}
       onFechar={fecharPainel ? () => { setAberta(null); fecharPainel(); } : undefined}
@@ -93,6 +93,7 @@ export function useEquipeNoChat({ ativo = true, abrirPainel, fecharPainel }: {
   ) : nova ? (
     <NovaConversaEquipe
       loja={lojaSel}
+      nomeLoja={nomeLojaSel}
       onVoltar={() => setNova(false)}
       onEscolher={(c) => { setNova(false); setAberta(c); recarregar(); }}
     />

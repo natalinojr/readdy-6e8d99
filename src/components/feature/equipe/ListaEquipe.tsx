@@ -1,7 +1,6 @@
 // Conversas com a equipe dentro da lista do chat (2026-09-23): uma linha por pessoa, com a última
 // mensagem, a hora e as não lidas, e o botão "Nova conversa" que abre as pessoas da loja.
 import { useEffect, useMemo, useState } from 'react';
-import { useAuth } from '@/contexts/AuthContext';
 import { useVoltarFecha } from '@/lib/voltarAndroid';
 import { chatEquipe, horaCurta, type ConversaResumo, type PessoaEquipe } from './api';
 import { AvatarPessoa, estadoVisto, Vistos } from './ConversaEquipe';
@@ -87,13 +86,12 @@ const PAPEL: Record<string, string> = {
 };
 
 /** Escolher com quem falar: as pessoas da loja escolhida nas abas (a conversa nasce nessa loja). */
-export function NovaConversaEquipe({ loja, onEscolher, onVoltar }: {
+export function NovaConversaEquipe({ loja, nomeLoja, onEscolher, onVoltar }: {
   loja: string;
+  nomeLoja?: string;
   onEscolher: (c: ConversaAberta) => void;
   onVoltar: () => void;
 }) {
-  const { availableTenants: lojas } = useAuth();
-  const availableTenants = lojas ?? [];
   const [colegas, setColegas] = useState<PessoaEquipe[] | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [filtro, setFiltro] = useState('');
@@ -113,7 +111,6 @@ export function NovaConversaEquipe({ loja, onEscolher, onVoltar }: {
 
   const termo = semAcento(filtro.trim());
   const lista = useMemo(() => (colegas ?? []).filter((p) => !termo || semAcento(p.nome).includes(termo)), [colegas, termo]);
-  const nomeLoja = availableTenants.find((t) => t.tenantId === loja)?.tenantName;
 
   const escolher = async (p: PessoaEquipe) => {
     if (abrindo) return;
