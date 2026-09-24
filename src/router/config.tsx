@@ -55,6 +55,7 @@ const ReceberPage = lazy(() => import('@/pages/receber/page'));
 
 const MesaQRPage = lazy(() => import('../pages/mesa-qr/page'));
 const VoucherLinkPage = lazy(() => import('../pages/voucher-link/page'));
+const RelatorioPublicoPage = lazy(() => import('../pages/relatorio-publico/page'));
 const DeliveryPage = lazy(() => import('../pages/delivery/page'));
 const MotoboyPage = lazy(() => import('../pages/motoboy/page'));
 const MotoboyListaPage = lazy(() => import('../pages/motoboy-lista/page'));
@@ -64,6 +65,8 @@ const routes: RouteObject[] = [
   { path: '/privacidade', element: <PrivacidadePage /> },
   { path: '/mesa/:mesaId', element: <MesaClientePage /> },
   { path: '/voucher/:token', element: <VoucherLinkPage /> },
+  // Relatório de Tarefas respondido por quem está fora do sistema (sem login)
+  { path: '/r/:token', element: <RelatorioPublicoPage /> },
   // Relatório de Tráfego Pago somente leitura, sem login. A própria TrafegoPagoPage
   // detecta o token no pathname e entra em modo público.
   { path: '/relatorio/:token', element: <TrafegoPagoPage /> },

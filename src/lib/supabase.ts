@@ -366,7 +366,7 @@ async function doFetch(
  * Agora com retry automatico: se a primeira tentativa falhar por erro transiente
  * (rede, timeout), aguarda e tenta novamente antes de desistir.
  */
-async function resolveAccessToken(externalToken?: string): Promise<{
+export async function resolveAccessToken(externalToken?: string): Promise<{
   accessToken: string | null;
   error: Error | null;
 }> {
@@ -617,7 +617,7 @@ export async function invokeWithAuth<T = unknown>(
  * Reduz MUITO o tamanho (e o egress) — uma foto de celular de ~2 MB vira ~60-90 KB.
  * Em caso de falha (ou formato que não recomprime bem), devolve o arquivo original.
  */
-async function compressImage(file: File, maxSize = 700, quality = 0.6): Promise<Blob> {
+export async function compressImage(file: File, maxSize = 700, quality = 0.6): Promise<Blob> {
   if (!file.type.startsWith('image/') || file.type === 'image/gif' || file.type === 'image/svg+xml') {
     return file;
   }

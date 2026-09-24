@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
-import { Plus, ListTodo, LayoutGrid, CalendarDays, ClipboardList, UserCheck, Users, Layers, SlidersHorizontal, ListChecks, Waypoints, ArrowLeft, Gauge, Share2, LayoutTemplate, BellRing } from 'lucide-react';
+import { Plus, ListTodo, LayoutGrid, CalendarDays, ClipboardList, UserCheck, Users, Layers, SlidersHorizontal, ListChecks, Waypoints, ArrowLeft, Gauge, Share2, LayoutTemplate, BellRing, FileText } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
 import { useEuTarefas } from './hooks/useEuTarefas';
 import { useAppMode } from '@/contexts/AppModeContext';
@@ -27,6 +27,7 @@ import ConfirmDialog from './components/ConfirmDialog';
 import CompartilharPasta from './components/CompartilharPasta';
 import ConfigAvisos from './components/ConfigAvisos';
 import { BottomNav, ListasSheet } from './components/MobileNav';
+import Relatorios from './relatorios/Relatorios';
 import type { Filtros, GroupBy } from './lib/agrupamento';
 import { FILTROS_VAZIOS, aplicarFiltros } from './lib/agrupamento';
 import { montarArvorePastas, achatarArvore, type NoPasta } from './lib/pastas';
@@ -101,6 +102,11 @@ export default function TarefasPage() {
   const [newListName, setNewListName] = useState('');
   const [newListColor, setNewListColor] = useState(CORES_LISTA[0]);
   const [newListParentId, setNewListParentId] = useState<string | null>(null);
+  // Relatórios compartilháveis por link: ocupam o lugar das tarefas na área principal.
+  // Abre direto por /tarefas?relatorio=<id> (clique no push de resposta nova).
+  const [relatorioAberto, setRelatorioAberto] = useState<string | null>(() =>
+    typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('relatorio') : null);
+  const [verRelatorios, setVerRelatorios] = useState<boolean>(() => !!relatorioAberto);
   const [pastaExcluindo, setPastaExcluindo] = useState<{ no: NoPasta; ids: Set<string>; descricao: string } | null>(null);
 
   const arvorePastas = useMemo(() => montarArvorePastas(lists), [lists]);
@@ -130,9 +136,10 @@ export default function TarefasPage() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const taskId = params.get('task');
-    if (!taskId) return;
-    setOpenTaskId(taskId);
+    if (!taskId && !params.get('relatorio')) return;
+    if (taskId) setOpenTaskId(taskId);
     params.delete('task');
+    params.delete('relatorio');
     const query = params.toString();
     window.history.replaceState(
       {},
@@ -247,6 +254,7 @@ export default function TarefasPage() {
   };
 
   const irParaPasta = (id: string) => {
+    setVerRelatorios(false);
     setSelectedListId(id);
     setOrigem('pasta');
   };
@@ -387,9 +395,9 @@ export default function TarefasPage() {
             return (
               <button
                 key={id}
-                onClick={() => setOrigem(id)}
+                onClick={() => { setVerRelatorios(false); setOrigem(id); }}
                 className={`w-full flex items-center gap-2 px-4 py-2 text-sm text-left transition ${
-                  origem === id ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-slate-600 hover:bg-slate-50'
+                  origem === id && !verRelatorios ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-slate-600 hover:bg-slate-50'
                 }`}
               >
                 <Icon size={14} className="shrink-0" />
@@ -397,6 +405,16 @@ export default function TarefasPage() {
               </button>
             );
           })}
+
+          <button
+            onClick={() => { setRelatorioAberto(null); setVerRelatorios(true); }}
+            className={`w-full flex items-center gap-2 px-4 py-2 text-sm text-left transition ${
+              verRelatorios ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-slate-600 hover:bg-slate-50'
+            }`}
+          >
+            <FileText size={14} className="shrink-0" />
+            <span className="flex-1">Relatórios</span>
+          </button>
 
           <div className="px-4 pt-3 pb-1 flex items-center justify-between group">
             <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Pastas</span>
@@ -479,6 +497,15 @@ export default function TarefasPage() {
       </aside>
 
       {/* ── Conteúdo ── */}
+      {verRelatorios ? (
+        <main className="flex-1 min-w-0 overflow-auto bg-slate-50">
+          <Relatorios
+            key={relatorioAberto ?? 'lista'}
+            abrirId={relatorioAberto}
+            onVoltar={() => setVerRelatorios(false)}
+          />
+        </main>
+      ) : (
       <main className="flex-1 min-w-0 overflow-auto bg-slate-50">
         <div className="sticky top-0 z-10 bg-slate-50/95 backdrop-blur border-b border-slate-200 px-4 md:px-6 py-2.5 md:py-3 flex flex-wrap items-center gap-2 md:gap-3">
           <button
@@ -607,12 +634,14 @@ export default function TarefasPage() {
           {conteudo}
         </PullToRefresh>
       </main>
+      )}
 
       {/* ── Navegação inferior (celular) ── */}
       <BottomNav
         // Carga é só desktop (tabela larga): no celular a barra marca Lista.
         view={origem === 'minhas' ? 'minhas' : display === 'carga' ? 'lista' : display}
         onView={(v) => {
+          setVerRelatorios(false);
           if (v === 'minhas') setOrigem('minhas');
           else setDisplay(v as Display);
         }}
@@ -629,8 +658,9 @@ export default function TarefasPage() {
           onNovaLista={() => abrirNovaPasta(null)}
           onNovaSubpasta={abrirNovaPasta}
           onExcluir={excluirPasta}
-          onCompartilhadas={() => setOrigem('compartilhadas')}
-          onTodas={() => setOrigem('todas')}
+          onCompartilhadas={() => { setVerRelatorios(false); setOrigem('compartilhadas'); }}
+          onTodas={() => { setVerRelatorios(false); setOrigem('todas'); }}
+          onRelatorios={() => { setRelatorioAberto(null); setVerRelatorios(true); }}
           onStatus={() => setShowStatus(true)}
           onCampos={() => setShowCampos(true)}
           onTemplates={() => setShowTemplates(true)}
