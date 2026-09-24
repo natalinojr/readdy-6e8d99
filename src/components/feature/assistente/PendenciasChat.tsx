@@ -19,6 +19,7 @@ import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { kindConfig } from '@/contexts/PendenciasContext';
 import ItensClassificarCard from '@/components/feature/assistente/ItensClassificarCard';
 import TarefasPendencia, { minhasTarefasPendentes } from '@/components/feature/assistente/TarefasPendencia';
+import { chamarPedidos } from '@/pages/receber/pedidos/api';
 
 type Call = <T>(action: string, extra?: Record<string, unknown>) => Promise<T>;
 
@@ -55,6 +56,8 @@ export async function carregarPendenciasChat(): Promise<PendenciaChat[]> {
 }
 
 const notaDa = (p: PendenciaChat) => (typeof p.payload?.document_id === 'string' ? p.payload.document_id : null);
+// Pedido de pagamento do /receber (reembolso, freelancer, fornecedor sem nota).
+const pedidoDa = (p: PendenciaChat) => (typeof p.payload?.pedido_id === 'string' ? p.payload.pedido_id : null);
 
 // "Recebimento parado" (receber-mercadoria) não tinha quem a fechasse: a nota era lançada ou
 // ignorada nas Notas de entrada e a pendência ficava para sempre (dono, 2026-09-24). Ao carregar,
@@ -186,6 +189,47 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
     finally { setOcupada(null); }
   };
 
+  // Pedido de pagamento (dono, 2026-09-24): aprovar ali mesmo e já seguir para o Pix. Aprovar gera a
+  // conta a pagar e o Edge prepara o Pix (pendência 'pagamento_pendente'); aí é o mesmo Pagar com PIN
+  // dos pagamentos do grupo. Se o Pix não foi preparado (sem chave, trava do Pix), fica o aviso.
+  const aprovarEPagar = async (p: PendenciaChat, soPreparar = false) => {
+    const pedido = pedidoDa(p);
+    if (!pedido) return;
+    setOcupada(p.id);
+    setErros((e) => { const n = { ...e }; delete n[p.id]; return n; });
+    try {
+      const { data, erro } = await chamarPedidos<{ pagamento?: { preparado: boolean; motivo?: string } }>(soPreparar ? 'preparar_pagamento' : 'aprovar', p.tenantId, { id: pedido });
+      if (erro) throw new Error(erro);
+      if (!data?.pagamento?.preparado) {
+        await recarregar(); onMudou?.();
+        setErros((x) => ({ ...x, [p.id]: `${soPreparar ? 'O' : 'Aprovado, mas o'} Pix não foi preparado: ${data?.pagamento?.motivo ?? 'sem resposta'}. Pague pelo app do banco — a conciliação dá baixa.` }));
+        return;
+      }
+      const { data: pend } = await supabase.from('pendencias').select('id')
+        .eq('tenant_id', p.tenantId).eq('kind', 'pagamento_pendente').in('status', ['aberta', 'vista'])
+        .eq('payload->>pedido_id', pedido).order('criada_em', { ascending: false }).limit(1).maybeSingle();
+      // O aviso "não preparou o Pix" cumpriu o papel: agora quem espera é o cartão do Pix.
+      if (soPreparar) await supabase.rpc('fn_pendencia_marcar', { p_id: p.id, p_acao: 'resolvida', p_motivo: 'Pix preparado de novo' });
+      if (!pend) { await recarregar(); onMudou?.(); return; }
+      await onPagar({ ...p, id: pend.id, kind: 'pagamento_pendente' });
+      await recarregar(); onMudou?.();
+    } catch (e) {
+      setErros((x) => ({ ...x, [p.id]: e instanceof Error ? e.message : String(e) }));
+      await recarregar();
+    } finally { setOcupada(null); }
+  };
+
+  // Recusar pedido: o motivo é obrigatório e a pessoa que pediu vê.
+  const recusarPedido = async (p: PendenciaChat, m: string) => {
+    const pedido = pedidoDa(p);
+    if (!pedido) return;
+    setOcupada(p.id);
+    const { erro } = await chamarPedidos('recusar', p.tenantId, { id: pedido, motivo: m });
+    if (erro) setErros((e) => ({ ...e, [p.id]: erro }));
+    else { setMotivoDe(null); setMotivo(''); await recarregar(); onMudou?.(); }
+    setOcupada(null);
+  };
+
   // Remessa/devolução que não é compra: ignora a nota nas Notas de entrada e fecha a pendência.
   const ignorarNota = async (p: PendenciaChat) => {
     const doc = notaDa(p);
@@ -231,6 +275,10 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
     const cfg = kindConfig(p.kind);
     const ehPagamento = p.kind === 'pagamento_grupo' || p.kind === 'pagamento_pendente';
     const ehRecebimento = p.kind === 'recebimento_parado' && !!notaDa(p);
+    const ehPedido = p.kind === 'pedido_pagamento' && !!pedidoDa(p);
+    const ehPedidoPagar = p.kind === 'pedido_pagamento_pagar' && !!pedidoDa(p);
+    // A frase do servidor é para quem pede; aqui o botão já diz o que acontece.
+    const detalhe = ehPedido ? p.detalhe?.replace(/\s*Só vira conta a pagar depois de aprovado\.?/i, '') : p.detalhe;
     const busy = ocupada === p.id;
     return (
       <div key={p.id} data-pend={p.id}
@@ -255,7 +303,7 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
         </div>
         <div className="pl-[42px]">
           {ehPagamento && infoPag[p.id] && <LinhaPagamento info={infoPag[p.id]} />}
-          {p.detalhe && <p className="text-xs text-zinc-500 mt-1 line-clamp-3 whitespace-pre-wrap">{p.detalhe}</p>}
+          {detalhe && <p className="text-xs text-zinc-500 mt-1 line-clamp-3 whitespace-pre-wrap">{detalhe}</p>}
         </div>
 
         {erros[p.id] && (
@@ -270,10 +318,15 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
         )}
 
         {motivoDe === p.id ? (
-          <form className="flex gap-1.5 mt-2.5" onSubmit={(e) => { e.preventDefault(); if (motivo.trim()) marcar(p, 'descartada', motivo.trim()); }}>
-            <input autoFocus value={motivo} onChange={(e) => setMotivo(e.target.value)} placeholder="Por que não vai fazer?"
+          <form className="flex gap-1.5 mt-2.5" onSubmit={(e) => {
+            e.preventDefault();
+            const m = motivo.trim();
+            if (!m) return;
+            if (ehPedido) { if (m.length >= 3) recusarPedido(p, m); } else marcar(p, 'descartada', m);
+          }}>
+            <input autoFocus value={motivo} onChange={(e) => setMotivo(e.target.value)} placeholder={ehPedido ? 'Motivo da recusa (a pessoa vai ver)' : 'Por que não vai fazer?'}
               className="flex-1 min-w-0 h-9 px-3 rounded-xl border border-zinc-200 text-sm focus:outline-none focus:border-violet-400" />
-            <button type="submit" disabled={busy || !motivo.trim()} className="px-3 h-9 rounded-xl bg-zinc-800 text-white text-xs font-bold disabled:opacity-40 cursor-pointer">OK</button>
+            <button type="submit" disabled={busy || motivo.trim().length < (ehPedido ? 3 : 1)} className="px-3 h-9 rounded-xl bg-zinc-800 text-white text-xs font-bold disabled:opacity-40 cursor-pointer">OK</button>
             <button type="button" onClick={() => { setMotivoDe(null); setMotivo(''); }} className="px-2 h-9 rounded-xl text-zinc-400 cursor-pointer" aria-label="Cancelar"><i className="ri-close-line" /></button>
           </form>
         ) : ignorarDe === p.id ? (
@@ -300,6 +353,27 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
                 )}
               </>
             )}
+            {/* Pedido de pagamento (2026-09-24): decide aqui; aprovar já chama o Pix com PIN. */}
+            {ehPedido && (
+              <>
+                <button onClick={() => aprovarEPagar(p)} disabled={busy} className={PRINCIPAL}>
+                  {busy ? 'Aprovando…' : <><i className="ri-check-line" /> Aprovar e pagar</>}
+                </button>
+                <button onClick={() => { setMotivoDe(p.id); setMotivo(''); }} disabled={busy} className={NEUTRO}>
+                  <i className="ri-close-line" /> Recusar
+                </button>
+                {p.rota && (
+                  <button onClick={() => onAbrir(p)} disabled={busy} className={SECUNDARIO}>
+                    <i className="ri-file-list-3-line" /> Ver pedido
+                  </button>
+                )}
+              </>
+            )}
+            {ehPedidoPagar && (
+              <button onClick={() => aprovarEPagar(p, true)} disabled={busy} className={PRINCIPAL}>
+                {busy ? 'Preparando…' : <><i className="ri-refresh-line" /> Preparar o Pix de novo</>}
+              </button>
+            )}
             {/* Recebimento parado (2026-09-24): "Abrir" levava à lista inteira de notas e não resolvia.
                 Agora abre a PRÓPRIA nota já na conferência, ou ignora se não for compra. */}
             {ehRecebimento && (
@@ -319,12 +393,12 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
                 <i className={RESOLVE_AQUI[p.kind].icone} /> {expandida === p.id ? 'Fechar' : RESOLVE_AQUI[p.kind].label}
               </button>
             )}
-            {!ehPagamento && !ehRecebimento && p.rota && (
-              <button onClick={() => onAbrir(p)} className={RESOLVE_AQUI[p.kind] ? SECUNDARIO : PRINCIPAL}>
+            {!ehPagamento && !ehRecebimento && !ehPedido && p.rota && (
+              <button onClick={() => onAbrir(p)} className={RESOLVE_AQUI[p.kind] || ehPedidoPagar ? SECUNDARIO : PRINCIPAL}>
                 <i className="ri-arrow-right-up-line" /> {RESOLVE_AQUI[p.kind] ? 'Abrir na tela' : 'Abrir'}
               </button>
             )}
-            {!p.acaoRequerida ? (
+            {ehPedido ? null : !p.acaoRequerida ? (
               <button onClick={() => marcar(p, 'vista')} disabled={busy} className={NEUTRO}><i className="ri-check-line" /> OK</button>
             ) : (
               <button onClick={() => { setMotivoDe(p.id); setMotivo(''); }} disabled={busy} className={NEUTRO}>Não vou fazer</button>
