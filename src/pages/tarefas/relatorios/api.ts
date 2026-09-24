@@ -34,6 +34,8 @@ export interface RespostaRel {
   body: string | null;
   images: ImagemRel[];
   new_status: StatusItem | null;
+  /** Links de arquivos na nuvem mandados junto com a resposta. */
+  links?: LinkRel[];
   /** Campos respondidos nesta resposta (só o que mudou). */
   answers?: Record<string, ValorCampo> | null;
   author_name: string;
@@ -59,6 +61,8 @@ export interface ItemRel {
   images: ImagemRel[];
   status: StatusItem;
   fields?: CampoRel[];
+  /** Links de arquivos na nuvem do item. */
+  links?: LinkRel[];
   created_by_guest_name: string | null;
   created_at: string;
   updated_at: string;
@@ -117,7 +121,21 @@ export const STATUS_INFO: Record<StatusItem, { label: string; cor: string }> = {
 
 // Endereço de onde o dono está (em produção, erpos.vercel.app). Não usa o
 // getAppBaseUrl: o VITE_APP_URL ainda pode apontar para o domínio do Readdy, que está pausado.
-export const linkPublico = (token: string) => `${window.location.origin}/r/${token}`;
+export const linkPublico = (token: string, titulo?: string | null) => {
+  const nome = slugRelatorio(titulo);
+  return `${window.location.origin}/r/${nome ? `${nome}/` : ''}${token}`;
+};
+
+/** Nome do relatório no endereço: "Compatibilização – Lume" → "compatibilizacao-lume". Só enfeite: quem abre é o código. */
+export function slugRelatorio(titulo?: string | null): string {
+  return (titulo ?? '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 60)
+    .replace(/-+$/, '');
+}
 
 // Função (e não constante) para só ler SUPABASE_URL na hora da chamada — nos testes o módulo vem mockado.
 const urlFn = () => `${SUPABASE_URL}/functions/v1/task-reports`;

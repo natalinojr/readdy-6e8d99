@@ -67,6 +67,8 @@ const routes: RouteObject[] = [
   { path: '/voucher/:token', element: <VoucherLinkPage /> },
   // Relatório de Tarefas respondido por quem está fora do sistema (sem login)
   { path: '/r/:token', element: <RelatorioPublicoPage /> },
+  // Mesmo relatório com o nome na frente (/r/compatibilizacao-lume/<código>) — o nome é só para ler.
+  { path: '/r/:nome/:token', element: <RelatorioPublicoPage /> },
   // Relatório de Tráfego Pago somente leitura, sem login. A própria TrafegoPagoPage
   // detecta o token no pathname e entra em modo público.
   { path: '/relatorio/:token', element: <TrafegoPagoPage /> },

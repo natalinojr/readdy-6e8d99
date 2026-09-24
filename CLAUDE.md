@@ -27,6 +27,14 @@ Para o fluxo **SDD** (specs, gates de qualidade, branches, restrições), consul
 - **type-check e lint estão "vermelhos"**: há ~350 erros de TypeScript **pré-existentes** (herdados do código gerado pelo Readdy). O build funciona mesmo assim porque o Vite não faz checagem de tipos. **NÃO tente consertar os 350** — ao mexer no código, apenas garanta não AUMENTAR a contagem (`npx tsc --noEmit --project tsconfig.app.json | grep -c "error TS"`).
 - Supabase: projeto `ERP OS`, ref `mdghhjemzdmeuqpzuyzx`.
 
+## Validar no sistema (autorização do dono, 2026-09-25)
+
+**Sempre que a mudança aparecer na tela, validar de verdade antes de dizer que está pronto** — o dono gosta e autoriza que o Claude use o navegador do app (painel Browser) para implantar e testar. Não precisa pedir para abrir o sistema.
+- **Loja de teste primeiro:** sempre que possível, testar na loja **"Testes PDV"** (dados, ids e usuários `qa.*` no `TESTES-CHECKLIST.md`). Lá pode tudo; fora dela, só leitura. Dado de teste criado em produção fora dessa loja (ex.: um relatório com token de teste) é apagado no fim e avisado ao dono.
+- **Sem login:** o Claude não digita senha. Tela que exige login → usar a sessão já logada no painel do navegador (o dono entra uma vez) ou o modo demo quando existir (`/dev/tarefas`, só em `npm run dev`). Tela pública (ex.: `/r/<código>`, `/mesa-qr`, delivery) → testar direto no dev server local contra o banco real.
+- **Backend sem tela:** chamar a Edge Function (curl com a anon key) ou `npx supabase db query --linked` (ver memória de migrações); transação que se desfaz sozinha quando só precisa conferir regra.
+- **Dev server:** worktree próprio + entrada no `.claude/launch.json` + `preview_start`; conferir celular (preset mobile) e tela larga. O relato ao dono diz o que foi testado **e como** (demo, link público, logado) e o que ficou sem teste.
+
 ## Colaboração
 
 - Projeto compartilhado com **Codex** e com o **usuário**. Não reverta alterações que você não fez sem autorização clara; trate mudanças novas como trabalho do usuário/Codex.

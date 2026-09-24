@@ -32,7 +32,7 @@ describe('ItemRelatorio', () => {
     fireEvent.click(screen.getByText('Responder'));
     fireEvent.change(screen.getByPlaceholderText('Escreva sua resposta…'), { target: { value: 'Feito ontem' } });
     fireEvent.click(screen.getByText('Enviar'));
-    await waitFor(() => expect(onResponder).toHaveBeenCalledWith('Feito ontem', [], null, null));
+    await waitFor(() => expect(onResponder).toHaveBeenCalledWith('Feito ontem', [], null, null, []));
   });
 
   const comCampos: ItemRel = {
@@ -83,7 +83,7 @@ describe('ItemRelatorio', () => {
     fireEvent.click(screen.getByLabelText('Cozinha'));
     expect((screen.getByLabelText('Quarto') as HTMLInputElement).disabled).toBe(true);
     fireEvent.click(screen.getByText('Enviar'));
-    await waitFor(() => expect(onResponder).toHaveBeenCalledWith('', [], null, { m: ['a', 'b'] }));
+    await waitFor(() => expect(onResponder).toHaveBeenCalledWith('', [], null, { m: ['a', 'b'] }, []));
   });
 
   it('responder campos envia só o que mudou', async () => {
@@ -92,7 +92,7 @@ describe('ItemRelatorio', () => {
     fireEvent.click(screen.getByText('Responder'));
     fireEvent.click(screen.getByLabelText('Cozinha'));
     fireEvent.click(screen.getByText('Enviar'));
-    await waitFor(() => expect(onResponder).toHaveBeenCalledWith('', [], null, { c2: ['b'] }));
+    await waitFor(() => expect(onResponder).toHaveBeenCalledWith('', [], null, { c2: ['b'] }, []));
   });
 
   it('Ctrl+V de imagem na caixa de resposta envia a imagem e aceita legenda', async () => {
@@ -108,7 +108,28 @@ describe('ItemRelatorio', () => {
     await waitFor(() => expect(onEnviarImagem).toHaveBeenCalledTimes(1));
     fireEvent.change(await screen.findByPlaceholderText('Legenda'), { target: { value: 'Ralo do banheiro' } });
     fireEvent.click(screen.getByText('Enviar'));
-    await waitFor(() => expect(onResponder).toHaveBeenCalledWith('', [{ path: 'r1/x.png', name: 'print.png', caption: 'Ralo do banheiro' }], null, null));
+    await waitFor(() => expect(onResponder).toHaveBeenCalledWith('', [{ path: 'r1/x.png', name: 'print.png', caption: 'Ralo do banheiro' }], null, null, []));
+  });
+
+  it('anexa link de arquivo da nuvem na resposta e mostra os links do item', async () => {
+    const onResponder = vi.fn().mockResolvedValue(true);
+    const comLink: ItemRel = { ...item, responses: [], links: [{ url: 'https://drive.google.com/x', title: 'Planta baixa' }] };
+    render(<ItemRelatorio item={comLink} numero={1} podeResponder onResponder={onResponder} onEnviarImagem={vi.fn()} />);
+    expect(screen.getByText('Planta baixa')).toBeTruthy();
+    expect(screen.getByText('Google Drive')).toBeTruthy();
+    fireEvent.click(screen.getByText('Responder'));
+    fireEvent.click(screen.getByText('Link'));
+    fireEvent.change(screen.getByPlaceholderText(/Cole o link de compartilhamento/), { target: { value: 'dropbox.com/s/abc' } });
+    fireEvent.change(screen.getByPlaceholderText('Nome do arquivo (opcional)'), { target: { value: 'Orçamento' } });
+    fireEvent.click(screen.getByText('Incluir link'));
+    fireEvent.click(screen.getByText('Enviar'));
+    await waitFor(() => expect(onResponder).toHaveBeenCalledWith('', [], null, null, [{ url: 'https://dropbox.com/s/abc', title: 'Orçamento' }]));
+  });
+
+  it('nome do relatório no endereço vira texto simples, sem acento', async () => {
+    const { slugRelatorio } = await import('@/pages/tarefas/relatorios/api');
+    expect(slugRelatorio('Compatibilização – Lume (APTO 02)')).toBe('compatibilizacao-lume-apto-02');
+    expect(slugRelatorio('   ')).toBe('');
   });
 
   it('na tela da equipe marca "você" pelo usuário e diferencia autor do relatório e equipe da pasta', () => {

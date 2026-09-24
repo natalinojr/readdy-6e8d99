@@ -411,7 +411,7 @@ function DetalheRelatorio({ id, onVoltar, pastas, meuId, tarefas, onOpenTask }: 
   }
 
   const { report, items, guests } = dados;
-  const link = report.share_token ? linkPublico(report.share_token) : '';
+  const link = report.share_token ? linkPublico(report.share_token, report.title) : '';
   const aberto = report.status === 'open';
   // O que dá pra mexer depende do acesso: quem só vê a pasta lê e responde.
   const edita = podeEditar(report.access);
@@ -596,8 +596,8 @@ function DetalheRelatorio({ id, onVoltar, pastas, meuId, tarefas, onOpenTask }: 
               aviso={item.responses.length > 0 ? (
                 <p className="text-xs text-amber-700">Este item já tem respostas: a edição fica registrada no histórico dele, com o texto anterior.</p>
               ) : undefined}
-              onSalvar={async (title, body, images, fields) => {
-                const ok = await acao('update_item', { item_id: item.id, title, body, images, fields });
+              onSalvar={async (title, body, images, fields, links) => {
+                const ok = await acao('update_item', { item_id: item.id, title, body, images, fields, links });
                 if (ok) setEditandoItem(null);
                 return ok;
               }}
@@ -610,7 +610,7 @@ function DetalheRelatorio({ id, onVoltar, pastas, meuId, tarefas, onOpenTask }: 
               podeResponder
               meuUserId={meuId}
               onEnviarImagem={enviarImagem}
-              onResponder={(body, images, st, answers) => acao('reply', { item_id: item.id, body, images, new_status: st, answers })}
+              onResponder={(body, images, st, answers, links) => acao('reply', { item_id: item.id, body, images, new_status: st, answers, links })}
               acoes={edita && (
                 <div className="shrink-0 flex items-center opacity-60 hover:opacity-100 transition">
                   <button disabled={i === 0} onClick={() => mover(i, -1)} className="p-1 rounded-lg text-slate-400 hover:bg-slate-100 disabled:opacity-30" title="Subir"><ChevronUp size={16} /></button>
@@ -625,7 +625,7 @@ function DetalheRelatorio({ id, onVoltar, pastas, meuId, tarefas, onOpenTask }: 
             <NovoItem
               comCampos
               onEnviarImagem={enviarImagem}
-              onCriar={(title, body, images, fields) => acao('add_item', { title, body, images, fields })}
+              onCriar={(title, body, images, fields, links) => acao('add_item', { title, body, images, fields, links })}
             />
           )}
         </div>

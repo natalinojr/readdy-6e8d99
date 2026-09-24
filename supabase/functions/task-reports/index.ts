@@ -197,7 +197,7 @@ async function montarRelatorio(admin: SupabaseClient, report: Row, publico: bool
   for (const r of respostas) {
     const lista = porItem.get(r.item_id) ?? [];
     lista.push({
-      id: r.id, kind: r.kind, body: r.body, images: comUrl(r.images), new_status: r.new_status, answers: r.answers ?? null,
+      id: r.id, kind: r.kind, body: r.body, images: comUrl(r.images), links: r.links ?? [], new_status: r.new_status, answers: r.answers ?? null,
       author_name: r.author_name, author_type: r.author_user_id ? 'owner' : 'guest',
       author_guest_id: r.author_guest_id, created_at: r.created_at,
       author_is_creator: !!r.author_user_id && r.author_user_id === report.created_by,
@@ -218,7 +218,7 @@ async function montarRelatorio(admin: SupabaseClient, report: Row, publico: bool
       }),
     },
     items: itens.map((i) => ({
-      id: i.id, position: i.position, title: i.title, body: i.body, images: comUrl(i.images), status: i.status,
+      id: i.id, position: i.position, title: i.title, body: i.body, images: comUrl(i.images), links: i.links ?? [], status: i.status,
       fields: i.fields ?? [],
       created_by_guest_name: i.created_by_guest ? nomeConvidado.get(i.created_by_guest) ?? null : null,
       created_at: i.created_at, updated_at: i.updated_at, responses: porItem.get(i.id) ?? [],
@@ -256,15 +256,16 @@ async function copiarImagens(admin: SupabaseClient, imagens: Imagem[], destino: 
 async function registrar(admin: SupabaseClient, reportId: string, item: Row, autor: { user?: string; guest?: string; nome: string }, body: Row) {
   const resposta = texto(body.body, MAX_TEXTO);
   const imagens = validarImagens(body.images, reportId);
+  const links = validarLinks(body.links);
   const valores = validarRespostas(body.answers, (item.fields ?? []) as Campo[]);
   const novoStatus = body.new_status == null || body.new_status === item.status ? null : String(body.new_status);
   if (novoStatus && !STATUS_ITEM.includes(novoStatus)) throw new Recusa('Status inválido');
-  const conteudo = !!(resposta || imagens.length || valores);
+  const conteudo = !!(resposta || imagens.length || links.length || valores);
   if (!conteudo && !novoStatus) throw new Recusa('Responda os campos, escreva a resposta ou anexe uma imagem');
 
   const { data, error } = await admin.from('task_report_responses').insert({
     report_id: reportId, item_id: item.id, kind: conteudo ? 'reply' : 'status',
-    body: resposta, images: imagens, answers: valores, new_status: novoStatus,
+    body: resposta, images: imagens, links, answers: valores, new_status: novoStatus,
     author_user_id: autor.user ?? null, author_guest_id: autor.guest ?? null, author_name: autor.nome,
   }).select('id').single();
   if (error) throw error;
@@ -334,7 +335,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
     // ═══════════════ Ações públicas (pelo link) ═══════════════
     if (action.startsWith('public_')) {
       const shareToken = String(body.token ?? '');
-      if (shareToken.length < 16) return json({ error: 'Link inválido' }, 404);
+      if (shareToken.length < 12) return json({ error: 'Link inválido' }, 404);
       const { data: report } = await admin.from('task_reports').select('*').eq('share_token', shareToken).maybeSingle();
       if (!report || report.archived_at || !report.link_enabled) return json({ error: 'Este link não está mais disponível' }, 404);
 
@@ -402,7 +403,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
             .eq('report_id', report.id).order('position', { ascending: false }).limit(1).maybeSingle();
           const { data, error } = await admin.from('task_report_items').insert({
             report_id: report.id, title: titulo, body: texto(body.body, MAX_TEXTO),
-            images: validarImagens(body.images, report.id), position: (ultimo?.position ?? 0) + 1, created_by_guest: c.id,
+            images: validarImagens(body.images, report.id), links: validarLinks(body.links), position: (ultimo?.position ?? 0) + 1, created_by_guest: c.id,
           }).select('id').single();
           if (error) throw error;
           await admin.from('task_reports').update({ updated_at: new Date().toISOString() }).eq('id', report.id);
@@ -537,14 +538,14 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         const { data, error } = await admin.from('task_reports').insert({
           tenant_id: tenantId, created_by: user.id, title: titulo,
           description: texto(body.description, MAX_TEXTO) ?? modelo?.description ?? null,
-          links: modelo?.links ?? [], share_token: tokenAleatorio(18), list_id: listId,
+          links: modelo?.links ?? [], share_token: tokenAleatorio(9), list_id: listId,
         }).select('id').single();
         if (error) throw error;
         if (modelo?.items?.length) {
           const itens = [];
           for (const [i, it] of (modelo.items as Row[]).entries()) {
             itens.push({
-              report_id: data.id, position: i + 1, title: it.title, body: it.body ?? null, fields: it.fields ?? [],
+              report_id: data.id, position: i + 1, title: it.title, body: it.body ?? null, fields: it.fields ?? [], links: it.links ?? [],
               images: await copiarImagens(admin, it.images ?? [], data.id), created_by_user: user.id,
             });
           }
@@ -570,7 +571,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         // Guarda uma cópia do relatório como está (sem respostas): explicação, links e itens.
         const r = await meuRelatorio(body.report_id);
         const nome = texto(body.name, 200) ?? r.title;
-        const { data: itens, error: eI } = await admin.from('task_report_items').select('title, body, images, fields')
+        const { data: itens, error: eI } = await admin.from('task_report_items').select('title, body, images, fields, links')
           .eq('report_id', r.id).is('archived_at', null).order('position').order('created_at');
         if (eI) throw eI;
         const { data: t, error } = await admin.from('task_report_templates')
@@ -578,7 +579,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         if (error) throw error;
         const itensModelo = [];
         for (const it of itens ?? []) {
-          itensModelo.push({ title: it.title, body: it.body, fields: it.fields ?? [], images: await copiarImagens(admin, it.images ?? [], `modelos/${t.id}`) });
+          itensModelo.push({ title: it.title, body: it.body, fields: it.fields ?? [], links: it.links ?? [], images: await copiarImagens(admin, it.images ?? [], `modelos/${t.id}`) });
         }
         await admin.from('task_report_templates').update({
           content: { description: r.description ?? null, links: r.links ?? [], items: itensModelo },
@@ -627,7 +628,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       }
       case 'regenerate_link': {
         const r = await meuRelatorio(body.report_id, 'edit');
-        const novo = tokenAleatorio(18);
+        const novo = tokenAleatorio(9);
         const { error } = await admin.from('task_reports').update({ share_token: novo, updated_at: new Date().toISOString() }).eq('id', r.id);
         if (error) throw error;
         return json({ success: true, share_token: novo });
@@ -650,7 +651,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         const { data: ultimo } = await admin.from('task_report_items').select('position')
           .eq('report_id', r.id).order('position', { ascending: false }).limit(1).maybeSingle();
         const { data, error } = await admin.from('task_report_items').insert({
-          report_id: r.id, title: titulo, body: texto(body.body, MAX_TEXTO), images: validarImagens(body.images, r.id),
+          report_id: r.id, title: titulo, body: texto(body.body, MAX_TEXTO), images: validarImagens(body.images, r.id), links: validarLinks(body.links),
           fields: validarCampos(body.fields), position: (ultimo?.position ?? 0) + 1, created_by_user: user.id,
         }).select('id').single();
         if (error) throw error;
@@ -668,6 +669,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         }
         if (body.body !== undefined) patch.body = texto(body.body, MAX_TEXTO);
         if (body.images !== undefined) patch.images = validarImagens(body.images, r.id);
+        if (body.links !== undefined) patch.links = validarLinks(body.links);
         if (body.fields !== undefined) patch.fields = validarCampos(body.fields);
         if (body.position !== undefined) {
           const p = Number(body.position);
@@ -676,7 +678,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         }
         if (!Object.keys(patch).length) return json({ success: true });
         const mudou = (k: string) => k in patch && JSON.stringify(patch[k] ?? null) !== JSON.stringify(item[k] ?? (k === 'body' || k === 'title' ? null : []));
-        const mudouConteudo = ['title', 'body', 'images', 'fields'].some(mudou);
+        const mudouConteudo = ['title', 'body', 'images', 'fields', 'links'].some(mudou);
         const agora = new Date().toISOString();
         const { error } = await admin.from('task_report_items').update({ ...patch, updated_at: agora }).eq('id', item.id);
         if (error) throw error;
@@ -692,6 +694,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
               mudou('body') ? `Texto anterior: ${String(item.body ?? '(vazio)').slice(0, 1500)}` : null,
               mudou('images') ? 'Imagens alteradas' : null,
               mudou('fields') ? 'Campos de resposta alterados' : null,
+              mudou('links') ? 'Links de arquivos alterados' : null,
             ].filter(Boolean).join('\n');
             await admin.from('task_report_responses').insert({
               report_id: r.id, item_id: item.id, kind: 'edit', body: antes || null,

@@ -9,8 +9,8 @@ import { Loader2, Lock, UserRound, ClipboardList } from 'lucide-react';
 import ItemRelatorio, { NovoItem } from '../tarefas/relatorios/ItemRelatorio';
 import LinksRelatorio from '../tarefas/relatorios/LinksRelatorio';
 import {
-  chamarPublico, enviarImagemPublico, lerConvidado, salvarConvidado,
-  type Convidado, type ImagemRel, type ItemRel, type Relatorio, type StatusItem, type ValorCampo,
+  chamarPublico, enviarImagemPublico, lerConvidado, salvarConvidado, slugRelatorio,
+  type Convidado, type ImagemRel, type ItemRel, type LinkRel, type Relatorio, type StatusItem, type ValorCampo,
 } from '../tarefas/relatorios/api';
 
 type Dados = { report: Relatorio; items: ItemRel[]; guests: Convidado[]; me: { id: string; name: string } | null };
@@ -40,7 +40,13 @@ export default function RelatorioPublicoPage() {
     return () => { document.removeEventListener('visibilitychange', f); window.clearInterval(t); };
   }, [carregar]);
 
-  useEffect(() => { if (dados?.report.title) document.title = dados.report.title; }, [dados?.report.title]);
+  useEffect(() => {
+    if (!dados?.report.title) return;
+    document.title = dados.report.title;
+    // Endereço com o nome atual do relatório (o título pode ter mudado depois que o link foi enviado).
+    const certo = `/r/${slugRelatorio(dados.report.title) ? `${slugRelatorio(dados.report.title)}/` : ''}${token}`;
+    if (window.location.pathname !== certo) window.history.replaceState(null, '', certo + window.location.search);
+  }, [dados?.report.title, token]);
 
   const mostrarAviso = (m: string) => { setAviso(m); window.setTimeout(() => setAviso(null), 4000); };
 
@@ -51,8 +57,8 @@ export default function RelatorioPublicoPage() {
     return r.data;
   };
 
-  const responder = async (itemId: string, body: string, images: ImagemRel[], novoStatus: StatusItem | null, answers: Record<string, ValorCampo> | null) => {
-    const r = await chamarPublico('public_reply', { token, guest_token: guestToken, item_id: itemId, body, images, new_status: novoStatus, answers });
+  const responder = async (itemId: string, body: string, images: ImagemRel[], novoStatus: StatusItem | null, answers: Record<string, ValorCampo> | null, links: LinkRel[]) => {
+    const r = await chamarPublico('public_reply', { token, guest_token: guestToken, item_id: itemId, body, images, new_status: novoStatus, answers, links });
     if (!r.ok) { mostrarAviso(r.error); return false; }
     await carregar();
     return true;
@@ -125,7 +131,7 @@ export default function RelatorioPublicoPage() {
             numero={i + 1}
             podeResponder={aberto}
             meuGuestId={me.id}
-            onResponder={(b, imgs, st, ans) => responder(item.id, b, imgs, st, ans)}
+            onResponder={(b, imgs, st, ans, links) => responder(item.id, b, imgs, st, ans, links)}
             onEnviarImagem={enviarImagem}
           />
         ))}
@@ -133,8 +139,8 @@ export default function RelatorioPublicoPage() {
         {aberto && report.guests_can_add_items && (
           <NovoItem
             onEnviarImagem={enviarImagem}
-            onCriar={async (title, body, images) => {
-              const r = await chamarPublico('public_add_item', { token, guest_token: guestToken, title, body, images });
+            onCriar={async (title, body, images, _fields, links) => {
+              const r = await chamarPublico('public_add_item', { token, guest_token: guestToken, title, body, images, links });
               if (!r.ok) { mostrarAviso(r.error); return false; }
               await carregar();
               return true;

@@ -5,7 +5,8 @@
 import { useRef, useState, type ClipboardEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { ImagePlus, Loader2, Send, X, PencilLine, CheckCircle2, RotateCcw, MessageCircle, Plus, ArrowRight } from 'lucide-react';
-import { STATUS_INFO, dataHora, type CampoRel, type ImagemRel, type ItemRel, type StatusItem, type ValorCampo } from './api';
+import { STATUS_INFO, dataHora, type CampoRel, type ImagemRel, type ItemRel, type LinkRel, type StatusItem, type ValorCampo } from './api';
+import { ChipsLinks, useLinks } from './LinksRelatorio';
 import { EditorCampos, PreencherCampos, erroPreenchimento, formatarValor, limparCampos, respostasMudadas, valoresAtuais } from './CamposResposta';
 
 /** Faixa colorida na lateral do item, pela situação. */
@@ -145,7 +146,7 @@ interface Props {
   meuGuestId?: string | null;
   /** Na tela da equipe: meu id de usuário — as minhas respostas aparecem como "você". */
   meuUserId?: string | null;
-  onResponder: (body: string, imagens: ImagemRel[], novoStatus: StatusItem | null, answers: Record<string, ValorCampo> | null) => Promise<boolean>;
+  onResponder: (body: string, imagens: ImagemRel[], novoStatus: StatusItem | null, answers: Record<string, ValorCampo> | null, links: LinkRel[]) => Promise<boolean>;
   onEnviarImagem: (f: File) => Promise<ImagemRel | null>;
   /** Ações da equipe (editar/excluir) no cabeçalho do item. */
   acoes?: ReactNode;
@@ -158,6 +159,7 @@ export default function ItemRelatorio({ item, numero, podeResponder, meuGuestId,
   const [rascunho, setRascunho] = useState<Record<string, ValorCampo>>({});
   const [erro, setErro] = useState<string | null>(null);
   const anexos = useAnexos(onEnviarImagem);
+  const lk = useLinks();
 
   const campos = item.fields ?? [];
   const atuais = valoresAtuais(item);
@@ -169,16 +171,16 @@ export default function ItemRelatorio({ item, numero, podeResponder, meuGuestId,
     setRascunho(valorAtual);
     setAberto(true);
   };
-  const fechar = () => { setAberto(false); setTexto(''); setRascunho({}); setErro(null); anexos.limpar(); };
+  const fechar = () => { setAberto(false); setTexto(''); setRascunho({}); setErro(null); anexos.limpar(); lk.limpar(); };
 
   const enviar = async (novoStatus: StatusItem | null) => {
     if (gravando || anexos.enviando) return;
-    if (!texto.trim() && !anexos.imagens.length && !novoStatus && !temMudancas) return;
+    if (!texto.trim() && !anexos.imagens.length && !lk.links.length && !novoStatus && !temMudancas) return;
     const e = erroPreenchimento(campos, mudancas);
     setErro(e);
     if (e) return;
     setGravando(true);
-    const ok = await onResponder(texto.trim(), anexos.paraGravar(), novoStatus, temMudancas ? mudancas : null);
+    const ok = await onResponder(texto.trim(), anexos.paraGravar(), novoStatus, temMudancas ? mudancas : null, lk.links);
     setGravando(false);
     if (ok) fechar();
   };
@@ -195,7 +197,7 @@ export default function ItemRelatorio({ item, numero, podeResponder, meuGuestId,
   // Quem preencheu o resumo: se foi uma pessoa só, num momento só, vira uma linha no rodapé.
   const autorias = Object.values(atuais).filter((a) => a.valor !== null);
   const autoriaUnica = autorias.length > 0 && autorias.every((a) => a.autor === autorias[0].autor && a.em === autorias[0].em);
-  const temRascunho = !!texto.trim() || anexos.imagens.length > 0 || temMudancas;
+  const temRascunho = !!texto.trim() || anexos.imagens.length > 0 || lk.links.length > 0 || temMudancas;
 
   return (
     <article className={`bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden border-l-4 ${COR_LATERAL[item.status]}`}>
@@ -215,6 +217,7 @@ export default function ItemRelatorio({ item, numero, podeResponder, meuGuestId,
       <div className="px-4 pb-3 pl-14">
         {item.body && <p className="text-sm text-slate-600 whitespace-pre-wrap break-words mt-1">{item.body}</p>}
         <GradeImagens imagens={item.images} />
+        <ChipsLinks links={item.links ?? []} />
         {campos.length > 0 && (
           <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50/50 px-3 py-2.5">
             <dl className="grid grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-2.5">
@@ -296,6 +299,7 @@ export default function ItemRelatorio({ item, numero, podeResponder, meuGuestId,
                   )}
                   {r.body && <p className="text-sm text-slate-700 whitespace-pre-wrap break-words mt-0.5">{r.body}</p>}
                   <GradeImagens imagens={r.images} />
+                  <ChipsLinks links={r.links ?? []} />
                   {r.new_status && (
                     <p className="text-xs text-slate-500 mt-1 flex items-center gap-1">
                       {r.new_status === 'resolved' ? <CheckCircle2 size={13} className="text-emerald-600" /> : <RotateCcw size={13} />}
@@ -356,10 +360,13 @@ export default function ItemRelatorio({ item, numero, podeResponder, meuGuestId,
                 className="w-full rounded-lg border border-slate-200 px-3 py-2 text-base md:text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200"
               />
               <GradeImagens imagens={anexos.imagens} onRemover={anexos.remover} onLegenda={anexos.legendar} />
+              {lk.chips}
+              {lk.painel}
               {DICA_COLAR}
               {erro && <p className="text-sm text-red-600">{erro}</p>}
               <div className="flex flex-wrap items-center gap-2">
                 {anexos.botao}
+                {lk.botao}
                 <div className="flex-1" />
                 <button onClick={fechar} className="px-3 py-2 rounded-lg text-sm text-slate-500 hover:bg-slate-100">
                   Cancelar
@@ -391,11 +398,11 @@ export default function ItemRelatorio({ item, numero, podeResponder, meuGuestId,
 
 /** Formulário de item (novo ou edição): título, descrição, imagens com legenda e, para a equipe, campos de resposta. */
 export function FormItem({ inicial, comCampos, rotuloSalvar, aviso, onSalvar, onCancelar, onEnviarImagem }: {
-  inicial?: { title: string; body: string | null; images: ImagemRel[]; fields?: CampoRel[] };
+  inicial?: { title: string; body: string | null; images: ImagemRel[]; fields?: CampoRel[]; links?: LinkRel[] };
   comCampos: boolean;
   rotuloSalvar: string;
   aviso?: ReactNode;
-  onSalvar: (title: string, body: string, images: ImagemRel[], fields: CampoRel[]) => Promise<boolean>;
+  onSalvar: (title: string, body: string, images: ImagemRel[], fields: CampoRel[], links: LinkRel[]) => Promise<boolean>;
   onCancelar: () => void;
   onEnviarImagem: (f: File) => Promise<ImagemRel | null>;
 }) {
@@ -405,13 +412,14 @@ export function FormItem({ inicial, comCampos, rotuloSalvar, aviso, onSalvar, on
   const [erro, setErro] = useState<string | null>(null);
   const [gravando, setGravando] = useState(false);
   const anexos = useAnexos(onEnviarImagem, inicial?.images ?? []);
+  const lk = useLinks(inicial?.links ?? []);
 
   const salvar = async () => {
     const { campos: limpos, erro: e } = limparCampos(campos);
     if (e) { setErro(e); return; }
     setErro(null);
     setGravando(true);
-    await onSalvar(titulo.trim(), corpo.trim(), anexos.paraGravar(), limpos);
+    await onSalvar(titulo.trim(), corpo.trim(), anexos.paraGravar(), limpos, lk.links);
     setGravando(false);
   };
 
@@ -434,6 +442,8 @@ export function FormItem({ inicial, comCampos, rotuloSalvar, aviso, onSalvar, on
         className="w-full rounded-lg border border-slate-200 px-3 py-2 text-base md:text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200"
       />
       <GradeImagens imagens={anexos.imagens} onRemover={anexos.remover} onLegenda={anexos.legendar} />
+      {lk.chips}
+      {lk.painel}
       {DICA_COLAR}
       {comCampos && (
         <div className="pt-1">
@@ -443,8 +453,9 @@ export function FormItem({ inicial, comCampos, rotuloSalvar, aviso, onSalvar, on
       )}
       {aviso}
       {erro && <p className="text-sm text-red-600">{erro}</p>}
-      <div className="flex items-center gap-2 pt-1">
+      <div className="flex flex-wrap items-center gap-2 pt-1">
         {anexos.botao}
+        {lk.botao}
         <div className="flex-1" />
         <button onClick={onCancelar} className="px-3 py-2 rounded-lg text-sm text-slate-500 hover:bg-slate-100">Cancelar</button>
         <button
@@ -461,7 +472,7 @@ export function FormItem({ inicial, comCampos, rotuloSalvar, aviso, onSalvar, on
 
 /** Botão "Incluir item" que abre o formulário. */
 export function NovoItem({ onCriar, onEnviarImagem, comCampos = false }: {
-  onCriar: (title: string, body: string, images: ImagemRel[], fields: CampoRel[]) => Promise<boolean>;
+  onCriar: (title: string, body: string, images: ImagemRel[], fields: CampoRel[], links: LinkRel[]) => Promise<boolean>;
   onEnviarImagem: (f: File) => Promise<ImagemRel | null>;
   comCampos?: boolean;
 }) {
@@ -485,8 +496,8 @@ export function NovoItem({ onCriar, onEnviarImagem, comCampos = false }: {
       rotuloSalvar="Incluir"
       onEnviarImagem={onEnviarImagem}
       onCancelar={() => setAberto(false)}
-      onSalvar={async (t, b, imgs, f) => {
-        const ok = await onCriar(t, b, imgs, f);
+      onSalvar={async (t, b, imgs, f, links) => {
+        const ok = await onCriar(t, b, imgs, f, links);
         if (ok) { setAberto(false); setChave((k) => k + 1); }
         return ok;
       }}

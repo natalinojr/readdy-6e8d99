@@ -3,7 +3,7 @@
  * O arquivo continua na nuvem de quem compartilhou; aqui fica só o endereço.
  */
 import { useState } from 'react';
-import { Cloud, ExternalLink, Plus, Trash2, Loader2 } from 'lucide-react';
+import { Cloud, ExternalLink, Plus, Trash2, Loader2, Link2, X } from 'lucide-react';
 import type { LinkRel } from './api';
 
 /** Nome do serviço pelo endereço, para mostrar ao lado do link. */
@@ -20,6 +20,98 @@ export function servicoDoLink(url: string): string {
   } catch {
     return '';
   }
+}
+
+/** Links como etiquetas clicáveis (no item, na resposta e no rascunho). */
+export function ChipsLinks({ links, onRemover }: { links: LinkRel[]; onRemover?: (i: number) => void }) {
+  if (!links.length) return null;
+  return (
+    <div className="flex flex-wrap gap-2 mt-2">
+      {links.map((l, i) => (
+        <span key={`${l.url}-${i}`} className="inline-flex items-center max-w-full rounded-xl border border-slate-200 bg-white hover:border-indigo-300 transition">
+          <a href={l.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 pl-2.5 pr-2 py-1.5 min-w-0">
+            <Cloud size={14} className="text-sky-500 shrink-0" />
+            <span className="min-w-0">
+              <span className="block text-xs font-medium text-slate-700 truncate max-w-[220px]">{l.title || l.url}</span>
+              <span className="block text-[10px] text-slate-400 truncate max-w-[220px]">{servicoDoLink(l.url)}</span>
+            </span>
+            <ExternalLink size={12} className="text-slate-300 shrink-0" />
+          </a>
+          {onRemover && (
+            <button type="button" onClick={() => onRemover(i)} className="p-1.5 text-slate-300 hover:text-red-500 border-l border-slate-100" title="Tirar link">
+              <X size={13} />
+            </button>
+          )}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * Anexar link de arquivo na nuvem num formulário (item ou resposta):
+ * `botao` vai ao lado de "Imagem", `painel` abre o campo do link, `chips` mostra o que já entrou.
+ */
+export function useLinks(iniciais: LinkRel[] = []) {
+  const [links, setLinks] = useState<LinkRel[]>(iniciais);
+  const [aberto, setAberto] = useState(false);
+  const [url, setUrl] = useState('');
+  const [titulo, setTitulo] = useState('');
+  const [erro, setErro] = useState<string | null>(null);
+
+  const incluir = () => {
+    let u = url.trim();
+    if (u && !/^https?:\/\//i.test(u)) u = `https://${u}`;
+    try { new URL(u); } catch { setErro('Cole o endereço completo do link'); return; }
+    setLinks((a) => [...a, { url: u, title: titulo.trim() || null }]);
+    setUrl(''); setTitulo(''); setErro(null); setAberto(false);
+  };
+
+  const botao = (
+    <button
+      type="button"
+      onClick={() => setAberto((v) => !v)}
+      disabled={links.length >= 30}
+      title="Anexar link de arquivo da nuvem (Drive, OneDrive, Dropbox…)"
+      className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm border disabled:opacity-50 ${aberto ? 'border-indigo-200 bg-indigo-50 text-indigo-700' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}
+    >
+      <Link2 size={16} /> Link
+    </button>
+  );
+
+  const painel = aberto ? (
+    <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-2.5 space-y-2">
+      <input
+        value={url}
+        onChange={(e) => setUrl(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); incluir(); } }}
+        autoFocus
+        maxLength={1000}
+        placeholder="Cole o link de compartilhamento da nuvem (https://…)"
+        className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-base md:text-sm"
+      />
+      <div className="flex flex-wrap gap-2">
+        <input
+          value={titulo}
+          onChange={(e) => setTitulo(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); incluir(); } }}
+          maxLength={200}
+          placeholder="Nome do arquivo (opcional)"
+          className="flex-1 min-w-[160px] rounded-lg border border-slate-200 bg-white px-3 py-2 text-base md:text-sm"
+        />
+        <button type="button" onClick={() => { setAberto(false); setErro(null); }} className="px-3 py-2 rounded-lg text-sm text-slate-500 hover:bg-white">Cancelar</button>
+        <button type="button" onClick={incluir} disabled={!url.trim()} className="px-3 py-2 rounded-lg text-sm font-medium bg-indigo-600 text-white disabled:opacity-50">Incluir link</button>
+      </div>
+      {erro && <p className="text-sm text-red-600">{erro}</p>}
+      <p className="text-[11px] text-slate-400">Deixe o link liberado para "qualquer pessoa com o link" na nuvem.</p>
+    </div>
+  ) : null;
+
+  return {
+    links, botao, painel,
+    chips: <ChipsLinks links={links} onRemover={(i) => setLinks((a) => a.filter((_, j) => j !== i))} />,
+    limpar: () => { setLinks([]); setAberto(false); setUrl(''); setTitulo(''); setErro(null); },
+  };
 }
 
 export default function LinksRelatorio({ links, podeEditar, onSalvar, className }: {
