@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 interface Props {
   children: ReactNode;
   /** Ação ao puxar o suficiente. Padrão: recarrega a página (re-busca tudo). */
-  onRefresh?: () => void;
+  onRefresh?: () => void | Promise<unknown>;
   /** Distância (px) necessária para disparar o refresh. */
   threshold?: number;
   /** Desliga o gesto (ex.: telas onde não faz sentido). */
@@ -93,9 +93,19 @@ export default function PullToRefresh({ children, onRefresh, threshold = 70, dis
       if (distRef.current >= threshold) {
         setRefreshing(true);
         setPull(threshold);
-        const fn = onRefreshRef.current || (() => window.location.reload());
+        const fn = onRefreshRef.current;
         // pequeno atraso para o spinner aparecer antes do reload
-        window.setTimeout(fn, 150);
+        window.setTimeout(() => {
+          if (!fn) { window.location.reload(); return; }
+          // Recarga dentro da tela: some o spinner quando terminar (ou no máximo em 10 s).
+          // Sem isso o indicador ficava girando para sempre.
+          const fim = () => { setRefreshing(false); setPull(0); };
+          const trava = window.setTimeout(fim, 10000);
+          Promise.resolve()
+            .then(() => fn())
+            .catch(() => {})
+            .finally(() => { window.clearTimeout(trava); window.setTimeout(fim, 300); });
+        }, 150);
       } else {
         setPull(0);
       }

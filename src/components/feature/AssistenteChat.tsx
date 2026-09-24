@@ -1171,7 +1171,8 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
   );
 
   const painel = (
-    <div className={variant === 'floating'
+    // data-no-pull: puxar para baixo dentro do chat não recarrega a tela de trás.
+    <div data-no-pull className={variant === 'floating'
       ? `fixed z-[60] inset-0 sm:inset-auto sm:bottom-5 sm:right-5 sm:w-[420px] sm:h-[min(720px,calc(100vh-40px))] flex flex-col bg-white sm:rounded-2xl sm:border sm:border-zinc-200 shadow-2xl overflow-hidden
          transition-transform duration-200 ease-out sm:translate-y-0 ${subindo ? 'translate-y-0' : 'translate-y-full'}`
       : 'flex flex-col h-[70vh] rounded-2xl border border-zinc-200 bg-white overflow-hidden'}>
@@ -1512,6 +1513,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
   if (modo === 'mini') {
     return (
       <div
+        data-no-pull
         className="fixed z-[60] bottom-3 left-3 right-3 sm:left-auto sm:right-5 sm:w-[420px] rounded-2xl border border-zinc-200 bg-white shadow-2xl overflow-hidden"
         // Puxar para cima abre a conversa — mas só quando o toque começa FORA de área rolável ou de
         // controle. Rolar o menu de ações rápidas abria o chat na tela toda (visto em 2026-09-16).
