@@ -263,7 +263,12 @@ Quando o usuario pedir "muda X":
 
 ## Historico de solucoes e criterios
 
-Secao viva: registrar aqui padroes, decisoes e pegadinhas reutilizaveis conforme o sistema evolui. Cada entrada com data, contexto e onde foi aplicado.
+Secao viva: registrar aqui padroes, decisoes e pegadinhas reutilizaveis conforme o sistema evolui. Cada entrada com data
+
+### 2026-09-25 — "Failed to fetch dynamically imported module" caía na tela de erro
+- **Causa:** o `vite:preloadError` do `main.tsx` só dispara quando falha uma **dependência** da tela; quando o **próprio arquivo da rota** (React.lazy) não baixa (4G oscilando, ou deploy novo com aba antiga), o import rejeita direto no ErrorBoundary. Visto no celular com `page-*.js` de 1,4 MB que existia no servidor.
+- **Solução:** `src/lib/recargaTela.ts` — o ErrorBoundary do `App.tsx` recarrega sozinho quando o erro é de carregar tela, no máximo 1x por minuto (`sessionStorage erpos_chunk_reload_ts`, sem laço offline); se falhar de novo mostra "Não consegui carregar esta tela" em vez do erro técnico. Testado com build de produção apagando o arquivo da rota.
+, contexto e onde foi aplicado.
 
 ### 2026-09-25 — Tarefas: relatório compartilhável por link (respostas de quem está fora do sistema)
 - **O que é:** Tarefas › "Relatórios" (barra lateral; no celular, folha de Pastas). O dono monta itens (título, texto, imagens), manda o link `/r/:token` (copiar ou WhatsApp) e acompanha as respostas. Rota pública fora do `AppLayout`, sem login (`src/pages/relatorio-publico/page.tsx`); tela do dono em `src/pages/tarefas/relatorios/` (`Relatorios.tsx`, `ItemRelatorio.tsx` compartilhado pelas duas telas, `api.ts`, `demo.ts` p/ `/dev/tarefas`).

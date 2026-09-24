@@ -6,9 +6,33 @@ import ToastContainer from './components/base/ToastContainer';
 import { Suspense } from 'react';
 import { useWakeLock } from './hooks/useWakeLock';
 import { reportError } from './lib/errorReporter';
+import { ehErroCarregarTela, tentarRecarregarTela } from './lib/recargaTela';
 
 // ─── Fallback de crash de render ────────────────────────────────────────────
 function ErroAplicacao({ error }: { error?: Error }) {
+  const naoCarregou = ehErroCarregarTela(error);
+  if (naoCarregou) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-neutral-50">
+        <div className="text-center max-w-md px-6">
+          <div className="w-16 h-16 flex items-center justify-center mx-auto mb-6 bg-amber-50 rounded-full">
+            <i className="ri-wifi-off-line text-3xl text-amber-500" />
+          </div>
+          <h2 className="text-xl font-semibold text-neutral-800 mb-2">Não consegui carregar esta tela</h2>
+          <p className="text-sm text-neutral-500 mb-6">
+            Pode ser a internet oscilando ou uma versão nova do sistema que acabou de sair. Confira a conexão e toque em recarregar.
+          </p>
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="px-5 py-2.5 bg-neutral-900 text-white text-sm rounded-md hover:bg-neutral-700 transition-colors cursor-pointer whitespace-nowrap"
+          >
+            Recarregar
+          </button>
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="min-h-screen flex items-center justify-center bg-neutral-50">
       <div className="text-center max-w-md px-6">
@@ -62,6 +86,8 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
+    // Arquivo da tela não baixou (rede ruim ou deploy novo): recarrega sozinho antes de mostrar erro.
+    if (tentarRecarregarTela(error)) return;
     console.error('[ErrorBoundary] Crash de render capturado:', error.message, error.stack, info.componentStack);
     reportError(error, { fn: 'ErrorBoundary', context: { componentStack: (info.componentStack ?? '').slice(0, 1500) } });
     this.setState({ error });
