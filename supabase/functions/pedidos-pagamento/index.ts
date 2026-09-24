@@ -74,7 +74,7 @@ async function comPagamento(ctx: Ctx, pedidos: any[]) {
 async function criar(ctx: Ctx, body: Record<string, any>) {
   const tipo = String(body.tipo ?? '') as TipoPedido;
   if (!PERM_DO_TIPO[tipo]) return erro('Tipo de pedido inválido');
-  if (!ctx.perms[PERM_DO_TIPO[tipo]]) return erro('Seu perfil não pode fazer esse pedido. Peça ao dono para liberar em Configurações › Permissões.', 403);
+  if (!ctx.perms[PERM_DO_TIPO[tipo]]) return erro('Seu perfil não pode fazer esse pedido. Peça ao administrador para liberar em Configurações › Permissões.', 403);
   const ref = txt(body.ref, 80);
   if (ref.length < 8) return erro('Pedido sem identificação (ref)');
 
@@ -249,7 +249,7 @@ Deno.serve(async (req) => {
         return json({ ok: true });
       }
       case 'para_aprovar': {
-        if (!aprovador) return erro('Só o dono (ou quem ele liberar) aprova pedidos de pagamento.', 403);
+        if (!aprovador) return erro('Só o financeiro aprova pedidos de pagamento.', 403);
         const [pend, dec] = await Promise.all([
           admin.from('fin_payment_requests').select(CAMPOS).eq('tenant_id', tenantId).eq('status', 'pendente').order('created_at').limit(200),
           admin.from('fin_payment_requests').select(CAMPOS).eq('tenant_id', tenantId).neq('status', 'pendente')
@@ -267,11 +267,11 @@ Deno.serve(async (req) => {
         return json({ url: data.signedUrl });
       }
       case 'aprovar': {
-        if (!aprovador) return erro('Só o dono (ou quem ele liberar) aprova pedidos de pagamento.', 403);
+        if (!aprovador) return erro('Só o financeiro aprova pedidos de pagamento.', 403);
         const p = await carregarPedido(ctx, String(body.id ?? ''));
         if (!p) return erro('Pedido não encontrado', 404);
         // Ninguém aprova o próprio pedido — só o Admin (o dono)
-        if (p.solicitado_por === caller.userId && role !== 'admin') return erro('Você não pode aprovar o seu próprio pedido. Peça ao dono.', 403);
+        if (p.solicitado_por === caller.userId && role !== 'admin') return erro('Você não pode aprovar o seu próprio pedido. Peça ao financeiro.', 403);
         const valor = body.valor != null && body.valor !== '' ? round2(Number(body.valor)) : null;
         if (valor != null && !(valor > 0 && valor <= 50000)) return erro('Valor inválido');
         const dre = txt(body.dre_category_id, 40) || null;
@@ -284,7 +284,7 @@ Deno.serve(async (req) => {
         return json(data);
       }
       case 'recusar': {
-        if (!aprovador) return erro('Só o dono (ou quem ele liberar) recusa pedidos de pagamento.', 403);
+        if (!aprovador) return erro('Só o financeiro recusa pedidos de pagamento.', 403);
         const p = await carregarPedido(ctx, String(body.id ?? ''));
         if (!p) return erro('Pedido não encontrado', 404);
         if (p.status !== 'pendente') return erro(`Esse pedido já foi ${p.status}`);

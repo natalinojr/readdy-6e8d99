@@ -2,8 +2,7 @@
 // fornecedor sem nota. Mercadoria paga do bolso NÃO vem aqui: vai pelo recebimento (entra no CMV).
 import { useEffect, useMemo, useState } from 'react';
 import { brl, dataBR, hojeISO, normalizar, somaDias } from '../api';
-import { fotoParaEnvio } from '../leitura';
-import { chamarPedidos, type Categoria, type ContextoPedidos, type Fornecedor, type Freela, type TipoPedido } from './api';
+import { chamarPedidos, comprovanteParaEnvio, type Categoria, type ContextoPedidos, type Fornecedor, type Freela, type TipoPedido } from './api';
 import { Categorias, Chips, Comprovante, Enviar, Rotulo, Texto, Valor, cls, lerValor } from './ui';
 
 interface Props {
@@ -100,7 +99,7 @@ export default function NovoPedido({ tipo, tenantId, contexto, onEnviado, onErro
     setEnviando(true);
     onErro(null);
     try {
-      const comprovante = foto ? await fotoParaEnvio(foto).then((f) => ({ base64: f.base64, media_type: f.mediaType })) : null;
+      const comprovante = foto ? await comprovanteParaEnvio(foto) : null;
       const { erro } = await chamarPedidos('criar', tenantId, {
         tipo, ref, valor: v, descricao, obs, dre_category_id: dre, comprovante,
         favorecido_nome: nome, favorecido_doc: doc, pix_chave: pix,
@@ -177,7 +176,7 @@ export default function NovoPedido({ tipo, tenantId, contexto, onEnviado, onErro
                 </div>
               )}
               {nome.trim() && !listaBusca.length && (
-                <p className="text-xs text-zinc-500 px-1 mt-1">Novo — {tipo === 'freelancer' ? 'o cadastro do freela é criado quando o dono aprovar' : 'o fornecedor não é cadastrado por aqui (só o dono cadastra)'}.</p>
+                <p className="text-xs text-zinc-500 px-1 mt-1">Novo — {tipo === 'freelancer' ? 'o cadastro do freela é criado quando o financeiro aprovar' : 'o fornecedor não é cadastrado por aqui (só o financeiro cadastra)'}.</p>
               )}
             </>
           )}
@@ -211,7 +210,7 @@ export default function NovoPedido({ tipo, tenantId, contexto, onEnviado, onErro
               <input type="date" min={hoje} max={somaDias(hoje, 120)} value={vencimento} onChange={(e) => e.target.value && setVencimento(e.target.value)} className="w-full border border-zinc-200 rounded-xl px-3 py-2.5 text-sm bg-white" />
             </div>
           </div>
-          <Categorias categorias={categorias} valor={dre} onValor={setDre} dica="Se não souber, deixe em branco: o dono escolhe ao aprovar" />
+          <Categorias categorias={categorias} valor={dre} onValor={setDre} dica="Se não souber, deixe em branco: o financeiro escolhe ao aprovar" />
           <Comprovante arquivo={foto} onArquivo={setFoto} />
           <p className="text-xs text-zinc-500 px-1">Mercadoria que chegou sem nota? Use <b>Chegou sem nota</b> no recebimento — assim entra no estoque e no custo.</p>
         </>
@@ -225,8 +224,8 @@ export default function NovoPedido({ tipo, tenantId, contexto, onEnviado, onErro
         </div>
       )}
 
-      <Texto label="Observação (opcional)" valor={obs} onValor={setObs} multilinha placeholder="Algo que o dono precisa saber" />
-      <p className="text-xs text-zinc-500 px-1">O pedido vai para o dono aprovar. Só depois vira conta a pagar.</p>
+      <Texto label="Observação (opcional)" valor={obs} onValor={setObs} multilinha placeholder="Algo que o financeiro precisa saber" />
+      <p className="text-xs text-zinc-500 px-1">O pedido vai para o financeiro aprovar. Só depois vira conta a pagar.</p>
 
       <Enviar onClick={enviar} disabled={!!faltando || enviando}>
         {enviando ? 'Enviando…' : faltando ?? 'Enviar para aprovação'}

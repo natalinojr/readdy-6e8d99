@@ -1,5 +1,5 @@
 // Peças de formulário dos pedidos de pagamento (mesmo visual do Receber mercadoria).
-import { useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from 'react';
 import { normalizar } from '../api';
 import type { Categoria } from './api';
 
@@ -97,25 +97,36 @@ export function Categorias({ categorias, valor, onValor, dica }: { categorias: C
   );
 }
 
-/** Foto (câmera) ou PDF do comprovante. */
+/** Comprovante: tirar foto na hora (câmera) ou anexar foto/PDF que já está no celular (galeria, arquivos, WhatsApp). */
 export function Comprovante({ arquivo, onArquivo, obrigatorio }: { arquivo: File | null; onArquivo: (f: File | null) => void; obrigatorio?: boolean }) {
-  const input = useRef<HTMLInputElement>(null);
+  const camera = useRef<HTMLInputElement>(null);
+  const anexo = useRef<HTMLInputElement>(null);
   const url = useMemo(() => (arquivo && arquivo.type.startsWith('image/') ? URL.createObjectURL(arquivo) : null), [arquivo]);
+  useEffect(() => () => { if (url) URL.revokeObjectURL(url); }, [url]);
+  const escolher = (e: ChangeEvent<HTMLInputElement>) => { const f = e.target.files?.[0] ?? null; e.target.value = ''; if (f) onArquivo(f); };
+  const botao = 'flex-1 rounded-2xl border-2 border-dashed border-zinc-300 text-zinc-600 font-semibold flex items-center justify-center gap-2 cursor-pointer active:bg-zinc-100';
   return (
     <div>
-      <Rotulo dica={obrigatorio ? 'Obrigatório: cupom, recibo ou nota do que foi pago' : 'Recibo, orçamento ou conversa (opcional)'}>Foto do comprovante</Rotulo>
-      <input ref={input} type="file" accept="image/*,application/pdf" capture="environment" className="hidden"
-        onChange={(e) => { const f = e.target.files?.[0] ?? null; e.target.value = ''; if (f) onArquivo(f); }} />
+      <Rotulo dica={obrigatorio ? 'Obrigatório: cupom, recibo ou nota do que foi pago' : 'Recibo, orçamento ou conversa (opcional)'}>Comprovante</Rotulo>
+      <input ref={camera} type="file" accept="image/*" capture="environment" className="hidden" onChange={escolher} />
+      {/* Sem `capture`: o celular oferece galeria, arquivos e outros apps */}
+      <input ref={anexo} type="file" accept="image/*,application/pdf" className="hidden" onChange={escolher} />
       {arquivo ? (
         <div className="mt-1.5 flex items-center gap-3 bg-white border-2 border-emerald-200 rounded-2xl p-2.5">
           {url ? <img src={url} alt="" className="w-14 h-14 object-cover rounded-xl" /> : <div className="w-14 h-14 rounded-xl bg-zinc-100 flex items-center justify-center"><i className="ri-file-pdf-2-line text-2xl text-red-500" /></div>}
-          <p className="flex-1 min-w-0 text-sm text-emerald-700 font-semibold">Comprovante anexado</p>
-          <button type="button" onClick={() => input.current?.click()} className="px-3 py-2 text-sm font-semibold text-zinc-600 cursor-pointer">Trocar</button>
+          <p className="flex-1 min-w-0 text-sm text-emerald-700 font-semibold truncate">{url ? 'Comprovante anexado' : arquivo.name}</p>
+          <button type="button" onClick={() => camera.current?.click()} className="p-2 text-zinc-500 cursor-pointer" aria-label="Tirar outra foto"><i className="ri-camera-line text-xl" /></button>
+          <button type="button" onClick={() => anexo.current?.click()} className="p-2 text-zinc-500 cursor-pointer" aria-label="Anexar outro arquivo"><i className="ri-attachment-2 text-xl" /></button>
         </div>
       ) : (
-        <button type="button" onClick={() => input.current?.click()} className="mt-1.5 w-full py-5 rounded-2xl border-2 border-dashed border-zinc-300 text-zinc-600 font-semibold flex items-center justify-center gap-2 cursor-pointer active:bg-zinc-100">
-          <i className="ri-camera-line text-2xl" /> Tirar foto
-        </button>
+        <div className="mt-1.5 flex gap-2">
+          <button type="button" onClick={() => camera.current?.click()} className={`${botao} py-5`}>
+            <i className="ri-camera-line text-2xl" /> Tirar foto
+          </button>
+          <button type="button" onClick={() => anexo.current?.click()} className={`${botao} py-5`}>
+            <i className="ri-attachment-2 text-2xl" /> Anexar
+          </button>
+        </div>
       )}
     </div>
   );

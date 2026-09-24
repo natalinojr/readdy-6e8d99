@@ -81,7 +81,7 @@ export function descreverPagamento(r: Rascunho): string {
     case 'pago': return `Já pago · ${r.forma} (o extrato confirma)`;
     case 'a_pagar': return `A pagar · ${r.forma === 'Boleto' ? 'Boleto' : 'PIX'} · vence ${dataBR(r.vencimento)}`;
     case 'bonificacao': return 'Bonificação (sem custo)';
-    case 'reembolso': return `Paguei do bolso · reembolso para ${r.reembolso?.nome ?? '—'} (o dono aprova)`;
+    case 'reembolso': return `Paguei do bolso · reembolso para ${r.reembolso?.nome ?? '—'} (o financeiro aprova)`;
     default: return '—';
   }
 }
@@ -174,7 +174,7 @@ export default function Pagamento({ r, onMudar, onContinuar, reembolso, soReembo
           onClick={() => onMudar({ pagamento: 'reembolso', reembolso: r.reembolso ?? { nome: reembolso.nome, pix: reembolso.pix, foto: null } })}
           icone="ri-refund-2-line"
           titulo="Paguei do meu bolso"
-          sub="Vira pedido de reembolso por Pix — o dono aprova antes de pagar"
+          sub="Vira pedido de reembolso por Pix — o financeiro aprova antes de pagar"
         >
           <div className="space-y-3">
             <Texto label="Quem pagou" valor={r.reembolso?.nome ?? ''} onValor={(v) => onMudar({ reembolso: { ...(r.reembolso ?? { nome: '', pix: '', foto: null }), nome: v } })} />

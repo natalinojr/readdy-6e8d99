@@ -466,7 +466,7 @@ async function lancar(ctx: Ctx, body: Record<string, any>) {
   } : null;
   if (reemb) {
     if (!(await permissoesPedido(admin, tenantId, ctx.role)).pag_reembolso) {
-      return erro('Seu perfil não pode pedir reembolso. Peça ao dono para liberar "Pedir reembolso" em Configurações › Permissões.', 403);
+      return erro('Seu perfil não pode pedir reembolso. Peça ao administrador para liberar "Pedir reembolso" em Configurações › Permissões.', 403);
     }
     if (!reemb.nome) return erro('Informe quem pagou (quem recebe o reembolso)');
     if (!reemb.pix) return erro('Informe a chave Pix de quem recebe o reembolso');
@@ -570,7 +570,7 @@ async function lancar(ctx: Ctx, body: Record<string, any>) {
   const notes = [
     `Recebida pelo celular${ctx.email ? ` (${ctx.email})` : ''} — ${origem === 'cupom' ? 'cupom/notinha' : 'entrega sem nota'}`,
     pagamento === 'dinheiro' ? MARCA_DINHEIRO : null,
-    reemb ? `${MARCA_REEMBOLSO} ${reemb.nome} — reembolso por Pix depois que o dono aprovar` : null,
+    reemb ? `${MARCA_REEMBOLSO} ${reemb.nome} — reembolso por Pix depois que o financeiro aprovar` : null,
     pagamento === 'pago' ? `já paga por ${forma} na entrega — a conciliação baixa pelo extrato` : null,
     chave.length === 44 ? `NFC-e chave ${chave}` : null,
     String(body.obs ?? '').trim().slice(0, 300) || null,
@@ -711,7 +711,7 @@ Deno.serve(async (req) => {
     // Quem só pode pedir reembolso lança a mercadoria que pagou do bolso (cupom/sem nota) e nada mais
     const soReembolso = ['insumos', 'fornecedores'].includes(action) || (action === 'lancar' && body.pagamento === 'reembolso');
     if (!(await podeReceber(admin, tenantId, role)) && !(soReembolso && (await permissoesPedido(admin, tenantId, role)).pag_reembolso)) {
-      return erro('Seu perfil não pode receber mercadoria. Peça ao dono para liberar "Receber mercadoria" em Configurações › Permissões.', 403);
+      return erro('Seu perfil não pode receber mercadoria. Peça ao administrador para liberar "Receber mercadoria" em Configurações › Permissões.', 403);
     }
     const ctx: Ctx = { admin, url, tenantId, userToken: bearerToken(req), email: caller.email, financeiro: isFinanceiroRole(role), userId: caller.userId, role };
 

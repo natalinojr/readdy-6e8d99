@@ -11,7 +11,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { usePermissoes } from '@/hooks/usePermissoes';
 import NovoPedido from './pedidos/NovoPedido';
 import ListaPedidos from './pedidos/ListaPedidos';
-import { chamarPedidos, ROTULO_TIPO, type ContextoPedidos, type TipoPedido } from './pedidos/api';
+import { chamarPedidos, comprovanteParaEnvio, ROTULO_TIPO, type ContextoPedidos, type TipoPedido } from './pedidos/api';
 import Conferir from './components/Conferir';
 import Pagamento, { descreverPagamento } from './components/Pagamento';
 import SemNota from './components/SemNota';
@@ -225,8 +225,8 @@ export default function ReceberPage() {
       if (r.pagamento === 'reembolso' && r.reembolso) {
         let comprovante: { base64: string; media_type: string } | null = null;
         try {
-          if (r.reembolso.foto) { const f = await fotoParaEnvio(r.reembolso.foto); comprovante = { base64: f.base64, media_type: f.mediaType }; }
-        } catch { setErro('Não consegui ler a foto do comprovante. Tire outra.'); setTela('pagamento'); return; }
+          if (r.reembolso.foto) comprovante = await comprovanteParaEnvio(r.reembolso.foto);
+        } catch (e) { setErro((e as Error).message || 'Não consegui ler o comprovante. Escolha outro.'); setTela('pagamento'); return; }
         reembolso = { nome: r.reembolso.nome, pix_chave: r.reembolso.pix, comprovante };
       }
       res = await chamar<Resultado>('lancar', tenantId, {
@@ -372,7 +372,7 @@ export default function ReceberPage() {
             )}
 
             {!podeReceber && ctxPed && !podePedir && (
-              <p className="text-center text-sm text-zinc-500 py-10">Seu perfil ainda não tem nada liberado aqui. Peça ao dono em Configurações › Permissões.</p>
+              <p className="text-center text-sm text-zinc-500 py-10">Seu perfil ainda não tem nada liberado aqui. Peça ao administrador em Configurações › Permissões.</p>
             )}
 
             {podeReceber && <>
@@ -449,7 +449,7 @@ export default function ReceberPage() {
               <i className="ri-send-plane-line text-4xl text-emerald-600" />
             </div>
             <p className="text-2xl font-black text-zinc-900 mt-5">Pedido enviado</p>
-            <p className="text-sm text-zinc-500 mt-2">O dono vai aprovar. Acompanhe em "Meus pedidos".</p>
+            <p className="text-sm text-zinc-500 mt-2">O financeiro vai aprovar. Acompanhe em "Meus pedidos".</p>
             <div className="mt-8 space-y-3">
               <button onClick={() => setTela('meus')} className="w-full py-4 rounded-2xl bg-amber-500 text-white font-bold cursor-pointer">Ver meus pedidos</button>
               <button onClick={voltarInicio} className="w-full py-4 rounded-2xl border-2 border-zinc-200 text-zinc-700 font-bold cursor-pointer">Voltar</button>
@@ -732,7 +732,7 @@ function Feito({ resultado, r, onOutra, onSair }: { resultado: Resultado | null;
             {resultado.faltas.length > 0 && <Aviso cor="orange" icone="ri-scales-line">Chegou diferente em {resultado.faltas.length} item(ns). Ficou anotado na compra para o financeiro.</Aviso>}
             {resultado.sem_estoque > 0 && <Aviso cor="zinc" icone="ri-link-unlink">{resultado.sem_estoque} item(ns) sem insumo ligado não entraram no estoque.</Aviso>}
             {resultado.aviso && <Aviso cor="red" icone="ri-error-warning-line">{resultado.aviso}</Aviso>}
-            {r?.pagamento === 'reembolso' && resultado.reembolso?.ok && <Aviso cor="emerald" icone="ri-refund-2-line">Pedido de reembolso para <b>{r.reembolso?.nome}</b> enviado ao dono. Acompanhe em "Meus pedidos".</Aviso>}
+            {r?.pagamento === 'reembolso' && resultado.reembolso?.ok && <Aviso cor="emerald" icone="ri-refund-2-line">Pedido de reembolso para <b>{r.reembolso?.nome}</b> enviado ao financeiro. Acompanhe em "Meus pedidos".</Aviso>}
             {r?.pagamento === 'reembolso' && !resultado.reembolso?.ok && <Aviso cor="red" icone="ri-error-warning-line">{resultado.reembolso?.erro ?? 'O pedido de reembolso não foi criado. Avise o financeiro.'}</Aviso>}
           </div>
         </>

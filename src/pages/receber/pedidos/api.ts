@@ -78,3 +78,22 @@ export function situacao(p: Pedido): { texto: string; cor: string } {
   if (p.status === 'cancelada') return { texto: 'Cancelado', cor: 'bg-zinc-100 text-zinc-500' };
   return p.pago ? { texto: 'Pago', cor: 'bg-emerald-100 text-emerald-700' } : { texto: 'Aprovado · a pagar', cor: 'bg-sky-100 text-sky-700' };
 }
+
+/** Comprovante para a Edge: foto reduzida (sobe rápido no 4G); se o navegador não abrir a imagem
+ *  (ex.: HEIC da galeria) ou for PDF, manda o arquivo como está (até 10 MB). */
+export async function comprovanteParaEnvio(file: File): Promise<{ base64: string; media_type: string }> {
+  const { fotoParaEnvio } = await import('../leitura');
+  try {
+    const f = await fotoParaEnvio(file);
+    return { base64: f.base64, media_type: f.mediaType };
+  } catch {
+    if (file.size > 10 * 1024 * 1024) throw new Error('Arquivo maior que 10 MB. Escolha outro ou tire uma foto.');
+    const base64 = await new Promise<string>((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(String(r.result).split(',')[1] ?? '');
+      r.onerror = () => reject(new Error('Não consegui ler o arquivo. Escolha outro.'));
+      r.readAsDataURL(file);
+    });
+    return { base64, media_type: file.type || 'image/jpeg' };
+  }
+}
