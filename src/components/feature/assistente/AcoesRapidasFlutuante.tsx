@@ -7,6 +7,7 @@ import { useNavigate } from 'react-router-dom';
 import { useVoltarFecha } from '@/lib/voltarAndroid';
 import { ACOES, GRUPOS } from './acoes';
 import { acaoLiberada, useAcessoAcoes } from './acoes/acesso';
+import { useFabArrastavel } from './useFabArrastavel';
 
 const semAcento = (t: string) => t.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
 
@@ -20,6 +21,8 @@ export default function AcoesRapidasFlutuante({ variant }: { variant: 'floating'
 
   useVoltarFecha(variant === 'floating' && aberto, () => setAberto(false), 'acoes-rapidas-painel');
   useVoltarFecha(aberto && !!acao, () => setAcao(null), 'acoes-rapidas-acao');
+  // O botão fechado anda pela tela como o do assistente do dono (arrasta e ele fica lá).
+  const fab = useFabArrastavel(() => setAberto(true));
 
   const liberadas = acesso.carregando ? [] : ACOES.filter((a) => acaoLiberada(a.id, acesso));
   // Sem nenhuma ação liberada não há o que mostrar: nem o botão aparece.
@@ -32,8 +35,8 @@ export default function AcoesRapidasFlutuante({ variant }: { variant: 'floating'
 
   if (!aberto) {
     return (
-      <button onClick={() => setAberto(true)}
-        className="fixed z-[55] bottom-5 right-5 w-14 h-14 rounded-full bg-violet-600 hover:bg-violet-500 text-white shadow-lg flex items-center justify-center cursor-pointer select-none"
+      <button {...fab.props}
+        className={`fixed z-[55] ${fab.classePosicao} w-14 h-14 rounded-full bg-violet-600 hover:bg-violet-500 text-white shadow-lg flex items-center justify-center ${fab.arrastando ? 'cursor-grabbing scale-110' : 'cursor-pointer'} select-none`}
         aria-label="Ações rápidas">
         <i className="ri-flashlight-line text-2xl" />
       </button>
