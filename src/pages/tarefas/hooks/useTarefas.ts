@@ -33,6 +33,10 @@ export interface TaskList {
   owner_name?: string | null;
   /** Quantas pessoas têm acesso direto a ESTA pasta (compartilhamentos dela). */
   share_count?: number;
+  /** Quantas pessoas veem esta pasta por compartilhamento (direto ou herdado da pasta de cima). */
+  shared_count?: number;
+  /** Subpasta tirada do compartilhamento: não herda os compartilhamentos de cima (2026-09-24). */
+  share_excluded?: boolean;
 }
 
 export interface TaskTag {

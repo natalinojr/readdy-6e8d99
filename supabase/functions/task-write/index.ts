@@ -481,6 +481,23 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         if (error) return json({ error: errMsg(error) }, 500);
         return json({ success: true });
       }
+      case 'set_share_exclusion': {
+        // Subpasta fora do compartilhamento (2026-09-24): deixa de herdar os compartilhamentos das
+        // pastas de cima (ela e tudo abaixo). Só quem é dono da pasta-mãe decide — quem só edita
+        // uma pasta compartilhada não consegue esconder uma subpasta do dono nem dos outros.
+        const { list_id, excluded } = body;
+        if (!list_id || typeof excluded !== 'boolean') return json({ error: 'Informe a subpasta e se ela fica fora' }, 400);
+        const sub = await assertOwned('task_lists', list_id);
+        if (!sub.parent_list_id) return json({ error: 'Só subpastas podem ficar fora do compartilhamento' }, 400);
+        if ((await acessoPasta(sub.parent_list_id as string)) !== 'owner') {
+          return json({ error: 'Só o dono da pasta pode tirar subpastas do compartilhamento' }, 403);
+        }
+        const { error } = excluded
+          ? await admin.from('task_list_share_exclusions').upsert({ list_id, created_by: user.id }, { onConflict: 'list_id' })
+          : await admin.from('task_list_share_exclusions').delete().eq('list_id', list_id);
+        if (error) return json({ error: errMsg(error) }, 500);
+        return json({ success: true });
+      }
       case 'remove_share': {
         // O dono tira alguém; ou a própria pessoa "sai" da pasta.
         const { share_id } = body;

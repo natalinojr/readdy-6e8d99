@@ -840,6 +840,7 @@ export default function TarefasPage() {
       {compartilhando && (
         <CompartilharPasta
           list={lists.find((l) => l.id === compartilhando.id) ?? compartilhando}
+          lists={lists}
           meuId={meuId}
           write={write}
           onClose={() => setCompartilhando(null)}

@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useState } from 'react';
-import { Eye, Loader2, LogOut, Pencil, Share2, Trash2, UserPlus, X } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Eye, EyeOff, Loader2, LogOut, Pencil, Share2, Trash2, UserPlus, X } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
 import { supabase } from '@/lib/supabase';
 import type { TaskList } from '../hooks/useTarefas';
+import { achatarArvore, montarArvorePastas } from '../lib/pastas';
 import { iniciais } from './TaskCard';
 
 interface Compartilhamento {
@@ -18,6 +19,8 @@ interface Compartilhamento {
 
 interface CompartilharPastaProps {
   list: TaskList;
+  /** Todas as pastas que eu vejo — para listar as subpastas desta (fora do compartilhamento). */
+  lists?: TaskList[];
   meuId: string | null;
   write: (action: string, payload?: Record<string, unknown>) => Promise<{ success: boolean; error?: string }>;
   onClose: () => void;
@@ -33,7 +36,7 @@ const PERMISSOES = [
  * e-mail ou matrícula. Só o dono muda; quem recebeu vê quem mais tem acesso
  * e pode sair da pasta.
  */
-export default function CompartilharPasta({ list, meuId, write, onClose }: CompartilharPastaProps) {
+export default function CompartilharPasta({ list, lists = [], meuId, write, onClose }: CompartilharPastaProps) {
   const toast = useToast();
   const souDono = list.access === 'owner' || list.access === undefined;
   const [itens, setItens] = useState<Compartilhamento[]>([]);
@@ -42,6 +45,39 @@ export default function CompartilharPasta({ list, meuId, write, onClose }: Compa
   const [permissao, setPermissao] = useState<'view' | 'edit'>('view');
   const [enviando, setEnviando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
+  // Subpastas fora do compartilhamento (2026-09-24): o que o dono marcou agora, antes do reload.
+  const [foraAgora, setForaAgora] = useState<Record<string, boolean>>({});
+  const [gravandoSub, setGravandoSub] = useState<string | null>(null);
+
+  // Subpastas desta pasta, em árvore (pré-ordem), com a profundidade relativa a ela.
+  const subpastas = useMemo(() => {
+    const raiz = achatarArvore(montarArvorePastas(lists)).find((n) => n.id === list.id);
+    // profundidade relativa: 0 = filha direta desta pasta
+    return raiz ? achatarArvore(raiz.filhas).map((n) => ({ ...n, nivel: n.profundidade - raiz.profundidade - 1 })) : [];
+  }, [lists, list.id]);
+  const estaFora = (l: TaskList) => foraAgora[l.id] ?? !!l.share_excluded;
+  // Fora por causa de uma pasta de cima (entre esta e a subpasta) que já está fora.
+  const foraPorCima = (l: TaskList): boolean => {
+    let pai = l.parent_list_id;
+    while (pai && pai !== list.id) {
+      const p = lists.find((x) => x.id === pai);
+      if (!p) break;
+      if (estaFora(p)) return true;
+      pai = p.parent_list_id;
+    }
+    return false;
+  };
+  const alternarSub = async (l: TaskList) => {
+    const nova = !estaFora(l);
+    setGravandoSub(l.id);
+    setForaAgora((prev) => ({ ...prev, [l.id]: nova }));
+    const res = await write('set_share_exclusion', { list_id: l.id, excluded: nova });
+    setGravandoSub(null);
+    if (!res.success) {
+      setForaAgora((prev) => ({ ...prev, [l.id]: !nova }));
+      toast.error('Não foi possível mudar a subpasta', res.error);
+    }
+  };
 
   const carregar = useCallback(async () => {
     const { data, error } = await supabase.rpc('fn_get_task_list_shares', { p_list_id: list.id });
@@ -93,7 +129,7 @@ export default function CompartilharPasta({ list, meuId, write, onClose }: Compa
           </span>
           <div className="min-w-0 flex-1">
             <h2 className="text-sm font-semibold text-slate-800 truncate">Compartilhar "{list.name}"</h2>
-            <p className="text-[11px] text-slate-400">Vale para a pasta e todas as subpastas dela</p>
+            <p className="text-[11px] text-slate-400">{subpastas.some(estaFora) ? 'Vale para a pasta e as subpastas marcadas' : 'Vale para a pasta e todas as subpastas dela'}</p>
           </div>
           <button onClick={onClose} className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100"><X size={16} /></button>
         </div>
@@ -131,6 +167,32 @@ export default function CompartilharPasta({ list, meuId, write, onClose }: Compa
             </button>
             <p className="text-[10px] text-slate-400">Só aparece quem tem acesso ao módulo Tarefas (liberado no Admin Master).</p>
           </form>
+        )}
+
+        {souDono && subpastas.length > 0 && (
+          <div className="px-5 pb-3">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400 mb-1">Subpastas compartilhadas</p>
+            <p className="text-[11px] text-slate-400 mb-1.5">Desmarque a subpasta que não deve ser compartilhada — as de dentro dela saem junto.</p>
+            <div className="max-h-44 overflow-y-auto rounded-lg border border-slate-100 py-1">
+              {subpastas.map((sp) => {
+                const porCima = foraPorCima(sp);
+                const dentro = !porCima && !estaFora(sp);
+                return (
+                  <label key={sp.id}
+                    className={`flex items-center gap-2 py-1.5 pr-3 text-sm ${porCima ? 'text-slate-300' : 'text-slate-700 cursor-pointer hover:bg-slate-50'}`}
+                    style={{ paddingLeft: `${12 + sp.nivel * 14}px` }}
+                    title={porCima ? 'Fora porque a pasta de cima está fora' : undefined}>
+                    <input type="checkbox" checked={dentro} disabled={porCima || gravandoSub === sp.id}
+                      onChange={() => alternarSub(sp)} className="accent-indigo-600" />
+                    <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: sp.color }} />
+                    <span className="flex-1 truncate">{sp.name}</span>
+                    {!dentro && <EyeOff size={12} className="shrink-0 text-slate-400" />}
+                    {gravandoSub === sp.id && <Loader2 size={12} className="shrink-0 animate-spin text-slate-400" />}
+                  </label>
+                );
+              })}
+            </div>
+          </div>
         )}
 
         <div className="px-5 pb-5 pt-2">
