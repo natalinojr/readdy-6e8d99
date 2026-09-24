@@ -3,12 +3,15 @@ import { invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatCurrency } from '@/lib/formatters';
 import { todayBrasilia } from '@/lib/dateUtils';
+import { AcaoImportar, HistoricoDias, MensagemResultado, SemConfig, Spinner, StatusIntegracao, quando, type Resultado } from './integracoesUi';
+import TaxasMercadoPago from './TaxasMercadoPago';
 
-// Painel da conciliação do Mercado Pago. Duas coisas separadas de propósito:
-//  • VENDAS por dia (busca de pagamentos) — dá para importar até HOJE, não precisa esperar
+// Aba "Mercado Pago" da janela Integrações, em três partes:
+//  • VENDAS por dia (busca de pagamentos) — dá para buscar até HOJE, não precisa esperar
 //    o dia fechar como na Stone;
-//  • RELATÓRIO DE LIBERAÇÕES — o extrato da conta do MP, que traz os SAQUES. O relatório é
-//    gerado pelo Mercado Pago e leva alguns minutos: pedir agora, baixar depois.
+//  • TAXAS por tipo de cartão (fin_mp_taxas) — taxa efetiva real, venda a venda;
+//  • SAQUES: o Relatório de Liberações (extrato da conta do MP). O relatório é gerado pelo
+//    Mercado Pago e leva alguns minutos: pedir agora, baixar depois.
 
 interface MpImport {
   id: string;
@@ -62,6 +65,13 @@ type ReleaseResp = {
   results?: Array<{ file: string; error?: string; rows?: number; movements?: number; inserted?: number }>;
 };
 
+type Parte = 'vendas' | 'taxas' | 'saques';
+const PARTES: Array<{ id: Parte; label: string; icon: string }> = [
+  { id: 'vendas', label: 'Vendas por dia', icon: 'ri-calendar-2-line' },
+  { id: 'taxas', label: 'Taxas por cartão', icon: 'ri-percent-line' },
+  { id: 'saques', label: 'Saques', icon: 'ri-bank-line' },
+];
+
 function addDaysISO(iso: string, days: number) {
   const [y, m, d] = iso.split('-').map(Number);
   const dt = new Date(y, m - 1, d + days);
@@ -77,10 +87,10 @@ export default function MpImportPanel({ onImportDone, onConfigureClick }: Props)
   const [reports, setReports] = useState<MpReport[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<null | 'import' | 'fetch' | 'request'>(null);
-  const [dateFrom, setDateFrom] = useState(addDaysISO(hoje, -6));
-  const [dateTo, setDateTo] = useState(hoje);
-  const [result, setResult] = useState<{ ok: boolean; msg: string; details?: string } | null>(null);
-  const [showHistory, setShowHistory] = useState(false);
+  const [result, setResult] = useState<Resultado>(null);
+  const [parte, setParte] = useState<Parte>('vendas');
+  const [relFrom, setRelFrom] = useState(addDaysISO(hoje, -6));
+  const [relTo, setRelTo] = useState(hoje);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -119,10 +129,10 @@ export default function MpImportPanel({ onImportDone, onConfigureClick }: Props)
       if (erros.length > 0) avisos.push(erros.map((e) => `${fmtDia(e.date)}: ${e.error}`).join(' | '));
       // esta conta do Mercado Pago também recebe vendas do Mercado Livre: elas aparecem no
       // extrato (para o saldo fechar) mas nunca entram como receita da loja
-      if (ml > 0) avisos.push(`${ml} venda(s) do Mercado Livre nesta conta ficaram fora da receita da loja (aparecem no extrato do Mercado Pago).`);
+      if (ml > 0) avisos.push(`${ml} venda(s) do Mercado Livre nesta conta ficaram fora da receita da loja.`);
       setResult({
         ok: erros.length === 0,
-        msg: `${rows.length - erros.length}/${rows.length} dia(s): ${vendas} venda(s), ${novos} linha(s) nova(s) · bruto ${formatCurrency(bruto)} · taxa ${formatCurrency(taxas)}`,
+        msg: `${vendas} venda(s) · ${novos} linha(s) nova(s) · bruto ${formatCurrency(bruto)} · taxa ${formatCurrency(taxas)}`,
         details: avisos.length > 0 ? avisos.join(' · ') : undefined,
       });
     }
@@ -146,8 +156,8 @@ export default function MpImportPanel({ onImportDone, onConfigureClick }: Props)
       setResult({
         ok: erros.length === 0,
         msg: rows.length === 0
-          ? `Nenhum relatório novo na conta do Mercado Pago (${d.available ?? 0} disponível(is), todos já importados).`
-          : `${rows.length} relatório(s) importado(s): ${novos} movimento(s) novo(s) no extrato do Mercado Pago.`,
+          ? `Nenhum relatório novo na conta do Mercado Pago (${d.available ?? 0} disponível(is), todos já baixados).`
+          : `${rows.length} relatório(s) baixado(s): ${novos} movimento(s) novo(s).`,
         details: erros.length > 0 ? erros.map((e) => `${e.file}: ${e.error}`).join(' | ') : undefined,
       });
     }
@@ -159,190 +169,144 @@ export default function MpImportPanel({ onImportDone, onConfigureClick }: Props)
     setBusy('request');
     setResult(null);
     const resp = await invokeWithAuth<ReleaseResp>('mp-conciliation', {
-      body: { action: 'release_request', tenant_id: user?.tenantId, date_from: dateFrom, date_to: dateTo },
+      body: { action: 'release_request', tenant_id: user?.tenantId, date_from: relFrom, date_to: relTo },
     });
     setBusy(null);
     const d = resp.data;
     const err = resp.error?.message ?? (d?.success ? undefined : d?.error);
     setResult(err || !d
       ? { ok: false, msg: err || 'Erro ao pedir o relatório.' }
-      : { ok: true, msg: `Relatório de ${fmtDia(dateFrom)} a ${fmtDia(dateTo)} pedido ao Mercado Pago.`, details: 'O Mercado Pago leva alguns minutos para gerar. Depois clique em "Baixar relatórios".' });
+      : { ok: true, msg: `Relatório de ${fmtDia(relFrom)} a ${fmtDia(relTo)} pedido ao Mercado Pago.`, details: 'Leva alguns minutos para ficar pronto. Depois clique em "Baixar relatórios prontos".' });
   };
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center py-8">
-        <div className="w-5 h-5 border-2 border-sky-500 border-t-transparent rounded-full animate-spin" />
-      </div>
-    );
+    return <div className="flex justify-center py-10"><div className="w-5 h-5 border-2 border-sky-500 border-t-transparent rounded-full animate-spin" /></div>;
   }
 
   if (!config) {
     return (
-      <div className="bg-white rounded-xl border border-zinc-200 p-6 text-center">
-        <div className="w-14 h-14 flex items-center justify-center bg-sky-100 rounded-2xl mx-auto mb-4">
-          <i className="ri-bank-card-line text-sky-600 text-2xl" />
-        </div>
-        <h3 className="font-bold text-zinc-800 mb-1">Conciliação do Mercado Pago não configurada</h3>
-        <p className="text-sm text-zinc-500 mb-4">
-          Escolha a conta do Mercado Pago e o sistema passa a trazer as vendas com a taxa real de cada uma, além dos saques que caem no banco. Não precisa de credencial nova.
-        </p>
-        <button onClick={onConfigureClick}
-          className="inline-flex items-center gap-2 px-5 py-2.5 bg-sky-600 text-white rounded-lg text-sm font-semibold hover:bg-sky-700 cursor-pointer whitespace-nowrap transition-colors">
-          <i className="ri-settings-3-line" /> Configurar Mercado Pago
-        </button>
-      </div>
+      <SemConfig icone="ri-bank-card-line" cor="bg-sky-100 text-sky-600" titulo="Mercado Pago não configurado"
+        texto="Escolha a conta do Mercado Pago e o sistema passa a trazer as vendas com a taxa real de cada uma, além dos saques que caem no banco. Não precisa de credencial nova."
+        botao="Configurar Mercado Pago" onConfig={onConfigureClick} />
     );
   }
 
   const ultimoRelatorio = reports.find((r) => r.status === 'success') ?? reports[0] ?? null;
 
   return (
-    <div className="space-y-4">
-      <div className={`bg-white rounded-xl border p-4 ${config.last_sync_error ? 'border-red-200' : 'border-zinc-200'}`}>
-        <div className="flex items-center justify-between flex-wrap gap-3">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 flex items-center justify-center rounded-xl bg-sky-100">
-              <i className="ri-bank-card-line text-sky-600 text-lg" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2 flex-wrap">
-                <p className="text-sm font-bold text-zinc-800">Mercado Pago</p>
-                {config.last_sync_error ? (
-                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-red-100 text-red-700"><i className="ri-error-warning-fill text-xs" /> Com erro</span>
-                ) : (
-                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-green-100 text-green-700"><i className="ri-checkbox-circle-fill text-xs" /> Conectado</span>
-                )}
-                {config.auto_sync !== false && <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold bg-blue-50 text-blue-700"><i className="ri-refresh-line" /> ao abrir a tela</span>}
-                {config.token_environment === 'sandbox' && <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold bg-amber-50 text-amber-700">ambiente de teste</span>}
-                {!config.release_report && <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold bg-zinc-100 text-zinc-600">sem Relatório de Liberações</span>}
-              </div>
-              <p className="text-xs text-zinc-500">
-                {config.token_label ?? 'Token da maquininha'}
-                {config.last_sync_at && <span className="ml-2 text-zinc-400">· Última sync: {new Date(config.last_sync_at).toLocaleString('pt-BR')}</span>}
-              </p>
-            </div>
-          </div>
-          <button onClick={onConfigureClick}
-            className="flex items-center gap-1.5 px-3 py-1.5 border border-zinc-200 text-zinc-600 rounded-lg text-xs font-semibold hover:bg-zinc-50 cursor-pointer whitespace-nowrap transition-colors">
-            <i className="ri-settings-3-line text-xs" /> Configurar
+    <div className="space-y-5">
+      <StatusIntegracao
+        erro={config.last_sync_error}
+        ultima={config.last_sync_at}
+        auto={config.auto_sync !== false ? 'busca sozinho às 07h20 e ao abrir a conciliação' : 'busca automática desligada'}
+        extra={<>
+          {config.token_environment === 'sandbox' && <span className="text-[10px] px-1.5 py-0.5 rounded-full font-semibold bg-amber-50 text-amber-700">ambiente de teste</span>}
+          {config.token_label && <span className="text-xs text-zinc-400">{config.token_label}</span>}
+        </>}
+        onConfig={onConfigureClick}
+      />
+
+      <div className="flex gap-1 border-b border-zinc-200">
+        {PARTES.map((p) => (
+          <button key={p.id} onClick={() => { setParte(p.id); setResult(null); }}
+            className={`flex items-center gap-1.5 px-3 py-2 text-xs font-semibold border-b-2 -mb-px cursor-pointer whitespace-nowrap ${parte === p.id ? 'border-sky-600 text-sky-700' : 'border-transparent text-zinc-500 hover:text-zinc-800'}`}>
+            <i className={p.icon} /> {p.label}
           </button>
-        </div>
-        {config.last_sync_error && (
-          <p className="mt-3 text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2"><i className="ri-error-warning-line" /> {config.last_sync_error}</p>
-        )}
+        ))}
       </div>
 
-      <div className="bg-white rounded-xl border border-zinc-200 p-4">
-        <p className="text-xs font-semibold text-zinc-700 mb-3">Vendas no cartão</p>
-        <div className="flex items-end gap-3 flex-wrap">
-          <div>
-            <label className="block text-xs text-zinc-500 mb-1">De</label>
-            <input type="date" value={dateFrom} max={dateTo} onChange={(e) => setDateFrom(e.target.value)}
-              className="border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-400" />
-          </div>
-          <div>
-            <label className="block text-xs text-zinc-500 mb-1">Até</label>
-            <input type="date" value={dateTo} min={dateFrom} max={hoje} onChange={(e) => setDateTo(e.target.value)}
-              className="border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-400" />
-          </div>
-          <button onClick={() => runImport(dateFrom, dateTo)} disabled={busy !== null || !dateFrom || !dateTo}
-            className="flex items-center gap-2 px-4 py-2 bg-sky-600 text-white rounded-lg text-sm font-semibold hover:bg-sky-700 cursor-pointer whitespace-nowrap transition-colors disabled:opacity-50">
-            {busy === 'import' ? <><div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" /> Buscando...</> : <><i className="ri-download-cloud-line" /> Buscar período</>}
-          </button>
-          <button onClick={() => runImport(hoje, hoje)} disabled={busy !== null}
-            className="flex items-center gap-2 px-4 py-2 border border-sky-300 text-sky-700 rounded-lg text-sm font-semibold hover:bg-sky-50 cursor-pointer whitespace-nowrap transition-colors disabled:opacity-50">
-            <i className="ri-calendar-line" /> Só hoje
-          </button>
+      {parte === 'vendas' && (
+        <div className="space-y-4">
+          <AcaoImportar
+            label="Buscar vendas de hoje" icon="ri-download-cloud-line" onClick={() => runImport(hoje, hoje)} busy={busy === 'import'} disabled={busy !== null}
+            cor="bg-sky-600 hover:bg-sky-700"
+            defaultFrom={addDaysISO(hoje, -6)} defaultTo={hoje} max={hoje}
+            onPeriodo={runImport}
+            dica="Até 31 dias por vez. Buscar de novo um dia não duplica lançamentos."
+          />
+          <MensagemResultado result={result} />
+          <HistoricoDias
+            titulo="Dias buscados"
+            itens={imports}
+            cabecalho={
+              <tr>
+                <th className="text-left px-4 py-2 text-zinc-500 font-semibold">Dia</th>
+                <th className="text-right px-4 py-2 text-zinc-500 font-semibold">Vendas</th>
+                <th className="text-right px-4 py-2 text-zinc-500 font-semibold">Bruto</th>
+                <th className="text-right px-4 py-2 text-zinc-500 font-semibold">Taxa</th>
+                <th className="text-right px-4 py-2 text-zinc-500 font-semibold hidden sm:table-cell">Líquido</th>
+                <th className="text-right px-4 py-2 text-zinc-500 font-semibold hidden md:table-cell">Estornos</th>
+              </tr>
+            }
+            linha={(h) => {
+              const bruto = Number(h.sales_gross ?? 0);
+              const taxa = Number(h.fees_total ?? 0);
+              return (
+                <tr key={h.id} className="hover:bg-zinc-50" title={h.error_message ?? (h.imported_at ? `Buscado em ${quando(h.imported_at)}` : undefined)}>
+                  <td className="px-4 py-2.5 font-medium text-zinc-700 whitespace-nowrap">
+                    {fmtDia(h.reference_date)}
+                    {h.status !== 'success' && <span className="ml-2 px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-red-100 text-red-700">erro</span>}
+                  </td>
+                  <td className="px-4 py-2.5 text-right text-zinc-700">{h.payments_count ?? 0}</td>
+                  <td className="px-4 py-2.5 text-right text-zinc-800 font-semibold">{formatCurrency(bruto)}</td>
+                  <td className="px-4 py-2.5 text-right text-red-600 whitespace-nowrap">
+                    {formatCurrency(taxa)}
+                    {bruto > 0 && <span className="text-zinc-400 font-normal"> · {((taxa / bruto) * 100).toFixed(2).replace('.', ',')}%</span>}
+                  </td>
+                  <td className="px-4 py-2.5 text-right text-green-700 font-semibold hidden sm:table-cell">{formatCurrency(Number(h.net_total ?? 0))}</td>
+                  <td className="px-4 py-2.5 text-right text-zinc-600 hidden md:table-cell">{Number(h.refunds_total ?? 0) > 0 ? formatCurrency(Number(h.refunds_total)) : '—'}</td>
+                </tr>
+              );
+            }}
+          />
         </div>
-        <p className="text-xs text-zinc-400 mt-2 flex items-center gap-1">
-          <i className="ri-information-line" /> Até 31 dias por vez. Diferente da Stone, o dia de hoje já pode ser buscado. Rebuscar um dia não duplica linhas.
-        </p>
+      )}
 
-        <div className="mt-4 pt-4 border-t border-zinc-100">
-          <p className="text-xs font-semibold text-zinc-700 mb-2">Extrato da conta do Mercado Pago (saques)</p>
-          <div className="flex items-center gap-3 flex-wrap">
+      {parte === 'taxas' && <TaxasMercadoPago />}
+
+      {parte === 'saques' && (
+        <div className="space-y-4">
+          {!config.release_report && (
+            <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+              O Relatório de Liberações está desligado nesta loja. Ligue em <strong>Configurar</strong> para os saques entrarem sozinhos.
+            </p>
+          )}
+          <p className="text-xs text-zinc-500">
+            O Relatório de Liberações é o extrato da conta do Mercado Pago: é por ele que os saques para o banco entram na conciliação.
+            {config.release_report && ' Com ele ligado, o relatório do dia é baixado sozinho às 07h20.'}
+          </p>
+          <div className="flex items-center gap-2 flex-wrap">
             <button onClick={runReleaseFetch} disabled={busy !== null}
-              className="flex items-center gap-2 px-4 py-2 bg-zinc-800 text-white rounded-lg text-sm font-semibold hover:bg-zinc-900 cursor-pointer whitespace-nowrap transition-colors disabled:opacity-50">
-              {busy === 'fetch' ? <><div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" /> Baixando...</> : <><i className="ri-file-list-3-line" /> Baixar relatórios prontos</>}
-            </button>
-            <button onClick={runReleaseRequest} disabled={busy !== null}
-              className="flex items-center gap-2 px-4 py-2 border border-zinc-300 text-zinc-700 rounded-lg text-sm font-semibold hover:bg-zinc-50 cursor-pointer whitespace-nowrap transition-colors disabled:opacity-50">
-              {busy === 'request' ? <><div className="w-4 h-4 border-2 border-zinc-300 border-t-zinc-600 rounded-full animate-spin" /> Pedindo...</> : <><i className="ri-add-line" /> Pedir relatório do período</>}
+              className="flex items-center gap-2 px-4 py-2 bg-sky-600 text-white rounded-lg text-sm font-semibold hover:bg-sky-700 cursor-pointer whitespace-nowrap disabled:opacity-50">
+              {busy === 'fetch' ? <><Spinner cor="border-white/60" /> Baixando...</> : <><i className="ri-file-download-line" /> Baixar relatórios prontos</>}
             </button>
             {ultimoRelatorio && (
               <span className="text-xs text-zinc-400">
                 Último: {ultimoRelatorio.file_name}
-                {ultimoRelatorio.imported_at ? ` · ${new Date(ultimoRelatorio.imported_at).toLocaleString('pt-BR')}` : ''}
+                {ultimoRelatorio.imported_at ? ` · ${quando(ultimoRelatorio.imported_at)}` : ''}
                 {ultimoRelatorio.status === 'error' ? ' · com erro' : ''}
               </span>
             )}
           </div>
-          <p className="text-xs text-zinc-400 mt-2 flex items-center gap-1">
-            <i className="ri-information-line" /> O Mercado Pago gera o relatório em alguns minutos. Com o relatório diário programado, o cron das 07h20 já baixa sozinho.
-          </p>
-        </div>
-
-        {result && (
-          <div className={`mt-3 flex items-start gap-2 px-3 py-2.5 rounded-xl text-xs font-medium ${result.ok ? 'bg-green-50 border border-green-200 text-green-700' : 'bg-red-50 border border-red-200 text-red-700'}`}>
-            <i className={`${result.ok ? 'ri-checkbox-circle-fill' : 'ri-error-warning-fill'} text-sm flex-shrink-0 mt-0.5`} />
-            <div className="break-words">
-              <p>{result.msg}</p>
-              {result.details && <p className="opacity-80 mt-0.5">{result.details}</p>}
+          <div className="flex items-end gap-2 flex-wrap bg-zinc-50 border border-zinc-200 rounded-lg p-3">
+            <p className="w-full text-xs font-semibold text-zinc-700">Faltou algum período? Peça o relatório ao Mercado Pago</p>
+            <div>
+              <label className="block text-[11px] text-zinc-500 mb-0.5">De</label>
+              <input type="date" value={relFrom} max={relTo} onChange={(e) => setRelFrom(e.target.value)}
+                className="border border-zinc-200 rounded-lg px-2 py-1.5 text-xs bg-white" />
             </div>
+            <div>
+              <label className="block text-[11px] text-zinc-500 mb-0.5">Até</label>
+              <input type="date" value={relTo} min={relFrom} max={hoje} onChange={(e) => setRelTo(e.target.value)}
+                className="border border-zinc-200 rounded-lg px-2 py-1.5 text-xs bg-white" />
+            </div>
+            <button onClick={runReleaseRequest} disabled={busy !== null || !relFrom || !relTo}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-zinc-800 text-white rounded-lg text-xs font-semibold hover:bg-zinc-900 cursor-pointer whitespace-nowrap disabled:opacity-50">
+              {busy === 'request' ? <><Spinner cor="border-white/60" /> Pedindo...</> : <><i className="ri-add-line" /> Pedir relatório</>}
+            </button>
+            <p className="w-full text-[11px] text-zinc-400">Fica pronto em alguns minutos; depois é só clicar em "Baixar relatórios prontos".</p>
           </div>
-        )}
-      </div>
-
-      {imports.length > 0 && (
-        <div className="bg-white rounded-xl border border-zinc-200 overflow-hidden">
-          <button onClick={() => setShowHistory(!showHistory)} className="w-full flex items-center justify-between px-4 py-3 hover:bg-zinc-50 cursor-pointer transition-colors">
-            <p className="text-xs font-semibold text-zinc-700">Histórico por dia ({imports.length})</p>
-            <i className={`${showHistory ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-zinc-400`} />
-          </button>
-          {showHistory && (
-            <div className="border-t border-zinc-100 overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead className="bg-zinc-50">
-                  <tr>
-                    <th className="text-left px-4 py-2 text-zinc-500 font-semibold">Dia</th>
-                    <th className="text-center px-4 py-2 text-zinc-500 font-semibold">Status</th>
-                    <th className="text-right px-4 py-2 text-zinc-500 font-semibold">Vendas</th>
-                    <th className="text-right px-4 py-2 text-zinc-500 font-semibold">Bruto</th>
-                    <th className="text-right px-4 py-2 text-zinc-500 font-semibold">Taxa</th>
-                    <th className="text-right px-4 py-2 text-zinc-500 font-semibold">Líquido</th>
-                    <th className="text-right px-4 py-2 text-zinc-500 font-semibold">Estornos</th>
-                    <th className="text-right px-4 py-2 text-zinc-500 font-semibold">Buscado em</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-zinc-50">
-                  {imports.map((h) => {
-                    const bruto = Number(h.sales_gross ?? 0);
-                    const taxa = Number(h.fees_total ?? 0);
-                    return (
-                      <tr key={h.id} className="hover:bg-zinc-50" title={h.error_message ?? undefined}>
-                        <td className="px-4 py-2.5 font-medium text-zinc-700">{fmtDia(h.reference_date)}</td>
-                        <td className="px-4 py-2.5 text-center">
-                          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-semibold ${h.status === 'success' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                            {h.status === 'success' ? 'Sucesso' : 'Erro'}
-                          </span>
-                        </td>
-                        <td className="px-4 py-2.5 text-right text-zinc-700 font-semibold">{h.payments_count ?? 0}</td>
-                        <td className="px-4 py-2.5 text-right text-zinc-800 font-semibold">{formatCurrency(bruto)}</td>
-                        <td className="px-4 py-2.5 text-right text-red-600 font-semibold">
-                          {formatCurrency(taxa)}
-                          {bruto > 0 && <span className="block text-[10px] font-normal text-zinc-400">{((taxa / bruto) * 100).toFixed(2).replace('.', ',')}%</span>}
-                        </td>
-                        <td className="px-4 py-2.5 text-right text-green-700 font-semibold">{formatCurrency(Number(h.net_total ?? 0))}</td>
-                        <td className="px-4 py-2.5 text-right text-zinc-600">{Number(h.refunds_total ?? 0) > 0 ? formatCurrency(Number(h.refunds_total)) : '—'}</td>
-                        <td className="px-4 py-2.5 text-right text-zinc-400">{h.imported_at ? new Date(h.imported_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—'}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
+          <MensagemResultado result={result} />
         </div>
       )}
     </div>

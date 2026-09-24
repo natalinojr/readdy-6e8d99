@@ -11,12 +11,10 @@ import TransacaoDetalheModal from './conciliacao/TransacaoDetalheModal';
 import ConfirmarVinculosModal from './conciliacao/ConfirmarVinculosModal';
 import ReconciliacaoSaldoModal from './conciliacao/ReconciliacaoSaldoModal';
 import StoneConfigModal from './conciliacao/StoneConfigModal';
-import StoneImportPanel from './conciliacao/StoneImportPanel';
 import MpConfigModal from './conciliacao/MpConfigModal';
-import MpImportPanel from './conciliacao/MpImportPanel';
+import IntegracoesModal, { type AbaIntegracao } from './conciliacao/IntegracoesModal';
 import IfoodConfigModal from './conciliacao/IfoodConfigModal';
 import InterConfigModal from './conciliacao/InterConfigModal';
-import InterSyncPanel from './conciliacao/InterSyncPanel';
 import InicioFinanceiroModal from './conciliacao/InicioFinanceiroModal';
 import ConfirmModal from '@/components/base/ConfirmModal';
 import ComoDinheiroEntraModal from './conciliacao/ComoDinheiroEntraModal';
@@ -468,7 +466,8 @@ export default function ConciliacaoTab() {
   const [showIfoodConfig, setShowIfoodConfig] = useState(false);
   const [showInterConfig, setShowInterConfig] = useState(false);
   const [showInicioFin, setShowInicioFin] = useState(false);
-  const [showIntegracoes, setShowIntegracoes] = useState(false);
+  // false = fechada; true = abre na aba que precisa de atenção; ou a aba escolhida
+  const [showIntegracoes, setShowIntegracoes] = useState<boolean | AbaIntegracao>(false);
   const [showComoEntra, setShowComoEntra] = useState(false);
   const [showRepassesStone, setShowRepassesStone] = useState<false | 'repasses' | 'taxas'>(false);
   const { flow: moneyFlow, reload: reloadMoneyFlow } = useMoneyFlow();
@@ -1176,9 +1175,8 @@ export default function ConciliacaoTab() {
               onClick={() => { setMenuConfig(false); setShowInicioFin(true); }} />
             <div className="border-t border-zinc-100 my-1" />
             <p className="px-3 pt-1 pb-0.5 text-[11px] font-semibold text-zinc-400 uppercase tracking-wide">Integrações</p>
-            <MenuItem icon="ri-pulse-line" label="Status e histórico" hint="Última busca, erros, dias da Stone" onClick={() => { setMenuConfig(false); setShowIntegracoes(true); }} />
-            <MenuItem icon="ri-bank-line" label="Banco Inter" onClick={() => { setMenuConfig(false); setShowInterConfig(true); }} />
-            <MenuItem icon="ri-bank-card-line" label="Stone" onClick={() => { setMenuConfig(false); setShowStoneConfig(true); }} />
+            <MenuItem icon="ri-pulse-line" label="Banco e maquininhas" hint="Situação, atualizar e histórico (Inter, Stone, Mercado Pago)" onClick={() => { setMenuConfig(false); setShowIntegracoes(true); }} />
+            <MenuItem icon="ri-percent-line" label="Taxas do Mercado Pago" hint="Taxa efetiva por tipo de cartão" onClick={() => { setMenuConfig(false); setShowIntegracoes('mp'); }} />
             <MenuItem icon="ri-restaurant-2-line" label="iFood" onClick={() => { setMenuConfig(false); setShowIfoodConfig(true); }} />
           </DropMenu>
         </div>
@@ -1779,38 +1777,18 @@ export default function ConciliacaoTab() {
         />
       )}
 
-      {/* Status das integrações (Inter + Stone): última busca, erros e histórico por dia */}
-      {showIntegracoes && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setShowIntegracoes(false)}>
-          <div className="bg-white rounded-2xl w-full max-w-4xl max-h-[92vh] flex flex-col" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-100 flex-shrink-0">
-              <div>
-                <h3 className="font-bold text-zinc-900">Integrações bancárias</h3>
-                {(usaStone || usaMp) && (
-                  <p className="text-xs text-zinc-500">Maquininha da loja: <strong>{usaMp ? 'Mercado Pago' : 'Stone'}</strong> (Conciliação › ⚙ › Como o dinheiro entra)</p>
-                )}
-              </div>
-              <button onClick={() => setShowIntegracoes(false)} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-zinc-100 cursor-pointer">
-                <i className="ri-close-line text-zinc-500" />
-              </button>
-            </div>
-            <div className="flex-1 overflow-y-auto p-6 space-y-4">
-              <InterSyncPanel
-                refreshKey={interRefreshKey}
-                onSyncDone={() => { refresh(); refetchAccounts(); }}
-                onConfigureClick={() => setShowInterConfig(true)}
-              />
-              <StoneImportPanel
-                onImportDone={() => { refresh(); }}
-                onConfigureClick={() => setShowStoneConfig(true)}
-              />
-              <MpImportPanel
-                onImportDone={() => { refresh(); }}
-                onConfigureClick={() => setShowMpConfig(true)}
-              />
-            </div>
-          </div>
-        </div>
+      {/* Integrações (Inter, Stone, Mercado Pago): situação, atualizar e histórico por dia */}
+      {showIntegracoes !== false && (
+        <IntegracoesModal
+          maquininha={usaMp ? 'mercadopago' : usaStone ? 'stone' : null}
+          abaInicial={showIntegracoes === true ? undefined : showIntegracoes}
+          interRefreshKey={interRefreshKey}
+          onClose={() => setShowIntegracoes(false)}
+          onChanged={() => { refresh(); }}
+          onInterSynced={() => { refresh(); refetchAccounts(); }}
+          onConfig={(a) => { if (a === 'inter') setShowInterConfig(true); else if (a === 'stone') setShowStoneConfig(true); else setShowMpConfig(true); }}
+          onVerRepassesStone={() => setShowRepassesStone('repasses')}
+        />
       )}
 
       {/* Papel de cada banco/maquininha (fin_revenue_settings via financial-write › set_money_flow) */}
