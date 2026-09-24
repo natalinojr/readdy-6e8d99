@@ -236,7 +236,7 @@ export default function Sidebar({ gestaoMode = false, isOpen = false, onClose }:
                           </span>
                         )}
                         {item.path === '/financeiro' && financeiroBadge > 0 && (
-                          <span className={`ml-auto text-[9px] font-black px-1.5 py-0.5 rounded-full flex-shrink-0 ${
+                          <span title="Contas vencidas + vencendo em 7 dias + folha pendente (detalhe nas abas Contas a Pagar e RH / Folha)" className={`ml-auto text-[9px] font-black px-1.5 py-0.5 rounded-full flex-shrink-0 ${
                             isActive
                               ? 'bg-white/30 text-white'
                               : contasVencidas > 0

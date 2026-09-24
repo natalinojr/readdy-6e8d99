@@ -21,9 +21,6 @@ export interface FinanceiroAlertasSummary {
   loading: boolean;
 }
 
-const today = new Date().toISOString().split('T')[0];
-const sevenDaysLater = new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0];
-const currentMonth = today.slice(0, 7);
 
 export function useFinanceiroAlertas(): FinanceiroAlertasSummary {
   const { user } = useAuth();
@@ -41,6 +38,10 @@ export function useFinanceiroAlertas(): FinanceiroAlertasSummary {
       return;
     }
     setLoading(true);
+    // Datas calculadas a cada carga: no escopo do módulo ficavam presas no dia em que a tela abriu
+    const today = new Date().toISOString().split('T')[0];
+    const sevenDaysLater = new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0];
+    const currentMonth = today.slice(0, 7);
 
     const [billsRes, payrollRes, budgetsRes, comprasRecebidasRes] = await Promise.all([
       // Contas a pagar vencidas ou vencendo em 7 dias

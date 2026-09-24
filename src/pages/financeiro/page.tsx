@@ -3,6 +3,7 @@ import { useLocation, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { usePermissoes } from '@/hooks/usePermissoes';
 import { finKeyDaAba } from '@/constants/permissoesAbas';
+import { useFinanceiroAlertas } from '@/hooks/useFinanceiroAlertas';
 import VisaoGeralFinTab from './components/VisaoGeralFinTab';
 import FluxoCaixaTab from './components/FluxoCaixaTab';
 import ContasPagarTab from './components/ContasPagarTab';
@@ -54,6 +55,14 @@ export default function FinanceiroPage() {
   const { hasPermissao } = usePermissoes();
   const podeAba = (t: string) => { const k = finKeyDaAba(t); return !!k && hasPermissao(k); };
   const abas = TABS.filter((t) => podeAba(t.id));
+  // Mesmo número do menu lateral (contas vencidas + vencendo em 7 dias + folha pendente),
+  // quebrado nas abas onde cada parte se resolve — antes só o menu mostrava o total.
+  const { contasVencidas, contasVencendo, folhaPendente } = useFinanceiroAlertas();
+  const avisoDaAba: Record<string, { n: number; cor: string; dica: string }> = {
+    pagar: { n: contasVencidas + contasVencendo, cor: contasVencidas > 0 ? 'bg-red-500' : 'bg-amber-500', dica: `${contasVencidas} vencida(s) e ${contasVencendo} vencendo em 7 dias` },
+    'contas-vencidas': { n: contasVencidas, cor: 'bg-red-500', dica: `${contasVencidas} conta(s) vencida(s)` },
+    rh: { n: folhaPendente, cor: 'bg-amber-500', dica: `${folhaPendente} pagamento(s) da folha do mês pendente(s)` },
+  };
   // Aba na URL (?tab=dre), como no Estoque e nas Configurações. Antes era só useState com
   // location.state: quem chegava por link — inclusive o botão "Abrir DRE" do assistente
   // (2026-09-16) — caía sempre na Visão Geral, e navegar já estando em /financeiro não fazia nada.
@@ -149,6 +158,11 @@ export default function FinanceiroPage() {
               <i className={tab.icon} />
               <span className="hidden sm:inline">{tab.label}</span>
               <span className="sm:hidden">{tab.label.split(' ')[0]}</span>
+              {(avisoDaAba[tab.id]?.n ?? 0) > 0 && (
+                <span title={avisoDaAba[tab.id].dica} className={`text-[9px] font-black px-1.5 py-0.5 rounded-full text-white ${avisoDaAba[tab.id].cor}`}>
+                  {avisoDaAba[tab.id].n}
+                </span>
+              )}
             </button>
           ))}
         </div>
