@@ -3,6 +3,7 @@ import { supabase, invokeWithAuth, uploadTaskAttachment } from '@/lib/supabase';
 import { useEuTarefas } from './useEuTarefas';
 import { useToast } from '@/contexts/ToastContext';
 import { MODO_DEMO } from '../demo/modoDemo';
+import type { Recorrencia } from '../lib/recorrencia';
 import { useTarefasDemo } from '../demo/useTarefasDemo';
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
@@ -93,7 +94,7 @@ export interface TaskRow {
   due_date: string | null;
   due_has_time: boolean;
   sort_order: number;
-  recurrence: { freq?: string; interval?: number } | null;
+  recurrence: Recorrencia | null;
   completed_at: string | null;
   created_at: string;
   created_by: string | null;
@@ -150,7 +151,7 @@ export interface TaskDetail {
   start_date: string | null;
   due_date: string | null;
   due_has_time: boolean;
-  recurrence: { freq?: string; interval?: number } | null;
+  recurrence: Recorrencia | null;
   completed_at: string | null;
   created_at: string;
   created_by: string | null;

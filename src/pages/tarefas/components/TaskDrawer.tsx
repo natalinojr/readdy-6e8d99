@@ -17,6 +17,8 @@ import CampoInput from './campos/CampoInput';
 import ComentarioInput from './ComentarioInput';
 import ConfirmDialog from './ConfirmDialog';
 import EditorCelula from './EditorCelula';
+import EditorRecorrencia from './EditorRecorrencia';
+import { DICA_RECORRENCIA, descreverRecorrencia } from '../lib/recorrencia';
 import PlanoPorDia from './PlanoPorDia';
 import StatusPicker from './StatusPicker';
 import { iniciais, rotuloVencimento } from './TaskCard';
@@ -44,19 +46,6 @@ function formatarTamanho(bytes: number | null): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-}
-
-const RECORRENCIAS: Array<{ value: string; label: string; rec: { freq: string; interval: number } | null }> = [
-  { value: 'nenhuma', label: 'Não se repete', rec: null },
-  { value: 'daily-1', label: 'Todo dia', rec: { freq: 'daily', interval: 1 } },
-  { value: 'weekly-1', label: 'Toda semana', rec: { freq: 'weekly', interval: 1 } },
-  { value: 'weekly-2', label: 'A cada 2 semanas', rec: { freq: 'weekly', interval: 2 } },
-  { value: 'monthly-1', label: 'Todo mês', rec: { freq: 'monthly', interval: 1 } },
-];
-
-function chaveRecorrencia(rec: { freq?: string; interval?: number } | null): string {
-  if (!rec?.freq) return 'nenhuma';
-  return `${rec.freq}-${rec.interval ?? 1}`;
 }
 
 const ACTIVITY_LABEL: Record<string, string> = {
@@ -130,6 +119,7 @@ export default function TaskDrawer({
   const [editor, setEditor] = useState<{ col: ColunaId; rect: DOMRect } | null>(null);
   const [statusAberto, setStatusAberto] = useState<DOMRect | null>(null);
   const [atividadeAberta, setAtividadeAberta] = useState(false);
+  const [recAberta, setRecAberta] = useState<DOMRect | null>(null);
 
   const load = useCallback(async () => {
     const [d, a] = await Promise.all([fetchDetail(taskId), fetchAnexos(taskId)]);
@@ -371,19 +361,24 @@ export default function TaskDrawer({
               </Propriedade>
 
               <Propriedade icone={<Repeat size={14} />} rotulo="Recorrência">
-                <select
-                  value={chaveRecorrencia(detail.recurrence)}
-                  onChange={(e) => {
-                    const opcao = RECORRENCIAS.find((r) => r.value === e.target.value);
-                    update({ recurrence: opcao?.rec ?? null });
-                  }}
-                  className={`${VALOR_CLS} bg-transparent outline-none cursor-pointer appearance-none ${detail.recurrence?.freq ? 'text-slate-700' : 'text-slate-400'}`}
-                  title={detail.recurrence?.freq ? 'Ao concluir, a próxima ocorrência é criada automaticamente' : undefined}
+                <button
+                  onClick={(e) => setRecAberta(e.currentTarget.getBoundingClientRect())}
+                  className={VALOR_CLS}
+                  title={detail.recurrence?.freq ? DICA_RECORRENCIA : undefined}
                 >
-                  {RECORRENCIAS.map((r) => (
-                    <option key={r.value} value={r.value}>{r.label}</option>
-                  ))}
-                </select>
+                  {detail.recurrence?.freq
+                    ? <span className="text-slate-700 truncate">{descreverRecorrencia(detail.recurrence)}</span>
+                    : <span className="text-slate-400">Não se repete</span>}
+                </button>
+                {recAberta && (
+                  <EditorRecorrencia
+                    atual={detail.recurrence}
+                    vencimento={detail.due_date}
+                    anchorRect={recAberta}
+                    onSalvar={(rec) => update({ recurrence: rec })}
+                    onClose={() => setRecAberta(null)}
+                  />
+                )}
               </Propriedade>
 
               <Propriedade icone={<Tag size={14} />} rotulo="Etiquetas">

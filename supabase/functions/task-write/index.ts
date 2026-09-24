@@ -2,6 +2,7 @@
 // Padrão do projeto: service_role + validação de membership (igual stock-write).
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
 import { ACOES_MODELOS, acaoModelos } from './modelos.ts';
+import { proximaOcorrencia, validarRecorrencia } from '../_shared/recorrencia.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -83,19 +84,8 @@ function validarEstimativa(v: unknown): string | null {
     ? null : 'time_estimate_minutes deve ser inteiro entre 0 e 60000';
 }
 
-// Próxima ocorrência de recorrência {freq: daily|weekly|monthly, interval: n}
-function nextDueDate(current: string | null, recurrence: { freq?: string; interval?: number }): string | null {
-  const base = current ? new Date(current) : new Date();
-  const interval = Math.max(1, Number(recurrence.interval) || 1);
-  const d = new Date(base);
-  switch (recurrence.freq) {
-    case 'daily': d.setDate(d.getDate() + interval); break;
-    case 'weekly': d.setDate(d.getDate() + 7 * interval); break;
-    case 'monthly': d.setMonth(d.getMonth() + interval); break;
-    default: return null;
-  }
-  return d.toISOString();
-}
+// Próxima ocorrência: ver ../_shared/recorrencia.ts (dias da semana, dia do mês,
+// N-ésima sexta, último dia, até quando…). Mesmo cálculo da tela.
 
 Deno.serve({ verify_jwt: false }, async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
@@ -499,6 +489,8 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         if (!list_id || !title) return json({ error: 'list_id and title are required' }, 400);
         const estimativaErro = validarEstimativa(time_estimate_minutes);
         if (estimativaErro) return json({ error: estimativaErro }, 400);
+        const recErroNovo = validarRecorrencia(recurrence);
+        if (recErroNovo) return json({ error: recErroNovo }, 400);
         await assertListEdit(list_id);
         await assertResponsavelValido(list_id, assignee_id);
         let resolvedStatus = status_id ?? null;
@@ -544,6 +536,10 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         const editable = ['title', 'description', 'status_id', 'priority', 'assignee_id', 'start_date', 'due_date', 'due_has_time', 'list_id', 'sort_order', 'recurrence', 'is_archived', 'parent_task_id', 'time_estimate_minutes', 'time_plan'];
         for (const k of editable) {
           if (rest[k] !== undefined) patch[k] = rest[k];
+        }
+        if (patch.recurrence !== undefined) {
+          const recErro = validarRecorrencia(patch.recurrence);
+          if (recErro) return json({ error: recErro }, 400);
         }
         if (patch.time_estimate_minutes !== undefined) {
           const estimativaErro = validarEstimativa(patch.time_estimate_minutes);
@@ -594,9 +590,9 @@ Deno.serve({ verify_jwt: false }, async (req) => {
           if (newStatus.category === 'done') {
             patch.completed_at = new Date().toISOString();
             // Recorrência: cria a próxima ocorrência (modelo Todoist)
-            const rec = (patch.recurrence ?? current.recurrence) as { freq?: string; interval?: number } | null;
+            const rec = (patch.recurrence ?? current.recurrence) as Parameters<typeof proximaOcorrencia>[1];
             if (rec && rec.freq) {
-              const nextDue = nextDueDate(current.due_date as string | null, rec);
+              const nextDue = proximaOcorrencia(current.due_date as string | null, rec);
               if (nextDue) {
                 const { data: next } = await admin.from('tasks').insert({
                   tenant_id: tenantId,

@@ -19,7 +19,7 @@ const MARGEM_TELA = 8;
  * motivo do StatusPicker: o card do grupo tem `overflow-hidden` e cortava o
  * menu nas últimas linhas). Fecha ao rolar/redimensionar e com Esc.
  */
-function Popover({ anchorRect, largura, onClose, children }: {
+export function Popover({ anchorRect, largura, onClose, children }: {
   anchorRect: DOMRect;
   largura: number;
   onClose: () => void;
@@ -93,7 +93,7 @@ function Popover({ anchorRect, largura, onClose, children }: {
   );
 }
 
-function Opcao({ ativo, onClick, children }: { ativo?: boolean; onClick: () => void; children: ReactNode }) {
+export function Opcao({ ativo, onClick, children }: { ativo?: boolean; onClick: () => void; children: ReactNode }) {
   return (
     <button
       type="button"
