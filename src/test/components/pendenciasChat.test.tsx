@@ -1,18 +1,28 @@
-// Caixa de pendências do chat (PendenciasChat) — ordem de chegada, data/hora de cada uma e o
-// botão "Mais antiga" (dono, 2026-09-24). Banco falso em memória; nada vai para produção.
+// Caixa de pendências do chat (PendenciasChat) — ordem de chegada, data/hora de cada uma, botão
+// "Mais antiga", agrupar por tipo, filtro de loja e "Recebimento parado" (dono, 2026-09-24).
+// Banco falso em memória; nada vai para produção.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 
-const h = vi.hoisted(() => ({ rows: [] as Record<string, unknown>[] }));
+const h = vi.hoisted(() => ({
+  rows: [] as Record<string, unknown>[],
+  notas: [] as Array<{ id: string; status: string }>,
+  rpc: vi.fn(),
+  invoke: vi.fn(),
+}));
 
 vi.mock('@/lib/supabase', () => {
-  const q = {
-    select: () => q, in: () => q, eq: () => q, not: () => q, lt: () => q, or: () => q,
-    order: (_c: string, o?: { ascending?: boolean }) => { q._asc = o?.ascending ?? true; return q; },
-    limit: () => Promise.resolve({ data: [...h.rows].sort((a, b) => String(a.criada_em).localeCompare(String(b.criada_em)) * (q._asc ? 1 : -1)), error: null }),
+  const pend = {
+    select: () => pend, in: () => pend, eq: () => pend, not: () => pend, lt: () => pend, or: () => pend,
+    order: (_c: string, o?: { ascending?: boolean }) => { pend._asc = o?.ascending ?? true; return pend; },
+    limit: () => Promise.resolve({ data: [...h.rows].sort((a, b) => String(a.criada_em).localeCompare(String(b.criada_em)) * (pend._asc ? 1 : -1)), error: null }),
     _asc: true,
   };
-  return { supabase: { from: () => q, rpc: vi.fn().mockResolvedValue({ error: null }) } };
+  const notas = { select: () => notas, in: (_c: string, ids: string[]) => Promise.resolve({ data: h.notas.filter((n) => ids.includes(n.id)), error: null }) };
+  return {
+    supabase: { from: (t: string) => (t === 'fiscal_inbound_documents' ? notas : pend), rpc: h.rpc },
+    invokeWithAuth: h.invoke,
+  };
 });
 vi.mock('@/components/feature/assistente/TarefasPendencia', () => ({
   default: () => null,
@@ -23,29 +33,34 @@ import PendenciasChat from '@/components/feature/assistente/PendenciasChat';
 
 const agora = Date.now();
 const iso = (horasAtras: number) => new Date(agora - horasAtras * 3600000).toISOString();
-const linha = (id: string, titulo: string, horasAtras: number, urgencia = 'normal') => ({
-  id, tenant_id: 't1', kind: 'conta_atrasada', titulo, detalhe: null, rota: null, urgencia,
-  acao_requerida: true, status: 'aberta', criada_em: iso(horasAtras), tenants: { name: 'Loja A' },
+const linha = (id: string, titulo: string, horasAtras: number, extra: Record<string, unknown> = {}) => ({
+  id, tenant_id: 't1', kind: 'conta_atrasada', titulo, detalhe: null, rota: '/financeiro', urgencia: 'normal',
+  acao_requerida: true, status: 'aberta', criada_em: iso(horasAtras), payload: null, tenants: { name: 'Loja A' }, ...extra,
 });
 
+const onAbrir = vi.fn();
 const props = {
   call: vi.fn().mockResolvedValue({}) as never, meuId: null, onFechar: () => {}, versao: 0,
-  onPagar: vi.fn(), onAbrir: vi.fn(), onPedir: vi.fn(), onVerMensagem: vi.fn(), onAbrirTarefa: vi.fn(),
+  onPagar: vi.fn(), onAbrir, onPedir: vi.fn(), onVerMensagem: vi.fn(), onAbrirTarefa: vi.fn(),
 };
 
 const titulos = () => [...document.querySelectorAll('[data-pend] p.font-bold.text-zinc-900')].map((e) => e.textContent);
 
-describe('PendenciasChat — ordem de chegada', () => {
-  beforeEach(() => {
-    localStorage.clear();
-    Element.prototype.scrollIntoView = vi.fn();
-    h.rows = [
-      linha('b', 'Conta nova urgente', 1, 'alta'),
-      linha('a', 'Conta antiga', 100),
-      linha('c', 'Conta de ontem', 30),
-    ];
-  });
+beforeEach(() => {
+  localStorage.clear();
+  Element.prototype.scrollIntoView = vi.fn();
+  h.rpc.mockReset().mockResolvedValue({ error: null });
+  h.invoke.mockReset().mockResolvedValue({ data: { success: true }, error: null });
+  onAbrir.mockReset();
+  h.notas = [];
+  h.rows = [
+    linha('b', 'Conta nova urgente', 1, { urgencia: 'alta' }),
+    linha('a', 'Conta antiga', 100),
+    linha('c', 'Conta de ontem', 30, { kind: 'conta_sem_dre', tenant_id: 't2', tenants: { name: 'Loja B' } }),
+  ];
+});
 
+describe('PendenciasChat — ordem de chegada', () => {
   it('lista pela ordem de chegada (mais antiga primeiro), sem furar fila pela urgência', async () => {
     render(<PendenciasChat {...props} />);
     await waitFor(() => expect(titulos()).toEqual(['Conta antiga', 'Conta de ontem', 'Conta nova urgente']));
@@ -69,7 +84,63 @@ describe('PendenciasChat — ordem de chegada', () => {
     fireEvent.click(screen.getByText('Mais antigas primeiro'));
     expect(titulos()).toEqual(['Conta nova urgente', 'Conta de ontem', 'Conta antiga']);
     fireEvent.click(screen.getByText(/Mais antiga ·/));
-    expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
+    await waitFor(() => expect(Element.prototype.scrollIntoView).toHaveBeenCalled());
     expect(document.querySelector('[data-pend="a"]')?.className).toContain('ring-4');
+  });
+});
+
+describe('PendenciasChat — agrupar e filtrar', () => {
+  it('agrupa por tipo, com contagem, e recolhe o grupo', async () => {
+    render(<PendenciasChat {...props} />);
+    await screen.findByText('Conta antiga');
+    fireEvent.click(screen.getByRole('button', { name: /Tipo/ }));
+    const grupo = screen.getByRole('button', { name: /Conta atrasada/ });
+    expect(grupo.textContent).toContain('2');
+    expect(titulos()).toEqual(['Conta antiga', 'Conta nova urgente', 'Conta de ontem']);
+    fireEvent.click(grupo);
+    expect(titulos()).toEqual(['Conta de ontem']);
+  });
+
+  it('filtra pela loja no seletor', async () => {
+    render(<PendenciasChat {...props} />);
+    await screen.findByText('Conta antiga');
+    fireEvent.change(screen.getByLabelText('Loja'), { target: { value: 't2' } });
+    expect(titulos()).toEqual(['Conta de ontem']);
+  });
+});
+
+describe('PendenciasChat — recebimento parado', () => {
+  const recebimento = () => linha('r', 'Mercadoria de SEQUOIA chegou — NF 1678 precisa ser lançada', 23, {
+    kind: 'recebimento_parado', rota: '/financeiro?tab=notas-entrada', payload: { document_id: 'doc-1' },
+  });
+
+  it('"Conferir e lançar a nota" abre a própria nota', async () => {
+    h.rows = [recebimento()];
+    h.notas = [{ id: 'doc-1', status: 'new' }];
+    render(<PendenciasChat {...props} />);
+    fireEvent.click(await screen.findByText(/Conferir e lançar a nota/));
+    expect(onAbrir).toHaveBeenCalledWith(expect.objectContaining({ rota: '/financeiro?tab=notas-entrada&nota=doc-1' }));
+    expect(screen.queryByText(/^Abrir$/)).toBeNull();
+  });
+
+  it('"Não é compra" ignora a nota e resolve a pendência', async () => {
+    h.rows = [recebimento()];
+    h.notas = [{ id: 'doc-1', status: 'new' }];
+    render(<PendenciasChat {...props} />);
+    fireEvent.click(await screen.findByText(/Não é compra/));
+    fireEvent.click(screen.getByText('Ignorar a nota'));
+    await waitFor(() => expect(h.invoke).toHaveBeenCalledWith('fiscal-inbound', expect.objectContaining({
+      body: expect.objectContaining({ tenant_id: 't1', document_id: 'doc-1', action: 'ignore' }),
+    })));
+    await waitFor(() => expect(h.rpc).toHaveBeenCalledWith('fn_pendencia_marcar', expect.objectContaining({ p_id: 'r', p_acao: 'resolvida' })));
+  });
+
+  it('nota já lançada fecha a pendência sozinha', async () => {
+    h.rows = [recebimento(), linha('a', 'Conta antiga', 100)];
+    h.notas = [{ id: 'doc-1', status: 'imported' }];
+    render(<PendenciasChat {...props} />);
+    await screen.findByText('Conta antiga');
+    expect(screen.queryByText(/SEQUOIA/)).toBeNull();
+    expect(h.rpc).toHaveBeenCalledWith('fn_pendencia_marcar', expect.objectContaining({ p_id: 'r', p_acao: 'resolvida' }));
   });
 });

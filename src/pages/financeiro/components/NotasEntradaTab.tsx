@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
@@ -114,6 +115,7 @@ export default function NotasEntradaTab() {
   const podeLancar = user?.perfil === 'admin' || user?.perfil === 'gerente';
 
   const [docs, setDocs] = useState<DocRow[]>([]);
+  const [docsDe, setDocsDe] = useState<string | null>(null); // de qual loja é a lista carregada
   const [loading, setLoading] = useState(true);
   // ?busca= vem do clique num alerta da Conciliação (2026-09-20): mostra todas, não só as novas
   const daUrl = new URLSearchParams(window.location.search).get('busca') ?? '';
@@ -142,11 +144,26 @@ export default function NotasEntradaTab() {
       supabase.from('fiscal_settings').select('inbound_last_sync_at, inbound_last_error, enabled').eq('tenant_id', tenantId).maybeSingle(),
     ]);
     setDocs((data ?? []) as unknown as DocRow[]);
+    setDocsDe(tenantId);
     setUltimaSync({ at: (fs?.inbound_last_sync_at as string) ?? null, erro: (fs?.inbound_last_error as string) ?? null, temToken: Boolean(fs) });
     setLoading(false);
   }, [tenantId]);
 
   useEffect(() => { carregar(); }, [carregar]);
+
+  // ?nota=<id> vem da caixa de pendências ("Conferir e lançar a nota", 2026-09-24): abre a
+  // PRÓPRIA nota na conferência, em vez de deixar a pessoa procurar na lista.
+  const [params, setParams] = useSearchParams();
+  const notaDaUrl = params.get('nota');
+  useEffect(() => {
+    // Espera a lista da loja atual (a pendência pode ter trocado de loja antes de navegar)
+    if (!notaDaUrl || loading || docsDe !== tenantId) return;
+    const d = docs.find((x) => x.id === notaDaUrl);
+    const limpa = new URLSearchParams(params); limpa.delete('nota'); setParams(limpa, { replace: true });
+    if (!d) { toastErr('Nota não encontrada', 'Ela pode ser de outra loja — troque a loja e tente de novo.'); return; }
+    if (d.status === 'new') setAberto(d);
+    else { setFiltro('all'); setBusca(d.numero != null ? String(d.numero) : ''); toastOk(d.status === 'imported' ? 'Essa nota já foi lançada' : 'Essa nota está ignorada'); }
+  }, [notaDaUrl, loading, docsDe, tenantId, docs, params, setParams, toastErr, toastOk]);
 
   const sincronizar = async () => {
     setSincronizando(true);
