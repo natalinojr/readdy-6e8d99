@@ -18,6 +18,20 @@ export interface Pendente {
   pagamento: string | null;
 }
 
+/** "Já chegaram": compra com entrega confirmada (Edge receber-mercadoria › recebidas). */
+export interface Recebida {
+  id: string;
+  fornecedor: string;
+  numero: string | null;
+  valor: number;
+  data: string;
+  recebido_em: string;
+  origem: string;
+  pagamento: string | null;
+  obs: string | null;
+  itens: { descricao: string; quantidade: number; pedido: number; unidade: string }[];
+}
+
 export interface Insumo { id: string; nome: string; unidade: string; categoria: string }
 
 export interface ItemAberto {

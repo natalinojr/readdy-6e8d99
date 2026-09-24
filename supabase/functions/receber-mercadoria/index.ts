@@ -14,6 +14,7 @@
 //
 // Ações (body: { action, tenant_id, ... }):
 //   pendentes                      notas e compras esperando chegar
+//   recebidas    { mes: 'AAAA-MM' } compras já recebidas no mês ("Já chegaram")
 //   buscar       { codigo }        chave de 44 dígitos (código de barras da DANFE) ou número da nota
 //   abrir        { tipo, id }      itens para conferir (tipo 'nota' | 'compra')
 //   insumos / fornecedores         listas para "sem nota"
@@ -141,6 +142,33 @@ async function insumos(admin: Admin, tenantId: string) {
 }
 
 // Linha que o fiscal-inbound cria com a diferença entre o total da nota e os itens
+// "Já chegaram" (2026-09-24): compras com entrega confirmada no mês (horário de Brasília), mais recente primeiro.
+async function recebidas(ctx: Ctx, mes: string) {
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(mes)) throw new Error('Mês inválido');
+  const [a, m] = mes.split('-').map(Number);
+  const prox = m === 12 ? `${a + 1}-01` : `${a}-${String(m + 1).padStart(2, '0')}`;
+  const { data, error } = await ctx.admin.from('fin_purchases')
+    .select('id, supplier, invoice_number, purchase_date, total_amount, payment_method, payment_status, is_bonus, notes, delivery_notes, delivery_confirmed_at, items:fin_purchase_items(id, description, quantity, received_quantity, unit_label)')
+    .eq('tenant_id', ctx.tenantId)
+    .gte('delivery_confirmed_at', `${mes}-01T00:00:00-03:00`).lt('delivery_confirmed_at', `${prox}-01T00:00:00-03:00`)
+    .order('delivery_confirmed_at', { ascending: false }).limit(500);
+  if (error) throw new Error(error.message);
+  return ((data ?? []) as any[]).map((c) => {
+    const notas = String(c.notes ?? '');
+    const itens = ((c.items ?? []) as any[]).filter((it) => !ehAcrescimo(it));
+    return {
+      id: c.id, fornecedor: c.supplier ?? 'Fornecedor', numero: c.invoice_number ?? null,
+      valor: Number(c.total_amount ?? 0), data: String(c.purchase_date ?? '').slice(0, 10),
+      // delivery_confirmed_at é UTC: dia de Brasília
+      recebido_em: new Date(new Date(c.delivery_confirmed_at).getTime() - 3 * 3600_000).toISOString().slice(0, 10),
+      origem: /foto da nota no grupo/i.test(notas) ? 'Grupo do WhatsApp' : /chave \d{44}/.test(notas) ? 'Nota fiscal' : c.invoice_number ? 'Compra lançada' : 'Sem nota / cupom',
+      pagamento: c.is_bonus ? 'Bonificação' : `${c.payment_method ?? ''}${c.payment_status === 'paid' ? ' (pago)' : ''}`.trim() || null,
+      obs: c.delivery_notes ?? null,
+      itens: itens.map((it) => ({ descricao: String(it.description ?? '').replace(/\s*\(\d{6,}\)$/, ''), quantidade: Number(it.received_quantity ?? it.quantity ?? 0), pedido: Number(it.quantity ?? 0), unidade: it.unit_label ?? '' })),
+    };
+  });
+}
+
 const ehAcrescimo = (it: any) => String(it?.description ?? '').startsWith('Acréscimos da nota');
 
 // ── Abrir: itens para conferir ──────────────────────────────────────────────
@@ -689,6 +717,7 @@ Deno.serve(async (req) => {
 
     switch (action) {
       case 'pendentes': return json({ itens: await pendentes(ctx) });
+      case 'recebidas': return json({ itens: await recebidas(ctx, String(body.mes ?? '')) });
       case 'insumos': return json({ insumos: await insumos(admin, tenantId) });
       case 'fornecedores': {
         const { data } = await admin.from('fin_suppliers').select('id, name').eq('tenant_id', tenantId).eq('is_active', true).order('name').limit(1000);

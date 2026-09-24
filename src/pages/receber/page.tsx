@@ -15,6 +15,7 @@ import { chamarPedidos, ROTULO_TIPO, type ContextoPedidos, type TipoPedido } fro
 import Conferir from './components/Conferir';
 import Pagamento, { descreverPagamento } from './components/Pagamento';
 import SemNota from './components/SemNota';
+import JaChegaram from './components/JaChegaram';
 import {
   brl, chamar, dataBR, hojeISO, lerCupom, memorizarCupom, normalizar, qtd, somaDias, un,
   type Aberto, type Insumo, type Pendente, type Resultado, type ScanResult,
@@ -49,6 +50,7 @@ export default function ReceberPage() {
   const [erro, setErro] = useState<string | null>(null);
   const [pendentes, setPendentes] = useState<Pendente[] | null>(null);
   const [filtro, setFiltro] = useState('');
+  const [aba, setAba] = useState<'esperando' | 'chegaram'>('esperando');
   const [r, setR] = useState<Rascunho | null>(null);
   const [resultado, setResultado] = useState<Resultado | null>(null);
   const [dup, setDup] = useState<{ id: string; purchase_date: string; delivery_confirmed_at?: string | null } | null>(null);
@@ -382,13 +384,16 @@ export default function ReceberPage() {
               <BotaoGrande cor="bg-white text-zinc-800" icone="ri-keyboard-line" titulo="Digitar nº da nota" sub="Se o código não ler" onClick={() => { setDigitado(''); setTela('digitar'); }} />
             </div>
 
-            <div className="mt-6 flex items-center justify-between px-1">
-              <p className="text-sm font-bold text-zinc-700">Esperando chegar {pendentes ? `(${pendentes.length})` : ''}</p>
+            <div className="mt-6 grid grid-cols-2 gap-1 bg-zinc-100 rounded-2xl p-1">
+              {([['esperando', `Esperando chegar${pendentes ? ` (${pendentes.length})` : ''}`], ['chegaram', 'Já chegaram']] as const).map(([v, l]) => (
+                <button key={v} onClick={() => setAba(v)} className={`py-2.5 rounded-xl text-sm font-semibold cursor-pointer ${aba === v ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500'}`}>{l}</button>
+              ))}
             </div>
-            <div className="mt-2 flex items-center gap-2 bg-white border border-zinc-100 rounded-2xl px-4">
+            <div className="mt-3 flex items-center gap-2 bg-white border border-zinc-100 rounded-2xl px-4">
               <i className="ri-search-line text-zinc-400" />
               <input value={filtro} onChange={(e) => setFiltro(e.target.value)} placeholder="Fornecedor ou número" className="flex-1 bg-transparent py-3 text-base outline-none" />
             </div>
+            {aba === 'chegaram' ? <JaChegaram tenantId={tenantId} filtro={filtro} onErro={setErro} /> : (
             <div className="mt-3 space-y-2.5">
               {pendentes === null && <Spinner texto="Carregando…" />}
               {pendentes && lista.length === 0 && (
@@ -417,6 +422,7 @@ export default function ReceberPage() {
                 </button>
               ))}
             </div>
+            )}
             </>}
           </div>
         )}
