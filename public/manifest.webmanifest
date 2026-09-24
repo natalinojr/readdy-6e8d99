@@ -44,6 +44,12 @@
       "short_name": "Receber",
       "url": "/receber",
       "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Pedir reembolso",
+      "short_name": "Reembolso",
+      "url": "/receber?pedido=reembolso",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
     }
   ]
 }

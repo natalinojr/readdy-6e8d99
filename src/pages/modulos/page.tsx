@@ -5,7 +5,7 @@ import { useAppMode, type AppMode } from '@/contexts/AppModeContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { useModoTreino } from '@/contexts/ModoTreinoContext';
 import { useSystemSettings } from '@/hooks/useSystemSettings';
-import { usePermissoes, type PermissaoKey } from '@/hooks/usePermissoes';
+import { usePermissoes, RECEBER_MODULO_KEYS, type PermissaoKey } from '@/hooks/usePermissoes';
 import { useUsuarios } from '@/hooks/useUsuarios';
 import { useModuleAccess, type ModuloLivre } from '@/hooks/useModuleAccess';
 import { empresaTemPdv } from '@/lib/tipoEmpresa';
@@ -101,8 +101,8 @@ const MODULOS: ModuloCard[] = [
   },
   {
     id: 'receber',
-    titulo: 'Receber mercadoria',
-    descricao: 'Chegou fornecedor? Confere a nota e dá entrada no estoque',
+    titulo: 'Recebimentos e pagamentos',
+    descricao: 'Mercadoria que chegou, reembolso, freelancer e fornecedor sem nota',
     icon: 'ri-truck-line',
     rota: '/receber',
     acento: '#d97706',
@@ -501,7 +501,7 @@ export default function ModulosPage() {
     if (m.id === 'gestor_pedidos' && kitchenView !== 'gestor' && kitchenView !== 'ambos') cfgOk = false;
     if (m.id === 'kds' && !hasPermissao('kds_acessar')) cfgOk = false;
     if (m.id === 'gestor_pedidos' && !hasPermissao('gestor_pedidos_acessar')) cfgOk = false;
-    if (m.id === 'receber' && !hasPermissao('estoque_receber') && !hasPermissao('estoque_movimentar')) cfgOk = false;
+    if (m.id === 'receber' && !RECEBER_MODULO_KEYS.some((k) => hasPermissao(k))) cfgOk = false;
     if (m.id === 'gestao' && !GESTAO_ENTRADA_KEYS.some((k) => hasPermissao(k as PermissaoKey))) cfgOk = false;
     const visible = perfilOk && cfgOk;
     console.log('[Modulos]', m.id, '| perfil:', user?.perfil, '| perfilOk:', perfilOk, '| cfgOk:', cfgOk, '| pdvCfg:', JSON.stringify(pdvCfg), '| visible:', visible);

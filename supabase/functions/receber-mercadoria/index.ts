@@ -20,9 +20,14 @@
 //   confirmar    { tipo, id, itens, pagamento?, forma?, recebido_em, obs? }
 //   lancar       { origem: 'cupom'|'sem_nota', fornecedor, itens, pagamento, ... }
 //   aguardando_nota { fornecedor, descricao, obs? }   pendência para o financeiro (não lança nada)
+//
+// "Paguei do meu bolso" (2026-09-24): lancar com pagamento 'reembolso' + reembolso { nome, pix_chave, comprovante? }
+// lança a compra (CMV + estoque, como sempre) SEM conta a pagar e abre um pedido de reembolso ligado a ela
+// (fin_payment_requests, ver Edge pedidos-pagamento). A conta só nasce quando o dono aprova. Exige 'pag_reembolso'.
 // deno-lint-ignore-file no-explicit-any
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { authenticate, bearerToken, isFinanceiroRole, tenantRole } from '../_shared/tenant-auth.ts';
+import { nomeDoUsuario, pendenciaDoPedido, permissoesPedido, salvarComprovante } from '../_shared/pedidos-pagamento.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -64,7 +69,7 @@ async function podeReceber(admin: Admin, tenantId: string, role: string): Promis
 }
 
 // ── Chamadas às Edges que já têm a regra ────────────────────────────────────
-interface Ctx { admin: Admin; url: string; tenantId: string; userToken: string; email: string | null; financeiro: boolean }
+interface Ctx { admin: Admin; url: string; tenantId: string; userToken: string; email: string | null; financeiro: boolean; userId: string; role: string }
 
 async function chamarEdge(ctx: Ctx, funcao: string, corpo: Record<string, unknown>, comoUsuario: boolean) {
   const anon = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
@@ -418,6 +423,7 @@ async function confirmar(ctx: Ctx, body: Record<string, any>) {
 
 // ── Lançar cupom / entrega sem nota ─────────────────────────────────────────
 const REF_OK = /^[a-zA-Z0-9-]{8,64}$/;
+const MARCA_REEMBOLSO = 'paga do bolso por';
 
 async function lancar(ctx: Ctx, body: Record<string, any>) {
   const { admin, tenantId } = ctx;
@@ -430,7 +436,21 @@ async function lancar(ctx: Ctx, body: Record<string, any>) {
   const fornecedor = String(body.fornecedor ?? '').trim().slice(0, 200);
   if (!fornecedor) return erro('Informe o fornecedor');
   const pagamento = String(body.pagamento ?? '');
-  if (!['dinheiro', 'pago', 'a_pagar', 'bonificacao'].includes(pagamento)) return erro('Forma de pagamento inválida');
+  if (!['dinheiro', 'pago', 'a_pagar', 'bonificacao', 'reembolso'].includes(pagamento)) return erro('Forma de pagamento inválida');
+  // Reembolso: quem pagou do bolso, chave Pix e comprovante (o cupom lido na SEFAZ já é o comprovante)
+  const reemb = pagamento === 'reembolso' ? {
+    nome: String(body.reembolso?.nome ?? '').trim().slice(0, 120),
+    pix: String(body.reembolso?.pix_chave ?? '').trim().slice(0, 140),
+    comprovante: body.reembolso?.comprovante ?? null,
+  } : null;
+  if (reemb) {
+    if (!(await permissoesPedido(admin, tenantId, ctx.role)).pag_reembolso) {
+      return erro('Seu perfil não pode pedir reembolso. Peça ao dono para liberar "Pedir reembolso" em Configurações › Permissões.', 403);
+    }
+    if (!reemb.nome) return erro('Informe quem pagou (quem recebe o reembolso)');
+    if (!reemb.pix) return erro('Informe a chave Pix de quem recebe o reembolso');
+    if (!reemb.comprovante?.base64 && onlyDigits(body.chave).length !== 44) return erro('Tire a foto do comprovante do que foi pago');
+  }
   const forma = FORMAS_PAGAS.includes(String(body.forma)) ? String(body.forma) : 'PIX';
   const recebidoEm = validarData(body.recebido_em);
   if (!recebidoEm) return erro('Data do recebimento inválida (não pode ser no futuro)');
@@ -443,14 +463,21 @@ async function lancar(ctx: Ctx, body: Record<string, any>) {
 
   // Já lançado por este mesmo rascunho (nova tentativa): só termina o recebimento
   {
-    const { data: ja } = await admin.from('fin_purchases').select('id, delivery_confirmed_at')
+    const { data: ja } = await admin.from('fin_purchases').select('id, delivery_confirmed_at, notes')
       .eq('tenant_id', tenantId).ilike('notes', `%${marcaRef}%`).limit(1).maybeSingle();
     if (ja) {
+      // Mesma ref com outro pagamento (ex.: 1ª tentativa em dinheiro deu timeout e a pessoa trocou para
+      // reembolso): nunca misturar — seria saída do caixa + Pix para a mesma compra
+      const eraReembolso = String((ja as any).notes ?? '').includes(MARCA_REEMBOLSO);
+      if (eraReembolso !== !!reemb) {
+        return erro('Essa compra já foi lançada com outra forma de pagamento. Veja em "Esperando chegar" ou fale com o financeiro.', 409);
+      }
       const sg = pagamento === 'dinheiro' ? await sangria(ctx, String(ja.id)) : null;
-      if (ja.delivery_confirmed_at) return json({ ok: true, purchase_id: ja.id, lancada_agora: true, aviso: null, faltas: [], sem_estoque: 0, sangria: sg });
+      const pr = reemb ? await pedidoDeReembolso(ctx, String(ja.id), ref, fornecedor, dataCompra, reemb) : null;
+      if (ja.delivery_confirmed_at) return json({ ok: true, purchase_id: ja.id, lancada_agora: true, aviso: null, faltas: [], sem_estoque: 0, sangria: sg, reembolso: pr });
       const rec = await receber(ctx, String(ja.id), new Map(), recebidoEm, '');
       if (!rec.ok) return erro(`A compra está lançada, mas o recebimento não confirmou: ${rec.erro}`, 500, { purchase_id: ja.id });
-      return json({ ...rec, purchase_id: ja.id, lancada_agora: true, sangria: sg });
+      return json({ ...rec, purchase_id: ja.id, lancada_agora: true, sangria: sg, reembolso: pr });
     }
   }
 
@@ -522,6 +549,7 @@ async function lancar(ctx: Ctx, body: Record<string, any>) {
   const notes = [
     `Recebida pelo celular${ctx.email ? ` (${ctx.email})` : ''} — ${origem === 'cupom' ? 'cupom/notinha' : 'entrega sem nota'}`,
     pagamento === 'dinheiro' ? MARCA_DINHEIRO : null,
+    reemb ? `${MARCA_REEMBOLSO} ${reemb.nome} — reembolso por Pix depois que o dono aprovar` : null,
     pagamento === 'pago' ? `já paga por ${forma} na entrega — a conciliação baixa pelo extrato` : null,
     chave.length === 44 ? `NFC-e chave ${chave}` : null,
     String(body.obs ?? '').trim().slice(0, 300) || null,
@@ -531,9 +559,9 @@ async function lancar(ctx: Ctx, body: Record<string, any>) {
   // extrato (mesma regra do assistente — 'paid' aqui e o extrato de novo = saída em dobro).
   const payload: Record<string, unknown> = {
     supplier: fornecedor, invoice_number: numero, purchase_date: dataCompra,
-    payment_method: bonus ? 'Bonificação' : pagamento === 'dinheiro' ? 'Dinheiro' : pagamento === 'pago' ? forma : body.forma === 'Boleto' ? 'Boleto' : 'PIX',
+    payment_method: bonus ? 'Bonificação' : pagamento === 'dinheiro' ? 'Dinheiro' : pagamento === 'pago' ? forma : reemb ? 'PIX' : body.forma === 'Boleto' ? 'Boleto' : 'PIX',
     payment_status: bonus || pagamento === 'dinheiro' ? 'paid' : 'pending',
-    due_date: pagamento === 'a_pagar' ? vencimento : pagamento === 'pago' ? hojeBR() : null,
+    due_date: pagamento === 'a_pagar' ? vencimento : pagamento === 'pago' || reemb ? hojeBR() : null,
     is_bonus: bonus, notes, items,
   };
   const cr = await chamarEdge(ctx, 'purchase-write', { action: 'create_purchase', tenant_id: tenantId, payload }, false);
@@ -541,6 +569,15 @@ async function lancar(ctx: Ctx, body: Record<string, any>) {
   if (!cr.ok || !compra?.id) return erro(`Não consegui lançar a compra: ${cr.ok ? 'sem retorno' : cr.erro}`, 500);
   const purchaseId = String(compra.id);
   const sg = pagamento === 'dinheiro' ? await sangria(ctx, purchaseId) : null;
+  // Reembolso: a compra entra SEM conta a pagar — a conta só nasce quando o dono aprova o pedido
+  // (fn_pedido_pagamento_aprovar). O pedido (com pendência no 📥) faz o papel da "compra pelo celular".
+  let pr: { ok: boolean; erro?: string } | null = null;
+  if (reemb) {
+    const { error: delErr } = await admin.from('fin_accounts_payable').delete()
+      .eq('tenant_id', tenantId).eq('reference_type', 'purchase').eq('reference_id', purchaseId).eq('status', 'pending');
+    if (delErr) console.error('[receber-mercadoria] tirar conta do reembolso', delErr.message);
+    pr = await pedidoDeReembolso(ctx, purchaseId, ref, fornecedor, dataCompra, reemb);
+  }
 
   // Conta a pagar criada por quem não é do financeiro: o dono confere antes de pagar
   if (!ctx.financeiro && (pagamento === 'a_pagar' || pagamento === 'pago')) {
@@ -554,7 +591,35 @@ async function lancar(ctx: Ctx, body: Record<string, any>) {
   if (!rec.ok) {
     return erro(`A compra foi lançada, mas o recebimento não confirmou: ${rec.erro}. Ela aparece em "Esperando chegar" — confirme por lá.`, 500, { purchase_id: purchaseId });
   }
-  return json({ ...rec, purchase_id: purchaseId, lancada_agora: true, sangria: sg });
+  return json({ ...rec, purchase_id: purchaseId, lancada_agora: true, sangria: sg, reembolso: pr });
+}
+
+/** Pedido de reembolso ligado à compra (idempotente pela ref do rascunho). Falha aqui não desfaz a compra. */
+async function pedidoDeReembolso(ctx: Ctx, purchaseId: string, ref: string, fornecedor: string, dataCompra: string,
+  reemb: { nome: string; pix: string; comprovante: any }): Promise<{ ok: boolean; erro?: string }> {
+  const { admin, tenantId } = ctx;
+  const refPedido = `rec-${ref}`;
+  const { data: ja } = await admin.from('fin_payment_requests').select('id').eq('tenant_id', tenantId).eq('ref', refPedido).maybeSingle();
+  if (ja) return { ok: true };
+  const falhou = (erro: string) => {
+    console.error('[receber-mercadoria] pedido de reembolso', purchaseId, erro);
+    return { ok: false, erro: `A compra foi lançada, mas o pedido de reembolso não foi criado (${erro}). Avise o financeiro.` };
+  };
+  const { data: compra } = await admin.from('fin_purchases').select('total_amount').eq('id', purchaseId).maybeSingle();
+  const valor = round2(Number(compra?.total_amount ?? 0));
+  if (!(valor > 0)) return falhou('compra sem valor');
+  let comprovante: string | null = null;
+  try { comprovante = await salvarComprovante(admin, tenantId, refPedido, reemb.comprovante); } catch (e) { return falhou((e as Error).message); }
+  const quem = await nomeDoUsuario(admin, ctx.userId, ctx.email);
+  const linha = {
+    tenant_id: tenantId, tipo: 'reembolso', ref: refPedido, descricao: `Compra em ${fornecedor} (entrou no estoque)`, valor,
+    data_gasto: dataCompra, favorecido_nome: reemb.nome, pix_chave: reemb.pix, comprovante_path: comprovante,
+    purchase_id: purchaseId, bill_id: null, solicitado_por: ctx.userId, solicitado_por_nome: quem,
+  };
+  const { data: novo, error } = await admin.from('fin_payment_requests').insert(linha).select('id').single();
+  if (error) return error.code === '23505' ? { ok: true } : falhou(error.message);
+  await pendenciaDoPedido(admin, { id: novo.id, tenant_id: tenantId, tipo: 'reembolso', valor, favorecido_nome: reemb.nome, descricao: linha.descricao, solicitado_por_nome: quem });
+  return { ok: true };
 }
 
 // ── Buscar pela chave (código de barras da DANFE) ou pelo número ────────────
@@ -622,10 +687,12 @@ Deno.serve(async (req) => {
     if (!tenantId) return erro('tenant_id obrigatório');
     const role = await tenantRole(admin, caller.userId, tenantId);
     if (!role) return erro('Sem acesso a esta loja', 403);
-    if (!(await podeReceber(admin, tenantId, role))) {
+    // Quem só pode pedir reembolso lança a mercadoria que pagou do bolso (cupom/sem nota) e nada mais
+    const soReembolso = ['insumos', 'fornecedores'].includes(action) || (action === 'lancar' && body.pagamento === 'reembolso');
+    if (!(await podeReceber(admin, tenantId, role)) && !(soReembolso && (await permissoesPedido(admin, tenantId, role)).pag_reembolso)) {
       return erro('Seu perfil não pode receber mercadoria. Peça ao dono para liberar "Receber mercadoria" em Configurações › Permissões.', 403);
     }
-    const ctx: Ctx = { admin, url, tenantId, userToken: bearerToken(req), email: caller.email, financeiro: isFinanceiroRole(role) };
+    const ctx: Ctx = { admin, url, tenantId, userToken: bearerToken(req), email: caller.email, financeiro: isFinanceiroRole(role), userId: caller.userId, role };
 
     switch (action) {
       case 'pendentes': return json({ itens: await pendentes(ctx) });

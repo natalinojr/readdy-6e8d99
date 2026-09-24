@@ -80,7 +80,7 @@ Rotas dentro do layout autenticado:
 - `/pedidos`: `src/pages/pedidos/page.tsx`
 - `/tarefas`: `src/pages/tarefas/page.tsx` (gestão de tarefas: Lista/Kanban/Calendário/Minhas + campos personalizados — ver PLANO-MODULO-TAREFAS.md)
 - `/estoque`: `src/pages/estoque/page.tsx`
-- `/receber`: `src/pages/receber/page.tsx` (celular da loja: receber mercadoria por etapas — nota, compra lançada, cupom, sem nota; atalho no app instalado e card em Módulos)
+- `/receber`: `src/pages/receber/page.tsx` — **Recebimentos e pagamentos** (celular da loja: receber mercadoria por etapas — nota, compra lançada, cupom, sem nota; + pedidos de pagamento em `src/pages/receber/pedidos/`: reembolso, freelancer, fornecedor sem nota, aprovação; links `?pedido=`, `?aprovar=1`, `?meus=1`)
 - `/financeiro`: `src/pages/financeiro/page.tsx`
 - `/configuracoes`: `src/pages/configuracoes/page.tsx`
 - `/config-delivery`: `src/pages/config-delivery/page.tsx`
@@ -3299,3 +3299,14 @@ por `description` começando com `'Acréscimos da nota'`. Já filtram: `receber-
 `purchase-confirm-delivery` (receipt_context), `DetalhePurchaseModal` (mostra como linha de valor à parte),
 `ConfirmarRecebimento` do assistente, `vinculos-memorizados`, registro de classificação e entrada tardia.
 Relatórios/DRE/detalhe de conta continuam mostrando a linha (é dinheiro gasto).
+
+### Pedidos de pagamento no módulo Recebimentos e pagamentos (2026-09-24)
+- Pedido do dono: pedir **reembolso**, **pagamento de freelancer** e **pagamento de fornecedor sem NF contra o CNPJ da loja** dentro do sistema, com permissão por tipo e ação rápida de reembolso. O `/receber` ("Receber mercadoria") virou **"Recebimentos e pagamentos"** (Sidebar, card de Módulos, título).
+- **Nada vira dívida sem aprovação** (decisão do dono): o pedido fica em `fin_payment_requests` (`pendente`) + pendência `kind='pedido_pagamento'` no 📥 (rota `/receber?aprovar=1`). Aprovar → `fn_pedido_pagamento_aprovar` (service role, uma transação) cria a conta a pagar **em aberto**; o Pix sai pelo caminho de sempre e a conciliação baixa. A trava de Pix (fornecedor cadastrado / Pix permitidos) **não foi mexida** — chave de funcionário/freela nova se paga pelo app do banco.
+- Contas: reembolso e fornecedor → `reference_type='pedido_pagamento'` (novo no CHECK), `reference_id` = pedido, `dre_category_id` obrigatório (reembolso: quem pede escolhe; fornecedor: o dono escolhe ao aprovar se faltar). Freelancer → mesma forma de sempre (`reference_type='freelancer'`, RH, `reference_id` = `hr_freelancers.id`) + diárias em `hr_freelancer_shifts` com `bill_id` e sem `payment_id`.
+- **Freela sem dupla contagem:** `fn_freelancer_registrar_pagamento` agora, quando o Pix não tem conta ligada, **adota** a conta em aberto de um pedido aprovado (mesmo freela, mesmo valor, sem outro Pix) e liga as diárias do pedido ao pagamento (passo 3a) em vez de gravar outras.
+- **Reembolso de mercadoria não é despesa**: "O que você comprou?" → mercadoria vai pelo recebimento (cupom ou sem nota) com a opção **"Paguei do meu bolso"** (`lancar` com `pagamento='reembolso'`): compra A PAGAR (CMV + estoque como sempre, vence hoje) e pedido de reembolso ligado (`purchase_id`, `bill_id` da parcela). Esse pedido não se recusa nem se cancela pelo app (a compra já entrou); aprovar só libera o pagamento. Quem só tem `pag_reembolso` passa no gate da `receber-mercadoria` apenas para `insumos`/`fornecedores`/`lancar` com reembolso.
+- Permissões novas (`PEDIDO_KEYS` em `usePermissoes.ts`): `pag_reembolso`, `pag_freelancer`, `pag_fornecedor` (padrão Admin/Gerente, liberáveis para qualquer papel) e `pag_aprovar` (padrão só Admin; `somenteGerente` na matriz). O servidor repete o padrão sem linha na matriz (`_shared/pedidos-pagamento.ts › permissoesPedido`). Ninguém aprova o próprio pedido, exceto o Admin. Entrada no módulo: `RECEBER_MODULO_KEYS` (RotaProtegida, Sidebar, Módulos, `acesso.ts`).
+- Comprovantes no bucket privado `pedidos-pagamento` (upload/URL assinada só pela Edge). Ações rápidas novas: "Pedir reembolso" (`/receber?pedido=reembolso`) e "Aprovar pedidos de pagamento".
+- Edge `pedidos-pagamento` (verify_jwt true) + `receber-mercadoria` atualizada; migration `20260925200000_pedidos_pagamento.sql`.
+

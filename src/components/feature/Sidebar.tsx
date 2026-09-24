@@ -11,7 +11,7 @@ import { useAprovacoes } from '../../contexts/AprovacoesContext';
 import { useAppMode } from '../../contexts/AppModeContext';
 import { useFinanceiroAlertas } from '@/hooks/useFinanceiroAlertas';
 import { useSystemSettings } from '@/hooks/useSystemSettings';
-import { usePermissoes, type PermissaoKey } from '@/hooks/usePermissoes';
+import { usePermissoes, RECEBER_MODULO_KEYS, type PermissaoKey } from '@/hooks/usePermissoes';
 import { FIN_KEYS, REL_KEYS, CFG_MAQUININHA_KEY } from '@/constants/permissoesAbas';
 
 const ADMIN_MASTER_EMAIL = 'natalinojr.engel@gmail.com';
@@ -67,7 +67,7 @@ const navSections: NavSection[] = [
       { label: 'Tráfego Pago',          icon: Megaphone,       path: '/trafego-pago',  permissao: 'relatorio_financeiro' },
       { label: 'Cardápio',              icon: UtensilsCrossed, path: '/cardapio',      permissao: 'cardapio_editar' },
       { label: 'Estoque',               icon: Package,         path: '/estoque',       permissao: 'estoque_movimentar' },
-      { label: 'Receber mercadoria',    icon: Truck,           path: '/receber',       permissao: ['estoque_receber', 'estoque_movimentar'] },
+      { label: 'Recebimentos e pagamentos', icon: Truck,       path: '/receber',       permissao: RECEBER_MODULO_KEYS },
       { label: 'Financeiro',            icon: DollarSign,      path: '/financeiro',    permissao: FIN_KEYS },
       { label: 'Usuários',              icon: Users,           path: '/usuarios',      permissao: 'usuarios_gerenciar' },
       { label: 'Mesas',                 icon: LayoutGrid,      path: '/mesas',         permissao: 'gestao_mesas' },

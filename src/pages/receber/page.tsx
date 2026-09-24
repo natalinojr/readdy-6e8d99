@@ -1,10 +1,17 @@
-// Receber mercadoria — tela de celular para quem recebe na porta da loja (2026-09-22).
-// Passo a passo: o que chegou? (nota que já está no sistema, compra lançada, cupom, sem nota)
+// Recebimentos e pagamentos (ex-"Receber mercadoria") — tela de celular da loja (2026-09-22).
+// Receber: o que chegou? (nota que já está no sistema, compra lançada, cupom, sem nota)
 // → conferir item a item → como foi pago (se ainda não está lançado) → confirmar.
 // Toda a regra fica na Edge receber-mercadoria, que reaproveita as Edges de compra/nota/estoque.
+// Pedir pagamento (2026-09-24): reembolso, freelancer e fornecedor sem nota viram pedido para o dono
+// aprovar (Edge pedidos-pagamento); mercadoria paga do bolso vai pelo recebimento ("Paguei do meu bolso").
+// Links: ?pedido=reembolso|freelancer|fornecedor, ?aprovar=1, ?meus=1.
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
+import { usePermissoes } from '@/hooks/usePermissoes';
+import NovoPedido from './pedidos/NovoPedido';
+import ListaPedidos from './pedidos/ListaPedidos';
+import { chamarPedidos, ROTULO_TIPO, type ContextoPedidos, type TipoPedido } from './pedidos/api';
 import Conferir from './components/Conferir';
 import Pagamento, { descreverPagamento } from './components/Pagamento';
 import SemNota from './components/SemNota';
@@ -17,7 +24,8 @@ import { fotoParaEnvio, isNfcePrQr, lerCodigoDaFoto } from './leitura';
 
 type Tela =
   | 'inicio' | 'carregando' | 'conferir' | 'pagamento' | 'resumo' | 'gravando' | 'feito'
-  | 'sem_nota_pergunta' | 'sem_nota' | 'aguardando' | 'nao_achou' | 'duplicado' | 'parecidas' | 'busca' | 'digitar';
+  | 'sem_nota_pergunta' | 'sem_nota' | 'aguardando' | 'nao_achou' | 'duplicado' | 'parecidas' | 'busca' | 'digitar'
+  | 'reembolso_o_que' | 'pedido' | 'pedido_ok' | 'meus' | 'aprovar';
 
 interface CompraParecida { id: string; supplier: string; total_amount: number; purchase_date: string; delivery_confirmed_at: string | null }
 
@@ -27,6 +35,14 @@ export default function ReceberPage() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const tenantId = user?.tenantId ?? '';
+  const { hasPermissao } = usePermissoes();
+  const podeReceber = hasPermissao('estoque_receber') || hasPermissao('estoque_movimentar');
+  const [params, setParams] = useSearchParams();
+  const [ctxPed, setCtxPed] = useState<ContextoPedidos | null>(null);
+  const [tipoPedido, setTipoPedido] = useState<TipoPedido>('reembolso');
+  /** Mercadoria paga do bolso: o recebimento já abre com "Paguei do meu bolso" marcado. */
+  const modoReembolso = useRef(false);
+  const fotoCupom = useRef<File | null>(null);
 
   const [tela, setTela] = useState<Tela>('inicio');
   const [msgCarregando, setMsgCarregando] = useState('');
@@ -46,22 +62,52 @@ export default function ReceberPage() {
   const inputCupom = useRef<HTMLInputElement>(null);
 
   const carregarPendentes = useCallback(async () => {
-    if (!tenantId) return;
+    if (!tenantId || !podeReceber) return;
     const { data, erro: e } = await chamar<{ itens: Pendente[] }>('pendentes', tenantId);
     if (e) { setErro(e); setPendentes([]); return; }
     setPendentes(data?.itens ?? []);
+  }, [tenantId, podeReceber]);
+
+  const lojaAtual = useRef(tenantId);
+  lojaAtual.current = tenantId;
+  const carregarCtxPed = useCallback(async () => {
+    if (!tenantId) return;
+    const { data } = await chamarPedidos<ContextoPedidos>('contexto', tenantId);
+    if (lojaAtual.current === tenantId) setCtxPed(data); // resposta atrasada de outra loja: descarta
   }, [tenantId]);
 
   // Troca de loja: nada do rascunho de uma loja pode ser lançado na outra
   useEffect(() => {
-    setR(null); setResultado(null); setErro(null); setTela('inicio'); setPendentes(null);
-    carregarPendentes();
-  }, [carregarPendentes]);
+    setR(null); setResultado(null); setErro(null); setTela('inicio'); setPendentes(null); setCtxPed(null);
+    modoReembolso.current = false;
+    carregarCtxPed();
+  }, [tenantId, carregarCtxPed]);
+  useEffect(() => { carregarPendentes(); }, [carregarPendentes]);
+  // Voltou ao início por qualquer caminho (erro de leitura inclusive): próximo recebimento é normal
+  useEffect(() => { if (tela === 'inicio') modoReembolso.current = false; }, [tela]);
+
+  // Atalhos por link (ação rápida, pendência do 📥): abre direto no pedido/lista e limpa o link
+  useEffect(() => {
+    const pedido = params.get('pedido');
+    const alvo: Tela | null = pedido === 'reembolso' ? 'reembolso_o_que'
+      : pedido === 'freelancer' || pedido === 'fornecedor' ? 'pedido'
+      : params.get('aprovar') ? 'aprovar' : params.get('meus') ? 'meus' : null;
+    if (!alvo) return;
+    if (pedido === 'freelancer' || pedido === 'fornecedor') setTipoPedido(pedido);
+    setErro(null); setR(null); setTela(alvo);
+    setParams({}, { replace: true });
+  }, [params, setParams]);
+
+  const comReembolso = (x: Rascunho): Rascunho => (modoReembolso.current ? {
+    ...x, pagamento: 'reembolso',
+    reembolso: { nome: ctxPed?.ultimo_reembolso?.nome ?? ctxPed?.nome ?? '', pix: ctxPed?.ultimo_reembolso?.pix_chave ?? '', foto: x.origem === 'cupom' ? fotoCupom.current : null },
+  } : x);
 
   const novoAguardando = (obs = '') => ({ fornecedor: '', descricao: '', obs, ref: crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2, 12)}` });
 
   const carregando = (msg: string) => { setErro(null); setMsgCarregando(msg); setTela('carregando'); };
-  const voltarInicio = () => { setErro(null); setR(null); setTela('inicio'); };
+  const voltarInicio = () => { setErro(null); setR(null); setTela('inicio'); modoReembolso.current = false; };
+  const abrirPedido = (t: TipoPedido) => { setErro(null); setTipoPedido(t); setTela('pedido'); };
   const mudar = (patch: Partial<Rascunho>) => setR((x) => (x ? { ...x, ...patch } : x));
 
   // ── Abrir uma nota/compra da lista ──────────────────────────────────────────
@@ -110,10 +156,14 @@ export default function ReceberPage() {
 
   const onFotoCupom = async (file: File | undefined) => {
     if (!file) return;
+    fotoCupom.current = file;
     carregando('Procurando o QR Code…');
     const lido = await lerCodigoDaFoto(file).catch(() => ({ tipo: 'nada' as const }));
     if (lido.tipo === 'qr' && isNfcePrQr(lido.url)) return lerCupomQr(lido.url);
-    if (lido.tipo === 'chave') return buscarCodigo(lido.chave);
+    if (lido.tipo === 'chave') {
+      if (!podeReceber) { setErro('Isso é uma nota fiscal (DANFE), não cupom de mercado. Peça a quem recebe mercadoria para dar entrada.'); setTela('inicio'); return; }
+      return buscarCodigo(lido.chave);
+    }
     carregando('Lendo a notinha (leva uns segundos)…');
     try {
       const { base64, mediaType } = await fotoParaEnvio(file);
@@ -130,7 +180,7 @@ export default function ReceberPage() {
     if (s.duplicate) { setDup(s.duplicate); setTela('duplicado'); return; }
     const { data, erro: e } = await chamar<{ insumos: Insumo[] }>('insumos', tenantId);
     if (e) { setErro(e); setTela('inicio'); return; }
-    setR(deCupom(s, data?.insumos ?? []));
+    setR(comReembolso(deCupom(s, data?.insumos ?? [])));
     setTela('conferir');
   };
 
@@ -143,7 +193,7 @@ export default function ReceberPage() {
     ]);
     if (ins.erro) { setErro(ins.erro); setTela('inicio'); return; }
     setFornecedores(forn.data?.fornecedores ?? []);
-    setR(novoSemNota(ins.data?.insumos ?? []));
+    setR(comReembolso(novoSemNota(ins.data?.insumos ?? [])));
     setTela('sem_nota');
   };
 
@@ -168,7 +218,17 @@ export default function ReceberPage() {
         itens: r.itens.map((i) => ({ key: i.key, recebido: i.recebido, ingredient_id: i.ingredient_id, units_per_package: i.units_per_package })),
       });
     } else {
+      // Paguei do meu bolso: dados do reembolso (o pedido nasce ligado à compra)
+      let reembolso: Record<string, unknown> | undefined;
+      if (r.pagamento === 'reembolso' && r.reembolso) {
+        let comprovante: { base64: string; media_type: string } | null = null;
+        try {
+          if (r.reembolso.foto) { const f = await fotoParaEnvio(r.reembolso.foto); comprovante = { base64: f.base64, media_type: f.mediaType }; }
+        } catch { setErro('Não consegui ler a foto do comprovante. Tire outra.'); setTela('pagamento'); return; }
+        reembolso = { nome: r.reembolso.nome, pix_chave: r.reembolso.pix, comprovante };
+      }
       res = await chamar<Resultado>('lancar', tenantId, {
+        reembolso,
         origem: r.origem, fornecedor: r.fornecedor, numero: r.numero, data_compra: r.data, chave: r.chave,
         pagamento: r.pagamento, forma: r.forma, vencimento: r.vencimento, recebido_em: r.recebidoEm, obs: r.obs,
         ref: r.ref, forcar,
@@ -209,6 +269,7 @@ export default function ReceberPage() {
     setResultado(res.data);
     setTela('feito');
     carregarPendentes();
+    if (r.pagamento === 'reembolso') carregarCtxPed();
   };
 
   // ── Navegação ─────────────────────────────────────────────────────────────
@@ -216,6 +277,7 @@ export default function ReceberPage() {
     if (tela === 'pagamento') return setTela(r?.origem === 'sem_nota' ? 'sem_nota' : 'conferir');
     if (tela === 'resumo') return setTela(r && precisaPagamento(r) ? 'pagamento' : 'conferir');
     if (tela === 'aguardando') return setTela('sem_nota_pergunta');
+    if (tela === 'pedido' && tipoPedido === 'reembolso') return setTela('reembolso_o_que');
     if (tela === 'inicio') return navigate('/modulos');
     if (tela === 'gravando' || tela === 'carregando') return;
     voltarInicio();
@@ -223,11 +285,15 @@ export default function ReceberPage() {
   const depoisDeConferir = () => setTela(r && precisaPagamento(r) ? 'pagamento' : 'resumo');
 
   const titulo: Record<Tela, string> = {
-    inicio: 'Receber mercadoria', carregando: 'Receber mercadoria', conferir: 'Conferir o que chegou', pagamento: 'Pagamento',
+    inicio: 'Recebimentos e pagamentos', carregando: 'Recebimentos e pagamentos', conferir: 'Conferir o que chegou', pagamento: 'Pagamento',
     resumo: 'Confirmar recebimento', gravando: 'Confirmando…', feito: 'Pronto', sem_nota_pergunta: 'Chegou sem nota',
     sem_nota: 'Chegou sem nota', aguardando: 'Nota vem depois', nao_achou: 'Nota não encontrada', duplicado: 'Já lançado',
     busca: 'Resultado da busca', digitar: 'Digitar a nota', parecidas: 'Já lançado?',
+    reembolso_o_que: 'Pedir reembolso', pedido: `Pedir pagamento · ${ROTULO_TIPO[tipoPedido]}`, pedido_ok: 'Pedido enviado',
+    meus: 'Meus pedidos', aprovar: 'Aprovar pedidos',
   };
+  const perms = ctxPed?.perms;
+  const podePedir = !!perms && (perms.pag_reembolso || perms.pag_freelancer || perms.pag_fornecedor);
 
   const lista = useMemo(() => {
     const q = normalizar(filtro);
@@ -248,7 +314,7 @@ export default function ReceberPage() {
             <p className="text-xs text-white/80 truncate">{user?.loja}</p>
           </div>
           {tela === 'inicio' && (
-            <button onClick={() => { setPendentes(null); carregarPendentes(); }} className="w-11 h-11 flex items-center justify-center rounded-full active:bg-white/20 cursor-pointer" aria-label="Atualizar">
+            <button onClick={() => { setPendentes(null); carregarPendentes(); carregarCtxPed(); }} className="w-11 h-11 flex items-center justify-center rounded-full active:bg-white/20 cursor-pointer" aria-label="Atualizar">
               <i className="ri-refresh-line text-xl" />
             </button>
           )}
@@ -271,6 +337,44 @@ export default function ReceberPage() {
 
         {tela === 'inicio' && (
           <div className="px-4 pt-4 pb-10">
+            {perms?.pag_aprovar && (ctxPed?.para_aprovar ?? 0) > 0 && (
+              <button onClick={() => setTela('aprovar')} className="w-full mb-4 flex items-center gap-3 bg-emerald-500 text-white rounded-3xl p-4 text-left shadow-lg shadow-emerald-500/25 cursor-pointer active:scale-[0.99]">
+                <i className="ri-checkbox-multiple-line text-3xl" />
+                <div className="flex-1">
+                  <p className="text-[15px] font-bold">{ctxPed!.para_aprovar} pedido{ctxPed!.para_aprovar > 1 ? 's' : ''} de pagamento para aprovar</p>
+                  <p className="text-xs text-white/85">Reembolso, freelancer ou fornecedor sem nota</p>
+                </div>
+                <i className="ri-arrow-right-s-line text-2xl" />
+              </button>
+            )}
+
+            {podePedir && (
+              <div className="mb-6">
+                <p className="text-sm font-bold text-zinc-700 px-1 mb-2">Pedir pagamento</p>
+                <div className="grid grid-cols-3 gap-2.5">
+                  {perms!.pag_reembolso && <BotaoPedido icone="ri-refund-2-line" titulo="Reembolso" onClick={() => { setErro(null); setTela('reembolso_o_que'); }} />}
+                  {perms!.pag_freelancer && <BotaoPedido icone="ri-user-star-line" titulo="Freelancer" onClick={() => abrirPedido('freelancer')} />}
+                  {perms!.pag_fornecedor && <BotaoPedido icone="ri-store-2-line" titulo="Fornecedor sem nota" onClick={() => abrirPedido('fornecedor')} />}
+                </div>
+                <div className="mt-2.5 flex gap-2">
+                  <button onClick={() => setTela('meus')} className="flex-1 py-3 rounded-2xl bg-white border border-zinc-100 text-sm font-semibold text-zinc-700 cursor-pointer">
+                    <i className="ri-list-check-2 mr-1" /> Meus pedidos
+                  </button>
+                  {perms!.pag_aprovar && (
+                    <button onClick={() => setTela('aprovar')} className="flex-1 py-3 rounded-2xl bg-white border border-zinc-100 text-sm font-semibold text-zinc-700 cursor-pointer">
+                      <i className="ri-checkbox-multiple-line mr-1" /> Aprovar
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {!podeReceber && ctxPed && !podePedir && (
+              <p className="text-center text-sm text-zinc-500 py-10">Seu perfil ainda não tem nada liberado aqui. Peça ao dono em Configurações › Permissões.</p>
+            )}
+
+            {podeReceber && <>
+            {podePedir && <p className="text-sm font-bold text-zinc-700 px-1 mb-2">Chegou mercadoria</p>}
             <div className="grid grid-cols-2 gap-3">
               <BotaoGrande cor="bg-amber-500 text-white" icone="ri-barcode-line" titulo="Ler código da nota" sub="Foto do código de barras da DANFE" onClick={() => inputCodigo.current?.click()} destaque />
               <BotaoGrande cor="bg-white text-zinc-800" icone="ri-receipt-line" titulo="Cupom / notinha" sub="Foto do cupom de mercado" onClick={() => inputCupom.current?.click()} />
@@ -313,7 +417,42 @@ export default function ReceberPage() {
                 </button>
               ))}
             </div>
+            </>}
           </div>
+        )}
+
+        {tela === 'reembolso_o_que' && (
+          <div className="px-4 pt-6 space-y-3">
+            <p className="text-xl font-bold text-zinc-900 px-1">O que você comprou?</p>
+            <p className="text-sm text-zinc-500 px-1 mb-2">Mercadoria entra no estoque e no custo (CMV); o resto vira despesa.</p>
+            <BotaoGrande cor="bg-white text-zinc-800" icone="ri-receipt-line" titulo="Mercadoria com cupom" sub="Insumo, bebida, embalagem — foto do cupom do mercado"
+              onClick={() => { modoReembolso.current = true; setErro(null); inputCupom.current?.click(); }} largo />
+            <BotaoGrande cor="bg-white text-zinc-800" icone="ri-inbox-unarchive-line" titulo="Mercadoria sem cupom" sub="Digito o que comprei e anexo a foto do recibo"
+              onClick={() => { modoReembolso.current = true; abrirSemNota(); }} largo />
+            <BotaoGrande cor="bg-white text-zinc-800" icone="ri-tools-line" titulo="Outra coisa" sub="Limpeza, manutenção, material, transporte…" onClick={() => abrirPedido('reembolso')} largo />
+          </div>
+        )}
+
+        {tela === 'pedido' && (ctxPed
+          ? <NovoPedido key={tipoPedido} tipo={tipoPedido} tenantId={tenantId} contexto={ctxPed} onErro={setErro} onEnviado={() => { setTela('pedido_ok'); carregarCtxPed(); }} />
+          : <Spinner texto="Carregando…" grande />)}
+
+        {tela === 'pedido_ok' && (
+          <div className="px-4 pt-10 pb-10 text-center">
+            <div className="w-20 h-20 mx-auto rounded-full bg-emerald-100 flex items-center justify-center">
+              <i className="ri-send-plane-line text-4xl text-emerald-600" />
+            </div>
+            <p className="text-2xl font-black text-zinc-900 mt-5">Pedido enviado</p>
+            <p className="text-sm text-zinc-500 mt-2">O dono vai aprovar. Acompanhe em "Meus pedidos".</p>
+            <div className="mt-8 space-y-3">
+              <button onClick={() => setTela('meus')} className="w-full py-4 rounded-2xl bg-amber-500 text-white font-bold cursor-pointer">Ver meus pedidos</button>
+              <button onClick={voltarInicio} className="w-full py-4 rounded-2xl border-2 border-zinc-200 text-zinc-700 font-bold cursor-pointer">Voltar</button>
+            </div>
+          </div>
+        )}
+
+        {(tela === 'meus' || tela === 'aprovar') && (
+          <ListaPedidos key={tela} modo={tela} tenantId={tenantId} onErro={setErro} onMudou={carregarCtxPed} />
         )}
 
         {(tela === 'carregando' || tela === 'gravando') && <Spinner texto={tela === 'gravando' ? 'Confirmando o recebimento…' : msgCarregando} grande />}
@@ -407,7 +546,10 @@ export default function ReceberPage() {
 
         {tela === 'sem_nota' && r && <SemNota r={r} fornecedores={fornecedores} onMudar={mudar} onContinuar={() => setTela('pagamento')} />}
         {tela === 'conferir' && r && <Conferir r={r} onItens={(itens) => mudar({ itens })} onContinuar={depoisDeConferir} />}
-        {tela === 'pagamento' && r && <Pagamento r={r} onMudar={mudar} onContinuar={() => setTela('resumo')} />}
+        {tela === 'pagamento' && r && (
+          <Pagamento r={r} onMudar={mudar} onContinuar={() => setTela('resumo')} soReembolso={!podeReceber}
+            reembolso={perms?.pag_reembolso ? { nome: ctxPed?.ultimo_reembolso?.nome ?? ctxPed?.nome ?? '', pix: ctxPed?.ultimo_reembolso?.pix_chave ?? '' } : null} />
+        )}
 
         {tela === 'resumo' && r && <Resumo r={r} onMudar={mudar} onConfirmar={() => gravar()} />}
 
@@ -436,6 +578,15 @@ export default function ReceberPage() {
 }
 
 // ── Peças ─────────────────────────────────────────────────────────────────────
+function BotaoPedido({ icone, titulo, onClick }: { icone: string; titulo: string; onClick: () => void }) {
+  return (
+    <button onClick={onClick} className="bg-white border border-zinc-100 rounded-3xl p-3 min-h-[92px] flex flex-col items-start justify-between text-left active:scale-[0.98] transition-transform cursor-pointer">
+      <i className={`${icone} text-2xl text-emerald-600`} />
+      <p className="text-[13px] font-bold text-zinc-800 leading-tight">{titulo}</p>
+    </button>
+  );
+}
+
 function BotaoGrande({ cor, icone, titulo, sub, onClick, destaque, largo }: { cor: string; icone: string; titulo: string; sub: string; onClick: () => void; destaque?: boolean; largo?: boolean }) {
   return (
     <button
@@ -575,6 +726,8 @@ function Feito({ resultado, r, onOutra, onSair }: { resultado: Resultado | null;
             {resultado.faltas.length > 0 && <Aviso cor="orange" icone="ri-scales-line">Chegou diferente em {resultado.faltas.length} item(ns). Ficou anotado na compra para o financeiro.</Aviso>}
             {resultado.sem_estoque > 0 && <Aviso cor="zinc" icone="ri-link-unlink">{resultado.sem_estoque} item(ns) sem insumo ligado não entraram no estoque.</Aviso>}
             {resultado.aviso && <Aviso cor="red" icone="ri-error-warning-line">{resultado.aviso}</Aviso>}
+            {r?.pagamento === 'reembolso' && resultado.reembolso?.ok && <Aviso cor="emerald" icone="ri-refund-2-line">Pedido de reembolso para <b>{r.reembolso?.nome}</b> enviado ao dono. Acompanhe em "Meus pedidos".</Aviso>}
+            {r?.pagamento === 'reembolso' && !resultado.reembolso?.ok && <Aviso cor="red" icone="ri-error-warning-line">{resultado.reembolso?.erro ?? 'O pedido de reembolso não foi criado. Avise o financeiro.'}</Aviso>}
           </div>
         </>
       ) : (
