@@ -351,6 +351,28 @@ async function syncTenant(admin: Admin, tenantId: string, opts: { days?: number;
       log('WARN', action, 'fn_match_stone_inter falhou', { tenantId, error: String(e) });
     }
 
+    // iFood e Pix do tablet (2026-09-24): o repasse do iFood só casava no sync do iFood (07h20), antes
+    // de o depósito cair no Inter — ficava "Pendente" o dia todo. O Pix do tablet casa pelo txid da cobrança.
+    try {
+      const d20 = from < addDays(today, -20) ? from : addDays(today, -20);
+      // Só no período coberto pelo relatório do iFood da loja (mesma trava do ifood-financial › matchInter).
+      const [{ data: ifLo }, { data: ifHi }] = await Promise.all([
+        admin.from('fin_ifood_entries').select('data_repasse').eq('tenant_id', tenantId).not('data_repasse', 'is', null).order('data_repasse', { ascending: true }).limit(1),
+        admin.from('fin_ifood_entries').select('data_repasse').eq('tenant_id', tenantId).not('data_repasse', 'is', null).order('data_repasse', { ascending: false }).limit(1),
+      ]);
+      const ifFrom = ifLo?.[0]?.data_repasse as string | undefined; const ifTo = ifHi?.[0]?.data_repasse as string | undefined;
+      if (ifFrom && ifTo && ifTo >= d20) {
+        const { data: ifd, error: ifdErr } = await admin.rpc('fn_match_ifood_inter', { p_tenant: tenantId, p_from: ifFrom > d20 ? ifFrom : d20, p_to: ifTo < today ? ifTo : today });
+        if (ifdErr) log('WARN', action, 'fn_match_ifood_inter falhou', { tenantId, error: ifdErr.message });
+        else if (ifd) log('INFO', action, 'ifood×inter', { tenantId, casados: ifd });
+      }
+      const { data: kp, error: kpErr } = await admin.rpc('fn_match_kiosk_pix', { p_tenant: tenantId, p_from: d20, p_to: today });
+      if (kpErr) log('WARN', action, 'fn_match_kiosk_pix falhou', { tenantId, error: kpErr.message });
+      else if (kp) log('INFO', action, 'pix tablet×inter', { tenantId, casados: kp });
+    } catch (e) {
+      log('WARN', action, 'fn_match_ifood_inter/kiosk_pix falhou', { tenantId, error: String(e) });
+    }
+
     // Pagamentos × notas de entrada / contas a pagar: só SUGERE (a baixa é confirmada pelo usuário).
     try {
       const { data: mp, error: mpErr } = await admin.rpc('fn_match_payments', { p_tenant: tenantId, p_from: from < addDays(today, -120) ? from : addDays(today, -120), p_to: today });
