@@ -1,21 +1,24 @@
-// Ação rápida (só leitura): fechamento de um dia — vendas do ERPOS por forma de pagamento × vendas na
-// Stone × vendas do iFood — sem IA e sem gravar nada.
-// ERPOS: RPC fn_get_sales_report (mesma do Relatórios › detalhe do dia), sem pedidos de treino.
-// Stone: stone-conciliation › get_config / get_history (fin_stone_imports: vendas brutas do arquivo do dia).
-// iFood: fetchIfoodVendas (relatório de conciliação importado, por data do pedido — igual Relatórios).
-// Resposta em PAINEL (2026-09-18): cada bloco (ERPOS, Stone, iFood) vira um cartão com números e
-// a diferença destacada; erro/"nada a comparar" continuam texto.
+// Ação rápida (só leitura): fechamento de um dia da loja — sem IA e sem gravar nada.
+// Mesma cara do "Fechamento do turno" que o assistente manda ao fechar a sessão (assistente-cron ›
+// sessaoText), só que para o dia inteiro: faturamento × mesmo dia da semana passada, barras por
+// pagamento/canal, mais vendidos, caixas do dia e cancelados/descontos.
+// Vendas: RPC fn_get_sales_report (mesma do Relatórios › detalhe do dia), sem pedidos de treino.
+// 2026-09-23 (dono): saíram os cartões Cartão × Stone e iFood — a conferência fica na Conciliação.
 import { useEffect, useState } from 'react';
-import { supabase, invokeWithAuth } from '@/lib/supabase';
+import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
-import { fetchIfoodVendas } from '@/lib/ifoodVendas';
-import { Roteiro, useRoteiro, EscolhaData, Fim, OpcaoNeutra, brl, dataBR, hojeISO, type AcaoProps } from '../kit';
-import { Painel, Kpis, Linhas, Chip, type Status } from '../painel';
+import { Roteiro, useRoteiro, EscolhaData, Fim, OpcaoNeutra, brl, dataBR, hojeISO, somaDias, type AcaoProps } from '../kit';
+import { Painel, Kpis, Linhas, Barras, Ranking, Variacao } from '../painel';
 
-interface ByPayment { payment_method: string; payment_type: string; total: number; count: number }
-interface StoneDia { reference_date: string; status: string; sales_count?: number | null; sales_gross?: number | null; payments_total?: number | null; total_credit?: number | null; total_debit?: number | null; error_message?: string | null }
+interface Relatorio {
+  total_revenue?: number; total_orders?: number; avg_ticket?: number;
+  by_payment?: { payment_method: string; total: number; count: number }[];
+  by_destination?: { destination: string; orders: number; revenue: number }[];
+  top_items?: { item_name: string; total_qty: number; total_revenue: number }[];
+}
+// Mesmos nomes de canal do "Fechamento do turno" (assistente-cron › sessaoText).
+const CANAL: Record<string, string> = { delivery: 'Delivery', table: 'Mesa', qr_universal: 'QR Code', cashier: 'Caixa', immediate: 'Balcão', name: 'Senha', password: 'Senha', self_service: 'Autoatendimento', waiter: 'Garçom' };
 const TOLERANCIA = 1; // R$: diferença menor que isso é arredondamento/gorjeta miúda
-const CARTAO = ['credit_card', 'debit_card'];
 
 export default function FechamentoDia({ onFechar, irPara }: AcaoProps) {
   const { user } = useAuth();
@@ -27,110 +30,99 @@ export default function FechamentoDia({ onFechar, irPara }: AcaoProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const dif = (a: number, b: number): { texto: string; status: Status } => {
-    const d = Math.round((a - b) * 100) / 100;
-    return Math.abs(d) < TOLERANCIA ? { texto: 'bate', status: 'ok' } : { texto: `diferença ${d > 0 ? '+' : '−'}${brl(Math.abs(d))}`, status: 'alerta' };
-  };
-
   const fechar = async (dia: string) => {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(dia) || dia > hojeISO()) { bot('Data inválida.'); return; }
     eu(dataBR(dia));
     setPasso('carregando');
     const from = `${dia}T00:00:00-03:00`;
     const to = `${dia}T23:59:59-03:00`;
-    const [rep, stoneCfg, stoneHist, ifood] = await Promise.all([
+    const semanaPassada = somaDias(dia, -7);
+    const [rep, anterior, extras, caixas] = await Promise.all([
       supabase.rpc('fn_get_sales_report', { p_tenant_id: tenantId, p_date_from: from, p_date_to: to, p_session_id: null }),
-      invokeWithAuth<{ config?: { is_active?: boolean } | null; error?: string }>('stone-conciliation', { body: { action: 'get_config', tenant_id: tenantId } }),
-      invokeWithAuth<{ history?: StoneDia[]; error?: string }>('stone-conciliation', { body: { action: 'get_history', tenant_id: tenantId } }),
-      fetchIfoodVendas(tenantId, from, to),
+      supabase.rpc('fn_get_sales_report', { p_tenant_id: tenantId, p_date_from: `${semanaPassada}T00:00:00-03:00`, p_date_to: `${semanaPassada}T23:59:59-03:00`, p_session_id: null }),
+      supabase.from('orders').select('status, total_amount, discount_amount')
+        .eq('tenant_id', tenantId).gte('created_at', from).lte('created_at', to).eq('is_training', false).eq('is_draft', false),
+      supabase.from('cash_registers').select('closing_difference')
+        .eq('tenant_id', tenantId).gte('opened_at', from).lte('opened_at', to).not('closed_at', 'is', null),
     ]);
 
-    // ── ERPOS ──
-    let cartaoErp = 0;
-    let ifoodErp: number | null = null;
     if (rep.error) {
-      bot(`Não consegui ler as vendas do ERPOS: ${rep.error.message}`);
-    } else {
-      const r = (rep.data ?? {}) as { total_revenue?: number; total_orders?: number; by_payment?: ByPayment[] };
-      const formas = [...(r.by_payment ?? [])].sort((a, b) => Number(b.total) - Number(a.total));
-      const totalPag = formas.reduce((s, p) => s + Number(p.total ?? 0), 0);
-      cartaoErp = formas.filter((p) => CARTAO.includes(p.payment_type)).reduce((s, p) => s + Number(p.total ?? 0), 0);
-      const ifoodForma = formas.filter((p) => /ifood/i.test(p.payment_method));
-      if (ifoodForma.length) ifoodErp = ifoodForma.reduce((s, p) => s + Number(p.total ?? 0), 0);
-      if (!formas.length) {
-        bot(`*Vendas no ERPOS · ${dataBR(dia)}*\nNenhum pedido pago nesse dia.`);
-      } else {
-        const diffPagFat = Math.abs(totalPag - Number(r.total_revenue ?? 0)) >= TOLERANCIA ? dif(totalPag, Number(r.total_revenue ?? 0)) : null;
-        painel(
-          <Painel titulo="Vendas no ERPOS" subtitulo={dataBR(dia)}>
-            <Kpis
-              principal={{ label: 'Total recebido', valor: brl(totalPag), extra: diffPagFat ? <Chip texto={`vs faturamento: ${diffPagFat.texto}`} status={diffPagFat.status} /> : undefined }}
-              outros={[{ label: 'Pedidos pagos', valor: String(Number(r.total_orders ?? 0)) }, { label: 'Faturamento', valor: brl(Number(r.total_revenue ?? 0)) }]}
-            />
-            <Linhas titulo="Por forma de pagamento" itens={formas.map((p) => ({ label: p.payment_method, valor: `${brl(Number(p.total))} · ${p.count}` }))} />
-          </Painel>,
-        );
-      }
+      bot(`Não consegui ler as vendas: ${rep.error.message}`);
+      setPasso('fim');
+      return;
+    }
+    const r = (rep.data ?? {}) as Relatorio;
+    const a = (anterior.error ? null : anterior.data) as Relatorio | null;
+    const pedidos = (extras.data ?? []) as Array<{ status: string; total_amount: number | null; discount_amount: number | null }>;
+    const cancelados = pedidos.filter((o) => o.status === 'cancelled');
+    const valorCancelado = cancelados.reduce((s, o) => s + Number(o.total_amount ?? 0), 0);
+    const descontos = pedidos.filter((o) => o.status !== 'cancelled').reduce((s, o) => s + Number(o.discount_amount ?? 0), 0);
+    const n = Number(r.total_orders ?? 0);
+    if (!n && !cancelados.length) {
+      bot(`*Fechamento do dia · ${dataBR(dia)}*\nNenhum pedido pago nesse dia.`);
+      setPasso('fim');
+      return;
     }
 
-    // ── Stone ──
-    const cfg = stoneCfg.data?.config ?? null;
-    if (stoneCfg.error || stoneCfg.data?.error) {
-      bot(`Stone: não consegui consultar (${stoneCfg.error?.message ?? stoneCfg.data?.error}).`);
-    } else if (!cfg) {
-      bot('Stone: não integrada nesta loja.');
-    } else if (dia >= hojeISO()) {
-      bot(`*Cartão (ERPOS) × Stone*\nERPOS crédito+débito: ${brl(cartaoErp)}\nO arquivo da Stone de hoje só sai amanhã a partir das 04h.`);
-    } else {
-      const s = (stoneHist.data?.history ?? []).find((h) => h.reference_date === dia);
-      if (!s) {
-        bot(`*Cartão (ERPOS) × Stone*\nERPOS crédito+débito: ${brl(cartaoErp)}\nStone: dia ainda não importado. Rode "Atualizar conciliação" e tente de novo.`);
-      } else if (s.status !== 'success') {
-        bot(`*Cartão (ERPOS) × Stone*\nERPOS crédito+débito: ${brl(cartaoErp)}\nStone: importação do dia falhou${s.error_message ? ` (${s.error_message.slice(0, 160)})` : ''}.`);
-      } else {
-        const stone = Number(s.sales_gross ?? 0);
-        const d = dif(stone, cartaoErp);
-        painel(
-          <Painel titulo="Cartão (ERPOS) × Stone" subtitulo={dataBR(dia)} rodape="A Stone pode incluir Pix/voucher passado na maquininha; o ERPOS inclui cartão online.">
-            <Kpis
-              principal={{ label: 'Stone vendas brutas', valor: brl(stone), extra: <Chip texto={`Stone − ERPOS: ${d.texto}`} status={d.status} /> }}
-              outros={[{ label: 'ERPOS crédito+débito', valor: brl(cartaoErp) }, { label: 'Vendas Stone', valor: String(Number(s.sales_count ?? 0)) }]}
-            />
-            {/* Sem a seção <Payments> no arquivo (Paranaguá nunca teve), o liquidado é créditos − débitos do dia. */}
-            <Linhas itens={[{ label: 'Stone liquidou no dia', valor: brl(Number(s.payments_total ?? 0) > 0 ? Number(s.payments_total) : Number(s.total_credit ?? 0) - Number(s.total_debit ?? 0)) }]} />
-          </Painel>,
-        );
-      }
+    const rev = Number(r.total_revenue ?? 0);
+    const base = a && Number(a.total_orders) > 0 ? Number(a.total_revenue ?? 0) : null;
+    const diaSemana = new Date(`${semanaPassada}T12:00:00-03:00`).toLocaleDateString('pt-BR', { weekday: 'short' }).replace('.', '');
+    const formas = [...(r.by_payment ?? [])].sort((x, y) => Number(y.total) - Number(x.total));
+    const totalPag = formas.reduce((s, p) => s + Number(p.total ?? 0), 0);
+    const canais = [...(r.by_destination ?? [])].sort((x, y) => Number(y.revenue) - Number(x.revenue));
+    const somaItens = new Map<string, { qtd: number; valor: number }>();
+    for (const it of r.top_items ?? []) {
+      const nome = String(it.item_name ?? '').replace(/\s*\(Un\.\s*\d+\)\s*$/i, '').trim();
+      const prev = somaItens.get(nome) ?? { qtd: 0, valor: 0 };
+      prev.qtd += Number(it.total_qty ?? 0);
+      prev.valor += Number(it.total_revenue ?? 0);
+      somaItens.set(nome, prev);
     }
+    const top = [...somaItens.entries()].sort((x, y) => y[1].qtd - x[1].qtd).slice(0, 5).map(([nome, v]) => ({ nome, ...v }));
+    const difs = (caixas.data ?? []) as Array<{ closing_difference: number | null }>;
+    const somaDif = difs.reduce((s, c) => s + Number(c.closing_difference ?? 0), 0);
+    const difPagFat = Math.round((totalPag - rev) * 100) / 100;
+    const alertas: string[] = [];
+    if (cancelados.length) alertas.push(`${cancelados.length} cancelado(s) (${brl(valorCancelado)})`);
+    if (descontos > 0) alertas.push(`descontos ${brl(descontos)}`);
+    if (formas.length && Math.abs(difPagFat) >= TOLERANCIA) alertas.push(`pagamentos × faturamento: diferença ${difPagFat > 0 ? '+' : '−'}${brl(Math.abs(difPagFat))}`);
 
-    // ── iFood ──
-    if (ifood.error) {
-      bot(`iFood: não consegui ler (${ifood.error}).`);
-    } else if (ifood.pedidos === 0 && Math.abs(ifood.total) < 0.005) {
-      bot(`*iFood · ${dataBR(dia)}*\nSem vendas no relatório do iFood para o dia (o relatório pode chegar depois; ou a loja não usa iFood).${ifoodErp != null ? `\nERPOS (forma iFood): ${brl(ifoodErp)}` : ''}`);
-    } else {
-      const d = ifoodErp != null ? dif(ifood.total, ifoodErp) : null;
-      painel(
-        <Painel titulo="iFood" subtitulo={dataBR(dia)} rodape={ifoodErp == null ? 'Pedidos do iFood não passam pelo caixa do ERPOS: valor só informativo.' : undefined}>
-          <Kpis
-            principal={{ label: 'Vendas no iFood', valor: brl(ifood.total), extra: d ? <Chip texto={`× ERPOS: ${d.texto}`} status={d.status} /> : undefined }}
-            outros={[{ label: 'Pedidos', valor: String(ifood.pedidos) }, ...(ifoodErp != null ? [{ label: 'ERPOS (forma iFood)', valor: brl(ifoodErp) }] : [])]}
-          />
-        </Painel>,
-      );
-    }
+    painel(
+      <Painel titulo="Fechamento do dia" subtitulo={user?.loja || 'Loja ativa'} rodape={`${dataBR(dia)} · dia inteiro, todos os turnos`}>
+        <Kpis
+          principal={{ label: 'Faturamento', valor: brl(rev), extra: <Variacao atual={rev} base={base} rotulo={`vs ${diaSemana} passada`} /> }}
+          outros={[{ label: 'Pedidos', valor: String(n) }, { label: 'Ticket médio', valor: brl(Number(r.avg_ticket ?? 0)) }]}
+        />
+        {formas.length > 0 && <Barras titulo="Por forma de pagamento" itens={formas.map((p) => ({ label: p.payment_method, valor: Number(p.total) }))} />}
+        {canais.length > 0 && (
+          <Barras titulo="Por canal" cor="bg-sky-500"
+            itens={canais.map((c) => ({ label: CANAL[c.destination] ?? c.destination, valor: Number(c.revenue), detalhe: `${c.orders} pedido${Number(c.orders) === 1 ? '' : 's'}` }))} />
+        )}
+        {top.length > 0 && <Ranking titulo="Mais vendidos" itens={top} />}
+        {difs.length > 0 && (
+          <Linhas titulo="Caixas" itens={[{
+            label: `${difs.length} caixa${difs.length === 1 ? '' : 's'} do dia`,
+            valor: Math.abs(somaDif) < 0.01 ? 'bateu certinho' : somaDif > 0 ? `sobrou ${brl(somaDif)}` : `faltou ${brl(Math.abs(somaDif))}`,
+            status: Math.abs(somaDif) < 0.01 ? 'ok' : 'perigo',
+          }]} />
+        )}
+        {alertas.map((al) => (
+          <p key={al} className="text-xs font-semibold text-amber-700 bg-amber-50 rounded-xl px-3 py-2">⚠️ {al}</p>
+        ))}
+      </Painel>,
+    );
     setPasso('fim');
   };
 
   return (
     <Roteiro titulo="Fechamento do dia" icone="ri-calendar-check-line" cor="bg-emerald-50 text-emerald-600" baloes={baloes}
-      carregando={passo === 'carregando'} textoCarregando="Somando vendas, Stone e iFood…" onFechar={onFechar}>
+      carregando={passo === 'carregando'} textoCarregando="Somando as vendas do dia…" onFechar={onFechar}>
       {passo === 'dia' && tenantId && <EscolhaData onEscolher={fechar} />}
       {passo === 'dia' && !tenantId && <OpcaoNeutra onClick={onFechar}>Fechar</OpcaoNeutra>}
       {passo === 'fim' && (
         <Fim onFechar={onFechar} acoes={[
           { label: 'Outro dia', onClick: () => { bot('Fechamento de qual dia?'); setPasso('dia'); } },
-          { label: 'Abrir na conciliação', onClick: () => irPara('/financeiro?tab=conciliacao') },
+          { label: 'Abrir Relatórios', onClick: () => irPara('/relatorios') },
         ]} />
       )}
     </Roteiro>
