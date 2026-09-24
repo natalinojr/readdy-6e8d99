@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
-import { EU_DEMO, MODO_DEMO } from '../demo/modoDemo';
+import { EU_DEMO, modoDemo } from '../demo/modoDemo';
 import { useAuth } from '@/contexts/AuthContext';
 
 /**
@@ -21,7 +21,7 @@ export interface EuTarefas {
 export function useEuTarefas(): EuTarefas {
   const { user, hasNoTenants } = useAuth();
   // Modo demonstração (só dev): usuário fictício, sem sessão.
-  const demo = MODO_DEMO ? { id: EU_DEMO.id, nome: EU_DEMO.nome, tenantId: 'demo', pronto: true, semLoja: false } : null;
+  const demo = modoDemo() ? { id: EU_DEMO.id, nome: EU_DEMO.nome, tenantId: 'demo', pronto: true, semLoja: false } : null;
   const [sessao, setSessao] = useState<{ id: string; nome: string } | null>(null);
 
   useEffect(() => {

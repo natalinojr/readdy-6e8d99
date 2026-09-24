@@ -4,8 +4,13 @@
  * pra testar layout (principalmente no celular) sem depender de conta real.
  * Em produção `import.meta.env.DEV` é false e nada disto entra no build.
  */
-export const MODO_DEMO: boolean =
-  import.meta.env.DEV && typeof window !== 'undefined' && window.location.pathname.startsWith('/dev/tarefas');
+// Função, e não constante de módulo: a constante era calculada uma vez só, quando o
+// módulo carregava. Se isso acontecesse em outra rota (ex.: /tarefas antes de ir por
+// navegação interna para /dev/tarefas), o demo ficava desligado a sessão toda e a
+// página caía em /modulos → /login. Lida na hora, a URL já é a da rota atual.
+export function modoDemo(): boolean {
+  return import.meta.env.DEV && typeof window !== 'undefined' && window.location.pathname.startsWith('/dev/tarefas');
+}
 
 export const EU_DEMO = { id: 'demo-eu', nome: 'Você (demo)' };
 

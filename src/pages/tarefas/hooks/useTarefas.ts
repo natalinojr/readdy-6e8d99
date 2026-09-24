@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase, invokeWithAuth, uploadTaskAttachment } from '@/lib/supabase';
 import { useEuTarefas } from './useEuTarefas';
 import { useToast } from '@/contexts/ToastContext';
-import { MODO_DEMO } from '../demo/modoDemo';
+import { modoDemo } from '../demo/modoDemo';
 import type { Recorrencia } from '../lib/recorrencia';
 import type { Responsavel } from '../lib/responsaveis';
 import { useTarefasDemo } from '../demo/useTarefasDemo';
@@ -223,10 +223,12 @@ export const PRIORIDADES: Array<{ value: number; label: string; color: string }>
 // ─── Hook principal ───────────────────────────────────────────────────────────
 
 export function useTarefas() {
-  // Modo demonstração (só em dev, rota /dev/tarefas): dados em memória. MODO_DEMO
-  // é constante durante toda a vida da página, então a ordem dos hooks não muda.
+  // Modo demonstração (só em dev, rota /dev/tarefas): dados em memória. O valor fica
+  // congelado na montagem, então a ordem dos hooks não muda (/tarefas e /dev/tarefas
+  // são rotas diferentes: trocar entre elas remonta a página).
+  const [demo] = useState(modoDemo);
   // eslint-disable-next-line react-hooks/rules-of-hooks
-  if (MODO_DEMO) return useTarefasDemo() as unknown as ReturnType<typeof useTarefasReal>;
+  if (demo) return useTarefasDemo() as unknown as ReturnType<typeof useTarefasReal>;
   // eslint-disable-next-line react-hooks/rules-of-hooks
   return useTarefasReal();
 }

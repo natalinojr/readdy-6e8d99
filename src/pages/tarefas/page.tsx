@@ -9,7 +9,7 @@ import { useUsuarios } from '@/hooks/useUsuarios';
 import PullToRefresh from '@/components/feature/PullToRefresh';
 import { useTarefas } from './hooks/useTarefas';
 import { supabase } from '@/lib/supabase';
-import { MODO_DEMO, USUARIOS_DEMO } from './demo/modoDemo';
+import { modoDemo, USUARIOS_DEMO } from './demo/modoDemo';
 import type { TaskList } from './hooks/useTarefas';
 import { ehResponsavel, idsResponsaveis, responsaveis } from './lib/responsaveis';
 import ViewLista from './components/ViewLista';
@@ -74,7 +74,7 @@ export default function TarefasPage() {
   // qualquer um autenticado: o card sumia de /modulos, mas quem caísse em
   // /tarefas (ex.: o login devolve para a última rota do aparelho) entrava.
   const { hasModule, loading: acessoLoading } = useModuleAccess();
-  const temAcessoTarefas = MODO_DEMO || hasModule('tarefas');
+  const temAcessoTarefas = modoDemo() || hasModule('tarefas');
 
   // A rota /tarefas roda em modo terminal (sem sidebar/topbar do ERPOS) — o
   // único jeito de sair é este botão.
@@ -92,13 +92,13 @@ export default function TarefasPage() {
   // vazia e quem tem Tarefas sem loja nunca aparecia.
   const [pessoasTarefas, setPessoasTarefas] = useState<Array<{ id: string; nome: string; ativo: boolean }>>([]);
   useEffect(() => {
-    if (MODO_DEMO || !eu.id) return;
+    if (modoDemo() || !eu.id) return;
     supabase.rpc('fn_get_task_pessoas').then(({ data, error }) => {
       if (!error && Array.isArray(data)) setPessoasTarefas((data as Array<{ id: string; nome: string }>).map((p) => ({ ...p, ativo: true })));
     });
   }, [eu.id]);
   const usuarios = useMemo(() => {
-    if (MODO_DEMO) return USUARIOS_DEMO;
+    if (modoDemo()) return USUARIOS_DEMO;
     const porId = new Map<string, { id: string; nome: string; ativo: boolean }>();
     for (const u of usuariosLoja) porId.set(u.id, { id: u.id, nome: u.nome, ativo: u.ativo });
     for (const p of pessoasTarefas) if (!porId.has(p.id)) porId.set(p.id, p);
@@ -447,7 +447,7 @@ export default function TarefasPage() {
     </div>
   );
 
-  if (!MODO_DEMO && !acessoLoading && !temAcessoTarefas) return <Navigate to="/modulos" replace />;
+  if (!modoDemo() && !acessoLoading && !temAcessoTarefas) return <Navigate to="/modulos" replace />;
 
   return (
     <div className="flex h-full min-h-0">
