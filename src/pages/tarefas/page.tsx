@@ -201,14 +201,20 @@ export default function TarefasPage() {
   const meuId = eu.id;
   // Contagem ao lado de "Tarefas que atribuí": em aberto e quantas já passaram do prazo.
   const diaLocal = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  const resumoAtribuidas = useMemo(() => {
-    const minhasDelegadas = tasks.filter((t) => t.created_by === meuId && idsResponsaveis(t).some((id) => id !== meuId)
-      && t.status_category !== 'done' && t.status_category !== 'cancelled' && !t.parent_task_id);
+  const resumos = useMemo(() => {
     const agora = Date.now();
-    const atrasadas = minhasDelegadas.filter((t) => t.due_date && (t.due_has_time
-      ? new Date(t.due_date).getTime() < agora
-      : diaLocal(new Date(t.due_date)) < diaLocal(new Date()))).length;
-    return { abertas: minhasDelegadas.length, atrasadas };
+    const resumir = (lista: typeof tasks) => {
+      const abertas = lista.filter((t) => t.status_category !== 'done' && t.status_category !== 'cancelled' && !t.parent_task_id);
+      const atrasadas = abertas.filter((t) => t.due_date && (t.due_has_time
+        ? new Date(t.due_date).getTime() < agora
+        : diaLocal(new Date(t.due_date)) < diaLocal(new Date()))).length;
+      return { abertas: abertas.length, atrasadas };
+    };
+    return {
+      atribuidas: resumir(tasks.filter((t) => t.created_by === meuId && idsResponsaveis(t).some((id) => id !== meuId))),
+      // Mesma regra da origem "compartilhadas": sou responsável e outra pessoa criou.
+      compartilhadas: resumir(tasks.filter((t) => ehResponsavel(t, meuId) && t.created_by !== meuId)),
+    };
   }, [tasks, meuId]);
 
   // A pasta que vira o prop `list` das views — null em origem cross-pasta,
@@ -469,12 +475,12 @@ export default function TarefasPage() {
               >
                 <Icon size={14} className="shrink-0" />
                 <span className="flex-1">{label}</span>
-                {id === 'atribuidas' && resumoAtribuidas.abertas > 0 && (
+                {(id === 'atribuidas' || id === 'compartilhadas') && resumos[id].abertas > 0 && (
                   <span
-                    className={`text-xs ${resumoAtribuidas.atrasadas > 0 ? 'text-red-500 font-medium' : 'text-slate-400'}`}
-                    title={resumoAtribuidas.atrasadas > 0 ? `${resumoAtribuidas.atrasadas} atrasada(s)` : 'Em aberto'}
+                    className={`text-xs ${resumos[id].atrasadas > 0 ? 'text-red-500 font-medium' : 'text-slate-400'}`}
+                    title={resumos[id].atrasadas > 0 ? `${resumos[id].atrasadas} atrasada(s)` : 'Em aberto'}
                   >
-                    {resumoAtribuidas.abertas}
+                    {resumos[id].abertas}
                   </span>
                 )}
               </button>

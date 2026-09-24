@@ -26,6 +26,22 @@ import AvataresResponsaveis from './AvataresResponsaveis';
 import { iniciais, rotuloVencimento } from './TaskCard';
 import RelatoriosDaTarefa from '../relatorios/RelatoriosDaTarefa';
 
+/**
+ * Quem dá pra marcar com @: a lista geral + quem criou a tarefa, os responsáveis
+ * e quem já comentou (esses sempre, mesmo se não vierem na lista geral).
+ */
+export function pessoasDaConversa(usuarios: UsuarioOption[], detail: Pick<TaskDetail, 'created_by' | 'created_by_name' | 'comments' | 'assignee_id' | 'assignee_name' | 'assignees'>): UsuarioOption[] {
+  const lista = [...usuarios];
+  const ids = new Set(lista.map((u) => u.id));
+  const por = (id: string | null | undefined, nome: string | null | undefined) => {
+    if (id && nome && !ids.has(id)) { lista.push({ id, nome }); ids.add(id); }
+  };
+  por(detail.created_by, detail.created_by_name);
+  for (const r of responsaveis(detail)) por(r.id, r.name);
+  for (const c of detail.comments) por(c.user_id, c.user_name);
+  return lista;
+}
+
 interface TaskDrawerProps {
   taskId: string;
   /** A tarefa como está na lista (tem tempo/cronômetro ao vivo). Pode faltar se ela não está carregada. */
@@ -680,7 +696,7 @@ export default function TaskDrawer({
                 ))}
               </div>
               <ComentarioInput
-                usuarios={usuarios}
+                usuarios={pessoasDaConversa(usuarios, detail)}
                 onEnviar={async (body, mentions) => {
                   const res = await write('add_comment', { task_id: taskId, body, mentions });
                   if (!res.success) toast.error('Erro ao comentar', res.error);

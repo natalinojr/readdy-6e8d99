@@ -318,14 +318,21 @@ Deno.serve({ verify_jwt: false }, async (req) => {
     };
 
     // Troca a lista de responsáveis (tabela), avisa quem entrou e registra.
-    const sincronizarResponsaveis = async (taskId: string, ids: string[], titulo: unknown) => {
-      const antes = await responsaveisDe(taskId);
+    // `antesDaGravacao`: lista lida ANTES do update da tarefa — o gatilho
+    // trg_task_assignee_principal já põe o novo principal na tabela ao gravar, e
+    // relendo aqui ele não contaria como "entrou" (sem aviso nem registro).
+    const sincronizarResponsaveis = async (taskId: string, ids: string[], titulo: unknown, antesDaGravacao?: string[]) => {
+      const agora = await responsaveisDe(taskId);
+      const antes = antesDaGravacao ?? agora;
       const sair = antes.filter((id) => !ids.includes(id));
       const entrar = ids.filter((id) => !antes.includes(id));
-      if (sair.length) await admin.from('task_assignees').delete().eq('task_id', taskId).in('user_id', sair);
-      if (entrar.length) {
+      // Grava pela lista atual da tabela (o gatilho pode já ter feito parte).
+      const tirar = agora.filter((id) => !ids.includes(id));
+      const por = ids.filter((id) => !agora.includes(id));
+      if (tirar.length) await admin.from('task_assignees').delete().eq('task_id', taskId).in('user_id', tirar);
+      if (por.length) {
         await admin.from('task_assignees').upsert(
-          entrar.map((id) => ({ task_id: taskId, user_id: id, added_by: user.id })),
+          por.map((id) => ({ task_id: taskId, user_id: id, added_by: user.id })),
           { onConflict: 'task_id,user_id', ignoreDuplicates: true },
         );
       }
@@ -574,6 +581,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         // antes — substitui todos). O principal (tasks.assignee_id) continua o mesmo se
         // ainda estiver na lista; senão vira o primeiro.
         let novosResp: string[] | null = null;
+        let respAntes: string[] | undefined;
         if (Array.isArray(rest.assignee_ids)) {
           novosResp = [...new Set((rest.assignee_ids as unknown[]).filter((x): x is string => typeof x === 'string' && !!x))];
           if (novosResp.length > 20) return json({ error: 'No máximo 20 responsáveis' }, 400);
@@ -584,6 +592,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         }
         if (novosResp) {
           const jaEram = await responsaveisDe(task_id);
+          respAntes = jaEram;
           for (const id of novosResp) {
             if (!jaEram.includes(id)) await assertResponsavelValido((rest.list_id ?? current.list_id) as string, id);
           }
@@ -702,7 +711,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
           const { error } = await admin.from('tasks').update(patch).eq('id', task_id);
           if (error) return json({ error: errMsg(error) }, 500);
         }
-        if (novosResp) await sincronizarResponsaveis(task_id, novosResp, current.title);
+        if (novosResp) await sincronizarResponsaveis(task_id, novosResp, current.title, respAntes);
 
         // Tags: substituição completa quando tag_ids vier no body
         if (Array.isArray(rest.tag_ids)) {
