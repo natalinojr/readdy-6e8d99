@@ -28,6 +28,7 @@ import CompartilharPasta from './components/CompartilharPasta';
 import ConfigAvisos from './components/ConfigAvisos';
 import { BottomNav, ListasSheet } from './components/MobileNav';
 import Relatorios from './relatorios/Relatorios';
+import { chamarDono } from './relatorios/api';
 import type { Filtros, GroupBy } from './lib/agrupamento';
 import { FILTROS_VAZIOS, aplicarFiltros } from './lib/agrupamento';
 import { montarArvorePastas, achatarArvore, type NoPasta } from './lib/pastas';
@@ -40,13 +41,15 @@ const CORES_LISTA = ['#6366f1', '#0ea5e9', '#10b981', '#f59e0b', '#ef4444', '#8b
 type Origem = 'pasta' | 'minhas' | 'compartilhadas' | 'atribuidas' | 'todas';
 /** COMO mostrar essas tarefas — independente da origem (pedido do usuário: a
  *  visualização lista/kanban/calendário deve valer pra qualquer origem). */
-type Display = 'lista' | 'kanban' | 'calendario' | 'carga';
+type Display = 'lista' | 'kanban' | 'calendario' | 'carga' | 'relatorios';
 
 const DISPLAYS: Array<{ id: Display; label: string; icon: typeof ListTodo }> = [
   { id: 'lista', label: 'Lista', icon: ListTodo },
   { id: 'kanban', label: 'Kanban', icon: LayoutGrid },
   { id: 'calendario', label: 'Calendário', icon: CalendarDays },
   { id: 'carga', label: 'Carga', icon: Gauge },
+  // Relatórios são da pasta: a aba só vale com uma pasta aberta.
+  { id: 'relatorios', label: 'Relatórios', icon: FileText },
 ];
 
 const ORIGEM_INFO: Record<Exclude<Origem, 'pasta'>, { label: string; icon: typeof UserCheck }> = {
@@ -104,11 +107,8 @@ export default function TarefasPage() {
   const [newListName, setNewListName] = useState('');
   const [newListColor, setNewListColor] = useState(CORES_LISTA[0]);
   const [newListParentId, setNewListParentId] = useState<string | null>(null);
-  // Relatórios compartilháveis por link: ocupam o lugar das tarefas na área principal.
-  // Abre direto por /tarefas?relatorio=<id> (clique no push de resposta nova).
-  const [relatorioAberto, setRelatorioAberto] = useState<string | null>(() =>
-    typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('relatorio') : null);
-  const [verRelatorios, setVerRelatorios] = useState<boolean>(() => !!relatorioAberto);
+  // Relatório aberto direto (push de resposta nova → /tarefas?relatorio=<id>, ou vindo de uma tarefa).
+  const [relatorioAberto, setRelatorioAberto] = useState<string | null>(null);
   const [pastaExcluindo, setPastaExcluindo] = useState<{ no: NoPasta; ids: Set<string>; descricao: string } | null>(null);
 
   const arvorePastas = useMemo(() => montarArvorePastas(lists), [lists]);
@@ -140,8 +140,10 @@ export default function TarefasPage() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const taskId = params.get('task');
-    if (!taskId && !params.get('relatorio')) return;
+    const relatorioId = params.get('relatorio');
+    if (!taskId && !relatorioId) return;
     if (taskId) setOpenTaskId(taskId);
+    if (relatorioId) abrirRelatorio(relatorioId);
     params.delete('task');
     params.delete('relatorio');
     const query = params.toString();
@@ -269,8 +271,28 @@ export default function TarefasPage() {
     reload();
   };
 
+  /** Abre um relatório: vai para a pasta dele, na aba Relatórios. */
+  async function abrirRelatorio(id: string, listId?: string | null) {
+    let pasta = listId ?? null;
+    if (!pasta) {
+      const r = await chamarDono<{ report: { list_id?: string | null } }>('get', { report_id: id });
+      if (!r.ok) { toast.error('Não consegui abrir o relatório', r.error); return; }
+      pasta = r.data.report.list_id ?? null;
+    }
+    if (!pasta) return;
+    setOpenTaskId(null);
+    setSelectedListId(pasta);
+    setOrigem('pasta');
+    setDisplay('relatorios');
+    setRelatorioAberto(id);
+  }
+
+  useEffect(() => {
+    if (display === 'relatorios' && origem !== 'pasta') setDisplay('lista');
+  }, [display, origem]);
+
   const irParaPasta = (id: string) => {
-    setVerRelatorios(false);
+    setRelatorioAberto(null);
     setSelectedListId(id);
     setOrigem('pasta');
   };
@@ -339,6 +361,17 @@ export default function TarefasPage() {
               usuarios={usuariosAtivos}
               groupBy={groupBy}
               write={write}
+              onOpenTask={setOpenTaskId}
+            />
+          )}
+          {display === 'relatorios' && origem === 'pasta' && selectedList && (
+            <Relatorios
+              key={selectedList.id}
+              pasta={selectedList}
+              abrirId={relatorioAberto}
+              pastas={lists}
+              meuId={meuId}
+              tarefas={tasks}
               onOpenTask={setOpenTaskId}
             />
           )}
@@ -411,9 +444,9 @@ export default function TarefasPage() {
             return (
               <button
                 key={id}
-                onClick={() => { setVerRelatorios(false); setOrigem(id); }}
+                onClick={() => setOrigem(id)}
                 className={`w-full flex items-center gap-2 px-4 py-2 text-sm text-left transition ${
-                  origem === id && !verRelatorios ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-slate-600 hover:bg-slate-50'
+                  origem === id ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-slate-600 hover:bg-slate-50'
                 }`}
               >
                 <Icon size={14} className="shrink-0" />
@@ -429,16 +462,6 @@ export default function TarefasPage() {
               </button>
             );
           })}
-
-          <button
-            onClick={() => { setRelatorioAberto(null); setVerRelatorios(true); }}
-            className={`w-full flex items-center gap-2 px-4 py-2 text-sm text-left transition ${
-              verRelatorios ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-slate-600 hover:bg-slate-50'
-            }`}
-          >
-            <FileText size={14} className="shrink-0" />
-            <span className="flex-1">Relatórios</span>
-          </button>
 
           <div className="px-4 pt-3 pb-1 flex items-center justify-between group">
             <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Pastas</span>
@@ -521,18 +544,6 @@ export default function TarefasPage() {
       </aside>
 
       {/* ── Conteúdo ── */}
-      {verRelatorios ? (
-        <main className="flex-1 min-w-0 overflow-auto bg-slate-50">
-          <Relatorios
-            key={relatorioAberto ?? 'lista'}
-            abrirId={relatorioAberto}
-            onVoltar={() => setVerRelatorios(false)}
-            pastas={lists}
-            pastaAtualId={selectedListId}
-            meuId={meuId}
-          />
-        </main>
-      ) : (
       <main className="flex-1 min-w-0 overflow-auto bg-slate-50">
         <div className="sticky top-0 z-10 bg-slate-50/95 backdrop-blur border-b border-slate-200 px-4 md:px-6 py-2.5 md:py-3 flex flex-wrap items-center gap-2 md:gap-3">
           <button
@@ -582,6 +593,17 @@ export default function TarefasPage() {
             )}
           </h1>
 
+          {origem === 'pasta' && selectedList && (
+            <button
+              onClick={() => setDisplay(display === 'relatorios' ? 'lista' : 'relatorios')}
+              className={`md:hidden shrink-0 flex items-center gap-1 text-xs px-2 py-1.5 rounded-lg border ${
+                display === 'relatorios' ? 'bg-indigo-50 border-indigo-200 text-indigo-700' : 'border-slate-200 text-slate-500'
+              }`}
+            >
+              <FileText size={14} /> Relatórios
+            </button>
+          )}
+
           {/* Seletor de visualização — vale pra qualquer origem (pasta ou cross-pasta).
               No celular quem faz isso é a barra inferior. */}
           <div className="hidden md:flex items-center gap-1 text-xs">
@@ -589,7 +611,8 @@ export default function TarefasPage() {
               <button
                 key={id}
                 onClick={() => setDisplay(id)}
-                disabled={origem === 'pasta' && !selectedList}
+                disabled={id === 'relatorios' ? origem !== 'pasta' || !selectedList : origem === 'pasta' && !selectedList}
+                title={id === 'relatorios' && (origem !== 'pasta' || !selectedList) ? 'Abra uma pasta para ver os relatórios dela' : undefined}
                 className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg transition disabled:opacity-40 disabled:cursor-not-allowed ${
                   display === id
                     ? 'bg-white border border-slate-200 text-indigo-600 font-medium shadow-sm'
@@ -661,14 +684,12 @@ export default function TarefasPage() {
           {conteudo}
         </PullToRefresh>
       </main>
-      )}
 
       {/* ── Navegação inferior (celular) ── */}
       <BottomNav
-        // Carga é só desktop (tabela larga): no celular a barra marca Lista.
-        view={origem === 'minhas' ? 'minhas' : display === 'carga' ? 'lista' : display}
+        // Carga é só desktop (tabela larga) e Relatórios fica no cabeçalho: no celular a barra marca Lista.
+        view={origem === 'minhas' ? 'minhas' : display === 'carga' || display === 'relatorios' ? 'lista' : display}
         onView={(v) => {
-          setVerRelatorios(false);
           if (v === 'minhas') setOrigem('minhas');
           else setDisplay(v as Display);
         }}
@@ -685,10 +706,9 @@ export default function TarefasPage() {
           onNovaLista={() => abrirNovaPasta(null)}
           onNovaSubpasta={abrirNovaPasta}
           onExcluir={excluirPasta}
-          onCompartilhadas={() => { setVerRelatorios(false); setOrigem('compartilhadas'); }}
-          onTodas={() => { setVerRelatorios(false); setOrigem('todas'); }}
-          onAtribuidas={() => { setVerRelatorios(false); setOrigem('atribuidas'); }}
-          onRelatorios={() => { setRelatorioAberto(null); setVerRelatorios(true); }}
+          onCompartilhadas={() => setOrigem('compartilhadas')}
+          onTodas={() => setOrigem('todas')}
+          onAtribuidas={() => setOrigem('atribuidas')}
           onStatus={() => setShowStatus(true)}
           onCampos={() => setShowCampos(true)}
           onTemplates={() => setShowTemplates(true)}
@@ -864,6 +884,7 @@ export default function TarefasPage() {
           abrirAnexo={abrirAnexo}
           onClose={() => setOpenTaskId(null)}
           onOpenTask={setOpenTaskId}
+          onAbrirRelatorio={abrirRelatorio}
         />
       )}
     </div>

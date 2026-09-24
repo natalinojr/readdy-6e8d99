@@ -2,7 +2,7 @@
  * Relatórios no modo demo (/dev/tarefas, só em `npm run dev`): mesmas ações do
  * task-reports, em memória, para testar a tela sem login nem banco.
  */
-import type { ImagemRel, ItemRel, Relatorio, RespostaRel, ResumoRelatorio, Convidado, StatusItem } from './api';
+import type { CampoRel, ImagemRel, ItemRel, Relatorio, RespostaRel, ResumoRelatorio, Convidado, StatusItem, ValorCampo } from './api';
 
 type Rel = Relatorio & { items: ItemRel[]; guests: Convidado[] };
 
@@ -21,7 +21,14 @@ const relatorios: Rel[] = [{
       created_by_guest_name: null, created_at: agora(), updated_at: agora(),
       responses: [{ id: 'r1', kind: 'reply', body: 'Refaço na terça.', images: [], new_status: null, author_name: 'Carlos (empreiteiro)', author_type: 'guest', author_guest_id: 'g1', created_at: agora() }],
     },
-    { id: 'i2', position: 2, title: 'Tomada da cozinha sem energia', body: null, images: [], status: 'open', created_by_guest_name: null, created_at: agora(), updated_at: agora(), responses: [] },
+    {
+      id: 'i2', position: 2, title: 'Tomada da cozinha sem energia', body: null, images: [], status: 'open', created_by_guest_name: null, created_at: agora(), updated_at: agora(), responses: [],
+      fields: [
+        { id: 'c1', type: 'escolha', label: 'Situação', options: [{ id: 'o1', label: 'Resolvido' }, { id: 'o2', label: 'Precisa de eletricista' }] },
+        { id: 'c2', type: 'multipla', label: 'Tomadas afetadas', options: [{ id: 'a', label: 'Bancada' }, { id: 'b', label: 'Geladeira' }, { id: 'c', label: 'Micro-ondas' }] },
+        { id: 'c3', type: 'data', label: 'Prazo' },
+      ],
+    },
   ],
 }, {
   // Relatório de outra pessoa numa pasta compartilhada comigo com "só ver".
@@ -41,6 +48,8 @@ const PASTAS_DEMO: Record<string, { name: string; color: string }> = {
   cozinha: { name: 'Cozinha', color: '#f59e0b' },
 };
 const vistos = new Map<string, string>();
+const ligacoes = new Map<string, Set<string>>();
+const ligadas = (id: string) => { if (!ligacoes.has(id)) ligacoes.set(id, new Set()); return ligacoes.get(id)!; };
 
 function achar(id: unknown) {
   const r = relatorios.find((x) => x.id === id);
@@ -68,7 +77,7 @@ export async function demoDono(action: string, p: Record<string, unknown>): Prom
       const r = achar(p.report_id);
       if (p.mark_seen) vistos.set(r.id, agora());
       const { items, guests, ...report } = r;
-      return { report, items: structuredClone(items), guests };
+      return { report: { ...report, linked_task_ids: [...ligadas(r.id)] }, items: structuredClone(items), guests };
     }
     case 'create': {
       const id = novoId();
@@ -93,6 +102,7 @@ export async function demoDono(action: string, p: Record<string, unknown>): Prom
       r.items.push({
         id: novoId(), position: (r.items.at(-1)?.position ?? 0) + 1, title: String(p.title), body: (p.body as string) || null,
         images: (p.images as ImagemRel[]) ?? [], status: 'open', created_by_guest_name: null, created_at: agora(), updated_at: agora(), responses: [],
+        fields: (p.fields as CampoRel[]) ?? [],
       });
       return {};
     }
@@ -102,6 +112,7 @@ export async function demoDono(action: string, p: Record<string, unknown>): Prom
       if (p.title !== undefined) it.title = String(p.title);
       if (p.body !== undefined) it.body = (p.body as string) || null;
       if (p.images !== undefined) it.images = p.images as ImagemRel[];
+      if (p.fields !== undefined) it.fields = p.fields as CampoRel[];
       if (p.position !== undefined) it.position = Number(p.position);
       r.items.sort((a, b) => a.position - b.position);
       return {};
@@ -112,13 +123,20 @@ export async function demoDono(action: string, p: Record<string, unknown>): Prom
       const it = rel.items.find((i) => i.id === p.item_id)!;
       const st = (p.new_status as StatusItem | null) ?? null;
       const resp: RespostaRel = {
-        id: novoId(), kind: p.body ? 'reply' : 'status', body: (p.body as string) || null, images: (p.images as ImagemRel[]) ?? [],
+        id: novoId(), kind: p.body || p.answers ? 'reply' : 'status', answers: (p.answers as Record<string, ValorCampo> | null) ?? null, body: (p.body as string) || null, images: (p.images as ImagemRel[]) ?? [],
         new_status: st, author_name: 'Você (demo)', author_type: 'owner', author_guest_id: null, author_is_creator: rel.created_by === 'demo-eu', author_user_id: 'demo-eu', created_at: agora(),
       };
       it.responses.push(resp);
       if (st) it.status = st;
       return { id: resp.id };
     }
+    case 'link_task': ligadas(String(p.report_id)).add(String(p.task_id)); return {};
+    case 'unlink_task': ligadas(String(p.report_id)).delete(String(p.task_id)); return {};
+    case 'task_links':
+      return {
+        reports: relatorios.filter((r) => ligadas(r.id).has(String(p.task_id)))
+          .map((r) => ({ id: r.id, title: r.title, status: r.status, list_id: r.list_id, access: r.access })),
+      };
     default:
       throw new Error(`Ação desconhecida: ${action}`);
   }

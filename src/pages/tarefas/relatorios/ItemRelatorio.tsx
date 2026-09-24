@@ -1,34 +1,51 @@
 /**
  * Um item do relatório com a sequência de respostas e a caixa de resposta.
- * Usado pelo dono (dentro de Tarefas) e por quem abre o link (/r/:token).
+ * Usado pela equipe (dentro de Tarefas) e por quem abre o link (/r/:token).
  */
-import { useRef, useState, type ReactNode } from 'react';
+import { useRef, useState, type ClipboardEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { ImagePlus, Loader2, Send, X, PencilLine, CheckCircle2, RotateCcw, MessageCircle, Plus } from 'lucide-react';
-import { STATUS_INFO, dataHora, type ImagemRel, type ItemRel, type StatusItem } from './api';
+import { ImagePlus, Loader2, Send, X, PencilLine, CheckCircle2, RotateCcw, MessageCircle, Plus, ListChecks } from 'lucide-react';
+import { STATUS_INFO, dataHora, type CampoRel, type ImagemRel, type ItemRel, type StatusItem, type ValorCampo } from './api';
+import { EditorCampos, PreencherCampos, formatarValor, limparCampos, respostasMudadas, valoresAtuais } from './CamposResposta';
 
 export function StatusBadge({ status }: { status: StatusItem }) {
   const s = STATUS_INFO[status];
   return <span className={`shrink-0 text-[11px] font-medium px-2 py-0.5 rounded-full ${s.cor}`}>{s.label}</span>;
 }
 
-export function GradeImagens({ imagens, onRemover }: { imagens: ImagemRel[]; onRemover?: (i: number) => void }) {
-  const [aberta, setAberta] = useState<string | null>(null);
+/** Miniaturas. Com `onLegenda`, cada imagem ganha um campo de legenda (rascunho). */
+export function GradeImagens({ imagens, onRemover, onLegenda }: {
+  imagens: ImagemRel[];
+  onRemover?: (i: number) => void;
+  onLegenda?: (i: number, legenda: string) => void;
+}) {
+  const [aberta, setAberta] = useState<ImagemRel | null>(null);
   if (!imagens.length) return null;
   return (
     <>
-      <div className="flex flex-wrap gap-2 mt-2">
+      <div className="flex flex-wrap gap-3 mt-2">
         {imagens.map((img, i) => (
-          <div key={img.path} className="relative">
+          <figure key={img.path} className={`relative ${onLegenda ? 'w-36' : 'w-20 md:w-24'}`}>
             {img.url ? (
-              <button type="button" onClick={() => setAberta(img.url!)} className="block">
-                <img src={img.url} alt={img.name} className="w-20 h-20 md:w-24 md:h-24 object-cover rounded-lg border border-slate-200" loading="lazy" />
+              <button type="button" onClick={() => setAberta(img)} className="block w-full">
+                <img src={img.url} alt={img.caption || img.name} className={`w-full ${onLegenda ? 'h-28' : 'h-20 md:h-24'} object-cover rounded-lg border border-slate-200`} loading="lazy" />
               </button>
             ) : (
-              <div className="w-20 h-20 rounded-lg border border-dashed border-slate-300 text-[10px] text-slate-400 flex items-center justify-center p-1 text-center break-all">
+              <div className="w-full h-20 rounded-lg border border-dashed border-slate-300 text-[10px] text-slate-400 flex items-center justify-center p-1 text-center break-all">
                 {img.name}
               </div>
             )}
+            {onLegenda ? (
+              <input
+                value={img.caption ?? ''}
+                onChange={(e) => onLegenda(i, e.target.value)}
+                maxLength={300}
+                placeholder="Legenda"
+                className="mt-1 w-full rounded border border-slate-200 px-2 py-1 text-base md:text-xs"
+              />
+            ) : img.caption ? (
+              <figcaption className="mt-0.5 text-[11px] leading-tight text-slate-500 line-clamp-2 break-words" title={img.caption}>{img.caption}</figcaption>
+            ) : null}
             {onRemover && (
               <button
                 type="button"
@@ -39,12 +56,13 @@ export function GradeImagens({ imagens, onRemover }: { imagens: ImagemRel[]; onR
                 <X size={13} />
               </button>
             )}
-          </div>
+          </figure>
         ))}
       </div>
-      {aberta && createPortal(
-        <div className="fixed inset-0 z-[100] bg-black/85 flex items-center justify-center p-3" onClick={() => setAberta(null)}>
-          <img src={aberta} alt="" className="max-w-full max-h-full object-contain rounded" />
+      {aberta?.url && createPortal(
+        <div className="fixed inset-0 z-[100] bg-black/85 flex flex-col items-center justify-center p-3 gap-3" onClick={() => setAberta(null)}>
+          <img src={aberta.url} alt="" className="max-w-full max-h-[85vh] object-contain rounded" />
+          {aberta.caption && <p className="text-white text-sm text-center max-w-2xl whitespace-pre-wrap">{aberta.caption}</p>}
           <button className="absolute top-3 right-3 w-10 h-10 rounded-full bg-white/15 text-white flex items-center justify-center" onClick={() => setAberta(null)}>
             <X size={20} />
           </button>
@@ -55,14 +73,17 @@ export function GradeImagens({ imagens, onRemover }: { imagens: ImagemRel[]; onR
   );
 }
 
-/** Campo de texto + anexar imagens (usado na resposta e no item novo). */
-export function useAnexos(enviar: (f: File) => Promise<ImagemRel | null>) {
-  const [imagens, setImagens] = useState<ImagemRel[]>([]);
+/**
+ * Anexar imagens: botão, Ctrl+V (print colado) e legenda por imagem.
+ * `aoColar` vai no onPaste do bloco do formulário — o evento sobe do campo de texto.
+ */
+export function useAnexos(enviar: (f: File) => Promise<ImagemRel | null>, iniciais: ImagemRel[] = []) {
+  const [imagens, setImagens] = useState<ImagemRel[]>(iniciais);
   const [enviando, setEnviando] = useState(0);
   const input = useRef<HTMLInputElement>(null);
-  const escolher = async (files: FileList | null) => {
-    if (!files?.length) return;
-    const lista = Array.from(files).slice(0, 8);
+  const subir = async (arquivos: File[]) => {
+    const lista = arquivos.slice(0, Math.max(0, 8 - imagens.length));
+    if (!lista.length) return;
     setEnviando((n) => n + lista.length);
     for (const f of lista) {
       const img = await enviar(f);
@@ -71,13 +92,25 @@ export function useAnexos(enviar: (f: File) => Promise<ImagemRel | null>) {
     }
     if (input.current) input.current.value = '';
   };
+  const aoColar = (e: ClipboardEvent) => {
+    const arquivos = Array.from(e.clipboardData?.items ?? [])
+      .filter((it) => it.kind === 'file' && it.type.startsWith('image/'))
+      .map((it) => it.getAsFile())
+      .filter((f): f is File => !!f)
+      // Print colado vem como "image.png": um nome com hora ajuda a achar depois.
+      .map((f) => (f.name && f.name !== 'image.png' ? f : new File([f], `print-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.png`, { type: f.type })));
+    if (!arquivos.length) return; // texto colado segue normal
+    e.preventDefault();
+    subir(arquivos);
+  };
   const botao = (
     <>
-      <input ref={input} type="file" accept="image/*" multiple className="hidden" onChange={(e) => escolher(e.target.files)} />
+      <input ref={input} type="file" accept="image/*" multiple className="hidden" onChange={(e) => subir(Array.from(e.target.files ?? []))} />
       <button
         type="button"
         onClick={() => input.current?.click()}
         disabled={enviando > 0 || imagens.length >= 8}
+        title="Também dá para colar uma imagem com Ctrl+V"
         className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm text-slate-600 border border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-50"
       >
         {enviando > 0 ? <Loader2 size={16} className="animate-spin" /> : <ImagePlus size={16} />}
@@ -86,13 +119,16 @@ export function useAnexos(enviar: (f: File) => Promise<ImagemRel | null>) {
     </>
   );
   return {
-    imagens, enviando: enviando > 0, botao,
+    imagens, enviando: enviando > 0, botao, aoColar,
     remover: (i: number) => setImagens((a) => a.filter((_, j) => j !== i)),
+    legendar: (i: number, legenda: string) => setImagens((a) => a.map((x, j) => (j === i ? { ...x, caption: legenda } : x))),
     limpar: () => setImagens([]),
-    /** Para gravar: sem a URL local de pré-visualização. */
-    paraGravar: () => imagens.map(({ path, name }) => ({ path, name })),
+    /** Para gravar: sem a URL de pré-visualização. */
+    paraGravar: () => imagens.map(({ path, name, caption }) => ({ path, name, ...(caption?.trim() ? { caption: caption.trim() } : {}) })),
   };
 }
+
+const DICA_COLAR = <p className="text-[11px] text-slate-400 hidden md:block">Dica: cole uma imagem com Ctrl+V.</p>;
 
 interface Props {
   item: ItemRel;
@@ -102,9 +138,9 @@ interface Props {
   meuGuestId?: string | null;
   /** Na tela da equipe: meu id de usuário — as minhas respostas aparecem como "você". */
   meuUserId?: string | null;
-  onResponder: (body: string, imagens: ImagemRel[], novoStatus: StatusItem | null) => Promise<boolean>;
+  onResponder: (body: string, imagens: ImagemRel[], novoStatus: StatusItem | null, answers: Record<string, ValorCampo> | null) => Promise<boolean>;
   onEnviarImagem: (f: File) => Promise<ImagemRel | null>;
-  /** Ações do dono (editar/excluir) no cabeçalho do item. */
+  /** Ações da equipe (editar/excluir) no cabeçalho do item. */
   acoes?: ReactNode;
 }
 
@@ -112,23 +148,33 @@ export default function ItemRelatorio({ item, numero, podeResponder, meuGuestId,
   const [texto, setTexto] = useState('');
   const [gravando, setGravando] = useState(false);
   const [aberto, setAberto] = useState(false);
+  const [rascunho, setRascunho] = useState<Record<string, ValorCampo>>({});
   const anexos = useAnexos(onEnviarImagem);
+
+  const campos = item.fields ?? [];
+  const atuais = valoresAtuais(item);
+  const valorAtual = Object.fromEntries(Object.entries(atuais).map(([k, v]) => [k, v.valor]));
+  const mudancas = respostasMudadas(campos, valorAtual, rascunho);
+  const temMudancas = Object.keys(mudancas).length > 0;
+
+  const abrir = () => {
+    setRascunho(valorAtual);
+    setAberto(true);
+  };
+  const fechar = () => { setAberto(false); setTexto(''); setRascunho({}); anexos.limpar(); };
 
   const enviar = async (novoStatus: StatusItem | null) => {
     if (gravando || anexos.enviando) return;
-    if (!texto.trim() && !anexos.imagens.length && !novoStatus) return;
+    if (!texto.trim() && !anexos.imagens.length && !novoStatus && !temMudancas) return;
     setGravando(true);
-    const ok = await onResponder(texto.trim(), anexos.paraGravar(), novoStatus);
+    const ok = await onResponder(texto.trim(), anexos.paraGravar(), novoStatus, temMudancas ? mudancas : null);
     setGravando(false);
-    if (ok) {
-      setTexto('');
-      anexos.limpar();
-      setAberto(false);
-    }
+    if (ok) fechar();
   };
 
   const respostas = item.responses;
-  const temRascunho = !!texto.trim() || anexos.imagens.length > 0;
+  const temRascunho = !!texto.trim() || anexos.imagens.length > 0 || temMudancas;
+  const nomeCampo = (cid: string) => campos.find((c) => c.id === cid);
 
   return (
     <article className="bg-white rounded-xl border border-slate-200 overflow-hidden">
@@ -148,6 +194,22 @@ export default function ItemRelatorio({ item, numero, podeResponder, meuGuestId,
       <div className="px-4 pb-3 pl-14">
         {item.body && <p className="text-sm text-slate-600 whitespace-pre-wrap break-words mt-1">{item.body}</p>}
         <GradeImagens imagens={item.images} />
+        {campos.length > 0 && (
+          <dl className="mt-3 rounded-lg border border-slate-200 divide-y divide-slate-100 text-sm">
+            {campos.map((c) => {
+              const a = atuais[c.id];
+              return (
+                <div key={c.id} className="px-3 py-2 flex flex-wrap gap-x-3 gap-y-0.5">
+                  <dt className="text-slate-500 flex items-center gap-1"><ListChecks size={13} /> {c.label}</dt>
+                  <dd className={`font-medium ${a && a.valor !== null ? 'text-slate-800' : 'text-slate-300'}`}>
+                    {a ? formatarValor(c, a.valor) : 'sem resposta'}
+                  </dd>
+                  {a && a.valor !== null && <dd className="text-[11px] text-slate-400 w-full md:w-auto md:ml-auto">{a.autor} · {dataHora(a.em)}</dd>}
+                </div>
+              );
+            })}
+          </dl>
+        )}
       </div>
 
       {respostas.length > 0 && (
@@ -166,6 +228,7 @@ export default function ItemRelatorio({ item, numero, podeResponder, meuGuestId,
                 </li>
               );
             }
+            const respostasCampos = Object.entries(r.answers ?? {});
             return (
               <li key={r.id} className="flex gap-2">
                 <span className={`shrink-0 w-7 h-7 rounded-full text-xs font-semibold flex items-center justify-center ${r.author_type === 'owner' ? 'bg-indigo-100 text-indigo-700' : 'bg-amber-100 text-amber-800'}`}>
@@ -181,6 +244,19 @@ export default function ItemRelatorio({ item, numero, podeResponder, meuGuestId,
                     )}
                     <span className="ml-1">· {dataHora(r.created_at)}</span>
                   </p>
+                  {respostasCampos.length > 0 && (
+                    <ul className="mt-1 space-y-0.5">
+                      {respostasCampos.map(([cid, valor]) => {
+                        const c = nomeCampo(cid);
+                        return (
+                          <li key={cid} className="text-sm text-slate-700">
+                            <span className="text-slate-500">{c?.label ?? 'Campo removido'}:</span>{' '}
+                            <strong className="font-medium">{c ? formatarValor(c, valor) : String(valor)}</strong>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
                   {r.body && <p className="text-sm text-slate-700 whitespace-pre-wrap break-words mt-0.5">{r.body}</p>}
                   <GradeImagens imagens={r.images} />
                   {r.new_status && (
@@ -201,7 +277,7 @@ export default function ItemRelatorio({ item, numero, podeResponder, meuGuestId,
           {!aberto && !temRascunho ? (
             <div className="flex flex-wrap gap-2">
               <button
-                onClick={() => setAberto(true)}
+                onClick={abrir}
                 className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700"
               >
                 <MessageCircle size={16} /> Responder
@@ -225,24 +301,29 @@ export default function ItemRelatorio({ item, numero, podeResponder, meuGuestId,
               )}
             </div>
           ) : (
-            <div className="space-y-2">
+            <div className="space-y-3" onPaste={anexos.aoColar}>
+              {campos.length > 0 && (
+                <PreencherCampos
+                  campos={campos}
+                  valores={rascunho}
+                  onChange={(cid, v) => setRascunho((r) => ({ ...r, [cid]: v }))}
+                />
+              )}
               <textarea
                 value={texto}
                 onChange={(e) => setTexto(e.target.value)}
-                autoFocus
+                autoFocus={campos.length === 0}
                 rows={3}
                 maxLength={5000}
-                placeholder="Escreva sua resposta…"
+                placeholder={campos.length ? 'Comentário (opcional)…' : 'Escreva sua resposta…'}
                 className="w-full rounded-lg border border-slate-200 px-3 py-2 text-base md:text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200"
               />
-              <GradeImagens imagens={anexos.imagens} onRemover={anexos.remover} />
+              <GradeImagens imagens={anexos.imagens} onRemover={anexos.remover} onLegenda={anexos.legendar} />
+              {DICA_COLAR}
               <div className="flex flex-wrap items-center gap-2">
                 {anexos.botao}
                 <div className="flex-1" />
-                <button
-                  onClick={() => { setAberto(false); setTexto(''); anexos.limpar(); }}
-                  className="px-3 py-2 rounded-lg text-sm text-slate-500 hover:bg-slate-100"
-                >
+                <button onClick={fechar} className="px-3 py-2 rounded-lg text-sm text-slate-500 hover:bg-slate-100">
                   Cancelar
                 </button>
                 {item.status !== 'resolved' && (
@@ -270,33 +351,38 @@ export default function ItemRelatorio({ item, numero, podeResponder, meuGuestId,
   );
 }
 
-/** Formulário de item novo (título, descrição, imagens). */
-export function NovoItem({ onCriar, onEnviarImagem }: {
-  onCriar: (title: string, body: string, images: ImagemRel[]) => Promise<boolean>;
+/** Formulário de item (novo ou edição): título, descrição, imagens com legenda e, para a equipe, campos de resposta. */
+export function FormItem({ inicial, comCampos, rotuloSalvar, aviso, onSalvar, onCancelar, onEnviarImagem }: {
+  inicial?: { title: string; body: string | null; images: ImagemRel[]; fields?: CampoRel[] };
+  comCampos: boolean;
+  rotuloSalvar: string;
+  aviso?: ReactNode;
+  onSalvar: (title: string, body: string, images: ImagemRel[], fields: CampoRel[]) => Promise<boolean>;
+  onCancelar: () => void;
   onEnviarImagem: (f: File) => Promise<ImagemRel | null>;
 }) {
-  const [aberto, setAberto] = useState(false);
-  const [titulo, setTitulo] = useState('');
-  const [corpo, setCorpo] = useState('');
+  const [titulo, setTitulo] = useState(inicial?.title ?? '');
+  const [corpo, setCorpo] = useState(inicial?.body ?? '');
+  const [campos, setCampos] = useState<CampoRel[]>(inicial?.fields ?? []);
+  const [erro, setErro] = useState<string | null>(null);
   const [gravando, setGravando] = useState(false);
-  const anexos = useAnexos(onEnviarImagem);
+  const anexos = useAnexos(onEnviarImagem, inicial?.images ?? []);
 
-  if (!aberto) {
-    return (
-      <button
-        onClick={() => setAberto(true)}
-        className="w-full flex items-center justify-center gap-1.5 py-3 rounded-xl border-2 border-dashed border-slate-300 text-sm text-slate-500 hover:border-indigo-300 hover:text-indigo-600"
-      >
-        <Plus size={16} /> Incluir item
-      </button>
-    );
-  }
+  const salvar = async () => {
+    const { campos: limpos, erro: e } = limparCampos(campos);
+    if (e) { setErro(e); return; }
+    setErro(null);
+    setGravando(true);
+    await onSalvar(titulo.trim(), corpo.trim(), anexos.paraGravar(), limpos);
+    setGravando(false);
+  };
+
   return (
-    <div className="bg-white rounded-xl border border-slate-200 p-4 space-y-2">
+    <div className={`bg-white rounded-xl border p-4 space-y-2 ${inicial ? 'border-2 border-indigo-200' : 'border-slate-200'}`} onPaste={anexos.aoColar}>
       <input
         value={titulo}
         onChange={(e) => setTitulo(e.target.value)}
-        autoFocus
+        autoFocus={!inicial}
         maxLength={300}
         placeholder="Título do item"
         className="w-full rounded-lg border border-slate-200 px-3 py-2 text-base md:text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-200"
@@ -309,24 +395,63 @@ export function NovoItem({ onCriar, onEnviarImagem }: {
         placeholder="Descrição (opcional)"
         className="w-full rounded-lg border border-slate-200 px-3 py-2 text-base md:text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200"
       />
-      <GradeImagens imagens={anexos.imagens} onRemover={anexos.remover} />
-      <div className="flex items-center gap-2">
+      <GradeImagens imagens={anexos.imagens} onRemover={anexos.remover} onLegenda={anexos.legendar} />
+      {DICA_COLAR}
+      {comCampos && (
+        <div className="pt-1">
+          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">O que quem responde preenche</p>
+          <EditorCampos campos={campos} onChange={setCampos} />
+        </div>
+      )}
+      {aviso}
+      {erro && <p className="text-sm text-red-600">{erro}</p>}
+      <div className="flex items-center gap-2 pt-1">
         {anexos.botao}
         <div className="flex-1" />
-        <button onClick={() => { setAberto(false); setTitulo(''); setCorpo(''); anexos.limpar(); }} className="px-3 py-2 rounded-lg text-sm text-slate-500 hover:bg-slate-100">Cancelar</button>
+        <button onClick={onCancelar} className="px-3 py-2 rounded-lg text-sm text-slate-500 hover:bg-slate-100">Cancelar</button>
         <button
           disabled={!titulo.trim() || gravando || anexos.enviando}
-          onClick={async () => {
-            setGravando(true);
-            const ok = await onCriar(titulo.trim(), corpo.trim(), anexos.paraGravar());
-            setGravando(false);
-            if (ok) { setAberto(false); setTitulo(''); setCorpo(''); anexos.limpar(); }
-          }}
+          onClick={salvar}
           className="px-4 py-2 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50"
         >
-          Incluir
+          {rotuloSalvar}
         </button>
       </div>
     </div>
+  );
+}
+
+/** Botão "Incluir item" que abre o formulário. */
+export function NovoItem({ onCriar, onEnviarImagem, comCampos = false }: {
+  onCriar: (title: string, body: string, images: ImagemRel[], fields: CampoRel[]) => Promise<boolean>;
+  onEnviarImagem: (f: File) => Promise<ImagemRel | null>;
+  comCampos?: boolean;
+}) {
+  const [aberto, setAberto] = useState(false);
+  // A chave zera o formulário depois de incluir.
+  const [chave, setChave] = useState(0);
+  if (!aberto) {
+    return (
+      <button
+        onClick={() => setAberto(true)}
+        className="w-full flex items-center justify-center gap-1.5 py-3 rounded-xl border-2 border-dashed border-slate-300 text-sm text-slate-500 hover:border-indigo-300 hover:text-indigo-600"
+      >
+        <Plus size={16} /> Incluir item
+      </button>
+    );
+  }
+  return (
+    <FormItem
+      key={chave}
+      comCampos={comCampos}
+      rotuloSalvar="Incluir"
+      onEnviarImagem={onEnviarImagem}
+      onCancelar={() => setAberto(false)}
+      onSalvar={async (t, b, imgs, f) => {
+        const ok = await onCriar(t, b, imgs, f);
+        if (ok) { setAberto(false); setChave((k) => k + 1); }
+        return ok;
+      }}
+    />
   );
 }

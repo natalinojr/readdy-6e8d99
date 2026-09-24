@@ -7,7 +7,12 @@ import { MODO_DEMO } from '../demo/modoDemo';
 
 export type StatusItem = 'open' | 'answered' | 'resolved';
 
-export interface ImagemRel { path: string; name: string; url?: string | null }
+export interface ImagemRel { path: string; name: string; caption?: string | null; url?: string | null }
+
+/** Campo de resposta de um item: o que quem responde preenche. */
+export type TipoCampo = 'escolha' | 'multipla' | 'sim_nao' | 'texto' | 'numero' | 'data';
+export interface CampoRel { id: string; type: TipoCampo; label: string; options?: Array<{ id: string; label: string }> }
+export type ValorCampo = string | number | string[] | null;
 
 export interface RespostaRel {
   id: string;
@@ -15,6 +20,8 @@ export interface RespostaRel {
   body: string | null;
   images: ImagemRel[];
   new_status: StatusItem | null;
+  /** Campos respondidos nesta resposta (só o que mudou). */
+  answers?: Record<string, ValorCampo> | null;
   author_name: string;
   author_type: 'owner' | 'guest';
   author_guest_id: string | null;
@@ -37,6 +44,7 @@ export interface ItemRel {
   body: string | null;
   images: ImagemRel[];
   status: StatusItem;
+  fields?: CampoRel[];
   created_by_guest_name: string | null;
   created_at: string;
   updated_at: string;
@@ -57,6 +65,8 @@ export interface Relatorio {
   created_by?: string;
   list_id?: string | null;
   access?: AcessoRelatorio | null;
+  /** Tarefas ligadas ao relatório (só na tela da equipe). */
+  linked_task_ids?: string[];
 }
 
 export interface Convidado { id: string; name: string; contact?: string | null; created_at?: string; last_seen_at?: string }

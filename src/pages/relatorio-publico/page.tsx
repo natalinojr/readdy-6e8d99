@@ -9,7 +9,7 @@ import { Loader2, Lock, UserRound, ClipboardList } from 'lucide-react';
 import ItemRelatorio, { NovoItem } from '../tarefas/relatorios/ItemRelatorio';
 import {
   chamarPublico, enviarImagemPublico, lerConvidado, salvarConvidado,
-  type Convidado, type ImagemRel, type ItemRel, type Relatorio, type StatusItem,
+  type Convidado, type ImagemRel, type ItemRel, type Relatorio, type StatusItem, type ValorCampo,
 } from '../tarefas/relatorios/api';
 
 type Dados = { report: Relatorio; items: ItemRel[]; guests: Convidado[]; me: { id: string; name: string } | null };
@@ -50,8 +50,8 @@ export default function RelatorioPublicoPage() {
     return r.data;
   };
 
-  const responder = async (itemId: string, body: string, images: ImagemRel[], novoStatus: StatusItem | null) => {
-    const r = await chamarPublico('public_reply', { token, guest_token: guestToken, item_id: itemId, body, images, new_status: novoStatus });
+  const responder = async (itemId: string, body: string, images: ImagemRel[], novoStatus: StatusItem | null, answers: Record<string, ValorCampo> | null) => {
+    const r = await chamarPublico('public_reply', { token, guest_token: guestToken, item_id: itemId, body, images, new_status: novoStatus, answers });
     if (!r.ok) { mostrarAviso(r.error); return false; }
     await carregar();
     return true;
@@ -122,7 +122,7 @@ export default function RelatorioPublicoPage() {
             numero={i + 1}
             podeResponder={aberto}
             meuGuestId={me.id}
-            onResponder={(b, imgs, st) => responder(item.id, b, imgs, st)}
+            onResponder={(b, imgs, st, ans) => responder(item.id, b, imgs, st, ans)}
             onEnviarImagem={enviarImagem}
           />
         ))}

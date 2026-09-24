@@ -22,6 +22,7 @@ import { DICA_RECORRENCIA, descreverRecorrencia } from '../lib/recorrencia';
 import PlanoPorDia from './PlanoPorDia';
 import StatusPicker from './StatusPicker';
 import { iniciais, rotuloVencimento } from './TaskCard';
+import RelatoriosDaTarefa from '../relatorios/RelatoriosDaTarefa';
 
 interface TaskDrawerProps {
   taskId: string;
@@ -39,6 +40,8 @@ interface TaskDrawerProps {
   abrirAnexo: (attachmentId: string) => Promise<string | null>;
   onClose: () => void;
   onOpenTask?: (taskId: string) => void;
+  /** Abre um relatório ligado à tarefa (vai para a pasta dele, aba Relatórios). */
+  onAbrirRelatorio?: (reportId: string, listId: string | null) => void;
 }
 
 function formatarTamanho(bytes: number | null): string {
@@ -102,7 +105,7 @@ function Secao({ icone, titulo, contador, acao, children }: {
 
 export default function TaskDrawer({
   taskId, task, lists, tags, campos, templates, usuarios,
-  write, fetchDetail, fetchAnexos, enviarAnexo, abrirAnexo, onClose, onOpenTask,
+  write, fetchDetail, fetchAnexos, enviarAnexo, abrirAnexo, onClose, onOpenTask, onAbrirRelatorio,
 }: TaskDrawerProps) {
   const toast = useToast();
   const [detail, setDetail] = useState<TaskDetail | null>(null);
@@ -569,6 +572,9 @@ export default function TaskDrawer({
                 </div>
               </Secao>
             )}
+
+            {/* ── Relatórios ligados ── */}
+            {onAbrirRelatorio && <RelatoriosDaTarefa taskId={taskId} onAbrir={onAbrirRelatorio} />}
 
             {/* ── Anexos ── */}
             <Secao icone={<Paperclip size={15} />} titulo="Anexos" contador={anexos.length}>

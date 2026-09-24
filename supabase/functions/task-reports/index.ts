@@ -1,15 +1,17 @@
 // task-reports — relatório compartilhável por link, do módulo Tarefas (2026-09-25).
 //
-// Equipe (JWT, módulo Tarefas): quem criou monta o relatório (itens com texto e
-// imagens), liga/desliga o link, responde e muda status dos itens. Relatório
-// dentro de uma pasta vale também para quem divide a pasta (fn_task_report_access:
-// creator > owner da pasta > edit > view; view só lê e responde).
+// Equipe (JWT, módulo Tarefas): o relatório fica numa pasta e vale para quem
+// divide a pasta (fn_task_report_access: creator > owner da pasta > edit > view;
+// view só lê e responde). Itens têm texto, imagens com legenda e campos de
+// resposta (lista suspensa, caixas de seleção, sim/não, texto, número, data).
+// O relatório pode ser ligado a tarefas (task_report_tasks).
 // Público (sem login, pelo share_token): quem abre o link se identifica com
 // nome (+ contato opcional) e recebe um guest_token que fica no aparelho; com
 // ele responde os itens. Toda resposta, mudança de status e edição de item vira
 // uma linha em task_report_responses com autor e hora — nada é apagado.
+// Resposta de fora avisa (push) toda a equipe da pasta.
 //
-// verify_jwt = false: as ações públicas não têm JWT; as do dono validam aqui.
+// verify_jwt = false: as ações públicas não têm JWT; as da equipe validam aqui.
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
 
 const corsHeaders = {
@@ -59,9 +61,9 @@ async function sha256(s: string): Promise<string> {
   return Array.from(new Uint8Array(h)).map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-type Imagem = { path: string; name: string };
+type Imagem = { path: string; name: string; caption?: string | null };
 
-/** Imagens vindas do cliente: só caminhos já enviados para ESTE relatório. */
+/** Imagens vindas do cliente: só caminhos já enviados para ESTE relatório; legenda opcional. */
 function validarImagens(v: unknown, reportId: string): Imagem[] {
   if (v === undefined || v === null) return [];
   if (!Array.isArray(v)) throw new Recusa('images deve ser uma lista');
@@ -69,8 +71,69 @@ function validarImagens(v: unknown, reportId: string): Imagem[] {
   return v.map((i) => {
     const path = String((i as Imagem)?.path ?? '');
     if (!path.startsWith(`${reportId}/`) || path.includes('..')) throw new Recusa('Imagem inválida');
-    return { path, name: String((i as Imagem)?.name ?? 'imagem').slice(0, 120) };
+    const caption = texto((i as Imagem)?.caption, 300);
+    return { path, name: String((i as Imagem)?.name ?? 'imagem').slice(0, 120), ...(caption ? { caption } : {}) };
   });
+}
+
+// ── Campos de resposta por item ──
+const TIPOS_CAMPO = ['escolha', 'multipla', 'sim_nao', 'texto', 'numero', 'data'];
+type Opcao = { id: string; label: string };
+type Campo = { id: string; type: string; label: string; options?: Opcao[] };
+
+function validarCampos(v: unknown): Campo[] {
+  if (v === undefined || v === null) return [];
+  if (!Array.isArray(v)) throw new Recusa('fields deve ser uma lista');
+  if (v.length > 20) throw new Recusa('No máximo 20 campos por item');
+  const ids = new Set<string>();
+  return v.map((c: Row) => {
+    const id = String(c?.id ?? '').slice(0, 40) || crypto.randomUUID();
+    if (ids.has(id)) throw new Recusa('Campo repetido');
+    ids.add(id);
+    const type = String(c?.type ?? '');
+    if (!TIPOS_CAMPO.includes(type)) throw new Recusa(`Tipo de campo inválido: ${type}`);
+    const label = texto(c?.label, 200);
+    if (!label) throw new Recusa('Todo campo precisa de uma pergunta');
+    if (type !== 'escolha' && type !== 'multipla') return { id, type, label };
+    if (!Array.isArray(c?.options) || !c.options.length) throw new Recusa(`"${label}": inclua ao menos uma opção`);
+    if (c.options.length > 50) throw new Recusa(`"${label}": no máximo 50 opções`);
+    const idsOp = new Set<string>();
+    const options = (c.options as Row[]).map((o) => {
+      const oid = String(o?.id ?? '').slice(0, 40) || crypto.randomUUID();
+      if (idsOp.has(oid)) throw new Recusa('Opção repetida');
+      idsOp.add(oid);
+      const ol = texto(o?.label, 120);
+      if (!ol) throw new Recusa(`"${label}": opção sem texto`);
+      return { id: oid, label: ol };
+    });
+    return { id, type, label, options };
+  });
+}
+
+/** Valores respondidos {campo_id: valor}; null limpa. Devolve null se não veio nada. */
+function validarRespostas(v: unknown, campos: Campo[]): Row | null {
+  if (v === undefined || v === null) return null;
+  if (typeof v !== 'object' || Array.isArray(v)) throw new Recusa('answers deve ser um objeto');
+  const saida: Row = {};
+  for (const [cid, valor] of Object.entries(v as Row)) {
+    const campo = campos.find((c) => c.id === cid);
+    if (!campo) throw new Recusa('Campo de resposta não existe mais — recarregue a página');
+    if (valor === null || valor === '' || (Array.isArray(valor) && !valor.length)) { saida[cid] = null; continue; }
+    const opcoes = new Set((campo.options ?? []).map((o) => o.id));
+    const erro = `"${campo.label}": valor inválido`;
+    switch (campo.type) {
+      case 'escolha': if (typeof valor !== 'string' || !opcoes.has(valor)) throw new Recusa(erro); break;
+      case 'multipla':
+        if (!Array.isArray(valor) || !valor.every((x) => typeof x === 'string' && opcoes.has(x))) throw new Recusa(erro);
+        break;
+      case 'sim_nao': if (valor !== 'sim' && valor !== 'nao') throw new Recusa(erro); break;
+      case 'texto': if (typeof valor !== 'string' || valor.length > 1000) throw new Recusa(erro); break;
+      case 'numero': if (typeof valor !== 'number' || !isFinite(valor)) throw new Recusa(erro); break;
+      case 'data': if (typeof valor !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(valor) || isNaN(Date.parse(valor))) throw new Recusa(erro); break;
+    }
+    saida[cid] = typeof valor === 'string' ? valor.trim() : valor;
+  }
+  return Object.keys(saida).length ? saida : null;
 }
 
 // deno-lint-ignore no-explicit-any
@@ -78,11 +141,12 @@ type Row = Record<string, any>;
 
 /** Relatório completo, com URLs assinadas das imagens. `publico` esconde contato e dados internos. */
 async function montarRelatorio(admin: SupabaseClient, report: Row, publico: boolean) {
-  const [itensR, respR, convR, donoR] = await Promise.all([
+  const [itensR, respR, convR, donoR, tarefasR] = await Promise.all([
     admin.from('task_report_items').select('*').eq('report_id', report.id).is('archived_at', null).order('position').order('created_at'),
     admin.from('task_report_responses').select('*').eq('report_id', report.id).order('created_at'),
     admin.from('task_report_guests').select('id, name, contact, created_at, last_seen_at').eq('report_id', report.id).order('created_at'),
     admin.from('users').select('name').eq('id', report.created_by).maybeSingle(),
+    publico ? Promise.resolve({ data: [] }) : admin.from('task_report_tasks').select('task_id').eq('report_id', report.id),
   ]);
   if (itensR.error) throw itensR.error;
   if (respR.error) throw respR.error;
@@ -105,7 +169,7 @@ async function montarRelatorio(admin: SupabaseClient, report: Row, publico: bool
   for (const r of respostas) {
     const lista = porItem.get(r.item_id) ?? [];
     lista.push({
-      id: r.id, kind: r.kind, body: r.body, images: comUrl(r.images), new_status: r.new_status,
+      id: r.id, kind: r.kind, body: r.body, images: comUrl(r.images), new_status: r.new_status, answers: r.answers ?? null,
       author_name: r.author_name, author_type: r.author_user_id ? 'owner' : 'guest',
       author_guest_id: r.author_guest_id, created_at: r.created_at,
       author_is_creator: !!r.author_user_id && r.author_user_id === report.created_by,
@@ -122,10 +186,12 @@ async function montarRelatorio(admin: SupabaseClient, report: Row, publico: bool
       ...(publico ? {} : {
         share_token: report.share_token, link_enabled: report.link_enabled, created_by: report.created_by,
         list_id: report.list_id ?? null, access: report.access ?? null,
+        linked_task_ids: ((tarefasR.data ?? []) as Row[]).map((t) => t.task_id),
       }),
     },
     items: itens.map((i) => ({
       id: i.id, position: i.position, title: i.title, body: i.body, images: comUrl(i.images), status: i.status,
+      fields: i.fields ?? [],
       created_by_guest_name: i.created_by_guest ? nomeConvidado.get(i.created_by_guest) ?? null : null,
       created_at: i.created_at, updated_at: i.updated_at, responses: porItem.get(i.id) ?? [],
     })),
@@ -149,19 +215,21 @@ async function gravarImagem(admin: SupabaseClient, reportId: string, file: File)
 async function registrar(admin: SupabaseClient, reportId: string, item: Row, autor: { user?: string; guest?: string; nome: string }, body: Row) {
   const resposta = texto(body.body, MAX_TEXTO);
   const imagens = validarImagens(body.images, reportId);
+  const valores = validarRespostas(body.answers, (item.fields ?? []) as Campo[]);
   const novoStatus = body.new_status == null || body.new_status === item.status ? null : String(body.new_status);
   if (novoStatus && !STATUS_ITEM.includes(novoStatus)) throw new Recusa('Status inválido');
-  if (!resposta && !imagens.length && !novoStatus) throw new Recusa('Escreva a resposta ou anexe uma imagem');
+  const conteudo = !!(resposta || imagens.length || valores);
+  if (!conteudo && !novoStatus) throw new Recusa('Responda os campos, escreva a resposta ou anexe uma imagem');
 
   const { data, error } = await admin.from('task_report_responses').insert({
-    report_id: reportId, item_id: item.id, kind: resposta || imagens.length ? 'reply' : 'status',
-    body: resposta, images: imagens, new_status: novoStatus,
+    report_id: reportId, item_id: item.id, kind: conteudo ? 'reply' : 'status',
+    body: resposta, images: imagens, answers: valores, new_status: novoStatus,
     author_user_id: autor.user ?? null, author_guest_id: autor.guest ?? null, author_name: autor.nome,
   }).select('id').single();
   if (error) throw error;
 
   // Resposta de quem está fora marca o item como "respondido" se ele estava em aberto.
-  const statusFinal = novoStatus ?? (autor.guest && item.status === 'open' && (resposta || imagens.length) ? 'answered' : null);
+  const statusFinal = novoStatus ?? (autor.guest && item.status === 'open' && conteudo ? 'answered' : null);
   const agora = new Date().toISOString();
   if (statusFinal) await admin.from('task_report_items').update({ status: statusFinal, updated_at: agora }).eq('id', item.id);
   await admin.from('task_reports').update({ updated_at: agora }).eq('id', reportId);
@@ -170,19 +238,22 @@ async function registrar(admin: SupabaseClient, reportId: string, item: Row, aut
 
 declare const EdgeRuntime: { waitUntil(p: Promise<unknown>): void } | undefined;
 
-/** Push para o dono quando alguém de fora responde. Roda depois da resposta sair, e falha não atrapalha. */
-function avisarDono(supabaseUrl: string, serviceRoleKey: string, report: Row, nome: string, itemTitulo: string) {
-  const p = enviarAvisoDono(supabaseUrl, serviceRoleKey, report, nome, itemTitulo);
+/** Push para a equipe do relatório (quem criou + quem divide a pasta). Roda depois da resposta sair. */
+function avisarEquipe(supabaseUrl: string, serviceRoleKey: string, admin: SupabaseClient, report: Row, nome: string, itemTitulo: string) {
+  const p = enviarAviso(supabaseUrl, serviceRoleKey, admin, report, nome, itemTitulo);
   if (typeof EdgeRuntime !== 'undefined') EdgeRuntime.waitUntil(p);
 }
 
-async function enviarAvisoDono(supabaseUrl: string, serviceRoleKey: string, report: Row, nome: string, itemTitulo: string) {
+async function enviarAviso(supabaseUrl: string, serviceRoleKey: string, admin: SupabaseClient, report: Row, nome: string, itemTitulo: string) {
   try {
+    const { data } = await admin.rpc('fn_task_report_membros', { p_report_id: report.id });
+    const ids = [...new Set([report.created_by, ...((data ?? []) as Row[]).map((m) => m.user_id)])].filter(Boolean);
     await fetch(`${supabaseUrl}/functions/v1/send-push`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${serviceRoleKey}` },
       body: JSON.stringify({
-        action: 'send', user_ids: [report.created_by], tenant_id: report.tenant_id ?? null,
+        // Sem loja: a equipe da pasta pode ser de outra loja (send-push filtraria os aparelhos).
+        action: 'send', user_ids: ids, tenant_id: null,
         payload: {
           titulo: `${nome} respondeu · ${report.title}`.slice(0, 120),
           corpo: itemTitulo.slice(0, 160),
@@ -277,7 +348,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
           if (!item) throw new Recusa('Item não encontrado', 404);
           const id = await registrar(admin, report.id, item, { guest: c.id, nome: c.name }, body);
           await admin.from('task_report_guests').update({ last_seen_at: new Date().toISOString() }).eq('id', c.id);
-          avisarDono(supabaseUrl, serviceRoleKey, report, c.name, item.title);
+          avisarEquipe(supabaseUrl, serviceRoleKey, admin, report, c.name, item.title);
           return json({ success: true, id });
         }
         case 'public_add_item': {
@@ -294,7 +365,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
           }).select('id').single();
           if (error) throw error;
           await admin.from('task_reports').update({ updated_at: new Date().toISOString() }).eq('id', report.id);
-          avisarDono(supabaseUrl, serviceRoleKey, report, c.name, `Novo item: ${titulo}`);
+          avisarEquipe(supabaseUrl, serviceRoleKey, admin, report, c.name, `Novo item: ${titulo}`);
           return json({ success: true, id: data.id });
         }
         default:
@@ -302,7 +373,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       }
     }
 
-    // ═══════════════ Ações do dono (login) ═══════════════
+    // ═══════════════ Ações da equipe (login) ═══════════════
     const db = createClient(supabaseUrl, anonKey, {
       global: { headers: { Authorization: req.headers.get('Authorization') ?? '' } },
       auth: { autoRefreshToken: false, persistSession: false },
@@ -318,7 +389,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
     const lojaPedida = body.tenant_id ? lojas?.find((l) => l.tenant_id === body.tenant_id)?.tenant_id : null;
     const tenantId = lojaPedida ?? lojas?.[0]?.tenant_id ?? null;
 
-    // Nível mínimo por ação: view (ler/responder) < edit (itens, link) < owner (excluir) < creator (trocar pasta).
+    // Nível mínimo por ação: view (ler/responder) < edit (itens, link, tarefas) < owner (excluir) < creator (trocar pasta).
     const NIVEL: Record<string, number> = { view: 1, edit: 2, owner: 3, creator: 4 };
     const meuRelatorio = async (id: unknown, minimo: 'view' | 'edit' | 'owner' | 'creator' = 'view'): Promise<Row> => {
       const reportId = String(id ?? '');
@@ -334,12 +405,21 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       }
       return { ...data, access: acesso };
     };
-    /** Pasta onde a pessoa pode pôr relatório: dona ou com permissão de editar. */
-    const pastaPermitida = async (listId: unknown): Promise<string | null> => {
-      if (listId === null || listId === undefined || listId === '') return null;
+    /** Pasta onde a pessoa pode pôr relatório: dona ou com permissão de editar. Obrigatória. */
+    const pastaPermitida = async (listId: unknown): Promise<string> => {
+      if (listId === null || listId === undefined || listId === '') throw new Recusa('Escolha a pasta do relatório');
       const { data: acesso } = await admin.rpc('fn_task_list_access', { p_list_id: String(listId), p_user_id: user.id });
       if (acesso !== 'owner' && acesso !== 'edit') throw new Recusa('Você não pode pôr relatório nessa pasta', 403);
       return String(listId);
+    };
+    /** Tarefa que eu vejo: sou responsável ou tenho acesso à pasta dela (mesma regra do task-write). */
+    const tarefaVisivel = async (taskId: unknown): Promise<Row> => {
+      const { data: t } = await admin.from('tasks').select('id, list_id, assignee_id, title').eq('id', String(taskId ?? '')).maybeSingle();
+      if (!t) throw new Recusa('Tarefa não encontrada', 404);
+      if (t.assignee_id === user.id) return t;
+      const { data: acesso } = await admin.rpc('fn_task_list_access', { p_list_id: t.list_id, p_user_id: user.id });
+      if (!acesso) throw new Recusa('Tarefa não encontrada', 404);
+      return t;
     };
     const marcarVisto = (reportId: string) => admin.from('task_report_seen')
       .upsert({ report_id: reportId, user_id: user.id, seen_at: new Date().toISOString() }, { onConflict: 'report_id,user_id' });
@@ -459,7 +539,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
           .eq('report_id', r.id).order('position', { ascending: false }).limit(1).maybeSingle();
         const { data, error } = await admin.from('task_report_items').insert({
           report_id: r.id, title: titulo, body: texto(body.body, MAX_TEXTO), images: validarImagens(body.images, r.id),
-          position: (ultimo?.position ?? 0) + 1, created_by_user: user.id,
+          fields: validarCampos(body.fields), position: (ultimo?.position ?? 0) + 1, created_by_user: user.id,
         }).select('id').single();
         if (error) throw error;
         await admin.from('task_reports').update({ updated_at: new Date().toISOString() }).eq('id', r.id);
@@ -476,14 +556,15 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         }
         if (body.body !== undefined) patch.body = texto(body.body, MAX_TEXTO);
         if (body.images !== undefined) patch.images = validarImagens(body.images, r.id);
+        if (body.fields !== undefined) patch.fields = validarCampos(body.fields);
         if (body.position !== undefined) {
           const p = Number(body.position);
           if (!isFinite(p)) throw new Recusa('Posição inválida');
           patch.position = p;
         }
         if (!Object.keys(patch).length) return json({ success: true });
-        const mudouConteudo = ['title', 'body', 'images'].some((k) => k in patch
-          && JSON.stringify(patch[k] ?? null) !== JSON.stringify(item[k] ?? null));
+        const mudou = (k: string) => k in patch && JSON.stringify(patch[k] ?? null) !== JSON.stringify(item[k] ?? (k === 'body' || k === 'title' ? null : []));
+        const mudouConteudo = ['title', 'body', 'images', 'fields'].some(mudou);
         const agora = new Date().toISOString();
         const { error } = await admin.from('task_report_items').update({ ...patch, updated_at: agora }).eq('id', item.id);
         if (error) throw error;
@@ -495,9 +576,10 @@ Deno.serve({ verify_jwt: false }, async (req) => {
           ]);
           if ((convidados ?? 0) > 0 || (respostas ?? 0) > 0) {
             const antes = [
-              patch.title && item.title !== patch.title ? `Título anterior: ${item.title}` : null,
-              'body' in patch && (patch.body ?? null) !== (item.body ?? null) ? `Texto anterior: ${String(item.body ?? '(vazio)').slice(0, 1500)}` : null,
-              'images' in patch && JSON.stringify(patch.images) !== JSON.stringify(item.images ?? []) ? 'Imagens alteradas' : null,
+              mudou('title') ? `Título anterior: ${item.title}` : null,
+              mudou('body') ? `Texto anterior: ${String(item.body ?? '(vazio)').slice(0, 1500)}` : null,
+              mudou('images') ? 'Imagens alteradas' : null,
+              mudou('fields') ? 'Campos de resposta alterados' : null,
             ].filter(Boolean).join('\n');
             await admin.from('task_report_responses').insert({
               report_id: r.id, item_id: item.id, kind: 'edit', body: antes || null,
@@ -521,6 +603,35 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         const id = await registrar(admin, r.id, item, { user: user.id, nome: await meuNome() }, body);
         await marcarVisto(r.id);
         return json({ success: true, id });
+      }
+      // ── Relatório ↔ tarefa ──
+      case 'link_task': {
+        const r = await meuRelatorio(body.report_id, 'edit');
+        const t = await tarefaVisivel(body.task_id);
+        const { error } = await admin.from('task_report_tasks')
+          .upsert({ report_id: r.id, task_id: t.id, created_by: user.id }, { onConflict: 'report_id,task_id', ignoreDuplicates: true });
+        if (error) throw error;
+        return json({ success: true });
+      }
+      case 'unlink_task': {
+        const r = await meuRelatorio(body.report_id, 'edit');
+        const { error } = await admin.from('task_report_tasks').delete().eq('report_id', r.id).eq('task_id', String(body.task_id ?? ''));
+        if (error) throw error;
+        return json({ success: true });
+      }
+      case 'task_links': {
+        // Relatórios ligados a uma tarefa — só os que eu enxergo.
+        const t = await tarefaVisivel(body.task_id);
+        const [{ data: links }, { data: acessos }] = await Promise.all([
+          admin.from('task_report_tasks').select('report_id').eq('task_id', t.id),
+          admin.rpc('fn_task_reports_acessiveis', { p_user_id: user.id }),
+        ]);
+        const acessoDe = new Map(((acessos ?? []) as Row[]).map((a) => [a.report_id, a.access]));
+        const ids = ((links ?? []) as Row[]).map((l) => l.report_id).filter((id) => acessoDe.has(id));
+        if (!ids.length) return json({ success: true, reports: [] });
+        const { data: reps, error } = await admin.from('task_reports').select('id, title, status, list_id').in('id', ids);
+        if (error) throw error;
+        return json({ success: true, reports: (reps ?? []).map((r) => ({ ...r, access: acessoDe.get(r.id) })) });
       }
       default:
         return json({ error: `Ação desconhecida: ${action}` }, 400);

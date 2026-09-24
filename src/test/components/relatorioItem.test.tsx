@@ -32,7 +32,49 @@ describe('ItemRelatorio', () => {
     fireEvent.click(screen.getByText('Responder'));
     fireEvent.change(screen.getByPlaceholderText('Escreva sua resposta…'), { target: { value: 'Feito ontem' } });
     fireEvent.click(screen.getByText('Enviar'));
-    await waitFor(() => expect(onResponder).toHaveBeenCalledWith('Feito ontem', [], null));
+    await waitFor(() => expect(onResponder).toHaveBeenCalledWith('Feito ontem', [], null, null));
+  });
+
+  const comCampos: ItemRel = {
+    ...item,
+    responses: [
+      { id: 'x1', kind: 'reply', body: null, images: [], new_status: null, answers: { c1: 'o1' }, author_name: 'Carlos', author_type: 'guest', author_guest_id: 'g1', created_at: '2026-09-24T11:00:00Z' },
+    ],
+    fields: [
+      { id: 'c1', type: 'escolha', label: 'Situação', options: [{ id: 'o1', label: 'Ok' }, { id: 'o2', label: 'Refazer' }] },
+      { id: 'c2', type: 'multipla', label: 'Cômodos', options: [{ id: 'a', label: 'Sala' }, { id: 'b', label: 'Cozinha' }] },
+    ],
+  };
+
+  it('mostra o valor atual de cada campo e a resposta do campo na sequência', () => {
+    render(<ItemRelatorio item={comCampos} numero={1} podeResponder={false} onResponder={vi.fn()} onEnviarImagem={vi.fn()} />);
+    expect(screen.getAllByText('Ok').length).toBe(2); // resumo do campo + linha da resposta
+    expect(screen.getByText('sem resposta')).toBeTruthy(); // Cômodos ainda vazio
+  });
+
+  it('responder campos envia só o que mudou', async () => {
+    const onResponder = vi.fn().mockResolvedValue(true);
+    render(<ItemRelatorio item={comCampos} numero={1} podeResponder onResponder={onResponder} onEnviarImagem={vi.fn()} />);
+    fireEvent.click(screen.getByText('Responder'));
+    fireEvent.click(screen.getByLabelText('Cozinha'));
+    fireEvent.click(screen.getByText('Enviar'));
+    await waitFor(() => expect(onResponder).toHaveBeenCalledWith('', [], null, { c2: ['b'] }));
+  });
+
+  it('Ctrl+V de imagem na caixa de resposta envia a imagem e aceita legenda', async () => {
+    const onEnviarImagem = vi.fn().mockResolvedValue({ path: 'r1/x.png', name: 'print.png' });
+    const onResponder = vi.fn().mockResolvedValue(true);
+    globalThis.URL.createObjectURL = vi.fn(() => 'blob:x');
+    render(<ItemRelatorio item={{ ...item, responses: [] }} numero={1} podeResponder onResponder={onResponder} onEnviarImagem={onEnviarImagem} />);
+    fireEvent.click(screen.getByText('Responder'));
+    const arquivo = new File(['x'], 'image.png', { type: 'image/png' });
+    fireEvent.paste(screen.getByPlaceholderText('Escreva sua resposta…'), {
+      clipboardData: { items: [{ kind: 'file', type: 'image/png', getAsFile: () => arquivo }] },
+    });
+    await waitFor(() => expect(onEnviarImagem).toHaveBeenCalledTimes(1));
+    fireEvent.change(await screen.findByPlaceholderText('Legenda'), { target: { value: 'Ralo do banheiro' } });
+    fireEvent.click(screen.getByText('Enviar'));
+    await waitFor(() => expect(onResponder).toHaveBeenCalledWith('', [{ path: 'r1/x.png', name: 'print.png', caption: 'Ralo do banheiro' }], null, null));
   });
 
   it('na tela da equipe marca "você" pelo usuário e diferencia autor do relatório e equipe da pasta', () => {

@@ -1,16 +1,19 @@
 /**
- * Relatórios compartilháveis (Tarefas) — visão da equipe (quem criou e quem divide a pasta).
- * Monta o relatório (itens com texto e imagens), manda o link para quem está
- * fora do sistema e acompanha as respostas, cada uma com nome e horário.
+ * Relatórios compartilháveis (Tarefas) — aba "Relatórios" de uma pasta.
+ * Monta o relatório (itens com texto, imagens e campos de resposta), manda o
+ * link para quem está fora do sistema e acompanha as respostas, cada uma com
+ * nome e horário. O relatório é da pasta aberta e vale para quem divide a pasta;
+ * dá para mudar de pasta depois e ligar tarefas a ele.
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ArrowLeft, Plus, Link2, Copy, MessageCircle, RefreshCw, Loader2, Trash2, Pencil, ChevronUp, ChevronDown,
-  Lock, Unlock, Users, FileText, Check, X, Folder,
+  Lock, Unlock, Users, FileText, Check, Folder, ListTodo, X, CheckCircle2, Circle, Search,
 } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
 import ConfirmDialog from '../components/ConfirmDialog';
-import ItemRelatorio, { GradeImagens, NovoItem, useAnexos } from './ItemRelatorio';
+import type { TaskRow } from '../hooks/useTarefas';
+import ItemRelatorio, { FormItem, NovoItem } from './ItemRelatorio';
 import {
   chamarDono, enviarImagemDono, linkPublico, dataHora,
   podeEditar, podeExcluir,
@@ -23,43 +26,26 @@ export interface PastaRel { id: string; name: string; color: string; access?: 'o
 /** Pastas onde posso pôr relatório: as minhas e as compartilhadas comigo com 'pode editar'. */
 const pastasPermitidas = (pastas: PastaRel[]) => pastas.filter((p) => (p.access ?? 'owner') !== 'view');
 
-function SeletorPasta({ pastas, valor, onChange }: { pastas: PastaRel[]; valor: string; onChange: (v: string) => void }) {
-  return (
-    <select
-      value={valor}
-      onChange={(e) => onChange(e.target.value)}
-      className="rounded-lg border border-slate-200 px-2 py-2 text-base md:text-sm bg-white max-w-full"
-      title="Quem divide a pasta também vê o relatório"
-    >
-      <option value="">Sem pasta (só eu)</option>
-      {pastasPermitidas(pastas).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-    </select>
-  );
-}
-
 interface Props {
+  /** Pasta aberta em Tarefas: a lista mostra os relatórios dela e o novo nasce nela. */
+  pasta: PastaRel;
   /** Abre direto num relatório (ex.: clique no push → /tarefas?relatorio=<id>). */
   abrirId?: string | null;
-  /** Celular: volta para o menu de Tarefas. */
-  onVoltar?: () => void;
-  /** Pastas de Tarefas que eu vejo (para pôr o relatório numa pasta). */
+  /** Pastas que eu vejo (para mudar o relatório de pasta). */
   pastas: PastaRel[];
-  /** Pasta aberta em Tarefas — já vem escolhida ao criar. */
-  pastaAtualId?: string | null;
   meuId: string | null;
+  /** Tarefas que eu vejo — para ligar ao relatório. */
+  tarefas: TaskRow[];
+  onOpenTask: (taskId: string) => void;
 }
 
-export default function Relatorios({ abrirId, onVoltar, pastas, pastaAtualId, meuId }: Props) {
+export default function Relatorios({ pasta, abrirId, pastas, meuId, tarefas, onOpenTask }: Props) {
   const toast = useToast();
   const [lista, setLista] = useState<ResumoRelatorio[] | null>(null);
   const [selecionado, setSelecionado] = useState<string | null>(abrirId ?? null);
   const [criando, setCriando] = useState(false);
   const [novoTitulo, setNovoTitulo] = useState('');
-  const [novaPasta, setNovaPasta] = useState('');
-  const abrirCriacao = () => {
-    setNovaPasta(pastasPermitidas(pastas).some((p) => p.id === pastaAtualId) ? pastaAtualId! : '');
-    setCriando(true);
-  };
+  const podeCriar = (pasta.access ?? 'owner') !== 'view';
 
   const carregarLista = useCallback(async () => {
     const r = await chamarDono<{ reports: ResumoRelatorio[] }>('list');
@@ -68,11 +54,13 @@ export default function Relatorios({ abrirId, onVoltar, pastas, pastaAtualId, me
   }, [toast]);
 
   useEffect(() => { carregarLista(); }, [carregarLista]);
-  useEffect(() => { if (abrirId) setSelecionado(abrirId); }, [abrirId]);
+  useEffect(() => { setSelecionado(abrirId ?? null); }, [abrirId, pasta.id]);
+
+  const daPasta = useMemo(() => (lista ?? []).filter((r) => r.list_id === pasta.id), [lista, pasta.id]);
 
   const criar = async () => {
     if (!novoTitulo.trim()) return;
-    const r = await chamarDono<{ id: string }>('create', { title: novoTitulo.trim(), list_id: novaPasta || null });
+    const r = await chamarDono<{ id: string }>('create', { title: novoTitulo.trim(), list_id: pasta.id });
     if (!r.ok) { toast.error('Erro ao criar relatório', r.error); return; }
     setNovoTitulo('');
     setCriando(false);
@@ -80,31 +68,29 @@ export default function Relatorios({ abrirId, onVoltar, pastas, pastaAtualId, me
     carregarLista();
   };
 
+  const voltar = useCallback(() => { setSelecionado(null); carregarLista(); }, [carregarLista]);
+
   if (selecionado) {
     return (
       <DetalheRelatorio
         id={selecionado}
         pastas={pastas}
         meuId={meuId}
-        onVoltar={() => { setSelecionado(null); carregarLista(); }}
+        tarefas={tarefas}
+        onOpenTask={onOpenTask}
+        onVoltar={voltar}
       />
     );
   }
 
   return (
-    <div className="px-4 md:px-6 py-4 md:py-6 max-w-3xl pb-24 md:pb-6">
-      <div className="flex items-center gap-2 mb-1">
-        {onVoltar && (
-          <button onClick={onVoltar} className="md:hidden p-1.5 -ml-1.5 rounded-lg text-slate-500 active:bg-slate-200"><ArrowLeft size={18} /></button>
-        )}
-        <h1 className="text-base font-semibold text-slate-800 flex items-center gap-2"><FileText size={17} className="text-indigo-500" /> Relatórios compartilháveis</h1>
-      </div>
-      <p className="text-sm text-slate-500 mb-4">
-        Monte uma lista de pontos (texto e fotos), mande o link para quem está fora do sistema e receba as respostas item a item — cada uma com nome e horário.
-        Relatório dentro de uma pasta aparece também para quem divide a pasta.
+    <div className="max-w-3xl">
+      <p className="text-sm text-slate-500 mb-3">
+        Pontos (texto, fotos e perguntas) para quem está fora do sistema responder pelo link — cada resposta fica com nome e horário.
+        Quem divide esta pasta também vê os relatórios dela.
       </p>
 
-      {criando ? (
+      {podeCriar && (criando ? (
         <div className="bg-white rounded-xl border border-slate-200 p-3 flex flex-wrap gap-2 mb-4">
           <input
             value={novoTitulo}
@@ -115,31 +101,31 @@ export default function Relatorios({ abrirId, onVoltar, pastas, pastaAtualId, me
             placeholder="Ex.: Vistoria da obra — pendências do empreiteiro"
             className="flex-1 min-w-[200px] rounded-lg border border-slate-200 px-3 py-2 text-base md:text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200"
           />
-          <SeletorPasta pastas={pastas} valor={novaPasta} onChange={setNovaPasta} />
           <button onClick={() => setCriando(false)} className="px-3 py-2 rounded-lg text-sm text-slate-500 hover:bg-slate-100">Cancelar</button>
           <button onClick={criar} disabled={!novoTitulo.trim()} className="px-4 py-2 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50">Criar</button>
         </div>
       ) : (
         <button
-          onClick={abrirCriacao}
+          onClick={() => setCriando(true)}
           className="mb-4 flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700"
         >
           <Plus size={16} /> Novo relatório
         </button>
-      )}
+      ))}
 
       {lista === null && <div className="py-10 flex justify-center"><Loader2 className="animate-spin text-slate-400" /></div>}
-      {lista?.length === 0 && !criando && (
-        <p className="text-sm text-slate-400 text-center py-10">Nenhum relatório ainda.</p>
+      {lista !== null && daPasta.length === 0 && !criando && (
+        <p className="text-sm text-slate-400 text-center py-10">Nenhum relatório nesta pasta.</p>
       )}
       <div className="space-y-2">
-        {lista?.map((r) => (
+        {daPasta.map((r) => (
           <button
             key={r.id}
             onClick={() => setSelecionado(r.id)}
             className="w-full text-left bg-white rounded-xl border border-slate-200 px-4 py-3 hover:border-indigo-300 transition"
           >
             <div className="flex items-center gap-2">
+              <FileText size={15} className="text-indigo-400 shrink-0" />
               <span className="flex-1 min-w-0 font-medium text-slate-800 truncate">{r.title}</span>
               {r.unseen > 0 && (
                 <span className="shrink-0 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-indigo-600 text-white">
@@ -149,15 +135,8 @@ export default function Relatorios({ abrirId, onVoltar, pastas, pastaAtualId, me
               {r.status === 'closed' && <span className="shrink-0 text-[11px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-500">encerrado</span>}
               {r.status === 'open' && !r.link_enabled && <span className="shrink-0 text-[11px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-500">link desligado</span>}
             </div>
-            {(r.list_name || r.access !== 'creator') && (
-              <p className="text-xs text-slate-500 mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                {r.list_name && (
-                  <span className="flex items-center gap-1">
-                    <Folder size={12} style={{ color: r.list_color ?? undefined }} /> {r.list_name}
-                  </span>
-                )}
-                {r.access !== 'creator' && <span>de {r.owner_name ?? 'outra pessoa'}{r.access === 'view' ? ' · só ver e responder' : ''}</span>}
-              </p>
+            {r.access !== 'creator' && (
+              <p className="text-xs text-slate-500 mt-1">de {r.owner_name ?? 'outra pessoa'}{r.access === 'view' ? ' · só ver e responder' : ''}</p>
             )}
             <p className="text-xs text-slate-500 mt-1">
               {r.items_total} {r.items_total === 1 ? 'item' : 'itens'} · {r.items_open} aguardando · {r.items_resolved} resolvido{r.items_resolved === 1 ? '' : 's'}
@@ -170,7 +149,14 @@ export default function Relatorios({ abrirId, onVoltar, pastas, pastaAtualId, me
   );
 }
 
-function DetalheRelatorio({ id, onVoltar, pastas, meuId }: { id: string; onVoltar: () => void; pastas: PastaRel[]; meuId: string | null }) {
+function DetalheRelatorio({ id, onVoltar, pastas, meuId, tarefas, onOpenTask }: {
+  id: string;
+  onVoltar: () => void;
+  pastas: PastaRel[];
+  meuId: string | null;
+  tarefas: TaskRow[];
+  onOpenTask: (taskId: string) => void;
+}) {
   const toast = useToast();
   const [dados, setDados] = useState<RelatorioCompleto | null>(null);
   const [editandoCabecalho, setEditandoCabecalho] = useState(false);
@@ -219,6 +205,10 @@ function DetalheRelatorio({ id, onVoltar, pastas, meuId }: { id: string; onVolta
   const exclui = podeExcluir(report.access);
   const criador = report.access === 'creator';
   const nomePasta = pastas.find((p) => p.id === report.list_id)?.name ?? null;
+  const opcoesPasta = pastasPermitidas(pastas);
+  if (report.list_id && !opcoesPasta.some((p) => p.id === report.list_id)) {
+    opcoesPasta.push({ id: report.list_id, name: nomePasta ?? 'Pasta atual', color: '' });
+  }
 
   const copiar = async () => {
     try {
@@ -244,9 +234,9 @@ function DetalheRelatorio({ id, onVoltar, pastas, meuId }: { id: string; onVolta
   };
 
   return (
-    <div className="px-4 md:px-6 py-4 md:py-6 max-w-3xl pb-24 md:pb-6">
+    <div className="max-w-3xl">
       <button onClick={onVoltar} className="flex items-center gap-1 text-sm text-slate-500 hover:text-indigo-600 mb-3">
-        <ArrowLeft size={15} /> Relatórios
+        <ArrowLeft size={15} /> Relatórios da pasta
       </button>
 
       {/* Cabeçalho */}
@@ -303,14 +293,18 @@ function DetalheRelatorio({ id, onVoltar, pastas, meuId }: { id: string; onVolta
           <Folder size={15} className="text-slate-400 shrink-0" />
           {criador ? (
             <>
-              <SeletorPasta
-                pastas={report.list_id && !pastasPermitidas(pastas).some((p) => p.id === report.list_id)
-                  ? [...pastas, { id: report.list_id, name: nomePasta ?? 'Pasta atual', color: '' }]
-                  : pastas}
-                valor={report.list_id ?? ''}
-                onChange={(v) => acao('update', { list_id: v || null }, v ? 'Relatório agora está na pasta' : 'Relatório tirado da pasta')}
-              />
-              <span className="text-xs text-slate-400">{report.list_id ? 'Quem divide essa pasta também vê este relatório.' : 'Só você vê este relatório.'}</span>
+              <select
+                value={report.list_id ?? ''}
+                onChange={async (e) => {
+                  const destino = pastas.find((p) => p.id === e.target.value)?.name ?? 'outra pasta';
+                  await acao('update', { list_id: e.target.value }, `Relatório movido para ${destino}`);
+                }}
+                className="rounded-lg border border-slate-200 px-2 py-1.5 text-base md:text-sm bg-white max-w-full"
+                title="Quem divide a pasta também vê o relatório"
+              >
+                {opcoesPasta.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+              <span className="text-xs text-slate-400">Quem divide essa pasta também vê este relatório.</span>
             </>
           ) : (
             <span>
@@ -337,14 +331,16 @@ function DetalheRelatorio({ id, onVoltar, pastas, meuId }: { id: string; onVolta
               <button onClick={whatsapp} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm bg-emerald-600 text-white hover:bg-emerald-700">
                 <MessageCircle size={15} /> Mandar no WhatsApp
               </button>
-              {edita && <>
-              <button onClick={() => setTrocandoLink(true)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm text-slate-600 border border-slate-200 hover:bg-slate-50">
-                <RefreshCw size={14} /> Trocar link
-              </button>
-              <button onClick={() => acao('update', { link_enabled: false }, 'Link desligado')} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm text-slate-600 border border-slate-200 hover:bg-slate-50">
-                <Lock size={14} /> Desligar link
-              </button>
-              </>}
+              {edita && (
+                <>
+                  <button onClick={() => setTrocandoLink(true)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm text-slate-600 border border-slate-200 hover:bg-slate-50">
+                    <RefreshCw size={14} /> Trocar link
+                  </button>
+                  <button onClick={() => acao('update', { link_enabled: false }, 'Link desligado')} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm text-slate-600 border border-slate-200 hover:bg-slate-50">
+                    <Lock size={14} /> Desligar link
+                  </button>
+                </>
+              )}
             </div>
           </>
         ) : (
@@ -369,6 +365,17 @@ function DetalheRelatorio({ id, onVoltar, pastas, meuId }: { id: string; onVolta
         </label>
       </section>
 
+      {/* Tarefas ligadas */}
+      <TarefasLigadas
+        ids={report.linked_task_ids ?? []}
+        tarefas={tarefas}
+        podeMexer={edita}
+        pastaId={report.list_id ?? null}
+        onOpenTask={onOpenTask}
+        onLigar={(taskId) => acao('link_task', { task_id: taskId }, 'Tarefa ligada ao relatório')}
+        onDesligar={(taskId) => acao('unlink_task', { task_id: taskId })}
+      />
+
       {/* Quem entrou */}
       <section className="bg-white rounded-xl border border-slate-200 p-4 mt-3">
         <h2 className="text-sm font-semibold text-slate-700 flex items-center gap-1.5"><Users size={15} /> Quem entrou pelo link ({guests.length})</h2>
@@ -391,13 +398,18 @@ function DetalheRelatorio({ id, onVoltar, pastas, meuId }: { id: string; onVolta
       <h2 className="text-sm font-semibold text-slate-700 mt-5 mb-2">Itens ({items.length})</h2>
       <div className="space-y-3">
         {items.map((item, i) => editandoItem === item.id ? (
-          <EditarItem
+          <FormItem
             key={item.id}
-            item={item}
+            inicial={item}
+            comCampos
+            rotuloSalvar="Salvar"
             onEnviarImagem={enviarImagem}
             onCancelar={() => setEditandoItem(null)}
-            onSalvar={async (title, body, images) => {
-              const ok = await acao('update_item', { item_id: item.id, title, body, images });
+            aviso={item.responses.length > 0 ? (
+              <p className="text-xs text-amber-700">Este item já tem respostas: a edição fica registrada no histórico dele, com o texto anterior.</p>
+            ) : undefined}
+            onSalvar={async (title, body, images, fields) => {
+              const ok = await acao('update_item', { item_id: item.id, title, body, images, fields });
               if (ok) setEditandoItem(null);
               return ok;
             }}
@@ -410,7 +422,7 @@ function DetalheRelatorio({ id, onVoltar, pastas, meuId }: { id: string; onVolta
             podeResponder
             meuUserId={meuId}
             onEnviarImagem={enviarImagem}
-            onResponder={(body, images, st) => acao('reply', { item_id: item.id, body, images, new_status: st })}
+            onResponder={(body, images, st, answers) => acao('reply', { item_id: item.id, body, images, new_status: st, answers })}
             acoes={edita && (
               <div className="shrink-0 flex items-center">
                 <button disabled={i === 0} onClick={() => mover(i, -1)} className="p-1 rounded text-slate-400 hover:bg-slate-100 disabled:opacity-30" title="Subir"><ChevronUp size={16} /></button>
@@ -423,30 +435,31 @@ function DetalheRelatorio({ id, onVoltar, pastas, meuId }: { id: string; onVolta
         ))}
         {edita && (
           <NovoItem
+            comCampos
             onEnviarImagem={enviarImagem}
-            onCriar={(title, body, images) => acao('add_item', { title, body, images })}
+            onCriar={(title, body, images, fields) => acao('add_item', { title, body, images, fields })}
           />
         )}
       </div>
 
       {/* Rodapé */}
       {edita && (
-      <div className="mt-6 flex flex-wrap gap-2 border-t border-slate-200 pt-4">
-        {aberto ? (
-          <button onClick={() => acao('update', { status: 'closed' }, 'Relatório encerrado')} className="px-3 py-2 rounded-lg text-sm text-slate-600 border border-slate-200 hover:bg-slate-50">
-            Encerrar relatório
-          </button>
-        ) : (
-          <button onClick={() => acao('update', { status: 'open' }, 'Relatório reaberto')} className="px-3 py-2 rounded-lg text-sm text-slate-600 border border-slate-200 hover:bg-slate-50">
-            Reabrir relatório
-          </button>
-        )}
-        {exclui && (
-          <button onClick={() => setExcluindoRelatorio(true)} className="px-3 py-2 rounded-lg text-sm text-red-600 border border-red-200 hover:bg-red-50">
-            Excluir relatório
-          </button>
-        )}
-      </div>
+        <div className="mt-6 flex flex-wrap gap-2 border-t border-slate-200 pt-4">
+          {aberto ? (
+            <button onClick={() => acao('update', { status: 'closed' }, 'Relatório encerrado')} className="px-3 py-2 rounded-lg text-sm text-slate-600 border border-slate-200 hover:bg-slate-50">
+              Encerrar relatório
+            </button>
+          ) : (
+            <button onClick={() => acao('update', { status: 'open' }, 'Relatório reaberto')} className="px-3 py-2 rounded-lg text-sm text-slate-600 border border-slate-200 hover:bg-slate-50">
+              Reabrir relatório
+            </button>
+          )}
+          {exclui && (
+            <button onClick={() => setExcluindoRelatorio(true)} className="px-3 py-2 rounded-lg text-sm text-red-600 border border-red-200 hover:bg-red-50">
+              Excluir relatório
+            </button>
+          )}
+        </div>
       )}
 
       {excluindoItem && (
@@ -462,7 +475,7 @@ function DetalheRelatorio({ id, onVoltar, pastas, meuId }: { id: string; onVolta
       {excluindoRelatorio && (
         <ConfirmDialog
           titulo="Excluir relatório?"
-          descricao="O link para de funcionar e o relatório sai da sua lista."
+          descricao="O link para de funcionar e o relatório sai da pasta."
           textoConfirmar="Excluir"
           perigo
           onCancelar={() => setExcluindoRelatorio(false)}
@@ -488,53 +501,87 @@ function DetalheRelatorio({ id, onVoltar, pastas, meuId }: { id: string; onVolta
   );
 }
 
-function EditarItem({ item, onSalvar, onCancelar, onEnviarImagem }: {
-  item: ItemRel;
-  onSalvar: (title: string, body: string, images: ImagemRel[]) => Promise<boolean>;
-  onCancelar: () => void;
-  onEnviarImagem: (f: File) => Promise<ImagemRel | null>;
+/** Tarefas ligadas ao relatório; clicar abre a tarefa. Tarefa que eu não vejo entra só na contagem. */
+function TarefasLigadas({ ids, tarefas, podeMexer, pastaId, onOpenTask, onLigar, onDesligar }: {
+  ids: string[];
+  tarefas: TaskRow[];
+  podeMexer: boolean;
+  pastaId: string | null;
+  onOpenTask: (id: string) => void;
+  onLigar: (id: string) => Promise<boolean>;
+  onDesligar: (id: string) => Promise<boolean>;
 }) {
-  const [titulo, setTitulo] = useState(item.title);
-  const [corpo, setCorpo] = useState(item.body ?? '');
-  const [existentes, setExistentes] = useState<ImagemRel[]>(item.images);
-  const [gravando, setGravando] = useState(false);
-  const anexos = useAnexos(onEnviarImagem);
+  const [buscando, setBuscando] = useState(false);
+  const [busca, setBusca] = useState('');
+  const porId = new Map(tarefas.map((t) => [t.id, t]));
+  const ligadas = ids.map((id) => porId.get(id)).filter((t): t is TaskRow => !!t);
+  const ocultas = ids.length - ligadas.length;
+  const candidatas = useMemo(() => {
+    const termo = busca.trim().toLowerCase();
+    return tarefas
+      .filter((t) => !ids.includes(t.id) && (!termo || t.title.toLowerCase().includes(termo)))
+      // As da própria pasta primeiro, depois as abertas.
+      .sort((a, b) => Number(b.list_id === pastaId) - Number(a.list_id === pastaId)
+        || Number(a.status_category === 'done') - Number(b.status_category === 'done'))
+      .slice(0, 8);
+  }, [tarefas, ids, busca, pastaId]);
+
   return (
-    <div className="bg-white rounded-xl border-2 border-indigo-200 p-4 space-y-2">
-      <input
-        value={titulo}
-        onChange={(e) => setTitulo(e.target.value)}
-        maxLength={300}
-        className="w-full rounded-lg border border-slate-200 px-3 py-2 text-base md:text-sm font-medium focus:outline-none focus:ring-2 focus:ring-indigo-200"
-      />
-      <textarea
-        value={corpo}
-        onChange={(e) => setCorpo(e.target.value)}
-        rows={3}
-        maxLength={5000}
-        className="w-full rounded-lg border border-slate-200 px-3 py-2 text-base md:text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200"
-      />
-      <GradeImagens imagens={existentes} onRemover={(i) => setExistentes((a) => a.filter((_, j) => j !== i))} />
-      <GradeImagens imagens={anexos.imagens} onRemover={anexos.remover} />
-      {item.responses.length > 0 && (
-        <p className="text-xs text-amber-700">Este item já tem respostas: a edição fica registrada no histórico dele, com o texto anterior.</p>
-      )}
+    <section className="bg-white rounded-xl border border-slate-200 p-4 mt-3">
       <div className="flex items-center gap-2">
-        {anexos.botao}
-        <div className="flex-1" />
-        <button onClick={onCancelar} className="px-3 py-2 rounded-lg text-sm text-slate-500 hover:bg-slate-100"><X size={15} className="inline -mt-0.5" /> Cancelar</button>
-        <button
-          disabled={!titulo.trim() || gravando || anexos.enviando}
-          onClick={async () => {
-            setGravando(true);
-            await onSalvar(titulo.trim(), corpo.trim(), [...existentes.map(({ path, name }) => ({ path, name })), ...anexos.paraGravar()]);
-            setGravando(false);
-          }}
-          className="px-4 py-2 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50"
-        >
-          Salvar
-        </button>
+        <h2 className="text-sm font-semibold text-slate-700 flex items-center gap-1.5 flex-1"><ListTodo size={15} /> Tarefas ligadas ({ids.length})</h2>
+        {podeMexer && !buscando && (
+          <button onClick={() => setBuscando(true)} className="text-sm text-indigo-600 hover:underline flex items-center gap-1"><Plus size={14} /> Ligar tarefa</button>
+        )}
       </div>
-    </div>
+      {ids.length === 0 && !buscando && <p className="text-sm text-slate-400 mt-1">Nenhuma tarefa ligada.</p>}
+      {ligadas.length > 0 && (
+        <ul className="mt-2 divide-y divide-slate-100">
+          {ligadas.map((t) => (
+            <li key={t.id} className="py-1.5 flex items-center gap-2 text-sm">
+              {t.status_category === 'done' ? <CheckCircle2 size={15} className="text-emerald-500 shrink-0" /> : <Circle size={15} className="text-slate-300 shrink-0" />}
+              <button onClick={() => onOpenTask(t.id)} className={`flex-1 min-w-0 text-left truncate hover:text-indigo-600 ${t.status_category === 'done' ? 'text-slate-400 line-through' : 'text-slate-700'}`}>
+                {t.title}
+              </button>
+              {t.list_id !== pastaId && t.list_name && <span className="text-xs text-slate-400 shrink-0 hidden sm:inline">{t.list_name}</span>}
+              {t.assignee_name && <span className="text-xs text-slate-400 shrink-0">{t.assignee_name}</span>}
+              {podeMexer && (
+                <button onClick={() => onDesligar(t.id)} className="p-1 text-slate-300 hover:text-red-500" title="Desligar do relatório"><X size={14} /></button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      {ocultas > 0 && <p className="text-xs text-slate-400 mt-1">+ {ocultas} tarefa{ocultas > 1 ? 's' : ''} que você não vê</p>}
+      {buscando && (
+        <div className="mt-2 rounded-lg border border-slate-200">
+          <div className="flex items-center gap-2 px-2 border-b border-slate-100">
+            <Search size={14} className="text-slate-400" />
+            <input
+              value={busca}
+              onChange={(e) => setBusca(e.target.value)}
+              autoFocus
+              placeholder="Buscar tarefa pelo nome…"
+              className="flex-1 py-2 text-base md:text-sm outline-none"
+            />
+            <button onClick={() => { setBuscando(false); setBusca(''); }} className="p-1 text-slate-400"><X size={14} /></button>
+          </div>
+          <ul className="max-h-64 overflow-y-auto">
+            {candidatas.map((t) => (
+              <li key={t.id}>
+                <button
+                  onClick={async () => { if (await onLigar(t.id)) { setBuscando(false); setBusca(''); } }}
+                  className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50 flex items-center gap-2"
+                >
+                  <span className="flex-1 min-w-0 truncate">{t.title}</span>
+                  {t.list_name && <span className="text-xs text-slate-400 shrink-0">{t.list_name}</span>}
+                </button>
+              </li>
+            ))}
+            {candidatas.length === 0 && <li className="px-3 py-2 text-sm text-slate-400">Nenhuma tarefa encontrada.</li>}
+          </ul>
+        </div>
+      )}
+    </section>
   );
 }
