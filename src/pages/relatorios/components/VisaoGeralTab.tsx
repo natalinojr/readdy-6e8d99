@@ -1,6 +1,6 @@
 import {
   BarChart, Bar,
-  LineChart, Line,
+  AreaChart, Area,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
 import { TrendingUp, ShoppingBag, Percent } from 'lucide-react';
@@ -424,7 +424,7 @@ export default function VisaoGeralTab({ periodo, externalSession, onSessionChang
           {hourlyData.some((h) => h.valor > 0) ? (
             <div className="h-44 md:h-56">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={hourlyData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+                <AreaChart data={hourlyData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f4f4f5" vertical={false} />
                   <XAxis
                     dataKey="hora"
@@ -445,18 +445,29 @@ export default function VisaoGeralTab({ periodo, externalSession, onSessionChang
                     labelFormatter={(label) => `Hora: ${label}`}
                     contentStyle={{ borderRadius: 8, border: '1px solid #e4e4e7', fontSize: 11 }}
                   />
-                  <Line
+                  <defs>
+                    <linearGradient id="sombra-vendas-hora" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#f59e0b" stopOpacity={0.18} />
+                      <stop offset="100%" stopColor="#f59e0b" stopOpacity={0} />
+                    </linearGradient>
+                    <linearGradient id="sombra-vendas-hora-ifood" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#ea1d2c" stopOpacity={0.08} />
+                      <stop offset="100%" stopColor="#ea1d2c" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <Area
                     type="monotone"
                     dataKey="valor"
                     stroke="#f59e0b"
                     strokeWidth={2}
+                    fill="url(#sombra-vendas-hora)"
                     dot={false}
                     activeDot={{ r: 4, fill: '#f59e0b' }}
                   />
                   {ifPed > 0 && (
-                    <Line type="monotone" dataKey="ifood" stroke="#ea1d2c" strokeWidth={1.5} strokeDasharray="4 3" dot={false} activeDot={{ r: 3, fill: '#ea1d2c' }} />
+                    <Area type="monotone" dataKey="ifood" stroke="#ea1d2c" strokeWidth={1.5} strokeDasharray="4 3" fill="url(#sombra-vendas-hora-ifood)" dot={false} activeDot={{ r: 3, fill: '#ea1d2c' }} />
                   )}
-                </LineChart>
+                </AreaChart>
               </ResponsiveContainer>
             </div>
           ) : (

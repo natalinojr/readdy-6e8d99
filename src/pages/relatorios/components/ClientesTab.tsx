@@ -3,7 +3,7 @@ import { useClientesReport } from '@/hooks/useClientesReport';
 import { useClientesRetencao } from '@/hooks/useClientesRetencao';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  LineChart, Line, ReferenceLine, Cell,
+  AreaChart, Area, ReferenceLine, Cell,
 } from 'recharts';
 
 interface Props { periodo: string; }
@@ -287,7 +287,7 @@ export default function ClientesTab({ periodo }: Props) {
                 <p className="text-xs font-semibold text-zinc-600 mb-2">Taxa de retenção por semana (%)</p>
                 <div className="h-36">
                   <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={retencaoLine} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+                    <AreaChart data={retencaoLine} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#f4f4f5" vertical={false} />
                       <XAxis dataKey="semana" tick={{ fontSize: 10, fill: '#a1a1aa' }} axisLine={false} tickLine={false} />
                       <YAxis tick={{ fontSize: 10, fill: '#a1a1aa' }} axisLine={false} tickLine={false} width={28} domain={[0, 100]} tickFormatter={(v) => `${v}%`} />
@@ -296,8 +296,14 @@ export default function ClientesTab({ periodo }: Props) {
                         contentStyle={{ borderRadius: 8, fontSize: 11, border: '1px solid #e4e4e7' }}
                       />
                       <ReferenceLine y={60} stroke="#d97706" strokeDasharray="4 4" label={{ value: 'Meta 60%', position: 'right', fontSize: 9, fill: '#d97706' }} />
-                      <Line type="monotone" dataKey="taxa" stroke="#059669" strokeWidth={2} dot={{ fill: '#059669', r: 3 }} activeDot={{ r: 5 }} />
-                    </LineChart>
+                      <defs>
+                        <linearGradient id="sombra-retencao" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="#059669" stopOpacity={0.18} />
+                          <stop offset="100%" stopColor="#059669" stopOpacity={0} />
+                        </linearGradient>
+                      </defs>
+                      <Area type="monotone" dataKey="taxa" stroke="#059669" strokeWidth={2} fill="url(#sombra-retencao)" dot={{ fill: '#059669', r: 3 }} activeDot={{ r: 5 }} />
+                    </AreaChart>
                   </ResponsiveContainer>
                 </div>
               </div>

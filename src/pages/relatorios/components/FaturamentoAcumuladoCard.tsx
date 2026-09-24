@@ -1,4 +1,4 @@
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { useSalesReport } from '@/hooks/useSalesReport';
 import { useIfoodVendas } from '@/hooks/useIfoodVendas';
 import { getPeriodDates, todayBrasilia } from '@/lib/dateUtils';
@@ -103,7 +103,7 @@ export default function FaturamentoAcumuladoCard({ periodo }: { periodo: string 
       {temDados ? (
         <div className="h-44 md:h-56">
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={dados} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+            <AreaChart data={dados} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#f4f4f5" vertical={false} />
               <XAxis dataKey="dia" tick={{ fontSize: 9, fill: '#a1a1aa' }} axisLine={false} tickLine={false} interval={2} />
               <YAxis
@@ -118,9 +118,19 @@ export default function FaturamentoAcumuladoCard({ periodo }: { periodo: string 
                 labelFormatter={(label) => `Acumulado até o dia ${Number(label)}`}
                 contentStyle={{ borderRadius: 8, border: '1px solid #e4e4e7', fontSize: 11 }}
               />
-              <Line type="monotone" dataKey="anterior" stroke="#a1a1aa" strokeWidth={1.5} strokeDasharray="4 3" dot={false} activeDot={{ r: 3, fill: '#a1a1aa' }} connectNulls={false} />
-              <Line type="monotone" dataKey="atual" stroke="#f59e0b" strokeWidth={2} dot={false} activeDot={{ r: 4, fill: '#f59e0b' }} connectNulls={false} />
-            </LineChart>
+              <defs>
+                <linearGradient id="sombra-acum-ant" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#a1a1aa" stopOpacity={0.08} />
+                  <stop offset="100%" stopColor="#a1a1aa" stopOpacity={0} />
+                </linearGradient>
+                <linearGradient id="sombra-acum-atual" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#f59e0b" stopOpacity={0.18} />
+                  <stop offset="100%" stopColor="#f59e0b" stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <Area type="monotone" dataKey="anterior" stroke="#a1a1aa" strokeWidth={1.5} strokeDasharray="4 3" fill="url(#sombra-acum-ant)" dot={false} activeDot={{ r: 3, fill: '#a1a1aa' }} connectNulls={false} />
+              <Area type="monotone" dataKey="atual" stroke="#f59e0b" strokeWidth={2} fill="url(#sombra-acum-atual)" dot={false} activeDot={{ r: 4, fill: '#f59e0b' }} connectNulls={false} />
+            </AreaChart>
           </ResponsiveContainer>
         </div>
       ) : (

@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import {
-  BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  BarChart, Bar, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
 import { useOrigemReport, getPeriodoAnteriorOrigem, labelPeriodoAnteriorOrigem, type OrigemHoraItem } from '@/hooks/useOrigemReport';
 import { periodoDias } from '@/lib/dateUtils';
@@ -310,7 +310,7 @@ export default function OrigemTab({ periodo, externalSession }: Props) {
                   ))}
                 </BarChart>
                 ) : (
-                <LineChart data={porHora} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+                <AreaChart data={porHora} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f4f4f5" vertical={false} />
                   <XAxis dataKey="hora" tick={{ fontSize: 10, fill: '#a1a1aa' }} axisLine={false} tickLine={false} />
                   <YAxis tick={{ fontSize: 10, fill: '#a1a1aa' }} axisLine={false} tickLine={false}
@@ -320,11 +320,20 @@ export default function OrigemTab({ periodo, externalSession }: Props) {
                     labelFormatter={(label) => `Das ${label} às ${String(parseInt(label, 10) + 1).padStart(2, '0')}h`}
                     contentStyle={{ borderRadius: 8, fontSize: 11, border: '1px solid #e4e4e7' }}
                   />
+                  {/* Sombreamento leve sob cada linha (não empilhado: cada canal a partir do zero). */}
+                  <defs>
+                    {canais.map((c) => (
+                      <linearGradient key={c.key} id={`origem-hora-${c.key}`} x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor={c.cor} stopOpacity={0.18} />
+                        <stop offset="100%" stopColor={c.cor} stopOpacity={0} />
+                      </linearGradient>
+                    ))}
+                  </defs>
                   {canais.map((c) => (
-                    <Line key={c.key} type="monotone" dataKey={c.key} stroke={c.cor} strokeWidth={2}
-                      dot={false} activeDot={{ r: 4, fill: c.cor }} />
+                    <Area key={c.key} type="monotone" dataKey={c.key} stroke={c.cor} strokeWidth={2}
+                      fill={`url(#origem-hora-${c.key})`} dot={false} activeDot={{ r: 4, fill: c.cor }} />
                   ))}
-                </LineChart>
+                </AreaChart>
                 )}
               </ResponsiveContainer>
             </div>

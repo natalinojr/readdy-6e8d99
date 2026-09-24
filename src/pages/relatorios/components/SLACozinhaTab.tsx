@@ -1,6 +1,6 @@
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell,
-  LineChart, Line,
+  AreaChart, Area,
 } from 'recharts';
 import { useState, useMemo } from 'react';
 import { useKDS } from '@/contexts/KDSContext';
@@ -462,7 +462,7 @@ export default function SLACozinhaTab({ periodo = 'Hoje' }: Props) {
                 </div>
                 <div className="h-48">
                   <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={evolucaoHoraria} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+                    <AreaChart data={evolucaoHoraria} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#f4f4f5" vertical={false} />
                       <XAxis dataKey="hora" tick={{ fontSize: 9, fill: '#a1a1aa' }} axisLine={false} tickLine={false} />
                       <YAxis tick={{ fontSize: 10, fill: '#a1a1aa' }} axisLine={false} tickLine={false} unit=" min" width={36} />
@@ -470,8 +470,14 @@ export default function SLACozinhaTab({ periodo = 'Hoje' }: Props) {
                         formatter={(v: number, name: string) => [name === 'tempMedio' ? `${v} min` : `${v} itens`, name === 'tempMedio' ? 'Tempo médio' : 'Itens']}
                         contentStyle={{ borderRadius: 8, fontSize: 11, border: '1px solid #e4e4e7' }}
                       />
-                      <Line type="monotone" dataKey="tempMedio" stroke="#f59e0b" strokeWidth={2} dot={{ r: 3, fill: '#f59e0b' }} activeDot={{ r: 5 }} />
-                    </LineChart>
+                      <defs>
+                        <linearGradient id="sombra-sla-hora" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="#f59e0b" stopOpacity={0.18} />
+                          <stop offset="100%" stopColor="#f59e0b" stopOpacity={0} />
+                        </linearGradient>
+                      </defs>
+                      <Area type="monotone" dataKey="tempMedio" stroke="#f59e0b" strokeWidth={2} fill="url(#sombra-sla-hora)" dot={{ r: 3, fill: '#f59e0b' }} activeDot={{ r: 5 }} />
+                    </AreaChart>
                   </ResponsiveContainer>
                 </div>
               </div>
