@@ -1,4 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { cnpjDaCompra, ligarItem, vinculosMemorizados } from '../_shared/vinculos-memorizados.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -49,16 +50,7 @@ Deno.serve(async (req) => {
 
     if (purchaseErr || !purchase) return new Response(JSON.stringify({ error: 'Compra não encontrada' }), { status: 404, headers: corsHeaders });
     // CNPJ do fornecedor: sugere e memoriza o vínculo item → insumo por (CNPJ, código do produto)
-    let supplierCnpj = '';
-    {
-      const base = supabase.from('fin_suppliers').select('cnpj').eq('tenant_id', tenant_id);
-      const { data: sp } = await (purchase.supplier_id ? base.eq('id', purchase.supplier_id) : base.ilike('name', String(purchase.supplier ?? '').trim())).limit(1).maybeSingle();
-      supplierCnpj = String(sp?.cnpj ?? '').replace(/\D/g, '');
-      if (!supplierCnpj) {
-        const { data: fd } = await supabase.from('fiscal_inbound_documents').select('emitente_cnpj').eq('tenant_id', tenant_id).eq('purchase_id', purchase_id).limit(1).maybeSingle();
-        supplierCnpj = String(fd?.emitente_cnpj ?? '').replace(/\D/g, '');
-      }
-    }
+    const supplierCnpj = await cnpjDaCompra(supabase, tenant_id, purchase);
 
     // Tela de recebimento: lista de insumos + sugestão de vínculo para cada item.
     // Ordem: o que já está na compra → memorizado do fornecedor (código/EAN) → histórico pela descrição.
@@ -186,6 +178,20 @@ Deno.serve(async (req) => {
             item.units_per_package = upp;
           }
           linkChanges.push({ item, ingredient_id: ing, upp });
+        }
+      }
+
+      // Item que quem confirmou não mencionou (sem ingredient_id no payload, ex. assistente) e
+      // tem vínculo memorizado: entra ligado, como a tela faria com a sugestão (2026-09-24).
+      // "Sem insumo" escolhido explicitamente (ingredient_id: null) é respeitado.
+      {
+        const mencionados = new Set(withLink.map((ri) => String(ri.item_id)));
+        const itemsList = (purchase.items ?? []) as Array<Record<string, unknown>>;
+        const livres = itemsList.filter((it) => !mencionados.has(String(it.id)));
+        const memo = await vinculosMemorizados(supabase, tenant_id, supplierCnpj, livres, purchase_id);
+        for (const it of livres) {
+          const v = memo.get(String(it.id));
+          if (v && await ligarItem(supabase, tenant_id, it, v)) newlyLinked.add(String(it.id));
         }
       }
 

@@ -1,5 +1,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { isFinanceiroRole } from '../_shared/tenant-auth.ts';
+import { cnpjDaCompra, ligarItem, vinculosMemorizados } from '../_shared/vinculos-memorizados.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -860,7 +861,17 @@ Deno.serve(async (req) => {
         }).eq('id', purchase_id).eq('tenant_id', tenant_id).is('delivery_confirmed_at', null).select('id');
         if (lockErr) throw lockErr;
         if (!locked || locked.length === 0) return new Response(JSON.stringify({ error: 'Recebimento já confirmado' }), { status: 409, headers: corsHeaders });
-        if (stockNow) await applyStockEntry(supabase, tenant_id, purchase, (purchase.items ?? []) as Array<Record<string, unknown>>, user);
+        if (stockNow) {
+          // Item sem insumo com vínculo memorizado (fornecedor + código / EAN) entra ligado —
+          // sem isso, o recebimento pelo assistente deixava de fora itens já vinculados (2026-09-24)
+          const its = (purchase.items ?? []) as Array<Record<string, unknown>>;
+          const memo = await vinculosMemorizados(supabase, tenant_id, await cnpjDaCompra(supabase, tenant_id, purchase), its, purchase_id);
+          for (const it of its) {
+            const v = memo.get(String(it.id));
+            if (v) await ligarItem(supabase, tenant_id, it, v);
+          }
+          await applyStockEntry(supabase, tenant_id, purchase, its, user);
+        }
 
         await supabase.from('fin_accounts_payable').update({ delivery_confirmed: true, delivery_confirmed_at: confirmedAt })
           .eq('reference_id', purchase_id).eq('tenant_id', tenant_id).neq('status', 'paid');
