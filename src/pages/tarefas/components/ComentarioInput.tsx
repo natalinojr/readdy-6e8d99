@@ -18,7 +18,7 @@ export default function ComentarioInput({ usuarios, onEnviar, autoFocus }: Comen
   const [buscaMencao, setBuscaMencao] = useState<string | null>(null);
   const [indiceAtivo, setIndiceAtivo] = useState(0);
   const [enviando, setEnviando] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   const sugestoes = useMemo(() => {
     if (buscaMencao === null) return [];
@@ -67,6 +67,7 @@ export default function ComentarioInput({ usuarios, onEnviar, autoFocus }: Comen
     setEnviando(true);
     await onEnviar(corpo, extrairMencoes(corpo));
     setTexto('');
+    if (inputRef.current) inputRef.current.style.height = '';
     setBuscaMencao(null);
     setEnviando(false);
   };
@@ -98,18 +99,33 @@ export default function ComentarioInput({ usuarios, onEnviar, autoFocus }: Comen
           e.preventDefault();
           enviar();
         }}
-        className="flex items-center gap-2"
+        className="flex items-end gap-2"
+        autoComplete="off"
       >
-        <input
+        {/* textarea, não input: o Chrome oferecia cartão de crédito salvo no <input>. */}
+        <textarea
           ref={inputRef}
+          rows={1}
           autoFocus={autoFocus}
+          autoComplete="off"
+          name="comentario-tarefa"
           value={texto}
           onChange={(e) => {
+            // Cresce com o texto (até max-h-32).
+            e.target.style.height = 'auto';
+            e.target.style.height = `${e.target.scrollHeight}px`;
             setTexto(e.target.value);
             atualizarBusca(e.target.value, e.target.selectionStart ?? 0);
           }}
           onKeyDown={(e) => {
-            if (sugestoes.length === 0) return;
+            if (sugestoes.length === 0) {
+              // Enter envia (como antes); Shift+Enter quebra linha.
+              if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                e.preventDefault();
+                enviar();
+              }
+              return;
+            }
             if (e.key === 'ArrowDown') {
               e.preventDefault();
               setIndiceAtivo((i) => (i + 1) % sugestoes.length);
@@ -124,7 +140,7 @@ export default function ComentarioInput({ usuarios, onEnviar, autoFocus }: Comen
             }
           }}
           placeholder="Comentar… use @ para mencionar"
-          className="flex-1 text-sm max-md:text-base border border-slate-200 rounded-lg px-3 py-2 outline-none focus:border-indigo-300"
+          className="flex-1 text-sm max-md:text-base border border-slate-200 rounded-lg px-3 py-2 outline-none focus:border-indigo-300 resize-none max-h-32 leading-5"
         />
         <button
           type="submit"
