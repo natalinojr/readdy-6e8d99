@@ -20,7 +20,7 @@ interface Props { tenantId: string; lojaShort: string | null; onImportar: () => 
 
 const chave = (s: string) => s.trim().replace(/\s+/g, ' ').toLowerCase();
 // Busca sem acento e sem caixa ("acucar" acha "Açúcar").
-const semAcento = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+const semAcento = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 // O relatório traz "Em 1 categorias" como grupo de vários itens — não diz nada, então some.
 const grupoUtil = (g: string | null) => (g && !/^em \d+ categorias?$/i.test(g.trim()) ? g : null);
 const dBR = (d: string) => `${d.slice(8, 10)}/${d.slice(5, 7)}/${d.slice(0, 4)}`;
