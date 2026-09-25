@@ -5,6 +5,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { formatCurrency } from '@/lib/formatters';
 import { todayBrasilia } from '@/lib/dateUtils';
 import { fetchAllRows } from '@/lib/fetchAllRows';
+import { ocorrenciasRecorrentes } from '@/lib/recorrencias';
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, ReferenceLine, BarChart, Bar, Legend,
@@ -55,6 +56,8 @@ interface Payable {
   paid_amount: number | null;
   status: string;
   description: string;
+  is_recurring?: boolean | null;
+  recurrence_end_date?: string | null;
 }
 
 /** Nota de entrada (SEFAZ) que ainda não virou compra/despesa — ver bloco de provisionamento. */
@@ -374,7 +377,7 @@ export default function PrevisaoCaixaTab() {
       // venceu é jogado em HOJE (mesmo tratamento que a folha em atraso já tinha).
       supabase
         .from('fin_accounts_payable')
-        .select('due_date, amount, paid_amount, status, description')
+        .select('due_date, amount, paid_amount, status, description, is_recurring, recurrence_end_date')
         .eq('tenant_id', user.tenantId)
         // 'overdue' É dívida em aberto. A rotina `fn_mark_overdue_bills` troca
         // 'pending' → 'overdue' assim que a data passa, então filtrar por
@@ -388,6 +391,7 @@ export default function PrevisaoCaixaTab() {
         .from('fin_cash_flow')
         .select('date, amount, type, origin, description')
         .eq('tenant_id', user.tenantId)
+        .eq('fora_do_caixa', false) // venda no cartão do PDV: o dinheiro entra pelo repasse da maquininha
         .gte('date', todayStr)
         .lte('date', endDateStr),
 
@@ -399,6 +403,7 @@ export default function PrevisaoCaixaTab() {
           .from('fin_cash_flow')
           .select('amount, type')
           .eq('tenant_id', user.tenantId)
+          .eq('fora_do_caixa', false)
           .lt('date', todayStr)
           .range(from, to)
       ),
@@ -515,6 +520,13 @@ export default function PrevisaoCaixaTab() {
           valor: saldoDevedor,
         });
       }
+    });
+    // Recorrentes: a tabela só tem a próxima ocorrência; os meses seguintes do horizonte
+    // entram como previstos (o aluguel de novembro não aparecia na previsão de 90 dias).
+    ocorrenciasRecorrentes((payablesRes.data ?? []) as Payable[], endDateStr).forEach((o) => {
+      if (!dayMap[o.due_date] || !(o.amount > 0.005)) return;
+      dayMap[o.due_date].saidasContas += o.amount;
+      dayMap[o.due_date].detalhes.push({ tipo: 'conta_pagar', descricao: `${o.description} (recorrente — prevista)`, valor: o.amount });
     });
     setTotalVencidas(totalVencidas);
     setCountVencidas(countVencidas);

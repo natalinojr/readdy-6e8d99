@@ -260,7 +260,9 @@ export function useCashFlow(startDate?: string, endDate?: string) {
       console.error('[useFinanceiro] Erro ao buscar fluxo de caixa:', result.error);
       setEntries([]);
     } else {
-      setEntries((result?.data as CashFlowEntry[]) ?? []);
+      // fora_do_caixa: venda no cartão do PDV em loja cuja maquininha lança o repasse no razão
+      // (a mesma venda entraria 2x). Não é movimento de caixa — só a DRE decide se usa (2026-09-25).
+      setEntries(((result?.data as Array<CashFlowEntry & { fora_do_caixa?: boolean }>) ?? []).filter(e => !e.fora_do_caixa));
     }
     setLoading(false);
   }, [user?.tenantId, startDate, endDate]);

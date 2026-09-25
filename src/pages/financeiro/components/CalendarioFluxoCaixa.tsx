@@ -6,6 +6,7 @@ import { todayBrasilia } from '@/lib/dateUtils';
 import { fetchAllRows } from '@/lib/fetchAllRows';
 import { formatCurrency } from '@/lib/formatters';
 import type { CashFlowEntry } from '@/types/financeiro';
+import { ocorrenciasRecorrentes } from '@/lib/recorrencias';
 
 const DIAS_SEMANA = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 const MESES = [
@@ -132,6 +133,7 @@ export default function CalendarioFluxoCaixa() {
           .from('fin_cash_flow')
           .select('amount, type')
           .eq('tenant_id', user.tenantId)
+          .eq('fora_do_caixa', false) // venda no cartão do PDV: o dinheiro entra pelo repasse da maquininha
           .lt('date', periodStartStr)
           .range(from, to)
       );
@@ -192,6 +194,12 @@ export default function CalendarioFluxoCaixa() {
         status: b.status,
       });
       billsByDate.set(key, list);
+    });
+    // Recorrentes: a tabela só tem a próxima ocorrência; os meses seguintes entram como previstos
+    ocorrenciasRecorrentes(bills, localDateKey(end)).forEach(o => {
+      const list = billsByDate.get(o.due_date) ?? [];
+      list.push({ desc: `${o.description} (recorrente — prevista)`, amount: o.amount, status: 'pending' });
+      billsByDate.set(o.due_date, list);
     });
 
     const recByDate = new Map<string, { desc: string; amount: number; status: string }[]>();

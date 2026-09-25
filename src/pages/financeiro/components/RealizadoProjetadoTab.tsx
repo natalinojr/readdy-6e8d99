@@ -106,7 +106,7 @@ export default function RealizadoProjetadoTab() {
     try {
       const [cf, st, ap, rc, pr, ba] = await Promise.all([
         fetchAllRows<{ date: string; amount: number; type: string }>((from, to) =>
-          supabase.from('fin_cash_flow').select('date, amount, type').eq('tenant_id', t).gte('date', start).lte('date', end).range(from, to)),
+          supabase.from('fin_cash_flow').select('date, amount, type').eq('tenant_id', t).eq('fora_do_caixa', false).gte('date', start).lte('date', end).range(from, to)),
         fetchAllRows<{ transaction_date: string; amount: number; transaction_type: string; status: string; reconciled: boolean; source?: string | null }>((from, to) =>
           supabase.from('fin_bank_statement_imports').select('transaction_date, amount, transaction_type, status, reconciled, source').eq('tenant_id', t).gte('transaction_date', start).lte('transaction_date', end).range(from, to)),
         fetchAllRows<{ due_date: string; amount: number; paid_amount: number | null; status: string }>((from, to) =>
