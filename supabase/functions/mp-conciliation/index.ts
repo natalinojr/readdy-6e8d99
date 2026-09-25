@@ -57,6 +57,8 @@ const MAX_PAGES = 60;            // 3.000 vendas num dia é folga suficiente
 const MAX_RANGE_DAYS = 31;
 const MAX_REPORTS_PER_RUN = 5;   // baixar tudo de uma vez estoura o tempo da Edge
 const MATCH_WINDOW_DAYS = 20;
+const SEARCH_TRIES = 6;          // a busca do MP devolve vazio às vezes: repete antes de aceitar "dia sem venda"
+const LATE_EVENT_DAYS = 5;      // estorno/contestação alterados nesses dias reimportam o dia da venda
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
@@ -145,6 +147,10 @@ interface MpSale {
   fee: number;
   net: number;
   refunded: number;
+  /** Estornos com a data em que o dinheiro saiu (dia em Brasília). Soma = refunded. */
+  refunds: Array<{ id: string; date: string; amount: number }>;
+  /** Contestação perdida (status charged_back): dia em Brasília em que o MP registrou */
+  chargebackDate: string | null;
   installments: number;
   brand: string;
   paymentType: string;
@@ -197,13 +203,22 @@ function parseSale(p: any): MpSale | null {
   }
 
   const orderType = p.order?.type ? String(p.order.type) : null;
+  const refunded = round2(num(p.transaction_amount_refunded));
+  const lastUpdate = brDate(p.date_last_updated) ?? approved;
+  const refunds = (Array.isArray(p.refunds) ? p.refunds : [])
+    .filter((r: any) => !r?.status || ['approved', 'processed'].includes(String(r.status)))
+    .map((r: any) => ({ id: String(r?.id ?? ''), date: brDate(r?.date_created) ?? lastUpdate, amount: round2(num(r?.amount)) }))
+    .filter((r: { amount: number }) => r.amount > 0.004);
+  // a busca às vezes vem sem a lista: um estorno só, na data da última alteração do pagamento
+  if (refunds.length === 0 && refunded > 0.004) refunds.push({ id: '', date: lastUpdate, amount: refunded });
   return {
     id: String(p.id),
     status: String(p.status ?? ''),
     approvedDate: approved,
     releaseDate: brDate(p.money_release_date) ?? approved,
     gross, fee, net,
-    refunded: round2(num(p.transaction_amount_refunded)),
+    refunded, refunds,
+    chargebackDate: String(p.status ?? '') === 'charged_back' ? lastUpdate : null,
     installments: Number(p.installments ?? 1) || 1,
     brand: String(p.payment_method_id ?? ''),
     paymentType: String(p.payment_type_id ?? ''),
@@ -216,6 +231,23 @@ function parseSale(p: any): MpSale | null {
     lastFour: p.card?.last_four_digits ? String(p.card.last_four_digits) : null,
     description: p.description ? String(p.description).slice(0, 160) : null,
   };
+}
+
+/**
+ * Uma página da busca de pagamentos, repetida quando volta vazia. Medido na conta real em 2026-09-25:
+ * a MESMA busca (dia 21/09, 12 pagamentos) devolveu `total: 0` em 4 de 6 chamadas seguidas — e o
+ * importador gravava o dia como "sem vendas" e nunca mais olhava. Fica com a resposta de maior total.
+ */
+async function searchPage(token: string, qs: URLSearchParams) {
+  let best: Awaited<ReturnType<typeof mpFetch>> | null = null;
+  for (let i = 0; i < SEARCH_TRIES; i++) {
+    const r = await mpFetch(token, `/v1/payments/search?${qs.toString()}`);
+    if (!r.ok) { if (!best) best = r; continue; }
+    const n = Array.isArray(r.body?.results) ? r.body.results.length : 0;
+    if (!best || !best.ok || n > (Array.isArray(best.body?.results) ? best.body.results.length : 0)) best = r;
+    if (n > 0) break;
+  }
+  return best!;
 }
 
 async function fetchSales(token: string, date: string): Promise<{ sales: MpSale[]; error?: string }> {
@@ -231,7 +263,7 @@ async function fetchSales(token: string, date: string): Promise<{ sales: MpSale[
       limit: String(PAGE),
       offset: String(page * PAGE),
     });
-    const r = await mpFetch(token, `/v1/payments/search?${qs.toString()}`);
+    const r = await searchPage(token, qs);
     if (!r.ok) return { sales, error: mpError(r) };
     const results: any[] = Array.isArray(r.body?.results) ? r.body.results : [];
     for (const p of results) {
@@ -246,6 +278,34 @@ async function fetchSales(token: string, date: string): Promise<{ sales: MpSale[
     if (results.length < PAGE || (page + 1) * PAGE >= total) break;
   }
   return { sales };
+}
+
+/** Parte líquida de um valor estornado (a taxa volta na mesma proporção). */
+const refundNet = (s: MpSale, amount: number) => (s.gross > 0 ? round2(amount * s.net / s.gross) : round2(amount));
+
+/**
+ * Dias de venda que precisam ser reimportados porque a venda mudou depois (estorno, contestação).
+ * O dia é importado pela data de APROVAÇÃO, uma vez só; um estorno 10 dias depois nunca seria visto.
+ */
+async function changedSaleDays(token: string, from: string, to: string): Promise<{ days: string[]; error?: string }> {
+  const days = new Set<string>();
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const qs = new URLSearchParams({
+      range: 'date_last_updated', begin_date: dayStart(from), end_date: dayEnd(to),
+      sort: 'date_last_updated', criteria: 'asc', limit: String(PAGE), offset: String(page * PAGE),
+    });
+    const r = await searchPage(token, qs);
+    if (!r.ok) return { days: [...days], error: mpError(r) };
+    const results: any[] = Array.isArray(r.body?.results) ? r.body.results : [];
+    for (const p of results) {
+      const mexeu = ['refunded', 'charged_back', 'in_mediation'].includes(String(p.status ?? '')) || num(p.transaction_amount_refunded) > 0;
+      const aprov = brDate(p.date_approved);
+      if (mexeu && aprov) days.add(aprov);
+    }
+    const total = Number(r.body?.paging?.total ?? results.length);
+    if (results.length < PAGE || (page + 1) * PAGE >= total) break;
+  }
+  return { days: [...days].sort() };
 }
 
 // ── Linhas de extrato das vendas ─────────────────────────────────────────────
@@ -283,32 +343,42 @@ function saleRows(tenantId: string, bankAccountId: string, importId: string | nu
         external_reference: s.externalReference, approved_date: s.approvedDate, release_date: s.releaseDate,
       },
     });
-    if (s.refunded > 0.004) {
+    // Estorno: o MP devolve a taxa proporcional, então sai do saldo o LÍQUIDO do valor estornado,
+    // no dia do estorno (visto na conta: venda de R$ 1,00 com taxa 0,01 → reserve_for_refund 0,99).
+    // Contestação (charged_back) não vira linha aqui: o débito real vem no Relatório de Liberações.
+    s.refunds.forEach((r, i) => {
+      const liquido = refundNet(s, r.amount);
       rows.push({
         tenant_id: tenantId, bank_account_id: bankAccountId,
-        external_id: `mpref:${s.id}`,
-        transaction_date: s.releaseDate,
-        amount: s.refunded,
-        description: `Estorno de venda${s.externalReference ? ` · pedido ${s.externalReference}` : ''} (R$ ${money(s.refunded)})`,
+        external_id: i === 0 ? `mpref:${s.id}` : `mpref:${s.id}:${r.id || i}`,
+        transaction_date: r.date,
+        amount: liquido,
+        description: `Estorno de venda${s.externalReference ? ` · pedido ${s.externalReference}` : ''} (R$ ${money(r.amount)}, taxa devolvida R$ ${money(round2(r.amount - liquido))})`,
         transaction_type: 'debit',
         status: 'matched', match_kind: 'card_refund', matched_at: now,
         category: 'Estorno (Mercado Pago)',
         source: 'mercadopago', provider_import_id: importId,
-        raw: { kind: 'refund', payment_id: s.id, refunded: s.refunded, status: s.status },
+        raw: { kind: 'refund', payment_id: s.id, refund_id: r.id || null, refunded: r.amount, net: liquido, fee_returned: round2(r.amount - liquido), refund_date: r.date, status: s.status },
       });
-    }
+    });
   }
   return rows;
 }
 
 async function insertStatement(admin: Admin, rows: Record<string, unknown>[]) {
   let inserted = 0;
-  for (let i = 0; i < rows.length; i += 200) {
-    const { data, error } = await admin.from('fin_bank_statement_imports')
-      .upsert(rows.slice(i, i + 200), { onConflict: 'tenant_id,bank_account_id,external_id', ignoreDuplicates: true })
-      .select('id');
-    if (error) throw new Error(`Gravar extrato: ${error.message}`);
-    inserted += (data ?? []).length;
+  // estorno é REGRAVADO (valor/data mudam com estorno parcial novo e com a correção da taxa devolvida);
+  // o resto é imutável e só entra se ainda não existe
+  const estornos = rows.filter((r) => String(r.external_id).startsWith('mpref:'));
+  const demais = rows.filter((r) => !String(r.external_id).startsWith('mpref:'));
+  for (const [lista, ignore] of [[demais, true], [estornos, false]] as const) {
+    for (let i = 0; i < lista.length; i += 200) {
+      const { data, error } = await admin.from('fin_bank_statement_imports')
+        .upsert(lista.slice(i, i + 200), { onConflict: 'tenant_id,bank_account_id,external_id', ignoreDuplicates: ignore })
+        .select('id');
+      if (error) throw new Error(`Gravar extrato: ${error.message}`);
+      inserted += (data ?? []).length;
+    }
   }
   return inserted;
 }
@@ -324,28 +394,58 @@ async function postLedger(admin: Admin, tenantId: string, importId: string, allS
   if (delErr) throw new Error(`Limpar lançamentos: ${delErr.message}`);
 
   const sales = allSales.filter((s) => !s.marketplace);
-  type Day = { gross: number; fee: number; refund: number; n: number };
+  // Cada movimento no dia em que o dinheiro mexe: venda na liberação; estorno e contestação no dia
+  // em que aconteceram, tirando o bruto da receita e devolvendo a taxa proporcional (como a Stone).
+  type Day = { gross: number; fee: number; refund: number; cbk: number; n: number; loss: number };
   const days = new Map<string, Day>();
+  const day = (d: string) => {
+    let x = days.get(d);
+    if (!x) { x = { gross: 0, fee: 0, refund: 0, cbk: 0, n: 0, loss: 0 }; days.set(d, x); }
+    return x;
+  };
   for (const s of sales) {
-    let x = days.get(s.releaseDate);
-    if (!x) { x = { gross: 0, fee: 0, refund: 0, n: 0 }; days.set(s.releaseDate, x); }
-    x.gross += s.gross; x.fee += s.fee; x.refund += s.refunded; x.n++;
+    const v = day(s.releaseDate);
+    v.gross += s.gross; v.fee += s.fee; v.n++;
+    for (const r of s.refunds) {
+      const x = day(r.date);
+      x.gross -= r.amount; x.fee -= round2(r.amount - refundNet(s, r.amount)); x.refund += r.amount;
+    }
+    // contestação perdida: sai o que sobrou da venda depois dos estornos
+    if (s.chargebackDate) {
+      const resto = round2(s.gross - s.refunded);
+      if (resto > 0.004) {
+        const x = day(s.chargebackDate);
+        x.gross -= resto; x.fee -= round2(resto - refundNet(s, resto)); x.cbk += resto;
+      }
+    }
   }
   const rows: Record<string, unknown>[] = [];
   const base = { tenant_id: tenantId, reference_id: importId };
   for (const [d, x] of days) {
-    const liquido = round2(x.gross - x.refund);
-    if (liquido > 0.004) {
+    // dia com mais estorno do que venda: nada de receita/taxa negativa — a diferença vira despesa
+    if (x.fee < 0) { x.gross -= x.fee; x.fee = 0; } // taxa devolvida maior que a do dia: vira receita (gross − fee não muda)
+    if (x.gross < 0) { x.loss = -x.gross; x.gross = 0; }
+    const extra = [
+      x.refund > 0.004 ? `R$ ${money(round2(x.refund))} estornados` : null,
+      x.cbk > 0.004 ? `R$ ${money(round2(x.cbk))} em contestação perdida` : null,
+    ].filter(Boolean).join(', ');
+    if (x.gross > 0.004) {
       rows.push({
-        ...base, date: d, type: 'income', origin: 'stone_sale', category: 'Vendas', amount: liquido,
+        ...base, date: d, type: 'income', origin: 'stone_sale', category: 'Vendas', amount: round2(x.gross),
         description: `Vendas no cartão liberadas pelo Mercado Pago em ${ddmm(d)} (${x.n} venda(s), valor bruto`
-          + (x.refund > 0.004 ? `, R$ ${money(round2(x.refund))} estornados` : '') + ')',
+          + (extra ? `, ${extra}` : '') + ')',
       });
     }
     if (x.fee > 0.004) {
       rows.push({
         ...base, date: d, type: 'expense', origin: 'auto_card_fee', category: 'Taxas de Cartao', amount: round2(x.fee),
         description: `Taxa do Mercado Pago das vendas liberadas em ${ddmm(d)}`,
+      });
+    }
+    if (x.loss > 0.004) {
+      rows.push({
+        ...base, date: d, type: 'expense', origin: 'auto_card_fee', category: 'Taxas de Cartao', amount: round2(x.loss),
+        description: `Mercado Pago: estornos/contestações de ${ddmm(d)} (${extra})`,
       });
     }
   }
@@ -634,6 +734,15 @@ async function syncTenant(admin: Admin, cfg: any, dateFrom?: string) {
   for (let d = from; daysBetween(d, to) >= 0; d = addDays(d, 1)) {
     if (!done.has(d) || daysBetween(d, to) <= 1) days.push(d);
   }
+  // dia gravado com 0 vendas pode ter sido a busca do MP voltando vazia: confere de novo por uma semana
+  const { data: vazios } = await admin.from('fin_mp_imports')
+    .select('reference_date').eq('tenant_id', tenantId).eq('status', 'success').eq('payments_count', 0)
+    .gte('reference_date', addDays(to, -7)).lte('reference_date', to);
+  for (const v of vazios ?? []) if (!days.includes(v.reference_date)) days.push(v.reference_date);
+  // vendas antigas estornadas/contestadas nos últimos dias: reimporta o dia da venda (idempotente)
+  const changed = await changedSaleDays(tk.token, addDays(to, -LATE_EVENT_DAYS), to);
+  if (changed.error) log('WARN', 'sync', 'busca de vendas alteradas falhou', { tenantId, error: changed.error });
+  for (const d of changed.days) if (!days.includes(d)) days.push(d);
 
   const results = [];
   let firstError: string | null = null;

@@ -422,7 +422,7 @@ async function postLedger(admin: Admin, tenantId: string, importId: string, pars
   }
   for (const x of days.values()) {
     // dia só com cancelamento (ou mais cancelado que vendido): o líquido negativo vira débito, sem receita/taxa negativas
-    if (x.mdr < 0) { x.gross += x.mdr; x.mdr = 0; }
+    if (x.mdr < 0) { x.gross -= x.mdr; x.mdr = 0; } // taxa devolvida maior que a do dia: vira receita (gross − mdr não muda)
     if (x.gross < 0) { x.otherDebit += -x.gross; x.gross = 0; }
   }
   const rows: Record<string, unknown>[] = [];
