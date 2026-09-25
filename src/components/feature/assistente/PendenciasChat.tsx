@@ -21,6 +21,7 @@ import ItensClassificarCard from '@/components/feature/assistente/ItensClassific
 import TarefasPendencia, { minhasTarefasPendentes } from '@/components/feature/assistente/TarefasPendencia';
 import { chamarPedidos } from '@/pages/receber/pedidos/api';
 import { LigarSangria, ProcurarNota, ResumoCompra } from '@/components/feature/assistente/PendenciaDireta';
+import DreClassificacaoSelect, { precisaClassificarDRE, useDreEscolha } from '@/pages/financeiro/components/DreClassificacaoSelect';
 
 type Call = <T>(action: string, extra?: Record<string, unknown>) => Promise<T>;
 
@@ -68,7 +69,7 @@ const MOTIVO: Record<string, { placeholder: string; acao: 'resolvida' | 'descart
 };
 // Onde se resolve, em uma linha (dono, 2026-09-25: "precisa ser lançada — mas lançada onde?").
 const ONDE: Record<string, string> = {
-  recebimento_parado: 'Financeiro › Notas de entrada — "Conferir e lançar a nota" abre ela direto.',
+  recebimento_parado: 'Financeiro › Notas de entrada — o botão roxo abaixo abre essa nota direto.',
   nota_nao_lancada: 'Financeiro › Notas de entrada — lance a nota para virar conta a pagar.',
   recebimento_sem_nota: 'Financeiro › Notas de entrada, quando a nota chegar — "Procurar a nota" busca por aqui.',
 };
@@ -128,13 +129,15 @@ interface Props {
   /** Algo mudou aqui (ciente, descarte, pagamento): o botão do chat reconta. */
   onMudou?: () => void;
   onPagar: (p: PendenciaChat) => Promise<void>;
+  /** Conta paga pelo cartão (conta atrasada): o pagamento preparado vai para o chat e pede o PIN. */
+  onPagarConta?: (billId: string) => Promise<void>;
   onAbrir: (p: PendenciaChat) => void;
   onPedir: (texto: string) => void;
   onVerMensagem: (p: PendenciaChat) => Promise<void>;
   onAbrirTarefa: (tenantId: string, taskId: string) => void;
 }
 
-export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou, onPagar, onAbrir, onPedir, onVerMensagem, onAbrirTarefa }: Props) {
+export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou, onPagar, onPagarConta, onAbrir, onPedir, onVerMensagem, onAbrirTarefa }: Props) {
   // Cartão aberto para resolver ali mesmo (classificar, ver tarefas). Um por vez.
   const [expandida, setExpandida] = useState<string | null>(null);
   // Filtro por loja (dono atende mais de uma, 2026-09-18). '' = todas. Lembrado neste aparelho.
@@ -317,6 +320,8 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
     const ehPedido = p.kind === 'pedido_pagamento' && !!pedidoDa(p);
     const ehPedidoPagar = p.kind === 'pedido_pagamento_pagar' && !!pedidoDa(p);
     const direto = DIRETO.includes(p.kind);
+    // Conta atrasada abre a aba certa: Financeiro › Contas Vencidas (a rota gravada era a de Contas a Pagar).
+    if (p.kind === 'conta_atrasada') p = { ...p, rota: '/financeiro?tab=contas-vencidas' };
     const compraId = compraDa(p);
     const verCompra = compraId ? () => onAbrir({ ...p, rota: `/financeiro?tab=compras&foco=${encodeURIComponent(compraId)}` }) : null;
     const pedeConfirmar = (chave: string, fn: () => void) => () => { if (confirmar === `${p.id}:${chave}`) fn(); else setConfirmar(`${p.id}:${chave}`); };
@@ -529,7 +534,11 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
         {expandida === p.id && p.kind === 'item_sem_classe' && (
           <ItensClassificarCard call={call} tenantId={p.tenantId} abertoInicial onFeito={() => onMudou?.()} onTudo={() => { setExpandida(null); recarregar(); onMudou?.(); }} />
         )}
-        {expandida === p.id && p.kind === 'conta_atrasada' && <ContasAtrasadasInline tenantId={p.tenantId} />}
+        {expandida === p.id && p.kind === 'conta_atrasada' && (
+          <ContasAtrasadasInline tenantId={p.tenantId} onPagarConta={onPagarConta}
+            onAbrir={(billId) => onAbrir({ ...p, rota: `/financeiro?tab=contas-vencidas&foco=${encodeURIComponent(billId)}` })}
+            onMudou={() => { recarregar(); onMudou?.(); }} />
+        )}
         {expandida === p.id && p.kind === 'sangria_sem_cupom' && <LigarSangria call={call} pendId={p.id} onFeito={(msg) => depoisDeResolver(msg, p)} />}
         {expandida === p.id && p.kind === 'recebimento_sem_nota' && (
           <ProcurarNota call={call} pendId={p.id} onAchou={(doc) => {
@@ -793,20 +802,43 @@ function ContasDreInline({ call, tenantId, onFeito, onTudo }: { call: Call; tena
 }
 const GRUPO_DRE: Record<string, string> = { cost: 'Custos', expense: 'Despesas' };
 
-interface ContaAtrasada { id: string; description: string; supplier: string | null; amount: number; paid_amount: number | null; due_date: string }
+interface ContaAtrasada {
+  id: string; description: string; supplier: string | null; amount: number; paid_amount: number | null; due_date: string;
+  dre_category_id: string | null; reference_type: string | null; boleto_digitavel: string | null; boleto_pix_copia: string | null;
+}
 
 // Contas atrasadas da loja, mais antiga primeiro, com quantos dias de atraso. Leitura direta: a RLS
 // de fin_accounts_payable libera SELECT a membro da loja (20260912070000_fin_select_membership).
-function ContasAtrasadasInline({ tenantId }: { tenantId: string }) {
+// Ação em cada conta (dono, 2026-09-25): Pagar (boleto/Pix guardado → Inter → PIN), Dar baixa (já pagou
+// por fora — mesmo pay_bill da aba Contas Vencidas) e Abrir (a conta em Contas Vencidas).
+function ContasAtrasadasInline({ tenantId, onPagarConta, onAbrir, onMudou }: {
+  tenantId: string;
+  onPagarConta?: (billId: string) => Promise<void>;
+  onAbrir: (billId: string) => void;
+  onMudou: () => void;
+}) {
   const [contas, setContas] = useState<ContaAtrasada[] | null>(null);
   const [erro, setErro] = useState<string | null>(null);
-  useEffect(() => {
-    const hoje = new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' });
-    supabase.from('fin_accounts_payable').select('id, description, supplier, amount, paid_amount, due_date')
+  const [baixaDe, setBaixaDe] = useState<string | null>(null);
+  const [ocupada, setOcupada] = useState<string | null>(null);
+  const [errosConta, setErrosConta] = useState<Record<string, string>>({});
+  const hoje = new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' });
+  const carregar = useCallback(() => {
+    supabase.from('fin_accounts_payable').select('id, description, supplier, amount, paid_amount, due_date, dre_category_id, reference_type, boleto_digitavel, boleto_pix_copia')
       .eq('tenant_id', tenantId).not('status', 'in', '(paid,cancelled)').lt('due_date', hoje)
       .order('due_date', { ascending: true }).limit(100)
       .then(({ data: d, error }) => { if (error) setErro(error.message); setContas((d as ContaAtrasada[]) ?? []); });
-  }, [tenantId]);
+  }, [tenantId, hoje]);
+  useEffect(() => { carregar(); }, [carregar]);
+
+  const pagar = async (c: ContaAtrasada) => {
+    if (!onPagarConta) return;
+    setOcupada(c.id); setErrosConta((e) => { const n = { ...e }; delete n[c.id]; return n; });
+    try { await onPagarConta(c.id); }
+    catch (e) { setErrosConta((x) => ({ ...x, [c.id]: e instanceof Error ? e.message : String(e) })); }
+    finally { setOcupada(null); }
+  };
+
   if (contas === null) return <p className="mt-2.5 text-xs text-zinc-500">Carregando contas…</p>;
   const agora = Date.now();
   return (
@@ -815,17 +847,92 @@ function ContasAtrasadasInline({ tenantId }: { tenantId: string }) {
       {!contas.length && !erro && <p className="text-xs font-semibold text-emerald-700"><i className="ri-check-line" /> Nenhuma conta atrasada.</p>}
       {contas.map((c) => {
         const dias = Math.max(1, Math.floor((agora - new Date(`${c.due_date}T12:00:00-03:00`).getTime()) / 86400000));
+        const saldo = Number(c.amount) - Number(c.paid_amount ?? 0);
+        const temBoleto = !!(c.boleto_digitavel || c.boleto_pix_copia);
         return (
-          <div key={c.id} className="rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2.5">
-            <p className="text-sm font-semibold text-zinc-800 break-words">{c.supplier || c.description}</p>
-            {c.supplier && c.description && c.description !== c.supplier && <p className="text-xs text-zinc-500 break-words">{c.description}</p>}
-            <p className="text-[11px] mt-0.5">
-              <span className="font-bold text-zinc-800">{brl(Number(c.amount) - Number(c.paid_amount ?? 0))}</span>
-              <span className="text-red-600"> · venceu {data(c.due_date)} · {dias} dia{dias > 1 ? 's' : ''}</span>
-            </p>
+          <div key={c.id} className="rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2">
+            <div className="flex items-start gap-2">
+              <div className="flex-1 min-w-0">
+                <p className="text-[13px] font-semibold text-zinc-800 break-words leading-snug">{c.supplier || c.description}</p>
+                {c.supplier && c.description && c.description !== c.supplier && <p className="text-[11px] text-zinc-500 break-words">{c.description}</p>}
+                <p className="text-[11px] text-red-600 mt-0.5">venceu {data(c.due_date)} · {dias} dia{dias > 1 ? 's' : ''}</p>
+              </div>
+              <span className="text-[13px] font-bold text-zinc-900 tabular-nums whitespace-nowrap">{brl(saldo)}</span>
+            </div>
+            {errosConta[c.id] && <p className="mt-1.5 text-[11px] text-red-600">{errosConta[c.id]}</p>}
+            {baixaDe === c.id ? (
+              <BaixaConta conta={c} tenantId={tenantId} saldo={saldo} hoje={hoje}
+                onCancelar={() => setBaixaDe(null)}
+                onFeito={() => { setBaixaDe(null); carregar(); onMudou(); }} />
+            ) : (
+              <div className="flex flex-wrap gap-1.5 mt-2">
+                {temBoleto && onPagarConta && (
+                  <button onClick={() => pagar(c)} disabled={!!ocupada} className={PRINCIPAL}>
+                    {ocupada === c.id ? 'Preparando…' : <><i className="ri-bank-card-line" /> Pagar {c.boleto_digitavel ? 'boleto' : 'Pix'}</>}
+                  </button>
+                )}
+                <button onClick={() => setBaixaDe(c.id)} disabled={!!ocupada} className={temBoleto ? SECUNDARIO : PRINCIPAL}>
+                  <i className="ri-check-double-line" /> Já paguei — dar baixa
+                </button>
+                <button onClick={() => onAbrir(c.id)} disabled={!!ocupada} className={NEUTRO}>Abrir</button>
+              </div>
+            )}
           </div>
         );
       })}
     </div>
+  );
+}
+
+// Baixa de conta paga por fora: mesmo caminho do "Pagar" da aba Contas Vencidas (financial-write ›
+// pay_bill — lança a despesa, debita o banco, gera a próxima recorrente). Classificação DRE obrigatória
+// quando a conta não tem (regra do dono, 2026-09-12).
+function BaixaConta({ conta, tenantId, saldo, hoje, onCancelar, onFeito }: {
+  conta: ContaAtrasada; tenantId: string; saldo: number; hoje: string; onCancelar: () => void; onFeito: () => void;
+}) {
+  const [valor, setValor] = useState(saldo.toFixed(2));
+  const [dia, setDia] = useState(hoje);
+  const [forma, setForma] = useState('Pix');
+  const [dre, setDre] = useState('');
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+  const { toPayload } = useDreEscolha();
+  const precisaDre = precisaClassificarDRE(conta);
+  const salvar = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const v = Number(valor.replace(',', '.'));
+    if (!(v > 0)) { setErro('Informe o valor pago.'); return; }
+    if (precisaDre && !dre) { setErro('Escolha a classificação DRE.'); return; }
+    setSalvando(true); setErro(null);
+    const { data: r, error } = await invokeWithAuth<{ error?: string }>('financial-write', {
+      body: { action: 'pay_bill', tenant_id: tenantId, payload: { id: conta.id, paid_date: dia, paid_amount: v, payment_method: forma, ...(precisaDre ? toPayload(dre) ?? {} : {}) } },
+    });
+    const falha = error?.message ?? r?.error ?? null;
+    setSalvando(false);
+    if (falha) setErro(String(falha)); else onFeito();
+  };
+  const campo = 'h-8 px-2 rounded-lg border border-zinc-200 bg-white text-xs focus:outline-none focus:border-violet-400';
+  return (
+    <form onSubmit={salvar} className="mt-2 space-y-2 rounded-lg bg-white border border-zinc-200 p-2.5">
+      <div className="grid grid-cols-3 gap-1.5">
+        <label className="text-[10px] text-zinc-500">Valor pago
+          <input value={valor} onChange={(e) => setValor(e.target.value)} inputMode="decimal" className={`${campo} w-full mt-0.5`} />
+        </label>
+        <label className="text-[10px] text-zinc-500">Pago em
+          <input type="date" value={dia} max={hoje} onChange={(e) => setDia(e.target.value)} className={`${campo} w-full mt-0.5`} />
+        </label>
+        <label className="text-[10px] text-zinc-500">Como
+          <select value={forma} onChange={(e) => setForma(e.target.value)} className={`${campo} w-full mt-0.5`}>
+            {['Pix', 'Boleto', 'Transferência', 'Dinheiro', 'Cartão'].map((f) => <option key={f}>{f}</option>)}
+          </select>
+        </label>
+      </div>
+      {precisaDre && <DreClassificacaoSelect value={dre} onChange={setDre} categorias={[]} />}
+      {erro && <p className="text-[11px] text-red-600">{erro}</p>}
+      <div className="flex gap-1.5">
+        <button type="submit" disabled={salvando} className={PRINCIPAL}>{salvando ? 'Salvando…' : <><i className="ri-check-line" /> Confirmar baixa</>}</button>
+        <button type="button" onClick={onCancelar} disabled={salvando} className={NEUTRO}>Cancelar</button>
+      </div>
+    </form>
   );
 }

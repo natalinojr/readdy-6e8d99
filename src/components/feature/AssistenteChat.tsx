@@ -910,6 +910,15 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
     if (prontos.length === 1) await acaoPagamento(prontos[0], 'ok');
   };
 
+  // Conta atrasada paga pelo cartão da pendência: prepara no Inter, o cartão vai para o chat e pede o PIN.
+  const pagarConta = async (billId: string) => {
+    const out = await call<{ payment: Payment }>('conta_pagar', { bill_id: billId });
+    setPays((prev) => [out.payment, ...prev.filter((x) => x.id !== out.payment.id)]);
+    setPagFixo(out.payment.id);
+    setPendAberta(false);
+    if (['draft', 'awaiting_pin'].includes(out.payment.status)) await acaoPagamento(out.payment, 'ok');
+  };
+
   // Abrir a tela que resolve. Pendência de outra loja: troca de loja antes (o chat vê todas).
   const abrirPendencia = async (pd: PendenciaChat) => {
     if (!pd.rota) return;
@@ -1499,6 +1508,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
           versao={pendVersao}
           onMudou={() => { contarPendencias(); carregarPagamentos(); }}
           onPagar={pagarPendencia}
+          onPagarConta={pagarConta}
           onAbrir={abrirPendencia}
           onPedir={pedirPendencia}
         />
