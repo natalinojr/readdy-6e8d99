@@ -983,6 +983,11 @@ Deno.serve(async (req) => {
       const access = r.data.accessToken as string;
       const m = await ifoodGet('/merchant/v1.0/merchants', access, cfg.homologation_mode === true);
       const merchants = (Array.isArray(m.data) ? m.data : []).map((x: any) => ({ id: String(x.id), name: String(x.name ?? x.corporateName ?? x.id) }));
+      // Lojas que nenhuma autorização anterior enxergava: se vier zero, o código foi digitado no Portal
+      // do Parceiro com outra loja selecionada (a tela avisa em vez de dizer só "Autorizado").
+      const { data: prevAuths } = await admin.from('fin_ifood_auths').select('merchant_ids').eq('tenant_id', tenantId);
+      const jaCobertas = new Set((prevAuths ?? []).flatMap((a) => a.merchant_ids ?? []));
+      const novas = merchants.filter((x: { id: string }) => !jaCobertas.has(x.id));
       // Cada autorização guarda o próprio token: autorizar outra loja não derruba as anteriores.
       const now = new Date().toISOString();
       const { error: aErr } = await admin.from('fin_ifood_auths').insert({
@@ -994,7 +999,8 @@ Deno.serve(async (req) => {
       await admin.from('fin_ifood_config').update({ authorized_at: now, user_code: null, auth_verifier_secret: null, updated_at: now }).eq('id', cfg.id);
       await autoEnableMerchants(admin, tenantId, merchants);
       if (!r.data.refreshToken) log('WARN', 'confirm_authorization', 'token sem refreshToken', { tenantId });
-      return json({ success: true, merchants: await merchantsForUi(admin, cfg, tenantId) });
+      return json({ success: true, merchants: await merchantsForUi(admin, cfg, tenantId),
+        authorized_now: merchants.map((x: { name: string }) => x.name), new_merchants: novas.map((x: { name: string }) => x.name) });
     }
 
     // App centralizado (ex.: app de teste "C"): token por client_credentials e lista das lojas liberadas.

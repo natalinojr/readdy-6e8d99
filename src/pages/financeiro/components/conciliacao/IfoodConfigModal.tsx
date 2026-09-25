@@ -146,9 +146,15 @@ export default function IfoodConfigModal({ onClose, onImported }: Props) {
   };
 
   const handleConfirm = async () => {
-    const d = await call<{ merchants?: IfoodMerchant[] }>('confirm', { action: 'confirm_authorization', authorization_code: authCode.trim() });
+    const d = await call<{ merchants?: IfoodMerchant[]; authorized_now?: string[]; new_merchants?: string[] }>('confirm', { action: 'confirm_authorization', authorization_code: authCode.trim() });
     if (!d) return;
     setAuthCode('');
+    // Autorização que só trouxe lojas já conectadas: o código foi digitado com outra loja selecionada no portal.
+    if (d.new_merchants && d.new_merchants.length === 0) {
+      setResult({ ok: false, msg: `Essa autorização trouxe só loja(s) que já estavam conectadas (${(d.authorized_now ?? []).join(', ') || 'nenhuma'}). No Portal do Parceiro, troque para a loja que falta (seletor de loja no topo) antes de digitar o código, gere um código novo aqui e repita.` });
+      load();
+      return;
+    }
     const pendentes = (d.merchants ?? []).filter((m) => m.authorized && !m.api_sync).length;
     setResult({ ok: true, msg: pendentes > 0
       ? 'Autorizado! Ligue abaixo as lojas do iFood que são desta loja do ERPOS.'
@@ -326,7 +332,7 @@ export default function IfoodConfigModal({ onClose, onImported }: Props) {
                 <li>No <strong>Portal do Desenvolvedor</strong> do iFood › Meus aplicativos, abra o app <strong>distribuído</strong> e copie o Client ID e o Client Secret.</li>
                 <li>Salve aqui e clique em <strong>Gerar código</strong>.</li>
                 <li>No <strong>Portal do Parceiro</strong> da loja, digite o código para autorizar o app. Ele mostra um <strong>código de autorização</strong>: cole abaixo.</li>
-                <li>Tem mais de uma loja no iFood? Gere um código novo e repita para cada uma (as já autorizadas continuam).</li>
+                <li>Tem mais de uma loja no iFood? Gere um código novo e repita para cada uma (as já autorizadas continuam) — no Portal do Parceiro, <strong>selecione a loja certa no topo</strong> antes de digitar o código.</li>
               </ol>
 
               <div>
