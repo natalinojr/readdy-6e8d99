@@ -4,6 +4,7 @@ import { useCmvReport } from '@/hooks/useCmvReport';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatCurrency, formatPercent } from '@/lib/formatters';
+import { custoLinhaFicha } from '@/lib/unitConversion';
 
 // ── Hook: CMV mensal histórico ────────────────────────────────────────────────
 interface CmvMensalPonto { mes: string; cmv_pct: number; receita: number; custo: number; }
@@ -57,12 +58,12 @@ function useCmvMensal() {
       if (itemIds.length > 0) {
         const { data: fichaRows } = await supabase
           .from('item_ingredients')
-          .select('item_id, quantity, ingredients!inner(unit_price)')
+          .select('item_id, quantity, unit, ingredients!inner(unit_price, unit)')
           .in('item_id', itemIds)
           .eq('tenant_id', user.tenantId);
 
-        for (const row of (fichaRows ?? []) as Array<{ item_id: string; quantity: number; ingredients: { unit_price: number } }>) {
-          fichaMap.set(row.item_id, (fichaMap.get(row.item_id) ?? 0) + Number(row.quantity) * Number(row.ingredients?.unit_price ?? 0));
+        for (const row of (fichaRows ?? []) as Array<{ item_id: string; quantity: number; unit: string | null; ingredients: { unit_price: number; unit: string | null } }>) {
+          fichaMap.set(row.item_id, (fichaMap.get(row.item_id) ?? 0) + custoLinhaFicha(row.quantity, row.unit, row.ingredients?.unit, row.ingredients?.unit_price ?? 0));
         }
       }
 
@@ -294,7 +295,7 @@ function CmvTeorico() {
           // Fallback: query direta
           return supabase
             .from('item_ingredients')
-            .select('item_id, quantity, ingredients!inner(unit_price)')
+            .select('item_id, quantity, unit, ingredients!inner(unit_price, unit)')
             .in('item_id', itemIds)
             .eq('tenant_id', user.tenantId);
         }
@@ -302,17 +303,20 @@ function CmvTeorico() {
       })
       .then((result) => {
         const map = new Map<string, number>();
-        // A RPC retorna { item_id, ingredient_id, quantity, unit_price } (flat)
-        // O fallback (query direta) retorna { item_id, quantity, ingredients: { unit_price } } (nested)
+        // A RPC retorna { item_id, ingredient_id, quantity, unit, unit_price, ingredient_unit } (flat)
+        // O fallback (query direta) retorna { item_id, quantity, unit, ingredients: { unit_price, unit } } (nested)
         for (const row of ((result as { data: unknown[] | null }).data ?? []) as Array<{
           item_id: string;
           quantity: number;
+          unit?: string | null;
           unit_price?: number;
-          ingredients?: { unit_price: number } | null;
+          ingredient_unit?: string | null;
+          ingredients?: { unit_price: number; unit: string | null } | null;
         }>) {
-          // Aceita ambos os formatos: flat (RPC) e nested (query direta)
+          // Aceita ambos os formatos: flat (RPC) e nested (query direta); converte g da ficha → kg do insumo
           const cost = Number(row.unit_price ?? row.ingredients?.unit_price ?? 0);
-          map.set(row.item_id, (map.get(row.item_id) ?? 0) + Number(row.quantity) * cost);
+          const ingUnit = row.ingredient_unit ?? row.ingredients?.unit;
+          map.set(row.item_id, (map.get(row.item_id) ?? 0) + custoLinhaFicha(row.quantity, row.unit, ingUnit, cost));
         }
         setFichaMap(map);
       })

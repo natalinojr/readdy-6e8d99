@@ -122,3 +122,21 @@ export async function convertFichaToStockUnit(
   // (ex: 'un' vs 'kg' — não há como converter sem peso médio)
   return null;
 }
+/**
+ * Custo de uma linha da ficha técnica: a quantidade vem na unidade da FICHA (ex.: 150 g) e o preço
+ * é por unidade do ESTOQUE do insumo (ex.: R$/kg). Converte antes de multiplicar — sem isso,
+ * 150 g × R$ 45/kg dava R$ 6.750 (CMV/Fichas, 2026-09-25). Unidades sem conversão (un → L) usam a
+ * quantidade como está, igual à baixa de estoque das vendas.
+ */
+export function custoLinhaFicha(qty: number, fichaUnit: string | null | undefined, ingredientUnit: string | null | undefined, unitPrice: number): number {
+  const q = Number(qty) || 0;
+  const conv = fichaUnit && ingredientUnit ? convertUnit(q, fichaUnit, ingredientUnit) : null;
+  return (conv ?? q) * (Number(unitPrice) || 0);
+}
+
+/** Quantidade da ficha na unidade do estoque do insumo (mesma regra de custoLinhaFicha). */
+export function qtdFichaNoEstoque(qty: number, fichaUnit: string | null | undefined, ingredientUnit: string | null | undefined): number {
+  const q = Number(qty) || 0;
+  const conv = fichaUnit && ingredientUnit ? convertUnit(q, fichaUnit, ingredientUnit) : null;
+  return conv ?? q;
+}

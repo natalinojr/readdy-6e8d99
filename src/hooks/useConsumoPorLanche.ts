@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
+import { custoLinhaFicha, qtdFichaNoEstoque } from '@/lib/unitConversion';
 
 export interface IngredienteUsado {
   id: string;
@@ -127,8 +128,9 @@ export function useConsumoPorLanche(dateFrom: string, dateTo: string) {
           let custoTotal = 0;
           const ingredientes: IngredienteUsado[] = ings.map((ii) => {
             const ing = ingsMap.get(ii.ingredient_id);
-            const qtdTotal = Number(ii.quantity) * agg.qtd;
-            const custo = qtdTotal * (ing?.unit_price ?? 0);
+            // Quantidade na unidade do estoque (ficha em g, insumo em kg) — é a unidade que aparece na tela
+            const qtdTotal = qtdFichaNoEstoque(Number(ii.quantity) * agg.qtd, ii.unit, ing?.unit);
+            const custo = custoLinhaFicha(Number(ii.quantity) * agg.qtd, ii.unit, ing?.unit, ing?.unit_price ?? 0);
             custoTotal += custo;
             return {
               id: ii.ingredient_id,

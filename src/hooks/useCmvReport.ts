@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { getPeriodDates } from '@/lib/dateUtils';
+import { custoLinhaFicha } from '@/lib/unitConversion';
 
 export interface CmvItemVendido {
   item_id: string;
@@ -151,11 +152,11 @@ export function useCmvReport() {
           }
           const { data: fichaRows } = await supabase
             .from('item_ingredients')
-            .select('item_id, quantity, ingredients!inner(unit_price)')
+            .select('item_id, quantity, unit, ingredients!inner(unit_price, unit)')
             .in('item_id', itemIdsForFicha)
             .eq('tenant_id', user.tenantId);
-          for (const row of (fichaRows ?? []) as Array<{ item_id: string; quantity: number; ingredients: { unit_price: number } }>) {
-            const custo = Number(row.quantity ?? 0) * Number(row.ingredients?.unit_price ?? 0);
+          for (const row of (fichaRows ?? []) as Array<{ item_id: string; quantity: number; unit: string | null; ingredients: { unit_price: number; unit: string | null } }>) {
+            const custo = custoLinhaFicha(row.quantity ?? 0, row.unit, row.ingredients?.unit, row.ingredients?.unit_price ?? 0);
             fichaMap.set(row.item_id, (fichaMap.get(row.item_id) ?? 0) + custo);
           }
         }
