@@ -3432,3 +3432,11 @@ Sem SW ativo o POST cai no Vercel e falha — por isso o destino só existe no S
   devolve `pendencia_id` ao preparar e `pix_inter` ('aguardando'|'pago') na lista — conta só vira "paga" na baixa do extrato,
   então Pix já enviado mostra "Pix enviado · …" e esconde o "Pagar agora". Lista recarrega ao voltar ao app e a cada 30 s
   (aprovou no PC, celular mostrava "Esperando aprovação"). Aprovar 2× já era barrado no banco (`fn_pedido_pagamento_aprovar`).
+- **Conversa da IA com candidatos (2026-09-25, 487d915):** revisada lendo as conversas reais (`bot_messages` +
+  `hiring_scheduling_sessions.history`). Agendador (`hiring-scheduler`) agora recebe os mesmos fatos que o link da vaga libera
+  (`bot_channels.share_fields`/`extra_info`) e tem regra de "fatos literais" (6x1 não diz quais dias); entrevista já passada
+  (`jaFoi`) → nada de "te esperamos"/remarcar pela IA, recado vai à equipe 1×; lista de horários espalhada em até 3 dias
+  (`espalhar`); aviso `unconfirmed_alert_at` 3 h antes; retorno opcional para NA (`hiring_job_scheduling.feedback_message`,
+  modelo Meta `retorno_processo_seletivo`, pendente `aguardando_retorno`). `canal-publico`: arquivo >10 min depois da ficha
+  vira anexo (`hiring_candidate_events` kind `anexo`, `meta.path` em `curriculos/anexos/<cand>/…`), `sayOnce` contra aviso
+  repetido, nome grudado corrigido pelo perfil do WhatsApp (grafia diferente só avisa), menor de idade avisado.
