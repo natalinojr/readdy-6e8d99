@@ -848,6 +848,8 @@ export default function ConciliacaoTab() {
         cost_center_id: r.appliedRule?.cost_center_id || null,
         matched_at: r.matchStatus === 'matched' ? new Date().toISOString() : null,
         matched_by: r.matchStatus === 'matched' ? user.id : null,
+        // hora do lançamento quando o arquivo do banco traz (padrão raw.hora, lido por horaTransacao)
+        ...(r.time ? { raw: { hora: r.time, hora_ref: 'banco' } } : {}),
       }));
 
     if (toInsert.length === 0) {

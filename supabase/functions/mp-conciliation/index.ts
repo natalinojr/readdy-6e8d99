@@ -33,7 +33,7 @@
 //   get_history      {}                              dias importados + relatórios baixados
 //   release_request  { date_from, date_to }          pede o Relatório de Liberações ao MP
 //   release_schedule { frequency? }                  programa o relatório diário no MP
-//   release_fetch    {}                              baixa e importa os relatórios prontos
+//   release_fetch    { reprocess? }                  baixa e importa os relatórios prontos (reprocess: também os já importados)
 //   sync             { date_from? }                  dias sem sucesso + release_fetch
 //   sync_all         {}                              (interno) todas as lojas — cron 07h20
 //
@@ -93,6 +93,14 @@ function brDate(v: unknown): string | null {
   if (Number.isNaN(t)) return isoDate(s.slice(0, 10)) ? s.slice(0, 10) : null;
   return new Date(t - 3 * 3600_000).toISOString().slice(0, 10);
 }
+/** Data do MP (com offset) → 'HH:MM' em Brasília; null quando não tem hora. */
+function brTime(v: unknown): string | null {
+  const s = String(v ?? '');
+  if (!/T\d{2}:\d{2}|\s\d{2}:\d{2}/.test(s)) return null;
+  const t = Date.parse(s);
+  if (Number.isNaN(t)) return null;
+  return new Date(t - 3 * 3600_000).toISOString().slice(11, 16);
+}
 /** Início/fim do dia em Brasília no formato que a busca do MP aceita. */
 const dayStart = (d: string) => `${d}T00:00:00.000-03:00`;
 const dayEnd = (d: string) => `${d}T23:59:59.999-03:00`;
@@ -143,12 +151,14 @@ interface MpSale {
   status: string;
   approvedDate: string;   // dia em Brasília
   releaseDate: string;    // dia em Brasília (money_release_date, ou o de aprovação)
+  /** hora (Brasília) da liberação, ou da aprovação quando o MP não informa a da liberação */
+  releaseTime: string | null;
   gross: number;
   fee: number;
   net: number;
   refunded: number;
   /** Estornos com a data em que o dinheiro saiu (dia em Brasília). Soma = refunded. */
-  refunds: Array<{ id: string; date: string; amount: number }>;
+  refunds: Array<{ id: string; date: string; time: string | null; amount: number }>;
   /** Contestação perdida (status charged_back): dia em Brasília em que o MP registrou */
   chargebackDate: string | null;
   installments: number;
@@ -207,15 +217,16 @@ function parseSale(p: any): MpSale | null {
   const lastUpdate = brDate(p.date_last_updated) ?? approved;
   const refunds = (Array.isArray(p.refunds) ? p.refunds : [])
     .filter((r: any) => !r?.status || ['approved', 'processed'].includes(String(r.status)))
-    .map((r: any) => ({ id: String(r?.id ?? ''), date: brDate(r?.date_created) ?? lastUpdate, amount: round2(num(r?.amount)) }))
+    .map((r: any) => ({ id: String(r?.id ?? ''), date: brDate(r?.date_created) ?? lastUpdate, time: brTime(r?.date_created ?? p.date_last_updated), amount: round2(num(r?.amount)) }))
     .filter((r: { amount: number }) => r.amount > 0.004);
   // a busca às vezes vem sem a lista: um estorno só, na data da última alteração do pagamento
-  if (refunds.length === 0 && refunded > 0.004) refunds.push({ id: '', date: lastUpdate, amount: refunded });
+  if (refunds.length === 0 && refunded > 0.004) refunds.push({ id: '', date: lastUpdate, time: brTime(p.date_last_updated), amount: refunded });
   return {
     id: String(p.id),
     status: String(p.status ?? ''),
     approvedDate: approved,
     releaseDate: brDate(p.money_release_date) ?? approved,
+    releaseTime: brTime(p.money_release_date) ?? brTime(p.date_approved),
     gross, fee, net,
     refunded, refunds,
     chargebackDate: String(p.status ?? '') === 'charged_back' ? lastUpdate : null,
@@ -336,6 +347,7 @@ function saleRows(tenantId: string, bankAccountId: string, importId: string | nu
       source: 'mercadopago', provider_import_id: importId,
       raw: {
         kind: 'release', payment_id: s.id, status: s.status,
+        ...(s.releaseTime ? { hora: s.releaseTime, hora_ref: 'liberação' } : {}),
         gross: s.gross, fee: s.fee, net: s.net, refunded: s.refunded,
         installments: s.installments, brand: s.brand, payment_type: s.paymentType,
         operation_type: s.operationType, order_type: s.orderType, marketplace: s.marketplace,
@@ -358,11 +370,22 @@ function saleRows(tenantId: string, bankAccountId: string, importId: string | nu
         status: 'matched', match_kind: 'card_refund', matched_at: now,
         category: 'Estorno (Mercado Pago)',
         source: 'mercadopago', provider_import_id: importId,
-        raw: { kind: 'refund', payment_id: s.id, refund_id: r.id || null, refunded: r.amount, net: liquido, fee_returned: round2(r.amount - liquido), refund_date: r.date, status: s.status },
+        raw: { kind: 'refund', payment_id: s.id, refund_id: r.id || null, refunded: r.amount, net: liquido, fee_returned: round2(r.amount - liquido), refund_date: r.date, status: s.status, ...(r.time ? { hora: r.time, hora_ref: 'estorno' } : {}) },
       });
     });
   }
   return rows;
+}
+
+/** Hora nas linhas que já existiam (importadas antes de guardarmos a hora): o upsert ignora duplicadas. */
+async function setHora(admin: Admin, tenantId: string, bankAccountId: string, rows: Record<string, unknown>[]) {
+  const comHora = rows
+    .map((r) => ({ external_id: r.external_id, raw: (r.raw ?? {}) as Record<string, unknown> }))
+    .filter((r) => r.raw.hora)
+    .map((r) => ({ external_id: r.external_id, hora: r.raw.hora, hora_data: r.raw.hora_data ?? null, hora_ref: r.raw.hora_ref ?? null }));
+  if (comHora.length === 0) return;
+  const { error } = await admin.rpc('fn_statement_set_hora', { p_tenant: tenantId, p_bank_account: bankAccountId, p_rows: comHora });
+  if (error) log('WARN', 'import', 'gravar hora falhou', { tenantId, error: error.message });
 }
 
 async function insertStatement(admin: Admin, rows: Record<string, unknown>[]) {
@@ -489,7 +512,9 @@ async function importDay(admin: Admin, tenantId: string, cfg: any, token: string
 
   let inserted = 0;
   try {
-    inserted = await insertStatement(admin, saleRows(tenantId, cfg.bank_account_id, imp?.id ?? null, sales));
+    const linhas = saleRows(tenantId, cfg.bank_account_id, imp?.id ?? null, sales);
+    inserted = await insertStatement(admin, linhas);
+    await setHora(admin, tenantId, cfg.bank_account_id, linhas);
   } catch (e) {
     await logRow({ status: 'error', error_message: String((e as Error)?.message ?? e).slice(0, 500) });
     return { date, error: String((e as Error)?.message ?? e) };
@@ -600,6 +625,7 @@ function releaseRows(tenantId: string, bankAccountId: string, reportId: string |
         financing_fee: num(r.FINANCING_FEE_AMOUNT), shipping_fee: num(r.SHIPPING_FEE_AMOUNT),
         coupon: num(r.COUPON_AMOUNT), balance: num(r.BALANCE_AMOUNT),
         record_type: recordType || null, report: 'release',
+        ...(brTime(r.DATE) ? { hora: brTime(r.DATE), hora_ref: isPayout ? 'saque' : 'movimento' } : {}),
       },
     });
   }
@@ -611,13 +637,14 @@ function reportFileName(item: any): string {
 }
 
 /** Baixa e importa os relatórios que o MP já gerou e que ainda não importamos. */
-async function fetchReports(admin: Admin, tenantId: string, cfg: any, token: string) {
+async function fetchReports(admin: Admin, tenantId: string, cfg: any, token: string, reprocess = false) {
   const list = await mpFetch(token, '/v1/account/release_report/list');
   if (!list.ok) return { error: mpError(list) };
   const items: any[] = Array.isArray(list.body) ? list.body : (Array.isArray(list.body?.results) ? list.body.results : []);
   const { data: known } = await admin.from('fin_mp_reports')
     .select('file_name, status').eq('tenant_id', tenantId).limit(2000);
-  const done = new Set((known ?? []).filter((k: any) => k.status === 'success').map((k: any) => k.file_name));
+  // reprocess: baixa de novo os já importados (linhas existentes não duplicam; só completa o que faltava, ex.: hora)
+  const done = new Set(reprocess ? [] : (known ?? []).filter((k: any) => k.status === 'success').map((k: any) => k.file_name));
 
   // CUIDADO: o MP não usa o prefixo no começo do nome — ele PREFIXA o nosso prefixo. Pedimos
   // `erpos-7221d7f3` e o arquivo saiu `reserve-erpos-7221d7f3-2026-09-22-054037.csv`. Por isso
@@ -648,6 +675,7 @@ async function fetchReports(admin: Admin, tenantId: string, cfg: any, token: str
     try {
       const { rows, total, skipped } = releaseRows(tenantId, cfg.bank_account_id, rep?.id ?? null, dl.text);
       const inserted = await insertStatement(admin, rows);
+      await setHora(admin, tenantId, cfg.bank_account_id, rows);
       await admin.from('fin_mp_reports').update({
         status: 'success', rows_count: total, inserted_count: inserted,
         imported_at: new Date().toISOString(), error_message: null,
@@ -954,7 +982,7 @@ Deno.serve(async (req: Request) => {
     }
 
     if (action === 'release_fetch') {
-      const r = await fetchReports(admin, tenantId, cfg, tk.token);
+      const r = await fetchReports(admin, tenantId, cfg, tk.token, body.reprocess === true);
       if (!(r as any).error) {
         await admin.rpc('fn_match_mp_payouts', { p_tenant: tenantId, p_from: addDays(todayBR(), -60), p_to: todayBR() });
       }

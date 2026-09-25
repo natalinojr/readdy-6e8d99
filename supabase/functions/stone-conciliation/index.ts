@@ -61,6 +61,11 @@ function stoneDate(s: string | null | undefined, fallback: string): string {
   if (d.length >= 8) return `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}`;
   return fallback;
 }
+/** 'HH:MM' de um carimbo da Stone (aaaammddhhmmss, horário local da loja); null quando só tem a data */
+function stoneTime(s: string | null | undefined): string | null {
+  const d = String(s ?? '').replace(/\D/g, '');
+  return d.length >= 12 ? `${d.slice(8, 10)}:${d.slice(10, 12)}` : null;
+}
 // Valores da Stone vêm em reais com ponto decimal ("8732.020500")
 const money = (s: string | null | undefined) => {
   const n = Number(String(s ?? '').trim().replace(',', '.'));
@@ -151,6 +156,7 @@ function parseConciliation(xml: string, referenceDate: string): ParsedFile {
     const brand = BRAND[val(top, 'BrandId')] ?? (val(top, 'BrandId') ? `Bandeira ${val(top, 'BrandId')}` : '');
     const nInst = Number(val(top, 'NumberOfInstallments') || '1') || 1;
     const capture = stoneDate(val(top, 'CaptureLocalDateTime'), '');
+    const captureTime = stoneTime(val(top, 'CaptureLocalDateTime'));
     const cardNumber = val(top, 'CardNumber');
     const authCode = val(top, 'IssuerAuthorizationCode');
 
@@ -163,6 +169,7 @@ function parseConciliation(xml: string, referenceDate: string): ParsedFile {
       const chargeDate = stoneDate(val(billing, 'ChargeDate'), '');
       if (!charged || !chargeDate) continue; // PrevisionChargeDate = só aviso; o desconto vem no arquivo do dia da cobrança
       const returned = money(val(canc, 'ReturnedAmount'));
+      const cancAt = val(canc, 'CancellationDateTime');
       const opKey = val(canc, 'OperationKey');
       const paymentId = val(canc, 'PaymentId');
       lines.push({
@@ -171,7 +178,8 @@ function parseConciliation(xml: string, referenceDate: string): ParsedFile {
         description: [`Stone cancelamento de venda`, brand, capture ? `venda ${capture.split('-').reverse().join('/')}` : null, `R$ ${returned.toFixed(2).replace('.', ',')}`].filter(Boolean).join(' · ').slice(0, 250),
         category: 'Cancelamento Stone', stone_transaction_id: atk || itk || null, stone_payment_type: acct,
         stone_installment_info: { gross_amount: -round2(returned), net_amount: -round2(charged), fee_amount: -round2(returned - charged), advance_fee: 0, payment_id: paymentId || null, capture_date: capture || null },
-        raw: { kind: 'cancellation', atk, itk, operation_key: opKey, gross: -returned, net: -charged, returned, charged, charge_date: chargeDate, payment_id: paymentId, capture_date: capture, pilha: null },
+        raw: { kind: 'cancellation', atk, itk, operation_key: opKey, gross: -returned, net: -charged, returned, charged, charge_date: chargeDate, payment_id: paymentId, capture_date: capture, pilha: null,
+          ...(stoneTime(cancAt) ? { hora: stoneTime(cancAt), hora_data: stoneDate(cancAt, ''), hora_ref: 'cancelamento' } : {}) },
       });
     }
 
@@ -193,7 +201,9 @@ function parseConciliation(xml: string, referenceDate: string): ParsedFile {
           description: desc.slice(0, 250), category: `Recebimento Stone ${ACCOUNT_LABEL[acct] ?? 'Cartão'}`,
           stone_transaction_id: atk || itk || null, stone_payment_type: acct,
           stone_installment_info: { installment_number: Number(num), total_installments: nInst, card_brand: brand || null, authorization_code: authCode || null, gross_amount: round2(gross), net_amount: round2(net), fee_amount: round2(gross - net), advance_fee: round2(advFee), payment_id: paymentId || null, capture_date: capture || null, card_number: cardNumber || null },
-          raw: { kind: 'installment', atk, itk, account_type: acct, brand, installment: Number(num), installments: nInst, gross, net, payment_date: payDate, payment_id: paymentId, advance_fee: advFee, capture_date: capture },
+          raw: { kind: 'installment', atk, itk, account_type: acct, brand, installment: Number(num), installments: nInst, gross, net, payment_date: payDate, payment_id: paymentId, advance_fee: advFee, capture_date: capture,
+            // o repasse não tem hora no arquivo: a hora mostrada é a da VENDA (dia em hora_data)
+            ...(captureTime ? { hora: captureTime, hora_data: capture, hora_ref: 'venda' } : {}) },
           gross: round2(gross),
         });
       }
@@ -214,7 +224,7 @@ function parseConciliation(xml: string, referenceDate: string): ParsedFile {
             description: ['Stone chargeback', brand, capture ? `venda ${capture.split('-').reverse().join('/')}` : null, reason ? `motivo ${reason}` : null].filter(Boolean).join(' · ').slice(0, 250),
             category: 'Chargeback Stone', stone_transaction_id: atk || itk || null, stone_payment_type: acct,
             stone_installment_info: { gross_amount: -instGross, net_amount: -round2(Math.abs(amt)), fee_amount: -round2(instGross - Math.abs(amt)), advance_fee: 0, payment_id: val(cb, 'PaymentId') || null, capture_date: capture || null },
-            raw: { kind: 'chargeback', atk, itk, id, amount: amt, gross: -instGross, net: -Math.abs(amt), returned: instGross, charged: Math.abs(amt), reason, charge_date: stoneDate(val(cb, 'ChargeDate'), ''), payment_id: val(cb, 'PaymentId'), installment_payment_id: paymentId, installment_advance_fee: advFee, capture_date: capture, pilha: null },
+            raw: { kind: 'chargeback', atk, itk, id, amount: amt, gross: -instGross, net: -Math.abs(amt), returned: instGross, charged: Math.abs(amt), reason, charge_date: stoneDate(val(cb, 'ChargeDate'), ''), payment_id: val(cb, 'PaymentId'), installment_payment_id: paymentId, installment_advance_fee: advFee, capture_date: capture, pilha: null, ...(captureTime ? { hora: captureTime, hora_data: capture, hora_ref: 'venda' } : {}) },
           });
         }
       }
@@ -231,7 +241,7 @@ function parseConciliation(xml: string, referenceDate: string): ParsedFile {
             description: ['Stone reapresentação de chargeback', brand, capture ? `venda ${capture.split('-').reverse().join('/')}` : null].filter(Boolean).join(' · ').slice(0, 250),
             category: 'Chargeback Stone', stone_transaction_id: atk || itk || null, stone_payment_type: acct,
             stone_installment_info: { gross_amount: instGross, net_amount: round2(Math.abs(amt)), fee_amount: round2(instGross - Math.abs(amt)), advance_fee: 0, payment_id: val(cr, 'PaymentId') || null, capture_date: capture || null },
-            raw: { kind: 'chargeback_refund', atk, itk, id, amount: amt, gross: instGross, net: Math.abs(amt), returned: instGross, charged: Math.abs(amt), payment_id: val(cr, 'PaymentId'), installment_payment_id: paymentId, installment_advance_fee: advFee, capture_date: capture, pilha: null },
+            raw: { kind: 'chargeback_refund', atk, itk, id, amount: amt, gross: instGross, net: Math.abs(amt), returned: instGross, charged: Math.abs(amt), payment_id: val(cr, 'PaymentId'), installment_payment_id: paymentId, installment_advance_fee: advFee, capture_date: capture, pilha: null, ...(captureTime ? { hora: captureTime, hora_data: capture, hora_ref: 'venda' } : {}) },
           });
         }
       }
@@ -505,6 +515,12 @@ async function importDay(admin: Admin, tenantId: string, cfg: any, date: string)
       return { date, error: `Gravar extrato: ${error.message}` };
     }
     inserted = inserted.concat(data ?? []);
+  }
+  // Hora nas linhas que já existiam (importadas antes de guardarmos a hora): o upsert acima ignora duplicadas
+  const comHora = parsed.lines.filter((l) => l.raw.hora).map((l) => ({ external_id: l.external_id, hora: l.raw.hora, hora_data: l.raw.hora_data, hora_ref: l.raw.hora_ref }));
+  if (comHora.length > 0) {
+    const { error: hErr } = await admin.rpc('fn_statement_set_hora', { p_tenant: tenantId, p_bank_account: cfg.bank_account_id, p_rows: comHora });
+    if (hErr) log('WARN', 'import', 'gravar hora falhou', { tenantId, date, error: hErr.message });
   }
   const grossByExt = new Map(parsed.lines.filter((l) => l.gross != null).map((l) => [l.external_id, l.gross as number]));
   // Cancelamento/chargeback não têm lançamento próprio no banco (já vêm descontados do repasse): fora do casamento 1-a-1

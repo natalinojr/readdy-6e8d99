@@ -2863,6 +2863,15 @@ Venda cancelada depois de capturada **continua na lista de parcelas liquidadas**
 - Venda aprovada num dia e estornada/contestada depois: o sync busca por `date_last_updated` nos últimos 5 dias e reimporta o dia da venda.
 - Dia só com estorno/cancelamento (receita ou taxa negativa): `gross −= taxa` (sinal!) e o que ficar negativo vira despesa. O mesmo ajuste na Stone estava com o sinal trocado (nenhum dia real atingido).
 
+### Hora em toda linha de extrato (2026-09-25)
+
+Regra do dono: todo extrato da conciliação mostra a hora, de qualquer banco ou conta. Padrão único em `fin_bank_statement_imports.raw`: `hora` ('HH:MM', Brasília), `hora_data` (quando a hora é de OUTRO dia que a linha) e `hora_ref` (do que é a hora). `horaTransacao` (useConciliacao.ts) lê `raw.hora` e cai no `raw.dataInclusao` do Inter; hora de outro dia aparece "18:22 · venda 09/09".
+- **Stone**: o arquivo não tem hora do repasse → mostra a hora da VENDA (`CaptureLocalDateTime`, já local) com `hora_data` = dia da venda; cancelamento usa `CancellationDateTime`; chargeback, a hora da venda.
+- **Mercado Pago**: liberação (`money_release_date`, senão `date_approved`), estorno (`refunds[].date_created`), saque/movimento (coluna `DATE` do Relatório de Liberações). `release_fetch { reprocess: true }` rebaixa os relatórios já importados.
+- **Arquivo OFX/CSV** (Itaú e qualquer banco sem API): `DTPOSTED` com hora, convertida do fuso `[-3:BRT]`/`[0:GMT]`; 00:00:00 e 12:00:00 exatos = banco sem hora (não mostra). CSV: célula de data com hora ('10/09/2026 14:32').
+- Linha já importada ganha a hora pelo reimport: `fn_statement_set_hora(tenant, conta, [{external_id, hora, hora_data, hora_ref}])` só completa `raw.hora*` onde falta (o upsert da importação ignora duplicadas e regravar a linha desfaria a conciliação). Integração NOVA de banco/maquininha: gravar `raw.hora` desde o início.
+- Sem como recuperar: linhas de arquivo importadas antes (o arquivo não fica guardado).
+
 ### Operação go-live Paranaguá: carga, segurança e corridas (2026-09-17)
 Agentes (auditor, carga, testadores, revisores, executores) testaram produção na loja Testes PDV; dados de teste apagados ao final.
 - **Latência**: Edge rodava em sa-east-1 e o banco está em us-west-1 (~150 ms por consulta; create_order 4,5 s). `src/lib/supabase.ts` agora anexa `?forceFunctionRegion=us-west-1` (patch global de `fetch`, lista `EDGES_NA_REGIAO_DO_BANCO`) às edges que só falam com o banco; create_order caiu p/ ~1,1 s, record_payment ~0,8 s. Edges que falam com SEFAZ/Inter/Stone/Pix ficam no padrão. Edge nova só de banco → adicionar à lista.

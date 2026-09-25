@@ -70,9 +70,22 @@ export interface StatementImport {
   raw?: Record<string, unknown> | null;
 }
 
-/** Hora da transação ("18:28") quando o provedor informa — hoje só o Inter (raw.dataInclusao). */
-export function horaTransacao(s: Pick<StatementImport, 'raw'>): string | null {
-  const m = /[ T](\d{2}):(\d{2})/.exec(String(s.raw?.dataInclusao ?? ''));
+/**
+ * Hora da transação ("18:28", Brasília). Padrão de todas as origens: raw.hora (Stone, Mercado Pago, arquivo
+ * OFX/CSV); o Inter usa raw.dataInclusao. Quando a hora é de outro dia (repasse da Stone mostra a hora da
+ * VENDA), vem com o dia: "18:22 · venda 09/09".
+ */
+export function horaTransacao(s: Pick<StatementImport, 'raw'> & { transaction_date?: string }): string | null {
+  const raw = s.raw ?? {};
+  const hora = /^\d{2}:\d{2}$/.test(String(raw.hora ?? '')) ? String(raw.hora) : null;
+  if (hora) {
+    const dia = String(raw.hora_data ?? '');
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dia) && dia !== s.transaction_date) {
+      return `${hora} · ${raw.hora_ref ? `${raw.hora_ref} ` : ''}${dia.slice(8, 10)}/${dia.slice(5, 7)}`;
+    }
+    return hora;
+  }
+  const m = /[ T](\d{2}):(\d{2})/.exec(String(raw.dataInclusao ?? ''));
   return m ? `${m[1]}:${m[2]}` : null;
 }
 

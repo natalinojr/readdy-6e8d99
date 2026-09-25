@@ -17,6 +17,8 @@ export interface OFXTransaction {
   type: 'credit' | 'debit';
   checkNumber?: string;
   rawAmount?: number;   // valor original com sinal
+  /** Hora do lançamento (HH:MM, Brasília) quando o arquivo traz — vai para raw.hora na conciliação */
+  time?: string;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -31,6 +33,32 @@ function ofxDateToISO(raw: string): string {
   const digits = raw.replace(/[^0-9]/g, '').substring(0, 8);
   if (digits.length < 8) return '';
   return `${digits.substring(0, 4)}-${digits.substring(4, 6)}-${digits.substring(6, 8)}`;
+}
+
+/**
+ * Hora do DTPOSTED do OFX (aaaammddhhmmss[.xxx][-3:BRT]). Converte para Brasília quando o banco manda outro fuso.
+ * 00:00:00 e 12:00:00 exatos são o valor que muitos bancos põem quando NÃO têm a hora: tratados como sem hora.
+ */
+function ofxTime(raw: string): string | undefined {
+  const digits = raw.replace(/\[.*$/, '').replace(/[^0-9]/g, '');
+  if (digits.length < 12) return undefined;
+  const hh = Number(digits.substring(8, 10));
+  const mi = Number(digits.substring(10, 12));
+  const ss = digits.length >= 14 ? Number(digits.substring(12, 14)) : 0;
+  if (ss === 0 && mi === 0 && (hh === 0 || hh === 12)) return undefined;
+  const tz = /\[([+-]?\d+(?:\.\d+)?)/.exec(raw);
+  const offset = tz ? Number(tz[1]) : -3;
+  let min = hh * 60 + mi + Math.round((-3 - offset) * 60);
+  min = ((min % 1440) + 1440) % 1440;
+  return `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
+}
+
+/** Hora de uma célula de data do CSV ('10/09/2026 14:32' ou '2026-09-10T14:32:00') */
+function csvTime(str: string): string | undefined {
+  const m = /[ T](\d{1,2}):(\d{2})/.exec(str ?? '');
+  if (!m) return undefined;
+  const hh = Number(m[1]);
+  return hh < 24 ? `${String(hh).padStart(2, '0')}:${m[2]}` : undefined;
 }
 
 function parseBRNumber(str: string): number {
@@ -49,7 +77,8 @@ function parseBRNumber(str: string): number {
 
 function parseBRDate(str: string): string {
   if (!str) return '';
-  const s = str.trim();
+  // a célula pode vir com a hora junto ('10/09/2026 14:32'): a data é o primeiro pedaço
+  const s = str.trim().split(/[ T]/)[0];
   // dd/mm/yyyy ou dd/mm/yy
   if (/^\d{2}\/\d{2}\/\d{2,4}$/.test(s)) {
     const [d, m, y] = s.split('/');
@@ -126,6 +155,7 @@ export function parseOFX(content: string): OFXTransaction[] {
       type: rawAmount >= 0 ? 'credit' : 'debit',
       rawAmount,
       checkNumber: checkNum || undefined,
+      time: ofxTime(dateRaw),
     });
   }
 
@@ -153,6 +183,7 @@ export function parseOFX(content: string): OFXTransaction[] {
         type: rawAmount >= 0 ? 'credit' : 'debit',
         rawAmount,
         checkNumber: checkNum || undefined,
+        time: ofxTime(dateRaw),
       });
     }
   }
@@ -297,6 +328,7 @@ export function parseCSV(content: string): OFXTransaction[] {
         description: description.trim(),
         type,
         rawAmount: type === 'debit' ? -amount : amount,
+        time: csvTime(cols[0]),
       });
     } catch {
       // Linha inválida — ignorar
