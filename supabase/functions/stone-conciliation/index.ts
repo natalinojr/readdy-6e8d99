@@ -197,22 +197,28 @@ function parseConciliation(xml: string, referenceDate: string): ParsedFile {
           gross: round2(gross),
         });
       }
-      // Chargebacks descontados
+      // Chargeback (contestação do portador): descontado no ChargeDate do pagamento PaymentId do próprio Chargeback.
+      // Antes da liquidação a parcela e o chargeback vêm juntos e se anulam; depois, vem num pagamento futuro.
+      // gross/net negativos (−bruto da parcela / −valor descontado) para abater repasse, receita e DRE como o cancelamento.
+      const instGross = round2(Math.abs(gross || net));
       for (const cbWrap of children(inst, 'Chargebacks')) {
         for (const cb of children(cbWrap, 'Chargeback')) {
           const amt = money(val(cb, 'Amount'));
           if (!amt) continue;
           const id = val(cb, 'Id');
+          const reason = val(cb, 'ReasonCode');
           lines.push({
             external_id: `stone_cb_${id || `${atk}_${num}`}`,
             transaction_date: stoneDate(val(cb, 'ChargeDate') || val(cb, 'Date'), refDate),
             amount: round2(Math.abs(amt)), transaction_type: 'debit',
-            description: `Stone chargeback · ${brand || 'cartão'} · NSU ${atk}${val(cb, 'ReasonCode') ? ` · motivo ${val(cb, 'ReasonCode')}` : ''}`.slice(0, 250),
-            category: 'Chargeback Stone', stone_transaction_id: atk || null, stone_payment_type: acct, stone_installment_info: null,
-            raw: { kind: 'chargeback', atk, id, amount: amt, reason: val(cb, 'ReasonCode'), payment_id: val(cb, 'PaymentId') },
+            description: ['Stone chargeback', brand, capture ? `venda ${capture.split('-').reverse().join('/')}` : null, reason ? `motivo ${reason}` : null].filter(Boolean).join(' · ').slice(0, 250),
+            category: 'Chargeback Stone', stone_transaction_id: atk || itk || null, stone_payment_type: acct,
+            stone_installment_info: { gross_amount: -instGross, net_amount: -round2(Math.abs(amt)), fee_amount: -round2(instGross - Math.abs(amt)), advance_fee: 0, payment_id: val(cb, 'PaymentId') || null, capture_date: capture || null },
+            raw: { kind: 'chargeback', atk, itk, id, amount: amt, gross: -instGross, net: -Math.abs(amt), returned: instGross, charged: Math.abs(amt), reason, charge_date: stoneDate(val(cb, 'ChargeDate'), ''), payment_id: val(cb, 'PaymentId'), installment_payment_id: paymentId, installment_advance_fee: advFee, capture_date: capture, pilha: null },
           });
         }
       }
+      // Reapresentação (a Stone devolve o valor do chargeback): o espelho, com sinal positivo
       for (const crWrap of children(inst, 'ChargebackRefunds')) {
         for (const cr of children(crWrap, 'ChargebackRefund')) {
           const amt = money(val(cr, 'Amount'));
@@ -222,20 +228,23 @@ function parseConciliation(xml: string, referenceDate: string): ParsedFile {
             external_id: `stone_cbr_${id || `${atk}_${num}`}`,
             transaction_date: stoneDate(val(cr, 'ChargeDate') || val(cr, 'Date'), refDate),
             amount: round2(Math.abs(amt)), transaction_type: 'credit',
-            description: `Stone reapresentação de chargeback · NSU ${atk}`.slice(0, 250),
-            category: 'Chargeback Stone', stone_transaction_id: atk || null, stone_payment_type: acct, stone_installment_info: null,
-            raw: { kind: 'chargeback_refund', atk, id, amount: amt },
+            description: ['Stone reapresentação de chargeback', brand, capture ? `venda ${capture.split('-').reverse().join('/')}` : null].filter(Boolean).join(' · ').slice(0, 250),
+            category: 'Chargeback Stone', stone_transaction_id: atk || itk || null, stone_payment_type: acct,
+            stone_installment_info: { gross_amount: instGross, net_amount: round2(Math.abs(amt)), fee_amount: round2(instGross - Math.abs(amt)), advance_fee: 0, payment_id: val(cr, 'PaymentId') || null, capture_date: capture || null },
+            raw: { kind: 'chargeback_refund', atk, itk, id, amount: amt, gross: instGross, net: Math.abs(amt), returned: instGross, charged: Math.abs(amt), payment_id: val(cr, 'PaymentId'), installment_payment_id: paymentId, installment_advance_fee: advFee, capture_date: capture, pilha: null },
           });
         }
       }
     }
   }
 
-  // Cancelamento sai do repasse (pagamento) onde foi descontado: herda a pilha (antecipado/débito) desse pagamento
+  // Cancelamento/chargeback sai do repasse (pagamento) onde foi descontado: herda a pilha (antecipado/débito) desse
+  // pagamento; sem irmãs no arquivo, fica com a pilha da própria parcela (chargeback) ou débito (SQL: pilha nula = débito)
   for (const c of lines) {
-    if (c.raw.kind !== 'cancellation' || !c.raw.payment_id) continue;
-    const irmas = lines.filter((l) => l.raw.kind === 'installment' && l.raw.payment_id === c.raw.payment_id);
+    if (!['cancellation', 'chargeback', 'chargeback_refund'].includes(String(c.raw.kind))) continue;
+    const irmas = c.raw.payment_id ? lines.filter((l) => l.raw.kind === 'installment' && l.raw.payment_id === c.raw.payment_id) : [];
     if (irmas.length > 0) c.raw.pilha = irmas.some((l) => Number(l.raw.advance_fee) > 0) ? 'antecipado' : 'debito';
+    else if (c.raw.kind !== 'cancellation') c.raw.pilha = Number(c.raw.installment_advance_fee) > 0 ? 'antecipado' : 'debito';
   }
 
   // Eventos pagos/cobrados no dia
@@ -402,10 +411,12 @@ async function postLedger(admin: Admin, tenantId: string, importId: string, pars
       const fee = Number(info.fee_amount ?? 0);
       const adv = Number(info.advance_fee ?? 0);
       x.gross += gross; x.adv += adv; x.mdr += fee - adv; x.n++;
-    } else if (l.raw.kind === 'cancellation') {
-      // venda cancelada: sai da receita (bruto devolvido) e a taxa dela volta (bruto − valor descontado)
+    } else if (l.raw.kind === 'cancellation' || l.raw.kind === 'chargeback' || l.raw.kind === 'chargeback_refund') {
+      // venda cancelada/contestada: sai da receita (bruto) e a taxa volta (bruto − valor descontado);
+      // reapresentação do chargeback é o espelho (volta a receita e a taxa)
+      const sinal = l.raw.kind === 'chargeback_refund' ? 1 : -1;
       const returned = Number(l.raw.returned ?? l.amount);
-      x.gross -= returned; x.mdr -= returned - l.amount;
+      x.gross += sinal * returned; x.mdr += sinal * (returned - l.amount);
     } else if (l.transaction_type === 'debit') x.otherDebit += l.amount;
     else x.otherCredit += l.amount;
   }
@@ -496,8 +507,8 @@ async function importDay(admin: Admin, tenantId: string, cfg: any, date: string)
     inserted = inserted.concat(data ?? []);
   }
   const grossByExt = new Map(parsed.lines.filter((l) => l.gross != null).map((l) => [l.external_id, l.gross as number]));
-  // Cancelamento não tem lançamento próprio no banco (já vem descontado do repasse): fica fora do casamento 1-a-1
-  const cancExt = new Set(parsed.lines.filter((l) => l.raw.kind === 'cancellation').map((l) => l.external_id));
+  // Cancelamento/chargeback não têm lançamento próprio no banco (já vêm descontados do repasse): fora do casamento 1-a-1
+  const cancExt = new Set(parsed.lines.filter((l) => ['cancellation', 'chargeback', 'chargeback_refund'].includes(String(l.raw.kind))).map((l) => l.external_id));
   const matched = await autoMatch(admin, tenantId, cfg.bank_account_id, inserted.filter((r) => !cancExt.has(r.external_id)), grossByExt);
 
   // Stone × Inter: casa os grupos do dia com o repasse que caiu no Inter e marca transferências entre contas próprias
