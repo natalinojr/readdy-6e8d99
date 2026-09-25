@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { invokeWithAuth } from '@/lib/supabase';
+import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 
 export interface PricePoint {
@@ -38,19 +38,15 @@ export function useIngredientPriceHistory(ingredientId: string | null) {
 
     setLoading(true);
     try {
-      const { data, error: apiErr } = await invokeWithAuth<{
-        data: Array<{ date: string; price: number; supplier: string }>;
-      }>('purchase-write', {
-        body: {
-          action: 'list_purchase_prices',
-          tenant_id: user.tenantId,
-          payload: { ingredient_id: ingredientId },
-        },
+      // Mesma base do preço automático: compras ligadas + antigas do vínculo, por unidade do estoque
+      const { data, error: apiErr } = await supabase.rpc('fn_ingredient_price_history', {
+        p_tenant: user.tenantId, p_ingredient: ingredientId,
       });
 
       if (apiErr) throw apiErr;
 
-      const rows = data?.data ?? [];
+      const rows = ((data ?? []) as Array<{ date: string; price: number | string; supplier: string }>)
+        .map((r) => ({ date: r.date, price: Number(r.price), supplier: r.supplier }));
 
       if (rows.length === 0) {
         setStats(null);

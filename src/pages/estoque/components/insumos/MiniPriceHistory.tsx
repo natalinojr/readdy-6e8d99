@@ -6,6 +6,9 @@ import { useProductionPriceHistory } from '@/hooks/useProductionPriceHistory';
 const fmt = (v: number, digits = 2) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: digits }).format(v);
 
+// Insumo em g/ml tem preço de fração de centavo: mais casas para não virar R$ 0,00
+const fmtPreco = (v: number) => fmt(v, v > 0 && v < 1 ? 4 : 2);
+
 interface MiniPriceHistoryProps {
   insumo: Insumo;
 }
@@ -65,13 +68,13 @@ export default function MiniPriceHistory({ insumo }: MiniPriceHistoryProps) {
               <p className="text-[9px] text-zinc-400 uppercase tracking-wide mb-0.5">
                 {isProduction ? 'Custo médio 6m' : 'Preço médio 3m'}
               </p>
-              <p className="text-xs font-bold text-zinc-800">{fmt(stats.avg3m)}</p>
+              <p className="text-xs font-bold text-zinc-800">{fmtPreco(stats.avg3m)}</p>
             </div>
             <div className="bg-white border border-zinc-100 rounded-lg px-3 py-2 min-w-[90px]">
               <p className="text-[9px] text-zinc-400 uppercase tracking-wide mb-0.5">
                 {isProduction ? 'Custo médio 30 dias' : 'Média 30 dias'}
               </p>
-              <p className="text-xs font-bold text-zinc-800">{fmt(stats.avg1m)}</p>
+              <p className="text-xs font-bold text-zinc-800">{fmtPreco(stats.avg1m)}</p>
             </div>
             <div className="bg-white border border-zinc-100 rounded-lg px-3 py-2 min-w-[90px]">
               <p className="text-[9px] text-zinc-400 uppercase tracking-wide mb-0.5">Variação recente</p>
@@ -96,16 +99,19 @@ export default function MiniPriceHistory({ insumo }: MiniPriceHistoryProps) {
               <p className="text-[9px] text-zinc-400 uppercase tracking-wide mb-0.5">
                 {isProduction ? 'Faixa 6m' : 'Faixa 3m'}
               </p>
-              <p className="text-xs font-semibold text-zinc-700">{fmt(stats.minPrice)} – {fmt(stats.maxPrice)}</p>
+              <p className="text-xs font-semibold text-zinc-700">{fmtPreco(stats.minPrice)} – {fmtPreco(stats.maxPrice)}</p>
             </div>
           </div>
 
           {prices.length > 1 && (
-            <div className="flex-1 min-w-[140px] max-w-xs">
+            <div className="flex-1 min-w-[200px] max-w-xl">
               <p className="text-[9px] text-zinc-400 uppercase tracking-wide mb-1">
                 {isProduction ? 'Evolução do custo (6 meses)' : 'Evolução do preço (3 meses)'}
               </p>
-              <svg viewBox="0 0 100 26" className="w-full h-8" preserveAspectRatio="none">
+              {/* Preço em cada ponto (HTML por cima: o SVG estica e deformaria o texto) */}
+              <div className="relative pt-4 px-6">
+              <div className="relative">
+              <svg viewBox="0 0 100 26" className="w-full h-10 overflow-visible" preserveAspectRatio="none">
                 <defs>
                   <linearGradient id="miniGrad" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="0%" stopColor="#f59e0b" stopOpacity="0.25" />
@@ -117,12 +123,29 @@ export default function MiniPriceHistory({ insumo }: MiniPriceHistoryProps) {
                 {prices.map((p, i) => {
                   const x = prices.length === 1 ? 50 : (i / (prices.length - 1)) * 100;
                   const y = 24 - (p / sparkMax) * 22;
-                  return <circle key={i} cx={x} cy={y} r="1.5" fill="#f59e0b" />;
+                  return <circle key={i} cx={x} cy={y} r="1.5" fill="#f59e0b" vectorEffect="non-scaling-stroke" />;
                 })}
               </svg>
+              {stats.points.map((pt, i) => {
+                const x = prices.length === 1 ? 50 : (i / (prices.length - 1)) * 100;
+                const y = ((24 - (pt.price / sparkMax) * 22) / 26) * 100;
+                // Muitos pontos: mostra o preço de 1 em cada N (sempre o primeiro e o último) para não encavalar
+                const passo = Math.ceil(prices.length / 8);
+                if (i % passo !== 0 && i !== prices.length - 1) return null;
+                return (
+                  <span key={i}
+                    title={`${new Date(pt.date + 'T00:00:00').toLocaleDateString('pt-BR')} · ${'supplier' in pt ? pt.supplier : 'produção'} · ${fmtPreco(pt.price)}`}
+                    className="absolute -translate-x-1/2 -translate-y-full -mt-1 text-[9px] font-semibold text-amber-700 whitespace-nowrap bg-white/80 rounded px-0.5 leading-tight"
+                    style={{ left: `${x}%`, top: `${y}%` }}>
+                    {fmtPreco(pt.price)}
+                  </span>
+                );
+              })}
+              </div>
+              </div>
               <div className="flex justify-between text-[9px] text-zinc-400 mt-0.5">
                 <span>{stats.points[0]?.date ? new Date(stats.points[0].date + 'T00:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' }) : ''}</span>
-                <span className="font-semibold text-amber-600">{fmt(stats.lastPrice)}</span>
+                <span className="font-semibold text-amber-600">{fmtPreco(stats.lastPrice)}</span>
                 <span>{stats.points[stats.points.length - 1]?.date ? new Date(stats.points[stats.points.length - 1].date + 'T00:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' }) : ''}</span>
               </div>
             </div>
