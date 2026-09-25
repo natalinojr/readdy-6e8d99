@@ -1502,7 +1502,7 @@ export default function ConciliacaoTab() {
             message={lancTipo === 'fora_dre'
               ? `Saem das pendências como "${MOTIVOS_FORA_DRE.find(([k]) => k === lancMotivo)?.[1] ?? ''}". Nada é lançado e o resultado não muda. Cada um pode ser desfeito depois.`
               : `Viram ${lancTipo === 'compra' ? 'compra (CMV)' : 'despesa'} já paga, cada uma na data em que o dinheiro saiu, com competência do ${lancComp === 'prev' ? 'mês anterior ao pagamento' : 'mês do pagamento'}. A descrição de cada lançamento será o nome de quem recebeu.`}
-            confirmLabel="Lançar"
+            confirmLabel={lancTipo === 'fora_dre' ? 'Tirar do DRE' : 'Lançar'}
             onCancel={() => setConfirmarLote(false)}
             onConfirm={lancarSelecionados}
           />
