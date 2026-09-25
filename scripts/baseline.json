@@ -1,7 +1,7 @@
 {
-  "updated_at": "2026-09-16T01:31:29.335Z",
+  "updated_at": "2026-09-25T04:09:51.824Z",
   "tsc": {
-    "count": 292,
+    "count": 287,
     "keys": [
       "src/components/feature/CardapioExportImportModal.tsx: TS2345",
       "src/components/feature/CardapioExportImportModal.tsx: TS2345",
@@ -89,9 +89,6 @@
       "src/mocks/producao.ts: TS2820",
       "src/mocks/producao.ts: TS2739",
       "src/pages/auditoria/components/AlertasCriticos.tsx: TS2503",
-      "src/pages/autoatendimento/components/KioskConfigModal.tsx: TS2339",
-      "src/pages/autoatendimento/components/KioskConfigModal.tsx: TS2339",
-      "src/pages/autoatendimento/components/KioskConfigModal.tsx: TS2352",
       "src/pages/autoatendimento/components/PagamentoKiosk.tsx: TS2339",
       "src/pages/autoatendimento/components/PagamentoKiosk.tsx: TS2339",
       "src/pages/autoatendimento/components/PagamentoKiosk.tsx: TS2339",
@@ -101,8 +98,6 @@
       "src/pages/autoatendimento/page.tsx: TS2339",
       "src/pages/autoatendimento/page.tsx: TS2339",
       "src/pages/autoatendimento/page.tsx: TS2322",
-      "src/pages/autoatendimento/page.tsx: TS2339",
-      "src/pages/autoatendimento/page.tsx: TS2339",
       "src/pages/autoatendimento/page.tsx: TS2367",
       "src/pages/cardapio/components/DeliveryTab.tsx: TS2322",
       "src/pages/cardapio/components/ItemModal.tsx: TS2741",
@@ -298,7 +293,7 @@
     ]
   },
   "vitest": {
-    "total": 211,
+    "total": 752,
     "failed": []
   }
 }
