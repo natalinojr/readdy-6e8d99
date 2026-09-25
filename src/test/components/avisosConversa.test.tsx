@@ -65,3 +65,15 @@ describe('Avisos', () => {
     expect(h.updates[0].filtro).toBe('lido_em');
   });
 });
+
+describe('Avisos — corrida da recarga', () => {
+  it('recarga que chega depois de marcar não traz o número de volta', async () => {
+    h.linhas = [pago];
+    const { result } = renderHook(() => useAvisos(true));
+    await waitFor(() => expect(result.current.naoLidos).toBe(1));
+    await act(async () => { await result.current.marcarLidos(); });
+    // o servidor ainda responde com lido_em nulo (a leitura saiu antes da marcação)
+    await act(async () => { await result.current.recarregar(); });
+    expect(result.current.naoLidos).toBe(0);
+  });
+});

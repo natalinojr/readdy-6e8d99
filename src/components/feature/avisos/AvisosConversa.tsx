@@ -24,11 +24,14 @@ const horaDe = (iso: string) => new Date(iso).toLocaleTimeString('pt-BR', { time
 export function useAvisos(ativo: boolean) {
   const [avisos, setAvisos] = useState<Aviso[]>([]);
   const [carregado, setCarregado] = useState(false);
+  // Lidos aqui: a recarga que já estava a caminho ao abrir a conversa chega depois da marcação e
+  // traria lido_em nulo de volta (o número não sumia — visto no teste de 2026-09-25).
+  const lidosAqui = useRef(new Map<string, string>());
   const recarregar = useCallback(async () => {
     const { data, error } = await supabase.from('avisos')
       .select('id, kind, resumo, painel, created_at, lido_em')
       .order('created_at', { ascending: false }).limit(60);
-    if (!error) setAvisos(((data ?? []) as Aviso[]).reverse());
+    if (!error) setAvisos(((data ?? []) as Aviso[]).reverse().map((a) => (a.lido_em || !lidosAqui.current.has(a.id) ? a : { ...a, lido_em: lidosAqui.current.get(a.id)! })));
     setCarregado(true);
   }, []);
   useEffect(() => {
@@ -40,6 +43,7 @@ export function useAvisos(ativo: boolean) {
   const marcarLidos = useCallback(async () => {
     if (!avisos.some((a) => !a.lido_em)) return;
     const agora = new Date().toISOString();
+    for (const a of avisos) if (!a.lido_em) lidosAqui.current.set(a.id, agora);
     setAvisos((p) => p.map((a) => (a.lido_em ? a : { ...a, lido_em: agora })));
     await supabase.from('avisos').update({ lido_em: agora }).is('lido_em', null);
   }, [avisos]);
