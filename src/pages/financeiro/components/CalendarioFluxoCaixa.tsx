@@ -2,7 +2,7 @@ import { useState, useMemo, useCallback, useEffect } from 'react';
 import { useCashFlow, useBillsPayable, useReceivableInstallments } from '@/hooks/useFinanceiro';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
-import { todayBrasilia } from '@/lib/dateUtils';
+import { todayBrasilia, somarDias } from '@/lib/dateUtils';
 import { fetchAllRows } from '@/lib/fetchAllRows';
 import { formatCurrency } from '@/lib/formatters';
 import type { CashFlowEntry } from '@/types/financeiro';
@@ -119,6 +119,24 @@ export default function CalendarioFluxoCaixa() {
   // HOJE; não serve de abertura para um mês passado ou futuro.
   const [saldoAbertura, setSaldoAbertura] = useState(0);
   const [aberturaCarregada, setAberturaCarregada] = useState(false);
+  // Saldo REAL de hoje nas contas (Inter sincronizado ou razão da conta) — mesma regra da aba
+  // Projeção. null = loja sem banco configurado: aí vale o razão acumulado (saldoAbertura).
+  const [saldoBanco, setSaldoBanco] = useState<number | null>(null);
+  useEffect(() => {
+    setSaldoBanco(null);
+    if (!user?.tenantId) return;
+    let vivo = true;
+    supabase.from('fin_bank_accounts').select('current_balance, synced_balance')
+      .eq('tenant_id', user.tenantId).eq('is_active', true)
+      .then(({ data }) => {
+        if (!vivo) return;
+        const accs = (data ?? []) as Array<{ current_balance: number | null; synced_balance: number | null }>;
+        const total = accs.reduce((s, b) => s + Number(b.synced_balance ?? b.current_balance ?? 0), 0);
+        const usa = accs.some(b => b.synced_balance != null) || Math.abs(total) > 0.001;
+        setSaldoBanco(usa ? total : null);
+      });
+    return () => { vivo = false; };
+  }, [user?.tenantId]);
   const periodStartStr = activeBounds.periodStartStr;
 
   useEffect(() => {
@@ -159,7 +177,7 @@ export default function CalendarioFluxoCaixa() {
     end: Date,
     currentMonth: number,
     scope: 'mes' | 'semana',
-  ): DiaCalendario[] => {
+  ): { dias: DiaCalendario[]; abertura: number | null } => {
     const result: DiaCalendario[] = [];
 
     const entriesByDate = new Map<string, CashFlowEntry[]>();
@@ -224,7 +242,23 @@ export default function CalendarioFluxoCaixa() {
     // atrasadas — as mais urgentes — e a projeção dava saída zero.
     const EM_ABERTO = ['pending', 'partial', 'overdue'];
 
-    let saldoAcumulado = saldoAbertura;
+    // Com banco (saldo real), o saldo corrido parte do saldo de HOJE, como na aba Projeção.
+    // Antes partia do razão acumulado desde sempre — Paranaguá: "abertura" de R$ 94 mil com
+    // R$ 2,2 mil no banco, e o calendário dizia que sobrava dinheiro no fim do mês (2026-09-25).
+    // Dias passados ficam sem saldo corrido (não dá para reconstituir o banco pelo razão).
+    const usaBanco = saldoBanco !== null;
+    const previstoDoDia = (d: string) =>
+      (recByDate.get(d) ?? []).filter(c => c.status === 'pending').reduce((s, c) => s + c.amount, 0)
+      - (billsByDate.get(d) ?? []).filter(c => EM_ABERTO.includes(c.status)).reduce((s, c) => s + c.amount, 0);
+    let saldoAcumulado = usaBanco ? (saldoBanco as number) : saldoAbertura;
+    if (usaBanco) {
+      // Período que começa depois de hoje: soma o previsto de hoje até a véspera do 1º dia
+      const primeiro = new Date(start);
+      if (scope === 'mes') while (primeiro.getMonth() !== currentMonth) primeiro.setDate(primeiro.getDate() + 1);
+      const primeiroStr = localDateKey(primeiro);
+      for (let d = todayStr; d < primeiroStr; d = somarDias(d, 1)) saldoAcumulado += previstoDoDia(d);
+    }
+    let abertura: number | null = null;
     const current = new Date(start);
     while (current <= end) {
       const dateStr = localDateKey(current);
@@ -256,8 +290,11 @@ export default function CalendarioFluxoCaixa() {
       const totalSaidas = saidas + prevSaidas;
       const saldoDia = totalEntradas - totalSaidas;
 
-      if (isInPeriod) {
-        saldoAcumulado += saldoDia;
+      // Com banco, hoje só soma o previsto (o realizado de hoje já está no saldo do banco)
+      const conta = isInPeriod && (!usaBanco || dateStr >= todayStr);
+      if (conta) {
+        if (abertura === null) abertura = saldoAcumulado;
+        saldoAcumulado += usaBanco && isToday ? prevEntradas - prevSaidas : saldoDia;
       }
 
       result.push({
@@ -271,8 +308,8 @@ export default function CalendarioFluxoCaixa() {
         entradas: totalEntradas,
         saidas: totalSaidas,
         saldo: saldoDia,
-        saldoAcumulado: isInPeriod ? saldoAcumulado : undefined,
-        saldoNegativo: isProjecao && isInPeriod && saldoAcumulado < 0,
+        saldoAcumulado: conta ? saldoAcumulado : undefined,
+        saldoNegativo: isProjecao && conta && saldoAcumulado < 0,
         movimentacoes: movs,
         contasPagar,
         contasReceber,
@@ -281,8 +318,8 @@ export default function CalendarioFluxoCaixa() {
       current.setDate(current.getDate() + 1);
     }
 
-    return result;
-  }, [entries, bills, installments, todayStr, saldoAbertura]);
+    return { dias: result, abertura };
+  }, [entries, bills, installments, todayStr, saldoAbertura, saldoBanco]);
 
   const diasMensal = useMemo(
     () => buildDias(monthBounds.start, monthBounds.end, viewMonth, 'mes'),
@@ -294,7 +331,7 @@ export default function CalendarioFluxoCaixa() {
     [buildDias, weekBounds]
   );
 
-  const dias = viewMode === 'mensal' ? diasMensal : diasSemanal;
+  const { dias, abertura: aberturaPeriodo } = viewMode === 'mensal' ? diasMensal : diasSemanal;
 
   const goPrevMonth = useCallback(() => {
     setViewMonth(m => {
@@ -345,9 +382,10 @@ export default function CalendarioFluxoCaixa() {
     const prevEntradas = diasPeriodo.filter(d => d.isProjecao).reduce((s, d) => s + d.entradas, 0);
     const prevSaidas = diasPeriodo.filter(d => d.isProjecao).reduce((s, d) => s + d.saidas, 0);
     const diasNegativosCount = diasPeriodo.filter(d => d.saldoNegativo).length;
-    const saldoFinal = saldoAbertura + saldo;
+    const comSaldo = diasPeriodo.filter(d => d.saldoAcumulado !== undefined);
+    const saldoFinal = comSaldo.length ? comSaldo[comSaldo.length - 1].saldoAcumulado as number : null;
     return { entradas, saidas, saldo, prevEntradas, prevSaidas, diasNegativosCount, saldoFinal };
-  }, [dias, saldoAbertura]);
+  }, [dias]);
 
   const isLoading = loadingCF || loadingBills || loadingRec;
 
@@ -420,7 +458,7 @@ export default function CalendarioFluxoCaixa() {
               {resumoPeriodo.diasNegativosCount} {resumoPeriodo.diasNegativosCount === 1 ? 'dia futuro com saldo projetado negativo' : 'dias futuros com saldo projetado negativo'}
             </p>
             <p className="text-xs text-red-500 mt-0.5">
-              Projeção a partir do saldo de abertura de {formatCurrency(saldoAbertura)} (caixa acumulado até o início do período).
+              Projeção a partir de {formatCurrency(aberturaPeriodo ?? 0)} ({saldoBanco !== null ? 'saldo real das contas hoje + o previsto até o período' : 'caixa acumulado até o início do período'}).
               Verifique as contas a pagar e entradas previstas para evitar problemas de caixa.
             </p>
           </div>
@@ -443,7 +481,9 @@ export default function CalendarioFluxoCaixa() {
             {formatCurrency(resumoPeriodo.saldo)}
           </p>
           <p className="text-[10px] text-zinc-400 mt-0.5">
-            Abertura {formatCurrency(saldoAbertura)} → {formatCurrency(resumoPeriodo.saldoFinal)}
+            {aberturaPeriodo === null || resumoPeriodo.saldoFinal === null
+              ? 'Período passado: saldo corrido só de hoje em diante'
+              : <>{saldoBanco !== null && aberturaPeriodo === saldoBanco ? 'Hoje no banco' : 'Abertura'} {formatCurrency(aberturaPeriodo)} → {formatCurrency(resumoPeriodo.saldoFinal)}</>}
           </p>
         </div>
         <div className="bg-white rounded-xl border border-zinc-200 p-3">
