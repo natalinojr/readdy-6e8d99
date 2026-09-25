@@ -469,15 +469,19 @@ export default function TransacaoDetalheModal({
             const num = (v: unknown) => Number(v ?? 0);
             const vendas = groupRows.filter(r => r.source === 'stone');
             const deps = groupRows.filter(r => r.source !== 'stone');
+            // cancelamento/chargeback vêm como débito (gross/fee negativos): abatem o repasse, não são venda
+            const sinal = (r: { transaction_type?: string }) => (r.transaction_type === 'debit' ? -1 : 1);
+            const nVendas = vendas.filter(r => r.transaction_type !== 'debit').length;
+            const nDesc = vendas.length - nVendas;
             const bruto = vendas.reduce((s, r) => s + num(r.stone_installment_info?.gross_amount ?? r.amount), 0);
             const taxa = vendas.reduce((s, r) => s + num(r.stone_installment_info?.fee_amount), 0);
-            const liq = vendas.reduce((s, r) => s + num(r.amount), 0);
+            const liq = vendas.reduce((s, r) => s + sinal(r) * num(r.amount), 0);
             const dep = deps.reduce((s, r) => s + num(r.amount), 0);
             return (
               <div className="border border-green-200 rounded-xl overflow-hidden">
                 <div className="bg-green-50 px-3 py-2 flex items-center justify-between gap-2 text-xs">
                   <span className="font-semibold text-green-800"><i className="ri-links-line mr-1" />Repasse Stone × extrato do banco</span>
-                  <span className="text-green-700 whitespace-nowrap">{vendas.length} venda(s) · no banco {formatCurrency(dep)}</span>
+                  <span className="text-green-700 whitespace-nowrap">{nVendas} venda(s){nDesc > 0 ? ` · ${nDesc} cancelamento(s)` : ''} · no banco {formatCurrency(dep)}</span>
                 </div>
                 {transaction.match_group?.includes('+') && (() => {
                   const [d1, d2] = (transaction.match_group.split(':')[1] ?? '').split('+');
@@ -500,7 +504,7 @@ export default function TransacaoDetalheModal({
                       <span className="text-zinc-600 truncate mr-2">{r.description}</span>
                       <span className="text-zinc-800 whitespace-nowrap">
                         {formatCurrency(num(r.stone_installment_info?.gross_amount ?? r.amount))}
-                        <span className="text-zinc-400"> → {formatCurrency(num(r.amount))}</span>
+                        <span className="text-zinc-400"> → {formatCurrency(sinal(r) * num(r.amount))}</span>
                       </span>
                     </div>
                   ))}
