@@ -268,6 +268,22 @@ export default function TransacaoDetalheModal({
             </span>
           </div>
 
+          {/* Quem recebeu / quem pagou: é o que decide o que lançar */}
+          {(transaction.counterpart_name || transaction.counterpart_doc) && (
+            <div className="flex items-center gap-3 px-4 py-3 rounded-xl border border-zinc-200">
+              <i className={`${transaction.transaction_type === 'debit' ? 'ri-user-received-2-line' : 'ri-user-shared-2-line'} text-lg text-zinc-400`} />
+              <div className="min-w-0">
+                <p className="text-[11px] text-zinc-500">{transaction.transaction_type === 'debit' ? 'Pago a' : 'Recebido de'}</p>
+                <p className="text-sm font-semibold text-zinc-800 truncate">{transaction.counterpart_name || '—'}</p>
+                {transaction.counterpart_doc && (
+                  <p className="text-xs text-zinc-500">
+                    {transaction.counterpart_doc.length === 11 ? 'CPF ' : transaction.counterpart_doc.length === 14 ? 'CNPJ ' : 'Chave Pix '}{fmtDoc(transaction.counterpart_doc)}
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* Status */}
           <div className="flex items-center gap-3">
             <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold ${

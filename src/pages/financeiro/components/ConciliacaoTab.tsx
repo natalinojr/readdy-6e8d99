@@ -20,7 +20,7 @@ import ConfirmModal from '@/components/base/ConfirmModal';
 import ComoDinheiroEntraModal from './conciliacao/ComoDinheiroEntraModal';
 import RepassesStoneModal from './conciliacao/RepassesStoneModal';
 import { useMoneyFlow } from '@/hooks/useMoneyFlow';
-import { podeLancarDoExtrato, lancarDoExtrato, useCategoriasLancamento, type LancarTipo } from './conciliacao/LancarDoExtrato';
+import { podeLancarDoExtrato, lancarDoExtrato, useCategoriasLancamento, MOTIVOS_FORA_DRE, type LancarTipo } from './conciliacao/LancarDoExtrato';
 import CategoriaCombobox from './CategoriaCombobox';
 import type { OFXTransaction, MatchCandidate } from '@/utils/ofxParser';
 import type { StatementImport, ReconciliationRule } from '@/hooks/useConciliacao';
@@ -994,6 +994,7 @@ export default function ConciliacaoTab() {
   // anterior. Cada pagamento tem a sua data, então os ids vão em grupos, um por competência.
   const [lancComp, setLancComp] = useState<'same' | 'prev'>('same');
   const [lancRegra, setLancRegra] = useState(false);
+  const [lancMotivo, setLancMotivo] = useState(''); // 'Não entra no DRE' em lote: chave de MOTIVOS_FORA_DRE
   const [confirmarLote, setConfirmarLote] = useState(false);
   const selecionados = imports.filter(i => selLanc.has(i.id));
   // "Lançar" só vale para saída sem nota; entrada selecionada entra só no "dar ok"
@@ -1036,8 +1037,9 @@ export default function ConciliacaoTab() {
   const lancarSelecionados = async () => {
     if (!user?.tenantId || selLanc.size === 0) return;
     if (lancTipo === 'despesa' && !lancCat) { showToast('Escolha a categoria da despesa', 'error'); return; }
+    if (lancTipo === 'fora_dre' && !lancMotivo) { showToast('Escolha o motivo de não entrar no DRE', 'error'); return; }
     setConfirmarLote(false);
-    const oque = lancTipo === 'compra' ? 'compra (CMV)' : 'despesa';
+    const oque = lancTipo === 'compra' ? 'compra (CMV)' : lancTipo === 'fora_dre' ? 'fora do DRE' : 'despesa';
     setLancando(true);
     // um grupo por competência (a data de cada pagamento manda)
     const grupos = new Map<string, string[]>();
@@ -1049,16 +1051,17 @@ export default function ConciliacaoTab() {
     for (const [mes, ids] of grupos) {
       const r = await lancarDoExtrato(user.tenantId, ids, {
         kind: lancTipo,
+        motivo: lancTipo === 'fora_dre' ? lancMotivo : null,
         dre_category_id: lancTipo === 'despesa' ? lancCat : null,
         merchandise_category_id: lancTipo === 'compra' ? lancCat || null : null,
-        competence_month: mes,
+        competence_month: lancTipo === 'fora_dre' ? null : mes,
       });
       ok += r.results.filter(x => x.ok).length;
       falhas.push(...r.results.filter(x => !x.ok));
       if (r.error) { erro = r.error; break; }
     }
     // "Fazer sempre assim": cria a regra de lançamento para o CNPJ do lote
-    if (!erro && lancRegra && docDoLote) {
+    if (!erro && lancRegra && docDoLote && lancTipo !== 'fora_dre') {
       const quem = selSaidas[0]?.counterpart_name ?? null;
       const rr = await invokeWithAuth<{ error?: string }>('conciliacao-pagamentos', {
         body: {
@@ -1428,19 +1431,33 @@ export default function ConciliacaoTab() {
           {selSaidas.length > 0 && (<>
           <div className="border-t border-zinc-100 pt-3">
             <p className="text-[11px] font-medium text-zinc-500 mb-1.5">
-              Ou lançar {selSaidas.length === selLanc.size ? 'as' : `as ${selSaidas.length}`} saída{selSaidas.length > 1 ? 's' : ''} sem nota como despesa/compra:
+              Ou lançar {selSaidas.length === selLanc.size ? 'as' : `as ${selSaidas.length}`} saída{selSaidas.length > 1 ? 's' : ''} sem nota como despesa/compra, ou tirar do DRE:
             </p>
           </div>
 
           <div className="flex bg-zinc-100 rounded-lg p-0.5 w-full sm:w-fit">
-            {([['despesa', 'Despesa', 'ri-file-list-3-line'], ['compra', 'Compra (CMV)', 'ri-shopping-cart-line']] as const).map(([k, label, icon]) => (
-              <button key={k} onClick={() => { setLancTipo(k); setLancCat(''); }}
+            {([['despesa', 'Despesa', 'ri-file-list-3-line'], ['compra', 'Compra (CMV)', 'ri-shopping-cart-line'], ['fora_dre', 'Não entra no DRE', 'ri-eye-off-line']] as const).map(([k, label, icon]) => (
+              <button key={k} onClick={() => { setLancTipo(k); setLancCat(''); setLancMotivo(''); }}
                 className={`flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-3 py-2 rounded-md text-xs font-semibold cursor-pointer transition-colors ${lancTipo === k ? 'bg-violet-600 text-white' : 'text-zinc-600 hover:text-zinc-900'}`}>
                 <i className={icon} /> {label}
               </button>
             ))}
           </div>
 
+          {lancTipo === 'fora_dre' ? (
+          <div>
+            <label className="block text-[11px] font-medium text-zinc-500 mb-1">Motivo * <span className="font-normal text-zinc-400">— não cria conta nem compra; só sai das pendências sem mexer no resultado</span></label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+              {MOTIVOS_FORA_DRE.map(([k, label, ajuda]) => (
+                <button key={k} type="button" onClick={() => setLancMotivo(k)}
+                  className={`text-left px-3 py-2 rounded-lg border cursor-pointer ${lancMotivo === k ? 'bg-violet-600 border-violet-600 text-white' : 'bg-white border-zinc-200 text-zinc-700 hover:bg-zinc-50'}`}>
+                  <span className="block text-xs font-semibold">{label}</span>
+                  <span className={`block text-[11px] ${lancMotivo === k ? 'text-violet-100' : 'text-zinc-400'}`}>{ajuda}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+          ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             <div>
               <label className="block text-[11px] font-medium text-zinc-500 mb-1">{lancTipo === 'despesa' ? 'Categoria da DRE *' : 'Categoria do CMV'}</label>
@@ -1460,8 +1477,9 @@ export default function ConciliacaoTab() {
               </div>
             </div>
           </div>
+          )}
 
-          {docDoLote && (
+          {docDoLote && lancTipo !== 'fora_dre' && (
             <label className="flex items-start gap-2 text-xs text-zinc-700 cursor-pointer">
               <input type="checkbox" checked={lancRegra} onChange={e => setLancRegra(e.target.checked)} className="mt-0.5" />
               <span><b>Fazer sempre assim</b> para {selecionados[0]?.counterpart_name ?? 'este CNPJ'}: os próximos pagamentos viram este lançamento sozinhos (sugeridos em "Confirmar vínculos").</span>
@@ -1469,9 +1487,9 @@ export default function ConciliacaoTab() {
           )}
 
           <div className="flex items-center gap-2 flex-wrap">
-            <button disabled={lancando || (lancTipo === 'despesa' && !lancCat)} onClick={() => setConfirmarLote(true)}
+            <button disabled={lancando || (lancTipo === 'despesa' && !lancCat) || (lancTipo === 'fora_dre' && !lancMotivo)} onClick={() => setConfirmarLote(true)}
               className="flex-1 sm:flex-none px-4 py-2.5 rounded-xl bg-violet-600 text-white text-sm font-semibold hover:bg-violet-700 disabled:opacity-50 cursor-pointer">
-              {lancando ? 'Lançando…' : `Lançar ${selSaidas.length} já pago${selSaidas.length > 1 ? 's' : ''}`}
+              {lancando ? 'Lançando…' : lancTipo === 'fora_dre' ? `Tirar ${selSaidas.length} do DRE` : `Lançar ${selSaidas.length} já pago${selSaidas.length > 1 ? 's' : ''}`}
             </button>
             <span className="text-[11px] text-zinc-400">Cada um entra na sua data. Dá para desfazer depois.</span>
           </div>
@@ -1480,8 +1498,10 @@ export default function ConciliacaoTab() {
           <ConfirmModal
             isOpen={confirmarLote}
             icon="ri-add-circle-line"
-            title={`Lançar ${selSaidas.length} pagamento(s)?`}
-            message={`Viram ${lancTipo === 'compra' ? 'compra (CMV)' : 'despesa'} já paga, cada uma na data em que o dinheiro saiu, com competência do ${lancComp === 'prev' ? 'mês anterior ao pagamento' : 'mês do pagamento'}. A descrição de cada lançamento será o nome de quem recebeu.`}
+            title={lancTipo === 'fora_dre' ? `Tirar ${selSaidas.length} pagamento(s) do DRE?` : `Lançar ${selSaidas.length} pagamento(s)?`}
+            message={lancTipo === 'fora_dre'
+              ? `Saem das pendências como "${MOTIVOS_FORA_DRE.find(([k]) => k === lancMotivo)?.[1] ?? ''}". Nada é lançado e o resultado não muda. Cada um pode ser desfeito depois.`
+              : `Viram ${lancTipo === 'compra' ? 'compra (CMV)' : 'despesa'} já paga, cada uma na data em que o dinheiro saiu, com competência do ${lancComp === 'prev' ? 'mês anterior ao pagamento' : 'mês do pagamento'}. A descrição de cada lançamento será o nome de quem recebeu.`}
             confirmLabel="Lançar"
             onCancel={() => setConfirmarLote(false)}
             onConfirm={lancarSelecionados}
