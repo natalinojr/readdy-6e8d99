@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatCurrency } from '@/lib/formatters';
-import { todayBrasilia } from '@/lib/dateUtils';
+import { todayBrasilia, somarDias } from '@/lib/dateUtils';
 import { fetchAllRows } from '@/lib/fetchAllRows';
 import { ocorrenciasRecorrentes } from '@/lib/recorrencias';
 import {
@@ -321,6 +321,7 @@ export default function PrevisaoCaixaTab() {
   // Quando alguma conta tem saldo sincronizado pela API do banco (Inter)
   const [saldoSyncedAt, setSaldoSyncedAt] = useState<string | null>(null);
   const [totalRecebiveis, setTotalRecebiveis] = useState(0);
+  const [agendaQtd, setAgendaQtd] = useState(0);
   const [totalSaidas, setTotalSaidas] = useState(0);
   const [totalEntradas, setTotalEntradas] = useState(0);
   // Compromissos já VENCIDOS e em aberto, empilhados no dia de hoje.
@@ -635,6 +636,29 @@ export default function PrevisaoCaixaTab() {
     });
     setPendingReceivables(receivables);
 
+    // Agenda das maquininhas e do iFood (fin_agenda_recebiveis, 2026-09-25): cartão Stone ainda
+    // não pago (data em que cai) e repasse do iFood previsto. Só de amanhã em diante — o que cai
+    // hoje já está no saldo do banco. Mercado Pago não precisa: já vem no razão na data de liberação.
+    let sumAgenda = 0;
+    let qtdAgenda = 0;
+    const { data: agendaData, error: agendaErr } = await supabase.rpc('fin_agenda_recebiveis', {
+      p_tenant: user.tenantId, p_from: somarDias(todayStr, 1), p_to: endDateStr,
+    });
+    if (agendaErr) console.error('[PrevisaoCaixaTab] agenda de recebíveis:', agendaErr.message);
+    ((agendaData ?? []) as Array<{ data: string; origem: string; valor: number; qtd: number; descricao: string }>).forEach((a) => {
+      const v = Number(a.valor);
+      if (!dayMap[a.data] || !(v > 0.005)) return;
+      dayMap[a.data].entradasAuto += v;
+      dayMap[a.data].detalhes.push({
+        tipo: 'recebivel',
+        descricao: a.origem === 'stone' ? `${a.descricao} (${a.qtd} venda${a.qtd > 1 ? 's' : ''})` : a.descricao,
+        valor: v,
+      });
+      sumAgenda += v;
+      qtdAgenda += 1;
+    });
+    setAgendaQtd(qtdAgenda);
+
     // Folha → saídas folha (vermelho claro)
     // A data de saída é PROJETADA a partir da competência (ver payrollProjectedDate).
     // Folha vencida e ainda pendente (data projetada no passado) é jogada em HOJE:
@@ -663,7 +687,7 @@ export default function PrevisaoCaixaTab() {
     // O KPI "Recebíveis D+N" continua sendo SÓ parcelas de cartão a liquidar —
     // não pode ser lido de `entradasAuto`, que agora agrega também as entradas
     // automáticas do razão (auto_sale/auto_suprimento).
-    const sumRecebiveis = receivables.reduce((s, r) => s + Number(r.amount), 0);
+    const sumRecebiveis = receivables.reduce((s, r) => s + Number(r.amount), 0) + sumAgenda;
     let sumSaidas = 0;
     let sumEntradas = 0;
     const points: DayPoint[] = [];
@@ -871,7 +895,9 @@ export default function PrevisaoCaixaTab() {
             icon: 'ri-time-line',
             color: 'text-green-600',
             bg: 'bg-green-50',
-            sub: `${pendingReceivables.length} parcela(s) a liquidar`,
+            sub: agendaQtd > 0
+              ? `${pendingReceivables.length} parcela(s) + ${agendaQtd} dia(s) de cartão/iFood a receber`
+              : `${pendingReceivables.length} parcela(s) a liquidar`,
           },
           {
             label: 'Saídas Previstas',

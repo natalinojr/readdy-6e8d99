@@ -122,6 +122,21 @@ export default function CalendarioFluxoCaixa() {
   // Saldo REAL de hoje nas contas (Inter sincronizado ou razão da conta) — mesma regra da aba
   // Projeção. null = loja sem banco configurado: aí vale o razão acumulado (saldoAbertura).
   const [saldoBanco, setSaldoBanco] = useState<number | null>(null);
+  // Agenda das maquininhas (Stone ainda não paga) e repasses previstos do iFood — de amanhã até o
+  // fim do período exibido (o saldo corrido de meses futuros precisa dos dias intermediários).
+  const [agenda, setAgenda] = useState<Array<{ data: string; origem: string; valor: number; qtd: number; descricao: string }>>([]);
+  const agendaAte = activeBounds.endStr;
+  useEffect(() => {
+    setAgenda([]);
+    if (!user?.tenantId) return;
+    let vivo = true;
+    supabase.rpc('fin_agenda_recebiveis', { p_tenant: user.tenantId, p_from: somarDias(todayBrasilia(), 1), p_to: agendaAte })
+      .then(({ data, error }) => {
+        if (error) console.error('[CalendarioFluxoCaixa] agenda de recebíveis:', error.message);
+        if (vivo) setAgenda((data ?? []) as typeof agenda);
+      });
+    return () => { vivo = false; };
+  }, [user?.tenantId, agendaAte]);
   useEffect(() => {
     setSaldoBanco(null);
     if (!user?.tenantId) return;
@@ -235,6 +250,16 @@ export default function CalendarioFluxoCaixa() {
       recByDate.set(dueKey, list);
     });
 
+    agenda.forEach(a => {
+      const list = recByDate.get(a.data) ?? [];
+      list.push({
+        desc: a.origem === 'stone' ? `${a.descricao} (${a.qtd} venda${a.qtd > 1 ? 's' : ''})` : a.descricao,
+        amount: Number(a.valor),
+        status: 'pending',
+      });
+      recByDate.set(a.data, list);
+    });
+
     // Status de conta a pagar que ainda representam dívida em aberto.
     // 'partial' estava fora e por isso a conta paga pela metade sumia da previsão.
     // 'overdue' também estava fora: `fn_mark_overdue_bills` troca 'pending' →
@@ -319,7 +344,7 @@ export default function CalendarioFluxoCaixa() {
     }
 
     return { dias: result, abertura };
-  }, [entries, bills, installments, todayStr, saldoAbertura, saldoBanco]);
+  }, [entries, bills, installments, todayStr, saldoAbertura, saldoBanco, agenda]);
 
   const diasMensal = useMemo(
     () => buildDias(monthBounds.start, monthBounds.end, viewMonth, 'mes'),

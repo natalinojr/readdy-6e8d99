@@ -130,6 +130,10 @@ interface ParsedFile {
   lines: StmtLine[];
   sales: { count: number; gross: number };
   payments: { count: number; total: number; ids: string[] };
+  // Agenda (2026-09-25): parcelas das vendas do dia com a data prevista de pagamento, e vendas
+  // canceladas no dia (a agenda delas sai). Vão para fin_card_forecast.
+  forecasts: Array<{ external_key: string; transaction_key: string; capture_date: string; prevision_date: string; installment_number: number; total_installments: number; account_type: string; brand: string | null; gross: number; net: number }>;
+  cancelledKeys: string[];
 }
 
 function parseConciliation(xml: string, referenceDate: string): ParsedFile {
@@ -137,13 +141,34 @@ function parseConciliation(xml: string, referenceDate: string): ParsedFile {
   const refDate = stoneDate(val(header, 'ReferenceDate'), referenceDate);
   const lines: StmtLine[] = [];
 
-  // Vendas do dia (só resumo)
+  // Vendas do dia: resumo + agenda (cada parcela com a data prevista de pagamento)
   const ft = section(xml, 'FinancialTransactions');
   let salesCount = 0, salesGross = 0;
+  const forecasts: ParsedFile['forecasts'] = [];
+  const cancelledKeys: string[] = [];
   for (const tx of children(ft, 'Transaction')) {
     const top = stripContainers(tx, ['Events', 'Installments', 'Cancellations', 'Chargebacks', 'ChargebackRefunds', 'Poi']);
     const captured = money(val(top, 'CapturedAmount'));
     if (captured > 0) { salesCount++; salesGross += captured; }
+    const key = val(top, 'AcquirerTransactionKey') || val(top, 'InitiatorTransactionKey');
+    if (!key) continue;
+    const events = section(tx, 'Events');
+    if (Number(val(events, 'Cancellations') || '0') > 0) { cancelledKeys.push(key); continue; }
+    // só a venda capturada NESTE dia (o bloco também traz vendas antigas com evento no dia)
+    if (!(captured > 0) || Number(val(events, 'Captures') || '0') <= 0) continue;
+    const capture = stoneDate(val(top, 'CaptureLocalDateTime'), refDate);
+    const nInst = Number(val(top, 'NumberOfInstallments') || '1') || 1;
+    for (const inst of children(section(tx, 'Installments'), 'Installment')) {
+      const num = Number(val(inst, 'InstallmentNumber') || '1') || 1;
+      const net = money(val(inst, 'NetAmount'));
+      const prev = stoneDate(val(inst, 'PrevisionPaymentDate') || val(inst, 'PaymentDate'), '');
+      if (!(net > 0) || !prev) continue;
+      forecasts.push({
+        external_key: `stone_${key}_${num}`, transaction_key: key, capture_date: capture, prevision_date: prev,
+        installment_number: num, total_installments: nInst, account_type: ACCOUNT_TYPE[val(top, 'AccountType')] ?? 'card',
+        brand: BRAND[val(top, 'BrandId')] ?? null, gross: round2(money(val(inst, 'GrossAmount'))), net: round2(net),
+      });
+    }
   }
 
   // Parcelas liquidadas no dia → créditos
@@ -289,6 +314,7 @@ function parseConciliation(xml: string, referenceDate: string): ParsedFile {
   return {
     stoneCode: val(header, 'StoneCode'), referenceDate: refDate, layout: val(header, 'LayoutVersion'),
     lines, sales: { count: salesCount, gross: round2(salesGross) }, payments: { count: pays.length, total: round2(payTotal), ids: payIds },
+    forecasts, cancelledKeys,
   };
 }
 
@@ -534,6 +560,20 @@ async function importDay(admin: Admin, tenantId: string, cfg: any, date: string)
     const { data: si, error: siErr } = await admin.rpc('fn_match_stone_inter', { p_tenant: tenantId, p_from: addDays(lineDates[0], -1), p_to: addDays(lineDates[lineDates.length - 1], 1) });
     if (siErr) log('WARN', 'import', 'fn_match_stone_inter falhou', { tenantId, date, error: siErr.message }); else stoneInter = si;
   }
+  // Agenda de recebíveis (projeção de caixa): nunca derruba a importação
+  try {
+    for (let i = 0; i < parsed.forecasts.length; i += 200) {
+      const { error: fErr } = await admin.from('fin_card_forecast').upsert(
+        parsed.forecasts.slice(i, i + 200).map((f) => ({ ...f, tenant_id: tenantId, provider: 'stone' })),
+        { onConflict: 'tenant_id,provider,external_key', ignoreDuplicates: true });
+      if (fErr) { log('WARN', 'import', 'agenda: gravar falhou', { tenantId, date, error: fErr.message }); break; }
+    }
+    if (parsed.cancelledKeys.length > 0) {
+      await admin.from('fin_card_forecast').update({ cancelled_at: now })
+        .eq('tenant_id', tenantId).eq('provider', 'stone').in('transaction_key', parsed.cancelledKeys).is('cancelled_at', null);
+    }
+  } catch (e) { log('WARN', 'import', 'agenda falhou', { tenantId, date, error: String(e) }); }
+
   // Vendas e taxas no financeiro (opcional)
   let ledger: unknown = null;
   if (cfg.post_to_ledger === true && imp?.id) {
