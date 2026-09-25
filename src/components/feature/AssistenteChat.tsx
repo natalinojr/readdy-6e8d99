@@ -1196,7 +1196,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
             })}
             {/* Depois dos assuntos (dono, 2026-09-19): é para acompanhar a sequência inteira de vez em
                 quando, não é a conversa do dia a dia — por isso um link discreto, não mais uma linha. */}
-            <button onClick={() => abrirConversa('')}
+            <button onClick={() => abrirConversa('')} aria-label="Todas as mensagens juntas"
               className="w-full flex items-center justify-center gap-1.5 py-3 text-xs font-semibold text-violet-600 hover:bg-violet-50 cursor-pointer">
               <i className="ri-chat-3-line" /> Ver todas as mensagens juntas
             </button>

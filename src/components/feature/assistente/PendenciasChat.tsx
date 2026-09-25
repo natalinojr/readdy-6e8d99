@@ -332,7 +332,7 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
               {p.urgencia === 'alta' && <span className="px-1.5 rounded bg-red-100 text-red-700 font-bold">Urgente</span>}
               {p.status === 'vista' && <span className="text-zinc-400"><i className="ri-eye-line" /> vista</span>}
             </p>
-            <p className="font-semibold text-zinc-900 leading-snug mt-0.5">{p.titulo}</p>
+            <p data-titulo className="font-semibold text-zinc-900 leading-snug mt-0.5">{p.titulo}</p>
           </div>
           <div className="flex-shrink-0 text-right" title={`Chegou em ${new Date(p.criadaEm).toLocaleString('pt-BR')}`}>
             <p className="text-[11px] font-semibold text-zinc-600 whitespace-nowrap tabular-nums">{dataHora(p.criadaEm)}</p>

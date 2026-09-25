@@ -45,7 +45,7 @@ const props = {
   onPagar: vi.fn(), onAbrir, onPedir: vi.fn(), onVerMensagem: vi.fn(), onAbrirTarefa: vi.fn(),
 };
 
-const titulos = () => [...document.querySelectorAll('[data-pend] p.font-bold.text-zinc-900')].map((e) => e.textContent);
+const titulos = () => [...document.querySelectorAll('[data-pend] [data-titulo]')].map((e) => e.textContent);
 
 beforeEach(() => {
   localStorage.clear();

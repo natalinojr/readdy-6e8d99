@@ -361,6 +361,8 @@ describe('AssistenteChat — lista de conversas', () => {
     add('assistant', 'Aviso que não é do grupo', 'avisos');
     renderChat();
 
+    // Grupos têm aba própria na lista (2026-09-24).
+    await user.click(await screen.findByRole('tab', { name: /Grupos/ }));
     const linha = await screen.findByRole('button', { name: /Financeiro loja - EP MALL/ });
     expect(within(linha).getByLabelText('1 não lida(s)')).toBeInTheDocument();
     expect(within(linha).getByText(/compra lançada/)).toBeInTheDocument();
@@ -814,6 +816,7 @@ describe('AssistenteChat — resposta onde a pergunta foi feita', () => {
     expect(calls('send').at(-1)?.group_jid).toBeUndefined();
 
     await user.click(screen.getByRole('button', { name: 'Voltar para as conversas' }));
+    await user.click(await screen.findByRole('tab', { name: /Grupos/ })); // grupos em aba própria (2026-09-24)
     await entrarNaConversa(user, 'Financeiro Vila');
     await screen.findByText('Pedido do grupo');
     await user.type(screen.getByPlaceholderText('Mensagem'), 'e esse?');

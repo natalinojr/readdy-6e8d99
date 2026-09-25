@@ -227,15 +227,17 @@ describe('Conversas separadas por loja', () => {
     ];
   });
 
-  it('mostra só a loja aberta; a aba da outra loja avisa que tem mensagem nova', async () => {
-    // (as abas vêm das conversas: o AuthContext não lista as lojas depois de entrar)
+  it('mostra só a loja aberta; o seletor avisa que a outra loja tem mensagem nova', async () => {
+    // (as lojas vêm das conversas: o AuthContext não lista as lojas depois de entrar)
+    // Lojas numa lista suspensa desde 2026-09-24 (podem ser muitas).
     const user = userEvent.setup();
     renderPainel();
     expect(await screen.findByText('Assunto da Vila')).toBeInTheDocument();
     expect(screen.queryByText('Assunto de Paranaguá')).not.toBeInTheDocument();
-    expect(screen.getByLabelText('3 não lida(s) em Paranaguá')).toBeInTheDocument();
+    expect(screen.getByLabelText('3 não lida(s) em outras lojas')).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Paranaguá (3)' })).toBeInTheDocument();
     expect(screen.getByTestId('badge').textContent).toBe('3');
-    await user.click(screen.getByRole('tab', { name: /Paranaguá/ }));
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Loja das conversas' }), 'loja-2');
     expect(await screen.findByText('Assunto de Paranaguá')).toBeInTheDocument();
     expect(screen.queryByText('Assunto da Vila')).not.toBeInTheDocument();
   });
@@ -243,20 +245,20 @@ describe('Conversas separadas por loja', () => {
   it('Nova conversa na aba de Paranaguá começa a conversa em Paranaguá', async () => {
     const user = userEvent.setup();
     renderPainel();
-    await user.click(await screen.findByRole('tab', { name: /Paranaguá/ }));
+    await user.selectOptions(await screen.findByRole('combobox', { name: 'Loja das conversas' }), 'loja-2');
     await user.click(screen.getAllByRole('button', { name: /Nova conversa/ })[0]);
     expect(h.chamadas.filter((c) => c.action === 'colegas').at(-1)?.body.tenant_id).toBe('loja-2');
     await user.click(await screen.findByText('Beatriz'));
     expect(h.chamadas.find((c) => c.action === 'abrir')?.body).toMatchObject({ tenant_id: 'loja-2', user_id: 'u-bia' });
   });
 
-  it('o link do aviso de outra loja abre a conversa e já troca a aba para essa loja', async () => {
+  it('o link do aviso de outra loja abre a conversa e já troca a loja do seletor', async () => {
     h.mensagens = [{ id: 2, sender_id: 'u-ana', body: 'Assunto de Paranaguá', created_at: agora() }];
     const user = userEvent.setup();
     renderPainel('/modulos?conversa=t-pgua');
     await screen.findByRole('button', { name: 'Voltar para as conversas' });
     await user.click(screen.getByRole('button', { name: 'Voltar para as conversas' }));
-    expect(await screen.findByRole('tab', { name: /Paranaguá/, selected: true })).toBeInTheDocument();
+    expect(await screen.findByRole('combobox', { name: 'Loja das conversas' })).toHaveValue('loja-2');
   });
 });
 
@@ -302,22 +304,22 @@ describe('Pesquisar na conversa', () => {
 });
 
 describe('Abas por loja sem conversa em outra loja', () => {
-  it('só a loja aberta: sem abas, e a conversa de outra loja não aparece misturada', async () => {
+  it('só a loja aberta: sem seletor, e a conversa de outra loja não aparece misturada', async () => {
     h.conversas = [conversa({ thread_id: 't-v', tenant_id: 'loja-1', ultima: { id: 1, minha: false, texto: 'Oi da Vila', created_at: agora() } })];
     renderPainel();
     expect(await screen.findByText('Oi da Vila')).toBeInTheDocument();
-    expect(screen.queryByRole('tablist', { name: 'Loja das conversas' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('combobox', { name: 'Loja das conversas' })).not.toBeInTheDocument();
   });
 
-  it('conversa em outra loja cria a aba dela, e o cabeçalho da conversa diz a loja', async () => {
+  it('conversa em outra loja entra no seletor, e o cabeçalho da conversa diz a loja', async () => {
     h.conversas = [conversa({ thread_id: 't-p', tenant_id: 'loja-2', loja: 'El Patron Paranaguá', nao_lidas: 1,
       ultima: { id: 2, minha: false, texto: 'Oi de Paranaguá', created_at: agora() } })];
     const user = userEvent.setup();
     renderPainel();
-    const abas = await screen.findByRole('tablist', { name: 'Loja das conversas' });
-    expect(within(abas).getByRole('tab', { name: /Vila Leste/, selected: true })).toBeInTheDocument();
+    const seletor = await screen.findByRole('combobox', { name: 'Loja das conversas' });
+    expect(seletor).toHaveValue('loja-1');
     expect(screen.queryByText('Oi de Paranaguá')).not.toBeInTheDocument();
-    await user.click(within(abas).getByRole('tab', { name: /Paranaguá/ }));
+    await user.selectOptions(seletor, 'loja-2');
     await user.click(await screen.findByText('Oi de Paranaguá'));
     const cabecalho = (await screen.findByRole('button', { name: 'Voltar para as conversas' })).parentElement!;
     expect(within(cabecalho).getByText('El Patron Paranaguá')).toBeInTheDocument();
