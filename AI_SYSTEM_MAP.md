@@ -3348,3 +3348,7 @@ Sem SW ativo o POST cai no Vercel e falha — por isso o destino só existe no S
   recebimento (pode ser dias depois da nota); a tela mostra as duas datas.
 - **Critério do dono:** toda regra vale para qualquer loja. O caso da loja é só o exemplo. Consultar o banco
   inteiro antes de decidir (a trava kg→g teria estragado as verduras do sacolão).
+- **Linha órfã na Classificação:** compra apagada (ex.: lida da foto e substituída pela NF-e) deixava a linha
+  "sem CNPJ" na tela. O gatilho `zz_purchase_items_prune_orphans` (após apagar item de compra) chama
+  `fn_item_prune_orphans`, que remove a linha sem compra e passa o vínculo/classe para a gêmea única
+  (fornecedor pelo nome + descrição sem código + unidade normalizada). Sem gêmea segura, a linha ligada fica.
