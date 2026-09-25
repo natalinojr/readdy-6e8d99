@@ -1,4 +1,4 @@
-import { UserCheck, ListTodo, CalendarDays, ClipboardList, Plus, X, SlidersHorizontal, ListChecks, Users, Layers, Waypoints, LayoutTemplate, BellRing, Send, Gauge, FileText } from 'lucide-react';
+import { UserCheck, ListTodo, CalendarDays, ClipboardList, Plus, X, SlidersHorizontal, ListChecks, Users, Layers, Waypoints, LayoutTemplate, BellRing, Send, Gauge, FileText, Cloud } from 'lucide-react';
 import type { NoPasta } from '../lib/pastas';
 import { useVoltarFecha } from '../lib/mobile';
 import ArvorePastas from './ArvorePastas';
@@ -76,6 +76,7 @@ interface ListasSheetProps {
   onModelos?: () => void;
   /** Avisos de vencimento. */
   onAvisos?: () => void;
+  onMicrosoft?: () => void;
   /** Compartilhar a pasta (ou ver quem tem acesso). */
   onCompartilhar?: (no: NoPasta) => void;
   onClose: () => void;
@@ -89,7 +90,7 @@ interface ListasSheetProps {
  */
 export function ListasSheet({
   arvorePastas, temPastas, selectedId, onSelecionar, onNovaLista, onNovaSubpasta, onExcluir,
-  onCompartilhadas, onTodas, onAtribuidas, onStatus, onCampos, onTemplates, onModelos, onAvisos, onCompartilhar, onClose,
+  onCompartilhadas, onTodas, onAtribuidas, onStatus, onCampos, onTemplates, onModelos, onAvisos, onMicrosoft, onCompartilhar, onClose,
 }: ListasSheetProps) {
   useVoltarFecha(true, onClose);
 
@@ -231,6 +232,18 @@ export function ListasSheet({
               >
                 <BellRing size={16} className="shrink-0 text-slate-400" />
                 <span className="text-sm">Avisos de vencimento</span>
+              </button>
+            )}
+            {onMicrosoft && (
+              <button
+                onClick={() => {
+                  onClose();
+                  onMicrosoft();
+                }}
+                className="w-full flex items-center gap-3 px-4 py-3 text-left text-slate-600 active:bg-slate-50"
+              >
+                <Cloud size={16} className="shrink-0 text-slate-400" />
+                <span className="text-sm">OneDrive / SharePoint</span>
               </button>
             )}
           </div>

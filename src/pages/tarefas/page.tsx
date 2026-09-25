@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
-import { Plus, Pin, ListTodo, LayoutGrid, CalendarDays, ClipboardList, UserCheck, Users, Layers, Send, SlidersHorizontal, ListChecks, Waypoints, ArrowLeft, Gauge, Share2, LayoutTemplate, BellRing, FileText } from 'lucide-react';
+import { Plus, Pin, ListTodo, LayoutGrid, CalendarDays, ClipboardList, UserCheck, Users, Layers, Send, SlidersHorizontal, ListChecks, Waypoints, ArrowLeft, Gauge, Share2, LayoutTemplate, BellRing, FileText, Cloud } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
 import { useEuTarefas } from './hooks/useEuTarefas';
 import { useAppMode } from '@/contexts/AppModeContext';
@@ -31,6 +31,7 @@ import ArvorePastas from './components/ArvorePastas';
 import ConfirmDialog from './components/ConfirmDialog';
 import CompartilharPasta from './components/CompartilharPasta';
 import ConfigAvisos from './components/ConfigAvisos';
+import ConexaoMicrosoft from './components/ConexaoMicrosoft';
 import { BottomNav, ListasSheet } from './components/MobileNav';
 import Relatorios from './relatorios/Relatorios';
 import { chamarDono } from './relatorios/api';
@@ -137,6 +138,7 @@ export default function TarefasPage() {
   const [showCampos, setShowCampos] = useState(false);
   const [showTemplates, setShowTemplates] = useState(false);
   const [showAvisos, setShowAvisos] = useState(false);
+  const [showMicrosoft, setShowMicrosoft] = useState(false);
   const [telaModelos, setTelaModelos] = useState<TelaModelos | null>(null);
   const [showStatus, setShowStatus] = useState(false);
   const [showListasSheet, setShowListasSheet] = useState(false);
@@ -659,6 +661,12 @@ export default function TarefasPage() {
             >
               <BellRing size={13} /> Avisos de vencimento
             </button>
+            <button
+              onClick={() => setShowMicrosoft(true)}
+              className="w-full flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-xs text-slate-500 hover:bg-slate-50 hover:text-indigo-600"
+            >
+              <Cloud size={13} /> OneDrive / SharePoint
+            </button>
         </div>
       </aside>
 
@@ -867,6 +875,7 @@ export default function TarefasPage() {
           onCampos={() => setShowCampos(true)}
           onTemplates={() => setShowTemplates(true)}
           onAvisos={() => setShowAvisos(true)}
+          onMicrosoft={() => setShowMicrosoft(true)}
           onCompartilhar={setCompartilhando}
           onModelos={() => setTelaModelos({ tipo: 'lista' })}
           onClose={() => { setShowListasSheet(false); setRelatoriosAoEscolher(false); }}
@@ -1006,6 +1015,7 @@ export default function TarefasPage() {
       )}
 
       {showAvisos && <ConfigAvisos tenantId={eu.tenantId} write={write} onClose={() => setShowAvisos(false)} />}
+      {showMicrosoft && <ConexaoMicrosoft onClose={() => setShowMicrosoft(false)} />}
 
       {/* ── Templates de checklist ── */}
       {showTemplates && (
