@@ -60,18 +60,53 @@ export const SUPABASE_ANON_KEY = supabaseAnonKey;
  * recente e quem tem várias lojas (o dono) só enxergava uma. Só nas chamadas
  * REST/RPC: as Edge Functions não liberam esse header no CORS.
  */
-const fetchComLoja: typeof fetch = (input, init) => {
+const fetchComLoja: typeof fetch = async (input, init) => {
+  let url = '';
+  try { url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url; } catch { /* segue */ }
+  let req = init;
   try {
-    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
     const tenantId = localStorage.getItem('erpos_selected_tenant_id');
     if (tenantId && url.includes('/rest/v1/')) {
       const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
       headers.set('x-tenant-id', tenantId);
-      return fetch(input, { ...init, headers });
+      req = { ...init, headers };
     }
   } catch { /* localStorage bloqueado: segue sem o header */ }
-  return fetch(input, init);
+  const res = await fetch(input, req);
+  return await retentarSeJwtVencido(res, url, input, req);
 };
+
+// Token de acesso vencido (2026-09-25): o autoRefreshToken está desligado e a sessão só é renovada
+// pelo ping de 60 s do AuthContext — aba em segundo plano (timers estrangulados) ou PC que dormiu
+// mandava consultas com o token vencido e a tela mostrava "JWT expired" (visto na aba iFood).
+// Aqui, 401 "JWT expired" em /rest ou /functions → renova a sessão UMA vez (compartilhada entre
+// as consultas simultâneas) e repete a requisição com o token novo. Refresh recusado: devolve o
+// erro original (o AuthContext cuida do logout).
+let renovando: Promise<string | null> | null = null;
+export async function retentarSeJwtVencido(
+  res: Response, url: string, input: RequestInfo | URL, init?: RequestInit,
+  renovar: () => Promise<string | null> = async () => (await refreshSessionWithReason()).session?.access_token ?? null,
+): Promise<Response> {
+  if (res.status !== 401 || !(url.includes('/rest/v1/') || url.includes('/functions/v1/'))) return res;
+  if (input instanceof Request || (init?.body && typeof init.body !== 'string')) return res; // corpo não reenviável
+  const headers = new Headers(init?.headers);
+  const auth = headers.get('Authorization') ?? '';
+  if (!auth || auth === `Bearer ${supabaseAnonKey}`) return res; // chamada anônima: nada a renovar
+  let texto = '';
+  try { texto = await res.clone().text(); } catch { return res; }
+  if (!/jwt expired/i.test(texto)) return res;
+  renovando ??= (async () => {
+    try {
+      return await renovar();
+    } finally {
+      setTimeout(() => { renovando = null; }, 0);
+    }
+  })();
+  const token = await renovando;
+  if (!token) return res;
+  headers.set('Authorization', `Bearer ${token}`);
+  return await fetch(input, { ...init, headers });
+}
 
 /**
  * Trava do supabase-js com rede de segurança (tablet Android, 2026-09-21).

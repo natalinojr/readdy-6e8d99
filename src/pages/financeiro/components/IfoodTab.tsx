@@ -288,7 +288,7 @@ export default function IfoodTab() {
 
         <div className="flex flex-col lg:flex-row lg:items-center gap-3">
           {lojas.length > 0 && (
-            <div className="flex items-center gap-1.5 overflow-x-auto -mx-1 px-1 min-w-0 lg:flex-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            <div className="flex items-center gap-1.5 overflow-x-auto sm:overflow-visible sm:flex-wrap -mx-1 px-1 min-w-0 lg:flex-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
               {lojas.length > 1 && (
                 <button onClick={() => setLoja('')}
                   className={`px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap border cursor-pointer ${loja === '' ? 'bg-zinc-900 border-zinc-900 text-white' : 'bg-white border-zinc-200 text-zinc-600 hover:border-zinc-300'}`}>
