@@ -266,6 +266,11 @@ Quando o usuario pedir "muda X":
 
 Secao viva: registrar aqui padroes, decisoes e pegadinhas reutilizaveis conforme o sistema evolui. Cada entrada com data
 
+### 2026-09-25 — "Falha ao carregar: JWT expired" em aba aberta há tempo
+- **Causa:** o cliente Supabase roda com `autoRefreshToken: false`; a renovação depende do ping de 60 s do `AuthContext` (renova só se faltar < 5 min). Aba em segundo plano (timers estrangulados) ou PC que dormiu manda consulta com o token de acesso vencido → PostgREST/edge respondem 401 "JWT expired".
+- **Solução:** `fetchComLoja` (`src/lib/supabase.ts`) chama `retentarSeJwtVencido`: 401 com "JWT expired" em `/rest/v1` ou `/functions/v1`, com token de usuário e corpo string → `refreshSessionWithReason()` UMA vez (promise compartilhada entre consultas simultâneas) e repete com o token novo; refresh recusado devolve o 401 original. Teste: `src/test/lib/jwtExpiradoRetry.test.ts`.
+- **Pegadinha relacionada:** tela que faz `Promise.all` de consulta direta + edge fica vazia quando a edge está lenta — carregue a edge em paralelo sem bloquear (aba iFood, `get_config`).
+
 ### 2026-09-25 — "Failed to fetch dynamically imported module" caía na tela de erro
 - **Causa:** o `vite:preloadError` do `main.tsx` só dispara quando falha uma **dependência** da tela; quando o **próprio arquivo da rota** (React.lazy) não baixa (4G oscilando, ou deploy novo com aba antiga), o import rejeita direto no ErrorBoundary. Visto no celular com `page-*.js` de 1,4 MB que existia no servidor.
 - **Solução:** `src/lib/recargaTela.ts` — o ErrorBoundary do `App.tsx` recarrega sozinho quando o erro é de carregar tela, no máximo 1x por minuto (`sessionStorage erpos_chunk_reload_ts`, sem laço offline); se falhar de novo mostra "Não consegui carregar esta tela" em vez do erro técnico. Testado com build de produção apagando o arquivo da rota.
