@@ -20,7 +20,14 @@ const EV_STYLE: Record<string, { icon: string; cls: string }> = {
   entrevista: { icon: 'ri-calendar-event-line', cls: 'bg-violet-100 text-violet-700' },
   registro: { icon: 'ri-file-list-3-line', cls: 'bg-emerald-100 text-emerald-700' },
   anotacao: { icon: 'ri-sticky-note-line', cls: 'bg-yellow-100 text-yellow-800' },
+  anexo: { icon: 'ri-attachment-2', cls: 'bg-sky-100 text-sky-700' },
 };
+// Arquivo que o candidato mandou pelo WhatsApp depois da ficha (RG, carteira…): fica no bucket de currículos.
+async function abrirAnexo(path: string) {
+  const { data, error } = await supabase.storage.from('curriculos').createSignedUrl(path, 300);
+  if (error || !data?.signedUrl) { avisar('Não foi possível abrir o arquivo.'); return; }
+  window.open(data.signedUrl, '_blank', 'noopener');
+}
 const quemFez = (a: string | null) => (!a || a === 'sistema' ? 'sistema' : a === 'assistente' ? 'assistente (WhatsApp/IA)' : a.split('@')[0]);
 const quando = (iso: string) => new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' });
 
@@ -86,7 +93,11 @@ function HistoricoCandidato({ c, refreshKey }: { c: Candidate; refreshKey: strin
                     <button onClick={() => apagar(ev)} title="Apagar anotação" className="opacity-0 group-hover:opacity-100 text-zinc-400 hover:text-red-500 cursor-pointer"><i className="ri-close-line" /></button>
                   )}
                 </div>
-                {ev.detail && <p className={`text-xs mt-0.5 whitespace-pre-wrap ${ev.kind === 'anotacao' ? 'text-zinc-800' : 'text-zinc-500'}`}>{ev.detail}</p>}
+                {ev.kind === 'anexo' && typeof ev.meta?.path === 'string' ? (
+                  <button onClick={() => abrirAnexo(String(ev.meta.path))} className="text-xs mt-0.5 font-semibold text-sky-700 hover:underline cursor-pointer text-left">
+                    <i className="ri-external-link-line" /> {ev.detail || 'Abrir arquivo'}
+                  </button>
+                ) : ev.detail && <p className={`text-xs mt-0.5 whitespace-pre-wrap ${ev.kind === 'anotacao' ? 'text-zinc-800' : 'text-zinc-500'}`}>{ev.detail}</p>}
                 <p className="text-[10px] text-zinc-400 mt-0.5">{quando(ev.at)} · {quemFez(ev.actor)}</p>
               </li>
             );

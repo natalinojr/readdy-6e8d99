@@ -68,7 +68,9 @@ async function sendText(number: string, text: string): Promise<string | null> {
 }
 
 // ── janela de 24 h (API oficial) ──
-type Tpl = { name: string; params: string[]; aguardaJanela?: boolean };
+// aguardaJanela: o texto de verdade vai na 1ª resposta da pessoa (o modelo só abre a conversa);
+// aguarda = que pedido fica pendente ('aguardando_janela' = horários do convite; 'aguardando_retorno' = retorno NA).
+type Tpl = { name: string; params: string[]; aguardaJanela?: boolean; aguarda?: string };
 async function inWindow(dest: string): Promise<boolean> {
   const { data } = await sbLid.from('wa_last_in').select('at').eq('phone_key', foneKey(dest)).maybeSingle();
   return !!data?.at && Date.now() - Date.parse(String(data.at)) < 23.5 * 3600_000;
@@ -129,7 +131,7 @@ function parseDataBR(text: string): string | null {
 
 // deno-lint-ignore no-explicit-any
 type Row = Record<string, any>;
-interface Ctx { sess: Row; job: Row; cfg: Row; cand: Row; company: Row | null }
+interface Ctx { sess: Row; job: Row; cfg: Row; cand: Row; company: Row | null; canais?: Row[] }
 
 // Entrevistador da vaga (hiring_job_scheduling.interviewers), desde 2026-09-16 de dois tipos:
 //   whatsapp — { name, phone, jid? } (formato antigo, sem "kind"): avisado e responde pelo WhatsApp;
@@ -158,14 +160,65 @@ async function loadCtx(admin: SupabaseClient, sess: Row): Promise<Ctx | null> {
     admin.from('hiring_candidates').select('id, full_name, phone, stage_id').eq('id', sess.candidate_id).maybeSingle(),
   ]);
   if (!job || !cfg || !cand) return null;
-  const { data: company } = job.company_id ? await admin.from('hiring_companies').select('name, address, city, lat, lng').eq('id', job.company_id).maybeSingle() : { data: null };
-  return { sess, job, cfg, cand, company };
+  const [{ data: company }, { data: canais }] = await Promise.all([
+    job.company_id ? admin.from('hiring_companies').select('name, address, city, lat, lng, description').eq('id', job.company_id).maybeSingle() : Promise.resolve({ data: null }),
+    admin.from('bot_channels').select('share_fields, extra_info').eq('job_id', job.id).eq('is_active', true),
+  ]);
+  return { sess, job, cfg, cand, company, canais: (canais ?? []) as Row[] };
+}
+
+// O que a IA do agendamento pode contar sobre a vaga: o MESMO que o link de currículo da vaga libera
+// (bot_channels.share_fields + extra_info). Antes ela só sabia o horário e respondia "a equipe explica
+// na entrevista" até para o vale-alimentação que o outro atendente já tinha contado (Alexssandro,
+// 2026-09-19), e não sabia dizer onde se trabalha (Alexandra, 2026-09-15).
+const SHARE_LABELS: Record<string, string> = {
+  description: 'Descrição da vaga', requirements: 'Requisitos', desirable: 'Desejável', schedule: 'Horário / escala',
+  salary: 'Salário', benefits: 'Benefícios', contract_type: 'Tipo de contratação', openings: 'Quantidade de vagas',
+};
+function fatosDaVaga(c: Ctx): string[] {
+  const share = new Set<string>(['schedule']);
+  const extras: string[] = [];
+  for (const ch of c.canais ?? []) {
+    for (const f of Array.isArray(ch.share_fields) ? ch.share_fields : []) share.add(String(f));
+    if (String(ch.extra_info ?? '').trim()) extras.push(String(ch.extra_info).trim());
+  }
+  const out: string[] = [];
+  if (c.company) {
+    const end = [c.company.address, c.company.city].filter(Boolean).join(', ');
+    out.push(`Local de trabalho: ${c.company.name}${end ? ` — ${end}` : ''}`);
+    if (share.has('company') && c.company.description) out.push(`Sobre a empresa: ${c.company.description}`);
+  }
+  for (const f of share) {
+    const v = c.job[f];
+    if (SHARE_LABELS[f] && v != null && String(v).trim()) out.push(`${SHARE_LABELS[f]}: ${v}`);
+  }
+  for (const e of [...new Set(extras)]) out.push(`Outras informações: ${e}`);
+  return out;
 }
 
 async function freeSlots(admin: SupabaseClient, jobId: string, limit = OFFER): Promise<string[]> {
-  const { data, error } = await admin.rpc('fn_hiring_free_slots', { p_job: jobId, p_limit: limit });
+  // Lista para OFERECER (limit = OFFER): espalhada em até 3 dias. Antes eram os 6 primeiros horários,
+  // sempre do mesmo dia (às vezes o próprio dia), e vários candidatos pediram outro dia (15–21/09).
+  const { data, error } = await admin.rpc('fn_hiring_free_slots', { p_job: jobId, p_limit: limit === OFFER ? 300 : limit });
   if (error) { log('ERROR', 'fn_hiring_free_slots', { error: error.message }); return []; }
-  return ((data ?? []) as Row[]).map((r) => new Date(r.starts_at).toISOString());
+  const todos = ((data ?? []) as Row[]).map((r) => new Date(r.starts_at).toISOString());
+  return limit === OFFER ? espalhar(todos, OFFER) : todos;
+}
+// Até 3 dias; em cada dia, horários distribuídos ao longo do dia (não só os primeiros). Ordem cronológica.
+function espalhar(slots: string[], n: number): string[] {
+  if (slots.length <= n) return slots;
+  const porDia = new Map<string, string[]>();
+  for (const s of slots) { const d = localParts(s).d; porDia.set(d, [...(porDia.get(d) ?? []), s]); }
+  const dias = [...porDia.keys()].slice(0, 3);
+  const escolhidos = new Set<string>();
+  const cota = Math.ceil(n / dias.length);
+  for (const d of dias) {
+    const l = porDia.get(d)!;
+    const k = Math.min(cota, l.length);
+    for (let i = 0; i < k; i++) escolhidos.add(l[Math.round((i * (l.length - 1)) / Math.max(1, k - 1))]);
+  }
+  for (const s of slots) { if (escolhidos.size >= n) break; escolhidos.add(s); } // dia com poucos horários
+  return [...escolhidos].sort().slice(0, n);
 }
 const slotsText = (slots: string[]) => slots.map((s, i) => `${i + 1}) ${fmtSlot(s)}`).join('\n');
 const onde = (c: Ctx) => c.cfg.format === 'video' ? `online${c.cfg.location ? ` (${c.cfg.location})` : ''}` : c.cfg.format === 'telefone' ? 'por telefone' : `presencial${c.cfg.location ? ` — ${c.cfg.location}` : ''}`;
@@ -215,7 +268,7 @@ async function toCand(admin: SupabaseClient, c: Ctx, text: string, extraIn: Row 
   const r = await sendSmart(await destFor(c.sess.phone, c.sess.jid), text, tpl);
   const hist = r.modelo && tpl ? renderTemplate(tpl.name, tpl.params) : text;
   // Convite por modelo: os horários vão na 1ª resposta dele (ver 'aguardando_janela' em handleCandidate).
-  const pend = r.modelo && tpl?.aguardaJanela ? { pending_request: { kind: 'aguardando_janela', at: new Date().toISOString() } } : {};
+  const pend = r.modelo && tpl?.aguardaJanela ? { pending_request: { kind: tpl.aguarda ?? 'aguardando_janela', at: new Date().toISOString() } } : {};
   await addHist(admin, c.sess.id, 'assistente', hist, { last_out_at: new Date().toISOString(), last_out_msg_id: r.id, delivered_at: null, read_at: null, ...extra, ...pend }, __tipo ? String(__tipo) : undefined);
 }
 // Dono no chat do assistente (2026-09-16). Até aqui TODO aviso de contratação ia só por WhatsApp aos
@@ -370,6 +423,14 @@ function descrPref(p: Row): string {
   if (p.antes_de) partes.push(`antes das ${String(p.antes_de).replace(':00', 'h')}`);
   return partes.join(' ');
 }
+// WhatsApp usa *um* asterisco para negrito; a IA às vezes manda **markdown** (Syria, 2026-09-19).
+const zap = (s: string) => s.replace(/\*\*(.+?)\*\*/g, '*$1*').replace(/^#+\s*/gm, '');
+// Texto de retorno (NA) configurado na vaga, com {nome}, {empresa} e {vaga}.
+function textoRetorno(c: Ctx): string {
+  const tpl = String(c.cfg.feedback_message ?? '').trim();
+  if (!tpl) return '';
+  return tpl.replace(/\{nome\}/g, firstName(c.cand.full_name)).replace(/\{empresa\}/g, empresa(c)).replace(/\{vaga\}/g, c.job.title ?? '');
+}
 const COMO_RESPONDER = 'É só me dizer qual prefere: pode ser o número ou o dia e horário (ex.: segunda às 17h).';
 
 // ── interpretação da mensagem do candidato (sem ferramentas) ──
@@ -379,9 +440,10 @@ async function classify(c: Ctx, text: string, offered: string[]): Promise<Row> {
   const client = new Anthropic({ apiKey });
   const fatos = [
     `Empresa: ${empresa(c)}`, `Vaga: ${c.job.title}`, `Entrevista: ${onde(c)}, ${c.cfg.duration_min} minutos`,
-    c.cfg.candidate_notes ? `Orientações: ${c.cfg.candidate_notes}` : '', c.job.schedule ? `Horário/escala da vaga: ${c.job.schedule}` : '',
-    c.company?.address ? `Endereço da empresa: ${c.company.address}` : '',
-    c.sess.status === 'agendado' && c.sess.interview_at ? `Entrevista marcada: ${fmtSlot(c.sess.interview_at)}` : '',
+    c.cfg.candidate_notes ? `Orientações: ${c.cfg.candidate_notes}` : '',
+    ...fatosDaVaga(c),
+    c.sess.status === 'agendado' && c.sess.interview_at
+      ? `Entrevista marcada: ${fmtSlot(c.sess.interview_at)}${localDate(new Date(c.sess.interview_at)) === localDate(new Date()) ? ' (é HOJE)' : ''}` : '',
   ].filter(Boolean).join('\n');
   const opcoes = offered.map((s, i) => `${i + 1} = ${fmtSlot(s)} (${new Date(s).toLocaleString('sv-SE', { timeZone: TZ }).slice(0, 16).replace(' ', 'T')})`).join('\n') || '(nenhuma oferecida)';
   // Últimas falas (sem a atual): dá contexto a "pode ser esse", "o primeiro", "sim".
@@ -399,7 +461,11 @@ Responda SÓ com JSON válido:
  "opcao": número da opção escolhida ou null,
  "data_hora": "AAAA-MM-DDTHH:MM" (horário de São Paulo) se ele citou um dia E uma hora exata, senão null,
  "preferencia": {"data": "AAAA-MM-DD" ou null, "depois_de": "HH:MM" ou null, "antes_de": "HH:MM" ou null, "periodo": "manha" | "tarde" | "noite" | null} ou null,
- "resposta": texto curto e gentil em português para enviar (para pergunta/agradecer/outro; use só os fatos; salário, benefícios e o que não estiver nos fatos: diga que a equipe explica na entrevista)}
+ "resposta": texto curto e gentil em português para enviar (para pergunta/agradecer/outro; use só os fatos; o que não estiver nos fatos: diga que a equipe explica na entrevista)}
+- Fatos são literais: não deduza nem complete. "6x1" = 6 dias de trabalho e 1 de folga, sem dizer quais dias; nunca diga que dias são de folga, se trabalha domingo/feriado, se é diária, temporário ou fixo, a menos que esteja escrito nos fatos.
+- Pergunta sobre onde vai trabalhar: responda com o "Local de trabalho" dos fatos (o local da entrevista pode ser outro).
+- Se a entrevista marcada é hoje, diga "hoje" (nunca o dia da semana como se fosse outro dia).
+- Texto simples de WhatsApp: *negrito* com um asterisco só; nunca **dois**.
 - O candidato NÃO precisa responder com número. Entenda o jeito dele de falar.
 - "escolher": escolheu uma das opções oferecidas, pelo número OU pela descrição ("pode ser às 17h", "o de terça", "o primeiro", "esse das 16:30"). Se a descrição casa com uma opção, use "escolher" com o número dela. ATENÇÃO ao dia: se ele citar um dia ("amanhã", "quarta", "dia 17") diferente do dia da opção, NÃO é "escolher" — é "propor" com data_hora (ex.: hoje é terça e ele diz "amanhã às 15:00" → quarta 15:00, mesmo que exista "terça às 15:00" na lista). Sempre que ele citar dia e hora, preencha data_hora também.
 - "propor": quer outro dia/horário ou deu uma preferência. Com dia e hora exatos → data_hora. Preferência vaga ("segunda depois das 16h", "terça de manhã", "qualquer dia à tarde", "amanhã") → preencha "preferencia" (dia da semana = a próxima data com esse dia, contando hoje; "depois das 16h" → depois_de "16:00") e data_hora null.
@@ -451,9 +517,19 @@ async function handleCandidate(admin: SupabaseClient, sess: Row, text: string, j
     c.sess.interview_status = iv?.status ?? null;
   }
   if (!jaNoHistorico) await addHist(admin, sess.id, 'candidato', text, { last_in_at: new Date().toISOString() });
+  // Entrevista já passou (realizada, faltou ou o horário já foi).
+  const jaFoi = sess.status === 'agendado' && (['realizada', 'faltou'].includes(String(c.sess.interview_status ?? ''))
+    || (!!c.sess.interview_at && Date.parse(c.sess.interview_at) < Date.now()));
   const t = text.trim();
   const pend = (sess.pending_request ?? null) as Row | null;
 
+  // Retorno do processo (NA) que saiu por MODELO: a pessoa respondeu, agora vai o texto do dono.
+  if (pend?.kind === 'aguardando_retorno') {
+    await admin.from('hiring_scheduling_sessions').update({ pending_request: null }).eq('id', sess.id);
+    const txt = textoRetorno(c);
+    if (txt) await toCand(admin, c, txt, { __tipo: 'retorno' });
+    return;
+  }
   // 1ª resposta a um convite que saiu por MODELO (sem horários): agora, dentro da janela, manda a lista.
   if (pend?.kind === 'aguardando_janela') {
     await admin.from('hiring_scheduling_sessions').update({ pending_request: null }).eq('id', sess.id);
@@ -474,7 +550,7 @@ async function handleCandidate(admin: SupabaseClient, sess: Row, text: string, j
     if (/^(1|sim|pode|ok|isso|fechado|beleza|combinado|perfeito|quero)\b/i.test(t)) { await book(admin, c, pend.starts_at, false); return; }
   }
   // Confirmação de presença pedida (véspera / no dia): "1" confirma, "2" não vai
-  if (sess.status === 'agendado' && sess.confirm_requested_at && !sess.confirmed_at) {
+  if (sess.status === 'agendado' && sess.confirm_requested_at && !sess.confirmed_at && !jaFoi) {
     if (/^(1|sim|confirm|vou|estarei|ok|pode|combinado)\b/i.test(t)) { await confirmPresence(admin, c); return; }
     if (/^(2|n[aã]o)\b/i.test(t)) {
       await toInterviewers(c, `❌ ${c.cand.full_name} avisou que não vai à entrevista de ${c.job.title}${c.sess.interview_at ? ` (${fmtSlot(c.sess.interview_at)})` : ''}.`);
@@ -494,7 +570,8 @@ async function handleCandidate(admin: SupabaseClient, sess: Row, text: string, j
   // Só emoji: exige um pictograma e nenhum dígito ("1" é Emoji_Component e é escolha de horário).
   const soEmoji = /^(?=.*\p{Extended_Pictographic})[\p{Extended_Pictographic}\p{Emoji_Modifier}\u200d\ufe0f\s!.]+$/u.test(t);
   if (sess.status === 'agendado' && (soEmoji || ENCERRA.test(t))) {
-    if (soEmoji || ultimaNossa?.tipo === 'agradecimento') return;
+    // Depois da entrevista (Alexssandro e Luciane, 22–25/09): "Ok"/"Obrigado" recebia "Te esperamos 🙂".
+    if (soEmoji || jaFoi || ultimaNossa?.tipo === 'agradecimento') return;
     await toCand(admin, c, `Combinado! Te esperamos${c.sess.interview_at ? ` ${fmtSlot(c.sess.interview_at)}` : ''} 🙂`, { __tipo: 'agradecimento' });
     return;
   }
@@ -511,6 +588,16 @@ async function handleCandidate(admin: SupabaseClient, sess: Row, text: string, j
 
   const r = await classify(c, t, offered);
   let intencao = String(r.intencao ?? 'outro'); // pode virar 'propor' na trava do dia (abaixo)
+  // Entrevista já aconteceu (ou a pessoa faltou): nada de remarcar/cancelar/"te esperamos" pela IA.
+  // Agradecimento fica sem resposta; o resto vai para a equipe, que decide (resultado, nova chance…).
+  if (jaFoi) {
+    if (intencao === 'agradecer' || intencao === 'confirmar') return;
+    await toInterviewers(c, `💬 ${c.cand.full_name} (vaga ${c.job.title}) escreveu depois da entrevista: "${t.slice(0, 300)}"`);
+    // "Oi" seguido de "Oi" (Alexssandro, 22/09) recebia o mesmo aviso duas vezes: repete só depois de 12 h.
+    const repetido = ultimaNossa?.tipo === 'repassado' && Date.now() - Date.parse(String(ultimaNossa.at)) < 12 * 3600_000;
+    if (!repetido) await toCand(admin, c, 'Recebi sua mensagem e já passei para a equipe 🙂 Eles te respondem assim que possível.', { __tipo: 'repassado' });
+    return;
+  }
   if (sess.status === 'aguardando_gestor' && !['recusar', 'pergunta'].includes(intencao)) {
     await toCand(admin, c, 'Ainda estou confirmando com a equipe. Assim que tiver resposta eu te aviso 🙂');
     return;
@@ -570,21 +657,14 @@ async function handleCandidate(admin: SupabaseClient, sess: Row, text: string, j
   // Presença só é confirmada quando foi PEDIDA (véspera / manhã do dia). "Obrigado" logo depois de
   // marcar é só agradecimento (teste de 2026-09-14 confirmava presença por engano).
   if (intencao === 'confirmar' && sess.status === 'agendado' && sess.confirm_requested_at && !sess.confirmed_at) { await confirmPresence(admin, c); return; }
-  if ((intencao === 'agradecer' || intencao === 'confirmar') && sess.status === 'agendado') {
+  if ((intencao === 'agradecer' || intencao === 'confirmar') && sess.status === 'agendado' && !jaFoi) {
     // Agradecimento em cima de agradecimento (Adriana, 2026-09-19: "Ok obrigado" → "Obrigado" recebeu a
     // mesma despedida duas vezes): se a última fala nossa já foi a resposta a um obrigado, fica quieto.
     if (ultimaNossa?.tipo === 'agradecimento') return;
-    await toCand(admin, c, String(r.resposta ?? '').trim().slice(0, 700) || `Nós que agradecemos! Te esperamos${c.sess.interview_at ? ` ${fmtSlot(c.sess.interview_at)}` : ''} 🙂`, { __tipo: 'agradecimento' });
+    await toCand(admin, c, zap(String(r.resposta ?? '').trim()).slice(0, 700) || `Nós que agradecemos! Te esperamos${c.sess.interview_at ? ` ${fmtSlot(c.sess.interview_at)}` : ''} 🙂`, { __tipo: 'agradecimento' });
     return;
   }
-  const resp = String(r.resposta ?? '').trim();
-  const jaFoi = sess.status === 'agendado' && (['realizada', 'faltou'].includes(String(c.sess.interview_status ?? ''))
-    || (c.sess.interview_at && Date.parse(c.sess.interview_at) < Date.now()));
-  if (jaFoi && (intencao === 'pergunta' || intencao === 'outro')) {
-    await toInterviewers(c, `💬 ${c.cand.full_name} (vaga ${c.job.title}) escreveu depois da entrevista: "${t.slice(0, 300)}"`);
-    await toCand(admin, c, 'Recebi sua mensagem e já passei para a equipe 🙂 Eles te respondem assim que possível.');
-    return;
-  }
+  const resp = zap(String(r.resposta ?? '').trim());
   // A IA não escreve horário enquanto não está marcado: quem manda horário é a agenda (freeSlots).
   // Syria, 2026-09-19: a IA viu a lista vazia (corrida de duas mensagens) e inventou 15:00–16:40,
   // horários já ocupados. Resposta com hora vira a lista de verdade.
@@ -729,7 +809,7 @@ async function inbound(admin: SupabaseClient, body: Row): Promise<boolean> {
 // ── tick: convites, cobrança, lembretes ──
 // force = ignora o horário comercial (só por pedido do dono, via whatsapp-cloud › scheduler_force_tick).
 async function tick(admin: SupabaseClient, force = false) {
-  const res = { invited: 0, followups: 0, sem_resposta: 0, reminded: 0, confirm_asked: 0 };
+  const res = { invited: 0, followups: 0, sem_resposta: 0, reminded: 0, confirm_asked: 0, unconfirmed: 0, feedback: 0 };
   const hora = localHour();
   const comercial = force || (hora >= HOUR_START && hora < HOUR_END);
 
@@ -803,6 +883,31 @@ async function tick(admin: SupabaseClient, force = false) {
       }
     }
 
+    // Retorno para quem ficou "NA" (2026-09-25): só se a vaga tiver o texto em Agendamento › Retorno.
+    // Espera 2 h depois da decisão (dá tempo de mudar de ideia) e ignora entrevistas de mais de 14 dias.
+    const { data: nas } = await admin.from('hiring_scheduling_sessions').select('*, hiring_interviews!hiring_scheduling_sessions_interview_id_fkey(status, recommendation, updated_at, scheduled_at)')
+      .eq('status', 'agendado').is('feedback_sent_at', null).not('interview_id', 'is', null).limit(100);
+    for (const s of (nas ?? []) as Row[]) {
+      const iv = s.hiring_interviews as Row | null;
+      if (!iv || iv.status !== 'realizada' || iv.recommendation !== 'na') continue;
+      const desde = Date.now() - Date.parse(String(iv.updated_at));
+      if (desde < 2 * 3600_000 || Date.now() - Date.parse(String(iv.scheduled_at)) > 14 * 86_400_000) continue;
+      const c = await loadCtx(admin, s);
+      const txt = c ? textoRetorno(c) : '';
+      if (!c || !txt) continue;
+      await admin.from('hiring_scheduling_sessions').update({ feedback_sent_at: new Date().toISOString() }).eq('id', s.id);
+      try {
+        await toCand(admin, c, txt, { __tipo: 'retorno' },
+          { name: TEMPLATES.retorno.name, params: [firstName(c.cand.full_name), empresa(c), c.job.title], aguardaJanela: true, aguarda: 'aguardando_retorno' });
+        await admin.from('hiring_candidate_events').insert({ candidate_id: c.cand.id, kind: 'ia', title: 'Retorno do processo enviado pelo WhatsApp', detail: txt.slice(0, 500), actor: 'assistente' });
+        res.feedback++;
+      } catch (e) {
+        // Modelo ainda não aprovado na Meta etc.: volta para a fila (tenta de novo na próxima rodada).
+        await admin.from('hiring_scheduling_sessions').update({ feedback_sent_at: null }).eq('id', s.id);
+        log('WARN', 'retorno não enviado', { sess: s.id, error: errMsg(e) });
+      }
+    }
+
     // Cobrança: 24 h sem resposta → reenvia 1× com horários atualizados; mais 24 h → sem_resposta
     const ontem = new Date(Date.now() - 24 * 3600_000).toISOString();
     const { data: paradas } = await admin.from('hiring_scheduling_sessions').select('*').in('status', ['convidado', 'negociando']).lt('last_out_at', ontem).limit(20);
@@ -856,6 +961,18 @@ async function tick(admin: SupabaseClient, force = false) {
     for (const s of (doDia ?? []) as Row[]) {
       const iv = s.hiring_interviews as Row | null;
       if (!iv || iv.status !== 'agendada' || localDate(new Date(iv.scheduled_at)) !== hoje) continue;
+      // Pediu confirmação e ficou sem resposta até 3 h antes: avisa a equipe uma vez (as 2 faltas de 21/09
+      // foram de quem não respondeu o lembrete). A equipe decide se liga ou libera o horário.
+      const falta = new Date(iv.scheduled_at).getTime() - Date.now();
+      if (s.confirm_requested_at && !s.unconfirmed_alert_at && falta > 0 && falta < 3 * 3600_000) {
+        const c = await loadCtx(admin, s);
+        if (c) {
+          await admin.from('hiring_scheduling_sessions').update({ unconfirmed_alert_at: new Date().toISOString() }).eq('id', s.id);
+          await toInterviewers(c, `⚠️ ${c.cand.full_name} ainda não confirmou presença na entrevista de hoje (${c.job.title}) — ${fmtSlot(iv.scheduled_at)}. Vale uma ligação: ${digits(c.cand.phone) || 'sem telefone'}.`);
+          res.unconfirmed++;
+        }
+        continue;
+      }
       // Marcada hoje mesmo: a confirmação da reserva já vale; não pede de novo minutos depois.
       if (iv.created_at && localDate(new Date(String(iv.created_at))) === hoje) continue;
       if (new Date(iv.scheduled_at).getTime() - Date.now() < 3600_000) continue;

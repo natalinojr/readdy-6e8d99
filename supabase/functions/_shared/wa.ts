@@ -44,6 +44,13 @@ export const TEMPLATES = {
     text: 'Atualização do agendamento de entrevistas da vaga {{1}}: {{2}}. Responda por aqui se precisar.',
     example: ['Atendente', 'Maria marcou entrevista para terça-feira, 15/09 às 14:00'],
   },
+  // Retorno do processo para quem ficou "NA" (hiring_job_scheduling.feedback_message, 2026-09-25).
+  // O texto do dono vai na 1ª resposta da pessoa (dentro da janela), como o convite.
+  retorno: {
+    name: 'retorno_processo_seletivo',
+    text: 'Olá, {{1}}! Aqui é da {{2}}. Temos um retorno sobre o processo seletivo da vaga de {{3}}. Responda esta mensagem para receber.',
+    example: ['Maria', 'TBA Ipanema', 'Atendente'],
+  },
 } as const;
 
 let cache: { at: number; cfg: WaConfig } | null = null;

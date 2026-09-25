@@ -176,7 +176,7 @@ function welcomeOf(ch: Row, ctx: { company: Row | null; job: Row | null }, name:
   return fill(tpl, { nome: name ? `, ${firstName(name)}` : '', empresa, vaga });
 }
 
-function systemOf(ch: Row, ctx: { company: Row | null; job: Row | null }, faltas: string[] = []) {
+function systemOf(ch: Row, ctx: { company: Row | null; job: Row | null }, faltas: string[] = [], temFicha = false) {
   const job = ctx.job;
   const share: string[] = Array.isArray(ch.share_fields) ? ch.share_fields : [];
   const info: string[] = [];
@@ -193,7 +193,7 @@ function systemOf(ch: Row, ctx: { company: Row | null; job: Row | null }, faltas
   }
   if (ch.extra_info) info.push(`Outras informações liberadas: ${ch.extra_info}`);
 
-  return `Você é o atendente de RECRUTAMENTO de ${ctx.company?.name ?? 'uma empresa'} no WhatsApp. Fala com candidatos a emprego (público em geral), em português do Brasil, com mensagens curtas, simpáticas e simples (estilo WhatsApp, sem markdown pesado; *negrito* do WhatsApp é permitido).
+  return `Você é o atendente de RECRUTAMENTO de ${ctx.company?.name ?? 'uma empresa'} no WhatsApp. Fala com candidatos a emprego (público em geral), em português do Brasil, com mensagens curtas, simpáticas e simples (estilo WhatsApp, sem markdown pesado; *negrito* do WhatsApp é permitido, com UM asterisco). Fale como a equipe ("a gente", "nós"), sem se apresentar como homem ou mulher ("obrigado pelo interesse" em vez de "obrigada"). Revise a ortografia antes de enviar.
 
 SEU ÚNICO OBJETIVO: receber o currículo da pessoa e tirar dúvidas sobre a vaga usando SÓ as informações liberadas abaixo.
 
@@ -201,7 +201,9 @@ INFORMAÇÕES LIBERADAS (a única fonte da verdade; não invente nada além diss
 ${info.length ? info.map((l) => `- ${l}`).join('\n') : '- (nenhuma informação da vaga foi liberada)'}
 
 REGRAS:
-1. Pergunta cuja resposta não está acima (salário, data de início, resultado do processo, etc.): diga que a equipe informa essa parte (no caso do salário: "o salário é conversado com a equipe") e SEMPRE use a ferramenta chamar_equipe com a pergunta. Nunca diga que algo "não foi liberado", nunca invente nem "estime".
+1. Pergunta cuja resposta não está acima (salário, data de início, resultado do processo, etc.): diga que essa parte a equipe explica na entrevista (salário: "o salário a gente conversa na entrevista") e SEMPRE use a ferramenta chamar_equipe com a pergunta. Nunca diga que algo "não foi liberado", nunca prometa um retorno com prazo ("em breve", "já já"), nunca invente nem "estime".
+1b. As informações liberadas são LITERAIS: não deduza nem complete. Ex.: "6x1" quer dizer 6 dias de trabalho e 1 de folga — NÃO diz quais dias; nunca diga "segunda a sábado", se trabalha domingo/feriado, qual é a folga, se é diária, temporário, fixo ou freelance, a menos que esteja escrito. Pergunta sobre isso = regra 1.
+1c. Toda pergunta da pessoa precisa de resposta, mesmo no meio da coleta de dados. Se ela repetir uma pergunta ou disser que ouviu algo diferente (ex.: "me falaram que era diária"), responda o que está nas informações (ou a regra 1) e chame chamar_equipe — nunca ignore e siga adiante.
 2. Nunca prometa vaga, entrevista ou contratação. Diga que a equipe analisa os currículos e entra em contato se o perfil combinar.
 3. O currículo é recebido automaticamente quando a pessoa manda um PDF, foto ou arquivo Word — você não precisa fazer nada com arquivos. Se ela ainda não mandou, lembre gentilmente. Se a última coisa que ela mandou foi um [Arquivo] e ainda não houve a mensagem "Recebi seu currículo", diga só que está lendo o currículo (não afirme que foi recebido: a confirmação chega sozinha em seguida). Se a última resposta sobre o arquivo foi "Não consegui ler esse arquivo" ou "Tive um probleminha", o currículo NÃO foi recebido: peça gentilmente para mandar de novo (PDF, Word ou foto nítida) e não diga que a equipe vai analisar.
 4. Se a pessoa NÃO tiver currículo, colete em conversa, uma pergunta por vez: nome completo, bairro e cidade, experiências anteriores (onde, função, quanto tempo), escolaridade, disponibilidade de horário. Não pergunte idade, estado civil, filhos, religião, saúde, CPF ou documentos (a não ser o que estiver na lista DADOS QUE FALTAM NA FICHA). Com tudo em mãos, chame registrar_sem_curriculo com um resumo organizado e agradeça.
@@ -216,7 +218,9 @@ DADOS QUE FALTAM NA FICHA (o currículo já foi recebido, mas veio sem): ${falta
 - Grave TUDO o que a resposta trouxer, mesmo o que não foi perguntado. Ex.: "Ipanema, Pontal do Paraná" → neighborhood "Ipanema" e city "Pontal do Paraná"; "Rua X, 50, Centro" → address "Rua X, 50" e neighborhood "Centro". Tudo numa só chamada de completar_ficha.
 - Depois de gravar, SEMPRE escreva a próxima pergunta (ou o agradecimento, se a ficha ficou completa). Nunca termine sem texto.
 - Data de nascimento sempre em AAAA-MM-DD. Se a pessoa não quiser informar algum dado, não insista: chame chamar_equipe dizendo qual ficou faltando.
-- Se a pessoa fizer uma pergunta no meio, responda e depois volte ao dado que falta.` : ''}`.trim();
+- Se a pessoa fizer uma pergunta no meio, responda e depois volte ao dado que falta.` : ''}
+${temFicha ? `
+FICHA JÁ REGISTRADA: se a pessoa corrigir ou acrescentar algum dado (ex.: "fiz magistério e pedagogia", "mudei de endereço", "trabalhei também na loja X"), grave com completar_ficha (escolaridade vai em education; experiência em experiences) e confirme em uma frase. Nunca responda "a equipe completa depois".` : ''}`.trim();
 }
 
 const TOOLS: Anthropic.Tool[] = [
@@ -241,7 +245,7 @@ const TOOLS: Anthropic.Tool[] = [
   },
   {
     name: 'completar_ficha',
-    description: 'Grava na ficha do candidato os dados que faltavam (lista DADOS QUE FALTAM NA FICHA). Mande só os campos que a pessoa respondeu.',
+    description: 'Grava na ficha do candidato os dados que faltavam (lista DADOS QUE FALTAM NA FICHA) ou uma correção/acréscimo que a pessoa contou depois. Mande só os campos que a pessoa respondeu.',
     input_schema: {
       type: 'object',
       properties: {
@@ -263,7 +267,7 @@ const TOOLS: Anthropic.Tool[] = [
 ];
 
 // Resposta do candidato → colunas da ficha. Devolve o que faltar depois de gravar.
-async function completarFicha(admin: SupabaseClient, candId: string, inp: Row): Promise<{ ok: boolean; faltas: string[]; erro?: string }> {
+async function completarFicha(admin: SupabaseClient, candId: string, inp: Row): Promise<{ ok: boolean; faltas: string[]; erro?: string; idade?: number | null }> {
   const { data: c } = await admin.from('hiring_candidates').select('education, experiences, extra_fields').eq('id', candId).maybeSingle();
   if (!c) return { ok: false, faltas: [], erro: 'ficha não encontrada' };
   const txt = (k: string) => { const v = String(inp[k] ?? '').trim(); return v ? v.slice(0, 500) : null; };
@@ -277,7 +281,7 @@ async function completarFicha(admin: SupabaseClient, candId: string, inp: Row): 
   let erro: string | undefined;
   if (txt('birth_date')) {
     const iso = birthIso(txt('birth_date')!);
-    if (iso) { patch.birth_date = iso; patch.age = Math.floor((Date.now() - Date.parse(iso)) / (365.25 * 86_400_000)); }
+    if (iso) { patch.birth_date = iso; patch.age = idadeDe(iso); }
     else erro = 'data de nascimento inválida: peça de novo no formato dia/mês/ano';
   }
   if (txt('education')) patch.education = [...(Array.isArray(c.education) ? c.education : []), { instituicao: null, curso: null, nivel: txt('education'), situacao: null }];
@@ -301,7 +305,7 @@ async function completarFicha(admin: SupabaseClient, candId: string, inp: Row): 
     const { error } = await admin.from('hiring_candidates').update({ ...patch, updated_at: new Date().toISOString() }).eq('id', candId);
     if (error) return { ok: false, faltas: await missingOf(admin, candId), erro: error.message };
   }
-  return { ok: true, faltas: await missingOf(admin, candId), erro };
+  return { ok: true, faltas: await missingOf(admin, candId), erro, idade: patch.birth_date ? patch.age : null };
 }
 
 async function notifyOwner(admin: SupabaseClient, text: string) {
@@ -357,6 +361,77 @@ async function say(admin: SupabaseClient, conv: Row, number: string, text: strin
   await admin.from('bot_conversations').update({ last_message_at: new Date().toISOString() }).eq('id', conv.id);
 }
 
+// Mesmo aviso de novo em menos de 2 min: não repete (Adrian, 2026-09-22: 5 arquivos seguidos
+// receberam 5 "não consegui ler" iguais).
+async function sayOnce(admin: SupabaseClient, conv: Row, number: string, text: string, ms = 120_000) {
+  const { data } = await admin.from('bot_messages').select('content, created_at').eq('conversation_id', conv.id).eq('role', 'assistant')
+    .order('id', { ascending: false }).limit(1).maybeSingle();
+  if (data && data.content === text && Date.now() - Date.parse(String(data.created_at)) < ms) return;
+  await say(admin, conv, number, text);
+}
+// Arquivos da pessoa na conversa nos últimos `ms` (rajada de vários arquivos de uma vez).
+async function arquivosRecentes(admin: SupabaseClient, convId: string, ms: number): Promise<{ id: number }[]> {
+  const { data } = await admin.from('bot_messages').select('id').eq('conversation_id', convId).eq('role', 'user')
+    .like('content', '[Arquivo%').gte('created_at', new Date(Date.now() - ms).toISOString()).order('id');
+  return (data ?? []) as { id: number }[];
+}
+// Ficha desta conversa registrada há mais de 10 min: arquivo novo é DOCUMENTO para a ficha (RG, carteira,
+// certificado…), não outro currículo. Antes cada um ia para a leitura de currículo e voltava "não consegui
+// ler" (Adrian, 2026-09-22). Vários arquivos no começo continuam sendo currículos (mãe mandando o dos 2 filhos).
+async function fichaAntiga(admin: SupabaseClient, conv: Row): Promise<string | null> {
+  const id = (conv.candidate_ids ?? []).at(-1);
+  if (!id) return null;
+  const { data } = await admin.from('hiring_candidates').select('created_at').eq('id', id).maybeSingle();
+  return data && Date.now() - Date.parse(String(data.created_at)) > 10 * 60_000 ? String(id) : null;
+}
+async function guardarAnexo(admin: SupabaseClient, candId: string, file: NonNullable<Incoming['file']>, mime: string): Promise<boolean> {
+  try {
+    const bytes = Uint8Array.from(atob(file.base64), (c) => c.charCodeAt(0));
+    const nome = file.name ?? `arquivo.${mime.split('/')[1] ?? 'bin'}`;
+    const path = `anexos/${candId}/${crypto.randomUUID()}-${safeName(nome)}`;
+    const { error } = await admin.storage.from(BUCKET).upload(path, bytes, { contentType: mime, upsert: false });
+    if (error) { log('WARN', 'anexo não guardado', { error: error.message }); return false; }
+    await admin.from('hiring_candidate_events').insert({
+      candidate_id: candId, kind: 'anexo', title: 'Arquivo enviado pelo WhatsApp', detail: nome, actor: 'assistente',
+      meta: { path, name: nome, mime },
+    });
+    return true;
+  } catch (e) { log('WARN', 'anexo não guardado', { error: errMsg(e) }); return false; }
+}
+
+// Nome lido do currículo × nome do perfil do WhatsApp (2026-09-25): "Andressaborges" (tirado do e-mail)
+// vira "Andressa Borges" (grudado: corrige). "Amonda" × perfil "amanda" (uma letra de diferença) só vira
+// aviso ao dono: pode ser erro de leitura, mas "Ana"/"Anna" e "Luiza"/"Luisa" são nomes certos.
+const semAcento = (s: string) => s.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase().replace(/[^a-z]/g, '');
+const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
+function distancia(a: string, b: string): number {
+  const d = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
+  for (let j = 1; j <= b.length; j++) d[0][j] = j;
+  for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++)
+    d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+  return d[a.length][b.length];
+}
+export function nomeCorrigido(cv: string | null | undefined, perfil: string | null | undefined): string | null {
+  const partes = String(cv ?? '').trim().split(/\s+/);
+  const pOrig = String(perfil ?? '').trim().split(/\s+/)[0] ?? '';
+  const p = semAcento(pOrig);
+  const primeiro = partes[0] ?? '';
+  const c = semAcento(primeiro);
+  if (p.length < 4 || !c || c === p || semAcento(pOrig) !== pOrig.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase()) return null;
+  if (c.startsWith(p) && c.length - p.length >= 3) return [cap(pOrig), cap(primeiro.slice(pOrig.length)), ...partes.slice(1)].join(' ');
+  return null;
+}
+function nomeDiverge(cv: string | null | undefined, perfil: string | null | undefined): boolean {
+  const c = semAcento(String(cv ?? '').trim().split(/\s+/)[0] ?? '');
+  const p = semAcento(String(perfil ?? '').trim().split(/\s+/)[0] ?? '');
+  return p.length >= 4 && c.length >= 3 && c !== p && Math.abs(c.length - p.length) <= 1 && distancia(c, p) === 1;
+}
+const idadeDe = (iso: string | null | undefined) => iso ? Math.floor((Date.now() - Date.parse(iso)) / (365.25 * 86_400_000)) : null;
+// Menor de idade: só um aviso ao dono (a decisão é dele). Menos de 16 = abaixo da idade mínima (CLT), salvo aprendiz.
+const avisoIdade = (idade: number | null | undefined) => idade == null || idade >= 18 ? ''
+  : idade < 16 ? `\n⚠️ *${idade} anos* — abaixo da idade mínima para trabalhar (16; aprendiz a partir de 14).`
+  : `\n⚠️ *${idade} anos* — menor de idade.`;
+
 // Envia para hiring-cv-scan › intake (lê, guarda o arquivo, cria o candidato, inscreve na vaga).
 async function intake(admin: SupabaseClient, ch: Row, conv: Row, m: Incoming, entrada: Row) {
   const r = await fetch(`${supabaseUrl}/functions/v1/hiring-cv-scan`, {
@@ -377,12 +452,23 @@ async function intake(admin: SupabaseClient, ch: Row, conv: Row, m: Incoming, en
     }).eq('id', cand.id);
     await admin.from('bot_conversations').update({ candidate_ids: [...(conv.candidate_ids ?? []), cand.id] }).eq('id', conv.id);
     conv.candidate_ids = [...(conv.candidate_ids ?? []), cand.id];
+    const novoNome = !out.duplicate ? nomeCorrigido(cand.full_name, m.name) : null;
+    if (novoNome) {
+      log('INFO', 'nome corrigido pelo perfil do WhatsApp', { de: cand.full_name, para: novoNome });
+      await admin.from('hiring_candidates').update({ full_name: novoNome }).eq('id', cand.id);
+      cand.full_name = novoNome;
+    }
   }
+  const { data: nasc } = cand.id ? await admin.from('hiring_candidates').select('birth_date').eq('id', cand.id).maybeSingle() : { data: null };
+  const idade = idadeDe(nasc?.birth_date);
+  const confereNome = cand.full_name && nomeDiverge(cand.full_name, m.name)
+    ? `
+🔤 Nome no currículo "${firstName(cand.full_name)}", no WhatsApp "${firstName(m.name)}" — confira a grafia na ficha.` : '';
   const faltas = await missingOf(admin, cand.id ?? null);
   if (ch.notify_owner) {
     const km = out.distance?.km != null ? ` · ${Number(out.distance.km).toFixed(1).replace('.', ',')} km` : '';
     const match = out.match?.score != null ? `\nAderência à vaga: *${out.match.score}*${out.match.resumo ? ` — ${out.match.resumo}` : ''}` : '';
-    await notifyOwner(admin, `📥 *Currículo pelo link "${ch.name}"*${conv.is_test ? ' (teste)' : ''}\n${cand.full_name ?? 'Candidato'}${cand.desired_role ? ` — ${cand.desired_role}` : ''}${km}\nWhatsApp: +${m.number}${out.duplicate ? `\n⚠️ Já existia: ${out.duplicate}` : ''}${match}${out.pending_ai ? `\n⚠️ Salvo SEM leitura da IA (${String(out.ai_error ?? 'IA indisponível')}). Abra a ficha e use "Organizar com IA" quando a IA voltar.` : ''}${faltas.length ? `\n📝 Ficha incompleta (faltam: ${listaFaltas(faltas)}) — perguntando ao candidato.` : ''}`);
+    await notifyOwner(admin, `📥 *Currículo pelo link "${ch.name}"*${conv.is_test ? ' (teste)' : ''}\n${cand.full_name ?? 'Candidato'}${cand.desired_role ? ` — ${cand.desired_role}` : ''}${km}\nWhatsApp: +${m.number}${out.duplicate ? `\n⚠️ Já existia: ${out.duplicate}` : ''}${match}${out.pending_ai ? `\n⚠️ Salvo SEM leitura da IA (${String(out.ai_error ?? 'IA indisponível')}). Abra a ficha e use "Organizar com IA" quando a IA voltar.` : ''}${avisoIdade(idade)}${confereNome}${faltas.length ? `\n📝 Ficha incompleta (faltam: ${listaFaltas(faltas)}) — perguntando ao candidato.` : ''}`);
   }
   return { ok: true as const, candidate: cand, duplicate: out.duplicate ?? null, faltas };
 }
@@ -470,7 +556,20 @@ async function handleIncoming(admin: SupabaseClient, m: Incoming): Promise<void>
   if (m.file) {
     const mime = String(m.file.mime ?? '').split(';')[0].toLowerCase();
     const nome = m.file.name ?? null;
-    await admin.from('bot_messages').insert({ conversation_id: conv.id, role: 'user', content: `[Arquivo${nome ? ` "${nome}"` : ''}]${text && !code ? ` ${text}` : ''}` });
+    const { data: minha } = await admin.from('bot_messages').insert({ conversation_id: conv.id, role: 'user', content: `[Arquivo${nome ? ` "${nome}"` : ''}]${text && !code ? ` ${text}` : ''}` }).select('id').single();
+    // Ficha já registrada há tempo: é documento para a ficha. Guarda e responde UMA vez por rajada.
+    const candAnexo = await fichaAntiga(admin, conv);
+    if (candAnexo) {
+      const ok = await guardarAnexo(admin, candAnexo, m.file, mime || 'application/octet-stream');
+      await new Promise((r) => setTimeout(r, 4000));
+      const rajada = await arquivosRecentes(admin, conv.id, 120_000);
+      if (rajada.at(-1)?.id !== minha?.id) return; // chegou outro depois: ele responde por todos
+      await say(admin, conv, to(m), ok
+        ? `${rajada.length > 1 ? 'Recebi seus arquivos' : 'Recebi seu arquivo'} ✅ Já deixei junto com a sua ficha para a equipe ver.`
+        : 'Não consegui guardar esse arquivo agora 😕 Pode mandar de novo daqui a pouco?');
+      if (ok && channel.notify_owner) await notifyOwner(admin, `📎 +${m.number}${m.name ? ` (${m.name})` : ''} mandou ${rajada.length > 1 ? `${rajada.length} arquivos` : 'um arquivo'} pelo link "${channel.name}". Estão no Histórico da ficha.`);
+      return;
+    }
     const isDocx = mime === DOCX_MIME || /\.docx$/i.test(nome ?? '');
     if (mime !== 'application/pdf' && !IMAGE_TYPES.includes(mime) && !isDocx) {
       await say(admin, conv, to(m),'Esse tipo de arquivo eu não consigo abrir 😕 Pode mandar o currículo em *PDF*, *Word (.docx)* ou uma *foto* dele?');
@@ -510,11 +609,14 @@ async function handleIncoming(admin: SupabaseClient, m: Incoming): Promise<void>
       // vezes seguidas e recebeu "tive um probleminha"). Confirma em vez de pedir de novo.
       if (r.status === 409) {
         react(m.key ?? null, '✅');
+        // Dois arquivos juntos (Verônica, 2026-09-21): o repetido respondia "já está com a gente" antes do
+        // "Recebi seu currículo" do outro. Na rajada, fica quieto; a confirmação do outro basta.
+        if ((await arquivosRecentes(admin, conv.id, 120_000)).length > 1) return;
         await say(admin, conv, to(m), 'Esse currículo já está com a gente ✅ Não precisa mandar de novo.');
         return;
       }
       react(m.key ?? null, '');
-      await say(admin, conv, to(m),r.status === 422
+      await sayOnce(admin, conv, to(m), r.status === 422
         ? 'Não consegui ler esse arquivo como currículo 😕 Pode mandar em PDF, Word ou uma foto bem nítida, com boa luz?'
         : 'Tive um probleminha para salvar seu currículo. Pode mandar de novo daqui a pouco?');
       return;
@@ -539,7 +641,11 @@ async function handleIncoming(admin: SupabaseClient, m: Incoming): Promise<void>
   // ── Vídeo / outros ──
   if (m.kind === 'video' || m.kind === 'other' || (m.kind === 'document' && !m.file)) {
     await admin.from('bot_messages').insert({ conversation_id: conv.id, role: 'user', content: `[${m.kind}]` });
-    await say(admin, conv, to(m),'Esse tipo de mensagem eu não consigo abrir. Pode mandar em texto, áudio, PDF ou foto?');
+    // Vídeo no meio de uma rajada de arquivos: a resposta dos arquivos já cobre.
+    if ((await arquivosRecentes(admin, conv.id, 60_000)).length) return;
+    await sayOnce(admin, conv, to(m), m.kind === 'video'
+      ? 'Vídeo eu não consigo abrir por aqui 😕 Pode mandar em texto, áudio, PDF ou foto?'
+      : 'Esse tipo de mensagem eu não consigo abrir. Pode mandar em texto, áudio, PDF ou foto?');
     return;
   }
   if (!text) return;
@@ -583,7 +689,7 @@ async function handleIncoming(admin: SupabaseClient, m: Incoming): Promise<void>
   // Ficha do último currículo desta conversa: o que ainda falta vai no prompt.
   const fichaId = (): string | null => (conv!.candidate_ids ?? []).at(-1) ?? null;
   const faltas = await missingOf(admin, fichaId());
-  const system = systemOf(channel, ctx, faltas);
+  const system = systemOf(channel, ctx, faltas, !!fichaId());
   let reply = '';
   let cost = 0, calls = 0, closeAfter = false;
   const usadas = new Set<string>();   // ferramentas chamadas neste turno (trava do "anotei" sem gravar)
@@ -608,6 +714,9 @@ async function handleIncoming(admin: SupabaseClient, m: Incoming): Promise<void>
           if (!id) out = 'Ainda não há currículo registrado nesta conversa.';
           else {
             const r = await completarFicha(admin, id, inp);
+            if (r.ok && r.idade != null && r.idade < 18 && channel.notify_owner) {
+              await notifyOwner(admin, `👤 Candidato pelo link "${channel.name}" (+${m.number})${avisoIdade(r.idade)}`);
+            }
             if (!r.ok) out = `Não gravou: ${r.erro}. Diga que a equipe vai completar depois.`;
             else if (r.faltas.length) out = `Gravado.${r.erro ? ` Atenção: ${r.erro}.` : ''} Ainda faltam: ${r.faltas.map((f) => `${FIELD_LABELS[f] ?? f} [${f}] — "${FIELD_ASK[f] ?? ''}"`).join('; ')}. Peça o próximo.`;
             else {
@@ -669,7 +778,7 @@ async function handleIncoming(admin: SupabaseClient, m: Incoming): Promise<void>
     else reply = 'Certo! Se tiver alguma dúvida sobre a vaga, é só perguntar 🙂';
     log('WARN', 'modelo sem texto: resposta padrão', { conv: conv.id, faltas: faltasAgora });
   }
-  if (reply) await say(admin, conv, to(m),reply);
+  if (reply) await say(admin, conv, to(m), reply.replace(/\*\*(.+?)\*\*/g, '*$1*'));
   if (closeAfter) await admin.from('bot_conversations').update({ status: 'encerrada' }).eq('id', conv.id);
 }
 

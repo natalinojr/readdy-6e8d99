@@ -7,6 +7,7 @@ import {
   type Application, type Candidate, type Company, type Interview, type Job, type Stage,
   type Distance, type FichaCfg, type Settings,
   BUCKET, fmtKm, whatsLink, stageOf, decisionOf, withEmpresa, ageOf, companyName,
+  avisoIdade,
 } from '../shared';
 import { melhorAderencia } from '../aderencia';
 import { avisar } from '../dialog';
@@ -116,6 +117,7 @@ export default function CandidatoDrawer({
               ].filter(Boolean).join(' · ')}
             </p>
           </div>
+          {(() => { const a = avisoIdade(idade); return a ? <span title={a.dica} className={`text-xs font-bold px-2 py-1 rounded-lg border ${a.cls}`}>{a.texto}</span> : null; })()}
           {dec && <span className={`text-xs font-black px-2.5 py-1 rounded-lg border ${dec.cls}`} title={withEmpresa(dec.label, empresa)}>{dec.sigla}</span>}
           <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-zinc-100 text-zinc-500 cursor-pointer">
             <i className="ri-close-line text-lg" />

@@ -54,6 +54,8 @@ export interface JobScheduling {
   location: string | null;
   interviewers: SchedulingInterviewer[];
   candidate_notes: string | null;
+  /** Retorno automático para quem ficou "NA" na entrevista ({nome}, {empresa}, {vaga}). Vazio = não manda. */
+  feedback_message?: string | null;
 }
 export const DIAS_SEMANA = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 /** O que falta para o assistente poder convidar candidatos desta vaga (vazio = pronto). */
@@ -216,7 +218,7 @@ export interface CandidateEvent {
   id: number;
   candidate_id: string;
   at: string;
-  kind: string; // criado | fase | decisao | loja | avaliacao | ficha | ia | vaga | entrevista | registro | anotacao
+  kind: string; // criado | fase | decisao | loja | avaliacao | ficha | ia | vaga | entrevista | registro | anotacao | anexo (meta.path no bucket)
   title: string;
   detail: string | null;
   actor: string | null; // e-mail de quem fez, 'assistente' (WhatsApp/IA) ou 'sistema'
@@ -266,6 +268,13 @@ export const DECISIONS: { id: Decision; sigla: string; label: string; cls: strin
   { id: 'r', sigla: 'R', label: 'Quadro de reserva', cls: 'bg-amber-500 text-white border-amber-500', bar: 'bg-amber-400' },
   { id: 'na', sigla: 'NA', label: 'Não adequado à {empresa}', cls: 'bg-zinc-500 text-white border-zinc-500', bar: 'bg-zinc-400' },
 ];
+/** Menor de idade: aviso na ficha e na lista (a decisão é do dono). Menos de 16 = abaixo da idade mínima (CLT), salvo aprendiz. */
+export function avisoIdade(idade: number | null | undefined): { texto: string; cls: string; dica: string } | null {
+  if (idade == null || idade >= 18) return null;
+  return idade < 16
+    ? { texto: 'Menor de 16', cls: 'bg-red-100 text-red-700 border-red-200', dica: 'Abaixo da idade mínima para trabalhar (16 anos; aprendiz a partir de 14).' }
+    : { texto: 'Menor de idade', cls: 'bg-amber-100 text-amber-800 border-amber-200', dica: 'Menor de 18 anos: confira as regras de jornada (sem trabalho noturno, após 22h).' };
+}
 export const decisionOf = (d: string | null | undefined) => DECISIONS.find((x) => x.id === d) ?? null;
 export const withEmpresa = (text: string, empresa: string | null | undefined) => text.replace(/\{empresa\}/g, empresa || 'empresa');
 

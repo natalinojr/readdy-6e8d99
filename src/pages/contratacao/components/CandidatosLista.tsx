@@ -3,7 +3,7 @@ import { useMemo, useState } from 'react';
 import PerguntarAoAssistente from '@/components/feature/PerguntarAoAssistente';
 import {
   type Candidate, type Company, type Interview, type Stage, colorOf, stageOf, fmtMonths, fmtDate, fmtDateTime, companyName, avgScore,
-  ageOf, decisionOf, withEmpresa, DECISIONS, type Distance, fmtKm, distCls, FIT,
+  ageOf, avisoIdade, decisionOf, withEmpresa, DECISIONS, type Distance, fmtKm, distCls, FIT,
 } from '../shared';
 import type { Aderencia } from '../aderencia';
 
@@ -140,7 +140,7 @@ function Tabela({ items, companies, stages, proximaEntrevista, ultimaAvaliacao, 
                     return <span className="block truncate" title={vagas.join(', ')}>{vagas[0]}{vagas.length > 1 ? <span className="text-zinc-400"> +{vagas.length - 1}</span> : null}</span>;
                   })()}
                 </td>
-                <td className="px-3 py-2 text-xs text-zinc-700">{ageOf(c) ?? '—'}</td>
+                <td className="px-3 py-2 text-xs text-zinc-700" title={avisoIdade(ageOf(c))?.dica}>{ageOf(c) ?? '—'}{avisoIdade(ageOf(c)) ? <i className="ri-error-warning-fill text-amber-500 ml-1" /> : null}</td>
                 <td className="px-3 py-2 text-xs text-zinc-700 max-w-[180px] truncate">{[c.neighborhood, c.city].filter(Boolean).join(', ') || '—'}</td>
                 <td className="px-3 py-2 text-xs whitespace-nowrap">
                   {(() => {
@@ -205,6 +205,7 @@ export function CandidateCard({ c, companies, stage, empresa, entrevista, onOpen
           <div className="flex items-center gap-2">
             <p className={`font-bold text-zinc-900 truncate ${compact ? 'text-sm' : ''}`}>{c.full_name}</p>
             <DecisionBadge c={c} companies={companies} />
+            {(() => { const a = avisoIdade(idade); return a ? <span title={a.dica} className={`text-[10px] font-bold px-1.5 py-0.5 rounded border whitespace-nowrap ${a.cls}`}>{a.texto}</span> : null; })()}
             {c.rating ? <span className="text-amber-500 text-xs whitespace-nowrap">{'★'.repeat(c.rating)}</span> : null}
           </div>
           <p className="text-xs text-zinc-500 truncate">

@@ -9,7 +9,7 @@ import { type JobScheduling, type MembroEquipe, type SchedulingInterviewer, type
 
 const PADRAO = (jobId: string): JobScheduling => ({
   job_id: jobId, enabled: false, slots: [], blocked_dates: [], blocked_slots: [], duration_min: 30, gap_min: 0, per_slot: 1,
-  min_notice_hours: 12, horizon_days: 7, format: 'presencial', location: '', interviewers: [], candidate_notes: '',
+  min_notice_hours: 12, horizon_days: 7, format: 'presencial', location: '', interviewers: [], candidate_notes: '', feedback_message: '',
 });
 // Mesmos valores aceitos por hiring_interviews.format
 const FORMATOS = [{ id: 'presencial', label: 'Presencial' }, { id: 'video', label: 'Online (vídeo)' }, { id: 'telefone', label: 'Telefone' }];
@@ -76,6 +76,7 @@ export default function AgendamentoVaga({ jobId, defaultLocation }: { jobId: str
           : { kind: 'whatsapp', name: i.name.trim(), phone: normFone(i.phone), ...(i.jid ? { jid: i.jid } : {}) })),
       location: (s.location ?? '').trim() || null,
       candidate_notes: (s.candidate_notes ?? '').trim() || null,
+      feedback_message: (s.feedback_message ?? '').trim() || null,
       updated_at: new Date().toISOString(),
     };
     const { error } = await supabase.from('hiring_job_scheduling').upsert(row, { onConflict: 'job_id' });
@@ -232,6 +233,16 @@ export default function AgendamentoVaga({ jobId, defaultLocation }: { jobId: str
       <label className="block">
         <span className={lbl}>O que o assistente deve dizer ao candidato (documentos, como chegar…)</span>
         <textarea value={s.candidate_notes ?? ''} onChange={(e) => set('candidate_notes', e.target.value)} rows={2} placeholder="Ex.: trazer carteira de trabalho; entrar pela porta lateral e perguntar pela Thati" className="w-full px-3 py-2 rounded-lg border border-zinc-200 text-sm bg-white focus:outline-none focus:border-amber-300" />
+      </label>
+
+      <label className="block">
+        <span className={lbl}>Retorno para quem não passou (decisão NA) — opcional</span>
+        <textarea value={s.feedback_message ?? ''} onChange={(e) => set('feedback_message', e.target.value)} rows={3}
+          placeholder="Ex.: Oi, {nome}! Obrigado por participar da entrevista na {empresa}. Desta vez seguimos com outro perfil para a vaga de {vaga}, mas seu currículo fica com a gente para próximas oportunidades. Boa sorte! 🍀"
+          className="w-full px-3 py-2 rounded-lg border border-zinc-200 text-sm bg-white focus:outline-none focus:border-amber-300" />
+        <span className="block text-[11px] text-zinc-500 mt-1">
+          Em branco, ninguém recebe nada. Preenchido, o assistente manda 2 h depois de a entrevista ser registrada como NA (entrevistas dos últimos 14 dias, inclusive as que já estão registradas).
+        </span>
       </label>
 
       <div className="flex items-center gap-2">
