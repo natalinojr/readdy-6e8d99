@@ -354,7 +354,7 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
           </div>
         </div>
         <div className="pl-[42px]">
-          {ehPagamento && infoPag[p.id] && <LinhaPagamento info={infoPag[p.id]} />}
+          {ehPagamento && infoPag[p.id] && <LinhaPagamento info={infoPag[p.id]} pedido={origemPedido(p)} />}
           {p.kind === 'sangria_valor_diferente' ? (
             // Saiu × nota lado a lado: o texto longo do servidor dizia o mesmo em três linhas.
             <div className="mt-1.5 grid grid-cols-3 gap-1 rounded-lg bg-amber-50 border border-amber-100 px-2.5 py-1.5 text-center">
@@ -703,8 +703,20 @@ interface InfoPagamento {
   guia?: string | null; // DAS/DARF/FGTS: "Guia de imposto — não é compra · vence dd/mm"
 }
 
+// Pix de pedido de pagamento aprovado (/receber): freela, reembolso ou fornecedor sem nota não
+// passam pelo recebimento de mercadoria — a linha "recebimento não confirmado" não se aplica.
+const ORIGEM_PEDIDO: [RegExp, string][] = [
+  [/^Freelancer/i, 'Diária de freelancer — pedido aprovado, não é compra'],
+  [/^Reembolso/i, 'Reembolso — pedido aprovado, não é compra de mercadoria'],
+  [/^Fornecedor sem nota/i, 'Fornecedor sem nota — pedido aprovado'],
+];
+const origemPedido = (p: PendenciaChat): string | null => {
+  if (!pedidoDa(p)) return null;
+  return ORIGEM_PEDIDO.find(([re]) => re.test(p.titulo ?? ''))?.[1] ?? 'Pedido de pagamento aprovado';
+};
+
 // Para quem vai (em destaque) e se a mercadoria já chegou — o que se confere antes de pagar.
-function LinhaPagamento({ info }: { info: InfoPagamento }) {
+function LinhaPagamento({ info, pedido }: { info: InfoPagamento; pedido?: string | null }) {
   return (
     <div className="mt-1.5 rounded-lg bg-violet-50 border border-violet-100 px-2.5 py-1.5">
       <p className="text-xs text-zinc-800 break-words">
@@ -712,7 +724,11 @@ function LinhaPagamento({ info }: { info: InfoPagamento }) {
         {info.valor ? <> de <b>{brl(info.valor)}</b></> : null} para{' '}
         <b className="font-bold text-violet-800">{info.para || 'destinatário não identificado'}</b>
       </p>
-      {info.guia ? (
+      {pedido ? (
+        <p className="text-[11px] font-semibold mt-0.5 text-zinc-600">
+          <i className="ri-file-list-3-line" /> {pedido}
+        </p>
+      ) : info.guia ? (
         <p className="text-[11px] font-semibold mt-0.5 text-zinc-600">
           <i className="ri-government-line" /> {info.guia}
         </p>

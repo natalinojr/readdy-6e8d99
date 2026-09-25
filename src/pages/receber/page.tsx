@@ -367,7 +367,8 @@ export default function ReceberPage() {
 
       {scanner && <ScannerQR onLido={onLidoAoVivo} onLink={(url) => onLidoAoVivo({ tipo: 'qr', url })} onFoto={() => { setScanner(false); inputCupom.current?.click(); }} onGaleria={() => { setScanner(false); inputCupomGaleria.current?.click(); }} onFechar={() => setScanner(false)} />}
 
-      <div className="flex-1 overflow-y-auto">
+      {/* scroll-padding: o campo focado para acima da barra fixa do botão (que sobe junto com o teclado) */}
+      <div className="flex-1 overflow-y-auto scroll-pb-32">
         {erro && (
           <div className="mx-4 mt-4 bg-red-50 border border-red-200 text-red-700 rounded-2xl p-3.5 text-sm flex gap-2">
             <i className="ri-error-warning-line text-lg flex-shrink-0" />

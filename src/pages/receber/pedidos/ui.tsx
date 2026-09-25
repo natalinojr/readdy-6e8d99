@@ -5,6 +5,12 @@ import type { Categoria } from './api';
 
 export const cls = 'mt-1.5 w-full bg-white border-2 border-zinc-100 focus:border-amber-400 rounded-2xl px-4 py-3.5 text-base outline-none';
 
+/** Teclado do celular sobe depois do foco: centraliza o campo para ele não ficar atrás do teclado nem da barra do botão. */
+const centralizar = (e: { currentTarget: HTMLElement }) => {
+  const el = e.currentTarget;
+  setTimeout(() => { if (document.activeElement === el) el.scrollIntoView({ behavior: 'smooth', block: 'center' }); }, 350);
+};
+
 export function Rotulo({ children, dica }: { children: ReactNode; dica?: string }) {
   return (
     <div className="px-1">
@@ -22,8 +28,8 @@ export function Texto({ label, dica, valor, onValor, placeholder, multilinha, in
     <div>
       <Rotulo dica={dica}>{label}</Rotulo>
       {multilinha
-        ? <textarea rows={2} value={valor} onChange={(e) => onValor(e.target.value)} placeholder={placeholder} className={cls} />
-        : <input value={valor} inputMode={inputMode} onChange={(e) => onValor(e.target.value)} placeholder={placeholder} className={cls} />}
+        ? <textarea rows={2} value={valor} onFocus={centralizar} onChange={(e) => onValor(e.target.value)} placeholder={placeholder} className={cls} />
+        : <input value={valor} inputMode={inputMode} onFocus={centralizar} onChange={(e) => onValor(e.target.value)} placeholder={placeholder} className={cls} />}
     </div>
   );
 }
@@ -42,7 +48,7 @@ export function Valor({ label, valor, onValor }: { label: string; valor: string;
       <Rotulo>{label}</Rotulo>
       <div className="relative">
         <span className="absolute left-4 top-1/2 -translate-y-1/2 mt-0.5 text-zinc-400 font-semibold">R$</span>
-        <input value={valor} inputMode="decimal" onChange={(e) => onValor(e.target.value.replace(/[^\d.,]/g, ''))} placeholder="0,00" className={`${cls} pl-11 text-lg font-bold`} />
+        <input value={valor} inputMode="decimal" onFocus={centralizar} onChange={(e) => onValor(e.target.value.replace(/[^\d.,]/g, ''))} placeholder="0,00" className={`${cls} pl-11 text-lg font-bold`} />
       </div>
     </div>
   );
