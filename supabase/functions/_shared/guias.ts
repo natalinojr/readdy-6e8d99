@@ -163,6 +163,9 @@ export function lerGuia(textoBruto: string, linhaLida?: string | null): Guia | n
   else if (/Arrecadacao de Receitas Federais|\bDARF\b/i.test(t)) tipo = 'DARF';
   if (!tipo) return null;
   const previdencia = tipo === 'DARF' && /\b(1082|1099|1138|1141|1170|1176|1191|1196|1200|1646)\b|CONTR(IB)?\.? PREV|CP SEGURADOS|PREVIDENCI/i.test(t);
+  // IRRF descontado do salário (código 0561, 2026-09-25): o imposto já está no bruto da folha, que a DRE
+  // conta — lançado como "Impostos" contava duas vezes. Vira encargo da folha, igual ao INSS descontado.
+  const irrfFolha = tipo === 'DARF' && /\b0561\b|TRABALHO ASSALARIADO/i.test(t);
 
   // Competência: "agosto/2026" (Receita) · "PA:08/2026" · "08/2026" solto (GFD), nunca o fim de uma data.
   let competencia: string | null = null;
@@ -219,11 +222,11 @@ export function lerGuia(textoBruto: string, linhaLida?: string | null): Guia | n
     if (c && num(c) > 0) itens.push(`Consignado (desconto de empréstimo em folha): ${c}`);
   }
 
-  const titulo = tipo === 'DAS' ? 'DAS Simples Nacional' : tipo === 'FGTS' ? 'FGTS Digital (GFD)' : previdencia ? 'DARF INSS (previdência)' : 'DARF';
+  const titulo = tipo === 'DAS' ? 'DAS Simples Nacional' : tipo === 'FGTS' ? 'FGTS Digital (GFD)' : previdencia ? 'DARF INSS (previdência)' : irrfFolha ? 'DARF IRRF (folha)' : 'DARF';
   const fornecedor = tipo === 'FGTS' ? 'Caixa Econômica Federal (FGTS Digital)' : 'Receita Federal';
   const pagavel = tipo === 'FGTS' ? !!copia : !!linha;
   return {
-    tipo, titulo, fornecedor, encargo_folha: tipo === 'FGTS' || previdencia,
+    tipo, titulo, fornecedor, encargo_folha: tipo === 'FGTS' || previdencia || irrfFolha,
     competencia, vencimento, valor, cnpj, numero, linha, copia_e_cola: copia,
     composicao: itens.length ? itens.join('; ').slice(0, 600) : null,
     linha_reparada: reparada,
