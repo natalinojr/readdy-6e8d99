@@ -241,10 +241,15 @@ export default function IfoodApiViews({ tenantId, competence, view, merchantId, 
   if (view === 'repasses') {
     if (rows.length === 0 && antecip.length === 0 && conf.length === 0) return <Empty />;
     // Fontes batem se as disponíveis diferem até R$ 0,05 entre si.
-    const situacao = (c: { eventos: number | null; conciliacao: number | null; liquidado: number | null }) => {
+    const hoje = new Date(Date.now() - 3 * 3600_000).toISOString().slice(0, 10);
+    const situacao = (c: { data: string; eventos: number | null; conciliacao: number | null; liquidado: number | null }) => {
       const vals = [c.eventos, c.conciliacao, c.liquidado].filter((v): v is number => v !== null);
       if (vals.length < 2) return { t: 'Só uma fonte', c: 'bg-zinc-100 text-zinc-600' };
-      return Math.max(...vals) - Math.min(...vals) <= 0.05 ? { t: 'Conferido', c: 'bg-green-100 text-green-700' } : { t: 'Diferença', c: 'bg-amber-100 text-amber-700' };
+      if (Math.max(...vals) - Math.min(...vals) <= 0.05) return { t: 'Conferido', c: 'bg-green-100 text-green-700' };
+      // Repasse ainda por vir: a API já tem as vendas novas e o relatório do mês foi gerado antes delas.
+      const apiBate = c.eventos !== null && c.liquidado !== null && Math.abs(c.eventos - c.liquidado) <= 0.05;
+      if (c.data >= hoje && apiBate) return { t: 'Relatório desatualizado', c: 'bg-blue-50 text-blue-700' };
+      return { t: 'Diferença', c: 'bg-amber-100 text-amber-700' };
     };
     const variasLojas = new Set(conf.map((c) => c.merchant)).size > 1;
     const lojaNome = (id: string) => nomes[id] ?? `Loja ${id.slice(0, 8)}`;
@@ -255,7 +260,7 @@ export default function IfoodApiViews({ tenantId, competence, view, merchantId, 
           <div className="bg-white rounded-xl border border-zinc-100 overflow-hidden">
             <div className="px-4 py-3 border-b border-zinc-100">
               <p className="text-sm font-semibold text-zinc-800">Conferência entre fontes do iFood</p>
-              <p className="text-xs text-zinc-500">Por loja e data de repasse: eventos financeiros que afetam o repasse × relatório de conciliação × valor liquidado. As três devem bater (uma loja só pelo arquivo mostra "Só uma fonte").</p>
+              <p className="text-xs text-zinc-500">Por loja e data de repasse: eventos financeiros que afetam o repasse × relatório de conciliação × valor liquidado. As três devem bater. Loja só pelo arquivo mostra "Só uma fonte"; "Relatório desatualizado" some com <strong>Atualizar do iFood</strong>.</p>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm min-w-[640px]">
@@ -286,7 +291,11 @@ export default function IfoodApiViews({ tenantId, competence, view, merchantId, 
         <div className="bg-white rounded-xl border border-zinc-100 overflow-hidden">
           <div className="px-4 py-3 border-b border-zinc-100">
             <p className="text-sm font-semibold text-zinc-800">Liquidações do iFood</p>
-            <p className="text-xs text-zinc-500">Pago no banco: <strong className="text-green-700">{formatCurrency(rows.filter((r) => String(r.type ?? '').toUpperCase() === 'REPASSE').reduce((s, r) => s + n(r.amount), 0))}</strong> em repasses com data de pagamento neste mês. As linhas em cinza são a composição de cada fechamento (saldos compensados) e não somam.</p>
+            <p className="text-xs text-zinc-500">
+              Repasses do mês: <strong className="text-green-700">{formatCurrency(rows.filter((r) => String(r.type ?? '').toUpperCase() === 'REPASSE' && r.payment_date <= hoje).reduce((s, r) => s + n(r.amount), 0))}</strong> já pagos
+              {rows.some((r) => String(r.type ?? '').toUpperCase() === 'REPASSE' && r.payment_date > hoje) && <> · <strong className="text-zinc-700">{formatCurrency(rows.filter((r) => String(r.type ?? '').toUpperCase() === 'REPASSE' && r.payment_date > hoje).reduce((s, r) => s + n(r.amount), 0))}</strong> previstos</>}
+              . As linhas em cinza são a composição de cada fechamento (saldos compensados) e não somam.
+            </p>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm min-w-[700px]">

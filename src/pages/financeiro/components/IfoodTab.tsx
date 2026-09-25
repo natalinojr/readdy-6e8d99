@@ -40,12 +40,12 @@ function Kpi({ label, value, sub, icon, tone = 'zinc' }: { label: string; value:
   const color = { zinc: 'text-zinc-900', green: 'text-green-700', red: 'text-red-600', amber: 'text-amber-700' }[tone];
   const iconBg = { zinc: 'bg-zinc-100 text-zinc-600', green: 'bg-green-50 text-green-600', red: 'bg-red-50 text-red-500', amber: 'bg-amber-50 text-amber-600' }[tone];
   return (
-    <div className="bg-white rounded-2xl border border-zinc-100 p-4">
+    <div className="bg-white rounded-2xl border border-zinc-100 p-3 sm:p-4">
       <div className="flex items-center gap-2">
-        {icon && <span className={`w-7 h-7 flex items-center justify-center rounded-lg ${iconBg}`}><i className={`${icon} text-sm`} /></span>}
-        <p className="text-xs font-medium text-zinc-500">{label}</p>
+        {icon && <span className={`hidden sm:flex w-7 h-7 shrink-0 items-center justify-center rounded-lg ${iconBg}`}><i className={`${icon} text-sm`} /></span>}
+        <p className="text-xs font-medium text-zinc-500 leading-tight">{label}</p>
       </div>
-      <p className={`text-xl font-bold mt-2 ${color}`}>{value}</p>
+      <p className={`text-lg sm:text-xl font-bold mt-2 whitespace-nowrap ${color}`}>{value}</p>
       {sub && <p className="text-[11px] text-zinc-400 mt-0.5">{sub}</p>}
     </div>
   );
@@ -276,10 +276,10 @@ export default function IfoodTab() {
             <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-blue-50 text-blue-700 text-xs font-semibold"><i className="ri-flask-line" /> Modo homologação</span>
           ) : api.ligadas > 0 ? (
             <span title={api.erro ?? undefined}
-              className={`inline-flex flex-wrap items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${api.erro ? 'bg-amber-50 text-amber-700' : 'bg-green-50 text-green-700'}`}>
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold whitespace-nowrap ${api.erro ? 'bg-amber-50 text-amber-700' : 'bg-green-50 text-green-700'}`}>
               <span className={`w-2 h-2 rounded-full ${api.erro ? 'bg-amber-500' : 'bg-green-500'}`} />
               API {api.erro ? 'com aviso' : 'conectada'} · {api.ligadas} de {Math.max(api.total, lojas.length)} loja(s)
-              {api.lastSync && <span className="font-normal opacity-80">· {new Date(api.lastSync).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>}
+              {api.lastSync && <span className="hidden sm:inline font-normal opacity-80">· {new Date(api.lastSync).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>}
             </span>
           ) : (
             <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-zinc-100 text-zinc-600 text-xs font-semibold"><span className="w-2 h-2 rounded-full bg-zinc-400" /> Só por arquivo</span>
@@ -288,7 +288,7 @@ export default function IfoodTab() {
 
         <div className="flex flex-col lg:flex-row lg:items-center gap-3">
           {lojas.length > 0 && (
-            <div className="flex items-center gap-1.5 overflow-x-auto -mx-1 px-1 pb-0.5 min-w-0 lg:flex-1">
+            <div className="flex items-center gap-1.5 overflow-x-auto -mx-1 px-1 min-w-0 lg:flex-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
               {lojas.length > 1 && (
                 <button onClick={() => setLoja('')}
                   className={`px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap border cursor-pointer ${loja === '' ? 'bg-zinc-900 border-zinc-900 text-white' : 'bg-white border-zinc-200 text-zinc-600 hover:border-zinc-300'}`}>
@@ -307,10 +307,10 @@ export default function IfoodTab() {
               })}
             </div>
           )}
-          <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+          <div className="flex items-center gap-2 lg:justify-end">
             {competencias.length > 0 && (
               <select value={competence} onChange={(e) => setCompetence(e.target.value)} aria-label="Mês"
-                className="border border-zinc-200 rounded-lg px-3 py-2 text-sm bg-white capitalize font-semibold text-zinc-800">
+                className="flex-1 lg:flex-none min-w-0 border border-zinc-200 rounded-lg px-3 py-2 text-sm bg-white capitalize font-semibold text-zinc-800">
                 {competencias.map((c) => <option key={c} value={c}>{compLabel(c)}</option>)}
               </select>
             )}
@@ -323,12 +323,12 @@ export default function IfoodTab() {
             {apiOn && (
               <button onClick={gerarAgora} disabled={ondemand.running} title="Pede ao iFood o relatório de conciliação atualizado deste mês"
                 className="flex items-center gap-1.5 px-3 py-2 border border-red-200 text-red-700 rounded-lg text-sm font-semibold hover:bg-red-50 cursor-pointer whitespace-nowrap disabled:opacity-50">
-                <i className={`ri-refresh-line ${ondemand.running ? 'animate-spin' : ''}`} /> Atualizar do iFood
+                <i className={`ri-refresh-line ${ondemand.running ? 'animate-spin' : ''}`} /><span className="hidden sm:inline">Atualizar do iFood</span>
               </button>
             )}
             <button onClick={() => setShowConfig(true)}
               className="flex items-center gap-1.5 px-3 py-2 bg-red-600 text-white rounded-lg text-sm font-semibold hover:bg-red-700 cursor-pointer whitespace-nowrap">
-              <i className="ri-settings-3-line" /> Importar e configurar
+              <i className="ri-settings-3-line" /><span className="hidden sm:inline">Importar e configurar</span><span className="sm:hidden">Configurar</span>
             </button>
           </div>
         </div>
@@ -605,10 +605,10 @@ export default function IfoodTab() {
                 return (
                   <li key={desc} className="px-4 py-2.5">
                     <div className="flex items-baseline justify-between gap-3 text-sm">
-                      <span className="text-zinc-700 min-w-0 truncate">{desc}</span>
+                      <span className="text-zinc-700 min-w-0 flex-1 break-words">{desc}</span>
                       <span className="flex items-baseline gap-3 shrink-0">
-                        <span className="text-xs text-zinc-400 w-12 text-right">{p.toFixed(1)}%</span>
-                        <span className={`font-mono w-28 text-right ${v < 0 ? 'text-green-700' : 'text-red-600'}`}>{formatCurrency(v)}</span>
+                        <span className="text-xs text-zinc-400 w-11 text-right">{p.toFixed(1)}%</span>
+                        <span className={`font-mono w-24 sm:w-28 text-right ${v < 0 ? 'text-green-700' : 'text-red-600'}`}>{formatCurrency(v)}</span>
                       </span>
                     </div>
                     <div className="mt-1.5 h-1.5 rounded-full bg-zinc-100 overflow-hidden">
@@ -621,7 +621,7 @@ export default function IfoodTab() {
                 <span>Total</span>
                 <span className="flex items-baseline gap-3">
                   <span className="text-xs text-zinc-500 w-12 text-right">{resumo.taxaEfetiva.toFixed(1)}%</span>
-                  <span className="font-mono w-28 text-right text-red-600">{formatCurrency(resumo.custoTotal)}</span>
+                  <span className="font-mono w-24 sm:w-28 text-right text-red-600">{formatCurrency(resumo.custoTotal)}</span>
                 </span>
               </li>
             </ul>
