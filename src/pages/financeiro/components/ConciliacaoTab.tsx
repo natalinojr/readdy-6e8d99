@@ -505,9 +505,9 @@ export default function ConciliacaoTab() {
     setTimeout(() => setToast(null), 3500);
   };
 
-  // Set default account
+  // Set default account (também quando a conta escolhida não é desta loja: troca de loja)
   useEffect(() => {
-    if (bankAccounts.length > 0 && !selectedAccountId) {
+    if (bankAccounts.length > 0 && (!selectedAccountId || !bankAccounts.some(a => a.id === selectedAccountId))) {
       const def = bankAccounts.find(a => a.is_default) ?? bankAccounts[0];
       setSelectedAccountId(def.id);
     }
@@ -564,6 +564,10 @@ export default function ConciliacaoTab() {
     updateRule,
     deleteRule,
   } = useConciliacao(selectedAccountId, periodoValido ? { from: periodFrom, to: periodTo } : undefined);
+
+  // Lançar/desfazer/confirmar mexe no saldo da conta (fn_bank_debit/credit): o cartão do topo ficava
+  // com o saldo antigo até recarregar a página. Toda recarga do extrato relê as contas (2026-09-25).
+  useEffect(() => { if (imports.length > 0) refetchAccounts(); }, [imports]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Alertas de confiabilidade (fn_conciliacao_alertas)
   // Cada item do alerta carrega o registro (2026-09-20): a linha leva onde se resolve.
@@ -895,7 +899,7 @@ export default function ConciliacaoTab() {
 
   const handleReabrir = async (id: string) => {
     const ok = await unreconcile(id);
-    if (ok) { showToast('Status reaberto.'); refresh(); }
+    if (ok) { showToast('Status reaberto.'); refresh(); loadAlerts(); }
   };
 
   // ── Números do período ────────────────────────────────────────────────────
@@ -1819,7 +1823,7 @@ export default function ConciliacaoTab() {
           onClose={() => setSelectedTransaction(null)}
           onUpdate={updateImport}
           onReconcile={reconcile}
-          onUnreconcile={unreconcile}
+          onUnreconcile={async (id) => { const ok = await unreconcile(id); if (ok) loadAlerts(); return ok; }}
           onCreateRule={async (pattern, category, costCenterId, txType) => {
             return await createRule({
               pattern,

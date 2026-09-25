@@ -341,11 +341,11 @@ export default function TransacaoDetalheModal({
             const confLabel: Record<string, string> = { exato: 'Exato', forte: 'Forte', provavel: 'Provável', manual: 'Manual' };
             const desconto = Number(d.desconto ?? 0);
             // Lançado a partir do extrato (pagamento sem nota): despesa ou compra criada aqui
-            const criado = d.created === 'despesa' || d.created === 'compra' ? String(d.created) : null;
+            const criado = d.created === 'despesa' || d.created === 'compra' || d.created === 'freelancer' ? String(d.created) : null;
             return (
               <div className={'border rounded-xl p-3 text-xs space-y-2 ' + (conf ? 'border-emerald-200 bg-emerald-50' : 'border-blue-200 bg-blue-50')}>
                 <div className="flex items-center justify-between gap-2">
-                  <span className="font-semibold text-zinc-800"><i className="ri-links-line mr-1" />{criado ? `Lançado pelo extrato como ${criado === 'compra' ? 'compra (CMV)' : 'despesa'}` : conf ? 'Pagamento conciliado' : 'Vínculo sugerido'}</span>
+                  <span className="font-semibold text-zinc-800"><i className="ri-links-line mr-1" />{criado ? `Lançado pelo extrato como ${criado === 'compra' ? 'compra (CMV)' : criado === 'freelancer' ? 'pagamento de freelancer' : 'despesa'}` : conf ? 'Pagamento conciliado' : 'Vínculo sugerido'}</span>
                   <span className="px-2 py-0.5 rounded-full bg-white border border-zinc-200 text-zinc-600">{confLabel[String(transaction.match_confidence)] ?? String(transaction.match_confidence ?? '')}</span>
                 </div>
                 <p className="text-zinc-700">
@@ -368,6 +368,8 @@ export default function TransacaoDetalheModal({
                   <p className="text-emerald-700">
                     {criado === 'compra'
                       ? 'Compra já paga nesta data, no CMV. Se a nota desse pagamento chegar depois, ela aparece nos alertas da Conciliação: não importe de novo.'
+                      : criado === 'freelancer'
+                      ? 'Despesa de RH já paga nesta data; a diária está em Financeiro › Freelancers.'
                       : 'Conta a pagar já baixada nesta data, com a categoria da DRE.'}
                   </p>
                 )}
@@ -386,7 +388,7 @@ export default function TransacaoDetalheModal({
                   ) : (
                     <button
                       onClick={() => {
-                        if (criado && !window.confirm(`Desfazer? A ${criado === 'compra' ? 'compra' : 'despesa'} criada a partir deste pagamento será apagada e o pagamento volta a pendente.`)) return;
+                        if (criado && !window.confirm(criado === 'freelancer' ? 'Desfazer? O pagamento de freelancer (conta e diárias) será apagado e o pagamento volta a pendente.' : `Desfazer? A ${criado === 'compra' ? 'compra' : 'despesa'} criada a partir deste pagamento será apagada e o pagamento volta a pendente.`)) return;
                         vinculoAction('undo');
                       }}
                       disabled={vinculoBusy} className="px-3 py-1.5 bg-white border border-amber-300 text-amber-700 rounded-lg font-semibold hover:bg-amber-50 disabled:opacity-50 cursor-pointer">

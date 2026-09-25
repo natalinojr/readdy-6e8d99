@@ -44,7 +44,8 @@
 //   CNPJ + valor + data; Pix ao gerente/dono ou razão social diferente da nota nunca casava.
 //   link_search  { id, q? }  contas a pagar em aberto + notas não lançadas, mais parecidas primeiro
 //   link_manual  { id, alvo: { kind: 'payable'|'inbound_doc', ref_id, parcela?, valor?, vencimento? },
-//                  lembrar?: boolean }   admin/gerente: liga e dá a baixa (mesmo caminho do confirm);
+//                  lembrar?: boolean, dre_category_id? (classifica a conta sem DRE antes da baixa) }
+//                  admin/gerente: liga e dá a baixa (mesmo caminho do confirm);
 //                  lembrar grava o apelido "quem recebe X = fornecedor Y" (fin_counterpart_aliases)
 //                  e refaz as sugestões — os próximos pagamentos a essa pessoa casam sozinhos.
 //
@@ -1360,6 +1361,15 @@ Deno.serve(async (req: Request) => {
         const { data: b } = await admin.from('fin_accounts_payable').select('*').eq('id', String(alvo.ref_id)).eq('tenant_id', tenantId).maybeSingle();
         if (!b) return errResp('Conta a pagar não encontrada', 404);
         if (b.status === 'paid' || b.status === 'cancelled') return errResp('Esta conta já está quitada ou cancelada');
+        // Conta sem classificação DRE: o pay_bill recusa. A tela manda a categoria escolhida ali mesmo
+        // (antes o usuário tinha de sair para Contas a Pagar, classificar e voltar) — 2026-09-25.
+        if (!b.dre_category_id && body.dre_category_id && !['purchase', 'hr_payroll'].includes(String(b.reference_type ?? ''))) {
+          const { data: cat } = await admin.from('fin_dre_categories').select('id, group_type')
+            .eq('id', String(body.dre_category_id)).eq('tenant_id', tenantId).maybeSingle();
+          if (!cat || ['revenue', 'tax'].includes(String(cat.group_type))) return errResp('Categoria DRE inválida para despesa nesta loja');
+          const { error: catErr } = await admin.from('fin_accounts_payable').update({ dre_category_id: cat.id }).eq('id', b.id).eq('tenant_id', tenantId);
+          if (catErr) return errResp('Classificar a conta: ' + catErr.message, 500);
+        }
         const falta = round2(Number(b.amount) - Number(b.paid_amount ?? 0));
         det = { parcela: b.installment_number ? String(b.installment_number) : null, vencimento: b.due_date, valor: falta,
           label: String(b.description ?? ''), nome: b.supplier ?? null, manual: true,

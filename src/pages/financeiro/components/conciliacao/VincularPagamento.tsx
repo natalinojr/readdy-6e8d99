@@ -3,6 +3,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import { invokeWithAuth } from '@/lib/supabase';
 import { formatCurrency } from '@/lib/formatters';
 import type { StatementImport } from '@/hooks/useConciliacao';
+import CategoriaCombobox from '../CategoriaCombobox';
+import { useCategoriasLancamento } from './LancarDoExtrato';
 
 // "Este pagamento é de…" (2026-09-20). O casamento automático usa CNPJ + valor + data: Pix ao gerente,
 // ao dono ou a uma razão social diferente da nota nunca casava e não havia como dizer à mão.
@@ -45,9 +47,13 @@ export default function VincularPagamento({ transaction, onDone }: { transaction
   const [lembrar, setLembrar] = useState(true);
   const [busy, setBusy] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
+  const [pedeDre, setPedeDre] = useState(false);
+  const [dreCat, setDreCat] = useState('');
+  const { dreOptions } = useCategoriasLancamento();
   const quem = transaction.counterpart_name || transaction.description || 'quem recebeu';
 
-  useEffect(() => { setAberto(false); setOpcoes(null); setEscolha(null); setBusca(''); setErro(null); }, [transaction.id]);
+  useEffect(() => { setAberto(false); setOpcoes(null); setEscolha(null); setBusca(''); setErro(null); setPedeDre(false); setDreCat(''); }, [transaction.id]);
+  useEffect(() => { setPedeDre(false); setDreCat(''); }, [escolha?.ref_id, escolha?.parcela]);
 
   const buscar = useCallback(async (q: string) => {
     if (!user?.tenantId) return;
@@ -65,16 +71,20 @@ export default function VincularPagamento({ transaction, onDone }: { transaction
 
   const vincular = async () => {
     if (!user?.tenantId || !escolha) return;
+    if (pedeDre && !dreCat) { setErro('Escolha a categoria do DRE desta conta.'); return; }
     setBusy(true); setErro(null);
     const r = await invokeWithAuth<{ results?: Array<{ ok: boolean; msg: string }>; lembrou?: { n: number; nome: string | null } | null; error?: string }>('conciliacao-pagamentos', {
       body: {
         action: 'link_manual', tenant_id: user.tenantId, id: transaction.id, lembrar,
         alvo: { kind: escolha.kind, ref_id: escolha.ref_id, parcela: escolha.parcela },
+        dre_category_id: pedeDre ? dreCat : null,
       },
     });
     setBusy(false);
     const res = r.data?.results?.[0];
     const e = r.data?.error ?? r.error?.message ?? (res && !res.ok ? res.msg : null);
+    // Conta sem classificação: em vez de mandar o usuário para Contas a Pagar, pede a categoria aqui
+    if (e && /Classifique a conta no DRE/i.test(e) && escolha.kind === 'payable') { setPedeDre(true); setErro(null); return; }
     if (e) { setErro(e); return; }
     onDone();
   };
@@ -161,6 +171,14 @@ export default function VincularPagamento({ transaction, onDone }: { transaction
             </span>
           </label>
         </>
+      )}
+
+      {pedeDre && (
+        <div className="bg-amber-50 border border-amber-300 rounded-lg p-2.5 space-y-1.5">
+          <p className="text-xs text-amber-800"><i className="ri-alert-line mr-1" />Esta conta ainda não tem classificação no DRE. Escolha aqui e ela é classificada junto com a baixa.</p>
+          <CategoriaCombobox value={dreCat} options={dreOptions} onChange={(id) => { setDreCat(id); setErro(null); }} placeholder="Categoria do DRE…"
+            buttonClassName="w-full px-3 py-2 border border-zinc-200 rounded-lg text-sm bg-white cursor-pointer" />
+        </div>
       )}
 
       {erro && <p className="text-xs text-red-600">{erro}</p>}
