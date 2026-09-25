@@ -385,7 +385,7 @@ export default function IfoodTab() {
       ) : view !== 'resumo' ? (
         user?.tenantId ? <IfoodApiViews tenantId={user.tenantId} competence={competence || hoje.slice(0, 7)} view={view} merchantId={loja || undefined} nomes={nomes} /> : null
       ) : !loading && imports.length === 0 ? (
-        <div className="bg-white rounded-xl border border-zinc-100 p-8 text-center space-y-2">
+        <div className="bg-white rounded-2xl border border-zinc-100 p-8 text-center space-y-2">
           <i className="ri-file-excel-2-line text-3xl text-zinc-300" />
           <p className="text-sm font-semibold text-zinc-700">{homolog ? 'A loja de teste do iFood não tem relatório de conciliação' : 'Nenhum relatório do iFood importado'}</p>
           {homolog && (
@@ -411,9 +411,9 @@ export default function IfoodTab() {
               </div>
               <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs">
                 <span className="text-zinc-500">Cai no banco</span>
-                <strong className="font-mono text-right text-green-700">{formatCurrency(resumo.liquido)}</strong>
+                <strong className="tabular-nums text-right text-green-700">{formatCurrency(resumo.liquido)}</strong>
                 <span className="text-zinc-500" title="Pago na entrega: entra pela maquininha/Pix, não pelo iFood">Recebido direto pela loja</span>
-                <strong className="font-mono text-right text-zinc-700">{formatCurrency(resumo.loja)}</strong>
+                <strong className="tabular-nums text-right text-zinc-700">{formatCurrency(resumo.loja)}</strong>
               </div>
             </div>
             {resumo.vendas > 0 && (() => {
@@ -482,13 +482,13 @@ export default function IfoodTab() {
                     </div>
                     <dl className="mt-2 space-y-0.5 text-xs">
                       {porLoja && (
-                        <div className="flex justify-between"><dt className="text-zinc-500">Esta loja</dt><dd className="font-mono">{formatCurrency(repasseDaLoja.get(r.data_repasse) ?? 0)}</dd></div>
+                        <div className="flex justify-between"><dt className="text-zinc-500">Esta loja</dt><dd className="tabular-nums">{formatCurrency(repasseDaLoja.get(r.data_repasse) ?? 0)}</dd></div>
                       )}
-                      <div className="flex justify-between"><dt className="text-zinc-500">{porLoja ? 'iFood informa (todas)' : 'iFood informa'}</dt><dd className="font-mono">{formatCurrency(r.esperado)}</dd></div>
-                      <div className="flex justify-between"><dt className="text-zinc-500">Caiu no banco</dt><dd className="font-mono">{futuro && r.linhas_inter === 0 ? '—' : formatCurrency(r.recebido_inter)}</dd></div>
+                      <div className="flex justify-between"><dt className="text-zinc-500">{porLoja ? 'iFood informa (todas)' : 'iFood informa'}</dt><dd className="tabular-nums">{formatCurrency(r.esperado)}</dd></div>
+                      <div className="flex justify-between"><dt className="text-zinc-500">Caiu no banco</dt><dd className="tabular-nums">{futuro && r.linhas_inter === 0 ? '—' : formatCurrency(r.recebido_inter)}</dd></div>
                       <div className="flex justify-between">
                         <dt className="text-zinc-500">Diferença</dt>
-                        <dd className={`font-mono ${futuro ? 'text-zinc-300' : Math.abs(diff) <= 0.05 ? 'text-zinc-400' : diff < 0 ? 'text-red-600' : 'text-amber-700'}`}>
+                        <dd className={`tabular-nums ${futuro ? 'text-zinc-300' : Math.abs(diff) <= 0.05 ? 'text-zinc-400' : diff < 0 ? 'text-red-600' : 'text-amber-700'}`}>
                           {futuro && r.linhas_inter === 0 ? '—' : formatCurrency(diff)}
                         </dd>
                       </div>
@@ -498,13 +498,13 @@ export default function IfoodTab() {
                         <div>
                           <p className="font-semibold text-zinc-700 mb-1">Depósitos no relatório do iFood</p>
                           {r.detalhe.ifood.map((d, i) => (
-                            <div key={i} className="flex justify-between border-t border-zinc-100 py-0.5"><span>{d.metodo || '—'}</span><span className="font-mono">{formatCurrency(Number(d.valor))}</span></div>
+                            <div key={i} className="flex justify-between border-t border-zinc-100 py-0.5"><span>{d.metodo || '—'}</span><span className="tabular-nums">{formatCurrency(Number(d.valor))}</span></div>
                           ))}
                           {Number(r.detalhe.antecipacao ?? 0) > 0 && (
                             <>
-                              <div className="flex justify-between border-t border-zinc-200 py-0.5 mt-1"><span>Subtotal do repasse</span><span className="font-mono">{formatCurrency(Number(r.detalhe.bruto ?? 0))}</span></div>
-                              <div className="flex justify-between border-t border-zinc-100 py-0.5 text-red-600"><span>Taxa de antecipação</span><span className="font-mono">-{formatCurrency(Number(r.detalhe.antecipacao))}</span></div>
-                              <div className="flex justify-between border-t border-zinc-100 py-0.5 font-semibold"><span>Valor que cai no banco</span><span className="font-mono">{formatCurrency(r.esperado)}</span></div>
+                              <div className="flex justify-between border-t border-zinc-200 py-0.5 mt-1"><span>Subtotal do repasse</span><span className="tabular-nums">{formatCurrency(Number(r.detalhe.bruto ?? 0))}</span></div>
+                              <div className="flex justify-between border-t border-zinc-100 py-0.5 text-red-600"><span>Taxa de antecipação</span><span className="tabular-nums">-{formatCurrency(Number(r.detalhe.antecipacao))}</span></div>
+                              <div className="flex justify-between border-t border-zinc-100 py-0.5 font-semibold"><span>Valor que cai no banco</span><span className="tabular-nums">{formatCurrency(r.esperado)}</span></div>
                             </>
                           )}
                         </div>
@@ -512,7 +512,7 @@ export default function IfoodTab() {
                           <p className="font-semibold text-zinc-700 mb-1">Créditos iFood no banco</p>
                           {r.detalhe.inter.length === 0 && <p className="text-zinc-400">Nenhum{futuro ? ' ainda (repasse futuro)' : ''}.</p>}
                           {r.detalhe.inter.map((d, i) => (
-                            <div key={i} className="flex justify-between gap-2 border-t border-zinc-100 py-0.5"><span className="break-words">{dataBR(d.data)} · {d.descricao}</span><span className="font-mono whitespace-nowrap">{formatCurrency(Number(d.valor))}</span></div>
+                            <div key={i} className="flex justify-between gap-2 border-t border-zinc-100 py-0.5"><span className="break-words">{dataBR(d.data)} · {d.descricao}</span><span className="tabular-nums whitespace-nowrap">{formatCurrency(Number(d.valor))}</span></div>
                           ))}
                         </div>
                       </div>
@@ -524,7 +524,7 @@ export default function IfoodTab() {
 
             <div className="hidden md:block overflow-x-auto">
               <table className="w-full text-sm">
-                <thead className="bg-zinc-50 text-xs text-zinc-500">
+                <thead className="text-[11px] uppercase tracking-wide text-zinc-400 border-b border-zinc-100">
                   <tr>
                     <th className="text-left px-4 py-2">Data</th>
                     {porLoja && <th className="text-right px-4 py-2">Esta loja</th>}
@@ -550,10 +550,10 @@ export default function IfoodTab() {
                       <>
                         <tr key={r.data_repasse} onClick={() => setOpenRepasse(aberto ? null : r.data_repasse)} className="border-t border-zinc-100 hover:bg-zinc-50 cursor-pointer">
                           <td className="px-4 py-2 whitespace-nowrap"><i className={`${aberto ? 'ri-arrow-down-s-line' : 'ri-arrow-right-s-line'} text-zinc-400 mr-1`} />{dataBR(r.data_repasse)}</td>
-                          {porLoja && <td className="px-4 py-2 text-right font-mono">{formatCurrency(repasseDaLoja.get(r.data_repasse) ?? 0)}</td>}
-                          <td className="px-4 py-2 text-right font-mono">{formatCurrency(r.esperado)}</td>
-                          <td className="px-4 py-2 text-right font-mono">{futuro && r.linhas_inter === 0 ? '—' : formatCurrency(r.recebido_inter)}</td>
-                          <td className={`px-4 py-2 text-right font-mono ${futuro ? 'text-zinc-300' : Math.abs(diff) <= 0.05 ? 'text-zinc-400' : diff < 0 ? 'text-red-600' : 'text-amber-700'}`}>{futuro && r.linhas_inter === 0 ? '—' : formatCurrency(diff)}</td>
+                          {porLoja && <td className="px-4 py-2 text-right tabular-nums">{formatCurrency(repasseDaLoja.get(r.data_repasse) ?? 0)}</td>}
+                          <td className="px-4 py-2 text-right tabular-nums">{formatCurrency(r.esperado)}</td>
+                          <td className="px-4 py-2 text-right tabular-nums">{futuro && r.linhas_inter === 0 ? '—' : formatCurrency(r.recebido_inter)}</td>
+                          <td className={`px-4 py-2 text-right tabular-nums ${futuro ? 'text-zinc-300' : Math.abs(diff) <= 0.05 ? 'text-zinc-400' : diff < 0 ? 'text-red-600' : 'text-amber-700'}`}>{futuro && r.linhas_inter === 0 ? '—' : formatCurrency(diff)}</td>
                           <td className="px-4 py-2"><span className={`px-2 py-0.5 rounded-full text-[11px] font-semibold ${status.c}`}>{status.t}</span></td>
                         </tr>
                         {aberto && (
@@ -563,13 +563,13 @@ export default function IfoodTab() {
                                 <div>
                                   <p className="font-semibold text-zinc-700 mb-1">Depósitos no relatório do iFood</p>
                                   {r.detalhe.ifood.map((d, i) => (
-                                    <div key={i} className="flex justify-between border-t border-zinc-100 py-0.5"><span>{d.metodo || '—'}</span><span className="font-mono">{formatCurrency(Number(d.valor))}</span></div>
+                                    <div key={i} className="flex justify-between border-t border-zinc-100 py-0.5"><span>{d.metodo || '—'}</span><span className="tabular-nums">{formatCurrency(Number(d.valor))}</span></div>
                                   ))}
                                   {Number(r.detalhe.antecipacao ?? 0) > 0 && (
                                     <>
-                                      <div className="flex justify-between border-t border-zinc-200 py-0.5 mt-1"><span>Subtotal do repasse</span><span className="font-mono">{formatCurrency(Number(r.detalhe.bruto ?? 0))}</span></div>
-                                      <div className="flex justify-between border-t border-zinc-100 py-0.5 text-red-600"><span>Taxa de antecipação</span><span className="font-mono">-{formatCurrency(Number(r.detalhe.antecipacao))}</span></div>
-                                      <div className="flex justify-between border-t border-zinc-100 py-0.5 font-semibold"><span>Valor que cai no banco</span><span className="font-mono">{formatCurrency(r.esperado)}</span></div>
+                                      <div className="flex justify-between border-t border-zinc-200 py-0.5 mt-1"><span>Subtotal do repasse</span><span className="tabular-nums">{formatCurrency(Number(r.detalhe.bruto ?? 0))}</span></div>
+                                      <div className="flex justify-between border-t border-zinc-100 py-0.5 text-red-600"><span>Taxa de antecipação</span><span className="tabular-nums">-{formatCurrency(Number(r.detalhe.antecipacao))}</span></div>
+                                      <div className="flex justify-between border-t border-zinc-100 py-0.5 font-semibold"><span>Valor que cai no banco</span><span className="tabular-nums">{formatCurrency(r.esperado)}</span></div>
                                     </>
                                   )}
                                 </div>
@@ -577,7 +577,7 @@ export default function IfoodTab() {
                                   <p className="font-semibold text-zinc-700 mb-1">Créditos iFood no banco</p>
                                   {r.detalhe.inter.length === 0 && <p className="text-zinc-400">Nenhum{futuro ? ' ainda (repasse futuro)' : ''}.</p>}
                                   {r.detalhe.inter.map((d, i) => (
-                                    <div key={i} className="flex justify-between gap-2 border-t border-zinc-100 py-0.5"><span className="truncate">{dataBR(d.data)} · {d.descricao}</span><span className="font-mono">{formatCurrency(Number(d.valor))}</span></div>
+                                    <div key={i} className="flex justify-between gap-2 border-t border-zinc-100 py-0.5"><span className="truncate">{dataBR(d.data)} · {d.descricao}</span><span className="tabular-nums">{formatCurrency(Number(d.valor))}</span></div>
                                   ))}
                                 </div>
                               </div>
@@ -614,7 +614,7 @@ export default function IfoodTab() {
                       <span className="text-zinc-700 min-w-0 flex-1 break-words">{desc}</span>
                       <span className="flex items-baseline gap-3 shrink-0">
                         <span className="text-xs text-zinc-400 w-11 text-right">{p.toFixed(1)}%</span>
-                        <span className={`font-mono w-24 sm:w-28 text-right ${v < 0 ? 'text-green-700' : 'text-red-600'}`}>{formatCurrency(v)}</span>
+                        <span className={`tabular-nums w-24 sm:w-28 text-right ${v < 0 ? 'text-green-700' : 'text-red-600'}`}>{formatCurrency(v)}</span>
                       </span>
                     </div>
                     <div className="mt-1.5 h-1.5 rounded-full bg-zinc-100 overflow-hidden">
@@ -627,7 +627,7 @@ export default function IfoodTab() {
                 <span>Total</span>
                 <span className="flex items-baseline gap-3">
                   <span className="text-xs text-zinc-500 w-12 text-right">{resumo.taxaEfetiva.toFixed(1)}%</span>
-                  <span className="font-mono w-24 sm:w-28 text-right text-red-600">{formatCurrency(resumo.custoTotal)}</span>
+                  <span className="tabular-nums w-24 sm:w-28 text-right text-red-600">{formatCurrency(resumo.custoTotal)}</span>
                 </span>
               </li>
             </ul>
