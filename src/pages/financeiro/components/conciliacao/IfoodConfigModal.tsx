@@ -24,6 +24,13 @@ interface IfoodConfig {
   last_sync_error: string | null;
   homologation_mode?: boolean;
   app_type?: 'distributed' | 'centralized';
+  merchants?: IfoodMerchant[];
+}
+
+// Lojas do iFood desta loja do ERPOS (várias por loja; cada uma liga/desliga a busca pela API).
+interface IfoodMerchant {
+  merchant_id: string; merchant_short: string | null; name: string | null;
+  api_sync: boolean; authorized: boolean; last_sync_at: string | null; last_sync_error: string | null;
 }
 
 interface ImportRow {
@@ -61,7 +68,6 @@ export default function IfoodConfigModal({ onClose, onImported }: Props) {
   const [postToLedger, setPostToLedger] = useState(false);
   const [authCode, setAuthCode] = useState('');
   const [appType, setAppType] = useState<'distributed' | 'centralized'>('distributed');
-  const [merchants, setMerchants] = useState<{ id: string; name: string }[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [result, setResult] = useState<{ ok: boolean; msg: string } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -140,44 +146,37 @@ export default function IfoodConfigModal({ onClose, onImported }: Props) {
   };
 
   const handleConfirm = async () => {
-    const d = await call<{ merchants?: { id: string; name: string }[]; merchant_id?: string | null }>('confirm', { action: 'confirm_authorization', authorization_code: authCode.trim() });
+    const d = await call<{ merchants?: IfoodMerchant[] }>('confirm', { action: 'confirm_authorization', authorization_code: authCode.trim() });
     if (!d) return;
     setAuthCode('');
-    if (!d.merchant_id && (d.merchants?.length ?? 0) > 1) {
-      setMerchants(d.merchants ?? []);
-      setResult({ ok: true, msg: 'Autorizado. Escolha abaixo qual loja do iFood é esta.' });
-    } else {
-      setResult({ ok: true, msg: 'Autorizado! Os dados do iFood passam a ser buscados todo dia às 07h20 e ao abrir a Conciliação.' });
-    }
+    const pendentes = (d.merchants ?? []).filter((m) => m.authorized && !m.api_sync).length;
+    setResult({ ok: true, msg: pendentes > 0
+      ? 'Autorizado! Ligue abaixo as lojas do iFood que são desta loja do ERPOS.'
+      : 'Autorizado! Os dados do iFood passam a ser buscados todo dia às 07h20 e ao abrir a Conciliação. Para outra loja do iFood, gere um novo código.' });
     load();
   };
 
   // App centralizado: sem código — pega o token direto e lista as lojas liberadas para o app.
   const handleConnectCentral = async () => {
-    const d = await call<{ merchants?: { id: string; name: string }[]; merchant_id?: string | null }>('connect', { action: 'connect_centralized' });
+    const d = await call<{ merchants?: IfoodMerchant[] }>('connect', { action: 'connect_centralized' });
     if (!d) return;
-    if (!d.merchant_id && (d.merchants?.length ?? 0) > 1) {
-      setMerchants(d.merchants ?? []);
-      setResult({ ok: true, msg: 'Conectado. Escolha abaixo qual loja do iFood usar.' });
-    } else if ((d.merchants?.length ?? 0) === 0) {
-      setResult({ ok: false, msg: 'Conectou, mas o iFood não liberou nenhuma loja para este app.' });
-    } else {
-      setResult({ ok: true, msg: `Conectado à loja ${d.merchants?.[0]?.name ?? ''}. Clique em "Buscar agora" para puxar os dados.` });
-    }
+    if ((d.merchants ?? []).filter((m) => m.authorized).length === 0) setResult({ ok: false, msg: 'Conectou, mas o iFood não liberou nenhuma loja para este app.' });
+    else setResult({ ok: true, msg: 'Conectado. Confira abaixo as lojas do iFood ligadas e clique em "Buscar agora".' });
     load();
   };
 
-  const handleSelectMerchant = async (m: { id: string; name: string }) => {
-    const d = await call('merchant', { action: 'select_merchant', merchant_id: m.id, merchant_name: m.name });
+  const handleMerchantApi = async (m: IfoodMerchant, on: boolean) => {
+    const d = await call('merchant', { action: 'set_merchant_api', merchant_id: m.merchant_id, on });
     if (!d) return;
-    setMerchants([]);
+    setResult({ ok: true, msg: on ? `${m.name ?? 'Loja'} ligada: entra na próxima busca.` : `${m.name ?? 'Loja'} desligada da API (os dados já importados continuam).` });
     load();
   };
 
   const handleSyncNow = async () => {
-    const d = await call<{ results?: Array<{ competence: string; lines?: number; error?: string; skipped?: boolean; unchanged?: boolean }> }>('sync', { action: 'sync' });
+    const d = await call<{ results?: Array<{ competence: string; merchant_name?: string | null; lines?: number; error?: string; skipped?: boolean; unchanged?: boolean }> }>('sync', { action: 'sync' });
     if (!d) return;
-    const parts = (d.results ?? []).map((r) => `${compLabel(r.competence)}: ${r.error ? 'erro' : r.skipped ? 'sem arquivo' : r.unchanged ? 'sem mudança' : `${r.lines} linha(s)`}`);
+    const variasLojas = new Set((d.results ?? []).map((r) => r.merchant_name ?? '')).size > 1;
+    const parts = (d.results ?? []).map((r) => `${variasLojas && r.merchant_name ? `${r.merchant_name} ` : ''}${compLabel(r.competence)}: ${r.error ? 'erro' : r.skipped ? 'sem arquivo' : r.unchanged ? 'sem mudança' : `${r.lines} linha(s)`}`);
     setResult({ ok: true, msg: `Atualizado · ${parts.join(' · ') || 'nada a buscar'}` });
     load();
     onImported();
@@ -286,23 +285,48 @@ export default function IfoodConfigModal({ onClose, onImported }: Props) {
             <div className="rounded-xl border border-zinc-200 p-4 space-y-3">
               <p className="text-sm font-semibold text-zinc-800 flex items-center gap-1.5"><i className="ri-plug-line text-red-600" /> Busca automática pela API do iFood</p>
 
-              {cfg?.client_id && (
-                <div className={`flex items-start gap-2 px-3 py-2 rounded-xl border text-xs ${cfg.last_sync_error ? 'bg-red-50 border-red-200' : cfg.authorized && cfg.merchant_id ? 'bg-green-50 border-green-200' : 'bg-amber-50 border-amber-200'}`}>
-                  <i className={`${cfg.last_sync_error ? 'ri-error-warning-fill text-red-600' : cfg.authorized && cfg.merchant_id ? 'ri-checkbox-circle-fill text-green-600' : 'ri-time-line text-amber-600'} mt-0.5`} />
-                  <div className="flex-1">
-                    <p className="font-semibold text-zinc-800">
-                      {cfg.authorized && cfg.merchant_id ? `Conectado${cfg.merchant_name ? ` · ${cfg.merchant_name}` : ''}` : cfg.authorized ? 'Autorizado — falta escolher a loja' : 'Credenciais salvas — falta a loja autorizar'}
-                    </p>
-                    {cfg.last_sync_at && <p className="text-zinc-600">Última busca: {new Date(cfg.last_sync_at).toLocaleString('pt-BR')}</p>}
-                    {cfg.last_sync_error && <p className="text-red-700 mt-1">Último erro: {cfg.last_sync_error}</p>}
+              {cfg?.client_id && (() => {
+                const ms = cfg.merchants ?? [];
+                const ligadas = ms.filter((m) => m.api_sync && m.authorized);
+                return (
+                  <div className="space-y-2">
+                    <div className={`flex items-start gap-2 px-3 py-2 rounded-xl border text-xs ${cfg.last_sync_error ? 'bg-red-50 border-red-200' : ligadas.length ? 'bg-green-50 border-green-200' : 'bg-amber-50 border-amber-200'}`}>
+                      <i className={`${cfg.last_sync_error ? 'ri-error-warning-fill text-red-600' : ligadas.length ? 'ri-checkbox-circle-fill text-green-600' : 'ri-time-line text-amber-600'} mt-0.5`} />
+                      <div className="flex-1">
+                        <p className="font-semibold text-zinc-800">
+                          {ligadas.length ? `Conectado · ${ligadas.length} loja(s) do iFood` : cfg.authorized ? 'Autorizado — ligue abaixo as lojas do iFood desta loja' : 'Credenciais salvas — falta a loja autorizar'}
+                        </p>
+                        {cfg.last_sync_at && <p className="text-zinc-600">Última busca: {new Date(cfg.last_sync_at).toLocaleString('pt-BR')}</p>}
+                        {cfg.last_sync_error && <p className="text-red-700 mt-1">Último erro: {cfg.last_sync_error}</p>}
+                      </div>
+                    </div>
+                    {ms.length > 0 && (
+                      <div className="rounded-xl border border-zinc-200 divide-y divide-zinc-100">
+                        {ms.map((m) => (
+                          <div key={m.merchant_id} className="flex items-center gap-3 px-3 py-2">
+                            <div className="min-w-0 flex-1">
+                              <p className="text-sm font-semibold text-zinc-800 truncate">{m.name ?? m.merchant_id.slice(0, 8)}{m.merchant_short ? <span className="ml-1 text-xs font-normal text-zinc-400">{m.merchant_short}</span> : null}</p>
+                              <p className={`text-[11px] ${m.last_sync_error && m.api_sync ? 'text-red-600' : 'text-zinc-500'}`}>
+                                {!m.authorized ? 'Sem autorização da API — só pelo arquivo' : !m.api_sync ? 'Autorizada · desligada' : m.last_sync_error ? m.last_sync_error : m.last_sync_at ? `Buscada em ${new Date(m.last_sync_at).toLocaleString('pt-BR')}` : 'Ligada · aguardando a 1ª busca'}
+                              </p>
+                            </div>
+                            <label className={`flex items-center gap-1.5 text-xs ${m.authorized ? 'text-zinc-700 cursor-pointer' : 'text-zinc-300'}`}>
+                              <input type="checkbox" checked={m.api_sync && m.authorized} disabled={!m.authorized || busy !== null} onChange={(e) => handleMerchantApi(m, e.target.checked)} className="rounded" />
+                              API
+                            </label>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
-                </div>
-              )}
+                );
+              })()}
 
               <ol className="space-y-1 text-xs text-zinc-600 list-decimal pl-4">
                 <li>No <strong>Portal do Desenvolvedor</strong> do iFood › Meus aplicativos, abra o app <strong>distribuído</strong> e copie o Client ID e o Client Secret.</li>
                 <li>Salve aqui e clique em <strong>Gerar código</strong>.</li>
                 <li>No <strong>Portal do Parceiro</strong> da loja, digite o código para autorizar o app. Ele mostra um <strong>código de autorização</strong>: cole abaixo.</li>
+                <li>Tem mais de uma loja no iFood? Gere um código novo e repita para cada uma (as já autorizadas continuam).</li>
               </ol>
 
               <div>
@@ -355,10 +379,10 @@ export default function IfoodConfigModal({ onClose, onImported }: Props) {
                 {cfg?.client_id && cfg.app_type !== 'centralized' && (
                   <button onClick={handleUserCode} disabled={busy !== null}
                     className="flex items-center gap-2 px-4 py-2 border border-red-300 text-red-700 rounded-lg text-sm font-semibold hover:bg-red-50 cursor-pointer disabled:opacity-50">
-                    {busy === 'code' ? 'Gerando...' : <><i className="ri-key-2-line" /> Gerar código</>}
+                    {busy === 'code' ? 'Gerando...' : <><i className="ri-key-2-line" /> {cfg.authorized ? 'Autorizar outra loja' : 'Gerar código'}</>}
                   </button>
                 )}
-                {cfg?.authorized && cfg.merchant_id && (
+                {(cfg?.merchants ?? []).some((m) => m.api_sync && m.authorized) && (
                   <button onClick={handleSyncNow} disabled={busy !== null}
                     className="flex items-center gap-2 px-4 py-2 border border-zinc-300 text-zinc-700 rounded-lg text-sm font-semibold hover:bg-zinc-50 cursor-pointer disabled:opacity-50">
                     {busy === 'sync' ? 'Buscando...' : <><i className="ri-refresh-line" /> Buscar agora</>}
@@ -383,15 +407,6 @@ export default function IfoodConfigModal({ onClose, onImported }: Props) {
                 </div>
               )}
 
-              {merchants.length > 1 && (
-                <div className="space-y-1">
-                  {merchants.map((m) => (
-                    <button key={m.id} onClick={() => handleSelectMerchant(m)} className="w-full text-left px-3 py-2 border border-zinc-200 rounded-lg text-sm hover:bg-zinc-50 cursor-pointer">
-                      {m.name} <span className="text-xs text-zinc-400 font-mono">{m.id.slice(0, 8)}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
             </div>
 
             {result && (

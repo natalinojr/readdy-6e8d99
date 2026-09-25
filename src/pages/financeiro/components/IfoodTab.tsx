@@ -176,7 +176,7 @@ export default function IfoodTab() {
     if (!user?.tenantId) return;
     const comp = competence || todayBrasilia().slice(0, 7);
     setOndemand({ running: true, msg: 'Pedindo o relatório ao iFood...', error: false });
-    const r = await invokeWithAuth<{ success?: boolean; error?: string; request_id?: string }>('ifood-financial', { body: { action: 'request_ondemand', tenant_id: user.tenantId, competence: comp } });
+    const r = await invokeWithAuth<{ success?: boolean; error?: string; request_id?: string }>('ifood-financial', { body: { action: 'request_ondemand', tenant_id: user.tenantId, competence: comp, merchant_id: loja || undefined } });
     const reqId = r.data?.request_id;
     if (!reqId) { setOndemand({ running: false, msg: r.data?.error ?? r.error?.message ?? 'Falhou.', error: true }); return; }
     for (let i = 0, wait = 3000; i < 8; i++, wait = Math.min(wait * 2, 60_000)) {
