@@ -239,13 +239,14 @@ export default function ItensClassificacaoTab() {
     });
     setBusy(false);
     if (error) { toastErr('Não foi possível salvar o vínculo', error.message); return; }
-    const d = (data ?? {}) as { memorizado?: boolean; lancamentos_atualizados?: number; compras_convertidas?: number; estoque_ajustado?: number; unidade?: string };
+    const d = (data ?? {}) as { memorizado?: boolean; lancamentos_atualizados?: number; compras_convertidas?: number; estoque_ajustado?: number; unidade?: string; preco?: number | null };
     if (ingId) {
       const nome = insMap.get(ingId)?.name ?? 'insumo';
       toastOk(`Vinculado a ${nome}`, [
         d.memorizado ? 'As próximas notas e recebimentos deste produto já vêm com o insumo.' : 'Produto sem CNPJ/código do fornecedor: no recebimento o insumo ainda é escolhido à mão.',
         d.lancamentos_atualizados ? `${d.lancamentos_atualizados} compra(s) já lançada(s) corrigida(s) na DRE.` : '',
         d.compras_convertidas ? `${d.compras_convertidas} compra(s) antiga(s) refeita(s) com a nova conversão (custo${d.estoque_ajustado ? ` e estoque: ${d.estoque_ajustado > 0 ? '+' : ''}${num(d.estoque_ajustado)} ${un(d.unidade)}` : ''}).` : '',
+        d.preco ? `Preço do insumo pelas notas: ${new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number(d.preco))}/${un(d.unidade)}.` : '',
       ].filter(Boolean).join(' '));
     } else {
       toastOk('Vínculo removido', d.memorizado ? 'As próximas notas deixam de sugerir este insumo.' : '');
