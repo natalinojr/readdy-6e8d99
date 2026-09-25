@@ -470,12 +470,14 @@ export default function ConciliacaoTab() {
   const [showIntegracoes, setShowIntegracoes] = useState<boolean | AbaIntegracao | 'mp-taxas'>(false);
   const [showComoEntra, setShowComoEntra] = useState(false);
   const [showRepassesStone, setShowRepassesStone] = useState<false | 'repasses' | 'taxas'>(false);
-  const { flow: moneyFlow, reload: reloadMoneyFlow } = useMoneyFlow();
+  const { flow: moneyFlow, providers: cardProviders, reload: reloadMoneyFlow } = useMoneyFlow();
   // Início do financeiro da loja (fin_revenue_settings.financeiro_inicio): o que é anterior está fechado
   const inicioFin = moneyFlow.financeiro_inicio ?? null;
   const mesBRFin = (iso: string) => iso.slice(5, 7) + '/' + iso.slice(0, 4);
-  const usaStone = moneyFlow.card_provider === 'stone';
-  const usaMp = moneyFlow.card_provider === 'mercadopago';
+  // A loja pode ter as duas maquininhas (fin_card_providers); card_provider é só a "principal" antiga —
+  // com Stone + Mercado Pago ele dizia 'mercadopago' e o botão Repasses Stone sumia (2026-09-25).
+  const usaStone = moneyFlow.card_provider === 'stone' || cardProviders.some(p => p.provider === 'stone');
+  const usaMp = moneyFlow.card_provider === 'mercadopago' || cardProviders.some(p => p.provider === 'mercadopago');
   // Pagamentos sem nota selecionados para lançar de uma vez (despesa/compra)
   const [selLanc, setSelLanc] = useState<Set<string>>(new Set());
   const [lancTipo, setLancTipo] = useState<LancarTipo>('despesa');
