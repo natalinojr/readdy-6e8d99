@@ -154,6 +154,27 @@ function parseConciliation(xml: string, referenceDate: string): ParsedFile {
     const cardNumber = val(top, 'CardNumber');
     const authCode = val(top, 'IssuerAuthorizationCode');
 
+    // Cancelamento cobrado no dia: a Stone desconta ChargedAmount do pagamento PaymentId (a parcela da venda
+    // cancelada continua na lista de liquidadas). Vira débito com gross/net negativos para abater o repasse.
+    // (o 1º <Cancellations> costuma ser o contador dentro de <Events>; o container é o que tem <Cancellation>)
+    for (const canc of children(tx, 'Cancellations').flatMap((w) => children(w, 'Cancellation'))) {
+      const billing = section(canc, 'Billing');
+      const charged = money(val(billing, 'ChargedAmount'));
+      const chargeDate = stoneDate(val(billing, 'ChargeDate'), '');
+      if (!charged || !chargeDate) continue; // PrevisionChargeDate = só aviso; o desconto vem no arquivo do dia da cobrança
+      const returned = money(val(canc, 'ReturnedAmount'));
+      const opKey = val(canc, 'OperationKey');
+      const paymentId = val(canc, 'PaymentId');
+      lines.push({
+        external_id: `stone_canc_${opKey || `${atk || itk}_${chargeDate}`}`,
+        transaction_date: chargeDate, amount: round2(Math.abs(charged)), transaction_type: 'debit',
+        description: [`Stone cancelamento de venda`, brand, capture ? `venda ${capture.split('-').reverse().join('/')}` : null, `R$ ${returned.toFixed(2).replace('.', ',')}`].filter(Boolean).join(' · ').slice(0, 250),
+        category: 'Cancelamento Stone', stone_transaction_id: atk || itk || null, stone_payment_type: acct,
+        stone_installment_info: { gross_amount: -round2(returned), net_amount: -round2(charged), fee_amount: -round2(returned - charged), advance_fee: 0, payment_id: paymentId || null, capture_date: capture || null },
+        raw: { kind: 'cancellation', atk, itk, operation_key: opKey, gross: -returned, net: -charged, returned, charged, charge_date: chargeDate, payment_id: paymentId, capture_date: capture, pilha: null },
+      });
+    }
+
     const instBlock = section(tx, 'Installments');
     for (const inst of children(instBlock, 'Installment')) {
       const instTop = stripContainers(inst, ['Chargebacks', 'Chargeback', 'ChargebackRefunds', 'ChargebackRefund']);
@@ -210,6 +231,13 @@ function parseConciliation(xml: string, referenceDate: string): ParsedFile {
     }
   }
 
+  // Cancelamento sai do repasse (pagamento) onde foi descontado: herda a pilha (antecipado/débito) desse pagamento
+  for (const c of lines) {
+    if (c.raw.kind !== 'cancellation' || !c.raw.payment_id) continue;
+    const irmas = lines.filter((l) => l.raw.kind === 'installment' && l.raw.payment_id === c.raw.payment_id);
+    if (irmas.length > 0) c.raw.pilha = irmas.some((l) => Number(l.raw.advance_fee) > 0) ? 'antecipado' : 'debito';
+  }
+
   // Eventos pagos/cobrados no dia
   const fea = section(xml, 'FinancialEventsAccounts');
   for (const ev of children(section(fea, 'Events') || fea, 'Event')) {
@@ -229,7 +257,8 @@ function parseConciliation(xml: string, referenceDate: string): ParsedFile {
   }
 
   // Depósitos (resumo)
-  const pays = children(section(xml, 'Payments'), 'Payment');
+  // (o 1º <Payments> do arquivo é o contador de <Events> de uma transação; o container é o que tem <Payment>)
+  const pays = children(xml, 'Payments').flatMap((w) => children(w, 'Payment'));
   let payTotal = 0;
   const payIds: string[] = [];
   for (const p of pays) {
@@ -373,8 +402,17 @@ async function postLedger(admin: Admin, tenantId: string, importId: string, pars
       const fee = Number(info.fee_amount ?? 0);
       const adv = Number(info.advance_fee ?? 0);
       x.gross += gross; x.adv += adv; x.mdr += fee - adv; x.n++;
+    } else if (l.raw.kind === 'cancellation') {
+      // venda cancelada: sai da receita (bruto devolvido) e a taxa dela volta (bruto − valor descontado)
+      const returned = Number(l.raw.returned ?? l.amount);
+      x.gross -= returned; x.mdr -= returned - l.amount;
     } else if (l.transaction_type === 'debit') x.otherDebit += l.amount;
     else x.otherCredit += l.amount;
+  }
+  for (const x of days.values()) {
+    // dia só com cancelamento (ou mais cancelado que vendido): o líquido negativo vira débito, sem receita/taxa negativas
+    if (x.mdr < 0) { x.gross += x.mdr; x.mdr = 0; }
+    if (x.gross < 0) { x.otherDebit += -x.gross; x.gross = 0; }
   }
   const rows: Record<string, unknown>[] = [];
   const base = { tenant_id: tenantId, reference_id: importId };
@@ -458,7 +496,9 @@ async function importDay(admin: Admin, tenantId: string, cfg: any, date: string)
     inserted = inserted.concat(data ?? []);
   }
   const grossByExt = new Map(parsed.lines.filter((l) => l.gross != null).map((l) => [l.external_id, l.gross as number]));
-  const matched = await autoMatch(admin, tenantId, cfg.bank_account_id, inserted, grossByExt);
+  // Cancelamento não tem lançamento próprio no banco (já vem descontado do repasse): fica fora do casamento 1-a-1
+  const cancExt = new Set(parsed.lines.filter((l) => l.raw.kind === 'cancellation').map((l) => l.external_id));
+  const matched = await autoMatch(admin, tenantId, cfg.bank_account_id, inserted.filter((r) => !cancExt.has(r.external_id)), grossByExt);
 
   // Stone × Inter: casa os grupos do dia com o repasse que caiu no Inter e marca transferências entre contas próprias
   let stoneInter: unknown = null;
