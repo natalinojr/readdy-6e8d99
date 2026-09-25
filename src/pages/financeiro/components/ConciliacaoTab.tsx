@@ -917,13 +917,26 @@ export default function ConciliacaoTab() {
     }
     if (filterStatus !== 'all') result = result.filter(s => situacao(s) === filterStatus);
     if (filterType !== 'all') result = result.filter(s => s.transaction_type === filterType);
-    if (filterCategory !== 'all') result = result.filter(s => (s.classificacao?.categoria ?? s.category) === filterCategory);
+    if (filterCategory === 'none') result = result.filter(s => !(s.classificacao?.categoria ?? s.category));
+    else if (filterCategory !== 'all') result = result.filter(s => (s.classificacao?.categoria ?? s.category) === filterCategory);
     // Dia mais recente primeiro e, no mesmo dia, pela hora (quando o banco informa); sem hora mantém a ordem do servidor
     result.sort((a, b) =>
       b.transaction_date.localeCompare(a.transaction_date)
       || (horaTransacao(b) ?? '').localeCompare(horaTransacao(a) ?? ''));
     return result;
   }, [imports, search, filterStatus, filterType, filterCategory]);
+
+  // Entradas e saídas do que está na tabela (período + filtros); sem filtro = o período inteiro
+  const totais = useMemo(() => {
+    const t = { entradas: 0, nEntradas: 0, saidas: 0, nSaidas: 0 };
+    filtered.forEach(s => {
+      const v = Number(s.amount) || 0;
+      if (s.transaction_type === 'credit') { t.entradas += v; t.nEntradas++; } else { t.saidas += v; t.nSaidas++; }
+    });
+    return t;
+  }, [filtered]);
+  const temFiltro = Boolean(search.trim()) || filterStatus !== 'all' || filterType !== 'all' || filterCategory !== 'all';
+  const filtrarCategoria = (c: string) => { setFilterCategory(c); setPage(1); };
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
@@ -1342,14 +1355,42 @@ export default function ConciliacaoTab() {
         {uniqueCategories.length > 0 && (
           <select
             value={filterCategory}
-            onChange={e => { setFilterCategory(e.target.value); setPage(1); }}
-            className="flex-1 sm:flex-none border border-zinc-200 rounded-lg px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white sm:max-w-[12rem]"
+            onChange={e => filtrarCategoria(e.target.value)}
+            className="md:hidden flex-1 sm:flex-none border border-zinc-200 rounded-lg px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white sm:max-w-[12rem]"
           >
             <option value="all">Todas categorias</option>
+            <option value="none">Sem categoria</option>
             {uniqueCategories.map(c => <option key={c} value={c}>{c}</option>)}
           </select>
         )}
       </div>
+
+      {/* Entradas e saídas do período (ou do filtro) */}
+      {selectedAccount && (
+        <div className="bg-white rounded-xl border border-zinc-200 grid grid-cols-3 divide-x divide-zinc-100">
+          <div className="px-3 sm:px-4 py-3 min-w-0">
+            <p className="text-xs text-zinc-400 truncate">Entradas {temFiltro ? 'no filtro' : 'no período'}</p>
+            <p className="text-sm sm:text-base font-bold text-green-700 whitespace-nowrap">+{fmtCur(totais.entradas)}</p>
+            <p className="text-[11px] text-zinc-400">{totais.nEntradas} lançamento(s)</p>
+          </div>
+          <div className="px-3 sm:px-4 py-3 min-w-0">
+            <p className="text-xs text-zinc-400 truncate">Saídas {temFiltro ? 'no filtro' : 'no período'}</p>
+            <p className="text-sm sm:text-base font-bold text-red-600 whitespace-nowrap">−{fmtCur(totais.saidas)}</p>
+            <p className="text-[11px] text-zinc-400">{totais.nSaidas} lançamento(s)</p>
+          </div>
+          <div className="px-3 sm:px-4 py-3 min-w-0">
+            <p className="text-xs text-zinc-400 truncate">Entradas − saídas</p>
+            <p className={`text-sm sm:text-base font-bold whitespace-nowrap ${totais.entradas - totais.saidas >= 0 ? 'text-zinc-900' : 'text-red-600'}`}>
+              {totais.entradas - totais.saidas < 0 ? '−' : ''}{fmtCur(Math.abs(totais.entradas - totais.saidas))}
+            </p>
+            {filterCategory !== 'all' && (
+              <button onClick={() => filtrarCategoria('all')} className="text-[11px] font-semibold text-amber-600 hover:underline cursor-pointer truncate max-w-full">
+                <i className="ri-close-line" /> {filterCategory === 'none' ? 'Sem categoria' : filterCategory}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Lançar em lote os pagamentos sem nota selecionados */}
       {selLanc.size > 0 && (
@@ -1559,7 +1600,15 @@ export default function ConciliacaoTab() {
                   <th className="text-left px-4 py-3 text-xs font-semibold text-zinc-500">Data</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-zinc-500">Descrição</th>
                   <th className="text-right px-4 py-3 text-xs font-semibold text-zinc-500">Valor</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-zinc-500">Categoria</th>
+                  <th className="text-left px-4 py-2 text-xs font-semibold text-zinc-500">
+                    <select value={filterCategory} onChange={e => filtrarCategoria(e.target.value)}
+                      title="Filtrar pela categoria"
+                      className={`max-w-[11rem] rounded-md px-1.5 py-1 text-xs font-semibold cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-400 ${filterCategory !== 'all' ? 'bg-amber-100 text-amber-800' : 'bg-transparent text-zinc-500 hover:bg-zinc-100'}`}>
+                      <option value="all">Categoria ▾</option>
+                      <option value="none">Sem categoria</option>
+                      {uniqueCategories.map(c => <option key={c} value={c}>{c}</option>)}
+                    </select>
+                  </th>
                   <th className="text-center px-4 py-3 text-xs font-semibold text-zinc-500">Status</th>
                   <th className="text-center px-4 py-3 text-xs font-semibold text-zinc-500">Ações</th>
                 </tr>
@@ -1600,14 +1649,14 @@ export default function ConciliacaoTab() {
                       <td className={`px-4 py-3 text-right font-bold text-sm whitespace-nowrap ${s.transaction_type === 'credit' ? 'text-green-700' : 'text-red-600'}`}>
                         {s.transaction_type === 'debit' ? '−' : '+'}{fmtCur(Number(s.amount))}
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="px-4 py-3" onClick={e => { const c = s.classificacao?.categoria ?? s.category; if (c) { e.stopPropagation(); filtrarCategoria(c); } }}>
                         {s.classificacao?.categoria ? (
-                          <span title={`Classificado na ${s.classificacao.tipo === 'compra' ? 'compra' : 'conta a pagar'} que recebeu a baixa`}
-                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700">
+                          <span title={`Classificado na ${s.classificacao.tipo === 'compra' ? 'compra' : 'conta a pagar'} que recebeu a baixa · clique para filtrar`}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 hover:ring-1 hover:ring-emerald-300">
                             {s.classificacao.categoria}
                           </span>
                         ) : s.category ? (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-700">
+                          <span title="Clique para filtrar" className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-700 hover:ring-1 hover:ring-amber-300">
                             {s.category}
                           </span>
                         ) : (
