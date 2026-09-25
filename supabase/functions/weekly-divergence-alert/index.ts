@@ -137,6 +137,14 @@ Deno.serve(async (req: Request) => {
     return new Response('Method not allowed', { status: 405 });
   }
 
+  // Só servidor/cron: sem isso qualquer um lia as divergências de todas as lojas e disparava o e-mail.
+  const bearer = (req.headers.get('authorization') ?? '').replace(/^Bearer\s+/i, '');
+  const internalKey = Deno.env.get('FISCAL_INTERNAL_KEY') ?? '';
+  const okKey = internalKey.length >= 20 && req.headers.get('x-internal-key') === internalKey;
+  if (!okKey && bearer !== SUPABASE_SERVICE_ROLE_KEY) {
+    return new Response(JSON.stringify({ ok: false, error: 'Unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json' } });
+  }
+
   try {
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 

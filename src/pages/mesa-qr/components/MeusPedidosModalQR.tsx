@@ -26,6 +26,7 @@ interface Props {
   participantId: string;
   participantName: string;
   tenantId: string;
+  accessToken: string;
   onClose: () => void;
 }
 
@@ -48,6 +49,7 @@ const STATUS_COLORS: Record<string, string> = {
 export default function MeusPedidosModalQR(props: Props) {
   const participantId = props.participantId;
   const participantName = props.participantName;
+  const accessToken = props.accessToken;
   const onClose = props.onClose;
 
   const [pedidos, setPedidos] = useState<Pedido[]>([]);
@@ -64,7 +66,7 @@ export default function MeusPedidosModalQR(props: Props) {
         const res = await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'get_meus_pedidos', participant_id: participantId }),
+          body: JSON.stringify({ action: 'get_meus_pedidos', participant_id: participantId, access_token: accessToken }),
         });
         const result = await res.json();
         if (cancelled) return;

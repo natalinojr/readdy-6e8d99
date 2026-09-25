@@ -1042,7 +1042,7 @@ Deno.serve(async (req: Request) => {
     const isManager = internal || isFinanceiroRole(role);
 
     // ── Pagamentos ──
-    const PAY_INTERNAL_ONLY = ['prepare_payment', 'execute_payment', 'cancel_payment', 'decode_boleto'];
+    const PAY_INTERNAL_ONLY = ['prepare_payment', 'execute_payment', 'cancel_payment', 'decode_boleto', 'reprepare_payment'];
     if (PAY_INTERNAL_ONLY.includes(action) && !internal) return errResp('Pagamento pelo Inter só pelo assistente, com botão e PIN.', 403);
     if (['payment_status', 'list_payments', 'check_payment_scopes'].includes(action) && !isManager) return errResp('Apenas admin/gerente', 403);
     // Diagnóstico (interno): pede UM escopo por vez e diz quais a integração do Inter aceita.

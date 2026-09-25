@@ -32,6 +32,16 @@ async function authAdminListUsers(supabaseUrl: string, serviceKey: string): Prom
   return data?.users ?? [];
 }
 
+async function authGetUser(supabaseUrl: string, anonKey: string, accessToken: string): Promise<{ id: string } | null> {
+  if (!accessToken) return null;
+  const res = await fetch(`${normalizeUrl(supabaseUrl)}/auth/v1/user`, {
+    headers: { 'apikey': anonKey, 'Authorization': `Bearer ${accessToken}` },
+  });
+  if (!res.ok) return null;
+  const data = await res.json().catch(() => null);
+  return data?.id ? { id: String(data.id) } : null;
+}
+
 async function authAdminCreateUser(supabaseUrl: string, serviceKey: string, email: string, password: string, name: string): Promise<{ id: string }> {
   const res = await fetch(`${normalizeUrl(supabaseUrl)}/auth/v1/admin/users`, {
     method: 'POST',
@@ -196,7 +206,7 @@ Deno.serve(async (req: Request) => {
     estacoes = [], categorias = [], itens = [],
     mesas, pagamentos = [], pdvs = [],
     inviteCode, existingUserId,
-    userAccessToken: _userAccessToken,
+    userAccessToken,
   } = payload;
 
   // ── Validação dos campos obrigatórios ────────────────────────────────────
@@ -225,6 +235,19 @@ Deno.serve(async (req: Request) => {
     return new Response(JSON.stringify({ error: 'Variáveis de ambiente não configuradas no servidor' }), {
       status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
+  }
+
+  // ── Fluxo "usuário já existe": prova que quem chama É o próprio usuário ──
+  // (antes, existingUserId vinha do body sem checagem — qualquer um podia
+  // criar uma loja em nome de outra conta).
+  if (existingUserId) {
+    const anonKey = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
+    const authedUser = await authGetUser(supabaseUrl, anonKey, String(userAccessToken ?? ''));
+    if (!authedUser || authedUser.id !== String(existingUserId)) {
+      return new Response(JSON.stringify({ error: 'Sessão inválida para este usuário' }), {
+        status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
   }
 
   // ── Validar invite code ANTES de qualquer coisa ──────────────────────────

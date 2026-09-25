@@ -320,6 +320,7 @@ export default function MesaQRPage() {
             participantId={participant.id}
             participantName={participant.name}
             tenantId={participant.tenant_id}
+            accessToken={participant.access_token}
             onClose={function () { data.setShowMeusPedidos(false); }}
           />
         ) : null}

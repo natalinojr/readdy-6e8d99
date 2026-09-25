@@ -384,6 +384,18 @@ Deno.serve(async (req) => {
       case 'pay_bill': {
         const { id, paid_date, paid_amount, payment_method, bank_account_id } = payload;
 
+        if (bank_account_id) {
+          const { data: contaAlvo, error: contaAlvoErr } = await supabase
+            .from('fin_bank_accounts')
+            .select('id')
+            .eq('id', bank_account_id)
+            .eq('tenant_id', tenant_id)
+            .maybeSingle();
+          if (contaAlvoErr || !contaAlvo) {
+            return new Response(JSON.stringify({ error: 'Conta bancária não encontrada nesta loja' }), { status: 400, headers: corsHeaders });
+          }
+        }
+
         const { data: bill, error: fetchError } = await supabase
           .from('fin_accounts_payable')
           .select('*')
@@ -1063,6 +1075,18 @@ Deno.serve(async (req) => {
         if (budgetErr || !budget) return new Response(JSON.stringify({ error: 'Orçamento não encontrado' }), { status: 404, headers: corsHeaders });
         if ((budget as Record<string, unknown>).status === 'convertido') return new Response(JSON.stringify({ error: 'Este orçamento já foi convertido em compra.' }), { status: 400, headers: corsHeaders });
 
+        if (bank_account_id) {
+          const { data: contaAlvo, error: contaAlvoErr } = await supabase
+            .from('fin_bank_accounts')
+            .select('id')
+            .eq('id', bank_account_id)
+            .eq('tenant_id', tenant_id)
+            .maybeSingle();
+          if (contaAlvoErr || !contaAlvo) {
+            return new Response(JSON.stringify({ error: 'Conta bancária não encontrada nesta loja' }), { status: 400, headers: corsHeaders });
+          }
+        }
+
         const today = new Date().toISOString().split('T')[0];
         const finalDueDate = due_date || (() => { const d = new Date(); d.setDate(d.getDate() + 30); return d.toISOString().split('T')[0]; })();
 
@@ -1145,6 +1169,15 @@ Deno.serve(async (req) => {
       // ── Bank Account manual transaction ───────────────────────────────────
       case 'bank_manual_transaction': {
         const { bank_account_id, type, amount, description, transaction_date } = payload;
+        const { data: contaAlvo, error: contaAlvoErr } = await supabase
+          .from('fin_bank_accounts')
+          .select('id')
+          .eq('id', bank_account_id)
+          .eq('tenant_id', tenant_id)
+          .maybeSingle();
+        if (contaAlvoErr || !contaAlvo) {
+          return new Response(JSON.stringify({ error: 'Conta bancária não encontrada nesta loja' }), { status: 400, headers: corsHeaders });
+        }
         if (type === 'debit') {
           await supabase.rpc('fn_bank_debit', {
             p_bank_account_id: bank_account_id,

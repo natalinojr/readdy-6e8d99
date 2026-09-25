@@ -20,16 +20,6 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
     const { action } = body;
     if (!action) return new Response(JSON.stringify({ error: "action is required" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
-    if (action === "lookup_mesa_by_number") {
-      const { table_number, tenant_id } = body;
-      if (!table_number || !tenant_id) return new Response(JSON.stringify({ error: "table_number and tenant_id are required" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
-      const { data: tableData } = await admin.from("tables").select("id, number, capacity, area, tenant_id, qr_token").eq("tenant_id", tenant_id).eq("number", table_number).maybeSingle();
-      if (!tableData) return new Response(JSON.stringify({ error: "mesa_not_found" }), { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } });
-      const { data: sessionData } = await admin.from("table_sessions").select("id, status, customer_name, opened_at, session_id, tenant_id").eq("table_id", tableData.id).eq("tenant_id", tableData.tenant_id).eq("status", "open").order("opened_at", { ascending: true }).limit(1).maybeSingle();
-      if (!sessionData) return new Response(JSON.stringify({ error: "mesa_encerrada", message: "Mesa encerrada", table: { number: tableData.number } }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
-      return new Response(JSON.stringify({ table: tableData, session: sessionData }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
-    }
-
     if (action === "lookup_mesa") {
       const { qr_token } = body;
       if (!qr_token) return new Response(JSON.stringify({ error: "qr_token is required" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
@@ -438,8 +428,12 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
     }
 
     if (action === "get_meus_pedidos") {
-      const { participant_id } = body;
-      if (!participant_id) return new Response(JSON.stringify({ error: "participant_id is required" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      const { participant_id, access_token } = body;
+      if (!participant_id || !access_token) return new Response(JSON.stringify({ error: "participant_id and access_token are required" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      const { data: participantRow } = await admin.from("table_session_participants").select("id, access_token, deleted_at").eq("id", participant_id).maybeSingle();
+      if (!participantRow || participantRow.deleted_at || String(participantRow.access_token) !== String(access_token)) {
+        return new Response(JSON.stringify({ error: "Identificação inválida", code: "invalid_participant" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
       const { data: orders } = await admin.from("orders").select("id, number, status, total_amount, subtotal, created_at, order_items(id, item_name, item_price, quantity, status, skip_kds, notes)").eq("participant_id", participant_id).order("created_at", { ascending: false });
       return new Response(JSON.stringify({ data: orders ?? [] }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }

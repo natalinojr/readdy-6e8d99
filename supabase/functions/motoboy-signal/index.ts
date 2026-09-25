@@ -186,9 +186,12 @@ serve(async (req) => {
     if (!orderId) return json({ error: "order_id obrigatorio" }, 400);
 
     if (body.action === "get_order") {
-      const { data: order, error } = await admin.from("orders")
+      const bodyTenantId = String(body.tenant_id ?? "").trim();
+      let getOrderQuery = admin.from("orders")
         .select("id, tenant_id, number, destination_name, delivery_address, delivery_lat, delivery_lng, total_amount, delivery_fee, notes, is_paid, status, motoboy_status, motoboy_note, motoboy_problems, delivery_notes, motoboy_driver_id, motoboy_timeline, out_for_delivery_at, created_at, origin_type")
-        .eq("id", orderId).maybeSingle();
+        .eq("id", orderId);
+      if (bodyTenantId) getOrderQuery = getOrderQuery.eq("tenant_id", bodyTenantId);
+      const { data: order, error } = await getOrderQuery.maybeSingle();
       if (error || !order) return json({ error: "not_found" }, 200);
       if (order.origin_type !== "delivery") return json({ error: "not_delivery" }, 200);
       const { data: items } = await admin.from("order_items")
@@ -261,10 +264,13 @@ serve(async (req) => {
         updated_at: nowIso,
       };
       const driverId = String(body.driver_id ?? "").trim();
+      if (!driverId) return json({ error: "driver_id obrigatorio" }, 400);
       // Trava de propriedade: a partir do 1o sinal, o pedido fica preso a um entregador.
       // So pode atualizar quem nao tem dono ainda OU o proprio dono.
-      const { data: cur } = await admin.from("orders").select("motoboy_driver_id, motoboy_timeline, motoboy_problems").eq("id", orderId).maybeSingle();
+      const { data: cur } = await admin.from("orders").select("tenant_id, motoboy_driver_id, motoboy_timeline, motoboy_problems").eq("id", orderId).maybeSingle();
       if (!cur) return json({ error: "not_found" }, 200);
+      const { data: drv } = await admin.from("delivery_drivers").select("id, is_active").eq("id", driverId).eq("tenant_id", cur.tenant_id).maybeSingle();
+      if (!drv || drv.is_active === false) return json({ error: "driver_invalido" }, 403);
       const dono = cur.motoboy_driver_id as string | null;
       if (dono && (!driverId || dono !== driverId)) {
         return json({ ok: false, error: "assumido_por_outro" }, 200);

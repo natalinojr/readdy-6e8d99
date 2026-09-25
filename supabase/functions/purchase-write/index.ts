@@ -708,6 +708,13 @@ Deno.serve(async (req) => {
         } = payload;
 
         const purchaseData: Record<string, unknown> = { ...rawData };
+        // Nunca confiar nessas chaves do body: quem escreve a compra, em que loja
+        // e os carimbos de recebimento/pagamento são controlados pelo servidor.
+        delete purchaseData.tenant_id;
+        delete purchaseData.id;
+        delete purchaseData.created_by;
+        delete purchaseData.delivery_confirmed_at;
+        delete purchaseData.stock_applied_at;
         if (!purchaseData.due_date) purchaseData.due_date = null;
         if (!purchaseData.cost_center_id) purchaseData.cost_center_id = null;
         if (!purchaseData.bank_account_id) purchaseData.bank_account_id = null;
@@ -836,6 +843,13 @@ Deno.serve(async (req) => {
 
         // Recria com os dados novos — mesmo cálculo do create_purchase.
         const purchaseData: Record<string, unknown> = { ...rawData };
+        // Nunca confiar nessas chaves do body: quem escreve a compra, em que loja
+        // e os carimbos de recebimento/pagamento são controlados pelo servidor.
+        delete purchaseData.tenant_id;
+        delete purchaseData.id;
+        delete purchaseData.created_by;
+        delete purchaseData.delivery_confirmed_at;
+        delete purchaseData.stock_applied_at;
         if (!purchaseData.due_date) purchaseData.due_date = null;
         if (!purchaseData.cost_center_id) purchaseData.cost_center_id = null;
         if (!purchaseData.bank_account_id) purchaseData.bank_account_id = null;

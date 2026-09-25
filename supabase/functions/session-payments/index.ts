@@ -67,11 +67,15 @@ Deno.serve(async (req) => {
 
     if (tenantErr) {
       console.error('[session-payments] erro ao verificar tenant:', tenantErr);
+      return new Response(JSON.stringify({ error: 'Erro ao verificar acesso ao tenant' }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
     }
 
     const tenantIds = (userTenants ?? []).map((ut: { tenant_id: string }) => ut.tenant_id);
 
-    if (tenantIds.length > 0 && !tenantIds.includes(tenant_id)) {
+    if (!tenantIds.includes(tenant_id)) {
       return new Response(JSON.stringify({ error: 'Acesso negado ao tenant' }), {
         status: 403,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },

@@ -105,7 +105,7 @@ async function mainHandler(req: Request): Promise<Response> {
     }
   } catch (tenantErr) {
     console.error('[audit-write] tenant resolution exception:', String(tenantErr));
-    tenantId = requestedTenantId;
+    return corsResponse({ error: 'Internal server error' }, 500);
   }
 
   if (!tenantId) {

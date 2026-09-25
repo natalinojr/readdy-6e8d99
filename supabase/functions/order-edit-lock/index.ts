@@ -55,11 +55,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       .maybeSingle();
 
     if (!tenantMembership) {
-      // Fallback: verifica se o tenant existe (KDS/Gestor pode usar sem user_tenants)
-      const { data: tenantExists } = await admin.from("tenants").select("id").eq("id", tenant_id).maybeSingle();
-      if (!tenantExists) {
-        return new Response(JSON.stringify({ error: "Invalid tenant" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
-      }
+      return new Response(JSON.stringify({ error: "Invalid tenant" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
     const now = new Date().toISOString();

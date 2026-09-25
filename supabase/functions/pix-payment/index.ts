@@ -641,6 +641,9 @@ Deno.serve(async (req: Request) => {
         });
       }
 
+      const genAuth = await requireMember(req, supabase, tenant_id);
+      if (genAuth.error) return genAuth.error;
+
       // Busca configuração PIX do tenant
       const { data: settings } = await supabase
         .from('system_settings')
@@ -778,13 +781,13 @@ Deno.serve(async (req: Request) => {
       if (!body.pix_payment_id) return json({ error: 'pix_payment_id é obrigatório' }, 400);
       const row = await loadRow(supabase, body);
       if (!row) return json({ error: 'Pagamento não encontrado' }, 404);
+      const csAuth = await requireMember(req, supabase, row.tenant_id);
+      if (csAuth.error) return csAuth.error;
       let status = row.status;
       const expired = new Date(row.expires_at) < new Date();
 
       const out: { pointStatus?: string } = {};
       if (PROVIDERS.includes(row.provider) && status === 'pending') {
-        const auth = await requireMember(req, supabase, row.tenant_id);
-        if (auth.error) return auth.error;
         // Vencido: ainda consulta uma última vez (pode ter pago no último segundo).
         if (expired || Date.now() - new Date(row.updated_at).getTime() >= RECONCILE_EVERY_MS) {
           try { status = await reconcileRow(supabase, row, out); } catch (e) { log('WARN', 'check_status', 'reconcile falhou', { id: row.id, error: friendlyError(e) }); }
@@ -834,10 +837,10 @@ Deno.serve(async (req: Request) => {
       if (!body.pix_payment_id) return json({ error: 'pix_payment_id é obrigatório' }, 400);
       const row = await loadRow(supabase, body);
       if (!row) return json({ success: true, status: 'not_found' });
+      const cancelAuth = await requireMember(req, supabase, row.tenant_id);
+      if (cancelAuth.error) return cancelAuth.error;
       if (row.status !== 'pending') return json({ success: true, status: row.status });
       if (PROVIDERS.includes(row.provider)) {
-        const auth = await requireMember(req, supabase, row.tenant_id);
-        if (auth.error) return auth.error;
         // Antes de cancelar, confere: se o cliente já pagou, o pedido tem que seguir.
         const st = await reconcileRow(supabase, row);
         if (st !== 'pending') {
