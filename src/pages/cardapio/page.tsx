@@ -6,6 +6,7 @@ import CombosTab from './components/CombosTab';
 import ObservacoesGlobaisTab from './components/ObservacoesGlobaisTab';
 import DestaquesTab from './components/DestaquesTab';
 import TraducoesTab from './components/TraducoesTab';
+import OpcoesEstoqueTab from './components/OpcoesEstoqueTab';
 import CardapioExportImportModal from '../../components/feature/CardapioExportImportModal';
 
 import { notifyReload } from '@/lib/reloadSignal';
@@ -13,7 +14,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
 import { publicarCardapio } from '@/hooks/useMenuPing';
 
-type Tab = 'destaques' | 'itens' | 'categorias' | 'combos' | 'obsGlobais' | 'traducoes';
+type Tab = 'destaques' | 'itens' | 'categorias' | 'combos' | 'obsGlobais' | 'traducoes' | 'opcoesEstoque';
 
 export default function CardapioPage() {
   const { itens, categorias, combos, obsGlobais, destaques, loading, recarregar } = useCardapio();
@@ -42,6 +43,7 @@ export default function CardapioPage() {
     { id: 'combos', label: 'Combos', shortLabel: 'Combos', icon: 'ri-gift-2-line', count: combos.length },
     { id: 'obsGlobais', label: 'Obs. Globais', shortLabel: 'Obs.', icon: 'ri-chat-3-line', count: obsGlobais.filter(o => o.ativo).length },
     { id: 'traducoes', label: 'Traduções', shortLabel: 'Idiomas', icon: 'ri-translate-2', count: 0 },
+    { id: 'opcoesEstoque', label: 'Opções × Estoque', shortLabel: 'Opç.×Est.', icon: 'ri-links-line', count: 0 },
   ];
 
   const ativosCount = itens.filter(i => i.status === 'ativo').length;
@@ -131,6 +133,7 @@ export default function CardapioPage() {
         {!loading && activeTab === 'combos' && <CombosTab />}
         {!loading && activeTab === 'obsGlobais' && <ObservacoesGlobaisTab />}
         {!loading && activeTab === 'traducoes' && <TraducoesTab />}
+        {!loading && activeTab === 'opcoesEstoque' && <OpcoesEstoqueTab />}
       </div>
 
       {/* Modal Exportar / Importar */}

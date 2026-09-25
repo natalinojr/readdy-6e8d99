@@ -3,6 +3,7 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { getPeriodDates } from '@/lib/dateUtils';
 import { custoLinhaFicha } from '@/lib/unitConversion';
+import { custoOpcoesNoPeriodo } from '@/lib/custoOpcoes';
 
 export interface CmvItemVendido {
   item_id: string;
@@ -43,7 +44,7 @@ export function useCmvReport() {
       const pl = getPeriodDates(periodo);
       const emptyResult = { periodo_de: pl.from.slice(0, 10), periodo_ate: pl.to.slice(0, 10), receita_total: 0, custo_total: 0, cmv_pct_geral: 0, margem_bruta_total: 0, itens: [] };
 
-      type SalesRow = { item_id: string | null; item_name: string; item_price: number; quantity: number };
+      type SalesRow = { id?: string; item_id: string | null; item_name: string; item_price: number; quantity: number };
       let salesRows: SalesRow[] = [];
       let itemIdsForFicha: string[] = [];
 
@@ -82,7 +83,7 @@ export function useCmvReport() {
 
         const { data: itemsData, error: iErr } = await supabase
           .from('order_items')
-          .select('item_id, item_name, item_price, quantity')
+          .select('id, item_id, item_name, item_price, quantity')
           .eq('tenant_id', user.tenantId)
           .in('order_id', orderIds);
         if (iErr) throw iErr;
@@ -91,9 +92,13 @@ export function useCmvReport() {
 
       if (!salesRows.length) { setData(emptyResult); return; }
 
+      // Custo das opções escolhidas (adicionais): o preço delas já está no item_price
+      const custoOpcoes = await custoOpcoesNoPeriodo(user.tenantId, from, to);
+
       // Agrega por item_id
-      const salesMap = new Map<string, { item_name: string; qtd: number; receita: number; preco: number }>();
+      const salesMap = new Map<string, { item_name: string; qtd: number; receita: number; preco: number; custoOpcoes: number }>();
       for (const row of salesRows) {
+        const opc = (row.id ? custoOpcoes.get(row.id) ?? 0 : 0) * Number(row.quantity ?? 1);
         const key = row.item_id ?? `name:${row.item_name}`;
         const existing = salesMap.get(key);
         const qty = Number(row.quantity ?? 1);
@@ -101,12 +106,14 @@ export function useCmvReport() {
         if (existing) {
           existing.qtd += qty;
           existing.receita += price * qty;
+          existing.custoOpcoes += opc;
         } else {
           salesMap.set(key, {
             item_name: row.item_name ?? 'Item',
             qtd: qty,
             receita: price * qty,
             preco: price,
+            custoOpcoes: opc,
           });
         }
       }
@@ -166,9 +173,10 @@ export function useCmvReport() {
       const itens: CmvItemVendido[] = [];
       for (const [key, sale] of salesMap.entries()) {
         const item_id = key.startsWith('name:') ? '' : key;
-        const custoUnit = fichaMap.get(item_id) ?? 0;
         const temFicha = fichaMap.has(item_id);
-        const custoTotal = custoUnit * sale.qtd;
+        // ficha × quantidade + opções escolhidas em cada venda
+        const custoTotal = (fichaMap.get(item_id) ?? 0) * sale.qtd + sale.custoOpcoes;
+        const custoUnit = sale.qtd > 0 ? custoTotal / sale.qtd : 0;
         const cmvPct = sale.receita > 0 && temFicha ? (custoTotal / sale.receita) * 100 : 0;
         const margemBruta = sale.receita - custoTotal;
         const margemPct = sale.receita > 0 ? (margemBruta / sale.receita) * 100 : 0;

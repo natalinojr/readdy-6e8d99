@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
 import { custoLinhaFicha, qtdFichaNoEstoque } from '@/lib/unitConversion';
+import { insumosDasOpcoesNoPeriodo } from '@/lib/custoOpcoes';
 
 export interface IngredienteUsado {
   id: string;
@@ -45,7 +46,7 @@ export function useConsumoPorLanche(dateFrom: string, dateTo: string) {
       try {
         // 1) Buscar order_items com join em orders para evitar lista grande de IDs
         //    Usando paginação de 1000 registros
-        let allOiData: Array<{ item_id: string; item_name: string; quantity: number; order_id: string }> = [];
+        let allOiData: Array<{ id: string; item_id: string; item_name: string; quantity: number; order_id: string }> = [];
         let page = 0;
         const PAGE_SIZE = 1000;
 
@@ -53,6 +54,7 @@ export function useConsumoPorLanche(dateFrom: string, dateTo: string) {
           const { data: pageData, error: pageErr } = await supabase
             .from('order_items')
             .select(`
+              id,
               item_id,
               item_name,
               quantity,
@@ -66,7 +68,7 @@ export function useConsumoPorLanche(dateFrom: string, dateTo: string) {
             .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
 
           if (pageErr) throw pageErr;
-          const rows = (pageData ?? []) as Array<{ item_id: string; item_name: string; quantity: number; order_id: string }>;
+          const rows = (pageData ?? []) as Array<{ id: string; item_id: string; item_name: string; quantity: number; order_id: string }>;
           allOiData = [...allOiData, ...rows];
           if (rows.length < PAGE_SIZE) break;
           page++;
@@ -77,11 +79,20 @@ export function useConsumoPorLanche(dateFrom: string, dateTo: string) {
           return;
         }
 
+        // Insumos das opções escolhidas (adicionais ligados ao estoque), por item vendido
+        const opcoesPorVenda = await insumosDasOpcoesNoPeriodo(tenantId!, `${dateFrom}T00:00:00`, `${dateTo}T23:59:59`);
+
         // 2) Agregar por item_id
-        const itemAgg = new Map<string, { nome: string; qtd: number; pedidos: Set<string> }>();
+        const itemAgg = new Map<string, { nome: string; qtd: number; pedidos: Set<string>; opcoes: Map<string, { qtd: number; custo: number; unidade: string }> }>();
         for (const oi of allOiData) {
           if (!oi.item_id) continue;
-          const prev = itemAgg.get(oi.item_id) ?? { nome: oi.item_name, qtd: 0, pedidos: new Set() };
+          const prev = itemAgg.get(oi.item_id) ?? { nome: oi.item_name, qtd: 0, pedidos: new Set(), opcoes: new Map() };
+          for (const x of opcoesPorVenda.get(oi.id) ?? []) {
+            const a = prev.opcoes.get(x.ingredient_id) ?? { qtd: 0, custo: 0, unidade: x.unidade };
+            a.qtd += x.qtd * Number(oi.quantity);
+            a.custo += x.custo * Number(oi.quantity);
+            prev.opcoes.set(x.ingredient_id, a);
+          }
           prev.qtd += Number(oi.quantity);
           prev.pedidos.add(oi.order_id);
           itemAgg.set(oi.item_id, prev);
@@ -105,7 +116,7 @@ export function useConsumoPorLanche(dateFrom: string, dateTo: string) {
         }
 
         // 4) Dados dos ingredientes (nome + preço) — em chunks de 50
-        const ingIds = Array.from(new Set(iiData.map((ii) => ii.ingredient_id)));
+        const ingIds = Array.from(new Set([...iiData.map((ii) => ii.ingredient_id), ...[...itemAgg.values()].flatMap((a) => [...a.opcoes.keys()])]));
         const ingsMap = new Map<string, { name: string; unit: string; unit_price: number }>();
         if (ingIds.length > 0) {
           for (const chunkIds of chunk(ingIds, 50)) {
@@ -139,7 +150,15 @@ export function useConsumoPorLanche(dateFrom: string, dateTo: string) {
               unidade: ing?.unit ?? ii.unit,
               custo,
             };
-          }).sort((a, b) => b.custo - a.custo);
+          });
+          // Adicionais escolhidos: soma no mesmo insumo da ficha ou entra como linha própria
+          for (const [ingId, o] of agg.opcoes) {
+            custoTotal += o.custo;
+            const ja = ingredientes.find((x) => x.id === ingId);
+            if (ja) { ja.quantidade += o.qtd; ja.custo += o.custo; }
+            else ingredientes.push({ id: ingId, nome: `${ingsMap.get(ingId)?.name ?? 'Desconhecido'} (adicional)`, quantidade: o.qtd, unidade: ingsMap.get(ingId)?.unit ?? o.unidade, custo: o.custo });
+          }
+          ingredientes.sort((a, b) => b.custo - a.custo);
 
           result.push({
             itemId,

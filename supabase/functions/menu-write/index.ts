@@ -457,6 +457,32 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       if (!item) return errResp('Item não encontrado nesta loja', 404);
       result = await reaplicarFicha(admin, tenantId, item_id, `${desde}T00:00:00-03:00`, user.id, !!aplicar);
     }
+    else if (action === 'ligar_opcoes_estoque') {
+      // Aba Opções × Estoque (2026-09-25): liga várias opções (mesmo complemento em vários itens) a um
+      // insumo ou produção de uma vez. Quantidade obrigatória — nunca liga sozinho, sempre por uma pessoa.
+      const { option_ids, ingredient_id, production_recipe_id, consumption_quantity, consumption_unit } = payload as {
+        option_ids: string[]; ingredient_id?: string | null; production_recipe_id?: string | null; consumption_quantity: number; consumption_unit: string;
+      };
+      const ids = (Array.isArray(option_ids) ? option_ids : []).filter(isValidUuid);
+      if (!ids.length) return errResp('Nenhuma opção informada', 400);
+      if (!isValidUuid(ingredient_id)) return errResp('Escolha o insumo', 400);
+      if (!(Number(consumption_quantity) > 0)) return errResp('Informe quanto sai do estoque', 400);
+      if (!['g', 'kg', 'ml', 'l', 'un'].includes(String(consumption_unit ?? ''))) return errResp('Unidade inválida', 400);
+      const { data: papel } = await admin.from('user_tenants').select('role').eq('user_id', user.id).eq('tenant_id', tenantId).maybeSingle();
+      if (!['admin', 'manager'].includes(String(papel?.role ?? ''))) return errResp('Só administrador ou gerente pode ligar opções ao estoque', 403);
+      const { data: ing } = await admin.from('ingredients').select('id').eq('id', ingredient_id).eq('tenant_id', tenantId).is('deleted_at', null).maybeSingle();
+      if (!ing) return errResp('Insumo não encontrado nesta loja', 404);
+      if (production_recipe_id) {
+        const { data: rec } = await admin.from('production_recipes').select('id').eq('id', production_recipe_id).eq('tenant_id', tenantId).maybeSingle();
+        if (!rec) return errResp('Produção não encontrada nesta loja', 404);
+      }
+      const { data: upd, error } = await admin.from('options').update({
+        ingredient_id, production_recipe_id: production_recipe_id ?? null,
+        consumption_quantity: Number(consumption_quantity), consumption_unit,
+      }).in('id', ids).eq('tenant_id', tenantId).is('deleted_at', null).select('id');
+      if (error) throw new Error(`ligar_opcoes_estoque: ${error.message}`);
+      result = { ligadas: (upd ?? []).length };
+    }
     else if (action === 'upsert_global_obs') {
       const { id, text, is_active, excluded_item_ids, excluded_category_ids } = payload as {
         id?: string; text: string; is_active?: boolean;

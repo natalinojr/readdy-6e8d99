@@ -5,6 +5,7 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatCurrency, formatPercent } from '@/lib/formatters';
 import { custoLinhaFicha } from '@/lib/unitConversion';
+import { custoOpcoesNoPeriodo } from '@/lib/custoOpcoes';
 
 // ── Hook: CMV mensal histórico ────────────────────────────────────────────────
 interface CmvMensalPonto { mes: string; cmv_pct: number; receita: number; custo: number; }
@@ -43,7 +44,7 @@ function useCmvMensal() {
       // Passo 2: busca order_items desses pedidos
       const { data: salesRows } = await supabase
         .from('order_items')
-        .select('item_id, item_price, quantity, order_id')
+        .select('id, item_id, item_price, quantity, order_id')
         .eq('tenant_id', user.tenantId)
         .in('order_id', orderIds);
 
@@ -67,16 +68,19 @@ function useCmvMensal() {
         }
       }
 
+      // Custo das opções escolhidas (adicionais): o preço delas já está no item_price
+      const custoOpcoes = await custoOpcoesNoPeriodo(user.tenantId, from.toISOString(), new Date().toISOString());
+
       // Agrega por mês
       const mesMap = new Map<string, { receita: number; custo: number }>();
-      for (const row of salesRows as Array<{ item_id: string | null; item_price: number; quantity: number; order_id: string }>) {
+      for (const row of salesRows as Array<{ id: string; item_id: string | null; item_price: number; quantity: number; order_id: string }>) {
         const createdAt = orderDateMap.get(row.order_id);
         if (!createdAt) continue;
         const date = new Date(createdAt);
         const mesKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
         const qty = Number(row.quantity ?? 1);
         const price = Number(row.item_price ?? 0);
-        const custo = (fichaMap.get(row.item_id ?? '') ?? 0) * qty;
+        const custo = ((fichaMap.get(row.item_id ?? '') ?? 0) + (custoOpcoes.get(row.id) ?? 0)) * qty;
         const prev = mesMap.get(mesKey) ?? { receita: 0, custo: 0 };
         mesMap.set(mesKey, { receita: prev.receita + price * qty, custo: prev.custo + custo });
       }
