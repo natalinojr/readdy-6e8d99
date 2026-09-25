@@ -571,6 +571,18 @@ export default function ConciliacaoTab() {
   // com o saldo antigo até recarregar a página. Toda recarga do extrato relê as contas (2026-09-25).
   useEffect(() => { if (imports.length > 0) refetchAccounts(); }, [imports]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Conta ligada ao banco: o saldo no ERP sai do extrato (fn_bank_recalc_balance, 2026-09-25) e a
+  // diferença = linhas a conciliar − pagamentos do ERP sem linha no extrato. Explicação debaixo do número.
+  type SaldoComposicao = { abertura: number; abertura_data: string | null; pendente: number; pendente_qtd: number; erp_sem_extrato: number; erp_sem_extrato_qtd: number; erp_sem_extrato_itens: { data: string; descricao: string; tipo: string; valor: number }[] };
+  const [composicao, setComposicao] = useState<SaldoComposicao | null>(null);
+  useEffect(() => {
+    const id = selectedAccountId;
+    if (!id) { setComposicao(null); return; }
+    let vivo = true;
+    supabase.rpc('fn_bank_balance_breakdown', { p_account: id }).then(({ data }) => { if (vivo) setComposicao((data as SaldoComposicao | null) ?? null); });
+    return () => { vivo = false; };
+  }, [selectedAccountId, imports]);
+
   // Alertas de confiabilidade (fn_conciliacao_alertas)
   // Cada item do alerta carrega o registro (2026-09-20): a linha leva onde se resolve.
   type AlertaItem = { label: string; valor: number; data: string | null; ref_kind?: 'statement' | 'bill' | 'doc' | null; ref_id?: string | null };
@@ -1276,8 +1288,11 @@ export default function ConciliacaoTab() {
             </p>
           </div>
           <div className="px-4 py-3">
-            <p className="text-xs text-zinc-400">Saldo no ERP</p>
+            <p className="text-xs text-zinc-400" title={composicao ? 'Saldo do banco antes da 1ª linha do extrato + tudo que já foi conciliado ou ignorado + pagamentos feitos no ERP que ainda não aparecem no extrato' : 'Saldo inicial da conta + entradas e saídas lançadas no ERP'}>Saldo no ERP</p>
             <p className="text-base font-bold text-zinc-900">{saldoErp != null ? formatCurrency(saldoErp) : '—'}</p>
+            {composicao?.abertura_data && (
+              <p className="text-[11px] text-zinc-400">abertura {formatCurrency(composicao.abertura)} em {composicao.abertura_data.split('-').reverse().join('/')}</p>
+            )}
           </div>
           <div className="px-4 py-3 border-t md:border-t-0 border-zinc-100">
             <p className="text-xs text-zinc-400">Diferença banco − ERP</p>
@@ -1285,6 +1300,20 @@ export default function ConciliacaoTab() {
               <p className="text-base font-bold text-zinc-300">—</p>
             ) : diferenca === 0 ? (
               <p className="text-base font-bold text-green-700 flex items-center gap-1"><i className="ri-check-line" /> Bate</p>
+            ) : composicao ? (
+              <>
+                <p className="text-base font-bold text-red-600">{diferenca > 0 ? '+' : '−'}{fmtCur(diferenca)}</p>
+                {composicao.pendente_qtd > 0 && (
+                  <button onClick={() => trocarFiltroStatus('pending')} className="block text-[11px] text-amber-600 hover:underline cursor-pointer text-left">
+                    {composicao.pendente_qtd} a conciliar ({composicao.pendente < 0 ? '−' : '+'}{fmtCur(composicao.pendente)})
+                  </button>
+                )}
+                {composicao.erp_sem_extrato_qtd > 0 && (
+                  <p className="text-[11px] text-zinc-500 cursor-help" title={composicao.erp_sem_extrato_itens.map(i => `${i.data.split('-').reverse().join('/')} · ${i.descricao} · ${i.tipo === 'debit' ? '−' : '+'}${formatCurrency(Number(i.valor))}`).join('\n')}>
+                    {composicao.erp_sem_extrato_qtd} pago{composicao.erp_sem_extrato_qtd > 1 ? 's' : ''} no ERP sem linha no extrato ({composicao.erp_sem_extrato < 0 ? '−' : '+'}{fmtCur(composicao.erp_sem_extrato)})
+                  </p>
+                )}
+              </>
             ) : (
               <button onClick={() => setShowSaldoModal(true)} className="text-base font-bold text-red-600 hover:underline cursor-pointer" title="Abrir a reconciliação de saldo">
                 {diferenca > 0 ? '+' : '−'}{fmtCur(diferenca)}
