@@ -6,6 +6,7 @@ import { todayBrasilia } from '@/lib/dateUtils';
 import IfoodConfigModal from './conciliacao/IfoodConfigModal';
 import IfoodApiViews, { type IfoodApiView } from './IfoodApiViews';
 import IfoodProdutos from './IfoodProdutos';
+import IfoodCmv from './IfoodCmv';
 import { portalBucket } from '@/lib/ifoodVendas';
 
 // Aba iFood: o relatório de conciliação do iFood (fin_ifood_entries, gravado pela edge
@@ -64,7 +65,7 @@ export default function IfoodTab() {
   const [showConfig, setShowConfig] = useState(false);
   const [togglingLedger, setTogglingLedger] = useState(false);
   const [openRepasse, setOpenRepasse] = useState<string | null>(null);
-  const [view, setView] = useState<'resumo' | 'produtos' | IfoodApiView>('resumo');
+  const [view, setView] = useState<'resumo' | 'produtos' | 'cmv' | IfoodApiView>('resumo');
   const [apiOn, setApiOn] = useState(false);
   const [homolog, setHomolog] = useState(false);
   const [nomes, setNomes] = useState<Record<string, string>>({});
@@ -346,7 +347,7 @@ export default function IfoodTab() {
 
       {/* Subabas */}
       <div className="flex gap-1 overflow-x-auto bg-zinc-100/80 rounded-xl p-1 w-full sm:w-fit">
-        {([['resumo', 'Resumo', 'ri-pie-chart-2-line'], ['produtos', 'Produtos', 'ri-shopping-bag-3-line'], ['pedidos', 'Pedidos', 'ri-file-list-3-line'], ['repasses', 'Repasses', 'ri-bank-line'], ['eventos', 'Eventos', 'ri-pulse-line']] as const).map(([k, label, icon]) => (
+        {([['resumo', 'Resumo', 'ri-pie-chart-2-line'], ['produtos', 'Produtos', 'ri-shopping-bag-3-line'], ['cmv', 'CMV', 'ri-scales-3-line'], ['pedidos', 'Pedidos', 'ri-file-list-3-line'], ['repasses', 'Repasses', 'ri-bank-line'], ['eventos', 'Eventos', 'ri-pulse-line']] as const).map(([k, label, icon]) => (
           <button key={k} onClick={() => setView(k)}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap cursor-pointer transition-colors ${view === k ? 'bg-white text-red-600 shadow-sm' : 'text-zinc-500 hover:text-zinc-800'}`}>
             <i className={icon} /> {label}
@@ -382,6 +383,8 @@ export default function IfoodTab() {
 
       {view === 'produtos' ? (
         user?.tenantId ? <IfoodProdutos tenantId={user.tenantId} lojaShort={loja ? (lojas.find(([id]) => id === loja)?.[1] ?? null) : null} onImportar={() => setShowConfig(true)} /> : null
+      ) : view === 'cmv' ? (
+        user?.tenantId ? <IfoodCmv tenantId={user.tenantId} lojaShort={loja ? (lojas.find(([id]) => id === loja)?.[1] ?? null) : null} onImportar={() => setShowConfig(true)} /> : null
       ) : view !== 'resumo' ? (
         user?.tenantId ? <IfoodApiViews tenantId={user.tenantId} competence={competence || hoje.slice(0, 7)} view={view} merchantId={loja || undefined} nomes={nomes} /> : null
       ) : !loading && imports.length === 0 ? (
