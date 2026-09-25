@@ -1016,6 +1016,56 @@ async function stockText(tenants: Array<{ id: string; name: string }>, state: an
   return { text: parts.length ? `📦 *Estoque crítico — o que mudou*\n\n${parts.join('\n\n')}` : null, newState: next, painel };
 }
 
+// ── Avisos da equipe (2026-09-25) ───────────────────────────────────────────
+// A conversa "Avisos" do chat vale para todo mundo (tabela avisos, uma linha por pessoa). Quem recebe
+// é quem tem a permissão na loja: admin sempre; os demais pela matriz `permissions` e, sem linha, pelo
+// padrão do papel (o mesmo de DEFAULT_PERMISSOES em src/hooks/usePermissoes.ts). O dono fica de fora:
+// ele já recebe pelo assistente.
+const PADRAO_PERM: Record<string, string[]> = {
+  fin_pagar: ['manager', 'financeiro', 'accountant'],
+  estoque_movimentar: ['manager'],
+};
+async function quemTem(tenantId: string, key: string): Promise<string[]> {
+  const rows = await db()<Array<{ user_id: string; role: string; allowed: boolean | null }>>`
+    select ut.user_id::text, ut.role::text, p.allowed from user_tenants ut
+    join users u on u.id = ut.user_id and u.is_active is not false and u.deleted_at is null
+    left join permissions p on p.tenant_id = ut.tenant_id and p.role = ut.role and p.permission_key = ${key}
+    where ut.tenant_id = ${tenantId}`;
+  return rows.filter((r) => r.role === 'admin' || (r.allowed ?? (PADRAO_PERM[key] ?? []).includes(r.role))).map((r) => r.user_id);
+}
+async function avisarEquipe(admin: SupabaseClient, loja: { id: string }, perm: string, kind: string, dia: string, resumo: string, painel: Painel, ownerId: unknown) {
+  const quem = (await quemTem(loja.id, perm)).filter((id) => id !== String(ownerId ?? ''));
+  if (!quem.length) return;
+  const { error } = await admin.from('avisos').upsert(
+    quem.map((user_id) => ({ user_id, tenant_id: loja.id, kind, ref: `${loja.id}:${dia}`, resumo, painel })),
+    { onConflict: 'user_id,kind,ref', ignoreDuplicates: true });
+  if (error) throw new Error(error.message);
+}
+// Push dos avisos novos (os dos gatilhos de pedido de pagamento e os de cima). Marca antes de enviar:
+// dois ticks juntos nunca mandam o mesmo. Aviso com mais de 6 h sem push não vale mais a notificação.
+async function pushAvisos(admin: SupabaseClient): Promise<number> {
+  const { data } = await admin.from('avisos').select('id, user_id, resumo')
+    .is('push_em', null).gte('created_at', new Date(Date.now() - 6 * 3600_000).toISOString()).order('created_at').limit(50);
+  const lista = (data ?? []) as Array<{ id: string; user_id: string; resumo: string }>;
+  if (!lista.length) return 0;
+  const { data: marcados } = await admin.from('avisos').update({ push_em: new Date().toISOString() })
+    .in('id', lista.map((a) => a.id)).is('push_em', null).select('id');
+  const ok = new Set(((marcados ?? []) as Array<{ id: string }>).map((m) => m.id));
+  let n = 0;
+  for (const a of lista.filter((x) => ok.has(x.id))) {
+    try {
+      await fetch(`${supabaseUrl}/functions/v1/send-push`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', apikey: serviceRoleKey, Authorization: `Bearer ${serviceRoleKey}` },
+        // Sem tenant_id: a assinatura guarda a loja que estava aberta ao se inscrever — filtrar por loja
+        // deixaria de avisar quem trabalha em mais de uma.
+        body: JSON.stringify({ action: 'send', user_ids: [a.user_id], payload: { titulo: 'Aviso', corpo: a.resumo.slice(0, 200), url: '/modulos?avisos=1', tag: `aviso-${a.id}` } }),
+      });
+      n++;
+    } catch (e) { log('WARN', 'push aviso', { id: a.id, error: errMsg(e) }); }
+  }
+  return n;
+}
+
 async function tasksOverdueText(ownerId: string): Promise<{ text: string; painel: Painel; resumo: string } | null> {
   const rows = await db()<Array<{ title: string; due_date: string; list: string | null }>>`
     select t.title, to_char(t.due_date at time zone 'America/Sao_Paulo', 'DD/MM') due_date, l.name as list
@@ -1408,6 +1458,14 @@ async function proactive(admin: SupabaseClient, cfg: Record<string, any>, ownerC
     if (!dry) { state.due_date = today; await saveState(); }
     const t = await dueTomorrowText(tenants, today);
     if (t) await deliver('due_tomorrow', t.text, { painel: t.painel, resumo: t.resumo }); else res.due_tomorrow = 'nada vencendo';
+    if (!dry) {
+      for (const lj of tenants) {
+        try {
+          const u = await dueTomorrowText([lj], today);
+          if (u) await avisarEquipe(admin, lj, 'fin_pagar', 'vencimentos', today, u.resumo, { ...u.painel, s: lj.name }, cfg.owner_user_id);
+        } catch (e) { log('ERROR', 'avisos equipe vencimentos', { tenant: lj.id, error: errMsg(e) }); }
+      }
+    }
   }
   // Vence hoje → conversa Financeiro com os cartões de pagamento (precisa do Telegram do dono: o
   // pagamento é aprovado pelo botão + PIN, no Telegram ou no chat do ERPOS).
@@ -1436,6 +1494,15 @@ async function proactive(admin: SupabaseClient, cfg: Record<string, any>, ownerC
   }
   if (want('stock') && (dry || (inWindow(pro.stock.time, now) && state.stock_date !== today))) {
     const { text, newState, painel: pnStock } = await stockText(tenants, state);
+    // Equipe: por loja, com o estado de ANTES (o "o que mudou" é o mesmo que o dono recebe).
+    if (!dry) {
+      for (const lj of tenants) {
+        try {
+          const u = await stockText([lj], state);
+          if (u.text && u.painel) await avisarEquipe(admin, lj, 'estoque_movimentar', 'estoque_critico', today, `Estoque crítico — ${lj.name}`, { ...u.painel, s: lj.name }, cfg.owner_user_id);
+        } catch (e) { log('ERROR', 'avisos equipe estoque', { tenant: lj.id, error: errMsg(e) }); }
+      }
+    }
     if (!dry) { state.stock_date = today; state.stock = newState; await saveState(); }
     if (text) await deliver('stock', text, pnStock ? { painel: pnStock, resumo: text.split('\n')[0].replace(/\*/g, '') } : undefined); else res.stock = 'sem mudança';
   }
@@ -1603,6 +1670,7 @@ Deno.serve(async (req) => {
   try { const pw = await payWatch(admin); if (pw) result.pay_watch = pw; } catch (e) { result.pay_watch_error = errMsg(e); log('ERROR', 'pay_watch', { error: errMsg(e) }); }
   try { const pp = await pagamentosParados(admin); if (pp) result.pagamentos_parados = pp; } catch (e) { result.pagamentos_parados_error = errMsg(e); log('ERROR', 'pagamentos_parados', { error: errMsg(e) }); }
   try { const pc = await pagamentosDeContaResolvida(admin); if (pc) result.pagamentos_conta_resolvida = pc; } catch (e) { log('ERROR', 'pagamentos_conta_resolvida', { error: errMsg(e) }); }
+  try { const pa = await pushAvisos(admin); if (pa) result.avisos_push = pa; } catch (e) { log('ERROR', 'avisos push', { error: errMsg(e) }); }
   try { const fg = await filaGrupo(admin); if (fg) result.fila_grupo = fg; } catch (e) { result.fila_grupo_error = errMsg(e); log('ERROR', 'fila_grupo', { error: errMsg(e) }); }
   // Agendamento de entrevistas (Contratação): convites, cobrança e lembretes — regras no hiring-scheduler
   try {

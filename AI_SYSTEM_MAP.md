@@ -3440,3 +3440,14 @@ Sem SW ativo o POST cai no Vercel e falha — por isso o destino só existe no S
   modelo Meta `retorno_processo_seletivo`, pendente `aguardando_retorno`). `canal-publico`: arquivo >10 min depois da ficha
   vira anexo (`hiring_candidate_events` kind `anexo`, `meta.path` em `curriculos/anexos/<cand>/…`), `sayOnce` contra aviso
   repetido, nome grudado corrigido pelo perfil do WhatsApp (grafia diferente só avisa), menor de idade avisado.
+- **Avisos para todas as pessoas (2026-09-25).** A conversa "Avisos" do chat, que era só do dono (`asst_messages` topic
+  `avisos`), agora existe para todo mundo no painel `AcoesRapidasFlutuante` (linha fixa no topo de Conversas →
+  `src/components/feature/avisos/AvisosConversa.tsx`, cada aviso desenhado com `PainelMensagem`). Tabela `avisos` (uma
+  linha por pessoa, `unique(user_id, kind, ref)`, RLS só `user_id = auth.uid()`, authenticated só lê e grava `lido_em`).
+  **Quem recebe é decidido ao gravar**, pela permissão do papel na loja: `assistente-cron` › `avisarEquipe` (admin sempre;
+  senão `permissions` e, sem linha, `PADRAO_PERM` — espelho de DEFAULT_PERMISSOES; dono fica de fora, já recebe pelo
+  assistente): vencimentos de amanhã → `fin_pagar`; estoque crítico → `estoque_movimentar`, por loja. Gatilhos SQL:
+  pedido de pagamento **pago** (Pix `paid` no `fin_inter_payments` ou conta `paid`, o primeiro que chegar) e **recusado**
+  → quem pediu (`fn_aviso_pedido_pagamento`; erro vira warning, nunca derruba a baixa). Push: `pushAvisos` a cada tick
+  (marca `push_em` antes, sem filtro de loja, url `/modulos?avisos=1` abre a conversa). Aviso novo = gravar em `avisos`
+  com `painel` no formato do `[painel]`.
