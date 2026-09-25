@@ -163,13 +163,14 @@ function VerComprovante({ url, pdf, titulo, onFechar }: { url: string; pdf: bool
   );
 }
 
-interface ResultadoPagamento { preparado: boolean; motivo?: string }
+interface ResultadoPagamento { preparado: boolean; motivo?: string; aviso?: string }
 
-/** Depois de aprovar: o Pix vai para o 📥 do chat com o botão Pagar (PIN), ou avisa por que não foi. */
+/** Depois de aprovar: o Pix vai para o 📥 do chat com o botão Pagar (PIN), ou avisa por que não foi.
+ *  O texto vem do servidor (2026-09-24): "já em andamento"/"já pago" NÃO são para pagar pelo banco. */
 function avisarPagamento(r: ResultadoPagamento | undefined, onErro: (m: string | null) => void) {
   if (!r) return;
-  if (r.preparado) window.alert('Aprovado. O Pix está pronto no 📥 do chat do assistente: toque em Pagar e confirme com o PIN.');
-  else onErro(`Aprovado, mas o Pix não foi preparado (${r.motivo ?? 'motivo desconhecido'}). Pague pelo app do banco — a conciliação dá baixa. Ficou um aviso no 📥 do chat.`);
+  if (r.preparado) window.alert(r.aviso ?? 'O Pix está pronto no 📥 do chat do assistente: toque em Pagar e confirme com o PIN.');
+  else onErro(r.aviso ?? `O Pix não foi preparado (${r.motivo ?? 'motivo desconhecido'}). Pague pelo app do banco — a conciliação dá baixa. Ficou um aviso no 📥 do chat.`);
 }
 
 function PagarDeNovo({ p, tenantId, onErro }: { p: Pedido; tenantId: string; onErro: (m: string | null) => void }) {

@@ -447,9 +447,11 @@ Deno.serve(async (req) => {
       // Só os que ainda esperam decisão ou estão em andamento — o cartão no chat é para AGIR.
       // Concluído (pago/cancelado/recusado) fica só na conversa; antes voltava por 24 h e o
       // rodapé do chat ficava entulhado de "pago" (2026-09-16).
+      // Rascunho com mais de 30 min já não paga (o servidor recusa): saía no rodapé com "Pagar" e virava
+      // "Preparar de novo" com PIN automático (auditoria 2026-09-24). Quem precisa dele é a pendência.
       const { data, error } = await admin.from('fin_inter_payments').select('*').eq('chat_id', chatKey)
         .in('status', PAY_OPEN)
-        .gte('created_at', new Date(Date.now() - 7 * 86400_000).toISOString())
+        .gte('created_at', new Date(Date.now() - PAY_TTL_MS).toISOString())
         .order('created_at', { ascending: false }).limit(20);
       if (error) throw new Error(error.message);
       return json({ success: true, data: { payments: await payCards(admin, data ?? []) } });
@@ -475,7 +477,8 @@ Deno.serve(async (req) => {
       // (pedido NOVO, revalida tudo; boleto vencido sai recalculado com multa e juros).
       if (op === 're') {
         if (!['expired', 'failed', 'rejected'].includes(p.status)) return fail(`Esse já está: ${PAY_STATUS[p.status] ?? p.status}.`);
-        const out = await callInter('reprepare_payment', { tenant_id: p.tenant_id, payment_id: p.id });
+        // conferido: o dono viu no app do Inter que o envio sem resposta NÃO saiu (inter-bank exige).
+        const out = await callInter('reprepare_payment', { tenant_id: p.tenant_id, payment_id: p.id, conferido: body.conferido === true });
         const novo = out.payment;
         if (novo.chat_id !== chatKey) await admin.from('fin_inter_payments').update({ chat_id: chatKey }).eq('id', novo.id);
         return json({ success: true, data: { payment: await payCard1(admin, { ...novo, chat_id: chatKey }) } });
@@ -687,10 +690,29 @@ Deno.serve(async (req) => {
       if (!['pagamento_grupo', 'pagamento_pendente'].includes(pend.kind)) return json({ success: true, data: { cancelados: 0 } });
       // deno-lint-ignore no-explicit-any
       const pl = (pend.payload ?? {}) as any;
-      let q = admin.from('fin_inter_payments').select('*').eq('tenant_id', pend.tenant_id).in('status', PAY_OPEN);
-      q = pend.kind === 'pagamento_grupo' ? q.eq('group_request_id', Number(pend.ref))
-        : q.in('id', [String(pend.ref), ...(Array.isArray(pl.pagamentos) ? pl.pagamentos.map(String) : [])]);
-      const { data: abertos } = await q;
+      // Todos os Pix da pendência, INCLUSIVE os que substituíram o original ("preparar de novo" gera
+      // outro id): antes só o original era cancelado e o substituto ficava no rodapé com Pagar.
+      let ids: string[] = [String(pend.ref), ...(Array.isArray(pl.pagamentos) ? pl.pagamentos.map(String) : [])];
+      if (pend.kind !== 'pagamento_grupo') {
+        const vistos = new Set<string>();
+        let fila = [...ids];
+        while (fila.length) {
+          const id = fila.shift() as string;
+          if (vistos.has(id)) continue;
+          vistos.add(id);
+          const { data: r } = await admin.from('fin_inter_payments').select('replaced_by').eq('id', id).maybeSingle();
+          if (r?.replaced_by && r.replaced_by !== id) fila.push(String(r.replaced_by));
+        }
+        ids = [...vistos];
+      }
+      let qTodos = admin.from('fin_inter_payments').select('*').eq('tenant_id', pend.tenant_id);
+      qTodos = pend.kind === 'pagamento_grupo' ? qTodos.eq('group_request_id', Number(pend.ref)) : qTodos.in('id', ids);
+      const { data: todosPix } = await qTodos;
+      // Já enviado ao Inter (aguardando aprovação etc.) não se cancela por aqui: fechar a pendência
+      // escondia um Pix que ainda podia ser aprovado. Recusa e diz onde resolver.
+      const enviado = (todosPix ?? []).find((x) => ['sending', 'sent', 'pending_approval', 'approved', 'scheduled'].includes(x.status));
+      if (enviado) return fail(`O Pix de ${brl(enviado.amount)} já foi enviado ao Inter (${PAY_STATUS[enviado.status] ?? enviado.status}). Recuse ou cancele pelo app do Inter; a pendência fecha sozinha depois.`);
+      const abertos = (todosPix ?? []).filter((x) => PAY_OPEN.includes(x.status));
       const erros: string[] = [];
       let cancelados = 0;
       for (const p of abertos ?? []) {
@@ -715,6 +737,21 @@ Deno.serve(async (req) => {
       if (!pend || !['pagamento_grupo', 'pagamento_pendente'].includes(pend.kind)) return fail('Pendência de pagamento não encontrada.', 404);
       if (!['aberta', 'vista'].includes(pend.status)) return fail('Essa pendência já foi fechada.');
       if (!(await ehGestor(admin, user.id, String(pend.tenant_id)))) return fail('Sem acesso a essa loja.', 403);
+      // Conta já paga/cancelada (pelo banco, pela conciliação): a pendência fecha em vez de preparar outro Pix.
+      const { data: pendFull } = await admin.from('pendencias').select('payload').eq('id', pend.id).maybeSingle();
+      // deno-lint-ignore no-explicit-any
+      const billId = (pendFull?.payload as any)?.bill_id;
+      if (billId) {
+        const { data: conta } = await admin.from('fin_accounts_payable').select('status').eq('id', String(billId)).maybeSingle();
+        if (conta && ['paid', 'cancelled'].includes(conta.status)) {
+          // Pix dessa conta ainda no Inter (aguardando aprovação…): não some — se aprovar, paga duas vezes.
+          const { data: noInter } = await admin.from('fin_inter_payments').select('amount, status').eq('bill_id', String(billId))
+            .in('status', ['sending', 'sent', 'pending_approval', 'approved', 'scheduled']).limit(1);
+          if (noInter?.length) return fail(`Essa conta já está ${conta.status === 'paid' ? 'paga' : 'cancelada'} no ERPOS, mas há um Pix de ${brl(noInter[0].amount)} dela esperando no Inter. Recuse esse Pix no app do Inter para não pagar duas vezes.`);
+          await admin.from('pendencias').update({ status: 'resolvida', resolvida_em: nowIso(), resolvida_por: user.id, motivo: conta.status === 'paid' ? 'conta já paga' : 'conta cancelada', updated_at: nowIso() }).eq('id', pend.id);
+          return fail(conta.status === 'paid' ? 'Essa conta já foi paga — tirei a pendência.' : 'Essa conta foi cancelada — tirei a pendência.');
+        }
+      }
       // deno-lint-ignore no-explicit-any
       let todos: any[] = [];
       if (pend.kind === 'pagamento_grupo') {
@@ -747,6 +784,11 @@ Deno.serve(async (req) => {
         if (vencido) {
           await admin.from('fin_inter_payments').update({ status: 'expired', updated_at: nowIso() }).eq('id', p.id).in('status', ['draft', 'awaiting_pin']);
           atual = { ...p, status: 'expired' };
+        }
+        if (atual.status === 'failed' && atual.inter_status === 'INCERTO') {
+          erros.push(`${brl(p.amount)}${p.beneficiary_name ? ` para ${p.beneficiary_name}` : ''}: o envio anterior ficou sem resposta do Inter — confira no app se saiu antes de pagar de novo`);
+          cards.push(await payCard1(admin, atual));
+          continue;
         }
         if (['expired', 'failed', 'rejected'].includes(atual.status)) {
           try {

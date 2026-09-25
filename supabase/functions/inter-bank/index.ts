@@ -425,6 +425,13 @@ async function syncTenant(admin: Admin, tenantId: string, opts: { days?: number;
 const PAY_SCOPE = 'pagamento-boleto.read pagamento-boleto.write pagamento-pix.read pagamento-pix.write';
 const PAY_LIVE = ['sending', 'sent', 'pending_approval', 'approved', 'scheduled', 'paid'];
 const PAY_OPEN = ['draft', 'awaiting_pin'];
+// Envio que saiu para o Inter e voltou sem resposta: status 'failed' + inter_status INCERTO. Não se
+// prepara de novo sem alguém conferir no app (auditoria 2026-09-24: "Preparar de novo" pagava duas vezes).
+const INCERTO = 'INCERTO';
+// Inícios fixos das mensagens: pedidos-pagamento reconhece o caso e não manda "pagar pelo banco".
+const ERRO_EM_ANDAMENTO = 'Já existe um pagamento em andamento para essa conta';
+const ERRO_JA_PAGO = 'Essa conta já foi paga:';
+const ERRO_INCERTO = 'Um envio anterior ficou sem resposta do Inter.';
 const DRAFT_TTL_MS = 30 * 60_000;
 // Emissores de Pix copia e cola aceitos (location do QR dinâmico): guias do governo.
 const PIX_COPIA_HOSTS = new Set(['pix-qrcode.caixa.gov.br']);
@@ -533,17 +540,35 @@ async function preparePayment(admin: Admin, tenantId: string, body: Record<strin
   const tipo = String(body.tipo ?? '').toLowerCase();
   // deno-lint-ignore no-explicit-any
   let bill: any = null;
+  let faltaConta: number | null = null;
   if (body.bill_id) {
     const { data } = await admin.from('fin_accounts_payable').select('id, tenant_id, description, supplier, amount, paid_amount, due_date, status').eq('id', String(body.bill_id)).eq('tenant_id', tenantId).maybeSingle();
     if (!data) throw new Error('Conta a pagar não encontrada.');
     if (data.status === 'paid') throw new Error('Essa conta já está paga no ERPOS.');
+    if (data.status === 'cancelled') throw new Error('Essa conta foi cancelada no ERPOS — não há o que pagar.');
+    // Pix/boleto já PAGO pelo Inter mas a conta ainda não baixada (a baixa espera o débito aparecer no
+    // extrato, pode levar horas): sem isto o "Mandar para pagar"/"Preparar de novo" pagava a mesma
+    // conta outra vez (auditoria 2026-09-24). Vale o maior entre o baixado e o pago pelo Inter.
+    const { data: pagos } = await admin.from('fin_inter_payments').select('id, amount, status, inter_status, replaced_by')
+      .eq('tenant_id', tenantId).eq('bill_id', data.id).in('status', ['paid', 'failed']);
+    const pagoInter = (pagos ?? []).filter((x) => x.status === 'paid').reduce((t, x) => t + Number(x.amount ?? 0), 0);
+    const falta = round2(Number(data.amount) - Math.max(Number(data.paid_amount ?? 0), pagoInter));
+    if (pagoInter > 0) faltaConta = falta;
+    if (falta <= 0.009) {
+      throw new Error(`${ERRO_JA_PAGO} ${brl(pagoInter)} pelo Inter — falta só a baixa, que sai sozinha quando o débito aparecer no extrato.`);
+    }
+    // Envio sem resposta ("não sei se o Inter recebeu"): até alguém conferir no app, nada novo para essa conta.
+    // Só o incerto que ninguém resolveu: o conferido já tem substituto (replaced_by) e não trava mais.
+    if (!body.conferido && (pagos ?? []).some((x) => x.status === 'failed' && x.inter_status === INCERTO && (!x.replaced_by || x.replaced_by === x.id))) {
+      throw new Error(`${ERRO_INCERTO} Confira no app do Inter se o Pix dessa conta saiu antes de pagar de novo.`);
+    }
     // Um pagamento em andamento por conta: pedido aberto (não expirado) ou já enviado
     // e ainda não finalizado. 'paid' é final (conta parcial pode receber outro).
     const { data: ativos } = await admin.from('fin_inter_payments').select('id, status, created_at')
       .eq('tenant_id', tenantId).eq('bill_id', data.id)
       .in('status', [...PAY_OPEN, ...PAY_LIVE.filter((s) => s !== 'paid')]);
     const emAndamento = (ativos ?? []).find((x) => !PAY_OPEN.includes(x.status) || Date.now() - new Date(x.created_at).getTime() <= DRAFT_TTL_MS);
-    if (emAndamento) throw new Error(`Já existe um pagamento em andamento para essa conta (situação "${emAndamento.status}"). Conclua ou cancele esse antes de pedir outro.`);
+    if (emAndamento) throw new Error(`${ERRO_EM_ANDAMENTO} (situação "${emAndamento.status}"). Conclua ou cancele esse antes de pedir outro.`);
     bill = data;
   }
   const row: Record<string, unknown> = {
@@ -627,6 +652,11 @@ async function preparePayment(admin: Admin, tenantId: string, body: Record<strin
   } else {
     throw new Error("tipo deve ser 'boleto' ou 'pix'");
   }
+  // Pix de conta já paga EM PARTE pelo Inter: não passa do que falta (boleto pode ter juros, fica de fora;
+  // sem nada pago pelo Inter não há limite — copia e cola com juros continua passando).
+  if (tipo === 'pix' && faltaConta != null && Number(row.amount) > faltaConta + 0.009) {
+    throw new Error(`Dessa conta faltam só ${brl(faltaConta)} (o resto já foi pago pelo Inter). Peça esse valor.`);
+  }
   await checkLimits(admin, cfg, tenantId, Number(row.amount));
   const { data: ins, error } = await admin.from('fin_inter_payments').insert(row).select('*').single();
   if (error?.code === '23505' && row.barcode) {
@@ -646,10 +676,13 @@ async function preparePayment(admin: Admin, tenantId: string, body: Record<strin
 // novo (DV do boleto, fornecedor/Pix permitido, limites, duplicidade): é um pedido novo,
 // não uma ressurreição do antigo. O vínculo com o pedido do grupo vai junto, para o
 // comprovante voltar ao grupo certo e a pendência fechar sozinha.
-async function reparePayment(admin: Admin, tenantId: string, id: string) {
+async function reparePayment(admin: Admin, tenantId: string, id: string, conferido = false) {
   const velho = await getPayment(admin, tenantId, id);
   if (PAY_OPEN.includes(velho.status) || PAY_LIVE.includes(velho.status)) {
     throw new Error(`Esse pedido ainda está "${velho.status}" — não precisa preparar de novo.`);
+  }
+  if (velho.status === 'failed' && velho.inter_status === INCERTO && !conferido) {
+    throw new Error(`${ERRO_INCERTO} Confira no app do Inter se esse Pix saiu. Se NÃO saiu, prepare de novo pelo cartão do pagamento no chat do ERPOS.`);
   }
   // decodeBoleto só lê linha digitável (47 dígitos, ou 48 de convênio) — o barcode de 44 não
   // serve como entrada. Todo boleto preparado aqui guardou o digitável; sem ele, não dá.
@@ -690,6 +723,7 @@ async function reparePayment(admin: Admin, tenantId: string, id: string) {
       instrucoes: instrucoes ?? undefined,
       descricao: velho.description ?? undefined,
       bill_id: velho.bill_id ?? undefined,
+      conferido: conferido || undefined,
       requested_by: velho.requested_by ?? undefined,
       channel: velho.channel ?? 'assistente',
       chat_id: velho.chat_id ?? undefined,
@@ -807,6 +841,7 @@ async function executePayment(admin: Admin, tenantId: string, id: string) {
       await fail(sentToInter
         ? `${friendlyError(e)} — não sei se o Inter recebeu: confira no app antes de tentar de novo.`
         : friendlyError(e));
+      if (sentToInter) await admin.from('fin_inter_payments').update({ inter_status: INCERTO }).eq('id', id);
     }
     throw e instanceof Error ? e : new Error(String(e));
   } finally { try { client?.close?.(); } catch { /* noop */ } }
@@ -1047,7 +1082,7 @@ Deno.serve(async (req: Request) => {
       // pagamento (2026-09-18). Mesma decodificação do prepare_payment.
       if (action === 'decode_boleto') return json({ success: true, boleto: decodeBoleto(String(body.linha ?? '')) });
       if (action === 'prepare_payment') return json({ success: true, payment: await preparePayment(admin, tenantId, body) });
-      if (action === 'reprepare_payment') return json({ success: true, payment: await reparePayment(admin, tenantId, String(body.payment_id ?? '')) });
+      if (action === 'reprepare_payment') return json({ success: true, payment: await reparePayment(admin, tenantId, String(body.payment_id ?? ''), body.conferido === true) });
       if (action === 'execute_payment') {
         const payment = await executePayment(admin, tenantId, String(body.payment_id ?? ''));
         await syncAfterPayment(payment);

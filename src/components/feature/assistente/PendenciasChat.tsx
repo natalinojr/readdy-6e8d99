@@ -173,21 +173,25 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
 
   const marcar = async (p: PendenciaChat, acao: 'vista' | 'descartada' | 'resolvida', m?: string) => {
     setOcupada(p.id);
+    // "Não vou fazer" num pagamento = não vou pagar: PRIMEIRO cancela os Pix preparados (senão os cartões
+    // seguiam no rodapé esperando "Pagar" — dono, 2026-09-20) e só fecha a pendência se deu certo. Antes
+    // fechava primeiro e, se o Pix já tinha ido ao Inter, ele sumia da caixa e ainda podia ser aprovado
+    // (auditoria 2026-09-24).
+    if (acao === 'descartada' && ['pagamento_grupo', 'pagamento_pendente'].includes(p.kind)) {
+      try {
+        const r = await call<{ cancelados: number; erros?: string[] }>('pendencia_recusar', { id: p.id });
+        if (r.erros?.length) {
+          setErros((e) => ({ ...e, [p.id]: `Não consegui cancelar: ${r.erros?.join(' · ')}. A pendência continua aberta.` }));
+          setOcupada(null); return;
+        }
+      } catch (e) {
+        setErros((x) => ({ ...x, [p.id]: e instanceof Error ? e.message : String(e) }));
+        setOcupada(null); return;
+      }
+    }
     const { error } = await supabase.rpc('fn_pendencia_marcar', { p_id: p.id, p_acao: acao, p_motivo: m ?? null });
     if (error) setErros((e) => ({ ...e, [p.id]: error.message }));
-    else {
-      // "Não vou fazer" num pedido de pagamento = não vou pagar: os Pix já preparados também saem
-      // (senão os cartões seguiam no rodapé do chat esperando "Pagar" — dono, 2026-09-20).
-      if (acao === 'descartada' && ['pagamento_grupo', 'pagamento_pendente'].includes(p.kind)) {
-        try {
-          const r = await call<{ cancelados: number; erros?: string[] }>('pendencia_recusar', { id: p.id });
-          if (r.erros?.length) setErros((e) => ({ ...e, [p.id]: `Pendência fechada, mas não consegui cancelar: ${r.erros?.join(' · ')}` }));
-        } catch (e) {
-          setErros((x) => ({ ...x, [p.id]: `Pendência fechada, mas o pagamento continua preparado: ${e instanceof Error ? e.message : String(e)}` }));
-        }
-      }
-      setMotivoDe(null); setMotivo(''); await recarregar(); onMudou?.();
-    }
+    else { setMotivoDe(null); setMotivo(''); await recarregar(); onMudou?.(); }
     setOcupada(null);
   };
 
@@ -208,18 +212,18 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
     setOcupada(p.id);
     setErros((e) => { const n = { ...e }; delete n[p.id]; return n; });
     try {
-      const { data, erro } = await chamarPedidos<{ pagamento?: { preparado: boolean; motivo?: string } }>(soPreparar ? 'preparar_pagamento' : 'aprovar', p.tenantId, { id: pedido });
+      const { data, erro } = await chamarPedidos<{ pagamento?: { preparado: boolean; motivo?: string; aviso?: string } }>(soPreparar ? 'preparar_pagamento' : 'aprovar', p.tenantId, { id: pedido });
       if (erro) throw new Error(erro);
       if (!data?.pagamento?.preparado) {
         await recarregar(); onMudou?.();
-        setErros((x) => ({ ...x, [p.id]: `${soPreparar ? 'O' : 'Aprovado, mas o'} Pix não foi preparado: ${data?.pagamento?.motivo ?? 'sem resposta'}. Pague pelo app do banco — a conciliação dá baixa.` }));
+        // O servidor diz o que fazer: "já em andamento"/"já pago" não são para pagar pelo banco.
+        // O cartão do pedido some ao aprovar: o aviso vai para a faixa do topo, não para o cartão.
+        setAvisoTopo(`${soPreparar ? '' : 'Aprovado. '}${data?.pagamento?.aviso ?? `O Pix não foi preparado: ${data?.pagamento?.motivo ?? 'sem resposta'}.`}`);
         return;
       }
       const { data: pend } = await supabase.from('pendencias').select('id')
         .eq('tenant_id', p.tenantId).eq('kind', 'pagamento_pendente').in('status', ['aberta', 'vista'])
         .eq('payload->>pedido_id', pedido).order('criada_em', { ascending: false }).limit(1).maybeSingle();
-      // O aviso "não preparou o Pix" cumpriu o papel: agora quem espera é o cartão do Pix.
-      if (soPreparar) await supabase.rpc('fn_pendencia_marcar', { p_id: p.id, p_acao: 'resolvida', p_motivo: 'Pix preparado de novo' });
       if (!pend) { await recarregar(); onMudou?.(); return; }
       await onPagar({ ...p, id: pend.id, kind: 'pagamento_pendente' });
       await recarregar(); onMudou?.();
@@ -237,6 +241,8 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
     catch (e) { setErros((x) => ({ ...x, [p.id]: e instanceof Error ? e.message : String(e) })); }
     finally { setOcupada(null); setConfirmar(null); }
   };
+  // Aviso que precisa sobreviver ao cartão (o pedido aprovado sai da lista).
+  const [avisoTopo, setAvisoTopo] = useState<string | null>(null);
   // Mudança de dinheiro pede um segundo toque ("Confirmar?") no próprio botão.
   const [confirmar, setConfirmar] = useState<string | null>(null);
   const depoisDeResolver = async (msg: string | null, p: PendenciaChat) => {
@@ -604,6 +610,13 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
         <p className="text-sm text-zinc-400 text-center py-16"><i className="ri-check-double-line text-2xl block mb-1 text-emerald-500" />Nada pendente.</p>
       ) : (
         <div className="flex-1 overflow-y-auto px-3 py-3 space-y-2">
+          {avisoTopo && (
+            <div className="flex items-start gap-2 rounded-xl bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-900">
+              <i className="ri-information-line text-sm mt-px" />
+              <p className="flex-1">{avisoTopo}</p>
+              <button onClick={() => setAvisoTopo(null)} className="text-amber-700 cursor-pointer" aria-label="Fechar aviso"><i className="ri-close-line" /></button>
+            </div>
+          )}
           {!itens.length && <p className="text-sm text-zinc-400 text-center py-10"><i className="ri-check-double-line text-xl block mb-1 text-emerald-500" />Nenhuma pendência {filtro ? 'nesta loja' : ''}.</p>}
           {agrupar === 'chegada'
             ? itens.map((p, i) => (

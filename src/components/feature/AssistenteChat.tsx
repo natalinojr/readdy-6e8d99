@@ -214,7 +214,7 @@ function centroFab(x: number, y: number) {
   return { x: Math.min(Math.max(x, min), w - min), y: Math.min(Math.max(y, min), h - min) };
 }
 
-function PaymentCard({ p, onAction }: { p: Payment; onAction: (p: Payment, op: 'ok' | 'no' | 'st' | 're') => void | Promise<void> }) {
+function PaymentCard({ p, onAction }: { p: Payment; onAction: (p: Payment, op: 'ok' | 'no' | 'st' | 're' | 'rc') => void | Promise<void> }) {
   // "Ver status" sem mudança parecia não fazer nada (dono, 2026-09-18): mostra que conferiu e quando.
   const [conferindo, setConferindo] = useState(false);
   const [conferido, setConferido] = useState<string | null>(null);
@@ -230,11 +230,15 @@ function PaymentCard({ p, onAction }: { p: Payment; onAction: (p: Payment, op: '
   const andamento = ['sending', 'sent', 'pending_approval', 'approved', 'scheduled'].includes(p.status);
   // Recusado/expirado: "Preparar de novo" (2026-09-22) — só o Telegram tinha, e o cartão ficava sem saída.
   const refazer = ['expired', 'failed', 'rejected'].includes(p.status);
+  // Enviado e sem resposta do Inter (2026-09-24): pode ter saído. Preparar de novo só depois de conferir
+  // no app do Inter — antes o "Preparar de novo" pagava duas vezes.
+  const incerto = p.status === 'failed' && /não sei se o Inter recebeu/i.test(p.error ?? '');
   const [refazendo, setRefazendo] = useState(false);
   const prepararDeNovo = async () => {
     if (refazendo) return;
+    if (incerto && !window.confirm('Você conferiu no app do Inter que esse Pix NÃO saiu? Se saiu, preparar de novo paga duas vezes.')) return;
     setRefazendo(true);
-    try { await onAction(p, 're'); } finally { setRefazendo(false); }
+    try { await onAction(p, incerto ? 'rc' : 're'); } finally { setRefazendo(false); }
   };
   const hojeBR = new Date(Date.now() - 3 * 3600_000).toISOString().slice(0, 10);
   const comEncargos = p.kind === 'boleto' && p.face_value != null && p.amount - p.face_value > 0.005;
@@ -283,7 +287,7 @@ function PaymentCard({ p, onAction }: { p: Payment; onAction: (p: Payment, op: '
       </div>
       {refazer && (
         <button onClick={prepararDeNovo} disabled={refazendo} className="w-full h-9 mt-2.5 rounded-xl bg-violet-600 hover:bg-violet-500 text-white text-sm font-bold cursor-pointer disabled:opacity-60">
-          <i className={`ri-repeat-line ${refazendo ? 'inline-block animate-spin' : ''}`} /> {refazendo ? 'Preparando…' : 'Preparar de novo'}
+          <i className={`ri-repeat-line ${refazendo ? 'inline-block animate-spin' : ''}`} /> {refazendo ? 'Preparando…' : incerto ? 'Conferi no Inter: não saiu — preparar de novo' : 'Preparar de novo'}
         </button>
       )}
       {(aberto || andamento) && (
@@ -834,7 +838,9 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
       // e o cartão fixo mostra o que aconteceu, com o motivo.
       if (!/PIN/i.test(msg)) {
         setPays((prev) => {
-          const falho = { ...p, status: 'rejected', status_label: 'não foi enviado', error: msg } as Payment;
+          // "Não sei se o Inter recebeu" pode ter saído: não rotula como "não foi enviado".
+          const incerto = /não sei se o Inter recebeu/i.test(msg);
+          const falho = { ...p, status: incerto ? 'failed' : 'rejected', status_label: incerto ? 'sem resposta do Inter' : 'não foi pago', error: msg } as Payment;
           return prev.some((x) => x.id === p.id) ? prev.map((x) => (x.id === p.id ? falho : x)) : [falho, ...prev];
         });
         setPagFixo(p.id);
@@ -848,11 +854,11 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
     } finally { setPaying(false); }
   };
 
-  const acaoPagamento = async (p: Payment, op: 'ok' | 'no' | 'st' | 're') => {
-    if (op === 're') {
+  const acaoPagamento = async (p: Payment, op: 'ok' | 'no' | 'st' | 're' | 'rc') => {
+    if (op === 're' || op === 'rc') {
       // Pedido NOVO no lugar do recusado/expirado: some o antigo, o novo vira o cartão fixo e já pede o PIN.
       try {
-        const out = await call<{ payment: Payment }>('pay', { id: p.id, op: 're' });
+        const out = await call<{ payment: Payment }>('pay', { id: p.id, op: 're', conferido: op === 'rc' });
         setPays((prev) => [out.payment, ...prev.filter((x) => x.id !== p.id && x.id !== out.payment.id)]);
         setPagFixo(out.payment.id);
         setPendVersao((v) => v + 1);

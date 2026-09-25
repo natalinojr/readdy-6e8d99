@@ -119,7 +119,7 @@ const PAY_LABEL: Record<string, string> = {
 };
 async function pagamentosParados(admin: SupabaseClient): Promise<number> {
   const { data } = await admin.from('fin_inter_payments')
-    .select('id, tenant_id, kind, amount, beneficiary_name, description, status, bill_id, created_at')
+    .select('id, tenant_id, kind, amount, beneficiary_name, description, status, inter_status, bill_id, created_at')
     .in('status', Object.keys(PAY_LABEL)).is('replaced_by', null).is('group_request_id', null)
     .lt('created_at', new Date(Date.now() - PARADO_MS).toISOString())
     .gte('created_at', new Date(Math.max(Date.now() - 7 * 86400000, PARADO_DESDE)).toISOString()).limit(50);
@@ -137,11 +137,43 @@ async function pagamentosParados(admin: SupabaseClient): Promise<number> {
     const { error } = await admin.rpc('fn_pendencia_upsert', {
       p_tenant: p.tenant_id, p_kind: 'pagamento_pendente', p_ref: String(p.id),
       p_titulo: `${p.kind === 'pix' ? 'Pix' : 'Boleto'} de ${brl(p.amount)}${quem ? ` para ${quem}` : ''} — não pago`,
-      p_detalhe: `Preparado em ${new Date(p.created_at).toLocaleString('pt-BR', { timeZone: TZ, day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })} e ${PAY_LABEL[p.status] ?? p.status}.`,
+      p_detalhe: `Preparado em ${new Date(p.created_at).toLocaleString('pt-BR', { timeZone: TZ, day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })} e ${p.status === 'failed' && p.inter_status === 'INCERTO' ? 'enviado SEM resposta do Inter — confira no app se saiu antes de pagar de novo' : (PAY_LABEL[p.status] ?? p.status)}.`,
       p_payload: { payment_id: p.id, bill_id: p.bill_id }, p_rota: null,
       p_urgencia: 'alta', p_acao_requerida: true, p_origem: 'cron',
     });
     if (error) log('WARN', 'pendência de pagamento parado', { payment: p.id, error: error.message }); else n++;
+  }
+  return n;
+}
+
+// Pendência de pagamento cuja conta já foi paga (conciliação, app do banco) ou cancelada: fecha.
+// Antes só fechava pelo status do Pix — conta paga por fora deixava o cartão com "Pagar" para
+// sempre, e o Pagar preparava outro Pix (auditoria 2026-09-24).
+async function pagamentosDeContaResolvida(admin: SupabaseClient): Promise<number> {
+  const { data: pends } = await admin.from('pendencias').select('id, payload')
+    .in('kind', ['pagamento_pendente', 'pedido_pagamento_pagar']).in('status', ['aberta', 'vista']).limit(200);
+  // deno-lint-ignore no-explicit-any
+  const comConta = (pends ?? []).filter((p) => (p.payload as any)?.bill_id);
+  if (!comConta.length) return 0;
+  // deno-lint-ignore no-explicit-any
+  const ids = [...new Set(comConta.map((p) => String((p.payload as any).bill_id)))];
+  const { data: contas } = await admin.from('fin_accounts_payable').select('id, status').in('id', ids).in('status', ['paid', 'cancelled']);
+  const fim = new Map((contas ?? []).map((c) => [c.id, c.status]));
+  // Conta com Pix ainda no Inter (aguardando aprovação…) fica de fora: a pendência é o que lembra de
+  // recusar esse Pix — se sumisse e ele fosse aprovado, pagava duas vezes.
+  if (fim.size) {
+    const { data: noInter } = await admin.from('fin_inter_payments').select('bill_id').in('bill_id', [...fim.keys()])
+      .in('status', ['sending', 'sent', 'pending_approval', 'approved', 'scheduled']);
+    for (const x of noInter ?? []) fim.delete(String(x.bill_id));
+  }
+  let n = 0;
+  for (const p of comConta) {
+    // deno-lint-ignore no-explicit-any
+    const st = fim.get(String((p.payload as any).bill_id));
+    if (!st) continue;
+    const { error } = await admin.from('pendencias').update({ status: 'resolvida', resolvida_em: new Date().toISOString(), motivo: st === 'paid' ? 'conta paga' : 'conta cancelada' })
+      .eq('id', p.id).in('status', ['aberta', 'vista']);
+    if (!error) n++;
   }
   return n;
 }
@@ -1471,6 +1503,7 @@ Deno.serve(async (req) => {
   try { const pr = await proactive(admin, cfg, ownerChat); if (Object.keys(pr).length) result.proactive = pr; } catch (e) { result.proactive_error = errMsg(e); log('ERROR', 'proactive', { error: errMsg(e) }); }
   try { const pw = await payWatch(admin); if (pw) result.pay_watch = pw; } catch (e) { result.pay_watch_error = errMsg(e); log('ERROR', 'pay_watch', { error: errMsg(e) }); }
   try { const pp = await pagamentosParados(admin); if (pp) result.pagamentos_parados = pp; } catch (e) { result.pagamentos_parados_error = errMsg(e); log('ERROR', 'pagamentos_parados', { error: errMsg(e) }); }
+  try { const pc = await pagamentosDeContaResolvida(admin); if (pc) result.pagamentos_conta_resolvida = pc; } catch (e) { log('ERROR', 'pagamentos_conta_resolvida', { error: errMsg(e) }); }
   try { const fg = await filaGrupo(admin); if (fg) result.fila_grupo = fg; } catch (e) { result.fila_grupo_error = errMsg(e); log('ERROR', 'fila_grupo', { error: errMsg(e) }); }
   // Agendamento de entrevistas (Contratação): convites, cobrança e lembretes — regras no hiring-scheduler
   try {

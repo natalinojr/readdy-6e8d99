@@ -178,13 +178,19 @@ const ROTULO: Record<string, string> = { reembolso: 'Reembolso', freelancer: 'Fr
  * A trava continua valendo: chave fora de Fornecedores / Pix permitidos não é preparada; aí a
  * pendência avisa para pagar pelo app do banco (a conciliação dá baixa).
  */
-async function prepararPagamento(ctx: Ctx, pedidoId: string): Promise<{ preparado: boolean; motivo?: string }> {
+async function prepararPagamento(ctx: Ctx, pedidoId: string): Promise<{ preparado: boolean; motivo?: string; aviso?: string }> {
   const { data: p } = await ctx.admin.from('fin_payment_requests')
     .select('id, tipo, status, valor, favorecido_nome, pix_chave, freelancer_id, bill_id, descricao')
     .eq('id', pedidoId).eq('tenant_id', ctx.tenantId).maybeSingle();
-  if (!p || p.status !== 'aprovada' || !p.bill_id) return { preparado: false, motivo: 'pedido sem conta a pagar' };
+  if (!p || p.status !== 'aprovada' || !p.bill_id) return { preparado: false, motivo: 'pedido sem conta a pagar', aviso: 'Esse pedido não tem conta a pagar.' };
+  // O aviso "pague pelo app do banco" (pedido_pagamento_pagar) sai quando o pagamento se resolve
+  // por aqui — antes ficava aberto para sempre ao lado do cartão do Pix (auditoria 2026-09-24).
+  const fecharAvisoPagar = (motivo: string) => ctx.admin.from('pendencias')
+    .update({ status: 'resolvida', resolvida_em: new Date().toISOString(), resolvida_por: ctx.userId, motivo })
+    .eq('tenant_id', ctx.tenantId).eq('kind', 'pedido_pagamento_pagar').eq('ref', p.id).in('status', ['aberta', 'vista']);
   const { data: bill } = await ctx.admin.from('fin_accounts_payable').select('id, amount, paid_amount, status').eq('id', p.bill_id).maybeSingle();
-  if (!bill || bill.status === 'paid') return { preparado: false, motivo: 'conta já paga' };
+  if (!bill || bill.status === 'paid') { await fecharAvisoPagar('conta já paga'); return { preparado: false, motivo: 'conta já paga', aviso: 'Essa conta já está paga.' }; }
+  if (bill.status === 'cancelled') { await fecharAvisoPagar('conta cancelada'); return { preparado: false, motivo: 'conta cancelada', aviso: 'A conta desse pedido foi cancelada — não há o que pagar.' }; }
   let chave: string | null = p.pix_chave;
   if (!chave && p.freelancer_id) {
     const { data: f } = await ctx.admin.from('hr_freelancers').select('pix_favorecido_id').eq('id', p.freelancer_id).maybeSingle();
@@ -193,8 +199,21 @@ async function prepararPagamento(ctx: Ctx, pedidoId: string): Promise<{ preparad
       chave = fav?.pix_key ?? null;
     }
   }
-  const valor = round2(Number(bill.amount) - Number(bill.paid_amount ?? 0));
+  // O que falta: desconta também Pix já pago pelo Inter e ainda não baixado (a baixa espera o extrato).
+  const { data: pagos } = await ctx.admin.from('fin_inter_payments').select('amount').eq('tenant_id', ctx.tenantId).eq('bill_id', bill.id).eq('status', 'paid');
+  const pagoInter = (pagos ?? []).reduce((t: number, x: { amount: number }) => t + Number(x.amount ?? 0), 0);
+  const valor = round2(Number(bill.amount) - Math.max(Number(bill.paid_amount ?? 0), pagoInter));
+  if (valor <= 0.009) {
+    await fecharAvisoPagar('já pago pelo Inter');
+    return { preparado: false, motivo: 'já pago pelo Inter', aviso: 'Essa conta já foi paga pelo Inter — falta só a baixa, que sai sozinha pelo extrato.' };
+  }
   const titulo = `${ROTULO[p.tipo] ?? 'Pagamento'} aprovado: Pix de ${brl(valor)} para ${p.favorecido_nome}`;
+  const pendenciaPix = (payId: string) => ctx.admin.rpc('fn_pendencia_upsert', {
+    p_tenant: ctx.tenantId, p_kind: 'pagamento_pendente', p_ref: payId,
+    p_titulo: titulo, p_detalhe: `${chave ? `Chave ${chave}. ` : ''}Toque em Pagar e confirme com o PIN.`,
+    p_payload: { payment_id: payId, bill_id: bill.id, pedido_id: p.id }, p_rota: null,
+    p_urgencia: 'alta', p_acao_requerida: true, p_origem: 'app', p_reabrir: true,
+  });
   let motivo = '';
   if (chave) {
     const r = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/inter-bank`, {
@@ -208,15 +227,42 @@ async function prepararPagamento(ctx: Ctx, pedidoId: string): Promise<{ preparad
     const out: any = await r.json().catch(() => ({}));
     const pay = out?.payment;
     if (r.ok && out?.success !== false && pay?.id) {
-      await ctx.admin.rpc('fn_pendencia_upsert', {
-        p_tenant: ctx.tenantId, p_kind: 'pagamento_pendente', p_ref: String(pay.id),
-        p_titulo: titulo, p_detalhe: `Chave ${chave}. Toque em Pagar e confirme com o PIN.`,
-        p_payload: { payment_id: pay.id, bill_id: bill.id, pedido_id: p.id }, p_rota: null,
-        p_urgencia: 'alta', p_acao_requerida: true, p_origem: 'app', p_reabrir: true,
-      });
+      await pendenciaPix(String(pay.id));
+      await fecharAvisoPagar('Pix preparado');
       return { preparado: true };
     }
     motivo = String(out?.error ?? `Inter respondeu ${r.status}`);
+    // Já existe Pix em andamento para essa conta (rascunho recente ou aguardando aprovação no Inter):
+    // NÃO é para pagar pelo banco — é o mesmo pagamento. Garante o cartão dele no 📥 e para aqui.
+    // Antes isto virava "pague pelo app do banco" e o dono pagava duas vezes (auditoria 2026-09-24).
+    if (/^Já existe um pagamento em andamento/i.test(motivo)) {
+      // Mesmo critério do inter-bank: vale o que já está no Inter; rascunho só se tiver menos de 30 min.
+      const { data: vivos } = await ctx.admin.from('fin_inter_payments').select('id, status, created_at').eq('tenant_id', ctx.tenantId).eq('bill_id', bill.id)
+        .in('status', ['draft', 'awaiting_pin', 'sending', 'sent', 'pending_approval', 'approved', 'scheduled'])
+        .order('created_at', { ascending: false });
+      const noInter = (vivos ?? []).find((x: { status: string }) => !['draft', 'awaiting_pin'].includes(x.status));
+      const rascunho = (vivos ?? []).find((x: { status: string; created_at: string }) => ['draft', 'awaiting_pin'].includes(x.status) && Date.now() - new Date(x.created_at).getTime() <= 30 * 60_000);
+      const vivo = noInter ?? rascunho ?? null;
+      if (vivo) await pendenciaPix(String(vivo.id));
+      await fecharAvisoPagar('Pix já em andamento');
+      return { preparado: !!vivo && ['draft', 'awaiting_pin'].includes(vivo.status), motivo, aviso: vivo && !['draft', 'awaiting_pin'].includes(vivo.status)
+        ? 'O Pix dessa conta já foi enviado e está aguardando aprovação no app do Inter. Aprove por lá — não pague de novo.'
+        : 'O Pix dessa conta já está preparado no 📥.' };
+    }
+    if (/^Essa conta já foi paga:/i.test(motivo)) {
+      await fecharAvisoPagar('já pago pelo Inter');
+      return { preparado: false, motivo, aviso: motivo };
+    }
+    // Envio anterior sem resposta do Inter: não mandar pagar pelo banco (pode já ter saído).
+    if (/^Um envio anterior ficou sem resposta/i.test(motivo)) {
+      await ctx.admin.rpc('fn_pendencia_upsert', {
+        p_tenant: ctx.tenantId, p_kind: 'pedido_pagamento_pagar', p_ref: p.id, p_titulo: titulo,
+        p_detalhe: 'Um Pix anterior dessa conta foi enviado e o Inter não respondeu. Confira no app do Inter se saiu ANTES de pagar de novo.',
+        p_payload: { pedido_id: p.id, bill_id: bill.id, chave }, p_rota: '/receber?aprovar=1',
+        p_urgencia: 'alta', p_acao_requerida: true, p_origem: 'app', p_reabrir: true,
+      });
+      return { preparado: false, motivo, aviso: 'Um Pix anterior dessa conta ficou sem resposta do Inter. Confira no app do Inter se saiu antes de pagar de novo.' };
+    }
   } else {
     motivo = 'pedido sem chave Pix';
   }
@@ -228,7 +274,7 @@ async function prepararPagamento(ctx: Ctx, pedidoId: string): Promise<{ preparad
     p_payload: { pedido_id: p.id, bill_id: bill.id, chave }, p_rota: '/receber?aprovar=1',
     p_urgencia: 'alta', p_acao_requerida: true, p_origem: 'app', p_reabrir: true,
   });
-  return { preparado: false, motivo };
+  return { preparado: false, motivo, aviso: `O Pix não foi preparado: ${motivo}. Pague pelo app do banco — a conciliação dá baixa.` };
 }
 
 async function carregarPedido(ctx: Ctx, id: string) {
