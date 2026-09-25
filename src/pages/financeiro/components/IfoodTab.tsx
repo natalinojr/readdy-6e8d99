@@ -260,7 +260,7 @@ export default function IfoodTab() {
 
   return (
     <div className="p-4 md:p-6 space-y-4 md:space-y-5">
-      {/* Cabeçalho: título + situação da API; embaixo, lojas (botões), mês e ações. */}
+      {/* Cabeçalho: título + situação da API e, à direita, mês e ações; embaixo, as lojas iFood (botões). */}
       <div className="bg-white rounded-2xl border border-zinc-100 p-4 md:p-5 space-y-4">
         <div className="flex flex-wrap items-start gap-3">
           <div className="flex items-center gap-3 min-w-0 flex-1">
@@ -270,47 +270,26 @@ export default function IfoodTab() {
             <div className="min-w-0">
               <h2 className="text-lg font-bold text-zinc-900 leading-tight">iFood</h2>
               <p className="text-xs text-zinc-500">Vendas, taxas e repasses por mês de venda</p>
+              <div className="mt-1.5">
+                {homolog ? (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-blue-50 text-blue-700 text-xs font-semibold"><i className="ri-flask-line" /> Modo homologação</span>
+                ) : api.ligadas > 0 ? (
+                  <span title={api.erro ?? undefined}
+                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold whitespace-nowrap ${api.erro ? 'bg-amber-50 text-amber-700' : 'bg-green-50 text-green-700'}`}>
+                    <span className={`w-2 h-2 rounded-full ${api.erro ? 'bg-amber-500' : 'bg-green-500'}`} />
+                    API {api.erro ? 'com aviso' : 'conectada'} · {api.ligadas} de {Math.max(api.total, lojas.length)} loja(s)
+                    {api.lastSync && <span className="hidden sm:inline font-normal opacity-80">· {new Date(api.lastSync).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>}
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-zinc-100 text-zinc-600 text-xs font-semibold"><span className="w-2 h-2 rounded-full bg-zinc-400" /> Só por arquivo</span>
+                )}
+              </div>
             </div>
           </div>
-          {homolog ? (
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-blue-50 text-blue-700 text-xs font-semibold"><i className="ri-flask-line" /> Modo homologação</span>
-          ) : api.ligadas > 0 ? (
-            <span title={api.erro ?? undefined}
-              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold whitespace-nowrap ${api.erro ? 'bg-amber-50 text-amber-700' : 'bg-green-50 text-green-700'}`}>
-              <span className={`w-2 h-2 rounded-full ${api.erro ? 'bg-amber-500' : 'bg-green-500'}`} />
-              API {api.erro ? 'com aviso' : 'conectada'} · {api.ligadas} de {Math.max(api.total, lojas.length)} loja(s)
-              {api.lastSync && <span className="hidden sm:inline font-normal opacity-80">· {new Date(api.lastSync).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>}
-            </span>
-          ) : (
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-zinc-100 text-zinc-600 text-xs font-semibold"><span className="w-2 h-2 rounded-full bg-zinc-400" /> Só por arquivo</span>
-          )}
-        </div>
-
-        <div className="flex flex-col lg:flex-row lg:items-center gap-3">
-          {lojas.length > 0 && (
-            <div className="flex items-center gap-1.5 overflow-x-auto sm:overflow-visible sm:flex-wrap -mx-1 px-1 min-w-0 lg:flex-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-              {lojas.length > 1 && (
-                <button onClick={() => setLoja('')}
-                  className={`px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap border cursor-pointer ${loja === '' ? 'bg-zinc-900 border-zinc-900 text-white' : 'bg-white border-zinc-200 text-zinc-600 hover:border-zinc-300'}`}>
-                  Todas as lojas
-                </button>
-              )}
-              {lojas.map(([id, curto]) => {
-                const ativo = loja === id || lojas.length === 1;
-                return (
-                  <span key={id} className={`inline-flex items-center rounded-full border whitespace-nowrap ${ativo ? 'bg-red-50 border-red-300 text-red-700' : 'bg-white border-zinc-200 text-zinc-600 hover:border-zinc-300'}`}>
-                    <button onClick={() => setLoja(id)} title={`Código ${curto}`} className="pl-3 pr-1.5 py-1.5 text-xs font-semibold cursor-pointer">{nomeCurto(id, curto)}</button>
-                    <button onClick={() => renomearLoja(id)} title="Nome e antecipação desta loja"
-                      className="pr-2.5 pl-0.5 py-1.5 text-zinc-400 hover:text-red-600 cursor-pointer"><i className="ri-pencil-line text-xs" /></button>
-                  </span>
-                );
-              })}
-            </div>
-          )}
-          <div className="flex items-center gap-2 lg:justify-end">
+          <div className="flex items-center gap-2 w-full md:w-auto">
             {competencias.length > 0 && (
               <select value={competence} onChange={(e) => setCompetence(e.target.value)} aria-label="Mês"
-                className="flex-1 lg:flex-none min-w-0 border border-zinc-200 rounded-lg px-3 py-2 text-sm bg-white capitalize font-semibold text-zinc-800">
+                className="flex-1 md:flex-none min-w-0 border border-zinc-200 rounded-lg px-3 py-2 text-sm bg-white capitalize font-semibold text-zinc-800">
                 {competencias.map((c) => <option key={c} value={c}>{compLabel(c)}</option>)}
               </select>
             )}
@@ -332,6 +311,27 @@ export default function IfoodTab() {
             </button>
           </div>
         </div>
+
+        {lojas.length > 0 && (
+          <div className="flex items-center gap-1.5 overflow-x-auto sm:overflow-visible sm:flex-wrap -mx-1 px-1 min-w-0 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            {lojas.length > 1 && (
+              <button onClick={() => setLoja('')}
+                className={`px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap border cursor-pointer ${loja === '' ? 'bg-zinc-900 border-zinc-900 text-white' : 'bg-white border-zinc-200 text-zinc-600 hover:border-zinc-300'}`}>
+                Todas as lojas
+              </button>
+            )}
+            {lojas.map(([id, curto]) => {
+              const ativo = loja === id || lojas.length === 1;
+              return (
+                <span key={id} className={`inline-flex items-center rounded-full border whitespace-nowrap ${ativo ? 'bg-red-50 border-red-300 text-red-700' : 'bg-white border-zinc-200 text-zinc-600 hover:border-zinc-300'}`}>
+                  <button onClick={() => setLoja(id)} title={`Código ${curto}`} className="pl-3 pr-1.5 py-1.5 text-xs font-semibold cursor-pointer">{nomeCurto(id, curto)}</button>
+                  <button onClick={() => renomearLoja(id)} title="Nome e antecipação desta loja"
+                    className="pr-2.5 pl-0.5 py-1.5 text-zinc-400 hover:text-red-600 cursor-pointer"><i className="ri-pencil-line text-xs" /></button>
+                </span>
+              );
+            })}
+          </div>
+        )}
 
         {ondemand.msg && (
           <div className={`rounded-lg border px-3 py-2 text-xs ${ondemand.error ? 'bg-red-50 border-red-200 text-red-700' : 'bg-blue-50 border-blue-200 text-blue-700'}`}>{ondemand.msg}</div>
