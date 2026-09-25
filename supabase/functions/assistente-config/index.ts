@@ -13,6 +13,7 @@
 //   whatsapp_state      {}                estado da conexão (open | connecting | close)
 //   sync_groups         {}                busca na Evolution os grupos do número; os novos entram desligados
 //   toggle_group        { group_jid, enabled }  liga/desliga a leitura do grupo
+//   set_group_options   { group_jid, task_list_id?, read_media? }  pasta de tarefas do 📌 e leitura de foto/PDF com IA
 //   ── Pix permitidos (lista branca do Pix pelo assistente) — PIN PRÓPRIO, criado pelo dono ──
 //   pix_allow_status    {}                          { has_pin, locked_until }
 //   pix_allow_set_pin   { new_pin }                 SÓ cria (1ª vez); 6–8 dígitos. Não há troca pela tela (decisão do
@@ -64,6 +65,27 @@ async function whatsappState(): Promise<{ state: string | null; error?: string }
   } catch (e) {
     return { state: null, error: errMsg(e) };
   }
+}
+
+// Pastas de tarefas que o dono pode editar (destino do 📌 dos grupos), com o caminho "Obra › Elétrica".
+async function pastasEditaveis(admin: SupabaseClient, userId: string): Promise<{ id: string; path: string }[]> {
+  const { data: ac, error } = await admin.rpc('fn_task_lists_acessiveis', { p_user_id: userId });
+  if (error) { console.warn('[assistente-config] pastas de tarefas:', error.message); return []; }
+  // deno-lint-ignore no-explicit-any
+  const ids = ((ac ?? []) as any[]).filter((r) => r.access === 'owner' || r.access === 'edit').map((r) => String(r.list_id));
+  if (!ids.length) return [];
+  const { data: ls } = await admin.from('task_lists').select('id, name, parent_list_id').in('id', ids);
+  const porId = new Map((ls ?? []).map((l) => [String(l.id), l]));
+  const caminho = (id: string): string => {
+    const nomes: string[] = [];
+    let cur = porId.get(id);
+    for (let i = 0; cur && i < 10; i++) {
+      nomes.unshift(String(cur.name ?? ''));
+      cur = cur.parent_list_id ? porId.get(String(cur.parent_list_id)) : undefined;
+    }
+    return nomes.join(' › ');
+  };
+  return ids.map((id) => ({ id, path: caminho(id) })).sort((a, b) => a.path.localeCompare(b.path, 'pt-BR'));
 }
 
 async function loadSettings(admin: SupabaseClient) {
@@ -210,7 +232,7 @@ Deno.serve(async (req) => {
             + ((u.cache_write ?? 0) - w1h) * PRICE.cache_write + w1h * PRICE.cache_write_1h) / 1e6;
         }
         const fx = await usdBrl(admin, cfg);
-        const { data: gs } = await admin.from('asst_groups').select('group_jid, name, is_enabled').order('name');
+        const { data: gs } = await admin.from('asst_groups').select('group_jid, name, is_enabled, task_list_id, read_media').order('name');
         const groups = [];
         for (const g of gs ?? []) {
           const { data: last } = await admin.from('asst_group_messages').select('sent_at').eq('group_jid', g.group_jid).order('sent_at', { ascending: false }).limit(1).maybeSingle();
@@ -238,6 +260,7 @@ Deno.serve(async (req) => {
             rate_at: fx?.at ?? null,
           },
           groups,
+          task_lists: await pastasEditaveis(admin, user.id),
         });
       }
 
@@ -291,6 +314,27 @@ Deno.serve(async (req) => {
         const { data, error } = await admin.from('asst_groups')
           .update({ is_enabled: !!body.enabled, updated_at: new Date().toISOString() })
           .eq('group_jid', String(body.group_jid ?? '')).select('group_jid');
+        if (error) throw new Error(error.message);
+        if (!data?.length) return fail('Grupo não encontrado.');
+        return ok();
+      }
+
+      // Grupo de obra (2026-09-24): pasta de tarefas que recebe o 📌 e leitura de foto/PDF com IA.
+      // { group_jid, task_list_id?: uuid | null, read_media?: boolean } — só muda o que vier.
+      case 'set_group_options': {
+        const jid = String(body.group_jid ?? '');
+        const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+        if ('task_list_id' in body) {
+          const lid = body.task_list_id ? String(body.task_list_id) : null;
+          if (lid) {
+            if (!UUID_RE.test(lid)) return fail('Pasta inválida.');
+            const { data: acesso } = await admin.rpc('fn_task_list_access', { p_list_id: lid, p_user_id: user.id });
+            if (acesso !== 'owner' && acesso !== 'edit') return fail('Você não pode editar essa pasta de tarefas.');
+          }
+          patch.task_list_id = lid;
+        }
+        if ('read_media' in body) patch.read_media = !!body.read_media;
+        const { data, error } = await admin.from('asst_groups').update(patch).eq('group_jid', jid).select('group_jid');
         if (error) throw new Error(error.message);
         if (!data?.length) return fail('Grupo não encontrado.');
         return ok();

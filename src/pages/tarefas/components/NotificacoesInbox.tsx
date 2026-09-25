@@ -3,6 +3,7 @@ import { Bell, AtSign, UserPlus, MessageSquare, AlertCircle, Sun, CheckCheck, Be
 import { useToast } from '@/contexts/ToastContext';
 import { ativarPush, desativarPush, enviarPushTeste, estadoPush, type EstadoPush } from '@/lib/push';
 import type { TaskNotificacao, TaskRow } from '../hooks/useTarefas';
+import { useVoltarFecha } from '@/lib/voltarAndroid';
 
 interface NotificacoesInboxProps {
   notificacoes: TaskNotificacao[];
@@ -86,6 +87,7 @@ export default function NotificacoesInbox({
 }: NotificacoesInboxProps) {
   const toast = useToast();
   const [aberto, setAberto] = useState(false);
+  useVoltarFecha(aberto, () => setAberto(false), 'tarefas-notificacoes');
   const [push, setPush] = useState<EstadoPush | null>(null);
   const [ocupado, setOcupado] = useState(false);
 

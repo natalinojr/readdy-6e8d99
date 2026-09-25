@@ -4,7 +4,7 @@
 import { supabase, SUPABASE_URL, SUPABASE_ANON_KEY, ensureFreshSession } from '@/lib/supabase';
 
 export type Origem = 'nota' | 'compra' | 'cupom' | 'sem_nota';
-export type Pagamento = 'nota' | 'dinheiro' | 'pago' | 'a_pagar' | 'bonificacao';
+export type Pagamento = 'nota' | 'dinheiro' | 'pago' | 'a_pagar' | 'bonificacao' | 'reembolso';
 
 export interface Pendente {
   tipo: 'nota' | 'compra';
@@ -16,6 +16,20 @@ export interface Pendente {
   lancada: boolean;
   itens_qtd: number;
   pagamento: string | null;
+}
+
+/** "Já chegaram": compra com entrega confirmada (Edge receber-mercadoria › recebidas). */
+export interface Recebida {
+  id: string;
+  fornecedor: string;
+  numero: string | null;
+  valor: number;
+  data: string;
+  recebido_em: string;
+  origem: string;
+  pagamento: string | null;
+  obs: string | null;
+  itens: { descricao: string; quantidade: number; pedido: number; unidade: string }[];
 }
 
 export interface Insumo { id: string; nome: string; unidade: string; categoria: string }
@@ -67,6 +81,8 @@ export interface Resultado {
   faltas: string[];
   sem_estoque: number;
   sangria: { ok: boolean; acao?: string; motivo?: string; quando?: string } | null;
+  /** "Paguei do meu bolso": o pedido de reembolso foi criado? */
+  reembolso?: { ok: boolean; erro?: string } | null;
 }
 
 export async function chamar<T>(action: string, tenantId: string, corpo: Record<string, unknown> = {}): Promise<{ data: T | null; erro: string | null; extra?: Record<string, unknown> }> {

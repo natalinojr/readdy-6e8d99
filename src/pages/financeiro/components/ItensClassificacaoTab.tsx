@@ -66,6 +66,15 @@ const docFmt = (k: string) => {
 };
 const un = (u: string | null | undefined) => (!u || u === 'unit' ? 'un' : u);
 const num = (n: number) => n.toLocaleString('pt-BR', { maximumFractionDigits: 3 });
+// Conversão do vínculo (dono, 2026-09-24): só vem pronta quando é óbvia — mesma unidade (1) ou kg↔g /
+// L↔mL (1000). Unidade diferente (un → g, cx → un…) começa VAZIA e é obrigatória: o "1" pronto deixava
+// passar "1 un = 1 g" e o custo da grama saía o preço do pé de alface.
+const UNID: Record<string, string> = { unit: 'un', un: 'un', und: 'un', unid: 'un', unidade: 'un', pc: 'un', kg: 'kg', g: 'g', gr: 'g', l: 'l', lt: 'l', ml: 'ml' };
+const normUn = (u: string | null | undefined) => { const k = String(u ?? '').trim().toLowerCase().replace(/\.$/, ''); return UNID[k] ?? k; };
+const METRICO: Record<string, string> = { 'kg>g': '1000', 'g>kg': '0,001', 'l>ml': '1000', 'ml>l': '0,001' };
+const mesmaUnidade = (item: string | null | undefined, insumo: string | null | undefined) => !normUn(item) || normUn(item) === normUn(insumo);
+const uppInicial = (item: string | null | undefined, insumo: string | null | undefined) =>
+  mesmaUnidade(item, insumo) ? '1' : METRICO[`${normUn(item)}>${normUn(insumo)}`] ?? '';
 
 export default function ItensClassificacaoTab() {
   const { user } = useAuth();
@@ -230,12 +239,13 @@ export default function ItensClassificacaoTab() {
     });
     setBusy(false);
     if (error) { toastErr('Não foi possível salvar o vínculo', error.message); return; }
-    const d = (data ?? {}) as { memorizado?: boolean; lancamentos_atualizados?: number };
+    const d = (data ?? {}) as { memorizado?: boolean; lancamentos_atualizados?: number; compras_convertidas?: number; estoque_ajustado?: number; unidade?: string };
     if (ingId) {
       const nome = insMap.get(ingId)?.name ?? 'insumo';
       toastOk(`Vinculado a ${nome}`, [
         d.memorizado ? 'As próximas notas e recebimentos deste produto já vêm com o insumo.' : 'Produto sem CNPJ/código do fornecedor: no recebimento o insumo ainda é escolhido à mão.',
         d.lancamentos_atualizados ? `${d.lancamentos_atualizados} compra(s) já lançada(s) corrigida(s) na DRE.` : '',
+        d.compras_convertidas ? `${d.compras_convertidas} compra(s) antiga(s) refeita(s) com a nova conversão (custo${d.estoque_ajustado ? ` e estoque: ${d.estoque_ajustado > 0 ? '+' : ''}${num(d.estoque_ajustado)} ${un(d.unidade)}` : ''}).` : '',
       ].filter(Boolean).join(' '));
     } else {
       toastOk('Vínculo removido', d.memorizado ? 'As próximas notas deixam de sugerir este insumo.' : '');
@@ -263,13 +273,16 @@ export default function ItensClassificacaoTab() {
     if (!id) { toastErr('Não foi possível criar o insumo', 'Confira se já não existe um insumo com este nome.'); return; }
     toastOk(`Insumo "${data.nome}" criado`, 'Agora confirme quanto dele vem em cada unidade do produto.');
     await Promise.all([carregar(), reloadInsumos()]);
-    setVinc({ rowId, ingId: id, upp: '1' });
+    setVinc({ rowId, ingId: id, upp: uppInicial(rows.find((x) => x.id === rowId)?.unit_label, data.unidade) });
   };
 
   const salvarVinculo = (r: Row) => {
     if (!vinc) return;
     const upp = Number(vinc.upp.replace(',', '.'));
-    if (!(upp > 0)) { toastErr('Quantidade inválida', 'Informe quantas unidades do insumo vêm em 1 unidade do item.'); return; }
+    const ingUn = insMap.get(vinc.ingId)?.unit;
+    if (!(upp > 0)) { toastErr('Informe a conversão', `Quanto do insumo (${un(ingUn)}) vem em 1 ${r.unit_label || 'un'} deste item.`); return; }
+    if (upp === 1 && !mesmaUnidade(r.unit_label, ingUn)
+      && !window.confirm(`Confere? 1 ${r.unit_label || 'un'} de "${r.description}" = 1 ${un(ingUn)} do insumo.`)) return;
     vincular(r, vinc.ingId, upp);
   };
 
@@ -320,13 +333,13 @@ export default function ItensClassificacaoTab() {
           <p className="text-[11px] font-semibold text-zinc-700 truncate"><i className="ri-links-line text-emerald-600" /> {alvo?.name}</p>
           <label className="flex items-center gap-1.5 text-[11px] text-zinc-600 whitespace-nowrap">
             1 {r.unit_label || 'un'} =
-            <input autoFocus value={vinc.upp} inputMode="decimal"
+            <input autoFocus value={vinc.upp} inputMode="decimal" placeholder="?"
               onChange={(e) => setVinc({ ...vinc, upp: e.target.value })}
               onKeyDown={(e) => { if (e.key === 'Enter') salvarVinculo(r); if (e.key === 'Escape') setVinc(null); }}
               className="w-16 border border-zinc-200 rounded px-1.5 py-0.5 text-xs bg-white focus:outline-none focus:border-amber-400" />
             {un(alvo?.unit)}
           </label>
-          <p className="text-[10px] text-zinc-400 whitespace-normal">Quanto do insumo entra no estoque a cada {r.unit_label || 'unidade'} comprada.</p>
+          <p className="text-[10px] text-zinc-400 whitespace-normal">Quanto do insumo entra no estoque a cada {r.unit_label || 'unidade'} comprada. Vale também para as compras já lançadas deste item (custo, e estoque das recebidas depois do último inventário).</p>
           <div className="flex gap-1.5">
             <button disabled={busy} onClick={() => salvarVinculo(r)} className="px-2 py-1 rounded bg-amber-500 text-white text-[11px] font-semibold hover:bg-amber-600 disabled:opacity-50 cursor-pointer">Salvar</button>
             <button disabled={busy} onClick={() => setVinc(null)} className="px-2 py-1 rounded text-[11px] text-zinc-500 hover:bg-zinc-100 cursor-pointer">Cancelar</button>
@@ -364,7 +377,7 @@ export default function ItensClassificacaoTab() {
     return (
       <div>
       <CategoriaCombobox value="" options={insOptions} disabled={busy} placeholder="Vincular insumo…"
-        onChange={(id) => { if (id) setVinc({ rowId: r.id, ingId: id, upp: '1' }); }}
+        onChange={(id) => { if (id) setVinc({ rowId: r.id, ingId: id, upp: uppInicial(r.unit_label, insMap.get(id)?.unit) }); }}
         onCreate={(texto) => setNovoInsumo({ rowId: r.id, nome: texto || r.description })}
         createLabel={(texto) => (texto ? `Criar insumo “${texto}”` : 'Criar novo insumo')}
         buttonClassName="text-[11px] font-semibold rounded-lg px-1.5 py-1 w-[170px] cursor-pointer bg-zinc-50 text-zinc-500 border border-dashed border-zinc-200 hover:border-emerald-300" />

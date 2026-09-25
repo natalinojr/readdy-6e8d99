@@ -55,8 +55,40 @@ self.addEventListener('activate', (event) => {
   );
 });
 
+/* ── Compartilhar para o ERPOS (Android, Web Share Target — manifest.share_target) ──
+   O menu "Compartilhar" do celular (ex.: segurar uma mensagem no WhatsApp) manda um POST
+   multipart para /tarefas/compartilhar. Guardamos texto e arquivos num cache só nosso e abrimos
+   /tarefas?compartilhado=1, onde a tela monta a tarefa (CompartilhadoParaTarefa.tsx). Cada
+   compartilhamento substitui o anterior. */
+const SHARE_CACHE = 'erpos-compartilhado';
+
+async function receberCompartilhado(req) {
+  try {
+    const form = await req.formData();
+    const cache = await caches.open(SHARE_CACHE);
+    for (const k of await cache.keys()) await cache.delete(k);
+    const arquivos = form.getAll('arquivos').filter((f) => f && typeof f === 'object' && 'size' in f);
+    const meta = {
+      title: String(form.get('title') || ''),
+      text: String(form.get('text') || ''),
+      url: String(form.get('url') || ''),
+      arquivos: arquivos.map((f, i) => ({ chave: `/__compartilhado/arquivo-${i}`, nome: f.name || `arquivo-${i + 1}`, tipo: f.type || 'application/octet-stream' })),
+      em: new Date().toISOString(),
+    };
+    await Promise.all(arquivos.map((f, i) => cache.put(meta.arquivos[i].chave, new Response(f, { headers: { 'Content-Type': meta.arquivos[i].tipo } }))));
+    await cache.put('/__compartilhado/meta', new Response(JSON.stringify(meta), { headers: { 'Content-Type': 'application/json' } }));
+  } catch (_) {
+    /* sem o formulário: a tela avisa que não chegou nada */
+  }
+  return Response.redirect('/tarefas?compartilhado=1', 303);
+}
+
 self.addEventListener('fetch', (event) => {
   const req = event.request;
+  if (req.method === 'POST' && new URL(req.url).pathname === '/tarefas/compartilhar') {
+    event.respondWith(receberCompartilhado(req));
+    return;
+  }
   if (req.method !== 'GET') return;
 
   const url = new URL(req.url);

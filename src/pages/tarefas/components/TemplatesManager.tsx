@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { X, Plus, Trash2, ListChecks } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
 import type { ChecklistTemplate } from '../hooks/useTarefas';
+import { useVoltarFecha } from '@/lib/voltarAndroid';
 
 interface TemplatesManagerProps {
   templates: ChecklistTemplate[];
@@ -12,6 +13,7 @@ interface TemplatesManagerProps {
 const EXEMPLO = 'Ex.: Abertura da loja\n\nConferir troco do caixa\nLigar fritadeira\nChecar validade dos insumos\nLimpar bancadas';
 
 export default function TemplatesManager({ templates, write, onClose }: TemplatesManagerProps) {
+  useVoltarFecha(true, onClose, 'tarefas-templates');
   const toast = useToast();
   const [criando, setCriando] = useState(false);
   const [nome, setNome] = useState('');

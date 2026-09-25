@@ -108,6 +108,23 @@ interface Parsed {
   pagamento: Array<{ forma: string; valor: number }>;
 }
 
+// Fornecedor que não preenche <cobr><dup> e escreve o boleto só nos Dados adicionais
+// (ex.: BeeMax, NF-e 5929 relativa a cupom: "DUPLICATA 001 R$595,90 VENCIMENTO 07/10/2026").
+// Só aceita se as parcelas somarem o total da nota; vencimento sem valor → 1 parcela do total.
+function parcelasDoTexto(txt: string, total: number): Parsed['parcelas'] {
+  const brl = (s: string) => Number(s.replace(/\./g, '').replace(',', '.'));
+  const re = /(?:DUPLICATA|DUP\.?|PARCELA)?\s*(\d{1,3})?\s*(?:(?:R\$|VALOR)\s*:?\s*(?:R\$)?\s*([\d.]+,\d{2}))?\s*VENC(?:IMENTO|TO|\.)?\s*:?\s*(\d{2})\/(\d{2})\/(\d{4})/gi;
+  const achadas: Parsed['parcelas'] = [];
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(txt))) {
+    achadas.push({ numero: m[1] ?? String(achadas.length + 1).padStart(3, '0'), vencimento: `${m[5]}-${m[4]}-${m[3]}`, valor: m[2] ? round2(brl(m[2])) : 0 });
+  }
+  if (achadas.length === 0 || total <= 0) return [];
+  if (achadas.length === 1) return [{ ...achadas[0], valor: total }];
+  const soma = round2(achadas.reduce((s, p) => s + p.valor, 0));
+  return achadas.every((p) => p.valor > 0) && Math.abs(soma - total) < 0.02 ? achadas : [];
+}
+
 function parseNFe(xml: string): Parsed {
   const inf = tag(xml, 'infNFe');
   const empty: Parsed = {
@@ -149,8 +166,9 @@ function parseNFe(xml: string): Parsed {
     vencimento: (tag(d, 'dVenc') ?? '').slice(0, 10),
     valor: round2(num(tag(d, 'vDup'))),
   })).filter((p) => p.vencimento && p.valor > 0);
+  if (parcelas.length === 0) parcelas.push(...parcelasDoTexto(unesc(tag(inf, 'infCpl')) ?? '', round2(num(tag(tot, 'vNF')))));
 
-  const pagamento = blocks(pag, 'detPag').map((d) => ({ forma: tag(d, 'tPag') ?? '99', valor: round2(num(tag(d, 'vPag'))) }));
+  const pagamento =blocks(pag, 'detPag').map((d) => ({ forma: tag(d, 'tPag') ?? '99', valor: round2(num(tag(d, 'vPag'))) }));
 
   return {
     full: true,

@@ -173,6 +173,8 @@ export default function ViewKanban({
                   <input
                     value={quickAdd[chave] ?? ''}
                     onChange={(e) => setQuickAdd((prev) => ({ ...prev, [chave]: e.target.value }))}
+                    name="titulo-tarefa"
+                    autoComplete="off"
                     placeholder="Nova tarefa…"
                     className="flex-1 text-xs bg-transparent outline-none placeholder:text-slate-400 py-1"
                   />

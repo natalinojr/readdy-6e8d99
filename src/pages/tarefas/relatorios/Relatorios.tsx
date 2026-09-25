@@ -21,6 +21,7 @@ import {
   podeEditar, podeExcluir,
   type ImagemRel, type ItemRel, type ModeloRel, type RelatorioCompleto, type ResumoRelatorio,
 } from './api';
+import { useVoltarFecha } from '@/lib/voltarAndroid';
 
 /** Pasta de Tarefas (o suficiente para escolher onde o relatório fica). */
 export interface PastaRel { id: string; name: string; color: string; access?: 'owner' | 'edit' | 'view' }
@@ -170,6 +171,8 @@ export default function Relatorios({ pasta, abrirId, pastas, meuId, tarefas, onO
   };
 
   const voltar = useCallback(() => { setSelecionado(null); carregarLista(); }, [carregarLista]);
+  // Relatório aberto é uma camada: o voltar volta para a lista de relatórios.
+  useVoltarFecha(!!selecionado, voltar, 'relatorio-aberto');
 
   if (selecionado) {
     return (

@@ -52,47 +52,27 @@ Deno.serve(async (req) => {
     // CNPJ do fornecedor: sugere e memoriza o vínculo item → insumo por (CNPJ, código do produto)
     const supplierCnpj = await cnpjDaCompra(supabase, tenant_id, purchase);
 
-    // Tela de recebimento: lista de insumos + sugestão de vínculo para cada item.
-    // Ordem: o que já está na compra → memorizado do fornecedor (código/EAN) → histórico pela descrição.
+    // Tela de recebimento: lista de insumos + vínculo de cada item.
+    // Só o que já está na compra ou o vínculo memorizado exato (o mesmo que a confirmação aplica:
+    // CNPJ + código/EAN ou Classificação de itens). Sem "histórico pela descrição" (regra do dono,
+    // 2026-09-24): item sem vínculo fica fora do estoque até ser ligado na Classificação de itens.
     if (body.action === 'receipt_context') {
       // "Acréscimos da nota" (ICMS-ST, IPI...) é valor, não produto: sem sugestão de insumo
       const its = ((purchase.items ?? []) as Array<Record<string, any>>)
         .filter((i) => !String(i.description ?? '').startsWith('Acréscimos da nota'));
-      const codes = [...new Set(its.map((i) => String(i.supplier_code ?? '').trim()).filter(Boolean))];
-      const eans = [...new Set(its.map((i) => String(i.ean ?? '').trim()).filter(Boolean))];
-      const descs = [...new Set(its.filter((i) => !i.ingredient_id).map((i) => String(i.description ?? '')).filter(Boolean))].slice(0, 80);
-      const [ingsRes, memoRes, eanRes, histRes] = await Promise.all([
+      const [ingsRes, memo] = await Promise.all([
         supabase.from('ingredients').select('id, name, unit, purchase_unit, purchase_factor').eq('tenant_id', tenant_id).is('deleted_at', null).order('name').limit(3000),
-        supplierCnpj && codes.length
-          ? supabase.from('fiscal_inbound_item_links').select('supplier_code, ingredient_id, units_per_package').eq('tenant_id', tenant_id).eq('supplier_cnpj', supplierCnpj).in('supplier_code', codes)
-          : Promise.resolve({ data: [] as any[] }),
-        eans.length
-          ? supabase.from('fiscal_inbound_item_links').select('ean, ingredient_id, units_per_package').eq('tenant_id', tenant_id).in('ean', eans)
-          : Promise.resolve({ data: [] as any[] }),
-        descs.length
-          ? supabase.from('fin_purchase_items').select('description, ingredient_id, units_per_package').eq('tenant_id', tenant_id).not('ingredient_id', 'is', null).in('description', descs).limit(500)
-          : Promise.resolve({ data: [] as any[] }),
+        vinculosMemorizados(supabase, tenant_id, supplierCnpj, its, purchase_id),
       ]);
       const ings = (ingsRes.data ?? []) as any[];
-      const valid = new Set(ings.map((i) => String(i.id)));
-      const byCode = new Map(((memoRes.data ?? []) as any[]).map((l) => [String(l.supplier_code), l]));
-      const byEan = new Map(((eanRes.data ?? []) as any[]).map((l) => [String(l.ean), l]));
-      const byDesc = new Map<string, any>();
-      for (const h of (histRes.data ?? []) as any[]) if (!byDesc.has(String(h.description))) byDesc.set(String(h.description), h);
       const suggestions: Record<string, { ingredient_id: string; units_per_package: number; source: string }> = {};
       for (const it of its) {
         if (it.ingredient_id) {
           suggestions[it.id] = { ingredient_id: String(it.ingredient_id), units_per_package: Number(it.units_per_package ?? 1) || 1, source: 'compra' };
           continue;
         }
-        const code = String(it.supplier_code ?? '').trim();
-        const ean = String(it.ean ?? '').trim();
-        const m = (code && byCode.get(code)) || (ean && byEan.get(ean)) || null;
-        const h = byDesc.get(String(it.description ?? ''));
-        const pick = m ? { l: m, s: 'memorizado' } : h ? { l: h, s: 'historico' } : null;
-        if (pick && valid.has(String(pick.l.ingredient_id))) {
-          suggestions[it.id] = { ingredient_id: String(pick.l.ingredient_id), units_per_package: Number(pick.l.units_per_package ?? 1) || 1, source: pick.s };
-        }
+        const m = memo.get(String(it.id));
+        if (m) suggestions[it.id] = { ingredient_id: m.ingredient_id, units_per_package: m.units_per_package, source: 'memorizado' };
       }
       return new Response(JSON.stringify({ ingredients: ings, suggestions, stock_already_applied: Boolean(purchase.stock_applied_at) }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }

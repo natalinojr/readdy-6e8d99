@@ -57,6 +57,10 @@ export const KIND_CONFIG: Record<string, { label: string; icone: string; corBg: 
   recebimento_sem_nota: { label: 'Chegou sem nota', icone: 'ri-truck-line', corBg: 'bg-orange-100', corTexto: 'text-orange-700' },
   recebimento_parado: { label: 'Recebimento parado', icone: 'ri-truck-line', corBg: 'bg-orange-100', corTexto: 'text-orange-700' },
   compra_pelo_celular: { label: 'Compra pelo celular', icone: 'ri-smartphone-line', corBg: 'bg-sky-100', corTexto: 'text-sky-700' },
+  // Pedidos de pagamento do /receber (2026-09-24): caíam no ícone cinza genérico.
+  pedido_pagamento: { label: 'Pedido de pagamento', icone: 'ri-hand-coin-line', corBg: 'bg-rose-100', corTexto: 'text-rose-700' },
+  pedido_pagamento_pagar: { label: 'Pagamento', icone: 'ri-money-dollar-circle-line', corBg: 'bg-emerald-100', corTexto: 'text-emerald-700' },
+  sangria_valor_diferente: { label: 'Sangria diferente', icone: 'ri-scales-3-line', corBg: 'bg-amber-100', corTexto: 'text-amber-700' },
 };
 export const KIND_FALLBACK = { label: 'Pendência', icone: 'ri-inbox-line', corBg: 'bg-zinc-100', corTexto: 'text-zinc-700' };
 export const kindConfig = (kind: string) => KIND_CONFIG[kind] ?? KIND_FALLBACK;

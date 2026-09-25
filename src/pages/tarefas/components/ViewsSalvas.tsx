@@ -3,6 +3,7 @@ import { Bookmark, BookmarkPlus, Trash2, Check } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
 import type { TaskList, TaskViewSalva } from '../hooks/useTarefas';
 import type { Filtros, GroupBy } from '../lib/agrupamento';
+import { useVoltarFecha } from '@/lib/voltarAndroid';
 
 interface ViewsSalvasProps {
   views: TaskViewSalva[];
@@ -24,6 +25,7 @@ export default function ViewsSalvas({
 }: ViewsSalvasProps) {
   const toast = useToast();
   const [aberto, setAberto] = useState(false);
+  useVoltarFecha(aberto, () => setAberto(false), 'tarefas-views');
   const [salvando, setSalvando] = useState(false);
   const [nome, setNome] = useState('');
   const [aplicadaId, setAplicadaId] = useState<string | null>(null);

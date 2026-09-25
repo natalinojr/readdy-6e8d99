@@ -18,6 +18,7 @@ interface TarefaVencida {
   id: string; title: string; due_date: string | null; assignee_name: string | null; list_name: string | null;
   list_id: string; completed_at: string | null; assignee_id: string | null; created_by: string | null;
   status_category: TaskStatus['category'] | null;
+  priority?: number | null;
   tenant_id: string; // loja onde a tarefa mora (preenchido aqui; escrita/leitura vão por ela)
 }
 
@@ -61,11 +62,24 @@ export default function TarefasPendencia({ tenantId, meuId, onAbrir, onMudou: av
   const [listas, setListas] = useState<TaskList[]>([]);
   const [aberta, setAberta] = useState<string | null>(null);
   const [erro, setErro] = useState<string | null>(null);
+  // Filtros da tela "Minhas tarefas" (dono, 2026-09-24). Só sem loja: dentro da pendência de uma
+  // loja a lista é curta e já vem filtrada.
+  const [busca, setBusca] = useState('');
+  const [prazo, setPrazo] = useState<'todas' | 'atrasadas' | 'hoje'>('todas');
+  const [quem, setQuem] = useState<'todas' | 'comigo' | 'passei'>('todas');
+  const [soAlta, setSoAlta] = useState(false);
+  const [pasta, setPasta] = useState('');
 
   const carregar = useCallback(async () => {
     let lojas: string[] = tenantId ? [tenantId] : [];
+    // Loja de cada tarefa (tasks.tenant_id): fn_get_tasks não devolve a loja
+    const lojaDa = new Map<string, string>();
     if (!tenantId) {
-      try { lojas = [...new Set((await minhasTarefasPendentes(meuId)).map((x) => x.tenant_id))]; }
+      try {
+        const minhas = await minhasTarefasPendentes(meuId);
+        minhas.forEach((x) => lojaDa.set(x.id, x.tenant_id));
+        lojas = [...new Set(minhas.map((x) => x.tenant_id))];
+      }
       catch (e) { setErro(e instanceof Error ? e.message : String(e)); setTarefas([]); return; }
     }
     const res = await Promise.all(lojas.map(async (tid) => {
@@ -81,7 +95,14 @@ export default function TarefasPendencia({ tenantId, meuId, onAbrir, onMudou: av
     setListas(res.flatMap((r) => (r.l.data as TaskList[]) ?? []));
     // Com loja: só as vencidas (pendência "tarefas vencidas" daquela loja). Sem loja: vencidas e de hoje.
     const limite = tenantId ? Date.now() : fimDeHoje();
-    setTarefas(res.flatMap((r) => ((r.t.data ?? []) as TarefaVencida[]).map((x) => ({ ...x, tenant_id: r.tid })))
+    // fn_get_tasks devolve as tarefas de TODAS as pastas acessíveis, não só as da loja pedida: com
+    // duas lojas cada tarefa vinha duas vezes (chave repetida no React = filtro que não some com
+    // os cartões, dono 2026-09-24). Uma por id, na loja onde ela mora.
+    const unicas = new Map<string, TarefaVencida>();
+    res.forEach((r) => ((r.t.data ?? []) as TarefaVencida[]).forEach((x) => {
+      if (!unicas.has(x.id)) unicas.set(x.id, { ...x, tenant_id: lojaDa.get(x.id) ?? r.tid });
+    }));
+    setTarefas([...unicas.values()]
       .filter((x) => !x.completed_at && x.due_date && new Date(x.due_date).getTime() <= limite)
       .filter((x) => !meuId || x.assignee_id === meuId || x.created_by === meuId)
       .sort((a, b) => String(a.due_date).localeCompare(String(b.due_date))));
@@ -92,19 +113,84 @@ export default function TarefasPendencia({ tenantId, meuId, onAbrir, onMudou: av
   useEffect(() => { carregar(); }, [carregar]);
 
   if (tarefas === null) return <p className="mt-2.5 text-xs text-zinc-500">Carregando tarefas…</p>;
+  const agora = Date.now();
+  const atrasada = (t: TarefaVencida) => (t.due_date ? new Date(t.due_date).getTime() < agora : false);
+  const comigo = (t: TarefaVencida) => !meuId || t.assignee_id === meuId;
+  const passei = (t: TarefaVencida) => !!meuId && t.created_by === meuId && !!t.assignee_id && t.assignee_id !== meuId;
+  const alta = (t: TarefaVencida) => Number(t.priority ?? 0) >= 3;
+  const termo = busca.trim().toLowerCase();
+  // Cada filtro conta sobre o resultado dos OUTROS, para o número bater com o que aparece ao tocar.
+  const passa = (t: TarefaVencida, sem?: 'prazo' | 'quem' | 'alta' | 'pasta') =>
+    (sem === 'prazo' || prazo === 'todas' || (prazo === 'atrasadas' ? atrasada(t) : !atrasada(t)))
+    && (sem === 'quem' || quem === 'todas' || (quem === 'comigo' ? comigo(t) : passei(t)))
+    && (sem === 'alta' || !soAlta || alta(t))
+    && (sem === 'pasta' || !pasta || t.list_name === pasta)
+    && (!termo || t.title.toLowerCase().includes(termo) || (t.assignee_name ?? '').toLowerCase().includes(termo));
+  const conta = (f: (t: TarefaVencida) => boolean, sem: 'prazo' | 'quem' | 'alta' | 'pasta') => tarefas.filter((t) => passa(t, sem) && f(t)).length;
+  const pastas = [...new Set(tarefas.map((t) => t.list_name).filter(Boolean) as string[])].sort((a, b) => a.localeCompare(b));
+  const visiveis = tenantId ? tarefas : tarefas.filter((t) => passa(t));
+  const filtrando = prazo !== 'todas' || quem !== 'todas' || soAlta || !!pasta || !!termo;
+  const chip = (ativo: boolean) => `h-7 px-2.5 flex-shrink-0 flex items-center gap-1 rounded-full text-xs font-bold whitespace-nowrap cursor-pointer ${ativo ? 'bg-violet-600 text-white' : 'bg-white border border-zinc-200 text-zinc-600 hover:bg-zinc-50'}`;
+
   return (
     <div className="mt-2.5 space-y-1.5">
+      {!tenantId && tarefas.length > 1 && (
+        <div className="space-y-2 pb-1.5">
+          <div className="flex gap-1.5">
+            <label className="relative flex-1 min-w-0">
+              <i className="ri-search-line absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" />
+              <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar tarefa ou pessoa"
+                className="w-full h-9 pl-8 pr-2 rounded-xl border border-zinc-200 bg-white text-sm focus:outline-none focus:border-violet-400" />
+            </label>
+            {pastas.length > 1 && (
+              <select value={pasta} onChange={(e) => setPasta(e.target.value)} aria-label="Pasta"
+                className="w-[38%] h-9 px-2 rounded-xl border border-zinc-200 bg-white text-sm text-zinc-700 truncate focus:outline-none focus:border-violet-400">
+                <option value="">Todas as pastas</option>
+                {pastas.map((n) => <option key={n} value={n}>{n} · {conta((t) => t.list_name === n, 'pasta')}</option>)}
+              </select>
+            )}
+          </div>
+          <div className="flex gap-1.5 overflow-x-auto pb-0.5">
+            <button onClick={() => setPrazo((x) => (x === 'atrasadas' ? 'todas' : 'atrasadas'))} className={chip(prazo === 'atrasadas')}>
+              <i className="ri-alarm-warning-line" /> Atrasadas · {conta(atrasada, 'prazo')}
+            </button>
+            <button onClick={() => setPrazo((x) => (x === 'hoje' ? 'todas' : 'hoje'))} className={chip(prazo === 'hoje')}>
+              <i className="ri-calendar-event-line" /> Hoje · {conta((t) => !atrasada(t), 'prazo')}
+            </button>
+            <button onClick={() => setQuem((x) => (x === 'comigo' ? 'todas' : 'comigo'))} className={chip(quem === 'comigo')}>
+              <i className="ri-user-line" /> Comigo · {conta(comigo, 'quem')}
+            </button>
+            <button onClick={() => setQuem((x) => (x === 'passei' ? 'todas' : 'passei'))} className={chip(quem === 'passei')}>
+              <i className="ri-share-forward-line" /> Passei · {conta(passei, 'quem')}
+            </button>
+            <button onClick={() => setSoAlta((x) => !x)} className={chip(soAlta)}>
+              <i className="ri-fire-line" /> Alta/urgente · {conta(alta, 'alta')}
+            </button>
+          </div>
+          {filtrando && (
+            <p className="flex items-center justify-between text-[11px] text-zinc-500">
+              <span>{visiveis.length} de {tarefas.length}</span>
+              <button onClick={() => { setPrazo('todas'); setQuem('todas'); setSoAlta(false); setPasta(''); setBusca(''); }} className="font-bold text-violet-700 cursor-pointer">Limpar filtros</button>
+            </p>
+          )}
+        </div>
+      )}
       {erro && <p className="text-xs text-red-600">{erro}</p>}
       {!tarefas.length && !erro && <p className="text-xs font-semibold text-emerald-700"><i className="ri-check-line" /> {tenantId ? 'Nenhuma tarefa vencida.' : 'Nenhuma tarefa vencida ou para hoje.'}</p>}
-      {tarefas.map((t) => {
-        const venceu = t.due_date ? new Date(t.due_date).getTime() < Date.now() : false;
+      {tarefas.length > 0 && !visiveis.length && <p className="text-xs text-zinc-500 text-center py-4">Nenhuma tarefa com esses filtros.</p>}
+      {visiveis.map((t) => {
+        const venceu = atrasada(t);
+        const prio = Number(t.priority ?? 0) >= 3 ? PRIORIDADES.find((p) => p.value === Number(t.priority)) : null;
         return (
         <div key={t.id} className={`rounded-xl border bg-zinc-50 ${aberta === t.id ? 'border-violet-300 bg-white' : 'border-zinc-200'}`}>
           <button onClick={() => setAberta((x) => (x === t.id ? null : t.id))} className="w-full flex items-start gap-2.5 px-3 py-2.5 text-left cursor-pointer" aria-expanded={aberta === t.id}>
             <i className="ri-checkbox-blank-circle-line text-amber-500 mt-0.5" />
             <span className="flex-1 min-w-0">
               {/* Título INTEIRO (pedido do dono): quebra linha, nunca corta. */}
-              <span className="block text-sm font-semibold text-zinc-800 whitespace-normal break-words">{t.title}</span>
+              <span className="block text-sm font-semibold text-zinc-800 whitespace-normal break-words">
+                {prio && <span className="mr-1 px-1.5 rounded text-[10px] font-bold text-white align-middle" style={{ backgroundColor: prio.color }}>{prio.label}</span>}
+                {t.title}
+              </span>
               <span className={`block text-[11px] mt-0.5 ${venceu ? 'text-red-600' : 'text-amber-700'}`}>
                 {venceu ? `venceu ${data(t.due_date)}` : 'vence hoje'}{t.assignee_name ? ` · ${t.assignee_name}` : ''}{t.list_name ? ` · ${t.list_name}` : ''}
               </span>

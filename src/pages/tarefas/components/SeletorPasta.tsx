@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { Search } from 'lucide-react';
 import type { TaskList } from '../hooks/useTarefas';
 import { montarArvorePastas, achatarArvore } from '../lib/pastas';
+import { useVoltarFecha } from '@/lib/voltarAndroid';
 
 interface SeletorPastaProps {
   titulo: string;
@@ -20,6 +21,7 @@ interface SeletorPastaProps {
  * task-write recusa a pasta destino sem esse acesso, então nem oferece.
  */
 export default function SeletorPasta({ titulo, lists, desabilitarIds, onEscolher, onClose }: SeletorPastaProps) {
+  useVoltarFecha(true, onClose, 'tarefas-seletor-pasta');
   const [busca, setBusca] = useState('');
   const editaveis = lists.filter((l) => (l.access ?? 'owner') === 'owner' || l.access === 'edit');
   const nos = achatarArvore(montarArvorePastas(editaveis))

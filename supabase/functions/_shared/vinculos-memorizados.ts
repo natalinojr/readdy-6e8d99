@@ -4,6 +4,9 @@
 // que já tinham vínculo memorizado. Usado por purchase-write e purchase-confirm-delivery.
 // Ordem: fornecedor (CNPJ) + código do produto → EAN → Classificação de itens (supplier_key +
 // item_key, cobre fornecedor sem CNPJ e item sem código; fn_item_memo_links). Descrição solta não.
+// Regra do dono (2026-09-24): só vínculo que uma pessoa confirmou e exatamente o mesmo item do mesmo
+// fornecedor — EAN também só do mesmo CNPJ (o fator de outro fornecedor pode ser de outra embalagem).
+// Sem vínculo, o item fica fora do estoque até ser ligado na Classificação de itens.
 
 // deno-lint-ignore no-explicit-any
 type Sb = any;
@@ -38,8 +41,8 @@ export async function vinculosMemorizados(
     supplierCnpj && codes.length
       ? supabase.from('fiscal_inbound_item_links').select('supplier_code, ingredient_id, units_per_package').eq('tenant_id', tenantId).eq('supplier_cnpj', supplierCnpj).in('supplier_code', codes)
       : Promise.resolve({ data: [] }),
-    eans.length
-      ? supabase.from('fiscal_inbound_item_links').select('ean, ingredient_id, units_per_package').eq('tenant_id', tenantId).in('ean', eans)
+    supplierCnpj && eans.length
+      ? supabase.from('fiscal_inbound_item_links').select('ean, ingredient_id, units_per_package').eq('tenant_id', tenantId).eq('supplier_cnpj', supplierCnpj).in('ean', eans)
       : Promise.resolve({ data: [] }),
     supabase.rpc('fn_item_memo_links', { p_tenant: tenantId, p_purchase: purchaseId }),
   ]);

@@ -28,7 +28,9 @@ interface Overview {
   messages: Message[];
   whatsapp: { state: string | null; error?: string; owner_chat_id: string | null };
   usage30d: { replies: number; usd: number; brl: number | null; rate: number | null; rate_source: string | null; rate_at: string | null };
-  groups: { group_jid: string; name: string | null; is_enabled: boolean; last_at: string | null }[];
+  groups: { group_jid: string; name: string | null; is_enabled: boolean; last_at: string | null; task_list_id: string | null; read_media: boolean }[];
+  /** Pastas de tarefas que posso editar: destino do 📌 marcado num grupo. */
+  task_lists?: { id: string; path: string }[];
 }
 
 async function call<T = unknown>(action: string, extra: Record<string, unknown> = {}): Promise<T> {
@@ -475,6 +477,9 @@ export default function AssistentePage() {
                     <b>Mensagens de antes:</b> o assistente só vê o que chega depois de ligado. Para ele conhecer o passado, no celular abra o grupo › ⋮ › Mais › <b>Exportar conversa</b> › <b>Sem mídia</b> e mande o arquivo <b>.txt</b> para o assistente <b>pelo WhatsApp</b>, com o nome do grupo na legenda.
                   </p>
                   <p className="mt-1.5">
+                    <b>Grupo de obra → Tarefas:</b> escolha a pasta em <i>"📌 vira tarefa em"</i>. No grupo, quem reagir com 📌 numa mensagem manda ela (texto, áudio transcrito, foto ou PDF) para a caixa dessa pasta no módulo Tarefas; o assistente reage 📥. Lá, quem edita a pasta decide: vira tarefa (✅ no grupo), anotação de uma tarefa (📝) ou descarta. Tirar o 📌 antes disso tira da caixa. Em grupo de obra, desmarque <i>"Ler fotos e PDFs com IA"</i>: cada foto lida custa.
+                  </p>
+                  <p className="mt-1.5">
                     Por segurança, qualquer pessoa pode pôr o número do assistente num grupo, mas grupo novo só liga sozinho se você também estiver nele. Para parar de ler, é só desligar o botão.
                   </p>
                 </details>
@@ -486,6 +491,30 @@ export default function AssistentePage() {
                       <div className="flex-1 min-w-0">
                         <p className={`text-sm truncate ${g.is_enabled ? 'text-zinc-900 font-semibold' : 'text-zinc-500'}`}>{g.name || g.group_jid}</p>
                         <p className="text-[11px] text-zinc-400">{g.last_at ? `Última mensagem ${fmt(g.last_at)}` : 'Sem mensagens guardadas'}</p>
+                        {g.is_enabled && (
+                          <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[11px] text-zinc-500">
+                            <label className="flex items-center gap-1.5 min-w-0">
+                              <span className="shrink-0">📌 vira tarefa em</span>
+                              <select
+                                value={g.task_list_id ?? ''}
+                                onChange={(e) => acao(() => call('set_group_options', { group_jid: g.group_jid, task_list_id: e.target.value || null }), e.target.value ? 'Pasta do grupo salva: quem reagir 📌 manda a mensagem para a caixa dela.' : '📌 desligado neste grupo.')}
+                                className="min-w-0 max-w-[14rem] h-7 px-1.5 rounded-lg border border-zinc-200 bg-white text-[11px] text-zinc-700"
+                              >
+                                <option value="">(nenhuma pasta)</option>
+                                {(ov.task_lists ?? []).map((l) => <option key={l.id} value={l.id}>{l.path}</option>)}
+                              </select>
+                            </label>
+                            <label className="flex items-center gap-1.5 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={g.read_media !== false}
+                                onChange={(e) => acao(() => call('set_group_options', { group_jid: g.group_jid, read_media: e.target.checked }), e.target.checked ? 'Fotos e PDFs deste grupo voltam a ser lidos com IA.' : 'Fotos e PDFs deste grupo não passam mais pela IA (sem custo).')}
+                                className="accent-violet-600"
+                              />
+                              Ler fotos e PDFs com IA
+                            </label>
+                          </div>
+                        )}
                       </div>
                       <button
                         onClick={() => acao(() => call('toggle_group', { group_jid: g.group_jid, enabled: !g.is_enabled }), g.is_enabled ? 'Leitura do grupo desligada.' : 'Leitura do grupo ligada.')}

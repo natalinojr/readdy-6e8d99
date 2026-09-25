@@ -80,7 +80,7 @@ Rotas dentro do layout autenticado:
 - `/pedidos`: `src/pages/pedidos/page.tsx`
 - `/tarefas`: `src/pages/tarefas/page.tsx` (gestão de tarefas: Lista/Kanban/Calendário/Minhas + campos personalizados — ver PLANO-MODULO-TAREFAS.md)
 - `/estoque`: `src/pages/estoque/page.tsx`
-- `/receber`: `src/pages/receber/page.tsx` (celular da loja: receber mercadoria por etapas — nota, compra lançada, cupom, sem nota; atalho no app instalado e card em Módulos)
+- `/receber`: `src/pages/receber/page.tsx` — **Recebimentos e pagamentos** (celular da loja: receber mercadoria por etapas — nota, compra lançada, cupom, sem nota; + pedidos de pagamento em `src/pages/receber/pedidos/`: reembolso, freelancer, fornecedor sem nota, aprovação; links `?pedido=`, `?aprovar=1`, `?meus=1`)
 - `/financeiro`: `src/pages/financeiro/page.tsx`
 - `/configuracoes`: `src/pages/configuracoes/page.tsx`
 - `/config-delivery`: `src/pages/config-delivery/page.tsx`
@@ -3299,3 +3299,35 @@ por `description` começando com `'Acréscimos da nota'`. Já filtram: `receber-
 `purchase-confirm-delivery` (receipt_context), `DetalhePurchaseModal` (mostra como linha de valor à parte),
 `ConfirmarRecebimento` do assistente, `vinculos-memorizados`, registro de classificação e entrada tardia.
 Relatórios/DRE/detalhe de conta continuam mostrando a linha (é dinheiro gasto).
+
+### Pedidos de pagamento no módulo Recebimentos e pagamentos (2026-09-24)
+- Pedido do dono: pedir **reembolso**, **pagamento de freelancer** e **pagamento de fornecedor sem NF contra o CNPJ da loja** dentro do sistema, com permissão por tipo e ação rápida de reembolso. O `/receber` ("Receber mercadoria") virou **"Recebimentos e pagamentos"** (Sidebar, card de Módulos, título).
+- **Nada vira dívida sem aprovação** (decisão do dono): o pedido fica em `fin_payment_requests` (`pendente`) + pendência `kind='pedido_pagamento'` no 📥 (rota `/receber?aprovar=1`). Aprovar → `fn_pedido_pagamento_aprovar` (service role, uma transação) cria a conta a pagar **em aberto**; o Pix sai pelo caminho de sempre e a conciliação baixa. A trava de Pix (fornecedor cadastrado / Pix permitidos) **não foi mexida** — chave de funcionário/freela nova se paga pelo app do banco.
+- Contas: reembolso e fornecedor → `reference_type='pedido_pagamento'` (novo no CHECK), `reference_id` = pedido, `dre_category_id` obrigatório (reembolso: quem pede escolhe; fornecedor: o dono escolhe ao aprovar se faltar). Freelancer → mesma forma de sempre (`reference_type='freelancer'`, RH, `reference_id` = `hr_freelancers.id`) + diárias em `hr_freelancer_shifts` com `bill_id` e sem `payment_id`.
+- **Freela sem dupla contagem:** `fn_freelancer_registrar_pagamento` agora, quando o Pix não tem conta ligada, **adota** a conta em aberto de um pedido aprovado (mesmo freela, mesmo valor, sem outro Pix) e liga as diárias do pedido ao pagamento (passo 3a) em vez de gravar outras.
+- **Reembolso de mercadoria não é despesa**: "O que você comprou?" → mercadoria vai pelo recebimento (cupom ou sem nota) com a opção **"Paguei do meu bolso"** (`lancar` com `pagamento='reembolso'`): compra A PAGAR (CMV + estoque como sempre, vence hoje) e pedido de reembolso ligado (`purchase_id`, `bill_id` da parcela). Esse pedido não se recusa nem se cancela pelo app (a compra já entrou); aprovar só libera o pagamento. Quem só tem `pag_reembolso` passa no gate da `receber-mercadoria` apenas para `insumos`/`fornecedores`/`lancar` com reembolso.
+- Permissões novas (`PEDIDO_KEYS` em `usePermissoes.ts`): `pag_reembolso`, `pag_freelancer`, `pag_fornecedor` (padrão Admin/Gerente, liberáveis para qualquer papel) e `pag_aprovar` (padrão só Admin; `somenteGerente` na matriz). O servidor repete o padrão sem linha na matriz (`_shared/pedidos-pagamento.ts › permissoesPedido`). Ninguém aprova o próprio pedido, exceto o Admin. Entrada no módulo: `RECEBER_MODULO_KEYS` (RotaProtegida, Sidebar, Módulos, `acesso.ts`).
+- Comprovantes no bucket privado `pedidos-pagamento` (upload/URL assinada só pela Edge). Ações rápidas novas: "Pedir reembolso" (`/receber?pedido=reembolso`) e "Aprovar pedidos de pagamento".
+- Edge `pedidos-pagamento` (verify_jwt true) + `receber-mercadoria` atualizada; migration `20260925200000_pedidos_pagamento.sql`.
+
+### 📌 no grupo do WhatsApp → caixa da pasta de Tarefas (2026-09-24)
+Grupo do assistente ligado a uma pasta (`asst_groups.task_list_id`, tela Assistente › Grupos). Quem reage
+📌 numa mensagem manda ela para `task_whatsapp_items` (texto/áudio transcrito já gravado em
+`asst_group_messages`; foto/PDF/áudio/vídeo salvos na hora no bucket `task-attachments` em
+`whatsapp/<list_id>/<message_id>.<ext>`, porque o WhatsApp apaga a mídia depois). Sem IA. O assistente reage
+📥; push para `fn_task_list_editores`. Na pasta, `CaixaWhatsApp` (quem tem owner/edit) decide:
+tarefa (`create_task` + `task-write › wa_item_resolve mode:'tarefa'`, ✅ no grupo), anotação
+(`wa_item_resolve mode:'anotacao'` → `task_comments`, 📝) ou descarta (`wa_item_discard`, tira a reação).
+Pegadinhas: a reação chega como `messages.upsert` com `message.reactionMessage` (texto vazio = reação
+removida; só quem marcou tira, e só se o jid dele veio); ao resolver, o arquivo passa a ser do
+`task_attachments` e o item solta `media_path` (apagar o anexo apaga o arquivo). `asst_groups.read_media=false`
+desliga a leitura de foto/PDF com IA só naquele grupo (grupo de obra = muita foto = custo).
+
+### Compartilhar → ERPOS no Android (Web Share Target, 2026-09-24)
+`manifest.webmanifest › share_target` (POST multipart para `/tarefas/compartilhar`, campo de arquivos
+`arquivos`). Quem atende é o `public/sw.js › receberCompartilhado`: guarda texto e arquivos no cache
+`erpos-compartilhado` (um compartilhamento por vez) e redireciona (303) para `/tarefas?compartilhado=1`;
+`CompartilhadoParaTarefa.tsx` lê o cache e cria tarefa (pasta lembrada em localStorage) ou junta a uma
+tarefa (comentário + anexos via upload normal). Só funciona com o app **instalado** no Android (Chrome
+atualiza o manifest do app instalado sozinho, mas pode levar ~1 dia; reinstalar força). iPhone não tem.
+Sem SW ativo o POST cai no Vercel e falha — por isso o destino só existe no SW.

@@ -7,6 +7,7 @@ import { carregarModelos, chamarModelos, textoResumo, type ModeloEstrutura } fro
 import ModeloEditor, { type ModoEditor } from './ModeloEditor';
 import AplicarModelo from './AplicarModelo';
 import ConfirmDialog from '../ConfirmDialog';
+import { useVoltarFecha } from '@/lib/voltarAndroid';
 
 /** Por onde a pessoa entrou: a lista de modelos, "salvar esta pasta" ou "criar a partir de modelo". */
 export type TelaModelos =
@@ -33,6 +34,7 @@ interface Props {
  * TemplatesManager.)
  */
 export default function ModelosPastas({ inicial, lists, tenantId, usuarios, pastaAtualId, onCriado, onFechar }: Props) {
+  useVoltarFecha(true, onFechar, 'tarefas-modelos');
   const toast = useToast();
   const [tela, setTela] = useState<Tela>(inicial);
   const [modelos, setModelos] = useState<ModeloEstrutura[]>([]);

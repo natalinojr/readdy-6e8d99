@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { useIsMobile } from '../lib/mobile';
+import { useIsMobile, useVoltarFecha } from '../lib/mobile';
 import { Search, SlidersHorizontal, X, Check } from 'lucide-react';
 import type { CampoCustom, TaskList, TaskTag } from '../hooks/useTarefas';
 import { PRIORIDADES } from '../hooks/useTarefas';
@@ -25,6 +25,7 @@ export default function FiltrosBar({
   filtros, onFiltros, groupBy, onGroupBy, mostrarAgrupamento, tags, usuarios, campos, list,
 }: FiltrosBarProps) {
   const [aberto, setAberto] = useState(false);
+  useVoltarFecha(aberto, () => setAberto(false), 'tarefas-filtros');
   // No celular a folha de filtros vai direto pro <body>: o cabeçalho tem
   // backdrop-blur, que prende o `fixed` dentro dele (a folha abria fora da tela).
   const celular = useIsMobile();

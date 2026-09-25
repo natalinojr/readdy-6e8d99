@@ -32,6 +32,22 @@
       "purpose": "maskable"
     }
   ],
+  "share_target": {
+    "action": "/tarefas/compartilhar",
+    "method": "POST",
+    "enctype": "multipart/form-data",
+    "params": {
+      "title": "title",
+      "text": "text",
+      "url": "url",
+      "files": [
+        {
+          "name": "arquivos",
+          "accept": ["image/*", "application/pdf", "audio/*", "video/*", ".pdf", ".ogg", ".opus", ".m4a", ".mp3", ".mp4", ".jpg", ".jpeg", ".png", ".webp"]
+        }
+      ]
+    }
+  },
   "shortcuts": [
     {
       "name": "Minhas tarefas",
@@ -43,6 +59,12 @@
       "name": "Receber mercadoria",
       "short_name": "Receber",
       "url": "/receber",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Pedir reembolso",
+      "short_name": "Reembolso",
+      "url": "/receber?pedido=reembolso",
       "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
     }
   ]

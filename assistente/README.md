@@ -1004,3 +1004,11 @@ Botões (`enviar_enquete`), com perguntas juntadas porque cada toque é uma roda
 2. Pagar boleto/Pix pelo Inter. **Código no ar desde 2026-09-12**: tools `preparar_pagamento` e `status_pagamento`, botões Pagar e Cancelar no Telegram, PIN criado por `/pin` e interceptado sem passar pelo modelo, e aprovação final no app do Inter. Detalhes em `AI_SYSTEM_MAP.md`. **Bloqueio:** a integração do Inter (client_id final 078f) ainda só tem `extrato.read`. Os escopos `pagamento-boleto.*` e `pagamento-pix.*` voltam "No registered scope value". Depois de liberar, rodar `inter-bank › check_payment_scopes` e fazer o 1º boleto pequeno real.
 3. Google Agenda + Gmail (OAuth do dono, tokens em `asst_settings`).
 4. Nome do assistente (ainda não escolhido; bot aparece como "John Snow").
+
+### 📌 no grupo vira tarefa (2026-09-24)
+Na tela Assistente › Grupos, cada grupo ligado ganha **"📌 vira tarefa em"** (pasta do módulo Tarefas) e
+**"Ler fotos e PDFs com IA"** (desmarcar em grupo de obra: cada foto lida custa). Reação 📌 numa mensagem
+do grupo → `pinParaTarefa` (assistente-webhook) grava em `task_whatsapp_items`, salva a mídia no Storage e
+reage 📥. A decisão é na tela de Tarefas (caixa verde em cima da pasta): tarefa (✅), anotação (📝) ou
+descartar (reação removida). Nada vira tarefa sozinho e não passa por modelo. Tirar o 📌 antes de alguém
+decidir tira da caixa. Detalhes técnicos: AI_SYSTEM_MAP.md › "📌 no grupo do WhatsApp".

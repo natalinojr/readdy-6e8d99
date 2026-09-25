@@ -2,7 +2,7 @@ import { Navigate, useLocation } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { usePermissoes } from '@/hooks/usePermissoes';
-import type { PermissaoKey } from '@/hooks/usePermissoes';
+import { RECEBER_MODULO_KEYS, type PermissaoKey } from '@/hooks/usePermissoes';
 import { FIN_KEYS, REL_KEYS, CFG_MAQUININHA_KEY } from '@/constants/permissoesAbas';
 import { rotaForcada } from '@/lib/acessoRota';
 
@@ -14,8 +14,9 @@ import { rotaForcada } from '@/lib/acessoRota';
 const ROTA_PERMISSAO: Record<string, PermissaoKey | readonly PermissaoKey[]> = {
   '/cardapio': 'cardapio_editar',
   '/estoque': 'estoque_movimentar',
-  // estoque_receber abre só esta tela; quem movimenta estoque continua entrando
-  '/receber': ['estoque_receber', 'estoque_movimentar'],
+  // Recebimentos e pagamentos: quem recebe mercadoria (estoque_receber abre só esta tela; quem
+  // movimenta estoque continua entrando) ou quem faz/aprova pedido de pagamento
+  '/receber': RECEBER_MODULO_KEYS,
   '/relatorios': REL_KEYS,
   '/financeiro': FIN_KEYS,
   '/usuarios': 'usuarios_gerenciar',

@@ -4,7 +4,8 @@ import { BellRing, Check, Loader2, Smartphone, X } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
 import { supabase } from '@/lib/supabase';
 import BotaoAvisos from '@/components/feature/BotaoAvisos';
-import { MODO_DEMO } from '../demo/modoDemo';
+import { modoDemo } from '../demo/modoDemo';
+import { useVoltarFecha } from '@/lib/voltarAndroid';
 
 export interface PrefsAvisos {
   ativo: boolean;
@@ -38,13 +39,14 @@ export default function ConfigAvisos({ tenantId, write, onClose }: {
   write: (action: string, payload?: Record<string, unknown>) => Promise<{ success: boolean; error?: string }>;
   onClose: () => void;
 }) {
+  useVoltarFecha(true, onClose, 'tarefas-avisos');
   const toast = useToast();
   const [prefs, setPrefs] = useState<PrefsAvisos | null>(null);
   const [salvando, setSalvando] = useState(false);
   const [testando, setTestando] = useState(false);
 
   useEffect(() => {
-    if (MODO_DEMO) { setPrefs(PREFS_PADRAO); return; }
+    if (modoDemo()) { setPrefs(PREFS_PADRAO); return; }
     supabase.rpc('fn_get_task_notification_prefs').then(({ data, error }) => {
       if (error || !data) { setPrefs(PREFS_PADRAO); return; }
       const d = data as Partial<PrefsAvisos>;

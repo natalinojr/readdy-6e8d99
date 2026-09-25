@@ -5,6 +5,7 @@ import { supabase } from '@/lib/supabase';
 import type { TaskList } from '../hooks/useTarefas';
 import { achatarArvore, montarArvorePastas } from '../lib/pastas';
 import { iniciais } from './TaskCard';
+import { useVoltarFecha } from '@/lib/voltarAndroid';
 
 interface Compartilhamento {
   id: string;
@@ -37,6 +38,7 @@ const PERMISSOES = [
  * e pode sair da pasta.
  */
 export default function CompartilharPasta({ list, lists = [], meuId, write, onClose }: CompartilharPastaProps) {
+  useVoltarFecha(true, onClose, 'tarefas-compartilhar');
   const toast = useToast();
   const souDono = list.access === 'owner' || list.access === undefined;
   const [itens, setItens] = useState<Compartilhamento[]>([]);

@@ -1299,6 +1299,97 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         return json({ success: true });
       }
 
+      // ═══ Caixa do WhatsApp (📌 no grupo da obra → assistente-webhook › pinParaTarefa) ═══
+      // Quem pode editar a pasta decide cada mensagem: vira tarefa (a tela cria com create_task e
+      // chama wa_item_resolve com o id), vira anotação de uma tarefa, ou é descartada.
+      case 'wa_item_sign':
+      case 'wa_item_resolve':
+      case 'wa_item_discard': {
+        const { data: item, error: itemErr } = await admin.from('task_whatsapp_items')
+          .select('*').eq('id', String(body.item_id ?? '')).maybeSingle();
+        if (itemErr) return json({ error: errMsg(itemErr) }, 500);
+        if (!item) return json({ error: 'Mensagem não encontrada na caixa' }, 404);
+        await assertListEdit(item.list_id as string);
+
+        // Reação do assistente na mensagem do grupo (✅ tarefa, 📝 anotação, '' descartada). Nunca derruba a ação.
+        const reagir = async (emoji: string) => {
+          try {
+            await fetch(`${supabaseUrl}/functions/v1/assistente-webhook`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'x-internal-key': Deno.env.get('ASSISTENTE_INTERNAL_KEY') ?? '' },
+              body: JSON.stringify({ action: 'group_react', group_jid: item.group_jid, message_id: item.message_id, emoji }),
+            });
+          } catch (e) {
+            console.error('[task-write] reação no grupo falhou (ignorado):', e instanceof Error ? e.message : e);
+          }
+        };
+
+        if (action === 'wa_item_sign') {
+          if (!item.media_path) return json({ error: 'Essa mensagem não tem arquivo' }, 400);
+          const { data, error } = await admin.storage.from('task-attachments').createSignedUrl(item.media_path as string, 3600);
+          if (error) return json({ error: errMsg(error) }, 500);
+          return json({ success: true, url: data.signedUrl });
+        }
+
+        if (action === 'wa_item_discard') {
+          const { data: feito } = await admin.from('task_whatsapp_items')
+            .update({ status: 'descartado', decided_by: user.id, decided_at: new Date().toISOString(), media_path: null })
+            .eq('id', item.id).eq('status', 'pendente').select('id');
+          if (!feito?.length) return json({ error: 'Essa mensagem já foi resolvida por outra pessoa' }, 409);
+          if (item.media_path) await admin.storage.from('task-attachments').remove([item.media_path as string]);
+          await reagir('');
+          return json({ success: true });
+        }
+
+        // wa_item_resolve
+        const modo = body.mode === 'anotacao' ? 'anotacao' : body.mode === 'tarefa' ? 'tarefa' : null;
+        const taskId = String(body.task_id ?? '');
+        if (!modo || !taskId) return json({ error: 'mode e task_id são obrigatórios' }, 400);
+        const tarefa = await assertTaskAccess(taskId, modo === 'tarefa' ? 'edit' : 'comment');
+        // Tranca antes de gravar: dois cliques (ou duas pessoas) não resolvem o mesmo item.
+        const { data: trancado } = await admin.from('task_whatsapp_items')
+          .update({ status: modo, task_id: taskId, decided_by: user.id, decided_at: new Date().toISOString() })
+          .eq('id', item.id).eq('status', 'pendente').select('id');
+        if (!trancado?.length) return json({ error: 'Essa mensagem já foi resolvida por outra pessoa' }, 409);
+
+        const quando = item.sent_at
+          ? new Date(item.sent_at as string).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+          : '';
+        const origem = `📌 WhatsApp · ${item.group_name ?? 'grupo'} · ${item.sender_name ?? 'alguém'}${quando ? `, ${quando}` : ''}`;
+        const tenantTarefa = (tarefa.tenant_id as string | null) ?? tenantId;
+        if (modo === 'anotacao') {
+          const texto = `${origem}\n${item.content ?? (item.media_path ? '(arquivo anexado)' : '')}`.trim();
+          const { error } = await admin.from('task_comments')
+            .insert({ tenant_id: tenantTarefa, task_id: taskId, user_id: user.id, body: texto, mentions: [] });
+          if (error) return json({ error: errMsg(error) }, 500);
+        }
+        // O arquivo já está no bucket de anexos: vira anexo da tarefa sem copiar. A partir daí o dono
+        // do arquivo é o anexo (apagar o anexo apaga o arquivo), então o item solta a referência.
+        let aviso: string | null = null;
+        if (item.media_path) {
+          const ext = String(item.media_path).split('.').pop() ?? 'bin';
+          const nome = String(item.media_name || `whatsapp-${String(item.kind)}-${String(item.message_id).slice(-6)}.${ext}`)
+            .replace(/[^a-zA-Z0-9.\-_ ]/g, '').slice(0, 120) || `whatsapp.${ext}`;
+          const { error } = await admin.from('task_attachments').insert({
+            tenant_id: tenantTarefa, task_id: taskId, file_name: nome, file_path: item.media_path,
+            mime_type: item.media_mime ?? null, size_bytes: item.media_size ?? null, uploaded_by: user.id,
+          });
+          if (error) {
+            // A decisão fica valendo; o arquivo continua no item (não some) e a tela avisa.
+            console.error('[task-write] anexo do WhatsApp falhou:', errMsg(error));
+            aviso = 'A mensagem foi para a tarefa, mas o arquivo não foi anexado. Anexe de novo pela tarefa.';
+          } else {
+            await admin.from('task_whatsapp_items').update({ media_path: null }).eq('id', item.id);
+          }
+        }
+        await admin.from('task_activity').insert({
+          tenant_id: tenantTarefa, task_id: taskId, user_id: user.id,
+          action: modo === 'tarefa' ? 'whatsapp_task' : 'whatsapp_note', payload: { grupo: item.group_name, de: item.sender_name },
+        });
+        await reagir(modo === 'tarefa' ? '✅' : '📝');
+        return json({ success: true, warning: aviso });
+      }
+
       // ═══ Templates de checklist ═══
       case 'create_checklist_template': {
         const { name, items } = body;

@@ -37,6 +37,7 @@ import AvisoInsumoZerado from '@/components/feature/AvisoInsumoZerado';
 import EstoqueZerarModal from './components/EstoqueZerarModal';
 import { useEstoqueAlertaPDV, type InsumoZerando } from '@/hooks/useEstoqueAlertaPDV';
 import { useDeliveryState } from '@/hooks/useDeliveryState';
+import { useCaixaPing } from '@/hooks/useCaixaPing';
 
 type ModalState = 'none' | 'opcoes' | 'destino' | 'pagamento' | 'sangria'
   | 'iniciar_sessao' | 'abertura_caixa' | 'fechar_sessao' | 'abrir_mesa';
@@ -412,6 +413,9 @@ function PDVOperacional({ onAbrirFechamento }: PDVOperacionalProps) {
     document.addEventListener('visibilitychange', handleVisibility);
     return () => document.removeEventListener('visibilitychange', handleVisibility);
   }, [loadMovimentacoes]);
+
+  // Mudou fora daqui (assistente, financeiro, outro caixa): o PDV não tem botão de atualizar
+  useCaixaPing(user?.tenantId, loadMovimentacoes);
 
   // Global number map for quick-add by number
   const numberToItem = new Map<number, Item>(

@@ -3,7 +3,7 @@
  * Dono: com login (invokeWithAuth). Público: pelo token do link, sem login.
  */
 import { invokeWithAuth, resolveAccessToken, compressImage, SUPABASE_URL, SUPABASE_ANON_KEY } from '@/lib/supabase';
-import { MODO_DEMO } from '../demo/modoDemo';
+import { modoDemo } from '../demo/modoDemo';
 
 export type StatusItem = 'open' | 'answered' | 'resolved';
 
@@ -145,7 +145,7 @@ type Resp<T> = { ok: true; data: T } | { ok: false; error: string; status?: numb
 // ── Dono ──
 
 export async function chamarDono<T = Record<string, unknown>>(action: string, payload: Record<string, unknown> = {}): Promise<Resp<T>> {
-  if (MODO_DEMO) {
+  if (modoDemo()) {
     const { demoDono } = await import('./demo');
     try { return { ok: true, data: (await demoDono(action, payload)) as T }; } catch (e) { return { ok: false, error: (e as Error).message }; }
   }

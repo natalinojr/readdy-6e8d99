@@ -5,11 +5,16 @@
 import type { ReactNode } from 'react';
 import { brl, dataBR, hojeISO, somaDias, type Pagamento as Pag } from '../api';
 import type { Rascunho } from '../rascunho';
+import { Comprovante, Texto } from '../pedidos/ui';
 
 interface Props {
   r: Rascunho;
   onMudar: (patch: Partial<Rascunho>) => void;
   onContinuar: () => void;
+  /** Tem 'pag_reembolso': mostra "Paguei do meu bolso" (vira pedido de reembolso ligado à compra). */
+  reembolso?: { nome: string; pix: string } | null;
+  /** Só tem 'pag_reembolso' (não recebe mercadoria): as outras formas dariam "sem permissão" no fim. */
+  soReembolso?: boolean;
 }
 
 const FORMAS_PAGAS = ['PIX', 'Cartão Débito', 'Transferência']; // crédito: o extrato só traz a fatura, a conta nunca baixaria
@@ -51,6 +56,11 @@ function Chips({ opcoes, valor, onValor }: { opcoes: { v: string; label: string 
 export function pagamentoValido(r: Rascunho): boolean {
   if (!r.pagamento) return false;
   if (r.pagamento === 'a_pagar') return /^\d{4}-\d{2}-\d{2}$/.test(r.vencimento);
+  if (r.pagamento === 'reembolso') {
+    const e = r.reembolso;
+    // Cupom lido na SEFAZ (chave de 44 dígitos) já é o comprovante
+    return !!e && !!e.nome.trim() && !!e.pix.trim() && (!!e.foto || (r.chave ?? '').replace(/\D/g, '').length === 44);
+  }
   return true;
 }
 
@@ -71,13 +81,14 @@ export function descreverPagamento(r: Rascunho): string {
     case 'pago': return `Já pago · ${r.forma} (o extrato confirma)`;
     case 'a_pagar': return `A pagar · ${r.forma === 'Boleto' ? 'Boleto' : 'PIX'} · vence ${dataBR(r.vencimento)}`;
     case 'bonificacao': return 'Bonificação (sem custo)';
+    case 'reembolso': return `Paguei do bolso · reembolso para ${r.reembolso?.nome ?? '—'} (o financeiro aprova)`;
     default: return '—';
   }
 }
 
-export default function Pagamento({ r, onMudar, onContinuar }: Props) {
+export default function Pagamento({ r, onMudar, onContinuar, reembolso, soReembolso }: Props) {
   const nota = r.origem === 'nota';
-  const soBoleto = nota && !!r.pagInfo?.so_boleto;
+  const soBoleto = (nota && !!r.pagInfo?.so_boleto) || !!soReembolso;
   const bonificacaoOk = !nota || r.pagInfo?.bonificacao_ok !== false;
   const parcelas = r.pagInfo?.parcelas ?? [];
   const formasNota = r.pagInfo?.formas ?? [];
@@ -106,7 +117,7 @@ export default function Pagamento({ r, onMudar, onContinuar }: Props) {
         />
       )}
 
-      {soBoleto && (
+      {soBoleto && !soReembolso && (
         <p className="text-sm text-zinc-500 px-1">Essa nota tem boleto. Se foi pago de outro jeito, avise o financeiro — só ele muda a forma de pagamento.</p>
       )}
 
@@ -128,7 +139,7 @@ export default function Pagamento({ r, onMudar, onContinuar }: Props) {
         <Chips opcoes={FORMAS_PAGAS.map((f) => ({ v: f, label: f }))} valor={r.forma} onValor={(v) => onMudar({ forma: v })} />
       </Opcao>}
 
-      {!nota && (
+      {!nota && !soReembolso && (
         <Opcao
           ativo={r.pagamento === 'a_pagar'}
           onClick={() => escolher('a_pagar')}
@@ -153,6 +164,24 @@ export default function Pagamento({ r, onMudar, onContinuar }: Props) {
                 className="mt-2 w-full border border-zinc-200 rounded-xl px-3 py-2.5 text-base"
               />
             </div>
+          </div>
+        </Opcao>
+      )}
+
+      {!nota && reembolso && (
+        <Opcao
+          ativo={r.pagamento === 'reembolso'}
+          onClick={() => onMudar({ pagamento: 'reembolso', reembolso: r.reembolso ?? { nome: reembolso.nome, pix: reembolso.pix, foto: null } })}
+          icone="ri-refund-2-line"
+          titulo="Paguei do meu bolso"
+          sub="Vira pedido de reembolso por Pix — o financeiro aprova antes de pagar"
+        >
+          <div className="space-y-3">
+            <Texto label="Quem pagou" valor={r.reembolso?.nome ?? ''} onValor={(v) => onMudar({ reembolso: { ...(r.reembolso ?? { nome: '', pix: '', foto: null }), nome: v } })} />
+            <Texto label="Chave Pix" valor={r.reembolso?.pix ?? ''} onValor={(v) => onMudar({ reembolso: { ...(r.reembolso ?? { nome: '', pix: '', foto: null }), pix: v } })} placeholder="CPF, celular, e-mail ou chave aleatória" />
+            {(r.chave ?? '').replace(/\D/g, '').length === 44
+              ? <p className="text-xs text-zinc-500 px-1">O cupom lido na SEFAZ já vale como comprovante.</p>
+              : <Comprovante arquivo={r.reembolso?.foto ?? null} onArquivo={(f) => onMudar({ reembolso: { ...(r.reembolso ?? { nome: '', pix: '', foto: null }), foto: f } })} obrigatorio />}
           </div>
         </Opcao>
       )}

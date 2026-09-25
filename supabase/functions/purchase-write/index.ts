@@ -100,7 +100,9 @@ function computePurchaseItems(tenant_id: string, items: unknown): ComputedItem[]
 // units_per_package/pack_count; o assistente (cupom) não mandava, e o item entrava 1:1 — "4 un" de
 // milho 170 g viravam 4 g no estoque. Sem conversão explícita, resolve pelo insumo: mesma unidade → 1;
 // kg↔g e L↔ml → 1000; embalagem memorizada no insumo (purchase_unit + purchase_factor ≠ 1) quando a
-// unidade bate. Não deu → mantém 1:1 e devolve aviso para quem chamou perguntar.
+// unidade bate. Não deu → o item fica SEM insumo (fora do estoque) e volta aviso: a conversão é
+// informada na Classificação de itens, que também refaz as compras antigas (dono, 2026-09-24 — nunca 1:1
+// por falta de informação: "1 un = 1 g" inflava o custo da grama).
 const UNIT_ALIAS: Record<string, string> = {
   unit: 'un', un: 'un', und: 'un', unid: 'un', unidade: 'un', unidades: 'un', pc: 'un', pca: 'un', 'pç': 'un',
   kg: 'kg', kgs: 'kg', quilo: 'kg', g: 'g', gr: 'g', grama: 'g', gramas: 'g', l: 'l', lt: 'l', litro: 'l', litros: 'l', ml: 'ml',
@@ -134,7 +136,9 @@ async function applyIngredientConversions(supabase: any, tenant_id: string, rawI
     else if (METRIC[`${de}>${para}`]) f = METRIC[`${de}>${para}`];
     else if (fatorInsumo > 0 && fatorInsumo !== 1 && normUnit(ing.purchase_unit) === de) f = fatorInsumo;
     if (f == null) {
-      avisos.push(`${c.description}: comprado em "${c.unit_label}" e o insumo "${ing.name}" é controlado em "${ing.unit}" — sem conversão, entrou 1:1. Informe units_per_package (quanto 1 ${c.unit_label} vale em ${ing.unit}) ou corrija o cadastro do insumo.`);
+      avisos.push(`${c.description}: comprado em "${c.unit_label}" e o insumo "${ing.name}" é controlado em "${ing.unit}" — sem conversão, ficou sem insumo (fora do estoque). Informe quanto 1 ${c.unit_label} vale em ${ing.unit} na Classificação de itens.`);
+      c.ingredient_id = null;
+      c.cost_per_base_unit = null;
       return;
     }
     if (f !== 1) {

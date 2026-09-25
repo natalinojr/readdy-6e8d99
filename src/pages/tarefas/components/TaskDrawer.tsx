@@ -82,6 +82,8 @@ const ACTIVITY_LABEL: Record<string, string> = {
   time_added: 'lançou tempo manualmente',
   checklist_template_applied: 'aplicou um template de checklist',
   attachment_added: 'anexou um arquivo',
+  whatsapp_task: 'criou a partir de uma mensagem do WhatsApp (📌)',
+  whatsapp_note: 'anotou uma mensagem do WhatsApp (📌)',
 };
 
 function fmtDateTime(iso: string): string {

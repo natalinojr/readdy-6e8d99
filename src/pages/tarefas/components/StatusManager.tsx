@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { X, Plus, Trash2, ChevronUp, ChevronDown } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
 import type { TaskList, TaskStatus } from '../hooks/useTarefas';
+import { useVoltarFecha } from '@/lib/voltarAndroid';
 
 interface StatusManagerProps {
   list: TaskList;
@@ -29,6 +30,7 @@ const CATEGORIAS: Array<{ value: TaskStatus['category']; label: string }> = [
  * quando o nome do status é livre.
  */
 export default function StatusManager({ list, write, onClose }: StatusManagerProps) {
+  useVoltarFecha(true, onClose, 'tarefas-status');
   const toast = useToast();
   const [criando, setCriando] = useState(false);
   const [nome, setNome] = useState('');

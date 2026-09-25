@@ -6,6 +6,7 @@ import { montarArvorePastas, achatarArvore } from '../../lib/pastas';
 import { diaLocal, filtrarModelo, resumirModelo, gravarExibicaoPastas, type ExibicaoModelo } from '../../lib/modeloEstrutura';
 import { chamarModelos, textoResumo, type ModeloEstrutura } from './api';
 import ArvoreModelo from './ArvoreModelo';
+import { useVoltarFecha } from '@/lib/voltarAndroid';
 
 interface Props {
   modelos: ModeloEstrutura[];
@@ -21,6 +22,7 @@ interface Props {
 
 /** Cria uma pasta nova (com tudo o que o modelo tem) a partir de um modelo. */
 export default function AplicarModelo({ modelos, modeloIdInicial, parentIdInicial, lists, tenantId, nomeUsuario, onCriado, onFechar }: Props) {
+  useVoltarFecha(true, onFechar, 'tarefas-aplicar-modelo');
   const toast = useToast();
   const [modeloId, setModeloId] = useState(modeloIdInicial ?? modelos[0]?.id ?? '');
   const modelo = modelos.find((m) => m.id === modeloId) ?? null;

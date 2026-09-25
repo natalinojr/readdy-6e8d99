@@ -325,8 +325,9 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
   // Conversa com as pessoas da loja (2026-09-23): seção na lista + camada por cima do painel.
   const equipe = useEquipeNoChat({
     ativo: user?.email?.toLowerCase() === ASSISTENTE_OWNER_EMAIL,
-    abrirPainel: () => { setVista('lista'); setModo('full'); },
+    abrirPainel: () => { setVista('lista'); setSecaoLista('equipe'); setModo('full'); },
     fecharPainel: variant === 'floating' ? () => setModo('fab') : undefined,
+    semTitulo: true,
   });
   // null = este toque não conta como "puxar para abrir" (começou numa lista que rola, campo, botão).
   const arrasteY = useRef<number | null>(null);
@@ -398,6 +399,9 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
   const [vista, setVista] = useState<'lista' | 'conversa'>('lista');
   const [conversas, setConversas] = useState<TopicoResumo[]>([]);
   const [grupos, setGrupos] = useState<GrupoResumo[]>([]);
+  // A lista virou três abas (dono, 2026-09-24: "muito embolado"): assistente, equipe e grupos do
+  // WhatsApp não ficam mais empilhados numa rolagem só.
+  const [secaoLista, setSecaoLista] = useState<'assistente' | 'equipe' | 'grupos'>('assistente');
   // Caixa de pendências no chat (2026-09-18): saiu do sino. Abre pelo botão ao lado das ações
   // rápidas, no painel inteiro (dono: a faixa fixa no topo tomava a conversa). `pendVersao`
   // recarrega a caixa depois de um pagamento (o trigger fecha a pendência quando o Inter confirma).
@@ -601,7 +605,8 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
   // volta para a lista, depois o painel fecha. No chat embutido (página Assistente) não vale — lá
   // o voltar tem de sair da página, como em qualquer tela.
   useVoltarFecha(variant === 'floating' && open, () => setModo('fab'), 'assistente-painel');
-  useVoltarFecha(open && vista === 'conversa', () => setVista('lista'), 'assistente-conversa');
+  // Na barrinha pequena (mini) não há lista à vista: o voltar fecha a barrinha direto.
+  useVoltarFecha(open && vista === 'conversa' && (modo === 'full' || variant === 'embedded'), () => setVista('lista'), 'assistente-conversa');
   // Ações rápidas em tela cheia são mais uma camada: o voltar fecha só elas.
   useVoltarFecha(open && menuAcoes && (modo === 'full' || variant === 'embedded'), () => setMenuAcoes(false), 'assistente-acoes');
   useVoltarFecha(open && pendAberta, () => setPendAberta(false), 'assistente-pendencias');
@@ -1148,37 +1153,58 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
     );
   };
 
+  const naoLidasAssistente = conversas.reduce((t, c) => t + (c.unread || 0), 0);
+  const naoLidasGrupos = grupos.reduce((t, g) => t + (g.unread || 0), 0);
+  const abasLista = [
+    { id: 'assistente' as const, label: 'Assistente', icone: 'ri-robot-2-line', n: naoLidasAssistente, cor: 'bg-violet-600' },
+    { id: 'equipe' as const, label: 'Equipe', icone: 'ri-team-line', n: equipe.naoLidas, cor: 'bg-sky-600' },
+    ...(grupos.length ? [{ id: 'grupos' as const, label: 'Grupos', icone: 'ri-whatsapp-line', n: naoLidasGrupos, cor: 'bg-emerald-600' }] : []),
+  ];
+  const secaoVisivel = secaoLista === 'grupos' && !grupos.length ? 'assistente' : secaoLista;
+
   const listaConversas = (
-    <div className="flex-1 overflow-y-auto bg-white">
-      {ASSUNTOS.map((a) => {
-        const c = conversas.find((x) => x.topic === a.id);
-        return linhaConversa({ chave: a.id, icone: a.icon, cor: a.cor, titulo: a.label, unread: c?.unread ?? 0, last: c?.last ?? null, abrir: () => abrirConversa(a.id) });
-      })}
-      {/* Depois dos assuntos, antes dos grupos (dono, 2026-09-19): é para acompanhar a sequência
-          inteira de vez em quando, não é a conversa do dia a dia. */}
-      <button
-        onClick={() => abrirConversa('')}
-        className="w-full flex items-center gap-3 px-4 py-3 border-b border-zinc-100 hover:bg-zinc-50 cursor-pointer text-left"
-      >
-        <span className="w-11 h-11 flex-shrink-0 flex items-center justify-center rounded-full bg-violet-50 text-violet-600 border border-violet-100">
-          <i className="ri-chat-3-line text-xl" />
-        </span>
-        <span className="flex-1 min-w-0">
-          <span className="block text-sm font-black text-zinc-900">Todas as mensagens</span>
-          <span className="block text-xs text-zinc-400 truncate">A conversa inteira, sem separar por assunto</span>
-        </span>
-      </button>
-      {/* Pessoas da loja (2026-09-23): conversa direta com alguém da equipe. */}
-      {equipe.secao}
-      {/* Grupos do WhatsApp (2026-09-17): cada grupo é uma conversa, com tudo que veio dele. */}
-      {grupos.length > 0 && (
-        <p className="px-4 pt-3 pb-1 text-[11px] font-bold uppercase tracking-wide text-zinc-400">Grupos do WhatsApp</p>
-      )}
-      {grupos.map((g) => linhaConversa({
-        chave: `${PREFIXO_GRUPO}${g.group_jid}`, icone: 'ri-whatsapp-line', cor: 'bg-emerald-50 text-emerald-600', titulo: g.name,
-        unread: g.unread, last: g.last, abrir: () => abrirConversa(`${PREFIXO_GRUPO}${g.group_jid}`),
-      }))}
-    </div>
+    <>
+      <div className="flex gap-1 p-1 mx-3 mt-2 mb-1 rounded-xl bg-zinc-100 flex-shrink-0" role="tablist" aria-label="Conversas">
+        {abasLista.map((t) => {
+          const ativa = t.id === secaoVisivel;
+          return (
+            <button key={t.id} role="tab" aria-selected={ativa} onClick={() => setSecaoLista(t.id)}
+              className={`flex-1 min-w-0 flex items-center justify-center gap-1.5 h-9 rounded-lg text-xs font-bold cursor-pointer transition-colors ${ativa ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'}`}>
+              <i className={`${t.icone} text-sm`} />
+              <span className="truncate">{t.label}</span>
+              {t.n > 0 && (
+                <span className={`min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full text-white text-[10px] font-black ${t.cor}`} aria-label={`${t.n} não lida(s)`}>
+                  {t.n > 99 ? '99+' : t.n}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+      <div className="flex-1 overflow-y-auto bg-white">
+        {secaoVisivel === 'assistente' && (
+          <>
+            {ASSUNTOS.map((a) => {
+              const c = conversas.find((x) => x.topic === a.id);
+              return linhaConversa({ chave: a.id, icone: a.icon, cor: a.cor, titulo: a.label, unread: c?.unread ?? 0, last: c?.last ?? null, abrir: () => abrirConversa(a.id) });
+            })}
+            {/* Depois dos assuntos (dono, 2026-09-19): é para acompanhar a sequência inteira de vez em
+                quando, não é a conversa do dia a dia — por isso um link discreto, não mais uma linha. */}
+            <button onClick={() => abrirConversa('')}
+              className="w-full flex items-center justify-center gap-1.5 py-3 text-xs font-semibold text-violet-600 hover:bg-violet-50 cursor-pointer">
+              <i className="ri-chat-3-line" /> Ver todas as mensagens juntas
+            </button>
+          </>
+        )}
+        {/* Pessoas da loja (2026-09-23): conversa direta com alguém da equipe. */}
+        {secaoVisivel === 'equipe' && equipe.secao}
+        {/* Grupos do WhatsApp (2026-09-17): cada grupo é uma conversa, com tudo que veio dele. */}
+        {secaoVisivel === 'grupos' && grupos.map((g) => linhaConversa({
+          chave: `${PREFIXO_GRUPO}${g.group_jid}`, icone: 'ri-whatsapp-line', cor: 'bg-emerald-50 text-emerald-600', titulo: g.name,
+          unread: g.unread, last: g.last, abrir: () => abrirConversa(`${PREFIXO_GRUPO}${g.group_jid}`),
+        }))}
+      </div>
+    </>
   );
 
   const painel = (
@@ -1605,10 +1631,10 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
       onClick={() => {
         if (ignorarCliqueFab.current) { ignorarCliqueFab.current = false; return; }
         if (temNovidade && naoLidas.topic) { setAba(naoLidas.topic); setVista('conversa'); }
-        else if (temNovidade) setVista('lista'); // veio de assuntos diferentes: escolha na lista
+        else if (temNovidade) { setVista('lista'); setSecaoLista('assistente'); } // veio de assuntos diferentes: escolha na lista
         // Mensagem de alguém da equipe: abre na lista, onde está a conversa com a pessoa.
         const irEquipe = !temNovidade && equipe.naoLidas > 0;
-        if (irEquipe) setVista('lista');
+        if (irEquipe) { setVista('lista'); setSecaoLista('equipe'); }
         // Pendência esperando: abre na lista, com a caixa aberta no topo.
         const irPendencias = !temNovidade && !irEquipe && pendNovas > 0;
         if (irPendencias) setPendAberta(true);

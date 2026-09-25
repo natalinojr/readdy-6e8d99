@@ -11,6 +11,7 @@ import { chamarModelos, textoResumo, type ModeloEstrutura } from './api';
 import ArvoreModelo from './ArvoreModelo';
 import OpcoesModeloForm from './OpcoesModeloForm';
 import ConfirmDialog from '../ConfirmDialog';
+import { useVoltarFecha } from '@/lib/voltarAndroid';
 
 export type ModoEditor = { tipo: 'novo'; listId: string } | { tipo: 'editar'; modelo: ModeloEstrutura };
 
@@ -36,6 +37,7 @@ function idsDaSubarvore(lists: TaskList[], listId: string): string[] {
  * uma pasta e voltar a uma versão anterior.
  */
 export default function ModeloEditor({ modo, lists, modelos, tenantId, nomeUsuario, onSalvo, onFechar }: Props) {
+  useVoltarFecha(true, onFechar, 'tarefas-modelo-editor');
   const toast = useToast();
   const existente = modo.tipo === 'editar' ? modo.modelo : null;
   const [nome, setNome] = useState(existente?.name ?? lists.find((l) => modo.tipo === 'novo' && l.id === modo.listId)?.name ?? '');

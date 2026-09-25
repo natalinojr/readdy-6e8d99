@@ -177,8 +177,9 @@ function candidatesText(c: Candidates): string {
   return lines.join('\n');
 }
 
-// Vínculos memorizados para as descrições da nota. Mesmo fornecedor primeiro;
-// senão, o vínculo mais recente da mesma descrição em qualquer fornecedor.
+// Memória da notinha (unidade, embalagem e categorias) — só do MESMO fornecedor. Insumo não vem daqui
+// (regra do dono, 2026-09-24): a leitura não sugere insumo; o recebimento só liga o vínculo exato
+// confirmado (Classificação de itens / nota SEFAZ) e o resto fica fora do estoque até ser classificado.
 // deno-lint-ignore no-explicit-any
 async function loadLinks(admin: SupabaseClient, tenantId: string, supplierKey: string, descriptions: string[]): Promise<(dk: string) => any> {
   const descKeys = [...new Set(descriptions.map(normKey).filter(Boolean))];
@@ -188,9 +189,7 @@ async function loadLinks(admin: SupabaseClient, tenantId: string, supplierKey: s
       .eq('tenant_id', tenantId).in('description_key', descKeys)
     : { data: [] };
   return (dk: string) => {
-    const rows = (links ?? []).filter((l) => l.description_key === dk);
-    return rows.find((l) => supplierKey && l.supplier_key === supplierKey)
-      ?? rows.sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)))[0] ?? null;
+    return (links ?? []).find((l) => l.description_key === dk && supplierKey && l.supplier_key === supplierKey) ?? null;
   };
 }
 
@@ -216,31 +215,6 @@ function qrPayment(label: string): string | null {
   if (k.includes('boleto')) return 'Boleto';
   if (k.includes('transfer')) return 'Transferência';
   return null;
-}
-
-// Vínculo por nome, sem IA: nome igual (normalizado) = alta; maioria das palavras em comum = média.
-function nameMatch(desc: string, cand: Candidates): { type: 'catalogo' | 'insumo'; id: string; conf: 'alta' | 'media' } | null {
-  const dk = normKey(desc);
-  const dt = new Set(dk.split(' ').filter((t) => t.length > 1));
-  let best: { type: 'catalogo' | 'insumo'; id: string; score: number } | null = null;
-  const consider = (type: 'catalogo' | 'insumo', id: string, name: string) => {
-    const nk = normKey(name);
-    let score: number;
-    if (nk === dk) score = 1;
-    else {
-      const nt = new Set(nk.split(' ').filter((t) => t.length > 1));
-      const inter = [...dt].filter((t) => nt.has(t)).length;
-      const union = new Set([...dt, ...nt]).size;
-      score = union ? inter / union : 0;
-    }
-    // Empate: catálogo (apresentação) vence insumo — traz embalagem e categorias.
-    if (!best || score > best.score || (score === best.score && type === 'catalogo' && best.type === 'insumo')) best = { type, id, score };
-  };
-  for (const c of cand.catalog) consider('catalogo', c.id, c.name);
-  for (const i of cand.ingredients) consider('insumo', i.id, i.name);
-  const b = best as { type: 'catalogo' | 'insumo'; id: string; score: number } | null;
-  if (!b || b.score < 0.6) return null;
-  return { type: b.type, id: b.id, conf: b.score >= 0.99 ? 'alta' : 'media' };
 }
 
 // deno-lint-ignore no-explicit-any
@@ -294,40 +268,26 @@ async function actionQrcode(admin: SupabaseClient, tenantId: string, body: Recor
   })).filter((it) => it.descricao);
   if (parsed.length === 0) return errResp('Não encontrei itens na consulta da SEFAZ.', 422);
 
-  const cand = await loadCandidates(admin, tenantId);
-  const catById = new Map(cand.catalog.map((x) => [x.id, x]));
-  const ingIds = new Set(cand.ingredients.map((x) => x.id));
   const supplierKey = supplierKeyOf(supplierCnpj, supplierName);
   const linkFor = await loadLinks(admin, tenantId, supplierKey, parsed.map((it) => it.descricao));
 
   const items = parsed.map((it) => {
     const link = linkFor(normKey(it.descricao));
-    let catalogId: string | null = null;
-    let ingredientId: string | null = null;
+    const catalogId: string | null = null;
+    const ingredientId: string | null = null;
     let merchId: string | null = null;
     let dreId: string | null = null;
     let unitLabel = QR_UNITS[it.un] ?? 'un';
     let packCount: number | null = null;
     let packSize: number | null = null;
     let source: 'memoria' | 'ia' | null = null;
-    let confidence = 'alta';
-    if (link && (link.catalog_id ? catById.has(link.catalog_id) : true) && (link.ingredient_id ? ingIds.has(link.ingredient_id) : true)) {
-      catalogId = link.catalog_id ?? null;
-      ingredientId = link.ingredient_id ?? (catalogId ? catById.get(catalogId)?.ingredient_id ?? null : null);
+    const confidence = 'alta';
+    if (link) {
       merchId = link.merchandise_category_id ?? null;
       dreId = link.dre_category_id ?? null;
       if (link.unit_label) unitLabel = link.unit_label;
       if (link.pack_count) { packCount = Number(link.pack_count); packSize = link.pack_size != null ? Number(link.pack_size) : null; }
       source = 'memoria';
-    } else {
-      const m = nameMatch(it.descricao, cand);
-      if (m?.type === 'catalogo') {
-        const c = catById.get(m.id)!;
-        catalogId = c.id; ingredientId = c.ingredient_id; merchId = c.merchandise_category_id; dreId = c.dre_category_id;
-        source = 'ia'; confidence = m.conf;
-      } else if (m?.type === 'insumo') {
-        ingredientId = m.id; source = 'ia'; confidence = m.conf;
-      }
     }
     const gross = round2(it.qtd * it.vunit);
     return {
@@ -466,8 +426,6 @@ async function actionScan(admin: SupabaseClient, tenantId: string, body: Record<
   }
 
   // ── Pós-processamento: valida ids e aplica vínculos memorizados ──
-  const ingById = new Map(cand.ingredients.map((x) => [x.id, x]));
-  const catById = new Map(cand.catalog.map((x) => [x.id, x]));
   const merchIds = new Set(cand.merch.map((x) => x.id));
   const dreIds = new Set(cand.dre.map((x) => x.id));
   const supplierKey = supplierKeyOf(out.fornecedor_cnpj, out.fornecedor_nome);
@@ -479,8 +437,8 @@ async function actionScan(admin: SupabaseClient, tenantId: string, body: Record<
   const items = rawItems.map((it: any) => {
     const dk = normKey(it.descricao);
     const link = linkFor(dk);
-    let catalogId: string | null = null;
-    let ingredientId: string | null = null;
+    const catalogId: string | null = null;
+    const ingredientId: string | null = null;
     let merchId: string | null = merchIds.has(it.categoria_mercadoria_id) ? it.categoria_mercadoria_id : null;
     let dreId: string | null = dreIds.has(it.categoria_dre_id) ? it.categoria_dre_id : null;
     let unitLabel: string = String(it.unidade || 'un');
@@ -488,25 +446,12 @@ async function actionScan(admin: SupabaseClient, tenantId: string, body: Record<
     let packSize: number | null = Number(it.embalagem_conteudo) > 0 ? Number(it.embalagem_conteudo) : null;
     let source: 'memoria' | 'ia' | null = null;
 
-    if (link && (link.catalog_id ? catById.has(link.catalog_id) : true) && (link.ingredient_id ? ingById.has(link.ingredient_id) : true)) {
-      catalogId = link.catalog_id ?? null;
-      ingredientId = link.ingredient_id ?? (catalogId ? catById.get(catalogId)?.ingredient_id ?? null : null);
+    if (link) {
       merchId = link.merchandise_category_id ?? merchId;
-      dreId = link.dre_category_id ?? (ingredientId ? null : dreId);
+      dreId = link.dre_category_id ?? dreId;
       if (link.unit_label) unitLabel = link.unit_label;
       if (link.pack_count) { packCount = Number(link.pack_count); packSize = link.pack_size != null ? Number(link.pack_size) : null; }
       source = 'memoria';
-    } else if (it.vinculo_tipo === 'catalogo' && catById.has(it.vinculo_id)) {
-      const c = catById.get(it.vinculo_id)!;
-      catalogId = c.id;
-      ingredientId = c.ingredient_id;
-      merchId = c.merchandise_category_id ?? merchId;
-      dreId = c.dre_category_id ?? (ingredientId ? null : dreId);
-      source = 'ia';
-    } else if (it.vinculo_tipo === 'insumo' && ingById.has(it.vinculo_id)) {
-      ingredientId = it.vinculo_id;
-      dreId = null;
-      source = 'ia';
     }
 
     const qty = Number(it.quantidade) || 0;

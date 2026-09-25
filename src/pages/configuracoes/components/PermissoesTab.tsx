@@ -46,6 +46,12 @@ const permissoes: Permissao[] = [
   // Qualquer papel pode ter (dono, 2026-09-22): abre só a tela Receber mercadoria (/receber),
   // sem dar a página de Estoque — é o que o Caixa da loja precisa para receber fornecedor.
   { id: 'estoque_receber', categoria: 'Estoque', descricao: 'Receber mercadoria (tela do celular da loja)' },
+  // Módulo Recebimentos e pagamentos (2026-09-24): qualquer papel pode pedir; o pedido só vira
+  // conta a pagar quando quem tem "Aprovar" aprova (padrão: só o Admin).
+  { id: 'pag_reembolso', categoria: 'Pedidos de pagamento', descricao: 'Pedir reembolso (gastou do próprio bolso)' },
+  { id: 'pag_freelancer', categoria: 'Pedidos de pagamento', descricao: 'Pedir pagamento de freelancer' },
+  { id: 'pag_fornecedor', categoria: 'Pedidos de pagamento', descricao: 'Pedir pagamento de fornecedor sem nota' },
+  { id: 'pag_aprovar', categoria: 'Pedidos de pagamento', descricao: 'Aprovar pedidos de pagamento (vira conta a pagar)', somenteGerente: true },
   { id: 'kds_acessar', categoria: 'Cozinha', descricao: 'Acessar KDS (Display de Cozinha)' },
   { id: 'gestor_pedidos_acessar', categoria: 'Cozinha', descricao: 'Acessar Gestor de Pedidos' },
   { id: 'gestor_pedidos_entregar', categoria: 'Cozinha', descricao: 'Marcar pedidos como entregues no Gestor' },
@@ -79,6 +85,7 @@ const defaultPermissoes: Record<Papel, string[]> = {
     'pdv_cancelar_pedido', 'pdv_cancelar_item', 'pdv_estornar_pagamento',
     'garcom_fechar_mesa', 'garcom_transferir_mesa', 'cardapio_editar',
     'estoque_movimentar', 'estoque_inventario', 'estoque_receber',
+    'pag_reembolso', 'pag_freelancer', 'pag_fornecedor',
     'kds_acessar', 'gestor_pedidos_acessar', 'gestor_pedidos_entregar',
     'relatorio_financeiro', 'relatorio_estoque', 'clientes_ver', 'auditoria_ver',
     // Sem `configuracoes_editar`: as abas só valem se o dono abrir a tela para o Gerente.

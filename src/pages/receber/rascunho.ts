@@ -44,6 +44,8 @@ export interface Rascunho {
   obs: string;
   /** Identifica este lançamento: reenviar (sem internet, timeout) não lança de novo. */
   ref: string;
+  /** "Paguei do meu bolso": quem recebe o reembolso (vira pedido para o dono aprovar). */
+  reembolso?: { nome: string; pix: string; foto: File | null };
 }
 
 const novaRef = () => (crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2, 12)}`);

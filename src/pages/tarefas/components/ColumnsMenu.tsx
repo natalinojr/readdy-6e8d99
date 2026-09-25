@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Columns3, Check } from 'lucide-react';
 import type { ColunaDef, ColunaId } from '../lib/colunas';
+import { useVoltarFecha } from '@/lib/voltarAndroid';
 
 interface ColumnsMenuProps {
   disponiveis: ColunaDef[];
@@ -11,6 +12,7 @@ interface ColumnsMenuProps {
 /** Botão + popover pra escolher quais colunas aparecem na view Lista, estilo ClickUp. */
 export default function ColumnsMenu({ disponiveis, visiveis, onChange }: ColumnsMenuProps) {
   const [aberto, setAberto] = useState(false);
+  useVoltarFecha(aberto, () => setAberto(false), 'tarefas-colunas');
 
   const alternar = (id: ColunaId) => {
     onChange(visiveis.includes(id) ? visiveis.filter((v) => v !== id) : [...visiveis, id]);
