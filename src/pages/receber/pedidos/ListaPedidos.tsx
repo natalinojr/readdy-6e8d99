@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { brl, dataBR } from '../api';
 import { ICONE_TIPO, ROTULO_TIPO, chamarPedidos, situacao, type Categoria, type Pedido } from './api';
 import { Categorias } from './ui';
+import JanelaPagamento, { type AvisoPagamento } from './JanelaPagamento';
 
 interface Props {
   modo: 'meus' | 'aprovar';
@@ -18,6 +19,7 @@ export default function ListaPedidos({ modo, tenantId, onErro, onMudou }: Props)
   const [pedidos, setPedidos] = useState<Pedido[] | null>(null);
   const [decididos, setDecididos] = useState<Pedido[]>([]);
   const [categorias, setCategorias] = useState<Categoria[] | null>(null);
+  const [janela, setJanela] = useState<AvisoPagamento | null>(null);
 
   const carregar = useCallback(async () => {
     if (modo === 'meus') {
@@ -33,12 +35,23 @@ export default function ListaPedidos({ modo, tenantId, onErro, onMudou }: Props)
   }, [modo, tenantId, onErro]);
 
   useEffect(() => { setPedidos(null); carregar(); }, [carregar]);
+  // Sempre atualizada (dono, 2026-09-25): aprovou/pagou no computador e o celular, com a tela aberta
+  // de antes, ainda mostrava "Esperando aprovação". Recarrega ao voltar para o app e a cada 30 s.
+  useEffect(() => {
+    const aoVoltar = () => { if (document.visibilityState === 'visible') carregar(); };
+    document.addEventListener('visibilitychange', aoVoltar);
+    window.addEventListener('focus', aoVoltar);
+    const t = window.setInterval(aoVoltar, 30_000);
+    return () => { document.removeEventListener('visibilitychange', aoVoltar); window.removeEventListener('focus', aoVoltar); window.clearInterval(t); };
+  }, [carregar]);
   useEffect(() => {
     if (modo !== 'aprovar') return;
     chamarPedidos<{ categorias: Categoria[] }>('categorias', tenantId).then(({ data }) => setCategorias(data?.categorias ?? []));
   }, [modo, tenantId]);
 
   const depois = () => { carregar(); onMudou?.(); };
+  // Erro de gravar costuma ser "já foi aprovado/recusado" em outro aparelho: mostra e recarrega.
+  const erroERecarrega = useCallback((m: string | null) => { onErro(m); if (m) carregar(); }, [onErro, carregar]);
 
   if (pedidos === null) {
     return (
@@ -52,21 +65,22 @@ export default function ListaPedidos({ modo, tenantId, onErro, onMudou }: Props)
   return (
     <div className="px-4 pt-4 pb-10 space-y-3">
       {modo === 'aprovar' && (
-        <p className="text-sm text-zinc-500 px-1">Aprovado vira conta a pagar e o Pix vai para o 📥 do chat do assistente com o botão Pagar. A conciliação dá baixa pelo extrato.</p>
+        <p className="text-sm text-zinc-500 px-1">Aprovar já pede o seu PIN e manda o Pix pelo Inter. Se preferir pagar depois, ele fica no 📥 do chat. A conciliação dá baixa pelo extrato.</p>
       )}
       {pedidos.length === 0 && (
         <p className="text-center text-sm text-zinc-400 py-10">{modo === 'meus' ? 'Você não fez pedidos nos últimos 60 dias.' : 'Nenhum pedido esperando aprovação.'}</p>
       )}
       {pedidos.map((p) => modo === 'aprovar'
-        ? <CartaoAprovar key={p.id} p={p} tenantId={tenantId} categorias={categorias} onErro={onErro} onFeito={depois} />
-        : <CartaoMeu key={p.id} p={p} tenantId={tenantId} onErro={onErro} onFeito={depois} />)}
+        ? <CartaoAprovar key={p.id} p={p} tenantId={tenantId} categorias={categorias} onErro={erroERecarrega} onFeito={depois} onJanela={setJanela} />
+        : <CartaoMeu key={p.id} p={p} tenantId={tenantId} onErro={erroERecarrega} onFeito={depois} />)}
 
       {modo === 'aprovar' && decididos.length > 0 && (
         <>
           <p className="text-sm font-bold text-zinc-700 px-1 pt-4">Decididos nos últimos 15 dias</p>
-          {decididos.map((p) => <CartaoMeu key={p.id} p={p} tenantId={tenantId} onErro={onErro} onFeito={depois} mostrarQuem />)}
+          {decididos.map((p) => <CartaoMeu key={p.id} p={p} tenantId={tenantId} onErro={erroERecarrega} onFeito={depois} onJanela={setJanela} mostrarQuem />)}
         </>
       )}
+      {janela && <JanelaPagamento aviso={janela} onFechar={() => { setJanela(null); depois(); }} />}
     </div>
   );
 }
@@ -163,17 +177,18 @@ function VerComprovante({ url, pdf, titulo, onFechar }: { url: string; pdf: bool
   );
 }
 
-interface ResultadoPagamento { preparado: boolean; motivo?: string; aviso?: string }
+interface ResultadoPagamento { preparado: boolean; motivo?: string; aviso?: string; pendencia_id?: string | null }
 
-/** Depois de aprovar: o Pix vai para o 📥 do chat com o botão Pagar (PIN), ou avisa por que não foi.
- *  O texto vem do servidor (2026-09-24): "já em andamento"/"já pago" NÃO são para pagar pelo banco. */
-function avisarPagamento(r: ResultadoPagamento | undefined, onErro: (m: string | null) => void) {
+/** Depois de aprovar: Pix preparado → janela que já pede o PIN e paga ali (2026-09-25; antes era um
+ *  alert mandando ao 📥). Sem preparo, avisa por quê — o texto vem do servidor (2026-09-24):
+ *  "já em andamento"/"já pago" NÃO são para pagar pelo banco. */
+function avisarPagamento(r: ResultadoPagamento | undefined, p: Pedido, onErro: (m: string | null) => void, onJanela: (a: AvisoPagamento) => void) {
   if (!r) return;
-  if (r.preparado) window.alert(r.aviso ?? 'O Pix está pronto no 📥 do chat do assistente: toque em Pagar e confirme com o PIN.');
+  if (r.preparado) onJanela({ nome: p.favorecido_nome, valor: p.valor, pendenciaId: r.pendencia_id ?? null, texto: r.aviso ?? 'O Pix está pronto no 📥 do chat do assistente: toque em Pagar e confirme com o PIN.' });
   else onErro(r.aviso ?? `O Pix não foi preparado (${r.motivo ?? 'motivo desconhecido'}). Pague pelo app do banco — a conciliação dá baixa. Ficou um aviso no 📥 do chat.`);
 }
 
-function PagarDeNovo({ p, tenantId, onErro }: { p: Pedido; tenantId: string; onErro: (m: string | null) => void }) {
+function PagarDeNovo({ p, tenantId, onErro, onJanela }: { p: Pedido; tenantId: string; onErro: (m: string | null) => void; onJanela: (a: AvisoPagamento) => void }) {
   const [indo, setIndo] = useState(false);
   const mandar = async () => {
     setIndo(true);
@@ -181,11 +196,11 @@ function PagarDeNovo({ p, tenantId, onErro }: { p: Pedido; tenantId: string; onE
     const { data, erro } = await chamarPedidos<{ pagamento: ResultadoPagamento }>('preparar_pagamento', tenantId, { id: p.id });
     setIndo(false);
     if (erro) { onErro(erro); return; }
-    avisarPagamento(data?.pagamento, onErro);
+    avisarPagamento(data?.pagamento, p, onErro, onJanela);
   };
   return (
     <button type="button" onClick={mandar} disabled={indo} className="mt-3 w-full py-3 rounded-2xl bg-violet-600 active:bg-violet-700 disabled:bg-zinc-200 text-white text-sm font-bold flex items-center justify-center gap-1.5 cursor-pointer">
-      <i className="ri-send-plane-line" /> {indo ? 'Preparando…' : 'Mandar para pagar (assistente)'}
+      <i className="ri-lock-2-line" /> {indo ? 'Preparando…' : 'Pagar agora'}
     </button>
   );
 }
@@ -203,7 +218,7 @@ function Pix({ chave }: { chave: string | null }) {
   );
 }
 
-function CartaoMeu({ p, tenantId, onErro, onFeito, mostrarQuem }: { p: Pedido; tenantId: string; onErro: (m: string | null) => void; onFeito: () => void; mostrarQuem?: boolean }) {
+function CartaoMeu({ p, tenantId, onErro, onFeito, onJanela, mostrarQuem }: { p: Pedido; tenantId: string; onErro: (m: string | null) => void; onFeito: () => void; onJanela?: (a: AvisoPagamento) => void; mostrarQuem?: boolean }) {
   const [cancelando, setCancelando] = useState(false);
   const cancelar = async () => {
     if (!window.confirm('Cancelar este pedido?')) return;
@@ -218,7 +233,7 @@ function CartaoMeu({ p, tenantId, onErro, onFeito, mostrarQuem }: { p: Pedido; t
       <Cabecalho p={p} mostrarQuem={mostrarQuem} />
       {p.status === 'recusada' && p.motivo_recusa && <p className="mt-2 text-sm text-red-700 bg-red-50 rounded-xl px-3 py-2">Motivo: {p.motivo_recusa}</p>}
       {p.status === 'aprovada' && p.decidido_por_nome && <p className="mt-2 text-xs text-zinc-500">Aprovado por {p.decidido_por_nome}{p.pago_em ? ` · pago em ${dataBR(p.pago_em)}` : ''}</p>}
-      {mostrarQuem && p.status === 'aprovada' && !p.pago && <PagarDeNovo p={p} tenantId={tenantId} onErro={onErro} />}
+      {mostrarQuem && onJanela && p.status === 'aprovada' && !p.pago && !p.pix_inter && <PagarDeNovo p={p} tenantId={tenantId} onErro={onErro} onJanela={onJanela} />}
       {!mostrarQuem && p.status === 'pendente' && !p.purchase_id && (
         <button type="button" onClick={cancelar} disabled={cancelando} className="mt-3 w-full py-3 rounded-2xl border-2 border-zinc-200 text-zinc-600 text-sm font-bold cursor-pointer">
           {cancelando ? 'Cancelando…' : 'Cancelar pedido'}
@@ -228,7 +243,7 @@ function CartaoMeu({ p, tenantId, onErro, onFeito, mostrarQuem }: { p: Pedido; t
   );
 }
 
-function CartaoAprovar({ p, tenantId, categorias, onErro, onFeito }: { p: Pedido; tenantId: string; categorias: Categoria[] | null; onErro: (m: string | null) => void; onFeito: () => void }) {
+function CartaoAprovar({ p, tenantId, categorias, onErro, onFeito, onJanela }: { p: Pedido; tenantId: string; categorias: Categoria[] | null; onErro: (m: string | null) => void; onFeito: () => void; onJanela: (a: AvisoPagamento) => void }) {
   const [dre, setDre] = useState<string | null>(p.dre_category_id);
   const [recusando, setRecusando] = useState(false);
   const [motivo, setMotivo] = useState('');
@@ -242,7 +257,7 @@ function CartaoAprovar({ p, tenantId, categorias, onErro, onFeito }: { p: Pedido
     const { data, erro } = await chamarPedidos<{ pagamento?: ResultadoPagamento }>('aprovar', tenantId, { id: p.id, dre_category_id: precisaDre ? dre : null });
     setGravando(false);
     if (erro) { onErro(erro); return; }
-    avisarPagamento(data?.pagamento, onErro);
+    avisarPagamento(data?.pagamento, p, onErro, onJanela);
     onFeito();
   };
   const recusar = async () => {
@@ -278,7 +293,7 @@ function CartaoAprovar({ p, tenantId, categorias, onErro, onFeito }: { p: Pedido
           <BotaoComprovante p={p} tenantId={tenantId} onErro={onErro} />
           <button type="button" onClick={() => setRecusando(true)} disabled={gravando} className="flex-1 py-3 rounded-2xl border-2 border-red-200 text-red-600 text-sm font-bold cursor-pointer">Recusar</button>
           <button type="button" onClick={aprovar} disabled={gravando} className="flex-[1.4] py-3 rounded-2xl bg-emerald-500 active:bg-emerald-600 disabled:bg-zinc-200 text-white text-sm font-bold cursor-pointer">
-            {gravando ? 'Gravando…' : 'Aprovar'}
+            {gravando ? 'Aprovando…' : 'Aprovar e pagar'}
           </button>
         </div>
       )}

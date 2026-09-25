@@ -40,6 +40,8 @@ export interface Pedido {
   created_at: string;
   pago: boolean;
   pago_em: string | null;
+  /** Pix da conta no Inter antes da baixa do extrato: 'aguardando' (aprovar no app do Inter) ou 'pago'. */
+  pix_inter?: 'aguardando' | 'pago' | null;
   tem_comprovante: boolean;
 }
 
@@ -76,7 +78,10 @@ export function situacao(p: Pedido): { texto: string; cor: string } {
   if (p.status === 'pendente') return { texto: 'Esperando aprovação', cor: 'bg-amber-100 text-amber-800' };
   if (p.status === 'recusada') return { texto: 'Recusado', cor: 'bg-red-100 text-red-700' };
   if (p.status === 'cancelada') return { texto: 'Cancelado', cor: 'bg-zinc-100 text-zinc-500' };
-  return p.pago ? { texto: 'Pago', cor: 'bg-emerald-100 text-emerald-700' } : { texto: 'Aprovado · a pagar', cor: 'bg-sky-100 text-sky-700' };
+  if (p.pago) return { texto: 'Pago', cor: 'bg-emerald-100 text-emerald-700' };
+  if (p.pix_inter === 'pago') return { texto: 'Pix enviado · falta a baixa do extrato', cor: 'bg-emerald-100 text-emerald-700' };
+  if (p.pix_inter === 'aguardando') return { texto: 'Pix enviado · aprovar no app do Inter', cor: 'bg-violet-100 text-violet-700' };
+  return { texto: 'Aprovado · a pagar', cor: 'bg-sky-100 text-sky-700' };
 }
 
 /** Comprovante para a Edge: foto reduzida (sobe rápido no 4G); se o navegador não abrir a imagem

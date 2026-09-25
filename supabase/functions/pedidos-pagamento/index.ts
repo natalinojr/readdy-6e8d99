@@ -52,18 +52,28 @@ async function categorias(ctx: Ctx) {
 async function comPagamento(ctx: Ctx, pedidos: any[]) {
   const bills = [...new Set(pedidos.map((p) => p.bill_id).filter(Boolean))];
   const cats = [...new Set(pedidos.map((p) => p.dre_category_id).filter(Boolean))];
-  const [{ data: bs }, { data: cs }] = await Promise.all([
+  const [{ data: bs }, { data: cs }, { data: ps }] = await Promise.all([
     bills.length ? ctx.admin.from('fin_accounts_payable').select('id, status, paid_date').in('id', bills) : Promise.resolve({ data: [] }),
     cats.length ? ctx.admin.from('fin_dre_categories').select('id, name').in('id', cats) : Promise.resolve({ data: [] }),
+    bills.length ? ctx.admin.from('fin_inter_payments').select('bill_id, status').eq('tenant_id', ctx.tenantId).in('bill_id', bills)
+      .in('status', ['sending', 'sent', 'pending_approval', 'approved', 'scheduled', 'paid']) : Promise.resolve({ data: [] }),
   ]);
   const bm = new Map((bs ?? []).map((b: any) => [b.id, b]));
   const cm = new Map((cs ?? []).map((c: any) => [c.id, c.name]));
+  // Pix já saiu pelo Inter mas a conta só vira "paga" na baixa do extrato: sem isto a tela mostrava
+  // "a pagar" + "Mandar para pagar" num pedido já pago (dono, 2026-09-25).
+  const pix = new Map<string, 'pago' | 'aguardando'>();
+  for (const x of (ps ?? []) as any[]) {
+    if (x.status === 'paid') pix.set(x.bill_id, 'pago');
+    else if (!pix.has(x.bill_id)) pix.set(x.bill_id, 'aguardando');
+  }
   return pedidos.map((p) => {
     const b: any = p.bill_id ? bm.get(p.bill_id) : null;
     return {
       ...p,
       categoria: p.dre_category_id ? cm.get(p.dre_category_id) ?? null : null,
       pago: b?.status === 'paid',
+      pix_inter: b && b.status !== 'paid' ? pix.get(p.bill_id) ?? null : null,
       pago_em: b?.status === 'paid' ? b.paid_date : null,
       tem_comprovante: !!p.comprovante_path,
       comprovante_path: undefined,
@@ -178,7 +188,7 @@ const ROTULO: Record<string, string> = { reembolso: 'Reembolso', freelancer: 'Fr
  * A trava continua valendo: chave fora de Fornecedores / Pix permitidos não é preparada; aí a
  * pendência avisa para pagar pelo app do banco (a conciliação dá baixa).
  */
-async function prepararPagamento(ctx: Ctx, pedidoId: string): Promise<{ preparado: boolean; motivo?: string; aviso?: string }> {
+async function prepararPagamento(ctx: Ctx, pedidoId: string): Promise<{ preparado: boolean; motivo?: string; aviso?: string; pendencia_id?: string | null }> {
   const { data: p } = await ctx.admin.from('fin_payment_requests')
     .select('id, tipo, status, valor, favorecido_nome, pix_chave, freelancer_id, bill_id, descricao')
     .eq('id', pedidoId).eq('tenant_id', ctx.tenantId).maybeSingle();
@@ -208,12 +218,13 @@ async function prepararPagamento(ctx: Ctx, pedidoId: string): Promise<{ preparad
     return { preparado: false, motivo: 'já pago pelo Inter', aviso: 'Essa conta já foi paga pelo Inter — falta só a baixa, que sai sozinha pelo extrato.' };
   }
   const titulo = `${ROTULO[p.tipo] ?? 'Pagamento'} aprovado: Pix de ${brl(valor)} para ${p.favorecido_nome}`;
-  const pendenciaPix = (payId: string) => ctx.admin.rpc('fn_pendencia_upsert', {
+  // Devolve o id da pendência: a tela de aprovar paga ali mesmo (PIN) pelo assistente-app › pendencia_pagar.
+  const pendenciaPix = async (payId: string): Promise<string | null> => (await ctx.admin.rpc('fn_pendencia_upsert', {
     p_tenant: ctx.tenantId, p_kind: 'pagamento_pendente', p_ref: payId,
     p_titulo: titulo, p_detalhe: `${chave ? `Chave ${chave}. ` : ''}Toque em Pagar e confirme com o PIN.`,
     p_payload: { payment_id: payId, bill_id: bill.id, pedido_id: p.id }, p_rota: null,
     p_urgencia: 'alta', p_acao_requerida: true, p_origem: 'app', p_reabrir: true,
-  });
+  }))?.data?.id ?? null;
   let motivo = '';
   if (chave) {
     const r = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/inter-bank`, {
@@ -227,9 +238,9 @@ async function prepararPagamento(ctx: Ctx, pedidoId: string): Promise<{ preparad
     const out: any = await r.json().catch(() => ({}));
     const pay = out?.payment;
     if (r.ok && out?.success !== false && pay?.id) {
-      await pendenciaPix(String(pay.id));
+      const pendencia_id = await pendenciaPix(String(pay.id));
       await fecharAvisoPagar('Pix preparado');
-      return { preparado: true };
+      return { preparado: true, pendencia_id };
     }
     motivo = String(out?.error ?? `Inter respondeu ${r.status}`);
     // Já existe Pix em andamento para essa conta (rascunho recente ou aguardando aprovação no Inter):
@@ -243,9 +254,10 @@ async function prepararPagamento(ctx: Ctx, pedidoId: string): Promise<{ preparad
       const noInter = (vivos ?? []).find((x: { status: string }) => !['draft', 'awaiting_pin'].includes(x.status));
       const rascunho = (vivos ?? []).find((x: { status: string; created_at: string }) => ['draft', 'awaiting_pin'].includes(x.status) && Date.now() - new Date(x.created_at).getTime() <= 30 * 60_000);
       const vivo = noInter ?? rascunho ?? null;
-      if (vivo) await pendenciaPix(String(vivo.id));
+      const pendencia_id = vivo ? await pendenciaPix(String(vivo.id)) : null;
       await fecharAvisoPagar('Pix já em andamento');
-      return { preparado: !!vivo && ['draft', 'awaiting_pin'].includes(vivo.status), motivo, aviso: vivo && !['draft', 'awaiting_pin'].includes(vivo.status)
+      const rascunhoVivo = !!vivo && ['draft', 'awaiting_pin'].includes(vivo.status);
+      return { preparado: rascunhoVivo, pendencia_id: rascunhoVivo ? pendencia_id : null, motivo, aviso: vivo && !['draft', 'awaiting_pin'].includes(vivo.status)
         ? 'O Pix dessa conta já foi enviado e está aguardando aprovação no app do Inter. Aprove por lá — não pague de novo.'
         : 'O Pix dessa conta já está preparado no 📥.' };
     }

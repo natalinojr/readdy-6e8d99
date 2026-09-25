@@ -3427,3 +3427,8 @@ Sem SW ativo o POST cai no Vercel e falha — por isso o destino só existe no S
 - **Opções/complementos × estoque:** baixa das opções já existia (`buildOptionDeductions`). O custo delas entra no CMV
   por `src/lib/custoOpcoes.ts` (receita do adicional já vem no `item_price`). Cardápio › **Opções × Estoque** liga as
   opções de mesmo nome em lote (`menu-write` `ligar_opcoes_estoque`); vínculo novo nasce em g/mL sem quantidade.
+- **Aprovar pedido de pagamento já paga (2026-09-25):** `/receber` › Aprovar pedidos → "Aprovar e pagar" abre
+  `JanelaPagamento.tsx` (PIN ali mesmo; mesmo caminho do 📥: `assistente-app` `pendencia_pagar` + `pay`). `pedidos-pagamento`
+  devolve `pendencia_id` ao preparar e `pix_inter` ('aguardando'|'pago') na lista — conta só vira "paga" na baixa do extrato,
+  então Pix já enviado mostra "Pix enviado · …" e esconde o "Pagar agora". Lista recarrega ao voltar ao app e a cada 30 s
+  (aprovou no PC, celular mostrava "Esperando aprovação"). Aprovar 2× já era barrado no banco (`fn_pedido_pagamento_aprovar`).
