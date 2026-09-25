@@ -256,7 +256,7 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
           <label className="block text-xs font-medium text-zinc-600 mb-1">Motivo *</label>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
             {MOTIVOS_FORA_DRE.map(([k, label, ajuda]) => (
-              <button key={k} type="button" onClick={() => setMotivo(k)}
+              <button key={k} type="button" onClick={() => { setMotivo(k); setErro(null); }}
                 className={`text-left px-3 py-2 rounded-lg border cursor-pointer ${motivo === k ? 'bg-violet-600 border-violet-600 text-white' : 'bg-white border-zinc-200 text-zinc-700 hover:bg-zinc-50'}`}>
                 <span className="block text-xs font-semibold">{label}</span>
                 <span className={`block text-[11px] ${motivo === k ? 'text-violet-100' : 'text-zinc-400'}`}>{ajuda}</span>

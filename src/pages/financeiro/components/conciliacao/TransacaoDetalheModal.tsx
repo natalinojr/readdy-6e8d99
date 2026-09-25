@@ -319,6 +319,22 @@ export default function TransacaoDetalheModal({
               </div>
             );
           })()}
+          {transaction.match_kind === 'fora_dre' && transaction.match_detail && (() => {
+            // "Não entra no DRE" (LancarDoExtrato): só o motivo; o undo da edge devolve a linha a pendente
+            const d = transaction.match_detail as Record<string, unknown>;
+            return (
+              <div className="border border-zinc-200 bg-zinc-50 rounded-xl p-3 text-xs space-y-2">
+                <p className="font-semibold text-zinc-800"><i className="ri-eye-off-line mr-1" />Fora do DRE: {String(d.motivo_label ?? transaction.category ?? '')}</p>
+                <p className="text-zinc-600">{d.observacao ? String(d.observacao) + ' · ' : ''}Não virou conta nem compra e não mexe no resultado.</p>
+                {vinculoMsg && <p className="text-red-600">{vinculoMsg}</p>}
+                <button
+                  onClick={() => { if (window.confirm('Desfazer? O pagamento volta a pendente.')) vinculoAction('undo'); }}
+                  disabled={vinculoBusy} className="px-3 py-1.5 bg-white border border-amber-300 text-amber-700 rounded-lg font-semibold hover:bg-amber-50 disabled:opacity-50 cursor-pointer">
+                  {vinculoBusy ? 'Desfazendo...' : 'Desfazer'}
+                </button>
+              </div>
+            );
+          })()}
           {(transaction.match_kind === 'payable' || transaction.match_kind === 'inbound_doc') && transaction.match_detail && (() => {
             const d = transaction.match_detail as Record<string, unknown>;
             const conf = d.confirmed as Record<string, unknown> | undefined;
