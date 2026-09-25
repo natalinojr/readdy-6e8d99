@@ -4,11 +4,12 @@ import { formatCurrency } from '@/lib/formatters';
 
 // Visões das APIs do módulo Financial do iFood (gravadas pela edge ifood-financial na
 // busca diária): Pedidos (Sales), Repasses (Settlements + Anticipations) e Eventos
-// (Financial Events). Mês = competência escolhida na aba iFood.
+// (Financial Events). Mês = competência escolhida na aba iFood; loja = filtro de loja da aba
+// (vazio = todas as lojas iFood desta loja do ERPOS).
 
 export type IfoodApiView = 'pedidos' | 'repasses' | 'eventos';
 
-interface Props { tenantId: string; competence: string; view: IfoodApiView }
+interface Props { tenantId: string; competence: string; view: IfoodApiView; merchantId?: string; nomes?: Record<string, string> }
 
 const dBR = (d?: string | null) => (d ? `${d.slice(8, 10)}/${d.slice(5, 7)}/${d.slice(0, 4)}` : '—');
 const n = (v: unknown) => Number(v ?? 0);
@@ -20,6 +21,7 @@ const monthRange = (c: string) => {
 const STATUS_PT: Record<string, string> = {
   SUCCEED: 'Pago', SUCCESS: 'Pago', PAID: 'Pago', FAILED: 'Falhou', PENDING: 'Pendente', SCHEDULED: 'Agendado', CANCELLED: 'Cancelado',
   CONCLUDED: 'Concluído', CANCELED: 'Cancelado', DISPATCHED: 'Despachado', CONFIRMED: 'Confirmado',
+  CLOSED: 'Fechado', COMPENSATED: 'Compensado',
 };
 const pt = (s?: string | null) => (s ? STATUS_PT[s.toUpperCase()] ?? s : '—');
 // Nomes técnicos que a API devolve em lançamentos, eventos e formas de pagamento.
@@ -34,23 +36,32 @@ const NOME_PT: Record<string, string> = {
   BANK_PAY: 'Pagamento bancário', DIGITAL_WALLET: 'Carteira digital', ONLINE: 'Online', OFFLINE: 'Na entrega',
 };
 const nm = (s?: string | null) => (s ? NOME_PT[s.toUpperCase()] ?? s : '');
-const TIPO_PT: Record<string, string> = { REPASSE: 'Repasse', BOLETO: 'Boleto (loja deve ao iFood)', REGISTRO_RECEBIVEIS: 'Registro de recebíveis' };
+const TIPO_PT: Record<string, string> = {
+  REPASSE: 'Repasse', BOLETO: 'Boleto (loja deve ao iFood)', REGISTRO_RECEBIVEIS: 'Registro de recebíveis',
+  'SALDO POSITIVO': 'Saldo positivo do fechamento', 'SALDO NEGATIVO': 'Saldo negativo do fechamento',
+};
+// Só REPASSE e BOLETO movimentam dinheiro; "saldo positivo/negativo" (CLOSED/COMPENSATED) é a composição
+// do fechamento — somá-los junto com o repasse inflava o total (ex.: 23/09: 989,74 virava 2.603,74).
+const movimentaDinheiro = (t: unknown) => ['REPASSE', 'BOLETO'].includes(String(t ?? '').toUpperCase());
 
 function Empty() {
   return (
     <div className="bg-white rounded-xl border border-zinc-100 p-8 text-center space-y-2">
       <i className="ri-plug-line text-3xl text-zinc-300" />
       <p className="text-sm font-semibold text-zinc-700">Sem dados da API do iFood neste mês</p>
-      <p className="text-xs text-zinc-500 max-w-md mx-auto">Esta visão vem da API do iFood (busca diária às 07h20). Ela só funciona com o app conectado: em teste, com o app de teste e o modo homologação ligados; na loja real, depois da homologação.</p>
+      <p className="text-xs text-zinc-500 max-w-md mx-auto">Esta visão vem da API do iFood (busca todo dia às 07h20 e ao abrir a Conciliação). Se a loja ainda não aparece, autorize-a em <strong>Configurar</strong> › "Autorizar outra loja".</p>
     </div>
   );
 }
 
-export default function IfoodApiViews({ tenantId, competence, view }: Props) {
+export default function IfoodApiViews({ tenantId, competence, view, merchantId, nomes = {} }: Props) {
+  // Filtro de loja do iFood em todas as consultas (sem ele, duas lojas se misturavam).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const porLoja = (q: any) => (merchantId ? q.eq('merchant_id', merchantId) : q);
   const [rows, setRows] = useState<any[]>([]);
   const [antecip, setAntecip] = useState<any[]>([]);
   // Conferência entre fontes, por data de repasse: eventos × relatório de conciliação × liquidação.
-  const [conf, setConf] = useState<{ data: string; eventos: number | null; conciliacao: number | null; liquidado: number | null }[]>([]);
+  const [conf, setConf] = useState<{ merchant: string; data: string; eventos: number | null; conciliacao: number | null; liquidado: number | null }[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [soImpacto, setSoImpacto] = useState(true);
@@ -67,11 +78,11 @@ export default function IfoodApiViews({ tenantId, competence, view }: Props) {
     if (loading || pulou || rows.length > 0 || antecip.length > 0) return;
     setPulou(true);
     const [tabela, col] = view === 'pedidos' ? ['fin_ifood_sales', 'sale_created_at'] : view === 'repasses' ? ['fin_ifood_settlements', 'payment_date'] : ['fin_ifood_events', 'event_at'];
-    supabase.from(tabela).select(col).eq('tenant_id', tenantId).not(col, 'is', null).order(col, { ascending: false }).limit(1).then(({ data }) => {
+    porLoja(supabase.from(tabela).select(col).eq('tenant_id', tenantId)).not(col, 'is', null).order(col, { ascending: false }).limit(1).then(({ data }: { data: Record<string, string>[] | null }) => {
       const ultimo = (data?.[0] as Record<string, string> | undefined)?.[col];
       if (ultimo && ultimo.slice(0, 7) !== mes) setMes(ultimo.slice(0, 7));
     });
-  }, [loading, pulou, rows.length, antecip.length, view, tenantId, mes]);
+  }, [loading, pulou, rows.length, antecip.length, view, tenantId, mes, merchantId]);
 
   useEffect(() => {
     let alive = true;
@@ -80,29 +91,34 @@ export default function IfoodApiViews({ tenantId, competence, view }: Props) {
       setError(null);
       let res: { data: any[] | null; error: { message: string } | null };
       if (view === 'pedidos') {
-        res = await supabase.from('fin_ifood_sales').select('*').eq('tenant_id', tenantId)
+        res = await porLoja(supabase.from('fin_ifood_sales').select('*').eq('tenant_id', tenantId))
           .gte('sale_created_at', `${start}T00:00:00-03:00`).lte('sale_created_at', `${end}T23:59:59-03:00`).order('sale_created_at', { ascending: false }).limit(3000);
       } else if (view === 'repasses') {
         const [s, a, ev, rec] = await Promise.all([
-          supabase.from('fin_ifood_settlements').select('*').eq('tenant_id', tenantId).gte('payment_date', start).lte('payment_date', end).order('payment_date'),
-          supabase.from('fin_ifood_anticipations').select('*').eq('tenant_id', tenantId).gte('anticipated_date', start).lte('anticipated_date', end).order('anticipated_date'),
-          supabase.from('fin_ifood_events').select('expected_settlement, amount').eq('tenant_id', tenantId).eq('has_transfer_impact', true).gte('expected_settlement', start).lte('expected_settlement', end).limit(20000),
-          supabase.from('fin_ifood_entries').select('data_repasse, valor').eq('tenant_id', tenantId).eq('impacto_repasse', true).gte('data_repasse', start).lte('data_repasse', end).limit(50000),
+          porLoja(supabase.from('fin_ifood_settlements').select('*').eq('tenant_id', tenantId)).gte('payment_date', start).lte('payment_date', end).order('payment_date'),
+          porLoja(supabase.from('fin_ifood_anticipations').select('*').eq('tenant_id', tenantId)).gte('anticipated_date', start).lte('anticipated_date', end).order('anticipated_date'),
+          porLoja(supabase.from('fin_ifood_events').select('merchant_id, expected_settlement, amount').eq('tenant_id', tenantId)).eq('has_transfer_impact', true).gte('expected_settlement', start).lte('expected_settlement', end).limit(20000),
+          porLoja(supabase.from('fin_ifood_entries').select('merchant_id, data_repasse, valor').eq('tenant_id', tenantId)).eq('impacto_repasse', true).gte('data_repasse', start).lte('data_repasse', end).limit(50000),
         ]);
         res = s;
         if (alive) {
           setAntecip(a.data ?? []);
+          // Por loja + data: cada loja do iFood tem o próprio repasse (somar lojas com fontes diferentes
+          // — uma só por arquivo, outra pela API — dava "Diferença" falsa).
           const mapa = new Map<string, { eventos: number | null; conciliacao: number | null; liquidado: number | null }>();
-          const soma = (d: string | null, k: 'eventos' | 'conciliacao' | 'liquidado', v: number) => {
+          const soma = (m: string | null, d: string | null, k: 'eventos' | 'conciliacao' | 'liquidado', v: number) => {
             if (!d) return;
-            const x = mapa.get(d) ?? { eventos: null, conciliacao: null, liquidado: null };
+            const key = `${m ?? ''}|${d}`;
+            const x = mapa.get(key) ?? { eventos: null, conciliacao: null, liquidado: null };
             x[k] = (x[k] ?? 0) + v;
-            mapa.set(d, x);
+            mapa.set(key, x);
           };
-          for (const e of ev.data ?? []) soma(e.expected_settlement, 'eventos', n(e.amount));
-          for (const e of rec.data ?? []) soma(e.data_repasse, 'conciliacao', n(e.valor));
-          for (const r of s.data ?? []) if (String(r.type ?? '').toUpperCase() === 'REPASSE') soma(r.payment_date, 'liquidado', n(r.amount));
-          setConf([...mapa.entries()].sort(([x], [y]) => x.localeCompare(y)).map(([data, v]) => ({ data, ...v })));
+          for (const e of ev.data ?? []) soma(e.merchant_id, e.expected_settlement, 'eventos', n(e.amount));
+          for (const e of rec.data ?? []) soma(e.merchant_id, e.data_repasse, 'conciliacao', n(e.valor));
+          for (const r of s.data ?? []) if (String(r.type ?? '').toUpperCase() === 'REPASSE') soma(r.merchant_id, r.payment_date, 'liquidado', n(r.amount));
+          setConf([...mapa.entries()]
+            .map(([k, v]) => ({ merchant: k.split('|')[0], data: k.split('|')[1], ...v }))
+            .sort((x, y) => x.data.localeCompare(y.data) || x.merchant.localeCompare(y.merchant)));
         }
       } else {
         res = await supabase.from('fin_ifood_events').select('*').eq('tenant_id', tenantId)
@@ -114,7 +130,7 @@ export default function IfoodApiViews({ tenantId, competence, view }: Props) {
       setLoading(false);
     })();
     return () => { alive = false; };
-  }, [tenantId, start, end, view]);
+  }, [tenantId, start, end, view, merchantId]);
 
   const eventos = useMemo(() => (soImpacto ? rows.filter((e) => e.has_transfer_impact) : rows), [rows, soImpacto]);
 
@@ -155,6 +171,7 @@ export default function IfoodApiViews({ tenantId, competence, view }: Props) {
     // da API e aparece na composição do líquido — somá-la aqui reduzia o bruto indevidamente.
     const bruto = rows.reduce((s, r) => s + n(r.gross_bag) + n(r.delivery_fee), 0);
     const saldo = rows.reduce((s, r) => s + n(r.sale_balance), 0);
+    const variasLojasP = new Set(rows.map((r) => r.merchant_id)).size > 1;
     return (
       <div className="bg-white rounded-xl border border-zinc-100 overflow-hidden">
         <div className="px-4 py-3 border-b border-zinc-100 flex flex-wrap gap-4 text-xs text-zinc-600">
@@ -182,7 +199,7 @@ export default function IfoodApiViews({ tenantId, competence, view }: Props) {
                 const quem = [...new Set(patrocinios.map((sp) => (/ifood/i.test(String(sp?.name ?? '')) ? 'iFood' : /merchant|loja/i.test(String(sp?.name ?? '')) ? 'loja' : String(sp?.name ?? ''))))].filter(Boolean).join(' + ');
                 return (
                   <tr key={r.id} className="border-t border-zinc-100 align-top">
-                    <td className="px-3 py-2 font-mono text-xs">#{r.short_id ?? String(r.sale_id).slice(0, 8)}</td>
+                    <td className="px-3 py-2 font-mono text-xs">#{r.short_id ?? String(r.sale_id).slice(0, 8)}{variasLojasP && <span className="block font-sans text-[11px] text-zinc-400">{nomes[r.merchant_id] ?? `Loja ${String(r.merchant_id).slice(0, 8)}`}</span>}</td>
                     <td className="px-3 py-2 text-xs whitespace-nowrap">{r.sale_created_at ? new Date(r.sale_created_at).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : '—'}</td>
                     <td className="px-3 py-2 text-xs">{pt(r.current_status)}</td>
                     <td className="px-3 py-2 text-xs">
@@ -229,6 +246,8 @@ export default function IfoodApiViews({ tenantId, competence, view }: Props) {
       if (vals.length < 2) return { t: 'Só uma fonte', c: 'bg-zinc-100 text-zinc-600' };
       return Math.max(...vals) - Math.min(...vals) <= 0.05 ? { t: 'Conferido', c: 'bg-green-100 text-green-700' } : { t: 'Diferença', c: 'bg-amber-100 text-amber-700' };
     };
+    const variasLojas = new Set(conf.map((c) => c.merchant)).size > 1;
+    const lojaNome = (id: string) => nomes[id] ?? `Loja ${id.slice(0, 8)}`;
     const conta = (a: any) => (a ? `${a.bankName ?? a.bankNumber ?? ''} ag. ${a.branchCode ?? ''} c/c ${String(a.accountNumber ?? '').replace(/.(?=.{4})/g, '•')}${a.accountDigit ? '-' + a.accountDigit : ''}` : '—');
     return (
       <div className="space-y-4">
@@ -236,20 +255,21 @@ export default function IfoodApiViews({ tenantId, competence, view }: Props) {
           <div className="bg-white rounded-xl border border-zinc-100 overflow-hidden">
             <div className="px-4 py-3 border-b border-zinc-100">
               <p className="text-sm font-semibold text-zinc-800">Conferência entre fontes do iFood</p>
-              <p className="text-xs text-zinc-500">Por data de repasse: soma dos eventos financeiros que afetam o repasse × relatório de conciliação × valor liquidado (tipo Repasse). As três devem bater.</p>
+              <p className="text-xs text-zinc-500">Por loja e data de repasse: eventos financeiros que afetam o repasse × relatório de conciliação × valor liquidado. As três devem bater (uma loja só pelo arquivo mostra "Só uma fonte").</p>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm min-w-[640px]">
                 <thead className="bg-zinc-50 text-xs text-zinc-500">
-                  <tr><th className="text-left px-3 py-2">Repasse</th><th className="text-right px-3 py-2">Eventos</th><th className="text-right px-3 py-2">Conciliação</th><th className="text-right px-3 py-2">Liquidado</th><th className="text-left px-3 py-2">Situação</th></tr>
+                  <tr><th className="text-left px-3 py-2">Repasse</th>{variasLojas && <th className="text-left px-3 py-2">Loja</th>}<th className="text-right px-3 py-2">Eventos</th><th className="text-right px-3 py-2">Conciliação</th><th className="text-right px-3 py-2">Liquidado</th><th className="text-left px-3 py-2">Situação</th></tr>
                 </thead>
                 <tbody>
                   {conf.map((c) => {
                     const st = situacao(c);
                     const cel = (v: number | null) => (v === null ? <span className="text-zinc-300">—</span> : formatCurrency(v));
                     return (
-                      <tr key={c.data} className="border-t border-zinc-100">
+                      <tr key={`${c.merchant}|${c.data}`} className="border-t border-zinc-100">
                         <td className="px-3 py-2 whitespace-nowrap">{dBR(c.data)}</td>
+                        {variasLojas && <td className="px-3 py-2 text-xs text-zinc-600">{lojaNome(c.merchant)}</td>}
                         <td className="px-3 py-2 text-right font-mono">{cel(c.eventos)}</td>
                         <td className="px-3 py-2 text-right font-mono">{cel(c.conciliacao)}</td>
                         <td className="px-3 py-2 text-right font-mono">{cel(c.liquidado)}</td>
@@ -266,7 +286,7 @@ export default function IfoodApiViews({ tenantId, competence, view }: Props) {
         <div className="bg-white rounded-xl border border-zinc-100 overflow-hidden">
           <div className="px-4 py-3 border-b border-zinc-100">
             <p className="text-sm font-semibold text-zinc-800">Liquidações do iFood</p>
-            <p className="text-xs text-zinc-500">Total: <strong>{formatCurrency(rows.reduce((s, r) => s + n(r.amount), 0))}</strong> · repasses, boletos e registro de recebíveis com data de pagamento neste mês.</p>
+            <p className="text-xs text-zinc-500">Pago no banco: <strong className="text-green-700">{formatCurrency(rows.filter((r) => String(r.type ?? '').toUpperCase() === 'REPASSE').reduce((s, r) => s + n(r.amount), 0))}</strong> em repasses com data de pagamento neste mês. As linhas em cinza são a composição de cada fechamento (saldos compensados) e não somam.</p>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm min-w-[700px]">
@@ -275,11 +295,11 @@ export default function IfoodApiViews({ tenantId, competence, view }: Props) {
               </thead>
               <tbody>
                 {rows.map((r) => (
-                  <tr key={r.id} className="border-t border-zinc-100">
+                  <tr key={r.id} className={`border-t border-zinc-100 ${movimentaDinheiro(r.type) ? '' : 'text-zinc-400'}`}>
                     <td className="px-3 py-2 whitespace-nowrap">{dBR(r.payment_date)}</td>
-                    <td className="px-3 py-2 text-xs">{TIPO_PT[String(r.type ?? '').toUpperCase()] ?? r.type ?? '—'}{r.product ? <span className="text-zinc-400"> · {r.product}</span> : null}</td>
+                    <td className="px-3 py-2 text-xs">{TIPO_PT[String(r.type ?? '').toUpperCase()] ?? r.type ?? '—'}{r.product ? <span className="text-zinc-400"> · {r.product}</span> : null}{variasLojas && <span className="block text-[11px] text-zinc-400">{lojaNome(r.merchant_id)}</span>}</td>
                     <td className="px-3 py-2 text-xs">{dBR(r.calc_begin)} a {dBR(r.calc_end)}</td>
-                    <td className={`px-3 py-2 text-right font-mono ${n(r.amount) < 0 || String(r.type).toUpperCase() === 'BOLETO' ? 'text-red-600' : 'text-green-700'}`}>{formatCurrency(n(r.amount))}</td>
+                    <td className={`px-3 py-2 text-right font-mono ${!movimentaDinheiro(r.type) ? 'text-zinc-400' : n(r.amount) < 0 || String(r.type).toUpperCase() === 'BOLETO' ? 'text-red-600' : 'text-green-700'}`}>{formatCurrency(n(r.amount))}</td>
                     <td className="px-3 py-2 text-xs">{pt(r.status)}</td>
                     <td className="px-3 py-2 text-xs text-zinc-500">{String(r.status ?? '').toUpperCase() === 'SUCCEED' ? conta(r.account_details) : '—'}</td>
                     <td className="px-3 py-2 text-center">{verApi(r.raw)}</td>

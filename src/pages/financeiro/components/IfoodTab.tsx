@@ -36,12 +36,16 @@ const dataBR = (d: string) => `${d.slice(8, 10)}/${d.slice(5, 7)}/${d.slice(0, 4
 // Mesma regra da edge: receita = entradas e subsídios; taxas = cobranças e retenções.
 // Divisão igual ao Portal do Parceiro — compartilhada com os Relatórios (Origem e Calendário).
 
-function Kpi({ label, value, sub, tone = 'zinc' }: { label: string; value: string; sub?: string; tone?: 'zinc' | 'green' | 'red' | 'amber' }) {
+function Kpi({ label, value, sub, icon, tone = 'zinc' }: { label: string; value: string; sub?: string; icon?: string; tone?: 'zinc' | 'green' | 'red' | 'amber' }) {
   const color = { zinc: 'text-zinc-900', green: 'text-green-700', red: 'text-red-600', amber: 'text-amber-700' }[tone];
+  const iconBg = { zinc: 'bg-zinc-100 text-zinc-600', green: 'bg-green-50 text-green-600', red: 'bg-red-50 text-red-500', amber: 'bg-amber-50 text-amber-600' }[tone];
   return (
-    <div className="bg-white rounded-xl border border-zinc-100 p-4">
-      <p className="text-xs text-zinc-500">{label}</p>
-      <p className={`text-xl font-bold mt-1 ${color}`}>{value}</p>
+    <div className="bg-white rounded-2xl border border-zinc-100 p-4">
+      <div className="flex items-center gap-2">
+        {icon && <span className={`w-7 h-7 flex items-center justify-center rounded-lg ${iconBg}`}><i className={`${icon} text-sm`} /></span>}
+        <p className="text-xs font-medium text-zinc-500">{label}</p>
+      </div>
+      <p className={`text-xl font-bold mt-2 ${color}`}>{value}</p>
       {sub && <p className="text-[11px] text-zinc-400 mt-0.5">{sub}</p>}
     </div>
   );
@@ -64,6 +68,9 @@ export default function IfoodTab() {
   const [apiOn, setApiOn] = useState(false);
   const [homolog, setHomolog] = useState(false);
   const [nomes, setNomes] = useState<Record<string, string>>({});
+  // Lojas do iFood cadastradas (fin_ifood_merchants) e a situação da API (get_config).
+  const [lojasCad, setLojasCad] = useState<{ id: string; curto: string | null }[]>([]);
+  const [api, setApi] = useState<{ ligadas: number; total: number; lastSync: string | null; erro: string | null }>({ ligadas: 0, total: 0, lastSync: null, erro: null });
   const [editLoja, setEditLoja] = useState<{ id: string; curto: string; nome: string; pct: string; dias: string; salvando: boolean; erro: string | null } | null>(null);
   // Repasse antecipado por loja iFood (fin_ifood_merchants.anticipation_pct/days): o relatório traz a data
   // original e não traz a taxa; a edge aplica a data antecipada e a taxa (2026-09-19).
@@ -76,10 +83,13 @@ export default function IfoodTab() {
       supabase.from('fin_ifood_imports')
         .select('id, merchant_id, merchant_short, competence, source, file_name, lines, orders, gross, fees, net, updated_at, expected_lines, expected_orders, integrity_ok')
         .eq('tenant_id', user.tenantId).order('competence', { ascending: false }),
-      invokeWithAuth<{ config?: { post_to_ledger?: boolean; authorized?: boolean; merchant_id?: string | null } | null }>('ifood-financial', { body: { action: 'get_config', tenant_id: user.tenantId } }),
-      supabase.from('fin_ifood_merchants').select('merchant_id, name, anticipation_pct, anticipation_days').eq('tenant_id', user.tenantId),
+      invokeWithAuth<{ config?: { post_to_ledger?: boolean; authorized?: boolean; merchant_id?: string | null; last_sync_at?: string | null; last_sync_error?: string | null; merchants?: { merchant_id: string; api_sync: boolean; authorized: boolean }[] } | null }>('ifood-financial', { body: { action: 'get_config', tenant_id: user.tenantId } }),
+      supabase.from('fin_ifood_merchants').select('merchant_id, merchant_short, name, anticipation_pct, anticipation_days').eq('tenant_id', user.tenantId),
     ]);
-    const merRows = (mer.data ?? []) as { merchant_id: string; name: string | null; anticipation_pct: number | null; anticipation_days: number | null }[];
+    const merRows = (mer.data ?? []) as { merchant_id: string; merchant_short: string | null; name: string | null; anticipation_pct: number | null; anticipation_days: number | null }[];
+    setLojasCad(merRows.map((m) => ({ id: m.merchant_id, curto: m.merchant_short })));
+    const cms = cfg.data?.config?.merchants ?? [];
+    setApi({ ligadas: cms.filter((m) => m.api_sync && m.authorized).length, total: cms.length, lastSync: cfg.data?.config?.last_sync_at ?? null, erro: cfg.data?.config?.last_sync_error ?? null });
     setNomes(Object.fromEntries(merRows.filter((m) => m.name).map((m) => [m.merchant_id, m.name as string])));
     setAntecip(Object.fromEntries(merRows.filter((m) => Number(m.anticipation_pct) > 0).map((m) => [m.merchant_id, { pct: Number(m.anticipation_pct), dias: Number(m.anticipation_days ?? 21) }])));
     if (err) { setError(err.message); setLoading(false); return; }
@@ -201,7 +211,12 @@ export default function IfoodTab() {
 
   const hoje = todayBrasilia();
   const competencias = [...new Set(imports.map((i) => i.competence))];
-  const lojas = [...new Map(imports.map((i) => [i.merchant_id, i.merchant_short || i.merchant_id.slice(0, 8)])).entries()];
+  // Lojas = as que têm relatório importado + as cadastradas (ex.: autorizada na API e ainda sem arquivo).
+  const lojas = [...new Map([
+    ...lojasCad.map((l) => [l.id, l.curto || l.id.slice(0, 8)] as [string, string]),
+    ...imports.map((i) => [i.merchant_id, i.merchant_short || i.merchant_id.slice(0, 8)] as [string, string]),
+  ]).entries()];
+  const nomeCurto = (id: string, curto?: string | null) => nomes[id] ?? `Loja ${curto ?? id.slice(0, 8)}`;
   const nomeLoja = (id: string, curto?: string | null) => (nomes[id] ? `${nomes[id]} (${curto ?? id.slice(0, 8)})` : `Loja ${curto ?? id.slice(0, 8)}`);
 
   const renomearLoja = (id: string) => {
@@ -245,89 +260,115 @@ export default function IfoodTab() {
 
   return (
     <div className="p-4 md:p-6 space-y-4 md:space-y-5">
-      {/* Cabeçalho */}
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="flex items-center gap-2">
-          <div className="w-9 h-9 flex items-center justify-center rounded-xl bg-red-100">
-            <i className="ri-restaurant-2-line text-red-600" />
+      {/* Cabeçalho: título + situação da API; embaixo, lojas (botões), mês e ações. */}
+      <div className="bg-white rounded-2xl border border-zinc-100 p-4 md:p-5 space-y-4">
+        <div className="flex flex-wrap items-start gap-3">
+          <div className="flex items-center gap-3 min-w-0 flex-1">
+            <div className="w-11 h-11 flex items-center justify-center rounded-xl bg-red-600 text-white shadow-sm shrink-0">
+              <i className="ri-restaurant-2-line text-xl" />
+            </div>
+            <div className="min-w-0">
+              <h2 className="text-lg font-bold text-zinc-900 leading-tight">iFood</h2>
+              <p className="text-xs text-zinc-500">Vendas, taxas e repasses por mês de venda</p>
+            </div>
           </div>
-          <div>
-            <h2 className="text-base font-bold text-zinc-900">iFood</h2>
-            <p className="text-xs text-zinc-500">Relatório de conciliação do iFood, por mês de venda</p>
-          </div>
+          {homolog ? (
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-blue-50 text-blue-700 text-xs font-semibold"><i className="ri-flask-line" /> Modo homologação</span>
+          ) : api.ligadas > 0 ? (
+            <span title={api.erro ?? undefined}
+              className={`inline-flex flex-wrap items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${api.erro ? 'bg-amber-50 text-amber-700' : 'bg-green-50 text-green-700'}`}>
+              <span className={`w-2 h-2 rounded-full ${api.erro ? 'bg-amber-500' : 'bg-green-500'}`} />
+              API {api.erro ? 'com aviso' : 'conectada'} · {api.ligadas} de {Math.max(api.total, lojas.length)} loja(s)
+              {api.lastSync && <span className="font-normal opacity-80">· {new Date(api.lastSync).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>}
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-zinc-100 text-zinc-600 text-xs font-semibold"><span className="w-2 h-2 rounded-full bg-zinc-400" /> Só por arquivo</span>
+          )}
         </div>
-        <div className="flex-1" />
-        {lojas.length > 0 && (
-          <div className="flex items-center gap-1">
-            <select value={loja} onChange={(e) => setLoja(e.target.value)}
-              className="border border-zinc-200 rounded-lg px-3 py-2 text-sm bg-white max-w-[260px]">
-              {lojas.length > 1 && <option value="">Todas as lojas iFood</option>}
-              {lojas.map(([id, curto]) => <option key={id} value={id}>{nomeLoja(id, curto)}</option>)}
-            </select>
-            <button onClick={() => renomearLoja(loja || lojas[0][0])} title="Dar nome a esta loja"
-              className="w-9 h-9 flex items-center justify-center border border-zinc-200 rounded-lg text-zinc-500 hover:bg-zinc-50 cursor-pointer">
-              <i className="ri-pencil-line" />
+
+        <div className="flex flex-col lg:flex-row lg:items-center gap-3">
+          {lojas.length > 0 && (
+            <div className="flex items-center gap-1.5 overflow-x-auto -mx-1 px-1 pb-0.5 min-w-0 lg:flex-1">
+              {lojas.length > 1 && (
+                <button onClick={() => setLoja('')}
+                  className={`px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap border cursor-pointer ${loja === '' ? 'bg-zinc-900 border-zinc-900 text-white' : 'bg-white border-zinc-200 text-zinc-600 hover:border-zinc-300'}`}>
+                  Todas as lojas
+                </button>
+              )}
+              {lojas.map(([id, curto]) => {
+                const ativo = loja === id || lojas.length === 1;
+                return (
+                  <span key={id} className={`inline-flex items-center rounded-full border whitespace-nowrap ${ativo ? 'bg-red-50 border-red-300 text-red-700' : 'bg-white border-zinc-200 text-zinc-600 hover:border-zinc-300'}`}>
+                    <button onClick={() => setLoja(id)} title={`Código ${curto}`} className="pl-3 pr-1.5 py-1.5 text-xs font-semibold cursor-pointer">{nomeCurto(id, curto)}</button>
+                    <button onClick={() => renomearLoja(id)} title="Nome e antecipação desta loja"
+                      className="pr-2.5 pl-0.5 py-1.5 text-zinc-400 hover:text-red-600 cursor-pointer"><i className="ri-pencil-line text-xs" /></button>
+                  </span>
+                );
+              })}
+            </div>
+          )}
+          <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+            {competencias.length > 0 && (
+              <select value={competence} onChange={(e) => setCompetence(e.target.value)} aria-label="Mês"
+                className="border border-zinc-200 rounded-lg px-3 py-2 text-sm bg-white capitalize font-semibold text-zinc-800">
+                {competencias.map((c) => <option key={c} value={c}>{compLabel(c)}</option>)}
+              </select>
+            )}
+            {competence && (
+              <button onClick={exportCsv} title="Baixar o relatório de conciliação deste mês em CSV"
+                className="flex items-center gap-1.5 px-3 py-2 border border-zinc-200 text-zinc-700 rounded-lg text-sm font-semibold hover:bg-zinc-50 cursor-pointer whitespace-nowrap">
+                <i className="ri-file-download-line" /><span className="hidden sm:inline">CSV</span>
+              </button>
+            )}
+            {apiOn && (
+              <button onClick={gerarAgora} disabled={ondemand.running} title="Pede ao iFood o relatório de conciliação atualizado deste mês"
+                className="flex items-center gap-1.5 px-3 py-2 border border-red-200 text-red-700 rounded-lg text-sm font-semibold hover:bg-red-50 cursor-pointer whitespace-nowrap disabled:opacity-50">
+                <i className={`ri-refresh-line ${ondemand.running ? 'animate-spin' : ''}`} /> Atualizar do iFood
+              </button>
+            )}
+            <button onClick={() => setShowConfig(true)}
+              className="flex items-center gap-1.5 px-3 py-2 bg-red-600 text-white rounded-lg text-sm font-semibold hover:bg-red-700 cursor-pointer whitespace-nowrap">
+              <i className="ri-settings-3-line" /> Importar e configurar
             </button>
           </div>
+        </div>
+
+        {ondemand.msg && (
+          <div className={`rounded-lg border px-3 py-2 text-xs ${ondemand.error ? 'bg-red-50 border-red-200 text-red-700' : 'bg-blue-50 border-blue-200 text-blue-700'}`}>{ondemand.msg}</div>
         )}
-        {competencias.length > 0 && (
-          <select value={competence} onChange={(e) => setCompetence(e.target.value)}
-            className="border border-zinc-200 rounded-lg px-3 py-2 text-sm bg-white capitalize">
-            {competencias.map((c) => <option key={c} value={c}>{compLabel(c)}</option>)}
-          </select>
-        )}
-        {competence && (
-          <button onClick={exportCsv} title="Baixar o relatório de conciliação deste mês em CSV"
-            className="flex items-center gap-1.5 px-3 py-2 border border-zinc-200 text-zinc-700 rounded-lg text-sm font-semibold hover:bg-zinc-50 cursor-pointer whitespace-nowrap">
-            <i className="ri-file-download-line" /> Exportar CSV
-          </button>
-        )}
-        {apiOn && (
-          <button onClick={gerarAgora} disabled={ondemand.running}
-            className="flex items-center gap-1.5 px-3 py-2 border border-red-300 text-red-700 rounded-lg text-sm font-semibold hover:bg-red-50 cursor-pointer whitespace-nowrap disabled:opacity-50">
-            <i className={`ri-refresh-line ${ondemand.running ? 'animate-spin' : ''}`} /> Gerar relatório agora
-          </button>
-        )}
-        <button onClick={() => setShowConfig(true)}
-          className="flex items-center gap-1.5 px-3 py-2 bg-red-600 text-white rounded-lg text-sm font-semibold hover:bg-red-700 cursor-pointer whitespace-nowrap">
-          <i className="ri-upload-2-line" /> Importar / configurar
-        </button>
       </div>
 
-      {ondemand.msg && (
-        <div className={`rounded-lg border px-3 py-2 text-xs ${ondemand.error ? 'bg-red-50 border-red-200 text-red-700' : 'bg-blue-50 border-blue-200 text-blue-700'}`}>{ondemand.msg}</div>
-      )}
-
       {/* Subabas */}
-      <div className="flex gap-1 border-b border-zinc-100">
-        {([['resumo', 'Resumo'], ['produtos', 'Produtos'], ['pedidos', 'Pedidos'], ['repasses', 'Repasses'], ['eventos', 'Eventos']] as const).map(([k, label]) => (
+      <div className="flex gap-1 overflow-x-auto bg-zinc-100/80 rounded-xl p-1 w-full sm:w-fit">
+        {([['resumo', 'Resumo', 'ri-pie-chart-2-line'], ['produtos', 'Produtos', 'ri-shopping-bag-3-line'], ['pedidos', 'Pedidos', 'ri-file-list-3-line'], ['repasses', 'Repasses', 'ri-bank-line'], ['eventos', 'Eventos', 'ri-pulse-line']] as const).map(([k, label, icon]) => (
           <button key={k} onClick={() => setView(k)}
-            className={`px-3 py-2 text-xs font-semibold border-b-2 cursor-pointer ${view === k ? 'border-red-500 text-red-600' : 'border-transparent text-zinc-400 hover:text-zinc-700'}`}>
-            {label}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap cursor-pointer transition-colors ${view === k ? 'bg-white text-red-600 shadow-sm' : 'text-zinc-500 hover:text-zinc-800'}`}>
+            <i className={icon} /> {label}
           </button>
         ))}
       </div>
 
       {/* Onde entra no resto do financeiro (no modo homologação: dados de teste, nunca lançados) */}
-      {homolog ? (
-        <div className="flex items-start gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">
+      {view === 'resumo' && (homolog ? (
+        <div className="flex items-start gap-2 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">
           <i className="ri-flask-line mt-0.5" />
           <span><strong>Modo homologação:</strong> dados da loja de teste do iFood, buscados com o header de homologação. Eles aparecem aqui para conferência e <strong>não entram</strong> em Receitas, DRE nem Fluxo de Caixa.</span>
         </div>
       ) : (
-      <div className={`flex flex-wrap items-start gap-2 rounded-lg border px-3 py-2 text-xs ${postToLedger ? 'bg-green-50 border-green-200 text-green-800' : 'bg-amber-50 border-amber-200 text-amber-800'}`}>
-        <i className={`${postToLedger ? 'ri-checkbox-circle-line' : 'ri-information-line'} mt-0.5`} />
-        <span className="flex-1 min-w-[220px]">
-          {postToLedger
-            ? <>As vendas do iFood entram em <strong>Receitas</strong>, <strong>DRE</strong> ("Vendas iFood") e <strong>Fluxo de Caixa</strong> na data de cada repasse já pago; as comissões e taxas entram em "Taxas de cartão, Pix e iFood". Receitas e DRE só mostram com a fonte "Conciliação iFood" ligada em Receitas › Fontes.</>
-            : <>Os números abaixo ainda <strong>não entram</strong> na DRE nem em Receitas. Ligue o lançamento para as vendas e as taxas de cada repasse já pago irem para o financeiro.</>}
-        </span>
-        <button onClick={toggleLedger} disabled={togglingLedger || imports.length === 0}
-          className={`px-2.5 py-1 rounded-md border font-semibold cursor-pointer whitespace-nowrap disabled:opacity-50 ${postToLedger ? 'border-green-300 hover:bg-green-100' : 'border-amber-300 hover:bg-amber-100'}`}>
-          {togglingLedger ? 'Salvando...' : postToLedger ? 'Parar de lançar' : 'Lançar no financeiro'}
-        </button>
-      </div>
-      )}
+        <div className={`flex flex-wrap items-center gap-2 rounded-xl border px-3 py-2 text-xs ${postToLedger ? 'bg-green-50/70 border-green-200 text-green-800' : 'bg-amber-50 border-amber-200 text-amber-800'}`}>
+          <i className={postToLedger ? 'ri-checkbox-circle-fill text-green-600' : 'ri-information-line'} />
+          <span className="flex-1 min-w-[220px]">
+            {postToLedger
+              ? <><strong>Lançando no financeiro:</strong> vendas em Receitas, DRE e Fluxo de Caixa, e taxas em &quot;Taxas de cartão, Pix e iFood&quot;, na data de cada repasse pago.</>
+              : <><strong>Fora do financeiro:</strong> estes números ainda não entram na DRE nem em Receitas.</>}
+            <span title="Receitas e DRE só mostram com a fonte &quot;Conciliação iFood&quot; ligada em Receitas › Fontes." className="ml-1 cursor-help opacity-70"><i className="ri-question-line" /></span>
+          </span>
+          <button onClick={toggleLedger} disabled={togglingLedger || imports.length === 0}
+            className={`px-2.5 py-1 rounded-md border font-semibold cursor-pointer whitespace-nowrap disabled:opacity-50 ${postToLedger ? 'border-green-300 hover:bg-green-100' : 'border-amber-300 bg-white hover:bg-amber-100'}`}>
+            {togglingLedger ? 'Salvando...' : postToLedger ? 'Parar de lançar' : 'Lançar no financeiro'}
+          </button>
+        </div>
+      ))}
 
       {error && (
         <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">Falha ao carregar: {error}</div>
@@ -336,7 +377,7 @@ export default function IfoodTab() {
       {view === 'produtos' ? (
         user?.tenantId ? <IfoodProdutos tenantId={user.tenantId} lojaShort={loja ? (lojas.find(([id]) => id === loja)?.[1] ?? null) : null} onImportar={() => setShowConfig(true)} /> : null
       ) : view !== 'resumo' ? (
-        user?.tenantId ? <IfoodApiViews tenantId={user.tenantId} competence={competence || hoje.slice(0, 7)} view={view} /> : null
+        user?.tenantId ? <IfoodApiViews tenantId={user.tenantId} competence={competence || hoje.slice(0, 7)} view={view} merchantId={loja || undefined} nomes={nomes} /> : null
       ) : !loading && imports.length === 0 ? (
         <div className="bg-white rounded-xl border border-zinc-100 p-8 text-center space-y-2">
           <i className="ri-file-excel-2-line text-3xl text-zinc-300" />
@@ -352,28 +393,65 @@ export default function IfoodTab() {
         </div>
       ) : (
         <>
-          {/* Mesmos cartões e mesma conta do Portal do Parceiro › Financeiro › Faturamento */}
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-            <Kpi label="Valor das vendas" value={formatCurrency(resumo.vendas)} sub={`${resumo.pedidos} pedido(s) · ticket ${formatCurrency(resumo.ticket)}${resumo.cancelados ? ` · ${resumo.cancelados} cancelado(s)` : ''}`} />
-            <Kpi label="Taxas e comissões" value={formatCurrency(-resumo.taxas || 0)} sub={`${resumo.vendas > 0 ? ((resumo.taxas / resumo.vendas) * 100).toFixed(1) : '0.0'}% das vendas`} tone="red" />
-            <Kpi label="Serviços e promoções" value={formatCurrency(-resumo.servicos || 0)} sub={`promoções da loja ${formatCurrency(resumo.promoLoja)}`} tone="red" />
-            <Kpi label="Ajustes" value={formatCurrency(resumo.ajustes)} sub="ressarcimentos do iFood" tone={resumo.ajustes < 0 ? 'red' : 'green'} />
-            <Kpi label="Total faturamento" value={formatCurrency(resumo.faturamento)} sub={`iFood bancou ${formatCurrency(resumo.promoIfood)} em promoções`} tone="green" />
+          {/* Mesma conta do Portal do Parceiro › Financeiro › Faturamento, com a barra de cada real vendido. */}
+          <div className="bg-white rounded-2xl border border-zinc-100 p-4 md:p-5">
+            <div className="flex flex-wrap items-end justify-between gap-4">
+              <div>
+                <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">Total faturamento · {competence ? compLabel(competence) : ''}</p>
+                <p className="text-3xl font-bold text-zinc-900 mt-1">{formatCurrency(resumo.faturamento)}</p>
+                <p className="text-xs text-zinc-500 mt-1">
+                  de <strong className="text-zinc-700">{formatCurrency(resumo.vendas)}</strong> vendidos · o iFood ficou com <strong className="text-red-600">{resumo.taxaEfetiva.toFixed(1)}%</strong>
+                </p>
+              </div>
+              <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs">
+                <span className="text-zinc-500">Cai no banco</span>
+                <strong className="font-mono text-right text-green-700">{formatCurrency(resumo.liquido)}</strong>
+                <span className="text-zinc-500" title="Pago na entrega: entra pela maquininha/Pix, não pelo iFood">Recebido direto pela loja</span>
+                <strong className="font-mono text-right text-zinc-700">{formatCurrency(resumo.loja)}</strong>
+              </div>
+            </div>
+            {resumo.vendas > 0 && (() => {
+              const pct = (v: number) => Math.max(0, (v / resumo.vendas) * 100);
+              const partes = [
+                { k: 'Faturamento', v: resumo.faturamento, c: 'bg-green-500' },
+                { k: 'Taxas e comissões', v: resumo.taxas, c: 'bg-red-500' },
+                { k: 'Serviços e promoções', v: resumo.servicos - resumo.ajustes, c: 'bg-orange-400' },
+              ].filter((p) => p.v > 0.004);
+              return (
+                <div className="mt-4">
+                  <div className="flex h-3 rounded-full overflow-hidden bg-zinc-100">
+                    {partes.map((p) => <div key={p.k} className={p.c} style={{ width: `${pct(p.v)}%` }} title={`${p.k}: ${formatCurrency(p.v)}`} />)}
+                  </div>
+                  <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-[11px] text-zinc-500">
+                    {partes.map((p) => (
+                      <span key={p.k} className="inline-flex items-center gap-1.5"><span className={`w-2 h-2 rounded-full ${p.c}`} />{p.k} {pct(p.v).toFixed(1)}%</span>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
           </div>
-          <div className="flex flex-wrap items-center gap-x-6 gap-y-1 rounded-xl border border-zinc-100 bg-white px-4 py-3 text-sm">
-            <span className="text-zinc-500">Faturamento</span>
-            <span className="font-mono">{formatCurrency(resumo.faturamento)}</span>
-            <span className="text-zinc-400">=</span>
-            <span><span className="text-zinc-500">Total em repasses </span><strong className="font-mono text-green-700">{formatCurrency(resumo.liquido)}</strong> <span className="text-xs text-zinc-400">(cai no banco · {repasses.length} data(s))</span></span>
-            <span className="text-zinc-400">+</span>
-            <span><span className="text-zinc-500">Recebido direto pela loja </span><strong className="font-mono">{formatCurrency(resumo.loja)}</strong> <span className="text-xs text-zinc-400">(pago na entrega · entra pela maquininha/Pix)</span></span>
+
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <Kpi icon="ri-shopping-bag-3-line" label="Pedidos" value={String(resumo.pedidos)} sub={`ticket médio ${formatCurrency(resumo.ticket)}${resumo.cancelados ? ` · ${resumo.cancelados} cancelado(s)` : ''}`} />
+            <Kpi icon="ri-percent-line" label="Taxas e comissões" value={formatCurrency(-resumo.taxas || 0)} sub={`${resumo.vendas > 0 ? ((resumo.taxas / resumo.vendas) * 100).toFixed(1) : '0.0'}% das vendas`} tone="red" />
+            <Kpi icon="ri-coupon-3-line" label="Serviços e promoções" value={formatCurrency(-resumo.servicos || 0)} sub={`promoções pagas pela loja ${formatCurrency(resumo.promoLoja)}`} tone="red" />
+            <Kpi icon="ri-gift-line" label="Ajustes e ressarcimentos" value={formatCurrency(resumo.ajustes)} sub={`iFood bancou ${formatCurrency(resumo.promoIfood)} em promoções`} tone={resumo.ajustes < 0 ? 'red' : 'green'} />
           </div>
 
           {/* Repasses */}
-          <div className="bg-white rounded-xl border border-zinc-100 overflow-hidden">
-            <div className="px-4 py-3 border-b border-zinc-100">
-              <p className="text-sm font-semibold text-zinc-800">Repasses</p>
-              <p className="text-xs text-zinc-500">O que o iFood diz que paga × créditos com "iFood" no extrato do banco (na data e no dia seguinte). O cartão chega como "Crédito domicílio cartão", em valores próprios, então compare o total do dia. Soma <strong>todas as lojas iFood importadas</strong> (o Inter recebe as duas na mesma conta): importe o relatório de cada loja para o total bater.{porLoja && <> A coluna <strong>Esta loja</strong> é o repasse desta loja (bate com o "Valor" dos Repasses no Portal).</>}{repasses.some((r) => r.detalhe.sem_conta) && <> Esta loja não tem conta de depósito do iFood em <strong>Conciliação › Como o dinheiro entra</strong>, então não há extrato para conferir.</>}</p>
+          <div className="bg-white rounded-2xl border border-zinc-100 overflow-hidden">
+            <div className="px-4 py-3 border-b border-zinc-100 flex items-start gap-2">
+              <span className="w-7 h-7 flex items-center justify-center rounded-lg bg-green-50 text-green-600 shrink-0"><i className="ri-bank-line text-sm" /></span>
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-zinc-800">Repasses × banco</p>
+                <p className="text-xs text-zinc-500">
+                  O que o iFood paga em cada data × créditos do iFood no extrato (no dia e no seguinte), somando todas as lojas iFood — o banco recebe todas na mesma conta.
+                  <span className="ml-1 cursor-help opacity-70" title={'O cartão chega como "Crédito domicílio cartão", em valores próprios: compare o total do dia. Importe o relatório de cada loja para o total bater.'}><i className="ri-question-line" /></span>
+                  {porLoja && <> A coluna <strong>Esta loja</strong> é o repasse só desta loja (bate com o "Valor" dos Repasses no Portal).</>}
+                  {repasses.some((r) => r.detalhe.sem_conta) && <> Esta loja não tem conta de depósito do iFood em <strong>Conciliação › Como o dinheiro entra</strong>, então não há extrato para conferir.</>}
+                </p>
+              </div>
             </div>
             {/* Celular: um cartão por repasse — a tabela de 6 colunas não cabe em 375px. */}
             <ul className="md:hidden p-2 space-y-2 bg-zinc-50/60">
@@ -512,27 +590,41 @@ export default function IfoodTab() {
           </div>
 
           {/* Taxas */}
-          <div className="bg-white rounded-xl border border-zinc-100 overflow-hidden">
-            <div className="px-4 py-3 border-b border-zinc-100">
-              <p className="text-sm font-semibold text-zinc-800">Para onde foi o dinheiro</p>
-              <p className="text-xs text-zinc-500">Comissões, taxas e ajustes descontados do repasse.</p>
+          <div className="bg-white rounded-2xl border border-zinc-100 overflow-hidden">
+            <div className="px-4 py-3 border-b border-zinc-100 flex items-start gap-2">
+              <span className="w-7 h-7 flex items-center justify-center rounded-lg bg-red-50 text-red-500 shrink-0"><i className="ri-pie-chart-line text-sm" /></span>
+              <div>
+                <p className="text-sm font-semibold text-zinc-800">Para onde foi o dinheiro</p>
+                <p className="text-xs text-zinc-500">Comissões, taxas e ajustes descontados do repasse, em % das vendas.</p>
+              </div>
             </div>
-            <table className="w-full text-sm">
-              <tbody>
-                {resumo.taxasLista.map(([desc, v]) => (
-                  <tr key={desc} className="border-t border-zinc-100">
-                    <td className="px-4 py-2">{desc}</td>
-                    <td className="px-4 py-2 text-right text-xs text-zinc-400">{resumo.vendas > 0 ? `${((v / resumo.vendas) * 100).toFixed(1)}%` : ''}</td>
-                    <td className={`px-4 py-2 text-right font-mono ${v < 0 ? 'text-green-700' : 'text-red-600'}`}>{formatCurrency(v)}</td>
-                  </tr>
-                ))}
-                <tr className="border-t border-zinc-200 font-semibold">
-                  <td className="px-4 py-2">Total</td>
-                  <td className="px-4 py-2 text-right text-xs text-zinc-500">{resumo.taxaEfetiva.toFixed(1)}%</td>
-                  <td className="px-4 py-2 text-right font-mono text-red-600">{formatCurrency(resumo.custoTotal)}</td>
-                </tr>
-              </tbody>
-            </table>
+            <ul className="divide-y divide-zinc-100">
+              {resumo.taxasLista.map(([desc, v]) => {
+                const p = resumo.vendas > 0 ? (v / resumo.vendas) * 100 : 0;
+                const maior = Math.max(...resumo.taxasLista.map(([, x]) => Math.abs(x)), 0.01);
+                return (
+                  <li key={desc} className="px-4 py-2.5">
+                    <div className="flex items-baseline justify-between gap-3 text-sm">
+                      <span className="text-zinc-700 min-w-0 truncate">{desc}</span>
+                      <span className="flex items-baseline gap-3 shrink-0">
+                        <span className="text-xs text-zinc-400 w-12 text-right">{p.toFixed(1)}%</span>
+                        <span className={`font-mono w-28 text-right ${v < 0 ? 'text-green-700' : 'text-red-600'}`}>{formatCurrency(v)}</span>
+                      </span>
+                    </div>
+                    <div className="mt-1.5 h-1.5 rounded-full bg-zinc-100 overflow-hidden">
+                      <div className={`h-full rounded-full ${v < 0 ? 'bg-green-400' : 'bg-red-400'}`} style={{ width: `${(Math.abs(v) / maior) * 100}%` }} />
+                    </div>
+                  </li>
+                );
+              })}
+              <li className="px-4 py-2.5 flex items-baseline justify-between gap-3 text-sm font-semibold bg-zinc-50/70">
+                <span>Total</span>
+                <span className="flex items-baseline gap-3">
+                  <span className="text-xs text-zinc-500 w-12 text-right">{resumo.taxaEfetiva.toFixed(1)}%</span>
+                  <span className="font-mono w-28 text-right text-red-600">{formatCurrency(resumo.custoTotal)}</span>
+                </span>
+              </li>
+            </ul>
           </div>
 
           {impsMes.map((imp) => (
@@ -542,7 +634,7 @@ export default function IfoodTab() {
               {imp.integrity_ok === false && <span className="text-red-600 font-semibold"> · ATENÇÃO: o arquivo difere do que o iFood informou ({imp.expected_lines ?? '—'} linhas e {imp.expected_orders ?? '—'} pedidos esperados) — gere o relatório de novo</span>}
             </p>
           ))}
-          {lojas.length === 1 && (
+          {lojas.length === 1 && api.ligadas === 0 && (
             <p className="text-[11px] text-amber-600">Só uma loja iFood importada. Se houver outra, baixe o relatório dela no Portal do Parceiro (troque a loja no topo do portal) e importe também.</p>
           )}
         </>
