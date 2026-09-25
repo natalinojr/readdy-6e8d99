@@ -19,6 +19,10 @@ interface Produto { key: string; kind: 'item' | 'complemento'; name: string; gro
 interface Props { tenantId: string; lojaShort: string | null; onImportar: () => void }
 
 const chave = (s: string) => s.trim().replace(/\s+/g, ' ').toLowerCase();
+// Busca sem acento e sem caixa ("acucar" acha "Açúcar").
+const semAcento = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+// O relatório traz "Em 1 categorias" como grupo de vários itens — não diz nada, então some.
+const grupoUtil = (g: string | null) => (g && !/^em \d+ categorias?$/i.test(g.trim()) ? g : null);
 const dBR = (d: string) => `${d.slice(8, 10)}/${d.slice(5, 7)}/${d.slice(0, 4)}`;
 const n = (v: unknown) => Number(v ?? 0);
 const UNID_LABEL: Record<string, string> = { g: 'g', kg: 'kg', ml: 'ml', L: 'L', unit: 'un' };
@@ -91,8 +95,8 @@ export default function IfoodCmv({ tenantId, lojaShort, onImportar }: Props) {
     return { vendido, cmv, vendidoComposto, cobertura: vendido > 0 ? (vendidoComposto / vendido) * 100 : 0, pct: vendidoComposto > 0 ? (cmv / vendidoComposto) * 100 : 0, faltam: produtos.filter((p) => p.custoUnit === null && p.qtd > 0).length };
   }, [produtos]);
 
-  const q = busca.trim().toLowerCase();
-  const lista = produtos.filter((p) => (!q || p.name.toLowerCase().includes(q)) && (filtro === 'todos' || (filtro === 'sem') === (p.custoUnit === null)));
+  const q = semAcento(busca.trim());
+  const lista = produtos.filter((p) => (!q || semAcento(p.name).includes(q)) && (filtro === 'todos' || (filtro === 'sem') === (p.custoUnit === null)));
 
   if (loading) return <div className="flex items-center justify-center py-12"><div className="w-6 h-6 border-2 border-red-500 border-t-transparent rounded-full animate-spin" /></div>;
   if (erro) return <div className="rounded-xl bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">Falha ao carregar: {erro}</div>;
@@ -171,7 +175,7 @@ export default function IfoodCmv({ tenantId, lojaShort, onImportar }: Props) {
                   <tr key={p.key} className="border-b border-zinc-100 hover:bg-zinc-50">
                     <td className="px-4 py-2.5">
                       <p className="font-medium text-zinc-800">{p.name}</p>
-                      <p className="text-xs text-zinc-400">{p.kind === 'complemento' ? 'Complemento' : 'Item'}{p.group ? ` · ${p.group}` : ''}</p>
+                      <p className="text-xs text-zinc-400">{p.kind === 'complemento' ? 'Complemento' : 'Item'}{grupoUtil(p.group) ? ` · ${grupoUtil(p.group)}` : ''}</p>
                     </td>
                     <td className="px-3 py-2.5 text-right tabular-nums text-zinc-700">{p.qtd.toLocaleString('pt-BR')}</td>
                     <td className="px-3 py-2.5 text-right tabular-nums text-zinc-700">{formatCurrency(p.valor)}</td>
@@ -219,7 +223,7 @@ function EditorComposicao({ tenantId, produto, insumos, insumoPorId, iniciais, o
   const qtd = (s: string) => Number(String(s).replace(',', '.')) || 0;
   const custoUnit = ls.reduce((s, l) => s + custoDaLinha({ quantity: qtd(l.quantity), unit: l.unit }, insumoPorId.get(l.ingredient_id)), 0);
   const precoMedio = produto.qtd > 0 ? produto.valor / produto.qtd : 0;
-  const achados = busca.trim().length >= 2 ? insumos.filter((i) => i.name.toLowerCase().includes(busca.trim().toLowerCase()) && !ls.some((l) => l.ingredient_id === i.id)).slice(0, 8) : [];
+  const achados = busca.trim().length >= 2 ? insumos.filter((i) => semAcento(i.name).includes(semAcento(busca.trim())) && !ls.some((l) => l.ingredient_id === i.id)).slice(0, 8) : [];
 
   const addInsumo = (i: Insumo) => { setLs([...ls, { ingredient_id: i.id, quantity: '', unit: unidadePadrao(i.unit) }]); setBusca(''); };
 
@@ -293,7 +297,7 @@ function EditorComposicao({ tenantId, produto, insumos, insumoPorId, iniciais, o
               <input value={buscaMenu} onChange={(e) => setBuscaMenu(e.target.value)} placeholder="Item do cardápio do ERPOS" autoFocus
                 className="w-full px-3 py-2 border border-zinc-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-300" />
               <div className="max-h-40 overflow-y-auto divide-y divide-zinc-100">
-                {itensMenu.filter((m) => !buscaMenu.trim() || m.name.toLowerCase().includes(buscaMenu.trim().toLowerCase())).slice(0, 30).map((m) => (
+                {itensMenu.filter((m) => !buscaMenu.trim() || semAcento(m.name).includes(semAcento(buscaMenu.trim()))).slice(0, 30).map((m) => (
                   <button key={m.id} onClick={() => copiarFicha(m.id)} className="w-full text-left px-2 py-1.5 text-sm hover:bg-zinc-50 cursor-pointer">{m.name}</button>
                 ))}
               </div>
