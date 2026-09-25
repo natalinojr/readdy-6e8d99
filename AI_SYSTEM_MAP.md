@@ -3352,3 +3352,13 @@ Sem SW ativo o POST cai no Vercel e falha — por isso o destino só existe no S
   "sem CNPJ" na tela. O gatilho `zz_purchase_items_prune_orphans` (após apagar item de compra) chama
   `fn_item_prune_orphans`, que remove a linha sem compra e passa o vínculo/classe para a gêmea única
   (fornecedor pelo nome + descrição sem código + unidade normalizada). Sem gêmea segura, a linha ligada fica.
+- **Ficha técnica × unidade:** custo de linha da ficha = `custoLinhaFicha` (src/lib/unitConversion.ts), que converte
+  a unidade da ficha (g) para a do insumo (kg) antes de multiplicar. Usado em CMV/Fichas, CMV mensal, relatório de CMV
+  e consumo por lanche (antes: Burrito R$ 11.626 em vez de R$ 14,30). A baixa de estoque da venda já convertia.
+- **Ficha mudada depois das vendas:** `menu-write` `reaplicar_ficha` (`_shared/ficha-retroativa.ts`) refaz a baixa
+  das vendas processadas desde a data escolhida, com a mesma conta da venda (`buildDeductions`). Antes da última
+  contagem do insumo, a diferença vira ajuste na contagem (o saldo não muda); depois dela, muda o saldo. A tela da
+  ficha pergunta a data após salvar (admin/gerente) e mostra a prévia antes de aplicar.
+- **Excluir compra:** estorna só o que entrou por ela (soma dos movimentos com o motivo "Compra: fornecedor - NF"…).
+- **Custo do produzido:** é o preço de cada ingrediente **no ato da produção** (decisão do dono, 2026-09-25) —
+  não recalcular quando o ingrediente muda de preço.
