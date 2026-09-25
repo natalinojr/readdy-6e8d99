@@ -3389,3 +3389,9 @@ Sem SW ativo o POST cai no Vercel e falha — por isso o destino só existe no S
 - **Excluir compra:** estorna só o que entrou por ela (soma dos movimentos com o motivo "Compra: fornecedor - NF"…).
 - **Custo do produzido:** é o preço de cada ingrediente **no ato da produção** (decisão do dono, 2026-09-25) —
   não recalcular quando o ingrediente muda de preço.
+
+### Acesso anônimo fechado no RLS (2026-09-25)
+- Checagem pela chave pública achou: `table_session_participants` (nome, telefone, access_token), `table_sessions` (session_token) e `tables` (qr_token) legíveis por qualquer um; `tables` alterável pelo anônimo; e duas políticas "bypass do service_role" criadas no papel `public` (`fin_merchandise_categories`, `delivery_customer_addresses`), o que deixava qualquer usuário logado gravar em qualquer loja.
+- Correção: `supabase/migrations/rls_fechar_acesso_publico.sql` (desfazer em `_rollback_rls_publico_20260925.sql`). O anônimo agora só lê `tenants(id, name, slug, logo_url, is_active)` (grant por coluna) e `kitchen_stations`.
+- **Critério:** tela pública (`/mesa-qr`, delivery, `/r/`) nunca lê tabela direto; passa por Edge Function (`mesa-write`, `delivery-write`...) com service_role. Política de "bypass" sempre `to service_role`, nunca `to public`. Políticas permissivas `using (false)` ("deny_direct_write_*") **não bloqueiam nada**: políticas permissivas somam com OR; para negar, use `as restrictive` ou não crie a política.
+- Ainda sem auditoria: ~70 funções `security definer` executáveis pelo anônimo e as Edge Functions com `verify_jwt=false`.
