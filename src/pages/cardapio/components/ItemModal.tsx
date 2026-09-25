@@ -7,6 +7,8 @@ import type {
 const mockDiasSemana = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 import type { EstacaoCozinha } from '../../../contexts/CardapioContext';
 import FichaTecnicaTab from './FichaTecnicaTab';
+import FichaRetroativaModal from './FichaRetroativaModal';
+import { custoLinhaFicha } from '@/lib/unitConversion';
 import DeliveryTab from './DeliveryTab';
 import FiscalFields from '@/components/feature/FiscalFields';
 import type { ItemFiscal } from '@/lib/fiscal';
@@ -24,6 +26,15 @@ const semAcento = (t: string) => t.normalize('NFD').replace(/\p{Diacritic}/gu, '
 
 // ── Unidades suportadas ────────────────────────────────────────────────────
 const ALL_UNITS = ['g', 'kg', 'ml', 'l', 'un'];
+// Complemento ligado ao estoque (dono, 2026-09-25): insumo em kg/L começa em g/mL e SEM quantidade —
+// o '1' pronto virava 1 kg de bacon por adicional. A quantidade é obrigatória para salvar.
+const unidadeConsumoInicial = (u: string | null | undefined) => {
+  const k = String(u ?? '').toLowerCase();
+  if (k === 'kg') return 'g';
+  if (k === 'l') return 'ml';
+  if (k === 'unit') return 'un';
+  return k || 'un';
+};
 
 interface Props {
   item?: Item;
@@ -256,8 +267,16 @@ export default function ItemModal({ item, categorias, obsGlobais, estacoes, savi
     }
   };
 
+  const [erroOpcoes, setErroOpcoes] = useState<string | null>(null);
   const handleSave = () => {
     if (!nome.trim() || !preco) return;
+    const semQtd = grupos.flatMap(g => g.opcoes.filter(o => o.ingredientId && !(Number(o.consumptionQuantity) > 0)).map(o => o.nome || 'opção sem nome'));
+    if (semQtd.length) {
+      setErroOpcoes(`Informe quanto sai do estoque em: ${semQtd.join(', ')}.`);
+      setTab('opcoes');
+      return;
+    }
+    setErroOpcoes(null);
     const saved: Item = {
       id: item?.id ?? `item-${Date.now()}`,
       categoriaId,
@@ -724,6 +743,10 @@ export default function ItemModal({ item, categorias, obsGlobais, estacoes, savi
               onRemoveOpcao={removeOpcao}
               onUpdateOpcao={updateOpcao}
               onMoveOpcao={moverOpcao}
+              erro={erroOpcoes}
+              itemId={item?.id}
+              itemNome={nome || item?.nome}
+              vinculosSalvos={JSON.stringify(vinculosOpcoes(item?.gruposOpcoes ?? [])) === JSON.stringify(vinculosOpcoes(grupos))}
             />
           )}
 
@@ -937,13 +960,27 @@ interface OpcoesTabProps {
   onRemoveOpcao: (grupoId: string, opcId: string) => void;
   onUpdateOpcao: (grupoId: string, opcId: string, patch: Partial<OpcaoItem>) => void;
   onMoveOpcao: (grupoId: string, opcId: string, direction: 'up' | 'down') => void;
+  erro?: string | null;
+  itemId?: string;
+  itemNome?: string;
+  /** true quando os vínculos com o estoque na tela são os mesmos que estão salvos */
+  vinculosSalvos?: boolean;
 }
+
+// Vínculos das opções com o estoque (para saber se há mudança não salva)
+const vinculosOpcoes = (gs: GrupoOpcoes[]) =>
+  gs.flatMap(g => g.opcoes.filter(o => o.ingredientId).map(o => [o.id, o.ingredientId, Number(o.consumptionQuantity ?? 0), o.consumptionUnit ?? ''])).sort();
 
 function OpcoesTab({
   grupos, insumos, recipes, getBatchesByRecipeId,
   onAddGrupo, onAddGrupoCompleto, onRemoveGrupo, onUpdateGrupo,
   onAddOpcao, onRemoveOpcao, onUpdateOpcao, onMoveOpcao,
+  erro, itemId, itemNome, vinculosSalvos,
 }: OpcoesTabProps) {
+  const { user } = useAuth();
+  const [aplicarVendas, setAplicarVendas] = useState(false);
+  const temVinculo = grupos.some(g => g.opcoes.some(o => o.ingredientId));
+  const podeAplicar = !!itemId && !itemId.startsWith('item-') && (user?.perfil === 'admin' || user?.perfil === 'gerente');
   const [openVinculo, setOpenVinculo] = useState<string | null>(null);
   const [vinculoTab, setVinculoTab] = useState<'ingredient' | 'production'>('ingredient');
   const [buscaInsumo, setBuscaInsumo] = useState('');
@@ -1031,8 +1068,8 @@ function OpcoesTab({
       ingredientId: insumo.id,
       ingredientName: insumo.nome,
       productionRecipeId: null,
-      consumptionQuantity: 1,
-      consumptionUnit: insumo.unidade,
+      consumptionQuantity: undefined,
+      consumptionUnit: unidadeConsumoInicial(insumo.unidade),
       source: 'ingredient',
     });
     setOpenVinculo(null);
@@ -1045,8 +1082,8 @@ function OpcoesTab({
       ingredientId: recipe.outputIngredientId,
       ingredientName: recipe.name,
       productionRecipeId: recipe.id,
-      consumptionQuantity: 1,
-      consumptionUnit: recipe.unit,
+      consumptionQuantity: undefined,
+      consumptionUnit: unidadeConsumoInicial(recipe.unit),
       source: 'production',
     });
     setOpenVinculo(null);
@@ -1066,6 +1103,26 @@ function OpcoesTab({
 
   return (
     <div className="space-y-4">
+      {erro && (
+        <div className="bg-red-50 border border-red-200 text-red-700 text-xs rounded-lg px-3 py-2">{erro}</div>
+      )}
+      {temVinculo && podeAplicar && user?.tenantId && (
+        <div className="flex flex-wrap items-center gap-2 bg-amber-50/60 border border-amber-100 rounded-lg px-3 py-2 text-[11px] text-amber-800">
+          <i className="ri-history-line" />
+          <span className="flex-1 min-w-[180px]">
+            {vinculosSalvos
+              ? 'Opções ligadas ao estoque dão baixa nas próximas vendas. Para as vendas já feitas:'
+              : 'Salve o item para que os vínculos com o estoque valham; depois dá para aplicar nas vendas já feitas.'}
+          </span>
+          <button type="button" disabled={!vinculosSalvos} onClick={() => setAplicarVendas(true)}
+            className="px-2.5 py-1 rounded-md bg-amber-500 text-white font-semibold hover:bg-amber-600 disabled:opacity-40 cursor-pointer">
+            Aplicar nas vendas já feitas
+          </button>
+        </div>
+      )}
+      {aplicarVendas && itemId && user?.tenantId && (
+        <FichaRetroativaModal tenantId={user.tenantId} itemId={itemId} itemNome={itemNome ?? 'Item'} onFechar={() => setAplicarVendas(false)} />
+      )}
       {/* ── Barra de Templates ── */}
       <div className="flex items-center gap-2">
         <button
@@ -1531,9 +1588,10 @@ function OpcoesTab({
                           type="number"
                           min="0"
                           step="0.001"
-                          className="w-16 border border-amber-200 rounded px-1.5 py-0.5 text-[11px] text-amber-800 focus:outline-none focus:border-amber-400 bg-white"
-                          value={opc.consumptionQuantity ?? 1}
-                          onChange={e => onUpdateOpcao(grp.id, opc.id, { consumptionQuantity: parseFloat(e.target.value) || 0 })}
+                          placeholder="?"
+                          className={`w-16 border rounded px-1.5 py-0.5 text-[11px] text-amber-800 focus:outline-none focus:border-amber-400 bg-white ${Number(opc.consumptionQuantity) > 0 ? 'border-amber-200' : 'border-red-400'}`}
+                          value={opc.consumptionQuantity ?? ''}
+                          onChange={e => onUpdateOpcao(grp.id, opc.id, { consumptionQuantity: e.target.value === '' ? undefined : (parseFloat(e.target.value) || 0) })}
                         />
                         <select
                           value={opc.consumptionUnit || 'un'}
@@ -1542,6 +1600,13 @@ function OpcoesTab({
                         >
                           {ALL_UNITS.map(u => <option key={u} value={u}>{u}</option>)}
                         </select>
+                        {(() => {
+                          const ins = insumos.find(i => i.id === opc.ingredientId);
+                          const q = Number(opc.consumptionQuantity);
+                          if (!ins || !(q > 0)) return <span className="text-[10px] text-red-500">informe quanto sai do estoque</span>;
+                          const custo = custoLinhaFicha(q, opc.consumptionUnit || 'un', ins.unidade, ins.precoUnitario);
+                          return <span className="text-[10px] text-amber-700" title="Quantidade × preço atual do insumo">custo {custo.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: custo > 0 && custo < 0.1 ? 4 : 2 })}</span>;
+                        })()}
                       </div>
                     </div>
                     <button

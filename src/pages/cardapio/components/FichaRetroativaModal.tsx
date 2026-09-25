@@ -51,7 +51,7 @@ export default function FichaRetroativaModal({ tenantId, itemId, itemNome, onFec
       <div className="bg-white w-full md:max-w-xl rounded-t-2xl md:rounded-2xl max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
         <div className="p-4 border-b border-zinc-100 flex items-start gap-3">
           <div className="min-w-0 flex-1">
-            <p className="text-sm font-bold text-zinc-800">Aplicar a ficha nova nas vendas já feitas?</p>
+            <p className="text-sm font-bold text-zinc-800">Aplicar ficha e opções nas vendas já feitas?</p>
             <p className="text-xs text-zinc-500 mt-0.5 break-words">{itemNome}</p>
           </div>
           <button onClick={onFechar} className="w-8 h-8 flex items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-100 cursor-pointer" aria-label="Fechar">
@@ -61,7 +61,7 @@ export default function FichaRetroativaModal({ tenantId, itemId, itemNome, onFec
 
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
           <p className="text-xs text-zinc-600">
-            A ficha já vale para as próximas vendas. Se quiser, o sistema refaz a baixa dos insumos das vendas desde uma data,
+            A ficha técnica e as opções ligadas ao estoque já valem para as próximas vendas. Se quiser, o sistema refaz a baixa dos insumos das vendas desde uma data,
             e o estoque teórico e o consumo desses dias ficam como se a ficha já fosse essa.
             Vendas antes da última contagem de um insumo não mudam o saldo atual: a contagem continua valendo.
           </p>
