@@ -248,6 +248,25 @@ async function sendReminders(admin: SupabaseClient, ownerChat: string | null) {
   return sent;
 }
 
+// Painel no chat do ERPOS (2026-09-25, dono: "avisos mais bonitos, tipo painel"): o texto continua indo
+// para o Telegram/WhatsApp; no app a mensagem guarda um resumo curto + [painel]{...}[/painel] com os
+// dados, que o AssistenteChat desenha (src/components/feature/assistente/PainelMensagem.tsx — mesmo
+// formato do fechamento de caixa). bt = botões de atalho ('#pendencias' abre a caixa de pendências).
+type St = 'ok' | 'alerta' | 'perigo' | 'neutro';
+interface Painel {
+  t: string; s?: string; r?: string;
+  kpi?: { p: { l: string; v: string }; o?: Array<{ l: string; v: string }> };
+  lin?: Array<{ t: string; i: Array<{ l: string; v?: string; d?: string; st?: St }> }>;
+  al?: string[];
+  bt?: Array<{ l: string; r: string; i?: string }>;
+}
+const comPainel = (resumo: string, painel: Painel) => `${resumo}\n[painel]${JSON.stringify(painel)}[/painel]`;
+const diaSemana = (iso: string) => {
+  const d = new Date(`${iso}T12:00:00-03:00`);
+  const w = d.toLocaleDateString('pt-BR', { timeZone: TZ, weekday: 'long' });
+  return `${w.charAt(0).toUpperCase()}${w.slice(1)}, ${iso.slice(8, 10)}/${iso.slice(5, 7)}`;
+};
+
 // deno-lint-ignore no-explicit-any
 async function morningBrief(admin: SupabaseClient, cfg: Record<string, any>, ownerChat: string | null) {
   const mb = cfg.morning_brief ?? { enabled: true, time: '07:30' };
@@ -267,21 +286,23 @@ async function morningBrief(admin: SupabaseClient, cfg: Record<string, any>, own
   // Montado aqui, sem modelo (2026-09-23): o resumo pedido ao assistente-brain custava ~US$ 0,18 por
   // dia (8–9 ferramentas relendo o prompt inteiro) para juntar listas que o SQL já entrega prontas.
   let texto: string;
+  let painel: Painel;
+  let resumo: string;
   try {
-    texto = await morningBriefText(admin, cfg, today);
+    ({ texto, painel, resumo } = await morningBriefText(admin, cfg, today));
   } catch (e) {
     await admin.from('asst_settings').upsert({ key: 'last_brief_date', value: null, updated_at: new Date().toISOString() });
     throw e;
   }
   await deliver(ownerChat, texto);
-  await admin.from('asst_messages').insert({ channel: 'cron', chat_id: ownerChat, role: 'assistant', content: texto, topic: 'avisos' });
+  await admin.from('asst_messages').insert({ channel: 'cron', chat_id: ownerChat, role: 'assistant', content: comPainel(resumo, painel), topic: 'avisos' });
   return true;
 }
 
 // Resumo da manhã: pendências (caixa) → contas a pagar → tarefas → lembretes → tempo. Só o que pede
 // atenção; item vazio some. Mesmo conteúdo que o assistente montava, na mesma ordem.
 // deno-lint-ignore no-explicit-any
-async function morningBriefText(admin: SupabaseClient, cfg: Record<string, any>, today: string): Promise<string> {
+async function morningBriefText(admin: SupabaseClient, cfg: Record<string, any>, today: string): Promise<{ texto: string; painel: Painel; resumo: string }> {
   const tenants = await getTenants(admin, cfg);
   const ids = tenants.map((t) => t.id);
   const nome = (id: string) => tenants.find((t) => t.id === id)?.name ?? 'loja';
@@ -300,6 +321,8 @@ async function morningBriefText(admin: SupabaseClient, cfg: Record<string, any>,
       .gte('due_at', `${today}T00:00:00-03:00`).lte('due_at', `${today}T23:59:59-03:00`).order('due_at').limit(20),
   ]);
   const linhas: string[] = ['Bom dia!'];
+  const pn: Painel = { t: 'Bom dia!', s: diaSemana(today), lin: [], bt: [] };
+  const lin = pn.lin as NonNullable<Painel['lin']>;
 
   // Pendências: quantas e quais pedem dinheiro/ação urgente, em uma linha — a lista está na caixa.
   const abertas = (pend.data ?? []).filter((p) => !p.snooze_until || Date.parse(String(p.snooze_until)) < Date.now());
@@ -307,7 +330,10 @@ async function morningBriefText(admin: SupabaseClient, cfg: Record<string, any>,
     const urgentes = abertas.filter((p) => p.urgencia === 'alta');
     const quais = urgentes.slice(0, 3).map((p) => String(p.titulo ?? '').trim()).filter(Boolean).join('; ');
     linhas.push(`*${abertas.length} pendência${abertas.length === 1 ? '' : 's'}* em aberto${urgentes.length ? ` — urgentes: ${quais}${urgentes.length > 3 ? ` e mais ${urgentes.length - 3}` : ''}` : ''}. Lista completa em Pendências.`);
+    if (urgentes.length) lin.push({ t: `Urgentes (${urgentes.length})`, i: urgentes.slice(0, 4).map((p) => ({ l: String(p.titulo ?? '').trim(), st: 'perigo' as St })) });
+    pn.bt!.push({ l: `Pendências (${abertas.length})`, r: '#pendencias', i: 'ri-inbox-archive-line' });
   }
+  const kpiO: Array<{ l: string; v: string }> = [];
 
   // Contas: vencendo hoje até +3 dias e atrasadas, por loja.
   const cs = (contas.data ?? []).map((c) => ({ ...c, amount: Number(c.amount ?? 0), due: String(c.due_date ?? '') }));
@@ -327,6 +353,20 @@ async function morningBriefText(admin: SupabaseClient, cfg: Record<string, any>,
     }
     if (atrasadas.length) partes.push(`atrasadas: ${porLoja(atrasadas)}`);
     linhas.push(`*Contas a pagar:* ${partes.join('; ')}.`);
+    const soma = (l: typeof cs) => l.reduce((t, c) => t + c.amount, 0);
+    if (atrasadas.length) kpiO.push({ l: `Atrasadas (${atrasadas.length})`, v: brl(soma(atrasadas)) });
+    if (vencendo.length) kpiO.push({ l: `Vencem até ${ddmm(ate3)}`, v: brl(soma(vencendo)) });
+    if (vencendo.length) {
+      lin.push({ t: `Vencendo até ${ddmm(ate3)}`, i: vencendo.slice(0, 5).map((c) => ({
+        l: String(c.supplier || c.description), v: brl(c.amount), d: c.due === today ? 'vence hoje' : `vence ${ddmm(c.due)}`, st: (c.due === today ? 'alerta' : 'neutro') as St,
+      })).concat(vencendo.length > 5 ? [{ l: `e mais ${vencendo.length - 5}`, v: '', d: '', st: 'neutro' as St }] : []) });
+    }
+    if (atrasadas.length) {
+      const m = new Map<string, { n: number; v: number }>();
+      for (const c of atrasadas) { const k = String(c.tenant_id); const a = m.get(k) ?? { n: 0, v: 0 }; a.n++; a.v += c.amount; m.set(k, a); }
+      lin.push({ t: 'Contas atrasadas', i: [...m.entries()].map(([k, a]) => ({ l: tenants.length > 1 ? nome(k) : 'Atrasadas', v: brl(a.v), d: `${a.n} conta${a.n === 1 ? '' : 's'}`, st: 'perigo' as St })) });
+    }
+    pn.bt!.push({ l: 'Contas a pagar', r: '/financeiro?tab=pagar', i: 'ri-bill-line' });
   }
 
   // Tarefas: de hoje (lista) e atrasadas (quantas, desde quando).
@@ -335,21 +375,34 @@ async function morningBriefText(admin: SupabaseClient, cfg: Record<string, any>,
   const velhas = ts.filter((t) => t.dia < today);
   if (deHoje.length) linhas.push(`*Tarefas de hoje (${deHoje.length}):* ${deHoje.slice(0, 6).map((t) => t.titulo).join('; ')}${deHoje.length > 6 ? ` e mais ${deHoje.length - 6}` : ''}.`);
   if (velhas.length) linhas.push(`*Atrasadas (${velhas.length}):* ${velhas.slice(0, 3).map((t) => t.titulo).join('; ')}${velhas.length > 3 ? '…' : ''} — a mais antiga de ${ddmm(velhas[0].dia)}.`);
+  if (deHoje.length) lin.push({ t: `Tarefas de hoje (${deHoje.length})`, i: deHoje.slice(0, 6).map((t) => ({ l: t.titulo, st: 'alerta' as St })) });
+  if (velhas.length) lin.push({ t: `Tarefas atrasadas (${velhas.length})`, i: velhas.slice(0, 4).map((t) => ({ l: t.titulo, d: `desde ${ddmm(t.dia)}`, st: 'perigo' as St })) });
+  if (deHoje.length || velhas.length) pn.bt!.push({ l: 'Tarefas', r: '/tarefas', i: 'ri-task-line' });
 
   const lem = lembretes.data ?? [];
   if (lem.length) linhas.push(`*Lembretes de hoje:* ${lem.map((l) => `${new Date(String(l.due_at)).toLocaleTimeString('pt-BR', { timeZone: TZ, hour: '2-digit', minute: '2-digit' })} ${l.text}`).join('; ')}.`);
+  if (lem.length) lin.push({ t: 'Lembretes de hoje', i: lem.map((l) => ({ l: String(l.text), v: new Date(String(l.due_at)).toLocaleTimeString('pt-BR', { timeZone: TZ, hour: '2-digit', minute: '2-digit' }) })) });
 
   const tempo = await tempoDeHoje(admin, cfg, tenants).catch((e) => { log('WARN', 'resumo: previsão do tempo', { error: errMsg(e) }); return null; });
-  if (tempo) linhas.push(tempo);
+  if (tempo) {
+    linhas.push(tempo.linha);
+    pn.s = `${pn.s} · ${tempo.curto}`;
+    if (tempo.alertas.length) pn.al = [`${tempo.alertas.join(' e ')} — pode afetar o movimento`];
+  }
 
   if (linhas.length === 1) linhas.push('Nada pedindo atenção hoje.');
-  return linhas.join('\n\n');
+  // Número grande = pendências (o que pede ação); ao lado, o dinheiro atrasado e o que vence.
+  pn.kpi = { p: { l: 'Pendências em aberto', v: String(abertas.length) }, o: kpiO };
+  if (!lin.length && !abertas.length) pn.r = 'Nada pedindo atenção hoje.';
+  if (!pn.bt!.length) delete pn.bt;
+  const resumo = `Bom dia! ${abertas.length} pendência${abertas.length === 1 ? '' : 's'} em aberto${atrasadas.length ? `, ${atrasadas.length} conta${atrasadas.length === 1 ? '' : 's'} atrasada${atrasadas.length === 1 ? '' : 's'}` : ''}${deHoje.length ? `, ${deHoje.length} tarefa${deHoje.length === 1 ? '' : 's'} para hoje` : ''}.`;
+  return { texto: linhas.join('\n\n'), painel: pn, resumo };
 }
 
 // Previsão de hoje para a loja principal (Open-Meteo, grátis), em uma linha, destacando chuva no
 // horário de movimento (almoço 11–14h, noite 18–22h).
 // deno-lint-ignore no-explicit-any
-async function tempoDeHoje(admin: SupabaseClient, cfg: Record<string, any>, tenants: Array<{ id: string; name: string }>): Promise<string | null> {
+async function tempoDeHoje(admin: SupabaseClient, cfg: Record<string, any>, tenants: Array<{ id: string; name: string }>): Promise<{ linha: string; curto: string; alertas: string[] } | null> {
   const principal = tenants.find((t) => t.id === String(cfg.default_tenant_id ?? '')) ?? tenants[0];
   if (!principal) return null;
   const { data: ss } = await admin.from('system_settings').select('delivery_config, delivery_city').eq('tenant_id', principal.id).maybeSingle();
@@ -374,7 +427,11 @@ async function tempoDeHoje(admin: SupabaseClient, cfg: Record<string, any>, tena
   const chuvaEm = (de: number, ate: number) => Math.max(0, ...horas.map((t, i) => ({ h: Number(t.slice(11, 13)), p: Number(prob[i] ?? 0) })).filter((x) => x.h >= de && x.h < ate).map((x) => x.p));
   const almoco = chuvaEm(11, 14), noite = chuvaEm(18, 22);
   const alertas = [almoco >= 50 ? `chuva no almoço (${almoco}%)` : '', noite >= 50 ? `chuva à noite (${noite}%)` : ''].filter(Boolean);
-  return `*Tempo em ${lugar}:* ${cond}, ${min}–${max}°C${alertas.length ? ` — ${alertas.join(' e ')}, pode afetar o movimento` : ''}.`;
+  return {
+    linha: `*Tempo em ${lugar}:* ${cond}, ${min}–${max}°C${alertas.length ? ` — ${alertas.join(' e ')}, pode afetar o movimento` : ''}.`,
+    curto: `${cond} ${min}–${max}°C`,
+    alertas,
+  };
 }
 
 // Mantém vivo o cache de 1 h do assistente enquanto o dono está usando: uma
@@ -875,7 +932,7 @@ async function dueTodayRun(tenants: Array<{ id: string; name: string }>, today: 
 }
 
 // Contas que vencem amanhã (na sexta: sáb+dom+seg), atrasadas e saldo sincronizado dos bancos.
-async function dueTomorrowText(tenants: Array<{ id: string; name: string }>, today: string): Promise<string | null> {
+async function dueTomorrowText(tenants: Array<{ id: string; name: string }>, today: string): Promise<{ text: string; painel: Painel; resumo: string } | null> {
   const ids = tenants.map((t) => t.id);
   const wd = weekday(today);
   const from = addDays(today, 1), to = addDays(today, wd === 5 ? 3 : 1);
@@ -899,16 +956,38 @@ async function dueTomorrowText(tenants: Array<{ id: string; name: string }>, tod
   if (due.length > 12) lines.push(`… e mais ${due.length - 12}`);
   if (overdue[0].n) lines.push(`⚠️ Atrasadas: ${overdue[0].n} (${brl(overdue[0].total)})`);
   if (banks.length) lines.push(`Saldo: ${banks.map((b) => `${b.bank_name || b.name} ${brl(b.synced_balance)}`).join(' · ')}`);
-  return lines.join('\n');
+  const titulo = from === to ? `Vencimentos de amanhã (${dmy(from).slice(0, 5)})` : `Vencimentos de ${dmy(from).slice(0, 5)} a ${dmy(to).slice(0, 5)}`;
+  const saldo = banks.reduce((t, b) => t + Number(b.synced_balance ?? 0), 0);
+  const painel: Painel = {
+    t: titulo, s: 'Contas a pagar',
+    kpi: { p: { l: `${due.length} conta${due.length === 1 ? '' : 's'}`, v: brl(total) }, o: [
+      ...(overdue[0].n ? [{ l: `Atrasadas (${overdue[0].n})`, v: brl(overdue[0].total) }] : []),
+      ...(banks.length ? [{ l: 'Saldo nos bancos', v: brl(saldo) }] : []),
+    ] },
+    lin: [
+      ...(due.length ? [{ t: 'Vencendo', i: due.slice(0, 12).map((d) => ({
+        l: String(d.supplier || d.description), v: brl(d.amount),
+        d: [from !== to ? dmy(d.due_date).slice(0, 5) : '', tenants.length > 1 ? byT.get(d.tenant_id) ?? '' : ''].filter(Boolean).join(' · ') || undefined,
+        st: 'alerta' as St,
+      })) }] : []),
+      ...(banks.length > 1 ? [{ t: 'Saldo por banco', i: banks.map((b) => ({ l: String(b.bank_name || b.name), v: brl(b.synced_balance), st: (b.synced_balance < 0 ? 'perigo' : 'ok') as St })) }] : []),
+    ],
+    ...(due.length > 12 ? { r: `… e mais ${due.length - 12}` } : {}),
+    ...(banks.length && saldo < total ? { al: [`O saldo nos bancos (${brl(saldo)}) não cobre o que vence (${brl(total)}).`] } : {}),
+    bt: [{ l: 'Contas a pagar', r: '/financeiro?tab=pagar', i: 'ri-bill-line' }],
+  };
+  return { text: lines.join('\n'), painel, resumo: `${titulo}: ${due.length} conta(s), ${brl(total)}` };
 }
 
 // Estoque crítico: manda só os itens que ENTRARAM em crítico desde o último aviso
 // (e quantos saíram). Estado por loja: lista de ids já avisados.
 // deno-lint-ignore no-explicit-any
-async function stockText(tenants: Array<{ id: string; name: string }>, state: any): Promise<{ text: string | null; newState: Record<string, string[]> }> {
+async function stockText(tenants: Array<{ id: string; name: string }>, state: any): Promise<{ text: string | null; newState: Record<string, string[]>; painel?: Painel }> {
   const prev: Record<string, string[]> = state.stock ?? {};
   const next: Record<string, string[]> = {};
   const parts: string[] = [];
+  const pLin: NonNullable<Painel['lin']> = [];
+  let totalCritico = 0;
   for (const t of tenants) {
     const rows = await db()<Array<{ id: string; name: string; current_stock: number; min_stock: number; unit: string }>>`
       select id::text, name, current_stock::float, min_stock::float, unit::text from ingredients
@@ -924,18 +1003,38 @@ async function stockText(tenants: Array<{ id: string; name: string }>, state: an
     if (resolvidos) l.push(`✔️ ${resolvidos} item(ns) saíram do crítico`);
     if (rows.length) l.push(`Total em crítico agora: ${rows.length}`);
     parts.push(l.join('\n'));
+    totalCritico += rows.length;
+    pLin.push({ t: tenants.length > 1 ? t.name : 'Entraram em crítico', i: [
+      ...novos.slice(0, 15).map((r) => ({ l: r.name, v: `${r.current_stock} ${r.unit}`, d: `mín. ${r.min_stock}`, st: (r.current_stock <= 0 ? 'perigo' : 'alerta') as St })),
+      ...(resolvidos ? [{ l: `${resolvidos} item(ns) saíram do crítico`, st: 'ok' as St }] : []),
+    ] });
   }
-  return { text: parts.length ? `📦 *Estoque crítico — o que mudou*\n\n${parts.join('\n\n')}` : null, newState: next };
+  const painel: Painel | undefined = parts.length ? {
+    t: 'Estoque crítico', s: 'O que mudou', kpi: { p: { l: 'Itens em crítico agora', v: String(totalCritico) } }, lin: pLin,
+    bt: [{ l: 'Estoque', r: '/estoque', i: 'ri-archive-line' }],
+  } : undefined;
+  return { text: parts.length ? `📦 *Estoque crítico — o que mudou*\n\n${parts.join('\n\n')}` : null, newState: next, painel };
 }
 
-async function tasksOverdueText(ownerId: string): Promise<string | null> {
+async function tasksOverdueText(ownerId: string): Promise<{ text: string; painel: Painel; resumo: string } | null> {
   const rows = await db()<Array<{ title: string; due_date: string; list: string | null }>>`
     select t.title, to_char(t.due_date at time zone 'America/Sao_Paulo', 'DD/MM') due_date, l.name as list
     from tasks t left join task_lists l on l.id = t.list_id
     where (t.created_by = ${ownerId} or t.assignee_id = ${ownerId}) and t.completed_at is null and t.is_archived = false and t.due_date < now()
     order by t.due_date limit 12`;
   if (!rows.length) return null;
-  return `📋 *Tarefas vencidas (${rows.length}${rows.length === 12 ? '+' : ''})*\n${rows.map((r) => `• ${r.title} (${r.due_date}${r.list ? `, ${r.list}` : ''})`).join('\n')}\nMe diga "concluí X" ou "adia X pra sexta" que eu ajusto.`;
+  const n = `${rows.length}${rows.length === 12 ? '+' : ''}`;
+  const painel: Painel = {
+    t: 'Tarefas vencidas', s: 'Tarefas',
+    kpi: { p: { l: 'Vencidas', v: n } },
+    lin: [{ t: 'Mais antigas primeiro', i: rows.map((r) => ({ l: r.title, d: [`venceu ${r.due_date}`, r.list ?? ''].filter(Boolean).join(' · '), st: 'perigo' as St })) }],
+    r: 'Diga "concluí X" ou "adia X pra sexta" que eu ajusto.',
+    bt: [{ l: 'Abrir tarefas', r: '/tarefas', i: 'ri-task-line' }],
+  };
+  return {
+    text: `📋 *Tarefas vencidas (${n})*\n${rows.map((r) => `• ${r.title} (${r.due_date}${r.list ? `, ${r.list}` : ''})`).join('\n')}\nMe diga "concluí X" ou "adia X pra sexta" que eu ajusto.`,
+    painel, resumo: `Tarefas vencidas (${n}): ${rows.slice(0, 3).map((r) => r.title).join('; ')}${rows.length > 3 ? '…' : ''}`,
+  };
 }
 
 // ── Caixa de pendências (2026-09-18) ────────────────────────────────────────
@@ -1265,8 +1364,8 @@ async function proactive(admin: SupabaseClient, cfg: Record<string, any>, ownerC
   const tenants = await getTenants(admin, cfg);
   if (!tenants.length) return { skipped: 'sem lojas' };
   const saveState = async () => { if (!dry) await admin.from('asst_settings').upsert({ key: 'proactive_state', value: state, updated_at: new Date().toISOString() }); };
-  const deliver = async (kind: string, text: string) => {
-    res[kind] = dry ? text : true;
+  const deliver = async (kind: string, text: string, painel?: { painel: Painel; resumo: string }) => {
+    res[kind] = dry ? (painel ? { text, painel: painel.painel } : text) : true;
     if (dry || !ownerChat) return;
     // Não chamar deliver() aqui: este deliver local esconde o de fora e chamava a si mesmo
     // ("Maximum call stack size exceeded" — nenhum aviso proativo saía até 2026-09-15).
@@ -1274,7 +1373,7 @@ async function proactive(admin: SupabaseClient, cfg: Record<string, any>, ownerC
     // Assunto pelo TIPO do aviso, não pelas palavras (2026-09-18: "Tarefas vencidas" com "API do iFood"
     // caiu no Financeiro pelo gatilho de texto). Tipo sem assunto fixo segue o gatilho.
     const topic = ({ tasks_overdue: 'avisos', closing: 'pagamentos', due_tomorrow: 'pagamentos', stock: 'compras' } as Record<string, string>)[kind];
-    await admin.from('asst_messages').insert({ channel: 'cron', chat_id: ownerChat, role: 'assistant', content: text, ...(topic ? { topic } : {}) });
+    await admin.from('asst_messages').insert({ channel: 'cron', chat_id: ownerChat, role: 'assistant', content: painel ? comPainel(painel.resumo, painel.painel) : text, ...(topic ? { topic } : {}) });
   };
   const want = (k: string) => (only ? only === k : pro[k].enabled && !!ownerChat);
 
@@ -1308,7 +1407,7 @@ async function proactive(admin: SupabaseClient, cfg: Record<string, any>, ownerC
   if (want('due_tomorrow') && (dry || (inWindow(pro.due_tomorrow.time, now) && state.due_date !== today))) {
     if (!dry) { state.due_date = today; await saveState(); }
     const t = await dueTomorrowText(tenants, today);
-    if (t) await deliver('due_tomorrow', t); else res.due_tomorrow = 'nada vencendo';
+    if (t) await deliver('due_tomorrow', t.text, { painel: t.painel, resumo: t.resumo }); else res.due_tomorrow = 'nada vencendo';
   }
   // Vence hoje → conversa Financeiro com os cartões de pagamento (precisa do Telegram do dono: o
   // pagamento é aprovado pelo botão + PIN, no Telegram ou no chat do ERPOS).
@@ -1336,14 +1435,14 @@ async function proactive(admin: SupabaseClient, cfg: Record<string, any>, ownerC
     }
   }
   if (want('stock') && (dry || (inWindow(pro.stock.time, now) && state.stock_date !== today))) {
-    const { text, newState } = await stockText(tenants, state);
+    const { text, newState, painel: pnStock } = await stockText(tenants, state);
     if (!dry) { state.stock_date = today; state.stock = newState; await saveState(); }
-    if (text) await deliver('stock', text); else res.stock = 'sem mudança';
+    if (text) await deliver('stock', text, pnStock ? { painel: pnStock, resumo: text.split('\n')[0].replace(/\*/g, '') } : undefined); else res.stock = 'sem mudança';
   }
   if (want('tasks_overdue') && (dry || (inWindow(pro.tasks_overdue.time, now) && state.tasks_date !== today))) {
     if (!dry) { state.tasks_date = today; await saveState(); }
     const t = await tasksOverdueText(String(cfg.owner_user_id ?? ''));
-    if (t) await deliver('tasks_overdue', t); else res.tasks_overdue = 'nenhuma vencida';
+    if (t) await deliver('tasks_overdue', t.text, { painel: t.painel, resumo: t.resumo }); else res.tasks_overdue = 'nenhuma vencida';
   }
   // Caixa em dia primeiro (silencioso, 2 contagens por loja): é ela que garante que nada se
   // perde — os avisos abaixo são só ponteiros para cá. Fora do want() de propósito:
@@ -1407,7 +1506,7 @@ Deno.serve(async (req) => {
   // deno-lint-ignore no-explicit-any
   const body: any = await req.json().catch(() => ({}));
   if (body.preview === 'brief') {
-    try { return json({ ok: true, preview: await morningBriefText(admin, cfg, localDate()) }); }
+    try { const b = await morningBriefText(admin, cfg, localDate()); return json({ ok: true, preview: b.texto, painel: b.painel }); }
     catch (e) { return json({ error: errMsg(e) }, 500); }
   }
   if (typeof body.preview === 'string') {

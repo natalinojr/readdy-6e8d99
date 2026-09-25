@@ -244,8 +244,11 @@ async function bloqueioDaNota(ctx: Ctx, doc: any): Promise<string | null> {
   }
   if (!motivo) return null;
   await pendencia(ctx, 'recebimento_parado', String(doc.id),
-    `Mercadoria de ${doc.emitente_nome ?? 'fornecedor'} chegou — NF ${doc.numero ?? ''} precisa ser lançada`,
-    `A loja quer receber a NF ${doc.numero ?? ''} (R$ ${Number(doc.valor_total ?? 0).toFixed(2)}), mas ela ${motivo}. Lance em Notas de entrada; depois o recebimento é confirmado pelo celular.`,
+    // Texto dizendo ONDE e COMO (dono, 2026-09-25: "lançada onde?").
+    `NF ${doc.numero ?? ''} de ${doc.emitente_nome ?? 'fornecedor'} chegou e espera o lançamento no Financeiro`,
+    `A loja quer receber essa mercadoria (NF ${doc.numero ?? ''}, ${Number(doc.valor_total ?? 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}), mas a nota ${motivo} — por isso o celular não lança sozinho. `
+      + `O que fazer: em Financeiro › Notas de entrada, abra essa nota e lance como compra (o botão "Conferir e lançar a nota" abre ela direto). `
+      + `Se não for mercadoria comprada, toque em "Não é compra". Depois do lançamento, a loja confirma o recebimento pelo celular.`,
     '/financeiro?tab=notas-entrada', { document_id: doc.id });
   return `Essa nota ${motivo} e precisa ser lançada pelo financeiro. Já avisei — quando ele lançar, ela aparece aqui para você receber.`;
 }

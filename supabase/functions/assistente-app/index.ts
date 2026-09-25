@@ -683,6 +683,27 @@ Deno.serve(async (req) => {
       return fail('Ação não disponível para essa pendência.');
     }
 
+    // Conta atrasada paga pelo cartão da pendência (dono, 2026-09-25): prepara o boleto guardado (o
+    // inter-bank recalcula multa e juros do vencido) ou o Pix copia e cola da conta; a tela pede o PIN.
+    // Todas as travas do inter-bank valem (já paga, em andamento, incerto, fornecedor/Pix permitido).
+    if (action === 'conta_pagar') {
+      const { data: b } = await admin.from('fin_accounts_payable')
+        .select('id, tenant_id, supplier, description, amount, paid_amount, status, boleto_digitavel, boleto_pix_copia')
+        .eq('id', String(body.bill_id ?? '')).maybeSingle();
+      if (!b) return fail('Conta não encontrada.', 404);
+      if (!(await ehGestor(admin, user.id, String(b.tenant_id)))) return fail('Sem acesso a essa loja.', 403);
+      if (['paid', 'cancelled'].includes(String(b.status))) return fail(b.status === 'paid' ? 'Essa conta já está paga.' : 'Essa conta foi cancelada.');
+      if (!b.boleto_digitavel && !b.boleto_pix_copia) return fail('Essa conta não tem boleto nem Pix guardado. Mande o boleto no chat ou dê baixa se já pagou.');
+      const saldo = Math.round((Number(b.amount) - Number(b.paid_amount ?? 0)) * 100) / 100;
+      const out = await callInter('prepare_payment', {
+        tenant_id: b.tenant_id, tipo: b.boleto_digitavel ? 'boleto' : 'pix',
+        linha: b.boleto_digitavel ?? undefined, copia_e_cola: b.boleto_digitavel ? undefined : b.boleto_pix_copia,
+        valor: b.boleto_digitavel ? undefined : saldo, bill_id: b.id,
+        descricao: String(b.supplier || b.description || 'Conta').slice(0, 140), requested_by: user.id, channel: 'app', chat_id: chatKey,
+      });
+      return json({ success: true, data: { payment: await payCard1(admin, out.payment) } });
+    }
+
     if (action === 'pendencia_recusar') {
       const { data: pend } = await admin.from('pendencias').select('id, tenant_id, kind, ref, payload').eq('id', String(body.id ?? '')).maybeSingle();
       if (!pend) return fail('Pendência não encontrada.', 404);
