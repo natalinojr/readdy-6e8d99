@@ -66,6 +66,12 @@ const MOTIVO: Record<string, { placeholder: string; acao: 'resolvida' | 'descart
   sangria_sem_cupom: { placeholder: 'O que foi esse dinheiro?', acao: 'resolvida' },
   recebimento_sem_nota: { placeholder: 'Por que veio sem nota?', acao: 'resolvida' },
 };
+// Onde se resolve, em uma linha (dono, 2026-09-25: "precisa ser lançada — mas lançada onde?").
+const ONDE: Record<string, string> = {
+  recebimento_parado: 'Financeiro › Notas de entrada — "Conferir e lançar a nota" abre ela direto.',
+  nota_nao_lancada: 'Financeiro › Notas de entrada — lance a nota para virar conta a pagar.',
+  recebimento_sem_nota: 'Financeiro › Notas de entrada, quando a nota chegar — "Procurar a nota" busca por aqui.',
+};
 // Pedido de pagamento do /receber (reembolso, freelancer, fornecedor sem nota).
 const pedidoDa = (p: PendenciaChat) => (typeof p.payload?.pedido_id === 'string' ? p.payload.pedido_id : null);
 
@@ -241,6 +247,8 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
     catch (e) { setErros((x) => ({ ...x, [p.id]: e instanceof Error ? e.message : String(e) })); }
     finally { setOcupada(null); setConfirmar(null); }
   };
+  // Cartões com o texto aberto por inteiro (o resto fica em 3 linhas).
+  const [textoAberto, setTextoAberto] = useState<Set<string>>(new Set());
   // Aviso que precisa sobreviver ao cartão (o pedido aprovado sai da lista).
   const [avisoTopo, setAvisoTopo] = useState<string | null>(null);
   // Mudança de dinheiro pede um segundo toque ("Confirmar?") no próprio botão.
@@ -348,7 +356,15 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
               <span><span className="block text-[10px] text-amber-800">Nota</span><b className="text-xs text-zinc-900">{brl(nota)}</b></span>
               <span><span className="block text-[10px] text-amber-800">Diferença</span><b className="text-xs text-amber-800">{brl(Math.abs(saiu - nota))}</b></span>
             </div>
-          ) : detalhe && <p className="text-xs text-zinc-500 mt-1 line-clamp-3 whitespace-pre-wrap">{detalhe}</p>}
+          ) : detalhe && (
+            // Texto longo cortado em 3 linhas: tocar abre o texto inteiro (dono, 2026-09-25: "não tem como ler").
+            <button type="button" onClick={() => setTextoAberto((x) => { const n = new Set(x); if (n.has(p.id)) n.delete(p.id); else n.add(p.id); return n; })}
+              className="block w-full text-left cursor-pointer" aria-expanded={textoAberto.has(p.id)}>
+              <span className={`block text-xs text-zinc-500 mt-1 whitespace-pre-wrap ${textoAberto.has(p.id) ? '' : 'line-clamp-3'}`}>{detalhe}</span>
+              {detalhe.length > 140 && <span className="block text-[11px] font-semibold text-violet-700 mt-0.5">{textoAberto.has(p.id) ? 'Mostrar menos' : 'Ler tudo'}</span>}
+            </button>
+          )}
+          {ONDE[p.kind] && <p className="mt-1 text-[11px] text-zinc-600"><i className="ri-map-pin-2-line text-zinc-400" /> <b className="font-semibold">Onde:</b> {ONDE[p.kind]}</p>}
           {['compra_pelo_celular', 'sangria_nao_saiu'].includes(p.kind) && compraId && <ResumoCompra call={call} pendId={p.id} />}
         </div>
 
@@ -578,7 +594,7 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
             </div>
           </div>
           )}
-          {(itens.length > 1 || nTarefas > 0) && (
+          {itens.length > 1 && (
             <div className="flex items-center gap-2">
               {itens.length > 1 && (
               <button onClick={trocarOrdem} title="Ordem de chegada"
@@ -586,13 +602,6 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
                 <i className={ordem === 'antigas' ? 'ri-sort-asc' : 'ri-sort-desc'} />
                 {ordem === 'antigas' ? 'Mais antigas primeiro' : 'Mais novas primeiro'}
               </button>
-              )}
-              {/* No lugar do antigo "Mais antiga" (a ordem já resolve): atalho para as minhas tarefas. */}
-              {nTarefas > 0 && (
-                <button onClick={() => setVerTarefas(true)}
-                  className="ml-auto h-7 px-2.5 flex items-center gap-1 rounded-lg border border-amber-200 bg-amber-50 text-amber-800 text-xs font-bold cursor-pointer whitespace-nowrap hover:bg-amber-100">
-                  <i className="ri-task-line" /> {nTarefas} tarefa{nTarefas > 1 ? 's' : ''} vencida{nTarefas > 1 ? 's' : ''} ou hoje <i className="ri-arrow-right-s-line" />
-                </button>
               )}
             </div>
           )}
@@ -616,6 +625,20 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
               <p className="flex-1">{avisoTopo}</p>
               <button onClick={() => setAvisoTopo(null)} className="text-amber-700 cursor-pointer" aria-label="Fechar aviso"><i className="ri-close-line" /></button>
             </div>
+          )}
+          {/* Minhas tarefas (dono, 2026-09-25: o botão amarelo no topo destoava): uma linha da lista, com a
+              mesma cara dos grupos por tipo — ícone, nome, quantas e a seta. */}
+          {nTarefas > 0 && (
+            <button onClick={() => setVerTarefas(true)}
+              className="w-full flex items-center gap-2 rounded-xl px-2 py-1.5 text-left cursor-pointer hover:bg-zinc-100">
+              <span className="w-7 h-7 flex-shrink-0 flex items-center justify-center rounded-lg bg-amber-100"><i className="ri-task-line text-amber-700" /></span>
+              <span className="flex-1 min-w-0">
+                <span className="block text-[13px] font-bold text-zinc-800 truncate">Minhas tarefas</span>
+                <span className="block text-[11px] text-zinc-500 truncate">{nTarefas} tarefa{nTarefas > 1 ? 's' : ''} vencida{nTarefas > 1 ? 's' : ''} ou hoje</span>
+              </span>
+              <span className="min-w-[22px] h-[22px] px-1.5 flex items-center justify-center rounded-full bg-zinc-800 text-white text-[11px] font-bold">{nTarefas}</span>
+              <i className="ri-arrow-right-s-line text-zinc-400" />
+            </button>
           )}
           {!itens.length && <p className="text-sm text-zinc-400 text-center py-10"><i className="ri-check-double-line text-xl block mb-1 text-emerald-500" />Nenhuma pendência {filtro ? 'nesta loja' : ''}.</p>}
           {agrupar === 'chegada'

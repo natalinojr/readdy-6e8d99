@@ -1344,7 +1344,10 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
             return (
               <div key={m.id} data-msg-id={m.id} className="flex justify-start">
                 <div className="w-full max-w-[92%]">
-                  <PainelMensagem dados={pnl} />
+                  <PainelMensagem dados={pnl} onBotao={(r) => {
+                    if (r === '#pendencias') { setPendAberta(true); return; }
+                    navigate(r); if (variant === 'floating') setModo('mini');
+                  }} />
                   <p className="text-[10px] text-zinc-400 mt-1">{horaMsg(m.created_at)}</p>
                 </div>
               </div>

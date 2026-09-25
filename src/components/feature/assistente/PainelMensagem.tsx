@@ -15,6 +15,7 @@ export interface DadosPainel {
   lin?: Array<{ t: string; i: Array<{ l: string; v?: string; d?: string; st?: 'ok' | 'alerta' | 'perigo' | 'neutro' }> }>; // linhas label → valor
   rk?: { t: string; p?: 'v'; i: Array<{ n: string; q: number; v?: number }> };                    // ranking (p: 'v' = por faturamento)
   al?: string[];                                                                         // alertas
+  bt?: Array<{ l: string; r: string; i?: string }>;  // botões de atalho (r = rota; '#pendencias' abre a caixa) — 2026-09-25
 }
 
 /** Lê o marcador do texto da mensagem. Marcador inválido = sem painel (o balão mostra o texto). */
@@ -27,7 +28,7 @@ export function painelDoTexto(texto: string): DadosPainel | null {
   } catch { return null; }
 }
 
-export default function PainelMensagem({ dados }: { dados: DadosPainel }) {
+export default function PainelMensagem({ dados, onBotao }: { dados: DadosPainel; onBotao?: (rota: string) => void }) {
   return (
     <Painel titulo={dados.t} subtitulo={dados.s} rodape={dados.r}>
       {dados.kpi && (
@@ -54,6 +55,16 @@ export default function PainelMensagem({ dados }: { dados: DadosPainel }) {
       {(dados.al ?? []).map((a) => (
         <p key={a} className="text-xs font-semibold text-amber-700 bg-amber-50 rounded-xl px-3 py-2">⚠️ {a}</p>
       ))}
+      {onBotao && !!dados.bt?.length && (
+        <div className="flex flex-wrap gap-1.5">
+          {dados.bt.map((b) => (
+            <button key={b.r} onClick={() => onBotao(b.r)}
+              className="flex-1 min-w-fit h-8 px-3 flex items-center justify-center gap-1 rounded-lg border border-violet-200 text-xs font-semibold text-violet-700 hover:bg-violet-50 cursor-pointer whitespace-nowrap">
+              <i className={b.i ?? 'ri-arrow-right-up-line'} /> {b.l}
+            </button>
+          ))}
+        </div>
+      )}
     </Painel>
   );
 }
