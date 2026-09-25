@@ -1251,9 +1251,15 @@ function AutoatendimentoPageInner() {
               </div>
             )}
             {pedidoPago ? (
-              <span className="px-4 py-1.5 bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-xs font-semibold rounded-xl whitespace-nowrap">
-                Pedido pago — procure o caixa
-              </span>
+              // Pedido pago não se cancela, mas o tablet nunca pode ficar preso nele (Tablet 2 de
+              // Paranaguá, 2026-09-25: Pix pago + erro ao lançar no caixa = tela sem saída).
+              // "Concluir" só volta ao início; o pedido segue pago e na cozinha.
+              <button
+                onClick={() => { void handleConcluir(); }}
+                className="px-4 py-1.5 bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-400 text-xs font-semibold rounded-xl whitespace-nowrap cursor-pointer"
+              >
+                Pedido pago · Concluir
+              </button>
             ) : (
               <button
                 onClick={handleCancelar}

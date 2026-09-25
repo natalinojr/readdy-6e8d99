@@ -3,6 +3,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import QRCodeImport from 'react-qr-code';
 const QRCode = ((QRCodeImport as unknown as { default: typeof QRCodeImport }).default || QRCodeImport) as typeof QRCodeImport;
 import { supabase, invokeWithAuth } from '@/lib/supabase';
+import { reportError } from '@/lib/errorReporter';
 import { useAuth } from '@/contexts/AuthContext';
 import { useKioskAuth } from '@/contexts/KioskAuthContext';
 import { type ItemPedidoCliente } from '@/types/mesaCliente';
@@ -653,7 +654,23 @@ export default function PagamentoKiosk({
       invokeWithAuth('pix-payment', { body: { action: 'attach_order', pix_payment_id: pixPaymentId, order_id: orderId } }).catch(() => {});
       const metodo = paymentMethods.find((m) => m.type === tipo);
       if (!metodo) throw new Error(`O pagamento foi recebido, mas a loja não tem a forma de pagamento ${NOME_TIPO[tipo] ?? tipo} cadastrada. NÃO pague de novo — chame um atendente.`);
-      await onRegistrarPagamento(metodo.id, orderId);
+      // Daqui em diante o cliente JÁ pagou e o pedido JÁ existe (nasce pago e vai pra cozinha).
+      // Tablet 2 de Paranaguá, 2026-09-25 20:38: o banco estava sobrecarregado, o registro no caixa
+      // deu statement timeout e a tela voltava pra "Como deseja pagar?" — sem Cancelar (pedido pago)
+      // e sem inatividade: travada. Agora tenta de novo e, se ainda falhar, mostra o pedido
+      // confirmado ao cliente e avisa a equipe (dev_error_events) para lançar o pagamento no caixa.
+      let erroCaixa: unknown = null;
+      for (let tentativa = 0; tentativa < 3; tentativa++) {
+        try { await onRegistrarPagamento(metodo.id, orderId); erroCaixa = null; break; }
+        catch (err) { erroCaixa = err; if (tentativa < 2) await new Promise((r) => setTimeout(r, 2000 * (tentativa + 1))); }
+      }
+      if (erroCaixa) {
+        reportError(erroCaixa, {
+          fn: 'PagamentoKiosk.pagamentoNaoLancadoNoCaixa',
+          message: `Pagamento ${NOME_TIPO[tipo] ?? tipo} recebido e pedido criado, mas NÃO lançado no caixa (lançar à mão): pedido ${orderId}, pagamento ${pixPaymentId}, ${fmt(total)}. Erro: ${erroCaixa instanceof Error ? erroCaixa.message : String(erroCaixa)}`,
+          context: { order_id: orderId, pix_payment_id: pixPaymentId, payment_method_id: metodo.id, amount: total, tipo },
+        });
+      }
       setConfirmado(true);
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Erro ao registrar o pagamento.';
@@ -664,7 +681,7 @@ export default function PagamentoKiosk({
     } finally {
       setAguardando(false);
     }
-  }, [onEntrarPagamento, onRegistrarPagamento, paymentMethods]);
+  }, [onEntrarPagamento, onRegistrarPagamento, paymentMethods, total]);
 
   const cobrancaEmAndamento =
     forma?.type === 'pix' ||
