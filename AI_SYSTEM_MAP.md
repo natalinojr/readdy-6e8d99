@@ -2878,6 +2878,11 @@ Regra do dono: todo extrato da conciliação mostra a hora, de qualquer banco ou
 - Saldo do cartão da conta (`useBankAccounts`) é relido a cada recarga do extrato: lançar/desfazer mexe no saldo via `fn_bank_debit/credit`.
 - `link_manual` aceita `dre_category_id`: conta sem classificação DRE é classificada ali (o `pay_bill` recusa baixa sem DRE).
 
+### Datas no Financeiro: fuso de Brasília (2026-09-25)
+- Coluna `timestamptz` (`created_at`, `received_at`) filtrada por período: SEMPRE `dia + 'T00:00:00-03:00'` / `dia + 'T23:59:59.999-03:00'`. Sem offset o Postgres lê UTC e o mês vira às 21h (a DRE e a DRE comparativa estavam assim; `useReceitas` já fazia certo). Coluna `date` (`paid_date`, `due_date`, `fin_cash_flow.date`) compara com 'YYYY-MM-DD' puro.
+- "Hoje": `todayBrasilia()` e `somarDias(hoje, n)` (`src/lib/dateUtils.ts`), nunca `new Date().toISOString().split('T')[0]` — vira amanhã às 21h (conta de hoje aparecia vencida à noite).
+- Contas a Pagar: `bank_account_id` da conta é o banco que a baixa debita (`pay_bill` usa o do payload ou o da conta; sem nenhum, não mexe em saldo). O modal de pagamento tem "Saiu da conta".
+
 ### Operação go-live Paranaguá: carga, segurança e corridas (2026-09-17)
 Agentes (auditor, carga, testadores, revisores, executores) testaram produção na loja Testes PDV; dados de teste apagados ao final.
 - **Latência**: Edge rodava em sa-east-1 e o banco está em us-west-1 (~150 ms por consulta; create_order 4,5 s). `src/lib/supabase.ts` agora anexa `?forceFunctionRegion=us-west-1` (patch global de `fetch`, lista `EDGES_NA_REGIAO_DO_BANCO`) às edges que só falam com o banco; create_order caiu p/ ~1,1 s, record_payment ~0,8 s. Edges que falam com SEFAZ/Inter/Stone/Pix ficam no padrão. Edge nova só de banco → adicionar à lista.
