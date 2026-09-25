@@ -2881,6 +2881,9 @@ Regra do dono: todo extrato da conciliação mostra a hora, de qualquer banco ou
 ### Datas no Financeiro: fuso de Brasília (2026-09-25)
 - Coluna `timestamptz` (`created_at`, `received_at`) filtrada por período: SEMPRE `dia + 'T00:00:00-03:00'` / `dia + 'T23:59:59.999-03:00'`. Sem offset o Postgres lê UTC e o mês vira às 21h (a DRE e a DRE comparativa estavam assim; `useReceitas` já fazia certo). Coluna `date` (`paid_date`, `due_date`, `fin_cash_flow.date`) compara com 'YYYY-MM-DD' puro.
 - "Hoje": `todayBrasilia()` e `somarDias(hoje, n)` (`src/lib/dateUtils.ts`), nunca `new Date().toISOString().split('T')[0]` — vira amanhã às 21h (conta de hoje aparecia vencida à noite).
+- Fluxo de caixa × maquininha (2026-09-25): `fin_cash_flow.fora_do_caixa = true` (gatilho `trg_cash_flow_fora_do_caixa`) marca `auto_sale`/`auto_card_fee` de pagamento em cartão (credit/debit/meal_voucher) quando a loja tem Stone ou MP com `post_to_ledger` — o dinheiro entra pelo `stone_sale` na liberação. Toda tela de CAIXA (Fluxo/Calendário/Previsão/Realizado) filtra `fora_do_caixa=false`; a DRE não (segue a regra de fontes). Leitura nova de fin_cash_flow para caixa: filtrar também.
+- Saldo inicial de projeção: com banco configurado (`fin_bank_accounts` synced/current) parte do saldo de HOJE — Previsão e Calendário usam a mesma regra; o razão acumulado só vale para loja sem banco.
+- Recorrentes na projeção: a tabela só tem a próxima ocorrência (a edge cria a seguinte na baixa); `ocorrenciasRecorrentes` (`src/lib/recorrencias.ts`) gera as dos meses seguintes só para exibir.
 - Contas a Pagar: `bank_account_id` da conta é o banco que a baixa debita (`pay_bill` usa o do payload ou o da conta; sem nenhum, não mexe em saldo). O modal de pagamento tem "Saiu da conta".
 
 ### Operação go-live Paranaguá: carga, segurança e corridas (2026-09-17)
