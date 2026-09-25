@@ -11,11 +11,16 @@ interface Recebimento {
   supplier: string | null;
   invoice_number: string | null;
   received_at: string;
+  purchase_date: string | null;
   unit_label: string | null;
   quantidade: number;
   valor: number;
   inventario_depois: boolean;
+  inventario_em: string | null;
 }
+
+const dataHora = (iso: string) =>
+  new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 
 interface Props {
   tenantId: string;
@@ -107,16 +112,18 @@ export default function EntradaTardiaModal({ tenantId, item, insumo, upp, onFech
               <input type="checkbox" className="mt-1" checked={sel.has(r.purchase_item_id)} onChange={() => toggle(r.purchase_item_id)} />
               <div className="min-w-0 flex-1">
                 <p className="text-sm text-zinc-800">
-                  Recebido em {new Date(r.received_at).toLocaleDateString('pt-BR')}
-                  <span className="text-zinc-500"> · {r.supplier ?? '—'}{r.invoice_number ? ` · NF ${r.invoice_number}` : ''}</span>
+                  {r.invoice_number ? `NF ${r.invoice_number}` : 'Compra sem NF'}
+                  {r.purchase_date && ` de ${new Date(r.purchase_date + 'T00:00:00').toLocaleDateString('pt-BR')}`}
+                  <span className="text-zinc-500"> · {r.supplier ?? '—'}</span>
                 </p>
+                <p className="text-xs text-zinc-500">Recebimento confirmado em {dataHora(r.received_at)}</p>
                 <p className="text-xs text-zinc-500">
                   {num(Number(r.quantidade))} {r.unit_label || 'un'} · {brl(Number(r.valor))}
                   {insumo ? ` → +${num(Number(r.quantidade) * upp)} ${un(insumo.unit)} no estoque` : ''}
                 </p>
                 {r.inventario_depois && (
                   <p className="text-[11px] text-orange-700 mt-1">
-                    <i className="ri-error-warning-line" /> Teve inventário deste insumo depois dessa data: a contagem provavelmente já acertou o estoque. Dar entrada agora pode contar em dobro.
+                    <i className="ri-error-warning-line" /> Teve contagem deste insumo depois{r.inventario_em ? ` (${dataHora(r.inventario_em)})` : ''}: o estoque já foi acertado. Dar entrada agora conta em dobro.
                   </p>
                 )}
               </div>
