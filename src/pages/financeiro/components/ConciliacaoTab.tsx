@@ -1356,7 +1356,7 @@ export default function ConciliacaoTab() {
           <select
             value={filterCategory}
             onChange={e => filtrarCategoria(e.target.value)}
-            className="md:hidden flex-1 sm:flex-none border border-zinc-200 rounded-lg px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white sm:max-w-[12rem]"
+            className={`${filterCategory === 'all' ? 'md:hidden' : 'ring-2 ring-amber-300'} flex-1 sm:flex-none border border-zinc-200 rounded-lg px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white sm:max-w-[12rem]`}
           >
             <option value="all">Todas categorias</option>
             <option value="none">Sem categoria</option>
@@ -1508,6 +1508,23 @@ export default function ConciliacaoTab() {
             </p>
             {imports.length === 0 && (
               <p className="text-xs text-zinc-400 mt-1">Amplie o período ou use "Importar" para buscar nos bancos</p>
+            )}
+            {imports.length > 0 && temFiltro && (
+              <div className="mt-3 flex flex-col items-center gap-1.5">
+                <p className="text-xs text-zinc-400 text-center px-4">
+                  Filtrando por:{' '}
+                  {[
+                    filterStatus !== 'all' && (filterStatus === 'pending' ? 'Pendentes' : filterStatus === 'conciliado' ? 'Conciliados' : 'Ignorados'),
+                    filterType !== 'all' && (filterType === 'credit' ? 'só entradas' : 'só saídas'),
+                    filterCategory !== 'all' && `categoria "${filterCategory === 'none' ? 'Sem categoria' : filterCategory}"`,
+                    search.trim() && `busca "${search.trim()}"`,
+                  ].filter(Boolean).join(' · ')}
+                </p>
+                <button onClick={() => { setSearch(''); setFilterStatus('all'); setFilterType('all'); setFilterCategory('all'); setPage(1); }}
+                  className="px-3 py-1.5 rounded-lg bg-amber-500 text-white text-xs font-semibold hover:bg-amber-600 cursor-pointer">
+                  <i className="ri-filter-off-line" /> Limpar filtros
+                </button>
+              </div>
             )}
           </div>
         ) : (
