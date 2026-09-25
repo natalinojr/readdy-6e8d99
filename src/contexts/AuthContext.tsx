@@ -7,7 +7,7 @@ import type { TipoEmpresa } from '@/lib/tipoEmpresa';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-export type UserPerfil = 'admin' | 'gerente' | 'caixa' | 'garcom' | 'cozinha' | 'gestor_entregas' | 'tarefas' | 'totem' | 'financeiro' | 'supervisao';
+export type UserPerfil = 'admin' | 'gerente' | 'caixa' | 'garcom' | 'cozinha' | 'gestor_entregas' | 'tarefas' | 'totem' | 'financeiro' | 'supervisao' | 'contabilidade';
 
 export interface TenantOption {
   tenantId: string;
@@ -78,6 +78,7 @@ const DB_TO_FRONTEND_ROLE: Record<string, UserPerfil> = {
   tasks_only: 'tarefas',
   tablet: 'totem',
   financeiro: 'financeiro',
+  accountant: 'contabilidade',
 };
 
 // ─── Login: distinguir "senha errada" de "aparelho sem internet" ─────────────

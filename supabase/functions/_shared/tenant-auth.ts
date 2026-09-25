@@ -36,6 +36,15 @@ export function isFinanceiroRole(role?: string | null): boolean {
   return role === 'financeiro';
 }
 
+/**
+ * Papel Contabilidade (contador(a) da loja, 2026-09-25). Fica FORA de isFinanceiroRole de
+ * propósito: nas Edges do Financeiro ele só lê; a escrita é liberada ação a ação (folha e guias),
+ * nunca pagamento, baixa ou cadastro de fornecedor/chave Pix.
+ */
+export function isContabilidadeRole(role?: string | null): boolean {
+  return role === 'accountant';
+}
+
 export function bearerToken(req: Request): string {
   const h = req.headers.get('Authorization') ?? '';
   return h.replace(/^Bearer\s+/i, '').trim();

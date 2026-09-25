@@ -24,6 +24,7 @@ import NotasEntradaTab from './components/NotasEntradaTab';
 import ItensClassificacaoTab from './components/ItensClassificacaoTab';
 import IfoodTab from './components/IfoodTab';
 import FreelancersTab from './components/FreelancersTab';
+import GuiasTab from './components/GuiasTab';
 
 const TABS = [
   { id: 'visao', label: 'Visão Geral', icon: 'ri-dashboard-line' },
@@ -39,6 +40,7 @@ const TABS = [
   { id: 'itens', label: 'Classificação de Itens', icon: 'ri-price-tag-3-line' },
   { id: 'rh', label: 'RH / Folha', icon: 'ri-team-line' },
   { id: 'rh-relatorio', label: 'Relatório RH', icon: 'ri-bar-chart-grouped-line' },
+  { id: 'guias', label: 'Guias e impostos', icon: 'ri-file-upload-line' },
   { id: 'freelancers', label: 'Freelancers', icon: 'ri-user-star-line' },
   { id: 'centros', label: 'Centro de Custos', icon: 'ri-pie-chart-line' },
   { id: 'dre', label: 'DRE', icon: 'ri-file-chart-line' },
@@ -100,7 +102,7 @@ export default function FinanceiroPage() {
     setHighlightPurchaseId(undefined);
   };
 
-  if (!user || !['admin', 'gerente', 'financeiro'].includes(user.perfil)) {
+  if (!user || !['admin', 'gerente', 'financeiro', 'contabilidade'].includes(user.perfil)) {
     return (
       <div className="flex-1 flex items-center justify-center bg-zinc-50">
         <div className="text-center">
@@ -186,6 +188,7 @@ export default function FinanceiroPage() {
         {activeTab === 'compras' && <ComprasTab highlightId={highlightPurchaseId} onHighlightConsumed={handleClearHighlight} />}
         {activeTab === 'rh' && <RHTab />}
         {activeTab === 'rh-relatorio' && <RHRelatorioTab />}
+        {activeTab === 'guias' && <GuiasTab />}
         {activeTab === 'freelancers' && <FreelancersTab />}
         {activeTab === 'centros' && <CentroCustosTab />}
         {activeTab === 'dre' && <DREContainer />}

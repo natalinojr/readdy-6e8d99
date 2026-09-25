@@ -21,6 +21,11 @@ describe('rotaForcada', () => {
     expect(rotaForcada('tarefas', '/tarefas/123')).toBe(null);
   });
 
+  it('prende a contabilidade no Financeiro', () => {
+    expect(rotaForcada('contabilidade', '/pdv/caixa')).toBe('/financeiro');
+    expect(rotaForcada('contabilidade', '/financeiro?tab=guias')).toBe(null);
+  });
+
   it('não prende quem não é papel restrito', () => {
     for (const p of ['admin', 'gerente', 'caixa', 'garcom', 'cozinha', undefined]) {
       expect(rotaForcada(p, '/dashboard')).toBe(null);

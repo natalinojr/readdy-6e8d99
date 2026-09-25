@@ -6,6 +6,7 @@ export const PAPEIS_PRESOS: Record<string, string> = {
   gestor_entregas: '/gestor-entregas',
   tarefas: '/tarefas',
   financeiro: '/financeiro',
+  contabilidade: '/financeiro',
 };
 
 export function rotaForcada(perfil: string | undefined | null, pathname: string): string | null {

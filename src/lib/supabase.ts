@@ -465,6 +465,7 @@ export const NON_IDEMPOTENT_ACTIONS = new Set([
   'close_cash_register',
   'add_cash_movement',
   'register_partial_refund',
+  'enviar_guia', // contabilidade: repetir pode preparar o pagamento da guia duas vezes
 ]);
 
 /**
