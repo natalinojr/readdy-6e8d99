@@ -582,6 +582,15 @@ function parseReleaseCsv(csv: string) {
   return { rows, header };
 }
 
+/** Nome em português das reservas do Relatório de Liberações */
+function reserveLabel(description: string): string {
+  const d = description.toLowerCase();
+  if (d.includes('payout')) return 'reserva para saque';
+  if (d.includes('refund')) return 'reserva para estorno';
+  if (d.includes('dispute') || d.includes('cbk') || d.includes('chargeback')) return 'reserva por contestação';
+  return `reserva (${description})`;
+}
+
 function releaseRows(tenantId: string, bankAccountId: string, reportId: string | null, csv: string) {
   const { rows: csvRows, header } = parseReleaseCsv(csv);
   const out: Record<string, unknown>[] = [];
@@ -601,7 +610,10 @@ function releaseRows(tenantId: string, bankAccountId: string, reportId: string |
     if (amount === 0) amount = num(r.GROSS_AMOUNT);
     if (Math.abs(amount) < 0.005) { skipped++; continue; }
 
-    const isPayout = /payout|withdraw|saque|transfer/i.test(description);
+    // reserve_for_payout/refund/dispute: o MP separa o dinheiro e devolve (par que se anula) — NÃO é o saque.
+    // Antes caía no /payout/ e aparecia como "Saque do Mercado Pago para o banco" três vezes por saque.
+    const reserva = /^reserve_for_/i.test(description) ? reserveLabel(description) : null;
+    const isPayout = !reserva && /payout|withdraw|saque|transfer/i.test(description);
     const sourceId = String(r.SOURCE_ID ?? r.PURCHASE_ID ?? r.ORDER_ID ?? '').trim();
     // chave determinada pelo CONTEÚDO: relatórios de períodos que se sobrepõem não duplicam
     const key = `mprel:${date}:${description}:${sourceId}:${amount.toFixed(2)}`;
@@ -613,9 +625,11 @@ function releaseRows(tenantId: string, bankAccountId: string, reportId: string |
       transaction_type: amount < 0 ? 'debit' : 'credit',
       description: isPayout
         ? `Saque do Mercado Pago para o banco (R$ ${money(Math.abs(round2(amount)))})`
+        : reserva
+        ? `Mercado Pago: ${reserva} (${amount < 0 ? 'separado' : 'devolvido ao saldo'})${sourceId ? ` · ${sourceId}` : ''}`
         : `Mercado Pago: ${description}${sourceId ? ` · ${sourceId}` : ''}`,
       status: 'pending',
-      category: isPayout ? 'Repasse Mercado Pago' : 'Mercado Pago',
+      category: isPayout ? 'Repasse Mercado Pago' : reserva ? 'Reserva Mercado Pago' : 'Mercado Pago',
       source: 'mercadopago', provider_import_id: reportId,
       raw: {
         kind: isPayout ? 'payout' : 'movement',
