@@ -1,4 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
+import { reaplicarFicha } from '../_shared/ficha-retroativa.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -443,6 +444,18 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       });
       if (error) throw new Error(`upsert_item_ingredients: ${error.message}`);
       result = data;
+    }
+    else if (action === 'reaplicar_ficha') {
+      // Ficha mudada → refaz a baixa das vendas desde a data escolhida (_shared/ficha-retroativa.ts).
+      // aplicar=false só calcula o efeito (prévia na tela).
+      const { item_id, desde, aplicar } = payload as { item_id: string; desde: string; aplicar?: boolean };
+      if (!isValidUuid(item_id)) return errResp('item_id inválido', 400);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(String(desde ?? ''))) return errResp('Informe a data (AAAA-MM-DD)', 400);
+      const { data: papel } = await admin.from('user_tenants').select('role').eq('user_id', user.id).eq('tenant_id', tenantId).maybeSingle();
+      if (!['admin', 'manager'].includes(String(papel?.role ?? ''))) return errResp('Só administrador ou gerente pode refazer a baixa das vendas', 403);
+      const { data: item } = await admin.from('menu_items').select('id').eq('id', item_id).eq('tenant_id', tenantId).maybeSingle();
+      if (!item) return errResp('Item não encontrado nesta loja', 404);
+      result = await reaplicarFicha(admin, tenantId, item_id, `${desde}T00:00:00-03:00`, user.id, !!aplicar);
     }
     else if (action === 'upsert_global_obs') {
       const { id, text, is_active, excluded_item_ids, excluded_category_ids } = payload as {

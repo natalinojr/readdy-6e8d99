@@ -867,6 +867,7 @@ export default function ItemModal({ item, categorias, obsGlobais, estacoes, savi
           {tab === 'ficha' && (
             <FichaTecnicaTab
               itemId={item?.id}
+              itemNome={nome || item?.nome}
               precoVenda={parseFloat(preco) || 0}
               onCountChange={setFichasCount}
             />

@@ -5,6 +5,7 @@ import { useEstoque } from '@/contexts/EstoqueContext';
 import { useProducao } from '@/contexts/ProducaoContext';
 import type { Insumo } from '@/contexts/EstoqueContext';
 import type { ProductionRecipe } from '@/types/estoque';
+import FichaRetroativaModal from './FichaRetroativaModal';
 
 // Busca sem diferenciar maiúscula/minúscula nem acento ("pao" acha "PÃO").
 const semAcento = (t: string) => t.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase().trim();
@@ -75,6 +76,7 @@ interface FichaLocal {
 
 interface Props {
   itemId?: string;
+  itemNome?: string;
   precoVenda: number;
   onCountChange?: (count: number) => void;
 }
@@ -94,8 +96,10 @@ function calcCustoLinha(ficha: FichaLocal): number {
   return qtyBase * ficha.unit_price;
 }
 
-export default function FichaTecnicaTab({ itemId, precoVenda, onCountChange }: Props) {
+export default function FichaTecnicaTab({ itemId, itemNome, precoVenda, onCountChange }: Props) {
   const { user } = useAuth();
+  // Depois de salvar: pergunta se a ficha nova vale para as vendas já feitas (desde quando)
+  const [perguntarVendas, setPerguntarVendas] = useState(false);
   const { insumos } = useEstoque();
   const { recipes, getBatchesByRecipeId } = useProducao();
   const [fichas, setFichas] = useState<FichaLocal[]>([]);
@@ -176,6 +180,7 @@ export default function FichaTecnicaTab({ itemId, precoVenda, onCountChange }: P
       if (error) throw error;
       setSaved(true);
       onCountChange?.(fichas.length);
+      if (user.perfil === 'admin' || user.perfil === 'gerente') setPerguntarVendas(true);
       setTimeout(() => setSaved(false), 2500);
     } catch (e) {
       console.error('[FichaTecnicaTab] save error:', e);
@@ -595,6 +600,10 @@ export default function FichaTecnicaTab({ itemId, precoVenda, onCountChange }: P
             )}
           </button>
         </div>
+      )}
+
+      {perguntarVendas && itemId && user?.tenantId && (
+        <FichaRetroativaModal tenantId={user.tenantId} itemId={itemId} itemNome={itemNome ?? 'Item'} onFechar={() => setPerguntarVendas(false)} />
       )}
     </div>
   );
