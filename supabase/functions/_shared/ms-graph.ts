@@ -6,30 +6,44 @@
 
 export const GRAPH = 'https://graph.microsoft.com/v1.0';
 
-/** `offline_access` = refresh token; `openid profile` = id_token com o tid da organização. */
-export const MS_SCOPES = 'offline_access openid profile User.Read Files.ReadWrite.All Sites.ReadWrite.All';
+/**
+ * Dois tipos de conta:
+ *  - 'pessoal' (Outlook/Hotmail/Microsoft 365 Family): endpoint "consumers", só OneDrive.
+ *  - 'empresa' (Microsoft 365 Business): endpoint "organizations", OneDrive + SharePoint.
+ * O app no Entra é registrado aceitando os dois ("qualquer diretório + contas pessoais").
+ * `offline_access` = refresh token; `openid profile` = id_token com nome/e-mail.
+ */
+export type TipoConta = 'pessoal' | 'empresa';
+
+const BASE = 'offline_access openid profile User.Read Files.ReadWrite.All';
+export const MS_SCOPES: Record<TipoConta, string> = {
+  pessoal: BASE,
+  empresa: `${BASE} Sites.ReadWrite.All`,
+};
+const AUTH_TENANT: Record<TipoConta, string> = { pessoal: 'consumers', empresa: 'organizations' };
+
+export function tipoConta(v: unknown): TipoConta {
+  return v === 'pessoal' ? 'pessoal' : 'empresa';
+}
 
 export function msConfig() {
   const clientId = Deno.env.get('MS_CLIENT_ID')?.trim() ?? '';
   const clientSecret = Deno.env.get('MS_CLIENT_SECRET')?.trim() ?? '';
-  // "organizations" = qualquer conta corporativa (Microsoft 365 Business). O app é
-  // registrado como multi-organização para o módulo poder ser vendido depois.
-  const authTenant = Deno.env.get('MS_AUTH_TENANT')?.trim() || 'organizations';
-  return { clientId, clientSecret, authTenant, configured: !!(clientId && clientSecret) };
+  return { clientId, clientSecret, configured: !!(clientId && clientSecret) };
 }
 
-export function authorizeUrl(redirectUri: string, state: string): string {
-  const { clientId, authTenant } = msConfig();
+export function authorizeUrl(redirectUri: string, state: string, tipo: TipoConta): string {
+  const { clientId } = msConfig();
   const p = new URLSearchParams({
     client_id: clientId,
     response_type: 'code',
     redirect_uri: redirectUri,
     response_mode: 'query',
-    scope: MS_SCOPES,
+    scope: MS_SCOPES[tipo],
     state,
     prompt: 'select_account',
   });
-  return `https://login.microsoftonline.com/${authTenant}/oauth2/v2.0/authorize?${p}`;
+  return `https://login.microsoftonline.com/${AUTH_TENANT[tipo]}/oauth2/v2.0/authorize?${p}`;
 }
 
 interface TokenResp {
@@ -42,18 +56,18 @@ interface TokenResp {
   error_description?: string;
 }
 
-async function tokenRequest(params: Record<string, string>): Promise<TokenResp> {
-  const { clientId, clientSecret, authTenant } = msConfig();
-  const resp = await fetch(`https://login.microsoftonline.com/${authTenant}/oauth2/v2.0/token`, {
+async function tokenRequest(tipo: TipoConta, params: Record<string, string>): Promise<TokenResp> {
+  const { clientId, clientSecret } = msConfig();
+  const resp = await fetch(`https://login.microsoftonline.com/${AUTH_TENANT[tipo]}/oauth2/v2.0/token`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ client_id: clientId, client_secret: clientSecret, scope: MS_SCOPES, ...params }),
+    body: new URLSearchParams({ client_id: clientId, client_secret: clientSecret, scope: MS_SCOPES[tipo], ...params }),
   });
   return await resp.json().catch(() => ({ error: `http_${resp.status}` }));
 }
 
-export function exchangeCode(code: string, redirectUri: string) {
-  return tokenRequest({ grant_type: 'authorization_code', code, redirect_uri: redirectUri });
+export function exchangeCode(code: string, redirectUri: string, tipo: TipoConta) {
+  return tokenRequest(tipo, { grant_type: 'authorization_code', code, redirect_uri: redirectUri });
 }
 
 /** Payload do id_token sem verificar assinatura: veio direto do endpoint de token por TLS. */
@@ -76,7 +90,7 @@ export class MsReconnectError extends Error {}
 export async function accessTokenFor(admin: any, userId: string): Promise<string> {
   const { data: conn, error } = await admin
     .from('ms_graph_connections')
-    .select('access_token, refresh_token, token_expires_at, needs_reconnect')
+    .select('access_token, refresh_token, token_expires_at, needs_reconnect, account_kind')
     .eq('user_id', userId)
     .maybeSingle();
   if (error) throw new Error(error.message);
@@ -85,7 +99,7 @@ export async function accessTokenFor(admin: any, userId: string): Promise<string
 
   if (new Date(conn.token_expires_at).getTime() - Date.now() > 5 * 60_000) return conn.access_token;
 
-  const t = await tokenRequest({ grant_type: 'refresh_token', refresh_token: conn.refresh_token });
+  const t = await tokenRequest(tipoConta(conn.account_kind), { grant_type: 'refresh_token', refresh_token: conn.refresh_token });
   if (!t.access_token) {
     const motivo = t.error_description?.split('\r\n')[0] ?? t.error ?? 'falha ao renovar';
     // invalid_grant = consentimento revogado, senha trocada, 90 dias sem uso… só reconectando.

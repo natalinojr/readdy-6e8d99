@@ -3,7 +3,7 @@
 // Ações: config · exchange · status · disconnect · browse
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
 import {
-  authorizeUrl, exchangeCode, graphFetch, GraphError, idTokenClaims, MS_SCOPES, msConfig, MsReconnectError,
+  authorizeUrl, exchangeCode, graphFetch, GraphError, idTokenClaims, MS_SCOPES, msConfig, MsReconnectError, tipoConta,
 } from '../_shared/ms-graph.ts';
 
 const corsHeaders = {
@@ -50,6 +50,11 @@ function mapItem(i: Record<string, any>): Item {
   };
 }
 
+async function conexaoPessoal(admin: ReturnType<typeof createClient>, userId: string): Promise<boolean> {
+  const { data } = await admin.from('ms_graph_connections').select('account_kind').eq('user_id', userId).maybeSingle();
+  return data?.account_kind === 'pessoal';
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
@@ -82,14 +87,14 @@ Deno.serve(async (req) => {
       const state = String(body.state ?? '');
       if (!redirectPermitido(redirectUri)) return json({ success: false, error: 'Endereço de retorno não permitido.' }, 400);
       if (!/^[a-z0-9]{16,64}$/.test(state)) return json({ success: false, error: 'state inválido' }, 400);
-      return json({ success: true, url: authorizeUrl(redirectUri, state) });
+      return json({ success: true, url: authorizeUrl(redirectUri, state, tipoConta(body.tipo)) });
     }
 
     // ── status: conta conectada (NUNCA devolve token) ──
     if (action === 'status') {
       const { data } = await admin
         .from('ms_graph_connections')
-        .select('ms_user_email, ms_user_name, needs_reconnect, last_error, connected_at')
+        .select('ms_user_email, ms_user_name, account_kind, needs_reconnect, last_error, connected_at')
         .eq('user_id', userId)
         .maybeSingle();
       return json({ success: true, configured: cfg.configured, connection: data ?? null });
@@ -102,7 +107,8 @@ Deno.serve(async (req) => {
       const redirectUri = String(body.redirect_uri ?? '');
       if (!code || !redirectPermitido(redirectUri)) return json({ success: false, error: 'Dados do login inválidos.' }, 400);
 
-      const t = await exchangeCode(code, redirectUri);
+      const tipo = tipoConta(body.tipo);
+      const t = await exchangeCode(code, redirectUri, tipo);
       if (!t.access_token || !t.refresh_token) {
         console.error('[ms-graph] exchange falhou:', t.error, t.error_description?.slice(0, 300));
         return json({ success: false, error: t.error_description?.split('\r\n')[0] ?? 'A Microsoft não concluiu o login.' });
@@ -121,7 +127,8 @@ Deno.serve(async (req) => {
         access_token: t.access_token,
         refresh_token: t.refresh_token,
         token_expires_at: new Date(Date.now() + (t.expires_in ?? 3600) * 1000).toISOString(),
-        scopes: t.scope ?? MS_SCOPES,
+        account_kind: tipo,
+        scopes: t.scope ?? MS_SCOPES[tipo],
         needs_reconnect: false,
         last_error: null,
         connected_at: new Date().toISOString(),
@@ -129,7 +136,7 @@ Deno.serve(async (req) => {
       };
       const { error } = await admin.from('ms_graph_connections').upsert(row, { onConflict: 'user_id' });
       if (error) return json({ success: false, error: error.message }, 500);
-      return json({ success: true, connection: { ms_user_email: row.ms_user_email, ms_user_name: row.ms_user_name, needs_reconnect: false } });
+      return json({ success: true, connection: { ms_user_email: row.ms_user_email, ms_user_name: row.ms_user_name, account_kind: tipo, needs_reconnect: false } });
     }
 
     // ── disconnect: apaga os tokens (as pastas na nuvem ficam intactas) ──
@@ -173,7 +180,9 @@ Deno.serve(async (req) => {
 
       const [meuDrive, sites] = await Promise.all([
         graphFetch(admin, userId, '/me/drive?$select=id,name,webUrl,quota').catch(() => null),
-        graphFetch(admin, userId, '/sites?search=*&$select=id,displayName,webUrl&$top=100').catch(() => ({ value: [] })),
+        // Conta pessoal não tem SharePoint: a busca de sites nem é tentada.
+        conexaoPessoal(admin, userId).then((pessoal) => pessoal ? { value: [] }
+          : graphFetch(admin, userId, '/sites?search=*&$select=id,displayName,webUrl&$top=100').catch(() => ({ value: [] }))),
       ]);
       return json({
         success: true,
