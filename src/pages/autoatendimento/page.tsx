@@ -861,15 +861,19 @@ function AutoatendimentoPageInner() {
   // volta à tela inicial. Não roda na tela inicial nem com o modal de configuração aberto.
   // Na etapa de pagamento o prazo é maior (3 min) e NUNCA roda com cobrança em andamento
   // (Pix gerado, cartão na maquininha, registrando/confirmado) nem com pedido já criado.
-  const INATIVIDADE_MS = etapa === 'pagamento' ? 180_000 : 90_000;
+  // Regra do dono (2026-09-25, tablet 2 de Paranaguá parado na tela de pagamento): NENHUMA tela
+  // fica parada para sempre. Com cobrança em andamento (Pix na tela, cartão na maquininha) ou pedido
+  // já criado, o prazo é 11 min — o Pix vence em 10, então não dá mais para pagar depois disso.
+  const [cobrancaEmAndamento, setCobrancaEmAndamento] = useState(false);
+  const cobrancaAberta = etapa === 'pagamento' && (cobrancaEmAndamento || !!pendingOrderId);
+  const INATIVIDADE_MS = cobrancaAberta ? 660_000 : etapa === 'pagamento' ? 180_000 : 90_000;
   const AVISO_SEGUNDOS = 15;
   const ultimaAtividadeRef = useRef(Date.now());
   const [avisoInatividade, setAvisoInatividade] = useState<number | null>(null);
-  const [cobrancaEmAndamento, setCobrancaEmAndamento] = useState(false);
-  const monitorarInatividade = etapa !== 'welcome' && !showConfigModal
-    && !(etapa === 'pagamento' && (cobrancaEmAndamento || !!pendingOrderId));
+  const monitorarInatividade = etapa !== 'welcome' && !showConfigModal;
+  // Pedido já pago não se cancela: só volta ao início (segue pago e na cozinha).
   const handleCancelarRef = useRef(handleCancelar);
-  handleCancelarRef.current = handleCancelar;
+  handleCancelarRef.current = () => (pedidoPagoRef.current ? handleConcluir() : handleCancelar());
 
   useEffect(() => {
     ultimaAtividadeRef.current = Date.now();
@@ -1285,7 +1289,8 @@ function AutoatendimentoPageInner() {
             </div>
             <h2 className="text-3xl font-black text-white mb-2">Ainda está aí?</h2>
             <p className="text-zinc-400 text-lg mb-6">
-              Seu pedido será cancelado em <span className="text-amber-400 font-black">{avisoInatividade}s</span>
+              {pedidoPago ? 'Voltando à tela inicial em ' : 'Seu pedido será cancelado em '}
+              <span className="text-amber-400 font-black">{avisoInatividade}s</span>
             </p>
             <button className="w-full py-4 bg-amber-500 hover:bg-amber-400 text-zinc-950 font-black text-xl rounded-2xl cursor-pointer">
               Continuar pedido
