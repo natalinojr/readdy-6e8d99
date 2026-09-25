@@ -108,16 +108,25 @@ export function findBoletos(texto: string): Decoded[] {
   // Sequências de dígitos, aceitando os separadores típicos da linha digitável impressa
   // (espaço, ponto e hífen) — sem isso a linha "34191.79001 01043..." não é encontrada.
   const candidatos = String(texto ?? '').match(/[\d][\d.\s-]{40,60}[\d]/g) ?? [];
+  const add = (dec: Decoded | null) => {
+    if (!dec || vistos.has(dec.barcode)) return;
+    vistos.add(dec.barcode); achados.push(dec);
+  };
+  // Linha digitável: pode estar colada em outros números, então varre janelas. Tem 3 DVs de
+  // módulo 10 + o geral — janela aleatória quase nunca fecha.
   for (const c of candidatos) {
     const d = onlyDigits(c);
-    for (const len of [47, 48, 44]) {
-      if (d.length < len) continue;
-      for (let i = 0; i + len <= d.length; i++) {
-        const trecho = d.slice(i, i + len);
-        if (vistos.has(trecho)) continue;
-        const dec = tryDecodeBoleto(trecho);
-        if (dec) { vistos.add(trecho); achados.push(dec); }
-      }
+    for (const len of [47, 48]) {
+      for (let i = 0; i + len <= d.length; i++) add(tryDecodeBoleto(d.slice(i, i + len)));
+    }
+  }
+  // Código de barras (44) tem UM dígito verificador: numa janela deslizante 1 em cada ~10
+  // sequências "fecha" por acaso (2026-09-25: um "boleto de 2019" saiu dos números do PDF).
+  // Por isso só a sequência de exatamente 44 dígitos, e só quando não há linha digitável.
+  if (!achados.length) {
+    for (const c of candidatos) {
+      const d = onlyDigits(c);
+      if (d.length === 44) add(tryDecodeBoleto(d));
     }
   }
   return achados;

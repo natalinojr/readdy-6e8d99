@@ -61,6 +61,8 @@ export const KIND_CONFIG: Record<string, { label: string; icone: string; corBg: 
   pedido_pagamento: { label: 'Pedido de pagamento', icone: 'ri-hand-coin-line', corBg: 'bg-rose-100', corTexto: 'text-rose-700' },
   pedido_pagamento_pagar: { label: 'Pagamento', icone: 'ri-money-dollar-circle-line', corBg: 'bg-emerald-100', corTexto: 'text-emerald-700' },
   sangria_valor_diferente: { label: 'Sangria diferente', icone: 'ri-scales-3-line', corBg: 'bg-amber-100', corTexto: 'text-amber-700' },
+  // Boleto que chegou por e-mail e ficou para decidir (2026-09-25): remetente novo ou CNPJ diferente.
+  boleto_email: { label: 'Boleto por e-mail', icone: 'ri-mail-download-line', corBg: 'bg-amber-100', corTexto: 'text-amber-800' },
 };
 export const KIND_FALLBACK = { label: 'Pendência', icone: 'ri-inbox-line', corBg: 'bg-zinc-100', corTexto: 'text-zinc-700' };
 export const kindConfig = (kind: string) => KIND_CONFIG[kind] ?? KIND_FALLBACK;

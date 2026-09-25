@@ -21,6 +21,7 @@ import ItensClassificarCard from '@/components/feature/assistente/ItensClassific
 import TarefasPendencia, { minhasTarefasPendentes } from '@/components/feature/assistente/TarefasPendencia';
 import { chamarPedidos } from '@/pages/receber/pedidos/api';
 import { LigarSangria, ProcurarNota, ResumoCompra } from '@/components/feature/assistente/PendenciaDireta';
+import BoletoEmailDecisao from '@/pages/financeiro/components/BoletoEmailDecisao';
 import DreClassificacaoSelect, { precisaClassificarDRE, useDreEscolha } from '@/pages/financeiro/components/DreClassificacaoSelect';
 
 type Call = <T>(action: string, extra?: Record<string, unknown>) => Promise<T>;
@@ -61,7 +62,7 @@ const notaDa = (p: PendenciaChat) => (typeof p.payload?.document_id === 'string'
 const compraDa = (p: PendenciaChat) => (typeof p.payload?.purchase_id === 'string' ? p.payload.purchase_id : null);
 // Tipos que se resolvem no próprio cartão (2026-09-24): não levam "Não vou fazer" genérico — cada um
 // tem a sua saída ("Não era compra", "Veio sem nota", "Está certa"…).
-const DIRETO = ['compra_pelo_celular', 'sangria_sem_cupom', 'sangria_nao_saiu', 'sangria_valor_diferente', 'recebimento_sem_nota'];
+const DIRETO = ['compra_pelo_celular', 'sangria_sem_cupom', 'sangria_nao_saiu', 'sangria_valor_diferente', 'recebimento_sem_nota', 'boleto_email'];
 // Fechar com um motivo digitado: o texto do campo e como a pendência fecha.
 const MOTIVO: Record<string, { placeholder: string; acao: 'resolvida' | 'descartada' }> = {
   sangria_sem_cupom: { placeholder: 'O que foi esse dinheiro?', acao: 'resolvida' },
@@ -487,6 +488,13 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
                 {verCompra && <button onClick={verCompra} disabled={busy} className={SECUNDARIO}><i className="ri-edit-line" /> Corrigir a compra</button>}
               </>
             )}
+            {/* Boleto que chegou por e-mail e não foi lançado sozinho (2026-09-25): ver o boleto e decidir ali. */}
+            {p.kind === 'boleto_email' && (
+              <button onClick={() => setExpandida((x) => (x === p.id ? null : p.id))} disabled={busy}
+                className={expandida === p.id ? `${SECUNDARIO} bg-violet-100` : p.payload?.alerta ? `${BOTAO} bg-red-600 hover:bg-red-500 text-white` : PRINCIPAL}>
+                <i className="ri-file-search-line" /> {expandida === p.id ? 'Fechar' : 'Ver o boleto e decidir'}
+              </button>
+            )}
             {/* Mercadoria chegou e a nota não estava no sistema. */}
             {p.kind === 'recebimento_sem_nota' && (
               <>
@@ -538,6 +546,9 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
           <ContasAtrasadasInline tenantId={p.tenantId} onPagarConta={onPagarConta}
             onAbrir={(billId) => onAbrir({ ...p, rota: `/financeiro?tab=contas-vencidas&foco=${encodeURIComponent(billId)}` })}
             onMudou={() => { recarregar(); onMudou?.(); }} />
+        )}
+        {expandida === p.id && p.kind === 'boleto_email' && !!p.payload?.mail_id && (
+          <BoletoEmailDecisao tenantId={p.tenantId} mailId={String(p.payload.mail_id)} onFeito={(msg) => { setAvisoTopo(msg); depoisDeResolver(null, p); }} />
         )}
         {expandida === p.id && p.kind === 'sangria_sem_cupom' && <LigarSangria call={call} pendId={p.id} onFeito={(msg) => depoisDeResolver(msg, p)} />}
         {expandida === p.id && p.kind === 'recebimento_sem_nota' && (

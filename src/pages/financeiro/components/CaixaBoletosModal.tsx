@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatCurrency } from '@/lib/formatters';
+import BoletoEmailDecisao from './BoletoEmailDecisao';
 
 // ── Caixa de boletos por e-mail ─────────────────────────────────────────────
 // O Gmail da loja é o endereço que se dá aos fornecedores e encaminha sozinho para um
@@ -46,7 +47,7 @@ const STATUS: Record<string, { label: string; cls: string }> = {
   pending: { label: 'Aguardando leitura', cls: 'bg-zinc-100 text-zinc-600' },
   bill: { label: 'Virou conta', cls: 'bg-green-100 text-green-700' },
   pendencia: { label: 'Esperando você', cls: 'bg-amber-100 text-amber-700' },
-  ignored: { label: 'Não era boleto', cls: 'bg-zinc-100 text-zinc-400' },
+  ignored: { label: 'Sem boleto / descartado', cls: 'bg-zinc-100 text-zinc-400' },
   error: { label: 'Falhou', cls: 'bg-red-100 text-red-700' },
 };
 
@@ -59,6 +60,7 @@ export default function CaixaBoletosModal({ onClose }: Props) {
   const [busy, setBusy] = useState<null | 'salvar' | 'trocar' | 'desligar'>(null);
   const [copiado, setCopiado] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; msg: string } | null>(null);
+  const [aberto, setAberto] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -223,11 +225,12 @@ export default function CaixaBoletosModal({ onClose }: Props) {
             {mensagens.length > 0 && (
               <div className="rounded-xl border border-zinc-200 overflow-hidden">
                 <p className="text-xs font-semibold text-zinc-700 px-4 py-2.5 bg-zinc-50">E-mails recebidos ({mensagens.length})</p>
-                <div className="divide-y divide-zinc-100 max-h-64 overflow-y-auto">
+                <div className="divide-y divide-zinc-100 max-h-[28rem] overflow-y-auto">
                   {mensagens.map((m) => {
                     const st = STATUS[m.status] ?? STATUS.pending;
                     return (
                       <div key={m.id} className="px-4 py-2.5 text-xs">
+                        <div onClick={() => setAberto((x) => (x === m.id ? null : m.id))} className="cursor-pointer">
                         <div className="flex items-center justify-between gap-2">
                           <span className="font-medium text-zinc-700 truncate">{m.from_name || m.from_email || 'desconhecido'}</span>
                           <span className={`px-2 py-0.5 rounded-full font-semibold flex-shrink-0 ${st.cls}`}>{st.label}</span>
@@ -238,8 +241,13 @@ export default function CaixaBoletosModal({ onClose }: Props) {
                           {m.amount != null && <span className="text-zinc-600 font-semibold">{formatCurrency(Number(m.amount))}</span>}
                           {m.due_date && <span>vence {new Date(m.due_date + 'T00:00:00').toLocaleDateString('pt-BR')}</span>}
                           {(m.attachments ?? 0) > 0 && <span><i className="ri-attachment-2" /> {m.attachments}</span>}
-                          {m.reason && <span className="text-amber-700">{m.reason}</span>}
+                          {m.reason && <span className={m.status === 'bill' ? 'text-green-700' : 'text-amber-700'}>{m.reason}</span>}
                         </div>
+                        </div>
+                        {aberto === m.id && user?.tenantId && (
+                          <BoletoEmailDecisao tenantId={user.tenantId} mailId={m.id}
+                            onFeito={(msg) => { setAberto(null); setResult({ ok: true, msg }); load(); }} />
+                        )}
                       </div>
                     );
                   })}
@@ -255,8 +263,8 @@ export default function CaixaBoletosModal({ onClose }: Props) {
             )}
 
             <p className="text-[11px] text-zinc-400">
-              Nesta etapa o sistema já lê o boleto que vem no <strong>corpo</strong> do e-mail e identifica o fornecedor pelo remetente.
-              Ler o boleto de <strong>anexo em PDF</strong> e lançar a conta sozinho entram na próxima — até lá os e-mails ficam listados aqui.
+              O boleto é lido do texto do e-mail ou do PDF anexo (PDF escaneado é lido pela IA e conferido pelos dígitos).
+              O que fica "esperando você" também aparece no 📥 do chat. Toque num e-mail para ver o boleto e decidir.
             </p>
           </div>
         )}
