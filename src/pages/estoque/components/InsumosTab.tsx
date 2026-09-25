@@ -535,7 +535,8 @@ const STATUS_RANK: Record<string, number> = { Esgotado: 0, 'Crítico': 1, Baixo:
                           )}
                         </td>
                         <td className="px-4 py-3 text-right">
-                          <p className="font-semibold text-zinc-800">{new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(insumo.precoUnitario)}/{insumo.unidade}</p>
+                          <p className="font-semibold text-zinc-800">{/* insumo em g/ml custa fração de centavo: 4 casas para não virar R$ 0,00 */}
+                            {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: insumo.precoUnitario > 0 && insumo.precoUnitario < 1 ? 4 : 2 }).format(insumo.precoUnitario)}/{insumo.unidade}</p>
                           {insumo.priceSource === 'average' && (
                             <span className="text-[10px] text-sky-600 font-medium flex items-center justify-end gap-0.5 mt-0.5">
                               <i className="ri-bar-chart-line" /> Média 3 meses
