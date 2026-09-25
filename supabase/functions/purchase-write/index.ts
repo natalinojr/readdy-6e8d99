@@ -342,6 +342,40 @@ async function applyStockEntry(
   }
 }
 
+// Quanto entrou no estoque, por insumo, pelos movimentos desta compra. O movimento não guarda o id da
+// compra, só o motivo com fornecedor + NF (os textos abaixo são os de todas as entradas de compra);
+// conta só o que foi lançado depois da compra existir.
+async function entradasDaCompra(
+  // deno-lint-ignore no-explicit-any
+  supabase: any,
+  tenant_id: string,
+  // deno-lint-ignore no-explicit-any
+  purchase: any,
+  items: Array<Record<string, unknown>>,
+): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  const ings = [...new Set(items.map((i) => i.ingredient_id).filter(Boolean).map(String))];
+  if (!ings.length) return out;
+  const sup = String(purchase.supplier ?? '');
+  const nf = purchase.invoice_number ? String(purchase.invoice_number) : '';
+  const motivos = [
+    `Compra: ${sup} - NF ${nf || 'S/N'}`,
+    `Compra (entrada tardia): ${sup} - NF ${nf || 'S/N'}`,
+    `Ajuste no recebimento: ${sup}${nf ? ` NF ${nf}` : ''}`,
+    `Correção de conversão: ${sup} - NF ${nf || 'S/N'}`,
+    `Ajuste por edição da compra: ${sup}${nf ? ` NF ${nf}` : ''}`,
+  ].map((m) => m.slice(0, 250));
+  const { data, error } = await supabase.from('stock_movements')
+    .select('ingredient_id, signed_quantity')
+    .eq('tenant_id', tenant_id).in('ingredient_id', ings).in('reason', motivos)
+    .gte('created_at', purchase.created_at);
+  if (error) { console.error('[purchase-write] entradasDaCompra:', error.message); return out; }
+  for (const m of (data ?? []) as Array<{ ingredient_id: string; signed_quantity: number | null }>) {
+    out.set(m.ingredient_id, (out.get(m.ingredient_id) ?? 0) + Number(m.signed_quantity ?? 0));
+  }
+  return out;
+}
+
 // Estorna a entrada de estoque de uma lista de itens (usado ao excluir e ao
 // editar uma compra cujo estoque JÁ entrou — stock_applied_at preenchido).
 async function reverseStockForItems(
@@ -352,13 +386,26 @@ async function reverseStockForItems(
   // deno-lint-ignore no-explicit-any
   user: any,
   reason: string,
+  // Exclusão: estorna só o que comprovadamente ENTROU por esta compra (2026-09-25). Item ligado a insumo
+  // depois do recebimento nunca teve entrada, e o estorno tirava do estoque o que não estava lá
+  // (Chilli com Carne −48 kg). Na edição não se passa: lá o estorno é compensado pela entrada nova.
+  // deno-lint-ignore no-explicit-any
+  soOQueEntrou?: any,
 ) {
+  const entrouPorInsumo = soOQueEntrou ? await entradasDaCompra(supabase, tenant_id, soOQueEntrou, items) : null;
   for (const item of items) {
     if (!item.ingredient_id) continue;
+    if (soOQueEntrou && item.stock_skipped_at) continue; // marcado "Não entram": nunca entrou
     // Estorna o que de fato entrou: a quantidade recebida, quando o recebimento ajustou
     const purchaseQty = item.received_quantity != null ? Number(item.received_quantity) : Number(item.quantity ?? 0);
     const unitsPerPkg = Number(item.units_per_package ?? 1) > 0 ? Number(item.units_per_package) : 1;
-    const stockQty = purchaseQty * unitsPerPkg;
+    let stockQty = purchaseQty * unitsPerPkg;
+    if (entrouPorInsumo) {
+      const ing = String(item.ingredient_id);
+      const saldo = entrouPorInsumo.get(ing) ?? 0;
+      stockQty = Math.min(stockQty, saldo);
+      entrouPorInsumo.set(ing, saldo - Math.max(stockQty, 0));
+    }
     if (stockQty <= 0) continue;
 
     // Estorno via RPC. O tipo antigo 'out' nao existe no enum
@@ -915,6 +962,7 @@ Deno.serve(async (req) => {
           await reverseStockForItems(
             supabase, tenant_id, purchaseItems, user,
             `Estorno de compra excluída: ${purchase.supplier}${purchase.invoice_number ? ` NF ${purchase.invoice_number}` : ''}`,
+            purchase,
           );
         }
 
