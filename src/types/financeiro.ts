@@ -74,6 +74,7 @@ export interface BillPayable {
   description: string;
   category: string;
   cost_center_id?: string;
+  bank_account_id?: string | null;
   amount: number;
   due_date: string;
   paid_date?: string;

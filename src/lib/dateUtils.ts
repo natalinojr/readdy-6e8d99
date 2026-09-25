@@ -41,6 +41,13 @@ export function todayBrasilia(): string {
   return new Date().toLocaleDateString('en-CA', { timeZone: TIMEZONE });
 }
 
+/** 'YYYY-MM-DD' + n dias (aritmética de calendário, sem fuso). Ex.: somarDias(todayBrasilia(), 7). */
+export function somarDias(ymd: string, n: number): string {
+  const d = new Date(ymd + 'T12:00:00Z');
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
 /**
  * Retorna timestamps início/fim do dia em Brasília para queries no banco.
  * O banco armazena em UTC; usamos offset fixo -03:00 para garantir que

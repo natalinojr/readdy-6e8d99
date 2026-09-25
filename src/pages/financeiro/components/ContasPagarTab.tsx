@@ -5,7 +5,7 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import type { BillPayable, BillStatus } from '@/types/financeiro';
 import { formatCurrency } from '@/lib/formatters';
-import { todayBrasilia } from '@/lib/dateUtils';
+import { todayBrasilia, somarDias } from '@/lib/dateUtils';
 import AgingContasPagar from '@/pages/financeiro/components/AgingContasPagar';
 import ContasPagarDREModal from '@/pages/financeiro/components/ContasPagarDREModal';
 import ContasPagarDetalheModal from '@/pages/financeiro/components/ContasPagarDetalheModal';
@@ -215,7 +215,7 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
     return sum + (b ? saldoRestante(b) : 0);
   }, 0);
   // Data em Brasília: toISOString é UTC e vira o dia seguinte depois das 21h
-  const [payForm, setPayForm] = useState({ paid_date: todayBrasilia(), paid_amount: '', payment_method: 'Dinheiro' });
+  const [payForm, setPayForm] = useState({ paid_date: todayBrasilia(), paid_amount: '', payment_method: 'Dinheiro', bank_account_id: '' });
 
   // ?busca= vem do clique num alerta da Conciliação (2026-09-20)
   const [search, setSearch] = useState(() => new URLSearchParams(window.location.search).get('busca') ?? '');
@@ -342,6 +342,8 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
       notes: form.notes,
       cost_center_id: form.cost_center_id || undefined,
       dre_category_id: form.dre_category_id || undefined,
+      // "Débitar da Conta": nunca era gravado — a baixa não mexia no saldo de banco nenhum (2026-09-25)
+      bank_account_id: form.bank_account_id || undefined,
       status: 'pending',
     };
     if (form.is_recurring) {
@@ -361,7 +363,7 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
     setPaying(true);
     try {
       await pay(payModal.id, payForm.paid_date, Number(payForm.paid_amount), payForm.payment_method,
-        precisaClassificarDRE(payModal) ? dreToPayload(payDre) : undefined);
+        precisaClassificarDRE(payModal) ? dreToPayload(payDre) : undefined, payForm.bank_account_id || null);
       setPayModal(null);
     } catch (err) {
       // `pay` agora lança: recusa do backend (valor acima do saldo, conta já
@@ -391,8 +393,8 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
   const uniqueCategories = [...new Set(billsDoMes.map(b => b.category).filter(Boolean))];
   const expenseDreCats = dreCats.filter(c => c.group_type === 'expense' || c.group_type === 'cost');
 
-  const today = new Date().toISOString().split('T')[0];
-  const in7Days = new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0];
+  const today = todayBrasilia(); // dia de Brasília (UTC virava amanhã às 21h)
+  const in7Days = somarDias(today, 7);
   const vencendoEmBreve = billsDoMes.filter(b =>
     b.status !== 'paid' && b.due_date >= today && b.due_date <= in7Days
   );
@@ -942,7 +944,7 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
                       <div className="flex items-center gap-1.5">
                         {b.status !== 'paid' && (
                           <button
-                            onClick={(e) => { e.stopPropagation(); setPayModal(b); setPayForm(f => ({ ...f, paid_amount: String(saldoRestante(b)) })); }}
+                            onClick={(e) => { e.stopPropagation(); setPayModal(b); setPayForm(f => ({ ...f, paid_amount: String(saldoRestante(b)), bank_account_id: b.bank_account_id ?? '' })); }}
                             className="flex items-center gap-1 text-xs bg-green-100 text-green-700 px-2 py-1 rounded-lg cursor-pointer hover:bg-green-200 whitespace-nowrap"
                           >
                             <i className="ri-check-line" /> Pagar
@@ -1033,7 +1035,7 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
                       <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
                         {b.status !== 'paid' && (
                           <button
-                            onClick={(e) => { e.stopPropagation(); setPayModal(b); setPayForm(f => ({ ...f, paid_amount: String(saldoRestante(b)) })); }}
+                            onClick={(e) => { e.stopPropagation(); setPayModal(b); setPayForm(f => ({ ...f, paid_amount: String(saldoRestante(b)), bank_account_id: b.bank_account_id ?? '' })); }}
                             className="flex items-center gap-1 text-xs bg-green-100 text-green-700 px-2.5 py-1.5 rounded-lg cursor-pointer hover:bg-green-200 whitespace-nowrap font-semibold"
                           >
                             <i className="ri-check-line" /> Pagar
@@ -1254,7 +1256,7 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
         <ContasPagarDetalheModal
           bill={detalheModal}
           onClose={() => setDetalheModal(null)}
-          onPay={() => { setPayModal(detalheModal); setPayForm(f => ({ ...f, paid_amount: String(saldoRestante(detalheModal)) })); }}
+          onPay={() => { setPayModal(detalheModal); setPayForm(f => ({ ...f, paid_amount: String(saldoRestante(detalheModal)), bank_account_id: detalheModal.bank_account_id ?? '' })); }}
           onNavigateToCompras={onNavigateToCompras}
         />
       )}
@@ -1308,6 +1310,16 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
                   {['Dinheiro', 'PIX', 'Cartão Débito', 'Cartão Crédito', 'Transferência', 'Boleto'].map(m => <option key={m}>{m}</option>)}
                 </select>
               </div>
+              {bankAccounts.length > 0 && (
+                <div>
+                  <label className="text-xs font-semibold text-zinc-600 block mb-1">Saiu da conta</label>
+                  <select value={payForm.bank_account_id} onChange={e => setPayForm(f => ({ ...f, bank_account_id: e.target.value }))}
+                    className="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400">
+                    <option value="">Nenhuma (não mexe no saldo de banco)</option>
+                    {bankAccounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                  </select>
+                </div>
+              )}
               {payError && (
                 <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-start gap-2">
                   <i className="ri-error-warning-line text-red-500 mt-0.5 flex-shrink-0" />

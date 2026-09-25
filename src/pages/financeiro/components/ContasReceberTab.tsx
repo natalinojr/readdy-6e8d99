@@ -5,6 +5,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { formatCurrency } from '@/lib/formatters';
 import type { ReceivableInstallment } from '@/types/financeiro';
 import AgingRecebiveis, { buildAgingBuckets } from '@/pages/financeiro/components/AgingRecebiveis';
+import { todayBrasilia } from '@/lib/dateUtils';
 
 const PAGE_SIZE = 10;
 
@@ -26,7 +27,7 @@ interface AntecipacaoModalProps {
 }
 
 function AntecipacaoModal({ installments, onClose, onConfirm }: AntecipacaoModalProps) {
-  const today = new Date().toISOString().split('T')[0];
+  const today = todayBrasilia(); // dia de Brasília (UTC virava amanhã às 21h)
   // Apenas pendentes e NÃO antecipados
   const pending = installments.filter((i) => i.status !== 'received' && !i.is_anticipated);
 
@@ -310,7 +311,7 @@ export default function ContasReceberTab() {
   const [filterStatus, setFilterStatus] = useState<'all' | 'pending' | 'received' | 'overdue' | 'anticipated'>('all');
   const [page, setPage] = useState(1);
 
-  const today = new Date().toISOString().split('T')[0];
+  const today = todayBrasilia(); // dia de Brasília (UTC virava amanhã às 21h)
 
   // Repasses do iFood (relatório de conciliação importado — aba iFood) como linhas SÓ
   // DE LEITURA: não viram fin_receivable_installments, porque "Dar baixa" lança
@@ -404,10 +405,13 @@ export default function ContasReceberTab() {
   }, [enriched, monthEnd]);
 
   const handleReceive = useCallback(async (id: string) => {
+    // Lança receita no fluxo de caixa e não tem estorno: um clique errado não pode passar direto
+    const inst = installments.find(i => i.id === id);
+    if (!window.confirm(`Dar baixa${inst ? ` de ${formatCurrency(Number(inst.amount))}` : ''}? A entrada vai para o fluxo de caixa com a data de hoje e não dá para desfazer por aqui.`)) return;
     setReceivingId(id);
     await receive(id);
     setReceivingId(null);
-  }, [receive]);
+  }, [receive, installments]);
 
   const handleAntecipacao = useCallback(async (payload: {
     gross_amount: number;

@@ -114,8 +114,8 @@ export default function ContasVencidasPanel() {
         .eq('orders.is_training', false)
         .eq('orders.is_draft', false)
         .not('orders.status', 'in', '("cancelled","draft")')
-        .gte('created_at', new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0])
-        .lte('created_at', today + 'T23:59:59'),
+        .gte('created_at', today.slice(0, 7) + '-01T00:00:00-03:00')
+        .lte('created_at', today + 'T23:59:59.999-03:00'),
     ]);
 
     const cats = catsRes.data ?? [];

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
+import { todayBrasilia, somarDias } from '@/lib/dateUtils';
 
 export interface FinanceiroAlerta {
   tipo: 'conta_vencida' | 'conta_vencendo' | 'folha_pendente' | 'orcamento_expirando' | 'compra_recebida_pendente';
@@ -39,8 +40,9 @@ export function useFinanceiroAlertas(): FinanceiroAlertasSummary {
     }
     setLoading(true);
     // Datas calculadas a cada carga: no escopo do módulo ficavam presas no dia em que a tela abriu
-    const today = new Date().toISOString().split('T')[0];
-    const sevenDaysLater = new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0];
+    // Dia de Brasília: toISOString é UTC e virava "amanhã" às 21h (conta de hoje contava como vencida)
+    const today = todayBrasilia();
+    const sevenDaysLater = somarDias(today, 7);
     const currentMonth = today.slice(0, 7);
 
     const [billsRes, payrollRes, budgetsRes, comprasRecebidasRes] = await Promise.all([

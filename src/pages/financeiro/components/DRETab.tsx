@@ -84,7 +84,7 @@ interface DREData {
 
 // P2: calcula CMV teórico (consumo) e cobertura de ficha técnica no período.
 // Empresa sem PDV não tem order_items/ficha técnica — sai cedo, sem disparar a query.
-async function fetchCmvConsumo(tenantId: string, startDate: string, endDateTime: string, temPdv: boolean): Promise<{ cmvTeorico: number; fichaCobertura: number }> {
+async function fetchCmvConsumo(tenantId: string, startTs: string, endDateTime: string, temPdv: boolean): Promise<{ cmvTeorico: number; fichaCobertura: number }> {
   if (!temPdv) return { cmvTeorico: 0, fichaCobertura: 0 };
   const { data } = await supabase
     .from('order_items')
@@ -94,7 +94,7 @@ async function fetchCmvConsumo(tenantId: string, startDate: string, endDateTime:
     .eq('orders.is_training', false)
     .eq('orders.is_draft', false)
     .not('orders.status', 'in', '(cancelled,draft)')
-    .gte('orders.created_at', startDate)
+    .gte('orders.created_at', startTs)
     .lte('orders.created_at', endDateTime);
   const rows = (data ?? []) as Array<Record<string, unknown>>;
   let cmvTeorico = 0;
@@ -126,7 +126,10 @@ const STANDARD_GROUPS = STANDARD_GROUP_KEYS;
 
 // ─── Fetch — Regime de Caixa ──────────────────────────────────────────────────
 async function fetchDREData(tenantId: string, startDate: string, endDate: string, temPdv: boolean): Promise<DREData> {
-  const endDateTime = endDate + 'T23:59:59';
+  // Colunas timestamptz: limites no horário de Brasília. Sem o offset o Postgres lê UTC e o mês
+  // virava às 21h (jantar do último dia caía fora; o do dia anterior ao 1º entrava) — 2026-09-25.
+  const startTs = startDate + 'T00:00:00-03:00';
+  const endDateTime = endDate + 'T23:59:59.999-03:00';
 
   // ═══ LIVRO-RAZÃO ÚNICO: fin_cash_flow é a fonte de verdade para receita ═══
   // auto_sale = vendas recebidas à vista; manual = entradas manuais
@@ -161,7 +164,7 @@ async function fetchDREData(tenantId: string, startDate: string, endDate: string
       .eq('orders.is_draft', false)
       .not('orders.status', 'in', '(cancelled,draft)')
       .eq('is_refunded', false)
-      .gte('created_at', startDate)
+      .gte('created_at', startTs)
       .lte('created_at', endDateTime),
 
     supabase
@@ -171,7 +174,7 @@ async function fetchDREData(tenantId: string, startDate: string, endDate: string
       .eq('is_training', false)
       .eq('is_draft', false)
       .eq('status', 'cancelled')
-      .gte('created_at', startDate)
+      .gte('created_at', startTs)
       .lte('created_at', endDateTime),
 
     supabase
@@ -181,7 +184,7 @@ async function fetchDREData(tenantId: string, startDate: string, endDate: string
       .eq('is_training', false)
       .eq('is_draft', false)
       .not('status', 'in', '(cancelled,draft)')
-      .gte('created_at', startDate)
+      .gte('created_at', startTs)
       .lte('created_at', endDateTime),
 
     supabase
@@ -233,7 +236,7 @@ async function fetchDREData(tenantId: string, startDate: string, endDate: string
       .select('id, amount, order_id, orders!inner(destination_type)')
       .eq('tenant_id', tenantId)
       .eq('status', 'received')
-      .gte('received_at', startDate)
+      .gte('received_at', startTs)
       .lte('received_at', endDateTime),
   ]);
 
@@ -358,7 +361,7 @@ async function fetchDREData(tenantId: string, startDate: string, endDate: string
     .lte('date', endDate);
   const receitaStone = (stoneSaleRows ?? []).reduce((s, r) => s + Number(r.amount), 0);
 
-  const { cmvTeorico, fichaCobertura } = await fetchCmvConsumo(tenantId, startDate, endDateTime, temPdv);
+  const { cmvTeorico, fichaCobertura } = await fetchCmvConsumo(tenantId, startTs, endDateTime, temPdv);
 
   return {
     receitaBalcao, receitaDelivery, receitaMesa, receitaAutoatendimento,
@@ -374,7 +377,10 @@ async function fetchDREData(tenantId: string, startDate: string, endDate: string
 
 // ─── Fetch — Regime de Competência ───────────────────────────────────────────
 async function fetchDREDataCompetencia(tenantId: string, startDate: string, endDate: string, temPdv: boolean): Promise<DREData> {
-  const endDateTime = endDate + 'T23:59:59';
+  // Colunas timestamptz: limites no horário de Brasília. Sem o offset o Postgres lê UTC e o mês
+  // virava às 21h (jantar do último dia caía fora; o do dia anterior ao 1º entrava) — 2026-09-25.
+  const startTs = startDate + 'T00:00:00-03:00';
+  const endDateTime = endDate + 'T23:59:59.999-03:00';
   const monthStr = startDate.slice(0, 7);
 
   // ═══ LIVRO-RAZÃO ÚNICO + SALDO DE RECEBÍVEIS ═══
@@ -408,7 +414,7 @@ async function fetchDREDataCompetencia(tenantId: string, startDate: string, endD
       .eq('orders.is_draft', false)
       .not('orders.status', 'in', '(cancelled,draft)')
       .eq('is_refunded', false)
-      .gte('created_at', startDate)
+      .gte('created_at', startTs)
       .lte('created_at', endDateTime),
 
     supabase
@@ -426,7 +432,7 @@ async function fetchDREDataCompetencia(tenantId: string, startDate: string, endD
       .eq('is_training', false)
       .eq('is_draft', false)
       .eq('status', 'cancelled')
-      .gte('created_at', startDate)
+      .gte('created_at', startTs)
       .lte('created_at', endDateTime),
 
     supabase
@@ -436,7 +442,7 @@ async function fetchDREDataCompetencia(tenantId: string, startDate: string, endD
       .eq('is_training', false)
       .eq('is_draft', false)
       .not('status', 'in', '(cancelled,draft)')
-      .gte('created_at', startDate)
+      .gte('created_at', startTs)
       .lte('created_at', endDateTime),
 
     supabase
@@ -566,7 +572,7 @@ async function fetchDREDataCompetencia(tenantId: string, startDate: string, endD
     .filter((r) => !isStoneVendasLedger(r.description))
     .reduce((s, r) => s + Number(r.amount), 0);
 
-  const { cmvTeorico, fichaCobertura } = await fetchCmvConsumo(tenantId, startDate, endDateTime, temPdv);
+  const { cmvTeorico, fichaCobertura } = await fetchCmvConsumo(tenantId, startTs, endDateTime, temPdv);
 
   return {
     receitaBalcao, receitaDelivery, receitaMesa, receitaAutoatendimento,

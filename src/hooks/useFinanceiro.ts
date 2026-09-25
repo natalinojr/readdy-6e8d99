@@ -327,8 +327,10 @@ export function useBillsPayable() {
   const pay = async (
     id: string, paid_date: string, paid_amount: number, payment_method: string,
     dre?: { dre_category_id?: string; dre_group?: string; dre_category_name?: string },
+    bank_account_id?: string | null,
   ) => {
-    const result = await invokeFinancial('pay_bill', user!.tenantId, { id, paid_date, paid_amount, payment_method, ...(dre ?? {}) });
+    // bank_account_id: de qual conta o dinheiro saiu (sem ele o pay_bill usa o da conta a pagar)
+    const result = await invokeFinancial('pay_bill', user!.tenantId, { id, paid_date, paid_amount, payment_method, ...(dre ?? {}), ...(bank_account_id ? { bank_account_id } : {}) });
     await fetchBills();
     if (result?.error) throw new Error(String(result.error));
     return result;
