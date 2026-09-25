@@ -3332,3 +3332,19 @@ desliga a leitura de foto/PDF com IA só naquele grupo (grupo de obra = muita fo
 tarefa (comentário + anexos via upload normal). Só funciona com o app **instalado** no Android (Chrome
 atualiza o manifest do app instalado sozinho, mas pode levar ~1 dia; reinstalar força). iPhone não tem.
 Sem SW ativo o POST cai no Vercel e falha — por isso o destino só existe no SW.
+
+### Preço do insumo pelas notas e identidade do item do fornecedor (2026-09-25)
+- **Preço automático:** `fn_ingredient_cost_from_purchases` = compras ligadas (`ingredient_id`) + compras
+  antigas dos itens vinculados na Classificação (supplier_key + item_key, conversão do vínculo). Só custo,
+  estoque não muda. Vincular chama `fn_ingredient_apply_purchase_cost` (Manual vira automático). O histórico
+  do Estoque (`fn_ingredient_price_history`) usa a mesma base, por unidade do estoque.
+- **Código do fornecedor nem sempre identifica o produto:** a Lapeana manda `CFOP5102` como código de todos os
+  itens. `fn_item_key` ignora código que começa com CFOP (usa a descrição) e o vínculo memorizado com código
+  CFOP é bloqueado por trigger. Código repetido em descrições parecidas (Beemax) é o mesmo produto: não separar.
+- **A unidade escrita na nota pode mentir:** o Sacolão escreve "kg" e vende por pé (alface R$ 1,99 o "kg").
+  Por isso a conversão kg→g **não é travada**: a tela só **avisa** conversão fora do normal ou grande demais.
+- **Entrada tardia:** o aviso "conta em dobro" considera sessão de Inventário **e** ajuste de inventário feito
+  direto no insumo (`stock_movements.type = 'inventory_adjustment'`). "Recebido em" = confirmação do
+  recebimento (pode ser dias depois da nota); a tela mostra as duas datas.
+- **Critério do dono:** toda regra vale para qualquer loja. O caso da loja é só o exemplo. Consultar o banco
+  inteiro antes de decidir (a trava kg→g teria estragado as verduras do sacolão).
