@@ -3424,3 +3424,6 @@ Sem SW ativo o POST cai no Vercel e falha — por isso o destino só existe no S
 - Leitura (`contas-email/leitura.ts`): corpo → texto do PDF (unpdf) → IA só para PDF-imagem (Haiku; DV reprovou → Sonnet). Linha e CNPJ só valem com DV. CNPJ do beneficiário = 1º CNPJ após "Beneficiário/Cedente" sem "Pagador/Sacado" no meio, e nunca a raiz da loja.
 - Pegadinha: código de barras de 44 dígitos tem UM DV — varrer texto com janela deslizante acha ~1 falso a cada 10 janelas ("boleto de R$ 76 mil de 2019"). `findBoletos` só aceita 44 como sequência exata e quando não há linha 47/48.
 - Regra: fornecedor (e-mail em `fin_suppliers`) + raiz do CNPJ do beneficiário igual → lança direto (`boleto_origem='email'`, sem DRE). Senão pendência `boleto_email` (alerta = CNPJ divergente). Anexos em `fin-mail-anexos` (privado). Nunca paga.
+- **Opções/complementos × estoque:** baixa das opções já existia (`buildOptionDeductions`). O custo delas entra no CMV
+  por `src/lib/custoOpcoes.ts` (receita do adicional já vem no `item_price`). Cardápio › **Opções × Estoque** liga as
+  opções de mesmo nome em lote (`menu-write` `ligar_opcoes_estoque`); vínculo novo nasce em g/mL sem quantidade.
