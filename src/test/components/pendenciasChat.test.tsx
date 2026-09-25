@@ -32,6 +32,10 @@ vi.mock('@/components/feature/assistente/TarefasPendencia', () => ({
 
 import PendenciasChat from '@/components/feature/assistente/PendenciasChat';
 
+// Relógio fixo ao meio-dia: "1 h atrás" rodando depois da meia-noite caía em "Ontem" (falha de 00:15).
+// Só o Date é falso — os timers seguem reais para o waitFor.
+vi.useFakeTimers({ toFake: ['Date'] });
+vi.setSystemTime(new Date(new Date().setHours(12, 0, 0, 0)));
 const agora = Date.now();
 const iso = (horasAtras: number) => new Date(agora - horasAtras * 3600000).toISOString();
 const linha = (id: string, titulo: string, horasAtras: number, extra: Record<string, unknown> = {}) => ({
