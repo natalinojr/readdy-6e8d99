@@ -195,7 +195,7 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
     }
     // "Fazer sempre assim": regra de LANÇAMENTO para este CPF/CNPJ/chave (2026-09-18). Antes só
     // etiquetava o extrato — não entrava na DRE e ainda escondia o pagamento do alerta.
-    if (lembrar && doc) {
+    if (lembrar && doc && tipo !== 'fora_dre') {
       const rr = await invokeWithAuth<{ success?: boolean; error?: string }>('conciliacao-pagamentos', {
         body: {
           action: 'launch_rule_save', tenant_id: user.tenantId, counterpart_doc: doc,
@@ -246,8 +246,25 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
           ? 'Vira uma conta a pagar já baixada nesta data, com a categoria da DRE (limpeza, manutenção, serviço, frete…).'
           : tipo === 'compra'
           ? 'Vira uma compra de mercadoria já paga nesta data: entra no CMV na categoria escolhida. Não mexe no estoque.'
-          : 'Vira despesa de RH já paga nesta data e registra a diária em Financeiro › Freelancers. Sem informar os dias, o freela fica com "dias a informar".'}
+          : tipo === 'freelancer'
+          ? 'Vira despesa de RH já paga nesta data e registra a diária em Financeiro › Freelancers. Sem informar os dias, o freela fica com "dias a informar".'
+          : 'Não cria conta nem compra: o pagamento só sai das pendências com o motivo e não mexe no resultado (DRE).'}
       </p>
+
+      {tipo === 'fora_dre' && (
+        <div>
+          <label className="block text-xs font-medium text-zinc-600 mb-1">Motivo *</label>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+            {MOTIVOS_FORA_DRE.map(([k, label, ajuda]) => (
+              <button key={k} type="button" onClick={() => setMotivo(k)}
+                className={`text-left px-3 py-2 rounded-lg border cursor-pointer ${motivo === k ? 'bg-violet-600 border-violet-600 text-white' : 'bg-white border-zinc-200 text-zinc-700 hover:bg-zinc-50'}`}>
+                <span className="block text-xs font-semibold">{label}</span>
+                <span className={`block text-[11px] ${motivo === k ? 'text-violet-100' : 'text-zinc-400'}`}>{ajuda}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         <div className="sm:col-span-2">
@@ -270,7 +287,7 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
             </>
           ) : (
             <input value={descricao} onChange={(e) => setDescricao(e.target.value)}
-              placeholder={tipo === 'compra' ? 'Ex.: Gelo, verduras da feira…' : 'Ex.: Diária de limpeza'}
+              placeholder={tipo === 'compra' ? 'Ex.: Gelo, verduras da feira…' : tipo === 'fora_dre' ? 'Observação (opcional). Ex.: parcela do financiamento' : 'Ex.: Diária de limpeza'}
               className="w-full px-3 py-2 border border-zinc-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-violet-300" />
           )}
         </div>
@@ -330,7 +347,7 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
             </div>
           </div>
         )}
-        {tipo !== 'freelancer' && (
+        {(tipo === 'despesa' || tipo === 'compra') && (
         <div>
           <label className="block text-xs font-medium text-zinc-600 mb-1">{tipo === 'despesa' ? 'Categoria da DRE *' : 'Categoria do CMV'}</label>
           {tipo === 'despesa' ? (
@@ -344,6 +361,8 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
         )}
       </div>
 
+      {/* Fora do DRE não tem competência nem regra "fazer sempre assim" (a edge não cria nada) */}
+      {tipo !== 'fora_dre' && (
       <div>
         <label className="block text-xs font-medium text-zinc-600 mb-1">Competência (mês a que o gasto pertence)</label>
         <div className="flex flex-wrap items-center gap-2">
@@ -359,8 +378,9 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
           )}
         </div>
       </div>
+      )}
 
-      {doc && (
+      {doc && tipo !== 'fora_dre' && (
         <label className="flex items-start gap-2 text-xs text-zinc-700 cursor-pointer">
           <input type="checkbox" checked={lembrar} onChange={(e) => setLembrar(e.target.checked)} className="mt-0.5" />
           <span>
@@ -385,7 +405,7 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
       <div className="flex items-center gap-2">
         <button onClick={lancar} disabled={busy || (!!avisoFolha && !permitirFolha)}
           className="px-4 py-2 bg-violet-600 text-white rounded-lg text-sm font-semibold hover:bg-violet-700 disabled:opacity-50 cursor-pointer">
-          {busy ? 'Lançando...' : tipo === 'despesa' ? 'Lançar despesa paga' : tipo === 'compra' ? 'Lançar compra paga' : 'Lançar pagamento de freelancer'}
+          {busy ? 'Lançando...' : tipo === 'despesa' ? 'Lançar despesa paga' : tipo === 'compra' ? 'Lançar compra paga' : tipo === 'freelancer' ? 'Lançar pagamento de freelancer' : 'Marcar como fora do DRE'}
         </button>
         <span className="text-[11px] text-zinc-400">Dá para desfazer depois, no próprio pagamento.</span>
       </div>
