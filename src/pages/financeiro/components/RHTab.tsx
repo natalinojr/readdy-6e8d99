@@ -1244,8 +1244,8 @@ function EmployeeRow({
 }
 
 // ─── Main Component ───────────────────────────────────────────────────────────
-export default function RHTab() {
-  const [activeView, setActiveView] = useState<'folha' | 'funcionarios' | 'relatorio'>('folha');
+export default function RHTab({ inicial }: { inicial?: 'folha' | 'funcionarios' | 'relatorio' } = {}) {
+  const [activeView, setActiveView] = useState<'folha' | 'funcionarios' | 'relatorio'>(inicial ?? 'folha');
   const [selectedMonth, setSelectedMonth] = useState(currentMonth);
   const [employeeModal, setEmployeeModal] = useState<Partial<Employee> | null | false>(false);
   const [payrollModal, setPayrollModal] = useState<Partial<PayrollEntry> | null | false>(false);

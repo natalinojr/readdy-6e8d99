@@ -213,6 +213,7 @@ const perfilLabel: Record<string, string> = {
   garcom: 'Garçom',
   cozinha: 'Operador de Cozinha',
   financeiro: 'Financeiro',
+  contabilidade: 'Contabilidade',
 };
 
 // ─── Tela Sem Loja, com módulos liberados ─────────────────────────────────────
@@ -484,7 +485,7 @@ export default function ModulosPage() {
     if (m.emails && !m.emails.includes(user?.email?.toLowerCase() ?? '')) return false;
     if (m.modulo && !hasModule(m.modulo)) return false;
     if (m.id === 'financeiro') {
-      return user?.perfil === 'financeiro' || !empresaTemPdv(user?.tenantKind);
+      return user?.perfil === 'financeiro' || user?.perfil === 'contabilidade' || !empresaTemPdv(user?.tenantKind);
     }
     // Empresa sem PDV não mostra módulo de PDV/cozinha — nem para admin. O corte é pelo
     // TIPO DA EMPRESA, não pelo papel: o dono da plataforma vira admin em toda empresa nova

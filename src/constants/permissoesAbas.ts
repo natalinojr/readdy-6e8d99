@@ -16,7 +16,7 @@ export const FIN_ABAS = [
   { aba: 'notas-entrada', key: 'fin_notas_entrada', label: 'Notas de Entrada' },
   { aba: 'itens', key: 'fin_itens', label: 'Classificação de Itens' },
   { aba: 'rh', key: 'fin_rh', label: 'RH / Folha' },
-  { aba: 'rh-relatorio', key: 'fin_rh_relatorio', label: 'Relatório RH' },
+  { aba: 'guias', key: 'fin_guias', label: 'Guias e impostos' },
   { aba: 'freelancers', key: 'fin_freelancers', label: 'Freelancers' },
   { aba: 'centros', key: 'fin_centros', label: 'Centro de Custos' },
   { aba: 'dre', key: 'fin_dre', label: 'DRE' },
@@ -77,13 +77,22 @@ export const CFG_KEYS_GERENTE: CfgPermissaoKey[] = CFG_KEYS.filter((k) => k !== 
 export const FIN_KEYS: FinPermissaoKey[] = FIN_ABAS.map((a) => a.key);
 export const REL_KEYS: RelPermissaoKey[] = REL_ABAS.map((a) => a.key);
 
+/** Abas que o papel Contabilidade recebe de fábrica (2026-09-25): conferir (DRE, receitas,
+ *  despesas, contas, notas, folha) e dar entrada nos documentos do mês (folha do Domínio e guias
+ *  DAS/INSS/FGTS). O dono tira ou põe aba em Configurações › Permissões. */
+export const FIN_KEYS_CONTABILIDADE: FinPermissaoKey[] = [
+  'fin_guias', 'fin_rh', 'fin_dre', 'fin_receitas', 'fin_despesas',
+  'fin_pagar', 'fin_contas_vencidas', 'fin_notas_entrada',
+];
+
 const CFG_POR_ABA: Record<string, CfgPermissaoKey> = Object.fromEntries(CFG_ABAS.map((a) => [a.aba, a.key]));
 const FIN_POR_ABA: Record<string, FinPermissaoKey> = Object.fromEntries(FIN_ABAS.map((a) => [a.aba, a.key]));
 const REL_POR_ABA: Record<string, RelPermissaoKey> = Object.fromEntries(REL_ABAS.map((a) => [a.aba, a.key]));
 
 /** Chave da aba do Financeiro ('previsao' é apelido antigo do Fluxo de Caixa). */
 export function finKeyDaAba(aba: string): FinPermissaoKey | undefined {
-  return FIN_POR_ABA[aba === 'previsao' ? 'fluxo' : aba];
+  // 'rh-relatorio' era aba própria até 2026-09-25; hoje é a subaba Relatórios dentro de RH / Folha.
+  return FIN_POR_ABA[aba === 'previsao' ? 'fluxo' : aba === 'rh-relatorio' ? 'rh' : aba];
 }
 
 export function relKeyDaAba(aba: string): RelPermissaoKey | undefined {

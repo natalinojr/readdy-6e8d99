@@ -113,7 +113,7 @@ export function ListaEquipe({ conversas, onAbrir, onNova, lojas, lojaSel, onLoja
 const semAcento = (t: string) => t.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
 const PAPEL: Record<string, string> = {
   admin: 'Administrador', manager: 'Gerente', cashier: 'Caixa', waiter: 'Garçom', kitchen: 'Cozinha',
-  delivery_manager: 'Entregas', financeiro: 'Financeiro', tarefas: 'Tarefas', supervisao: 'Supervisão',
+  delivery_manager: 'Entregas', financeiro: 'Financeiro', tarefas: 'Tarefas', supervisao: 'Supervisão', contabilidade: 'Contabilidade', accountant: 'Contabilidade',
 };
 
 /** Escolher com quem falar: as pessoas da loja escolhida nas abas (a conversa nasce nessa loja). */

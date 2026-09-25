@@ -43,3 +43,21 @@ describe('papel supervisão nos mapas', () => {
     expect(sup.some((k) => k.startsWith('fin_'))).toBe(false);
   });
 });
+
+describe('papel contabilidade nos mapas', () => {
+  it('traduz nos dois sentidos (contabilidade ↔ accountant)', () => {
+    expect(ROLE_MAP['accountant']).toBe('contabilidade');
+    expect(ROLE_MAP_REVERSE['contabilidade']).toBe('accountant');
+    expect(PAPEL_TO_DB_ROLE['contabilidade']).toBe('accountant');
+    expect(perfilConfig['contabilidade'].label).toBe('Contabilidade');
+  });
+
+  it('nasce só com abas do Financeiro, com Guias e Folha, sem Conciliação nem Bancos', () => {
+    const perms = DEFAULT_PERMISSOES['contabilidade'];
+    for (const k of perms) expect(k.startsWith('fin_')).toBe(true);
+    expect(perms).toContain('fin_guias');
+    expect(perms).toContain('fin_rh');
+    expect(perms).not.toContain('fin_conciliacao');
+    expect(perms).not.toContain('fin_bancos');
+  });
+});

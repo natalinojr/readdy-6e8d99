@@ -13,6 +13,7 @@ import { useFinanceiroAlertas } from '@/hooks/useFinanceiroAlertas';
 import { useSystemSettings } from '@/hooks/useSystemSettings';
 import { usePermissoes, RECEBER_MODULO_KEYS, type PermissaoKey } from '@/hooks/usePermissoes';
 import { FIN_KEYS, REL_KEYS, CFG_MAQUININHA_KEY } from '@/constants/permissoesAbas';
+import { rotaForcada } from '@/lib/acessoRota';
 
 const ADMIN_MASTER_EMAIL = 'natalinojr.engel@gmail.com';
 
@@ -98,6 +99,7 @@ const perfilLabel: Record<string, string> = {
   garcom: 'Garçom',
   cozinha: 'Operador de Cozinha',
   financeiro: 'Financeiro',
+  contabilidade: 'Contabilidade',
 };
 
 interface SidebarProps {
@@ -133,6 +135,8 @@ export default function Sidebar({ gestaoMode = false, isOpen = false, onClose }:
     .map((section) => {
       const filteredItems = section.items.filter((item) => {
         if (item.adminMasterOnly && user?.email !== ADMIN_MASTER_EMAIL) return false;
+        // Papel preso a uma área (Financeiro, Contabilidade, Tarefas...): link de fora dela só devolveria para lá.
+        if (rotaForcada(user?.perfil, item.path)) return false;
         if (item.modulo && !hasModule(item.modulo)) return false;
         if (item.permissao && !(typeof item.permissao === 'string' ? [item.permissao] : item.permissao).some((k) => hasPermissao(k))) return false;
         if (item.pdvTerminal) {

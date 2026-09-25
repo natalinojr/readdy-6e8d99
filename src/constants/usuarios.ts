@@ -1,4 +1,4 @@
-export type PerfilUsuario = 'admin' | 'gerente' | 'caixa' | 'garcom' | 'cozinha' | 'gestor_entregas' | 'tarefas' | 'totem' | 'financeiro' | 'supervisao';
+export type PerfilUsuario = 'admin' | 'gerente' | 'caixa' | 'garcom' | 'cozinha' | 'gestor_entregas' | 'tarefas' | 'totem' | 'financeiro' | 'supervisao' | 'contabilidade';
 
 export const perfilConfig: Record<PerfilUsuario, { label: string; cor: string; bg: string; desc: string }> = {
   admin:           { label: 'Administrador',       cor: 'text-red-600',    bg: 'bg-red-50',    desc: 'Acesso total ao sistema' },
@@ -11,4 +11,5 @@ export const perfilConfig: Record<PerfilUsuario, { label: string; cor: string; b
   tarefas:         { label: 'Tarefas',             cor: 'text-indigo-600', bg: 'bg-indigo-50', desc: 'Acesso restrito — só o módulo de Tarefas' },
   totem:           { label: 'Totem',               cor: 'text-orange-600', bg: 'bg-orange-50', desc: 'Autoatendimento — login por matrícula + PIN' },
   financeiro:      { label: 'Financeiro',          cor: 'text-teal-600',   bg: 'bg-teal-50',   desc: 'Vê e opera só o módulo Financeiro' },
+  contabilidade:   { label: 'Contabilidade',       cor: 'text-cyan-700',   bg: 'bg-cyan-50',   desc: 'Contador(a): vê DRE, contas, notas e folha; importa a folha e envia as guias (DAS, INSS, FGTS). Não paga nada' },
 };

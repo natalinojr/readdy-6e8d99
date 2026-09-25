@@ -2,10 +2,10 @@ import { useState, useEffect, useCallback, createContext, useContext } from 'rea
 import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useKioskAuth } from '@/contexts/KioskAuthContext';
-import { FIN_KEYS, REL_KEYS, CFG_KEYS, CFG_KEYS_GERENTE, CFG_MAQUININHA_KEY, type FinPermissaoKey, type RelPermissaoKey, type CfgPermissaoKey, type CfgMaquininhaKey } from '@/constants/permissoesAbas';
+import { FIN_KEYS, FIN_KEYS_CONTABILIDADE, REL_KEYS, CFG_KEYS, CFG_KEYS_GERENTE, CFG_MAQUININHA_KEY, type FinPermissaoKey, type RelPermissaoKey, type CfgPermissaoKey, type CfgMaquininhaKey } from '@/constants/permissoesAbas';
 import { GESTAO_KEYS, type GestaoPermissaoKey } from '@/constants/permissoesGestao';
 
-export type Papel = 'admin' | 'gerente' | 'caixa' | 'garcom' | 'cozinha' | 'gestor_entregas' | 'tarefas' | 'financeiro' | 'supervisao';
+export type Papel = 'admin' | 'gerente' | 'caixa' | 'garcom' | 'cozinha' | 'gestor_entregas' | 'tarefas' | 'financeiro' | 'supervisao' | 'contabilidade';
 
 export type PermissaoKey =
   | 'pdv_abrir_caixa'
@@ -61,6 +61,7 @@ export const PAPEL_TO_DB_ROLE: Record<string, string> = {
   gestor_entregas: 'delivery_manager',
   tarefas: 'tasks_only',
   financeiro: 'financeiro',
+  contabilidade: 'accountant',
 };
 
 /** Permissões padrão por papel (fallback quando não há dados no banco) */
@@ -113,6 +114,10 @@ export const DEFAULT_PERMISSOES: Record<Papel, PermissaoKey[]> = {
   // Nasce com todas as abas do Financeiro e nada além — o papel é preso ao
   // módulo pelo hard-lock de rota (RotaProtegida / acessoRota.ts).
   financeiro: [...FIN_KEYS],
+  // Contador(a) — 2026-09-25. Preso ao Financeiro como o papel 'financeiro', mas só com as
+  // abas de conferência e de entrada de documento. No servidor ele lê e só grava a folha e as
+  // guias (financial-write › ACOES_CONTABILIDADE, Edge contabilidade): pagar é sempre do dono.
+  contabilidade: [...FIN_KEYS_CONTABILIDADE],
 };
 
 /** Padrão + linhas salvas (allowed true acrescenta, false tira). */

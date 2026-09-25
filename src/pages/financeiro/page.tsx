@@ -16,7 +16,6 @@ import OrcamentosTab from './components/OrcamentosTab';
 import ConciliacaoTab from './components/ConciliacaoTab';
 import BancosContasTab from './components/BancosContasTab';
 import RHTab from './components/RHTab';
-import RHRelatorioTab from './components/RHRelatorioTab';
 import ContasVencidasPanel from './components/ContasVencidasPanel';
 import DespesasTab from './components/DespesasTab';
 import ReceitasTab from './components/ReceitasTab';
@@ -24,6 +23,7 @@ import NotasEntradaTab from './components/NotasEntradaTab';
 import ItensClassificacaoTab from './components/ItensClassificacaoTab';
 import IfoodTab from './components/IfoodTab';
 import FreelancersTab from './components/FreelancersTab';
+import GuiasTab from './components/GuiasTab';
 
 const TABS = [
   { id: 'visao', label: 'Visão Geral', icon: 'ri-dashboard-line' },
@@ -38,7 +38,7 @@ const TABS = [
   { id: 'notas-entrada', label: 'Notas de Entrada', icon: 'ri-inbox-archive-line' },
   { id: 'itens', label: 'Classificação de Itens', icon: 'ri-price-tag-3-line' },
   { id: 'rh', label: 'RH / Folha', icon: 'ri-team-line' },
-  { id: 'rh-relatorio', label: 'Relatório RH', icon: 'ri-bar-chart-grouped-line' },
+  { id: 'guias', label: 'Guias e impostos', icon: 'ri-file-upload-line' },
   { id: 'freelancers', label: 'Freelancers', icon: 'ri-user-star-line' },
   { id: 'centros', label: 'Centro de Custos', icon: 'ri-pie-chart-line' },
   { id: 'dre', label: 'DRE', icon: 'ri-file-chart-line' },
@@ -69,7 +69,7 @@ export default function FinanceiroPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const daUrl = searchParams.get('tab');
   const doState = (location.state as { activeTab?: string } | null)?.activeTab;
-  const valida = (t: string | null | undefined) => (t && (TABS.some((x) => x.id === t) || t === 'previsao') && podeAba(t) ? t : null);
+  const valida = (t: string | null | undefined) => (t && (TABS.some((x) => x.id === t) || t === 'previsao' || t === 'rh-relatorio') && podeAba(t) ? t : null);
   const activeTab = valida(daUrl) ?? valida(doState) ?? abas[0]?.id ?? 'visao';
   const setActiveTab = (t: string) => setSearchParams({ tab: t }, { replace: true });
   // ?foco=<id da compra> abre a aba Compras já piscando naquela linha — usado pelo Rastreamento
@@ -100,7 +100,7 @@ export default function FinanceiroPage() {
     setHighlightPurchaseId(undefined);
   };
 
-  if (!user || !['admin', 'gerente', 'financeiro'].includes(user.perfil)) {
+  if (!user || !['admin', 'gerente', 'financeiro', 'contabilidade'].includes(user.perfil)) {
     return (
       <div className="flex-1 flex items-center justify-center bg-zinc-50">
         <div className="text-center">
@@ -150,7 +150,7 @@ export default function FinanceiroPage() {
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
               className={`flex items-center gap-1 md:gap-1.5 px-2.5 md:px-3 py-2.5 text-xs font-semibold whitespace-nowrap border-b-2 transition-colors cursor-pointer flex-shrink-0 ${
-                activeTab === tab.id
+                (activeTab === 'rh-relatorio' ? 'rh' : activeTab) === tab.id
                   ? 'border-amber-500 text-amber-600'
                   : 'border-transparent text-zinc-400 hover:text-zinc-700'
               }`}
@@ -184,8 +184,9 @@ export default function FinanceiroPage() {
         {activeTab === 'notas-entrada' && <NotasEntradaTab />}
         {activeTab === 'itens' && <ItensClassificacaoTab />}
         {activeTab === 'compras' && <ComprasTab highlightId={highlightPurchaseId} onHighlightConsumed={handleClearHighlight} />}
-        {activeTab === 'rh' && <RHTab />}
-        {activeTab === 'rh-relatorio' && <RHRelatorioTab />}
+        {/* 'rh-relatorio' (aba antiga, links salvos e o assistente) abre RH já em Relatórios */}
+        {(activeTab === 'rh' || activeTab === 'rh-relatorio') && <RHTab inicial={activeTab === 'rh-relatorio' ? 'relatorio' : undefined} />}
+        {activeTab === 'guias' && <GuiasTab />}
         {activeTab === 'freelancers' && <FreelancersTab />}
         {activeTab === 'centros' && <CentroCustosTab />}
         {activeTab === 'dre' && <DREContainer />}

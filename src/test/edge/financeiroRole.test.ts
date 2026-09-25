@@ -10,6 +10,7 @@ const TENANT_AUTH_PATH = pathToFileURL(resolve(__dirname, '../../../supabase/fun
 type Mod = {
   isFinanceiroRole: (role?: string | null) => boolean;
   isManagerRole: (role?: string | null) => boolean;
+  isContabilidadeRole: (role?: string | null) => boolean;
 };
 
 const load = () => import(/* @vite-ignore */ TENANT_AUTH_PATH) as Promise<Mod>;
@@ -34,5 +35,15 @@ describe('isFinanceiroRole', () => {
   it('não dá ao papel financeiro acesso de gerente (o PDV continua barrado)', async () => {
     const { isManagerRole } = await load();
     expect(isManagerRole('financeiro')).toBe(false);
+  });
+});
+
+describe('isContabilidadeRole', () => {
+  it('só o papel accountant, e ele não escreve como Financeiro nem como gerente', async () => {
+    const { isContabilidadeRole, isFinanceiroRole, isManagerRole } = await load();
+    expect(isContabilidadeRole('accountant')).toBe(true);
+    for (const r of ['admin', 'manager', 'financeiro', 'cashier', '', null]) expect(isContabilidadeRole(r)).toBe(false);
+    expect(isFinanceiroRole('accountant')).toBe(false);
+    expect(isManagerRole('accountant')).toBe(false);
   });
 });

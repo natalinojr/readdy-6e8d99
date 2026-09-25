@@ -1,5 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { isFinanceiroRole, isManagerRole } from '../_shared/tenant-auth.ts';
+import { isContabilidadeRole, isFinanceiroRole, isManagerRole } from '../_shared/tenant-auth.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -49,8 +49,32 @@ Deno.serve(async (req) => {
     // telas que chamam esta edge (/financeiro, /estoque, chat do dono) já são restritas a
     // admin/gerente/financeiro; assistente-brain e conciliacao-pagamentos repassam o JWT do
     // dono/usuário, que é admin.
-    if (!isFinanceiroRole(tenantCheck.role)) {
+    // Contabilidade (2026-09-25): lê tudo (list_*/get_*) e grava só a folha — importar o Extrato
+    // do Domínio, corrigir lançamento pendente, férias/13º. Pagar folha, pagar/baixar conta,
+    // fornecedor, banco e conciliação continuam de admin/gerente/financeiro.
+    const ACOES_CONTABILIDADE = new Set([
+      'upsert_employee', 'update_employee_vacation', 'update_employee_thirteenth',
+      'upsert_payroll', 'delete_payroll', 'bulk_insert_payroll',
+      'upsert_payroll_custom_field', 'delete_payroll_custom_field',
+    ]);
+    const leitura = /^(list|get)_/.test(String(action ?? ''));
+    if (isContabilidadeRole(tenantCheck.role)) {
+      if (!leitura && !ACOES_CONTABILIDADE.has(action)) {
+        return new Response(JSON.stringify({ error: 'Sem permissão: o perfil Contabilidade confere e envia documentos (folha e guias), mas não paga nem altera contas.' }), { status: 403, headers: corsHeaders });
+      }
+    } else if (!isFinanceiroRole(tenantCheck.role)) {
       return new Response(JSON.stringify({ error: 'Sem permissão: o Financeiro é só para administrador ou gerente da loja.' }), { status: 403, headers: corsHeaders });
+    }
+    // Folha paga é do dono: a contabilidade não marca como paga nem mexe/apaga o que já foi pago.
+    if (isContabilidadeRole(tenantCheck.role) && ['upsert_payroll', 'delete_payroll', 'bulk_insert_payroll'].includes(action)) {
+      const recusa = (msg: string) => new Response(JSON.stringify({ error: msg }), { status: 403, headers: corsHeaders });
+      const linhas = (action === 'bulk_insert_payroll' ? (Array.isArray(payload?.records) ? payload.records : []) : [payload ?? {}]) as Record<string, unknown>[];
+      if (linhas.some((l) => String(l?.status ?? '') === 'paid' || l?.paid_date)) return recusa('A contabilidade lança a folha como pendente; quem marca como paga é o dono.');
+      const id = action === 'bulk_insert_payroll' ? null : String((payload as { id?: string } | null)?.id ?? '');
+      if (id) {
+        const { data: atual } = await supabase.from('hr_payroll').select('status').eq('id', id).eq('tenant_id', tenant_id).maybeSingle();
+        if (atual?.status === 'paid') return recusa('Esse lançamento da folha já foi pago: só o dono altera.');
+      }
     }
     // Exceção ao papel 'financeiro' (spec modulo-financeiro-sem-pdv, 2026-09-20): estas ações
     // gravam direto em `ingredients` (estoque do PDV) e NÃO vêm de tela do Financeiro — vêm do

@@ -15,6 +15,7 @@ export const ROLE_OPTIONS = [
   { value: 'delivery_manager', label: 'Gestor de entregas' },
   { value: 'tasks_only', label: 'Só Tarefas' },
   { value: 'financeiro', label: 'Financeiro' },
+  { value: 'accountant', label: 'Contabilidade' },
 ];
 
 export const ROLE_LABEL: Record<string, string> = {

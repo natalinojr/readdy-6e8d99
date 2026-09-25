@@ -7,7 +7,7 @@ import { FIN_ABAS, FIN_KEYS, REL_ABAS, REL_KEYS, CFG_ABAS, CFG_KEYS_GERENTE, CFG
 import { GESTAO_TELAS, GESTAO_KEYS } from '@/constants/permissoesGestao';
 import { useToast } from '@/contexts/ToastContext';
 
-type Papel = 'admin' | 'gerente' | 'supervisao' | 'caixa' | 'garcom' | 'cozinha' | 'financeiro';
+type Papel = 'admin' | 'gerente' | 'supervisao' | 'caixa' | 'garcom' | 'cozinha' | 'financeiro' | 'contabilidade';
 
 interface Permissao {
   id: string;
@@ -26,6 +26,8 @@ const papeis: { id: Papel; label: string; cor: string }[] = [
   { id: 'caixa', label: 'Caixa', cor: 'text-amber-600 bg-amber-50' },
   { id: 'garcom', label: 'Garçom', cor: 'text-green-600 bg-green-50' },
   { id: 'cozinha', label: 'Cozinha', cor: 'text-sky-600 bg-sky-50' },
+  // Contador(a): só as abas do Financeiro valem (o papel é preso a /financeiro).
+  { id: 'contabilidade', label: 'Contabilidade', cor: 'text-cyan-700 bg-cyan-50' },
 ];
 
 const permissoes: Permissao[] = [
@@ -104,6 +106,7 @@ const defaultPermissoes: Record<Papel, string[]> = {
     'gestor_pedidos_entregar',
   ],
   financeiro: [...FIN_KEYS],
+  contabilidade: [...DEFAULT_PERMISSOES.contabilidade],
 };
 
 const categorias = [...new Set(permissoes.map((p) => p.categoria))];
@@ -116,6 +119,7 @@ const papeisToDbRole: Record<Papel, string> = {
   garcom: 'waiter',
   cozinha: 'kitchen',
   financeiro: 'financeiro',
+  contabilidade: 'accountant',
 };
 
 const dbRoleToPapel: Record<string, Papel> = {
@@ -126,6 +130,7 @@ const dbRoleToPapel: Record<string, Papel> = {
   waiter: 'garcom',
   kitchen: 'cozinha',
   financeiro: 'financeiro',
+  accountant: 'contabilidade',
 };
 
 export default function PermissoesTab() {
@@ -159,6 +164,7 @@ export default function PermissoesTab() {
           garcom: mesclarComPadrao(defaultPermissoes.garcom, linhas('garcom')),
           cozinha: mesclarComPadrao(defaultPermissoes.cozinha, linhas('cozinha')),
           financeiro: mesclarComPadrao(defaultPermissoes.financeiro, linhas('financeiro')),
+          contabilidade: mesclarComPadrao(defaultPermissoes.contabilidade, linhas('contabilidade')),
         };
         setMatrix(newMatrix);
       }
@@ -174,6 +180,8 @@ export default function PermissoesTab() {
 
   const travado = (papel: Papel, perm: Permissao) => {
     if (perm.somenteAdmin) return papel !== 'admin';
+    // Contabilidade só entra no Financeiro; e mesmo lá o servidor só a deixa ler e mandar folha/guias.
+    if (papel === 'contabilidade') return perm.categoria !== 'Financeiro';
     return !!perm.somenteGerente && papel !== 'admin' && papel !== 'gerente';
   };
 
@@ -198,7 +206,7 @@ export default function PermissoesTab() {
 
     // Build flat array of all permissions (excluding admin — always full)
     const permissionsPayload: { role: string; permission_key: string; allowed: boolean }[] = [];
-    const papeisSalvar: Papel[] = ['gerente', 'supervisao', 'caixa', 'garcom', 'cozinha'];
+    const papeisSalvar: Papel[] = ['gerente', 'supervisao', 'caixa', 'garcom', 'cozinha', 'contabilidade'];
     for (const papel of papeisSalvar) {
       for (const perm of permissoes) {
         permissionsPayload.push({
