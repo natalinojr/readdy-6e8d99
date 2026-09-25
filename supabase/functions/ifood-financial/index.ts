@@ -602,10 +602,20 @@ async function syncTenant(admin: Admin, cfg: any, competences?: string[]) {
   const run = async (k: string, fn: () => Promise<number>) => {
     try { apis[k] = await fn(); } catch (e) { lastErr = String((e as Error)?.message ?? e); apis[k] = { error: lastErr }; }
   };
-  await run('sales', () => syncSales(admin, cfg, addDaysISO(today, -30), today));
+  // Janelas máximas em produção (a loja de teste aceitava mais): Sales 8 dias (400 se passar);
+  // Settlements/Anticipations ~32 dias — acima disso devolve lista VAZIA sem erro. Por isso, em blocos.
+  const inWindows = async (from: string, to: string, days: number, fn: (a: string, b: string) => Promise<number>) => {
+    let n = 0;
+    for (let a = from; a <= to; a = addDaysISO(a, days)) {
+      const b = addDaysISO(a, days - 1) < to ? addDaysISO(a, days - 1) : to;
+      n += await fn(a, b);
+    }
+    return n;
+  };
+  await run('sales', () => inWindows(addDaysISO(today, -30), today, 7, (a, b) => syncSales(admin, cfg, a, b)));
   await run('events', () => syncEvents(admin, cfg, addDaysISO(today, -32), today));
-  await run('settlements', () => syncSettlements(admin, cfg, addDaysISO(today, -35), addDaysISO(today, 35)));
-  await run('anticipations', () => syncAnticipations(admin, cfg, addDaysISO(today, -35), addDaysISO(today, 35)));
+  await run('settlements', () => inWindows(addDaysISO(today, -35), addDaysISO(today, 35), 30, (a, b) => syncSettlements(admin, cfg, a, b)));
+  await run('anticipations', () => inWindows(addDaysISO(today, -35), addDaysISO(today, 35), 30, (a, b) => syncAnticipations(admin, cfg, a, b)));
   await admin.from('fin_ifood_config').update({ last_sync_at: new Date().toISOString(), last_sync_error: lastErr, updated_at: new Date().toISOString() }).eq('id', cfg.id);
   return { tenant_id: cfg.tenant_id, results, apis, error: lastErr ?? undefined };
 }
