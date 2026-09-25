@@ -509,6 +509,67 @@ async function syncCompetence(admin: Admin, cfg: any, competence: string) {
   return await saveCompetence(admin, cfg.tenant_id, cfg, competence, entries, { source: 'api', merchant_id: cfg.merchant_id, sha256: sha || await sha256Hex(bytes), expected });
 }
 
+// ── Relatório sob demanda (reconciliation/on-demand) ──
+// O arquivo mensal automático só existe depois que o iFood o gera (loja recém-autorizada fica sem ele);
+// o sob demanda traz o mês até hoje e substitui o da planilha (mesma loja + competência).
+// Pronto = tem filePath e o status não é de "em andamento" (o iFood devolve "processed").
+const ondemandPronto = (status: string, filePath: string | null) => !!filePath && !/ing$|pending|request|queue|error|fail/i.test(status);
+
+async function requestOndemand(admin: Admin, mcfg: any, competence: string, userId: string | null) {
+  const r = await apiPost(admin, mcfg, finPath(mcfg, '/reconciliation/on-demand'), { competence });
+  let requestId: string | null = r.data?.requestId ? String(r.data.requestId) : null;
+  if (r.status === 409) {
+    // Já existe pedido em andamento para a competência: reutiliza o requestId.
+    if (!requestId) {
+      const { data: prev } = await admin.from('fin_ifood_ondemand').select('request_id').eq('tenant_id', mcfg.tenant_id).eq('merchant_id', mcfg.merchant_id).eq('competence', competence).order('created_at', { ascending: false }).limit(1);
+      requestId = prev?.[0]?.request_id ?? null;
+    }
+    if (!requestId) throw new Error('O iFood já está gerando esse relatório. Tente de novo em alguns minutos.');
+  } else if (!r.ok || !requestId) throw new Error(apiError(r, 'Gerar relatório'));
+  const now = new Date().toISOString();
+  await admin.from('fin_ifood_ondemand').upsert({ tenant_id: mcfg.tenant_id, merchant_id: mcfg.merchant_id, competence, request_id: requestId, status: 'REQUESTED', requested_by: userId, updated_at: now }, { onConflict: 'tenant_id,request_id' });
+  return { request_id: requestId, reused: r.status === 409 };
+}
+
+// Consulta um pedido; se ficou pronto, baixa e grava a competência (uma vez só).
+async function checkOndemand(admin: Admin, cfg: any, mcfg: any, od: any, userId: string | null) {
+  const r = await apiGet(admin, mcfg, finPath(mcfg, `/reconciliation/on-demand/${encodeURIComponent(od.request_id)}`));
+  if (!r.ok) throw new Error(apiError(r, 'Status do relatório'));
+  const status = String(r.data?.status ?? 'PROCESSING');
+  const filePath = str(r.data?.filePath);
+  let imported: any = null;
+  if (!od.imported_at && ondemandPronto(status, filePath)) {
+    const f = await fetch(filePath!);
+    // O iFood marca "processed" segundos antes de o arquivo existir no S3: 403/404 = ainda gerando.
+    if (f.status === 403 || f.status === 404) return { status: 'PROCESSING', file_path: null, error_message: null, imported: null };
+    if (!f.ok) throw new Error(`Baixar relatório: HTTP ${f.status}`);
+    const bytes = new Uint8Array(await f.arrayBuffer());
+    const rows = await readReport(bytes, 'ondemand.csv.gz');
+    const entries = rows.map(toEntry).filter((e) => !e.competence || e.competence === od.competence);
+    imported = entries.length
+      ? await saveCompetence(admin, od.tenant_id, cfg, od.competence, entries, { source: 'api', merchant_id: od.merchant_id, sha256: await sha256Hex(bytes), userId })
+      : { competence: od.competence, skipped: true, reason: 'relatório sem lançamentos' };
+  }
+  const now = new Date().toISOString();
+  const error_message = str(r.data?.errorMessage);
+  await admin.from('fin_ifood_ondemand').update({ status, file_path: filePath, error_message, imported_at: imported ? now : od.imported_at, updated_at: now }).eq('id', od.id);
+  return { status, file_path: filePath, error_message, imported };
+}
+
+// Busca automática: sem arquivo mensal, finaliza o pedido sob demanda pendente ou faz um novo
+// (no máximo 1 a cada 6 h por loja/mês; a rodada das 07h20 pede e a das 07h50 — ou abrir a Conciliação — importa).
+async function autoOndemand(admin: Admin, cfg: any, competence: string) {
+  const { data: last } = await admin.from('fin_ifood_ondemand').select('*').eq('tenant_id', cfg.tenant_id).eq('merchant_id', cfg.merchant_id).eq('competence', competence).order('created_at', { ascending: false }).limit(1).maybeSingle();
+  if (last && !last.imported_at && !last.error_message && Date.now() - new Date(last.created_at).getTime() < 24 * 3600_000) {
+    const c = await checkOndemand(admin, cfg, cfg, last, null);
+    if (c.imported) return { competence, ondemand: 'imported', ...c.imported };
+    if (!c.error_message && !ondemandPronto(c.status, c.file_path)) return { competence, ondemand: 'processing' };
+  }
+  if (last && Date.now() - new Date(last.created_at).getTime() < 6 * 3600_000) return { competence, ondemand: 'recent' };
+  const q = await requestOndemand(admin, cfg, competence, null);
+  return { competence, ondemand: 'requested', request_id: q.request_id };
+}
+
 // ── Demais APIs do módulo Financial (vendas, eventos, liquidações, antecipações) ──
 const addDaysISO = (d: string, n: number) => { const x = new Date(d + 'T12:00:00Z'); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); };
 const hashKey = async (v: unknown) => (await sha256Hex(new TextEncoder().encode(JSON.stringify(v)))).slice(0, 40);
@@ -655,8 +716,11 @@ async function syncMerchant(admin: Admin, cfg: any, competences?: string[]) {
   const results = [];
   let lastErr: string | null = null;
   for (const c of competences?.length ? competences : defaultCompetences()) {
-    try { results.push(await syncCompetence(admin, cfg, c)); }
-    catch (e) { lastErr = String((e as Error)?.message ?? e); results.push({ competence: c, error: lastErr }); }
+    try {
+      const r: any = await syncCompetence(admin, cfg, c);
+      // Sem arquivo mensal do iFood: relatório sob demanda (fora da loja de teste, que não tem lançamentos).
+      results.push(r.skipped && cfg.homologation_mode !== true ? await autoOndemand(admin, cfg, c) : r);
+    } catch (e) { lastErr = String((e as Error)?.message ?? e); results.push({ competence: c, error: lastErr }); }
   }
   // Demais APIs: janelas móveis (eventos: máx. 33 dias; liquidações/antecipações: passado e futuro).
   const today = todayBR();
@@ -896,19 +960,8 @@ Deno.serve(async (req) => {
       const mcfg = loja.ctx;
       const competence = String(body.competence ?? '');
       if (!/^\d{4}-\d{2}$/.test(competence)) return errResp('Competência inválida (use AAAA-MM).');
-      const r = await apiPost(admin, mcfg, finPath(mcfg, '/reconciliation/on-demand'), { competence });
-      let requestId: string | null = r.data?.requestId ? String(r.data.requestId) : null;
-      if (r.status === 409) {
-        // Já existe pedido em andamento para a competência: reutiliza o requestId.
-        if (!requestId) {
-          const { data: prev } = await admin.from('fin_ifood_ondemand').select('request_id').eq('tenant_id', tenantId).eq('merchant_id', mcfg.merchant_id).eq('competence', competence).order('created_at', { ascending: false }).limit(1);
-          requestId = prev?.[0]?.request_id ?? null;
-        }
-        if (!requestId) return errResp('O iFood já está gerando esse relatório. Tente de novo em alguns minutos.');
-      } else if (!r.ok || !requestId) return errResp(apiError(r, 'Gerar relatório'));
-      const now = new Date().toISOString();
-      await admin.from('fin_ifood_ondemand').upsert({ tenant_id: tenantId, merchant_id: mcfg.merchant_id, competence, request_id: requestId, status: 'REQUESTED', requested_by: userId, updated_at: now }, { onConflict: 'tenant_id,request_id' });
-      return json({ success: true, request_id: requestId, reused: r.status === 409 });
+      try { return json({ success: true, ...(await requestOndemand(admin, mcfg, competence, userId)) }); }
+      catch (e) { return errResp(String((e as Error)?.message ?? e)); }
     }
 
     if (action === 'ondemand_status') {
@@ -917,22 +970,8 @@ Deno.serve(async (req) => {
       if (!od) return errResp('Pedido de relatório não encontrado.');
       const mcfg = (await merchantContexts(admin, cfg)).find((l) => l.ctx && l.merchant_id === od.merchant_id)?.ctx;
       if (!mcfg) return errResp('API do iFood não conectada para esta loja.');
-      const r = await apiGet(admin, mcfg, finPath(mcfg, `/reconciliation/on-demand/${encodeURIComponent(requestId)}`));
-      if (!r.ok) return errResp(apiError(r, 'Status do relatório'));
-      const status = String(r.data?.status ?? 'PROCESSING');
-      const filePath = str(r.data?.filePath);
-      let imported: unknown = null;
-      if (filePath && !od.imported_at && /complet|conclu|done|success|ready|finish|available|generated/i.test(status)) {
-        const f = await fetch(filePath);
-        if (!f.ok) return errResp(`Baixar relatório: HTTP ${f.status}`);
-        const bytes = new Uint8Array(await f.arrayBuffer());
-        const rows = await readReport(bytes, 'ondemand.csv.gz');
-        const entries = rows.map(toEntry).filter((e) => !e.competence || e.competence === od.competence);
-        imported = await saveCompetence(admin, tenantId, cfg, od.competence, entries, { source: 'api', merchant_id: od.merchant_id, sha256: await sha256Hex(bytes), userId });
-      }
-      const now = new Date().toISOString();
-      await admin.from('fin_ifood_ondemand').update({ status, file_path: filePath, error_message: str(r.data?.errorMessage), imported_at: imported ? now : od.imported_at, updated_at: now }).eq('id', od.id);
-      return json({ success: true, status, file_path: filePath, error_message: str(r.data?.errorMessage), imported });
+      try { return json({ success: true, ...(await checkOndemand(admin, cfg, mcfg, od, userId)) }); }
+      catch (e) { return errResp(String((e as Error)?.message ?? e)); }
     }
 
     if (action === 'save_config') {
