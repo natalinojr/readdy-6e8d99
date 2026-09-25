@@ -79,25 +79,31 @@ export default function IfoodTab() {
 
   const loadImports = useCallback(async () => {
     if (!user?.tenantId) return;
-    const [{ data, error: err }, cfg, mer] = await Promise.all([
+    // Situação da API (edge) em paralelo e SEM segurar a tela: com a edge lenta (sincronização
+    // pesada rodando), a aba ficava vazia esperando o get_config.
+    invokeWithAuth<{ config?: { post_to_ledger?: boolean; authorized?: boolean; merchant_id?: string | null; homologation_mode?: boolean; last_sync_at?: string | null; last_sync_error?: string | null; merchants?: { merchant_id: string; api_sync: boolean; authorized: boolean }[] } | null }>('ifood-financial', { body: { action: 'get_config', tenant_id: user.tenantId } })
+      .then((cfg) => {
+        const c = cfg.data?.config;
+        if (!c) return;
+        const cms = c.merchants ?? [];
+        setApi({ ligadas: cms.filter((m) => m.api_sync && m.authorized).length, total: cms.length, lastSync: c.last_sync_at ?? null, erro: c.last_sync_error ?? null });
+        setPostToLedger(c.post_to_ledger === true);
+        setApiOn(c.authorized === true && !!c.merchant_id);
+        setHomolog(c.homologation_mode === true);
+      });
+    const [{ data, error: err }, mer] = await Promise.all([
       supabase.from('fin_ifood_imports')
         .select('id, merchant_id, merchant_short, competence, source, file_name, lines, orders, gross, fees, net, updated_at, expected_lines, expected_orders, integrity_ok')
         .eq('tenant_id', user.tenantId).order('competence', { ascending: false }),
-      invokeWithAuth<{ config?: { post_to_ledger?: boolean; authorized?: boolean; merchant_id?: string | null; last_sync_at?: string | null; last_sync_error?: string | null; merchants?: { merchant_id: string; api_sync: boolean; authorized: boolean }[] } | null }>('ifood-financial', { body: { action: 'get_config', tenant_id: user.tenantId } }),
       supabase.from('fin_ifood_merchants').select('merchant_id, merchant_short, name, anticipation_pct, anticipation_days').eq('tenant_id', user.tenantId),
     ]);
     const merRows = (mer.data ?? []) as { merchant_id: string; merchant_short: string | null; name: string | null; anticipation_pct: number | null; anticipation_days: number | null }[];
     setLojasCad(merRows.map((m) => ({ id: m.merchant_id, curto: m.merchant_short })));
-    const cms = cfg.data?.config?.merchants ?? [];
-    setApi({ ligadas: cms.filter((m) => m.api_sync && m.authorized).length, total: cms.length, lastSync: cfg.data?.config?.last_sync_at ?? null, erro: cfg.data?.config?.last_sync_error ?? null });
     setNomes(Object.fromEntries(merRows.filter((m) => m.name).map((m) => [m.merchant_id, m.name as string])));
     setAntecip(Object.fromEntries(merRows.filter((m) => Number(m.anticipation_pct) > 0).map((m) => [m.merchant_id, { pct: Number(m.anticipation_pct), dias: Number(m.anticipation_days ?? 21) }])));
     if (err) { setError(err.message); setLoading(false); return; }
     const rows = (data ?? []) as ImportRow[];
     setImports(rows);
-    setPostToLedger(cfg.data?.config?.post_to_ledger === true);
-    setApiOn(cfg.data?.config?.authorized === true && !!cfg.data?.config?.merchant_id);
-    setHomolog((cfg.data?.config as { homologation_mode?: boolean } | null | undefined)?.homologation_mode === true);
     setCompetence((c) => (c && rows.some((r) => r.competence === c) ? c : rows[0]?.competence ?? ''));
     if (rows.length === 0) setLoading(false);
   }, [user?.tenantId]);
