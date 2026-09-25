@@ -2872,6 +2872,12 @@ Regra do dono: todo extrato da conciliação mostra a hora, de qualquer banco ou
 - Linha já importada ganha a hora pelo reimport: `fn_statement_set_hora(tenant, conta, [{external_id, hora, hora_data, hora_ref}])` só completa `raw.hora*` onde falta (o upsert da importação ignora duplicadas e regravar a linha desfaria a conciliação). Integração NOVA de banco/maquininha: gravar `raw.hora` desde o início.
 - Sem como recuperar: linhas de arquivo importadas antes (o arquivo não fica guardado).
 
+### Conciliação: "Reabrir" = undo quando a conciliação criou/baixou algo (2026-09-25)
+- Linha com `match_detail.confirmed` (`bill_id`, `payroll_id` ou `created='fora_dre'`) só se reabre pela edge `conciliacao-pagamentos › undo` (`useConciliacao.unreconcile` já decide). Voltar só `status/reconciled` deixava a conta paga/compra/diária de pé e a linha "pendente" — convite a lançar em dobro. Botão novo que reabra linha da conciliação: usar `unreconcile`, nunca `updateImport` cru.
+- Todo `match_detail.created` novo (`despesa`/`compra`/`freelancer`/`fora_dre`) precisa de quadro no `TransacaoDetalheModal` com o Desfazer — a aba "Não entra no DRE" nasceu sem motivo nem desfazer.
+- Saldo do cartão da conta (`useBankAccounts`) é relido a cada recarga do extrato: lançar/desfazer mexe no saldo via `fn_bank_debit/credit`.
+- `link_manual` aceita `dre_category_id`: conta sem classificação DRE é classificada ali (o `pay_bill` recusa baixa sem DRE).
+
 ### Operação go-live Paranaguá: carga, segurança e corridas (2026-09-17)
 Agentes (auditor, carga, testadores, revisores, executores) testaram produção na loja Testes PDV; dados de teste apagados ao final.
 - **Latência**: Edge rodava em sa-east-1 e o banco está em us-west-1 (~150 ms por consulta; create_order 4,5 s). `src/lib/supabase.ts` agora anexa `?forceFunctionRegion=us-west-1` (patch global de `fetch`, lista `EDGES_NA_REGIAO_DO_BANCO`) às edges que só falam com o banco; create_order caiu p/ ~1,1 s, record_payment ~0,8 s. Edges que falam com SEFAZ/Inter/Stone/Pix ficam no padrão. Edge nova só de banco → adicionar à lista.
