@@ -166,6 +166,9 @@ async function criar(ctx: Ctx, body: Record<string, any>) {
     });
   }
 
+  const dup = await duplicado(ctx, tipo, linha);
+  if (dup) return erro(dup, 409);
+
   linha.comprovante_path = await salvarComprovante(ctx.admin, ctx.tenantId, ref, body.comprovante);
   const { data: novo, error } = await ctx.admin.from('fin_payment_requests').insert(linha).select('id').single();
   if (error) {
@@ -177,6 +180,60 @@ async function criar(ctx: Ctx, body: Record<string, any>) {
   }
   await pendenciaDoPedido(ctx.admin, { id: novo.id, tenant_id: ctx.tenantId, tipo, valor, favorecido_nome: linha.favorecido_nome, descricao: linha.descricao, solicitado_por_nome: linha.solicitado_por_nome });
   return json({ ok: true, id: novo.id });
+}
+
+const normNome = (s: unknown) => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+const normPix = (s: unknown) => String(s ?? '').toLowerCase().replace(/\s+/g, '').trim();
+const diaBR = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}`;
+
+/**
+ * Pedido em dobro (dono, 2026-09-25): mesma pessoa + mesmo valor + mesma data já pedido (pendente ou
+ * aprovado) → recusa e diz quem pediu. "Mesma pessoa" = mesmo cadastro, mesma chave Pix ou mesmo nome.
+ * Data: reembolso = dia do gasto; fornecedor = vencimento. Freelancer: qualquer dia já pedido para a
+ * mesma pessoa, ou diária já registrada (paga por outro caminho), bloqueia — não se paga o mesmo dia 2x.
+ */
+async function duplicado(ctx: Ctx, tipo: TipoPedido, l: Record<string, any>): Promise<string | null> {
+  const nome = normNome(l.favorecido_nome);
+  const pix = normPix(l.pix_chave);
+  const mesmaPessoa = (r: any) =>
+    (tipo === 'freelancer' && l.freelancer_id && r.freelancer_id === l.freelancer_id) ||
+    (tipo === 'fornecedor' && l.supplier_id && r.supplier_id === l.supplier_id) ||
+    (!!pix && normPix(r.pix_chave) === pix) ||
+    (!!nome && normNome(r.favorecido_nome) === nome);
+
+  let q = ctx.admin.from('fin_payment_requests')
+    .select('id, status, valor, favorecido_nome, pix_chave, freelancer_id, supplier_id, data_gasto, vencimento, dias, solicitado_por_nome, created_at')
+    .eq('tenant_id', ctx.tenantId).eq('tipo', tipo).in('status', ['pendente', 'aprovada']);
+  if (tipo === 'reembolso') q = q.eq('data_gasto', l.data_gasto).eq('valor', l.valor);
+  else if (tipo === 'fornecedor') q = q.eq('vencimento', l.vencimento).eq('valor', l.valor);
+  else q = q.overlaps('dias', l.dias);
+  const { data, error } = await q.limit(50);
+  if (error) throw new Error(`Falha ao conferir pedido repetido: ${error.message}`);
+
+  const r: any = (data ?? []).find(mesmaPessoa);
+  if (r) {
+    const situacao = r.status === 'aprovada' ? 'já foi aprovado' : 'está esperando aprovação';
+    const quem = r.solicitado_por_nome ? ` por ${r.solicitado_por_nome}` : '';
+    const quando = diaBR(new Date(Date.parse(r.created_at) - 3 * 3600_000).toISOString().slice(0, 10));
+    if (tipo === 'freelancer') {
+      const repetidos = (l.dias as string[]).filter((d) => (r.dias ?? []).includes(d)).map(diaBR).join(', ');
+      return `Já existe pedido de diária para ${r.favorecido_nome} no(s) dia(s) ${repetidos} — pedido${quem} em ${quando}, que ${situacao}. Não dá para pedir de novo.`;
+    }
+    const qual = tipo === 'reembolso' ? `gasto de ${diaBR(l.data_gasto)}` : `vencimento ${diaBR(l.vencimento)}`;
+    return `Esse pedido já foi lançado: ${ROTULO[tipo].toLowerCase()} de ${brl(r.valor)} para ${r.favorecido_nome} (${qual}), pedido${quem} em ${quando}, que ${situacao}. Não dá para pedir de novo.`;
+  }
+
+  // Freelancer: diária já registrada por outro caminho (Pix pelo grupo, extrato, dinheiro)
+  if (tipo === 'freelancer' && l.freelancer_id) {
+    const { data: sh, error: e2 } = await ctx.admin.from('hr_freelancer_shifts').select('work_date')
+      .eq('tenant_id', ctx.tenantId).eq('freelancer_id', l.freelancer_id).in('work_date', l.dias);
+    if (e2) throw new Error(`Falha ao conferir diárias: ${e2.message}`);
+    if (sh?.length) {
+      const dias = [...new Set<string>(sh.map((s: any) => s.work_date as string))].sort().map(diaBR).join(', ');
+      return `A diária de ${l.favorecido_nome} no(s) dia(s) ${dias} já foi lançada no sistema. Não dá para pedir de novo.`;
+    }
+  }
+  return null;
 }
 
 const brl = (n: number) => `R$ ${Number(n).toFixed(2).replace('.', ',')}`;
