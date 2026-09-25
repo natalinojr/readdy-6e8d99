@@ -18,8 +18,10 @@ interface Memory { id: number; content: string; created_at: string }
 interface Reminder { id: number; text: string; due_at: string; sent_at: string | null }
 interface Message { id: number; role: 'user' | 'assistant'; content: string; channel: string; created_at: string }
 interface MorningBrief { enabled: boolean; time: string }
+// Quando o assistente pede para pagar um boleto pedido no grupo (asst_settings.pay_timing).
+interface PayTiming { modo: 'na_hora' | 'vencimento'; dias_antes: number; hora: string }
 interface Overview {
-  settings: { watched_tenant_ids: string[]; default_tenant_id: string | null; morning_brief: MorningBrief };
+  settings: { watched_tenant_ids: string[]; default_tenant_id: string | null; morning_brief: MorningBrief; pay_timing: PayTiming };
   tenants: Tenant[];
   memories: Memory[];
   reminders: { pending: Reminder[]; sent: Reminder[] };
@@ -61,6 +63,7 @@ export default function AssistentePage() {
   const [watched, setWatched] = useState<string[]>([]);
   const [principal, setPrincipal] = useState<string>('');
   const [brief, setBrief] = useState<MorningBrief>({ enabled: true, time: '07:30' });
+  const [pay, setPay] = useState<PayTiming>({ modo: 'vencimento', dias_antes: 0, hora: '08:00' });
   const [saving, setSaving] = useState(false);
 
   const [novaMemoria, setNovaMemoria] = useState('');
@@ -77,6 +80,7 @@ export default function AssistentePage() {
       setWatched(data.settings.watched_tenant_ids);
       setPrincipal(data.settings.default_tenant_id ?? '');
       setBrief(data.settings.morning_brief);
+      setPay(data.settings.pay_timing);
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -137,7 +141,7 @@ export default function AssistentePage() {
   const salvarConfig = async () => {
     setSaving(true);
     try {
-      await call('save_settings', { watched_tenant_ids: watched, default_tenant_id: principal, morning_brief: brief });
+      await call('save_settings', { watched_tenant_ids: watched, default_tenant_id: principal, morning_brief: brief, pay_timing: pay });
       flash('ok', 'Configurações salvas.');
       carregar();
     } catch (e) {
@@ -164,8 +168,9 @@ export default function AssistentePage() {
     const s = ov.settings;
     return JSON.stringify([...watched].sort()) !== JSON.stringify([...s.watched_tenant_ids].sort())
       || principal !== (s.default_tenant_id ?? '')
-      || brief.enabled !== s.morning_brief.enabled || brief.time !== s.morning_brief.time;
-  }, [ov, watched, principal, brief]);
+      || brief.enabled !== s.morning_brief.enabled || brief.time !== s.morning_brief.time
+      || pay.modo !== s.pay_timing.modo || pay.dias_antes !== s.pay_timing.dias_antes || pay.hora !== s.pay_timing.hora;
+  }, [ov, watched, principal, brief, pay]);
 
   if (user && !isOwner) return <Navigate to="/modulos" replace />;
 
@@ -399,6 +404,42 @@ export default function AssistentePage() {
                       className="h-9 px-2 rounded-lg border border-zinc-200 text-sm focus:outline-none focus:border-violet-400"
                     />
                   </label>
+                )}
+              </div>
+
+              <div className="rounded-2xl border border-zinc-200 bg-white p-4">
+                <p className="text-sm font-bold text-zinc-800">Quando pedir para pagar</p>
+                <p className="text-xs text-zinc-400 mb-3">
+                  Boleto pedido no grupo ou encaminhado: o assistente guarda na conta a pagar e só prepara o pagamento (botão <b>Pagar</b>) no dia escolhido. Vencido ou vencendo dentro do prazo: prepara na hora.
+                </p>
+                <div className="flex flex-wrap items-center gap-3 text-sm text-zinc-600">
+                  <select
+                    value={pay.modo === 'na_hora' ? 'na_hora' : String(pay.dias_antes)}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setPay((p) => (v === 'na_hora' ? { ...p, modo: 'na_hora', dias_antes: 0 } : { ...p, modo: 'vencimento', dias_antes: Number(v) }));
+                    }}
+                    className="h-9 px-2 rounded-lg border border-zinc-200 text-sm bg-white focus:outline-none focus:border-violet-400"
+                    aria-label="Quando pedir para pagar"
+                  >
+                    <option value="0">No dia do vencimento</option>
+                    <option value="1">1 dia antes do vencimento</option>
+                    <option value="2">2 dias antes do vencimento</option>
+                    <option value="3">3 dias antes do vencimento</option>
+                    <option value="na_hora">Assim que pedirem no grupo</option>
+                  </select>
+                  <label className="flex items-center gap-2">
+                    às
+                    <input
+                      type="time"
+                      value={pay.hora}
+                      onChange={(e) => setPay((p) => ({ ...p, hora: e.target.value }))}
+                      className="h-9 px-2 rounded-lg border border-zinc-200 text-sm focus:outline-none focus:border-violet-400"
+                    />
+                  </label>
+                </div>
+                {pay.modo === 'na_hora' && (
+                  <p className="text-xs text-zinc-400 mt-2">Boleto só encaminhado (sem pedido no grupo) continua sendo cobrado no dia do vencimento, nesse horário.</p>
                 )}
               </div>
 

@@ -756,9 +756,11 @@ async function tentarDireto(admin: SupabaseClient, cfg: Record<string, any>, g: 
   const pid = actions.find((a) => a?.type === 'payment')?.id ?? null;
   const agora = new Date().toISOString();
   await admin.from('asst_group_requests').update({
-    status: tipo === 'compra' ? 'lancado' : 'preparado', payment_id: pid, reply: texto.slice(0, 2000), notified_at: agora, updated_at: agora,
+    status: tipo === 'compra' ? 'lancado' : out.guardado ? 'guardado' : 'preparado', payment_id: pid, reply: texto.slice(0, 2000), notified_at: agora, updated_at: agora,
   }).eq('id', reqId);
-  if (tipo === 'pagamento') await abrirPendenciaPagamento(admin, cfg, reqId, g, msg, texto, pid ? [String(pid)] : []);
+  // Boleto guardado (vence depois do prazo de "quando pedir para pagar"): quem cobra é o
+  // assistente-cron no dia — sem pendência agora.
+  if (tipo === 'pagamento' && !out.guardado) await abrirPendenciaPagamento(admin, cfg, reqId, g, msg, texto, pid ? [String(pid)] : []);
   log('INFO', 'documento do grupo resolvido sem o modelo', { tipo, group: g.name });
   return true;
 }
@@ -801,14 +803,17 @@ async function executarTriagem(admin: SupabaseClient, cfg: Record<string, any>, 
       await admin.from('hr_freelancer_shifts').update({ group_request_id: req.id }).in('payment_id', ids).is('group_request_id', null)
         .then(({ error: e }) => { if (e) log('WARN', 'ligar diárias ao pedido', { error: e.message }); });
     }
+    // 'guardado' vem do brain (preparar_pagamento guardou o boleto que vence depois do prazo).
+    const { data: atual } = await admin.from('asst_group_requests').select('status').eq('id', req.id).maybeSingle();
+    const guardado = !pagamento && atual?.status === 'guardado';
     await admin.from('asst_group_requests').update({
-      status: pagamento ? 'preparado' : 'incompleto', payment_id: pagamento ? String(pagamento.id) : null,
+      status: pagamento ? 'preparado' : guardado ? 'guardado' : 'incompleto', payment_id: pagamento ? String(pagamento.id) : null,
       reply: reply.slice(0, 2000), notified_at: new Date().toISOString(), updated_at: new Date().toISOString(),
     }).eq('id', req.id);
     // Pedido de pagamento entra na caixa de pendências, preparado ou não: o cartão do
     // Telegram expira em 30 min, a pendência não. Fecha sozinha quando o Inter confirmar
     // (trigger trg_pendencia_pagamento_grupo). Compra lançada não gera pendência: já acabou.
-    if (tipo === 'pagamento') {
+    if (tipo === 'pagamento' && !guardado) {
       await abrirPendenciaPagamento(admin, cfg, req.id, g, msg,
         pagamento ? reply : `Não consegui preparar sozinho: ${reply}`, ids);
     }

@@ -4,7 +4,8 @@
 // Ações (POST JSON { action, ... }), JWT do usuário no Authorization:
 //   get                 visão geral: configurações, lojas, conversa recente, lembretes,
 //                       memórias, estado do WhatsApp e custo estimado de 30 dias
-//   save_settings       { watched_tenant_ids, default_tenant_id, morning_brief: { enabled, time } }
+//   save_settings       { watched_tenant_ids, default_tenant_id, morning_brief: { enabled, time },
+//                         pay_timing?: { modo: 'na_hora'|'vencimento', dias_antes: 0-5, hora } }  quando pedir para pagar
 //   add_memory          { content }
 //   delete_memory       { id }            (desativa, não apaga)
 //   cancel_reminder     { id }            (só lembrete ainda não enviado)
@@ -221,6 +222,7 @@ Deno.serve(async (req) => {
             watched_tenant_ids: watched,
             default_tenant_id: cfg.default_tenant_id ?? null,
             morning_brief: cfg.morning_brief ?? { enabled: true, time: '07:30' },
+            pay_timing: { modo: 'vencimento', dias_antes: 0, hora: '08:00', ...(cfg.pay_timing ?? {}) },
           },
           tenants: tenants.data ?? [],
           memories: memories.data ?? [],
@@ -253,6 +255,14 @@ Deno.serve(async (req) => {
         await setSetting(admin, 'watched_tenant_ids', valid);
         await setSetting(admin, 'default_tenant_id', def);
         await setSetting(admin, 'morning_brief', { enabled: !!mb.enabled, time });
+        if (body.pay_timing) {
+          const pt = body.pay_timing;
+          const hora = String(pt.hora ?? '08:00');
+          const dias = Number(pt.dias_antes ?? 0);
+          if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(hora)) return fail('Horário do pagamento inválido (use HH:MM).');
+          if (!Number.isInteger(dias) || dias < 0 || dias > 5) return fail('Dias antes do vencimento: de 0 a 5.');
+          await setSetting(admin, 'pay_timing', { modo: pt.modo === 'na_hora' ? 'na_hora' : 'vencimento', dias_antes: dias, hora });
+        }
         return ok();
       }
 

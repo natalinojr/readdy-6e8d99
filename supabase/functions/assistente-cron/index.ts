@@ -791,25 +791,32 @@ async function anomalyTexts(tenants: Array<{ id: string; name: string }>, pro: a
 // Contas que vencem HOJE: prepara o pagamento das que têm boleto guardado (fin_accounts_payable.
 // boleto_*, gravado pelo brain › guardar_boleto) e lista as que não têm. Não prepara de novo se a
 // conta já tem pagamento em aberto ou pago. Pagamento só sai com o PIN e a aprovação no app do Inter.
-async function dueTodayRun(tenants: Array<{ id: string; name: string }>, today: string, tgChat: string, ownerId: string) {
+// diasAntes (pay_timing): prepara também o que vence até hoje + diasAntes. Rascunho não pago expira em
+// 30 min e no dia seguinte é preparado de novo (not exists abaixo ignora expired) — cobra todo dia até pagar.
+async function dueTodayRun(tenants: Array<{ id: string; name: string }>, today: string, tgChat: string, ownerId: string, diasAntes = 0) {
   const ids = tenants.map((t) => t.id);
+  const ate = addDays(today, diasAntes);
   // Guia com Pix copia e cola (FGTS Digital, 2026-09-18) entra junto: boleto_pix_copia.
-  const contas = await db()<Array<{ id: string; tenant_id: string; nome: string; aberto: number; parcial: boolean; linha: string | null; copia: string | null }>>`
-    select a.id, a.tenant_id, case when a.boleto_origem = 'guia' then a.description else coalesce(nullif(a.supplier, ''), a.description) end nome,
+  const contas = await db()<Array<{ id: string; tenant_id: string; nome: string; aberto: number; parcial: boolean; linha: string | null; copia: string | null; venc: string }>>`
+    select a.id, a.tenant_id, a.due_date::text venc, case when a.boleto_origem = 'guia' then a.description else coalesce(nullif(a.supplier, ''), a.description) end nome,
            (a.amount - coalesce(a.paid_amount, 0))::float aberto, coalesce(a.paid_amount, 0) > 0 parcial,
            coalesce(a.boleto_digitavel, a.boleto_barcode) linha, a.boleto_pix_copia copia
       from fin_accounts_payable a
-     where a.tenant_id = any(${ids}::uuid[]) and a.status not in ('paid', 'cancelled') and a.due_date = ${today}::date
+     where a.tenant_id = any(${ids}::uuid[]) and a.status not in ('paid', 'cancelled') and a.due_date between ${today}::date and ${ate}::date
        and not exists (select 1 from fin_inter_payments p where p.bill_id = a.id and p.replaced_by is null
                         and p.status not in ('cancelled', 'expired', 'failed', 'rejected'))
-     order by a.amount desc`;
+     order by a.due_date, a.amount desc`;
   if (!contas.length) return null;
   const byT = new Map(tenants.map((t) => [t.id, t.name]));
-  const loja = (id: string) => (tenants.length > 1 ? ` · ${byT.get(id) ?? ''}` : '');
+  // Com dias antes, cada linha diz o vencimento (hoje ou dd/mm).
+  const lojaSo = (id: string) => (tenants.length > 1 ? ` · ${byT.get(id) ?? ''}` : '');
+  let vencAtual = today;
+  const loja = (id: string) => `${diasAntes ? ` · vence ${vencAtual === today ? 'hoje' : dmy(vencAtual).slice(0, 5)}` : ''}${lojaSo(id)}`;
   const pagamentos: string[] = [];
   const comBoleto: string[] = [];
   const semBoleto: string[] = [];
   for (const c of contas) {
+    vencAtual = c.venc;
     if (!c.linha && !c.copia) { semBoleto.push(`• ${c.nome} — ${brl(c.aberto)}${loja(c.tenant_id)}`); continue; }
     // Já teve pagamento parcial: o boleto cobraria o valor cheio. Não prepara sozinho — confira.
     if (c.parcial) { semBoleto.push(`• ${c.nome} — ${brl(c.aberto)} em aberto${loja(c.tenant_id)} (já tem pagamento parcial: o boleto cobra o valor cheio, confira antes)`); continue; }
@@ -829,7 +836,7 @@ async function dueTodayRun(tenants: Array<{ id: string; name: string }>, today: 
     }
   }
   const total = contas.reduce((a, b) => a + Number(b.aberto), 0);
-  const lines = [`💸 *Vencem hoje (${dmy(today)})*: ${contas.length} conta(s), ${brl(total)}`];
+  const lines = [diasAntes ? `💸 *Para pagar (vencem até ${dmy(ate)})*: ${contas.length} conta(s), ${brl(total)}` : `💸 *Vencem hoje (${dmy(today)})*: ${contas.length} conta(s), ${brl(total)}`];
   if (comBoleto.length) lines.push('', '✅ *Com boleto* — pagamento preparado, é só tocar em Pagar:', ...comBoleto);
   if (semBoleto.length) lines.push('', '⚠️ *Sem boleto* — mande o boleto no WhatsApp do assistente ou pague por fora:', ...semBoleto);
   return { text: lines.join('\n'), pagamentos };
@@ -1273,13 +1280,18 @@ async function proactive(admin: SupabaseClient, cfg: Record<string, any>, ownerC
   }
   // Vence hoje → conversa Financeiro com os cartões de pagamento (precisa do Telegram do dono: o
   // pagamento é aprovado pelo botão + PIN, no Telegram ou no chat do ERPOS).
-  if (want('due_today') && (dry || (inWindow(pro.due_today.time, now) && state.due_today_date !== today))) {
+  // Quando pedir para pagar (asst_settings.pay_timing, tela Assistente › Configurações): hora do aviso e
+  // quantos dias antes do vencimento. Sem configuração: no dia, no horário de due_today (08:00).
+  const pt = (cfg.pay_timing ?? {}) as { dias_antes?: unknown; hora?: unknown };
+  const payHora = /^([01]\d|2[0-3]):[0-5]\d$/.test(String(pt.hora ?? '')) ? String(pt.hora) : String(pro.due_today.time);
+  const payDias = Math.min(5, Math.max(0, Math.round(Number(pt.dias_antes ?? 0)) || 0));
+  if (want('due_today') && (dry || (inWindow(payHora, now) && state.due_today_date !== today))) {
     const tg = cfg.telegram_owner_chat_id ? `tg:${cfg.telegram_owner_chat_id}` : null;
     if (!tg) res.due_today = 'sem Telegram do dono';
     else if (dry) res.due_today = 'prévia desligada (prepararia pagamentos de verdade)';
     else {
       state.due_today_date = today; await saveState();
-      const r = await dueTodayRun(tenants, today, tg, String(cfg.owner_user_id ?? ''));
+      const r = await dueTodayRun(tenants, today, tg, String(cfg.owner_user_id ?? ''), payDias);
       if (!r) res.due_today = 'nada vencendo hoje';
       else {
         const d = await fetch(`${supabaseUrl}/functions/v1/assistente-telegram`, {

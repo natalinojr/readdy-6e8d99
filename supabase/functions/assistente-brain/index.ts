@@ -75,6 +75,21 @@ const brl = (n: unknown) => Number(n ?? 0).toLocaleString('pt-BR', { style: 'cur
 const nowLocal = () => new Date().toLocaleString('pt-BR', { timeZone: TZ, dateStyle: 'full', timeStyle: 'short' });
 // AAAA-MM-DD de hoje no fuso de SP (para comparar com due_date/date)
 const todayIso = () => new Date().toLocaleDateString('en-CA', { timeZone: TZ });
+const addDiasIso = (iso: string, n: number) => { const d = new Date(`${iso}T12:00:00Z`); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+
+// Quando pedir para pagar (dono, 2026-09-24 — tela Assistente › Configurações, asst_settings.pay_timing).
+// 'vencimento': boleto pedido no grupo que vence depois de hoje + dias_antes só é GUARDADO na conta a
+// pagar; o assistente-cron prepara o pagamento no dia (hoje + dias_antes ≥ vencimento), na hora escolhida.
+// 'na_hora': prepara assim que pedem (como era antes). Pedido do próprio dono no chat prepara sempre.
+type PrazoPagamento = { modo: 'na_hora' | 'vencimento'; dias_antes: number; hora: string; limite: string };
+async function prazoPagamento(admin: SupabaseClient): Promise<PrazoPagamento> {
+  const { data } = await admin.from('asst_settings').select('value').eq('key', 'pay_timing').maybeSingle();
+  // deno-lint-ignore no-explicit-any
+  const v: any = data?.value ?? {};
+  const dias = Math.min(5, Math.max(0, Math.round(Number(v.dias_antes ?? 0)) || 0));
+  const hora = /^([01]\d|2[0-3]):[0-5]\d$/.test(String(v.hora ?? '')) ? String(v.hora) : '08:00';
+  return { modo: v.modo === 'na_hora' ? 'na_hora' : 'vencimento', dias_antes: dias, hora, limite: addDiasIso(todayIso(), dias) };
+}
 
 // ── Contexto do dono ──
 type Ctx = {
@@ -702,8 +717,8 @@ async function interTenant(ctx: Ctx, loja?: string): Promise<string> {
 // - DAS e DARF comum → categoria DRE "Impostos". INSS descontado e FGTS → reference_type 'hr_payroll'
 //   (encargo da folha): a DRE já conta o custo pela folha (bruto + FGTS) — classificar de novo
 //   seria contar duas vezes;
-// - vence HOJE → prepara o pagamento; vence depois → só guarda (o assistente-cron prepara às 08h
-//   do dia); vencida → não prepara: guia vencida não é aceita, precisa ser gerada de novo.
+// - vence até hoje + dias_antes (pay_timing) → prepara o pagamento; vence depois → só guarda (o assistente-cron prepara
+//   no dia, na hora configurada); vencida → não prepara: guia vencida não é aceita, precisa ser gerada de novo.
 type ResultadoGuia = { ok: boolean; texto: string; conta_id?: string; payment_id?: string | null; guardado?: boolean; erro?: string };
 async function processarGuia(admin: SupabaseClient, ownerId: string, chatId: string, g: Guia, origem: string, grupoReq: number | null): Promise<ResultadoGuia> {
   const ddmm = (iso: string | null) => (iso ? iso.split('-').reverse().join('/') : '?');
@@ -754,8 +769,10 @@ async function processarGuia(admin: SupabaseClient, ownerId: string, chatId: str
   }
   const linhas = [cab, `${loja.name} · ${acao}${g.encargo_folha ? ' (encargo da folha — não conta de novo na DRE)' : ' · DRE: Impostos'}.`];
   if (g.linha_reparada) linhas.push('A leitura tinha um dígito errado no código de barras; corrigi conferindo com o número do documento.');
-  if (g.vencimento! > hoje) {
-    linhas.push(`📅 Guardada: o pagamento é preparado sozinho no dia ${ddmm(g.vencimento)} às 08h, para você aprovar.`);
+  // Prazo de "quando pedir para pagar" (asst_settings.pay_timing): vence depois de hoje + dias_antes → só guarda.
+  const prazo = await prazoPagamento(admin);
+  if (g.vencimento! > prazo.limite) {
+    linhas.push(`📅 Guardada: o pagamento é preparado sozinho no dia ${ddmm(addDiasIso(g.vencimento!, -prazo.dias_antes))} às ${prazo.hora}, para você aprovar.`);
     return { ok: true, conta_id: contaId, payment_id: null, guardado: true, texto: linhas.join('\n') };
   }
   if (g.vencimento! < hoje) {
@@ -764,7 +781,7 @@ async function processarGuia(admin: SupabaseClient, ownerId: string, chatId: str
   }
   const { data: cfg } = await admin.from('fin_inter_config').select('is_active').eq('tenant_id', tenantId).maybeSingle();
   if (!cfg?.is_active) {
-    linhas.push(`Vence hoje, mas ${loja.name} não tem o Banco Inter conectado: pague pelo banco.`);
+    linhas.push(`Vence ${ddmm(g.vencimento)}, mas ${loja.name} não tem o Banco Inter conectado: pague pelo banco.`);
     return { ok: true, conta_id: contaId, payment_id: null, guardado: true, texto: linhas.join('\n') };
   }
   try {
@@ -774,7 +791,7 @@ async function processarGuia(admin: SupabaseClient, ownerId: string, chatId: str
     });
     const pid = String(out.payment.id);
     if (grupoReq) await ligarAoGrupo(admin, pid, grupoReq);
-    linhas.push('💸 Vence *hoje*: pagamento preparado.');
+    linhas.push(g.vencimento === hoje ? '💸 Vence *hoje*: pagamento preparado.' : `💸 Vence ${ddmm(g.vencimento)}: pagamento preparado.`);
     return { ok: true, conta_id: contaId, payment_id: pid, texto: linhas.join('\n') };
   } catch (e) {
     // Rascunho que já existia para o mesmo código (preparado antes, sem conta ligada): reaproveita.
@@ -784,10 +801,10 @@ async function processarGuia(admin: SupabaseClient, ownerId: string, chatId: str
     if (aberto?.[0]) {
       if (!aberto[0].bill_id) await admin.from('fin_inter_payments').update({ bill_id: contaId }).eq('id', aberto[0].id);
       if (grupoReq) await ligarAoGrupo(admin, String(aberto[0].id), grupoReq);
-      linhas.push('💸 Vence *hoje*: o pagamento já estava preparado.');
+      linhas.push(`💸 Vence ${ddmm(g.vencimento)}: o pagamento já estava preparado.`);
       return { ok: true, conta_id: contaId, payment_id: String(aberto[0].id), texto: linhas.join('\n') };
     }
-    linhas.push(`⚠️ Vence hoje, mas não consegui preparar o pagamento: ${errMsg(e).slice(0, 200)}`);
+    linhas.push(`⚠️ Vence ${ddmm(g.vencimento)}, mas não consegui preparar o pagamento: ${errMsg(e).slice(0, 200)}`);
     return { ok: false, conta_id: contaId, payment_id: null, texto: linhas.join('\n'), erro: errMsg(e) };
   }
 }
@@ -1489,6 +1506,34 @@ async function runTool(ctx: Ctx, name: string, input: any): Promise<string> {
     case 'preparar_pagamento': {
       if (ctx.channel !== 'telegram' && ctx.channel !== 'app') throw new Error('Pagamento só pelo Telegram ou pelo chat do ERPOS (botões + PIN). Peça para ele mandar por lá.');
       const tenantId = await interTenant(ctx, input.loja);
+      // Boleto pedido no GRUPO que vence depois do prazo configurado (dono, 2026-09-24: boleto da
+      // Beemax para 07/10 virou "Pagar" urgente no dia 24/09): só guarda na conta a pagar; o
+      // assistente-cron prepara no dia. Guia do governo (linha começando em 8) segue pelo lancar_guia.
+      const linhaGrupo = String(input.linha_digitavel ?? '').replace(/\D/g, '');
+      if (input.tipo === 'boleto' && input.solicitacao_grupo_id && !input.freelancer && linhaGrupo && !/^8/.test(linhaGrupo)) {
+        const prazo = await prazoPagamento(ctx.admin);
+        if (prazo.modo === 'vencimento') {
+          const dec = (await callInter('decode_boleto', { tenant_id: tenantId, linha: linhaGrupo })).boleto;
+          const { data: req } = await ctx.admin.from('asst_group_requests').select('data').eq('id', Number(input.solicitacao_grupo_id)).maybeSingle();
+          const lidoPg = req?.data?.extraido?.pagamento ?? {};
+          const iso = (x: unknown) => (/^\d{4}-\d{2}-\d{2}$/.test(String(x ?? '')) ? String(x) : null);
+          const venc = iso(dec?.vencimento) ?? iso(lidoPg.vencimento);
+          if (venc && venc > prazo.limite) {
+            const g = JSON.parse(await runTool(ctx, 'guardar_boleto', {
+              loja: input.loja, linha_digitavel: linhaGrupo, valor: input.valor ?? lidoPg.valor ?? undefined, vencimento: venc,
+              beneficiario: lidoPg.beneficiario ?? undefined, documento: lidoPg.documento ?? undefined, descricao: input.descricao, conta_a_pagar_id: input.conta_a_pagar_id,
+            }));
+            if (!g.ok) return JSON.stringify(g); // conta ambígua: a pergunta vem na instrução
+            const pedirEm = addDiasIso(venc, -prazo.dias_antes);
+            await ctx.admin.from('asst_group_requests').update({ status: 'guardado', updated_at: new Date().toISOString() }).eq('id', Number(input.solicitacao_grupo_id));
+            const dm = (d: string) => d.split('-').reverse().slice(0, 2).join('/');
+            return JSON.stringify({
+              ok: true, guardado: true, conta_id: g.conta_id, acao: g.acao, vencimento: venc, pedir_em: pedirEm,
+              instrucao: `NÃO preparei o pagamento: vence ${dm(venc)} e a regra dele é pedir para pagar ${prazo.dias_antes ? `${prazo.dias_antes} dia(s) antes do vencimento` : 'no dia do vencimento'}. O boleto foi guardado (${g.acao}). Escreva em até 3 linhas: grupo, quem pediu, o que é, valor, vencimento e "guardei — peço para pagar em ${dm(pedirEm)} às ${prazo.hora}". Não chame preparar_pagamento de novo para este boleto e NÃO responda NO_REPLY.`,
+            });
+          }
+        }
+      }
       // Pix para pessoa/fornecedor pelo NOME (regra do dono, 2026-09-14): a chave sai do cadastro — Pix
       // permitidos (fin_pix_favorecidos) ou fornecedor com chave — e nunca da conversa.
       let chave: string | undefined = input.chave_pix ? String(input.chave_pix) : undefined;
@@ -2691,6 +2736,17 @@ Deno.serve(async (req) => {
       const conta = compat[0];
       // deno-lint-ignore no-explicit-any
       const r: any = JSON.parse(await runTool(ctx, 'preparar_pagamento', { tipo: 'boleto', linha_digitavel: linha, valor: p.valor ?? undefined, conta_a_pagar_id: conta.id, solicitacao_grupo_id: reqId, descricao: String(conta.description ?? '').slice(0, 120) }));
+      if (r.ok && r.guardado) {
+        // Vence depois do prazo de "quando pedir para pagar": boleto guardado na conta, sem cartão Pagar.
+        const texto = [
+          `🧾 *Boleto ${p.beneficiario ?? conta.supplier ?? ''}* — ${brl(valor)} · vence ${ddmm(r.vencimento)}.`,
+          `Conta: ${conta.description}. Guardei o boleto — peço para pagar em ${ddmm(r.pedir_em)}.`,
+          origem,
+        ].join('\n');
+        await gravar(texto, 'pagamentos');
+        log('INFO', 'boleto do grupo guardado', { grupo, conta: conta.id, pedir_em: r.pedir_em });
+        return json({ success: true, feito: true, guardado: true, texto, actions: [] });
+      }
       if (!r.ok || !r.pagamento?.id) return nao(`preparar_pagamento: ${String(r.instrucao ?? 'sem pagamento').slice(0, 200)}`);
       const pg = r.pagamento;
       const texto = [
