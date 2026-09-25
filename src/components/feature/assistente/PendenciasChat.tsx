@@ -706,9 +706,9 @@ interface InfoPagamento {
 // Pix de pedido de pagamento aprovado (/receber): freela, reembolso ou fornecedor sem nota não
 // passam pelo recebimento de mercadoria — a linha "recebimento não confirmado" não se aplica.
 const ORIGEM_PEDIDO: [RegExp, string][] = [
-  [/^Freelancer/i, 'Diária de freelancer — pedido aprovado, não é compra'],
-  [/^Reembolso/i, 'Reembolso — pedido aprovado, não é compra de mercadoria'],
-  [/^Fornecedor sem nota/i, 'Fornecedor sem nota — pedido aprovado'],
+  [/^Freelancer/i, 'Diária de freelancer — pedido aprovado, não é compra'],
+  [/^Reembolso/i, 'Reembolso — pedido aprovado, não é compra de mercadoria'],
+  [/^Fornecedor sem nota/i, 'Fornecedor sem nota — pedido aprovado'],
 ];
 const origemPedido = (p: PendenciaChat): string | null => {
   if (!pedidoDa(p)) return null;
