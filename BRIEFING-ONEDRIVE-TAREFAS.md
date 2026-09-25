@@ -6,6 +6,11 @@
 > **Andamento:** passo 2 (conexão) FEITO em 2026-09-26 — tabela `ms_graph_connections`, Edge `ms-graph`
 > (config/exchange/status/disconnect/browse) e tela `ConexaoMicrosoft.tsx`. Falta o passo 0 do dono
 > (registrar o app no Entra + secrets) para testar com a conta real.
+>
+> **2026-09-25 — começa pela conta PESSOAL (Microsoft 365 Family do dono)** e migra para o Business depois.
+> A conexão tem `account_kind`: `pessoal` (endpoint `consumers`, sem SharePoint, sem `Sites.*`) ou
+> `empresa` (`organizations`, com SharePoint). No Family as pastas dos projetos ficam no OneDrive do dono
+> e a pasta "Projetos" é compartilhada com os colegas uma vez; tudo conta no 1 TB do dono.
 
 ## Objetivo da Fase 1
 
@@ -115,14 +120,14 @@ RLS: `ms_graph_drives` sem acesso para `authenticated`; `task_list_cloud` e `tas
 
 ## Registro do app no Microsoft Entra (passo 0)
 
-1. https://entra.microsoft.com com a conta **administradora** do Microsoft 365 do escritório.
+1. Conta pessoal: a Microsoft só deixa registrar app dentro de um "diretório". Entrar em https://portal.azure.com com a conta pessoal; se não houver diretório, criar a **conta gratuita do Azure** (pede cartão só para verificar). Depois, **Microsoft Entra ID → Registros de aplicativo**. (No Business: https://entra.microsoft.com com o administrador do escritório.)
 2. Aplicativos → **Registros de aplicativo** → Novo registro.
    - Nome: `ERPOS Tarefas`.
-   - Tipos de conta: **Contas em qualquer diretório organizacional (multilocatário)**.
+   - Tipos de conta: **Contas em qualquer diretório organizacional e contas Microsoft pessoais** (aceita Family e Business).
    - URI de redirecionamento: plataforma **Web**, `https://erpos.vercel.app/tarefas`.
 3. Em **Autenticação**, adicionar também `http://localhost:5571/tarefas` (testes).
 4. Em **Certificados e segredos** → Novo segredo do cliente, validade 24 meses. Copiar o **Valor** na hora (só aparece uma vez) e anotar a data de vencimento.
-5. Em **Permissões de API** → Microsoft Graph → Permissões delegadas: `offline_access`, `openid`, `profile`, `User.Read`, `Files.ReadWrite.All`, `Sites.ReadWrite.All` → **Conceder consentimento do administrador**.
+5. Em **Permissões de API** → Microsoft Graph → Permissões delegadas: `offline_access`, `openid`, `profile`, `User.Read`, `Files.ReadWrite.All`, `Sites.ReadWrite.All`. (Conta pessoal não precisa de "consentimento do administrador": a própria tela de login pede a autorização.)
 6. Copiar o **ID do aplicativo (cliente)** da Visão geral.
 7. Gravar no Supabase: `npx supabase secrets set MS_CLIENT_ID=<id> MS_CLIENT_SECRET=<valor> --project-ref mdghhjemzdmeuqpzuyzx` (o dono roda; o segredo não passa pelo chat).
 

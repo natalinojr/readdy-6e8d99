@@ -14,7 +14,8 @@ import { modoDemo } from '../demo/modoDemo';
  * para escolher a pasta da nuvem ligada a uma pasta das Tarefas.
  */
 
-interface Conexao { ms_user_email: string | null; ms_user_name: string | null; needs_reconnect: boolean; last_error?: string | null }
+type TipoConta = 'pessoal' | 'empresa';
+interface Conexao { ms_user_email: string | null; ms_user_name: string | null; account_kind?: TipoConta; needs_reconnect: boolean; last_error?: string | null }
 interface Resp { success: boolean; error?: string; reconectar?: boolean; [k: string]: unknown }
 
 interface ItemNuvem {
@@ -48,9 +49,10 @@ export default function ConexaoMicrosoft({ onClose }: { onClose: () => void }) {
   const [configurado, setConfigurado] = useState(true);
   const [conexao, setConexao] = useState<Conexao | null>(null);
   const [conectando, setConectando] = useState(false);
+  const [tipo, setTipo] = useState<TipoConta>('pessoal');
 
   const carregarStatus = useCallback(async () => {
-    if (modoDemo()) { setCarregando(false); setConfigurado(false); return; }
+    if (modoDemo()) { setCarregando(false); return; }
     const r = await chamar({ action: 'status' });
     setConfigurado(r.configured !== false);
     setConexao((r.connection as Conexao) ?? null);
@@ -58,12 +60,15 @@ export default function ConexaoMicrosoft({ onClose }: { onClose: () => void }) {
   }, []);
 
   useEffect(() => { carregarStatus(); }, [carregarStatus]);
+  // Reconectar usa o mesmo tipo de conta da conexão que expirou.
+  useEffect(() => { if (conexao?.account_kind) setTipo(conexao.account_kind); }, [conexao?.account_kind]);
 
   const conectar = async () => {
+    if (modoDemo()) { toast.info('Modo demonstração', 'O login da Microsoft só funciona no sistema de verdade.'); return; }
     setConectando(true);
     const redirectUri = `${window.location.origin}/tarefas`;
     const state = Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('');
-    const cfg = await chamar({ action: 'config', redirect_uri: redirectUri, state });
+    const cfg = await chamar({ action: 'config', redirect_uri: redirectUri, state, tipo });
     if (!cfg.success || typeof cfg.url !== 'string') {
       setConectando(false);
       toast.error('Não foi possível iniciar a conexão', cfg.error);
@@ -90,7 +95,7 @@ export default function ConexaoMicrosoft({ onClose }: { onClose: () => void }) {
       try { popup.close(); } catch { /* ignora */ }
       if (event.data.error) { setConectando(false); toast.error('Login cancelado na Microsoft', String(event.data.error)); return; }
       if (event.data.state !== state) { setConectando(false); toast.error('Falha na verificação de segurança', 'Tente conectar de novo.'); return; }
-      const r = await chamar({ action: 'exchange', code: event.data.code, redirect_uri: redirectUri });
+      const r = await chamar({ action: 'exchange', code: event.data.code, redirect_uri: redirectUri, tipo });
       setConectando(false);
       if (!r.success) { toast.error('Não foi possível conectar', r.error); return; }
       setConexao(r.connection as Conexao);
@@ -148,9 +153,26 @@ export default function ConexaoMicrosoft({ onClose }: { onClose: () => void }) {
                 </p>
               )}
               <p className="text-sm text-slate-600">
-                Entre com a conta Microsoft 365 do escritório. O ERPOS passa a criar as pastas dos projetos
+                Entre com a conta Microsoft onde ficam os arquivos. O ERPOS passa a criar as pastas dos projetos
                 e anexar arquivos da nuvem nas tarefas. Nada é apagado na nuvem pelo ERPOS.
               </p>
+              <div className="grid grid-cols-2 gap-2">
+                {([
+                  ['pessoal', 'Conta pessoal', 'Outlook, Hotmail ou Microsoft 365 Family — só OneDrive'],
+                  ['empresa', 'Conta do trabalho', 'Microsoft 365 Business — OneDrive e SharePoint'],
+                ] as const).map(([v, titulo, desc]) => (
+                  <button
+                    key={v}
+                    onClick={() => setTipo(v)}
+                    className={`text-left rounded-xl border p-3 transition ${
+                      tipo === v ? 'border-sky-500 bg-sky-50 ring-1 ring-sky-500' : 'border-slate-200 hover:border-slate-300'
+                    }`}
+                  >
+                    <span className="block text-sm font-medium text-slate-800">{titulo}</span>
+                    <span className="block text-[11px] text-slate-500 mt-0.5">{desc}</span>
+                  </button>
+                ))}
+              </div>
               <button
                 onClick={conectar}
                 disabled={conectando}
@@ -168,7 +190,9 @@ export default function ConexaoMicrosoft({ onClose }: { onClose: () => void }) {
                 </span>
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-slate-800 truncate">{conexao.ms_user_name ?? 'Conta conectada'}</p>
-                  <p className="text-[11px] text-slate-400 truncate">{conexao.ms_user_email}</p>
+                  <p className="text-[11px] text-slate-400 truncate">
+                    {conexao.ms_user_email}{conexao.account_kind === 'pessoal' ? ' · conta pessoal' : ' · conta do trabalho'}
+                  </p>
                 </div>
                 <button onClick={desconectar} title="Desconectar" className="p-2 rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-600">
                   <LogOut size={15} />
