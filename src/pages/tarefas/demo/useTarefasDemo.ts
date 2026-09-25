@@ -83,6 +83,9 @@ interface Extra { description: string | null; checklist: ChecklistItem[]; commen
 export function useTarefasDemo() {
   const [tasks, setTasks] = useState<TaskRow[]>(inicial);
   const [lists, setLists] = useState<TaskList[]>(LISTAS);
+  const [tags, setTags] = useState<TaskTag[]>(TAGS);
+  const tagsRef = useRef(tags);
+  tagsRef.current = tags;
   const [extras, setExtras] = useState<Record<string, Extra>>({
     t6: {
       description: 'Pedido da semana: 20kg de fraldinha, 10kg de peito de frango.',
@@ -137,7 +140,7 @@ export function useTarefasDemo() {
             n.assignee_name = nome(p.assignee_id as string | null);
             n.assignees = p.assignee_id ? [{ id: p.assignee_id as string, name: n.assignee_name }] : [];
           }
-          if (Array.isArray(p.tag_ids)) n.tags = TAGS.filter((tg) => (p.tag_ids as string[]).includes(tg.id));
+          if (Array.isArray(p.tag_ids)) n.tags = tagsRef.current.filter((tg) => (p.tag_ids as string[]).includes(tg.id));
           const lista = lists.find((l) => l.id === n.list_id)!;
           const st = typeof p.status_id === 'string'
             ? lista.statuses.find((s) => s.id === p.status_id)
@@ -192,6 +195,12 @@ export function useTarefasDemo() {
         });
         return { success: true };
       }
+      case 'create_tag': {
+        const nova: TaskTag = { id: `tg${seq++}`, name: String(p.name), color: String(p.color ?? '#64748b') };
+        tagsRef.current = [...tagsRef.current, nova];
+        setTags(tagsRef.current);
+        return { success: true, id: nova.id };
+      }
       case 'create_list': {
         const novaId = `l${seq++}`;
         setLists((prev) => [...prev, { id: novaId, name: String(p.name), color: String(p.color ?? '#6366f1'), icon: null, sort_order: seq, parent_list_id: (p.parent_list_id as string) ?? null, statuses: STATUS(novaId), open_count: 0, access: 'owner', owner_id: EU_DEMO.id, owner_name: EU_DEMO.nome, share_count: 0 }]);
@@ -233,7 +242,7 @@ export function useTarefasDemo() {
   }));
 
   return {
-    lists: listasComContagem, tasks, tags: TAGS, campos: [], notificacoes: [], views: [], templates: [],
+    lists: listasComContagem, tasks, tags, campos: [], notificacoes: [], views: [], templates: [],
     loading: false, error: null as string | null, reload: FIXOS.reload, write, fetchDetail,
     fetchAnexos: FIXOS.fetchAnexos, enviarAnexo: FIXOS.enviarAnexo, abrirAnexo: FIXOS.abrirAnexo,
   };

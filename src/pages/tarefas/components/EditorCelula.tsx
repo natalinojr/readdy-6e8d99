@@ -324,7 +324,7 @@ interface EditorCelulaProps {
   campos: CampoCustom[];
   usuarios: UsuarioOption[];
   tags: TaskTag[];
-  gravar: (action: string, payload: Record<string, unknown>) => Promise<{ success: boolean }>;
+  gravar: (action: string, payload: Record<string, unknown>) => Promise<{ success: boolean; id?: string; error?: string }>;
   onClose: () => void;
 }
 
@@ -491,6 +491,8 @@ export default function EditorCelula({ coluna, task, anchorRect, campos, usuario
   }
 }
 
+const CORES_ETIQUETA = ['#6366f1', '#0ea5e9', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#64748b'];
+
 function EditorEtiquetas({ task, tags, anchorRect, gravar, onClose }: {
   task: TaskRow;
   tags: TaskTag[];
@@ -499,22 +501,70 @@ function EditorEtiquetas({ task, tags, anchorRect, gravar, onClose }: {
   onClose: () => void;
 }) {
   const [busca, setBusca] = useState('');
-  const t = busca.trim().toLowerCase();
-  const filtradas = t ? tags.filter((tag) => tag.name.toLowerCase().includes(t)) : tags;
+  const [cor, setCor] = useState(CORES_ETIQUETA[0]);
+  const [criando, setCriando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+  // Criada aqui e ainda fora de `tags`/`task.tags` (o reload traz depois):
+  // mostra já marcada e não some no próximo clique.
+  const [criadas, setCriadas] = useState<TaskTag[]>([]);
+  const pendentes = criadas.filter((c) => !tags.some((x) => x.id === c.id));
+  const todas = [...tags, ...pendentes];
+
+  const nome = busca.trim();
+  const t = nome.toLowerCase();
+  const filtradas = t ? todas.filter((tag) => tag.name.toLowerCase().includes(t)) : todas;
+  const exata = t ? todas.find((tag) => tag.name.trim().toLowerCase() === t) : undefined;
+
+  const idsAtuais = () => [...task.tags.map((x) => x.id), ...pendentes.map((x) => x.id)];
 
   const alternar = (tagId: string) => {
-    const atuais = task.tags.map((x) => x.id);
+    const atuais = idsAtuais();
     const proximas = atuais.includes(tagId) ? atuais.filter((x) => x !== tagId) : [...atuais, tagId];
+    if (pendentes.some((x) => x.id === tagId) && !proximas.includes(tagId)) {
+      setCriadas((l) => l.filter((x) => x.id !== tagId));
+    }
     gravar('update_task', { task_id: task.id, tag_ids: proximas });
   };
 
+  const criar = async () => {
+    if (!nome || exata || criando) return;
+    setCriando(true);
+    setErro(null);
+    const res = await gravar('create_tag', { name: nome, color: cor });
+    setCriando(false);
+    if (!res.success || !res.id) {
+      setErro(res.error ?? 'Não foi possível criar a etiqueta');
+      return;
+    }
+    const nova: TaskTag = { id: res.id, name: nome, color: cor };
+    setCriadas((l) => [...l, nova]);
+    setBusca('');
+    gravar('update_task', { task_id: task.id, tag_ids: [...idsAtuais(), nova.id] });
+  };
+
   return (
-    <Popover anchorRect={anchorRect} largura={210} onClose={onClose}>
-      {tags.length > 6 && <Busca valor={busca} onChange={setBusca} />}
+    <Popover anchorRect={anchorRect} largura={230} onClose={onClose}>
+      <div className="flex items-center gap-1.5 px-2 py-1.5 mb-1 border-b border-slate-100">
+        <Search size={12} className="text-slate-400 shrink-0" />
+        <input
+          autoFocus
+          value={busca}
+          onChange={(e) => { setBusca(e.target.value); setErro(null); }}
+          onKeyDown={(e) => {
+            if (e.key !== 'Enter') return;
+            e.preventDefault();
+            if (exata) alternar(exata.id);
+            else criar();
+          }}
+          maxLength={40}
+          placeholder="Buscar ou criar etiqueta…"
+          className="flex-1 min-w-0 text-xs max-md:text-base outline-none bg-transparent placeholder:text-slate-300"
+        />
+      </div>
       <div className="max-h-64 overflow-y-auto">
-        {tags.length === 0 && <p className="px-2 py-2 text-xs text-slate-400">Nenhuma etiqueta criada</p>}
+        {todas.length === 0 && !nome && <p className="px-2 py-2 text-xs text-slate-400">Nenhuma etiqueta ainda — digite um nome para criar</p>}
         {filtradas.map((tag) => {
-          const on = task.tags.some((x) => x.id === tag.id);
+          const on = task.tags.some((x) => x.id === tag.id) || pendentes.some((x) => x.id === tag.id);
           return (
             <button
               key={tag.id}
@@ -535,6 +585,35 @@ function EditorEtiquetas({ task, tags, anchorRect, gravar, onClose }: {
           );
         })}
       </div>
+      {nome && !exata && (
+        <div className="mt-1 pt-1.5 border-t border-slate-100 px-1">
+          <div className="flex items-center gap-1 max-md:gap-2 px-1 pb-1.5">
+            {CORES_ETIQUETA.map((c) => (
+              <button
+                key={c}
+                type="button"
+                aria-label={`Cor ${c}`}
+                onClick={() => setCor(c)}
+                className={`w-4 h-4 max-md:w-6 max-md:h-6 rounded-full shrink-0 ${cor === c ? 'ring-2 ring-offset-1 ring-slate-400' : ''}`}
+                style={{ backgroundColor: c }}
+              />
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={criar}
+            disabled={criando}
+            className="w-full flex items-center gap-2 px-1 py-1.5 max-md:py-3 rounded-lg text-xs max-md:text-[15px] text-left text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+          >
+            <Plus size={12} className="text-slate-400 shrink-0" />
+            <span className="shrink-0">{criando ? 'Criando…' : 'Criar'}</span>
+            <span className="px-1.5 py-0.5 rounded-full text-[10px] font-medium text-white truncate" style={{ backgroundColor: cor }}>
+              {nome}
+            </span>
+          </button>
+          {erro && <p className="px-1 pb-1 text-[11px] text-red-500">{erro}</p>}
+        </div>
+      )}
     </Popover>
   );
 }
