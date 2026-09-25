@@ -263,6 +263,30 @@ async function adminAction(admin: SupabaseClient, body: any) {
     if (!cfg.waba_id) return json({ error: 'wa_public.waba_id não configurado' }, 400);
     return json(await graph(`${cfg.waba_id}/subscribed_apps`, { method: 'POST', body: {} }).catch((e) => ({ erro: errMsg(e) })));
   }
+  if (body?.action === 'set_profile_photo') {
+    // Foto de perfil do número: upload retomável no app (/{app}/uploads) → handle → whatsapp_business_profile.
+    // { url } de uma imagem pública (JPG/PNG, quadrada, ≥ 192 px). Padrão: ícone do ERPOS.
+    if (!cfg.phone_id) return json({ error: 'wa_public.phone_id não configurado' }, 400);
+    try {
+      const src = String(body.url ?? 'https://erpos.vercel.app/icon-512.png');
+      const img = await fetch(src);
+      if (!img.ok) return json({ error: `imagem ${src} → ${img.status}` }, 400);
+      const bytes = new Uint8Array(await img.arrayBuffer());
+      const mime = String(img.headers.get('content-type') ?? 'image/png').split(';')[0];
+      const app = await graph('app');
+      const up = await graph(`${app.id}/uploads?file_length=${bytes.length}&file_type=${encodeURIComponent(mime)}`, { method: 'POST' });
+      const r = await fetch(`https://graph.facebook.com/v25.0/${up.id}`, {
+        method: 'POST',
+        headers: { Authorization: `OAuth ${Deno.env.get('WHATSAPP_CLOUD_TOKEN') ?? ''}`, file_offset: '0' },
+        body: bytes,
+      });
+      const h = await r.json().catch(() => ({}));
+      if (!r.ok || !h?.h) return json({ error: 'upload falhou', detalhe: h }, 502);
+      const out = await graph(`${cfg.phone_id}/whatsapp_business_profile`, { body: { messaging_product: 'whatsapp', profile_picture_handle: h.h } });
+      const perfil = await graph(`${cfg.phone_id}/whatsapp_business_profile?fields=profile_picture_url`).catch(() => null);
+      return json({ ok: true, out, perfil });
+    } catch (e) { return json({ ok: false, error: errMsg(e) }, 502); }
+  }
   return json({ error: 'ação desconhecida' }, 400);
 }
 
