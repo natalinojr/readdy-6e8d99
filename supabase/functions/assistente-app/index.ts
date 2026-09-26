@@ -67,7 +67,6 @@ const MAX_B64 = 14 * 1024 * 1024; // ~10 MB de arquivo
 // numa aba, a mensagem já nasce com o assunto.
 const TOPICS = ['geral', 'pagamentos', 'curriculos', 'compras', 'avisos'];
 
-const PIN_LOCK_MS = 15 * 60_000;
 const PAY_TTL_MS = 30 * 60_000;
 const PAY_OPEN = ['draft', 'awaiting_pin', 'sending', 'sent', 'pending_approval', 'approved', 'scheduled'];
 const PAY_STATUS: Record<string, string> = {
@@ -77,13 +76,6 @@ const PAY_STATUS: Record<string, string> = {
 };
 const nowIso = () => new Date().toISOString();
 const brl = (n: unknown) => Number(n ?? 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-
-async function sha256hex(text: string): Promise<string> {
-  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
-  return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, '0')).join('');
-}
-// Igual ao assistente-telegram (pinHash): o sal é o id do chat do Telegram do dono.
-const pinHash = (pin: string, tgChatId: number) => sha256hex(`erpos-pay:${tgChatId}:${pin}`);
 
 // deno-lint-ignore no-explicit-any
 async function getSetting(admin: SupabaseClient, key: string): Promise<any> {
@@ -443,6 +435,26 @@ Deno.serve(async (req) => {
       return json({ success: true, data: { last_seen_id: base, topics } });
     }
 
+    // PIN de pagamento: criar/trocar aqui (o /pin do Telegram saiu em 2026-09-26). Troca exige o atual.
+    if (action === 'pin_status') {
+      const { data, error } = await admin.rpc('fn_pay_pin_status');
+      if (error) throw new Error(error.message);
+      return json({ success: true, data });
+    }
+    if (action === 'pin_set') {
+      const { data, error } = await admin.rpc('fn_pay_pin_set', { p_current: String(body.current ?? ''), p_new: String(body.pin ?? '') });
+      if (error) throw new Error(error.message);
+      if (!data?.ok) {
+        const r = String(data?.reason ?? '');
+        if (r === 'invalid') return fail(String(data.msg));
+        if (r === 'locked') return fail('PIN bloqueado por tentativas erradas. Tente de novo em 15 minutos.', 423);
+        return fail(r === 'locked_now' ? 'PIN atual errado 3 vezes. Bloqueado por 15 minutos.' : `PIN atual errado (${data?.fails ?? '?'}/3).`, 401);
+      }
+      await admin.from('asst_messages').insert({ channel: 'app', chat_id: chatKey, role: 'assistant', content: '[PIN de pagamento criado/trocado pelo ERPOS]' });
+      log('INFO', 'PIN de pagamento criado/trocado');
+      return json({ success: true, data: { ok: true } });
+    }
+
     if (action === 'payments') {
       // Só os que ainda esperam decisão ou estão em andamento — o cartão no chat é para AGIR.
       // Concluído (pago/cancelado/recusado) fica só na conversa; antes voltava por 24 h e o
@@ -490,27 +502,18 @@ Deno.serve(async (req) => {
         await admin.from('fin_inter_payments').update({ status: 'expired', updated_at: nowIso() }).eq('id', p.id).in('status', ['draft', 'awaiting_pin']);
         return fail('Esse pedido expirou (30 minutos). Me peça de novo.');
       }
-      // ── PIN (mesma regra do Telegram) ──
+      // PIN: quem confere é o inter-bank › execute_payment (fn_pay_pin_verify, 2026-09-26) — a chave
+      // interna sozinha não paga. Erro de PIN volta com pin_error e vira o erro da tela (a digital do
+      // app reconhece "PIN errado" e pede o PIN digitado).
       const pin = String(body.pin ?? '').trim();
-      const s = (await getSetting(admin, 'pay_pin')) ?? {};
-      if (!s.hash) return fail('Você ainda não tem PIN de pagamento. Crie no Telegram mandando /pin.');
-      if (s.locked_until && new Date(s.locked_until).getTime() > Date.now()) {
-        return fail(`PIN bloqueado até ${new Date(s.locked_until).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' })} por tentativas erradas.`, 423);
-      }
-      if (!/^\d{4,8}$/.test(pin) || (await pinHash(pin, tgId)) !== s.hash) {
-        const fails = Number(s.fails ?? 0) + 1;
-        const locked = fails >= 3 ? new Date(Date.now() + PIN_LOCK_MS).toISOString() : null;
-        await setSetting(admin, 'pay_pin', { ...s, fails: locked ? 0 : fails, locked_until: locked });
-        log('WARN', 'PIN de pagamento errado (ERPOS)', { fails, locked: !!locked });
-        return fail(locked ? 'PIN errado 3 vezes. Bloqueado por 15 minutos.' : `PIN errado (${fails}/3).`, 401);
-      }
-      if (s.fails) await setSetting(admin, 'pay_pin', { ...s, fails: 0, locked_until: null });
 
       // execute_payment faz o claim atômico (draft/awaiting_pin → sending): dois toques não pagam 2×.
       // deno-lint-ignore no-explicit-any
       let pago: any = p;
       try {
-        const out = await callInter('execute_payment', { tenant_id: p.tenant_id, payment_id: p.id });
+        const { status: st, out } = await callEdge('inter-bank', fiscalKey, { action: 'execute_payment', tenant_id: p.tenant_id, payment_id: p.id, pin });
+        if (out?.pin_error) return fail(String(out.error), st);
+        if (st >= 400 || out?.success === false) throw new Error(String(out?.error ?? `inter-bank HTTP ${st}`));
         pago = { ...p, ...out.payment };
       } catch (e) {
         const { data: cur } = await admin.from('fin_inter_payments').select('*').eq('id', p.id).maybeSingle();

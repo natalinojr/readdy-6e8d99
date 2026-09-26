@@ -1103,6 +1103,17 @@ Deno.serve(async (req: Request) => {
       if (action === 'prepare_payment') return json({ success: true, payment: await preparePayment(admin, tenantId, body) });
       if (action === 'reprepare_payment') return json({ success: true, payment: await reparePayment(admin, tenantId, String(body.payment_id ?? ''), body.conferido === true) });
       if (action === 'execute_payment') {
+        // PIN do dono conferido AQUI (2026-09-26): a chave interna é compartilhada por ~20 edges e
+        // sozinha não pode pagar. fn_pay_pin_verify trava a linha do PIN (3 erros = 15 min).
+        const { data: chk, error: pinErr } = await admin.rpc('fn_pay_pin_verify', { p_pin: String(body.pin ?? '') });
+        if (pinErr) return errResp(`Não consegui conferir o PIN: ${pinErr.message}`, 500);
+        if (!chk?.ok) {
+          const r = String(chk?.reason ?? '');
+          if (r === 'no_pin') return json({ success: false, pin_error: true, error: 'Você ainda não tem PIN de pagamento. Crie no chat do ERPOS (cadeado ao lado do 📥).' }, 400);
+          if (r === 'locked') return json({ success: false, pin_error: true, error: `PIN bloqueado até ${new Date(chk.locked_until).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' })} por tentativas erradas.` }, 423);
+          log('WARN', action, 'PIN de pagamento errado', { reason: r, fails: chk?.fails });
+          return json({ success: false, pin_error: true, error: r === 'locked_now' ? 'PIN errado 3 vezes. Bloqueado por 15 minutos.' : `PIN errado (${chk?.fails ?? '?'}/3).` }, 401);
+        }
         const payment = await executePayment(admin, tenantId, String(body.payment_id ?? ''));
         await syncAfterPayment(payment);
         return json({ success: true, payment });
