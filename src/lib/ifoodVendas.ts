@@ -1,5 +1,6 @@
 import { supabase } from '@/lib/supabase';
 import { fetchAllRows } from '@/lib/fetchAllRows';
+import { fetchComplementoApi } from '@/lib/ifoodDashboard';
 
 // Vendas do iFood a partir do relatório de conciliação importado (fin_ifood_entries — Financeiro › iFood).
 // Mesma divisão do Portal do Parceiro (Financeiro › Faturamento), igual à edge ifood-financial:
@@ -41,14 +42,14 @@ export interface IfoodVendas {
   porHora: Record<string, number>;
   total: number;
   pedidos: number;
-  /** Pedidos que vieram do módulo Pedidos do iFood (ao vivo) por ainda não estarem na conciliação importada */
+  /** Pedidos que vieram da API do iFood (Vendas ou módulo Pedidos) por ainda não estarem na conciliação importada */
   pedidosAoVivo: number;
   error: string | null;
 }
 
 /**
  * Valor das vendas do iFood por dia do PEDIDO (data_criacao_pedido_associado), somando todas as lojas
- * iFood importadas do tenant, completado pelos pedidos ao vivo ainda não conciliados. Pedido cancelado entra
+ * iFood importadas do tenant, completado pelos pedidos da API ainda não conciliados. Pedido cancelado entra
  * e sai no mesmo dia (as linhas de cancelamento são do mesmo pedido), então só conta como pedido quem terminou
  * com valor positivo.
  */
@@ -73,11 +74,22 @@ export async function fetchIfoodVendas(tenantId: string, fromISO: string, toISO:
     porPedido.set(r.order_id, p);
   }
 
-  // Pedidos ao vivo (módulo Pedidos do iFood, ifood_orders) que ainda não estão na conciliação importada —
-  // a conciliação chega dias depois, então sem isso "Hoje" e a sessão aberta ficam sem iFood.
-  // Valor das vendas ≈ itens (subTotal) + taxa de entrega só quando a própria loja entrega: é o que sobra no
-  // Portal depois das retenções (entrega iFood, taxa de serviço) e somando os subsídios de promoção.
+  // A conciliação chega dias depois; sem complemento, "Hoje" e a sessão aberta ficam sem iFood.
+  // 1) API de Vendas (fin_ifood_sales, sincronizada pela ifood-financial) — mesma tradução da aba iFood
+  //    (montarPedidosApi), então o valor bate com o Portal. Cancelado não entra.
   let pedidosAoVivo = 0;
+  const api = await fetchComplementoApi(tenantId, fromISO, toISO, new Set(porPedido.keys())).catch(() => []);
+  const canceladosApi = new Set<string>();
+  for (const p of api) {
+    if (p.cancelado) { canceladosApi.add(p.id); continue; }
+    if (porPedido.has(p.id)) continue;
+    porPedido.set(p.id, { at: p.at.toISOString(), valor: p.vendas });
+    pedidosAoVivo += 1;
+  }
+
+  // 2) Pedidos ao vivo do módulo Pedidos do iFood (ifood_orders) que nem a API de Vendas trouxe ainda.
+  //    Valor das vendas ≈ itens (subTotal) + taxa de entrega só quando a própria loja entrega: é o que sobra
+  //    no Portal depois das retenções (entrega iFood, taxa de serviço) e somando os subsídios de promoção.
   const vivos = await fetchAllRows<LiveRow>((from, to) => supabase
     .from('ifood_orders')
     .select('ifood_order_id, ordered_at, status, delivered_by, total')
@@ -88,7 +100,7 @@ export async function fetchIfoodVendas(tenantId: string, fromISO: string, toISO:
     .order('ordered_at', { ascending: true })
     .range(from, to));
   for (const o of vivos.rows ?? []) {
-    if (!o.ordered_at || o.status === 'cancelled' || porPedido.has(o.ifood_order_id)) continue;
+    if (!o.ordered_at || o.status === 'cancelled' || porPedido.has(o.ifood_order_id) || canceladosApi.has(o.ifood_order_id)) continue;
     const valor = Number(o.total?.subTotal ?? 0) + (o.delivered_by === 'MERCHANT' ? Number(o.total?.deliveryFee ?? 0) : 0);
     porPedido.set(o.ifood_order_id, { at: o.ordered_at, valor });
     pedidosAoVivo += 1;

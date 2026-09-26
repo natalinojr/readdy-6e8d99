@@ -3523,7 +3523,8 @@ Sem SW ativo o POST cai no Vercel e falha — por isso o destino só existe no S
   `assistente-cron { run: 'opening_session' }` → conversa Financeiro, tipo `caixa`, + push; não vai para WhatsApp/Telegram.
   PEGADINHA: `run` desconhecido no assistente-cron cai na rotina geral — publicar a edge ANTES do gatilho que chama um run novo.
 - **Vendas do iFood nos Relatórios (2026-09-26)**: `fetchIfoodVendas` (`src/lib/ifoodVendas.ts`) = conciliação importada
-  (`fin_ifood_entries`, valor como no Portal) + pedidos ao vivo de `ifood_orders` ainda não conciliados (mesmo id do pedido;
+  (`fin_ifood_entries`, valor como no Portal) + API de Vendas (`fin_ifood_sales` via `fetchComplementoApi`, igual à aba iFood)
+  + pedidos ao vivo de `ifood_orders` ainda não conciliados (mesmo id do pedido;
   cancelado não entra; valor ≈ `subTotal` + taxa de entrega só se `delivered_by = MERCHANT`). A Visão Geral mostra iFood também
   no modo sessão (pedidos entre `opened_at` e `closed_at`/agora — `useIfoodVendas(periodo, intervalo)`).
   PEGADINHA: intervalo com `new Date()` precisa de `useMemo`, senão o efeito refaz a busca a cada render.
