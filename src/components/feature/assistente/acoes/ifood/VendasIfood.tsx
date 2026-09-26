@@ -6,7 +6,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useAcessoAcoes, rotaLiberada } from '../acesso';
 import { Roteiro, useRoteiro, EscolhaData, Fim, brl, dataBR, somaDias, hojeISO, type AcaoProps } from '../kit';
-import { Painel, Kpis, Barras, Linhas, Variacao, GraficoLinha } from '../painel';
+import { Painel, Kpis, Barras, Linhas, Variacao, GraficoLinha, horaAgoraBR } from '../painel';
 import { resumoIfood, lojasIfood, atualizarVendasIfood } from './comum';
 
 const DIA_SEMANA = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
@@ -56,7 +56,7 @@ export default function VendasIfood({ onFechar, irPara }: AcaoProps) {
     const comVenda = [...Array(24).keys()].filter((h) => r.porHora[h] > 0 || (a?.porHora[h] ?? 0) > 0);
     const pontos = comVenda.length >= 2
       ? Array.from({ length: comVenda[comVenda.length - 1] - comVenda[0] + 1 }, (_, i) => comVenda[0] + i)
-        .map((h) => ({ rotulo: `${h}h`, valor: r.porHora[h], base: a ? a.porHora[h] : null }))
+        .map((h) => ({ rotulo: `${h}h`, valor: dia === hojeISO() && h > horaAgoraBR() ? null : r.porHora[h], base: a ? a.porHora[h] : null }))
       : [];
     const pctTaxa = (r.vendido > 0 ? Math.round((Math.abs(r.taxas) / r.vendido) * 1000) / 10 : 0).toLocaleString('pt-BR');
 
