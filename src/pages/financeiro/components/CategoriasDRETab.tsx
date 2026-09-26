@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect, Fragment } from 'react';
 import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import ImportExportTemplatesModal from '@/components/ImportExportTemplatesModal';
-import { useDreGroups, type DreGroup } from '@/hooks/useDreGroups';
+import { useDreGroups, ordenarGrupos, type DreGroup } from '@/hooks/useDreGroups';
 import { avisar } from '@/components/base/Dialogos';
 
 async function callFinancialWrite(action: string, tenantId: string, payload: Record<string, unknown>) {
@@ -92,11 +92,15 @@ interface CatNodeProps {
   onEdit: (cat: DRECat) => void;
   onDelete: (cat: DRECat) => void;
   onAddChild: (parent: DRECat) => void;
+  /** Sobe/desce entre as irmãs (mesmo grupo e mesma mãe). Ausente = sem botões (ex.: com busca). */
+  onMove?: (cat: DRECat, dir: -1 | 1) => void;
+  isFirst?: boolean;
+  isLast?: boolean;
   /** Com busca ativa a árvore fica toda aberta, para mostrar onde o resultado está. */
   forceOpen?: boolean;
 }
 
-function CatNode({ cat, depth, onEdit, onDelete, onAddChild, forceOpen }: CatNodeProps) {
+function CatNode({ cat, depth, onEdit, onDelete, onAddChild, onMove, isFirst, isLast, forceOpen }: CatNodeProps) {
   const [expanded, setExpanded] = useState(true);
   const hasChildren = (cat.children?.length ?? 0) > 0;
   const open = forceOpen || expanded;
@@ -129,6 +133,26 @@ function CatNode({ cat, depth, onEdit, onDelete, onAddChild, forceOpen }: CatNod
           </span>
         )}
         <div className="flex items-center gap-0.5 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
+          {onMove && (
+            <>
+              <button
+                onClick={() => onMove(cat, -1)}
+                disabled={isFirst}
+                className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-zinc-100 text-zinc-400 hover:text-zinc-700 cursor-pointer disabled:opacity-30 disabled:cursor-default disabled:hover:bg-transparent"
+                title="Subir"
+              >
+                <i className="ri-arrow-up-line text-xs" />
+              </button>
+              <button
+                onClick={() => onMove(cat, 1)}
+                disabled={isLast}
+                className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-zinc-100 text-zinc-400 hover:text-zinc-700 cursor-pointer disabled:opacity-30 disabled:cursor-default disabled:hover:bg-transparent"
+                title="Descer"
+              >
+                <i className="ri-arrow-down-line text-xs" />
+              </button>
+            </>
+          )}
           <button
             onClick={() => onAddChild(cat)}
             className="flex items-center gap-0.5 text-[11px] font-semibold text-amber-700 hover:bg-amber-50 px-1.5 py-1 rounded-md cursor-pointer whitespace-nowrap"
@@ -152,7 +176,7 @@ function CatNode({ cat, depth, onEdit, onDelete, onAddChild, forceOpen }: CatNod
           </button>
         </div>
       </div>
-      {open && hasChildren && cat.children!.map(child => (
+      {open && hasChildren && cat.children!.map((child, i, irmas) => (
         <CatNode
           key={child.id}
           cat={child}
@@ -160,6 +184,9 @@ function CatNode({ cat, depth, onEdit, onDelete, onAddChild, forceOpen }: CatNod
           onEdit={onEdit}
           onDelete={onDelete}
           onAddChild={onAddChild}
+          onMove={onMove}
+          isFirst={i === 0}
+          isLast={i === irmas.length - 1}
           forceOpen={forceOpen}
         />
       ))}
@@ -225,7 +252,13 @@ export default function CategoriasDRETab() {
   const [groupError, setGroupError] = useState<string | null>(null);
   const [showTemplatesModal, setShowTemplatesModal] = useState(false);
 
-  const allGroups = [...STANDARD_GROUPS, ...customGroups.map(g => g.key)];
+  // Receitas fica sempre no topo (não entra no resultado); os grupos que subtraem
+  // do resultado seguem a ordem que a loja escolheu — a mesma que a DRE usa.
+  const gruposOrdenaveis = ordenarGrupos(
+    [...STANDARD_GROUPS.filter(g => g !== 'revenue'), ...customGroups.map(g => g.key)],
+    gruposComLegado,
+  );
+  const allGroups = ['revenue', ...gruposOrdenaveis];
   const getGroupMeta2 = (g: string) => getGroupMeta(g, gruposComLegado);
 
   const fetchCats = useCallback(async () => {
@@ -237,7 +270,8 @@ export default function CategoriasDRETab() {
       .eq('tenant_id', user.tenantId)
       .eq('is_active', true)
       .order('group_type')
-      .order('sort_order');
+      .order('sort_order')
+      .order('created_at');
     setCats(data ?? []);
     setLoading(false);
   }, [user?.tenantId]);
@@ -425,7 +459,16 @@ export default function CategoriasDRETab() {
     const grupo = gruposComLegado.find(g => g.key === key);
     if (!grupo?.id || !user?.tenantId) return;
     try {
-      await callFinancialWrite('delete_dre_group', user.tenantId, { id: grupo.id });
+      const padrao = DEFAULT_GROUP_LABELS[key];
+      if (padrao) {
+        // Grupo padrão: volta o nome e o ícone de fábrica sem apagar a linha,
+        // que também guarda a posição do grupo na DRE.
+        await callFinancialWrite('upsert_dre_group', user.tenantId, {
+          key, label: padrao.label, icon: padrao.icon, sort_order: grupo.sort_order ?? 0,
+        });
+      } else {
+        await callFinancialWrite('delete_dre_group', user.tenantId, { id: grupo.id });
+      }
       await refetchGroups();
       if (filterGroup === key) setFilterGroup('all');
     } catch (e) {
@@ -433,6 +476,59 @@ export default function CategoriasDRETab() {
       // erro só ia pro console e o clique parecia não fazer nada.
       console.error('[CategoriasDRE] erro ao excluir grupo:', e);
       await avisar(e instanceof Error ? e.message : 'Não foi possível remover o grupo.', { erro: true });
+    }
+  };
+
+  // Sobe/desce a categoria entre as irmãs (mesmo grupo, mesma mãe). Renumera as
+  // irmãs 0..n-1 — havia posições repetidas, e trocar só duas não bastava — e
+  // grava apenas as que mudaram.
+  const moverCategoria = async (cat: DRECat, dir: -1 | 1) => {
+    if (!user?.tenantId) return;
+    const irmas = cats.filter(c => c.group_type === cat.group_type && (c.parent_id ?? null) === (cat.parent_id ?? null));
+    const i = irmas.findIndex(c => c.id === cat.id);
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= irmas.length) return;
+    const nova = [...irmas];
+    [nova[i], nova[j]] = [nova[j], nova[i]];
+    const mudou = nova.map((c, idx) => ({ c, idx })).filter(({ c, idx }) => c.sort_order !== idx);
+    const posicao = new Map(nova.map((c, idx) => [c.id, idx]));
+    // Na tela na hora; o banco vem atrás.
+    setCats(prev => prev
+      .map(c => posicao.has(c.id) ? { ...c, sort_order: posicao.get(c.id)! } : c)
+      .sort((a, b) => a.group_type.localeCompare(b.group_type) || a.sort_order - b.sort_order));
+    try {
+      await Promise.all(mudou.map(({ c, idx }) =>
+        callFinancialWrite('upsert_dre_category', user.tenantId!, { id: c.id, sort_order: idx })));
+    } catch (e) {
+      await avisar(e instanceof Error ? e.message : 'Não foi possível mudar a ordem.', { erro: true });
+      fetchCats();
+    }
+  };
+
+  // Sobe/desce o grupo. Grava a posição de todos os grupos ordenáveis (1..n),
+  // inclusive "Despesas Operacionais", que ganha linha própria em fin_dre_groups
+  // com o nome atual (não vira apelido: ver temApelido).
+  const [movendoGrupo, setMovendoGrupo] = useState(false);
+  const moverGrupo = async (key: string, dir: -1 | 1) => {
+    if (!user?.tenantId || movendoGrupo) return;
+    const i = gruposOrdenaveis.indexOf(key);
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= gruposOrdenaveis.length) return;
+    const nova = [...gruposOrdenaveis];
+    [nova[i], nova[j]] = [nova[j], nova[i]];
+    setMovendoGrupo(true);
+    try {
+      await Promise.all(nova.map((k, idx) => {
+        const meta = getGroupMeta2(k);
+        return callFinancialWrite('upsert_dre_group', user.tenantId!, {
+          key: k, label: meta.label || k, icon: meta.icon, sort_order: idx + 1,
+        });
+      }));
+    } catch (e) {
+      await avisar(e instanceof Error ? e.message : 'Não foi possível mudar a ordem.', { erro: true });
+    } finally {
+      await refetchGroups();
+      setMovendoGrupo(false);
     }
   };
 
@@ -567,7 +663,13 @@ export default function CategoriasDRETab() {
             const meta = getGroupMeta2(g);
             const isCustom = customGroups.some(cg => cg.key === g);
             // Grupo padrão que a loja renomeou tem linha própria, e por isso um id.
-            const temApelido = !isCustom && !!gruposComLegado.find(x => x.key === g)?.id;
+            // A linha também existe só para guardar a posição — aí não é apelido.
+            const linha = gruposComLegado.find(x => x.key === g);
+            const padrao = DEFAULT_GROUP_LABELS[g];
+            const temApelido = !isCustom && !!linha?.id && !!padrao
+              && (linha.label !== padrao.label || linha.icon !== padrao.icon);
+            const posGrupo = gruposOrdenaveis.indexOf(g);
+            const podeMover = posGrupo >= 0 && !q && gruposOrdenaveis.length > 1;
             const papel = papelDoGrupo(g);
             const total = totalByGroup[g] ?? 0;
             return (
@@ -587,6 +689,26 @@ export default function CategoriasDRETab() {
                     </div>
                   </div>
                   <div className="flex items-center gap-0.5 flex-shrink-0">
+                    {podeMover && (
+                      <>
+                        <button
+                          onClick={() => moverGrupo(g, -1)}
+                          disabled={movendoGrupo || posGrupo === 0}
+                          className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-zinc-100 text-zinc-400 hover:text-zinc-700 cursor-pointer disabled:opacity-30 disabled:cursor-default disabled:hover:bg-transparent"
+                          title="Subir o grupo na DRE"
+                        >
+                          <i className="ri-arrow-up-line text-xs" />
+                        </button>
+                        <button
+                          onClick={() => moverGrupo(g, 1)}
+                          disabled={movendoGrupo || posGrupo === gruposOrdenaveis.length - 1}
+                          className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-zinc-100 text-zinc-400 hover:text-zinc-700 cursor-pointer disabled:opacity-30 disabled:cursor-default disabled:hover:bg-transparent"
+                          title="Descer o grupo na DRE"
+                        >
+                          <i className="ri-arrow-down-line text-xs" />
+                        </button>
+                      </>
+                    )}
                     <button
                       onClick={() => novaNoGrupo(g)}
                       className="flex items-center gap-1 text-[11px] font-semibold text-amber-700 hover:bg-amber-50 px-2 py-1.5 rounded-lg cursor-pointer whitespace-nowrap"
@@ -614,7 +736,7 @@ export default function CategoriasDRETab() {
                 </div>
                 {nodes.length > 0 ? (
                   <div className="divide-y divide-zinc-50 py-1">
-                    {nodes.map(node => (
+                    {nodes.map((node, i) => (
                       <CatNode
                         key={node.id}
                         cat={node}
@@ -622,6 +744,9 @@ export default function CategoriasDRETab() {
                         onEdit={openEdit}
                         onDelete={requestDelete}
                         onAddChild={openNew}
+                        onMove={q ? undefined : moverCategoria}
+                        isFirst={i === 0}
+                        isLast={i === nodes.length - 1}
                         forceOpen={!!q}
                       />
                     ))}

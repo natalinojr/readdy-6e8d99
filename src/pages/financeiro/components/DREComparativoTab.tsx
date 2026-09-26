@@ -8,7 +8,7 @@ import { useMoneyFlow } from '@/hooks/useMoneyFlow';
 import { useAuth } from '@/contexts/AuthContext';
 import { empresaTemPdv } from '@/lib/tipoEmpresa';
 import { formatCurrency } from '@/lib/formatters';
-import { useDreGroups, STANDARD_GROUP_KEYS } from '@/hooks/useDreGroups';
+import { useDreGroups, STANDARD_GROUP_KEYS, ordenarGrupos } from '@/hooks/useDreGroups';
 import { MonthNav, SectionHeader, NoteRow, mesExtenso } from './dreUi';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -467,7 +467,8 @@ export default function DREComparativoTab() {
   const costTree = buildTree(dreCats.filter(c => c.group_type === 'cost'));
   // Grupos criados pela loja (ex.: "Despesas fixas"). Antes não tinham linha aqui, mas
   // entravam no total e no resultado — a tabela não fechava.
-  const customKeys = [...new Set(dreCats.map(c => c.group_type))].filter(k => !STANDARD_GROUP_KEYS.includes(k));
+  // Na ordem escolhida em Categorias DRE (↑↓).
+  const customKeys = ordenarGrupos([...new Set(dreCats.map(c => c.group_type))].filter(k => !STANDARD_GROUP_KEYS.includes(k)), dreGroups);
   const customTrees = customKeys.map(key => ({
     key,
     label: dreGroups.find(g => g.key === key)?.label ?? key,

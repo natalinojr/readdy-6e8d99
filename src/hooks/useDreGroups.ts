@@ -9,6 +9,8 @@ export interface DreGroup {
   icon: string;
   /** Grupo embutido no sistema; não pode ser renomeado nem apagado. */
   standard: boolean;
+  /** Posição escolhida pela loja (Categorias DRE › ↑↓). Só existe em grupo gravado no banco. */
+  sort_order?: number;
 }
 
 export const STANDARD_DRE_GROUPS: DreGroup[] = [
@@ -67,7 +69,7 @@ export function resolverGrupos(rows: DreGroup[]) {
 
   const aplicar = (g: DreGroup): DreGroup => {
     const ov = overrides.find((o) => o.key === g.key);
-    return ov ? { ...g, id: ov.id, label: ov.label, icon: ov.icon } : g;
+    return ov ? { ...g, id: ov.id, label: ov.label, icon: ov.icon, sort_order: ov.sort_order } : g;
   };
 
   /** Só os grupos que a interface oferece hoje. Legados ficam de fora. */
@@ -77,6 +79,23 @@ export function resolverGrupos(rows: DreGroup[]) {
   const gruposComLegado = [...allGroups, ...GRUPOS_LEGADOS.map(aplicar)];
 
   return { allGroups, gruposComLegado, customGroups };
+}
+
+/**
+ * Ordena chaves de grupo pela ordem que a loja escolheu. Grupo sem posição
+ * gravada: "Despesas Operacionais" vem primeiro (era a ordem fixa antes) e os
+ * demais mantêm a ordem em que chegaram. Empate também mantém a ordem de chegada.
+ */
+export function ordenarGrupos(keys: string[], grupos: DreGroup[]): string[] {
+  const pos = (k: string) => {
+    const g = grupos.find((x) => x.key === k);
+    if (g?.sort_order != null) return g.sort_order;
+    return k === 'expense' ? -1 : 0;
+  };
+  return keys
+    .map((k, i) => ({ k, i, p: pos(k) }))
+    .sort((a, b) => a.p - b.p || a.i - b.i)
+    .map((x) => x.k);
 }
 
 export function useDreGroups() {
@@ -89,7 +108,7 @@ export function useDreGroups() {
     setLoading(true);
     const { data } = await supabase
       .from('fin_dre_groups')
-      .select('id, key, label, icon')
+      .select('id, key, label, icon, sort_order')
       .eq('tenant_id', user.tenantId)
       .order('sort_order')
       .order('label');
@@ -100,6 +119,7 @@ export function useDreGroups() {
         label: g.label as string,
         icon: (g.icon as string) || 'ri-folder-line',
         standard: false,
+        sort_order: g.sort_order as number,
       })),
     );
     setLoading(false);
