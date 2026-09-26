@@ -41,6 +41,7 @@ export default function IfoodCmv({ tenantId, lojaShort, onImportar }: Props) {
   const [periodo, setPeriodo] = useState('');
   const [busca, setBusca] = useState('');
   const [filtro, setFiltro] = useState<'todos' | 'sem' | 'com'>('todos');
+  const [tipo, setTipo] = useState<'todos' | 'item' | 'complemento'>('todos');
   const [editando, setEditando] = useState<Produto | null>(null);
 
   const carregar = useCallback(async () => {
@@ -93,11 +94,15 @@ export default function IfoodCmv({ tenantId, lojaShort, onImportar }: Props) {
     const compostos = produtos.filter((p) => p.custoUnit !== null);
     const cmv = compostos.reduce((s, p) => s + p.qtd * (p.custoUnit ?? 0), 0);
     const vendidoComposto = compostos.reduce((s, p) => s + p.valor, 0);
-    return { vendido, cmv, vendidoComposto, cobertura: vendido > 0 ? (vendidoComposto / vendido) * 100 : 0, pct: vendidoComposto > 0 ? (cmv / vendidoComposto) * 100 : 0, faltam: produtos.filter((p) => p.custoUnit === null && p.qtd > 0).length };
+    return { vendido, cmv, vendidoComposto, cobertura: vendido > 0 ? (vendidoComposto / vendido) * 100 : 0, pct: vendidoComposto > 0 ? (cmv / vendidoComposto) * 100 : 0, faltam: produtos.filter((p) => p.custoUnit === null && p.qtd > 0).length,
+      cmvItens: compostos.filter((p) => p.kind === 'item').reduce((s, p) => s + p.qtd * (p.custoUnit ?? 0), 0),
+      cmvComps: compostos.filter((p) => p.kind === 'complemento').reduce((s, p) => s + p.qtd * (p.custoUnit ?? 0), 0) };
   }, [produtos]);
 
   const q = semAcento(busca.trim());
-  const lista = produtos.filter((p) => (!q || semAcento(p.name).includes(q)) && (filtro === 'todos' || (filtro === 'sem') === (p.custoUnit === null)));
+  const lista = produtos.filter((p) => (!q || semAcento(p.name).includes(q)) && (filtro === 'todos' || (filtro === 'sem') === (p.custoUnit === null)) && (tipo === 'todos' || p.kind === tipo));
+  // Itens e complementos em seções separadas (os complementos têm custo próprio: molho, adicional, bebida…).
+  const secoes = ([['item', 'Itens'], ['complemento', 'Complementos']] as const).map(([k, t]) => ({ k, t, ps: lista.filter((p) => p.kind === k) })).filter((x) => x.ps.length > 0);
 
   if (loading) return <div className="flex items-center justify-center py-12"><div className="w-6 h-6 border-2 border-red-500 border-t-transparent rounded-full animate-spin" /></div>;
   if (erro) return <div className="rounded-xl bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">Falha ao carregar: {erro}</div>;
@@ -128,13 +133,18 @@ export default function IfoodCmv({ tenantId, lojaShort, onImportar }: Props) {
             <button key={k} onClick={() => setFiltro(k)} className={`px-2.5 py-1.5 rounded-md text-xs font-semibold cursor-pointer ${filtro === k ? 'bg-zinc-900 text-white' : 'text-zinc-500 hover:text-zinc-800'}`}>{l}</button>
           ))}
         </div>
+        <div className="flex gap-1 bg-white border border-zinc-200 rounded-lg p-0.5">
+          {([['todos', 'Itens e complementos'], ['item', 'Só itens'], ['complemento', 'Só complementos']] as const).map(([k, l]) => (
+            <button key={k} onClick={() => setTipo(k)} className={`px-2.5 py-1.5 rounded-md text-xs font-semibold cursor-pointer ${tipo === k ? 'bg-zinc-900 text-white' : 'text-zinc-500 hover:text-zinc-800'}`}>{l}</button>
+          ))}
+        </div>
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <div className="bg-white rounded-2xl border border-zinc-100 p-4">
           <p className="text-xs font-medium text-zinc-500">CMV dos compostos</p>
           <p className="text-xl font-bold text-zinc-900 mt-1 tabular-nums">{formatCurrency(tot.cmv)}</p>
-          <p className="text-[11px] text-zinc-400">custo atual dos insumos × quantidade vendida</p>
+          <p className="text-[11px] text-zinc-400 tabular-nums">itens {formatCurrency(tot.cmvItens)} + complementos {formatCurrency(tot.cmvComps)}</p>
         </div>
         <div className="bg-white rounded-2xl border border-zinc-100 p-4">
           <p className="text-xs font-medium text-zinc-500">CMV %</p>
@@ -169,28 +179,41 @@ export default function IfoodCmv({ tenantId, lojaShort, onImportar }: Props) {
               </tr>
             </thead>
             <tbody>
-              {lista.map((p) => {
-                const cmv = p.custoUnit === null ? null : p.custoUnit * p.qtd;
-                const pct = cmv !== null && p.valor > 0 ? (cmv / p.valor) * 100 : null;
-                return (
-                  <tr key={p.key} className="border-b border-zinc-100 hover:bg-zinc-50">
-                    <td className="px-4 py-2.5">
-                      <p className="font-medium text-zinc-800">{p.name}</p>
-                      <p className="text-xs text-zinc-400">{p.kind === 'complemento' ? 'Complemento' : 'Item'}{grupoUtil(p.group) ? ` · ${grupoUtil(p.group)}` : ''}</p>
+              {secoes.map((sec) => {
+                const cmvSec = sec.ps.reduce((x, p) => x + (p.custoUnit === null ? 0 : p.custoUnit * p.qtd), 0);
+                return [
+                  <tr key={`h-${sec.k}`} className="bg-zinc-50/80 border-b border-zinc-100">
+                    <td colSpan={7} className="px-4 py-2">
+                      <div className="flex items-center justify-between gap-3 text-xs">
+                        <span className="font-semibold text-zinc-700">{sec.t} <span className="font-normal text-zinc-400">· {sec.ps.length} · {sec.ps.reduce((x, p) => x + p.qtd, 0).toLocaleString('pt-BR')} vendidos</span></span>
+                        <span className="text-zinc-500 tabular-nums">CMV {formatCurrency(cmvSec)}</span>
+                      </div>
                     </td>
-                    <td className="px-3 py-2.5 text-right tabular-nums text-zinc-700">{p.qtd.toLocaleString('pt-BR')}</td>
-                    <td className="px-3 py-2.5 text-right tabular-nums text-zinc-700">{formatCurrency(p.valor)}</td>
-                    <td className="px-3 py-2.5 text-right tabular-nums">{p.custoUnit === null ? <span className="text-zinc-300">—</span> : formatCurrency(p.custoUnit)}</td>
-                    <td className="px-3 py-2.5 text-right tabular-nums font-semibold text-zinc-900">{cmv === null ? <span className="text-zinc-300 font-normal">—</span> : formatCurrency(cmv)}</td>
-                    <td className={`px-3 py-2.5 text-right tabular-nums ${pct === null ? 'text-zinc-300' : pct > 35 ? 'text-red-600 font-semibold' : 'text-green-700'}`}>{pct === null ? (cmv !== null && p.valor === 0 ? 'sem preço' : '—') : `${pct.toFixed(1)}%`}</td>
-                    <td className="px-3 py-2.5 text-right">
-                      <button onClick={() => setEditando(p)}
-                        className={`px-2.5 py-1 rounded-lg text-xs font-semibold cursor-pointer whitespace-nowrap ${p.custoUnit === null ? 'bg-red-600 text-white hover:bg-red-700' : 'border border-zinc-200 text-zinc-700 hover:bg-zinc-50'}`}>
-                        {p.custoUnit === null ? 'Compor' : `Editar (${p.linhas})`}
-                      </button>
-                    </td>
-                  </tr>
-                );
+                  </tr>,
+                  ...sec.ps.map((p) => {
+                    const cmv = p.custoUnit === null ? null : p.custoUnit * p.qtd;
+                    const pct = cmv !== null && p.valor > 0 ? (cmv / p.valor) * 100 : null;
+                    return (
+                      <tr key={p.key} className="border-b border-zinc-100 hover:bg-zinc-50">
+                        <td className="px-4 py-2.5">
+                          <p className="font-medium text-zinc-800">{p.name}</p>
+                          {grupoUtil(p.group) && <p className="text-xs text-zinc-400">{grupoUtil(p.group)}</p>}
+                        </td>
+                        <td className="px-3 py-2.5 text-right tabular-nums text-zinc-700">{p.qtd.toLocaleString('pt-BR')}</td>
+                        <td className="px-3 py-2.5 text-right tabular-nums text-zinc-700">{p.valor > 0 ? formatCurrency(p.valor) : <span className="text-xs text-zinc-400" title="Complemento sem cobrança à parte: o custo dele entra no CMV total">sem cobrança</span>}</td>
+                        <td className="px-3 py-2.5 text-right tabular-nums">{p.custoUnit === null ? <span className="text-zinc-300">—</span> : formatCurrency(p.custoUnit)}</td>
+                        <td className="px-3 py-2.5 text-right tabular-nums font-semibold text-zinc-900">{cmv === null ? <span className="text-zinc-300 font-normal">—</span> : formatCurrency(cmv)}</td>
+                        <td className={`px-3 py-2.5 text-right tabular-nums ${pct === null ? 'text-zinc-300' : pct > 35 ? 'text-red-600 font-semibold' : 'text-green-700'}`}>{pct === null ? '—' : `${pct.toFixed(1)}%`}</td>
+                        <td className="px-3 py-2.5 text-right">
+                          <button onClick={() => setEditando(p)}
+                            className={`px-2.5 py-1 rounded-lg text-xs font-semibold cursor-pointer whitespace-nowrap ${p.custoUnit === null ? 'bg-red-600 text-white hover:bg-red-700' : 'border border-zinc-200 text-zinc-700 hover:bg-zinc-50'}`}>
+                            {p.custoUnit === null ? 'Compor' : `Editar (${p.linhas})`}
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  }),
+                ];
               })}
               {lista.length === 0 && <tr><td colSpan={7} className="px-4 py-8 text-center text-sm text-zinc-400">Nenhum produto com esse filtro.</td></tr>}
             </tbody>
