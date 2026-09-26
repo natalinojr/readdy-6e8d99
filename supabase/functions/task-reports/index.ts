@@ -688,6 +688,82 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         }).eq('id', t.id);
         return json({ success: true, id: t.id });
       }
+      case 'get_template': {
+        // Modelo para editar: conteúdo com URLs assinadas das imagens.
+        const { data: t } = await admin.from('task_report_templates').select('id, name, content')
+          .eq('id', String(body.template_id ?? '')).eq('created_by', user.id).maybeSingle();
+        if (!t) throw new Recusa('Modelo não encontrado', 404);
+        const itens = ((t.content?.items ?? []) as Row[]);
+        const caminhos = itens.flatMap((it) => ((it.images ?? []) as Imagem[]).map((i) => i.path));
+        const urls = new Map<string, string>();
+        if (caminhos.length) {
+          const { data } = await admin.storage.from(BUCKET).createSignedUrls(caminhos, 60 * 60 * 6);
+          for (const d of data ?? []) if (d.path && d.signedUrl) urls.set(d.path, d.signedUrl);
+        }
+        return json({
+          success: true,
+          template: {
+            id: t.id, name: t.name, description: t.content?.description ?? null, links: t.content?.links ?? [],
+            items: itens.map((it) => ({ ...it, images: ((it.images ?? []) as Imagem[]).map((i) => ({ ...i, url: urls.get(i.path) ?? null })) })),
+          },
+        });
+      }
+      case 'upload_template': {
+        const { data: t } = await admin.from('task_report_templates').select('id')
+          .eq('id', String(body.template_id ?? '')).eq('created_by', user.id).maybeSingle();
+        if (!t) throw new Recusa('Modelo não encontrado', 404);
+        if (!arquivo) throw new Recusa('Arquivo ausente');
+        return json({ success: true, image: await gravarImagem(admin, `modelos/${t.id}`, arquivo) });
+      }
+      case 'update_template': {
+        // Edição do modelo: itens na ordem; condição entre itens pelo índice (item_idx).
+        const { data: t } = await admin.from('task_report_templates').select('id, content')
+          .eq('id', String(body.template_id ?? '')).eq('created_by', user.id).maybeSingle();
+        if (!t) throw new Recusa('Modelo não encontrado', 404);
+        const nome = texto(body.name, 200);
+        if (!nome) throw new Recusa('Informe o nome do modelo');
+        const brutos = Array.isArray(body.items) ? (body.items as Row[]) : [];
+        if (brutos.length > 100) throw new Recusa('No máximo 100 itens por modelo');
+        const pasta = `modelos/${t.id}`;
+        const itens = brutos.map((it) => {
+          const titulo = texto(it?.title, 300);
+          if (!titulo) throw new Recusa('Todo item precisa de título');
+          return { title: titulo, body: texto(it?.body, MAX_TEXTO), images: validarImagens(it?.images, pasta), fields: validarCampos(it?.fields), links: validarLinks(it?.links), show_if: it?.show_if ?? null };
+        });
+        itens.forEach((it, i) => {
+          const c = it.show_if as Row | null;
+          if (!c) return;
+          const idx = Number(c.item_idx);
+          const pai = Number.isInteger(idx) && idx !== i ? itens[idx] : undefined;
+          const campo = pai?.fields.find((f) => f.id === String(c.field_id ?? ''));
+          if (!pai || !campo || !['escolha', 'multipla', 'sim_nao'].includes(campo.type)) throw new Recusa(`"${it.title}": a condição precisa ser uma pergunta de escolha de outro item`);
+          const validos = idsResposta(campo);
+          if (!Array.isArray(c.values) || !c.values.length || !c.values.every((x: unknown) => typeof x === 'string' && validos.has(x))) {
+            throw new Recusa(`"${it.title}": escolha com qual resposta de "${campo.label}" ele aparece`);
+          }
+          it.show_if = { item_idx: idx, field_id: campo.id, values: [...new Set(c.values as string[])] };
+        });
+        // Sem ciclo: seguindo as condições a partir de qualquer item, nunca se volta a ele.
+        itens.forEach((_, i) => {
+          let atual: number | undefined = i;
+          for (let passo = 0; atual !== undefined && passo <= itens.length; passo++) {
+            const prox = (itens[atual].show_if as Row | null)?.item_idx as number | undefined;
+            if (prox === i) throw new Recusa(`"${itens[i].title}": as condições dos itens fecham um círculo`);
+            atual = prox;
+          }
+        });
+        const { error } = await admin.from('task_report_templates').update({
+          name: nome, updated_at: new Date().toISOString(),
+          content: { description: texto(body.description, MAX_TEXTO), links: validarLinks(body.links), items: itens },
+        }).eq('id', t.id);
+        if (error) throw error;
+        // Imagens que saíram do modelo são apagadas do armazenamento.
+        const ficam = new Set(itens.flatMap((it) => it.images.map((i) => i.path)));
+        const antigas = ((t.content?.items ?? []) as Row[]).flatMap((it) => ((it.images ?? []) as Imagem[]).map((i) => i.path));
+        const sair = antigas.filter((p) => !ficam.has(p));
+        if (sair.length) await admin.storage.from(BUCKET).remove(sair);
+        return json({ success: true });
+      }
       case 'rename_template': {
         const nome = texto(body.name, 200);
         if (!nome) throw new Recusa('Informe o nome do modelo');

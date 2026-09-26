@@ -2,6 +2,11 @@ import { useState } from 'react';
 import { ChevronRight, ChevronDown, EyeOff, Plus, Trash2, Users, Share2 } from 'lucide-react';
 import type { NoPasta } from '../lib/pastas';
 
+/** Põe o texto inteiro como dica (title) só quando ele está cortado com "…". */
+export function mostrarSeCortado(el: HTMLElement, texto: string) {
+  el.title = el.scrollWidth > el.clientWidth ? texto : '';
+}
+
 interface ArvorePastasProps {
   nos: NoPasta[];
   selectedId: string | null;
@@ -58,7 +63,8 @@ export default function ArvorePastas({ nos, selectedId, onSelecionar, onNovaSubp
           </button>
           <button onClick={() => onSelecionar(no.id)} className="flex-1 flex items-center gap-2 py-2 text-left min-w-0">
             <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: no.color }} />
-            <span className="flex-1 truncate">{no.name}</span>
+            {/* Nome cortado: passar o mouse mostra inteiro (só quando não cabe). */}
+            <span className="flex-1 truncate" onMouseEnter={(e) => mostrarSeCortado(e.currentTarget, no.name)}>{no.name}</span>
             {no.open_count > 0 && <span className="text-xs text-slate-400 shrink-0">{no.open_count}</span>}
           </button>
           {/* Tocar no símbolo mostra com quem a pasta está compartilhada (janela Compartilhar). */}

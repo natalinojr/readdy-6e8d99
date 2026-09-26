@@ -146,6 +146,27 @@ export async function demoDono(action: string, p: Record<string, unknown>): Prom
       if (st) it.status = st;
       return { id: resp.id };
     }
+    case 'get_template': {
+      const m = modelos.find((x) => x.id === p.template_id)!;
+      const idx = new Map(m.content.items.map((it, i) => [it.id, i]));
+      return {
+        template: {
+          id: m.id, name: m.name, description: m.content.description, links: m.content.links,
+          items: m.content.items.map((it) => ({ ...it, show_if: it.show_if && idx.has(it.show_if.item_id) ? { item_idx: idx.get(it.show_if.item_id), field_id: it.show_if.field_id, values: it.show_if.values } : null })),
+        },
+      };
+    }
+    case 'update_template': {
+      const m = modelos.find((x) => x.id === p.template_id)!;
+      m.name = String(p.name);
+      const itens = (p.items as Array<Record<string, unknown>>).map((it, i) => ({ ...(it as unknown as ItemRel), id: `mi${i}`, position: i + 1, responses: [], status: 'open' as const }));
+      itens.forEach((it) => {
+        const c = it.show_if as unknown as { item_idx: number; field_id: string; values: string[] } | null;
+        it.show_if = c ? { item_id: `mi${c.item_idx}`, field_id: c.field_id, values: c.values } : null;
+      });
+      m.content = { description: (p.description as string) ?? null, links: (p.links as unknown[]) ?? [], items: itens };
+      return {};
+    }
     case 'list_templates':
       return { templates: modelos.map((m) => ({ id: m.id, name: m.name, items_total: m.content.items.length, links_total: m.content.links.length, created_at: agora(), updated_at: agora() })) };
     case 'save_template': {
