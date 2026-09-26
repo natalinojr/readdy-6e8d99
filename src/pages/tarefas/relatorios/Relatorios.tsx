@@ -613,7 +613,8 @@ function DetalheRelatorio({ id, onVoltar, pastas, meuId, tarefas, onOpenTask }: 
               podeResponder
               meuUserId={meuId}
               onEnviarImagem={enviarImagem}
-              onResponder={(body, images, st, answers, links) => acao('reply', { item_id: item.id, body, images, new_status: st, answers, links })}
+              podeAlterarCampos={criador}
+              onResponder={(body, images, st, answers, links, parent_id) => acao('reply', { item_id: item.id, body, images, new_status: st, answers, links, parent_id })}
               acoes={edita && (
                 <div className="shrink-0 flex items-center opacity-60 hover:opacity-100 transition">
                   <button disabled={i === 0} onClick={() => mover(i, -1)} className="p-1 rounded-lg text-slate-400 hover:bg-slate-100 disabled:opacity-30" title="Subir"><ChevronUp size={16} /></button>

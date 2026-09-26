@@ -132,6 +132,7 @@ export async function demoDono(action: string, p: Record<string, unknown>): Prom
       const resp: RespostaRel = {
         id: novoId(), kind: p.body || p.answers ? 'reply' : 'status', answers: (p.answers as Record<string, ValorCampo> | null) ?? null, body: (p.body as string) || null, images: (p.images as ImagemRel[]) ?? [],
         new_status: st, author_name: 'Você (demo)', author_type: 'owner', author_guest_id: null, author_is_creator: rel.created_by === 'demo-eu', author_user_id: 'demo-eu', created_at: agora(),
+        parent_id: (p.parent_id as string | null) ?? null,
       };
       it.responses.push(resp);
       if (st) it.status = st;

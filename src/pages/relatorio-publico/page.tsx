@@ -57,8 +57,8 @@ export default function RelatorioPublicoPage() {
     return r.data;
   };
 
-  const responder = async (itemId: string, body: string, images: ImagemRel[], novoStatus: StatusItem | null, answers: Record<string, ValorCampo> | null, links: LinkRel[]) => {
-    const r = await chamarPublico('public_reply', { token, guest_token: guestToken, item_id: itemId, body, images, new_status: novoStatus, answers, links });
+  const responder = async (itemId: string, body: string, images: ImagemRel[], novoStatus: StatusItem | null, answers: Record<string, ValorCampo> | null, links: LinkRel[], parentId?: string | null) => {
+    const r = await chamarPublico('public_reply', { token, guest_token: guestToken, item_id: itemId, body, images, new_status: novoStatus, answers, links, parent_id: parentId ?? null });
     if (!r.ok) { mostrarAviso(r.error); return false; }
     await carregar();
     return true;
@@ -131,7 +131,7 @@ export default function RelatorioPublicoPage() {
             numero={i + 1}
             podeResponder={aberto}
             meuGuestId={me.id}
-            onResponder={(b, imgs, st, ans, links) => responder(item.id, b, imgs, st, ans, links)}
+            onResponder={(b, imgs, st, ans, links, pai) => responder(item.id, b, imgs, st, ans, links, pai)}
             onEnviarImagem={enviarImagem}
           />
         ))}
