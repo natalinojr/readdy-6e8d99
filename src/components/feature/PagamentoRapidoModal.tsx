@@ -11,6 +11,7 @@ import type { PedidoAgrupado } from '@/hooks/usePedidosAgrupados';
 import { indicesPagamentosFaltantes } from '@/lib/pagamentosPendentes';
 import AutorizacaoGerenteModal from '@/components/feature/AutorizacaoGerenteModal';
 import { usePermissoes } from '@/hooks/usePermissoes';
+import { descontoDoVinculado, descontoQueFecha, aplicarDescontoEmPedidoExistente } from '@/lib/descontoVinculados';
 import CortesiaDetalhesModal from '@/pages/pdv/caixa/components/CortesiaDetalhesModal';
 import CobrarMaquininhaModal from '@/components/feature/CobrarMaquininhaModal';
 import { perguntar } from '@/components/base/Dialogos';
@@ -277,11 +278,12 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
 
   const totalEfetivo = total + totalPedidosSelecionados;
 
-  // Desconto/voucher só quando é UM pedido só (sem pedidos vinculados) — evita ter que
-  // distribuir o desconto proporcionalmente entre vários pedidos.
+  // Voucher só quando é UM pedido só (o resgate fica preso a um pedido). O desconto manual
+  // vale também com pedidos vinculados: é rateado entre eles no handleFinalizar.
   const semLinkados = totalPedidosSelecionados <= 0.001;
   const voucherValor = semLinkados ? (voucherAplicado?.applicable_amount ?? 0) : 0;
-  const descontoManualValor = semLinkados ? descontoManual : 0;
+  // Limitado ao total: desvincular pedidos depois de dar o desconto não deixa ele passar do total
+  const descontoManualValor = Math.min(descontoManual, Math.max(0, totalEfetivo - voucherValor));
   const descontoTotal = voucherValor + descontoManualValor;
   const totalAPagar = Math.max(0, totalEfetivo - descontoTotal);
 
@@ -290,6 +292,10 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
   // Pedido do tablet com forma escolhida: o valor acompanha o total (que muda quando os
   // pedidos vinculados carregam) até o operador digitar — aí é só confirmar.
   const valorEditadoRef = useRef(false);
+  // Total de cada pedido na 1ª tentativa de finalizar. Com desconto, o realtime do KDS traz o
+  // total já reduzido; num reenvio após falha parcial o rateio usa estes valores congelados
+  // para não dar o desconto de novo nem gravar pagamentos com outros valores.
+  const totaisOriginaisRef = useRef(new Map<string, number>());
   useEffect(() => {
     if (!formaInicialNome || valorInicial != null || valorEditadoRef.current || pagamentos.length > 0) return;
     if (restante > 0) setValorInput(restante.toFixed(2));
@@ -534,34 +540,66 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
         ? crypto.randomUUID()
         : null;
 
-      // ── Desconto/voucher no pedido principal (só quando é um pedido só) ──
+      // Cada pedido do grupo grava só a SUA parte do valor recebido (proporcional ao
+      // próprio total), senão a soma das linhas de payments conta o grupo em dobro.
+      // O principal fica com o resto (valor - partes dos vinculados) para absorver o
+      // arredondamento e fechar exatamente com o que foi recebido.
+      const totaisOriginais = totaisOriginaisRef.current;
+      for (const p of [{ id: orderId, total }, ...todosPedidosVinculados]) {
+        if (!totaisOriginais.has(p.id)) totaisOriginais.set(p.id, p.total);
+      }
+      const totalOriginalDe = (id: string) => totaisOriginais.get(id) ?? 0;
+      const totalPrincipal = totalOriginalDe(orderId);
+      const totalGrupo = totalPrincipal + todosPedidosVinculados.reduce((s, p) => s + totalOriginalDe(p.id), 0);
+      const valoresVinculados = todosPedidosVinculados.map((pedido) =>
+        pagamentosFinais.map((pag) => Number((pag.valor * (totalOriginalDe(pedido.id) / totalGrupo)).toFixed(2))),
+      );
+      const valoresPrincipal = pagamentosFinais.map((pag, j) =>
+        Number((pag.valor - valoresVinculados.reduce((s, valores) => s + valores[j], 0)).toFixed(2)),
+      );
+
+      // Desconto manual com vinculados: cada vinculado recebe como desconto o que falta
+      // entre o total dele e a parte que ele recebe; o principal fica com o resto.
+      const descontosVinculados = descontoManualValor > 0.001
+        ? todosPedidosVinculados.map((pedido, i) => descontoDoVinculado(totalOriginalDe(pedido.id), valoresVinculados[i]))
+        : todosPedidosVinculados.map(() => 0);
+      const descontoPrincipal = descontoTotal > 0.001
+        ? descontoQueFecha(totalPrincipal, descontoTotal - descontosVinculados.reduce((s, d) => s + d, 0), valoresPrincipal)
+        : 0;
+
+      // Daqui em diante o banco pode ficar com desconto gravado: numa falha, o operador
+      // vê o aviso de "confira antes de cobrar de novo".
+      gravandoPagamentos = true;
+
+      // Parte do desconto de cada pedido vinculado (antes do principal e dos pagamentos)
+      for (let i = 0; i < todosPedidosVinculados.length; i++) {
+        await aplicarDescontoEmPedidoExistente({
+          orderId: todosPedidosVinculados[i].id,
+          tenantId: user?.tenantId,
+          totalOriginal: totalOriginalDe(todosPedidosVinculados[i].id),
+          desconto: descontosVinculados[i],
+          autorizadoPor: descontoAutorizadoPor,
+        });
+      }
+
+      // ── Desconto/voucher no pedido principal ──
       // Ajusta discount_amount + total_amount do pedido para que os pagamentos
       // cubram o novo total (senão o pedido ficaria "parcialmente pago").
-      if (semLinkados && descontoTotal > 0.001) {
-        const novoTotal = Math.max(0, total - descontoTotal);
-        const { error: discErr } = await invokeWithAuth('order-write', {
-          body: {
-            action: 'apply_discount',
-            order_id: orderId,
-            tenant_id: user?.tenantId,
-            discount_type: 'fixed',
-            discount_value: descontoTotal,
-            coupon_code: voucherAplicado?.code ?? null,
-            // approved_by é UUID (FK users) — a autorização já foi validada na UI;
-            // o NOME do autorizador vai em approval_notes/reason (texto).
-            requires_approval: false,
-            approved_by: null,
-            approval_notes: descontoManual > 0 && descontoAutorizadoPor ? `Desconto autorizado por: ${descontoAutorizadoPor}` : null,
-            reason: voucherAplicado
-              ? `Voucher ${voucherAplicado.code}${descontoManual > 0 ? ` + desconto (aut. ${descontoAutorizadoPor ?? '—'})` : ''}`
-              : `Desconto no PDV Caixa (pagamento rápido)${descontoAutorizadoPor ? ` — aut. ${descontoAutorizadoPor}` : ''}`,
-            new_discount_amount: descontoTotal,
-            new_total_amount: novoTotal,
-          },
+      if (descontoPrincipal > 0.001) {
+        await aplicarDescontoEmPedidoExistente({
+          orderId,
+          tenantId: user?.tenantId,
+          totalOriginal: totalPrincipal,
+          desconto: descontoPrincipal,
+          pularSePago: false,
+          autorizadoPor: descontoManual > 0 ? descontoAutorizadoPor : null,
+          couponCode: semLinkados ? (voucherAplicado?.code ?? null) : null,
+          reason: voucherAplicado && semLinkados
+            ? `Voucher ${voucherAplicado.code}${descontoManual > 0 ? ` + desconto (aut. ${descontoAutorizadoPor ?? '—'})` : ''}`
+            : `Desconto no PDV Caixa (pagamento rápido)${descontoAutorizadoPor ? ` — aut. ${descontoAutorizadoPor}` : ''}`,
         });
-        if (discErr) throw discErr;
-        // Resgata o voucher (baixa saldo/uso) vinculando ao pedido
-        if (voucherAplicado) {
+        // Resgata o voucher (baixa saldo/uso) vinculando ao pedido — só vale sem vinculados
+        if (voucherAplicado && semLinkados) {
           await invokeWithAuth('voucher-write', {
             body: {
               action: 'redeem_voucher',
@@ -588,14 +626,6 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
         });
       }
 
-      // Cada pedido do grupo grava só a SUA parte do valor recebido (proporcional ao
-      // próprio total), senão a soma das linhas de payments conta o grupo em dobro.
-      // O principal fica com o resto (valor - partes dos vinculados) para absorver o
-      // arredondamento e fechar exatamente com o que foi recebido.
-      const valoresVinculados = todosPedidosVinculados.map((pedido) =>
-        pagamentosFinais.map((pag) => Number((pag.valor * (pedido.total / totalEfetivo)).toFixed(2))),
-      );
-
       // Reenvio após falha parcial: formas já gravadas numa tentativa anterior (mesma forma,
       // mesmo valor ±0,01, últimos 30 min) não são gravadas de novo. Se a leitura falhar,
       // grava tudo (comportamento anterior).
@@ -617,10 +647,6 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
       };
 
       // Registra pagamento do pedido principal
-      gravandoPagamentos = true;
-      const valoresPrincipal = pagamentosFinais.map((pag, j) =>
-        Number((pag.valor - valoresVinculados.reduce((s, valores) => s + valores[j], 0)).toFixed(2)),
-      );
       const faltantesPrincipal = await faltantesDoPedido(orderId, valoresPrincipal);
       for (let j = 0; j < pagamentosFinais.length; j++) {
         if (!faltantesPrincipal.has(j)) continue;
@@ -1160,9 +1186,7 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
           </div>
 
           {/* ── Desconto / Voucher / Cliente ─────────────────────────────────── */}
-          {semLinkados ? (
-            <>
-              {/* Desconto */}
+              {/* Desconto (vale também com pedidos vinculados — rateado entre eles) */}
               <div className="border border-zinc-200 rounded-xl overflow-hidden">
                 <button onClick={() => setDescontoOpen((v) => !v)} className="w-full flex items-center justify-between px-4 py-2.5 bg-zinc-50 hover:bg-zinc-100 cursor-pointer transition-colors">
                   <span className="flex items-center gap-2 text-sm font-semibold text-zinc-700">
@@ -1200,6 +1224,8 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
                 )}
               </div>
 
+          {semLinkados ? (
+            <>
               {/* Voucher */}
               <div className="border border-zinc-200 rounded-xl overflow-hidden">
                 <button onClick={() => setVoucherOpen((v) => !v)} className="w-full flex items-center justify-between px-4 py-2.5 bg-zinc-50 hover:bg-zinc-100 cursor-pointer transition-colors">
@@ -1234,7 +1260,7 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
             </>
           ) : (
             <p className="text-[11px] text-zinc-400 text-center bg-zinc-50 border border-zinc-100 rounded-lg py-2">
-              Desconto e voucher ficam disponíveis ao cobrar um pedido por vez.
+              O voucher fica disponível ao cobrar um pedido por vez.
             </p>
           )}
 
