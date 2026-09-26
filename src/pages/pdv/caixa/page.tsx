@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
+import AvisoImpressao from '@/components/feature/AvisoImpressao';
 import { Clock, Lock } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAppMode } from '@/contexts/AppModeContext';
@@ -1168,6 +1169,7 @@ export default function PDVCaixaPage() {
   return (
     <PDVProvider>
       <PDVCaixaInner />
+      <AvisoImpressao />
     </PDVProvider>
   );
 }

@@ -1,3 +1,4 @@
+import { getLojaAtiva } from '@/lib/lojaAtiva';
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
@@ -14,7 +15,7 @@ export function useConsumoTimeline(ingredientId: string | null, days = 30) {
   const [loading, setLoading] = useState(false);
 
   const tenantIdFromStorage = typeof window !== 'undefined'
-    ? localStorage.getItem('erpos_selected_tenant_id')
+    ? getLojaAtiva()
     : null;
 
   // PRIORIDADE: localStorage (fonte mais confiável) > user.tenantId

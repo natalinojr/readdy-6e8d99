@@ -80,7 +80,8 @@ export default function SelecionarLojaPage() {
     if (selecting) return;
     setSelecting(tenantId);
     await selectTenant(tenantId);
-    navigate('/modulos', { replace: true });
+    // Aberta no lugar de outra tela (aba nova direto em /pedidos, p.ex.): fica nela.
+    if (window.location.pathname === '/selecionar-loja') navigate('/modulos', { replace: true });
     setSelecting(null);
   };
 

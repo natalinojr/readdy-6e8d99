@@ -7,6 +7,7 @@
  * Regras: dedup em memória por (mensagem + stack), lote a cada 4 s (máx. 20), keepalive no
  * unload, nunca lança, e em `npm run dev` só loga (sem mandar), salvo VITE_REPORT_ERRORS=1.
  */
+import { getLojaAtiva } from './lojaAtiva';
 const ENDPOINT = `${import.meta.env.VITE_PUBLIC_SUPABASE_URL ?? ''}/functions/v1/client-errors`;
 const ANON = import.meta.env.VITE_PUBLIC_SUPABASE_ANON_KEY ?? '';
 const ENABLED = !!ENDPOINT && (import.meta.env.PROD || import.meta.env.VITE_REPORT_ERRORS === '1');
@@ -49,7 +50,7 @@ function appBuild(): string | null {
 }
 
 function tenantId(): string | null {
-  try { return localStorage.getItem('erpos_selected_tenant_id'); } catch { return null; }
+  return getLojaAtiva();
 }
 
 async function accessToken(): Promise<string | null> {

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import AvisoImpressao from '@/components/feature/AvisoImpressao';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useKDS } from '@/contexts/KDSContext';
 import { useSessao } from '@/contexts/SessaoContext';
@@ -851,6 +852,7 @@ export default function GestorPedidosPage() {
 
   return (
     <div className="flex flex-col h-full bg-zinc-50 overflow-hidden">
+      <AvisoImpressao />
       {/* Modais */}
       {obsModal && (
         <ObsGateModal

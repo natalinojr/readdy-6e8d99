@@ -266,6 +266,11 @@ Quando o usuario pedir "muda X":
 
 Secao viva: registrar aqui padroes, decisoes e pegadinhas reutilizaveis conforme o sistema evolui. Cada entrada com data
 
+### 2026-09-26 — Várias abas/janelas no computador
+- **Loja ativa é POR ABA:** `src/lib/lojaAtiva.ts` (`getLojaAtiva`/`setLojaAtiva`/`fixarLojaNestaAba`/`limparLojaAtiva`) — sessionStorage da aba primeiro, localStorage só como padrão da aba nova. Nunca ler `erpos_selected_tenant_id` direto do localStorage: o header `x-tenant-id` de uma aba seguia a troca de loja feita em outra.
+- **Navegação = link de verdade** (`<a href>`/`NavLink`) para rodinha/Ctrl+clique abrirem aba; clique simples intercepta com `cliqueParaNovaAba` (`src/lib/novaJanela.ts`). `abrirNovaJanela` = popup no navegador, janela do app no PWA.
+- Pegadinha de uso: digitar o endereço no Chrome com o ERPOS aberto sugere "Mudar para esta guia" — parece que "as abas ficam no mesmo lugar".
+
 ### 2026-09-26 — iFood Entrega (Shipping / Sob Demanda) — referência viva: `IFOOD-SHIPPING.md`
 - **Apps do iFood são por CATEGORIA** e a categoria trava os módulos: o app "ERPOS" (Finanças) não aceita Shipping. Criado o app **"ERPOS PDV"** (categoria PDV) com credenciais/autorizações próprias (`ifood_pdv_config`/`ifood_pdv_auths`), separado de `fin_ifood_*`. Order ficou de fora (decisão do dono; exigiria outro app).
 - **Pegadinha:** a loja de teste do iFood NÃO suporta Entrega iFood (FAQ do portal) — regras dos eventos testadas com os exemplos da doc (`supabase/functions/ifood-shipping/core.ts` + `src/test/edge/ifoodShipping.test.ts`).

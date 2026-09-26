@@ -25,6 +25,7 @@ export default function IfoodEntregaConfigModal({ tenantId, onClose, onChanged }
   const [ok, setOk] = useState('');
   const [clientId, setClientId] = useState('');
   const [secret, setSecret] = useState('');
+  const [appType, setAppType] = useState<'distributed' | 'centralized'>('distributed');
   const [authCode, setAuthCode] = useState('');
   const [userCode, setUserCode] = useState<{ code: string; url: string | null } | null>(null);
 
@@ -34,6 +35,7 @@ export default function IfoodEntregaConfigModal({ tenantId, onClose, onChanged }
     if (!r.success) { setErro(r.error || 'Não foi possível carregar.'); return; }
     setCfg(r.config); setPodeEditar(r.can_edit);
     setClientId(r.config?.client_id ?? '');
+    setAppType(r.config?.app_type ?? 'distributed');
     if (r.config?.user_code) setUserCode({ code: r.config.user_code, url: r.config.verification_url });
   }, [tenantId]);
   useEffect(() => { carregar(); }, [carregar]);
@@ -50,7 +52,7 @@ export default function IfoodEntregaConfigModal({ tenantId, onClose, onChanged }
   };
 
   const salvarCredenciais = async () => {
-    const r = await run('cred', 'save_config', { client_id: clientId.trim(), client_secret: secret.trim() || undefined }, 'Credenciais salvas.');
+    const r = await run('cred', 'save_config', { client_id: clientId.trim(), client_secret: secret.trim() || undefined, app_type: appType }, 'Credenciais salvas.');
     if (r) setSecret('');
   };
   const gerarCodigo = async () => {
@@ -87,7 +89,13 @@ export default function IfoodEntregaConfigModal({ tenantId, onClose, onChanged }
             <>
               {/* 1. Credenciais */}
               <section className="space-y-2">
-                <p className="text-xs font-bold text-zinc-700">1. App do iFood (Portal do Desenvolvedor › ERPOS PDV › Credenciais)</p>
+                <p className="text-xs font-bold text-zinc-700">1. App do iFood (Portal do Desenvolvedor › Meus aplicativos › Credenciais)</p>
+                <div className="flex gap-1.5">
+                  {([['distributed', 'ERPOS PDV (lojas reais)'], ['centralized', 'App de teste "C" (loja de teste)']] as const).map(([k, t]) => (
+                    <button key={k} type="button" onClick={() => setAppType(k)}
+                      className={`flex-1 py-1.5 rounded-lg text-[11px] font-bold border ${appType === k ? 'bg-zinc-800 text-white border-zinc-800' : 'bg-white text-zinc-600 border-zinc-200'}`}>{t}</button>
+                  ))}
+                </div>
                 <div><label className={lbl}>Client ID</label><input className={inp} value={clientId} onChange={(e) => setClientId(e.target.value)} /></div>
                 <div><label className={lbl}>Client Secret {cfg?.has_secret && <span className="text-emerald-600">(guardado — deixe vazio para manter)</span>}</label>
                   <input className={inp} type="password" autoComplete="off" value={secret} onChange={(e) => setSecret(e.target.value)} /></div>
@@ -101,7 +109,11 @@ export default function IfoodEntregaConfigModal({ tenantId, onClose, onChanged }
                 <section className="space-y-2">
                   <p className="text-xs font-bold text-zinc-700">2. Autorizar a loja no Portal do Parceiro</p>
                   {cfg.merchants.length > 0 && <p className="text-xs text-emerald-700"><i className="ri-checkbox-circle-line" /> Autorizadas: {cfg.merchants.map((m) => m.name).join(', ')}</p>}
-                  {!userCode ? (
+                  {cfg.app_type === 'centralized' ? (
+                    <button disabled={!!busy} onClick={() => run('central', 'connect_centralized', {}, 'Conectado.')} className="px-4 py-2 rounded-lg bg-red-600 text-white text-xs font-bold disabled:opacity-50">
+                      {busy === 'central' ? 'Conectando…' : conectado ? 'Conectar de novo' : 'Conectar (app de teste, sem código)'}
+                    </button>
+                  ) : !userCode ? (
                     <button disabled={!!busy} onClick={gerarCodigo} className="px-4 py-2 rounded-lg border border-zinc-200 text-zinc-700 text-xs font-bold disabled:opacity-50">
                       {busy === 'code' ? 'Gerando…' : conectado ? 'Autorizar outra loja' : 'Gerar código de vínculo'}
                     </button>

@@ -71,6 +71,7 @@ import PrintQueueBadge from './PrintQueueBadge';
 import type { PerfilAlvo } from '../../contexts/NotificacoesContext';
 import { countPendingOrders } from '@/lib/offlineDB';
 import { startAutoSync, stopAutoSync } from '@/lib/offlineSync';
+import { abrirNovaJanela } from '@/lib/novaJanela';
 
 const perfilLabel: Record<string, string> = {
   admin: 'Administrador',
@@ -251,6 +252,16 @@ export default function TopBar({ onMenuToggle }: TopBarProps) {
           className="w-9 h-9 flex items-center justify-center rounded-lg hover:bg-zinc-100 text-zinc-600 cursor-pointer transition-colors"
         >
           <i className="ri-refresh-line text-lg" />
+        </button>
+
+        {/* Nova janela (só no computador): outra tela do sistema ao lado desta. */}
+        <button
+          onClick={() => abrirNovaJanela(window.location.pathname + window.location.search)}
+          title="Abrir esta tela em outra janela"
+          aria-label="Abrir em outra janela"
+          className="hidden md:flex w-9 h-9 items-center justify-center rounded-lg hover:bg-zinc-100 text-zinc-600 cursor-pointer transition-colors"
+        >
+          <i className="ri-window-line text-lg" />
         </button>
 
         {/* Relógio só no desktop (2026-09-16): no celular a hora já está na barra do sistema, dois
