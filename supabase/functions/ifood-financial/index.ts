@@ -845,6 +845,22 @@ Deno.serve(async (req) => {
       return json({ success: !r.error, inserted, ...r });
     }
 
+    // Busca LEVE só das vendas recentes (2026-09-25): fechamento do turno e ações rápidas do iFood
+    // precisam das vendas de hoje, e a busca completa (30 dias + repasses + relatório) é pesada.
+    // Vendas de hoje já vêm da API (Sales) no mesmo dia. days = hoje e os N-1 dias anteriores (máx. 7).
+    if (action === 'sync_sales') {
+      if (!cfg || !cfg.client_id || !cfg.is_active) return json({ success: true, skipped: true });
+      const days = Math.min(7, Math.max(1, Number(body.days ?? 2) || 2));
+      const today = todayBR();
+      const out: Record<string, unknown> = {};
+      for (const l of await merchantContexts(admin, cfg)) {
+        if (!l.ctx) continue;
+        try { out[l.merchant_id] = await syncSales(admin, l.ctx, addDaysISO(today, -(days - 1)), today); }
+        catch (e) { out[l.merchant_id] = { error: String((e as Error)?.message ?? e) }; }
+      }
+      return json({ success: true, sales: out });
+    }
+
     if (action === 'import_file') {
       if (!isManager) return errResp('Apenas admin/gerente', 403);
       const b64 = String(body.file_b64 ?? '');

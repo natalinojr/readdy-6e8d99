@@ -50,7 +50,7 @@ const NOME_PT: Record<string, string> = {
   APPLE_PAY: 'Apple Pay', GOOGLE_PAY: 'Google Pay', SAMSUNG_PAY: 'Samsung Pay',
 };
 // Código desconhecido (ex.: NOVO_TIPO_X) vira "Novo tipo x"; texto comum passa como veio.
-const nm = (s?: string | null) => {
+export const nm = (s?: string | null) => {
   if (!s) return '';
   const k = s.toUpperCase();
   if (NOME_PT[k]) return NOME_PT[k];

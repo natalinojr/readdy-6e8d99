@@ -13,7 +13,7 @@ export interface AcaoDef {
   Componente: LazyExoticComponent<ComponentType<AcaoProps>>;
 }
 
-export const GRUPOS = ['Atalhos', 'Financeiro', 'Operação', 'Compras e estoque', 'Clientes e marketing', 'Pessoas', 'Tarefas', 'Pessoal'] as const;
+export const GRUPOS = ['Atalhos', 'Financeiro', 'Operação', 'iFood', 'Compras e estoque', 'Clientes e marketing', 'Pessoas', 'Tarefas', 'Pessoal'] as const;
 
 // "Tarefa recorrente" é a Nova tarefa perguntando a repetição logo depois do título.
 const NovaTarefaRecorrente = lazy(async () => {
@@ -48,6 +48,11 @@ export const ACOES: AcaoDef[] = [
   { id: 'pedidos-atrasados', grupo: 'Operação', label: 'Pedidos atrasados', icone: 'ri-timer-flash-line', cor: 'bg-orange-50 text-orange-600', Componente: lazy(() => import('./operacao/PedidosAtrasados')) },
   { id: 'impressora-parada', grupo: 'Operação', label: 'Impressora parada', icone: 'ri-printer-line', cor: 'bg-orange-50 text-orange-600', Componente: lazy(() => import('./operacao/ImpressoraParada')) },
   { id: 'caixa-aberto', grupo: 'Operação', label: 'Caixa aberto', icone: 'ri-safe-2-line', cor: 'bg-orange-50 text-orange-600', Componente: lazy(() => import('./operacao/CaixaAberto')) },
+  // iFood (2026-09-25): o iFood não passa pelo PDV; tudo lê as tabelas fin_ifood_* da tela Financeiro › iFood.
+  { id: 'ifood-vendas', grupo: 'iFood', label: 'Vendas do iFood', icone: 'ri-e-bike-2-line', cor: 'bg-red-50 text-red-600', Componente: lazy(() => import('./ifood/VendasIfood')) },
+  { id: 'ifood-repasses', grupo: 'iFood', label: 'Repasses do iFood', icone: 'ri-bank-card-line', cor: 'bg-red-50 text-red-600', Componente: lazy(() => import('./ifood/RepassesIfood')) },
+  { id: 'ifood-custo', grupo: 'iFood', label: 'Custo do iFood no mês', icone: 'ri-percent-line', cor: 'bg-red-50 text-red-600', Componente: lazy(() => import('./ifood/TaxasIfood')) },
+  { id: 'ifood-produtos', grupo: 'iFood', label: 'Mais vendidos no iFood', icone: 'ri-trophy-line', cor: 'bg-red-50 text-red-600', Componente: lazy(() => import('./ifood/ProdutosIfood')) },
   { id: 'receber-mercadoria', grupo: 'Compras e estoque', label: 'Receber mercadoria', icone: 'ri-truck-line', cor: 'bg-amber-50 text-amber-600', Componente: lazy(() => import('./estoque/ReceberMercadoria')) },
   { id: 'registrar-perda', grupo: 'Compras e estoque', label: 'Registrar perda', icone: 'ri-delete-bin-6-line', cor: 'bg-amber-50 text-amber-600', Componente: lazy(() => import('./estoque/RegistrarPerda')) },
   { id: 'contagem-rapida', grupo: 'Compras e estoque', label: 'Contagem rápida', icone: 'ri-list-check-3', cor: 'bg-amber-50 text-amber-600', Componente: lazy(() => import('./estoque/ContagemRapida')) },

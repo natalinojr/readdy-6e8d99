@@ -16,7 +16,9 @@ import { supabase } from '@/lib/supabase';
 import { pedidosPagosDoDia, porHora, porCategoria } from './vendasDoDia';
 import { useAuth } from '@/contexts/AuthContext';
 import { Roteiro, useRoteiro, EscolhaData, Fim, brl, dataBR, somaDias, hojeISO, type AcaoProps } from '../kit';
-import { Painel, Kpis, Barras, Ranking, Variacao, GraficoLinha } from '../painel';
+import { Painel, Kpis, Barras, Ranking, Variacao, GraficoLinha, Linhas } from '../painel';
+import { resumoIfood, lojasIfood, atualizarVendasIfood } from '../ifood/comum';
+import { useAcessoAcoes, rotaLiberada } from '../acesso';
 
 interface Relatorio {
   total_revenue: number;
@@ -44,6 +46,8 @@ export default function VendasDia({ onFechar, irPara }: AcaoProps) {
   // Dia sem venda (ex.: "hoje" logo depois da meia-noite, com o turno de ontem recém-fechado):
   // oferece o dia anterior num toque.
   const [vazio, setVazio] = useState<string | null>(null);
+  const [temIfood, setTemIfood] = useState(false);
+  const acesso = useAcessoAcoes();
 
   useEffect(() => {
     if (iniciou.current) return;
@@ -66,14 +70,23 @@ export default function VendasDia({ onFechar, irPara }: AcaoProps) {
     });
     // Mesmo dia da semana passada: a comparação que faz sentido num restaurante (sexta com sexta).
     const semanaPassada = somaDias(iso, -7);
-    const [{ data, error }, anterior, pedidosDia, pedidosAnterior] = await Promise.all([
-      relatorio(iso), relatorio(semanaPassada), pedidosPagosDoDia(tenantId, iso), pedidosPagosDoDia(tenantId, semanaPassada),
+    // iFood (2026-09-25): fora do PDV, entra num bloco à parte + "Total c/ iFood". Hoje/ontem: busca leve antes.
+    const ifoodDoDia = async () => {
+      const nomes = await lojasIfood(tenantId);
+      if (!Object.keys(nomes).length) return null;
+      if (iso >= somaDias(hojeISO(), -1)) await atualizarVendasIfood(tenantId);
+      return resumoIfood(tenantId, `${iso}T00:00:00-03:00`, `${iso}T23:59:59.999-03:00`, nomes);
+    };
+    const [{ data, error }, anterior, pedidosDia, pedidosAnterior, ifoodBruto] = await Promise.all([
+      relatorio(iso), relatorio(semanaPassada), pedidosPagosDoDia(tenantId, iso), pedidosPagosDoDia(tenantId, semanaPassada), ifoodDoDia().catch(() => null),
     ]);
+    const ifood = ifoodBruto && (ifoodBruto.pedidos || ifoodBruto.cancelados) ? ifoodBruto : null;
+    setTemIfood(!!ifoodBruto);
     if (error) { bot(`Não consegui ler as vendas: ${error.message}`); setPasso('fim'); return; }
     const r = (data ?? {}) as Relatorio;
     const a = (anterior.error ? null : anterior.data) as Relatorio | null;
     const pedidos = Number(r.total_orders ?? 0);
-    if (!pedidos) {
+    if (!pedidos && !ifood) {
       bot(`Nenhuma venda paga em ${dataBR(iso)}${iso === hojeISO() ? ' (ainda)' : ''}.`);
       setVazio(somaDias(iso, -1));
       setPasso('fim');
@@ -102,14 +115,23 @@ export default function VendasDia({ onFechar, irPara }: AcaoProps) {
     const categorias = pedidosDia?.length ? await porCategoria(tenantId, pedidosDia.map((o) => o.id)) : null;
 
     painel(
-      <Painel titulo={`Vendas de ${dataBR(iso)}`} subtitulo={user?.loja || 'Loja ativa'} rodape="iFood fora do PDV não entra aqui. Por categoria soma só os itens (sem taxa de serviço/entrega e descontos).">
+      <Painel titulo={`Vendas de ${dataBR(iso)}`} subtitulo={user?.loja || 'Loja ativa'} rodape={`${ifood ? 'Faturamento, pedidos e gráficos são do PDV; o iFood está no bloco próprio (vendido = itens + entrega).' : 'iFood fora do PDV não entra aqui.'} Por categoria soma só os itens (sem taxa de serviço/entrega e descontos).`}>
         <Kpis
           principal={{ label: 'Faturamento', valor: brl(r.total_revenue), extra: <Variacao atual={Number(r.total_revenue)} base={base(a?.total_revenue)} rotulo={`vs ${diaSemana} passada`} /> }}
           outros={[
             { label: 'Pedidos', valor: String(pedidos), extra: <Variacao atual={pedidos} base={base(a?.total_orders)} rotulo="" /> },
             { label: 'Ticket médio', valor: brl(r.avg_ticket), extra: <Variacao atual={Number(r.avg_ticket)} base={base(a?.avg_ticket)} rotulo="" /> },
+            ...(ifood ? [{ label: 'Total c/ iFood', valor: brl(Number(r.total_revenue ?? 0) + ifood.vendido) }] : []),
           ]}
         />
+        {ifood && (
+          <Linhas titulo="iFood (fora do PDV)" itens={[
+            { label: 'Vendido no iFood', valor: brl(ifood.vendido), detalhe: `${ifood.pedidos} pedido${ifood.pedidos === 1 ? '' : 's'} · itens + entrega` },
+            { label: 'Taxas do iFood', valor: brl(ifood.taxas), status: 'alerta' },
+            { label: 'Líquido para a loja', valor: brl(ifood.liquido), status: 'ok' },
+            ...(ifood.cancelados ? [{ label: `${ifood.cancelados} cancelado${ifood.cancelados === 1 ? '' : 's'} no iFood`, valor: brl(ifood.valorCancelado), status: 'perigo' as const }] : []),
+          ]} />
+        )}
         {pontosHora.length >= 2 && (
           <GraficoLinha titulo="Faturado por hora" pontos={pontosHora} rotuloBase={`${diaSemana} passada`} />
         )}
@@ -137,6 +159,7 @@ export default function VendasDia({ onFechar, irPara }: AcaoProps) {
           ...(vazio ? [{ label: `Ver ${dataBR(vazio)}`, onClick: () => carregar(vazio) }] : []),
           { label: 'Outro dia', onClick: () => { bot('Qual dia?'); setPasso('dia'); } },
           { label: 'Abrir Relatórios', onClick: () => irPara('/relatorios') },
+          ...(temIfood && rotaLiberada('/financeiro?tab=ifood', acesso) ? [{ label: 'Abrir iFood no Financeiro', onClick: () => irPara('/financeiro?tab=ifood') }] : []),
         ]} />
       )}
     </Roteiro>

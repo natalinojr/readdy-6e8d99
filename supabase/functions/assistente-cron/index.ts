@@ -652,6 +652,48 @@ async function caixasSemJustificativa(admin: SupabaseClient, tenants: Array<{ id
   return faltam.length;
 }
 
+// iFood no fechamento (dono, 2026-09-25): o iFood não passa pelo PDV, então o faturamento do turno/dia
+// não tem esses pedidos. Antes de somar, pede ao ifood-financial a busca LEVE das vendas de hoje/ontem
+// (a diária das 07h20 ainda não tem a noite). Mesmas contas da tela Financeiro › iFood › Pedidos:
+// vendido = itens + entrega dos não cancelados; taxas = lançamentos negativos que não são promoção;
+// líquido = saleBalance (o que o iFood repassa). null = loja sem iFood / sem venda no período.
+type IfoodResumo = { pedidos: number; cancelados: number; vendido: number; taxas: number; liquido: number };
+async function ifoodResumo(tenantId: string, from: string, to: string, atualizar: boolean): Promise<IfoodResumo | null> {
+  const [{ tem }] = await db()<[{ tem: boolean }]>`select exists(select 1 from fin_ifood_config where tenant_id = ${tenantId} and is_active) as tem`;
+  if (!tem) return null;
+  if (atualizar) {
+    try {
+      await fetch(`${supabaseUrl}/functions/v1/ifood-financial`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'x-internal-key': Deno.env.get('FISCAL_INTERNAL_KEY') ?? '' },
+        body: JSON.stringify({ action: 'sync_sales', tenant_id: tenantId, days: 2 }),
+        signal: AbortSignal.timeout(25_000),
+      });
+    } catch { /* sem a busca, usa o que já está no banco */ }
+  }
+  const rows = await db()<Array<{ cancelado: boolean; vendido: number; liquido: number; taxas: number }>>`
+    select s.current_status ~* 'CANCEL' as cancelado,
+           (coalesce(s.gross_bag, 0) + coalesce(s.delivery_fee, 0))::float as vendido,
+           coalesce(s.sale_balance, 0)::float as liquido,
+           coalesce((select sum((b->>'value')::numeric) from jsonb_array_elements(case when jsonb_typeof(s.billing_entries) = 'array' then s.billing_entries else '[]'::jsonb end) b
+                      where (b->>'value')::numeric < 0 and coalesce(b->>'name', '') !~* 'SUBSIDY'), 0)::float as taxas
+      from fin_ifood_sales s
+     where s.tenant_id = ${tenantId} and s.sale_created_at >= ${from}::timestamptz and s.sale_created_at < ${to}::timestamptz`;
+  if (!rows.length) return null;
+  const ok = rows.filter((r) => !r.cancelado);
+  return {
+    pedidos: ok.length, cancelados: rows.length - ok.length,
+    vendido: ok.reduce((a, r) => a + Number(r.vendido), 0),
+    taxas: rows.reduce((a, r) => a + Number(r.taxas), 0),
+    liquido: rows.reduce((a, r) => a + Number(r.liquido), 0),
+  };
+}
+const ifoodLinhas = (f: IfoodResumo) => [
+  { l: 'Vendido no iFood', v: brl(f.vendido), d: `${f.pedidos} pedido${f.pedidos === 1 ? '' : 's'} · itens + entrega` },
+  { l: 'Taxas do iFood', v: brl(f.taxas), st: 'alerta' as const },
+  { l: 'Líquido para a loja', v: brl(f.liquido), st: 'ok' as const },
+  ...(f.cancelados ? [{ l: `${f.cancelados} cancelado${f.cancelados === 1 ? '' : 's'} no iFood`, st: 'perigo' as const }] : []),
+];
+
 async function sessaoText(admin: SupabaseClient, sessionId: string): Promise<Aviso | null> {
   const { data: s } = await admin.from('sessions')
     .select('id, tenant_id, number, opened_at, closed_at, is_training').eq('id', sessionId).maybeSingle();
@@ -673,7 +715,9 @@ async function sessaoText(admin: SupabaseClient, sessionId: string): Promise<Avi
       (select coalesce(sum(total_amount),0)::float from orders where session_id = ${sessionId} and not is_training and status = 'cancelled') as cancelados_valor,
       (select coalesce(sum(discount_amount),0)::float from orders where session_id = ${sessionId} and not is_training and status <> 'cancelled') as descontos`;
   const x = extra[0];
-  if (!n && !x.cancelados) return null; // turno sem venda: não enche o chat
+  // iFood no horário do turno (abertura → fechamento), com busca leve antes (a noite ainda não foi buscada).
+  const ifood = await ifoodResumo(String(s.tenant_id), String(s.opened_at), String(s.closed_at ?? new Date().toISOString()), true).catch(() => null);
+  if (!n && !x.cancelados && !ifood) return null; // turno sem venda: não enche o chat
   const lwRev = Number(prev.total_revenue ?? 0);
   const CANAL_NOME: Record<string, string> = { delivery: 'Delivery', table: 'Mesa', qr_universal: 'QR Code', cashier: 'Caixa', immediate: 'Balcão', name: 'Senha', password: 'Senha', self_service: 'Autoatendimento', waiter: 'Garçom' };
   const l: string[] = [];
@@ -758,6 +802,11 @@ async function sessaoText(admin: SupabaseClient, sessionId: string): Promise<Avi
   const difs = (caixas ?? []) as Array<{ closing_difference: number | null }>;
   const somaDif = difs.reduce((a, c) => a + Number(c.closing_difference ?? 0), 0);
   if (difs.length) { l.push(''); l.push(`*Caixas*: ${difs.length} · dinheiro ${diffTexto(somaDif)}`); }
+  if (ifood) {
+    l.push('');
+    l.push(`*iFood* (fora do PDV): ${brl(ifood.vendido)} em ${ifood.pedidos} pedido${ifood.pedidos === 1 ? '' : 's'} · taxas ${brl(ifood.taxas)} · líquido ${brl(ifood.liquido)}${ifood.cancelados ? ` · ${ifood.cancelados} cancelado(s)` : ''}`);
+    l.push(`*Total com iFood*: ${brl(rev + ifood.vendido)}`);
+  }
   const alertas: string[] = [];
   if (x.cancelados) alertas.push(`${x.cancelados} cancelado(s) (${brl(x.cancelados_valor)})`);
   if (x.descontos > 0) alertas.push(`descontos ${brl(x.descontos)}`);
@@ -767,7 +816,7 @@ async function sessaoText(admin: SupabaseClient, sessionId: string): Promise<Avi
     r: `${s.number ? `Sessão #${s.number} · ` : ''}${diaHora(s.opened_at)} → ${diaHora(s.closed_at)}`,
     kpi: {
       p: { l: 'Faturamento', v: brl(rev), ...(lwRev > 0 ? { var: { a: rev, b: lwRev, r: `vs ${['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'][weekday(lwDay)]} passada` } } : {}) },
-      o: [{ l: 'Pedidos', v: String(n) }, { l: 'Ticket médio', v: brl(r.avg_ticket) }],
+      o: [{ l: 'Pedidos', v: String(n) }, { l: 'Ticket médio', v: brl(r.avg_ticket) }, ...(ifood ? [{ l: 'Total c/ iFood', v: brl(rev + ifood.vendido) }] : [])],
     },
     ...(grafico.length >= 2 ? { gl: { t: 'Faturado por hora', rb: `${['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'][weekday(lwDay)]} passada`, i: grafico } } : {}),
     b: [
@@ -778,8 +827,12 @@ async function sessaoText(admin: SupabaseClient, sessionId: string): Promise<Avi
       ...(categorias.length ? [{ t: 'Por categoria (itens)', c: 'bg-amber-500', i: categorias.map((c) => ({ l: c.nome, v: c.valor, d: `${c.qtd} ${c.qtd === 1 ? 'item' : 'itens'}` })) }] : []),
     ],
     ...(top.length ? { rk: { t: 'Mais vendidos', p: 'v', i: top.map(([nome, it]) => ({ n: nome, q: it.q, v: it.v })) } } : {}),
-    ...(difs.length ? { lin: [{ t: 'Caixas', i: [{ l: `${difs.length} caixa${difs.length === 1 ? '' : 's'} do turno`, v: diffTexto(somaDif).replace(' ✅', '').replace(' ⚠️', ''), st: (Math.abs(somaDif) < 0.01 ? 'ok' : 'perigo') as 'ok' | 'perigo' }] }] } : {}),
+    ...((difs.length || ifood) ? { lin: [
+      ...(difs.length ? [{ t: 'Caixas', i: [{ l: `${difs.length} caixa${difs.length === 1 ? '' : 's'} do turno`, v: diffTexto(somaDif).replace(' ✅', '').replace(' ⚠️', ''), st: (Math.abs(somaDif) < 0.01 ? 'ok' : 'perigo') as 'ok' | 'perigo' }] }] : []),
+      ...(ifood ? [{ t: 'iFood (fora do PDV)', i: ifoodLinhas(ifood) }] : []),
+    ] } : {}),
     ...(alertas.length ? { al: alertas } : {}),
+    ...(ifood ? { bt: [{ l: 'Ver iFood', r: '/financeiro?tab=ifood', i: 'ri-e-bike-2-line' }] } : {}),
   };
   return {
     texto: l.join('\n'),
@@ -814,7 +867,8 @@ async function closingText(admin: SupabaseClient, tenants: Array<{ id: string; n
         (select sum(closing_difference)::float from cash_registers where tenant_id = ${t.id} and closed_at >= ${from}::timestamptz and closed_at < ${to}::timestamptz) as quebra,
         (select count(*)::int from cash_registers where tenant_id = ${t.id} and status <> 'closed' and opened_at >= ${from}::timestamptz and opened_at < ${to}::timestamptz) as caixas_abertos`;
     const x = extra[0];
-    if (!n && !x.cancelados) { parts.push(`*${t.name}*: sem movimento hoje.`); continue; }
+    const ifood = await ifoodResumo(t.id, from, to, day === localDate()).catch(() => null);
+    if (!n && !x.cancelados && !ifood) { parts.push(`*${t.name}*: sem movimento hoje.`); continue; }
     anyMovement = true;
     const lines = [`*${t.name}*`];
     const lwRev = Number(l.total_revenue ?? 0);
@@ -836,6 +890,7 @@ async function closingText(admin: SupabaseClient, tenants: Array<{ id: string; n
     }
     const top = [...somaItens.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([nome, qtd]) => `${nome} (${qtd})`);
     if (top.length) lines.push(`Mais vendidos: ${top.join(', ')}`);
+    if (ifood) lines.push(`iFood (fora do PDV): ${brl(ifood.vendido)} em ${ifood.pedidos} pedidos · taxas ${brl(ifood.taxas)} · líquido ${brl(ifood.liquido)} — total com iFood ${brl(rev + ifood.vendido)}`);
     const alerts: string[] = [];
     if (x.cancelados) alerts.push(`${x.cancelados} cancelado(s) (${brl(x.cancelados_valor)})`);
     if (x.descontos > 0) alerts.push(`descontos ${brl(x.descontos)}${rev > 0 ? ` (${Math.round((x.descontos / (rev + x.descontos)) * 100)}%)` : ''}`);

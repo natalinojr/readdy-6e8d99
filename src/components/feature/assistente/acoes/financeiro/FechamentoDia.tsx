@@ -6,12 +6,14 @@
 // Vendas: RPC fn_get_sales_report (mesma do Relatórios › detalhe do dia). Por hora e por categoria:
 // as mesmas contas da ação "Vendas do dia" (pedidosPagosDoDia / porHora / porCategoria).
 // Caixas: os que ABRIRAM no dia e já fecharam. Cancelados/descontos: pedidos do dia sem treino.
+// iFood (2026-09-25): bloco "iFood (fora do PDV)" + "Total c/ iFood", igual ao turno (ifood/comum.ts).
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { Roteiro, useRoteiro, EscolhaData, Fim, OpcaoNeutra, brl, dataBR, hojeISO, somaDias, type AcaoProps } from '../kit';
 import PainelMensagem, { type DadosPainel } from '../../PainelMensagem';
 import { pedidosPagosDoDia, porHora, porCategoria } from '../operacao/vendasDoDia';
+import { resumoIfood, lojasIfood, atualizarVendasIfood } from '../ifood/comum';
 
 interface Relatorio {
   total_revenue?: number; total_orders?: number; avg_ticket?: number;
@@ -41,7 +43,14 @@ export default function FechamentoDia({ onFechar, irPara }: AcaoProps) {
     const from = `${dia}T00:00:00-03:00`;
     const to = `${dia}T23:59:59-03:00`;
     const semanaPassada = somaDias(dia, -7);
-    const [rep, anterior, extras, caixas, pedidosDia, pedidosAnterior] = await Promise.all([
+    const ifoodDoDia = async () => {
+      const nomes = await lojasIfood(tenantId);
+      if (!Object.keys(nomes).length) return null;
+      if (dia >= somaDias(hojeISO(), -1)) await atualizarVendasIfood(tenantId);
+      const f = await resumoIfood(tenantId, from, `${dia}T23:59:59.999-03:00`, nomes);
+      return f && (f.pedidos || f.cancelados) ? f : null;
+    };
+    const [rep, anterior, extras, caixas, pedidosDia, pedidosAnterior, ifood] = await Promise.all([
       supabase.rpc('fn_get_sales_report', { p_tenant_id: tenantId, p_date_from: from, p_date_to: to, p_session_id: null }),
       supabase.rpc('fn_get_sales_report', { p_tenant_id: tenantId, p_date_from: `${semanaPassada}T00:00:00-03:00`, p_date_to: `${semanaPassada}T23:59:59-03:00`, p_session_id: null }),
       supabase.from('orders').select('status, total_amount, discount_amount')
@@ -50,6 +59,7 @@ export default function FechamentoDia({ onFechar, irPara }: AcaoProps) {
         .eq('tenant_id', tenantId).gte('opened_at', from).lte('opened_at', to).not('closed_at', 'is', null),
       pedidosPagosDoDia(tenantId, dia),
       pedidosPagosDoDia(tenantId, semanaPassada),
+      ifoodDoDia().catch(() => null),
     ]);
 
     if (rep.error) {
@@ -64,7 +74,7 @@ export default function FechamentoDia({ onFechar, irPara }: AcaoProps) {
     const valorCancelado = cancelados.reduce((s, o) => s + Number(o.total_amount ?? 0), 0);
     const descontos = pedidos.filter((o) => o.status !== 'cancelled').reduce((s, o) => s + Number(o.discount_amount ?? 0), 0);
     const n = Number(r.total_orders ?? 0);
-    if (!n && !cancelados.length) {
+    if (!n && !cancelados.length && !ifood) {
       bot(`*Fechamento do dia · ${dataBR(dia)}*\nNenhum pedido pago nesse dia.`);
       setPasso('fim');
       return;
@@ -104,7 +114,7 @@ export default function FechamentoDia({ onFechar, irPara }: AcaoProps) {
       r: `${dataBR(dia)} · dia inteiro, todos os turnos`,
       kpi: {
         p: { l: 'Faturamento', v: brl(rev), ...(lwRev > 0 ? { var: { a: rev, b: lwRev, r: `vs ${rotuloSemana}` } } : {}) },
-        o: [{ l: 'Pedidos', v: String(n) }, { l: 'Ticket médio', v: brl(Number(r.avg_ticket ?? 0)) }],
+        o: [{ l: 'Pedidos', v: String(n) }, { l: 'Ticket médio', v: brl(Number(r.avg_ticket ?? 0)) }, ...(ifood ? [{ l: 'Total c/ iFood', v: brl(rev + ifood.vendido) }] : [])],
       },
       ...(grafico.length >= 2 ? { gl: { t: 'Faturado por hora', rb: rotuloSemana, i: grafico } } : {}),
       b: [
@@ -113,7 +123,15 @@ export default function FechamentoDia({ onFechar, irPara }: AcaoProps) {
         ...(categorias?.length ? [{ t: 'Por categoria (itens)', c: 'bg-amber-500', i: categorias.map((c) => ({ l: c.nome, v: c.valor, d: `${c.qtd} ${c.qtd === 1 ? 'item' : 'itens'}` })) }] : []),
       ],
       ...(top.length ? { rk: { t: 'Mais vendidos', p: 'v' as const, i: top.map(([nome, it]) => ({ n: nome, q: it.q, v: it.v })) } } : {}),
-      ...(difs.length ? { lin: [{ t: 'Caixas', i: [{ l: `${difs.length} caixa${difs.length === 1 ? '' : 's'} do dia`, v: diffTexto(somaDif), st: (Math.abs(somaDif) < 0.01 ? 'ok' : 'perigo') as 'ok' | 'perigo' }] }] } : {}),
+      ...((difs.length || ifood) ? { lin: [
+        ...(difs.length ? [{ t: 'Caixas', i: [{ l: `${difs.length} caixa${difs.length === 1 ? '' : 's'} do dia`, v: diffTexto(somaDif), st: (Math.abs(somaDif) < 0.01 ? 'ok' : 'perigo') as 'ok' | 'perigo' }] }] : []),
+        ...(ifood ? [{ t: 'iFood (fora do PDV)', i: [
+          { l: 'Vendido no iFood', v: brl(ifood.vendido), d: `${ifood.pedidos} pedido${ifood.pedidos === 1 ? '' : 's'} · itens + entrega` },
+          { l: 'Taxas do iFood', v: brl(ifood.taxas), st: 'alerta' as const },
+          { l: 'Líquido para a loja', v: brl(ifood.liquido), st: 'ok' as const },
+          ...(ifood.cancelados ? [{ l: `${ifood.cancelados} cancelado${ifood.cancelados === 1 ? '' : 's'} no iFood`, st: 'perigo' as const }] : []),
+        ] }] : []),
+      ] } : {}),
       ...(alertas.length ? { al: alertas } : {}),
     };
     painel(<PainelMensagem dados={dados} />);

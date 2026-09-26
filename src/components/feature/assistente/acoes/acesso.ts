@@ -69,6 +69,12 @@ const REGRAS: Record<string, (c: ContextoAcesso) => boolean> = {
   'pedidos-atrasados': (c) => algum(c, 'gestao_pedidos', 'gestor_pedidos_acessar', 'kds_acessar'),
   'impressora-parada': (c) => (c.pode('configuracoes_editar') && c.pode('cfg_impressoras')) || c.pode('gestao_pedidos'),
   'caixa-aberto': (c) => algum(c, 'pdv_abrir_caixa', 'pdv_fechar_caixa', 'rel_caixa'),
+  // iFood: vendas é leitura de faturamento (mesma turma do Vendas do dia) ou quem vê a aba iFood;
+  // repasses e custo são do Financeiro › iFood.
+  'ifood-vendas': (c) => algum(c, 'rel_geral', 'relatorio_financeiro', 'gestao_dashboard') || fin(c, 'fin_ifood'),
+  'ifood-repasses': (c) => fin(c, 'fin_ifood'),
+  'ifood-custo': (c) => fin(c, 'fin_ifood'),
+  'ifood-produtos': (c) => fin(c, 'fin_ifood') || algum(c, 'rel_geral', 'cardapio_editar'),
   // Receber mercadoria só abre o /receber: mesma regra da rota (RotaProtegida/Sidebar).
   'receber-mercadoria': (c) => rotaLiberada('/receber', c) && algum(c, 'estoque_receber', 'estoque_movimentar'),
   // Pedidos de pagamento (2026-09-24): mesma permissão da tela
