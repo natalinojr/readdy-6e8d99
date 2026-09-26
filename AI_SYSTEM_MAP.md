@@ -3494,3 +3494,7 @@ Sem SW ativo o POST cai no Vercel e falha — por isso o destino só existe no S
   responde `{ fresh: true, last_sync_at }` sem chamar o provedor (~1–2 s). Menu "Atualizar bancos agora"/"Buscar o período"
   não mandam o parâmetro e vão sempre. Depois da busca a lista é relida com `refresh(true)` (silenciosa, sem "Carregando...").
   Nova busca automática em tela = sempre com `max_age_min`; o cron nunca manda.
+- **Ordem da DRE (2026-09-26)**: grupos que subtraem do resultado (`expense` + grupos da loja) e categorias (entre irmãs)
+  têm ↑↓ em Categorias DRE. Posição em `fin_dre_groups.sort_order` (o `expense` ganha linha própria só para guardar a posição —
+  não é "apelido": apelido = nome/ícone diferente do de fábrica) e `fin_dre_categories.sort_order`. Toda tela que lista grupos
+  usa `ordenarGrupos()` de `useDreGroups` (sem posição: `expense` primeiro, resto na ordem de chegada). "Receitas" fica fixo no topo.
