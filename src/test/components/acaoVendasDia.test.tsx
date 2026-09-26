@@ -27,6 +27,8 @@ vi.mock('@/lib/supabase', () => ({
   SUPABASE_ANON_KEY: 'k',
 }));
 vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => h.auth }));
+// Permissões (botão "Abrir iFood no Financeiro"): fora do escopo deste teste.
+vi.mock('@/components/feature/assistente/acoes/acesso', () => ({ useAcessoAcoes: () => ({ perfil: 'admin', pode: () => true, modulo: () => true, carregando: false }), rotaLiberada: () => false }));
 
 import VendasDia from '@/components/feature/assistente/acoes/operacao/VendasDia';
 
