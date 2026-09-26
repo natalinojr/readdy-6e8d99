@@ -391,6 +391,9 @@ async function syncTenant(admin: Admin, tenantId: string, opts: { days?: number;
 
     // Pagamentos × notas de entrada / contas a pagar: só SUGERE (a baixa é confirmada pelo usuário).
     try {
+      // Fornecedor pré-pago (2026-09-26): Pix de recarga vira crédito antes do casamento com notas
+      const { error: ppErr } = await admin.rpc('fn_prepaid_apply_topups', { p_tenant: tenantId });
+      if (ppErr) log('WARN', action, 'fn_prepaid_apply_topups falhou', { tenantId, error: ppErr.message });
       const { data: mp, error: mpErr } = await admin.rpc('fn_match_payments', { p_tenant: tenantId, p_from: from < addDays(today, -120) ? from : addDays(today, -120), p_to: today });
       if (mpErr) log('WARN', action, 'fn_match_payments falhou', { tenantId, error: mpErr.message });
       else if (mp) log('INFO', action, 'pagamentos×notas', { tenantId, ...(mp as Record<string, unknown>) });

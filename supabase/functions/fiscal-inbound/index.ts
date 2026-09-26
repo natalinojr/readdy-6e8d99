@@ -772,6 +772,10 @@ async function autoLaunchTenant(admin: Admin, supabaseUrl: string, tenantId: str
   ]);
   const billById = new Map(((billsRes.data ?? []) as any[]).map((b) => [String(b.id), b]));
   const purById = new Map(((pursRes.data ?? []) as any[]).map((p) => [String(p.id), p]));
+  // Fornecedor pré-pago (2026-09-26): a nota é o consumo do crédito — lança pela Conferir
+  // (conciliacao-pagamentos › prepaid_consume), nunca como conta a pagar
+  const { data: pre } = await admin.from('fin_prepaid_suppliers').select('cnpj').eq('tenant_id', tenantId);
+  const prePago = new Set(((pre ?? []) as any[]).map((p) => String(p.cnpj).slice(0, 8)));
 
   const ctx: ImportCtx = { admin, supabaseUrl, tenantId, userId: null, userToken: null };
   for (const doc of docs) {
@@ -782,6 +786,7 @@ async function autoLaunchTenant(admin: Admin, supabaseUrl: string, tenantId: str
     if (Number(doc.sefaz_status) === 2) { pular('cancelada pelo fornecedor'); continue; }
     const bonificacao = !servico && isBonificacao(doc);
     if (!bonificacao) {
+      if (prePago.has(String(doc.emitente_cnpj ?? '').replace(/\D/g, '').slice(0, 8)) || h?.settlement === 'prepaid') { pular('fornecedor pré-pago: lançar do crédito'); continue; }
       if (!h) { pular('fornecedor novo'); continue; }
       // Nota do mês: a última foi quitada pelos pagamentos do extrato — esta também precisa ser
       // vinculada (Conferir › pagamentos do mês), senão viraria conta a pagar em dobro

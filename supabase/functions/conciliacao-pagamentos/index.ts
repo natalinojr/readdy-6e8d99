@@ -20,6 +20,13 @@
 //                          admin/gerente — NOTA DO MÊS: 1 nota cobre vários pagamentos já feitos; lança na data de
 //                          emissão com 1 parcela por pagamento, cada uma baixada; saldo que faltar fica a pagar
 //   unlink_monthly         { document_id }       desfaz tudo (estorna as baixas, apaga a compra, nota volta a conferir)
+//   FORNECEDOR PRÉ-PAGO (2026-09-26, Facebook/Meta Ads): Pix = recarga de crédito (fora do DRE, sai do caixa),
+//   nota = consumo do mês (despesa na competência da nota, paga com o crédito). Tabelas fin_prepaid_*.
+//   prepaid_list        { cnpj? }   fornecedores, saldo, movimentos e notas pendentes (aplica as recargas antes)
+//   prepaid_save        { cnpj, name, dre_category_id, cost_center_id?, start_date, opening_balance?, is_active? }  admin/gerente
+//   prepaid_adjust      { supplier_id, saldo_real, note? }   acerto pelo saldo que o fornecedor mostra (fora do DRE)
+//   prepaid_move_delete { id }   apaga um acerto
+//   prepaid_consume     { document_id }   lança a nota do crédito;  prepaid_unconsume { document_id } desfaz
 //   save_counterpart_rule  { counterpart_doc, counterpart_label?, category, cost_center_id?, transaction_type }
 //   create_from_statement  { ids, kind: 'despesa'|'compra'|'freelancer' (dias?: 'YYYY-MM-DD'[], funcao?)|'fora_dre' (motivo: retirada_dono|transferencia|emprestimo|particular|investimento|outro), dre_category_id?, merchandise_category_id?, description?,
 //                            supplier?, cost_center_id?, allow_payroll?, competence_month?: 'YYYY-MM' }   admin/gerente — pagamento SEM NOTA:
@@ -713,6 +720,112 @@ async function unlinkMonthly(ctx: Ctx, doc: Row, silencioso = false): Promise<{ 
   return { ok: true, msg: 'Vínculo desfeito: os pagamentos voltaram a pendentes e a nota voltou para "A conferir"' };
 }
 
+// ── Fornecedor pré-pago (2026-09-26) ────────────────────────────────────────
+// Recarga (Pix ao CNPJ do fornecedor) = crédito, sai do caixa e não entra no DRE
+// (fn_prepaid_apply_topups). Nota = consumo do mês: despesa na data de competência da nota,
+// quitada com o crédito — conta a pagar paga sem banco e sem fin_cash_flow (o dinheiro já saiu
+// na recarga). Caso típico: Facebook/Meta Ads (NFS-e do dia 03 = anúncios do mês anterior).
+type Prepaid = Row & { saldo: number };
+
+async function prepaidSuppliers(ctx: Ctx): Promise<Prepaid[]> {
+  const { admin, tenantId } = ctx;
+  const { data: sups } = await admin.from('fin_prepaid_suppliers').select('*').eq('tenant_id', tenantId).order('name');
+  const list = (sups ?? []) as Row[];
+  if (list.length === 0) return [];
+  const { data: moves } = await admin.from('fin_prepaid_moves').select('supplier_id, amount').eq('tenant_id', tenantId);
+  const soma = new Map<string, number>();
+  for (const m of (moves ?? []) as Row[]) soma.set(String(m.supplier_id), (soma.get(String(m.supplier_id)) ?? 0) + Number(m.amount));
+  return list.map((s) => ({ ...s, saldo: round2(Number(s.opening_balance ?? 0) + (soma.get(String(s.id)) ?? 0)) }));
+}
+
+async function prepaidFor(ctx: Ctx, cnpj: unknown): Promise<Prepaid | null> {
+  const raiz = soDigitos(cnpj).slice(0, 8);
+  if (raiz.length !== 8) return null;
+  return (await prepaidSuppliers(ctx)).find((s) => String(s.cnpj).slice(0, 8) === raiz) ?? null;
+}
+
+// Data do consumo: competência da NFS-e (dCompet — Meta usa o último dia do mês dos anúncios);
+// sem ela, a emissão.
+function competenciaNota(doc: Row): string {
+  const c = String(((doc.itens ?? []) as Row[])[0]?.competencia ?? '').slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(c) ? c : String(doc.emitted_at ?? '').slice(0, 10);
+}
+const mesBR = (iso: string) => iso.slice(5, 7) + '/' + iso.slice(0, 4);
+
+async function applyTopups(ctx: Ctx): Promise<number> {
+  const { data, error } = await ctx.admin.rpc('fn_prepaid_apply_topups', { p_tenant: ctx.tenantId });
+  if (error) { log('WARN', 'prepaid', 'fn_prepaid_apply_topups falhou', { tenantId: ctx.tenantId, error: error.message }); return 0; }
+  return Number(data ?? 0);
+}
+
+async function prepaidConsume(ctx: Ctx, doc: Row): Promise<{ ok: boolean; msg: string }> {
+  const { admin, tenantId } = ctx;
+  if (doc.status !== 'new') return { ok: false, msg: 'Esta nota já foi lançada ou está ignorada' };
+  if (Number(doc.sefaz_status) === 2) return { ok: false, msg: 'A nota foi CANCELADA na SEFAZ — não lance' };
+  await applyTopups(ctx);
+  const sup = await prepaidFor(ctx, doc.emitente_cnpj);
+  if (!sup || !sup.is_active) return { ok: false, msg: 'Este fornecedor não está marcado como pré-pago' };
+  const total = round2(Number(doc.valor_total ?? 0));
+  if (total <= 0) return { ok: false, msg: 'Nota sem valor' };
+  const data = competenciaNota(doc);
+  if (data < String(sup.start_date)) {
+    return { ok: false, msg: 'Consumo de ' + mesBR(data) + ' é de antes do início do crédito (' + br(String(sup.start_date)) + '): foi pago com recargas que não estão aqui. Ignore esta nota.' };
+  }
+  const { data: cat } = await admin.from('fin_dre_categories').select('name').eq('id', sup.dre_category_id).maybeSingle();
+  const nota = 'Fornecedor pré-pago: consumo de ' + mesBR(data) + ' pago com o crédito (recargas por Pix)';
+  const imp = await callEdge(ctx, 'fiscal-inbound', {
+    action: 'import_bill', tenant_id: tenantId, document_id: doc.id, tipo_escolhido: true, notes: nota,
+    parcelas: [{ numero: '1', vencimento: data, valor: total }],
+    category: cat?.name ?? 'Marketing', dre_category_id: sup.dre_category_id, cost_center_id: sup.cost_center_id ?? null,
+  });
+  if (!imp.ok) return { ok: false, msg: 'Lançar a nota: ' + (imp.error ?? 'falhou') };
+
+  const { data: d2 } = await admin.from('fiscal_inbound_documents').select('payable_ids').eq('id', doc.id).maybeSingle();
+  const billId = ((d2?.payable_ids ?? []) as string[])[0] ?? null;
+  const desfaz = async (motivo: string) => {
+    if (billId) await admin.from('fin_accounts_payable').delete().eq('id', billId).eq('tenant_id', tenantId);
+    await admin.from('fiscal_inbound_documents').update({
+      status: 'new', import_type: null, purchase_id: null, payable_ids: [], imported_at: null, imported_by: null,
+      settlement: null, updated_at: new Date().toISOString(),
+    }).eq('id', doc.id);
+    return { ok: false, msg: 'Lançar do crédito: ' + motivo + ' (nada foi lançado)' };
+  };
+  if (!billId) return desfaz('a conta não foi criada');
+  // Quitada com o crédito: sem conta bancária e sem fin_cash_flow (o caixa já saiu na recarga).
+  // DRE caixa lê paid_date e competência lê due_date: as duas = mês do consumo.
+  const { error: pe } = await admin.from('fin_accounts_payable').update({
+    status: 'paid', paid_date: data, paid_amount: total, payment_method: 'Crédito pré-pago',
+    competence_month: data.slice(0, 7) + '-01', updated_at: new Date().toISOString(),
+  }).eq('id', billId).eq('tenant_id', tenantId);
+  if (pe) return desfaz(pe.message);
+  const { error: me } = await admin.from('fin_prepaid_moves').insert({
+    tenant_id: tenantId, supplier_id: sup.id, kind: 'consumption', amount: -total, date: data,
+    document_id: doc.id, bill_id: billId, created_by: ctx.userId,
+    note: 'NF ' + (doc.numero ?? '?') + ' — consumo de ' + mesBR(data),
+  });
+  if (me) return desfaz(me.message);
+  await admin.from('fiscal_inbound_documents').update({ settlement: 'prepaid', updated_at: new Date().toISOString() }).eq('id', doc.id);
+  const saldo = round2(sup.saldo - total);
+  return {
+    ok: true,
+    msg: 'Despesa de ' + br$(total) + ' lançada em ' + br(data) + ' (' + (cat?.name ?? 'DRE') + '), paga com o crédito. Saldo agora: ' + br$(saldo)
+      + (saldo < -0.009 ? ' — negativo: falta registrar recarga ou acertar o saldo' : ''),
+  };
+}
+
+async function prepaidUnconsume(ctx: Ctx, doc: Row): Promise<{ ok: boolean; msg: string }> {
+  const { admin, tenantId } = ctx;
+  if (doc.settlement !== 'prepaid' || doc.status !== 'imported') return { ok: false, msg: 'Esta nota não foi lançada do crédito' };
+  const payIds = ((doc.payable_ids ?? []) as string[]);
+  await admin.from('fin_prepaid_moves').delete().eq('tenant_id', tenantId).eq('document_id', doc.id);
+  if (payIds.length) await admin.from('fin_accounts_payable').delete().eq('tenant_id', tenantId).in('id', payIds);
+  await admin.from('fiscal_inbound_documents').update({
+    status: 'new', import_type: null, purchase_id: null, payable_ids: [], imported_at: null, imported_by: null,
+    settlement: null, auto_launch_blocked: true, error_message: null, updated_at: new Date().toISOString(),
+  }).eq('id', doc.id);
+  return { ok: true, msg: 'Desfeito: a despesa saiu, o valor voltou para o crédito e a nota voltou para "A conferir"' };
+}
+
 // ── Desfazer (estorno) ───────────────────────────────────────────────────────
 async function reversePayment(ctx: Ctx, billId: string, amount: number, bankAccountId: string | null, date: string) {
   const { admin, tenantId } = ctx;
@@ -756,6 +869,17 @@ async function undoOne(ctx: Ctx, rowId: string): Promise<Result> {
       status: 'pending', reconciled: false, reconciled_at: null, reconciled_by: null, matched_at: null, matched_by: null, match_detail: resto,
     }).eq('id', row.id);
     return { id: row.id, ok: true, msg: 'Pagamento da folha desfeito: a folha voltou a pendente.' };
+  }
+  // Recarga de fornecedor pré-pago: sai do crédito e do caixa; a linha não volta a ser recarga sozinha
+  if (c?.created === 'prepaid_topup') {
+    await admin.from('fin_prepaid_moves').delete().eq('tenant_id', tenantId).eq('statement_id', row.id);
+    if (c.cash_flow_id) await admin.from('fin_cash_flow').delete().eq('tenant_id', tenantId).eq('id', c.cash_flow_id).eq('origin', 'prepaid_topup');
+    await admin.from('fin_bank_statement_imports').update({
+      status: 'pending', reconciled: false, reconciled_at: null, reconciled_by: null, matched_at: null, matched_by: null,
+      match_kind: det.prev_match_kind ?? null, match_ref_id: null, match_confidence: null, category: det.prev_category ?? null,
+      match_detail: { prepaid_skip: true },
+    }).eq('id', row.id).eq('tenant_id', tenantId);
+    return { id: row.id, ok: true, msg: 'Desfeito: este pagamento não conta mais como recarga de crédito e voltou a pendente.' };
   }
   // "Não entra no DRE": nada foi criado, só devolve a linha para pendente
   if (c?.created === 'fora_dre') {
@@ -948,6 +1072,7 @@ Deno.serve(async (req: Request) => {
     if (action === 'rematch') {
       const to = todayBR();
       const from = addDays(to, -120);
+      await applyTopups(ctx); // antes do casamento: recarga de pré-pago não vira sugestão de nota
       const { data, error } = await admin.rpc('fn_match_payments', { p_tenant: tenantId, p_from: from, p_to: to });
       if (error) return errResp('Sugerir vínculos: ' + error.message, 500);
       const { data: folha, error: fe } = await admin.rpc('fn_match_payroll', { p_tenant: tenantId, p_from: from, p_to: to });
@@ -1148,6 +1273,99 @@ Deno.serve(async (req: Request) => {
         return r.ok ? json({ success: true, message: r.msg }) : errResp(r.msg);
       }
       const r = await unlinkMonthly(ctx, doc);
+      return r.ok ? json({ success: true, message: r.msg }) : errResp(r.msg);
+    }
+
+    // ── Fornecedor pré-pago ────────────────────────────────────────────────────
+    if (action === 'prepaid_list') {
+      await applyTopups(ctx);
+      const raiz = soDigitos(body.cnpj).slice(0, 8);
+      const sups = (await prepaidSuppliers(ctx)).filter((s) => !raiz || String(s.cnpj).slice(0, 8) === raiz);
+      const ids = sups.map((s) => String(s.id));
+      const { data: moves } = ids.length
+        ? await admin.from('fin_prepaid_moves').select('id, supplier_id, kind, amount, date, statement_id, document_id, note, created_at')
+            .eq('tenant_id', tenantId).in('supplier_id', ids).order('date', { ascending: false }).order('created_at', { ascending: false }).limit(300)
+        : { data: [] as Row[] };
+      const { data: docs } = ids.length
+        ? await admin.from('fiscal_inbound_documents').select('id, numero, emitente_cnpj, valor_total, emitted_at, itens, status')
+            .eq('tenant_id', tenantId).eq('status', 'new').in('emitente_cnpj', sups.map((s) => String(s.cnpj))).order('emitted_at')
+        : { data: [] as Row[] };
+      const { data: rs } = await admin.from('fin_revenue_settings').select('financeiro_inicio').eq('tenant_id', tenantId).maybeSingle();
+      return json({
+        success: true,
+        financeiro_inicio: rs?.financeiro_inicio ?? null,
+        suppliers: sups.map((s) => ({
+          ...s,
+          moves: ((moves ?? []) as Row[]).filter((m) => String(m.supplier_id) === String(s.id)),
+          notas_pendentes: ((docs ?? []) as Row[]).filter((d) => soDigitos(d.emitente_cnpj).slice(0, 8) === String(s.cnpj).slice(0, 8))
+            .map((d) => ({ id: d.id, numero: d.numero, valor: round2(Number(d.valor_total ?? 0)), competencia: competenciaNota(d), antes_do_inicio: competenciaNota(d) < String(s.start_date) })),
+        })),
+      });
+    }
+
+    if (action === 'prepaid_save') {
+      if (!isManager) return errResp('Apenas administradores e gerentes', 403);
+      const cnpj = soDigitos(body.cnpj);
+      if (cnpj.length !== 14) return errResp('CNPJ do fornecedor inválido');
+      const nome = String(body.name ?? '').trim().slice(0, 120);
+      if (!nome) return errResp('Informe o nome do fornecedor');
+      const dreId = String(body.dre_category_id ?? '');
+      const { data: cat } = dreId ? await admin.from('fin_dre_categories').select('id, group_type').eq('id', dreId).eq('tenant_id', tenantId).maybeSingle() : { data: null };
+      if (!cat || ['revenue', 'tax', 'cost'].includes(String(cat.group_type))) return errResp('Escolha a categoria de despesa do DRE');
+      const inicio = String(body.start_date ?? '');
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(inicio)) return errResp('Informe a data de início do crédito');
+      const abertura = round2(Number(body.opening_balance ?? 0));
+      if (!Number.isFinite(abertura)) return errResp('Saldo inicial inválido');
+      const campos = {
+        tenant_id: tenantId, cnpj, name: nome, dre_category_id: dreId, cost_center_id: body.cost_center_id ? String(body.cost_center_id) : null,
+        start_date: inicio, opening_balance: abertura, is_active: body.is_active !== false, updated_at: new Date().toISOString(),
+      };
+      const { data: atual } = await admin.from('fin_prepaid_suppliers').select('id, start_date').eq('tenant_id', tenantId).eq('cnpj', cnpj).maybeSingle();
+      if (atual && inicio > String(atual.start_date)) {
+        const { count } = await admin.from('fin_prepaid_moves').select('id', { count: 'exact', head: true })
+          .eq('supplier_id', atual.id).neq('kind', 'adjust').lt('date', inicio);
+        if ((count ?? 0) > 0) return errResp('Já há recargas/consumos antes de ' + br(inicio) + ': desfaça-os antes de mudar o início');
+      }
+      const { error } = atual
+        ? await admin.from('fin_prepaid_suppliers').update(campos).eq('id', atual.id)
+        : await admin.from('fin_prepaid_suppliers').insert({ ...campos, created_by: userId });
+      if (error) return errResp('Salvar: ' + error.message, 500);
+      const n = await applyTopups(ctx);
+      log('INFO', 'prepaid_save', 'ok', { tenantId, userId, cnpj, recargas: n });
+      return json({ success: true, message: nome + ' é pré-pago' + (n ? ': ' + n + ' recarga(s) do extrato entraram no crédito' : '') });
+    }
+
+    if (action === 'prepaid_adjust') {
+      if (!isManager) return errResp('Apenas administradores e gerentes', 403);
+      const sup = (await prepaidSuppliers(ctx)).find((s) => String(s.id) === String(body.supplier_id ?? ''));
+      if (!sup) return errResp('Fornecedor pré-pago não encontrado', 404);
+      const real = round2(Number(String(body.saldo_real ?? '').replace(',', '.')));
+      if (!Number.isFinite(real) || String(body.saldo_real ?? '').trim() === '') return errResp('Informe o saldo que o fornecedor mostra');
+      const dif = round2(real - sup.saldo);
+      if (Math.abs(dif) < 0.01) return json({ success: true, message: 'O saldo já confere' });
+      const { error } = await admin.from('fin_prepaid_moves').insert({
+        tenant_id: tenantId, supplier_id: sup.id, kind: 'adjust', amount: dif, date: todayBR(), created_by: userId,
+        note: String(body.note ?? '').trim().slice(0, 200) || 'Acerto pelo saldo do fornecedor (' + br$(real) + ')',
+      });
+      if (error) return errResp('Acertar: ' + error.message, 500);
+      return json({ success: true, message: 'Saldo acertado para ' + br$(real) + ' (' + (dif > 0 ? '+' : '') + br$(dif) + '). Não entra no DRE.' });
+    }
+
+    if (action === 'prepaid_move_delete') {
+      if (!isManager) return errResp('Apenas administradores e gerentes', 403);
+      const { data: m } = await admin.from('fin_prepaid_moves').select('id, kind').eq('id', String(body.id ?? '')).eq('tenant_id', tenantId).maybeSingle();
+      if (!m) return errResp('Movimento não encontrado', 404);
+      if (m.kind !== 'adjust') return errResp('Só acertos se apagam aqui: recarga desfaz na Conciliação e consumo pela nota');
+      await admin.from('fin_prepaid_moves').delete().eq('id', m.id);
+      return json({ success: true, message: 'Acerto apagado' });
+    }
+
+    if (action === 'prepaid_consume' || action === 'prepaid_unconsume') {
+      if (!isManager) return errResp('Apenas administradores e gerentes', 403);
+      const { data: doc } = await admin.from('fiscal_inbound_documents').select('*').eq('id', String(body.document_id ?? '')).eq('tenant_id', tenantId).maybeSingle();
+      if (!doc) return errResp('Nota não encontrada', 404);
+      const r = action === 'prepaid_consume' ? await prepaidConsume(ctx, doc) : await prepaidUnconsume(ctx, doc);
+      log(r.ok ? 'INFO' : 'WARN', action, r.msg, { tenantId, userId, doc: doc.id });
       return r.ok ? json({ success: true, message: r.msg }) : errResp(r.msg);
     }
 

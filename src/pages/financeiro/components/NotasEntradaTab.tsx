@@ -4,6 +4,7 @@ import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
 import { confirmar } from '@/components/base/Dialogos';
+import { PrePagoConferir, PrePagoModal, listarPrePagos } from './notas/PrePago';
 
 // ── Notas de entrada (NF-e dos fornecedores contra o CNPJ da loja, via SEFAZ) ──
 // Cada nota é conferida aqui e vira uma COMPRA (mercadoria → CMV, com as parcelas
@@ -27,8 +28,9 @@ interface DocRow {
    *  logo após a busca na SEFAZ porque o fornecedor já tinha nota lançada antes */
   auto_imported?: boolean;
   auto_import_ref?: string | null;
-  /** 'monthly' = nota do mês, quitada por vários pagamentos do extrato */
-  settlement?: 'monthly' | null;
+  /** 'monthly' = nota do mês, quitada por vários pagamentos do extrato;
+   *  'prepaid' = fornecedor pré-pago, paga com o crédito das recargas (2026-09-26) */
+  settlement?: 'monthly' | 'prepaid' | null;
   settlement_statement_ids?: string[] | null;
 }
 const COLS = 'id, chave, modelo, numero, serie, emitente_cnpj, emitente_nome, natureza, cfops, valor_total, emitted_at, sefaz_status, xml_status, parcelas, itens, frete, desconto, pagamento, status, import_type, purchase_id, payable_ids, ignore_reason, manifest_status, error_message, imported_at, auto_imported, auto_import_ref, auto_launch_blocked, settlement, settlement_statement_ids';
@@ -94,9 +96,10 @@ function UrgenciaTag({ d }: { d: DocRow }) {
 // Por que a nota não entrou sozinha: as mesmas regras do lançamento automático
 // (fiscal-inbound › autoLaunchTenant), para o usuário não ter de adivinhar.
 interface Historico { ultima: DocRow; teto: number }
-function motivoParada(d: DocRow, h: Historico | undefined): { txt: string; dica: string } | null {
+function motivoParada(d: DocRow, h: Historico | undefined, prePago = false): { txt: string; dica: string } | null {
   if (d.status !== 'new' || d.sefaz_status === 2) return null;
   const servico = isServico(d);
+  if (prePago) return { txt: 'Fornecedor pré-pago', dica: 'Esta nota é o consumo do crédito: abra em Conferir e use "Lançar do crédito".' };
   if (d.xml_status !== 'full') return { txt: 'Aguardando XML completo', dica: 'Sem o XML não dá para ver itens e boletos. Use "Pedir XML" ou espere a próxima busca.' };
   if (d.auto_launch_blocked) return { txt: 'Lançamento automático desfeito', dica: 'Alguém desfez o lançamento automático desta nota: ela só entra conferindo à mão.' };
   if (!servico && isBonificacao(d)) return { txt: 'Bonificação', dica: 'Bonificação entra sozinha na próxima busca (06h e 12h). Se continuar aqui, confira o erro.' };
@@ -130,6 +133,16 @@ export default function NotasEntradaTab() {
   const [ordem, setOrdem] = useState<'emissao' | 'vencimento'>('emissao');
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [ignorandoLote, setIgnorandoLote] = useState(false);
+  // Fornecedores pré-pagos (raiz do CNPJ) e a janela do crédito
+  const [prePagos, setPrePagos] = useState<Set<string>>(new Set());
+  const [verCredito, setVerCredito] = useState(false);
+  const carregarPrePagos = useCallback(async () => {
+    if (!tenantId) return;
+    const r = await listarPrePagos(tenantId);
+    setPrePagos(new Set(r.success ? (r.suppliers ?? []).filter((s) => s.is_active).map((s) => s.cnpj.slice(0, 8)) : []));
+  }, [tenantId]);
+  useEffect(() => { carregarPrePagos(); }, [carregarPrePagos]);
+  const ehPrePago = (d: DocRow) => prePagos.has((d.emitente_cnpj ?? '').replace(/\D/g, '').slice(0, 8));
   useEffect(() => { setSel(new Set()); }, [filtro, tipoDoc, busca]);
 
   const call = useCallback(async <T,>(body: Record<string, unknown>) => {
@@ -291,11 +304,11 @@ export default function NotasEntradaTab() {
       {cancelada ? <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-red-100 text-red-700">Cancelada na SEFAZ</span>
                   : d.status === 'imported' ? <><span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700">{d.import_type === 'purchase' ? 'Lançada como compra' : d.import_type === 'bonus' ? 'Lançada como bonificação' : 'Lançada como despesa'}</span>{d.auto_imported && <span className="ml-1 text-[11px] font-bold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700" title={d.auto_import_ref
                     ? 'Importada automaticamente pela conciliação bancária ao confirmar o pagamento.'
-                    : 'Lançada automaticamente: este fornecedor já tinha nota lançada antes, e esta entrou do mesmo jeito. Se estiver errada, use "Desfazer".'}>automática</span>}{d.settlement === 'monthly' && <span className="ml-1 text-[11px] font-bold px-2 py-0.5 rounded-full bg-violet-50 text-violet-700" title="Nota do mês: quitada pelos pagamentos do extrato">paga no mês · {(d.settlement_statement_ids ?? []).length} pagto(s)</span>}</>
+                    : 'Lançada automaticamente: este fornecedor já tinha nota lançada antes, e esta entrou do mesmo jeito. Se estiver errada, use "Desfazer".'}>automática</span>}{d.settlement === 'monthly' && <span className="ml-1 text-[11px] font-bold px-2 py-0.5 rounded-full bg-violet-50 text-violet-700" title="Nota do mês: quitada pelos pagamentos do extrato">paga no mês · {(d.settlement_statement_ids ?? []).length} pagto(s)</span>}{d.settlement === 'prepaid' && <span className="ml-1 text-[11px] font-bold px-2 py-0.5 rounded-full bg-violet-50 text-violet-700" title="Fornecedor pré-pago: despesa do mês do consumo, paga com o crédito das recargas">paga com crédito</span>}</>
                   : d.status === 'ignored' ? <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-zinc-100 text-zinc-500" title={d.ignore_reason ?? ''}>Ignorada</span>
                   : <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700">A conferir</span>}
       {(() => {
-        const m = motivoParada(d, d.emitente_cnpj ? historico.get(d.emitente_cnpj) : undefined);
+        const m = motivoParada(d, d.emitente_cnpj ? historico.get(d.emitente_cnpj) : undefined, ehPrePago(d));
         return m && <span className="block w-full mt-0.5 text-[10px] text-zinc-500 cursor-help" title={m.dica}><i className="ri-question-line mr-0.5" />{m.txt}</span>;
       })()}
     </>
@@ -349,7 +362,26 @@ export default function NotasEntradaTab() {
                       title="Desfazer o vínculo com os pagamentos do mês"
                       className="text-[11px] font-semibold px-2 py-1 rounded-lg text-zinc-600 hover:bg-zinc-100 disabled:opacity-40 cursor-pointer">Desfazer</button>
                   )}
-                  {d.status === 'imported' && d.auto_imported && !d.auto_import_ref && d.settlement !== 'monthly' && podeLancar && (
+                  {d.status === 'imported' && d.settlement === 'prepaid' && podeLancar && (
+                    <button
+                      onClick={async () => {
+                        if (!(await confirmar({
+                          titulo: 'Desfazer o lançamento do crédito?',
+                          mensagem: 'A despesa desta nota é excluída, o valor volta para o crédito do fornecedor e a nota volta para "A conferir".',
+                          confirmarLabel: 'Desfazer',
+                          perigo: true,
+                        }))) return;
+                        setBusy(d.id);
+                        const r = await callConc(tenantId, { action: 'prepaid_unconsume', document_id: d.id });
+                        setBusy(null);
+                        if (r.success) toastOk(r.message ?? 'Desfeito'); else toastErr('Não foi possível desfazer', r.error ?? '');
+                        await carregar();
+                      }}
+                      disabled={isBusy}
+                      title="Desfazer o lançamento do crédito"
+                      className="text-[11px] font-semibold px-2 py-1 rounded-lg text-zinc-600 hover:bg-zinc-100 disabled:opacity-40 cursor-pointer">Desfazer</button>
+                  )}
+                  {d.status === 'imported' && d.auto_imported && !d.auto_import_ref && !d.settlement && podeLancar && (
                     <button
                       onClick={async () => {
                         if (await confirmar({
@@ -382,11 +414,19 @@ export default function NotasEntradaTab() {
             {ultimaSync.erro ? <span className="text-red-500"> · Erro: {ultimaSync.erro}</span> : null}
           </p>
         </div>
-        <button onClick={sincronizar} disabled={sincronizando}
-          className="inline-flex items-center gap-2 text-xs font-semibold px-3 py-2 rounded-lg bg-amber-500 text-white hover:bg-amber-600 disabled:opacity-50 cursor-pointer whitespace-nowrap">
-          <i className={sincronizando ? 'ri-loader-4-line animate-spin' : 'ri-download-cloud-2-line'} />
-          {sincronizando ? 'Buscando na SEFAZ…' : 'Buscar notas agora'}
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          {prePagos.size > 0 && (
+            <button onClick={() => setVerCredito(true)} title="Fornecedores pré-pagos: saldo de crédito, recargas e consumos"
+              className="inline-flex items-center gap-2 text-xs font-semibold px-3 py-2 rounded-lg border border-violet-200 text-violet-700 bg-violet-50 hover:bg-violet-100 cursor-pointer whitespace-nowrap">
+              <i className="ri-wallet-3-line" />Crédito pré-pago
+            </button>
+          )}
+          <button onClick={sincronizar} disabled={sincronizando}
+            className="inline-flex items-center gap-2 text-xs font-semibold px-3 py-2 rounded-lg bg-amber-500 text-white hover:bg-amber-600 disabled:opacity-50 cursor-pointer whitespace-nowrap">
+            <i className={sincronizando ? 'ri-loader-4-line animate-spin' : 'ri-download-cloud-2-line'} />
+            {sincronizando ? 'Buscando na SEFAZ…' : 'Buscar notas agora'}
+          </button>
+        </div>
       </div>
 
       {/* Resumo */}
@@ -579,9 +619,19 @@ export default function NotasEntradaTab() {
           podeLancar={podeLancar}
           tenantId={tenantId ?? ''}
           onClose={() => setAberto(null)}
-          onLancado={async (msg) => { setAberto(null); toastOk(msg); await carregar(); }}
+          onLancado={async (msg) => { setAberto(null); toastOk(msg); await Promise.all([carregar(), carregarPrePagos()]); }}
           call={call}
           onErro={(t, m) => toastErr(t, m)}
+        />
+      )}
+      {verCredito && (
+        <PrePagoModal
+          tenantId={tenantId ?? ''}
+          podeLancar={podeLancar}
+          onClose={() => setVerCredito(false)}
+          onConferir={(id) => { const d = docs.find((x) => x.id === id); setVerCredito(false); if (d) setAberto(d); }}
+          onErro={(t, m) => toastErr(t, m)}
+          onOk={(m) => toastOk(m)}
         />
       )}
     </div>
@@ -619,6 +669,8 @@ function ConferirModal({ doc, podeLancar, tenantId, onClose, onLancado, call, on
   const [centro, setCentro] = useState('');
   const [dre, setDre] = useState('');
   const [enviando, setEnviando] = useState(false);
+  // Fornecedor pré-pago: a nota sai do crédito; o lançamento normal some da tela
+  const [prePago, setPrePago] = useState(false);
   // Vínculo item → insumo (dá entrada no estoque); vem memorizado por fornecedor+código
   const [insumos, setInsumos] = useState<Insumo[]>([]);
   const [vinculos, setVinculos] = useState<Vinculo[]>(() => (doc.itens ?? []).map(() => ({ ingredient_id: '', units_per_package: 1 })));
@@ -849,6 +901,9 @@ function ConferirModal({ doc, podeLancar, tenantId, onClose, onLancado, call, on
             </div>
           )}
 
+          <PrePagoConferir doc={doc} tenantId={tenantId} podeLancar={podeLancar} onAtivo={setPrePago} onLancado={onLancado} onErro={onErro} />
+
+          {!prePago && <>
           {/* Nota do mês: vários pagamentos já feitos */}
           {tipo !== 'bonus' && pagtos.length > 0 && (
             <div className={`border rounded-xl p-3 ${usarMensal ? 'border-violet-200 bg-violet-50/40' : 'border-zinc-100'}`}>
@@ -990,18 +1045,19 @@ function ConferirModal({ doc, podeLancar, tenantId, onClose, onLancado, call, on
               </div>
             )}
           </div>
+          </>}
         </div>
 
         <div className="p-4 border-t border-zinc-100 flex items-center justify-end gap-2">
           <button onClick={onClose} className="px-4 py-2 text-sm font-semibold text-zinc-600 bg-zinc-100 rounded-lg hover:bg-zinc-200 cursor-pointer">Cancelar</button>
-          <button onClick={lancar}
+          {!prePago && <button onClick={lancar}
             disabled={!podeLancar || enviando || (tipo === 'bill' && !dre) || (usarMensal
               ? selPagtos.size === 0 || saldoMensal < -0.01
               : (!(tipo === 'purchase' && pago) && (parcelas.length === 0 || soma <= 0)))}
             title={!podeLancar ? 'Apenas administradores e gerentes' : undefined}
             className="px-4 py-2 text-sm font-semibold text-white bg-amber-500 rounded-lg hover:bg-amber-600 disabled:opacity-40 cursor-pointer">
             {enviando ? 'Lançando…' : usarMensal ? `Lançar e vincular ${selPagtos.size} pagamento(s)` : tipo === 'purchase' ? (pago ? 'Lançar compra paga' : `Lançar compra · ${parcelas.length} parcela(s)`) : `Lançar despesa · ${parcelas.length} parcela(s)`}
-          </button>
+          </button>}
         </div>
       </div>
     </div>
