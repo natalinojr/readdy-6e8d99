@@ -3,7 +3,7 @@ import {
   LayoutDashboard, ShoppingCart, Coffee, Tablet, Monitor, UtensilsCrossed,
   LayoutGrid, Package, BarChart3, Users, Settings, LogOut, ChefHat,
   Shield, Heart, HelpCircle, ClipboardList, Bell, Truck, ArrowLeft, DollarSign,
-  Tag, Gift, ShieldCheck, Megaphone, UserSearch, Bot, FileText,
+  ShieldCheck, Megaphone, UserSearch, Bot, FileText,
 } from 'lucide-react';
 import { useModuleAccess, type ModuloLivre } from '@/hooks/useModuleAccess';
 import { useAuth } from '../../contexts/AuthContext';
@@ -72,9 +72,8 @@ const navSections: NavSection[] = [
       { label: 'Financeiro',            icon: DollarSign,      path: '/financeiro',    permissao: FIN_KEYS },
       { label: 'Usuários',              icon: Users,           path: '/usuarios',      permissao: 'usuarios_gerenciar' },
       { label: 'Mesas',                 icon: LayoutGrid,      path: '/mesas',         permissao: 'gestao_mesas' },
-      { label: 'Clientes',              icon: Heart,           path: '/clientes',      permissao: 'clientes_ver' },
-      { label: 'Promoções',             icon: Tag,             path: '/promocoes',     permissao: 'gestao_promocoes' },
-      { label: 'Vouchers & Gift Cards', icon: Gift,            path: '/vouchers',      permissao: 'gestao_vouchers' },
+      // Clientes, Funil, Promoções e Vouchers numa tela só (abas por permissão).
+      { label: 'Clientes & Marketing',  icon: Heart,           path: '/clientes',      permissao: ['clientes_ver', 'gestao_promocoes', 'gestao_vouchers'] },
       { label: 'Auditoria',             icon: Shield,          path: '/auditoria',     permissao: 'auditoria_ver' },
       { label: 'Aprovações',            icon: Bell,            path: '/aprovacoes',    permissao: 'gestao_aprovacoes' },
       { label: 'Configurações',         icon: Settings,        path: '/configuracoes', permissao: ['configuracoes_editar', CFG_MAQUININHA_KEY] },

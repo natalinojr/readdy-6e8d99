@@ -85,10 +85,10 @@ Rotas dentro do layout autenticado:
 - `/configuracoes`: `src/pages/configuracoes/page.tsx`
 - `/config-delivery`: `src/pages/config-delivery/page.tsx`
 - `/usuarios`: `src/pages/usuarios/page.tsx`
-- `/clientes`: `src/pages/clientes/page.tsx`
+- `/clientes`: `src/pages/clientes/page.tsx` — **Clientes & Marketing** (abas `?aba=clientes|funil|promocoes|vouchers` em `src/pages/clientes/abas/`; cada aba com a sua permissão: `clientes_ver`, `gestao_promocoes`, `gestao_vouchers`)
 - `/auditoria`: `src/pages/auditoria/page.tsx`
-- `/promocoes`: `src/pages/promocoes/page.tsx`
-- `/vouchers`: `src/pages/vouchers/page.tsx`
+- `/promocoes`: redireciona para `/clientes?aba=promocoes` (modal em `src/pages/promocoes/components/`)
+- `/vouchers`: redireciona para `/clientes?aba=vouchers` (modais em `src/pages/vouchers/components/`)
 - `/imprimir-qrcodes`: `src/pages/imprimir-qrcodes/page.tsx`
 - `/admin-master`: `src/pages/admin-master/page.tsx` (abas Lojas / Usuários / Módulos / Convites; modais em `modals.tsx`, gestão de acesso em `acessos.tsx`)
 - `/contratacao`: `src/pages/contratacao/page.tsx` (banco de currículos; só o e-mail do dono. Leitura híbrida: PDF com texto é lido grátis no navegador por `src/lib/curriculoLocal.ts` (pdf.js + regras: nome, contato, nascimento, cidade/UF, cargo, texto completo pesquisável); foto/PDF escaneado vai direto à IA; nos demais a IA só roda no botão "Organizar com IA". Abas Candidatos (cards/tabela), Kanban, Agenda de entrevistas (`hiring_interviews`, ficha com notas 1–5 por critério), Relatórios e Configurações. **Independente das lojas do ERPOS**: empresas próprias `hiring_companies` (`company_id`), fases editáveis `hiring_stages` (`stage_id`; 4 nativas por `native_kind`, que não podem ser apagadas) e `hiring_settings` (id=1). `tenant_id`/`status` em hiring_candidates são legado. **Vagas** (`hiring_jobs`) + candidaturas (`hiring_applications`: score 0–100, fit, `analysis` jsonb): `hiring-cv-scan › match` compara currículo × vaga × loja (endereço/descrição em `hiring_companies`) sem enviar idade/estado civil/filhos; `› intake` (x-internal-key) é a entrada do assistente no Telegram (`modo_curriculos`/`salvar_curriculo`). A função é publicada com `--no-verify-jwt` e confere o login dentro. **Distância loja × candidato**: pin da loja (`hiring_companies.lat/lng`, `MapaPin` nas Configurações) + geocode ORS do endereço do candidato (`hiring_candidates.lat/lng/geo_precision`) → rota de carro ORS (fallback linha reta × 1,3) em `hiring_distances`; ações `geocode`, `distance`, `distance_company` (lotes de 20, 1,5 s entre rotas). Regra: só existe distância até a loja da ficha do candidato (`company_id`); sem loja, não calcula. Entrevista = questionário (`settings.questions` → `hiring_interviews.answers`) + considerações (`notes`) + tomada de decisão GPC/PC/R/NA (`hiring_interviews.recommendation` e `hiring_candidates.decision`). Structured outputs da Anthropic aceita no máx. 16 campos union/nullable por schema: acima disso dá 400, então use ""/0/enum e normalize na Edge. Edge `hiring-cv-scan` lê PDF/foto com IA → tabela `hiring_candidates` + bucket privado `curriculos`, RLS por `is_hiring_admin()` = e-mail do dono OU usuário liberado em `user_module_access` (Admin Master › Módulos), não por tenant)
@@ -157,7 +157,7 @@ Relatorios, dashboard e auditoria:
 - Edge Functions: `audit-write`, `qa-full-simulation`, `simulate-orders`, `simulate-pdv-orders`, `weekly-divergence-alert`.
 
 Clientes, promocoes e vouchers:
-- Telas: `src/pages/clientes`, `src/pages/promocoes`, `src/pages/vouchers`, `src/pages/voucher-link` (publica).
+- Telas: `src/pages/clientes` (tela única Clientes & Marketing: `abas/ClientesAba`, `FunilAba`, `PromocoesAba`, `VouchersAba`), `src/pages/voucher-link` (publica). `src/pages/promocoes` e `src/pages/vouchers` guardam só os modais.
 - Hooks: `useClientes`, `useClientesReport`, `useClientesRetencao`.
 - Tabelas: `customers`, `loyalty_transactions`, `promotion_rules`, `vouchers`, `voucher_transactions`.
 - Edge Functions: `voucher-write`, `voucher-claim` (publica, sem JWT), `menu-write`.
@@ -3121,7 +3121,7 @@ Fica em aberto que o `AprovacoesContext` perde as solicitações num F5 — prob
 - **Pegadinha (a mais importante):** `customers.accepts_marketing` nasce `false` no cadastro do delivery e nunca é preenchida — usá-la como opt-out bloqueava **a loja inteira** (22 de 22 clientes "não aceita contato"). Recusa é um ato, e mora em `customers.crm_opt_out_at`. `accepts_marketing` continua sendo só informativa.
 - **Auth da edge:** comparar o bearer com `SUPABASE_SERVICE_ROLE_KEY` NÃO basta — o projeto tem chave legada (JWT) e nova (`sb_secret_`), e a que chega na função nem sempre é a mesma da env; além disso o gateway rejeita a `sb_secret_` como apikey. Chamada interna/cron usa `x-internal-key` = `CRM_INTERNAL_KEY` (mesmo padrão do assistente). Usuário logado é validado por `user_tenants`; `save_rules` exige admin.
 - **Envio é sempre humano:** "Chamar" abre o WhatsApp com a mensagem da regra ({nome}/{loja}/{cupom}/{link}); "Voucher" abre o `EnviarVoucherModal` já preenchido com a oferta do estágio (prop `oferta`; o TEXTO continua sendo o do modal, que é o único que conhece o link de ativação) e o `onSent` devolve o voucher para o `log_send`. `crm_rules.auto_send` existe mas é sempre false — disparo automático depende de template aprovado na Meta.
-- Front: `src/pages/clientes/components/FunilPanel.tsx` (aba Funil + aba Regras, botão "Funil" na tela Clientes) com **exportar Público Meta por estágio** (mesmo formato phone,email,fn,ln,country da exportação da lista).
+- Front: `src/pages/clientes/abas/FunilAba.tsx` (aba Funil de Clientes & Marketing; era o modal `FunilPanel`) com **exportar Público Meta por estágio** (mesmo formato phone,email,fn,ln,country da exportação da lista).
 
 ### Critérios do funil configuráveis por loja — `crm_stage_criteria` (2026-09-21)
 - Os cortes que definiam cada estágio (90 dias = perdido, 1,5× o ciclo = em risco, 6 pedidos = fiel, top 10% = VIP, carrinho quente por 72h, ciclo assumido de 30d para quem só tem 1 pedido) viviam **dentro** da `fn_crm_recompute_stages`. Agora moram em `crm_stage_criteria` (uma linha por loja) e a função os lê com `coalesce` para os mesmos valores de antes — **loja sem linha não muda de comportamento**, e por isso a edge NÃO cria a linha sozinha (só quando o dono salva).
@@ -3538,3 +3538,14 @@ Sem SW ativo o POST cai no Vercel e falha — por isso o destino só existe no S
   NÃO é do iFood (entrega própria/sob demanda); entregue pelo iFood (billing `DELIVERY_FEE_IFOOD`) a entrega é do iFood e
   fica fora — é o mesmo valor do Portal do Parceiro. Taxas não contam `DELIVERY_FEE_IFOOD`. Onde está: `acoes/ifood/comum.ts`
   (`vendidoDoPedido`), `IfoodApiViews` (Pedidos), `assistente-cron › ifoodResumo`, e a conta do Portal (`ifoodVendas`/`ifoodDashboard`).
+- **Clientes & Marketing numa tela só (2026-09-26)**: Clientes, Funil (antes modal), Promoções e Vouchers viraram abas
+  de `/clientes` (`?aba=`); `/promocoes` e `/vouchers` redirecionam. Sidebar tem 1 item; `RotaProtegida` libera
+  `/clientes` com qualquer das 3 chaves e a tela esconde a aba sem permissão. **Achado:** `promotion_rules` (regras
+  de desconto/cupom) **não são aplicadas em venda nenhuma** — o motor `order-write › apply_promotions` existe mas
+  nenhuma tela chama (1 regra ativa, 0 usos em 2026-09-26). O que vale no caixa/delivery é o preço promocional do item
+  (`item_promotions`, `promoAtivaHoje`); a aba Promoções mostra os dois e avisa. Ligar o motor no PDV/delivery é
+  decisão do dono (mexe no valor cobrado). Outros critérios: a "Segmentação RFM" com cortes fixos saiu da aba Clientes
+  (contradizia o Funil, que tem critérios por loja); a descrição dos estágios do funil é montada no front a partir de
+  `crm_stage_criteria` (a do servidor tem "90 dias"/"6 pedidos" fixos no texto); Vouchers carrega tudo e filtra na
+  tela (filtro no servidor zerava os números do topo) e trata `active` com `expires_at` passado como expirado;
+  `create_promotion_rule` ignora `is_active` — o modal desliga logo depois quando o usuário desmarca "Ativa".

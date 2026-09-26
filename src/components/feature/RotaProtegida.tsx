@@ -24,7 +24,8 @@ const ROTA_PERMISSAO: Record<string, PermissaoKey | readonly PermissaoKey[]> = {
   // apenas a aba Maquininha.
   '/configuracoes': ['configuracoes_editar', CFG_MAQUININHA_KEY],
   '/auditoria': 'auditoria_ver',
-  '/clientes': 'clientes_ver',
+  // Clientes & Marketing: cada aba confere a sua chave dentro da tela.
+  '/clientes': ['clientes_ver', 'gestao_promocoes', 'gestao_vouchers'],
   '/aprovacoes': 'gestao_aprovacoes',
   '/promocoes': 'gestao_promocoes',
   '/vouchers': 'gestao_vouchers',
