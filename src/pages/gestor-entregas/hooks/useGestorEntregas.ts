@@ -82,6 +82,8 @@ export function useGestorEntregas() {
   // iFood Entrega: última entrega iFood de cada pedido + se o botão aparece nesta loja.
   const [ifood, setIfood] = useState<Record<string, IfoodShippingOrder>>({});
   const [ifoodOn, setIfoodOn] = useState(false);
+  // Pedidos do iFood (módulo Order): botão "Pedidos iFood" + modo operar (homologação).
+  const [ifoodPedidos, setIfoodPedidos] = useState<{ on: boolean; operar: boolean }>({ on: false, operar: false });
   // Entregas iFood ativas cujo pedido saiu do quadro (cancelado no ERPOS etc.) — o entregador ainda vai.
   const [ifoodForaDoQuadro, setIfoodForaDoQuadro] = useState<IfoodShippingOrder[]>([]);
 
@@ -118,8 +120,9 @@ export function useGestorEntregas() {
 
   const carregarIfoodCfg = useCallback(async () => {
     if (!tenantId) return;
-    const r = await ifoodShipping<{ config: { shipping_enabled: boolean } | null }>('get_config', tenantId);
+    const r = await ifoodShipping<{ config: { shipping_enabled: boolean; order_enabled?: boolean; order_mode?: string } | null }>('get_config', tenantId);
     setIfoodOn(!!r.success && !!r.config?.shipping_enabled);
+    setIfoodPedidos({ on: !!r.success && !!r.config?.order_enabled, operar: r.config?.order_mode === 'operate' });
   }, [tenantId]);
   useEffect(() => { carregarIfoodCfg(); }, [carregarIfoodCfg]);
 
@@ -221,6 +224,6 @@ export function useGestorEntregas() {
 
   return {
     orders, loading, erro, busy, now, autor, recarregar: () => carregar(), setStatus, liberar, fetchDetalhe, addNote,
-    tenantId, ifood, ifoodOn, ifoodForaDoQuadro, recarregarIfoodCfg: carregarIfoodCfg,
+    tenantId, ifood, ifoodOn, ifoodForaDoQuadro, ifoodPedidos, recarregarIfoodCfg: carregarIfoodCfg,
   };
 }

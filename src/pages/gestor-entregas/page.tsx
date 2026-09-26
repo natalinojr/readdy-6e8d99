@@ -8,6 +8,7 @@ import ProblemaModal from './components/ProblemaModal';
 import LiberarModal from './components/LiberarModal';
 import IfoodEntregaModal from './components/IfoodEntregaModal';
 import IfoodEntregaConfigModal from './components/IfoodEntregaConfigModal';
+import IfoodPedidosModal from './components/IfoodPedidosModal';
 import MapaEntregasGestor, { type PontoGestor } from './components/MapaEntregasGestor';
 
 const FASE_CURTA: Record<ColunaId, string> = {
@@ -16,7 +17,8 @@ const FASE_CURTA: Record<ColunaId, string> = {
 
 export default function GestorEntregasPage() {
   const navigate = useNavigate();
-  const { orders, loading, erro, busy, now, autor, recarregar, setStatus, liberar, fetchDetalhe, addNote, tenantId, ifood, ifoodOn, ifoodForaDoQuadro, recarregarIfoodCfg } = useGestorEntregas();
+  const { orders, loading, erro, busy, now, autor, recarregar, setStatus, liberar, fetchDetalhe, addNote, tenantId, ifood, ifoodOn, ifoodForaDoQuadro, ifoodPedidos, recarregarIfoodCfg } = useGestorEntregas();
+  const [pedidosIfoodOpen, setPedidosIfoodOpen] = useState(false);
   const [ifoodId, setIfoodId] = useState<string | null>(null);
   const [ifoodCfgOpen, setIfoodCfgOpen] = useState(false);
   const [modalProblema, setModalProblema] = useState<string | null>(null);
@@ -100,6 +102,12 @@ export default function GestorEntregasPage() {
                 <i className="ri-alert-line text-amber-600 text-sm" />
                 <span className="text-xs font-semibold text-amber-700">{comProblema} c/ problema</span>
               </div>
+            )}
+            {ifoodPedidos.on && (
+              <button onClick={() => setPedidosIfoodOpen(true)} title="Pedidos do iFood de hoje, com os itens"
+                className="inline-flex items-center gap-1.5 border border-zinc-200 bg-white hover:bg-zinc-50 text-zinc-700 px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer">
+                <i className="ri-restaurant-2-fill text-red-600" /> <span className="hidden sm:inline">Pedidos iFood</span>
+              </button>
             )}
             <button onClick={() => setIfoodCfgOpen(true)} title="iFood Entrega (entregador do iFood sob demanda)"
               className="inline-flex items-center gap-1.5 border border-zinc-200 bg-white hover:bg-zinc-50 text-zinc-700 px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer">
@@ -238,6 +246,9 @@ export default function GestorEntregasPage() {
         <IfoodEntregaModal tenantId={tenantId} orderId={ifoodId}
           telefone={orders.find((o) => o.id === ifoodId)?.telefone ?? ''}
           onClose={() => setIfoodId(null)} onChanged={recarregar} />
+      )}
+      {pedidosIfoodOpen && tenantId && (
+        <IfoodPedidosModal tenantId={tenantId} operar={ifoodPedidos.operar} onClose={() => setPedidosIfoodOpen(false)} />
       )}
       {ifoodCfgOpen && tenantId && (
         <IfoodEntregaConfigModal tenantId={tenantId} onClose={() => setIfoodCfgOpen(false)} onChanged={recarregarIfoodCfg} />

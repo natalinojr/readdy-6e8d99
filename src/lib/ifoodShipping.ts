@@ -19,6 +19,9 @@ export interface IfoodShippingConfig {
   last_poll_at: string | null;
   last_poll_error: string | null;
   poll_fail_count: number;
+  order_enabled: boolean;
+  order_mode: 'read_only' | 'operate';
+  order_merchant_ids: string[];
 }
 
 export type ShippingStatus =
@@ -126,4 +129,37 @@ export async function fetchShippingAtivas(tenantId: string): Promise<IfoodShippi
     .select('id, order_id, ifood_order_id, status, last_event, tracking_url, drop_code, pickup_code, safe_score, driver, ifood_fee, merchant_fee, prep_min, address_change, address_change_deadline, cancel_reason, error, timeline, created_at, updated_at')
     .eq('tenant_id', tenantId).in('status', SHIPPING_ATIVOS);
   return (data ?? []) as IfoodShippingOrder[];
+}
+
+// ── Pedidos do iFood (módulo Order; modo só leitura por padrão) ──
+export type IfoodOrderStatus = 'placed' | 'confirmed' | 'preparing' | 'ready' | 'dispatched' | 'concluded' | 'cancelled';
+export const IFOOD_ORDER_LABEL: Record<IfoodOrderStatus, string> = {
+  placed: 'Novo', confirmed: 'Confirmado', preparing: 'Em preparo', ready: 'Pronto',
+  dispatched: 'Saiu', concluded: 'Concluído', cancelled: 'Cancelado',
+};
+export interface IfoodOrderOption { name: string; groupName?: string; quantity?: number; unitPrice?: number; price?: number; customization?: { name: string; quantity?: number }[] }
+export interface IfoodOrderItem {
+  id: string; idx: number | null; name: string; quantity: number; unit: string | null; unit_price: number | null;
+  options_price: number | null; total_price: number | null; observations: string | null; external_code: string | null; options: IfoodOrderOption[];
+}
+export interface IfoodOrder {
+  id: string; merchant_id: string; ifood_order_id: string; display_id: string | null; status: IfoodOrderStatus;
+  order_type: string | null; order_timing: string | null; sales_channel: string | null; delivered_by: string | null; is_test: boolean;
+  ordered_at: string | null; customer_name: string | null; customer_document: string | null; customer_orders_count: number | null;
+  pickup_code: string | null; delivery_observations: string | null; address: Record<string, unknown> | null;
+  total: { subTotal?: number; deliveryFee?: number; benefits?: number; additionalFees?: number; orderAmount?: number } | null;
+  payments: { prepaid?: number; pending?: number; methods?: { value: number; type: string; method: string; card?: { brand?: string }; cash?: { changeFor?: number }; wallet?: { name?: string } }[] } | null;
+  benefits: { value: number; target: string; sponsorshipValues?: { name: string; value: number }[] }[] | null;
+  extra_info: string | null; schedule: Record<string, unknown> | null; dispute: Record<string, unknown> | null;
+  cancel_reason: string | null; cancel_requested: boolean; last_event: string | null; timeline: Record<string, string>;
+  created_at: string; updated_at: string;
+  ifood_order_items?: IfoodOrderItem[];
+}
+
+/** Pedidos do iFood desde `desde` (ISO), com itens (RLS: só da loja da pessoa). */
+export async function fetchIfoodOrders(tenantId: string, desde: string): Promise<IfoodOrder[]> {
+  const { data } = await supabase.from('ifood_orders')
+    .select('id, merchant_id, ifood_order_id, display_id, status, order_type, order_timing, sales_channel, delivered_by, is_test, ordered_at, customer_name, customer_document, customer_orders_count, pickup_code, delivery_observations, address, total, payments, benefits, extra_info, schedule, dispute, cancel_reason, cancel_requested, last_event, timeline, created_at, updated_at, ifood_order_items(id, idx, name, quantity, unit, unit_price, options_price, total_price, observations, external_code, options)')
+    .eq('tenant_id', tenantId).gte('created_at', desde).order('created_at', { ascending: false }).limit(300);
+  return (data ?? []) as unknown as IfoodOrder[];
 }

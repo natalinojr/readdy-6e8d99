@@ -30,6 +30,7 @@
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
 import { isContabilidadeRole, isManagerRole } from '../_shared/tenant-auth.ts';
 import { ACTIVE, buildItems as buildItemsPure, cut, eventName, norm, onlyDigits, parseEnderecoPedido, paymentFromNotes, planEvent, round2, splitPhone, type OrderSignal } from './core.ts';
+import { orderEventName, orderItemsFromDetails, orderRowFromDetails, planOrderEvent } from './order.ts';
 
 type Admin = SupabaseClient;
 
@@ -136,10 +137,21 @@ async function getToken(admin: Admin, cfg: any, auth: any): Promise<string> {
 // Contexto de chamada da loja: config + a autorização mais recente que enxerga a loja do iFood escolhida.
 type Ctx = { cfg: any; auth: any; merchantId: string };
 async function loadCtx(admin: Admin, cfg: any): Promise<Ctx | null> {
-  if (!cfg?.client_id || !cfg.client_secret || !cfg.shipping_merchant_id) return null;
+  return cfg?.shipping_merchant_id ? ctxFor(admin, cfg, cfg.shipping_merchant_id) : null;
+}
+// Mesma regra para qualquer loja do iFood desta loja do ERPOS (pedidos podem vir de várias).
+async function ctxFor(admin: Admin, cfg: any, merchantId: string): Promise<Ctx | null> {
+  if (!cfg?.client_id || !cfg.client_secret || !merchantId) return null;
   const { data: auths } = await admin.from('ifood_pdv_auths').select('*').eq('tenant_id', cfg.tenant_id).order('authorized_at', { ascending: false });
-  const auth = (auths ?? []).find((a) => (a.merchants ?? []).some((m: any) => m.id === cfg.shipping_merchant_id));
-  return auth ? { cfg, auth, merchantId: cfg.shipping_merchant_id } : null;
+  const auth = (auths ?? []).find((a) => (a.merchants ?? []).some((m: any) => m.id === merchantId));
+  return auth ? { cfg, auth, merchantId } : null;
+}
+// Lojas do iFood que o polling desta loja do ERPOS acompanha.
+function pollMerchants(cfg: any): string[] {
+  const set = new Set<string>();
+  if (cfg?.shipping_enabled && cfg.shipping_merchant_id) set.add(cfg.shipping_merchant_id);
+  if (cfg?.order_enabled) for (const m of cfg.order_merchant_ids ?? []) if (m) set.add(String(m));
+  return [...set];
 }
 async function call(admin: Admin, c: Ctx, method: 'GET' | 'POST', path: string, body?: unknown, extraHeaders: Record<string, string> = {}, retry = method === 'GET') {
   const run = async () => ifoodFetch(path, {
@@ -305,11 +317,55 @@ async function settleIfoodPayment(admin: Admin, s: any): Promise<boolean> {
   return true;
 }
 
+// ── Pedidos do iFood (módulo Order; modo só leitura por padrão) ──────────────
+// Grava o pedido e os itens (GET /orders/{id}) — base do CMV por pedido e da baixa de estoque.
+async function fetchOrderDetails(admin: Admin, c: Ctx, row: any, ifoodOrderId: string) {
+  const r = await call(admin, c, 'GET', `/order/v1.0/orders/${ifoodOrderId}`);
+  if (!r.ok || !r.data) throw new Error(apiError(r, 'Detalhe do pedido'));
+  const now = new Date().toISOString();
+  const { error } = await admin.from('ifood_orders').update({ ...orderRowFromDetails(r.data), details_at: now, updated_at: now }).eq('id', row.id);
+  if (error) throw new Error('Gravar pedido: ' + error.message);
+  const itens = orderItemsFromDetails(r.data).map((i: any) => ({ ...i, tenant_id: row.tenant_id, order_row_id: row.id }));
+  await admin.from('ifood_order_items').delete().eq('order_row_id', row.id);
+  if (itens.length) {
+    const { error: iErr } = await admin.from('ifood_order_items').insert(itens);
+    if (iErr) throw new Error('Gravar itens: ' + iErr.message);
+  }
+}
+
+async function applyOrderEvent(admin: Admin, c: Ctx, e: any) {
+  const ifoodOrderId = String(e.orderId ?? '');
+  const { data: cur } = await admin.from('ifood_orders').select('*').eq('ifood_order_id', ifoodOrderId).maybeSingle();
+  const plan = planOrderEvent(cur, e);
+  const now = new Date().toISOString();
+  let row = cur;
+  if (!row) {
+    const { data: ins, error } = await admin.from('ifood_orders').upsert({
+      tenant_id: c.cfg.tenant_id, merchant_id: String(e.merchantId ?? c.merchantId), ifood_order_id: ifoodOrderId,
+      sales_channel: e.salesChannel ?? null, ...plan.upd, updated_at: now,
+    }, { onConflict: 'ifood_order_id' }).select('*').single();
+    if (error) throw new Error('Gravar pedido: ' + error.message);
+    row = ins;
+  } else {
+    const { error } = await admin.from('ifood_orders').update({ ...plan.upd, updated_at: now }).eq('id', row.id);
+    if (error) throw new Error('Atualizar pedido: ' + error.message);
+  }
+  if (plan.fetchDetails) await fetchOrderDetails(admin, c, row, ifoodOrderId);
+}
+
 async function applyEvent(admin: Admin, c: Ctx | null, e: any) {
   const ifoodOrderId = String(e.orderId ?? '');
   if (!ifoodOrderId) return;
   const { data: s } = await admin.from('ifood_shipping_orders').select('*').eq('ifood_order_id', ifoodOrderId).maybeSingle();
-  if (!s) return; // pedido que não saiu daqui (ex.: pedido da plataforma) — só fica no log
+  if (!s) {
+    // Pedido do iFood (não é entrega chamada daqui): módulo Order, se ligado para esta loja do iFood.
+    const cfg = c?.cfg;
+    const merchant = String(e.merchantId ?? c?.merchantId ?? '');
+    if (c && cfg?.order_enabled && (cfg.order_merchant_ids ?? []).includes(merchant) && String(e.salesChannel ?? '') !== 'POS') {
+      await applyOrderEvent(admin, { ...c, merchantId: merchant }, e);
+    }
+    return;
+  }
   const plan = planEvent(s, e);
   // Pedido Sob Demanda nasce com PLACED; confirma (os dados foram validados antes de enviar). Sem o módulo
   // de pedidos o iFood pode recusar — fica no log.
@@ -346,22 +402,38 @@ async function markPoll(admin: Admin, cfg: any, error: string | null) {
 }
 
 async function pollTenant(admin: Admin, cfg: any) {
-  const c = await loadCtx(admin, cfg);
-  if (!c) {
+  // Lojas do iFood acompanhadas (entrega + pedidos), agrupadas pela autorização que as enxerga:
+  // o header x-polling-merchants só aceita lojas que o token daquela autorização pode ler.
+  const grupos = new Map<string, { c: Ctx; ids: string[] }>();
+  const semAuth: string[] = [];
+  for (const m of pollMerchants(cfg)) {
+    const c = await ctxFor(admin, cfg, m);
+    if (!c) { semAuth.push(m); continue; }
+    const g = grupos.get(c.auth.id) ?? { c, ids: [] };
+    g.ids.push(m);
+    grupos.set(c.auth.id, g);
+  }
+  if (grupos.size === 0) {
     const msg = 'Sem autorização da loja do iFood escolhida (autorize de novo o app ERPOS PDV).';
     await markPoll(admin, cfg, msg);
     return { error: msg };
   }
-  const r = await call(admin, c, 'GET', '/events/v1.0/events:polling', undefined, { 'x-polling-merchants': c.merchantId });
-  if (r.status === 204 || (r.ok && !Array.isArray(r.data))) {
-    await markPoll(admin, cfg, null);
-    return { events: 0 };
+  let events = 0, applied = 0;
+  const erros: string[] = [];
+  for (const g of grupos.values()) {
+    const r = await pollGroup(admin, cfg, g.c, g.ids);
+    events += r.events ?? 0; applied += r.applied ?? 0;
+    if (r.error) erros.push(r.error);
   }
-  if (!r.ok) {
-    const msg = apiError(r, 'Polling de eventos');
-    await markPoll(admin, cfg, msg);
-    return { error: msg };
-  }
+  if (semAuth.length) erros.push(`${semAuth.length} loja(s) do iFood sem autorização`);
+  await markPoll(admin, cfg, erros.length ? erros.join(' | ').slice(0, 500) : null);
+  return { events, applied, ...(erros.length ? { error: erros.join(' | ') } : {}) };
+}
+
+async function pollGroup(admin: Admin, cfg: any, c: Ctx, merchantIds: string[]): Promise<{ events?: number; applied?: number; error?: string }> {
+  const r = await call(admin, c, 'GET', '/events/v1.0/events:polling', undefined, { 'x-polling-merchants': merchantIds.join(',') });
+  if (r.status === 204 || (r.ok && !Array.isArray(r.data))) return { events: 0 };
+  if (!r.ok) return { error: apiError(r, 'Polling de eventos') };
   const events = (r.data as any[]).filter((e) => e?.id);
   const ids = events.map((e) => String(e.id));
   const { data: seen } = ids.length ? await admin.from('ifood_pdv_events').select('event_id, processed_at').in('event_id', ids) : { data: [] };
@@ -396,7 +468,6 @@ async function pollTenant(admin: Admin, cfg: any) {
     if (ack.ok) await admin.from('ifood_pdv_events').update({ acked_at: new Date().toISOString() }).in('event_id', ackIds);
     else log('ERROR', 'ack', 'acknowledgment falhou', { status: ack.status, body: ack.raw.slice(0, 200) });
   }
-  await markPoll(admin, cfg, null);
   return { events: events.length, applied };
 }
 
@@ -415,6 +486,8 @@ function safeConfig(cfg: any, auths: any[]) {
     merchants: [...merchants.entries()].map(([id, name]) => ({ id, name })),
     authorized: auths.length > 0,
     last_poll_at: cfg.last_poll_at ?? null, last_poll_error: cfg.last_poll_error ?? null, poll_fail_count: cfg.poll_fail_count ?? 0,
+    order_enabled: cfg.order_enabled === true, order_mode: cfg.order_mode === 'operate' ? 'operate' : 'read_only',
+    order_merchant_ids: cfg.order_merchant_ids ?? [],
   };
 }
 
@@ -435,9 +508,15 @@ Deno.serve(async (req) => {
   try {
     if (action === 'poll_all') {
       if (!internal) return errResp('Unauthorized', 401);
-      const { data: lojas } = await admin.from('ifood_pdv_config').select('*').eq('shipping_enabled', true);
+      const { data: lojas } = await admin.from('ifood_pdv_config').select('*').or('shipping_enabled.eq.true,order_enabled.eq.true');
       const out = [];
       for (const cfg of (lojas ?? []).map(withSystemApp).filter((c) => c.client_id)) {
+        // Pedidos do iFood ligados: acompanha sempre (pedido chega a qualquer hora do expediente).
+        if (cfg.order_enabled && (cfg.order_merchant_ids ?? []).length) {
+          try { out.push({ tenant_id: cfg.tenant_id, ...(await pollTenant(admin, cfg)) }); }
+          catch (e) { out.push({ tenant_id: cfg.tenant_id, error: String((e as Error)?.message ?? e) }); }
+          continue;
+        }
         // Entrega "ativa" há mais de 6 h sem notícia não segura o polling (mesma regra do cron no banco).
         const { count } = await admin.from('ifood_shipping_orders').select('id', { count: 'exact', head: true })
           .eq('tenant_id', cfg.tenant_id).in('status', ACTIVE).gt('updated_at', new Date(Date.now() - 6 * 3600_000).toISOString());
@@ -724,6 +803,52 @@ Deno.serve(async (req) => {
       return json({ success: true, ...(await pollTenant(admin, cfg)) });
     }
 
+    // ── Pedidos do iFood (módulo Order) ──
+    const getIfoodOrder = async () => {
+      const { data: o } = await admin.from('ifood_orders').select('*').eq('id', String(body.order_row_id ?? '')).eq('tenant_id', tenantId).maybeSingle();
+      return o;
+    };
+    if (action === 'order_refresh') {
+      const o = await getIfoodOrder();
+      if (!o) return errResp('Pedido não encontrado.');
+      const c = await ctxFor(admin, cfg, o.merchant_id);
+      if (!c) return errResp('Loja do iFood sem autorização no app ERPOS PDV.');
+      await fetchOrderDetails(admin, c, o, o.ifood_order_id);
+      return json({ success: true });
+    }
+    // Operar o pedido pelo ERPOS (confirmar, preparo, pronto, despachar, cancelar): só no modo "operar" —
+    // em produção a loja opera pelo Gestor de Pedidos do iFood (modo só leitura).
+    if (action === 'order_action' || action === 'order_cancel_reasons') {
+      if (cfg?.order_mode !== 'operate') return errResp('Pedidos do iFood em modo só leitura: a loja opera pelo Gestor de Pedidos do iFood.');
+      if (isContabilidadeRole(role)) return errResp('Seu perfil não pode operar pedidos.', 403);
+      const o = await getIfoodOrder();
+      if (!o) return errResp('Pedido não encontrado.');
+      const c = await ctxFor(admin, cfg, o.merchant_id);
+      if (!c) return errResp('Loja do iFood sem autorização no app ERPOS PDV.');
+      if (action === 'order_cancel_reasons') {
+        const r = await call(admin, c, 'GET', `/order/v1.0/orders/${o.ifood_order_id}/cancellationReasons`);
+        if (r.status === 204) return json({ success: true, reasons: [] });
+        if (!r.ok) return errResp(apiError(r, 'Motivos de cancelamento'));
+        const lista = Array.isArray(r.data) ? r.data : (r.data?.reasons ?? []);
+        return json({ success: true, reasons: lista.map((x: any) => ({ code: String(x.cancelCodeId ?? x.code), description: String(x.description ?? '') })) });
+      }
+      const op = String(body.op ?? '');
+      const paths: Record<string, string> = { confirm: 'confirm', start: 'startPreparation', ready: 'readyToPickup', dispatch: 'dispatch', cancel: 'requestCancellation' };
+      if (!paths[op]) return errResp('Ação inválida.');
+      let payload: unknown = undefined;
+      if (op === 'cancel') {
+        const code = String(body.code ?? '').trim();
+        if (!code) return errResp('Escolha o motivo do cancelamento.');
+        // A doc mostra só { reason }, mas a API exige cancellationCode (400 InvalidParameter sem ele — teste 2026-09-26).
+        payload = { reason: String(body.reason ?? '').trim().slice(0, 250) || code, cancellationCode: code };
+      }
+      const r = await call(admin, c, 'POST', `/order/v1.0/orders/${o.ifood_order_id}/${paths[op]}`, payload, { 'idempotency-key': `${op}-${o.ifood_order_id}` });
+      if (!r.ok) return errResp(apiError(r, 'iFood'));
+      if (op === 'cancel') await admin.from('ifood_orders').update({ cancel_requested: true, updated_at: new Date().toISOString() }).eq('id', o.id);
+      log('INFO', 'order_action', op, { order: o.ifood_order_id, tenantId });
+      return json({ success: true, message: 'Enviado ao iFood — a confirmação chega no próximo polling (até 30 s).' });
+    }
+
     // ── Configuração (admin/gerente) ──
     if (!isManager) return errResp('Apenas admin/gerente', 403);
 
@@ -765,6 +890,13 @@ Deno.serve(async (req) => {
         if (id && !m) return errResp('Essa loja do iFood ainda não autorizou o app ERPOS PDV.');
         if (id !== (cfg.shipping_merchant_id ?? '') && await temAtivas()) return errResp(MSG_ATIVAS);
         upd.shipping_merchant_id = id || null; upd.shipping_merchant_name = m?.name ?? null;
+      }
+      if (typeof body.order_enabled === 'boolean') upd.order_enabled = body.order_enabled;
+      if (body.order_mode === 'read_only' || body.order_mode === 'operate') upd.order_mode = body.order_mode;
+      if (Array.isArray(body.order_merchant_ids)) {
+        const ok = new Set((await listAuths()).flatMap((a: any) => (a.merchants ?? []).map((m: any) => m.id)));
+        const ids = body.order_merchant_ids.map(String).filter((id: string) => ok.has(id));
+        upd.order_merchant_ids = ids;
       }
       if (typeof body.shipping_enabled === 'boolean') {
         if (body.shipping_enabled && !(upd.shipping_merchant_id ?? cfg.shipping_merchant_id)) return errResp('Escolha a loja do iFood que vai despachar as entregas.');

@@ -161,6 +161,34 @@ export default function IfoodEntregaConfigModal({ tenantId, onClose, onChanged }
                   )}
                 </section>
               )}
+              {/* 3. Pedidos do iFood (módulo Order) */}
+              {conectado && cfg && (
+                <section className="space-y-2">
+                  <p className="text-xs font-bold text-zinc-700">3. Pedidos do iFood</p>
+                  <p className="text-[11px] text-zinc-500">Traz cada pedido do iFood com os itens para o ERPOS (CMV e estoque). A loja continua aceitando e despachando no Gestor de Pedidos do iFood.</p>
+                  <label className="flex items-center gap-2 text-sm text-zinc-700 cursor-pointer">
+                    <input type="checkbox" checked={cfg.order_enabled} disabled={!!busy}
+                      onChange={(e) => run('ord-on', 'set_options', { order_enabled: e.target.checked, ...(e.target.checked && cfg.order_merchant_ids.length === 0 ? { order_merchant_ids: cfg.merchants.map((m) => m.id) } : {}) }, e.target.checked ? 'Pedidos do iFood ligados.' : 'Pedidos do iFood desligados.')} />
+                    Receber os pedidos do iFood
+                  </label>
+                  {cfg.order_enabled && (
+                    <div className="space-y-1 pl-6">
+                      {cfg.merchants.map((m) => (
+                        <label key={m.id} className="flex items-center gap-2 text-xs text-zinc-600 cursor-pointer">
+                          <input type="checkbox" checked={cfg.order_merchant_ids.includes(m.id)} disabled={!!busy}
+                            onChange={(e) => run('ord-m', 'set_options', { order_merchant_ids: e.target.checked ? [...cfg.order_merchant_ids, m.id] : cfg.order_merchant_ids.filter((x) => x !== m.id) })} />
+                          {m.name}
+                        </label>
+                      ))}
+                      <label className="flex items-center gap-2 text-xs text-zinc-500 cursor-pointer pt-1">
+                        <input type="checkbox" checked={cfg.order_mode === 'operate'} disabled={!!busy}
+                          onChange={(e) => run('ord-mode', 'set_options', { order_mode: e.target.checked ? 'operate' : 'read_only' })} />
+                        Operar pedidos pelo ERPOS (confirmar, despachar, cancelar) — só para a homologação na loja de teste
+                      </label>
+                    </div>
+                  )}
+                </section>
+              )}
               {/* Avançado: app próprio (teste) */}
               <section className="rounded-lg border border-zinc-100">
                 <button type="button" onClick={() => setAvancado(!avancado)} className="w-full flex items-center justify-between px-3 py-2 text-xs font-semibold text-zinc-500 hover:text-zinc-700">
