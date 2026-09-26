@@ -16,7 +16,7 @@ import { supabase } from '@/lib/supabase';
 import { pedidosPagosDoDia, porHora, porCategoria } from './vendasDoDia';
 import { useAuth } from '@/contexts/AuthContext';
 import { Roteiro, useRoteiro, EscolhaData, Fim, brl, dataBR, somaDias, hojeISO, type AcaoProps } from '../kit';
-import { Painel, Kpis, Barras, Ranking, Variacao, GraficoLinha, Linhas } from '../painel';
+import { Painel, Kpis, Barras, Ranking, Variacao, GraficoLinha, Linhas, horaAgoraBR } from '../painel';
 import { resumoIfood, lojasIfood, atualizarVendasIfood } from '../ifood/comum';
 import { useAcessoAcoes, rotaLiberada } from '../acesso';
 
@@ -117,7 +117,7 @@ export default function VendasDia({ onFechar, irPara }: AcaoProps) {
     const comVenda = [...Array(24).keys()].filter((h) => (horas?.[h] ?? 0) > 0 || (horasAnterior?.[h] ?? 0) > 0);
     const pontosHora = horas && comVenda.length
       ? Array.from({ length: comVenda[comVenda.length - 1] - comVenda[0] + 1 }, (_, i) => comVenda[0] + i)
-        .map((h) => ({ rotulo: `${h}h`, valor: horas[h], base: horasAnterior ? horasAnterior[h] : null }))
+        .map((h) => ({ rotulo: `${h}h`, valor: iso === hojeISO() && h > horaAgoraBR() ? null : horas[h], base: horasAnterior ? horasAnterior[h] : null }))
       : [];
     const categorias = pedidosDia?.length ? await porCategoria(tenantId, pedidosDia.map((o) => o.id)) : null;
     // Destaque (2026-09-26, pedido do dono): com iFood ligado, o número grande é o total (ERPOS + iFood)

@@ -163,25 +163,31 @@ export function Ranking({ titulo, itens, por = 'qtd' }: { titulo: string; itens:
  * Gráfico de linha (2026-09-23, Vendas do dia por hora): uma série principal (violeta, com área) e,
  * opcional, uma de comparação tracejada (ex.: mesmo dia da semana passada). Tocar ou passar o dedo
  * escolhe o ponto e o valor aparece em cima — começa no pico. SVG puro, cabe no celular.
+ * valor null (2026-09-26) = hora que ainda não chegou: a linha principal para ali, a base segue.
  */
+/** Hora atual (0–23) em Brasília — para cortar a linha de hoje nas horas que ainda não chegaram. */
+export const horaAgoraBR = () => Number(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo', hour: '2-digit', hourCycle: 'h23' }));
+
 export function GraficoLinha({ titulo, pontos, rotuloBase, formatar = brl }: {
   titulo: string;
-  pontos: Array<{ rotulo: string; valor: number; base?: number | null }>;
+  pontos: Array<{ rotulo: string; valor: number | null; base?: number | null }>;
   rotuloBase?: string;
   formatar?: (n: number) => string;
 }) {
-  const pico = pontos.reduce((m, p, i) => (p.valor > pontos[m].valor ? i : m), 0);
+  const val = (i: number) => pontos[i].valor ?? 0;
+  const pico = pontos.reduce((m, _p, i) => (val(i) > val(m) ? i : m), 0);
   const [sel, setSel] = useState(pico);
-  if (pontos.length < 2 || !pontos.some((p) => p.valor > 0)) return null;
+  if (pontos.length < 2 || !pontos.some((p) => (p.valor ?? 0) > 0)) return null;
+  const fim = pontos.reduce((u, p, i) => (p.valor != null ? i : u), 0);
   // Base mostrada sempre que veio (2026-09-26, dono): semana passada sem venda = linha tracejada no zero.
   const temBase = pontos.some((p) => p.base != null);
   const W = 320; const H = 130; const E = 6; const D = 6; const T = 8; const B = 18;
-  const max = Math.max(...pontos.map((p) => Math.max(p.valor, temBase ? p.base ?? 0 : 0)), 1);
+  const max = Math.max(...pontos.map((p) => Math.max(p.valor ?? 0, temBase ? p.base ?? 0 : 0)), 1);
   const x = (i: number) => E + (i * (W - E - D)) / (pontos.length - 1);
   const y = (v: number) => T + (1 - v / max) * (H - T - B);
   const linha = (vals: number[]) => vals.map((v, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
-  const principal = linha(pontos.map((p) => p.valor));
-  const area = `${principal} L${x(pontos.length - 1).toFixed(1)},${H - B} L${x(0).toFixed(1)},${H - B} Z`;
+  const principal = linha(pontos.slice(0, fim + 1).map((p) => p.valor ?? 0));
+  const area = `${principal} L${x(fim).toFixed(1)},${H - B} L${x(0).toFixed(1)},${H - B} Z`;
   const passo = Math.ceil(pontos.length / 7);
   const escolher = (clientX: number, alvo: SVGSVGElement) => {
     const r = alvo.getBoundingClientRect();
@@ -195,7 +201,7 @@ export function GraficoLinha({ titulo, pontos, rotuloBase, formatar = brl }: {
         <p className="text-xs font-bold text-zinc-700">{titulo}</p>
         <p className="text-xs tabular-nums text-right">
           <span className="font-semibold text-zinc-500">{p.rotulo} · </span>
-          <span className="font-black text-zinc-900">{formatar(p.valor)}</span>
+          <span className="font-black text-zinc-900">{p.valor == null ? 'ainda não' : formatar(p.valor)}</span>
           {temBase && <span className="text-zinc-400"> · {rotuloBase ?? 'base'} {formatar(p.base ?? 0)}</span>}
         </p>
       </div>
@@ -204,12 +210,12 @@ export function GraficoLinha({ titulo, pontos, rotuloBase, formatar = brl }: {
         onPointerMove={(e) => { if (e.buttons || e.pointerType === 'mouse') escolher(e.clientX, e.currentTarget); }}>
         <line x1={E} x2={W - D} y1={H - B} y2={H - B} className="stroke-zinc-200" strokeWidth={1} />
         <line x1={E} x2={W - D} y1={T} y2={T} className="stroke-zinc-100" strokeWidth={1} strokeDasharray="2 3" />
-        <text x={W - D} y={T - 1} textAnchor="end" className="fill-zinc-400" fontSize={8}>{formatar(max)}</text>
+        <text x={W - D} y={T - 1} textAnchor="end" className="fill-zinc-400" fontSize={8}>pico {formatar(max)}</text>
         {temBase && <path d={linha(pontos.map((q) => q.base ?? 0))} fill="none" className="stroke-zinc-400" strokeWidth={1.5} strokeDasharray="4 3" />}
         <path d={area} className="fill-violet-500/10" />
         <path d={principal} fill="none" className="stroke-violet-600" strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
         <line x1={x(sel)} x2={x(sel)} y1={T} y2={H - B} className="stroke-violet-300" strokeWidth={1} />
-        <circle cx={x(sel)} cy={y(p.valor)} r={3.5} className="fill-violet-600 stroke-white" strokeWidth={1.5} />
+        {p.valor != null && <circle cx={x(sel)} cy={y(p.valor)} r={3.5} className="fill-violet-600 stroke-white" strokeWidth={1.5} />}
         {pontos.map((q, i) => (i === pontos.length - 1 || (i % passo === 0 && pontos.length - 1 - i >= passo)) ? (
           <text key={i} x={x(i)} y={H - 5} textAnchor={i === 0 ? 'start' : i === pontos.length - 1 ? 'end' : 'middle'} className="fill-zinc-400" fontSize={9}>{q.rotulo}</text>
         ) : null)}
