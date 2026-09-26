@@ -12,7 +12,9 @@
 //
 // Ações (POST JSON { action, tenant_id, ... }):
 //   get_config            {}                                   sem segredos
-//   save_config           { client_id, client_secret?, auto_sync? }   admin/gerente (credenciais da API)
+//   save_config           { client_id, client_secret?, auto_sync? }   admin/gerente — só app PRÓPRIO (teste);
+//                         sem isso a loja usa o app ERPOS do sistema (secrets IFOOD_CLIENT_ID/IFOOD_CLIENT_SECRET)
+//   use_system_app        {}                                   volta a loja para o app ERPOS do sistema
 //   set_options           { post_to_ledger, auto_sync? }       admin/gerente; relança o razão das importações já gravadas
 //   request_user_code     {}                                   gera o código que a loja digita no Portal do Parceiro
 //   confirm_authorization { authorization_code }               troca pelo token e descobre a(s) loja(s)
@@ -52,6 +54,16 @@ const log = (level: string, action: string, msg: string, extra: Record<string, u
   console.log(JSON.stringify({ level, fn: 'ifood-financial', action, msg, ...extra }));
 
 const API = 'https://merchant-api.ifood.com.br';
+
+// App ERPOS (distribuído, homologado): Client ID/Secret são do SISTEMA, não da loja (2026-09-26).
+// Ficam nos secrets da função; toda loja usa este app e só autoriza no Portal do Parceiro (código).
+// Credencial gravada na config da loja (app de teste) tem prioridade.
+const SYSTEM_APP = { id: (Deno.env.get('IFOOD_CLIENT_ID') ?? '').trim(), secret: (Deno.env.get('IFOOD_CLIENT_SECRET') ?? '').trim() };
+const hasSystemApp = () => Boolean(SYSTEM_APP.id && SYSTEM_APP.secret);
+function withSystemApp(cfg: any) {
+  if (!cfg || cfg.client_id || !hasSystemApp()) return cfg;
+  return { ...cfg, client_id: SYSTEM_APP.id, client_secret: SYSTEM_APP.secret, app_type: 'distributed' };
+}
 const round2 = (n: number) => Math.round(n * 100) / 100;
 const todayBR = () => new Date(Date.now() - 3 * 3600_000).toISOString().slice(0, 10);
 
@@ -775,6 +787,7 @@ function safeConfig(cfg: any, merchants: any[] = []) {
   return {
     client_id: cfg.client_id ? String(cfg.client_id).slice(0, 4) + '…' + String(cfg.client_id).slice(-4) : null,
     has_secret: Boolean(cfg.client_secret),
+    system_app: Boolean(cfg.client_id) && cfg.client_id === SYSTEM_APP.id,
     // Compatibilidade: 1ª loja ligada (telas antigas olham merchant_id para saber se a API está ativa).
     merchant_id: ligadas[0]?.merchant_id ?? null, merchant_name: ligadas[0]?.name ?? null,
     merchants,
@@ -808,7 +821,7 @@ Deno.serve(async (req) => {
       const { data: lojas } = await admin.from('fin_ifood_config').select('*').eq('is_active', true);
       const out = [];
       const minComp = defaultCompetences()[0];
-      for (const cfg of lojas ?? []) {
+      for (const cfg of (lojas ?? []).map(withSystemApp)) {
         const r: Record<string, unknown> = { tenant_id: cfg.tenant_id };
         try {
           if (cfg.auto_sync !== false && (await merchantContexts(admin, cfg)).some((l) => l.ctx)) r.sync = await syncTenant(admin, cfg);
@@ -841,9 +854,14 @@ Deno.serve(async (req) => {
     }
     // Financeiro/RH é admin, gerente ou o papel financeiro (spec modulo-financeiro-sem-pdv, 2026-09-20).
     const isManager = internal || isFinanceiroRole(role);
-    const { data: cfg } = await admin.from('fin_ifood_config').select('*').eq('tenant_id', tenantId).maybeSingle();
+    const { data: cfgRow } = await admin.from('fin_ifood_config').select('*').eq('tenant_id', tenantId).maybeSingle();
+    const cfg = withSystemApp(cfgRow);
 
-    if (action === 'get_config') return json({ success: true, config: safeConfig(cfg, cfg ? await merchantsForUi(admin, cfg, tenantId) : []) });
+    if (action === 'get_config') {
+      // Loja sem config ainda: com o app do sistema, a tela já mostra "Gerar código".
+      const shown = cfg ?? withSystemApp({ tenant_id: tenantId, is_active: true, auto_sync: true });
+      return json({ success: true, config: safeConfig(shown, cfg ? await merchantsForUi(admin, cfg, tenantId) : []), system_app_available: hasSystemApp() });
+    }
 
     if (action === 'list_imports') {
       const { data } = await admin.from('fin_ifood_imports').select('id, merchant_id, merchant_short, competence, source, file_name, lines, orders, gross, fees, net, updated_at, expected_lines, expected_orders, integrity_ok').eq('tenant_id', tenantId).order('competence', { ascending: false }).limit(48);
@@ -1018,11 +1036,11 @@ Deno.serve(async (req) => {
       const clientId = String(body.client_id ?? '').trim();
       const clientSecret = String(body.client_secret ?? '').trim();
       if (!clientId) return errResp('Informe o Client ID do aplicativo do iFood.');
-      if (!clientSecret && !cfg?.client_secret) return errResp('Informe o Client Secret do aplicativo do iFood.');
+      if (!clientSecret && !(cfgRow?.client_id === clientId && cfgRow?.client_secret)) return errResp('Informe o Client Secret do aplicativo do iFood.');
       const changedApp = cfg && cfg.client_id !== clientId;
       const now = new Date().toISOString();
       const row: Record<string, unknown> = {
-        tenant_id: tenantId, client_id: clientId, client_secret: clientSecret || cfg?.client_secret,
+        tenant_id: tenantId, client_id: clientId, client_secret: clientSecret || cfgRow?.client_secret,
         app_type: body.app_type === 'centralized' ? 'centralized' : 'distributed',
         auto_sync: body.auto_sync === false ? false : true,
         is_active: true, updated_at: now,
@@ -1037,15 +1055,37 @@ Deno.serve(async (req) => {
       return json({ success: true, message: (nAuth ?? 0) === 0 ? 'Credenciais salvas. Agora gere o código e autorize no Portal do Parceiro.' : 'Configuração salva.' });
     }
 
+    // Volta para o app ERPOS do sistema (apaga a credencial própria; autorizações de outro app caem).
+    if (action === 'use_system_app') {
+      if (!hasSystemApp()) return errResp('O app ERPOS do sistema não está configurado no servidor.');
+      if (!cfgRow) return json({ success: true });
+      const changedApp = cfgRow.client_id && cfgRow.client_id !== SYSTEM_APP.id;
+      const upd: Record<string, unknown> = { client_id: null, client_secret: null, app_type: 'distributed', updated_at: new Date().toISOString() };
+      if (changedApp) Object.assign(upd, { access_token: null, refresh_token: null, token_expires_at: null, authorized_at: null, user_code: null, auth_verifier_secret: null, homologation_mode: false });
+      const { error } = await admin.from('fin_ifood_config').update(upd).eq('id', cfgRow.id);
+      if (error) return errResp('Salvar: ' + error.message, 500);
+      if (changedApp) await admin.from('fin_ifood_auths').delete().eq('tenant_id', tenantId);
+      return json({ success: true });
+    }
+
     if (action === 'request_user_code') {
-      if (!cfg?.client_id) return errResp('Salve primeiro o Client ID e o Client Secret.');
-      const r = await ifoodForm('/authentication/v1.0/oauth/userCode', { clientId: cfg.client_id }, cfg.homologation_mode === true);
+      const rc = cfg ?? withSystemApp({ tenant_id: tenantId });
+      if (!rc?.client_id) return errResp('Salve primeiro o Client ID e o Client Secret.');
+      // 1ª vez da loja com o app do sistema: cria a config (o código fica guardado nela).
+      if (!rc.id) {
+        const { data: novo, error } = await admin.from('fin_ifood_config')
+          .insert({ tenant_id: tenantId, is_active: true, auto_sync: true, app_type: 'distributed', created_by: userId, updated_at: new Date().toISOString() })
+          .select('id').single();
+        if (error) return errResp('Salvar: ' + error.message, 500);
+        rc.id = novo.id;
+      }
+      const r = await ifoodForm('/authentication/v1.0/oauth/userCode', { clientId: rc.client_id }, rc.homologation_mode === true);
       if (!r.ok || !r.data?.userCode) return errResp(apiError(r, 'Gerar código'));
       await admin.from('fin_ifood_config').update({
         user_code: r.data.userCode, auth_verifier_secret: r.data.authorizationCodeVerifier,
         verification_url: r.data.verificationUrlComplete ?? r.data.verificationUrl ?? null,
         user_code_expires_at: new Date(Date.now() + Number(r.data.expiresIn ?? 600) * 1000).toISOString(), updated_at: new Date().toISOString(),
-      }).eq('id', cfg.id);
+      }).eq('id', rc.id);
       return json({ success: true, user_code: r.data.userCode, verification_url: r.data.verificationUrlComplete ?? r.data.verificationUrl ?? null, expires_in: r.data.expiresIn ?? null });
     }
 

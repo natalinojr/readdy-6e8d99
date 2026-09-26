@@ -9,10 +9,13 @@ import { confirmar } from '@/components/base/Dialogos';
 //     digitado pela loja no Portal do Parceiro → código de autorização colado aqui.
 //   • Arquivo: "Relatório de Conciliação" baixado no Portal do Parceiro (Financeiro › Exportar).
 // O Client Secret nunca volta para o front (get_config devolve só has_secret).
+// Desde 2026-09-26 o app ERPOS é do SISTEMA (secrets da edge): a loja só gera o código e autoriza.
+// Client ID/Secret próprios ficam em "Avançado", só para app de teste.
 
 interface IfoodConfig {
   client_id: string | null;
   has_secret: boolean;
+  system_app?: boolean;
   merchant_id: string | null;
   merchant_name: string | null;
   authorized: boolean;
@@ -69,17 +72,20 @@ export default function IfoodConfigModal({ onClose, onImported }: Props) {
   const [postToLedger, setPostToLedger] = useState(false);
   const [authCode, setAuthCode] = useState('');
   const [appType, setAppType] = useState<'distributed' | 'centralized'>('distributed');
+  const [systemAvailable, setSystemAvailable] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [result, setResult] = useState<{ ok: boolean; msg: string } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
     const [c, i] = await Promise.all([
-      invokeWithAuth<Resp & { config?: IfoodConfig | null }>('ifood-financial', { body: { action: 'get_config', tenant_id: user?.tenantId } }),
+      invokeWithAuth<Resp & { config?: IfoodConfig | null; system_app_available?: boolean }>('ifood-financial', { body: { action: 'get_config', tenant_id: user?.tenantId } }),
       invokeWithAuth<Resp & { imports?: ImportRow[] }>('ifood-financial', { body: { action: 'list_imports', tenant_id: user?.tenantId } }),
     ]);
     const conf = c.data?.config ?? null;
     setCfg(conf);
+    setSystemAvailable(c.data?.system_app_available === true);
     if (conf) {
       setAutoSync(conf.auto_sync !== false);
       setPostToLedger(conf.post_to_ledger === true);
@@ -102,7 +108,7 @@ export default function IfoodConfigModal({ onClose, onImported }: Props) {
   };
 
   const handleSave = async () => {
-    if (!clientId.trim() && !cfg?.client_id) { setResult({ ok: false, msg: 'Informe o Client ID.' }); return; }
+    if (!clientId.trim() && (!cfg?.client_id || usaSistema)) { setResult({ ok: false, msg: 'Informe o Client ID.' }); return; }
     const d = await call('save', {
       action: 'save_config',
       client_id: clientId.trim() || undefined,
@@ -113,6 +119,27 @@ export default function IfoodConfigModal({ onClose, onImported }: Props) {
     if (!d) return;
     setClientSecret('');
     setResult({ ok: true, msg: d.message || 'Configuração salva.' });
+    load();
+  };
+
+  // Com o app do sistema não há "Salvar": a busca diária grava na hora.
+  const handleAutoSync = async (on: boolean) => {
+    setAutoSync(on);
+    const d = await call('autosync', { action: 'set_options', auto_sync: on });
+    if (!d) { setAutoSync(!on); return; }
+    load();
+  };
+
+  const handleUseSystemApp = async () => {
+    if (cfg?.authorized && !(await confirmar({
+      titulo: 'Voltar para o app ERPOS?',
+      mensagem: 'As autorizações feitas com o app próprio deixam de valer: cada loja do iFood precisa gerar um código e autorizar de novo.',
+      confirmarLabel: 'Voltar',
+    }))) return;
+    const d = await call('system', { action: 'use_system_app' });
+    if (!d) return;
+    setShowAdvanced(false);
+    setResult({ ok: true, msg: 'Usando o app ERPOS. Clique em Gerar código para autorizar a loja.' });
     load();
   };
 
@@ -225,6 +252,8 @@ export default function IfoodConfigModal({ onClose, onImported }: Props) {
     if (d) { load(); setResult({ ok: true, msg: 'Integração removida.' }); }
   };
 
+  // Loja no app ERPOS do sistema (sem credencial própria gravada).
+  const usaSistema = cfg?.system_app === true || (systemAvailable && !cfg?.client_id);
   const spinner = <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />;
   const inputCls = 'w-full border border-zinc-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-red-400 font-mono';
 
@@ -306,7 +335,7 @@ export default function IfoodConfigModal({ onClose, onImported }: Props) {
                       <i className={`${cfg.last_sync_error ? 'ri-error-warning-fill text-red-600' : ligadas.length ? 'ri-checkbox-circle-fill text-green-600' : 'ri-time-line text-amber-600'} mt-0.5`} />
                       <div className="flex-1">
                         <p className="font-semibold text-zinc-800">
-                          {ligadas.length ? `Conectado · ${ligadas.length} loja(s) do iFood` : cfg.authorized ? 'Autorizado — ligue abaixo as lojas do iFood desta loja' : 'Credenciais salvas — falta a loja autorizar'}
+                          {ligadas.length ? `Conectado · ${ligadas.length} loja(s) do iFood` : cfg.authorized ? 'Autorizado — ligue abaixo as lojas do iFood desta loja' : usaSistema ? 'Falta a loja autorizar o app ERPOS' : 'Credenciais salvas — falta a loja autorizar'}
                         </p>
                         {cfg.last_sync_at && <p className="text-zinc-600">Última busca: {new Date(cfg.last_sync_at).toLocaleString('pt-BR')}</p>}
                         {cfg.last_sync_error && <p className="text-red-700 mt-1">Último erro: {cfg.last_sync_error}</p>}
@@ -334,54 +363,26 @@ export default function IfoodConfigModal({ onClose, onImported }: Props) {
                 );
               })()}
 
-              <ol className="space-y-1 text-xs text-zinc-600 list-decimal pl-4">
-                <li>No <strong>Portal do Desenvolvedor</strong> do iFood › Meus aplicativos, abra o app <strong>distribuído</strong> e copie o Client ID e o Client Secret.</li>
-                <li>Salve aqui e clique em <strong>Gerar código</strong>.</li>
-                <li>No <strong>Portal do Parceiro</strong> da loja, digite o código para autorizar o app. Ele mostra um <strong>código de autorização</strong>: cole abaixo.</li>
-                <li>Tem mais de uma loja no iFood? Gere um código novo e repita para cada uma (as já autorizadas continuam) — no Portal do Parceiro, <strong>selecione a loja certa no topo</strong> antes de digitar o código.</li>
-              </ol>
+              {usaSistema ? (
+                <ol className="space-y-1 text-xs text-zinc-600 list-decimal pl-4">
+                  <li>Clique em <strong>{cfg?.authorized ? 'Autorizar outra loja' : 'Gerar código'}</strong>.</li>
+                  <li>No <strong>Portal do Parceiro</strong> da loja, digite o código para autorizar o app ERPOS. Ele mostra um <strong>código de autorização</strong>: cole abaixo.</li>
+                  <li>Tem mais de uma loja no iFood? Gere um código novo e repita para cada uma (as já autorizadas continuam) — no Portal do Parceiro, <strong>selecione a loja certa no topo</strong> antes de digitar o código.</li>
+                </ol>
+              ) : (
+                <ol className="space-y-1 text-xs text-zinc-600 list-decimal pl-4">
+                  <li>No <strong>Portal do Desenvolvedor</strong> do iFood › Meus aplicativos, abra o app e copie o Client ID e o Client Secret.</li>
+                  <li>Salve em <strong>Avançado</strong> e clique em <strong>Gerar código</strong> (ou <strong>Conectar</strong>, se o app for centralizado).</li>
+                  <li>No <strong>Portal do Parceiro</strong> da loja, digite o código para autorizar o app e cole abaixo o <strong>código de autorização</strong>.</li>
+                </ol>
+              )}
 
-              <div>
-                <label className="block text-xs font-semibold text-zinc-700 mb-1.5">Tipo do aplicativo</label>
-                <div className="flex gap-2">
-                  {([['distributed', 'Distribuído (código da loja)'], ['centralized', 'Centralizado (sem código)']] as const).map(([k, label]) => (
-                    <button key={k} type="button" onClick={() => setAppType(k)}
-                      className={`flex-1 px-3 py-2 rounded-lg border text-xs font-semibold cursor-pointer ${appType === k ? 'border-red-400 bg-red-50 text-red-700' : 'border-zinc-200 text-zinc-600 hover:bg-zinc-50'}`}>
-                      {label}
-                    </button>
-                  ))}
-                </div>
-                <p className="text-[11px] text-zinc-400 mt-1">Para testar: app "Teste (C)" = centralizado, já liberado na loja de teste.</p>
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-zinc-700 mb-1.5">Client ID</label>
-                <input type="text" value={clientId} onChange={(e) => setClientId(e.target.value)} placeholder={cfg?.client_id ?? 'Cole o Client ID'} className={inputCls} />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-zinc-700 mb-1.5">Client Secret</label>
-                <div className="relative">
-                  <input type={showSecret ? 'text' : 'password'} value={clientSecret} onChange={(e) => setClientSecret(e.target.value)}
-                    placeholder={cfg?.has_secret ? '•••••••••••• (manter o atual)' : 'Cole o Client Secret'} className={inputCls + ' pr-10'} />
-                  <button type="button" onClick={() => setShowSecret(!showSecret)} className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 cursor-pointer">
-                    <i className={showSecret ? 'ri-eye-off-line' : 'ri-eye-line'} />
-                  </button>
-                </div>
-              </div>
               <label className="flex items-center gap-2 text-xs text-zinc-700 cursor-pointer">
-                <input type="checkbox" checked={autoSync} onChange={(e) => setAutoSync(e.target.checked)} className="rounded" />
+                <input type="checkbox" checked={autoSync} disabled={busy !== null} onChange={(e) => (usaSistema ? handleAutoSync(e.target.checked) : setAutoSync(e.target.checked))} className="rounded" />
                 Buscar todo dia às 07h20 e ao abrir a Conciliação
               </label>
-              <label className="flex items-start gap-2 text-xs text-zinc-700 cursor-pointer">
-                <input type="checkbox" checked={cfg?.homologation_mode === true} disabled={busy !== null} onChange={(e) => handleHomolog(e.target.checked)} className="rounded mt-0.5" />
-                <span>Modo homologação (app de teste)
-                  <span className="block text-zinc-400">Marca todas as chamadas como teste (header x-request-homologation). Use com o app de teste e a loja de teste do iFood; desligue quando o app oficial for aprovado.</span>
-                </span>
-              </label>
+
               <div className="flex flex-wrap gap-2">
-                <button onClick={handleSave} disabled={busy !== null}
-                  className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-semibold hover:bg-red-700 cursor-pointer disabled:opacity-50">
-                  {busy === 'save' ? <>{spinner} Salvando...</> : <><i className="ri-save-line" /> Salvar</>}
-                </button>
                 {cfg?.client_id && cfg.app_type === 'centralized' && (
                   <button onClick={handleConnectCentral} disabled={busy !== null}
                     className="flex items-center gap-2 px-4 py-2 border border-red-300 text-red-700 rounded-lg text-sm font-semibold hover:bg-red-50 cursor-pointer disabled:opacity-50">
@@ -390,7 +391,7 @@ export default function IfoodConfigModal({ onClose, onImported }: Props) {
                 )}
                 {cfg?.client_id && cfg.app_type !== 'centralized' && (
                   <button onClick={handleUserCode} disabled={busy !== null}
-                    className="flex items-center gap-2 px-4 py-2 border border-red-300 text-red-700 rounded-lg text-sm font-semibold hover:bg-red-50 cursor-pointer disabled:opacity-50">
+                    className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-semibold hover:bg-red-700 cursor-pointer disabled:opacity-50">
                     {busy === 'code' ? 'Gerando...' : <><i className="ri-key-2-line" /> {cfg.authorized ? 'Autorizar outra loja' : 'Gerar código'}</>}
                   </button>
                 )}
@@ -419,6 +420,61 @@ export default function IfoodConfigModal({ onClose, onImported }: Props) {
                 </div>
               )}
 
+              <div className="rounded-lg border border-zinc-100">
+                <button type="button" onClick={() => setShowAdvanced(!showAdvanced)} className="w-full flex items-center justify-between px-3 py-2 text-xs font-semibold text-zinc-500 hover:text-zinc-700 cursor-pointer">
+                  <span>Avançado: app próprio do iFood (teste){!usaSistema && cfg?.client_id ? ' · em uso' : ''}</span>
+                  <i className={showAdvanced ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} />
+                </button>
+                {showAdvanced && (
+                  <div className="px-3 pb-3 space-y-3">
+                    <p className="text-[11px] text-zinc-400">Só para testar com um app de teste do Portal do Desenvolvedor. As lojas de verdade usam o app ERPOS, já configurado no sistema.</p>
+                  <div>
+                    <label className="block text-xs font-semibold text-zinc-700 mb-1.5">Tipo do aplicativo</label>
+                    <div className="flex gap-2">
+                      {([['distributed', 'Distribuído (código da loja)'], ['centralized', 'Centralizado (sem código)']] as const).map(([k, label]) => (
+                        <button key={k} type="button" onClick={() => setAppType(k)}
+                          className={`flex-1 px-3 py-2 rounded-lg border text-xs font-semibold cursor-pointer ${appType === k ? 'border-red-400 bg-red-50 text-red-700' : 'border-zinc-200 text-zinc-600 hover:bg-zinc-50'}`}>
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                    <p className="text-[11px] text-zinc-400 mt-1">Para testar: app "Teste (C)" = centralizado, já liberado na loja de teste.</p>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-zinc-700 mb-1.5">Client ID</label>
+                    <input type="text" value={clientId} onChange={(e) => setClientId(e.target.value)} placeholder={(!usaSistema && cfg?.client_id) || 'Cole o Client ID'} className={inputCls} />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-zinc-700 mb-1.5">Client Secret</label>
+                    <div className="relative">
+                      <input type={showSecret ? 'text' : 'password'} value={clientSecret} onChange={(e) => setClientSecret(e.target.value)}
+                        placeholder={cfg?.has_secret && !usaSistema ? '•••••••••••• (manter o atual)' : 'Cole o Client Secret'} className={inputCls + ' pr-10'} />
+                      <button type="button" onClick={() => setShowSecret(!showSecret)} className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 cursor-pointer">
+                        <i className={showSecret ? 'ri-eye-off-line' : 'ri-eye-line'} />
+                      </button>
+                    </div>
+                  </div>
+                  <label className="flex items-start gap-2 text-xs text-zinc-700 cursor-pointer">
+                    <input type="checkbox" checked={cfg?.homologation_mode === true} disabled={busy !== null} onChange={(e) => handleHomolog(e.target.checked)} className="rounded mt-0.5" />
+                    <span>Modo homologação (app de teste)
+                      <span className="block text-zinc-400">Marca todas as chamadas como teste (header x-request-homologation). Use com o app de teste e a loja de teste do iFood; desligue quando o app oficial for aprovado.</span>
+                    </span>
+                  </label>
+                    <div className="flex flex-wrap gap-2">
+                      <button onClick={handleSave} disabled={busy !== null}
+                        className="flex items-center gap-2 px-4 py-2 bg-zinc-800 text-white rounded-lg text-sm font-semibold hover:bg-zinc-900 cursor-pointer disabled:opacity-50">
+                        {busy === 'save' ? <>{spinner} Salvando...</> : <><i className="ri-save-line" /> Salvar app próprio</>}
+                      </button>
+                      {systemAvailable && !usaSistema && cfg?.client_id && (
+                        <button onClick={handleUseSystemApp} disabled={busy !== null}
+                          className="px-4 py-2 border border-zinc-300 text-zinc-700 rounded-lg text-sm font-semibold hover:bg-zinc-50 cursor-pointer disabled:opacity-50">
+                          {busy === 'system' ? 'Salvando...' : 'Voltar para o app ERPOS'}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
 
             {result && (
@@ -429,7 +485,7 @@ export default function IfoodConfigModal({ onClose, onImported }: Props) {
             )}
 
             <div className="flex items-center gap-3 pt-1">
-              {cfg?.client_id && (
+              {(cfg?.authorized || (cfg?.client_id && !usaSistema)) && (
                 <button onClick={handleRemove} disabled={busy !== null} className="px-4 py-2.5 text-sm text-red-600 hover:bg-red-50 rounded-lg cursor-pointer disabled:opacity-50">Remover API</button>
               )}
               <div className="flex-1" />

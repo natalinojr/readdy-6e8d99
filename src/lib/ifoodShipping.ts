@@ -5,6 +5,7 @@ import { supabase } from '@/lib/supabase';
 export interface IfoodShippingConfig {
   client_id: string | null;
   has_secret: boolean;
+  system_app?: boolean;
   app_type: 'distributed' | 'centralized';
   homologation_mode: boolean;
   shipping_enabled: boolean;

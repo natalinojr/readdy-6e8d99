@@ -9,7 +9,9 @@
 //
 // Ações (POST JSON { action, tenant_id, ... }):
 //   get_config                                      qualquer pessoa da loja (sem segredos)
-//   save_config    { client_id, client_secret? }    admin/gerente
+//   save_config    { client_id, client_secret? }    admin/gerente — só app PRÓPRIO (teste); sem isso a loja usa
+//                                                   o app ERPOS PDV do sistema (secrets IFOOD_PDV_CLIENT_ID/SECRET)
+//   use_system_app                                  volta a loja para o app do sistema
 //   set_options    { homologation_mode?, shipping_enabled?, default_prep_min?, shipping_merchant_id? }
 //   request_user_code / confirm_authorization { authorization_code } / delete_config   admin/gerente
 //   prepare        { order_id }                     formulário pré-preenchido (endereço, telefone, itens, pagamento)
@@ -42,6 +44,15 @@ const log = (level: string, action: string, msg: string, extra: Record<string, u
   console.log(JSON.stringify({ level, fn: 'ifood-shipping', action, msg, ...extra }));
 
 const API = 'https://merchant-api.ifood.com.br';
+
+// App ERPOS PDV (distribuído): Client ID/Secret são do SISTEMA, nos secrets da função (2026-09-26).
+// Toda loja usa este app e só autoriza no Portal do Parceiro; credencial própria na config (app de teste) tem prioridade.
+const SYSTEM_APP = { id: (Deno.env.get('IFOOD_PDV_CLIENT_ID') ?? '').trim(), secret: (Deno.env.get('IFOOD_PDV_CLIENT_SECRET') ?? '').trim() };
+const hasSystemApp = () => Boolean(SYSTEM_APP.id && SYSTEM_APP.secret);
+function withSystemApp(cfg: any) {
+  if (!cfg || cfg.client_id || !hasSystemApp()) return cfg;
+  return { ...cfg, client_id: SYSTEM_APP.id, client_secret: SYSTEM_APP.secret, app_type: 'distributed' };
+}
 
 // ── API do iFood ─────────────────────────────────────────────────────────────
 // Backoff exponencial com jitter em 429/5xx (1s, 2s, 4s, 8s; respeita Retry-After) e header de
@@ -394,7 +405,8 @@ function safeConfig(cfg: any, auths: any[]) {
   const merchants = new Map<string, string>();
   for (const a of auths) for (const m of a.merchants ?? []) merchants.set(m.id, m.name);
   return {
-    client_id: cfg.client_id ?? null, has_secret: !!cfg.client_secret, app_type: cfg.app_type === 'centralized' ? 'centralized' : 'distributed',
+    client_id: cfg.client_id ?? null, has_secret: !!cfg.client_secret,
+    system_app: !!cfg.client_id && cfg.client_id === SYSTEM_APP.id, app_type: cfg.app_type === 'centralized' ? 'centralized' : 'distributed',
     homologation_mode: cfg.homologation_mode === true, shipping_enabled: cfg.shipping_enabled === true,
     default_prep_min: cfg.default_prep_min ?? 15,
     shipping_merchant_id: cfg.shipping_merchant_id ?? null, shipping_merchant_name: cfg.shipping_merchant_name ?? null,
@@ -423,9 +435,9 @@ Deno.serve(async (req) => {
   try {
     if (action === 'poll_all') {
       if (!internal) return errResp('Unauthorized', 401);
-      const { data: lojas } = await admin.from('ifood_pdv_config').select('*').eq('shipping_enabled', true).not('client_id', 'is', null);
+      const { data: lojas } = await admin.from('ifood_pdv_config').select('*').eq('shipping_enabled', true);
       const out = [];
-      for (const cfg of lojas ?? []) {
+      for (const cfg of (lojas ?? []).map(withSystemApp).filter((c) => c.client_id)) {
         // Entrega "ativa" há mais de 6 h sem notícia não segura o polling (mesma regra do cron no banco).
         const { count } = await admin.from('ifood_shipping_orders').select('id', { count: 'exact', head: true })
           .eq('tenant_id', cfg.tenant_id).in('status', ACTIVE).gt('updated_at', new Date(Date.now() - 6 * 3600_000).toISOString());
@@ -459,10 +471,15 @@ Deno.serve(async (req) => {
       role = String(match.role ?? '');
     }
     const isManager = internal || isManagerRole(role);
-    const { data: cfg } = await admin.from('ifood_pdv_config').select('*').eq('tenant_id', tenantId).maybeSingle();
+    const { data: cfgRow } = await admin.from('ifood_pdv_config').select('*').eq('tenant_id', tenantId).maybeSingle();
+    const cfg = withSystemApp(cfgRow);
     const listAuths = async () => (await admin.from('ifood_pdv_auths').select('id, merchants, authorized_at').eq('tenant_id', tenantId).order('authorized_at', { ascending: false })).data ?? [];
 
-    if (action === 'get_config') return json({ success: true, config: safeConfig(cfg, cfg ? await listAuths() : []), can_edit: isManager });
+    if (action === 'get_config') {
+      // Loja sem config ainda: com o app do sistema, a tela já mostra "Gerar código".
+      const shown = cfg ?? withSystemApp({ tenant_id: tenantId });
+      return json({ success: true, config: safeConfig(shown, cfg ? await listAuths() : []), can_edit: isManager, system_app_available: hasSystemApp() });
+    }
 
     // ── Entregas (qualquer pessoa da loja: quem despacha é o caixa/expedição) ──
     const getShipping = async () => {
@@ -720,11 +737,11 @@ Deno.serve(async (req) => {
       const clientId = String(body.client_id ?? '').trim();
       const clientSecret = String(body.client_secret ?? '').trim();
       if (!clientId) return errResp('Informe o Client ID do app ERPOS PDV.');
-      if (!clientSecret && !cfg?.client_secret) return errResp('Informe o Client Secret do app ERPOS PDV.');
+      if (!clientSecret && !(cfgRow?.client_id === clientId && cfgRow?.client_secret)) return errResp('Informe o Client Secret do app ERPOS PDV.');
       const changedApp = cfg && cfg.client_id !== clientId;
       if (changedApp && await temAtivas()) return errResp(MSG_ATIVAS);
       const appType = body.app_type === 'centralized' ? 'centralized' : 'distributed';
-      const row: Record<string, unknown> = { tenant_id: tenantId, client_id: clientId, client_secret: clientSecret || cfg?.client_secret, app_type: appType, updated_at: new Date().toISOString() };
+      const row: Record<string, unknown> = { tenant_id: tenantId, client_id: clientId, client_secret: clientSecret || cfgRow?.client_secret, app_type: appType, updated_at: new Date().toISOString() };
       if (!cfg) row.created_by = userId;
       if (changedApp) Object.assign(row, { user_code: null, auth_verifier_secret: null, shipping_merchant_id: null, shipping_merchant_name: null, shipping_enabled: false });
       const { error } = await admin.from('ifood_pdv_config').upsert(row, { onConflict: 'tenant_id' });
@@ -782,15 +799,37 @@ Deno.serve(async (req) => {
       return json({ success: true, merchants });
     }
 
+    // Volta para o app ERPOS PDV do sistema (apaga a credencial própria; autorizações de outro app caem).
+    if (action === 'use_system_app') {
+      if (!hasSystemApp()) return errResp('O app ERPOS PDV do sistema não está configurado no servidor.');
+      if (!cfgRow) return json({ success: true });
+      const changedApp = cfgRow.client_id && cfgRow.client_id !== SYSTEM_APP.id;
+      if (changedApp && await temAtivas()) return errResp(MSG_ATIVAS);
+      const upd: Record<string, unknown> = { client_id: null, client_secret: null, app_type: 'distributed', updated_at: new Date().toISOString() };
+      if (changedApp) Object.assign(upd, { user_code: null, auth_verifier_secret: null, shipping_merchant_id: null, shipping_merchant_name: null, shipping_enabled: false, homologation_mode: false, homologation_until: null });
+      const { error } = await admin.from('ifood_pdv_config').update(upd).eq('id', cfgRow.id);
+      if (error) return errResp('Salvar: ' + error.message, 500);
+      if (changedApp) await admin.from('ifood_pdv_auths').delete().eq('tenant_id', tenantId);
+      return json({ success: true });
+    }
+
     if (action === 'request_user_code') {
-      if (!cfg?.client_id) return errResp('Salve primeiro o Client ID e o Client Secret.');
-      const r = await ifoodForm('/authentication/v1.0/oauth/userCode', { clientId: cfg.client_id }, cfg.homologation_mode === true);
+      const rc = cfg ?? withSystemApp({ tenant_id: tenantId });
+      if (!rc?.client_id) return errResp('Salve primeiro o Client ID e o Client Secret.');
+      // 1ª vez da loja com o app do sistema: cria a config (o código fica guardado nela).
+      if (!rc.id) {
+        const { data: novo, error } = await admin.from('ifood_pdv_config')
+          .insert({ tenant_id: tenantId, app_type: 'distributed', created_by: userId, updated_at: new Date().toISOString() }).select('id').single();
+        if (error) return errResp('Salvar: ' + error.message, 500);
+        rc.id = novo.id;
+      }
+      const r = await ifoodForm('/authentication/v1.0/oauth/userCode', { clientId: rc.client_id }, rc.homologation_mode === true);
       if (!r.ok || !r.data?.userCode) return errResp(apiError(r, 'Gerar código'));
       await admin.from('ifood_pdv_config').update({
         user_code: r.data.userCode, auth_verifier_secret: r.data.authorizationCodeVerifier,
         verification_url: r.data.verificationUrlComplete ?? r.data.verificationUrl ?? null,
         user_code_expires_at: new Date(Date.now() + Number(r.data.expiresIn ?? 600) * 1000).toISOString(), updated_at: new Date().toISOString(),
-      }).eq('id', cfg.id);
+      }).eq('id', rc.id);
       return json({ success: true, user_code: r.data.userCode, verification_url: r.data.verificationUrlComplete ?? r.data.verificationUrl ?? null });
     }
 

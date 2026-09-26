@@ -14,6 +14,8 @@ const lbl = 'block text-[11px] font-semibold text-zinc-500 mb-0.5';
 /**
  * Configuração do iFood Entrega: app "ERPOS PDV" (separado do app do financeiro) — credenciais,
  * autorização da loja no Portal do Parceiro, loja do iFood que despacha e modo homologação.
+ * Desde 2026-09-26 o app ERPOS PDV é do SISTEMA (secrets da edge): a loja só gera o código e autoriza;
+ * Client ID/Secret próprios ficam em "Avançado", só para app de teste.
  */
 export default function IfoodEntregaConfigModal({ tenantId, onClose, onChanged }: Props) {
   useVoltarFecha(true, onClose, 'ifood-entrega-config');
@@ -28,13 +30,16 @@ export default function IfoodEntregaConfigModal({ tenantId, onClose, onChanged }
   const [appType, setAppType] = useState<'distributed' | 'centralized'>('distributed');
   const [authCode, setAuthCode] = useState('');
   const [userCode, setUserCode] = useState<{ code: string; url: string | null } | null>(null);
+  const [systemAvailable, setSystemAvailable] = useState(false);
+  const [avancado, setAvancado] = useState(false);
 
   const carregar = useCallback(async () => {
-    const r = await ifoodShipping<{ config: IfoodShippingConfig | null; can_edit: boolean }>('get_config', tenantId);
+    const r = await ifoodShipping<{ config: IfoodShippingConfig | null; can_edit: boolean; system_app_available?: boolean }>('get_config', tenantId);
     setCarregando(false);
     if (!r.success) { setErro(r.error || 'Não foi possível carregar.'); return; }
     setCfg(r.config); setPodeEditar(r.can_edit);
-    setClientId(r.config?.client_id ?? '');
+    setSystemAvailable(r.system_app_available === true);
+    setClientId(r.config?.system_app ? '' : r.config?.client_id ?? '');
     setAppType(r.config?.app_type ?? 'distributed');
     if (r.config?.user_code) setUserCode({ code: r.config.user_code, url: r.config.verification_url });
   }, [tenantId]);
@@ -64,7 +69,15 @@ export default function IfoodEntregaConfigModal({ tenantId, onClose, onChanged }
     if (r) { setAuthCode(''); setUserCode(null); }
   };
 
+  const voltarParaSistema = async () => {
+    if (conectado && !window.confirm('Voltar para o app ERPOS PDV? As autorizações feitas com o app próprio deixam de valer e a loja precisa autorizar de novo.')) return;
+    const r = await run('sistema', 'use_system_app', {}, 'Usando o app ERPOS PDV. Gere o código para autorizar a loja.');
+    if (r) setAvancado(false);
+  };
+
   const conectado = !!cfg?.authorized;
+  // Loja no app ERPOS PDV do sistema (sem credencial própria gravada).
+  const usaSistema = cfg?.system_app === true || (systemAvailable && !cfg?.client_id);
 
   return (
     <div className="fixed inset-0 z-[90] flex items-end sm:items-center justify-center bg-black/50 sm:p-4" onClick={onClose}>
@@ -87,34 +100,18 @@ export default function IfoodEntregaConfigModal({ tenantId, onClose, onChanged }
             </p>
           ) : (
             <>
-              {/* 1. Credenciais */}
-              <section className="space-y-2">
-                <p className="text-xs font-bold text-zinc-700">1. App do iFood (Portal do Desenvolvedor › Meus aplicativos › Credenciais)</p>
-                <div className="flex gap-1.5">
-                  {([['distributed', 'ERPOS PDV (lojas reais)'], ['centralized', 'App de teste "C" (loja de teste)']] as const).map(([k, t]) => (
-                    <button key={k} type="button" onClick={() => setAppType(k)}
-                      className={`flex-1 py-1.5 rounded-lg text-[11px] font-bold border ${appType === k ? 'bg-zinc-800 text-white border-zinc-800' : 'bg-white text-zinc-600 border-zinc-200'}`}>{t}</button>
-                  ))}
-                </div>
-                <div><label className={lbl}>Client ID</label><input className={inp} value={clientId} onChange={(e) => setClientId(e.target.value)} /></div>
-                <div><label className={lbl}>Client Secret {cfg?.has_secret && <span className="text-emerald-600">(guardado — deixe vazio para manter)</span>}</label>
-                  <input className={inp} type="password" autoComplete="off" value={secret} onChange={(e) => setSecret(e.target.value)} /></div>
-                <button disabled={!!busy || !clientId.trim()} onClick={salvarCredenciais} className="px-4 py-2 rounded-lg bg-zinc-800 text-white text-xs font-bold disabled:opacity-50">
-                  {busy === 'cred' ? 'Salvando…' : 'Salvar credenciais'}
-                </button>
-              </section>
-
-              {/* 2. Autorização */}
+              {/* 1. Autorização */}
+              {!cfg?.client_id && <p className="text-xs text-zinc-500">App do iFood não configurado: abra <b>Avançado</b> abaixo.</p>}
               {cfg?.client_id && (
                 <section className="space-y-2">
-                  <p className="text-xs font-bold text-zinc-700">2. Autorizar a loja no Portal do Parceiro</p>
+                  <p className="text-xs font-bold text-zinc-700">1. Autorizar a loja no Portal do Parceiro{usaSistema ? ' (app ERPOS PDV)' : ''}</p>
                   {cfg.merchants.length > 0 && <p className="text-xs text-emerald-700"><i className="ri-checkbox-circle-line" /> Autorizadas: {cfg.merchants.map((m) => m.name).join(', ')}</p>}
                   {cfg.app_type === 'centralized' ? (
                     <button disabled={!!busy} onClick={() => run('central', 'connect_centralized', {}, 'Conectado.')} className="px-4 py-2 rounded-lg bg-red-600 text-white text-xs font-bold disabled:opacity-50">
                       {busy === 'central' ? 'Conectando…' : conectado ? 'Conectar de novo' : 'Conectar (app de teste, sem código)'}
                     </button>
                   ) : !userCode ? (
-                    <button disabled={!!busy} onClick={gerarCodigo} className="px-4 py-2 rounded-lg border border-zinc-200 text-zinc-700 text-xs font-bold disabled:opacity-50">
+                    <button disabled={!!busy} onClick={gerarCodigo} className="px-4 py-2 rounded-lg bg-red-600 text-white text-xs font-bold disabled:opacity-50">
                       {busy === 'code' ? 'Gerando…' : conectado ? 'Autorizar outra loja' : 'Gerar código de vínculo'}
                     </button>
                   ) : (
@@ -131,10 +128,10 @@ export default function IfoodEntregaConfigModal({ tenantId, onClose, onChanged }
                 </section>
               )}
 
-              {/* 3. Loja + opções */}
+              {/* 2. Loja + opções */}
               {conectado && cfg && (
                 <section className="space-y-3">
-                  <p className="text-xs font-bold text-zinc-700">3. Entregas</p>
+                  <p className="text-xs font-bold text-zinc-700">2. Entregas</p>
                   <div><label className={lbl}>Loja do iFood que despacha</label>
                     <select className={inp} value={cfg.shipping_merchant_id ?? ''} disabled={!!busy}
                       onChange={(e) => run('merchant', 'set_options', { shipping_merchant_id: e.target.value })}>
@@ -164,6 +161,33 @@ export default function IfoodEntregaConfigModal({ tenantId, onClose, onChanged }
                   )}
                 </section>
               )}
+              {/* Avançado: app próprio (teste) */}
+              <section className="rounded-lg border border-zinc-100">
+                <button type="button" onClick={() => setAvancado(!avancado)} className="w-full flex items-center justify-between px-3 py-2 text-xs font-semibold text-zinc-500 hover:text-zinc-700">
+                  <span>Avançado: app próprio do iFood (teste){!usaSistema && cfg?.client_id ? ' · em uso' : ''}</span>
+                  <i className={avancado ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} />
+                </button>
+                {avancado && <div className="px-3 pb-3 space-y-2">
+                <p className="text-[11px] text-zinc-400">Só para testar com um app de teste do Portal do Desenvolvedor. As lojas de verdade usam o app ERPOS PDV, já configurado no sistema.</p>
+                <div className="flex gap-1.5">
+                  {([['distributed', 'ERPOS PDV (lojas reais)'], ['centralized', 'App de teste "C" (loja de teste)']] as const).map(([k, t]) => (
+                    <button key={k} type="button" onClick={() => setAppType(k)}
+                      className={`flex-1 py-1.5 rounded-lg text-[11px] font-bold border ${appType === k ? 'bg-zinc-800 text-white border-zinc-800' : 'bg-white text-zinc-600 border-zinc-200'}`}>{t}</button>
+                  ))}
+                </div>
+                <div><label className={lbl}>Client ID</label><input className={inp} value={clientId} onChange={(e) => setClientId(e.target.value)} /></div>
+                <div><label className={lbl}>Client Secret {cfg?.has_secret && !usaSistema && <span className="text-emerald-600">(guardado — deixe vazio para manter)</span>}</label>
+                  <input className={inp} type="password" autoComplete="off" value={secret} onChange={(e) => setSecret(e.target.value)} /></div>
+                <button disabled={!!busy || !clientId.trim()} onClick={salvarCredenciais} className="px-4 py-2 rounded-lg bg-zinc-800 text-white text-xs font-bold disabled:opacity-50">
+                  {busy === 'cred' ? 'Salvando…' : 'Salvar app próprio'}
+                </button>
+                {systemAvailable && !usaSistema && cfg?.client_id && (
+                  <button disabled={!!busy} onClick={voltarParaSistema} className="ml-2 px-4 py-2 rounded-lg border border-zinc-200 text-zinc-700 text-xs font-bold disabled:opacity-50">
+                    {busy === 'sistema' ? 'Salvando…' : 'Voltar para o app ERPOS PDV'}
+                  </button>
+                )}
+                </div>}
+              </section>
             </>
           )}
           {erro && <p className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-lg p-2">{erro}</p>}
