@@ -2406,15 +2406,25 @@ Deno.serve(async (req) => {
       }
       await admin.from('fin_inter_payments').update({ settle_attempts: Number(p.settle_attempts ?? 0) + 1, settle_last_try: agora }).eq('id', pid);
       const marcar = (extra: Record<string, unknown>) => admin.from('fin_inter_payments').update({ ...extra, updated_at: new Date().toISOString() }).eq('id', pid);
-      const { data: bill } = await admin.from('fin_accounts_payable').select('id, status, description').eq('id', p.bill_id).maybeSingle();
+      const { data: bill } = await admin.from('fin_accounts_payable').select('id, status, description, amount, paid_amount').eq('id', p.bill_id).maybeSingle();
       if (!bill) { await marcar({ settle_error: 'conta a pagar não encontrada' }); return json({ ok: false, erro: 'conta a pagar não encontrada' }); }
-      if (bill.status === 'paid') { await marcar({ settled_at: agora, settle_error: null }); return json({ ok: true, ja: true, msg: 'conta já estava quitada' }); }
+      // Baixa já feita na hora da confirmação do Inter: falta só LIGAR a linha do extrato (sem pagar de novo).
+      const antecipada = !!p.baixa_antecipada_at && bill.status === 'paid';
+      // Baixa antecipada estornada à mão (Contas a Pagar) antes do extrato: não paga de novo, avisa.
+      // (2 min de folga: outra rodada em paralelo pode estar no meio do pay_bill.)
+      if (p.baixa_antecipada_at && bill.status !== 'paid' && Date.now() - Date.parse(String(p.baixa_antecipada_at)) > 120_000) {
+        await marcar({ settled_at: agora, settle_error: 'a baixa feita na confirmação do Inter foi estornada à mão; confira na Conciliação' });
+        return json({ ok: false, erro: 'a baixa deste Pix foi estornada à mão — confira na Conciliação antes de baixar de novo' });
+      }
+      if (bill.status === 'paid' && !antecipada) { await marcar({ settled_at: agora, settle_error: null }); return json({ ok: true, ja: true, msg: 'conta já estava quitada' }); }
       const { data: st } = await admin.from('asst_settings').select('value').eq('key', 'owner_user_id').maybeSingle();
       // deno-lint-ignore no-explicit-any
       const ctx: any = { admin, ownerId: String(st?.value ?? '') };
       try { await callInter('sync', { tenant_id: p.tenant_id, days: 3 }); } catch (e) { log('WARN', 'baixa: sync do extrato', { error: errMsg(e) }); }
-      const rm = await callEdge(ctx, 'conciliacao-pagamentos', 'rematch', {}, p.tenant_id).catch((e) => ({ status: 0, body: { error: errMsg(e) }, ms: 0 }));
-      if (rm.status >= 400 || rm.body?.success === false) log('WARN', 'baixa: rematch', { body: JSON.stringify(rm.body).slice(0, 300) });
+      if (!antecipada) {
+        const rm = await callEdge(ctx, 'conciliacao-pagamentos', 'rematch', {}, p.tenant_id).catch((e) => ({ status: 0, body: { error: errMsg(e) }, ms: 0 }));
+        if (rm.status >= 400 || rm.body?.success === false) log('WARN', 'baixa: rematch', { body: JSON.stringify(rm.body).slice(0, 300) });
+      }
       // QUAL débito do extrato é ESTE pagamento (corrigido em 2026-09-16). Antes valia qualquer débito
       // de mesmo valor que a conciliação sugerisse para a conta — e ela sugere pelo NOME + VALOR. Freela
       // recebe o mesmo valor em dias diferentes: a conta da Joziane (Pix de 16/09) levou o Pix de 11/09,
@@ -2439,6 +2449,48 @@ Deno.serve(async (req) => {
       if (!row && !e2e) row = mesmoValor.filter((r: any) => r.status === 'pending').find((r: any) => r.match_kind === 'payable' && r.match_ref_id === p.bill_id)
         // deno-lint-ignore no-explicit-any
         ?? (mesmoValor.filter((r: any) => r.status === 'pending').length === 1 ? mesmoValor.find((r: any) => r.status === 'pending') : undefined);
+
+      if (antecipada) {
+        // Só pelo E2E: a conta já está paga, então a conciliação não sugere mais nada para ela.
+        if (e2e && !row) {
+          // A linha deste E2E já foi conciliada (tela ou outra rodada): se foi com OUTRA conta, é baixa em dobro.
+          const { data: jaConc } = await admin.from('fin_bank_statement_imports').select('id, match_detail')
+            .eq('tenant_id', p.tenant_id).eq('reconciled', true).eq('raw->detalhes->>endToEndId', e2e).limit(1);
+          if (jaConc?.length) {
+            const outra = (jaConc[0].match_detail as { confirmed?: { bill_id?: string } } | null)?.confirmed?.bill_id;
+            if (outra && outra !== bill.id) {
+              await marcar({ settled_at: agora, settle_error: 'linha do extrato deste Pix foi conciliada com OUTRA conta: baixa em dobro, desfaça uma na Conciliação' });
+              log('WARN', 'baixa antecipada: linha conciliada com outra conta', { payment: pid, bill: bill.id, outra, row: jaConc[0].id });
+              return json({ ok: false, erro: 'a linha do extrato deste Pix foi conciliada com outra conta — há baixa em dobro; desfaça uma na Conciliação' });
+            }
+            await marcar({ settled_at: agora, settle_error: null });
+            return json({ ok: true, ja: true, msg: 'linha do extrato já ligada' });
+          }
+        }
+        if (!e2e || !row) {
+          // Esperar a linha não gasta as 15 tentativas (o cron ainda limita a 2 dias do pagamento).
+          await marcar({ settle_attempts: Number(p.settle_attempts ?? 0), settle_error: 'baixa feita na confirmação do Inter; falta ligar a linha do extrato' });
+          // ja: o cartão do Telegram já disse "baixa feita" na tentativa que quitou; aqui fica calado.
+          return json({ ok: true, ja: true, baixa_feita: true, msg: 'a linha do extrato ainda não chegou para ligar' });
+        }
+        // O débito que o pay_bill gravou na conta do banco é o par desta linha (mesmo que a Conciliação faria).
+        const { data: mov } = await admin.from('fin_bank_transactions').select('id').eq('tenant_id', p.tenant_id)
+          .eq('reference_type', 'bill_payment').eq('reference_id', bill.id).order('created_at', { ascending: false }).limit(1);
+        const confirmed = { bill_id: bill.id, juros_bill_id: null, pay_amount: Number(p.amount), juros: 0, desconto: 0, auto_imported: false, at: agora, by: ctx.ownerId || null, baixa_antecipada: true };
+        const { data: ligada } = await admin.from('fin_bank_statement_imports').update({
+          status: 'matched', reconciled: true, reconciled_at: agora, reconciled_by: ctx.ownerId || null, matched_at: agora, matched_by: ctx.ownerId || null,
+          match_kind: 'payable', match_ref_id: bill.id, match_confidence: 'exato', matched_transaction_id: mov?.[0]?.id ?? null, notes: null,
+          match_detail: { ...(row.match_detail ?? {}), via: 'pagamento_inter', pix_e2e: e2e, confirmed },
+        }).eq('id', row.id).eq('reconciled', false).select('id');
+        if (!ligada?.length) {
+          await marcar({ settle_error: 'linha do extrato foi conciliada por outra pessoa enquanto ligava' });
+          return json({ ok: false, erro: 'a linha do extrato já foi conciliada' });
+        }
+        await marcar({ settled_at: agora, settle_error: null });
+        log('INFO', 'baixa antecipada ligada ao extrato', { payment: pid, bill: bill.id, row: row.id });
+        return json({ ok: true, ja: true, msg: 'linha do extrato ligada à baixa' });
+      }
+
       if (row?.status === 'matched') {
         await admin.from('fin_bank_statement_imports').update({ status: 'pending', matched_transaction_id: null, matched_at: null, notes: null })
           .eq('id', row.id).eq('reconciled', false);
@@ -2455,6 +2507,28 @@ Deno.serve(async (req) => {
         log('INFO', 'baixa: débito reapontado para o pagamento certo', { payment: pid, row: row.id, antes: row.match_ref_id, e2e: !!e2e });
       }
       if (!row) {
+        // Baixa na hora (dono, 2026-09-25): Pix PAGO no Inter = o dinheiro saiu, não precisa esperar o extrato.
+        // Mesma baixa da Conciliação (pay_bill com a conta do Inter: fluxo de caixa + débito no banco); a linha
+        // do extrato é ligada depois pelo E2E. Só Pix com E2E e valor igual ao saldo da conta — boleto (juros,
+        // desconto, sem E2E) continua esperando o extrato, que mostra o valor que de fato saiu.
+        const restante = Math.round((Number(bill.amount) - Number(bill.paid_amount ?? 0)) * 100) / 100;
+        if (p.kind === 'pix' && e2e && p.paid_at && Math.abs(restante - Number(p.amount)) < 0.01) {
+          const { data: cfg } = await admin.from('fin_inter_config').select('bank_account_id').eq('tenant_id', p.tenant_id).maybeSingle();
+          // Marca ANTES de pagar: se o pay_bill gravar e a resposta se perder, a próxima rodada ainda sabe
+          // que a baixa é deste Pix (e o sync do extrato reserva o débito dela para a linha deste E2E).
+          await marcar({ baixa_antecipada_at: agora });
+          const pg = await callEdge(ctx, 'financial-write', 'pay_bill', {
+            id: bill.id, paid_date: diaSP(String(p.paid_at)), paid_amount: restante, payment_method: 'Pix', bank_account_id: cfg?.bank_account_id ?? null,
+          }, p.tenant_id).catch((e) => ({ status: 0, body: { error: errMsg(e) }, ms: 0 }));
+          const { data: depois } = await admin.from('fin_accounts_payable').select('status').eq('id', bill.id).maybeSingle();
+          if (depois?.status === 'paid') {
+            await marcar({ settle_error: 'baixa feita na confirmação do Inter; falta ligar a linha do extrato' });
+            log('INFO', 'baixa na confirmação do Inter', { payment: pid, bill: bill.id, valor: restante, http: pg.status });
+            return json({ ok: true, baixa_feita: true, msg: 'baixa feita (o extrato é ligado quando chegar)' });
+          }
+          await marcar({ baixa_antecipada_at: null });
+          log('WARN', 'baixa na confirmação do Inter falhou', { payment: pid, bill: bill.id, status: pg.status, body: JSON.stringify(pg.body).slice(0, 300) });
+        }
         await marcar({ settle_error: 'débito ainda não apareceu no extrato ou sem vínculo sugerido' });
         return json({ ok: false, pendente: 'o débito ainda não apareceu no extrato do Inter' });
       }

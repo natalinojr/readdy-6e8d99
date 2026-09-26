@@ -311,6 +311,12 @@ async function syncTenant(admin: Admin, tenantId: string, opts: { days?: number;
       const billsBaixadas = new Set((baixadas ?? []).map((r) =>
         (r.match_detail as { confirmed?: { bill_id?: string } } | null)?.confirmed?.bill_id
         ?? (r.match_kind === 'payable' ? r.match_ref_id : null)).filter(Boolean) as string[]);
+      // Baixa feita na confirmação do Inter (brain › baixa_conciliada, 2026-09-25) ainda sem linha: o débito
+      // dela é reservado para a linha do MESMO E2E (o brain liga). Sem isso, outro Pix de mesmo valor
+      // (freela com a mesma diária) casava com ele e a conta desse outro ficava aberta.
+      const { data: antecipadas } = await admin.from('fin_inter_payments').select('bill_id').eq('tenant_id', tenantId)
+        .not('baixa_antecipada_at', 'is', null).is('settled_at', null).not('bill_id', 'is', null);
+      for (const a of antecipadas ?? []) billsBaixadas.add(String(a.bill_id));
       for (const b of bts ?? []) {
         if (b.reference_type === 'bill_payment' && billsBaixadas.has(String(b.reference_id))) usedIds.add(b.id);
       }
