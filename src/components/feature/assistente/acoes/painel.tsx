@@ -44,11 +44,12 @@ export function Kpis({ principal, outros }: {
         {principal.extra && <div className="mt-1">{principal.extra}</div>}
       </div>
       {outros.length > 0 && (
-        <div className={`grid gap-2 ${outros.length >= 3 ? 'grid-cols-3' : 'grid-cols-2'}`}>
+        // No máximo 2 por linha (3 lado a lado não cabem no celular: "R$ 165,2/6"); o que sobra ocupa a linha toda.
+        <div className="grid grid-cols-2 gap-2 [&>*:last-child:nth-child(odd)]:col-span-2">
           {outros.map((k) => (
             <div key={k.label} className="rounded-xl bg-zinc-50 px-3 py-2.5">
               <p className="text-[11px] font-semibold text-zinc-500">{k.label}</p>
-              <p className={`${outros.length >= 3 ? 'text-base' : 'text-lg'} font-black text-zinc-900 leading-tight tabular-nums break-words`}>{k.valor}</p>
+              <p className="text-lg font-black text-zinc-900 leading-tight tabular-nums whitespace-nowrap">{k.valor}</p>
               {k.extra && <div className="mt-0.5">{k.extra}</div>}
             </div>
           ))}
