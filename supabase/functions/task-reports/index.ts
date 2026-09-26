@@ -8,7 +8,9 @@
 // arquivos na nuvem e virar modelo (task_report_templates, imagens copiadas).
 // Público (sem login, pelo share_token): quem abre o link se identifica com
 // nome (+ contato opcional) e recebe um guest_token que fica no aparelho; com
-// ele responde os itens. Toda resposta, mudança de status e edição de item vira
+// ele responde os itens (e pode responder um comentário: parent_id, um nível).
+// Campos do item: só quem responde pelo link e quem criou o relatório alteram.
+// Toda resposta, mudança de status e edição de item vira
 // uma linha em task_report_responses com autor e hora — nada é apagado.
 // Resposta de fora avisa (push) toda a equipe da pasta.
 //
@@ -216,7 +218,7 @@ async function montarRelatorio(admin: SupabaseClient, report: Row, publico: bool
     lista.push({
       id: r.id, kind: r.kind, body: r.body, images: comUrl(r.images), links: r.links ?? [], new_status: r.new_status, answers: r.answers ?? null,
       author_name: r.author_name, author_type: r.author_user_id ? 'owner' : 'guest',
-      author_guest_id: r.author_guest_id, created_at: r.created_at,
+      author_guest_id: r.author_guest_id, created_at: r.created_at, parent_id: r.parent_id ?? null,
       author_is_creator: !!r.author_user_id && r.author_user_id === report.created_by,
       ...(publico ? {} : { author_user_id: r.author_user_id }),
     });
@@ -269,19 +271,32 @@ async function copiarImagens(admin: SupabaseClient, imagens: Imagem[], destino: 
   return saida;
 }
 
-/** Grava uma resposta/evento e, se veio status, atualiza o item. */
-async function registrar(admin: SupabaseClient, reportId: string, item: Row, autor: { user?: string; guest?: string; nome: string }, body: Row) {
+/**
+ * Grava uma resposta/evento e, se veio status, atualiza o item.
+ * `podeAlterarCampos`: quem responde pelo link e quem criou o relatório; o resto da equipe só comenta.
+ * `parent_id`: resposta a uma resposta (um nível só — resposta de resposta vai para a de cima), só texto/imagem/link.
+ */
+async function registrar(admin: SupabaseClient, reportId: string, item: Row, autor: { user?: string; guest?: string; nome: string }, body: Row, podeAlterarCampos: boolean) {
   const resposta = texto(body.body, MAX_TEXTO);
   const imagens = validarImagens(body.images, reportId);
   const links = validarLinks(body.links);
   const valores = validarRespostas(body.answers, (item.fields ?? []) as Campo[]);
-  const novoStatus = body.new_status == null || body.new_status === item.status ? null : String(body.new_status);
+  if (valores && !podeAlterarCampos) throw new Recusa('Só quem criou o relatório altera as respostas dos campos', 403);
+  let parentId: string | null = null;
+  if (body.parent_id) {
+    const { data: pai } = await admin.from('task_report_responses').select('id, parent_id, kind')
+      .eq('id', String(body.parent_id)).eq('item_id', item.id).maybeSingle();
+    if (!pai || pai.kind !== 'reply') throw new Recusa('Resposta não encontrada — recarregue a página', 404);
+    parentId = pai.parent_id ?? pai.id;
+    if (valores) throw new Recusa('Resposta a um comentário não altera os campos');
+  }
+  const novoStatus = parentId || body.new_status == null || body.new_status === item.status ? null : String(body.new_status);
   if (novoStatus && !STATUS_ITEM.includes(novoStatus)) throw new Recusa('Status inválido');
   const conteudo = !!(resposta || imagens.length || links.length || valores);
   if (!conteudo && !novoStatus) throw new Recusa('Responda os campos, escreva a resposta ou anexe uma imagem');
 
   const { data, error } = await admin.from('task_report_responses').insert({
-    report_id: reportId, item_id: item.id, kind: conteudo ? 'reply' : 'status',
+    report_id: reportId, item_id: item.id, kind: conteudo ? 'reply' : 'status', parent_id: parentId,
     body: resposta, images: imagens, links, answers: valores, new_status: novoStatus,
     author_user_id: autor.user ?? null, author_guest_id: autor.guest ?? null, author_name: autor.nome,
   }).select('id').single();
@@ -405,7 +420,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
           const { data: item } = await admin.from('task_report_items').select('*')
             .eq('id', String(body.item_id ?? '')).eq('report_id', report.id).is('archived_at', null).maybeSingle();
           if (!item) throw new Recusa('Item não encontrado', 404);
-          const id = await registrar(admin, report.id, item, { guest: c.id, nome: c.name }, body);
+          const id = await registrar(admin, report.id, item, { guest: c.id, nome: c.name }, body, true);
           await admin.from('task_report_guests').update({ last_seen_at: new Date().toISOString() }).eq('id', c.id);
           avisarEquipe(supabaseUrl, serviceRoleKey, admin, report, c.name, item.title);
           return json({ success: true, id });
@@ -732,7 +747,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       case 'reply': {
         const r = await meuRelatorio(body.report_id);
         const item = await meuItem(r.id, body.item_id);
-        const id = await registrar(admin, r.id, item, { user: user.id, nome: await meuNome() }, body);
+        const id = await registrar(admin, r.id, item, { user: user.id, nome: await meuNome() }, body, r.access === 'creator');
         await marcarVisto(r.id);
         return json({ success: true, id });
       }

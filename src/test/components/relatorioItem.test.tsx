@@ -221,6 +221,31 @@ describe('ItemRelatorio', () => {
     });
   });
 
+  describe('resposta de resposta e campos só do criador', () => {
+    const comConversa: ItemRel = { ...item, responses: [
+      { id: 'r1', kind: 'reply', body: 'Qual o horário?', images: [], new_status: null, author_name: 'Carlos', author_type: 'guest', author_guest_id: 'g1', created_at: '2026-09-24T11:00:00Z' },
+      { id: 'r2', kind: 'reply', body: 'Às 19h', images: [], new_status: null, author_name: 'Maria', author_type: 'owner', author_guest_id: null, created_at: '2026-09-24T12:00:00Z', parent_id: 'r1' },
+    ] };
+
+    it('mostra a resposta da resposta embaixo dela e responde com o id da de cima', async () => {
+      const onResponder = vi.fn().mockResolvedValue(true);
+      render(<ItemRelatorio item={comConversa} numero={1} podeResponder onResponder={onResponder} onEnviarImagem={vi.fn()} />);
+      expect(screen.getByText('Às 19h')).toBeTruthy();
+      // O 1º "Responder" é o da conversa (fica antes da caixa do item).
+      fireEvent.click(screen.getAllByText('Responder')[0]);
+      fireEvent.change(screen.getByPlaceholderText('Responder esta resposta…'), { target: { value: 'Combinado' } });
+      fireEvent.click(screen.getAllByText('Enviar').at(-1)!);
+      await waitFor(() => expect(onResponder).toHaveBeenCalledWith('Combinado', [], null, null, [], 'r1'));
+    });
+
+    it('equipe que não criou o relatório só comenta: não vê os campos para preencher', () => {
+      render(<ItemRelatorio item={comCampos} numero={1} podeResponder podeAlterarCampos={false} onResponder={vi.fn()} onEnviarImagem={vi.fn()} />);
+      fireEvent.click(screen.getByText('Responder'));
+      expect(screen.queryByLabelText('Cozinha')).toBeNull();
+      expect(screen.getByText(/só quem criou o relatório altera/)).toBeTruthy();
+    });
+  });
+
   it('sem permissão de responder (relatório encerrado) não mostra a caixa', () => {
     render(<ItemRelatorio item={item} numero={1} podeResponder={false} onResponder={vi.fn()} onEnviarImagem={vi.fn()} />);
     expect(screen.queryByText('Responder')).toBeNull();

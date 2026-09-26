@@ -46,6 +46,8 @@ export interface RespostaRel {
   links?: LinkRel[];
   /** Campos respondidos nesta resposta (só o que mudou). */
   answers?: Record<string, ValorCampo> | null;
+  /** Resposta a outra resposta (um nível só): id da resposta de cima. */
+  parent_id?: string | null;
   author_name: string;
   author_type: 'owner' | 'guest';
   author_guest_id: string | null;

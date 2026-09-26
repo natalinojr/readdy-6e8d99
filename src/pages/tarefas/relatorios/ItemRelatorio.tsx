@@ -4,8 +4,8 @@
  */
 import { useRef, useState, type ClipboardEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { ImagePlus, Loader2, Send, X, PencilLine, CheckCircle2, RotateCcw, MessageCircle, Plus, ArrowRight } from 'lucide-react';
-import { STATUS_INFO, dataHora, type CampoRel, type ImagemRel, type ItemRel, type LinkRel, type StatusItem, type ValorCampo } from './api';
+import { ImagePlus, Loader2, Send, X, PencilLine, CheckCircle2, RotateCcw, MessageCircle, Plus, ArrowRight, Reply } from 'lucide-react';
+import { STATUS_INFO, dataHora, type CampoRel, type ImagemRel, type ItemRel, type LinkRel, type RespostaRel, type StatusItem, type ValorCampo } from './api';
 import { ChipsLinks, useLinks } from './LinksRelatorio';
 import { EditorCampos, PreencherCampos, camposVisiveis, erroPreenchimento, formatarValor, limparCampos, respostasMudadas, valoresAtuais } from './CamposResposta';
 import { useVoltarFecha } from '@/lib/voltarAndroid';
@@ -148,13 +148,16 @@ interface Props {
   meuGuestId?: string | null;
   /** Na tela da equipe: meu id de usuário — as minhas respostas aparecem como "você". */
   meuUserId?: string | null;
-  onResponder: (body: string, imagens: ImagemRel[], novoStatus: StatusItem | null, answers: Record<string, ValorCampo> | null, links: LinkRel[]) => Promise<boolean>;
+  /** `parentId`: resposta a uma resposta (só texto/imagem/link). */
+  onResponder: (body: string, imagens: ImagemRel[], novoStatus: StatusItem | null, answers: Record<string, ValorCampo> | null, links: LinkRel[], parentId?: string | null) => Promise<boolean>;
   onEnviarImagem: (f: File) => Promise<ImagemRel | null>;
+  /** Pode preencher/alterar os campos do item: quem responde pelo link e quem criou o relatório. O resto da equipe só comenta. */
+  podeAlterarCampos?: boolean;
   /** Ações da equipe (editar/excluir) no cabeçalho do item. */
   acoes?: ReactNode;
 }
 
-export default function ItemRelatorio({ item, numero, podeResponder, meuGuestId, meuUserId, onResponder, onEnviarImagem, acoes }: Props) {
+export default function ItemRelatorio({ item, numero, podeResponder, meuGuestId, meuUserId, onResponder, onEnviarImagem, acoes, podeAlterarCampos = true }: Props) {
   const [texto, setTexto] = useState('');
   const [gravando, setGravando] = useState(false);
   const [aberto, setAberto] = useState(false);
@@ -164,13 +167,15 @@ export default function ItemRelatorio({ item, numero, podeResponder, meuGuestId,
   const lk = useLinks();
 
   const campos = item.fields ?? [];
+  const preenche = podeAlterarCampos && campos.length > 0;
+  const [respondendoA, setRespondendoA] = useState<string | null>(null);
   const atuais = valoresAtuais(item);
   const valorAtual = Object.fromEntries(Object.entries(atuais).map(([k, v]) => [k, v.valor]));
   const mudancas = respostasMudadas(campos, valorAtual, rascunho);
   const temMudancas = Object.keys(mudancas).length > 0;
 
   const abrir = () => {
-    setRascunho(valorAtual);
+    setRascunho(podeAlterarCampos ? valorAtual : {});
     setAberto(true);
   };
   const fechar = () => { setAberto(false); setTexto(''); setRascunho({}); setErro(null); anexos.limpar(); lk.limpar(); };
@@ -256,7 +261,7 @@ export default function ItemRelatorio({ item, numero, podeResponder, meuGuestId,
 
       {respostas.length > 0 && (
         <ol className="border-t border-slate-100 bg-slate-50/60 px-4 py-3 space-y-3">
-          {respostas.map((r) => {
+          {respostas.filter((r) => !r.parent_id).map((r) => {
             const minha = (meuGuestId && r.author_guest_id === meuGuestId) || (!!meuUserId && r.author_user_id === meuUserId);
             const quem = <strong className="font-semibold text-slate-700">{r.author_name}{minha ? ' (você)' : ''}</strong>;
             if (r.kind === 'edit') {
@@ -274,7 +279,8 @@ export default function ItemRelatorio({ item, numero, podeResponder, meuGuestId,
             const respondidos = campos.filter((c) => r.answers && c.id in r.answers);
             const vazio = (x: ValorCampo | undefined) => x === null || x === undefined || x === '' || (Array.isArray(x) && !x.length);
             return (
-              <li key={r.id} className="flex gap-2">
+              <li key={r.id}>
+              <div className="flex gap-2">
                 <span className={`shrink-0 w-7 h-7 rounded-full text-xs font-semibold flex items-center justify-center ${r.author_type === 'owner' ? 'bg-indigo-100 text-indigo-700' : 'bg-amber-100 text-amber-800'}`}>
                   {r.author_name.trim().charAt(0).toUpperCase()}
                 </span>
@@ -321,6 +327,19 @@ export default function ItemRelatorio({ item, numero, podeResponder, meuGuestId,
                     </p>
                   )}
                 </div>
+              </div>
+              {r.kind === 'reply' && (
+                <Conversa
+                  filhas={respostas.filter((x) => x.parent_id === r.id)}
+                  aberta={respondendoA === r.id}
+                  podeResponder={podeResponder}
+                  eMinha={(x) => (!!meuGuestId && x.author_guest_id === meuGuestId) || (!!meuUserId && x.author_user_id === meuUserId)}
+                  onAbrir={() => setRespondendoA(r.id)}
+                  onFechar={() => setRespondendoA(null)}
+                  onEnviar={(body, imgs) => onResponder(body, imgs, null, null, [], r.id)}
+                  onEnviarImagem={onEnviarImagem}
+                />
+              )}
               </li>
             );
           })}
@@ -357,7 +376,10 @@ export default function ItemRelatorio({ item, numero, podeResponder, meuGuestId,
             </div>
           ) : (
             <div className="space-y-3" onPaste={anexos.aoColar}>
-              {campos.length > 0 && (
+              {campos.length > 0 && !podeAlterarCampos && (
+                <p className="text-xs text-slate-500">As respostas dos campos são de quem responde pelo link — só quem criou o relatório altera. Aqui você comenta.</p>
+              )}
+              {preenche && (
                 <PreencherCampos
                   campos={campos}
                   valores={rascunho}
@@ -367,10 +389,10 @@ export default function ItemRelatorio({ item, numero, podeResponder, meuGuestId,
               <textarea
                 value={texto}
                 onChange={(e) => setTexto(e.target.value)}
-                autoFocus={campos.length === 0}
+                autoFocus={!preenche}
                 rows={3}
                 maxLength={5000}
-                placeholder={campos.length ? 'Comentário (opcional)…' : 'Escreva sua resposta…'}
+                placeholder={preenche ? 'Comentário (opcional)…' : podeAlterarCampos ? 'Escreva sua resposta…' : 'Escreva um comentário…'}
                 className="w-full rounded-lg border border-slate-200 px-3 py-2 text-base md:text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200"
               />
               <GradeImagens imagens={anexos.imagens} onRemover={anexos.remover} onLegenda={anexos.legendar} />
@@ -407,6 +429,94 @@ export default function ItemRelatorio({ item, numero, podeResponder, meuGuestId,
         </div>
       )}
     </article>
+  );
+}
+
+/** Respostas a uma resposta (um nível só) + caixa para responder ela. */
+function Conversa({ filhas, aberta, podeResponder, eMinha, onAbrir, onFechar, onEnviar, onEnviarImagem }: {
+  filhas: RespostaRel[];
+  aberta: boolean;
+  podeResponder: boolean;
+  eMinha: (r: RespostaRel) => boolean;
+  onAbrir: () => void;
+  onFechar: () => void;
+  onEnviar: (body: string, imagens: ImagemRel[]) => Promise<boolean>;
+  onEnviarImagem: (f: File) => Promise<ImagemRel | null>;
+}) {
+  const [texto, setTexto] = useState('');
+  const [gravando, setGravando] = useState(false);
+  const anexos = useAnexos(onEnviarImagem);
+  const enviandoRef = useRef(false);
+  const fechar = () => { setTexto(''); anexos.limpar(); onFechar(); };
+  const enviar = async () => {
+    if (enviandoRef.current || anexos.enviando || (!texto.trim() && !anexos.imagens.length)) return;
+    enviandoRef.current = true;
+    setGravando(true);
+    try {
+      if (await onEnviar(texto.trim(), anexos.paraGravar())) fechar();
+    } finally {
+      enviandoRef.current = false;
+      setGravando(false);
+    }
+  };
+  if (!filhas.length && !aberta && !podeResponder) return null;
+  return (
+    <div className="ml-9 mt-1.5 space-y-2">
+      {filhas.length > 0 && (
+        <ol className="border-l-2 border-slate-200 pl-3 space-y-2">
+          {filhas.map((f) => (
+            <li key={f.id} className="flex gap-2">
+              <span className={`shrink-0 w-6 h-6 rounded-full text-[11px] font-semibold flex items-center justify-center ${f.author_type === 'owner' ? 'bg-indigo-100 text-indigo-700' : 'bg-amber-100 text-amber-800'}`}>
+                {f.author_name.trim().charAt(0).toUpperCase()}
+              </span>
+              <div className="flex-1 min-w-0">
+                <p className="text-xs text-slate-500">
+                  <strong className="font-semibold text-slate-700">{f.author_name}{eMinha(f) ? ' (você)' : ''}</strong>
+                  {f.author_type === 'owner' && (
+                    <span className="ml-1 text-[10px] px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-600">{f.author_is_creator ? 'autor do relatório' : 'equipe'}</span>
+                  )}
+                  <span className="ml-1">· {dataHora(f.created_at)}</span>
+                </p>
+                {f.body && <p className="text-sm text-slate-700 whitespace-pre-wrap break-words mt-0.5">{f.body}</p>}
+                <GradeImagens imagens={f.images} />
+                <ChipsLinks links={f.links ?? []} />
+              </div>
+            </li>
+          ))}
+        </ol>
+      )}
+      {podeResponder && !aberta && (
+        <button type="button" onClick={onAbrir} className="flex items-center gap-1 text-xs text-indigo-600 hover:underline">
+          <Reply size={13} /> Responder{filhas.length ? '' : ' esta resposta'}
+        </button>
+      )}
+      {podeResponder && aberta && (
+        <div className="space-y-2" onPaste={anexos.aoColar}>
+          <textarea
+            value={texto}
+            onChange={(e) => setTexto(e.target.value)}
+            autoFocus
+            rows={2}
+            maxLength={5000}
+            placeholder="Responder esta resposta…"
+            className="w-full rounded-lg border border-slate-200 px-3 py-2 text-base md:text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-200"
+          />
+          <GradeImagens imagens={anexos.imagens} onRemover={anexos.remover} onLegenda={anexos.legendar} />
+          <div className="flex flex-wrap items-center gap-2">
+            {anexos.botao}
+            <div className="flex-1" />
+            <button onClick={fechar} className="px-3 py-1.5 rounded-lg text-sm text-slate-500 hover:bg-slate-100">Cancelar</button>
+            <button
+              onClick={enviar}
+              disabled={gravando || anexos.enviando || (!texto.trim() && !anexos.imagens.length)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50"
+            >
+              {gravando ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />} Enviar
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
