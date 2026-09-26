@@ -13,7 +13,8 @@
 // Item condicional (show_if): só aparece no link se outro item tiver certa resposta.
 // Toda resposta, mudança de status e edição de item vira
 // uma linha em task_report_responses com autor e hora — nada é apagado.
-// Resposta de fora avisa (push) toda a equipe da pasta.
+// Resposta de fora avisa (push) toda a equipe da pasta. Toda mudança manda um ping
+// sem conteúdo em `report-ping:<id>` (Realtime) e as telas abertas recarregam.
 //
 // verify_jwt = false: as ações públicas não têm JWT; as da equipe validam aqui.
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
@@ -84,7 +85,11 @@ function validarImagens(v: unknown, reportId: string): Imagem[] {
 const TIPOS_CAMPO = ['escolha', 'multipla', 'sim_nao', 'texto', 'numero', 'data'];
 type Opcao = { id: string; label: string };
 type Condicao = { field_id: string; values: string[] };
-type Campo = { id: string; type: string; label: string; options?: Opcao[]; min?: number | null; max?: number | null; show_if?: Condicao };
+type Campo = { id: string; type: string; label: string; options?: Opcao[]; min?: number | null; max?: number | null; show_if?: Condicao; outro?: boolean };
+/** Lista suspensa com "Outro": a resposta é "outro:<texto>" e, na condição, vale o id OUTRO. */
+const OUTRO = '__outro';
+/** Respostas que uma condição pode usar de uma pergunta de escolha. */
+const idsResposta = (c: Campo) => new Set(c.type === 'sim_nao' ? ['sim', 'nao'] : [...(c.options ?? []).map((o) => o.id), ...(c.outro ? [OUTRO] : [])]);
 
 function validarCampos(v: unknown): Campo[] {
   if (v === undefined || v === null) return [];
@@ -112,7 +117,7 @@ function validarCampos(v: unknown): Campo[] {
       return { id: oid, label: ol };
     });
     // Caixas de seleção: quantas opções no mínimo/no máximo (vazio = sem limite).
-    if (type !== 'multipla') return { id, type, label, options };
+    if (type !== 'multipla') return { id, type, label, options, ...(c?.outro === true ? { outro: true } : {}) };
     const lim = (x: unknown, nome: string) => {
       if (x === undefined || x === null || x === '') return null;
       const n = Number(x);
@@ -134,7 +139,7 @@ function validarCampos(v: unknown): Campo[] {
     if (!pai || !['escolha', 'multipla', 'sim_nao'].includes(pai.type)) {
       throw new Recusa(`"${campo.label}": a pergunta da condição precisa ser de escolha e ficar acima dela`);
     }
-    const validos = new Set(pai.type === 'sim_nao' ? ['sim', 'nao'] : (pai.options ?? []).map((o) => o.id));
+    const validos = idsResposta(pai);
     if (!Array.isArray(s?.values) || !s.values.length || !s.values.every((x: unknown) => typeof x === 'string' && validos.has(x))) {
       throw new Recusa(`"${campo.label}": escolha com qual resposta de "${pai.label}" ela aparece`);
     }
@@ -159,7 +164,7 @@ async function validarCondicaoItem(admin: SupabaseClient, reportId: string, item
   if (!pai) throw new Recusa('O item da condição não existe mais — recarregue a página', 404);
   const campo = ((pai.fields ?? []) as Campo[]).find((c) => c.id === String(s.field_id ?? ''));
   if (!campo || !['escolha', 'multipla', 'sim_nao'].includes(campo.type)) throw new Recusa('A condição precisa ser uma pergunta de escolha do outro item');
-  const validos = new Set(campo.type === 'sim_nao' ? ['sim', 'nao'] : (campo.options ?? []).map((o) => o.id));
+  const validos = idsResposta(campo);
   if (!Array.isArray(s.values) || !s.values.length || !s.values.every((x: unknown) => typeof x === 'string' && validos.has(x))) {
     throw new Recusa(`Escolha com qual resposta de "${campo.label}" este item aparece`);
   }
@@ -199,7 +204,14 @@ function validarRespostas(v: unknown, campos: Campo[]): Row | null {
     const opcoes = new Set((campo.options ?? []).map((o) => o.id));
     const erro = `"${campo.label}": valor inválido`;
     switch (campo.type) {
-      case 'escolha': if (typeof valor !== 'string' || !opcoes.has(valor)) throw new Recusa(erro); break;
+      case 'escolha':
+        if (typeof valor !== 'string') throw new Recusa(erro);
+        if (campo.outro && valor.startsWith('outro:')) {
+          const livre = valor.slice(6).trim();
+          if (!livre) throw new Recusa(`"${campo.label}": escreva o que é o "Outro"`);
+          if (livre.length > 500) throw new Recusa(erro);
+        } else if (!opcoes.has(valor)) throw new Recusa(erro);
+        break;
       case 'multipla':
         if (!Array.isArray(valor) || !valor.every((x) => typeof x === 'string' && opcoes.has(x))) throw new Recusa(erro);
         if (new Set(valor).size !== valor.length) throw new Recusa(erro);
@@ -345,6 +357,19 @@ async function registrar(admin: SupabaseClient, reportId: string, item: Row, aut
 
 declare const EdgeRuntime: { waitUntil(p: Promise<unknown>): void } | undefined;
 
+/**
+ * Ping ao vivo: quem está com o relatório aberto (equipe ou link) recarrega na hora.
+ * Canal público `report-ping:<id>` sem conteúdo nenhum — a tela refaz o fetch autenticado.
+ */
+function avisarTelas(supabaseUrl: string, serviceRoleKey: string, reportId: string) {
+  const p = fetch(`${supabaseUrl}/realtime/v1/api/broadcast`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', apikey: serviceRoleKey, Authorization: `Bearer ${serviceRoleKey}` },
+    body: JSON.stringify({ messages: [{ topic: `report-ping:${reportId}`, event: 'mudou', payload: {} }] }),
+  }).catch((e) => console.error('[task-reports] ping', errMsg(e)));
+  if (typeof EdgeRuntime !== 'undefined') EdgeRuntime.waitUntil(p);
+}
+
 /** Push para a equipe do relatório (quem criou + quem divide a pasta). Roda depois da resposta sair. */
 function avisarEquipe(supabaseUrl: string, serviceRoleKey: string, admin: SupabaseClient, report: Row, nome: string, itemTitulo: string) {
   const p = enviarAviso(supabaseUrl, serviceRoleKey, admin, report, nome, itemTitulo);
@@ -456,6 +481,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
           const id = await registrar(admin, report.id, item, { guest: c.id, nome: c.name }, body, true);
           await admin.from('task_report_guests').update({ last_seen_at: new Date().toISOString() }).eq('id', c.id);
           avisarEquipe(supabaseUrl, serviceRoleKey, admin, report, c.name, item.title);
+          avisarTelas(supabaseUrl, serviceRoleKey, report.id);
           return json({ success: true, id });
         }
         case 'public_add_item': {
@@ -473,6 +499,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
           if (error) throw error;
           await admin.from('task_reports').update({ updated_at: new Date().toISOString() }).eq('id', report.id);
           avisarEquipe(supabaseUrl, serviceRoleKey, admin, report, c.name, `Novo item: ${titulo}`);
+          avisarTelas(supabaseUrl, serviceRoleKey, report.id);
           return json({ success: true, id: data.id });
         }
         default:
@@ -699,6 +726,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         }
         const { error } = await admin.from('task_reports').update(patch).eq('id', r.id);
         if (error) throw error;
+        avisarTelas(supabaseUrl, serviceRoleKey, r.id);
         return json({ success: true });
       }
       case 'regenerate_link': {
@@ -732,6 +760,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         }).select('id').single();
         if (error) throw error;
         await admin.from('task_reports').update({ updated_at: new Date().toISOString() }).eq('id', r.id);
+        avisarTelas(supabaseUrl, serviceRoleKey, r.id);
         return json({ success: true, id: data.id });
       }
       case 'update_item': {
@@ -780,6 +809,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
           }
         }
         await admin.from('task_reports').update({ updated_at: agora }).eq('id', r.id);
+        avisarTelas(supabaseUrl, serviceRoleKey, r.id);
         return json({ success: true });
       }
       case 'delete_item': {
@@ -787,6 +817,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         const item = await meuItem(r.id, body.item_id);
         const { error } = await admin.from('task_report_items').update({ archived_at: new Date().toISOString() }).eq('id', item.id);
         if (error) throw error;
+        avisarTelas(supabaseUrl, serviceRoleKey, r.id);
         return json({ success: true });
       }
       case 'reply': {
@@ -794,6 +825,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         const item = await meuItem(r.id, body.item_id);
         const id = await registrar(admin, r.id, item, { user: user.id, nome: await meuNome() }, body, r.access === 'creator');
         await marcarVisto(r.id);
+        avisarTelas(supabaseUrl, serviceRoleKey, r.id);
         return json({ success: true, id });
       }
       // ── Relatório ↔ tarefa ──

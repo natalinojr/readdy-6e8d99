@@ -19,6 +19,8 @@ export interface CampoRel {
   /** Caixas de seleção: quantas marcar no mínimo/no máximo (vazio = sem limite). */
   min?: number | null;
   max?: number | null;
+  /** Lista suspensa: inclui a opção "Outro", em que a pessoa escreve (valor = "outro:<texto>"). */
+  outro?: boolean;
   /** Condição: o campo só aparece se a pergunta `field_id` (acima dele, de escolha ou sim/não) tiver uma das respostas `values`. */
   show_if?: CondicaoCampo | null;
 }

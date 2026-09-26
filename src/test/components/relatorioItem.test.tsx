@@ -5,7 +5,7 @@ vi.mock('@/lib/supabase', () => ({}));
 
 import ItemRelatorio from '@/pages/tarefas/relatorios/ItemRelatorio';
 import type { CampoRel, ItemRel } from '@/pages/tarefas/relatorios/api';
-import { camposVisiveis, limparCampos } from '@/pages/tarefas/relatorios/CamposResposta';
+import { camposVisiveis, formatarValor, limparCampos, respostaBate } from '@/pages/tarefas/relatorios/CamposResposta';
 import { candidatosCondicao, itensVisiveis } from '@/pages/tarefas/relatorios/condicaoItem';
 
 const item: ItemRel = {
@@ -18,9 +18,13 @@ const item: ItemRel = {
   ],
 };
 
+/** O histórico fica fechado; abre no botão "Ver histórico". */
+const abrirHistorico = () => fireEvent.click(screen.getByText(/Ver histórico/));
+
 describe('ItemRelatorio', () => {
   it('mostra a sequência de respostas com autor, marca a da pessoa atual e o evento de edição', () => {
     render(<ItemRelatorio item={item} numero={1} podeResponder meuGuestId="g2" onResponder={vi.fn()} onEnviarImagem={vi.fn()} />);
+    abrirHistorico();
     expect(screen.getByText('Vou mandar o encanador')).toBeTruthy();
     expect(screen.getByText('Carlos')).toBeTruthy();
     expect(screen.getByText('Maria (você)')).toBeTruthy();
@@ -50,6 +54,7 @@ describe('ItemRelatorio', () => {
 
   it('mostra o valor atual no resumo e o que foi respondido no histórico', () => {
     render(<ItemRelatorio item={comCampos} numero={1} podeResponder={false} onResponder={vi.fn()} onEnviarImagem={vi.fn()} />);
+    abrirHistorico();
     expect(screen.getAllByText('Ok').length).toBe(2); // resumo + etiqueta da resposta
     expect(screen.getByText('sem resposta')).toBeTruthy(); // Cômodos ainda vazio
     expect(screen.getByText('Situação:')).toBeTruthy();
@@ -65,6 +70,7 @@ describe('ItemRelatorio', () => {
       ],
     };
     render(<ItemRelatorio item={apagado} numero={1} podeResponder={false} onResponder={vi.fn()} onEnviarImagem={vi.fn()} />);
+    abrirHistorico();
     expect(screen.getAllByText('Ok').some((e) => /line-through/.test(e.className))).toBe(true);
     expect(screen.getByText('apagou')).toBeTruthy();
   });
@@ -91,6 +97,7 @@ describe('ItemRelatorio', () => {
       ],
     };
     render(<ItemRelatorio item={mudou} numero={1} podeResponder={false} onResponder={vi.fn()} onEnviarImagem={vi.fn()} />);
+    abrirHistorico();
     expect(screen.getAllByText('Ok').some((e) => /line-through/.test(e.className))).toBe(true);
     expect(screen.getAllByText('Refazer').length).toBe(2); // valor atual + "→ Refazer"
   });
@@ -169,6 +176,7 @@ describe('ItemRelatorio', () => {
       ],
     };
     render(<ItemRelatorio item={comEquipe} numero={1} podeResponder meuUserId="u-bruno" onResponder={vi.fn()} onEnviarImagem={vi.fn()} />);
+    abrirHistorico();
     expect(screen.getByText('Bruno (você)')).toBeTruthy();
     expect(screen.getByText('Ana')).toBeTruthy();
     expect(screen.getByText('autor do relatório')).toBeTruthy();
@@ -231,6 +239,7 @@ describe('ItemRelatorio', () => {
     it('mostra a resposta da resposta embaixo dela e responde com o id da de cima', async () => {
       const onResponder = vi.fn().mockResolvedValue(true);
       render(<ItemRelatorio item={comConversa} numero={1} podeResponder onResponder={onResponder} onEnviarImagem={vi.fn()} />);
+      abrirHistorico();
       expect(screen.getByText('Às 19h')).toBeTruthy();
       // O 1º "Responder" é o da conversa (fica antes da caixa do item).
       fireEvent.click(screen.getAllByText('Responder')[0]);
@@ -272,6 +281,40 @@ describe('ItemRelatorio', () => {
     it('não oferece como condição um item que já depende deste (ciclo)', () => {
       expect(candidatosCondicao('a', [tipo, cardapio, restricoes]).map((i) => i.id)).toEqual([]);
       expect(candidatosCondicao('c', [tipo, cardapio, restricoes]).map((i) => i.id)).toEqual(['a', 'b']);
+    });
+  });
+
+  it('mostra só a resposta final; o histórico abre e fecha no clique', () => {
+    render(<ItemRelatorio item={item} numero={1} podeResponder={false} onResponder={vi.fn()} onEnviarImagem={vi.fn()} />);
+    expect(screen.getByText('Trocado')).toBeTruthy(); // última resposta, sempre à vista
+    expect(screen.queryByText('Vou mandar o encanador')).toBeNull();
+    expect(screen.getByText(/Ver histórico \(3 registros\)/)).toBeTruthy();
+    abrirHistorico();
+    expect(screen.getByText('Vou mandar o encanador')).toBeTruthy();
+    fireEvent.click(screen.getByText('Esconder histórico'));
+    expect(screen.queryByText('Vou mandar o encanador')).toBeNull();
+  });
+
+  describe('opção "Outro" da lista suspensa', () => {
+    const campo: CampoRel = { id: 'q', type: 'escolha', label: 'Profissional', options: [{ id: 'a', label: 'Eletricista' }], outro: true };
+    const itemOutro: ItemRel = { ...item, responses: [], fields: [campo] };
+
+    it('escolher "Outro" abre o texto livre e envia "outro:<texto>"', async () => {
+      const onResponder = vi.fn().mockResolvedValue(true);
+      render(<ItemRelatorio item={itemOutro} numero={1} podeResponder onResponder={onResponder} onEnviarImagem={vi.fn()} />);
+      fireEvent.click(screen.getByText('Responder'));
+      fireEvent.change(screen.getByRole('combobox'), { target: { value: '__outro' } });
+      fireEvent.click(screen.getByText('Enviar'));
+      expect(await screen.findByText(/escreva o que é o "Outro"/)).toBeTruthy();
+      fireEvent.change(screen.getByPlaceholderText('Escreva qual…'), { target: { value: 'Pintor' } });
+      fireEvent.click(screen.getByText('Enviar'));
+      await waitFor(() => expect(onResponder).toHaveBeenCalledWith('', [], null, { q: 'outro:Pintor' }, []));
+    });
+
+    it('mostra "Outro: texto" e conta como Outro na condição', () => {
+      expect(formatarValor(campo, 'outro:Pintor')).toBe('Outro: Pintor');
+      expect(respostaBate('outro:Pintor', ['__outro'])).toBe(true);
+      expect(respostaBate('a', ['__outro'])).toBe(false);
     });
   });
 

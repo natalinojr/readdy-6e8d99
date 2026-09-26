@@ -4,7 +4,7 @@
  * Condição quebrada (item ou campo apagado) é ignorada — o item aparece.
  */
 import type { ItemRel, ValorCampo } from './api';
-import { camposVisiveis, respostasPossiveis, valoresAtuais } from './CamposResposta';
+import { camposVisiveis, respostaBate, respostasPossiveis, valoresAtuais } from './CamposResposta';
 
 const valoresDo = (item: ItemRel): Record<string, ValorCampo> =>
   Object.fromEntries(Object.entries(valoresAtuais(item)).map(([k, v]) => [k, v.valor]));
@@ -23,10 +23,9 @@ export function itensVisiveis(itens: ItemRel[]): Set<string> {
     // Ciclo (não deveria existir — a edge recusa) também é ignorado.
     if (s && pai && campo && !caminho.has(it.id)) {
       const valores = valoresDo(pai);
-      const v = valores[s.field_id];
       ok = visivel(pai, new Set([...caminho, it.id]))
         && camposVisiveis(pai.fields ?? [], valores).some((c) => c.id === campo.id)
-        && (Array.isArray(v) ? v.some((x) => s.values.includes(x)) : typeof v === 'string' && s.values.includes(v));
+        && respostaBate(valores[s.field_id], s.values);
     }
     memo.set(it.id, ok);
     return ok;

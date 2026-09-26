@@ -27,10 +27,21 @@ const temOpcoes = (t: TipoCampo) => t === 'escolha' || t === 'multipla';
 export const condicionavel = (t: TipoCampo) => temOpcoes(t) || t === 'sim_nao';
 export const MAX_CAMPOS = 40;
 
-/** Respostas possíveis de uma pergunta de escolha (sim/não vira duas opções fixas). */
+/** Opção "Outro" da lista suspensa: na condição vale o id OUTRO; a resposta guarda "outro:<texto>". */
+export const OUTRO = '__outro';
+const PREFIXO_OUTRO = 'outro:';
+export const ehOutro = (v: unknown): v is string => typeof v === 'string' && v.startsWith(PREFIXO_OUTRO);
+
+/** Respostas possíveis de uma pergunta de escolha (sim/não vira duas opções fixas; "Outro" entra no fim). */
 export function respostasPossiveis(c: CampoRel): Array<{ id: string; label: string }> {
   if (c.type === 'sim_nao') return [{ id: 'sim', label: 'Sim' }, { id: 'nao', label: 'Não' }];
-  return c.options ?? [];
+  return [...(c.options ?? []), ...(c.type === 'escolha' && c.outro ? [{ id: OUTRO, label: 'Outro' }] : [])];
+}
+
+/** A resposta `v` bate com alguma das `values` da condição? ("Outro: …" conta como OUTRO.) */
+export function respostaBate(v: ValorCampo | undefined, values: string[]): boolean {
+  const norm = (x: string) => (ehOutro(x) ? OUTRO : x);
+  return Array.isArray(v) ? v.some((x) => values.includes(norm(x))) : typeof v === 'string' && values.includes(norm(v));
 }
 
 /**
@@ -43,9 +54,7 @@ export function camposVisiveis(campos: CampoRel[], valores: Record<string, Valor
     const s = c.show_if;
     let ok = true;
     if (s) {
-      const v = valores[s.field_id];
-      ok = visiveis.has(s.field_id)
-        && (Array.isArray(v) ? v.some((x) => s.values.includes(x)) : typeof v === 'string' && s.values.includes(v));
+      ok = visiveis.has(s.field_id) && respostaBate(valores[s.field_id], s.values);
     }
     if (ok) visiveis.add(c.id);
     return ok;
@@ -65,7 +74,7 @@ export function formatarValor(campo: CampoRel, valor: ValorCampo): string {
   if (valor === null || valor === undefined || valor === '') return '—';
   const nomeOp = (id: string) => campo.options?.find((o) => o.id === id)?.label ?? '(opção removida)';
   switch (campo.type) {
-    case 'escolha': return nomeOp(String(valor));
+    case 'escolha': return ehOutro(valor) ? `Outro: ${valor.slice(PREFIXO_OUTRO.length)}` : nomeOp(String(valor));
     case 'multipla': {
       if (!Array.isArray(valor) || !valor.length) return '—';
       // Na ordem das opções, não na ordem em que foram marcadas.
@@ -199,7 +208,20 @@ export function EditorCampos({ campos, onChange }: { campos: CampoRel[]; onChang
                       </div>
                     );
                   })}
-                  <button type="button" onClick={() => mudar(i, { options: [...(c.options ?? []), { id: novoId(), label: '' }] })} className="text-xs text-indigo-600 hover:underline">+ opção</button>
+                  {c.type === 'escolha' && c.outro && (
+                    <div className="flex items-center gap-1.5">
+                      <span className="w-3.5 h-3.5 border border-slate-300 shrink-0 rounded-full" />
+                      <span className="flex-1 min-w-0 rounded border border-dashed border-slate-300 px-2 py-1 text-base md:text-sm text-slate-500 bg-white">Outro <span className="text-slate-400">— a pessoa escreve</span></span>
+                      {minhaCor && mostraCom(c, OUTRO).length > 0 && <ChipMostra numeros={mostraCom(c, OUTRO)} cor={minhaCor} />}
+                      <button type="button" onClick={() => mudar(i, { outro: false })} className="p-1 text-slate-400 hover:text-red-500" title="Tirar a opção Outro"><X size={14} /></button>
+                    </div>
+                  )}
+                  <div className="flex flex-wrap items-center gap-3">
+                    <button type="button" onClick={() => mudar(i, { options: [...(c.options ?? []), { id: novoId(), label: '' }] })} className="text-xs text-indigo-600 hover:underline">+ opção</button>
+                    {c.type === 'escolha' && !c.outro && (
+                      <button type="button" onClick={() => mudar(i, { outro: true })} className="text-xs text-indigo-600 hover:underline">+ opção "Outro" (texto livre)</button>
+                    )}
+                  </div>
                   {c.type === 'multipla' && (
                     <div className="flex flex-wrap items-center gap-2 pt-1 text-xs text-slate-500">
                       <span>Marcar</span>
@@ -255,7 +277,7 @@ export function EditorCampos({ campos, onChange }: { campos: CampoRel[]; onChang
       })}
       <button
         type="button"
-        onClick={() => onChange([...campos, { id: novoId(), type: 'escolha', label: '', options: [{ id: novoId(), label: '' }] }])}
+        onClick={() => onChange([...campos, { id: novoId(), type: 'escolha', label: '', options: [{ id: novoId(), label: '' }], outro: true }])}
         disabled={campos.length >= MAX_CAMPOS}
         className="flex items-center gap-1 text-sm text-indigo-600 hover:underline disabled:opacity-40"
       >
@@ -334,6 +356,7 @@ export function limparCampos(campos: CampoRel[]): { campos: CampoRel[]; erro: st
   const semOpcao = limpos.find((c) => temOpcoes(c.type) && !c.options?.length);
   if (semOpcao) return { campos: limpos, erro: `"${semOpcao.label}": inclua ao menos uma opção` };
   for (const c of limpos) {
+    if (c.type !== 'escolha' || !c.outro) delete c.outro;
     if (c.type !== 'multipla') { delete c.min; delete c.max; continue; }
     const n = c.options?.length ?? 0;
     if ((c.min ?? 0) > n || (c.max ?? 0) > n) return { campos: limpos, erro: `"${c.label}": o limite passa do número de opções (${n})` };
@@ -369,14 +392,27 @@ export function PreencherCampos({ campos, valores, onChange }: {
           <div key={c.id}>
             <p className="text-sm font-medium text-slate-700 mb-1">{c.label}</p>
             {c.type === 'escolha' && (
-              <select
-                value={(v as string) ?? ''}
-                onChange={(e) => onChange(c.id, e.target.value || null)}
-                className="w-full md:w-auto min-w-[200px] rounded-lg border border-slate-200 px-3 py-2 text-base md:text-sm bg-white"
-              >
-                <option value="">Escolha…</option>
-                {c.options?.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
-              </select>
+              <div className="flex flex-col md:flex-row gap-2">
+                <select
+                  value={ehOutro(v) ? OUTRO : typeof v === 'string' ? v : ''}
+                  onChange={(e) => onChange(c.id, e.target.value === OUTRO ? PREFIXO_OUTRO : e.target.value || null)}
+                  className="w-full md:w-auto min-w-[200px] rounded-lg border border-slate-200 px-3 py-2 text-base md:text-sm bg-white"
+                >
+                  <option value="">Escolha…</option>
+                  {c.options?.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+                  {c.outro && <option value={OUTRO}>Outro…</option>}
+                </select>
+                {ehOutro(v) && (
+                  <input
+                    autoFocus
+                    value={v.slice(PREFIXO_OUTRO.length)}
+                    onChange={(e) => onChange(c.id, PREFIXO_OUTRO + e.target.value)}
+                    maxLength={500}
+                    placeholder="Escreva qual…"
+                    className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-base md:text-sm"
+                  />
+                )}
+              </div>
             )}
             {c.type === 'multipla' && (
               <div className="flex flex-col gap-1.5">
@@ -456,6 +492,7 @@ export function dicaLimite(c: CampoRel): string | null {
 export function erroPreenchimento(campos: CampoRel[], mudancas: Record<string, ValorCampo>): string | null {
   for (const c of campos) {
     const v = mudancas[c.id];
+    if (c.type === 'escolha' && ehOutro(v) && !v.slice(PREFIXO_OUTRO.length).trim()) return `"${c.label}": escreva o que é o "Outro"`;
     if (c.type !== 'multipla' || !Array.isArray(v) || !v.length) continue;
     if (c.min && v.length < c.min) return `"${c.label}": marque pelo menos ${c.min}`;
     if (c.max && v.length > c.max) return `"${c.label}": marque no máximo ${c.max}`;
