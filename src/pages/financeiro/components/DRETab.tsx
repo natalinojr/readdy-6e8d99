@@ -775,6 +775,23 @@ const MODE_TOOLTIPS: Record<DREMode, string> = {
 };
 
 // ─── Main Component ───────────────────────────────────────────────────────────
+/** Receita recebida da DRE (soma das fontes já aplicadas). Única conta: tabela, gráfico e ação rápida. */
+export const receitaRecebidaDe = (d: DREData) => d.receitaBalcao + d.receitaDelivery + d.receitaMesa + d.receitaAutoatendimento
+  + d.receitaManual + (d.receitaStone ?? 0) + (d.receitaPix ?? 0) + (d.receitaIfood ?? 0) + (d.receitaDinheiro ?? 0);
+
+/**
+ * DRE do período em regime de CAIXA com as fontes de receita da loja aplicadas — a MESMA conta da
+ * tabela no modo Caixa (a tela chama esta função). Também usada pela ação rápida "CMV do mês".
+ */
+export async function dreCaixaDoPeriodo(tenantId: string, start: string, end: string, tenantKind?: string | null) {
+  const [d, extras] = await Promise.all([
+    fetchDREData(tenantId, start, end, empresaTemPdv(tenantKind)),
+    loadRevenueExtras(tenantId, start, end, tenantKind),
+  ]);
+  const dados = applyRevenueSources(d, extras.sources, extras.pix, extras.ifood, extras.cash, extras.pixPorEtiqueta);
+  return { dados, receita: receitaRecebidaDe(dados), cmv: dados.cmvCompras ?? 0 };
+}
+
 export default function DRETab() {
   const { user } = useAuth();
   const temPdv = empresaTemPdv(user?.tenantKind);
@@ -830,13 +847,11 @@ export default function DRETab() {
   // o que não está ligado zera, e o Pix do Inter entra quando escolhido.
   const fetchFn = useCallback(
     async (tenantId: string, start: string, end: string) => {
+      if (dreMode !== 'competencia') return (await dreCaixaDoPeriodo(tenantId, start, end, user?.tenantKind)).dados;
       const [d, extras] = await Promise.all([
-        dreMode === 'competencia'
-          ? fetchDREDataCompetencia(tenantId, start, end, temPdv)
-          : fetchDREData(tenantId, start, end, temPdv),
+        fetchDREDataCompetencia(tenantId, start, end, temPdv),
         loadRevenueExtras(tenantId, start, end, user?.tenantKind),
       ]);
-      if (dreMode !== 'competencia') return applyRevenueSources(d, extras.sources, extras.pix, extras.ifood, extras.cash, extras.pixPorEtiqueta);
       // Competência: iFood pela data do PEDIDO e Stone pela data da VENDA (caixa segue pela data do repasse)
       const c = await fetchCartoesCompetencia(tenantId, start, end);
       const ifoodOn = extras.sources.includes('ifood');
@@ -887,8 +902,7 @@ export default function DRETab() {
       const { start, end } = getMonthRange(m);
       const d = await fetchFn(user.tenantId, start, end);
       // Mesma receita da tabela (antes o gráfico ignorava manuais e Stone).
-      const receitaBase = d.receitaBalcao + d.receitaDelivery + d.receitaMesa + d.receitaAutoatendimento
-        + d.receitaManual + (d.receitaStone ?? 0) + (d.receitaPix ?? 0) + (d.receitaIfood ?? 0) + (d.receitaDinheiro ?? 0);
+      const receitaBase = receitaRecebidaDe(d);
       // BUG-41: receitaAReceber não soma na receita (é saldo, não receita adicional)
       const receita = receitaBase;
       const cmv = d.cmvCompras ?? 0; // CMV = compras realizadas (2026-09-05)
@@ -918,7 +932,7 @@ export default function DRETab() {
   }
   if (!data) return null;
 
-  const receitaRecebida = data.receitaBalcao + data.receitaDelivery + data.receitaMesa + data.receitaAutoatendimento + data.receitaManual + (data.receitaStone ?? 0) + (data.receitaPix ?? 0) + (data.receitaIfood ?? 0) + (data.receitaDinheiro ?? 0);
+  const receitaRecebida = receitaRecebidaDe(data);
 
   // BUG-41: receitaAReceber é saldo (balanço), não receita adicional.
   // No regime de competência a receita já está no auto_sale do fin_cash_flow

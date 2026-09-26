@@ -81,6 +81,16 @@ const REGRAS: Record<string, (c: ContextoAcesso) => boolean> = {
   'ifood-repasses': (c) => !!c.ifood && fin(c, 'fin_ifood'),
   'ifood-custo': (c) => !!c.ifood && fin(c, 'fin_ifood'),
   'ifood-produtos': (c) => !!c.ifood && (fin(c, 'fin_ifood') || algum(c, 'rel_geral', 'cardapio_editar')),
+  // Operação do iFood (2026-09-26): quem vê a aba iFood (Financeiro ou Relatórios) ou cuida dos pedidos.
+  'ifood-pedido': (c) => !!c.ifood && (fin(c, 'fin_ifood') || algum(c, 'rel_ifood', 'gestao_pedidos', 'gestao_delivery')),
+  'ifood-cancelamentos': (c) => !!c.ifood && (fin(c, 'fin_ifood') || algum(c, 'rel_ifood', 'gestao_pedidos')),
+  'ifood-tempos': (c) => !!c.ifood && (fin(c, 'fin_ifood') || algum(c, 'rel_ifood', 'gestao_pedidos', 'gestao_delivery')),
+  // Repasse × extrato: dinheiro no banco, só o Financeiro com a aba iFood.
+  'ifood-repasse-caiu': (c) => !!c.ifood && fin(c, 'fin_ifood'),
+  // CMV do mês: a mesma conta da DRE — quem vê a DRE.
+  'cmv-mes': (c) => fin(c, 'fin_dre'),
+  // Clientes que sumiram: termina em voucher — mesma permissão do "Enviar voucher".
+  'clientes-sumidos': (c) => c.pode('gestao_vouchers'),
   // Receber mercadoria só abre o /receber: mesma regra da rota (RotaProtegida/Sidebar).
   'receber-mercadoria': (c) => rotaLiberada('/receber', c) && algum(c, 'estoque_receber', 'estoque_movimentar'),
   // Pedidos de pagamento (2026-09-24): mesma permissão da tela

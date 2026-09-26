@@ -65,6 +65,18 @@ const pagamento = (m: NonNullable<Venda['payment_methods']>[number] | undefined)
   return m.card?.brand && ['CREDIT', 'DEBIT', 'MEAL_VOUCHER', 'VOUCHER'].includes(String(m.method).toUpperCase()) ? `${metodo} ${nm(m.card.brand)}` : metodo || 'Não informado';
 };
 
+// Motivo de cancelamento pelo código que a API manda no evento REFUND (metadata.cancelCode). Textos
+// iguais aos do relatório de conciliação do iFood (fin_ifood_entries.raw.motivo_cancelamento).
+// Culpa: mesma regra do dashboard de Relatórios › iFood (culpaCancelamento: 5xx/902 loja, 6xx cliente).
+export const MOTIVO_CANCELAMENTO: Record<number, string> = {
+  406: 'O pedido foi acidental', 410: 'O pedido não foi entregue', 412: 'Itens errados / cancelamento parcial',
+  419: 'Cancelado pelo atendimento / item faltando', 501: 'Problemas de sistema na loja',
+  504: 'A loja está sem entregadores disponíveis', 512: 'A loja só abrirá mais tarde', 601: 'Problemas no veículo',
+  609: 'Cliente escolheu outra forma de pagamento', 610: 'Cliente não localizado', 902: 'O pedido não foi confirmado pela loja',
+};
+export const codigoCancelamento = (eventos: Array<{ metadata?: { cancelCode?: number } | null }> | null | undefined) =>
+  (eventos ?? []).map((e) => Number(e?.metadata?.cancelCode)).find((c) => c > 0) ?? null;
+
 /** Nomes das lojas do iFood desta loja do ERPOS (merchant_id → nome). Vazio = loja sem iFood. */
 export async function lojasIfood(tenantId: string): Promise<Record<string, string>> {
   const { data } = await supabase.from('fin_ifood_merchants').select('merchant_id, name, merchant_short').eq('tenant_id', tenantId);

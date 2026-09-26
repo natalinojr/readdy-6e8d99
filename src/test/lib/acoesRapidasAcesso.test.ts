@@ -41,7 +41,7 @@ describe('ações rápidas por acesso', () => {
   });
 
   it('loja sem iFood: a categoria iFood some, até para o Admin', () => {
-    const ifood = ['ifood-vendas', 'ifood-repasses', 'ifood-custo', 'ifood-produtos'];
+    const ifood = ['ifood-vendas', 'ifood-repasses', 'ifood-custo', 'ifood-produtos', 'ifood-pedido', 'ifood-cancelamentos', 'ifood-tempos', 'ifood-repasse-caiu'];
     expect(liberadas(ctx('admin'))).toEqual(expect.arrayContaining(ifood));
     const semIfood = liberadas(ctx('admin', [], [], false));
     for (const id of ifood) expect(semIfood).not.toContain(id);

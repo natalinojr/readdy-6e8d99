@@ -12,7 +12,8 @@ import {
   invokeUmaVez,
 } from '../kit';
 
-interface Cliente { id: string; nome: string; celular: string; totalVisitas: number }
+export interface ClienteVoucher { id: string; nome: string; celular: string; totalVisitas: number }
+type Cliente = ClienteVoucher;
 type Tipo = 'discount_percent' | 'discount_fixed' | 'gift_card';
 type Passo = 'carregando' | 'cliente' | 'tipo' | 'valor' | 'validade' | 'validade_outra' | 'minimo' | 'minimo_valor' | 'confirmar' | 'gravando' | 'enviar' | 'fim';
 
@@ -25,7 +26,12 @@ const TIPOS: { id: Tipo; label: string; detalhe: string }[] = [
 const norm = (s: string) => s.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
 const soDigitos = (s: string) => s.replace(/\D/g, '');
 
-export default function EnviarVoucher({ onFechar, irPara }: AcaoProps) {
+export default function EnviarVoucher({ onFechar, irPara, clienteInicial, aoCriar }: AcaoProps & {
+  /** Cliente já escolhido (ex.: "Clientes que sumiram"): pula a busca. */
+  clienteInicial?: ClienteVoucher;
+  /** Depois de criar o voucher (o funil registra a abordagem para o cooldown). */
+  aoCriar?: (voucherId: string, mensagem: string) => void;
+}) {
   const { user } = useAuth();
   const { registrarEvento } = useAuditoria();
   const { baloes, bot, eu } = useRoteiro();
@@ -43,6 +49,7 @@ export default function EnviarVoucher({ onFechar, irPara }: AcaoProps) {
   useEffect(() => {
     (async () => {
       if (!user?.tenantId) { bot('Escolha uma loja no app antes.'); setPasso('fim'); return; }
+      if (clienteInicial) { escolherCliente(clienteInicial); return; }
       const { data, error } = await supabase.rpc('fn_get_customers_list', { p_tenant_id: user.tenantId });
       if (error) { bot(`Não consegui carregar os clientes: ${error.message}`); setPasso('fim'); return; }
       const lista = ((data as Record<string, unknown>[]) ?? []).map((c) => ({
@@ -148,6 +155,7 @@ export default function EnviarVoucher({ onFechar, irPara }: AcaoProps) {
       const v = (data as { data?: Voucher; error?: string })?.data;
       if (!v) throw new Error((data as { error?: string })?.error ?? 'Falha ao criar voucher');
       setCriado(v);
+      aoCriar?.(v.id, montarMensagem(v));
       registrarEvento({
         tipo: 'voucher_emitido',
         severidade: 'info',
@@ -167,10 +175,11 @@ export default function EnviarVoucher({ onFechar, irPara }: AcaoProps) {
     }
   };
 
-  const link = criado?.claim_token ? `${window.location.origin}/voucher/${criado.claim_token}` : '';
-  const mensagem = criado
-    ? `\u{1F381} Olá, ${cliente!.nome.split(' ')[0]}! Você ganhou ${descricao()} na ${user?.loja || 'nossa loja'}${minimo > 0 ? ` em pedidos a partir de ${brl(minimo)}` : ''}!\n\nToque no link para ativar seu voucher:\n${link}\n\nVálido até ${dataBR(fim)}. Esperamos você! \u{1F60A}`
-    : '';
+  function montarMensagem(v: Voucher) {
+    const link = v.claim_token ? `${window.location.origin}/voucher/${v.claim_token}` : '';
+    return `\u{1F381} Olá, ${cliente!.nome.split(' ')[0]}! Você ganhou ${descricao()} na ${user?.loja || 'nossa loja'}${minimo > 0 ? ` em pedidos a partir de ${brl(minimo)}` : ''}!\n\nToque no link para ativar seu voucher:\n${link}\n\nVálido até ${dataBR(fim)}. Esperamos você! \u{1F60A}`;
+  }
+  const mensagem = criado ? montarMensagem(criado) : '';
 
   const abrirWhats = () => {
     const numero = soDigitos(cliente?.celular ?? '');
