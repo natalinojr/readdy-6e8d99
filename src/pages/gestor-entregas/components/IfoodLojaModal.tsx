@@ -95,7 +95,18 @@ export default function IfoodLojaModal({ tenantId, merchants, podeEditar, onClos
 
   const pausar = async () => { if (await run('pausa', 'merchant_pause_create', { minutes: pausaMin, description: pausaMotivo }, `Loja pausada por ${pausaMin} min no iFood.`)) { setPausaMotivo(''); carregarLoja(); } };
   const tirarPausa = async (id: string) => { if (await run('del' + id, 'merchant_pause_delete', { interruption_id: id }, 'Pausa removida.')) carregarLoja(); };
-  const salvarHorarios = async () => { if (await run('horas', 'merchant_hours_save', { shifts: turnos }, 'Horários salvos no iFood.')) carregarLoja(); };
+  // O GET /opening-hours do iFood leva ~1 min para refletir o PUT (teste 2026-09-26): recarregar logo depois mostraria o
+  // horário antigo. Usa os turnos que o próprio PUT devolve.
+  const salvarHorarios = async () => {
+    setBusy('horas'); setMsg(null);
+    const r = await ifoodShipping<{ opening_hours?: { shifts?: Turno[] } }>('merchant_hours_save', tenantId, { merchant_id: loja, shifts: turnos });
+    setBusy('');
+    setMsg({ ok: r.success, t: r.success ? 'Horários salvos no iFood.' : (r.error ?? 'Falhou.') });
+    if (!r.success) return;
+    const salvos = r.opening_hours?.shifts;
+    if (salvos?.length) setTurnos(salvos.map((t) => ({ dayOfWeek: t.dayOfWeek, start: hhmm(t.start), duration: t.duration })));
+    setTurnosSujo(false);
+  };
   const responder = async (id: string) => {
     if (await run('resp' + id, 'review_answer', { review_id: id, text: resposta.trim() }, 'Resposta publicada.')) { setRespondendo(null); setResposta(''); carregarAvaliacoes(pagina); }
   };
