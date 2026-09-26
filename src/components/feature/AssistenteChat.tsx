@@ -48,6 +48,24 @@ const ASSUNTOS = [
   { id: 'avisos', label: 'Avisos', icon: 'ri-notification-3-line', cor: 'bg-sky-50 text-sky-600' },
 ];
 const rotuloAssunto = (id: string) => ASSUNTOS.find((a) => a.id === id)?.label ?? 'Todas as mensagens';
+// Filtro por TIPO dentro da conversa (dono, 2026-09-26: "as mensagens do Financeiro ficam perdidas, tem
+// que ficar rodando"). asst_messages.kind nasce no banco (gatilho); '' = tudo. Cada conversa só mostra
+// os tipos que acontecem nela; grupo do WhatsApp não tem filtro (é tudo 'grupo').
+const TIPOS = [
+  { id: 'conversa', label: 'Conversa', icon: 'ri-chat-3-line' },
+  { id: 'pagamento', label: 'Pagamentos', icon: 'ri-bank-card-line' },
+  { id: 'caixa', label: 'Caixa e turnos', icon: 'ri-safe-2-line' },
+  { id: 'automatico', label: 'Avisos automáticos', icon: 'ri-time-line' },
+  { id: 'grupo', label: 'Grupos', icon: 'ri-whatsapp-line' },
+];
+const TIPOS_DA_CONVERSA: Record<string, string[]> = {
+  '': ['conversa', 'pagamento', 'caixa', 'automatico', 'grupo'],
+  pagamentos: ['conversa', 'pagamento', 'caixa', 'automatico', 'grupo'],
+  compras: ['conversa', 'grupo', 'automatico'],
+  geral: ['conversa', 'grupo'],
+  curriculos: ['conversa', 'automatico'],
+  avisos: ['conversa', 'automatico'],
+};
 interface Payment {
   id: string; kind: 'pix' | 'boleto'; amount: number; beneficiary_name: string | null; pix_key: string | null;
   due_date: string | null; description: string | null; status: string; status_label: string; error: string | null; created_at: string;
@@ -400,6 +418,10 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
   // Aba de assunto ('' = tudo). A conversa é uma só; a aba só filtra (asst_messages.topic).
   const [aba, setAba] = useState('');
   const abaRef = useRef('');
+  // Tipo dentro da conversa ('' = tudo). Volta para "Tudo" ao trocar de conversa.
+  const [tipo, setTipo] = useState('');
+  const tipoRef = useRef('');
+  const filtroHistorico = useCallback(() => ({ ...filtroConversa(abaRef.current), ...(tipoRef.current ? { kind: tipoRef.current } : {}) }), []);
   // Ações rápidas (2026-09-16): roteiros fixos que rodam no sistema, sem o modelo (custo zero).
   const [menuAcoes, setMenuAcoes] = useState(false);
   // Filtro das ações rápidas (dono, 2026-09-18): digitou, só ficam os botões que contêm o texto.
@@ -498,6 +520,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
   const abrirConversa = useCallback((topic: string) => {
     fimPendente.current = true; stick.current = true;
     setAba(topic);
+    setTipo('');
     setVista('conversa');
   }, []);
 
@@ -537,16 +560,18 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
 
   const sincronizar = useCallback(async () => {
     if (!lastId.current) return;
-    try { merge((await call<{ messages: Msg[] }>('history', { after_id: lastId.current, ...filtroConversa(abaRef.current) })).messages); } catch { /* tenta no próximo ciclo */ }
-  }, [merge]);
+    try { merge((await call<{ messages: Msg[] }>('history', { after_id: lastId.current, ...filtroHistorico() })).messages); } catch { /* tenta no próximo ciclo */ }
+  }, [merge, filtroHistorico]);
 
-  // Trocou de aba: recomeça a lista com o filtro novo.
+  // Trocou de aba (ou de tipo): recomeça a lista com o filtro novo.
   useEffect(() => {
-    if (abaRef.current === aba) return;
+    if (abaRef.current === aba && tipoRef.current === tipo) return;
     abaRef.current = aba;
+    tipoRef.current = tipo;
+    fimPendente.current = true; stick.current = true;
     lastId.current = 0;
     setMsgs([]); setPolls({}); setLinks({}); setLoaded(false);
-  }, [aba]);
+  }, [aba, tipo]);
 
   const isOwner = user?.email?.toLowerCase() === ASSISTENTE_OWNER_EMAIL;
 
@@ -657,7 +682,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
         const foco = focoMsg.current;
         focoMsg.current = null;
         // Com foco: a página termina na mensagem do pedido; o que veio depois chega pelo sincronizar.
-        const h = await call<{ messages: Msg[]; has_more: boolean }>('history', { ...filtroConversa(abaRef.current), ...(foco ? { before_id: foco + 1 } : {}) });
+        const h = await call<{ messages: Msg[]; has_more: boolean }>('history', { ...filtroHistorico(), ...(foco ? { before_id: foco + 1 } : {}) });
         setMsgs(h.messages); setHasMore(h.has_more);
         lastId.current = h.messages.length ? h.messages[h.messages.length - 1].id : 0;
         fimPendente.current = !foco; stick.current = !foco;
@@ -698,7 +723,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
     if (!primeiro) return;
     const el = scrollRef.current; const h0 = el?.scrollHeight ?? 0;
     try {
-      const h = await call<{ messages: Msg[]; has_more: boolean }>('history', { before_id: primeiro.id, ...filtroConversa(abaRef.current) });
+      const h = await call<{ messages: Msg[]; has_more: boolean }>('history', { before_id: primeiro.id, ...filtroHistorico() });
       setMsgs((prev) => [...h.messages, ...prev]); setHasMore(h.has_more);
       requestAnimationFrame(() => { if (el) el.scrollTop = el.scrollHeight - h0; });
     } catch { /* ignora */ }
@@ -763,6 +788,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
       const antes = lastId.current;
       // Só a conversa aberta: sem o filtro, o que chegou em OUTRAS conversas enquanto a resposta vinha
       // (grupos, avisos, Financeiro) caía aqui dentro — a "replicação" que o dono via (2026-09-19).
+      // Sem o filtro de tipo: o que você acabou de mandar e a resposta aparecem mesmo filtrando.
       const h = await call<{ messages: Msg[] }>('history', { after_id: antes, ...filtroConversa(abaRef.current) });
       merge(h.messages);
       const ultimaResp = [...h.messages].reverse().find((m) => m.role === 'assistant');
@@ -1296,6 +1322,21 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
         )}
       </div>
 
+      {/* Filtro por tipo dentro da conversa: botões roláveis na horizontal, "Tudo" primeiro. */}
+      {vista === 'conversa' && TIPOS_DA_CONVERSA[aba] && (
+        <div className="flex gap-1.5 px-3 py-2 overflow-x-auto border-b border-zinc-100 flex-shrink-0 [scrollbar-width:none]" role="tablist" aria-label="Filtrar mensagens por tipo">
+          {[{ id: '', label: 'Tudo', icon: 'ri-list-check' }, ...TIPOS.filter((t) => TIPOS_DA_CONVERSA[aba].includes(t.id))].map((t) => {
+            const ativo = t.id === tipo;
+            return (
+              <button key={t.id || 'tudo'} role="tab" aria-selected={ativo} onClick={() => setTipo(t.id)}
+                className={`flex-shrink-0 flex items-center gap-1 h-7 px-2.5 rounded-full text-xs font-bold whitespace-nowrap cursor-pointer transition-colors ${ativo ? 'bg-violet-600 text-white' : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'}`}>
+                <i className={t.icon} /> {t.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       {/* Lista de conversas ou a conversa aberta */}
       {vista === 'lista' ? listaConversas : (
       <div
@@ -1313,7 +1354,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
         {hasMore && (
           <button onClick={maisAntigas} className="block mx-auto text-xs text-violet-600 font-semibold py-1 cursor-pointer">Carregar mensagens anteriores</button>
         )}
-        {loaded && msgs.length === 0 && <p className="text-sm text-zinc-400 text-center py-10">Pode falar: texto, áudio, foto ou PDF.</p>}
+        {loaded && msgs.length === 0 && <p className="text-sm text-zinc-400 text-center py-10">{tipo ? 'Nada desse tipo nesta conversa.' : 'Pode falar: texto, áudio, foto ou PDF.'}</p>}
         {msgs.map((m, i) => {
           const divisor = i === 0 || diaChave(msgs[i - 1].created_at) !== diaChave(m.created_at) ? (
             <div className="flex justify-center py-1.5" aria-label={`Mensagens de ${rotuloDia(m.created_at)}`}>
@@ -1741,7 +1782,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
       onPointerCancel={() => { arrastoFab.current = null; setArrastandoFab(null); }}
       onClick={() => {
         if (ignorarCliqueFab.current) { ignorarCliqueFab.current = false; return; }
-        if (temNovidade && naoLidas.topic) { setAba(naoLidas.topic); setVista('conversa'); }
+        if (temNovidade && naoLidas.topic) { setAba(naoLidas.topic); setTipo(''); setVista('conversa'); }
         else if (temNovidade) { setVista('lista'); setSecaoLista('assistente'); } // veio de assuntos diferentes: escolha na lista
         // Mensagem de alguém da equipe: abre na lista, onde está a conversa com a pessoa.
         const irEquipe = !temNovidade && equipe.naoLidas > 0;

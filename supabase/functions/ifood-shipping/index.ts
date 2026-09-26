@@ -27,7 +27,7 @@
 
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
 import { isContabilidadeRole, isManagerRole } from '../_shared/tenant-auth.ts';
-import { ACTIVE, buildItems as buildItemsPure, cut, eventName, norm, onlyDigits, paymentFromNotes, planEvent, round2, splitPhone, type OrderSignal } from './core.ts';
+import { ACTIVE, buildItems as buildItemsPure, cut, eventName, norm, onlyDigits, parseEnderecoPedido, paymentFromNotes, planEvent, round2, splitPhone, type OrderSignal } from './core.ts';
 
 type Admin = SupabaseClient;
 
@@ -397,7 +397,10 @@ Deno.serve(async (req) => {
         const byText = list.find((a: any) => a.street && String(o.delivery_address ?? '').toLowerCase().includes(String(a.street).toLowerCase()));
         addr = (byPin && dist(byPin) < 0.002 ? byPin : null) ?? byText ?? list.find((a: any) => a.is_default) ?? null;
       }
-      const city = String(loja?.city ?? '').trim();
+      // Sem endereço cadastrado do cliente: lê do texto do pedido.
+      const txt = parseEnderecoPedido(o.delivery_address);
+      if (!addr) addr = { street: txt.street, number: txt.number, complement: txt.complement, reference_point: txt.reference, bairro: txt.neighborhood };
+      const city = txt.city || String(loja?.city ?? '').trim(); // a cidade do texto vem da config do delivery
       const state = String(loja?.state ?? '').trim().toUpperCase().slice(0, 2);
       const street = String(addr?.street ?? '').trim();
       const bairro = String(addr?.bairro ?? '').trim();
@@ -551,7 +554,7 @@ Deno.serve(async (req) => {
       const code = Number(body.code);
       const reason = cut(body.reason, 250) || 'Cancelado pela loja';
       if (!Number.isFinite(code)) return errResp('Escolha o motivo do cancelamento.');
-      const r = await call(admin, c, 'POST', `/shipping/v1.0/orders/${s.ifood_order_id}/cancel`, { reason, cancellationCode: code }, { 'idempotency-key': `cancel-${s.id}-${code}` });
+      const r = await call(admin, c, 'POST', `/shipping/v1.0/orders/${s.ifood_order_id}/cancel`, { reason, cancellationCode: String(code) }, { 'idempotency-key': `cancel-${s.id}-${code}` });
       if (!r.ok) return errResp(apiError(r, 'Cancelar'));
       await admin.from('ifood_shipping_orders').update({ status: 'cancel_requested', cancel_reason: reason, error: null, updated_at: new Date().toISOString() }).eq('id', s.id);
       return json({ success: true, message: 'Cancelamento pedido ao iFood. A confirmação chega em alguns segundos.' });
@@ -580,6 +583,15 @@ Deno.serve(async (req) => {
       const score = sd.ok ? String(sd.data?.score ?? '') || null : null;
       if (score && score !== s.safe_score) await admin.from('ifood_shipping_orders').update({ safe_score: score }).eq('id', s.id);
       return json({ success: true, tracking: t.ok ? t.data : null, safe: sd.ok ? sd.data : null });
+    }
+
+    // Endereço/coordenadas da loja do iFood que despacha (Merchant API) — conferência na configuração.
+    if (action === 'merchant_info') {
+      const c = await needCtx();
+      const r = await call(admin, c, 'GET', `/merchant/v1.0/merchants/${c.merchantId}`);
+      if (!r.ok) return errResp(apiError(r, 'Dados da loja'));
+      const a = r.data?.address ?? {};
+      return json({ success: true, merchant: { id: c.merchantId, name: r.data?.name ?? null, address: a, lat: a.latitude ?? null, lng: a.longitude ?? null } });
     }
 
     if (action === 'poll') {

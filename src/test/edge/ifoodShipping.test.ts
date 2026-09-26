@@ -129,3 +129,26 @@ describe('planEvent — ciclo da entrega', () => {
     expect((p.upd.timeline as any).ASSIGN_DRIVER).toBe('2026-09-26T11:00:00.000Z');
   });
 });
+
+describe('parseEnderecoPedido — texto do delivery', () => {
+  it('rua, número, complemento, bairro, cidade e referência', () => {
+    expect(core.parseEnderecoPedido('Rua das Flores 123 (Apto 4) - Centro - Paranaguá (Ref: perto da praça)')).toEqual({
+      street: 'Rua das Flores', number: '123', complement: 'Apto 4', neighborhood: 'Centro', city: 'Paranaguá', reference: 'perto da praça',
+    });
+  });
+  it('sem complemento nem referência', () => {
+    expect(core.parseEnderecoPedido('Ramal Bujari 200 - Bujari - Bujari')).toMatchObject({ street: 'Ramal Bujari', number: '200', neighborhood: 'Bujari', city: 'Bujari' });
+  });
+  it('vazio não quebra', () => {
+    expect(core.parseEnderecoPedido(null)).toMatchObject({ street: '', number: '' });
+  });
+});
+
+describe('cancelamento pelo iFood — motivo vem em CANCEL_CODE_DESCRIPTION', () => {
+  it('grava o motivo e libera o pedido', () => {
+    const p = core.planEvent({ status: 'cancel_requested' }, ev('CANCELLED', { CANCEL_CODE: '802', CANCEL_CODE_DESCRIPTION: 'O pedido está duplicado' }));
+    expect(p.upd.status).toBe('cancelled');
+    expect(p.upd.cancel_reason).toBe('O pedido está duplicado');
+    expect(p.order).toBe('liberar');
+  });
+});

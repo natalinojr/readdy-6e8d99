@@ -21,6 +21,7 @@
 //   item_classify { tenant_id, ids, classe, dre_category_id?, merchandise_category_id? }
 //                                                  → classifica pelo chat (fn_item_classify com o JWT do dono)
 //   history/topics aceitam group_jid: conversa de um GRUPO do WhatsApp (asst_messages.group_jid)
+//   history aceita kind (conversa|pagamento|caixa|grupo|automatico): filtro por tipo dentro da conversa
 //   Caixa de pendências no chat (2026-09-18):
 //   pendencia_pagar { id }                         → prepara de novo o pedido do grupo (ou o pagamento parado) e devolve os cartões
 //   pendencia_recusar { id }                       → "não vou pagar": cancela os Pix preparados e recusa o pedido
@@ -66,6 +67,9 @@ const MAX_B64 = 14 * 1024 * 1024; // ~10 MB de arquivo
 // Assuntos (abas do chat): asst_messages.topic. A conversa é uma só; a aba filtra e, ao escrever
 // numa aba, a mensagem já nasce com o assunto.
 const TOPICS = ['geral', 'pagamentos', 'curriculos', 'compras', 'avisos'];
+// Tipo da mensagem (asst_messages.kind, 2026-09-26): filtro DENTRO da conversa — as mensagens do
+// Financeiro se perdiam no meio de fechamentos, avisos e pagamentos.
+const KINDS = ['conversa', 'pagamento', 'caixa', 'grupo', 'automatico'];
 
 const PAY_TTL_MS = 30 * 60_000;
 const PAY_OPEN = ['draft', 'awaiting_pin', 'sending', 'sent', 'pending_approval', 'approved', 'scheduled'];
@@ -268,9 +272,10 @@ Deno.serve(async (req) => {
 
   try {
     if (action === 'history') {
-      let q = admin.from('asst_messages').select('id, role, content, channel, created_at, topic, group_jid').eq('chat_id', chatKey);
+      let q = admin.from('asst_messages').select('id, role, content, channel, created_at, topic, group_jid, kind').eq('chat_id', chatKey);
       if (GRUPO_JID.test(String(body.group_jid ?? ''))) q = q.eq('group_jid', String(body.group_jid)); // conversa do grupo
       else if (TOPICS.includes(String(body.topic)) ) q = q.eq('topic', String(body.topic)); // aba; sem topic = tudo
+      if (KINDS.includes(String(body.kind))) q = q.eq('kind', String(body.kind)); // filtro por tipo dentro da conversa
       if (body.after_id) q = q.gt('id', Number(body.after_id)).order('id', { ascending: true }).limit(100);
       else {
         if (body.before_id) q = q.lt('id', Number(body.before_id));
