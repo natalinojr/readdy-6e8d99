@@ -27,7 +27,8 @@ import CaixaWhatsApp from './components/CaixaWhatsApp';
 import CompartilhadoParaTarefa from './components/CompartilhadoParaTarefa';
 import ViewsSalvas from './components/ViewsSalvas';
 import FiltrosBar from './components/FiltrosBar';
-import ArvorePastas from './components/ArvorePastas';
+import ArvorePastas, { mostrarSeCortado } from './components/ArvorePastas';
+import { useLarguraSidebar } from './hooks/useLarguraSidebar';
 import ConfirmDialog from './components/ConfirmDialog';
 import CompartilharPasta from './components/CompartilharPasta';
 import ConfigAvisos from './components/ConfigAvisos';
@@ -83,6 +84,7 @@ const ORIGEM_INFO: Record<Exclude<Origem, 'pasta'>, { label: string; icon: typeo
 
 export default function TarefasPage() {
   const toast = useToast();
+  const sidebar = useLarguraSidebar();
   const eu = useEuTarefas();
   const { setMode } = useAppMode();
   const navigate = useNavigate();
@@ -537,7 +539,12 @@ export default function TarefasPage() {
   return (
     <div className="flex h-full min-h-0">
       {/* ── Sidebar de pastas (desktop) ── */}
-      <aside className="hidden md:flex w-60 shrink-0 border-r border-slate-200 bg-white flex-col">
+      <aside className="hidden md:flex relative shrink-0 border-r border-slate-200 bg-white flex-col" style={{ width: sidebar.largura }}>
+        {/* Alça na borda direita: arrastar muda a largura (nomes longos cabem). */}
+        <div
+          {...sidebar.alcaProps}
+          className={`absolute top-0 -right-1 z-20 h-full w-2 cursor-col-resize transition-colors hover:bg-indigo-300/60 ${sidebar.arrastando ? 'bg-indigo-400/70' : ''}`}
+        />
         <div className="px-3 py-2 border-b border-slate-100">
           <button
             onClick={voltarModulos}
@@ -691,7 +698,7 @@ export default function TarefasPage() {
                 {selectedList && (
                   <span className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: selectedList.color }} />
                 )}
-                <span className="truncate">{selectedList?.name ?? 'Tarefas'}</span>
+                <span className="truncate" onMouseEnter={(e) => mostrarSeCortado(e.currentTarget, selectedList?.name ?? '')}>{selectedList?.name ?? 'Tarefas'}</span>
                 {selectedList && (selectedList.access ?? 'owner') !== 'owner' && (
                   <span className="shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-slate-200/70 text-slate-500">
                     {selectedList.access === 'edit' ? 'pode editar' : 'só ver'} · de {selectedList.owner_name ?? 'outra pessoa'}
