@@ -71,14 +71,18 @@ export default function VendasDia({ onFechar, irPara }: AcaoProps) {
     // Mesmo dia da semana passada: a comparação que faz sentido num restaurante (sexta com sexta).
     const semanaPassada = somaDias(iso, -7);
     // iFood (2026-09-25): fora do PDV, entra num bloco à parte + "Total c/ iFood". Hoje/ontem: busca leve antes.
-    const ifoodDoDia = async () => {
+    // Semana passada também (2026-09-26): o número em destaque é o total ERPOS + iFood, e a variação
+    // compara total com total.
+    const ifoodDosDias = async () => {
       const nomes = await lojasIfood(tenantId);
-      if (!Object.keys(nomes).length) return null;
+      if (!Object.keys(nomes).length) return [null, null] as const;
       if (iso >= somaDias(hojeISO(), -1)) await atualizarVendasIfood(tenantId);
-      return resumoIfood(tenantId, `${iso}T00:00:00-03:00`, `${iso}T23:59:59.999-03:00`, nomes);
+      const dia = (d: string) => resumoIfood(tenantId, `${d}T00:00:00-03:00`, `${d}T23:59:59.999-03:00`, nomes);
+      return Promise.all([dia(iso), dia(semanaPassada).catch(() => null)]);
     };
-    const [{ data, error }, anterior, pedidosDia, pedidosAnterior, ifoodBruto] = await Promise.all([
-      relatorio(iso), relatorio(semanaPassada), pedidosPagosDoDia(tenantId, iso), pedidosPagosDoDia(tenantId, semanaPassada), ifoodDoDia().catch(() => null),
+    const [{ data, error }, anterior, pedidosDia, pedidosAnterior, [ifoodBruto, ifoodAnterior]] = await Promise.all([
+      relatorio(iso), relatorio(semanaPassada), pedidosPagosDoDia(tenantId, iso), pedidosPagosDoDia(tenantId, semanaPassada),
+      ifoodDosDias().catch(() => [null, null] as const),
     ]);
     const ifood = ifoodBruto && (ifoodBruto.pedidos || ifoodBruto.cancelados) ? ifoodBruto : null;
     setTemIfood(!!ifoodBruto);
@@ -105,27 +109,42 @@ export default function VendasDia({ onFechar, irPara }: AcaoProps) {
     const diaSemana = new Date(`${semanaPassada}T12:00:00-03:00`).toLocaleDateString('pt-BR', { weekday: 'short' }).replace('.', '');
     const base = (n: number | undefined) => (a && Number(a.total_orders) > 0 ? Number(n ?? 0) : null);
     // Eixo das horas: da primeira à última hora com venda (em qualquer dos dois dias).
-    const horas = porHora(pedidosDia);
-    const horasAnterior = porHora(pedidosAnterior);
+    // Com iFood ligado (2026-09-26) o gráfico soma ERPOS + iFood por hora, nos dois dias, para bater
+    // com o total em destaque; a linha tracejada é sempre o mesmo dia da semana passada.
+    const somaIfood = (h: number[] | null, f: { porHora: number[] } | null) => (h && f ? h.map((v, i) => v + (f.porHora[i] ?? 0)) : h);
+    const horas = somaIfood(porHora(pedidosDia), ifood);
+    const horasAnterior = somaIfood(porHora(pedidosAnterior), ifood ? ifoodAnterior : null);
     const comVenda = [...Array(24).keys()].filter((h) => (horas?.[h] ?? 0) > 0 || (horasAnterior?.[h] ?? 0) > 0);
     const pontosHora = horas && comVenda.length
       ? Array.from({ length: comVenda[comVenda.length - 1] - comVenda[0] + 1 }, (_, i) => comVenda[0] + i)
         .map((h) => ({ rotulo: `${h}h`, valor: horas[h], base: horasAnterior ? horasAnterior[h] : null }))
       : [];
     const categorias = pedidosDia?.length ? await porCategoria(tenantId, pedidosDia.map((o) => o.id)) : null;
+    // Destaque (2026-09-26, pedido do dono): com iFood ligado, o número grande é o total (ERPOS + iFood)
+    // e embaixo, em menor, quanto veio de cada um. Base da semana passada = PDV + iFood daquele dia.
+    const erpos = Number(r.total_revenue ?? 0);
+    const total = erpos + (ifood?.vendido ?? 0);
+    const temAnterior = (a && Number(a.total_orders) > 0) || (ifoodAnterior?.pedidos ?? 0) > 0;
+    const baseTotal = ifood
+      ? (temAnterior ? Number(a?.total_revenue ?? 0) + (ifoodAnterior?.vendido ?? 0) : null)
+      : base(a?.total_revenue);
 
     painel(
-      <Painel titulo={`Vendas de ${dataBR(iso)}`} subtitulo={user?.loja || 'Loja ativa'} rodape={`${ifood ? 'Faturamento, pedidos e gráficos são do PDV; o iFood está no bloco próprio (vendido = itens + entrega).' : 'iFood fora do PDV não entra aqui.'} Por categoria soma só os itens (sem taxa de serviço/entrega e descontos).`}>
+      <Painel titulo={`Vendas de ${dataBR(iso)}`} subtitulo={user?.loja || 'Loja ativa'} rodape={`${ifood ? 'Total = ERPOS + iFood (vendido = itens + entrega). O gráfico por hora soma os dois; pedidos, ticket e as barras são só do ERPOS (o iFood está no bloco próprio).' : 'iFood fora do PDV não entra aqui.'} Por categoria soma só os itens (sem taxa de serviço/entrega e descontos).`}>
         <Kpis
-          principal={{ label: 'Faturamento', valor: brl(r.total_revenue), extra: (
+          principal={{ label: ifood ? 'Faturamento total' : 'Faturamento', valor: brl(total), extra: (
             <>
-              <Variacao atual={Number(r.total_revenue)} base={base(a?.total_revenue)} rotulo={`vs ${diaSemana} passada`} />
-              {ifood && <p className="text-xs font-semibold text-zinc-600 mt-1">Total com iFood: {brl(Number(r.total_revenue ?? 0) + ifood.vendido)}</p>}
+              <Variacao atual={total} base={baseTotal} rotulo={`vs ${diaSemana} passada`} />
+              {ifood && (
+                <p className="text-xs font-semibold text-zinc-600 mt-1 tabular-nums">
+                  ERPOS {brl(erpos)} · iFood {brl(ifood.vendido)}
+                </p>
+              )}
             </>
           ) }}
           outros={[
-            { label: 'Pedidos', valor: String(pedidos), extra: <Variacao atual={pedidos} base={base(a?.total_orders)} rotulo="" /> },
-            { label: 'Ticket médio', valor: brl(r.avg_ticket), extra: <Variacao atual={Number(r.avg_ticket)} base={base(a?.avg_ticket)} rotulo="" /> },
+            { label: ifood ? 'Pedidos ERPOS' : 'Pedidos', valor: String(pedidos), extra: <Variacao atual={pedidos} base={base(a?.total_orders)} rotulo="" /> },
+            { label: ifood ? 'Ticket médio ERPOS' : 'Ticket médio', valor: brl(r.avg_ticket), extra: <Variacao atual={Number(r.avg_ticket)} base={base(a?.avg_ticket)} rotulo="" /> },
           ]}
         />
         {ifood && (
@@ -137,7 +156,7 @@ export default function VendasDia({ onFechar, irPara }: AcaoProps) {
           ]} />
         )}
         {pontosHora.length >= 2 && (
-          <GraficoLinha titulo="Faturado por hora" pontos={pontosHora} rotuloBase={`${diaSemana} passada`} />
+          <GraficoLinha titulo={ifood ? 'Faturado por hora (ERPOS + iFood)' : 'Faturado por hora'} pontos={pontosHora} rotuloBase={`${diaSemana} passada`} />
         )}
         {categorias && categorias.length > 0 && (
           <Barras titulo="Por categoria (itens)" cor="bg-amber-500"

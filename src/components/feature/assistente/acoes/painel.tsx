@@ -173,7 +173,8 @@ export function GraficoLinha({ titulo, pontos, rotuloBase, formatar = brl }: {
   const pico = pontos.reduce((m, p, i) => (p.valor > pontos[m].valor ? i : m), 0);
   const [sel, setSel] = useState(pico);
   if (pontos.length < 2 || !pontos.some((p) => p.valor > 0)) return null;
-  const temBase = pontos.some((p) => (p.base ?? 0) > 0);
+  // Base mostrada sempre que veio (2026-09-26, dono): semana passada sem venda = linha tracejada no zero.
+  const temBase = pontos.some((p) => p.base != null);
   const W = 320; const H = 130; const E = 6; const D = 6; const T = 8; const B = 18;
   const max = Math.max(...pontos.map((p) => Math.max(p.valor, temBase ? p.base ?? 0 : 0)), 1);
   const x = (i: number) => E + (i * (W - E - D)) / (pontos.length - 1);

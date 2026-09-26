@@ -83,4 +83,31 @@ describe('Ação rápida — Vendas do dia', () => {
     expect(screen.getByText('Sem categoria')).toBeInTheDocument();
     expect(screen.getByText(/R\$\s80,00/)).toBeInTheDocument();
   });
+
+  it('com iFood: destaque = ERPOS + iFood, detalhe de cada um e gráfico com a semana passada', async () => {
+    const SEMANA = '2026-09-13';
+    h.tabelas.fin_ifood_merchants = () => ({ data: [{ merchant_id: 'm1', name: 'Loja iFood', merchant_short: null }], error: null });
+    h.tabelas.fin_ifood_sales = (f) => ({
+      data: diaDoFiltro(f) === DIA
+        ? [{ merchant_id: 'm1', sale_created_at: `${DIA}T23:30:00Z`, current_status: 'CONCLUDED', gross_bag: 90, delivery_fee: 10, sale_balance: 80, payment_methods: [], billing_entries: [] }]
+        : diaDoFiltro(f) === SEMANA
+          ? [{ merchant_id: 'm1', sale_created_at: `${SEMANA}T16:00:00Z`, current_status: 'CONCLUDED', gross_bag: 50, delivery_fee: 0, sale_balance: 40, payment_methods: [], billing_entries: [] }]
+          : [],
+      error: null,
+    });
+    render(<VendasDia onFechar={() => {}} irPara={() => {}} />);
+    fireEvent.click(await screen.findByText('Outra data'));
+    const campo = document.querySelector('input[type="date"]') as HTMLInputElement;
+    fireEvent.change(campo, { target: { value: DIA } });
+    fireEvent.submit(campo.closest('form')!);
+
+    expect(await screen.findByText('Faturamento total')).toBeInTheDocument();
+    expect(screen.getByText(/^R\$\s450,00$/)).toBeInTheDocument();
+    expect(screen.getByText(/ERPOS R\$\s350,00 · iFood R\$\s100,00/)).toBeInTheDocument();
+    // Gráfico soma os dois e sempre traz a linha da semana passada (lá só teve iFood)
+    expect(screen.getByText('Faturado por hora (ERPOS + iFood)')).toBeInTheDocument();
+    expect(screen.getAllByText(/dom passada/).length).toBeGreaterThan(0);
+    h.tabelas.fin_ifood_merchants = () => ({ data: [], error: null });
+    h.tabelas.fin_ifood_sales = () => ({ data: [], error: null });
+  });
 });
