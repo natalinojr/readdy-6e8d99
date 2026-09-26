@@ -122,7 +122,10 @@ export function useConsumoComparativo(dateFrom?: string, dateTo?: string) {
       // Agrupa consumo atual
       const consumoAtualMap = new Map<string, { total: number; dias: Set<string>; vendas: number; producao: number; perda: number }>();
       // Correção de conversão acerta a entrada de uma compra antiga — não é consumo
-      const ehConsumo = (m: { reason?: string | null }) => !String(m.reason ?? '').toLowerCase().startsWith('correção de conversão');
+      const ehConsumo = (m: { reason?: string | null }) => {
+        const r = String(m.reason ?? '').toLowerCase();
+        return !r.startsWith('correção de conversão') && !r.startsWith('correção de ficha (saldo mantido)');
+      };
       for (const mov of (movsAtual ?? []).filter(ehConsumo)) {
         const prev = consumoAtualMap.get(mov.ingredient_id) ?? { total: 0, dias: new Set<string>(), vendas: 0, producao: 0, perda: 0 };
         const qtd = Math.abs(Number(mov.quantity));

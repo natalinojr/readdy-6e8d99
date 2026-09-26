@@ -1,5 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
-import { reaplicarFicha } from '../_shared/ficha-retroativa.ts';
+import { reaplicarFicha, OPCOES_PADRAO, type OpcoesFicha } from '../_shared/ficha-retroativa.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -448,14 +448,56 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
     else if (action === 'reaplicar_ficha') {
       // Ficha mudada → refaz a baixa das vendas desde a data escolhida (_shared/ficha-retroativa.ts).
       // aplicar=false só calcula o efeito (prévia na tela).
-      const { item_id, desde, aplicar } = payload as { item_id: string; desde: string; aplicar?: boolean };
+      const { item_id, desde, aplicar, opcoes } = payload as { item_id: string; desde: string; aplicar?: boolean; opcoes?: Partial<OpcoesFicha> };
       if (!isValidUuid(item_id)) return errResp('item_id inválido', 400);
       if (!/^\d{4}-\d{2}-\d{2}$/.test(String(desde ?? ''))) return errResp('Informe a data (AAAA-MM-DD)', 400);
       const { data: papel } = await admin.from('user_tenants').select('role').eq('user_id', user.id).eq('tenant_id', tenantId).maybeSingle();
       if (!['admin', 'manager'].includes(String(papel?.role ?? ''))) return errResp('Só administrador ou gerente pode refazer a baixa das vendas', 403);
       const { data: item } = await admin.from('menu_items').select('id').eq('id', item_id).eq('tenant_id', tenantId).maybeSingle();
       if (!item) return errResp('Item não encontrado nesta loja', 404);
-      result = await reaplicarFicha(admin, tenantId, item_id, `${desde}T00:00:00-03:00`, user.id, !!aplicar);
+      const op: OpcoesFicha = { ...OPCOES_PADRAO, ...(opcoes ?? {}) };
+      if (op.estoque && !op.consumo) return errResp('Estoque só junto com o consumo', 400);
+      result = await reaplicarFicha(admin, tenantId, item_id, `${desde}T00:00:00-03:00`, user.id, !!aplicar, op);
+    }
+    else if (action === 'fichas_vendidas') {
+      // Botão "Aplicar fichas nas vendas passadas" (2026-09-26): produtos vendidos desde a data, com ou sem ficha.
+      // Combo vendido entra pelos itens dele (a baixa do combo vem das fichas dos itens).
+      const { desde } = payload as { desde: string };
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(String(desde ?? ''))) return errResp('Informe a data (AAAA-MM-DD)', 400);
+      const { data: papel } = await admin.from('user_tenants').select('role').eq('user_id', user.id).eq('tenant_id', tenantId).maybeSingle();
+      if (!['admin', 'manager'].includes(String(papel?.role ?? ''))) return errResp('Só administrador ou gerente', 403);
+      const vendas = new Map<string, number>();
+      const combosVendidos = new Map<string, number>();
+      for (let from = 0; ; from += 1000) {
+        const { data, error } = await admin.from('order_items').select('item_id, combo_id, quantity, status')
+          .eq('tenant_id', tenantId).gte('created_at', `${desde}T00:00:00-03:00`).neq('status', 'cancelled').range(from, from + 999);
+        if (error) throw new Error(`order_items: ${error.message}`);
+        for (const r of (data ?? []) as Array<{ item_id: string | null; combo_id: string | null; quantity: number | null }>) {
+          const q = Number(r.quantity ?? 1) || 1;
+          if (r.item_id) vendas.set(r.item_id, (vendas.get(r.item_id) ?? 0) + q);
+          else if (r.combo_id) combosVendidos.set(r.combo_id, (combosVendidos.get(r.combo_id) ?? 0) + q);
+        }
+        if (!data || data.length < 1000) break;
+      }
+      if (combosVendidos.size) {
+        const { data: ci } = await admin.from('combo_items').select('combo_id, item_id').eq('tenant_id', tenantId).in('combo_id', [...combosVendidos.keys()]).is('deleted_at', null);
+        for (const c of (ci ?? []) as Array<{ combo_id: string; item_id: string }>) vendas.set(c.item_id, (vendas.get(c.item_id) ?? 0) + (combosVendidos.get(c.combo_id) ?? 0));
+      }
+      const ids = [...vendas.keys()];
+      const nomes = new Map<string, string>();
+      const comFicha = new Set<string>();
+      for (let i = 0; i < ids.length; i += 300) {
+        const part = ids.slice(i, i + 300);
+        const [{ data: mi }, { data: ii }] = await Promise.all([
+          admin.from('menu_items').select('id, name').eq('tenant_id', tenantId).in('id', part),
+          admin.from('item_ingredients').select('item_id').eq('tenant_id', tenantId).in('item_id', part),
+        ]);
+        for (const m of (mi ?? []) as Array<{ id: string; name: string }>) nomes.set(m.id, m.name);
+        for (const f of (ii ?? []) as Array<{ item_id: string }>) comFicha.add(f.item_id);
+      }
+      result = ids.filter((id) => nomes.has(id))
+        .map((id) => ({ item_id: id, nome: nomes.get(id)!, vendas: vendas.get(id) ?? 0, tem_ficha: comFicha.has(id) }))
+        .sort((a, b) => Number(b.tem_ficha) - Number(a.tem_ficha) || b.vendas - a.vendas);
     }
     else if (action === 'ligar_opcoes_estoque') {
       // Aba Opções × Estoque (2026-09-25): liga várias opções (mesmo complemento em vários itens) a um

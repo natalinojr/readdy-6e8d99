@@ -76,6 +76,8 @@ function classifyMovement(
 
   // Correção de conversão (Classificação de itens) acerta a ENTRADA de uma compra antiga — não é consumo
   if (r.startsWith('correção de conversão') || r.startsWith('correcao de conversao')) return { bucket: 'ajuste', isConsumo: false };
+  // Compensação de "aplicar ficha só no consumo": mantém o saldo, não é consumo
+  if (r.startsWith('correção de ficha (saldo mantido)')) return { bucket: 'ajuste', isConsumo: false };
 
   // ── A partir daqui só temos saídas / consumo ─────────────────────────────
 
