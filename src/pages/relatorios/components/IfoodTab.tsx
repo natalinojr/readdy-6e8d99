@@ -307,7 +307,13 @@ export default function IfoodTab({ periodo }: Props) {
     const out: { icon: string; cor: string; titulo: string; texto: string }[] = [];
     if (heat.top.n > 0) {
       const melhorDia = [...heat.porSemana].sort((a, b) => b.v - a.v)[0];
-      out.push({ icon: 'ri-fire-line', cor: IFOOD, titulo: 'Horário de pico', texto: `${SEMANA_LONGA[heat.top.s]} às ${heat.top.h}h é a janela mais forte (${heat.top.n} pedidos). No total, ${SEMANA_LONGA[melhorDia.s]} é o dia que mais vende (${brl0(melhorDia.v)}). Garanta equipe e insumo nessa janela.` });
+      // Com um dia só no período (ou um dia da semana só), comparar dias da semana não diz nada.
+      const variosDiasSemana = heat.porSemana.filter((d) => d.n > 0).length > 1;
+      const umDia = new Set(validos.map((p) => p.dia)).size === 1;
+      const texto = variosDiasSemana
+        ? `${SEMANA_LONGA[heat.top.s]} às ${heat.top.h}h é a janela mais forte (${heat.top.n} pedidos). No total, ${SEMANA_LONGA[melhorDia.s]} é o dia que mais vende (${brl0(melhorDia.v)}). Garanta equipe e insumo nessa janela.`
+        : `${umDia ? '' : `${SEMANA_LONGA[heat.top.s]} às `}${heat.top.h}h foi o horário mais forte (${heat.top.n} pedido${heat.top.n > 1 ? 's' : ''}, ${brl0(heat.top.v)}). Garanta equipe e insumo nessa janela.`;
+      out.push({ icon: 'ri-fire-line', cor: IFOOD, titulo: 'Horário de pico', texto: texto.charAt(0).toUpperCase() + texto.slice(1) });
     }
     if (r.vendas > 0) {
       const d = ra.vendas > 0 ? r.custoPct - ra.custoPct : null;
@@ -336,7 +342,7 @@ export default function IfoodTab({ periodo }: Props) {
       out.push({ icon: 'ri-eye-line', cor: '#ec4899', titulo: 'Muita visita, pouca venda', texto: `"${v.nome}" teve ${v.visitas} visitas e converteu ${pct(v.conv)} (média do cardápio ${pct(menu.convMedia)}). Vale revisar foto, descrição ou preço.` });
     }
     return out;
-  }, [heat, r, ra, porLogistica, promo, cancel, porPagamento, op, menu]);
+  }, [heat, validos, r, ra, porLogistica, promo, cancel, porPagamento, op, menu]);
 
   // ── Render ─────────────────────────────────────────────────────────────────
   if (!atual) {
