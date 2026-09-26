@@ -21,6 +21,9 @@ export interface NetworkStatus {
 const PING_TIMEOUT_MS = 5000;
 const DEBOUNCE_MS = 2000;
 const RECHECK_INTERVAL_MS = 30000; // verifica a cada 30s quando offline
+// Online: só de vez em quando e com a tela na frente (2026-09-26). Antes pingava a cada 30s SEMPRE
+// (2 instâncias por aparelho) — ~17 mil pedidos/dia no banco, madrugada inclusive.
+const RECHECK_ONLINE_MS = 5 * 60_000;
 
 /** Faz um ping leve ao Supabase para confirmar conectividade real */
 async function pingSupabase(): Promise<boolean> {
@@ -44,6 +47,8 @@ async function pingSupabase(): Promise<boolean> {
 
 export function useNetworkStatus(): NetworkStatus {
   const [isOnline, setIsOnline] = useState<boolean>(navigator.onLine);
+  const onlineRef = useRef(isOnline);
+  onlineRef.current = isOnline;
   const [isChecking, setIsChecking] = useState(false);
   const [lastOnlineAt, setLastOnlineAt] = useState<number | null>(
     navigator.onLine ? Date.now() : null,
@@ -94,8 +99,12 @@ export function useNetworkStatus(): NetworkStatus {
     checkNow();
 
     // Recheck periódico quando offline (para detectar reconexão)
+    let ultimoPing = Date.now();
     recheckRef.current = setInterval(() => {
       if (!navigator.onLine) return; // browser diz offline — não pinga
+      // Offline pelo nosso ping: tenta a cada 30s para detectar a volta. Online: 5 min, só visível.
+      if (onlineRef.current && (document.hidden || Date.now() - ultimoPing < RECHECK_ONLINE_MS)) return;
+      ultimoPing = Date.now();
       checkNow();
     }, RECHECK_INTERVAL_MS);
 

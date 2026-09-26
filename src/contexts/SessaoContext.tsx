@@ -165,13 +165,18 @@ export function SessaoProvider({ children }: { children: ReactNode }) {
     // TODOS os tenants do sistema (problema de segurança + performance).
     // Solução: polling leve de 15s apenas para cash_registers, que muda raramente
     // (só na abertura/fechamento de caixa). Sessions já cobre o caso principal.
+    // 2026-09-26: 15s → 60s e só com a tela na frente (+ na volta à tela). Eram ~35 mil
+    // chamadas/dia (2 RPCs por tick), madrugada inclusive, em todo aparelho aberto.
     const cashPollInterval = setInterval(() => {
-      restoreSession();
-    }, 15000);
+      if (!document.hidden) restoreSession();
+    }, 60000);
+    const aoVoltar = () => { if (!document.hidden) restoreSession(); };
+    document.addEventListener('visibilitychange', aoVoltar);
 
     return () => {
       supabase.removeChannel(sessionsChannel);
       clearInterval(cashPollInterval);
+      document.removeEventListener('visibilitychange', aoVoltar);
     };
   }, [effectiveTenantId, restoreSession]);
 
