@@ -266,6 +266,11 @@ Quando o usuario pedir "muda X":
 
 Secao viva: registrar aqui padroes, decisoes e pegadinhas reutilizaveis conforme o sistema evolui. Cada entrada com data
 
+### 2026-09-26 — iFood Entrega (Shipping / Sob Demanda) — referência viva: `IFOOD-SHIPPING.md`
+- **Apps do iFood são por CATEGORIA** e a categoria trava os módulos: o app "ERPOS" (Finanças) não aceita Shipping. Criado o app **"ERPOS PDV"** (categoria PDV) com credenciais/autorizações próprias (`ifood_pdv_config`/`ifood_pdv_auths`), separado de `fin_ifood_*`. Order ficou de fora (decisão do dono; exigiria outro app).
+- **Pegadinha:** a loja de teste do iFood NÃO suporta Entrega iFood (FAQ do portal) — regras dos eventos testadas com os exemplos da doc (`supabase/functions/ifood-shipping/core.ts` + `src/test/edge/ifoodShipping.test.ts`).
+- **POST que gera custo não repete** (5xx pode ter sido aceito): `create` reserva a linha antes (índice único parcial = trava de 2 cliques), resposta incerta → `uncertain` e a tela exige "conferi no iFood". Cron de 30 s (pg_net) só chama a Edge com entrega ativa (<6 h) ou homologação (24 h); job `cron-historico-limpeza` apaga `cron.job_run_details` > 3 dias.
+
 ### 2026-09-26 — Fornecedor pré-pago (Facebook/Meta Ads: Pix de recarga × nota do consumo)
 - **Causa:** o Pix ao Facebook é **recarga de crédito**; a NFS-e do dia 03 é o **consumo do mês anterior** (`dCompet` = último dia do mês dos anúncios). "Nota do mês" (1 nota ↔ N pagamentos) nunca fecha e a diferença virava conta a pagar falsa.
 - **Solução:** migração `20260927120000_fornecedor_pre_pago.sql` — `fin_prepaid_suppliers` (CNPJ casado pela raiz, categoria DRE, `start_date`, `opening_balance`) e `fin_prepaid_moves` (topup +, consumption −, adjust ±; saldo = abertura + soma). Só a edge lê/grava (sem grant a authenticated).
