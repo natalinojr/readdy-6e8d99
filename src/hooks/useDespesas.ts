@@ -96,11 +96,13 @@ export function useDespesas(filters: DespesasFilters) {
     // Busca paralela de todas as fontes
     const [billsRes, purchasesRes, payrollRes, cashflowRes, anticipationRes] = await Promise.all([
       // Contas a pagar (pagas, pendentes, vencidas) — excluir geradas automaticamente por compras
+      // e as guias de encargo da folha (INSS descontado, FGTS, IRRF — reference_type 'hr_payroll'):
+      // o custo delas já entra pela Folha abaixo (bruto + FGTS). Mesma regra da DRE (2026-09-26).
       supabase
         .from('fin_accounts_payable')
         .select('id, description, category, amount, paid_amount, due_date, paid_date, status, payment_method, supplier, notes, created_at')
         .eq('tenant_id', user.tenantId)
-        .or('reference_type.is.null,reference_type.neq.purchase')
+        .or('reference_type.is.null,reference_type.not.in.(purchase,hr_payroll)')
         .gte('due_date', startDate)
         .lte('due_date', endDate),
 
