@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 
 vi.mock('@/lib/supabase', () => ({ supabase: {} }));
 
-import { montarPedidos, resumir, culpaCancelamento, motivoCurto, montarOperacao, mediana, type EntryRow } from '@/lib/ifoodDashboard';
+import { montarPedidos, montarPedidosApi, resumir, culpaCancelamento, motivoCurto, montarOperacao, mediana, type EntryRow, type SaleFinRow } from '@/lib/ifoodDashboard';
 
 const base = { import_id: 'imp1', impacto_repasse: true, metodo_pagamento: null, motivo: null };
 const linha = (order: string, tipo: string, desc: string, valor: number, extra: Partial<EntryRow> = {}): EntryRow => ({
@@ -90,5 +90,82 @@ describe('operação', () => {
     expect(o.rotaMin).toBe(15);
     expect(o.totalMin).toBe(40);
     expect(mediana([3, null, 1, 2])).toBe(2);
+  });
+});
+
+// Pedido real (loja EP, 24/09/2026) que está nas duas fontes: a API tem que fechar igual à conciliação.
+describe('complemento pela API de Vendas', () => {
+  const venda: SaleFinRow = {
+    sale_id: 'P1', merchant_id: 'lojaX', sale_created_at: '2026-09-24T23:10:00Z', current_status: 'CONCLUDED',
+    gross_bag: 45.79, delivery_fee: 6.99, payment_methods: [{ method: 'PIX' }],
+    billing_entries: [
+      { name: 'ORDER_COMMISSION', value: -8.57 }, { name: 'SERVICE_FEE', value: -0.99 }, { name: 'IFOOD_SUBSIDY', value: 5.37 },
+      { name: 'PAYMENT_TRANSACTION_FEE', value: -1.06 }, { name: 'ORDER_PAYMENT', value: 36.42 }, { name: 'DELIVERY_FEE_IFOOD', value: -6.99 },
+    ],
+    benefits: { benefits: [
+      { target: 'ITEM', sponsorships: [{ name: 'IFOOD', value: 5.37 }, { name: 'EXTERNAL', value: 0 }, { name: 'MERCHANT', value: 4.99 }, { name: 'CHAIN', value: 0 }] },
+      { target: 'DELIVERY_FEE', sponsorships: [{ name: 'IFOOD', value: 0 }, { name: 'MERCHANT', value: 6.99 }] },
+    ] },
+    events: [],
+  };
+  const conciliacao = [
+    linha('P1', 'Retenção', 'Taxa entrega iFood', -6.99),
+    linha('P1', 'Subsídio', 'Promoção custeada pela loja no delivery', -6.99, { impacto_repasse: false }),
+    linha('P1', 'Entrada Financeira', 'Entrada Financeira', 36.42, { metodo_pagamento: 'Pix' }),
+    linha('P1', 'Subsídio', 'Promoção custeada pelo iFood', 5.37),
+    linha('P1', 'Cobrança', 'Comissão do iFood', -8.57),
+    linha('P1', 'Subsídio', 'Promoção custeada pela loja', -4.99, { impacto_repasse: false }),
+    linha('P1', 'Retenção', 'Taxa de serviço iFood cobrada do cliente', -0.99),
+    linha('P1', 'Cobrança', 'Taxa de transação', -1.06),
+  ];
+
+  it('fecha igual à conciliação do mesmo pedido', () => {
+    const [api] = montarPedidosApi([venda]);
+    const [conc] = montarPedidos(conciliacao, { imp1: 'lojaX' });
+    for (const k of ['vendas', 'comissao', 'transacao', 'promoLoja', 'promoIfood', 'liquido', 'outrosServicos', 'ajustes'] as const) {
+      expect(api[k]).toBeCloseTo(conc[k]);
+    }
+    expect(api.vendas).toBeCloseTo(45.79); // itens do pedido
+    expect(api.loja).toBe('lojaX');
+    expect(api.pagamento).toBe('Pix');
+    expect(api.logistica).toBe(conc.logistica);
+    expect(api.cancelado).toBe(false);
+  });
+
+  it('cancelado: zera a venda, guarda o valor perdido, o ressarcimento e o motivo', () => {
+    const [p] = montarPedidosApi([{
+      ...venda, sale_id: 'C1', current_status: 'CANCELLED', gross_bag: 146.9, delivery_fee: 8.99, benefits: null,
+      billing_entries: [{ name: 'ORDER_PAYMENT', value: 0 }, { name: 'ORDER_COMMISSION', value: 0 }, { name: 'STORE_REFUND', value: 108.41 }],
+      events: [{ metadata: null }, { metadata: { cancelCode: 601 } }],
+    }]);
+    expect(p.cancelado).toBe(true);
+    expect(p.vendas).toBe(0);
+    expect(p.bruto).toBeCloseTo(155.89);
+    expect(p.ajustes).toBeCloseTo(108.41);
+    expect(p.liquido).toBeCloseTo(108.41);
+    expect(p.motivo).toBe('601 - Problemas no veículo');
+    expect(culpaCancelamento(p.motivo!)).toBe('cliente');
+    expect(resumir([p])).toMatchObject({ pedidos: 0, cancelados: 1 });
+  });
+
+  it('pago direto à loja (EXTERNAL): vendas = itens + entrega, fora do repasse', () => {
+    const [p] = montarPedidosApi([{
+      ...venda, sale_id: 'E1', gross_bag: 79.99, delivery_fee: 8.5, benefits: null,
+      payment_methods: [{ method: 'EXTERNAL', liability: 'MERCHANT' }], billing_entries: [{ name: 'DELIVERY_REQUEST', value: -13.99 }],
+    }]);
+    expect(p.vendas).toBeCloseTo(88.49);
+    expect(p.entregaSobDemanda).toBeCloseTo(13.99);
+    expect(p.liquido).toBeCloseTo(88.49 - 13.99);
+    expect(p.pagamento).toBe('Pagamento externo');
+  });
+
+  it('sem nenhum valor na API ainda: fica de fora até a conciliação', () => {
+    expect(montarPedidosApi([{ ...venda, sale_id: 'Z1', gross_bag: 0, delivery_fee: 0, billing_entries: [], benefits: null }])).toHaveLength(0);
+  });
+
+  it('cancelado sem nenhum lançamento ainda aparece', () => {
+    const [p] = montarPedidosApi([{ ...venda, sale_id: 'C2', current_status: 'CANCELLED', billing_entries: [], benefits: null, events: [] }]);
+    expect(p.cancelado).toBe(true);
+    expect(p.liquido).toBe(0);
   });
 });

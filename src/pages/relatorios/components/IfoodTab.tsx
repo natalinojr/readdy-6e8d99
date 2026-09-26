@@ -3,7 +3,7 @@ import {
   ComposedChart, Bar, Line, BarChart, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, Legend,
 } from 'recharts';
 import { useAuth } from '@/contexts/AuthContext';
-import { supabase } from '@/lib/supabase';
+import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { getPeriodDates, getPeriodoAnterior, labelPeriodoAnterior } from '@/lib/dateUtils';
 import { useSalesReport } from '@/hooks/useSalesReport';
 import {
@@ -13,6 +13,7 @@ import {
 
 // Relatórios › iFood (2026-09-25). Tudo sai do que já foi importado em Financeiro › iFood
 // (conciliação por pedido; API de Vendas p/ tempos; relatório de Cardápio p/ produtos).
+// 2026-09-26: pedido que a conciliação ainda não trouxe entra pela API de Vendas (provisório).
 
 interface Props { periodo: string }
 
@@ -29,7 +30,7 @@ const LOGISTICA: Record<Logistica, { label: string; cor: string; dica: string }>
   sob_demanda: { label: 'Sob demanda', cor: '#8b5cf6', dica: 'loja chamou entregador iFood avulso' },
 };
 
-type Dados = { pedidos: PedidoIfood[]; error: string | null };
+type Dados = { pedidos: PedidoIfood[]; daApi: number; error: string | null };
 
 function variacao(atual: number, ant: number): number | null {
   return ant > 0 ? ((atual - ant) / ant) * 100 : null;
@@ -108,10 +109,23 @@ export default function IfoodTab({ periodo }: Props) {
     let vivo = true;
     setAtual(null);
     const ant = getPeriodDates(periodoAnt);
-    fetchPedidosIfood(tenantId, from, to).then((d) => { if (vivo) setAtual(d); });
+    let sincronizado = false; // a leitura pós-API é a mais nova: a primeira não pode sobrescrever
+    fetchPedidosIfood(tenantId, from, to).then((d) => { if (vivo && !sincronizado) setAtual(d); });
     fetchPedidosIfood(tenantId, ant.from, ant.to).then((d) => { if (vivo) setAnterior(d); });
     fetchOperacaoIfood(tenantId, from, to).then((d) => { if (vivo) setOperacao(d); });
     fetchCardapioIfood(tenantId, from.slice(0, 10), to.slice(0, 10)).then((d) => { if (vivo) setCardapio(d); });
+    // Período com hoje/ontem: busca leve na API do iFood (mesma do "Vendas do dia") e recarrega.
+    const ontem = new Date(Date.now() - 86_400_000).toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+    if (to.slice(0, 10) >= ontem) {
+      invokeWithAuth('ifood-financial', { body: { action: 'sync_sales', tenant_id: tenantId, days: 2 } })
+        .catch(() => null)
+        .then(() => {
+          if (!vivo) return;
+          fetchOperacaoIfood(tenantId, from, to).then((d) => { if (vivo) setOperacao(d); });
+          return fetchPedidosIfood(tenantId, from, to);
+        })
+        .then((d) => { if (vivo && d) { sincronizado = true; setAtual(d); } });
+    }
     return () => { vivo = false; };
   }, [tenantId, from, to, periodoAnt]);
 
@@ -355,7 +369,7 @@ export default function IfoodTab({ periodo }: Props) {
           </div>
           <p className="text-sm font-semibold text-zinc-500">{atual.error ? `Erro ao carregar: ${atual.error}` : 'Nenhum pedido do iFood no período'}</p>
           <p className="text-xs text-zinc-400 mt-1 max-w-md">
-            Os dados vêm do relatório de conciliação do iFood (Financeiro › iFood).
+            Os dados vêm do relatório de conciliação do iFood (Financeiro › iFood) e, para os pedidos ainda não importados, da API de Vendas do iFood.
             {ultimaFmt ? ` Último pedido importado: ${ultimaFmt}.` : ' Nenhum relatório importado ainda.'}
             {diasPeriodo <= 1 ? ' Experimente o filtro de 30 dias.' : ''}
           </p>
@@ -375,7 +389,9 @@ export default function IfoodTab({ periodo }: Props) {
           <span className="w-7 h-7 flex items-center justify-center rounded-lg text-white text-xs font-black flex-shrink-0" style={{ background: IFOOD }}>iF</span>
           <p className="text-xs text-zinc-500 min-w-0">
             Pedidos pela data do pedido, divisão igual ao Portal do Parceiro.
-            {ultimaFmt ? <> Dados até <b>{ultimaFmt}</b>.</> : null} Mensalidade fica de fora (não é de pedido).
+            {ultimaFmt ? <> Conciliação até <b>{ultimaFmt}</b>.</> : null}
+            {atual.daApi > 0 ? <> <b>{atual.daApi} pedido{atual.daApi === 1 ? '' : 's'}</b> ainda sem conciliação {atual.daApi === 1 ? 'vem' : 'vêm'} da API do iFood (provisório até importar o relatório).</> : null}
+            {' '}Mensalidade fica de fora (não é de pedido).
           </p>
         </div>
         {filtroLoja}

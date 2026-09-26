@@ -156,6 +156,135 @@ export function resumir(pedidos: PedidoIfood[]): Resumo {
   return z;
 }
 
+// ── Complemento pela API de Vendas (2026-09-26) ──────────────────────────────
+// A conciliação só chega quando alguém importa o relatório (dias depois); a API de Vendas
+// (fin_ifood_sales, a mesma do "Vendas do dia") tem o pedido na hora. Pedido que ainda não está na
+// conciliação entra pela API, traduzido para as MESMAS linhas da conciliação (billing_entries ↔
+// Cobrança/Retenção/Subsídio) e somado por montarPedidos — mesma divisão do Portal. Quando a
+// conciliação é importada, ela assume o pedido (casam por sale_id = order_id).
+
+export interface SaleFinRow {
+  sale_id: string;
+  merchant_id: string;
+  sale_created_at: string;
+  current_status: string | null;
+  gross_bag: number | null;
+  delivery_fee: number | null;
+  payment_methods: Array<{ method?: string; liability?: string }> | null;
+  billing_entries: Array<{ name?: string; value?: number }> | null;
+  benefits: { benefits?: Array<{ target?: string; sponsorships?: Array<{ name?: string; value?: number }> }> } | null;
+  events: Array<{ metadata?: { cancelCode?: number } | null }> | null;
+}
+
+// Nome da API → [tipo_lancamento, descricao] da conciliação.
+const LINHA_API: Record<string, [string, string]> = {
+  ORDER_PAYMENT: ['Entrada Financeira', 'Entrada Financeira'],
+  IFOOD_SUBSIDY: ['Subsídio', 'Promoção custeada pelo iFood'],
+  INDUSTRY_SUBSIDY: ['Subsídio', 'Promoção custeada pela Indústria'],
+  ORDER_COMMISSION: ['Cobrança', 'Comissão do iFood'],
+  TAKEOUT_COMMISSION: ['Cobrança', 'Comissão do iFood'],
+  PAYMENT_TRANSACTION_FEE: ['Cobrança', 'Taxa de transação'],
+  DELIVERY_REQUEST: ['Cobrança', 'Solicitação de entrega Sob Demanda Off'],
+  SERVICE_FEE: ['Retenção', 'Taxa de serviço iFood cobrada do cliente'],
+  DELIVERY_FEE_IFOOD: ['Retenção', 'Taxa entrega iFood'],
+  CONVENIENCE_FEE: ['Retenção', 'Taxa de conveniência por pagamento parcelado'],
+  STORE_REFUND: ['Ressarcimento', 'Ressarcimento iFood'],
+};
+
+// Meio de pagamento da API → nome usado na conciliação.
+const PAGAMENTO_API: Record<string, string> = {
+  PIX: 'Pix', CREDIT: 'Crédito', DEBIT: 'Débito', DIGITAL_WALLET: 'Carteira digital', BANK_PAY: 'Banco',
+  EXTERNAL: 'Pagamento externo', CASH: 'Dinheiro', MEAL_VOUCHER: 'Vale refeição', FOOD_VOUCHER: 'Vale refeição', OTHER_VOUCHER: 'Outros vales',
+};
+
+// Motivos pelo código (mesmos textos da conciliação: "501 - Problemas de sistema na loja").
+const MOTIVO_API: Record<number, string> = {
+  406: 'O pedido foi acidental', 410: 'O pedido não foi entregue', 411: 'O pedido está atrasado', 412: 'O pedido veio com todos os itens errados',
+  419: 'Cancelamento realizado via atendimento', 501: 'Problemas de sistema na loja', 504: 'A loja está sem entregadores disponíveis',
+  512: 'A loja só abrirá mais tarde', 601: 'Problemas no veículo', 609: 'Cliente escolheu outra forma de pagamento',
+  610: 'Cliente não localizado', 860: 'Problema com pagamento do cliente', 902: 'O pedido não foi confirmado pela loja',
+};
+
+/** Pedidos da API de Vendas no formato do dashboard (mesmas contas da conciliação). */
+export function montarPedidosApi(sales: SaleFinRow[]): PedidoIfood[] {
+  const rows: EntryRow[] = [];
+  const extra = new Map<string, { cancelado: boolean; bruto: number; motivo: string | null; pagamento: string | null }>();
+  for (const s of sales) {
+    const antes = rows.length;
+    const base = { import_id: s.merchant_id, order_id: s.sale_id, order_created_at: s.sale_created_at, impacto_repasse: true, metodo_pagamento: null, motivo: null };
+    for (const b of Array.isArray(s.billing_entries) ? s.billing_entries : []) {
+      const valor = Number(b.value) || 0;
+      if (Math.abs(valor) < 0.005) continue;
+      const nome = String(b.name ?? '');
+      const [tipo, descricao] = LINHA_API[nome] ?? (valor < 0 ? ['Cobrança', nome] : ['Ajuste', nome]);
+      rows.push({ ...base, tipo_lancamento: tipo, descricao, valor });
+    }
+    // Promoção paga pela loja não vem em billing_entries: sai dos patrocínios (MERCHANT/CHAIN).
+    for (const bf of s.benefits?.benefits ?? []) {
+      const loja = (bf.sponsorships ?? []).filter((sp) => /^(MERCHANT|CHAIN)$/i.test(String(sp.name))).reduce((a, sp) => a + (Number(sp.value) || 0), 0);
+      if (loja < 0.005) continue;
+      const descricao = /DELIVERY/i.test(String(bf.target)) ? 'Promoção custeada pela loja no delivery' : 'Promoção custeada pela loja';
+      rows.push({ ...base, tipo_lancamento: 'Subsídio', descricao, valor: -loja, impacto_repasse: false });
+    }
+    const cancelado = /CANCEL/i.test(String(s.current_status ?? ''));
+    const bruto = (Number(s.gross_bag) || 0) + (Number(s.delivery_fee) || 0);
+    // Sem ORDER_PAYMENT: pago direto à loja (EXTERNAL/dinheiro — a conciliação traz como Entrada fora do
+    // repasse) ou pedido recente que o iFood ainda não fechou. A Entrada é o que falta para as vendas
+    // darem itens + entrega (o "vendido" do Vendas do dia); taxas ainda não calculadas ficam de fora.
+    const temPagamento = (s.billing_entries ?? []).some((b) => b.name === 'ORDER_PAYMENT' && Math.abs(Number(b.value) || 0) >= 0.005);
+    if (!cancelado && !temPagamento) {
+      if (bruto < 0.005) { rows.length = antes; continue; } // a API ainda não tem nem o valor: espera a conciliação
+      const jaSomado = montarPedidos(rows.slice(antes), {})[0]?.vendas ?? 0;
+      const externo = s.payment_methods?.[0]?.liability === 'MERCHANT' || /^(EXTERNAL|CASH)$/i.test(String(s.payment_methods?.[0]?.method));
+      rows.push({ ...base, tipo_lancamento: 'Entrada Financeira', descricao: 'Entrada Financeira', valor: Math.round((bruto - jaSomado) * 100) / 100, impacto_repasse: !externo });
+    }
+    const cod = (s.events ?? []).map((e) => Number(e?.metadata?.cancelCode)).find((c) => c > 0) ?? null;
+    const metodo = String(s.payment_methods?.[0]?.method ?? '').toUpperCase();
+    extra.set(s.sale_id, {
+      cancelado,
+      bruto,
+      motivo: cod ? `${cod} - ${MOTIVO_API[cod] ?? 'Cancelamento'}` : null,
+      pagamento: PAGAMENTO_API[metodo] ?? null,
+    });
+    // Pedido sem nenhum lançamento (ex.: cancelado sem ressarcimento) ainda precisa aparecer.
+    if (rows.length === antes) rows.push({ ...base, tipo_lancamento: 'Ajuste', descricao: '', valor: 0 });
+  }
+  // montarPedidos acha a loja pelo import_id; aqui o "import" de cada linha é a própria loja.
+  const pedidos = montarPedidos(rows, Object.fromEntries(sales.map((s) => [s.merchant_id, s.merchant_id])));
+  for (const p of pedidos) {
+    const x = extra.get(p.id);
+    if (!x) continue;
+    if (x.pagamento) p.pagamento = x.pagamento;
+    if (x.cancelado) {
+      // A API zera os lançamentos do cancelado; a conciliação guarda o valor perdido nas Entradas.
+      p.cancelado = true;
+      p.bruto = x.bruto;
+      p.motivo = x.motivo;
+    }
+  }
+  return pedidos;
+}
+
+async function fetchComplementoApi(tenantId: string, fromISO: string, toISO: string, jaTem: Set<string>) {
+  const res = await fetchAllRows<SaleFinRow>((from, to) => supabase
+    .from('fin_ifood_sales')
+    .select('sale_id, merchant_id, sale_created_at, current_status, gross_bag, delivery_fee, payment_methods, billing_entries, benefits:raw->benefits, events:raw->orderEvents')
+    .eq('tenant_id', tenantId)
+    .gte('sale_created_at', fromISO)
+    .lte('sale_created_at', toISO)
+    .order('sale_created_at', { ascending: true })
+    .range(from, to) as unknown as PromiseLike<{ data: SaleFinRow[] | null; error: { message: string } | null }>);
+  const novas = (res.rows ?? []).filter((s) => s.sale_id && !jaTem.has(s.sale_id));
+  // O pedido pode estar na conciliação com data um pouco diferente (fora deste período): confere pelo id.
+  const naConciliacao = new Set<string>();
+  for (let i = 0; i < novas.length; i += 150) {
+    const { data } = await supabase.from('fin_ifood_entries').select('order_id').eq('tenant_id', tenantId)
+      .in('order_id', novas.slice(i, i + 150).map((s) => s.sale_id));
+    for (const d of (data ?? []) as { order_id: string }[]) naConciliacao.add(d.order_id);
+  }
+  return montarPedidosApi(novas.filter((s) => !naConciliacao.has(s.sale_id)));
+}
+
 export async function fetchPedidosIfood(tenantId: string, fromISO: string, toISO: string) {
   const [ent, imp] = await Promise.all([
     fetchAllRows<EntryRow>((from, to) => supabase
@@ -170,10 +299,14 @@ export async function fetchPedidosIfood(tenantId: string, fromISO: string, toISO
       .range(from, to)),
     supabase.from('fin_ifood_imports').select('id, merchant_id').eq('tenant_id', tenantId),
   ]);
-  if (ent.error) return { pedidos: [] as PedidoIfood[], error: ent.error.message };
+  if (ent.error) return { pedidos: [] as PedidoIfood[], daApi: 0, error: ent.error.message };
   const lojaDoImport: Record<string, string> = {};
   for (const i of (imp.data ?? []) as { id: string; merchant_id: string | null }[]) lojaDoImport[i.id] = i.merchant_id ?? '';
-  return { pedidos: montarPedidos(ent.rows ?? [], lojaDoImport), error: null as string | null };
+  const conciliados = montarPedidos(ent.rows ?? [], lojaDoImport);
+  // Falha na API não derruba o relatório: segue só com a conciliação.
+  const api = await fetchComplementoApi(tenantId, fromISO, toISO, new Set(conciliados.map((p) => p.id))).catch(() => [] as PedidoIfood[]);
+  const pedidos = [...conciliados, ...api].sort((a, b) => a.at.getTime() - b.at.getTime());
+  return { pedidos, daApi: api.length, error: null as string | null };
 }
 
 // ── Operação (API de Vendas) ─────────────────────────────────────────────────
