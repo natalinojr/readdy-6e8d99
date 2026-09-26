@@ -74,8 +74,8 @@ const SUB_TABS: { id: SubTab; label: string; icon: React.ReactNode }[] = [
 
 export default function ConsumoIngredientesTab({ periodo }: Props) {
   const { user } = useAuth();
-  const hoje = new Date().toISOString().split('T')[0];
-  const trinta = new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0];
+  const hoje = new Date().toLocaleDateString('sv-SE');
+  const trinta = new Date(Date.now() - 30 * 86400000).toLocaleDateString('sv-SE');
 
   const [from, setFrom] = useState(trinta);
   const [toDate, setToDate] = useState(hoje);

@@ -60,6 +60,7 @@ function normalizeUnit(u: string | null | undefined): UnidadeEstoque {
 function classifyMovement(
   type: string,
   reason: string | null,
+  signed: number | null = null,
 ): {
   bucket: keyof ConsumoPorTipo;
   isConsumo: boolean;
@@ -97,8 +98,8 @@ function classifyMovement(
   /* transferência de saída */
   if (type === 'transfer_out') return { bucket: 'transferencia', isConsumo: true };
 
-  /* ajuste de inventário */
-  if (type === 'inventory_adjustment') return { bucket: 'ajuste', isConsumo: true };
+  /* ajuste de inventário: só o que a contagem achou A MENOS é saída; a mais é entrada, não consumo */
+  if (type === 'inventory_adjustment') return { bucket: 'ajuste', isConsumo: signed != null && signed < 0 };
 
   /* manual_out genérico = saída manual */
   if (type === 'manual_out') return { bucket: 'ajuste', isConsumo: true };
@@ -114,8 +115,8 @@ export function useConsumoIngredientes(
   const { user } = useAuth();
   const tenantId = user?.tenantId;
 
-  const fromIso = dateFrom ?? new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0];
-  const toIso = dateTo ?? new Date().toISOString().split('T')[0];
+  const fromIso = dateFrom ?? new Date(Date.now() - 30 * 86400000).toLocaleDateString('sv-SE');
+  const toIso = dateTo ?? new Date().toLocaleDateString('sv-SE');
 
   const [dados, setDados] = useState<ConsumoIngrediente[]>([]);
   const [resumo, setResumo] = useState<ConsumoResumo | null>(null);
@@ -198,6 +199,7 @@ export function useConsumoIngredientes(
           reason?: string | null;
           created_at?: string | null;
           order_id?: string | null;
+          signed_quantity?: number | null;
         }>;
 
         const movements = rawMovs.map((r) => ({
@@ -208,6 +210,7 @@ export function useConsumoIngredientes(
           unit: normalizeUnit(r.ingredient_unit),
           reason: r.reason ?? null,
           createdAt: r.created_at ?? '',
+          signed: r.signed_quantity == null ? null : Number(r.signed_quantity),
         }));
 
         /* 3) orders do período via RPC */
@@ -242,7 +245,7 @@ export function useConsumoIngredientes(
         >();
 
         for (const m of movements) {
-          const classified = classifyMovement(m.type, m.reason);
+          const classified = classifyMovement(m.type, m.reason, m.signed);
           const qtyAbs = Math.abs(m.quantity);
 
           /* conversão de unidade */

@@ -79,21 +79,22 @@ export function useConsumoComparativo(dateFrom?: string, dateTo?: string) {
     if (!tId) return;
     setLoading(true);
 
-    const to = dateTo ?? new Date().toISOString().split('T')[0];
-    const from = dateFrom ?? new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0];
+    const to = dateTo ?? new Date().toLocaleDateString('sv-SE');
+    const from = dateFrom ?? new Date(Date.now() - 30 * 86400000).toLocaleDateString('sv-SE');
 
     const diasPeriodo = Math.max(1, Math.ceil((new Date(to).getTime() - new Date(from).getTime()) / 86400000));
 
     // Período anterior: mesma duração, imediatamente antes
     const fromDate = new Date(from + 'T00:00:00');
     const toDate = new Date(to + 'T23:59:59');
-    const fromAnterior = new Date(fromDate.getTime() - diasPeriodo * 86400000).toISOString().split('T')[0];
-    const toAnterior = new Date(toDate.getTime() - diasPeriodo * 86400000).toISOString().split('T')[0];
+    // Datas e limites no horário local (Brasília): texto sem fuso era lido como UTC pelo banco (3 h de deslocamento)
+    const fromAnterior = new Date(fromDate.getTime() - diasPeriodo * 86400000).toLocaleDateString('sv-SE');
+    const toAnterior = new Date(toDate.getTime() - diasPeriodo * 86400000).toLocaleDateString('sv-SE');
 
-    const fromTs = `${from}T00:00:00`;
-    const toTs = `${to}T23:59:59`;
-    const fromAntTs = `${fromAnterior}T00:00:00`;
-    const toAntTs = `${toAnterior}T23:59:59`;
+    const fromTs = new Date(`${from}T00:00:00`).toISOString();
+    const toTs = new Date(`${to}T23:59:59`).toISOString();
+    const fromAntTs = new Date(`${fromAnterior}T00:00:00`).toISOString();
+    const toAntTs = new Date(`${toAnterior}T23:59:59`).toISOString();
 
     try {
       // Busca ingredientes via RPC
@@ -128,7 +129,7 @@ export function useConsumoComparativo(dateFrom?: string, dateTo?: string) {
         if (tipo === 'vendas') prev.vendas += qtd;
         else if (tipo === 'producao') prev.producao += qtd;
         else if (tipo === 'perda') prev.perda += qtd;
-        if (mov.created_at) prev.dias.add(mov.created_at.split('T')[0]);
+        if (mov.created_at) prev.dias.add(new Date(mov.created_at).toLocaleDateString('sv-SE'));
         consumoAtualMap.set(mov.ingredient_id, prev);
       }
 
@@ -142,7 +143,7 @@ export function useConsumoComparativo(dateFrom?: string, dateTo?: string) {
         if (tipo === 'vendas') prev.vendas += qtd;
         else if (tipo === 'producao') prev.producao += qtd;
         else if (tipo === 'perda') prev.perda += qtd;
-        if (mov.created_at) prev.dias.add(mov.created_at.split('T')[0]);
+        if (mov.created_at) prev.dias.add(new Date(mov.created_at).toLocaleDateString('sv-SE'));
         consumoAnteriorMap.set(mov.ingredient_id, prev);
       }
 
