@@ -27,6 +27,8 @@ const EDGES_NA_REGIAO_DO_BANCO = new Set([
   'voucher-write', 'voucher-claim', 'check-session-pending', 'order-edit-lock',
   'print-queue-write', 'customer-write', 'config-write', 'reservation-write',
   'production-write', 'user-write', 'audit-write', 'task-write', 'motoboy-signal',
+  // Financeiro (2026-09-25): a Conciliação fazia 4–6 chamadas em sequência de 1–5 s cada
+  'financial-write', 'conciliacao-pagamentos',
 ]);
 
 export function withEdgeRegion(url: string): string {

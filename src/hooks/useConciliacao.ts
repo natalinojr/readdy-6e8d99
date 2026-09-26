@@ -214,28 +214,37 @@ export function useConciliacao(bankAccountId?: string, period?: { from?: string;
   };
 
   const reabrindo = useRef(new Set<string>());
+  const baixaDaConciliacao = (id: string) => {
+    const row = imports.find(i => i.id === id);
+    const c = (row?.match_detail as Record<string, unknown> | null | undefined)?.confirmed as Record<string, unknown> | undefined;
+    return c && (c.bill_id || c.payroll_id || c.created === 'fora_dre') ? c : null;
+  };
+  /** O que o Reabrir desfaz (texto para a confirmação na tela); null = só volta o status. */
+  const motivoReabrir = (id: string): string | null => {
+    const c = baixaDaConciliacao(id);
+    if (!c) return null;
+    const oque = c.created === 'fora_dre' ? 'A marcação "fora do DRE" sai'
+      : c.payroll_id ? 'A folha volta a pendente'
+      : c.created === 'freelancer' ? 'O pagamento de freelancer (conta e diárias) é apagado'
+      : c.created === 'despesa' || c.created === 'compra' ? `A ${c.created} criada a partir deste pagamento é apagada`
+      : 'A baixa da conta é desfeita (a conta volta a em aberto)';
+    return `${oque} e o pagamento volta a pendente.`;
+  };
   // Unreconcile. Linha com baixa feita pela conciliação (conta paga, compra, freela, folha, fora do DRE):
   // só voltar o status deixava a conta paga e a linha "pendente" (convite a lançar de novo) — desfaz
   // de verdade pela edge (undo), que estorna o que foi criado e limpa o vínculo (2026-09-25).
+  // A confirmação é da tela (motivoReabrir + ConfirmModal); erro vem como exceção.
   const unreconcile = async (id: string) => {
-    const row = imports.find(i => i.id === id);
-    const c = (row?.match_detail as Record<string, unknown> | null | undefined)?.confirmed as Record<string, unknown> | undefined;
-    if (c && (c.bill_id || c.payroll_id || c.created === 'fora_dre')) {
+    if (baixaDaConciliacao(id)) {
       // clique duplo enquanto o undo roda: o 2º dava "Não há baixa feita pela conciliação"
       if (reabrindo.current.has(id)) return false;
-      const oque = c.created === 'fora_dre' ? 'A marcação "fora do DRE" sai'
-        : c.payroll_id ? 'A folha volta a pendente'
-        : c.created === 'freelancer' ? 'O pagamento de freelancer (conta e diárias) é apagado'
-        : c.created === 'despesa' || c.created === 'compra' ? `A ${c.created} criada a partir deste pagamento é apagada`
-        : 'A baixa da conta é desfeita (a conta volta a em aberto)';
-      if (!window.confirm(`Reabrir? ${oque} e o pagamento volta a pendente.`)) return false;
       reabrindo.current.add(id);
       const r = await invokeWithAuth<{ success?: boolean; error?: string; results?: Array<{ ok: boolean; msg: string }> }>('conciliacao-pagamentos', {
         body: { action: 'undo', tenant_id: user?.tenantId, id },
       }).finally(() => reabrindo.current.delete(id));
       const res = r.data?.results?.[0];
       const err = r.data?.error ?? r.error?.message ?? (res && !res.ok ? res.msg : null);
-      if (err) { window.alert('Não foi possível reabrir: ' + err); return false; }
+      if (err) throw new Error(err);
       await fetchImports();
       return true;
     }
@@ -376,6 +385,7 @@ export function useConciliacao(bankAccountId?: string, period?: { from?: string;
     updateImport,
     reconcile,
     unreconcile,
+    motivoReabrir,
     findBillMatches,
     findReceivableMatches,
     applyRules,

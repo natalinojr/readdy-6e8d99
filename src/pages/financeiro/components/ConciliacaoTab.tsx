@@ -518,6 +518,9 @@ export default function ConciliacaoTab() {
   // "De" salvo na conta (financial-write): abre na conciliação mais antiga e só muda pelo usuário.
   // periodFromSalvo = último valor lido/gravado, para não regravar o que acabou de ser lido.
   const periodFromSalvo = useRef<{ accountId: string; from: string } | null>(null);
+  // Conta cujo "De" salvo já chegou: a lista só é buscada depois (antes buscava com hoje−30,
+  // chegava o período salvo e buscava tudo de novo — 2026-09-25).
+  const [periodoPronto, setPeriodoPronto] = useState<string | null>(null);
   useEffect(() => {
     if (!user?.tenantId || !selectedAccountId) return;
     let cancel = false;
@@ -533,6 +536,7 @@ export default function ConciliacaoTab() {
       periodFromSalvo.current = { accountId: selectedAccountId, from };
       setPeriodFrom(from);
       setPage(1);
+      setPeriodoPronto(selectedAccountId);
     })();
     return () => { cancel = true; };
   }, [user?.tenantId, selectedAccountId]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -559,13 +563,14 @@ export default function ConciliacaoTab() {
     updateImport,
     reconcile,
     unreconcile,
+    motivoReabrir,
     findBillMatches,
     findReceivableMatches,
     applyRules,
     createRule,
     updateRule,
     deleteRule,
-  } = useConciliacao(selectedAccountId, periodoValido ? { from: periodFrom, to: periodTo } : undefined);
+  } = useConciliacao(periodoPronto === selectedAccountId ? selectedAccountId : undefined, periodoValido ? { from: periodFrom, to: periodTo } : undefined);
 
   // Lançar/desfazer/confirmar mexe no saldo da conta (fn_bank_debit/credit): o cartão do topo ficava
   // com o saldo antigo até recarregar a página. Toda recarga do extrato relê as contas (2026-09-25).
@@ -716,8 +721,27 @@ export default function ConciliacaoTab() {
     if (parts.length > 0) { refetchAccounts(); setInterRefreshKey((k) => k + 1); }
   }, [user?.tenantId, refresh, refetchAccounts, loadAlerts]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Uma vez ao abrir a tela (e ao trocar de loja)
-  useEffect(() => { runBankSync(); }, [user?.tenantId]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Uma vez ao abrir a tela (e ao trocar de loja) — DEPOIS que a lista aparece. Rodando junto,
+  // o Inter (6–26 s) e o Mercado Pago disputavam o banco com a lista, que ficava ~15 s vazia
+  // (2026-09-25). Loja sem conta bancária nunca carrega lista: aí sincroniza em 8 s.
+  const [listaPronta, setListaPronta] = useState(false);
+  const viuCarregando = useRef(false);
+  const sincronizouLoja = useRef<string | null>(null);
+  useEffect(() => { setListaPronta(false); viuCarregando.current = false; }, [user?.tenantId]);
+  useEffect(() => {
+    if (loading) viuCarregando.current = true;
+    else if (viuCarregando.current) setListaPronta(true);
+  }, [loading]);
+  useEffect(() => {
+    const t = user?.tenantId;
+    if (!t || sincronizouLoja.current === t) return;
+    const timer = setTimeout(() => {
+      if (sincronizouLoja.current === t) return;
+      sincronizouLoja.current = t;
+      runBankSync();
+    }, listaPronta ? 0 : 8000);
+    return () => clearTimeout(timer);
+  }, [user?.tenantId, listaPronta]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Vínculos pagamento × nota/conta ─────────────────────────────────────────
   // Pagamentos com vínculo EXATO a uma nota/conta: confirmados em lote (decisão do dono)
@@ -911,9 +935,21 @@ export default function ConciliacaoTab() {
     if (ok) { showToast('Lançamento ignorado.'); refresh(); }
   };
 
+  // Reabrir: quando desfaz algo (conta, compra, freela, folha, fora do DRE) confirma na janela do
+  // sistema — antes era o confirm do navegador ("erpos.vercel.app diz…").
+  const [reabrir, setReabrir] = useState<{ id: string; msg: string } | null>(null);
+  const executarReabrir = async (id: string) => {
+    try {
+      const ok = await unreconcile(id);
+      if (ok) { showToast('Pagamento reaberto.'); refresh(); loadAlerts(); }
+    } catch (e) {
+      showToast('Não foi possível reabrir: ' + (e instanceof Error ? e.message : String(e)), 'error');
+    }
+  };
   const handleReabrir = async (id: string) => {
-    const ok = await unreconcile(id);
-    if (ok) { showToast('Status reaberto.'); refresh(); loadAlerts(); }
+    const msg = motivoReabrir(id);
+    if (msg) { setReabrir({ id, msg }); return; }
+    await executarReabrir(id);
   };
 
   // ── Números do período ────────────────────────────────────────────────────
@@ -1866,6 +1902,17 @@ export default function ConciliacaoTab() {
         />
       )}
 
+      <ConfirmModal
+        isOpen={!!reabrir}
+        icon="ri-arrow-go-back-line"
+        danger
+        title="Reabrir este pagamento?"
+        message={reabrir?.msg ?? ''}
+        confirmLabel="Reabrir"
+        onCancel={() => setReabrir(null)}
+        onConfirm={async () => { if (reabrir) await executarReabrir(reabrir.id); setReabrir(null); }}
+      />
+
       {/* Transaction Detail Modal */}
       {selectedTransaction && (
         <TransacaoDetalheModal
@@ -1874,7 +1921,7 @@ export default function ConciliacaoTab() {
           onClose={() => setSelectedTransaction(null)}
           onUpdate={updateImport}
           onReconcile={reconcile}
-          onUnreconcile={async (id) => { const ok = await unreconcile(id); if (ok) loadAlerts(); return ok; }}
+          onUnreconcile={async (id) => { await handleReabrir(id); return true; }}
           onCreateRule={async (pattern, category, costCenterId, txType) => {
             return await createRule({
               pattern,

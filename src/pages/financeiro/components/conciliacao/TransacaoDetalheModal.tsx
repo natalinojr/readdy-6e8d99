@@ -8,6 +8,7 @@ import { CATEGORIAS_ENTRADA } from './categoriasEntrada';
 import VincularPagamento, { podeVincular } from './VincularPagamento';
 import LancarDoExtrato, { podeLancarDoExtrato, useCategoriasLancamento } from './LancarDoExtrato';
 import CategoriaCombobox, { type ComboOption } from '../CategoriaCombobox';
+import ConfirmModal from '@/components/base/ConfirmModal';
 import RastreioPagamento from './RastreioPagamento';
 import { tipoDaNota } from './ConfirmarVinculosModal';
 import { situacaoRepasse, type RepasseStone } from './RepassesStoneModal';
@@ -85,6 +86,8 @@ export default function TransacaoDetalheModal({
 
   // Vínculo pagamento × nota/conta: confirmar ou desfazer a baixa; lembrar CPF/chave Pix
   const [vinculoBusy, setVinculoBusy] = useState(false);
+  // Desfazer confirmado na janela do sistema (antes: confirm do navegador)
+  const [confirmarDesfazer, setConfirmarDesfazer] = useState<string | null>(null);
   const [vinculoMsg, setVinculoMsg] = useState<string | null>(null);
   const [lembrarContraparte, setLembrarContraparte] = useState(false);
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
@@ -111,7 +114,6 @@ export default function TransacaoDetalheModal({
     const res = r.data?.results?.[0];
     const err = r.data?.error ?? r.error?.message ?? (res && !res.ok ? res.msg : null);
     if (err) { setVinculoMsg('Não foi possível: ' + err); return; }
-    if (kind === 'undo' && r.data?.message) window.alert(r.data.message);
     onChanged?.();
     onClose();
   };
@@ -344,7 +346,7 @@ export default function TransacaoDetalheModal({
                 <p className="text-zinc-600">{d.observacao ? String(d.observacao) + ' · ' : ''}Não virou conta nem compra e não mexe no resultado.</p>
                 {vinculoMsg && <p className="text-red-600">{vinculoMsg}</p>}
                 <button
-                  onClick={() => { if (window.confirm('Desfazer? O pagamento volta a pendente.')) vinculoAction('undo'); }}
+                  onClick={() => setConfirmarDesfazer('A marcação "fora do DRE" sai e o pagamento volta a pendente.')}
                   disabled={vinculoBusy} className="px-3 py-1.5 bg-white border border-amber-300 text-amber-700 rounded-lg font-semibold hover:bg-amber-50 disabled:opacity-50 cursor-pointer">
                   {vinculoBusy ? 'Desfazendo...' : 'Desfazer'}
                 </button>
@@ -404,8 +406,10 @@ export default function TransacaoDetalheModal({
                   ) : (
                     <button
                       onClick={() => {
-                        if (criado && !window.confirm(criado === 'freelancer' ? 'Desfazer? O pagamento de freelancer (conta e diárias) será apagado e o pagamento volta a pendente.' : `Desfazer? A ${criado === 'compra' ? 'compra' : 'despesa'} criada a partir deste pagamento será apagada e o pagamento volta a pendente.`)) return;
-                        vinculoAction('undo');
+                        setConfirmarDesfazer(criado === 'freelancer'
+                          ? 'O pagamento de freelancer (conta e diárias) é apagado e o pagamento volta a pendente.'
+                          : criado ? `A ${criado === 'compra' ? 'compra' : 'despesa'} criada a partir deste pagamento é apagada e o pagamento volta a pendente.`
+                          : 'A baixa da conta é desfeita (a conta volta a em aberto) e o pagamento volta a pendente.');
                       }}
                       disabled={vinculoBusy} className="px-3 py-1.5 bg-white border border-amber-300 text-amber-700 rounded-lg font-semibold hover:bg-amber-50 disabled:opacity-50 cursor-pointer">
                       {vinculoBusy ? 'Desfazendo...' : criado ? 'Desfazer lançamento' : 'Desfazer baixa'}
@@ -665,6 +669,16 @@ export default function TransacaoDetalheModal({
           </div>
         </div>
       </div>
+      <ConfirmModal
+        isOpen={!!confirmarDesfazer}
+        icon="ri-arrow-go-back-line"
+        danger
+        title="Desfazer este lançamento?"
+        message={confirmarDesfazer ?? ''}
+        confirmLabel="Desfazer"
+        onCancel={() => setConfirmarDesfazer(null)}
+        onConfirm={async () => { await vinculoAction('undo'); setConfirmarDesfazer(null); }}
+      />
     </div>
   );
 }
