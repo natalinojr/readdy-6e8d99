@@ -699,7 +699,7 @@ export default function ConciliacaoTab() {
         ? mpRange()
         : invokeWithAuth<SyncResp>('mp-conciliation', { body: { action: 'sync', tenant_id: user.tenantId, ...maxAge, ...(stoneSince ? { date_from: stoneSince } : {}) } }),
       invokeWithAuth<SyncResp>('ifood-financial', {
-        body: { action: 'sync', tenant_id: user.tenantId, ...maxAge, ...(competencias ? { competences: competencias } : {}) },
+        body: { action: 'sync', tenant_id: user.tenantId, ...maxAge, ...(competencias ? { competences: competencias } : {}), ...(range ? { sales_from: range.from, sales_to: range.to } : {}) },
       }),
     ]);
     const parts: string[] = [];

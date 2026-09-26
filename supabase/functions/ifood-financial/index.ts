@@ -19,7 +19,8 @@
 //   set_merchant_api      { merchant_id, on }                  liga/desliga a busca pela API de uma loja do iFood
 //                         (fin_ifood_merchants.api_sync; tokens por autorização em fin_ifood_auths)
 //   delete_config         {}
-//   sync                  { competences?: ['AAAA-MM'] }        padrão: mês atual (+ anterior até o dia 15)
+//   sync                  { competences?: ['AAAA-MM'], sales_from?, sales_to? }   padrão: mês atual (+ anterior até o dia 15);
+//                         sales_from/to (AAAA-MM-DD, máx. 400 dias) = busca retroativa da API de Vendas no período
 //   import_file           { file_b64, file_name }              .xlsx do portal, .csv ou .csv.gz
 //   request_ondemand      { competence }                       POST reconciliation/on-demand (409 → reutiliza o requestId)
 //   ondemand_status       { request_id }                       GET do pedido; pronto → baixa e importa o arquivo
@@ -687,7 +688,9 @@ function defaultCompetences() {
 }
 
 // Busca todas as lojas do iFood ligadas (api_sync) desta loja do ERPOS, uma de cada vez.
-async function syncTenant(admin: Admin, cfg: any, competences?: string[]) {
+type SalesRange = { from: string; to: string };
+
+async function syncTenant(admin: Admin, cfg: any, competences?: string[], salesRange?: SalesRange) {
   if (!cfg.client_id || !cfg.client_secret) return { tenant_id: cfg.tenant_id, not_configured: true };
   const lojas = await merchantContexts(admin, cfg);
   if (lojas.length === 0) return { tenant_id: cfg.tenant_id, error: 'Nenhuma loja do iFood autorizada/ligada para buscar pela API.' };
@@ -698,7 +701,7 @@ async function syncTenant(admin: Admin, cfg: any, competences?: string[]) {
     const nome = l.name ?? l.merchant_id.slice(0, 8);
     let err: string | null = l.error ?? null;
     if (l.ctx) {
-      const r = await syncMerchant(admin, l.ctx, competences);
+      const r = await syncMerchant(admin, l.ctx, competences, salesRange);
       results.push(...r.results.map((x: any) => ({ ...x, merchant_id: l.merchant_id, merchant_name: l.name })));
       apis[l.merchant_id] = r.apis;
       err = r.error;
@@ -712,7 +715,7 @@ async function syncTenant(admin: Admin, cfg: any, competences?: string[]) {
   return { tenant_id: cfg.tenant_id, results, apis, error: lastErr ?? undefined };
 }
 
-async function syncMerchant(admin: Admin, cfg: any, competences?: string[]) {
+async function syncMerchant(admin: Admin, cfg: any, competences?: string[], salesRange?: SalesRange) {
   const results = [];
   let lastErr: string | null = null;
   for (const c of competences?.length ? competences : defaultCompetences()) {
@@ -739,6 +742,18 @@ async function syncMerchant(admin: Admin, cfg: any, competences?: string[]) {
     return n;
   };
   await run('sales', () => inWindows(addDaysISO(today, -30), today, 7, (a, b) => syncSales(admin, cfg, a, b)));
+  // Busca retroativa (Conciliação › buscar período): blocos de 7 dias; um bloco recusado pelo iFood
+  // (ex.: data antiga demais) não derruba os outros — o 1º erro volta em apis.sales_range.error.
+  if (salesRange && salesRange.from < addDaysISO(today, -30)) {
+    const fim = salesRange.to < addDaysISO(today, -31) ? salesRange.to : addDaysISO(today, -31);
+    let n = 0; let primeiroErro: string | null = null; let semDados = 0;
+    for (let a = salesRange.from; a <= fim; a = addDaysISO(a, 7)) {
+      const b = addDaysISO(a, 6) < fim ? addDaysISO(a, 6) : fim;
+      try { const k = await syncSales(admin, cfg, a, b); n += k; if (k === 0) semDados++; }
+      catch (e) { primeiroErro = primeiroErro ?? `${a}: ${String((e as Error)?.message ?? e)}`; }
+    }
+    apis.sales_range = { from: salesRange.from, to: fim, inserted: n, empty_windows: semDados, ...(primeiroErro ? { error: primeiroErro } : {}) };
+  }
   await run('events', () => syncEvents(admin, cfg, addDaysISO(today, -32), today));
   await run('settlements', () => inWindows(addDaysISO(today, -35), addDaysISO(today, 35), 30, (a, b) => syncSettlements(admin, cfg, a, b)));
   await run('anticipations', () => inWindows(addDaysISO(today, -35), addDaysISO(today, 35), 30, (a, b) => syncAnticipations(admin, cfg, a, b)));
@@ -846,7 +861,10 @@ Deno.serve(async (req) => {
         return json({ success: true, fresh: true, inserted: 0, last_sync_at: cfg.last_sync_at });
       }
       const comps = Array.isArray(body.competences) ? body.competences.map(String).filter((c: string) => /^\d{4}-\d{2}$/.test(c)).slice(0, 12) : undefined;
-      const r = await syncTenant(admin, cfg, comps);
+      const iso = (v: unknown) => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null);
+      const sf = iso(body.sales_from), st = iso(body.sales_to) ?? todayBR();
+      const salesRange = sf && sf <= st && sf >= addDaysISO(st, -400) ? { from: sf, to: st } : undefined;
+      const r = await syncTenant(admin, cfg, comps, salesRange);
       const inserted = (r.results ?? []).reduce((s: number, x: any) => s + Number(x.lines ?? 0), 0);
       return json({ success: !r.error, inserted, ...r });
     }
