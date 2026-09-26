@@ -655,7 +655,7 @@ async function caixasSemJustificativa(admin: SupabaseClient, tenants: Array<{ id
 // iFood no fechamento (dono, 2026-09-25): o iFood não passa pelo PDV, então o faturamento do turno/dia
 // não tem esses pedidos. Antes de somar, pede ao ifood-financial a busca LEVE das vendas de hoje/ontem
 // (a diária das 07h20 ainda não tem a noite). Mesmas contas da tela Financeiro › iFood › Pedidos:
-// vendido = itens + entrega dos não cancelados; taxas = lançamentos negativos que não são promoção;
+// vendido = itens + entrega (sem a entrega feita pelo iFood) dos não cancelados; taxas = lançamentos negativos que não são promoção;
 // líquido = saleBalance (o que o iFood repassa). null = loja sem iFood / sem venda no período.
 type IfoodResumo = { pedidos: number; cancelados: number; vendido: number; taxas: number; liquido: number };
 async function ifoodResumo(tenantId: string, from: string, to: string, atualizar: boolean): Promise<IfoodResumo | null> {
@@ -672,10 +672,12 @@ async function ifoodResumo(tenantId: string, from: string, to: string, atualizar
   }
   const rows = await db()<Array<{ cancelado: boolean; vendido: number; liquido: number; taxas: number }>>`
     select s.current_status ~* 'CANCEL' as cancelado,
-           (coalesce(s.gross_bag, 0) + coalesce(s.delivery_fee, 0))::float as vendido,
+           -- entrega só quando não é o iFood que entrega (DELIVERY_FEE_IFOOD = entrega retida pelo iFood; igual ao Portal)
+           (coalesce(s.gross_bag, 0) + case when exists (select 1 from jsonb_array_elements(case when jsonb_typeof(s.billing_entries) = 'array' then s.billing_entries else '[]'::jsonb end) e
+                                                          where e->>'name' = 'DELIVERY_FEE_IFOOD') then 0 else coalesce(s.delivery_fee, 0) end)::float as vendido,
            coalesce(s.sale_balance, 0)::float as liquido,
            coalesce((select sum((b->>'value')::numeric) from jsonb_array_elements(case when jsonb_typeof(s.billing_entries) = 'array' then s.billing_entries else '[]'::jsonb end) b
-                      where (b->>'value')::numeric < 0 and coalesce(b->>'name', '') !~* 'SUBSIDY'), 0)::float as taxas
+                      where (b->>'value')::numeric < 0 and coalesce(b->>'name', '') !~* 'SUBSIDY' and coalesce(b->>'name', '') <> 'DELIVERY_FEE_IFOOD'), 0)::float as taxas
       from fin_ifood_sales s
      where s.tenant_id = ${tenantId} and s.sale_created_at >= ${from}::timestamptz and s.sale_created_at < ${to}::timestamptz`;
   if (!rows.length) return null;
@@ -688,7 +690,7 @@ async function ifoodResumo(tenantId: string, from: string, to: string, atualizar
   };
 }
 const ifoodLinhas = (f: IfoodResumo) => [
-  { l: 'Vendido no iFood', v: brl(f.vendido), d: `${f.pedidos} pedido${f.pedidos === 1 ? '' : 's'} · itens + entrega` },
+  { l: 'Vendido no iFood', v: brl(f.vendido), d: `${f.pedidos} pedido${f.pedidos === 1 ? '' : 's'} · itens + entrega própria` },
   { l: 'Taxas do iFood', v: brl(f.taxas), st: 'alerta' as const },
   { l: 'Líquido para a loja', v: brl(f.liquido), st: 'ok' as const },
   ...(f.cancelados ? [{ l: `${f.cancelados} cancelado${f.cancelados === 1 ? '' : 's'} no iFood`, st: 'perigo' as const }] : []),

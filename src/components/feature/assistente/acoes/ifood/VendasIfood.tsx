@@ -62,7 +62,7 @@ export default function VendasIfood({ onFechar, irPara }: AcaoProps) {
 
     painel(
       <Painel titulo={`iFood · ${dataBR(dia)}`} subtitulo={user?.loja || 'Loja ativa'}
-        rodape="Vendido = itens + entrega dos pedidos não cancelados. Líquido = o que o iFood repassa (cai no repasse da semana). O iFood não entra no Vendas do dia do PDV.">
+        rodape="Vendido = itens + entrega (só quando a entrega não é do iFood), dos pedidos não cancelados — igual ao Portal e aos Relatórios. Líquido = o que o iFood repassa (cai no repasse da semana). O iFood não entra no Vendas do dia do PDV.">
         <Kpis
           principal={{ label: 'Vendido no iFood', valor: brl(r.vendido), extra: <Variacao atual={r.vendido} base={base(a?.vendido)} rotulo={`vs ${rotulo}`} /> }}
           outros={[

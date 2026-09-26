@@ -1,8 +1,10 @@
 // Contas do iFood usadas pelas ações rápidas (grupo iFood, Vendas do dia e Fechamento do dia).
 // MESMAS regras da tela Financeiro › iFood › Pedidos (IfoodApiViews › PedidosView) e do
 // "Fechamento do turno" (assistente-cron › ifoodResumo) — mudou lá, mude aqui:
-// - vendido = itens (gross_bag) + entrega dos pedidos NÃO cancelados (taxa de serviço fica fora);
-// - taxas = lançamentos negativos do pedido que não são promoção (SUBSIDY);
+// - vendido = itens (gross_bag) + entrega só quando NÃO é o iFood que entrega (entrega própria/sob demanda),
+//   dos pedidos NÃO cancelados (taxa de serviço fica fora). Entregue pelo iFood (tem DELIVERY_FEE_IFOOD), a
+//   taxa de entrega é do iFood — igual ao Portal do Parceiro e aos Relatórios (regra do dono, 2026-09-26);
+// - taxas = lançamentos negativos do pedido que não são promoção (SUBSIDY) nem a entrega retida pelo iFood;
 // - líquido = saleBalance (o que o iFood repassa), de todos os pedidos (cancelado pode ter saldo).
 // O iFood não passa pelo PDV: nada disto está no faturamento do fn_get_sales_report.
 import { supabase, invokeWithAuth } from '@/lib/supabase';
@@ -42,7 +44,15 @@ const n = (v: unknown) => Number(v ?? 0);
 const horaBrasilia = (ts: string) => Number(new Date(ts).toLocaleString('en-US', { timeZone: 'America/Sao_Paulo', hour: '2-digit', hourCycle: 'h23' }));
 export const canceladoIfood = (s: { current_status: string | null }) => /CANCEL/i.test(String(s.current_status ?? ''));
 export const taxasDoPedido = (s: { billing_entries: Venda['billing_entries'] }) =>
-  (Array.isArray(s.billing_entries) ? s.billing_entries : []).filter((b) => n(b.value) < 0 && !/SUBSIDY/i.test(String(b.name))).reduce((a, b) => a + n(b.value), 0);
+  (Array.isArray(s.billing_entries) ? s.billing_entries : [])
+    .filter((b) => n(b.value) < 0 && !/SUBSIDY/i.test(String(b.name)) && String(b.name) !== 'DELIVERY_FEE_IFOOD')
+    .reduce((a, b) => a + n(b.value), 0);
+/** Entregue pelo iFood: a taxa de entrega fica com o iFood (vem retida como DELIVERY_FEE_IFOOD). */
+export const entregaDoIfood = (s: { billing_entries: Venda['billing_entries'] }) =>
+  (Array.isArray(s.billing_entries) ? s.billing_entries : []).some((b) => String(b.name) === 'DELIVERY_FEE_IFOOD');
+/** Vendido do pedido: itens + entrega, sem a entrega quando é o iFood que entrega. */
+export const vendidoDoPedido = (s: { gross_bag: number | null; delivery_fee: number | null; billing_entries: Venda['billing_entries'] }) =>
+  n(s.gross_bag) + (entregaDoIfood(s) ? 0 : n(s.delivery_fee));
 
 // Promoções por quem pagou (mesma regra de IfoodApiViews › somaPatrocinio).
 const patrocinio = (benefits: unknown, quem: 'loja' | 'ifood') => {
@@ -107,7 +117,7 @@ export async function resumoIfood(tenantId: string, de: string, ate: string, nom
   const pags = new Map<string, { valor: number; pedidos: number }>();
   const horas = Array<number>(24).fill(0);
   for (const s of ok) {
-    const v = n(s.gross_bag) + n(s.delivery_fee);
+    const v = vendidoDoPedido(s);
     const l = lojas.get(s.merchant_id) ?? { vendido: 0, pedidos: 0 };
     l.vendido += v; l.pedidos += 1;
     lojas.set(s.merchant_id, l);
@@ -121,7 +131,7 @@ export async function resumoIfood(tenantId: string, de: string, ate: string, nom
     pedidos: ok.length,
     cancelados: cancel.length,
     valorCancelado: cancel.reduce((a, s) => a + n(s.gross_bag) + n(s.delivery_fee), 0),
-    vendido: ok.reduce((a, s) => a + n(s.gross_bag) + n(s.delivery_fee), 0),
+    vendido: ok.reduce((a, s) => a + vendidoDoPedido(s), 0),
     taxas: vendas.reduce((a, s) => a + taxasDoPedido(s), 0),
     liquido: vendas.reduce((a, s) => a + n(s.sale_balance), 0),
     promoLoja: ok.reduce((a, s) => a + patrocinio(s.benefits, 'loja'), 0),

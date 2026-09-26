@@ -3534,3 +3534,7 @@ Sem SW ativo o POST cai no Vercel e falha — por isso o destino só existe no S
   `/status` continua "Loja aberta" com pausa ativa e o iFood **não** recusou pausa sobreposta (sem 409); a lista de pausas
   aparece com alguns segundos de atraso. Review: `/summary` responde **404 "Summary not found"** em loja sem avaliação
   (a edge devolve resumo zerado). Teste da edge sem login: `net.http_post` no SQL com `x-internal-key` lido do vault.
+- **"Vendido no iFood" único em todas as telas (regra do dono, 2026-09-26)**: itens + taxa de entrega só quando a entrega
+  NÃO é do iFood (entrega própria/sob demanda); entregue pelo iFood (billing `DELIVERY_FEE_IFOOD`) a entrega é do iFood e
+  fica fora — é o mesmo valor do Portal do Parceiro. Taxas não contam `DELIVERY_FEE_IFOOD`. Onde está: `acoes/ifood/comum.ts`
+  (`vendidoDoPedido`), `IfoodApiViews` (Pedidos), `assistente-cron › ifoodResumo`, e a conta do Portal (`ifoodVendas`/`ifoodDashboard`).

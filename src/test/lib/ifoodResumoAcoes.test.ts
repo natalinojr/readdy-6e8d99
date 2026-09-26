@@ -45,6 +45,16 @@ describe('resumoIfood', () => {
     expect(r!.porHora[12]).toBe(30);
   });
 
+  it('entrega feita pelo iFood (DELIVERY_FEE_IFOOD) fica fora do vendido e das taxas; entrega própria entra', async () => {
+    h.rows = [
+      venda({ gross_bag: 70.79, delivery_fee: 15.99, billing_entries: [{ name: 'ORDER_COMMISSION', value: -8 }, { name: 'DELIVERY_FEE_IFOOD', value: -15.99 }] }),
+      venda({ gross_bag: 36.9, delivery_fee: 8.5, billing_entries: [{ name: 'DELIVERY_REQUEST', value: -9 }] }),
+    ];
+    const r = await resumoIfood('t', 'a', 'b');
+    expect(r!.vendido).toBeCloseTo(70.79 + 36.9 + 8.5);
+    expect(r!.taxas).toBeCloseTo(-17);
+  });
+
   it('sem venda no período', async () => {
     h.rows = [];
     const r = await resumoIfood('t', 'a', 'b');

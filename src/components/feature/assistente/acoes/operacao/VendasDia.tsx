@@ -130,7 +130,7 @@ export default function VendasDia({ onFechar, irPara }: AcaoProps) {
       : base(a?.total_revenue);
 
     painel(
-      <Painel titulo={`Vendas de ${dataBR(iso)}`} subtitulo={user?.loja || 'Loja ativa'} rodape={`${ifood ? 'Total = ERPOS + iFood (vendido = itens + entrega). O gráfico por hora soma os dois; pedidos, ticket e as barras são só do ERPOS (o iFood está no bloco próprio).' : 'iFood fora do PDV não entra aqui.'} Por categoria soma só os itens (sem taxa de serviço/entrega e descontos).`}>
+      <Painel titulo={`Vendas de ${dataBR(iso)}`} subtitulo={user?.loja || 'Loja ativa'} rodape={`${ifood ? 'Total = ERPOS + iFood (vendido = itens + entrega própria; a entrega feita pelo iFood é do iFood). O gráfico por hora soma os dois; pedidos, ticket e as barras são só do ERPOS (o iFood está no bloco próprio).' : 'iFood fora do PDV não entra aqui.'} Por categoria soma só os itens (sem taxa de serviço/entrega e descontos).`}>
         <Kpis
           principal={{ label: ifood ? 'Faturamento total' : 'Faturamento', valor: brl(total), extra: (
             <>
@@ -149,7 +149,7 @@ export default function VendasDia({ onFechar, irPara }: AcaoProps) {
         />
         {ifood && (
           <Linhas titulo="iFood (fora do PDV)" itens={[
-            { label: 'Vendido no iFood', valor: brl(ifood.vendido), detalhe: `${ifood.pedidos} pedido${ifood.pedidos === 1 ? '' : 's'} · itens + entrega` },
+            { label: 'Vendido no iFood', valor: brl(ifood.vendido), detalhe: `${ifood.pedidos} pedido${ifood.pedidos === 1 ? '' : 's'} · itens + entrega própria` },
             { label: 'Taxas do iFood', valor: brl(ifood.taxas), status: 'alerta' },
             { label: 'Líquido para a loja', valor: brl(ifood.liquido), status: 'ok' },
             ...(ifood.cancelados ? [{ label: `${ifood.cancelados} cancelado${ifood.cancelados === 1 ? '' : 's'} no iFood`, valor: brl(ifood.valorCancelado), status: 'perigo' as const }] : []),

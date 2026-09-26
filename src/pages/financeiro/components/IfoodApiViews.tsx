@@ -389,13 +389,15 @@ function PedidosView({ rows, nomes, verApi }: { rows: any[]; nomes: Record<strin
     (situacao === 'todos' || (situacao === 'cancelados') === cancelado(r))
     && (!busca.trim() || String(r.short_id ?? r.sale_id).includes(busca.trim().replace(/^#/, ''))));
   const validos = rows.filter((r) => !cancelado(r));
-  // Bruto = itens + entrega. A taxa de serviço (cobrada do cliente e repassada ao iFood) vem negativa
-  // da API e aparece na composição do líquido — somá-la aqui reduzia o bruto indevidamente.
-  const bruto = validos.reduce((s, r) => s + n(r.gross_bag) + n(r.delivery_fee), 0);
+  // Bruto = itens + entrega (a entrega só quando não é o iFood que entrega — aí ela vem retida como
+  // DELIVERY_FEE_IFOOD e é do iFood; igual ao Portal e aos Relatórios). A taxa de serviço (cobrada do cliente
+  // e repassada ao iFood) vem negativa da API e aparece na composição do líquido.
+  const entregaIfood = (r: any) => ((r.billing_entries ?? []) as any[]).some((b) => String(b.name) === 'DELIVERY_FEE_IFOOD');
+  const bruto = validos.reduce((s, r) => s + n(r.gross_bag) + (entregaIfood(r) ? 0 : n(r.delivery_fee)), 0);
   const promoLoja = validos.reduce((s, r) => s + somaPatrocinio(r, 'loja'), 0);
   const promoIfood = validos.reduce((s, r) => s + somaPatrocinio(r, 'ifood'), 0);
   const liquido = rows.reduce((s, r) => s + n(r.sale_balance), 0);
-  const taxasDe = (r: any) => ((r.billing_entries ?? []) as any[]).filter((b) => n(b.value) < 0 && !/SUBSIDY/i.test(String(b.name))).reduce((s, b) => s + n(b.value), 0);
+  const taxasDe = (r: any) => ((r.billing_entries ?? []) as any[]).filter((b) => n(b.value) < 0 && !/SUBSIDY/i.test(String(b.name)) && String(b.name) !== 'DELIVERY_FEE_IFOOD').reduce((s, b) => s + n(b.value), 0);
   const taxas = rows.reduce((s, r) => s + taxasDe(r), 0);
   const nomeLoja = (id: string) => nomes[id] ?? `Loja ${String(id).slice(0, 8)}`;
 
@@ -411,7 +413,7 @@ function PedidosView({ rows, nomes, verApi }: { rows: any[]; nomes: Record<strin
     <div className="bg-white rounded-2xl border border-zinc-100 overflow-hidden">
       <div className="px-4 py-4 border-b border-zinc-100 grid grid-cols-2 sm:grid-cols-5 gap-4">
         <Stat label="Pedidos" value={String(validos.length)} sub={rows.length > validos.length ? `+ ${rows.length - validos.length} cancelado(s)` : undefined} />
-        <Stat label="Vendido (itens + entrega)" value={formatCurrency(bruto)} />
+        <Stat label="Vendido (itens + entrega própria)" value={formatCurrency(bruto)} />
         <Stat label="Promoções" value={formatCurrency(promoLoja + promoIfood)} sub={`loja ${formatCurrency(promoLoja)} · iFood ${formatCurrency(promoIfood)}`} />
         <Stat label="Taxas do iFood" value={formatCurrency(taxas)} tone="text-red-600" />
         <Stat label="Líquido para a loja" value={formatCurrency(liquido)} tone="text-green-700" />

@@ -126,7 +126,7 @@ export default function FechamentoDia({ onFechar, irPara }: AcaoProps) {
       ...((difs.length || ifood) ? { lin: [
         ...(difs.length ? [{ t: 'Caixas', i: [{ l: `${difs.length} caixa${difs.length === 1 ? '' : 's'} do dia`, v: diffTexto(somaDif), st: (Math.abs(somaDif) < 0.01 ? 'ok' : 'perigo') as 'ok' | 'perigo' }] }] : []),
         ...(ifood ? [{ t: 'iFood (fora do PDV)', i: [
-          { l: 'Vendido no iFood', v: brl(ifood.vendido), d: `${ifood.pedidos} pedido${ifood.pedidos === 1 ? '' : 's'} · itens + entrega` },
+          { l: 'Vendido no iFood', v: brl(ifood.vendido), d: `${ifood.pedidos} pedido${ifood.pedidos === 1 ? '' : 's'} · itens + entrega própria` },
           { l: 'Taxas do iFood', v: brl(ifood.taxas), st: 'alerta' as const },
           { l: 'Líquido para a loja', v: brl(ifood.liquido), st: 'ok' as const },
           ...(ifood.cancelados ? [{ l: `${ifood.cancelados} cancelado${ifood.cancelados === 1 ? '' : 's'} no iFood`, st: 'perigo' as const }] : []),
