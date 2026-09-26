@@ -48,7 +48,7 @@ export function Kpis({ principal, outros }: {
           {outros.map((k) => (
             <div key={k.label} className="rounded-xl bg-zinc-50 px-3 py-2.5">
               <p className="text-[11px] font-semibold text-zinc-500">{k.label}</p>
-              <p className="text-lg font-black text-zinc-900 leading-tight tabular-nums">{k.valor}</p>
+              <p className={`${outros.length >= 3 ? 'text-base' : 'text-lg'} font-black text-zinc-900 leading-tight tabular-nums break-words`}>{k.valor}</p>
               {k.extra && <div className="mt-0.5">{k.extra}</div>}
             </div>
           ))}

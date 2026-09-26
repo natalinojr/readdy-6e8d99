@@ -117,11 +117,15 @@ export default function VendasDia({ onFechar, irPara }: AcaoProps) {
     painel(
       <Painel titulo={`Vendas de ${dataBR(iso)}`} subtitulo={user?.loja || 'Loja ativa'} rodape={`${ifood ? 'Faturamento, pedidos e gráficos são do PDV; o iFood está no bloco próprio (vendido = itens + entrega).' : 'iFood fora do PDV não entra aqui.'} Por categoria soma só os itens (sem taxa de serviço/entrega e descontos).`}>
         <Kpis
-          principal={{ label: 'Faturamento', valor: brl(r.total_revenue), extra: <Variacao atual={Number(r.total_revenue)} base={base(a?.total_revenue)} rotulo={`vs ${diaSemana} passada`} /> }}
+          principal={{ label: 'Faturamento', valor: brl(r.total_revenue), extra: (
+            <>
+              <Variacao atual={Number(r.total_revenue)} base={base(a?.total_revenue)} rotulo={`vs ${diaSemana} passada`} />
+              {ifood && <p className="text-xs font-semibold text-zinc-600 mt-1">Total com iFood: {brl(Number(r.total_revenue ?? 0) + ifood.vendido)}</p>}
+            </>
+          ) }}
           outros={[
             { label: 'Pedidos', valor: String(pedidos), extra: <Variacao atual={pedidos} base={base(a?.total_orders)} rotulo="" /> },
             { label: 'Ticket médio', valor: brl(r.avg_ticket), extra: <Variacao atual={Number(r.avg_ticket)} base={base(a?.avg_ticket)} rotulo="" /> },
-            ...(ifood ? [{ label: 'Total c/ iFood', valor: brl(Number(r.total_revenue ?? 0) + ifood.vendido) }] : []),
           ]}
         />
         {ifood && (

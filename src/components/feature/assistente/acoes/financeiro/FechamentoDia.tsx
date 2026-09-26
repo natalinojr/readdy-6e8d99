@@ -113,8 +113,8 @@ export default function FechamentoDia({ onFechar, irPara }: AcaoProps) {
       t: 'Fechamento do dia', s: user?.loja || 'Loja ativa',
       r: `${dataBR(dia)} · dia inteiro, todos os turnos`,
       kpi: {
-        p: { l: 'Faturamento', v: brl(rev), ...(lwRev > 0 ? { var: { a: rev, b: lwRev, r: `vs ${rotuloSemana}` } } : {}) },
-        o: [{ l: 'Pedidos', v: String(n) }, { l: 'Ticket médio', v: brl(Number(r.avg_ticket ?? 0)) }, ...(ifood ? [{ l: 'Total c/ iFood', v: brl(rev + ifood.vendido) }] : [])],
+        p: { l: 'Faturamento', v: brl(rev), ...(lwRev > 0 ? { var: { a: rev, b: lwRev, r: `vs ${rotuloSemana}` } } : {}), ...(ifood ? { x: `Total com iFood: ${brl(rev + ifood.vendido)}` } : {}) },
+        o: [{ l: 'Pedidos', v: String(n) }, { l: 'Ticket médio', v: brl(Number(r.avg_ticket ?? 0)) }],
       },
       ...(grafico.length >= 2 ? { gl: { t: 'Faturado por hora', rb: rotuloSemana, i: grafico } } : {}),
       b: [

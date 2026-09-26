@@ -815,8 +815,8 @@ async function sessaoText(admin: SupabaseClient, sessionId: string): Promise<Avi
     t: 'Fechamento do turno', s: String(loja?.name ?? ''),
     r: `${s.number ? `Sessão #${s.number} · ` : ''}${diaHora(s.opened_at)} → ${diaHora(s.closed_at)}`,
     kpi: {
-      p: { l: 'Faturamento', v: brl(rev), ...(lwRev > 0 ? { var: { a: rev, b: lwRev, r: `vs ${['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'][weekday(lwDay)]} passada` } } : {}) },
-      o: [{ l: 'Pedidos', v: String(n) }, { l: 'Ticket médio', v: brl(r.avg_ticket) }, ...(ifood ? [{ l: 'Total c/ iFood', v: brl(rev + ifood.vendido) }] : [])],
+      p: { l: 'Faturamento', v: brl(rev), ...(lwRev > 0 ? { var: { a: rev, b: lwRev, r: `vs ${['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'][weekday(lwDay)]} passada` } } : {}), ...(ifood ? { x: `Total com iFood: ${brl(rev + ifood.vendido)}` } : {}) },
+      o: [{ l: 'Pedidos', v: String(n) }, { l: 'Ticket médio', v: brl(r.avg_ticket) }],
     },
     ...(grafico.length >= 2 ? { gl: { t: 'Faturado por hora', rb: `${['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'][weekday(lwDay)]} passada`, i: grafico } } : {}),
     b: [

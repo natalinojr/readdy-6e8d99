@@ -9,7 +9,7 @@ export interface DadosPainel {
   t: string;                                              // título
   s?: string;                                             // subtítulo (loja)
   r?: string;                                             // rodapé
-  kpi?: { p: { l: string; v: string; var?: { a: number; b: number; r: string } }; o?: Array<{ l: string; v: string }> };
+  kpi?: { p: { l: string; v: string; var?: { a: number; b: number; r: string }; x?: string }; o?: Array<{ l: string; v: string }> };  // x = linha extra no card principal (ex.: Total c/ iFood)
   gl?: { t: string; rb?: string; i: Array<{ l: string; v: number; b?: number | null }> };  // gráfico de linha (ex.: por hora; b = comparação)
   b?: Array<{ t: string; c?: string; i: Array<{ l: string; v: number; d?: string }> }>;  // barras
   lin?: Array<{ t: string; i: Array<{ l: string; v?: string; d?: string; st?: 'ok' | 'alerta' | 'perigo' | 'neutro' }> }>; // linhas label → valor
@@ -36,7 +36,12 @@ export default function PainelMensagem({ dados, onBotao }: { dados: DadosPainel;
           principal={{
             label: dados.kpi.p.l,
             valor: dados.kpi.p.v,
-            extra: dados.kpi.p.var ? <Variacao atual={dados.kpi.p.var.a} base={dados.kpi.p.var.b} rotulo={dados.kpi.p.var.r} /> : undefined,
+            extra: dados.kpi.p.var || dados.kpi.p.x ? (
+              <>
+                {dados.kpi.p.var && <Variacao atual={dados.kpi.p.var.a} base={dados.kpi.p.var.b} rotulo={dados.kpi.p.var.r} />}
+                {dados.kpi.p.x && <p className="text-xs font-semibold text-zinc-600 mt-1">{dados.kpi.p.x}</p>}
+              </>
+            ) : undefined,
           }}
           outros={(dados.kpi.o ?? []).map((k) => ({ label: k.l, valor: k.v }))}
         />
