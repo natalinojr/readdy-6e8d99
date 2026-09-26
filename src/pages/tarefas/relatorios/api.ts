@@ -19,6 +19,14 @@ export interface CampoRel {
   /** Caixas de seleção: quantas marcar no mínimo/no máximo (vazio = sem limite). */
   min?: number | null;
   max?: number | null;
+  /** Condição: o campo só aparece se a pergunta `field_id` (acima dele, de escolha ou sim/não) tiver uma das respostas `values`. */
+  show_if?: CondicaoCampo | null;
+}
+
+/** "Se a pergunta X for A ou B" — `values` = ids das opções (ou 'sim'/'nao'). */
+export interface CondicaoCampo {
+  field_id: string;
+  values: string[];
 }
 
 /** Link de arquivo na nuvem anexado ao relatório. */

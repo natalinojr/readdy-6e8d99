@@ -1718,17 +1718,22 @@ Deno.serve(async (req) => {
   }
 
   const result: Record<string, unknown> = {};
+  // Ritmo (2026-09-26, banco travou no plano Free por IO): cada minuto só o que é "na hora" —
+  // lembretes, resumo, pagamentos em andamento, avisos push e fila dos grupos. O resto (proativo em
+  // janelas de 2 h, pagamentos parados, contas resolvidas, entrevistas) a cada 5 min; limpezas 1×/h.
+  const minuto = Number(localHHMM().slice(3, 5));
+  const aCada5 = minuto % 5 === 0;
   try { result.reminders_sent = await sendReminders(admin, ownerChat); } catch (e) { result.reminders_error = errMsg(e); log('ERROR', 'reminders', { error: errMsg(e) }); }
   try { result.brief_sent = await morningBrief(admin, cfg, ownerChat); } catch (e) { result.brief_error = errMsg(e); log('ERROR', 'brief', { error: errMsg(e) }); }
   try { result.warmed = await keepWarm(admin, cfg); } catch (e) { result.warm_error = errMsg(e); log('ERROR', 'warm', { error: errMsg(e) }); }
-  try { const pr = await proactive(admin, cfg, ownerChat); if (Object.keys(pr).length) result.proactive = pr; } catch (e) { result.proactive_error = errMsg(e); log('ERROR', 'proactive', { error: errMsg(e) }); }
+  if (aCada5) try { const pr = await proactive(admin, cfg, ownerChat); if (Object.keys(pr).length) result.proactive = pr; } catch (e) { result.proactive_error = errMsg(e); log('ERROR', 'proactive', { error: errMsg(e) }); }
   try { const pw = await payWatch(admin); if (pw) result.pay_watch = pw; } catch (e) { result.pay_watch_error = errMsg(e); log('ERROR', 'pay_watch', { error: errMsg(e) }); }
-  try { const pp = await pagamentosParados(admin); if (pp) result.pagamentos_parados = pp; } catch (e) { result.pagamentos_parados_error = errMsg(e); log('ERROR', 'pagamentos_parados', { error: errMsg(e) }); }
-  try { const pc = await pagamentosDeContaResolvida(admin); if (pc) result.pagamentos_conta_resolvida = pc; } catch (e) { log('ERROR', 'pagamentos_conta_resolvida', { error: errMsg(e) }); }
+  if (aCada5) try { const pp = await pagamentosParados(admin); if (pp) result.pagamentos_parados = pp; } catch (e) { result.pagamentos_parados_error = errMsg(e); log('ERROR', 'pagamentos_parados', { error: errMsg(e) }); }
+  if (aCada5) try { const pc = await pagamentosDeContaResolvida(admin); if (pc) result.pagamentos_conta_resolvida = pc; } catch (e) { log('ERROR', 'pagamentos_conta_resolvida', { error: errMsg(e) }); }
   try { const pa = await pushAvisos(admin); if (pa) result.avisos_push = pa; } catch (e) { log('ERROR', 'avisos push', { error: errMsg(e) }); }
   try { const fg = await filaGrupo(admin); if (fg) result.fila_grupo = fg; } catch (e) { result.fila_grupo_error = errMsg(e); log('ERROR', 'fila_grupo', { error: errMsg(e) }); }
   // Agendamento de entrevistas (Contratação): convites, cobrança e lembretes — regras no hiring-scheduler
-  try {
+  if (aCada5) try {
     const r = await fetch(`${supabaseUrl}/functions/v1/hiring-scheduler`, {
       method: 'POST', headers: { 'Content-Type': 'application/json', 'x-internal-key': internalKey }, body: JSON.stringify({ action: 'tick' }),
     });
@@ -1737,8 +1742,10 @@ Deno.serve(async (req) => {
     if (hs.invited || hs.followups || hs.sem_resposta || hs.reminded) result.hiring = hs;
   } catch (e) { result.hiring_error = errMsg(e); log('ERROR', 'hiring-scheduler', { error: errMsg(e) }); }
   // Fila do debounce: só serve por segundos; guarda 7 dias para diagnóstico
-  await admin.from('asst_inbox').delete().lt('created_at', new Date(Date.now() - 7 * 86400000).toISOString());
-  await admin.from('asst_tg_updates').delete().lt('created_at', new Date(Date.now() - 7 * 86400000).toISOString());
+  if (minuto === 7) {
+    await admin.from('asst_inbox').delete().lt('created_at', new Date(Date.now() - 7 * 86400000).toISOString());
+    await admin.from('asst_tg_updates').delete().lt('created_at', new Date(Date.now() - 7 * 86400000).toISOString());
+  }
   // Mensagens de grupos: NÃO apagar (decisão do dono, 2026-09-12): histórico completo fica guardado.
   // Leitor universal (asst_reader): tabelas/colunas novas entram sozinhas, 1×/dia às 04:00
   if (localHHMM() === '04:00') {

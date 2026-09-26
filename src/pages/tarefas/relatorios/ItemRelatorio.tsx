@@ -7,7 +7,7 @@ import { createPortal } from 'react-dom';
 import { ImagePlus, Loader2, Send, X, PencilLine, CheckCircle2, RotateCcw, MessageCircle, Plus, ArrowRight } from 'lucide-react';
 import { STATUS_INFO, dataHora, type CampoRel, type ImagemRel, type ItemRel, type LinkRel, type StatusItem, type ValorCampo } from './api';
 import { ChipsLinks, useLinks } from './LinksRelatorio';
-import { EditorCampos, PreencherCampos, erroPreenchimento, formatarValor, limparCampos, respostasMudadas, valoresAtuais } from './CamposResposta';
+import { EditorCampos, PreencherCampos, camposVisiveis, erroPreenchimento, formatarValor, limparCampos, respostasMudadas, valoresAtuais } from './CamposResposta';
 import { useVoltarFecha } from '@/lib/voltarAndroid';
 
 /** Faixa colorida na lateral do item, pela situação. */
@@ -230,7 +230,8 @@ export default function ItemRelatorio({ item, numero, podeResponder, meuGuestId,
         {campos.length > 0 && (
           <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50/50 px-3 py-2.5">
             <dl className="grid grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-2.5">
-              {campos.map((c) => {
+              {/* Só o que vale para as respostas atuais (campo condicional escondido não entra). */}
+              {camposVisiveis(campos, valorAtual).map((c) => {
                 const a = atuais[c.id];
                 const vazio = !a || a.valor === null;
                 return (

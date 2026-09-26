@@ -4,7 +4,8 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 vi.mock('@/lib/supabase', () => ({}));
 
 import ItemRelatorio from '@/pages/tarefas/relatorios/ItemRelatorio';
-import type { ItemRel } from '@/pages/tarefas/relatorios/api';
+import type { CampoRel, ItemRel } from '@/pages/tarefas/relatorios/api';
+import { camposVisiveis, limparCampos } from '@/pages/tarefas/relatorios/CamposResposta';
 
 const item: ItemRel = {
   id: 'i1', position: 1, title: 'Pia vazando', body: 'Resolver até sexta?', images: [], status: 'answered',
@@ -171,6 +172,53 @@ describe('ItemRelatorio', () => {
     expect(screen.getByText('Ana')).toBeTruthy();
     expect(screen.getByText('autor do relatório')).toBeTruthy();
     expect(screen.getByText('equipe')).toBeTruthy();
+  });
+
+  describe('campo condicional (show_if)', () => {
+    const campos: CampoRel[] = [
+      { id: 'tipo', type: 'escolha', label: 'Tipo de evento', options: [{ id: 'fest', label: 'Festa' }, { id: 'corp', label: 'Corporativo' }] },
+      { id: 'conv', type: 'numero', label: 'Convidados', show_if: { field_id: 'tipo', values: ['fest'] } },
+      { id: 'buf', type: 'sim_nao', label: 'Quer bufê?', show_if: { field_id: 'tipo', values: ['fest'] } },
+      { id: 'cardapio', type: 'texto', label: 'Cardápio', show_if: { field_id: 'buf', values: ['sim'] } },
+      { id: 'cnpj', type: 'texto', label: 'CNPJ', show_if: { field_id: 'tipo', values: ['corp'] } },
+    ];
+    const briefing: ItemRel = { ...item, responses: [], fields: campos };
+
+    it('mostra só os campos da resposta escolhida, em cadeia', () => {
+      const ids = (v: Record<string, string | null>) => camposVisiveis(campos, v).map((c) => c.id);
+      expect(ids({})).toEqual(['tipo']);
+      expect(ids({ tipo: 'fest' })).toEqual(['tipo', 'conv', 'buf']);
+      expect(ids({ tipo: 'fest', buf: 'sim' })).toEqual(['tipo', 'conv', 'buf', 'cardapio']);
+      // Pergunta da condição escondida esconde o filho também.
+      expect(ids({ tipo: 'corp', buf: 'sim' })).toEqual(['tipo', 'cnpj']);
+    });
+
+    it('quem responde vê os campos aparecerem conforme escolhe', () => {
+      render(<ItemRelatorio item={briefing} numero={1} podeResponder onResponder={vi.fn()} onEnviarImagem={vi.fn()} />);
+      fireEvent.click(screen.getByText('Responder'));
+      expect(screen.queryByText('CNPJ')).toBeNull();
+      fireEvent.change(screen.getByRole('combobox'), { target: { value: 'corp' } });
+      expect(screen.getByText('CNPJ')).toBeTruthy();
+      expect(screen.queryByText('Convidados')).toBeNull();
+    });
+
+    it('trocar a resposta apaga o valor do campo que ficou escondido', async () => {
+      const onResponder = vi.fn().mockResolvedValue(true);
+      const respondido: ItemRel = { ...briefing, responses: [
+        { id: 'r1', kind: 'reply', body: null, images: [], new_status: null, author_name: 'Ana', author_type: 'guest', author_guest_id: 'g1', created_at: '2026-09-24T11:00:00Z', answers: { tipo: 'corp', cnpj: '123' } },
+      ] };
+      render(<ItemRelatorio item={respondido} numero={1} podeResponder onResponder={onResponder} onEnviarImagem={vi.fn()} />);
+      fireEvent.click(screen.getByText('Responder'));
+      fireEvent.change(screen.getByRole('combobox'), { target: { value: 'fest' } });
+      fireEvent.click(screen.getByText('Enviar'));
+      await waitFor(() => expect(onResponder).toHaveBeenCalledWith('', [], null, { tipo: 'fest', cnpj: null }, []));
+    });
+
+    it('ao salvar, recusa condição sem resposta escolhida ou com pergunta abaixo', () => {
+      expect(limparCampos(campos).erro).toBeNull();
+      expect(limparCampos([campos[0], { ...campos[1], show_if: { field_id: 'tipo', values: [] } }]).erro).toMatch(/escolha com qual resposta/);
+      expect(limparCampos([campos[1], campos[0]]).erro).toMatch(/ficar acima/);
+    });
   });
 
   it('sem permissão de responder (relatório encerrado) não mostra a caixa', () => {

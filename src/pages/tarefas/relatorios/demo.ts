@@ -28,6 +28,8 @@ const relatorios: Rel[] = [{
         { id: 'c1', type: 'escolha', label: 'Situação', options: [{ id: 'o1', label: 'Resolvido' }, { id: 'o2', label: 'Precisa de eletricista' }] },
         { id: 'c2', type: 'multipla', label: 'Tomadas afetadas', options: [{ id: 'a', label: 'Bancada' }, { id: 'b', label: 'Geladeira' }, { id: 'c', label: 'Micro-ondas' }], min: 1, max: 2 },
         { id: 'c3', type: 'data', label: 'Prazo' },
+        // Condicional: só aparece se "Situação" = "Precisa de eletricista".
+        { id: 'c4', type: 'texto', label: 'Nome do eletricista', show_if: { field_id: 'c1', values: ['o2'] } },
       ],
     },
   ],
