@@ -3461,3 +3461,8 @@ Sem SW ativo o POST cai no Vercel e falha — por isso o destino só existe no S
   → quem pediu (`fn_aviso_pedido_pagamento`; erro vira warning, nunca derruba a baixa). Push: `pushAvisos` a cada tick
   (marca `push_em` antes, sem filtro de loja, url `/modulos?avisos=1` abre a conversa). Aviso novo = gravar em `avisos`
   com `painel` no formato do `[painel]`.
+- **Casamento automático do Inter × baixa pelo extrato (2026-09-25):** a baixa feita pela conciliação (fn_match_payments,
+  `match_detail.confirmed.bill_id`) cria um `fin_bank_transactions` (`bill_payment`, `reference_id` = conta) mas NÃO grava
+  `matched_transaction_id` na linha. O casamento legado do `inter-bank` (valor ± 3 dias) achava esse movimento "livre" e
+  casava o Pix seguinte de mesmo valor (freela semanal) → linha `matched` sem baixa. Agora movimento de conta já baixada
+  pelo extrato conta como usado. Descrição do pagamento na tela: `descricaoPagamento()` (raw.detalhes.descricaoPix / raw.description).
