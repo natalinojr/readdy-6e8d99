@@ -16,6 +16,7 @@ import ConfirmDialog from '../components/ConfirmDialog';
 import type { TaskRow } from '../hooks/useTarefas';
 import ItemRelatorio, { FormItem, NovoItem } from './ItemRelatorio';
 import LinksRelatorio from './LinksRelatorio';
+import EditorModelo from './EditorModelo';
 import { descreverCondicao, itensVisiveis } from './condicaoItem';
 import { useRelatorioAoVivo } from './useRelatorioAoVivo';
 import {
@@ -165,6 +166,7 @@ export default function Relatorios({ pasta, abrirId, pastas, meuId, tarefas, onO
   const [modeloId, setModeloId] = useState('');
   const [gerenciandoModelos, setGerenciandoModelos] = useState(false);
   const [excluindoModelo, setExcluindoModelo] = useState<ModeloRel | null>(null);
+  const [editandoModelo, setEditandoModelo] = useState<string | null>(null);
   const podeCriar = (pasta.access ?? 'owner') !== 'view';
 
   const carregarLista = useCallback(async () => {
@@ -198,6 +200,10 @@ export default function Relatorios({ pasta, abrirId, pastas, meuId, tarefas, onO
   const voltar = useCallback(() => { setSelecionado(null); carregarLista(); }, [carregarLista]);
   // Relatório aberto é uma camada: o voltar volta para a lista de relatórios.
   useVoltarFecha(!!selecionado, voltar, 'relatorio-aberto');
+  const fecharModelo = useCallback((salvou: boolean) => { setEditandoModelo(null); if (salvou) carregarModelos(); }, [carregarModelos]);
+  useVoltarFecha(!!editandoModelo, () => fecharModelo(false), 'modelo-aberto');
+
+  if (editandoModelo) return <EditorModelo modeloId={editandoModelo} onFechar={fecharModelo} />;
 
   if (selecionado) {
     return (
@@ -291,6 +297,7 @@ export default function Relatorios({ pasta, abrirId, pastas, meuId, tarefas, onO
                   <span className="block text-sm font-medium text-slate-700 truncate">{m.name}</span>
                   <span className="block text-xs text-slate-400">{m.items_total} {m.items_total === 1 ? 'item' : 'itens'}{m.links_total ? ` · ${m.links_total} link${m.links_total > 1 ? 's' : ''}` : ''}</span>
                 </span>
+                <button onClick={() => setEditandoModelo(m.id)} className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50" title="Editar modelo"><Pencil size={14} /></button>
                 <button onClick={() => setExcluindoModelo(m)} className="p-1.5 rounded-lg text-slate-300 hover:text-red-500 hover:bg-red-50" title="Excluir modelo"><Trash2 size={14} /></button>
               </div>
             ))}

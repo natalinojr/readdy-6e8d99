@@ -208,6 +208,23 @@ export async function enviarImagemDono(reportId: string, file: File): Promise<Re
   return enviarMultipart({ action: 'upload', report_id: reportId }, file, accessToken);
 }
 
+/** Imagem nova num modelo (fica em modelos/<id>/ no armazenamento). */
+export async function enviarImagemModelo(templateId: string, file: File): Promise<Resp<ImagemRel>> {
+  if (modoDemo()) return { ok: false, error: 'No modo demo não dá para enviar imagem' };
+  const { accessToken, error } = await resolveAccessToken();
+  if (!accessToken) return { ok: false, error: error?.message ?? 'Sessão expirada. Entre de novo.' };
+  return enviarMultipart({ action: 'upload_template', template_id: templateId }, file, accessToken);
+}
+
+/** Modelo aberto para editar: itens como no relatório, condição entre itens pelo índice. */
+export interface ModeloCompleto {
+  id: string;
+  name: string;
+  description: string | null;
+  links: LinkRel[];
+  items: Array<{ title: string; body: string | null; images: ImagemRel[]; fields?: CampoRel[]; links?: LinkRel[]; show_if?: { item_idx: number; field_id: string; values: string[] } | null }>;
+}
+
 // ── Público (link) ──
 
 export async function chamarPublico<T = Record<string, unknown>>(action: string, payload: Record<string, unknown>): Promise<Resp<T>> {
