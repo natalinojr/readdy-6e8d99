@@ -626,6 +626,19 @@ async function syncSales(admin: Admin, cfg: any, from: string, to: string) {
         payment_methods: s.payments?.methods ?? null, billing_entries: s.billingSummary?.billingEntries ?? null, raw: s, synced_at: now,
       });
     }
+    // Valor que já estava gravado não é apagado por uma resposta incompleta (2026-09-26): a API às
+    // vezes devolve o pedido sem saleGrossValue/billingSummary e o upsert zerava valor e taxas —
+    // as ações rápidas mostravam o mesmo dia com totais diferentes a cada leitura.
+    const MANTER = ['gross_bag', 'delivery_fee', 'service_fee', 'benefits_total', 'sale_balance', 'payment_methods', 'billing_entries'] as const;
+    if (rows.size) {
+      const { data: antes } = await admin.from('fin_ifood_sales').select(`sale_id, ${MANTER.join(', ')}`)
+        .eq('tenant_id', cfg.tenant_id).in('sale_id', [...rows.keys()]);
+      for (const a of (antes ?? []) as unknown as Array<Record<string, unknown>>) {
+        const novo = rows.get(String(a.sale_id));
+        if (!novo) continue;
+        for (const k of MANTER) if (novo[k] == null && a[k] != null) novo[k] = a[k];
+      }
+    }
     n += await upsertRows(admin, 'fin_ifood_sales', rows, 'tenant_id,sale_id');
     if (sales.length === 0) break;
   }
