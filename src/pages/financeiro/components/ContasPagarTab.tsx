@@ -86,7 +86,7 @@ const emptyForm = {
 
 export default function ContasPagarTab({ onNavigateToCompras }: Props) {
   const { user } = useAuth();
-  const { bills, loading, upsert, pay, remove } = useBillsPayable();
+  const { bills, loading, upsert, pay, remove, refresh } = useBillsPayable();
   const { centers } = useCostCenters();
   const { accounts: bankAccounts } = useBankAccounts();
   const { names: supplierNames } = useSuppliers();
@@ -1092,7 +1092,8 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
         <ContasPagarDREModal
           bills={bills}
           onClose={() => setShowDREModal(false)}
-          onSaved={() => { setShowDREModal(false); }}
+          // Recarrega as contas: sem isso a janela reaberta mostrava os vínculos antigos, como se não tivesse salvo.
+          onSaved={() => { setShowDREModal(false); refresh(); }}
         />
       )}
 

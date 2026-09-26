@@ -33,7 +33,11 @@ export default function ContasPagarDREModal({ bills: allBills, onClose, onSaved 
   // dupla contagem (fix P1). Pedir vínculo delas era trabalho sem efeito e
   // aparecia como "5 sem categoria DRE" em vermelho, sugerindo pendência.
   const purchaseBills = useMemo(() => allBills.filter(b => b.reference_type === 'purchase'), [allBills]);
-  const bills = useMemo(() => allBills.filter(b => b.reference_type !== 'purchase'), [allBills]);
+  // Guias da folha (DARF INSS, FGTS, IRRF — reference_type hr_payroll) também ficam de fora: a
+  // DRE conta a folha por hr_payroll, e baixa, 📥 e assistente já as dispensam de categoria
+  // (dono, 2026-09-25: "são de RH, e agora?").
+  const folhaBills = useMemo(() => allBills.filter(b => b.reference_type === 'hr_payroll'), [allBills]);
+  const bills = useMemo(() => allBills.filter(b => b.reference_type !== 'purchase' && b.reference_type !== 'hr_payroll'), [allBills]);
   const [dreCats, setDreCats] = useState<DRECat[]>([]);
   const [assignments, setAssignments] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
@@ -180,6 +184,16 @@ export default function ContasPagarDREModal({ bills: allBills, onClose, onSaved 
               <span className="font-semibold">{purchaseBills.length} conta{purchaseBills.length > 1 ? 's' : ''} de compra</span>
               {' '}não aparece{purchaseBills.length > 1 ? 'm' : ''} aqui — mercadoria entra na DRE pelo <strong>CMV</strong>,
               não por categoria de despesa. Classificá-la aqui contaria o custo duas vezes.
+            </p>
+          </div>
+        )}
+        {folhaBills.length > 0 && (
+          <div className="px-6 py-2.5 bg-indigo-50 border-b border-indigo-100 flex items-start gap-2 flex-shrink-0">
+            <i className="ri-information-line text-indigo-500 mt-0.5 flex-shrink-0" />
+            <p className="text-xs text-indigo-800">
+              <span className="font-semibold">{folhaBills.length} guia{folhaBills.length > 1 ? 's' : ''} da folha</span>
+              {' '}(INSS, FGTS, IRRF) não aparece{folhaBills.length > 1 ? 'm' : ''} aqui — já entra{folhaBills.length > 1 ? 'm' : ''} na DRE
+              pela <strong>folha de pagamento</strong> (RH), sem precisar de categoria.
             </p>
           </div>
         )}

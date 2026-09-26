@@ -24,8 +24,8 @@ vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => ({ user: { tenantId: '
 
 import ContasPagarDREModal from '@/pages/financeiro/components/ContasPagarDREModal';
 
-const conta = (id: string, desc: string, dre: string | null) =>
-  ({ id, description: desc, supplier: 'X', category: 'Outros', amount: 100, due_date: '2026-10-05', status: 'pending', reference_type: null, dre_category_id: dre }) as unknown as BillPayable;
+const conta = (id: string, desc: string, dre: string | null, ref: string | null = null) =>
+  ({ id, description: desc, supplier: 'X', category: 'Outros', amount: 100, due_date: '2026-10-05', status: 'pending', reference_type: ref, dre_category_id: dre }) as unknown as BillPayable;
 
 describe('Vincular Categorias DRE', () => {
   beforeEach(() => { h.consultas = 0; });
@@ -44,5 +44,13 @@ describe('Vincular Categorias DRE', () => {
     expect(screen.getByText('1 alteração pendente')).toBeInTheDocument();
     // Uma consulta de categorias, não um laço
     expect(h.consultas).toBe(1);
+  });
+
+  it('guias da folha (hr_payroll) não pedem categoria: entram na DRE pela folha', async () => {
+    render(<ContasPagarDREModal bills={[conta('a', 'Boleto Estação Mall', null), conta('f', 'DARF INSS (previdência) — competência 08/2026', null, 'hr_payroll')]} onClose={() => {}} onSaved={() => {}} />);
+    await screen.findAllByText('Aluguel');
+    expect(screen.queryByText(/DARF INSS/)).toBeNull();
+    expect(screen.getByText('1 sem categoria DRE')).toBeInTheDocument();
+    expect(screen.getByText(/1 guia da folha/)).toBeInTheDocument();
   });
 });
