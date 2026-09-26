@@ -6,6 +6,7 @@ import type { TaskList } from '../hooks/useTarefas';
 import { achatarArvore, montarArvorePastas } from '../lib/pastas';
 import { iniciais } from './TaskCard';
 import { useVoltarFecha } from '@/lib/voltarAndroid';
+import { confirmar } from '@/components/base/Dialogos';
 
 interface Compartilhamento {
   id: string;
@@ -115,7 +116,7 @@ export default function CompartilharPasta({ list, lists = [], meuId, write, onCl
 
   const remover = async (item: Compartilhamento) => {
     const saindo = item.user_id === meuId;
-    if (saindo && !confirm(`Sair da pasta "${list.name}"? Você deixa de ver as tarefas dela.`)) return;
+    if (saindo && !(await confirmar({ titulo: `Sair da pasta "${list.name}"?`, mensagem: 'Você deixa de ver as tarefas dela.', confirmarLabel: 'Sair', perigo: true }))) return;
     const res = await write('remove_share', { share_id: item.id });
     if (!res.success) { toast.error('Não foi possível remover', res.error); return; }
     if (saindo) { toast.success('Você saiu da pasta'); onClose(); return; }

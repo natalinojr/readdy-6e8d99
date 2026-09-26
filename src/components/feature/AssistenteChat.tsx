@@ -12,6 +12,7 @@ import { supabase } from '@/lib/supabase';
 import { SHARE_KEY, type SharePayload } from '@/lib/shareIntake';
 import { EVENTO_ASSISTENTE, getFoco, limparFocoItem, resumirFoco, setFocoItem, type PedidoAbrir } from '@/lib/assistenteFoco';
 import { useVoltarFecha } from '@/lib/voltarAndroid';
+import { confirmar } from '@/components/base/Dialogos';
 import BotaoAvisos from '@/components/feature/BotaoAvisos';
 import { ACOES, GRUPOS } from '@/components/feature/assistente/acoes';
 import { acaoLiberada, useAcessoAcoes } from '@/components/feature/assistente/acoes/acesso';
@@ -236,7 +237,7 @@ function PaymentCard({ p, onAction }: { p: Payment; onAction: (p: Payment, op: '
   const [refazendo, setRefazendo] = useState(false);
   const prepararDeNovo = async () => {
     if (refazendo) return;
-    if (incerto && !window.confirm('Você conferiu no app do Inter que esse Pix NÃO saiu? Se saiu, preparar de novo paga duas vezes.')) return;
+    if (incerto && !(await confirmar({ titulo: 'Você conferiu no app do Inter que esse Pix NÃO saiu?', mensagem: 'Se saiu, preparar de novo paga duas vezes.', confirmarLabel: 'Sim, não saiu', perigo: true }))) return;
     setRefazendo(true);
     try { await onAction(p, incerto ? 'rc' : 're'); } finally { setRefazendo(false); }
   };

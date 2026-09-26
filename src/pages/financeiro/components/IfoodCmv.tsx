@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency } from '@/lib/formatters';
 import { custoLinhaFicha } from '@/lib/unitConversion';
+import { confirmar } from '@/components/base/Dialogos';
 
 // CMV do iFood (2026-09-25): cada produto/complemento do relatório de Cardápio (fin_ifood_menu_sales,
 // identificado pelo nome) recebe uma composição de insumos (fin_ifood_cmv_items/linhas, gravada pela
@@ -341,7 +342,7 @@ function EditorComposicao({ tenantId, produto, insumos, insumoPorId, iniciais, o
 
         <div className="flex items-center gap-2 px-5 py-3 border-t border-zinc-100">
           {iniciais.length > 0 && (
-            <button onClick={() => { if (window.confirm('Remover a composição deste produto?')) salvar(true); }} disabled={salvando}
+            <button onClick={async () => { if (await confirmar({ titulo: 'Remover a composição deste produto?', confirmarLabel: 'Remover', perigo: true })) salvar(true); }} disabled={salvando}
               className="px-3 py-2 text-sm text-red-600 hover:bg-red-50 rounded-lg cursor-pointer">Remover composição</button>
           )}
           <div className="flex-1" />

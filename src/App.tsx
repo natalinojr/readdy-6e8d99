@@ -4,6 +4,7 @@ import { AppRoutes } from './router';
 import { AppProviders } from './providers/AppProviders';
 import ToastContainer from './components/base/ToastContainer';
 import AvisoAtualizacao from './components/feature/AvisoAtualizacao';
+import { DialogosHost } from './components/base/Dialogos';
 import { Suspense } from 'react';
 import { useWakeLock } from './hooks/useWakeLock';
 import { reportError } from './lib/errorReporter';
@@ -127,6 +128,7 @@ function App() {
           </Suspense>
           <ToastContainer />
           <AvisoAtualizacao />
+          <DialogosHost />
         </BrowserRouter>
       </AppProviders>
     </ErrorBoundary>

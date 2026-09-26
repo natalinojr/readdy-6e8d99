@@ -5,6 +5,7 @@ import { useToast } from '@/contexts/ToastContext';
 import { invokeWithAuth } from '@/lib/supabase';
 import { useVoltarFecha } from '@/lib/voltarAndroid';
 import { modoDemo } from '../demo/modoDemo';
+import { confirmar } from '@/components/base/Dialogos';
 
 /**
  * Conexão das Tarefas com o Microsoft 365 (OneDrive/SharePoint) — Fase 1.
@@ -115,7 +116,7 @@ export default function ConexaoMicrosoft({ onClose }: { onClose: () => void }) {
   };
 
   const desconectar = async () => {
-    if (!window.confirm('Desconectar a conta Microsoft? Os arquivos na nuvem não são apagados.')) return;
+    if (!(await confirmar({ titulo: 'Desconectar a conta Microsoft?', mensagem: 'Os arquivos na nuvem não são apagados.', confirmarLabel: 'Desconectar', perigo: true }))) return;
     const r = await chamar({ action: 'disconnect' });
     if (!r.success) { toast.error('Não foi possível desconectar', r.error); return; }
     setConexao(null);

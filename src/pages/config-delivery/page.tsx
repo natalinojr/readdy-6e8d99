@@ -8,6 +8,7 @@ import { useCardapio } from '@/contexts/CardapioContext';
 import type { MotoboyAlertEntry } from '@/contexts/SystemSettingsContext';
 import GerirEntregasTab from './GerirEntregasTab';
 import QrCodeDelivery from './QrCodeDelivery';
+import { confirmar } from '@/components/base/Dialogos';
 
 interface Neighborhood {
   id: string;
@@ -679,7 +680,7 @@ export default function ConfigDeliveryPage() {
                         </button>
                         <button
                           type="button"
-                          onClick={function () { if (window.confirm('Remover este entregador?')) alterarMotoboy(m.id, { remover: true }); }}
+                          onClick={async function () { if (await confirmar({ titulo: 'Remover este entregador?', confirmarLabel: 'Remover', perigo: true })) alterarMotoboy(m.id, { remover: true }); }}
                           className="px-2 py-1 rounded-lg text-xs font-bold bg-zinc-100 text-zinc-500 hover:bg-red-100 hover:text-red-600 transition-colors"
                         >
                           <i className="ri-delete-bin-line" />

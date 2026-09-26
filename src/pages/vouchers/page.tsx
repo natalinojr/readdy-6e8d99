@@ -4,6 +4,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import type { Voucher, VoucherStatus, VoucherType } from '@/types/vouchers';
 import EmitirVoucherModal from './components/EmitirVoucherModal';
 import VoucherDetalheModal from './components/VoucherDetalheModal';
+import { confirmar } from '@/components/base/Dialogos';
 
 const TYPE_LABELS: Record<VoucherType, { label: string; icon: string; color: string }> = {
   gift_card: { label: 'Gift Card', icon: 'ri-gift-line', color: 'text-rose-600 bg-rose-50' },
@@ -73,7 +74,7 @@ export default function VouchersPage() {
   useEffect(() => { loadVouchers(); }, [loadVouchers]);
 
   async function cancelVoucher(v: Voucher) {
-    if (!window.confirm(`Cancelar o voucher ${v.code}?`)) return;
+    if (!(await confirmar({ titulo: `Cancelar o voucher ${v.code}?`, confirmarLabel: 'Cancelar voucher', perigo: true }))) return;
     await invokeWithAuth('voucher-write', {
       body: { action: 'cancel_voucher', voucher_id: v.id, active_tenant_id: user?.tenantId },
     });

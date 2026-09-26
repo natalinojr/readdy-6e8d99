@@ -3,6 +3,7 @@ import { Store, Camera, Save } from 'lucide-react';
 import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
+import { avisar } from '@/components/base/Dialogos';
 
 interface ConfigLoja {
   nome: string;
@@ -202,7 +203,7 @@ export default function LojaTab() {
                   onChange={(e) => {
                     const file = e.target.files?.[0];
                     if (!file) return;
-                    if (file.size > 2 * 1024 * 1024) { alert('Arquivo muito grande. Máx. 2MB.'); return; }
+                    if (file.size > 2 * 1024 * 1024) { void avisar('Arquivo muito grande. Máx. 2MB.'); return; }
                     const reader = new FileReader();
                     reader.onload = (ev) => {
                       const raw = ev.target?.result;

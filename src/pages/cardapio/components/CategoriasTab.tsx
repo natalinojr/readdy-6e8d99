@@ -3,6 +3,7 @@ import FiscalFields from '@/components/feature/FiscalFields';
 import type { CategoriaFiscal } from '@/lib/fiscal';
 import { useCardapio } from '@/contexts/CardapioContext';
 import ConfirmModal from '@/components/base/ConfirmModal';
+import { confirmar } from '@/components/base/Dialogos';
 import type { Item } from '@/types/cardapio';
 
 type Canal = 'casa' | 'ambos' | 'delivery';
@@ -88,7 +89,7 @@ export default function CategoriasTab() {
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Excluir esta categoria? Os itens vinculados serão afetados.')) return;
+    if (!(await confirmar({ titulo: 'Excluir esta categoria?', mensagem: 'Os itens vinculados serão afetados.', confirmarLabel: 'Excluir', perigo: true }))) return;
     await excluirCategoria(id);
   };
 

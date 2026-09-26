@@ -3,6 +3,7 @@ import { invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatCurrency } from '@/lib/formatters';
 import BoletoEmailDecisao from './BoletoEmailDecisao';
+import { confirmar } from '@/components/base/Dialogos';
 
 // ── Caixa de boletos por e-mail ─────────────────────────────────────────────
 // O Gmail da loja é o endereço que se dá aos fornecedores e encaminha sozinho para um
@@ -91,7 +92,12 @@ export default function CaixaBoletosModal({ onClose }: Props) {
   };
 
   const trocarSegredo = async () => {
-    if (!window.confirm('Gerar um endereço novo? O atual para de funcionar na hora — você vai precisar atualizar no serviço de recebimento.')) return;
+    if (!(await confirmar({
+      titulo: 'Gerar um endereço novo?',
+      mensagem: 'O atual para de funcionar na hora — você vai precisar atualizar no serviço de recebimento.',
+      confirmarLabel: 'Gerar novo',
+      perigo: true,
+    }))) return;
     setBusy('trocar');
     const { data } = await invokeWithAuth<Resp>('contas-email', { body: { action: 'rotate_token', tenant_id: user?.tenantId } });
     setBusy(null);
@@ -100,7 +106,12 @@ export default function CaixaBoletosModal({ onClose }: Props) {
   };
 
   const desligar = async () => {
-    if (!window.confirm('Desligar a caixa? Os e-mails param de entrar. O que já virou conta continua.')) return;
+    if (!(await confirmar({
+      titulo: 'Desligar a caixa?',
+      mensagem: 'Os e-mails param de entrar. O que já virou conta continua.',
+      confirmarLabel: 'Desligar',
+      perigo: true,
+    }))) return;
     setBusy('desligar');
     await invokeWithAuth<Resp>('contas-email', { body: { action: 'disconnect', tenant_id: user?.tenantId } });
     setBusy(null);

@@ -3,6 +3,7 @@ import { X, Plus, Trash2, ListChecks } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
 import type { ChecklistTemplate } from '../hooks/useTarefas';
 import { useVoltarFecha } from '@/lib/voltarAndroid';
+import { confirmar } from '@/components/base/Dialogos';
 
 interface TemplatesManagerProps {
   templates: ChecklistTemplate[];
@@ -64,7 +65,7 @@ export default function TemplatesManager({ templates, write, onClose }: Template
                 <span className="text-[11px] text-slate-400">{tpl.items.length} itens</span>
                 <button
                   onClick={async () => {
-                    if (!confirm(`Excluir o template "${tpl.name}"?`)) return;
+                    if (!(await confirmar({ titulo: `Excluir o template "${tpl.name}"?`, confirmarLabel: 'Excluir', perigo: true }))) return;
                     const res = await write('delete_checklist_template', { template_id: tpl.id });
                     if (!res.success) toast.error('Erro ao excluir', res.error);
                   }}

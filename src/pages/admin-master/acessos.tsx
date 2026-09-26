@@ -3,6 +3,7 @@
 // fn_admin_* (só o dono passa em fn_assert_platform_admin).
 import { useMemo, useState } from 'react';
 import { supabase } from '@/lib/supabase';
+import { confirmar } from '@/components/base/Dialogos';
 import { ADMIN_MASTER_EMAIL, type AdminUser, type TenantInfo } from './modals';
 
 export const ROLE_OPTIONS = [
@@ -138,13 +139,12 @@ export function UserAccessModal({
     }
   };
 
-  const changeRole = (tenant: TenantInfo, role: string) => {
+  const changeRole = async (tenant: TenantInfo, role: string) => {
     if (!role) {
       const ultima = Object.keys(roles).length === 1;
-      const msg = ultima
-        ? `Tirar o acesso de ${user.name} à ${tenant.name}? Era a única loja: no próximo login a pessoa vai cair na tela de código de convite.`
-        : `Tirar o acesso de ${user.name} à ${tenant.name}?`;
-      if (!window.confirm(msg)) return;
+      const titulo = `Tirar o acesso de ${user.name} à ${tenant.name}?`;
+      const mensagem = ultima ? 'Era a única loja: no próximo login a pessoa vai cair na tela de código de convite.' : undefined;
+      if (!(await confirmar({ titulo, mensagem, confirmarLabel: 'Tirar acesso', perigo: true }))) return;
       run(tenant.id, () => removeUserTenant(user.id, tenant.id), () =>
         setRoles((r) => { const n = { ...r }; delete n[tenant.id]; return n; }));
       return;

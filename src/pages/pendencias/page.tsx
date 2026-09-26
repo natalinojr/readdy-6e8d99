@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { usePendencias, kindConfig, type Pendencia, type PendenciaUrgencia } from '@/contexts/PendenciasContext';
 import { useToast } from '@/contexts/ToastContext';
 import PullToRefresh from '@/components/feature/PullToRefresh';
+import { perguntar } from '@/components/base/Dialogos';
 
 /**
  * Caixa de pendências — a lista que não rola para cima.
@@ -161,8 +162,8 @@ export default function PendenciasPage() {
     }
   };
 
-  const handleDescartar = (p: Pendencia) => {
-    const motivo = window.prompt(`Por que não vai fazer?\n\n${p.titulo}`, '');
+  const handleDescartar = async (p: Pendencia) => {
+    const motivo = await perguntar({ titulo: 'Por que não vai fazer?', mensagem: p.titulo, opcional: true });
     if (motivo === null) return;          // cancelou o diálogo
     acao(p, 'descartada', motivo.trim() || undefined);
   };

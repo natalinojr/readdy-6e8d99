@@ -3,6 +3,7 @@ import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import ImportExportTemplatesModal from '@/components/ImportExportTemplatesModal';
 import { useDreGroups, type DreGroup } from '@/hooks/useDreGroups';
+import { avisar } from '@/components/base/Dialogos';
 
 async function callFinancialWrite(action: string, tenantId: string, payload: Record<string, unknown>) {
   const { data, error } = await invokeWithAuth<{ error?: string; data?: unknown }>('financial-write', {
@@ -431,7 +432,7 @@ export default function CategoriasDRETab() {
       // O backend recusa (409) apagar grupo que ainda tem categorias; antes o
       // erro só ia pro console e o clique parecia não fazer nada.
       console.error('[CategoriasDRE] erro ao excluir grupo:', e);
-      alert(e instanceof Error ? e.message : 'Não foi possível remover o grupo.');
+      await avisar(e instanceof Error ? e.message : 'Não foi possível remover o grupo.', { erro: true });
     }
   };
 

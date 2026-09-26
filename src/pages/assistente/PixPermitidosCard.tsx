@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
+import { confirmar } from '@/components/base/Dialogos';
 
 // Pix permitidos: pessoas (além dos fornecedores) para quem o assistente pode preparar Pix
 // pela conta do Inter. Ver, incluir, editar e remover exigem o PIN desta lista, criado pelo
@@ -120,7 +121,7 @@ export default function PixPermitidosCard() {
 
   const remove = async (it: Item) => {
     if (!pinRef.current) { lock(); return; }
-    if (!window.confirm(`Tirar ${it.name} dos Pix permitidos?`)) return;
+    if (!(await confirmar({ titulo: `Tirar ${it.name} dos Pix permitidos?`, confirmarLabel: 'Tirar', perigo: true }))) return;
     setBusy(true); touch();
     const r = await call('pix_allow_remove', { pin: pinRef.current, id: it.id });
     setBusy(false);

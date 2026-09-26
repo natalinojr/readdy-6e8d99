@@ -21,6 +21,7 @@ import { ContaStrip, ConjuntosTable, AreaEntregaCard } from './components/ContaE
 import { AgenteTab } from './components/Agente';
 import { PreviaModal, RankingsInline, RetencaoVideoCard, PecasCriativasCard } from './components/Criativos';
 import { AparelhoRegiaoCards, FrequenciaCard, PublicosCard, RecomendacoesCard, montarAvisos } from './components/Quebras';
+import { confirmar } from '@/components/base/Dialogos';
 
 // ─── Tipos ─────────────────────────────────────────────────────────────────
 interface AdAccount { id: string; name: string }
@@ -543,7 +544,7 @@ export default function TrafegoPagoPage() {
   // ── Desconectar ──
   const handleDisconnect = useCallback(async () => {
     if (!tenantId) return;
-    if (!window.confirm('Desconectar a conta da Meta? Os números deixarão de aparecer até reconectar.')) return;
+    if (!(await confirmar({ titulo: 'Desconectar a conta da Meta?', mensagem: 'Os números deixarão de aparecer até reconectar.', confirmarLabel: 'Desconectar', perigo: true }))) return;
     await invokeWithAuth('meta-connect', { body: { action: 'disconnect', tenant_id: tenantId } });
     setConnection(null);
     setInsights(null);
@@ -1701,7 +1702,7 @@ function CompartilharModal({
   };
 
   const revogar = async (l: ShareLink) => {
-    if (!window.confirm('Revogar este link? Quem tiver o endereço deixa de ver o relatório na hora.')) return;
+    if (!(await confirmar({ titulo: 'Revogar este link?', mensagem: 'Quem tiver o endereço deixa de ver o relatório na hora.', confirmarLabel: 'Revogar', perigo: true }))) return;
     const { data, error: err } = await invokeWithAuth<{ success: boolean; error?: string }>('meta-connect', {
       body: { action: 'revoke_share', tenant_id: tenantId, id: l.id },
     });

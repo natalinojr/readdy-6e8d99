@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
+import { confirmar } from '@/components/base/Dialogos';
 
 // ── Notas de entrada (NF-e dos fornecedores contra o CNPJ da loja, via SEFAZ) ──
 // Cada nota é conferida aqui e vira uma COMPRA (mercadoria → CMV, com as parcelas
@@ -229,7 +230,12 @@ export default function NotasEntradaTab() {
   const ignorarSelecionadas = async () => {
     const alvo = docs.filter((d) => sel.has(d.id) && d.status === 'new');
     if (alvo.length === 0) return;
-    if (!window.confirm(`Ignorar ${alvo.length} nota(s)?\n\nElas saem de "A conferir" e não viram compra nem despesa. Dá para desfazer depois no filtro "Ignoradas".`)) return;
+    if (!(await confirmar({
+      titulo: `Ignorar ${alvo.length} nota(s)?`,
+      mensagem: 'Elas saem de "A conferir" e não viram compra nem despesa. Dá para desfazer depois no filtro "Ignoradas".',
+      confirmarLabel: 'Ignorar',
+      perigo: true,
+    }))) return;
     setIgnorandoLote(true);
     let ok = 0;
     const falhas: string[] = [];
@@ -327,7 +333,12 @@ export default function NotasEntradaTab() {
                   {d.status === 'imported' && d.settlement === 'monthly' && podeLancar && (
                     <button
                       onClick={async () => {
-                        if (!window.confirm('Desfazer o vínculo com os pagamentos do mês?\n\nAs baixas são estornadas, a compra (ou despesa) desta nota é excluída, os pagamentos voltam a pendentes na Conciliação e a nota volta para "A conferir".')) return;
+                        if (!(await confirmar({
+                          titulo: 'Desfazer o vínculo com os pagamentos do mês?',
+                          mensagem: 'As baixas são estornadas, a compra (ou despesa) desta nota é excluída, os pagamentos voltam a pendentes na Conciliação e a nota volta para "A conferir".',
+                          confirmarLabel: 'Desfazer',
+                          perigo: true,
+                        }))) return;
                         setBusy(d.id);
                         const r = await callConc(tenantId, { action: 'unlink_monthly', document_id: d.id });
                         setBusy(null);
@@ -340,8 +351,13 @@ export default function NotasEntradaTab() {
                   )}
                   {d.status === 'imported' && d.auto_imported && !d.auto_import_ref && d.settlement !== 'monthly' && podeLancar && (
                     <button
-                      onClick={() => {
-                        if (window.confirm('Desfazer o lançamento automático?\n\nA compra (ou a conta a pagar) desta nota é excluída e a nota volta para "A conferir". Ela não será relançada sozinha.')) {
+                      onClick={async () => {
+                        if (await confirmar({
+                          titulo: 'Desfazer o lançamento automático?',
+                          mensagem: 'A compra (ou a conta a pagar) desta nota é excluída e a nota volta para "A conferir". Ela não será relançada sozinha.',
+                          confirmarLabel: 'Desfazer',
+                          perigo: true,
+                        })) {
                           acao(d, { action: 'undo_auto_import' }, 'Lançamento desfeito: a nota voltou para conferência');
                         }
                       }}

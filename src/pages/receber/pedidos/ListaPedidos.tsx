@@ -5,6 +5,7 @@ import { brl, dataBR } from '../api';
 import { ICONE_TIPO, ROTULO_TIPO, chamarPedidos, situacao, type Categoria, type Pedido } from './api';
 import { Categorias } from './ui';
 import JanelaPagamento, { type AvisoPagamento } from './JanelaPagamento';
+import { confirmar } from '@/components/base/Dialogos';
 
 interface Props {
   modo: 'meus' | 'aprovar';
@@ -221,7 +222,7 @@ function Pix({ chave }: { chave: string | null }) {
 function CartaoMeu({ p, tenantId, onErro, onFeito, onJanela, mostrarQuem }: { p: Pedido; tenantId: string; onErro: (m: string | null) => void; onFeito: () => void; onJanela?: (a: AvisoPagamento) => void; mostrarQuem?: boolean }) {
   const [cancelando, setCancelando] = useState(false);
   const cancelar = async () => {
-    if (!window.confirm('Cancelar este pedido?')) return;
+    if (!(await confirmar({ titulo: 'Cancelar este pedido?', confirmarLabel: 'Cancelar pedido', perigo: true }))) return;
     setCancelando(true);
     const { erro } = await chamarPedidos('cancelar', tenantId, { id: p.id });
     setCancelando(false);

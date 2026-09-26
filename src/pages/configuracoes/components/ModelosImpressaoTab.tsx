@@ -3,6 +3,7 @@ import { useImpressoras } from '@/contexts/ImpressorasContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
 import { supabase } from '@/lib/supabase';
+import { confirmar } from '@/components/base/Dialogos';
 
 interface KitchenStation {
   id: string;
@@ -302,8 +303,8 @@ function TemplateEditor({
 
       {hasCustom && (
         <button
-          onClick={() => {
-            if (window.confirm(`Resetar o modelo de ${stationLabel} para o padrão do sistema?`)) {
+          onClick={async () => {
+            if (await confirmar({ titulo: `Resetar o modelo de ${stationLabel} para o padrão do sistema?`, confirmarLabel: 'Resetar' })) {
               onReset(stationKey);
             }
           }}

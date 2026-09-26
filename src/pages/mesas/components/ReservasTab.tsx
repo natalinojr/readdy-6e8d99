@@ -4,6 +4,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
 import type { TableReservation, ReservationStatus } from '@/types/reservations';
 import NovaReservaModal from './NovaReservaModal';
+import { perguntar } from '@/components/base/Dialogos';
 
 type FilterStatus = 'all' | ReservationStatus;
 
@@ -294,8 +295,8 @@ export default function ReservasTab() {
                           </button>
                         )}
                         <button
-                          onClick={() => {
-                            const reason = window.prompt('Motivo do cancelamento (opcional):');
+                          onClick={async () => {
+                            const reason = await perguntar({ titulo: 'Motivo do cancelamento', opcional: true });
                             if (reason !== null) handleAction(r.id, 'cancel_reservation', { cancellation_reason: reason || null });
                           }}
                           disabled={!!isLoading}

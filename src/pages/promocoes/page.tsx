@@ -4,6 +4,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useAuditoria } from '@/contexts/AuditoriaContext';
 import type { PromotionRule, PromoType } from '@/types/promotions';
 import PromocaoModal from './components/PromocaoModal';
+import { confirmar } from '@/components/base/Dialogos';
 
 const PROMO_TYPE_LABELS: Record<PromoType, string> = {
   item_percent: '% em item',
@@ -105,7 +106,7 @@ export default function PromocoesPage() {
   }
 
   async function deleteRule(rule: PromotionRule) {
-    if (!window.confirm(`Excluir a promoção "${rule.name}"?`)) return;
+    if (!(await confirmar({ titulo: `Excluir a promoção "${rule.name}"?`, confirmarLabel: 'Excluir', perigo: true }))) return;
     await invokeWithAuth('order-write', {
       body: { action: 'delete_promotion_rule', promotion_id: rule.id, active_tenant_id: user?.tenantId },
     });

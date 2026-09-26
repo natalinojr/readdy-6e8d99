@@ -2,6 +2,7 @@ import { useState, useRef } from 'react';
 import { useCardapio } from '@/contexts/CardapioContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { uploadMenuImage } from '@/lib/supabase';
+import { confirmar } from '@/components/base/Dialogos';
 import type { Combo, ComboItem } from '@/types/cardapio';
 
 interface ModalState {
@@ -77,7 +78,7 @@ export default function CombosTab() {
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Excluir este combo?')) return;
+    if (!(await confirmar({ titulo: 'Excluir este combo?', confirmarLabel: 'Excluir', perigo: true }))) return;
     await excluirCombo(id);
   };
 

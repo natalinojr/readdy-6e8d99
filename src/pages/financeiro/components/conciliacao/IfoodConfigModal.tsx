@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatCurrency } from '@/lib/formatters';
+import { confirmar } from '@/components/base/Dialogos';
 
 // Integração iFood (edge ifood-financial). Dois caminhos para o mesmo resultado:
 //   • API (app distribuído do Portal do Desenvolvedor): credenciais → código de vínculo
@@ -214,7 +215,12 @@ export default function IfoodConfigModal({ onClose, onImported }: Props) {
   };
 
   const handleRemove = async () => {
-    if (!window.confirm('Remover a integração com o iFood? Os relatórios já importados continuam.')) return;
+    if (!(await confirmar({
+      titulo: 'Remover a integração com o iFood?',
+      mensagem: 'Os relatórios já importados continuam.',
+      confirmarLabel: 'Remover',
+      perigo: true,
+    }))) return;
     const d = await call('remove', { action: 'delete_config' });
     if (d) { load(); setResult({ ok: true, msg: 'Integração removida.' }); }
   };

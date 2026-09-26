@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useCardapio } from '@/contexts/CardapioContext';
 import ItemImage from '@/components/base/ItemImage';
+import { confirmar } from '@/components/base/Dialogos';
 
 type CanalDestaque = 'casa' | 'ambos' | 'delivery';
 const CANAIS_DESTAQUE: { key: CanalDestaque; icon: string; title: string }[] = [
@@ -69,7 +70,7 @@ export default function DestaquesTab() {
   };
 
   const handleRemove = async (id: string) => {
-    if (!confirm('Remover este item dos destaques?')) return;
+    if (!(await confirmar({ titulo: 'Remover este item dos destaques?', confirmarLabel: 'Remover', perigo: true }))) return;
     await removerDestaque(id);
   };
 

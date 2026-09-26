@@ -41,6 +41,7 @@ const ICON_MAP: Record<string, string> = {
 };
 import ComprovantePrint from './ComprovantePrint';
 import CobrarMaquininhaModal from '@/components/feature/CobrarMaquininhaModal';
+import { perguntar } from '@/components/base/Dialogos';
 import { printSimpleReceipt } from './CozinhaTicketPrint';
 import { queueOrderForPrint, type OrderItemForPrint, type OrderPrintDestino } from '@/lib/printOrderQueue';
 import type { PrintResult } from '@/lib/printUtils';
@@ -370,7 +371,7 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
 
   // "Dispensar": pede o motivo e some da lista (backend exige gerente/admin).
   const handleDispensarCobrancaPendente = useCallback(async (c: { id: string }) => {
-    const motivo = window.prompt('Motivo: estornado na maquininha / lançado à mão em outro pedido…');
+    const motivo = await perguntar({ titulo: 'Por que dispensar esta cobrança?', placeholder: 'Ex.: estornado na maquininha / lançado à mão em outro pedido', confirmarLabel: 'Dispensar', perigo: true });
     if (!motivo || !motivo.trim()) return;
     try {
       const { error } = await invokeWithAuth('pix-payment', {

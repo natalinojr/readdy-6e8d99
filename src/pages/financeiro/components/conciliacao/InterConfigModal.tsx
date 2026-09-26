@@ -3,6 +3,7 @@ import { invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useBankAccounts } from '@/hooks/useFinanceiro';
 import { formatCurrency } from '@/lib/formatters';
+import { confirmar } from '@/components/base/Dialogos';
 
 // Configuração da integração com o Banco Inter (API Banking, conta PJ).
 // Segredos (client_secret, certificado, chave) só sobem para a Edge `inter-bank`;
@@ -151,7 +152,12 @@ export default function InterConfigModal({ onClose, onSaved }: Props) {
 
   const handleRemove = async () => {
     if (!existing) return;
-    if (!window.confirm('Remover a integração com o Banco Inter? As linhas já importadas continuam na conciliação.')) return;
+    if (!(await confirmar({
+      titulo: 'Remover a integração com o Banco Inter?',
+      mensagem: 'As linhas já importadas continuam na conciliação.',
+      confirmarLabel: 'Remover',
+      perigo: true,
+    }))) return;
     setRemoving(true);
     const resp = await invokeWithAuth<Resp>('inter-bank', { body: { action: 'delete_config', tenant_id: user?.tenantId } });
     setRemoving(false);
@@ -185,7 +191,12 @@ export default function InterConfigModal({ onClose, onSaved }: Props) {
   };
 
   const handleRemovePay = async () => {
-    if (!window.confirm('Remover a credencial de pagamento? O assistente deixa de conseguir pagar pelo Inter.')) return;
+    if (!(await confirmar({
+      titulo: 'Remover a credencial de pagamento?',
+      mensagem: 'O assistente deixa de conseguir pagar pelo Inter.',
+      confirmarLabel: 'Remover',
+      perigo: true,
+    }))) return;
     setPaySaving(true);
     const resp = await invokeWithAuth<Resp>('inter-bank', { body: { action: 'delete_pay_credentials', tenant_id: user?.tenantId } });
     setPaySaving(false);

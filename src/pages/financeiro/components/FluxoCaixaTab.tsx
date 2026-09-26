@@ -11,6 +11,7 @@ import CalendarioFluxoCaixa from './CalendarioFluxoCaixa';
 import PrevisaoCaixaTab from './PrevisaoCaixaTab';
 import RealizadoProjetadoTab from './RealizadoProjetadoTab';
 import { usePaymentMethods } from '@/hooks/usePaymentMethods';
+import { avisar } from '@/components/base/Dialogos';
 
 const PERIODS = [
   { label: 'Hoje', value: 'today' },
@@ -112,7 +113,7 @@ export default function FluxoCaixaTab() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.payment_method_id) {
-      alert('Selecione uma forma de pagamento');
+      await avisar('Selecione uma forma de pagamento');
       return;
     }
     await insert({ ...form, amount: Number(form.amount), origin: 'manual' } as Partial<CashFlowEntry>);

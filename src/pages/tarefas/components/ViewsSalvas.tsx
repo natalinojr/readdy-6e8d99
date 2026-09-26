@@ -4,6 +4,7 @@ import { useToast } from '@/contexts/ToastContext';
 import type { TaskList, TaskViewSalva } from '../hooks/useTarefas';
 import type { Filtros, GroupBy } from '../lib/agrupamento';
 import { useVoltarFecha } from '@/lib/voltarAndroid';
+import { confirmar } from '@/components/base/Dialogos';
 
 interface ViewsSalvasProps {
   views: TaskViewSalva[];
@@ -90,7 +91,7 @@ export default function ViewsSalvas({
                   {(!v.user_id || v.user_id === meuId) && (
                     <button
                       onClick={async () => {
-                        if (!confirm(`Excluir a view "${v.name}"?`)) return;
+                        if (!(await confirmar({ titulo: `Excluir a view "${v.name}"?`, confirmarLabel: 'Excluir', perigo: true }))) return;
                         const res = await write('delete_view', { view_id: v.id });
                         if (!res.success) toast.error('Erro ao excluir', res.error);
                         else if (aplicadaId === v.id) setAplicadaId(null);

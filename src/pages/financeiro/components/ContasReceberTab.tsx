@@ -6,6 +6,7 @@ import { formatCurrency } from '@/lib/formatters';
 import type { ReceivableInstallment } from '@/types/financeiro';
 import AgingRecebiveis, { buildAgingBuckets } from '@/pages/financeiro/components/AgingRecebiveis';
 import { todayBrasilia } from '@/lib/dateUtils';
+import { confirmar } from '@/components/base/Dialogos';
 
 const PAGE_SIZE = 10;
 
@@ -407,7 +408,11 @@ export default function ContasReceberTab() {
   const handleReceive = useCallback(async (id: string) => {
     // Lança receita no fluxo de caixa e não tem estorno: um clique errado não pode passar direto
     const inst = installments.find(i => i.id === id);
-    if (!window.confirm(`Dar baixa${inst ? ` de ${formatCurrency(Number(inst.amount))}` : ''}? A entrada vai para o fluxo de caixa com a data de hoje e não dá para desfazer por aqui.`)) return;
+    if (!(await confirmar({
+      titulo: `Dar baixa${inst ? ` de ${formatCurrency(Number(inst.amount))}` : ''}?`,
+      mensagem: 'A entrada vai para o fluxo de caixa com a data de hoje e não dá para desfazer por aqui.',
+      confirmarLabel: 'Dar baixa',
+    }))) return;
     setReceivingId(id);
     await receive(id);
     setReceivingId(null);

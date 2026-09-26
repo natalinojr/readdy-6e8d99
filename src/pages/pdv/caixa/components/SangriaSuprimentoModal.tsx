@@ -4,6 +4,7 @@ import { useSessao } from '@/contexts/SessaoContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { useAuditoria } from '@/contexts/AuditoriaContext';
 import { useCaixaPing } from '@/hooks/useCaixaPing';
+import { confirmar } from '@/components/base/Dialogos';
 
 type TipoMovimento = 'sangria' | 'suprimento';
 
@@ -111,7 +112,7 @@ export default function SangriaSuprimentoModal({
   };
   const naoSaiu = async (pv: SangriaPrevista) => {
     if (!user?.tenantId || resolvendo) return;
-    if (!window.confirm(`O dinheiro da compra ${pv.supplier ?? ''} (${fmt(pv.amount)}) NÃO saiu deste caixa? O gerente vai ser avisado para conferir.`)) return;
+    if (!(await confirmar({ titulo: `O dinheiro da compra ${pv.supplier ?? ''} (${fmt(pv.amount)}) NÃO saiu deste caixa?`, mensagem: 'O gerente vai ser avisado para conferir.', confirmarLabel: 'Não saiu', perigo: true }))) return;
     setResolvendo(pv.id);
     await invokeWithAuth('order-write', { body: { action: 'sangria_prevista_nao_saiu', tenant_id: user.tenantId, previsao_id: pv.id, motivo: 'informado no PDV' } });
     setResolvendo(null);

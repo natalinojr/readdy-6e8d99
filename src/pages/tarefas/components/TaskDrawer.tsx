@@ -16,6 +16,7 @@ import { formatarDuracao, formatarRelogio, segundosRegistrados, useAgora } from 
 import CampoInput from './campos/CampoInput';
 import ComentarioInput from './ComentarioInput';
 import ConfirmDialog from './ConfirmDialog';
+import { confirmar } from '@/components/base/Dialogos';
 import EditorCelula from './EditorCelula';
 import EditorRecorrencia from './EditorRecorrencia';
 import { DICA_RECORRENCIA, descreverRecorrencia } from '../lib/recorrencia';
@@ -649,7 +650,7 @@ export default function TaskDrawer({
                       </button>
                       <button
                         onClick={async () => {
-                          if (!confirm(`Remover "${a.file_name}"?`)) return;
+                          if (!(await confirmar({ titulo: `Remover "${a.file_name}"?`, confirmarLabel: 'Remover', perigo: true }))) return;
                           await gravar('delete_attachment', { attachment_id: a.id });
                         }}
                         className="p-1.5 rounded-lg text-slate-300 hover:text-red-500 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition"

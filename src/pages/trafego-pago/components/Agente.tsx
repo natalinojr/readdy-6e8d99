@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { invokeWithAuth } from '@/lib/supabase';
 import { brl, dataHora } from '../shared';
+import { confirmar } from '@/components/base/Dialogos';
 
 type Settings = {
   enabled: boolean; mode: 'sugerir' | 'autonomo'; autonomia_criar: boolean; objetivo: 'whatsapp' | 'trafego' | 'vendas';
@@ -190,7 +191,7 @@ export function AgenteTab({ tenantId, isAdmin }: { tenantId: string; isAdmin: bo
     if (d === 'aprovar') {
       const a = actions.find((x) => x.id === id);
       const txt = a?.kind === 'create_campaign' ? 'Criar e ATIVAR esta campanha na Meta agora? Ela começa a gastar hoje.' : a?.kind === 'rotate_creative' ? 'Marcar como "vou providenciar"?' : `Executar "${KIND_LABEL[a?.kind ?? ''] ?? a?.kind}" em "${a?.target_name ?? ''}" na Meta agora?`;
-      if (!window.confirm(txt)) return;
+      if (!(await confirmar({ titulo: txt, confirmarLabel: 'Executar' }))) return;
     }
     setDeciding(id); setErro(null);
     const { data, error } = await invokeWithAuth<{ success: boolean; status: string; error?: string | null }>('meta-ads-agent', { body: { action: 'decide', tenant_id: tenantId, action_id: id, decision: d } });

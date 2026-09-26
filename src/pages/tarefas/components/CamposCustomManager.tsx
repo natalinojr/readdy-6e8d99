@@ -4,6 +4,7 @@ import { useToast } from '@/contexts/ToastContext';
 import type { CampoCustom, CampoOpcao, CampoTipo, TaskList } from '../hooks/useTarefas';
 import { CAMPO_TIPOS } from '../hooks/useTarefas';
 import { useVoltarFecha } from '@/lib/voltarAndroid';
+import { confirmar } from '@/components/base/Dialogos';
 
 interface CamposCustomManagerProps {
   campos: CampoCustom[];
@@ -117,7 +118,7 @@ export default function CamposCustomManager({ campos, list, write, onClose }: Ca
                 </button>
                 <button
                   onClick={async () => {
-                    if (!confirm(`Arquivar o campo "${campo.name}"? Os valores já preenchidos deixam de aparecer.`)) return;
+                    if (!(await confirmar({ titulo: `Arquivar o campo "${campo.name}"?`, mensagem: 'Os valores já preenchidos deixam de aparecer.', confirmarLabel: 'Arquivar', perigo: true }))) return;
                     const res = await write('update_field', { field_id: campo.id, is_archived: true });
                     if (!res.success) toast.error('Erro ao arquivar', res.error);
                   }}

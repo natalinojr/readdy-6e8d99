@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useBankAccounts } from '@/hooks/useFinanceiro';
+import { confirmar } from '@/components/base/Dialogos';
 
 // Configuração da API de Conciliação da Stone. A chave nunca volta para o front:
 // get_config devolve só has_key. Salvar valida baixando um arquivo na Stone.
@@ -75,7 +76,12 @@ export default function StoneConfigModal({ onClose, onSaved }: Props) {
   };
 
   const handleRemove = async () => {
-    if (!window.confirm('Remover a integração com a Stone? As linhas já importadas continuam na conciliação.')) return;
+    if (!(await confirmar({
+      titulo: 'Remover a integração com a Stone?',
+      mensagem: 'As linhas já importadas continuam na conciliação.',
+      confirmarLabel: 'Remover',
+      perigo: true,
+    }))) return;
     setRemoving(true);
     const resp = await invokeWithAuth<Resp>('stone-conciliation', { body: { action: 'delete_config', tenant_id: user?.tenantId } });
     setRemoving(false);

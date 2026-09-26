@@ -8,6 +8,7 @@ import { useIngredientCategories } from '@/hooks/useIngredientCategories';
 import InsumoModal from '@/pages/estoque/components/insumos/InsumoModal';
 import CategoriaCombobox from './CategoriaCombobox';
 import EntradaTardiaModal from './EntradaTardiaModal';
+import { confirmar } from '@/components/base/Dialogos';
 
 // ── Classificação de itens (base de correlações) ──
 // Cada item comprado (fornecedor + código do produto; sem código, descrição) tem UMA
@@ -295,15 +296,15 @@ export default function ItensClassificacaoTab() {
     setVinc({ rowId, ingId: id, upp: uppInicial(rows.find((x) => x.id === rowId)?.unit_label, data.unidade) });
   };
 
-  const salvarVinculo = (r: Row) => {
+  const salvarVinculo = async (r: Row) => {
     if (!vinc) return;
     const upp = Number(vinc.upp.replace(',', '.'));
     const ingUn = insMap.get(vinc.ingId)?.unit;
     if (!(upp > 0)) { toastErr('Informe a conversão', `Quanto do insumo (${un(ingUn)}) vem em 1 ${r.unit_label || 'un'} deste item.`); return; }
     if (upp === 1 && !mesmaUnidade(r.unit_label, ingUn)
-      && !window.confirm(`Confere? 1 ${r.unit_label || 'un'} de "${r.description}" = 1 ${un(ingUn)} do insumo.`)) return;
+      && !(await confirmar({ titulo: `Confere? 1 ${r.unit_label || 'un'} de "${r.description}" = 1 ${un(ingUn)} do insumo.`, confirmarLabel: 'Confirmar' }))) return;
     const aviso = avisoConversao(r.unit_label, ingUn, upp);
-    if (aviso && !window.confirm(aviso)) return;
+    if (aviso && !(await confirmar({ titulo: aviso, confirmarLabel: 'Confirmar' }))) return;
     vincular(r, vinc.ingId, upp);
   };
 
@@ -381,7 +382,7 @@ export default function ItensClassificacaoTab() {
             <i className="ri-pencil-line" />
           </button>
           <button disabled={busy}
-            onClick={() => { if (window.confirm(`Tirar o vínculo de "${r.description}" com ${ing.name}?`)) vincular(r, null); }}
+            onClick={async () => { if (await confirmar({ titulo: `Tirar o vínculo de "${r.description}" com ${ing.name}?`, confirmarLabel: 'Tirar vínculo', perigo: true })) vincular(r, null); }}
             className="w-6 h-6 flex items-center justify-center rounded text-zinc-300 hover:text-red-500 hover:bg-red-50 cursor-pointer" title="Tirar vínculo">
             <i className="ri-link-unlink" />
           </button>

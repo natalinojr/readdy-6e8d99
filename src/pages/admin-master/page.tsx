@@ -5,6 +5,7 @@ import { useState, useEffect, useCallback, useMemo, type ReactNode } from 'react
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
+import { confirmar } from '@/components/base/Dialogos';
 import { Segmented } from '@/pages/financeiro/components/dreUi';
 import {
   ADMIN_MASTER_EMAIL, fmtDate, fmtCurrency,
@@ -144,8 +145,8 @@ function LojaDetalhe({
               <button
                 title="Tirar acesso"
                 disabled={busy !== null}
-                onClick={() => {
-                  if (!window.confirm(`Tirar o acesso de ${u.name} à ${tenant.name}?`)) return;
+                onClick={async () => {
+                  if (!(await confirmar({ titulo: `Tirar o acesso de ${u.name} à ${tenant.name}?`, confirmarLabel: 'Tirar acesso', perigo: true }))) return;
                   run(u.id, () => removeUserTenant(u.id, tenant.id));
                 }}
                 className="w-7 h-7 flex items-center justify-center rounded-lg text-zinc-400 hover:text-red-500 hover:bg-red-50 cursor-pointer disabled:opacity-40"

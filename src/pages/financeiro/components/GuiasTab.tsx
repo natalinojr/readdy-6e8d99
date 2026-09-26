@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
+import { avisar } from '@/components/base/Dialogos';
 
 type Resultado = 'preparada' | 'guardada' | 'ja_paga' | 'erro' | 'nao_reconhecida';
 
@@ -116,7 +117,7 @@ export default function GuiasTab() {
   const abrirArquivo = async (id: string) => {
     const aba = window.open('', '_blank');
     const { data, error } = await invokeWithAuth<{ success: boolean; url: string }>('contabilidade', { body: { action: 'abrir_arquivo', id } });
-    if (error || !data?.url) { aba?.close(); alert(error?.message ?? 'Não consegui abrir o arquivo.'); return; }
+    if (error || !data?.url) { aba?.close(); await avisar(error?.message ?? 'Não consegui abrir o arquivo.', { erro: true }); return; }
     if (aba) aba.location.href = data.url; else window.location.href = data.url;
   };
 

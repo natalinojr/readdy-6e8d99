@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useBankAccounts } from '@/hooks/useFinanceiro';
+import { confirmar } from '@/components/base/Dialogos';
 
 // Conciliação do Mercado Pago. Diferente da Stone, aqui NÃO se digita credencial: o Access
 // Token sai da maquininha já configurada em Configurações › Formas de pagamento (mesma conta
@@ -86,7 +87,12 @@ export default function MpConfigModal({ onClose, onSaved }: Props) {
   };
 
   const handleRemove = async () => {
-    if (!window.confirm('Remover a conciliação do Mercado Pago? As linhas já importadas continuam na conciliação.')) return;
+    if (!(await confirmar({
+      titulo: 'Remover a conciliação do Mercado Pago?',
+      mensagem: 'As linhas já importadas continuam na conciliação.',
+      confirmarLabel: 'Remover',
+      perigo: true,
+    }))) return;
     setRemoving(true);
     const resp = await invokeWithAuth<Resp>('mp-conciliation', { body: { action: 'delete_config', tenant_id: user?.tenantId } });
     setRemoving(false);

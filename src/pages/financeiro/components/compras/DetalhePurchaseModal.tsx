@@ -5,6 +5,7 @@ import { SUPABASE_URL } from '@/lib/supabase';
 import { formatCurrency } from '@/lib/formatters';
 import type { Purchase } from '@/types/financeiro';
 import { ehAcrescimoNota } from '@/lib/acrescimoNota';
+import { avisar } from '@/components/base/Dialogos';
 
 interface BillInstallment {
   id: string;
@@ -215,7 +216,7 @@ export default function DetalhePurchaseModal({ purchase, installments, loadingIn
         setDeliveryError(result.error || 'Erro ao confirmar recebimento');
       } else {
         // Recebimento gravado, mas as contas a pagar não puderam ser ajustadas (ex.: novo total menor que o já pago)
-        if (result.data?.aviso) window.alert(`Recebimento confirmado.\n\n${result.data.aviso}`);
+        if (result.data?.aviso) await avisar(result.data.aviso, { titulo: 'Recebimento confirmado' });
         setShowDeliveryForm(false);
         onDeliveryConfirmed?.();
         onClose();

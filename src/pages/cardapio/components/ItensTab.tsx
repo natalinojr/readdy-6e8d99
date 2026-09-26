@@ -4,6 +4,7 @@ import type { Item } from '@/types/cardapio';
 import ItemModal from './ItemModal';
 import ItemImage from '@/components/base/ItemImage';
 import ConfirmModal from '@/components/base/ConfirmModal';
+import { confirmar } from '@/components/base/Dialogos';
 
 type Disponibilidade = 'ambos' | 'casa' | 'delivery';
 function disponibilidadeDe(item: Item): Disponibilidade {
@@ -115,7 +116,7 @@ export default function ItensTab() {
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Excluir este item? Esta ação não pode ser desfeita.')) return;
+    if (!(await confirmar({ titulo: 'Excluir este item?', mensagem: 'Esta ação não pode ser desfeita.', confirmarLabel: 'Excluir', perigo: true }))) return;
     await excluirItem(id);
   };
 

@@ -3,6 +3,7 @@ import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useAuditoria } from '@/contexts/AuditoriaContext';
 import type { Voucher, VoucherTransaction } from '@/types/vouchers';
+import { confirmar } from '@/components/base/Dialogos';
 
 interface Props {
   voucher: Voucher;
@@ -51,7 +52,7 @@ export default function VoucherDetalheModal({ voucher, onClose, onCancelled }: P
   }
 
   async function handleCancel() {
-    if (!window.confirm(`Cancelar o voucher ${voucher.code}?`)) return;
+    if (!(await confirmar({ titulo: `Cancelar o voucher ${voucher.code}?`, confirmarLabel: 'Cancelar voucher', perigo: true }))) return;
     setCancelling(true);
     try {
       await invokeWithAuth('voucher-write', {
