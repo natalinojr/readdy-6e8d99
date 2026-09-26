@@ -15,6 +15,9 @@ import CobrarMaquininhaModal from '@/components/feature/CobrarMaquininhaModal';
 
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
+/** Marca de pagamento cobrado FORA do sistema (maquininha avulsa), para não voltar à fila. */
+const MANUAL = 'manual';
+
 interface Props {
   orderId: string;
   numeroDisplay: number;
@@ -292,11 +295,23 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
   const troco = (totalPago > totalAPagar ? totalPago - totalAPagar : 0)
     + pagamentos.reduce((acc, p) => acc + (p.troco ?? 0), 0);
 
+  // Cartão aprovado pela maquininha (cobrancaId real, não MANUAL): o cliente já pagou de
+  // verdade — nenhuma ação pode fazer essa cobrança desaparecer da tela sem terminar a venda.
+  const pagamentosAprovados = pagamentos.filter((p) => p.cobrancaId && p.cobrancaId !== MANUAL);
+  const temCobrancaAprovada = pagamentosAprovados.length > 0;
+  const valorAprovadoNaMaquininha = pagamentosAprovados.reduce((acc, p) => acc + p.valor, 0);
+  const bloquearSeAprovado = useCallback(() => {
+    if (!temCobrancaAprovada) return false;
+    toastError('Tem cartão aprovado', `O cliente já pagou ${fmt(valorAprovadoNaMaquininha)} na maquininha. Termine a venda — se precisar desfazer, estorne na maquininha.`);
+    return true;
+  }, [temCobrancaAprovada, valorAprovadoNaMaquininha, toastError]);
+
   // Base do desconto manual (valor efetivo já menos o voucher)
   const baseDesconto = Math.max(0, totalEfetivo - voucherValor);
 
   async function handleValidarVoucher() {
     if (!voucherCode.trim()) return;
+    if (bloquearSeAprovado()) return;
     setVoucherLoading(true);
     setVoucherError('');
     try {
@@ -324,6 +339,7 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
   }
 
   function handleRemoverVoucher() {
+    if (bloquearSeAprovado()) return;
     setVoucherAplicado(null);
     setVoucherCode('');
     setVoucherError('');
@@ -331,6 +347,7 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
   }
 
   function handleAplicarDesconto() {
+    if (bloquearSeAprovado()) return;
     setDescontoError('');
     const n = parseFloat(descontoInput.replace(',', '.'));
     if (!n || n <= 0) { setDescontoError('Informe um valor de desconto'); return; }
@@ -343,6 +360,7 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
   }
 
   function handleRemoverDesconto() {
+    if (bloquearSeAprovado()) return;
     setDescontoManual(0);
     setDescontoAutorizadoPor(null);
     setDescontoInput('');
@@ -362,6 +380,51 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
     });
     return () => { cancelled = true; };
   }, [user?.tenantId]);
+
+  // Cartão aprovado no caixa que não entrou em venda nenhuma (tela fechou/recarregou entre a
+  // aprovação e o fim da venda). Só faz sentido consultar quando a maquininha do caixa está ligada.
+  const [cobrancasNaoUsadas, setCobrancasNaoUsadas] = useState<Array<{
+    id: string; amount: number; method: 'credit_card' | 'debit_card' | 'pix'; confirmed_at: string; order_id: string | null;
+  }>>([]);
+  useEffect(() => {
+    if (!pointPdv || !user?.tenantId) return;
+    invokeWithAuth<{ charges?: Array<{ id: string; amount: number; method: 'credit_card' | 'debit_card' | 'pix'; confirmed_at: string; order_id: string | null }> }>('pix-payment', {
+      body: { action: 'pdv_unused', tenant_id: user.tenantId },
+    }).then(({ data }) => {
+      setCobrancasNaoUsadas(data?.charges ?? []);
+    }).catch(() => undefined);
+  }, [pointPdv, user?.tenantId]);
+
+  // "Usar nesta venda": empurra a cobrança pendente como um pagamento já aprovado.
+  const handleUsarCobrancaPendente = useCallback((c: { id: string; amount: number; method: 'credit_card' | 'debit_card' | 'pix' }) => {
+    const tipo = c.method === 'debit_card' ? 'debito' : c.method === 'pix' ? 'pix' : 'credito';
+    const forma = formasAtivas.find((f) => f.tipo === tipo);
+    if (!forma) {
+      toastError('Forma indisponível', 'Não há forma de pagamento ativa para esse tipo de cobrança.');
+      return;
+    }
+    setPagamentos((prev) => [...prev, { formaId: forma.id, formaNome: forma.nome, valor: c.amount, cobrancaId: c.id }]);
+    setCobrancasNaoUsadas((prev) => prev.filter((x) => x.id !== c.id));
+  }, [formasAtivas, toastError]);
+
+  // "Dispensar": pede o motivo e some da lista (backend exige gerente/admin).
+  const handleDispensarCobrancaPendente = useCallback(async (c: { id: string }) => {
+    const motivo = window.prompt('Motivo: estornado na maquininha / lançado à mão em outro pedido…');
+    if (!motivo || !motivo.trim()) return;
+    try {
+      const { error } = await invokeWithAuth('pix-payment', {
+        body: { action: 'dismiss_unused', pix_payment_id: c.id, reason: motivo.trim(), tenant_id: user?.tenantId },
+      });
+      if (error) {
+        const code = (error as EdgeHttpError).code;
+        toastError('Não foi possível dispensar', code === 'forbidden' ? 'Só gerente ou administrador pode dispensar uma cobrança aprovada.' : error.message);
+        return;
+      }
+      setCobrancasNaoUsadas((prev) => prev.filter((x) => x.id !== c.id));
+    } catch (e) {
+      toastError('Erro ao dispensar', e instanceof Error ? e.message : String(e));
+    }
+  }, [user?.tenantId, toastError]);
 
   const handleAddPagamento = () => {
     const v = parseFloat(valorInput.replace(',', '.'));
@@ -604,6 +667,17 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
         if (vinculadoErrors.length > 0) {
           throw new Error(`Falha ao registrar pagamento vinculado: ${vinculadoErrors.join('; ')}`);
         }
+      }
+
+      // Vincula toda cobrança aprovada na maquininha ao pedido principal (fin_pix_payments.order_id) —
+      // é o que liga a venda no Mercado Pago ao pedido na hora de conferir a conciliação.
+      const idsCobrancaAprovada = pagamentosFinais
+        .filter((p) => p.cobrancaId && p.cobrancaId !== MANUAL)
+        .map((p) => p.cobrancaId as string);
+      if (idsCobrancaAprovada.length > 0) {
+        await Promise.all(idsCobrancaAprovada.map((id) =>
+          invokeWithAuth('pix-payment', { body: { action: 'attach_order', pix_payment_id: id, order_id: orderId, tenant_id: user?.tenantId } })
+            .catch(() => undefined)));
       }
 
       // Atualiza o estado local do KDS para refletir isPaid = true
@@ -860,7 +934,7 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
                 <p className="text-xs text-zinc-500 mt-0.5">{destinoDisplay}</p>
               </div>
             </div>
-            <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-zinc-200 cursor-pointer text-zinc-400 transition-colors">
+            <button onClick={() => { if (!bloquearSeAprovado()) onClose(); }} className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-zinc-200 cursor-pointer text-zinc-400 transition-colors">
               <i className="ri-close-line text-lg" />
             </button>
           </div>
@@ -974,7 +1048,7 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
               </p>
             )}
           </div>
-          <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-zinc-200 cursor-pointer text-zinc-400 transition-colors">
+          <button onClick={() => { if (!bloquearSeAprovado()) onClose(); }} className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-zinc-200 cursor-pointer text-zinc-400 transition-colors">
             <i className="ri-close-line text-lg" />
           </button>
         </div>
@@ -1185,6 +1259,40 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
             )}
           </div>
 
+          {/* Cartão aprovado e ainda não lançado numa venda */}
+          {cobrancasNaoUsadas.length > 0 && (
+            <div className="bg-amber-50 border border-amber-300 rounded-xl p-3 space-y-2">
+              <p className="text-xs font-bold text-amber-700 flex items-center gap-1.5">
+                <i className="ri-alert-line" /> Cartão aprovado e ainda não lançado
+              </p>
+              {cobrancasNaoUsadas.map((c) => (
+                <div key={c.id} className="flex items-center justify-between gap-2 bg-white border border-amber-200 rounded-lg px-3 py-2">
+                  <div className="text-xs text-zinc-700">
+                    <span className="font-bold">{fmt(c.amount)}</span>
+                    {' · '}
+                    {c.method === 'debit_card' ? 'Débito' : c.method === 'pix' ? 'Pix' : 'Crédito'}
+                    {' · '}
+                    {new Date(c.confirmed_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' })}
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      onClick={() => handleUsarCobrancaPendente(c)}
+                      className="px-2.5 py-1 bg-amber-500 hover:bg-amber-600 text-white text-[11px] font-semibold rounded-lg cursor-pointer whitespace-nowrap"
+                    >
+                      Usar nesta venda
+                    </button>
+                    <button
+                      onClick={() => handleDispensarCobrancaPendente(c)}
+                      className="text-[11px] text-zinc-400 hover:text-red-500 cursor-pointer underline whitespace-nowrap"
+                    >
+                      Dispensar
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
           {/* Formas de pagamento */}
           {loadingFormas ? (
             <div className="flex items-center justify-center py-6">
@@ -1259,12 +1367,18 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
                       {p.troco && p.troco > 0 && (
                         <span className="text-[10px] text-emerald-600 font-semibold">troco {fmt(p.troco)}</span>
                       )}
-                      <button
-                        onClick={() => setPagamentos((prev) => prev.filter((_, i) => i !== idx))}
-                        className="w-5 h-5 flex items-center justify-center text-zinc-300 hover:text-red-400 cursor-pointer transition-colors"
-                      >
-                        <i className="ri-close-line text-sm" />
-                      </button>
+                      {p.cobrancaId && p.cobrancaId !== MANUAL ? (
+                        <span className="flex items-center gap-1 text-[10px] font-semibold text-emerald-600" title="Aprovado na maquininha — não pode ser removido">
+                          <i className="ri-lock-line" /> aprovado
+                        </span>
+                      ) : (
+                        <button
+                          onClick={() => setPagamentos((prev) => prev.filter((_, i) => i !== idx))}
+                          className="w-5 h-5 flex items-center justify-center text-zinc-300 hover:text-red-400 cursor-pointer transition-colors"
+                        >
+                          <i className="ri-close-line text-sm" />
+                        </button>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -1365,6 +1479,7 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
           niveisPermitidos={['supervisao', 'gerente', 'admin']}
           tenantId={user?.tenantId ?? ''}
           onAutorizado={(autorizadoPor) => {
+            if (bloquearSeAprovado()) { setShowDescontoAuth(false); return; }
             setDescontoManual(descontoPendente);
             setDescontoAutorizadoPor(autorizadoPor);
             setShowDescontoAuth(false);

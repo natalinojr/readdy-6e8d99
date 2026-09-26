@@ -772,7 +772,47 @@ Deno.serve(async (req: Request) => {
       if (auth.error) return auth.error;
       const { data: o } = await supabase.from('orders').select('id').eq('id', orderId).eq('tenant_id', row.tenant_id).maybeSingle();
       if (!o) return json({ error: 'Pedido não encontrado' }, 404);
-      await supabase.from('fin_pix_payments').update({ order_id: orderId, updated_at: new Date().toISOString() }).eq('id', row.id).is('order_id', null);
+      const agora = new Date().toISOString();
+      await supabase.from('fin_pix_payments').update({ order_id: orderId, updated_at: agora }).eq('id', row.id).is('order_id', null);
+      // Cobrança do caixa: entrou numa venda (sai da lista de "aprovado e não lançado").
+      await supabase.from('fin_pix_payments').update({ used_at: agora }).eq('id', row.id).is('used_at', null);
+      return json({ ok: true });
+    }
+
+    // ── ACTION: pdv_unused — cartão aprovado no caixa que não entrou em venda nenhuma ──
+    // Acontece quando a tela de pagamento fecha (ou o navegador recarrega) entre a aprovação
+    // de um cartão e o fim da venda (ex.: 2º cartão recusado). O cliente pagou; a tela de
+    // pagamento mostra estas cobranças para usar na venda.
+    if (action === 'pdv_unused') {
+      const tenantId = String(body.tenant_id ?? '');
+      if (!tenantId) return json({ error: 'tenant_id é obrigatório' }, 400);
+      const auth = await requireMember(req, supabase, tenantId);
+      if (auth.error) return auth.error;
+      const desde = new Date(Date.now() - 48 * 3600 * 1000).toISOString();
+      const { data, error } = await supabase.from('fin_pix_payments')
+        .select('id, amount, method, confirmed_at, order_id')
+        .eq('tenant_id', tenantId).eq('provider', 'mp_point').eq('station', 'pdv')
+        .eq('status', 'confirmed').is('used_at', null).gte('confirmed_at', desde)
+        .order('confirmed_at', { ascending: true });
+      if (error) throw error;
+      return json({ charges: data ?? [] });
+    }
+
+    // ── ACTION: dismiss_unused — tira da lista uma cobrança já resolvida por fora ──
+    // (lançada à mão ou estornada na maquininha). Fica o registro de quem dispensou.
+    if (action === 'dismiss_unused') {
+      const row = await loadRow(supabase, body);
+      if (!row) return json({ error: 'Pagamento não encontrado' }, 404);
+      const auth = await requireMember(req, supabase, row.tenant_id);
+      if (auth.error) return auth.error;
+      // Dispensar esconde dinheiro recebido do caixa: só gerente/admin.
+      if (!isManager(auth.role)) return json({ error: 'Só gerente ou administrador pode dispensar uma cobrança aprovada.', code: 'forbidden' }, 403);
+      const motivo = String(body.reason ?? '').trim().slice(0, 200);
+      if (!motivo) return json({ error: 'Diga o motivo (ex.: estornado na maquininha).' }, 400);
+      await supabase.from('fin_pix_payments')
+        .update({ used_at: new Date().toISOString(), error: `dispensado no caixa: ${motivo} (user ${auth.userId})` })
+        .eq('id', row.id).eq('status', 'confirmed').is('used_at', null);
+      log('WARN', 'dismiss_unused', 'cobrança do caixa dispensada', { id: row.id, amount: row.amount, userId: auth.userId, motivo });
       return json({ ok: true });
     }
 
@@ -916,6 +956,7 @@ Deno.serve(async (req: Request) => {
         pix_key: 'mp_point', pix_key_type: 'provider', beneficiary_name: 'Mercado Pago Point', city: '-', emv_payload: null,
         status: 'pending', expires_at: new Date(Date.now() + POINT_EXPIRATION_MS).toISOString(),
         provider: 'mp_point', provider_payment_id: created.providerPaymentId, raw_provider: created.raw,
+        station,
       }).select('id, expires_at').single();
       if (insErr || !row) {
         // Cobrança existe na maquininha mas não aqui: cancela lá pra não receber sem rastro.

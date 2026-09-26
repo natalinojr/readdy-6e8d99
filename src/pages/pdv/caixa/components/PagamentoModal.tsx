@@ -6,7 +6,7 @@ import { useSystemSettings } from '@/hooks/useSystemSettings';
 import { useToast } from '../../../../contexts/ToastContext';
 import { useSessao } from '../../../../contexts/SessaoContext';
 import { useKDS, buildKDSPedido } from '../../../../contexts/KDSContext';
-import { supabase, invokeWithAuth } from '@/lib/supabase';
+import { supabase, invokeWithAuth, type EdgeHttpError } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useImpressoras } from '@/contexts/ImpressorasContext';
 import { usePedidosAgrupados } from '@/hooks/usePedidosAgrupados';
@@ -105,6 +105,11 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
   const [seguirAposCobranca, setSeguirAposCobranca] = useState(false);
   // cobrancas aprovadas nesta venda: depois de criar o pedido, viram vinculo pix_payment -> pedido
   const cobrancasRef = useRef<string[]>([]);
+  // Cartão aprovado na maquininha em venda anterior que nunca entrou num pedido (modal fechou,
+  // navegador recarregou etc.) — mostrado no topo para reaproveitar ou dispensar com motivo.
+  const [cobrancasNaoUsadas, setCobrancasNaoUsadas] = useState<Array<{
+    id: string; amount: number; method: 'credit_card' | 'debit_card' | 'pix'; confirmed_at: string; order_id: string | null;
+  }>>([]);
   const [sucesso, setSucesso] = useState(false);
   const [pagamentosFinal, setPagamentosFinal] = useState<PagamentoItem[]>([]);
   const [showComprovante, setShowComprovante] = useState(false);
@@ -192,6 +197,7 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
   const baseDesconto = Math.max(0, totalEfetivo - desconto);
 
   function handleAplicarDesconto() {
+    if (bloquearSeAprovado()) return;
     setDescontoError('');
     const n = parseFloat(descontoInput.replace(',', '.'));
     if (!n || n <= 0) { setDescontoError('Informe um valor de desconto'); return; }
@@ -216,6 +222,7 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
   }, [descontoManual, voucherAplicado]);
 
   function handleRemoverDesconto() {
+    if (bloquearSeAprovado()) return;
     setDescontoManual(0);
     setDescontoAutorizadoPor(null);
     setDescontoInput('');
@@ -294,6 +301,17 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
   const troco = (totalPago > totalComDesconto ? totalPago - totalComDesconto : 0)
     + pagamentos.reduce((acc, p) => acc + (p.troco ?? 0), 0);
 
+  // Cartão aprovado pela maquininha (cobrancaId real, não MANUAL): o cliente já pagou de
+  // verdade — nenhuma ação pode fazer essa cobrança desaparecer da tela sem terminar a venda.
+  const pagamentosAprovados = pagamentos.filter((p) => p.cobrancaId && p.cobrancaId !== MANUAL);
+  const temCobrancaAprovada = pagamentosAprovados.length > 0;
+  const valorAprovadoNaMaquininha = pagamentosAprovados.reduce((acc, p) => acc + p.valor, 0);
+  const bloquearSeAprovado = useCallback(() => {
+    if (!temCobrancaAprovada) return false;
+    toastError('Tem cartão aprovado', `O cliente já pagou ${formatPrice(valorAprovadoNaMaquininha)} na maquininha. Termine a venda — se precisar desfazer, estorne na maquininha.`);
+    return true;
+  }, [temCobrancaAprovada, valorAprovadoNaMaquininha, toastError]);
+
   useEffect(() => {
     if (!user?.tenantId) return;
     supabase.rpc('fn_get_payment_methods', { p_tenant_id: user.tenantId }).then(({ data }) => {
@@ -327,9 +345,52 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
     return () => { cancelled = true; };
   }, [user?.tenantId]);
 
+  // Cartão aprovado no caixa que não entrou em venda nenhuma (tela fechou/recarregou entre a
+  // aprovação e o fim da venda). Só faz sentido consultar quando a maquininha do caixa está ligada.
+  useEffect(() => {
+    if (!pointPdv || !user?.tenantId) return;
+    invokeWithAuth<{ charges?: Array<{ id: string; amount: number; method: 'credit_card' | 'debit_card' | 'pix'; confirmed_at: string; order_id: string | null }> }>('pix-payment', {
+      body: { action: 'pdv_unused', tenant_id: user.tenantId },
+    }).then(({ data }) => {
+      setCobrancasNaoUsadas(data?.charges ?? []);
+    }).catch(() => undefined);
+  }, [pointPdv, user?.tenantId]);
+
+  // "Usar nesta venda": empurra a cobrança pendente como um pagamento já aprovado.
+  const handleUsarCobrancaPendente = useCallback((c: { id: string; amount: number; method: 'credit_card' | 'debit_card' | 'pix' }) => {
+    const forma = formasPagamento.find((f) => f.tipo === c.method);
+    if (!forma) {
+      toastError('Forma indisponível', 'Não há forma de pagamento ativa para esse tipo de cobrança.');
+      return;
+    }
+    setPagamentos((prev) => [...prev, { formaId: forma.id, formaNome: forma.nome, valor: c.amount, cobrancaId: c.id }]);
+    cobrancasRef.current = [...cobrancasRef.current, c.id];
+    setCobrancasNaoUsadas((prev) => prev.filter((x) => x.id !== c.id));
+  }, [formasPagamento, toastError]);
+
+  // "Dispensar": pede o motivo e some da lista (backend exige gerente/admin).
+  const handleDispensarCobrancaPendente = useCallback(async (c: { id: string }) => {
+    const motivo = window.prompt('Motivo: estornado na maquininha / lançado à mão em outro pedido…');
+    if (!motivo || !motivo.trim()) return;
+    try {
+      const { error } = await invokeWithAuth('pix-payment', {
+        body: { action: 'dismiss_unused', pix_payment_id: c.id, reason: motivo.trim(), tenant_id: user?.tenantId },
+      });
+      if (error) {
+        const code = (error as EdgeHttpError).code;
+        toastError('Não foi possível dispensar', code === 'forbidden' ? 'Só gerente ou administrador pode dispensar uma cobrança aprovada.' : error.message);
+        return;
+      }
+      setCobrancasNaoUsadas((prev) => prev.filter((x) => x.id !== c.id));
+    } catch (e) {
+      toastError('Erro ao dispensar', e instanceof Error ? e.message : String(e));
+    }
+  }, [user?.tenantId, toastError]);
+
   // ── Voucher handlers ───────────────────────────────────────────────────────
   async function handleValidarVoucher() {
     if (!voucherCode.trim()) return;
+    if (bloquearSeAprovado()) return;
     setVoucherLoading(true);
     setVoucherError('');
     try {
@@ -367,6 +428,7 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
   }
 
   function handleRemoverVoucher() {
+    if (bloquearSeAprovado()) return;
     setVoucherAplicado(null);
     setVoucherCode('');
     setVoucherError('');
@@ -403,6 +465,11 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
   };
 
   const handleRemovePagamento = (idx: number) => {
+    // Linha com cobrança aprovada não some da lista (o botão nem aparece; isto é reforço).
+    if (pagamentos[idx]?.cobrancaId && pagamentos[idx].cobrancaId !== MANUAL) {
+      bloquearSeAprovado();
+      return;
+    }
     setPagamentos((prev) => prev.filter((_, i) => i !== idx));
   };
 
@@ -633,6 +700,12 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
           pagarPedidoExistente(orderId, pg, paymentGroupId, totalPedidosPagando),
         ),
       );
+
+      // Sem carrinho (só pedidos já lançados sendo pagos): a cobrança aprovada ainda não foi
+      // vinculada a nenhum pedido — vincularCobrancas já é no-op se o carrinho a consumiu antes.
+      if (pedidosExistentes.length > 0) {
+        void vincularCobrancas(pedidosExistentes[0].id);
+      }
 
       // Resgatar voucher se aplicado
       // Resgata sempre que o pedido existe de fato (UUID): o desconto já foi gravado no
@@ -1042,6 +1115,7 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
             {modoVincularManual && (
               <button
                 onClick={() => {
+                  if (bloquearSeAprovado()) return;
                   // Volta para a seleção de vinculação (mantém o modo manual ativo)
                   setEtapa('selecionar_conta');
                   setPagamentos([]);
@@ -1066,7 +1140,7 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
               )}
             </div>
           </div>
-          <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-zinc-200 cursor-pointer text-zinc-400">
+          <button onClick={() => { if (!bloquearSeAprovado()) onClose(); }} className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-zinc-200 cursor-pointer text-zinc-400">
             <i className="ri-close-line text-lg" />
           </button>
         </div>
@@ -1144,6 +1218,7 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
             <div className="grid grid-cols-4 md:grid-cols-2 gap-2 shrink-0">
               <button
                 onClick={() => {
+                  if (bloquearSeAprovado()) return;
                   setModoVincularManual(true);
                   setEtapa('selecionar_conta');
                   setPagamentos([]);
@@ -1180,6 +1255,39 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
           {/* ── Direita: pagamento ─────────────────────────────────────────── */}
           <div className="flex-1 md:min-h-0 flex flex-col">
           <div className="md:flex-1 md:min-h-0 md:overflow-y-auto p-4 space-y-3">
+          {/* Cartão aprovado e ainda não lançado numa venda */}
+          {cobrancasNaoUsadas.length > 0 && (
+            <div className="bg-amber-50 border border-amber-300 rounded-xl p-3 space-y-2">
+              <p className="text-xs font-bold text-amber-700 flex items-center gap-1.5">
+                <i className="ri-alert-line" /> Cartão aprovado e ainda não lançado
+              </p>
+              {cobrancasNaoUsadas.map((c) => (
+                <div key={c.id} className="flex items-center justify-between gap-2 bg-white border border-amber-200 rounded-lg px-3 py-2">
+                  <div className="text-xs text-zinc-700">
+                    <span className="font-bold">{formatPrice(c.amount)}</span>
+                    {' · '}
+                    {c.method === 'debit_card' ? 'Débito' : c.method === 'pix' ? 'Pix' : 'Crédito'}
+                    {' · '}
+                    {new Date(c.confirmed_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' })}
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      onClick={() => handleUsarCobrancaPendente(c)}
+                      className="px-2.5 py-1 bg-amber-500 hover:bg-amber-600 text-white text-[11px] font-semibold rounded-lg cursor-pointer whitespace-nowrap"
+                    >
+                      Usar nesta venda
+                    </button>
+                    <button
+                      onClick={() => handleDispensarCobrancaPendente(c)}
+                      className="text-[11px] text-zinc-400 hover:text-red-500 cursor-pointer underline whitespace-nowrap"
+                    >
+                      Dispensar
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
           {/* Payment methods */}
           <div>
             <p className="text-xs font-semibold text-zinc-500 mb-2 uppercase tracking-wider">Forma de Pagamento</p>
@@ -1253,11 +1361,17 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
                           recebido {formatPrice(p.valorRecebido ?? p.valor)} · troco {formatPrice(p.troco)}
                         </span>
                       )}
-                      <button onClick={() => handleRemovePagamento(idx)} className="text-zinc-300 hover:text-red-400 cursor-pointer">
-                        <div className="w-4 h-4 flex items-center justify-center">
-                          <i className="ri-close-line text-sm" />
-                        </div>
-                      </button>
+                      {p.cobrancaId && p.cobrancaId !== MANUAL ? (
+                        <span className="flex items-center gap-1 text-[10px] font-semibold text-emerald-600" title="Aprovado na maquininha — não pode ser removido">
+                          <i className="ri-lock-line" /> aprovado na maquininha
+                        </span>
+                      ) : (
+                        <button onClick={() => handleRemovePagamento(idx)} className="text-zinc-300 hover:text-red-400 cursor-pointer">
+                          <div className="w-4 h-4 flex items-center justify-center">
+                            <i className="ri-close-line text-sm" />
+                          </div>
+                        </button>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -1527,6 +1641,7 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
           niveisPermitidos={['supervisao', 'gerente', 'admin']}
           tenantId={user?.tenantId ?? ''}
           onAutorizado={(autorizadoPor) => {
+            if (bloquearSeAprovado()) { setShowDescontoAuth(false); return; }
             setDescontoManual(descontoPendente);
             setDescontoAutorizadoPor(autorizadoPor);
             setShowDescontoAuth(false);
