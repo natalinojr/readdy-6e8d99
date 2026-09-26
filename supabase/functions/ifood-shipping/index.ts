@@ -153,7 +153,7 @@ function pollMerchants(cfg: any): string[] {
   if (cfg?.order_enabled) for (const m of cfg.order_merchant_ids ?? []) if (m) set.add(String(m));
   return [...set];
 }
-async function call(admin: Admin, c: Ctx, method: 'GET' | 'POST', path: string, body?: unknown, extraHeaders: Record<string, string> = {}, retry = method === 'GET') {
+async function call(admin: Admin, c: Ctx, method: 'GET' | 'POST' | 'PUT' | 'DELETE', path: string, body?: unknown, extraHeaders: Record<string, string> = {}, retry = method === 'GET') {
   const run = async () => ifoodFetch(path, {
     method,
     headers: { Authorization: `Bearer ${await getToken(admin, c.cfg, c.auth)}`, Accept: 'application/json', ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}), ...extraHeaders },
@@ -847,6 +847,119 @@ Deno.serve(async (req) => {
       if (op === 'cancel') await admin.from('ifood_orders').update({ cancel_requested: true, updated_at: new Date().toISOString() }).eq('id', o.id);
       log('INFO', 'order_action', op, { order: o.ifood_order_id, tenantId });
       return json({ success: true, message: 'Enviado ao iFood — a confirmação chega no próximo polling (até 30 s).' });
+    }
+
+    // ── Loja no iFood (módulo Merchant) e avaliações (módulo Review) ──
+    // Qualquer loja do iFood autorizada nesta loja do ERPOS; mudar pausa/horário/responder = admin/gerente.
+    const merchantCtx = async () => {
+      const m = String(body.merchant_id ?? '').trim();
+      if (!m) throw new Error('Escolha a loja do iFood.');
+      const c = await ctxFor(admin, cfg, m);
+      if (!c) throw new Error('Essa loja do iFood não autorizou o app ERPOS PDV.');
+      return c;
+    };
+    const ok = (r: { status: number; ok: boolean }) => r.ok || r.status === 204;
+
+    if (action === 'merchant_overview') {
+      const c = await merchantCtx();
+      const base = `/merchant/v1.0/merchants/${c.merchantId}`;
+      const [det, st, pausas, horas] = await Promise.all([
+        call(admin, c, 'GET', base), call(admin, c, 'GET', `${base}/status`),
+        call(admin, c, 'GET', `${base}/interruptions`), call(admin, c, 'GET', `${base}/opening-hours`),
+      ]);
+      return json({
+        success: true,
+        merchant: det.ok ? det.data : null,
+        status: st.ok ? st.data : null,
+        interruptions: pausas.status === 204 ? [] : (pausas.ok ? pausas.data : null),
+        opening_hours: horas.ok ? horas.data : null,
+        errors: [det, st, pausas, horas].filter((r) => !ok(r)).map((r) => apiError(r, 'iFood')),
+      });
+    }
+
+    if (action === 'merchant_pause_create' || action === 'merchant_pause_delete' || action === 'merchant_hours_save') {
+      if (!isManager) return errResp('Só admin ou gerente altera a loja no iFood.', 403);
+      const c = await merchantCtx();
+      const base = `/merchant/v1.0/merchants/${c.merchantId}`;
+      if (action === 'merchant_pause_create') {
+        const min = Math.round(Number(body.minutes));
+        if (!Number.isFinite(min) || min < 1 || min > 7 * 24 * 60) return errResp('Duração da pausa entre 1 minuto e 7 dias.');
+        const description = cut(body.description, 255) || 'Pausa pela loja';
+        const start = new Date(Date.now() + 5_000);
+        const end = new Date(start.getTime() + min * 60_000);
+        const r = await call(admin, c, 'POST', `${base}/interruptions`, { description, start: start.toISOString(), end: end.toISOString() });
+        if (r.status === 409) return errResp('Já existe uma pausa nesse horário — remova a atual antes.');
+        if (!r.ok) return errResp(apiError(r, 'Criar pausa'));
+        log('INFO', 'merchant', 'pausa criada', { merchant: c.merchantId, min, tenantId });
+        return json({ success: true, interruption: r.data });
+      }
+      if (action === 'merchant_pause_delete') {
+        const id = String(body.interruption_id ?? '').trim();
+        if (!id) return errResp('Pausa não informada.');
+        const r = await call(admin, c, 'DELETE', `${base}/interruptions/${encodeURIComponent(id)}`);
+        if (!ok(r)) return errResp(apiError(r, 'Remover pausa'));
+        log('INFO', 'merchant', 'pausa removida', { merchant: c.merchantId, id, tenantId });
+        return json({ success: true });
+      }
+      // Horários: substituição completa (PUT). Valida antes de enviar (o iFood recusa sobreposição com 400).
+      const DIAS = ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY'];
+      const shifts = (Array.isArray(body.shifts) ? body.shifts : []).map((x: any) => ({
+        dayOfWeek: String(x.dayOfWeek ?? '').toUpperCase(), start: String(x.start ?? ''), duration: Math.round(Number(x.duration)),
+      }));
+      if (shifts.length === 0) return errResp('Informe ao menos um turno.');
+      for (const sh of shifts) {
+        if (!DIAS.includes(sh.dayOfWeek) || !/^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/.test(sh.start) || !(sh.duration > 0) || sh.duration > 24 * 60) return errResp('Turno inválido: confira dia, hora de abertura e duração.');
+        if (sh.start.length === 5) sh.start += ':00';
+      }
+      const minutos = (h: string) => Number(h.slice(0, 2)) * 60 + Number(h.slice(3, 5));
+      for (const d of DIAS) {
+        const doDia = shifts.filter((x: any) => x.dayOfWeek === d).map((x: any) => [minutos(x.start), minutos(x.start) + x.duration]).sort((a: number[], b: number[]) => a[0] - b[0]);
+        for (let i = 1; i < doDia.length; i++) if (doDia[i][0] < doDia[i - 1][1]) return errResp('Há turnos sobrepostos no mesmo dia.');
+      }
+      const r = await call(admin, c, 'PUT', `${base}/opening-hours`, { storeId: c.merchantId, shifts });
+      if (!r.ok) return errResp(apiError(r, 'Salvar horários'));
+      log('INFO', 'merchant', 'horários salvos', { merchant: c.merchantId, turnos: shifts.length, tenantId });
+      return json({ success: true, opening_hours: r.data });
+    }
+
+    if (action === 'reviews_list' || action === 'review_get' || action === 'reviews_summary') {
+      const c = await merchantCtx();
+      const base = `/review/v2.0/merchants/${c.merchantId}`;
+      if (action === 'reviews_summary') {
+        const r = await call(admin, c, 'GET', `${base}/summary`);
+        if (!r.ok) return errResp(apiError(r, 'Resumo das avaliações'));
+        return json({ success: true, summary: r.data });
+      }
+      if (action === 'review_get') {
+        const id = String(body.review_id ?? '').trim();
+        const r = await call(admin, c, 'GET', `${base}/reviews/${encodeURIComponent(id)}`);
+        if (r.status === 404) return errResp('Avaliação não encontrada.');
+        if (!r.ok) return errResp(apiError(r, 'Avaliação'));
+        return json({ success: true, review: r.data });
+      }
+      const page = Math.max(1, Math.round(Number(body.page ?? 1)) || 1);
+      const pageSize = Math.min(50, Math.max(1, Math.round(Number(body.page_size ?? 20)) || 20));
+      const q = new URLSearchParams({ page: String(page), pageSize: String(pageSize), addCount: 'true' });
+      const iso = (v: unknown, fim: boolean) => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) ? `${v}T${fim ? '23:59:59' : '00:00:00'}Z` : null);
+      const df = iso(body.date_from, false), dt = iso(body.date_to, true);
+      if (df) q.set('dateFrom', df);
+      if (dt) q.set('dateTo', dt);
+      const r = await call(admin, c, 'GET', `${base}/reviews?${q}`);
+      if (!r.ok) return errResp(apiError(r, 'Avaliações'));
+      return json({ success: true, ...(r.data ?? {}) });
+    }
+
+    if (action === 'review_answer') {
+      if (!isManager) return errResp('Só admin ou gerente responde avaliações.', 403);
+      const c = await merchantCtx();
+      const id = String(body.review_id ?? '').trim();
+      const text = String(body.text ?? '').trim();
+      if (text.length < 10 || text.length > 300) return errResp('A resposta precisa ter de 10 a 300 caracteres.');
+      const r = await call(admin, c, 'POST', `/review/v2.0/merchants/${c.merchantId}/reviews/${encodeURIComponent(id)}/answers`, { text });
+      if (r.status === 409 || r.status === 422) return errResp('Essa avaliação já foi respondida ou não aceita resposta.');
+      if (!r.ok) return errResp(apiError(r, 'Responder'));
+      log('INFO', 'review', 'respondida', { merchant: c.merchantId, id, tenantId });
+      return json({ success: true, answer: r.data });
     }
 
     // ── Configuração (admin/gerente) ──

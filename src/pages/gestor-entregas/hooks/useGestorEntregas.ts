@@ -84,6 +84,8 @@ export function useGestorEntregas() {
   const [ifoodOn, setIfoodOn] = useState(false);
   // Pedidos do iFood (módulo Order): botão "Pedidos iFood" + modo operar (homologação).
   const [ifoodPedidos, setIfoodPedidos] = useState<{ on: boolean; operar: boolean }>({ on: false, operar: false });
+  // Loja no iFood (Merchant/Review): lojas autorizadas no app ERPOS PDV + se a pessoa pode alterar.
+  const [ifoodLoja, setIfoodLoja] = useState<{ merchants: { id: string; name: string }[]; podeEditar: boolean }>({ merchants: [], podeEditar: false });
   // Entregas iFood ativas cujo pedido saiu do quadro (cancelado no ERPOS etc.) — o entregador ainda vai.
   const [ifoodForaDoQuadro, setIfoodForaDoQuadro] = useState<IfoodShippingOrder[]>([]);
 
@@ -120,7 +122,8 @@ export function useGestorEntregas() {
 
   const carregarIfoodCfg = useCallback(async () => {
     if (!tenantId) return;
-    const r = await ifoodShipping<{ config: { shipping_enabled: boolean; order_enabled?: boolean; order_mode?: string } | null }>('get_config', tenantId);
+    const r = await ifoodShipping<{ config: { shipping_enabled: boolean; order_enabled?: boolean; order_mode?: string; merchants?: { id: string; name: string }[] } | null; can_edit?: boolean }>('get_config', tenantId);
+    setIfoodLoja({ merchants: r.success ? (r.config?.merchants ?? []) : [], podeEditar: !!r.can_edit });
     setIfoodOn(!!r.success && !!r.config?.shipping_enabled);
     setIfoodPedidos({ on: !!r.success && !!r.config?.order_enabled, operar: r.config?.order_mode === 'operate' });
   }, [tenantId]);
@@ -224,6 +227,6 @@ export function useGestorEntregas() {
 
   return {
     orders, loading, erro, busy, now, autor, recarregar: () => carregar(), setStatus, liberar, fetchDetalhe, addNote,
-    tenantId, ifood, ifoodOn, ifoodForaDoQuadro, ifoodPedidos, recarregarIfoodCfg: carregarIfoodCfg,
+    tenantId, ifood, ifoodOn, ifoodForaDoQuadro, ifoodPedidos, ifoodLoja, recarregarIfoodCfg: carregarIfoodCfg,
   };
 }
