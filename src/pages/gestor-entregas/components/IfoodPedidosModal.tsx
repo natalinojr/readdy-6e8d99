@@ -145,7 +145,6 @@ export default function IfoodPedidosModal({ tenantId, operar, onClose }: Props) 
                         {p.customer_document && <p className="text-zinc-600">CPF/CNPJ na nota: {p.customer_document}</p>}
                         {p.customer_orders_count != null && <p className="text-zinc-400">{p.customer_orders_count} pedido(s) do cliente na loja</p>}
                         {p.cancel_reason && <p className="text-zinc-500">Cancelado: {p.cancel_reason}</p>}
-                        {p.dispute && <p className="text-red-600 font-semibold">Reclamação aberta pelo cliente — responda no Gestor do iFood</p>}
                       </div>
                     </div>
 
@@ -163,6 +162,7 @@ export default function IfoodPedidosModal({ tenantId, operar, onClose }: Props) 
                         </>
                       )}
                     </div>
+                    {p.dispute && <Negociacao d={p.dispute} operar={operar} busy={busy} id={p.id} onResponder={(op, reason) => acao(p, op, { reason })} />}
                     {motivos?.id === p.id && (
                       <div className="flex gap-1.5">
                         <select value={motivo} onChange={(e) => setMotivo(e.target.value)} className="flex-1 px-2 py-1.5 rounded-lg border border-zinc-200 text-xs">
@@ -188,5 +188,36 @@ function Botao({ on, b, t, cor, off }: { on: () => void; b: boolean; t: string; 
     <button disabled={b || off} onClick={on} className={`px-2.5 py-1.5 rounded-lg text-white font-bold disabled:opacity-50 ${cor}`}>
       {b ? '…' : t}
     </button>
+  );
+}
+
+// Plataforma de Negociação: o cliente pediu cancelamento/reembolso (HANDSHAKE_DISPUTE). No modo "operar" a loja
+// aceita ou recusa aqui; no modo só leitura responde no Gestor de Pedidos do iFood. Sem resposta, vale o timeoutAction.
+const ACAO_DISPUTA: Record<string, string> = { CANCELLATION: 'cancelar o pedido', PARTIAL_CANCELLATION: 'cancelar parte do pedido', PROP_REFUND: 'reembolso proporcional' };
+function Negociacao({ d, operar, busy, id, onResponder }: { d: Record<string, unknown>; operar: boolean; busy: string; id: string; onResponder: (op: string, reason?: string) => void }) {
+  const [recusa, setRecusa] = useState<string | null>(null);
+  const acaoTxt = ACAO_DISPUTA[String(d.action ?? '')] ?? String(d.action ?? 'negociação');
+  const expira = typeof d.expiresAt === 'string' ? hora(d.expiresAt) : '';
+  const fechada = Boolean(d.settled || d.answered);
+  return (
+    <div className="rounded-lg border border-red-200 bg-red-50 p-2 space-y-1.5">
+      <p className="text-red-700 font-semibold">
+        Cliente pediu: {acaoTxt}{d.message ? ` — “${String(d.message)}”` : ''}{expira && !fechada ? ` · responder até ${expira}` : ''}
+      </p>
+      {d.settled ? <p className="text-zinc-600">Negociação encerrada pelo iFood.</p>
+        : d.answered ? <p className="text-zinc-600">Respondido: {d.answered === 'accept' ? 'aceito' : 'recusado'}. Aguardando o iFood.</p>
+        : !operar ? <p className="text-zinc-600">Responda no Gestor de Pedidos do iFood.</p>
+        : recusa === null ? (
+          <div className="flex gap-1.5">
+            <Botao on={() => onResponder('dispute_accept')} b={busy === id + 'dispute_accept'} t="Aceitar" cor="bg-emerald-600" />
+            <Botao on={() => setRecusa('')} b={false} t="Recusar" cor="bg-red-600" />
+          </div>
+        ) : (
+          <div className="flex gap-1.5">
+            <input value={recusa} onChange={(e) => setRecusa(e.target.value)} maxLength={250} placeholder="Motivo da recusa" className="flex-1 px-2 py-1.5 rounded-lg border border-zinc-200 text-xs" />
+            <Botao on={() => onResponder('dispute_reject', recusa.trim())} b={busy === id + 'dispute_reject'} t="Enviar" cor="bg-red-600" off={!recusa.trim()} />
+          </div>
+        )}
+    </div>
   );
 }

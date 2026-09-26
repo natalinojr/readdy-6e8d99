@@ -3522,3 +3522,9 @@ Sem SW ativo o POST cai no Vercel e falha — por isso o destino só existe no S
   (`TIPOS_DA_CONVERSA` define quais existem em cada conversa; a lista de grupos não marca visto; `seen` nunca leva o tipo). Aviso de **turno aberto**: `trg_session_abriu` (sessão não treino) →
   `assistente-cron { run: 'opening_session' }` → conversa Financeiro, tipo `caixa`, + push; não vai para WhatsApp/Telegram.
   PEGADINHA: `run` desconhecido no assistente-cron cai na rotina geral — publicar a edge ANTES do gatilho que chama um run novo.
+- **iFood Merchant — horário da pausa sem fuso (2026-09-26)**: `POST /merchants/{id}/interruptions` aceita ISO com fuso
+  (enviamos UTC com `Z`), mas a resposta e o `GET` devolvem **UTC sem o `Z`** (`"2026-09-26T19:01:09"`). `new Date()` no
+  navegador leria como hora local (3 h adiantado) → `IfoodLojaModal` acrescenta `Z` antes de formatar. Na loja de teste o
+  `/status` continua "Loja aberta" com pausa ativa e o iFood **não** recusou pausa sobreposta (sem 409); a lista de pausas
+  aparece com alguns segundos de atraso. Review: `/summary` responde **404 "Summary not found"** em loja sem avaliação
+  (a edge devolve resumo zerado). Teste da edge sem login: `net.http_post` no SQL com `x-internal-key` lido do vault.
