@@ -63,8 +63,9 @@ export function useConsumoPorLanche(dateFrom: string, dateTo: string) {
             `)
             .eq('tenant_id', tenantId!)
             .filter('orders.status', 'neq', 'cancelled')
-            .filter('orders.created_at', 'gte', `${dateFrom}T00:00:00`)
-            .filter('orders.created_at', 'lte', `${dateTo}T23:59:59`)
+            // Limites no horário local (Brasília): texto sem fuso era lido como UTC (3 h de deslocamento)
+            .filter('orders.created_at', 'gte', new Date(`${dateFrom}T00:00:00`).toISOString())
+            .filter('orders.created_at', 'lte', new Date(`${dateTo}T23:59:59`).toISOString())
             .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
 
           if (pageErr) throw pageErr;
@@ -80,7 +81,7 @@ export function useConsumoPorLanche(dateFrom: string, dateTo: string) {
         }
 
         // Insumos das opções escolhidas (adicionais ligados ao estoque), por item vendido
-        const opcoesPorVenda = await insumosDasOpcoesNoPeriodo(tenantId!, `${dateFrom}T00:00:00`, `${dateTo}T23:59:59`);
+        const opcoesPorVenda = await insumosDasOpcoesNoPeriodo(tenantId!, new Date(`${dateFrom}T00:00:00`).toISOString(), new Date(`${dateTo}T23:59:59`).toISOString());
 
         // 2) Agregar por item_id
         const itemAgg = new Map<string, { nome: string; qtd: number; pedidos: Set<string>; opcoes: Map<string, { qtd: number; custo: number; unidade: string }> }>();

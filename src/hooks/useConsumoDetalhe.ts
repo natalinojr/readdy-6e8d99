@@ -36,6 +36,8 @@ function getBucket(type: string, reason: string | null): { bucket: 'vendas' | 'p
   if (type === 'in' || type === 'transfer_in') return { bucket: 'entrada', isConsumo: false };
   const r = (reason || '').toLowerCase();
   if (type === 'theoretical_out') return { bucket: 'vendas', isConsumo: true };
+  if (type === 'loss') return { bucket: 'perda', isConsumo: true };
+  if (r.startsWith('correção de conversão')) return { bucket: 'ajuste', isConsumo: false };
   if (
     r.includes('perda') ||
     r.includes('descarte') ||
@@ -272,7 +274,8 @@ export function useConsumoDetalhe(
         // 7) Agrupar por dia
         const byDay = new Map<string, typeof consumoMovs>();
         for (const m of consumoMovs) {
-          const dateKey = m.created_at.slice(0, 10);
+          // Dia no horário local (Brasília): o slice do ISO era o dia em UTC — venda das 21h caía no dia seguinte
+          const dateKey = new Date(m.created_at).toLocaleDateString('sv-SE');
           const prev = byDay.get(dateKey) ?? [];
           prev.push(m);
           byDay.set(dateKey, prev);

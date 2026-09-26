@@ -74,8 +74,8 @@ const SUB_TABS: { id: SubTab; label: string; icon: React.ReactNode }[] = [
 
 export default function ConsumoIngredientesTab({ periodo }: Props) {
   const { user } = useAuth();
-  const hoje = new Date().toISOString().split('T')[0];
-  const trinta = new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0];
+  const hoje = new Date().toLocaleDateString('sv-SE');
+  const trinta = new Date(Date.now() - 30 * 86400000).toLocaleDateString('sv-SE');
 
   const [from, setFrom] = useState(trinta);
   const [toDate, setToDate] = useState(hoje);
@@ -351,8 +351,10 @@ export default function ConsumoIngredientesTab({ periodo }: Props) {
                 <tbody className="divide-y divide-zinc-50">
                   {filtrados.map((item) => {
                     const exp = expand.has(String(item.id));
-                    const crit = !item.semCadastro && Number(item.diasAteZerar) <= 3;
-                    const baixo = !item.semCadastro && Number(item.diasAteZerar) <= 7;
+                    // Sem venda no período (diasAteZerar null) não é crítico — antes Number(null) = 0 marcava CRÍTICO
+                    const temPrevisao = !item.semCadastro && item.diasAteZerar !== null;
+                    const crit = temPrevisao && Number(item.diasAteZerar) <= 3;
+                    const baixo = temPrevisao && Number(item.diasAteZerar) <= 7;
                     return (
                       <>
                         <tr
@@ -409,7 +411,7 @@ export default function ConsumoIngredientesTab({ periodo }: Props) {
                               <span
                                 className={`relative group cursor-help font-semibold ${crit ? 'text-red-600' : baixo ? 'text-amber-600' : 'text-emerald-600'}`}
                               >
-                                {Number(item.diasAteZerar)}d
+                                {item.estoqueAtual <= 0 ? 'zerado' : `${Number(item.diasAteZerar)}d`}
                                 {/* tooltip abaixo, alinhado à direita */}
                                 <span className="absolute top-full right-0 mt-1 w-52 bg-zinc-800 text-white text-[10px] leading-relaxed rounded-lg px-2.5 py-2 opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50 shadow-lg whitespace-normal text-left font-normal">
                                   <span className="font-semibold text-amber-300 block mb-1">Como foi calculado:</span>
