@@ -62,7 +62,7 @@ export interface StatementImport {
   match_confidence?: 'exato' | 'forte' | 'provavel' | null;
   match_detail?: Record<string, unknown> | null;
   /** Pagamento baixado numa conta a pagar: a classificação vem da conta (anexada por list_statement_imports) */
-  classificacao?: { bill_id: string; tipo: 'compra' | 'despesa'; categoria: string | null; centro_custo: string | null } | null;
+  classificacao?: { bill_id: string; tipo: 'compra' | 'despesa'; categoria: string | null; centro_custo: string | null; descricao?: string | null } | null;
   reconciled: boolean;
   reconciled_at?: string;
   created_at: string;
@@ -87,6 +87,19 @@ export function horaTransacao(s: Pick<StatementImport, 'raw'> & { transaction_da
   }
   const m = /[ T](\d{2}):(\d{2})/.exec(String(raw.dataInclusao ?? ''));
   return m ? `${m[1]}:${m[2]}` : null;
+}
+
+/**
+ * Descrição que veio no registro do pagamento, além do título da linha: a mensagem do Pix no Inter
+ * (raw.detalhes.descricaoPix) ou a descrição do pagamento no Mercado Pago (raw.description).
+ * Não repete quando o texto já está na descrição da linha.
+ */
+export function descricaoPagamento(s: Pick<StatementImport, 'raw' | 'description'>): string | null {
+  const raw = s.raw ?? {};
+  const det = raw.detalhes && typeof raw.detalhes === 'object' ? raw.detalhes as Record<string, unknown> : {};
+  const txt = String(det.descricaoPix ?? raw.description ?? '').trim();
+  if (!txt) return null;
+  return (s.description ?? '').toLowerCase().includes(txt.toLowerCase()) ? null : txt;
 }
 
 export interface BillMatch {

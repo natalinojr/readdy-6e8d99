@@ -297,13 +297,23 @@ async function syncTenant(admin: Admin, tenantId: string, opts: { days?: number;
       const dates = inserted.map((r) => r.transaction_date as string).sort();
       const dFrom = addDays(dates[0], -MATCH_DAYS);
       const dTo = addDays(dates[dates.length - 1], MATCH_DAYS);
-      const [{ data: bts }, { data: cfs }, { data: used }, { data: rules }] = await Promise.all([
-        admin.from('fin_bank_transactions').select('id, transaction_date, amount, type, description').eq('tenant_id', tenantId).eq('bank_account_id', cfg.bank_account_id).gte('transaction_date', dFrom).lte('transaction_date', dTo).limit(5000),
+      const [{ data: bts }, { data: cfs }, { data: used }, { data: rules }, { data: baixadas }] = await Promise.all([
+        admin.from('fin_bank_transactions').select('id, transaction_date, amount, type, description, reference_type, reference_id').eq('tenant_id', tenantId).eq('bank_account_id', cfg.bank_account_id).gte('transaction_date', dFrom).lte('transaction_date', dTo).limit(5000),
         admin.from('fin_cash_flow').select('id, date, amount, type, description').eq('tenant_id', tenantId).gte('date', dFrom).lte('date', dTo).limit(5000),
         admin.from('fin_bank_statement_imports').select('matched_transaction_id').eq('tenant_id', tenantId).not('matched_transaction_id', 'is', null).gte('transaction_date', dFrom).lte('transaction_date', dTo).limit(5000),
         admin.from('fin_reconciliation_rules').select('id, pattern, match_type, category, cost_center_id, transaction_type, bank_account_id, match_count').eq('tenant_id', tenantId).eq('is_active', true),
+        // Linhas que já deram baixa numa conta (fn_match_payments): o movimento bancário dessa baixa já tem
+        // linha no extrato. Sem isso, o Pix seguinte de mesmo valor (freela toda semana) casava com o
+        // pagamento anterior e ficava "conciliado" sem baixa (2026-09-25).
+        admin.from('fin_bank_statement_imports').select('match_kind, match_ref_id, reconciled, match_detail').eq('tenant_id', tenantId).eq('reconciled', true).not('match_kind', 'is', null).gte('transaction_date', addDays(dFrom, -MATCH_DAYS)).lte('transaction_date', addDays(dTo, MATCH_DAYS)).limit(5000),
       ]);
       const usedIds = new Set((used ?? []).map((u) => u.matched_transaction_id as string));
+      const billsBaixadas = new Set((baixadas ?? []).map((r) =>
+        (r.match_detail as { confirmed?: { bill_id?: string } } | null)?.confirmed?.bill_id
+        ?? (r.match_kind === 'payable' ? r.match_ref_id : null)).filter(Boolean) as string[]);
+      for (const b of bts ?? []) {
+        if (b.reference_type === 'bill_payment' && billsBaixadas.has(String(b.reference_id))) usedIds.add(b.id);
+      }
       type Cand = { id: string; date: string; amount: number; type: 'credit' | 'debit'; source: 'bank_transaction' | 'cash_flow'; description: string };
       const cands: Cand[] = [
         ...(bts ?? []).map((b) => ({ id: b.id, date: b.transaction_date, amount: Number(b.amount), type: (b.type === 'credit' ? 'credit' : 'debit') as 'credit' | 'debit', source: 'bank_transaction' as const, description: b.description })),

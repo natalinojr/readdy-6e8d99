@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useBankAccounts } from '@/hooks/useFinanceiro';
-import { useConciliacao, horaTransacao } from '@/hooks/useConciliacao';
+import { useConciliacao, horaTransacao, descricaoPagamento } from '@/hooks/useConciliacao';
 import { parseOFX, parseCSV, findMatches } from '@/utils/ofxParser';
 import { formatCurrency } from '@/lib/formatters';
 import RegrasConciliacaoModal from './conciliacao/RegrasConciliacaoModal';
@@ -965,10 +965,11 @@ export default function ConciliacaoTab() {
     let result = [...imports];
     if (search.trim()) {
       const q = search.toLowerCase();
-      result = result.filter(s =>
-        s.description?.toLowerCase().includes(q) ||
-        s.category?.toLowerCase().includes(q)
-      );
+      // Busca também na descrição do registro do pagamento (conta paga / vínculo), na contraparte e na observação
+      result = result.filter(s => [
+        s.description, descricaoPagamento(s), s.category, s.classificacao?.categoria, s.classificacao?.descricao,
+        s.match_detail?.label, s.counterpart_name, s.notes,
+      ].some(t => t != null && String(t).toLowerCase().includes(q)));
     }
     if (filterStatus !== 'all') result = result.filter(s => situacao(s) === filterStatus);
     if (filterType !== 'all') result = result.filter(s => s.transaction_type === filterType);
@@ -1397,7 +1398,7 @@ export default function ConciliacaoTab() {
           <input
             value={search}
             onChange={e => { setSearch(e.target.value); setPage(1); }}
-            placeholder="Buscar por descrição ou categoria..."
+            placeholder="Buscar na descrição, pagamento ou categoria..."
             className="w-full pl-9 pr-3 py-2 border border-zinc-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white"
           />
         </div>
@@ -1649,9 +1650,19 @@ export default function ConciliacaoTab() {
                           </span>
                         </div>
                         <p className="text-sm font-medium text-zinc-800 break-words line-clamp-2">{s.description || '—'}</p>
+                        {descricaoPagamento(s) && (
+                          <p className="text-xs text-zinc-500 italic mt-0.5 break-words line-clamp-2">
+                            <i className="ri-chat-quote-line text-xs not-italic" /> {descricaoPagamento(s)}
+                          </p>
+                        )}
                         {temVinculo && (
                           <p className={'text-xs mt-0.5 break-words line-clamp-2 ' + (s.reconciled ? 'text-emerald-600' : 'text-blue-600')}>
                             <i className="ri-links-line text-xs" /> {s.reconciled ? 'Pago: ' : 'Sugestão: '}{String(det?.label ?? '')}
+                          </p>
+                        )}
+                        {!temVinculo && s.classificacao?.descricao && (
+                          <p className="text-xs mt-0.5 break-words line-clamp-2 text-emerald-600">
+                            <i className="ri-links-line text-xs" /> Pago: {s.classificacao.descricao}
                           </p>
                         )}
                         {s.notes && <p className="text-xs text-amber-500 mt-0.5 break-words line-clamp-1"><i className="ri-sticky-note-line text-xs" /> {s.notes}</p>}
@@ -1743,6 +1754,11 @@ export default function ConciliacaoTab() {
                       </td>
                       <td className="px-4 py-3 max-w-xs">
                         <p className="text-xs font-medium text-zinc-800 truncate">{s.description || '—'}</p>
+                        {descricaoPagamento(s) && (
+                          <p className="text-xs text-zinc-500 italic mt-0.5 truncate" title={descricaoPagamento(s) ?? ''}>
+                            <i className="ri-chat-quote-line text-xs not-italic" /> {descricaoPagamento(s)}
+                          </p>
+                        )}
                         {s.notes && (
                           <p className="text-xs text-amber-500 mt-0.5 truncate"><i className="ri-sticky-note-line text-xs" /> {s.notes}</p>
                         )}
@@ -1752,6 +1768,11 @@ export default function ConciliacaoTab() {
                             {!s.reconciled && s.match_detail.auto_import ? ' · nota será importada' : ''}
                             {s.reconciled && (s.match_detail.confirmed as Record<string, unknown> | undefined)?.auto_imported ? ' · nota importada automaticamente' : ''}
                             {Number(s.match_detail.juros ?? 0) > 0 ? ' · juros ' + fmtCur(Number(s.match_detail.juros)) : ''}
+                          </p>
+                        )}
+                        {s.classificacao?.descricao && !(s.match_detail && (s.match_kind === 'payable' || s.match_kind === 'inbound_doc' || s.match_kind === 'payroll' || s.match_kind === 'rule')) && (
+                          <p className="text-xs mt-0.5 truncate text-emerald-600" title={s.classificacao.descricao}>
+                            <i className="ri-links-line text-xs" /> Pago: {s.classificacao.descricao}
                           </p>
                         )}
                       </td>

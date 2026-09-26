@@ -1325,10 +1325,10 @@ Deno.serve(async (req) => {
           ?? (r.match_kind === 'payable' && r.reconciled ? r.match_ref_id ?? null : null);
         const billIds = [...new Set((rows as SiRow[]).map(billDe).filter((x): x is string => Boolean(x)))];
         if (billIds.length > 0) {
-          const bills: Array<{ id: string; category: string | null; reference_type: string | null; dre_category_id: string | null; cost_center_id: string | null }> = [];
+          const bills: Array<{ id: string; description: string | null; supplier: string | null; category: string | null; reference_type: string | null; dre_category_id: string | null; cost_center_id: string | null }> = [];
           for (let i = 0; i < billIds.length; i += 200) {
             const { data: b } = await supabase.from('fin_accounts_payable')
-              .select('id, category, reference_type, dre_category_id, cost_center_id')
+              .select('id, description, supplier, category, reference_type, dre_category_id, cost_center_id')
               .eq('tenant_id', tenant_id).in('id', billIds.slice(i, i + 200));
             bills.push(...(b ?? []));
           }
@@ -1351,6 +1351,9 @@ Deno.serve(async (req) => {
               tipo: compra ? 'compra' : 'despesa',
               categoria: compra ? 'Compra (CMV)' : (b.dre_category_id ? dreNome.get(b.dre_category_id) ?? null : null) ?? b.category ?? null,
               centro_custo: b.cost_center_id ? ccNome.get(b.cost_center_id) ?? null : null,
+              // Descrição do registro do pagamento (a conta que recebeu a baixa): a tela mostra e busca por ela
+              descricao: [b.description, b.supplier && !String(b.description ?? '').toLowerCase().includes(String(b.supplier).toLowerCase()) ? b.supplier : null]
+                .filter(Boolean).join(' · ') || null,
             };
           }
         }
