@@ -2424,15 +2424,26 @@ Deno.serve(async (req) => {
       const diaSP = (iso: string) => new Date(iso).toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
       const desde = diaSP(String(p.sent_at ?? p.paid_at ?? p.created_at));
       const ateIso = new Date(Date.parse(`${desde}T12:00:00-03:00`) + 6 * 86400_000).toISOString().slice(0, 10);
-      const { data: cands } = await admin.from('fin_bank_statement_imports').select('id, amount, transaction_date, match_kind, match_ref_id, match_detail, raw')
-        .eq('tenant_id', p.tenant_id).eq('transaction_type', 'debit').eq('status', 'pending').eq('reconciled', false)
+      // 'matched' sem reconciled = casamento AUTOMÁTICO do sync com um movimento bancário (ex.: a baixa do
+      // Pix anterior de mesmo valor). Só vale pelo E2E: aí o débito é deste Pix com certeza e o casamento
+      // automático é solto antes de confirmar. Antes a baixa só olhava 'pending', não achava a linha e
+      // desistia depois de 15 tentativas (Pix da Marcelle, 25/09).
+      const { data: cands } = await admin.from('fin_bank_statement_imports').select('id, status, amount, transaction_date, match_kind, match_ref_id, match_detail, raw')
+        .eq('tenant_id', p.tenant_id).eq('transaction_type', 'debit').in('status', ['pending', 'matched']).eq('reconciled', false)
         .gte('transaction_date', desde).lte('transaction_date', ateIso);
       // deno-lint-ignore no-explicit-any
       const mesmoValor = (cands ?? []).filter((r: any) => Math.abs(Math.abs(Number(r.amount)) - Number(p.amount)) < 0.01);
       // deno-lint-ignore no-explicit-any
       let row: any = e2e ? mesmoValor.find((r: any) => String(r.raw?.detalhes?.endToEndId ?? '').trim() === e2e) : undefined;
       // deno-lint-ignore no-explicit-any
-      if (!row && !e2e) row = mesmoValor.find((r: any) => r.match_kind === 'payable' && r.match_ref_id === p.bill_id) ?? (mesmoValor.length === 1 ? mesmoValor[0] : undefined);
+      if (!row && !e2e) row = mesmoValor.filter((r: any) => r.status === 'pending').find((r: any) => r.match_kind === 'payable' && r.match_ref_id === p.bill_id)
+        // deno-lint-ignore no-explicit-any
+        ?? (mesmoValor.filter((r: any) => r.status === 'pending').length === 1 ? mesmoValor.find((r: any) => r.status === 'pending') : undefined);
+      if (row?.status === 'matched') {
+        await admin.from('fin_bank_statement_imports').update({ status: 'pending', matched_transaction_id: null, matched_at: null, notes: null })
+          .eq('id', row.id).eq('reconciled', false);
+        log('INFO', 'baixa: débito solto do casamento automático errado', { payment: pid, row: row.id });
+      }
       if (row && (row.match_kind !== 'payable' || row.match_ref_id !== p.bill_id)) {
         // Solta sugestões dessa conta em OUTROS débitos (ainda não conciliados) e aponta o certo.
         await admin.from('fin_bank_statement_imports').update({ match_kind: null, match_ref_id: null, match_confidence: null })
