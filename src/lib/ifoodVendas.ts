@@ -26,6 +26,13 @@ export function portalBucket(e: PortalEntry) {
 }
 
 interface EntryRow extends PortalEntry { order_id: string | null; order_created_at: string | null }
+interface LiveRow {
+  ifood_order_id: string;
+  ordered_at: string | null;
+  status: string;
+  delivered_by: string | null;
+  total: { subTotal?: number; deliveryFee?: number } | null;
+}
 
 export interface IfoodVendas {
   /** YYYY-MM-DD (Brasília) → valor das vendas e pedidos do dia */
@@ -34,13 +41,16 @@ export interface IfoodVendas {
   porHora: Record<string, number>;
   total: number;
   pedidos: number;
+  /** Pedidos que vieram do módulo Pedidos do iFood (ao vivo) por ainda não estarem na conciliação importada */
+  pedidosAoVivo: number;
   error: string | null;
 }
 
 /**
  * Valor das vendas do iFood por dia do PEDIDO (data_criacao_pedido_associado), somando todas as lojas
- * iFood importadas do tenant. Pedido cancelado entra e sai no mesmo dia (as linhas de cancelamento são do
- * mesmo pedido), então só conta como pedido quem terminou com valor positivo.
+ * iFood importadas do tenant, completado pelos pedidos ao vivo ainda não conciliados. Pedido cancelado entra
+ * e sai no mesmo dia (as linhas de cancelamento são do mesmo pedido), então só conta como pedido quem terminou
+ * com valor positivo.
  */
 export async function fetchIfoodVendas(tenantId: string, fromISO: string, toISO: string): Promise<IfoodVendas> {
   const res = await fetchAllRows<EntryRow>((from, to) => supabase
@@ -52,7 +62,7 @@ export async function fetchIfoodVendas(tenantId: string, fromISO: string, toISO:
     .lte('order_created_at', toISO)
     .order('order_created_at', { ascending: true })
     .range(from, to));
-  const vazio: IfoodVendas = { porDia: {}, porHora: {}, total: 0, pedidos: 0, error: res.error?.message ?? null };
+  const vazio: IfoodVendas = { porDia: {}, porHora: {}, total: 0, pedidos: 0, pedidosAoVivo: 0, error: res.error?.message ?? null };
   if (res.error) return vazio;
 
   const porPedido = new Map<string, { at: string; valor: number }>();
@@ -63,7 +73,28 @@ export async function fetchIfoodVendas(tenantId: string, fromISO: string, toISO:
     porPedido.set(r.order_id, p);
   }
 
-  const out: IfoodVendas = { porDia: {}, porHora: {}, total: 0, pedidos: 0, error: null };
+  // Pedidos ao vivo (módulo Pedidos do iFood, ifood_orders) que ainda não estão na conciliação importada —
+  // a conciliação chega dias depois, então sem isso "Hoje" e a sessão aberta ficam sem iFood.
+  // Valor das vendas ≈ itens (subTotal) + taxa de entrega só quando a própria loja entrega: é o que sobra no
+  // Portal depois das retenções (entrega iFood, taxa de serviço) e somando os subsídios de promoção.
+  let pedidosAoVivo = 0;
+  const vivos = await fetchAllRows<LiveRow>((from, to) => supabase
+    .from('ifood_orders')
+    .select('ifood_order_id, ordered_at, status, delivered_by, total')
+    .eq('tenant_id', tenantId)
+    .not('ordered_at', 'is', null)
+    .gte('ordered_at', fromISO)
+    .lte('ordered_at', toISO)
+    .order('ordered_at', { ascending: true })
+    .range(from, to));
+  for (const o of vivos.rows ?? []) {
+    if (!o.ordered_at || o.status === 'cancelled' || porPedido.has(o.ifood_order_id)) continue;
+    const valor = Number(o.total?.subTotal ?? 0) + (o.delivered_by === 'MERCHANT' ? Number(o.total?.deliveryFee ?? 0) : 0);
+    porPedido.set(o.ifood_order_id, { at: o.ordered_at, valor });
+    pedidosAoVivo += 1;
+  }
+
+  const out: IfoodVendas = { porDia: {}, porHora: {}, total: 0, pedidos: 0, pedidosAoVivo, error: null };
   for (const p of porPedido.values()) {
     const quando = new Date(p.at);
     const dia = quando.toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });

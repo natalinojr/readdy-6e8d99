@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import {
   BarChart, Bar,
   AreaChart, Area,
@@ -112,8 +113,13 @@ export default function VisaoGeralTab({ periodo, externalSession, onSessionChang
 
   const { data: extras, loading: extrasLoading } = useVisaoGeralExtras(periodo);
 
-  // iFood: pedidos do relatório de conciliação importado (Financeiro › iFood) — só no modo calendário.
-  const { data: ifood } = useIfoodVendas(isSessao ? '' : periodo);
+  // iFood: conciliação importada (Financeiro › iFood) + pedidos ao vivo ainda não conciliados.
+  // No modo sessão, os pedidos feitos entre a abertura e o fechamento (ou agora, se aberta) da sessão.
+  // (o "agora" da sessão aberta fica fixo até trocar de sessão; o botão Atualizar remonta a aba)
+  const sessaoIntervalo = useMemo(() => (isSessao && selectedSession
+    ? { from: selectedSession.opened_at, to: selectedSession.closed_at ?? new Date().toISOString() }
+    : null), [isSessao, selectedSession?.id, selectedSession?.opened_at, selectedSession?.closed_at]); // eslint-disable-line react-hooks/exhaustive-deps
+  const { data: ifood } = useIfoodVendas(isSessao ? '' : periodo, sessaoIntervalo);
   const { data: ifoodAnt } = useIfoodVendas(isSessao ? '' : periodoAnterior);
 
   const report = isSessao ? reportSessao : reportCalendario;
@@ -144,7 +150,7 @@ export default function VisaoGeralTab({ periodo, externalSession, onSessionChang
   }
 
   // Modo sessão selecionada mas sem dados
-  if (isSessao && selectedSession && !hasRealData && !loading) {
+  if (isSessao && selectedSession && !hasRealData && !loading && !(ifood && ifood.pedidos > 0)) {
     return (
       <div className="flex flex-col items-center justify-center py-20 text-zinc-400">
         <div className="w-16 h-16 flex items-center justify-center bg-zinc-100 rounded-2xl mb-4">
@@ -284,9 +290,9 @@ export default function VisaoGeralTab({ periodo, externalSession, onSessionChang
           {!isSessao && <VariacaoBadge pct={varTkt} label={labelPeriodoAnt} />}
         </MetricCard>
       </div>
-      {!isSessao && ifPed > 0 && (
+      {ifPed > 0 && (
         <p className="text-[11px] text-zinc-400 -mt-2">
-          <i className="ri-restaurant-2-line text-red-500" /> Inclui iFood: <strong className="text-zinc-600">{fmt(ifTot)}</strong> em {ifPed} pedido(s) — relatório de conciliação importado em Financeiro › iFood (valor das vendas como no Portal do Parceiro, na data do pedido).
+          <i className="ri-restaurant-2-line text-red-500" /> Inclui iFood: <strong className="text-zinc-600">{fmt(ifTot)}</strong> em {ifPed} pedido(s) — relatório de conciliação importado em Financeiro › iFood (valor das vendas como no Portal do Parceiro, na data do pedido){(ifood?.pedidosAoVivo ?? 0) > 0 && <> e {ifood?.pedidosAoVivo} pedido(s) recebidos ao vivo do iFood, ainda não conciliados (valor dos itens)</>}.
         </p>
       )}
 
@@ -395,7 +401,7 @@ export default function VisaoGeralTab({ periodo, externalSession, onSessionChang
               </div>
             </>
           )}
-          {!isSessao && ifPed > 0 && (
+          {ifPed > 0 && (
             <div className="mt-3 flex items-start gap-2 px-3 py-2 bg-red-50 border border-red-100 rounded-lg">
               <i className="ri-restaurant-2-line text-red-500 text-xs flex-shrink-0 mt-0.5" />
               <p className="text-[10px] text-red-700">
@@ -519,7 +525,7 @@ export default function VisaoGeralTab({ periodo, externalSession, onSessionChang
       )}
 
       {/* Origem dos pedidos */}
-      {(destData || (!isSessao && ifPed > 0)) && (
+      {(destData || ifPed > 0) && (
         <div className="bg-white border border-zinc-100 rounded-xl p-4 md:p-5">
           <div className="flex items-center justify-between mb-3 md:mb-4">
             <h3 className="text-sm font-semibold text-zinc-800">Origem dos Pedidos</h3>
@@ -528,7 +534,7 @@ export default function VisaoGeralTab({ periodo, externalSession, onSessionChang
             {(() => {
               const origens = [
                 ...(destData ?? []),
-                ...(!isSessao && ifPed > 0 ? [{ destination: 'ifood', orders: ifPed, revenue: ifTot }] : []),
+                ...(ifPed > 0 ? [{ destination: 'ifood', orders: ifPed, revenue: ifTot }] : []),
               ];
               const total = origens.reduce((s, x) => s + Number(x.revenue), 0);
               const colors = ['#f59e0b', '#10b981', '#06b6d4', '#f97316', '#8b5cf6'];
