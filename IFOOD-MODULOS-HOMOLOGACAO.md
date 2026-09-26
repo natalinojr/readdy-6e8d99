@@ -38,6 +38,17 @@ Achados: horário da pausa volta em UTC **sem `Z`** (tela corrigida); `/status` 
 Sem teste: a tela "Loja iFood" em si (abrir, pausar, editar turno, responder), resposta real a uma avaliação (não há
 avaliação na loja de teste), 401/403/429 reais.
 
+### Teste pela tela — 2026-09-26 à noite (produção, Testes PDV logada no navegador do app)
+- Loja iFood: status "Aberta"; pausa 30 min criada e exibida em hora de Brasília (18:34–19:04, certo); removida.
+  Turno de segunda 23:59 → 22:00 → 23:59, conferido no iFood. **Achado:** o `GET /opening-hours` leva ~1 min para
+  refletir o `PUT` → a tela agora mostra os turnos devolvidos pelo próprio PUT (corrigido e conferido em produção).
+- Avaliações: "Sem nota ainda · 0 de 0", lista vazia com filtro de período, link da Política abre em nova aba.
+- Pedidos de teste do Portal: o gerador só tem categoria **FOOD** (entrega iFood, crédito) e **FOOD_SELF_SERVICE**
+  (= `orderType` **DINE_IN**, canal TOTEM, `dineIn.deliveryDateTime`, confirmado pelo próprio iFood em 0,2 s). O card
+  mostrava "Entregador iFood" + botão Despachar → corrigido (`ifoodTipoPedido`/`ifoodPodeDespachar`); preparo → pronto
+  ok. Retirada, agendado, dinheiro com troco e disputa **não** saem do gerador do Portal (precisa do "Usuário de testes"
+  pedindo pelo app do iFood).
+
 ## Chamado de homologação — Shipping, Merchant e Review (texto pronto)
 Portal do Desenvolvedor › Minhas solicitações › Abrir nova solicitação › **Homologação**. Marcar Shipping, Merchant e
 Review; loja de teste 4117700; status "concluí o desenvolvimento".
