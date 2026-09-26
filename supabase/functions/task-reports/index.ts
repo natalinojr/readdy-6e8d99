@@ -10,6 +10,7 @@
 // nome (+ contato opcional) e recebe um guest_token que fica no aparelho; com
 // ele responde os itens (e pode responder um comentário: parent_id, um nível).
 // Campos do item: só quem responde pelo link e quem criou o relatório alteram.
+// Item condicional (show_if): só aparece no link se outro item tiver certa resposta.
 // Toda resposta, mudança de status e edição de item vira
 // uma linha em task_report_responses com autor e hora — nada é apagado.
 // Resposta de fora avisa (push) toda a equipe da pasta.
@@ -142,6 +143,38 @@ function validarCampos(v: unknown): Campo[] {
   return campos;
 }
 
+/**
+ * Item condicional: {item_id, field_id, values} — o item só aparece para quem responde se o campo de
+ * escolha/sim-não de OUTRO item deste relatório tiver uma das respostas. Recusa ciclo (A depende de B que depende de A).
+ * `itemId` null = item novo.
+ */
+async function validarCondicaoItem(admin: SupabaseClient, reportId: string, itemId: string | null, v: unknown): Promise<Row | null> {
+  if (v === undefined || v === null) return null;
+  if (typeof v !== 'object' || Array.isArray(v)) throw new Recusa('Condição do item inválida');
+  const s = v as Row;
+  const paiId = String(s.item_id ?? '');
+  if (!paiId || paiId === itemId) throw new Recusa('Escolha outro item para a condição');
+  const { data: pai } = await admin.from('task_report_items').select('id, title, fields, show_if')
+    .eq('id', paiId).eq('report_id', reportId).is('archived_at', null).maybeSingle();
+  if (!pai) throw new Recusa('O item da condição não existe mais — recarregue a página', 404);
+  const campo = ((pai.fields ?? []) as Campo[]).find((c) => c.id === String(s.field_id ?? ''));
+  if (!campo || !['escolha', 'multipla', 'sim_nao'].includes(campo.type)) throw new Recusa('A condição precisa ser uma pergunta de escolha do outro item');
+  const validos = new Set(campo.type === 'sim_nao' ? ['sim', 'nao'] : (campo.options ?? []).map((o) => o.id));
+  if (!Array.isArray(s.values) || !s.values.length || !s.values.every((x: unknown) => typeof x === 'string' && validos.has(x))) {
+    throw new Recusa(`Escolha com qual resposta de "${campo.label}" este item aparece`);
+  }
+  // Sobe pela corrente de condições: se chegar neste item, é ciclo.
+  if (itemId) {
+    let atual: Row | null = pai;
+    for (let passo = 0; atual?.show_if?.item_id && passo < 50; passo++) {
+      if (atual.show_if.item_id === itemId) throw new Recusa(`"${pai.title}" já depende deste item — escolha outro`);
+      const { data } = await admin.from('task_report_items').select('id, show_if').eq('id', atual.show_if.item_id).eq('report_id', reportId).maybeSingle();
+      atual = data;
+    }
+  }
+  return { item_id: pai.id, field_id: campo.id, values: [...new Set(s.values as string[])] };
+}
+
 /** Links de arquivos na nuvem: [{url, title}], só http/https. */
 function validarLinks(v: unknown): Array<{ url: string; title: string | null }> {
   if (v === undefined || v === null) return [];
@@ -238,7 +271,7 @@ async function montarRelatorio(admin: SupabaseClient, report: Row, publico: bool
     },
     items: itens.map((i) => ({
       id: i.id, position: i.position, title: i.title, body: i.body, images: comUrl(i.images), links: i.links ?? [], status: i.status,
-      fields: i.fields ?? [],
+      fields: i.fields ?? [], show_if: i.show_if ?? null,
       created_by_guest_name: i.created_by_guest ? nomeConvidado.get(i.created_by_guest) ?? null : null,
       created_at: i.created_at, updated_at: i.updated_at, responses: porItem.get(i.id) ?? [],
     })),
@@ -581,8 +614,15 @@ Deno.serve({ verify_jwt: false }, async (req) => {
               images: await copiarImagens(admin, it.images ?? [], data.id), created_by_user: user.id,
             });
           }
-          const { error: eItens } = await admin.from('task_report_items').insert(itens);
+          const { data: novos, error: eItens } = await admin.from('task_report_items').insert(itens).select('id, position');
           if (eItens) throw eItens;
+          // Condição entre itens: o modelo guarda o índice do item (item_idx); aqui vira o id novo.
+          const idPorPos = new Map(((novos ?? []) as Row[]).map((n) => [n.position, n.id]));
+          for (const [i, it] of (modelo.items as Row[]).entries()) {
+            const c = it.show_if;
+            const paiId = c && Number.isInteger(c.item_idx) ? idPorPos.get(c.item_idx + 1) : null;
+            if (paiId) await admin.from('task_report_items').update({ show_if: { item_id: paiId, field_id: c.field_id, values: c.values } }).eq('id', idPorPos.get(i + 1));
+          }
         }
         return json({ success: true, id: data.id });
       }
@@ -603,15 +643,18 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         // Guarda uma cópia do relatório como está (sem respostas): explicação, links e itens.
         const r = await meuRelatorio(body.report_id);
         const nome = texto(body.name, 200) ?? r.title;
-        const { data: itens, error: eI } = await admin.from('task_report_items').select('title, body, images, fields, links')
+        const { data: itens, error: eI } = await admin.from('task_report_items').select('id, title, body, images, fields, links, show_if')
           .eq('report_id', r.id).is('archived_at', null).order('position').order('created_at');
         if (eI) throw eI;
+        const idx = new Map(((itens ?? []) as Row[]).map((it, i) => [it.id, i]));
         const { data: t, error } = await admin.from('task_report_templates')
           .insert({ created_by: user.id, name: nome, content: {} }).select('id').single();
         if (error) throw error;
         const itensModelo = [];
         for (const it of itens ?? []) {
-          itensModelo.push({ title: it.title, body: it.body, fields: it.fields ?? [], links: it.links ?? [], images: await copiarImagens(admin, it.images ?? [], `modelos/${t.id}`) });
+          const c = it.show_if;
+          const show_if = c && idx.has(c.item_id) ? { item_idx: idx.get(c.item_id), field_id: c.field_id, values: c.values } : null;
+          itensModelo.push({ title: it.title, body: it.body, fields: it.fields ?? [], links: it.links ?? [], show_if, images: await copiarImagens(admin, it.images ?? [], `modelos/${t.id}`) });
         }
         await admin.from('task_report_templates').update({
           content: { description: r.description ?? null, links: r.links ?? [], items: itensModelo },
@@ -685,6 +728,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         const { data, error } = await admin.from('task_report_items').insert({
           report_id: r.id, title: titulo, body: texto(body.body, MAX_TEXTO), images: validarImagens(body.images, r.id), links: validarLinks(body.links),
           fields: validarCampos(body.fields), position: (ultimo?.position ?? 0) + 1, created_by_user: user.id,
+          show_if: await validarCondicaoItem(admin, r.id, null, body.show_if),
         }).select('id').single();
         if (error) throw error;
         await admin.from('task_reports').update({ updated_at: new Date().toISOString() }).eq('id', r.id);
@@ -703,6 +747,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         if (body.images !== undefined) patch.images = validarImagens(body.images, r.id);
         if (body.links !== undefined) patch.links = validarLinks(body.links);
         if (body.fields !== undefined) patch.fields = validarCampos(body.fields);
+        if (body.show_if !== undefined) patch.show_if = await validarCondicaoItem(admin, r.id, item.id, body.show_if);
         if (body.position !== undefined) {
           const p = Number(body.position);
           if (!isFinite(p)) throw new Recusa('Posição inválida');

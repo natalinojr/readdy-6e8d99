@@ -4,10 +4,11 @@
  */
 import { useRef, useState, type ClipboardEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { ImagePlus, Loader2, Send, X, PencilLine, CheckCircle2, RotateCcw, MessageCircle, Plus, ArrowRight, Reply } from 'lucide-react';
-import { STATUS_INFO, dataHora, type CampoRel, type ImagemRel, type ItemRel, type LinkRel, type RespostaRel, type StatusItem, type ValorCampo } from './api';
+import { ImagePlus, Loader2, Send, X, PencilLine, CheckCircle2, RotateCcw, MessageCircle, Plus, ArrowRight, Reply, CornerDownRight } from 'lucide-react';
+import { STATUS_INFO, dataHora, type CampoRel, type CondicaoItem, type ImagemRel, type ItemRel, type LinkRel, type RespostaRel, type StatusItem, type ValorCampo } from './api';
+import { candidatosCondicao } from './condicaoItem';
 import { ChipsLinks, useLinks } from './LinksRelatorio';
-import { EditorCampos, PreencherCampos, camposVisiveis, erroPreenchimento, formatarValor, limparCampos, respostasMudadas, valoresAtuais } from './CamposResposta';
+import { EditorCampos, PreencherCampos, camposVisiveis, condicionavel, respostasPossiveis, erroPreenchimento, formatarValor, limparCampos, respostasMudadas, valoresAtuais } from './CamposResposta';
 import { useVoltarFecha } from '@/lib/voltarAndroid';
 
 /** Faixa colorida na lateral do item, pela situação. */
@@ -153,11 +154,13 @@ interface Props {
   onEnviarImagem: (f: File) => Promise<ImagemRel | null>;
   /** Pode preencher/alterar os campos do item: quem responde pelo link e quem criou o relatório. O resto da equipe só comenta. */
   podeAlterarCampos?: boolean;
+  /** Faixa no topo do item (equipe: "aparece só se…"). */
+  faixa?: ReactNode;
   /** Ações da equipe (editar/excluir) no cabeçalho do item. */
   acoes?: ReactNode;
 }
 
-export default function ItemRelatorio({ item, numero, podeResponder, meuGuestId, meuUserId, onResponder, onEnviarImagem, acoes, podeAlterarCampos = true }: Props) {
+export default function ItemRelatorio({ item, numero, podeResponder, meuGuestId, meuUserId, onResponder, onEnviarImagem, acoes, podeAlterarCampos = true, faixa }: Props) {
   const [texto, setTexto] = useState('');
   const [gravando, setGravando] = useState(false);
   const [aberto, setAberto] = useState(false);
@@ -215,6 +218,7 @@ export default function ItemRelatorio({ item, numero, podeResponder, meuGuestId,
 
   return (
     <article className={`bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden border-l-4 ${COR_LATERAL[item.status]}`}>
+      {faixa}
       <header className="px-4 pt-4 flex items-start gap-3">
         <span className="shrink-0 w-7 h-7 rounded-lg bg-slate-100 text-slate-600 text-sm font-semibold flex items-center justify-center">{numero}</span>
         <div className="flex-1 min-w-0">
@@ -521,18 +525,28 @@ function Conversa({ filhas, aberta, podeResponder, eMinha, onAbrir, onFechar, on
 }
 
 /** Formulário de item (novo ou edição): título, descrição, imagens com legenda e, para a equipe, campos de resposta. */
-export function FormItem({ inicial, comCampos, rotuloSalvar, aviso, onSalvar, onCancelar, onEnviarImagem }: {
-  inicial?: { title: string; body: string | null; images: ImagemRel[]; fields?: CampoRel[]; links?: LinkRel[] };
+export function FormItem({ inicial, comCampos, rotuloSalvar, aviso, onSalvar, onCancelar, onEnviarImagem, itens }: {
+  inicial?: { id?: string; title: string; body: string | null; images: ImagemRel[]; fields?: CampoRel[]; links?: LinkRel[]; show_if?: CondicaoItem | null };
   comCampos: boolean;
+  /** Itens do relatório (equipe): permite pôr este item condicionado a outro. */
+  itens?: ItemRel[];
   rotuloSalvar: string;
   aviso?: ReactNode;
-  onSalvar: (title: string, body: string, images: ImagemRel[], fields: CampoRel[], links: LinkRel[]) => Promise<boolean>;
+  onSalvar: (title: string, body: string, images: ImagemRel[], fields: CampoRel[], links: LinkRel[], showIf?: CondicaoItem | null) => Promise<boolean>;
   onCancelar: () => void;
   onEnviarImagem: (f: File) => Promise<ImagemRel | null>;
 }) {
   const [titulo, setTitulo] = useState(inicial?.title ?? '');
   const [corpo, setCorpo] = useState(inicial?.body ?? '');
   const [campos, setCampos] = useState<CampoRel[]>(inicial?.fields ?? []);
+  // Condição quebrada (o outro item ou a pergunta dele foi apagada) sai ao abrir — a edge recusaria.
+  const [condicao, setCondicao] = useState<CondicaoItem | null>(() => {
+    const c = inicial?.show_if;
+    const campo = c && itens?.find((x) => x.id === c.item_id)?.fields?.find((f) => f.id === c.field_id);
+    if (!c || !campo) return null;
+    const existem = new Set(respostasPossiveis(campo).map((o) => o.id));
+    return { ...c, values: c.values.filter((v) => existem.has(v)) };
+  });
   const [erro, setErro] = useState<string | null>(null);
   const [gravando, setGravando] = useState(false);
   const anexos = useAnexos(onEnviarImagem, inicial?.images ?? []);
@@ -541,9 +555,10 @@ export function FormItem({ inicial, comCampos, rotuloSalvar, aviso, onSalvar, on
   const salvar = async () => {
     const { campos: limpos, erro: e } = limparCampos(campos);
     if (e) { setErro(e); return; }
+    if (condicao && !condicao.values.length) { setErro('Escolha com qual resposta este item aparece'); return; }
     setErro(null);
     setGravando(true);
-    await onSalvar(titulo.trim(), corpo.trim(), anexos.paraGravar(), limpos, lk.links);
+    await onSalvar(titulo.trim(), corpo.trim(), anexos.paraGravar(), limpos, lk.links, itens ? condicao : undefined);
     setGravando(false);
   };
 
@@ -575,6 +590,7 @@ export function FormItem({ inicial, comCampos, rotuloSalvar, aviso, onSalvar, on
           <EditorCampos campos={campos} onChange={setCampos} />
         </div>
       )}
+      {itens && <EditorCondicaoItem itemId={inicial?.id ?? null} itens={itens} condicao={condicao} onChange={setCondicao} />}
       {aviso}
       {erro && <p className="text-sm text-red-600">{erro}</p>}
       <div className="flex flex-wrap items-center gap-2 pt-1">
@@ -595,10 +611,11 @@ export function FormItem({ inicial, comCampos, rotuloSalvar, aviso, onSalvar, on
 }
 
 /** Botão "Incluir item" que abre o formulário. */
-export function NovoItem({ onCriar, onEnviarImagem, comCampos = false }: {
-  onCriar: (title: string, body: string, images: ImagemRel[], fields: CampoRel[], links: LinkRel[]) => Promise<boolean>;
+export function NovoItem({ onCriar, onEnviarImagem, comCampos = false, itens }: {
+  onCriar: (title: string, body: string, images: ImagemRel[], fields: CampoRel[], links: LinkRel[], showIf?: CondicaoItem | null) => Promise<boolean>;
   onEnviarImagem: (f: File) => Promise<ImagemRel | null>;
   comCampos?: boolean;
+  itens?: ItemRel[];
 }) {
   const [aberto, setAberto] = useState(false);
   // A chave zera o formulário depois de incluir.
@@ -617,14 +634,92 @@ export function NovoItem({ onCriar, onEnviarImagem, comCampos = false }: {
     <FormItem
       key={chave}
       comCampos={comCampos}
+      itens={itens}
       rotuloSalvar="Incluir"
       onEnviarImagem={onEnviarImagem}
       onCancelar={() => setAberto(false)}
-      onSalvar={async (t, b, imgs, f, links) => {
-        const ok = await onCriar(t, b, imgs, f, links);
+      onSalvar={async (t, b, imgs, f, links, showIf) => {
+        const ok = await onCriar(t, b, imgs, f, links, showIf);
         if (ok) { setAberto(false); setChave((k) => k + 1); }
         return ok;
       }}
     />
+  );
+}
+
+/** "Este item só aparece se [2 · Item] › [pergunta] for [A] [B]" — no formulário do item (equipe). */
+function EditorCondicaoItem({ itemId, itens, condicao, onChange }: {
+  itemId: string | null;
+  itens: ItemRel[];
+  condicao: CondicaoItem | null;
+  onChange: (c: CondicaoItem | null) => void;
+}) {
+  const candidatos = candidatosCondicao(itemId, itens);
+  const perguntas = (it?: ItemRel) => (it?.fields ?? []).filter((f) => condicionavel(f.type));
+  const numero = (it: ItemRel) => itens.indexOf(it) + 1;
+  const escolherItem = (id: string) => onChange({ item_id: id, field_id: perguntas(itens.find((x) => x.id === id))[0]?.id ?? '', values: [] });
+  if (!condicao) {
+    if (!candidatos.length) return null;
+    return (
+      <button
+        type="button"
+        onClick={() => escolherItem(candidatos[0].id)}
+        className="flex items-center gap-1 text-left text-xs text-slate-500 hover:text-indigo-600 pt-1"
+      >
+        <CornerDownRight size={13} /> Mostrar este item só se outro item tiver certa resposta…
+      </button>
+    );
+  }
+  const pai = itens.find((x) => x.id === condicao.item_id);
+  const campo = pai?.fields?.find((f) => f.id === condicao.field_id);
+  return (
+    <div className="rounded-lg border border-indigo-200 bg-indigo-50/60 px-3 py-2 space-y-1.5 text-xs text-slate-600">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <CornerDownRight size={14} className="text-indigo-500 shrink-0" />
+        <span className="font-medium">Este item só aparece se o item</span>
+        <select
+          value={condicao.item_id}
+          onChange={(e) => escolherItem(e.target.value)}
+          className="max-w-[220px] rounded-full border-0 bg-indigo-100 text-indigo-800 px-2 py-0.5 text-base md:text-xs font-medium"
+        >
+          {candidatos.map((x) => <option key={x.id} value={x.id}>{numero(x)} · {x.title}</option>)}
+          {pai && !candidatos.includes(pai) && <option value={pai.id}>{numero(pai)} · {pai.title}</option>}
+        </select>
+        <button type="button" onClick={() => onChange(null)} className="ml-auto p-0.5 text-slate-400 hover:text-red-500" title="Mostrar sempre (tirar a condição)"><X size={14} /></button>
+      </div>
+      {pai && (
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 pl-5">
+          <span>na pergunta</span>
+          <select
+            value={condicao.field_id}
+            onChange={(e) => onChange({ ...condicao, field_id: e.target.value, values: [] })}
+            className="max-w-[220px] rounded-full border-0 bg-indigo-100 text-indigo-800 px-2 py-0.5 text-base md:text-xs font-medium"
+          >
+            {perguntas(pai).map((f) => <option key={f.id} value={f.id}>{f.label}</option>)}
+          </select>
+          {campo && (
+            <>
+              <span>{campo.type === 'multipla' ? 'tiver marcado' : 'for'}</span>
+              {respostasPossiveis(campo).map((o) => {
+                const marcado = condicao.values.includes(o.id);
+                return (
+                  <button
+                    key={o.id}
+                    type="button"
+                    onClick={() => onChange({ ...condicao, values: marcado ? condicao.values.filter((v) => v !== o.id) : [...condicao.values, o.id] })}
+                    className={`px-2 py-0.5 rounded-full border ${marcado ? 'bg-indigo-600 border-indigo-600 text-white' : 'bg-white border-slate-200 text-slate-500'}`}
+                  >
+                    {o.label}
+                  </button>
+                );
+              })}
+              {condicao.values.length > 1 && <span className="text-slate-400">(qualquer uma)</span>}
+            </>
+          )}
+        </div>
+      )}
+      {!condicao.values.length && <p className="pl-5 text-amber-700">Clique na resposta que faz este item aparecer.</p>}
+      <p className="pl-5 text-slate-400">A condição usa as perguntas já salvas do outro item.</p>
+    </div>
   );
 }

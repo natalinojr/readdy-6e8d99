@@ -32,6 +32,13 @@ const relatorios: Rel[] = [{
         { id: 'c4', type: 'texto', label: 'Nome do eletricista', show_if: { field_id: 'c1', values: ['o2'] } },
       ],
     },
+    {
+      // Item condicional: só aparece no link se no item 2 "Situação" = "Precisa de eletricista".
+      id: 'i3', position: 3, title: 'Orçamento do eletricista', body: 'Mande o valor e o prazo.', images: [], status: 'open',
+      created_by_guest_name: null, created_at: agora(), updated_at: agora(), responses: [],
+      show_if: { item_id: 'i2', field_id: 'c1', values: ['o2'] },
+      fields: [{ id: 'd1', type: 'numero', label: 'Valor (R$)' }],
+    },
   ],
 }, {
   // Relatório de outra pessoa numa pasta compartilhada comigo com "só ver".
@@ -109,7 +116,7 @@ export async function demoDono(action: string, p: Record<string, unknown>): Prom
       r.items.push({
         id: novoId(), position: (r.items.at(-1)?.position ?? 0) + 1, title: String(p.title), body: (p.body as string) || null,
         images: (p.images as ImagemRel[]) ?? [], status: 'open', created_by_guest_name: null, created_at: agora(), updated_at: agora(), responses: [],
-        fields: (p.fields as CampoRel[]) ?? [],
+        fields: (p.fields as CampoRel[]) ?? [], show_if: (p.show_if as ItemRel['show_if']) ?? null,
       });
       return {};
     }
@@ -120,6 +127,7 @@ export async function demoDono(action: string, p: Record<string, unknown>): Prom
       if (p.body !== undefined) it.body = (p.body as string) || null;
       if (p.images !== undefined) it.images = p.images as ImagemRel[];
       if (p.fields !== undefined) it.fields = p.fields as CampoRel[];
+      if (p.show_if !== undefined) it.show_if = p.show_if as ItemRel['show_if'];
       if (p.position !== undefined) it.position = Number(p.position);
       r.items.sort((a, b) => a.position - b.position);
       return {};

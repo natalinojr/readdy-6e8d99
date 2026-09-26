@@ -8,6 +8,7 @@ import { useParams } from 'react-router-dom';
 import { Loader2, Lock, UserRound, ClipboardList } from 'lucide-react';
 import ItemRelatorio, { NovoItem } from '../tarefas/relatorios/ItemRelatorio';
 import LinksRelatorio from '../tarefas/relatorios/LinksRelatorio';
+import { itensVisiveis } from '../tarefas/relatorios/condicaoItem';
 import {
   chamarPublico, enviarImagemPublico, lerConvidado, salvarConvidado, slugRelatorio,
   type Convidado, type ImagemRel, type ItemRel, type LinkRel, type Relatorio, type StatusItem, type ValorCampo,
@@ -79,7 +80,10 @@ export default function RelatorioPublicoPage() {
     return <Tela><div className="flex justify-center py-20"><Loader2 className="animate-spin text-slate-400" /></div></Tela>;
   }
 
-  const { report, items, guests, me } = dados;
+  const { report, guests, me } = dados;
+  // Item condicional só aparece quando a resposta do outro item pede (itensVisiveis).
+  const visiveis = itensVisiveis(dados.items);
+  const items = dados.items.filter((i) => visiveis.has(i.id));
   if (!me) {
     return (
       <Tela>

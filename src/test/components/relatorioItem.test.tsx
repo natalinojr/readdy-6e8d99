@@ -6,6 +6,7 @@ vi.mock('@/lib/supabase', () => ({}));
 import ItemRelatorio from '@/pages/tarefas/relatorios/ItemRelatorio';
 import type { CampoRel, ItemRel } from '@/pages/tarefas/relatorios/api';
 import { camposVisiveis, limparCampos } from '@/pages/tarefas/relatorios/CamposResposta';
+import { candidatosCondicao, itensVisiveis } from '@/pages/tarefas/relatorios/condicaoItem';
 
 const item: ItemRel = {
   id: 'i1', position: 1, title: 'Pia vazando', body: 'Resolver até sexta?', images: [], status: 'answered',
@@ -243,6 +244,34 @@ describe('ItemRelatorio', () => {
       fireEvent.click(screen.getByText('Responder'));
       expect(screen.queryByLabelText('Cozinha')).toBeNull();
       expect(screen.getByText(/só quem criou o relatório altera/)).toBeTruthy();
+    });
+  });
+
+  describe('item condicional (show_if do item)', () => {
+    const base = { images: [], status: 'open' as const, body: null, created_by_guest_name: null, created_at: '2026-09-24T10:00:00Z', updated_at: '2026-09-24T10:00:00Z' };
+    const resposta = (answers: Record<string, string>) => [{ id: 'r', kind: 'reply' as const, body: null, images: [], new_status: null, author_name: 'Ana', author_type: 'guest' as const, author_guest_id: 'g', created_at: '2026-09-24T11:00:00Z', answers }];
+    const tipo: ItemRel = { ...base, id: 'a', position: 1, title: 'Evento', responses: [], fields: [{ id: 't', type: 'escolha', label: 'Tipo', options: [{ id: 'fest', label: 'Festa' }, { id: 'corp', label: 'Corporativo' }] }] };
+    const cardapio: ItemRel = { ...base, id: 'b', position: 2, title: 'Cardápio', responses: [], show_if: { item_id: 'a', field_id: 't', values: ['fest'] }, fields: [{ id: 'q', type: 'sim_nao', label: 'Tem restrição?' }] };
+    const restricoes: ItemRel = { ...base, id: 'c', position: 3, title: 'Restrições', responses: [], show_if: { item_id: 'b', field_id: 'q', values: ['sim'] } };
+
+    it('aparece só com a resposta certa do outro item, em cadeia', () => {
+      expect([...itensVisiveis([tipo, cardapio, restricoes])]).toEqual(['a']);
+      const festa = { ...tipo, responses: resposta({ t: 'fest' }) };
+      expect([...itensVisiveis([festa, cardapio, restricoes])]).toEqual(['a', 'b']);
+      const comRestricao = { ...cardapio, responses: resposta({ q: 'sim' }) };
+      expect([...itensVisiveis([festa, comRestricao, restricoes])]).toEqual(['a', 'b', 'c']);
+      // Trocou para corporativo: some o cardápio e, com ele, as restrições.
+      const corp = { ...tipo, responses: resposta({ t: 'corp' }) };
+      expect([...itensVisiveis([corp, comRestricao, restricoes])]).toEqual(['a']);
+    });
+
+    it('item ou campo da condição apagado: o item aparece', () => {
+      expect(itensVisiveis([cardapio]).has('b')).toBe(true);
+    });
+
+    it('não oferece como condição um item que já depende deste (ciclo)', () => {
+      expect(candidatosCondicao('a', [tipo, cardapio, restricoes]).map((i) => i.id)).toEqual([]);
+      expect(candidatosCondicao('c', [tipo, cardapio, restricoes]).map((i) => i.id)).toEqual(['a', 'b']);
     });
   });
 

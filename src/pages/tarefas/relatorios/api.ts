@@ -23,6 +23,13 @@ export interface CampoRel {
   show_if?: CondicaoCampo | null;
 }
 
+/** Item que depende de outro: o campo `field_id` do item `item_id` precisa ter uma das `values`. */
+export interface CondicaoItem {
+  item_id: string;
+  field_id: string;
+  values: string[];
+}
+
 /** "Se a pergunta X for A ou B" — `values` = ids das opções (ou 'sim'/'nao'). */
 export interface CondicaoCampo {
   field_id: string;
@@ -71,6 +78,8 @@ export interface ItemRel {
   images: ImagemRel[];
   status: StatusItem;
   fields?: CampoRel[];
+  /** Item condicional: só aparece para quem responde se o campo de outro item tiver uma destas respostas. */
+  show_if?: CondicaoItem | null;
   /** Links de arquivos na nuvem do item. */
   links?: LinkRel[];
   created_by_guest_name: string | null;

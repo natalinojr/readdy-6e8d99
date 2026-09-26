@@ -24,11 +24,11 @@ export const TIPOS_CAMPO: Array<{ id: TipoCampo; label: string }> = [
 const novoId = () => Math.random().toString(36).slice(2, 10);
 const temOpcoes = (t: TipoCampo) => t === 'escolha' || t === 'multipla';
 /** Tipos que podem servir de condição para outro campo. */
-const condicionavel = (t: TipoCampo) => temOpcoes(t) || t === 'sim_nao';
+export const condicionavel = (t: TipoCampo) => temOpcoes(t) || t === 'sim_nao';
 export const MAX_CAMPOS = 40;
 
 /** Respostas possíveis de uma pergunta de escolha (sim/não vira duas opções fixas). */
-function respostasPossiveis(c: CampoRel): Array<{ id: string; label: string }> {
+export function respostasPossiveis(c: CampoRel): Array<{ id: string; label: string }> {
   if (c.type === 'sim_nao') return [{ id: 'sim', label: 'Sim' }, { id: 'nao', label: 'Não' }];
   return c.options ?? [];
 }

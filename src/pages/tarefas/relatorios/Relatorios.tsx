@@ -9,13 +9,14 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import {
   ArrowLeft, Plus, Link2, Copy, MessageCircle, RefreshCw, Loader2, Trash2, Pencil, ChevronUp, ChevronDown,
   Lock, Unlock, Users, FileText, Check, Folder, ListTodo, X, CheckCircle2, Circle, Search, LayoutTemplate,
-  MoreHorizontal, Clock, MessagesSquare, Archive, RotateCcw, Sparkles,
+  MoreHorizontal, Clock, MessagesSquare, Archive, RotateCcw, Sparkles, CornerDownRight, EyeOff,
 } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
 import ConfirmDialog from '../components/ConfirmDialog';
 import type { TaskRow } from '../hooks/useTarefas';
 import ItemRelatorio, { FormItem, NovoItem } from './ItemRelatorio';
 import LinksRelatorio from './LinksRelatorio';
+import { descreverCondicao, itensVisiveis } from './condicaoItem';
 import {
   chamarDono, enviarImagemDono, linkPublico,
   podeEditar, podeExcluir,
@@ -128,6 +129,29 @@ interface Props {
   /** Tarefas que eu vejo — para ligar ao relatório. */
   tarefas: TaskRow[];
   onOpenTask: (taskId: string) => void;
+}
+
+/** Topo do item condicional na tela da equipe: de qual item ele depende e se está aparecendo para quem responde. */
+function FaixaItemCondicional({ item, itens, visiveis }: { item: ItemRel; itens: ItemRel[]; visiveis: Set<string> }) {
+  const c = descreverCondicao(item, itens);
+  if (!c) return null;
+  const aparece = visiveis.has(item.id);
+  return (
+    <div className="px-4 py-1.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs bg-indigo-50 text-slate-600 border-b border-indigo-100">
+      <CornerDownRight size={13} className="text-indigo-500 shrink-0" />
+      <span>Aparece só se no item</span>
+      <strong className="font-medium text-indigo-800">{c.numero} · {c.titulo}</strong>
+      <span>a pergunta</span>
+      <strong className="font-medium text-indigo-800">{c.pergunta}</strong>
+      <span>for</span>
+      <strong className="font-medium text-indigo-800">{c.respostas}</strong>
+      {!aparece && (
+        <span className="ml-auto flex items-center gap-1 text-slate-400" title="Com as respostas de agora, quem abre o link não vê este item">
+          <EyeOff size={12} /> escondido agora
+        </span>
+      )}
+    </div>
+  );
 }
 
 export default function Relatorios({ pasta, abrirId, pastas, meuId, tarefas, onOpenTask }: Props) {
@@ -414,6 +438,7 @@ function DetalheRelatorio({ id, onVoltar, pastas, meuId, tarefas, onOpenTask }: 
   }
 
   const { report, items, guests } = dados;
+  const visiveis = itensVisiveis(items);
   const link = report.share_token ? linkPublico(report.share_token, report.title) : '';
   const aberto = report.status === 'open';
   // O que dá pra mexer depende do acesso: quem só vê a pasta lê e responde.
@@ -593,14 +618,15 @@ function DetalheRelatorio({ id, onVoltar, pastas, meuId, tarefas, onOpenTask }: 
               key={item.id}
               inicial={item}
               comCampos
+              itens={items}
               rotuloSalvar="Salvar"
               onEnviarImagem={enviarImagem}
               onCancelar={() => setEditandoItem(null)}
               aviso={item.responses.length > 0 ? (
                 <p className="text-xs text-amber-700">Este item já tem respostas: a edição fica registrada no histórico dele, com o texto anterior.</p>
               ) : undefined}
-              onSalvar={async (title, body, images, fields, links) => {
-                const ok = await acao('update_item', { item_id: item.id, title, body, images, fields, links });
+              onSalvar={async (title, body, images, fields, links, show_if) => {
+                const ok = await acao('update_item', { item_id: item.id, title, body, images, fields, links, show_if });
                 if (ok) setEditandoItem(null);
                 return ok;
               }}
@@ -614,6 +640,7 @@ function DetalheRelatorio({ id, onVoltar, pastas, meuId, tarefas, onOpenTask }: 
               meuUserId={meuId}
               onEnviarImagem={enviarImagem}
               podeAlterarCampos={criador}
+              faixa={<FaixaItemCondicional item={item} itens={items} visiveis={visiveis} />}
               onResponder={(body, images, st, answers, links, parent_id) => acao('reply', { item_id: item.id, body, images, new_status: st, answers, links, parent_id })}
               acoes={edita && (
                 <div className="shrink-0 flex items-center opacity-60 hover:opacity-100 transition">
@@ -628,8 +655,9 @@ function DetalheRelatorio({ id, onVoltar, pastas, meuId, tarefas, onOpenTask }: 
           {edita && (
             <NovoItem
               comCampos
+              itens={items}
               onEnviarImagem={enviarImagem}
-              onCriar={(title, body, images, fields, links) => acao('add_item', { title, body, images, fields, links })}
+              onCriar={(title, body, images, fields, links, show_if) => acao('add_item', { title, body, images, fields, links, show_if })}
             />
           )}
         </div>
