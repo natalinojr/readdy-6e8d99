@@ -3,7 +3,7 @@ import { supabase, SUPABASE_URL } from '@/lib/supabase';
 import { fetchAllRows } from '@/lib/fetchAllRows';
 import { dateKeyBrasilia } from '@/lib/dateUtils';
 import {
-  DEFAULT_REVENUE_SOURCES, EMPTY_MONEY_FLOW, fetchRevenueSettings, fetchPixRecebidos, fetchCashSales, moneyFlowLabels,
+  DEFAULT_REVENUE_SOURCES, EMPTY_MONEY_FLOW, fetchRevenueSettings, fetchPixRecebidos, fetchCashSales, moneyFlowLabels, pixEtiqueta, maquininhaDaVenda,
   type MoneyFlowSettings, type RevenueSettingSource,
 } from '@/lib/revenueSources';
 
@@ -286,7 +286,8 @@ export function useReceitas(filters: ReceitasFilters) {
         id: `stone_${c.id}`,
         source: 'stone',
         description: c.description || `Vendas em cartão (${lbl.card})`,
-        category: `Cartão (${lbl.card})`,
+        // uma categoria por maquininha (Stone, Mercado Pago) — separa no resumo e no filtro
+        category: `Cartão (${maquininhaDaVenda(c.description)})`,
         amount: Number(c.amount),
         date: c.date,
         status: 'received',
@@ -303,7 +304,8 @@ export function useReceitas(filters: ReceitasFilters) {
         id: `pix_${p.id}`,
         source: 'pix',
         description: p.description || 'Pix recebido',
-        category: 'Pix',
+        // etiqueta da Conciliação (Tuna, vouchers, Pix do tablet...) — separa no resumo e no filtro
+        category: `Pix · ${pixEtiqueta(p)}`,
         amount: p.amount,
         date: p.transaction_date,
         status: 'received',

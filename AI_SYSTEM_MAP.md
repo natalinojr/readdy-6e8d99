@@ -266,6 +266,19 @@ Quando o usuario pedir "muda X":
 
 Secao viva: registrar aqui padroes, decisoes e pegadinhas reutilizaveis conforme o sistema evolui. Cada entrada com data
 
+### 2026-09-26 — Fornecedor pré-pago (Facebook/Meta Ads: Pix de recarga × nota do consumo)
+- **Causa:** o Pix ao Facebook é **recarga de crédito**; a NFS-e do dia 03 é o **consumo do mês anterior** (`dCompet` = último dia do mês dos anúncios). "Nota do mês" (1 nota ↔ N pagamentos) nunca fecha e a diferença virava conta a pagar falsa.
+- **Solução:** migração `20260927120000_fornecedor_pre_pago.sql` — `fin_prepaid_suppliers` (CNPJ casado pela raiz, categoria DRE, `start_date`, `opening_balance`) e `fin_prepaid_moves` (topup +, consumption −, adjust ±; saldo = abertura + soma). Só a edge lê/grava (sem grant a authenticated).
+  - **Recarga:** `fn_prepaid_apply_topups(tenant)` pega débito Inter pendente ao CNPJ desde `start_date` → linha `matched/reconciled`, `match_kind='prepaid_topup'`, `fin_cash_flow` origin **`prepaid_topup`** (sai do caixa; o DRE só lê origens específicas de `fin_cash_flow`, então não entra). Roda no `rematch` (antes do `fn_match_payments`), no sync do `inter-bank` e ao abrir/salvar o pré-pago. Undo na Conciliação apaga move + cash flow e marca `match_detail.prepaid_skip` (não volta sozinha).
+  - **Consumo:** `conciliacao-pagamentos › prepaid_consume` chama `fiscal-inbound import_bill` (1 parcela na data de competência) e marca a conta **paga sem banco e sem `fin_cash_flow`** (`payment_method 'Crédito pré-pago'`, `paid_date = due_date = competência`, `competence_month`) → DRE caixa e competência caem no mês do consumo; `fiscal_inbound_documents.settlement='prepaid'`. Consumo com competência antes do `start_date` é recusado (ignorar a nota). `prepaid_unconsume` desfaz.
+  - `fiscal-inbound › autoLaunchTenant` pula fornecedor pré-pago. Tela: `notas/PrePago.tsx` (bloco no Conferir + janela "Crédito pré-pago" com extrato do crédito e "Acertar saldo").
+- **Pegadinha:** não usar `pay_bill` para a baixa do consumo — ele grava `auto_bill_payment` no `fin_cash_flow` e o caixa contaria a saída 2× (recarga + consumo).
+
+### 2026-09-26 — "Tuna e VR não somam na receita" (etiqueta da Conciliação × DRE)
+- **Causa da dúvida:** a etiqueta dada na Conciliação ("Repasse Tuna", "Repasse voucher") nunca cria receita — a receita vem das Fontes da loja (`src/lib/revenueSources.ts`). Tuna e VR pagam por Pix no Inter, então já estavam dentro de "Pix recebido", só não apareciam separados.
+- **Solução (só exibição, total igual):** `fin_pix_recebidos` devolve `category`; `pixEtiqueta()` e `maquininhaDaVenda()` (Stone × Mercado Pago pelo texto que cada conector grava na linha `stone_sale`) alimentam sublinhas no DRE/DRE Comparativo (`linhasDetalhe`, só com 2+ itens) e a categoria em Receitas. Teste: `src/test/lib/revenueDetalhe.test.ts`.
+- **Pegadinha:** mudar o texto da descrição em `stone-conciliation`/`mp-conciliation` quebra a separação por maquininha — manter "Stone" / "Mercado Pago" no texto.
+
 ### 2026-09-25 — "Falha ao carregar: JWT expired" em aba aberta há tempo
 - **Causa:** o cliente Supabase roda com `autoRefreshToken: false`; a renovação depende do ping de 60 s do `AuthContext` (renova só se faltar < 5 min). Aba em segundo plano (timers estrangulados) ou PC que dormiu manda consulta com o token de acesso vencido → PostgREST/edge respondem 401 "JWT expired".
 - **Solução:** `fetchComLoja` (`src/lib/supabase.ts`) chama `retentarSeJwtVencido`: 401 com "JWT expired" em `/rest/v1` ou `/functions/v1`, com token de usuário e corpo string → `refreshSessionWithReason()` UMA vez (promise compartilhada entre consultas simultâneas) e repete com o token novo; refresh recusado devolve o 401 original. Teste: `src/test/lib/jwtExpiradoRetry.test.ts`.

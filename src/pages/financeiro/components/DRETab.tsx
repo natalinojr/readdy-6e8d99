@@ -3,7 +3,7 @@ import { useImpressoras, PRINTER_KEY_RELATORIOS } from '@/contexts/ImpressorasCo
 import { sendToPrinter } from '@/lib/printUtils';
 import { supabase } from '@/lib/supabase';
 import { fetchComprasDREDetalhado, fetchComprasPeriodo } from '@/lib/comprasDRE';
-import { loadRevenueExtras, applyRevenueSources } from '@/lib/revenueSources';
+import { loadRevenueExtras, applyRevenueSources, maquininhaDaVenda, somarDetalhe, juntarDetalhe, linhasDetalhe, type ReceitaDetalhe } from '@/lib/revenueSources';
 import { isIfoodAntecipacao } from '@/lib/ifoodVendas';
 import { fetchCartoesCompetencia, isStoneMdrLedger, isStoneVendasLedger } from '@/lib/cartoesCompetencia';
 import { useMoneyFlow } from '@/hooks/useMoneyFlow';
@@ -15,7 +15,7 @@ import {
 import { formatCurrency } from '@/lib/formatters';
 import DREDrillDownModal from './DREDrillDownModal';
 import { VarChip, SectionHeader, NoteRow, Segmented, KpiCard } from './dreUi';
-import { useDreGroups, STANDARD_GROUP_KEYS } from '@/hooks/useDreGroups';
+import { useDreGroups, STANDARD_GROUP_KEYS, ordenarGrupos } from '@/hooks/useDreGroups';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function pct(v: number, total: number) {
@@ -55,8 +55,12 @@ interface DREData {
   receitaManual: number;
   /** Vendas em cartão liquidadas pela Stone (fin_cash_flow origin stone_sale). Só existe com a opção ligada na integração. */
   receitaStone: number;
+  /** Vendas em cartão abertas por maquininha (Stone, Mercado Pago) — sublinhas, soma = receitaStone. */
+  cartaoPorMaquininha?: ReceitaDetalhe;
   /** Pix que entrou no Inter — só com a fonte "pix" ligada (fin_revenue_settings). */
   receitaPix?: number;
+  /** Pix recebido aberto pela etiqueta da Conciliação (Tuna, vouchers, tablet...) — sublinhas, soma = receitaPix. */
+  pixPorEtiqueta?: ReceitaDetalhe;
   /** Vendas do iFood por dia de repasse (fin_cash_flow origin ifood_sale) — só com a fonte "ifood" ligada. */
   receitaIfood?: number;
   /** Vendas pagas em dinheiro no PDV/totem — só com a fonte "cash" ligada (e "orders" desligada). */
@@ -353,19 +357,20 @@ async function fetchDREData(tenantId: string, startDate: string, endDate: string
   // Vendas em cartão liquidadas pela Stone (opção "lançar no financeiro" da integração)
   const { data: stoneSaleRows } = await supabase
     .from('fin_cash_flow')
-    .select('amount')
+    .select('amount, description')
     .eq('tenant_id', tenantId)
     .eq('type', 'income')
     .eq('origin', 'stone_sale')
     .gte('date', startDate)
     .lte('date', endDate);
   const receitaStone = (stoneSaleRows ?? []).reduce((s, r) => s + Number(r.amount), 0);
+  const cartaoPorMaquininha = somarDetalhe(stoneSaleRows ?? [], r => maquininhaDaVenda(r.description), r => Number(r.amount));
 
   const { cmvTeorico, fichaCobertura } = await fetchCmvConsumo(tenantId, startTs, endDateTime, temPdv);
 
   return {
     receitaBalcao, receitaDelivery, receitaMesa, receitaAutoatendimento,
-    receitaManual, receitaStone,
+    receitaManual, receitaStone, cartaoPorMaquininha,
     cancelamentos, descontos, cmvCompras, comprasTotal, cmvPorCategoria, despesasPorCategoria,
     custoPessoal, taxasMaquininha,
     receitaAReceber: 0,
@@ -568,15 +573,17 @@ async function fetchDREDataCompetencia(tenantId: string, startDate: string, endD
     .eq('origin', 'stone_sale')
     .gte('date', startDate)
     .lte('date', endDate);
-  const receitaStone = ((stoneSaleRows ?? []) as Array<{ amount: number; description?: string | null }>)
-    .filter((r) => !isStoneVendasLedger(r.description))
-    .reduce((s, r) => s + Number(r.amount), 0);
+  const stoneLedger = ((stoneSaleRows ?? []) as Array<{ amount: number; description?: string | null }>)
+    .filter((r) => !isStoneVendasLedger(r.description));
+  const receitaStone = stoneLedger.reduce((s, r) => s + Number(r.amount), 0);
+  // Mercado Pago segue pela data da liberação (não tem arquivo por data da venda)
+  const cartaoPorMaquininha = somarDetalhe(stoneLedger, r => maquininhaDaVenda(r.description), r => Number(r.amount));
 
   const { cmvTeorico, fichaCobertura } = await fetchCmvConsumo(tenantId, startTs, endDateTime, temPdv);
 
   return {
     receitaBalcao, receitaDelivery, receitaMesa, receitaAutoatendimento,
-    receitaManual, receitaStone,
+    receitaManual, receitaStone, cartaoPorMaquininha,
     cancelamentos, descontos, cmvCompras, comprasTotal, cmvPorCategoria, despesasPorCategoria,
     custoPessoal, taxasMaquininha,
     receitaAReceber,
@@ -786,7 +793,7 @@ export default function DRETab() {
   }[]>([]);
   const [loadingChart, setLoadingChart] = useState(false);
   const [dreCats, setDreCats] = useState<DRECat[]>([]);
-  const { customGroups: dreGroups } = useDreGroups();
+  const { customGroups: dreGroups, gruposComLegado } = useDreGroups();
   const [semCategoria, setSemCategoria] = useState(0);
   const [drillDown, setDrillDown] = useState<{
     type: string;
@@ -809,10 +816,15 @@ export default function DRETab() {
   // Nomes da maquininha e do banco principal (Conciliação › ⚙ › Como o dinheiro entra)
   const { labels: flowLabels } = useMoneyFlow();
 
-  const enrichedCustomGroups = customGroups.map(g => {
-    const match = dreGroups.find(s => s.key === g.key);
-    return match ? { key: g.key, label: match.label } : g;
-  });
+  // Ordem escolhida pela loja em Categorias DRE (↑↓), inclusive a posição de
+  // "Despesas operacionais" entre os grupos criados por ela.
+  const ordemSecoes = ordenarGrupos(['expense', ...customGroups.map(g => g.key)], gruposComLegado);
+  const enrichedCustomGroups = ordenarGrupos(customGroups.map(g => g.key), gruposComLegado)
+    .map(k => customGroups.find(g => g.key === k)!)
+    .map(g => {
+      const match = dreGroups.find(s => s.key === g.key);
+      return match ? { key: g.key, label: match.label } : g;
+    });
 
   // A receita segue a regra dos recebidos da loja (Financeiro › Receitas › Fontes):
   // o que não está ligado zera, e o Pix do Inter entra quando escolhido.
@@ -824,15 +836,16 @@ export default function DRETab() {
           : fetchDREData(tenantId, start, end, temPdv),
         loadRevenueExtras(tenantId, start, end, user?.tenantKind),
       ]);
-      if (dreMode !== 'competencia') return applyRevenueSources(d, extras.sources, extras.pix, extras.ifood, extras.cash);
+      if (dreMode !== 'competencia') return applyRevenueSources(d, extras.sources, extras.pix, extras.ifood, extras.cash, extras.pixPorEtiqueta);
       // Competência: iFood pela data do PEDIDO e Stone pela data da VENDA (caixa segue pela data do repasse)
       const c = await fetchCartoesCompetencia(tenantId, start, end);
       const ifoodOn = extras.sources.includes('ifood');
       return applyRevenueSources({
         ...d,
         receitaStone: d.receitaStone + c.stone_bruto,
+        cartaoPorMaquininha: juntarDetalhe(d.cartaoPorMaquininha, c.stone_bruto ? { Stone: c.stone_bruto } : {}),
         taxasMaquininha: d.taxasMaquininha + c.stone_mdr + (ifoodOn ? c.ifood_custo : 0),
-      }, extras.sources, extras.pix, c.ifood_receita, extras.cash);
+      }, extras.sources, extras.pix, c.ifood_receita, extras.cash, extras.pixPorEtiqueta);
     },
     [dreMode, user?.tenantKind, temPdv]
   );
@@ -1321,10 +1334,16 @@ export default function DRETab() {
                       ? 'Vendas em cartão pela DATA DA VENDA (arquivo de conciliação da Stone), valor bruto. A taxa da venda (MDR) também pela data da venda; antecipação e tarifas pela data do repasse, em Taxas de cartão.'
                       : 'Livro-razão: fin_cash_flow → stone_sale (vendas em cartão pela DATA DO REPASSE, valor bruto; as taxas estão em Taxas de cartão)'} />
                 )}
+                {(data.receitaStone ?? 0) > 0 && linhasDetalhe(data.cartaoPorMaquininha, prevData?.cartaoPorMaquininha).map(k => (
+                  <DRERow key={`cartao-${k}`} label={k} atual={data.cartaoPorMaquininha?.[k] ?? 0} anterior={prevData?.cartaoPorMaquininha?.[k] ?? 0} receitaBruta={receitaBruta} depth={2} />
+                ))}
                 {(data.receitaPix ?? 0) > 0 && (
                   <DRERow label={`Pix recebido (${flowLabels.bank})`} atual={data.receitaPix ?? 0} anterior={prevData?.receitaPix} receitaBruta={receitaBruta} depth={1}
-                    origin={`Extrato do ${flowLabels.bank} → créditos Pix${flowLabels.pixMode === 'transfer' ? ' (inclui o Pix da maquininha transferido da conta dela)' : ''}`} />
+                    origin={`Extrato do ${flowLabels.bank} → créditos Pix${flowLabels.pixMode === 'transfer' ? ' (inclui o Pix da maquininha transferido da conta dela)' : ''}. Aberto pela etiqueta dada na Conciliação.`} />
                 )}
+                {(data.receitaPix ?? 0) > 0 && linhasDetalhe(data.pixPorEtiqueta, prevData?.pixPorEtiqueta).map(k => (
+                  <DRERow key={`pix-${k}`} label={k} atual={data.pixPorEtiqueta?.[k] ?? 0} anterior={prevData?.pixPorEtiqueta?.[k] ?? 0} receitaBruta={receitaBruta} depth={2} />
+                ))}
                 {(data.receitaDinheiro ?? 0) > 0 && (
                   <DRERow label="Vendas em dinheiro (caixa)" atual={data.receitaDinheiro ?? 0} anterior={prevData?.receitaDinheiro} receitaBruta={receitaBruta} depth={1}
                     origin="Livro-razão: fin_cash_flow → auto_sale dos pagamentos em dinheiro (data da venda)" />
@@ -1426,82 +1445,88 @@ export default function DRETab() {
                 )}
                 <DRERow label="Lucro bruto" atual={lucroBruto} anterior={prevLucroBruto} receitaBruta={receitaBruta} isTotal />
 
-                {/* ── DESPESAS OPERACIONAIS ── */}
-                <SectionHeader label="Despesas operacionais" icon="ri-bill-line" tone="rose" />
-                {data.custoPessoal > 0 && (
-                  <DRERow
-                    label="Pessoal (folha + FGTS)"
-                    atual={data.custoPessoal}
-                    anterior={prevData?.custoPessoal}
-                    receitaBruta={receitaBruta}
-                    isNeg
-                    depth={1}
-                    origin={dreMode === 'caixa'
-                      ? 'Folha marcada como PAGA com data de pagamento neste mês + FGTS (regime de caixa)'
-                      : 'Folha do mês de referência + encargos patronais (paga ou não)'}
-                    badge="RH"
-                    badgeColor="bg-amber-100 text-amber-700"
-                    clickable
-                    onClick={() => setDrillDown({ type: 'custo_pessoal' })}
-                  />
-                )}
-                {taxasMaquininha > 0 && (
-                  <DRERow
-                    label="Taxas de cartão, Pix e iFood"
-                    atual={taxasMaquininha}
-                    anterior={prevData?.taxasMaquininha}
-                    receitaBruta={receitaBruta}
-                    isNeg
-                    depth={1}
-                    origin="Livro-razão: fin_cash_flow → auto_card_fee + ifood_fee (comissões e taxas do iFood)"
-                  />
-                )}
-                {hasDynCats && expenseCats.length > 0 ? (
-                  <CatTreeRows cats={expenseCats} depth={1} data={data} prevData={prevData} receitaBruta={receitaBruta} mode={dreMode} onDrillDown={drillCat} />
-                ) : (
-                  <tr>
-                    <td colSpan={5} className="px-5 py-5 text-center">
-                      <div className="flex flex-col items-center gap-1.5">
-                        <i className="ri-folder-chart-line text-zinc-300 text-2xl" />
-                        <p className="text-xs text-zinc-400">
-                          Crie categorias na aba <strong className="text-zinc-600">Categorias DRE</strong> e vincule suas contas a pagar a elas
-                        </p>
-                      </div>
-                    </td>
-                  </tr>
-                )}
-                {/* Despesas sem categoria DRE: SOMAM no resultado (antes sumiam da conta).
-                    Ficam nesta linha até serem classificadas em Contas a Pagar. */}
-                {despesasSemCategoria > 0 && (
-                  <DRERow
-                    label="Sem categoria (a classificar)"
-                    atual={despesasSemCategoria}
-                    anterior={prevDespesasSemCategoria}
-                    receitaBruta={receitaBruta}
-                    isNeg
-                    depth={1}
-                    origin="Contas a pagar sem dre_category_id — já subtraídas do resultado"
-                    badge="A classificar"
-                    badgeColor="bg-amber-100 text-amber-700"
-                  />
-                )}
-
-                {/* ── GRUPOS CUSTOMIZADOS ── */}
-                {customGroupTrees.map(({ group, cats, total }) => (
-                  total > 0 || cats.length > 0 ? (
-                    <Fragment key={group.key}>
-                      <SectionHeader label={group.label} icon="ri-folder-line" />
-                      {cats.length > 0 ? (
-                        <CatTreeRows cats={cats} depth={1} data={data} prevData={prevData} receitaBruta={receitaBruta} mode={dreMode} onDrillDown={drillCat} />
+                {/* ── DESPESAS OPERACIONAIS e GRUPOS DA LOJA, na ordem de Categorias DRE ── */}
+                {ordemSecoes.map(secao => (
+                  secao === 'expense' ? (
+                    <Fragment key="expense">
+                      <SectionHeader label="Despesas operacionais" icon="ri-bill-line" tone="rose" />
+                      {data.custoPessoal > 0 && (
+                        <DRERow
+                          label="Pessoal (folha + FGTS)"
+                          atual={data.custoPessoal}
+                          anterior={prevData?.custoPessoal}
+                          receitaBruta={receitaBruta}
+                          isNeg
+                          depth={1}
+                          origin={dreMode === 'caixa'
+                            ? 'Folha marcada como PAGA com data de pagamento neste mês + FGTS (regime de caixa)'
+                            : 'Folha do mês de referência + encargos patronais (paga ou não)'}
+                          badge="RH"
+                          badgeColor="bg-amber-100 text-amber-700"
+                          clickable
+                          onClick={() => setDrillDown({ type: 'custo_pessoal' })}
+                        />
+                      )}
+                      {taxasMaquininha > 0 && (
+                        <DRERow
+                          label="Taxas de cartão, Pix e iFood"
+                          atual={taxasMaquininha}
+                          anterior={prevData?.taxasMaquininha}
+                          receitaBruta={receitaBruta}
+                          isNeg
+                          depth={1}
+                          origin="Livro-razão: fin_cash_flow → auto_card_fee + ifood_fee (comissões e taxas do iFood)"
+                        />
+                      )}
+                      {hasDynCats && expenseCats.length > 0 ? (
+                        <CatTreeRows cats={expenseCats} depth={1} data={data} prevData={prevData} receitaBruta={receitaBruta} mode={dreMode} onDrillDown={drillCat} />
                       ) : (
                         <tr>
-                          <td colSpan={5} className="px-5 py-3 text-xs text-zinc-400 text-center">
-                            Nenhuma despesa neste grupo no período
+                          <td colSpan={5} className="px-5 py-5 text-center">
+                            <div className="flex flex-col items-center gap-1.5">
+                              <i className="ri-folder-chart-line text-zinc-300 text-2xl" />
+                              <p className="text-xs text-zinc-400">
+                                Crie categorias na aba <strong className="text-zinc-600">Categorias DRE</strong> e vincule suas contas a pagar a elas
+                              </p>
+                            </div>
                           </td>
                         </tr>
                       )}
+                      {/* Despesas sem categoria DRE: SOMAM no resultado (antes sumiam da conta).
+                          Ficam nesta linha até serem classificadas em Contas a Pagar. */}
+                      {despesasSemCategoria > 0 && (
+                        <DRERow
+                          label="Sem categoria (a classificar)"
+                          atual={despesasSemCategoria}
+                          anterior={prevDespesasSemCategoria}
+                          receitaBruta={receitaBruta}
+                          isNeg
+                          depth={1}
+                          origin="Contas a pagar sem dre_category_id — já subtraídas do resultado"
+                          badge="A classificar"
+                          badgeColor="bg-amber-100 text-amber-700"
+                        />
+                      )}
                     </Fragment>
-                  ) : null
+                    ) : (() => {
+                      const cg = customGroupTrees.find(x => x.group.key === secao);
+                      if (!cg) return null;
+                      const { group, cats, total } = cg;
+                      return total > 0 || cats.length > 0 ? (
+                        <Fragment key={group.key}>
+                          <SectionHeader label={group.label} icon="ri-folder-line" />
+                          {cats.length > 0 ? (
+                            <CatTreeRows cats={cats} depth={1} data={data} prevData={prevData} receitaBruta={receitaBruta} mode={dreMode} onDrillDown={drillCat} />
+                          ) : (
+                            <tr>
+                              <td colSpan={5} className="px-5 py-3 text-xs text-zinc-400 text-center">
+                                Nenhuma despesa neste grupo no período
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
+                      ) : null;
+                    })()
                 ))}
 
                 {/* ── RESULTADO ── (operacional = líquido: não há IR/financeiro separado) */}

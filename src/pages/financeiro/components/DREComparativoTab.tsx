@@ -1,14 +1,14 @@
 import { useState, useEffect, useCallback, Fragment, type ReactNode } from 'react';
 import { supabase } from '@/lib/supabase';
 import { fetchComprasDRE, fetchComprasPeriodo } from '@/lib/comprasDRE';
-import { loadRevenueExtras, applyRevenueSources } from '@/lib/revenueSources';
+import { loadRevenueExtras, applyRevenueSources, maquininhaDaVenda, somarDetalhe, juntarDetalhe, linhasDetalhe, type ReceitaDetalhe } from '@/lib/revenueSources';
 import { isIfoodAntecipacao } from '@/lib/ifoodVendas';
 import { fetchCartoesCompetencia, isStoneMdrLedger, isStoneVendasLedger } from '@/lib/cartoesCompetencia';
 import { useMoneyFlow } from '@/hooks/useMoneyFlow';
 import { useAuth } from '@/contexts/AuthContext';
 import { empresaTemPdv } from '@/lib/tipoEmpresa';
 import { formatCurrency } from '@/lib/formatters';
-import { useDreGroups, STANDARD_GROUP_KEYS } from '@/hooks/useDreGroups';
+import { useDreGroups, STANDARD_GROUP_KEYS, ordenarGrupos } from '@/hooks/useDreGroups';
 import { MonthNav, SectionHeader, NoteRow, mesExtenso } from './dreUi';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -30,8 +30,12 @@ interface DRESnapshot {
   receitaAutoatendimento: number;
   /** Vendas em cartão liquidadas pela Stone (origin stone_sale). */
   receitaStone: number;
+  /** Vendas em cartão por maquininha (sublinhas; soma = receitaStone). */
+  cartaoPorMaquininha?: ReceitaDetalhe;
   /** Pix que entrou no Inter — só com a fonte "pix" ligada (fin_revenue_settings). */
   receitaPix?: number;
+  /** Pix recebido por etiqueta da Conciliação (sublinhas; soma = receitaPix). */
+  pixPorEtiqueta?: ReceitaDetalhe;
   /** Vendas do iFood (origin ifood_sale) — só com a fonte "ifood" ligada. */
   receitaIfood?: number;
   /** Vendas pagas em dinheiro no PDV/totem — só com a fonte "cash" ligada (e "orders" desligada). */
@@ -160,11 +164,12 @@ async function fetchCaixa(tenantId: string, startDate: string, endDate: string, 
   });
   const custoPessoal = (payrollRes.data ?? []).reduce((s, p) => s + Number(p.gross_salary) + Number(p.fgts), 0);
   const taxasMaquininha = (cardFeeRes.data ?? []).reduce((s, r) => s + Number(r.amount), 0);
-  const { data: stoneSaleRows } = await supabase.from('fin_cash_flow').select('amount').eq('tenant_id', tenantId).eq('type', 'income').eq('origin', 'stone_sale').gte('date', startDate).lte('date', endDate);
+  const { data: stoneSaleRows } = await supabase.from('fin_cash_flow').select('amount, description').eq('tenant_id', tenantId).eq('type', 'income').eq('origin', 'stone_sale').gte('date', startDate).lte('date', endDate);
   const receitaStone = (stoneSaleRows ?? []).reduce((s, r) => s + Number(r.amount), 0);
+  const cartaoPorMaquininha = somarDetalhe(stoneSaleRows ?? [], r => maquininhaDaVenda(r.description), r => Number(r.amount));
 
   return {
-    receitaBalcao: bucket.balcao, receitaDelivery: bucket.delivery, receitaMesa: bucket.mesa, receitaAutoatendimento: bucket.auto, receitaStone,
+    receitaBalcao: bucket.balcao, receitaDelivery: bucket.delivery, receitaMesa: bucket.mesa, receitaAutoatendimento: bucket.auto, receitaStone, cartaoPorMaquininha,
     receitaAReceber: 0, cancelamentos, descontos, cmvCompras, cmvComprasPendentes: 0, cmvTeorico,
     despesasPorCategoria, despesasAPagar: 0, custoPessoal, taxasMaquininha,
   };
@@ -221,12 +226,13 @@ async function fetchCompetencia(tenantId: string, startDate: string, endDate: st
     .filter((r) => (r.origin !== 'ifood_fee' || isIfoodAntecipacao(r.description)) && !isStoneMdrLedger(r.description))
     .reduce((s, r) => s + Number(r.amount), 0);
   const { data: stoneSaleRows } = await supabase.from('fin_cash_flow').select('amount, description').eq('tenant_id', tenantId).eq('type', 'income').eq('origin', 'stone_sale').gte('date', startDate).lte('date', endDate);
-  const receitaStone = ((stoneSaleRows ?? []) as Array<{ amount: number; description?: string | null }>)
-    .filter((r) => !isStoneVendasLedger(r.description))
-    .reduce((s, r) => s + Number(r.amount), 0);
+  const stoneLedger = ((stoneSaleRows ?? []) as Array<{ amount: number; description?: string | null }>)
+    .filter((r) => !isStoneVendasLedger(r.description));
+  const receitaStone = stoneLedger.reduce((s, r) => s + Number(r.amount), 0);
+  const cartaoPorMaquininha = somarDetalhe(stoneLedger, r => maquininhaDaVenda(r.description), r => Number(r.amount));
 
   return {
-    receitaBalcao: bucket.balcao, receitaDelivery: bucket.delivery, receitaMesa: bucket.mesa, receitaAutoatendimento: bucket.auto, receitaStone,
+    receitaBalcao: bucket.balcao, receitaDelivery: bucket.delivery, receitaMesa: bucket.mesa, receitaAutoatendimento: bucket.auto, receitaStone, cartaoPorMaquininha,
     receitaAReceber, cancelamentos, descontos, cmvCompras, cmvComprasPendentes, cmvTeorico,
     despesasPorCategoria, despesasAPagar, custoPessoal, taxasMaquininha,
   };
@@ -426,14 +432,15 @@ export default function DREComparativoTab() {
       // Regra dos recebidos da loja (Financeiro › Receitas › Fontes) — igual à DRE
       loadRevenueExtras(user.tenantId, start, end, user.tenantKind),
     ]);
-    setCaixaData(applyRevenueSources(caixa, extras.sources, extras.pix, extras.ifood, extras.cash));
+    setCaixaData(applyRevenueSources(caixa, extras.sources, extras.pix, extras.ifood, extras.cash, extras.pixPorEtiqueta));
     // Competência: iFood pela data do PEDIDO e Stone pela data da VENDA; caixa segue pela data do repasse
     const c = await fetchCartoesCompetencia(user.tenantId, start, end);
     setCompData(applyRevenueSources({
       ...comp,
       receitaStone: comp.receitaStone + c.stone_bruto,
+      cartaoPorMaquininha: juntarDetalhe(comp.cartaoPorMaquininha, c.stone_bruto ? { Stone: c.stone_bruto } : {}),
       taxasMaquininha: comp.taxasMaquininha + c.stone_mdr + (extras.sources.includes('ifood') ? c.ifood_custo : 0),
-    }, extras.sources, extras.pix, c.ifood_receita, extras.cash));
+    }, extras.sources, extras.pix, c.ifood_receita, extras.cash, extras.pixPorEtiqueta));
     setDreCats(catsRes.data ?? []);
     setLoading(false);
   }, [user?.tenantId, user?.tenantKind, mes]);
@@ -460,7 +467,8 @@ export default function DREComparativoTab() {
   const costTree = buildTree(dreCats.filter(c => c.group_type === 'cost'));
   // Grupos criados pela loja (ex.: "Despesas fixas"). Antes não tinham linha aqui, mas
   // entravam no total e no resultado — a tabela não fechava.
-  const customKeys = [...new Set(dreCats.map(c => c.group_type))].filter(k => !STANDARD_GROUP_KEYS.includes(k));
+  // Na ordem escolhida em Categorias DRE (↑↓).
+  const customKeys = ordenarGrupos([...new Set(dreCats.map(c => c.group_type))].filter(k => !STANDARD_GROUP_KEYS.includes(k)), dreGroups);
   const customTrees = customKeys.map(key => ({
     key,
     label: dreGroups.find(g => g.key === key)?.label ?? key,
@@ -593,12 +601,18 @@ export default function DREComparativoTab() {
               {(caixaData.receitaStone > 0 || compData.receitaStone > 0) && (
                 <CompRow label={`Vendas em cartão (${flowLabels.card})`} caixaVal={caixaData.receitaStone} compVal={compData.receitaStone} {...rowBase} />
               )}
+              {linhasDetalhe(caixaData.cartaoPorMaquininha, compData.cartaoPorMaquininha).map(k => (
+                <CompRow key={`cartao-${k}`} label={k} caixaVal={caixaData.cartaoPorMaquininha?.[k] ?? 0} compVal={compData.cartaoPorMaquininha?.[k] ?? 0} {...rowBase} depth={2} />
+              ))}
               {((caixaData.receitaDinheiro ?? 0) > 0 || (compData.receitaDinheiro ?? 0) > 0) && (
                 <CompRow label="Vendas em dinheiro (caixa)" caixaVal={caixaData.receitaDinheiro ?? 0} compVal={compData.receitaDinheiro ?? 0} {...rowBase} />
               )}
               {((caixaData.receitaPix ?? 0) > 0 || (compData.receitaPix ?? 0) > 0) && (
                 <CompRow label={`Pix recebido (${flowLabels.bank})`} caixaVal={caixaData.receitaPix ?? 0} compVal={compData.receitaPix ?? 0} {...rowBase} />
               )}
+              {linhasDetalhe(caixaData.pixPorEtiqueta, compData.pixPorEtiqueta).map(k => (
+                <CompRow key={`pix-${k}`} label={k} caixaVal={caixaData.pixPorEtiqueta?.[k] ?? 0} compVal={compData.pixPorEtiqueta?.[k] ?? 0} {...rowBase} depth={2} />
+              ))}
               {((caixaData.receitaIfood ?? 0) > 0 || (compData.receitaIfood ?? 0) > 0) && (
                 <CompRow label="Vendas iFood" caixaVal={caixaData.receitaIfood ?? 0} compVal={compData.receitaIfood ?? 0} {...rowBase} />
               )}

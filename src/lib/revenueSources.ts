@@ -156,6 +156,58 @@ export interface PixRecebidoRow {
   counterpart_name: string | null;
   match_kind: string | null;
   created_at: string;
+  /** Etiqueta da Conciliação (Repasse Tuna, voucher, Venda Pix do tablet...) — só exibição. */
+  category?: string | null;
+}
+
+// ─── Detalhe da receita (só exibição, não muda total) ────────────────────────
+// Pix recebido por etiqueta da Conciliação e vendas em cartão por maquininha: sublinhas
+// em Receitas, DRE e DRE Comparativo. Chave = rótulo mostrado na tela.
+export type ReceitaDetalhe = Record<string, number>;
+
+const PIX_ETIQUETA_LABEL: Record<string, string> = {
+  'Transferência entre contas': 'Pix da maquininha (transferido)',
+  'Venda Pix (tablet)': 'Pix do tablet',
+  'Repasse Tuna Pagamentos': 'Tuna Pagamentos',
+  'Repasse voucher (VR, Alelo, Ticket…)': 'Vouchers (VR, Alelo, Ticket…)',
+};
+
+export function pixEtiqueta(row: Pick<PixRecebidoRow, 'category' | 'match_kind'>): string {
+  if (row.match_kind === 'internal_transfer') return PIX_ETIQUETA_LABEL['Transferência entre contas'];
+  const cat = (row.category ?? '').trim();
+  if (!cat) return 'Pix sem etiqueta';
+  return PIX_ETIQUETA_LABEL[cat] ?? cat;
+}
+
+/** Maquininha de uma linha stone_sale do razão, pelo texto que cada conector grava
+ *  (stone-conciliation: "…pela Stone…" / "Stone: créditos diversos"; mp-conciliation: "…Mercado Pago…"). */
+export function maquininhaDaVenda(description: string | null | undefined): string {
+  const d = description ?? '';
+  if (/mercado\s*pago/i.test(d)) return 'Mercado Pago';
+  if (/stone/i.test(d)) return 'Stone';
+  return 'Outra maquininha';
+}
+
+export function somarDetalhe<T>(rows: T[], chave: (r: T) => string, valor: (r: T) => number): ReceitaDetalhe {
+  const out: ReceitaDetalhe = {};
+  for (const r of rows) { const k = chave(r); out[k] = (out[k] ?? 0) + valor(r); }
+  return out;
+}
+
+export function juntarDetalhe(a: ReceitaDetalhe | undefined, b: ReceitaDetalhe | undefined): ReceitaDetalhe {
+  const out: ReceitaDetalhe = { ...(a ?? {}) };
+  for (const [k, v] of Object.entries(b ?? {})) out[k] = (out[k] ?? 0) + v;
+  return out;
+}
+
+/** Sublinhas a mostrar: só quando há 2+ itens com valor (em qualquer dos dois períodos/modos);
+ *  uma sublinha única repetiria a linha-mãe. Ordem: maior valor primeiro. */
+export function linhasDetalhe(a: ReceitaDetalhe | undefined, b?: ReceitaDetalhe): string[] {
+  const keys = new Set<string>();
+  for (const d of [a, b]) for (const [k, v] of Object.entries(d ?? {})) if (Math.abs(v) >= 0.005) keys.add(k);
+  if (keys.size < 2) return [];
+  const peso = (k: string) => Math.max(a?.[k] ?? 0, b?.[k] ?? 0);
+  return [...keys].sort((x, y) => peso(y) - peso(x));
 }
 
 // Pix que entrou no banco principal da loja (configuração "Como o dinheiro entra").
@@ -215,13 +267,15 @@ export const sumAmount = (rows: { amount: number }[]) => rows.reduce((s, r) => s
 // Fontes da loja + totais de Pix e iFood do período (só busca o que estiver ligado).
 export async function loadRevenueExtras(tenantId: string, startDate: string, endDate: string, kind?: string | null) {
   const { sources, flow } = await fetchRevenueSettings(tenantId, kind);
-  const [pix, ifood, cash, cards] = await Promise.all([
-    sources.includes('pix') ? fetchPixRecebidos(tenantId, startDate, endDate).then(r => sumAmount(r.rows)) : Promise.resolve(0),
+  const [pixRows, ifood, cash, cards] = await Promise.all([
+    sources.includes('pix') ? fetchPixRecebidos(tenantId, startDate, endDate).then(r => r.rows) : Promise.resolve([] as PixRecebidoRow[]),
     sources.includes('ifood') ? fetchIfoodSales(tenantId, startDate, endDate).then(r => sumAmount(r.rows)) : Promise.resolve(0),
     sources.includes('cash') ? fetchCashSales(tenantId, startDate, endDate).then(r => sumAmount(r.rows)) : Promise.resolve(0),
     sources.includes('stone') ? fetchCardProviders(tenantId).then(r => r.providers) : Promise.resolve([] as CardProviderConfig[]),
   ]);
-  return { sources, pix, ifood, cash, labels: moneyFlowLabels(flow, cards) };
+  const pix = sumAmount(pixRows);
+  const pixPorEtiqueta = somarDetalhe<PixRecebidoRow>(pixRows, pixEtiqueta, r => r.amount);
+  return { sources, pix, pixPorEtiqueta, ifood, cash, labels: moneyFlowLabels(flow, cards) };
 }
 
 // Aplica a regra dos recebidos a um snapshot de DRE: zera o que a loja não
@@ -229,7 +283,8 @@ export async function loadRevenueExtras(tenantId: string, startDate: string, end
 export function applyRevenueSources<T extends {
   receitaBalcao: number; receitaDelivery: number; receitaMesa: number; receitaAutoatendimento: number;
   receitaStone: number; receitaManual?: number; receitaPix?: number; receitaIfood?: number; receitaDinheiro?: number;
-}>(d: T, sources: RevenueSettingSource[], pix: number, ifood = 0, cash = 0): T {
+  cartaoPorMaquininha?: ReceitaDetalhe; pixPorEtiqueta?: ReceitaDetalhe;
+}>(d: T, sources: RevenueSettingSource[], pix: number, ifood = 0, cash = 0, pixPorEtiqueta: ReceitaDetalhe = {}): T {
   const on = (s: RevenueSettingSource) => sources.includes(s);
   return {
     ...d,
@@ -238,6 +293,8 @@ export function applyRevenueSources<T extends {
     receitaMesa: on('orders') ? d.receitaMesa : 0,
     receitaAutoatendimento: on('orders') ? d.receitaAutoatendimento : 0,
     receitaStone: on('stone') ? d.receitaStone : 0,
+    cartaoPorMaquininha: on('stone') ? (d.cartaoPorMaquininha ?? {}) : {},
+    pixPorEtiqueta: on('pix') ? pixPorEtiqueta : {},
     ...(d.receitaManual !== undefined ? { receitaManual: on('manual') ? d.receitaManual : 0 } : {}),
     receitaPix: on('pix') ? pix : 0,
     receitaIfood: on('ifood') ? ifood : 0,
