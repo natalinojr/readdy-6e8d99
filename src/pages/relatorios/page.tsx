@@ -43,6 +43,9 @@ export default function RelatoriosPage() {
   const abas = tabs.filter((t) => { const k = relKeyDaAba(t.id); return !!k && hasPermissao(k); });
   const tab: Tab | undefined = abas.some((t) => t.id === tabEscolhida) ? tabEscolhida : abas[0]?.id;
   const [refreshing, setRefreshing] = useState(false);
+  // Incrementa a cada clique numa aba (mesmo a já ativa) ou no botão Atualizar:
+  // muda a `key` do conteúdo, a aba remonta e busca os dados de novo.
+  const [refreshKey, setRefreshKey] = useState(0);
   const [selectedSession, setSelectedSession] = useState<SessionInfo | null>(null);
 
   const { modo } = useModoFaturamento();
@@ -62,6 +65,7 @@ export default function RelatoriosPage() {
   }, [isSessao, selectedSession, periodo]);
 
   const handleRefresh = () => {
+    setRefreshKey((k) => k + 1);
     setRefreshing(true);
     setTimeout(() => setRefreshing(false), 800);
   };
@@ -151,7 +155,7 @@ export default function RelatoriosPage() {
           {abas.map((t) => (
             <button
               key={t.id}
-              onClick={() => setTab(t.id)}
+              onClick={() => { setTab(t.id); setRefreshKey((k) => k + 1); }}
               className={`flex items-center gap-1 md:gap-1.5 px-2.5 md:px-3 py-2 md:py-2.5 text-[11px] md:text-xs font-semibold border-b-2 transition-colors whitespace-nowrap cursor-pointer flex-shrink-0 ${
                 tab === t.id
                   ? 'border-amber-500 text-amber-600'
@@ -168,7 +172,7 @@ export default function RelatoriosPage() {
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-3 md:p-6">
-        <div className="max-w-7xl mx-auto">
+        <div key={refreshKey} className="max-w-7xl mx-auto">
           {!tab && (
             <p className="text-sm text-zinc-500 text-center py-16">Nenhuma aba dos Relatórios está liberada para o seu perfil. Fale com o administrador.</p>
           )}
