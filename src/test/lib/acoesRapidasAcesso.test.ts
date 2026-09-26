@@ -5,9 +5,9 @@ import { ACOES } from '@/components/feature/assistente/acoes';
 import { DEFAULT_PERMISSOES, type Papel, type PermissaoKey } from '@/hooks/usePermissoes';
 import type { ModuloLivre } from '@/hooks/useModuleAccess';
 
-const ctx = (perfil: Papel, modulos: ModuloLivre[] = [], extra: PermissaoKey[] = []): ContextoAcesso => {
+const ctx = (perfil: Papel, modulos: ModuloLivre[] = [], extra: PermissaoKey[] = [], ifood = true): ContextoAcesso => {
   const ks = new Set<PermissaoKey>([...DEFAULT_PERMISSOES[perfil], ...extra]);
-  return { perfil, pode: (k) => ks.has(k), modulo: (m) => modulos.includes(m) };
+  return { perfil, pode: (k) => ks.has(k), modulo: (m) => modulos.includes(m), ifood };
 };
 const liberadas = (c: ContextoAcesso) => ACOES.filter((a) => acaoLiberada(a.id, c)).map((a) => a.id);
 
@@ -38,6 +38,14 @@ describe('ações rápidas por acesso', () => {
     // Gerente com a aba tirada perde a ação.
     const gerenteSemConc: ContextoAcesso = { ...ctx('gerente'), pode: (k) => k !== 'fin_conciliacao' && DEFAULT_PERMISSOES.gerente.includes(k) };
     expect(acaoLiberada('atualizar-conciliacao', gerenteSemConc)).toBe(false);
+  });
+
+  it('loja sem iFood: a categoria iFood some, até para o Admin', () => {
+    const ifood = ['ifood-vendas', 'ifood-repasses', 'ifood-custo', 'ifood-produtos'];
+    expect(liberadas(ctx('admin'))).toEqual(expect.arrayContaining(ifood));
+    const semIfood = liberadas(ctx('admin', [], [], false));
+    for (const id of ifood) expect(semIfood).not.toContain(id);
+    expect(semIfood).toContain('vendas-dia');
   });
 
   it('atalhos respeitam papel preso e abas do Financeiro', () => {

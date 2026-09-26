@@ -4,6 +4,8 @@
 // Sidebar, abas do Financeiro, módulos por usuário). A gravação continua conferida no servidor
 // (edge/RLS) — isto aqui só evita botão que daria "sem permissão".
 // Ação nova sem linha aqui NÃO aparece para ninguém (nem para o dono): acrescente a regra junto.
+import { useEffect, useState } from 'react';
+import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { usePermissoes, RECEBER_MODULO_KEYS, type PermissaoKey } from '@/hooks/usePermissoes';
 import { useModuleAccess, type ModuloLivre } from '@/hooks/useModuleAccess';
@@ -14,6 +16,8 @@ export interface ContextoAcesso {
   perfil: string | null;
   pode: (k: PermissaoKey) => boolean;
   modulo: (m: ModuloLivre) => boolean;
+  /** A loja ativa tem iFood (alguma loja do iFood cadastrada)? Sem iFood, a categoria iFood some. */
+  ifood?: boolean;
 }
 
 // O Financeiro (tela e edges financial-write/purchase-write) é só Admin/Gerente/Financeiro; as
@@ -71,10 +75,11 @@ const REGRAS: Record<string, (c: ContextoAcesso) => boolean> = {
   'caixa-aberto': (c) => algum(c, 'pdv_abrir_caixa', 'pdv_fechar_caixa', 'rel_caixa'),
   // iFood: vendas é leitura de faturamento (mesma turma do Vendas do dia) ou quem vê a aba iFood;
   // repasses e custo são do Financeiro › iFood.
-  'ifood-vendas': (c) => algum(c, 'rel_geral', 'relatorio_financeiro', 'gestao_dashboard') || fin(c, 'fin_ifood'),
-  'ifood-repasses': (c) => fin(c, 'fin_ifood'),
-  'ifood-custo': (c) => fin(c, 'fin_ifood'),
-  'ifood-produtos': (c) => fin(c, 'fin_ifood') || algum(c, 'rel_geral', 'cardapio_editar'),
+  // Loja sem iFood: nenhuma (dono, 2026-09-26).
+  'ifood-vendas': (c) => !!c.ifood && (algum(c, 'rel_geral', 'relatorio_financeiro', 'gestao_dashboard') || fin(c, 'fin_ifood')),
+  'ifood-repasses': (c) => !!c.ifood && fin(c, 'fin_ifood'),
+  'ifood-custo': (c) => !!c.ifood && fin(c, 'fin_ifood'),
+  'ifood-produtos': (c) => !!c.ifood && (fin(c, 'fin_ifood') || algum(c, 'rel_geral', 'cardapio_editar')),
   // Receber mercadoria só abre o /receber: mesma regra da rota (RotaProtegida/Sidebar).
   'receber-mercadoria': (c) => rotaLiberada('/receber', c) && algum(c, 'estoque_receber', 'estoque_movimentar'),
   // Pedidos de pagamento (2026-09-24): mesma permissão da tela
@@ -108,12 +113,34 @@ export function acaoLiberada(id: string, c: ContextoAcesso): boolean {
 }
 
 /** Contexto de acesso do usuário logado. `carregando` = permissões/módulos ainda chegando. */
+// Loja ativa tem iFood? Uma leitura por loja na sessão (a lista de lojas do iFood quase nunca muda).
+const IFOOD_POR_LOJA = new Map<string, boolean>();
+function useLojaTemIfood(tenantId: string | undefined): boolean | null {
+  const [tem, setTem] = useState<boolean | null>(tenantId ? IFOOD_POR_LOJA.get(tenantId) ?? null : false);
+  useEffect(() => {
+    if (!tenantId) { setTem(false); return; }
+    const salvo = IFOOD_POR_LOJA.get(tenantId);
+    if (salvo !== undefined) { setTem(salvo); return; }
+    let vivo = true;
+    setTem(null);
+    supabase.from('fin_ifood_merchants').select('merchant_id', { count: 'exact', head: true }).eq('tenant_id', tenantId)
+      .then(({ count, error }) => {
+        const v = !error && (count ?? 0) > 0;
+        if (!error) IFOOD_POR_LOJA.set(tenantId, v);
+        if (vivo) setTem(v);
+      });
+    return () => { vivo = false; };
+  }, [tenantId]);
+  return tem;
+}
+
 export function useAcessoAcoes(): ContextoAcesso & { carregando: boolean } {
   const { user, hasNoTenants } = useAuth();
   const { hasPermissao, loading } = usePermissoes();
   const { hasModule, loading: carregandoModulos } = useModuleAccess();
+  const ifood = useLojaTemIfood(user?.tenantId);
   // Sem loja (só módulo, 2026-09-24): nenhuma permissão de loja. Sem isto o usePermissoes cai no
   // padrão do papel "caixa" e mostraria ações de caixa/cozinha para quem só tem Tarefas.
   if (!user && hasNoTenants) return { perfil: null, pode: () => false, modulo: hasModule, carregando: carregandoModulos };
-  return { perfil: user?.perfil ?? null, pode: hasPermissao, modulo: hasModule, carregando: loading || carregandoModulos };
+  return { perfil: user?.perfil ?? null, pode: hasPermissao, modulo: hasModule, ifood: ifood === true, carregando: loading || carregandoModulos || ifood === null };
 }
