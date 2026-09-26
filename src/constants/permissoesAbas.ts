@@ -33,6 +33,7 @@ export const REL_ABAS = [
   { aba: 'origem', key: 'rel_origem', label: 'Origem dos Pedidos' },
   { aba: 'cmv', key: 'rel_cmv', label: 'CMV & Margem' },
   { aba: 'delivery', key: 'rel_delivery', label: 'Delivery' },
+  { aba: 'ifood', key: 'rel_ifood', label: 'iFood' },
   { aba: 'sla', key: 'rel_sla', label: 'SLA da Cozinha' },
   { aba: 'caixa', key: 'rel_caixa', label: 'Relatório de Caixa' },
   { aba: 'cancelamentos', key: 'rel_cancelamentos', label: 'Cancelamentos' },

@@ -12,13 +12,14 @@ import ClientesTab from './components/ClientesTab';
 import CalendarioFaturamentoTab from './components/CalendarioFaturamentoTab';
 import CMVTab from './components/CMVTab';
 import DeliveryTab from './components/DeliveryTab';
+import IfoodTab from './components/IfoodTab';
 import SessaoSelector from '@/components/feature/SessaoSelector';
 import { useModoFaturamento } from '@/contexts/ModoFaturamentoContext';
 import type { SessionInfo } from '@/hooks/useSessions';
 import { usePermissoes } from '@/hooks/usePermissoes';
 import { relKeyDaAba } from '@/constants/permissoesAbas';
 
-type Tab = 'geral' | 'caixa' | 'produtos' | 'cmv' | 'sla' | 'origem' | 'delivery' | 'cancelamentos' | 'clientes' | 'calendario';
+type Tab = 'geral' | 'caixa' | 'produtos' | 'cmv' | 'sla' | 'origem' | 'delivery' | 'ifood' | 'cancelamentos' | 'clientes' | 'calendario';
 
 const tabs: { id: Tab; label: string; icon: string; shortLabel: string }[] = [
   { id: 'geral',          label: 'Visão Geral',           shortLabel: 'Geral',        icon: 'ri-dashboard-line' },
@@ -27,6 +28,7 @@ const tabs: { id: Tab; label: string; icon: string; shortLabel: string }[] = [
   { id: 'origem',         label: 'Origem dos Pedidos',    shortLabel: 'Origem',       icon: 'ri-route-line' },
   { id: 'cmv',            label: 'CMV & Margem',          shortLabel: 'CMV',          icon: 'ri-scales-line' },
   { id: 'delivery',       label: 'Delivery',              shortLabel: 'Delivery',     icon: 'ri-motorbike-line' },
+  { id: 'ifood',          label: 'iFood',                 shortLabel: 'iFood',        icon: 'ri-restaurant-2-line' },
   { id: 'sla',            label: 'SLA da Cozinha',        shortLabel: 'SLA',          icon: 'ri-timer-line' },
   { id: 'caixa',          label: 'Relatório de Caixa',    shortLabel: 'Caixa',        icon: 'ri-safe-line' },
   { id: 'cancelamentos',  label: 'Cancelamentos',         shortLabel: 'Cancelam.',    icon: 'ri-close-circle-line' },
@@ -184,6 +186,7 @@ export default function RelatoriosPage() {
           {tab === 'sla'           && <SLACozinhaTab periodo={periodoEfetivo} />}
           {tab === 'origem'        && <OrigemTab periodo={periodoEfetivo} externalSession={selectedSession} />}
           {tab === 'delivery'      && <DeliveryTab periodo={periodoEfetivo} />}
+          {tab === 'ifood'         && <IfoodTab periodo={periodoEfetivo} />}
           {tab === 'cancelamentos' && <CancelamentosTab periodo={periodoEfetivo} />}
           {tab === 'clientes'      && <ClientesTab periodo={periodoEfetivo} />}
         </div>
