@@ -41,7 +41,7 @@ import AssistenteChat from '@/components/feature/AssistenteChat';
 import { getFoco, perguntarAoAssistente, setFocoTela } from '@/lib/assistenteFoco';
 
 // ── Servidor falso ──────────────────────────────────────────────────────────
-type Msg = { id: number; role: 'user' | 'assistant'; content: string; channel: string; created_at: string; topic: string; group_jid?: string | null };
+type Msg = { id: number; role: 'user' | 'assistant'; content: string; channel: string; created_at: string; topic: string; group_jid?: string | null; kind?: string };
 type Pay = { id: string; kind: 'pix' | 'boleto'; amount: number; beneficiary_name: string | null; pix_key: string | null; due_date: string | null; description: string | null; status: string; status_label: string; error: string | null; created_at: string };
 const srv = {
   msgs: [] as Msg[],
@@ -65,6 +65,7 @@ function fakeServer(fn: string, opts: { body: Body }) {
   switch (b.action) {
     case 'history': {
       let rows = srv.msgs.filter((m) => (b.group_jid ? m.group_jid === b.group_jid : !b.topic || m.topic === b.topic));
+      if (b.kind) rows = rows.filter((m) => (m.kind ?? 'conversa') === b.kind);
       if (b.after_id) rows = rows.filter((m) => m.id > Number(b.after_id));
       else if (b.before_id) rows = rows.filter((m) => m.id < Number(b.before_id));
       return Promise.resolve(ok({ messages: rows.map((m) => ({ ...m })), has_more: false }));
@@ -831,6 +832,44 @@ describe('AssistenteChat — resposta onde a pergunta foi feita', () => {
     await user.click(screen.getByRole('button', { name: 'Enviar' }));
     await waitFor(() => expect(calls('send').at(-1)).toMatchObject({ text: 'e esse?', group_jid: '120363@g.us' }));
     expect(calls('send').at(-1)?.topic).toBeUndefined();
+  });
+});
+
+describe('AssistenteChat — filtro por tipo dentro da conversa', () => {
+  // Dono (2026-09-26): "as mensagens do Financeiro ficam perdidas, tem que ficar rodando".
+  it('no Financeiro, "Caixa e turnos" mostra só abertura/fechamento; "Tudo" volta tudo', async () => {
+    const user = userEvent.setup();
+    add('assistant', '☀️ *Turno aberto — Vila*\nSessão #1 · às 18:00', 'pagamentos', 'cron');
+    srv.msgs[srv.msgs.length - 1].kind = 'caixa';
+    add('assistant', 'Vencimentos de amanhã: 2 contas', 'pagamentos', 'cron');
+    srv.msgs[srv.msgs.length - 1].kind = 'automatico';
+    add('user', 'paga o boleto da DLR', 'pagamentos');
+    renderChat();
+    await entrarNaConversa(user, 'Financeiro');
+    expect(await screen.findByText('Vencimentos de amanhã: 2 contas')).toBeInTheDocument();
+    await user.click(screen.getByRole('tab', { name: /Caixa e turnos/ }));
+    await waitFor(() => expect(screen.queryByText('Vencimentos de amanhã: 2 contas')).toBeNull());
+    expect(await screen.findByText(/Turno aberto/)).toBeInTheDocument();
+    expect(screen.queryByText('paga o boleto da DLR')).toBeNull();
+    expect(calls('history').at(-1)).toMatchObject({ topic: 'pagamentos', kind: 'caixa' });
+    // O visto continua sendo da conversa, sem o tipo.
+    await waitFor(() => expect(calls('seen').length).toBeGreaterThan(0));
+    expect(calls('seen').every((b) => !('kind' in b))).toBe(true);
+    await user.click(screen.getByRole('tab', { name: /Tudo/ }));
+    expect(await screen.findByText('Vencimentos de amanhã: 2 contas')).toBeInTheDocument();
+    expect(calls('history').at(-1)?.kind).toBeUndefined();
+  });
+
+  it('trocar de conversa volta para "Tudo"; grupo do WhatsApp não tem filtro', async () => {
+    const user = userEvent.setup();
+    add('assistant', 'Vencimentos de amanhã', 'pagamentos', 'cron');
+    renderChat();
+    await entrarNaConversa(user, 'Financeiro');
+    await user.click(await screen.findByRole('tab', { name: /Avisos automáticos/ }));
+    await user.click(screen.getByRole('button', { name: 'Voltar para as conversas' }));
+    await entrarNaConversa(user, 'Currículos');
+    expect(await screen.findByRole('tab', { name: /Tudo/ })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.queryByRole('tab', { name: /Caixa e turnos/ })).toBeNull(); // só os tipos da conversa
   });
 });
 

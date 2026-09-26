@@ -1644,6 +1644,33 @@ Deno.serve(async (req) => {
       return json(await avisarCaixa(admin, ownerChat, id, false));
     } catch (e) { return json({ error: errMsg(e) }, 500); }
   }
+  // Turno aberto (dono, 2026-09-26): só no chat do ERPOS (conversa Financeiro, tipo 'caixa', ao lado do
+  // fechamento) + notificação no celular. WhatsApp/Telegram ficam só com o fechamento, que tem conteúdo.
+  if (body.run === 'opening_session') {
+    try {
+      const id = String(body.id ?? '');
+      if (!id) return json({ error: 'id obrigatório' }, 400);
+      if (!ownerChat) return json({ ok: true, skipped: 'sem canal do dono' });
+      const { data: s } = await admin.from('sessions')
+        .select('id, tenant_id, number, opened_at, opened_by, opening_amount, is_training').eq('id', id).maybeSingle();
+      if (!s || s.is_training) return json({ ok: true, skipped: 'sem sessão' });
+      const [{ data: loja }, { data: op }] = await Promise.all([
+        admin.from('tenants').select('name').eq('id', s.tenant_id).maybeSingle(),
+        s.opened_by ? admin.from('users').select('name').eq('id', s.opened_by).maybeSingle() : Promise.resolve({ data: null }),
+      ]);
+      const nomeLoja = String(loja?.name ?? '');
+      const detalhe = [
+        s.number ? `Sessão #${s.number}` : null,
+        `às ${hhmm(s.opened_at)}`,
+        op?.name ? `por ${op.name}` : null,
+        Number(s.opening_amount ?? 0) > 0 ? `troco ${brl(s.opening_amount)}` : null,
+      ].filter(Boolean).join(' · ');
+      const texto = `☀️ *Turno aberto — ${nomeLoja}*\n${detalhe}`;
+      await admin.from('asst_messages').insert({ channel: 'cron', chat_id: ownerChat, role: 'assistant', topic: 'pagamentos', kind: 'caixa', content: texto });
+      await pushDono(`☀️ Turno aberto — ${nomeLoja}: ${detalhe}`);
+      return json({ ok: true, sent: true });
+    } catch (e) { return json({ error: errMsg(e) }, 500); }
+  }
   if (body.run === 'closing_session') {
     try {
       const id = String(body.id ?? '');
