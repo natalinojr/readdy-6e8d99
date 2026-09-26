@@ -36,6 +36,8 @@ function getBucket(type: string, reason: string | null): { bucket: 'vendas' | 'p
   if (type === 'in' || type === 'transfer_in') return { bucket: 'entrada', isConsumo: false };
   const r = (reason || '').toLowerCase();
   if (type === 'theoretical_out') return { bucket: 'vendas', isConsumo: true };
+  if (type === 'loss') return { bucket: 'perda', isConsumo: true };
+  if (r.startsWith('correção de conversão')) return { bucket: 'ajuste', isConsumo: false };
   if (
     r.includes('perda') ||
     r.includes('descarte') ||

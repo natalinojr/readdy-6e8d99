@@ -74,6 +74,9 @@ function classifyMovement(
   // Transferência de entrada também não é consumo
   if (type === 'transfer_in') return { bucket: 'transferencia', isConsumo: false };
 
+  // Correção de conversão (Classificação de itens) acerta a ENTRADA de uma compra antiga — não é consumo
+  if (r.startsWith('correção de conversão') || r.startsWith('correcao de conversao')) return { bucket: 'ajuste', isConsumo: false };
+
   // ── A partir daqui só temos saídas / consumo ─────────────────────────────
 
   /* vendas diretas (PDV) */
@@ -340,13 +343,13 @@ export function useConsumoIngredientes(
             ? (c?.semanaAnteriorProducao ?? 0)
             : (c?.semanaAnteriorVendas ?? 0);
 
+          // Sem consumo na semana anterior não há com o que comparar (ex.: loja começou a vender há poucos
+          // dias) — antes virava "acelerando" para tudo.
           let tendencia: 'subindo' | 'estavel' | 'caindo' = 'estavel';
           if (semanaAnteriorRef > 0) {
             const variacao = (ultimaSemanaRef - semanaAnteriorRef) / semanaAnteriorRef;
             if (variacao > 0.2) tendencia = 'subindo';
             else if (variacao < -0.2) tendencia = 'caindo';
-          } else if (ultimaSemanaRef > 0 && semanaAnteriorRef === 0) {
-            tendencia = 'subindo';
           }
 
           result.push({
@@ -366,7 +369,8 @@ export function useConsumoIngredientes(
             custoProducao: porTipo.producao * ing.unitPrice,
             custoPerda: porTipo.perda * ing.unitPrice,
             mediaDiaria,
-            diasAteZerar: mediaDiaria > 0 ? Math.floor(ing.currentStock / mediaDiaria) : null,
+            // Estoque zerado/negativo = 0 dias (antes saía "-27 dias")
+            diasAteZerar: mediaDiaria > 0 ? Math.max(0, Math.floor(ing.currentStock / mediaDiaria)) : null,
             tendencia,
             semCadastro: false,
           });

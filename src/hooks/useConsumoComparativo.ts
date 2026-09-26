@@ -121,7 +121,9 @@ export function useConsumoComparativo(dateFrom?: string, dateTo?: string) {
 
       // Agrupa consumo atual
       const consumoAtualMap = new Map<string, { total: number; dias: Set<string>; vendas: number; producao: number; perda: number }>();
-      for (const mov of (movsAtual ?? [])) {
+      // Correção de conversão acerta a entrada de uma compra antiga — não é consumo
+      const ehConsumo = (m: { reason?: string | null }) => !String(m.reason ?? '').toLowerCase().startsWith('correção de conversão');
+      for (const mov of (movsAtual ?? []).filter(ehConsumo)) {
         const prev = consumoAtualMap.get(mov.ingredient_id) ?? { total: 0, dias: new Set<string>(), vendas: 0, producao: 0, perda: 0 };
         const qtd = Math.abs(Number(mov.quantity));
         prev.total += qtd;
@@ -135,7 +137,7 @@ export function useConsumoComparativo(dateFrom?: string, dateTo?: string) {
 
       // Agrupa consumo anterior
       const consumoAnteriorMap = new Map<string, { total: number; dias: Set<string>; vendas: number; producao: number; perda: number }>();
-      for (const mov of (movsAnterior ?? [])) {
+      for (const mov of (movsAnterior ?? []).filter(ehConsumo)) {
         const prev = consumoAnteriorMap.get(mov.ingredient_id) ?? { total: 0, dias: new Set<string>(), vendas: 0, producao: 0, perda: 0 };
         const qtd = Math.abs(Number(mov.quantity));
         prev.total += qtd;
