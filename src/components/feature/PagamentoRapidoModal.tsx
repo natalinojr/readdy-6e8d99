@@ -10,6 +10,7 @@ import type { DestinoInfo } from '@/contexts/PDVContext';
 import type { PedidoAgrupado } from '@/hooks/usePedidosAgrupados';
 import { indicesPagamentosFaltantes } from '@/lib/pagamentosPendentes';
 import AutorizacaoGerenteModal from '@/components/feature/AutorizacaoGerenteModal';
+import { usePermissoes } from '@/hooks/usePermissoes';
 import CortesiaDetalhesModal from '@/pages/pdv/caixa/components/CortesiaDetalhesModal';
 import CobrarMaquininhaModal from '@/components/feature/CobrarMaquininhaModal';
 import { perguntar } from '@/components/base/Dialogos';
@@ -49,6 +50,7 @@ interface ItemPedido {
 export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, destinoDisplay, destino, onClose, onSuccess, paidByPdv = 'cashier', valorInicial, tituloContexto, autoLinkOrderIds, formaInicialNome }: Props) {
   const { formasAtivas, loading: loadingFormas } = usePaymentMethods();
   const { user } = useAuth();
+  const { hasPermissao } = usePermissoes();
   const { success: toastSuccess, error: toastError, warning: toastWarning } = useToast();
   const { setPedidos, pedidos: kdsPedidos } = useKDS();
 
@@ -356,6 +358,16 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
     let valor = descontoTipoManual === 'percentual' ? baseDesconto * (n / 100) : n;
     valor = Math.min(Math.round(valor * 100) / 100, baseDesconto);
     if (valor <= 0) { setDescontoError('Desconto inválido para este total'); return; }
+    // Quem tem a permissão "Aplicar desconto" (pdv_desconto) aplica direto; sem ela,
+    // o desconto continua pedindo PIN de supervisão/gerente/admin.
+    if (hasPermissao('pdv_desconto')) {
+      const autor = user?.nome ?? 'Operador';
+      setDescontoManual(valor);
+      setDescontoAutorizadoPor(autor);
+      setPagamentos([]);
+      toastSuccess('Desconto aplicado', `${fmt(valor)} por ${autor}`);
+      return;
+    }
     setDescontoPendente(valor);
     setShowDescontoAuth(true);
   }
@@ -1181,7 +1193,7 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
                           <button onClick={handleAplicarDesconto} disabled={!descontoInput.trim()} className="px-4 py-2 bg-amber-500 hover:bg-amber-600 disabled:opacity-40 text-white text-sm font-semibold rounded-lg cursor-pointer whitespace-nowrap flex items-center gap-1.5"><i className="ri-shield-check-line" />Aplicar</button>
                         </div>
                         {descontoError && <div className="flex items-center gap-2 text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2"><i className="ri-error-warning-line" />{descontoError}</div>}
-                        <p className="text-[10px] text-zinc-400">O desconto exige autorização de gerente/admin.</p>
+                        <p className="text-[10px] text-zinc-400">{hasPermissao('pdv_desconto') ? 'Você tem permissão para aplicar desconto.' : 'O desconto exige autorização de gerente/admin.'}</p>
                       </>
                     )}
                   </div>

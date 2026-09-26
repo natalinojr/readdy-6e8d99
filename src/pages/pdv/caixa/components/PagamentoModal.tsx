@@ -14,6 +14,7 @@ import type { Voucher } from '@/types/vouchers';
 import type { PedidoAgrupado } from '@/hooks/usePedidosAgrupados';
 import EtapaSelecionarPedidos from './pagamento/EtapaSelecionarPedidos';
 import AutorizacaoGerenteModal from '@/components/feature/AutorizacaoGerenteModal';
+import { usePermissoes } from '@/hooks/usePermissoes';
 import CortesiaDetalhesModal from './CortesiaDetalhesModal';
 import type { KDSPedido } from '@/types/kds';
 
@@ -85,6 +86,7 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
   const { caixa, sessao } = useSessao();
   const { addPedido, reloadOrders, pedidos: kdsPedidos, stationMap: kdsStationMap } = useKDS();
   const { user } = useAuth();
+  const { hasPermissao } = usePermissoes();
   const { getImpressoraParaEstacao, mapaEstacoes } = useImpressoras();
   const { settings } = useSystemSettings();
   const { pedidosRelacionados, carrinhoComoPedido, reloadOrders: reloadPedidosAgrupados } = usePedidosAgrupados(destino, carrinho, total);
@@ -206,6 +208,16 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
     if (descontoTipoManual === 'percentual' && n > 100) { setDescontoError('Percentual máximo é 100%'); return; }
     valor = Math.min(Math.round(valor * 100) / 100, baseDesconto);
     if (valor <= 0) { setDescontoError('Desconto inválido para este total'); return; }
+    // Quem tem a permissão "Aplicar desconto" (pdv_desconto) aplica direto; sem ela,
+    // o desconto continua pedindo PIN de supervisão/gerente/admin.
+    if (hasPermissao('pdv_desconto')) {
+      const autor = user?.nome ?? 'Operador';
+      setDescontoManual(valor);
+      setDescontoAutorizadoPor(autor);
+      setPagamentos([]);
+      toastSuccess('Desconto aplicado', `${formatPrice(valor)} por ${autor}`);
+      return;
+    }
     setDescontoPendente(valor);
     setShowDescontoAuth(true);
   }
@@ -1462,7 +1474,9 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
                       </div>
                     )}
                     <p className="text-[10px] text-zinc-400">
-                      O desconto exige autorização de gerente/admin (PIN ou notificação).
+                      {hasPermissao('pdv_desconto')
+                        ? 'Você tem permissão para aplicar desconto.'
+                        : 'O desconto exige autorização de gerente/admin (PIN ou notificação).'}
                     </p>
                   </>
                 )}
