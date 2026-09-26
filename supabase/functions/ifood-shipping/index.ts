@@ -62,6 +62,20 @@ function withSystemApp(cfg: any) {
 // uma vez só — um 5xx pode ter sido aceito do lado do iFood e repetir chamaria dois entregadores.
 // Falha de rede vira status 0 (resposta incerta).
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/** GET /merchants paginado (page/size, critério de homologação do Merchant): segue até vir página incompleta. */
+async function listarLojas(access: string, homolog: boolean) {
+  const size = 100;
+  const merchants: { id: string; name: string }[] = [];
+  for (let page = 1; page <= 20; page++) {
+    const m = await ifoodFetch(`/merchant/v1.0/merchants?page=${page}&size=${size}`, { headers: { Authorization: `Bearer ${access}`, Accept: 'application/json' } }, homolog);
+    if (!m.ok) return { ...m, merchants };
+    const lote = Array.isArray(m.data) ? m.data : [];
+    merchants.push(...lote.map((x: any) => ({ id: String(x.id), name: String(x.name ?? x.corporateName ?? x.id) })));
+    if (lote.length < size) break;
+  }
+  return { ok: true, status: 200, data: null, raw: '', merchants };
+}
+
 async function ifoodFetch(path: string, init: RequestInit, homolog: boolean, maxAttempts = 4) {
   const headers = new Headers(init.headers);
   if (homolog) headers.set('x-request-homologation', 'true');
@@ -1045,9 +1059,9 @@ Deno.serve(async (req) => {
       const r = await ifoodForm('/authentication/v1.0/oauth/token', { grantType: 'client_credentials', clientId: cfg.client_id, clientSecret: cfg.client_secret }, cfg.homologation_mode === true);
       if (!r.ok || !r.data?.accessToken) return errResp(apiError(r, 'Conectar'));
       const access = r.data.accessToken as string;
-      const m = await ifoodFetch('/merchant/v1.0/merchants', { headers: { Authorization: `Bearer ${access}`, Accept: 'application/json' } }, cfg.homologation_mode === true);
+      const m = await listarLojas(access, cfg.homologation_mode === true);
       if (!m.ok) return errResp(apiError(m, 'Listar lojas'));
-      const merchants = (Array.isArray(m.data) ? m.data : []).map((x: any) => ({ id: String(x.id), name: String(x.name ?? x.corporateName ?? x.id) }));
+      const merchants = m.merchants;
       const now = new Date().toISOString();
       await admin.from('ifood_pdv_auths').delete().eq('tenant_id', tenantId);
       const { error: aErr } = await admin.from('ifood_pdv_auths').insert({
@@ -1107,8 +1121,7 @@ Deno.serve(async (req) => {
       }, cfg.homologation_mode === true);
       if (!r.ok || !r.data?.accessToken) return errResp(apiError(r, 'Autorizar'));
       const access = r.data.accessToken as string;
-      const m = await ifoodFetch('/merchant/v1.0/merchants', { headers: { Authorization: `Bearer ${access}`, Accept: 'application/json' } }, cfg.homologation_mode === true);
-      const merchants = (Array.isArray(m.data) ? m.data : []).map((x: any) => ({ id: String(x.id), name: String(x.name ?? x.corporateName ?? x.id) }));
+      const { merchants } = await listarLojas(access, cfg.homologation_mode === true);
       const now = new Date().toISOString();
       const { error: aErr } = await admin.from('ifood_pdv_auths').insert({
         tenant_id: tenantId, access_token: access, refresh_token: r.data.refreshToken ?? null,
