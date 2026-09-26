@@ -55,6 +55,29 @@ export function buildItems(order: { id: string; number: unknown; total_amount: u
   return { items: [{ id: order.id, name: cut(`Pedido #${numero}`, 50), quantity: 1, unitPrice: itemsTotal, price: itemsTotal, optionsPrice: 0, totalPrice: itemsTotal }], itemsTotal };
 }
 
+/**
+ * Endereço do texto do pedido (orders.delivery_address), quando o cliente não tem endereço cadastrado.
+ * Formato do delivery: "Rua X 123 (compl) - Bairro - Cidade (Ref: ...)".
+ */
+export function parseEnderecoPedido(txt: string | null | undefined) {
+  let t = String(txt ?? '').trim();
+  const ref = /\(Ref:\s*([^)]*)\)/i.exec(t)?.[1]?.trim() ?? '';
+  t = t.replace(/\(Ref:[^)]*\)/i, '').trim();
+  const partes = t.split(/\s+-\s+/).map((x) => x.trim()).filter(Boolean);
+  let rua = partes[0] ?? '';
+  const complement = /\(([^)]*)\)/.exec(rua)?.[1]?.trim() ?? '';
+  rua = rua.replace(/\([^)]*\)/, '').replace(/,\s*$/, '').trim();
+  const m = /^(.*?)[,\s]+(\d+[A-Za-z]?|s\/?n)$/i.exec(rua);
+  return {
+    street: (m ? m[1] : rua).replace(/,\s*$/, '').trim(),
+    number: m ? m[2] : '',
+    complement,
+    neighborhood: partes[1] ?? '',
+    city: partes[2] ?? '',
+    reference: ref,
+  };
+}
+
 // ── Eventos ──────────────────────────────────────────────────────────────────
 export const CODE_ALIAS: Record<string, string> = {
   PLC: 'PLACED', CFM: 'CONFIRMED', CAN: 'CANCELLED', CON: 'CONCLUDED', DSP: 'DISPATCHED',
@@ -129,7 +152,7 @@ export function planEvent(s: { status: string; timeline?: Record<string, string>
       return { upd, order: 'entregou' };
     case 'REQUEST_DRIVER_FAILED': case 'CANCELLED': case 'DELIVERY_CANCELLED': {
       upd.status = name === 'REQUEST_DRIVER_FAILED' ? 'failed' : 'cancelled';
-      const motivo = metaCode(meta, ['reason', 'REASON', 'cancellationReason', 'description', 'message']);
+      const motivo = metaCode(meta, ['CANCEL_CODE_DESCRIPTION', 'CANCELLATION_REASON', 'reason', 'REASON', 'cancellationReason', 'description', 'message']);
       if (motivo) upd.cancel_reason = cut(motivo, 300);
       clearAddr();
       const nota = (name === 'REQUEST_DRIVER_FAILED' ? 'iFood não conseguiu um entregador' : 'Entrega iFood cancelada')
