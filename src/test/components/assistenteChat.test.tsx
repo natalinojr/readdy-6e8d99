@@ -18,6 +18,14 @@ vi.mock('@/lib/supabase', () => ({
     // Conversa com a equipe escuta o Realtime (equipe/useConversasEquipe).
     channel: () => { const c = { on: () => c, subscribe: () => c }; return c; },
     removeChannel: () => undefined,
+    // Conversa "Avisos" (AvisosConversa) lê a tabela avisos direto: aqui, sempre vazia.
+    from: () => {
+      const q: Record<string, unknown> = {};
+      for (const m of ['select', 'order', 'eq', 'is', 'in', 'update']) q[m] = () => q;
+      q.limit = () => Promise.resolve({ data: [], error: null });
+      q.then = (ok: (v: unknown) => unknown) => Promise.resolve({ data: [], error: null }).then(ok);
+      return q;
+    },
   },
   invokeWithAuth: vi.fn().mockResolvedValue({ data: {}, error: null }),
   SUPABASE_URL: 'http://localhost',
