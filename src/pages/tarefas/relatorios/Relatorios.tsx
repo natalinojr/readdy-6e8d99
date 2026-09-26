@@ -17,6 +17,7 @@ import type { TaskRow } from '../hooks/useTarefas';
 import ItemRelatorio, { FormItem, NovoItem } from './ItemRelatorio';
 import LinksRelatorio from './LinksRelatorio';
 import { descreverCondicao, itensVisiveis } from './condicaoItem';
+import { useRelatorioAoVivo } from './useRelatorioAoVivo';
 import {
   chamarDono, enviarImagemDono, linkPublico,
   podeEditar, podeExcluir,
@@ -408,6 +409,11 @@ function DetalheRelatorio({ id, onVoltar, pastas, meuId, tarefas, onOpenTask }: 
   }, [id, toast, onVoltar]);
 
   useEffect(() => { carregar(true); }, [carregar]);
+  // Ao vivo: resposta/edição de outra pessoa chega na hora. Falha aqui não tira a pessoa da tela.
+  useRelatorioAoVivo(id, async () => {
+    const r = await chamarDono<RelatorioCompleto>('get', { report_id: id, mark_seen: true });
+    if (r.ok) setDados(r.data);
+  });
   useEffect(() => {
     const f = () => { if (document.visibilityState === 'visible') carregar(true); };
     document.addEventListener('visibilitychange', f);

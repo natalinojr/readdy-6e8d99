@@ -4,7 +4,7 @@
  */
 import { useRef, useState, type ClipboardEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { ImagePlus, Loader2, Send, X, PencilLine, CheckCircle2, RotateCcw, MessageCircle, Plus, ArrowRight, Reply, CornerDownRight } from 'lucide-react';
+import { ImagePlus, Loader2, Send, X, PencilLine, CheckCircle2, RotateCcw, MessageCircle, Plus, ArrowRight, Reply, CornerDownRight, History, ChevronDown } from 'lucide-react';
 import { STATUS_INFO, dataHora, type CampoRel, type CondicaoItem, type ImagemRel, type ItemRel, type LinkRel, type RespostaRel, type StatusItem, type ValorCampo } from './api';
 import { candidatosCondicao } from './condicaoItem';
 import { ChipsLinks, useLinks } from './LinksRelatorio';
@@ -172,6 +172,8 @@ export default function ItemRelatorio({ item, numero, podeResponder, meuGuestId,
   const campos = item.fields ?? [];
   const preenche = podeAlterarCampos && campos.length > 0;
   const [respondendoA, setRespondendoA] = useState<string | null>(null);
+  // Na tela fica só a resposta final; a sequência inteira abre no clique (senão fica muita coisa aberta).
+  const [verHistorico, setVerHistorico] = useState(false);
   const atuais = valoresAtuais(item);
   const valorAtual = Object.fromEntries(Object.entries(atuais).map(([k, v]) => [k, v.valor]));
   const mudancas = respostasMudadas(campos, valorAtual, rascunho);
@@ -203,6 +205,7 @@ export default function ItemRelatorio({ item, numero, podeResponder, meuGuestId,
   };
 
   const respostas = item.responses;
+  const ultima = [...respostas].reverse().find((r) => r.kind === 'reply' && !r.parent_id && (r.body || r.images.length || r.links?.length));
   const anteriores = new Map<string, Record<string, ValorCampo>>();
   {
     const corrente: Record<string, ValorCampo> = {};
@@ -261,9 +264,31 @@ export default function ItemRelatorio({ item, numero, podeResponder, meuGuestId,
             )}
           </div>
         )}
+        {/* Sem campos, a "resposta final" é a última resposta com conteúdo. */}
+        {campos.length === 0 && ultima && (
+          <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50/50 px-3 py-2.5">
+            <p className="text-[11px] text-slate-500">
+              Última resposta · <strong className="font-semibold text-slate-600">{ultima.author_name}</strong> · {dataHora(ultima.created_at)}
+            </p>
+            {ultima.body && <p className="text-sm text-slate-800 whitespace-pre-wrap break-words mt-0.5">{ultima.body}</p>}
+            <GradeImagens imagens={ultima.images} />
+            <ChipsLinks links={ultima.links ?? []} />
+          </div>
+        )}
       </div>
 
       {respostas.length > 0 && (
+        <button
+          type="button"
+          onClick={() => setVerHistorico((v) => !v)}
+          className="w-full flex items-center gap-1.5 border-t border-slate-100 px-4 py-2 text-xs font-medium text-slate-500 hover:bg-slate-50 hover:text-indigo-600"
+        >
+          <History size={13} />
+          {verHistorico ? 'Esconder histórico' : `Ver histórico (${respostas.length} ${respostas.length === 1 ? 'registro' : 'registros'})`}
+          <ChevronDown size={14} className={`ml-auto transition ${verHistorico ? 'rotate-180' : ''}`} />
+        </button>
+      )}
+      {respostas.length > 0 && verHistorico && (
         <ol className="border-t border-slate-100 bg-slate-50/60 px-4 py-3 space-y-3">
           {respostas.filter((r) => !r.parent_id).map((r) => {
             const minha = (meuGuestId && r.author_guest_id === meuGuestId) || (!!meuUserId && r.author_user_id === meuUserId);

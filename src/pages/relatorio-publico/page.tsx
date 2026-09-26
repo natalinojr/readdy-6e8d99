@@ -9,6 +9,7 @@ import { Loader2, Lock, UserRound, ClipboardList } from 'lucide-react';
 import ItemRelatorio, { NovoItem } from '../tarefas/relatorios/ItemRelatorio';
 import LinksRelatorio from '../tarefas/relatorios/LinksRelatorio';
 import { itensVisiveis } from '../tarefas/relatorios/condicaoItem';
+import { useRelatorioAoVivo } from '../tarefas/relatorios/useRelatorioAoVivo';
 import {
   chamarPublico, enviarImagemPublico, lerConvidado, salvarConvidado, slugRelatorio,
   type Convidado, type ImagemRel, type ItemRel, type LinkRel, type Relatorio, type StatusItem, type ValorCampo,
@@ -33,6 +34,8 @@ export default function RelatorioPublicoPage() {
   }, [token, guestToken]);
 
   useEffect(() => { carregar(); }, [carregar]);
+  // Ao vivo: resposta de outra pessoa (ou da equipe) aparece na hora.
+  useRelatorioAoVivo(dados?.report.id, carregar);
   // Volta para a aba → busca respostas novas de outras pessoas.
   useEffect(() => {
     const f = () => { if (document.visibilityState === 'visible') carregar(); };
