@@ -5,7 +5,8 @@ import { fetchIfoodVendas, type IfoodVendas } from '@/lib/ifoodVendas';
 
 // Vendas do iFood do período dos Relatórios ('Hoje', '7d', 'custom:AAAA-MM-DD:AAAA-MM-DD'…).
 // Período vazio = desligado. `intervalo` (ISO) substitui o período — ex.: janela da sessão de caixa.
-export function useIfoodVendas(periodo: string, intervalo?: { from: string; to: string } | null) {
+// `recarregar`: mudar o valor busca de novo (ex.: refreshKey do Dashboard).
+export function useIfoodVendas(periodo: string, intervalo?: { from: string; to: string } | null, recarregar = 0) {
   const { user } = useAuth();
   const [data, setData] = useState<IfoodVendas | null>(null);
 
@@ -15,7 +16,7 @@ export function useIfoodVendas(periodo: string, intervalo?: { from: string; to: 
     const { from, to } = intervalo ?? getPeriodDates(periodo);
     fetchIfoodVendas(user.tenantId, from, to).then((d) => { if (vivo) setData(d); });
     return () => { vivo = false; };
-  }, [user?.tenantId, periodo, intervalo?.from, intervalo?.to]);
+  }, [user?.tenantId, periodo, intervalo?.from, intervalo?.to, recarregar]);
 
   return { data };
 }

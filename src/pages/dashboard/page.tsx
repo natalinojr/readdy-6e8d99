@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { DollarSign, ShoppingBag, Receipt, LayoutGrid, Timer, Clock } from 'lucide-react';
 import MetricCard from './components/MetricCard';
@@ -24,6 +24,7 @@ import { useKDS } from '../../contexts/KDSContext';
 import { useModoFaturamento } from '@/contexts/ModoFaturamentoContext';
 import { useSessaoFaturamento } from '@/hooks/useSessaoFaturamento';
 import { useSessao } from '@/contexts/SessaoContext';
+import { useIfoodVendas } from '@/hooks/useIfoodVendas';
 
 const fmt = (v: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
@@ -77,19 +78,45 @@ export default function Dashboard() {
 
   const hasData = !!m;
 
+  // iFood (conciliação + API do iFood, mesma conta da Visão Geral dos Relatórios): não passa pelo PDV,
+  // então soma aos totais. Hoje/ontem no modo calendário; no modo sessão, os pedidos feitos desde a abertura.
+  const sessaoIntervalo = useMemo(() => (modo === 'sessao' && sessao
+    ? { from: sessao.dataRef.toISOString(), to: new Date().toISOString() }
+    : null), [modo, sessao?.dataRef.getTime(), refreshKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  const { data: ifDia } = useIfoodVendas('Hoje', null, refreshKey);
+  const { data: ifOntem } = useIfoodVendas(modo === 'sessao' ? '' : 'Ontem', null, refreshKey);
+  const { data: ifSessao } = useIfoodVendas('', sessaoIntervalo, refreshKey);
+  const ifood = modo === 'sessao' ? ifSessao : ifDia;
+  const ifTot = ifood?.total ?? 0;
+  const ifPed = ifood?.pedidos ?? 0;
+
   // Escolhe fonte de dados conforme modo
-  const faturamentoHoje = modo === 'sessao'
+  const faturamentoHoje = (modo === 'sessao'
     ? sessaoMetrics.faturamento_sessao
-    : (m?.faturamento_hoje ?? 0);
-  const faturamentoOntem = modo === 'sessao' ? 0 : (m?.faturamento_ontem ?? 0);
-  const pedidosHoje = modo === 'sessao'
+    : (m?.faturamento_hoje ?? 0)) + ifTot;
+  const faturamentoOntem = modo === 'sessao' ? 0 : (m?.faturamento_ontem ?? 0) + (ifOntem?.total ?? 0);
+  const pedidosHoje = (modo === 'sessao'
     ? sessaoMetrics.pedidos_sessao
-    : (m?.pedidos_hoje ?? 0);
-  const pedidosOntem = modo === 'sessao' ? 0 : (m?.pedidos_ontem ?? 0);
-  const ticketMedio = modo === 'sessao'
-    ? sessaoMetrics.ticket_medio_sessao
-    : (m?.ticket_medio ?? 0);
-  const ticketMedioOntem = modo === 'sessao' ? 0 : (m?.ticket_medio_ontem ?? 0);
+    : (m?.pedidos_hoje ?? 0)) + ifPed;
+  const pedidosOntem = modo === 'sessao' ? 0 : (m?.pedidos_ontem ?? 0) + (ifOntem?.pedidos ?? 0);
+  const ticketMedio = pedidosHoje > 0 ? faturamentoHoje / pedidosHoje : 0;
+  const ticketMedioOntem = pedidosOntem > 0 ? faturamentoOntem / pedidosOntem : 0;
+
+  // Vendas por hora do dia (PDV + iFood por cima), sempre do dia de hoje.
+  const vendasPorHora = (() => {
+    const base = new Map<string, { valor: number; ifood: number }>();
+    for (const h of m?.vendas_por_hora ?? []) base.set(h.hora.slice(0, 2), { valor: Number(h.valor), ifood: 0 });
+    for (const [hm, v] of Object.entries(ifDia?.porHora ?? {})) {
+      const x = base.get(hm.slice(0, 2)) ?? { valor: 0, ifood: 0 };
+      x.ifood += v;
+      base.set(hm.slice(0, 2), x);
+    }
+    return [...base.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([h, v]) => ({
+      hora: `${h}:00`,
+      valor: Math.round((v.valor + v.ifood) * 100) / 100,
+      ifood: Math.round(v.ifood * 100) / 100,
+    }));
+  })();
   const mesasOcupadas = m?.mesas_ocupadas ?? 0;
   const mesasTotal = m?.mesas_total ?? 0;
   const pedidosAbertosValor = m?.pedidos_abertos_valor ?? 0;
@@ -237,11 +264,17 @@ export default function Dashboard() {
           <MetricCard key={metric.label} {...metric} />
         ))}
       </div>
+      {ifPed > 0 && (
+        <p className="text-[11px] text-zinc-400 -mt-3">
+          <i className="ri-restaurant-2-line text-red-500" /> Inclui iFood: <strong className="text-zinc-600">{fmt(ifTot)}</strong> em {ifPed} pedido{ifPed !== 1 ? 's' : ''}
+          {(ifood?.pedidosAoVivo ?? 0) > 0 && ' (valor provisório pela API do iFood até importar a conciliação)'} — detalhes em Relatórios › iFood.
+        </p>
+      )}
 
       {/* Chart + Status */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="lg:col-span-2">
-          <SalesChart data={m?.vendas_por_hora ?? []} lastUpdated={lastUpdated} />
+          <SalesChart data={vendasPorHora} lastUpdated={lastUpdated} />
         </div>
         <div>
           <PedidosStatus
