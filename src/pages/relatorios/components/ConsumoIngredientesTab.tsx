@@ -10,6 +10,7 @@ import ConsumoDetalheDia from './ConsumoDetalheDia';
 import ConsumoCategoriasPanel from './ConsumoCategoriasPanel';
 import ConsumoPorLanchePanel from './ConsumoPorLanchePanel';
 import ConsumoPerdas from './ConsumoPerdas';
+import { BotaoFichasVendasPassadas } from '@/pages/estoque/components/FichasVendasPassadasModal';
 
 type SubTab = 'ingredientes' | 'categorias' | 'lanchesPratos' | 'perdas';
 
@@ -165,6 +166,8 @@ export default function ConsumoIngredientesTab({ periodo }: Props) {
         >
           Últimos 30 dias
         </button>
+        <span className="flex-1" />
+        <BotaoFichasVendasPassadas onAplicado={reload} />
       </div>
 
       {loading && (

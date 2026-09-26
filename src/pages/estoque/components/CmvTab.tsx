@@ -6,6 +6,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { formatCurrency, formatPercent } from '@/lib/formatters';
 import { custoLinhaFicha } from '@/lib/unitConversion';
 import { custoOpcoesNoPeriodo } from '@/lib/custoOpcoes';
+import { BotaoFichasVendasPassadas } from './FichasVendasPassadasModal';
 
 // ── Hook: CMV mensal histórico ────────────────────────────────────────────────
 interface CmvMensalPonto { mes: string; cmv_pct: number; receita: number; custo: number; }
@@ -884,6 +885,7 @@ export default function CmvTab() {
 
   return (
     <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-2 justify-between">
       {/* Sub-tabs */}
       <div className="flex items-center gap-1 bg-zinc-100 rounded-xl p-1 w-fit">
         <button
@@ -904,6 +906,8 @@ export default function CmvTab() {
           <i className="ri-test-tube-line mr-1.5" />
           CMV Teórico
         </button>
+      </div>
+      <BotaoFichasVendasPassadas />
       </div>
 
       {/* Descrição do modo */}

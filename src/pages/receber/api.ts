@@ -120,6 +120,8 @@ export interface ScanResult {
   access_key?: string;
   duplicate?: { id: string; purchase_date: string } | null;
   readable: boolean; supplier_name: string | null; supplier_key: string;
+  /** Leitura por IA: cupom_fiscal | nfe_danfe | notinha_manual | pedido_orcamento | outro */
+  document_kind?: string;
   invoice_number: string | null; purchase_date: string | null; payment_method: string | null;
   document_total: number | null; discount_total: number | null; items_sum: number;
   items: ScanItem[]; warnings: string[];
