@@ -83,7 +83,7 @@ Rotas dentro do layout autenticado:
 - `/receber`: `src/pages/receber/page.tsx` — **Recebimentos e pagamentos** (celular da loja: receber mercadoria por etapas — nota, compra lançada, cupom, sem nota; + pedidos de pagamento em `src/pages/receber/pedidos/`: reembolso, freelancer, fornecedor sem nota, aprovação; links `?pedido=`, `?aprovar=1`, `?meus=1`)
 - `/financeiro`: `src/pages/financeiro/page.tsx`
 - `/configuracoes`: `src/pages/configuracoes/page.tsx`
-- `/config-delivery`: `src/pages/config-delivery/page.tsx`
+- `/config-delivery`: `src/pages/config-delivery/page.tsx` (abas Configurações, Gerir entregas, Atendimento WhatsApp → `AtendimentoWhatsAppTab.tsx`)
 - `/usuarios`: `src/pages/usuarios/page.tsx`
 - `/clientes`: `src/pages/clientes/page.tsx`
 - `/auditoria`: `src/pages/auditoria/page.tsx`
@@ -3538,3 +3538,14 @@ Sem SW ativo o POST cai no Vercel e falha — por isso o destino só existe no S
   NÃO é do iFood (entrega própria/sob demanda); entregue pelo iFood (billing `DELIVERY_FEE_IFOOD`) a entrega é do iFood e
   fica fora — é o mesmo valor do Portal do Parceiro. Taxas não contam `DELIVERY_FEE_IFOOD`. Onde está: `acoes/ifood/comum.ts`
   (`vendidoDoPedido`), `IfoodApiViews` (Pedidos), `assistente-cron › ifoodResumo`, e a conta do Portal (`ifoodVendas`/`ifoodDashboard`).
+- **Atendimento de clientes da loja pelo WhatsApp (2026-09-26)**: Delivery › aba "Atendimento WhatsApp"
+  (`AtendimentoWhatsAppTab.tsx`) + edge `atendimento-loja` (Haiku 4.5, `--no-verify-jwt`) + tabelas `wa_loja_bots`
+  (1/loja, código `PD-XXXX`), `wa_loja_conversas`, `wa_loja_mensagens` (RLS `fn_is_tenant_admin`; migração
+  `20260926120000_atendimento_whatsapp_loja.sql`). Roteamento na `whatsapp-cloud`: número próprio da loja
+  (`wa_loja_bots.phone_id`) → tudo para a loja; no número compartilhado, depois do `hiring-scheduler`, o código PD-
+  no texto ou conversa da loja aberta (3 dias, mais recente que a de candidatura) → `atendimento-loja`; o resto segue
+  para o `canal-publico`. **Regra:** o robô NUNCA cria pedido nem recebe pagamento — vende mandando o link do delivery
+  (`?utm_source=whatsapp_bot`, `&item=` para abrir o item, `&voucher=` quando oferece o cupom configurado). Cardápio,
+  promoções do dia, horário, taxa e estoque vêm do `delivery-write › get_delivery_config` (o mesmo do link público).
+  Pedidos do cliente: só os do telefone que está falando. Foto/arquivo (comprovante), reclamação ou pedido de humano →
+  `needs_human` + aviso no Telegram; a equipe responde pela aba (`action: 'reply'`), o que pausa o robô por 2 h.
