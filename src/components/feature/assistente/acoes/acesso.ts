@@ -16,7 +16,8 @@ export interface ContextoAcesso {
   perfil: string | null;
   pode: (k: PermissaoKey) => boolean;
   modulo: (m: ModuloLivre) => boolean;
-  /** A loja ativa tem iFood (alguma loja do iFood cadastrada)? Sem iFood, a categoria iFood some. */
+  /** A loja ativa tem iFood ligado na API (alguma loja do iFood com api_sync)? Sem isso a categoria iFood some:
+   *  as ações leem vendas/repasses da API e ficariam vazias (ex.: Vila Leste, só com relatório importado). */
   ifood?: boolean;
 }
 
@@ -113,7 +114,7 @@ export function acaoLiberada(id: string, c: ContextoAcesso): boolean {
 }
 
 /** Contexto de acesso do usuário logado. `carregando` = permissões/módulos ainda chegando. */
-// Loja ativa tem iFood? Uma leitura por loja na sessão (a lista de lojas do iFood quase nunca muda).
+// Loja ativa tem iFood ligado na API? Uma leitura por loja na sessão (quase nunca muda).
 const IFOOD_POR_LOJA = new Map<string, boolean>();
 function useLojaTemIfood(tenantId: string | undefined): boolean | null {
   const [tem, setTem] = useState<boolean | null>(tenantId ? IFOOD_POR_LOJA.get(tenantId) ?? null : false);
@@ -123,7 +124,7 @@ function useLojaTemIfood(tenantId: string | undefined): boolean | null {
     if (salvo !== undefined) { setTem(salvo); return; }
     let vivo = true;
     setTem(null);
-    supabase.from('fin_ifood_merchants').select('merchant_id', { count: 'exact', head: true }).eq('tenant_id', tenantId)
+    supabase.from('fin_ifood_merchants').select('merchant_id', { count: 'exact', head: true }).eq('tenant_id', tenantId).eq('api_sync', true)
       .then(({ count, error }) => {
         const v = !error && (count ?? 0) > 0;
         if (!error) IFOOD_POR_LOJA.set(tenantId, v);
