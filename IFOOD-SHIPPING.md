@@ -50,6 +50,16 @@ troca de endereço no prazo; **código de coleta** (conferir com o entregador); 
 com jitter (3–5 tentativas); idempotency-key em operações que mudam estado; logs com orderId/eventId por 30 dias;
 alertas (> 5 falhas seguidas de polling). Submissão: descrever como cada critério é atendido + logs + métricas.
 
+## Pagamento cobrado pelo entregador (decisão do dono, 2026-09-26: automático)
+
+Cliente paga ao entregador do iFood (dinheiro/cartão) → o valor vem no **repasse do iFood**, não na gaveta. No
+CONCLUDED o pedido é pago com a forma **"iFood Entrega"** (`payment_methods` type `other`, criada sozinha na 1ª vez,
+`fiscal_code` 99, `days_to_receive` 7 → vira **a receber** em `fin_receivable_installments`), `paid_by_pdv =
+'ifood_shipping'`, NFC-e pela fiscal-write se a loja emite. Mesmo caminho do Pix pelo app (`fn_record_payment_bypass`,
+que exige caixa aberto na sessão do pedido — sem caixa, fica a observação para dar baixa à mão). Idempotente.
+Teste: ação interna `simulate_event` (só com homologação ligada) — testado na Testes PDV (pagamento, a receber, nota
+no pedido, evento repetido não duplica).
+
 ## Proteções (revisão 2026-09-26)
 
 - POST que chama/cancela entregador vai **uma vez só** (5xx pode ter sido aceito); só GET, token e ack repetem.
@@ -74,5 +84,7 @@ alertas (> 5 falhas seguidas de polling). Submissão: descrever como cada crité
   relatório de conciliação do app financeiro.
 - **Loja de teste não suporta Entrega iFood** (FAQ do portal): sem alocação nem eventos em teste. O 1º teste real depende
   do app autorizar uma loja real (provavelmente só após a homologação).
-- **Decisão do dono pendente:** dinheiro/cartão cobrado pelo entregador do iFood entra no repasse do iFood. Hoje fica
-  só uma observação no pedido ao concluir (`is_paid` não muda, NFC-e não sai).
+- NFC-e do pagamento "iFood Entrega" (tPag 99, descrição "iFood Entrega") ainda não foi emitida de verdade: a loja
+  Testes PDV não tem fiscal ligado. Conferir na 1ª entrega real de uma loja com NFC-e.
+- Se o relatório financeiro do iFood (app ERPOS) trouxer as cobranças do Sob Demanda como crédito do repasse, conferir
+  que não soma em dobro com a fonte "pedidos" (hoje são produtos separados).
