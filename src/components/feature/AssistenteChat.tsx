@@ -389,6 +389,14 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
   const [pin, setPin] = useState('');
   const [pinErr, setPinErr] = useState<string | null>(null);
   const [paying, setPaying] = useState(false);
+  // Criar/trocar o PIN de pagamento (2026-09-26: saiu do /pin do Telegram). null = janela fechada.
+  const [pinCfg, setPinCfg] = useState<{ hasPin: boolean } | null>(null);
+  const [pinAtual, setPinAtual] = useState('');
+  const [pinNovo, setPinNovo] = useState('');
+  const [pinNovo2, setPinNovo2] = useState('');
+  const [pinCfgErr, setPinCfgErr] = useState<string | null>(null);
+  const [pinCfgBusy, setPinCfgBusy] = useState(false);
+  const [pinCfgOk, setPinCfgOk] = useState(false);
   // Aba de assunto ('' = tudo). A conversa é uma só; a aba só filtra (asst_messages.topic).
   const [aba, setAba] = useState('');
   const abaRef = useRef('');
@@ -833,7 +841,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
       return true;
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      // PIN guardado não confere mais (trocado pelo /pin no Telegram): esquece e pede digitado.
+      // PIN guardado não confere mais (trocado em outro aparelho): esquece e pede digitado.
       if (daDigital && /PIN errado/i.test(msg)) await bio()?.deleteCredentials({ server: BIO_SERVER }).catch(() => {});
       // Erro que não é de PIN (Inter recusou, limite, saldo…): digitar de novo não resolve — fecha o PIN
       // e o cartão fixo mostra o que aconteceu, com o motivo.
@@ -853,6 +861,30 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
       setPin('');
       return false;
     } finally { setPaying(false); }
+  };
+
+  const abrirPinCfg = async () => {
+    setMenuAcoes(false); setPinFor(null);
+    if (modo === 'mini') setModo('full');
+    setPinAtual(''); setPinNovo(''); setPinNovo2(''); setPinCfgErr(null); setPinCfgOk(false);
+    setPinCfg({ hasPin: true });
+    try {
+      const st = await call<{ has_pin: boolean }>('pin_status');
+      setPinCfg({ hasPin: !!st.has_pin });
+    } catch (e) { setPinCfgErr(e instanceof Error ? e.message : String(e)); }
+  };
+  const salvarPin = async () => {
+    if (pinNovo !== pinNovo2) { setPinCfgErr('Os dois PINs novos não batem.'); return; }
+    setPinCfgBusy(true); setPinCfgErr(null);
+    try {
+      await call('pin_set', { current: pinAtual, pin: pinNovo });
+      // O PIN antigo guardado pela digital não serve mais: a próxima vez pede digitado e guarda o novo.
+      await bio()?.deleteCredentials({ server: BIO_SERVER }).catch(() => {});
+      setPinCfgOk(true); setPinAtual(''); setPinNovo(''); setPinNovo2('');
+    } catch (e) {
+      setPinCfgErr(e instanceof Error ? e.message : String(e));
+      setPinAtual('');
+    } finally { setPinCfgBusy(false); }
   };
 
   const acaoPagamento = async (p: Payment, op: 'ok' | 'no' | 'st' | 're' | 'rc') => {
@@ -1062,6 +1094,12 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
               {pendNovas > 9 ? '9+' : pendNovas}
             </span>
           )}
+        </button>
+        {/* PIN de pagamento (2026-09-26): criar/trocar aqui — o /pin do Telegram saiu. */}
+        <button onClick={abrirPinCfg} disabled={sending || !!recording}
+          className="w-10 h-10 flex-shrink-0 flex items-center justify-center rounded-xl disabled:opacity-40 cursor-pointer text-zinc-500 hover:bg-zinc-100"
+          aria-label="PIN de pagamento" title="PIN de pagamento">
+          <i className="ri-lock-password-line text-xl" />
         </button>
     </>
   );
@@ -1552,13 +1590,66 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
                 Usar a digital nas próximas vezes
               </label>
             )}
-            <p className="text-[11px] text-zinc-400 mt-2">Mesmo PIN do Telegram. Depois o Inter ainda pede a sua aprovação no app.</p>
+            <p className="text-[11px] text-zinc-400 mt-2">
+              Depois o Inter ainda pede a sua aprovação no app.{' '}
+              <button type="button" onClick={abrirPinCfg} disabled={paying} className="text-violet-600 font-bold underline cursor-pointer">Criar ou trocar o PIN</button>
+            </p>
             <div className="flex gap-2 mt-4">
               <button type="button" onClick={() => setPinFor(null)} disabled={paying} className="flex-1 h-10 rounded-xl border border-zinc-200 text-sm font-bold text-zinc-600 cursor-pointer">Voltar</button>
               <button type="submit" disabled={paying || pin.length < 4} className="flex-1 h-10 rounded-xl bg-violet-600 text-white text-sm font-bold disabled:opacity-40 cursor-pointer">
                 {paying ? 'Enviando…' : 'Pagar'}
               </button>
             </div>
+          </form>
+        </div>
+      )}
+
+      {/* Criar/trocar o PIN de pagamento — conferido no servidor, nunca passa pelo modelo */}
+      {pinCfg && (
+        <div className="absolute inset-0 z-10 flex items-end sm:items-center justify-center bg-black/40 p-3" onClick={() => !pinCfgBusy && setPinCfg(null)}>
+          <form
+            onClick={(e) => e.stopPropagation()}
+            onSubmit={(e) => { e.preventDefault(); salvarPin(); }}
+            className="w-full max-w-xs rounded-2xl bg-white p-5 text-center"
+          >
+            <i className="ri-lock-password-line text-2xl text-violet-600" />
+            <p className="text-base font-black text-zinc-900 mt-1">{pinCfg.hasPin ? 'Trocar o PIN de pagamento' : 'Criar o PIN de pagamento'}</p>
+            {pinCfgOk ? (
+              <>
+                <p className="text-sm text-emerald-700 font-bold mt-4">PIN salvo.</p>
+                <p className="text-xs text-zinc-500 mt-1">No próximo pagamento, digite o PIN novo.{bioDisponivel ? ' A digital volta a valer depois disso.' : ''}</p>
+                <button type="button" onClick={() => setPinCfg(null)} className="mt-4 w-full h-10 rounded-xl bg-violet-600 text-white text-sm font-bold cursor-pointer">Fechar</button>
+              </>
+            ) : (
+              <>
+                <p className="text-xs text-zinc-500 mt-1">De 6 a 8 números, sem sequência nem número repetido.</p>
+                {[
+                  ...(pinCfg.hasPin ? [{ v: pinAtual, set: setPinAtual, ph: 'PIN atual' }] : []),
+                  { v: pinNovo, set: setPinNovo, ph: 'PIN novo' },
+                  { v: pinNovo2, set: setPinNovo2, ph: 'Repita o PIN novo' },
+                ].map((f, i) => (
+                  <input
+                    key={f.ph}
+                    autoFocus={i === 0}
+                    value={f.v}
+                    onChange={(e) => f.set(e.target.value.replace(/\D/g, '').slice(0, 8))}
+                    inputMode="numeric"
+                    type="password"
+                    autoComplete="off"
+                    placeholder={f.ph}
+                    className="mt-3 w-full h-11 text-center text-lg tracking-[0.3em] rounded-xl border border-zinc-200 focus:outline-none focus:border-violet-400 placeholder:tracking-normal placeholder:text-sm"
+                  />
+                ))}
+                {pinCfgErr && <p className="text-xs text-red-600 mt-2">{pinCfgErr}</p>}
+                <div className="flex gap-2 mt-4">
+                  <button type="button" onClick={() => setPinCfg(null)} disabled={pinCfgBusy} className="flex-1 h-10 rounded-xl border border-zinc-200 text-sm font-bold text-zinc-600 cursor-pointer">Voltar</button>
+                  <button type="submit" disabled={pinCfgBusy || pinNovo.length < 6 || pinNovo2.length < 6 || (pinCfg.hasPin && pinAtual.length < 4)}
+                    className="flex-1 h-10 rounded-xl bg-violet-600 text-white text-sm font-bold disabled:opacity-40 cursor-pointer">
+                    {pinCfgBusy ? 'Salvando…' : 'Salvar'}
+                  </button>
+                </div>
+              </>
+            )}
           </form>
         </div>
       )}
