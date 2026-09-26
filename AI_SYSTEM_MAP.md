@@ -3528,3 +3528,9 @@ Sem SW ativo o POST cai no Vercel e falha — por isso o destino só existe no S
   cancelado não entra; valor ≈ `subTotal` + taxa de entrega só se `delivered_by = MERCHANT`). A Visão Geral mostra iFood também
   no modo sessão (pedidos entre `opened_at` e `closed_at`/agora — `useIfoodVendas(periodo, intervalo)`).
   PEGADINHA: intervalo com `new Date()` precisa de `useMemo`, senão o efeito refaz a busca a cada render.
+- **iFood Merchant — horário da pausa sem fuso (2026-09-26)**: `POST /merchants/{id}/interruptions` aceita ISO com fuso
+  (enviamos UTC com `Z`), mas a resposta e o `GET` devolvem **UTC sem o `Z`** (`"2026-09-26T19:01:09"`). `new Date()` no
+  navegador leria como hora local (3 h adiantado) → `IfoodLojaModal` acrescenta `Z` antes de formatar. Na loja de teste o
+  `/status` continua "Loja aberta" com pausa ativa e o iFood **não** recusou pausa sobreposta (sem 409); a lista de pausas
+  aparece com alguns segundos de atraso. Review: `/summary` responde **404 "Summary not found"** em loja sem avaliação
+  (a edge devolve resumo zerado). Teste da edge sem login: `net.http_post` no SQL com `x-internal-key` lido do vault.
