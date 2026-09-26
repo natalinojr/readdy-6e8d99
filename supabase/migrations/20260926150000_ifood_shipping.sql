@@ -13,6 +13,7 @@ create table if not exists public.ifood_pdv_config (
   tenant_id uuid not null unique references public.tenants(id) on delete cascade,
   client_id text,
   client_secret text,
+  app_type text not null default 'distributed',   -- 'centralized' = app de teste "C" (client_credentials)
   homologation_mode boolean not null default false,
   homologation_until timestamptz,   -- polling contínuo da homologação desliga sozinho (24 h)
   user_code text,

@@ -103,9 +103,12 @@ const msgErro = (r: { status: number; data: any; raw: string }, what: string) =>
 // ── Token (renova 5 min antes de vencer; 401 força renovação) ────────────────
 async function getToken(admin: Admin, cfg: any, auth: any): Promise<string> {
   if (auth.access_token && auth.token_expires_at && new Date(auth.token_expires_at).getTime() - Date.now() > 5 * 60_000) return auth.access_token;
-  if (!auth.refresh_token) throw new Error('A loja precisa autorizar de novo o app ERPOS PDV no Portal do Parceiro.');
-  const r = await ifoodForm('/authentication/v1.0/oauth/token',
-    { grantType: 'refresh_token', clientId: cfg.client_id, clientSecret: cfg.client_secret, refreshToken: auth.refresh_token },
+  // App centralizado (app de teste "C" do iFood, já liberado na loja de teste): client_credentials, sem código.
+  const centralized = cfg.app_type === 'centralized';
+  if (!centralized && !auth.refresh_token) throw new Error('A loja precisa autorizar de novo o app ERPOS PDV no Portal do Parceiro.');
+  const r = await ifoodForm('/authentication/v1.0/oauth/token', centralized
+    ? { grantType: 'client_credentials', clientId: cfg.client_id, clientSecret: cfg.client_secret }
+    : { grantType: 'refresh_token', clientId: cfg.client_id, clientSecret: cfg.client_secret, refreshToken: auth.refresh_token },
     cfg.homologation_mode === true);
   if (!r.ok || !r.data?.accessToken) throw new Error(apiError(r, 'Renovar acesso'));
   const upd = {
@@ -298,7 +301,7 @@ function safeConfig(cfg: any, auths: any[]) {
   const merchants = new Map<string, string>();
   for (const a of auths) for (const m of a.merchants ?? []) merchants.set(m.id, m.name);
   return {
-    client_id: cfg.client_id ?? null, has_secret: !!cfg.client_secret,
+    client_id: cfg.client_id ?? null, has_secret: !!cfg.client_secret, app_type: cfg.app_type === 'centralized' ? 'centralized' : 'distributed',
     homologation_mode: cfg.homologation_mode === true, shipping_enabled: cfg.shipping_enabled === true,
     default_prep_min: cfg.default_prep_min ?? 15,
     shipping_merchant_id: cfg.shipping_merchant_id ?? null, shipping_merchant_name: cfg.shipping_merchant_name ?? null,
@@ -600,7 +603,8 @@ Deno.serve(async (req) => {
       if (!clientSecret && !cfg?.client_secret) return errResp('Informe o Client Secret do app ERPOS PDV.');
       const changedApp = cfg && cfg.client_id !== clientId;
       if (changedApp && await temAtivas()) return errResp(MSG_ATIVAS);
-      const row: Record<string, unknown> = { tenant_id: tenantId, client_id: clientId, client_secret: clientSecret || cfg?.client_secret, updated_at: new Date().toISOString() };
+      const appType = body.app_type === 'centralized' ? 'centralized' : 'distributed';
+      const row: Record<string, unknown> = { tenant_id: tenantId, client_id: clientId, client_secret: clientSecret || cfg?.client_secret, app_type: appType, updated_at: new Date().toISOString() };
       if (!cfg) row.created_by = userId;
       if (changedApp) Object.assign(row, { user_code: null, auth_verifier_secret: null, shipping_merchant_id: null, shipping_merchant_name: null, shipping_enabled: false });
       const { error } = await admin.from('ifood_pdv_config').upsert(row, { onConflict: 'tenant_id' });
@@ -633,6 +637,29 @@ Deno.serve(async (req) => {
       const { error } = await admin.from('ifood_pdv_config').update(upd).eq('id', cfg.id);
       if (error) return errResp('Salvar: ' + error.message, 500);
       return json({ success: true });
+    }
+
+    // App centralizado: token por client_credentials e a lista das lojas que o app enxerga (sem código).
+    if (action === 'connect_centralized') {
+      if (!cfg?.client_id || !cfg.client_secret || cfg.app_type !== 'centralized') return errResp('Salve antes as credenciais de um app centralizado.');
+      const r = await ifoodForm('/authentication/v1.0/oauth/token', { grantType: 'client_credentials', clientId: cfg.client_id, clientSecret: cfg.client_secret }, cfg.homologation_mode === true);
+      if (!r.ok || !r.data?.accessToken) return errResp(apiError(r, 'Conectar'));
+      const access = r.data.accessToken as string;
+      const m = await ifoodFetch('/merchant/v1.0/merchants', { headers: { Authorization: `Bearer ${access}`, Accept: 'application/json' } }, cfg.homologation_mode === true);
+      if (!m.ok) return errResp(apiError(m, 'Listar lojas'));
+      const merchants = (Array.isArray(m.data) ? m.data : []).map((x: any) => ({ id: String(x.id), name: String(x.name ?? x.corporateName ?? x.id) }));
+      const now = new Date().toISOString();
+      await admin.from('ifood_pdv_auths').delete().eq('tenant_id', tenantId);
+      const { error: aErr } = await admin.from('ifood_pdv_auths').insert({
+        tenant_id: tenantId, access_token: access, refresh_token: null,
+        token_expires_at: new Date(Date.now() + Number(r.data.expiresIn ?? 21600) * 1000).toISOString(),
+        merchants, authorized_at: now, updated_at: now,
+      });
+      if (aErr) return errResp('Gravar autorização: ' + aErr.message, 500);
+      const upd: Record<string, unknown> = { updated_at: now };
+      if (!cfg.shipping_merchant_id && merchants.length === 1) Object.assign(upd, { shipping_merchant_id: merchants[0].id, shipping_merchant_name: merchants[0].name });
+      await admin.from('ifood_pdv_config').update(upd).eq('id', cfg.id);
+      return json({ success: true, merchants });
     }
 
     if (action === 'request_user_code') {
