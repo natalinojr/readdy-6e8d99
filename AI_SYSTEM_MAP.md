@@ -3466,3 +3466,9 @@ Sem SW ativo o POST cai no Vercel e falha — por isso o destino só existe no S
   `matched_transaction_id` na linha. O casamento legado do `inter-bank` (valor ± 3 dias) achava esse movimento "livre" e
   casava o Pix seguinte de mesmo valor (freela semanal) → linha `matched` sem baixa. Agora movimento de conta já baixada
   pelo extrato conta como usado. Descrição do pagamento na tela: `descricaoPagamento()` (raw.detalhes.descricaoPix / raw.description).
+- **Abertura da Conciliação sem ir aos bancos à toa (2026-09-26):** a busca real custa ~50 s (iFood ~41 s, MP ~12 s,
+  Inter ~8 s, Stone ~4 s). A abertura da tela manda `max_age_min: 15` no `sync` das 4 Edges (`inter-bank`,
+  `stone-conciliation`, `mp-conciliation`, `ifood-financial`): com `last_sync_at` recente e sem `last_sync_error` a Edge
+  responde `{ fresh: true, last_sync_at }` sem chamar o provedor (~1–2 s). Menu "Atualizar bancos agora"/"Buscar o período"
+  não mandam o parâmetro e vão sempre. Depois da busca a lista é relida com `refresh(true)` (silenciosa, sem "Carregando...").
+  Nova busca automática em tela = sempre com `max_age_min`; o cron nunca manda.
