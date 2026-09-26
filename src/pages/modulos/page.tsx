@@ -12,6 +12,7 @@ import { empresaTemPdv } from '@/lib/tipoEmpresa';
 import { GESTAO_ENTRADA_KEYS, primeiraRotaGestao } from '@/constants/permissoesGestao';
 import { ChefHat, LogOut, Monitor, Store } from 'lucide-react';
 import OnboardingShareModal from '@/pages/modulos/components/OnboardingShareModal';
+import { abrirNovaJanela, cliqueParaNovaAba } from '@/lib/novaJanela';
 
 
 interface ModuloCard {
@@ -447,11 +448,14 @@ export default function ModulosPage() {
     }
   }, [location.state, navigate]);
 
+  // Gestão abre na primeira tela que o papel pode ver — o card aponta para
+  // /dashboard, que pode não estar liberado para quem só ganhou Pedidos, p.ex.
+  const rotaDoModulo = (m: ModuloCard) =>
+    m.id === 'gestao' ? primeiraRotaGestao((k) => hasPermissao(k as PermissaoKey)) : m.rota;
+
   const handleModulo = (m: ModuloCard) => {
     setMode(m.id);
-    // Gestão abre na primeira tela que o papel pode ver — o card aponta para
-    // /dashboard, que pode não estar liberado para quem só ganhou Pedidos, p.ex.
-    navigate(m.id === 'gestao' ? primeiraRotaGestao((k) => hasPermissao(k as PermissaoKey)) : m.rota);
+    navigate(rotaDoModulo(m));
   };
 
   const handleLogout = () => {
@@ -797,7 +801,9 @@ export default function ModulosPage() {
                   key={m.id}
                   modulo={m}
                   delay={idx * 55}
-                  onClick={() => handleModulo(m)}
+                  href={rotaDoModulo(m)}
+                  onAbrir={() => handleModulo(m)}
+                  onNovaJanela={() => { setMode(m.id); abrirNovaJanela(rotaDoModulo(m)); }}
                 />
               ))}
             </div>
@@ -814,7 +820,9 @@ export default function ModulosPage() {
                   key={m.id}
                   modulo={m}
                   delay={(terminais.length + idx) * 55}
-                  onClick={() => handleModulo(m)}
+                  href={rotaDoModulo(m)}
+                  onAbrir={() => handleModulo(m)}
+                  onNovaJanela={() => { setMode(m.id); abrirNovaJanela(rotaDoModulo(m)); }}
                 />
               ))}
             </div>
@@ -831,7 +839,9 @@ export default function ModulosPage() {
                   key={m.id}
                   modulo={m}
                   delay={(terminais.length + cozinha.length + idx) * 55}
-                  onClick={() => handleModulo(m)}
+                  href={rotaDoModulo(m)}
+                  onAbrir={() => handleModulo(m)}
+                  onNovaJanela={() => { setMode(m.id); abrirNovaJanela(rotaDoModulo(m)); }}
                 />
               ))}
             </div>
@@ -877,15 +887,23 @@ function SectionLabel({ label }: { label: string }) {
 interface ModuloTileProps {
   modulo: ModuloCard;
   delay: number;
-  onClick: () => void;
+  href: string;
+  onAbrir: () => void;
+  onNovaJanela: () => void;
 }
 
-function ModuloTile({ modulo: m, delay, onClick }: ModuloTileProps) {
+// Link de verdade: rodinha do mouse / Ctrl+clique / botão direito abrem em outra aba.
+function ModuloTile({ modulo: m, delay, href, onAbrir, onNovaJanela }: ModuloTileProps) {
   return (
-    <button
-      onClick={onClick}
-      style={{ animationDelay: `${delay}ms` }}
-      className={`mod-enter group relative flex flex-col p-5 rounded-2xl border cursor-pointer text-left transition-all duration-200 overflow-hidden bg-white/70 hover:bg-white backdrop-blur-sm ${m.acentoBorder} hover:scale-[1.02]`}
+    <div className="mod-enter group relative" style={{ animationDelay: `${delay}ms` }}>
+    <a
+      href={href}
+      onClick={(e) => {
+        if (cliqueParaNovaAba(e)) return;
+        e.preventDefault();
+        onAbrir();
+      }}
+      className={`relative flex flex-col h-full p-5 rounded-2xl border cursor-pointer text-left transition-all duration-200 overflow-hidden bg-white/70 hover:bg-white backdrop-blur-sm ${m.acentoBorder} hover:scale-[1.02]`}
     >
       {/* Orb decorativo no hover */}
       <div
@@ -918,6 +936,17 @@ function ModuloTile({ modulo: m, delay, onClick }: ModuloTileProps) {
         Acessar
         <i className="ri-arrow-right-line text-xs" />
       </div>
-    </button>
+    </a>
+      {/* Outra janela (computador): fora do <a> para não abrir o módulo junto. */}
+      <button
+        type="button"
+        onClick={onNovaJanela}
+        title="Abrir em outra janela"
+        aria-label={`Abrir ${m.titulo} em outra janela`}
+        className={`hidden md:flex absolute bottom-3 right-3 w-8 h-8 items-center justify-center rounded-lg ${m.acentoText} hover:bg-zinc-100 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity cursor-pointer`}
+      >
+        <i className="ri-window-line text-base" />
+      </button>
+    </div>
   );
 }

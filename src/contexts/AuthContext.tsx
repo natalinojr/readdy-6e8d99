@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { supabase, SUPABASE_URL, SUPABASE_ANON_KEY, safeRefreshSession, safeSignOut, refreshSessionWithReason, isLogoutIntencional, clearLogoutIntencional } from '@/lib/supabase';
 import { ensureFreshSession } from '@/lib/supabase';
 import { reportError } from '@/lib/errorReporter';
+import { getLojaAtiva, setLojaAtiva, limparLojaAtiva, fixarLojaNestaAba } from '@/lib/lojaAtiva';
 import type { TipoEmpresa } from '@/lib/tipoEmpresa';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -239,7 +240,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(null);
         setNeedsTenantSelection(false);
         setAvailableTenants([]);
-        localStorage.removeItem(SELECTED_TENANT_KEY);
+        limparLojaAtiva();
         return;
       }
 
@@ -279,24 +280,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setNeedsTenantSelection(false);
         return;
       }
-      localStorage.removeItem(SELECTED_TENANT_KEY);
+      limparLojaAtiva();
       setAvailableTenants(tenants);
       setNeedsTenantSelection(true);
       setUser(null);
       return;
     }
 
-    const storedId = localStorage.getItem(SELECTED_TENANT_KEY);
+    const storedId = getLojaAtiva();
     const validStored = tenants.find((t) => t.tenantId === storedId);
 
     if (validStored) {
       const profile = await fetchProfileForTenant(userId, validStored.tenantId);
       if (profile) {
+        fixarLojaNestaAba(validStored.tenantId);
         setUser(profile);
         setNeedsTenantSelection(false);
         return;
       }
-      localStorage.removeItem(SELECTED_TENANT_KEY);
+      limparLojaAtiva();
     }
 
     setAvailableTenants(tenants);
@@ -313,7 +315,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setNeedsTenantSelection(false);
         setHasNoTenants(false);
         authUserIdRef.current = null;
-        localStorage.removeItem(SELECTED_TENANT_KEY);
+        limparLojaAtiva();
         setLoading(false);
         return;
       }
@@ -390,7 +392,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setNeedsTenantSelection(false);
           setHasNoTenants(false);
           authUserIdRef.current = null;
-          localStorage.removeItem(SELECTED_TENANT_KEY);
+          limparLojaAtiva();
           setLoading(false);
         };
 
@@ -477,7 +479,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               setNeedsTenantSelection(false);
               setHasNoTenants(false);
               authUserIdRef.current = null;
-              localStorage.removeItem(SELECTED_TENANT_KEY);
+              limparLojaAtiva();
             } else {
               // Falha transitória (rede/timeout) — mantém a sessão local, tenta de novo no próximo ciclo.
               console.warn('[AuthContext] forceSessionCheck: refresh falhou por erro transitório — sessão mantida');
@@ -526,7 +528,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               setNeedsTenantSelection(false);
               setHasNoTenants(false);
               authUserIdRef.current = null;
-              localStorage.removeItem(SELECTED_TENANT_KEY);
+              limparLojaAtiva();
             } else {
               console.warn('[AuthContext] Refresh preventivo falhou por erro transitório — sessão mantida');
             }
@@ -633,7 +635,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setNeedsTenantSelection(false);
     setTenantCount(0);
     setHasNoTenants(false);
-    localStorage.removeItem(SELECTED_TENANT_KEY);
+    limparLojaAtiva();
     authUserIdRef.current = null;
   };
 
@@ -642,7 +644,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const selectTenant = async (tenantId: string) => {
     const userId = authUserIdRef.current;
     if (!userId) return;
-    localStorage.setItem(SELECTED_TENANT_KEY, tenantId);
+    setLojaAtiva(tenantId);
     const profile = await fetchProfileForTenant(userId, tenantId);
     if (!profile) {
       // Se não conseguiu buscar o perfil (token expirado, etc), desloga
@@ -650,7 +652,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(null);
       setNeedsTenantSelection(false);
       setAvailableTenants([]);
-      localStorage.removeItem(SELECTED_TENANT_KEY);
+      limparLojaAtiva();
       return;
     }
     setUser(profile);
@@ -663,7 +665,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const switchTenant = () => {
     const userId = authUserIdRef.current;
     if (!userId) return;
-    localStorage.removeItem(SELECTED_TENANT_KEY);
+    limparLojaAtiva();
     setNeedsTenantSelection(true); // Garante isAuthenticated=true ate a nova selecao
     setUser(null);
     setAvailableTenants([]);

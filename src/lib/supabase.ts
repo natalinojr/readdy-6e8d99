@@ -1,4 +1,5 @@
 import { reportEdgeFailure } from './errorReporter';
+import { getLojaAtiva, limparLojaAtiva } from './lojaAtiva';
 import { createClient, navigatorLock } from '@supabase/supabase-js';
 import type { Session } from '@supabase/supabase-js';
 
@@ -67,7 +68,7 @@ const fetchComLoja: typeof fetch = async (input, init) => {
   try { url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url; } catch { /* segue */ }
   let req = init;
   try {
-    const tenantId = localStorage.getItem('erpos_selected_tenant_id');
+    const tenantId = getLojaAtiva();
     if (tenantId && url.includes('/rest/v1/')) {
       const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
       headers.set('x-tenant-id', tenantId);
@@ -234,11 +235,12 @@ export async function safeSignOut(): Promise<void> {
   try {
     const keys = Object.keys(localStorage);
     for (const key of keys) {
-      if (key.startsWith('sb-') || key.includes('supabase') || key === 'erpos_selected_tenant_id') {
+      if (key.startsWith('sb-') || key.includes('supabase')) {
         localStorage.removeItem(key);
       }
     }
   } catch { /* silencioso */ }
+  limparLojaAtiva();
 }
 
 /** Motivo de uma tentativa de refresh sem sessão de volta. */

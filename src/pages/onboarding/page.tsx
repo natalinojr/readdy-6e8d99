@@ -3,7 +3,8 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ChefHat } from 'lucide-react';
 import { supabase, SUPABASE_URL } from '@/lib/supabase';
 import { useAppMode } from '@/contexts/AppModeContext';
-import { useAuth, SELECTED_TENANT_STORAGE_KEY } from '@/contexts/AuthContext';
+import { useAuth } from '@/contexts/AuthContext';
+import { setLojaAtiva } from '@/lib/lojaAtiva';
 import StepBoasVindas from './components/StepBoasVindas';
 import StepLoja from './components/StepLoja';
 import type { LojaData } from './components/StepLoja';
@@ -233,7 +234,7 @@ export default function OnboardingPage() {
       // Pré-seleciona a loja recém-criada para entrar NELA (e não na loja antiga,
       // caso o usuário já tivesse outras). reloadUser respeita essa seleção.
       if (data?.tenant_id) {
-        try { localStorage.setItem(SELECTED_TENANT_STORAGE_KEY, data.tenant_id); } catch { /* ignore */ }
+        setLojaAtiva(data.tenant_id);
       }
       await reloadUser();
       setAppMode('modulos');
