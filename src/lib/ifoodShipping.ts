@@ -153,13 +153,38 @@ export interface IfoodOrder {
   extra_info: string | null; schedule: Record<string, unknown> | null; dispute: Record<string, unknown> | null;
   cancel_reason: string | null; cancel_requested: boolean; last_event: string | null; timeline: Record<string, string>;
   created_at: string; updated_at: string;
+  takeout?: { takeoutDateTime?: string } | null; dine_in?: { deliveryDateTime?: string } | null;
   ifood_order_items?: IfoodOrderItem[];
 }
+
+const hora = (iso?: unknown) => (typeof iso === 'string' && iso ? new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '');
+
+/**
+ * Como o pedido sai da loja, pelo `orderType` do iFood: DELIVERY (entregador do iFood ou da loja), TAKEOUT (retirada no
+ * balcão), DINE_IN (consumo no local — pedido de teste FOOD_SELF_SERVICE vem assim, canal TOTEM) e INDOOR (salão).
+ * Agendado mostra a janela de `schedule`.
+ */
+export function ifoodTipoPedido(p: Pick<IfoodOrder, 'order_type' | 'order_timing' | 'delivered_by' | 'sales_channel' | 'schedule' | 'takeout' | 'dine_in'>): string {
+  const t = p.order_type;
+  let s = t === 'TAKEOUT' ? 'Retirada no balcão'
+    : t === 'DINE_IN' ? `Consumo no local${p.sales_channel === 'TOTEM' ? ' (totem)' : ''}`
+    : t === 'INDOOR' ? 'No salão'
+    : p.delivered_by === 'MERCHANT' ? 'Entrega própria' : 'Entregador iFood';
+  if (p.order_timing === 'SCHEDULED') {
+    const ini = hora(p.schedule?.deliveryDateTimeStart), fim = hora(p.schedule?.deliveryDateTimeEnd);
+    s += ini ? ` · agendado para ${ini}${fim ? ` a ${fim.slice(-5)}` : ''}` : ' · agendado';
+  } else if (t === 'TAKEOUT' && p.takeout?.takeoutDateTime) s += ` · retirar ${hora(p.takeout.takeoutDateTime)}`;
+  return s;
+}
+
+/** "Despachar" só existe para entrega feita pela loja (retirada, consumo no local e entregador do iFood não despacham). */
+export const ifoodPodeDespachar = (p: Pick<IfoodOrder, 'order_type' | 'delivered_by'>) =>
+  p.order_type === 'DELIVERY' && p.delivered_by !== 'IFOOD';
 
 /** Pedidos do iFood desde `desde` (ISO), com itens (RLS: só da loja da pessoa). */
 export async function fetchIfoodOrders(tenantId: string, desde: string): Promise<IfoodOrder[]> {
   const { data } = await supabase.from('ifood_orders')
-    .select('id, merchant_id, ifood_order_id, display_id, status, order_type, order_timing, sales_channel, delivered_by, is_test, ordered_at, customer_name, customer_document, customer_orders_count, pickup_code, delivery_observations, address, total, payments, benefits, extra_info, schedule, dispute, cancel_reason, cancel_requested, last_event, timeline, created_at, updated_at, ifood_order_items(id, idx, name, quantity, unit, unit_price, options_price, total_price, observations, external_code, options)')
+    .select('id, merchant_id, ifood_order_id, display_id, status, order_type, order_timing, sales_channel, delivered_by, is_test, ordered_at, customer_name, customer_document, customer_orders_count, pickup_code, delivery_observations, address, total, payments, benefits, extra_info, schedule, dispute, cancel_reason, cancel_requested, last_event, timeline, created_at, updated_at, takeout:raw->takeout, dine_in:raw->dineIn, ifood_order_items(id, idx, name, quantity, unit, unit_price, options_price, total_price, observations, external_code, options)')
     .eq('tenant_id', tenantId).gte('created_at', desde).order('created_at', { ascending: false }).limit(300);
   return (data ?? []) as unknown as IfoodOrder[];
 }

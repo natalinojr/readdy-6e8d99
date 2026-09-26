@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useVoltarFecha } from '@/lib/voltarAndroid';
-import { ifoodShipping, fetchIfoodOrders, IFOOD_ORDER_LABEL, type IfoodOrder } from '@/lib/ifoodShipping';
+import { ifoodShipping, fetchIfoodOrders, IFOOD_ORDER_LABEL, ifoodTipoPedido, ifoodPodeDespachar, type IfoodOrder } from '@/lib/ifoodShipping';
 import { fmtMoeda } from '../utils';
 
 interface Props {
@@ -137,8 +137,8 @@ export default function IfoodPedidosModal({ tenantId, operar, onClose }: Props) 
                         {p.total && <p className="text-zinc-500 pt-0.5">Itens {fmtMoeda(Number(p.total.subTotal ?? 0))} · entrega {fmtMoeda(Number(p.total.deliveryFee ?? 0))}{Number(p.total.additionalFees ?? 0) ? ` · taxas ${fmtMoeda(Number(p.total.additionalFees))}` : ''}{Number(p.total.benefits ?? 0) ? ` · descontos −${fmtMoeda(Number(p.total.benefits))}` : ''}</p>}
                       </div>
                       <div className="rounded-lg bg-zinc-50 p-2 space-y-0.5">
-                        <p className="font-bold text-zinc-700">Entrega</p>
-                        <p className="text-zinc-600">{p.order_type === 'TAKEOUT' ? 'Retirada' : p.delivered_by === 'MERCHANT' ? 'Entrega própria' : 'Entregador iFood'}{p.order_timing === 'SCHEDULED' ? ' · agendado' : ''}</p>
+                        <p className="font-bold text-zinc-700">{p.order_type === 'DELIVERY' ? 'Entrega' : 'Como sai'}</p>
+                        <p className="text-zinc-600">{ifoodTipoPedido(p)}</p>
                         {p.pickup_code && <p className="text-zinc-700">Código de coleta: <b className="tracking-widest">{p.pickup_code}</b></p>}
                         {p.delivery_observations && <p className="text-amber-700 font-semibold">Obs. da entrega: {p.delivery_observations}</p>}
                         {p.extra_info && <p className="text-zinc-500">{p.extra_info}</p>}
@@ -157,7 +157,7 @@ export default function IfoodPedidosModal({ tenantId, operar, onClose }: Props) 
                           {p.status === 'placed' && <Botao on={() => acao(p, 'confirm')} b={busy === p.id + 'confirm'} t="Confirmar" cor="bg-emerald-600" />}
                           {p.status === 'confirmed' && <Botao on={() => acao(p, 'start')} b={busy === p.id + 'start'} t="Iniciar preparo" cor="bg-sky-600" />}
                           {['confirmed', 'preparing'].includes(p.status) && <Botao on={() => acao(p, 'ready')} b={busy === p.id + 'ready'} t="Pronto" cor="bg-violet-600" />}
-                          {p.status === 'ready' && p.delivered_by !== 'IFOOD' && <Botao on={() => acao(p, 'dispatch')} b={busy === p.id + 'dispatch'} t="Despachar" cor="bg-indigo-600" />}
+                          {p.status === 'ready' && ifoodPodeDespachar(p) && <Botao on={() => acao(p, 'dispatch')} b={busy === p.id + 'dispatch'} t="Despachar" cor="bg-indigo-600" />}
                           {!p.cancel_requested && <Botao on={() => abrirMotivos(p)} b={busy === p.id + 'reasons'} t="Cancelar pedido" cor="bg-red-600" />}
                         </>
                       )}
