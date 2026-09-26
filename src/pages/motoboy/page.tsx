@@ -151,6 +151,9 @@ export default function MotoboyPage() {
         // Outro entregador assumiu o pedido — recarrega pra refletir e travar.
         setAviso('Este pedido já está sendo entregue por outro entregador.');
         carregar();
+      } else if (data.error === 'com_ifood') {
+        setAviso('Este pedido vai com um entregador do iFood.');
+        carregar();
       }
     } catch { /* ignora */ } finally {
       setEnviando('');

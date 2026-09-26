@@ -88,7 +88,7 @@ export default function MapaEntregas({
     setMarcando(orderId); setMsg('');
     const r = await onACaminho(orderId);
     setMarcando('');
-    if (!r.ok) setMsg(r.error === 'assumido_por_outro' ? 'Esse pedido já está com outro entregador.' : 'Não foi possível marcar. Tente de novo.');
+    if (!r.ok) setMsg(r.error === 'assumido_por_outro' ? 'Esse pedido já está com outro entregador.' : r.error === 'com_ifood' ? 'Esse pedido vai com um entregador do iFood.' : 'Não foi possível marcar. Tente de novo.');
   };
 
   return (

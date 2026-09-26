@@ -83,6 +83,15 @@ function json(obj: unknown, status = 200): Response {
   return new Response(JSON.stringify(obj), { status, headers: { "Content-Type": "application/json", ...corsHeaders } });
 }
 
+// Pedidos com entrega iFood (ifood_shipping_orders) em andamento — entregador do iFood a caminho.
+// deno-lint-ignore no-explicit-any
+async function pedidosComIfoodAtivo(admin: any, orderIds: string[]): Promise<Set<string>> {
+  if (orderIds.length === 0) return new Set();
+  const { data } = await admin.from("ifood_shipping_orders").select("order_id").in("order_id", orderIds)
+    .not("status", "in", "(concluded,cancelled,failed)");
+  return new Set(((data ?? []) as { order_id: string }[]).map((r) => r.order_id));
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders });
   try {
@@ -148,6 +157,9 @@ serve(async (req) => {
         }
         return true;
       });
+      // Pedido com entregador do iFood (iFood Entrega) em andamento some da lista do motoboy da loja.
+      const comIfood = await pedidosComIfoodAtivo(admin, lista.map((o) => o.id as string));
+      for (let i = lista.length - 1; i >= 0; i--) if (comIfood.has(lista[i].id as string) && lista[i].status !== "delivered") lista.splice(i, 1);
       const alertasMap = await alertasPorPedido(admin, tenantId, lista.map((o) => o.id as string));
 
       // Nomes dos entregadores que assumiram pedidos (pra mostrar "com Fulano").
@@ -269,6 +281,8 @@ serve(async (req) => {
       // So pode atualizar quem nao tem dono ainda OU o proprio dono.
       const { data: cur } = await admin.from("orders").select("tenant_id, motoboy_driver_id, motoboy_timeline, motoboy_problems").eq("id", orderId).maybeSingle();
       if (!cur) return json({ error: "not_found" }, 200);
+      // Entregador do iFood já está com o pedido: o motoboy da loja não assume (dois iriam ao cliente).
+      if ((await pedidosComIfoodAtivo(admin, [orderId])).has(orderId)) return json({ ok: false, error: "com_ifood" }, 200);
       const { data: drv } = await admin.from("delivery_drivers").select("id, is_active").eq("id", driverId).eq("tenant_id", cur.tenant_id).maybeSingle();
       if (!drv || drv.is_active === false) return json({ error: "driver_invalido" }, 403);
       const dono = cur.motoboy_driver_id as string | null;

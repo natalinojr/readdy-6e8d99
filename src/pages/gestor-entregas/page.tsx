@@ -6,6 +6,8 @@ import EntregaCard from './components/EntregaCard';
 import EntregaDetalheModal from './components/EntregaDetalheModal';
 import ProblemaModal from './components/ProblemaModal';
 import LiberarModal from './components/LiberarModal';
+import IfoodEntregaModal from './components/IfoodEntregaModal';
+import IfoodEntregaConfigModal from './components/IfoodEntregaConfigModal';
 import MapaEntregasGestor, { type PontoGestor } from './components/MapaEntregasGestor';
 
 const FASE_CURTA: Record<ColunaId, string> = {
@@ -14,7 +16,9 @@ const FASE_CURTA: Record<ColunaId, string> = {
 
 export default function GestorEntregasPage() {
   const navigate = useNavigate();
-  const { orders, loading, erro, busy, now, autor, recarregar, setStatus, liberar, fetchDetalhe, addNote } = useGestorEntregas();
+  const { orders, loading, erro, busy, now, autor, recarregar, setStatus, liberar, fetchDetalhe, addNote, tenantId, ifood, ifoodOn, ifoodForaDoQuadro, recarregarIfoodCfg } = useGestorEntregas();
+  const [ifoodId, setIfoodId] = useState<string | null>(null);
+  const [ifoodCfgOpen, setIfoodCfgOpen] = useState(false);
   const [modalProblema, setModalProblema] = useState<string | null>(null);
   const [modalLiberar, setModalLiberar] = useState<string | null>(null);
   const [detalheId, setDetalheId] = useState<string | null>(null);
@@ -97,6 +101,10 @@ export default function GestorEntregasPage() {
                 <span className="text-xs font-semibold text-amber-700">{comProblema} c/ problema</span>
               </div>
             )}
+            <button onClick={() => setIfoodCfgOpen(true)} title="iFood Entrega (entregador do iFood sob demanda)"
+              className="inline-flex items-center gap-1.5 border border-zinc-200 bg-white hover:bg-zinc-50 text-zinc-700 px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer">
+              <i className="ri-e-bike-2-fill text-red-600" /> <span className="hidden sm:inline">iFood Entrega</span>
+            </button>
             <button onClick={() => setShowMapa(true)}
               className="inline-flex items-center gap-1.5 border border-zinc-200 bg-white hover:bg-zinc-50 text-zinc-700 px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer">
               <i className="ri-map-2-line text-sky-600" /> Mapa
@@ -157,6 +165,15 @@ export default function GestorEntregasPage() {
           )}
         </div>
 
+        {ifoodForaDoQuadro.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2 p-2 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700">
+            <i className="ri-e-bike-2-fill" />
+            <span className="font-semibold">Entregador do iFood a caminho de pedido que saiu do quadro (cancelado?) — cancele a entrega se não for mais sair:</span>
+            {ifoodForaDoQuadro.map((s) => (
+              <button key={s.id} onClick={() => setIfoodId(s.order_id)} className="px-2 py-0.5 rounded bg-white border border-red-200 font-bold hover:bg-red-100">Abrir</button>
+            ))}
+          </div>
+        )}
         {erro && <p className="text-xs text-red-600">{erro}</p>}
       </div>
 
@@ -194,7 +211,8 @@ export default function GestorEntregasPage() {
                           onAbrir={(id) => setDetalheId(id)}
                           onAvancar={setStatus}
                           onProblema={(id) => setModalProblema(id)}
-                          onLiberar={(id) => setModalLiberar(id)} />
+                          onLiberar={(id) => setModalLiberar(id)}
+                          ifood={ifood[o.id]} ifoodOn={ifoodOn} onIfood={(id) => setIfoodId(id)} />
                       ))
                     )}
                   </div>
@@ -214,6 +232,15 @@ export default function GestorEntregasPage() {
           onAddNote={addNote}
           onClose={() => setDetalheId(null)}
         />
+      )}
+
+      {ifoodId && tenantId && (
+        <IfoodEntregaModal tenantId={tenantId} orderId={ifoodId}
+          telefone={orders.find((o) => o.id === ifoodId)?.telefone ?? ''}
+          onClose={() => setIfoodId(null)} onChanged={recarregar} />
+      )}
+      {ifoodCfgOpen && tenantId && (
+        <IfoodEntregaConfigModal tenantId={tenantId} onClose={() => setIfoodCfgOpen(false)} onChanged={recarregarIfoodCfg} />
       )}
 
       {showMapa && <MapaEntregasGestor pontos={pontosMapa} onClose={() => setShowMapa(false)} />}

@@ -1,4 +1,5 @@
 import type { EntregaPedido } from '../hooks/useGestorEntregas';
+import { SHIPPING_ATIVOS, SHIPPING_LABEL, type IfoodShippingOrder } from '@/lib/ifoodShipping';
 import { fmtMoeda, fmtTelefone, waNumero, horaCurta, proximaFase, prazoInfo, temProblema } from '../utils';
 
 interface Props {
@@ -9,6 +10,11 @@ interface Props {
   onAvancar: (orderId: string, signal: string) => void;
   onProblema: (orderId: string) => void;
   onLiberar: (orderId: string) => void;
+  /** Última entrega iFood do pedido (se houver) */
+  ifood?: IfoodShippingOrder;
+  /** iFood Entrega ligado na loja → mostra o botão "iFood" */
+  ifoodOn?: boolean;
+  onIfood?: (orderId: string) => void;
 }
 
 const PRAZO_TOM: Record<string, string> = {
@@ -20,7 +26,7 @@ const PRAZO_TOM: Record<string, string> = {
 const numCurto = (n: string) => `#${String(n).replace(/\D/g, '').slice(-4) || n}`;
 const stop = (e: React.MouseEvent) => e.stopPropagation();
 
-export default function EntregaCard({ pedido: o, now, busy, onAbrir, onAvancar, onProblema, onLiberar }: Props) {
+export default function EntregaCard({ pedido: o, now, busy, onAbrir, onAvancar, onProblema, onLiberar, ifood, ifoodOn, onIfood }: Props) {
   const prazo = prazoInfo(o, now);
   const prox = proximaFase(o);
   const problemaAtivo = o.motoboy_status === 'problema';
@@ -28,6 +34,7 @@ export default function EntregaCard({ pedido: o, now, busy, onAbrir, onAvancar, 
   const entregue = o.status === 'delivered' || o.motoboy_status === 'entregou';
   const tl = o.motoboy_timeline || {};
   const algumBusy = !!busy && busy.startsWith(o.id + ':');
+  const ifoodAtivo = !!ifood && SHIPPING_ATIVOS.includes(ifood.status);
 
   const probs = (o.problemas && o.problemas.length > 0)
     ? o.problemas
@@ -103,7 +110,12 @@ export default function EntregaCard({ pedido: o, now, busy, onAbrir, onAvancar, 
             </span>
           ) : null}
         </div>
-        {o.driver_id ? (
+        {ifoodAtivo ? (
+          <button type="button" onClick={(e) => { stop(e); onIfood?.(o.id); }} title="Entrega pelo iFood — ver detalhes"
+            className="inline-flex items-center gap-1 text-[10px] font-bold text-red-600 truncate max-w-[140px]">
+            <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse shrink-0" /> iFood · {SHIPPING_LABEL[ifood!.status]}
+          </button>
+        ) : o.driver_id ? (
           <span className="inline-flex items-center gap-1 text-[10px] text-zinc-500 truncate max-w-[120px]" title="Entregador responsável">
             <i className="ri-e-bike-2-line text-zinc-400" /> {o.driver_nome || 'entregador'}
           </span>
@@ -140,13 +152,24 @@ export default function EntregaCard({ pedido: o, now, busy, onAbrir, onAvancar, 
       {/* Ações */}
       {!entregue && (
         <div className="flex items-center gap-1.5 pt-1">
-          {prox ? (
+          {ifoodAtivo ? (
+            <button type="button" onClick={(e) => { stop(e); onIfood?.(o.id); }}
+              className="flex-1 inline-flex items-center justify-center gap-1 py-2 rounded-lg bg-red-50 text-red-700 text-[11px] font-bold hover:bg-red-100">
+              <i className="ri-e-bike-2-fill" /> {ifood!.address_change ? 'Cliente pediu troca de endereço' : 'Acompanhar iFood'}
+            </button>
+          ) : prox ? (
             <button type="button" disabled={algumBusy} onClick={(e) => { stop(e); onAvancar(o.id, prox.signal); }}
               className="flex-1 inline-flex items-center justify-center gap-1 py-2 rounded-lg bg-amber-500 text-white text-[11px] font-bold hover:bg-amber-600 disabled:opacity-50">
               <i className={(busy === `${o.id}:${prox.signal}` ? 'ri-loader-4-line animate-spin' : prox.icon)} /> {prox.label}
             </button>
           ) : (
             <span className="flex-1 text-center text-[10px] text-zinc-400 py-2">Aguardando a cozinha finalizar</span>
+          )}
+          {ifoodOn && !ifoodAtivo && !o.driver_id && (
+            <button type="button" disabled={algumBusy} onClick={(e) => { stop(e); onIfood?.(o.id); }} title="Chamar entregador do iFood"
+              className="inline-flex items-center justify-center gap-0.5 h-8 px-2 rounded-lg bg-red-600 text-white text-[10px] font-black hover:bg-red-700 disabled:opacity-50">
+              <i className="ri-e-bike-2-fill text-xs" /> iFood
+            </button>
           )}
           {!problemaAtivo && (
             <button type="button" disabled={algumBusy} onClick={(e) => { stop(e); onProblema(o.id); }} title="Marcar problema na entrega"

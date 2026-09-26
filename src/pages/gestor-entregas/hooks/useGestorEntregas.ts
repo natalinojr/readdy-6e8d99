@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useOrdersPing } from '@/hooks/useOrdersPing';
+import { fetchShippingAtivas, fetchShippingByOrder, ifoodShipping, type IfoodShippingOrder } from '@/lib/ifoodShipping';
 
 function getDeliveryWriteUrl(): string {
   const base = (import.meta.env.VITE_PUBLIC_SUPABASE_URL as string || '').replace(/\/$/, '');
@@ -78,6 +79,11 @@ export function useGestorEntregas() {
   const [erro, setErro] = useState('');
   const [busy, setBusy] = useState('');
   const [now, setNow] = useState(() => Date.now());
+  // iFood Entrega: última entrega iFood de cada pedido + se o botão aparece nesta loja.
+  const [ifood, setIfood] = useState<Record<string, IfoodShippingOrder>>({});
+  const [ifoodOn, setIfoodOn] = useState(false);
+  // Entregas iFood ativas cujo pedido saiu do quadro (cancelado no ERPOS etc.) — o entregador ainda vai.
+  const [ifoodForaDoQuadro, setIfoodForaDoQuadro] = useState<IfoodShippingOrder[]>([]);
 
   const token = useCallback(async () => {
     const { data } = await supabase.auth.getSession();
@@ -96,12 +102,26 @@ export function useGestorEntregas() {
         body: JSON.stringify({ action: 'list_delivery_board', tenant_id: tenantId }),
       });
       const data = await res.json();
-      if (data.ok) { setOrders(data.orders ?? []); setErro(''); }
+      if (data.ok) {
+        const lista: EntregaPedido[] = data.orders ?? [];
+        setOrders(lista); setErro('');
+        const [porPedido, ativas] = await Promise.all([fetchShippingByOrder(tenantId, lista.map((o) => o.id)), fetchShippingAtivas(tenantId)]);
+        setIfood(porPedido);
+        const noQuadro = new Set(lista.map((o) => o.id));
+        setIfoodForaDoQuadro(ativas.filter((s) => !noQuadro.has(s.order_id)));
+      }
       else setErro('Não foi possível carregar as entregas.');
     } catch { setErro('Erro de conexão.'); } finally { setLoading(false); }
   }, [tenantId, token]);
 
   useEffect(() => { carregar(); }, [carregar]);
+
+  const carregarIfoodCfg = useCallback(async () => {
+    if (!tenantId) return;
+    const r = await ifoodShipping<{ config: { shipping_enabled: boolean } | null }>('get_config', tenantId);
+    setIfoodOn(!!r.success && !!r.config?.shipping_enabled);
+  }, [tenantId]);
+  useEffect(() => { carregarIfoodCfg(); }, [carregarIfoodCfg]);
 
   // Realtime: refetch debounced a cada mudança em `orders` da loja (mesmo padrão do
   // useMotoboyStatus). Backstop 90s + reload ao voltar pra aba.
@@ -199,5 +219,8 @@ export function useGestorEntregas() {
     } catch { return false; } finally { setBusy(''); }
   }, [tenantId, token, autor, carregar]);
 
-  return { orders, loading, erro, busy, now, autor, recarregar: () => carregar(), setStatus, liberar, fetchDetalhe, addNote };
+  return {
+    orders, loading, erro, busy, now, autor, recarregar: () => carregar(), setStatus, liberar, fetchDetalhe, addNote,
+    tenantId, ifood, ifoodOn, ifoodForaDoQuadro, recarregarIfoodCfg: carregarIfoodCfg,
+  };
 }
