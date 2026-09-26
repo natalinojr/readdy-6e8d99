@@ -139,10 +139,14 @@ declare
   v_key text; v_anon text;
 begin
   -- Entrega "ativa" sem notícia há 6 h: encerra (o polling já não olha; sem isto o pedido fica travado).
-  update public.ifood_shipping_orders
-     set status = 'failed', uncertain = true, updated_at = now(),
-         error = 'Sem notícia do iFood há mais de 6 h — confira no Gestor de Pedidos do iFood.'
-   where status not in ('concluded', 'cancelled', 'failed') and updated_at < now() - interval '6 hours';
+  -- (só escreve quando há o que encerrar: 1 leitura barata por tick, nenhuma escrita no caso comum)
+  if exists (select 1 from public.ifood_shipping_orders
+              where status not in ('concluded', 'cancelled', 'failed') and updated_at < now() - interval '6 hours') then
+    update public.ifood_shipping_orders
+       set status = 'failed', uncertain = true, updated_at = now(),
+           error = 'Sem notícia do iFood há mais de 6 h — confira no Gestor de Pedidos do iFood.'
+     where status not in ('concluded', 'cancelled', 'failed') and updated_at < now() - interval '6 hours';
+  end if;
   if not exists (
     select 1 from public.ifood_pdv_config c
      where c.shipping_enabled and c.client_id is not null
