@@ -53,7 +53,7 @@ const rotuloAssunto = (id: string) => ASSUNTOS.find((a) => a.id === id)?.label ?
 // "Chegada" = a conversa inteira em ordem; "Tipo" = um grupo por tipo, fechados, abre um por vez. Cada
 // conversa só mostra os tipos que acontecem nela; grupo do WhatsApp não separa (é tudo 'grupo').
 const TIPOS = [
-  { id: 'conversa', label: 'Conversa com o assistente', icon: 'ri-chat-3-line', cor: 'bg-violet-100 text-violet-700' },
+  { id: 'conversa', label: 'Conversa', icon: 'ri-chat-3-line', cor: 'bg-violet-100 text-violet-700' },
   { id: 'pagamento', label: 'Pagamentos', icon: 'ri-bank-card-line', cor: 'bg-emerald-100 text-emerald-700' },
   { id: 'caixa', label: 'Caixa e turnos', icon: 'ri-safe-2-line', cor: 'bg-amber-100 text-amber-700' },
   { id: 'automatico', label: 'Avisos automáticos', icon: 'ri-time-line', cor: 'bg-sky-100 text-sky-700' },
@@ -1242,7 +1242,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
   // (a bolinha roxa, como no WhatsApp/Telegram).
   const linhaConversa = (o: { chave: string; icone: string; cor: string; titulo: string; unread: number; last: TopicoResumo['last']; abrir: () => void }) => {
     const previa = o.last
-      ? (resumoSistema(o.last.content) ?? linhaSistema(o.last.content) ?? `${o.last.role === 'user' ? 'Você: ' : ''}${semMarcadores(o.last.content)}`)
+      ? (resumoSistema(o.last.content) ?? linhaSistema(o.last.content) ?? `${o.last.role === 'user' ? 'Você: ' : ''}${semMarcadores(o.last.content.replace(/\[painel\][\s\S]*$/, ''))}`)
       : 'Nada por aqui ainda';
     return (
       <button key={o.chave} onClick={o.abrir} className="w-full flex items-center gap-3 px-4 py-3 border-b border-zinc-100 hover:bg-zinc-50 cursor-pointer text-left">
