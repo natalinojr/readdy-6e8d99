@@ -21,7 +21,10 @@ interface Review { id: string; status?: string; score?: number; comment?: string
 
 const hhmm = (s: string) => s.slice(0, 5);
 const fim = (start: string, dur: number) => { const m = Number(start.slice(0, 2)) * 60 + Number(start.slice(3, 5)) + dur; return `${String(Math.floor(m / 60) % 24).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`; };
-const dataHora = (iso?: string) => (iso ? new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '');
+// O iFood devolve início/fim da pausa em UTC SEM o "Z" (teste 2026-09-26: enviado 16:01-03:00 → volta "19:01:09");
+// sem fuso o navegador leria como hora local e mostraria 3 h adiantado.
+const utc = (iso: string) => (/[zZ]|[+-]\d\d:?\d\d$/.test(iso) ? iso : `${iso}Z`);
+const dataHora = (iso?: string) => (iso ? new Date(utc(iso)).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '');
 const TOM_ESTADO: Record<string, string> = { OK: 'bg-emerald-100 text-emerald-800', WARNING: 'bg-amber-100 text-amber-800', CLOSED: 'bg-zinc-200 text-zinc-700', ERROR: 'bg-red-100 text-red-700' };
 const ESTADO: Record<string, string> = { OK: 'Aberta', WARNING: 'Aberta com alerta', CLOSED: 'Fechada', ERROR: 'Com problema' };
 
@@ -204,7 +207,7 @@ export default function IfoodLojaModal({ tenantId, merchants, podeEditar, onClos
           {aba === 'avaliacoes' && !carregando && (
             <>
               <div className="flex flex-wrap items-center gap-2 rounded-lg bg-zinc-50 p-2">
-                {resumo && <span className="text-sm font-black text-zinc-800">★ {Number(resumo.score ?? 0).toFixed(1).replace('.', ',')}</span>}
+                {resumo && <span className="text-sm font-black text-zinc-800">{resumo.score != null ? `★ ${Number(resumo.score).toFixed(1).replace('.', ',')}` : 'Sem nota ainda'}</span>}
                 {resumo && <span className="text-zinc-500">{resumo.validReviewsCount ?? 0} avaliações válidas de {resumo.totalReviewsCount ?? 0}</span>}
                 <span className="flex-1" />
                 <a href={POLITICA_AVALIACOES} target="_blank" rel="noopener noreferrer" className="text-red-600 font-bold underline">Política de Avaliações do iFood</a>

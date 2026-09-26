@@ -833,6 +833,22 @@ Deno.serve(async (req) => {
         return json({ success: true, reasons: lista.map((x: any) => ({ code: String(x.cancelCodeId ?? x.code), description: String(x.description ?? '') })) });
       }
       const op = String(body.op ?? '');
+      // Plataforma de Negociação (HANDSHAKE_DISPUTE): cliente pede cancelamento/reembolso e a loja aceita ou recusa
+      // antes de expirar (senão vale o timeoutAction do iFood). Critério de homologação do Order.
+      if (op === 'dispute_accept' || op === 'dispute_reject') {
+        const disputeId = String(o.dispute?.disputeId ?? o.dispute?.id ?? '').trim();
+        if (!disputeId) return errResp('Este pedido não tem negociação aberta.');
+        if (o.dispute?.settled || o.dispute?.answered) return errResp('Essa negociação já foi respondida.');
+        const aceitar = op === 'dispute_accept';
+        const motivo = String(body.reason ?? '').trim().slice(0, 250);
+        if (!aceitar && !motivo) return errResp('Escreva o motivo da recusa.');
+        const r = await call(admin, c, 'POST', `/order/v1.0/disputes/${encodeURIComponent(disputeId)}/${aceitar ? 'accept' : 'reject'}`,
+          aceitar ? undefined : { reason: motivo }, { 'idempotency-key': `${op}-${disputeId}` });
+        if (!r.ok) return errResp(apiError(r, 'Negociação'));
+        await admin.from('ifood_orders').update({ dispute: { ...o.dispute, answered: aceitar ? 'accept' : 'reject', answered_at: new Date().toISOString() }, updated_at: new Date().toISOString() }).eq('id', o.id);
+        log('INFO', 'order_action', op, { order: o.ifood_order_id, disputeId, tenantId });
+        return json({ success: true, message: aceitar ? 'Pedido do cliente aceito — o iFood confirma no próximo polling.' : 'Pedido do cliente recusado.' });
+      }
       const paths: Record<string, string> = { confirm: 'confirm', start: 'startPreparation', ready: 'readyToPickup', dispatch: 'dispatch', cancel: 'requestCancellation' };
       if (!paths[op]) return errResp('Ação inválida.');
       let payload: unknown = undefined;
@@ -927,6 +943,8 @@ Deno.serve(async (req) => {
       const base = `/review/v2.0/merchants/${c.merchantId}`;
       if (action === 'reviews_summary') {
         const r = await call(admin, c, 'GET', `${base}/summary`);
+        // Loja sem nenhuma avaliação: o iFood responde 404 "Summary not found" (teste 2026-09-26).
+        if (r.status === 404) return json({ success: true, summary: { totalReviewsCount: 0, validReviewsCount: 0, score: null } });
         if (!r.ok) return errResp(apiError(r, 'Resumo das avaliações'));
         return json({ success: true, summary: r.data });
       }
