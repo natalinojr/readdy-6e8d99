@@ -147,17 +147,28 @@ async function merchantContexts(admin: Admin, cfg: any): Promise<MerchantCtx[]> 
 // Liga a busca pela API das lojas recém-autorizadas: só as que já são desta loja do ERPOS (vieram
 // no arquivo/importação) ou quando a autorização trouxe uma loja só — e nunca uma loja que outra
 // loja do ERPOS já busca. As demais aparecem na lista para o gerente ligar à mão.
+// O iFood devolve TODAS as lojas do login do Portal do Parceiro (não só a selecionada): loja do iFood
+// que já pertence a outra loja do ERPOS (e não a esta) fica de fora — senão as lojas se misturam.
+// Devolve as lojas que ficaram com esta loja do ERPOS.
 async function autoEnableMerchants(admin: Admin, tenantId: string, merchants: { id: string; name: string }[]) {
-  if (merchants.length === 0) return;
+  if (merchants.length === 0) return merchants;
   const now = new Date().toISOString();
   const ids = merchants.map((m) => m.id);
   const { data: known } = await admin.from('fin_ifood_merchants').select('merchant_id').eq('tenant_id', tenantId).in('merchant_id', ids);
-  const { data: taken } = await admin.from('fin_ifood_merchants').select('merchant_id').neq('tenant_id', tenantId).eq('api_sync', true).in('merchant_id', ids);
+  const { data: others } = await admin.from('fin_ifood_merchants').select('merchant_id').neq('tenant_id', tenantId).in('merchant_id', ids);
   const knownSet = new Set((known ?? []).map((k) => k.merchant_id));
-  const takenSet = new Set((taken ?? []).map((k) => k.merchant_id));
-  await admin.from('fin_ifood_merchants').upsert(merchants.map((m) => ({ tenant_id: tenantId, merchant_id: m.id, name: m.name, updated_at: now })), { onConflict: 'tenant_id,merchant_id' });
-  const on = merchants.filter((m) => !takenSet.has(m.id) && (knownSet.has(m.id) || merchants.length === 1)).map((m) => m.id);
-  if (on.length) await admin.from('fin_ifood_merchants').update({ api_sync: true, updated_at: now }).eq('tenant_id', tenantId).in('merchant_id', on);
+  const otherSet = new Set((others ?? []).map((k) => k.merchant_id));
+  const mine = merchants.filter((m) => knownSet.has(m.id) || !otherSet.has(m.id));
+  if (mine.length === 0) return mine;
+  await admin.from('fin_ifood_merchants').upsert(mine.map((m) => ({ tenant_id: tenantId, merchant_id: m.id, name: m.name, updated_at: now })), { onConflict: 'tenant_id,merchant_id' });
+  const on = mine.filter((m) => knownSet.has(m.id) || mine.length === 1).map((m) => m.id);
+  if (on.length) {
+    const { data: taken } = await admin.from('fin_ifood_merchants').select('merchant_id').neq('tenant_id', tenantId).eq('api_sync', true).in('merchant_id', on);
+    const takenSet = new Set((taken ?? []).map((k) => k.merchant_id));
+    const ligar = on.filter((id) => !takenSet.has(id));
+    if (ligar.length) await admin.from('fin_ifood_merchants').update({ api_sync: true, updated_at: now }).eq('tenant_id', tenantId).in('merchant_id', ligar);
+  }
+  return mine;
 }
 
 // GET/POST autenticados: 401 → força renovação do token e tenta uma vez mais.
@@ -1106,7 +1117,6 @@ Deno.serve(async (req) => {
       // do Parceiro com outra loja selecionada (a tela avisa em vez de dizer só "Autorizado").
       const { data: prevAuths } = await admin.from('fin_ifood_auths').select('merchant_ids').eq('tenant_id', tenantId);
       const jaCobertas = new Set((prevAuths ?? []).flatMap((a) => a.merchant_ids ?? []));
-      const novas = merchants.filter((x: { id: string }) => !jaCobertas.has(x.id));
       // Cada autorização guarda o próprio token: autorizar outra loja não derruba as anteriores.
       const now = new Date().toISOString();
       const { error: aErr } = await admin.from('fin_ifood_auths').insert({
@@ -1116,10 +1126,11 @@ Deno.serve(async (req) => {
       });
       if (aErr) return errResp('Gravar autorização: ' + aErr.message, 500);
       await admin.from('fin_ifood_config').update({ authorized_at: now, user_code: null, auth_verifier_secret: null, updated_at: now }).eq('id', cfg.id);
-      await autoEnableMerchants(admin, tenantId, merchants);
+      const mine = await autoEnableMerchants(admin, tenantId, merchants);
+      const novas = mine.filter((x) => !jaCobertas.has(x.id));
       if (!r.data.refreshToken) log('WARN', 'confirm_authorization', 'token sem refreshToken', { tenantId });
       return json({ success: true, merchants: await merchantsForUi(admin, cfg, tenantId),
-        authorized_now: merchants.map((x: { name: string }) => x.name), new_merchants: novas.map((x: { name: string }) => x.name) });
+        authorized_now: mine.map((x) => x.name), new_merchants: novas.map((x) => x.name) });
     }
 
     // App centralizado (ex.: app de teste "C"): token por client_credentials e lista das lojas liberadas.
