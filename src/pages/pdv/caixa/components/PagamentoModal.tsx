@@ -1476,7 +1476,7 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
                     <p className="text-[10px] text-zinc-400">
                       {hasPermissao('pdv_desconto')
                         ? 'Você tem permissão para aplicar desconto.'
-                        : 'O desconto exige autorização de gerente/admin (PIN ou notificação).'}
+                        : 'O desconto exige autorização de supervisão, gerente ou admin.'}
                     </p>
                   </>
                 )}
@@ -1652,7 +1652,7 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
       {showDescontoAuth && (
         <AutorizacaoGerenteModal
           titulo="Autorizar Desconto"
-          descricao={`Libere o desconto de ${formatPrice(descontoPendente)} com credenciais de gerente ou admin.`}
+          descricao={`Libere o desconto de ${formatPrice(descontoPendente)} com credenciais de supervisão, gerente ou admin.`}
           niveisPermitidos={['supervisao', 'gerente', 'admin']}
           tenantId={user?.tenantId ?? ''}
           onAutorizado={(autorizadoPor) => {

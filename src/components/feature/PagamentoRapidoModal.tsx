@@ -1193,7 +1193,7 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
                           <button onClick={handleAplicarDesconto} disabled={!descontoInput.trim()} className="px-4 py-2 bg-amber-500 hover:bg-amber-600 disabled:opacity-40 text-white text-sm font-semibold rounded-lg cursor-pointer whitespace-nowrap flex items-center gap-1.5"><i className="ri-shield-check-line" />Aplicar</button>
                         </div>
                         {descontoError && <div className="flex items-center gap-2 text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2"><i className="ri-error-warning-line" />{descontoError}</div>}
-                        <p className="text-[10px] text-zinc-400">{hasPermissao('pdv_desconto') ? 'Você tem permissão para aplicar desconto.' : 'O desconto exige autorização de gerente/admin.'}</p>
+                        <p className="text-[10px] text-zinc-400">{hasPermissao('pdv_desconto') ? 'Você tem permissão para aplicar desconto.' : 'O desconto exige autorização de supervisão, gerente ou admin.'}</p>
                       </>
                     )}
                   </div>
@@ -1488,7 +1488,7 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
       {showDescontoAuth && (
         <AutorizacaoGerenteModal
           titulo="Autorizar Desconto"
-          descricao={`Libere o desconto de ${fmt(descontoPendente)} com credenciais de gerente ou admin.`}
+          descricao={`Libere o desconto de ${fmt(descontoPendente)} com credenciais de supervisão, gerente ou admin.`}
           niveisPermitidos={['supervisao', 'gerente', 'admin']}
           tenantId={user?.tenantId ?? ''}
           onAutorizado={(autorizadoPor) => {

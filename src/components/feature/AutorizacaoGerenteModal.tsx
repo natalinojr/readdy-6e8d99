@@ -33,9 +33,12 @@ export default function AutorizacaoGerenteModal({
   onAutorizado,
   onCancelar,
 }: Props) {
-  const quemPodeAutorizar = niveisPermitidos.includes('supervisao')
+  const comSupervisao = niveisPermitidos.includes('supervisao');
+  const quemPodeAutorizar = comSupervisao
     ? 'Apenas supervisão, gerente ou administrador podem autorizar.'
     : 'Apenas gerentes ou administradores podem autorizar.';
+  // Rótulo dos campos: mesmo público da mensagem de erro (antes dizia só "gerente/admin")
+  const rotuloQuem = comSupervisao ? 'supervisão/gerente/admin' : 'gerente/admin';
   const [modo, setModo] = useState<Modo>('pin');
   const [matricula, setMatricula] = useState('');
   const [senha, setSenha] = useState('');
@@ -105,7 +108,7 @@ export default function AutorizacaoGerenteModal({
       const nivelUsuario = roleMapa[data.role ?? ''];
 
       if (!nivelUsuario || !niveisPermitidos.includes(nivelUsuario)) {
-        throw new Error(`Usuário não tem permissão para esta ação.\n${quemPodeAutorizar}`);
+        throw new Error(`Este usuário não pode autorizar. ${quemPodeAutorizar}`);
       }
 
       onAutorizado(data.name ?? matricula.trim());
@@ -158,7 +161,7 @@ export default function AutorizacaoGerenteModal({
       const nivelFrontend = roleMapa[nivelUsuario ?? ''];
 
       if (!nivelFrontend || !niveisPermitidos.includes(nivelFrontend)) {
-        throw new Error(`Usuário não tem permissão para esta ação.\n${quemPodeAutorizar}`);
+        throw new Error(`Este usuário não pode autorizar. ${quemPodeAutorizar}`);
       }
 
       onAutorizado(nomeUsuario);
@@ -227,7 +230,7 @@ export default function AutorizacaoGerenteModal({
             <>
               <div>
                 <label className="block text-[11px] font-bold text-zinc-500 uppercase tracking-wider mb-1.5">
-                  Matrícula (gerente/admin)
+                  Matrícula ({rotuloQuem})
                 </label>
                 <input
                   ref={inputRef}
@@ -263,7 +266,7 @@ export default function AutorizacaoGerenteModal({
             <>
               <div>
                 <label className="block text-[11px] font-bold text-zinc-500 uppercase tracking-wider mb-1.5">
-                  E-mail (gerente/admin)
+                  E-mail ({rotuloQuem})
                 </label>
                 <input
                   ref={inputRef}
