@@ -135,9 +135,12 @@ export function useConciliacao(bankAccountId?: string, period?: { from?: string;
   const [rulesLoading, setRulesLoading] = useState(false);
 
   // Fetch imports via Edge Function (bypasses RLS)
-  const fetchImports = useCallback(async () => {
+  // silent: relê por trás, sem trocar a tabela por "Carregando..." (depois da busca nos bancos).
+  // Compara com === true porque refresh também é passado direto como onClick (recebe o evento).
+  const fetchImports = useCallback(async (silent?: boolean) => {
     if (!user?.tenantId || !bankAccountId) return;
-    setLoading(true);
+    const quieto = silent === true;
+    if (!quieto) setLoading(true);
     try {
       const { data, error } = await invokeWithAuth<{ data: StatementImport[] }>('financial-write', {
         body: {
@@ -151,7 +154,7 @@ export function useConciliacao(bankAccountId?: string, period?: { from?: string;
     } catch (err) {
       console.error('[useConciliacao] Erro fetchImports:', err);
     }
-    setLoading(false);
+    if (!quieto) setLoading(false);
   }, [user?.tenantId, bankAccountId, periodFrom, periodTo]);
 
   // Fetch rules via Edge Function (bypasses RLS permission issue)

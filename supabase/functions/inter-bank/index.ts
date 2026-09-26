@@ -1186,6 +1186,16 @@ Deno.serve(async (req: Request) => {
       if ((body.date_from && !isoOk(body.date_from)) || (body.date_to && !isoOk(body.date_to))) return errResp('Datas inválidas (use AAAA-MM-DD)');
       if (body.date_from && body.date_to && body.date_from > body.date_to) return errResp('A data inicial é depois da final');
       if (body.date_from && daysBetween(body.date_from, body.date_to ?? todayBR()) > 366) return errResp('Máximo de 1 ano por importação');
+      // Abertura da tela (max_age_min): se a última busca (cron, outra pessoa, outra aba) foi há
+      // pouco e sem erro, não vai ao banco de novo — a tela já tem o que precisa (2026-09-26).
+      const maxAge = Number(body.max_age_min ?? 0);
+      if (maxAge > 0 && !body.date_from) {
+        const { data: cfg } = await admin.from('fin_inter_config').select('is_active, bank_account_id, last_sync_at, last_sync_error').eq('tenant_id', tenantId).maybeSingle();
+        if (cfg?.is_active && cfg.bank_account_id && cfg.last_sync_at && !cfg.last_sync_error
+          && Date.now() - new Date(String(cfg.last_sync_at)).getTime() < maxAge * 60_000) {
+          return json({ success: true, fresh: true, inserted: 0, last_sync_at: cfg.last_sync_at });
+        }
+      }
       const r = await syncTenant(admin, tenantId, {
         days: body.days ? Number(body.days) : undefined,
         date_from: body.date_from || undefined,

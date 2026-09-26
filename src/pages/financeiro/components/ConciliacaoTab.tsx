@@ -622,11 +622,16 @@ export default function ConciliacaoTab() {
 
   // Extratos dos bancos integrados (Inter, Stone e iFood): o cron diário das 07h já busca;
   // aqui buscamos de novo ao abrir a tela e pelo menu "Importar".
+  // auto (abertura da tela): cada banco só é consultado se a última busca dele (cron, outra pessoa,
+  // outra aba) tem mais de 15 min ou deu erro — senão abrir a aba levava ~10–25 s à toa (2026-09-26).
+  // O menu "Atualizar bancos agora" continua indo sempre aos bancos.
+  const SYNC_MAX_AGE_MIN = 15;
   const [bankSync, setBankSync] = useState<{ running: boolean; msg: string | null; error: boolean }>({ running: false, msg: null, error: false });
-  const runBankSync = useCallback(async (range?: { from: string; to: string }, stoneSince?: string) => {
+  const runBankSync = useCallback(async (range?: { from: string; to: string }, stoneSince?: string, auto = false) => {
     if (!user?.tenantId) return;
     setBankSync({ running: true, msg: null, error: false });
-    type SyncResp = { success?: boolean; not_configured?: boolean; skipped?: boolean; error?: string; inserted?: number };
+    const maxAge = auto && !range && !stoneSince ? { max_age_min: SYNC_MAX_AGE_MIN } : {};
+    type SyncResp = { success?: boolean; not_configured?: boolean; skipped?: boolean; fresh?: boolean; last_sync_at?: string; error?: string; inserted?: number };
     type Resp = { data: SyncResp | null; error: Error | null };
 
     // Stone: o arquivo do dia só sai no dia seguinte (Até ≤ ontem) e a edge aceita
@@ -681,44 +686,57 @@ export default function ConciliacaoTab() {
 
     const [inter, stone] = await Promise.all([
       invokeWithAuth<SyncResp>('inter-bank', {
-        body: { action: 'sync', tenant_id: user.tenantId, ...(range ? { date_from: range.from, date_to: range.to } : {}) },
+        body: { action: 'sync', tenant_id: user.tenantId, ...maxAge, ...(range ? { date_from: range.from, date_to: range.to } : {}) },
       }),
       range
         ? stoneRange()
-        : invokeWithAuth<SyncResp>('stone-conciliation', { body: { action: 'sync', tenant_id: user.tenantId, ...(stoneSince ? { date_from: stoneSince } : {}) } }),
+        : invokeWithAuth<SyncResp>('stone-conciliation', { body: { action: 'sync', tenant_id: user.tenantId, ...maxAge, ...(stoneSince ? { date_from: stoneSince } : {}) } }),
     ]);
     // Depois do Inter: os saques do Mercado Pago e os depósitos do iFood casam com o extrato
     // que acabou de chegar (a mesma razão pela qual o cron roda o Inter primeiro).
     const [mp, ifood] = await Promise.all([
       range
         ? mpRange()
-        : invokeWithAuth<SyncResp>('mp-conciliation', { body: { action: 'sync', tenant_id: user.tenantId, ...(stoneSince ? { date_from: stoneSince } : {}) } }),
+        : invokeWithAuth<SyncResp>('mp-conciliation', { body: { action: 'sync', tenant_id: user.tenantId, ...maxAge, ...(stoneSince ? { date_from: stoneSince } : {}) } }),
       invokeWithAuth<SyncResp>('ifood-financial', {
-        body: { action: 'sync', tenant_id: user.tenantId, ...(competencias ? { competences: competencias } : {}) },
+        body: { action: 'sync', tenant_id: user.tenantId, ...maxAge, ...(competencias ? { competences: competencias } : {}) },
       }),
     ]);
     const parts: string[] = [];
     let hasError = false;
+    let buscou = false; // algum banco foi consultado de verdade (não só "em dia")
+    let ultimaBusca: string | null = null; // a mais antiga entre os bancos que estavam em dia
     const read = (label: string, r: { data: SyncResp | null; error: Error | null }) => {
       const d = r.data;
       const err = d?.error ?? r.error?.message;
       if (d?.not_configured || /não configurad/i.test(String(err ?? ''))) return; // banco não integrado nesta loja
       if (d?.skipped) return;
       if (err || !d?.success) { hasError = true; parts.push(`${label}: falhou`); return; }
+      if (d.fresh) {
+        if (d.last_sync_at && (!ultimaBusca || d.last_sync_at < ultimaBusca)) ultimaBusca = d.last_sync_at;
+        parts.push(`${label}: em dia`);
+        return;
+      }
+      buscou = true;
       parts.push(`${label}: ${Number(d.inserted ?? 0)} novo(s)`);
     };
     read('Inter', inter);
     read('Stone', stone);
     read('Mercado Pago', mp);
     read('iFood', ifood);
-    const hora = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+    const fmtHora = (d: Date) => d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' });
     const periodo = range ? ` (${fmtDataBR(range.from)} a ${fmtDataBR(range.to)})` : '';
-    setBankSync({ running: false, error: hasError, msg: parts.length > 0 ? `Bancos atualizados às ${hora}${periodo} · ${parts.join(' · ')}` : null });
-    // Sugere de novo os vínculos pagamento × nota/conta (a nota pode ter chegado depois do pagamento)
+    const msg = parts.length === 0 ? null
+      : !buscou && !hasError && ultimaBusca
+        ? `Bancos em dia · última busca às ${fmtHora(new Date(ultimaBusca))} (para buscar agora: Importar › Atualizar bancos agora)`
+        : `Bancos atualizados às ${fmtHora(new Date())}${periodo} · ${parts.join(' · ')}`;
+    setBankSync({ running: false, error: hasError, msg });
+    // Sugere de novo os vínculos pagamento × nota/conta (a nota pode ter chegado depois do pagamento).
+    // A lista é relida por trás (sem "Carregando..."): quem já está mexendo na tabela não perde o lugar.
     await invokeWithAuth('conciliacao-pagamentos', { body: { action: 'rematch', tenant_id: user.tenantId } });
-    refresh();
+    refresh(true);
     loadAlerts();
-    if (parts.length > 0) { refetchAccounts(); setInterRefreshKey((k) => k + 1); }
+    if (buscou) { refetchAccounts(); setInterRefreshKey((k) => k + 1); }
   }, [user?.tenantId, refresh, refetchAccounts, loadAlerts]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Uma vez ao abrir a tela (e ao trocar de loja) — DEPOIS que a lista aparece. Rodando junto,
@@ -738,7 +756,7 @@ export default function ConciliacaoTab() {
     const timer = setTimeout(() => {
       if (sincronizouLoja.current === t) return;
       sincronizouLoja.current = t;
-      runBankSync();
+      runBankSync(undefined, undefined, true);
     }, listaPronta ? 0 : 8000);
     return () => clearTimeout(timer);
   }, [user?.tenantId, listaPronta]); // eslint-disable-line react-hooks/exhaustive-deps

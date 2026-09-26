@@ -704,6 +704,12 @@ Deno.serve(async (req: Request) => {
     if (action === 'sync') {
       if (!cfg || !cfg.api_key_b64 || !cfg.bank_account_id) return json({ success: false, not_configured: true });
       if (!cfg.is_active || cfg.auto_sync === false) return json({ success: true, skipped: true });
+      // Abertura da tela (max_age_min): se a última busca (cron, outra pessoa, outra aba) foi há
+      // pouco e sem erro, não vai ao banco de novo — a tela já tem o que precisa (2026-09-26).
+      const maxAge = Number(body.max_age_min ?? 0);
+      if (maxAge > 0 && cfg.last_sync_at && !cfg.last_sync_error && Date.now() - new Date(String(cfg.last_sync_at)).getTime() < maxAge * 60_000) {
+        return json({ success: true, fresh: true, inserted: 0, last_sync_at: cfg.last_sync_at });
+      }
       // date_from (botão "Atualizar bancos"): busca só os dias sem importação com sucesso desde
       // essa data — dia já importado não é baixado de novo. Sem date_from: últimos 3 dias.
       const since = isoDate(String(body.date_from ?? '')) ? String(body.date_from) : null;

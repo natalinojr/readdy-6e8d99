@@ -839,6 +839,12 @@ Deno.serve(async (req) => {
       if (!cfg || !cfg.client_id) return json({ success: false, not_configured: true });
       if (!(await merchantContexts(admin, cfg)).some((l) => l.ctx)) return json({ success: true, skipped: true });
       if (!cfg.is_active || cfg.auto_sync === false) return json({ success: true, skipped: true });
+      // Abertura da tela (max_age_min): se a última busca (cron, outra pessoa, outra aba) foi há
+      // pouco e sem erro, não vai ao banco de novo — a tela já tem o que precisa (2026-09-26).
+      const maxAge = Number(body.max_age_min ?? 0);
+      if (maxAge > 0 && cfg.last_sync_at && !cfg.last_sync_error && Date.now() - new Date(String(cfg.last_sync_at)).getTime() < maxAge * 60_000) {
+        return json({ success: true, fresh: true, inserted: 0, last_sync_at: cfg.last_sync_at });
+      }
       const comps = Array.isArray(body.competences) ? body.competences.map(String).filter((c: string) => /^\d{4}-\d{2}$/.test(c)).slice(0, 12) : undefined;
       const r = await syncTenant(admin, cfg, comps);
       const inserted = (r.results ?? []).reduce((s: number, x: any) => s + Number(x.lines ?? 0), 0);
