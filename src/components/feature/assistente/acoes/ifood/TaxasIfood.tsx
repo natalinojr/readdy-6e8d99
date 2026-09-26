@@ -78,7 +78,7 @@ export default function TaxasIfood({ onFechar, irPara }: AcaoProps) {
         <Kpis
           principal={{ label: 'O iFood ficou com', valor: brl(custo), extra: <span className="text-xs font-semibold text-zinc-600">{pct(custo)} do vendido{pctAnt != null ? ` · mês anterior ${(Math.round(pctAnt * 1000) / 10).toLocaleString('pt-BR')}%` : ''}</span> }}
           outros={[
-            { label: 'Vendido', valor: brl(r.vendido), extra: <Variacao atual={r.vendido} base={a && a.pedidos ? a.vendido : null} rotulo="" /> },
+            { label: 'Vendido', valor: brl(r.vendido), extra: <Variacao atual={r.vendido} base={a && a.pedidos ? a.vendido : null} rotulo="vs mês anterior" /> },
             { label: 'Líquido', valor: brl(r.liquido) },
             { label: 'Pedidos', valor: String(r.pedidos) },
           ]}

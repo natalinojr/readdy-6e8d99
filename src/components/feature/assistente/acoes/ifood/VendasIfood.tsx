@@ -66,8 +66,8 @@ export default function VendasIfood({ onFechar, irPara }: AcaoProps) {
         <Kpis
           principal={{ label: 'Vendido no iFood', valor: brl(r.vendido), extra: <Variacao atual={r.vendido} base={base(a?.vendido)} rotulo={`vs ${rotulo}`} /> }}
           outros={[
-            { label: 'Pedidos', valor: String(r.pedidos), extra: <Variacao atual={r.pedidos} base={base(a?.pedidos)} rotulo="" /> },
-            { label: 'Ticket médio', valor: brl(ticket) },
+            { label: 'Pedidos', valor: String(r.pedidos), extra: <Variacao atual={r.pedidos} base={base(a?.pedidos)} rotulo={`vs ${rotulo}`} /> },
+            { label: 'Ticket médio', valor: brl(ticket), extra: <Variacao atual={ticket} base={a && a.pedidos > 0 ? a.vendido / a.pedidos : null} rotulo={`vs ${rotulo}`} /> },
             { label: 'Líquido', valor: brl(r.liquido) },
           ]}
         />

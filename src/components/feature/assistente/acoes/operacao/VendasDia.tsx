@@ -143,8 +143,8 @@ export default function VendasDia({ onFechar, irPara }: AcaoProps) {
             </>
           ) }}
           outros={[
-            { label: ifood ? 'Pedidos ERPOS' : 'Pedidos', valor: String(pedidos), extra: <Variacao atual={pedidos} base={base(a?.total_orders)} rotulo="" /> },
-            { label: ifood ? 'Ticket médio ERPOS' : 'Ticket médio', valor: brl(r.avg_ticket), extra: <Variacao atual={Number(r.avg_ticket)} base={base(a?.avg_ticket)} rotulo="" /> },
+            { label: ifood ? 'Pedidos ERPOS' : 'Pedidos', valor: String(pedidos), extra: <Variacao atual={pedidos} base={base(a?.total_orders)} rotulo={`vs ${diaSemana} passada`} /> },
+            { label: ifood ? 'Ticket médio ERPOS' : 'Ticket médio', valor: brl(r.avg_ticket), extra: <Variacao atual={Number(r.avg_ticket)} base={base(a?.avg_ticket)} rotulo={`vs ${diaSemana} passada`} /> },
           ]}
         />
         {ifood && (
