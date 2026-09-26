@@ -3,8 +3,13 @@
  * (lista suspensa, caixas de seleção, sim/não, texto, número, data) e quem
  * responde preenche. Cada resposta guarda só o que mudou; o valor atual de cada
  * campo é o da resposta mais recente que o preencheu.
+ *
+ * Campo condicional (briefing): "mostrar só se a pergunta X for A ou B" —
+ * `show_if` aponta para uma pergunta de escolha/sim-não acima dele. Campo
+ * escondido não aparece para quem responde e, se tinha valor, é apagado na
+ * próxima resposta (a sequência guarda o que era).
  */
-import { Plus, Trash2, ChevronUp, ChevronDown, X } from 'lucide-react';
+import { Plus, Trash2, ChevronUp, ChevronDown, X, CornerDownRight } from 'lucide-react';
 import type { CampoRel, ItemRel, TipoCampo, ValorCampo } from './api';
 
 export const TIPOS_CAMPO: Array<{ id: TipoCampo; label: string }> = [
@@ -18,6 +23,34 @@ export const TIPOS_CAMPO: Array<{ id: TipoCampo; label: string }> = [
 
 const novoId = () => Math.random().toString(36).slice(2, 10);
 const temOpcoes = (t: TipoCampo) => t === 'escolha' || t === 'multipla';
+/** Tipos que podem servir de condição para outro campo. */
+const condicionavel = (t: TipoCampo) => temOpcoes(t) || t === 'sim_nao';
+export const MAX_CAMPOS = 40;
+
+/** Respostas possíveis de uma pergunta de escolha (sim/não vira duas opções fixas). */
+function respostasPossiveis(c: CampoRel): Array<{ id: string; label: string }> {
+  if (c.type === 'sim_nao') return [{ id: 'sim', label: 'Sim' }, { id: 'nao', label: 'Não' }];
+  return c.options ?? [];
+}
+
+/**
+ * Campos que aparecem com estes valores, na ordem. Condição olha só perguntas
+ * acima; se a pergunta da condição está escondida, o campo também fica.
+ */
+export function camposVisiveis(campos: CampoRel[], valores: Record<string, ValorCampo | undefined>): CampoRel[] {
+  const visiveis = new Set<string>();
+  return campos.filter((c) => {
+    const s = c.show_if;
+    let ok = true;
+    if (s) {
+      const v = valores[s.field_id];
+      ok = visiveis.has(s.field_id)
+        && (Array.isArray(v) ? v.some((x) => s.values.includes(x)) : typeof v === 'string' && s.values.includes(v));
+    }
+    if (ok) visiveis.add(c.id);
+    return ok;
+  });
+}
 
 /** Valor atual de cada campo + quem respondeu e quando. */
 export function valoresAtuais(item: ItemRel): Record<string, { valor: ValorCampo; autor: string; em: string }> {
@@ -54,10 +87,13 @@ export function EditorCampos({ campos, onChange }: { campos: CampoRel[]; onChang
     [n[i], n[i + d]] = [n[i + d], n[i]];
     onChange(n);
   };
+  // Tirar um campo (ou fazer ele deixar de ser escolha) solta as condições que dependiam dele.
+  const soltarDependentes = (lista: CampoRel[], id: string) => lista.map((x) => (x.show_if?.field_id === id ? { ...x, show_if: null } : x));
+  const tirar = (i: number) => onChange(soltarDependentes(campos.filter((_, j) => j !== i), campos[i].id));
   return (
     <div className="space-y-2">
       {campos.map((c, i) => (
-        <div key={c.id} className="rounded-lg border border-slate-200 bg-slate-50/60 p-2 space-y-2">
+        <div key={c.id} className={`rounded-lg border p-2 space-y-2 ${c.show_if ? 'ml-4 border-indigo-200 bg-indigo-50/40' : 'border-slate-200 bg-slate-50/60'}`}>
           <div className="flex flex-wrap items-center gap-2">
             <input
               value={c.label}
@@ -70,7 +106,9 @@ export function EditorCampos({ campos, onChange }: { campos: CampoRel[]; onChang
               value={c.type}
               onChange={(e) => {
                 const type = e.target.value as TipoCampo;
-                mudar(i, { type, options: temOpcoes(type) ? (c.options?.length ? c.options : [{ id: novoId(), label: '' }]) : undefined });
+                const novo = { ...c, type, options: temOpcoes(type) ? (c.options?.length ? c.options : [{ id: novoId(), label: '' }]) : undefined };
+                const lista = campos.map((x, j) => (j === i ? novo : x));
+                onChange(condicionavel(type) && condicionavel(c.type) && temOpcoes(type) === temOpcoes(c.type) ? lista : soltarDependentes(lista, c.id));
               }}
               className="rounded-lg border border-slate-200 px-2 py-1.5 text-base md:text-sm bg-white"
             >
@@ -79,7 +117,7 @@ export function EditorCampos({ campos, onChange }: { campos: CampoRel[]; onChang
             <div className="flex items-center">
               <button type="button" disabled={i === 0} onClick={() => mover(i, -1)} className="p-1 text-slate-400 disabled:opacity-30" title="Subir"><ChevronUp size={15} /></button>
               <button type="button" disabled={i === campos.length - 1} onClick={() => mover(i, 1)} className="p-1 text-slate-400 disabled:opacity-30" title="Descer"><ChevronDown size={15} /></button>
-              <button type="button" onClick={() => onChange(campos.filter((_, j) => j !== i))} className="p-1 text-slate-400 hover:text-red-500" title="Tirar campo"><Trash2 size={15} /></button>
+              <button type="button" onClick={() => tirar(i)} className="p-1 text-slate-400 hover:text-red-500" title="Tirar campo"><Trash2 size={15} /></button>
             </div>
           </div>
           {temOpcoes(c.type) && (
@@ -130,16 +168,67 @@ export function EditorCampos({ campos, onChange }: { campos: CampoRel[]; onChang
               )}
             </div>
           )}
+          <EditorCondicao campo={c} anteriores={campos.slice(0, i)} todos={campos} onChange={(show_if) => mudar(i, { show_if })} />
         </div>
       ))}
       <button
         type="button"
         onClick={() => onChange([...campos, { id: novoId(), type: 'escolha', label: '', options: [{ id: novoId(), label: '' }] }])}
-        disabled={campos.length >= 20}
+        disabled={campos.length >= MAX_CAMPOS}
         className="flex items-center gap-1 text-sm text-indigo-600 hover:underline disabled:opacity-40"
       >
         <Plus size={14} /> Campo de resposta
       </button>
+    </div>
+  );
+}
+
+/** "Mostrar só se [pergunta acima] for [A] [B]…" — só aparece quando há pergunta de escolha acima. */
+function EditorCondicao({ campo, anteriores, todos, onChange }: {
+  campo: CampoRel;
+  anteriores: CampoRel[];
+  todos: CampoRel[];
+  onChange: (s: CampoRel['show_if']) => void;
+}) {
+  const candidatos = anteriores.filter((x) => condicionavel(x.type));
+  const s = campo.show_if;
+  if (!s && !candidatos.length) return null;
+  const pai = s ? todos.find((x) => x.id === s.field_id) : undefined;
+  const paiAcima = !!pai && anteriores.includes(pai);
+  const nome = (x: CampoRel) => x.label.trim() || `Pergunta ${todos.indexOf(x) + 1}`;
+  return (
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500">
+      <CornerDownRight size={13} className="text-indigo-400 shrink-0" />
+      <span>Mostrar</span>
+      <select
+        value={s?.field_id ?? ''}
+        onChange={(e) => onChange(e.target.value ? { field_id: e.target.value, values: [] } : null)}
+        className="max-w-[220px] rounded border border-slate-200 px-1.5 py-0.5 text-base md:text-xs bg-white"
+      >
+        <option value="">sempre</option>
+        {candidatos.map((x) => <option key={x.id} value={x.id}>só se {nome(x)}</option>)}
+        {s && pai && !paiAcima && <option value={pai.id}>só se {nome(pai)}</option>}
+      </select>
+      {s && pai && (
+        <>
+          <span>{pai.type === 'multipla' ? 'tiver marcado' : 'for'}</span>
+          {respostasPossiveis(pai).map((o, k) => {
+            const marcado = s.values.includes(o.id);
+            return (
+              <button
+                key={o.id}
+                type="button"
+                onClick={() => onChange({ ...s, values: marcado ? s.values.filter((v) => v !== o.id) : [...s.values, o.id] })}
+                className={`px-2 py-0.5 rounded-full border ${marcado ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white border-slate-200 text-slate-600'}`}
+              >
+                {o.label.trim() || `Opção ${k + 1}`}
+              </button>
+            );
+          })}
+          {s.values.length > 1 && <span className="text-slate-400">(qualquer uma)</span>}
+          {!paiAcima && <span className="w-full text-amber-600">A pergunta da condição precisa ficar acima desta — use as setas.</span>}
+        </>
+      )}
     </div>
   );
 }
@@ -162,6 +251,17 @@ export function limparCampos(campos: CampoRel[]): { campos: CampoRel[]; erro: st
     if (!c.min) delete c.min;
     if (!c.max) delete c.max;
   }
+  // Condição: pergunta de escolha acima, com ao menos uma resposta que ainda existe.
+  for (let i = 0; i < limpos.length; i++) {
+    const c = limpos[i];
+    if (!c.show_if) { delete c.show_if; continue; }
+    const pai = limpos.slice(0, i).find((x) => x.id === c.show_if!.field_id);
+    if (!pai || !condicionavel(pai.type)) return { campos: limpos, erro: `"${c.label}": a pergunta da condição precisa ser de escolha e ficar acima dela` };
+    const validos = new Set(respostasPossiveis(pai).map((o) => o.id));
+    const values = c.show_if.values.filter((v) => validos.has(v));
+    if (!values.length) return { campos: limpos, erro: `"${c.label}": escolha com qual resposta de "${pai.label}" ela aparece` };
+    c.show_if = { field_id: pai.id, values };
+  }
   return { campos: limpos, erro: null };
 }
 
@@ -173,7 +273,7 @@ export function PreencherCampos({ campos, valores, onChange }: {
 }) {
   return (
     <div className="space-y-3">
-      {campos.map((c) => {
+      {camposVisiveis(campos, valores).map((c) => {
         const v = valores[c.id];
         return (
           <div key={c.id}>
@@ -276,9 +376,11 @@ export function erroPreenchimento(campos: CampoRel[], mudancas: Record<string, V
 /** Só o que mudou em relação ao valor atual — cada resposta registra só as mudanças. */
 export function respostasMudadas(campos: CampoRel[], atuais: Record<string, ValorCampo>, rascunho: Record<string, ValorCampo>) {
   const saida: Record<string, ValorCampo> = {};
+  // Campo que a condição escondeu vai vazio (a resposta antiga não vale mais).
+  const visiveis = new Set(camposVisiveis(campos, { ...atuais, ...rascunho }).map((c) => c.id));
   for (const c of campos) {
     if (!(c.id in rascunho)) continue;
-    const novo = rascunho[c.id];
+    const novo = visiveis.has(c.id) ? rascunho[c.id] : null;
     const vazio = (x: ValorCampo) => x === null || x === undefined || x === '' || (Array.isArray(x) && !x.length);
     if (vazio(novo) && vazio(atuais[c.id])) continue;
     if (JSON.stringify(novo) !== JSON.stringify(atuais[c.id] ?? null)) saida[c.id] = vazio(novo) ? null : novo;

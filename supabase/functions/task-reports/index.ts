@@ -80,14 +80,15 @@ function validarImagens(v: unknown, reportId: string): Imagem[] {
 // ── Campos de resposta por item ──
 const TIPOS_CAMPO = ['escolha', 'multipla', 'sim_nao', 'texto', 'numero', 'data'];
 type Opcao = { id: string; label: string };
-type Campo = { id: string; type: string; label: string; options?: Opcao[]; min?: number | null; max?: number | null };
+type Condicao = { field_id: string; values: string[] };
+type Campo = { id: string; type: string; label: string; options?: Opcao[]; min?: number | null; max?: number | null; show_if?: Condicao };
 
 function validarCampos(v: unknown): Campo[] {
   if (v === undefined || v === null) return [];
   if (!Array.isArray(v)) throw new Recusa('fields deve ser uma lista');
-  if (v.length > 20) throw new Recusa('No máximo 20 campos por item');
+  if (v.length > 40) throw new Recusa('No máximo 40 campos por item');
   const ids = new Set<string>();
-  return v.map((c: Row) => {
+  const campos: Campo[] = v.map((c: Row) => {
     const id = String(c?.id ?? '').slice(0, 40) || crypto.randomUUID();
     if (ids.has(id)) throw new Recusa('Campo repetido');
     ids.add(id);
@@ -121,6 +122,22 @@ function validarCampos(v: unknown): Campo[] {
     if (max === 0) throw new Recusa(`"${label}": o máximo precisa ser pelo menos 1`);
     return { id, type, label, options, ...(min ? { min } : {}), ...(max ? { max } : {}) };
   });
+  // Condição ("mostrar só se"): pergunta de escolha/sim-não ACIMA do campo e respostas que existem nela.
+  v.forEach((c: Row, i: number) => {
+    const s = c?.show_if;
+    if (s === undefined || s === null) return;
+    const campo = campos[i];
+    const pai = campos.slice(0, i).find((x) => x.id === String(s?.field_id ?? ''));
+    if (!pai || !['escolha', 'multipla', 'sim_nao'].includes(pai.type)) {
+      throw new Recusa(`"${campo.label}": a pergunta da condição precisa ser de escolha e ficar acima dela`);
+    }
+    const validos = new Set(pai.type === 'sim_nao' ? ['sim', 'nao'] : (pai.options ?? []).map((o) => o.id));
+    if (!Array.isArray(s?.values) || !s.values.length || !s.values.every((x: unknown) => typeof x === 'string' && validos.has(x))) {
+      throw new Recusa(`"${campo.label}": escolha com qual resposta de "${pai.label}" ela aparece`);
+    }
+    campo.show_if = { field_id: pai.id, values: [...new Set(s.values as string[])] };
+  });
+  return campos;
 }
 
 /** Links de arquivos na nuvem: [{url, title}], só http/https. */
