@@ -9,6 +9,7 @@ import type { EstacaoCozinha } from '../../../contexts/CardapioContext';
 import FichaTecnicaTab from './FichaTecnicaTab';
 import FichaRetroativaModal from './FichaRetroativaModal';
 import { custoLinhaFicha } from '@/lib/unitConversion';
+import { insumosDaOpcao, comInsumos } from '@/lib/opcaoInsumos';
 import DeliveryTab from './DeliveryTab';
 import FiscalFields from '@/components/feature/FiscalFields';
 import type { ItemFiscal } from '@/lib/fiscal';
@@ -270,7 +271,7 @@ export default function ItemModal({ item, categorias, obsGlobais, estacoes, savi
   const [erroOpcoes, setErroOpcoes] = useState<string | null>(null);
   const handleSave = () => {
     if (!nome.trim() || !preco) return;
-    const semQtd = grupos.flatMap(g => g.opcoes.filter(o => o.ingredientId && !(Number(o.consumptionQuantity) > 0)).map(o => o.nome || 'opção sem nome'));
+    const semQtd = grupos.flatMap(g => g.opcoes.filter(o => insumosDaOpcao(o).some(x => !(Number(x.quantidade) > 0))).map(o => o.nome || 'opção sem nome'));
     if (semQtd.length) {
       setErroOpcoes(`Informe quanto sai do estoque em: ${semQtd.join(', ')}.`);
       setTab('opcoes');
@@ -969,7 +970,7 @@ interface OpcoesTabProps {
 
 // Vínculos das opções com o estoque (para saber se há mudança não salva)
 const vinculosOpcoes = (gs: GrupoOpcoes[]) =>
-  gs.flatMap(g => g.opcoes.filter(o => o.ingredientId).map(o => [o.id, o.ingredientId, Number(o.consumptionQuantity ?? 0), o.consumptionUnit ?? ''])).sort();
+  gs.flatMap(g => g.opcoes.flatMap(o => insumosDaOpcao(o).map(x => [o.id, x.ingredientId, Number(x.quantidade ?? 0), x.unidade ?? '']))).map(v => v.join('|')).sort();
 
 function OpcoesTab({
   grupos, insumos, recipes, getBatchesByRecipeId,
@@ -979,7 +980,7 @@ function OpcoesTab({
 }: OpcoesTabProps) {
   const { user } = useAuth();
   const [aplicarVendas, setAplicarVendas] = useState(false);
-  const temVinculo = grupos.some(g => g.opcoes.some(o => o.ingredientId));
+  const temVinculo = grupos.some(g => g.opcoes.some(o => insumosDaOpcao(o).length > 0));
   const podeAplicar = !!itemId && !itemId.startsWith('item-') && (user?.perfil === 'admin' || user?.perfil === 'gerente');
   const [openVinculo, setOpenVinculo] = useState<string | null>(null);
   const [vinculoTab, setVinculoTab] = useState<'ingredient' | 'production'>('ingredient');
@@ -1063,43 +1064,36 @@ function OpcoesTab({
     }
   };
 
-  const vincularInsumo = (grupoId: string, opcId: string, insumo: Insumo) => {
-    onUpdateOpcao(grupoId, opcId, {
-      ingredientId: insumo.id,
-      ingredientName: insumo.nome,
-      productionRecipeId: null,
-      consumptionQuantity: undefined,
-      consumptionUnit: unidadeConsumoInicial(insumo.unidade),
-      source: 'ingredient',
-    });
+  // Opção com vários insumos (2026-09-26): escolher no painel ACRESCENTA à lista da opção
+  const acrescentarInsumo = (grupoId: string, opcId: string, novo: { ingredientId: string; productionRecipeId: string | null; unidade: string; source: 'ingredient' | 'production' }) => {
+    const opc = grupos.find(g => g.id === grupoId)?.opcoes.find(o => o.id === opcId);
+    if (!opc) return;
+    const atual = insumosDaOpcao(opc);
+    if (!atual.some(x => x.ingredientId === novo.ingredientId)) {
+      onUpdateOpcao(grupoId, opcId, comInsumos([...atual, { ...novo, quantidade: undefined, unidade: unidadeConsumoInicial(novo.unidade) }]));
+    }
     setOpenVinculo(null);
     setBuscaInsumo('');
   };
-
+  const vincularInsumo = (grupoId: string, opcId: string, insumo: Insumo) =>
+    acrescentarInsumo(grupoId, opcId, { ingredientId: insumo.id, productionRecipeId: null, unidade: insumo.unidade, source: 'ingredient' });
   const vincularProducao = (grupoId: string, opcId: string, recipe: ProductionRecipe) => {
     if (!recipe.outputIngredientId) return;
-    onUpdateOpcao(grupoId, opcId, {
-      ingredientId: recipe.outputIngredientId,
-      ingredientName: recipe.name,
-      productionRecipeId: recipe.id,
-      consumptionQuantity: undefined,
-      consumptionUnit: unidadeConsumoInicial(recipe.unit),
-      source: 'production',
-    });
-    setOpenVinculo(null);
-    setBuscaInsumo('');
+    acrescentarInsumo(grupoId, opcId, { ingredientId: recipe.outputIngredientId, productionRecipeId: recipe.id, unidade: recipe.unit, source: 'production' });
   };
-
-  const removerVinculo = (grupoId: string, opcId: string) => {
-    onUpdateOpcao(grupoId, opcId, {
-      ingredientId: null,
-      ingredientName: undefined,
-      productionRecipeId: null,
-      consumptionQuantity: undefined,
-      consumptionUnit: undefined,
-      source: undefined,
-    });
+  const alterarInsumo = (grupoId: string, opcId: string, ingredientId: string, patch: { quantidade?: number; unidade?: string }) => {
+    const opc = grupos.find(g => g.id === grupoId)?.opcoes.find(o => o.id === opcId);
+    if (!opc) return;
+    onUpdateOpcao(grupoId, opcId, comInsumos(insumosDaOpcao(opc).map(x => x.ingredientId === ingredientId ? { ...x, ...patch } : x)));
   };
+  const removerInsumo = (grupoId: string, opcId: string, ingredientId: string) => {
+    const opc = grupos.find(g => g.id === grupoId)?.opcoes.find(o => o.id === opcId);
+    if (!opc) return;
+    onUpdateOpcao(grupoId, opcId, comInsumos(insumosDaOpcao(opc).filter(x => x.ingredientId !== ingredientId)));
+  };
+  const nomeDoInsumo = (x: { ingredientId: string; productionRecipeId?: string | null }) =>
+    (x.productionRecipeId ? recipes.find(r => r.id === x.productionRecipeId)?.name : undefined)
+    ?? insumos.find(i => i.id === x.ingredientId)?.nome ?? 'Insumo';
 
   return (
     <div className="space-y-4">
@@ -1567,68 +1561,60 @@ function OpcoesTab({
                   )}
                 </div>
 
-                {/* Vínculo com estoque */}
-                {opc.ingredientId ? (
-                  <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                    <div className="w-5 h-5 flex items-center justify-center flex-shrink-0">
-                      {opc.source === 'production' ? (
-                        <i className="ri-flask-line text-amber-600 text-sm" />
-                      ) : (
-                        <i className="ri-archive-line text-amber-600 text-sm" />
-                      )}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs font-medium text-amber-800 truncate">
-                        {opc.source === 'production' ? 'Produção: ' : 'Insumo: '}
-                        {opc.ingredientName || opc.nome}
-                      </p>
-                      <div className="flex items-center gap-2 mt-1">
-                        <span className="text-[10px] text-amber-600">Consumo:</span>
-                        <input
-                          type="number"
-                          min="0"
-                          step="0.001"
-                          placeholder="?"
-                          className={`w-16 border rounded px-1.5 py-0.5 text-[11px] text-amber-800 focus:outline-none focus:border-amber-400 bg-white ${Number(opc.consumptionQuantity) > 0 ? 'border-amber-200' : 'border-red-400'}`}
-                          value={opc.consumptionQuantity ?? ''}
-                          onChange={e => onUpdateOpcao(grp.id, opc.id, { consumptionQuantity: e.target.value === '' ? undefined : (parseFloat(e.target.value) || 0) })}
-                        />
-                        <select
-                          value={opc.consumptionUnit || 'un'}
-                          onChange={e => onUpdateOpcao(grp.id, opc.id, { consumptionUnit: e.target.value })}
-                          className="border border-amber-200 rounded px-1.5 py-0.5 text-[11px] text-amber-800 focus:outline-none focus:border-amber-400 bg-white cursor-pointer"
-                        >
-                          {ALL_UNITS.map(u => <option key={u} value={u}>{u}</option>)}
-                        </select>
-                        {(() => {
-                          const ins = insumos.find(i => i.id === opc.ingredientId);
-                          const q = Number(opc.consumptionQuantity);
-                          if (!ins || !(q > 0)) return <span className="text-[10px] text-red-500">informe quanto sai do estoque</span>;
-                          const custo = custoLinhaFicha(q, opc.consumptionUnit || 'un', ins.unidade, ins.precoUnitario);
-                          return <span className="text-[10px] text-amber-700" title="Quantidade × preço atual do insumo">custo {custo.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: custo > 0 && custo < 0.1 ? 4 : 2 })}</span>;
-                        })()}
-                      </div>
-                    </div>
-                    <button
-                      onClick={() => removerVinculo(grp.id, opc.id)}
-                      className="text-[10px] text-amber-600 hover:text-red-500 font-medium cursor-pointer whitespace-nowrap transition-colors"
-                    >
-                      Remover
-                    </button>
+                {/* Vínculo com estoque — um ou mais insumos (2026-09-26) */}
+                {insumosDaOpcao(opc).length > 0 && (
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 space-y-1.5">
+                    {insumosDaOpcao(opc).map(x => {
+                      const ins = insumos.find(i => i.id === x.ingredientId);
+                      const q = Number(x.quantidade);
+                      const custo = ins && q > 0 ? custoLinhaFicha(q, x.unidade || 'un', ins.unidade, ins.precoUnitario) : null;
+                      return (
+                        <div key={x.ingredientId} className="flex flex-wrap items-center gap-2">
+                          <i className={`${x.source === 'production' ? 'ri-flask-line' : 'ri-archive-line'} text-amber-600 text-sm`} />
+                          <span className="text-xs font-medium text-amber-800 min-w-[90px] flex-1 truncate">
+                            {x.source === 'production' ? 'Produção: ' : ''}{nomeDoInsumo(x)}
+                          </span>
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.001"
+                            placeholder="?"
+                            className={`w-16 border rounded px-1.5 py-0.5 text-[11px] text-amber-800 focus:outline-none focus:border-amber-400 bg-white ${q > 0 ? 'border-amber-200' : 'border-red-400'}`}
+                            value={x.quantidade ?? ''}
+                            onChange={e => alterarInsumo(grp.id, opc.id, x.ingredientId, { quantidade: e.target.value === '' ? undefined : (parseFloat(e.target.value) || 0) })}
+                          />
+                          <select
+                            value={x.unidade || 'un'}
+                            onChange={e => alterarInsumo(grp.id, opc.id, x.ingredientId, { unidade: e.target.value })}
+                            className="border border-amber-200 rounded px-1.5 py-0.5 text-[11px] text-amber-800 focus:outline-none focus:border-amber-400 bg-white cursor-pointer"
+                          >
+                            {ALL_UNITS.map(u => <option key={u} value={u}>{u}</option>)}
+                          </select>
+                          {custo === null
+                            ? <span className="text-[10px] text-red-500">informe quanto sai</span>
+                            : <span className="text-[10px] text-amber-700" title="Quantidade × preço atual do insumo">custo {custo.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: custo > 0 && custo < 0.1 ? 4 : 2 })}</span>}
+                          <button
+                            onClick={() => removerInsumo(grp.id, opc.id, x.ingredientId)}
+                            className="text-[10px] text-amber-600 hover:text-red-500 font-medium cursor-pointer whitespace-nowrap transition-colors"
+                          >
+                            Remover
+                          </button>
+                        </div>
+                      );
+                    })}
                   </div>
-                ) : (
-                  <button
-                    onClick={() => {
-                      setOpenVinculo(openVinculo === `${grp.id}-${opc.id}` ? null : `${grp.id}-${opc.id}`);
-                      setVinculoTab('ingredient');
-                      setBuscaInsumo('');
-                    }}
-                    className="flex items-center gap-1.5 text-[11px] text-gray-500 hover:text-amber-600 font-medium cursor-pointer transition-colors"
-                  >
-                    <i className="ri-link-m" />
-                    {openVinculo === `${grp.id}-${opc.id}` ? 'Fechar vínculo' : 'Vincular ao estoque'}
-                  </button>
                 )}
+                <button
+                  onClick={() => {
+                    setOpenVinculo(openVinculo === `${grp.id}-${opc.id}` ? null : `${grp.id}-${opc.id}`);
+                    setVinculoTab('ingredient');
+                    setBuscaInsumo('');
+                  }}
+                  className="flex items-center gap-1.5 text-[11px] text-gray-500 hover:text-amber-600 font-medium cursor-pointer transition-colors"
+                >
+                  <i className={openVinculo === `${grp.id}-${opc.id}` ? 'ri-close-line' : insumosDaOpcao(opc).length ? 'ri-add-line' : 'ri-link-m'} />
+                  {openVinculo === `${grp.id}-${opc.id}` ? 'Fechar' : insumosDaOpcao(opc).length ? 'Adicionar outro insumo' : 'Vincular ao estoque'}
+                </button>
 
                 {/* Painel de seleção de insumo/produção */}
                 {openVinculo === `${grp.id}-${opc.id}` && (

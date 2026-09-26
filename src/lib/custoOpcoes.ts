@@ -46,15 +46,23 @@ async function resolver(tenantId: string, escolhidas: Array<{ order_item_id: str
   if (!escolhidas.length) return out;
 
   type Opt = { id: string; ingredient_id: string | null; production_recipe_id: string | null; consumption_quantity: number | null; consumption_unit: string | null };
-  const opts = new Map<string, Opt>();
-  for (const part of chunk([...new Set(escolhidas.map((e) => e.option_id))], 150)) {
+  // Opção com vários insumos (option_ingredients, 2026-09-26); sem linhas lá, vale o vínculo antigo da opção
+  const opts = new Map<string, Opt[]>();
+  const optIds = [...new Set(escolhidas.map((e) => e.option_id))];
+  for (const part of chunk(optIds, 150)) {
+    const { data } = await supabase.from('option_ingredients').select('option_id, ingredient_id, production_recipe_id, quantity, unit').in('option_id', part).eq('tenant_id', tenantId);
+    for (const r of (data ?? []) as Array<{ option_id: string; ingredient_id: string; production_recipe_id: string | null; quantity: number; unit: string }>) {
+      opts.set(r.option_id, [...(opts.get(r.option_id) ?? []), { id: r.option_id, ingredient_id: r.ingredient_id, production_recipe_id: r.production_recipe_id, consumption_quantity: r.quantity, consumption_unit: r.unit }]);
+    }
+  }
+  for (const part of chunk(optIds.filter((id) => !opts.has(id)), 150)) {
     const { data } = await supabase.from('options').select('id, ingredient_id, production_recipe_id, consumption_quantity, consumption_unit').in('id', part).eq('tenant_id', tenantId);
-    for (const o of (data ?? []) as Opt[]) if (o.ingredient_id || o.production_recipe_id) opts.set(o.id, o);
+    for (const o of (data ?? []) as Opt[]) if (o.ingredient_id || o.production_recipe_id) opts.set(o.id, [o]);
   }
   if (!opts.size) return out;
 
   // opção ligada só à produção → insumo que a produção gera
-  const receitas = [...new Set([...opts.values()].filter((o) => !o.ingredient_id && o.production_recipe_id).map((o) => o.production_recipe_id!))];
+  const receitas = [...new Set([...opts.values()].flat().filter((o) => !o.ingredient_id && o.production_recipe_id).map((o) => o.production_recipe_id!))];
   const saidaDaReceita = new Map<string, string>();
   if (receitas.length) {
     const { data } = await supabase.from('production_recipes').select('id, output_ingredient_id').in('id', receitas).eq('tenant_id', tenantId);
@@ -63,22 +71,22 @@ async function resolver(tenantId: string, escolhidas: Array<{ order_item_id: str
   const insumoDa = (o: Opt) => o.ingredient_id ?? (o.production_recipe_id ? saidaDaReceita.get(o.production_recipe_id) ?? null : null);
 
   const ings = new Map<string, { unit: string; unit_price: number }>();
-  for (const part of chunk([...new Set([...opts.values()].map(insumoDa).filter((x): x is string => !!x))], 150)) {
+  for (const part of chunk([...new Set([...opts.values()].flat().map(insumoDa).filter((x): x is string => !!x))], 150)) {
     const { data } = await supabase.from('ingredients').select('id, unit, unit_price').in('id', part).eq('tenant_id', tenantId);
     for (const g of (data ?? []) as Array<{ id: string; unit: string; unit_price: number | null }>) ings.set(g.id, { unit: g.unit, unit_price: Number(g.unit_price ?? 0) });
   }
 
   for (const e of escolhidas) {
-    const o = opts.get(e.option_id);
-    if (!o) continue;
-    const ingId = insumoDa(o);
-    const ing = ingId ? ings.get(ingId) : undefined;
-    if (!ingId || !ing) continue;
-    const q = Number(o.consumption_quantity ?? 1) || 1;
-    const u = o.consumption_unit && o.consumption_unit.trim() ? o.consumption_unit.trim() : ing.unit;
-    const l = out.get(e.order_item_id) ?? [];
-    l.push({ ingredient_id: ingId, qtd: qtdFichaNoEstoque(q, u, ing.unit), unidade: ing.unit, custo: custoLinhaFicha(q, u, ing.unit, ing.unit_price) });
-    out.set(e.order_item_id, l);
+    for (const o of opts.get(e.option_id) ?? []) {
+      const ingId = insumoDa(o);
+      const ing = ingId ? ings.get(ingId) : undefined;
+      if (!ingId || !ing) continue;
+      const q = Number(o.consumption_quantity ?? 1) || 1;
+      const u = o.consumption_unit && o.consumption_unit.trim() ? o.consumption_unit.trim() : ing.unit;
+      const l = out.get(e.order_item_id) ?? [];
+      l.push({ ingredient_id: ingId, qtd: qtdFichaNoEstoque(q, u, ing.unit), unidade: ing.unit, custo: custoLinhaFicha(q, u, ing.unit, ing.unit_price) });
+      out.set(e.order_item_id, l);
+    }
   }
   return out;
 }

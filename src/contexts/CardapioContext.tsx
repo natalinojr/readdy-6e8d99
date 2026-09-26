@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
+import { insumosDaOpcao } from '@/lib/opcaoInsumos';
 import type { ReactNode, Dispatch, SetStateAction } from 'react';
 import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
@@ -51,6 +52,8 @@ interface DBOpcao {
   production_recipe_id?: string | null;
   consumption_quantity?: number | null;
   consumption_unit?: string | null;
+  /** insumos da opção (option_ingredients, fn_get_full_menu) */
+  ingredientes?: Array<{ ingredient_id: string; production_recipe_id: string | null; quantity: number | string; unit: string }> | null;
 }
 
 interface DBGrupoOpcoes {
@@ -190,6 +193,12 @@ function mapOpcao(o: DBOpcao, ingredientNameMap?: Map<string, string>): OpcaoIte
     productionRecipeId: o.production_recipe_id ?? null,
     consumptionQuantity: o.consumption_quantity ? Number(o.consumption_quantity) : undefined,
     consumptionUnit: o.consumption_unit ?? undefined,
+    ingredientes: Array.isArray(o.ingredientes)
+      ? o.ingredientes.map((x) => ({
+          ingredientId: x.ingredient_id, productionRecipeId: x.production_recipe_id ?? null,
+          quantidade: Number(x.quantity), unidade: x.unit, source: x.production_recipe_id ? 'production' as const : 'ingredient' as const,
+        }))
+      : undefined,
   };
 }
 
@@ -710,6 +719,10 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
             production_recipe_id: o.productionRecipeId ?? null,
             consumption_quantity: o.consumptionQuantity ?? null,
             consumption_unit: o.consumptionUnit ?? null,
+            // lista de insumos (vários por opção); o servidor grava em option_ingredients
+            ingredientes: insumosDaOpcao(o).map((x) => ({
+              ingredient_id: x.ingredientId, production_recipe_id: x.productionRecipeId ?? null, quantity: x.quantidade ?? null, unit: x.unidade,
+            })),
           })),
         })),
         promotions: item.promocoes.map(p => ({

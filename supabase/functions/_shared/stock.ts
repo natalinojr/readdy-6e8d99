@@ -59,7 +59,18 @@ async function buildOptionDeductions(admin: ReturnType<typeof createClient>, ten
   if (!options || options.length === 0) return deductions;
   const validOptionIds = options.map((o) => o.option_id).filter((id): id is string => !!id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id));
   if (validOptionIds.length === 0) return deductions;
-  const { data: optRows } = await admin.from("options").select("id, ingredient_id, production_recipe_id, consumption_quantity, consumption_unit").in("id", validOptionIds).eq("tenant_id", tenantId).not("ingredient_id", "is", null);
+  // Opção com vários insumos (option_ingredients, 2026-09-26); sem linhas lá, vale o vínculo antigo da opção
+  const { data: oiRows } = await admin.from("option_ingredients").select("option_id, ingredient_id, production_recipe_id, quantity, unit").in("option_id", validOptionIds).eq("tenant_id", tenantId);
+  const comLista = new Set(((oiRows ?? []) as Array<{ option_id: string }>).map((r) => r.option_id));
+  const semLista = validOptionIds.filter((id) => !comLista.has(id));
+  const { data: legacyRows } = semLista.length
+    ? await admin.from("options").select("id, ingredient_id, production_recipe_id, consumption_quantity, consumption_unit").in("id", semLista).eq("tenant_id", tenantId).not("ingredient_id", "is", null)
+    : { data: [] };
+  const optRows: Array<{ id: string; ingredient_id: string | null; production_recipe_id: string | null; consumption_quantity: number | null; consumption_unit: string | null }> = [
+    ...((oiRows ?? []) as Array<{ option_id: string; ingredient_id: string; production_recipe_id: string | null; quantity: number; unit: string }>)
+      .map((r) => ({ id: r.option_id, ingredient_id: r.ingredient_id, production_recipe_id: r.production_recipe_id, consumption_quantity: r.quantity, consumption_unit: r.unit })),
+    ...((legacyRows ?? []) as Array<{ id: string; ingredient_id: string | null; production_recipe_id: string | null; consumption_quantity: number | null; consumption_unit: string | null }>),
+  ];
   const ingredientIds = [...new Set((optRows ?? []).map((r: Record<string, unknown>) => r.ingredient_id).filter((id): id is string => !!id))];
   let unitMap = new Map<string, string>();
   if (ingredientIds.length > 0) {

@@ -13,6 +13,16 @@ export interface Categoria {
   deleted_at?: string | null;
 }
 
+/** Um insumo que a opção baixa do estoque quando o cliente escolhe (option_ingredients). */
+export interface InsumoDaOpcaoCardapio {
+  ingredientId: string;
+  productionRecipeId?: string | null;
+  /** quantidade na unidade abaixo; vazio = ainda não informada (não salva) */
+  quantidade?: number;
+  unidade: string;
+  source?: 'ingredient' | 'production';
+}
+
 export interface OpcaoItem {
   id: string;
   nome: string;
@@ -32,6 +42,8 @@ export interface OpcaoItem {
   consumptionUnit?: string;
   /** Origem do vínculo: insumo direto ou produto de produção */
   source?: 'ingredient' | 'production';
+  /** Insumos da opção — vários (2026-09-26). Fonte da verdade quando presente; ingredientId/consumption* = o primeiro */
+  ingredientes?: InsumoDaOpcaoCardapio[];
   created_at?: string;
   updated_at?: string;
   deleted_at?: string | null;

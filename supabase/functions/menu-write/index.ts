@@ -25,6 +25,34 @@ function friendlyUniqueError(err: unknown, context: string): string {
   return 'Já existe um registro com este nome. Escolha outro nome.';
 }
 
+// Grava a lista de insumos de uma opção (substitui a anterior). Linha sem insumo válido ou sem quantidade > 0 é
+// ignorada; insumo de outra loja também. A unidade vazia vira a do insumo.
+async function salvarInsumosOpcao(
+  // deno-lint-ignore no-explicit-any
+  admin: any, tenantId: string, optionId: string,
+  lista: Array<{ ingredient_id?: string | null; production_recipe_id?: string | null; quantity?: number | null; unit?: string | null }>,
+) {
+  const validas = (lista ?? []).filter((x) => isValidUuid(x?.ingredient_id) && Number(x?.quantity) > 0);
+  const ids = [...new Set(validas.map((x) => String(x.ingredient_id)))];
+  const unidades = new Map<string, string>();
+  if (ids.length) {
+    const { data } = await admin.from('ingredients').select('id, unit').in('id', ids).eq('tenant_id', tenantId);
+    for (const g of (data ?? []) as Array<{ id: string; unit: string }>) unidades.set(g.id, g.unit);
+  }
+  const vistos = new Set<string>();
+  const linhas = validas.filter((x) => unidades.has(String(x.ingredient_id)) && !vistos.has(String(x.ingredient_id)) && vistos.add(String(x.ingredient_id)))
+    .map((x, i) => ({
+      tenant_id: tenantId, option_id: optionId, ingredient_id: x.ingredient_id, production_recipe_id: isValidUuid(x.production_recipe_id) ? x.production_recipe_id : null,
+      quantity: Number(x.quantity), unit: (x.unit && String(x.unit).trim()) || unidades.get(String(x.ingredient_id)), sort_order: i,
+    }));
+  const { error: delErr } = await admin.from('option_ingredients').delete().eq('option_id', optionId).eq('tenant_id', tenantId);
+  if (delErr) throw new Error(`insumos da opção: ${delErr.message}`);
+  if (linhas.length) {
+    const { error } = await admin.from('option_ingredients').insert(linhas);
+    if (error) throw new Error(`insumos da opção: ${error.message}`);
+  }
+}
+
 function isValidUuid(v: unknown): boolean {
   return typeof v === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
 }
@@ -358,6 +386,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
               consumption_quantity: opt.consumption_quantity ?? null,
               consumption_unit: opt.consumption_unit ?? null,
             };
+            let savedOptId: string | null = opt.id ?? null;
             if (opt.id) {
               console.log(`[menu-write] Updating option ${opt.id}`);
               const { data: updatedOpt, error: updErr } = await admin.from('options').update(optPayload).eq('id', opt.id).eq('tenant_id', tenantId).select('id, name, description').maybeSingle();
@@ -373,6 +402,15 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
                 throw new Error(`Failed to insert option: ${insErr.message}`);
               }
               console.log('[menu-write] Option inserted:', JSON.stringify(insertedOpt));
+              savedOptId = insertedOpt?.id ?? null;
+            }
+            // Insumos da opção (vários, 2026-09-26). Tela nova manda 'ingredientes'; tela antiga (cache) manda só
+            // o vínculo único — aí vale ele. As colunas antigas da opção são mantidas pelo gatilho do banco.
+            if (savedOptId) {
+              const lista = Array.isArray(opt.ingredientes)
+                ? opt.ingredientes
+                : (opt.ingredient_id ? [{ ingredient_id: opt.ingredient_id, production_recipe_id: opt.production_recipe_id ?? null, quantity: opt.consumption_quantity, unit: opt.consumption_unit }] : []);
+              await salvarInsumosOpcao(admin, tenantId, savedOptId, lista);
             }
           }
         }
@@ -500,15 +538,18 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         .sort((a, b) => Number(b.tem_ficha) - Number(a.tem_ficha) || b.vendas - a.vendas);
     }
     else if (action === 'ligar_opcoes_estoque') {
-      // Aba Opções × Estoque (2026-09-25): liga várias opções (mesmo complemento em vários itens) a um
-      // insumo ou produção de uma vez. Quantidade obrigatória — nunca liga sozinho, sempre por uma pessoa.
-      const { option_ids, ingredient_id, production_recipe_id, consumption_quantity, consumption_unit } = payload as {
-        option_ids: string[]; ingredient_id?: string | null; production_recipe_id?: string | null; consumption_quantity: number; consumption_unit: string;
+      // Aba Opções × Estoque (2026-09-25/26): acrescenta um insumo a várias opções de uma vez (o mesmo complemento
+      // em vários itens), com a quantidade de CADA opção — pode variar de item para item. Não apaga os outros
+      // insumos da opção; se a opção já tem esse insumo, troca a quantidade. Nunca liga sozinho: sempre uma pessoa.
+      const { vinculos, option_ids, ingredient_id, production_recipe_id, consumption_quantity, consumption_unit } = payload as {
+        vinculos?: Array<{ option_id: string; quantity: number }>; option_ids?: string[];
+        ingredient_id?: string | null; production_recipe_id?: string | null; consumption_quantity?: number; consumption_unit: string;
       };
-      const ids = (Array.isArray(option_ids) ? option_ids : []).filter(isValidUuid);
-      if (!ids.length) return errResp('Nenhuma opção informada', 400);
+      const lista = (Array.isArray(vinculos) ? vinculos : (option_ids ?? []).map((id) => ({ option_id: id, quantity: Number(consumption_quantity) })))
+        .filter((v) => isValidUuid(v?.option_id));
+      if (!lista.length) return errResp('Nenhuma opção informada', 400);
+      if (lista.some((v) => !(Number(v.quantity) > 0))) return errResp('Informe quanto sai do estoque em cada item marcado', 400);
       if (!isValidUuid(ingredient_id)) return errResp('Escolha o insumo', 400);
-      if (!(Number(consumption_quantity) > 0)) return errResp('Informe quanto sai do estoque', 400);
       if (!['g', 'kg', 'ml', 'l', 'un'].includes(String(consumption_unit ?? ''))) return errResp('Unidade inválida', 400);
       const { data: papel } = await admin.from('user_tenants').select('role').eq('user_id', user.id).eq('tenant_id', tenantId).maybeSingle();
       if (!['admin', 'manager'].includes(String(papel?.role ?? ''))) return errResp('Só administrador ou gerente pode ligar opções ao estoque', 403);
@@ -518,12 +559,21 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         const { data: rec } = await admin.from('production_recipes').select('id').eq('id', production_recipe_id).eq('tenant_id', tenantId).maybeSingle();
         if (!rec) return errResp('Produção não encontrada nesta loja', 404);
       }
-      const { data: upd, error } = await admin.from('options').update({
-        ingredient_id, production_recipe_id: production_recipe_id ?? null,
-        consumption_quantity: Number(consumption_quantity), consumption_unit,
-      }).in('id', ids).eq('tenant_id', tenantId).is('deleted_at', null).select('id');
+      const { data: opts } = await admin.from('options').select('id').in('id', lista.map((v) => v.option_id)).eq('tenant_id', tenantId).is('deleted_at', null);
+      const validas = new Set(((opts ?? []) as Array<{ id: string }>).map((o) => o.id));
+      const { data: ordens } = validas.size
+        ? await admin.from('option_ingredients').select('option_id, sort_order').in('option_id', [...validas]).eq('tenant_id', tenantId)
+        : { data: [] };
+      const proxima = new Map<string, number>();
+      for (const r of (ordens ?? []) as Array<{ option_id: string; sort_order: number }>) proxima.set(r.option_id, Math.max(proxima.get(r.option_id) ?? 0, r.sort_order + 1));
+      const linhas = lista.filter((v) => validas.has(v.option_id)).map((v) => ({
+        tenant_id: tenantId, option_id: v.option_id, ingredient_id, production_recipe_id: production_recipe_id ?? null,
+        quantity: Number(v.quantity), unit: consumption_unit, sort_order: proxima.get(v.option_id) ?? 0,
+      }));
+      if (!linhas.length) return errResp('Opções não encontradas nesta loja', 404);
+      const { error } = await admin.from('option_ingredients').upsert(linhas, { onConflict: 'option_id,ingredient_id' });
       if (error) throw new Error(`ligar_opcoes_estoque: ${error.message}`);
-      result = { ligadas: (upd ?? []).length };
+      result = { ligadas: linhas.length };
     }
     else if (action === 'upsert_global_obs') {
       const { id, text, is_active, excluded_item_ids, excluded_category_ids } = payload as {
