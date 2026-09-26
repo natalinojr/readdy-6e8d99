@@ -62,7 +62,6 @@ export default function ReceberPage() {
   const [aguardando, setAguardando] = useState({ fornecedor: '', descricao: '', obs: '', ref: '' });
   const [parecidas, setParecidas] = useState<CompraParecida[]>([]);
   const [digitado, setDigitado] = useState('');
-  const inputCodigo = useRef<HTMLInputElement>(null);
   const inputCupom = useRef<HTMLInputElement>(null);
   const inputCupomGaleria = useRef<HTMLInputElement>(null);
 
@@ -138,7 +137,7 @@ export default function ReceberPage() {
     const { data, erro: e } = await chamar<{ tipo: string; id?: string; chave?: string; notas?: Busca['notas']; compras?: Busca['compras'] }>('buscar', tenantId, { codigo });
     if (e || !data) { setErro(e ?? 'Não consegui procurar'); setTela('inicio'); return; }
     if (data.tipo === 'nota' && data.id) return abrir('nota', data.id);
-    if (data.tipo === 'nfce') { setErro('Isso é um cupom (NFC-e). Toque em "Cupom / notinha" e tire foto do QR Code.'); setTela('inicio'); return; }
+    if (data.tipo === 'nfce') { setErro('Isso é um cupom (NFC-e). Toque em "Ler nota ou cupom" e aponte para o QR Code.'); setTela('inicio'); return; }
     if (data.tipo === 'nao_achou') { setChaveNaoAchada(data.chave ?? codigo); setTela('nao_achou'); return; }
     setBusca({ notas: data.notas ?? [], compras: data.compras ?? [] });
     setTela('busca');
@@ -150,20 +149,12 @@ export default function ReceberPage() {
       // A consulta da SEFAZ-PR às vezes sai do ar (ex.: 24/09 respondia "mal formatado" até para QR válido):
       // a foto da notinha é lida por IA e não depende dela
       const msg = (e as Error).message;
-      setErro(/SEFAZ/i.test(msg) ? `${msg} — a consulta da SEFAZ está com problema. Toque em "Cupom / notinha" › "Tirar foto da notinha" para lançar pela foto.` : msg);
+      setErro(/SEFAZ/i.test(msg) ? `${msg} — a consulta da SEFAZ está com problema. Toque em "Ler nota ou cupom" › "Tirar foto" para lançar pela foto.` : msg);
       setTela('inicio');
     }
   };
 
-  const onFotoCodigo = async (file: File | undefined) => {
-    if (!file) return;
-    carregando('Lendo o código…');
-    const lido = await lerCodigoDaFoto(file).catch(() => ({ tipo: 'nada' as const }));
-    if (lido.tipo === 'chave') return buscarCodigo(lido.chave);
-    if (lido.tipo === 'qr' && isNfcePrQr(lido.url)) return lerCupomQr(lido.url);
-    setErro('Não consegui ler o código. Tire a foto mais perto, reta e com luz — ou digite o número da nota.');
-    setTela('inicio');
-  };
+
 
   // Leitor ao vivo (cupom): QR da SEFAZ ou, por engano, o código da DANFE
   const onLidoAoVivo = (l: Lido) => {
@@ -203,6 +194,14 @@ export default function ReceberPage() {
     try {
       const { base64, mediaType } = await fotoParaEnvio(file);
       const scan = await lerCupom(tenantId, { action: 'scan', file_base64: base64, media_type: mediaType });
+      // Nota grande (DANFE) nunca vira compra pela foto: a compra sai do XML (Notas de entrada).
+      // Procura a nota pelo número lido; sem número, pede para digitar.
+      if (scan.document_kind === 'nfe_danfe') {
+        if (scan.invoice_number) return buscarCodigo(scan.invoice_number);
+        setErro('Essa foto é de nota fiscal (DANFE), que não é lançada pela foto. Aponte para o código de barras dela ou use "Digitar nº da nota".');
+        setTela('inicio');
+        return;
+      }
       await abrirCupom(chaveDoQr && !scan.access_key ? { ...scan, access_key: chaveDoQr } : scan);
     } catch (e) { setErro((e as Error).message); setTela('inicio'); }
   };
@@ -357,8 +356,6 @@ export default function ReceberPage() {
         </div>
       </div>
 
-      <input ref={inputCodigo} type="file" accept="image/*" capture="environment" className="hidden"
-        onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; onFotoCodigo(f); }} />
       <input ref={inputCupom} type="file" accept="image/*" capture="environment" className="hidden"
         onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; onFotoCupom(f); }} />
       {/* Galeria/arquivos (sem capture): foto já tirada, print ou PDF do cupom */}
@@ -418,8 +415,9 @@ export default function ReceberPage() {
             {podeReceber && <>
             {podePedir && <p className="text-sm font-bold text-zinc-700 px-1 mb-2">Chegou mercadoria</p>}
             <div className="grid grid-cols-2 gap-3">
-              <BotaoGrande cor="bg-amber-500 text-white" icone="ri-barcode-line" titulo="Ler código da nota" sub="Foto do código de barras da DANFE" onClick={() => inputCodigo.current?.click()} destaque />
-              <BotaoGrande cor="bg-white text-zinc-800" icone="ri-receipt-line" titulo="Cupom / notinha" sub="Lê o QR Code do cupom de mercado" onClick={abrirLeitorCupom} />
+              <div className="col-span-2">
+                <BotaoGrande cor="bg-amber-500 text-white" icone="ri-qr-scan-2-line" titulo="Ler nota ou cupom" sub="QR do cupom de mercado ou código de barras da nota (DANFE) — ou foto da notinha" onClick={abrirLeitorCupom} destaque largo />
+              </div>
               <BotaoGrande cor="bg-white text-zinc-800" icone="ri-inbox-unarchive-line" titulo="Chegou sem nota" sub="Lançar ou avisar o financeiro" onClick={() => setTela('sem_nota_pergunta')} />
               <BotaoGrande cor="bg-white text-zinc-800" icone="ri-keyboard-line" titulo="Digitar nº da nota" sub="Se o código não ler" onClick={() => { setDigitado(''); setTela('digitar'); }} />
             </div>

@@ -99,7 +99,7 @@ export default function ScannerQR({ onLido, onLink, onFoto, onGaleria, onFechar 
   return (
     <div className="fixed inset-0 z-[100] bg-black flex flex-col" role="dialog" aria-modal="true">
       <div className="flex items-center gap-2 px-3 text-white flex-shrink-0" style={{ paddingTop: 'calc(env(safe-area-inset-top) + 8px)', paddingBottom: 8 }}>
-        <p className="flex-1 text-base font-bold">Aponte para o QR Code</p>
+        <p className="flex-1 text-base font-bold">Aponte para o QR ou o código de barras</p>
         <button type="button" onClick={onFechar} className="w-11 h-11 flex items-center justify-center rounded-full active:bg-white/20 cursor-pointer" aria-label="Fechar">
           <i className="ri-close-line text-2xl" />
         </button>
@@ -115,7 +115,7 @@ export default function ScannerQR({ onLido, onLink, onFoto, onGaleria, onFechar 
         {!erro && <p className="absolute inset-x-0 bottom-3 text-center text-xs text-white/80">{status}</p>}
       </div>
       <div className="px-4 pt-3 space-y-2 flex-shrink-0" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 12px)' }}>
-        <p className="text-center text-xs text-white/70">Lê sozinho quando o QR aparecer no quadrado. Não leu? Afaste um pouco o celular, ou cole o link que a câmera do celular mostra.</p>
+        <p className="text-center text-xs text-white/70">Lê sozinho o QR do cupom ou o código de barras da nota. Não leu? Afaste um pouco o celular, tire foto, ou cole o link que a câmera do celular mostra.</p>
         {colando ? (
           <div className="flex gap-2">
             <input autoFocus value={link} onChange={(e) => setLink(e.target.value)} placeholder="Cole aqui o link do QR"
