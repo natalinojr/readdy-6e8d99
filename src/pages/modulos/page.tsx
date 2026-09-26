@@ -383,7 +383,7 @@ export default function ModulosPage() {
   const location = useLocation();
   const [showShareModal, setShowShareModal] = useState(false);
   const { settings, loading: settingsLoading, carregar } = useSystemSettings();
-  const { hasPermissao } = usePermissoes();
+  const { hasPermissao, loading: permLoading } = usePermissoes();
   const { usuarios } = useUsuarios();
   const { hasModule, loading: moduleLoading } = useModuleAccess();
   const [acessoNegadoMsg, setAcessoNegadoMsg] = useState<string | null>(null);
@@ -512,6 +512,15 @@ export default function ModulosPage() {
   const terminais = modulosVisiveis.filter((m) => m.tag === 'Terminal');
   const cozinha = modulosVisiveis.filter((m) => m.tag === 'Cozinha');
   const admin = modulosVisiveis.filter((m) => m.tag === 'Admin');
+
+  // Só mostra os cards depois da 1ª carga (config da loja + permissões + módulos por pessoa).
+  // Antes disso valiam os padrões ("tudo ligado") e apareciam por um instante cards que a
+  // loja desligou (Garçom, Delivery, KDS...). Recarga posterior não esconde a grade.
+  const settingsProntas = !settingsLoading && (!user?.tenantId || settings.tenant_id === user.tenantId);
+  const [cargaPronta, setCargaPronta] = useState(false);
+  useEffect(() => {
+    if (settingsProntas && !permLoading && !moduleLoading) setCargaPronta(true);
+  }, [settingsProntas, permLoading, moduleLoading]);
 
   const podeVerTotens = user?.perfil === 'admin' || user?.perfil === 'gerente';
   const isAdminMaster = user?.email === 'natalinojr.engel@gmail.com';
@@ -773,6 +782,11 @@ export default function ModulosPage() {
       {/* ── GRID DE MÓDULOS ── */}
       <div className="relative z-10 flex-1 px-5 md:px-10 pb-12 max-w-5xl w-full">
 
+        {!cargaPronta ? (
+          <div className="flex justify-center py-20">
+            <div className="w-7 h-7 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
+          </div>
+        ) : (<>
         {/* Terminais PDV */}
         {terminais.length > 0 && (
           <div className="mb-8">
@@ -839,6 +853,7 @@ export default function ModulosPage() {
           </p>
           <div className="flex-1 h-px bg-zinc-200" />
         </div>
+        </>)}
       </div>
 
       {showShareModal && <OnboardingShareModal onClose={() => setShowShareModal(false)} />}
