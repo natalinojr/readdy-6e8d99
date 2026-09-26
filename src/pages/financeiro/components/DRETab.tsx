@@ -15,7 +15,7 @@ import {
 import { formatCurrency } from '@/lib/formatters';
 import DREDrillDownModal from './DREDrillDownModal';
 import { VarChip, SectionHeader, NoteRow, Segmented, KpiCard } from './dreUi';
-import { useDreGroups, STANDARD_GROUP_KEYS, ordenarGrupos } from '@/hooks/useDreGroups';
+import { useDreGroups, STANDARD_GROUP_KEYS } from '@/hooks/useDreGroups';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function pct(v: number, total: number) {
@@ -793,7 +793,7 @@ export default function DRETab() {
   }[]>([]);
   const [loadingChart, setLoadingChart] = useState(false);
   const [dreCats, setDreCats] = useState<DRECat[]>([]);
-  const { customGroups: dreGroups, gruposComLegado } = useDreGroups();
+  const { customGroups: dreGroups } = useDreGroups();
   const [semCategoria, setSemCategoria] = useState(0);
   const [drillDown, setDrillDown] = useState<{
     type: string;
@@ -816,15 +816,10 @@ export default function DRETab() {
   // Nomes da maquininha e do banco principal (Conciliação › ⚙ › Como o dinheiro entra)
   const { labels: flowLabels } = useMoneyFlow();
 
-  // Ordem escolhida pela loja em Categorias DRE (↑↓), inclusive a posição de
-  // "Despesas operacionais" entre os grupos criados por ela.
-  const ordemSecoes = ordenarGrupos(['expense', ...customGroups.map(g => g.key)], gruposComLegado);
-  const enrichedCustomGroups = ordenarGrupos(customGroups.map(g => g.key), gruposComLegado)
-    .map(k => customGroups.find(g => g.key === k)!)
-    .map(g => {
-      const match = dreGroups.find(s => s.key === g.key);
-      return match ? { key: g.key, label: match.label } : g;
-    });
+  const enrichedCustomGroups = customGroups.map(g => {
+    const match = dreGroups.find(s => s.key === g.key);
+    return match ? { key: g.key, label: match.label } : g;
+  });
 
   // A receita segue a regra dos recebidos da loja (Financeiro › Receitas › Fontes):
   // o que não está ligado zera, e o Pix do Inter entra quando escolhido.
@@ -1445,88 +1440,82 @@ export default function DRETab() {
                 )}
                 <DRERow label="Lucro bruto" atual={lucroBruto} anterior={prevLucroBruto} receitaBruta={receitaBruta} isTotal />
 
-                {/* ── DESPESAS OPERACIONAIS e GRUPOS DA LOJA, na ordem de Categorias DRE ── */}
-                {ordemSecoes.map(secao => (
-                  secao === 'expense' ? (
-                    <Fragment key="expense">
-                      <SectionHeader label="Despesas operacionais" icon="ri-bill-line" tone="rose" />
-                      {data.custoPessoal > 0 && (
-                        <DRERow
-                          label="Pessoal (folha + FGTS)"
-                          atual={data.custoPessoal}
-                          anterior={prevData?.custoPessoal}
-                          receitaBruta={receitaBruta}
-                          isNeg
-                          depth={1}
-                          origin={dreMode === 'caixa'
-                            ? 'Folha marcada como PAGA com data de pagamento neste mês + FGTS (regime de caixa)'
-                            : 'Folha do mês de referência + encargos patronais (paga ou não)'}
-                          badge="RH"
-                          badgeColor="bg-amber-100 text-amber-700"
-                          clickable
-                          onClick={() => setDrillDown({ type: 'custo_pessoal' })}
-                        />
-                      )}
-                      {taxasMaquininha > 0 && (
-                        <DRERow
-                          label="Taxas de cartão, Pix e iFood"
-                          atual={taxasMaquininha}
-                          anterior={prevData?.taxasMaquininha}
-                          receitaBruta={receitaBruta}
-                          isNeg
-                          depth={1}
-                          origin="Livro-razão: fin_cash_flow → auto_card_fee + ifood_fee (comissões e taxas do iFood)"
-                        />
-                      )}
-                      {hasDynCats && expenseCats.length > 0 ? (
-                        <CatTreeRows cats={expenseCats} depth={1} data={data} prevData={prevData} receitaBruta={receitaBruta} mode={dreMode} onDrillDown={drillCat} />
+                {/* ── DESPESAS OPERACIONAIS ── */}
+                <SectionHeader label="Despesas operacionais" icon="ri-bill-line" tone="rose" />
+                {data.custoPessoal > 0 && (
+                  <DRERow
+                    label="Pessoal (folha + FGTS)"
+                    atual={data.custoPessoal}
+                    anterior={prevData?.custoPessoal}
+                    receitaBruta={receitaBruta}
+                    isNeg
+                    depth={1}
+                    origin={dreMode === 'caixa'
+                      ? 'Folha marcada como PAGA com data de pagamento neste mês + FGTS (regime de caixa)'
+                      : 'Folha do mês de referência + encargos patronais (paga ou não)'}
+                    badge="RH"
+                    badgeColor="bg-amber-100 text-amber-700"
+                    clickable
+                    onClick={() => setDrillDown({ type: 'custo_pessoal' })}
+                  />
+                )}
+                {taxasMaquininha > 0 && (
+                  <DRERow
+                    label="Taxas de cartão, Pix e iFood"
+                    atual={taxasMaquininha}
+                    anterior={prevData?.taxasMaquininha}
+                    receitaBruta={receitaBruta}
+                    isNeg
+                    depth={1}
+                    origin="Livro-razão: fin_cash_flow → auto_card_fee + ifood_fee (comissões e taxas do iFood)"
+                  />
+                )}
+                {hasDynCats && expenseCats.length > 0 ? (
+                  <CatTreeRows cats={expenseCats} depth={1} data={data} prevData={prevData} receitaBruta={receitaBruta} mode={dreMode} onDrillDown={drillCat} />
+                ) : (
+                  <tr>
+                    <td colSpan={5} className="px-5 py-5 text-center">
+                      <div className="flex flex-col items-center gap-1.5">
+                        <i className="ri-folder-chart-line text-zinc-300 text-2xl" />
+                        <p className="text-xs text-zinc-400">
+                          Crie categorias na aba <strong className="text-zinc-600">Categorias DRE</strong> e vincule suas contas a pagar a elas
+                        </p>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+                {/* Despesas sem categoria DRE: SOMAM no resultado (antes sumiam da conta).
+                    Ficam nesta linha até serem classificadas em Contas a Pagar. */}
+                {despesasSemCategoria > 0 && (
+                  <DRERow
+                    label="Sem categoria (a classificar)"
+                    atual={despesasSemCategoria}
+                    anterior={prevDespesasSemCategoria}
+                    receitaBruta={receitaBruta}
+                    isNeg
+                    depth={1}
+                    origin="Contas a pagar sem dre_category_id — já subtraídas do resultado"
+                    badge="A classificar"
+                    badgeColor="bg-amber-100 text-amber-700"
+                  />
+                )}
+
+                {/* ── GRUPOS CUSTOMIZADOS ── */}
+                {customGroupTrees.map(({ group, cats, total }) => (
+                  total > 0 || cats.length > 0 ? (
+                    <Fragment key={group.key}>
+                      <SectionHeader label={group.label} icon="ri-folder-line" />
+                      {cats.length > 0 ? (
+                        <CatTreeRows cats={cats} depth={1} data={data} prevData={prevData} receitaBruta={receitaBruta} mode={dreMode} onDrillDown={drillCat} />
                       ) : (
                         <tr>
-                          <td colSpan={5} className="px-5 py-5 text-center">
-                            <div className="flex flex-col items-center gap-1.5">
-                              <i className="ri-folder-chart-line text-zinc-300 text-2xl" />
-                              <p className="text-xs text-zinc-400">
-                                Crie categorias na aba <strong className="text-zinc-600">Categorias DRE</strong> e vincule suas contas a pagar a elas
-                              </p>
-                            </div>
+                          <td colSpan={5} className="px-5 py-3 text-xs text-zinc-400 text-center">
+                            Nenhuma despesa neste grupo no período
                           </td>
                         </tr>
                       )}
-                      {/* Despesas sem categoria DRE: SOMAM no resultado (antes sumiam da conta).
-                          Ficam nesta linha até serem classificadas em Contas a Pagar. */}
-                      {despesasSemCategoria > 0 && (
-                        <DRERow
-                          label="Sem categoria (a classificar)"
-                          atual={despesasSemCategoria}
-                          anterior={prevDespesasSemCategoria}
-                          receitaBruta={receitaBruta}
-                          isNeg
-                          depth={1}
-                          origin="Contas a pagar sem dre_category_id — já subtraídas do resultado"
-                          badge="A classificar"
-                          badgeColor="bg-amber-100 text-amber-700"
-                        />
-                      )}
                     </Fragment>
-                    ) : (() => {
-                      const cg = customGroupTrees.find(x => x.group.key === secao);
-                      if (!cg) return null;
-                      const { group, cats, total } = cg;
-                      return total > 0 || cats.length > 0 ? (
-                        <Fragment key={group.key}>
-                          <SectionHeader label={group.label} icon="ri-folder-line" />
-                          {cats.length > 0 ? (
-                            <CatTreeRows cats={cats} depth={1} data={data} prevData={prevData} receitaBruta={receitaBruta} mode={dreMode} onDrillDown={drillCat} />
-                          ) : (
-                            <tr>
-                              <td colSpan={5} className="px-5 py-3 text-xs text-zinc-400 text-center">
-                                Nenhuma despesa neste grupo no período
-                              </td>
-                            </tr>
-                          )}
-                        </Fragment>
-                      ) : null;
-                    })()
+                  ) : null
                 ))}
 
                 {/* ── RESULTADO ── (operacional = líquido: não há IR/financeiro separado) */}
