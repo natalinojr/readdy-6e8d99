@@ -947,9 +947,8 @@ export default function ConciliacaoTab() {
     }
   };
   const handleReabrir = async (id: string) => {
-    const msg = motivoReabrir(id);
-    if (msg) { setReabrir({ id, msg }); return; }
-    await executarReabrir(id);
+    // Sempre confirma: um clique à toa tirava da conciliação até linha casada sozinha (Pix do tablet)
+    setReabrir({ id, msg: motivoReabrir(id) ?? 'O pagamento volta a pendente. Nenhum lançamento é apagado.' });
   };
 
   // ── Números do período ────────────────────────────────────────────────────
