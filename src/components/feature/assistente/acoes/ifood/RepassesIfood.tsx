@@ -41,35 +41,53 @@ export default function RepassesIfood({ onFechar, irPara }: AcaoProps) {
       const linhas = ((liq.data ?? []) as Liquidacao[]).filter((l) => ['REPASSE', 'BOLETO'].includes(tipo(l.type)));
       const variasLojas = new Set(linhas.map((l) => l.merchant_id)).size > 1;
       const loja = (id: string) => (variasLojas ? ` · ${nomes[id] ?? `Loja ${id.slice(0, 8)}`}` : '');
-      const futuros = linhas.filter((l) => (l.payment_date ?? '') >= hoje);
-      const pagos = linhas.filter((l) => (l.payment_date ?? '') < hoje).reverse();
-      const aReceber = futuros.filter((l) => tipo(l.type) === 'REPASSE').reduce((a, l) => a + n(l.amount), 0);
-      const boletos = futuros.filter((l) => tipo(l.type) === 'BOLETO');
-      const proximo = futuros.find((l) => tipo(l.type) === 'REPASSE');
-      const pagoMes = pagos.filter((l) => tipo(l.type) === 'REPASSE' && (l.payment_date ?? '') >= inicioMes).reduce((a, l) => a + n(l.amount), 0);
+      // O iFood paga o repasse de um dia em VÁRIAS linhas (uma por período de vendas apurado): junta por
+      // data + loja + tipo, senão o "próximo repasse" mostrava só um pedaço do dia.
+      type Grupo = { data: string; merchant: string; tipo: string; valor: number; de: string | null; ate: string | null; falhou: boolean };
+      const agrupar = (ls: Liquidacao[]) => {
+        const m = new Map<string, Grupo>();
+        for (const l of ls) {
+          const k = `${l.payment_date}|${l.merchant_id}|${tipo(l.type)}`;
+          const g = m.get(k) ?? { data: l.payment_date ?? '', merchant: l.merchant_id, tipo: tipo(l.type), valor: 0, de: null, ate: null, falhou: false };
+          g.valor += n(l.amount);
+          if (l.calc_begin && (!g.de || l.calc_begin < g.de)) g.de = l.calc_begin;
+          if (l.calc_end && (!g.ate || l.calc_end > g.ate)) g.ate = l.calc_end;
+          if (/FAIL/i.test(String(l.status))) g.falhou = true;
+          m.set(k, g);
+        }
+        return [...m.values()].sort((a, b) => a.data.localeCompare(b.data) || a.merchant.localeCompare(b.merchant));
+      };
+      const futuros = agrupar(linhas.filter((l) => (l.payment_date ?? '') >= hoje));
+      const pagos = agrupar(linhas.filter((l) => (l.payment_date ?? '') < hoje)).reverse();
+      const aReceber = futuros.filter((g) => g.tipo === 'REPASSE').reduce((a, g) => a + g.valor, 0);
+      const boletos = futuros.filter((g) => g.tipo === 'BOLETO');
+      const dataProximo = futuros.find((g) => g.tipo === 'REPASSE')?.data ?? null;
+      const doProximo = futuros.filter((g) => g.tipo === 'REPASSE' && g.data === dataProximo);
+      const valorProximo = doProximo.reduce((a, g) => a + g.valor, 0);
+      const pagoMes = pagos.filter((g) => g.tipo === 'REPASSE' && g.data >= inicioMes).reduce((a, g) => a + g.valor, 0);
       const antecip = (ant.data ?? []) as Antecipacao[];
       const taxaAntecip = antecip.reduce((a, x) => a + n(x.fee_amount), 0);
-      const periodo = (l: Liquidacao) => (l.calc_begin && l.calc_end ? `vendas de ${dataBR(l.calc_begin).slice(0, 5)} a ${dataBR(l.calc_end).slice(0, 5)}` : undefined);
+      const periodo = (g: Grupo) => (g.de && g.ate ? `vendas de ${dataBR(g.de).slice(0, 5)} a ${dataBR(g.ate).slice(0, 5)}` : undefined);
 
       painel(
         <Painel titulo="Repasses do iFood" subtitulo={user?.loja || 'Loja ativa'}
           rodape="Da API do iFood (busca todo dia às 07h20). Só repasses e boletos movimentam dinheiro; os saldos do fechamento não somam.">
           <Kpis
-            principal={{ label: 'Próximo repasse', valor: proximo ? brl(n(proximo.amount)) : '—', extra: proximo ? <span className="text-xs text-zinc-500">{dataBR(proximo.payment_date)}{proximo.payment_date === hoje ? ' (hoje)' : ''}</span> : undefined }}
+            principal={{ label: 'Próximo repasse', valor: dataProximo ? brl(valorProximo) : '—', extra: dataProximo ? <span className="text-xs text-zinc-500">{dataBR(dataProximo)}{dataProximo === hoje ? ' (hoje)' : ''}{doProximo.length > 1 ? ` · ${doProximo.length} lojas do iFood` : ''}</span> : undefined }}
             outros={[
               { label: 'A receber (35 dias)', valor: brl(aReceber) },
               { label: 'Recebido no mês', valor: brl(pagoMes) },
             ]}
           />
           <Linhas titulo="Próximos" vazio="Nenhum repasse previsto ainda."
-            itens={futuros.slice(0, 8).map((l) => ({
-              label: `${dataBR(l.payment_date)}${tipo(l.type) === 'BOLETO' ? ' · boleto (loja paga ao iFood)' : ''}${loja(l.merchant_id)}`,
-              valor: brl(n(l.amount)), detalhe: periodo(l), status: tipo(l.type) === 'BOLETO' ? 'perigo' : 'neutro',
+            itens={futuros.slice(0, 8).map((g) => ({
+              label: `${dataBR(g.data)}${g.tipo === 'BOLETO' ? ' · boleto (loja paga ao iFood)' : ''}${loja(g.merchant)}`,
+              valor: brl(g.valor), detalhe: periodo(g), status: g.tipo === 'BOLETO' ? 'perigo' : 'neutro',
             }))} />
           <Linhas titulo="Últimos recebidos"
-            itens={pagos.slice(0, 5).map((l) => ({
-              label: `${dataBR(l.payment_date)}${tipo(l.type) === 'BOLETO' ? ' · boleto' : ''}${loja(l.merchant_id)}`,
-              valor: brl(n(l.amount)), detalhe: periodo(l), status: /FAIL/i.test(String(l.status)) ? 'perigo' : 'ok',
+            itens={pagos.slice(0, 6).map((g) => ({
+              label: `${dataBR(g.data)}${g.tipo === 'BOLETO' ? ' · boleto' : ''}${loja(g.merchant)}`,
+              valor: brl(g.valor), detalhe: periodo(g), status: g.falhou ? 'perigo' : 'ok',
             }))} />
           {antecip.length > 0 && (
             <Linhas titulo="Antecipações no mês" itens={[
@@ -77,7 +95,7 @@ export default function RepassesIfood({ onFechar, irPara }: AcaoProps) {
             ]} />
           )}
           {boletos.length > 0 && (
-            <p className="text-xs font-semibold text-red-700 bg-red-50 rounded-xl px-3 py-2">⚠️ {boletos.length} boleto(s) do iFood a pagar: {brl(boletos.reduce((a, l) => a + n(l.amount), 0))}</p>
+            <p className="text-xs font-semibold text-red-700 bg-red-50 rounded-xl px-3 py-2">⚠️ {boletos.length} boleto(s) do iFood a pagar: {brl(boletos.reduce((a, g) => a + g.valor, 0))}</p>
           )}
         </Painel>,
       );

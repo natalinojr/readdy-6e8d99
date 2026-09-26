@@ -58,7 +58,7 @@ export default function VendasIfood({ onFechar, irPara }: AcaoProps) {
       ? Array.from({ length: comVenda[comVenda.length - 1] - comVenda[0] + 1 }, (_, i) => comVenda[0] + i)
         .map((h) => ({ rotulo: `${h}h`, valor: r.porHora[h], base: a ? a.porHora[h] : null }))
       : [];
-    const pctTaxa = r.vendido > 0 ? Math.round((Math.abs(r.taxas) / r.vendido) * 1000) / 10 : 0;
+    const pctTaxa = (r.vendido > 0 ? Math.round((Math.abs(r.taxas) / r.vendido) * 1000) / 10 : 0).toLocaleString('pt-BR');
 
     painel(
       <Painel titulo={`iFood · ${dataBR(dia)}`} subtitulo={user?.loja || 'Loja ativa'}
