@@ -151,9 +151,13 @@ export default function PromocaoModal({ rule, duplicar = false, onClose, onSaved
       // usuário desmarcou "Ativa", desliga logo em seguida.
       const novoId = data?.data?.id;
       if (!editando && !form.is_active && novoId) {
-        await invokeWithAuth('order-write', {
+        const { data: off, error: offErr } = await invokeWithAuth<{ error?: string }>('order-write', {
           body: { action: 'update_promotion_rule', active_tenant_id: user?.tenantId, promotion_id: novoId, is_active: false },
         });
+        if (offErr || off?.error) {
+          // A regra já existe e está LIGADA: não fecha o modal calado.
+          throw new Error('A regra foi criada, mas não consegui desligá-la. Desligue pelo interruptor na lista.');
+        }
       }
       onSaved();
     } catch (err) {

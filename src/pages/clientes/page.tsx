@@ -37,7 +37,7 @@ interface VoucherAlvo {
 
 export default function ClientesMarketingPage() {
   const { user } = useAuth();
-  const { hasPermissao } = usePermissoes();
+  const { hasPermissao, loading: carregandoPermissoes } = usePermissoes();
   const [params, setParams] = useSearchParams();
   const [voucherAlvo, setVoucherAlvo] = useState<VoucherAlvo | null>(null);
 
@@ -95,12 +95,19 @@ export default function ClientesMarketingPage() {
       </div>
 
       <div className="flex-1 overflow-auto">
+        {/* Sem as permissões reais ainda, não assume aba nenhuma (evita piscar Clientes). */}
+        {carregandoPermissoes ? (
+          <div className="flex items-center justify-center py-20">
+            <div className="w-6 h-6 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
+          </div>
+        ) : <>
         {aba === 'clientes' && (
           <ClientesAba onEnviarVoucher={(c) => abrirVoucher(c)} onAbrirFunil={() => irPara('funil')} />
         )}
         {aba === 'funil' && <FunilAba onEnviarVoucher={abrirVoucher} />}
         {aba === 'promocoes' && <PromocoesAba />}
         {aba === 'vouchers' && <VouchersAba />}
+        </>}
       </div>
 
       {voucherAlvo && (
