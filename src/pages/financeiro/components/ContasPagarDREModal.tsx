@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { supabase, SUPABASE_URL } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatCurrency } from '@/lib/formatters';
@@ -32,8 +32,8 @@ export default function ContasPagarDREModal({ bills: allBills, onClose, onSaved 
   // de mercadoria já é contabilizado pelo CMV — contar as duas coisas seria
   // dupla contagem (fix P1). Pedir vínculo delas era trabalho sem efeito e
   // aparecia como "5 sem categoria DRE" em vermelho, sugerindo pendência.
-  const purchaseBills = allBills.filter(b => b.reference_type === 'purchase');
-  const bills = allBills.filter(b => b.reference_type !== 'purchase');
+  const purchaseBills = useMemo(() => allBills.filter(b => b.reference_type === 'purchase'), [allBills]);
+  const bills = useMemo(() => allBills.filter(b => b.reference_type !== 'purchase'), [allBills]);
   const [dreCats, setDreCats] = useState<DRECat[]>([]);
   const [assignments, setAssignments] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
@@ -42,33 +42,28 @@ export default function ContasPagarDREModal({ bills: allBills, onClose, onSaved 
   const [filterUnlinked, setFilterUnlinked] = useState(true);
   const [search, setSearch] = useState('');
 
-  const loadCats = useCallback(async () => {
+  // Categorias: uma vez por loja. Antes o efeito dependia de `bills`, que era um array novo a
+  // cada render — laço infinito de consultas que, a cada volta, reescrevia `assignments` e apagava
+  // a categoria recém-escolhida no seletor (2026-09-25). `assignments` agora guarda SÓ o que a
+  // pessoa mudou; o vínculo que já existe vem da própria conta.
+  useEffect(() => {
     if (!user?.tenantId) return;
-    const { data } = await supabase
+    let vivo = true;
+    supabase
       .from('fin_dre_categories')
       .select('id, name, group_type, parent_id')
       .eq('tenant_id', user.tenantId)
       .eq('is_active', true)
       .order('group_type')
-      .order('sort_order');
-    setDreCats(data ?? []);
+      .order('sort_order')
+      .then(({ data }) => { if (vivo) setDreCats(data ?? []); });
+    return () => { vivo = false; };
   }, [user?.tenantId]);
 
-  useEffect(() => {
-    loadCats();
-    // Pré-preencher com categorias já vinculadas
-    const initial: Record<string, string> = {};
-    bills.forEach(b => {
-      if ((b as BillPayable & { dre_category_id?: string }).dre_category_id) {
-        initial[b.id] = (b as BillPayable & { dre_category_id?: string }).dre_category_id!;
-      }
-    });
-    setAssignments(initial);
-  }, [loadCats, bills]);
-
+  // A linha escolhida agora continua na lista até salvar (senão sumia no mesmo clique).
   const filteredBills = bills.filter(b => {
-    const hasLink = !!(b as BillPayable & { dre_category_id?: string }).dre_category_id || !!assignments[b.id];
-    if (filterUnlinked && hasLink) return false;
+    const salvo = !!(b as BillPayable & { dre_category_id?: string }).dre_category_id;
+    if (filterUnlinked && salvo && !(b.id in assignments)) return false;
     if (search.trim()) {
       const q = search.toLowerCase();
       return b.description.toLowerCase().includes(q) || (b.supplier || '').toLowerCase().includes(q) || (b.category || '').toLowerCase().includes(q);
@@ -91,9 +86,7 @@ export default function ContasPagarDREModal({ bills: allBills, onClose, onSaved 
     // a tela dizia "N vínculos salvos" sem ter salvo nada. Para usuário
     // multi-loja o update direto ainda podia afetar zero linhas em silêncio
     // (RLS `*_auth_uid` resolve o tenant com LIMIT 1 sem ORDER BY).
-    const assignmentsList = Object.entries(assignments)
-      .filter(([, catId]) => !!catId)
-      .map(([bill_id, dre_category_id]) => ({ bill_id, dre_category_id }));
+    const assignmentsList = mudancas.map(b => ({ bill_id: b.id, dre_category_id: assignments[b.id] }));
 
     if (assignmentsList.length === 0) {
       setSaving(false);
@@ -140,7 +133,9 @@ export default function ContasPagarDREModal({ bills: allBills, onClose, onSaved 
     catsByGroup[c.group_type].push(c);
   });
 
-  const assignedCount = Object.values(assignments).filter(Boolean).length;
+  const atual = (b: BillPayable) => (b as BillPayable & { dre_category_id?: string }).dre_category_id || '';
+  const mudancas = bills.filter(b => b.id in assignments && assignments[b.id] && assignments[b.id] !== atual(b));
+  const assignedCount = mudancas.length;
 
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
