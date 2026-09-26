@@ -208,6 +208,92 @@ async function syncOrder(admin: Admin, orderId: string, signal: OrderSignal, not
   }
 }
 
+// ── Pagamento cobrado pelo entregador do iFood (decisão do dono, 2026-09-26) ──
+// O cliente paga ao entregador do iFood (dinheiro/cartão na maquininha dele) e o valor volta no
+// REPASSE do iFood — não na gaveta. Ao concluir, o pedido é pago com a forma "iFood Entrega"
+// (type 'other' → fora da gaveta; NFC-e tPag 99 com a descrição "iFood Entrega"; a receber em
+// days_to_receive dias). Mesmo caminho do "Pix pelo app" (online-payments › settlePix).
+// Devolve true se o pagamento ficou registrado (ou já estava).
+async function settleIfoodPayment(admin: Admin, s: any): Promise<boolean> {
+  const tenantId = s.tenant_id as string;
+  const orderId = s.order_id as string;
+  const amount = round2(Number(s.payment?.methods?.[0]?.value ?? 0));
+  if (!(amount > 0)) return false;
+
+  // Forma de pagamento da loja (cria na 1ª vez).
+  const { data: pms } = await admin.from('payment_methods').select('id, name, days_to_receive, fee_percentage')
+    .eq('tenant_id', tenantId).eq('type', 'other').is('deleted_at', null).ilike('name', 'ifood entrega');
+  let pm = (pms ?? [])[0] as { id: string; name: string; days_to_receive: number | null; fee_percentage: number | null } | undefined;
+  if (!pm) {
+    const { data: novo, error } = await admin.from('payment_methods').insert({
+      tenant_id: tenantId, name: 'iFood Entrega', type: 'other', is_active: true, fee_percentage: 0,
+      requires_change: false, sort_order: 90, days_to_receive: 7, fiscal_code: '99',
+    }).select('id, name, days_to_receive, fee_percentage').single();
+    if (error || !novo) { log('ERROR', 'settle', 'criar forma iFood Entrega', { tenantId, error: error?.message }); return false; }
+    pm = novo;
+  }
+
+  // Idempotente: evento reaplicado não paga duas vezes.
+  const { data: ja } = await admin.from('payments').select('id').eq('order_id', orderId).eq('payment_method_id', pm.id).eq('is_refunded', false).limit(1);
+  if (ja?.length) return true;
+
+  const { data: paymentId, error: payErr } = await admin.rpc('fn_record_payment_bypass', {
+    p_order_id: orderId, p_tenant_id: tenantId, p_cash_register_id: null, p_payment_method_id: pm.id,
+    p_amount: amount, p_change_amount: 0, p_operator_name: 'Entregador iFood', p_origin_type: 'ifood_shipping', p_payment_group_id: null,
+  });
+  if (payErr || !paymentId) {
+    // Sem caixa aberto na sessão do pedido: fica a observação para o caixa dar baixa à mão.
+    log('WARN', 'settle', 'pagamento não registrado', { orderId, error: payErr?.message ?? 'sem caixa aberto' });
+    return false;
+  }
+
+  const now = new Date().toISOString();
+  const { data: o } = await admin.from('orders').select('number, total_amount, is_paid').eq('id', orderId).maybeSingle();
+  const { data: allPays } = await admin.from('payments').select('amount').eq('order_id', orderId).eq('is_refunded', false);
+  const totalPaid = (allPays ?? []).reduce((acc: number, p: { amount: number }) => acc + Number(p.amount), 0);
+  const total = Number(o?.total_amount ?? 0);
+  if (o && !o.is_paid && (total === 0 || totalPaid >= total - 0.005)) {
+    await admin.from('orders').update({ is_paid: true, paid_at: now, paid_by_pdv: 'ifood_shipping', updated_at: now }).eq('id', orderId);
+    // NFC-e automática (a fiscal-write decide se emite; delivery = nota por pedido).
+    const internalKey = Deno.env.get('FISCAL_INTERNAL_KEY') ?? '';
+    const { data: fs } = await admin.from('fiscal_settings').select('enabled').eq('tenant_id', tenantId).maybeSingle();
+    if (fs?.enabled && internalKey) {
+      const anonKey = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
+      try {
+        const r = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/fiscal-write`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${anonKey}`, apikey: anonKey, 'x-internal-key': internalKey },
+          body: JSON.stringify({ action: 'emit', tenant_id: tenantId, source_type: 'order', source_id: orderId, trigger: 'ifood_shipping' }),
+        });
+        log('INFO', 'fiscal', 'emit', { orderId, http: r.status, body: (await r.text().catch(() => '')).slice(0, 200) });
+      } catch (e) { log('WARN', 'fiscal', 'falhou', { orderId, error: String(e) }); }
+    }
+  }
+
+  // Financeiro (espelho do online-payments › postSaleFinance): com prazo = a receber do iFood.
+  try {
+    const todayBR = new Date(Date.now() - 3 * 3600_000).toISOString().slice(0, 10);
+    const numero = (o?.number as string) ?? null;
+    const days = Number(pm.days_to_receive ?? 0);
+    if (days > 0) {
+      const { data: rec } = await admin.from('fin_receivable_installments').select('id').eq('tenant_id', tenantId).eq('order_id', orderId).eq('payment_method_name', pm.name).limit(1);
+      if (!rec?.length) {
+        const due = new Date(`${todayBR}T12:00:00Z`);
+        due.setUTCDate(due.getUTCDate() + days);
+        await admin.from('fin_receivable_installments').insert({
+          tenant_id: tenantId, order_id: orderId, installment_number: 1, total_installments: 1, amount,
+          due_date: due.toISOString().slice(0, 10), status: 'pending', payment_method_name: pm.name, order_number: numero,
+        });
+      }
+    } else {
+      const { data: flow } = await admin.from('fin_cash_flow').select('id').eq('tenant_id', tenantId).eq('reference_id', String(paymentId)).eq('origin', 'auto_sale').maybeSingle();
+      if (!flow) await admin.from('fin_cash_flow').insert({ tenant_id: tenantId, type: 'income', amount, description: `Venda ${numero ?? orderId.slice(0, 8)} (${pm.name})`, category: 'Vendas', origin: 'auto_sale', reference_id: String(paymentId), date: todayBR, payment_method_id: pm.id });
+    }
+  } catch (e) { log('WARN', 'settle', 'financeiro da venda falhou (não bloqueia)', { orderId, error: String(e) }); }
+  log('INFO', 'settle', 'pago como iFood Entrega', { orderId, amount });
+  return true;
+}
+
 async function applyEvent(admin: Admin, c: Ctx | null, e: any) {
   const ifoodOrderId = String(e.orderId ?? '');
   if (!ifoodOrderId) return;
@@ -220,10 +306,17 @@ async function applyEvent(admin: Admin, c: Ctx | null, e: any) {
     const r = await call(admin, c, 'POST', `/order/v1.0/orders/${ifoodOrderId}/confirm`, undefined, { 'idempotency-key': `confirm-${ifoodOrderId}` });
     if (!r.ok && r.status !== 409) log('WARN', 'event', 'confirmar pedido', { ifoodOrderId, status: r.status, body: r.raw.slice(0, 200) });
   }
-  // Cobrado na entrega pelo entregador do iFood: o dinheiro entra no REPASSE do iFood, não na gaveta.
-  const obs = plan.order === 'entregou' && s.payment
-    ? 'Pagamento recebido pelo entregador do iFood (entra no repasse do iFood, não no caixa) — registre como "iFood Entrega".'
-    : undefined;
+  // Cobrado na entrega pelo entregador do iFood: paga o pedido como "iFood Entrega" (a receber do
+  // iFood, fora da gaveta). Sem caixa aberto não dá para registrar — fica o aviso para o caixa.
+  let obs: string | undefined;
+  if (plan.order === 'entregou' && s.payment) {
+    let pago = false;
+    try { pago = await settleIfoodPayment(admin, s); }
+    catch (err) { log('ERROR', 'settle', 'falhou', { order: s.order_id, error: String((err as Error)?.message ?? err) }); }
+    obs = pago
+      ? 'Pago ao entregador do iFood — lançado como "iFood Entrega" (a receber no repasse do iFood, fora da gaveta).'
+      : 'Pagamento recebido pelo entregador do iFood (entra no repasse do iFood, não no caixa) — não consegui lançar sozinho: dê baixa como "iFood Entrega".';
+  }
   if (plan.order) await syncOrder(admin, s.order_id, plan.order, plan.note, obs);
   const { error } = await admin.from('ifood_shipping_orders').update({ ...plan.upd, updated_at: new Date().toISOString() }).eq('id', s.id);
   if (error) throw new Error('Atualizar entrega: ' + error.message);
@@ -583,6 +676,21 @@ Deno.serve(async (req) => {
       const score = sd.ok ? String(sd.data?.score ?? '') || null : null;
       if (score && score !== s.safe_score) await admin.from('ifood_shipping_orders').update({ safe_score: score }).eq('id', s.id);
       return json({ success: true, tracking: t.ok ? t.data : null, safe: sd.ok ? sd.data : null });
+    }
+
+    // Evento de EXEMPLO (a loja de teste do iFood não aloca entregador nem gera DISPATCHED/CONCLUDED —
+    // FAQ do portal manda usar os eventos da doc). Só chamada interna e só com o modo homologação ligado.
+    if (action === 'simulate_event') {
+      if (!internal) return errResp('Unauthorized', 401);
+      if (!cfg?.homologation_mode) return errResp('Só com o modo homologação ligado.');
+      const { data: s } = await admin.from('ifood_shipping_orders').select('ifood_order_id').eq('id', String(body.shipping_id ?? '')).eq('tenant_id', tenantId).maybeSingle();
+      if (!s?.ifood_order_id) return errResp('Entrega não encontrada.');
+      const ev = { id: `sim-${crypto.randomUUID()}`, fullCode: String(body.full_code ?? ''), orderId: s.ifood_order_id, createdAt: new Date().toISOString(), metadata: body.metadata ?? null, salesChannel: 'POS' };
+      await admin.from('ifood_pdv_events').insert({ event_id: ev.id, tenant_id: tenantId, ifood_order_id: ev.orderId, full_code: ev.fullCode, sales_channel: 'POS', metadata: ev.metadata, event_at: ev.createdAt, error: 'simulado' });
+      await applyEvent(admin, await loadCtx(admin, cfg), ev);
+      await admin.from('ifood_pdv_events').update({ processed_at: new Date().toISOString() }).eq('event_id', ev.id);
+      const { data: depois } = await admin.from('ifood_shipping_orders').select('status, last_event').eq('ifood_order_id', s.ifood_order_id).maybeSingle();
+      return json({ success: true, shipping: depois });
     }
 
     // Endereço/coordenadas da loja do iFood que despacha (Merchant API) — conferência na configuração.

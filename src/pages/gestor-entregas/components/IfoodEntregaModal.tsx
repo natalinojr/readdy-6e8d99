@@ -313,7 +313,7 @@ export default function IfoodEntregaModal({ tenantId, orderId, telefone, onClose
                   ))}
                 </div>
                 {prep?.payment.kind === 'unknown' && <p className="text-[11px] text-amber-700 mt-1">Não reconheci a forma de pagamento do pedido{prep.payment.label ? ` ("${prep.payment.label}")` : ''} — escolha acima.</p>}
-                {pay && pay !== 'paid' && <p className="text-[11px] text-zinc-500 mt-1">O entregador do iFood cobra {fmtMoeda(prep?.order.total ?? 0)} na entrega (o valor entra no repasse do iFood).</p>}
+                {pay && pay !== 'paid' && <p className="text-[11px] text-zinc-500 mt-1">O entregador do iFood cobra {fmtMoeda(prep?.order.total ?? 0)} na entrega. Ao entregar, o pedido fica pago sozinho como "iFood Entrega" (entra no repasse do iFood, não na gaveta).</p>}
                 {pay === 'CASH' && (
                   <div className="mt-2 w-40"><label className={lbl}>Troco para (opcional)</label><input className={inp} value={troco} inputMode="decimal" placeholder="0,00" onChange={(e) => setTroco(e.target.value)} /></div>
                 )}

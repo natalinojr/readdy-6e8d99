@@ -22,6 +22,7 @@
 //                                                  → classifica pelo chat (fn_item_classify com o JWT do dono)
 //   history/topics aceitam group_jid: conversa de um GRUPO do WhatsApp (asst_messages.group_jid)
 //   history aceita kind (conversa|pagamento|caixa|grupo|automatico): filtro por tipo dentro da conversa
+//   kinds     { topic? }                           → por tipo: total, não lidas e a última mensagem
 //   Caixa de pendências no chat (2026-09-18):
 //   pendencia_pagar { id }                         → prepara de novo o pedido do grupo (ou o pagamento parado) e devolve os cartões
 //   pendencia_recusar { id }                       → "não vou pagar": cancela os Pix preparados e recusa o pedido
@@ -364,6 +365,30 @@ Deno.serve(async (req) => {
         topic: topics.length === 1 && TOPICS.includes(topics[0]) ? topics[0] : null,
         previa: ultima ? String(ultima.content).replace(/^\[[^\]]*\]\s*/, '').slice(0, 140) : null,
       } });
+    }
+
+    // ── Grupos por tipo dentro da conversa (dono, 2026-09-26: "igual ao Tipo das pendências") ──
+    // Por tipo: quantas mensagens, a última e quantas o assistente mandou que você não viu.
+    if (action === 'kinds') {
+      const topic = TOPICS.includes(String(body.topic)) ? String(body.topic) : null;
+      const marca = await getSetting(admin, 'app_last_seen');
+      const visto = vistosDe(marca);
+      const base = () => admin.from('asst_messages');
+      const kinds = await Promise.all(KINDS.map(async (k) => {
+        let qt = base().select('id', { count: 'exact', head: true }).eq('chat_id', chatKey).eq('kind', k).neq('content', SILENCIO);
+        let qu = base().select('id, role, content, created_at, topic').eq('chat_id', chatKey).eq('kind', k).order('id', { ascending: false }).limit(8);
+        let qn = base().select('id, topic, group_jid').eq('chat_id', chatKey).eq('kind', k).eq('role', 'assistant').neq('content', SILENCIO).gt('id', pisoDosVistos(marca)).limit(200);
+        if (topic) { qt = qt.eq('topic', topic); qu = qu.eq('topic', topic); qn = qn.eq('topic', topic); }
+        const [{ count }, { data: ult }, { data: novas }] = await Promise.all([qt, qu, qn]);
+        const u = semSilencio((ult ?? []).reverse()).pop() ?? null;
+        return {
+          kind: k,
+          total: count ?? 0,
+          unread: (novas ?? []).filter((n) => Number(n.id) > vistoDaMsg(visto, n)).length,
+          last: u ? { role: u.role, content: String(u.content).slice(0, 400), created_at: u.created_at } : null,
+        };
+      }));
+      return json({ success: true, data: { kinds } });
     }
 
     // ── Lista de conversas (2026-09-16) ──

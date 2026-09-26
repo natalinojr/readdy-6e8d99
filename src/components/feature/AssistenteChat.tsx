@@ -48,16 +48,19 @@ const ASSUNTOS = [
   { id: 'avisos', label: 'Avisos', icon: 'ri-notification-3-line', cor: 'bg-sky-50 text-sky-600' },
 ];
 const rotuloAssunto = (id: string) => ASSUNTOS.find((a) => a.id === id)?.label ?? 'Todas as mensagens';
-// Filtro por TIPO dentro da conversa (dono, 2026-09-26: "as mensagens do Financeiro ficam perdidas, tem
-// que ficar rodando"). asst_messages.kind nasce no banco (gatilho); '' = tudo. Cada conversa só mostra
-// os tipos que acontecem nela; grupo do WhatsApp não tem filtro (é tudo 'grupo').
+// Separar por TIPO dentro da conversa (dono, 2026-09-26: "as mensagens do Financeiro ficam perdidas, tem
+// que ficar rodando" → "separe igual ao Tipo das pendências"). asst_messages.kind nasce no banco (gatilho).
+// "Chegada" = a conversa inteira em ordem; "Tipo" = um grupo por tipo, fechados, abre um por vez. Cada
+// conversa só mostra os tipos que acontecem nela; grupo do WhatsApp não separa (é tudo 'grupo').
 const TIPOS = [
-  { id: 'conversa', label: 'Conversa', icon: 'ri-chat-3-line' },
-  { id: 'pagamento', label: 'Pagamentos', icon: 'ri-bank-card-line' },
-  { id: 'caixa', label: 'Caixa e turnos', icon: 'ri-safe-2-line' },
-  { id: 'automatico', label: 'Avisos automáticos', icon: 'ri-time-line' },
-  { id: 'grupo', label: 'Grupos', icon: 'ri-whatsapp-line' },
+  { id: 'conversa', label: 'Conversa', icon: 'ri-chat-3-line', cor: 'bg-violet-100 text-violet-700' },
+  { id: 'pagamento', label: 'Pagamentos', icon: 'ri-bank-card-line', cor: 'bg-emerald-100 text-emerald-700' },
+  { id: 'caixa', label: 'Caixa e turnos', icon: 'ri-safe-2-line', cor: 'bg-amber-100 text-amber-700' },
+  { id: 'automatico', label: 'Avisos automáticos', icon: 'ri-time-line', cor: 'bg-sky-100 text-sky-700' },
+  { id: 'grupo', label: 'Grupos do WhatsApp', icon: 'ri-whatsapp-line', cor: 'bg-green-100 text-green-700' },
 ];
+interface TipoResumo { kind: string; total: number; unread: number; last: { role: string; content: string; created_at: string } | null }
+const AGRUPAR_KEY = 'erpos.chat.agrupar';
 const TIPOS_DA_CONVERSA: Record<string, string[]> = {
   '': ['conversa', 'pagamento', 'caixa', 'automatico', 'grupo'],
   pagamentos: ['conversa', 'pagamento', 'caixa', 'automatico', 'grupo'],
@@ -421,6 +424,14 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
   // Tipo dentro da conversa ('' = tudo). Volta para "Tudo" ao trocar de conversa.
   const [tipo, setTipo] = useState('');
   const tipoRef = useRef('');
+  // Chegada × Tipo (lembrado neste aparelho; começa em Tipo). Em Tipo sem grupo aberto, a conversa mostra
+  // os grupos no lugar das mensagens.
+  const [agrupar, setAgrupar] = useState<'chegada' | 'tipo'>(() => { try { return localStorage.getItem(AGRUPAR_KEY) === 'chegada' ? 'chegada' : 'tipo'; } catch { return 'tipo'; } });
+  const escolherAgrupar = (a: 'chegada' | 'tipo') => {
+    setAgrupar(a); setTipo('');
+    try { localStorage.setItem(AGRUPAR_KEY, a); } catch { /* preferência deste aparelho: sem storage, só não lembra */ }
+  };
+  const [resumoTipos, setResumoTipos] = useState<TipoResumo[] | null>(null);
   const filtroHistorico = useCallback(() => ({ ...filtroConversa(abaRef.current), ...(tipoRef.current ? { kind: tipoRef.current } : {}) }), []);
   // Ações rápidas (2026-09-16): roteiros fixos que rodam no sistema, sem o modelo (custo zero).
   const [menuAcoes, setMenuAcoes] = useState(false);
@@ -432,6 +443,9 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
   // Lista de conversas (2026-09-16): o painel abre na LISTA de assuntos, com cara de WhatsApp —
   // última mensagem, hora e não lidas por assunto. Toca num, entra na conversa; a seta volta.
   const [vista, setVista] = useState<'lista' | 'conversa'>('lista');
+  // Separado por tipo e nenhum grupo aberto: a conversa mostra os grupos, não as mensagens.
+  const separaTipos = vista === 'conversa' && agrupar === 'tipo' && !!TIPOS_DA_CONVERSA[aba];
+  const listaTipos = separaTipos && !tipo;
   const [conversas, setConversas] = useState<TopicoResumo[]>([]);
   const [grupos, setGrupos] = useState<GrupoResumo[]>([]);
   // A lista virou três abas (dono, 2026-09-24: "muito embolado"): assistente, equipe e grupos do
@@ -531,14 +545,14 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
     if (vista !== 'conversa' || !loaded) return;
     const el = scrollRef.current;
     if (!el) return;
-    const chave = `${modo}|${aba}`;
+    const chave = `${modo}|${aba}|${tipo}|${listaTipos}`;
     if (fimPendente.current || chaveTela.current !== chave) {
       el.scrollTop = el.scrollHeight;
       stick.current = true;
       fimPendente.current = false;
     }
     chaveTela.current = chave;
-  }, [vista, loaded, msgs, modo, aba]);
+  }, [vista, loaded, msgs, modo, aba, tipo, listaTipos]);
 
   // O que cresce depois (botões, cartões, texto longo) continua no fim — enquanto você não rolou para cima.
   useEffect(() => {
@@ -556,7 +570,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
     const vv = window.visualViewport;
     vv?.addEventListener('resize', aoFim);
     return () => { ro.disconnect(); vv?.removeEventListener('resize', aoFim); };
-  }, [vista, loaded, modo]);
+  }, [vista, loaded, modo, listaTipos]);
 
   const sincronizar = useCallback(async () => {
     if (!lastId.current) return;
@@ -608,10 +622,26 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
     return () => clearInterval(t);
   }, [isOwner, open, verificarNaoLidas]);
 
-  // Leu uma conversa: só ELA deixa de ser novidade (igual ao WhatsApp). Ficar na lista não marca
-  // nada — o servidor guarda o "visto" por assunto (assistente-app › seen).
+  const carregarTipos = useCallback(async () => {
+    const topic = abaRef.current;
+    try {
+      const r = await call<{ kinds: TipoResumo[] }>('kinds', topic ? { topic } : {});
+      if (abaRef.current === topic) setResumoTipos(r.kinds);
+    } catch { /* os grupos voltam no próximo ciclo */ }
+  }, []);
+  useEffect(() => { setResumoTipos(null); }, [aba]);
   useEffect(() => {
-    if (!open || !isOwner || vista !== 'conversa' || !lastId.current) return;
+    if (!open || !isOwner || !listaTipos) return;
+    carregarTipos();
+    const t = setInterval(() => { if (!document.hidden) carregarTipos(); }, 15000);
+    return () => clearInterval(t);
+  }, [open, isOwner, listaTipos, aba, carregarTipos]);
+
+  // Leu uma conversa: só ELA deixa de ser novidade (igual ao WhatsApp). Ficar na lista não marca
+  // nada — o servidor guarda o "visto" por assunto (assistente-app › seen). A lista de grupos por tipo
+  // também não: só ler as mensagens marca.
+  useEffect(() => {
+    if (!open || !isOwner || vista !== 'conversa' || listaTipos || !lastId.current) return;
     const topic = abaRef.current;
     setNaoLidas((n) => (topic && n.topic && n.topic !== topic ? n : { count: 0, topic: null, previa: null }));
     const grupoAberto = topic.startsWith(PREFIXO_GRUPO) ? topic.slice(PREFIXO_GRUPO.length) : null;
@@ -621,7 +651,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
       if (!topic) setGrupos((prev) => prev.map((g) => ({ ...g, unread: 0 })));
     }
     call('seen', { id: lastId.current, ...filtroConversa(topic) }).catch(() => { /* marca de novo no próximo ciclo */ });
-  }, [open, isOwner, vista, msgs.length]);
+  }, [open, isOwner, vista, msgs.length, listaTipos]);
 
   // Pagamentos esperando decisão aparecem na lista, na conversa e na barra pequena: a carga é
   // do painel aberto, não da conversa.
@@ -645,6 +675,8 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
   useVoltarFecha(variant === 'floating' && open, () => setModo('fab'), 'assistente-painel');
   // Na barrinha pequena (mini) não há lista à vista: o voltar fecha a barrinha direto.
   useVoltarFecha(open && vista === 'conversa' && (modo === 'full' || variant === 'embedded'), () => setVista('lista'), 'assistente-conversa');
+  // Grupo por tipo aberto: o voltar fecha o grupo (volta aos grupos), não a conversa.
+  useVoltarFecha(open && separaTipos && !!tipo && (modo === 'full' || variant === 'embedded'), () => setTipo(''), 'assistente-grupo-tipo');
   // Ações rápidas em tela cheia são mais uma camada: o voltar fecha só elas.
   useVoltarFecha(open && menuAcoes && (modo === 'full' || variant === 'embedded'), () => setMenuAcoes(false), 'assistente-acoes');
   useVoltarFecha(open && pendAberta, () => setPendAberta(false), 'assistente-pendencias');
@@ -748,6 +780,8 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
   const enviar = async (override?: string, audio?: { base64: string; media_type: string }) => {
     const t = (override ?? text).trim();
     if ((!t && !attach && !audio) || sending) return;
+    // Escreveu com os grupos na tela: mostra a conversa (as mensagens de "Tudo" já estão carregadas).
+    if (listaTipos) setAgrupar('chegada');
     const foco = getFoco();
     // Responder a uma mensagem: o trecho vai no texto, então o assistente entende igual no
     // Telegram e a citação continua no histórico (sem coluna nova no banco).
@@ -1208,7 +1242,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
   // (a bolinha roxa, como no WhatsApp/Telegram).
   const linhaConversa = (o: { chave: string; icone: string; cor: string; titulo: string; unread: number; last: TopicoResumo['last']; abrir: () => void }) => {
     const previa = o.last
-      ? (resumoSistema(o.last.content) ?? linhaSistema(o.last.content) ?? `${o.last.role === 'user' ? 'Você: ' : ''}${semMarcadores(o.last.content)}`)
+      ? (resumoSistema(o.last.content) ?? linhaSistema(o.last.content) ?? `${o.last.role === 'user' ? 'Você: ' : ''}${semMarcadores(o.last.content.replace(/\[painel\][\s\S]*$/, ''))}`)
       : 'Nada por aqui ainda';
     return (
       <button key={o.chave} onClick={o.abrir} className="w-full flex items-center gap-3 px-4 py-3 border-b border-zinc-100 hover:bg-zinc-50 cursor-pointer text-left">
@@ -1287,6 +1321,40 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
     </>
   );
 
+  // Grupos por tipo (fechados): ícone, nome, a última mensagem, não lidas e o total. Tocar abre o grupo.
+  const gruposTipo = (
+    <div className="flex-1 overflow-y-auto px-3 py-3 space-y-1.5 bg-zinc-50/60">
+      {resumoTipos === null && <div className="mx-auto my-16 w-6 h-6 border-2 border-violet-500 border-t-transparent rounded-full animate-spin" />}
+      {resumoTipos && TIPOS.filter((t) => (TIPOS_DA_CONVERSA[aba] ?? []).includes(t.id)).map((t) => {
+        const r = resumoTipos.find((x) => x.kind === t.id);
+        const total = r?.total ?? 0;
+        const last = r?.last ?? null;
+        // A prévia vem cortada: um painel pela metade não casa com o marcador inteiro, então corta ali.
+        const previa = last
+          ? (resumoSistema(last.content) ?? linhaSistema(last.content) ?? `${last.role === 'user' ? 'Você: ' : ''}${semMarcadores(last.content.replace(/\[painel\][\s\S]*$/, ''))}`)
+          : 'Nada por aqui ainda';
+        return (
+          <button key={t.id} onClick={() => setTipo(t.id)} disabled={!total} aria-expanded="false" aria-label={t.label}
+            className="w-full flex items-center gap-2.5 rounded-xl px-2.5 py-2 text-left cursor-pointer bg-white border border-zinc-100 hover:bg-zinc-50 disabled:opacity-50 disabled:cursor-default">
+            <span className={`w-9 h-9 flex-shrink-0 flex items-center justify-center rounded-lg ${t.cor}`}><i className={`${t.icon} text-lg`} /></span>
+            <span className="flex-1 min-w-0">
+              <span className="flex items-baseline gap-2">
+                <span className="flex-1 text-[13px] font-bold text-zinc-800 truncate">{t.label}</span>
+                {last && <span className={`text-[11px] flex-shrink-0 ${r?.unread ? 'text-violet-600 font-bold' : 'text-zinc-400'}`}>{hora(last.created_at)}</span>}
+              </span>
+              <span className={`block text-xs truncate ${r?.unread ? 'text-zinc-700 font-semibold' : 'text-zinc-400'}`}>{previa}</span>
+            </span>
+            {!!r?.unread && (
+              <span className="min-w-[20px] h-5 px-1.5 flex items-center justify-center rounded-full bg-violet-600 text-white text-[11px] font-black" aria-label={`${r.unread} não lida(s)`}>{r.unread > 99 ? '99+' : r.unread}</span>
+            )}
+            <span className="min-w-[22px] h-[22px] px-1.5 flex items-center justify-center rounded-full bg-zinc-800 text-white text-[11px] font-bold" aria-label={`${total} mensagem(ns)`}>{total}</span>
+            <i className="ri-arrow-down-s-line text-zinc-400" />
+          </button>
+        );
+      })}
+    </div>
+  );
+
   const painel = (
     // data-no-pull: puxar para baixo dentro do chat não recarrega a tela de trás.
     <div data-no-pull className={variant === 'floating'
@@ -1322,23 +1390,39 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
         )}
       </div>
 
-      {/* Filtro por tipo dentro da conversa: botões roláveis na horizontal, "Tudo" primeiro. */}
+      {/* Chegada × Tipo, igual à caixa de pendências. Com um grupo aberto, a linha dele fica fixa embaixo
+          (tocar fecha e volta aos grupos). */}
       {vista === 'conversa' && TIPOS_DA_CONVERSA[aba] && (
-        <div className="flex gap-1.5 px-3 py-2 overflow-x-auto border-b border-zinc-100 flex-shrink-0 [scrollbar-width:none]" role="tablist" aria-label="Filtrar mensagens por tipo">
-          {[{ id: '', label: 'Tudo', icon: 'ri-list-check' }, ...TIPOS.filter((t) => TIPOS_DA_CONVERSA[aba].includes(t.id))].map((t) => {
-            const ativo = t.id === tipo;
+        <div className="flex-shrink-0 border-b border-zinc-100">
+          <div className="flex items-center gap-2 px-3 py-2">
+            <span className="flex-1 text-[11px] font-semibold text-zinc-400">{agrupar === 'tipo' ? 'Separado por tipo' : 'Tudo na ordem de chegada'}</span>
+            <div className="flex p-0.5 rounded-xl bg-zinc-100 flex-shrink-0" role="group" aria-label="Agrupar">
+              {([['chegada', 'ri-time-line', 'Chegada'], ['tipo', 'ri-stack-line', 'Tipo']] as const).map(([id, icone, nome]) => (
+                <button key={id} onClick={() => escolherAgrupar(id)} aria-pressed={agrupar === id}
+                  className={`h-8 px-2.5 flex items-center gap-1 rounded-[10px] text-xs font-bold cursor-pointer ${agrupar === id ? 'bg-white text-violet-700 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'}`}>
+                  <i className={icone} /> {nome}
+                </button>
+              ))}
+            </div>
+          </div>
+          {separaTipos && tipo && (() => {
+            const t = TIPOS.find((x) => x.id === tipo);
+            const r = resumoTipos?.find((x) => x.kind === tipo);
             return (
-              <button key={t.id || 'tudo'} role="tab" aria-selected={ativo} onClick={() => setTipo(t.id)}
-                className={`flex-shrink-0 flex items-center gap-1 h-7 px-2.5 rounded-full text-xs font-bold whitespace-nowrap cursor-pointer transition-colors ${ativo ? 'bg-violet-600 text-white' : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'}`}>
-                <i className={t.icon} /> {t.label}
+              <button onClick={() => setTipo('')} aria-expanded="true" aria-label={`Fechar ${t?.label ?? ''}`}
+                className="w-full flex items-center gap-2 px-3 pb-2 text-left cursor-pointer">
+                <span className={`w-7 h-7 flex-shrink-0 flex items-center justify-center rounded-lg ${t?.cor ?? ''}`}><i className={t?.icon} /></span>
+                <span className="flex-1 min-w-0 text-[13px] font-bold text-zinc-800 truncate">{t?.label}</span>
+                {r && <span className="min-w-[22px] h-[22px] px-1.5 flex items-center justify-center rounded-full bg-zinc-800 text-white text-[11px] font-bold">{r.total}</span>}
+                <i className="ri-arrow-up-s-line text-zinc-400" />
               </button>
             );
-          })}
+          })()}
         </div>
       )}
 
       {/* Lista de conversas ou a conversa aberta */}
-      {vista === 'lista' ? listaConversas : (
+      {vista === 'lista' ? listaConversas : listaTipos ? gruposTipo : (
       <div
         ref={scrollRef}
         // "No fim" = a poucos pixels do fim. Com 80 px, quem subia uma ou duas linhas para ler ainda

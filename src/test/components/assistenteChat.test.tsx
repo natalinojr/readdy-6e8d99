@@ -89,6 +89,15 @@ function fakeServer(fn: string, opts: { body: Body }) {
         previa: novas.length ? novas[novas.length - 1].content.slice(0, 140) : null,
       }));
     }
+    case 'kinds': {
+      const doTopico = srv.msgs.filter((m) => !b.topic || m.topic === b.topic);
+      const kinds = ['conversa', 'pagamento', 'caixa', 'grupo', 'automatico'].map((k) => {
+        const rows = doTopico.filter((m) => (m.kind ?? 'conversa') === k);
+        const u = rows.at(-1);
+        return { kind: k, total: rows.length, unread: rows.filter((m) => m.role === 'assistant' && m.id > srv.visto).length, last: u ? { role: u.role, content: u.content, created_at: u.created_at } : null };
+      });
+      return Promise.resolve(ok({ kinds }));
+    }
     case 'topics': {
       const TOP = ['geral', 'pagamentos', 'curriculos', 'compras', 'avisos'];
       const jids = [...new Set(srv.msgs.filter((m) => m.group_jid).map((m) => String(m.group_jid)))];
@@ -152,6 +161,8 @@ beforeEach(() => {
   h.auth.user = OWNER;
   h.invoke.mockReset();
   h.invoke.mockImplementation(fakeServer);
+  // Os testes antigos leem a conversa em ordem de chegada; "Tipo" tem os testes próprios.
+  localStorage.setItem('erpos.chat.agrupar', 'chegada');
 });
 afterEach(() => { delete (window as unknown as { Capacitor?: unknown }).Capacitor; });
 
@@ -835,41 +846,71 @@ describe('AssistenteChat — resposta onde a pergunta foi feita', () => {
   });
 });
 
-describe('AssistenteChat — filtro por tipo dentro da conversa', () => {
-  // Dono (2026-09-26): "as mensagens do Financeiro ficam perdidas, tem que ficar rodando".
-  it('no Financeiro, "Caixa e turnos" mostra só abertura/fechamento; "Tudo" volta tudo', async () => {
-    const user = userEvent.setup();
+describe('AssistenteChat — separado por tipo dentro da conversa', () => {
+  // Dono (2026-09-26): "as mensagens do Financeiro ficam perdidas" → "separe igual ao Tipo das pendências".
+  const semear = () => {
     add('assistant', '☀️ *Turno aberto — Vila*\nSessão #1 · às 18:00', 'pagamentos', 'cron');
     srv.msgs[srv.msgs.length - 1].kind = 'caixa';
     add('assistant', 'Vencimentos de amanhã: 2 contas', 'pagamentos', 'cron');
     srv.msgs[srv.msgs.length - 1].kind = 'automatico';
     add('user', 'paga o boleto da DLR', 'pagamentos');
+  };
+
+  it('em Tipo a conversa abre nos grupos fechados; abrir um mostra só ele, tocar de novo volta', async () => {
+    localStorage.setItem('erpos.chat.agrupar', 'tipo');
+    const user = userEvent.setup();
+    semear();
     renderChat();
     await entrarNaConversa(user, 'Financeiro');
-    expect(await screen.findByText('Vencimentos de amanhã: 2 contas')).toBeInTheDocument();
-    await user.click(screen.getByRole('tab', { name: /Caixa e turnos/ }));
-    await waitFor(() => expect(screen.queryByText('Vencimentos de amanhã: 2 contas')).toBeNull());
-    expect(await screen.findByText(/Turno aberto/)).toBeInTheDocument();
+    const caixa = await screen.findByRole('button', { name: 'Caixa e turnos' });
+    expect(within(caixa).getByText(/Turno aberto/)).toBeInTheDocument(); // prévia da última
+    expect(screen.getByRole('button', { name: 'Pagamentos' })).toBeDisabled(); // nada desse tipo
+    expect(document.querySelector('[data-msg-id]')).toBeNull(); // nenhuma mensagem aberta
+    expect(calls('history').some((b) => b.kind)).toBe(false); // nenhum grupo carregado
+    expect(calls('seen')).toHaveLength(0); // ver os grupos não marca como lido
+    await user.click(caixa);
+    expect(await screen.findByText(/Sessão #1/)).toBeInTheDocument();
     expect(screen.queryByText('paga o boleto da DLR')).toBeNull();
     expect(calls('history').at(-1)).toMatchObject({ topic: 'pagamentos', kind: 'caixa' });
-    // O visto continua sendo da conversa, sem o tipo.
     await waitFor(() => expect(calls('seen').length).toBeGreaterThan(0));
     expect(calls('seen').every((b) => !('kind' in b))).toBe(true);
-    await user.click(screen.getByRole('tab', { name: /Tudo/ }));
-    expect(await screen.findByText('Vencimentos de amanhã: 2 contas')).toBeInTheDocument();
-    expect(calls('history').at(-1)?.kind).toBeUndefined();
+    await user.click(screen.getByRole('button', { name: 'Fechar Caixa e turnos' }));
+    expect(await screen.findByRole('button', { name: 'Avisos automáticos' })).toBeInTheDocument();
   });
 
-  it('trocar de conversa volta para "Tudo"; grupo do WhatsApp não tem filtro', async () => {
+  it('Chegada mostra tudo em ordem e fica lembrado', async () => {
+    localStorage.setItem('erpos.chat.agrupar', 'tipo');
     const user = userEvent.setup();
-    add('assistant', 'Vencimentos de amanhã', 'pagamentos', 'cron');
+    semear();
     renderChat();
     await entrarNaConversa(user, 'Financeiro');
-    await user.click(await screen.findByRole('tab', { name: /Avisos automáticos/ }));
-    await user.click(screen.getByRole('button', { name: 'Voltar para as conversas' }));
+    await user.click(await screen.findByRole('button', { name: /Chegada/ }));
+    expect(await screen.findByText('Vencimentos de amanhã: 2 contas')).toBeInTheDocument();
+    expect(screen.getByText('paga o boleto da DLR')).toBeInTheDocument();
+    expect(localStorage.getItem('erpos.chat.agrupar')).toBe('chegada');
+  });
+
+  it('escrever com os grupos na tela mostra a conversa com a resposta', async () => {
+    localStorage.setItem('erpos.chat.agrupar', 'tipo');
+    const user = userEvent.setup();
+    semear();
+    renderChat();
+    await entrarNaConversa(user, 'Financeiro');
+    await screen.findByRole('button', { name: 'Caixa e turnos' });
+    await user.type(screen.getByPlaceholderText('Mensagem'), 'e o pix?');
+    await user.click(screen.getByRole('button', { name: 'Enviar' }));
+    expect(await screen.findByText('Resposta para: e o pix?')).toBeInTheDocument();
+    expect(localStorage.getItem('erpos.chat.agrupar')).toBe('tipo'); // preferência não muda
+  });
+
+  it('cada conversa só mostra os tipos dela', async () => {
+    localStorage.setItem('erpos.chat.agrupar', 'tipo');
+    const user = userEvent.setup();
+    add('assistant', 'Aviso de estoque', 'avisos');
+    renderChat();
     await entrarNaConversa(user, 'Currículos');
-    expect(await screen.findByRole('tab', { name: /Tudo/ })).toHaveAttribute('aria-selected', 'true');
-    expect(screen.queryByRole('tab', { name: /Caixa e turnos/ })).toBeNull(); // só os tipos da conversa
+    expect(await screen.findByRole('button', { name: 'Avisos automáticos' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Caixa e turnos' })).toBeNull(); // só os tipos da conversa
   });
 });
 

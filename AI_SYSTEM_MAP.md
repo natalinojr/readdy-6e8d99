@@ -3517,7 +3517,8 @@ Sem SW ativo o POST cai no Vercel e falha — por isso o destino só existe no S
   usa `ordenarGrupos()` de `useDreGroups` (sem posição: `expense` primeiro, resto na ordem de chegada). "Receitas" fica fixo no topo.
 - **Tipo da mensagem no chat do assistente (2026-09-26)**: `asst_messages.kind` (conversa | pagamento | caixa | grupo |
   automatico) nasce no gatilho `fn_asst_messages_kind` (independente do `topic`); `assistente-app history` aceita `kind` e o
-  AssistenteChat mostra botões de filtro dentro da conversa (`TIPOS_DA_CONVERSA` define quais aparecem em cada uma; "Tudo" ao
-  trocar de conversa; `seen` nunca leva o tipo). Aviso de **turno aberto**: `trg_session_abriu` (sessão não treino) →
+  AssistenteChat separa a conversa em **Chegada | Tipo** igual às pendências (localStorage `erpos.chat.agrupar`, começa em Tipo):
+  em Tipo a conversa abre nos grupos fechados (`assistente-app kinds` → total, não lidas, última) e abre um por vez
+  (`TIPOS_DA_CONVERSA` define quais existem em cada conversa; a lista de grupos não marca visto; `seen` nunca leva o tipo). Aviso de **turno aberto**: `trg_session_abriu` (sessão não treino) →
   `assistente-cron { run: 'opening_session' }` → conversa Financeiro, tipo `caixa`, + push; não vai para WhatsApp/Telegram.
   PEGADINHA: `run` desconhecido no assistente-cron cai na rotina geral — publicar a edge ANTES do gatilho que chama um run novo.
