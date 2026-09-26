@@ -402,14 +402,15 @@ export default function IfoodTab() {
         </div>
       ) : (
         <>
-          {/* Mesma conta do Portal do Parceiro › Financeiro › Faturamento, com a barra de cada real vendido. */}
+          {/* Mesma conta do Portal do Parceiro › Financeiro (lá chamada de "Total faturamento"); aqui o nome é
+              "Líquido para a loja": faturamento é o vendido (decisão do dono, 2026-09-25). */}
           <div className="bg-white rounded-2xl border border-zinc-100 p-4 md:p-5">
             <div className="flex flex-wrap items-end justify-between gap-4">
               <div>
-                <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">Total faturamento · {competence ? compLabel(competence) : ''}</p>
+                <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">Líquido para a loja · {competence ? compLabel(competence) : ''}</p>
                 <p className="text-3xl font-bold text-zinc-900 mt-1">{formatCurrency(resumo.faturamento)}</p>
                 <p className="text-xs text-zinc-500 mt-1">
-                  de <strong className="text-zinc-700">{formatCurrency(resumo.vendas)}</strong> vendidos · o iFood ficou com <strong className="text-red-600">{resumo.taxaEfetiva.toFixed(1)}%</strong>
+                  de <strong className="text-zinc-700">{formatCurrency(resumo.vendas)}</strong> de faturamento · o iFood ficou com <strong className="text-red-600">{resumo.taxaEfetiva.toFixed(1)}%</strong>
                 </p>
               </div>
               <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs">
@@ -422,7 +423,7 @@ export default function IfoodTab() {
             {resumo.vendas > 0 && (() => {
               const pct = (v: number) => Math.max(0, (v / resumo.vendas) * 100);
               const partes = [
-                { k: 'Faturamento', v: resumo.faturamento, c: 'bg-green-500' },
+                { k: 'Líquido', v: resumo.faturamento, c: 'bg-green-500' },
                 { k: 'Taxas e comissões', v: resumo.taxas, c: 'bg-red-500' },
                 { k: 'Serviços e promoções', v: resumo.servicos - resumo.ajustes, c: 'bg-orange-400' },
               ].filter((p) => p.v > 0.004);
