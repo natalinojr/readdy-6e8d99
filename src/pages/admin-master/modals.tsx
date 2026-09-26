@@ -219,11 +219,15 @@ export interface FinanceUserOption {
 
 interface NewFinanceTenantModalProps {
   users: FinanceUserOption[];
+  /** 'loja' = loja completa com PDV; 'financeiro' = empresa só com o Financeiro. */
+  kind?: 'loja' | 'financeiro';
   onClose: () => void;
   onCreated: () => void;
 }
 
-export function NewFinanceTenantModal({ users, onClose, onCreated }: NewFinanceTenantModalProps) {
+export function NewFinanceTenantModal({ users, kind = 'financeiro', onClose, onCreated }: NewFinanceTenantModalProps) {
+  const { reloadUser } = useAuth();
+  const isLoja = kind === 'loja';
   const [nome, setNome] = useState('');
   const [cnpj, setCnpj] = useState('');
   const [responsavelId, setResponsavelId] = useState('');
@@ -233,29 +237,37 @@ export function NewFinanceTenantModal({ users, onClose, onCreated }: NewFinanceT
 
   const handleCreate = async () => {
     if (!nome.trim()) { setErrorMsg('Nome é obrigatório'); return; }
-    if (!responsavelId) { setErrorMsg('Selecione a pessoa responsável'); return; }
+    if (!isLoja && !responsavelId) { setErrorMsg('Selecione a pessoa responsável'); return; }
     setLoading(true);
     setErrorMsg(null);
-    const { error } = await supabase.rpc('fn_admin_create_finance_tenant', {
+    const { error } = await supabase.rpc(isLoja ? 'fn_admin_create_store' : 'fn_admin_create_finance_tenant', {
       p_name: nome.trim(),
       p_cnpj: cnpj.trim() || null,
-      p_user_id: responsavelId,
+      p_user_id: responsavelId || null,
     });
     setLoading(false);
     if (error) { setErrorMsg(error.message); return; }
     setDone(true);
     onCreated();
+    // O dono entra como admin na loja nova (trigger): recarrega a lista de lojas dele.
+    if (isLoja) reloadUser().catch(() => {});
   };
+
+  const cor = isLoja
+    ? { soft: 'bg-amber-50 border-amber-100 text-amber-800', icon: 'bg-amber-100 text-amber-600', focus: 'focus:border-amber-400', btn: 'bg-amber-500 hover:bg-amber-600' }
+    : { soft: 'bg-emerald-50 border-emerald-100 text-emerald-800', icon: 'bg-emerald-100 text-emerald-600', focus: 'focus:border-emerald-400', btn: 'bg-emerald-500 hover:bg-emerald-600' };
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-sm p-4">
       <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-md overflow-hidden">
         <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-100">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 flex items-center justify-center bg-emerald-100 rounded-xl">
-              <i className="ri-building-line text-emerald-600 text-sm" />
+            <div className={`w-8 h-8 flex items-center justify-center rounded-xl ${cor.icon}`}>
+              <i className={`${isLoja ? 'ri-store-2-line' : 'ri-building-line'} text-sm`} />
             </div>
-            <h2 className="text-sm font-black text-zinc-900">{done ? 'Empresa criada!' : 'Nova empresa financeira'}</h2>
+            <h2 className="text-sm font-black text-zinc-900">
+              {done ? (isLoja ? 'Loja criada!' : 'Empresa criada!') : (isLoja ? 'Nova loja' : 'Nova empresa financeira')}
+            </h2>
           </div>
           <button onClick={onClose} className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-zinc-100 cursor-pointer text-zinc-400">
             <i className="ri-close-line text-base" />
@@ -265,33 +277,41 @@ export function NewFinanceTenantModal({ users, onClose, onCreated }: NewFinanceT
 
           {!done ? (
             <>
-              <div className="p-3 bg-emerald-50 border border-emerald-100 rounded-xl">
-                <p className="text-xs text-emerald-800 leading-relaxed">
-                  Cria uma empresa sem PDV, só com o módulo Financeiro: plano de contas padrão e fontes de receita (manual, Pix) já configurados.
+              <div className={`p-3 border rounded-xl ${cor.soft}`}>
+                <p className="text-xs leading-relaxed">
+                  {isLoja
+                    ? 'Cria uma loja completa, com PDV: já nasce com as estações Cozinha e Bar e as formas de pagamento básicas (dinheiro, crédito, débito, Pix). Cardápio, mesas e impressoras você configura depois dentro da loja.'
+                    : 'Cria uma empresa sem PDV, só com o módulo Financeiro: plano de contas padrão e fontes de receita (manual, Pix) já configurados.'}
                 </p>
               </div>
               <div>
-                <label className="block text-xs font-semibold text-zinc-600 mb-1.5">Nome da empresa</label>
+                <label className="block text-xs font-semibold text-zinc-600 mb-1.5">{isLoja ? 'Nome da loja' : 'Nome da empresa'}</label>
                 <input type="text" value={nome} onChange={(e) => setNome(e.target.value)}
-                  placeholder="Ex: Empresa Financeira XYZ"
-                  className="w-full text-sm border border-zinc-200 rounded-xl px-3 py-2.5 focus:outline-none focus:border-emerald-400" />
+                  placeholder={isLoja ? 'Ex: El Patrón Centro' : 'Ex: Empresa Financeira XYZ'}
+                  className={`w-full text-sm border border-zinc-200 rounded-xl px-3 py-2.5 focus:outline-none ${cor.focus}`} />
               </div>
               <div>
                 <label className="block text-xs font-semibold text-zinc-600 mb-1.5">CNPJ <span className="text-zinc-400 font-normal">(opcional)</span></label>
                 <input type="text" value={cnpj} onChange={(e) => setCnpj(e.target.value)}
                   placeholder="00.000.000/0000-00"
-                  className="w-full text-sm border border-zinc-200 rounded-xl px-3 py-2.5 focus:outline-none focus:border-emerald-400" />
+                  className={`w-full text-sm border border-zinc-200 rounded-xl px-3 py-2.5 focus:outline-none ${cor.focus}`} />
               </div>
               <div>
-                <label className="block text-xs font-semibold text-zinc-600 mb-1.5">Pessoa responsável</label>
+                <label className="block text-xs font-semibold text-zinc-600 mb-1.5">
+                  Pessoa responsável {isLoja && <span className="text-zinc-400 font-normal">(opcional)</span>}
+                </label>
                 <select value={responsavelId} onChange={(e) => setResponsavelId(e.target.value)}
-                  className="w-full text-sm border border-zinc-200 rounded-xl px-3 py-2.5 focus:outline-none focus:border-emerald-400 bg-white">
-                  <option value="">Selecione…</option>
+                  className={`w-full text-sm border border-zinc-200 rounded-xl px-3 py-2.5 focus:outline-none bg-white ${cor.focus}`}>
+                  <option value="">{isLoja ? 'Só eu por enquanto' : 'Selecione…'}</option>
                   {users.map((u) => (
                     <option key={u.id} value={u.id}>{u.name} — {u.email}</option>
                   ))}
                 </select>
-                <p className="text-[10px] text-zinc-400 mt-1">Essa pessoa recebe o papel Financeiro nesta empresa.</p>
+                <p className="text-[10px] text-zinc-400 mt-1">
+                  {isLoja
+                    ? 'Essa pessoa entra como Administrador da loja. Você já entra como admin automaticamente.'
+                    : 'Essa pessoa recebe o papel Financeiro nesta empresa.'}
+                </p>
               </div>
               {errorMsg && (
                 <div className="flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded-xl">
@@ -302,9 +322,9 @@ export function NewFinanceTenantModal({ users, onClose, onCreated }: NewFinanceT
               <div className="flex gap-2 pt-1">
                 <button onClick={onClose} className="flex-1 py-2.5 text-sm font-semibold text-zinc-600 bg-zinc-100 rounded-xl hover:bg-zinc-200 cursor-pointer whitespace-nowrap">Cancelar</button>
                 <button onClick={handleCreate} disabled={loading}
-                  className="flex-1 py-2.5 text-sm font-semibold text-white bg-emerald-500 rounded-xl hover:bg-emerald-600 disabled:opacity-50 cursor-pointer whitespace-nowrap flex items-center justify-center gap-2">
+                  className={`flex-1 py-2.5 text-sm font-semibold text-white rounded-xl disabled:opacity-50 cursor-pointer whitespace-nowrap flex items-center justify-center gap-2 ${cor.btn}`}>
                   {loading ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <i className="ri-add-line" />}
-                  {loading ? 'Criando...' : 'Criar empresa'}
+                  {loading ? 'Criando...' : (isLoja ? 'Criar loja' : 'Criar empresa')}
                 </button>
               </div>
             </>
@@ -316,7 +336,11 @@ export function NewFinanceTenantModal({ users, onClose, onCreated }: NewFinanceT
                 </div>
                 <div>
                   <p className="text-sm font-bold text-emerald-800">{nome} criada com sucesso!</p>
-                  <p className="text-xs text-emerald-600">Já nasceu com plano de contas e fontes de receita configurados.</p>
+                  <p className="text-xs text-emerald-600">
+                    {isLoja
+                      ? 'Já aparece na troca de loja. Falta configurar cardápio, mesas e impressoras dentro dela.'
+                      : 'Já nasceu com plano de contas e fontes de receita configurados.'}
+                  </p>
                 </div>
               </div>
               <button onClick={onClose} className="w-full py-2.5 text-sm font-semibold text-zinc-600 bg-zinc-100 rounded-xl hover:bg-zinc-200 cursor-pointer whitespace-nowrap">Fechar</button>

@@ -98,7 +98,7 @@ Rotas dentro do layout autenticado:
 Autenticacao, lojas e permissoes:
 - Telas: `src/pages/login`, `src/pages/selecionar-loja`, `src/pages/admin-master`, `src/pages/usuarios`.
 - Contexts/hooks: `AuthContext`, `PermissoesContext`, `useUsuarios`, `useValidarPIN`, `useKioskTokens`.
-- Supabase RPCs: `get_user_profile_for_tenant`, `get_user_tenants`, `fn_get_users_list`, `fn_update_user`, `fn_toggle_user_active`, `fn_admin_list_users_v4` (Admin Master: vínculos + módulos), `fn_admin_set_user_tenant`, `fn_admin_remove_user_tenant`, `fn_admin_set_module_access`, `fn_my_modules` (hook `useModuleAccess`).
+- Supabase RPCs: `get_user_profile_for_tenant`, `get_user_tenants`, `fn_get_users_list`, `fn_update_user`, `fn_toggle_user_active`, `fn_admin_list_users_v4` (Admin Master: vínculos + módulos), `fn_admin_set_user_tenant`, `fn_admin_remove_user_tenant`, `fn_admin_set_module_access`, `fn_my_modules` (hook `useModuleAccess`), `fn_admin_create_store` (Admin Master › Lojas › "Nova loja": loja com PDV sem convite — estações Cozinha+Bar e pagamentos básicos; responsável opcional vira admin), `fn_admin_create_finance_tenant` (empresa só Financeiro).
 - Edge Functions: `login-pin`, `kiosk-auth`, `user-write`, `admin-create-user`, `admin-manage-user`, `setup-tenant`, `bootstrap-admin`.
 
 Cardapio e produtos:
