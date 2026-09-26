@@ -44,12 +44,12 @@ export default function ArvorePastas({ nos, selectedId, onSelecionar, onNovaSubp
     const pessoas = no.shared_count ?? no.share_count ?? 0;
     const compartilhada = acesso !== 'owner' || pessoas > 0;
     const foraDoCompartilhamento = acesso === 'owner' && !!no.share_excluded;
-    const acaoCls = `shrink-0 rounded text-slate-300 ${compacto ? 'p-2.5 opacity-100 text-slate-400' : 'p-1.5 opacity-0 group-hover:opacity-100'}`;
+    const acaoCls = `shrink-0 rounded text-slate-300 ${compacto ? 'p-2.5 text-slate-400' : 'p-1.5'}`;
 
     return (
       <div key={no.id}>
         <div
-          className={`group w-full flex items-center gap-1 text-sm ${
+          className={`group w-full flex items-center gap-1 text-sm ${compacto ? '' : 'pr-2'} ${
             ativa ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-slate-600 hover:bg-slate-50'
           }`}
           style={{ paddingLeft: `${16 + no.profundidade * 16}px` }}
@@ -86,7 +86,8 @@ export default function ArvorePastas({ nos, selectedId, onSelecionar, onNovaSubp
               <EyeOff size={12} />
             </span>
           )}
-          <div className="flex items-center mr-2">
+          {/* No computador as ações só ocupam lugar no hover — escondidas, o nome usa a largura toda. */}
+          <div className={`items-center ${compacto ? 'flex mr-2' : 'hidden group-hover:flex group-focus-within:flex'}`}>
             {onCompartilhar && (
               <button
                 onClick={(e) => { e.stopPropagation(); onCompartilhar(no); }}
