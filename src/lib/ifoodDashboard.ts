@@ -265,7 +265,7 @@ export function montarPedidosApi(sales: SaleFinRow[]): PedidoIfood[] {
   return pedidos;
 }
 
-async function fetchComplementoApi(tenantId: string, fromISO: string, toISO: string, jaTem: Set<string>) {
+export async function fetchComplementoApi(tenantId: string, fromISO: string, toISO: string, jaTem: Set<string>) {
   const res = await fetchAllRows<SaleFinRow>((from, to) => supabase
     .from('fin_ifood_sales')
     .select('sale_id, merchant_id, sale_created_at, current_status, gross_bag, delivery_fee, payment_methods, billing_entries, benefits:raw->benefits, events:raw->orderEvents')

@@ -292,7 +292,7 @@ export default function VisaoGeralTab({ periodo, externalSession, onSessionChang
       </div>
       {ifPed > 0 && (
         <p className="text-[11px] text-zinc-400 -mt-2">
-          <i className="ri-restaurant-2-line text-red-500" /> Inclui iFood: <strong className="text-zinc-600">{fmt(ifTot)}</strong> em {ifPed} pedido(s) — relatório de conciliação importado em Financeiro › iFood (valor das vendas como no Portal do Parceiro, na data do pedido){(ifood?.pedidosAoVivo ?? 0) > 0 && <> e {ifood?.pedidosAoVivo} pedido(s) recebidos ao vivo do iFood, ainda não conciliados (valor dos itens)</>}.
+          <i className="ri-restaurant-2-line text-red-500" /> Inclui iFood: <strong className="text-zinc-600">{fmt(ifTot)}</strong> em {ifPed} pedido(s) — relatório de conciliação importado em Financeiro › iFood (valor das vendas como no Portal do Parceiro, na data do pedido){(ifood?.pedidosAoVivo ?? 0) > 0 && <> e {ifood?.pedidosAoVivo} pedido(s) ainda sem conciliação, vindos da API do iFood (provisório até importar o relatório)</>}.
         </p>
       )}
 
