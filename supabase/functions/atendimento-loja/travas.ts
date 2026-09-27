@@ -276,7 +276,9 @@ export function conferir(c: Conferir): string[] {
       const trecho = norm(l.slice(ini, m.index));
       ini = (m.index ?? 0) + m[0].length;
       const v = Number(m[1].replace(/\./g, '').replace(',', '.')).toFixed(2);
-      const citados = items.filter((i) => i.nome.length >= 5 && trecho.includes(norm(i.nome)));
+      // Só o nome mais completo: "Burrito Classic Veggie — R$ 38" não vale pelo preço do "Burrito Classic" (s01, v13).
+      const achados = items.filter((i) => i.nome.length >= 5 && trecho.includes(norm(i.nome)));
+      const citados = achados.filter((i) => !achados.some((x) => x !== i && norm(x.nome).includes(norm(i.nome))));
       if (!citados.length || citados.some((i) => precosDo(i).has(v))) continue;
       // O modelo abrevia nomes ("Combo Burrito com batata frita e bebida"): vale o item com esse preço cujo
       // nome está 60%+ no trecho (com erro de digitação). "Dupla Quesadilla Pollo … R$ 39,90" continua errado.

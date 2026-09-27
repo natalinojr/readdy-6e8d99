@@ -65,3 +65,10 @@ export function gravarJogador(j: Jogador | null) {
 export function soDigitos(v: string): string {
   return String(v || '').replace(/\D/g, '');
 }
+
+/** Ainda pode jogar? Só com pedido em andamento; quando é entregue, o jogo para. */
+export function direitoJogar(tenantId: string, credencial: CredencialJogo) {
+  return chamar<{ pode_jogar: boolean; motivo?: 'sem_pedido' | 'entregue'; mensagem?: string }>({
+    action: 'direito', tenant_id: tenantId, credencial,
+  });
+}
