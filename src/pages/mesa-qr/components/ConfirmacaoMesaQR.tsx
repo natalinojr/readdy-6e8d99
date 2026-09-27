@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { formatCurrency } from '@/lib/formatters';
+import JogosEspera from '@/components/jogos/JogosEspera';
 
 interface CartItem {
   cartId: string;
@@ -109,6 +110,11 @@ export default function ConfirmacaoMesaQR(props: Props) {
             </span>
           </div>
         ) : null}
+
+        {/* Joguinhos enquanto a comida fica pronta */}
+        <div className="w-full mt-6">
+          <JogosEspera />
+        </div>
 
         {/* Itens do pedido com foto */}
         {confirmedCartItems.length > 0 ? (
