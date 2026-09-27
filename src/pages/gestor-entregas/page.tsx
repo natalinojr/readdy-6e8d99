@@ -18,7 +18,7 @@ const FASE_CURTA: Record<ColunaId, string> = {
 
 export default function GestorEntregasPage() {
   const navigate = useNavigate();
-  const { orders, loading, erro, busy, now, autor, recarregar, setStatus, liberar, fetchDetalhe, addNote, ifoodPasso, tenantId, ifood, ifoodOn, ifoodForaDoQuadro, ifoodPedidos, ifoodLoja, recarregarIfoodCfg } = useGestorEntregas();
+  const { orders, loading, erro, busy, now, autor, recarregar, setStatus, liberar, fetchDetalhe, addNote, tenantId, ifood, ifoodOn, ifoodForaDoQuadro, ifoodPedidos, ifoodLoja, recarregarIfoodCfg } = useGestorEntregas();
   const [lojaIfoodOpen, setLojaIfoodOpen] = useState(false);
   const [pedidosIfoodOpen, setPedidosIfoodOpen] = useState(false);
   const [ifoodId, setIfoodId] = useState<string | null>(null);
@@ -228,7 +228,7 @@ export default function GestorEntregasPage() {
                           onAvancar={setStatus}
                           onProblema={(id) => setModalProblema(id)}
                           onLiberar={(id) => setModalLiberar(id)}
-                          ifood={ifood[o.id]} ifoodOn={ifoodOn} onIfood={(id) => setIfoodId(id)} onIfoodPasso={ifoodPasso} />
+                          ifood={ifood[o.id]} ifoodOn={ifoodOn} onIfood={(id) => setIfoodId(id)} />
                       ))
                     )}
                   </div>

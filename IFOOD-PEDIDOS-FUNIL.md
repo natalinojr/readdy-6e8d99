@@ -1,4 +1,4 @@
-# Pedidos do iFood no funil do ERPOS — desenho (2026-09-27, aguardando aprovação do dono)
+# Pedidos do iFood no funil do ERPOS — desenho (2026-09-27, APROVADO pelo dono)
 
 Objetivo: o pedido do iFood vira um pedido normal do ERPOS (cozinha/KDS, Gestor de Pedidos, Gestor de Entregas,
 estoque, NFC-e) e cada mudança de status é avisada ao iFood. Vale para **qualquer loja**, ligado por configuração.
@@ -9,6 +9,14 @@ pronto, despachar, cancelar, disputa) na edge `ifood-shipping` (ver `IFOOD-MODUL
 - ERPOS emite a NFC-e dos pedidos do iFood (Paranaguá não emite hoje) — **opção por loja**.
 - Não é piloto por loja: recurso genérico, cada loja liga na configuração.
 - Confirmação automática ou manual = **configuração da loja**.
+- Cancelar pelo ERPOS = pedir cancelamento (só cancela quando o iFood confirmar) — ok.
+- Financeiro sem contagem dupla (pedido do iFood não gera a receber/auto_sale; fonte "Pedidos" ignora iFood quando a
+  fonte "iFood" está ligada) — ok.
+- **Complementos também dão baixa de estoque** (vínculo do complemento com a opção do cardápio / ficha).
+- **NFC-e pelo valor da venda** (itens + entrega − desconto pago pela loja). Comissão e taxas do iFood NÃO abatem a
+  nota: são serviço do iFood (despesa, já vem pela conciliação). Dono: "faz do jeito certo contabilmente".
+- **Conflito aberto:** outra sessão (migration `20260927180000_ifood_motoboy_proprio.sql`, sem commit) decidiu o
+  contrário ("pedido do iFood NÃO vira linha em orders"). Etapa 3 só depois do dono decidir.
 
 ## Configuração por loja (`ifood_pdv_config`)
 - `order_mode`: `read_only` (hoje) | `funnel` (novo: pedido entra no ERPOS e o ERPOS avisa o iFood).
@@ -40,8 +48,9 @@ código de coleta; sem motoboy da loja. Retirada (TAKEOUT) e consumo no local (D
 1. **Vínculo de itens** — tabela `ifood_item_links` (loja, chave do iFood = `externalCode` ou id do item no catálogo +
    nome, `menu_item_id`/`combo_id`). Tela para ligar o que ficou sem par (lista dos itens do iFood já vendidos).
    Regra do projeto: só vínculo confirmado liga, o sistema não chuta. Item sem vínculo entra na cozinha com o nome do
-   iFood, sem baixa de estoque, e aparece como pendência para ligar. Complementos entram como texto
-   (`order_item_options`); vínculo de complemento para estoque fica para depois.
+   iFood, sem baixa de estoque, e aparece como pendência para ligar. Complementos (2º e 3º nível do iFood) também
+   são vinculados — a uma opção do cardápio (`order_item_options.option_id` → ficha da opção) ou a um item — e dão
+   baixa; "não usa estoque" é uma escolha explícita.
 2. **Criação do pedido** — caminho próprio na edge `ifood-shipping` (não o `create_delivery_order`, que reprecifica pelo
    cardápio do ERPOS): `orders` (`origin_type delivery`, `delivery_platform 'ifood'`, `destination_type` pelo tipo do
    iFood, cliente/endereço/observações, taxa de entrega) + `order_items` com **o preço do iFood**; reaproveita
@@ -56,8 +65,8 @@ código de coleta; sem motoboy da loja. Retirada (TAKEOUT) e consumo no local (D
    Pedido do iFood no ERPOS **não gera** conta a receber nem `auto_sale`, e a fonte "Pedidos" ignora
    `delivery_platform = 'ifood'` quando a fonte "iFood" está ligada (Receitas, DRE, DRE comparativo, Visão Geral).
 6. **NFC-e** — com `order_emit_nfce`, emite pelo `fiscal-write` como os demais delivery. Valor = itens + entrega −
-   desconto pago pela loja; cupom pago pelo iFood não é desconto da loja. **Conferir com a contabilidade** o código
-   de pagamento da nota (hoje "99 – outros" na iFood Entrega).
+   desconto pago pela loja (valor da venda); cupom pago pelo iFood não é desconto da loja; comissão/taxas do iFood não
+   abatem. Código de pagamento da nota: "99 – outros" (igual à iFood Entrega) — conferir com a contabilidade.
 7. **Telas** — configuração (seção "Pedidos do iFood"), aguardando aceite + prazo no Gestor de Pedidos, selo "iFood"
    nos cards (cozinha, gestor, entregas), cancelar com motivos do iFood, tela de vínculo de itens.
 
@@ -73,3 +82,25 @@ código de coleta; sem motoboy da loja. Retirada (TAKEOUT) e consumo no local (D
 - Loja mexendo também pelo Gestor do iFood → ações em dobro (não quebra, confunde). Orientar: tablet do iFood só de reserva.
 - Cardápio do iFood com preço diferente do ERPOS: a venda vale pelo preço do iFood (correto); CMV pela ficha.
 - Se o ERPOS/Supabase cair, o polling para e o iFood pode cancelar pedido não confirmado → aviso de falha do polling já existe.
+
+## Motoboy da loja (`delivered_by = MERCHANT`) — peças já prontas e o que falta (2026-09-27, sessão do delivery)
+Uma primeira versão levava o pedido do iFood ao Gestor de Entregas/portal do motoboy **sem** virar `orders` (commit
+d95420e); foi **desfeita** no mesmo dia porque o dono escolheu este desenho. Aprendizados e peças que ficaram:
+- **Já no ar:** `ifood-shipping › order_action` op **`verify_code`** (`POST /order/v1.0/orders/{id}/verifyDeliveryCode`
+  `{code}`) — só vale com `valid === true` explícito (resposta em outro formato = não confirmado); código certo → o
+  iFood conclui sozinho (CONCLUDED). `ifood_orders.delivery_lat/lng/fee` (0,0 do pedido de teste = sem posição) e
+  `delivery_code_ok`/`delivery_code_fails` (migration `20260927190000_ifood_campos_entrega.sql`).
+- **Entrega = prova com código:** para `delivered_by = MERCHANT`, "Entreguei" do motoboy (e "Marcar entregue" do Gestor)
+  pede o código que o cliente vê no app do iFood → `verify_code`. O portal do motoboy é público (login só nome +
+  celular): **limitar tentativas** (5 erros travam até o Gestor "liberar entregador", que zera `delivery_code_fails`).
+- **Avisar o iFood antes de gravar:** se o iFood recusar (despacho/código), o funil do ERPOS não anda — as duas pontas
+  ficam iguais. Com a fila (`ifood_order_outbox`), o "coletou" do motoboy vira `dispatch`.
+- **Filtros que vão precisar mudar:** o Gestor de Entregas (`delivery-write › list_delivery_board`) esconde
+  `delivery_platform` de apps externos (`PLATAFORMAS_EXTERNAS`, inclui 'ifood') — o pedido criado por este desenho com
+  `delivered_by = MERCHANT` precisa passar (marcar pelo vínculo `ifood_orders.order_id`, não só pela plataforma, porque
+  pedido lançado à mão no PDV como "iFood" é entregue pelo iFood). O portal (`motoboy-signal › list_orders`) hoje só
+  esconde retirada.
+- **Acerto dos entregadores:** sai sozinho pelo gatilho de `orders` (`trg_delivery_driver_ledger`) quando o pedido tem
+  motoboy e fica `delivered`; taxa = `delivery_fee` do iFood; km nulo (faixa_km usa o valor base) — gravar
+  `delivery_lat/lng` no pedido para o mapa e, se quiser km, calcular a distância na criação.
+- Pedido com entregador do iFood (`delivered_by = IFOOD`) nunca vai para o motoboy da loja.

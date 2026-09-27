@@ -285,7 +285,6 @@ export default function MotoboyListaPage() {
       <Link key={o.id} to={`/motoboy/${o.id}`} className={'block rounded-2xl border p-4 active:brightness-95 transition ' + baseBg + ring}>
         <div className="flex items-center justify-between mb-1 gap-1.5">
           <div className="flex items-center gap-1.5 min-w-0">
-            {(o as { fonte?: string }).fonte === 'ifood' ? <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-red-600 text-white shrink-0">iFood</span> : null}
             <span className="text-sm font-black text-zinc-800 shrink-0">#{String(o.number).replace(/\D/g, '').slice(-4) || o.number}</span>
             {/* Status da cozinha ao lado do número do pedido (oculto quando já entregue) */}
             {!concluido ? (

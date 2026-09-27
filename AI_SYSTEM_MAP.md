@@ -3604,24 +3604,8 @@ Sem SW ativo o POST cai no Vercel e falha — por isso o destino só existe no S
   99food) continua nascendo entregue; entrega PRÓPRIA nasce `ready` → "Pronto · aguardando motoboy" no Gestor. (3) Sem `delivery_lat/lng` (loja por bairro)
   não há ETA para o cliente — só a moto. (4) Teste de "Desfazer": o painel do navegador responde "Cancelar" ao
   `window.confirm`; sobrescrever `window.confirm` na aba para testar.
-- **Delivery Fase 4 — pedido do iFood com motoboy da loja (2026-09-27, só na loja de teste por ora)**: pedido do iFood
-  `order_type=DELIVERY` + `delivered_by=MERCHANT` entra no Gestor de Entregas e no portal do motoboy com id `ifood:<uuid>`
-  (fonte 'ifood'), **só quando `ifood_pdv_config.order_mode='operate'`** (decisão do dono: só vale se cada passo avisar o
-  iFood; loja em só leitura não muda nada). NÃO vira `orders` (o iFood já entra no financeiro pela conciliação — contaria
-  em dobro; também ficaria fora do KDS/estoque/nota de propósito). Campos do motoboy em `ifood_orders` (motoboy_driver_id/
-  status/timeline/problems, delivery_notes, out_for_delivery_at, **entregue_at** = "entregue" no ERPOS, delivery_code_ok,
-  delivery_lat/lng/fee). Lógica única em `supabase/functions/_shared/ifood-motoboy.ts` (usada por `delivery-write` e
-  `motoboy-signal`). Passos no iFood: cartão do Gestor chama `order_action` confirm/start/ready; "coletou" (motoboy ou
-  Gestor) → `dispatch`; "entregou" do motoboy → pede o **código de entrega** que o cliente vê no app do iFood →
-  `ifood-shipping` op `verify_code` (POST /order/v1.0/orders/{id}/verifyDeliveryCode {code}) → o iFood conclui sozinho
-  (CONCLUDED). Sempre avisa o iFood ANTES de gravar: se o iFood recusa, o funil não anda. Gestor "Marcar entregue" não
-  pede código (válvula de escape, só local). CONCLUDED com motoboy em rota e sem entregue_at → marca entregue (poll).
-  Acerto: `delivery_driver_ledger.ifood_order_id` + gatilho `trg_delivery_driver_ledger_ifood` (espelho do de orders;
-  km nulo → faixa_km usa o valor base); ranking soma os dois. PEGADINHAS: `fetchShippingByOrder` recebe só uuid (filtrar
-  os `ifood:`); pedido de teste do iFood vem com coordenada 0,0 (tratada como sem posição); chamada interna da
-  motoboy-signal à ifood-shipping usa `FISCAL_INTERNAL_KEY`.
-  Revisão Opus (1ª rodada reprovou, corrigido): código só vale com `valid === true` explícito do iFood; **5 códigos
-  errados travam** o pedido (`ifood_orders.delivery_code_fails`, zera no "liberar entregador"); Gestor "Marcar entregue"
-  também pede o código (prompt); portal recusa ler/sinalizar pedido do iFood fora do modo operar (link antigo);
-  polling de 20 s do Gestor só com operar; com operar, o portal esconde a cópia do PDV (`delivery_platform='ifood'`).
-  Fica de fora de propósito: `is_test` no acerto (pedido de teste só existe na loja de teste, onde deve contar).
+- **Pedido do iFood com motoboy da loja (2026-09-27):** uma versão separada (sem virar `orders`, d95420e) foi publicada e
+  DESFEITA no mesmo dia — o dono escolheu o desenho `IFOOD-PEDIDOS-FUNIL.md` (pedido do iFood vira pedido do ERPOS).
+  Ficou no ar: `ifood-shipping` op `verify_code` (código de entrega; só `valid === true` explícito) e
+  `ifood_orders.delivery_lat/lng/fee/delivery_code_ok/delivery_code_fails`. O que o motoboy precisa no desenho novo
+  está na seção "Motoboy da loja" do IFOOD-PEDIDOS-FUNIL.md.
