@@ -2,6 +2,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.4";
 import { deductStockForSkipKdsItems, runStockInBackground } from "../_shared/stock.ts";
 import { activeLocales, normalizeLocale, loadTranslations, decorate, decorateHighlights, translationsPayload } from "../_shared/menu-i18n.ts";
+import { cartaoIfood, cozinhaIfood, carregarIfood, ehIdIfood, itensIfood, liberarIfood, listarIfoodEntrega, modoOperar, notaIfood, rowIdIfood, sinalIfood } from "../_shared/ifood-motoboy.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -967,13 +968,18 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
           }
           return true;
         });
+        // Fase 4: pedidos do iFood entregues pelo motoboy da loja entram no mesmo quadro (id "ifood:<uuid>").
+        // Só no modo "operar" (cada passo avisa o iFood — decisão do dono); só leitura = loja segue pelo app do iFood.
+        const operarIfood = await modoOperar(admin, tenant_id);
+        const ifoodRows = operarIfood ? await listarIfoodEntrega(admin, tenant_id) : [];
         const driverNome: Record<string, string> = {};
-        const dids = Array.from(new Set(lista.map((o) => o.motoboy_driver_id as string | null).filter(Boolean))) as string[];
+        const dids = Array.from(new Set([...lista, ...ifoodRows].map((o) => o.motoboy_driver_id as string | null).filter(Boolean))) as string[];
         if (dids.length) {
           const { data: drvs } = await admin.from("delivery_drivers").select("id, name").in("id", dids);
           (drvs ?? []).forEach((d: { id: string; name: string }) => { driverNome[d.id] = d.name; });
         }
-        return new Response(JSON.stringify({ _v: "v15", ok: true, orders: lista.map((o) => ({
+        const cartoesIfood = ifoodRows.map((r) => ({ ...cartaoIfood(r, operarIfood), driver_nome: r.motoboy_driver_id ? (driverNome[r.motoboy_driver_id] ?? null) : null }));
+        return new Response(JSON.stringify({ _v: "v17", ok: true, orders: [...lista.map((o) => ({
           id: o.id, number: o.number,
           cliente: ((o.destination_name as string | null) ?? "Cliente").split(/\s+[-–—]\s+/)[0].trim() || "Cliente",
           telefone: ((o.destination_phone as string | null) ?? "").replace(/\D/g, ""),
@@ -990,11 +996,46 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
           pago: !!o.is_paid, pagamento: (o.notes as string | null) ?? null,
           lat: o.delivery_lat != null ? Number(o.delivery_lat) : null,
           lng: o.delivery_lng != null ? Number(o.delivery_lng) : null,
-        })) }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        })), ...cartoesIfood] }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
       const orderId = String(body.order_id || "").trim();
       if (!orderId) return jsonErr("order_id obrigatorio", 400);
+
+      // Pedido do iFood (motoboy da loja): mesmas ações, gravando em ifood_orders.
+      if (ehIdIfood(orderId)) {
+        const rowId = rowIdIfood(orderId);
+        const okResp = () => new Response(JSON.stringify({ _v: "v17", ok: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        if (action === "get_delivery_order") {
+          const r = await carregarIfood(admin, rowId, tenant_id);
+          if (!r) return jsonErr("Pedido não encontrado nesta loja.", 404);
+          const c = cartaoIfood(r, await modoOperar(admin, tenant_id));
+          const driverNomeDet = r.motoboy_driver_id
+            ? (await admin.from("delivery_drivers").select("name").eq("id", r.motoboy_driver_id).maybeSingle()).data?.name ?? null : null;
+          return new Response(JSON.stringify({ _v: "v17", ok: true, order: {
+            ...c, driver_nome: driverNomeDet, cozinha: cozinhaIfood(r), itens: await itensIfood(admin, r.id),
+          } }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        }
+        if (action === "add_delivery_note") {
+          const kind = String(body.kind || "");
+          if (kind !== "problema" && kind !== "observacao") return jsonErr("kind invalido", 400);
+          const text = String(body.text ?? "").trim().slice(0, 1000);
+          if (!text) return jsonErr("texto obrigatorio", 400);
+          const r = await notaIfood(admin, rowId, tenant_id, kind, text, String(body.autor ?? "").slice(0, 120) || null);
+          return r.ok ? okResp() : jsonErr(r.error ?? "erro", 400);
+        }
+        if (action === "clear_motoboy_driver") {
+          const r = await liberarIfood(admin, rowId, tenant_id);
+          return r.ok ? okResp() : jsonErr(r.error ?? "erro", 400);
+        }
+        if (action === "set_motoboy_status") {
+          const signal = String(body.signal || "");
+          if (!["a_caminho_loja", "coletou", "entregou", "problema"].includes(signal)) return jsonErr("signal invalido", 400);
+          const r = await sinalIfood(admin, { rowId, tenantId: tenant_id, signal, porLoja: true, motivo: body.motivo != null ? String(body.motivo) : null, code: body.code != null ? String(body.code) : null, autor: String(body.autor ?? "").slice(0, 120) || null });
+          return r.ok ? okResp() : jsonErr(r.message ?? r.error ?? "erro", 400);
+        }
+        return jsonErr("Ação indisponível para pedido do iFood.", 400);
+      }
 
       if (action === "get_delivery_order") {
         // Detalhe completo p/ o modal do Gestor de Entregas: fases da cozinha + entrega,
