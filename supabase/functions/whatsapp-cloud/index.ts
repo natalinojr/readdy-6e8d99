@@ -112,7 +112,8 @@ async function ownerKeys(admin: SupabaseClient): Promise<Set<string>> {
 // Atendimento de clientes da loja no número COMPARTILHADO: código PD-XXXX no texto, ou conversa da
 // loja aberta nos últimos 3 dias (e mais recente que uma conversa de candidatura do mesmo contato).
 const STORE_CODE_RE = /\b(PD-[A-Z0-9]{4})\b/i;
-const ANY_CODE_RE = /\b([A-Z]{2,4}-[A-Z0-9]{4})\b/i;
+// Sem /i: os códigos dos links vêm em maiúsculas ("pre-pago" no meio da conversa não é código).
+const ANY_CODE_RE = /\b([A-Z]{2,4}-[A-Z0-9]{4})\b/;
 async function lojaDoContato(admin: SupabaseClient, waId: string, text: string): Promise<string | null> {
   const code = text.match(STORE_CODE_RE)?.[1]?.toUpperCase();
   if (code) {

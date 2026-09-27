@@ -169,25 +169,45 @@ const itemLineFull = (i: MenuItem) => `${itemLine(i)}${i.opcoes ? `\n   Escolhas
 
 // Item pelo id (prefixo) ou pelo nome. Por palavras inteiras: "combo burrito" não pode cair em "Combo
 // Burritos e Quesadilla" (caso da simulação s25, 2026-09-27). Empate: o que tem menos palavras sobrando.
-export function acharItem(items: MenuItem[], q: string): MenuItem | null {
+// "com", "de", "e"… não contam: "Nachos com 4 Queijos" caía em "Batata fria com 4 queijos" (s19, v5).
+const LIGACAO = new Set(['com', 'de', 'do', 'da', 'dos', 'das', 'e', 'no', 'na', 'sem', 'um', 'uma', 'pra', 'para', 'o', 'a']);
+export function acharItem(items: MenuItem[], q: string, vistos: Set<string> = new Set()): MenuItem | null {
   const t = norm(q).replace(/[\[\]]/g, '').replace(/^id\s+/, '').trim();
   if (!t) return null;
   const porId = items.find((i) => i.id.toLowerCase().startsWith(t) && t.length >= 6);
   if (porId) return porId;
-  const palavrasDe = (x: string) => norm(x).replace(/[^a-z0-9 ]/g, ' ').split(' ').filter((w) => w.length >= 2);
+  const palavrasDe = (x: string) => norm(x).replace(/[^a-z0-9 ]/g, ' ').split(' ').filter((w) => w.length >= 2 && !LIGACAO.has(w));
   const alvo = palavrasDe(t);
   const exato = items.find((i) => palavrasDe(i.nome).join(' ') === alvo.join(' '));
   if (exato) return exato;
   let melhor: MenuItem | null = null, nota = -1;
   for (const i of items) {
     const ws = palavrasDe(i.nome);
-    const inteiras = alvo.filter((w) => ws.includes(w)).length;
-    if (inteiras < Math.ceil(alvo.length * 0.6)) continue;
-    const n = inteiras * 10 - ws.filter((w) => !alvo.includes(w)).length + (i.disponivel ? 1 : 0);
+    const inteiras = alvo.filter((w) => ws.some((x) => x === w || quase(x, w))).length;
+    // Item que a busca acabou de mostrar: basta uma palavra ("Nachos com 4 Queijos" → "Nachos 4 Quesos").
+    if (inteiras < Math.ceil(alvo.length * 0.6) && !(vistos.has(i.id) && inteiras >= 1)) continue;
+    // Item que a busca acabou de mostrar ganha (é dele que a conversa está falando).
+    const n = inteiras * 10 - ws.filter((w) => !alvo.includes(w)).length + (i.disponivel ? 1 : 0) + (vistos.has(i.id) ? 5 : 0);
     if (n > nota) { nota = n; melhor = i; }
   }
   return melhor;
 }
+
+// Palavra parecida (erro de digitação): "quesadila" ~ "quesadilla", "franbo" ~ "frango" (s39, v6).
+function quase(a: string, b: string): boolean {
+  if (Math.abs(a.length - b.length) > 1 || Math.min(a.length, b.length) < 5) return false;
+  let i = 0, j = 0, dif = 0;
+  while (i < a.length && j < b.length) {
+    if (a[i] === b[j]) { i++; j++; continue; }
+    if (++dif > 1) return false;
+    if (a.length > b.length) i++; else if (b.length > a.length) j++; else { i++; j++; }
+  }
+  return dif + (a.length - i) + (b.length - j) <= 1;
+}
+export const temTermo = (texto: string, t: string) => {
+  const n = norm(texto);
+  return n.includes(t) || n.replace(/[^a-z0-9 ]/g, ' ').split(' ').some((w) => quase(w, t));
+};
 
 function deliveryUrl(slug: string, extra: Record<string, string> = {}) {
   const q = new URLSearchParams({ utm_source: 'whatsapp_bot', ...extra });
@@ -240,7 +260,7 @@ export function regrasPadrao(bot: Row): string {
 - Objetivo: levar a pessoa até o link do pedido. Assim que ela escolher algo, disser que quer pedir ou pedir o link, chame link_do_pedido NA MESMA resposta (com o item escolhido) e mande o link que a ferramenta devolver. Nunca escreva um link de cabeça e nunca diga "vou gerar o link" sem mandar.
 - Vários itens: mande o link (ele abre o primeiro item) e diga para adicionar os outros no carrinho do link. Você não mexe no carrinho: nunca diga que já colocou algo nele. Para 2 ou mais pessoas, procure antes opções "Dupla", "Trio" ou "Combo" (costumam sair mais em conta) e ofereça.
 - Você NÃO vê pedidos: nunca diga que um pedido foi feito, confirmado, recebido, pago ou que está a caminho. Se a pessoa disser que já pediu, agradeça e ofereça consultar o andamento com meus_pedidos. Você não anota pedido e não recebe Pix/comprovante: escolher e pagar é no link. Se pedirem o total, pode fazer a conta simples (preço × quantidade + taxa do bairro), dizendo que é uma estimativa e o valor final aparece no link (adicionais e escolhas mudam o valor).
-- Item e preço: chame buscar_cardapio antes de citar qualquer item ou preço e use exatamente o nome e o preço que vierem. Nunca invente sabor, tamanho, adicional, ingrediente, prazo, promoção nem "o mais pedido" (só os Destaques acima são destaque). "O mais barato": buscar_cardapio com ordem="preco". Não achou: diga que não tem e ofereça o que houver de parecido.
+- Item e preço: use exatamente o nome e o preço do CARDÁPIO COMPLETO acima (ou da busca), com a promoção de hoje quando houver. Sabores, tamanhos e adicionais: chame buscar_cardapio antes de citar. Nunca invente sabor, tamanho, adicional, ingrediente, prazo, promoção nem "o mais pedido" (só os Destaques acima são destaque; nunca diga "o mais pedido", "campeão" ou "sucesso"). "O mais barato": buscar_cardapio com ordem="preco" e SEM categoria (o cardápio todo). Descreva cada item só com a descrição DELE: sabores, preço e ingredientes de outro item não valem. Não achou: diga que não tem e ofereça o que houver de parecido.
 - Tamanho, peso, quantas pessoas serve, ingredientes: só o que estiver escrito na descrição do item. Não está lá? Diga que não tem essa informação (e a equipe confirma, se a pessoa precisar).
 - Item com "a partir de": o preço depende das escolhas (sabor, tamanho); explique as escolhas que a busca mostrar.
 - Item INDISPONÍVEL: avise e sugira um parecido disponível, já com o link dele.
@@ -251,6 +271,8 @@ ${bot.upsell ? '- VENDA (obrigatório): toda vez que mandar o link para um prato
 ${bot.voucher_code ? `- Cupom ${bot.voucher_code}: ofereça SÓ se a pessoa hesitar por preço ou disser que vai deixar para depois. Aí chame link_do_pedido com com_cupom=true (o link já aplica o cupom). Não ofereça de cara.` : '- Não existe cupom nem desconto: não prometa desconto, brinde ou frete grátis.'}
 - "Cadê meu pedido?": chame meus_pedidos e diga o status e a previsão que vierem. Atrasado, errado, faltando item ou não encontrado: chame chamar_atendente.
 - Chame chamar_atendente (e diga que alguém da equipe já responde por aqui) em: reclamação, problema com pedido, troca/estorno, comprovante de pagamento, pedido grande ou encomenda para evento, alergia grave, pergunta sobre a loja que você não sabe, ou quando pedirem uma pessoa. Não prometa prazo de resposta nem o que a equipe vai fazer (reembolso, desconto). Se a pessoa insistir depois, diga que a equipe já foi avisada; se ela trouxer informação nova (ameaça cancelar, novo problema), chame chamar_atendente de novo com essa informação.
+- Reclamação, atraso ou cliente bravo: nessa resposta não mande link nem ofereça comida — só acolha, diga o que meus_pedidos mostrou (se for o caso) e que a equipe já foi avisada.
+- Encomenda grande/evento já passada para a equipe: não calcule total, não peça endereço e não mande link para ela; a equipe combina tudo.
 - Ingredientes: só os da descrição do item. Nunca garanta "100% vegano", "sem glúten" ou "sem lactose": diga o que a descrição traz e, para alergia ou restrição, chame chamar_atendente para a equipe confirmar. Tirar ingrediente/observação: a pessoa escreve na observação do item no link.
 - Não invente recursos ou serviços: não prometa aviso por app, rastreio, agendamento de horário, cardápio em PDF/foto nem nota fiscal — o cardápio é o link; o que não estiver nestas informações, chame chamar_atendente.
 - Não existe telefone para ligar: nunca sugira ligar para a loja; o contato é por aqui mesmo.
@@ -264,14 +286,18 @@ export function idiomaDe(textos: string[]): 'en' | 'es' | null {
   const t = ` ${norm(textos.slice(-3).join(' ')).replace(/[^a-z\s]/g, ' ')} `;
   const conta = (ws: string[]) => ws.reduce((n, w) => n + (t.includes(` ${w} `) ? 1 : 0), 0);
   const pt = conta(['voce', 'vc', 'quero', 'tem', 'qual', 'obrigado', 'oi', 'quanto', 'pra', 'nao', 'ta', 'entrega', 'meu', 'um', 'uma', 'de']);
-  const en = conta(['the', 'you', 'do', 'what', 'is', 'how', 'can', 'thanks', 'hi', 'hello', 'please', 'want', 'much', 'deliver', 'my', 'it', 'to']);
-  const es = conta(['hola', 'tienen', 'cuanto', 'cuesta', 'gracias', 'quiero', 'por', 'favor', 'que', 'usted', 'puedo', 'tacos', 'cuestan', 'donde']);
+  // Só palavras que NÃO existem no português ("por favor", "do", "to" levavam para espanhol/inglês — s31, v5).
+  const en = conta(['the', 'you', 'what', 'is', 'how', 'can', 'thanks', 'hi', 'hello', 'please', 'want', 'much', 'deliver', 'my', 'it', 'your', 'have', 'there']);
+  const es = conta(['hola', 'tienen', 'cuanto', 'cuesta', 'gracias', 'quiero', 'usted', 'puedo', 'cuestan', 'donde', 'tienes', 'cuales', 'hay', 'senor', 'bueno', 'buenas', 'necesito', 'pedir']);
   if (en >= 2 && en > pt) return 'en';
   if (es >= 2 && es > pt) return 'es';
   return null;
 }
 
-export function systemOf(bot: Row, tenant: Row, menu: Row, items: MenuItem[], regras?: string, idioma: 'en' | 'es' | null = null): string {
+// Duas partes: a ESTÁVEL (regras, taxas, cardápio inteiro) vai com cache — no Haiku 4.5 o cache só vale com
+// 4096+ tokens de prefixo e a leitura do cache não conta no limite de tokens/minuto (as simulações batiam
+// no limite, 2026-09-27); a VOLÁTIL (hora, aberto/fechado, promoção de hoje, esgotados) vem depois.
+export function systemPartes(bot: Row, tenant: Row, menu: Row, items: MenuItem[], regras?: string, idioma: 'en' | 'es' | null = null): [string, string] {
   const dc = (menu.delivery_config ?? {}) as Row;
   const sp = spNow();
   const aberto = menu.delivery_open_now === true;
@@ -284,24 +310,36 @@ export function systemOf(bot: Row, tenant: Row, menu: Row, items: MenuItem[], re
       : 'Taxa de entrega: calculada no link pelo endereço.';
   const destaques = (menu.highlights ?? []).slice(0, 8).map((h: Row) => `• ${h.item_name}${h.custom_price ? ` — ${brl(h.custom_price)}` : ''}`).join('\n');
   const promos = items.filter((i) => i.promo != null && i.promo < i.preco && i.disponivel).slice(0, 12).map(itemLine).join('\n');
-  const categorias = [...new Set(items.map((i) => i.categoria))].join(', ');
-  return `Você é o atendente da ${tenant.name} no WhatsApp. Responde clientes, mostra o cardápio e o delivery e ajuda a pessoa a fazer o pedido — seu objetivo é VENDER, com simpatia e sem forçar.
+  const esgotados = items.filter((i) => !i.disponivel).map((i) => i.nome);
+  // Cardápio sem o que muda no dia (promoção e estoque ficam na parte volátil).
+  const porCategoria = new Map<string, MenuItem[]>();
+  for (const i of items) porCategoria.set(i.categoria, [...(porCategoria.get(i.categoria) ?? []), i]);
+  const cardapio = [...porCategoria].map(([cat, its]) => `${cat}:\n${its.map((i) =>
+    `• ${i.nome} — ${i.aPartir != null ? `a partir de ${brl(i.aPartir)}` : brl(i.preco)}${i.desc ? ` · ${i.desc}` : ''}`).join('\n')}`).join('\n').slice(0, 24000);
+  const estavel = `Você é o atendente da ${tenant.name} no WhatsApp. Responde clientes, mostra o cardápio e o delivery e ajuda a pessoa a fazer o pedido — seu objetivo é VENDER, com simpatia e sem forçar.
 
-AGORA: ${DIAS[sp.dow]}, ${sp.iso.split('-').reverse().join('/')} ${sp.hhmm}. Delivery ${aberto ? 'ABERTO agora' : `FECHADO agora (${MOTIVO_FECHADO[menu.delivery_closed_reason] ?? 'fechado'}). Retirada no balcão também não funciona agora.${proximaAbertura(dc) ? ` Próxima abertura: ${proximaAbertura(dc)}.` : ''}`}
 LINK DO PEDIDO: só o que a ferramenta link_do_pedido devolver (nunca escreva link de cabeça, nem iFood).
 ${tenant.address ? `Endereço da loja (retirada): ${tenant.address}${tenant.city ? ` — ${tenant.city}` : ''}.` : 'Endereço da loja: não cadastrado (se perguntarem, chame chamar_atendente).'}
 ${horarios(dc)}
 ${taxa}
-${dc.pedido_minimo_ativo ? `Pedido mínimo: ${brl(dc.pedido_minimo_valor)}.` : ''}
+${dc.pedido_minimo_ativo ? `Pedido mínimo: ${brl(dc.pedido_minimo_valor)}.` : 'Pedido mínimo: não há (pode pedir um item só).'}
 ${tempoEntrega(dc)}
 Retirada no balcão: ${dc.retirada_ativo === false ? 'não' : 'sim, sem taxa'}.
-Categorias do cardápio: ${categorias || '(cardápio vazio)'}.
 ${destaques ? `Destaques da casa:\n${destaques}` : ''}
-${promos ? `Promoções de HOJE:\n${promos}` : ''}
 ${bot.extra_info ? `Informações da loja (pode contar):\n${bot.extra_info}` : ''}
 ${bot.forbidden ? `NUNCA fale sobre: ${bot.forbidden}` : ''}
 
-${regras ?? regrasPadrao(bot)}${idioma ? `\n\nIMPORTANTE: o cliente escreve em ${idioma === 'en' ? 'INGLÊS' : 'ESPANHOL'}. Responda TODA a mensagem em ${idioma === 'en' ? 'inglês' : 'espanhol'} (nomes dos pratos podem ficar como estão).` : ''}`;
+CARDÁPIO COMPLETO (preço normal; sabores, tamanhos e adicionais: buscar_cardapio):
+${cardapio || '(cardápio vazio)'}
+
+${regras ?? regrasPadrao(bot)}`;
+  const volatil = `AGORA: ${DIAS[sp.dow]}, ${sp.iso.split('-').reverse().join('/')} ${sp.hhmm}. Delivery ${aberto ? 'ABERTO agora' : `FECHADO agora (${MOTIVO_FECHADO[menu.delivery_closed_reason] ?? 'fechado'}). Retirada no balcão também não funciona agora.${proximaAbertura(dc) ? ` Próxima abertura: ${proximaAbertura(dc)}.` : ''}`}
+${promos ? `Promoções de HOJE:\n${promos}` : 'Promoções de hoje: nenhuma.'}
+${esgotados.length ? `INDISPONÍVEIS agora (não ofereça): ${esgotados.slice(0, 40).join(', ')}.` : ''}${idioma ? `\n\nIMPORTANTE: o cliente escreve em ${idioma === 'en' ? 'INGLÊS' : 'ESPANHOL'}. Responda TODA a mensagem em ${idioma === 'en' ? 'inglês' : 'espanhol'} (nomes dos pratos podem ficar como estão).` : ''}`;
+  return [estavel, volatil];
+}
+export function systemOf(bot: Row, tenant: Row, menu: Row, items: MenuItem[], regras?: string, idioma: 'en' | 'es' | null = null): string {
+  return systemPartes(bot, tenant, menu, items, regras, idioma).join('\n\n');
 }
 
 const TOOLS: Anthropic.Tool[] = [
@@ -386,7 +424,8 @@ export interface Pensar {
 // O "cérebro": cardápio + instruções + ferramentas → resposta. Usado na conversa real e na simulação.
 export async function pensar(o: Pensar) {
   const items = menuItems(o.menu);
-  const system = systemOf(o.bot, o.tenant, o.menu, items, o.regras, idiomaDe(o.historico.filter((h) => h.role === 'user').map((h) => h.content)));
+  const [estavel, volatil] = systemPartes(o.bot, o.tenant, o.menu, items, o.regras, idiomaDe(o.historico.filter((h) => h.role === 'user').map((h) => h.content)));
+  const system: Anthropic.TextBlockParam[] = [{ type: 'text', text: estavel, cache_control: { type: 'ephemeral' } }, { type: 'text', text: volatil }];
   const msgs: Anthropic.MessageParam[] = [];
   for (const h of o.historico) {
     const last = msgs[msgs.length - 1];
@@ -398,9 +437,10 @@ export async function pensar(o: Pensar) {
   if (o.nome) msgs[0].content = `[Nome no WhatsApp: ${o.nome}]\n${msgs[0].content}`;
 
   const client = new Anthropic({ apiKey: Deno.env.get('ANTHROPIC_API_KEY') ?? '' });
-  let reply = '', cost = 0, calls = 0, closeAfter = false, linkSent = false;
+  let reply = '', cost = 0, calls = 0, closeAfter = false, linkSent = false, cacheLido = 0;
   const ferramentas: Array<{ nome: string; entrada: unknown; saida: string }> = [];
   const links: string[] = [];
+  const vistosNaBusca = new Set<string>();
   const runTool = async (u: Anthropic.ToolUseBlock): Promise<string> => {
     // deno-lint-ignore no-explicit-any
     const inp = (u.input ?? {}) as any;
@@ -409,17 +449,18 @@ export async function pensar(o: Pensar) {
         const termos = norm(inp.busca).split(/\s+/).filter((t) => t.length >= 2);
         const cat = norm(inp.categoria).trim();
         let achados = items.filter((i) => (!cat || norm(i.categoria).includes(cat))
-          && termos.every((t) => norm(`${i.nome} ${i.categoria} ${i.desc}`).includes(t)));
+          && termos.every((t) => temTermo(`${i.nome} ${i.categoria} ${i.desc}`, t)));
         // Nada com todas as palavras: tenta com qualquer uma (ex.: "pizza de calabresa").
-        if (!achados.length && termos.length > 1) achados = items.filter((i) => termos.some((t) => norm(`${i.nome} ${i.categoria}`).includes(t)));
+        if (!achados.length && termos.length > 1) achados = items.filter((i) => termos.some((t) => temTermo(`${i.nome} ${i.categoria}`, t)));
         if (inp.ordem === 'preco') achados = [...achados].sort((a, b) => (a.promo ?? a.preco) - (b.promo ?? b.preco));
+        for (const a of achados.slice(0, 8)) vistosNaBusca.add(a.id);
         if (!achados.length) return 'Nada encontrado com esse nome. Categorias: ' + [...new Set(items.map((i) => i.categoria))].join(', ');
         const lista = achados.length <= 8 ? achados.map(itemLineFull) : achados.slice(0, 25).map(itemLine);
         return lista.join('\n') + (achados.length > 25 ? `\n(+${achados.length - 25} itens; refine a busca)` : '') + (achados.length > 8 ? '\n(busque o item pelo nome para ver sabores/adicionais)' : '');
       }
       if (u.name === 'link_do_pedido') {
         const extra: Record<string, string> = {};
-        const it = acharItem(items, String(inp.item ?? inp.item_id ?? ''));
+        const it = acharItem(items, String(inp.item ?? inp.item_id ?? ''), vistosNaBusca);
         if (it) extra.item = it.id;
         if (inp.com_cupom && o.bot.voucher_code) extra.voucher = String(o.bot.voucher_code);
         linkSent = true;
@@ -440,7 +481,9 @@ export async function pensar(o: Pensar) {
     for (let i = 0; i < limite; i++) {
       const res = await client.messages.create({ model: MODEL, max_tokens: 700, system, tools: TOOLS, messages: msgs });
       calls++;
-      cost += (res.usage.input_tokens ?? 0) * PRICE_IN + (res.usage.output_tokens ?? 0) * PRICE_OUT;
+      const u = res.usage;
+      cost += ((u.input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) * 1.25 + (u.cache_read_input_tokens ?? 0) * 0.1) * PRICE_IN + (u.output_tokens ?? 0) * PRICE_OUT;
+      cacheLido += u.cache_read_input_tokens ?? 0;
       const texto = res.content.filter((b): b is Anthropic.TextBlock => b.type === 'text').map((b) => b.text).join('\n').trim();
       const uses = res.content.filter((b): b is Anthropic.ToolUseBlock => b.type === 'tool_use');
       if (!uses.length) { reply = texto; return; }
@@ -474,15 +517,52 @@ export async function pensar(o: Pensar) {
   const semContas = reply.split('\n').filter((l) => !/total|soma|=|\bfica\b|\bd[aá]\b|ao todo|mais ou menos|aproximad/i.test(l)).join('\n');
   const precosErrados = [...semContas.matchAll(/R\$\s?(\d{1,4}(?:\.\d{3})*(?:,\d{2})?)/g)]
     .map((m) => m[1]).filter((v) => !conhecidos.has(Number(v.replace(/\./g, '').replace(',', '.')).toFixed(2)));
-  const esgotados = items.filter((i) => !i.disponivel && i.nome.length >= 6 && norm(reply).includes(norm(i.nome)));
-  const avisouEsgotado = /indispon|acabou|esgot|sem estoque|em falta|nao temos|não temos/i.test(reply);
+  // Esgotado: confere linha a linha (s05, v5: avisou que o Classic acabou e na linha seguinte ofereceu o Veggie, também esgotado).
+  const avisaEsgotado = (l: string) => /indispon|acabou|esgot|sem estoque|em falta|nao temos|não temos|n[aã]o tem mais/i.test(l);
+  const esgotados = items.filter((i) => !i.disponivel && i.nome.length >= 6
+    && reply.split('\n').some((l) => norm(l).includes(norm(i.nome)) && !avisaEsgotado(l)));
+  // Links que já estavam na conversa: reenviar o link do item é certo (antes o código trocava pelo geral — s38/s48, v5).
+  const semPontas = (u: string) => u.replace(/[).,!?*_~]+$/, '');
+  const linksAntes = new Set(o.historico.flatMap((h) => (h.content.match(/https?:\/\/\S+/g) ?? []).map(semPontas)));
   const correcoes: string[] = [];
+  const urlsResposta = (reply.match(/https?:\/\/\S+/g) ?? []).map(semPontas);
+  if (urlsResposta.some((u) => !links.includes(u) && !linksAntes.has(u)))
+    correcoes.push('Você escreveu um link sem chamar link_do_pedido. Chame link_do_pedido agora (com o item que a pessoa escolheu, ou sem item se ela só quer ver o cardápio) e use só o link que a ferramenta devolver.');
+  if (/\b(app|aplicativo|rastrei\w*|notifica\w*)\b|te (aviso|avisamos|mando mensagem|notifico)|vou te avisar|(vamos|vou|equipe vai) (te )?(avisar|acompanhar|registrar)|registr(ei|amos|ad[ao])|anotei|anotad[ao]/i.test(reply))
+    correcoes.push('Não existe app, rastreio, aviso automático nem registro de reclamação: não prometa avisar, acompanhar ou registrar nada. Diga só o que as ferramentas mostraram e, se for o caso, que a equipe já foi avisada.');
+  if (/sem gl[uú]ten|sem lactose|sem amendoim|livre de|100% vegan|é vegan|s[aã]o vegan|pode comer tranquil|seguro para al[eé]rgic/i.test(reply))
+    correcoes.push('Não garanta que um item é sem glúten, sem lactose, sem amendoim ou vegano: diga só os ingredientes que a descrição traz e, para alergia/restrição, que a equipe confirma (chame chamar_atendente se ainda não chamou).');
+  if (!usadas.has('meus_pedidos') && /pedido[^.!?\n]{0,20}(recebido|confirmado|anotado|registrado|cancelado|aprovado|feito|garantid|chegando|na cozinha|na fila)|(j[aá]|est[aá]|t[aá]) (a caminho|em preparo|saindo|sendo preparado)|cancelei/i.test(reply))
+    correcoes.push('Você não vê nem altera pedidos: não diga que um pedido foi recebido, confirmado, anotado, cancelado ou que está a caminho. Para status, chame meus_pedidos; para cancelar/mudar, chame chamar_atendente.');
+  if (/mais pedid|mais vendid|campe[aã]o|faz (muito )?sucesso|sucesso da casa|todo mundo (ama|pede|adora)|queridinh|muito procurad/i.test(reply))
+    correcoes.push('Não diga que algo é o mais pedido, campeão, sucesso ou que todo mundo ama: você não tem esse dado. "Destaque da casa" só para os Destaques da lista.');
+  const ultimaDoCliente = [...o.historico].reverse().find((h) => h.role === 'user')?.content ?? '';
+  const pediuLink = /\blink\b|card[aá]pio|\bmenu\b/i.test(ultimaDoCliente);
+  if (pediuLink && !urlsResposta.length && !usadas.has('chamar_atendente'))
+    correcoes.push('A pessoa pediu o link/cardápio: chame link_do_pedido (sem item se ela só quer ver o cardápio) e mande o link.');
+  // Acabou de passar para a equipe (reclamação, encomenda, alergia): nada de vender na mesma resposta (s09/s17, v6).
+  if (usadas.has('chamar_atendente') && urlsResposta.length && !pediuLink)
+    correcoes.push('Você acabou de passar a conversa para a equipe: nesta resposta não mande link nem ofereça comida. Acolha e diga só que a equipe já foi avisada e responde por aqui.');
+  if (/\b(coloquei|adicionei|separei)\b|(j[aá] )?(est[aá]|t[aá]|vai|vem|fica)[^.!?\n]{0,12}(no|ao) (seu )?carrinho/i.test(reply))
+    correcoes.push('Você não mexe no carrinho: nunca diga que colocou, adicionou ou separou algo nem que já está no carrinho. A pessoa adiciona no link.');
+  // Preço de um item atribuído a outro (s39, v6: "Dupla Quesadilla Pollo R$ 39,90", que era o preço do combo).
+  const precosDo = (i: MenuItem) => new Set([i.preco, i.promo, i.aPartir, ...i.precosOpcoes.map((v) => i.preco + v)].filter((v): v is number => v != null && v > 0).map((v) => v.toFixed(2)));
+  for (const l of reply.split('\n')) {
+    if (/total|soma|=|\bfica\b|ao todo|aproximad|taxa|\+/i.test(l)) continue;
+    const valores = [...l.matchAll(/R\$\s?(\d{1,4}(?:\.\d{3})*(?:,\d{2})?)/g)].map((m) => Number(m[1].replace(/\./g, '').replace(',', '.')).toFixed(2));
+    if (!valores.length) continue;
+    const citados = items.filter((i) => i.nome.length >= 5 && norm(l).includes(norm(i.nome)));
+    const donos = citados.filter((i) => !citados.some((x) => x !== i && norm(x.nome).includes(norm(i.nome))));
+    if (donos.length !== 1) continue;
+    const ps = precosDo(donos[0]);
+    if (!valores.some((v) => ps.has(v))) correcoes.push(`O preço de ${donos[0].nome} é ${precoTxt(donos[0])}; ${valores.map((v) => `R$ ${v.replace('.', ',')}`).join(', ')} não é dele. Use o preço certo de cada item.`);
+  }
   if (/\blig(ar|ue|a|uem)\b[^.!?\n]{0,25}(loja|pra gente|para a gente|pra n[oó]s|telefone)|telefone d[ae] loja|\(\d{2}\)\s?\d{4,5}-?\d{4}/i.test(reply))
     correcoes.push('Não existe telefone da loja para passar nem para ligar: tire isso; o contato é por aqui mesmo.');
   if ((usadas.has('chamar_atendente') || o.equipeJaAvisada) && /(em breve|j[aá] j[aá]|logo logo|rapidinho|poucos minutos|\d+\s?min|(vai|v[aã]o) (resolver|trocar|reembolsar|devolver|estornar|te passar|te informar|te dar))/i.test(reply))
     correcoes.push('Sobre a equipe: não prometa prazo nem o que ela vai fazer (troca, reembolso, informação). Diga só que a equipe já foi avisada e responde por aqui.');
   if (precosErrados.length) correcoes.push(`Estes preços não existem no cardápio: ${precosErrados.map((v) => `R$ ${v}`).join(', ')}. Confira com buscar_cardapio e use só o preço que vier.`);
-  if (esgotados.length && !avisouEsgotado) correcoes.push(`${esgotados.map((i) => i.nome).join(', ')} está INDISPONÍVEL agora: não ofereça; se for o que a pessoa pediu, avise que acabou e sugira um parecido disponível.`);
+  if (esgotados.length) correcoes.push(`${esgotados.map((i) => i.nome).join(', ')} está INDISPONÍVEL agora: não ofereça; se for o que a pessoa pediu, avise que acabou e sugira um parecido disponível.`);
   if (correcoes.length && reply) {
     log('WARN', 'resposta corrigida', { correcoes });
     msgs.push({ role: 'assistant', content: reply });
@@ -490,6 +570,8 @@ export async function pensar(o: Pensar) {
     reply = '';
     await rodada(3);
   }
+  // Passou para a equipe e o modelo não escreveu nada: a resposta padrão não pode ser "olha o cardápio" (s09, v6).
+  if (!reply && !closeAfter && (usadas.has('chamar_atendente') || o.equipeJaAvisada)) reply = 'A equipe já foi avisada e responde por aqui. 🙏';
   // Disse que avisou/chamou a equipe sem chamar: chama de verdade (senão ninguém fica sabendo).
   // "Avisei/chamei a equipe" (ação nova) vale sempre; "a equipe já foi avisada" só se ainda não tinha sido.
   const ativo = /(avisei|chamei|acionei|passei|vou chamar|vou avisar|vou passar)[^.!?\n]{0,25}(equipe|atendente|gerente|pessoal|algu[eé]m)/i.test(reply);
@@ -505,16 +587,20 @@ export async function pensar(o: Pensar) {
   // Só existem os links que a ferramenta gerou (ou o link geral da loja). O modelo às vezes inventa
   // (iFood, domínio falso) ou corta o id do item: tira o que não é nosso e põe o link certo no fim.
   const geral = deliveryUrl(o.tenant.slug);
-  const validos = new Set([...links, geral]);
+  const validos = new Set([...links, ...linksAntes, geral]);
   const noTexto = reply.match(/https?:\/\/\S+/g) ?? [];
   let tirou = false;
   for (const u of noTexto) {
-    if (validos.has(u.replace(/[).,!?*_~]+$/, ''))) continue;
-    reply = reply.replace(u, '').replace(/[ \t]+\n/g, '\n').trim();
+    if (validos.has(semPontas(u))) continue;
+    // Link inventado: no mesmo lugar entra o último link da ferramenta (ou o geral).
+    reply = reply.replace(u, links[links.length - 1] ?? geral);
     tirou = true;
   }
+  // "Aqui está o link:" seguido de linhas vazias (o modelo deixou o lugar e não escreveu).
+  reply = reply.replace(/\n{3,}/g, '\n\n').trim();
   // Link geral numa resposta que fala de UM item só: troca pelo link que já abre o item.
-  if (reply.includes(geral) && !links.some((l) => l !== geral && reply.includes(l))) {
+  // Se a ferramenta devolveu o geral de propósito (a pessoa quer ver o cardápio), fica o geral (s37, v6).
+  if (reply.includes(geral) && !links.includes(geral) && !links.some((l) => reply.includes(l))) {
     const citados = items.filter((i) => i.disponivel && i.nome.length >= 5 && norm(reply).includes(norm(i.nome)));
     const maior = citados.sort((a, b) => b.nome.length - a.nome.length)[0];
     if (maior && citados.every((i) => norm(maior.nome).includes(norm(i.nome)))) reply = reply.replace(geral, deliveryUrl(o.tenant.slug, { item: maior.id }));
@@ -524,7 +610,7 @@ export async function pensar(o: Pensar) {
     reply = `${reply}\n\n${links[links.length - 1] ?? geral}`.trim();
     linkSent = true;
   }
-  return { reply, calls, cost, linkSent, closeAfter, ferramentas };
+  return { reply, calls, cost, linkSent, closeAfter, ferramentas, cacheLido };
 }
 
 async function handleIncoming(admin: SupabaseClient, m: Incoming): Promise<void> {
@@ -671,7 +757,7 @@ async function simular(admin: SupabaseClient, b: Row) {
   const turnos = Math.min(Math.max(Number(b.turnos ?? 6), 1), 10);
   const historico: Array<{ role: 'user' | 'assistant'; content: string }> = [];
   const log: Array<Row> = [];
-  let custo = 0, equipe = false, link = false;
+  let custo = 0, equipe = false, link = false, cache = 0;
   let fala = String(b.primeira ?? 'Oi');
   for (let t = 0; t < turnos; t++) {
     historico.push({ role: 'user', content: fala });
@@ -682,6 +768,7 @@ async function simular(admin: SupabaseClient, b: Row) {
     });
     if (!r) break;
     custo += r.cost;
+    cache += r.cacheLido;
     link ||= r.linkSent;
     const resp = r.reply || `Posso te ajudar com mais alguma coisa? O cardápio completo está aqui: ${deliveryUrl(tenant.slug)} 😉`;
     historico.push({ role: 'assistant', content: resp });
@@ -709,17 +796,19 @@ LINKS VÁLIDOS: começam com ${deliveryUrl(tenant.slug)} (podem ter &item=... e 
 CARDÁPIO COMPLETO (preço de hoje; INDISPONÍVEL marcado):
 ${items.map(itemLine).join('\n').slice(0, 16000)}`;
     const j = await client.messages.create({
-      model: JUDGE_MODEL, max_tokens: 3000,
+      model: JUDGE_MODEL, max_tokens: 6000,
       system: `Você avalia um atendente de WhatsApp de restaurante que deve VENDER com simpatia, seguindo à risca as instruções e os fatos que ele recebeu (vêm abaixo, em "INSTRUÇÕES E FATOS DO ATENDENTE"). Só conte como inventado o que NÃO está nesses fatos nem no retorno das ferramentas.
 Responda SÓ um JSON: {"nota":0-10,"vendeu":true|false,"problemas":[{"gravidade":"alta|media|baixa","trecho":"...","o_que":"..."}],"sugestao_prompt":"mudança concreta nas instruções que evitaria os problemas, ou vazio"}.
-"vendeu" = o cliente que queria comprar recebeu o link certo. Seja rigoroso: confira cada preço e item com o cardápio.`,
+"vendeu" = o cliente que queria comprar recebeu o link certo. Seja rigoroso: confira cada preço e item com o cardápio.
+Sobre links: o que importa é o link que o cliente recebeu. Um link válido que já tinha sido devolvido pela ferramenta em turno anterior pode ser reenviado sem nova chamada. Link geral (sem &item) é certo quando a pessoa só quer ver o cardápio; quando ela escolheu um item, o certo é o link com &item desse item. Confira se o &item aponta para o item que o cliente escolheu.
+Seja breve: no máximo 5 problemas, trechos curtos.`,
       messages: [{ role: 'user', content: `INSTRUÇÕES E FATOS DO ATENDENTE\n${fatos}\n\nPERSONA DO CLIENTE: ${b.persona ?? '-'}\n\nCONVERSA (com as ferramentas usadas):\n${JSON.stringify(log, null, 1).slice(0, 30000)}` }],
     });
     custo += (j.usage.input_tokens ?? 0) * 3 / 1e6 + (j.usage.output_tokens ?? 0) * 15 / 1e6;
     const txt = j.content.filter((x): x is Anthropic.TextBlock => x.type === 'text').map((x) => x.text).join('');
     try { avaliacao = JSON.parse(txt.slice(txt.indexOf('{'), txt.lastIndexOf('}') + 1)); } catch { avaliacao = { bruto: txt.slice(0, 2000) }; }
   }
-  return { id: b.id ?? null, persona: b.persona, equipe, link, custo_usd: Number(custo.toFixed(4)), conversa: log, avaliacao };
+  return { id: b.id ?? null, persona: b.persona, equipe, link, custo_usd: Number(custo.toFixed(4)), cache_lido: cache, conversa: log, avaliacao };
 }
 
 const pausado = (c: Row) => !!c.bot_paused_until && Date.parse(String(c.bot_paused_until)) > Date.now();
