@@ -14,7 +14,8 @@ describe('GraficoLinha', () => {
         { rotulo: '15h', valor: null, base: 40 },
       ]} />,
     );
-    expect(screen.getByText(/^pico R\$\s120,00$/)).toBeInTheDocument();
+    // Pico é do dia escolhido (100 às 12h), não da base (120)
+    expect(screen.getByText(/^pico R\$\s100,00 · 12h$/)).toBeInTheDocument();
     const caminhos = [...container.querySelectorAll('path')].map((p) => p.getAttribute('d') ?? '');
     // Base (tracejada) com 4 pontos; principal só com 2
     expect(caminhos.some((d) => (d.match(/[ML]/g) ?? []).length === 4)).toBe(true);

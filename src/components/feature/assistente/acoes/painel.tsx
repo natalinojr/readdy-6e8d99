@@ -209,8 +209,9 @@ export function GraficoLinha({ titulo, pontos, rotuloBase, formatar = brl }: {
         onPointerDown={(e) => escolher(e.clientX, e.currentTarget)}
         onPointerMove={(e) => { if (e.buttons || e.pointerType === 'mouse') escolher(e.clientX, e.currentTarget); }}>
         <line x1={E} x2={W - D} y1={H - B} y2={H - B} className="stroke-zinc-200" strokeWidth={1} />
-        <line x1={E} x2={W - D} y1={T} y2={T} className="stroke-zinc-100" strokeWidth={1} strokeDasharray="2 3" />
-        <text x={W - D} y={T - 1} textAnchor="end" className="fill-zinc-400" fontSize={8}>pico {formatar(max)}</text>
+        {/* Pico do dia escolhido (2026-09-27, dono): linha na altura dele, nunca o topo da escala (que pode ser a base) */}
+        <line x1={E} x2={W - D} y1={y(val(pico))} y2={y(val(pico))} className="stroke-zinc-200" strokeWidth={1} strokeDasharray="2 3" />
+        <text x={W - D} y={y(val(pico)) - 2} textAnchor="end" className="fill-zinc-400" fontSize={8}>pico {formatar(val(pico))} · {pontos[pico].rotulo}</text>
         {temBase && <path d={linha(pontos.map((q) => q.base ?? 0))} fill="none" className="stroke-zinc-400" strokeWidth={1.5} strokeDasharray="4 3" />}
         <path d={area} className="fill-violet-500/10" />
         <path d={principal} fill="none" className="stroke-violet-600" strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
