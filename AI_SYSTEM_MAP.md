@@ -3538,3 +3538,24 @@ Sem SW ativo o POST cai no Vercel e falha — por isso o destino só existe no S
   NÃO é do iFood (entrega própria/sob demanda); entregue pelo iFood (billing `DELIVERY_FEE_IFOOD`) a entrega é do iFood e
   fica fora — é o mesmo valor do Portal do Parceiro. Taxas não contam `DELIVERY_FEE_IFOOD`. Onde está: `acoes/ifood/comum.ts`
   (`vendidoDoPedido`), `IfoodApiViews` (Pedidos), `assistente-cron › ifoodResumo`, e a conta do Portal (`ifoodVendas`/`ifoodDashboard`).
+- **Delivery Fase 1 — GPS do motoboy + rastreio do cliente (2026-09-26)**: tabelas `delivery_driver_positions` (1 linha
+  por motoboy, última posição) e `delivery_driver_position_history` (histórico; cron `driver-positions-limpeza` apaga > 7 dias,
+  06h40 UTC). RLS: SELECT só `authenticated` com `auth_is_member_of(tenant_id)`; anon sem acesso; escrita só `service_role`.
+  Escrita pela RPC `fn_driver_ping` (security definer, só service_role): valida motoboy (loja + ativo), limita 1 gravação a
+  cada 10 s por motoboy, faz upsert + histórico e manda broadcast público `drivers-ping:<tenant>` (evento `driver_position`,
+  payload só `{ driver_id }` — a posição NUNCA trafega no canal público). Edge `motoboy-signal` (verify_jwt false) ganhou
+  `ping_position` e `track_order` (cliente: `tenant_id` + `order_number`, igual ao `get_order_status`; devolve a posição do
+  motoboy só desse pedido e só em rota: `out_for_delivery_at` + `motoboy_status='coletou'` + não entregue/cancelado/retirada;
+  posição > 15 min não sai). Previsão recalculada sem API externa: linha reta × 1,3 na velocidade da rota ORS do pedido
+  (`delivery_distance_km / delivery_route_min`, limitada a 12–45 km/h; sem rota = 25 km/h).
+  Front: `src/pages/motoboy/useMotoboyGps.ts` (watchPosition só com pedido dele `a_caminho_loja`/`coletou` ou **turno ligado**
+  — chave `erpos_motoboy_turno` no aparelho; envia com ≥15 s **e** ≥30 m, ou a cada 3 min parado; descarta precisão > 300 m;
+  Wake Lock para a tela não apagar) usado na lista `/entregas/:slug` e em `/motoboy/:id`; Gestor: `useDriverPositions`
+  (carga 1x + refetch com debounce 4 s no broadcast, só com o mapa aberto) e motos no `MapaEntregasGestor` (cinza > 10 min);
+  cliente: `RastreioMapa` (lazy, leaflet fora do bundle do cardápio) no `AcompanharPedido`, com `track_order` a cada 15 s só em rota.
+  **Limitação:** navegador só manda GPS com a tela aberta (o aviso "mantenha esta tela aberta" aparece para o motoboy).
+  **Decisão:** o rastreio foi para a `motoboy-signal` e não para o `get_order_status` da `delivery-write` porque a sessão só
+  tinha deploy por MCP (arquivo inline) e a `delivery-write` tem 137 KB — transcrever tudo é arriscado.
+  PEGADINHAS: (1) leaflet dentro de `Suspense`/lazy precisa de `map.invalidateSize()` antes do `fitBounds`, senão o ponto sai
+  cortado; (2) teste de edge sem curl (proxy bloqueia supabase.co no ambiente de nuvem): `net.http_post` no SQL e ler
+  `net._http_response` — a resposta chega assíncrona, e um MCP instável pode deixar a posição "velha" (> 15 min) entre chamadas.
