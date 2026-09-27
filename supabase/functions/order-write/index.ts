@@ -753,7 +753,9 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       const mappedOrigin = ORIGIN_MAP[origin] ?? "cashier";
       const mappedDest = DEST_MAP[destination] ?? "immediate";
       const allSkipKds = Array.isArray(items) && items.length > 0 && items.every((i: Record<string, unknown>) => i.skip_kds === true);
-      const isDeliveryOrigin = mappedOrigin === "delivery";
+      // Pedido de entrega só de itens sem cozinha: se quem entrega é o app (iFood/Rappi/Uber/99), já nasce
+      // entregue como antes; entrega PRÓPRIA nasce "pronto" e vai para o Gestor de Entregas/motoboy.
+      const isDeliveryOrigin = mappedOrigin === "delivery" && ["ifood", "rappi", "uber_eats", "99food"].includes(String(deliveryPlatform ?? ""));
       let initialOrderStatus = "new";
       if (isDeliveryOrigin && allSkipKds) { initialOrderStatus = "delivered"; } else if (allSkipKds) { initialOrderStatus = "ready"; }
       // Autoatendimento em dinheiro: o pedido fica SEGURADO (rascunho: fora do KDS, do gestor e sem
