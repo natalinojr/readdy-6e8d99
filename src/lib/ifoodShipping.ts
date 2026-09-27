@@ -20,7 +20,8 @@ export interface IfoodShippingConfig {
   last_poll_error: string | null;
   poll_fail_count: number;
   order_enabled: boolean;
-  order_mode: 'read_only' | 'operate';
+  order_mode: 'read_only' | 'operate' | 'funnel';
+  order_auto_confirm: boolean;
   order_merchant_ids: string[];
 }
 
@@ -154,6 +155,9 @@ export interface IfoodOrder {
   cancel_reason: string | null; cancel_requested: boolean; last_event: string | null; timeline: Record<string, string>;
   created_at: string; updated_at: string;
   takeout?: { takeoutDateTime?: string } | null; dine_in?: { deliveryDateTime?: string } | null;
+  /** Funil: pedido do ERPOS ligado (número/status) e por que ainda não entrou. */
+  order_id?: string | null; funnel_error?: string | null;
+  erpos?: { number: string | null; status: string; is_draft: boolean } | null;
   ifood_order_items?: IfoodOrderItem[];
 }
 
@@ -184,7 +188,7 @@ export const ifoodPodeDespachar = (p: Pick<IfoodOrder, 'order_type' | 'delivered
 /** Pedidos do iFood desde `desde` (ISO), com itens (RLS: só da loja da pessoa). */
 export async function fetchIfoodOrders(tenantId: string, desde: string): Promise<IfoodOrder[]> {
   const { data } = await supabase.from('ifood_orders')
-    .select('id, merchant_id, ifood_order_id, display_id, status, order_type, order_timing, sales_channel, delivered_by, is_test, ordered_at, customer_name, customer_document, customer_orders_count, pickup_code, delivery_observations, address, total, payments, benefits, extra_info, schedule, dispute, cancel_reason, cancel_requested, last_event, timeline, created_at, updated_at, takeout:raw->takeout, dine_in:raw->dineIn, ifood_order_items(id, idx, name, quantity, unit, unit_price, options_price, total_price, observations, external_code, options)')
+    .select('id, merchant_id, ifood_order_id, display_id, status, order_type, order_timing, sales_channel, delivered_by, is_test, ordered_at, customer_name, customer_document, customer_orders_count, pickup_code, delivery_observations, address, total, payments, benefits, extra_info, schedule, dispute, cancel_reason, cancel_requested, last_event, timeline, created_at, updated_at, takeout:raw->takeout, dine_in:raw->dineIn, order_id, funnel_error, erpos:orders!ifood_orders_order_id_fkey(number, status, is_draft), ifood_order_items(id, idx, name, quantity, unit, unit_price, options_price, total_price, observations, external_code, options)')
     .eq('tenant_id', tenantId).gte('created_at', desde).order('created_at', { ascending: false }).limit(300);
   return (data ?? []) as unknown as IfoodOrder[];
 }

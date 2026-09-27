@@ -165,7 +165,7 @@ export default function IfoodEntregaConfigModal({ tenantId, onClose, onChanged }
               {conectado && cfg && (
                 <section className="space-y-2">
                   <p className="text-xs font-bold text-zinc-700">3. Pedidos do iFood</p>
-                  <p className="text-[11px] text-zinc-500">Traz cada pedido do iFood com os itens para o ERPOS (CMV e estoque). A loja continua aceitando e despachando no Gestor de Pedidos do iFood.</p>
+                  <p className="text-[11px] text-zinc-500">Traz cada pedido do iFood com os itens para o ERPOS. Escolha se a loja continua operando no tablet do iFood ou se o pedido passa pela cozinha e pelas entregas do ERPOS.</p>
                   <label className="flex items-center gap-2 text-sm text-zinc-700 cursor-pointer">
                     <input type="checkbox" checked={cfg.order_enabled} disabled={!!busy}
                       onChange={(e) => run('ord-on', 'set_options', { order_enabled: e.target.checked, ...(e.target.checked && cfg.order_merchant_ids.length === 0 ? { order_merchant_ids: cfg.merchants.map((m) => m.id) } : {}) }, e.target.checked ? 'Pedidos do iFood ligados.' : 'Pedidos do iFood desligados.')} />
@@ -180,11 +180,26 @@ export default function IfoodEntregaConfigModal({ tenantId, onClose, onChanged }
                           {m.name}
                         </label>
                       ))}
-                      <label className="flex items-center gap-2 text-xs text-zinc-500 cursor-pointer pt-1">
-                        <input type="checkbox" checked={cfg.order_mode === 'operate'} disabled={!!busy}
-                          onChange={(e) => run('ord-mode', 'set_options', { order_mode: e.target.checked ? 'operate' : 'read_only' })} />
-                        Operar pedidos pelo ERPOS (confirmar, despachar, cancelar) — só para a homologação na loja de teste
-                      </label>
+                      <div className="pt-1 space-y-1">
+                        {([
+                          ['read_only', 'Só acompanhar', 'A loja aceita e despacha no tablet do iFood; o ERPOS só mostra os pedidos.'],
+                          ['funnel', 'Pedido entra no ERPOS', 'Vai para a cozinha (KDS e tickets), Gestor de Pedidos e Entregas, dá baixa no estoque; o ERPOS avisa o iFood a cada etapa (preparo, pronto, saiu).'],
+                          ['operate', 'Operar à mão (homologação)', 'Botões de confirmar/preparo/pronto/despachar na tela Pedidos iFood — só para a homologação na loja de teste.'],
+                        ] as const).map(([v, t, d]) => (
+                          <label key={v} className="flex items-start gap-2 text-xs text-zinc-600 cursor-pointer">
+                            <input type="radio" name="ifood-order-mode" className="mt-0.5" checked={cfg.order_mode === v} disabled={!!busy}
+                              onChange={() => run('ord-mode', 'set_options', { order_mode: v }, v === 'funnel' ? 'Pedidos do iFood entram no ERPOS a partir de agora.' : 'Modo dos pedidos salvo.')} />
+                            <span><b className="text-zinc-700">{t}</b> — {d}</span>
+                          </label>
+                        ))}
+                        {cfg.order_mode === 'funnel' && (
+                          <label className="flex items-center gap-2 text-xs text-zinc-600 cursor-pointer pl-5">
+                            <input type="checkbox" checked={cfg.order_auto_confirm} disabled={!!busy}
+                              onChange={(e) => run('ord-auto', 'set_options', { order_auto_confirm: e.target.checked }, e.target.checked ? 'Pedidos do iFood aceitos sozinhos.' : 'Pedidos do iFood esperam o Aceitar em Pedidos iFood.')} />
+                            Aceitar sozinho (desligado: alguém aperta "Aceitar" em Pedidos iFood antes do prazo do iFood)
+                          </label>
+                        )}
+                      </div>
                     </div>
                   )}
                 </section>

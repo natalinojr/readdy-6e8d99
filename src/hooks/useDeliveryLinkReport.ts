@@ -110,6 +110,7 @@ export function useDeliveryLinkReport(periodo: string) {
         .eq('origin_type', 'delivery')
         .in('delivery_platform', ['propria', 'retirada'])
         .eq('is_training', false)
+        .is('ifood_order_id', null) // pedido do iFood pelo funil: venda contada pelo iFood
         .gte('created_at', fromTs)
         .lte('created_at', toTs)
         .order('created_at', { ascending: false });

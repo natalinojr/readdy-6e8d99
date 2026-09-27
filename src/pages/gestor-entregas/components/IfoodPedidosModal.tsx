@@ -7,6 +7,7 @@ import IfoodVinculosModal from './IfoodVinculosModal';
 interface Props {
   tenantId: string;
   operar: boolean; // modo "operar" (homologação na loja de teste); padrão = só leitura
+  funil?: boolean; // pedido entra no ERPOS (cozinha/entregas avisam o iFood); aqui ficam aceitar e cancelar
   onClose: () => void;
 }
 
@@ -19,6 +20,7 @@ const PAGTO: Record<string, string> = {
   CREDIT: 'Crédito', DEBIT: 'Débito', CASH: 'Dinheiro', PIX: 'Pix', MEAL_VOUCHER: 'Vale-refeição', FOOD_VOUCHER: 'Vale-alimentação',
   DIGITAL_WALLET: 'Carteira digital', GIFT_CARD: 'Vale-presente', OTHER: 'Outro',
 };
+const ERPOS_STATUS: Record<string, string> = { draft: 'aguardando aceite', new: 'na fila da cozinha', preparing: 'em preparo', ready: 'pronto', delivered: 'entregue', cancelled: 'cancelado' };
 const QUEM: Record<string, string> = { IFOOD: 'iFood', MERCHANT: 'loja', EXTERNAL: 'parceiro', CHAIN: 'rede' };
 const hora = (iso: string | null) => (iso ? new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '');
 const hojeInicio = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.toISOString(); };
@@ -28,7 +30,7 @@ const hojeInicio = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return 
  * observações, pagamento (bandeira/troco), cupons e quem paga, código de coleta e CPF da nota.
  * No modo "operar" (homologação na loja de teste) aparecem confirmar / preparo / pronto / despachar / cancelar.
  */
-export default function IfoodPedidosModal({ tenantId, operar, onClose }: Props) {
+export default function IfoodPedidosModal({ tenantId, operar, funil = false, onClose }: Props) {
   useVoltarFecha(true, onClose, 'ifood-pedidos');
   const [pedidos, setPedidos] = useState<IfoodOrder[]>([]);
   const [carregando, setCarregando] = useState(true);
@@ -81,7 +83,7 @@ export default function IfoodPedidosModal({ tenantId, operar, onClose }: Props) 
             <h4 className="text-sm font-bold text-zinc-800">Pedidos do iFood — hoje</h4>
             <p className="text-xs text-zinc-500 truncate">
               {resumo.n} pedido{resumo.n === 1 ? '' : 's'} · {fmtMoeda(resumo.total)}{resumo.cancelados ? ` · ${resumo.cancelados} cancelado${resumo.cancelados === 1 ? '' : 's'}` : ''}
-              {' · '}{operar ? <b className="text-amber-700">modo operar</b> : 'só leitura (a loja opera no Gestor do iFood)'}
+              {' · '}{operar ? <b className="text-amber-700">modo operar</b> : funil ? <b className="text-emerald-700">entram no ERPOS</b> : 'só leitura (a loja opera no Gestor do iFood)'}
             </p>
           </div>
           <button onClick={() => setVinculos(true)} title="Ligar produtos e complementos do iFood ao cardápio (baixa de estoque)" className="px-2.5 py-1.5 rounded-lg border border-zinc-200 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 shrink-0">
@@ -154,10 +156,26 @@ export default function IfoodPedidosModal({ tenantId, operar, onClose }: Props) 
                       </div>
                     </div>
 
+                    {funil && (
+                      <p className={`rounded-lg px-2 py-1.5 border ${p.funnel_error ? 'bg-amber-50 border-amber-100 text-amber-800' : p.erpos?.is_draft ? 'bg-sky-50 border-sky-100 text-sky-800' : p.erpos ? 'bg-emerald-50 border-emerald-100 text-emerald-800' : 'bg-zinc-50 border-zinc-100 text-zinc-500'}`}>
+                        <i className="ri-store-3-line" />{' '}
+                        {p.funnel_error ? p.funnel_error
+                          : p.erpos?.is_draft ? 'No ERPOS: aguardando aceite (ainda não foi para a cozinha).'
+                          : p.erpos ? `No ERPOS: pedido ${p.erpos.number ?? ''} · ${ERPOS_STATUS[p.erpos.status] ?? p.erpos.status}`
+                          : p.status === 'cancelled' ? 'Cancelado antes de entrar no ERPOS.' : 'Entrando no ERPOS…'}
+                      </p>
+                    )}
+
                     <div className="flex flex-wrap gap-1.5">
                       <button disabled={!!busy} onClick={() => reler(p)} className="px-2.5 py-1.5 rounded-lg border border-zinc-200 text-zinc-600 font-semibold disabled:opacity-50">
                         <i className={'ri-refresh-line' + (busy === p.id + 'refresh' ? ' animate-spin' : '')} /> Reler do iFood
                       </button>
+                      {funil && !['concluded', 'cancelled'].includes(p.status) && (
+                        <>
+                          {p.erpos?.is_draft && <Botao on={() => acao(p, 'accept')} b={busy === p.id + 'accept'} t="Aceitar (vai para a cozinha)" cor="bg-emerald-600" />}
+                          {!p.cancel_requested && <Botao on={() => abrirMotivos(p)} b={busy === p.id + 'reasons'} t={p.erpos?.is_draft ? 'Recusar' : 'Cancelar pedido'} cor="bg-red-600" />}
+                        </>
+                      )}
                       {operar && !['concluded', 'cancelled'].includes(p.status) && (
                         <>
                           {p.status === 'placed' && <Botao on={() => acao(p, 'confirm')} b={busy === p.id + 'confirm'} t="Confirmar" cor="bg-emerald-600" />}

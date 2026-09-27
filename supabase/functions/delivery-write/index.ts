@@ -400,7 +400,8 @@ async function emitDeliveryOutputs(admin: any, ctx: DeliveryOutputCtx) {
         });
       } catch { /* non-blocking */ }
 
-      await notifyDeliveryOrderCreated({
+      // Sem telefone (ex.: pedido do iFood, cliente mascarado) não há para quem mandar.
+      if (cleanPhone || customer_phone) await notifyDeliveryOrderCreated({
         tenant_id,
         order_id: orderId,
         order_number: orderNumber,
@@ -1592,7 +1593,9 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       if (!internalKey || req.headers.get("x-internal-key") !== internalKey) return jsonErr("Unauthorized", 401);
       const { tenant_id, order_id } = body;
       if (!tenant_id || !order_id) return jsonErr("tenant_id e order_id obrigatorios", 400);
-      const r = await releaseHeldOrder(admin, String(tenant_id), String(order_id), "PIX pelo app (PAGO)", null);
+      // payment_label: o funil do iFood (ifood-shipping) libera o pedido do iFood com a forma dele.
+      const label = typeof body.payment_label === "string" && body.payment_label.trim() ? body.payment_label.trim().slice(0, 80) : "PIX pelo app (PAGO)";
+      const r = await releaseHeldOrder(admin, String(tenant_id), String(order_id), label, null);
       if (r.error) return jsonErr(r.error, r.code ?? 400);
       return new Response(JSON.stringify({ _v: "v14", ok: true, released: !r.already, already: !!r.already }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
