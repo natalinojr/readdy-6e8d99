@@ -10,7 +10,7 @@ Pasta separada do site: tem `package.json` próprio e **não entra no build da V
   `@capgo/capacitor-native-biometric` (digital/rosto). O site chama os plugins por
   `window.Capacitor.Plugins.*`, sem importar nada no bundle da web.
 
-## GPS do motoboy com a tela apagada (código pronto em 2026-09-27 — falta gerar o APK e testar)
+## GPS do motoboy com a tela apagada (APK gerado em 2026-09-27 — falta testar no celular)
 
 Plugin `@capacitor-community/background-geolocation` (serviço em primeiro plano, tipo `location`, com o aviso fixo
 "ERPOS — entrega em andamento" na barra). O manifesto do próprio plugin traz as permissões (localização,
@@ -25,11 +25,10 @@ entrega) → aceitar a localização → apagar a tela e andar: a moto deve cont
 
 ## Gerar o APK de teste (neste PC)
 
-**2026-09-27: o Android SDK não está mais em `C:\Users\natal\AppData\Local\Android\Sdk`** (o build parou em
-"SDK location not found"). Reinstalar pelo Android Studio (More Actions › SDK Manager › Android SDK Platform 36) e
-rodar o build pelo **PowerShell** (no Git Bash o `npm run apk` não acha o `gradlew.bat`):
-`cd android-app; npx cap sync android; cd android; .\gradlew.bat assembleDebug` (com `JAVA_HOME` apontando para
-`C:\Program Files\Android\Android Studio\jbr`).
+**SDK reinstalado em 2026-09-27** (tinha sumido): cmdline-tools + `platform-tools`, `platforms;android-36`,
+`build-tools;35.0.0` em `C:\Users\natal\AppData\Local\Android\Sdk`, licenças aceitas. Gerar pelo **PowerShell**
+(no Git Bash o `npm run apk` não acha o `gradlew.bat`):
+`$env:JAVA_HOME="C:\Program Files\Android\Android Studio\jbr"; $env:ANDROID_HOME="$env:LOCALAPPDATA\Android\Sdk"; cd android-app; npx cap sync android; cd android; .\gradlew.bat assembleDebug`.
 
 Requisitos já instalados em 2026-09-15: Android Studio (JDK 21 em `...\Android Studio\jbr`), SDK 36.
 
