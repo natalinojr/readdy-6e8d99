@@ -58,13 +58,24 @@ export async function salvarComprovante(admin: any, tenantId: string, ref: strin
 const brl = (n: number) => `R$ ${Number(n).toFixed(2).replace('.', ',').replace(/\B(?=(\d{3})+(?!\d))/g, '.')}`;
 const ROTULO: Record<TipoPedido, string> = { reembolso: 'Reembolso', freelancer: 'Freelancer', fornecedor: 'Fornecedor sem nota' };
 
+const SEMANA = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
+/** '2026-09-26' → '26/09 (sáb)'. */
+const diaCurto = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)} (${SEMANA[new Date(`${iso}T12:00:00Z`).getUTCDay()]})`;
+/** Dias trabalhados do freela para o dono saber o que está aprovando: "Dias 24/09 (qui), 26/09 (sáb)". */
+export function textoDias(dias: string[] | null | undefined): string {
+  const lista = [...new Set((dias ?? []).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)))].sort();
+  if (!lista.length) return '';
+  return `${lista.length > 1 ? 'Dias' : 'Dia'} ${lista.map(diaCurto).join(', ')}`;
+}
+
 /** Avisa o dono no 📥 do chat (uma pendência por pedido). */
-export async function pendenciaDoPedido(admin: any, p: { id: string; tenant_id: string; tipo: TipoPedido; valor: number; favorecido_nome: string; descricao: string; solicitado_por_nome: string | null }) {
+export async function pendenciaDoPedido(admin: any, p: { id: string; tenant_id: string; tipo: TipoPedido; valor: number; favorecido_nome: string; descricao: string; solicitado_por_nome: string | null; dias?: string[] | null }) {
+  const dias = p.tipo === 'freelancer' ? textoDias(p.dias) : '';
   const { error } = await admin.rpc('fn_pendencia_upsert', {
     p_tenant: p.tenant_id, p_kind: 'pedido_pagamento', p_ref: p.id,
     p_titulo: `${ROTULO[p.tipo]} de ${brl(p.valor)} — ${p.favorecido_nome}`,
-    p_detalhe: `${p.descricao}. Pedido por ${p.solicitado_por_nome ?? 'alguém da loja'}. Só vira conta a pagar depois de aprovado.`,
-    p_payload: { pedido_id: p.id, tipo: p.tipo, valor: p.valor },
+    p_detalhe: `${p.descricao.replace(/\.$/, '')}.${dias ? ` ${dias}.` : ''} Pedido por ${p.solicitado_por_nome ?? 'alguém da loja'}. Só vira conta a pagar depois de aprovado.`,
+    p_payload: { pedido_id: p.id, tipo: p.tipo, valor: p.valor, ...(p.dias?.length ? { dias: p.dias } : {}) },
     p_rota: '/receber?aprovar=1', p_urgencia: 'normal', p_acao_requerida: true, p_origem: 'app', p_reabrir: false,
   });
   if (error) console.error('[pedidos-pagamento] pendência', error.message);
