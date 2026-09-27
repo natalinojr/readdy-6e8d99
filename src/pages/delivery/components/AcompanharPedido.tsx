@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, lazy, Suspense } from 'react';
+import type { Rastreio } from './RastreioMapa';
 import { formatCurrency } from '@/lib/formatters';
 import TrocarPagamentoDelivery, { type MetodoAlternativo } from './TrocarPagamentoDelivery';
 
@@ -67,6 +68,15 @@ function getStatusLabel(status: string): string {
   return map[status] || status;
 }
 
+// Mapa carregado só quando o pedido está em rota (leaflet fora do bundle do cardápio).
+const RastreioMapa = lazy(() => import('./RastreioMapa'));
+const RASTREIO_MS = 15000;
+
+function getMotoboySignalUrl(): string {
+  const base = (import.meta.env.VITE_PUBLIC_SUPABASE_URL as string || '').replace(/\/$/, '');
+  return base + '/functions/v1/motoboy-signal';
+}
+
 function getDeliveryWriteUrl(): string {
   const base = (import.meta.env.VITE_PUBLIC_SUPABASE_URL as string || '').replace(/\/$/, '');
   return base + '/functions/v1/delivery-write';
@@ -132,6 +142,29 @@ export default function AcompanharPedido(props: Props) {
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
   }, [numeroPedido, tenantId]);
+
+  // Rastreio ao vivo: só enquanto o pedido está em rota (a posição do motoboy vem da
+  // motoboy-signal › track_order, só deste pedido). Fora da rota não faz nenhuma chamada.
+  const [rastreio, setRastreio] = useState<Rastreio | null>(null);
+  const emRotaAgora = !!orderData && !!orderData.out_for_delivery_at && !orderData.is_retirada
+    && orderData.status !== 'delivered' && orderData.status !== 'cancelled';
+  useEffect(function () {
+    if (!emRotaAgora || !tenantId || !numeroPedido) { setRastreio(null); return; }
+    let vivo = true;
+    function buscar() {
+      fetch(getMotoboySignalUrl(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'track_order', tenant_id: tenantId, order_number: numeroPedido }),
+      })
+        .then(function (res) { return res.json(); })
+        .then(function (data) { if (vivo && data && data.ok) setRastreio(data.rastreio ?? null); })
+        .catch(function () { /* mantém a última posição */ });
+    }
+    buscar();
+    const id = setInterval(buscar, RASTREIO_MS);
+    return function () { vivo = false; clearInterval(id); };
+  }, [emRotaAgora, tenantId, numeroPedido]);
 
   function getStepIndex(status: string): number {
     const order = isRetirada ? ['new', 'preparing', 'ready', 'delivered'] : ['new', 'preparing', 'ready', 'em_rota', 'delivered'];
@@ -296,6 +329,37 @@ export default function AcompanharPedido(props: Props) {
             <p className="text-[10px] font-bold text-amber-700 uppercase tracking-wider">Previsão de entrega até</p>
             <p className="text-lg font-black text-zinc-800 leading-tight">{formatTime(new Date(previsaoEntregaMs!).toISOString())}</p>
           </div>
+        </div>
+      ) : null}
+
+      {/* Rastreio ao vivo: a moto até a casa do cliente + previsão recalculada */}
+      {status === 'em_rota' && rastreio && (rastreio.motoboy || rastreio.destino) ? (
+        <div className="mb-6">
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-[10px] font-bold text-amber-700 uppercase tracking-wider flex items-center gap-1">
+              <i className="ri-motorbike-line" /> Seu pedido está a caminho
+            </p>
+            {rastreio.eta_min != null ? (
+              <p className="text-xs font-black text-zinc-800">
+                chega em ~{rastreio.eta_min} min <span className="font-medium text-zinc-400">({formatTime(new Date(Date.now() + rastreio.eta_min * 60000).toISOString())})</span>
+              </p>
+            ) : null}
+          </div>
+          {rastreio.motoboy ? (
+            <Suspense fallback={<div className="h-52 w-full rounded-2xl bg-zinc-100 animate-pulse" />}>
+              <RastreioMapa rastreio={rastreio} />
+            </Suspense>
+          ) : (
+            <p className="text-xs text-zinc-500 px-3 py-2 bg-zinc-50 rounded-xl border border-zinc-100">
+              O entregador saiu com seu pedido. A localização dele aparece aqui assim que o GPS do celular dele atualizar.
+            </p>
+          )}
+          {rastreio.motoboy ? (
+            <p className="text-[10px] text-zinc-400 mt-1">
+              Localização atualizada às {formatTime(rastreio.motoboy.atualizado_em)}
+              {rastreio.distancia_km != null ? ` · cerca de ${rastreio.distancia_km.toLocaleString('pt-BR')} km` : ''}
+            </p>
+          ) : null}
         </div>
       ) : null}
 
