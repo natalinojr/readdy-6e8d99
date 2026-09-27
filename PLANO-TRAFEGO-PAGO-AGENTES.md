@@ -133,6 +133,7 @@ Tela própria (`/estudio`, menu Marketing), **não** dentro do Tráfego Pago. Se
 **b) Biblioteca.** Fotos do cardápio (`menu_items.photo_url`, já existentes), logo, fotos extras enviadas, referências. Haiku visão dá uma **nota de qualidade** a cada foto (nitidez, luz, enquadramento) → o sistema sabe quais pratos têm foto boa para anúncio e **avisa quais precisam de foto nova**.
 
 **b2) Banco de imagens do usuário (link externo).** A loja pode **ligar o acervo que já tem** em vez de subir foto por foto:
+- **Qualquer nuvem por link (decisão do dono):** colar o link da pasta compartilhada; o sistema detecta o provedor.
 - **OneDrive/SharePoint:** reaproveitar a conexão que já existe (Edge `ms-graph`, tabela `ms_graph_connections`, ação `browse`). O dono escolhe uma pasta; o Estúdio lê dela.
 - **Google Drive / Dropbox:** mesmo padrão (OAuth por loja, token só na Edge), numa fase seguinte.
 - **Instagram/Facebook da própria loja:** puxar os posts antigos como referência de estilo (usa a conexão Meta existente + `instagram_basic`).
@@ -151,7 +152,7 @@ Como funciona: sincronização periódica (ex.: 1×/dia) que **indexa** as image
 **e) Quem usa o Estúdio.**
 - **Tráfego Pago:** `rotate_creative` e `create_campaign` viram *pedido de arte* → Estúdio entrega 2–3 variações → Revisor → sobe como criativo novo (teste A/B no mesmo conjunto).
 - **Cardápio/Delivery:** "padronizar foto do item", "gerar capa do cardápio", "arte do combo do dia".
-- **Promoções/Vouchers, Instagram orgânico, WhatsApp** (arte da promoção para enviar), no futuro.
+- **Promoções/Vouchers e WhatsApp** (arte da promoção para enviar), no futuro. (Post orgânico no Instagram fica fora: decisão do dono, 2026-09-27.)
 
 Contrato entre módulos: uma Edge Function `estudio` com `request_creative {tenant_id, origem, objetivo, item_ids?, formatos[], texto_sugerido?, prazo}` → grava em `creative_requests` → processa → devolve `creative_ids`. O Tráfego Pago só conhece essa interface.
 
@@ -211,7 +212,7 @@ Integração no cardápio: botão "Gerar arte/foto padronizada" no item, que abr
 | **F4** | **Monitor** 3/3h + **Analista de Resultados** (arte ↔ resultado ↔ pedidos ERPOS) + relatório semanal | F3 |
 | **F5a** | **Inteligência da loja**: fatos por canal (balcão, mesa, autoatendimento, delivery próprio, iFood, retirada) + margem + estoque + clientes; relatório semanal "oportunidades" só para leitura | nada (pode vir antes, em paralelo à F1) |
 | **F5b** | **Estrategista** semanal gerando propostas + fila de aprovação (permissão `marketing_aprovar_estrategia`, tela Aprovações) + avaliação da estratégia depois do prazo + níveis de autonomia 0–3 | F5a + F4 |
-| **F6** (opcional) | IA geradora de imagem para fundo/remover fundo; publicação orgânica no Instagram/Facebook | decisão do dono + App Review Meta |
+| **F6** (opcional) | IA de imagem (opção escolhida pelo dono entre B, C e D) | decisão do dono |
 
 Cada fase: testar na loja **Testes PDV** e, para a Meta, com uma conta de anúncios de teste antes de ligar em loja real.
 
@@ -219,16 +220,16 @@ Cada fase: testar na loja **Testes PDV** e, para a Meta, com uma conta de anúnc
 
 ## 8. Decisões que são do dono
 
-1. **Autonomia inicial:** começar no nível 1 (protege) e subir depois? (recomendado)
-2. **Teto de gasto com IA** por loja/mês (ex.: R$ 30) para travar custo dos agentes.
-3. **Opus semanal**: ok usar Opus só na revisão estratégica semanal?
-4. **Imagem gerada por IA externa** (fase F6): quer? Qual fornecedor/custo aceitável? Ou só modelos com as fotos reais?
-5. **Publicação orgânica** (posts no Instagram, não só anúncio) entra no escopo?
-6. **App Review da Meta** para as permissões de escrita/publicação: quem cuida (é feito no painel da Meta pelo dono)?
-7. **Banco de imagens:** onde estão as fotos hoje (OneDrive, Google Drive, Dropbox, só no Instagram)? Define qual conector vem primeiro.
+1. **Autonomia inicial:** explicado ao dono em 2026-09-27; aguardando escolha do nível (recomendado: nível 1).
+2. ~~Teto de gasto com IA~~ **Decidido (2026-09-27):** item de configuração por loja, definido pelos usuários da loja (quem tem acesso ao Tráfego Pago). Ao atingir o teto no mês, os agentes param e avisam; as travas em código (Monitor sem IA) continuam.
+3. ~~Opus semanal~~ **Decidido (2026-09-27):** sim, Opus só na revisão estratégica semanal.
+4. **Imagem gerada por IA externa:** opções apresentadas ao dono em 2026-09-27 (A: sem IA de imagem; B: editar a foto real; C: foto real + cenário gerado; D: imagem 100% gerada, nunca como foto de prato). Aguardando escolha.
+5. ~~Publicação orgânica~~ **Decidido (2026-09-27):** não entra. Só anúncios pagos.
+6. ~~App Review~~ **Decidido (2026-09-27):** a conexão e as permissões de cada loja ficam com os usuários da loja que têm acesso ao Tráfego Pago. Observação: o App Review em si é feito **uma vez** no app Meta do ERPOS (dono do app), não por loja; depois de aprovado, cada loja só conecta.
+7. ~~Banco de imagens~~ **Decidido (2026-09-27):** qualquer nuvem, por link. O Estúdio aceita um link de pasta compartilhada (Google Drive, OneDrive, Dropbox, iCloud, Mega, etc.), detecta o provedor e usa o leitor dele; pasta privada que o link não abre pede login (OAuth) daquele provedor.
 8. ~~Aprovação de estratégias~~ **Decidido (2026-09-27):** o administrador de cada loja configura quem aprova e as faixas de valor; padrão = só admin.
 9. ~~iFood × próprio~~ **Decidido (2026-09-27):** o delivery próprio é independente do iFood; pode ter qualquer preço. Oferta "mais barato no próprio" está liberada.
-10. Quem aprova artes (entra nas mesmas regras de aprovação configuradas pelo admin): só o dono/admin, ou um papel de "marketing" nas permissões?
+10. ~~Quem aprova artes~~ **Decidido (2026-09-27):** entra nas regras de aprovação configuradas pelo admin.
 
 ---
 
