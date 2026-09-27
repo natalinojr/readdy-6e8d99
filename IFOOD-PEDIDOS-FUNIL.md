@@ -15,8 +15,8 @@ pronto, despachar, cancelar, disputa) na edge `ifood-shipping` (ver `IFOOD-MODUL
 - **Complementos também dão baixa de estoque** (vínculo do complemento com a opção do cardápio / ficha).
 - **NFC-e pelo valor da venda** (itens + entrega − desconto pago pela loja). Comissão e taxas do iFood NÃO abatem a
   nota: são serviço do iFood (despesa, já vem pela conciliação). Dono: "faz do jeito certo contabilmente".
-- **Conflito aberto:** outra sessão (migration `20260927180000_ifood_motoboy_proprio.sql`, sem commit) decidiu o
-  contrário ("pedido do iFood NÃO vira linha em orders"). Etapa 3 só depois do dono decidir.
+- Conflito com a "Fase 4 motoboy do iFood" (pedido só em `ifood_orders`) **resolvido**: o dono confirmou este desenho;
+  a outra sessão desfez a Fase 4 (commit ea4a65f + migration 20260927190000). Ver seção "Motoboy da loja" no fim.
 
 ## Configuração por loja (`ifood_pdv_config`)
 - `order_mode`: `read_only` (hoje) | `funnel` (novo: pedido entra no ERPOS e o ERPOS avisa o iFood).
