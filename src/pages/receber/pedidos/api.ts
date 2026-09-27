@@ -10,6 +10,8 @@ export interface PermsPedido { pag_reembolso: boolean; pag_freelancer: boolean; 
 export interface ContextoPedidos {
   perms: PermsPedido;
   para_aprovar: number;
+  /** Aprovados que ainda não foram pagos (Pix já enviado pelo Inter não conta). Ausente em Edge antiga. */
+  aprovados_nao_pagos?: number;
   nome: string;
   ultimo_reembolso: { pix_chave: string; nome: string } | null;
 }

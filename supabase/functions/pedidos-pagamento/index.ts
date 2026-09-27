@@ -388,17 +388,29 @@ Deno.serve(async (req) => {
     switch (action) {
       case 'contexto': {
         let aprovar = 0;
+        let aprovadosNaoPagos = 0;
         if (aprovador) {
-          const { count } = await admin.from('fin_payment_requests').select('id', { count: 'exact', head: true })
-            .eq('tenant_id', tenantId).eq('status', 'pendente');
+          const [{ count }, { data: aprov }] = await Promise.all([
+            admin.from('fin_payment_requests').select('id', { count: 'exact', head: true })
+              .eq('tenant_id', tenantId).eq('status', 'pendente'),
+            admin.from('fin_payment_requests').select('id, bill_id, dre_category_id, comprovante_path')
+              .eq('tenant_id', tenantId).eq('status', 'aprovada').order('created_at', { ascending: false }).limit(300),
+          ]);
           aprovar = count ?? 0;
+          // Número no botão Aprovar (dono, 2026-09-27): aprovados que ainda não foram pagos. Pix que já
+          // saiu pelo Inter (só falta a baixa do extrato) não conta — o dinheiro já foi.
+          const lista = aprov ?? [];
+          for (let i = 0; i < lista.length; i += 100) {
+            const com = await comPagamento(ctx, lista.slice(i, i + 100));
+            aprovadosNaoPagos += com.filter((p: any) => !p.pago && p.pix_inter !== 'pago').length;
+          }
         }
         // Última chave Pix usada pela pessoa num reembolso (evita digitar toda vez)
         const { data: ult } = await admin.from('fin_payment_requests').select('pix_chave, favorecido_nome')
           .eq('tenant_id', tenantId).eq('solicitado_por', caller.userId).eq('tipo', 'reembolso')
           .not('pix_chave', 'is', null).order('created_at', { ascending: false }).limit(1).maybeSingle();
         return json({
-          perms, para_aprovar: aprovar,
+          perms, para_aprovar: aprovar, aprovados_nao_pagos: aprovadosNaoPagos,
           nome: await nomeDoUsuario(admin, caller.userId, caller.email),
           ultimo_reembolso: ult ? { pix_chave: ult.pix_chave, nome: ult.favorecido_nome } : null,
         });

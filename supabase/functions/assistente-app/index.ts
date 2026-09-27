@@ -500,6 +500,56 @@ Deno.serve(async (req) => {
       return json({ success: true, data: { payments: await payCards(admin, data ?? []) } });
     }
 
+    // Histórico de solicitações de pagamento (dono, 2026-09-27): no Financeiro cada mudança de status é
+    // uma mensagem solta ("aguardando aprovação", depois "pago") e o mesmo Pix aparecia 2–3 vezes.
+    // Aqui é UMA linha por solicitação, com o status atual e a linha do tempo das mudanças.
+    if (action === 'payments_history') {
+      const LIMITE = 30;
+      const filtro = String(body.filtro ?? 'todos');
+      let q = admin.from('fin_inter_payments').select('*').eq('chat_id', chatKey);
+      if (filtro === 'aberto') q = q.in('status', PAY_OPEN);
+      else if (filtro === 'pagos') q = q.eq('status', 'paid');
+      else if (filtro === 'nao_pagos') q = q.in('status', ['cancelled', 'rejected', 'failed', 'expired']);
+      const antes = String(body.before ?? '');
+      if (antes && !Number.isNaN(Date.parse(antes))) q = q.lt('created_at', antes);
+      const { data, error } = await q.order('created_at', { ascending: false }).limit(LIMITE + 1);
+      if (error) throw new Error(error.message);
+      const rows = (data ?? []).slice(0, LIMITE);
+      const cards = await payCards(admin, rows);
+      const ids = rows.map((r) => String(r.id));
+      const lojaIds = [...new Set(rows.map((r) => String(r.tenant_id)))];
+      const [{ data: msgs }, { data: lojas }] = await Promise.all([
+        ids.length
+          ? admin.from('asst_messages').select('content, created_at, channel').eq('chat_id', chatKey).like('content', '[Pagamento %')
+            .or(ids.map((id) => `content.like.*id ${id}`).join(',')).order('id', { ascending: true }).limit(600)
+          : Promise.resolve({ data: [] as { content: string; created_at: string; channel: string }[] }),
+        lojaIds.length ? admin.from('tenants').select('id, name').in('id', lojaIds) : Promise.resolve({ data: [] as { id: string; name: string }[] }),
+      ]);
+      const passos = new Map<string, { at: string; texto: string; canal: string }[]>();
+      for (const m of msgs ?? []) {
+        const c = String(m.content);
+        const id = c.match(/\]\s*id\s+(\S+)\s*$/)?.[1];
+        const st = c.match(/^\[Pagamento [^:\]]*: ([^\]]+)\]/)?.[1];
+        if (!id || !st) continue;
+        const texto = st.replace(/\s*\(atualizado automaticamente\)/i, '').replace(/\s*—\s*pelo ERPOS\s*$/i, '').replace(/^cancelado pelo ERPOS$/i, 'cancelado').trim();
+        const lista = passos.get(id) ?? [];
+        // Mesma frase repetida (o cron confere de novo e grava igual): fica só a primeira.
+        if (lista[lista.length - 1]?.texto !== texto) lista.push({ at: m.created_at, texto, canal: String(m.channel ?? '') });
+        passos.set(id, lista);
+      }
+      const nomeLoja = new Map((lojas ?? []).map((l) => [String(l.id), String(l.name)]));
+      const payments = cards.map((c, i) => ({
+        ...c,
+        loja: nomeLoja.get(String(rows[i].tenant_id)) ?? null,
+        origem: rows[i].channel ?? null,
+        sent_at: rows[i].sent_at ?? null,
+        updated_at: rows[i].updated_at ?? null,
+        substituido: !!rows[i].replaced_by && rows[i].replaced_by !== rows[i].id,
+        linha_do_tempo: passos.get(String(rows[i].id)) ?? [],
+      }));
+      return json({ success: true, data: { payments, has_more: (data ?? []).length > LIMITE } });
+    }
+
     if (action === 'pay') {
       const id = String(body.id ?? '');
       const op = String(body.op ?? '');
