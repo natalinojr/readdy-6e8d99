@@ -22,7 +22,8 @@
 
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
 import Anthropic from 'npm:@anthropic-ai/sdk@0.125.0';
-import { waConfig, waOwnNumber, waSendText, type WaConfig } from '../_shared/wa.ts';
+import { graph, waConfig, waOwnNumber, waSendText, type WaConfig } from '../_shared/wa.ts';
+import { assinarWebhook, confirmarCodigo, criarNumero, desregistrar, esConfig, nomeValido, numerosDaConta, pedirCodigo, registrar, separarNumero, situacao, trocarCodigo } from './numero.ts';
 import { acharItem, arrumarLinks, brl, conferir, semBastidores, DIAS, disseQueChamouEquipe, idiomaDe, linkQueFalta, menuItems, type MenuItem, norm, precoTxt, spNow, temTermo } from './travas.ts';
 
 const corsHeaders = {
@@ -76,8 +77,16 @@ const fill = (tpl: string, v: Record<string, string>) => tpl.replace(/\{(\w+)\}/
 const firstName = (s: string | null | undefined) => String(s ?? '').trim().split(/\s+/)[0] ?? '';
 
 // ── Envio: número próprio da loja ou o compartilhado (asst_settings.wa_public) ──
+// Credencial do número quando ele é da conta do CLIENTE (Conectar WhatsApp); null = token do sistema.
+async function tokenDoNumero(admin: SupabaseClient, tenantId: string, phoneId: string | null): Promise<string | null> {
+  if (!phoneId) return null;
+  const { data } = await admin.from('wa_loja_credenciais').select('token').eq('tenant_id', tenantId).eq('phone_id', phoneId).maybeSingle();
+  return data?.token ? String(data.token) : null;
+}
 async function cfgFor(admin: SupabaseClient, conv: Row, bot: Row | null): Promise<WaConfig> {
-  if (conv.via === 'proprio' && bot?.phone_id) return { transport: 'cloud', phone_id: String(bot.phone_id), waba_id: bot.waba_id ?? null };
+  if (conv.via === 'proprio' && bot?.phone_id) {
+    return { transport: 'cloud', phone_id: String(bot.phone_id), waba_id: bot.waba_id ?? null, token: await tokenDoNumero(admin, String(conv.tenant_id), String(bot.phone_id)) };
+  }
   return waConfig(admin);
 }
 async function say(admin: SupabaseClient, cfg: WaConfig, conv: Row, text: string, role: 'assistant' | 'staff' = 'assistant') {
@@ -654,7 +663,9 @@ Deno.serve(async (req) => {
     if (!m.tenant_id || !m.number) return json({ error: 'tenant_id/number obrigatórios' }, 400);
     const p = handleIncoming(admin, m).catch(async (e) => {
       log('ERROR', 'falha no atendimento', { tenant: m.tenant_id, from: m.number, error: errMsg(e) });
-      const cfg: WaConfig = m.via === 'proprio' && m.phone_id ? { transport: 'cloud', phone_id: m.phone_id, waba_id: null } : await waConfig(admin);
+      const cfg: WaConfig = m.via === 'proprio' && m.phone_id
+        ? { transport: 'cloud', phone_id: m.phone_id, waba_id: null, token: await tokenDoNumero(admin, m.tenant_id, m.phone_id) }
+        : await waConfig(admin);
       await waSendText(cfg, m.number, 'Tive um probleminha aqui 😕 Pode mandar de novo daqui a pouco?', { origin: ORIGIN }).catch(() => {});
     });
     // deno-lint-ignore no-explicit-any
@@ -678,8 +689,141 @@ Deno.serve(async (req) => {
 
   if (body?.action === 'info') {
     if (!body.tenant_id || !(await isAdmin(String(body.tenant_id)))) return json({ error: 'Sem acesso a esta loja' }, 403);
-    try { return json({ success: true, number: await waOwnNumber(await waConfig(admin)) }); }
-    catch (e) { return json({ success: true, number: null, error: errMsg(e) }); }
+    const es = esConfig();
+    // Conectar WhatsApp (Embedded Signup) só aparece com o ERPOS aprovado na Meta (segredos META_ES_*).
+    const conectar = es ? { app_id: es.app_id, config_id: es.config_id } : null;
+    try { return json({ success: true, number: await waOwnNumber(await waConfig(admin)), conectar }); }
+    catch (e) { return json({ success: true, number: null, conectar, error: errMsg(e) }); }
+  }
+
+  // ── Número próprio da loja (ver numero.ts) — só admin da loja ──
+  if (typeof body?.action === 'string' && body.action.startsWith('numero_')) {
+    const tenantId = String(body.tenant_id ?? '');
+    if (!tenantId || !(await isAdmin(tenantId))) return json({ error: 'Sem acesso a esta loja' }, 403);
+    const { data: bot } = await admin.from('wa_loja_bots').select('tenant_id, phone_id, waba_id, numero_origem').eq('tenant_id', tenantId).maybeSingle();
+    if (!bot) return json({ success: false, error: 'Ative o atendimento pelo WhatsApp antes de ligar um número.' }, 400);
+    const phoneId = bot.phone_id ? String(bot.phone_id) : null;
+    const token = await tokenDoNumero(admin, tenantId, phoneId);
+    try {
+      if (body.action === 'numero_status') {
+        return json({ success: true, origem: bot.numero_origem ?? null, situacao: phoneId ? await situacao(phoneId, token) : null });
+      }
+      if (body.action === 'numero_criar') {
+        const sep = separarNumero(String(body.numero ?? ''));
+        if (!sep) return json({ success: false, error: 'Número inválido: use DDD + número (ex.: 41 99999-9999).' }, 400);
+        const nome = String(body.nome ?? '').trim().replace(/\s+/g, ' ');
+        const erroNome = nomeValido(nome);
+        if (erroNome) return json({ success: false, error: erroNome }, 400);
+        if (phoneId) {
+          const st = await situacao(phoneId, token).catch(() => null);
+          if (st?.conectado) return json({ success: false, error: 'A loja já tem um número conectado. Desligue ele antes de cadastrar outro.' }, 409);
+        }
+        const cfg = await waConfig(admin);
+        if (!cfg.waba_id) return json({ success: false, error: 'Conta do WhatsApp do sistema não configurada.' }, 500);
+        let novo: string;
+        // Dono do chip (wa_loja_numeros) só é gravado quando a loja CONFIRMA o código do SMS (numero_confirmar):
+        // assim ninguém "reserva" o chip de outra loja digitando o número antes (revisão 2026-09-27).
+        try { novo = await criarNumero(cfg.waba_id, sep.cc, sep.numero, nome); }
+        catch (e) {
+          // Já existe na conta (tentativa que parou no meio, ou chip desligado): reaproveita se ainda não tem
+          // dono ou se o dono é esta loja; nunca o número do sistema; de outra loja, não.
+          const conta = await numerosDaConta(cfg.waba_id).catch(() => []);
+          const achado = conta.find((n) => String(n.display_phone_number ?? '').replace(/\D/g, '').endsWith(sep.numero));
+          if (!achado?.id || achado.id === cfg.phone_id) throw e;
+          const { data: dono } = await admin.from('wa_loja_numeros').select('tenant_id').eq('phone_id', achado.id).maybeSingle();
+          if (dono && String(dono.tenant_id) !== tenantId) {
+            return json({ success: false, error: 'Esse número já está ligado a outra loja. Use outro chip.' }, 409);
+          }
+          novo = String(achado.id);
+        }
+        const { error: erroBot } = await admin.from('wa_loja_bots').update({ phone_id: novo, waba_id: cfg.waba_id, numero_origem: 'erpos', updated_at: new Date().toISOString() }).eq('tenant_id', tenantId);
+        if (erroBot) return json({ success: false, error: /duplicate|unique/i.test(erroBot.message) ? 'Esse número já está ligado a outra loja.' : erroBot.message }, 409);
+        await admin.from('wa_loja_credenciais').delete().eq('tenant_id', tenantId);
+        await pedirCodigo(novo, body.metodo === 'VOICE' ? 'VOICE' : 'SMS');
+        return json({ success: true, phone_id: novo });
+      }
+      if (!phoneId) return json({ success: false, error: 'A loja ainda não tem número próprio.' }, 400);
+      if (body.action === 'numero_codigo') {
+        await pedirCodigo(phoneId, body.metodo === 'VOICE' ? 'VOICE' : 'SMS', token);
+        return json({ success: true });
+      }
+      if (body.action === 'numero_confirmar') {
+        const codigo = String(body.codigo ?? '').replace(/\D/g, '');
+        if (codigo.length !== 6) return json({ success: false, error: 'O código tem 6 números.' }, 400);
+        // Pula o verify_code só se ESTA loja já provou ter o chip antes (é a dona). Senão, sempre confere o código.
+        const { data: dono } = await admin.from('wa_loja_numeros').select('tenant_id').eq('phone_id', phoneId).maybeSingle();
+        const ehDona = !!dono && String(dono.tenant_id) === tenantId;
+        const antes = await situacao(phoneId, token).catch(() => null);
+        if (!(ehDona && antes?.verificado)) await confirmarCodigo(phoneId, codigo, token);
+        if (bot.numero_origem === 'erpos' && !dono) {
+          const { error: erroDono } = await admin.from('wa_loja_numeros').insert({ phone_id: phoneId, tenant_id: tenantId, numero: String(antes?.numero ?? '').replace(/^55/, '') || '?' });
+          // Sem dono gravado o chip ficaria reaproveitável por outra loja depois de desligado: não conecta.
+          if (erroDono) throw new Error(`não consegui guardar o dono do número (${erroDono.message}); tente confirmar de novo`);
+        }
+        await registrar(phoneId, token);
+        return json({ success: true, situacao: await situacao(phoneId, token) });
+      }
+      if (body.action === 'numero_registrar') {
+        // A Meta às vezes desconecta (troca de token, 2 etapas): registra de novo com o mesmo PIN — ou com o
+        // PIN de 2 etapas que o cliente já tinha (Conectar WhatsApp de número vindo de outro provedor).
+        await registrar(phoneId, token, body.pin && bot.numero_origem === 'cliente' ? String(body.pin) : null);
+        return json({ success: true, situacao: await situacao(phoneId, token) });
+      }
+      if (body.action === 'numero_desligar') {
+        // Chip da conta do ERPOS: tira da API (para de receber); a mesma loja pode ligar de novo pelo cadastro.
+        // Número da conta do cliente: só solta daqui — a conta é dele.
+        if (bot.numero_origem === 'erpos') await desregistrar(phoneId).catch((e) => log('WARN', 'deregister', { tenant: tenantId, error: errMsg(e) }));
+        await admin.from('wa_loja_bots').update({ phone_id: null, waba_id: null, numero_origem: null, updated_at: new Date().toISOString() }).eq('tenant_id', tenantId);
+        await admin.from('wa_loja_credenciais').delete().eq('tenant_id', tenantId);
+        return json({ success: true });
+      }
+    } catch (e) {
+      log('WARN', 'número próprio', { tenant: tenantId, action: body.action, error: errMsg(e) });
+      return json({ success: false, error: errMsg(e) }, 502);
+    }
+    return json({ error: 'Ação desconhecida' }, 400);
+  }
+
+  // ── Conectar WhatsApp (Embedded Signup): a janela da Meta devolve code + ids; aqui vira token da loja ──
+  if (body?.action === 'conectar_meta') {
+    const tenantId = String(body.tenant_id ?? '');
+    if (!tenantId || !(await isAdmin(tenantId))) return json({ error: 'Sem acesso a esta loja' }, 403);
+    const phoneId = String(body.phone_number_id ?? '').replace(/\D/g, ''), waba = String(body.waba_id ?? '').replace(/\D/g, '');
+    if (!body.code || !phoneId || !waba) return json({ success: false, error: 'A Meta não devolveu o número e a conta. Tente de novo.' }, 400);
+    const { data: bot } = await admin.from('wa_loja_bots').select('tenant_id').eq('tenant_id', tenantId).maybeSingle();
+    if (!bot) return json({ success: false, error: 'Ative o atendimento pelo WhatsApp antes de conectar.' }, 400);
+    try {
+      const tok = await trocarCodigo(String(body.code));
+      // Os ids vêm do navegador: só aceita se o token da loja enxerga esse número nessa conta.
+      const lista = await graph(`${waba}/phone_numbers?fields=id&limit=100`, {}, tok);
+      if (!(lista?.data ?? []).some((n: Row) => String(n.id) === phoneId)) return json({ success: false, error: 'Esse número não pertence à conta conectada.' }, 403);
+      await assinarWebhook(waba, tok);
+      // Grava antes de registrar: se o registro pedir o PIN de 2 etapas do cliente, a tela manda depois
+      // (numero_registrar com pin) sem precisar abrir a janela da Meta de novo.
+      const agora = new Date().toISOString();
+      const { data: antes } = await admin.from('wa_loja_bots').select('phone_id, numero_origem').eq('tenant_id', tenantId).maybeSingle();
+      // Bot primeiro: se o número já é de outra loja (unique), a credencial do número atual fica intacta.
+      const { error: erroBot } = await admin.from('wa_loja_bots').update({ phone_id: phoneId, waba_id: waba, numero_origem: 'cliente', updated_at: agora }).eq('tenant_id', tenantId);
+      if (erroBot) throw new Error(/duplicate|unique/i.test(erroBot.message) ? 'Esse número já está ligado a outra loja.' : erroBot.message);
+      const { error: erroCred } = await admin.from('wa_loja_credenciais').upsert({ tenant_id: tenantId, phone_id: phoneId, waba_id: waba, token: tok, coexistencia: !!body.coexistencia, updated_at: agora });
+      if (erroCred) throw new Error(erroCred.message);
+      // Tinha um chip na conta do ERPOS: tira da API (senão fica registrado sem loja).
+      if (antes?.numero_origem === 'erpos' && antes.phone_id && String(antes.phone_id) !== phoneId) {
+        await desregistrar(String(antes.phone_id)).catch((e) => log('WARN', 'deregister', { tenant: tenantId, error: errMsg(e) }));
+      }
+      // Coexistência (número continua no app WhatsApp Business): o número já está registrado — não registra.
+      if (!body.coexistencia) {
+        try { await registrar(phoneId, tok, body.pin ? String(body.pin) : null); }
+        catch (e) {
+          log('WARN', 'conectar_meta › register', { tenant: tenantId, error: errMsg(e) });
+          return json({ success: true, precisa_pin: true, situacao: await situacao(phoneId, tok).catch(() => null) });
+        }
+      }
+      return json({ success: true, situacao: await situacao(phoneId, tok) });
+    } catch (e) {
+      log('WARN', 'conectar_meta', { tenant: tenantId, error: errMsg(e) });
+      return json({ success: false, error: errMsg(e) }, 502);
+    }
   }
 
   if (body?.action === 'reply') {

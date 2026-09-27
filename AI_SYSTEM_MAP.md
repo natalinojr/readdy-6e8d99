@@ -3556,6 +3556,16 @@ Sem SW ativo o POST cai no Vercel e falha — por isso o destino só existe no S
   promoções do dia, horário, taxa e estoque vêm do `delivery-write › get_delivery_config` (o mesmo do link público).
   Pedidos do cliente: só os do telefone que está falando. Foto/arquivo (comprovante), reclamação ou pedido de humano →
   `needs_human` + aviso no Telegram; a equipe responde pela aba (`action: 'reply'`), o que pausa o robô por 2 h.
+  **Número próprio pelo ERPOS (2026-09-27)** — card "Número próprio da loja" (`NumeroProprio.tsx`), ações
+  `numero_*`/`conectar_meta` da `atendimento-loja` (`numero.ts`): (1) **chip novo** criado na WABA do número
+  compartilhado (Graph `phone_numbers` → `request_code` → `verify_code` → `register`, PIN = HMAC do segredo interno
+  pelo phone_id); o dono do chip (`wa_loja_numeros`) só é gravado depois do código confirmado, e outra loja nunca
+  reaproveita número com dono (revisão de segurança: antes dava para tomar o chip desligado de outra loja);
+  (2) **Conectar pela Meta** (Embedded Signup) — escondido até existirem `META_ES_APP_ID/SECRET/CONFIG_ID` (e o
+  segredo tem que ser o do app do webhook); token do cliente em `wa_loja_credenciais` (só service_role) e
+  `WaConfig.token` em `_shared/wa.ts` para enviar/baixar mídia por aquele número; coexistência: eco
+  `smb_message_echoes` pausa o assistente 2 h. `phone_id/waba_id` de `wa_loja_bots` só o servidor grava
+  (privilégio de coluna). O que o dono faz na Meta: `WHATSAPP-CONECTAR-META.md`.
   **Treino (2026-09-27, v4→v12):** modelo = **Sonnet 5** (60 cenários, mesmas travas: Haiku 4.5 nota 7,3 / 18 erros
   graves / US$ 0,023 por conversa × Sonnet 5 nota 8,6 / 1 erro grave / US$ 0,044 — `MODEL` em `index.ts`). As travas
   ficam em `atendimento-loja/travas.ts` (código puro, sem imports): `conferir()` gera a volta de correção,
