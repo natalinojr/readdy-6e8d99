@@ -81,8 +81,9 @@ export default function GestorEntregasPage() {
     <div className="flex flex-col h-full">
       {/* Cabeçalho */}
       <div className="px-4 md:px-6 py-3 flex-shrink-0 bg-white border-b border-zinc-100 space-y-3">
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2 md:gap-3 min-w-0">
+        {/* No celular os botões descem para a linha de baixo em vez de cobrir o título */}
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+          <div className="flex items-center gap-2 md:gap-3 min-w-0 shrink-0">
             <button onClick={() => navigate('/modulos')} title="Voltar aos Módulos"
               className="w-8 h-8 flex items-center justify-center rounded-lg text-zinc-500 hover:text-zinc-800 hover:bg-zinc-100 transition-colors cursor-pointer flex-shrink-0">
               <i className="ri-arrow-left-line text-base" />
@@ -96,7 +97,7 @@ export default function GestorEntregasPage() {
               <p className="text-xs text-zinc-400">{loading ? 'Carregando...' : `${emAndamento.length} em andamento`}</p>
             </div>
           </div>
-          <div className="flex items-center gap-2 flex-shrink-0">
+          <div className="flex flex-wrap items-center justify-end gap-2 ml-auto">
             {atrasadosCount > 0 && (
               <div className="hidden sm:flex items-center gap-1.5 bg-red-50 border border-red-200 rounded-lg px-2.5 py-1.5">
                 <i className="ri-time-line text-red-500 text-sm" />
