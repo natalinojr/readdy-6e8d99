@@ -348,7 +348,7 @@ function PaymentCard({ p, onAction }: { p: Payment; onAction: (p: Payment, op: '
 // linha com o que importa (quem, quanto, o que falta); tocar abre os cartões, tocar de novo recolhe.
 // Um só esperando o PIN: o "Pagar" já fica na faixa, sem abrir.
 function situacaoPag(p: Payment): { texto: string; cor: string } {
-  if (p.status === 'pending_approval') return { texto: 'Falta aprovar no app do Inter', cor: 'text-amber-700' };
+  if (p.status === 'pending_approval') return { texto: 'Falta sua aprovação no app do Inter', cor: 'text-amber-700' };
   if (['draft', 'awaiting_pin'].includes(p.status)) return { texto: 'Esperando você pagar', cor: 'text-violet-700' };
   if (p.status === 'paid') return { texto: 'Pago', cor: 'text-emerald-700' };
   if (['failed', 'rejected'].includes(p.status)) return { texto: p.status_label || 'Não foi pago', cor: 'text-red-600' };
@@ -373,7 +373,7 @@ function BarraPagamentos({ lista, onAction, onDispensar }: {
   return (
     <div data-sem-arrasto className="border-t border-zinc-100 bg-white flex-shrink-0">
       <div className="flex items-center gap-2 px-3 py-1.5">
-        <button onClick={() => setAberta((v) => !v)} aria-expanded={aberta} className="flex-1 min-w-0 flex items-center gap-2.5 text-left cursor-pointer py-0.5">
+        <button onClick={() => setAberta((v) => !v)} aria-expanded={aberta} aria-label={aberta ? 'Recolher pagamentos' : 'Ver pagamentos'} className="flex-1 min-w-0 flex items-center gap-2.5 text-left cursor-pointer py-0.5">
           <span className={`w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-lg ${faltaInter && !faltaPin ? 'bg-amber-100 text-amber-700' : 'bg-violet-50 text-violet-600'}`}>
             <i className={um ? (um.kind === 'pix' ? 'ri-qr-code-line' : 'ri-barcode-line') : 'ri-money-dollar-circle-line'} />
           </span>
