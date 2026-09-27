@@ -44,41 +44,50 @@ export async function lojaInfo(admin: any, tenantId: string): Promise<LojaInfo> 
   };
 }
 
-const SAIR_RE = /^\s*(sair|parar|pare|stop|cancelar|descadastrar|nao quero|não quero)\b/i;
+/** Todas as formas em que o mesmo celular pode estar gravado em customers.phone. */
+export function variantesTelefone(cel: string): string[] {
+  const sem9 = cel.slice(0, 2) + cel.slice(3);
+  return [cel, sem9, '55' + cel, '55' + sem9];
+}
+
+// "[Áudio] " é o prefixo que o whatsapp-cloud põe na transcrição.
+const SAIR_RE = /^\s*(\[[^\]]*\]\s*)?(sair|parar|pare|stop|cancelar|descadastrar|nao quero|não quero)\b/i;
+
+export const querSair = (text: string) => SAIR_RE.test(text);
 
 /**
- * Mensagem que chegou no número do assistente de alguém que recebeu envio automático do funil
- * nos últimos 15 dias. SAIR → opt-out em todas as lojas que mandaram. Outra coisa → uma resposta
- * curta com o link do delivery e o WhatsApp da loja (no máx. 1 a cada 6 h, para não virar conversa).
+ * Mensagem que chegou no número do assistente de alguém que já recebeu envio automático do funil.
+ * - SAIR (texto ou áudio, a qualquer tempo): opt-out em TODAS as lojas onde esse telefone é cliente —
+ *   o remetente é um número só, então "sair" vale para ele inteiro.
+ * - Outra coisa, com envio nos últimos 15 dias: uma resposta curta com o link do delivery e o
+ *   WhatsApp da loja (no máx. 1 a cada 6 h, para não virar conversa).
  * Devolve true quando tratou (o whatsapp-cloud não passa adiante).
  */
 export async function crmInbound(admin: any, cfg: WaConfig, waId: string, text: string): Promise<boolean> {
   const cel = celularBR(waId);
   if (!cel) return false;
-  const variantes = [cel, cel.slice(0, 2) + cel.slice(3)]; // com e sem o 9
-  const desde = new Date(Date.now() - 15 * 24 * 60 * 60 * 1000).toISOString();
 
-  const { data: clientes } = await admin.from('customers').select('id, tenant_id').in('phone', variantes);
+  const { data: clientes } = await admin.from('customers').select('id, tenant_id').in('phone', variantesTelefone(cel));
   const ids = (clientes ?? []).map((c: any) => String(c.id));
   if (ids.length === 0) return false;
   const { data: envios } = await admin.from('crm_sends')
     .select('id, tenant_id, customer_id, sent_at, replied_at')
-    .eq('auto', true).eq('status', 'sent').in('customer_id', ids).gte('sent_at', desde)
+    .eq('auto', true).eq('status', 'sent').in('customer_id', ids)
     .order('sent_at', { ascending: false }).limit(20);
-  if (!envios || envios.length === 0) return false;
+  if (!envios || envios.length === 0) return false; // nunca recebeu do funil: não é conosco
 
   const agora = new Date().toISOString();
   const ultimo = envios[0];
 
-  if (SAIR_RE.test(text)) {
-    const tenants = Array.from(new Set(envios.map((e: any) => String(e.tenant_id))));
-    const alvo = (clientes ?? []).filter((c: any) => tenants.includes(String(c.tenant_id))).map((c: any) => String(c.id));
-    await admin.from('customers').update({ crm_opt_out_at: agora }).in('id', alvo).is('crm_opt_out_at', null);
+  if (querSair(text)) {
+    await admin.from('customers').update({ crm_opt_out_at: agora }).in('id', ids).is('crm_opt_out_at', null);
     await admin.from('crm_sends').update({ replied_at: agora }).in('id', envios.map((e: any) => e.id)).is('replied_at', null);
-    const nomes = await Promise.all(tenants.map(async (t) => (await lojaInfo(admin, t)).nome));
-    await waSendText(cfg, waId, `Pronto! Você não vai mais receber ofertas da ${nomes.join(' e ')} por aqui. Se mudar de ideia, é só avisar na loja.`, { origin: 'crm' });
+    await waSendText(cfg, waId, 'Pronto! Você não vai mais receber nossas ofertas por aqui. Se mudar de ideia, é só avisar na loja.', { origin: 'crm' });
     return true;
   }
+
+  // Resposta que não é SAIR só é nossa se o envio é recente.
+  if (Date.now() - new Date(ultimo.sent_at).getTime() > 15 * 24 * 60 * 60 * 1000) return false;
 
   const recente = envios.find((e: any) => e.replied_at && Date.now() - new Date(e.replied_at).getTime() < 6 * 60 * 60 * 1000);
   await admin.from('crm_sends').update({ replied_at: agora }).eq('id', ultimo.id);

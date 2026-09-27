@@ -119,6 +119,8 @@ type DeliveryCustomer = {
   last_used_at: string;
   birth_date?: string | null;
   gender?: string | null;
+  /** Já aceitou ofertas pelo WhatsApp (lookup_customer): o checkout não pergunta de novo. */
+  aceita_ofertas?: boolean;
   delivery_neighborhoods?: Neighborhood | null;
 };
 
@@ -614,6 +616,8 @@ export function useDeliveryData(storeSlug?: string) {
   const [customerName, setCustomerName] = useState('');
   const [dataNascimento, setDataNascimento] = useState('');
   const [genero, setGenero] = useState('');
+  // Aceite de ofertas pelo WhatsApp (LGPD: começa desmarcado; só grava quando marcado).
+  const [aceitaOfertas, setAceitaOfertas] = useState(false);
   // Voucher aplicado no checkout do delivery (pré-preenchido se veio de ?voucher= no link)
   const [voucherInput, setVoucherInput] = useState(() => getUrlVoucher() ?? '');
   const [voucherCodigo, setVoucherCodigo] = useState('');
@@ -1622,6 +1626,7 @@ export function useDeliveryData(storeSlug?: string) {
         customer_address: endereco,
         birth_date: dataNascimento || null,
         gender: genero || null,
+        accepts_marketing: aceitaOfertas || undefined,
         voucher_code: voucherCodigo || null,
         neighborhood_name: bairroName,
         neighborhood_id: selectedNeighborhoodId,
@@ -2103,6 +2108,9 @@ export function useDeliveryData(storeSlug?: string) {
     handleConfirmarPedido,
     cpfNota,
     setCpfNota,
+    aceitaOfertas,
+    setAceitaOfertas,
+    jaAceitaOfertas: customer?.aceita_ofertas === true,
     handleNovoPedido,
     handleSair,
     handleChangeNeighborhood,

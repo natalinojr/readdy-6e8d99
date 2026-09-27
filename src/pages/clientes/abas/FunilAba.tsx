@@ -201,6 +201,9 @@ export default function FunilAba(props: Props) {
   const [showNaoPediram, setShowNaoPediram] = useState(false);
   // Situação dos modelos na Meta (nome → APPROVED/PENDING/…), vinda do painel do envio automático.
   const [modelos, setModelos] = useState<Record<string, string>>({});
+  // auto_send como veio do servidor: vai junto no salvar para uma aba antiga não religar o
+  // automático que outra pessoa desligou (o servidor ignora se o banco mudou no meio).
+  const [autoServidor, setAutoServidor] = useState<Record<string, boolean>>({});
 
   const tenantId = user?.tenantId;
 
@@ -240,6 +243,7 @@ export default function FunilAba(props: Props) {
       const lista = d.stages ?? [];
       setStages(lista);
       setRules(d.rules ?? []);
+      setAutoServidor(Object.fromEntries((d.rules ?? []).map(function (r) { return [r.stage, r.auto_send]; })));
       setSettings(d.settings ?? null);
       setCriteria(d.criteria ?? null);
       setCriteriaPadrao(d.criteria_padrao ?? null);
@@ -418,7 +422,10 @@ export default function FunilAba(props: Props) {
     setSalvando(true);
     setMsgSalvo('');
     invokeWithAuth<{ rules?: CrmRule[]; settings?: CrmSettings; criteria?: CrmCriteria; error?: string; message?: string }>(
-      'crm-funnel', { body: { action: 'save_rules', tenant_id: tenantId, rules, settings, criteria } },
+      'crm-funnel', { body: {
+        action: 'save_rules', tenant_id: tenantId, settings, criteria,
+        rules: rules.map(function (r) { return { ...r, auto_send_antes: autoServidor[r.stage] ?? false }; }),
+      } },
     ).then(function (res) {
       setSalvando(false);
       const d = res.data;
@@ -427,6 +434,7 @@ export default function FunilAba(props: Props) {
         return;
       }
       setRules(d.rules ?? rules);
+      if (d.rules) setAutoServidor(Object.fromEntries(d.rules.map(function (r) { return [r.stage, r.auto_send]; })));
       setSettings(d.settings ?? settings);
       // O servidor devolve o que REALMENTE gravou (valores fora da faixa são
       // ajustados lá) — a tela tem que mostrar isso, não o que foi digitado.
