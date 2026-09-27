@@ -10,18 +10,10 @@ Pasta separada do site: tem `package.json` próprio e **não entra no build da V
   `@capgo/capacitor-native-biometric` (digital/rosto). O site chama os plugins por
   `window.Capacitor.Plugins.*`, sem importar nada no bundle da web.
 
-## GPS do motoboy com a tela apagada (APK gerado em 2026-09-27 — falta testar no celular)
+## GPS do motoboy
 
-Plugin `@capacitor-community/background-geolocation` (serviço em primeiro plano, tipo `location`, com o aviso fixo
-"ERPOS — entrega em andamento" na barra). O manifesto do próprio plugin traz as permissões (localização,
-`FOREGROUND_SERVICE_LOCATION`, `POST_NOTIFICATIONS`). O site (`src/pages/motoboy/useMotoboyGps.ts`) usa o plugin
-quando `window.Capacitor.isNativePlatform()`; no navegador continua o `watchPosition` com "mantenha a tela aberta".
-Mesmas regras: só com entrega dele a caminho/coletada ou turno ligado; envio com ≥ 15 s **e** ≥ 30 m.
-Permissão negada → o aviso vermelho abre as configurações do app (`openSettings`). Economia de bateria de alguns
-celulares (Xiaomi, Samsung) pode matar o serviço: orientar "Bateria › Sem restrição" para o ERPOS.
-
-Teste no celular real: instalar o APK novo por cima → entrar em `/entregas/<slug>` → ligar o turno (ou pegar uma
-entrega) → aceitar a localização → apagar a tela e andar: a moto deve continuar andando no Mapa do Gestor.
+Não fica mais aqui: foi para o app separado **ERPOS Entregas** (`android-entregas/`, 2026-09-27). Este app
+não pede localização.
 
 ## Gerar o APK de teste (neste PC)
 

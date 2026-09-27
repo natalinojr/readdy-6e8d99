@@ -73,12 +73,12 @@ export default function AppEntregasPage() {
           <form onSubmit={salvarDados} className="bg-white rounded-2xl border border-zinc-100 p-4 space-y-3">
             <label className="block">
               <span className="text-[11px] font-bold text-zinc-500 uppercase">Seu nome</span>
-              <input value={nome} onChange={(e) => setNome(e.target.value)} maxLength={80} autoComplete="name"
+              <input value={nome} onChange={(e) => setNome(e.target.value)} maxLength={80} autoComplete="name" aria-label="Seu nome"
                 className="mt-1 w-full px-3 py-2.5 rounded-xl border border-zinc-200 outline-none focus:border-amber-400 text-sm" />
             </label>
             <label className="block">
               <span className="text-[11px] font-bold text-zinc-500 uppercase">Celular com DDD</span>
-              <input value={celular} onChange={(e) => setCelular(e.target.value)} inputMode="tel" autoComplete="tel" maxLength={20}
+              <input value={celular} onChange={(e) => setCelular(e.target.value)} inputMode="tel" autoComplete="tel" maxLength={20} aria-label="Celular com DDD"
                 className="mt-1 w-full px-3 py-2.5 rounded-xl border border-zinc-200 outline-none focus:border-amber-400 text-sm" />
             </label>
             {erro ? <p className="text-xs text-red-600">{erro}</p> : null}

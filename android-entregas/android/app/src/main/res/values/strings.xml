@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">ERPOS Entregas</string>
+    <string name="title_activity_main">ERPOS Entregas</string>
+    <string name="package_name">app.erpos.entregas</string>
+    <string name="custom_url_scheme">app.erpos.entregas</string>
+</resources>

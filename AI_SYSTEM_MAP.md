@@ -3705,3 +3705,10 @@ Sem SW ativo o POST cai no Vercel e falha — por isso o destino só existe no S
   soma venda por `orders`/`payments` precisa de `ifood_order_id IS NULL` (a venda é contada pelo iFood); pedido do iFood
   não cancela direto (gatilho `trg_ifood_block_cancel`; o ERPOS cancela via `fn_ifood_cancel_erpos_order` quando o iFood
   confirma); plataforma = 'propria' (motoboy da loja), 'ifood' (entregador iFood) ou 'retirada'.
+- **App "ERPOS Entregas" (2026-09-27)**: app Android separado para motoboys (`android-entregas/`, pacote
+  `app.erpos.entregas`, abre `/app-entregas`). O GPS em segundo plano saiu do app ERPOS (`android-app`) e ficou só nele.
+  Lojas ligadas por **código de uso único (24 h)** gerado em Config. do Delivery › Entregadores (`delivery-write ›
+  gerar_codigo_motoboy`, tabela `delivery_driver_codes`; `motoboy-signal › vincular_codigo` acha/cria o entregador pelo
+  celular). Perfil e lojas ficam no aparelho (`src/lib/motoboyApp.ts`, chaves `erpos_motoboy_perfil`/`_lojas`); entrar
+  numa loja grava a sessão de sempre (`erpos_motoboy_session`) e abre `/entregas/<slug>`, que mostra "Minhas lojas".
+  O link aberto `/entregas/<slug>` com nome + celular continua funcionando no navegador.

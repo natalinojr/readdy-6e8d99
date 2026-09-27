@@ -1,0 +1,18 @@
+{
+  "name": "erpos-entregas-android",
+  "private": true,
+  "version": "0.1.0",
+  "description": "App Android ERPOS Entregas (Capacitor) — só o portal do motoboy. Abre https://erpos.vercel.app/app-entregas — ver android-entregas/README.md",
+  "scripts": {
+    "sync": "cap sync android",
+    "apk": "cap sync android && cd android && gradlew.bat assembleDebug"
+  },
+  "dependencies": {
+    "@capacitor-community/background-geolocation": "1.2.26",
+    "@capacitor/android": "8.5.2",
+    "@capacitor/core": "8.5.2"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "8.5.2"
+  }
+}
