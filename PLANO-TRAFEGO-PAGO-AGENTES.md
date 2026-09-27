@@ -78,6 +78,44 @@ Princípio: **IA decide e escreve; código calcula, desenha e executa.** Nenhum 
 
 "Rodar sozinho" = os 5 juntos, com o nível de autonomia que o dono escolher.
 
+### 3.1b Inteligência da loja: estratégia a partir dos dados do próprio ERPOS
+
+Hoje o agente só olha os pedidos de **delivery** dos últimos 30 dias (`erposContext`). O sistema tem muito mais que isso, e a estratégia deve nascer desses dados, não só dos números da Meta. Quem faz isso é o **Estrategista** (agente 3), alimentado por uma camada de **fatos calculados em código** (SQL/RPC). A IA não soma nada, só interpreta; segue o `DIRETRIZES-ANALISE-IA.md` (triangulação, hierarquia de fontes).
+
+**Fontes (todas já existem no banco):**
+
+| Canal / dado | Onde está | O que ensina para marketing |
+|---|---|---|
+| Balcão / caixa | `orders.origin_type = 'cashier'` | O que o cliente da rua pede; horários de pico presencial |
+| Mesa / salão | `origin_type = 'table'` | Ticket e mix de quem consome no local |
+| Autoatendimento (totem/QR) | `origin_type = 'self_service'` | Itens que vendem sem garçom sugerir; adicionais aceitos |
+| Delivery próprio | `origin_type = 'delivery'`, `delivery_platform = 'propria'`, `delivery_source` (utm) | Canal que o anúncio quer fazer crescer; pedidos vindos da Meta |
+| iFood | `delivery_platform = 'ifood'` | Demanda que existe mas paga comissão → **migrar para o canal próprio** |
+| Retirada | `delivery_platform = 'retirada'` | Clientes próximos, candidatos a raio pequeno |
+| Itens e combos | `order_items`, `menu_items` | Mais vendidos, combos, itens com foto |
+| **Margem (CMV)** | `fn_get_cmv_report`, fichas técnicas | Empurrar o que **dá lucro**, não só o que vende |
+| Estoque | `fn_get_stock_critical_alerts`, `ingredient_batches` (validade) | Não anunciar item que vai faltar; **promover o que está sobrando/perto de vencer** |
+| Clientes | aba Clientes & Marketing, vouchers, promoções | Recorrência, clientes sumidos, bairros, aniversariantes |
+| Área de entrega | `delivery_config` (pin, faixas de km), `orders.delivery_distance_km` | Raio real dos anúncios; bairros fortes e fracos |
+
+**Estratégias que dá para tirar disso (exemplos):**
+- **Migrar iFood → delivery próprio:** prato forte no iFood e fraco no próprio → anúncio no raio com oferta "peça direto e pague menos" (a diferença da comissão paga a oferta).
+- **Prato campeão no salão/balcão, desconhecido no delivery** → vira anúncio do delivery.
+- **Horário vazio:** hora/dia com cozinha ociosa em todos os canais → campanha só nesse horário (`active_hours`) ou combo do horário.
+- **Margem × volume:** item de alta margem e venda baixa → teste de anúncio; item de margem ruim que vende muito → não precisa de verba.
+- **Estoque:** insumo sobrando ou perto da validade → prato que usa esse insumo entra na pauta da semana; insumo em falta → pausa anúncio do prato.
+- **Clientes sumidos / bairro fraco:** público personalizado e voucher de volta (liga com Promoções/Vouchers).
+- **Upsell do autoatendimento:** adicional que o totem vende bem → sugerir combo no delivery e no cardápio.
+- **Sazonalidade:** dia da semana, datas (jogo, feriado, dia dos namorados) cruzado com o histórico de vendas.
+
+**Estratégia não executa sozinha: passa por aprovação.**
+- O Estrategista gera **propostas de estratégia** (`marketing_strategies`): título, dado que justifica (números e fonte), o que fazer (anúncio, arte, promoção, ajuste de cardápio), custo previsto, meta de resultado e prazo de avaliação.
+- Cada proposta vai para uma **fila de aprovação** e só vira ação (pedido de arte, campanha, promoção) depois do "aprovar".
+- **Quem aprova é configurável por loja:** nova permissão `marketing_aprovar_estrategia` em Configurações › Permissões, que o dono atribui a quem quiser (dono, gerente, responsável de marketing). Reaproveitar a tela **Aprovações** (`/aprovacoes`, permissão `gestao_aprovacoes`) como caixa de entrada, com um tipo novo "Estratégia de marketing", em vez de criar outra fila.
+- Aprovar, recusar (com motivo, que a IA usa para aprender) ou **editar e aprovar**. Limite de valor: acima de R$ X/mês a estratégia exige o dono (admin), mesmo que outro usuário tenha a permissão.
+- Aviso de proposta nova pelo sino/WhatsApp do assistente, e aprovação também pelo assistente (já existe o padrão `AprovarSugestoesTrafego`).
+- Depois do prazo, o **Analista de Resultados** avalia se a estratégia bateu a meta e fecha o ciclo ("funcionou / não funcionou / por quê").
+
 ### 3.2 Estúdio de Criação (módulo separado)
 
 Tela própria (`/estudio`, menu Marketing), **não** dentro do Tráfego Pago. Serve qualquer parte do sistema que precise de imagem.
@@ -130,6 +168,8 @@ Todas com RLS padrão do projeto: select por membership da loja, escrita só `se
 - `creatives`: peça gerada (formato, template, item, textos, `image_path`, status `rascunho → em_revisao → aprovada → publicada | reprovada`, notas do revisor, `meta_creative_id`/`ad_id`/`post_id`).
 - `creative_results`: métricas diárias por peça (vindas do insights + pedidos ERPOS).
 - `marketing_plan`: pauta semanal do Estrategista (itens, datas, status).
+- `marketing_strategies`: propostas de estratégia (evidência com números e fonte, ação proposta, custo, meta, prazo), status `proposta → aprovada | recusada | editada → em_execucao → avaliada`, quem aprovou, motivo da recusa, resultado final.
+- Views/RPCs de fatos por canal (`fn_mkt_fatos_canais`: vendas por canal × hora × dia × item, margem, estoque, clientes), calculadas em SQL: a IA recebe o resumo pronto.
 - `agent_runs` genérico **ou** coluna `agent` em `meta_agent_runs` para registrar cada agente com `model`, `usage` e **custo**, e mostrar "quanto a IA custou este mês" na tela.
 
 ---
@@ -167,7 +207,8 @@ Integração no cardápio: botão "Gerar arte/foto padronizada" no item, que abr
 | **F2** | **Estúdio v1**: 4–6 modelos de arte (feed, story, item padronizado, promoção), Diretor de Arte (Sonnet), renderização no servidor, galeria com aprovar/baixar | F1 |
 | **F3** | Ligar Tráfego → Estúdio: `rotate_creative`/`create_campaign` geram pedido de arte; **Revisor** antes de subir; subir criativo novo no conjunto | F2 + permissões `ads_management`/`pages_manage_ads` |
 | **F4** | **Monitor** 3/3h + **Analista de Resultados** (arte ↔ resultado ↔ pedidos ERPOS) + relatório semanal | F3 |
-| **F5** | **Estrategista** semanal (pauta com CMV/estoque/mais vendidos) + níveis de autonomia 0–3 | F4 |
+| **F5a** | **Inteligência da loja**: fatos por canal (balcão, mesa, autoatendimento, delivery próprio, iFood, retirada) + margem + estoque + clientes; relatório semanal "oportunidades" só para leitura | nada (pode vir antes, em paralelo à F1) |
+| **F5b** | **Estrategista** semanal gerando propostas + fila de aprovação (permissão `marketing_aprovar_estrategia`, tela Aprovações) + avaliação da estratégia depois do prazo + níveis de autonomia 0–3 | F5a + F4 |
 | **F6** (opcional) | IA geradora de imagem para fundo/remover fundo; publicação orgânica no Instagram/Facebook | decisão do dono + App Review Meta |
 
 Cada fase: testar na loja **Testes PDV** e, para a Meta, com uma conta de anúncios de teste antes de ligar em loja real.
@@ -183,7 +224,9 @@ Cada fase: testar na loja **Testes PDV** e, para a Meta, com uma conta de anúnc
 5. **Publicação orgânica** (posts no Instagram, não só anúncio) entra no escopo?
 6. **App Review da Meta** para as permissões de escrita/publicação: quem cuida (é feito no painel da Meta pelo dono)?
 7. **Banco de imagens:** onde estão as fotos hoje (OneDrive, Google Drive, Dropbox, só no Instagram)? Define qual conector vem primeiro.
-8. Quem aprova artes: só o dono/admin, ou um papel de "marketing" nas permissões?
+8. **Aprovação de estratégias:** quem recebe a permissão por padrão (só o dono? gerente?) e a partir de qual valor mensal volta a exigir o dono.
+9. **iFood × próprio:** pode anunciar oferta "mais barato no delivery próprio" (checar contrato/regras do iFood sobre paridade de preço)?
+10. Quem aprova artes: só o dono/admin, ou um papel de "marketing" nas permissões?
 
 ---
 
