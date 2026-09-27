@@ -3548,7 +3548,13 @@ Sem SW ativo o POST cai no Vercel e falha — por isso o destino só existe no S
   (contradizia o Funil, que tem critérios por loja); a descrição dos estágios do funil é montada no front a partir de
   `crm_stage_criteria` (a do servidor tem "90 dias"/"6 pedidos" fixos no texto); Vouchers carrega tudo e filtra na
   tela (filtro no servidor zerava os números do topo) e trata `active` com `expires_at` passado como expirado;
-  `create_promotion_rule` ignora `is_active` — o modal desliga logo depois quando o usuário desmarca "Ativa".
+  `create_promotion_rule` aceita `is_active` desde 2026-09-27 (antes ignorava e o modal desligava numa 2ª chamada).
+  **Validação logada (2026-09-27, Testes PDV):** `delete_promotion_rule` só desligava (a regra ficava na lista) → agora
+  grava `deleted_at` (exclusão lógica; `list_promotion_rules`, `apply_promotions` e a aba filtram `deleted_at is null`).
+  `EnviarVoucherModal` ganhou `onEnviado` (dispara 1x no "Enviar WhatsApp"/"Copiar mensagem"): o Funil registra o
+  `log_send` ali, não mais ao criar o voucher (criar e fechar sem mandar marcava o cliente como abordado, com mensagem
+  vazia). `onSent` segue sendo "voucher criado" (o perfil usa para recarregar). No Funil, oferta desligada na aba
+  Ofertas também esconde o botão de voucher da linha (mesmo critério `resumoOferta` do cabeçalho).
 - **Delivery Fase 1 — GPS do motoboy + rastreio do cliente (2026-09-26)**: tabelas `delivery_driver_positions` (1 linha
   por motoboy, última posição) e `delivery_driver_position_history` (histórico; cron `driver-positions-limpeza` apaga > 7 dias,
   06h40 UTC). RLS: SELECT só `authenticated` com `auth_is_member_of(tenant_id)`; anon sem acesso; escrita só `service_role`.

@@ -627,7 +627,8 @@ export default function FunilAba(props: Props) {
                   </div>
                 ) : listaVisivel.map(function (c) {
                   const regra = regraDo(stageAberto);
-                  const temCupom = !!regra && regra.voucher_type !== 'nenhum' && Number(regra.voucher_value) > 0;
+                  // Mesmo critério do cabeçalho: oferta desligada na aba Ofertas não gera voucher.
+                  const temCupom = !!resumoOferta(regra);
                   return (
                     <div key={c.customer_id} className="px-4 py-3 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 hover:bg-zinc-50/60">
                       <div className="min-w-0 flex-1">

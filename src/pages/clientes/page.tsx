@@ -114,7 +114,7 @@ export default function ClientesMarketingPage() {
         <EnviarVoucherModal
           cliente={voucherAlvo.cliente}
           oferta={voucherAlvo.oferta}
-          onSent={(v, m) => { voucherAlvo.aoEnviar?.(v, m); }}
+          onEnviado={(v, m) => { voucherAlvo.aoEnviar?.(v, m); }}
           onClose={() => setVoucherAlvo(null)}
         />
       )}
