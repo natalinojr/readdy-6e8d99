@@ -102,3 +102,30 @@ describe('acharVinculo', () => {
     expect(m.acharVinculo(ls, 'complemento', { name: 'z', groupName: 'outro grupo' })).toBeNull();
   });
 });
+
+describe('revisão 2026-09-27', () => {
+  it('retirada paga no balcão NÃO é repasse (a loja recebe)', () => {
+    const r = m.montarPedidoErpos(pedido({ order_type: 'TAKEOUT', delivered_by: null, payments: { methods: [{ method: 'CASH', type: 'OFFLINE', value: 37 }] } }), itens, links, menu);
+    expect(r.pago).toBe(false);
+    expect(r.paymentLabel).toBe('Cobrar na entrega: Dinheiro R$ 37,00');
+  });
+  it('entregador do iFood cobrando na entrega = repasse', () => {
+    expect(m.montarPedidoErpos(pedido({ payments: { methods: [{ method: 'CASH', type: 'OFFLINE', value: 37 }] } }), itens, links, menu).pago).toBe(true);
+  });
+  it('cobrado pela loja com cupom do iFood: total = o que o cliente paga; desconto do iFood anotado', () => {
+    const r = m.montarPedidoErpos(pedido({
+      delivered_by: 'MERCHANT', benefits: [{ value: 10, target: 'CART', sponsorshipValues: [{ name: 'IFOOD', value: 10 }] }],
+      payments: { methods: [{ method: 'CASH', type: 'OFFLINE', value: 32.99 }] },
+    }), itens, links, menu);
+    expect(r.order).toMatchObject({ subtotal: 37, delivery_fee: 5.99, total_amount: 32.99, discount_amount: 10, service_fee_amount: 0 });
+    expect(r.order.notes).toContain('Desconto bancado pelo iFood: R$ 10,00');
+  });
+  it('complemento 2x ligado a opção vira duas linhas (baixa em dobro), preço dividido', () => {
+    const its = [{ idx: 1, name: 'X', quantity: 1, unit_price: 10, options: [{ id: 'z', name: 'Complemento 1 - Segundo Nível', groupName: 'Adicione mais ingredientes', quantity: 2, price: 4, unitPrice: 2 }] }];
+    const r = m.montarPedidoErpos(pedido(), its, links, menu);
+    expect(r.items[0].options).toEqual([
+      { option_id: 'opt-queijo', option_name: 'Complemento 1 - Segundo Nível', group_name: 'Adicione mais ingredientes', additional_price: 2 },
+      { option_id: 'opt-queijo', option_name: 'Complemento 1 - Segundo Nível', group_name: 'Adicione mais ingredientes', additional_price: 2 },
+    ]);
+  });
+});

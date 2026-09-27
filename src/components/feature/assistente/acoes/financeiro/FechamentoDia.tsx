@@ -54,7 +54,7 @@ export default function FechamentoDia({ onFechar, irPara }: AcaoProps) {
       supabase.rpc('fn_get_sales_report', { p_tenant_id: tenantId, p_date_from: from, p_date_to: to, p_session_id: null }),
       supabase.rpc('fn_get_sales_report', { p_tenant_id: tenantId, p_date_from: `${semanaPassada}T00:00:00-03:00`, p_date_to: `${semanaPassada}T23:59:59-03:00`, p_session_id: null }),
       supabase.from('orders').select('status, total_amount, discount_amount')
-        .eq('tenant_id', tenantId).gte('created_at', from).lte('created_at', to).eq('is_training', false).eq('is_draft', false).is('ifood_order_id', null),
+        .eq('tenant_id', tenantId).gte('created_at', from).lte('created_at', to).eq('is_training', false).eq('is_draft', false).eq('ifood_repasse', false),
       supabase.from('cash_registers').select('closing_difference')
         .eq('tenant_id', tenantId).gte('opened_at', from).lte('opened_at', to).not('closed_at', 'is', null),
       pedidosPagosDoDia(tenantId, dia),

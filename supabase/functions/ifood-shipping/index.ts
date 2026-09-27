@@ -367,7 +367,7 @@ async function applyOrderEvent(admin: Admin, c: Ctx, e: any) {
     if (error) throw new Error('Atualizar pedido: ' + error.message);
   }
   if (plan.fetchDetails) await fetchOrderDetails(admin, c, row, ifoodOrderId);
-  if (funnelOn(c.cfg)) await funnelAfterEvent(admin, c, row.id);
+  if (funnelOn(c.cfg) || row.order_id) await funnelAfterEvent(admin, c, row.id);
 }
 
 // ── Funil do iFood (IFOOD-PEDIDOS-FUNIL.md, etapas 3/4) ─────────────────────────────────────────────────────────
@@ -398,6 +398,14 @@ async function aceitarPedidoFunil(admin: Admin, c: Ctx, row: any): Promise<strin
   const { data: o } = await admin.from('orders').select('id, status, is_draft, notes').eq('id', row.order_id).maybeSingle();
   if (!o) return 'Pedido do ERPOS não encontrado.';
   if (o.is_draft || o.status === 'draft') {
+    // Retido numa sessão que já fechou: leva para o caixa aberto (sem caixa aberto não entra na cozinha).
+    const { data: oSess } = await admin.from('orders').select('session_id').eq('id', o.id).maybeSingle();
+    const { data: sOk } = oSess?.session_id ? await admin.from('sessions').select('status').eq('id', oSess.session_id).maybeSingle() : { data: null };
+    if (sOk?.status !== 'open') {
+      const { data: aberta } = await admin.from('sessions').select('id').eq('tenant_id', row.tenant_id).eq('status', 'open').order('opened_at', { ascending: false }).limit(1).maybeSingle();
+      if (!aberta) { const m = 'Sem caixa aberto no ERPOS: abra o caixa para o pedido entrar na cozinha.'; await funnelErro(admin, row.id, m); return m; }
+      await admin.from('orders').update({ session_id: aberta.id, updated_at: new Date().toISOString() }).eq('id', o.id);
+    }
     const notas = String(o.notes ?? '');
     const cobrar = notas.match(/COBRAR NA ENTREGA: ([^|]+)/i)?.[1]?.trim();
     await liberarPedidoErpos(row.tenant_id, o.id, cobrar ? `Cobrar na entrega: ${cobrar}` : 'iFood (pago no app)');
@@ -448,7 +456,7 @@ async function criarPedidoFunil(admin: Admin, c: Ctx, row: any): Promise<void> {
   const orderId = cr.id as string;
   const now = new Date().toISOString();
   const { error: uErr } = await admin.from('orders').update({
-    ifood_order_id: row.ifood_order_id, is_paid: p.pago, paid_at: p.pago ? now : null,
+    ifood_order_id: row.ifood_order_id, ifood_repasse: p.pago, is_paid: p.pago, paid_at: p.pago ? now : null,
     delivery_lat: row.delivery_lat ?? null, delivery_lng: row.delivery_lng ?? null, updated_at: now,
   }).eq('id', orderId);
   if (uErr) throw new Error('Marcar pedido do iFood: ' + uErr.message);
@@ -460,9 +468,34 @@ async function criarPedidoFunil(admin: Admin, c: Ctx, row: any): Promise<void> {
   }
   await admin.from('ifood_orders').update({ order_id: orderId, funnel_error: null, funnel_at: now, updated_at: now }).eq('id', row.id);
   log('INFO', 'funnel', 'pedido criado no ERPOS', { ifood: row.ifood_order_id, order: orderId, numero, semVinculo: p.semVinculo.length, tenantId });
-  if (cfg.order_auto_confirm !== false) {
-    const erro = await aceitarPedidoFunil(admin, c, { ...row, order_id: orderId });
+  if (cfg.order_auto_confirm !== false) await aceiteAutomatico(admin, c, { ...row, order_id: orderId });
+}
+
+/** Agendado: fica retido (fora da cozinha) até perto do horário — preparo padrão + 20 min antes do início da janela. */
+function agendadoLonge(cfg: any, row: any): boolean {
+  const ini = row.order_timing === 'SCHEDULED' ? row.schedule?.deliveryDateTimeStart : null;
+  if (!ini) return false;
+  const antes = (Number(cfg.default_prep_min ?? 15) + 20) * 60_000;
+  return new Date(ini).getTime() - antes > Date.now();
+}
+
+/** Aceite automático: agendado longe só confirma no iFood (a varredura libera na hora); erro fica em funnel_error. */
+async function aceiteAutomatico(admin: Admin, c: Ctx, row: any) {
+  try {
+    if (agendadoLonge(c.cfg, row)) {
+      if (row.status === 'placed') {
+        const r = await call(admin, c, 'POST', `/order/v1.0/orders/${row.ifood_order_id}/confirm`, undefined, { 'idempotency-key': `confirm-${row.ifood_order_id}` });
+        if (!r.ok && r.status !== 409) { await funnelErro(admin, row.id, apiError(r, 'Confirmar no iFood')); return; }
+      }
+      await funnelErro(admin, row.id, null);
+      return;
+    }
+    const erro = await aceitarPedidoFunil(admin, c, row);
     if (erro) log('WARN', 'funnel', 'aceite automático', { ifood: row.ifood_order_id, erro });
+  } catch (e) {
+    const m = String((e as Error)?.message ?? e).slice(0, 300);
+    log('ERROR', 'funnel', 'aceite automático', { ifood: row.ifood_order_id, error: m });
+    await funnelErro(admin, row.id, m);
   }
 }
 
@@ -480,6 +513,7 @@ async function funnelAfterEvent(admin: Admin, c: Ctx, rowId: string) {
   if (row.status === 'concluded' && row.order_id) {
     const { data: o } = await admin.from('orders').select('id, status, session_id').eq('id', row.order_id).maybeSingle();
     if (o && !['delivered', 'cancelled'].includes(o.status)) {
+      // Concluído sem ter passado pela cozinha (ex.: agendado/aceite pendente): conclui sem imprimir nada.
       // Baixa do que a cozinha não marcou pronto (idempotente por item) e conclui.
       const { data: sess } = o.session_id ? await admin.from('sessions').select('opened_by').eq('id', o.session_id).maybeSingle() : { data: null };
       const { data: its } = await admin.from('order_items').select('id').eq('order_id', o.id).neq('status', 'cancelled');
@@ -487,11 +521,11 @@ async function funnelAfterEvent(admin: Admin, c: Ctx, rowId: string) {
         try { await deductStockForOrderItem(admin, row.tenant_id, o.id, it.id, sess.opened_by); } catch (e) { log('WARN', 'funnel', 'baixa de estoque', { item: it.id, error: String(e) }); }
       }
       await admin.from('order_items').update({ status: 'delivered', delivered_at: new Date().toISOString() }).eq('order_id', o.id).in('status', ['new', 'preparing', 'ready']);
-      await admin.from('orders').update({ status: 'delivered', updated_at: new Date().toISOString() }).eq('id', o.id);
+      await admin.from('orders').update({ status: 'delivered', is_draft: false, updated_at: new Date().toISOString() }).eq('id', o.id);
     }
     return;
   }
-  if (!row.order_id) await criarPedidoFunil(admin, c, row);
+  if (!row.order_id && funnelOn(c.cfg)) await criarPedidoFunil(admin, c, row);
 }
 
 /** A cada polling da loja no funil: pedidos que não entraram (ex.: caixa fechado), confirmações pendentes e avisos. */
@@ -503,11 +537,14 @@ async function funnelSweep(admin: Admin, cfg: any) {
     const c = await ctxFor(admin, cfg, row.merchant_id);
     if (!c) continue;
     try {
-      if (!row.order_id) await criarPedidoFunil(admin, c, row);
-      else if (row.status === 'placed') {
-        // Aceito no ERPOS mas a confirmação no iFood falhou: tenta de novo (rascunho = aceite manual pendente, não mexe).
-        const { data: o } = await admin.from('orders').select('is_draft').eq('id', row.order_id).maybeSingle();
-        if (o && !o.is_draft) await aceitarPedidoFunil(admin, c, row);
+      if (!row.order_id) { if (funnelOn(cfg)) await criarPedidoFunil(admin, c, row); }
+      else {
+        const { data: o } = await admin.from('orders').select('is_draft, status').eq('id', row.order_id).maybeSingle();
+        if (!o || o.status === 'cancelled') continue;
+        // Retido: aceite automático que falhou ou agendado que chegou a hora (aceite manual pendente não mexe).
+        if (o.is_draft) { if (cfg.order_auto_confirm !== false && funnelOn(cfg)) await aceiteAutomatico(admin, c, row); }
+        // Na cozinha mas a confirmação no iFood falhou: tenta de novo.
+        else if (row.status === 'placed') await aceitarPedidoFunil(admin, c, row);
       }
     } catch (e) {
       const m = String((e as Error)?.message ?? e).slice(0, 300);
@@ -516,12 +553,17 @@ async function funnelSweep(admin: Admin, cfg: any) {
     }
   }
   const { data: fila } = await admin.from('ifood_order_outbox').select('*').eq('tenant_id', cfg.tenant_id).eq('status', 'pending').order('created_at').limit(30);
-  for (const f of (fila ?? []) as any[]) {
+  // Mesma transação gera 'ready' e 'dispatch' com o mesmo created_at: ordem fixa preparo → pronto → saiu.
+  const PESO: Record<string, number> = { start: 0, ready: 1, dispatch: 2 };
+  const ordenada = ((fila ?? []) as any[]).sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)) || PESO[a.op] - PESO[b.op]);
+  for (const f of ordenada) {
     const { data: row } = await admin.from('ifood_orders').select('merchant_id, status').eq('ifood_order_id', f.ifood_order_id).maybeSingle();
     if (!row || ['cancelled', 'concluded'].includes(row.status)) {
       await admin.from('ifood_order_outbox').update({ status: 'skipped', last_error: `pedido ${row?.status ?? 'sumiu'}` }).eq('id', f.id);
       continue;
     }
+    // Ainda não confirmado no iFood: espera (mandar preparo/pronto antes do confirm dá erro e o aviso se perderia).
+    if (row.status === 'placed') continue;
     const c = await ctxFor(admin, cfg, row.merchant_id);
     if (!c) continue;
     const r = await call(admin, c, 'POST', `/order/v1.0/orders/${f.ifood_order_id}/${OUTBOX_PATH[f.op]}`, undefined, { 'idempotency-key': `${f.op}-${f.ifood_order_id}` });
@@ -586,6 +628,16 @@ async function markPoll(admin: Admin, cfg: any, error: string | null) {
 }
 
 async function pollTenant(admin: Admin, cfg: any) {
+  // Um polling por loja por vez (cron de 30 s + botão Atualizar): dois ao mesmo tempo duplicavam itens e tickets.
+  const ate = new Date(Date.now() + 90_000).toISOString();
+  const { data: trava } = await admin.from('ifood_pdv_config').update({ polling_lock_until: ate }).eq('id', cfg.id)
+    .or(`polling_lock_until.is.null,polling_lock_until.lt.${new Date().toISOString()}`).select('id');
+  if (!trava?.length) return { skipped: 'polling em andamento' };
+  try { return await pollTenantSemTrava(admin, cfg); }
+  finally { await admin.from('ifood_pdv_config').update({ polling_lock_until: null }).eq('id', cfg.id); }
+}
+
+async function pollTenantSemTrava(admin: Admin, cfg: any) {
   // Lojas do iFood acompanhadas (entrega + pedidos), agrupadas pela autorização que as enxerga:
   // o header x-polling-merchants só aceita lojas que o token daquela autorização pode ler.
   const grupos = new Map<string, { c: Ctx; ids: string[] }>();
@@ -610,7 +662,7 @@ async function pollTenant(admin: Admin, cfg: any) {
     if (r.error) erros.push(r.error);
   }
   if (semAuth.length) erros.push(`${semAuth.length} loja(s) do iFood sem autorização`);
-  if (funnelOn(cfg)) {
+  if (funnelOn(cfg) || cfg.order_enabled) {
     try { await funnelSweep(admin, cfg); }
     catch (e) { erros.push('Funil: ' + String((e as Error)?.message ?? e).slice(0, 200)); }
   }
@@ -1028,6 +1080,9 @@ Deno.serve(async (req) => {
         return json({ success: true, reasons: lista.map((x: any) => ({ code: String(x.cancelCodeId ?? x.code), description: String(x.description ?? '') })) });
       }
       const op = String(body.op ?? '');
+      if (funil && op === 'cancel' && !isManager && !/caix|cashier/i.test(String(role ?? ''))) {
+        return errResp('Cancelar pedido do iFood (tem multa e pesa na loja): só gerente, admin ou caixa.', 403);
+      }
       // Funil com aceite manual: libera o pedido na cozinha do ERPOS e confirma no iFood.
       if (op === 'accept') {
         if (!funil) return errResp('Aceitar só existe no funil.');
