@@ -19,8 +19,9 @@ export default function HeatmapSemanaHora({ pontos, rgb = '234,29,44', texto = '
   const heat = useMemo(() => {
     const g: { n: number; v: number }[][] = Array.from({ length: 7 }, () => Array.from({ length: 24 }, () => ({ n: 0, v: 0 })));
     for (const p of pontos) { g[p.semana][p.hora].n += 1; g[p.semana][p.hora].v += p.valor; }
-    // Só as horas com pedido (hora sem nenhum pedido no período some da tabela).
-    const horas = [...Array(24).keys()].filter((h) => g.some((l) => l[h].n > 0));
+    // Da 1ª à última hora com pedido; hora vazia no meio aparece, mas estreita (ver colunas abaixo).
+    let horas = [...Array(24).keys()].filter((h) => g.some((l) => l[h].n > 0));
+    if (horas.length) { const a = Math.min(...horas), b = Math.max(...horas); horas = [...Array(b - a + 1).keys()].map((i) => a + i); }
     const max = Math.max(1, ...g.flat().map((c) => c.n));
     const porSemana = g.map((l) => l.reduce((a, c) => a + c.v, 0));
     const pedSemana = g.map((l) => l.reduce((a, c) => a + c.n, 0));
@@ -42,9 +43,9 @@ export default function HeatmapSemanaHora({ pontos, rgb = '234,29,44', texto = '
 
   return (
     <div className="overflow-x-auto">
-      <div className="inline-grid gap-[3px] min-w-full" style={{ gridTemplateColumns: `36px repeat(${heat.horas.length}, minmax(54px, 1fr)) 70px` }}>
+      <div className="inline-grid gap-[3px] min-w-full" style={{ gridTemplateColumns: `36px ${heat.horas.map((h) => (heat.porHora[h].n ? 'minmax(54px, 1fr)' : '22px')).join(' ')} 70px` }}>
         <div />
-        {heat.horas.map((h) => <div key={h} className="text-[10px] text-zinc-400 text-center">{h}h</div>)}
+        {heat.horas.map((h) => <div key={h} className={`text-zinc-400 text-center ${heat.porHora[h].n ? 'text-[10px]' : 'text-[8px]'}`}>{h}h</div>)}
         <div className="text-[10px] text-zinc-400 text-right pr-1">Total</div>
         {heat.g.map((linha, s) => (
           <div key={s} className="contents">
