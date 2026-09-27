@@ -3622,3 +3622,17 @@ Sem SW ativo o POST cai no Vercel e falha — por isso o destino só existe no S
 - **Backend:** tabela `loyalty_programs` (1/loja; `config` jsonb + `enabled`, RLS sem policy, só service_role) e `fn_fidelidade_histograma(tenant, desde)` (clientes por nº de compras, mesmo critério de pedido válido do funil). Edge **`fidelidade`** (verify_jwt=false; `get`/`save`; escrita = admin/gerente ou `gestao_promocoes` na matriz).
 - **Fase 1 NÃO credita nem desconta nada** (`enabled` sempre false). Fase 2 = livro-razão de pontos + crédito no pedido pago; Fase 3 = resgate no caixa/delivery e roleta com sorteio no servidor.
 - **Pegadinha de negócio:** em 2026-09-27 só 13% dos pedidos da Vila Leste e 0% da Paranaguá tinham `customer_id` — sem identificar o cliente no caixa/mesa o programa fica vazio.
+- **Delivery Fase 3 — "Montar saída" no Gestor de Entregas (2026-09-27)**: botão violeta no cabeçalho (conta os prontos
+  sem entregador) abre `MontarSaidaModal`. SEMPRE sugestão — nada muda até "Confirmar saída". Algoritmo puro em
+  `src/lib/montarSaida.ts` (testes em `src/test/lib/montarSaida.test.ts`): candidatos = `ready` sem entregador e sem fase,
+  com coordenada; semente = o mais urgente (criação + SLA); junta o vizinho mais perto da última parada até 2,5 km,
+  máx. 3 paradas, e só se não fizer outro pedido estourar o prazo; ordem = vizinho mais próximo a partir da loja
+  (linha reta × 1,3, 25 km/h, 5 min para sair, 3 min por parada — sem ORS, custo zero); motoboy sugerido = ativo, GPS
+  ≤ 10 min, sem entrega em andamento, mais perto da loja (um por saída). Link do Google Maps com as paradas. Loja sem
+  pin (`delivery_config.store_location`) → rota começa na 1ª parada. `list_delivery_board` devolve `loja` + `motoboys`.
+  `delivery-write › montar_saida` valida (entrega própria em aberto, sem outro entregador; UPDATE condicional contra
+  corrida) e só grava `orders.motoboy_driver_id` (não mexe na fase) + linha em **`delivery_saidas`** (pedidos na ordem,
+  motoboy, km/min, `sugerido` jsonb e `seguiu_sugestao` — base para medir a sugestão). Portal do motoboy:
+  `list_orders` devolve `rota` (última saída dele nas últimas 6 h, só paradas pendentes) → cartão "Sua rota" + "Abrir
+  rota no Maps" (sem origem: o Maps usa onde o motoboy está). PEGADINHA: a posição dos motoboys chega depois de abrir
+  a janela — a `key` do cartão inclui o motoboy sugerido, senão o select fica em "Escolha…".

@@ -25,6 +25,8 @@ const numCurto = (n: string) => `#${String(n).replace(/\D/g, '').slice(-4) || n}
 export default function MontarSaidaModal({ tenantId, orders, loja, motoboys, onConfirmar, onFechar }: Props) {
   const { posicoes } = useDriverPositions(tenantId, true);
   const [versao, setVersao] = useState(0); // "Sugerir de novo"
+  // Confirmadas nesta janela (o quadro recarrega e os pedidos saem da sugestão — a confirmação fica visível aqui)
+  const [feitas, setFeitas] = useState<string[]>([]);
 
   const prontos = useMemo(() => orders.filter((o) => o.status === 'ready' && !o.driver_id && !o.motoboy_status), [orders]);
   const semLocal = prontos.filter((o) => o.lat == null || o.lng == null);
@@ -66,6 +68,11 @@ export default function MontarSaidaModal({ tenantId, orders, loja, motoboys, onC
               A loja não tem o pin no mapa (Config. do Delivery): a rota começa na 1ª parada e o motoboy sugerido é o mais perto dela.
             </p>
           )}
+          {feitas.map((f, i) => (
+            <div key={i} className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800 font-semibold flex items-center gap-2">
+              <i className="ri-checkbox-circle-fill text-lg" /> {f}
+            </div>
+          ))}
           {sugestoes.length === 0 ? (
             <div className="text-center py-10">
               <i className="ri-inbox-line text-3xl text-zinc-300" />
@@ -74,7 +81,7 @@ export default function MontarSaidaModal({ tenantId, orders, loja, motoboys, onC
           ) : sugestoes.map((s, i) => (
             // (a posição dos motoboys chega depois de abrir: o cartão recomeça quando muda o motoboy sugerido)
             <CartaoSaida key={`${versao}-${i}-${s.paradas.map((p) => p.pedido.id).join()}-${s.motoboy?.driver_id ?? ''}`} indice={i + 1} sugestao={s}
-              loja={loja} motoboys={motoboys} onConfirmar={onConfirmar} />
+              loja={loja} motoboys={motoboys} onConfirmar={onConfirmar} onFeito={(msg) => setFeitas((f) => [...f, msg])} />
           ))}
           {semLocal.length > 0 && (
             <p className="text-[11px] text-zinc-500 px-1">
@@ -87,14 +94,14 @@ export default function MontarSaidaModal({ tenantId, orders, loja, motoboys, onC
   );
 }
 
-function CartaoSaida({ indice, sugestao, loja, motoboys, onConfirmar }: {
+function CartaoSaida({ indice, sugestao, loja, motoboys, onConfirmar, onFeito }: {
   indice: number; sugestao: SugestaoSaida; loja: Props['loja']; motoboys: Props['motoboys']; onConfirmar: Props['onConfirmar'];
+  onFeito: (msg: string) => void;
 }) {
   const [fora, setFora] = useState<Set<string>>(new Set());
   const [driverId, setDriverId] = useState(sugestao.motoboy?.driver_id ?? '');
   const [enviando, setEnviando] = useState(false);
   const [erro, setErro] = useState('');
-  const [feito, setFeito] = useState('');
 
   const ficam = sugestao.paradas.filter((p) => !fora.has(p.pedido.id)).map((p) => p.pedido);
   // Tirou algum pedido: recalcula tempo/distância na mesma ordem
@@ -114,16 +121,9 @@ function CartaoSaida({ indice, sugestao, loja, motoboys, onConfirmar }: {
       sugerido: { driver_id: sugestao.motoboy?.driver_id ?? null, pedidos: sugestao.paradas.map((p) => p.pedido.id), km: sugestao.km, min: sugestao.minutos },
     });
     setEnviando(false);
-    if (r.ok) setFeito(r.motoboy ?? 'motoboy'); else setErro(r.erro ?? 'Não foi possível confirmar.');
+    if (r.ok) onFeito(`Saída com ${ficam.map((p) => numCurto(p.number)).join(', ')} confirmada com ${r.motoboy ?? 'o motoboy'} — ele vê a rota no portal.`);
+    else setErro(r.erro ?? 'Não foi possível confirmar.');
   };
-
-  if (feito) {
-    return (
-      <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800 font-semibold flex items-center gap-2">
-        <i className="ri-checkbox-circle-fill text-lg" /> Saída {indice} confirmada com {feito}. Ele vê a rota no portal do motoboy.
-      </div>
-    );
-  }
 
   return (
     <div className="rounded-xl border border-zinc-200 p-3 space-y-2.5">
