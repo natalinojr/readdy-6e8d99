@@ -72,7 +72,8 @@ export default function MontarSaidaModal({ tenantId, orders, loja, motoboys, onC
               <p className="text-sm font-semibold text-zinc-600 mt-1">Nenhum pedido pronto esperando motoboy.</p>
             </div>
           ) : sugestoes.map((s, i) => (
-            <CartaoSaida key={`${versao}-${i}-${s.paradas.map((p) => p.pedido.id).join()}`} indice={i + 1} sugestao={s}
+            // (a posição dos motoboys chega depois de abrir: o cartão recomeça quando muda o motoboy sugerido)
+            <CartaoSaida key={`${versao}-${i}-${s.paradas.map((p) => p.pedido.id).join()}-${s.motoboy?.driver_id ?? ''}`} indice={i + 1} sugestao={s}
               loja={loja} motoboys={motoboys} onConfirmar={onConfirmar} />
           ))}
           {semLocal.length > 0 && (
