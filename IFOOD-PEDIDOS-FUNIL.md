@@ -138,3 +138,12 @@ d95420e); foi **desfeita** no mesmo dia porque o dono escolheu este desenho. Apr
   Portal não faz), CONCLUDED no funil, disputa no funil, fechar caixa com pedido do iFood aberto.
 - A Testes PDV voltou para o modo **"operar"** (roteiro da homologação automática do Order).
 - **Etapa 5 (NFC-e) NÃO feita**: decisão/validação do dono + contabilidade; Testes PDV não tem fiscal.
+- **Revisão Opus (reprovou: 5 P1 + 6 P2) → tudo corrigido em 5ff9f36** e retestado (#2852 → P2609260012):
+  `orders.ifood_repasse` (só o que vem pelo repasse sai das somas; cobrado pela loja é venda da loja); retirada/mesa
+  paga no balcão não é "pago"; total do cobrado = o que o cliente paga; complemento 2x = 2 linhas; `fn_close_session`
+  não cancela rascunho do iFood (aceite leva p/ caixa aberto); trava de polling por loja; `release_held_order`
+  condicional; aceite automático refeito pela varredura; agendado retido até preparo+20 min; fila espera o confirm e
+  tem ordem fixa; pedidos ligados seguem fora do funil; cancelar = gerente/admin/caixa; CONCLUDED tira do rascunho.
+- Estoque pela ficha **testado** (#7445 → P2609260011): item→Quesadilla, complemento→item Burrito (linha própria),
+  complemento→opção Guacamole — as 7 baixas certas. Vínculos de teste ficaram na Testes PDV.
+
