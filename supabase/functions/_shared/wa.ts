@@ -8,7 +8,9 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
 
 export type WaTransport = 'evolution' | 'cloud';
-export interface WaConfig { transport: WaTransport; phone_id: string | null; waba_id: string | null }
+// token: credencial do número quando ele é de uma conta do CLIENTE (Conectar WhatsApp › wa_loja_credenciais);
+// sem token vale o WHATSAPP_CLOUD_TOKEN do sistema (número compartilhado e números na conta do ERPOS).
+export interface WaConfig { transport: WaTransport; phone_id: string | null; waba_id: string | null; token?: string | null }
 export type WaKey = { remoteJid: string; fromMe: boolean; id: string };
 
 /** Erro de envio. `code` é o código da Meta (ex.: 131047 = fora da janela de 24 h → só modelo). */
@@ -95,8 +97,8 @@ function cloudTo(to: string): string {
   return d;
 }
 
-export async function graph(path: string, init: { method?: string; body?: unknown } = {}): Promise<any> {
-  const token = cloudToken();
+export async function graph(path: string, init: { method?: string; body?: unknown } = {}, tokenDoNumero?: string | null): Promise<any> {
+  const token = tokenDoNumero || cloudToken();
   if (!token) throw new WaError('WHATSAPP_CLOUD_TOKEN não configurado', 500, null);
   const r = await fetch(`${GRAPH}/${path}`, {
     method: init.method ?? (init.body ? 'POST' : 'GET'),
@@ -112,7 +114,7 @@ export async function graph(path: string, init: { method?: string; body?: unknow
 }
 async function cloudSend(cfg: WaConfig, body: Record<string, unknown>) {
   if (!cfg.phone_id) throw new WaError('wa_public.phone_id não configurado', 500, null);
-  return graph(`${cfg.phone_id}/messages`, { body: { messaging_product: 'whatsapp', ...body } });
+  return graph(`${cfg.phone_id}/messages`, { body: { messaging_product: 'whatsapp', ...body } }, cfg.token);
 }
 async function evo(path: string, body: unknown) {
   const r = await fetch(`${evoUrl}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json', apikey: evoKey }, body: JSON.stringify(body) });
@@ -206,7 +208,7 @@ export async function waTyping(cfg: WaConfig, to: string, ms: number, messageId?
 export async function waOwnNumber(cfg: WaConfig): Promise<string | null> {
   if (cfg.transport === 'cloud') {
     if (!cfg.phone_id) return null;
-    const out = await graph(`${cfg.phone_id}?fields=display_phone_number`);
+    const out = await graph(`${cfg.phone_id}?fields=display_phone_number`, {}, cfg.token);
     const d = digits(out?.display_phone_number);
     return d.length >= 10 ? d : null;
   }

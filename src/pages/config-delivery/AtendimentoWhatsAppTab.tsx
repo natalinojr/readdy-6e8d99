@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import { getPublicUrl } from '@/lib/appUrl';
 import QrCodeDelivery from './QrCodeDelivery';
+import NumeroProprio, { type ConectarMeta } from './NumeroProprio';
 
 // Aba "Atendimento WhatsApp" (Delivery): o assistente responde os clientes da loja pelo WhatsApp
 // (API oficial), mostra o cardápio e manda o link do delivery para fechar a venda.
@@ -18,6 +19,7 @@ interface Bot {
   code: string;
   phone_id: string | null;
   waba_id: string | null;
+  numero_origem: 'erpos' | 'cliente' | null;
   start_text: string | null;
   welcome: string | null;
   extra_info: string | null;
@@ -78,6 +80,9 @@ async function chamarEdge(body: Record<string, unknown>) {
 export default function AtendimentoWhatsAppTab({ tenantId }: { tenantId?: string }) {
   const [bot, setBot] = useState<Bot | null>(null);
   const [slug, setSlug] = useState('');
+  const [lojaNome, setLojaNome] = useState('');
+  const [conectar, setConectar] = useState<ConectarMeta | null>(null);
+  const [proprio, setProprio] = useState<string | null>(null);
   const [numero, setNumero] = useState<string | null>(null);
   const [carregando, setCarregando] = useState(true);
   const [salvando, setSalvando] = useState(false);
@@ -100,17 +105,19 @@ export default function AtendimentoWhatsAppTab({ tenantId }: { tenantId?: string
   useEffect(() => {
     if (!tenantId) return;
     let vivo = true;
+    setProprio(null); // trocou de loja: não mostra o número próprio da anterior
     (async () => {
       setCarregando(true);
       const [{ data: b }, { data: t }] = await Promise.all([
         supabase.from('wa_loja_bots').select('*').eq('tenant_id', tenantId).maybeSingle(),
-        supabase.from('tenants').select('slug').eq('id', tenantId).maybeSingle(),
+        supabase.from('tenants').select('slug, name').eq('id', tenantId).maybeSingle(),
       ]);
       if (!vivo) return;
       setBot((b as Bot | null) ?? null);
       setSlug(String(t?.slug ?? ''));
+      setLojaNome(String(t?.name ?? ''));
       setCarregando(false);
-      chamarEdge({ action: 'info', tenant_id: tenantId }).then((o) => { if (vivo) setNumero(o?.number ?? null); }).catch(() => {});
+      chamarEdge({ action: 'info', tenant_id: tenantId }).then((o) => { if (vivo) { setNumero(o?.number ?? null); setConectar(o?.conectar ?? null); } }).catch(() => {});
       carregarConversas();
     })();
     return () => { vivo = false; };
@@ -166,8 +173,7 @@ export default function AtendimentoWhatsAppTab({ tenantId }: { tenantId?: string
       voucher_code: limpo(bot.voucher_code)?.toUpperCase() ?? null,
       upsell: bot.upsell,
       notify_owner: bot.notify_owner,
-      phone_id: (bot.phone_id ?? '').replace(/\D/g, '') || null,
-      waba_id: (bot.waba_id ?? '').replace(/\D/g, '') || null,
+      // phone_id/waba_id: só o servidor grava (Número próprio, ações numero_* da edge).
       updated_at: new Date().toISOString(),
     }).eq('tenant_id', tenantId);
     setSalvando(false);
@@ -204,7 +210,9 @@ export default function AtendimentoWhatsAppTab({ tenantId }: { tenantId?: string
 
   const set = (patch: Partial<Bot>) => setBot((b) => (b ? { ...b, ...patch } : b));
   const startText = bot ? ((bot.start_text ?? '').includes(bot.code) ? bot.start_text! : `Oi! Quero ver o cardápio (${bot.code})`) : '';
-  const linkWa = bot && numero ? `https://wa.me/${numero}?text=${encodeURIComponent(startText)}` : '';
+  // Com número próprio conectado o link vai direto para ele (lá não precisa do código).
+  const numeroLink = proprio ?? numero;
+  const linkWa = bot && numeroLink ? `https://wa.me/${numeroLink}?text=${encodeURIComponent(startText)}` : '';
   const linkDelivery = slug ? getPublicUrl(`/${slug}-delivery`) : '';
   const precisa = conversas.filter((c) => c.status === 'aberta' && c.needs_human).length;
 
@@ -251,8 +259,9 @@ export default function AtendimentoWhatsAppTab({ tenantId }: { tenantId?: string
           <div className="bg-white rounded-2xl border border-zinc-200 p-5 space-y-3">
             <h3 className="text-sm font-bold text-zinc-800">Link do WhatsApp para divulgar</h3>
             <p className="text-xs text-zinc-500">
-              Coloque na bio do Instagram, no Google, em anúncios e no QR Code do balcão. O texto pronto leva o código
-              <span className="font-mono font-bold text-zinc-700"> {bot.code}</span>, que liga a conversa a esta loja.
+              Coloque na bio do Instagram, no Google, em anúncios e no QR Code do balcão.{' '}
+              {proprio ? 'Ele abre direto no número próprio da loja.' : <>O texto pronto leva o código
+              <span className="font-mono font-bold text-zinc-700"> {bot.code}</span>, que liga a conversa a esta loja.</>}
             </p>
             {linkWa ? (
               <>
@@ -317,32 +326,8 @@ export default function AtendimentoWhatsAppTab({ tenantId }: { tenantId?: string
             </label>
           </div>
 
-          {/* Número próprio */}
-          <details className="bg-white rounded-2xl border border-zinc-200 p-5">
-            <summary className="text-sm font-bold text-zinc-800 cursor-pointer">Usar o número próprio da loja (avançado)</summary>
-            <div className="space-y-3 mt-3">
-              <p className="text-xs text-zinc-500">
-                Por padrão o atendimento usa o número oficial do sistema com o link acima. Para o assistente responder no
-                número da própria loja, ele precisa estar na API oficial do WhatsApp (Meta). Passos: adicionar o número
-                na conta do WhatsApp Business no Gerenciador da Meta, dar acesso ao usuário do sistema
-                <span className="font-mono"> erpos-whatsapp</span>, colar os dois ids abaixo e pedir ao suporte para ligar
-                o webhook dessa conta (ação <span className="font-mono">subscribe_app</span>). Tudo o que chegar nesse
-                número passa a ser atendido pelo assistente desta loja.
-              </p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-bold text-zinc-600 mb-1">ID do número (phone_number_id)</label>
-                  <input value={bot.phone_id ?? ''} onChange={(e) => set({ phone_id: e.target.value })} inputMode="numeric"
-                    className="w-full px-3 py-2 rounded-xl border border-zinc-200 text-sm font-mono" />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-zinc-600 mb-1">ID da conta (WABA)</label>
-                  <input value={bot.waba_id ?? ''} onChange={(e) => set({ waba_id: e.target.value })} inputMode="numeric"
-                    className="w-full px-3 py-2 rounded-xl border border-zinc-200 text-sm font-mono" />
-                </div>
-              </div>
-            </div>
-          </details>
+          {/* Número próprio: chip novo (conta do ERPOS) ou Conectar pela Meta (conta da loja) */}
+          <NumeroProprio tenantId={tenantId} lojaNome={lojaNome} chamar={chamarEdge} conectar={conectar} onMudou={setProprio} />
 
           <button type="button" onClick={salvar} disabled={salvando}
             className="w-full sm:w-auto px-6 py-2.5 rounded-xl bg-amber-500 text-white text-sm font-bold hover:bg-amber-600 disabled:opacity-50">

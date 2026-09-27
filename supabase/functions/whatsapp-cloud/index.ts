@@ -68,12 +68,13 @@ function toB64(buf: ArrayBuffer): string {
   for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
   return btoa(s);
 }
-// Mídia da Cloud API: /{media_id} → url temporária → download com o mesmo token.
-async function downloadMedia(mediaId: string): Promise<{ base64: string; mime: string } | null> {
-  const meta = await graph(mediaId);
+// Mídia da Cloud API: /{media_id} → url temporária → download com o mesmo token (o do número, se ele
+// for de uma conta do cliente — Conectar WhatsApp).
+async function downloadMedia(mediaId: string, token?: string | null): Promise<{ base64: string; mime: string } | null> {
+  const meta = await graph(mediaId, {}, token);
   if (!meta?.url) return null;
   if (Number(meta.file_size ?? 0) > MAX_MEDIA) throw new Error(`arquivo grande demais (${meta.file_size} bytes)`);
-  const r = await fetch(meta.url, { headers: { Authorization: `Bearer ${Deno.env.get('WHATSAPP_CLOUD_TOKEN') ?? ''}` } });
+  const r = await fetch(meta.url, { headers: { Authorization: `Bearer ${token || (Deno.env.get('WHATSAPP_CLOUD_TOKEN') ?? '')}` } });
   if (!r.ok) throw new Error(`download da mídia → ${r.status}`);
   return { base64: toB64(await r.arrayBuffer()), mime: String(meta.mime_type ?? r.headers.get('content-type') ?? '').split(';')[0].toLowerCase() };
 }
@@ -153,7 +154,7 @@ async function handleMessage(admin: SupabaseClient, cfg: WaConfig, m: any, name:
     else if (type === 'interactive') { kind = 'text'; text = String(m.interactive?.button_reply?.title ?? m.interactive?.list_reply?.title ?? ''); }
     else if (type === 'audio') {
       kind = 'audio';
-      const media = await downloadMedia(String(m.audio?.id ?? ''));
+      const media = await downloadMedia(String(m.audio?.id ?? ''), cfg.token);
       const t = media ? await transcribe(media.base64, media.mime) : '';
       if (!t) { await waSendText(cfg, waId, 'Não consegui ouvir o áudio 😕 Pode escrever?').catch(() => {}); return; }
       text = `[Áudio] ${t}`;
@@ -169,7 +170,7 @@ async function handleMessage(admin: SupabaseClient, cfg: WaConfig, m: any, name:
       const declared = String(src?.mime_type ?? '').split(';')[0].toLowerCase();
       const isDocx = declared === DOCX_MIME || /\.docx$/i.test(fname ?? '');
       if (declared === 'application/pdf' || IMAGE_TYPES.includes(declared) || isDocx) {
-        const media = await downloadMedia(String(src?.id ?? ''));
+        const media = await downloadMedia(String(src?.id ?? ''), cfg.token);
         if (!media) { await waSendText(cfg, waId, 'Não consegui baixar esse arquivo. Pode mandar de novo?').catch(() => {}); return; }
         file = { base64: media.base64, mime: isDocx ? DOCX_MIME : (media.mime || declared), name: fname };
       } else {
@@ -249,16 +250,45 @@ async function handleStatus(admin: SupabaseClient, s: any) {
 }
 
 // Números próprios das lojas ligados à Cloud API (wa_loja_bots.phone_id → loja).
-async function lojaDoNumero(admin: SupabaseClient, phoneId: string): Promise<{ tenant_id: string; waba_id: string | null } | null> {
+async function lojaDoNumero(admin: SupabaseClient, phoneId: string): Promise<{ tenant_id: string; waba_id: string | null; token: string | null } | null> {
   if (!phoneId) return null;
   const { data } = await admin.from('wa_loja_bots').select('tenant_id, waba_id').eq('phone_id', phoneId).maybeSingle();
-  return data ? { tenant_id: String(data.tenant_id), waba_id: data.waba_id ?? null } : null;
+  if (!data) return null;
+  // Número de conta do cliente (Conectar WhatsApp): responde com a credencial dele.
+  const { data: cred } = await admin.from('wa_loja_credenciais').select('token').eq('tenant_id', data.tenant_id).eq('phone_id', phoneId).maybeSingle();
+  return { tenant_id: String(data.tenant_id), waba_id: data.waba_id ?? null, token: cred?.token ? String(cred.token) : null };
+}
+
+// Coexistência (número da loja também no app WhatsApp Business): a equipe respondeu pelo celular. Pausa o
+// assistente naquela conversa por 2 h (igual a responder pela tela) — senão o cliente recebe duas respostas —
+// e guarda a mensagem na conversa para a tela mostrar.
+async function ecoDoApp(admin: SupabaseClient, v: any) {
+  const loja = await lojaDoNumero(admin, String(v.metadata?.phone_number_id ?? ''));
+  if (!loja) return;
+  for (const e of v.message_echoes ?? []) {
+    const key = foneKey(e.to);
+    if (key.length < 10 || !e.id || !(await firstTime(admin, `echo:${e.id}`))) continue; // a Meta reenvia evento
+    // Só a conversa do número próprio (a do número compartilhado, da mesma loja, segue com o assistente).
+    const { data: conv } = await admin.from('wa_loja_conversas').select('id').eq('tenant_id', loja.tenant_id).eq('phone_key', key)
+      .eq('via', 'proprio').eq('status', 'aberta').order('last_message_at', { ascending: false }).limit(1).maybeSingle();
+    if (!conv) continue;
+    const agora = new Date();
+    await admin.from('wa_loja_conversas').update({
+      bot_paused_until: new Date(agora.getTime() + 2 * 3_600_000).toISOString(), needs_human: false, last_message_at: agora.toISOString(),
+    }).eq('id', conv.id);
+    const texto = e.type === 'text' ? String(e.text?.body ?? '') : `[${e.type ?? 'mensagem'} pelo app]`;
+    await admin.from('wa_loja_mensagens').insert({ conversa_id: conv.id, role: 'staff', content: texto.slice(0, 4000) || '[mensagem pelo app]' });
+  }
 }
 
 async function processEvent(admin: SupabaseClient, body: any) {
   const shared = await waConfig(admin);
   for (const entry of body?.entry ?? []) {
     for (const change of entry?.changes ?? []) {
+      if (change?.field === 'smb_message_echoes') {
+        await ecoDoApp(admin, change.value ?? {}).catch((e) => log('WARN', 'eco do app', { error: errMsg(e) }));
+        continue;
+      }
       if (change?.field !== 'messages') continue;
       const v = change.value ?? {};
       // Número compartilhado do atendimento público, ou o número próprio de uma loja. Outros: ignora.
@@ -271,7 +301,7 @@ async function processEvent(admin: SupabaseClient, body: any) {
           log('INFO', 'evento de outro número (ignorado)', { phone_id: pid });
           continue;
         }
-        cfg = { transport: 'cloud', phone_id: pid, waba_id: loja.waba_id };
+        cfg = { transport: 'cloud', phone_id: pid, waba_id: loja.waba_id, token: loja.token };
         store = { tenant_id: loja.tenant_id };
       }
       for (const s of v.statuses ?? []) await handleStatus(admin, s).catch((e) => log('WARN', 'recibo', { error: errMsg(e) }));
