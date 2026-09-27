@@ -1151,6 +1151,8 @@ export default function DeliveryPage() {
                 metodosAlternativos={metodosAlternativos}
                 onTrocarPagamento={phone ? data.trocarPagamentoPedidoSegurado : undefined}
                 modoEntrega={modoEntrega}
+                nomeCliente={customerName}
+                telefoneCliente={phone}
               />
             </div>
           ) : subView === 'historico' ? (
