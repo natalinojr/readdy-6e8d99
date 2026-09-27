@@ -20,6 +20,8 @@ import PagamentoKiosk from './components/PagamentoKiosk';
 import DestinoKiosk from './components/DestinoKiosk';
 import IdentificacaoKiosk from './components/IdentificacaoKiosk';
 import CpfKiosk from './components/CpfKiosk';
+import ClubeEntradaKiosk, { ClubePainelKiosk, PedidoGratisKiosk, type ClubeApi, type ClubeStatus } from './components/ClubeKiosk';
+import { descontoDasReservas, type ClubeResumo, type ClubeReserva } from '../../lib/fidelidade';
 import FormaPagamentoKiosk from './components/FormaPagamentoKiosk';
 import KioskConfigModal from './components/KioskConfigModal';
 import PINGate, { isPINAtivo } from './components/PINGate';
@@ -75,7 +77,7 @@ class KioskErrorBoundary extends Component<{ children: ReactNode }, { hasError: 
   }
 }
 
-type Etapa = 'welcome' | 'destino' | 'cardapio' | 'carrinho' | 'identificacao' | 'cpf' | 'forma_pagamento' | 'pagamento';
+type Etapa = 'welcome' | 'clube' | 'destino' | 'cardapio' | 'carrinho' | 'identificacao' | 'cpf' | 'forma_pagamento' | 'pagamento';
 type Destino = 'aqui' | 'viagem' | null;
 
 const ETAPAS_FLUXO: Etapa[] = ['cardapio', 'carrinho', 'identificacao', 'cpf', 'forma_pagamento', 'pagamento'];
@@ -114,7 +116,7 @@ function AutoatendimentoPageInner() {
   const { user, logout } = useAuth();
   const { settings } = useSystemSettings();
   const { kioskSession } = useKioskAuth();
-  const { recarregar: recarregarCardapio } = useCardapio();
+  const { recarregar: recarregarCardapio, itensPublicos } = useCardapio();
   const { t } = useTranslation();
   // Idioma do cardapio no totem. A traducao e so de vitrine: o pedido continua
   // sendo montado com o nome em portugues, que e o que a cozinha le.
@@ -172,6 +174,16 @@ function AutoatendimentoPageInner() {
   const [alertaParcialKiosk, setAlertaParcialKiosk] = useState<string | null>(null);
   // BUG-10: contador de pedidos offline pendentes de sincronização
   const [offlinePendingCount, setOfflinePendingCount] = useState(0);
+
+  // ── Clube de fidelidade (Clientes & Marketing › Fidelidade) ─────────────────
+  // clubeStatus: a loja tem o programa ligado? (perguntado ao voltar à tela inicial)
+  // clube: cliente identificado pelo CPF; reservas: resgates deste pedido (pontos ou
+  // prêmio ficam reservados 30 min no banco e viram definitivos ao criar o pedido).
+  const [clubeStatus, setClubeStatus] = useState<ClubeStatus | null>(null);
+  const [clube, setClube] = useState<ClubeResumo | null>(null);
+  const [clubeCpf, setClubeCpf] = useState<string | null>(null);
+  const [reservas, setReservas] = useState<ClubeReserva[]>([]);
+  const [painelClube, setPainelClube] = useState(false);
 
   const modoIdentificacao = settings.self_service_id_type;
   const modoPagamento = settings.self_service_payment_type;
@@ -299,6 +311,109 @@ function AutoatendimentoPageInner() {
     return invokeWithAuth<T>(functionName, { body, externalToken: token ?? undefined });
   }, [kioskSession?.accessToken]);
 
+  // Programa ligado? Pergunta a cada volta à tela inicial (a loja pode ligar/desligar).
+  useEffect(() => {
+    if (etapa !== 'welcome') return;
+    const tenantId = kioskSession?.tenantId ?? user?.tenantId;
+    if (!tenantId) return;
+    let vivo = true;
+    void kioskInvoke<ClubeStatus>('fidelidade', { action: 'clube_status', tenant_id: tenantId }).then(({ data }) => {
+      if (vivo) setClubeStatus(data?.ativo ? data : null);
+    });
+    return () => { vivo = false; };
+  }, [etapa, kioskSession?.tenantId, user?.tenantId, kioskInvoke]);
+
+  const erroDe = (res: { data: unknown; error: Error | null }, padrao: string): string | null => {
+    const d = res.data as { error?: string; message?: string } | null;
+    if (res.error) return res.error.message || padrao;
+    if (d?.error) return d.message || d.error;
+    return null;
+  };
+
+  // Produto grátis do clube: se o item é simples (sem opção obrigatória), já entra no carrinho.
+  const adicionarProdutoGratis = (produtoId: string | null | undefined): string | null => {
+    if (!produtoId) return null;
+    const item = itensPublicos.find((i) => i.id === produtoId);
+    if (!item) return null;
+    if (carrinho.some((c) => c.itemId === produtoId)) return item.nome;
+    const precisaEscolher = !item.isCombo && (item.opcoes ?? []).some((g) => g.obrigatorio || (g.minSelecao ?? 0) > 0);
+    if (precisaEscolher) return null;
+    handleAdicionar({ itemId: item.id, nome: item.nome, categoria: item.categoria, preco: item.preco, quantidade: 1, opcoesSelecionadas: [], observacao: '', clienteNome: 'Kiosk', semPreparo: item.semPreparo ?? false, stationId: item.stationId ?? null });
+    return item.nome;
+  };
+
+  const clubeApi: ClubeApi = {
+    buscar: async (cpf) => {
+      const tenantId = kioskSession?.tenantId ?? user?.tenantId;
+      const res = await kioskInvoke<{ encontrado?: boolean; resumo?: ClubeResumo }>('fidelidade', { action: 'clube_buscar', tenant_id: tenantId, cpf });
+      const erro = erroDe(res, 'Não consegui consultar o clube agora.');
+      if (erro) return { encontrado: false, erro };
+      if (res.data?.encontrado && res.data.resumo) { setClube(res.data.resumo); setClubeCpf(cpf); }
+      return { encontrado: !!res.data?.encontrado, resumo: res.data?.resumo };
+    },
+    cadastrar: async (d) => {
+      const tenantId = kioskSession?.tenantId ?? user?.tenantId;
+      const res = await kioskInvoke<{ resumo?: ClubeResumo }>('fidelidade', { action: 'clube_cadastrar', tenant_id: tenantId, ...d });
+      const erro = erroDe(res, 'Não consegui fazer o cadastro agora.');
+      if (erro) return { erro };
+      if (res.data?.resumo) { setClube(res.data.resumo); setClubeCpf(d.cpf); }
+      return { resumo: res.data?.resumo };
+    },
+    usar: async (alvo, celularFinal) => {
+      const tenantId = kioskSession?.tenantId ?? user?.tenantId;
+      if (!clube) return { ok: false, erro: 'Identifique-se no clube primeiro.' };
+      const res = await kioskInvoke<{ reserva?: ClubeReserva; resumo?: ClubeResumo }>('fidelidade', {
+        action: 'clube_reservar', tenant_id: tenantId, customer_id: clube.customer_id, celular_final: celularFinal, ...alvo,
+      });
+      const erro = erroDe(res, 'Não consegui usar agora.');
+      if (erro || !res.data?.reserva) return { ok: false, erro: erro ?? 'Não consegui usar agora.' };
+      const reserva = res.data.reserva;
+      setReservas((prev) => [...prev, reserva]);
+      if (res.data.resumo) setClube(res.data.resumo);
+      if (reserva.reward.tipo === 'produto') {
+        const nome = adicionarProdutoGratis(reserva.reward.produto_id);
+        return { ok: true, aviso: nome ? `${nome} entrou no seu pedido de graça! 🎉` : `Escolha ${reserva.reward.nome} no cardápio: ele sai de graça.` };
+      }
+      return { ok: true };
+    },
+    girar: async () => {
+      const tenantId = kioskSession?.tenantId ?? user?.tenantId;
+      if (!clube) return { erro: 'Identifique-se no clube primeiro.' };
+      const res = await kioskInvoke<{ giro?: { indice: number; premio: { nome: string; tipo: string }; resumo: ClubeResumo } }>('fidelidade', {
+        action: 'clube_girar', tenant_id: tenantId, customer_id: clube.customer_id,
+      });
+      const erro = erroDe(res, 'Não consegui girar agora.');
+      if (erro || !res.data?.giro) return { erro: erro ?? 'Não consegui girar agora.' };
+      const g = res.data.giro;
+      // Saldo/prêmios novos só depois da animação parar (senão o painel "entrega" o prêmio antes).
+      setTimeout(() => setClube(g.resumo), 3400);
+      return { indice: g.indice, premio: g.premio, resumo: g.resumo };
+    },
+  };
+
+  // Desconto do clube sobre o carrinho atual. Produto grátis desconta o preço de
+  // CARDÁPIO de 1 unidade (adicional pago continua pago); nunca passa do subtotal.
+  const subtotalCarrinho = carrinho.reduce((s, i) => s + i.preco * i.quantidade, 0);
+  const descontoClube = descontoDasReservas(
+    reservas,
+    carrinho.map((i) => ({ id: i.itemId, preco: Math.min(i.preco, itensPublicos.find((p) => p.id === i.itemId)?.preco ?? i.preco), qtd: i.quantidade })),
+    subtotalCarrinho,
+  );
+  const totalComClube = Math.round((subtotalCarrinho - descontoClube.total) * 100) / 100;
+  const linhasClube = reservas.map((r) => ({ nome: r.reward.nome, valor: descontoClube.porReserva[r.hold_id] ?? 0 }));
+
+  // Solta o que foi reservado e não virou pedido (os pontos/prêmio voltam na hora).
+  const limparClube = useCallback((liberar = true) => {
+    const tenantId = kioskSession?.tenantId ?? user?.tenantId;
+    if (liberar && clube && reservas.length > 0) {
+      void kioskInvoke('fidelidade', { action: 'clube_liberar', tenant_id: tenantId, customer_id: clube.customer_id, hold_ids: reservas.map((r) => r.hold_id) });
+    }
+    setClube(null);
+    setClubeCpf(null);
+    setReservas([]);
+    setPainelClube(false);
+  }, [clube, reservas, kioskInvoke, kioskSession?.tenantId, user?.tenantId]);
+
   const etapasVisiveis = ETAPAS_FLUXO.filter((e) => {
     if (e === 'identificacao' && pularIdentificacao) return false;
     if (e === 'cpf' && !perguntarCpf) return false;
@@ -309,7 +424,9 @@ function AutoatendimentoPageInner() {
     return true;
   });
 
-  const handleIniciar = () => setEtapa('destino');
+  // Sem sessão de caixa o pedido vai para a fila offline: aí o clube fica de fora.
+  const clubeLigado = !!clubeStatus?.ativo && estado !== 'sem_sessao';
+  const handleIniciar = () => setEtapa(clubeLigado ? 'clube' : 'destino');
 
   const handleSelecionarDestino = (d: 'aqui' | 'viagem') => {
     setDestino(d);
@@ -368,7 +485,8 @@ function AutoatendimentoPageInner() {
 
   // Depois da identificação (ou direto do carrinho, quando não há identificação)
   // vem o CPF na nota — se a loja emite NFC-e. Senão, segue para o pagamento.
-  const etapaDepoisDoCpf = (): Etapa => (pagarNaEntrega ? 'forma_pagamento' : 'pagamento');
+  // Pedido zerado pelos resgates do clube não tem forma de pagamento: vai direto confirmar.
+  const etapaDepoisDoCpf = (): Etapa => (pagarNaEntrega && totalComClube > 0 ? 'forma_pagamento' : 'pagamento');
 
   const handleAvancarCarrinho = () => {
     if (pularIdentificacao) {
@@ -490,6 +608,9 @@ function AutoatendimentoPageInner() {
     const notasPedido = [
       ...(paraViagem ? ['[VIAGEM]'] : []),
       ...(formaAPagar ? [`Pagar no balcão: ${formaAPagar}`] : []),
+      ...(clube ? [`Clube: ${clube.primeiro_nome}${clube.nivel ? ` (${clube.nivel.nome})` : ''}`] : []),
+      ...(clube && reservas.some((r) => (descontoClube.porReserva[r.hold_id] ?? 0) > 0)
+        ? [`Resgate: ${reservas.filter((r) => (descontoClube.porReserva[r.hold_id] ?? 0) > 0).map((r) => r.reward.nome).join(', ')}`] : []),
     ].join(' · ') || null;
 
     const itensPayload = carrinho.map((item, idx) => ({
@@ -516,6 +637,9 @@ function AutoatendimentoPageInner() {
     }));
 
     const subtotal = carrinho.reduce((s, i) => s + i.preco * i.quantidade, 0);
+    // Clube: só vão para o pedido os resgates que descontam algo (produto no carrinho etc.).
+    const holdsUsados = clube ? reservas.filter((r) => (descontoClube.porReserva[r.hold_id] ?? 0) > 0) : [];
+    const descontoPedido = holdsUsados.length > 0 ? descontoClube.total : 0;
 
     const destinoTipoMap: Record<string, string> = {
       nome: 'nome',
@@ -551,11 +675,14 @@ function AutoatendimentoPageInner() {
           origin: 'self_service',
           cash_register_id: null,
           items: itensPayload,
-          discount_amount: 0,
+          discount_amount: descontoPedido,
           service_fee_amount: 0,
           subtotal,
-          total_amount: subtotal,
+          total_amount: Math.round((subtotal - descontoPedido) * 100) / 100,
           is_training: user?.modoTreino ?? false,
+          // Clube: cliente identificado (pontos quando o pedido for pago) + resgates usados.
+          ...(clube ? { loyalty_customer_id: clube.customer_id } : {}),
+          ...(holdsUsados.length > 0 ? { loyalty_hold_ids: holdsUsados.map((r) => r.hold_id) } : {}),
           // CPF na nota: a NFC-e automática (order-write › triggerFiscalEmit) lê orders.customer_cpf.
           customer_cpf: cpfNota,
           notes: notasPedido,
@@ -582,7 +709,7 @@ function AutoatendimentoPageInner() {
       console.error('[Autoatendimento] Exceção ao criar pedido após retries:', e);
       return null;
     }
-  }, [carrinho, identifNome, identifSenha, cpfNota, modoIdentificacao, pagarNaEntrega, formaPagamentoNome, destino, getTenantAndSession, submitOrder, user?.modoTreino, kioskSession?.accessToken]);
+  }, [carrinho, identifNome, identifSenha, cpfNota, modoIdentificacao, pagarNaEntrega, formaPagamentoNome, destino, getTenantAndSession, submitOrder, user?.modoTreino, kioskSession?.accessToken, clube, reservas, descontoClube]);
 
 
   // paidPixPaymentId só vale como texto: esta função também é usada direto em botões (recebe o evento).
@@ -632,7 +759,8 @@ function AutoatendimentoPageInner() {
   const registrarPagamento = useCallback(async (paymentMethodId: string, effectiveOrderId: string) => {
     const { tenantId, sessionId } = getTenantAndSession();
     if (!sessionId || !tenantId) throw new Error('Sessão do caixa não encontrada — o pagamento não foi registrado.');
-    const subtotal = carrinho.reduce((s, i) => s + i.preco * i.quantidade, 0);
+    // Valor cobrado = total do pedido (já com o desconto do clube).
+    const subtotal = totalComClube;
 
     // Busca o caixa ativo da sessão
     let cashRegisterId: string | null = caixa?.id ?? null;
@@ -696,12 +824,13 @@ function AutoatendimentoPageInner() {
       } catch { /* non-fatal */ }
       throw new Error('Não é possível registrar o pagamento sem um caixa (gaveta) aberto. Solicite ao operador que abra o caixa no PDV.');
     }
-  }, [caixa, getTenantAndSession, carrinho, kioskInvoke, marcarPedidoPago]);
+  }, [caixa, getTenantAndSession, totalComClube, kioskInvoke, marcarPedidoPago]);
 
   // orderId explícito: quem acabou de criar o pedido ainda vê pendingOrderId antigo (null)
   // nesta callback — sem ele o pagamento era pulado em silêncio.
   const handleConcluir = useCallback(async (paymentMethodId?: string, orderId?: string) => {
     const effectiveOrderId = orderId ?? pendingOrderId;
+    let guardarReservas = false;
     const { tenantId, sessionId } = getTenantAndSession();
 
     if (effectiveOrderId && paymentMethodId && sessionId && tenantId) {
@@ -750,6 +879,9 @@ function AutoatendimentoPageInner() {
         const destinoNome = destinoInfo.tipo === 'nome' ? (destinoInfo.nomeCliente ?? null)
           : (destinoInfo.tipo === 'senha' ? (destinoInfo.senha ?? null) : null);
         const subtotal = carrinho.reduce((s, i) => s + i.preco * i.quantidade, 0);
+        const holdsOffline = clube ? reservas.filter((r) => (descontoClube.porReserva[r.hold_id] ?? 0) > 0) : [];
+        const descontoOffline = holdsOffline.length > 0 ? descontoClube.total : 0;
+        guardarReservas = holdsOffline.length > 0;
 
         const offlineOrder: OfflineOrder = {
           localId: generateLocalOrderId(),
@@ -785,15 +917,22 @@ function AutoatendimentoPageInner() {
             })),
             observations: item.observacao ? [{ text: item.observacao }] : [],
           })),
-          discount_amount: 0,
+          // Caiu a conexão no meio do pedido com clube: o pedido guarda o mesmo total que o
+          // cliente viu + os resgates (a order-write liga ao sincronizar; loyalty_offline evita
+          // recusar por reserva vencida).
+          discount_amount: descontoOffline,
           service_fee_amount: 0,
           subtotal,
-          total_amount: subtotal,
+          total_amount: Math.round((subtotal - descontoOffline) * 100) / 100,
           cash_register_id: caixa?.id ?? null,
           is_training: user?.modoTreino ?? false,
           // buildOfflineCreateOrderBody espalha o create_payload antes dos campos legados:
           // o CPF da nota sobrevive à sincronização.
-          create_payload: cpfNota ? { customer_cpf: cpfNota } : undefined,
+          create_payload: (cpfNota || clube) ? {
+            ...(cpfNota ? { customer_cpf: cpfNota } : {}),
+            ...(clube ? { loyalty_customer_id: clube.customer_id, loyalty_offline: true } : {}),
+            ...(holdsOffline.length > 0 ? { loyalty_hold_ids: holdsOffline.map((r) => r.hold_id) } : {}),
+          } : undefined,
           payments: [],
         };
 
@@ -819,11 +958,13 @@ function AutoatendimentoPageInner() {
     setFormaPagamentoId(null);
     setFormaPagamentoNome(null);
     setAlertaParcialKiosk(null);
+    limparClube(!guardarReservas);
     setEtapa('welcome');
   }, [
     pendingOrderId, caixa, getTenantAndSession, carrinho,
     identifNome, identifSenha, cpfNota, modoIdentificacao,
-    addPedido, reloadOrders, kioskInvoke, registrarPagamento,
+    addPedido, reloadOrders, kioskInvoke, registrarPagamento, limparClube,
+    clube, reservas, descontoClube,
   ]);
 
   const handleCancelar = useCallback(async () => {
@@ -853,8 +994,9 @@ function AutoatendimentoPageInner() {
     setFormaPagamentoId(null);
     setFormaPagamentoNome(null);
     setAlertaParcialKiosk(null);
+    limparClube();
     setEtapa('welcome');
-  }, [pendingOrderId, getTenantAndSession, kioskInvoke, marcarPedidoPago]);
+  }, [pendingOrderId, getTenantAndSession, kioskInvoke, marcarPedidoPago, limparClube]);
 
   // ── Inatividade: cliente largou o totem no meio do pedido ──────────────────
   // 90s sem toque → aviso "Ainda está aí?" com contagem de 15s → limpa o carrinho e
@@ -1199,6 +1341,16 @@ function AutoatendimentoPageInner() {
                   {destino === 'aqui' ? t('cliente.comerAqui') : t('cliente.paraViagem')}
                 </span>
               )}
+              {clube && etapa !== 'clube' && (
+                <button
+                  onClick={() => setPainelClube(true)}
+                  className="text-xs font-bold px-2.5 py-1 rounded-full whitespace-nowrap cursor-pointer border"
+                  style={{ borderColor: clube.nivel?.cor ?? '#f59e0b', color: clube.nivel?.cor ?? '#f59e0b' }}
+                >
+                  {clube.nivel?.emoji ?? '👑'} {clube.primeiro_nome} · {Math.floor(clube.saldo).toLocaleString('pt-BR')} pts
+                  {(clube.giros > 0 || clube.beneficios.length > 0) && <span className="ml-1">🎁</span>}
+                </button>
+              )}
             </div>
           </div>
 
@@ -1300,8 +1452,18 @@ function AutoatendimentoPageInner() {
       )}
 
       <div className="flex-1 overflow-hidden">
+        {etapa === 'clube' && clubeStatus && (
+          <ClubeEntradaKiosk
+            status={clubeStatus}
+            resumo={clube}
+            reservas={reservas}
+            api={clubeApi}
+            onContinuar={() => setEtapa('destino')}
+            onPular={() => { limparClube(); setEtapa('destino'); }}
+          />
+        )}
         {etapa === 'destino' && (
-          <DestinoKiosk onSelecionar={handleSelecionarDestino} onVoltar={() => setEtapa('welcome')} />
+          <DestinoKiosk onSelecionar={handleSelecionarDestino} onVoltar={() => setEtapa(clubeLigado ? 'clube' : 'welcome')} />
         )}
         {etapa === 'cardapio' && (
           <CardapioKiosk
@@ -1321,12 +1483,16 @@ function AutoatendimentoPageInner() {
             onVoltar={() => setEtapa('cardapio')}
             onPagar={handleAvancarCarrinho}
             traduzir={idiomaCardapio.traduzir}
+            descontoClube={descontoClube.total}
+            linhasClube={linhasClube}
+            clubeTexto={clubeLigado && clubeStatus ? (clube ? `${clube.nivel?.emoji ?? '👑'} ${clube.primeiro_nome}: ${Math.floor(clube.saldo).toLocaleString('pt-BR')} pts${clube.giros > 0 ? ` · ${clube.giros} giro${clube.giros > 1 ? 's' : ''}` : ''}` : `👑 ${clubeStatus.programa}: ganhe pontos neste pedido`) : null}
+            onAbrirClube={() => (clube ? setPainelClube(true) : setEtapa('clube'))}
           />
         )}
         {etapa === 'identificacao' && (
           <IdentificacaoKiosk
             modo={modoIdentificacao}
-            total={carrinho.reduce((s, i) => s + i.preco * i.quantidade, 0)}
+            total={totalComClube}
             pagarNaEntrega={pagarNaEntrega}
             onContinuar={handleIdentificacaoConcluida}
             onVoltar={() => setEtapa('carrinho')}
@@ -1334,19 +1500,37 @@ function AutoatendimentoPageInner() {
         )}
         {etapa === 'cpf' && (
           <CpfKiosk
-            total={carrinho.reduce((s, i) => s + i.preco * i.quantidade, 0)}
+            total={totalComClube}
             onContinuar={handleCpfConcluido}
+            cpfInicial={clubeCpf ?? undefined}
             onVoltar={() => setEtapa(pularIdentificacao ? 'carrinho' : 'identificacao')}
           />
         )}
         {etapa === 'forma_pagamento' && (
           <FormaPagamentoKiosk
-            total={carrinho.reduce((s, i) => s + i.preco * i.quantidade, 0)}
+            total={totalComClube}
             onContinuar={handleFormaPagamentoConcluida}
             onVoltar={() => setEtapa(perguntarCpf ? 'cpf' : (pularIdentificacao ? 'carrinho' : 'identificacao'))}
           />
         )}
-        {etapa === 'pagamento' && (
+        {etapa === 'pagamento' && clube && totalComClube <= 0 && carrinho.length > 0 && (
+          <PedidoGratisKiosk
+            numero={pendingOrderNumber ?? undefined}
+            onVoltar={() => setEtapa('carrinho')}
+            onConcluir={() => { void handleConcluir(); }}
+            onConfirmar={async () => {
+              const id = await handleAvancarPagamento();
+              if (!id) return false;
+              const tenantId = kioskSession?.tenantId ?? user?.tenantId;
+              const { error } = await kioskInvoke('order-write', { action: 'mark_order_paid', order_id: id, tenant_id: tenantId });
+              // Sem marcar pago a tela não diz "confirmado" (a inatividade cancelaria o pedido).
+              if (error) return false;
+              marcarPedidoPago(true);
+              return true;
+            }}
+          />
+        )}
+        {etapa === 'pagamento' && !(clube && totalComClube <= 0 && carrinho.length > 0) && (
           <PagamentoKiosk
             carrinho={carrinho}
             identifNome={identifNome}
@@ -1363,7 +1547,20 @@ function AutoatendimentoPageInner() {
             onRegistrarPagamento={registrarPagamento}
             onConcluir={handleConcluir}
             onCobrancaEmAndamento={setCobrancaEmAndamento}
+            desconto={descontoClube.total}
           />
+        )}
+        {painelClube && clube && clubeStatus && (
+          <div className="fixed inset-0 z-[140] bg-zinc-950/95 overflow-y-auto p-4 md:p-6">
+            <ClubePainelKiosk
+              status={clubeStatus}
+              resumo={clube}
+              reservas={reservas}
+              api={clubeApi}
+              textoContinuar="Voltar ao pedido"
+              onContinuar={() => setPainelClube(false)}
+            />
+          </div>
         )}
       </div>
     </div>

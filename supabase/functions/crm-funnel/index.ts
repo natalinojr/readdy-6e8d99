@@ -474,7 +474,9 @@ Deno.serve(async (req: Request) => {
         if (tipo === "percentual") valor = Math.min(valor, tetoDesconto);
         // Envio automático só com a oferta ligada. Ligar grava quem e quando (a tela
         // pede confirmação antes); desligar é imediato.
-        const autoNovo = r.enabled === true && r.auto_send === true;
+        // Tela antiga (carregou auto_send diferente do que está no banco agora): mantém o banco.
+        const desatualizada = typeof r.auto_send_antes === "boolean" && r.auto_send_antes !== autoAntes.get(stage);
+        const autoNovo = r.enabled === true && (desatualizada ? autoAntes.get(stage) === true : r.auto_send === true);
         const ligouAgora = autoNovo && !autoAntes.get(stage);
         const { error: updErr } = await admin.from("crm_rules").update({
           enabled: r.enabled === true,
@@ -498,7 +500,8 @@ Deno.serve(async (req: Request) => {
           hora_fim: Math.min(23, Math.max(0, Number(settings.hora_fim ?? 21) || 0)),
           desconto_max_percent: Math.min(90, Math.max(0, tetoDesconto)),
           ...(settings.max_auto_por_dia !== undefined
-            ? { max_auto_por_dia: Math.min(500, Math.max(0, Math.round(Number(settings.max_auto_por_dia) || 0))) }
+            // 25 por rodada × ~10 rodadas no horário: acima de 250 não se alcança.
+            ? { max_auto_por_dia: Math.min(250, Math.max(0, Math.round(Number(settings.max_auto_por_dia) || 0))) }
             : {}),
           ...(settings.auto_so_optin !== undefined ? { auto_so_optin: settings.auto_so_optin !== false } : {}),
           updated_at: new Date().toISOString(),
@@ -572,7 +575,8 @@ Deno.serve(async (req: Request) => {
       const hojeBR = agoraBR.toISOString().slice(0, 10);
       const ini = Number(settings.hora_inicio ?? 10);
       const fim = Number(settings.hora_fim ?? 21);
-      const dentroDoHorario = ini === fim || (ini < fim ? hora >= ini && hora < fim : hora >= ini || hora < fim);
+      // Início = fim fecha o automático (na tela manual é "sem restrição"; marketing às 3 h, não).
+      const dentroDoHorario = ini !== fim && (ini < fim ? hora >= ini && hora < fim : hora >= ini || hora < fim);
 
       const { count: jaHoje } = await admin
         .from("crm_sends").select("id", { count: "exact", head: true })
@@ -587,33 +591,61 @@ Deno.serve(async (req: Request) => {
       const { error: recErr } = await admin.rpc("fn_crm_recompute_stages", { p_tenant_id: tenantId });
       if (recErr) throw recErr;
 
+      // No máximo LOTE envios por rodada (o cron roda de hora em hora): a função não passa do
+      // tempo limite e o teto do dia se espalha pelo horário da loja.
+      const LOTE = 25;
       // Quem precisa mais primeiro: carrinho e 2ª compra esfriam rápido.
       const PRIORIDADE: Stage[] = ["carrinho_abandonado", "primeira_compra", "em_risco", "nunca_comprou", "perdido", "recorrente", "fiel", "vip"];
       const soOptin = settings.auto_so_optin !== false;
+      const loja = await lojaInfo(admin, tenantId);
+      const semana = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+
+      // Falhou no automático nos últimos 7 dias (número sem WhatsApp etc.): fica fora, senão
+      // volta toda hora no topo da fila, trava o lote e cria/cancela voucher a cada rodada.
+      const { data: falhas7 } = await admin.from("crm_sends").select("customer_id")
+        .eq("tenant_id", tenantId).eq("auto", true).eq("status", "failed").gte("sent_at", semana);
+      const falhouRecente = new Set((falhas7 ?? []).map((x) => String(x.customer_id)));
+
+      // O número que envia é um só para todas as lojas: o mesmo celular não recebe duas
+      // mensagens automáticas na semana, venham de que loja vierem.
+      const { data: autoSemana } = await admin.from("crm_sends").select("customer_id")
+        .eq("auto", true).eq("status", "sent").gte("sent_at", semana).limit(5000);
+      const celularesSemana = new Set<string>();
+      const idsSemana = Array.from(new Set((autoSemana ?? []).map((x) => String(x.customer_id))));
+      for (let i = 0; i < idsSemana.length; i += 200) {
+        const { data: tel } = await admin.from("customers").select("phone").in("id", idsSemana.slice(i, i + 200));
+        for (const t of tel ?? []) { const cc = celularBR(t.phone); if (cc) celularesSemana.add(cc); }
+      }
+
       const fila: Array<{ stage: Stage; regra: Record<string, unknown>; c: Record<string, unknown>; cel: string }> = [];
       const jaNaFila = new Set<string>();
       let semOptin = 0;
       let semCelular = 0;
+      let semLink = 0;
+      let outraLoja = 0;
       for (const stage of PRIORIDADE) {
         if (!ligadas.has(stage)) continue;
         const { clientes, regra } = await avaliarEstagio(stage, regras, settings);
+        const semCupom = !(regra!.voucher_type !== "nenhum" && Number(regra!.voucher_value) > 0);
         for (const c of clientes) {
-          if (!c.pode_abordar || jaNaFila.has(c.customer_id)) continue;
+          if (!c.pode_abordar || jaNaFila.has(c.customer_id) || falhouRecente.has(c.customer_id)) continue;
           const cel = celularBR(c.phone);
           if (!cel) { semCelular++; continue; }
           if (soOptin && !c.aceita_marketing) { semOptin++; continue; }
+          if (semCupom && !loja.deliveryUrl) { semLink++; continue; }
+          if (celularesSemana.has(cel)) { outraLoja++; continue; }
           jaNaFila.add(c.customer_id);
+          celularesSemana.add(cel);
           fila.push({ stage, regra: regra!, c, cel });
         }
       }
-
-      const loja = await lojaInfo(admin, tenantId);
       if (dry) {
         return ok({
           dry_run: true,
           fila: fila.slice(0, 200).map((f) => ({ stage: f.stage, customer_id: f.c.customer_id, nome: f.c.nome, phone_fmt: f.c.phone_fmt })),
           total: fila.length, restante_hoje: restante, ja_hoje: jaHoje ?? 0, dentro_do_horario: dentroDoHorario,
           sem_optin: semOptin, sem_celular: semCelular, so_optin: soOptin, sem_link_delivery: !loja.deliveryUrl,
+          sem_link: semLink, ja_abordados_por_outra_loja: outraLoja, lote_por_rodada: LOTE,
         });
       }
 
@@ -628,9 +660,10 @@ Deno.serve(async (req: Request) => {
       let falhas = 0;
       let parouPor: string | null = null;
 
-      for (const f of fila.slice(0, restante)) {
+      for (const f of fila.slice(0, Math.min(restante, LOTE))) {
         const temCupom = f.regra.voucher_type !== "nenhum" && Number(f.regra.voucher_value) > 0;
         let voucherId: string | null = null;
+        let registroId: string | null = null;
         let nomeModelo = "";
         let params: string[] = [];
         try {
@@ -670,12 +703,21 @@ Deno.serve(async (req: Request) => {
             params = [primeiroNome(f.c.nome), loja.nome, FRASE_AUTO[f.stage], loja.deliveryUrl];
           }
 
-          const msgId = await waSendTemplate(cfg, "55" + f.cel, nomeModelo, params, "pt_BR", "crm");
-          await admin.from("crm_sends").insert({
+          // Registra ANTES de mandar: se a função morrer entre a Meta aceitar e o registro, o
+          // cliente não recebe de novo na hora seguinte (prefere-se perder um envio a duplicar).
+          const { data: reg, error: regErr } = await admin.from("crm_sends").insert({
             tenant_id: tenantId, customer_id: f.c.customer_id, rule_id: f.regra.id ?? null, stage: f.stage,
             channel: "whatsapp", voucher_id: voucherId, message: renderTemplate(nomeModelo, params).slice(0, 1000),
-            auto: true, status: "sent", wa_msg_id: msgId,
-          });
+            auto: true, status: "sent",
+          }).select("id").single();
+          if (regErr || !reg) {
+            if (voucherId) await admin.from("vouchers").update({ status: "cancelled" }).eq("id", voucherId);
+            parouPor = "não consegui registrar o envio: " + (regErr?.message ?? "sem id");
+            break;
+          }
+          registroId = String(reg.id);
+          const msgId = await waSendTemplate(cfg, "55" + f.cel, nomeModelo, params, "pt_BR", "crm");
+          await admin.from("crm_sends").update({ wa_msg_id: msgId }).eq("id", registroId);
           await admin.from("customers").update({ last_contacted_at: new Date().toISOString() })
             .eq("tenant_id", tenantId).eq("id", f.c.customer_id);
           enviados++;
@@ -683,13 +725,27 @@ Deno.serve(async (req: Request) => {
           falhas++;
           const erro = e instanceof Error ? e.message : String(e);
           if (voucherId) await admin.from("vouchers").update({ status: "cancelled" }).eq("id", voucherId);
-          await admin.from("crm_sends").insert({
-            tenant_id: tenantId, customer_id: f.c.customer_id, rule_id: f.regra.id ?? null, stage: f.stage,
-            channel: "whatsapp", auto: true, status: "failed", error: erro.slice(0, 500),
-          });
-          // Modelo não aprovado/pausado, token ou número bloqueado: não adianta tentar os próximos.
+          if (registroId) {
+            await admin.from("crm_sends").update({ status: "failed", error: erro.slice(0, 500) }).eq("id", registroId);
+          } else {
+            await admin.from("crm_sends").insert({
+              tenant_id: tenantId, customer_id: f.c.customer_id, rule_id: f.regra.id ?? null, stage: f.stage,
+              channel: "whatsapp", auto: true, status: "failed", error: erro.slice(0, 500),
+            });
+          }
           const code = e instanceof WaError ? e.code : null;
+          // 131050: a pessoa parou de receber marketing de empresas no próprio WhatsApp — vale como SAIR.
+          if (code === 131050) {
+            await admin.from("customers").update({ crm_opt_out_at: new Date().toISOString() })
+              .eq("tenant_id", tenantId).eq("id", f.c.customer_id).is("crm_opt_out_at", null);
+          }
+          // Modelo não aprovado/pausado, token ou número bloqueado: não adianta tentar os próximos.
           if ((code && ((code >= 132000 && code <= 132016) || code === 190 || code === 131031 || code === 368)) || /não configurado|API oficial/.test(erro)) {
+            // Falha geral, não do cliente: tira o registro para ele não ficar 7 dias fora da fila
+            // (o erro fica em crm_settings.auto_ultimo_erro, que a tela mostra).
+            if (registroId) await admin.from("crm_sends").delete().eq("id", registroId);
+            else await admin.from("crm_sends").delete().eq("tenant_id", tenantId).eq("customer_id", f.c.customer_id)
+              .eq("auto", true).eq("status", "failed").gte("sent_at", new Date(Date.now() - 60_000).toISOString());
             parouPor = erro;
             break;
           }

@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import type { Rastreio } from './RastreioMapa';
 import { formatCurrency } from '@/lib/formatters';
 import TrocarPagamentoDelivery, { type MetodoAlternativo } from './TrocarPagamentoDelivery';
+import JogosEspera from '@/components/jogos/JogosEspera';
 
 type OrderStatusData = {
   id: string;
@@ -38,6 +39,9 @@ interface Props {
   metodosAlternativos?: MetodoAlternativo[];
   onTrocarPagamento?: (orderId: string, metodoKey: string, cashAmount?: string) => Promise<boolean>;
   modoEntrega?: 'entrega' | 'retirada';
+  /** Para já preencher o cadastro do ranking dos jogos */
+  nomeCliente?: string;
+  telefoneCliente?: string;
 }
 
 const STATUS_STEPS_ENTREGA = [
@@ -329,6 +333,23 @@ export default function AcompanharPedido(props: Props) {
             <p className="text-[10px] font-bold text-amber-700 uppercase tracking-wider">Previsão de entrega até</p>
             <p className="text-lg font-black text-zinc-800 leading-tight">{formatTime(new Date(previsaoEntregaMs!).toISOString())}</p>
           </div>
+        </div>
+      ) : null}
+
+      {/* Joguinhos enquanto espera: o aviso aparece por cima do jogo quando o pedido anda */}
+      {!isCancelled && !isAguardandoPix ? (
+        <div className="mb-6">
+          <JogosEspera
+            esconderCartao={isDelivered}
+            tenantId={tenantId}
+            credencial={{ tipo: 'delivery', order_number: orderData.number }}
+            nomeInicial={props.nomeCliente}
+            telefoneInicial={props.telefoneCliente}
+            aviso={status === 'em_rota' ? 'Seu pedido saiu para entrega!'
+              : isDelivered ? (isRetirada ? 'Pedido retirado. Bom apetite!' : 'Pedido entregue. Bom apetite!')
+              : (status === 'ready' && isRetirada) ? 'Seu pedido está pronto! Pode retirar no balcão.'
+              : null}
+          />
         </div>
       ) : null}
 

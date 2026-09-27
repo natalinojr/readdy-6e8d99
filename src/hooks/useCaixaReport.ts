@@ -87,6 +87,9 @@ export interface CashSession {
   por_origem: PorOrigem[];
   cash_transactions: CashTransaction[];
   cash_transactions_grouped: CashTransaction[];
+  /** Pedidos do iFood pelo funil (fora do faturamento: a venda é contada pelo iFood). dinheiro = recebido na entrega
+   *  (já incluído na linha Dinheiro, porque está na gaveta). */
+  ifood?: { pedidos: number; total: number; dinheiro: number };
 }
 
 export interface CaixaFiltros {
@@ -162,6 +165,7 @@ export function useCaixaReport(filtros?: CaixaFiltros) {
           let paymentsBySession = new Map<string, any[]>();
           let discountsBySession = new Map<string, number>();
           let movementsByRegister = new Map<string, any[]>();
+          const ifoodBySession = new Map<string, { pedidos: number; total: number; dinheiro: number }>();
 
           if (sessionIds.length > 0) {
             const [regResult, ordersResult] = await Promise.all([
@@ -176,7 +180,7 @@ export function useCaixaReport(filtros?: CaixaFiltros) {
                 .in('session_id', sessionIds),
               supabase
                 .from('orders')
-                .select('id, session_id, number, total_amount, subtotal, status, is_cortesia, created_at, origin_type, origin_user_id')
+                .select('id, session_id, number, total_amount, subtotal, status, is_cortesia, created_at, origin_type, origin_user_id, ifood_order_id')
                 .eq('tenant_id', user.tenantId)
                 .in('session_id', sessionIds)
                 .eq('is_training', false)
@@ -196,6 +200,14 @@ export function useCaixaReport(filtros?: CaixaFiltros) {
               ordersResultData = ordersResult.data;
               for (const o of ordersResult.data) {
                 const sid = o.session_id;
+                if (o.ifood_order_id) {
+                  if (o.status !== 'cancelled') {
+                    const f = ifoodBySession.get(sid) ?? { pedidos: 0, total: 0, dinheiro: 0 };
+                    f.pedidos += 1; f.total += Number(o.total_amount ?? 0);
+                    ifoodBySession.set(sid, f);
+                  }
+                  continue;
+                }
                 if (!ordersMap[sid]) ordersMap[sid] = { total: 0, count: 0, cancelados: 0, cortesias: 0, valor_cortesias: 0 };
                 if (o.status === 'cancelled') {
                   ordersMap[sid].cancelados += 1;
@@ -294,7 +306,7 @@ export function useCaixaReport(filtros?: CaixaFiltros) {
             // descontos por session_id (via order)
             for (const d of discountsData) {
               const order = ordersById.get(d.order_id);
-              if (!order) continue;
+              if (!order || order.ifood_order_id) continue;
               const sid = order.session_id;
               discountsBySession.set(sid, (discountsBySession.get(sid) ?? 0) + Number(d.discount_value ?? 0));
             }
@@ -321,6 +333,12 @@ export function useCaixaReport(filtros?: CaixaFiltros) {
               const order = ordersById.get(p.order_id);
               if (!order || order.status === 'cancelled' || order.status === 'draft') continue;
               const pmInfo = pmMap.get(p.payment_method_id);
+              // iFood pelo funil: só o dinheiro recebido na entrega (está na gaveta) entra na divisão por forma
+              const emDinheiro = pmInfo?.type === 'cash' || (pmInfo?.name ?? '').toLowerCase().includes('dinheiro');
+              if (order.ifood_order_id) {
+                if (!emDinheiro) continue;
+                const f = ifoodBySession.get(sess.id); if (f) f.dinheiro += Number(p.amount ?? 0);
+              }
               const key = pmInfo?.name ?? 'Outros';
               const existing = porFormaMap.get(key);
               if (existing) {
@@ -348,7 +366,7 @@ export function useCaixaReport(filtros?: CaixaFiltros) {
             for (const o of ordersResultData ?? []) {
               if (o.session_id !== sess.id) continue;
               if (o.status === 'cancelled' || o.status === 'draft') continue;
-              if (o.is_training) continue;
+              if (o.is_training || o.ifood_order_id) continue;
               const key = o.origin_type ?? 'outros';
               const existing = porOrigemMap.get(key);
               if (existing) {
@@ -442,6 +460,7 @@ export function useCaixaReport(filtros?: CaixaFiltros) {
               por_origem,
               cash_transactions,
               cash_transactions_grouped: [],
+              ifood: ifoodBySession.get(sess.id),
             };
           });
         }

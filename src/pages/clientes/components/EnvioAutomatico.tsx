@@ -100,6 +100,7 @@ export default function PainelEnvioAutomatico({ tenantId, settings, algumLigado,
             ser abordado, de hora em hora, dentro do horário da loja
             {settings ? <> ({settings.hora_inicio}h às {settings.hora_fim}h)</> : null}. A Meta só deixa a empresa
             falar primeiro com <strong>modelo aprovado</strong> e cobra cada mensagem de marketing (cerca de R$ 0,35).
+            Cada cliente recebe no máximo 1 mensagem automática por semana (somando as lojas).
             Quem responder <strong>SAIR</strong> para de receber.
           </p>
         </div>
@@ -134,7 +135,7 @@ export default function PainelEnvioAutomatico({ tenantId, settings, algumLigado,
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <label className="flex items-center gap-2 text-xs text-zinc-700">
             <span className="whitespace-nowrap">Máximo por dia</span>
-            <input type="number" min={0} max={500} value={settings.max_auto_por_dia ?? 30}
+            <input type="number" min={0} max={250} value={settings.max_auto_por_dia ?? 30}
               onChange={function (e) { onSettings({ max_auto_por_dia: Number(e.target.value) }); }}
               className="w-20 px-2 py-1 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400" />
             <span className="text-[11px] text-zinc-400">mensagens (somando os estágios)</span>

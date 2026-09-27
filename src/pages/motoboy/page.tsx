@@ -266,7 +266,8 @@ export default function MotoboyPage() {
         </div>
 
         {avisoGps ? (
-          <div className={'flex items-start gap-2 rounded-2xl border px-3 py-2 text-[11px] font-semibold ' + avisoGps.cls}>
+          <div role={avisoGps.acao ? 'button' : undefined} onClick={avisoGps.acao}
+            className={'flex items-start gap-2 rounded-2xl border px-3 py-2 text-[11px] font-semibold ' + avisoGps.cls + (avisoGps.acao ? ' cursor-pointer' : '')}>
             <i className={avisoGps.icon + ' text-sm mt-px'} /> <span>{avisoGps.texto}</span>
           </div>
         ) : null}

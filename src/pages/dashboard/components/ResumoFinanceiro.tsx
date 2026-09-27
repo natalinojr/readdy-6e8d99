@@ -57,8 +57,9 @@ export default function ResumoFinanceiro({ refreshKey = 0 }: { refreshKey?: numb
       // Receita do dia — pagamentos registrados hoje (apenas de pedidos entregues)
       const { data: pagamentos } = await supabase
         .from('payments')
-        .select('amount, orders!inner(tenant_id, is_paid, status)')
+        .select('amount, orders!inner(tenant_id, is_paid, status, ifood_order_id)')
         .eq('orders.tenant_id', user.tenantId)
+        .is('orders.ifood_order_id', null) // venda do iFood pelo funil já é contada pelo iFood
         .eq('orders.status', 'delivered')
         .eq('is_refunded', false)
         .gte('created_at', fromTs)
@@ -75,6 +76,7 @@ export default function ResumoFinanceiro({ refreshKey = 0 }: { refreshKey?: numb
         .eq('status', 'delivered')
         .eq('is_training', false)
         .eq('is_draft', false)
+        .is('ifood_order_id', null)
         .gte('created_at', fromTs)
         .lte('created_at', toTs);
 

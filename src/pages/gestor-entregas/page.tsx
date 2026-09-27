@@ -269,7 +269,7 @@ export default function GestorEntregasPage() {
         <IfoodLojaModal tenantId={tenantId} merchants={ifoodLoja.merchants} podeEditar={ifoodLoja.podeEditar} onClose={() => setLojaIfoodOpen(false)} />
       )}
       {pedidosIfoodOpen && tenantId && (
-        <IfoodPedidosModal tenantId={tenantId} operar={ifoodPedidos.operar} onClose={() => setPedidosIfoodOpen(false)} />
+        <IfoodPedidosModal tenantId={tenantId} operar={ifoodPedidos.operar} funil={ifoodPedidos.funil} onClose={() => setPedidosIfoodOpen(false)} />
       )}
       {ifoodCfgOpen && tenantId && (
         <IfoodEntregaConfigModal tenantId={tenantId} onClose={() => setIfoodCfgOpen(false)} onChanged={recarregarIfoodCfg} />

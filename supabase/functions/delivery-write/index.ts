@@ -400,7 +400,8 @@ async function emitDeliveryOutputs(admin: any, ctx: DeliveryOutputCtx) {
         });
       } catch { /* non-blocking */ }
 
-      await notifyDeliveryOrderCreated({
+      // Sem telefone (ex.: pedido do iFood, cliente mascarado) não há para quem mandar.
+      if (cleanPhone || customer_phone) await notifyDeliveryOrderCreated({
         tenant_id,
         order_id: orderId,
         order_number: orderNumber,
@@ -594,11 +595,15 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       const { data: rows, error } = await admin.rpc("fn_delivery_lookup_customer", { p_tenant_id: tenant_id, p_phone: cleanPhone });
       if (error) throw error;
       const row = (rows && rows.length > 0) ? rows[0] : null;
-      const customer = row ? { id: row.id, phone: row.phone, name: row.name, neighborhood_id: row.neighborhood_id, street: row.street, number: row.number, complement: row.complement, reference_point: row.reference_point, last_used_at: row.last_used_at, birth_date: null as string | null, gender: null as string | null, delivery_neighborhoods: row.neighborhood_id ? { id: row.neighborhood_id, name: row.neighborhood_name, delivery_fee: row.neighborhood_delivery_fee } : null } : null;
+      const customer = row ? { id: row.id, phone: row.phone, name: row.name, neighborhood_id: row.neighborhood_id, street: row.street, number: row.number, complement: row.complement, reference_point: row.reference_point, last_used_at: row.last_used_at, birth_date: null as string | null, gender: null as string | null, aceita_ofertas: false, delivery_neighborhoods: row.neighborhood_id ? { id: row.neighborhood_id, name: row.neighborhood_name, delivery_fee: row.neighborhood_delivery_fee } : null } : null;
       // Anexa nascimento/gênero salvos no cadastro de clientes (aba Clientes) p/ pré-preencher.
       if (customer) {
-        const { data: custRow } = await admin.from("customers").select("birth_date, gender").eq("tenant_id", tenant_id).eq("phone", cleanPhone).limit(1).maybeSingle();
-        if (custRow) { customer.birth_date = custRow.birth_date ?? null; customer.gender = custRow.gender ?? null; }
+        const { data: custRow } = await admin.from("customers").select("birth_date, gender, accepts_marketing, crm_opt_out_at").eq("tenant_id", tenant_id).eq("phone", cleanPhone).limit(1).maybeSingle();
+        if (custRow) {
+          customer.birth_date = custRow.birth_date ?? null; customer.gender = custRow.gender ?? null;
+          // Já aceitou ofertas pelo WhatsApp (e não pediu para sair): o checkout não pergunta de novo.
+          customer.aceita_ofertas = custRow.accepts_marketing === true && !custRow.crm_opt_out_at;
+        }
       }
       // "Entrou no cardapio": marca a visita no cadastro. NAO mexe em last_used_at
       // (esse e o ultimo uso em PEDIDO e ordena a busca do caixa).
@@ -1588,7 +1593,9 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       if (!internalKey || req.headers.get("x-internal-key") !== internalKey) return jsonErr("Unauthorized", 401);
       const { tenant_id, order_id } = body;
       if (!tenant_id || !order_id) return jsonErr("tenant_id e order_id obrigatorios", 400);
-      const r = await releaseHeldOrder(admin, String(tenant_id), String(order_id), "PIX pelo app (PAGO)", null);
+      // payment_label: o funil do iFood (ifood-shipping) libera o pedido do iFood com a forma dele.
+      const label = typeof body.payment_label === "string" && body.payment_label.trim() ? body.payment_label.trim().slice(0, 80) : "PIX pelo app (PAGO)";
+      const r = await releaseHeldOrder(admin, String(tenant_id), String(order_id), label, null);
       if (r.error) return jsonErr(r.error, r.code ?? 400);
       return new Response(JSON.stringify({ _v: "v14", ok: true, released: !r.already, already: !!r.already }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
@@ -1944,6 +1951,13 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
           if (customer_name && customer_name.trim() && customer_name.trim() !== existingCustomers[0].name) upd.name = customer_name.trim();
           if (normBirth) upd.birth_date = normBirth;
           if (normGender) upd.gender = normGender;
+          // Aceite de ofertas marcado no checkout (LGPD: ato explícito, com data). Desmarcado não
+          // apaga aceite anterior. Marcar de novo desfaz um "SAIR" antigo — é um novo pedido dele.
+          if (body.accepts_marketing === true) {
+            upd.accepts_marketing = true;
+            upd.gdpr_consent_at = new Date().toISOString();
+            upd.crm_opt_out_at = null;
+          }
           if (Object.keys(upd).length > 0) await admin.from("customers").update(upd).eq("id", realCustomerId);
         } else {
           // O nome vem do cliente — o sistema NUNCA inventa um nome. Sem nome, recusa
@@ -1956,7 +1970,8 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
             birth_date: normBirth, gender: normGender,
             first_visit_at: new Date().toISOString(),
             visit_count: 0, total_spent: 0,
-            loyalty_points: 0, loyalty_tier: "bronze", accepts_marketing: false,
+            loyalty_points: 0, loyalty_tier: "bronze", accepts_marketing: body.accepts_marketing === true,
+            gdpr_consent_at: body.accepts_marketing === true ? new Date().toISOString() : null,
           }).select("id").single();
           if (newCustomer) realCustomerId = newCustomer.id;
         }

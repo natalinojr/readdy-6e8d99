@@ -53,6 +53,8 @@ interface PagamentoKioskProps {
   /** Avisa o pai se há cobrança em andamento (Pix/cartão na maquininha, registrando, confirmado ou
    *  erro pós-pagamento) — nesses casos o totem NÃO pode voltar sozinho por inatividade. */
   onCobrancaEmAndamento?: (emAndamento: boolean) => void;
+  /** Desconto do clube de fidelidade (resgates) — o valor cobrado é subtotal − desconto. */
+  desconto?: number;
 }
 
 // ── Tela de Confirmação ────────────────────────────────────────────────────
@@ -530,6 +532,7 @@ export default function PagamentoKiosk({
   onRegistrarPagamento,
   onConcluir,
   onCobrancaEmAndamento,
+  desconto = 0,
 }: PagamentoKioskProps) {
   const { user } = useAuth();
   const { t } = useTranslation();
@@ -556,7 +559,7 @@ export default function PagamentoKiosk({
   const [balcaoFormaNome, setBalcaoFormaNome] = useState<string | null>(null);
   const [balcaoEmDinheiro, setBalcaoEmDinheiro] = useState(false);
 
-  const total = carrinho.reduce((s, i) => s + i.preco * i.quantidade, 0);
+  const total = Math.max(0, Math.round((carrinho.reduce((s, i) => s + i.preco * i.quantidade, 0) - desconto) * 100) / 100);
   const tenantId = kioskSession?.tenantId ?? user?.tenantId ?? '';
 
   // Busca métodos de pagamento
