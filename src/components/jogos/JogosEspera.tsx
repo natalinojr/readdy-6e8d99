@@ -3,26 +3,27 @@ import { createPortal } from 'react-dom';
 import JogoCanvas, { type GravacaoPartida } from './JogoCanvas';
 import { JOGOS, type MotorJogo } from './catalogo';
 import {
-  comecarPartida, configJogos, direitoJogar, enviarPartida, gravarJogador, lerJogador, rankingJogo, soDigitos,
-  type ConfigJogos, type CredencialJogo, type Jogador, type LinhaRanking,
+  comecarPartida, configJogos, direitoJogar, enviarPartida, rankingJogo, soDigitos,
+  type ConfigJogos, type CredencialJogo, type LinhaRanking,
 } from '@/lib/jogos/api';
+import { clubeChamar, clubeSalvarToken, clubeTokenSalvo } from '@/lib/clubePublico';
 
 // "Jogue enquanto espera": cartão que abre os joguinhos em tela cheia na mesa QR e no
-// acompanhamento do delivery. Recorde fica no aparelho. Quando a loja liga o ranking
-// (Clientes & Marketing › Jogos), quem fez pedido e informou nome + WhatsApp joga
-// VALENDO: a semente vem do servidor e a pontuação é recalculada lá (Edge `jogos`).
+// acompanhamento do delivery. Regras do dono (2026-09-27): os jogos são SÓ DO CLUBE de
+// fidelidade (loja sem clube não mostra; quem não é membro vê "entre no clube") e só com
+// pedido em andamento (entregou, pausa até o próximo pedido). Quem joga é identificado
+// pelo cartão do clube no aparelho — nada de pedir nome/WhatsApp. Com o ranking ligado
+// (Clientes & Marketing › Jogos) toda partida vale: semente do servidor e pontuação
+// recalculada lá (Edge `jogos`). Recorde fica no aparelho.
 
 interface Props {
   /** Mensagem sobre o pedido para mostrar por cima do jogo (ex.: "saiu para entrega") */
   aviso?: string | null;
   /** Esconde o cartão (o jogo aberto continua aberto) */
   esconderCartao?: boolean;
-  /** Loja + pedido que dá direito ao ranking; sem isso só joga por diversão */
+  /** Loja + pedido que dá direito a jogar; sem os dois (só a demo /dev/jogos) joga livre */
   tenantId?: string;
   credencial?: CredencialJogo | null;
-  /** Para já preencher o cadastro do ranking */
-  nomeInicial?: string;
-  telefoneInicial?: string;
   /** Delivery: a tela já acompanha o status. Mesa: omitir e o jogo pergunta à Edge. */
   pedidoEntregue?: boolean;
   /** Botão "Fazer novo pedido" quando o jogo está pausado */
@@ -32,7 +33,7 @@ interface Props {
 // Regra do dono (2026-09-27): só joga depois de pedir; entregou, o jogo para até o próximo pedido.
 const MSG_ENTREGUE = 'Seu pedido foi entregue. Faça um novo pedido para continuar jogando.';
 
-type Tela = 'menu' | 'jogo' | 'ranking' | 'cadastro';
+type Tela = 'menu' | 'jogo' | 'ranking' | 'clube';
 
 interface Fim {
   pontos: number;
@@ -43,17 +44,20 @@ interface Fim {
   enviando?: boolean;
 }
 
+function soCpf(v: string) { return soDigitos(v).slice(0, 11); }
+function mascaraCpf(v: string) {
+  const d = soCpf(v);
+  if (d.length <= 3) return d;
+  if (d.length <= 6) return d.slice(0, 3) + '.' + d.slice(3);
+  if (d.length <= 9) return d.slice(0, 3) + '.' + d.slice(3, 6) + '.' + d.slice(6);
+  return d.slice(0, 3) + '.' + d.slice(3, 6) + '.' + d.slice(6, 9) + '-' + d.slice(9);
+}
+
 function lerRecorde(id: string): number {
   try { return Number(window.localStorage.getItem('erpos_jogo_recorde_' + id)) || 0; } catch { return 0; }
 }
 function gravarRecorde(id: string, pontos: number) {
   try { window.localStorage.setItem('erpos_jogo_recorde_' + id, String(pontos)); } catch { /* sem armazenamento: só não guarda */ }
-}
-function mascaraFone(v: string): string {
-  const d = soDigitos(v).slice(0, 11);
-  if (d.length <= 2) return d;
-  if (d.length <= 7) return '(' + d.slice(0, 2) + ') ' + d.slice(2);
-  return '(' + d.slice(0, 2) + ') ' + d.slice(2, d.length - 4) + '-' + d.slice(-4);
 }
 const MEDALHA = ['🥇', '🥈', '🥉'];
 
@@ -71,72 +75,82 @@ export default function JogosEspera(props: Props) {
   const [avisoFechado, setAvisoFechado] = useState<string | null>(null);
 
   const [cfg, setCfg] = useState<ConfigJogos | null>(null);
-  const [jogador, setJogador] = useState<Jogador | null>(null);
   const [sessao, setSessao] = useState<{ id: string; semente: number } | null>(null);
   const [preparando, setPreparando] = useState(false);
   const [avisoRanking, setAvisoRanking] = useState<string | null>(null);
-  const [depoisCadastro, setDepoisCadastro] = useState<MotorJogo | null>(null);
-  const [formNome, setFormNome] = useState('');
-  const [formFone, setFormFone] = useState('');
-  const [erroForm, setErroForm] = useState<string | null>(null);
 
   const [rankJogo, setRankJogo] = useState<string>('voa');
   const [rank, setRank] = useState<{ top: LinhaRanking[]; eu: { posicao: number; pontos: number } | null; jogadores: number } | null>(null);
   const [carregandoRank, setCarregandoRank] = useState(false);
 
-  const podeRanking = !!props.tenantId && !!props.credencial;
+  // Loja + pedido: exige clube e pedido em andamento. Sem isso é a demo (/dev/jogos).
+  const exigeClube = !!props.tenantId && !!props.credencial;
+  const [clubeToken, setClubeToken] = useState<string | null>(function () { return clubeTokenSalvo(props.tenantId); });
+  const [direito, setDireito] = useState<{ pode: boolean; motivo?: string; mensagem?: string } | null>(null);
+  const [formCpf, setFormCpf] = useState('');
+  const [formFinal, setFormFinal] = useState('');
+  const [erroClube, setErroClube] = useState<string | null>(null);
+  const [entrando, setEntrando] = useState(false);
 
-  // Mesa: pergunta à Edge a cada 30 s (só com a tela visível) se o pedido ainda está em andamento
-  const [bloqueioMesa, setBloqueioMesa] = useState<string | null>(null);
-  const credMesa = props.credencial && props.credencial.tipo === 'mesa' ? props.credencial : null;
-  const mesaId = credMesa ? credMesa.participant_id : '';
-  const mesaSenha = credMesa ? credMesa.access_token : '';
   useEffect(function () {
-    if (!props.tenantId || !mesaId || props.pedidoEntregue !== undefined) return;
+    if (!props.tenantId) return;
+    configJogos(props.tenantId).then(setCfg).catch(function () { /* sem config: tenta de novo na próxima montagem */ });
+  }, [props.tenantId]);
+
+  // Pergunta à Edge a cada 30 s (só com a tela visível): é do clube? pedido ainda em andamento?
+  // Ao voltar para a aba relê o cartão (a pessoa pode ter entrado no clube em /clube/<loja>).
+  const cred = props.credencial;
+  const credChave = !cred ? '' : cred.tipo === 'mesa' ? 'm:' + cred.participant_id + ':' + cred.access_token : 'd:' + cred.order_number;
+  useEffect(function () {
+    if (!exigeClube) return;
     let vivo = true;
     function checar() {
       if (document.visibilityState === 'hidden') return;
-      direitoJogar(props.tenantId!, { tipo: 'mesa', participant_id: mesaId, access_token: mesaSenha })
-        .then(function (r) { if (vivo) setBloqueioMesa(r.pode_jogar ? null : (r.mensagem || MSG_ENTREGUE)); })
+      const token = clubeTokenSalvo(props.tenantId);
+      setClubeToken(token);
+      if (!token) { setDireito({ pode: false, motivo: 'sem_clube' }); return; }
+      direitoJogar(props.tenantId!, props.credencial!, token)
+        .then(function (r) {
+          if (!vivo) return;
+          if (r.motivo === 'sem_clube') { clubeSalvarToken(props.tenantId!, null); setClubeToken(null); }
+          setDireito({ pode: r.pode_jogar, motivo: r.motivo, mensagem: r.mensagem });
+        })
         .catch(function () { /* sem rede: não trava o jogo */ });
     }
     checar();
     const id = setInterval(checar, 30000);
     document.addEventListener('visibilitychange', checar);
     return function () { vivo = false; clearInterval(id); document.removeEventListener('visibilitychange', checar); };
-  }, [props.tenantId, mesaId, mesaSenha, props.pedidoEntregue]);
-  const bloqueio = props.pedidoEntregue ? MSG_ENTREGUE : bloqueioMesa;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [exigeClube, props.tenantId, credChave, clubeToken]);
+
+  const semClube = exigeClube && (!clubeToken || direito?.motivo === 'sem_clube');
+  const bloqueio = props.pedidoEntregue ? MSG_ENTREGUE
+    : direito && !direito.pode && direito.motivo !== 'sem_clube' ? (direito.mensagem || MSG_ENTREGUE) : null;
 
   // pausou no meio da partida: o jogo para na hora
   useEffect(function () {
     if (!bloqueio) return;
     setTela('menu'); setJogo(null); setFim(null); setSessao(null); setPreparando(false);
   }, [bloqueio]);
-  const rankingAtivo = podeRanking && !!cfg && cfg.ranking_ativo;
+  const rankingAtivo = exigeClube && !!cfg && cfg.ranking_ativo;
 
   useEffect(function () {
     if (!aberto) return;
     const r: Record<string, number> = {};
     for (const j of JOGOS) r[j.id] = lerRecorde(j.id);
     setRecordes(r);
-    setJogador(lerJogador());
     const antes = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     return function () { document.body.style.overflow = antes; };
   }, [aberto]);
 
-  // busca já quando o cartão aparece: a Edge pode demorar a acordar e o banner do ranking
-  // tem que estar pronto quando a pessoa abrir
-  useEffect(function () {
-    if (!podeRanking || cfg) return;
-    configJogos(props.tenantId!).then(setCfg).catch(function () { /* sem ranking: joga por diversão */ });
-  }, [podeRanking, cfg, props.tenantId]);
-
   function valendo(j: MotorJogo): boolean {
-    return rankingAtivo && !!jogador && cfg!.jogos.includes(j.id);
+    return rankingAtivo && !!clubeToken && cfg!.jogos.includes(j.id);
   }
 
   async function jogar(j: MotorJogo) {
+    if (semClube) { setTela('clube'); return; }
     setJogo(j);
     setFim(null);
     setTela('jogo');
@@ -145,7 +159,7 @@ export default function JogosEspera(props: Props) {
     if (valendo(j)) {
       setPreparando(true);
       try {
-        const s = await comecarPartida(props.tenantId!, j.id, jogador!, props.credencial!);
+        const s = await comecarPartida(props.tenantId!, j.id, clubeToken!, props.credencial!);
         setSessao({ id: s.sessao, semente: s.semente });
       } catch (e) {
         setAvisoRanking((e as Error).message + ' Esta partida não vale para o ranking.');
@@ -182,32 +196,22 @@ export default function JogosEspera(props: Props) {
     setTimeout(function () { if (partidaRef.current === minha) setFim(function (f) { return f || base; }); }, 450);
   }
 
-  function abrirCadastro(proximo: MotorJogo | null) {
-    setDepoisCadastro(proximo);
-    setFormNome(jogador?.nome || props.nomeInicial || '');
-    setFormFone(mascaraFone(jogador?.telefone || props.telefoneInicial || ''));
-    setErroForm(null);
-    setTela('cadastro');
-  }
-
-  function salvarCadastro() {
-    const nome = formNome.trim();
-    const fone = soDigitos(formFone);
-    if (nome.length < 2) { setErroForm('Digite seu nome.'); return; }
-    if (fone.length < 10 || fone.length > 11) { setErroForm('Digite o WhatsApp com DDD.'); return; }
-    const j = { nome, telefone: fone };
-    gravarJogador(j);
-    setJogador(j);
-    if (depoisCadastro) {
-      // o estado novo ainda não chegou em `jogador`: começa direto com ele
-      const alvo = depoisCadastro;
-      setDepoisCadastro(null);
-      setJogo(alvo); setFim(null); setTela('jogo'); setSessao(null); setAvisoRanking(null); setPreparando(true);
-      comecarPartida(props.tenantId!, alvo.id, j, props.credencial!)
-        .then(function (s) { setSessao({ id: s.sessao, semente: s.semente }); })
-        .catch(function (e) { setAvisoRanking((e as Error).message + ' Esta partida não vale para o ranking.'); })
-        .finally(function () { setPreparando(false); setPartida(function (p) { return p + 1; }); });
-    } else setTela('menu');
+  // Entrar no clube aqui mesmo: CPF + 4 últimos do celular (mesma trava do clube, canal web)
+  async function entrarNoClube() {
+    const cpf = soCpf(formCpf);
+    const fin = soDigitos(formFinal).slice(0, 4);
+    if (cpf.length !== 11) { setErroClube('Digite o CPF completo.'); return; }
+    if (fin.length !== 4) { setErroClube('Digite os 4 últimos números do seu celular.'); return; }
+    setEntrando(true);
+    setErroClube(null);
+    const r = await clubeChamar<{ token?: string }>({ action: 'entrar', tenant_id: props.tenantId, cpf, celular_final: fin });
+    setEntrando(false);
+    if (r.error || !r.token) { setErroClube(r.message || 'Não foi possível entrar.'); return; }
+    clubeSalvarToken(props.tenantId!, r.token);
+    setClubeToken(r.token);
+    setDireito(null);
+    setFormCpf(''); setFormFinal('');
+    setTela('menu');
   }
 
   function abrirRanking(id?: string) {
@@ -217,7 +221,7 @@ export default function JogosEspera(props: Props) {
     setFim(null);
     setRank(null);
     setCarregandoRank(true);
-    rankingJogo(props.tenantId!, alvo, jogador?.telefone || '')
+    rankingJogo(props.tenantId!, alvo, clubeToken)
       .then(function (r) { setRank({ top: r.top, eu: r.eu, jogadores: r.jogadores }); })
       .catch(function () { setRank({ top: [], eu: null, jogadores: 0 }); })
       .finally(function () { setCarregandoRank(false); });
@@ -237,7 +241,10 @@ export default function JogosEspera(props: Props) {
   }
 
   const aviso = props.aviso && props.aviso !== avisoFechado ? props.aviso : null;
-  const titulo = tela === 'jogo' && jogo ? jogo.nome : tela === 'ranking' ? 'Ranking da semana' : tela === 'cadastro' ? 'Entrar no ranking' : 'Jogos';
+  const titulo = tela === 'jogo' && jogo ? jogo.nome : tela === 'ranking' ? 'Ranking da semana' : tela === 'clube' || semClube ? 'Jogos do Clube' : 'Jogos';
+
+  // Loja sem clube ligado: os jogos não aparecem. Enquanto carrega, também não (evita piscar).
+  if (exigeClube && (!cfg || !cfg.clube_ativo)) return null;
 
   return (
     <>
@@ -256,6 +263,21 @@ export default function JogosEspera(props: Props) {
             </button>
           ) : null}
         </div>
+      ) : semClube && !props.esconderCartao ? (
+        <button
+          type="button"
+          onClick={function () { setTela('clube'); setAberto(true); }}
+          className="w-full flex items-center gap-3 p-4 rounded-2xl text-left cursor-pointer bg-gradient-to-br from-violet-500 to-fuchsia-500 shadow-lg shadow-fuchsia-500/20 hover:brightness-105 transition"
+        >
+          <div className="w-12 h-12 flex items-center justify-center bg-white/20 rounded-xl shrink-0">
+            <i className="ri-vip-crown-line text-white text-2xl" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-white font-black text-sm">Jogos do Clube</p>
+            <p className="text-white/80 text-xs mt-0.5">Entre no clube para jogar enquanto espera{rankingAtivo ? ' e concorrer a prêmios' : ''}</p>
+          </div>
+          <i className="ri-arrow-right-circle-fill text-white text-3xl" />
+        </button>
       ) : !props.esconderCartao ? (
         <button
           type="button"
@@ -364,10 +386,6 @@ export default function JogosEspera(props: Props) {
                         </button>
                       ) : fim.erroRanking ? (
                         <p className="mt-3 text-xs text-red-500">{fim.erroRanking}</p>
-                      ) : rankingAtivo && !jogador && cfg!.jogos.includes(jogo.id) ? (
-                        <button type="button" onClick={function () { abrirCadastro(jogo); }} className="mt-3 w-full px-3 py-2 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs font-bold cursor-pointer">
-                          🏆 Quer concorrer a prêmio? Entre no ranking ›
-                        </button>
                       ) : null}
                       <button
                         type="button"
@@ -387,25 +405,25 @@ export default function JogosEspera(props: Props) {
                   </div>
                 ) : null}
               </>
-            ) : tela === 'cadastro' ? (
+            ) : semClube || tela === 'clube' ? (
               <div className="h-full overflow-y-auto px-2 pt-2">
                 <div className="max-w-md mx-auto bg-white rounded-3xl p-5">
-                  <p className="text-lg font-black text-zinc-800">🏆 Entrar no ranking</p>
+                  <p className="text-lg font-black text-zinc-800">👑 Jogos do Clube</p>
                   <p className="text-sm text-zinc-500 mt-1">
-                    Os 3 melhores da semana ganham prêmio da loja. Seu WhatsApp é só para a loja avisar se você ganhar; no ranking aparece só seu nome e os 2 últimos números.
+                    Os jogos são para quem é do clube{rankingAtivo ? ' — e os 3 melhores da semana ganham prêmio' : ''}. Entre com seu CPF e os 4 últimos números do celular.
                   </p>
-                  <label className="block text-xs font-bold text-zinc-600 mt-4 mb-1">Seu nome</label>
-                  <input value={formNome} onChange={function (e) { setFormNome(e.target.value); }} maxLength={40} className="w-full px-3 py-2.5 rounded-xl border border-zinc-200 text-sm" placeholder="Ex.: Maria Silva" />
-                  <label className="block text-xs font-bold text-zinc-600 mt-3 mb-1">WhatsApp{props.credencial?.tipo === 'delivery' ? ' (o mesmo do pedido)' : ''}</label>
-                  <input value={formFone} onChange={function (e) { setFormFone(mascaraFone(e.target.value)); }} inputMode="tel" className="w-full px-3 py-2.5 rounded-xl border border-zinc-200 text-sm" placeholder="(41) 99999-9999" />
-                  {erroForm ? <p className="text-xs text-red-500 mt-2">{erroForm}</p> : null}
-                  <button type="button" onClick={salvarCadastro} className="mt-4 w-full py-3 rounded-xl bg-gradient-to-br from-violet-500 to-fuchsia-500 text-white font-black text-sm cursor-pointer">
-                    {depoisCadastro ? 'Salvar e jogar' : 'Salvar'}
+                  <label className="block text-xs font-bold text-zinc-600 mt-4 mb-1">CPF</label>
+                  <input value={formCpf} onChange={function (e) { setFormCpf(mascaraCpf(e.target.value)); }} inputMode="numeric" className="w-full px-3 py-2.5 rounded-xl border border-zinc-200 text-sm" placeholder="000.000.000-00" />
+                  <label className="block text-xs font-bold text-zinc-600 mt-3 mb-1">4 últimos números do celular</label>
+                  <input value={formFinal} onChange={function (e) { setFormFinal(soDigitos(e.target.value).slice(0, 4)); }} inputMode="numeric" className="w-full px-3 py-2.5 rounded-xl border border-zinc-200 text-sm tracking-[0.3em]" placeholder="0000" />
+                  {erroClube ? <p className="text-xs text-red-500 mt-2">{erroClube}</p> : null}
+                  <button type="button" disabled={entrando} onClick={entrarNoClube} className="mt-4 w-full py-3 rounded-xl bg-gradient-to-br from-violet-500 to-fuchsia-500 text-white font-black text-sm cursor-pointer disabled:opacity-60">
+                    {entrando ? 'Entrando...' : 'Entrar e jogar'}
                   </button>
-                  {jogador ? (
-                    <button type="button" onClick={function () { gravarJogador(null); setJogador(null); setTela('menu'); }} className="mt-2 w-full py-2.5 rounded-xl bg-zinc-100 text-zinc-600 font-bold text-xs cursor-pointer">
-                      Sair do ranking neste celular
-                    </button>
+                  {cfg?.slug ? (
+                    <a href={'/clube/' + cfg.slug} target="_blank" rel="noreferrer" className="mt-3 block text-center text-sm font-bold text-violet-600">
+                      Ainda não é do clube? Cadastre-se grátis ›
+                    </a>
                   ) : null}
                 </div>
               </div>
@@ -460,16 +478,7 @@ export default function JogosEspera(props: Props) {
                           })}
                         </div>
                       ) : null}
-                      <div className="flex gap-2 mt-3">
-                        <button type="button" onClick={function () { abrirRanking(); }} className="flex-1 py-2 rounded-xl bg-white text-orange-600 text-xs font-black cursor-pointer">Ver ranking</button>
-                        {jogador ? (
-                          <button type="button" onClick={function () { abrirCadastro(null); }} className="flex-1 py-2 rounded-xl bg-white/25 text-white text-xs font-bold cursor-pointer truncate px-2">
-                            {jogador.nome.split(' ')[0]} •• {jogador.telefone.slice(-2)}
-                          </button>
-                        ) : (
-                          <button type="button" onClick={function () { abrirCadastro(null); }} className="flex-1 py-2 rounded-xl bg-white/25 text-white text-xs font-black cursor-pointer">Participar</button>
-                        )}
-                      </div>
+                      <button type="button" onClick={function () { abrirRanking(); }} className="mt-3 w-full py-2 rounded-xl bg-white text-orange-600 text-xs font-black cursor-pointer">Ver ranking</button>
                     </div>
                   ) : (
                     <p className="text-white/70 text-sm mb-4">Escolha um jogo. Seu recorde fica guardado neste celular.</p>
@@ -480,7 +489,7 @@ export default function JogosEspera(props: Props) {
                         <button
                           key={j.id}
                           type="button"
-                          onClick={function () { if (rankingAtivo && !jogador && cfg!.jogos.includes(j.id)) abrirCadastro(j); else jogar(j); }}
+                          onClick={function () { jogar(j); }}
                           className={'flex items-center gap-4 p-4 rounded-2xl text-left cursor-pointer bg-gradient-to-br ' + j.cor}
                         >
                           <div className="w-14 h-14 flex items-center justify-center bg-white/25 rounded-2xl shrink-0">

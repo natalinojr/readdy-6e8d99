@@ -165,7 +165,6 @@ export default function MesaQRPage() {
         cardapioItems={items}
         tenantId={participant.tenant_id}
         participantId={participant.id}
-        participantName={participant.name}
         descontoClube={data.descontoConfirmado}
       />
     );

@@ -35,10 +35,9 @@ interface Props {
   onNovoPedido: () => void;
   confirmedCartItems: CartItem[];
   cardapioItems: CardapioItem[];
-  /** Para o ranking dos jogos (participante + senha provam o pedido) */
+  /** Para os jogos (participante + senha provam o pedido; o clube identifica quem joga) */
   tenantId?: string;
   participantId?: string;
-  participantName?: string;
   /** Desconto do clube gravado pelo servidor neste pedido. */
   descontoClube?: number;
 }
@@ -124,7 +123,6 @@ export default function ConfirmacaoMesaQR(props: Props) {
           <JogosEspera
             tenantId={props.tenantId}
             credencial={props.participantId ? { tipo: 'mesa', participant_id: props.participantId, access_token: accessToken } : null}
-            nomeInicial={props.participantName}
             onNovoPedido={onNovoPedido}
           />
         </div>

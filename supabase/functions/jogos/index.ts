@@ -3,7 +3,7 @@
 // Ações públicas (cliente na mesa QR / delivery, sem login):
 //   config   → a loja tem ranking ligado? prêmios, jogos que valem, fim da semana.
 //   direito  → ainda pode jogar? (só com pedido em andamento; entregue = para)
-//   start    → começa uma partida valendo: confere que a pessoa tem pedido de verdade
+//   start    → começa uma partida valendo: só MEMBRO DO CLUBE (clube_token) com pedido de verdade
 //              em andamento (não entregue) nas últimas 12h e devolve a SEMENTE sorteada pelo servidor.
 //   submit   → recebe os quadros em que houve toque, REFAZ a partida com o mesmo
 //              motor do celular (_shared/jogos) e grava a pontuação calculada aqui.
@@ -18,6 +18,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.4";
 import { authenticate, isManagerRole, tenantRole } from "../_shared/tenant-auth.ts";
 import { refazerVoa } from "../_shared/jogos/voa.ts";
+import { programaLigado, sessaoDoClube } from "../_shared/clube-servidor.ts";
 import { refazerCorre } from "../_shared/jogos/corre.ts";
 
 const corsHeaders = {
@@ -90,12 +91,13 @@ async function lerConfig(admin: any, tenantId: string) {
   return normalizarConfig(data);
 }
 
-interface Linha { player_phone: string; player_name: string; score: number; created_at: string }
+interface Linha { customer_id: string | null; player_phone: string; player_name: string; score: number; created_at: string }
+const chaveJogador = (r: { customer_id?: string | null; player_phone: string }) => r.customer_id ? "c:" + r.customer_id : "f:" + r.player_phone;
 
 /** Melhor pontuação de cada pessoa na semana; empate = quem fez primeiro fica na frente. */
 async function rankingSemana(admin: any, tenantId: string, semana: string, jogo: string): Promise<Linha[]> {
   const { data, error } = await admin.from("game_scores")
-    .select("player_phone, player_name, score, created_at")
+    .select("customer_id, player_phone, player_name, score, created_at")
     .eq("tenant_id", tenantId).eq("week_start", semana).eq("game", jogo)
     .order("score", { ascending: false }).order("created_at", { ascending: true })
     .limit(5000);
@@ -103,21 +105,33 @@ async function rankingSemana(admin: any, tenantId: string, semana: string, jogo:
   const vistos = new Set<string>();
   const lista: Linha[] = [];
   for (const r of data ?? []) {
-    if (vistos.has(r.player_phone)) continue;
-    vistos.add(r.player_phone);
+    const k = chaveJogador(r);
+    if (vistos.has(k)) continue;
+    vistos.add(k);
     lista.push(r);
   }
   return lista;
 }
 
-function publico(lista: Linha[], fone: string, n = 10) {
+function publico(lista: Linha[], eu: string | null, n = 10) {
   return lista.slice(0, n).map((r, i) => ({
     posicao: i + 1,
     nome: nomeCurto(r.player_name),
     final: r.player_phone.slice(-2),
     pontos: r.score,
-    eu: !!fone && r.player_phone === fone,
+    eu: !!eu && chaveJogador(r) === eu,
   }));
+}
+
+/** Jogar é só para membro do clube (regra do dono, 2026-09-27): o cartão do clube
+ *  (token do aparelho, `clube-publico`) identifica quem joga — nome e celular vêm do cadastro. */
+async function membroDoClube(admin: any, tenantId: string, token: unknown): Promise<{ customerId: string; nome: string; fone: string } | null> {
+  const sessao = await sessaoDoClube(admin, token);
+  if (!sessao || sessao.tenant_id !== tenantId) return null;
+  if (!(await programaLigado(admin, tenantId))) return null;
+  const { data: c } = await admin.from("customers").select("id, name, phone").eq("id", sessao.customer_id).maybeSingle();
+  if (!c) return null;
+  return { customerId: c.id, nome: String(c.name || "Cliente").trim().slice(0, 40), fone: normalizarFone(c.phone) };
 }
 
 /** Pedido em andamento que dá direito a jogar (regra do dono, 2026-09-27: só joga depois
@@ -183,11 +197,15 @@ Deno.serve(async (req: Request) => {
     // ───────────── público ─────────────
     if (action === "config") {
       const cfg = await lerConfig(admin, tenantId);
-      return ok({ ...cfg, semana, termina_em: fimDaSemana(semana) });
+      const clube_ativo = await programaLigado(admin, tenantId);
+      const { data: t } = await admin.from("tenants").select("slug").eq("id", tenantId).maybeSingle();
+      return ok({ ...cfg, clube_ativo, slug: t?.slug ?? null, semana, termina_em: fimDaSemana(semana) });
     }
 
     // O cliente pode jogar agora? (o jogo para quando o pedido é entregue)
     if (action === "direito") {
+      const m = await membroDoClube(admin, tenantId, body.clube_token);
+      if (!m) return ok({ pode_jogar: false, motivo: "sem_clube", mensagem: "Os jogos são do clube. Entre no clube para jogar." });
       const d = await pedidoEmAndamento(admin, tenantId, body.credencial, null);
       return ok("erro" in d ? { pode_jogar: false, motivo: d.code, mensagem: d.erro } : { pode_jogar: true });
     }
@@ -197,12 +215,13 @@ Deno.serve(async (req: Request) => {
       if (!(JOGOS as readonly string[]).includes(jogo)) return jsonErr("jogo inválido");
       const cfg = await lerConfig(admin, tenantId);
       if (!cfg.ranking_ativo) return ok({ ranking_ativo: false, top: [] });
-      const fone = normalizarFone(body.telefone);
+      const m = body.clube_token ? await membroDoClube(admin, tenantId, body.clube_token) : null;
+      const eu = m ? "c:" + m.customerId : null;
       const lista = await rankingSemana(admin, tenantId, semana, jogo);
-      const idx = fone ? lista.findIndex((r) => r.player_phone === fone) : -1;
+      const idx = eu ? lista.findIndex((r) => chaveJogador(r) === eu) : -1;
       return ok({
         ranking_ativo: true, semana, termina_em: fimDaSemana(semana),
-        top: publico(lista, fone),
+        top: publico(lista, eu),
         eu: idx >= 0 ? { posicao: idx + 1, pontos: lista[idx].score } : null,
         jogadores: lista.length,
       });
@@ -213,23 +232,22 @@ Deno.serve(async (req: Request) => {
       if (!(JOGOS as readonly string[]).includes(jogo)) return jsonErr("jogo inválido");
       const cfg = await lerConfig(admin, tenantId);
       if (!cfg.ranking_ativo || !cfg.jogos.includes(jogo)) return jsonErr("Ranking desligado nesta loja.", 409, { code: "ranking_off" });
-      const fone = normalizarFone(body.telefone);
-      const nome = String(body.nome ?? "").trim().slice(0, 40);
-      if (!fone) return jsonErr("Informe um celular válido com DDD.", 400, { code: "telefone" });
-      if (nome.length < 2) return jsonErr("Informe seu nome.", 400, { code: "nome" });
-      const direito = await pedidoEmAndamento(admin, tenantId, body.credencial, fone);
+      const membro = await membroDoClube(admin, tenantId, body.clube_token);
+      if (!membro) return jsonErr("Os jogos são do clube. Entre no clube para jogar.", 403, { code: "sem_clube" });
+      const direito = await pedidoEmAndamento(admin, tenantId, body.credencial, null);
       if ("erro" in direito) return jsonErr(direito.erro, 403, { code: direito.code });
 
       const { count: porPedido } = await admin.from("game_sessions").select("id", { count: "exact", head: true })
         .eq("order_id", direito.orderId);
       if ((porPedido ?? 0) >= MAX_PARTIDAS_POR_PEDIDO) return jsonErr("Você já jogou bastante com este pedido! Faça um novo pedido para continuar valendo.", 429, { code: "limite" });
       const { count: porDia } = await admin.from("game_sessions").select("id", { count: "exact", head: true })
-        .eq("tenant_id", tenantId).eq("player_phone", fone).gte("started_at", new Date(agora - 86400_000).toISOString());
+        .eq("tenant_id", tenantId).eq("customer_id", membro.customerId).gte("started_at", new Date(agora - 86400_000).toISOString());
       if ((porDia ?? 0) >= MAX_PARTIDAS_POR_DIA) return jsonErr("Limite de partidas do dia atingido.", 429, { code: "limite" });
 
       const seed = crypto.getRandomValues(new Uint32Array(1))[0] | 0;
       const { data: s, error } = await admin.from("game_sessions").insert({
-        tenant_id: tenantId, game: jogo, seed, order_id: direito.orderId, player_phone: fone, player_name: nome,
+        tenant_id: tenantId, game: jogo, seed, order_id: direito.orderId, customer_id: membro.customerId,
+        player_phone: membro.fone, player_name: membro.nome,
       }).select("id, seed").single();
       if (error) throw error;
       return ok({ sessao: s.id, semente: Number(s.seed) });
@@ -263,7 +281,7 @@ Deno.serve(async (req: Request) => {
       if (eu) throw eu;
       const semanaPartida = semanaDe(inicio);
       const { error: ei } = await admin.from("game_scores").insert({
-        tenant_id: tenantId, game: s.game, session_id: s.id, player_phone: s.player_phone, player_name: s.player_name,
+        tenant_id: tenantId, game: s.game, session_id: s.id, customer_id: s.customer_id, player_phone: s.player_phone, player_name: s.player_name,
         score: pontos, frames: e.quadro, inputs: quadros, week_start: semanaPartida,
       });
       if (ei) {
@@ -271,13 +289,14 @@ Deno.serve(async (req: Request) => {
         throw ei;
       }
       const lista = await rankingSemana(admin, tenantId, semanaPartida, s.game);
-      const idx = lista.findIndex((r) => r.player_phone === s.player_phone);
+      const euChave = chaveJogador(s);
+      const idx = lista.findIndex((r) => chaveJogador(r) === euChave);
       return ok({
         pontos,
         melhor: idx >= 0 ? lista[idx].score : pontos,
         posicao: idx >= 0 ? idx + 1 : null,
         jogadores: lista.length,
-        top: publico(lista, s.player_phone),
+        top: publico(lista, euChave),
       });
     }
 

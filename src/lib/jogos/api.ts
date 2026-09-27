@@ -9,11 +9,12 @@ export interface ConfigJogos {
   premios: { posicao: number; descricao: string }[];
   regras: string;
   termina_em: string;
+  /** Jogos são só do clube: loja sem clube ligado não mostra os jogos */
+  clube_ativo: boolean;
+  slug: string | null;
 }
 
 export interface LinhaRanking { posicao: number; nome: string; final: string; pontos: number; eu: boolean }
-
-export interface Jogador { nome: string; telefone: string }
 
 function url(): string {
   return String(import.meta.env.VITE_PUBLIC_SUPABASE_URL || '') + '/functions/v1/jogos';
@@ -30,9 +31,9 @@ export function configJogos(tenantId: string) {
   return chamar<ConfigJogos>({ action: 'config', tenant_id: tenantId });
 }
 
-export function comecarPartida(tenantId: string, jogo: string, jogador: Jogador, credencial: CredencialJogo) {
+export function comecarPartida(tenantId: string, jogo: string, clubeToken: string, credencial: CredencialJogo) {
   return chamar<{ sessao: string; semente: number }>({
-    action: 'start', tenant_id: tenantId, jogo, nome: jogador.nome, telefone: jogador.telefone, credencial,
+    action: 'start', tenant_id: tenantId, jogo, clube_token: clubeToken, credencial,
   });
 }
 
@@ -42,33 +43,19 @@ export function enviarPartida(tenantId: string, sessao: string, entradas: number
   });
 }
 
-export function rankingJogo(tenantId: string, jogo: string, telefone: string) {
+export function rankingJogo(tenantId: string, jogo: string, clubeToken: string | null) {
   return chamar<{ ranking_ativo: boolean; top: LinhaRanking[]; eu: { posicao: number; pontos: number } | null; jogadores: number; termina_em: string }>({
-    action: 'ranking', tenant_id: tenantId, jogo, telefone,
+    action: 'ranking', tenant_id: tenantId, jogo, clube_token: clubeToken,
   });
-}
-
-const CHAVE = 'erpos_jogo_jogador';
-export function lerJogador(): Jogador | null {
-  try {
-    const j = JSON.parse(window.localStorage.getItem(CHAVE) || 'null');
-    return j && j.nome && j.telefone ? j : null;
-  } catch { return null; }
-}
-export function gravarJogador(j: Jogador | null) {
-  try {
-    if (j) window.localStorage.setItem(CHAVE, JSON.stringify(j));
-    else window.localStorage.removeItem(CHAVE);
-  } catch { /* sem armazenamento: pergunta de novo na próxima vez */ }
 }
 
 export function soDigitos(v: string): string {
   return String(v || '').replace(/\D/g, '');
 }
 
-/** Ainda pode jogar? Só com pedido em andamento; quando é entregue, o jogo para. */
-export function direitoJogar(tenantId: string, credencial: CredencialJogo) {
-  return chamar<{ pode_jogar: boolean; motivo?: 'sem_pedido' | 'entregue'; mensagem?: string }>({
-    action: 'direito', tenant_id: tenantId, credencial,
+/** Ainda pode jogar? Só membro do clube com pedido em andamento; entregou, o jogo para. */
+export function direitoJogar(tenantId: string, credencial: CredencialJogo, clubeToken: string | null) {
+  return chamar<{ pode_jogar: boolean; motivo?: 'sem_pedido' | 'entregue' | 'sem_clube'; mensagem?: string }>({
+    action: 'direito', tenant_id: tenantId, credencial, clube_token: clubeToken,
   });
 }
