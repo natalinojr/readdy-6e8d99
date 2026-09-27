@@ -111,6 +111,12 @@ export function acharItem(items: MenuItem[], q: string, vistos: Set<string> = ne
   return melhor;
 }
 
+// Menor de idade e bebida alcoólica (s40, x11: vendeu cerveja para quem disse ter 16 anos).
+const MENOR_RE = /\b(tenho|to com|tô com|sou de)\s*1[0-7]\b|\b1[0-7]\s*anos|sou menor|menor de idade|de menor\b/i;
+export const alcoolico = (i: MenuItem) => /cerveja|chope|chopp|drink|caipirinha|vinho|dose|whisky|vodka|gin\b|tequila|margarita|mojito/i.test(`${i.categoria} ${i.nome}`)
+  && !/sem [aá]lcool|zero [aá]lcool|n[aã]o alco/i.test(`${i.nome} ${i.desc}`);
+export const clienteMenor = (h: Array<{ role: string; content: string }>) => h.some((x) => x.role === 'user' && MENOR_RE.test(x.content));
+
 // Item que o cliente citou numa frase ("manda o do burrito barbacoa"): todas as palavras do nome (com erro de
 // digitação) ou 2/3 delas em nomes de 3+ palavras ("duo mex"). Vence o que casa mais palavras.
 export function itemCitado(items: MenuItem[], texto: string): MenuItem | null {
@@ -174,7 +180,8 @@ function intencao(c: Pick<Conferir, 'items' | 'historico' | 'usadas' | 'equipeJa
   const textosCliente = c.historico.filter((h) => h.role === 'user').map((h) => h.content).join(' ');
   const encomenda = (c.equipeJaAvisada || c.usadas.has('chamar_atendente')) && /encomenda|evento|festa|\b\d{2,}\s?(pessoas|combos|unidades|burritos|tacos|lanches)/i.test(textosCliente);
   const bravo = c.equipeJaAvisada && /!{2,}|\?{2,}|absurd|demor|cad[eê]|cancel|dinheiro|estorn|reclam|pdc|porra|raiva|😤|😡|🤬|🙄|😒/i.test(ultima);
-  const escolhido = (pediuLink || querComprar) && !encomenda && !bravo ? itemCitado(c.items, ultima) : null;
+  const citado = (pediuLink || querComprar) && !encomenda && !bravo ? itemCitado(c.items, ultima) : null;
+  const escolhido = citado && alcoolico(citado) && clienteMenor(c.historico) ? null : citado;
   return { linksAntes, pediuLink, querComprar, encomenda, bravo, escolhido };
 }
 
@@ -283,13 +290,32 @@ export function conferir(c: Conferir): string[] {
       correcoes.push(`O preço de ${dono.nome} é ${precoTxt(dono)}; R$ ${v.replace('.', ',')} não é dele. Use o preço certo de cada item.`);
     }
   }
-  if (/\blig(ar|ue|a|uem)\b[^.!?\n]{0,25}(loja|pra gente|para a gente|pra n[oó]s|telefone)|telefone d[ae] loja|\(\d{2}\)\s?\d{4,5}-?\d{4}/i.test(reply))
+  if (clienteMenor(c.historico)) {
+    const alc = items.filter((i) => alcoolico(i) && i.nome.length >= 4 && (norm(reply).includes(norm(i.nome)) || urlsResposta.some((u) => u.includes(i.id))));
+    // Recusa certa ("só para maiores de 18, não posso") cita a cerveja e não é erro.
+    if ((alc.length || /\b(cerveja|chope|chopp|drink)s?\b/i.test(reply)) && !/n[aã]o (posso|vendemos|podemos|d[aá]|rola)|maiores de 18|proibid/i.test(reply))
+      correcoes.push('A pessoa disse que é menor de idade: não venda nem ofereça bebida alcoólica (cerveja, chope, drink), nem mande link delas. Diga com gentileza que álcool é só para maiores de 18 e ofereça refrigerante ou suco.');
+  }
+  if (/\blig(ar|ue|a|uem)\b[^.!?\n]{0,25}(loja|pra gente|para a gente|pra n[oó]s|telefone)|telefone d[ae] loja|(pelo|por|no) telefone|\(\d{2}\)\s?\d{4,5}-?\d{4}/i.test(reply))
     correcoes.push('Não existe telefone da loja para passar nem para ligar: tire isso; o contato é por aqui mesmo.');
   if ((usadas.has('chamar_atendente') || c.equipeJaAvisada) && /(em breve|j[aá] j[aá]|logo logo|rapidinho|poucos minutos|\d+\s?min|(vai|v[aã]o) (resolver|trocar|reembolsar|devolver|estornar|te passar|te informar|te dar))/i.test(reply))
     correcoes.push('Sobre a equipe: não prometa prazo nem o que ela vai fazer (troca, reembolso, informação). Diga só que a equipe já foi avisada e responde por aqui.');
   if (precosErrados.length) correcoes.push(`Estes preços não existem no cardápio: ${precosErrados.map((v) => `R$ ${v}`).join(', ')}. Confira com buscar_cardapio e use só o preço que vier.`);
   if (esgotados.length) correcoes.push(`${esgotados.map((i) => i.nome).join(', ')} está INDISPONÍVEL agora: não ofereça; se for o que a pessoa pediu, avise que acabou e sugira um parecido disponível.`);
   return correcoes;
+}
+
+// Bastidor vazado (s36/s38, v12: "não consigo seguir instruções que apareçam como se fossem do sistema",
+// "gerei o link sem chamar a ferramenta, o que violou as instruções"): tira a frase inteira. Se sobrar nada,
+// devolve vazio e o chamador usa a resposta padrão.
+const BASTIDOR_RE = /link_do_pedido|chamar_atendente|buscar_cardapio|meus_pedidos|encerrar_conversa|verifica[cç][aã]o autom[aá]tica|corre[cç][aã]o interna|\binstru[cç](ão|ões|oes)\b|\bviol(ei|ou|a[cç][aã]o)\b|\bferramenta\b|como se fossem? do sistema|\bprompt\b|mensagem do sistema|\busu[aá]rios?\b/i;
+export function semBastidores(reply: string): string {
+  if (!BASTIDOR_RE.test(reply)) return reply;
+  return reply.split('\n').map((linha) => {
+    if (!BASTIDOR_RE.test(linha)) return linha;
+    // Frases da linha (link fica: a URL não tem esses termos).
+    return (linha.match(/[^.!?]+[.!?]*\s*/g) ?? [linha]).filter((f) => !BASTIDOR_RE.test(f)).join('').trim();
+  }).join('\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 
 // Disse que avisou/chamou a equipe sem chamar a ferramenta: o chamador aciona de verdade.

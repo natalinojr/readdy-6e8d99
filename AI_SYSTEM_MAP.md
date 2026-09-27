@@ -3547,12 +3547,28 @@ Sem SW ativo o POST cai no Vercel e falha — por isso o destino só existe no S
   (1/loja, código `PD-XXXX`), `wa_loja_conversas`, `wa_loja_mensagens` (RLS `fn_is_tenant_admin`; migração
   `20260926120000_atendimento_whatsapp_loja.sql`). Roteamento na `whatsapp-cloud`: número próprio da loja
   (`wa_loja_bots.phone_id`) → tudo para a loja; no número compartilhado, depois do `hiring-scheduler`, o código PD-
-  no texto ou conversa da loja aberta (3 dias, mais recente que a de candidatura) → `atendimento-loja`; o resto segue
-  para o `canal-publico`. **Regra:** o robô NUNCA cria pedido nem recebe pagamento — vende mandando o link do delivery
+  no texto ou conversa da loja aberta (3 dias, mais recente que a de candidatura) → `atendimento-loja`; só depois o
+  funil de CRM (`crmInbound`, que responde qualquer mensagem de quem recebeu oferta em 15 dias — por isso vem depois;
+  "SAIR"/"parar" sozinho continua indo para o descadastro); o resto segue para o `canal-publico`. **Regra:** o robô NUNCA cria pedido nem recebe pagamento — vende mandando o link do delivery
   (`?utm_source=whatsapp_bot`, `&item=` para abrir o item, `&voucher=` quando oferece o cupom configurado). Cardápio,
   promoções do dia, horário, taxa e estoque vêm do `delivery-write › get_delivery_config` (o mesmo do link público).
   Pedidos do cliente: só os do telefone que está falando. Foto/arquivo (comprovante), reclamação ou pedido de humano →
   `needs_human` + aviso no Telegram; a equipe responde pela aba (`action: 'reply'`), o que pausa o robô por 2 h.
+  **Treino (2026-09-27, v4→v12):** modelo = **Sonnet 5** (60 cenários, mesmas travas: Haiku 4.5 nota 7,3 / 18 erros
+  graves / US$ 0,023 por conversa × Sonnet 5 nota 8,6 / 1 erro grave / US$ 0,044 — `MODEL` em `index.ts`). As travas
+  ficam em `atendimento-loja/travas.ts` (código puro, sem imports): `conferir()` gera a volta de correção,
+  `linkQueFalta()` anexa o link quando o modelo ignora a correção, `arrumarLinks()` troca link inventado. Testes em
+  `src/test/edge/atendimentoTravas.test.ts`. System em 2 partes: estável com `cache_control` (regras + cardápio
+  inteiro; no Haiku o cache só vale com 4096+ tokens e a leitura não conta no limite de tokens/min) + volátil (hora,
+  promo, esgotados). **Pegadinhas:** (1) o link geral é PREFIXO do link de item — comparar URLs inteiras, nunca
+  `includes`/`replace` de texto (colava `&item` em cima de outro); (2) regex de texto roda com os links tirados
+  (`\bapp\b` casava `erpos.vercel.app` e mandava corrigir 1 de cada 3 respostas); (3) com o delivery fechado a
+  `delivery-write` RECUSA pedido — o robô não pode dizer "pede agora que sai quando abrir"; (4) menor de idade +
+  álcool = trava. **Como treinar sem gastar:** `simulate` com `avaliar:false` (atendente + cliente simulado pela API,
+  ~US$ 0,02–0,04 por conversa) e a avaliação feita no Claude Code por subagentes Sonnet lendo as conversas + os
+  fatos (`simulate` com `so_fatos:true`; passar as condições de cada cenário — fechado, esgotado, cupom — senão o
+  avaliador acusa invenção); `simulate` aceita `modelo` para comparar antes de trocar o de produção. Replay: rodar
+  `conferir()` no node sobre as respostas gravadas mede falso positivo/negativo de cada trava sem API.
 - **Clientes & Marketing numa tela só (2026-09-26)**: Clientes, Funil (antes modal), Promoções e Vouchers viraram abas
   de `/clientes` (`?aba=`); `/promocoes` e `/vouchers` redirecionam. Sidebar tem 1 item; `RotaProtegida` libera
   `/clientes` com qualquer das 3 chaves e a tela esconde a aba sem permissão. **Achado:** `promotion_rules` (regras
