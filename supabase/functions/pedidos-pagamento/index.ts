@@ -290,12 +290,28 @@ async function prepararPagamento(ctx: Ctx, pedidoId: string): Promise<{ preparad
   }
   const titulo = `${ROTULO[p.tipo] ?? 'Pagamento'} aprovado: Pix de ${brl(valor)} para ${p.favorecido_nome}`;
   // Devolve o id da pendência: a tela de aprovar paga ali mesmo (PIN) pelo assistente-app › pendencia_pagar.
-  const pendenciaPix = async (payId: string): Promise<string | null> => (await ctx.admin.rpc('fn_pendencia_upsert', {
-    p_tenant: ctx.tenantId, p_kind: 'pagamento_pendente', p_ref: payId,
-    p_titulo: titulo, p_detalhe: `${chave ? `Chave ${chave}. ` : ''}Toque em Pagar e confirme com o PIN.`,
-    p_payload: { payment_id: payId, bill_id: bill.id, pedido_id: p.id }, p_rota: null,
-    p_urgencia: 'alta', p_acao_requerida: true, p_origem: 'app', p_reabrir: true,
-  }))?.data?.id ?? null;
+  const pendenciaPix = async (payId: string): Promise<string | null> => {
+    // Pix recusado no Inter deixa a pendência dele aberta até pagar (20260928130000); o Pix novo ganha a
+    // sua — a antiga sai para não aparecer duas vezes no 📥. Só se o Pix dela já não está vivo no Inter
+    // (aguardando aprovação…): essa pendência é o que lembra de recusá-lo.
+    const { data: velhas } = await ctx.admin.from('pendencias').select('id, ref')
+      .eq('tenant_id', ctx.tenantId).eq('kind', 'pagamento_pendente').eq('payload->>bill_id', bill.id).neq('ref', payId).in('status', ['aberta', 'vista']);
+    if (velhas?.length) {
+      const { data: vivos } = await ctx.admin.from('fin_inter_payments').select('id').in('id', velhas.map((v) => v.ref))
+        .in('status', ['sending', 'sent', 'pending_approval', 'approved', 'scheduled']);
+      const fechar = velhas.filter((v) => !(vivos ?? []).some((x) => String(x.id) === String(v.ref))).map((v) => v.id);
+      if (fechar.length) {
+        await ctx.admin.from('pendencias').update({ status: 'resolvida', resolvida_em: new Date().toISOString(), resolvida_por: ctx.userId, motivo: 'Pix novo preparado' })
+          .in('id', fechar).in('status', ['aberta', 'vista']);
+      }
+    }
+    return (await ctx.admin.rpc('fn_pendencia_upsert', {
+      p_tenant: ctx.tenantId, p_kind: 'pagamento_pendente', p_ref: payId,
+      p_titulo: titulo, p_detalhe: `${chave ? `Chave ${chave}. ` : ''}Toque em Pagar e confirme com o PIN.`,
+      p_payload: { payment_id: payId, bill_id: bill.id, pedido_id: p.id }, p_rota: null,
+      p_urgencia: 'alta', p_acao_requerida: true, p_origem: 'app', p_reabrir: true,
+    }))?.data?.id ?? null;
+  };
   let motivo = '';
   if (chave) {
     const r = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/inter-bank`, {

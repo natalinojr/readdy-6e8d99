@@ -883,7 +883,10 @@ Deno.serve(async (req) => {
       const cards: any[] = [];
       const erros: string[] = [];
       for (const p of pontas) {
-        if (['paid', 'cancelled'].includes(p.status)) continue;
+        if (p.status === 'paid') continue;
+        // Recusado/cancelado no app do Inter com a conta ainda a pagar (dono, 2026-09-27): a pendência fica
+        // aberta até pagar, e o Pagar prepara um Pix novo. Sem conta (Pix avulso, pedido do grupo): cancelado encerra.
+        if (p.status === 'cancelled' && (pend.kind !== 'pagamento_pendente' || !billId)) continue;
         let atual = p;
         const vencido = ['draft', 'awaiting_pin'].includes(p.status) && Date.now() - new Date(p.created_at).getTime() > PAY_TTL_MS;
         if (vencido) {
@@ -895,7 +898,7 @@ Deno.serve(async (req) => {
           cards.push(await payCard1(admin, atual));
           continue;
         }
-        if (['expired', 'failed', 'rejected'].includes(atual.status)) {
+        if (['expired', 'failed', 'rejected', 'cancelled'].includes(atual.status)) {
           try {
             const out = await callInter('reprepare_payment', { tenant_id: p.tenant_id, payment_id: p.id });
             atual = out.payment;
