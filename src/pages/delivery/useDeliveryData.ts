@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, type MutableRefObject } from 'react';
 import { useMenuPing, comJitter } from '@/hooks/useMenuPing';
+import { clubeLimparReservas, type ClubeSelecao } from '@/components/fidelidade/ClubeCheckout';
 import { supabase } from '@/lib/supabase';
 import { rawPromoAtivaHoje } from '@/lib/promoUtils';
 import { loadCart, saveCart } from '@/lib/cartStorage';
@@ -626,6 +627,9 @@ export function useDeliveryData(storeSlug?: string) {
     try { return localStorage.getItem('erpos_delivery_cpf_nota') || ''; } catch { return ''; }
   });
   const [voucherDesconto, setVoucherDesconto] = useState(0);
+  // Clube de fidelidade: cartão do clube + prêmios reservados p/ este pedido (ClubeCheckout).
+  // O desconto de verdade é recalculado pela delivery-write.
+  const [clubeSel, setClubeSel] = useState<ClubeSelecao>({ token: null, holdIds: [], desconto: 0, nomes: [] });
   const [voucherMsg, setVoucherMsg] = useState('');
   const [voucherLoading, setVoucherLoading] = useState(false);
   const [selectedNeighborhoodId, setSelectedNeighborhoodId] = useState('');
@@ -1628,6 +1632,8 @@ export function useDeliveryData(storeSlug?: string) {
         gender: genero || null,
         accepts_marketing: aceitaOfertas || undefined,
         voucher_code: voucherCodigo || null,
+        ...(clubeSel.token ? { loyalty_token: clubeSel.token } : {}),
+        ...(clubeSel.token && clubeSel.holdIds.length > 0 ? { loyalty_hold_ids: clubeSel.holdIds } : {}),
         neighborhood_name: bairroName,
         neighborhood_id: selectedNeighborhoodId,
         delivery_fee: effectiveDeliveryFee,
@@ -1684,10 +1690,12 @@ export function useDeliveryData(storeSlug?: string) {
         }
         // Desconto real aplicado pelo backend (voucher) = bruto - total confirmado.
         const descontoAplicado = Math.max(0, (subtotal + effectiveDeliveryFee) - totalConfirmado);
-        setResumoConfirmacao({ subtotal, desconto: descontoAplicado, deliveryFee: effectiveDeliveryFee, voucherCodigo });
+        setResumoConfirmacao({ subtotal, desconto: descontoAplicado, deliveryFee: effectiveDeliveryFee, voucherCodigo: [voucherCodigo, clubeSel.nomes.length ? 'Clube' : ''].filter(Boolean).join(' + ') });
         // Pixel da Meta: PEDIDO CONFIRMADO — evento de conversão principal pro anúncio.
         trackPixel('Purchase', { value: totalConfirmado, currency: 'BRL' });
         setPedidoConfirmado(true);
+        clubeLimparReservas(tenant.id);
+        setClubeSel({ token: null, holdIds: [], desconto: 0, nomes: [] });
         setCart([]);
         setShowCart(false);
         setEnviando(false);
@@ -2028,6 +2036,8 @@ export function useDeliveryData(storeSlug?: string) {
     setVoucherInput,
     voucherCodigo,
     voucherDesconto,
+    clubeSel,
+    setClubeSel,
     voucherMsg,
     voucherLoading,
     handleAplicarVoucher,

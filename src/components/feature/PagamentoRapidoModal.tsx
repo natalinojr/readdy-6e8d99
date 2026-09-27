@@ -15,6 +15,7 @@ import { descontoDoVinculado, descontoQueFecha, aplicarDescontoEmPedidoExistente
 import CortesiaDetalhesModal from '@/pages/pdv/caixa/components/CortesiaDetalhesModal';
 import CobrarMaquininhaModal from '@/components/feature/CobrarMaquininhaModal';
 import { perguntar } from '@/components/base/Dialogos';
+import ClubeCaixa, { aplicarClubeNoPedido, type ClubeCaixaSel } from '@/components/fidelidade/ClubeCaixa';
 
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
@@ -90,6 +91,9 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
 
   // ── Voucher ──────────────────────────────────────────────────────────────
   const [voucherOpen, setVoucherOpen] = useState(false);
+  // Clube de fidelidade: cliente pelo CPF (pontos) + prêmios reservados (desconto do servidor).
+  const [clubeSel, setClubeSel] = useState<ClubeCaixaSel>({ customerId: null, holdIds: [], desconto: 0, nomes: [], cpf: null });
+  const clubeAplicadoRef = useRef(false);
   const [voucherCode, setVoucherCode] = useState('');
   const [voucherLoading, setVoucherLoading] = useState(false);
   const [voucherAplicado, setVoucherAplicado] = useState<{ code: string; applicable_amount: number; tipo: string } | null>(null);
@@ -283,8 +287,10 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
   const semLinkados = totalPedidosSelecionados <= 0.001;
   const voucherValor = semLinkados ? (voucherAplicado?.applicable_amount ?? 0) : 0;
   // Limitado ao total: desvincular pedidos depois de dar o desconto não deixa ele passar do total
-  const descontoManualValor = Math.min(descontoManual, Math.max(0, totalEfetivo - voucherValor));
-  const descontoTotal = voucherValor + descontoManualValor;
+  // Clube: como o voucher, só com UM pedido (o resgate fica preso a ele).
+  const clubeValor = semLinkados ? Math.min(clubeSel.desconto, Math.max(0, totalEfetivo - voucherValor)) : 0;
+  const descontoManualValor = Math.min(descontoManual, Math.max(0, totalEfetivo - voucherValor - clubeValor));
+  const descontoTotal = voucherValor + clubeValor + descontoManualValor;
   const totalAPagar = Math.max(0, totalEfetivo - descontoTotal);
 
   const totalPago = pagamentos.reduce((acc, p) => acc + p.valor, 0);
@@ -569,6 +575,20 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
 
       // Daqui em diante o banco pode ficar com desconto gravado: numa falha, o operador
       // vê o aviso de "confira antes de cobrar de novo".
+      // Clube: grava o cliente (pontos quando pagar) e o desconto dos prêmios no pedido
+      // ANTES do resto. O valor tem que bater com o que a tela mostrou (simulado no
+      // servidor) — senão o ajuste de desconto abaixo cobriria a diferença de graça.
+      if (semLinkados && clubeSel.customerId && !clubeAplicadoRef.current) {
+        const ap = await aplicarClubeNoPedido(user?.tenantId ?? '', orderId, clubeSel);
+        clubeAplicadoRef.current = true;
+        if (Math.abs(ap.desconto - clubeValor) > 0.009) {
+          // O que vale é o que o servidor aplicou: a próxima tentativa cobra por ele (senão a
+          // diferença viraria desconto comum sem prêmio e sem autorização).
+          setClubeSel((s) => ({ ...s, desconto: ap.desconto }));
+          throw new Error(`O desconto do clube mudou (${fmt(ap.desconto)}). Feche e abra o pagamento de novo para conferir.`);
+        }
+      }
+
       gravandoPagamentos = true;
 
       // Parte do desconto de cada pedido vinculado (antes do principal e dos pagamentos)
@@ -1262,6 +1282,19 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
             <p className="text-[11px] text-zinc-400 text-center bg-zinc-50 border border-zinc-100 rounded-lg py-2">
               O voucher fica disponível ao cobrar um pedido por vez.
             </p>
+          )}
+
+          {/* Clube de fidelidade */}
+          {semLinkados && (
+            <ClubeCaixa
+              tenantId={user?.tenantId}
+              orderId={orderId}
+              manterReservas={sucesso || clubeAplicadoRef.current}
+              onChange={(sel) => {
+                setClubeSel(sel);
+                if (sel.cpf && !customerCpf.trim()) setCustomerCpf(sel.cpf);
+              }}
+            />
           )}
 
           {/* Dados do cliente */}

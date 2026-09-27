@@ -8,7 +8,10 @@
 // Regras de dinheiro ficam no banco (Edge `fidelidade` → fn_fidelidade_*): aqui
 // só se mostra e se pede. Gastar pontos pede os 4 últimos números do celular.
 import { useEffect, useRef, useState } from 'react';
+import QRCodeImport from 'react-qr-code';
 import RoletaSvg, { rotacaoParaFatia, type FatiaRoleta } from '@/components/fidelidade/RoletaSvg';
+// react-qr-code exporta como default em alguns bundles e como named em outros.
+const QRCode = ((QRCodeImport as unknown as { default: typeof QRCodeImport }).default || QRCodeImport) as typeof QRCodeImport;
 import { cpfValido, formatarCpf, type ClubeBeneficio, type ClubeRecompensa, type ClubeResumo, type ClubeReserva } from '@/lib/fidelidade';
 
 export interface ClubeStatus {
@@ -27,6 +30,8 @@ export interface ClubeApi {
   cadastrar: (d: CadastroClube) => Promise<{ resumo?: ClubeResumo; erro?: string }>;
   usar: (alvo: { recompensa_id?: string; beneficio_id?: string }, celularFinal: string) => Promise<{ ok: boolean; erro?: string; aviso?: string }>;
   girar: () => Promise<{ indice?: number; premio?: { nome: string; tipo: string }; resumo?: ClubeResumo; erro?: string }>;
+  /** Link de uso único para abrir a página do clube no celular do cliente (QR). */
+  link: (celularFinal: string) => Promise<{ url?: string; erro?: string }>;
 }
 
 const pts = (n: number) => Math.floor(n).toLocaleString('pt-BR');
@@ -213,6 +218,8 @@ export function ClubePainelKiosk({ status, resumo, reservas, api, onContinuar, t
   onRecarregar?: () => void;
 }) {
   const [confirmar, setConfirmar] = useState<{ titulo: string; alvo: { recompensa_id?: string; beneficio_id?: string } } | null>(null);
+  const [pedindoQr, setPedindoQr] = useState(false);
+  const [qrUrl, setQrUrl] = useState<string | null>(null);
   const [roleta, setRoleta] = useState(false);
   const [aviso, setAviso] = useState('');
 
@@ -310,9 +317,48 @@ export function ClubePainelKiosk({ status, resumo, reservas, api, onContinuar, t
         </div>
       )}
 
+      {resumo.tem_celular && (
+        <button
+          onClick={() => setPedindoQr(true)}
+          className="w-full rounded-2xl p-4 flex items-center gap-4 bg-zinc-900 border border-zinc-700 text-left cursor-pointer hover:bg-zinc-800"
+        >
+          <span className="text-3xl">📱</span>
+          <span className="flex-1">
+            <b className="block text-white text-lg">Ver meu clube no celular</b>
+            <span className="text-zinc-400 text-sm">Pontos, prêmios e extrato — leia o QR com a câmera</span>
+          </span>
+          <i className="ri-qr-code-line text-3xl text-amber-400" />
+        </button>
+      )}
+
       <button onClick={onContinuar} className="w-full py-5 bg-amber-500 hover:bg-amber-400 text-zinc-950 font-black text-xl rounded-2xl cursor-pointer">
         {textoContinuar} <i className="ri-arrow-right-line ml-1" />
       </button>
+
+      {pedindoQr && (
+        <ConfirmarCelular
+          titulo="Ver no celular"
+          onCancelar={() => setPedindoQr(false)}
+          onConfirmar={async (final) => {
+            const r = await api.link(final);
+            if (r.erro || !r.url) return r.erro || 'Não consegui gerar o QR agora.';
+            setPedindoQr(false);
+            setQrUrl(r.url);
+            return null;
+          }}
+        />
+      )}
+      {qrUrl && (
+        <div className="fixed inset-0 z-[160] flex items-center justify-center bg-black/85 p-6" onClick={() => setQrUrl(null)}>
+          <div className="bg-white rounded-3xl p-6 w-full max-w-sm text-center" onClick={(e) => e.stopPropagation()}>
+            <p className="text-zinc-900 text-2xl font-black">Aponte a câmera do celular</p>
+            <p className="text-zinc-500 text-sm mb-4">Abre o seu clube já logado. O QR vale por 10 minutos e uma leitura.</p>
+            <div className="bg-white p-3 inline-block"><QRCode value={qrUrl} size={240} /></div>
+            <p className="text-zinc-400 text-xs mt-3">Depois, é só entrar em {new URL(qrUrl).host}{new URL(qrUrl).pathname}</p>
+            <button onClick={() => setQrUrl(null)} className="w-full mt-4 py-4 bg-zinc-900 text-white font-bold rounded-2xl cursor-pointer">Pronto</button>
+          </div>
+        </div>
+      )}
 
       {confirmar && <ConfirmarCelular titulo={confirmar.titulo} onConfirmar={usar} onCancelar={() => setConfirmar(null)} />}
       {roleta && (

@@ -1,6 +1,7 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.4";
 import { deductStockForSkipKdsItems, runStockInBackground } from "../_shared/stock.ts";
+import { descontoClubeServidor, idsValidos, sessaoDoClube, vincularClube } from "../_shared/clube-servidor.ts";
 import { activeLocales, normalizeLocale, loadTranslations, decorate, decorateHighlights, translationsPayload } from "../_shared/menu-i18n.ts";
 
 const corsHeaders = {
@@ -196,6 +197,8 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
 
       const cents = (n: number) => Math.round(n * 100) / 100;
       let serverSubtotal = 0;
+      // Clube: preço de CARDÁPIO de cada item (sem adicionais) — produto grátis desconta só ele.
+      const clubeItens: { id: string; preco: number; qtd: number }[] = [];
       const resolvedItems: Array<Record<string, unknown>> = [];
       for (const raw of items as Array<Record<string, unknown>>) {
         const clientName = typeof raw?.item_name === "string" ? raw.item_name.trim().slice(0, 200) : "";
@@ -247,6 +250,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         // Convenção da mesa/garçom: item_price = unitário já com opções.
         const unit = cents(basePrice + optionsTotal);
         serverSubtotal = cents(serverSubtotal + unit * qty);
+        if (iid && !cid) clubeItens.push({ id: String(iid), preco: cents(basePrice), qtd: qty });
         const obsRaw = (Array.isArray(raw?.observations) ? raw.observations : []) as Array<Record<string, unknown>>;
         resolvedItems.push({
           item_id: cid ? (iid ?? null) : iid,
@@ -263,6 +267,29 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         });
       }
 
+      // Clube de fidelidade (opcional): cartão do clube (token da página /clube) +
+      // prêmios reservados. Desconto calculado AQUI; prêmio vencido recusa o pedido.
+      let clubeCustomerId: string | null = null;
+      let clubeDiscount = 0;
+      let clubeUsados: string[] = [];
+      const holdsPedidos = idsValidos(body.loyalty_hold_ids);
+      if (body.loyalty_token || holdsPedidos.length > 0) {
+        const sessaoClube = body.loyalty_token ? await sessaoDoClube(admin, body.loyalty_token) : null;
+        if ((!sessaoClube || sessaoClube.tenant_id !== String(tenant_id)) && holdsPedidos.length > 0) {
+          return json({ error: "Sua sessão do clube acabou. Entre de novo no clube para usar o prêmio.", code: "loyalty_session_expired" }, 409);
+        }
+        if (sessaoClube && sessaoClube.tenant_id === String(tenant_id)) {
+          clubeCustomerId = sessaoClube.customer_id;
+          const holds = idsValidos(body.loyalty_hold_ids);
+          if (holds.length > 0) {
+            const dc = await descontoClubeServidor(admin, clubeCustomerId, holds, clubeItens, serverSubtotal);
+            if (dc.invalidas > 0) return json({ error: "O prêmio do clube expirou ou já foi usado. Escolha de novo.", code: "loyalty_hold_expired" }, 409);
+            clubeDiscount = dc.desconto; clubeUsados = dc.usados;
+          }
+        }
+      }
+      const totalPedido = cents(Math.max(0, serverSubtotal - clubeDiscount));
+
       const { data: numData, error: numErr } = await admin.rpc("fn_next_tenant_order_number", { p_tenant_id: tenant_id });
       if (numErr) throw numErr;
       const orderNumber = numData?.[0]?.number ?? "P" + Date.now();
@@ -276,7 +303,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         : (mesaNumber != null
           ? (participantName ? `Mesa ${mesaNumber} - ${participantName}` : `Mesa ${mesaNumber}`)
           : null);
-      const { data: order, error: orderErr } = await admin.rpc("fn_create_order_bypass", { order_data: { tenant_id, session_id, table_session_id: isFila ? null : table_session_id, participant_id, number: orderNumber, status: "new", origin_type: isFila ? "self_service" : "table", destination_type: isFila ? "password" : "table", destination_name: tableDestName, discount_amount: 0, service_fee_amount: 0, subtotal: serverSubtotal, total_amount: serverSubtotal, is_training: false, is_draft: false, table_number: isFila ? null : mesaNumber, client_request_id: clientRequestId } });
+      const { data: order, error: orderErr } = await admin.rpc("fn_create_order_bypass", { order_data: { tenant_id, session_id, table_session_id: isFila ? null : table_session_id, participant_id, number: orderNumber, status: "new", origin_type: isFila ? "self_service" : "table", destination_type: isFila ? "password" : "table", destination_name: tableDestName, discount_amount: clubeDiscount, service_fee_amount: 0, subtotal: serverSubtotal, total_amount: totalPedido, customer_id: clubeCustomerId, is_training: false, is_draft: false, table_number: isFila ? null : mesaNumber, client_request_id: clientRequestId } });
       if (orderErr) throw orderErr;
       const orderRow = Array.isArray(order) ? order[0] : order;
       const orderId = orderRow?.id;
@@ -294,9 +321,21 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
           return json({ error: "Não foi possível enviar o pedido. Tente novamente.", code: "items_failed", cancelled: true }, 422);
         }
       }
+      // Clube: prêmios reservados passam a ser deste pedido. Não ligou todos (usado em
+      // outro pedido no meio do caminho) = cancela: não sai desconto sem débito.
+      if (clubeCustomerId && clubeUsados.length > 0) {
+        let ligados = 0;
+        try { ligados = await vincularClube(admin, clubeCustomerId, String(orderId), clubeUsados); } catch (e) { console.warn("[mesa-write] clube: falha ao ligar resgate", orderId, String(e)); }
+        if (ligados < clubeUsados.length) {
+          await admin.from("orders").update({ status: "cancelled", cancel_reason: "Auto-cancelado: prêmio do clube indisponível", cancelled_at: new Date().toISOString() }).eq("id", orderId).eq("tenant_id", tenant_id);
+          // Itens também: senão ficam "pending" num pedido cancelado (pedido fantasma no KDS).
+          await admin.from("order_items").update({ status: "cancelled" }).eq("order_id", orderId).eq("tenant_id", tenant_id);
+          return json({ error: "O prêmio do clube não está mais disponível. Envie o pedido de novo.", code: "loyalty_hold_expired", cancelled: true }, 409);
+        }
+      }
       // Itens sem preparo (skip_kds, ex.: refrigerante) não passam pelo KDS: baixa o estoque agora.
       runStockInBackground(deductStockForSkipKdsItems(admin, String(tenant_id), String(orderId)).catch((e) => console.warn("[mesa-write] baixa de estoque falhou", orderId, String(e))));
-      return json({ data: { id: orderId, number: orderNumber, subtotal: serverSubtotal, total_amount: serverSubtotal } });
+      return json({ data: { id: orderId, number: orderNumber, subtotal: serverSubtotal, discount_amount: clubeDiscount, total_amount: totalPedido } });
     }
 
     // Troca de idioma sem recarregar o cardapio (ver delivery-write).

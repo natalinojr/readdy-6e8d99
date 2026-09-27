@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { formatCurrency } from '@/lib/formatters';
+import ClubeCheckout from '@/components/fidelidade/ClubeCheckout';
 import CpfCnpjInput from '@/components/base/CpfCnpjInput';
 import { isValidCpfCnpj } from '@/lib/cpfCnpj';
 import { useDeliveryData, getOrderSource, getDeliveryWriteUrl } from './useDeliveryData';
@@ -1224,7 +1225,8 @@ export default function DeliveryPage() {
         {showCart && cart.length > 0 ? (() => {
           const subtotalFooter = cart.reduce(function (s: number, i: typeof cart[0]) { return s + i.precoTotal * i.quantidade; }, 0);
           const voucherDescFooter = Math.min(data.voucherDesconto || 0, subtotalFooter);
-          const totalFooter = Math.max(0, subtotalFooter + deliveryFee - voucherDescFooter);
+          const clubeDescFooter = Math.min(data.clubeSel.desconto || 0, Math.max(0, subtotalFooter - voucherDescFooter));
+          const totalFooter = Math.max(0, subtotalFooter + deliveryFee - voucherDescFooter - clubeDescFooter);
           return (
             <div className="shrink-0 bg-white border-t border-zinc-100 px-4 py-3 space-y-3 z-30">
               {/* Resumo de totais */}
@@ -1266,6 +1268,21 @@ export default function DeliveryPage() {
                     <span className="text-green-600 font-bold">- {formatCurrency(voucherDescFooter)}</span>
                   </div>
                 ) : null}
+
+                {clubeDescFooter > 0 ? (
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-green-600 flex items-center gap-1 min-w-0 truncate">🎁 Clube: {data.clubeSel.nomes.join(', ')}</span>
+                    <span className="text-green-600 font-bold whitespace-nowrap">- {formatCurrency(clubeDescFooter)}</span>
+                  </div>
+                ) : null}
+
+                {/* Clube de fidelidade: pontos neste pedido + prêmios */}
+                <ClubeCheckout
+                  tenantId={data.tenantId}
+                  itens={cart.map(function (i: typeof cart[0]) { return { id: i.itemId, preco: i.precoBase, qtd: i.quantidade }; })}
+                  subtotal={Math.max(0, subtotalFooter - voucherDescFooter)}
+                  onChange={data.setClubeSel}
+                />
 
                 {/* Cupom / Voucher */}
                 <div className="pt-1">
@@ -1452,7 +1469,8 @@ export default function DeliveryPage() {
         {showPagamentoModal ? (() => {
           const subtotalModal = cart.reduce(function (s: number, i: typeof cart[0]) { return s + i.precoTotal * i.quantidade; }, 0);
           const voucherDescModal = Math.min(data.voucherDesconto || 0, subtotalModal);
-          const totalModal = Math.max(0, subtotalModal + deliveryFee - voucherDescModal);
+          const clubeDescModal = Math.min(data.clubeSel.desconto || 0, Math.max(0, subtotalModal - voucherDescModal));
+          const totalModal = Math.max(0, subtotalModal + deliveryFee - voucherDescModal - clubeDescModal);
           return (
             <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center" style={{ paddingBottom: kbInset }}>
               <div

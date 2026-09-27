@@ -376,6 +376,14 @@ function AutoatendimentoPageInner() {
       }
       return { ok: true };
     },
+    link: async (celularFinal) => {
+      const tenantId = kioskSession?.tenantId ?? user?.tenantId;
+      if (!clube) return { erro: 'Identifique-se no clube primeiro.' };
+      const res = await kioskInvoke<{ caminho?: string }>('fidelidade', { action: 'clube_link', tenant_id: tenantId, customer_id: clube.customer_id, celular_final: celularFinal });
+      const erro = erroDe(res, 'Não consegui gerar o QR agora.');
+      if (erro || !res.data?.caminho) return { erro: erro ?? 'Não consegui gerar o QR agora.' };
+      return { url: `${window.location.origin}${res.data.caminho}` };
+    },
     girar: async () => {
       const tenantId = kioskSession?.tenantId ?? user?.tenantId;
       if (!clube) return { erro: 'Identifique-se no clube primeiro.' };

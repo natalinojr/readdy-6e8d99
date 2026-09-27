@@ -166,6 +166,7 @@ export default function MesaQRPage() {
         tenantId={participant.tenant_id}
         participantId={participant.id}
         participantName={participant.name}
+        descontoClube={data.descontoConfirmado}
       />
     );
   }
@@ -275,6 +276,10 @@ export default function MesaQRPage() {
               enviando={enviando}
               error={error}
               onVoltar={function () { data.setShowCart(false); }}
+              tenantId={table?.tenant_id ?? null}
+              clubeDesconto={data.clubeSel.desconto}
+              clubeNomes={data.clubeSel.nomes}
+              onClube={data.setClubeSel}
             />
           ) : (
             <CardapioMesaQR

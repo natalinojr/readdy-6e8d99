@@ -1,6 +1,7 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.4";
 import { deductStockForSkipKdsItems, runStockInBackground } from "../_shared/stock.ts";
+import { descontoClubeServidor, idsValidos, sessaoDoClube, vincularClube } from "../_shared/clube-servidor.ts";
 import { activeLocales, normalizeLocale, loadTranslations, decorate, decorateHighlights, translationsPayload } from "../_shared/menu-i18n.ts";
 
 const corsHeaders = {
@@ -1942,10 +1943,51 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         }
       }
 
-      const serverTotal = Math.max(0, serverSubtotal + serverDeliveryFee - voucherDiscount);
+      // Clube de fidelidade (opcional): cartão do clube do cliente (token da página
+      // /clube) + prêmios reservados. Desconto calculado AQUI com os preços do servidor;
+      // prêmio vencido recusa o pedido (senão sairia com desconto sem debitar pontos).
+      let clubeDiscount = 0;
+      let clubeUsados: string[] = [];
+      let clubeNomes: string[] = [];
+      let clubeCustomerId: string | null = null;
+      const holdsPedidos = idsValidos(body.loyalty_hold_ids);
+      // Reenvio do MESMO pedido (resposta perdida): o prêmio já está ligado ao pedido criado —
+      // não recalcula (daria "expirou"); o dedupe abaixo devolve o pedido existente.
+      let pedidoJaCriado = false;
+      if (holdsPedidos.length > 0 && effectiveClientRequestId) {
+        const { data: ex } = await admin.from("orders").select("id").eq("client_request_id", effectiveClientRequestId).eq("tenant_id", tenant_id).maybeSingle();
+        pedidoJaCriado = !!ex;
+      }
+      if (body.loyalty_token || holdsPedidos.length > 0) {
+        const sessaoClube = body.loyalty_token ? await sessaoDoClube(admin, body.loyalty_token) : null;
+        // Prêmio no carrinho com cartão vencido/de outra loja: não sai a preço cheio calado.
+        if ((!sessaoClube || sessaoClube.tenant_id !== tenant_id) && holdsPedidos.length > 0 && !pedidoJaCriado) {
+          return jsonErr("Sua sessão do clube acabou. Entre de novo no clube para usar o prêmio.", 409);
+        }
+        if (sessaoClube && sessaoClube.tenant_id === tenant_id) {
+          clubeCustomerId = sessaoClube.customer_id;
+          const holds = pedidoJaCriado ? [] : holdsPedidos;
+          if (holds.length > 0) {
+            const itensClube = serverItems.map((i) => ({ id: String(i.item_id ?? ""), preco: Number(i.item_price ?? 0), qtd: Number(i.quantity ?? 0) }));
+            const dc = await descontoClubeServidor(admin, clubeCustomerId, holds, itensClube, Math.max(0, serverSubtotal - voucherDiscount));
+            if (dc.invalidas > 0) return jsonErr("O prêmio do clube expirou ou já foi usado. Volte ao carrinho e escolha de novo.", 409);
+            clubeDiscount = dc.desconto; clubeUsados = dc.usados; clubeNomes = dc.nomes;
+          }
+        }
+      }
+
+      const serverTotal = Math.max(0, serverSubtotal + serverDeliveryFee - voucherDiscount - clubeDiscount);
 
       let realCustomerId: string | null = null;
-      if (cleanPhone) {
+      // Membro do clube identificado pelo cartão: o pedido é DELE (pontos e nível), sem
+      // criar/atualizar cliente pelo telefone digitado.
+      if (clubeCustomerId) {
+        realCustomerId = clubeCustomerId;
+        // Aceite de ofertas marcado no checkout vale para o membro também (LGPD: ato explícito).
+        if (body.accepts_marketing === true) {
+          await admin.from("customers").update({ accepts_marketing: true, gdpr_consent_at: new Date().toISOString(), crm_opt_out_at: null }).eq("id", clubeCustomerId);
+        }
+      } else if (cleanPhone) {
         const { data: existingCustomers } = await admin.from("customers").select("id, name").eq("tenant_id", tenant_id).eq("phone", cleanPhone).limit(1);
         if (existingCustomers && existingCustomers.length > 0) {
           realCustomerId = existingCustomers[0].id;
@@ -2024,7 +2066,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
           // Normaliza para dígitos: todas as buscas (get_customer_orders, rate-limit, motoboy)
           // comparam por telefone sem máscara. Gravar formatado some do histórico do cliente.
           destination_phone: cleanPhone || null,
-          customer_id: realCustomerId, discount_amount: voucherDiscount, service_fee_amount: 0,
+          customer_id: realCustomerId, discount_amount: Math.round((voucherDiscount + clubeDiscount) * 100) / 100, service_fee_amount: 0,
           // CPF/CNPJ na nota fiscal (opcional, informado pelo cliente no app).
           customer_cpf: cpfNotaFiscal,
           subtotal: serverSubtotal,
@@ -2123,6 +2165,18 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       // Resgate do voucher (baixa de saldo + transação) — só após o pedido existir.
       // Condicional (otimista): só baixa se o voucher ainda está como foi validado. Se outro
       // pedido usou antes (0 linhas), cancela este pedido — o desconto não pode sair sem baixa.
+      // Clube: os prêmios reservados passam a ser deste pedido (cancelou = voltam).
+      if (clubeCustomerId && clubeUsados.length > 0) {
+        let ligados = 0;
+        try { ligados = await vincularClube(admin, clubeCustomerId, orderId, clubeUsados); } catch (e) { console.warn("[delivery-write] clube: falha ao ligar resgate", orderId, String(e)); }
+        // Não ligou todos (prêmio usado em outro pedido no meio do caminho): o pedido não
+        // pode sair com o desconto sem debitar — cancela e pede de novo (igual ao voucher).
+        if (ligados < clubeUsados.length) {
+          await cancelarPedidoCriado("premio do clube indisponivel no resgate");
+          return jsonErr("O prêmio do clube não está mais disponível. Volte ao carrinho e envie o pedido de novo.", 409);
+        }
+      }
+
       if (voucherRow && voucherDiscount > 0) {
         let resgatou = false;
         try {
@@ -2166,7 +2220,9 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       const outputCtx: DeliveryOutputCtx = {
         tenant_id, orderId, orderNumber, serverItems,
         customer_name: customer_name ?? null, customer_address: customer_address ?? null, customer_phone: String(customer_phone || ""),
-        cleanPhone, isRetirada, routeKm, routeTempoMax, serverDeliveryFee, serverSubtotal, voucherDiscount, vCode,
+        cleanPhone, isRetirada, routeKm, routeTempoMax, serverDeliveryFee, serverSubtotal,
+        voucherDiscount: Math.round((voucherDiscount + clubeDiscount) * 100) / 100,
+        vCode: [vCode, clubeNomes.length ? "Clube: " + clubeNomes.join(", ") : null].filter(Boolean).join(" + ") || null,
         serverTotal, payment_method: payment_method ?? null, isDinheiro: !!isDinheiro,
         cash_amount: (cash_amount !== undefined && cash_amount !== null) ? Number(cash_amount) : null,
       };

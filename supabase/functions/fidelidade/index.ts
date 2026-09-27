@@ -13,6 +13,8 @@
 //   clube_cadastrar {cpf, nome, celular, nascimento?, aceita_ofertas}
 //   clube_reservar  {customer_id, recompensa_id | beneficio_id, celular_final}
 //   clube_liberar   {customer_id, hold_ids}
+//   clube_link      {customer_id, celular_final}     → link de uso único p/ QR (/clube/<loja>)
+//   clube_aplicar_pedido {customer_id, order_id, hold_ids, simular?} → caixa: cliente + prêmios num pedido lançado
 //   clube_girar     {customer_id}
 // Toda regra de dinheiro (saldo, nível, sorteio) está no banco
 // (fn_fidelidade_*, migration 20260927150000_fidelidade_motor.sql).
@@ -22,6 +24,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.4";
 import { authenticate, isManagerRole, tenantRole } from "../_shared/tenant-auth.ts";
 import { configPadrao, cpfValido, normalizarConfig, soDigitos } from "../_shared/fidelidade.ts";
+import { cadastrarNoClube, conferirCelularFinal, descontoClubeServidor, idsValidos, novoToken, sha256Hex, vincularClube } from "../_shared/clube-servidor.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -208,52 +211,9 @@ Deno.serve(async (req: Request) => {
       }
 
       if (action === "clube_cadastrar") {
-        const cpf = soDigitos(body.cpf);
-        const nome = String(body.nome ?? "").trim().replace(/\s+/g, " ").slice(0, 80);
-        const celular = soDigitos(body.celular);
-        if (!cpfValido(cpf)) return jsonErr("CPF inválido. Confira os números.");
-        if (nome.length < 2) return jsonErr("Digite seu nome.");
-        if (celular.length < 10 || celular.length > 11) return jsonErr("Celular inválido. Use DDD + número.");
-        if (body.aceita_termos !== true) return jsonErr("Para entrar no clube é preciso aceitar os termos.");
-        let nascimento: string | null = null;
-        if (body.nascimento) {
-          const m = String(body.nascimento).match(/^(\d{4})-(\d{2})-(\d{2})$/);
-          if (m && Number(m[1]) > 1900 && Number(m[1]) <= new Date().getFullYear()) nascimento = `${m[1]}-${m[2]}-${m[3]}`;
-        }
-        const agora = new Date().toISOString();
-
-        const { data: porCpf } = await admin.from("customers").select("id, phone, loyalty_joined_at, birth_date")
-          .eq("tenant_id", tenantId).eq("cpf", cpf).is("deleted_at", null).maybeSingle();
-        if (porCpf?.loyalty_joined_at) return ok({ ativo: true, encontrado: true, resumo: await resumo(porCpf.id) });
-
-        // Celular de OUTRO cadastro: não junta pelo tablet — bastaria saber o celular de
-        // alguém para ficar com os pontos e o histórico dele. O caixa resolve.
-        const { data: porCel } = await admin.from("customers").select("id")
-          .eq("tenant_id", tenantId).eq("phone", celular).is("deleted_at", null).maybeSingle();
-        if (porCel && porCel.id !== porCpf?.id) {
-          return jsonErr("Este celular já tem cadastro na loja. Peça ao caixa para incluir seu CPF nele.");
-        }
-
-        let customerId: string;
-        if (porCpf) {
-          // CPF já conhecido (caixa/nota), agora com aceite: entra no clube.
-          const { error } = await admin.from("customers").update({
-            ...(soDigitos(porCpf.phone).length >= 10 ? {} : { phone: celular }),
-            birth_date: porCpf.birth_date ?? nascimento,
-            loyalty_joined_at: agora, gdpr_consent_at: agora, accepts_marketing: body.aceita_ofertas === true, updated_at: agora,
-          }).eq("id", porCpf.id);
-          if (error) throw error;
-          customerId = porCpf.id;
-        } else {
-          const { data: novo, error } = await admin.from("customers").insert({
-            tenant_id: tenantId, name: nome, phone: celular, cpf, birth_date: nascimento,
-            first_visit_at: agora, visit_count: 0, total_spent: 0, loyalty_points: 0,
-            accepts_marketing: body.aceita_ofertas === true, gdpr_consent_at: agora, loyalty_joined_at: agora,
-          }).select("id").single();
-          if (error) throw error;
-          customerId = novo.id;
-        }
-        return ok({ ativo: true, encontrado: true, novo: true, resumo: await resumo(customerId) });
+        const r = await cadastrarNoClube(admin, tenantId, body);
+        if (r.erro) return jsonErr(r.erro);
+        return ok({ ativo: true, encontrado: true, novo: true, resumo: await resumo(r.customerId!) });
       }
 
       const customerId = await clienteDaLoja(body.customer_id);
@@ -262,21 +222,8 @@ Deno.serve(async (req: Request) => {
       if (action === "clube_reservar") {
         // Gastar pontos/prêmio pede os 4 últimos dígitos do celular (só o CPF não basta).
         // 5 erros seguidos travam o resgate desse cliente por 15 min.
-        const { data: cli } = await admin.from("customers").select("phone, loyalty_pin_fails, loyalty_pin_locked_until").eq("id", customerId).maybeSingle();
-        const cel = soDigitos(cli?.phone);
-        if (cel.length < 10) return jsonErr("Seu cadastro está sem celular. Peça ao caixa para usar seus pontos.");
-        if (cli?.loyalty_pin_locked_until && new Date(cli.loyalty_pin_locked_until).getTime() > Date.now()) {
-          const min = Math.ceil((new Date(cli.loyalty_pin_locked_until).getTime() - Date.now()) / 60000);
-          return jsonErr(`Muitas tentativas. Tente de novo em ${min} min ou fale com o caixa.`);
-        }
-        if (soDigitos(body.celular_final) !== cel.slice(-4)) {
-          const falhas = Number(cli?.loyalty_pin_fails ?? 0) + 1;
-          await admin.from("customers").update(falhas >= 5
-            ? { loyalty_pin_fails: 0, loyalty_pin_locked_until: new Date(Date.now() + 15 * 60_000).toISOString() }
-            : { loyalty_pin_fails: falhas }).eq("id", customerId);
-          return jsonErr(falhas >= 5 ? "Muitas tentativas. Tente de novo em 15 min ou fale com o caixa." : "Os 4 últimos números do celular não conferem.");
-        }
-        if (Number(cli?.loyalty_pin_fails ?? 0) > 0) await admin.from("customers").update({ loyalty_pin_fails: 0 }).eq("id", customerId);
+        const erroCel = await conferirCelularFinal(admin, customerId, body.celular_final);
+        if (erroCel) return jsonErr(erroCel);
         try {
           const { data, error } = body.beneficio_id
             ? await admin.rpc("fn_fidelidade_reservar_beneficio", { p_customer: customerId, p_beneficio: String(body.beneficio_id) })
@@ -287,6 +234,76 @@ Deno.serve(async (req: Request) => {
         } catch (e) {
           return jsonErr(erroRpc(e));
         }
+      }
+
+      // "Ver no celular": o tablet mostra um QR com link de uso único (10 min) que abre
+      // /clube/<loja> já logado. Pede os 4 dígitos antes (o QR vira um cartão do clube).
+      if (action === "clube_link") {
+        const erroCel = await conferirCelularFinal(admin, customerId, body.celular_final);
+        if (erroCel) return jsonErr(erroCel);
+        const { data: loja } = await admin.from("tenants").select("slug").eq("id", tenantId).maybeSingle();
+        if (!loja?.slug) return jsonErr("Loja sem endereço público (slug) configurado.");
+        const token = novoToken();
+        const { error } = await admin.from("loyalty_login_links").insert({ tenant_id: tenantId, customer_id: customerId, token_hash: await sha256Hex(token) });
+        if (error) throw error;
+        return ok({ caminho: `/clube/${loja.slug}?entrar=${token}` });
+      }
+
+      // Caixa: liga o cliente do clube a um pedido JÁ lançado (pontos quando pagar) e
+      // aplica os prêmios reservados. Desconto calculado aqui com os itens do pedido.
+      // simular=true só devolve o desconto (a tela usa para o total a cobrar).
+      // Reenvio após falha: reserva já ligada a ESTE pedido conta como aplicada.
+      if (action === "clube_aplicar_pedido") {
+        const orderId = String(body.order_id ?? "");
+        if (!/^[0-9a-f-]{36}$/i.test(orderId)) return jsonErr("order_id inválido");
+        const { data: ped } = await admin.from("orders").select("id, tenant_id, status, is_paid, customer_id, total_amount, discount_amount, subtotal")
+          .eq("id", orderId).eq("tenant_id", tenantId).maybeSingle();
+        if (!ped) return jsonErr("Pedido não encontrado nesta loja.", 404);
+        if (ped.status === "cancelled") return jsonErr("Pedido cancelado.");
+        // Pedido já pago não ganha dono depois (subiria nível/giros de alguém com compra alheia).
+        if (ped.is_paid && ped.customer_id !== customerId) return jsonErr("Pedido já pago: não dá para colocar no clube depois.");
+        if (ped.customer_id && ped.customer_id !== customerId) return jsonErr("Este pedido já está no nome de outro cliente.");
+        const holds = idsValidos(body.hold_ids);
+        const [txLig, bnLig] = holds.length ? await Promise.all([
+          admin.from("loyalty_transactions").select("id").in("id", holds).eq("order_id", orderId).is("deleted_at", null),
+          admin.from("loyalty_benefits").select("id").in("id", holds).eq("order_id", orderId),
+        ]) : [{ data: [] }, { data: [] }];
+        const jaLigados = new Set([...(txLig.data ?? []), ...(bnLig.data ?? [])].map((x: any) => String(x.id)));
+        const pendentes = holds.filter((h) => !jaLigados.has(h));
+
+        let desconto = 0;
+        let usados: string[] = [];
+        if (pendentes.length > 0) {
+          if (ped.is_paid) return jsonErr("Pedido já pago: o prêmio fica para o próximo pedido.");
+          const { data: its } = await admin.from("order_items").select("item_id, item_price, quantity, status").eq("order_id", orderId).neq("status", "cancelled");
+          const ids = [...new Set((its ?? []).map((i: any) => i.item_id).filter(Boolean))];
+          const { data: menu } = ids.length ? await admin.from("menu_items").select("id, price").in("id", ids) : { data: [] };
+          const precoMenu = new Map((menu ?? []).map((m: any) => [String(m.id), Number(m.price ?? 0)]));
+          const itensDesc = (its ?? []).filter((i: any) => i.item_id).map((i: any) => ({
+            id: String(i.item_id), preco: Math.min(Number(i.item_price ?? 0), precoMenu.get(String(i.item_id)) ?? Number(i.item_price ?? 0)), qtd: Number(i.quantity ?? 0),
+          }));
+          // Base = itens (sem taxa de serviço/entrega), igual ao delivery e à mesa.
+          const baseItens = Math.min(Number(ped.total_amount ?? 0), Math.max(0, Number(ped.subtotal ?? 0) - Number(ped.discount_amount ?? 0)));
+          const dc = await descontoClubeServidor(admin, customerId, pendentes, itensDesc, baseItens);
+          if (dc.invalidas > 0) return jsonErr("Um prêmio do clube venceu ou já foi usado. Tire e use de novo.", 409);
+          desconto = dc.desconto; usados = dc.usados;
+        }
+        if (body.simular === true) return ok({ desconto, ja_aplicado: jaLigados.size > 0 });
+
+        const novoTotal = Math.max(0, Math.round((Number(ped.total_amount ?? 0) - desconto) * 100) / 100);
+        const upd: Record<string, unknown> = { customer_id: customerId, updated_at: new Date().toISOString() };
+        if (desconto > 0) { upd.discount_amount = Math.round((Number(ped.discount_amount ?? 0) + desconto) * 100) / 100; upd.total_amount = novoTotal; }
+        // Condicional ao total lido: outro terminal mexendo no mesmo pedido não soma duas vezes.
+        const { data: gravou } = await admin.from("orders").update(upd).eq("id", orderId).eq("total_amount", ped.total_amount).eq("is_paid", ped.is_paid).select("id");
+        if (!gravou?.length) return jsonErr("O pedido mudou enquanto aplicava o clube. Tente de novo.", 409);
+        if (usados.length > 0) {
+          const n = await vincularClube(admin, customerId, orderId, usados);
+          if (n < usados.length) {
+            await admin.from("orders").update({ discount_amount: ped.discount_amount, total_amount: ped.total_amount }).eq("id", orderId);
+            return jsonErr("Um prêmio do clube não está mais disponível. Tire e use de novo.", 409);
+          }
+        }
+        return ok({ desconto, total: desconto > 0 ? novoTotal : Number(ped.total_amount ?? 0) });
       }
 
       if (action === "clube_liberar") {

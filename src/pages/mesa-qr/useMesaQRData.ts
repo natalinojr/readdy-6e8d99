@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, type MutableRefObject } from 'react';
+import { clubeLimparReservas, type ClubeSelecao } from '@/components/fidelidade/ClubeCheckout';
 import { useMenuPing, comJitter } from '@/hooks/useMenuPing';
 import { useParams } from 'react-router-dom';
 import { queueOrderForPrint, type OrderItemForPrint, type OrderPrintDestino } from '@/lib/printOrderQueue';
@@ -303,6 +304,11 @@ export function useMesaQRData() {
   const [editingItem, setEditingItem] = useState<CartItem | null>(null);
   const [showCart, setShowCart] = useState(false);
   const [enviando, setEnviando] = useState(false);
+  // Clube de fidelidade: cartão + prêmios reservados para o próximo pedido (desconto
+  // recalculado pela mesa-write; conta e Pix leem o total do pedido).
+  const [clubeSel, setClubeSel] = useState<ClubeSelecao>({ token: null, holdIds: [], desconto: 0, nomes: [] });
+  // Desconto do clube que o servidor gravou no último pedido (tela de confirmação).
+  const [descontoConfirmado, setDescontoConfirmado] = useState(0);
   const [pedidoConfirmado, setPedidoConfirmado] = useState(false);
   const [numeroPedido, setNumeroPedido] = useState('');
   const [confirmedCartItems, setConfirmedCartItems] = useState<CartItem[]>([]);
@@ -620,6 +626,8 @@ export function useMesaQRData() {
       items: itemsPayload,
       subtotal: subtotal,
       total_amount: subtotal,
+      ...(clubeSel.token ? { loyalty_token: clubeSel.token } : {}),
+      ...(clubeSel.token && clubeSel.holdIds.length > 0 ? { loyalty_hold_ids: clubeSel.holdIds } : {}),
     };
 
     fetch(url, {
@@ -648,7 +656,10 @@ export function useMesaQRData() {
         }
         setNumeroPedido(data.data && data.data.number ? data.data.number : '');
         setConfirmedCartItems(cart);
+        setDescontoConfirmado(Number(data.data?.discount_amount ?? 0));
         setPedidoConfirmado(true);
+        clubeLimparReservas(table.tenant_id);
+        setClubeSel({ token: clubeSel.token, holdIds: [], desconto: 0, nomes: [] });
         setCart([]);
         setShowCart(false);
         setEnviando(false);
@@ -728,6 +739,9 @@ export function useMesaQRData() {
   const totalValor = cart.reduce(function (s, i) { return s + i.precoTotal * i.quantidade; }, 0);
 
   return {
+    clubeSel,
+    setClubeSel,
+    descontoConfirmado,
     step: step,
     tenantId: tenantId,
     table: table,

@@ -27,6 +27,13 @@ interface Props {
   onTrocarPagamento?: (metodoKey: string, cashAmount?: string) => Promise<boolean>;
 }
 
+// "ABC" → Cupom ABC · "Clube" → Prêmio do clube · "ABC + Clube" → Cupom ABC + prêmio do clube
+function rotuloDesconto(codigo: string): string {
+  const partes = (codigo || '').split(' + ').filter(Boolean);
+  if (partes.length === 0) return 'Desconto';
+  return partes.map((p, i) => (p === 'Clube' ? (i === 0 ? '🎁 Prêmio do clube' : 'prêmio do clube') : `Cupom ${p}`)).join(' + ');
+}
+
 export default function ConfirmacaoDelivery(props: Props) {
   const numeroPedido = props.numeroPedido;
   const orderTotal = props.orderTotal;
@@ -93,7 +100,7 @@ export default function ConfirmacaoDelivery(props: Props) {
               <span className="font-semibold text-zinc-700">{formatCurrency(resumo.subtotal)}</span>
             </div>
             <div className="flex justify-between text-xs text-emerald-600">
-              <span className="flex items-center gap-1"><i className="ri-coupon-3-line" />Cupom {resumo.voucherCodigo}</span>
+              <span className="flex items-center gap-1"><i className="ri-coupon-3-line" />{rotuloDesconto(resumo.voucherCodigo)}</span>
               <span className="font-bold">- {formatCurrency(resumo.desconto)}</span>
             </div>
             {resumo.deliveryFee > 0 ? (

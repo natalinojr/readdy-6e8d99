@@ -39,6 +39,8 @@ interface Props {
   tenantId?: string;
   participantId?: string;
   participantName?: string;
+  /** Desconto do clube gravado pelo servidor neste pedido. */
+  descontoClube?: number;
 }
 
 export default function ConfirmacaoMesaQR(props: Props) {
@@ -60,9 +62,11 @@ export default function ConfirmacaoMesaQR(props: Props) {
     return item ? item.photo_url : null;
   }
 
-  const totalPedido = confirmedCartItems.reduce(function (s, i) {
+  const subtotalPedido = confirmedCartItems.reduce(function (s, i) {
     return s + i.precoTotal * i.quantidade;
   }, 0);
+  const descontoClube = Math.min(props.descontoClube || 0, subtotalPedido);
+  const totalPedido = Math.max(0, subtotalPedido - descontoClube);
 
   return (
     <div className="min-h-screen flex flex-col items-center font-sans relative overflow-hidden px-4 py-8"
@@ -181,6 +185,12 @@ export default function ConfirmacaoMesaQR(props: Props) {
                   </div>
                 );
               })}
+              {descontoClube > 0 ? (
+                <div className="flex items-center justify-between px-4 py-2 border-t border-zinc-100">
+                  <p className="text-xs font-bold text-green-600">🎁 Prêmio do clube</p>
+                  <p className="text-sm font-bold text-green-600">- {formatCurrency(descontoClube)}</p>
+                </div>
+              ) : null}
               {/* Total */}
               <div className="flex items-center justify-between px-4 py-3 bg-zinc-50/80 border-t border-zinc-100">
                 <p className="text-xs font-bold text-zinc-500 uppercase tracking-wider">Total</p>

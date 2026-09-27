@@ -1,4 +1,5 @@
 import { formatCurrency } from '@/lib/formatters';
+import ClubeCheckout, { type ClubeSelecao } from '@/components/fidelidade/ClubeCheckout';
 
 interface CartItem {
   cartId: string;
@@ -23,6 +24,11 @@ interface Props {
   enviando: boolean;
   error: string;
   onVoltar: () => void;
+  /** Clube de fidelidade (opcional): loja, desconto dos prêmios reservados e retorno da seleção. */
+  tenantId?: string | null;
+  clubeDesconto?: number;
+  clubeNomes?: string[];
+  onClube?: (sel: ClubeSelecao) => void;
 }
 
 export default function CarrinhoMesaQR(props: Props) {
@@ -37,7 +43,9 @@ export default function CarrinhoMesaQR(props: Props) {
 
   const [removendo, setRemovendo] = useState<string | null>(null);
 
-  const total = cart.reduce(function (s, i) { return s + i.precoTotal * i.quantidade; }, 0);
+  const subtotal = cart.reduce(function (s, i) { return s + i.precoTotal * i.quantidade; }, 0);
+  const clubeDesc = Math.min(props.clubeDesconto || 0, subtotal);
+  const total = Math.max(0, subtotal - clubeDesc);
   const totalItens = cart.reduce(function (s, i) { return s + i.quantidade; }, 0);
 
   function handleRemover(cartId: string) {
@@ -185,6 +193,20 @@ export default function CarrinhoMesaQR(props: Props) {
               <span className="text-sm text-zinc-600">Itens</span>
               <span className="text-sm font-bold text-zinc-800">{totalItens}</span>
             </div>
+            {props.onClube ? (
+              <ClubeCheckout
+                tenantId={props.tenantId}
+                itens={cart.map(function (i) { return { id: i.itemId, preco: i.precoBase, qtd: i.quantidade }; })}
+                subtotal={subtotal}
+                onChange={props.onClube}
+              />
+            ) : null}
+            {clubeDesc > 0 ? (
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-green-600 min-w-0 truncate">🎁 Clube: {(props.clubeNomes || []).join(', ')}</span>
+                <span className="text-green-600 font-bold whitespace-nowrap">- {formatCurrency(clubeDesc)}</span>
+              </div>
+            ) : null}
             <div className="h-px bg-zinc-100" />
             <div className="flex items-center justify-between pt-1">
               <span className="text-base font-bold text-zinc-800">Total</span>
