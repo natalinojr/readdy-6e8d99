@@ -193,7 +193,7 @@ async function criar(ctx: Ctx, body: Record<string, any>) {
   return json({ ok: true, id: novo.id });
 }
 
-const normNome = (s: unknown) => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+const normNome = (s: unknown) => String(s ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
 const normPix = (s: unknown) => String(s ?? '').toLowerCase().replace(/\s+/g, '').trim();
 const diaBR = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}`;
 
