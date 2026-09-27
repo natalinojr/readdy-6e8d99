@@ -177,7 +177,9 @@ export default function IfoodTab({ periodo }: Props) {
     let top = { s: 0, h: 0, n: 0, v: 0 };
     g.forEach((l, s) => l.forEach((c, h) => { if (c.n > top.n) top = { s, h, n: c.n, v: c.v }; }));
     const porSemana = g.map((l, s) => ({ s, n: l.reduce((a, c) => a + c.n, 0), v: l.reduce((a, c) => a + c.v, 0) }));
-    return { g, horas, max, top, porSemana };
+    const porHora = g[0].map((_, h) => ({ n: g.reduce((a, l) => a + l[h].n, 0), v: g.reduce((a, l) => a + l[h].v, 0) }));
+    const totalV = porSemana.reduce((a, d) => a + d.v, 0);
+    return { g, horas, max, top, porSemana, porHora, totalV };
   }, [validos]);
 
   // ── Logística × custo ──────────────────────────────────────────────────────
@@ -466,7 +468,7 @@ export default function IfoodTab({ periodo }: Props) {
       {/* Heatmap */}
       <Card titulo="Quando o iFood vende" sub="Pedidos por dia da semana e hora — quanto mais escuro, mais pedidos">
         <div className="overflow-x-auto">
-          <div className="inline-grid gap-[3px] min-w-full" style={{ gridTemplateColumns: `36px repeat(${alturaHeat}, minmax(26px, 1fr)) 70px` }}>
+          <div className="inline-grid gap-[3px] min-w-full" style={{ gridTemplateColumns: `36px repeat(${alturaHeat}, minmax(54px, 1fr)) 70px` }}>
             <div />
             {heat.horas.map((h) => <div key={h} className="text-[10px] text-zinc-400 text-center">{h}h</div>)}
             <div className="text-[10px] text-zinc-400 text-right pr-1">Total</div>
@@ -487,6 +489,14 @@ export default function IfoodTab({ periodo }: Props) {
                 <div className="text-[11px] text-zinc-600 font-semibold text-right pr-1 flex items-center justify-end tabular-nums">{brl0(heat.porSemana[s].v)}</div>
               </div>
             ))}
+            <div className="text-[11px] font-semibold text-zinc-500 flex items-center pt-1 border-t border-zinc-100">Total</div>
+            {heat.horas.map((h) => (
+              <div key={h} title={`${h}h: ${heat.porHora[h].n} pedidos · ${brl(heat.porHora[h].v)}`}
+                className="text-[10px] text-zinc-600 font-semibold text-center pt-1 border-t border-zinc-100 tabular-nums whitespace-nowrap">
+                {heat.porHora[h].v ? brl0(heat.porHora[h].v) : ''}
+              </div>
+            ))}
+            <div className="text-[11px] text-zinc-800 font-bold text-right pr-1 pt-1 border-t border-zinc-100 flex items-center justify-end tabular-nums">{brl0(heat.totalV)}</div>
           </div>
         </div>
       </Card>
