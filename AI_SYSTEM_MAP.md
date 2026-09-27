@@ -3690,3 +3690,10 @@ Sem SW ativo o POST cai no Vercel e falha — por isso o destino só existe no S
 - **order-write record_payment:** o bloco antigo que somava pontos/visitas à mão foi removido (dobrava o saldo; o gatilho já faz).
 - **Pegadinhas:** (1) StrictMode monta 2× — ref de "ainda aberto" tem que voltar a true no mount (roleta travava em "Girando…"); (2) `jsonb_array_elements(x) t` sem `t(col)` dá registro, não jsonb; (3) no painel do navegador `window.confirm` responde Cancelar — sobrescrever para testar.
 - **Dado-chave:** em 2026-09-27 só 13% dos pedidos da Vila Leste e 0% da Paranaguá tinham cliente; o tablet (maior canal) nenhum. O clube no tablet é o que identifica.
+- **Funil do iFood (2026-09-27)** — ver `IFOOD-PEDIDOS-FUNIL.md`. `ifood_pdv_config.order_mode='funnel'`: pedido do
+  iFood vira `orders` (preço do iFood, `orders.ifood_order_id`, vínculos de `ifood_item_links`), nasce rascunho e é
+  liberado pelo `delivery-write › release_held_order`; status volta ao iFood pela fila `ifood_order_outbox` (gatilho
+  `trg_ifood_outbox` em `orders`, enviada pelo polling de 30 s da edge `ifood-shipping`). PEGADINHAS: todo relatório que
+  soma venda por `orders`/`payments` precisa de `ifood_order_id IS NULL` (a venda é contada pelo iFood); pedido do iFood
+  não cancela direto (gatilho `trg_ifood_block_cancel`; o ERPOS cancela via `fn_ifood_cancel_erpos_order` quando o iFood
+  confirma); plataforma = 'propria' (motoboy da loja), 'ifood' (entregador iFood) ou 'retirada'.
