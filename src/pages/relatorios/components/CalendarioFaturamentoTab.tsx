@@ -4,6 +4,8 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import DiaDetalheModal from './DiaDetalheModal';
 import { fetchIfoodVendas } from '@/lib/ifoodVendas';
+import { fetchPedidosIfood } from '@/lib/ifoodDashboard';
+import HeatmapSemanaHora, { type PontoSemanaHora } from './HeatmapSemanaHora';
 
 const fmt = (v: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
@@ -337,6 +339,9 @@ export default function CalendarioFaturamentoTab() {
 
         {/* Resumo do mês */}
         <MonthSummary dayData={dayData} monthTotal={monthTotal} />
+
+        {/* Dia da semana × hora, por canal */}
+        <HeatmapCanais tenantId={user?.tenantId} year={year} month={month} />
       </div>
 
       {/* Modal de detalhe do dia */}
@@ -476,6 +481,96 @@ function MonthSummary({ dayData, monthTotal }: MonthSummaryProps) {
         <p className="text-xs text-zinc-500 mt-0.5">Pedidos no mês</p>
         {worst && <p className="text-[10px] text-zinc-400">Menor: {formatDay(worst.date)}</p>}
       </div>
+    </div>
+  );
+}
+/* ---------- Heatmap por canal ---------- */
+type Canal = 'ifood' | 'delivery' | 'balcao';
+
+const CANAIS: { id: Canal; label: string; dica: string; rgb: string; texto: string }[] = [
+  { id: 'ifood', label: 'iFood', dica: 'pedidos do iFood (conciliação + API)', rgb: '234,29,44', texto: '#9f1239' },
+  { id: 'delivery', label: 'Delivery próprio', dica: 'delivery do ERPOS (entrega, retirada, WhatsApp)', rgb: '59,130,246', texto: '#1e3a8a' },
+  { id: 'balcao', label: 'Balcão', dica: 'caixa, garçom, mesa, QR e autoatendimento', rgb: '245,158,11', texto: '#78350f' },
+];
+
+// Hora e dia da semana de Brasília (UTC−3, sem horário de verão desde 2019).
+function semanaHoraBR(iso: string) {
+  const d = new Date(new Date(iso).getTime() - 3 * 3600_000);
+  return { semana: d.getUTCDay(), hora: d.getUTCHours() };
+}
+
+function HeatmapCanais({ tenantId, year, month }: { tenantId?: string; year: number; month: number }) {
+  const [sel, setSel] = useState<Canal[]>(['ifood', 'delivery', 'balcao']);
+  const [dados, setDados] = useState<Record<Canal, PontoSemanaHora[]> | null>(null);
+
+  useEffect(() => {
+    if (!tenantId) return;
+    let vivo = true;
+    setDados(null);
+    const mm = String(month + 1).padStart(2, '0');
+    const from = `${year}-${mm}-01T00:00:00-03:00`;
+    const to = `${year}-${mm}-${new Date(year, month + 1, 0).getDate()}T23:59:59-03:00`;
+    (async () => {
+      const r: Record<Canal, PontoSemanaHora[]> = { ifood: [], delivery: [], balcao: [] };
+      const [ifood] = await Promise.all([
+        fetchPedidosIfood(tenantId, from, to).catch(() => null),
+        (async () => {
+          // Mesma regra da aba Origem: tudo que não foi cancelado nem é rascunho/treino.
+          for (let ini = 0; ; ini += 1000) {
+            const { data, error } = await supabase
+              .from('orders')
+              .select('origin_type, total_amount, created_at')
+              .eq('tenant_id', tenantId)
+              .not('status', 'in', '(cancelled,draft)')
+              .eq('is_training', false)
+              .eq('is_draft', false)
+              .gte('created_at', from)
+              .lte('created_at', to)
+              .order('created_at')
+              .range(ini, ini + 999);
+            if (error) { console.warn('[HeatmapCanais]', error.message); break; }
+            for (const o of (data ?? []) as { origin_type: string | null; total_amount: number | null; created_at: string }[]) {
+              r[o.origin_type === 'delivery' ? 'delivery' : 'balcao'].push({ ...semanaHoraBR(o.created_at), valor: Number(o.total_amount ?? 0) });
+            }
+            if ((data?.length ?? 0) < 1000) break;
+          }
+        })(),
+      ]);
+      for (const p of ifood?.pedidos ?? []) if (!p.cancelado) r.ifood.push({ semana: p.semana, hora: p.hora, valor: p.vendas });
+      if (vivo) setDados(r);
+    })();
+    return () => { vivo = false; };
+  }, [tenantId, year, month]);
+
+  const pontos = useMemo(() => (dados ? sel.flatMap((c) => dados[c]) : []), [dados, sel]);
+  const cor = sel.length === 1 ? CANAIS.find((c) => c.id === sel[0])! : { rgb: '124,58,237', texto: '#4c1d95' };
+  const alternar = (c: Canal) => setSel((s) => (s.includes(c) ? (s.length > 1 ? s.filter((x) => x !== c) : s) : [...s, c]));
+
+  return (
+    <div className="bg-white border border-zinc-100 rounded-xl p-4 md:p-5">
+      <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
+        <div>
+          <h3 className="text-sm font-bold text-zinc-900">Quando a loja vende</h3>
+          <p className="text-[11px] text-zinc-400">Pedidos do mês por dia da semana e hora — quanto mais escuro, mais pedidos</p>
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {CANAIS.map((c) => {
+            const ativo = sel.includes(c.id);
+            return (
+              <button key={c.id} onClick={() => alternar(c.id)} title={c.dica}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors cursor-pointer ${ativo ? 'text-white' : 'bg-white text-zinc-500 border-zinc-200 hover:bg-zinc-50'}`}
+                style={ativo ? { background: `rgb(${c.rgb})`, borderColor: `rgb(${c.rgb})` } : undefined}>
+                {c.label}{dados ? ` · ${dados[c.id].length}` : ''}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      {dados ? <HeatmapSemanaHora pontos={pontos} rgb={cor.rgb} texto={cor.texto} /> : (
+        <div className="flex items-center justify-center py-10 text-zinc-400 text-sm">
+          <div className="w-4 h-4 border-2 border-violet-400 border-t-transparent rounded-full animate-spin mr-2" />Carregando...
+        </div>
+      )}
     </div>
   );
 }
