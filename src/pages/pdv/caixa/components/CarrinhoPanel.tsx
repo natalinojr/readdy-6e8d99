@@ -124,7 +124,7 @@ export default function CarrinhoPanel({ onDestino, onPagar, onLimpar, onEditItem
   const { dispararNotificacao, addPendingApproval, cancelPending } = useNotificacoes();
   const { user } = useAuth();
   const { registrarEvento } = useAuditoria();
-  const { addSolicitacao } = useAprovacoes();
+  const { addSolicitacao, cancelarSolicitacao } = useAprovacoes();
   const { hasPermissao } = usePermissoes();
 
   const [descontoTemp, setDescontoTemp] = useState('');
@@ -492,6 +492,7 @@ export default function CarrinhoPanel({ onDestino, onPagar, onLimpar, onEditItem
         detalhes: 'Operador cancelou a solicitação antes da resposta do gerente.',
       });
       cancelPending(pendingApprovalId);
+      cancelarSolicitacao(pendingApprovalId);
       setPendingApprovalId(null);
     }
   };

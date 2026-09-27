@@ -2736,7 +2736,7 @@ Regras:
 - **Caminho:** reaproveitar o caminho da tela. Não criar endpoint novo para ação rápida.
 
 Limitações conhecidas:
-- **Aprovações:** ficaram de fora. O contexto guarda só na memória do aparelho.
+- **Aprovações:** `AprovacoesPendentes` lê do banco (`pdv_approval_requests`) desde 2026-09-27.
 - **Promoções:** só lista. Há suspeita de que a tela nem salva: a action usada não existe no `menu-write`.
 - **Lembrete:** não há ação de criar para o front (`asst_reminders` é só service role).
 - **Registrar produção:** só escolhe a ficha e abre a tela.
@@ -3722,3 +3722,10 @@ Sem SW ativo o POST cai no Vercel e falha — por isso o destino só existe no S
   celular). Perfil e lojas ficam no aparelho (`src/lib/motoboyApp.ts`, chaves `erpos_motoboy_perfil`/`_lojas`); entrar
   numa loja grava a sessão de sempre (`erpos_motoboy_session`) e abre `/entregas/<slug>`, que mostra "Minhas lojas".
   O link aberto `/entregas/<slug>` com nome + celular continua funcionando no navegador.
+
+### Aprovações do PDV no banco (2026-09-27)
+Sintoma (Vila Leste): caixa tocava "Solicitar aprovação ao gerente" no cancelamento e nada aparecia para admin/gerente.
+Causa: `AprovacoesContext` (e o `NotificacoesContext`) eram só memória do aparelho de quem pedia.
+- Migração `20260928140000_pdv_approval_requests.sql`: tabela por loja (`tipo` cancelamento/desconto/problema_item, `payload` jsonb, `status` pendente/aprovado/rejeitado/cancelado). RLS: membro da loja lê e insere (sempre pendente, em nome próprio); sem UPDATE direto. Decidir só por `fn_pdv_approval_decide` (admin/manager/supervisor da loja, só pendente); desistir por `fn_pdv_approval_cancel` (quem pediu). Trigger manda broadcast `approvals-ping:<tenant>` (payload mínimo, padrão orders-ping).
+- Front: o contexto lê as últimas 24 h da loja ativa, ouve o ping + polling (30 s; 5 s enquanto o aparelho espera resposta). Os callbacks (executar cancelamento/aplicar desconto) continuam no aparelho de quem pediu e disparam uma vez quando a linha aparece decidida. Pedido novo de outro aparelho toca o sino/bipe para admin/gerente/supervisão.
+- Fechar a tela "Aguardando aprovação" cancela a solicitação. Se o aparelho que pediu recarregar antes da resposta, a aprovação fica registrada mas a ação não roda (refazer o cancelamento).
