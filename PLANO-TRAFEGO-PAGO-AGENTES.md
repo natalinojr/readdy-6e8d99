@@ -145,7 +145,12 @@ Como funciona: sincronização periódica (ex.: 1×/dia) que **indexa** as image
 - A IA **não desenha pixel**: escolhe foto, modelo de layout, texto (título, preço, CTA) e variações, sempre dentro do Kit.
 - O desenho é feito por **modelos (templates) em código**: HTML/SVG → PNG no servidor (satori + resvg na Edge Function). Resultado fiel à marca, previsível e barato (sem custo por imagem).
 - Formatos: feed 1:1 e 4:5, story/reels 9:16, capa de cardápio/delivery, banner de promoção, foto de item padronizada (fundo/moldura da marca).
-- **Fase opcional:** IA geradora de imagem de outro fornecedor (Claude não gera imagem) para **fundo/cenário, remover fundo e melhorar luz**. Regra: **nunca alterar o prato em si** (propaganda enganosa). Precisa de decisão do dono e chave de API.
+- **Quatro modos de imagem, escolhidos pelo usuário na hora** (decisão do dono, 2026-09-27), por peça ou como padrão da loja:
+  - **A · Modelo + foto real:** sem IA de imagem. Como um "modelo do Canva" preenchido sozinho: layouts prontos (ex.: foto do prato em 70% da peça, faixa na cor da marca com nome e preço, logo no canto, botão "Peça no WhatsApp"); o sistema encaixa foto e textos e gera o PNG. Custo zero por imagem.
+  - **B · Foto real melhorada:** serviço externo remove fundo, corrige luz/nitidez, aumenta resolução (ex.: Photoroom, remove.bg, Clipdrop). O prato continua o real.
+  - **C · Foto real + cenário gerado:** prato real recortado sobre fundo criado por IA (ex.: Photoroom, OpenAI gpt-image, Google Gemini/Imagen, Adobe Firefly).
+  - **D · Imagem 100% gerada:** para fundos, datas comemorativas, ilustrações (ex.: OpenAI gpt-image, Google Imagen, Ideogram, Flux). **Nunca** como foto de prato (propaganda enganosa): o Revisor bloqueia.
+  - B, C e D se combinam com A (a imagem tratada/gerada entra no modelo da marca). Cada provedor é um "conector" com chave própria da loja ou do ERPOS; o custo de cada imagem entra no teto mensal de IA.
 
 **d) Revisão da arte.** Checagem em código (contraste do texto, tamanho da fonte, % de texto na imagem, logo presente, preço = cardápio) + Haiku visão ("a arte está legível? o prato aparece bem?"). Reprovou → volta ao Diretor de Arte com o motivo (até 2 voltas) → senão fica para o dono.
 
@@ -177,16 +182,30 @@ Todas com RLS padrão do projeto: select por membership da loja, escrita só `se
 
 ---
 
-## 5. Níveis de autonomia (o dono escolhe por loja)
+## 5. Autonomia e travas: tudo configurável pela loja (decisão do dono, 2026-09-27)
 
-| Nível | Nome | O que roda sozinho |
-|---|---|---|
-| 0 | Só relatório | Nada executa; tudo é sugestão |
-| 1 | Protege | Pausar o que queima dinheiro + tetos (hoje ≈ "autônomo" sem criar) |
-| 2 | Otimiza | + ajustar orçamento ±20% + **trocar criativo em fadiga** usando arte já aprovada pelo dono |
-| 3 | Piloto automático | + criar campanha e subir arte nova do Estúdio, dentro de teto mensal e pauta aprovada |
+Não há nível fixo nem trava fixa no código. A loja **programa** o comportamento numa tela "Autonomia e travas" (usuários com acesso ao Tráfego Pago; quem aprova segue as regras de aprovação do admin).
 
-Travas que valem em qualquer nível (código, não IA): teto diário/mensal, ±20% a cada 72h, não mexer em conjunto em aprendizado, só ids existentes, preço da arte = preço do cardápio, 18+ para álcool. Tudo registrado com motivo e botão de desfazer quando possível.
+**Autonomia por tipo de ação.** Para cada ação, o usuário escolhe `automático` · `pedir aprovação` · `desligado`:
+
+| Ação | Sugestão de fábrica |
+|---|---|
+| Pausar anúncio com prejuízo | automático |
+| Reativar anúncio | pedir aprovação |
+| Aumentar orçamento | pedir aprovação |
+| Diminuir orçamento | automático |
+| Trocar arte cansada por arte já aprovada | pedir aprovação |
+| Gerar arte nova no Estúdio | automático (só gera; publicar é outra ação) |
+| Subir arte nova no anúncio | pedir aprovação |
+| Criar campanha nova | pedir aprovação |
+| Executar estratégia aprovada | pedir aprovação |
+
+Os "níveis" (Só relatório, Protege, Otimiza, Piloto automático) viram apenas **atalhos** que preenchem essa tabela de uma vez; depois o usuário ajusta item por item.
+
+**Travas, também editáveis** (com valor sugerido pré-preenchido): teto diário, teto mensal de anúncios, teto mensal de IA, % máximo de mudança de orçamento e intervalo entre mudanças (sugerido ±20% a cada 72h), mexer ou não em conjunto em fase de aprendizado, gasto mínimo antes de julgar um anúncio, frequência máxima, CTR mínimo, meta de custo por resultado, horários de anúncio, raio máximo, idade mínima.
+- A tela mostra aviso quando a trava sai da prática de mercado (ex.: "mudar orçamento mais de 20% reinicia o aprendizado da Meta") e pede confirmação, mas **deixa**.
+- Fica no código só o que não é escolha: usar apenas ids que existem na conta, respeitar os limites técnicos da Meta (ex.: orçamento mínimo que ela aceita), preço da arte = preço do cardápio, 18+ para álcool (política da Meta).
+- Toda mudança de configuração fica registrada (quem, quando, de → para). Cada ação automática tem motivo e botão de desfazer quando possível.
 
 ---
 
@@ -211,8 +230,8 @@ Integração no cardápio: botão "Gerar arte/foto padronizada" no item, que abr
 | **F3** | Ligar Tráfego → Estúdio: `rotate_creative`/`create_campaign` geram pedido de arte; **Revisor** antes de subir; subir criativo novo no conjunto | F2 + permissões `ads_management`/`pages_manage_ads` |
 | **F4** | **Monitor** 3/3h + **Analista de Resultados** (arte ↔ resultado ↔ pedidos ERPOS) + relatório semanal | F3 |
 | **F5a** | **Inteligência da loja**: fatos por canal (balcão, mesa, autoatendimento, delivery próprio, iFood, retirada) + margem + estoque + clientes; relatório semanal "oportunidades" só para leitura | nada (pode vir antes, em paralelo à F1) |
-| **F5b** | **Estrategista** semanal gerando propostas + fila de aprovação (permissão `marketing_aprovar_estrategia`, tela Aprovações) + avaliação da estratégia depois do prazo + níveis de autonomia 0–3 | F5a + F4 |
-| **F6** (opcional) | IA de imagem (opção escolhida pelo dono entre B, C e D) | decisão do dono |
+| **F5b** | **Estrategista** semanal gerando propostas + fila de aprovação (permissão `marketing_aprovar_estrategia`, tela Aprovações) + avaliação da estratégia depois do prazo + tela "Autonomia e travas" (tudo configurável) | F5a + F4 |
+| **F6** | Modos B, C e D de imagem (conectores de provedores externos) | F2 |
 
 Cada fase: testar na loja **Testes PDV** e, para a Meta, com uma conta de anúncios de teste antes de ligar em loja real.
 
@@ -220,10 +239,10 @@ Cada fase: testar na loja **Testes PDV** e, para a Meta, com uma conta de anúnc
 
 ## 8. Decisões que são do dono
 
-1. **Autonomia inicial:** explicado ao dono em 2026-09-27; aguardando escolha do nível (recomendado: nível 1).
+1. ~~Autonomia inicial~~ **Decidido (2026-09-27):** tudo programável pela loja, por tipo de ação, e as travas também (seção 5).
 2. ~~Teto de gasto com IA~~ **Decidido (2026-09-27):** item de configuração por loja, definido pelos usuários da loja (quem tem acesso ao Tráfego Pago). Ao atingir o teto no mês, os agentes param e avisam; as travas em código (Monitor sem IA) continuam.
 3. ~~Opus semanal~~ **Decidido (2026-09-27):** sim, Opus só na revisão estratégica semanal.
-4. **Imagem gerada por IA externa:** opções apresentadas ao dono em 2026-09-27 (A: sem IA de imagem; B: editar a foto real; C: foto real + cenário gerado; D: imagem 100% gerada, nunca como foto de prato). Aguardando escolha.
+4. ~~Imagem por IA externa~~ **Decidido (2026-09-27):** os quatro modos (A, B, C, D) ficam disponíveis e o usuário escolhe na hora (seção 3.2 c). Falta só escolher o 1º provedor de B/C/D na implementação.
 5. ~~Publicação orgânica~~ **Decidido (2026-09-27):** não entra. Só anúncios pagos.
 6. ~~App Review~~ **Decidido (2026-09-27):** a conexão e as permissões de cada loja ficam com os usuários da loja que têm acesso ao Tráfego Pago. Observação: o App Review em si é feito **uma vez** no app Meta do ERPOS (dono do app), não por loja; depois de aprovado, cada loja só conecta.
 7. ~~Banco de imagens~~ **Decidido (2026-09-27):** qualquer nuvem, por link. O Estúdio aceita um link de pasta compartilhada (Google Drive, OneDrive, Dropbox, iCloud, Mega, etc.), detecta o provedor e usa o leitor dele; pasta privada que o link não abre pede login (OAuth) daquele provedor.
