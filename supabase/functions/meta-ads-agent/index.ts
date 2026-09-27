@@ -21,7 +21,9 @@
 //
 // Segurança: service role + verify_jwt=false → membro da loja checado aqui (JWT) ou
 // x-internal-key = FISCAL_INTERNAL_KEY (cron). O token da Meta nunca sai desta função.
-// Segredos: ANTHROPIC_API_KEY, FISCAL_INTERNAL_KEY, (opcional) APP_PUBLIC_URL.
+// Segredos: ANTHROPIC_API_KEY, FISCAL_INTERNAL_KEY, (opcional) APP_PUBLIC_URL, META_AGENT_MODEL.
+// Modelo: settings.model por loja (senão META_AGENT_MODEL, senão Opus 5); settings.shadow_model
+// roda o candidato em "sombra" (trigger='sombra', shadow_of) só para comparar — ver PLANO-TRAFEGO-PAGO-AGENTES.md.
 
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
 import Anthropic from 'npm:@anthropic-ai/sdk@0.125.0';
@@ -32,8 +34,15 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 const GRAPH = 'https://graph.facebook.com/v20.0';
-// Decisão de gestão de verba: uma vez por dia por loja, vale o modelo mais capaz.
-const MODEL = 'claude-opus-5';
+// Modelo da rodada real: por loja (meta_agent_settings.model) → env META_AGENT_MODEL → Opus 5.
+// Fase 0 do plano (2026-09-27): `shadow_model` roda o candidato (ex.: Sonnet 5) em paralelo
+// sobre o MESMO payload, sem executar nada, para comparar decisões e custo antes de trocar.
+const MODELS_ALLOWED = ['claude-opus-5', 'claude-sonnet-5', 'claude-haiku-4-5'] as const;
+type ModelId = typeof MODELS_ALLOWED[number];
+const DEFAULT_MODEL: ModelId = (MODELS_ALLOWED as readonly string[]).includes(Deno.env.get('META_AGENT_MODEL') ?? '')
+  ? (Deno.env.get('META_AGENT_MODEL') as ModelId) : 'claude-opus-5';
+const modelOr = (v: unknown, fallback: ModelId | null): ModelId | null =>
+  (MODELS_ALLOWED as readonly string[]).includes(String(v ?? '')) ? (v as ModelId) : fallback;
 const APP_URL_DEFAULT = 'https://erpos.vercel.app';
 
 type Row = Record<string, unknown>;
@@ -70,6 +79,7 @@ const DEFAULT_SETTINGS = {
   page_id: null as string | null, page_name: null as string | null, whatsapp_number: null as string | null, destination_url: null as string | null,
   radius_km: null as number | null, age_min: 18, age_max: 65, store_context: null as string | null, active_hours: [] as number[],
   last_run_at: null as string | null, autopilot_since: null as string | null,
+  model: null as ModelId | null, shadow_model: null as ModelId | null,
 };
 type Settings = typeof DEFAULT_SETTINGS;
 
@@ -97,6 +107,8 @@ function sanitizeSettings(input: Row): Partial<Settings> {
   if ('whatsapp_number' in input) out.whatsapp_number = String(input.whatsapp_number ?? '').replace(/\D/g, '') || null;
   if (Array.isArray(input.active_hours)) out.active_hours = input.active_hours.map(Number).filter((h) => Number.isInteger(h) && h >= 0 && h <= 23);
   if (typeof out.age_min === 'number' && typeof out.age_max === 'number' && out.age_min > out.age_max) out.age_max = out.age_min;
+  if ('model' in input) out.model = modelOr(input.model, null);
+  if ('shadow_model' in input) out.shadow_model = modelOr(input.shadow_model, null);
   return out as Partial<Settings>;
 }
 
@@ -390,13 +402,13 @@ function compact(i: Insights | null, label: string) {
   };
 }
 
-async function askModel(payload: Json): Promise<{ out: Row; model: string; usage: Row | null }> {
+async function askModel(payload: Json, model: ModelId): Promise<{ out: Row; model: string; usage: Row | null }> {
   const apiKey = Deno.env.get('ANTHROPIC_API_KEY') ?? '';
   if (!apiKey) throw new Error('IA não configurada (falta ANTHROPIC_API_KEY).');
   const client = new Anthropic({ apiKey });
   // deno-lint-ignore no-explicit-any
   const response: any = await client.messages.create({
-    model: MODEL, max_tokens: 8000,
+    model, max_tokens: 8000,
     system: [{ type: 'text', text: SYSTEM, cache_control: { type: 'ephemeral' } }],
     output_config: { format: { type: 'json_schema', schema: OUTPUT_SCHEMA } },
     messages: [{ role: 'user', content: `Dados da loja e da conta de anúncios (JSON):\n${JSON.stringify(payload)}` }],
@@ -512,6 +524,70 @@ async function executeAction(admin: SupabaseClient, tenantId: string, action: Ro
   return { ok: false, result: {}, error: `Ação desconhecida: ${kind}` };
 }
 
+// ─── Guardrails pós-modelo ───────────────────────────────────────────────────
+// Só alvos existentes, orçamento dentro do teto, mudanças ±20%, sem duplicar alvo; teto mensal
+// é trava dura. Compartilhado entre a rodada real e a rodada sombra (mesma régua para comparar).
+function guardrails(out: Row, candidates: Candidate[], i7: Insights, s: Settings, tenantId: string, runId: string): Row[] {
+  const known = new Map<string, { level: string; name: string; budget: number }>();
+  for (const r of (i7.campaigns ?? []) as Row[]) known.set(String(r.campaign_id), { level: 'campaign', name: String(r.campaign), budget: n(r.daily_budget) });
+  for (const r of (i7.adsets ?? []) as Row[]) known.set(String(r.adset_id), { level: 'adset', name: String(r.adset), budget: n(r.daily_budget) });
+  for (const r of (i7.ads ?? []) as Row[]) known.set(String(r.ad_id), { level: 'ad', name: String(r.ad), budget: 0 });
+  const seen = new Set<string>();
+  const final: Row[] = [];
+  for (const raw of ((out.actions ?? []) as Row[])) {
+    const kind = String(raw.kind); const tid = raw.target_id ? String(raw.target_id) : null;
+    const p = ((raw.params ?? {}) as Row);
+    const params: Json = {};
+    if (kind === 'create_campaign') {
+      if (tid) continue;
+      if (!candidates.some((c) => c.kind === 'create_campaign')) continue; // IA não cria campanha por conta própria sem a regra "sem campanha ativa"
+      Object.assign(params, { objetivo: ['whatsapp', 'trafego', 'vendas'].includes(String(p.objetivo)) ? p.objetivo : s.objetivo, daily_budget: Math.min(n(p.daily_budget) || s.daily_budget_cap, s.daily_budget_cap), campaign_name: p.campaign_name, primary_text: p.primary_text, headline: p.headline, description: p.description, cta: p.cta, photo_url: p.photo_url, item_name: p.item_name, radius_km: p.radius_km });
+    } else {
+      if (!tid || !known.has(tid) || seen.has(tid)) continue;
+      const k = known.get(tid)!;
+      if (kind === 'set_budget') {
+        if (k.level !== 'adset' && k.level !== 'campaign') continue;
+        const cur = k.budget; if (!cur) continue;
+        const want = n(p.daily_budget); if (!want) continue;
+        params.previous = cur; params.daily_budget = round2(Math.min(s.daily_budget_cap, Math.max(cur * 0.8, Math.min(cur * 1.2, want))));
+        if (Math.abs(n(params.daily_budget) - cur) < 0.5) continue;
+      }
+      if (kind === 'rotate_creative') Object.assign(params, { frequency: p.frequency ?? null });
+      seen.add(tid);
+    }
+    final.push({
+      tenant_id: tenantId, run_id: runId, kind, level: String(raw.level ?? (tid ? known.get(tid)!.level : 'campaign')), target_id: tid,
+      target_name: tid ? known.get(tid)!.name : (params.campaign_name ?? null), params, reason: String(raw.reason ?? '').slice(0, 600),
+      expected_impact: String(raw.expected_impact ?? '').slice(0, 300), risk: ['baixo', 'medio', 'alto'].includes(String(raw.risk)) ? String(raw.risk) : 'medio',
+    });
+  }
+  // Teto mensal é trava dura: entra mesmo que a IA tenha descartado.
+  for (const c of candidates.filter((x) => x.rule === 'teto_mensal')) if (!seen.has(String(c.target_id))) { seen.add(String(c.target_id)); final.push({ tenant_id: tenantId, run_id: runId, kind: c.kind, level: c.level, target_id: c.target_id, target_name: c.target_name, params: c.params, reason: c.reason, expected_impact: c.expected_impact ?? null, risk: c.risk }); }
+  return final;
+}
+
+// ─── Rodada sombra ───────────────────────────────────────────────────────────
+// Mesmo payload e mesmos guardrails da rodada real, com outro modelo. Só grava (resumo, saúde,
+// alertas, uso e as ações que proporia); não insere em meta_agent_actions nem toca a Meta.
+async function shadowRun(admin: SupabaseClient, tenantId: string, realRunId: string, model: ModelId, payload: Json, candidates: Candidate[], i7: Insights, s: Settings) {
+  const { data: run } = await admin.from('meta_agent_runs').insert({ tenant_id: tenantId, trigger: 'sombra', status: 'running', shadow_of: realRunId }).select('id').single();
+  const runId = String(run?.id);
+  try {
+    const ai = await askModel(payload, model);
+    const final = guardrails(ai.out, candidates, i7, s, tenantId, runId);
+    await admin.from('meta_agent_runs').update({
+      status: 'done', finished_at: new Date().toISOString(), summary: String(ai.out.summary ?? ''), health_score: Math.max(0, Math.min(100, Math.round(n(ai.out.health_score)))),
+      alerts: [...new Set((ai.out.alerts as string[]) ?? [])].slice(0, 15), model: ai.model, usage: ai.usage, actions_total: final.length, actions_executed: 0,
+      snapshot: { sombra_acoes: final.map((a) => ({ kind: a.kind, level: a.level, target_id: a.target_id, target_name: a.target_name, params: a.params, reason: a.reason, risk: a.risk })) },
+    }).eq('id', runId);
+    log('INFO', 'sombra ok', { tenantId, model, actions: final.length, usage: ai.usage });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log('WARN', 'sombra falhou', { tenantId, model, msg });
+    await admin.from('meta_agent_runs').update({ status: 'error', finished_at: new Date().toISOString(), error: msg.slice(0, 1000) }).eq('id', runId);
+  }
+}
+
 // ─── Rodada completa de uma loja ─────────────────────────────────────────────
 async function runForTenant(admin: SupabaseClient, tenantId: string, trigger: 'manual' | 'cron' | 'assistente', force = false) {
   const s = await loadSettings(admin, tenantId);
@@ -541,44 +617,9 @@ async function runForTenant(admin: SupabaseClient, tenantId: string, trigger: 'm
       ultimos_7_dias: compact(i7, '7d'), ultimos_30_dias: compact(i30, '30d'),
       acoes_recentes: (recent ?? []).map((a: Row) => ({ kind: a.kind, target_id: a.target_id, status: a.status, created_at: a.created_at })),
     };
-    const ai = await askModel(payload);
-
-    // Guardrails pós-modelo: só alvos existentes, orçamento dentro do teto, mudanças ±20%, sem duplicar alvo.
-    const known = new Map<string, { level: string; name: string; budget: number }>();
-    for (const r of (i7.campaigns ?? []) as Row[]) known.set(String(r.campaign_id), { level: 'campaign', name: String(r.campaign), budget: n(r.daily_budget) });
-    for (const r of (i7.adsets ?? []) as Row[]) known.set(String(r.adset_id), { level: 'adset', name: String(r.adset), budget: n(r.daily_budget) });
-    for (const r of (i7.ads ?? []) as Row[]) known.set(String(r.ad_id), { level: 'ad', name: String(r.ad), budget: 0 });
-    const seen = new Set<string>();
-    const final: Row[] = [];
-    for (const raw of ((ai.out.actions ?? []) as Row[])) {
-      const kind = String(raw.kind); const tid = raw.target_id ? String(raw.target_id) : null;
-      const p = ((raw.params ?? {}) as Row);
-      const params: Json = {};
-      if (kind === 'create_campaign') {
-        if (tid) continue;
-        if (!candidates.some((c) => c.kind === 'create_campaign')) continue; // IA não cria campanha por conta própria sem a regra "sem campanha ativa"
-        Object.assign(params, { objetivo: ['whatsapp', 'trafego', 'vendas'].includes(String(p.objetivo)) ? p.objetivo : s.objetivo, daily_budget: Math.min(n(p.daily_budget) || s.daily_budget_cap, s.daily_budget_cap), campaign_name: p.campaign_name, primary_text: p.primary_text, headline: p.headline, description: p.description, cta: p.cta, photo_url: p.photo_url, item_name: p.item_name, radius_km: p.radius_km });
-      } else {
-        if (!tid || !known.has(tid) || seen.has(tid)) continue;
-        const k = known.get(tid)!;
-        if (kind === 'set_budget') {
-          if (k.level !== 'adset' && k.level !== 'campaign') continue;
-          const cur = k.budget; if (!cur) continue;
-          const want = n(p.daily_budget); if (!want) continue;
-          params.previous = cur; params.daily_budget = round2(Math.min(s.daily_budget_cap, Math.max(cur * 0.8, Math.min(cur * 1.2, want))));
-          if (Math.abs(n(params.daily_budget) - cur) < 0.5) continue;
-        }
-        if (kind === 'rotate_creative') Object.assign(params, { frequency: p.frequency ?? null });
-        seen.add(tid);
-      }
-      final.push({
-        tenant_id: tenantId, run_id: runId, kind, level: String(raw.level ?? (tid ? known.get(tid)!.level : 'campaign')), target_id: tid,
-        target_name: tid ? known.get(tid)!.name : (params.campaign_name ?? null), params, reason: String(raw.reason ?? '').slice(0, 600),
-        expected_impact: String(raw.expected_impact ?? '').slice(0, 300), risk: ['baixo', 'medio', 'alto'].includes(String(raw.risk)) ? String(raw.risk) : 'medio',
-      });
-    }
-    // Teto mensal é trava dura: entra mesmo que a IA tenha descartado.
-    for (const c of candidates.filter((x) => x.rule === 'teto_mensal')) if (!seen.has(String(c.target_id))) { seen.add(String(c.target_id)); final.push({ tenant_id: tenantId, run_id: runId, kind: c.kind, level: c.level, target_id: c.target_id, target_name: c.target_name, params: c.params, reason: c.reason, expected_impact: c.expected_impact ?? null, risk: c.risk }); }
+    const model = s.model ?? DEFAULT_MODEL;
+    const ai = await askModel(payload, model);
+    const final = guardrails(ai.out, candidates, i7, s, tenantId, runId);
 
     // Modo autônomo: executa o que é seguro; criar campanha só com autonomia_criar.
     let executed = 0;
@@ -599,8 +640,15 @@ async function runForTenant(admin: SupabaseClient, tenantId: string, trigger: 'm
       model: ai.model, usage: ai.usage, actions_total: final.length, actions_executed: executed,
     }).eq('id', runId);
     await admin.from('meta_agent_settings').upsert({ tenant_id: tenantId, last_run_at: new Date().toISOString(), updated_at: new Date().toISOString() }, { onConflict: 'tenant_id' });
-    log('INFO', 'rodada ok', { tenantId, actions: final.length, executed, usage: ai.usage });
-    return { skipped: false, run_id: runId, summary: ai.out.summary, health_score: ai.out.health_score, alerts: allAlerts, actions: final.length, executed };
+    log('INFO', 'rodada ok', { tenantId, model, actions: final.length, executed, usage: ai.usage });
+    // Sombra em segundo plano: a resposta não espera (a rodada real já levou ~50 s).
+    if (s.shadow_model && s.shadow_model !== model) {
+      const p = shadowRun(admin, tenantId, runId, s.shadow_model, payload, candidates, i7, s);
+      // deno-lint-ignore no-explicit-any
+      const rt = (globalThis as any).EdgeRuntime;
+      if (rt?.waitUntil) rt.waitUntil(p); else await p;
+    }
+    return { skipped: false, run_id: runId, model, summary: ai.out.summary, health_score: ai.out.health_score, alerts: allAlerts, actions: final.length, executed };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     log('ERROR', 'rodada falhou', { tenantId, msg });
@@ -637,12 +685,12 @@ Deno.serve(async (req: Request) => {
         loadSettings(admin, tenantId),
         admin.from('meta_ad_connections').select('access_token, ad_account_id, ad_account_name, token_expires_at').eq('tenant_id', tenantId).maybeSingle(),
         admin.from('meta_agent_actions').select('id', { count: 'exact', head: true }).eq('tenant_id', tenantId).eq('status', 'sugerida'),
-        admin.from('meta_agent_runs').select('id, status, started_at, finished_at, summary, health_score, alerts, actions_total, actions_executed, error, trigger').eq('tenant_id', tenantId).order('started_at', { ascending: false }).limit(1).maybeSingle(),
+        admin.from('meta_agent_runs').select('id, status, started_at, finished_at, summary, health_score, alerts, actions_total, actions_executed, error, trigger, model, usage').eq('tenant_id', tenantId).neq('trigger', 'sombra').order('started_at', { ascending: false }).limit(1).maybeSingle(),
       ]);
       const caps = conn?.access_token ? await tokenCapabilities(String(conn.access_token)) : null;
       const ctx = await erposContext(admin, tenantId);
       return json({
-        success: true, settings, pending: pending ?? 0, last_run: lastRun ?? null,
+        success: true, settings, pending: pending ?? 0, last_run: lastRun ?? null, default_model: DEFAULT_MODEL,
         connection: conn ? { ad_account_id: conn.ad_account_id, ad_account_name: conn.ad_account_name, token_expires_at: conn.token_expires_at } : null,
         capabilities: caps,
         erpos: { store: ctx.store, whatsapp_loja: ctx.whatsapp_loja, store_location: ctx.store_location, delivery_url: ctx.delivery_url, menu_items_with_photo: ctx.menu_items_with_photo, best_sellers: ctx.best_sellers.slice(0, 5), orders_30d: { count: ctx.orders_30d.count, revenue: ctx.orders_30d.revenue, ticket: ctx.orders_30d.ticket } },
@@ -666,10 +714,11 @@ Deno.serve(async (req: Request) => {
     }
 
     if (action === 'list_runs') {
-      const { data, error } = await admin.from('meta_agent_runs').select('id, trigger, status, started_at, finished_at, summary, health_score, alerts, actions_total, actions_executed, error, model, usage')
-        .eq('tenant_id', tenantId).order('started_at', { ascending: false }).limit(Math.min(50, n(body.limit) || 15));
+      // Rodadas sombra vêm junto (trigger='sombra', shadow_of, ações propostas) para a tela comparar.
+      const { data, error } = await admin.from('meta_agent_runs').select('id, trigger, status, started_at, finished_at, summary, health_score, alerts, actions_total, actions_executed, error, model, usage, shadow_of, sombra_acoes:snapshot->sombra_acoes')
+        .eq('tenant_id', tenantId).order('started_at', { ascending: false }).limit(Math.min(100, (n(body.limit) || 15) * 2));
       if (error) return json({ success: false, error: error.message }, 500);
-      return json({ success: true, runs: data ?? [] });
+      return json({ success: true, runs: data ?? [], default_model: DEFAULT_MODEL });
     }
 
     if (action === 'list_actions') {

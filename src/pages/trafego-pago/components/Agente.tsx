@@ -16,12 +16,36 @@ type Settings = {
   page_id: string | null; page_name: string | null; whatsapp_number: string | null; destination_url: string | null;
   radius_km: number | null; age_min: number; age_max: number; store_context: string | null;
   last_run_at: string | null; autopilot_since: string | null;
+  model: ModelId | null; shadow_model: ModelId | null;
 };
+type ModelId = 'claude-opus-5' | 'claude-sonnet-5' | 'claude-haiku-4-5';
+type Usage = { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number } | null;
+type SombraAcao = { kind: string; level: string | null; target_id: string | null; target_name: string | null; params: Record<string, unknown>; reason: string | null; risk: string };
 type Run = {
   id: string; trigger: string; status: string; started_at: string; finished_at: string | null; summary: string | null;
   health_score: number | null; alerts: string[]; actions_total: number; actions_executed: number; error: string | null;
-  usage?: { input_tokens?: number; output_tokens?: number } | null;
+  model?: string | null; usage?: Usage; shadow_of?: string | null; sombra_acoes?: SombraAcao[] | null;
 };
+
+// Preço de lista da API (US$ por milhão de tokens, 2026-09): leitura de cache ≈ 10%, gravação ≈ 125%.
+// Só para o dono comparar custo entre modelos; não é fatura.
+const PRECO_USD: Record<string, { in: number; out: number }> = {
+  'claude-opus-5': { in: 5, out: 25 }, 'claude-sonnet-5': { in: 2, out: 10 }, 'claude-haiku-4-5': { in: 1, out: 5 },
+};
+const MODEL_LABEL: Record<string, string> = { 'claude-opus-5': 'Opus 5', 'claude-sonnet-5': 'Sonnet 5', 'claude-haiku-4-5': 'Haiku 4.5' };
+const modeloNome = (m?: string | null) => (m ? (MODEL_LABEL[m] ?? Object.entries(MODEL_LABEL).find(([k]) => m.startsWith(k))?.[1] ?? m) : '—');
+function custoUsd(model?: string | null, u?: Usage): number | null {
+  if (!model || !u) return null;
+  const p = Object.entries(PRECO_USD).find(([k]) => model.startsWith(k))?.[1];
+  if (!p) return null;
+  const inp = (u.input_tokens ?? 0) * p.in + (u.cache_read_input_tokens ?? 0) * p.in * 0.1 + (u.cache_creation_input_tokens ?? 0) * p.in * 1.25;
+  return (inp + (u.output_tokens ?? 0) * p.out) / 1_000_000;
+}
+const usd = (v: number | null) => (v === null ? '—' : `US$ ${v.toFixed(v < 0.1 ? 3 : 2)}`);
+const tokens = (u?: Usage) => (u ? `${Math.round(((u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0)) / 1000)}k entrada · ${Math.round((u.output_tokens ?? 0) / 1000 * 10) / 10}k saída` : '');
+// Chave para comparar "a mesma ação" entre a rodada real e a sombra (tipo + alvo; orçamento arredondado).
+const chaveAcao = (a: { kind: string; target_id: string | null; params?: Record<string, unknown> }) =>
+  `${a.kind}:${a.target_id ?? 'nova'}${a.kind === 'set_budget' ? `:${Math.round(Number(a.params?.daily_budget ?? 0))}` : ''}`;
 type Action = {
   id: string; run_id: string | null; kind: string; level: string | null; target_id: string | null; target_name: string | null;
   params: Record<string, unknown>; reason: string | null; expected_impact: string | null; status: string; auto: boolean; risk: string;
@@ -33,7 +57,7 @@ type Erpos = {
   delivery_url: string | null; menu_items_with_photo: number; best_sellers: Array<{ name: string; qty_30d: number; photo_url: string | null }>;
   orders_30d: { count: number; revenue: number; ticket: number };
 };
-type GetSettings = { success: boolean; settings: Settings; pending: number; last_run: Run | null; capabilities: Capabilities; erpos: Erpos; connection: { token_expires_at: string | null } | null; error?: string };
+type GetSettings = { success: boolean; settings: Settings; pending: number; last_run: Run | null; default_model?: string; capabilities: Capabilities; erpos: Erpos; connection: { token_expires_at: string | null } | null; error?: string };
 
 const KIND_LABEL: Record<string, string> = {
   pause: 'Pausar', resume: 'Reativar', set_budget: 'Ajustar orçamento', create_campaign: 'Criar campanha',
@@ -132,6 +156,69 @@ function ActionCard({ a, onDecide, deciding, isAdmin }: { a: Action; onDecide?: 
   );
 }
 
+// Quadro real × sombra: mesma rodada, dois modelos. Compara nota de saúde, custo e quais ações
+// coincidem (tipo + alvo). É o que decide se dá para trocar o modelo real sem perder qualidade.
+function SombraCard({ real, sombra, acoesReais }: { real: Run; sombra: Run; acoesReais: Action[] }) {
+  const [aberto, setAberto] = useState(false);
+  const reais = new Map(acoesReais.map((a) => [chaveAcao(a), a]));
+  const propostas = sombra.sombra_acoes ?? [];
+  const iguais = propostas.filter((a) => reais.has(chaveAcao(a)));
+  const soSombra = propostas.filter((a) => !reais.has(chaveAcao(a)));
+  const soReal = acoesReais.filter((a) => !propostas.some((p) => chaveAcao(p) === chaveAcao(a)));
+  const cReal = custoUsd(real.model, real.usage); const cSombra = custoUsd(sombra.model, sombra.usage);
+  const dif = real.health_score !== null && sombra.health_score !== null ? sombra.health_score - real.health_score : null;
+  return (
+    <div className="mt-3 border border-violet-200 bg-violet-50/40 rounded-xl p-3 text-xs">
+      <div className="flex items-center gap-2 flex-wrap">
+        <Bot size={14} className="text-violet-500" />
+        <span className="font-bold text-violet-800">Sombra: {modeloNome(sombra.model)}</span>
+        {sombra.status === 'error'
+          ? <span className="text-red-600">falhou: {sombra.error}</span>
+          : sombra.status !== 'done'
+            ? <span className="text-zinc-400">ainda rodando…</span>
+            : (
+              <>
+                <span className="text-zinc-600">saúde {sombra.health_score ?? '—'} <span className="text-zinc-400">(real {real.health_score ?? '—'}{dif !== null ? `, ${dif > 0 ? '+' : ''}${dif}` : ''})</span></span>
+                <span className="text-zinc-600">· {iguais.length} de {Math.max(acoesReais.length, propostas.length)} ações iguais{soSombra.length ? `, ${soSombra.length} só na sombra` : ''}{soReal.length ? `, ${soReal.length} só na real` : ''}</span>
+                <span className="text-zinc-600">· custo {usd(cSombra)} <span className="text-zinc-400">vs {usd(cReal)}{cReal && cSombra ? ` (${Math.round((1 - cSombra / cReal) * 100)}% ${cSombra < cReal ? 'mais barato' : 'mais caro'})` : ''}</span></span>
+              </>
+            )}
+        {sombra.status === 'done' && (
+          <button onClick={() => setAberto((v) => !v)} className="ml-auto inline-flex items-center gap-1 text-[11px] font-semibold text-violet-600 cursor-pointer">
+            {aberto ? <ChevronUp size={12} /> : <ChevronDown size={12} />} {aberto ? 'Esconder' : 'Ver o que a sombra faria'}
+          </button>
+        )}
+      </div>
+      {aberto && sombra.status === 'done' && (
+        <div className="mt-2 space-y-2">
+          <p className="text-zinc-700 leading-relaxed whitespace-pre-line">{sombra.summary || 'Sem resumo.'}</p>
+          {propostas.length > 0 && (
+            <ul className="space-y-1">
+              {propostas.map((a, i) => {
+                const igual = reais.has(chaveAcao(a));
+                return (
+                  <li key={i} className={`flex items-start gap-2 rounded-lg px-2 py-1.5 border ${igual ? 'bg-white border-emerald-200' : 'bg-white border-amber-200'}`}>
+                    <KindIcon kind={a.kind} />
+                    <span className="flex-1 min-w-0">
+                      <span className="font-semibold text-zinc-800">{KIND_LABEL[a.kind] ?? a.kind}</span>
+                      {a.target_name && <span className="text-zinc-600"> · {a.target_name}</span>}
+                      {a.kind === 'set_budget' && typeof a.params?.daily_budget === 'number' && <span className="text-amber-700 font-semibold"> · {brl(a.params.daily_budget as number)}/dia</span>}
+                      <span className={`ml-2 text-[10px] font-semibold ${igual ? 'text-emerald-600' : 'text-amber-600'}`}>{igual ? 'igual à real' : 'só a sombra'}</span>
+                      {a.reason && <span className="block text-zinc-500 mt-0.5">{a.reason}</span>}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+          {soReal.length > 0 && <p className="text-zinc-500">A real também propôs (e a sombra não): {soReal.map((a) => `${KIND_LABEL[a.kind] ?? a.kind}${a.target_name ? ` · ${a.target_name}` : ''}`).join('; ')}.</p>}
+          {sombra.alerts?.length > 0 && <p className="text-zinc-500">Alertas da sombra: {sombra.alerts.join(' · ')}</p>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function AgenteTab({ tenantId, isAdmin }: { tenantId: string; isAdmin: boolean }) {
   const [loading, setLoading] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
@@ -217,7 +304,16 @@ export function AgenteTab({ tenantId, isAdmin }: { tenantId: string; isAdmin: bo
   const podeEscrever = !!caps?.ads_management;
   const pendentes = actions.filter((a) => a.status === 'sugerida');
   const historico = actions.filter((a) => a.status !== 'sugerida');
-  const ultima = runs[0] ?? info.last_run;
+  // Rodadas sombra (outro modelo, só comparação) ficam fora da lista principal e viram um quadro ao lado da real.
+  const runsReais = runs.filter((r) => r.trigger !== 'sombra');
+  const sombraDe = (id: string) => runs.find((r) => r.trigger === 'sombra' && r.shadow_of === id) ?? null;
+  const ultima = runsReais[0] ?? info.last_run;
+  const sombraUltima = ultima ? sombraDe(ultima.id) : null;
+  const modeloPadrao = info.default_model ?? 'claude-opus-5';
+  // Custo das últimas rodadas carregadas, real × sombra (para o dono ver a diferença antes de trocar).
+  const custoTotal = (lista: Run[]) => lista.reduce((acc, r) => acc + (custoUsd(r.model, r.usage) ?? 0), 0);
+  const custoReal = custoTotal(runsReais); const custoSombra = custoTotal(runs.filter((r) => r.trigger === 'sombra'));
+  const nSombra = runs.filter((r) => r.trigger === 'sombra' && r.status === 'done').length;
   const faltas: string[] = [];
   if (!podeEscrever) faltas.push('permissão ads_management no token (reconecte com a permissão marcada na configuração de Login da Meta)');
   if (!form.page_id) faltas.push('página do Facebook');
@@ -371,6 +467,21 @@ export function AgenteTab({ tenantId, isAdmin }: { tenantId: string; isAdmin: bo
               <span className={lbl}>Link do delivery</span>
               <input value={form.destination_url ?? ''} onChange={(e) => F('destination_url', e.target.value)} disabled={!isAdmin} placeholder={info.erpos.delivery_url ? `padrão: ${info.erpos.delivery_url}` : 'https://...'} className={inp} />
             </div>
+            <div>
+              <span className={lbl}>Modelo da IA (rodada real)</span>
+              <select value={form.model ?? ''} onChange={(e) => F('model', e.target.value || null)} disabled={!isAdmin} className={inp}>
+                <option value="">Padrão ({modeloNome(modeloPadrao)})</option>
+                {(Object.keys(MODEL_LABEL) as ModelId[]).map((m) => <option key={m} value={m}>{MODEL_LABEL[m]} · US$ {PRECO_USD[m].in}/{PRECO_USD[m].out} por 1M tokens</option>)}
+              </select>
+            </div>
+            <div>
+              <span className={lbl}>Modo sombra (só compara, não executa)</span>
+              <select value={form.shadow_model ?? ''} onChange={(e) => F('shadow_model', e.target.value || null)} disabled={!isAdmin} className={inp}>
+                <option value="">Desligado</option>
+                {(Object.keys(MODEL_LABEL) as ModelId[]).filter((m) => m !== (form.model ?? modeloPadrao)).map((m) => <option key={m} value={m}>{MODEL_LABEL[m]} roda em paralelo</option>)}
+              </select>
+              <span className="text-[10px] text-zinc-400 leading-tight block mt-0.5">Roda o outro modelo sobre os mesmos dados e guarda o que ele decidiria. Use 1–2 semanas antes de trocar o modelo real.</span>
+            </div>
             <div className="sm:col-span-2 lg:col-span-4">
               <span className={lbl}>Contexto da loja para a IA (diferenciais, tom de voz, pratos que quer empurrar, o que evitar)</span>
               <textarea value={form.store_context ?? ''} onChange={(e) => F('store_context', e.target.value)} disabled={!isAdmin} rows={3} maxLength={2000}
@@ -397,9 +508,16 @@ export function AgenteTab({ tenantId, isAdmin }: { tenantId: string; isAdmin: bo
             <Health score={ultima.health_score} />
             <span className="text-[11px] text-zinc-400 ml-auto">{ultima.actions_total} ação(ões), {ultima.actions_executed} executada(s)</span>
           </div>
+          {(ultima.model || ultima.usage) && (
+            <p className="text-[11px] text-zinc-400 mb-2">IA: {modeloNome(ultima.model)} · {tokens(ultima.usage)} · ≈ {usd(custoUsd(ultima.model, ultima.usage))} nesta rodada</p>
+          )}
           {ultima.status === 'error'
             ? <p className="text-sm text-red-600">Falhou: {ultima.error}</p>
             : <p className="text-sm text-zinc-700 leading-relaxed whitespace-pre-line">{ultima.summary || 'Sem resumo.'}</p>}
+          {sombraUltima && <SombraCard real={ultima} sombra={sombraUltima} acoesReais={actions.filter((a) => a.run_id === ultima.id)} />}
+          {form.shadow_model && !sombraUltima && ultima.status === 'done' && (
+            <p className="text-[11px] text-zinc-400 mt-2">Modo sombra ligado ({modeloNome(form.shadow_model)}): a comparação aparece aqui depois da próxima rodada (a sombra termina 1–2 min depois da real).</p>
+          )}
           {ultima.alerts?.length > 0 && (
             <ul className="mt-3 flex flex-col gap-1.5">
               {ultima.alerts.map((t, i) => (
@@ -431,32 +549,40 @@ export function AgenteTab({ tenantId, isAdmin }: { tenantId: string; isAdmin: bo
         <button onClick={() => setMostrarHistorico((v) => !v)} className="flex items-center gap-2 w-full text-left cursor-pointer">
           <History size={15} className="text-zinc-500" />
           <p className="text-sm font-bold text-zinc-800">Histórico</p>
-          <span className="text-xs text-zinc-400">{historico.length} ação(ões) · {runs.length} rodada(s)</span>
+          <span className="text-xs text-zinc-400">{historico.length} ação(ões) · {runsReais.length} rodada(s)</span>
+          {custoReal > 0 && (
+            <span className="text-[11px] text-zinc-400 hidden sm:inline">· IA: ≈ {usd(custoReal)} nas últimas {runsReais.length} rodadas{nSombra ? ` (sombra: ≈ ${usd(custoSombra)} em ${nSombra})` : ''}</span>
+          )}
           {mostrarHistorico ? <ChevronUp size={14} className="ml-auto text-zinc-400" /> : <ChevronDown size={14} className="ml-auto text-zinc-400" />}
         </button>
         {mostrarHistorico && (
           <div className="mt-3 space-y-4">
             {historico.length > 0 && <div className="flex flex-col gap-2">{historico.slice(0, 40).map((a) => <ActionCard key={a.id} a={a} deciding={null} isAdmin={isAdmin} />)}</div>}
-            {runs.length > 1 && (
+            {runsReais.length > 1 && (
               <div>
                 <p className="text-xs font-bold text-zinc-600 mb-1.5">Rodadas anteriores</p>
                 <ul className="divide-y divide-zinc-100 border border-zinc-100 rounded-lg">
-                  {runs.slice(1).map((r) => (
-                    <li key={r.id} className="px-3 py-2 text-xs text-zinc-600">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-semibold">{dataHora(r.started_at)}</span>
-                        <span className="text-zinc-400">{r.trigger === 'cron' ? 'automática' : r.trigger}</span>
-                        <Health score={r.health_score} />
-                        <span className="text-zinc-400 ml-auto">{r.actions_total} ação(ões) · {r.actions_executed} executada(s){r.status === 'error' ? ' · erro' : ''}</span>
-                      </div>
-                      {r.summary && <p className="mt-1 text-zinc-500 line-clamp-3">{r.summary}</p>}
-                      {r.error && <p className="mt-1 text-red-600">{r.error}</p>}
-                    </li>
-                  ))}
+                  {runsReais.slice(1).map((r) => {
+                    const sb = sombraDe(r.id);
+                    return (
+                      <li key={r.id} className="px-3 py-2 text-xs text-zinc-600">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-semibold">{dataHora(r.started_at)}</span>
+                          <span className="text-zinc-400">{r.trigger === 'cron' ? 'automática' : r.trigger}</span>
+                          <Health score={r.health_score} />
+                          {r.model && <span className="text-zinc-400">{modeloNome(r.model)} ≈ {usd(custoUsd(r.model, r.usage))}</span>}
+                          {sb && sb.status === 'done' && <span className="text-violet-500">sombra {modeloNome(sb.model)}: saúde {sb.health_score ?? '—'}, {sb.actions_total} ação(ões), ≈ {usd(custoUsd(sb.model, sb.usage))}</span>}
+                          <span className="text-zinc-400 ml-auto">{r.actions_total} ação(ões) · {r.actions_executed} executada(s){r.status === 'error' ? ' · erro' : ''}</span>
+                        </div>
+                        {r.summary && <p className="mt-1 text-zinc-500 line-clamp-3">{r.summary}</p>}
+                        {r.error && <p className="mt-1 text-red-600">{r.error}</p>}
+                      </li>
+                    );
+                  })}
                 </ul>
               </div>
             )}
-            {historico.length === 0 && runs.length <= 1 && <p className="text-xs text-zinc-400">Ainda não há histórico.</p>}
+            {historico.length === 0 && runsReais.length <= 1 && <p className="text-xs text-zinc-400">Ainda não há histórico.</p>}
           </div>
         )}
       </div>
