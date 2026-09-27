@@ -53,6 +53,22 @@ export const TEMPLATES = {
   },
 } as const;
 
+// ── Modelos do funil de CRM (categoria MARKETING — a Meta cobra por mensagem). Criados na Meta pelo
+// crm-funnel › submit_templates (só o dono), NÃO pelo setup_templates acima (que cria como UTILITY).
+// {{3}} é uma frase fixa por estágio (crm-funnel FRASE_AUTO), nunca texto livre da loja.
+export const CRM_TEMPLATES = {
+  oferta: {
+    name: 'crm_oferta_cupom',
+    text: 'Olá, {{1}}! Aqui é da {{2}}. {{3}} Separamos para você {{4}}, válido até {{5}}. Toque no link para ativar: {{6}} Se não quiser mais receber nossas ofertas, responda SAIR.',
+    example: ['Maria', 'El Patrón Paranaguá', 'Sentimos sua falta por aqui!', '15% de desconto', '02/10', 'https://erpos.vercel.app/voucher/3f9a1c'],
+  },
+  contato: {
+    name: 'crm_contato',
+    text: 'Olá, {{1}}! Aqui é da {{2}}. {{3}} Veja o cardápio e faça seu pedido: {{4}} Se não quiser mais receber nossas mensagens, responda SAIR.',
+    example: ['Maria', 'El Patrón Paranaguá', 'Obrigado por pedir sempre com a gente!', 'https://erpos.vercel.app/el-patron-delivery'],
+  },
+} as const;
+
 let cache: { at: number; cfg: WaConfig } | null = null;
 export async function waConfig(admin: any): Promise<WaConfig> {
   if (cache && Date.now() - cache.at < 60_000) return cache.cfg;
@@ -149,7 +165,7 @@ const tplParam = (s: unknown) => String(s ?? '').replace(/[\r\n\t]+/g, ' · ').r
 /** Texto que o destinatário leu: o modelo com as variáveis preenchidas. Histórico e registro guardam
  *  isto (antes era "[modelo nome] a | b | c", ilegível na tela). Modelo desconhecido cai no formato antigo. */
 export function renderTemplate(name: string, params: string[]): string {
-  const t = Object.values(TEMPLATES).find((x) => x.name === name);
+  const t = [...Object.values(TEMPLATES), ...Object.values(CRM_TEMPLATES)].find((x) => x.name === name);
   if (!t) return `[modelo ${name}] ${params.map(tplParam).join(' | ')}`;
   return t.text.replace(/\{\{(\d+)\}\}/g, (_m, n) => tplParam(params[Number(n) - 1]));
 }
