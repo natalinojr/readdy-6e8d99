@@ -4,14 +4,19 @@
 // pra esse estagio e quem esta elegivel a ser abordado AGORA (respeitando
 // espera, cooldown, teto de frequencia e opt-out).
 //
-// O que NAO faz: enviar mensagem. O envio e um clique humano na tela (o voucher
-// sai pela voucher-write, como no resto do CRM) e volta aqui so como log
-// (`log_send`). Disparo automatico depende de template aprovado na Meta e fica
-// para quando `crm_rules.auto_send` puder ser ligado de verdade.
+// Envio: pela tela e um clique humano (o voucher sai pela voucher-write e volta
+// aqui como log, `log_send`). Automatico (2026-09-27): estagio com
+// `crm_rules.auto_send` ligado (o dono confirma na tela) recebe o modelo aprovado
+// na Meta pelo WhatsApp do assistente: `auto_tick`, chamado de hora em hora pelo
+// cron fn_crm_auto_tick_all. Resposta do cliente (SAIR etc.): _shared/crm-auto.ts.
 //
 // Auth: verify_jwt = false no deploy; cada action valida o token na mao
 // (mesmo padrao da delivery-write), porque o cron chama com a service key.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.4";
+import { CRM_TEMPLATES, graph, renderTemplate, waConfig, WaError, waSendTemplate } from "../_shared/wa.ts";
+import { celularBR, FRASE_AUTO, lojaInfo } from "../_shared/crm-auto.ts";
+
+const OWNER_EMAIL = "natalinojr.engel@gmail.com";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -182,17 +187,19 @@ Deno.serve(async (req: Request) => {
     const isCron = (internalKey.length >= 20 && xKey === internalKey) || (!!serviceKey && token === serviceKey);
 
     let userId: string | null = null;
+    let userEmail = "";
     if (!isCron) {
       if (!token) return jsonErr("Não autenticado", 401);
       const { data: userData, error: userErr } = await admin.auth.getUser(token);
       if (userErr || !userData?.user) return jsonErr("Sessão inválida", 401);
       userId = userData.user.id;
+      userEmail = String(userData.user.email ?? "").toLowerCase();
       const { data: membership } = await admin
         .from("user_tenants").select("role")
         .eq("user_id", userId).eq("tenant_id", tenantId).limit(1).maybeSingle();
       if (!membership) return jsonErr("Sem acesso a esta loja.", 403);
       // Escrita de configuração é só de admin.
-      if ((action === "save_rules") && membership.role !== "admin") {
+      if ((action === "save_rules" || action === "auto_tick") && membership.role !== "admin") {
         return jsonErr("Só o admin da loja altera as regras do funil.", 403);
       }
     }
@@ -288,6 +295,7 @@ Deno.serve(async (req: Request) => {
         .from("crm_sends")
         .select("id, customer_id, stage, sent_at, converted_at")
         .eq("tenant_id", tenantId)
+        .eq("status", "sent")
         .gte("sent_at", desde);
 
       const pendentes = (sends ?? []).filter((s) => !s.converted_at);
@@ -341,14 +349,15 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    // ── Lista de um estágio, já dizendo quem pode ser abordado ────────────────
-    if (action === "list_stage") {
-      const stage = String(body.stage ?? "") as Stage;
-      if (!STAGE_ORDER.includes(stage)) return jsonErr("estagio invalido", 400);
-
-      const regras = await carregarRegras();
+    // ── Quem de um estágio pode ser abordado agora (tela e envio automático) ──
+    // Mesma regra nos dois caminhos: espera da regra, cooldown, teto semanal e
+    // opt-out. Só envio que SAIU conta (falha do automático não trava ninguém).
+    async function avaliarEstagio(
+      stage: Stage,
+      regras: Array<Record<string, unknown>>,
+      settings: Record<string, unknown>,
+    ) {
       const regra = regras.find((r) => String(r!.stage) === stage)!;
-      const settings = await carregarSettings();
 
       const { data: linhas, error: stErr } = await admin
         .from("crm_customer_stage")
@@ -360,7 +369,7 @@ Deno.serve(async (req: Request) => {
       if (stErr) throw stErr;
 
       const ids = (linhas ?? []).map((l) => String(l.customer_id));
-      if (ids.length === 0) return ok({ clientes: [], rule: regra, settings });
+      if (ids.length === 0) return { clientes: [], regra };
 
       const { data: cadastros } = await admin
         .from("customers")
@@ -376,6 +385,7 @@ Deno.serve(async (req: Request) => {
         .from("crm_sends")
         .select("customer_id, stage, sent_at")
         .eq("tenant_id", tenantId)
+        .eq("status", "sent")
         .in("customer_id", ids)
         .order("sent_at", { ascending: false })
         .limit(2000);
@@ -406,6 +416,7 @@ Deno.serve(async (req: Request) => {
         if (!phone) bloqueio = "sem telefone";
         // Só recusa EXPLÍCITA bloqueia. `accepts_marketing` nasce false no cadastro
         // do delivery e não significa "não quero" — usar isso travaria a loja toda.
+        // (O envio AUTOMÁTICO tem a trava própria crm_settings.auto_so_optin.)
         else if (cad?.crm_opt_out_at) bloqueio = "pediu para não receber";
         else if (agora - entrou < delayMs) bloqueio = "ainda na espera da regra";
         else if (ultimoMesmoEstagio && (agora - new Date(ultimoMesmoEstagio).getTime()) < cooldownMs) bloqueio = "já abordado (cooldown)";
@@ -423,11 +434,22 @@ Deno.serve(async (req: Request) => {
           avg_cycle_days: l.avg_cycle_days,
           entered_at: l.entered_at,
           ultimo_contato: cad?.last_contacted_at ?? null,
+          aceita_marketing: cad?.accepts_marketing === true,
           pode_abordar: bloqueio === null,
           bloqueio,
         };
       });
 
+      return { clientes, regra };
+    }
+
+    // ── Lista de um estágio, já dizendo quem pode ser abordado ────────────────
+    if (action === "list_stage") {
+      const stage = String(body.stage ?? "") as Stage;
+      if (!STAGE_ORDER.includes(stage)) return jsonErr("estagio invalido", 400);
+      const regras = await carregarRegras();
+      const settings = await carregarSettings();
+      const { clientes, regra } = await avaliarEstagio(stage, regras, settings!);
       return ok({ clientes, rule: regra, settings });
     }
 
@@ -438,7 +460,8 @@ Deno.serve(async (req: Request) => {
         settings?: Record<string, unknown>;
         criteria?: Record<string, unknown>;
       };
-      await carregarRegras(); // garante que as linhas existem
+      const antes = await carregarRegras(); // garante que as linhas existem
+      const autoAntes = new Map(antes.map((r) => [String(r!.stage), r!.auto_send === true]));
 
       const tetoDesconto = Number(settings?.desconto_max_percent ?? 25) || 25;
 
@@ -449,9 +472,14 @@ Deno.serve(async (req: Request) => {
         let valor = Math.max(0, Number(r.voucher_value ?? 0) || 0);
         // Trava de margem: desconto em % nunca passa do teto da loja.
         if (tipo === "percentual") valor = Math.min(valor, tetoDesconto);
+        // Envio automático só com a oferta ligada. Ligar grava quem e quando (a tela
+        // pede confirmação antes); desligar é imediato.
+        const autoNovo = r.enabled === true && r.auto_send === true;
+        const ligouAgora = autoNovo && !autoAntes.get(stage);
         const { error: updErr } = await admin.from("crm_rules").update({
           enabled: r.enabled === true,
-          // auto_send fica fora de propósito: não existe envio automático ainda.
+          auto_send: autoNovo,
+          ...(ligouAgora ? { auto_ligado_em: new Date().toISOString(), auto_ligado_por: userId } : {}),
           delay_hours: Math.max(0, Number(r.delay_hours ?? 24) || 0),
           voucher_type: tipo,
           voucher_value: valor,
@@ -469,6 +497,10 @@ Deno.serve(async (req: Request) => {
           hora_inicio: Math.min(23, Math.max(0, Number(settings.hora_inicio ?? 10) || 0)),
           hora_fim: Math.min(23, Math.max(0, Number(settings.hora_fim ?? 21) || 0)),
           desconto_max_percent: Math.min(90, Math.max(0, tetoDesconto)),
+          ...(settings.max_auto_por_dia !== undefined
+            ? { max_auto_por_dia: Math.min(500, Math.max(0, Math.round(Number(settings.max_auto_por_dia) || 0))) }
+            : {}),
+          ...(settings.auto_so_optin !== undefined ? { auto_so_optin: settings.auto_so_optin !== false } : {}),
           updated_at: new Date().toISOString(),
         }).eq("tenant_id", tenantId);
         if (setErr) throw setErr;
@@ -517,6 +549,197 @@ Deno.serve(async (req: Request) => {
         settings: await carregarSettings(),
         criteria: await carregarCriterios(),
       });
+    }
+
+    // ── Envio automático pelo WhatsApp do assistente ─────────────────────────
+    // Cron (fn_crm_auto_tick_all, de hora em hora) chama com a chave interna e
+    // envia de verdade. O admin da loja chama com dry_run para ver a fila
+    // ("quem receberia agora") antes de ligar — da tela nunca sai mensagem.
+    if (action === "auto_tick") {
+      const dry = !isCron || body.dry_run === true;
+      const settings = (await carregarSettings())!;
+      const regras = await carregarRegras();
+      // Prévia de um estágio que ainda vai ser ligado: a tela manda `estagios`.
+      const pedidos = Array.isArray(body.estagios) ? (body.estagios as unknown[]).map(String) : null;
+      const ligadas = new Set(
+        regras.filter((r) => r!.enabled === true && (dry && pedidos ? pedidos.includes(String(r!.stage)) : r!.auto_send === true))
+          .map((r) => String(r!.stage)),
+      );
+
+      // Hora e dia de Brasília (o servidor roda em UTC).
+      const agoraBR = new Date(Date.now() - 3 * 60 * 60 * 1000);
+      const hora = agoraBR.getUTCHours();
+      const hojeBR = agoraBR.toISOString().slice(0, 10);
+      const ini = Number(settings.hora_inicio ?? 10);
+      const fim = Number(settings.hora_fim ?? 21);
+      const dentroDoHorario = ini === fim || (ini < fim ? hora >= ini && hora < fim : hora >= ini || hora < fim);
+
+      const { count: jaHoje } = await admin
+        .from("crm_sends").select("id", { count: "exact", head: true })
+        .eq("tenant_id", tenantId).eq("auto", true).eq("status", "sent")
+        .gte("sent_at", `${hojeBR}T00:00:00-03:00`);
+      const restante = Math.max(0, Number(settings.max_auto_por_dia ?? 30) - (jaHoje ?? 0));
+
+      if (ligadas.size === 0) return ok({ enviados: 0, motivo: "nenhum estágio com envio automático", fila: [], total: 0 });
+      if (!dry && !dentroDoHorario) return ok({ enviados: 0, motivo: "fora do horário da loja" });
+      if (!dry && restante === 0) return ok({ enviados: 0, motivo: "teto diário atingido" });
+
+      const { error: recErr } = await admin.rpc("fn_crm_recompute_stages", { p_tenant_id: tenantId });
+      if (recErr) throw recErr;
+
+      // Quem precisa mais primeiro: carrinho e 2ª compra esfriam rápido.
+      const PRIORIDADE: Stage[] = ["carrinho_abandonado", "primeira_compra", "em_risco", "nunca_comprou", "perdido", "recorrente", "fiel", "vip"];
+      const soOptin = settings.auto_so_optin !== false;
+      const fila: Array<{ stage: Stage; regra: Record<string, unknown>; c: Record<string, unknown>; cel: string }> = [];
+      const jaNaFila = new Set<string>();
+      let semOptin = 0;
+      let semCelular = 0;
+      for (const stage of PRIORIDADE) {
+        if (!ligadas.has(stage)) continue;
+        const { clientes, regra } = await avaliarEstagio(stage, regras, settings);
+        for (const c of clientes) {
+          if (!c.pode_abordar || jaNaFila.has(c.customer_id)) continue;
+          const cel = celularBR(c.phone);
+          if (!cel) { semCelular++; continue; }
+          if (soOptin && !c.aceita_marketing) { semOptin++; continue; }
+          jaNaFila.add(c.customer_id);
+          fila.push({ stage, regra: regra!, c, cel });
+        }
+      }
+
+      const loja = await lojaInfo(admin, tenantId);
+      if (dry) {
+        return ok({
+          dry_run: true,
+          fila: fila.slice(0, 200).map((f) => ({ stage: f.stage, customer_id: f.c.customer_id, nome: f.c.nome, phone_fmt: f.c.phone_fmt })),
+          total: fila.length, restante_hoje: restante, ja_hoje: jaHoje ?? 0, dentro_do_horario: dentroDoHorario,
+          sem_optin: semOptin, sem_celular: semCelular, so_optin: soOptin, sem_link_delivery: !loja.deliveryUrl,
+        });
+      }
+
+      const cfg = await waConfig(admin);
+      if (cfg.transport !== "cloud") return jsonErr("WhatsApp do assistente não está na API oficial", 500);
+
+      const ddmm = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`;
+      const primeiroNome = (n: unknown) => String(n ?? "").trim().split(/\s+/)[0] || "tudo bem";
+      const ALFA = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+      const bloco = (b: Uint8Array) => Array.from(b, (x) => ALFA[x % ALFA.length]).join("");
+      let enviados = 0;
+      let falhas = 0;
+      let parouPor: string | null = null;
+
+      for (const f of fila.slice(0, restante)) {
+        const temCupom = f.regra.voucher_type !== "nenhum" && Number(f.regra.voucher_value) > 0;
+        let voucherId: string | null = null;
+        let nomeModelo = "";
+        let params: string[] = [];
+        try {
+          if (temCupom) {
+            const dias = Math.min(90, Math.max(1, Number(f.regra.validade_dias ?? 7) || 7));
+            const fimIso = new Date(agoraBR.getTime() + dias * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+            const valor = Number(f.regra.voucher_value);
+            const percent = f.regra.voucher_type === "percentual";
+            const token = Array.from(crypto.getRandomValues(new Uint8Array(18)), (b) => b.toString(16).padStart(2, "0")).join("");
+            let code = "";
+            for (let i = 0; i < 5 && !code; i++) {
+              const r = crypto.getRandomValues(new Uint8Array(8));
+              const cand = `DC-${bloco(r.slice(0, 4))}-${bloco(r.slice(4))}`;
+              const { data: existe } = await admin.from("vouchers").select("id").eq("tenant_id", tenantId).eq("code", cand).maybeSingle();
+              if (!existe) code = cand;
+            }
+            if (!code) throw new Error("não gerou código de voucher");
+            const { data: v, error: vErr } = await admin.from("vouchers").insert({
+              tenant_id: tenantId, code, voucher_type: "discount",
+              original_amount: valor, current_balance: valor,
+              discount_type: percent ? "percent" : "fixed", discount_value: valor,
+              expires_at: `${fimIso}T23:59:59-03:00`, max_uses: 1, claim_token: token, status: "active",
+              customer_id: f.c.customer_id, customer_name: f.c.nome,
+              notes: `Funil automático: ${ROTULOS[f.stage].label}`,
+            }).select("id").single();
+            if (vErr) throw vErr;
+            voucherId = String(v.id);
+            await admin.from("voucher_transactions").insert({
+              tenant_id: tenantId, voucher_id: voucherId, transaction_type: "issued", amount: valor, balance_after: valor,
+            });
+            nomeModelo = CRM_TEMPLATES.oferta.name;
+            const oferta = percent ? `${valor}% de desconto` : `R$ ${valor.toFixed(2).replace(".", ",")} de desconto`;
+            params = [primeiroNome(f.c.nome), loja.nome, FRASE_AUTO[f.stage], oferta, ddmm(fimIso), `${loja.appUrl}/voucher/${token}`];
+          } else {
+            if (!loja.deliveryUrl) throw new Error("loja sem link do delivery (slug)");
+            nomeModelo = CRM_TEMPLATES.contato.name;
+            params = [primeiroNome(f.c.nome), loja.nome, FRASE_AUTO[f.stage], loja.deliveryUrl];
+          }
+
+          const msgId = await waSendTemplate(cfg, "55" + f.cel, nomeModelo, params, "pt_BR", "crm");
+          await admin.from("crm_sends").insert({
+            tenant_id: tenantId, customer_id: f.c.customer_id, rule_id: f.regra.id ?? null, stage: f.stage,
+            channel: "whatsapp", voucher_id: voucherId, message: renderTemplate(nomeModelo, params).slice(0, 1000),
+            auto: true, status: "sent", wa_msg_id: msgId,
+          });
+          await admin.from("customers").update({ last_contacted_at: new Date().toISOString() })
+            .eq("tenant_id", tenantId).eq("id", f.c.customer_id);
+          enviados++;
+        } catch (e) {
+          falhas++;
+          const erro = e instanceof Error ? e.message : String(e);
+          if (voucherId) await admin.from("vouchers").update({ status: "cancelled" }).eq("id", voucherId);
+          await admin.from("crm_sends").insert({
+            tenant_id: tenantId, customer_id: f.c.customer_id, rule_id: f.regra.id ?? null, stage: f.stage,
+            channel: "whatsapp", auto: true, status: "failed", error: erro.slice(0, 500),
+          });
+          // Modelo não aprovado/pausado, token ou número bloqueado: não adianta tentar os próximos.
+          const code = e instanceof WaError ? e.code : null;
+          if ((code && ((code >= 132000 && code <= 132016) || code === 190 || code === 131031 || code === 368)) || /não configurado|API oficial/.test(erro)) {
+            parouPor = erro;
+            break;
+          }
+        }
+      }
+
+      await admin.from("crm_settings").update(
+        parouPor || falhas > 0
+          ? { auto_ultimo_erro: (parouPor ?? `${falhas} envio(s) falharam`).slice(0, 500), auto_ultimo_erro_em: new Date().toISOString() }
+          : { auto_ultimo_erro: null, auto_ultimo_erro_em: null },
+      ).eq("tenant_id", tenantId);
+
+      return ok({ enviados, falhas, parou_por: parouPor, na_fila: fila.length });
+    }
+
+    // ── Modelos da Meta usados pelo envio automático ─────────────────────────
+    if (action === "templates_status") {
+      const cfg = await waConfig(admin);
+      const nomes = Object.values(CRM_TEMPLATES).map((t) => t.name as string);
+      if (!cfg.waba_id) return ok({ modelos: [], erro: "WhatsApp do assistente sem waba_id", pode_enviar: false });
+      try {
+        const out = await graph(`${cfg.waba_id}/message_templates?fields=name,status,category,rejected_reason&limit=200`);
+        const achados = ((out?.data ?? []) as Array<Record<string, unknown>>).filter((t) => nomes.includes(String(t.name)));
+        return ok({
+          modelos: nomes.map((n) => {
+            const t = achados.find((x) => String(x.name) === n);
+            return { name: n, status: t ? String(t.status) : "NAO_ENVIADO", category: t?.category ?? null, rejected_reason: t?.rejected_reason ?? null };
+          }),
+          pode_enviar: userEmail === OWNER_EMAIL,
+        });
+      } catch (e) {
+        return ok({ modelos: [], erro: e instanceof Error ? e.message : String(e), pode_enviar: userEmail === OWNER_EMAIL });
+      }
+    }
+
+    // Submeter os modelos à Meta: o número é um só para todas as lojas, então só o dono.
+    if (action === "submit_templates") {
+      if (userEmail !== OWNER_EMAIL) return jsonErr("Só o dono do sistema envia modelos para a Meta.", 403);
+      const cfg = await waConfig(admin);
+      if (!cfg.waba_id) return jsonErr("WhatsApp do assistente sem waba_id", 400);
+      const res: Record<string, unknown> = {};
+      for (const t of Object.values(CRM_TEMPLATES)) {
+        res[t.name] = await graph(`${cfg.waba_id}/message_templates`, {
+          body: {
+            name: t.name, language: "pt_BR", category: "MARKETING",
+            components: [{ type: "BODY", text: t.text, example: { body_text: [[...t.example]] } }],
+          },
+        }).catch((e) => ({ erro: e instanceof Error ? e.message : String(e) }));
+      }
+      return ok({ resultado: res });
     }
 
     // ── Registrar que abordou alguém (o envio em si é o clique na tela) ───────

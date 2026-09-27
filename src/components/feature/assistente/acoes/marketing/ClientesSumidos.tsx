@@ -113,7 +113,7 @@ export default function ClientesSumidos({ onFechar, irPara }: AcaoProps) {
         </>
       )}
       {(passo === 'fim' || passo === 'estagio') && (
-        <Fim onFechar={onFechar} acoes={[{ label: 'Abrir funil de clientes', onClick: () => irPara('/clientes') }]} />
+        <Fim onFechar={onFechar} acoes={[{ label: 'Abrir funil de clientes', onClick: () => irPara('/clientes?aba=funil') }]} />
       )}
     </Roteiro>
   );

@@ -1122,7 +1122,10 @@ Deno.serve(async (req) => {
         grantType: 'authorization_code', clientId: cfg.client_id, clientSecret: cfg.client_secret,
         authorizationCode: code, authorizationCodeVerifier: cfg.auth_verifier_secret,
       }, cfg.homologation_mode === true);
-      if (!r.ok || !r.data?.accessToken) return errResp(apiError(r, 'Autorizar'));
+      if (!r.ok || !r.data?.accessToken) {
+        log('WARN', 'confirm_authorization', apiError(r, 'Autorizar'), { tenantId, codeLen: code.length });
+        return errResp(apiError(r, 'Autorizar'));
+      }
       const access = r.data.accessToken as string;
       const m = await ifoodGet('/merchant/v1.0/merchants', access, cfg.homologation_mode === true);
       const merchants = (Array.isArray(m.data) ? m.data : []).map((x: any) => ({ id: String(x.id), name: String(x.name ?? x.corporateName ?? x.id) }));

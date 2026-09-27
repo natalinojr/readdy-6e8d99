@@ -83,6 +83,10 @@ export function orderRowFromDetails(d: any) {
     pickup_code: delivery.pickupCode ?? null,
     delivery_observations: delivery.observations ?? d?.takeout?.observations ?? null,
     address: delivery.deliveryAddress ?? null,
+    // Para o pedido do ERPOS (IFOOD-PEDIDOS-FUNIL.md): mapa do Gestor/motoboy e acerto. 0,0 = pedido de teste sem posição.
+    delivery_lat: Number(delivery.deliveryAddress?.coordinates?.latitude) || null,
+    delivery_lng: Number(delivery.deliveryAddress?.coordinates?.longitude) || null,
+    delivery_fee: d?.total?.deliveryFee != null ? Number(d.total.deliveryFee) : null,
     total: d?.total ?? null,
     payments: d?.payments ?? null,
     benefits: d?.benefits ?? null,

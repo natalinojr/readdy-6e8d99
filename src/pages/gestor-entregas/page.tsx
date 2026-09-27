@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useGestorEntregas, type EntregaPedido } from './hooks/useGestorEntregas';
 import { COLUNAS, colunaDe, prazoInfo, temProblema, type ColunaId } from './utils';
 import EntregaCard from './components/EntregaCard';
+import MontarSaidaModal from './components/MontarSaidaModal';
 import EntregaDetalheModal from './components/EntregaDetalheModal';
 import ProblemaModal from './components/ProblemaModal';
 import LiberarModal from './components/LiberarModal';
@@ -18,8 +19,9 @@ const FASE_CURTA: Record<ColunaId, string> = {
 
 export default function GestorEntregasPage() {
   const navigate = useNavigate();
-  const { orders, loading, erro, busy, now, autor, recarregar, setStatus, liberar, fetchDetalhe, addNote, tenantId, ifood, ifoodOn, ifoodForaDoQuadro, ifoodPedidos, ifoodLoja, recarregarIfoodCfg } = useGestorEntregas();
+  const { orders, loading, erro, busy, now, autor, recarregar, setStatus, liberar, fetchDetalhe, addNote, loja, motoboys, montarSaida, tenantId, ifood, ifoodOn, ifoodForaDoQuadro, ifoodPedidos, ifoodLoja, recarregarIfoodCfg } = useGestorEntregas();
   const [lojaIfoodOpen, setLojaIfoodOpen] = useState(false);
+  const [montarOpen, setMontarOpen] = useState(false);
   const [pedidosIfoodOpen, setPedidosIfoodOpen] = useState(false);
   const [ifoodId, setIfoodId] = useState<string | null>(null);
   const [ifoodCfgOpen, setIfoodCfgOpen] = useState(false);
@@ -67,18 +69,21 @@ export default function GestorEntregasPage() {
   const emAndamento = orders.filter((o) => o.status !== 'delivered' && o.motoboy_status !== 'entregou');
   const atrasadosCount = emAndamento.filter(estaAtrasado).length;
   const comProblema = orders.filter(temProblema).length;
+  // "Montar saída": prontos esperando motoboy (sem entregador e sem fase)
+  const prontosSemMoto = orders.filter((o) => o.status === 'ready' && !o.driver_id && !o.motoboy_status).length;
 
   const pontosMapa: PontoGestor[] = baseFiltrada.map((o) => ({
     id: o.id, number: o.number, cliente: o.cliente, endereco: o.endereco,
-    lat: o.lat, lng: o.lng, atrasado: estaAtrasado(o), motoboy_status: o.motoboy_status, driver_nome: o.driver_nome,
+    lat: o.lat, lng: o.lng, atrasado: estaAtrasado(o), motoboy_status: o.motoboy_status, driver_nome: o.driver_nome, driver_id: o.driver_id,
   }));
 
   return (
     <div className="flex flex-col h-full">
       {/* Cabeçalho */}
       <div className="px-4 md:px-6 py-3 flex-shrink-0 bg-white border-b border-zinc-100 space-y-3">
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2 md:gap-3 min-w-0">
+        {/* No celular os botões descem para a linha de baixo em vez de cobrir o título */}
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+          <div className="flex items-center gap-2 md:gap-3 min-w-0 shrink-0">
             <button onClick={() => navigate('/modulos')} title="Voltar aos Módulos"
               className="w-8 h-8 flex items-center justify-center rounded-lg text-zinc-500 hover:text-zinc-800 hover:bg-zinc-100 transition-colors cursor-pointer flex-shrink-0">
               <i className="ri-arrow-left-line text-base" />
@@ -92,7 +97,7 @@ export default function GestorEntregasPage() {
               <p className="text-xs text-zinc-400">{loading ? 'Carregando...' : `${emAndamento.length} em andamento`}</p>
             </div>
           </div>
-          <div className="flex items-center gap-2 flex-shrink-0">
+          <div className="flex flex-wrap items-center justify-end gap-2 ml-auto">
             {atrasadosCount > 0 && (
               <div className="hidden sm:flex items-center gap-1.5 bg-red-50 border border-red-200 rounded-lg px-2.5 py-1.5">
                 <i className="ri-time-line text-red-500 text-sm" />
@@ -120,6 +125,11 @@ export default function GestorEntregasPage() {
             <button onClick={() => setIfoodCfgOpen(true)} title="iFood Entrega (entregador do iFood sob demanda)"
               className="inline-flex items-center gap-1.5 border border-zinc-200 bg-white hover:bg-zinc-50 text-zinc-700 px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer">
               <i className="ri-e-bike-2-fill text-red-600" /> <span className="hidden sm:inline">iFood Entrega</span>
+            </button>
+            <button onClick={() => setMontarOpen(true)} title="Sugere juntar pedidos prontos perto, a ordem das paradas e o motoboy"
+              className="inline-flex items-center gap-1.5 bg-violet-600 hover:bg-violet-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer">
+              <i className="ri-route-line" /> <span className="hidden sm:inline">Montar saída</span>
+              {prontosSemMoto > 0 && <span className="bg-white/25 rounded-full px-1.5 text-[10px]">{prontosSemMoto}</span>}
             </button>
             <button onClick={() => setShowMapa(true)}
               className="inline-flex items-center gap-1.5 border border-zinc-200 bg-white hover:bg-zinc-50 text-zinc-700 px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer">
@@ -265,7 +275,11 @@ export default function GestorEntregasPage() {
         <IfoodEntregaConfigModal tenantId={tenantId} onClose={() => setIfoodCfgOpen(false)} onChanged={recarregarIfoodCfg} />
       )}
 
-      {showMapa && <MapaEntregasGestor pontos={pontosMapa} onClose={() => setShowMapa(false)} />}
+      {montarOpen && (
+        <MontarSaidaModal tenantId={tenantId} orders={orders} loja={loja} motoboys={motoboys}
+          onConfirmar={montarSaida} onFechar={() => setMontarOpen(false)} />
+      )}
+      {showMapa && <MapaEntregasGestor pontos={pontosMapa} tenantId={tenantId} onClose={() => setShowMapa(false)} />}
 
       {modalProblema && (
         <ProblemaModal busy={!!busy} onCancelar={() => setModalProblema(null)}

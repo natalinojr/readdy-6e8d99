@@ -18,6 +18,7 @@ export const FIN_ABAS = [
   { aba: 'rh', key: 'fin_rh', label: 'RH / Folha' },
   { aba: 'guias', key: 'fin_guias', label: 'Guias e impostos' },
   { aba: 'freelancers', key: 'fin_freelancers', label: 'Freelancers' },
+  { aba: 'entregadores', key: 'fin_entregadores', label: 'Entregadores' },
   { aba: 'centros', key: 'fin_centros', label: 'Centro de Custos' },
   { aba: 'dre', key: 'fin_dre', label: 'DRE' },
   { aba: 'contas-vencidas', key: 'fin_contas_vencidas', label: 'Contas Vencidas' },

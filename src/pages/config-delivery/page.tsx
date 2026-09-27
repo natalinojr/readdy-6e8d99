@@ -1,4 +1,6 @@
 import { useState, useEffect } from 'react';
+import AcertoRegraCard from './AcertoRegraCard';
+import { lerAcertoCfg, acertoParaSalvar, ACERTO_PADRAO, type AcertoCfg } from './acertoCfg';
 import { useAuth } from '@/contexts/AuthContext';
 import { getPublicUrl, getAppUrl } from '@/lib/appUrl';
 import { supabase } from '@/lib/supabase';
@@ -70,6 +72,8 @@ export default function ConfigDeliveryPage() {
   // Avisar o motoboy: categorias/itens que disparam alerta na msg do motoboy
   const [alertCategorias, setAlertCategorias] = useState<MotoboyAlertEntry[]>([]);
   const [alertItens, setAlertItens] = useState<MotoboyAlertEntry[]>([]);
+  // Regra do acerto dos entregadores (delivery_config.acerto_motoboy)
+  const [acertoCfg, setAcertoCfg] = useState<AcertoCfg>(ACERTO_PADRAO);
   const [itemBusca, setItemBusca] = useState('');
   // Mensagens pro cliente (WhatsApp) por fase — pode ter mais de uma por fase
   const [whatsappMsgs, setWhatsappMsgs] = useState<Record<string, string[]>>({});
@@ -230,6 +234,7 @@ export default function ConfigDeliveryPage() {
             if (cr.validade_dias != null) setRecupValidadeDias(String(cr.validade_dias));
             if (typeof cr.mensagem === 'string') setRecupMensagem(cr.mensagem);
           }
+          setAcertoCfg(lerAcertoCfg(dc.acerto_motoboy));
           const ma = dc.motoboy_alertas;
           if (ma && typeof ma === 'object') {
             const norm = (x: any): MotoboyAlertEntry[] => Array.isArray(x)
@@ -333,6 +338,7 @@ export default function ConfigDeliveryPage() {
         }, {} as Record<string, { enabled: boolean; open: string; close: string }>),
       },
       motoboy_alertas: { categorias: alertCategorias, itens: alertItens },
+      acerto_motoboy: acertoParaSalvar(acertoCfg),
       cart_recovery: {
         enabled: recupAtivo,
         delay_min: Math.min(1440, Math.max(5, parseInt(recupEsperaMin, 10) || 30)),
@@ -440,7 +446,13 @@ export default function ConfigDeliveryPage() {
         ),
       });
       const data = await res.json();
-      if (data.error) { setMensagem({ tipo: 'erro', texto: 'Erro: ' + (data.message || data.error) }); return; }
+      if (data.error) {
+        const msg = String(data.message || data.error);
+        // Entregador com lançamentos de acerto (dinheiro) não pode ser apagado: o histórico fica.
+        const temAcerto = payload.remover && /foreign key|delivery_driver_ledger|delivery_driver_settlements/i.test(msg);
+        setMensagem({ tipo: 'erro', texto: temAcerto ? 'Este entregador tem entregas no acerto financeiro e não pode ser removido. Use "Bloquear".' : 'Erro: ' + msg });
+        return;
+      }
       await carregarMotoboys();
     } catch (_e) {
       setMensagem({ tipo: 'erro', texto: 'Erro de conexão.' });
@@ -616,6 +628,9 @@ export default function ConfigDeliveryPage() {
               <p className="text-xs text-zinc-400 mt-2">Quem abrir o link cai direto na página do item, pronto para adicionar ao carrinho.</p>
             )}
           </div>
+
+          {/* Pagamento dos entregadores (regra do acerto) */}
+          <AcertoRegraCard value={acertoCfg} onChange={setAcertoCfg} />
 
           {/* Entregadores (motoboys) — link de acesso + liberar/bloquear */}
           <div className="bg-white rounded-2xl border border-zinc-100 p-5 space-y-4">

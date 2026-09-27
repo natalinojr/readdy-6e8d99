@@ -23,6 +23,7 @@ import NotasEntradaTab from './components/NotasEntradaTab';
 import ItensClassificacaoTab from './components/ItensClassificacaoTab';
 import IfoodTab from './components/IfoodTab';
 import FreelancersTab from './components/FreelancersTab';
+import EntregadoresTab from './components/EntregadoresTab';
 import GuiasTab from './components/GuiasTab';
 
 const TABS = [
@@ -40,6 +41,7 @@ const TABS = [
   { id: 'rh', label: 'RH / Folha', icon: 'ri-team-line' },
   { id: 'guias', label: 'Guias e impostos', icon: 'ri-file-upload-line' },
   { id: 'freelancers', label: 'Freelancers', icon: 'ri-user-star-line' },
+  { id: 'entregadores', label: 'Entregadores', icon: 'ri-e-bike-2-line' },
   { id: 'centros', label: 'Centro de Custos', icon: 'ri-pie-chart-line' },
   { id: 'dre', label: 'DRE', icon: 'ri-file-chart-line' },
   { id: 'contas-vencidas', label: 'Contas Vencidas', icon: 'ri-alarm-warning-line' },
@@ -188,6 +190,7 @@ export default function FinanceiroPage() {
         {(activeTab === 'rh' || activeTab === 'rh-relatorio') && <RHTab inicial={activeTab === 'rh-relatorio' ? 'relatorio' : undefined} />}
         {activeTab === 'guias' && <GuiasTab />}
         {activeTab === 'freelancers' && <FreelancersTab />}
+        {activeTab === 'entregadores' && <EntregadoresTab />}
         {activeTab === 'centros' && <CentroCustosTab />}
         {activeTab === 'dre' && <DREContainer />}
         {activeTab === 'contas-vencidas' && <ContasVencidasPanel />}

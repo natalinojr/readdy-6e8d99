@@ -6,6 +6,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { getPeriodDates, getPeriodoAnterior, labelPeriodoAnterior } from '@/lib/dateUtils';
 import { useSalesReport } from '@/hooks/useSalesReport';
+import HeatmapSemanaHora from './HeatmapSemanaHora';
 import {
   fetchPedidosIfood, fetchOperacaoIfood, fetchCardapioIfood, resumir, mediana, motivoCurto, culpaCancelamento,
   type PedidoIfood, type OperacaoPedido, type MenuLinha, type Logistica,
@@ -179,6 +180,7 @@ export default function IfoodTab({ periodo }: Props) {
     const porSemana = g.map((l, s) => ({ s, n: l.reduce((a, c) => a + c.n, 0), v: l.reduce((a, c) => a + c.v, 0) }));
     return { g, horas, max, top, porSemana };
   }, [validos]);
+  const pontosHeat = useMemo(() => validos.map((p) => ({ semana: p.semana, hora: p.hora, valor: p.vendas })), [validos]);
 
   // ── Logística × custo ──────────────────────────────────────────────────────
   const porLogistica = useMemo(() => (Object.keys(LOGISTICA) as Logistica[]).map((k) => {
@@ -384,7 +386,6 @@ export default function IfoodTab({ periodo }: Props) {
     );
   }
 
-  const alturaHeat = heat.horas.length;
   const labelAnt = labelPeriodoAnterior(periodo);
 
   return (
@@ -465,30 +466,7 @@ export default function IfoodTab({ periodo }: Props) {
 
       {/* Heatmap */}
       <Card titulo="Quando o iFood vende" sub="Pedidos por dia da semana e hora — quanto mais escuro, mais pedidos">
-        <div className="overflow-x-auto">
-          <div className="inline-grid gap-[3px] min-w-full" style={{ gridTemplateColumns: `36px repeat(${alturaHeat}, minmax(26px, 1fr)) 70px` }}>
-            <div />
-            {heat.horas.map((h) => <div key={h} className="text-[10px] text-zinc-400 text-center">{h}h</div>)}
-            <div className="text-[10px] text-zinc-400 text-right pr-1">Total</div>
-            {heat.g.map((linha, s) => (
-              <div key={s} className="contents">
-                <div className="text-[11px] font-semibold text-zinc-500 flex items-center">{SEMANA[s]}</div>
-                {heat.horas.map((h) => {
-                  const c = linha[h];
-                  const a = c.n / heat.max;
-                  return (
-                    <div key={h} title={`${SEMANA_LONGA[s]} ${h}h: ${c.n} pedidos · ${brl(c.v)}`}
-                      className="h-7 rounded-md flex items-center justify-center text-[10px] font-bold"
-                      style={{ background: c.n ? `rgba(234,29,44,${0.1 + a * 0.85})` : '#fafafa', color: a > 0.5 ? '#fff' : '#9f1239' }}>
-                      {c.n || ''}
-                    </div>
-                  );
-                })}
-                <div className="text-[11px] text-zinc-600 font-semibold text-right pr-1 flex items-center justify-end tabular-nums">{brl0(heat.porSemana[s].v)}</div>
-              </div>
-            ))}
-          </div>
-        </div>
+        <HeatmapSemanaHora pontos={pontosHeat} />
       </Card>
 
       {/* Logística + pagamentos */}

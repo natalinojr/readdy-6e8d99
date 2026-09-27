@@ -1,7 +1,7 @@
 // Modal "Enviar Voucher" do perfil do cliente (CRM).
 // Cria um voucher vinculado ao cliente com link público de ativação
 // (/voucher/:token) e abre o WhatsApp com a mensagem pronta.
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useAuditoria } from '@/contexts/AuditoriaContext';
@@ -11,8 +11,11 @@ import type { Voucher } from '@/types/vouchers';
 interface Props {
   cliente: ClienteCRM;
   onClose: () => void;
-  /** Chamado quando o voucher foi criado (o funil usa para registrar a abordagem). */
+  /** Chamado quando o voucher foi criado (o perfil usa para recarregar a lista). */
   onSent?: (voucher?: Voucher, mensagem?: string) => void;
+  /** Chamado uma vez, quando o operador de fato manda (WhatsApp) ou copia a mensagem.
+   *  O funil registra a abordagem aqui: criar e fechar sem mandar não conta. */
+  onEnviado?: (voucher: Voucher, mensagem: string) => void;
   /** Oferta sugerida pela regra do funil: pre-preenche tipo, valor e validade.
    *  O TEXTO continua sendo o do modal, porque so ele conhece o link de ativacao. */
   oferta?: {
@@ -46,7 +49,7 @@ function fmtDataBR(isoDate: string) {
   return `${day}/${m}/${y}`;
 }
 
-export default function EnviarVoucherModal({ cliente, onClose, onSent, oferta }: Props) {
+export default function EnviarVoucherModal({ cliente, onClose, onSent, onEnviado, oferta }: Props) {
   const { user } = useAuth();
   const { registrarEvento } = useAuditoria();
 
@@ -64,6 +67,7 @@ export default function EnviarVoucherModal({ cliente, onClose, onSent, oferta }:
   const [linkCopiado, setLinkCopiado] = useState(false);
   // Mensagem editável: null = usa o texto padrão; string = texto que o operador ajustou.
   const [mensagemEditada, setMensagemEditada] = useState<string | null>(null);
+  const jaAvisouEnvio = useRef(false);
 
   const primeiroNome = cliente.nome.split(' ')[0];
 
@@ -149,14 +153,22 @@ export default function EnviarVoucherModal({ cliente, onClose, onSent, oferta }:
     }
   }
 
+  const avisarEnvio = () => {
+    if (!voucherCriado || jaAvisouEnvio.current) return;
+    jaAvisouEnvio.current = true;
+    onEnviado?.(voucherCriado, mensagemFinal);
+  };
+
   const abrirWhatsApp = () => {
     if (!cliente.celular) return;
+    avisarEnvio();
     const numero = cliente.celular.replace(/\D/g, '');
     window.open(`https://wa.me/55${numero}?text=${encodeURIComponent(mensagemFinal)}`, '_blank');
   };
 
   const copiarLink = () => {
     navigator.clipboard.writeText(mensagemFinal).then(() => {
+      avisarEnvio();
       setLinkCopiado(true);
       setTimeout(() => setLinkCopiado(false), 2000);
     });

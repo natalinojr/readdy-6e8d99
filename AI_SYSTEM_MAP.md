@@ -85,10 +85,10 @@ Rotas dentro do layout autenticado:
 - `/configuracoes`: `src/pages/configuracoes/page.tsx`
 - `/config-delivery`: `src/pages/config-delivery/page.tsx` (abas Configurações, Gerir entregas, Atendimento WhatsApp → `AtendimentoWhatsAppTab.tsx`)
 - `/usuarios`: `src/pages/usuarios/page.tsx`
-- `/clientes`: `src/pages/clientes/page.tsx`
+- `/clientes`: `src/pages/clientes/page.tsx` — **Clientes & Marketing** (abas `?aba=clientes|funil|promocoes|vouchers` em `src/pages/clientes/abas/`; cada aba com a sua permissão: `clientes_ver`, `gestao_promocoes`, `gestao_vouchers`)
 - `/auditoria`: `src/pages/auditoria/page.tsx`
-- `/promocoes`: `src/pages/promocoes/page.tsx`
-- `/vouchers`: `src/pages/vouchers/page.tsx`
+- `/promocoes`: redireciona para `/clientes?aba=promocoes` (modal em `src/pages/promocoes/components/`)
+- `/vouchers`: redireciona para `/clientes?aba=vouchers` (modais em `src/pages/vouchers/components/`)
 - `/imprimir-qrcodes`: `src/pages/imprimir-qrcodes/page.tsx`
 - `/admin-master`: `src/pages/admin-master/page.tsx` (abas Lojas / Usuários / Módulos / Convites; modais em `modals.tsx`, gestão de acesso em `acessos.tsx`)
 - `/contratacao`: `src/pages/contratacao/page.tsx` (banco de currículos; só o e-mail do dono. Leitura híbrida: PDF com texto é lido grátis no navegador por `src/lib/curriculoLocal.ts` (pdf.js + regras: nome, contato, nascimento, cidade/UF, cargo, texto completo pesquisável); foto/PDF escaneado vai direto à IA; nos demais a IA só roda no botão "Organizar com IA". Abas Candidatos (cards/tabela), Kanban, Agenda de entrevistas (`hiring_interviews`, ficha com notas 1–5 por critério), Relatórios e Configurações. **Independente das lojas do ERPOS**: empresas próprias `hiring_companies` (`company_id`), fases editáveis `hiring_stages` (`stage_id`; 4 nativas por `native_kind`, que não podem ser apagadas) e `hiring_settings` (id=1). `tenant_id`/`status` em hiring_candidates são legado. **Vagas** (`hiring_jobs`) + candidaturas (`hiring_applications`: score 0–100, fit, `analysis` jsonb): `hiring-cv-scan › match` compara currículo × vaga × loja (endereço/descrição em `hiring_companies`) sem enviar idade/estado civil/filhos; `› intake` (x-internal-key) é a entrada do assistente no Telegram (`modo_curriculos`/`salvar_curriculo`). A função é publicada com `--no-verify-jwt` e confere o login dentro. **Distância loja × candidato**: pin da loja (`hiring_companies.lat/lng`, `MapaPin` nas Configurações) + geocode ORS do endereço do candidato (`hiring_candidates.lat/lng/geo_precision`) → rota de carro ORS (fallback linha reta × 1,3) em `hiring_distances`; ações `geocode`, `distance`, `distance_company` (lotes de 20, 1,5 s entre rotas). Regra: só existe distância até a loja da ficha do candidato (`company_id`); sem loja, não calcula. Entrevista = questionário (`settings.questions` → `hiring_interviews.answers`) + considerações (`notes`) + tomada de decisão GPC/PC/R/NA (`hiring_interviews.recommendation` e `hiring_candidates.decision`). Structured outputs da Anthropic aceita no máx. 16 campos union/nullable por schema: acima disso dá 400, então use ""/0/enum e normalize na Edge. Edge `hiring-cv-scan` lê PDF/foto com IA → tabela `hiring_candidates` + bucket privado `curriculos`, RLS por `is_hiring_admin()` = e-mail do dono OU usuário liberado em `user_module_access` (Admin Master › Módulos), não por tenant)
@@ -157,7 +157,7 @@ Relatorios, dashboard e auditoria:
 - Edge Functions: `audit-write`, `qa-full-simulation`, `simulate-orders`, `simulate-pdv-orders`, `weekly-divergence-alert`.
 
 Clientes, promocoes e vouchers:
-- Telas: `src/pages/clientes`, `src/pages/promocoes`, `src/pages/vouchers`, `src/pages/voucher-link` (publica).
+- Telas: `src/pages/clientes` (tela única Clientes & Marketing: `abas/ClientesAba`, `FunilAba`, `PromocoesAba`, `VouchersAba`), `src/pages/voucher-link` (publica). `src/pages/promocoes` e `src/pages/vouchers` guardam só os modais.
 - Hooks: `useClientes`, `useClientesReport`, `useClientesRetencao`.
 - Tabelas: `customers`, `loyalty_transactions`, `promotion_rules`, `vouchers`, `voucher_transactions`.
 - Edge Functions: `voucher-write`, `voucher-claim` (publica, sem JWT), `menu-write`.
@@ -3120,8 +3120,12 @@ Fica em aberto que o `AprovacoesContext` perde as solicitações num F5 — prob
 - **Pegadinha (achada na verificação):** criar as regras padrão com `insert` estourava `crm_rules_stage_uk` — a tela chama `overview` duas vezes em paralelo (StrictMode). Tem que ser `upsert ... ignoreDuplicates` + releitura. Mesmo cuidado em `crm_settings`.
 - **Pegadinha (a mais importante):** `customers.accepts_marketing` nasce `false` no cadastro do delivery e nunca é preenchida — usá-la como opt-out bloqueava **a loja inteira** (22 de 22 clientes "não aceita contato"). Recusa é um ato, e mora em `customers.crm_opt_out_at`. `accepts_marketing` continua sendo só informativa.
 - **Auth da edge:** comparar o bearer com `SUPABASE_SERVICE_ROLE_KEY` NÃO basta — o projeto tem chave legada (JWT) e nova (`sb_secret_`), e a que chega na função nem sempre é a mesma da env; além disso o gateway rejeita a `sb_secret_` como apikey. Chamada interna/cron usa `x-internal-key` = `CRM_INTERNAL_KEY` (mesmo padrão do assistente). Usuário logado é validado por `user_tenants`; `save_rules` exige admin.
-- **Envio é sempre humano:** "Chamar" abre o WhatsApp com a mensagem da regra ({nome}/{loja}/{cupom}/{link}); "Voucher" abre o `EnviarVoucherModal` já preenchido com a oferta do estágio (prop `oferta`; o TEXTO continua sendo o do modal, que é o único que conhece o link de ativação) e o `onSent` devolve o voucher para o `log_send`. `crm_rules.auto_send` existe mas é sempre false — disparo automático depende de template aprovado na Meta.
-- Front: `src/pages/clientes/components/FunilPanel.tsx` (aba Funil + aba Regras, botão "Funil" na tela Clientes) com **exportar Público Meta por estágio** (mesmo formato phone,email,fn,ln,country da exportação da lista).
+- **Envio é sempre humano:** "Chamar" abre o WhatsApp com a mensagem da regra ({nome}/{loja}/{cupom}/{link}); "Voucher" abre o `EnviarVoucherModal` já preenchido com a oferta do estágio (prop `oferta`; o TEXTO continua sendo o do modal, que é o único que conhece o link de ativação) e o `onEnviado` (clique em Enviar/Copiar) devolve o voucher para o `log_send`.
+- **Envio automático (2026-09-27)**: por estágio (`crm_rules.auto_send`, só com a oferta ligada; `auto_ligado_em/por` gravam quem confirmou). Sai pelo **número do assistente** (API oficial, `asst_settings.wa_public`, `WHATSAPP_CLOUD_TOKEN`) — o número de "pedido recebido" (`whatsapp-send`, `META_WHATSAPP_*`) nunca foi configurado. Cron `crm-auto-envio` (min 7 de toda hora) → `fn_crm_auto_tick_all()` → `crm-funnel › auto_tick` por loja com estágio ligado (chave `crm_internal_key` no vault = secret `CRM_INTERNAL_KEY`, gerada de novo em 2026-09-27). `auto_tick` respeita horário da loja (Brasília), `crm_settings.max_auto_por_dia` (padrão 30), a mesma elegibilidade da tela (`avaliarEstagio`: espera, cooldown, teto semanal, opt-out) e **`auto_so_optin`** (padrão true: só `accepts_marketing`; em 2026-09-27 nenhuma loja real tinha opt-in). Com cupom cria o voucher direto (DC-, claim_token, `notes` "Funil automático") e manda o modelo `crm_oferta_cupom`; sem cupom manda `crm_contato` com o link `/<slug>-delivery`. Falha cancela o voucher e grava `crm_sends.status='failed'` (falha não conta para cooldown/teto); erro de modelo/token (1320xx, 190, 131031, 368) para a rodada e aparece em `crm_settings.auto_ultimo_erro`. Admin da loja só chama com `dry_run` (prévia na confirmação da tela).
+- Modelos em `_shared/wa.ts › CRM_TEMPLATES` (categoria MARKETING, cobrados por mensagem); `{{3}}` é frase fixa por estágio (`_shared/crm-auto.ts › FRASE_AUTO`), nunca o texto livre da loja. Submissão: `crm-funnel › submit_templates` (só o e-mail do dono; o `setup_templates` do whatsapp-cloud cria como UTILITY e não inclui estes). Situação: `templates_status`. A chave `WHATSAPP_ADMIN_KEY` não está guardada fora do servidor — por isso o crm-funnel fala com a Graph direto.
+- **Resposta do cliente**: `whatsapp-cloud` chama `crmInbound` (`_shared/crm-auto.ts`) antes do canal-publico quando o telefone recebeu envio automático nos últimos 15 dias e o texto não tem código de vaga válido. "SAIR/PARAR/…" grava `crm_opt_out_at` nas lojas que mandaram; outra mensagem recebe 1 resposta (máx. 1 a cada 6 h) com o link do delivery e o `delivery_config.whatsapp_loja`.
+- Tela: painel `src/pages/clientes/components/EnvioAutomatico.tsx` no topo de Ofertas (status dos modelos, botão de submeter, máximo por dia, só opt-in, último erro) + interruptor por estágio na `FunilAba` (travado sem oferta ou sem modelo APPROVED; ligar abre confirmação com a fila real do `dry_run`; vale ao salvar).
+- Front: `src/pages/clientes/abas/FunilAba.tsx` (aba Funil de Clientes & Marketing; era o modal `FunilPanel`) com **exportar Público Meta por estágio** (mesmo formato phone,email,fn,ln,country da exportação da lista).
 
 ### Critérios do funil configuráveis por loja — `crm_stage_criteria` (2026-09-21)
 - Os cortes que definiam cada estágio (90 dias = perdido, 1,5× o ciclo = em risco, 6 pedidos = fiel, top 10% = VIP, carrinho quente por 72h, ciclo assumido de 30d para quem só tem 1 pedido) viviam **dentro** da `fn_crm_recompute_stages`. Agora moram em `crm_stage_criteria` (uma linha por loja) e a função os lê com `coalesce` para os mesmos valores de antes — **loja sem linha não muda de comportamento**, e por isso a edge NÃO cria a linha sozinha (só quando o dono salva).
@@ -3549,3 +3553,101 @@ Sem SW ativo o POST cai no Vercel e falha — por isso o destino só existe no S
   promoções do dia, horário, taxa e estoque vêm do `delivery-write › get_delivery_config` (o mesmo do link público).
   Pedidos do cliente: só os do telefone que está falando. Foto/arquivo (comprovante), reclamação ou pedido de humano →
   `needs_human` + aviso no Telegram; a equipe responde pela aba (`action: 'reply'`), o que pausa o robô por 2 h.
+- **Clientes & Marketing numa tela só (2026-09-26)**: Clientes, Funil (antes modal), Promoções e Vouchers viraram abas
+  de `/clientes` (`?aba=`); `/promocoes` e `/vouchers` redirecionam. Sidebar tem 1 item; `RotaProtegida` libera
+  `/clientes` com qualquer das 3 chaves e a tela esconde a aba sem permissão. **Achado:** `promotion_rules` (regras
+  de desconto/cupom) **não são aplicadas em venda nenhuma** — o motor `order-write › apply_promotions` existe mas
+  nenhuma tela chama (1 regra ativa, 0 usos em 2026-09-26). O que vale no caixa/delivery é o preço promocional do item
+  (`item_promotions`, `promoAtivaHoje`); a aba Promoções mostra os dois e avisa. Ligar o motor no PDV/delivery é
+  decisão do dono (mexe no valor cobrado). Outros critérios: a "Segmentação RFM" com cortes fixos saiu da aba Clientes
+  (contradizia o Funil, que tem critérios por loja); a descrição dos estágios do funil é montada no front a partir de
+  `crm_stage_criteria` (a do servidor tem "90 dias"/"6 pedidos" fixos no texto); Vouchers carrega tudo e filtra na
+  tela (filtro no servidor zerava os números do topo) e trata `active` com `expires_at` passado como expirado;
+  `create_promotion_rule` aceita `is_active` desde 2026-09-27 (antes ignorava e o modal desligava numa 2ª chamada).
+  **Validação logada (2026-09-27, Testes PDV):** `delete_promotion_rule` só desligava (a regra ficava na lista) → agora
+  grava `deleted_at` (exclusão lógica; `list_promotion_rules`, `apply_promotions` e a aba filtram `deleted_at is null`).
+  `EnviarVoucherModal` ganhou `onEnviado` (dispara 1x no "Enviar WhatsApp"/"Copiar mensagem"): o Funil registra o
+  `log_send` ali, não mais ao criar o voucher (criar e fechar sem mandar marcava o cliente como abordado, com mensagem
+  vazia). `onSent` segue sendo "voucher criado" (o perfil usa para recarregar). No Funil, oferta desligada na aba
+  Ofertas também esconde o botão de voucher da linha (mesmo critério `resumoOferta` do cabeçalho).
+- **Delivery Fase 1 — GPS do motoboy + rastreio do cliente (2026-09-26)**: tabelas `delivery_driver_positions` (1 linha
+  por motoboy, última posição) e `delivery_driver_position_history` (histórico; cron `driver-positions-limpeza` apaga > 7 dias,
+  06h40 UTC). RLS: SELECT só `authenticated` com `auth_is_member_of(tenant_id)`; anon sem acesso; escrita só `service_role`.
+  Escrita pela RPC `fn_driver_ping` (security definer, só service_role): valida motoboy (loja + ativo), limita 1 gravação a
+  cada 10 s por motoboy, faz upsert + histórico e manda broadcast público `drivers-ping:<tenant>` (evento `driver_position`,
+  payload só `{ driver_id }` — a posição NUNCA trafega no canal público). Edge `motoboy-signal` (verify_jwt false) ganhou
+  `ping_position` e `track_order` (cliente: `tenant_id` + `order_number`, igual ao `get_order_status`; devolve a posição do
+  motoboy só desse pedido e só em rota: `out_for_delivery_at` + `motoboy_status='coletou'` + não entregue/cancelado/retirada;
+  posição > 15 min não sai). Previsão recalculada sem API externa: linha reta × 1,3 na velocidade da rota ORS do pedido
+  (`delivery_distance_km / delivery_route_min`, limitada a 12–45 km/h; sem rota = 25 km/h).
+  Front: `src/pages/motoboy/useMotoboyGps.ts` (watchPosition só com pedido dele `a_caminho_loja`/`coletou` ou **turno ligado**
+  — chave `erpos_motoboy_turno` no aparelho; envia com ≥15 s **e** ≥30 m, ou a cada 3 min parado; descarta precisão > 300 m;
+  Wake Lock para a tela não apagar) usado na lista `/entregas/:slug` e em `/motoboy/:id`; Gestor: `useDriverPositions`
+  (carga 1x + refetch com debounce 4 s no broadcast, só com o mapa aberto) e motos no `MapaEntregasGestor` (cinza > 10 min);
+  cliente: `RastreioMapa` (lazy, leaflet fora do bundle do cardápio) no `AcompanharPedido`, com `track_order` a cada 15 s só em rota.
+  **Limitação:** navegador só manda GPS com a tela aberta (o aviso "mantenha esta tela aberta" aparece para o motoboy).
+  **Decisão:** o rastreio foi para a `motoboy-signal` e não para o `get_order_status` da `delivery-write` porque a sessão só
+  tinha deploy por MCP (arquivo inline) e a `delivery-write` tem 137 KB — transcrever tudo é arriscado.
+  PEGADINHAS: (1) leaflet dentro de `Suspense`/lazy precisa de `map.invalidateSize()` antes do `fitBounds`, senão o ponto sai
+  cortado; (2) teste de edge sem curl (proxy bloqueia supabase.co no ambiente de nuvem): `net.http_post` no SQL e ler
+  `net._http_response` — a resposta chega assíncrona, e um MCP instável pode deixar a posição "velha" (> 15 min) entre chamadas.
+- **Delivery Fase 2 — acerto financeiro dos entregadores (2026-09-27)**: regra por loja em
+  `system_settings.delivery_config.acerto_motoboy` ({ativo, modo: por_entrega|faixa_km|diaria_mais_entrega|percentual_taxa,
+  valor_entrega, faixas[{ate_km,valor}], diaria, percentual}), editada em Config. do Delivery › "Pagamento dos entregadores"
+  (`AcertoRegraCard` + `acertoCfg.ts`; salva junto com o resto, só admin). Lançamentos em `delivery_driver_ledger`
+  (entrega | diaria | adiantamento | estorno; aberto | fechado | estornado) nascem pelo gatilho `trg_delivery_driver_ledger`
+  em `orders` (AFTER UPDATE OF status, motoboy_driver_id, WHEN entra/sai de 'delivered'; + AFTER INSERT já entregue) —
+  um lugar só pega todos os caminhos que gravam "entregue". Valor CONGELADO na entrega (`regra` = snapshot). Idempotente por
+  pedido (índices únicos parciais). Saiu de "entregue": aberto → estornado; já acertado → linha `estorno` negativa.
+  Falha do gatilho nunca bloqueia o pedido: vai para `fn_dev_error_report` (source 'other').
+  Financeiro › **Entregadores** (`EntregadoresTab`, permissão `fin_entregadores`): resumo (`fn_acerto_motoboy_resumo`),
+  adiantamento, chave Pix do motoboy (`delivery_drivers.pix_key/pix_key_kind`), "Fechar acerto" (`fn_acerto_motoboy_fechar`)
+  → UMA conta em `fin_accounts_payable` pendente, Pix, com DRE (escolhida ou "Entregadores" criada), `reference_type =
+  'delivery_driver_settlement'`, `reference_id` = acerto; "Desfazer" (`fn_acerto_motoboy_desfazer`) só com a conta pendente e
+  sem Pix ativo; ranking (`fn_delivery_ranking_entregadores`: entregas, tempo total/em rota, atrasos pelo SLA, km, custo).
+  CRITÉRIOS: (1) o acerto fecha TUDO em aberto até a data final (nada fica esquecido antes do período); (2) totais saem do
+  próprio `UPDATE ... RETURNING` e o gatilho trava a linha (`FOR UPDATE`) + guarda de status — sem corrida fechar × entregar/
+  cancelar; (3) diárias nascem no fechamento, só de dias com entrega fechada nele, uma por (motoboy, dia); (4) saldo ≤ 0 não
+  fecha (exceção desfaz tudo); (5) conta a pagar de acerto só some pelo "Desfazer" (gatilho `trg_payable_acerto_guard`,
+  liberado por `set_config('erpos.desfazendo_acerto')`); (6) permissão por LOJA EXPLÍCITA (`_acerto_motoboy_pode`: admin, ou
+  gerente/financeiro sem `fin_entregadores` negado) — NÃO usar `has_permission`, que pega a última loja (LIMIT 1);
+  (7) motoboy com lançamento não pode ser apagado (FK restrict) — a tela manda "Bloquear".
+  PEGADINHAS: a regra `fin_accounts_payable_reference_type_check` lista as origens aceitas — origem nova exige drop+add;
+  `dev_error_events.source` só aceita front|edge|print|fiscal|cron|sw|other — usar `fn_dev_error_report`.
+  Revisão: 2 rodadas com Opus (1ª reprovou: reference_type, corrida, linhas órfãs; 2ª aprovou).
+- **Validação das Fases 1-2 na nuvem (2026-09-27, Testes PDV)**: portal do motoboy no celular (GPS simulado), Mapa do
+  Gestor, "chega em ~X min" do cliente e acerto (fechar → conta em Contas a Pagar → desfazer) passaram. Achados:
+  (1) `list_delivery_board` só aceitava `delivery_platform` nulo/'propria' — pedido do PDV Delivery com canal
+  WhatsApp/Instagram/Telefone/Site/Presencial (entrega própria) sumia do Gestor; agora fica fora só retirada e
+  `PLATAFORMAS_EXTERNAS` (ifood/rappi/uber_eats/99food — mesma lista de `externo` em `src/constants/delivery.ts`).
+  (2) `order-write`: pedido de origem delivery com TODOS os itens `skip_kds` nascia `delivered` e nunca chegava ao
+  motoboy (na Testes PDV todo o cardápio é skip_kds). Decisão do dono (09-27): só entrega do APP (ifood/rappi/uber_eats/
+  99food) continua nascendo entregue; entrega PRÓPRIA nasce `ready` → "Pronto · aguardando motoboy" no Gestor. (3) Sem `delivery_lat/lng` (loja por bairro)
+  não há ETA para o cliente — só a moto. (4) Teste de "Desfazer": o painel do navegador responde "Cancelar" ao
+  `window.confirm`; sobrescrever `window.confirm` na aba para testar.
+- **Pedido do iFood com motoboy da loja (2026-09-27):** uma versão separada (sem virar `orders`, d95420e) foi publicada e
+  DESFEITA no mesmo dia — o dono escolheu o desenho `IFOOD-PEDIDOS-FUNIL.md` (pedido do iFood vira pedido do ERPOS).
+  Ficou no ar: `ifood-shipping` op `verify_code` (código de entrega; só `valid === true` explícito) e
+  `ifood_orders.delivery_lat/lng/fee/delivery_code_ok/delivery_code_fails`. O que o motoboy precisa no desenho novo
+  está na seção "Motoboy da loja" do IFOOD-PEDIDOS-FUNIL.md.
+
+### Programa de fidelidade — aba Fidelidade de Clientes & Marketing (2026-09-27, Fase 1)
+- **Tela:** `src/pages/clientes/abas/FidelidadeAba.tsx` (`/clientes?aba=fidelidade`, permissão `gestao_promocoes`). Seções: Resumo, Pontos, Recompensas (ligadas a `menu_items`), Trilha de níveis (por nº de compras numa janela móvel) e Roleta (prêmios com peso, custo por giro, giro de teste). Tudo simulado com pedidos reais.
+- **Formato + contas num arquivo só:** `supabase/functions/_shared/fidelidade.ts` (sem imports; o front importa via `src/lib/fidelidade.ts` re-export). `normalizarConfig` corta faixa e completa com padrão; testes em `src/test/lib/fidelidade.test.ts`.
+- **Backend:** tabela `loyalty_programs` (1/loja; `config` jsonb + `enabled`, RLS sem policy, só service_role) e `fn_fidelidade_histograma(tenant, desde)` (clientes por nº de compras, mesmo critério de pedido válido do funil). Edge **`fidelidade`** (verify_jwt=false; `get`/`save`; escrita = admin/gerente ou `gestao_promocoes` na matriz).
+- **Fase 1 NÃO credita nem desconta nada** (`enabled` sempre false). Fase 2 = livro-razão de pontos + crédito no pedido pago; Fase 3 = resgate no caixa/delivery e roleta com sorteio no servidor.
+- **Pegadinha de negócio:** em 2026-09-27 só 13% dos pedidos da Vila Leste e 0% da Paranaguá tinham `customer_id` — sem identificar o cliente no caixa/mesa o programa fica vazio.
+- **Delivery Fase 3 — "Montar saída" no Gestor de Entregas (2026-09-27)**: botão violeta no cabeçalho (conta os prontos
+  sem entregador) abre `MontarSaidaModal`. SEMPRE sugestão — nada muda até "Confirmar saída". Algoritmo puro em
+  `src/lib/montarSaida.ts` (testes em `src/test/lib/montarSaida.test.ts`): candidatos = `ready` sem entregador e sem fase,
+  com coordenada; semente = o mais urgente (criação + SLA); junta o vizinho mais perto da última parada até 2,5 km,
+  máx. 3 paradas, e só se não fizer outro pedido estourar o prazo; ordem = vizinho mais próximo a partir da loja
+  (linha reta × 1,3, 25 km/h, 5 min para sair, 3 min por parada — sem ORS, custo zero); motoboy sugerido = ativo, GPS
+  ≤ 10 min, sem entrega em andamento, mais perto da loja (um por saída). Link do Google Maps com as paradas. Loja sem
+  pin (`delivery_config.store_location`) → rota começa na 1ª parada. `list_delivery_board` devolve `loja` + `motoboys`.
+  `delivery-write › montar_saida` valida (entrega própria em aberto, sem outro entregador; UPDATE condicional contra
+  corrida) e só grava `orders.motoboy_driver_id` (não mexe na fase) + linha em **`delivery_saidas`** (pedidos na ordem,
+  motoboy, km/min, `sugerido` jsonb e `seguiu_sugestao` — base para medir a sugestão). Portal do motoboy:
+  `list_orders` devolve `rota` (última saída dele nas últimas 6 h, só paradas pendentes) → cartão "Sua rota" + "Abrir
+  rota no Maps" (sem origem: o Maps usa onde o motoboy está). PEGADINHA: a posição dos motoboys chega depois de abrir
+  a janela — a `key` do cartão inclui o motoboy sugerido, senão o select fica em "Escolha…".

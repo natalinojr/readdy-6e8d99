@@ -10,8 +10,8 @@ export const GESTAO_TELAS = [
   { key: 'gestao_pedidos', label: 'Pedidos', rota: '/pedidos' },
   { key: 'gestao_mesas', label: 'Mesas', rota: '/mesas' },
   { key: 'gestao_aprovacoes', label: 'Aprovações', rota: '/aprovacoes' },
-  { key: 'gestao_promocoes', label: 'Promoções', rota: '/promocoes' },
-  { key: 'gestao_vouchers', label: 'Vouchers & Gift Cards', rota: '/vouchers' },
+  { key: 'gestao_promocoes', label: 'Promoções (aba de Clientes & Marketing)', rota: '/clientes?aba=promocoes' },
+  { key: 'gestao_vouchers', label: 'Vouchers & Gift Cards (aba de Clientes & Marketing)', rota: '/clientes?aba=vouchers' },
   { key: 'gestao_delivery', label: 'Delivery (configuração)', rota: '/config-delivery' },
 ] as const;
 
@@ -45,9 +45,7 @@ const GESTAO_ROTAS: { rota: string; keys: readonly string[] }[] = [
   { rota: '/relatorios', keys: REL_KEYS },
   { rota: '/cardapio', keys: ['cardapio_editar'] },
   { rota: '/estoque', keys: ['estoque_movimentar'] },
-  { rota: '/clientes', keys: ['clientes_ver'] },
-  { rota: '/promocoes', keys: ['gestao_promocoes'] },
-  { rota: '/vouchers', keys: ['gestao_vouchers'] },
+  { rota: '/clientes', keys: ['clientes_ver', 'gestao_promocoes', 'gestao_vouchers'] },
   { rota: '/config-delivery', keys: ['gestao_delivery'] },
   { rota: '/aprovacoes', keys: ['gestao_aprovacoes'] },
   { rota: '/trafego-pago', keys: ['relatorio_financeiro'] },

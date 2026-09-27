@@ -2,6 +2,11 @@ import { useEffect, useState, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { MOTOBOY_SESSION_KEY, getMotoboySession, type MotoboySession } from '@/pages/motoboy/page';
 import MapaEntregas from './MapaEntregas';
+import { useMotoboyGps, textoGps } from '@/pages/motoboy/useMotoboyGps';
+import { linkMaps } from '@/lib/montarSaida';
+
+// "Turno ligado": motoboy livre também compartilha a localização (a loja vê quem está perto).
+const TURNO_KEY = 'erpos_motoboy_turno';
 
 function edgeUrl(): string {
   const base = (import.meta.env.VITE_PUBLIC_SUPABASE_URL as string || '').replace(/\/$/, '');
@@ -86,6 +91,8 @@ export default function MotoboyListaPage() {
 
   const [session, setSession] = useState<MotoboySession | null>(null);
   const [orders, setOrders] = useState<OrderRow[]>([]);
+  // Saída montada pelo gestor (Fase 3): ordem das paradas ainda pendentes
+  const [rota, setRota] = useState<{ paradas: string[] } | null>(null);
   const [loading, setLoading] = useState(true);
   const [erro, setErro] = useState('');
 
@@ -99,6 +106,12 @@ export default function MotoboyListaPage() {
   const [filtro, setFiltro] = useState<'todos' | 'meus' | 'sem_entregador' | 'atraso'>('todos');
   const [ordem, setOrdem] = useState<'fase' | 'tempo'>('fase');
   const [showMapa, setShowMapa] = useState(false);
+  const [turno, setTurno] = useState<boolean>(() => { try { return localStorage.getItem(TURNO_KEY) === '1'; } catch { return false; } });
+  const alternarTurno = () => setTurno((v) => { const n = !v; try { localStorage.setItem(TURNO_KEY, n ? '1' : '0'); } catch { /* ok */ } return n; });
+  // GPS liga só com pedido dele a caminho/em rota, ou com o turno ligado.
+  const temEntregaAtiva = orders.some((o) => o.meu && o.status !== 'delivered' && (o.motoboy_status === 'a_caminho_loja' || o.motoboy_status === 'coletou'));
+  const gps = useMotoboyGps(session?.tenant_id, session?.driver_id, !!session && (temEntregaAtiva || turno));
+  const avisoGps = textoGps(gps.estado);
   // Tick local (sem tocar servidor) pra o contador de tempo andar.
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -123,6 +136,7 @@ export default function MotoboyListaPage() {
       if (!data.ok) { setErro('Não foi possível carregar os pedidos.'); return; }
       setErro('');
       setOrders(data.orders ?? []);
+      setRota(data.rota && Array.isArray(data.rota.paradas) ? { paradas: data.rota.paradas } : null);
     } catch {
       setErro('Erro de conexão.');
     }
@@ -365,6 +379,54 @@ export default function MotoboyListaPage() {
           </div>
           <button type="button" onClick={sair} className="text-[11px] font-bold bg-white/15 px-2.5 py-1 rounded-full">Sair</button>
         </div>
+
+        {/* GPS: turno + aviso de tela aberta */}
+        <div className="flex items-center justify-between gap-2 bg-white rounded-2xl border border-zinc-100 px-3 py-2">
+          <div className="min-w-0">
+            <p className="text-xs font-bold text-zinc-700">Turno {turno ? 'ligado' : 'desligado'}</p>
+            <p className="text-[10px] text-zinc-400 leading-tight">
+              {turno ? 'A loja vê onde você está, mesmo sem pedido.' : 'Sua localização só é enviada durante uma entrega.'}
+            </p>
+          </div>
+          <button type="button" onClick={alternarTurno} aria-pressed={turno}
+            className={'relative shrink-0 w-11 h-6 rounded-full transition-colors ' + (turno ? 'bg-emerald-500' : 'bg-zinc-300')}>
+            <span className={'absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ' + (turno ? 'left-[22px]' : 'left-0.5')} />
+          </button>
+        </div>
+        {/* Rota montada pela loja: paradas em ordem + Maps (sem origem: o Maps usa onde o motoboy está) */}
+        {(() => {
+          const paradas = (rota?.paradas ?? []).map((id) => orders.find((o) => o.id === id)).filter((o): o is OrderRow => !!o);
+          if (!paradas.length) return null;
+          const comLocal = paradas.filter((o) => o.lat != null && o.lng != null).map((o) => ({ lat: o.lat!, lng: o.lng! }));
+          const url = comLocal.length === paradas.length ? linkMaps(null, comLocal) : '';
+          return (
+            <div className="bg-violet-50 border border-violet-200 rounded-2xl p-3 space-y-2">
+              <p className="text-xs font-black text-violet-800 flex items-center gap-1"><i className="ri-route-line" /> Sua rota ({paradas.length} {paradas.length > 1 ? 'entregas' : 'entrega'})</p>
+              <ol className="space-y-1">
+                {paradas.map((o, i) => (
+                  <li key={o.id}>
+                    <Link to={`/motoboy/${o.id}`} className="flex items-center gap-2 text-sm">
+                      <span className="w-5 h-5 shrink-0 rounded-full bg-violet-600 text-white text-[10px] font-black flex items-center justify-center">{i + 1}</span>
+                      <span className="font-bold text-zinc-800">#{String(o.number).replace(/\D/g, '').slice(-4) || o.number}</span>
+                      <span className="text-zinc-600 truncate">{o.cliente}</span>
+                    </Link>
+                  </li>
+                ))}
+              </ol>
+              {url ? (
+                <a href={url} target="_blank" rel="noopener noreferrer"
+                  className="w-full inline-flex items-center justify-center gap-1.5 py-2.5 rounded-xl bg-violet-600 text-white text-sm font-bold">
+                  <i className="ri-map-pin-line" /> Abrir rota no Maps
+                </a>
+              ) : <p className="text-[11px] text-violet-700">Algum endereço está sem localização no mapa — abra pelo pedido.</p>}
+            </div>
+          );
+        })()}
+        {avisoGps ? (
+          <div className={'flex items-start gap-2 rounded-2xl border px-3 py-2 text-[11px] font-semibold ' + avisoGps.cls}>
+            <i className={avisoGps.icon + ' text-sm mt-px'} /> <span>{avisoGps.texto}</span>
+          </div>
+        ) : null}
 
         {/* Filtros */}
         <div className="flex flex-wrap items-center gap-1.5">

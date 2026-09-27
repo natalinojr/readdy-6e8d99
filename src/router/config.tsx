@@ -39,8 +39,6 @@ const AprovacoesPage = lazy(() => import('../pages/aprovacoes/page'));
 const ModulosPage = lazy(() => import('../pages/modulos/page'));
 const SupabaseDebugPage = lazy(() => import('@/pages/supabase-debug/page'));
 const FinanceiroPage = lazy(() => import('@/pages/financeiro/page'));
-const PromocoesPage = lazy(() => import('@/pages/promocoes/page'));
-const VouchersPage = lazy(() => import('@/pages/vouchers/page'));
 const ImprimirQRCodesPage = lazy(() => import('@/pages/imprimir-qrcodes/page'));
 const AdminMasterPage = lazy(() => import('@/pages/admin-master/page'));
 const SelecionarLojaPage = lazy(() => import('@/pages/selecionar-loja/page'));
@@ -119,8 +117,9 @@ const routes: RouteObject[] = [
       { path: 'perfil', element: <PerfilPage /> },
       { path: 'ajuda', element: <AjudaPage /> },
       { path: 'financeiro', element: <FinanceiroPage /> },
-      { path: 'promocoes', element: <PromocoesPage /> },
-      { path: 'vouchers', element: <VouchersPage /> },
+      // Promoções e Vouchers viraram abas de Clientes & Marketing.
+      { path: 'promocoes', element: <Navigate to="/clientes?aba=promocoes" replace /> },
+      { path: 'vouchers', element: <Navigate to="/clientes?aba=vouchers" replace /> },
       { path: 'imprimir-qrcodes', element: <ImprimirQRCodesPage /> },
       { path: 'admin-master', element: <AdminMasterPage /> },
       { path: 'contratacao', element: <ContratacaoPage /> },

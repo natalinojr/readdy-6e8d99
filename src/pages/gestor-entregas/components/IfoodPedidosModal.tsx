@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useVoltarFecha } from '@/lib/voltarAndroid';
 import { ifoodShipping, fetchIfoodOrders, IFOOD_ORDER_LABEL, ifoodTipoPedido, ifoodPodeDespachar, type IfoodOrder } from '@/lib/ifoodShipping';
 import { fmtMoeda } from '../utils';
+import IfoodVinculosModal from './IfoodVinculosModal';
 
 interface Props {
   tenantId: string;
@@ -36,6 +37,7 @@ export default function IfoodPedidosModal({ tenantId, operar, onClose }: Props) 
   const [msg, setMsg] = useState<{ ok: boolean; t: string } | null>(null);
   const [motivos, setMotivos] = useState<{ id: string; lista: { code: string; description: string }[] } | null>(null);
   const [motivo, setMotivo] = useState('');
+  const [vinculos, setVinculos] = useState(false);
 
   const carregar = useCallback(async () => {
     setPedidos(await fetchIfoodOrders(tenantId, hojeInicio()));
@@ -82,8 +84,12 @@ export default function IfoodPedidosModal({ tenantId, operar, onClose }: Props) 
               {' · '}{operar ? <b className="text-amber-700">modo operar</b> : 'só leitura (a loja opera no Gestor do iFood)'}
             </p>
           </div>
+          <button onClick={() => setVinculos(true)} title="Ligar produtos e complementos do iFood ao cardápio (baixa de estoque)" className="px-2.5 py-1.5 rounded-lg border border-zinc-200 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 shrink-0">
+            <i className="ri-links-line" /> Vincular itens
+          </button>
           <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-100"><i className="ri-close-line text-lg" /></button>
         </div>
+        {vinculos && <IfoodVinculosModal tenantId={tenantId} onClose={() => setVinculos(false)} />}
 
         <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2">
           {msg && <p className={`text-xs rounded-lg p-2 border ${msg.ok ? 'text-emerald-700 bg-emerald-50 border-emerald-100' : 'text-red-600 bg-red-50 border-red-100'}`}>{msg.t}</p>}

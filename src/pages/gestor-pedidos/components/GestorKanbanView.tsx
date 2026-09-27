@@ -835,9 +835,11 @@ function GestorCard({
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-1 flex-wrap">
                         <span className="text-sm font-black text-sky-700 flex-shrink-0">{item.quantidade}x</span>
-                        <span className={`text-sm font-bold leading-snug flex-1 min-w-0 break-words ${isSkip ? 'text-zinc-400' : 'text-zinc-800'}`}>
+                        {/* basis mínima: em coluna estreita o nome fica inteiro e as etiquetas descem de linha */}
+                        <span className={`text-sm font-bold leading-snug grow basis-[6rem] min-w-0 break-words ${isSkip ? 'text-zinc-400' : 'text-zinc-800'}`}>
                           {item.nome}
                         </span>
+                        <span className="ml-auto flex items-center gap-1 flex-shrink-0">
                         {item.status === 'entregue' && (
                           <span className="flex items-center gap-0.5 text-[8px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-600 border border-emerald-200 whitespace-nowrap flex-shrink-0">
                             <i className="ri-check-double-line text-[8px]" />Entregue
@@ -859,13 +861,14 @@ function GestorCard({
                             <button
                               onClick={(e) => { e.stopPropagation(); onEntregarItem(item.id); }}
                               title="Entregar este item"
-                              className="ml-auto flex items-center gap-0.5 px-2 py-0.5 rounded-full bg-emerald-100 hover:bg-emerald-200 text-emerald-700 text-[9px] font-bold border border-emerald-300 cursor-pointer transition-colors whitespace-nowrap flex-shrink-0"
+                              className="flex items-center gap-0.5 px-2 py-0.5 rounded-full bg-emerald-100 hover:bg-emerald-200 text-emerald-700 text-[9px] font-bold border border-emerald-300 cursor-pointer transition-colors whitespace-nowrap flex-shrink-0"
                             >
                               <i className="ri-check-line text-[9px]" />
                               Entregar
                             </button>
                           )
                         )}
+                        </span>
                       </div>
 
                       {/* Opções */}

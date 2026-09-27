@@ -18,6 +18,7 @@
 
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
 import { graph, TEMPLATES, waConfig, waLog, waSendText, waTyping, type WaConfig } from '../_shared/wa.ts';
+import { crmInbound } from '../_shared/crm-auto.ts';
 
 const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
 const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
@@ -210,10 +211,22 @@ async function handleMessage(admin: SupabaseClient, cfg: WaConfig, m: any, name:
     const r = await internal('hiring-scheduler', { action: 'inbound', number: waId, reply_to: waId, text, name });
     if (r.ok && r.out?.handled === true) return;
   }
-  // 2) Cliente de uma loja (link com o código PD-XXXX ou conversa da loja em andamento).
-  const loja = await lojaDoContato(admin, waId, text).catch((e) => { log('WARN', 'rota da loja', { error: errMsg(e) }); return null; });
+  // 2) Cliente de uma loja (link com o código PD-XXXX ou conversa da loja em andamento). Vem antes do funil
+  // de CRM: quem recebeu oferta nos últimos 15 dias e clica no link da loja tem que cair no atendente da loja.
+  // Só "SAIR"/"parar" sozinho continua sendo o descadastro do funil.
+  const optOut = /^\s*(sair|parar|pare|stop|descadastrar)\s*[.!]*\s*$/i.test(text);
+  const loja = optOut ? null : await lojaDoContato(admin, waId, text).catch((e) => { log('WARN', 'rota da loja', { error: errMsg(e) }); return null; });
   if (loja) { await toStore(loja, 'compartilhado'); return; }
-  // 3) Link de candidatura (canal-publico decide se atende, igual ao fluxo da Evolution).
+  // 3) Cliente respondendo um envio automático do funil de CRM (SAIR ou dúvida). Mensagem com
+  // código de vaga válido continua indo para a candidatura.
+  if (text && !file) {
+    const code = text.match(/\b([A-Z]{2,4}-[A-Z0-9]{4})\b/i)?.[1]?.toUpperCase() ?? null;
+    const { data: canal } = code ? await admin.from('bot_channels').select('id').eq('code', code).maybeSingle() : { data: null };
+    const tratou = canal ? false : await crmInbound(admin, cfg, waId, text)
+      .catch((e) => { log('WARN', 'crm inbound', { error: errMsg(e) }); return false; });
+    if (tratou) return;
+  }
+  // 4) Link de candidatura (canal-publico decide se atende, igual ao fluxo da Evolution).
   const r = await internal('canal-publico', {
     action: 'incoming', chat_id: `${waId}@s.whatsapp.net`, number: waId, reply_to: waId, name, kind, text, file,
     key: { remoteJid: waId, fromMe: false, id: String(m.id) }, is_owner: isOwner,

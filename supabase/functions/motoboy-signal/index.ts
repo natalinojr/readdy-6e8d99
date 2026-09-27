@@ -170,8 +170,16 @@ serve(async (req) => {
         (drvs ?? []).forEach((d: { id: string; name: string }) => driverNome.set(d.id, d.name));
       }
 
+      // Fase 3: a saída montada pelo gestor para este motoboy (últimas 6 h) — ordem das paradas ainda pendentes.
+      const { data: saida } = await admin.from("delivery_saidas").select("id, pedidos, created_at")
+        .eq("tenant_id", tenantId).eq("driver_id", driverId).gte("created_at", new Date(agoraTs - 6 * 3600000).toISOString())
+        .order("created_at", { ascending: false }).limit(1).maybeSingle();
+      const pendentes = new Set(lista.filter((o) => o.motoboy_driver_id === driverId && o.status !== "delivered").map((o) => o.id as string));
+      const paradas = saida ? ((saida.pedidos as string[]) ?? []).filter((id) => pendentes.has(id)) : [];
+
       return json({
         ok: true,
+        rota: paradas.length ? { saida_id: saida!.id, paradas, criada_em: saida!.created_at } : null,
         orders: lista.map((o: Record<string, unknown>) => ({
           id: o.id,
           number: o.number,
@@ -191,6 +199,69 @@ serve(async (req) => {
           created_at: o.created_at,
           motoboy_updated_at: o.motoboy_updated_at ?? null,
         })),
+      });
+    }
+
+    // ── GPS: posição do motoboy (só enquanto tem pedido em rota / turno ligado) ──
+    // O front já filtra (≥15 s e ≥30 m); o banco ainda limita a 1 gravação a cada 10 s por motoboy.
+    if (body.action === "ping_position") {
+      const tenantId = String(body.tenant_id ?? "").trim();
+      const driverId = String(body.driver_id ?? "").trim();
+      const lat = Number(body.lat), lng = Number(body.lng);
+      if (!tenantId || !driverId || !Number.isFinite(lat) || !Number.isFinite(lng)) return json({ error: "params" }, 200);
+      const num = (v: unknown) => (v == null || v === "" || !Number.isFinite(Number(v)) ? null : Number(v));
+      const accuracy = num(body.accuracy);
+      // Leitura muito imprecisa (antena de celular, > 2 km) não vira posição no mapa.
+      if (accuracy != null && accuracy > 2000) return json({ ok: false, error: "imprecisa" }, 200);
+      const { data: r, error: pErr } = await admin.rpc("fn_driver_ping", {
+        p_tenant_id: tenantId, p_driver_id: driverId, p_lat: lat, p_lng: lng,
+        p_accuracy: accuracy, p_heading: num(body.heading), p_speed: num(body.speed),
+      });
+      if (pErr) return json({ error: pErr.message }, 500);
+      if (r === "driver_invalido") return json({ ok: false, blocked: true, error: "driver_invalido" }, 200);
+      return json({ ok: r === "ok" || r === "throttled", result: r });
+    }
+
+    // ── Rastreio do cliente (tela "Acompanhar pedido"): mesma chave do get_order_status
+    // (tenant_id + número do pedido). Devolve a posição do motoboy SÓ deste pedido e SÓ
+    // enquanto ele está em rota (coletou, não entregue/cancelado); posição > 15 min não sai.
+    // Previsão recalculada sem API externa: linha reta × 1,3 (fator de ruas) na velocidade
+    // da rota calculada na criação do pedido (ORS), limitada a 12–45 km/h.
+    if (body.action === "track_order") {
+      const tenantId = String(body.tenant_id ?? "").trim();
+      const number = String(body.order_number ?? "").trim();
+      if (!tenantId || !number) return json({ error: "params" }, 200);
+      const { data: o } = await admin.from("orders")
+        .select("status, out_for_delivery_at, motoboy_status, motoboy_driver_id, delivery_platform, delivery_lat, delivery_lng, delivery_distance_km, delivery_route_min")
+        .eq("tenant_id", tenantId).eq("number", number).maybeSingle();
+      const emRota = !!o && !!o.out_for_delivery_at && o.motoboy_status === "coletou" && !!o.motoboy_driver_id
+        && o.status !== "delivered" && o.status !== "cancelled" && o.delivery_platform !== "retirada";
+      if (!emRota) return json({ ok: true, rastreio: null });
+      const { data: pos } = await admin.from("delivery_driver_positions")
+        .select("lat, lng, recorded_at").eq("driver_id", o.motoboy_driver_id).eq("tenant_id", tenantId).maybeSingle();
+      const destLat = o.delivery_lat != null ? Number(o.delivery_lat) : null;
+      const destLng = o.delivery_lng != null ? Number(o.delivery_lng) : null;
+      const fresca = !!pos && (Date.now() - new Date(pos.recorded_at as string).getTime()) <= 15 * 60000;
+      let etaMin: number | null = null;
+      let distKm: number | null = null;
+      if (fresca && destLat != null && destLng != null) {
+        const rad = Math.PI / 180;
+        const pLat = Number(pos.lat), pLng = Number(pos.lng);
+        const dLat = (destLat - pLat) * rad, dLng = (destLng - pLng) * rad;
+        const a = Math.sin(dLat / 2) ** 2 + Math.cos(pLat * rad) * Math.cos(destLat * rad) * Math.sin(dLng / 2) ** 2;
+        distKm = 2 * 6371 * Math.asin(Math.sqrt(a)) * 1.3;
+        const rk = Number(o.delivery_distance_km ?? 0), rm = Number(o.delivery_route_min ?? 0);
+        const kmh = rk > 0 && rm > 0 ? Math.min(45, Math.max(12, rk / (rm / 60))) : 25;
+        etaMin = distKm < 0.15 ? 1 : Math.ceil((distKm / kmh) * 60) + 1;
+      }
+      return json({
+        ok: true,
+        rastreio: {
+          motoboy: fresca ? { lat: Number(pos.lat), lng: Number(pos.lng), atualizado_em: pos.recorded_at } : null,
+          destino: destLat != null && destLng != null ? { lat: destLat, lng: destLng } : null,
+          distancia_km: distKm != null ? Math.round(distKm * 10) / 10 : null,
+          eta_min: etaMin,
+        },
       });
     }
 

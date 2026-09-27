@@ -5,6 +5,8 @@ import type { PromotionRule, PromoType, PromotionChannels } from '@/types/promot
 
 interface Props {
   rule: PromotionRule | null;
+  /** Abre o formulário preenchido com `rule`, mas cria uma regra NOVA. */
+  duplicar?: boolean;
   onClose: () => void;
   onSaved: () => void;
 }
@@ -29,7 +31,9 @@ const DEFAULT_CHANNELS: PromotionChannels = {
   table_qr: false,
 };
 
-export default function PromocaoModal({ rule, onClose, onSaved }: Props) {
+export default function PromocaoModal({ rule, duplicar = false, onClose, onSaved }: Props) {
+  // Editando = tem regra e não é cópia. Duplicar parte da regra mas cria outra.
+  const editando = !!rule && !duplicar;
   const { user } = useAuth();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -60,7 +64,7 @@ export default function PromocaoModal({ rule, onClose, onSaved }: Props) {
   useEffect(() => {
     if (rule) {
       setForm({
-        name: rule.name,
+        name: duplicar ? `${rule.name} (cópia)` : rule.name,
         description: rule.description ?? '',
         promo_type: rule.promo_type,
         discount_value: rule.discount_value ?? '',
@@ -76,13 +80,14 @@ export default function PromocaoModal({ rule, onClose, onSaved }: Props) {
         channels: rule.channels ?? { ...DEFAULT_CHANNELS },
         max_uses_total: rule.max_uses_total ?? '',
         max_uses_per_customer: rule.max_uses_per_customer ?? '',
-        coupon_code: rule.coupon_code ?? '',
+        // Cupom é único por regra: a cópia nasce sem, para não haver dois iguais.
+        coupon_code: duplicar ? '' : (rule.coupon_code ?? ''),
         priority: rule.priority,
         is_stackable: rule.is_stackable,
         is_active: rule.is_active,
       });
     }
-  }, [rule]);
+  }, [rule, duplicar]);
 
   function set(field: string, value: unknown) {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -111,9 +116,11 @@ export default function PromocaoModal({ rule, onClose, onSaved }: Props) {
     setError('');
 
     const payload = {
-      action: rule ? 'update_promotion_rule' : 'create_promotion_rule',
+      action: editando ? 'update_promotion_rule' : 'create_promotion_rule',
       active_tenant_id: user?.tenantId,
-      ...(rule ? { promotion_id: rule.id } : {}),
+      ...(editando && rule ? { promotion_id: rule.id } : {}),
+      // Cópia leva o alvo da original (item/categoria/brinde não têm campo no formulário).
+      ...(duplicar && rule ? { target_item_id: rule.target_item_id, target_category_id: rule.target_category_id, free_item_id: rule.free_item_id } : {}),
       name: form.name.trim(),
       description: form.description.trim() || null,
       promo_type: form.promo_type,
@@ -137,11 +144,12 @@ export default function PromocaoModal({ rule, onClose, onSaved }: Props) {
     };
 
     try {
-      const { error: fnErr } = await invokeWithAuth('order-write', { body: payload });
+      const { data, error: fnErr } = await invokeWithAuth<{ data?: { id?: string }; error?: string }>('order-write', { body: payload });
       if (fnErr) throw fnErr;
+      if (data?.error) throw new Error(data.error);
       onSaved();
     } catch (err) {
-      setError(String(err));
+      setError(err instanceof Error ? err.message : String(err));
     } finally {
       setSaving(false);
     }
@@ -160,7 +168,7 @@ export default function PromocaoModal({ rule, onClose, onSaved }: Props) {
             <div className="w-8 h-8 flex items-center justify-center bg-rose-50 rounded-lg">
               <i className="ri-price-tag-3-line text-rose-600" />
             </div>
-            <h2 className="text-base font-bold text-zinc-900">{rule ? 'Editar Promoção' : 'Nova Promoção'}</h2>
+            <h2 className="text-base font-bold text-zinc-900">{editando ? 'Editar regra' : duplicar ? 'Duplicar regra' : 'Nova regra de desconto'}</h2>
           </div>
           <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-zinc-100 text-zinc-400 cursor-pointer transition-colors">
             <i className="ri-close-line text-lg" />
@@ -385,7 +393,7 @@ export default function PromocaoModal({ rule, onClose, onSaved }: Props) {
             {saving ? (
               <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> Salvando...</>
             ) : (
-              <><i className="ri-save-line" /> {rule ? 'Salvar alterações' : 'Criar promoção'}</>
+              <><i className="ri-save-line" /> {editando ? 'Salvar alterações' : 'Criar regra'}</>
             )}
           </button>
         </div>
