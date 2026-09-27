@@ -1,7 +1,7 @@
 // Clientes & Marketing — uma tela só para o que antes eram três (Clientes,
 // Promoções e Vouchers) mais o Funil, que vivia num modal dentro de Clientes.
 //
-// A aba vem da URL (?aba=clientes|funil|fidelidade|promocoes|vouchers), então /promocoes e
+// A aba vem da URL (?aba=clientes|funil|fidelidade|jogos|promocoes|vouchers), então /promocoes e
 // /vouchers continuam funcionando (redirecionam para cá) e links do assistente
 // abrem direto na aba certa. Cada aba respeita a sua permissão de antes:
 // clientes_ver (Clientes e Funil), gestao_promocoes e gestao_vouchers.
@@ -17,14 +17,17 @@ import FunilAba, { type OfertaVoucher } from './abas/FunilAba';
 import PromocoesAba from './abas/PromocoesAba';
 import VouchersAba from './abas/VouchersAba';
 import FidelidadeAba from './abas/FidelidadeAba';
+import JogosAba from './abas/JogosAba';
 
-type Aba = 'clientes' | 'funil' | 'fidelidade' | 'promocoes' | 'vouchers';
+type Aba = 'clientes' | 'funil' | 'fidelidade' | 'jogos' | 'promocoes' | 'vouchers';
 
 const ABAS: { id: Aba; label: string; icon: string; permissao: PermissaoKey; desc: string }[] = [
   { id: 'clientes', label: 'Clientes', icon: 'ri-group-line', permissao: 'clientes_ver', desc: 'Base de clientes, aniversários e campanhas' },
   { id: 'funil', label: 'Funil', icon: 'ri-filter-3-line', permissao: 'clientes_ver', desc: 'Quem abordar agora e com qual oferta' },
   // Fidelidade usa a permissão de Promoções: é marketing com dinheiro envolvido.
   { id: 'fidelidade', label: 'Fidelidade', icon: 'ri-vip-crown-line', permissao: 'gestao_promocoes', desc: 'Pontos, recompensas, trilha de níveis e roleta' },
+  // Jogos: ranking semanal com prêmio — mesma permissão de Promoções.
+  { id: 'jogos', label: 'Jogos', icon: 'ri-gamepad-line', permissao: 'gestao_promocoes', desc: 'Joguinhos enquanto espera e ranking semanal com prêmio' },
   { id: 'promocoes', label: 'Promoções', icon: 'ri-price-tag-3-line', permissao: 'gestao_promocoes', desc: 'Preço promocional e regras de desconto' },
   { id: 'vouchers', label: 'Vouchers', icon: 'ri-gift-line', permissao: 'gestao_vouchers', desc: 'Vouchers, gift cards e links enviados' },
 ];
@@ -109,6 +112,7 @@ export default function ClientesMarketingPage() {
         )}
         {aba === 'funil' && <FunilAba onEnviarVoucher={abrirVoucher} />}
         {aba === 'fidelidade' && <FidelidadeAba />}
+        {aba === 'jogos' && <JogosAba />}
         {aba === 'promocoes' && <PromocoesAba />}
         {aba === 'vouchers' && <VouchersAba />}
         </>}

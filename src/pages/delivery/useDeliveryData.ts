@@ -1833,6 +1833,7 @@ export function useDeliveryData(storeSlug?: string) {
     setCustomerName('');
     setDataNascimento('');
     setGenero('');
+    setAceitaOfertas(false); // tablet compartilhado: o próximo cliente decide por si
     setSavedAddresses([]);
     setSelectedAddressId(null);
     setStreet('');

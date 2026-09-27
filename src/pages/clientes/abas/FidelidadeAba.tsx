@@ -3,19 +3,21 @@
 // de compras e roleta de prêmios. Cada parte mostra na hora quanto custa para
 // a loja, com os pedidos reais (simulação).
 //
-// Fase 1 (2026-09-27): só configurar e simular. O acúmulo nos pedidos e o
-// resgate no caixa/delivery vêm na Fase 2. Regras e contas em
+// Ligar o programa (2026-09-27) vale de verdade: pontos nos pedidos pagos a partir
+// daquele dia, nível pelo histórico, e o tablet passa a pedir o CPF do clube.
+// Motor no banco (fn_fidelidade_*); contas da simulação em
 // supabase/functions/_shared/fidelidade.ts; grava pela Edge Function `fidelidade`.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { invokeWithAuth } from '@/lib/supabase';
+import RoletaSvg, { rotacaoParaFatia } from '@/components/fidelidade/RoletaSvg';
 import {
   CORES, avisosConfig, chancesRoleta, custoPorPonto, distribuirNiveis, novoId, retornoPercentual,
   type FaixaHistograma, type FidelidadeConfig, type Nivel, type Premio, type Recompensa,
   type TipoPremio, type TipoPresente, type TipoRecompensa,
 } from '@/lib/fidelidade';
 
-type Secao = 'resumo' | 'pontos' | 'recompensas' | 'trilha' | 'roleta';
+type Secao = 'resumo' | 'pontos' | 'recompensas' | 'trilha' | 'roleta' | 'membros';
 
 const SECOES: { id: Secao; label: string; icon: string }[] = [
   { id: 'resumo', label: 'Resumo', icon: 'ri-dashboard-line' },
@@ -23,7 +25,14 @@ const SECOES: { id: Secao; label: string; icon: string }[] = [
   { id: 'recompensas', label: 'Recompensas', icon: 'ri-gift-2-line' },
   { id: 'trilha', label: 'Trilha de níveis', icon: 'ri-medal-line' },
   { id: 'roleta', label: 'Roleta', icon: 'ri-donut-chart-line' },
+  { id: 'membros', label: 'Membros', icon: 'ri-team-line' },
 ];
+
+interface Membro {
+  customer_id: string; nome: string; celular: string | null; membro_desde: string | null;
+  saldo: number; compras: number; nivel: string | null; nivel_emoji: string | null; nivel_cor: string | null;
+  giros: number; beneficios: number; ultima_compra: string | null;
+}
 
 const TIPOS_RECOMPENSA: { id: TipoRecompensa; label: string }[] = [
   { id: 'produto', label: 'Produto grátis' },
@@ -57,6 +66,8 @@ interface Produto { id: string; nome: string; preco: number }
 
 interface RespostaGet {
   config?: FidelidadeConfig;
+  enabled?: boolean;
+  started_at?: string | null;
   salvo?: boolean;
   editavel?: boolean;
   updated_at?: string | null;
@@ -139,52 +150,17 @@ function Kpi({ label, valor, sub, tom = 'zinc' }: { label: string; valor: string
   );
 }
 
-// ── Roleta (desenho) ─────────────────────────────────────────────────────────
-function RoletaSvg({ premios, rotacao }: { premios: Premio[]; rotacao: number }) {
-  const { chances } = chancesRoleta(premios);
-  const R = 100;
-  let acc = 0;
-  const fatias = premios.map((p, i) => {
-    const ch = chances[i].chance;
-    const ini = acc * 2 * Math.PI;
-    acc += ch;
-    const fim = acc * 2 * Math.PI;
-    const x1 = R + R * Math.sin(ini), y1 = R - R * Math.cos(ini);
-    const x2 = R + R * Math.sin(fim), y2 = R - R * Math.cos(fim);
-    const grande = fim - ini > Math.PI ? 1 : 0;
-    const meio = (ini + fim) / 2;
-    const d = ch >= 0.9999
-      ? `M ${R} 0 A ${R} ${R} 0 1 1 ${R - 0.01} 0 Z`
-      : `M ${R} ${R} L ${x1} ${y1} A ${R} ${R} 0 ${grande} 1 ${x2} ${y2} Z`;
-    return { p, d, meio, ch };
-  });
-  return (
-    <div className="relative w-56 h-56 mx-auto">
-      <div className="absolute left-1/2 -top-1 -translate-x-1/2 z-10 w-0 h-0 border-l-[10px] border-r-[10px] border-t-[18px] border-l-transparent border-r-transparent border-t-zinc-800" />
-      <svg viewBox="-4 -4 208 208" className="w-full h-full" style={{ transform: `rotate(${rotacao}deg)`, transition: 'transform 3.2s cubic-bezier(.15,.85,.25,1)' }}>
-        {fatias.map(({ p, d }) => <path key={p.id} d={d} fill={p.cor} stroke="#fff" strokeWidth={2} />)}
-        {fatias.map(({ p, meio, ch }) => ch >= 0.05 && (
-          <text
-            key={`t_${p.id}`}
-            x={R + R * 0.62 * Math.sin(meio)} y={R - R * 0.62 * Math.cos(meio)}
-            textAnchor="middle" dominantBaseline="middle" fontSize={8} fontWeight={700} fill="#fff"
-            transform={`rotate(${(meio * 180) / Math.PI} ${R + R * 0.62 * Math.sin(meio)} ${R - R * 0.62 * Math.cos(meio)})`}
-          >
-            {p.nome.length > 16 ? p.nome.slice(0, 15) + '…' : p.nome}
-          </text>
-        ))}
-        <circle cx={R} cy={R} r={14} fill="#fff" stroke="#e4e4e7" strokeWidth={2} />
-      </svg>
-    </div>
-  );
-}
-
 export default function FidelidadeAba() {
   const { user } = useAuth();
   const tenantId = user?.tenantId;
   const [secao, setSecao] = useState<Secao>('resumo');
   const [cfg, setCfg] = useState<FidelidadeConfig | null>(null);
   const [salvo, setSalvo] = useState(false);
+  const [ligado, setLigado] = useState(false);
+  const [ligadoSalvo, setLigadoSalvo] = useState(false);
+  const [inicio, setInicio] = useState<string | null>(null);
+  const [membros, setMembros] = useState<Membro[] | null>(null);
+  const [buscaMembro, setBuscaMembro] = useState('');
   const [editavel, setEditavel] = useState(false);
   const [atualizadoEm, setAtualizadoEm] = useState<string | null>(null);
   const [hist, setHist] = useState<FaixaHistograma[]>([]);
@@ -218,6 +194,9 @@ export default function FidelidadeAba() {
       if (soHistograma) return;
       setCfg(d.config ?? null);
       setSalvo(!!d.salvo);
+      setLigado(!!d.enabled);
+      setLigadoSalvo(!!d.enabled);
+      setInicio(d.started_at ?? null);
       setEditavel(!!d.editavel);
       setAtualizadoEm(d.updated_at ?? null);
       setHist90(d.histograma_90d ?? []);
@@ -243,9 +222,12 @@ export default function FidelidadeAba() {
 
   const salvar = () => {
     if (!tenantId || !cfg) return;
+    if (ligado && !ligadoSalvo && !window.confirm(
+      `Ligar o ${cfg.nome_programa}?\n\n• Pedidos pagos a partir de agora dão pontos (não é retroativo).\n• O nível já considera as compras anteriores.\n• O tablet passa a pedir o CPF do clube no começo do pedido.`,
+    )) return;
     setSalvando(true);
-    invokeWithAuth<{ config?: FidelidadeConfig; error?: string; message?: string }>('fidelidade', {
-      body: { action: 'save', tenant_id: tenantId, config: cfg, enabled: false },
+    invokeWithAuth<{ config?: FidelidadeConfig; started_at?: string | null; recalculados?: number; error?: string; message?: string }>('fidelidade', {
+      body: { action: 'save', tenant_id: tenantId, config: cfg, enabled: ligado },
     }).then((res) => {
       setSalvando(false);
       const d = res.data;
@@ -255,10 +237,13 @@ export default function FidelidadeAba() {
       }
       // Mostra o que o servidor gravou (valores fora de faixa são ajustados lá).
       if (d.config) setCfg(d.config);
+      setInicio(d.started_at ?? inicio);
+      setLigadoSalvo(ligado);
       setAlterado(false);
       setSalvo(true);
       setAtualizadoEm(new Date().toISOString());
-      setMsg('Salvo.');
+      setMsg(d.recalculados ? `Salvo. ${d.recalculados} clientes recalculados.` : 'Salvo.');
+      setMembros(null);
     });
   };
 
@@ -293,18 +278,23 @@ export default function FidelidadeAba() {
 
   const avisos = useMemo(() => (cfg ? avisosConfig(cfg) : []), [cfg]);
 
+  // Membros: carrega ao abrir a seção.
+  useEffect(() => {
+    if (secao !== 'membros' || membros !== null || !tenantId) return;
+    invokeWithAuth<{ membros?: Membro[] }>('fidelidade', { body: { action: 'membros', tenant_id: tenantId } })
+      .then((res) => setMembros(res.data?.membros ?? []));
+  }, [secao, membros, tenantId]);
+
   const girarTeste = () => {
-    if (!cfg || girando.current || !sim) return;
+    if (!cfg || girando.current) return;
     const premios = cfg.roleta.premios;
     const soma = premios.reduce((s, p) => s + Math.max(0, p.peso), 0);
     if (premios.length === 0 || soma <= 0) return;
-    let r = Math.random() * soma, idx = 0, acc = 0;
+    let r = Math.random() * soma, idx = 0;
     for (let i = 0; i < premios.length; i++) { r -= Math.max(0, premios[i].peso); if (r <= 0) { idx = i; break; } }
-    for (let i = 0; i < idx; i++) acc += sim.chances[i].chance;
-    const meio = (acc + sim.chances[idx].chance / 2) * 360;
     girando.current = true;
     setResultadoGiro(null);
-    setRotacao((rot) => rot - (rot % 360) + 360 * 5 + (360 - meio));
+    setRotacao((rot) => rotacaoParaFatia(premios, idx, rot));
     setTimeout(() => { girando.current = false; setResultadoGiro(premios[idx]); }, 3300);
   };
 
@@ -351,10 +341,21 @@ export default function FidelidadeAba() {
             />
           </Campo>
         </div>
-        <div className="md:w-[26rem] text-xs text-amber-800 bg-white/70 border border-amber-200 rounded-lg p-2.5 leading-snug">
-          <i className="ri-information-line mr-1" />
-          <b>Fase 1 — configurar e simular.</b> Os números abaixo usam os pedidos reais da loja, mas ainda
-          nada é creditado nem descontado. O acúmulo nos pedidos e o resgate no caixa/delivery vêm na próxima etapa.
+        <div className={`md:w-[26rem] rounded-lg p-3 border flex items-start gap-3 ${ligado ? 'bg-emerald-50 border-emerald-200' : 'bg-white/70 border-amber-200'}`}>
+          <Chave label="Programa ligado" ligado={ligado} disabled={ro} onChange={(v) => { setLigado(v); setAlterado(true); setMsg(''); }} />
+          <div className="text-xs leading-snug min-w-0">
+            {ligado ? (
+              <p className="text-emerald-800">
+                <b>Programa ligado{ligado !== ligadoSalvo ? ' (salve para valer)' : ''}.</b> Pedido pago dá pontos
+                {inicio ? <> desde {new Date(inicio).toLocaleDateString('pt-BR')}</> : ' a partir de hoje'}; o tablet pede o CPF do clube.
+              </p>
+            ) : (
+              <p className="text-amber-800">
+                <b>Programa desligado{ligado !== ligadoSalvo ? ' (salve para valer)' : ''}.</b> Configure e simule à vontade; ao ligar,
+                os pedidos pagos a partir daquele dia dão pontos e o tablet passa a pedir o CPF.
+              </p>
+            )}
+          </div>
         </div>
       </div>
 
@@ -837,6 +838,64 @@ export default function FidelidadeAba() {
             </Cartao>
           </div>
         </div>
+      )}
+
+      {/* ── MEMBROS ────────────────────────────────────────────────────────── */}
+      {secao === 'membros' && (
+        <Cartao
+          titulo="Membros do clube"
+          desc="Quem entrou no clube (tablet) ou já tem pontos. Nível pelas compras da janela da trilha."
+          acao={<button onClick={() => setMembros(null)} className="text-sm text-zinc-500 hover:text-zinc-800 cursor-pointer"><i className="ri-refresh-line" /> Atualizar</button>}
+        >
+          {membros === null ? (
+            <div className="flex justify-center py-10"><div className="w-6 h-6 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" /></div>
+          ) : membros.length === 0 ? (
+            <p className="text-sm text-zinc-400 text-center py-8">Ninguém ainda. Quando o programa estiver ligado, quem digitar o CPF no tablet aparece aqui.</p>
+          ) : (
+            <>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                <Kpi label="Membros" valor={inteiro(membros.filter((m) => m.membro_desde).length)} sub={`${inteiro(membros.length)} com pontos ou cadastro`} />
+                <Kpi label="Pontos em aberto" valor={inteiro(membros.reduce((s, m) => s + Number(m.saldo), 0))} sub={sim.custoPonto > 0 ? `≈ ${brl(membros.reduce((s, m) => s + Number(m.saldo), 0) * sim.custoPonto)} se tudo for trocado` : undefined} tom="amber" />
+                <Kpi label="Giros guardados" valor={inteiro(membros.reduce((s, m) => s + m.giros, 0))} />
+                <Kpi label="Prêmios a usar" valor={inteiro(membros.reduce((s, m) => s + m.beneficios, 0))} />
+              </div>
+              <input value={buscaMembro} onChange={(e) => setBuscaMembro(e.target.value)} placeholder="Buscar por nome ou celular" className={INPUT + ' mb-3 max-w-sm'} />
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-[11px] uppercase tracking-wide text-zinc-400 border-b border-zinc-100">
+                      <th className="py-2 pr-3">Cliente</th><th className="py-2 pr-3">Nível</th><th className="py-2 pr-3 text-right">Pontos</th>
+                      <th className="py-2 pr-3 text-right">Compras</th><th className="py-2 pr-3 text-right">Giros</th><th className="py-2 pr-3 text-right">Prêmios</th><th className="py-2">Última compra</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {membros
+                      .filter((m) => {
+                        const q = buscaMembro.trim().toLowerCase();
+                        if (!q) return true;
+                        const dig = q.replace(/\D/g, '');
+                        return (m.nome ?? '').toLowerCase().includes(q) || (!!dig && (m.celular ?? '').includes(dig));
+                      })
+                      .map((m) => (
+                        <tr key={m.customer_id} className="border-b border-zinc-50">
+                          <td className="py-2 pr-3">
+                            <div className="font-semibold text-zinc-800">{m.nome}</div>
+                            <div className="text-[11px] text-zinc-400">{m.celular ? `•••• ${String(m.celular).slice(-4)}` : ''}{m.membro_desde ? ` · no clube desde ${new Date(m.membro_desde).toLocaleDateString('pt-BR')}` : ' · sem cadastro no clube'}</div>
+                          </td>
+                          <td className="py-2 pr-3 whitespace-nowrap">{m.nivel ? <span className="font-semibold" style={{ color: m.nivel_cor ?? undefined }}>{m.nivel_emoji} {m.nivel}</span> : <span className="text-zinc-400">—</span>}</td>
+                          <td className="py-2 pr-3 text-right tabular-nums font-semibold">{inteiro(Number(m.saldo))}</td>
+                          <td className="py-2 pr-3 text-right tabular-nums">{m.compras}</td>
+                          <td className="py-2 pr-3 text-right tabular-nums">{m.giros || '—'}</td>
+                          <td className="py-2 pr-3 text-right tabular-nums">{m.beneficios || '—'}</td>
+                          <td className="py-2 text-zinc-500 whitespace-nowrap">{m.ultima_compra ? new Date(m.ultima_compra).toLocaleDateString('pt-BR') : '—'}</td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </Cartao>
       )}
 
       {/* Barra de salvar */}

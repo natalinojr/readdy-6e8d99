@@ -9,6 +9,8 @@ interface Props {
   motor: MotorJogo;
   /** Muda para começar uma partida nova */
   partida: number;
+  /** Semente sorteada pelo servidor (partida valendo ranking); sem ela, sorteia aqui */
+  semente?: number | null;
   onFim: (g: GravacaoPartida) => void;
 }
 
@@ -16,6 +18,7 @@ const PASSO_MS = 1000 / 60;
 
 export default function JogoCanvas(props: Props) {
   const { motor, partida } = props;
+  const sementeFixa = props.semente;
   const caixaRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const onFimRef = useRef(props.onFim);
@@ -28,7 +31,7 @@ export default function JogoCanvas(props: Props) {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    const semente = novaSemente();
+    const semente = sementeFixa != null ? sementeFixa : novaSemente();
     const estado = motor.criar(semente);
     const quadros: number[] = [];
     let toquePendente = false;
@@ -114,7 +117,7 @@ export default function JogoCanvas(props: Props) {
       window.removeEventListener('keydown', tecla);
       window.removeEventListener('keyup', tecla);
     };
-  }, [motor, partida]);
+  }, [motor, partida, sementeFixa]);
 
   return (
     <div ref={caixaRef} className="absolute inset-0 flex items-center justify-center">

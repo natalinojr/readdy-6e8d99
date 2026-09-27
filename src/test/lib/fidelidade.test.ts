@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { avisosConfig, chancesRoleta, configPadrao, distribuirNiveis, nivelPorCompras, normalizarConfig, retornoPercentual } from '@/lib/fidelidade';
+import { cpfValido, descontoDasReservas, avisosConfig, chancesRoleta, configPadrao, distribuirNiveis, nivelPorCompras, normalizarConfig, retornoPercentual } from '@/lib/fidelidade';
 
 describe('fidelidade', () => {
   it('config vazia vira o padrão e valores fora de faixa são cortados', () => {
@@ -45,5 +45,27 @@ describe('fidelidade', () => {
     const av = avisosConfig(c);
     expect(av.some((a) => a.includes('não está ligada a um item'))).toBe(true);
     expect(av.some((a) => a.includes('nenhuma regra dá giro'))).toBe(true);
+  });
+
+  it('CPF: dígitos verificadores', () => {
+    expect(cpfValido('529.982.247-25')).toBe(true);
+    expect(cpfValido('52998224724')).toBe(false);
+    expect(cpfValido('111.111.111-11')).toBe(false);
+    expect(cpfValido('123')).toBe(false);
+  });
+
+  it('desconto dos resgates: produto só se estiver no carrinho, nunca passa do subtotal', () => {
+    const itens = [{ id: 'refri', preco: 6, qtd: 1 }, { id: 'burger', preco: 30, qtd: 1 }];
+    const r = (id: string, reward: any) => ({ hold_id: id, fonte: 'pontos' as const, reward });
+    const d = descontoDasReservas([
+      r('a', { tipo: 'produto', nome: 'Refri', valor: 0, produto_id: 'refri' }),
+      r('b', { tipo: 'produto', nome: 'Refri 2', valor: 0, produto_id: 'refri' }),
+      r('c', { tipo: 'produto', nome: 'Batata', valor: 0, produto_id: 'batata' }),
+      r('d', { tipo: 'desconto_percentual', nome: '10%', valor: 10 }),
+    ], itens, 36);
+    expect(d.porReserva).toEqual({ a: 6, b: 0, c: 0, d: 3.6 });
+    expect(d.total).toBe(9.6);
+    const teto = descontoDasReservas([r('x', { tipo: 'desconto_valor', nome: 'R$ 50', valor: 50 })], itens, 36);
+    expect(teto.total).toBe(36);
   });
 });

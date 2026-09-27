@@ -288,10 +288,10 @@ export function retornoPercentual(cfg: FidelidadeConfig, multiplicadorMedio = 1)
 }
 
 /** Chance de cada prêmio (0–1) e custo esperado de UM giro em R$. */
-export function chancesRoleta(premios: Premio[]) {
+export function chancesRoleta(premios: { id: string; peso: number; custo_loja?: number }[]) {
   const soma = premios.reduce((s, p) => s + Math.max(0, p.peso), 0);
   const chances = premios.map((p) => ({ id: p.id, chance: soma > 0 ? Math.max(0, p.peso) / soma : 0 }));
-  const custoGiro = premios.reduce((s, p, i) => s + chances[i].chance * p.custo_loja, 0);
+  const custoGiro = premios.reduce((s, p, i) => s + chances[i].chance * (p.custo_loja ?? 0), 0);
   return { chances, custoGiro, soma };
 }
 
@@ -319,4 +319,91 @@ export function avisosConfig(cfg: FidelidadeConfig): string[] {
     }
   }
   return av;
+}
+
+// ── Clube no tablet ─────────────────────────────────────────────────────────
+
+/** Só dígitos. */
+export function soDigitos(v: unknown): string {
+  return String(v ?? '').replace(/\D/g, '');
+}
+
+/** CPF válido (dígitos verificadores; rejeita 000.000.000-00 e afins). */
+export function cpfValido(v: unknown): boolean {
+  const d = soDigitos(v);
+  if (d.length !== 11 || /^(\d)\1{10}$/.test(d)) return false;
+  const dv = (base: string, peso: number) => {
+    let s = 0;
+    for (let i = 0; i < base.length; i++) s += Number(base[i]) * (peso - i);
+    const r = (s * 10) % 11;
+    return r === 10 ? 0 : r;
+  };
+  return dv(d.slice(0, 9), 10) === Number(d[9]) && dv(d.slice(0, 10), 11) === Number(d[10]);
+}
+
+export function formatarCpf(v: unknown): string {
+  const d = soDigitos(v).slice(0, 11);
+  return d.replace(/^(\d{3})(\d)/, '$1.$2').replace(/^(\d{3})\.(\d{3})(\d)/, '$1.$2.$3').replace(/\.(\d{3})(\d)/, '.$1-$2');
+}
+
+export interface ClubeNivel { id: string; nome: string; emoji: string; cor: string; min_compras: number; multiplicador: number; beneficios: string }
+export interface ClubeRecompensa { id: string; nome: string; tipo: TipoRecompensa; valor: number; produto_id: string | null; custo_pontos: number; nivel_ok: boolean; nivel_minimo: string | null; falta: number }
+export interface ClubeBeneficio { id: string; origem: string; reward: { tipo: TipoRecompensa; nome: string; valor: number; produto_id?: string | null; motivo?: string }; expires_at: string | null }
+
+/** O que o tablet recebe ao identificar o cliente (fn_fidelidade_resumo). */
+export interface ClubeResumo {
+  customer_id: string;
+  primeiro_nome: string;
+  membro: boolean;
+  programa: string;
+  ativo: boolean;
+  saldo: number;
+  vence_30d: number;
+  pontos_por_real: number;
+  compras_janela: number;
+  nivel: ClubeNivel | null;
+  proximo: ClubeNivel | null;
+  faltam_compras: number | null;
+  recompensas: ClubeRecompensa[];
+  beneficios: ClubeBeneficio[];
+  giros: number;
+  /** Sem celular não dá para confirmar resgate no tablet (fica com o caixa). */
+  tem_celular: boolean;
+}
+
+/** Um resgate reservado para o pedido atual. */
+export interface ClubeReserva {
+  hold_id: string;
+  fonte: 'pontos' | 'beneficio';
+  reward: { tipo: TipoRecompensa; nome: string; valor: number; produto_id?: string | null; custo_pontos?: number };
+}
+
+/** Quanto cada reserva desconta do pedido, dado o carrinho. Produto grátis só
+ *  vale se o produto estiver no carrinho (desconta 1 unidade). Nunca passa do subtotal. */
+export function descontoDasReservas(
+  reservas: ClubeReserva[],
+  itens: { id: string; preco: number; qtd: number }[],
+  subtotal: number,
+): { porReserva: Record<string, number>; total: number } {
+  const porReserva: Record<string, number> = {};
+  let total = 0;
+  const usados = new Map<string, number>();
+  for (const r of reservas) {
+    let v = 0;
+    const w = r.reward;
+    if (w.tipo === 'produto' && w.produto_id) {
+      const it = itens.find((i) => i.id === w.produto_id);
+      const ja = usados.get(w.produto_id) ?? 0;
+      if (it && it.qtd > ja) { v = it.preco; usados.set(w.produto_id, ja + 1); }
+    } else if (w.tipo === 'desconto_valor') {
+      v = Number(w.valor) || 0;
+    } else if (w.tipo === 'desconto_percentual') {
+      v = subtotal * (Number(w.valor) || 0) / 100;
+    }
+    v = Math.max(0, Math.min(v, subtotal - total));
+    v = Math.round(v * 100) / 100;
+    porReserva[r.hold_id] = v;
+    total += v;
+  }
+  return { porReserva, total: Math.round(total * 100) / 100 };
 }

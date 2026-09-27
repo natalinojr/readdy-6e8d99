@@ -10,14 +10,16 @@ interface Props {
   total: number;
   onContinuar: (cpf: string | null) => void;
   onVoltar: () => void;
+  /** CPF que o cliente já digitou no clube de fidelidade (vem preenchido; ele pode apagar). */
+  cpfInicial?: string;
 }
 
 const fmt = (v: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
 
-export default function CpfKiosk({ total, onContinuar, onVoltar }: Props) {
+export default function CpfKiosk({ total, onContinuar, onVoltar, cpfInicial }: Props) {
   const { t } = useTranslation();
-  const [digitos, setDigitos] = useState('');
+  const [digitos, setDigitos] = useState(cpfInicial ?? '');
   const [erro, setErro] = useState('');
 
   const ehCnpj = tipoDoc(digitos) === 'CNPJ' || digitos.length > 11;

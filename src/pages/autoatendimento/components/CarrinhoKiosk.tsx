@@ -19,6 +19,11 @@ interface CarrinhoKioskProps {
   onEditarItem: (index: number, updates: Partial<ItemPedidoCliente>) => void;
   onVoltar: () => void;
   onPagar: () => void;
+  /** Clube de fidelidade: desconto dos resgates, uma linha por resgate e o atalho do clube. */
+  descontoClube?: number;
+  linhasClube?: { nome: string; valor: number }[];
+  clubeTexto?: string | null;
+  onAbrirClube?: () => void;
 }
 
 export default function CarrinhoKiosk({
@@ -29,6 +34,10 @@ export default function CarrinhoKiosk({
   onEditarItem,
   onVoltar,
   onPagar,
+  descontoClube = 0,
+  linhasClube = [],
+  clubeTexto,
+  onAbrirClube,
 }: CarrinhoKioskProps) {
   const { itensPublicos } = useCardapio();
   const { t } = useTranslation();
@@ -36,7 +45,7 @@ export default function CarrinhoKiosk({
   const [editandoIndex, setEditandoIndex] = useState<number | null>(null);
 
   const subtotal = carrinho.reduce((s, i) => s + i.preco * i.quantidade, 0);
-  const total = subtotal;
+  const total = Math.max(0, Math.round((subtotal - descontoClube) * 100) / 100);
 
   // Busca o item original no cardápio pelo itemId
   const getItemCardapio = (itemCarrinho: ItemPedidoCliente): ItemCardapioPublico | undefined => {
@@ -141,11 +150,29 @@ export default function CarrinhoKiosk({
             ))}
           </div>
 
+          {clubeTexto && onAbrirClube && (
+            <button
+              onClick={onAbrirClube}
+              className="mt-3 lg:mt-4 w-full flex items-center justify-between gap-2 px-4 py-3 rounded-2xl bg-gradient-to-r from-amber-500/20 to-fuchsia-500/20 border border-amber-500/40 text-left cursor-pointer"
+            >
+              <span className="text-amber-300 font-bold text-sm lg:text-base truncate">{clubeTexto}</span>
+              <span className="text-white text-xs font-bold whitespace-nowrap">Meus prêmios <i className="ri-arrow-right-s-line" /></span>
+            </button>
+          )}
+
           <div className="lg:border-t border-zinc-800 lg:mt-6 lg:pt-6 space-y-2 lg:space-y-3">
             <div className="flex justify-between">
               <span className="text-zinc-400">{t('cliente.subtotal')}</span>
               <span className="text-white font-semibold">{fmt(subtotal)}</span>
             </div>
+            {linhasClube.map((l, i) => (
+              <div key={i} className="flex justify-between gap-2">
+                <span className="text-emerald-400 truncate">🎁 {l.nome}</span>
+                <span className={`font-semibold whitespace-nowrap ${l.valor > 0 ? 'text-emerald-400' : 'text-zinc-500 text-sm'}`}>
+                  {l.valor > 0 ? `− ${fmt(l.valor)}` : 'adicione o item'}
+                </span>
+              </div>
+            ))}
             <div className="flex justify-between text-3xl lg:text-4xl font-black">
               <span className="text-white">{t('cliente.total')}</span>
               <span className="text-amber-400">{fmt(total)}</span>
