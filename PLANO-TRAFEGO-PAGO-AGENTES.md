@@ -93,6 +93,14 @@ Tela própria (`/estudio`, menu Marketing), **não** dentro do Tráfego Pago. Se
 
 **b) Biblioteca.** Fotos do cardápio (`menu_items.photo_url`, já existentes), logo, fotos extras enviadas, referências. Haiku visão dá uma **nota de qualidade** a cada foto (nitidez, luz, enquadramento) → o sistema sabe quais pratos têm foto boa para anúncio e **avisa quais precisam de foto nova**.
 
+**b2) Banco de imagens do usuário (link externo).** A loja pode **ligar o acervo que já tem** em vez de subir foto por foto:
+- **OneDrive/SharePoint:** reaproveitar a conexão que já existe (Edge `ms-graph`, tabela `ms_graph_connections`, ação `browse`). O dono escolhe uma pasta; o Estúdio lê dela.
+- **Google Drive / Dropbox:** mesmo padrão (OAuth por loja, token só na Edge), numa fase seguinte.
+- **Instagram/Facebook da própria loja:** puxar os posts antigos como referência de estilo (usa a conexão Meta existente + `instagram_basic`).
+- **Link público** (pasta compartilhada, Pinterest, site): cadastro manual das URLs.
+
+Como funciona: sincronização periódica (ex.: 1×/dia) que **indexa** as imagens em `studio_assets` (origem, id externo, miniatura, nota de qualidade, tags geradas por Haiku visão: "prato", "ambiente", "equipe", "logo", "referência de estilo", e qual item do cardápio parece ser). Não copia o acervo inteiro: guarda só miniatura + referência, e baixa a imagem em resolução cheia na hora de montar a arte. O dono marca cada pasta como **"fotos para usar na arte"** ou **"só referência de estilo"**, porque são usos diferentes: foto entra na peça, referência só orienta o Diretor de Arte. Direitos de uso: o dono confirma que as imagens são dele (checkbox ao ligar a pasta).
+
 **c) Diretor de Arte (IA) + Renderizador (código).**
 - A IA **não desenha pixel**: escolhe foto, modelo de layout, texto (título, preço, CTA) e variações, sempre dentro do Kit.
 - O desenho é feito por **modelos (templates) em código**: HTML/SVG → PNG no servidor (satori + resvg na Edge Function). Resultado fiel à marca, previsível e barato (sem custo por imagem).
@@ -115,7 +123,8 @@ Contrato entre módulos: uma Edge Function `estudio` com `request_creative {tena
 Todas com RLS padrão do projeto: select por membership da loja, escrita só `service_role` + GRANTs explícitos.
 
 - `brand_kit` (1/loja): cores, fontes, tom, regras, CTA, flags, `logo_path`, referências.
-- `studio_assets`: fotos/logos/referências (bucket privado `estudio`), `menu_item_id?`, nota de qualidade.
+- `studio_assets`: fotos/logos/referências (bucket privado `estudio`), `menu_item_id?`, nota de qualidade, `source` (`upload|cardapio|onedrive|gdrive|dropbox|instagram|url`), `external_id`, `uso` (`arte|referencia`), tags.
+- `studio_sources`: bancos de imagem ligados pela loja (tipo, pasta/URL, conexão usada, uso, última sincronização).
 - `studio_templates`: modelos de layout (código + parâmetros), por formato.
 - `creative_requests`: fila (origem `trafego|cardapio|manual|…`, pedido, status, quem pediu).
 - `creatives`: peça gerada (formato, template, item, textos, `image_path`, status `rascunho → em_revisao → aprovada → publicada | reprovada`, notas do revisor, `meta_creative_id`/`ad_id`/`post_id`).
@@ -142,7 +151,7 @@ Travas que valem em qualquer nível (código, não IA): teto diário/mensal, ±2
 
 **Tráfego Pago** (`/trafego-pago`): abas `Painel` · `Agentes` (status de cada agente, última rodada, custo de IA do mês, nível de autonomia) · `Aprovações` (fila única: ações de verba, campanhas, pauta) · `Pauta` (calendário da semana) · `Resultados` (o que venceu: prato, arte, texto, horário).
 
-**Estúdio** (`/estudio`): `Marca` (questionário/kit) · `Biblioteca` (fotos + nota de qualidade + "pratos sem foto boa") · `Criar` (manual: escolhe item + formato → variações) · `Pedidos` (fila vinda do tráfego/cardápio) · `Galeria` (aprovar, baixar, usar no cardápio, mandar para anúncio).
+**Estúdio** (`/estudio`): `Marca` (questionário/kit) · `Biblioteca` (fotos + nota de qualidade + "pratos sem foto boa" + **Ligar banco de imagens**) · `Criar` (manual: escolhe item + formato → variações) · `Pedidos` (fila vinda do tráfego/cardápio) · `Galeria` (aprovar, baixar, usar no cardápio, mandar para anúncio).
 
 Integração no cardápio: botão "Gerar arte/foto padronizada" no item, que abre o Estúdio já com o item.
 
@@ -153,7 +162,8 @@ Integração no cardápio: botão "Gerar arte/foto padronizada" no item, que abr
 | Fase | Entrega | Depende de |
 |---|---|---|
 | **F0** | Modelo configurável + **modo sombra Sonnet × Opus** no `meta-ads-agent`; custo por rodada na tela; enxugar payload | nada |
-| **F1** | **Kit da Marca** (questionário + pré-preenchimento por IA) + Biblioteca com nota das fotos do cardápio | nada |
+| **F1** | **Kit da Marca** (questionário + pré-preenchimento por IA) + Biblioteca com nota das fotos do cardápio + **ligar pasta do OneDrive** (reusa `ms-graph`) | nada |
+| **F1b** | Google Drive / Dropbox / posts do Instagram como banco de imagens | F1 |
 | **F2** | **Estúdio v1**: 4–6 modelos de arte (feed, story, item padronizado, promoção), Diretor de Arte (Sonnet), renderização no servidor, galeria com aprovar/baixar | F1 |
 | **F3** | Ligar Tráfego → Estúdio: `rotate_creative`/`create_campaign` geram pedido de arte; **Revisor** antes de subir; subir criativo novo no conjunto | F2 + permissões `ads_management`/`pages_manage_ads` |
 | **F4** | **Monitor** 3/3h + **Analista de Resultados** (arte ↔ resultado ↔ pedidos ERPOS) + relatório semanal | F3 |
@@ -172,7 +182,8 @@ Cada fase: testar na loja **Testes PDV** e, para a Meta, com uma conta de anúnc
 4. **Imagem gerada por IA externa** (fase F6): quer? Qual fornecedor/custo aceitável? Ou só modelos com as fotos reais?
 5. **Publicação orgânica** (posts no Instagram, não só anúncio) entra no escopo?
 6. **App Review da Meta** para as permissões de escrita/publicação: quem cuida (é feito no painel da Meta pelo dono)?
-7. Quem aprova artes: só o dono/admin, ou um papel de "marketing" nas permissões?
+7. **Banco de imagens:** onde estão as fotos hoje (OneDrive, Google Drive, Dropbox, só no Instagram)? Define qual conector vem primeiro.
+8. Quem aprova artes: só o dono/admin, ou um papel de "marketing" nas permissões?
 
 ---
 
