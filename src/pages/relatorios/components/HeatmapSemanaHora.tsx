@@ -19,8 +19,8 @@ export default function HeatmapSemanaHora({ pontos, rgb = '234,29,44', texto = '
   const heat = useMemo(() => {
     const g: { n: number; v: number }[][] = Array.from({ length: 7 }, () => Array.from({ length: 24 }, () => ({ n: 0, v: 0 })));
     for (const p of pontos) { g[p.semana][p.hora].n += 1; g[p.semana][p.hora].v += p.valor; }
-    let horas = [...Array(24).keys()].filter((h) => g.some((l) => l[h].n > 0));
-    if (horas.length) { const a = Math.min(...horas), b = Math.max(...horas); horas = [...Array(b - a + 1).keys()].map((i) => a + i); }
+    // Só as horas com pedido (hora sem nenhum pedido no período some da tabela).
+    const horas = [...Array(24).keys()].filter((h) => g.some((l) => l[h].n > 0));
     const max = Math.max(1, ...g.flat().map((c) => c.n));
     const porSemana = g.map((l) => l.reduce((a, c) => a + c.v, 0));
     const porHora = g[0].map((_, h) => ({ n: g.reduce((a, l) => a + l[h].n, 0), v: g.reduce((a, l) => a + l[h].v, 0) }));
