@@ -64,6 +64,15 @@ código de coleta; sem motoboy da loja. Retirada (TAKEOUT) e consumo no local (D
 5. **Financeiro sem contagem dupla** — o dinheiro do iFood já entra pelo repasse (fonte "iFood" / conciliação).
    Pedido do iFood no ERPOS **não gera** conta a receber nem `auto_sale`, e a fonte "Pedidos" ignora
    `delivery_platform = 'ifood'` quando a fonte "iFood" está ligada (Receitas, DRE, DRE comparativo, Visão Geral).
+   **Levantamento 2026-09-27 (etapa 2):** `fn_record_payment_bypass` só insere `payments` (exige caixa da sessão do
+   pedido) — não gera `auto_sale`, banco nem pontos (isso é do `order-write › record_payment`). Então DRE, Visão Geral,
+   Fluxo de Caixa e Contas a Receber ficam certos se o funil **não** lançar `fin_cash_flow`/recebível. Pontos e
+   contadores do cliente vêm do gatilho `trg_orders_customer_counters` (só com `customer_id`) → pedido do iFood entra
+   **sem `customer_id`** (iFood mascara o cliente). Somam `orders`/`payments` direto e precisam ignorar
+   `orders.ifood_order_id is not null`: `useReceitas.ts` (fonte Pedidos), DRE comparativo (cancelados/descontos),
+   Dashboard `ResumoFinanceiro.tsx`, `fn_get_sales_report` (Vendas/Origem/Gestor de Pedidos), `fn_get_cash_sessions_v2*`
+   (fechamento: iFood vira linha à parte, fora do total vendido), resumos do assistente (vendasDoDia, FechamentoDia,
+   CaixaAberto). CMV/consumo/ranking de produtos passam a INCLUIR o iFood (correto: estoque saiu uma vez).
 6. **NFC-e** — com `order_emit_nfce`, emite pelo `fiscal-write` como os demais delivery. Valor = itens + entrega −
    desconto pago pela loja (valor da venda); cupom pago pelo iFood não é desconto da loja; comissão/taxas do iFood não
    abatem. Código de pagamento da nota: "99 – outros" (igual à iFood Entrega) — conferir com a contabilidade.
