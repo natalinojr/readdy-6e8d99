@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import { useDriverPositions, haQuanto, type PosicaoMotoboy } from '@/hooks/useDriverPositions';
 
 export interface PontoGestor {
   id: string;
@@ -13,6 +14,29 @@ export interface PontoGestor {
   atrasado: boolean;
   motoboy_status: string | null;
   driver_nome: string | null;
+  driver_id?: string | null;
+}
+
+// Posição mais velha que isso fica cinza ("sinal parado": tela fechada ou sem GPS).
+const POSICAO_VELHA_MS = 10 * 60000;
+
+function escHtml(s: string): string {
+  return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string));
+}
+
+// Moto: círculo com 🛵 + primeiro nome; cinza quando a posição está velha.
+function makeMotoIcon(m: PosicaoMotoboy, emRota: boolean, now: number) {
+  const velha = now - new Date(m.recorded_at).getTime() > POSICAO_VELHA_MS;
+  const cor = velha ? '#a1a1aa' : emRota ? '#7c3aed' : '#059669';
+  const nome = escHtml((m.nome || 'Motoboy').split(' ')[0]);
+  return L.divIcon({
+    className: '',
+    html: `<div style="display:flex;flex-direction:column;align-items:center">
+             <div style="background:${cor};width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;border:3px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.45);font-size:17px">🛵</div>
+             <div style="margin-top:2px;background:#fff;color:#18181b;font-size:10px;font-weight:800;padding:0 5px;border-radius:6px;box-shadow:0 1px 3px rgba(0,0,0,.3);white-space:nowrap">${nome}</div>
+           </div>`,
+    iconSize: [60, 52], iconAnchor: [30, 17], popupAnchor: [0, -18],
+  });
 }
 
 const SINAL_LABEL: Record<string, string> = {
@@ -47,23 +71,38 @@ function makeIcon(grupo: PontoGestor[]) {
 }
 
 // Enquadra todos os pontos só na 1ª vez (refresh de dados não mexe na câmera).
-function AjustarBounds({ pontos }: { pontos: PontoGestor[] }) {
+function AjustarBounds({ pontos, motos }: { pontos: PontoGestor[]; motos: PosicaoMotoboy[] }) {
   const map = useMap();
   const jaEnquadrou = useRef(false);
   useEffect(() => {
     if (jaEnquadrou.current) return;
-    const coords = pontos.filter((p) => p.lat != null && p.lng != null).map((p) => [p.lat as number, p.lng as number] as [number, number]);
+    const coords = pontos.filter((p) => p.lat != null && p.lng != null).map((p) => [p.lat as number, p.lng as number] as [number, number])
+      .concat(motos.map((m) => [m.lat, m.lng] as [number, number]));
     if (coords.length === 0) return;
     jaEnquadrou.current = true;
     if (coords.length === 1) { map.setView(coords[0], 16); return; }
     map.fitBounds(L.latLngBounds(coords), { padding: [40, 40] });
-  }, [pontos, map]);
+  }, [pontos, motos, map]);
   return null;
 }
 
-export default function MapaEntregasGestor({ pontos, onClose }: { pontos: PontoGestor[]; onClose: () => void }) {
+export default function MapaEntregasGestor({ pontos, onClose, tenantId }: { pontos: PontoGestor[]; onClose: () => void; tenantId?: string | null }) {
+  // Motoboys: última posição, atualizada por broadcast só enquanto o mapa está aberto.
+  const { posicoes: motos } = useDriverPositions(tenantId, true);
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => { const id = setInterval(() => setNow(Date.now()), 30000); return () => clearInterval(id); }, []);
   const comPin = pontos.filter((p) => p.lat != null && p.lng != null);
   const semPin = pontos.length - comPin.length;
+  // Pedidos em rota de cada motoboy (pra mostrar no balão da moto).
+  const emRotaPorMotoboy = useMemo(() => {
+    const m = new Map<string, PontoGestor[]>();
+    for (const p of pontos) {
+      if (!p.driver_id || p.motoboy_status !== 'coletou') continue;
+      if (!m.has(p.driver_id)) m.set(p.driver_id, []);
+      m.get(p.driver_id)!.push(p);
+    }
+    return m;
+  }, [pontos]);
 
   const grupos = useMemo(() => {
     const m = new Map<string, PontoGestor[]>();
@@ -76,7 +115,8 @@ export default function MapaEntregasGestor({ pontos, onClose }: { pontos: PontoG
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [comPin.map((p) => `${p.lat},${p.lng}:${p.id}:${p.motoboy_status}:${p.atrasado}`).join('|')]);
 
-  const center: [number, number] = comPin.length > 0 ? [comPin[0].lat as number, comPin[0].lng as number] : [-25.59, -48.35];
+  const center: [number, number] = comPin.length > 0 ? [comPin[0].lat as number, comPin[0].lng as number]
+    : motos.length > 0 ? [motos[0].lat, motos[0].lng] : [-25.59, -48.35];
 
   return (
     <div className="fixed inset-0 z-[95] bg-white flex flex-col">
@@ -85,6 +125,7 @@ export default function MapaEntregasGestor({ pontos, onClose }: { pontos: PontoG
           <h2 className="text-sm font-black text-zinc-800">Mapa das entregas</h2>
           <p className="text-[11px] text-zinc-400">
             {comPin.length} no mapa{semPin > 0 ? ` · ${semPin} sem localização` : ''}
+            {` · ${motos.length} ${motos.length === 1 ? 'motoboy' : 'motoboys'} com GPS`}
           </p>
         </div>
         <button type="button" onClick={onClose} className="px-3 py-1.5 rounded-lg bg-zinc-100 text-zinc-600 text-xs font-bold hover:bg-zinc-200">
@@ -92,7 +133,7 @@ export default function MapaEntregasGestor({ pontos, onClose }: { pontos: PontoG
         </button>
       </div>
       <div className="flex-1">
-        {comPin.length === 0 ? (
+        {comPin.length === 0 && motos.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center text-center px-6">
             <i className="ri-map-pin-line text-4xl text-zinc-300" />
             <p className="text-sm font-semibold text-zinc-500 mt-2">Nenhuma entrega com localização no mapa.</p>
@@ -104,7 +145,29 @@ export default function MapaEntregasGestor({ pontos, onClose }: { pontos: PontoG
               attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
             />
-            <AjustarBounds pontos={comPin} />
+            <AjustarBounds pontos={comPin} motos={motos} />
+            {motos.map((m) => {
+              const rota = emRotaPorMotoboy.get(m.driver_id) ?? [];
+              return (
+                <Marker key={'moto:' + m.driver_id} position={[m.lat, m.lng]} icon={makeMotoIcon(m, rota.length > 0, now)} zIndexOffset={1000}>
+                  <Popup minWidth={190}>
+                    <div>
+                      <div style={{ fontWeight: 800 }}>🛵 {m.nome}</div>
+                      <div style={{ fontSize: 11, color: now - new Date(m.recorded_at).getTime() > POSICAO_VELHA_MS ? '#dc2626' : '#555' }}>
+                        Atualizado {haQuanto(m.recorded_at, now)}{m.accuracy != null ? ` · ±${Math.round(m.accuracy)} m` : ''}
+                      </div>
+                      {rota.length > 0 ? (
+                        <div style={{ fontSize: 11, color: '#7c3aed', fontWeight: 700, marginTop: 4 }}>
+                          Em rota: {rota.map((p) => '#' + (String(p.number).replace(/\D/g, '').slice(-4) || p.number)).join(', ')}
+                        </div>
+                      ) : (
+                        <div style={{ fontSize: 11, color: '#059669', fontWeight: 700, marginTop: 4 }}>Sem pedido em rota</div>
+                      )}
+                    </div>
+                  </Popup>
+                </Marker>
+              );
+            })}
             {grupos.map((grupo) => {
               const p0 = grupo[0];
               const lat = p0.lat as number, lng = p0.lng as number;
