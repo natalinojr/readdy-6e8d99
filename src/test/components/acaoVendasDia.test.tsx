@@ -13,7 +13,7 @@ const h = vi.hoisted(() => ({
 function consulta(tabela: string) {
   const filtros: Array<[string, unknown]> = [];
   const q: Record<string, unknown> = {};
-  for (const m of ['select', 'eq', 'neq', 'gte', 'lte', 'order', 'range', 'in']) {
+  for (const m of ['select', 'eq', 'neq', 'is', 'gte', 'lte', 'order', 'range', 'in']) {
     q[m] = (...args: unknown[]) => { filtros.push([m, args]); return q; };
   }
   q.then = (ok: (v: unknown) => unknown) => Promise.resolve(h.tabelas[tabela]?.(filtros) ?? { data: [], error: null }).then(ok);
