@@ -125,6 +125,7 @@ export default function ConfirmacaoMesaQR(props: Props) {
             tenantId={props.tenantId}
             credencial={props.participantId ? { tipo: 'mesa', participant_id: props.participantId, access_token: accessToken } : null}
             nomeInicial={props.participantName}
+            onNovoPedido={onNovoPedido}
           />
         </div>
 

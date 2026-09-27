@@ -336,17 +336,17 @@ export default function AcompanharPedido(props: Props) {
         </div>
       ) : null}
 
-      {/* Joguinhos enquanto espera: o aviso aparece por cima do jogo quando o pedido anda */}
+      {/* Joguinhos enquanto espera: aviso por cima do jogo quando o pedido anda; entregue = pausa até o próximo pedido */}
       {!isCancelled && !isAguardandoPix ? (
         <div className="mb-6">
           <JogosEspera
-            esconderCartao={isDelivered}
+            pedidoEntregue={isDelivered}
+            onNovoPedido={props.onNovoPedido}
             tenantId={tenantId}
             credencial={{ tipo: 'delivery', order_number: orderData.number }}
             nomeInicial={props.nomeCliente}
             telefoneInicial={props.telefoneCliente}
             aviso={status === 'em_rota' ? 'Seu pedido saiu para entrega!'
-              : isDelivered ? (isRetirada ? 'Pedido retirado. Bom apetite!' : 'Pedido entregue. Bom apetite!')
               : (status === 'ready' && isRetirada) ? 'Seu pedido está pronto! Pode retirar no balcão.'
               : null}
           />
