@@ -570,8 +570,9 @@ function guardrails(out: Row, candidates: Candidate[], i7: Insights, s: Settings
 // Mesmo payload e mesmos guardrails da rodada real, com outro modelo. Só grava (resumo, saúde,
 // alertas, uso e as ações que proporia); não insere em meta_agent_actions nem toca a Meta.
 async function shadowRun(admin: SupabaseClient, tenantId: string, realRunId: string, model: ModelId, payload: Json, candidates: Candidate[], i7: Insights, s: Settings) {
-  const { data: run } = await admin.from('meta_agent_runs').insert({ tenant_id: tenantId, trigger: 'sombra', status: 'running', shadow_of: realRunId }).select('id').single();
-  const runId = String(run?.id);
+  const { data: run, error: insErr } = await admin.from('meta_agent_runs').insert({ tenant_id: tenantId, trigger: 'sombra', status: 'running', shadow_of: realRunId }).select('id').single();
+  if (insErr || !run?.id) { log('WARN', 'sombra: não criou a rodada (migração aplicada?)', insErr?.message); return; }
+  const runId = String(run.id);
   try {
     const ai = await askModel(payload, model);
     const final = guardrails(ai.out, candidates, i7, s, tenantId, runId);
