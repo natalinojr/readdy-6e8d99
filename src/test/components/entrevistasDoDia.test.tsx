@@ -22,8 +22,14 @@ vi.mock('@/lib/supabase', () => {
 
 import EntrevistasDoDia from '@/pages/contratacao/components/EntrevistasDoDia';
 import { mergeSettings, type Candidate, type Interview } from '@/pages/contratacao/shared';
+import { diaKeyBR } from '@/pages/contratacao/hoje';
 
-const hojeAs = (h: number, m: number) => { const d = new Date(); d.setHours(h, m, 0, 0); return d.toISOString(); };
+// "Hoje" em Brasília, como a tela (diaKeyBR) — com o relógio da máquina o teste quebrava de madrugada
+// (UTC já no dia seguinte e Brasília ainda no anterior: as entrevistas caíam em outro dia).
+const hojeAs = (h: number, m: number) => {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return new Date(`${diaKeyBR(new Date().toISOString())}T${pad(h)}:${pad(m)}:00-03:00`).toISOString();
+};
 const iv = (id: string, candidate_id: string, iso: string): Interview => ({
   id, candidate_id, company_id: null, scheduled_at: iso, duration_min: 30, format: 'presencial', location: null,
   interviewer: null, status: 'agendada', scores: {}, answers: {}, recommendation: null, notes: null, created_at: iso,
