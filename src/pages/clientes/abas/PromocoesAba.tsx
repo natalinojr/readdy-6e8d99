@@ -115,6 +115,7 @@ export default function PromocoesAba() {
         .from('promotion_rules')
         .select('*')
         .eq('tenant_id', user.tenantId)
+        .is('deleted_at', null)
         .order('priority', { ascending: true })
         .order('created_at', { ascending: false });
       if (error) setErro(error.message);

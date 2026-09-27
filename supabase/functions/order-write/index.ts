@@ -483,7 +483,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
     if (action === "apply_promotions") {
       const { channel, order_items, order_total, coupon_code } = body;
       if (!channel || !Array.isArray(order_items)) return new Response(JSON.stringify({ error: "channel and order_items are required" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
-      const { data: rules, error: rulesErr } = await admin.from("promotion_rules").select("*").eq("tenant_id", tenantId).eq("is_active", true).order("priority", { ascending: true });
+      const { data: rules, error: rulesErr } = await admin.from("promotion_rules").select("*").eq("tenant_id", tenantId).eq("is_active", true).is("deleted_at", null).order("priority", { ascending: true });
       if (rulesErr) throw rulesErr;
       const promotions = applyPromotions((rules ?? []) as PromotionRuleRow[], order_items as OrderItemInput[], channel, order_total ?? 0, coupon_code ?? null);
       const totalDiscount = promotions.reduce((s, p) => s + p.discount_value, 0);
@@ -492,7 +492,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
 
     if (action === "list_promotion_rules") {
       const { is_active } = body;
-      let query = admin.from("promotion_rules").select("*").eq("tenant_id", tenantId).order("priority", { ascending: true });
+      let query = admin.from("promotion_rules").select("*").eq("tenant_id", tenantId).is("deleted_at", null).order("priority", { ascending: true });
       if (is_active !== undefined) query = query.eq("is_active", is_active);
       const { data, error } = await query;
       if (error) throw error;
@@ -508,11 +508,11 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
     }
 
     if (action === "create_promotion_rule") {
-      const { name, description, promo_type, target_item_id, target_category_id, free_item_id, discount_value, special_price, buy_quantity, get_quantity, min_order_amount, valid_from, valid_until, days_of_week, time_from, time_until, channels, max_uses_total, max_uses_per_customer, coupon_code, priority, is_stackable } = body;
+      const { name, description, promo_type, target_item_id, target_category_id, free_item_id, discount_value, special_price, buy_quantity, get_quantity, min_order_amount, valid_from, valid_until, days_of_week, time_from, time_until, channels, max_uses_total, max_uses_per_customer, coupon_code, priority, is_stackable, is_active } = body;
       if (!name || !promo_type) return new Response(JSON.stringify({ error: "name and promo_type are required" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       await ensureUserExists(effectiveUserId);
       const defaultChannels = { cashier: true, waiter: true, delivery: true, self_service: true, table_qr: true };
-      const { data, error } = await admin.from("promotion_rules").insert({ tenant_id: tenantId, name, description: description ?? null, promo_type, target_item_id: target_item_id ?? null, target_category_id: target_category_id ?? null, free_item_id: free_item_id ?? null, discount_value: discount_value ?? null, special_price: special_price ?? null, buy_quantity: buy_quantity ?? null, get_quantity: get_quantity ?? null, min_order_amount: min_order_amount ?? null, valid_from: valid_from ?? null, valid_until: valid_until ?? null, days_of_week: days_of_week ?? null, time_from: time_from ?? null, time_until: time_until ?? null, channels: channels ? { ...defaultChannels, ...channels } : defaultChannels, max_uses_total: max_uses_total ?? null, max_uses_per_customer: max_uses_per_customer ?? null, coupon_code: coupon_code ?? null, priority: priority ?? 100, is_stackable: is_stackable ?? false, created_by: effectiveUserId }).select().maybeSingle();
+      const { data, error } = await admin.from("promotion_rules").insert({ tenant_id: tenantId, name, description: description ?? null, promo_type, target_item_id: target_item_id ?? null, target_category_id: target_category_id ?? null, free_item_id: free_item_id ?? null, discount_value: discount_value ?? null, special_price: special_price ?? null, buy_quantity: buy_quantity ?? null, get_quantity: get_quantity ?? null, min_order_amount: min_order_amount ?? null, valid_from: valid_from ?? null, valid_until: valid_until ?? null, days_of_week: days_of_week ?? null, time_from: time_from ?? null, time_until: time_until ?? null, channels: channels ? { ...defaultChannels, ...channels } : defaultChannels, max_uses_total: max_uses_total ?? null, max_uses_per_customer: max_uses_per_customer ?? null, coupon_code: coupon_code ?? null, priority: priority ?? 100, is_stackable: is_stackable ?? false, is_active: is_active ?? true, created_by: effectiveUserId }).select().maybeSingle();
       if (error) throw error;
       return new Response(JSON.stringify({ data }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
@@ -521,7 +521,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       const { promotion_id, ...updates } = body;
       if (!promotion_id) return new Response(JSON.stringify({ error: "promotion_id is required" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       const safeUpdates = { ...updates };
-      delete safeUpdates.action; delete safeUpdates.active_tenant_id; delete safeUpdates.tenant_id; delete safeUpdates.created_by; delete safeUpdates.current_uses;
+      delete safeUpdates.action; delete safeUpdates.active_tenant_id; delete safeUpdates.tenant_id; delete safeUpdates.created_by; delete safeUpdates.current_uses; delete safeUpdates.deleted_at;
       const { data, error } = await admin.from("promotion_rules").update(safeUpdates).eq("id", promotion_id).eq("tenant_id", tenantId).select().maybeSingle();
       if (error) throw error;
       return new Response(JSON.stringify({ data }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
@@ -530,7 +530,8 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
     if (action === "delete_promotion_rule") {
       const { promotion_id } = body;
       if (!promotion_id) return new Response(JSON.stringify({ error: "promotion_id is required" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
-      const { error } = await admin.from("promotion_rules").update({ is_active: false }).eq("id", promotion_id).eq("tenant_id", tenantId);
+      // Exclusao logica: some da tela e do motor, mas o historico (current_uses, created_by) fica.
+      const { error } = await admin.from("promotion_rules").update({ is_active: false, deleted_at: new Date().toISOString() }).eq("id", promotion_id).eq("tenant_id", tenantId);
       if (error) throw error;
       return new Response(JSON.stringify({ ok: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }

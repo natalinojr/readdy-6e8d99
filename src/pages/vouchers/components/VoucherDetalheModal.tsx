@@ -11,6 +11,13 @@ interface Props {
   onCancelled: () => void;
 }
 
+const TIPO_LABEL: Record<string, string> = {
+  gift_card: 'Gift Card',
+  discount: 'Desconto',
+  free_item: 'Item Grátis',
+  cashback: 'Cashback',
+};
+
 const TX_TYPE_LABELS: Record<string, { label: string; color: string; icon: string }> = {
   issued: { label: 'Emissão', color: 'text-green-600', icon: 'ri-add-circle-line' },
   redeemed: { label: 'Uso', color: 'text-red-600', icon: 'ri-subtract-line' },
@@ -108,7 +115,7 @@ export default function VoucherDetalheModal({ voucher, onClose, onCancelled }: P
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-xs text-zinc-400">Tipo</p>
-                <p className="text-sm font-semibold text-zinc-700 capitalize">{voucher.voucher_type.replace('_', ' ')}</p>
+                <p className="text-sm font-semibold text-zinc-700">{TIPO_LABEL[voucher.voucher_type] ?? voucher.voucher_type}</p>
               </div>
               <div className="text-right">
                 <p className="text-xs text-zinc-400">Status</p>
@@ -244,12 +251,13 @@ export default function VoucherDetalheModal({ voucher, onClose, onCancelled }: P
                           <p className="text-[10px] text-zinc-400">{formatDate(tx.created_at)}</p>
                         </div>
                       </div>
-                      <div className="text-right">
+                      {/* Desconto e item grátis não são saldo em R$: o amount da emissão é o % ou 1 uso. */}
+                      {isGiftOrCashback && <div className="text-right">
                         <p className={`text-sm font-bold ${tx.transaction_type === 'redeemed' ? 'text-red-600' : 'text-green-600'}`}>
                           {tx.transaction_type === 'redeemed' ? '-' : '+'}{formatCurrency(Math.abs(tx.amount))}
                         </p>
                         <p className="text-[10px] text-zinc-400">Saldo: {formatCurrency(tx.balance_after)}</p>
-                      </div>
+                      </div>}
                     </div>
                   );
                 })}
