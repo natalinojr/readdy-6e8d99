@@ -56,16 +56,19 @@ async function comPagamento(ctx: Ctx, pedidos: any[]) {
     bills.length ? ctx.admin.from('fin_accounts_payable').select('id, status, paid_date').in('id', bills) : Promise.resolve({ data: [] }),
     cats.length ? ctx.admin.from('fin_dre_categories').select('id, name').in('id', cats) : Promise.resolve({ data: [] }),
     bills.length ? ctx.admin.from('fin_inter_payments').select('bill_id, status').eq('tenant_id', ctx.tenantId).in('bill_id', bills)
-      .in('status', ['sending', 'sent', 'pending_approval', 'approved', 'scheduled', 'paid']) : Promise.resolve({ data: [] }),
+      .in('status', ['sending', 'sent', 'pending_approval', 'approved', 'scheduled', 'paid', 'cancelled', 'rejected']) : Promise.resolve({ data: [] }),
   ]);
   const bm = new Map((bs ?? []).map((b: any) => [b.id, b]));
   const cm = new Map((cs ?? []).map((c: any) => [c.id, c.name]));
   // Pix já saiu pelo Inter mas a conta só vira "paga" na baixa do extrato: sem isto a tela mostrava
   // "a pagar" + "Mandar para pagar" num pedido já pago (dono, 2026-09-25).
-  const pix = new Map<string, 'pago' | 'aguardando'>();
+  // Pix recusado/cancelado no app do Inter (dono, 2026-09-27): o pedido continua aprovado e a pagar, mas
+  // dizia só "Aprovado · a pagar" — agora avisa que o Pix foi recusado. Vale só se não há outro em curso.
+  const pix = new Map<string, 'pago' | 'aguardando' | 'recusado'>();
   for (const x of (ps ?? []) as any[]) {
     if (x.status === 'paid') pix.set(x.bill_id, 'pago');
-    else if (!pix.has(x.bill_id)) pix.set(x.bill_id, 'aguardando');
+    else if (['cancelled', 'rejected'].includes(x.status)) { if (!pix.has(x.bill_id)) pix.set(x.bill_id, 'recusado'); }
+    else if (pix.get(x.bill_id) !== 'pago') pix.set(x.bill_id, 'aguardando');
   }
   return pedidos.map((p) => {
     const b: any = p.bill_id ? bm.get(p.bill_id) : null;
