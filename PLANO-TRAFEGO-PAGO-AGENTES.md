@@ -117,6 +117,21 @@ Hoje o agente só olha os pedidos de **delivery** dos últimos 30 dias (`erposCo
 - Aviso de proposta nova pelo sino/WhatsApp do assistente, e aprovação também pelo assistente (já existe o padrão `AprovarSugestoesTrafego`).
 - Depois do prazo, o **Analista de Resultados** avalia se a estratégia bateu a meta e fecha o ciclo ("funcionou / não funcionou / por quê").
 
+### 3.1c Como o agente vira um gestor de tráfego de verdade
+
+O modelo de IA sabe muito de tráfego pago "de livro", mas de forma genérica e às vezes desatualizada (a Meta muda regras e produtos com frequência). Hoje o que existe é um resumo de boas práticas no prompt do `meta-ads-agent` (constante `SYSTEM`: fase de aprendizado, escalar no máximo 20%, CTR e frequência de referência, criativo de comida) mais as regras em código. Isso já é um **gestor júnior disciplinado**. Para virar um gestor sênior, cinco peças:
+
+1. **Manual do gestor (playbook) escrito e versionado.** Documento próprio (`supabase/functions/_shared/playbook-trafego.md`, entra no prompt com cache), em vez de frases soltas no código. Conteúdo: estrutura de conta (campanha de teste × campanha de escala), objetivo certo para cada caso (WhatsApp, vendas, tráfego, alcance local), públicos (raio, lookalike de clientes do ERPOS, remarketing de quem pediu), como testar criativo (1 variável por vez, orçamento e prazo mínimo de teste), quando escalar/pausar, sazonalidade de food, ofertas que funcionam em delivery, erros clássicos. Cada regra com **fonte** e **data de revisão**.
+2. **Revisão humana do manual.** Um gestor de tráfego de verdade (ou o dono) lê e corrige o manual antes de ligar o Estrategista, e o manual é revisado a cada 3 meses (checar mudanças da Meta: Advantage+, novos objetivos, políticas). A IA propõe atualizações; um humano aprova.
+3. **Método, não palpite.** Toda estratégia sai no formato de experimento: hipótese, dado que a justifica, o que muda, orçamento de teste, métrica de sucesso, prazo, critério de parada. Sem isso o Revisor devolve.
+4. **Memória da loja.** O Analista de Resultados grava o que funcionou e o que não funcionou em cada loja (prato, oferta, arte, horário, público, com números). O Estrategista lê esse histórico antes de propor. Com o tempo, cada loja tem seu próprio "livro" além do manual geral.
+5. **Prova antes de confiar.** Antes de dar autonomia:
+   - **Teste com o passado:** rodar o Estrategista sobre meses antigos da El Patrón e comparar o que ele teria proposto com o que de fato aconteceu.
+   - **Modo sombra:** 2–4 semanas propondo sem executar; o dono ou um gestor humano dá nota para cada proposta.
+   - **Placar na tela:** % de estratégias aprovadas, % que bateram a meta, dinheiro gasto × retorno. Se o placar cair, o sistema volta a pedir aprovação para tudo.
+
+Modelo: o Estrategista roda com **Opus** (decisão do dono) uma vez por semana; manual + memória + fatos calculados em código dão o contexto que o modelo sozinho não tem.
+
 ### 3.2 Estúdio de Criação (módulo separado)
 
 Tela própria (`/estudio`, menu Marketing), **não** dentro do Tráfego Pago. Serve qualquer parte do sistema que precise de imagem.
@@ -229,6 +244,7 @@ Integração no cardápio: botão "Gerar arte/foto padronizada" no item, que abr
 | **F2** | **Estúdio v1**: 4–6 modelos de arte (feed, story, item padronizado, promoção), Diretor de Arte (Sonnet), renderização no servidor, galeria com aprovar/baixar | F1 |
 | **F3** | Ligar Tráfego → Estúdio: `rotate_creative`/`create_campaign` geram pedido de arte; **Revisor** antes de subir; subir criativo novo no conjunto | F2 + permissões `ads_management`/`pages_manage_ads` |
 | **F4** | **Monitor** 3/3h + **Analista de Resultados** (arte ↔ resultado ↔ pedidos ERPOS) + relatório semanal | F3 |
+| **F4b** | **Manual do gestor** (playbook) escrito + revisão humana; teste do Estrategista com o passado da El Patrón | pode começar já, em paralelo |
 | **F5a** | **Inteligência da loja**: fatos por canal (balcão, mesa, autoatendimento, delivery próprio, iFood, retirada) + margem + estoque + clientes; relatório semanal "oportunidades" só para leitura | nada (pode vir antes, em paralelo à F1) |
 | **F5b** | **Estrategista** semanal gerando propostas + fila de aprovação (permissão `marketing_aprovar_estrategia`, tela Aprovações) + avaliação da estratégia depois do prazo + tela "Autonomia e travas" (tudo configurável) | F5a + F4 |
 | **F6** | Modos B, C e D de imagem (conectores de provedores externos) | F2 |
