@@ -74,6 +74,8 @@ const REGRAS: Record<string, (c: ContextoAcesso) => boolean> = {
   'pedidos-atrasados': (c) => algum(c, 'gestao_pedidos', 'gestor_pedidos_acessar', 'kds_acessar'),
   'impressora-parada': (c) => (c.pode('configuracoes_editar') && c.pode('cfg_impressoras')) || c.pode('gestao_pedidos'),
   'caixa-aberto': (c) => algum(c, 'pdv_abrir_caixa', 'pdv_fechar_caixa', 'rel_caixa'),
+  // Fechamentos passados: quem fecha caixa ou vê o Relatórios › Caixa.
+  'fechamento-caixa': (c) => algum(c, 'pdv_fechar_caixa', 'rel_caixa'),
   // iFood: vendas é leitura de faturamento (mesma turma do Vendas do dia) ou quem vê a aba iFood;
   // repasses e custo são do Financeiro › iFood.
   // Loja sem iFood: nenhuma (dono, 2026-09-26).
