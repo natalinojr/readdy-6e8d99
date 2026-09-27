@@ -152,7 +152,11 @@ export default function MotoboyPage() {
       });
       const data = await res.json();
       if (data.ok) {
-        setOrder((o) => (o ? { ...o, motoboy_status: signal, claimed_by_id: session?.driver_id ?? o.claimed_by_id } : o));
+        // O horário do sinal também entra no andamento (a edge grava o mesmo em motoboy_timeline).
+        setOrder((o) => (o ? {
+          ...o, motoboy_status: signal, claimed_by_id: session?.driver_id ?? o.claimed_by_id,
+          motoboy_timeline: { ...(o.motoboy_timeline ?? {}), [signal]: new Date().toISOString() },
+        } : o));
         setShowProblema(false);
         setMotivo('');
       } else if (data.error === 'assumido_por_outro') {

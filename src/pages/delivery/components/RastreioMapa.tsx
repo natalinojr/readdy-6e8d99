@@ -21,15 +21,16 @@ const casaIcon = L.divIcon({
   iconSize: [32, 32], iconAnchor: [16, 16],
 });
 
-// Enquadra moto + casa na 1ª vez; depois só acompanha a moto se ela sair da tela.
+// Enquadra moto + casa na 1ª vez (e de novo se aparecer um ponto que faltava);
+// depois só acompanha a moto se ela sair da tela.
 function Enquadrar({ moto, casa }: { moto: [number, number] | null; casa: [number, number] | null }) {
   const map = useMap();
-  const feito = useRef(false);
+  const enquadrados = useRef(0);
   useEffect(() => {
     const pts = [moto, casa].filter((p): p is [number, number] => !!p);
     if (pts.length === 0) return;
-    if (!feito.current) {
-      feito.current = true;
+    if (pts.length > enquadrados.current) {
+      enquadrados.current = pts.length;
       // O mapa monta dentro do Suspense: acerta o tamanho antes de enquadrar (senão a casa sai cortada).
       map.invalidateSize();
       if (pts.length === 1) map.setView(pts[0], 16);

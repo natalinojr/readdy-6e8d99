@@ -3583,3 +3583,12 @@ Sem SW ativo o POST cai no Vercel e falha — por isso o destino só existe no S
   PEGADINHAS: a regra `fin_accounts_payable_reference_type_check` lista as origens aceitas — origem nova exige drop+add;
   `dev_error_events.source` só aceita front|edge|print|fiscal|cron|sw|other — usar `fn_dev_error_report`.
   Revisão: 2 rodadas com Opus (1ª reprovou: reference_type, corrida, linhas órfãs; 2ª aprovou).
+- **Validação das Fases 1-2 na nuvem (2026-09-27, Testes PDV)**: portal do motoboy no celular (GPS simulado), Mapa do
+  Gestor, "chega em ~X min" do cliente e acerto (fechar → conta em Contas a Pagar → desfazer) passaram. Achados:
+  (1) `list_delivery_board` só aceitava `delivery_platform` nulo/'propria' — pedido do PDV Delivery com canal
+  WhatsApp/Instagram/Telefone/Site/Presencial (entrega própria) sumia do Gestor; agora fica fora só retirada e
+  `PLATAFORMAS_EXTERNAS` (ifood/rappi/uber_eats/99food — mesma lista de `externo` em `src/constants/delivery.ts`).
+  (2) `order-write`: pedido de origem delivery com TODOS os itens `skip_kds` nasce `delivered` e nunca chega ao motoboy
+  (na Testes PDV todo o cardápio é skip_kds) — regra antiga, não mexida. (3) Sem `delivery_lat/lng` (loja por bairro)
+  não há ETA para o cliente — só a moto. (4) Teste de "Desfazer": o painel do navegador responde "Cancelar" ao
+  `window.confirm`; sobrescrever `window.confirm` na aba para testar.
