@@ -14,6 +14,8 @@ import type { Voucher } from '@/types/vouchers';
 import type { PedidoAgrupado } from '@/hooks/usePedidosAgrupados';
 import EtapaSelecionarPedidos from './pagamento/EtapaSelecionarPedidos';
 import AutorizacaoGerenteModal from '@/components/feature/AutorizacaoGerenteModal';
+import { usePermissoes } from '@/hooks/usePermissoes';
+import { descontoDoVinculado, descontoQueFecha, aplicarDescontoEmPedidoExistente } from '@/lib/descontoVinculados';
 import CortesiaDetalhesModal from './CortesiaDetalhesModal';
 import type { KDSPedido } from '@/types/kds';
 
@@ -85,6 +87,7 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
   const { caixa, sessao } = useSessao();
   const { addPedido, reloadOrders, pedidos: kdsPedidos, stationMap: kdsStationMap } = useKDS();
   const { user } = useAuth();
+  const { hasPermissao } = usePermissoes();
   const { getImpressoraParaEstacao, mapaEstacoes } = useImpressoras();
   const { settings } = useSystemSettings();
   const { pedidosRelacionados, carrinhoComoPedido, reloadOrders: reloadPedidosAgrupados } = usePedidosAgrupados(destino, carrinho, total);
@@ -206,6 +209,16 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
     if (descontoTipoManual === 'percentual' && n > 100) { setDescontoError('Percentual máximo é 100%'); return; }
     valor = Math.min(Math.round(valor * 100) / 100, baseDesconto);
     if (valor <= 0) { setDescontoError('Desconto inválido para este total'); return; }
+    // Quem tem a permissão "Aplicar desconto" (pdv_desconto) aplica direto; sem ela,
+    // o desconto continua pedindo PIN de supervisão/gerente/admin.
+    if (hasPermissao('pdv_desconto')) {
+      const autor = user?.nome ?? 'Operador';
+      setDescontoManual(valor);
+      setDescontoAutorizadoPor(autor);
+      setPagamentos([]);
+      toastSuccess('Desconto aplicado', `${formatPrice(valor)} por ${autor}`);
+      return;
+    }
     setDescontoPendente(valor);
     setShowDescontoAuth(true);
   }
@@ -653,6 +666,23 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
         return { ...p, valor: Number((p.valor - somaExistentes).toFixed(2)) };
       });
 
+      // Desconto manual com pedidos já lançados junto: cada existente recebe como desconto
+      // o que falta entre o total dele e a parte que ele recebe (fecha exato, senão fica
+      // "parcialmente pago"); o pedido do carrinho fica com o resto do desconto.
+      const descontosExistentes = descontoManual > 0.001
+        ? pedidosExistentes.map((pedido, i) =>
+            descontoDoVinculado(pedido.total, pagamentosParaPedidosExistentes[i].pagamentos.map((p) => p.valor)))
+        : pedidosExistentes.map(() => 0);
+      // Ajustado para a soma dos pagamentos do carrinho (como o order-write soma) alcançar o
+      // novo total — senão o pedido pode ficar "parcialmente pago" por fração de centavo.
+      const descontoManualCarrinho = descontoManual > 0.001
+        ? descontoQueFecha(
+            Math.max(0, total - desconto),
+            descontoManual - descontosExistentes.reduce((s, d) => s + d, 0),
+            pagamentosCarrinho.map((p) => p.valor),
+          )
+        : 0;
+
       // 2. Cria o pedido do carrinho se estiver selecionado
       if (effectiveIncluirCarrinho && carrinhoSnapshot.length > 0) {
         const result = await finalizarPedido(
@@ -668,11 +698,11 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
             paymentGroupSize: paymentGroupId ? totalPedidosPagando : null,
           },
           undefined,
-          (descontoManual > 0 || desconto > 0)
+          (descontoManualCarrinho > 0 || desconto > 0)
             ? {
-                amount: descontoManual + desconto,
+                amount: descontoManualCarrinho + desconto,
                 authorizedBy: [
-                  descontoManual > 0 ? descontoAutorizadoPor : null,
+                  descontoManualCarrinho > 0 ? descontoAutorizadoPor : null,
                   voucherAplicado ? `voucher ${voucherAplicado.voucher.code} (${formatPrice(desconto)})` : null,
                 ].filter(Boolean).join(' + ') || null,
               }
@@ -697,9 +727,17 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
       // os métodos de pagamento continuam sequenciais (ver pagarPedidoExistente).
       // Isso troca N chamadas de rede em série por ~1 tempo de rede no total.
       await Promise.all(
-        pagamentosParaPedidosExistentes.map(({ orderId, pagamentos: pg }) =>
-          pagarPedidoExistente(orderId, pg, paymentGroupId, totalPedidosPagando),
-        ),
+        pagamentosParaPedidosExistentes.map(async ({ orderId, pagamentos: pg }, i) => {
+          // Parte do desconto deste pedido antes de gravar o pagamento dele
+          await aplicarDescontoEmPedidoExistente({
+            orderId,
+            tenantId: user?.tenantId,
+            totalOriginal: pedidosExistentes[i].total,
+            desconto: descontosExistentes[i],
+            autorizadoPor: descontoAutorizadoPor,
+          });
+          return pagarPedidoExistente(orderId, pg, paymentGroupId, totalPedidosPagando);
+        }),
       );
 
       // Sem carrinho (só pedidos já lançados sendo pagos): a cobrança aprovada ainda não foi
@@ -1462,7 +1500,9 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
                       </div>
                     )}
                     <p className="text-[10px] text-zinc-400">
-                      O desconto exige autorização de gerente/admin (PIN ou notificação).
+                      {hasPermissao('pdv_desconto')
+                        ? 'Você tem permissão para aplicar desconto.'
+                        : 'O desconto exige autorização de supervisão, gerente ou admin.'}
                     </p>
                   </>
                 )}
@@ -1638,7 +1678,7 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
       {showDescontoAuth && (
         <AutorizacaoGerenteModal
           titulo="Autorizar Desconto"
-          descricao={`Libere o desconto de ${formatPrice(descontoPendente)} com credenciais de gerente ou admin.`}
+          descricao={`Libere o desconto de ${formatPrice(descontoPendente)} com credenciais de supervisão, gerente ou admin.`}
           niveisPermitidos={['supervisao', 'gerente', 'admin']}
           tenantId={user?.tenantId ?? ''}
           onAutorizado={(autorizadoPor) => {

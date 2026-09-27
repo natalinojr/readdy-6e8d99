@@ -52,6 +52,8 @@ function quoteFromTiers(km: number, tiers: FaixaEntrega[]): { taxa: number; temp
 // Velocidade media urbana de moto p/ estimar o tempo de rota quando o ORS nao
 // retorna duracao (fallback). 25 km/h e conservador p/ cidade pequena.
 const MOTO_KMH = 25;
+// Apps de fora (mesma lista de `externo` em src/constants/delivery.ts): a entrega e do app.
+const PLATAFORMAS_EXTERNAS = new Set(["ifood", "rappi", "uber_eats", "99food"]);
 
 // ── Estado de abertura do delivery (sessao + pausa + agendamento + manual) ─────
 // Fonte da verdade do "delivery aberto agora". Combina:
@@ -954,9 +956,10 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         const RECENTE_MS = 3 * 60 * 60 * 1000; // entregues nas ultimas 3h ficam na coluna "Entregue"
         const agora = Date.now();
         const lista = ((orders ?? []) as Record<string, unknown>[]).filter((o) => {
-          // So entrega propria (propria ou sem plataforma); fora iFood e retirada.
+          // So entrega propria; fora retirada e os apps de fora (quem entrega e o app).
+          // WhatsApp/Instagram/Telefone/Site/Presencial do PDV Delivery SAO entrega propria.
           const plat = o.delivery_platform as string | null;
-          if (plat && plat !== "propria") return false;
+          if (plat && (plat === "retirada" || PLATAFORMAS_EXTERNAS.has(plat))) return false;
           if (o.status === "delivered") {
             const ref = (o.motoboy_updated_at as string | null) ?? (o.updated_at as string | null);
             const t = ref ? new Date(ref).getTime() : 0;

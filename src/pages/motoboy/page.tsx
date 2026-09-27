@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { Link } from 'react-router-dom';
+import { useMotoboyGps, textoGps } from './useMotoboyGps';
 
 function edgeUrl(): string {
   const base = (import.meta.env.VITE_PUBLIC_SUPABASE_URL as string || '').replace(/\/$/, '');
@@ -135,6 +136,13 @@ export default function MotoboyPage() {
 
   useEffect(() => { carregar(); }, [carregar]);
 
+  // GPS: liga enquanto ESTE motoboy está com o pedido a caminho/em rota (ou com o turno ligado na lista).
+  const turnoLigado = (() => { try { return localStorage.getItem('erpos_motoboy_turno') === '1'; } catch { return false; } })();
+  const minhaEntregaAtiva = !!order && !!session && order.claimed_by_id === session.driver_id && order.status !== 'delivered'
+    && (order.motoboy_status === 'a_caminho_loja' || order.motoboy_status === 'coletou');
+  const gps = useMotoboyGps(session?.tenant_id, session?.driver_id, !!session && (minhaEntregaAtiva || turnoLigado));
+  const avisoGps = textoGps(gps.estado);
+
   const sinalizar = async (signal: string, motivoTxt?: string) => {
     setEnviando(signal);
     try {
@@ -144,7 +152,11 @@ export default function MotoboyPage() {
       });
       const data = await res.json();
       if (data.ok) {
-        setOrder((o) => (o ? { ...o, motoboy_status: signal, claimed_by_id: session?.driver_id ?? o.claimed_by_id } : o));
+        // O horário do sinal também entra no andamento (a edge grava o mesmo em motoboy_timeline).
+        setOrder((o) => (o ? {
+          ...o, motoboy_status: signal, claimed_by_id: session?.driver_id ?? o.claimed_by_id,
+          motoboy_timeline: { ...(o.motoboy_timeline ?? {}), [signal]: new Date().toISOString() },
+        } : o));
         setShowProblema(false);
         setMotivo('');
       } else if (data.error === 'assumido_por_outro') {
@@ -252,6 +264,12 @@ export default function MotoboyPage() {
             </span>
           ) : null}
         </div>
+
+        {avisoGps ? (
+          <div className={'flex items-start gap-2 rounded-2xl border px-3 py-2 text-[11px] font-semibold ' + avisoGps.cls}>
+            <i className={avisoGps.icon + ' text-sm mt-px'} /> <span>{avisoGps.texto}</span>
+          </div>
+        ) : null}
 
         {/* Alerta "Avisar o motoboy" (ex.: tem bebida) */}
         {order.alertas && order.alertas.length > 0 ? (

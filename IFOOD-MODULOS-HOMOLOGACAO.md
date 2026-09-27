@@ -67,21 +67,24 @@ Review; loja de teste 4117700; status "concluí o desenvolvimento".
 > e idempotency-key; polling de eventos a cada 30 s com acknowledgment imediato e deduplicação por eventId; status do
 > entregador, código de entrega e de coleta na tela; cancelamento só com motivos do /cancellationReasons; tratamento de
 > cancelamento pelo iFood/cliente; aceitar/recusar troca de endereço dentro do prazo; token renovado antes de vencer;
-> backoff exponencial com jitter em 429/5xx (POST que muda estado não é repetido); logs com orderId/eventId por 30 dias e
+> backoff exponencial com jitter em 429/5xx, respeitando Retry-After (POST que muda estado não é repetido); logs com orderId/eventId por 30 dias e
 > aviso na configuração após mais de 5 falhas seguidas do polling. Observação: pela FAQ, a loja de teste não aloca entregador nem gera eventos de
 > Sob Demanda; demonstramos a cotação, o registro e o tratamento dos eventos com simulação e podemos repetir com uma loja
 > real quando liberado.
 >
-> **Merchant:** tela "Loja iFood": dados da loja, status por canal com as validações, pausas (criar com duração/motivo,
-> listar e remover; 409 de sobreposição tratado) e horários de funcionamento por dia/turno (PUT completo, validação de
-> sobreposição antes do envio). Status consultado sob demanda (nunca abaixo de 30 s).
+> **Merchant:** tela "Loja iFood" com dados da loja, status por canal com as validações, pausas (criar com duração e
+> motivo, listar e remover; 409 de sobreposição tratado, embora a loja de teste tenha aceitado pausa sobreposta sem 409)
+> e horários de funcionamento por dia/turno (PUT completo, validação de sobreposição antes do envio). Lista de lojas
+> paginada (page/size). Como o GET de horários e de pausas leva alguns instantes para refletir o PUT/POST/DELETE, a tela
+> mostra o que o próprio iFood devolveu na gravação. Não há consulta automática de status: ele é lido só ao abrir a
+> tela ou no botão Atualizar.
 >
-> **Review:** lista paginada (até 50 por página) com filtro de período, detalhe, resposta (10–300 caracteres, só para
-> avaliação sem resposta; 409/422 tratados) e resumo (nota, total e válidas). A tela tem o link para a Política de
-> Avaliações do iFood. A loja de teste está sem avaliações (lista vazia e /summary 404, tratado como "sem nota ainda");
-> para a demonstração da resposta, pedimos orientação de como gerar avaliações de teste.
+> **Review:** lista paginada (até 50 por página) com filtro de período, detalhe por id, resposta (10 a 300 caracteres,
+> só para avaliação sem resposta; 409/422 tratados) e resumo (nota, total e válidas). A tela tem o link para a Política
+> de Avaliações do iFood. A loja de teste está sem avaliações (lista vazia e /summary 404, tratado como "sem nota
+> ainda"); para a demonstração da resposta, pedimos orientação de como gerar avaliações de teste.
 >
-> Erros 400/401/403/404/409/429/5xx mostrados em português para a loja. Ficamos no aguardo das orientações e do roteiro
+> Erros 400/401/403/404/409/429/5xx são mostrados em português para a loja. Ficamos no aguardo das orientações e do roteiro
 > de demonstração.
 >
 > Obrigado!

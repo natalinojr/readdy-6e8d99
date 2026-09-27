@@ -3549,3 +3549,58 @@ Sem SW ativo o POST cai no Vercel e falha — por isso o destino só existe no S
   `crm_stage_criteria` (a do servidor tem "90 dias"/"6 pedidos" fixos no texto); Vouchers carrega tudo e filtra na
   tela (filtro no servidor zerava os números do topo) e trata `active` com `expires_at` passado como expirado;
   `create_promotion_rule` ignora `is_active` — o modal desliga logo depois quando o usuário desmarca "Ativa".
+- **Delivery Fase 1 — GPS do motoboy + rastreio do cliente (2026-09-26)**: tabelas `delivery_driver_positions` (1 linha
+  por motoboy, última posição) e `delivery_driver_position_history` (histórico; cron `driver-positions-limpeza` apaga > 7 dias,
+  06h40 UTC). RLS: SELECT só `authenticated` com `auth_is_member_of(tenant_id)`; anon sem acesso; escrita só `service_role`.
+  Escrita pela RPC `fn_driver_ping` (security definer, só service_role): valida motoboy (loja + ativo), limita 1 gravação a
+  cada 10 s por motoboy, faz upsert + histórico e manda broadcast público `drivers-ping:<tenant>` (evento `driver_position`,
+  payload só `{ driver_id }` — a posição NUNCA trafega no canal público). Edge `motoboy-signal` (verify_jwt false) ganhou
+  `ping_position` e `track_order` (cliente: `tenant_id` + `order_number`, igual ao `get_order_status`; devolve a posição do
+  motoboy só desse pedido e só em rota: `out_for_delivery_at` + `motoboy_status='coletou'` + não entregue/cancelado/retirada;
+  posição > 15 min não sai). Previsão recalculada sem API externa: linha reta × 1,3 na velocidade da rota ORS do pedido
+  (`delivery_distance_km / delivery_route_min`, limitada a 12–45 km/h; sem rota = 25 km/h).
+  Front: `src/pages/motoboy/useMotoboyGps.ts` (watchPosition só com pedido dele `a_caminho_loja`/`coletou` ou **turno ligado**
+  — chave `erpos_motoboy_turno` no aparelho; envia com ≥15 s **e** ≥30 m, ou a cada 3 min parado; descarta precisão > 300 m;
+  Wake Lock para a tela não apagar) usado na lista `/entregas/:slug` e em `/motoboy/:id`; Gestor: `useDriverPositions`
+  (carga 1x + refetch com debounce 4 s no broadcast, só com o mapa aberto) e motos no `MapaEntregasGestor` (cinza > 10 min);
+  cliente: `RastreioMapa` (lazy, leaflet fora do bundle do cardápio) no `AcompanharPedido`, com `track_order` a cada 15 s só em rota.
+  **Limitação:** navegador só manda GPS com a tela aberta (o aviso "mantenha esta tela aberta" aparece para o motoboy).
+  **Decisão:** o rastreio foi para a `motoboy-signal` e não para o `get_order_status` da `delivery-write` porque a sessão só
+  tinha deploy por MCP (arquivo inline) e a `delivery-write` tem 137 KB — transcrever tudo é arriscado.
+  PEGADINHAS: (1) leaflet dentro de `Suspense`/lazy precisa de `map.invalidateSize()` antes do `fitBounds`, senão o ponto sai
+  cortado; (2) teste de edge sem curl (proxy bloqueia supabase.co no ambiente de nuvem): `net.http_post` no SQL e ler
+  `net._http_response` — a resposta chega assíncrona, e um MCP instável pode deixar a posição "velha" (> 15 min) entre chamadas.
+- **Delivery Fase 2 — acerto financeiro dos entregadores (2026-09-27)**: regra por loja em
+  `system_settings.delivery_config.acerto_motoboy` ({ativo, modo: por_entrega|faixa_km|diaria_mais_entrega|percentual_taxa,
+  valor_entrega, faixas[{ate_km,valor}], diaria, percentual}), editada em Config. do Delivery › "Pagamento dos entregadores"
+  (`AcertoRegraCard` + `acertoCfg.ts`; salva junto com o resto, só admin). Lançamentos em `delivery_driver_ledger`
+  (entrega | diaria | adiantamento | estorno; aberto | fechado | estornado) nascem pelo gatilho `trg_delivery_driver_ledger`
+  em `orders` (AFTER UPDATE OF status, motoboy_driver_id, WHEN entra/sai de 'delivered'; + AFTER INSERT já entregue) —
+  um lugar só pega todos os caminhos que gravam "entregue". Valor CONGELADO na entrega (`regra` = snapshot). Idempotente por
+  pedido (índices únicos parciais). Saiu de "entregue": aberto → estornado; já acertado → linha `estorno` negativa.
+  Falha do gatilho nunca bloqueia o pedido: vai para `fn_dev_error_report` (source 'other').
+  Financeiro › **Entregadores** (`EntregadoresTab`, permissão `fin_entregadores`): resumo (`fn_acerto_motoboy_resumo`),
+  adiantamento, chave Pix do motoboy (`delivery_drivers.pix_key/pix_key_kind`), "Fechar acerto" (`fn_acerto_motoboy_fechar`)
+  → UMA conta em `fin_accounts_payable` pendente, Pix, com DRE (escolhida ou "Entregadores" criada), `reference_type =
+  'delivery_driver_settlement'`, `reference_id` = acerto; "Desfazer" (`fn_acerto_motoboy_desfazer`) só com a conta pendente e
+  sem Pix ativo; ranking (`fn_delivery_ranking_entregadores`: entregas, tempo total/em rota, atrasos pelo SLA, km, custo).
+  CRITÉRIOS: (1) o acerto fecha TUDO em aberto até a data final (nada fica esquecido antes do período); (2) totais saem do
+  próprio `UPDATE ... RETURNING` e o gatilho trava a linha (`FOR UPDATE`) + guarda de status — sem corrida fechar × entregar/
+  cancelar; (3) diárias nascem no fechamento, só de dias com entrega fechada nele, uma por (motoboy, dia); (4) saldo ≤ 0 não
+  fecha (exceção desfaz tudo); (5) conta a pagar de acerto só some pelo "Desfazer" (gatilho `trg_payable_acerto_guard`,
+  liberado por `set_config('erpos.desfazendo_acerto')`); (6) permissão por LOJA EXPLÍCITA (`_acerto_motoboy_pode`: admin, ou
+  gerente/financeiro sem `fin_entregadores` negado) — NÃO usar `has_permission`, que pega a última loja (LIMIT 1);
+  (7) motoboy com lançamento não pode ser apagado (FK restrict) — a tela manda "Bloquear".
+  PEGADINHAS: a regra `fin_accounts_payable_reference_type_check` lista as origens aceitas — origem nova exige drop+add;
+  `dev_error_events.source` só aceita front|edge|print|fiscal|cron|sw|other — usar `fn_dev_error_report`.
+  Revisão: 2 rodadas com Opus (1ª reprovou: reference_type, corrida, linhas órfãs; 2ª aprovou).
+- **Validação das Fases 1-2 na nuvem (2026-09-27, Testes PDV)**: portal do motoboy no celular (GPS simulado), Mapa do
+  Gestor, "chega em ~X min" do cliente e acerto (fechar → conta em Contas a Pagar → desfazer) passaram. Achados:
+  (1) `list_delivery_board` só aceitava `delivery_platform` nulo/'propria' — pedido do PDV Delivery com canal
+  WhatsApp/Instagram/Telefone/Site/Presencial (entrega própria) sumia do Gestor; agora fica fora só retirada e
+  `PLATAFORMAS_EXTERNAS` (ifood/rappi/uber_eats/99food — mesma lista de `externo` em `src/constants/delivery.ts`).
+  (2) `order-write`: pedido de origem delivery com TODOS os itens `skip_kds` nascia `delivered` e nunca chegava ao
+  motoboy (na Testes PDV todo o cardápio é skip_kds). Decisão do dono (09-27): só entrega do APP (ifood/rappi/uber_eats/
+  99food) continua nascendo entregue; entrega PRÓPRIA nasce `ready` → "Pronto · aguardando motoboy" no Gestor. (3) Sem `delivery_lat/lng` (loja por bairro)
+  não há ETA para o cliente — só a moto. (4) Teste de "Desfazer": o painel do navegador responde "Cancelar" ao
+  `window.confirm`; sobrescrever `window.confirm` na aba para testar.

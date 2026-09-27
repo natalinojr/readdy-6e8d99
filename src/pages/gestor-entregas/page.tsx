@@ -70,7 +70,7 @@ export default function GestorEntregasPage() {
 
   const pontosMapa: PontoGestor[] = baseFiltrada.map((o) => ({
     id: o.id, number: o.number, cliente: o.cliente, endereco: o.endereco,
-    lat: o.lat, lng: o.lng, atrasado: estaAtrasado(o), motoboy_status: o.motoboy_status, driver_nome: o.driver_nome,
+    lat: o.lat, lng: o.lng, atrasado: estaAtrasado(o), motoboy_status: o.motoboy_status, driver_nome: o.driver_nome, driver_id: o.driver_id,
   }));
 
   return (
@@ -265,7 +265,7 @@ export default function GestorEntregasPage() {
         <IfoodEntregaConfigModal tenantId={tenantId} onClose={() => setIfoodCfgOpen(false)} onChanged={recarregarIfoodCfg} />
       )}
 
-      {showMapa && <MapaEntregasGestor pontos={pontosMapa} onClose={() => setShowMapa(false)} />}
+      {showMapa && <MapaEntregasGestor pontos={pontosMapa} tenantId={tenantId} onClose={() => setShowMapa(false)} />}
 
       {modalProblema && (
         <ProblemaModal busy={!!busy} onCancelar={() => setModalProblema(null)}

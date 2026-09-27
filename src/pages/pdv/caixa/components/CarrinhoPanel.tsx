@@ -268,6 +268,26 @@ export default function CarrinhoPanel({ onDestino, onPagar, onLimpar, onEditItem
     if (descontoTipo === 'percentual') {
       realVal = (subtotal * v) / 100;
     }
+    // Quem tem a permissão "Aplicar desconto" (pdv_desconto) aplica direto; sem ela,
+    // o desconto pede senha in loco ou aprovação por notificação.
+    if (hasPermissao('pdv_desconto')) {
+      const autor = user?.nome ?? 'Operador';
+      setDesconto(realVal);
+      setDescontoLocal(realVal);
+      setDescontoAutorizadoPor(autor);
+      registrarEvento({
+        tipo: 'desconto_aplicado',
+        severidade: 'aviso',
+        usuario: autor,
+        perfil: user?.perfil ?? 'caixa',
+        descricao: `Desconto de ${formatPrice(realVal)} aplicado por ${autor} (permissão "Aplicar desconto")`,
+        entidade: 'Pedido',
+        entidadeId: destino?.tipo === 'mesa' ? `Mesa ${destino.mesaNumero}` : 'PDV',
+        antes: { total_sem_desconto: formatPrice(subtotal) },
+        depois: { desconto: formatPrice(realVal), autorizador: autor, metodo: 'Permissão do usuário' },
+      });
+      return;
+    }
     setDescontoModalValor(realVal);
     setShowDescontoModal(true);
   };
@@ -674,7 +694,7 @@ export default function CarrinhoPanel({ onDestino, onPagar, onLimpar, onEditItem
                     </button>
                   </div>
                 </div>
-              ) : hasPermissao('pdv_desconto') ? (
+              ) : (
                 <div className="space-y-1.5">
                   <div className="flex items-center gap-1.5">
                     <i className="ri-shield-keyhole-line text-zinc-400 text-sm flex-shrink-0" />
@@ -708,15 +728,15 @@ export default function CarrinhoPanel({ onDestino, onPagar, onLimpar, onEditItem
                     <button
                       onClick={handleAbrirModalDesconto}
                       disabled={!descontoTemp || parseFloat(descontoTemp) <= 0}
-                      title="Autorizar desconto — senha in loco ou notificação"
+                      title={hasPermissao('pdv_desconto') ? 'Aplicar desconto' : 'Autorizar desconto — senha in loco ou notificação'}
                       className="text-xs font-bold bg-zinc-800 text-white hover:bg-zinc-700 px-2.5 py-1.5 rounded cursor-pointer disabled:opacity-40 whitespace-nowrap transition-colors flex items-center gap-1 flex-shrink-0"
                     >
                       <i className="ri-shield-check-line text-xs" />
-                      Autorizar
+                      {hasPermissao('pdv_desconto') ? 'Aplicar' : 'Autorizar'}
                     </button>
                   </div>
                 </div>
-              ) : null}
+              )}
               {descontoAutorizadoPor && (
                 <p className="text-[10px] text-green-600 flex items-center gap-1 pl-5">
                   <i className="ri-shield-check-line" /> Autorizado por {descontoAutorizadoPor}
