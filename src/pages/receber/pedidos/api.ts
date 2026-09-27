@@ -29,6 +29,7 @@ export interface Pedido {
   categoria: string | null;
   freelancer_funcao: string | null;
   dias: string[] | null;
+  valores_dia: number[] | null;
   purchase_id: string | null;
   bill_id: string | null;
   obs: string | null;

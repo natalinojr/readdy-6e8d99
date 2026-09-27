@@ -61,16 +61,20 @@ const ROTULO: Record<TipoPedido, string> = { reembolso: 'Reembolso', freelancer:
 const SEMANA = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
 /** '2026-09-26' → '26/09 (sáb)'. */
 const diaCurto = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)} (${SEMANA[new Date(`${iso}T12:00:00Z`).getUTCDay()]})`;
-/** Dias trabalhados do freela para o dono saber o que está aprovando: "Dias 24/09 (qui), 26/09 (sáb)". */
-export function textoDias(dias: string[] | null | undefined): string {
-  const lista = [...new Set((dias ?? []).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)))].sort();
-  if (!lista.length) return '';
-  return `${lista.length > 1 ? 'Dias' : 'Dia'} ${lista.map(diaCurto).join(', ')}`;
+/** Dias trabalhados do freela para o dono saber o que está aprovando: "Dias 24/09 (qui), 26/09 (sáb)".
+ *  Com valor por dia (alinhado a `dias`): "Dias 24/09 (qui) R$ 100,00, 26/09 (sáb) R$ 120,00". */
+export function textoDias(dias: string[] | null | undefined, valores?: (number | string)[] | null): string {
+  const pares = (dias ?? []).map((d, i) => ({ d, v: valores?.length === dias?.length ? Number(valores[i]) : NaN }))
+    .filter((x) => /^\d{4}-\d{2}-\d{2}$/.test(x.d))
+    .filter((x, i, a) => a.findIndex((y) => y.d === x.d) === i)
+    .sort((a, b) => a.d.localeCompare(b.d));
+  if (!pares.length) return '';
+  return `${pares.length > 1 ? 'Dias' : 'Dia'} ${pares.map((x) => `${diaCurto(x.d)}${x.v > 0 ? ` ${brl(x.v)}` : ''}`).join(', ')}`;
 }
 
 /** Avisa o dono no 📥 do chat (uma pendência por pedido). */
-export async function pendenciaDoPedido(admin: any, p: { id: string; tenant_id: string; tipo: TipoPedido; valor: number; favorecido_nome: string; descricao: string; solicitado_por_nome: string | null; dias?: string[] | null }) {
-  const dias = p.tipo === 'freelancer' ? textoDias(p.dias) : '';
+export async function pendenciaDoPedido(admin: any, p: { id: string; tenant_id: string; tipo: TipoPedido; valor: number; favorecido_nome: string; descricao: string; solicitado_por_nome: string | null; dias?: string[] | null; valores_dia?: number[] | null }) {
+  const dias = p.tipo === 'freelancer' ? textoDias(p.dias, p.valores_dia) : '';
   const { error } = await admin.rpc('fn_pendencia_upsert', {
     p_tenant: p.tenant_id, p_kind: 'pedido_pagamento', p_ref: p.id,
     p_titulo: `${ROTULO[p.tipo]} de ${brl(p.valor)} — ${p.favorecido_nome}`,

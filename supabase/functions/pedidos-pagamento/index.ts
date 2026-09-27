@@ -28,7 +28,7 @@ const somaDias = (iso: string, d: number) => new Date(Date.parse(`${iso}T12:00:0
 const txt = (s: unknown, max = 300) => String(s ?? '').trim().slice(0, max);
 const dataOk = (d: unknown) => typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d) && !Number.isNaN(Date.parse(`${d}T12:00:00Z`));
 
-const CAMPOS = 'id, tipo, status, descricao, valor, data_gasto, vencimento, favorecido_nome, favorecido_doc, pix_chave, dre_category_id, supplier_id, freelancer_id, freelancer_funcao, dias, comprovante_path, purchase_id, bill_id, obs, solicitado_por, solicitado_por_nome, decidido_por_nome, decidido_em, motivo_recusa, created_at';
+const CAMPOS = 'id, tipo, status, descricao, valor, data_gasto, vencimento, favorecido_nome, favorecido_doc, pix_chave, dre_category_id, supplier_id, freelancer_id, freelancer_funcao, dias, valores_dia, comprovante_path, purchase_id, bill_id, obs, solicitado_por, solicitado_por_nome, decidido_por_nome, decidido_em, motivo_recusa, created_at';
 
 interface Ctx { admin: any; tenantId: string; userId: string; email: string | null; role: string; perms: Record<string, boolean> }
 
@@ -143,6 +143,17 @@ async function criar(ctx: Ctx, body: Record<string, any>) {
     const dias = [...new Set((Array.isArray(body.dias) ? body.dias : []).filter(dataOk))].sort() as string[];
     if (!dias.length) return erro('Marque os dias trabalhados');
     if (dias.some((d) => d > somaDias(hoje, 7) || d < somaDias(hoje, -90))) return erro('Dia fora do esperado (até 90 dias atrás ou 7 à frente)');
+    // Valor de cada dia (dono, 2026-09-27): o total é a soma, calculada aqui — não o que veio digitado.
+    // App antigo (sem valores_dia) manda só o total, que a aprovação divide pelos dias.
+    if (body.valores_dia && typeof body.valores_dia === 'object') {
+      const vd = body.valores_dia as Record<string, unknown>;
+      const valores = dias.map((d) => round2(Number(vd[d])));
+      const semValor = dias.filter((_, i) => !(valores[i] > 0) || valores[i] > 50000);
+      if (semValor.length) return erro(`Informe o valor do dia ${semValor.map(diaBR).join(', ')}`);
+      linha.valores_dia = valores;
+      linha.valor = round2(valores.reduce((a, b) => a + b, 0));
+      if (linha.valor > 50000) return erro('Total acima de R$ 50.000');
+    }
     const freeId = txt(body.freelancer_id, 40) || null;
     let temPix = false;
     if (freeId) {
@@ -178,7 +189,7 @@ async function criar(ctx: Ctx, body: Record<string, any>) {
     }
     return erro(`Não consegui gravar o pedido: ${error.message}`, 500);
   }
-  await pendenciaDoPedido(ctx.admin, { id: novo.id, tenant_id: ctx.tenantId, tipo, valor, favorecido_nome: linha.favorecido_nome, descricao: linha.descricao, solicitado_por_nome: linha.solicitado_por_nome, dias: linha.dias ?? null });
+  await pendenciaDoPedido(ctx.admin, { id: novo.id, tenant_id: ctx.tenantId, tipo, valor: linha.valor, favorecido_nome: linha.favorecido_nome, descricao: linha.descricao, solicitado_por_nome: linha.solicitado_por_nome, dias: linha.dias ?? null, valores_dia: linha.valores_dia ?? null });
   return json({ ok: true, id: novo.id });
 }
 
