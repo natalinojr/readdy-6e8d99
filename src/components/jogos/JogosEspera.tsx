@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import JogoCanvas, { type GravacaoPartida } from './JogoCanvas';
 import { JOGOS, type MotorJogo } from './catalogo';
 import {
-  comecarPartida, configJogos, enviarPartida, gravarJogador, lerJogador, rankingJogo, soDigitos,
+  comecarPartida, configJogos, direitoJogar, enviarPartida, gravarJogador, lerJogador, rankingJogo, soDigitos,
   type ConfigJogos, type CredencialJogo, type Jogador, type LinhaRanking,
 } from '@/lib/jogos/api';
 
@@ -23,7 +23,14 @@ interface Props {
   /** Para já preencher o cadastro do ranking */
   nomeInicial?: string;
   telefoneInicial?: string;
+  /** Delivery: a tela já acompanha o status. Mesa: omitir e o jogo pergunta à Edge. */
+  pedidoEntregue?: boolean;
+  /** Botão "Fazer novo pedido" quando o jogo está pausado */
+  onNovoPedido?: () => void;
 }
+
+// Regra do dono (2026-09-27): só joga depois de pedir; entregou, o jogo para até o próximo pedido.
+const MSG_ENTREGUE = 'Seu pedido foi entregue. Faça um novo pedido para continuar jogando.';
 
 type Tela = 'menu' | 'jogo' | 'ranking' | 'cadastro';
 
@@ -78,6 +85,33 @@ export default function JogosEspera(props: Props) {
   const [carregandoRank, setCarregandoRank] = useState(false);
 
   const podeRanking = !!props.tenantId && !!props.credencial;
+
+  // Mesa: pergunta à Edge a cada 30 s (só com a tela visível) se o pedido ainda está em andamento
+  const [bloqueioMesa, setBloqueioMesa] = useState<string | null>(null);
+  const credMesa = props.credencial && props.credencial.tipo === 'mesa' ? props.credencial : null;
+  const mesaId = credMesa ? credMesa.participant_id : '';
+  const mesaSenha = credMesa ? credMesa.access_token : '';
+  useEffect(function () {
+    if (!props.tenantId || !mesaId || props.pedidoEntregue !== undefined) return;
+    let vivo = true;
+    function checar() {
+      if (document.visibilityState === 'hidden') return;
+      direitoJogar(props.tenantId!, { tipo: 'mesa', participant_id: mesaId, access_token: mesaSenha })
+        .then(function (r) { if (vivo) setBloqueioMesa(r.pode_jogar ? null : (r.mensagem || MSG_ENTREGUE)); })
+        .catch(function () { /* sem rede: não trava o jogo */ });
+    }
+    checar();
+    const id = setInterval(checar, 30000);
+    document.addEventListener('visibilitychange', checar);
+    return function () { vivo = false; clearInterval(id); document.removeEventListener('visibilitychange', checar); };
+  }, [props.tenantId, mesaId, mesaSenha, props.pedidoEntregue]);
+  const bloqueio = props.pedidoEntregue ? MSG_ENTREGUE : bloqueioMesa;
+
+  // pausou no meio da partida: o jogo para na hora
+  useEffect(function () {
+    if (!bloqueio) return;
+    setTela('menu'); setJogo(null); setFim(null); setSessao(null); setPreparando(false);
+  }, [bloqueio]);
   const rankingAtivo = podeRanking && !!cfg && cfg.ranking_ativo;
 
   useEffect(function () {
@@ -207,7 +241,22 @@ export default function JogosEspera(props: Props) {
 
   return (
     <>
-      {!props.esconderCartao ? (
+      {bloqueio && !props.esconderCartao ? (
+        <div className="w-full flex items-center gap-3 p-4 rounded-2xl bg-zinc-100 border border-zinc-200">
+          <div className="w-12 h-12 flex items-center justify-center bg-white rounded-xl shrink-0">
+            <i className="ri-gamepad-line text-zinc-400 text-2xl" />
+          </div>
+          <div className="flex-1 min-w-0 text-left">
+            <p className="text-zinc-800 font-black text-sm">Jogos pausados</p>
+            <p className="text-zinc-500 text-xs mt-0.5">{bloqueio} Seu recorde fica guardado.</p>
+          </div>
+          {props.onNovoPedido ? (
+            <button type="button" onClick={props.onNovoPedido} className="px-3 py-2 rounded-xl bg-violet-600 text-white text-xs font-bold cursor-pointer whitespace-nowrap">
+              Novo pedido
+            </button>
+          ) : null}
+        </div>
+      ) : !props.esconderCartao ? (
         <button
           type="button"
           onClick={function () { setAberto(true); }}
@@ -267,7 +316,25 @@ export default function JogosEspera(props: Props) {
           ) : null}
 
           <div className="relative flex-1 min-h-0 mx-2 mb-2">
-            {tela === 'jogo' && jogo ? (
+            {bloqueio ? (
+              <div className="h-full flex items-center justify-center p-6">
+                <div className="w-full max-w-xs bg-white rounded-3xl p-6 text-center shadow-2xl">
+                  <p className="text-4xl">🍽️</p>
+                  <p className="text-lg font-black text-zinc-800 mt-2">Seu pedido chegou!</p>
+                  <p className="text-sm text-zinc-500 mt-2">
+                    O jogo pausou aqui. Faça um novo pedido para continuar jogando{rankingAtivo ? ' e subir no ranking da semana' : ''}. Seu recorde fica guardado.
+                  </p>
+                  {props.onNovoPedido ? (
+                    <button type="button" onClick={function () { fechar(); props.onNovoPedido!(); }} className="mt-5 w-full py-3 rounded-xl bg-gradient-to-br from-violet-500 to-fuchsia-500 text-white font-black text-sm cursor-pointer">
+                      Fazer novo pedido
+                    </button>
+                  ) : null}
+                  <button type="button" onClick={fechar} className="mt-2 w-full py-2.5 rounded-xl bg-zinc-100 text-zinc-700 font-bold text-sm cursor-pointer">
+                    Ver meu pedido
+                  </button>
+                </div>
+              </div>
+            ) : tela === 'jogo' && jogo ? (
               <>
                 {preparando ? (
                   <div className="absolute inset-0 flex items-center justify-center text-white/70 text-sm">

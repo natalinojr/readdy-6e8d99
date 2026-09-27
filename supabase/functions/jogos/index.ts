@@ -2,8 +2,9 @@
 //
 // Ações públicas (cliente na mesa QR / delivery, sem login):
 //   config   → a loja tem ranking ligado? prêmios, jogos que valem, fim da semana.
+//   direito  → ainda pode jogar? (só com pedido em andamento; entregue = para)
 //   start    → começa uma partida valendo: confere que a pessoa tem pedido de verdade
-//              na loja nas últimas 12h e devolve a SEMENTE sorteada pelo servidor.
+//              em andamento (não entregue) nas últimas 12h e devolve a SEMENTE sorteada pelo servidor.
 //   submit   → recebe os quadros em que houve toque, REFAZ a partida com o mesmo
 //              motor do celular (_shared/jogos) e grava a pontuação calculada aqui.
 //              O número que o celular diz ter feito não é usado.
@@ -119,30 +120,39 @@ function publico(lista: Linha[], fone: string, n = 10) {
   }));
 }
 
-/** Pedido que dá direito a jogar valendo. Mesa: participante + senha. Delivery: nº do pedido + celular do pedido. */
-async function pedidoQueDaDireito(admin: any, tenantId: string, cred: any, fone: string): Promise<{ orderId: string } | { erro: string }> {
+/** Pedido em andamento que dá direito a jogar (regra do dono, 2026-09-27: só joga depois
+ *  de pedir e o jogo para quando o pedido é entregue). Mesa: participante + senha, pedido
+ *  mais recente não entregue. Delivery: nº do pedido (+ celular do pedido quando `fone`). */
+type Direito = { orderId: string } | { erro: string; code: "sem_pedido" | "entregue" };
+async function pedidoEmAndamento(admin: any, tenantId: string, cred: any, fone: string | null): Promise<Direito> {
   const desde = new Date(Date.now() - JANELA_PEDIDO_H * 3600_000).toISOString();
+  let pedidos: any[] = [];
   if (cred?.tipo === "mesa") {
     const { data: p } = await admin.from("table_session_participants")
       .select("id, tenant_id, access_token, deleted_at").eq("id", String(cred.participant_id ?? "")).maybeSingle();
     if (!p || p.tenant_id !== tenantId || p.deleted_at || String(p.access_token) !== String(cred.access_token ?? "")) {
-      return { erro: "Não achamos o seu pedido." };
+      return { erro: "Não achamos o seu pedido.", code: "sem_pedido" };
     }
-    const { data: o } = await admin.from("orders").select("id")
+    const { data } = await admin.from("orders").select("id, status, destination_phone")
       .eq("tenant_id", tenantId).eq("participant_id", p.id).neq("status", "cancelled").not("is_draft", "is", true)
-      .gte("created_at", desde).order("created_at", { ascending: false }).limit(1).maybeSingle();
-    return o ? { orderId: o.id } : { erro: "Faça um pedido para jogar valendo o ranking." };
-  }
-  if (cred?.tipo === "delivery") {
-    const { data: o } = await admin.from("orders").select("id, destination_phone")
+      .gte("created_at", desde).order("created_at", { ascending: false }).limit(20);
+    pedidos = data ?? [];
+  } else if (cred?.tipo === "delivery") {
+    const { data } = await admin.from("orders").select("id, status, destination_phone")
       .eq("tenant_id", tenantId).eq("number", String(cred.order_number ?? "")).eq("origin_type", "delivery")
       .neq("status", "cancelled").not("is_draft", "is", true).gte("created_at", desde)
-      .order("created_at", { ascending: false }).limit(1).maybeSingle();
-    if (!o) return { erro: "Não achamos o seu pedido." };
-    if (normalizarFone(o.destination_phone) !== fone) return { erro: "Use o mesmo celular do pedido." };
-    return { orderId: o.id };
+      .order("created_at", { ascending: false }).limit(1);
+    pedidos = data ?? [];
+    if (pedidos.length && fone && normalizarFone(pedidos[0].destination_phone) !== fone) {
+      return { erro: "Use o mesmo celular do pedido.", code: "sem_pedido" };
+    }
+  } else {
+    return { erro: "Faça um pedido para jogar.", code: "sem_pedido" };
   }
-  return { erro: "Faça um pedido para jogar valendo o ranking." };
+  if (!pedidos.length) return { erro: "Faça um pedido para jogar.", code: "sem_pedido" };
+  const ativo = pedidos.find((o) => o.status !== "delivered");
+  if (!ativo) return { erro: "Seu pedido foi entregue. Faça um novo pedido para continuar jogando.", code: "entregue" };
+  return { orderId: ativo.id };
 }
 
 async function podeEditar(admin: any, tenantId: string, role: string): Promise<boolean> {
@@ -176,6 +186,12 @@ Deno.serve(async (req: Request) => {
       return ok({ ...cfg, semana, termina_em: fimDaSemana(semana) });
     }
 
+    // O cliente pode jogar agora? (o jogo para quando o pedido é entregue)
+    if (action === "direito") {
+      const d = await pedidoEmAndamento(admin, tenantId, body.credencial, null);
+      return ok("erro" in d ? { pode_jogar: false, motivo: d.code, mensagem: d.erro } : { pode_jogar: true });
+    }
+
     if (action === "ranking") {
       const jogo = String(body.jogo ?? "");
       if (!(JOGOS as readonly string[]).includes(jogo)) return jsonErr("jogo inválido");
@@ -201,8 +217,8 @@ Deno.serve(async (req: Request) => {
       const nome = String(body.nome ?? "").trim().slice(0, 40);
       if (!fone) return jsonErr("Informe um celular válido com DDD.", 400, { code: "telefone" });
       if (nome.length < 2) return jsonErr("Informe seu nome.", 400, { code: "nome" });
-      const direito = await pedidoQueDaDireito(admin, tenantId, body.credencial, fone);
-      if ("erro" in direito) return jsonErr(direito.erro, 403, { code: "sem_pedido" });
+      const direito = await pedidoEmAndamento(admin, tenantId, body.credencial, fone);
+      if ("erro" in direito) return jsonErr(direito.erro, 403, { code: direito.code });
 
       const { count: porPedido } = await admin.from("game_sessions").select("id", { count: "exact", head: true })
         .eq("order_id", direito.orderId);
