@@ -1,9 +1,10 @@
 import { useEffect, useState, useCallback } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import { MOTOBOY_SESSION_KEY, getMotoboySession, type MotoboySession } from '@/pages/motoboy/page';
 import MapaEntregas from './MapaEntregas';
 import { useMotoboyGps, textoGps } from '@/pages/motoboy/useMotoboyGps';
 import { linkMaps } from '@/lib/montarSaida';
+import { usaAppEntregas } from '@/lib/motoboyApp';
 
 // "Turno ligado": motoboy livre também compartilha a localização (a loja vê quem está perto).
 const TURNO_KEY = 'erpos_motoboy_turno';
@@ -90,6 +91,8 @@ export default function MotoboyListaPage() {
   const slug = storeSlug ?? '';
 
   const [session, setSession] = useState<MotoboySession | null>(null);
+  const navigate = useNavigate();
+  const appEntregas = usaAppEntregas();
   const [orders, setOrders] = useState<OrderRow[]>([]);
   // Saída montada pelo gestor (Fase 3): ordem das paradas ainda pendentes
   const [rota, setRota] = useState<{ paradas: string[] } | null>(null);
@@ -197,6 +200,8 @@ export default function MotoboyListaPage() {
     localStorage.removeItem(MOTOBOY_SESSION_KEY);
     setSession(null);
     setOrders([]);
+    // App de entregas: volta para "Minhas lojas" (as lojas ligadas continuam no celular)
+    if (appEntregas) navigate('/app-entregas');
   };
 
   if (loading) {
@@ -377,7 +382,13 @@ export default function MotoboyListaPage() {
               {atrasoCount > 0 ? <span className="text-red-300"> · {atrasoCount} em atraso</span> : null}
             </p>
           </div>
-          <button type="button" onClick={sair} className="text-[11px] font-bold bg-white/15 px-2.5 py-1 rounded-full">Sair</button>
+          {appEntregas ? (
+            <button type="button" onClick={() => navigate('/app-entregas')} className="text-[11px] font-bold bg-white/15 px-2.5 py-1 rounded-full inline-flex items-center gap-1">
+              <i className="ri-store-2-line" /> Minhas lojas
+            </button>
+          ) : (
+            <button type="button" onClick={sair} className="text-[11px] font-bold bg-white/15 px-2.5 py-1 rounded-full">Sair</button>
+          )}
         </div>
 
         {/* GPS: turno + aviso de tela aberta */}

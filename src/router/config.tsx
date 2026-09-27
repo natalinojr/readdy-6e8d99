@@ -58,6 +58,7 @@ const RelatorioPublicoPage = lazy(() => import('../pages/relatorio-publico/page'
 const DeliveryPage = lazy(() => import('../pages/delivery/page'));
 const MotoboyPage = lazy(() => import('../pages/motoboy/page'));
 const MotoboyListaPage = lazy(() => import('../pages/motoboy-lista/page'));
+const AppEntregasPage = lazy(() => import('../pages/app-entregas/page'));
 const ClubePage = lazy(() => import('../pages/clube/page'));
 
 const routes: RouteObject[] = [
@@ -80,6 +81,8 @@ const routes: RouteObject[] = [
   { path: '/:storeSlug-delivery', element: <PullToRefresh><MobileKeyboardAssist /><DeliveryPage /></PullToRefresh> },
   { path: '/motoboy/:order_id', element: <PullToRefresh><MobileKeyboardAssist /><MotoboyPage /></PullToRefresh> },
   { path: '/entregas/:storeSlug', element: <PullToRefresh><MobileKeyboardAssist /><MotoboyListaPage /></PullToRefresh> },
+  // App "ERPOS Entregas" (android-entregas): lojas do motoboy ligadas por código
+  { path: '/app-entregas', element: <PullToRefresh><MobileKeyboardAssist /><AppEntregasPage /></PullToRefresh> },
   // Clube de fidelidade do cliente (pública; o tablet abre logado por QR)
   { path: '/clube/:storeSlug', element: <ClubePage /> },
   { path: '/autoatendimento', element: <AutoatendimentoPage /> },

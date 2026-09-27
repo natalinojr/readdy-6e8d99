@@ -68,6 +68,7 @@ export default function ConfigDeliveryPage() {
   // Entregadores (motoboys) com acesso à lista de entregas
   const [motoboys, setMotoboys] = useState<DriverRow[]>([]);
   const [motoboysLoading, setMotoboysLoading] = useState(false);
+  const [codigoApp, setCodigoApp] = useState<{ code: string; expires_at: string; gerando: boolean } | null>(null);
   const [abaAtiva, setAbaAtiva] = useState<'config' | 'entregas' | 'whatsapp'>('config');
   // Avisar o motoboy: categorias/itens que disparam alerta na msg do motoboy
   const [alertCategorias, setAlertCategorias] = useState<MotoboyAlertEntry[]>([]);
@@ -431,6 +432,27 @@ export default function ConfigDeliveryPage() {
     }
   }
 
+  // App "ERPOS Entregas": código de uso único (24 h) para o motoboy ligar esta loja no app.
+  async function gerarCodigoApp() {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const token = sessionData.session?.access_token;
+    if (!token) { setMensagem({ tipo: 'erro', texto: 'Sessão expirada. Entre novamente.' }); return; }
+    setCodigoApp({ code: '', expires_at: '', gerando: true });
+    try {
+      const res = await fetch(getDeliveryWriteUrl(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+        body: JSON.stringify({ action: 'gerar_codigo_motoboy', tenant_id: tenantId }),
+      });
+      const data = await res.json();
+      if (data.ok) setCodigoApp({ code: data.code, expires_at: data.expires_at, gerando: false });
+      else { setCodigoApp(null); setMensagem({ tipo: 'erro', texto: String(data.error || 'Não foi possível gerar o código.') }); }
+    } catch (_e) {
+      setCodigoApp(null);
+      setMensagem({ tipo: 'erro', texto: 'Erro de conexão.' });
+    }
+  }
+
   async function alterarMotoboy(driverId: string, payload: { is_active?: boolean; remover?: boolean }) {
     const { data: sessionData } = await supabase.auth.getSession();
     const token = sessionData.session?.access_token;
@@ -662,6 +684,34 @@ export default function ConfigDeliveryPage() {
                 </button>
               </div>
             ) : null}
+
+            {/* App "ERPOS Entregas": código de uso único para o motoboy ligar esta loja no app */}
+            <div className="bg-violet-50 rounded-xl border border-violet-200 px-4 py-3 space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="text-sm font-bold text-violet-900">App ERPOS Entregas</p>
+                  <p className="text-xs text-violet-700">O motoboy digita o código no app (Adicionar loja). Vale uma vez, por 24 h.</p>
+                </div>
+                <button type="button" onClick={gerarCodigoApp} disabled={!!codigoApp?.gerando}
+                  className="px-3 py-1.5 bg-violet-600 hover:bg-violet-700 text-white text-xs font-bold rounded-lg cursor-pointer whitespace-nowrap disabled:opacity-50 flex items-center gap-1">
+                  <i className={codigoApp?.gerando ? 'ri-loader-4-line animate-spin' : 'ri-key-2-line'} /> Código para o app
+                </button>
+              </div>
+              {codigoApp?.code ? (
+                <div className="flex items-center gap-3 bg-white rounded-lg border border-violet-200 px-3 py-2">
+                  <span className="text-xl font-black tracking-widest text-violet-900 font-mono select-all">{codigoApp.code}</span>
+                  <span className="text-[11px] text-zinc-500 flex-1">vale até {new Date(codigoApp.expires_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>
+                  <button type="button" onClick={function () {
+                    navigator.clipboard.writeText(codigoApp.code).then(function () {
+                      setMensagem({ tipo: 'sucesso', texto: 'Código copiado!' });
+                      setTimeout(function () { setMensagem(null); }, 2000);
+                    });
+                  }} className="px-2.5 py-1 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 text-xs font-bold rounded-lg flex items-center gap-1">
+                    <i className="ri-file-copy-line" /> Copiar
+                  </button>
+                </div>
+              ) : null}
+            </div>
 
             {/* Lista de entregadores cadastrados */}
             <div className="flex items-center justify-between">
