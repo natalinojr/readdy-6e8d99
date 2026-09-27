@@ -2,15 +2,11 @@ import { describe, it, expect } from 'vitest';
 import { diasComparacao, horaBrasilia, montarVendasHora } from '@/lib/vendasHoraComparativo';
 
 describe('diasComparacao', () => {
-  it('ontem, semana passada e mesmo dia do mês passado', () => {
-    expect(diasComparacao('2026-09-27')).toEqual({ ontem: '2026-09-26', semana: '2026-09-20', mes: '2026-08-27' });
+  it('ontem, semana passada e 4 semanas atrás (mesmo dia da semana)', () => {
+    expect(diasComparacao('2026-09-27')).toEqual({ ontem: '2026-09-26', semana: '2026-09-20', mes: '2026-08-30' });
   });
-  it('dia que não existe no mês passado vira o último dia dele', () => {
-    expect(diasComparacao('2026-03-31').mes).toBe('2026-02-28');
-    expect(diasComparacao('2026-10-31').mes).toBe('2026-09-30');
-  });
-  it('janeiro volta para dezembro do ano anterior', () => {
-    expect(diasComparacao('2026-01-15')).toEqual({ ontem: '2026-01-14', semana: '2026-01-08', mes: '2025-12-15' });
+  it('vira o ano', () => {
+    expect(diasComparacao('2026-01-15')).toEqual({ ontem: '2026-01-14', semana: '2026-01-08', mes: '2025-12-18' });
   });
 });
 

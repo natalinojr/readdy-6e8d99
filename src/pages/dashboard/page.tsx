@@ -28,12 +28,7 @@ import { useIfoodVendas } from '@/hooks/useIfoodVendas';
 import { useVendasHoraComparativo } from '@/hooks/useVendasHoraComparativo';
 import { todayBrasilia } from '@/lib/dateUtils';
 import { diasComparacao, montarVendasHora, type Comparacao } from '@/lib/vendasHoraComparativo';
-
-const CHAVE_COMPARACOES = 'dashboard.vendasHora.comparacoes';
-const lerComparacoes = (): Record<Comparacao, boolean> => {
-  const padrao = { ontem: false, semana: false, mes: false };
-  try { return { ...padrao, ...JSON.parse(localStorage.getItem(CHAVE_COMPARACOES) ?? '{}') }; } catch { return padrao; }
-};
+import { useComparacoesLigadas } from '@/components/feature/ComparacaoVendasHora';
 
 const fmt = (v: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
@@ -113,14 +108,7 @@ export default function Dashboard() {
 
   // Vendas por hora do dia (PDV + iFood por cima), sempre do dia de hoje, com linhas de
   // comparação ligáveis (ontem, mesmo dia da semana passada, mesmo dia do mês passado).
-  const [comparacoes, setComparacoes] = useState(lerComparacoes);
-  const alternarComparacao = useCallback((k: Comparacao) => {
-    setComparacoes((c) => {
-      const n = { ...c, [k]: !c[k] };
-      try { localStorage.setItem(CHAVE_COMPARACOES, JSON.stringify(n)); } catch { /* sem storage */ }
-      return n;
-    });
-  }, []);
+  const [comparacoes, alternarComparacao] = useComparacoesLigadas('dashboard.vendasHora.comparacoes');
   const hojeBR = todayBrasilia();
   const diasComp = useMemo(() => diasComparacao(hojeBR), [hojeBR]);
   const seriesComp = useVendasHoraComparativo(diasComp, comparacoes);
