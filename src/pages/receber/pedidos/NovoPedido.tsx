@@ -203,8 +203,16 @@ export default function NovoPedido({ tipo, tenantId, contexto, onEnviado, onErro
             <Rotulo dica="Toque em todos os dias que a pessoa trabalhou">Dias trabalhados</Rotulo>
             <div className="mt-1.5">
               <Chips opcoes={ultimos7.map((d) => ({ v: d, label: nomeDia(d) }))} valor={dias} onValor={alternarDia} />
-              <input type="date" max={somaDias(hoje, 7)} min={somaDias(hoje, -90)} onChange={(e) => { const d = e.target.value; if (d && !dias.includes(d)) setDias([...dias, d].sort()); e.target.value = ''; }}
-                className="mt-2 w-full border border-zinc-200 rounded-xl px-3 py-2.5 text-sm bg-white" aria-label="Outro dia" />
+              {/* Botão de calendário (dono, 2026-09-27): o campo de data vazio não parecia clicável.
+                  O input fica invisível por cima do botão, então o toque abre o calendário do celular. */}
+              <label className="relative mt-2 flex items-center justify-center gap-2 w-full border-2 border-dashed border-amber-300 rounded-xl px-3 py-3 text-sm font-semibold text-amber-700 bg-amber-50 active:bg-amber-100 cursor-pointer">
+                <i className="ri-calendar-line text-lg" />
+                Escolher outra data
+                <input type="date" max={somaDias(hoje, 7)} min={somaDias(hoje, -90)} aria-label="Escolher outra data"
+                  onClick={(e) => { try { e.currentTarget.showPicker?.(); } catch { /* navegador sem showPicker: abre pelo toque */ } }}
+                  onChange={(e) => { const d = e.target.value; if (d && !dias.includes(d)) setDias([...dias, d].sort()); e.target.value = ''; }}
+                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
+              </label>
             </div>
           </div>
           {dias.length > 0 && (
