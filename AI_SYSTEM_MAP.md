@@ -3642,3 +3642,8 @@ Sem SW ativo o POST cai no Vercel e falha — por isso o destino só existe no S
   `list_orders` devolve `rota` (última saída dele nas últimas 6 h, só paradas pendentes) → cartão "Sua rota" + "Abrir
   rota no Maps" (sem origem: o Maps usa onde o motoboy está). PEGADINHA: a posição dos motoboys chega depois de abrir
   a janela — a `key` do cartão inclui o motoboy sugerido, senão o select fica em "Escolha…".
+- **GPS do motoboy com a tela apagada (app Android, 2026-09-27 — código pronto, APK não gerado)**: plugin
+  `@capacitor-community/background-geolocation` no `android-app` (serviço em primeiro plano com aviso fixo);
+  `useMotoboyGps` usa o plugin quando `window.Capacitor.isNativePlatform()` (estado `ativo_fundo`), mesmas regras de
+  envio; permissão negada → aviso abre `openSettings`. Testes em `src/test/unit/useMotoboyGps.test.ts` (plugin simulado +
+  navegador). PEGADINHA: o Android SDK sumiu do PC (build falha em "SDK location not found") — ver android-app/README.md.

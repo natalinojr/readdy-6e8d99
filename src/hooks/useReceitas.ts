@@ -163,6 +163,8 @@ export function useReceitas(filters: ReceitasFilters) {
         .eq('is_paid', true)
         .eq('is_training', false)
         .neq('status', 'cancelled')
+        // Pedido que veio do iFood pelo funil: a venda já entra pela fonte "iFood" (IFOOD-PEDIDOS-FUNIL.md)
+        .is('ifood_order_id', null)
         .gte('created_at', startISO)
         .lte('created_at', endISO)
         .order('created_at', { ascending: false })
