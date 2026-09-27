@@ -8,7 +8,9 @@
 //   ligado a item/combo → vira uma linha de item (baixa pela ficha do item); "sem_estoque" → só texto.
 // - Plataforma: entrega pelo motoboy da loja = 'propria' (entra no Gestor de Entregas e no acerto); entregador do iFood
 //   = 'ifood' (fora do quadro); retirada/consumo no local = 'retirada'. A origem iFood fica em orders.ifood_order_id.
-// - Pago: tudo online, ou cobrado pelo entregador do iFood. Cobrar na entrega com motoboy da loja = não pago.
+// - Repasse (pago): tudo online, ou cobrado pelo entregador do iFood — o dinheiro vem pelo repasse do iFood e o pedido
+//   fica fora das somas de venda (orders.ifood_repasse). Cobrado pela loja (motoboy, balcão, mesa) = venda da loja, não
+//   pago até o caixa receber; total = o que o cliente paga (já com o desconto que o iFood banca).
 
 export interface IfoodLink {
   level: 'item' | 'complemento'; name_key: string; group_key: string; ifood_id: string | null; external_code: string | null;
@@ -46,7 +48,7 @@ export interface ItemErpos {
 export interface PedidoErpos {
   order: Record<string, unknown>;
   items: ItemErpos[];
-  pago: boolean;
+  pago: boolean; // = ifood_repasse
   paymentLabel: string;
   semVinculo: string[];
 }
@@ -103,12 +105,16 @@ export function montarPedidoErpos(o: any, itens: any[], links: IfoodLink[], menu
         });
         continue;
       }
-      principal.options.push({
-        option_id: clk?.target_kind === 'option' ? clk.option_id : null,
-        option_name: opQtd > 1 ? `${opQtd}x ${op.name}` : String(op.name),
-        group_name: String(op.groupName ?? op._de ?? ''),
-        additional_price: r2(precoUnit),
-      });
+      // "2x Bacon": uma linha por unidade (a baixa de estoque é por linha de opção × quantidade do item).
+      const n = Math.max(1, Math.round(opQtd));
+      for (let k = 0; k < n; k++) {
+        principal.options.push({
+          option_id: clk?.target_kind === 'option' ? clk.option_id : null,
+          option_name: String(op.name),
+          group_name: String(op.groupName ?? op._de ?? ''),
+          additional_price: r2(precoUnit / n),
+        });
+      }
     }
     items.push(principal, ...extras);
   }
@@ -119,11 +125,15 @@ export function montarPedidoErpos(o: any, itens: any[], links: IfoodLink[], menu
   // Desconto que a LOJA paga (cupom da loja); o que o iFood banca não é desconto da loja.
   const descLoja = r2((Array.isArray(o.benefits) ? o.benefits : []).reduce((s: number, b: any) =>
     s + (Array.isArray(b.sponsorshipValues) ? b.sponsorshipValues : []).filter((x: any) => x.name === 'MERCHANT').reduce((a: number, x: any) => a + num(x.value), 0), 0));
-  const total = r2(Math.max(0, subtotal + taxa - descLoja));
-
   const metodos: any[] = Array.isArray(o.payments?.methods) ? o.payments.methods : [];
   const offline = metodos.filter((m) => m.type === 'OFFLINE');
-  const pago = offline.length === 0 || !loja;
+  // Só o entregador do iFood cobra por conta do iFood; retirada/mesa/motoboy da loja = a loja recebe.
+  const pago = offline.length === 0 || o.delivered_by === 'IFOOD';
+  // Repasse: venda pelo preço do iFood menos o desconto da loja. Cobrado pela loja: o que o cliente paga (soma das
+  // formas de pagamento) — o cupom que o iFood banca vem no repasse, não na gaveta.
+  const pagoCliente = r2(metodos.reduce((a, m) => a + num(m.value), 0));
+  const total = pago || pagoCliente <= 0 ? r2(Math.max(0, subtotal + taxa - descLoja)) : pagoCliente;
+  const descIfood = pago ? 0 : r2(Math.max(0, subtotal + taxa - descLoja - total));
   const PAG: Record<string, string> = { CREDIT: 'Crédito', DEBIT: 'Débito', CASH: 'Dinheiro', PIX: 'Pix', MEAL_VOUCHER: 'Vale-refeição', FOOD_VOUCHER: 'Vale-alimentação' };
   const cobrar = offline.map((m) => `${PAG[m.method] ?? m.method} ${brl(num(m.value))}${m.cash?.changeFor ? ` (troco para ${brl(num(m.cash.changeFor))})` : ''}`).join(' + ');
   const paymentLabel = pago ? 'iFood (pago no app)' : `Cobrar na entrega: ${cobrar}`;
@@ -137,6 +147,7 @@ export function montarPedidoErpos(o: any, itens: any[], links: IfoodLink[], menu
     agendado,
     o.pickup_code ? `Código de coleta: ${o.pickup_code}` : null,
     pago ? 'Pago no app do iFood' : `COBRAR NA ENTREGA: ${cobrar}`,
+    descIfood > 0 ? `Desconto bancado pelo iFood: ${brl(descIfood)} (vem no repasse)` : null,
     o.delivery_observations ? `Obs. da entrega: ${o.delivery_observations}` : null,
     o.extra_info ? String(o.extra_info) : null,
     semVinculo.length ? `Sem vínculo com o cardápio (sem baixa de estoque): ${semVinculo.join(', ')}` : null,
@@ -149,7 +160,7 @@ export function montarPedidoErpos(o: any, itens: any[], links: IfoodLink[], menu
       origin_type: 'delivery', destination_type: 'delivery',
       destination_name: `iFood ${display} ${nome}`.replace(/\s+/g, ' ').trim() + ` - ${ender ?? comoSai}`,
       destination_phone: null, delivery_address: ender, delivery_fee: taxa, delivery_platform: plataforma,
-      discount_amount: descLoja, service_fee_amount: 0, subtotal, total_amount: total,
+      discount_amount: r2(descLoja + descIfood), service_fee_amount: pago ? 0 : r2(Math.max(0, total - (subtotal + taxa - descLoja))), subtotal, total_amount: total,
       customer_cpf: o.customer_document && /^\d{11}(\d{3})?$/.test(String(o.customer_document).replace(/\D/g, '')) ? String(o.customer_document).replace(/\D/g, '') : null,
       notes: notas,
     },

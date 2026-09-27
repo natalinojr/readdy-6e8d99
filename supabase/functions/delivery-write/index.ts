@@ -426,8 +426,10 @@ async function releaseHeldOrder(admin: any, tenant_id: string, order_id: string,
 
   const upd: Record<string, unknown> = { status: "new", is_draft: false, updated_at: new Date().toISOString() };
   if (newNotes != null) upd.notes = newNotes;
-  const { error: upErr } = await admin.from("orders").update(upd).eq("id", order_id);
+  // Só quem tirou do rascunho segue (dois chamados ao mesmo tempo não imprimem nem baixam em dobro).
+  const { data: liberou, error: upErr } = await admin.from("orders").update(upd).eq("id", order_id).eq("is_draft", true).select("id");
   if (upErr) throw upErr;
+  if (!liberou?.length) return { already: true };
   // Saiu do rascunho = pedido real: itens sem preparo (skip_kds) baixam o estoque agora.
   runStockInBackground(deductStockForSkipKdsItems(admin, tenant_id, order_id).catch((e) => console.warn("[delivery-write] baixa de estoque falhou", order_id, String(e))));
 

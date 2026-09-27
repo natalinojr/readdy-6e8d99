@@ -112,12 +112,12 @@ async function fetchCaixa(tenantId: string, startDate: string, endDate: string, 
     // A coluna Caixa contava TODO payment do período — inclusive cartão a prazo (dinheiro que
     // ainda não entrou) e pagamentos estornados. Faltavam os 3 filtros do DRETab:
     // is_refunded=false, days_to_receive=0 e cruzamento com auto_sale.
-    supabase.from('payments').select('id, amount, payment_method_id, orders!inner(destination_type, status, is_training, is_draft, ifood_order_id)').eq('orders.tenant_id', tenantId).eq('orders.is_training', false).eq('orders.is_draft', false).is('orders.ifood_order_id', null).not('orders.status', 'in', '("cancelled","draft")').eq('is_refunded', false).gte('created_at', startTs).lte('created_at', endDateTime),
+    supabase.from('payments').select('id, amount, payment_method_id, orders!inner(destination_type, status, is_training, is_draft)').eq('orders.tenant_id', tenantId).eq('orders.is_training', false).eq('orders.is_draft', false).not('orders.status', 'in', '("cancelled","draft")').eq('is_refunded', false).gte('created_at', startTs).lte('created_at', endDateTime),
     supabase.from('payment_methods').select('id, days_to_receive').eq('tenant_id', tenantId),
     // BUG-42: cartão a prazo só vira caixa na liquidação do recebível.
     supabase.from('fin_receivable_installments').select('amount, orders!inner(destination_type)').eq('tenant_id', tenantId).eq('status', 'received').gte('received_at', startTs).lte('received_at', endDateTime),
-    supabase.from('orders').select('total_amount').eq('tenant_id', tenantId).eq('is_training', false).eq('is_draft', false).is('ifood_order_id', null).eq('status', 'cancelled').gte('created_at', startTs).lte('created_at', endDateTime),
-    supabase.from('orders').select('discount_amount').eq('tenant_id', tenantId).eq('is_training', false).eq('is_draft', false).is('ifood_order_id', null).not('status', 'in', '("cancelled","draft")').gte('created_at', startTs).lte('created_at', endDateTime),
+    supabase.from('orders').select('total_amount').eq('tenant_id', tenantId).eq('is_training', false).eq('is_draft', false).eq('ifood_repasse', false).eq('status', 'cancelled').gte('created_at', startTs).lte('created_at', endDateTime),
+    supabase.from('orders').select('discount_amount').eq('tenant_id', tenantId).eq('is_training', false).eq('is_draft', false).eq('ifood_repasse', false).not('status', 'in', '("cancelled","draft")').gte('created_at', startTs).lte('created_at', endDateTime),
     // P11: inclui `partial` e soma pelo `paid_amount` acumulado (o desembolso real).
     // Mantido o filtro do P1 (compras fora, senão a mercadoria conta 2x com o CMV).
     supabase.from('fin_accounts_payable').select('dre_category_id, amount, paid_amount, status').eq('tenant_id', tenantId).in('status', ['paid', 'partial']).or('reference_type.is.null,reference_type.not.in.(purchase,hr_payroll)').gte('paid_date', startDate).lte('paid_date', endDate),
@@ -183,10 +183,10 @@ async function fetchCompetencia(tenantId: string, startDate: string, endDate: st
   const monthStr = startDate.slice(0, 7);
   const [autoSaleRes, paymentsRes, receivablesRes, cancelledRes, descontosRes, billsRes, purchasesRes, payrollRes, cardFeeRes] = await Promise.all([
     supabase.from('fin_cash_flow').select('reference_id').eq('tenant_id', tenantId).eq('type', 'income').eq('origin', 'auto_sale').gte('date', startDate).lte('date', endDate),
-    supabase.from('payments').select('id, amount, orders!inner(destination_type, status, is_training, is_draft, ifood_order_id)').eq('orders.tenant_id', tenantId).eq('orders.is_training', false).eq('orders.is_draft', false).is('orders.ifood_order_id', null).not('orders.status', 'in', '("cancelled","draft")').eq('is_refunded', false).gte('created_at', startTs).lte('created_at', endDateTime),
+    supabase.from('payments').select('id, amount, orders!inner(destination_type, status, is_training, is_draft)').eq('orders.tenant_id', tenantId).eq('orders.is_training', false).eq('orders.is_draft', false).not('orders.status', 'in', '("cancelled","draft")').eq('is_refunded', false).gte('created_at', startTs).lte('created_at', endDateTime),
     supabase.from('fin_receivable_installments').select('amount').eq('tenant_id', tenantId).eq('status', 'pending').gte('due_date', startDate).lte('due_date', endDate),
-    supabase.from('orders').select('total_amount').eq('tenant_id', tenantId).eq('is_training', false).eq('is_draft', false).is('ifood_order_id', null).eq('status', 'cancelled').gte('created_at', startTs).lte('created_at', endDateTime),
-    supabase.from('orders').select('discount_amount').eq('tenant_id', tenantId).eq('is_training', false).eq('is_draft', false).is('ifood_order_id', null).not('status', 'in', '("cancelled","draft")').gte('created_at', startTs).lte('created_at', endDateTime),
+    supabase.from('orders').select('total_amount').eq('tenant_id', tenantId).eq('is_training', false).eq('is_draft', false).eq('ifood_repasse', false).eq('status', 'cancelled').gte('created_at', startTs).lte('created_at', endDateTime),
+    supabase.from('orders').select('discount_amount').eq('tenant_id', tenantId).eq('is_training', false).eq('is_draft', false).eq('ifood_repasse', false).not('status', 'in', '("cancelled","draft")').gte('created_at', startTs).lte('created_at', endDateTime),
     supabase.from('fin_accounts_payable').select('dre_category_id, amount, status').eq('tenant_id', tenantId).in('status', ['pending', 'paid', 'overdue', 'partial']).or('reference_type.is.null,reference_type.not.in.(purchase,hr_payroll)').gte('due_date', startDate).lte('due_date', endDate),
     supabase.from('fin_purchases').select('id, total_amount, payment_status').eq('tenant_id', tenantId).gte('purchase_date', startDate).lte('purchase_date', endDate),
     // Competência: folha pelo mês de referência, paga ou não (igual ao DRETab).

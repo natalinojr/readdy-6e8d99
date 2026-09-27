@@ -52,7 +52,7 @@ export default function CaixaAberto({ onFechar, irPara }: AcaoProps) {
         supabase.from('cash_registers').select('opened_at, opening_value, operator_id').eq('id', caixa.id).maybeSingle(),
         supabase.from('cash_movements').select('type, amount, reason, created_at').eq('cash_register_id', caixa.id).order('created_at', { ascending: true }),
         supabase.from('payment_methods').select('id, name, type, is_active').eq('tenant_id', tenantId),
-        supabase.from('payments').select('amount, payment_method_id, orders(ifood_order_id)').eq('tenant_id', tenantId).eq('cash_register_id', caixa.id).eq('is_refunded', false),
+        supabase.from('payments').select('amount, payment_method_id').eq('tenant_id', tenantId).eq('cash_register_id', caixa.id).eq('is_refunded', false),
       ]);
       const erro = movR.error ?? metR.error ?? pagR.error;
       if (erro) { bot(`Não consegui ler o caixa: ${erro.message}`); setPasso('fim'); return; }
@@ -67,10 +67,8 @@ export default function CaixaAberto({ onFechar, irPara }: AcaoProps) {
       const metodos = new Map(((metR.data ?? []) as { id: string; name: string; type: string; is_active: boolean }[]).map((m) => [m.id, m]));
       const porForma = new Map<string, number>();
       let dinheiro = 0;
-      for (const p of (pagR.data ?? []) as unknown as { amount: number; payment_method_id: string | null; orders: { ifood_order_id: string | null } | null }[]) {
+      for (const p of (pagR.data ?? []) as { amount: number; payment_method_id: string | null }[]) {
         const m = p.payment_method_id ? metodos.get(p.payment_method_id) : undefined;
-        // Pedido do iFood pelo funil: só o dinheiro recebido na entrega está na gaveta; o resto é venda do iFood.
-        if (p.orders?.ifood_order_id && m?.type !== 'cash') continue;
         const nome = m?.name ?? 'Outros';
         porForma.set(nome, (porForma.get(nome) ?? 0) + (Number(p.amount) || 0));
         if (m && m.type === 'cash' && m.is_active) dinheiro += Number(p.amount) || 0;

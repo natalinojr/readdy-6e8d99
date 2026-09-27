@@ -113,3 +113,37 @@ d95420e); foi **desfeita** no mesmo dia porque o dono escolheu este desenho. Apr
   motoboy e fica `delivered`; taxa = `delivery_fee` do iFood; km nulo (faixa_km usa o valor base) — gravar
   `delivery_lat/lng` no pedido para o mapa e, se quiser km, calcular a distância na criação.
 - Pedido com entregador do iFood (`delivered_by = IFOOD`) nunca vai para o motoboy da loja.
+
+## Estado — 2026-09-27 madrugada (Claude, dono dormindo; tudo no main e no ar)
+- **Etapa 1 FEITA** (eb03e39, 7084e77): `ifood_item_links` + tela Pedidos iFood › Vincular itens.
+- **Etapa 2 FEITA** (152139b): `orders.ifood_order_id`; pedido do funil fora de Relatório de Vendas, fechamento de caixa
+  (linha própria "iFood"; dinheiro cobrado na entrega fica na linha Dinheiro/gaveta), Receitas, DRE, DRE comparativo,
+  Dashboard, resumos do assistente e relatórios de delivery. Conferido: funções antigas × novas dão o mesmo resultado na
+  Paranaguá (só muda a ordem de uma lista sem ORDER BY).
+- **Etapas 3 e 4 FEITAS** (c4e82f1): config "Pedido entra no ERPOS" + "Aceitar sozinho" (Gestor de Entregas › iFood
+  Entrega › 3. Pedidos do iFood); `funnel.ts` (montador puro, 6 testes); pedido nasce rascunho e é liberado pelo
+  `delivery-write › release_held_order` (tickets, estoque de itens sem preparo); confirmação no iFood; sem caixa aberto
+  espera (varredura a cada polling); só pedidos depois de ligar (`funnel_since`). Fila `ifood_order_outbox` (gatilho em
+  `orders`): preparing→startPreparation, ready→readyToPickup, saiu com motoboy da loja→dispatch. CANCELLED do iFood
+  cancela no ERPOS (`fn_ifood_cancel_erpos_order`); CONCLUDED conclui e baixa o que a cozinha não marcou. Trava: pedido
+  do iFood não cancela direto no ERPOS (gatilho) — cancela em Pedidos iFood com o motivo do iFood.
+- **Testado na Testes PDV (produção, sessão do dono no navegador do app + Portal no Chrome)**: #4639 (entrega pela loja)
+  → P2609260009 pago, na cozinha, KDS mostra "iFood #4639" com complementos; preparo/pronto/despacho → fila "sent" e
+  iFood foi a preparing/ready/dispatched; aparece no Gestor de Entregas (R$ 26, taxa 5, PAGO); fechamento: faturamento
+  igual (R$ 545) + linha iFood 1 pedido R$ 26. #5357 com aceite manual → rascunho ("aguardando aceite") → Aceitar pela
+  tela → cozinha + iFood confirmado → Cancelar pela tela (motivo 501) → iFood cancelled → ERPOS cancelado com itens.
+  Trava de cancelamento direto conferida (transação desfeita).
+- **Sem teste:** baixa de estoque pela ficha (o item vinculado na loja de teste não tem ficha), complemento→item,
+  entregador do iFood (os pedidos de teste vieram com entrega pela loja), retirada/agendado/dinheiro (o gerador do
+  Portal não faz), CONCLUDED no funil, disputa no funil, fechar caixa com pedido do iFood aberto.
+- A Testes PDV voltou para o modo **"operar"** (roteiro da homologação automática do Order).
+- **Etapa 5 (NFC-e) NÃO feita**: decisão/validação do dono + contabilidade; Testes PDV não tem fiscal.
+- **Revisão Opus (reprovou: 5 P1 + 6 P2) → tudo corrigido em 5ff9f36** e retestado (#2852 → P2609260012):
+  `orders.ifood_repasse` (só o que vem pelo repasse sai das somas; cobrado pela loja é venda da loja); retirada/mesa
+  paga no balcão não é "pago"; total do cobrado = o que o cliente paga; complemento 2x = 2 linhas; `fn_close_session`
+  não cancela rascunho do iFood (aceite leva p/ caixa aberto); trava de polling por loja; `release_held_order`
+  condicional; aceite automático refeito pela varredura; agendado retido até preparo+20 min; fila espera o confirm e
+  tem ordem fixa; pedidos ligados seguem fora do funil; cancelar = gerente/admin/caixa; CONCLUDED tira do rascunho.
+- Estoque pela ficha **testado** (#7445 → P2609260011): item→Quesadilla, complemento→item Burrito (linha própria),
+  complemento→opção Guacamole — as 7 baixas certas. Vínculos de teste ficaram na Testes PDV.
+

@@ -1010,9 +1010,8 @@ export default function CaixaTab() {
                 <p className="text-xl md:text-2xl font-black text-zinc-900">{fmt(sessao.faturamento)}</p>
                 <p className="text-xs text-zinc-400">faturamento total</p>
                 {sessao.ifood && sessao.ifood.pedidos > 0 && (
-                  <p className="text-[11px] text-red-600 mt-0.5" title="Pedidos do iFood que passaram pelo ERPOS: a venda é contada pelo iFood (repasse), não entra no faturamento do caixa.">
-                    + iFood: {sessao.ifood.pedidos} pedido{sessao.ifood.pedidos === 1 ? '' : 's'} · {fmt(sessao.ifood.total)}
-                    {sessao.ifood.dinheiro > 0 ? ` (${fmt(sessao.ifood.dinheiro)} em dinheiro na entrega, já na gaveta)` : ''}
+                  <p className="text-[11px] text-red-600 mt-0.5" title="Pedidos do iFood pagos no app (entram pelo repasse do iFood, não pelo caixa). Os cobrados na entrega pela loja já estão no faturamento.">
+                    + iFood (repasse): {sessao.ifood.pedidos} pedido{sessao.ifood.pedidos === 1 ? '' : 's'} · {fmt(sessao.ifood.total)}
                   </p>
                 )}
               </div>
