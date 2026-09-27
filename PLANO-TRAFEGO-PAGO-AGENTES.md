@@ -112,7 +112,8 @@ Hoje o agente só olha os pedidos de **delivery** dos últimos 30 dias (`erposCo
 - O Estrategista gera **propostas de estratégia** (`marketing_strategies`): título, dado que justifica (números e fonte), o que fazer (anúncio, arte, promoção, ajuste de cardápio), custo previsto, meta de resultado e prazo de avaliação.
 - Cada proposta vai para uma **fila de aprovação** e só vira ação (pedido de arte, campanha, promoção) depois do "aprovar".
 - **Quem aprova é configurável por loja:** nova permissão `marketing_aprovar_estrategia` em Configurações › Permissões, que o dono atribui a quem quiser (dono, gerente, responsável de marketing). Reaproveitar a tela **Aprovações** (`/aprovacoes`, permissão `gestao_aprovacoes`) como caixa de entrada, com um tipo novo "Estratégia de marketing", em vez de criar outra fila.
-- Aprovar, recusar (com motivo, que a IA usa para aprender) ou **editar e aprovar**. Limite de valor: acima de R$ X/mês a estratégia exige o dono (admin), mesmo que outro usuário tenha a permissão.
+- Aprovar, recusar (com motivo, que a IA usa para aprender) ou **editar e aprovar**.
+- **Tudo isso é configurado pelo administrador da loja** (decisão do dono, 2026-09-27), numa tela "Regras de aprovação" (Configurações ou aba Agentes): quem aprova estratégias, quem aprova artes, quem aprova ações de verba, e **faixas de valor** (ex.: até R$ A/mês qualquer aprovador; acima disso só admin; acima de R$ B, dois aprovadores). Nenhum valor fixo no código: o padrão de fábrica é "só o admin aprova tudo" até o admin mudar. Gravado em `marketing_approval_rules` (1 por loja, escrita só admin).
 - Aviso de proposta nova pelo sino/WhatsApp do assistente, e aprovação também pelo assistente (já existe o padrão `AprovarSugestoesTrafego`).
 - Depois do prazo, o **Analista de Resultados** avalia se a estratégia bateu a meta e fecha o ciclo ("funcionou / não funcionou / por quê").
 
@@ -168,6 +169,7 @@ Todas com RLS padrão do projeto: select por membership da loja, escrita só `se
 - `creatives`: peça gerada (formato, template, item, textos, `image_path`, status `rascunho → em_revisao → aprovada → publicada | reprovada`, notas do revisor, `meta_creative_id`/`ad_id`/`post_id`).
 - `creative_results`: métricas diárias por peça (vindas do insights + pedidos ERPOS).
 - `marketing_plan`: pauta semanal do Estrategista (itens, datas, status).
+- `marketing_approval_rules` (1/loja, só admin escreve): aprovadores por tipo (estratégia, arte, verba, campanha nova) e faixas de valor.
 - `marketing_strategies`: propostas de estratégia (evidência com números e fonte, ação proposta, custo, meta, prazo), status `proposta → aprovada | recusada | editada → em_execucao → avaliada`, quem aprovou, motivo da recusa, resultado final.
 - Views/RPCs de fatos por canal (`fn_mkt_fatos_canais`: vendas por canal × hora × dia × item, margem, estoque, clientes), calculadas em SQL: a IA recebe o resumo pronto.
 - `agent_runs` genérico **ou** coluna `agent` em `meta_agent_runs` para registrar cada agente com `model`, `usage` e **custo**, e mostrar "quanto a IA custou este mês" na tela.
@@ -224,9 +226,9 @@ Cada fase: testar na loja **Testes PDV** e, para a Meta, com uma conta de anúnc
 5. **Publicação orgânica** (posts no Instagram, não só anúncio) entra no escopo?
 6. **App Review da Meta** para as permissões de escrita/publicação: quem cuida (é feito no painel da Meta pelo dono)?
 7. **Banco de imagens:** onde estão as fotos hoje (OneDrive, Google Drive, Dropbox, só no Instagram)? Define qual conector vem primeiro.
-8. **Aprovação de estratégias:** quem recebe a permissão por padrão (só o dono? gerente?) e a partir de qual valor mensal volta a exigir o dono.
-9. **iFood × próprio:** pode anunciar oferta "mais barato no delivery próprio" (checar contrato/regras do iFood sobre paridade de preço)?
-10. Quem aprova artes: só o dono/admin, ou um papel de "marketing" nas permissões?
+8. ~~Aprovação de estratégias~~ **Decidido (2026-09-27):** o administrador de cada loja configura quem aprova e as faixas de valor; padrão = só admin.
+9. ~~iFood × próprio~~ **Decidido (2026-09-27):** o delivery próprio é independente do iFood; pode ter qualquer preço. Oferta "mais barato no próprio" está liberada.
+10. Quem aprova artes (entra nas mesmas regras de aprovação configuradas pelo admin): só o dono/admin, ou um papel de "marketing" nas permissões?
 
 ---
 
