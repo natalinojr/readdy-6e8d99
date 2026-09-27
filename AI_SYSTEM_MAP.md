@@ -3614,24 +3614,29 @@ Sem SW ativo o POST cai no Vercel e falha — por isso o destino só existe no S
   99food) continua nascendo entregue; entrega PRÓPRIA nasce `ready` → "Pronto · aguardando motoboy" no Gestor. (3) Sem `delivery_lat/lng` (loja por bairro)
   não há ETA para o cliente — só a moto. (4) Teste de "Desfazer": o painel do navegador responde "Cancelar" ao
   `window.confirm`; sobrescrever `window.confirm` na aba para testar.
-- **Delivery Fase 4 — pedido do iFood com motoboy da loja (2026-09-27, só na loja de teste por ora)**: pedido do iFood
-  `order_type=DELIVERY` + `delivered_by=MERCHANT` entra no Gestor de Entregas e no portal do motoboy com id `ifood:<uuid>`
-  (fonte 'ifood'), **só quando `ifood_pdv_config.order_mode='operate'`** (decisão do dono: só vale se cada passo avisar o
-  iFood; loja em só leitura não muda nada). NÃO vira `orders` (o iFood já entra no financeiro pela conciliação — contaria
-  em dobro; também ficaria fora do KDS/estoque/nota de propósito). Campos do motoboy em `ifood_orders` (motoboy_driver_id/
-  status/timeline/problems, delivery_notes, out_for_delivery_at, **entregue_at** = "entregue" no ERPOS, delivery_code_ok,
-  delivery_lat/lng/fee). Lógica única em `supabase/functions/_shared/ifood-motoboy.ts` (usada por `delivery-write` e
-  `motoboy-signal`). Passos no iFood: cartão do Gestor chama `order_action` confirm/start/ready; "coletou" (motoboy ou
-  Gestor) → `dispatch`; "entregou" do motoboy → pede o **código de entrega** que o cliente vê no app do iFood →
-  `ifood-shipping` op `verify_code` (POST /order/v1.0/orders/{id}/verifyDeliveryCode {code}) → o iFood conclui sozinho
-  (CONCLUDED). Sempre avisa o iFood ANTES de gravar: se o iFood recusa, o funil não anda. Gestor "Marcar entregue" não
-  pede código (válvula de escape, só local). CONCLUDED com motoboy em rota e sem entregue_at → marca entregue (poll).
-  Acerto: `delivery_driver_ledger.ifood_order_id` + gatilho `trg_delivery_driver_ledger_ifood` (espelho do de orders;
-  km nulo → faixa_km usa o valor base); ranking soma os dois. PEGADINHAS: `fetchShippingByOrder` recebe só uuid (filtrar
-  os `ifood:`); pedido de teste do iFood vem com coordenada 0,0 (tratada como sem posição); chamada interna da
-  motoboy-signal à ifood-shipping usa `FISCAL_INTERNAL_KEY`.
-  Revisão Opus (1ª rodada reprovou, corrigido): código só vale com `valid === true` explícito do iFood; **5 códigos
-  errados travam** o pedido (`ifood_orders.delivery_code_fails`, zera no "liberar entregador"); Gestor "Marcar entregue"
-  também pede o código (prompt); portal recusa ler/sinalizar pedido do iFood fora do modo operar (link antigo);
-  polling de 20 s do Gestor só com operar; com operar, o portal esconde a cópia do PDV (`delivery_platform='ifood'`).
-  Fica de fora de propósito: `is_test` no acerto (pedido de teste só existe na loja de teste, onde deve contar).
+- **Pedido do iFood com motoboy da loja (2026-09-27):** uma versão separada (sem virar `orders`, d95420e) foi publicada e
+  DESFEITA no mesmo dia — o dono escolheu o desenho `IFOOD-PEDIDOS-FUNIL.md` (pedido do iFood vira pedido do ERPOS).
+  Ficou no ar: `ifood-shipping` op `verify_code` (código de entrega; só `valid === true` explícito) e
+  `ifood_orders.delivery_lat/lng/fee/delivery_code_ok/delivery_code_fails`. O que o motoboy precisa no desenho novo
+  está na seção "Motoboy da loja" do IFOOD-PEDIDOS-FUNIL.md.
+
+### Programa de fidelidade — aba Fidelidade de Clientes & Marketing (2026-09-27, Fase 1)
+- **Tela:** `src/pages/clientes/abas/FidelidadeAba.tsx` (`/clientes?aba=fidelidade`, permissão `gestao_promocoes`). Seções: Resumo, Pontos, Recompensas (ligadas a `menu_items`), Trilha de níveis (por nº de compras numa janela móvel) e Roleta (prêmios com peso, custo por giro, giro de teste). Tudo simulado com pedidos reais.
+- **Formato + contas num arquivo só:** `supabase/functions/_shared/fidelidade.ts` (sem imports; o front importa via `src/lib/fidelidade.ts` re-export). `normalizarConfig` corta faixa e completa com padrão; testes em `src/test/lib/fidelidade.test.ts`.
+- **Backend:** tabela `loyalty_programs` (1/loja; `config` jsonb + `enabled`, RLS sem policy, só service_role) e `fn_fidelidade_histograma(tenant, desde)` (clientes por nº de compras, mesmo critério de pedido válido do funil). Edge **`fidelidade`** (verify_jwt=false; `get`/`save`; escrita = admin/gerente ou `gestao_promocoes` na matriz).
+- **Fase 1 NÃO credita nem desconta nada** (`enabled` sempre false). Fase 2 = livro-razão de pontos + crédito no pedido pago; Fase 3 = resgate no caixa/delivery e roleta com sorteio no servidor.
+- **Pegadinha de negócio:** em 2026-09-27 só 13% dos pedidos da Vila Leste e 0% da Paranaguá tinham `customer_id` — sem identificar o cliente no caixa/mesa o programa fica vazio.
+- **Delivery Fase 3 — "Montar saída" no Gestor de Entregas (2026-09-27)**: botão violeta no cabeçalho (conta os prontos
+  sem entregador) abre `MontarSaidaModal`. SEMPRE sugestão — nada muda até "Confirmar saída". Algoritmo puro em
+  `src/lib/montarSaida.ts` (testes em `src/test/lib/montarSaida.test.ts`): candidatos = `ready` sem entregador e sem fase,
+  com coordenada; semente = o mais urgente (criação + SLA); junta o vizinho mais perto da última parada até 2,5 km,
+  máx. 3 paradas, e só se não fizer outro pedido estourar o prazo; ordem = vizinho mais próximo a partir da loja
+  (linha reta × 1,3, 25 km/h, 5 min para sair, 3 min por parada — sem ORS, custo zero); motoboy sugerido = ativo, GPS
+  ≤ 10 min, sem entrega em andamento, mais perto da loja (um por saída). Link do Google Maps com as paradas. Loja sem
+  pin (`delivery_config.store_location`) → rota começa na 1ª parada. `list_delivery_board` devolve `loja` + `motoboys`.
+  `delivery-write › montar_saida` valida (entrega própria em aberto, sem outro entregador; UPDATE condicional contra
+  corrida) e só grava `orders.motoboy_driver_id` (não mexe na fase) + linha em **`delivery_saidas`** (pedidos na ordem,
+  motoboy, km/min, `sugerido` jsonb e `seguiu_sugestao` — base para medir a sugestão). Portal do motoboy:
+  `list_orders` devolve `rota` (última saída dele nas últimas 6 h, só paradas pendentes) → cartão "Sua rota" + "Abrir
+  rota no Maps" (sem origem: o Maps usa onde o motoboy está). PEGADINHA: a posição dos motoboys chega depois de abrir
+  a janela — a `key` do cartão inclui o motoboy sugerido, senão o select fica em "Escolha…".

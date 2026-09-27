@@ -1,4 +1,4 @@
-import { IFOOD_PASSO, type EntregaPedido } from '../hooks/useGestorEntregas';
+import type { EntregaPedido } from '../hooks/useGestorEntregas';
 import { SHIPPING_ATIVOS, SHIPPING_LABEL, type IfoodShippingOrder } from '@/lib/ifoodShipping';
 import { fmtMoeda, fmtTelefone, waNumero, horaCurta, proximaFase, prazoInfo, temProblema } from '../utils';
 
@@ -7,7 +7,7 @@ interface Props {
   now: number;
   busy: string;
   onAbrir: (orderId: string) => void;
-  onAvancar: (orderId: string, signal: string, motivo?: string, code?: string) => void;
+  onAvancar: (orderId: string, signal: string) => void;
   onProblema: (orderId: string) => void;
   onLiberar: (orderId: string) => void;
   /** Última entrega iFood do pedido (se houver) */
@@ -15,8 +15,6 @@ interface Props {
   /** iFood Entrega ligado na loja → mostra o botão "iFood" */
   ifoodOn?: boolean;
   onIfood?: (orderId: string) => void;
-  /** Pedido do iFood no modo operar: confirmar / preparo / pronto no iFood */
-  onIfoodPasso?: (orderId: string, op: string) => void;
 }
 
 const PRAZO_TOM: Record<string, string> = {
@@ -28,7 +26,7 @@ const PRAZO_TOM: Record<string, string> = {
 const numCurto = (n: string) => `#${String(n).replace(/\D/g, '').slice(-4) || n}`;
 const stop = (e: React.MouseEvent) => e.stopPropagation();
 
-export default function EntregaCard({ pedido: o, now, busy, onAbrir, onAvancar, onProblema, onLiberar, ifood, ifoodOn, onIfood, onIfoodPasso }: Props) {
+export default function EntregaCard({ pedido: o, now, busy, onAbrir, onAvancar, onProblema, onLiberar, ifood, ifoodOn, onIfood }: Props) {
   const prazo = prazoInfo(o, now);
   const prox = proximaFase(o);
   const problemaAtivo = o.motoboy_status === 'problema';
@@ -37,9 +35,6 @@ export default function EntregaCard({ pedido: o, now, busy, onAbrir, onAvancar, 
   const tl = o.motoboy_timeline || {};
   const algumBusy = !!busy && busy.startsWith(o.id + ':');
   const ifoodAtivo = !!ifood && SHIPPING_ATIVOS.includes(ifood.status);
-  const doIfood = o.fonte === 'ifood';
-  // Pedido do iFood antes de ficar pronto: o botão é o passo no iFood (modo operar)
-  const passoIfood = doIfood && o.ifood_operar && !o.motoboy_status ? IFOOD_PASSO[o.ifood_status ?? ''] : undefined;
 
   const probs = (o.problemas && o.problemas.length > 0)
     ? o.problemas
@@ -55,9 +50,6 @@ export default function EntregaCard({ pedido: o, now, busy, onAbrir, onAvancar, 
       {/* Cabeçalho: nº + hora + prazo */}
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-1.5">
-          {doIfood && (
-            <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-red-600 text-white" title="Pedido do iFood — entrega pelo motoboy da loja">iFood</span>
-          )}
           <span className="text-sm font-black text-zinc-800">{numCurto(o.number)}</span>
           {problemaRegistrado && (
             <span className="inline-flex items-center gap-0.5 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-red-100 text-red-700" title="Problema registrado neste pedido">
@@ -165,30 +157,15 @@ export default function EntregaCard({ pedido: o, now, busy, onAbrir, onAvancar, 
               className="flex-1 inline-flex items-center justify-center gap-1 py-2 rounded-lg bg-red-50 text-red-700 text-[11px] font-bold hover:bg-red-100">
               <i className="ri-e-bike-2-fill" /> {ifood!.address_change ? 'Cliente pediu troca de endereço' : 'Acompanhar iFood'}
             </button>
-          ) : passoIfood ? (
-            <button type="button" disabled={algumBusy} onClick={(e) => { stop(e); onIfoodPasso?.(o.id, passoIfood.op); }}
-              title="Avisa o iFood"
-              className="flex-1 inline-flex items-center justify-center gap-1 py-2 rounded-lg bg-red-600 text-white text-[11px] font-bold hover:bg-red-700 disabled:opacity-50">
-              <i className={(busy === `${o.id}:${passoIfood.op}` ? 'ri-loader-4-line animate-spin' : passoIfood.icon)} /> {passoIfood.label}
-            </button>
           ) : prox ? (
-            <button type="button" disabled={algumBusy} onClick={(e) => {
-              stop(e);
-              // Pedido do iFood (modo operar): entregue só com o código que o cliente vê no app do iFood
-              if (doIfood && o.ifood_operar && prox.signal === 'entregou' && o.ifood_status !== 'concluded') {
-                const code = window.prompt('Código de entrega do iFood (o cliente vê no app do iFood):')?.replace(/\D/g, '');
-                if (code) onAvancar(o.id, prox.signal, undefined, code);
-                return;
-              }
-              onAvancar(o.id, prox.signal);
-            }}
+            <button type="button" disabled={algumBusy} onClick={(e) => { stop(e); onAvancar(o.id, prox.signal); }}
               className="flex-1 inline-flex items-center justify-center gap-1 py-2 rounded-lg bg-amber-500 text-white text-[11px] font-bold hover:bg-amber-600 disabled:opacity-50">
               <i className={(busy === `${o.id}:${prox.signal}` ? 'ri-loader-4-line animate-spin' : prox.icon)} /> {prox.label}
             </button>
           ) : (
             <span className="flex-1 text-center text-[10px] text-zinc-400 py-2">Aguardando a cozinha finalizar</span>
           )}
-          {ifoodOn && !doIfood && !ifoodAtivo && !o.driver_id && (
+          {ifoodOn && !ifoodAtivo && !o.driver_id && (
             <button type="button" disabled={algumBusy} onClick={(e) => { stop(e); onIfood?.(o.id); }} title="Chamar entregador do iFood"
               className="inline-flex items-center justify-center gap-0.5 h-8 px-2 rounded-lg bg-red-600 text-white text-[10px] font-black hover:bg-red-700 disabled:opacity-50">
               <i className="ri-e-bike-2-fill text-xs" /> iFood

@@ -3,6 +3,7 @@ import { useParams, Link } from 'react-router-dom';
 import { MOTOBOY_SESSION_KEY, getMotoboySession, type MotoboySession } from '@/pages/motoboy/page';
 import MapaEntregas from './MapaEntregas';
 import { useMotoboyGps, textoGps } from '@/pages/motoboy/useMotoboyGps';
+import { linkMaps } from '@/lib/montarSaida';
 
 // "Turno ligado": motoboy livre também compartilha a localização (a loja vê quem está perto).
 const TURNO_KEY = 'erpos_motoboy_turno';
@@ -90,6 +91,8 @@ export default function MotoboyListaPage() {
 
   const [session, setSession] = useState<MotoboySession | null>(null);
   const [orders, setOrders] = useState<OrderRow[]>([]);
+  // Saída montada pelo gestor (Fase 3): ordem das paradas ainda pendentes
+  const [rota, setRota] = useState<{ paradas: string[] } | null>(null);
   const [loading, setLoading] = useState(true);
   const [erro, setErro] = useState('');
 
@@ -133,6 +136,7 @@ export default function MotoboyListaPage() {
       if (!data.ok) { setErro('Não foi possível carregar os pedidos.'); return; }
       setErro('');
       setOrders(data.orders ?? []);
+      setRota(data.rota && Array.isArray(data.rota.paradas) ? { paradas: data.rota.paradas } : null);
     } catch {
       setErro('Erro de conexão.');
     }
@@ -285,7 +289,6 @@ export default function MotoboyListaPage() {
       <Link key={o.id} to={`/motoboy/${o.id}`} className={'block rounded-2xl border p-4 active:brightness-95 transition ' + baseBg + ring}>
         <div className="flex items-center justify-between mb-1 gap-1.5">
           <div className="flex items-center gap-1.5 min-w-0">
-            {(o as { fonte?: string }).fonte === 'ifood' ? <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-red-600 text-white shrink-0">iFood</span> : null}
             <span className="text-sm font-black text-zinc-800 shrink-0">#{String(o.number).replace(/\D/g, '').slice(-4) || o.number}</span>
             {/* Status da cozinha ao lado do número do pedido (oculto quando já entregue) */}
             {!concluido ? (
@@ -390,6 +393,35 @@ export default function MotoboyListaPage() {
             <span className={'absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ' + (turno ? 'left-[22px]' : 'left-0.5')} />
           </button>
         </div>
+        {/* Rota montada pela loja: paradas em ordem + Maps (sem origem: o Maps usa onde o motoboy está) */}
+        {(() => {
+          const paradas = (rota?.paradas ?? []).map((id) => orders.find((o) => o.id === id)).filter((o): o is OrderRow => !!o);
+          if (!paradas.length) return null;
+          const comLocal = paradas.filter((o) => o.lat != null && o.lng != null).map((o) => ({ lat: o.lat!, lng: o.lng! }));
+          const url = comLocal.length === paradas.length ? linkMaps(null, comLocal) : '';
+          return (
+            <div className="bg-violet-50 border border-violet-200 rounded-2xl p-3 space-y-2">
+              <p className="text-xs font-black text-violet-800 flex items-center gap-1"><i className="ri-route-line" /> Sua rota ({paradas.length} {paradas.length > 1 ? 'entregas' : 'entrega'})</p>
+              <ol className="space-y-1">
+                {paradas.map((o, i) => (
+                  <li key={o.id}>
+                    <Link to={`/motoboy/${o.id}`} className="flex items-center gap-2 text-sm">
+                      <span className="w-5 h-5 shrink-0 rounded-full bg-violet-600 text-white text-[10px] font-black flex items-center justify-center">{i + 1}</span>
+                      <span className="font-bold text-zinc-800">#{String(o.number).replace(/\D/g, '').slice(-4) || o.number}</span>
+                      <span className="text-zinc-600 truncate">{o.cliente}</span>
+                    </Link>
+                  </li>
+                ))}
+              </ol>
+              {url ? (
+                <a href={url} target="_blank" rel="noopener noreferrer"
+                  className="w-full inline-flex items-center justify-center gap-1.5 py-2.5 rounded-xl bg-violet-600 text-white text-sm font-bold">
+                  <i className="ri-map-pin-line" /> Abrir rota no Maps
+                </a>
+              ) : <p className="text-[11px] text-violet-700">Algum endereço está sem localização no mapa — abra pelo pedido.</p>}
+            </div>
+          );
+        })()}
         {avisoGps ? (
           <div className={'flex items-start gap-2 rounded-2xl border px-3 py-2 text-[11px] font-semibold ' + avisoGps.cls}>
             <i className={avisoGps.icon + ' text-sm mt-px'} /> <span>{avisoGps.texto}</span>

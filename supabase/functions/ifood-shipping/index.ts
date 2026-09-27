@@ -361,12 +361,6 @@ async function applyOrderEvent(admin: Admin, c: Ctx, e: any) {
     if (error) throw new Error('Gravar pedido: ' + error.message);
     row = ins;
   } else {
-    // Fase 4: concluído no iFood com o motoboy da loja já em rota → entregue no funil do ERPOS (conta no acerto).
-    if (plan.upd.status === 'concluded' && row.motoboy_driver_id && !row.entregue_at && row.motoboy_status === 'coletou') {
-      plan.upd.entregue_at = plan.upd.concluded_at ?? now;
-      plan.upd.motoboy_status = 'entregou';
-      plan.upd.motoboy_timeline = { ...(row.motoboy_timeline ?? {}), entregou: plan.upd.entregue_at };
-    }
     const { error } = await admin.from('ifood_orders').update({ ...plan.upd, updated_at: now }).eq('id', row.id);
     if (error) throw new Error('Atualizar pedido: ' + error.message);
   }
