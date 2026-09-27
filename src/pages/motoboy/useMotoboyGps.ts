@@ -5,7 +5,23 @@ function edgeUrl(): string {
   return base + '/functions/v1/motoboy-signal';
 }
 
-export type GpsEstado = 'desligado' | 'pedindo' | 'ativo' | 'negado' | 'indisponivel';
+export type GpsEstado = 'desligado' | 'pedindo' | 'ativo' | 'ativo_fundo' | 'negado' | 'indisponivel';
+
+// App Android (Capacitor): plugin @capacitor-community/background-geolocation — serviço em primeiro plano
+// com aviso fixo na barra, continua mandando com a tela apagada. O site chama pelo window.Capacitor (sem import).
+interface LocalNativo { latitude: number; longitude: number; accuracy: number | null; bearing: number | null; speed: number | null }
+interface GpsNativo {
+  addWatcher(o: Record<string, unknown>, cb: (l?: LocalNativo, e?: { code?: string }) => void): Promise<string>;
+  removeWatcher(o: { id: string }): Promise<void>;
+  openSettings(): Promise<void>;
+}
+function gpsNativo(): GpsNativo | null {
+  const c = (window as unknown as { Capacitor?: { isNativePlatform?: () => boolean; Plugins?: Record<string, unknown> } }).Capacitor;
+  if (!c?.isNativePlatform?.()) return null;
+  return (c.Plugins?.BackgroundGeolocation as GpsNativo | undefined) ?? null;
+}
+/** No app: abre as configurações do ERPOS no Android (permissão de localização). */
+export function abrirConfigGps(): void { gpsNativo()?.openSettings().catch(() => {}); }
 
 // Limites de envio (o Supabase já travou por IO: nada de ping sem necessidade).
 const MIN_INTERVALO_MS = 15000;   // no mínimo 15 s entre envios
@@ -33,11 +49,12 @@ export function useMotoboyGps(tenantId: string | null | undefined, driverId: str
 
   useEffect(() => {
     if (!ativo || !tenantId || !driverId) { setEstado('desligado'); return; }
-    if (typeof navigator === 'undefined' || !('geolocation' in navigator)) { setEstado('indisponivel'); return; }
+    const nativo = gpsNativo();
+    if (!nativo && (typeof navigator === 'undefined' || !('geolocation' in navigator))) { setEstado('indisponivel'); return; }
     setEstado('pedindo');
 
-    const enviar = async (pos: GeolocationPosition) => {
-      const { latitude: lat, longitude: lng, accuracy, heading, speed } = pos.coords;
+    type Leitura = { lat: number; lng: number; accuracy: number | null; heading: number | null; speed: number | null };
+    const enviar = async ({ lat, lng, accuracy, heading, speed }: Leitura) => {
       if (accuracy != null && accuracy > MAX_PRECISAO_M) return;
       const agora = Date.now();
       const ult = ultimoRef.current;
@@ -67,8 +84,35 @@ export function useMotoboyGps(tenantId: string | null | undefined, driverId: str
       }
     };
 
+    // App Android: mesmas regras de envio (≥15 s e ≥30 m), mas pelo serviço com aviso fixo (tela pode apagar).
+    if (nativo) {
+      let watcherId: string | null = null;
+      let encerrado = false;
+      nativo.addWatcher({
+        backgroundTitle: 'ERPOS — entrega em andamento',
+        backgroundMessage: 'A loja vê onde você está até terminar as entregas.',
+        requestPermissions: true,
+        stale: false,
+        distanceFilter: 10,
+      }, (l, e) => {
+        if (e) { setEstado(e.code === 'NOT_AUTHORIZED' ? 'negado' : 'indisponivel'); return; }
+        if (!l) return;
+        setEstado('ativo_fundo');
+        void enviar({ lat: l.latitude, lng: l.longitude, accuracy: l.accuracy ?? null, heading: l.bearing ?? null, speed: l.speed ?? null });
+      }).then((id) => { if (encerrado) nativo.removeWatcher({ id }).catch(() => {}); else watcherId = id; })
+        .catch(() => setEstado('indisponivel'));
+      return () => {
+        encerrado = true;
+        if (watcherId) nativo.removeWatcher({ id: watcherId }).catch(() => {});
+      };
+    }
+
     const watchId = navigator.geolocation.watchPosition(
-      (pos) => { setEstado('ativo'); void enviar(pos); },
+      (pos) => {
+        setEstado('ativo');
+        const c = pos.coords;
+        void enviar({ lat: c.latitude, lng: c.longitude, accuracy: c.accuracy ?? null, heading: c.heading ?? null, speed: c.speed ?? null });
+      },
       (err) => { setEstado(err.code === err.PERMISSION_DENIED ? 'negado' : 'indisponivel'); },
       { enableHighAccuracy: true, maximumAge: 10000, timeout: 30000 },
     );
@@ -91,12 +135,16 @@ export function useMotoboyGps(tenantId: string | null | undefined, driverId: str
   return { estado, ultimoEnvio };
 }
 
-/** Faixa de aviso do GPS para o motoboy ("mantenha esta tela aberta"). */
-export function textoGps(estado: GpsEstado): { cls: string; icon: string; texto: string } | null {
+/** Faixa de aviso do GPS para o motoboy ("mantenha esta tela aberta"). `acao` = tocar abre as configurações (app). */
+export function textoGps(estado: GpsEstado): { cls: string; icon: string; texto: string; acao?: () => void } | null {
+  const noApp = !!gpsNativo();
   switch (estado) {
     case 'ativo': return { cls: 'bg-emerald-50 text-emerald-700 border-emerald-200', icon: 'ri-map-pin-user-fill', texto: 'Localização ligada — mantenha esta tela aberta durante a entrega.' };
+    case 'ativo_fundo': return { cls: 'bg-emerald-50 text-emerald-700 border-emerald-200', icon: 'ri-map-pin-user-fill', texto: 'Localização ligada — pode apagar a tela: o aviso do ERPOS fica na barra até terminar. Se o celular economizar bateria, deixe o ERPOS "sem restrição" em Configurações › Bateria.' };
     case 'pedindo': return { cls: 'bg-sky-50 text-sky-700 border-sky-200', icon: 'ri-loader-4-line', texto: 'Ligando a localização… permita o acesso quando o celular pedir.' };
-    case 'negado': return { cls: 'bg-red-50 text-red-700 border-red-200', icon: 'ri-map-pin-off-line', texto: 'Localização bloqueada. Libere nas configurações do navegador para a loja e o cliente verem a entrega.' };
+    case 'negado': return noApp
+      ? { cls: 'bg-red-50 text-red-700 border-red-200', icon: 'ri-map-pin-off-line', texto: 'Localização bloqueada para o ERPOS. Toque aqui, vá em Permissões › Localização e escolha "Permitir" (o tempo todo, se aparecer).', acao: abrirConfigGps }
+      : { cls: 'bg-red-50 text-red-700 border-red-200', icon: 'ri-map-pin-off-line', texto: 'Localização bloqueada. Libere nas configurações do navegador para a loja e o cliente verem a entrega.' };
     case 'indisponivel': return { cls: 'bg-amber-50 text-amber-700 border-amber-200', icon: 'ri-error-warning-line', texto: 'Não foi possível ler o GPS. Ligue a localização do celular.' };
     default: return null;
   }
