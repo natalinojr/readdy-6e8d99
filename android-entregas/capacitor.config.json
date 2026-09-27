@@ -1,0 +1,13 @@
+{
+  "appId": "app.erpos.entregas",
+  "appName": "ERPOS Entregas",
+  "webDir": "www",
+  "server": {
+    "url": "https://erpos.vercel.app/app-entregas",
+    "cleartext": false,
+    "allowNavigation": ["erpos.vercel.app", "*.supabase.co"]
+  },
+  "android": {
+    "allowMixedContent": false
+  }
+}

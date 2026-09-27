@@ -128,6 +128,40 @@ serve(async (req) => {
       return json({ ok: true, driver: { id: created.id, name: created.name }, tenant_id: tenantId, store_name: tenant?.name ?? "", store_slug: tenant?.slug ?? "" });
     }
 
+    // ── App "ERPOS Entregas": liga uma loja pelo código gerado no ERPOS (uso único, 24 h) ──
+    // Mesmo resultado do driver_login (acha/cria o entregador pelo celular na loja do código).
+    if (body.action === "vincular_codigo") {
+      const code = String(body.code ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+      const nome = String(body.name ?? "").trim().slice(0, 80);
+      const phone = phoneDigits(body.phone);
+      if (code.length !== 8) return json({ ok: false, error: "codigo_invalido" }, 200);
+      if (!nome || phone.length < 8) return json({ ok: false, error: "dados_invalidos" }, 200);
+      const nowIso = new Date().toISOString();
+      const { data: cod } = await admin.from("delivery_driver_codes").select("id, tenant_id, expires_at")
+        .eq("code", code).is("used_at", null).maybeSingle();
+      if (!cod || cod.expires_at < nowIso) return json({ ok: false, error: "codigo_invalido" }, 200);
+      const tenantId = cod.tenant_id as string;
+      const { data: existing } = await admin.from("delivery_drivers")
+        .select("id, name, is_active").eq("tenant_id", tenantId).eq("phone", phone).maybeSingle();
+      let driver: { id: string; name: string };
+      if (existing) {
+        if (!existing.is_active) return json({ ok: false, blocked: true, error: "bloqueado" }, 200);
+        await admin.from("delivery_drivers").update({ name: nome, last_login_at: nowIso }).eq("id", existing.id);
+        driver = { id: existing.id, name: nome };
+      } else {
+        const { data: created, error: insErr } = await admin.from("delivery_drivers")
+          .insert({ tenant_id: tenantId, name: nome, phone, is_active: true, last_login_at: nowIso }).select("id, name").maybeSingle();
+        if (insErr || !created) return json({ error: "falha_login" }, 500);
+        driver = created;
+      }
+      // Uso único: só marca se ninguém usou no meio tempo
+      const { data: usado } = await admin.from("delivery_driver_codes").update({ used_at: nowIso, driver_id: driver.id })
+        .eq("id", cod.id).is("used_at", null).select("id");
+      if (!usado?.length) return json({ ok: false, error: "codigo_invalido" }, 200);
+      const { data: tenant } = await admin.from("tenants").select("name, slug").eq("id", tenantId).maybeSingle();
+      return json({ ok: true, driver, tenant_id: tenantId, store_name: tenant?.name ?? "", store_slug: tenant?.slug ?? "" });
+    }
+
     // ── Lista de pedidos de entrega em aberto da loja (pro motoboy escolher) ──
     if (body.action === "list_orders") {
       const tenantId = await resolveTenantId(admin, body);

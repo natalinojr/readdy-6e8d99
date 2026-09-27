@@ -881,7 +881,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
     }
 
     // ── Gestao de motoboys (entregadores) — admin da loja ──────────────────────
-    if (action === "list_drivers" || action === "set_driver_active" || action === "delete_driver") {
+    if (action === "list_drivers" || action === "set_driver_active" || action === "delete_driver" || action === "gerar_codigo_motoboy") {
       const authHeader = req.headers.get("Authorization") || "";
       const token = authHeader.replace(/^Bearer\s+/i, "").trim();
       if (!token) return jsonErr("Não autenticado", 401);
@@ -898,6 +898,21 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
           .select("id, name, phone, is_active, created_at, last_login_at")
           .eq("tenant_id", tenant_id).order("created_at", { ascending: false });
         return new Response(JSON.stringify({ _v: "v14", ok: true, drivers: drivers ?? [] }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      if (action === "gerar_codigo_motoboy") {
+        // App "ERPOS Entregas": código de uso único (24 h) para o motoboy ligar esta loja no app.
+        // 8 letras/números sem os ambíguos (0/O, 1/I/L) — chutar pelo endpoint público fica inviável.
+        const ALFA = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+        const expira = new Date(Date.now() + 24 * 3600000).toISOString();
+        for (let tentativa = 0; tentativa < 5; tentativa++) {
+          const rnd = crypto.getRandomValues(new Uint32Array(8));
+          const code = Array.from(rnd, (n) => ALFA[n % ALFA.length]).join("");
+          const { error } = await admin.from("delivery_driver_codes").insert({ tenant_id, code, created_by: userData.user.id, expires_at: expira });
+          if (!error) return new Response(JSON.stringify({ _v: "v18", ok: true, code: code.slice(0, 4) + "-" + code.slice(4), expires_at: expira }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+          if (!String(error.message).includes("duplicate")) throw error;
+        }
+        return jsonErr("Não foi possível gerar o código. Tente de novo.", 500);
       }
 
       const driverId = String(body.driver_id || "").trim();
