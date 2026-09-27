@@ -14,6 +14,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import type { ClienteCRM } from '@/hooks/useClientes';
 import type { Voucher } from '@/types/vouchers';
 import NaoPediramPanel from '../components/NaoPediramPanel';
+import PainelEnvioAutomatico, { MODELO_COM_CUPOM, MODELO_SEM_CUPOM } from '../components/EnvioAutomatico';
+import { confirmar } from '@/components/base/Dialogos';
 
 export type CrmStage =
   | 'carrinho_abandonado' | 'nunca_comprou' | 'primeira_compra' | 'recorrente'
@@ -59,6 +61,10 @@ interface CrmSettings {
   hora_inicio: number;
   hora_fim: number;
   desconto_max_percent: number;
+  max_auto_por_dia?: number;
+  auto_so_optin?: boolean;
+  auto_ultimo_erro?: string | null;
+  auto_ultimo_erro_em?: string | null;
 }
 
 interface ClienteFunil {
@@ -193,6 +199,8 @@ export default function FunilAba(props: Props) {
   const [busca, setBusca] = useState('');
   const [sequencia, setSequencia] = useState<ClienteFunil[] | null>(null);
   const [showNaoPediram, setShowNaoPediram] = useState(false);
+  // Situação dos modelos na Meta (nome → APPROVED/PENDING/…), vinda do painel do envio automático.
+  const [modelos, setModelos] = useState<Record<string, string>>({});
 
   const tenantId = user?.tenantId;
 
@@ -351,6 +359,58 @@ export default function FunilAba(props: Props) {
     setAlterado(true);
     setMsgSalvo('');
     setSettings({ ...settings, ...patch });
+  }
+
+  /** Modelo da Meta que o estágio usa no automático: com cupom ou só contato. */
+  function modeloDo(r: CrmRule): string {
+    return r.voucher_type !== 'nenhum' && Number(r.voucher_value) > 0 ? MODELO_COM_CUPOM : MODELO_SEM_CUPOM;
+  }
+
+  /** Por que o automático deste estágio não pode ser ligado agora (null = pode). */
+  function bloqueioAuto(r: CrmRule): string | null {
+    if (!r.enabled) return 'Ligue a oferta do estágio primeiro.';
+    const st = modelos[modeloDo(r)];
+    if (st !== 'APPROVED') return st === 'PENDING' ? 'Aguardando a Meta aprovar o modelo.' : 'O modelo desta mensagem ainda não foi aprovado pela Meta.';
+    return null;
+  }
+
+  // Ligar o automático pede confirmação com a fila real (quem receberia hoje).
+  // Desligar é imediato. Nos dois casos vale depois de "Salvar ofertas".
+  async function alternarAuto(r: CrmRule, label: string) {
+    if (r.auto_send) { alterarRegra(r.stage, { auto_send: false }); return; }
+    if (alterado) {
+      await confirmar({ titulo: 'Salve as ofertas primeiro', mensagem: 'Há mudanças não salvas. Salve (ou descarte) e depois ligue o envio automático.', confirmarLabel: 'Entendi', cancelarLabel: '' });
+      return;
+    }
+    const res = await invokeWithAuth<{
+      total?: number; restante_hoje?: number; sem_optin?: number; sem_celular?: number; so_optin?: boolean;
+      sem_link_delivery?: boolean; error?: string; message?: string;
+    }>('crm-funnel', { body: { action: 'auto_tick', tenant_id: tenantId, dry_run: true, estagios: [r.stage] } });
+    const d = res.data;
+    if (res.error || !d || d.error) {
+      await confirmar({ titulo: 'Não consegui montar a prévia', mensagem: res.error?.message || d?.message || 'Tente de novo.', confirmarLabel: 'Entendi', cancelarLabel: '' });
+      return;
+    }
+    const semCupom = modeloDo(r) === MODELO_SEM_CUPOM;
+    const ok = await confirmar({
+      titulo: `Ligar o envio automático em "${label}"?`,
+      confirmarLabel: 'Ligar envio automático',
+      mensagem: (
+        <div className="space-y-2 text-left text-sm">
+          <p>
+            O ERPOS vai mandar <strong>sozinho</strong>, pelo WhatsApp do assistente, {semCupom ? 'a mensagem' : 'a oferta com o voucher'} deste
+            estágio para quem puder ser abordado — de hora em hora, das {settings?.hora_inicio}h às {settings?.hora_fim}h,
+            no máximo {settings?.max_auto_por_dia ?? 30} mensagens por dia na loja.
+          </p>
+          <p><strong>{d.total ?? 0}</strong> {d.total === 1 ? 'cliente receberia' : 'clientes receberiam'} agora.
+            {d.so_optin && (d.sem_optin ?? 0) > 0 ? ` ${d.sem_optin} ficam de fora por não terem aceitado receber ofertas.` : ''}
+            {(d.sem_celular ?? 0) > 0 ? ` ${d.sem_celular} sem celular válido.` : ''}</p>
+          {semCupom && d.sem_link_delivery && <p className="text-red-600">A loja não tem link do delivery: a mensagem sem cupom não sai.</p>}
+          <p className="text-zinc-500">A Meta cobra cada mensagem de marketing (cerca de R$ 0,35). Começa depois de você salvar as ofertas.</p>
+        </div>
+      ),
+    });
+    if (ok) alterarRegra(r.stage, { auto_send: true });
   }
 
   function salvarRegras() {
@@ -556,6 +616,7 @@ export default function FunilAba(props: Props) {
                           <p className="text-[11px] text-zinc-400">
                             {listaCarregando ? 'Carregando…' : `${elegiveis.length} de ${clientes.length} podem ser abordados agora`}
                             {' · '}
+                            {regraDo(stageAberto)?.auto_send && <span className="text-green-700 font-semibold">envio automático ligado · </span>}
                             {oferta ? <span className="text-amber-700 font-semibold">oferta {oferta}</span> : (
                               <button onClick={function () { setAba('regras'); }} className="text-amber-600 hover:underline cursor-pointer">sem oferta — configurar</button>
                             )}
@@ -689,12 +750,23 @@ export default function FunilAba(props: Props) {
           <div className="flex items-start gap-2 px-3 py-2.5 bg-blue-50 border border-blue-100 rounded-xl">
             <i className="ri-information-line text-blue-500 text-sm mt-0.5" />
             <p className="text-[11px] text-blue-700">
-              Ligar um estágio faz o ERPOS <strong>sugerir</strong> a oferta na lista do funil. O envio continua
-              sendo um clique seu. Marcadores da mensagem:{' '}
+              Ligar um estágio faz o ERPOS <strong>sugerir</strong> a oferta na lista do funil, e o envio é um
+              clique seu — a não ser que você ligue o <strong>envio automático</strong> do estágio. Marcadores da
+              mensagem (envio pelo clique):{' '}
               <code>{'{nome}'}</code>, <code>{'{loja}'}</code>, <code>{'{cupom}'}</code>, <code>{'{link}'}</code>.
               {settings && <> Desconto em % nunca passa de <strong>{settings.desconto_max_percent}%</strong> (trava em Critérios).</>}
             </p>
           </div>
+
+          {tenantId && (
+            <PainelEnvioAutomatico
+              tenantId={tenantId}
+              settings={settings}
+              algumLigado={rules.some(function (r) { return r.auto_send; })}
+              onSettings={function (patch) { alterarSettings(patch); }}
+              onModelos={setModelos}
+            />
+          )}
 
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
             {[...ATENCAO, ...JORNADA].map(function (stage) {
@@ -722,7 +794,7 @@ export default function FunilAba(props: Props) {
                     </div>
                     <button
                       type="button"
-                      onClick={function () { alterarRegra(stage, { enabled: !r.enabled }); }}
+                      onClick={function () { alterarRegra(stage, r.enabled ? { enabled: false, auto_send: false } : { enabled: true }); }}
                       title={r.enabled ? 'Oferta ligada' : 'Oferta desligada'}
                       className={'relative w-11 h-6 rounded-full transition-colors cursor-pointer flex-shrink-0 ' +
                         (r.enabled ? 'bg-green-500' : 'bg-zinc-200')}
@@ -731,6 +803,36 @@ export default function FunilAba(props: Props) {
                         (r.enabled ? 'translate-x-[22px]' : 'translate-x-0.5')} />
                     </button>
                   </div>
+
+                  {(function () {
+                    const bloq = r.auto_send ? null : bloqueioAuto(r);
+                    return (
+                      <div className={'flex items-center justify-between gap-3 px-3 py-2 rounded-lg border ' +
+                        (r.auto_send ? 'bg-green-50 border-green-200' : 'bg-zinc-50 border-zinc-100')}>
+                        <div className="min-w-0">
+                          <p className="text-xs font-semibold text-zinc-700">
+                            <i className="ri-robot-2-line mr-1" />Envio automático {r.auto_send ? 'ligado' : 'desligado'}
+                          </p>
+                          <p className="text-[11px] text-zinc-400">
+                            {r.auto_send
+                              ? 'O ERPOS manda sozinho pelo WhatsApp do assistente (modelo aprovado).'
+                              : (bloq ?? 'Pronto para ligar: você confirma antes.')}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          disabled={!!bloq}
+                          onClick={function () { alternarAuto(r, resumo?.label ?? stage); }}
+                          title={r.auto_send ? 'Desligar envio automático' : 'Ligar envio automático'}
+                          className={'relative w-11 h-6 rounded-full transition-colors cursor-pointer flex-shrink-0 disabled:opacity-40 disabled:cursor-not-allowed ' +
+                            (r.auto_send ? 'bg-green-500' : 'bg-zinc-200')}
+                        >
+                          <span className={'absolute left-0 top-0.5 w-5 h-5 bg-white rounded-full transition-transform shadow ' +
+                            (r.auto_send ? 'translate-x-[22px]' : 'translate-x-0.5')} />
+                        </button>
+                      </div>
+                    );
+                  })()}
 
                   <div className={'space-y-3 ' + (r.enabled ? '' : 'opacity-50')}>
                     <div className="grid grid-cols-2 sm:grid-cols-6 gap-2">
