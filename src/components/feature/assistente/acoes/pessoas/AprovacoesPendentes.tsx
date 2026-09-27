@@ -1,7 +1,6 @@
 // Ação rápida: aprovações pendentes (descontos, cancelamentos, problemas de item) — sem IA.
 // Mesmo caminho da tela Aprovações: AprovacoesContext (aprovar/rejeitar com o nome de quem decide).
-// ATENÇÃO: esse contexto é EM MEMÓRIA, do aparelho/aba — só aparecem pedidos feitos neste mesmo
-// app aberto (igual à tela). Pedido feito no caixa de outro aparelho não chega aqui.
+// As solicitações vêm do banco (`pdv_approval_requests`, loja ativa) — chegam de qualquer aparelho.
 import { useEffect, useState } from 'react';
 import { useAprovacoes, type SolicitacaoAprovacao } from '@/contexts/AprovacoesContext';
 import { useAuth } from '@/contexts/AuthContext';
@@ -45,8 +44,8 @@ export default function AprovacoesPendentes({ onFechar, irPara }: AcaoProps) {
 
   useEffect(() => {
     bot(pendentes.length
-      ? `${pendentes.length} pendente(s). Toque numa para ver.\n(Só aparecem pedidos feitos neste aparelho, como na tela Aprovações.)`
-      : 'Nenhuma aprovação pendente neste aparelho.\n(Pedidos feitos em outro aparelho não aparecem aqui.)');
+      ? `${pendentes.length} pendente(s). Toque numa para ver.`
+      : 'Nenhuma aprovação pendente nesta loja.');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -75,10 +74,12 @@ export default function AprovacoesPendentes({ onFechar, irPara }: AcaoProps) {
       setSelId(null); setPasso('lista');
       return;
     }
-    if (decisao === 'aprovar') aprovar(s.id, operador); else rejeitar(s.id, operador);
-    bot(decisao === 'aprovar' ? `✅ Aprovado por ${operador}.` : `✅ Recusado por ${operador}.`);
+    const d = decisao;
     setSelId(null);
     setPasso('feito');
+    (d === 'aprovar' ? aprovar(s.id, operador) : rejeitar(s.id, operador))
+      .then(() => bot(d === 'aprovar' ? `✅ Aprovado por ${operador}.` : `✅ Recusado por ${operador}.`))
+      .catch((e: Error) => bot(`Não deu certo: ${e.message}`));
   };
 
   return (
