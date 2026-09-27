@@ -3559,3 +3559,27 @@ Sem SW ativo o POST cai no Vercel e falha — por isso o destino só existe no S
   PEGADINHAS: (1) leaflet dentro de `Suspense`/lazy precisa de `map.invalidateSize()` antes do `fitBounds`, senão o ponto sai
   cortado; (2) teste de edge sem curl (proxy bloqueia supabase.co no ambiente de nuvem): `net.http_post` no SQL e ler
   `net._http_response` — a resposta chega assíncrona, e um MCP instável pode deixar a posição "velha" (> 15 min) entre chamadas.
+- **Delivery Fase 2 — acerto financeiro dos entregadores (2026-09-27)**: regra por loja em
+  `system_settings.delivery_config.acerto_motoboy` ({ativo, modo: por_entrega|faixa_km|diaria_mais_entrega|percentual_taxa,
+  valor_entrega, faixas[{ate_km,valor}], diaria, percentual}), editada em Config. do Delivery › "Pagamento dos entregadores"
+  (`AcertoRegraCard` + `acertoCfg.ts`; salva junto com o resto, só admin). Lançamentos em `delivery_driver_ledger`
+  (entrega | diaria | adiantamento | estorno; aberto | fechado | estornado) nascem pelo gatilho `trg_delivery_driver_ledger`
+  em `orders` (AFTER UPDATE OF status, motoboy_driver_id, WHEN entra/sai de 'delivered'; + AFTER INSERT já entregue) —
+  um lugar só pega todos os caminhos que gravam "entregue". Valor CONGELADO na entrega (`regra` = snapshot). Idempotente por
+  pedido (índices únicos parciais). Saiu de "entregue": aberto → estornado; já acertado → linha `estorno` negativa.
+  Falha do gatilho nunca bloqueia o pedido: vai para `fn_dev_error_report` (source 'other').
+  Financeiro › **Entregadores** (`EntregadoresTab`, permissão `fin_entregadores`): resumo (`fn_acerto_motoboy_resumo`),
+  adiantamento, chave Pix do motoboy (`delivery_drivers.pix_key/pix_key_kind`), "Fechar acerto" (`fn_acerto_motoboy_fechar`)
+  → UMA conta em `fin_accounts_payable` pendente, Pix, com DRE (escolhida ou "Entregadores" criada), `reference_type =
+  'delivery_driver_settlement'`, `reference_id` = acerto; "Desfazer" (`fn_acerto_motoboy_desfazer`) só com a conta pendente e
+  sem Pix ativo; ranking (`fn_delivery_ranking_entregadores`: entregas, tempo total/em rota, atrasos pelo SLA, km, custo).
+  CRITÉRIOS: (1) o acerto fecha TUDO em aberto até a data final (nada fica esquecido antes do período); (2) totais saem do
+  próprio `UPDATE ... RETURNING` e o gatilho trava a linha (`FOR UPDATE`) + guarda de status — sem corrida fechar × entregar/
+  cancelar; (3) diárias nascem no fechamento, só de dias com entrega fechada nele, uma por (motoboy, dia); (4) saldo ≤ 0 não
+  fecha (exceção desfaz tudo); (5) conta a pagar de acerto só some pelo "Desfazer" (gatilho `trg_payable_acerto_guard`,
+  liberado por `set_config('erpos.desfazendo_acerto')`); (6) permissão por LOJA EXPLÍCITA (`_acerto_motoboy_pode`: admin, ou
+  gerente/financeiro sem `fin_entregadores` negado) — NÃO usar `has_permission`, que pega a última loja (LIMIT 1);
+  (7) motoboy com lançamento não pode ser apagado (FK restrict) — a tela manda "Bloquear".
+  PEGADINHAS: a regra `fin_accounts_payable_reference_type_check` lista as origens aceitas — origem nova exige drop+add;
+  `dev_error_events.source` só aceita front|edge|print|fiscal|cron|sw|other — usar `fn_dev_error_report`.
+  Revisão: 2 rodadas com Opus (1ª reprovou: reference_type, corrida, linhas órfãs; 2ª aprovou).
