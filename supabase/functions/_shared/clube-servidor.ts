@@ -95,10 +95,11 @@ export async function cadastrarNoClube(admin: any, tenantId: string, body: any, 
 
   const { data: porCpf } = await admin.from("customers").select("id, phone, loyalty_joined_at, birth_date")
     .eq("tenant_id", tenantId).eq("cpf", cpf).is("deleted_at", null).maybeSingle();
-  if (porCpf?.loyalty_joined_at) return { customerId: porCpf.id };
-  // Pela internet, só CPF que a loja ainda não conhece: CPF que já existe (do caixa, da
-  // nota) passa pelo balcão — senão alguém "tomaria" o cadastro e o histórico de outra pessoa.
+  // Pela internet, só CPF que a loja ainda não conhece — inclusive MEMBRO: sem isto,
+  // "cadastrar" com o CPF de um membro devolvia a sessão dele (sem os 4 dígitos). CPF que
+  // já existe (membro, caixa, nota) entra por "Entrar" ou passa pelo balcão.
   if (opts.web && porCpf) return { erro: "Este CPF já tem cadastro na loja. Se já é do clube, use Entrar; se não, peça ao caixa para ativar." };
+  if (porCpf?.loyalty_joined_at) return { customerId: porCpf.id };
 
   const { data: porCel } = await admin.from("customers").select("id")
     .eq("tenant_id", tenantId).eq("phone", celular).is("deleted_at", null).maybeSingle();
