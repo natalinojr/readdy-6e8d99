@@ -436,8 +436,9 @@ Deno.serve(async (req) => {
           unread: porTopico.get(t) ?? 0,
           last: ultimas[i] ? {
             role: ultimas[i].role,
-            // Prévia sem os marcadores internos ("[Pelo ERPOS…]", "[Áudio]", "[Pagamento…]").
-            content: String(ultimas[i].content).replace(/^\[[^\]]*\]\s*/, '').slice(0, 120),
+            // Prévia sem os marcadores internos ("[Pelo ERPOS…]", "[Áudio]"). A linha "[Pagamento…] id <uuid>"
+            // vai inteira: a frase É a prévia e o app tira o id — cortada, sobrava só "id da46…" (2026-09-27).
+            content: String(ultimas[i].content).replace(/^\[(?!Pagamento|PIN|Leitura)[^\]]*\]\s*/, '').slice(0, 160),
             created_at: ultimas[i].created_at,
           } : null,
         })),
