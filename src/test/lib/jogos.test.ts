@@ -119,3 +119,15 @@ describe('Corre Corre', function () {
     expect(r.quadro).toBe(e.quadro);
   });
 });
+
+describe('cópia do motor na Edge Function', function () {
+  it('supabase/functions/_shared/jogos é idêntico a src/lib/jogos', async function () {
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    for (const f of ['rng.ts', 'voa.ts', 'corre.ts']) {
+      const a = fs.readFileSync(path.resolve('src/lib/jogos', f), 'utf8').replace(/\r\n/g, '\n');
+      const b = fs.readFileSync(path.resolve('supabase/functions/_shared/jogos', f), 'utf8').replace(/\r\n/g, '\n');
+      expect(b, f + ' divergiu: copie src/lib/jogos/' + f + ' para supabase/functions/_shared/jogos/').toBe(a);
+    }
+  });
+});
