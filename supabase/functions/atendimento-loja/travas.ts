@@ -157,6 +157,37 @@ export const pediuLinkEm = (t: string) =>
   /(manda|mande|passa|envia|reenvia|me d[aá]|qual [eé]|cad[eê]|quero|de novo)[^.!?\n]{0,20}(link|card[aá]pio|menu)|(link|card[aá]pio|menu)[^.!?\n]{0,12}(por favor|pf|pfv|\?)/i.test(t);
 const ultimaDoCliente = (h: Conferir['historico']) => [...h].reverse().find((x) => x.role === 'user')?.content ?? '';
 
+// O que o cliente quer na última mensagem (usado pelas travas e para anexar o link que faltou).
+function intencao(c: Pick<Conferir, 'items' | 'historico' | 'usadas' | 'equipeJaAvisada'>) {
+  const ultima = ultimaDoCliente(c.historico);
+  const linksAntes = new Set(c.historico.flatMap((h) => urlsDe(h.content)));
+  const pediuLink = pediuLinkEm(ultima);
+  // Quem já recebeu o link na última resposta e está saindo ("vou pedir lá, vlw") não precisa de outro.
+  const ultimaResposta = [...c.historico].reverse().find((x) => x.role === 'assistant')?.content ?? '';
+  const despedida = linksAntes.size > 0 && /valeu|vlw|obrigad|brigad|flw|tmj|falou/i.test(ultima);
+  // "vou pedir/quero pedir" é compra; "quero/bora/pode ser/manda" só com um item citado ("quero logo viu",
+  // de quem reclama, não é — replay local 2026-09-27).
+  const querComprar = !urlsDe(ultimaResposta).length && !despedida && !/j[aá] (pedi|paguei|fiz)/i.test(ultima)
+    && (/\b(vou querer|vo querer|vou pedir|vo pedir|quero pedir|vou de|fechou|me v[eê])\b/i.test(ultima)
+      || /\b(quero|pode ser|bora|manda|mande)\b/i.test(ultima) && !!itemCitado(c.items, ultima));
+  // Encomenda grande/evento e cliente bravo: com a equipe, sem vender.
+  const textosCliente = c.historico.filter((h) => h.role === 'user').map((h) => h.content).join(' ');
+  const encomenda = (c.equipeJaAvisada || c.usadas.has('chamar_atendente')) && /encomenda|evento|festa|\b\d{2,}\s?(pessoas|combos|unidades|burritos|tacos|lanches)/i.test(textosCliente);
+  const bravo = c.equipeJaAvisada && /!{2,}|\?{2,}|absurd|demor|cad[eê]|cancel|dinheiro|estorn|reclam|pdc|porra|raiva|😤|😡|🤬|🙄|😒/i.test(ultima);
+  const escolhido = (pediuLink || querComprar) && !encomenda && !bravo ? itemCitado(c.items, ultima) : null;
+  return { linksAntes, pediuLink, querComprar, encomenda, bravo, escolhido };
+}
+
+// Depois da volta de correção a resposta ainda saiu sem link para quem quer comprar/pediu o link: o código
+// anexa (o modelo às vezes ignora a correção — 8 de 314 respostas na v10). Item citado > último item > geral.
+export function linkQueFalta(c: Conferir, geral: string, urlDoItem: (id: string) => string): string | null {
+  const x = intencao(c);
+  if (!(x.pediuLink || x.querComprar) || x.encomenda || x.bravo || c.usadas.has('chamar_atendente') || urlsDe(c.reply).length) return null;
+  if (x.escolhido) return x.escolhido.disponivel ? urlDoItem(x.escolhido.id) : geral; // esgotado: o geral, nunca o link dele
+  if (x.pediuLink) return geral;
+  return c.links[c.links.length - 1] ?? [...x.linksAntes].reverse().find((l) => l.includes('item=')) ?? geral;
+}
+
 // Confere a resposta do modelo. Cada item devolvido vira instrução de uma volta de correção.
 export function conferir(c: Conferir): string[] {
   const { items, usadas, links } = c;
@@ -174,7 +205,7 @@ export function conferir(c: Conferir): string[] {
   const vistos = `${c.saidas.join(' ')} ${c.historico.map((h) => h.content).join(' ')}`;
   for (const m of vistos.matchAll(/R\$\s?(\d{1,4}(?:\.\d{3})*(?:,\d{2})?)/g)) addPreco(m[1].replace(/\./g, '').replace(',', '.'));
   // Linha de conta (total, soma, "fica", "=") pode ter valor que não é do cardápio: não confere.
-  const semContas = reply.split('\n').filter((l) => !/total|soma|=|\bfica\b|\bd[aá]\b|ao todo|mais ou menos|aproximad/i.test(l)).join('\n');
+  const semContas = reply.split('\n').filter((l) => !/total|soma|=|\bfica\b|\bd[aá]\b|ao todo|mais ou menos|aproximad|troco/i.test(l)).join('\n');
   const precosErrados = [...semContas.matchAll(/R\$\s?(\d{1,4}(?:\.\d{3})*(?:,\d{2})?)/g)]
     .map((m) => m[1]).filter((v) => !conhecidos.has(Number(v.replace(/\./g, '').replace(',', '.')).toFixed(2)));
   // Esgotado: confere linha a linha (s05, v5: avisou que o Classic acabou e na linha seguinte ofereceu o Veggie, também esgotado).
@@ -195,32 +226,25 @@ export function conferir(c: Conferir): string[] {
     correcoes.push('Não garanta que um item é sem glúten, sem lactose, sem amendoim ou vegano: diga só os ingredientes que a descrição traz e, para alergia/restrição, que a equipe confirma (chame chamar_atendente se ainda não chamou).');
   if (!usadas.has('meus_pedidos') && /pedido[^.!?\n]{0,20}(recebido|confirmado|anotado|registrado|cancelado|aprovado|feito|garantid|chegando|na cozinha|na fila)|(pedido|lanche|comida)[^.!?\n]{0,25}(a caminho|em preparo|saindo|sendo preparado)|cancelei|pagamento[^.!?\n]{0,15}(recebido|confirmado|aprovado|caiu)/i.test(reply))
     correcoes.push('Você não vê nem altera pedidos: não diga que um pedido foi recebido, confirmado, anotado, cancelado ou que está a caminho. Para status, chame meus_pedidos; para cancelar/mudar, chame chamar_atendente.');
+  // Delivery fechado/pausado: não existe previsão de volta além da próxima abertura cadastrada (s55, x10).
+  if (c.menu.delivery_open_now === false && /(poucos|alguns|uns) minutos|j[aá] j[aá]|logo (volta|abre|reabre)|daqui a pouco|rapidinho|em breve|fica (pronto|agendad|guardad|salvo|registrad)|quando (a gente )?(abrir|voltar|reabrir)[^.!?\n]{0,40}(sai|entreg|prepar|processa)/i.test(reply))
+    correcoes.push('O delivery está fechado/pausado e não há previsão de volta: não diga que volta em minutos, "logo" ou "em breve". Diga só a próxima abertura informada (se houver); o link mostra o cardápio, mas o pedido só é aceito com o delivery aberto (não dá para pedir agora e receber depois).');
+  // "Vou consultar/verificar com a equipe" é promessa (s06, x10: consultar entrega fora da área).
+  if (/(vou|vamos|deixa eu|posso) (consultar|verificar|checar|ver com|confirmar com)/i.test(reply))
+    correcoes.push('Não prometa consultar ou verificar nada: responda com a regra que você tem; se for caso da equipe, chame chamar_atendente e diga só que ela já foi avisada.');
   // Quantas pessoas serve: só se a descrição disser (s37: "deve dar pra 3 pessoas").
   if (/\b(serve|servem|rende|rendem|d[aá] (pra|para)|deve dar|matam?)\b[^.!?\n]{0,25}\b(\d+|uma|duas|tr[eê]s|quatro|cinco)\s?pessoas?/i.test(reply)
     && !items.some((i) => /pessoa/i.test(i.desc)))
     correcoes.push('Quantas pessoas um item serve não está no cardápio: não estime; diga o peso/descrição que existe e que a equipe confirma se a pessoa precisar.');
   if (/mais pedid|mais vendid|campe[aã]o|faz (muito )?sucesso|sucesso da casa|todo mundo (ama|pede|adora)|queridinh|muito procurad/i.test(reply))
     correcoes.push('Não diga que algo é o mais pedido, campeão, sucesso ou que todo mundo ama: você não tem esse dado. "Destaque da casa" só para os Destaques da lista.');
-  const ultima = ultimaDoCliente(c.historico);
-  const pediuLink = pediuLinkEm(ultima);
-  // Quem já recebeu o link na última resposta e está saindo ("vou pedir lá, vlw") não precisa de outro.
-  const ultimaResposta = [...c.historico].reverse().find((x) => x.role === 'assistant')?.content ?? '';
-  // "vou pedir/quero pedir" é compra; "quero/bora/pode ser/manda" só com um item citado ("quero logo viu",
-  // de quem reclama, não é — replay local 2026-09-27).
-  const despedida = linksAntes.size > 0 && /valeu|vlw|obrigad|brigad|flw|tmj|falou/i.test(ultima);
-  const querComprar = !urlsDe(ultimaResposta).length && !despedida && !/j[aá] (pedi|paguei|fiz)/i.test(ultima)
-    && (/\b(vou querer|vo querer|vou pedir|vo pedir|quero pedir|vou de|fechou|me v[eê])\b/i.test(ultima)
-      || /\b(quero|pode ser|bora|manda|mande)\b/i.test(ultima) && !!itemCitado(items, ultima));
-  // Encomenda grande/evento e cliente bravo: com a equipe, sem vender. Fora isso, mesmo com a equipe já avisada
-  // por outro motivo, quem quer comprar recebe o link (s21, x9: "só a equipe cuida de pedido").
-  const textosCliente = c.historico.filter((h) => h.role === 'user').map((h) => h.content).join(' ');
-  const encomenda = (c.equipeJaAvisada || usadas.has('chamar_atendente')) && /encomenda|evento|festa|\b\d{2,}\s?(pessoas|combos|unidades|burritos|tacos|lanches)/i.test(textosCliente);
-  const bravo = c.equipeJaAvisada && /!{2,}|\?{2,}|absurd|demor|cad[eê]|cancel|dinheiro|estorn|reclam|pdc|porra|raiva|😤|😡|🤬|🙄|😒/i.test(ultima);
+  // Mesmo com a equipe já avisada por outro motivo, quem quer comprar recebe o link (s21, x9: "só a equipe
+  // cuida de pedido"); encomenda grande e cliente bravo, não.
+  const { pediuLink, querComprar, encomenda, bravo, escolhido } = intencao(c);
   if ((pediuLink || querComprar) && !urlsResposta.length && !usadas.has('chamar_atendente') && !encomenda && !bravo)
     correcoes.push(pediuLink ? 'A pessoa pediu o link/cardápio: chame link_do_pedido (sem item se ela só quer ver o cardápio) e mande o link.'
       : 'A pessoa quer comprar: chame link_do_pedido com o item que ela escolheu e mande o link nesta resposta (sabor, tamanho e endereço ela escolhe no link).');
   // Escolheu um item e o link foi sem item (s30, x9: pediu o Duo Mex e recebeu o link geral).
-  const escolhido = (pediuLink || querComprar) && !encomenda && !bravo ? itemCitado(items, ultima) : null;
   if (escolhido && urlsResposta.length && !urlsResposta.some((u) => u.includes('item=')))
     correcoes.push(`A pessoa escolheu ${escolhido.nome}: chame link_do_pedido com esse item e mande o link que abre nele.`);
   // Encomenda grande/evento com a equipe: nada de link, conta ou endereço (s17/s49, v7).

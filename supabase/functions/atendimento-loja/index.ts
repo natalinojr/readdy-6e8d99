@@ -23,7 +23,7 @@
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
 import Anthropic from 'npm:@anthropic-ai/sdk@0.125.0';
 import { waConfig, waOwnNumber, waSendText, type WaConfig } from '../_shared/wa.ts';
-import { acharItem, arrumarLinks, brl, conferir, DIAS, disseQueChamouEquipe, idiomaDe, menuItems, type MenuItem, norm, precoTxt, spNow, temTermo } from './travas.ts';
+import { acharItem, arrumarLinks, brl, conferir, DIAS, disseQueChamouEquipe, idiomaDe, linkQueFalta, menuItems, type MenuItem, norm, precoTxt, spNow, temTermo } from './travas.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -39,6 +39,8 @@ function log(level: 'INFO' | 'WARN' | 'ERROR', msg: string, ctx?: Record<string,
 
 const MODEL = 'claude-haiku-4-5';
 const PRICE_IN = 1 / 1e6, PRICE_OUT = 5 / 1e6; // US$ por token (Haiku 4.5)
+// Modelos que a simulação pode comparar (preço relativo ao Haiku 4.5: Sonnet 5 = US$ 2/10 por MTok).
+const MODELOS_SIM: Record<string, number> = { 'claude-haiku-4-5': 1, 'claude-sonnet-5': 2 };
 const DEBOUNCE_MS = 3000;
 const MAX_REPLIES_DAY = 40;          // por conversa
 const CONV_TTL_MS = 3 * 86_400_000;  // conversa parada há mais que isso: a próxima começa outra
@@ -116,7 +118,7 @@ function deliveryUrl(slug: string, extra: Record<string, string> = {}) {
 }
 
 const MOTIVO_FECHADO: Record<string, string> = {
-  sem_sessao: 'a loja ainda não abriu o caixa', pausado: 'o delivery está pausado por alguns minutos',
+  sem_sessao: 'a loja ainda não abriu o caixa', pausado: 'o delivery está pausado no momento, sem previsão de volta',
   fora_horario: 'fora do horário de entrega', fechado_manual: 'o delivery está fechado agora',
 };
 
@@ -166,7 +168,7 @@ export function regrasPadrao(bot: Row): string {
 - Tamanho, peso, quantas pessoas serve, ingredientes: só o que estiver escrito na descrição do item. Não está lá? Diga que não tem essa informação (e a equipe confirma, se a pessoa precisar).
 - Item com "a partir de": o preço depende das escolhas (sabor, tamanho); explique as escolhas que a busca mostrar.
 - Item INDISPONÍVEL: avise e sugira um parecido disponível, já com o link dele.
-- Delivery FECHADO: diga que agora está fechado (retirada também) e a próxima abertura informada acima; se não houver horário cadastrado, não diga quando abre. A pessoa já pode escolher pelo link. Não prometa entrega agora nem exceção.
+- Delivery FECHADO: diga que agora está fechado (retirada também) e a próxima abertura informada acima; se não houver horário cadastrado, não diga quando abre nem "em minutos". O link mostra o cardápio, mas o pedido só é aceito com o delivery aberto: nunca diga que dá para pedir agora e receber depois, nem que o pedido fica guardado. Não prometa entrega agora nem exceção.
 - Taxa: use a lista acima (entenda erros de digitação do bairro). Bairro fora da lista: não entregamos lá, sem exceção e sem prometer consultar; ofereça retirada no balcão (com o endereço, se houver).
 - Responda primeiro o que a pessoa perguntou (prazo, taxa, pagamento) e depois mande o link.
 ${bot.upsell ? '- VENDA (obrigatório): toda vez que mandar o link para um prato escolhido, na mesma mensagem sugira UM complemento concreto do cardápio (bebida, batata/porção, guacamole ou sobremesa), com nome e preço vindos de buscar_cardapio, ou uma promoção de hoje. Ex.: "Quer uma Coca-cola original (R$ 8,00) pra acompanhar? É só adicionar no link." Uma sugestão só; se a pessoa recusar, não insista.' : ''}
@@ -309,6 +311,7 @@ export interface Pensar {
   log?: (tool: string, out: string) => void;
   regras?: string; // só na simulação: instruções alternativas em teste
   equipeJaAvisada?: boolean; // a conversa já pediu atendente antes (não avisa de novo sozinho)
+  modelo?: string; // só na simulação: comparar outro modelo (ver MODELOS_SIM)
 }
 // O "cérebro": cardápio + instruções + ferramentas → resposta. Usado na conversa real e na simulação.
 export async function pensar(o: Pensar) {
@@ -368,10 +371,11 @@ export async function pensar(o: Pensar) {
   const usadas = new Set<string>();
   const rodada = async (limite: number) => {
     for (let i = 0; i < limite; i++) {
-      const res = await client.messages.create({ model: MODEL, max_tokens: 700, system, tools: TOOLS, messages: msgs });
+      const res = await client.messages.create({ model: o.modelo ?? MODEL, max_tokens: 700, system, tools: TOOLS, messages: msgs });
       calls++;
       const u = res.usage;
-      cost += ((u.input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) * 1.25 + (u.cache_read_input_tokens ?? 0) * 0.1) * PRICE_IN + (u.output_tokens ?? 0) * PRICE_OUT;
+      const fator = MODELOS_SIM[o.modelo ?? MODEL] ?? 1;
+      cost += (((u.input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) * 1.25 + (u.cache_read_input_tokens ?? 0) * 0.1) * PRICE_IN + (u.output_tokens ?? 0) * PRICE_OUT) * fator;
       cacheLido += u.cache_read_input_tokens ?? 0;
       const texto = res.content.filter((b): b is Anthropic.TextBlock => b.type === 'text').map((b) => b.text).join('\n').trim();
       const uses = res.content.filter((b): b is Anthropic.ToolUseBlock => b.type === 'tool_use');
@@ -408,6 +412,11 @@ export async function pensar(o: Pensar) {
     await o.chamarEquipe(`(automático) ${ultima}`.slice(0, 400));
     ferramentas.push({ nome: 'chamar_atendente', entrada: { automatico: true }, saida: 'Equipe avisada (a resposta dizia que tinha avisado).' });
   }
+  const falta = reply ? linkQueFalta({ reply, items, menu: o.menu, historico: o.historico, saidas: [], usadas, links, equipeJaAvisada: !!o.equipeJaAvisada },
+    deliveryUrl(o.tenant.slug), (id) => deliveryUrl(o.tenant.slug, { item: id })) : null;
+  if (falta) { reply = `${reply}
+
+${falta}`; linkSent = true; }
   const final = arrumarLinks({ reply, items, historico: o.historico, links, geral: deliveryUrl(o.tenant.slug), urlDoItem: (id) => deliveryUrl(o.tenant.slug, { item: id }) });
   reply = final.reply;
   if (final.anexou) linkSent = true;
@@ -569,6 +578,7 @@ async function simular(admin: SupabaseClient, b: Row) {
     historico.push({ role: 'user', content: fala });
     const r = await pensar({
       bot, tenant, menu, historico, nome: b.nome ?? null, regras: b.regras ? String(b.regras) : undefined, equipeJaAvisada: equipe,
+      modelo: MODELOS_SIM[String(b.modelo)] ? String(b.modelo) : undefined,
       pedidos: async () => String(b.pedidos ?? 'Nenhum pedido de delivery encontrado com este telefone.'),
       chamarEquipe: async () => { equipe = true; },
     });
