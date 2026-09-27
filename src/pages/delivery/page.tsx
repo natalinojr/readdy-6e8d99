@@ -1151,6 +1151,8 @@ export default function DeliveryPage() {
                 metodosAlternativos={metodosAlternativos}
                 onTrocarPagamento={phone ? data.trocarPagamentoPedidoSegurado : undefined}
                 modoEntrega={modoEntrega}
+                nomeCliente={customerName}
+                telefoneCliente={phone}
               />
             </div>
           ) : subView === 'historico' ? (
@@ -1630,6 +1632,22 @@ export default function DeliveryPage() {
                     hint="Deixe em branco se não quiser o documento na nota."
                   />
                 </div>
+
+                {/* Aceite de ofertas pelo WhatsApp (opt-in da Meta/LGPD): desmarcado por padrão. */}
+                {!data.jaAceitaOfertas && (
+                  <label className="mb-3 flex items-start gap-2.5 px-3 py-2.5 bg-zinc-50 border border-zinc-100 rounded-xl cursor-pointer">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5 w-4 h-4 accent-amber-500 cursor-pointer"
+                      checked={data.aceitaOfertas}
+                      onChange={function (e) { data.setAceitaOfertas(e.target.checked); }}
+                    />
+                    <span className="text-xs text-zinc-600 leading-snug">
+                      Quero receber ofertas e cupons da loja pelo WhatsApp.
+                      <span className="block text-[11px] text-zinc-400">Dá para sair quando quiser respondendo SAIR.</span>
+                    </span>
+                  </label>
+                )}
 
                 {error ? (
                   <div className="mb-3 flex items-start gap-2 bg-red-50 border border-red-100 rounded-xl px-3 py-2.5">

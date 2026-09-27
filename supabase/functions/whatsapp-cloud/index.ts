@@ -16,6 +16,7 @@
 
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
 import { graph, TEMPLATES, waConfig, waLog, waSendText, waTyping, type WaConfig } from '../_shared/wa.ts';
+import { crmInbound, querSair } from '../_shared/crm-auto.ts';
 
 const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
 const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
@@ -172,7 +173,19 @@ async function handleMessage(admin: SupabaseClient, cfg: WaConfig, m: any, name:
     const r = await internal('hiring-scheduler', { action: 'inbound', number: waId, reply_to: waId, text, name });
     if (r.ok && r.out?.handled === true) return;
   }
-  // 2) Link de candidatura (canal-publico decide se atende, igual ao fluxo da Evolution).
+  // 2) Cliente respondendo um envio automático do funil de CRM (SAIR ou dúvida). Mensagem com
+  // código de vaga válido continua indo para a candidatura.
+  if (text && !file) {
+    const code = text.match(/\b([A-Z]{2,4}-[A-Z0-9]{4})\b/i)?.[1]?.toUpperCase() ?? null;
+    const { data: canal } = code ? await admin.from('bot_channels').select('id').eq('code', code).maybeSingle() : { data: null };
+    // Candidatura em andamento segue para o canal-publico (só o SAIR é do CRM).
+    const { data: conversa } = canal || querSair(text) ? { data: null } : await admin.from('bot_conversations')
+      .select('id').eq('contact_jid', `${waId}@s.whatsapp.net`).eq('status', 'aberta').limit(1).maybeSingle();
+    const tratou = canal || conversa ? false : await crmInbound(admin, cfg, waId, text)
+      .catch((e) => { log('WARN', 'crm inbound', { error: errMsg(e) }); return false; });
+    if (tratou) return;
+  }
+  // 3) Link de candidatura (canal-publico decide se atende, igual ao fluxo da Evolution).
   const r = await internal('canal-publico', {
     action: 'incoming', chat_id: `${waId}@s.whatsapp.net`, number: waId, reply_to: waId, name, kind, text, file,
     key: { remoteJid: waId, fromMe: false, id: String(m.id) }, is_owner: isOwner,

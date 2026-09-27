@@ -52,6 +52,7 @@ const AssistentePage = lazy(() => import('@/pages/assistente/page'));
 const ReceberPage = lazy(() => import('@/pages/receber/page'));
 
 const MesaQRPage = lazy(() => import('../pages/mesa-qr/page'));
+const JogosDemoPage = lazy(() => import('../components/jogos/JogosDemo'));
 const VoucherLinkPage = lazy(() => import('../pages/voucher-link/page'));
 const RelatorioPublicoPage = lazy(() => import('../pages/relatorio-publico/page'));
 const DeliveryPage = lazy(() => import('../pages/delivery/page'));
@@ -132,6 +133,7 @@ const routes: RouteObject[] = [
   { path: '/supabase-debug', element: <SupabaseDebugPage /> },
   // Só em desenvolvimento: Tarefas com dados fictícios, sem login (testar layout/celular).
   ...(import.meta.env.DEV ? [{ path: '/dev/tarefas', element: <TarefasPage /> }] : []),
+  ...(import.meta.env.DEV ? [{ path: '/dev/jogos', element: <JogosDemoPage /> }] : []),
   { path: '*', element: <NotFound /> },
 ];
 

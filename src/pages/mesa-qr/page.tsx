@@ -163,6 +163,9 @@ export default function MesaQRPage() {
         onNovoPedido={handleNovoPedido}
         confirmedCartItems={data.confirmedCartItems}
         cardapioItems={items}
+        tenantId={participant.tenant_id}
+        participantId={participant.id}
+        participantName={participant.name}
       />
     );
   }

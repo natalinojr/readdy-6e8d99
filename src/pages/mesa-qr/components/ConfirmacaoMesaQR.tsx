@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { formatCurrency } from '@/lib/formatters';
+import JogosEspera from '@/components/jogos/JogosEspera';
 
 interface CartItem {
   cartId: string;
@@ -34,6 +35,10 @@ interface Props {
   onNovoPedido: () => void;
   confirmedCartItems: CartItem[];
   cardapioItems: CardapioItem[];
+  /** Para o ranking dos jogos (participante + senha provam o pedido) */
+  tenantId?: string;
+  participantId?: string;
+  participantName?: string;
 }
 
 export default function ConfirmacaoMesaQR(props: Props) {
@@ -109,6 +114,15 @@ export default function ConfirmacaoMesaQR(props: Props) {
             </span>
           </div>
         ) : null}
+
+        {/* Joguinhos enquanto a comida fica pronta */}
+        <div className="w-full mt-6">
+          <JogosEspera
+            tenantId={props.tenantId}
+            credencial={props.participantId ? { tipo: 'mesa', participant_id: props.participantId, access_token: accessToken } : null}
+            nomeInicial={props.participantName}
+          />
+        </div>
 
         {/* Itens do pedido com foto */}
         {confirmedCartItems.length > 0 ? (

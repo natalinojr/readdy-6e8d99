@@ -12,7 +12,7 @@ export async function pedidosPagosDoDia(tenantId: string, dia: string): Promise<
   for (let de = 0; ; de += LOTE) {
     const { data, error } = await supabase.from('orders').select('id, created_at, total_amount')
       .eq('tenant_id', tenantId).eq('is_paid', true).neq('status', 'cancelled')
-      .eq('is_training', false).eq('is_draft', false)
+      .eq('is_training', false).eq('is_draft', false).is('ifood_order_id', null)
       .gte('created_at', `${dia}T00:00:00-03:00`).lte('created_at', `${dia}T23:59:59-03:00`)
       .order('created_at').range(de, de + LOTE - 1);
     if (error) return null;
