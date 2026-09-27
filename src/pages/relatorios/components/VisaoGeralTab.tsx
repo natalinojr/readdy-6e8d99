@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import {
   BarChart, Bar,
-  AreaChart, Area,
+  ComposedChart, Area, Line,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
 import { TrendingUp, ShoppingBag, Percent } from 'lucide-react';
@@ -9,7 +9,10 @@ import { useSalesReport, useSalesReportBySession } from '@/hooks/useSalesReport'
 import { useVisaoGeralExtras } from '@/hooks/useVisaoGeralExtras';
 import { useIfoodVendas } from '@/hooks/useIfoodVendas';
 import { useModoFaturamento } from '@/contexts/ModoFaturamentoContext';
-import { getPeriodDateObjects, getPeriodoAnterior } from '@/lib/dateUtils';
+import { getPeriodDateObjects, getPeriodoAnterior, getPeriodDates as getPeriodDatesISO } from '@/lib/dateUtils';
+import { useVendasHoraComparativo } from '@/hooks/useVendasHoraComparativo';
+import { diasComparacao } from '@/lib/vendasHoraComparativo';
+import ChipsComparacao, { COMPARACOES, COR_COMPARACAO, rotuloComparacao, useComparacoesLigadas } from '@/components/feature/ComparacaoVendasHora';
 import type { SessionInfo } from '@/hooks/useSessions';
 import FaturamentoAcumuladoCard from './FaturamentoAcumuladoCard';
 
@@ -123,6 +126,16 @@ export default function VisaoGeralTab({ periodo, externalSession, onSessionChang
   const { data: ifoodAnt } = useIfoodVendas(isSessao ? '' : periodoAnterior);
 
   const report = isSessao ? reportSessao : reportCalendario;
+
+  // Linhas de comparação do gráfico por hora: só quando o período é um dia só (Hoje, Ontem, uma data).
+  const diaUnico = useMemo(() => {
+    if (isSessao) return null;
+    const { from, to } = getPeriodDatesISO(periodo);
+    return from.slice(0, 10) === to.slice(0, 10) ? from.slice(0, 10) : null;
+  }, [isSessao, periodo]);
+  const diasComp = useMemo(() => (diaUnico ? diasComparacao(diaUnico) : null), [diaUnico]);
+  const [comparacoes, alternarComparacao] = useComparacoesLigadas('relatorios.vendasHora.comparacoes');
+  const seriesComp = useVendasHoraComparativo(diasComp, comparacoes, 'relatorio');
   const loading = isSessao ? loadingSessao : loadingCalendario;
   const hasRealData = isSessao ? hasSessao : hasCalendario;
   const reportAnterior = isSessao ? null : reportAnteriorCalendario;
@@ -254,8 +267,11 @@ export default function VisaoGeralTab({ periodo, externalSession, onSessionChang
       valor: Math.round((v.rev + (ifoodHora[h] ?? 0)) * 100) / 100,
       ifood: Math.round((ifoodHora[h] ?? 0) * 100) / 100,
       pedidos: v.ord,
-    }));
+      ...Object.fromEntries(COMPARACOES.filter((k) => diasComp && comparacoes[k] && seriesComp[k])
+        .map((k) => [k, Math.round((seriesComp[k]![String(h).padStart(2, '0')] ?? 0) * 100) / 100])),
+    } as { hora: string; valor: number; ifood: number; pedidos: number; ontem?: number; semana?: number; mes?: number }));
   })() : [];
+  const linhasComp = diasComp ? COMPARACOES.filter((k) => comparacoes[k] && seriesComp[k]) : [];
 
   // Categorias — apenas no modo calendário
   const catData = !isSessao ? (extras?.by_category ?? []) : [];
@@ -427,10 +443,14 @@ export default function VisaoGeralTab({ periodo, externalSession, onSessionChang
               <div className="w-4 h-4 border-2 border-amber-400 border-t-transparent rounded-full animate-spin" />
             )}
           </div>
-          {hourlyData.some((h) => h.valor > 0) ? (
+          {diasComp && (
+            <ChipsComparacao ligadas={comparacoes} dias={diasComp} onAlternar={alternarComparacao}
+              baseOntem={periodo === 'Hoje' ? 'Ontem' : 'Dia anterior'} className="-mt-1 mb-3" />
+          )}
+          {hourlyData.some((h) => h.valor > 0 || linhasComp.some((k) => (h[k] ?? 0) > 0)) ? (
             <div className="h-44 md:h-56">
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={hourlyData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+                <ComposedChart data={hourlyData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f4f4f5" vertical={false} />
                   <XAxis
                     dataKey="hora"
@@ -447,7 +467,11 @@ export default function VisaoGeralTab({ periodo, externalSession, onSessionChang
                     width={36}
                   />
                   <Tooltip
-                    formatter={(val: number, name: string) => [fmt(val), name === 'ifood' ? 'Só iFood' : 'Faturamento total']}
+                    formatter={(val: number, name: string) => [fmt(val),
+                      name === 'ifood' ? 'Só iFood'
+                      : diasComp && (name === 'ontem' || name === 'semana' || name === 'mes')
+                        ? rotuloComparacao(name, diasComp[name], periodo === 'Hoje' ? 'Ontem' : 'Dia anterior')
+                      : 'Faturamento total']}
                     labelFormatter={(label) => `Hora: ${label}`}
                     contentStyle={{ borderRadius: 8, border: '1px solid #e4e4e7', fontSize: 11 }}
                   />
@@ -473,7 +497,11 @@ export default function VisaoGeralTab({ periodo, externalSession, onSessionChang
                   {ifPed > 0 && (
                     <Area type="monotone" dataKey="ifood" stroke="#ea1d2c" strokeWidth={1.5} strokeDasharray="4 3" fill="url(#sombra-vendas-hora-ifood)" dot={false} activeDot={{ r: 3, fill: '#ea1d2c' }} />
                   )}
-                </AreaChart>
+                  {linhasComp.map((k) => (
+                    <Line key={k} type="monotone" dataKey={k} stroke={COR_COMPARACAO[k]} strokeWidth={1.5} strokeDasharray="5 4"
+                      dot={false} activeDot={{ r: 3, fill: COR_COMPARACAO[k], strokeWidth: 0 }} isAnimationActive={false} />
+                  ))}
+                </ComposedChart>
               </ResponsiveContainer>
             </div>
           ) : (

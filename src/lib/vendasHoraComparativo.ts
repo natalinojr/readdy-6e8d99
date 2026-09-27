@@ -1,16 +1,13 @@
 import { somarDias } from '@/lib/dateUtils';
 
 // Gráfico "Vendas por Hora" do Dashboard: linhas de comparação com o dia anterior,
-// o mesmo dia da semana passada e o mesmo dia do mês passado.
+// o mesmo dia da semana passada e o mesmo dia da semana 4 semanas atrás (≈ mês passado, sem trocar o dia da semana).
 
 export type Comparacao = 'ontem' | 'semana' | 'mes';
 
-/** Dias comparados a partir de hoje ('YYYY-MM-DD', Brasília). Mês passado sem o dia (ex.: 31) → último dia dele. */
+/** Dias comparados a partir de hoje ('YYYY-MM-DD', Brasília). 'mes' = 28 dias atrás, mesmo dia da semana. */
 export function diasComparacao(hoje: string): Record<Comparacao, string> {
-  const [y, m, d] = hoje.split('-').map(Number);
-  const ultimoDiaMesPassado = new Date(Date.UTC(y, m - 1, 0)).getUTCDate();
-  const mes = new Date(Date.UTC(y, m - 2, Math.min(d, ultimoDiaMesPassado))).toISOString().slice(0, 10);
-  return { ontem: somarDias(hoje, -1), semana: somarDias(hoje, -7), mes };
+  return { ontem: somarDias(hoje, -1), semana: somarDias(hoje, -7), mes: somarDias(hoje, -28) };
 }
 
 /** Hora cheia ('HH') em Brasília de um timestamp. */
