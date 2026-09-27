@@ -3625,3 +3625,10 @@ Sem SW ativo o POST cai no Vercel e falha — por isso o destino só existe no S
   também pede o código (prompt); portal recusa ler/sinalizar pedido do iFood fora do modo operar (link antigo);
   polling de 20 s do Gestor só com operar; com operar, o portal esconde a cópia do PDV (`delivery_platform='ifood'`).
   Fica de fora de propósito: `is_test` no acerto (pedido de teste só existe na loja de teste, onde deve contar).
+
+### Programa de fidelidade — aba Fidelidade de Clientes & Marketing (2026-09-27, Fase 1)
+- **Tela:** `src/pages/clientes/abas/FidelidadeAba.tsx` (`/clientes?aba=fidelidade`, permissão `gestao_promocoes`). Seções: Resumo, Pontos, Recompensas (ligadas a `menu_items`), Trilha de níveis (por nº de compras numa janela móvel) e Roleta (prêmios com peso, custo por giro, giro de teste). Tudo simulado com pedidos reais.
+- **Formato + contas num arquivo só:** `supabase/functions/_shared/fidelidade.ts` (sem imports; o front importa via `src/lib/fidelidade.ts` re-export). `normalizarConfig` corta faixa e completa com padrão; testes em `src/test/lib/fidelidade.test.ts`.
+- **Backend:** tabela `loyalty_programs` (1/loja; `config` jsonb + `enabled`, RLS sem policy, só service_role) e `fn_fidelidade_histograma(tenant, desde)` (clientes por nº de compras, mesmo critério de pedido válido do funil). Edge **`fidelidade`** (verify_jwt=false; `get`/`save`; escrita = admin/gerente ou `gestao_promocoes` na matriz).
+- **Fase 1 NÃO credita nem desconta nada** (`enabled` sempre false). Fase 2 = livro-razão de pontos + crédito no pedido pago; Fase 3 = resgate no caixa/delivery e roleta com sorteio no servidor.
+- **Pegadinha de negócio:** em 2026-09-27 só 13% dos pedidos da Vila Leste e 0% da Paranaguá tinham `customer_id` — sem identificar o cliente no caixa/mesa o programa fica vazio.

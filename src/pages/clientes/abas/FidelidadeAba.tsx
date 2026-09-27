@@ -841,8 +841,8 @@ export default function FidelidadeAba() {
 
       {/* Barra de salvar */}
       {editavel ? (
-        <div className="fixed bottom-0 inset-x-0 md:left-auto md:right-6 md:bottom-4 md:inset-x-auto z-30">
-          <div className="bg-white border-t md:border md:rounded-xl border-zinc-200 shadow-lg px-4 py-3 flex items-center gap-3">
+        <div className="fixed bottom-0 inset-x-0 md:left-auto md:right-24 md:bottom-4 md:inset-x-auto z-30">
+          <div className="bg-white border-t md:border md:rounded-xl border-zinc-200 shadow-lg pl-4 pr-24 md:pr-4 py-3 flex items-center gap-3">
             <span className="text-xs text-zinc-500 flex-1 md:flex-none">
               {msg || (alterado ? 'Alterações não salvas' : salvo && atualizadoEm ? `Salvo em ${new Date(atualizadoEm).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}` : 'Padrão sugerido — ainda não salvo')}
             </span>
