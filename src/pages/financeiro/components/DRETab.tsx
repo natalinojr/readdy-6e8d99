@@ -162,10 +162,11 @@ async function fetchDREData(tenantId: string, startDate: string, endDate: string
 
     supabase
       .from('payments')
-      .select('amount, payment_method_id, order_id, id, orders!inner(destination_type, status, discount_amount, is_training, is_draft)')
+      .select('amount, payment_method_id, order_id, id, orders!inner(destination_type, status, discount_amount, is_training, is_draft, ifood_order_id)')
       .eq('orders.tenant_id', tenantId)
       .eq('orders.is_training', false)
       .eq('orders.is_draft', false)
+      .is('orders.ifood_order_id', null)
       .not('orders.status', 'in', '(cancelled,draft)')
       .eq('is_refunded', false)
       .gte('created_at', startTs)
@@ -177,6 +178,7 @@ async function fetchDREData(tenantId: string, startDate: string, endDate: string
       .eq('tenant_id', tenantId)
       .eq('is_training', false)
       .eq('is_draft', false)
+      .is('ifood_order_id', null)
       .eq('status', 'cancelled')
       .gte('created_at', startTs)
       .lte('created_at', endDateTime),
@@ -187,6 +189,7 @@ async function fetchDREData(tenantId: string, startDate: string, endDate: string
       .eq('tenant_id', tenantId)
       .eq('is_training', false)
       .eq('is_draft', false)
+      .is('ifood_order_id', null)
       .not('status', 'in', '(cancelled,draft)')
       .gte('created_at', startTs)
       .lte('created_at', endDateTime),
@@ -413,10 +416,11 @@ async function fetchDREDataCompetencia(tenantId: string, startDate: string, endD
 
     supabase
       .from('payments')
-      .select('amount, payment_method_id, order_id, id, orders!inner(destination_type, status, discount_amount, is_training, is_draft)')
+      .select('amount, payment_method_id, order_id, id, orders!inner(destination_type, status, discount_amount, is_training, is_draft, ifood_order_id)')
       .eq('orders.tenant_id', tenantId)
       .eq('orders.is_training', false)
       .eq('orders.is_draft', false)
+      .is('orders.ifood_order_id', null)
       .not('orders.status', 'in', '(cancelled,draft)')
       .eq('is_refunded', false)
       .gte('created_at', startTs)
@@ -436,6 +440,7 @@ async function fetchDREDataCompetencia(tenantId: string, startDate: string, endD
       .eq('tenant_id', tenantId)
       .eq('is_training', false)
       .eq('is_draft', false)
+      .is('ifood_order_id', null)
       .eq('status', 'cancelled')
       .gte('created_at', startTs)
       .lte('created_at', endDateTime),
@@ -446,6 +451,7 @@ async function fetchDREDataCompetencia(tenantId: string, startDate: string, endD
       .eq('tenant_id', tenantId)
       .eq('is_training', false)
       .eq('is_draft', false)
+      .is('ifood_order_id', null)
       .not('status', 'in', '(cancelled,draft)')
       .gte('created_at', startTs)
       .lte('created_at', endDateTime),
