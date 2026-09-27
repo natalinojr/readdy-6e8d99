@@ -1,6 +1,8 @@
 // whatsapp-cloud — webhook da API OFICIAL do WhatsApp (Meta Cloud API) para o atendimento público:
 // link de candidatura (canal-publico) e agendamento de entrevistas (hiring-scheduler). Criado em
-// 2026-09-14, depois que o número da Evolution foi banido. O assistente pessoal continua no
+// 2026-09-14, depois que o número da Evolution foi banido. Desde 2026-09-26 também o atendimento de
+// CLIENTES das lojas (atendimento-loja): número próprio da loja (wa_loja_bots.phone_id) ou o número
+// compartilhado com o código da loja (PD-XXXX) no texto. O assistente pessoal continua no
 // assistente-webhook (Evolution) e não passa por aqui.
 //
 //   GET  ?hub.mode=subscribe&hub.verify_token=…&hub.challenge=…  → confirmação do webhook no painel da Meta
@@ -108,7 +110,31 @@ async function ownerKeys(admin: SupabaseClient): Promise<Set<string>> {
   return new Set(list.map((x: unknown) => foneKey(String(x).replace(/@.*$/, ''))).filter((x: string) => x.length >= 10));
 }
 
-async function handleMessage(admin: SupabaseClient, cfg: WaConfig, m: any, name: string | null) {
+// Atendimento de clientes da loja no número COMPARTILHADO: código PD-XXXX no texto, ou conversa da
+// loja aberta nos últimos 3 dias (e mais recente que uma conversa de candidatura do mesmo contato).
+const STORE_CODE_RE = /\b(PD-[A-Z0-9]{4})\b/i;
+// Sem /i: os códigos dos links vêm em maiúsculas ("pre-pago" no meio da conversa não é código).
+const ANY_CODE_RE = /\b([A-Z]{2,4}-[A-Z0-9]{4})\b/;
+async function lojaDoContato(admin: SupabaseClient, waId: string, text: string): Promise<string | null> {
+  const code = text.match(STORE_CODE_RE)?.[1]?.toUpperCase();
+  if (code) {
+    const { data } = await admin.from('wa_loja_bots').select('tenant_id').eq('code', code).maybeSingle();
+    if (data) return String(data.tenant_id);
+  }
+  if (text.match(ANY_CODE_RE)) return null; // código de outro canal (currículo): canal-publico decide
+  const desde = new Date(Date.now() - 3 * 86_400_000).toISOString();
+  const { data: conv } = await admin.from('wa_loja_conversas').select('tenant_id, last_message_at')
+    .eq('phone_key', foneKey(waId)).eq('via', 'compartilhado').eq('status', 'aberta').gte('last_message_at', desde)
+    .order('last_message_at', { ascending: false }).limit(1).maybeSingle();
+  if (!conv) return null;
+  const { data: cand } = await admin.from('bot_conversations').select('last_message_at')
+    .eq('contact_jid', `${waId}@s.whatsapp.net`).eq('status', 'aberta').order('last_message_at', { ascending: false }).limit(1).maybeSingle();
+  if (cand && Date.parse(String(cand.last_message_at)) > Date.parse(String(conv.last_message_at))) return null;
+  return String(conv.tenant_id);
+}
+
+// store: mensagem chegou no número PRÓPRIO de uma loja (tudo vai para o atendimento dela).
+async function handleMessage(admin: SupabaseClient, cfg: WaConfig, m: any, name: string | null, store: { tenant_id: string } | null = null) {
   const waId = digits(m.from);
   if (!waId || !m.id) return;
   if (!(await firstTime(admin, String(m.id)))) return;
@@ -131,6 +157,10 @@ async function handleMessage(admin: SupabaseClient, cfg: WaConfig, m: any, name:
       const t = media ? await transcribe(media.base64, media.mime) : '';
       if (!t) { await waSendText(cfg, waId, 'Não consegui ouvir o áudio 😕 Pode escrever?').catch(() => {}); return; }
       text = `[Áudio] ${t}`;
+    } else if (store && (type === 'image' || type === 'document')) {
+      // Número da loja: o atendente não lê arquivo (em geral é comprovante); vai para a equipe.
+      kind = type;
+      text = String((type === 'image' ? m.image : m.document)?.caption ?? '');
     } else if (type === 'image' || type === 'document') {
       kind = type;
       const src = type === 'image' ? m.image : m.document;
@@ -166,6 +196,14 @@ async function handleMessage(admin: SupabaseClient, cfg: WaConfig, m: any, name:
   await waLog({ phone: waId, direction: 'in', origin: 'recebida', kind, wa_msg_id: String(m.id),
     text: file ? `[Arquivo${file.name ? ` "${file.name}"` : ''}]${text ? ` ${text}` : ''}` : text || `[${kind}]` });
   const isOwner = (await ownerKeys(admin)).has(foneKey(waId));
+  const toStore = async (tenantId: string, via: 'proprio' | 'compartilhado') => {
+    const r = await internal('atendimento-loja', {
+      action: 'incoming', tenant_id: tenantId, via, phone_id: cfg.phone_id, number: waId, name, kind,
+      text: text || (file ? `[Arquivo${file.name ? ` "${file.name}"` : ''}]` : ''), msg_id: String(m.id), is_owner: isOwner,
+    });
+    if (!r.ok) log('ERROR', 'atendimento-loja recusou', { status: r.status, error: r.out?.error });
+  };
+  if (store) { await toStore(store.tenant_id, 'proprio'); return; }
   // 1) Agendamento de entrevista: candidato com conversa aberta ou entrevistador respondendo.
   // O dono TAMBÉM passa por aqui (diferente do assistente-webhook, aqui não há assistente pessoal):
   // ele é entrevistador e, nos testes, o candidato. O scheduler só trata se houver sessão/pedido dele.
@@ -173,7 +211,13 @@ async function handleMessage(admin: SupabaseClient, cfg: WaConfig, m: any, name:
     const r = await internal('hiring-scheduler', { action: 'inbound', number: waId, reply_to: waId, text, name });
     if (r.ok && r.out?.handled === true) return;
   }
-  // 2) Cliente respondendo um envio automático do funil de CRM (SAIR ou dúvida). Mensagem com
+  // 2) Cliente de uma loja (link com o código PD-XXXX ou conversa da loja em andamento). Vem antes do funil
+  // de CRM: quem recebeu oferta nos últimos 15 dias e clica no link da loja tem que cair no atendente da loja.
+  // Só "SAIR"/"parar" sozinho continua sendo o descadastro do funil.
+  const optOut = /^\s*(sair|parar|pare|stop|descadastrar)\s*[.!]*\s*$/i.test(text);
+  const loja = optOut ? null : await lojaDoContato(admin, waId, text).catch((e) => { log('WARN', 'rota da loja', { error: errMsg(e) }); return null; });
+  if (loja) { await toStore(loja, 'compartilhado'); return; }
+  // 3) Cliente respondendo um envio automático do funil de CRM (SAIR ou dúvida). Mensagem com
   // código de vaga válido continua indo para a candidatura.
   if (text && !file) {
     const code = text.match(/\b([A-Z]{2,4}-[A-Z0-9]{4})\b/i)?.[1]?.toUpperCase() ?? null;
@@ -185,7 +229,7 @@ async function handleMessage(admin: SupabaseClient, cfg: WaConfig, m: any, name:
       .catch((e) => { log('WARN', 'crm inbound', { error: errMsg(e) }); return false; });
     if (tratou) return;
   }
-  // 3) Link de candidatura (canal-publico decide se atende, igual ao fluxo da Evolution).
+  // 4) Link de candidatura (canal-publico decide se atende, igual ao fluxo da Evolution).
   const r = await internal('canal-publico', {
     action: 'incoming', chat_id: `${waId}@s.whatsapp.net`, number: waId, reply_to: waId, name, kind, text, file,
     key: { remoteJid: waId, fromMe: false, id: String(m.id) }, is_owner: isOwner,
@@ -204,21 +248,36 @@ async function handleStatus(admin: SupabaseClient, s: any) {
   if (st === 'read') await admin.from('hiring_scheduling_sessions').update({ read_at: now }).eq('last_out_msg_id', id).is('read_at', null);
 }
 
+// Números próprios das lojas ligados à Cloud API (wa_loja_bots.phone_id → loja).
+async function lojaDoNumero(admin: SupabaseClient, phoneId: string): Promise<{ tenant_id: string; waba_id: string | null } | null> {
+  if (!phoneId) return null;
+  const { data } = await admin.from('wa_loja_bots').select('tenant_id, waba_id').eq('phone_id', phoneId).maybeSingle();
+  return data ? { tenant_id: String(data.tenant_id), waba_id: data.waba_id ?? null } : null;
+}
+
 async function processEvent(admin: SupabaseClient, body: any) {
-  const cfg = await waConfig(admin);
+  const shared = await waConfig(admin);
   for (const entry of body?.entry ?? []) {
     for (const change of entry?.changes ?? []) {
       if (change?.field !== 'messages') continue;
       const v = change.value ?? {};
-      // Só o número configurado do atendimento público (outros números da conta são ignorados).
-      if (cfg.phone_id && String(v.metadata?.phone_number_id ?? '') !== cfg.phone_id) {
-        log('INFO', 'evento de outro número (ignorado)', { phone_id: v.metadata?.phone_number_id });
-        continue;
+      // Número compartilhado do atendimento público, ou o número próprio de uma loja. Outros: ignora.
+      const pid = String(v.metadata?.phone_number_id ?? '');
+      let cfg = shared;
+      let store: { tenant_id: string } | null = null;
+      if (shared.phone_id && pid !== shared.phone_id) {
+        const loja = await lojaDoNumero(admin, pid).catch(() => null);
+        if (!loja) {
+          log('INFO', 'evento de outro número (ignorado)', { phone_id: pid });
+          continue;
+        }
+        cfg = { transport: 'cloud', phone_id: pid, waba_id: loja.waba_id };
+        store = { tenant_id: loja.tenant_id };
       }
       for (const s of v.statuses ?? []) await handleStatus(admin, s).catch((e) => log('WARN', 'recibo', { error: errMsg(e) }));
       const names = new Map<string, string>((v.contacts ?? []).map((c: any) => [digits(c.wa_id), String(c.profile?.name ?? '')]));
       for (const m of v.messages ?? []) {
-        await handleMessage(admin, cfg, m, names.get(digits(m.from)) || null)
+        await handleMessage(admin, cfg, m, names.get(digits(m.from)) || null, store)
           .catch((e) => log('ERROR', 'falha na mensagem', { from: m?.from, type: m?.type, error: errMsg(e) }));
       }
     }
@@ -273,8 +332,10 @@ async function adminAction(admin: SupabaseClient, body: any) {
   }
   if (body?.action === 'subscribe_app') {
     // Liga a conta do WhatsApp ao app (sem isso a Meta não manda os eventos de mensagem).
-    if (!cfg.waba_id) return json({ error: 'wa_public.waba_id não configurado' }, 400);
-    return json(await graph(`${cfg.waba_id}/subscribed_apps`, { method: 'POST', body: {} }).catch((e) => ({ erro: errMsg(e) })));
+    // { waba_id } opcional: conta do número próprio de uma loja (atendimento-loja).
+    const waba = digits(body?.waba_id) || cfg.waba_id;
+    if (!waba) return json({ error: 'wa_public.waba_id não configurado' }, 400);
+    return json(await graph(`${waba}/subscribed_apps`, { method: 'POST', body: {} }).catch((e) => ({ erro: errMsg(e) })));
   }
   if (body?.action === 'set_profile_photo') {
     // Foto de perfil do número: upload retomável no app (/{app}/uploads) → handle → whatsapp_business_profile.

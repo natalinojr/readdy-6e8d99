@@ -9,6 +9,7 @@ import MapaPin from '@/components/feature/MapaPin';
 import { useCardapio } from '@/contexts/CardapioContext';
 import type { MotoboyAlertEntry } from '@/contexts/SystemSettingsContext';
 import GerirEntregasTab from './GerirEntregasTab';
+import AtendimentoWhatsAppTab from './AtendimentoWhatsAppTab';
 import QrCodeDelivery from './QrCodeDelivery';
 import { confirmar } from '@/components/base/Dialogos';
 
@@ -67,7 +68,7 @@ export default function ConfigDeliveryPage() {
   // Entregadores (motoboys) com acesso à lista de entregas
   const [motoboys, setMotoboys] = useState<DriverRow[]>([]);
   const [motoboysLoading, setMotoboysLoading] = useState(false);
-  const [abaAtiva, setAbaAtiva] = useState<'config' | 'entregas'>('config');
+  const [abaAtiva, setAbaAtiva] = useState<'config' | 'entregas' | 'whatsapp'>('config');
   // Avisar o motoboy: categorias/itens que disparam alerta na msg do motoboy
   const [alertCategorias, setAlertCategorias] = useState<MotoboyAlertEntry[]>([]);
   const [alertItens, setAlertItens] = useState<MotoboyAlertEntry[]>([]);
@@ -494,8 +495,8 @@ export default function ConfigDeliveryPage() {
           </div>
         </div>
         {/* Abas */}
-        <div className="flex items-center gap-1 mt-3">
-          {([['config', 'Configurações'], ['entregas', 'Gerir entregas']] as const).map(([key, label]) => (
+        <div className="flex flex-wrap items-center gap-1 mt-3">
+          {([['config', 'Configurações'], ['entregas', 'Gerir entregas'], ['whatsapp', 'Atendimento WhatsApp']] as const).map(([key, label]) => (
             <button
               key={key}
               type="button"
@@ -513,6 +514,8 @@ export default function ConfigDeliveryPage() {
       <div className="flex-1 overflow-y-auto p-6">
         {abaAtiva === 'entregas' ? (
           <GerirEntregasTab tenantId={tenantId} />
+        ) : abaAtiva === 'whatsapp' ? (
+          <AtendimentoWhatsAppTab tenantId={tenantId} />
         ) : (
         <div className="max-w-2xl space-y-6">
           {/* Mensagem */}
