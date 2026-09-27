@@ -361,6 +361,12 @@ async function applyOrderEvent(admin: Admin, c: Ctx, e: any) {
     if (error) throw new Error('Gravar pedido: ' + error.message);
     row = ins;
   } else {
+    // Fase 4: concluído no iFood com o motoboy da loja já em rota → entregue no funil do ERPOS (conta no acerto).
+    if (plan.upd.status === 'concluded' && row.motoboy_driver_id && !row.entregue_at && row.motoboy_status === 'coletou') {
+      plan.upd.entregue_at = plan.upd.concluded_at ?? now;
+      plan.upd.motoboy_status = 'entregou';
+      plan.upd.motoboy_timeline = { ...(row.motoboy_timeline ?? {}), entregou: plan.upd.entregue_at };
+    }
     const { error } = await admin.from('ifood_orders').update({ ...plan.upd, updated_at: now }).eq('id', row.id);
     if (error) throw new Error('Atualizar pedido: ' + error.message);
   }
@@ -862,6 +868,20 @@ Deno.serve(async (req) => {
         await admin.from('ifood_orders').update({ dispute: { ...o.dispute, answered: aceitar ? 'accept' : 'reject', answered_at: new Date().toISOString() }, updated_at: new Date().toISOString() }).eq('id', o.id);
         log('INFO', 'order_action', op, { order: o.ifood_order_id, disputeId, tenantId });
         return json({ success: true, message: aceitar ? 'Pedido do cliente aceito — o iFood confirma no próximo polling.' : 'Pedido do cliente recusado.' });
+      }
+      // Entrega pela loja (delivered_by MERCHANT): o motoboy digita o código que o cliente vê no app do iFood;
+      // código válido → o iFood conclui o pedido sozinho (evento CONCLUDED). Doc: Order › verifyDeliveryCode.
+      if (op === 'verify_code') {
+        const code = String(body.code ?? '').replace(/\s/g, '').slice(0, 12);
+        if (!code) return errResp('Informe o código de entrega.');
+        const r = await call(admin, c, 'POST', `/order/v1.0/orders/${o.ifood_order_id}/verifyDeliveryCode`, { code });
+        if (!r.ok) return errResp(apiError(r, 'Código de entrega'));
+        // Só vale com confirmação EXPLÍCITA do iFood (doc: { "valid": true }); resposta em outro formato = não confirmado.
+        const valid = r.data?.valid === true || r.data?.success === true;
+        if (!valid) log('WARN', 'order_action', 'verify_code não confirmado', { order: o.ifood_order_id, resposta: r.data, tenantId });
+        if (valid) await admin.from('ifood_orders').update({ delivery_code_ok: true, updated_at: new Date().toISOString() }).eq('id', o.id);
+        log('INFO', 'order_action', 'verify_code', { order: o.ifood_order_id, valid, tenantId });
+        return json({ success: true, valid });
       }
       const paths: Record<string, string> = { confirm: 'confirm', start: 'startPreparation', ready: 'readyToPickup', dispatch: 'dispatch', cancel: 'requestCancellation' };
       if (!paths[op]) return errResp('Ação inválida.');

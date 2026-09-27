@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.47.0";
+import { cartaoIfood, carregarIfood, cozinhaIfood, ehIdIfood, itensIfood, listarIfoodEntrega, modoOperar, rowIdIfood, sinalIfood } from "../_shared/ifood-motoboy.ts";
 
 // Portal do motoboy (acesso por link com o order_id como token). Publico (sem login):
 // o link e compartilhado pela loja apenas com o motoboy daquele pedido.
@@ -163,8 +164,15 @@ serve(async (req) => {
       const alertasMap = await alertasPorPedido(admin, tenantId, lista.map((o) => o.id as string));
 
       // Nomes dos entregadores que assumiram pedidos (pra mostrar "com Fulano").
+      // Fase 4: pedidos do iFood com entrega da loja (motoboy próprio) entram na mesma lista.
+      // Só no modo "operar" (cada passo avisa o iFood — decisão do dono); só leitura = loja segue pelo app do iFood.
+      const operarIfood = await modoOperar(admin, tenantId);
+      const ifoodRows = operarIfood ? await listarIfoodEntrega(admin, tenantId) : [];
+      // Com o iFood no funil, a cópia lançada no PDV (plataforma iFood) sairia duas vezes para o motoboy.
+      if (operarIfood) for (let i = lista.length - 1; i >= 0; i--) if (lista[i].delivery_platform === "ifood") lista.splice(i, 1);
+
       const driverNome = new Map<string, string>();
-      const driverIds = Array.from(new Set(lista.map((o) => o.motoboy_driver_id as string | null).filter((x): x is string => !!x)));
+      const driverIds = Array.from(new Set([...lista, ...ifoodRows].map((o) => o.motoboy_driver_id as string | null).filter((x): x is string => !!x)));
       if (driverIds.length > 0) {
         const { data: drvs } = await admin.from("delivery_drivers").select("id, name").in("id", driverIds);
         (drvs ?? []).forEach((d: { id: string; name: string }) => driverNome.set(d.id, d.name));
@@ -190,6 +198,16 @@ serve(async (req) => {
           sla_min: o.delivery_sla_min != null ? Number(o.delivery_sla_min) : null,
           created_at: o.created_at,
           motoboy_updated_at: o.motoboy_updated_at ?? null,
+        })).concat(ifoodRows.map((r) => {
+          const c = cartaoIfood(r, operarIfood);
+          return {
+            id: c.id, number: c.number, cliente: c.cliente, endereco: c.endereco, lat: c.lat, lng: c.lng,
+            total: c.total, taxa: c.taxa, status: c.status, motoboy_status: c.motoboy_status,
+            meu: r.motoboy_driver_id === driverId, assumido: r.motoboy_driver_id != null,
+            assumido_por: r.motoboy_driver_id ? (driverNome.get(r.motoboy_driver_id) ?? null) : null,
+            alertas: [], sla_min: null, created_at: c.created_at, motoboy_updated_at: c.motoboy_updated_at,
+            fonte: "ifood", pago: c.pago,
+          };
         })),
       });
     }
@@ -259,6 +277,36 @@ serve(async (req) => {
 
     const orderId = String(body.order_id ?? "");
     if (!orderId) return json({ error: "order_id obrigatorio" }, 400);
+
+    if (body.action === "get_order" && ehIdIfood(orderId)) {
+      const r = await carregarIfood(admin, rowIdIfood(orderId), String(body.tenant_id ?? "").trim() || null);
+      if (!r) return json({ error: "not_found" }, 200);
+      // Loja em "só leitura": pedido do iFood não aparece no portal (nem por link antigo).
+      const operar = await modoOperar(admin, r.tenant_id);
+      if (!operar) return json({ error: "not_found" }, 200);
+      const c = cartaoIfood(r, operar);
+      const { data: tnt } = await admin.from("tenants").select("slug, name").eq("id", r.tenant_id).maybeSingle();
+      let claimedByName: string | null = null;
+      if (r.motoboy_driver_id) {
+        const { data: drv } = await admin.from("delivery_drivers").select("name").eq("id", r.motoboy_driver_id).maybeSingle();
+        claimedByName = drv?.name ?? null;
+      }
+      return json({
+        ok: true, store_slug: tnt?.slug ?? "", store_name: tnt?.name ?? "",
+        order: {
+          claimed_by_id: r.motoboy_driver_id ?? null, claimed_by_name: claimedByName,
+          number: c.number, cliente: c.cliente, endereco: c.endereco, lat: c.lat, lng: c.lng,
+          total: c.total, taxa: c.taxa, pagamento: c.pagamento, pago: c.pago,
+          status: c.status, motoboy_status: c.motoboy_status, motoboy_note: c.motoboy_note,
+          motoboy_problems: c.problemas, delivery_notes: c.delivery_notes, motoboy_timeline: c.motoboy_timeline,
+          cozinha: cozinhaIfood(r), em_rota: !!r.out_for_delivery_at, alertas: [],
+          itens: await itensIfood(admin, r.id),
+          fonte: "ifood", observacoes: r.delivery_observations ?? null,
+          // modo operar: "Entreguei" pede o código que o cliente vê no app do iFood
+          pede_codigo: operar && !r.delivery_code_ok && r.status !== "concluded",
+        },
+      });
+    }
 
     if (body.action === "get_order") {
       const bodyTenantId = String(body.tenant_id ?? "").trim();
@@ -330,6 +378,14 @@ serve(async (req) => {
     if (body.action === "signal") {
       const signal = String(body.signal ?? "");
       if (!VALID_SIGNALS.includes(signal)) return json({ error: "signal_invalido" }, 400);
+      if (ehIdIfood(orderId)) {
+        const r = await sinalIfood(admin, {
+          rowId: rowIdIfood(orderId), signal, driverId: String(body.driver_id ?? ""), porLoja: false,
+          motivo: body.motivo != null ? String(body.motivo) : null, code: body.code != null ? String(body.code) : null,
+        });
+        if (!r.ok) return json({ ok: false, error: r.error, message: r.message }, r.error === "driver_invalido" ? 403 : 200);
+        return json({ ok: true, motoboy_status: signal });
+      }
       const motivo = signal === "problema" ? String(body.motivo ?? "").slice(0, 500) : null;
       const nowIso = new Date().toISOString();
       const updates: Record<string, unknown> = {

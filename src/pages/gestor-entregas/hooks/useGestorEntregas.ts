@@ -62,7 +62,20 @@ export interface EntregaPedido {
   motoboy_timeline: Record<string, string>;
   lat: number | null;
   lng: number | null;
+  /** Pedido do iFood entregue pelo motoboy da loja (Fase 4): id "ifood:<uuid>" */
+  fonte?: 'ifood';
+  /** Status no iFood (placed/confirmed/preparing/ready/dispatched/concluded) */
+  ifood_status?: string;
+  /** Modo "operar": cada passo no ERPOS avisa o iFood */
+  ifood_operar?: boolean;
 }
+
+/** Passo do iFood antes do motoboy (só no modo operar): o botão do cartão chama o iFood. */
+export const IFOOD_PASSO: Record<string, { op: string; label: string; icon: string }> = {
+  placed: { op: 'confirm', label: 'Confirmar no iFood', icon: 'ri-check-line' },
+  confirmed: { op: 'start', label: 'Iniciar preparo', icon: 'ri-fire-line' },
+  preparing: { op: 'ready', label: 'Pedido pronto', icon: 'ri-restaurant-2-line' },
+};
 
 /**
  * Dados do "Gestor de Entregas". Reaproveita as ações da Edge `delivery-write`:
@@ -109,7 +122,8 @@ export function useGestorEntregas() {
       if (data.ok) {
         const lista: EntregaPedido[] = data.orders ?? [];
         setOrders(lista); setErro('');
-        const [porPedido, ativas] = await Promise.all([fetchShippingByOrder(tenantId, lista.map((o) => o.id)), fetchShippingAtivas(tenantId)]);
+        // (pedido do iFood não tem iFood Entrega: o id "ifood:..." nem é uuid)
+        const [porPedido, ativas] = await Promise.all([fetchShippingByOrder(tenantId, lista.filter((o) => o.fonte !== 'ifood').map((o) => o.id)), fetchShippingAtivas(tenantId)]);
         setIfood(porPedido);
         const noQuadro = new Set(lista.map((o) => o.id));
         setIfoodForaDoQuadro(ativas.filter((s) => !noQuadro.has(s.order_id)));
@@ -150,15 +164,18 @@ export function useGestorEntregas() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'orders', filter: `tenant_id=eq.${tenantId}` }, agendar)
       .subscribe();
     const backstop = setInterval(() => carregar(true), 90000);
+    // Pedidos do iFood mudam pelos eventos do iFood (fora de `orders`): com o módulo ligado, relê a cada 20 s.
+    const ifoodTick = ifoodPedidos.operar ? setInterval(() => { if (document.visibilityState === 'visible') carregar(true); }, 20000) : null;
     const onVis = () => { if (document.visibilityState === 'visible') carregar(true); };
     document.addEventListener('visibilitychange', onVis);
     return () => {
       supabase.removeChannel(ch);
       clearInterval(backstop);
+      if (ifoodTick) clearInterval(ifoodTick);
       document.removeEventListener('visibilitychange', onVis);
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-  }, [tenantId, carregar]);
+  }, [tenantId, carregar, ifoodPedidos.operar]);
 
   // Tick local: recalcula prazo/atraso sem tocar o servidor.
   useEffect(() => {
@@ -166,19 +183,31 @@ export function useGestorEntregas() {
     return () => clearInterval(id);
   }, []);
 
-  const setStatus = useCallback(async (orderId: string, signal: string, motivo?: string) => {
+  // `code`: código de entrega do iFood (pedido do iFood no modo operar, ao marcar entregue)
+  const setStatus = useCallback(async (orderId: string, signal: string, motivo?: string, code?: string) => {
     setBusy(`${orderId}:${signal}`);
     try {
       const t = await token();
       const res = await fetch(getDeliveryWriteUrl(), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + t },
-        body: JSON.stringify({ action: 'set_motoboy_status', tenant_id: tenantId, order_id: orderId, signal, motivo }),
+        body: JSON.stringify({ action: 'set_motoboy_status', tenant_id: tenantId, order_id: orderId, signal, motivo, code }),
       });
       const data = await res.json();
-      if (data.ok) await carregar(true); else setErro('Não foi possível atualizar.');
+      if (data.ok) await carregar(true); else setErro(typeof data.error === 'string' && data.error ? data.error : 'Não foi possível atualizar.');
     } catch { setErro('Erro de conexão.'); } finally { setBusy(''); }
   }, [tenantId, token, carregar]);
+
+  // Pedido do iFood (modo operar): confirmar / iniciar preparo / pronto direto no iFood.
+  const ifoodPasso = useCallback(async (orderId: string, op: string) => {
+    if (!tenantId) return;
+    setBusy(`${orderId}:${op}`);
+    try {
+      const r = await ifoodShipping('order_action', tenantId, { order_row_id: orderId.replace(/^ifood:/, ''), op });
+      if (!r.success) setErro(r.error || 'O iFood não aceitou.');
+      else { setErro(''); setTimeout(() => carregar(true), 4000); }
+    } catch { setErro('Erro de conexão com o iFood.'); } finally { setBusy(''); }
+  }, [tenantId, carregar]);
 
   const liberar = useCallback(async (orderId: string) => {
     setBusy(`${orderId}:liberar`);
@@ -226,7 +255,7 @@ export function useGestorEntregas() {
   }, [tenantId, token, autor, carregar]);
 
   return {
-    orders, loading, erro, busy, now, autor, recarregar: () => carregar(), setStatus, liberar, fetchDetalhe, addNote,
+    orders, loading, erro, busy, now, autor, recarregar: () => carregar(), setStatus, liberar, fetchDetalhe, addNote, ifoodPasso,
     tenantId, ifood, ifoodOn, ifoodForaDoQuadro, ifoodPedidos, ifoodLoja, recarregarIfoodCfg: carregarIfoodCfg,
   };
 }

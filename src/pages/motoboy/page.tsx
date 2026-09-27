@@ -9,7 +9,8 @@ function edgeUrl(): string {
 
 function getOrderIdFromUrl(): string {
   const m = window.location.pathname.match(/\/motoboy\/([^/]+)/);
-  return m ? m[1] : '';
+  if (!m) return '';
+  try { return decodeURIComponent(m[1]); } catch { return m[1]; } // pedido do iFood: "ifood:<uuid>"
 }
 
 // Sessao do motoboy (login simples por loja), compartilhada com a lista /entregas.
@@ -60,6 +61,11 @@ interface OrderData {
   motoboy_timeline?: Record<string, string>;
   cozinha?: { status: string; novo_at: string | null; preparo_at: string | null; pronto_at: string | null };
   itens: { nome: string; qtd: number }[];
+  /** Pedido do iFood entregue pelo motoboy da loja (Fase 4) */
+  fonte?: 'ifood';
+  /** Modo operar: "Entreguei" pede o código de entrega que o cliente vê no app do iFood */
+  pede_codigo?: boolean;
+  observacoes?: string | null;
 }
 
 // HH:MM de um ISO (fuso do dispositivo). '' se vazio.
@@ -92,6 +98,7 @@ export default function MotoboyPage() {
   const [entrando, setEntrando] = useState(false);
   const [loginErro, setLoginErro] = useState('');
   const [aviso, setAviso] = useState('');
+  const [codigo, setCodigo] = useState('');
   // Teclado virtual: empurra a tela pra cima pro campo de "problema" não ficar escondido.
   const [kbInset, setKbInset] = useState(0);
   const problemaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -144,11 +151,17 @@ export default function MotoboyPage() {
   const avisoGps = textoGps(gps.estado);
 
   const sinalizar = async (signal: string, motivoTxt?: string) => {
+    // Pedido do iFood: sem o código de entrega o iFood não conclui — pede antes de enviar.
+    if (signal === 'entregou' && order?.pede_codigo && !codigo.trim()) {
+      setAviso('Peça ao cliente o código de entrega (aparece no app do iFood) e digite abaixo.');
+      return;
+    }
+    setAviso('');
     setEnviando(signal);
     try {
       const res = await fetch(edgeUrl(), {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'signal', order_id: orderId, signal, motivo: motivoTxt, driver_id: session?.driver_id }),
+        body: JSON.stringify({ action: 'signal', order_id: orderId, signal, motivo: motivoTxt, driver_id: session?.driver_id, code: signal === 'entregou' && order?.pede_codigo ? codigo.trim() : undefined }),
       });
       const data = await res.json();
       if (data.ok) {
@@ -166,6 +179,9 @@ export default function MotoboyPage() {
       } else if (data.error === 'com_ifood') {
         setAviso('Este pedido vai com um entregador do iFood.');
         carregar();
+      } else if (data.message) {
+        // iFood recusou (despacho/código de entrega) ou pedido cancelado no iFood
+        setAviso(String(data.message));
       }
     } catch { /* ignora */ } finally {
       setEnviando('');
@@ -256,6 +272,7 @@ export default function MotoboyPage() {
           <div className="flex items-center gap-2 mb-1">
             <i className="ri-e-bike-2-line" />
             <span className="text-xs font-semibold opacity-70">Entrega — Pedido</span>
+            {order.fonte === 'ifood' ? <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-red-600 text-white">iFood</span> : null}
           </div>
           <h1 className="text-2xl font-black">#{String(order.number).replace(/\D/g, '').slice(-4) || order.number}</h1>
           {order.motoboy_status ? (
@@ -334,6 +351,16 @@ export default function MotoboyPage() {
           </form>
         ) : (
           <div className="space-y-2">
+            {proximo?.signal === 'entregou' && order.pede_codigo ? (
+              <div className="bg-red-50 border border-red-200 rounded-2xl p-3 space-y-1.5">
+                <label htmlFor="codigo-entrega" className="text-xs font-bold text-red-700 flex items-center gap-1">
+                  <i className="ri-shield-keyhole-line" /> Código de entrega do iFood
+                </label>
+                <input id="codigo-entrega" value={codigo} onChange={(e) => setCodigo(e.target.value.replace(/\D/g, '').slice(0, 8))}
+                  inputMode="numeric" autoComplete="one-time-code" placeholder="Peça ao cliente (está no app do iFood)"
+                  className="w-full px-3 py-2.5 rounded-xl border border-red-200 bg-white outline-none focus:border-red-400 text-lg font-black tracking-widest text-center" />
+              </div>
+            ) : null}
             {proximo ? (
               <Botao signal={proximo.signal} label={proximo.label} icon={proximo.icon} cor={proximo.cor} />
             ) : null}
