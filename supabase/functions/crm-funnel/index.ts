@@ -500,7 +500,8 @@ Deno.serve(async (req: Request) => {
           hora_fim: Math.min(23, Math.max(0, Number(settings.hora_fim ?? 21) || 0)),
           desconto_max_percent: Math.min(90, Math.max(0, tetoDesconto)),
           ...(settings.max_auto_por_dia !== undefined
-            ? { max_auto_por_dia: Math.min(500, Math.max(0, Math.round(Number(settings.max_auto_por_dia) || 0))) }
+            // 25 por rodada × ~10 rodadas no horário: acima de 250 não se alcança.
+            ? { max_auto_por_dia: Math.min(250, Math.max(0, Math.round(Number(settings.max_auto_por_dia) || 0))) }
             : {}),
           ...(settings.auto_so_optin !== undefined ? { auto_so_optin: settings.auto_so_optin !== false } : {}),
           updated_at: new Date().toISOString(),
@@ -740,6 +741,11 @@ Deno.serve(async (req: Request) => {
           }
           // Modelo não aprovado/pausado, token ou número bloqueado: não adianta tentar os próximos.
           if ((code && ((code >= 132000 && code <= 132016) || code === 190 || code === 131031 || code === 368)) || /não configurado|API oficial/.test(erro)) {
+            // Falha geral, não do cliente: tira o registro para ele não ficar 7 dias fora da fila
+            // (o erro fica em crm_settings.auto_ultimo_erro, que a tela mostra).
+            if (registroId) await admin.from("crm_sends").delete().eq("id", registroId);
+            else await admin.from("crm_sends").delete().eq("tenant_id", tenantId).eq("customer_id", f.c.customer_id)
+              .eq("auto", true).eq("status", "failed").gte("sent_at", new Date(Date.now() - 60_000).toISOString());
             parouPor = erro;
             break;
           }

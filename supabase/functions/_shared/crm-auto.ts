@@ -55,6 +55,11 @@ const SAIR_RE = /^\s*(\[[^\]]*\]\s*)?(sair|parar|pare|stop|cancelar|descadastrar
 
 export const querSair = (text: string) => SAIR_RE.test(text);
 
+/** Só a palavra, sem mais nada ("Sair.", "PARAR"): usado quando há candidatura aberta, em que
+ *  "não quero trabalhar domingo" ou "cancelar a entrevista" é conversa, não descadastro. */
+export const querSairExato = (text: string) =>
+  /^(sair|parar|pare|stop)$/i.test(text.replace(/^\s*\[[^\]]*\]\s*/, '').replace(/[\s.!?,;:]+/g, ''));
+
 /**
  * Mensagem que chegou no número do assistente de alguém que já recebeu envio automático do funil.
  * - SAIR (texto ou áudio, a qualquer tempo): opt-out em TODAS as lojas onde esse telefone é cliente —

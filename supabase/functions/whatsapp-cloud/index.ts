@@ -16,7 +16,7 @@
 
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
 import { graph, TEMPLATES, waConfig, waLog, waSendText, waTyping, type WaConfig } from '../_shared/wa.ts';
-import { crmInbound, querSair } from '../_shared/crm-auto.ts';
+import { crmInbound, querSairExato } from '../_shared/crm-auto.ts';
 
 const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
 const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
@@ -179,7 +179,7 @@ async function handleMessage(admin: SupabaseClient, cfg: WaConfig, m: any, name:
     const code = text.match(/\b([A-Z]{2,4}-[A-Z0-9]{4})\b/i)?.[1]?.toUpperCase() ?? null;
     const { data: canal } = code ? await admin.from('bot_channels').select('id').eq('code', code).maybeSingle() : { data: null };
     // Candidatura em andamento segue para o canal-publico (só o SAIR é do CRM).
-    const { data: conversa } = canal || querSair(text) ? { data: null } : await admin.from('bot_conversations')
+    const { data: conversa } = canal || querSairExato(text) ? { data: null } : await admin.from('bot_conversations')
       .select('id').eq('contact_jid', `${waId}@s.whatsapp.net`).eq('status', 'aberta').limit(1).maybeSingle();
     const tratou = canal || conversa ? false : await crmInbound(admin, cfg, waId, text)
       .catch((e) => { log('WARN', 'crm inbound', { error: errMsg(e) }); return false; });
