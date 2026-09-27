@@ -13,6 +13,8 @@ interface Props {
   onErro: (msg: string | null) => void;
 }
 
+const SEMANA = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
+const diaSemana = (iso: string) => SEMANA[new Date(`${iso}T12:00:00Z`).getUTCDay()];
 const novaRef = () => (crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2, 12)}`);
 
 export default function NovoPedido({ tipo, tenantId, contexto, onEnviado, onErro }: Props) {
@@ -41,7 +43,8 @@ export default function NovoPedido({ tipo, tenantId, contexto, onEnviado, onErro
   const [funcao, setFuncao] = useState('');
   const [dias, setDias] = useState<string[]>([]);
   const [busca, setBusca] = useState('');
-  const [valorMexido, setValorMexido] = useState(false);
+  // Valor de cada dia trabalhado (dono, 2026-09-27): o total é a soma, o sistema calcula
+  const [valoresDia, setValoresDia] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (tipo !== 'freelancer') {
@@ -58,12 +61,17 @@ export default function NovoPedido({ tipo, tenantId, contexto, onEnviado, onErro
   const freela = freelas?.find((f) => f.id === freelaId) ?? null;
   const fornecedor = fornecedores?.find((f) => f.id === fornecedorId) ?? null;
 
-  // Freela com diária cadastrada: valor = diária × dias (até a pessoa mexer no valor)
+  // Dia novo já vem com a diária cadastrada do freela (ou o valor do último dia preenchido); dá para mudar
+  const diariaTxt = freela?.diaria ? freela.diaria.toFixed(2).replace('.', ',') : '';
   useEffect(() => {
-    if (tipo === 'freelancer' && !valorMexido && freela?.diaria && dias.length) {
-      setValor((freela.diaria * dias.length).toFixed(2).replace('.', ','));
-    }
-  }, [tipo, freela, dias, valorMexido]);
+    if (tipo !== 'freelancer') return;
+    setValoresDia((vs) => {
+      const sugestao = diariaTxt || [...dias].reverse().map((d) => vs[d]).find((x) => x && lerValor(x) > 0) || '';
+      const novo: Record<string, string> = {};
+      for (const d of dias) novo[d] = vs[d] || sugestao;
+      return novo;
+    });
+  }, [tipo, dias, diariaTxt]);
 
   const listaBusca = useMemo(() => {
     const q = normalizar(busca);
@@ -73,9 +81,12 @@ export default function NovoPedido({ tipo, tenantId, contexto, onEnviado, onErro
     return base.filter((f) => normalizar(f.nome).includes(q)).slice(0, 8);
   }, [busca, tipo, freelas, fornecedores]);
 
-  const v = lerValor(valor);
+  const totalDias = Math.round(dias.reduce((s, d) => s + (lerValor(valoresDia[d] ?? '') || 0), 0) * 100) / 100;
+  const diaSemValor = dias.find((d) => !(lerValor(valoresDia[d] ?? '') > 0));
+  const v = tipo === 'freelancer' ? totalDias : lerValor(valor);
   const precisaPix = tipo === 'reembolso' || (tipo === 'fornecedor' && !fornecedor?.tem_pix) || (tipo === 'freelancer' && !freela?.tem_pix);
   const faltando = (() => {
+    if (tipo === 'freelancer' && diaSemValor) return `Informe o valor de ${dataBR(diaSemValor).slice(0, 5)}`;
     if (!(v > 0)) return 'Informe o valor';
     if (tipo === 'reembolso') {
       if (!descricao.trim()) return 'Conte o que foi comprado';
@@ -106,6 +117,7 @@ export default function NovoPedido({ tipo, tenantId, contexto, onEnviado, onErro
         favorecido_nome: nome, favorecido_doc: doc, pix_chave: pix,
         data_gasto: dataGasto, supplier_id: fornecedorId, vencimento,
         freelancer_id: freelaId, funcao, dias,
+        valores_dia: tipo === 'freelancer' ? Object.fromEntries(dias.map((d) => [d, lerValor(valoresDia[d] ?? '')])) : undefined,
       });
       if (erro) { onErro(erro); return; }
       onEnviado();
@@ -157,7 +169,7 @@ export default function NovoPedido({ tipo, tenantId, contexto, onEnviado, onErro
                   {((tipo === 'fornecedor' && fornecedor?.tem_pix) || (tipo === 'freelancer' && freela?.tem_pix)) ? ' · Pix cadastrado' : ''}
                 </p>
               </div>
-              <button type="button" onClick={() => { setFornecedorId(null); setFreelaId(null); setValorMexido(false); }} className="text-sm font-semibold text-zinc-500 cursor-pointer">Trocar</button>
+              <button type="button" onClick={() => { setFornecedorId(null); setFreelaId(null); }} className="text-sm font-semibold text-zinc-500 cursor-pointer">Trocar</button>
             </div>
           ) : (
             <>
@@ -191,12 +203,43 @@ export default function NovoPedido({ tipo, tenantId, contexto, onEnviado, onErro
             <Rotulo dica="Toque em todos os dias que a pessoa trabalhou">Dias trabalhados</Rotulo>
             <div className="mt-1.5">
               <Chips opcoes={ultimos7.map((d) => ({ v: d, label: nomeDia(d) }))} valor={dias} onValor={alternarDia} />
-              <input type="date" max={somaDias(hoje, 7)} min={somaDias(hoje, -90)} onChange={(e) => { const d = e.target.value; if (d && !dias.includes(d)) setDias([...dias, d].sort()); e.target.value = ''; }}
-                className="mt-2 w-full border border-zinc-200 rounded-xl px-3 py-2.5 text-sm bg-white" aria-label="Outro dia" />
-              {dias.length > 0 && <p className="text-xs text-zinc-500 px-1 mt-1.5">{dias.length} dia{dias.length > 1 ? 's' : ''}: {dias.map((d) => dataBR(d).slice(0, 5)).join(', ')}</p>}
+              {/* Botão de calendário (dono, 2026-09-27): o campo de data vazio não parecia clicável.
+                  O input fica invisível por cima do botão, então o toque abre o calendário do celular. */}
+              <label className="relative mt-2 flex items-center justify-center gap-2 w-full border-2 border-dashed border-amber-300 rounded-xl px-3 py-3 text-sm font-semibold text-amber-700 bg-amber-50 active:bg-amber-100 cursor-pointer">
+                <i className="ri-calendar-line text-lg" />
+                Escolher outra data
+                <input type="date" max={somaDias(hoje, 7)} min={somaDias(hoje, -90)} aria-label="Escolher outra data"
+                  onClick={(e) => { try { e.currentTarget.showPicker?.(); } catch { /* navegador sem showPicker: abre pelo toque */ } }}
+                  onChange={(e) => { const d = e.target.value; if (d && !dias.includes(d)) setDias([...dias, d].sort()); e.target.value = ''; }}
+                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
+              </label>
             </div>
           </div>
-          <Valor label={`Valor total${freela?.diaria && dias.length ? ` (${dias.length} × ${brl(freela.diaria)})` : ''}`} valor={valor} onValor={(x) => { setValor(x); setValorMexido(true); }} />
+          {dias.length > 0 && (
+            <div className="bg-white rounded-3xl border border-zinc-100 p-4">
+              <Rotulo dica="Quanto a pessoa recebe por cada dia">Valor de cada dia</Rotulo>
+              <div className="mt-2 space-y-2">
+                {dias.map((d) => (
+                  <div key={d} className="flex items-center gap-3">
+                    <span className="flex-1 min-w-0 text-sm font-semibold text-zinc-700">{dataBR(d).slice(0, 5)} <span className="font-normal text-zinc-400">{diaSemana(d)}</span></span>
+                    <div className="relative w-36">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 text-sm font-semibold">R$</span>
+                      <input value={valoresDia[d] ?? ''} inputMode="decimal" placeholder="0,00" aria-label={`Valor de ${dataBR(d).slice(0, 5)}`}
+                        onChange={(e) => { const x = e.target.value.replace(/[^\d.,]/g, ''); setValoresDia((vs) => ({ ...vs, [d]: x })); }}
+                        className="w-full border border-zinc-200 rounded-xl pl-10 pr-3 py-2.5 text-right font-bold bg-white" />
+                    </div>
+                    <button type="button" onClick={() => alternarDia(d)} aria-label={`Tirar ${dataBR(d).slice(0, 5)}`} className="w-8 h-8 flex items-center justify-center text-zinc-400 cursor-pointer">
+                      <i className="ri-close-line text-lg" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-3 pt-3 border-t border-zinc-100 flex items-baseline justify-between">
+                <span className="text-sm text-zinc-500">Total · {dias.length} dia{dias.length > 1 ? 's' : ''}</span>
+                <span className="text-xl font-black text-zinc-900">{brl(totalDias)}</span>
+              </div>
+            </div>
+          )}
         </>
       )}
 

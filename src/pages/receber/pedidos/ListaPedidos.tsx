@@ -110,7 +110,9 @@ function Cabecalho({ p, mostrarQuem }: { p: Pedido; mostrarQuem?: boolean }) {
 
 function Detalhes({ p }: { p: Pedido }) {
   const linhas: [string, string][] = [];
-  if (p.dias?.length) linhas.push(['Dias', p.dias.map((d) => dataBR(d).slice(0, 5)).join(', ')]);
+  // Com valor por dia: uma linha por dia (dono, 2026-09-27); pedido antigo: só as datas
+  if (p.dias?.length && p.valores_dia?.length === p.dias.length) p.dias.forEach((d, i) => linhas.push([`Dia ${dataBR(d).slice(0, 5)}`, brl(Number(p.valores_dia![i]))]));
+  else if (p.dias?.length) linhas.push(['Dias', p.dias.map((d) => dataBR(d).slice(0, 5)).join(', ')]);
   if (p.freelancer_funcao) linhas.push(['Função', p.freelancer_funcao]);
   if (p.data_gasto) linhas.push(['Pago em', dataBR(p.data_gasto)]);
   if (p.vencimento) linhas.push(['Vence', dataBR(p.vencimento)]);

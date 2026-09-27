@@ -202,6 +202,16 @@ const linhaSistema = (t: string): string | null => {
   const m = t.match(/^\[((?:Pagamento|PIN|Leitura)[^\]]*)\]/);
   return m ? m[1].trim() : null;
 };
+// Prévia de uma linha (lista de conversas, grupos por tipo, barra pequena). O "id <uuid>" do fim da
+// linha de sistema nunca aparece: o servidor antigo cortava o "[Pagamento…]" e a prévia do Financeiro
+// ficava só "id da46ec9c-…" (dono, 2026-09-27).
+const ID_SISTEMA = /\s*\bid [0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{0,12}\S*/gi;
+function previaDe(last: { role: string; content: string }): string {
+  const c = last.content;
+  const t = resumoSistema(c) ?? linhaSistema(c) ?? `${last.role === 'user' ? 'Você: ' : ''}${semMarcadores(c.replace(/\[painel\][\s\S]*$/, ''))}`;
+  const sem = t.replace(ID_SISTEMA, '').trim();
+  return sem || (sem !== t.trim() ? 'Atualização de pagamento' : t);
+}
 // O marcador de botão também É o botão (2026-09-16). Antes o botão só existia na resposta da hora
 // (vinha nas `actions` do send) e sumia ao recarregar; avisos que chegam sozinhos (contratação, cron)
 // nem passam pelo send — só pelo histórico. Lendo o marcador, o botão aparece em qualquer mensagem.
@@ -327,6 +337,66 @@ function PaymentCard({ p, onAction }: { p: Payment; onAction: (p: Payment, op: '
           <button onClick={() => onAction(p, 'no')} className="px-3 h-9 rounded-xl border border-zinc-200 text-zinc-500 text-sm font-bold hover:bg-zinc-50 cursor-pointer">
             Cancelar
           </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Pagamentos no rodapé (dono, 2026-09-27): os cartões inteiros ficavam empilhados em cima da conversa
+// — e o último enviado aparecia DUAS vezes (fixo na caixa de texto e na lista). Agora é uma faixa de uma
+// linha com o que importa (quem, quanto, o que falta); tocar abre os cartões, tocar de novo recolhe.
+// Um só esperando o PIN: o "Pagar" já fica na faixa, sem abrir.
+function situacaoPag(p: Payment): { texto: string; cor: string } {
+  if (p.status === 'pending_approval') return { texto: 'Falta sua aprovação no app do Inter', cor: 'text-amber-700' };
+  if (['draft', 'awaiting_pin'].includes(p.status)) return { texto: 'Esperando você pagar', cor: 'text-violet-700' };
+  if (p.status === 'paid') return { texto: 'Pago', cor: 'text-emerald-700' };
+  if (['failed', 'rejected'].includes(p.status)) return { texto: p.status_label || 'Não foi pago', cor: 'text-red-600' };
+  return { texto: p.status_label, cor: 'text-zinc-500' };
+}
+function BarraPagamentos({ lista, onAction, onDispensar }: {
+  lista: Payment[];
+  onAction: (p: Payment, op: 'ok' | 'no' | 'st' | 're' | 'rc') => void | Promise<void>;
+  /** Tira da faixa um pagamento já concluído (pago, recusado…) que ficou para mostrar o resultado. */
+  onDispensar: (p: Payment) => void;
+}) {
+  const [aberta, setAberta] = useState(false);
+  if (!lista.length) return null;
+  const um = lista.length === 1 ? lista[0] : null;
+  const faltaInter = lista.filter((p) => p.status === 'pending_approval').length;
+  const faltaPin = lista.filter((p) => ['draft', 'awaiting_pin'].includes(p.status)).length;
+  const sit = um ? situacaoPag(um) : faltaPin
+    ? { texto: `${faltaPin} esperando você pagar`, cor: 'text-violet-700' }
+    : faltaInter ? { texto: `${faltaInter} falta${faltaInter > 1 ? 'm' : ''} aprovar no app do Inter`, cor: 'text-amber-700' }
+    : { texto: 'Em andamento', cor: 'text-zinc-500' };
+  const concluido = um && !['draft', 'awaiting_pin', 'sending', 'sent', 'pending_approval', 'approved', 'scheduled'].includes(um.status);
+  return (
+    <div data-sem-arrasto className="border-t border-zinc-100 bg-white flex-shrink-0">
+      <div className="flex items-center gap-2 px-3 py-1.5">
+        <button onClick={() => setAberta((v) => !v)} aria-expanded={aberta} aria-label={aberta ? 'Recolher pagamentos' : 'Ver pagamentos'} className="flex-1 min-w-0 flex items-center gap-2.5 text-left cursor-pointer py-0.5">
+          <span className={`w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-lg ${faltaInter && !faltaPin ? 'bg-amber-100 text-amber-700' : 'bg-violet-50 text-violet-600'}`}>
+            <i className={um ? (um.kind === 'pix' ? 'ri-qr-code-line' : 'ri-barcode-line') : 'ri-money-dollar-circle-line'} />
+          </span>
+          <span className="flex-1 min-w-0 leading-tight">
+            <span className="block text-[13px] font-bold text-zinc-900 truncate">
+              {um ? `${um.kind === 'pix' ? 'Pix' : 'Boleto'} ${brl(um.amount)}${um.beneficiary_name ? ` · ${um.beneficiary_name}` : ''}` : `${lista.length} pagamentos`}
+            </span>
+            <span className={`block text-[11px] font-semibold truncate ${sit.cor}`}>{sit.texto}</span>
+          </span>
+          <i className={`ri-arrow-${aberta ? 'down' : 'up'}-s-line text-lg text-zinc-400 flex-shrink-0`} />
+        </button>
+        {um && !aberta && ['draft', 'awaiting_pin'].includes(um.status) && (
+          <button onClick={() => onAction(um, 'ok')} className="px-3 h-8 flex-shrink-0 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-bold cursor-pointer">Pagar</button>
+        )}
+        {concluido && (
+          <button onClick={() => onDispensar(um)} className="w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-100 cursor-pointer" aria-label="Fechar situação do pagamento">
+            <i className="ri-close-line" />
+          </button>
+        )}
+      </div>
+      {aberta && (
+        <div className="max-h-[45vh] overflow-y-auto px-3 pb-2 space-y-2">
+          {lista.map((p) => <PaymentCard key={p.id} p={p} onAction={onAction} />)}
         </div>
       )}
     </div>
@@ -1163,17 +1233,13 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
         </button>
     </>
   );
+  // O último enviado entra na MESMA faixa dos em aberto (antes aparecia duas vezes); concluído, fica
+  // só até fechar, para o dono ver o resultado.
   const cartaoFixo = pagFixo ? pays.find((x) => x.id === pagFixo) : undefined;
+  const pagamentosFaixa = cartaoFixo && !pagamentosVisiveis.some((p) => p.id === cartaoFixo.id)
+    ? [cartaoFixo, ...pagamentosVisiveis] : pagamentosVisiveis;
   const entrada = (
     <div className="border-t border-zinc-100 p-2.5 bg-white flex-shrink-0">
-      {cartaoFixo && (
-        <div className="relative mb-2">
-          <PaymentCard p={cartaoFixo} onAction={acaoPagamento} />
-          <button onClick={() => setPagFixo(null)} className="absolute top-1.5 right-1.5 w-7 h-7 flex items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-100 cursor-pointer" aria-label="Fechar situação do pagamento">
-            <i className="ri-close-line" />
-          </button>
-        </div>
-      )}
       {erro && <p className="text-xs text-red-600 px-1 pb-1.5">{erro}</p>}
       {citacao && (
         <div className="flex items-start gap-2 mb-2 px-2 py-1.5 rounded-xl bg-violet-50 border-l-2 border-violet-400">
@@ -1242,7 +1308,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
   // (a bolinha roxa, como no WhatsApp/Telegram).
   const linhaConversa = (o: { chave: string; icone: string; cor: string; titulo: string; unread: number; last: TopicoResumo['last']; abrir: () => void }) => {
     const previa = o.last
-      ? (resumoSistema(o.last.content) ?? linhaSistema(o.last.content) ?? `${o.last.role === 'user' ? 'Você: ' : ''}${semMarcadores(o.last.content.replace(/\[painel\][\s\S]*$/, ''))}`)
+      ? previaDe(o.last)
       : 'Nada por aqui ainda';
     return (
       <button key={o.chave} onClick={o.abrir} className="w-full flex items-center gap-3 px-4 py-3 border-b border-zinc-100 hover:bg-zinc-50 cursor-pointer text-left">
@@ -1331,7 +1397,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
         const last = r?.last ?? null;
         // A prévia vem cortada: um painel pela metade não casa com o marcador inteiro, então corta ali.
         const previa = last
-          ? (resumoSistema(last.content) ?? linhaSistema(last.content) ?? `${last.role === 'user' ? 'Você: ' : ''}${semMarcadores(last.content.replace(/\[painel\][\s\S]*$/, ''))}`)
+          ? previaDe(last)
           : 'Nada por aqui ainda';
         return (
           <button key={t.id} onClick={() => setTipo(t.id)} disabled={!total} aria-expanded="false" aria-label={t.label}
@@ -1593,11 +1659,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
       )}
 
       {/* Pagamentos esperando decisão */}
-      {pagamentosVisiveis.length > 0 && (
-        <div className="max-h-[38%] overflow-y-auto border-t border-zinc-100 px-3 py-2 space-y-2 bg-white flex-shrink-0">
-          {pagamentosVisiveis.map((p) => <PaymentCard key={p.id} p={p} onAction={acaoPagamento} />)}
-        </div>
-      )}
+      <BarraPagamentos lista={pagamentosFaixa} onAction={acaoPagamento} onDispensar={() => setPagFixo(null)} />
 
       {vista === 'conversa' && entrada}
       {/* Na lista não há caixa de digitação, mas as ações rápidas continuam à mão (pedido do dono). */}
