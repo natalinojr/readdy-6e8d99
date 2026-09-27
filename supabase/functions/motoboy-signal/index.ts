@@ -170,8 +170,16 @@ serve(async (req) => {
         (drvs ?? []).forEach((d: { id: string; name: string }) => driverNome.set(d.id, d.name));
       }
 
+      // Fase 3: a saída montada pelo gestor para este motoboy (últimas 6 h) — ordem das paradas ainda pendentes.
+      const { data: saida } = await admin.from("delivery_saidas").select("id, pedidos, created_at")
+        .eq("tenant_id", tenantId).eq("driver_id", driverId).gte("created_at", new Date(agoraTs - 6 * 3600000).toISOString())
+        .order("created_at", { ascending: false }).limit(1).maybeSingle();
+      const pendentes = new Set(lista.filter((o) => o.motoboy_driver_id === driverId && o.status !== "delivered").map((o) => o.id as string));
+      const paradas = saida ? ((saida.pedidos as string[]) ?? []).filter((id) => pendentes.has(id)) : [];
+
       return json({
         ok: true,
+        rota: paradas.length ? { saida_id: saida!.id, paradas, criada_em: saida!.created_at } : null,
         orders: lista.map((o: Record<string, unknown>) => ({
           id: o.id,
           number: o.number,

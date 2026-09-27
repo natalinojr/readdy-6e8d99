@@ -75,6 +75,9 @@ export function useGestorEntregas() {
   const { user } = useAuth();
   const tenantId = (user as { tenantId?: string } | null)?.tenantId;
   const [orders, setOrders] = useState<EntregaPedido[]>([]);
+  // "Montar saída" (Fase 3): pin da loja e motoboys ativos (vêm junto do quadro)
+  const [loja, setLoja] = useState<{ lat: number; lng: number } | null>(null);
+  const [motoboys, setMotoboys] = useState<{ id: string; name: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [erro, setErro] = useState('');
   const [busy, setBusy] = useState('');
@@ -109,6 +112,8 @@ export function useGestorEntregas() {
       if (data.ok) {
         const lista: EntregaPedido[] = data.orders ?? [];
         setOrders(lista); setErro('');
+        setLoja(data.loja ?? null);
+        setMotoboys(Array.isArray(data.motoboys) ? data.motoboys : []);
         const [porPedido, ativas] = await Promise.all([fetchShippingByOrder(tenantId, lista.map((o) => o.id)), fetchShippingAtivas(tenantId)]);
         setIfood(porPedido);
         const noQuadro = new Set(lista.map((o) => o.id));
@@ -194,6 +199,24 @@ export function useGestorEntregas() {
     } catch { setErro('Erro de conexão.'); } finally { setBusy(''); }
   }, [tenantId, token, carregar]);
 
+  // Fase 3: confirma a saída (amarra os pedidos ao motoboy e grava sugerido × feito).
+  const montarSaida = useCallback(async (p: {
+    pedidos: string[]; driver_id: string; km: number; min: number; maps_url: string;
+    sugerido: { driver_id: string | null; pedidos: string[]; km: number; min: number };
+  }): Promise<{ ok: boolean; erro?: string; motoboy?: string }> => {
+    try {
+      const t = await token();
+      const res = await fetch(getDeliveryWriteUrl(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + t },
+        body: JSON.stringify({ action: 'montar_saida', tenant_id: tenantId, ...p }),
+      });
+      const data = await res.json();
+      if (data.ok) { await carregar(true); return { ok: true, motoboy: data.motoboy }; }
+      return { ok: false, erro: typeof data.error === 'string' ? data.error : 'Não foi possível montar a saída.' };
+    } catch { return { ok: false, erro: 'Erro de conexão.' }; }
+  }, [tenantId, token, carregar]);
+
   // Nome do operador logado — gravado como autor do problema/observação.
   const autor = (user as { nome?: string } | null)?.nome ?? null;
 
@@ -227,6 +250,7 @@ export function useGestorEntregas() {
 
   return {
     orders, loading, erro, busy, now, autor, recarregar: () => carregar(), setStatus, liberar, fetchDetalhe, addNote,
+    loja, motoboys, montarSaida,
     tenantId, ifood, ifoodOn, ifoodForaDoQuadro, ifoodPedidos, ifoodLoja, recarregarIfoodCfg: carregarIfoodCfg,
   };
 }
