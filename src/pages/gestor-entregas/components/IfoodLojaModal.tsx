@@ -93,8 +93,19 @@ export default function IfoodLojaModal({ tenantId, merchants, podeEditar, onClos
     return r.success;
   };
 
-  const pausar = async () => { if (await run('pausa', 'merchant_pause_create', { minutes: pausaMin, description: pausaMotivo }, `Loja pausada por ${pausaMin} min no iFood.`)) { setPausaMotivo(''); carregarLoja(); } };
-  const tirarPausa = async (id: string) => { if (await run('del' + id, 'merchant_pause_delete', { interruption_id: id }, 'Pausa removida.')) carregarLoja(); };
+  // Como nos horários, o GET de pausas do iFood demora a refletir o POST/DELETE (teste 2026-09-27: a pausa criada só
+  // apareceu na 2ª atualização) → a lista é atualizada aqui com o que o próprio iFood devolveu, sem recarregar.
+  const pausar = async () => {
+    setBusy('pausa'); setMsg(null);
+    const r = await ifoodShipping<{ interruption?: Pausa }>('merchant_pause_create', tenantId, { merchant_id: loja, minutes: pausaMin, description: pausaMotivo });
+    setBusy('');
+    setMsg({ ok: r.success, t: r.success ? `Loja pausada por ${pausaMin} min no iFood.` : (r.error ?? 'Falhou.') });
+    if (!r.success) return;
+    setPausaMotivo('');
+    const nova = r.interruption;
+    if (nova?.id) setPausas((ps) => [...ps.filter((x) => x.id !== nova.id), nova]);
+  };
+  const tirarPausa = async (id: string) => { if (await run('del' + id, 'merchant_pause_delete', { interruption_id: id }, 'Pausa removida.')) setPausas((ps) => ps.filter((x) => x.id !== id)); };
   // O GET /opening-hours do iFood leva ~1 min para refletir o PUT (teste 2026-09-26): recarregar logo depois mostraria o
   // horário antigo. Usa os turnos que o próprio PUT devolve.
   const salvarHorarios = async () => {
