@@ -400,8 +400,16 @@ export default function ReceberPage() {
                     <i className="ri-list-check-2 mr-1" /> Meus pedidos
                   </button>
                   {perms!.pag_aprovar && (
-                    <button onClick={() => setTela('aprovar')} className="flex-1 py-3 rounded-2xl bg-white border border-zinc-100 text-sm font-semibold text-zinc-700 cursor-pointer">
-                      <i className="ri-checkbox-multiple-line mr-1" /> Aprovar
+                    // Os dois números no botão (dono, 2026-09-27): âmbar = faltam aprovar; azul = aprovados ainda não pagos.
+                    <button onClick={() => setTela('aprovar')} aria-label={`Aprovar: ${ctxPed?.para_aprovar ?? 0} para aprovar, ${ctxPed?.aprovados_nao_pagos ?? 0} aprovados não pagos`}
+                      className="flex-1 py-3 px-2 rounded-2xl bg-white border border-zinc-100 text-sm font-semibold text-zinc-700 cursor-pointer flex items-center justify-center gap-1.5 flex-wrap">
+                      <span><i className="ri-checkbox-multiple-line mr-1" /> Aprovar</span>
+                      {(ctxPed?.para_aprovar ?? 0) > 0 && (
+                        <span title="Faltam aprovar" className="min-w-[22px] h-[22px] px-1.5 inline-flex items-center justify-center rounded-full bg-amber-500 text-white text-[11px] font-bold">{ctxPed!.para_aprovar}</span>
+                      )}
+                      {(ctxPed?.aprovados_nao_pagos ?? 0) > 0 && (
+                        <span title="Aprovados, ainda não pagos" className="min-w-[22px] h-[22px] px-1.5 inline-flex items-center justify-center rounded-full bg-sky-500 text-white text-[11px] font-bold">{ctxPed!.aprovados_nao_pagos}</span>
+                      )}
                     </button>
                   )}
                 </div>

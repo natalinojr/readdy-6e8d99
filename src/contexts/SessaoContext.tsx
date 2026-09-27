@@ -84,9 +84,13 @@ export function SessaoProvider({ children }: { children: ReactNode }) {
   const restoreSession = useCallback(async () => {
     if (!effectiveTenantId) return null;
     try {
-      const { data: sessions } = await supabase.rpc('fn_get_active_session', {
+      // Erro (rede caiu, token vencendo) NÃO é "sem sessão": mantém o estado atual e
+      // tenta de novo no próximo tick. Antes o erro virava data=null → totem mostrava
+      // "Totem Offline / Aguardando abertura do caixa" com o caixa aberto.
+      const { data: sessions, error: sessErr } = await supabase.rpc('fn_get_active_session', {
         p_tenant_id: effectiveTenantId,
       });
+      if (sessErr) throw sessErr;
       const sess = sessions?.[0];
       if (!sess) {
         setSessao(null);
@@ -107,9 +111,10 @@ export function SessaoProvider({ children }: { children: ReactNode }) {
       };
       setSessao(sessaoInfo);
 
-      const { data: registers } = await supabase.rpc('fn_get_active_cash_register', {
+      const { data: registers, error: regErr } = await supabase.rpc('fn_get_active_cash_register', {
         p_session_id: sess.id,
       });
+      if (regErr) throw regErr;
       const reg = registers?.[0];
       if (reg) {
         const caixaInfo: CaixaInfo = {

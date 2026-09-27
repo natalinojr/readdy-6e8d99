@@ -425,6 +425,21 @@ describe('AssistenteChat — pagamento', () => {
     expect(calls('pay').map((c) => c.pin)).toEqual(['9999', '1234']);
   });
 
+  it('pagamento enviado aparece UMA vez, numa faixa recolhida que não cobre a conversa', async () => {
+    // Dono, 2026-09-27: o cartão enviado aparecia duas vezes (fixo + lista) e por cima de tudo.
+    const user = userEvent.setup();
+    srv.pays = [pixEduardo()];
+    renderChat();
+    await screen.findByText(/115,96/);
+    await user.click(screen.getByRole('button', { name: /Pagar/ }));
+    await user.type(await screen.findByPlaceholderText('PIN'), '1234');
+    await user.click(within(screen.getByPlaceholderText('PIN').closest('form') as HTMLElement).getByRole('button', { name: 'Pagar' }));
+    expect(await screen.findByText('Falta sua aprovação no app do Inter')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Ver status' })).toBeNull(); // cartão recolhido
+    await user.click(screen.getByRole('button', { name: 'Ver pagamentos' }));
+    expect(screen.getAllByRole('button', { name: /Ver status/ })).toHaveLength(1);
+  });
+
   it('pagamento concluído não fica fixo no rodapé (só na conversa)', async () => {
     // Antes o rodapé mantinha os pagos por 24 h e tomava a tela do chat (2026-09-16).
     srv.pays = [
@@ -443,6 +458,9 @@ describe('AssistenteChat — pagamento', () => {
       { ...pixEduardo(), id: 'c2', amount: 80, beneficiary_name: 'Frig. Silva', recebido: false } as Pay,
     ];
     renderChat();
+    // Recolhidos numa faixa de uma linha (2026-09-27): tocar abre os cartões.
+    expect(await screen.findByText('2 pagamentos')).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Ver pagamentos' }));
     expect((await screen.findByText('Sacolão Paranaguá')).tagName).toBe('B');
     expect(screen.getByText(/Mercadoria recebida em 18\/09/)).toBeInTheDocument();
     expect(screen.getByText(/Mercadoria ainda NÃO recebida/)).toBeInTheDocument();
@@ -453,6 +471,7 @@ describe('AssistenteChat — pagamento', () => {
     srv.pays = [pixEduardo()];
     renderChat();
     await screen.findByText(/115,96/);
+    await user.click(screen.getByRole('button', { name: 'Ver pagamentos' }));
     await user.click(screen.getByRole('button', { name: 'Cancelar' }));
     await waitFor(() => expect(calls('pay').at(-1)).toMatchObject({ op: 'no', id: 'p1' }));
     expect(screen.queryByPlaceholderText('PIN')).not.toBeInTheDocument();

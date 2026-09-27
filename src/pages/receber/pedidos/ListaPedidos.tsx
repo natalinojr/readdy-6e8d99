@@ -110,7 +110,9 @@ function Cabecalho({ p, mostrarQuem }: { p: Pedido; mostrarQuem?: boolean }) {
 
 function Detalhes({ p }: { p: Pedido }) {
   const linhas: [string, string][] = [];
-  if (p.dias?.length) linhas.push(['Dias', p.dias.map((d) => dataBR(d).slice(0, 5)).join(', ')]);
+  // Com valor por dia: uma linha por dia (dono, 2026-09-27); pedido antigo: só as datas
+  if (p.dias?.length && p.valores_dia?.length === p.dias.length) p.dias.forEach((d, i) => linhas.push([`Dia ${dataBR(d).slice(0, 5)}`, brl(Number(p.valores_dia![i]))]));
+  else if (p.dias?.length) linhas.push(['Dias', p.dias.map((d) => dataBR(d).slice(0, 5)).join(', ')]);
   if (p.freelancer_funcao) linhas.push(['Função', p.freelancer_funcao]);
   if (p.data_gasto) linhas.push(['Pago em', dataBR(p.data_gasto)]);
   if (p.vencimento) linhas.push(['Vence', dataBR(p.vencimento)]);
@@ -234,7 +236,7 @@ function CartaoMeu({ p, tenantId, onErro, onFeito, onJanela, mostrarQuem }: { p:
       <Cabecalho p={p} mostrarQuem={mostrarQuem} />
       {p.status === 'recusada' && p.motivo_recusa && <p className="mt-2 text-sm text-red-700 bg-red-50 rounded-xl px-3 py-2">Motivo: {p.motivo_recusa}</p>}
       {p.status === 'aprovada' && p.decidido_por_nome && <p className="mt-2 text-xs text-zinc-500">Aprovado por {p.decidido_por_nome}{p.pago_em ? ` · pago em ${dataBR(p.pago_em)}` : ''}</p>}
-      {mostrarQuem && onJanela && p.status === 'aprovada' && !p.pago && !p.pix_inter && <PagarDeNovo p={p} tenantId={tenantId} onErro={onErro} onJanela={onJanela} />}
+      {mostrarQuem && onJanela && p.status === 'aprovada' && !p.pago && (!p.pix_inter || p.pix_inter === 'recusado') && <PagarDeNovo p={p} tenantId={tenantId} onErro={onErro} onJanela={onJanela} />}
       {!mostrarQuem && p.status === 'pendente' && !p.purchase_id && (
         <button type="button" onClick={cancelar} disabled={cancelando} className="mt-3 w-full py-3 rounded-2xl border-2 border-zinc-200 text-zinc-600 text-sm font-bold cursor-pointer">
           {cancelando ? 'Cancelando…' : 'Cancelar pedido'}

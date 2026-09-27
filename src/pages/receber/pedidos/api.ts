@@ -10,6 +10,8 @@ export interface PermsPedido { pag_reembolso: boolean; pag_freelancer: boolean; 
 export interface ContextoPedidos {
   perms: PermsPedido;
   para_aprovar: number;
+  /** Aprovados que ainda não foram pagos (Pix já enviado pelo Inter não conta). Ausente em Edge antiga. */
+  aprovados_nao_pagos?: number;
   nome: string;
   ultimo_reembolso: { pix_chave: string; nome: string } | null;
 }
@@ -29,6 +31,7 @@ export interface Pedido {
   categoria: string | null;
   freelancer_funcao: string | null;
   dias: string[] | null;
+  valores_dia: number[] | null;
   purchase_id: string | null;
   bill_id: string | null;
   obs: string | null;
@@ -41,7 +44,7 @@ export interface Pedido {
   pago: boolean;
   pago_em: string | null;
   /** Pix da conta no Inter antes da baixa do extrato: 'aguardando' (aprovar no app do Inter) ou 'pago'. */
-  pix_inter?: 'aguardando' | 'pago' | null;
+  pix_inter?: 'aguardando' | 'pago' | 'recusado' | null;
   tem_comprovante: boolean;
 }
 
@@ -81,6 +84,7 @@ export function situacao(p: Pedido): { texto: string; cor: string } {
   if (p.pago) return { texto: 'Pago', cor: 'bg-emerald-100 text-emerald-700' };
   if (p.pix_inter === 'pago') return { texto: 'Pix enviado · falta a baixa do extrato', cor: 'bg-emerald-100 text-emerald-700' };
   if (p.pix_inter === 'aguardando') return { texto: 'Pix enviado · aprovar no app do Inter', cor: 'bg-violet-100 text-violet-700' };
+  if (p.pix_inter === 'recusado') return { texto: 'Pix recusado no Inter · ainda a pagar', cor: 'bg-red-100 text-red-700' };
   return { texto: 'Aprovado · a pagar', cor: 'bg-sky-100 text-sky-700' };
 }
 

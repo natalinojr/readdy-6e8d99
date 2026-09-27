@@ -49,6 +49,7 @@ export const ACOES: AcaoDef[] = [
   { id: 'pedidos-atrasados', grupo: 'Operação', label: 'Pedidos atrasados', icone: 'ri-timer-flash-line', cor: 'bg-orange-50 text-orange-600', Componente: lazy(() => import('./operacao/PedidosAtrasados')) },
   { id: 'impressora-parada', grupo: 'Operação', label: 'Impressora parada', icone: 'ri-printer-line', cor: 'bg-orange-50 text-orange-600', Componente: lazy(() => import('./operacao/ImpressoraParada')) },
   { id: 'caixa-aberto', grupo: 'Operação', label: 'Caixa aberto', icone: 'ri-safe-2-line', cor: 'bg-orange-50 text-orange-600', Componente: lazy(() => import('./operacao/CaixaAberto')) },
+  { id: 'fechamento-caixa', grupo: 'Operação', label: 'Fechamento de caixa', icone: 'ri-safe-line', cor: 'bg-orange-50 text-orange-600', Componente: lazy(() => import('./operacao/FechamentoCaixa')) },
   // iFood (2026-09-25): o iFood não passa pelo PDV; tudo lê as tabelas fin_ifood_* da tela Financeiro › iFood.
   { id: 'ifood-vendas', grupo: 'iFood', label: 'Vendas do iFood', icone: 'ri-e-bike-2-line', cor: 'bg-red-50 text-red-600', Componente: lazy(() => import('./ifood/VendasIfood')) },
   { id: 'ifood-repasses', grupo: 'iFood', label: 'Repasses do iFood', icone: 'ri-bank-card-line', cor: 'bg-red-50 text-red-600', Componente: lazy(() => import('./ifood/RepassesIfood')) },
