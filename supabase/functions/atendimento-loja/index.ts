@@ -258,7 +258,8 @@ function tempoEntrega(dc: Row): string {
 export function regrasPadrao(bot: Row): string {
   return `COMO ATENDER
 - Objetivo: levar a pessoa até o link do pedido. Assim que ela escolher algo, disser que quer pedir ou pedir o link, chame link_do_pedido NA MESMA resposta (com o item escolhido) e mande o link que a ferramenta devolver. Nunca escreva um link de cabeça e nunca diga "vou gerar o link" sem mandar.
-- Vários itens: mande o link (ele abre o primeiro item) e diga para adicionar os outros no carrinho do link. Você não mexe no carrinho: nunca diga que já colocou algo nele. Para 2 ou mais pessoas, procure antes opções "Dupla", "Trio" ou "Combo" (costumam sair mais em conta) e ofereça.
+- Combo, Dupla, Trio ou promoção que é item próprio do cardápio (ex.: "Duo"): se a pessoa escolheu ele, o link é DESSE item (os sabores ela escolhe dentro dele), nunca do sabor avulso.
+- Vários itens: mande o link abrindo o item que a pessoa acabou de escolher e diga para adicionar os outros no carrinho do link. Você não mexe no carrinho: nunca diga que já colocou algo nele. Para 2 ou mais pessoas, procure antes opções "Dupla", "Trio" ou "Combo" (costumam sair mais em conta) e ofereça.
 - Você NÃO vê pedidos: nunca diga que um pedido foi feito, confirmado, recebido, pago ou que está a caminho. Se a pessoa disser que já pediu, agradeça e ofereça consultar o andamento com meus_pedidos. Você não anota pedido e não recebe Pix/comprovante: escolher e pagar é no link. Se pedirem o total, pode fazer a conta simples (preço × quantidade + taxa do bairro), dizendo que é uma estimativa e o valor final aparece no link (adicionais e escolhas mudam o valor).
 - Item e preço: use exatamente o nome e o preço do CARDÁPIO COMPLETO acima (ou da busca), com a promoção de hoje quando houver. Sabores, tamanhos e adicionais: chame buscar_cardapio antes de citar. Nunca invente sabor, tamanho, adicional, ingrediente, prazo, promoção nem "o mais pedido" (só os Destaques acima são destaque; nunca diga "o mais pedido", "campeão" ou "sucesso"). "O mais barato": buscar_cardapio com ordem="preco" e SEM categoria (o cardápio todo). Descreva cada item só com a descrição DELE: sabores, preço e ingredientes de outro item não valem. Não achou: diga que não tem e ofereça o que houver de parecido.
 - Tamanho, peso, quantas pessoas serve, ingredientes: só o que estiver escrito na descrição do item. Não está lá? Diga que não tem essa informação (e a equipe confirma, se a pessoa precisar).
@@ -528,7 +529,7 @@ export async function pensar(o: Pensar) {
   const urlsResposta = (reply.match(/https?:\/\/\S+/g) ?? []).map(semPontas);
   if (urlsResposta.some((u) => !links.includes(u) && !linksAntes.has(u)))
     correcoes.push('Você escreveu um link sem chamar link_do_pedido. Chame link_do_pedido agora (com o item que a pessoa escolheu, ou sem item se ela só quer ver o cardápio) e use só o link que a ferramenta devolver.');
-  if (/\b(app|aplicativo|rastrei\w*|notifica\w*)\b|te (aviso|avisamos|mando mensagem|notifico)|vou te avisar|(vamos|vou|equipe vai) (te )?(avisar|acompanhar|registrar)|registr(ei|amos|ad[ao])|anotei|anotad[ao]/i.test(reply))
+  if (/\b(app|aplicativo|rastrei\w*|notifica\w*)\b|te (aviso|avisamos|mando mensagem|notifico)|vou te avisar|(vamos|vou|equipe vai) (te )?(avisar|acompanhar|registrar)|registr(ei|amos|ad[ao])|anot(ei|o|ar|amos|ad[ao])\b/i.test(reply))
     correcoes.push('Não existe app, rastreio, aviso automático nem registro de reclamação: não prometa avisar, acompanhar ou registrar nada. Diga só o que as ferramentas mostraram e, se for o caso, que a equipe já foi avisada.');
   if (/sem gl[uú]ten|sem lactose|sem amendoim|livre de|100% vegan|é vegan|s[aã]o vegan|pode comer tranquil|seguro para al[eé]rgic/i.test(reply))
     correcoes.push('Não garanta que um item é sem glúten, sem lactose, sem amendoim ou vegano: diga só os ingredientes que a descrição traz e, para alergia/restrição, que a equipe confirma (chame chamar_atendente se ainda não chamou).');
@@ -537,9 +538,21 @@ export async function pensar(o: Pensar) {
   if (/mais pedid|mais vendid|campe[aã]o|faz (muito )?sucesso|sucesso da casa|todo mundo (ama|pede|adora)|queridinh|muito procurad/i.test(reply))
     correcoes.push('Não diga que algo é o mais pedido, campeão, sucesso ou que todo mundo ama: você não tem esse dado. "Destaque da casa" só para os Destaques da lista.');
   const ultimaDoCliente = [...o.historico].reverse().find((h) => h.role === 'user')?.content ?? '';
-  const pediuLink = /\blink\b|card[aá]pio|\bmenu\b/i.test(ultimaDoCliente);
-  if (pediuLink && !urlsResposta.length && !usadas.has('chamar_atendente'))
-    correcoes.push('A pessoa pediu o link/cardápio: chame link_do_pedido (sem item se ela só quer ver o cardápio) e mande o link.');
+  // Pedido de link é verbo + link ("vou pedir lá no link" não é — s30, v7).
+  const pediuLink = /(manda|mande|passa|envia|reenvia|me d[aá]|qual [eé]|cad[eê]|quero|de novo)[^.!?\n]{0,20}(link|card[aá]pio|menu)|(link|card[aá]pio|menu)[^.!?\n]{0,12}(por favor|pf|pfv|\?)/i.test(ultimaDoCliente);
+  const querComprar = /\b(quero|vou querer|vo querer|vou pedir|vo pedir|vou de|pode ser|fechou|fecha|bora|me v[eê])\b/i.test(ultimaDoCliente)
+    && !/quero (saber|falar|cancelar|trocar|reclamar|meu dinheiro|reembolso)|j[aá] (pedi|paguei|fiz)/i.test(ultimaDoCliente);
+  if ((pediuLink || querComprar) && !urlsResposta.length && !usadas.has('chamar_atendente') && !o.equipeJaAvisada)
+    correcoes.push(pediuLink ? 'A pessoa pediu o link/cardápio: chame link_do_pedido (sem item se ela só quer ver o cardápio) e mande o link.'
+      : 'A pessoa quer comprar: chame link_do_pedido com o item que ela escolheu e mande o link nesta resposta (sabor, tamanho e endereço ela escolhe no link).');
+  // Encomenda grande/evento com a equipe: nada de link, conta ou endereço (s17/s49, v7).
+  const textosCliente = o.historico.filter((h) => h.role === 'user').map((h) => h.content).join(' ');
+  if ((o.equipeJaAvisada || usadas.has('chamar_atendente')) && /encomenda|evento|festa|\b\d{2,}\s?(pessoas|combos|unidades|burritos|tacos|lanches)/i.test(textosCliente)
+    && (urlsResposta.length || /total|endere[cç]o|bairro|taxa/i.test(reply)))
+    correcoes.push('A encomenda grande/evento está com a equipe: não mande link, não calcule total e não peça endereço ou bairro; diga que a equipe combina tudo por aqui.');
+  // Cliente bravo depois de passar para a equipe: sem vender (s34, v7).
+  if (o.equipeJaAvisada && !pediuLink && urlsResposta.length && /!{2,}|\?{2,}|absurd|demor|cad[eê]|cancel|dinheiro|estorn|reclam|pdc|porra|raiva|😤|😡|🤬/i.test(ultimaDoCliente))
+    correcoes.push('A pessoa está reclamando e a equipe já foi avisada: não mande link nem ofereça comida agora; acolha e diga que a equipe responde por aqui.');
   // Acabou de passar para a equipe (reclamação, encomenda, alergia): nada de vender na mesma resposta (s09/s17, v6).
   if (usadas.has('chamar_atendente') && urlsResposta.length && !pediuLink)
     correcoes.push('Você acabou de passar a conversa para a equipe: nesta resposta não mande link nem ofereça comida. Acolha e diga só que a equipe já foi avisada e responde por aqui.');
@@ -593,17 +606,26 @@ export async function pensar(o: Pensar) {
   for (const u of noTexto) {
     if (validos.has(semPontas(u))) continue;
     // Link inventado: no mesmo lugar entra o último link da ferramenta (ou o geral).
-    reply = reply.replace(u, links[links.length - 1] ?? geral);
+    reply = reply.split(u).join(links[links.length - 1] ?? geral);
     tirou = true;
   }
   // "Aqui está o link:" seguido de linhas vazias (o modelo deixou o lugar e não escreveu).
   reply = reply.replace(/\n{3,}/g, '\n\n').trim();
   // Link geral numa resposta que fala de UM item só: troca pelo link que já abre o item.
   // Se a ferramenta devolveu o geral de propósito (a pessoa quer ver o cardápio), fica o geral (s37, v6).
-  if (reply.includes(geral) && !links.includes(geral) && !links.some((l) => reply.includes(l))) {
+  // Compara URLs inteiras: o link geral é PREFIXO do link de item, e o includes/replace de texto colava um
+  // &item em cima do outro (s57, v8).
+  const urlsFinais = () => (reply.match(/https?:\/\/\S+/g) ?? []).map(semPontas);
+  const trocaUrl = (de: string, para: string) => { reply = reply.replace(/https?:\/\/\S+/g, (u) => semPontas(u) === de ? para + u.slice(semPontas(u).length) : u); };
+  if (urlsFinais().includes(geral) && !links.includes(geral) && !pediuLink && !links.some((l) => urlsFinais().includes(l))) {
     const citados = items.filter((i) => i.disponivel && i.nome.length >= 5 && norm(reply).includes(norm(i.nome)));
     const maior = citados.sort((a, b) => b.nome.length - a.nome.length)[0];
-    if (maior && citados.every((i) => norm(maior.nome).includes(norm(i.nome)))) reply = reply.replace(geral, deliveryUrl(o.tenant.slug, { item: maior.id }));
+    if (maior && citados.every((i) => norm(maior.nome).includes(norm(i.nome)))) trocaUrl(geral, deliveryUrl(o.tenant.slug, { item: maior.id }));
+    else if (!citados.length) {
+      // Reenvio sem citar item: volta o link do item que já tinha sido mandado (s23/s30, v7).
+      const ultimoItem = [...linksAntes].reverse().find((l) => l.includes('item='));
+      if (ultimoItem) trocaUrl(geral, ultimoItem);
+    }
   }
   const temValido = (reply.match(/https?:\/\/\S+/g) ?? []).length > 0;
   if (!temValido && (tirou || links.length)) {
