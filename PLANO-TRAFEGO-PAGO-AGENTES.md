@@ -242,7 +242,7 @@ Integração no cardápio: botão "Gerar arte/foto padronizada" no item, que abr
 
 | Fase | Entrega | Depende de |
 |---|---|---|
-| **F0** | Modelo configurável + **modo sombra Sonnet × Opus** no `meta-ads-agent`; custo por rodada na tela; enxugar payload | nada |
+| **F0** | ✅ **Feito em 2026-09-27** (migração aplicada, função publicada v13, tela na branch): modelo configurável por loja + **modo sombra**; custo por rodada e quadro real × sombra na aba Agente. Falta: ligar a sombra na El Patrón e acompanhar 1–2 semanas; enxugar o payload | nada |
 | **F1** | **Kit da Marca** (questionário + pré-preenchimento por IA) + Biblioteca com nota das fotos do cardápio + **ligar pasta do OneDrive** (reusa `ms-graph`) | nada |
 | **F1b** | Google Drive / Dropbox / posts do Instagram como banco de imagens | F1 |
 | **F2** | **Estúdio v1**: 4–6 modelos de arte (feed, story, item padronizado, promoção), Diretor de Arte (Sonnet), renderização no servidor, galeria com aprovar/baixar | F1 |
