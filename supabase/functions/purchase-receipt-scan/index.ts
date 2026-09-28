@@ -19,6 +19,7 @@
 
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
 import Anthropic from 'npm:@anthropic-ai/sdk@0.125.0';
+import { registrarUsoIa } from '../_shared/ai-usage.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -356,7 +357,7 @@ async function actionQrcode(admin: SupabaseClient, tenantId: string, body: Recor
 }
 
 // deno-lint-ignore no-explicit-any
-async function actionScan(admin: SupabaseClient, tenantId: string, body: Record<string, any>) {
+async function actionScan(admin: SupabaseClient, tenantId: string, body: Record<string, any>, userId?: string | null) {
   const apiKey = Deno.env.get('ANTHROPIC_API_KEY') ?? '';
   if (!apiKey) return errResp('Leitura de notas ainda não configurada (falta a chave ANTHROPIC_API_KEY no servidor).', 503);
 
@@ -391,6 +392,7 @@ async function actionScan(admin: SupabaseClient, tenantId: string, body: Record<
       }],
     // deno-lint-ignore no-explicit-any
     } as any);
+    await registrarUsoIa(admin, { feature: 'leitura-notinha', model: response.model, usage: response.usage, tenantId, userId: userId ?? null });
   } catch (err) {
     if (err instanceof Anthropic.AuthenticationError) {
       log('ERROR', 'scan', 'anthropic auth', {});
@@ -579,7 +581,7 @@ Deno.serve(async (req: Request) => {
     if (!match) return errResp('Sem acesso a esta loja', 403);
     const tenantId = String(match.tenant_id);
 
-    if (action === 'scan') return await actionScan(admin, tenantId, body);
+    if (action === 'scan') return await actionScan(admin, tenantId, body, userId);
     if (action === 'qrcode') return await actionQrcode(admin, tenantId, body);
     if (action === 'learn') return await actionLearn(admin, tenantId, userId, body);
     return errResp(`Ação desconhecida: ${action}`);

@@ -4,6 +4,7 @@
 // Ações (POST JSON { action, ... }), JWT do usuário no Authorization:
 //   get                 visão geral: configurações, lojas, conversa recente, lembretes,
 //                       memórias, estado do WhatsApp e custo estimado de 30 dias
+//   ai_usage            { de?, ate? } (AAAA-MM-DD) custo da API da Anthropic (ai_usage_events) por loja/pessoa/uso/modelo/dia
 //   save_settings       { watched_tenant_ids, default_tenant_id, morning_brief: { enabled, time },
 //                         pay_timing?: { modo: 'na_hora'|'vencimento', dias_antes: 0-5, hora } }  quando pedir para pagar
 //   add_memory          { content }
@@ -264,6 +265,70 @@ Deno.serve(async (req) => {
         });
       }
 
+      // Custos da IA (2026-09-28): public.ai_usage_events (todas as Edge Functions que chamam a
+      // Anthropic) somado por loja, pessoa, uso, modelo e dia. Período em dias locais (UTC-3).
+      case 'ai_usage': {
+        const dia = (v: unknown, pad: string) => (/^\d{4}-\d{2}-\d{2}$/.test(String(v ?? '')) ? String(v) : pad);
+        const hoje = new Date(Date.now() - 3 * 3600_000).toISOString().slice(0, 10);
+        const de = dia(body.de, `${hoje.slice(0, 8)}01`);
+        const ate = dia(body.ate, hoje);
+        const ini = new Date(`${de}T00:00:00-03:00`).toISOString();
+        const fim = new Date(new Date(`${ate}T00:00:00-03:00`).getTime() + 86400_000).toISOString();
+        // deno-lint-ignore no-explicit-any
+        const rows: any[] = [];
+        for (let from = 0; from < 100_000; from += 1000) {
+          const { data, error } = await admin.from('ai_usage_events')
+            .select('created_at, tenant_id, user_id, feature, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd, backfill')
+            .gte('created_at', ini).lt('created_at', fim).order('id').range(from, from + 999);
+          if (error) throw new Error(error.message);
+          rows.push(...(data ?? []));
+          if ((data ?? []).length < 1000) break;
+        }
+        type Soma = { chave: string; usd: number; chamadas: number; tokens_in: number; tokens_out: number };
+        const grupos: Record<string, Map<string, Soma>> = { loja: new Map(), pessoa: new Map(), uso: new Map(), modelo: new Map(), dia: new Map() };
+        const somar = (g: string, chave: string, r: Record<string, number>) => {
+          const m = grupos[g];
+          const s = m.get(chave) ?? { chave, usd: 0, chamadas: 0, tokens_in: 0, tokens_out: 0 };
+          s.usd += Number(r.cost_usd ?? 0);
+          s.chamadas += 1;
+          s.tokens_in += Number(r.input_tokens ?? 0) + Number(r.cache_read_tokens ?? 0) + Number(r.cache_write_tokens ?? 0);
+          s.tokens_out += Number(r.output_tokens ?? 0);
+          m.set(chave, s);
+        };
+        let total = 0, estimado = false;
+        for (const r of rows) {
+          total += Number(r.cost_usd ?? 0);
+          if (r.backfill) estimado = true;
+          somar('loja', r.tenant_id ?? '', r);
+          somar('pessoa', r.user_id ?? '', r);
+          somar('uso', r.feature, r);
+          somar('modelo', r.model, r);
+          somar('dia', new Date(Date.parse(r.created_at) - 3 * 3600_000).toISOString().slice(0, 10), r);
+        }
+        const tIds = [...grupos.loja.keys()].filter(Boolean);
+        const uIds = [...grupos.pessoa.keys()].filter(Boolean);
+        const [lojas, pessoas] = await Promise.all([
+          tIds.length ? admin.from('tenants').select('id, name').in('id', tIds) : Promise.resolve({ data: [] }),
+          uIds.length ? admin.from('users').select('id, name, nickname, email').in('id', uIds) : Promise.resolve({ data: [] }),
+        ]);
+        // deno-lint-ignore no-explicit-any
+        const nomeLoja = new Map((lojas.data ?? []).map((t: any) => [t.id, t.name]));
+        // deno-lint-ignore no-explicit-any
+        const nomePessoa = new Map((pessoas.data ?? []).map((u: any) => [u.id, u.nickname || u.name || u.email]));
+        const fx = await usdBrl(admin, cfg);
+        const lista = (g: string, nome: (k: string) => string) => [...grupos[g].values()]
+          .map((s) => ({ ...s, nome: nome(s.chave), usd: Math.round(s.usd * 10000) / 10000 }))
+          .sort((a, b) => b.usd - a.usd);
+        return ok({
+          de, ate, total_usd: Math.round(total * 10000) / 10000, chamadas: rows.length, estimado,
+          cotacao: fx ? { rate: fx.rate, source: fx.source, at: fx.at } : null,
+          por_loja: lista('loja', (k) => (k ? String(nomeLoja.get(k) ?? 'Loja removida') : 'Geral (sem loja)')),
+          por_pessoa: lista('pessoa', (k) => (k ? String(nomePessoa.get(k) ?? 'Usuário removido') : 'Automático / clientes')),
+          por_uso: lista('uso', (k) => k),
+          por_modelo: lista('modelo', (k) => k),
+          por_dia: lista('dia', (k) => k).sort((a, b) => a.chave.localeCompare(b.chave)),
+        });
+      }
       case 'save_settings': {
         const ids: string[] = Array.isArray(body.watched_tenant_ids) ? body.watched_tenant_ids.map(String).filter((s: string) => UUID_RE.test(s)) : [];
         if (!ids.length) return fail('Escolha pelo menos uma loja.');

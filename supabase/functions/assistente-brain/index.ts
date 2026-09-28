@@ -24,6 +24,7 @@ import Anthropic from 'npm:@anthropic-ai/sdk@0.125.0';
 import postgres from 'npm:postgres@3.4.5';
 import { acharCopiaECola, acharLinhas, lerGuia, linhaValida, soDigitos, type Guia } from '../_shared/guias.ts';
 import { textoDoPdf } from '../_shared/pdf-texto.ts';
+import { registrarUsoIa } from '../_shared/ai-usage.ts';
 
 // ── Leitor universal (só leitura) ──
 // Conexão direta ao Postgres (SUPABASE_DB_URL). Cada consulta roda em
@@ -2244,6 +2245,7 @@ Deno.serve(async (req) => {
         messages: [{ role: 'user', content: 'warmup' }],
       // deno-lint-ignore no-explicit-any
       } as any);
+      await registrarUsoIa(admin, { feature: 'assistente-aquecimento', model: r.model, usage: r.usage });
       return json({ success: true, usage: r.usage });
     }
 
@@ -2727,6 +2729,7 @@ Deno.serve(async (req) => {
         cache_read: r.usage?.cache_read_input_tokens ?? 0, cache_write: r.usage?.cache_creation_input_tokens ?? 0, cache_write_1h: 0,
         modelo: qual,
       };
+      await registrarUsoIa(admin, { feature: 'assistente-midia', model: r.model, usage: r.usage, tenantId: body.tenant_id ?? null, userId: null });
       // Comparação de modelos: devolve sem gravar nada na conversa.
       if (body.so_ler === true) return json({ success: true, lido, usage });
       // Custo da leitura entra na conta do assistente (tela Assistente lê asst_messages.usage).
@@ -2862,6 +2865,7 @@ Deno.serve(async (req) => {
     const client = new Anthropic({ apiKey });
     const toolCalls: Array<{ name: string; input: unknown; ok: boolean }> = [];
     const usage = { input: 0, output: 0, cache_read: 0, cache_write: 0, cache_write_1h: 0, web_searches: 0 };
+    const usageEvents: Array<{ model: string; usage: unknown }> = [];
     let reply = '';
     const started = Date.now();
 
@@ -2901,6 +2905,7 @@ Deno.serve(async (req) => {
       usage.cache_write += response.usage?.cache_creation_input_tokens ?? 0;
       usage.cache_write_1h += response.usage?.cache_creation?.ephemeral_1h_input_tokens ?? 0; // parte de cache_write (2x o preço)
       usage.web_searches += response.usage?.server_tool_use?.web_search_requests ?? 0; // US$ 0,01 cada
+      usageEvents.push({ model: response.model, usage: response.usage });
 
       const textOut = (response.content as Anthropic.ContentBlock[]).filter((b) => b.type === 'text').map((b) => (b as Anthropic.TextBlock).text).join('');
       if (response.stop_reason === 'refusal') { reply = 'Não consigo ajudar com isso.'; break; }
@@ -2924,6 +2929,25 @@ Deno.serve(async (req) => {
       }));
       messages.push({ role: 'user', content: results });
       if (round === MAX_TOOL_ROUNDS) reply = textOut || 'Fiz várias consultas mas não consegui fechar a resposta. Pode repetir de forma mais simples?';
+    }
+
+    // Custo da IA (dono, 2026-09-28): uma linha por resposta do loop. tenant_id só quando as
+    // ferramentas usadas (campo "loja") apontam para uma única loja; em modo de grupo (triagem,
+    // entrada de compra, dias de freelancer) não é o dono perguntando, então userId fica null.
+    {
+      const lojasUsadas = new Set<string>();
+      for (const tc of toolCalls) {
+        const inp = tc.input as Record<string, unknown> | null;
+        const loja = inp && typeof inp === 'object' ? inp.loja : null;
+        if (typeof loja === 'string' && loja) lojasUsadas.add(resolveTenant(ctx, loja).id);
+      }
+      const tenantIdUso = lojasUsadas.size === 1 ? [...lojasUsadas][0] : null;
+      const emGrupo = body.modo === 'triagem_grupo' || body.modo === 'entrada_compra_grupo' || body.modo === 'dias_freelancer';
+      const featureUso = emGrupo ? 'assistente-grupo' : 'assistente';
+      const userIdUso = emGrupo ? null : ownerId;
+      for (const ev of usageEvents) {
+        await registrarUsoIa(admin, { feature: featureUso, model: ev.model, usage: ev.usage, tenantId: tenantIdUso, userId: userIdUso, ref: chatId });
+      }
     }
 
     // O modelo IMITA os marcadores que vê no histórico (2026-09-16): passou a escrever

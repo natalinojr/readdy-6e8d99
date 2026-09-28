@@ -25,6 +25,7 @@
 
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
 import Anthropic from 'npm:@anthropic-ai/sdk@0.125.0';
+import { registrarUsoIa } from '../_shared/ai-usage.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -390,7 +391,7 @@ function compact(i: Insights | null, label: string) {
   };
 }
 
-async function askModel(payload: Json): Promise<{ out: Row; model: string; usage: Row | null }> {
+async function askModel(payload: Json, admin?: SupabaseClient, tenantId?: string | null): Promise<{ out: Row; model: string; usage: Row | null }> {
   const apiKey = Deno.env.get('ANTHROPIC_API_KEY') ?? '';
   if (!apiKey) throw new Error('IA não configurada (falta ANTHROPIC_API_KEY).');
   const client = new Anthropic({ apiKey });
@@ -402,6 +403,7 @@ async function askModel(payload: Json): Promise<{ out: Row; model: string; usage
     messages: [{ role: 'user', content: `Dados da loja e da conta de anúncios (JSON):\n${JSON.stringify(payload)}` }],
   // deno-lint-ignore no-explicit-any
   } as any);
+  if (admin) await registrarUsoIa(admin, { feature: 'trafego-meta-ads', model: response.model, usage: response.usage, tenantId: tenantId ?? null });
   if (response.stop_reason === 'refusal') throw new Error('A IA recusou analisar estes dados.');
   if (response.stop_reason === 'max_tokens') throw new Error('Resposta da IA ficou longa demais.');
   const text = (response.content ?? []).filter((b: Row) => b.type === 'text').map((b: Row) => String(b.text)).join('');
@@ -541,7 +543,7 @@ async function runForTenant(admin: SupabaseClient, tenantId: string, trigger: 'm
       ultimos_7_dias: compact(i7, '7d'), ultimos_30_dias: compact(i30, '30d'),
       acoes_recentes: (recent ?? []).map((a: Row) => ({ kind: a.kind, target_id: a.target_id, status: a.status, created_at: a.created_at })),
     };
-    const ai = await askModel(payload);
+    const ai = await askModel(payload, admin, tenantId);
 
     // Guardrails pós-modelo: só alvos existentes, orçamento dentro do teto, mudanças ±20%, sem duplicar alvo.
     const known = new Map<string, { level: string; name: string; budget: number }>();

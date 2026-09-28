@@ -33,6 +33,7 @@
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
 import Anthropic from 'npm:@anthropic-ai/sdk@0.125.0';
 import { graph, isOutsideWindow, renderTemplate, TEMPLATES, waConfig, waSendTemplate, waSendText } from '../_shared/wa.ts';
+import { registrarUsoIa } from '../_shared/ai-usage.ts';
 
 const TZ = 'America/Sao_Paulo';
 const MODEL = 'claude-haiku-4-5';
@@ -434,7 +435,7 @@ function textoRetorno(c: Ctx): string {
 const COMO_RESPONDER = 'É só me dizer qual prefere: pode ser o número ou o dia e horário (ex.: segunda às 17h).';
 
 // ── interpretação da mensagem do candidato (sem ferramentas) ──
-async function classify(c: Ctx, text: string, offered: string[]): Promise<Row> {
+async function classify(c: Ctx, text: string, offered: string[], admin?: SupabaseClient): Promise<Row> {
   const apiKey = Deno.env.get('ANTHROPIC_API_KEY') ?? '';
   if (!apiKey) return { intencao: 'outro' };
   const client = new Anthropic({ apiKey });
@@ -477,6 +478,7 @@ Responda SÓ com JSON válido:
 - NUNCA escreva dias ou horários em "resposta" (nem listas de horários): quem manda horários é o sistema, a partir da agenda.`;
   try {
     const r = await client.messages.create({ model: MODEL, max_tokens: 400, system, messages: [{ role: 'user', content: text.slice(0, 1500) }] });
+    if (admin) await registrarUsoIa(admin, { feature: 'agendamento-entrevista', model: r.model, usage: r.usage });
     const out = r.content.filter((b) => b.type === 'text').map((b) => (b as { text: string }).text).join('').trim()
       .replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
     return JSON.parse(out);
@@ -586,7 +588,7 @@ async function handleCandidate(admin: SupabaseClient, sess: Row, text: string, j
   const num = t.match(/^\s*(?:op[çc][aã]o\s*)?(\d{1,2})\s*[).]?\s*$/i);
   if (num && offered[Number(num[1]) - 1] && sess.status !== 'aguardando_gestor') { await book(admin, c, offered[Number(num[1]) - 1], false); return; }
 
-  const r = await classify(c, t, offered);
+  const r = await classify(c, t, offered, admin);
   let intencao = String(r.intencao ?? 'outro'); // pode virar 'propor' na trava do dia (abaixo)
   // Entrevista já aconteceu (ou a pessoa faltou): nada de remarcar/cancelar/"te esperamos" pela IA.
   // Agradecimento fica sem resposta; o resto vai para a equipe, que decide (resultado, nova chance…).
