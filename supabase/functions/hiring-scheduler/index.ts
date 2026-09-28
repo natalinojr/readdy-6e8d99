@@ -41,12 +41,12 @@ const ACTIVE = ['convidado', 'negociando', 'aguardando_gestor', 'agendado'];
 // Ritmo dos convites (a empresa falando primeiro), por transporte:
 //  • evolution: baixo de propósito — o número antigo foi BANIDO em 2026-09-14 depois de muitos contatos
 //    novos em poucos minutos.
-//  • cloud (API oficial, desde 2026-09-15): sem o freio anti-ban; fica só uma trava contra disparo em
-//    massa por erro de configuração. O número começa com limite da Meta de 250 conversas iniciadas pela
-//    empresa por dia, e convite bloqueado pelos candidatos derruba a qualidade do número.
+//  • cloud (API oficial): SEM trava de quantidade desde 2026-09-28 (pedido do dono: número oficial na
+//    Meta) — todo candidato que entra na etapa recebe o convite na rodada seguinte (a cada minuto).
+//    Antes era 10/rodada e 100/h. O limite diário de conversas iniciadas quem controla é a Meta.
 const INVITE_LIMITS = {
   evolution: { tick: 1, hour: 4 },
-  cloud: { tick: 10, hour: 100 },
+  cloud: { tick: Infinity, hour: Infinity },
 } as const;
 const HOUR_START = 8, HOUR_END = 20; // convites e cobranças só nesse horário (evita bloqueio e incômodo)
 const OFFER = 6;                     // horários oferecidos por mensagem
@@ -822,7 +822,7 @@ async function tick(admin: SupabaseClient, force = false) {
     const lim = INVITE_LIMITS[(await waConfig(admin)).transport];
     let vagas = Math.min(lim.tick, lim.hour - (naHora ?? 0));
     if (st?.id && vagas > 0) {
-      const { data: cands } = await admin.from('hiring_candidates').select('id, full_name, phone, whatsapp').eq('stage_id', st.id).limit(200);
+      const { data: cands } = await admin.from('hiring_candidates').select('id, full_name, phone, whatsapp').eq('stage_id', st.id).limit(1000);
       const ids = ((cands ?? []) as Row[]).map((x) => x.id);
       if (ids.length) {
         const [{ data: apps }, { data: cfgs }, { data: sess }] = await Promise.all([

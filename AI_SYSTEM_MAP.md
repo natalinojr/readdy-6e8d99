@@ -2291,8 +2291,8 @@ documento ou áudio, tirar as informações, preparar o pagamento e avisar*.
   minutos, com respostas automáticas via Evolution (conexão não oficial). O plano é uma linha nova,
   "aquecida" antes, com ritmo baixo: o `hiring-scheduler` manda 1 convite por rodada e no máximo
   4 por hora, com "digitando…" antes (`delay`). Desde 2026-09-15 o ritmo depende do transporte
-  (`INVITE_LIMITS`): Evolution continua 1/rodada e 4/h; API oficial 10/rodada e 100/h (só trava contra
-  disparo em massa: o número começa com 250 conversas iniciadas pela empresa por dia). O horário
+  (`INVITE_LIMITS`): Evolution continua 1/rodada e 4/h; API oficial era 10/rodada e 100/h e, desde
+  2026-09-28 (pedido do dono), **não tem trava**: todos os candidatos da etapa recebem na rodada seguinte. O horário
   8h–20h vale para os dois. Caminho definitivo: API oficial (Cloud API) num
   número só do recrutamento, separado do assistente pessoal.
 - **Link de candidatura = wa.me direto (2026-09-14)**. Tentamos um link curto próprio
