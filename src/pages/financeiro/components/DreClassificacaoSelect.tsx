@@ -1,4 +1,4 @@
-import { useDreGroups, isGrupoDespesa } from '@/hooks/useDreGroups';
+import { useDreGroups, isGrupoContaPagar } from '@/hooks/useDreGroups';
 
 /**
  * Classificação DRE exigida na baixa de uma conta a pagar (decisão do dono,
@@ -6,7 +6,7 @@ import { useDreGroups, isGrupoDespesa } from '@/hooks/useDreGroups';
  * conta sem `dre_category_id`, exceto compra (vai para o CMV pelos itens) e
  * folha (a DRE lê `hr_payroll`).
  *
- * Oferece as categorias de despesa da loja e, como quase nenhuma loja tem
+ * Oferece as categorias de despesa e de Deduções da receita bruta da loja e, como quase nenhuma loja tem
  * categorias, também os grupos: escolher um grupo faz o backend reaproveitar ou
  * criar a categoria raiz com o nome dele (mesma regra do catálogo de compras).
  */
@@ -24,7 +24,7 @@ export function precisaClassificarDRE(bill: unknown): boolean {
 
 export function useDreEscolha() {
   const { allGroups } = useDreGroups();
-  const grupos = allGroups.filter((g) => isGrupoDespesa(g.key));
+  const grupos = allGroups.filter((g) => isGrupoContaPagar(g.key));
   /** Traduz o valor do select no complemento do `pay` (id da categoria ou grupo). */
   const toPayload = (value: string) => {
     if (!value) return undefined;
@@ -44,7 +44,7 @@ interface Props {
 export default function DreClassificacaoSelect({ value, onChange, categorias }: Props) {
   const { grupos } = useDreEscolha();
   // cost: aposentado, mas categorias antigas de custo ainda são subtraídas pela DRE
-  const cats = categorias.filter((c) => isGrupoDespesa(c.group_type) || c.group_type === 'cost');
+  const cats = categorias.filter((c) => isGrupoContaPagar(c.group_type) || c.group_type === 'cost');
   const nomesCats = new Set(cats.map((c) => `${c.group_type}|${c.name.trim().toLowerCase()}`));
   const gruposSemRaiz = grupos.filter((g) => !nomesCats.has(`${g.key}|${g.label.trim().toLowerCase()}`));
 

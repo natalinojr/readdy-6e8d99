@@ -9,6 +9,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { empresaTemPdv } from '@/lib/tipoEmpresa';
 import { formatCurrency } from '@/lib/formatters';
 import { useDreGroups, STANDARD_GROUP_KEYS, ordenarGrupos } from '@/hooks/useDreGroups';
+import { aplicarCategoriasSistema, somaDeducoes, GRUPO_DEDUCOES } from '@/lib/dreSistema';
 import { MonthNav, SectionHeader, NoteRow, mesExtenso } from './dreUi';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -53,7 +54,10 @@ interface DRESnapshot {
   // Estas duas linhas existiam no DRETab e NÃO eram buscadas aqui — o resultado do
   // comparativo ignorava folha e taxa de maquininha e por isso nunca batia com a DRE.
   custoPessoal: number;
+  /** Taxas de cartão e Pix. */
   taxasMaquininha: number;
+  /** Comissões e taxas do iFood (separadas em 2026-09-28: cada uma tem categoria do sistema). */
+  taxasIfood: number;
 }
 
 // P2: CMV por consumo (Σ order_items.unit_cost × qtd) — igual nos dois regimes.
@@ -80,6 +84,7 @@ interface DRECat {
   group_type: string;
   parent_id: string | null;
   sort_order: number;
+  system_key?: string | null;
 }
 
 // ─── Fetch helpers ────────────────────────────────────────────────────────────
@@ -125,7 +130,7 @@ async function fetchCaixa(tenantId: string, startDate: string, endDate: string, 
     // Regime de caixa: folha PAGA no mês (paid_date), de qualquer mês de referência — igual ao DRETab.
     supabase.from('hr_payroll').select('gross_salary, fgts').eq('tenant_id', tenantId).eq('status', 'paid').gte('paid_date', startDate).lte('paid_date', endDate),
     // P7: taxa de maquininha vem do razão (auto_card_fee), igual ao DRETab.
-    supabase.from('fin_cash_flow').select('amount').eq('tenant_id', tenantId).eq('type', 'expense').in('origin', ['auto_card_fee', 'ifood_fee']).gte('date', startDate).lte('date', endDate),
+    supabase.from('fin_cash_flow').select('amount, origin').eq('tenant_id', tenantId).eq('type', 'expense').in('origin', ['auto_card_fee', 'ifood_fee']).gte('date', startDate).lte('date', endDate),
   ]);
 
   const autoSalePaymentIds = new Set(
@@ -163,7 +168,9 @@ async function fetchCaixa(tenantId: string, startDate: string, endDate: string, 
     despesasPorCategoria[key] = (despesasPorCategoria[key] ?? 0) + val;
   });
   const custoPessoal = (payrollRes.data ?? []).reduce((s, p) => s + Number(p.gross_salary) + Number(p.fgts), 0);
-  const taxasMaquininha = (cardFeeRes.data ?? []).reduce((s, r) => s + Number(r.amount), 0);
+  const feeRowsCaixa = (cardFeeRes.data ?? []) as Array<{ amount: number; origin?: string }>;
+  const taxasMaquininha = feeRowsCaixa.filter(r => r.origin !== 'ifood_fee').reduce((s, r) => s + Number(r.amount), 0);
+  const taxasIfood = feeRowsCaixa.filter(r => r.origin === 'ifood_fee').reduce((s, r) => s + Number(r.amount), 0);
   const { data: stoneSaleRows } = await supabase.from('fin_cash_flow').select('amount, description').eq('tenant_id', tenantId).eq('type', 'income').eq('origin', 'stone_sale').gte('date', startDate).lte('date', endDate);
   const receitaStone = (stoneSaleRows ?? []).reduce((s, r) => s + Number(r.amount), 0);
   const cartaoPorMaquininha = somarDetalhe(stoneSaleRows ?? [], r => maquininhaDaVenda(r.description), r => Number(r.amount));
@@ -171,7 +178,7 @@ async function fetchCaixa(tenantId: string, startDate: string, endDate: string, 
   return {
     receitaBalcao: bucket.balcao, receitaDelivery: bucket.delivery, receitaMesa: bucket.mesa, receitaAutoatendimento: bucket.auto, receitaStone, cartaoPorMaquininha,
     receitaAReceber: 0, cancelamentos, descontos, cmvCompras, cmvComprasPendentes: 0, cmvTeorico,
-    despesasPorCategoria, despesasAPagar: 0, custoPessoal, taxasMaquininha,
+    despesasPorCategoria, despesasAPagar: 0, custoPessoal, taxasMaquininha, taxasIfood,
   };
 }
 
@@ -222,9 +229,10 @@ async function fetchCompetencia(tenantId: string, startDate: string, endDate: st
   const custoPessoal = (payrollRes.data ?? []).reduce((s, p) => s + Number(p.gross_salary) + Number(p.fgts), 0);
   // iFood e Stone pela data da VENDA (loadData soma): do razão saem as comissões do iFood (fica a antecipação),
   // o MDR e as vendas da Stone (ficam antecipação, tarifas e créditos diversos) — igual ao DRETab.
-  const taxasMaquininha = ((cardFeeRes.data ?? []) as Array<{ amount: number; origin?: string; description?: string | null }>)
-    .filter((r) => (r.origin !== 'ifood_fee' || isIfoodAntecipacao(r.description)) && !isStoneMdrLedger(r.description))
-    .reduce((s, r) => s + Number(r.amount), 0);
+  const feeRows = ((cardFeeRes.data ?? []) as Array<{ amount: number; origin?: string; description?: string | null }>)
+    .filter((r) => (r.origin !== 'ifood_fee' || isIfoodAntecipacao(r.description)) && !isStoneMdrLedger(r.description));
+  const taxasMaquininha = feeRows.filter((r) => r.origin !== 'ifood_fee').reduce((s, r) => s + Number(r.amount), 0);
+  const taxasIfood = feeRows.filter((r) => r.origin === 'ifood_fee').reduce((s, r) => s + Number(r.amount), 0);
   const { data: stoneSaleRows } = await supabase.from('fin_cash_flow').select('amount, description').eq('tenant_id', tenantId).eq('type', 'income').eq('origin', 'stone_sale').gte('date', startDate).lte('date', endDate);
   const stoneLedger = ((stoneSaleRows ?? []) as Array<{ amount: number; description?: string | null }>)
     .filter((r) => !isStoneVendasLedger(r.description));
@@ -234,11 +242,15 @@ async function fetchCompetencia(tenantId: string, startDate: string, endDate: st
   return {
     receitaBalcao: bucket.balcao, receitaDelivery: bucket.delivery, receitaMesa: bucket.mesa, receitaAutoatendimento: bucket.auto, receitaStone, cartaoPorMaquininha,
     receitaAReceber, cancelamentos, descontos, cmvCompras, cmvComprasPendentes, cmvTeorico,
-    despesasPorCategoria, despesasAPagar, custoPessoal, taxasMaquininha,
+    despesasPorCategoria, despesasAPagar, custoPessoal, taxasMaquininha, taxasIfood,
   };
 }
 
-function calcDRE(d: DRESnapshot, _mode: 'caixa' | 'competencia') {
+/**
+ * `d` já passou por comSistema: folha e taxas estão nas categorias do sistema e em
+ * custoPessoal/taxas* sobra só o que não tem categoria. `deducoes` = grupo Deduções.
+ */
+function calcDRE(d: DRESnapshot, deducoes: number) {
   const receitaRecebida = d.receitaBalcao + d.receitaDelivery + d.receitaMesa + d.receitaAutoatendimento + (d.receitaStone ?? 0) + (d.receitaPix ?? 0) + (d.receitaIfood ?? 0) + (d.receitaDinheiro ?? 0);
   // BUG-41 (intencional, mesmo critério do DRETab): recebível pendente é SALDO, não receita
   // adicional. A venda a prazo já está no `payments`/`auto_sale`; somar `receitaAReceber` na
@@ -247,12 +259,14 @@ function calcDRE(d: DRESnapshot, _mode: 'caixa' | 'competencia') {
   const cmv = d.cmvCompras; // CMV = compras realizadas (2026-09-05)
   // Dedução dupla (corrigido): pedido cancelado não gera payment e o payments.amount já vem
   // líquido de desconto. Cancelamentos/descontos ficam como informativos.
-  const receitaLiquida = receitaBruta;
+  // Deduções da receita bruta (grupo 'tax', 2026-09-28): receita líquida = bruta − deduções.
+  const receitaLiquida = receitaBruta - deducoes;
   const lucroBruto = receitaLiquida - cmv;
   // Inclui `__sem__` (contas sem categoria DRE): antes sumiam do total e do resultado.
-  const totalDespesas = Object.values(d.despesasPorCategoria).reduce((s, v) => s + v, 0);
+  // As deduções já saíram da receita líquida, então ficam fora deste total.
+  const totalDespesas = Object.values(d.despesasPorCategoria).reduce((s, v) => s + v, 0) - deducoes;
   // Folha e taxa de maquininha agora entram no resultado (antes o comparativo as ignorava).
-  const resultado = lucroBruto - totalDespesas - d.custoPessoal - d.taxasMaquininha;
+  const resultado = lucroBruto - totalDespesas - d.custoPessoal - d.taxasMaquininha - d.taxasIfood;
   const margemBruta = receitaBruta > 0 ? (lucroBruto / receitaBruta) * 100 : 0;
   const margemLiquida = receitaBruta > 0 ? (resultado / receitaBruta) * 100 : 0;
   return { receitaBruta, receitaLiquida, lucroBruto, cmv, totalDespesas, resultado, margemBruta, margemLiquida };
@@ -401,13 +415,13 @@ function CompareCard({
 export default function DREComparativoTab() {
   const { user } = useAuth();
   const temPdv = empresaTemPdv(user?.tenantKind);
-  const { customGroups: dreGroups } = useDreGroups();
+  const { customGroups: dreGroups, gruposComLegado } = useDreGroups();
   const today = new Date();
   const [mes, setMes] = useState(
     `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`
   );
-  const [caixaData, setCaixaData] = useState<DRESnapshot | null>(null);
-  const [compData, setCompData] = useState<DRESnapshot | null>(null);
+  const [caixaBruto, setCaixaData] = useState<DRESnapshot | null>(null);
+  const [compBruto, setCompData] = useState<DRESnapshot | null>(null);
   const [dreCats, setDreCats] = useState<DRECat[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -425,7 +439,7 @@ export default function DREComparativoTab() {
       fetchCompetencia(user.tenantId, start, end, temPdv),
       supabase
         .from('fin_dre_categories')
-        .select('id, name, group_type, parent_id, sort_order')
+        .select('id, name, group_type, parent_id, sort_order, system_key')
         .eq('tenant_id', user.tenantId)
         .eq('is_active', true)
         .order('group_type').order('sort_order'),
@@ -439,7 +453,8 @@ export default function DREComparativoTab() {
       ...comp,
       receitaStone: comp.receitaStone + c.stone_bruto,
       cartaoPorMaquininha: juntarDetalhe(comp.cartaoPorMaquininha, c.stone_bruto ? { Stone: c.stone_bruto } : {}),
-      taxasMaquininha: comp.taxasMaquininha + c.stone_mdr + (extras.sources.includes('ifood') ? c.ifood_custo : 0),
+      taxasMaquininha: comp.taxasMaquininha + c.stone_mdr,
+      taxasIfood: comp.taxasIfood + (extras.sources.includes('ifood') ? c.ifood_custo : 0),
     }, extras.sources, extras.pix, c.ifood_receita, extras.cash, extras.pixPorEtiqueta));
     setDreCats(catsRes.data ?? []);
     setLoading(false);
@@ -458,10 +473,20 @@ export default function DREComparativoTab() {
     );
   }
 
-  if (!caixaData || !compData) return null;
+  if (!caixaBruto || !compBruto) return null;
 
-  const caixa = calcDRE(caixaData, 'caixa');
-  const comp = calcDRE(compData, 'competencia');
+  // Folha e taxas na categoria do sistema (mesma regra do DRETab); o resto fica nas linhas fixas.
+  const comSistema = (d: DRESnapshot): DRESnapshot => {
+    const r = aplicarCategoriasSistema(d.despesasPorCategoria, dreCats, {
+      pessoal: d.custoPessoal, taxasCartao: d.taxasMaquininha, taxasIfood: d.taxasIfood,
+    });
+    return { ...d, despesasPorCategoria: r.despesas, custoPessoal: r.soltos.pessoal, taxasMaquininha: r.soltos.taxasCartao, taxasIfood: r.soltos.taxasIfood };
+  };
+  const caixaData = comSistema(caixaBruto);
+  const compData = comSistema(compBruto);
+  const caixa = calcDRE(caixaData, somaDeducoes(caixaData.despesasPorCategoria, dreCats));
+  const comp = calcDRE(compData, somaDeducoes(compData.despesasPorCategoria, dreCats));
+  const deducoesTree = buildTree(dreCats.filter(c => c.group_type === GRUPO_DEDUCOES));
 
   const expenseTree = buildTree(dreCats.filter(c => c.group_type === 'expense'));
   const costTree = buildTree(dreCats.filter(c => c.group_type === 'cost'));
@@ -476,8 +501,8 @@ export default function DREComparativoTab() {
   }));
 
   // Total de despesas = mesmo total que entra no resultado (inclui folha e taxas).
-  const caixaDespesasTotais = caixa.totalDespesas + caixaData.custoPessoal + caixaData.taxasMaquininha;
-  const compDespesasTotais = comp.totalDespesas + compData.custoPessoal + compData.taxasMaquininha;
+  const caixaDespesasTotais = caixa.totalDespesas + caixaData.custoPessoal + caixaData.taxasMaquininha + caixaData.taxasIfood;
+  const compDespesasTotais = comp.totalDespesas + compData.custoPessoal + compData.taxasMaquininha + compData.taxasIfood;
   const diffResultado = comp.resultado - caixa.resultado;
   const fmtPct = (n: number) => `${n.toFixed(1).replace('.', ',')}%`;
   const semCaixa = caixaData.despesasPorCategoria['__sem__'] ?? 0;
@@ -633,6 +658,13 @@ export default function DREComparativoTab() {
               {temPdv && (caixaData.descontos > 0 || compData.descontos > 0) && (
                 <CompRow label="Descontos concedidos" caixaVal={caixaData.descontos} compVal={compData.descontos} {...rowBase} muted badge="Só conferência" />
               )}
+              {/* ── DEDUÇÕES DA RECEITA BRUTA ── */}
+              {deducoesTree.length > 0 && (
+                <>
+                  <SectionHeader label={gruposComLegado.find(g => g.key === GRUPO_DEDUCOES)?.label ?? 'Deduções da receita bruta'} icon="ri-government-line" tone="rose" colSpan={6} />
+                  <CatTreeCompRows cats={deducoesTree} depth={1} caixa={caixaData.despesasPorCategoria} comp={compData.despesasPorCategoria} {...rowBase} />
+                </>
+              )}
               <CompRow label="Receita líquida" caixaVal={caixa.receitaLiquida} compVal={comp.receitaLiquida} {...rowBase} isTotal />
 
               {/* ── CUSTOS ── */}
@@ -651,8 +683,9 @@ export default function DREComparativoTab() {
               {(caixaData.custoPessoal > 0 || compData.custoPessoal > 0) && (
                 <CompRow label="Pessoal (folha + FGTS)" caixaVal={caixaData.custoPessoal} compVal={compData.custoPessoal} {...rowBase} isNeg />
               )}
-              {(caixaData.taxasMaquininha > 0 || compData.taxasMaquininha > 0) && (
-                <CompRow label="Taxas de cartão / Pix / iFood" caixaVal={caixaData.taxasMaquininha} compVal={compData.taxasMaquininha} {...rowBase} isNeg />
+              {/* Só aparecem se a loja estiver sem a categoria do sistema (fallback). */}
+              {(caixaData.taxasMaquininha + caixaData.taxasIfood > 0 || compData.taxasMaquininha + compData.taxasIfood > 0) && (
+                <CompRow label="Taxas de cartão / Pix / iFood" caixaVal={caixaData.taxasMaquininha + caixaData.taxasIfood} compVal={compData.taxasMaquininha + compData.taxasIfood} {...rowBase} isNeg />
               )}
               <CatTreeCompRows cats={expenseTree} depth={1} caixa={caixaData.despesasPorCategoria} comp={compData.despesasPorCategoria} {...rowBase} />
               {(semCaixa > 0 || semComp > 0) && (

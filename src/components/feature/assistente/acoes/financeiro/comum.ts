@@ -5,7 +5,7 @@
 //   + grupos sem categoria raiz (escolher o grupo reaproveita/cria a categoria raiz com o nome dele).
 import { supabase } from '@/lib/supabase';
 import { invokeUmaVez } from '../kit';
-import { resolverGrupos, isGrupoDespesa, type DreGroup } from '@/hooks/useDreGroups';
+import { resolverGrupos, isGrupoContaPagar, type DreGroup } from '@/hooks/useDreGroups';
 
 /** Mesmas formas de pagamento do modal de baixa de Contas a Pagar. */
 export const FORMAS_PAGAMENTO = ['PIX', 'Dinheiro', 'Boleto', 'Transferência', 'Cartão Débito', 'Cartão Crédito'];
@@ -29,11 +29,13 @@ export interface DreGrupoOpcoes { key: string; label: string; opcoes: DreEscolha
 
 /**
  * Monta as opções de classificação por grupo (lógica pura, testada em src/test/lib).
- * Só grupos de DESPESA (expense + customizados): revenue/tax a DRE não subtrai e `cost` foi aposentado.
+ * Grupos de conta a pagar: Deduções da receita bruta (tax), expense e customizados. revenue a DRE não subtrai e `cost` foi aposentado.
  * Grupo sem categoria raiz com o mesmo nome também aparece como opção (vira a categoria raiz ao gravar).
  */
 export function montarOpcoesDre(cats: DreCat[], grupoRows: DreGroup[]): DreGrupoOpcoes[] {
-  const grupos = resolverGrupos(grupoRows).allGroups.filter((g) => isGrupoDespesa(g.key));
+  // Deduções por último: a maioria das contas é despesa, e o DAS já chega classificado pela guia.
+  const grupos = resolverGrupos(grupoRows).allGroups.filter((g) => isGrupoContaPagar(g.key))
+    .sort((a, b) => Number(a.key === 'tax') - Number(b.key === 'tax'));
   const nomePai = new Map(cats.map((c) => [c.id, c.name]));
   return grupos.map((g) => {
     const doGrupo = cats.filter((c) => c.group_type === g.key);

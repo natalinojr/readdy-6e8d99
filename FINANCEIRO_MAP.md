@@ -739,3 +739,11 @@ Front: `ComprasTab.tsx` tem botão de editar (lápis) na coluna Ações — chec
   conciliação. Entra em Despesas/DRE como qualquer conta paga (por `paid_date`). Aba Freelancers.
 - `baixa_conciliada` (assistente-brain) identifica o débito do extrato pelo E2E do Pix. Antes casava
   por nome + valor e podia quitar a conta com um Pix antigo da mesma pessoa. Detalhes no AI_SYSTEM_MAP.
+
+## 9o. Deduções da receita bruta + categorias do sistema (2026-09-28)
+
+- **Grupo nativo "Deduções da receita bruta"** = key embutida `tax` (o antigo "Impostos e Taxas", aposentado em 09-05 porque a DRE não somava). Agora `DRETab`/`DREComparativoTab` o desenham logo abaixo da receita bruta: **Receita líquida = bruta − deduções**. Posição fixa (não entra no ↑↓ dos grupos). Conta a pagar pode ser classificada nele (`isGrupoContaPagar`); **item de compra não** (`isGrupoDespesa('tax')` continua false → fica no CMV).
+- **Categorias do sistema** (`fin_dre_categories.system_key`, única por loja): `impostos` (nasce em Deduções; guias DAS/DARF do assistente caem aqui pelo `system_key`), `pessoal` (hr_payroll), `taxas_cartao` (auto_card_fee + MDR Stone), `taxas_ifood` (ifood_fee / conciliação iFood). A loja **renomeia e move** para qualquer grupo que a DRE subtrai; **não apaga, não desativa**, nem manda para Receitas/Custos — trigger `fn_dre_category_system_guard`. `fn_dre_ensure_system_categories(tenant)` cria/adota (categoria "Impostos" ou DAS em `tax` já existente) — roda em toda loja nova (constraint trigger DEFERRED em `tenants`, depois do plano de contas do `fn_admin_create_finance_tenant`).
+- **Na DRE:** `src/lib/dreSistema.ts › aplicarCategoriasSistema` põe folha e taxas no id da categoria do sistema (cai no grupo onde ela estiver); o que não tiver categoria fica nas linhas fixas antigas (fallback, nunca some). `taxasMaquininha` passou a ser só cartão/Pix; `taxasIfood` é separado.
+- Mudar o grupo de uma categoria leva as subcategorias junto (`fn_dre_category_cascade_group`).
+- **Pendente:** `RH` e `Entregadores` também são criadas pelo sistema, mas as funções as procuram por nome + `group_type='expense'`; se viraram categoria do sistema e forem movidas, o sistema criaria outra. Precisam primeiro trocar a busca para `system_key`.

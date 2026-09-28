@@ -23,14 +23,24 @@ interface DRECat {
   parent_id: string | null;
   is_active: boolean;
   created_at: string;
+  /** Categoria do sistema (impostos, pessoal, taxas): renomeia e muda de grupo, não exclui. */
+  system_key?: string | null;
   children?: DRECat[];
 }
+
+/** O que cada categoria do sistema recebe, para a loja saber por que ela não sai. */
+const SISTEMA_DESC: Record<string, string> = {
+  impostos: 'Guias DAS/DARF lançadas pelo sistema caem aqui.',
+  pessoal: 'Folha de pagamento (bruto + FGTS).',
+  taxas_cartao: 'Taxas das maquininhas e do Pix, lançadas pela conciliação.',
+  taxas_ifood: 'Comissões e taxas do iFood, lançadas pela conciliação do iFood.',
+};
 
 const DEFAULT_GROUP_LABELS: Record<string, { label: string; color: string; bg: string; icon: string }> = {
   revenue: { label: 'Receitas', color: 'text-green-700', bg: 'bg-green-50 border-green-200', icon: 'ri-arrow-down-circle-line' },
   cost: { label: 'Custos', color: 'text-orange-700', bg: 'bg-orange-50 border-orange-200', icon: 'ri-shopping-bag-line' },
   expense: { label: 'Despesas Operacionais', color: 'text-red-700', bg: 'bg-red-50 border-red-200', icon: 'ri-money-dollar-circle-line' },
-  tax: { label: 'Impostos e Taxas', color: 'text-zinc-700', bg: 'bg-zinc-50 border-zinc-200', icon: 'ri-government-line' },
+  tax: { label: 'Deduções da receita bruta', color: 'text-violet-700', bg: 'bg-violet-50 border-violet-200', icon: 'ri-government-line' },
 };
 
 const FALLBACK_GROUP = { label: '', color: 'text-zinc-700', bg: 'bg-zinc-50 border-zinc-200', icon: 'ri-folder-line' };
@@ -44,13 +54,15 @@ function getGroupMeta(groupType: string, groups: DreGroup[]) {
 }
 
 /**
- * "Custos" e "Impostos e Taxas" foram aposentados em 2026-09-05 a pedido do dono:
- * custo era redundante com o CMV (o padrão de todo item sem classificação) e
- * imposto nunca foi somado pela DRE. Os rótulos continuam acima só para que
- * categorias antigas ainda apareçam com nome, mas os grupos não são mais
- * oferecidos ao criar categoria nem viram card fixo na tela.
+ * "Custos" foi aposentado em 2026-09-05 a pedido do dono: era redundante com o
+ * CMV (o padrão de todo item sem classificação). O rótulo continua acima só para
+ * que categorias antigas ainda apareçam com nome. "Impostos e Taxas" (tax) saiu
+ * na mesma data e voltou em 2026-09-28 como "Deduções da receita bruta".
  */
-const GRUPOS_APOSENTADOS = ['cost', 'tax'];
+const GRUPOS_APOSENTADOS = ['cost'];
+
+/** Grupos de posição fixa na DRE (não entram no ↑↓): Receitas e Deduções. */
+const GRUPOS_FIXOS = ['revenue', 'tax'];
 
 /** Grupos padrão oferecidos hoje. */
 const STANDARD_GROUPS = Object.keys(DEFAULT_GROUP_LABELS).filter(
@@ -127,6 +139,14 @@ function CatNode({ cat, depth, onEdit, onDelete, onAddChild, onMove, isFirst, is
         <span className={`flex-1 min-w-0 truncate text-sm ${depth === 0 ? 'font-semibold text-zinc-800' : 'text-zinc-600'}`}>
           {cat.name}
         </span>
+        {cat.system_key && (
+          <span
+            className="text-[10px] font-semibold text-zinc-500 bg-zinc-100 px-1.5 py-0.5 rounded-full whitespace-nowrap cursor-help flex items-center gap-0.5"
+            title={`Categoria do sistema: custo obrigatório, não pode ser excluída. Pode renomear e mudar de grupo. ${SISTEMA_DESC[cat.system_key] ?? ''}`}
+          >
+            <i className="ri-lock-line" /> Sistema
+          </span>
+        )}
         {hasChildren && (
           <span className="text-[10px] text-zinc-500 bg-zinc-100 px-1.5 py-0.5 rounded-full whitespace-nowrap">
             {cat.children!.length} sub
@@ -167,13 +187,15 @@ function CatNode({ cat, depth, onEdit, onDelete, onAddChild, onMove, isFirst, is
           >
             <i className="ri-edit-line text-xs" />
           </button>
-          <button
-            onClick={() => onDelete(cat)}
-            className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-red-50 text-zinc-400 hover:text-red-500 cursor-pointer"
-            title="Excluir"
-          >
-            <i className="ri-delete-bin-line text-xs" />
-          </button>
+          {!cat.system_key && (
+            <button
+              onClick={() => onDelete(cat)}
+              className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-red-50 text-zinc-400 hover:text-red-500 cursor-pointer"
+              title="Excluir"
+            >
+              <i className="ri-delete-bin-line text-xs" />
+            </button>
+          )}
         </div>
       </div>
       {open && hasChildren && cat.children!.map((child, i, irmas) => (
@@ -198,7 +220,8 @@ function CatNode({ cat, depth, onEdit, onDelete, onAddChild, onMove, isFirst, is
 // se classificar ali muda o resultado (ver GRUPOS_FORA_DA_DRE em useDreGroups).
 function papelDoGrupo(key: string) {
   if (key === 'revenue') return { label: 'Não soma no resultado', cls: 'bg-zinc-100 text-zinc-500', title: 'Categorias de receita não são somadas pela DRE; a receita vem das fontes de Receitas › Fontes.' };
-  if (key === 'cost' || key === 'tax') return { label: 'Grupo antigo', cls: 'bg-amber-50 text-amber-700', title: 'Grupo aposentado em 2026-09-05. Custo = CMV; imposto nunca entrou no resultado. Mova as categorias para outro grupo.' };
+  if (key === 'tax') return { label: 'Deduz da receita bruta', cls: 'bg-violet-50 text-violet-700', title: 'Vem logo abaixo da receita bruta na DRE: receita líquida = receita bruta − deduções. Impostos sobre a venda (DAS) nascem aqui; você pode incluir outras categorias.' };
+  if (key === 'cost') return { label: 'Grupo antigo', cls: 'bg-amber-50 text-amber-700', title: 'Grupo aposentado em 2026-09-05. Custo = CMV. Mova as categorias para outro grupo.' };
   return { label: 'Subtrai do resultado', cls: 'bg-rose-50 text-rose-600', title: 'Contas a pagar e itens de compra classificados aqui entram como despesa na DRE.' };
 }
 
@@ -255,10 +278,10 @@ export default function CategoriasDRETab() {
   // Receitas fica sempre no topo (não entra no resultado); os grupos que subtraem
   // do resultado seguem a ordem que a loja escolheu — a mesma que a DRE usa.
   const gruposOrdenaveis = ordenarGrupos(
-    [...STANDARD_GROUPS.filter(g => g !== 'revenue'), ...customGroups.map(g => g.key)],
+    [...STANDARD_GROUPS.filter(g => !GRUPOS_FIXOS.includes(g)), ...customGroups.map(g => g.key)],
     gruposComLegado,
   );
-  const allGroups = ['revenue', ...gruposOrdenaveis];
+  const allGroups = [...GRUPOS_FIXOS, ...gruposOrdenaveis];
   const getGroupMeta2 = (g: string) => getGroupMeta(g, gruposComLegado);
 
   const fetchCats = useCallback(async () => {
@@ -875,13 +898,25 @@ export default function CategoriasDRETab() {
                 <label className="text-xs font-semibold text-zinc-600 block mb-1">Grupo do DRE *</label>
                 <select
                   value={form.group_type}
-                  onChange={e => setForm(f => ({ ...f, group_type: e.target.value }))}
+                  onChange={e => setForm(f => ({ ...f, group_type: e.target.value, parent_id: '' }))}
                   className="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
                 >
-                  {allGroupsToShow.map(g => (
-                    <option key={g} value={g}>{getGroupMeta2(g).label || g}</option>
-                  ))}
+                  {allGroupsToShow
+                    // Custo do sistema só vai para grupo que a DRE subtrai (receita não soma; custos é legado).
+                    .filter(g => !editing?.system_key || !['revenue', 'cost'].includes(g) || g === form.group_type)
+                    .map(g => (
+                      <option key={g} value={g}>{getGroupMeta2(g).label || g}</option>
+                    ))}
                 </select>
+                {editing?.system_key && (
+                  <p className="text-xs text-zinc-500 mt-1 flex items-start gap-1">
+                    <i className="ri-lock-line mt-0.5" />
+                    <span>Categoria do sistema: {SISTEMA_DESC[editing.system_key] ?? ''} Pode renomear e mudar de grupo; não pode ser excluída.</span>
+                  </p>
+                )}
+                {editing && editing.group_type !== form.group_type && cats.some(c => c.parent_id === editing.id) && (
+                  <p className="text-xs text-zinc-500 mt-1">As subcategorias vão junto para o novo grupo.</p>
+                )}
               </div>
               <div>
                 <label className="text-xs font-semibold text-zinc-600 block mb-1">Categoria Pai (opcional)</label>

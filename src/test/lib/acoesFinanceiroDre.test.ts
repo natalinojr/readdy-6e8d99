@@ -6,14 +6,16 @@ const cat = (id: string, name: string, group_type: string, parent_id: string | n
 const grupo = (key: string, label: string): DreGroup => ({ id: `g-${key}`, key, label, icon: 'ri-folder-line', standard: false });
 
 describe('montarOpcoesDre (ações rápidas do Financeiro)', () => {
-  it('só oferece grupos de despesa: receita, imposto e custo ficam de fora', () => {
+  it('oferece despesa e deduções: receita e custo ficam de fora', () => {
     const r = montarOpcoesDre([
       cat('r1', 'Vendas', 'revenue'),
       cat('t1', 'Simples', 'tax'),
       cat('c1', 'Mercadoria', 'cost'),
       cat('e1', 'Aluguel', 'expense'),
     ], []);
-    expect(r.map((g) => g.key)).toEqual(['expense']);
+    // Deduções da receita bruta (tax) voltou em 2026-09-28 e vem por último.
+    expect(r.map((g) => g.key)).toEqual(['expense', 'tax']);
+    expect(r[1].opcoes.map((o) => o.label)).toContain('Simples');
     const labels = r[0].opcoes.map((o) => o.label);
     expect(labels).toContain('Aluguel');
     expect(labels).not.toContain('Vendas');

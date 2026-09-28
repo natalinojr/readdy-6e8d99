@@ -15,33 +15,33 @@ export interface DreGroup {
 
 export const STANDARD_DRE_GROUPS: DreGroup[] = [
   { key: 'revenue', label: 'Receitas', icon: 'ri-arrow-down-circle-line', standard: true },
+  // Voltou em 2026-09-28 como "Deduções da receita bruta" (pedido do dono): a DRE subtrai
+  // este grupo da receita bruta. Nativo: impostos (DAS) nascem aqui (ver src/lib/dreSistema.ts).
+  { key: 'tax', label: 'Deduções da receita bruta', icon: 'ri-government-line', standard: true },
   { key: 'expense', label: 'Despesas Operacionais', icon: 'ri-money-dollar-circle-line', standard: true },
 ];
 
 /**
- * Grupos aposentados em 2026-09-05, a pedido do dono. Continuam reconhecidos
+ * Grupo aposentado em 2026-09-05, a pedido do dono. Continua reconhecido
  * para que categorias antigas não virem "grupo customizado" e passem a ser
- * contadas duas vezes na DRE, mas não são mais oferecidos em lugar nenhum:
- *
- *  - `cost` era redundante com o CMV. Categoria de custo já ia para o CMV, que
- *    é o padrão de qualquer item sem classificação: as duas opções davam o
- *    mesmo número e a segunda ainda criava uma categoria sem uso.
- *  - `tax` nunca foi somado pela DRE, então classificar ali fazia o valor
- *    desaparecer do resultado.
+ * contadas duas vezes na DRE, mas não é mais oferecido em lugar nenhum:
+ * `cost` era redundante com o CMV. Categoria de custo já ia para o CMV, que
+ * é o padrão de qualquer item sem classificação: as duas opções davam o
+ * mesmo número e a segunda ainda criava uma categoria sem uso.
+ * (`tax` também foi aposentado nessa data e voltou em 2026-09-28 como Deduções.)
  */
 export const GRUPOS_LEGADOS: DreGroup[] = [
   { key: 'cost', label: 'Custos', icon: 'ri-shopping-bag-line', standard: true },
-  { key: 'tax', label: 'Impostos e Taxas', icon: 'ri-government-line', standard: true },
 ];
 
 /** Tudo que NÃO é grupo customizado da loja, incluindo os aposentados. */
 export const STANDARD_GROUP_KEYS = [...STANDARD_DRE_GROUPS, ...GRUPOS_LEGADOS].map((g) => g.key);
 
 /**
- * Grupos que a DRE NÃO soma em lugar nenhum hoje (ver DRETab: o resultado
- * operacional desconta expense, cost, pessoal, taxas e os grupos customizados).
- * Classificar uma compra aqui faria o valor sumir do resultado, então esses
- * grupos não são oferecidos como destino de item de compra.
+ * Grupos que não são destino de ITEM DE COMPRA: `revenue` a DRE não soma (o valor
+ * sumiria do resultado) e `tax` (Deduções da receita bruta) é para imposto sobre a
+ * venda, não para mercadoria — item de compra classificado ali fica no CMV.
+ * Conta a pagar pode ir para Deduções: ver `isGrupoContaPagar`.
  */
 export const GRUPOS_FORA_DA_DRE = ['revenue', 'tax'];
 
@@ -55,6 +55,14 @@ export function isGrupoDespesa(groupType: string | null | undefined): boolean {
   if (!groupType) return false;
   if (groupType === 'cost') return false;
   return !GRUPOS_FORA_DA_DRE.includes(groupType);
+}
+
+/**
+ * Grupo onde uma CONTA A PAGAR pode ser classificada: os de despesa e, desde
+ * 2026-09-28, Deduções da receita bruta (DAS e outros impostos sobre a venda).
+ */
+export function isGrupoContaPagar(groupType: string | null | undefined): boolean {
+  return groupType === 'tax' || isGrupoDespesa(groupType);
 }
 
 /**

@@ -16,6 +16,7 @@ import { formatCurrency } from '@/lib/formatters';
 import DREDrillDownModal from './DREDrillDownModal';
 import { VarChip, SectionHeader, NoteRow, Segmented, KpiCard } from './dreUi';
 import { useDreGroups, STANDARD_GROUP_KEYS, ordenarGrupos } from '@/hooks/useDreGroups';
+import { aplicarCategoriasSistema, origemSistema, CHAVES_DO_RAZAO, GRUPO_DEDUCOES, type ChaveSistema } from '@/lib/dreSistema';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function pct(v: number, total: number) {
@@ -44,6 +45,8 @@ interface DRECat {
   group_type: string;
   parent_id: string | null;
   sort_order: number;
+  /** Categoria do sistema (Categorias DRE): pode mudar de grupo, não pode ser apagada. */
+  system_key?: string | null;
   children?: DRECat[];
 }
 
@@ -75,7 +78,10 @@ interface DREData {
   cmvPorCategoria?: Record<string, number>;
   despesasPorCategoria: Record<string, number>;
   custoPessoal: number;
+  /** Taxas de cartão e Pix (auto_card_fee + MDR da Stone). */
   taxasMaquininha: number;
+  /** Comissões e taxas do iFood (ifood_fee / conciliação iFood). Separadas em 2026-09-28: cada uma tem categoria do sistema. */
+  taxasIfood: number;
   receitaAReceber: number;
   despesasAPagar: number;
   cmvComprasPendentes: number;
@@ -348,14 +354,15 @@ async function fetchDREData(tenantId: string, startDate: string, endDate: string
   // que não cobria cartão a prazo e podia divergir do razão.
   const { data: cardFeeRows } = await supabase
     .from('fin_cash_flow')
-    .select('amount')
+    .select('amount, origin')
     .eq('tenant_id', tenantId)
     .eq('type', 'expense')
     // ifood_fee: comissões e taxas do iFood (edge ifood-financial)
     .in('origin', ['auto_card_fee', 'ifood_fee'])
     .gte('date', startDate)
     .lte('date', endDate);
-  const taxasMaquininha = (cardFeeRows ?? []).reduce((s, r) => s + Number(r.amount), 0);
+  const taxasMaquininha = (cardFeeRows ?? []).filter(r => r.origin !== 'ifood_fee').reduce((s, r) => s + Number(r.amount), 0);
+  const taxasIfood = (cardFeeRows ?? []).filter(r => r.origin === 'ifood_fee').reduce((s, r) => s + Number(r.amount), 0);
   // Vendas em cartão liquidadas pela Stone (opção "lançar no financeiro" da integração)
   const { data: stoneSaleRows } = await supabase
     .from('fin_cash_flow')
@@ -374,7 +381,7 @@ async function fetchDREData(tenantId: string, startDate: string, endDate: string
     receitaBalcao, receitaDelivery, receitaMesa, receitaAutoatendimento,
     receitaManual, receitaStone, cartaoPorMaquininha,
     cancelamentos, descontos, cmvCompras, comprasTotal, cmvPorCategoria, despesasPorCategoria,
-    custoPessoal, taxasMaquininha,
+    custoPessoal, taxasMaquininha, taxasIfood,
     receitaAReceber: 0,
     despesasAPagar: 0,
     cmvComprasPendentes: 0,
@@ -565,9 +572,10 @@ async function fetchDREDataCompetencia(tenantId: string, startDate: string, endD
   // Competência: iFood e Stone pela data da VENDA. Do razão (data do repasse) saem as comissões do iFood
   // (fica só a antecipação) e o MDR da Stone (ficam antecipação, tarifas e chargebacks); fetchFn soma os
   // valores por data da venda (fetchCartoesCompetencia → fn_dre_competencia_cartoes).
-  const taxasMaquininha = ((cardFeeRows ?? []) as Array<{ amount: number; origin?: string; description?: string | null }>)
-    .filter((r) => (r.origin !== 'ifood_fee' || isIfoodAntecipacao(r.description)) && !isStoneMdrLedger(r.description))
-    .reduce((s, r) => s + Number(r.amount), 0);
+  const feeRows = ((cardFeeRows ?? []) as Array<{ amount: number; origin?: string; description?: string | null }>)
+    .filter((r) => (r.origin !== 'ifood_fee' || isIfoodAntecipacao(r.description)) && !isStoneMdrLedger(r.description));
+  const taxasMaquininha = feeRows.filter((r) => r.origin !== 'ifood_fee').reduce((s, r) => s + Number(r.amount), 0);
+  const taxasIfood = feeRows.filter((r) => r.origin === 'ifood_fee').reduce((s, r) => s + Number(r.amount), 0);
   // Stone: do razão ficam só os "créditos diversos"; as vendas entram pela data da venda em fetchFn
   const { data: stoneSaleRows } = await supabase
     .from('fin_cash_flow')
@@ -589,7 +597,7 @@ async function fetchDREDataCompetencia(tenantId: string, startDate: string, endD
     receitaBalcao, receitaDelivery, receitaMesa, receitaAutoatendimento,
     receitaManual, receitaStone, cartaoPorMaquininha,
     cancelamentos, descontos, cmvCompras, comprasTotal, cmvPorCategoria, despesasPorCategoria,
-    custoPessoal, taxasMaquininha,
+    custoPessoal, taxasMaquininha, taxasIfood,
     receitaAReceber,
     despesasAPagar,
     cmvComprasPendentes,
@@ -725,7 +733,7 @@ function DRERow({
 }
 
 function CatTreeRows({
-  cats, depth, data, prevData, receitaBruta, mode, onDrillDown,
+  cats, depth, data, prevData, receitaBruta, mode, onDrillDown, onDrillSistema,
 }: {
   cats: DRECat[];
   depth: number;
@@ -734,6 +742,8 @@ function CatTreeRows({
   receitaBruta: number;
   mode: DREMode;
   onDrillDown: (catId: string, catName: string) => void;
+  /** Detalhe próprio da categoria do sistema (ex.: folha), que não vem de contas a pagar. */
+  onDrillSistema?: (type: string) => void;
 }) {
   return (
     <>
@@ -741,6 +751,12 @@ function CatTreeRows({
         const total = sumCatTree(cat, data.despesasPorCategoria);
         const prevTotal = prevData ? sumCatTree(cat, prevData.despesasPorCategoria) : 0;
         const hasChildren = (cat.children?.length ?? 0) > 0;
+        // Folha e taxas: categoria do sistema que vem do razão. Loja sem iFood não precisa
+        // de uma linha zerada de comissões do iFood todo mês.
+        const sistema = CHAVES_DO_RAZAO.includes(cat.system_key as ChaveSistema) ? origemSistema(cat.system_key) : null;
+        if (sistema && !hasChildren && total === 0 && prevTotal === 0) return null;
+        const drillSistema = sistema?.drill && onDrillSistema ? () => onDrillSistema(sistema.drill!) : undefined;
+        const onClick = total === 0 ? undefined : sistema ? drillSistema : () => onDrillDown(cat.id, cat.name);
         return (
           <Fragment key={cat.id}>
             <DRERow
@@ -750,9 +766,11 @@ function CatTreeRows({
               receitaBruta={receitaBruta}
               isNeg
               depth={depth}
-              origin={mode === 'competencia' ? 'Contas a Pagar (por vencimento)' : 'Contas a Pagar (pagas)'}
-              clickable={total !== 0}
-              onClick={total !== 0 ? () => onDrillDown(cat.id, cat.name) : undefined}
+              origin={sistema?.origin ?? (mode === 'competencia' ? 'Contas a Pagar (por vencimento)' : 'Contas a Pagar (pagas)')}
+              badge={cat.system_key ? 'Sistema' : undefined}
+              badgeColor="bg-zinc-100 text-zinc-500"
+              clickable={!!onClick}
+              onClick={onClick}
             />
             {hasChildren && (
               <CatTreeRows
@@ -763,6 +781,7 @@ function CatTreeRows({
                 receitaBruta={receitaBruta}
                 mode={mode}
                 onDrillDown={onDrillDown}
+                onDrillSistema={onDrillSistema}
               />
             )}
           </Fragment>
@@ -805,8 +824,8 @@ export default function DRETab() {
     `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`
   );
   const [dreMode, setDreMode] = useState<DREMode>('caixa');
-  const [data, setData] = useState<DREData | null>(null);
-  const [prevData, setPrevData] = useState<DREData | null>(null);
+  const [dadosBrutos, setData] = useState<DREData | null>(null);
+  const [prevBrutos, setPrevData] = useState<DREData | null>(null);
   const [loading, setLoading] = useState(true);
   const [activeView, setActiveView] = useState<'tabela' | 'grafico'>('tabela');
   const [chartHistory, setChartHistory] = useState<{
@@ -863,7 +882,8 @@ export default function DRETab() {
         ...d,
         receitaStone: d.receitaStone + c.stone_bruto,
         cartaoPorMaquininha: juntarDetalhe(d.cartaoPorMaquininha, c.stone_bruto ? { Stone: c.stone_bruto } : {}),
-        taxasMaquininha: d.taxasMaquininha + c.stone_mdr + (ifoodOn ? c.ifood_custo : 0),
+        taxasMaquininha: d.taxasMaquininha + c.stone_mdr,
+        taxasIfood: d.taxasIfood + (ifoodOn ? c.ifood_custo : 0),
       }, extras.sources, extras.pix, c.ifood_receita, extras.cash, extras.pixPorEtiqueta);
     },
     [dreMode, user?.tenantKind, temPdv]
@@ -873,7 +893,7 @@ export default function DRETab() {
     if (!user?.tenantId) return;
     const { data: cats, error } = await supabase
       .from('fin_dre_categories')
-      .select('id, name, group_type, parent_id, sort_order')
+      .select('id, name, group_type, parent_id, sort_order, system_key')
       .eq('tenant_id', user.tenantId)
       .eq('is_active', true)
       .order('group_type')
@@ -913,7 +933,7 @@ export default function DRETab() {
       // Despesas sem categoria DRE entram no total (mesmo critério da tabela) — antes o
       // gráfico as descartava e mostrava um resultado melhor do que o real.
       const despesas = Object.values(d.despesasPorCategoria)
-        .reduce((s, v) => s + v, 0) + cmv + d.custoPessoal + (d.taxasMaquininha ?? 0);
+        .reduce((s, v) => s + v, 0) + cmv + d.custoPessoal + (d.taxasMaquininha ?? 0) + (d.taxasIfood ?? 0);
       return { mes: mesLabel(m), receita, despesas, resultado: receita - despesas };
     }));
     setChartHistory(results);
@@ -934,7 +954,19 @@ export default function DRETab() {
       </div>
     );
   }
-  if (!data) return null;
+  if (!dadosBrutos) return null;
+
+  // Folha e taxas vão para a categoria do sistema correspondente, no grupo onde a loja a
+  // pôs (Categorias DRE). O que ficar sem categoria continua nas linhas fixas (custoPessoal,
+  // taxasMaquininha, taxasIfood passam a guardar só esse resto) — nada some do resultado.
+  const comSistema = (d: DREData): DREData => {
+    const r = aplicarCategoriasSistema(d.despesasPorCategoria, dreCats, {
+      pessoal: d.custoPessoal, taxasCartao: d.taxasMaquininha ?? 0, taxasIfood: d.taxasIfood ?? 0,
+    });
+    return { ...d, despesasPorCategoria: r.despesas, custoPessoal: r.soltos.pessoal, taxasMaquininha: r.soltos.taxasCartao, taxasIfood: r.soltos.taxasIfood };
+  };
+  const data = comSistema(dadosBrutos);
+  const prevData = prevBrutos ? comSistema(prevBrutos) : null;
 
   const receitaRecebida = receitaRecebidaDe(data);
 
@@ -956,7 +988,12 @@ export default function DRETab() {
   // LÍQUIDO de desconto (o desconto nunca chegou a ser cobrado do cliente). Subtrair
   // cancelamentos e descontos aqui descontava o mesmo dinheiro duas vezes.
   // Os dois valores continuam sendo buscados e exibidos como INFORMATIVOS (o drill-down usa).
-  const receitaLiquida = receitaBruta;
+  // DEDUÇÕES DA RECEITA BRUTA (grupo 'tax', 2026-09-28): impostos sobre a venda (DAS) e o
+  // que mais a loja puser no grupo. Receita líquida = bruta − deduções.
+  const deducoesCats = buildTree(dreCats.filter(c => c.group_type === GRUPO_DEDUCOES));
+  const totalDeducoes = deducoesCats.reduce((s, c) => s + sumCatTree(c, data.despesasPorCategoria), 0);
+  const prevTotalDeducoes = deducoesCats.reduce((s, c) => s + sumCatTree(c, prevData?.despesasPorCategoria ?? {}), 0);
+  const receitaLiquida = receitaBruta - totalDeducoes;
   const lucroBruto = receitaLiquida - cmvTotal;
 
   // Despesas lançadas em contas a pagar SEM `dre_category_id`: caíam na chave
@@ -992,7 +1029,8 @@ export default function DRETab() {
   // Include custom groups in total expenses for the chart and composition
   const totalCustomGroups = customGroupTrees.reduce((s, g) => s + g.total, 0);
 
-  const taxasMaquininha = data.taxasMaquininha ?? 0;
+  // Só o que não tem categoria do sistema (ver comSistema); normalmente zero.
+  const taxasMaquininha = (data.taxasMaquininha ?? 0) + (data.taxasIfood ?? 0);
   const resultadoOperacional = lucroBruto - totalDespesasOp - totalCustosCat - data.custoPessoal - taxasMaquininha - totalCustomGroups;
   const margemLiquida = receitaBruta > 0 ? (resultadoOperacional / receitaBruta) * 100 : 0;
   const margemBruta = receitaBruta > 0 ? (lucroBruto / receitaBruta) * 100 : 0;
@@ -1005,7 +1043,7 @@ export default function DRETab() {
   const prevCmvTotal = prevData?.cmvCompras ?? 0;
 
   // Mesmo critério do mês corrente: sem dedução dupla de cancelamentos/descontos.
-  const prevReceitaLiquida = prevReceitaBruta;
+  const prevReceitaLiquida = prevReceitaBruta - prevTotalDeducoes;
   const prevLucroBruto = prevReceitaLiquida - prevCmvTotal;
   const prevTotalDespesasOp = expenseCats.reduce(
     (s, c) => s + sumCatTree(c, prevData?.despesasPorCategoria ?? {}), 0
@@ -1016,15 +1054,15 @@ export default function DRETab() {
   const prevTotalCustomGroups = customGroupTrees.reduce(
     (s, g) => s + g.prevTotal, 0
   );
-  const prevTaxasMaquininha = prevData?.taxasMaquininha ?? 0;
+  const prevTaxasMaquininha = (prevData?.taxasMaquininha ?? 0) + (prevData?.taxasIfood ?? 0);
   const prevResultado = prevLucroBruto - prevTotalDespesasOp - prevTotalCustosCat - (prevData?.custoPessoal ?? 0) - prevTaxasMaquininha - prevTotalCustomGroups;
 
   const prevMesLabel = addMonths(mes, -1);
   const canGoNext = mes < `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
 
   // Totais para os cards (mesmos componentes que formam o resultado acima).
-  const totalCustosDespesas = cmvTotal + totalCustosCat + totalDespesasOp + data.custoPessoal + taxasMaquininha + totalCustomGroups;
-  const prevTotalCustosDespesas = prevCmvTotal + prevTotalCustosCat + prevTotalDespesasOp + (prevData?.custoPessoal ?? 0) + prevTaxasMaquininha + prevTotalCustomGroups;
+  const totalCustosDespesas = totalDeducoes + cmvTotal + totalCustosCat + totalDespesasOp + data.custoPessoal + taxasMaquininha + totalCustomGroups;
+  const prevTotalCustosDespesas = prevTotalDeducoes + prevCmvTotal + prevTotalCustosCat + prevTotalDespesasOp + (prevData?.custoPessoal ?? 0) + prevTaxasMaquininha + prevTotalCustomGroups;
 
   const mesExtenso = (() => {
     const [y, m] = mes.split('-').map(Number);
@@ -1048,6 +1086,7 @@ export default function DRETab() {
   // "Para onde foi a receita": cada fatia é parte do que foi subtraído da receita.
   // Cancelamentos/descontos ficam fora — já não estão na receita (são só informativos).
   const composicao = [
+    { label: 'Deduções', value: totalDeducoes, color: 'bg-violet-400' },
     { label: 'CMV', value: cmvTotal, color: 'bg-orange-400' },
     { label: 'Pessoal', value: data.custoPessoal, color: 'bg-rose-400' },
     { label: 'Despesas operacionais', value: totalDespesasOp, color: 'bg-amber-400' },
@@ -1061,6 +1100,7 @@ export default function DRETab() {
   const barraComposicao = composicao.filter(s => !(s as { isResult?: boolean }).isResult || resultadoOperacional >= 0);
 
   const drillCat = (id: string, name: string) => setDrillDown({ type: 'dre_category', categoryId: id, categoryName: name });
+  const drillSistema = (type: string) => setDrillDown({ type });
 
   return (
     <div className="p-6 space-y-5 max-w-[1400px] mx-auto">
@@ -1400,6 +1440,13 @@ export default function DRETab() {
                     origin="Descontos aplicados nos pedidos — o valor recebido já é líquido" badge="Só conferência"
                     clickable={data.descontos > 0} onClick={data.descontos > 0 ? () => setDrillDown({ type: 'descontos' }) : undefined} />
                 )}
+                {/* ── DEDUÇÕES DA RECEITA BRUTA ── (grupo nativo; impostos/DAS nascem aqui) */}
+                {(deducoesCats.length > 0 || totalDeducoes !== 0) && (
+                  <>
+                    <SectionHeader label={gruposComLegado.find(g => g.key === GRUPO_DEDUCOES)?.label ?? 'Deduções da receita bruta'} icon="ri-government-line" tone="rose" />
+                    <CatTreeRows cats={deducoesCats} depth={1} data={data} prevData={prevData} receitaBruta={receitaBruta} mode={dreMode} onDrillDown={drillCat} onDrillSistema={drillSistema} />
+                  </>
+                )}
                 <DRERow label="Receita líquida" atual={receitaLiquida} anterior={prevReceitaLiquida} receitaBruta={receitaBruta} isTotal />
 
                 {/* ── CUSTOS ── */}
@@ -1459,7 +1506,7 @@ export default function DRETab() {
                   )}
                 </NoteRow>
                 {hasDynCats && costCats.length > 0 && (
-                  <CatTreeRows cats={costCats} depth={1} data={data} prevData={prevData} receitaBruta={receitaBruta} mode={dreMode} onDrillDown={drillCat} />
+                  <CatTreeRows cats={costCats} depth={1} data={data} prevData={prevData} receitaBruta={receitaBruta} mode={dreMode} onDrillDown={drillCat} onDrillSistema={drillSistema} />
                 )}
                 <DRERow label="Lucro bruto" atual={lucroBruto} anterior={prevLucroBruto} receitaBruta={receitaBruta} isTotal />
 
@@ -1489,7 +1536,7 @@ export default function DRETab() {
                         <DRERow
                           label="Taxas de cartão, Pix e iFood"
                           atual={taxasMaquininha}
-                          anterior={prevData?.taxasMaquininha}
+                          anterior={prevTaxasMaquininha}
                           receitaBruta={receitaBruta}
                           isNeg
                           depth={1}
@@ -1497,7 +1544,7 @@ export default function DRETab() {
                         />
                       )}
                       {hasDynCats && expenseCats.length > 0 ? (
-                        <CatTreeRows cats={expenseCats} depth={1} data={data} prevData={prevData} receitaBruta={receitaBruta} mode={dreMode} onDrillDown={drillCat} />
+                        <CatTreeRows cats={expenseCats} depth={1} data={data} prevData={prevData} receitaBruta={receitaBruta} mode={dreMode} onDrillDown={drillCat} onDrillSistema={drillSistema} />
                       ) : (
                         <tr>
                           <td colSpan={5} className="px-5 py-5 text-center">
@@ -1534,7 +1581,7 @@ export default function DRETab() {
                         <Fragment key={group.key}>
                           <SectionHeader label={group.label} icon="ri-folder-line" />
                           {cats.length > 0 ? (
-                            <CatTreeRows cats={cats} depth={1} data={data} prevData={prevData} receitaBruta={receitaBruta} mode={dreMode} onDrillDown={drillCat} />
+                            <CatTreeRows cats={cats} depth={1} data={data} prevData={prevData} receitaBruta={receitaBruta} mode={dreMode} onDrillDown={drillCat} onDrillSistema={drillSistema} />
                           ) : (
                             <tr>
                               <td colSpan={5} className="px-5 py-3 text-xs text-zinc-400 text-center">

@@ -454,20 +454,20 @@ Deno.serve(async (req) => {
           if (payload.dre_category_id) {
             const { data: cat } = await supabase.from('fin_dre_categories').select('id, group_type')
               .eq('id', payload.dre_category_id).eq('tenant_id', tenant_id).maybeSingle();
-            // revenue/tax: a DRE não subtrai esses grupos, o valor sumiria do resultado
-            if (!cat || ['revenue', 'tax'].includes(String(cat.group_type))) {
+            // revenue: a DRE não subtrai, o valor sumiria do resultado. tax = Deduções da receita bruta (2026-09-28)
+            if (!cat || ['revenue'].includes(String(cat.group_type))) {
               return new Response(JSON.stringify({ error: 'Categoria DRE inválida para despesa nesta loja' }), { status: 400, headers: corsHeaders });
             }
             dreCategoryId = cat.id as string;
           } else if (payload.dre_group) {
             const grupo = String(payload.dre_group);
-            if (grupo !== 'expense') {
+            if (grupo !== 'expense' && grupo !== 'tax') {
               const { data: g } = await supabase.from('fin_dre_groups').select('key').eq('tenant_id', tenant_id).eq('key', grupo).maybeSingle();
               if (!g || ['revenue', 'tax', 'cost'].includes(grupo)) {
                 return new Response(JSON.stringify({ error: 'Grupo DRE inválido para despesa' }), { status: 400, headers: corsHeaders });
               }
             }
-            const nome = String(payload.dre_category_name || (grupo === 'expense' ? 'Despesas Operacionais' : grupo)).trim().slice(0, 120);
+            const nome = String(payload.dre_category_name || (grupo === 'expense' ? 'Despesas Operacionais' : grupo === 'tax' ? 'Deduções da receita bruta' : grupo)).trim().slice(0, 120);
             const { data: existentes } = await supabase.from('fin_dre_categories').select('id, name')
               .eq('tenant_id', tenant_id).eq('group_type', grupo);
             const achada = (existentes ?? []).find((c) => String(c.name).trim().toLowerCase() === nome.toLowerCase());
@@ -946,7 +946,8 @@ Deno.serve(async (req) => {
 
       // ── DRE Categories ────────────────────────────────────────────────────
       case 'upsert_dre_category': {
-        const { id, ...data } = payload;
+        // system_key só nasce no banco (fn_dre_ensure_system_categories); a tela não marca nem desmarca.
+        const { id, system_key: _sk, ...data } = payload;
         if (id) {
           result = await supabase.from('fin_dre_categories').update({ ...data, tenant_id }).eq('id', id).eq('tenant_id', tenant_id).select().single();
         } else {

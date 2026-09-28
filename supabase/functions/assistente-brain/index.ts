@@ -701,7 +701,7 @@ async function interTenant(ctx: Ctx, loja?: string): Promise<string> {
 // - loja = a do CNPJ da guia (a GFD só traz a raiz de 8 dígitos);
 // - conta a pagar "<guia> — competência MM/AAAA" (uma por guia e competência; guia reemitida com
 //   multa atualiza a mesma conta);
-// - DAS e DARF comum → categoria DRE "Impostos". INSS descontado e FGTS → reference_type 'hr_payroll'
+// - DAS e DARF comum → categoria do sistema 'impostos' (Deduções da receita bruta). INSS descontado e FGTS → reference_type 'hr_payroll'
 //   (encargo da folha): a DRE já conta o custo pela folha (bruto + FGTS) — classificar de novo
 //   seria contar duas vezes;
 // - vence até hoje + dias_antes (pay_timing) → prepara o pagamento; vence depois → só guarda (o assistente-cron prepara
@@ -730,9 +730,12 @@ async function processarGuia(admin: SupabaseClient, ownerId: string, chatId: str
   };
   if (g.encargo_folha) Object.assign(campos, { reference_type: 'hr_payroll', category: 'Encargos da folha', dre_category_id: null });
   else {
-    let { data: cat } = await admin.from('fin_dre_categories').select('id').eq('tenant_id', tenantId).ilike('name', 'impostos').is('deleted_at', null).limit(1).maybeSingle();
+    // Categoria do sistema 'impostos' (2026-09-28): nasce em Deduções da receita bruta e a loja pode
+    // renomear ou mudar de grupo, mas não apagar. O nome "Impostos" fica só como plano B.
+    let { data: cat } = await admin.from('fin_dre_categories').select('id').eq('tenant_id', tenantId).eq('system_key', 'impostos').limit(1).maybeSingle();
+    if (!cat) ({ data: cat } = await admin.from('fin_dre_categories').select('id').eq('tenant_id', tenantId).ilike('name', 'impostos').is('deleted_at', null).limit(1).maybeSingle());
     if (!cat) {
-      const ins = await admin.from('fin_dre_categories').insert({ tenant_id: tenantId, group_type: 'expense', name: 'Impostos', sort_order: 0, is_active: true }).select('id').single();
+      const ins = await admin.from('fin_dre_categories').insert({ tenant_id: tenantId, group_type: 'tax', name: 'Impostos (DAS)', sort_order: 0, is_active: true, system_key: 'impostos' }).select('id').single();
       if (ins.error) log('WARN', 'criar categoria Impostos', { error: ins.error.message });
       cat = ins.data;
     }
@@ -754,7 +757,7 @@ async function processarGuia(admin: SupabaseClient, ownerId: string, chatId: str
     if (error || !nova) return { ok: false, texto: `${cab}\n⚠️ Não consegui lançar a conta: ${error?.message ?? 'sem retorno'}`, erro: error?.message ?? 'insert' };
     contaId = String(nova.id); acao = 'lançada em Contas a pagar';
   }
-  const linhas = [cab, `${loja.name} · ${acao}${g.encargo_folha ? ' (encargo da folha — não conta de novo na DRE)' : ' · DRE: Impostos'}.`];
+  const linhas = [cab, `${loja.name} · ${acao}${g.encargo_folha ? ' (encargo da folha — não conta de novo na DRE)' : ' · DRE: Impostos (deduções da receita)'}.`];
   if (g.linha_reparada) linhas.push('A leitura tinha um dígito errado no código de barras; corrigi conferindo com o número do documento.');
   // Prazo de "quando pedir para pagar" (asst_settings.pay_timing): vence depois de hoje + dias_antes → só guarda.
   const prazo = await prazoPagamento(admin);
