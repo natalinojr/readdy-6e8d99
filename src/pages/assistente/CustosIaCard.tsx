@@ -25,6 +25,7 @@ const USO_LABEL: Record<string, string> = {
   'leitura-notinha': 'Leitura de notinha (foto)',
   'traducao-cardapio': 'Tradução do cardápio',
   'trafego-meta-ads': 'Gestor de tráfego (Meta Ads)',
+  'trafego-meta-ads-sombra': 'Gestor de tráfego (comparação de modelo)',
 };
 const MODELO_LABEL = (m: string) => m.replace(/^claude-/, '').replace(/-(\d)-(\d)$/, ' $1.$2').replace(/-(\d)$/, ' $1')
   .replace(/^./, (c) => c.toUpperCase());
