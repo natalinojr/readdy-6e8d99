@@ -3,7 +3,7 @@ import {
   LayoutDashboard, ShoppingCart, Coffee, Tablet, Monitor, UtensilsCrossed,
   LayoutGrid, Package, BarChart3, Users, Settings, LogOut, ChefHat,
   Shield, Heart, HelpCircle, ClipboardList, Bell, Truck, ArrowLeft, DollarSign,
-  ShieldCheck, Megaphone, UserSearch, Bot, FileText,
+  ShieldCheck, Megaphone, UserSearch, Bot, FileText, Palette,
 } from 'lucide-react';
 import { useModuleAccess, type ModuloLivre } from '@/hooks/useModuleAccess';
 import { useAuth } from '../../contexts/AuthContext';
@@ -66,6 +66,7 @@ const navSections: NavSection[] = [
       { label: 'Delivery',              icon: Truck,           path: '/config-delivery', permissao: 'gestao_delivery' },
       { label: 'Relatórios',            icon: BarChart3,       path: '/relatorios',    permissao: REL_KEYS },
       { label: 'Tráfego Pago',          icon: Megaphone,       path: '/trafego-pago',  permissao: 'relatorio_financeiro' },
+      { label: 'Estúdio de Criação',    icon: Palette,         path: '/estudio',       permissao: 'marketing_estudio' },
       { label: 'Cardápio',              icon: UtensilsCrossed, path: '/cardapio',      permissao: 'cardapio_editar' },
       { label: 'Estoque',               icon: Package,         path: '/estoque',       permissao: 'estoque_movimentar' },
       { label: 'Recebimentos e pagamentos', icon: Truck,       path: '/receber',       permissao: RECEBER_MODULO_KEYS },

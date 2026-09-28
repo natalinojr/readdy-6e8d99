@@ -43,6 +43,7 @@ const ImprimirQRCodesPage = lazy(() => import('@/pages/imprimir-qrcodes/page'));
 const AdminMasterPage = lazy(() => import('@/pages/admin-master/page'));
 const SelecionarLojaPage = lazy(() => import('@/pages/selecionar-loja/page'));
 const TrafegoPagoPage = lazy(() => import('@/pages/trafego-pago/page'));
+const EstudioPage = lazy(() => import('@/pages/estudio/page'));
 const TarefasPage = lazy(() => import('@/pages/tarefas/page'));
 const PendenciasPage = lazy(() => import('@/pages/pendencias/page'));
 const PrivacidadePage = lazy(() => import('@/pages/privacidade/page'));
@@ -107,6 +108,7 @@ const routes: RouteObject[] = [
       { path: 'relatorios', element: <RelatoriosPage /> },
       { path: 'pedidos', element: <PedidosPage /> },
       { path: 'trafego-pago', element: <TrafegoPagoPage /> },
+      { path: 'estudio', element: <EstudioPage /> },
       { path: 'notas-fiscais', element: <Navigate to="/pedidos?tab=notas" replace /> },
       { path: 'tarefas', element: <TarefasPage /> },
       // Tarefa é o que VOCÊ decide fazer; pendência é o que o sistema detectou e ainda

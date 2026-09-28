@@ -51,6 +51,9 @@ type Action = {
   params: Record<string, unknown>; reason: string | null; expected_impact: string | null; status: string; auto: boolean; risk: string;
   decided_by_name: string | null; decided_at: string | null; executed_at: string | null; result: Record<string, unknown> | null; error: string | null; created_at: string;
 };
+// Arte do Estúdio anexada à sugestão (F3): list_actions devolve URL assinada e status atual.
+type ArteAcao = { creative_id: string; template: string; item_name: string | null; url?: string | null; status?: string };
+const artesDe = (p: Record<string, unknown>): ArteAcao[] => (Array.isArray(p.artes) ? (p.artes as ArteAcao[]) : []);
 type Capabilities = { ads_management: boolean; pages_manage_ads: boolean; pages_show_list: boolean; business_management: boolean; granted: string[]; pages: Array<{ id: string; name: string; instagram_id: string | null }> } | null;
 type Erpos = {
   store: { name: string; city: string | null; slug: string | null }; whatsapp_loja: string | null; store_location: { lat: number; lng: number } | null;
@@ -94,7 +97,9 @@ function ActionCard({ a, onDecide, deciding, isAdmin }: { a: Action; onDecide?: 
   const [aberto, setAberto] = useState(false);
   const p = a.params ?? {};
   const pendente = a.status === 'sugerida';
-  const acionavel = pendente && a.kind !== 'rotate_creative';
+  const artes = artesDe(p);
+  // Trocar criativo só executa na Meta quando o Estúdio já entregou arte; sem arte é "vou providenciar".
+  const acionavel = pendente && (a.kind !== 'rotate_creative' || artes.length > 0);
   return (
     <div className={`border rounded-xl p-3 ${pendente ? 'bg-white border-amber-200' : 'bg-zinc-50/60 border-zinc-200'}`}>
       <div className="flex items-start gap-2.5">
@@ -119,7 +124,9 @@ function ActionCard({ a, onDecide, deciding, isAdmin }: { a: Action; onDecide?: 
           )}
           {a.kind === 'create_campaign' && aberto && (
             <div className="mt-2 grid sm:grid-cols-[120px_1fr] gap-3 bg-violet-50/60 border border-violet-100 rounded-lg p-3">
-              {typeof p.photo_url === 'string' && p.photo_url
+              {artes[0]?.url
+                ? <img src={artes[0].url} alt="Arte do Estúdio" title="Arte do Estúdio de Criação" className="w-[120px] rounded-lg border border-violet-100" />
+                : typeof p.photo_url === 'string' && p.photo_url
                 ? <img src={p.photo_url} alt="" className="w-[120px] h-[120px] object-cover rounded-lg border border-violet-100" />
                 : <div className="w-[120px] h-[120px] rounded-lg bg-white border border-dashed border-violet-200 flex items-center justify-center text-[11px] text-zinc-400">sem foto</div>}
               <div className="text-xs text-zinc-700 space-y-1">
@@ -131,6 +138,20 @@ function ActionCard({ a, onDecide, deciding, isAdmin }: { a: Action; onDecide?: 
                 <p><span className="text-zinc-400">Botão:</span> {String(p.cta ?? (p.objetivo === 'whatsapp' ? 'WHATSAPP_MESSAGE' : 'ORDER_NOW'))} · <span className="text-zinc-400">Prato:</span> {String(p.item_name ?? '—')}</p>
               </div>
             </div>
+          )}
+          {a.kind === 'rotate_creative' && artes.length > 0 && (
+            <div className="mt-2 flex items-start gap-2 flex-wrap">
+              {artes.map((x) => (
+                <a key={x.creative_id} href={x.url ?? undefined} target="_blank" rel="noreferrer" className="block w-[96px]" title={x.item_name ?? ''}>
+                  {x.url ? <img src={x.url} alt="" className="w-[96px] rounded-lg border border-sky-100" /> : <div className="w-[96px] h-[120px] rounded-lg bg-zinc-100 text-[10px] text-zinc-400 flex items-center justify-center">arte apagada</div>}
+                  <p className="text-[10px] text-zinc-500 truncate mt-0.5">{x.item_name ?? x.template}</p>
+                </a>
+              ))}
+              <p className="text-[11px] text-zinc-500 basis-full">Artes novas do Estúdio: ao aprovar, cada uma vira um anúncio novo neste conjunto (mesmo texto e link; só a imagem muda).</p>
+            </div>
+          )}
+          {(a.kind === 'rotate_creative' || a.kind === 'create_campaign') && typeof p.arte_erro === 'string' && p.arte_erro && artes.length === 0 && (
+            <p className="text-[11px] text-amber-700 mt-1">Estúdio não gerou arte: {p.arte_erro}</p>
           )}
           <div className="flex items-center gap-2 mt-2 flex-wrap">
             <span className={`text-[11px] font-semibold ${RISK_CLS[a.risk] ?? ''}`}>risco {a.risk}</span>
@@ -277,7 +298,7 @@ export function AgenteTab({ tenantId, isAdmin }: { tenantId: string; isAdmin: bo
   const decidir = async (id: string, d: 'aprovar' | 'rejeitar') => {
     if (d === 'aprovar') {
       const a = actions.find((x) => x.id === id);
-      const txt = a?.kind === 'create_campaign' ? 'Criar e ATIVAR esta campanha na Meta agora? Ela começa a gastar hoje.' : a?.kind === 'rotate_creative' ? 'Marcar como "vou providenciar"?' : `Executar "${KIND_LABEL[a?.kind ?? ''] ?? a?.kind}" em "${a?.target_name ?? ''}" na Meta agora?`;
+      const txt = a?.kind === 'create_campaign' ? 'Criar e ATIVAR esta campanha na Meta agora? Ela começa a gastar hoje.' : a?.kind === 'rotate_creative' ? (artesDe(a.params ?? {}).length ? `Subir ${artesDe(a.params ?? {}).length} arte(s) nova(s) neste conjunto na Meta? Os anúncios novos entram no ar hoje.` : 'Marcar como "vou providenciar"?') : `Executar "${KIND_LABEL[a?.kind ?? ''] ?? a?.kind}" em "${a?.target_name ?? ''}" na Meta agora?`;
       if (!(await confirmar({ titulo: txt, confirmarLabel: 'Executar' }))) return;
     }
     setDeciding(id); setErro(null);

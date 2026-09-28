@@ -31,6 +31,7 @@ export const GESTAO_ENTRADA_KEYS: readonly string[] = [
   'configuracoes_editar',
   'auditoria_ver',
   'relatorio_financeiro',
+  'marketing_estudio',
   ...REL_KEYS,
   ...FIN_KEYS,
 ];
@@ -49,6 +50,7 @@ const GESTAO_ROTAS: { rota: string; keys: readonly string[] }[] = [
   { rota: '/config-delivery', keys: ['gestao_delivery'] },
   { rota: '/aprovacoes', keys: ['gestao_aprovacoes'] },
   { rota: '/trafego-pago', keys: ['relatorio_financeiro'] },
+  { rota: '/estudio', keys: ['marketing_estudio'] },
   { rota: '/financeiro', keys: FIN_KEYS },
   { rota: '/usuarios', keys: ['usuarios_gerenciar'] },
   { rota: '/auditoria', keys: ['auditoria_ver'] },
