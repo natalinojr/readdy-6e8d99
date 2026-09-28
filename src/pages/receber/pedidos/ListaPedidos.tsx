@@ -299,8 +299,10 @@ function CartaoMeu({ p, tenantId, onErro, onFeito, onJanela, mostrarQuem }: { p:
       {p.status === 'aprovada' && p.decidido_por_nome && <p className="mt-2 text-xs text-zinc-500">Aprovado por {p.decidido_por_nome}{p.pago_em ? ` · pago em ${dataBR(p.pago_em)}` : ''}</p>}
       {p.tipo === 'compra_online' && p.status !== 'comprada' && p.status !== 'cancelada' && p.status !== 'recusada' && <AbrirLink p={p} />}
       {p.tipo === 'compra_online' && p.compra_detalhe && mostrarQuem && <div className="mt-3"><ResumoLido l={p.compra_detalhe} /></div>}
-      {p.tipo === 'compra_online' && (p.status === 'comprada' || mostrarQuem) && <Detalhes p={p} />}
-      {p.tipo === 'compra_online' && mostrarQuem && p.tem_comprovante && <div className="mt-3 flex"><BotaoComprovante p={p} tenantId={tenantId} onErro={onErro} /></div>}
+      {/* Decididos mostram a que o pedido se refere (dias, função, obs., classificação) e o comprovante,
+          não só quem aprovou e quando pagou (dono, 2026-09-28) */}
+      {(mostrarQuem || (p.tipo === 'compra_online' && p.status === 'comprada')) && <Detalhes p={p} />}
+      {mostrarQuem && p.tem_comprovante && <div className="mt-3 flex"><BotaoComprovante p={p} tenantId={tenantId} onErro={onErro} /></div>}
       {mostrarQuem && onJanela && p.tipo === 'compra_online' && p.status === 'aprovada' && <JaComprei p={p} tenantId={tenantId} onErro={onErro} onFeito={onFeito} />}
       {mostrarQuem && onJanela && p.tipo !== 'compra_online' && p.status === 'aprovada' && !p.pago && (!p.pix_inter || p.pix_inter === 'recusado') && <PagarDeNovo p={p} tenantId={tenantId} onErro={onErro} onJanela={onJanela} />}
       {!mostrarQuem && p.status === 'pendente' && !p.purchase_id && (
