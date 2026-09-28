@@ -26,7 +26,9 @@ export default function DetalheFolhaModal({ entry, onClose }: { entry: PayrollEn
       .sort((a, b) => b.total - a.total);
   };
   const proventos = grupo('P');
-  const descontos = grupo('D');
+  // Líquido da rescisão não é desconto: é o que a pessoa recebeu no TRCT (já está no líquido)
+  const descontos = grupo('D').filter((g) => g.k !== 'liquido_rescisao');
+  const pagoRescisao = rubricas.filter((r) => r.tipo === 'D' && cat(r) === 'liquido_rescisao').reduce((s, r) => s + Number(r.valor || 0), 0);
   const cabecalho = (entry.notes ?? '').split('\n').filter((l) => l && !/^(Rubricas:|[PD] \d*\s)/.test(l) && !/^Importado do Domínio/.test(l));
   const custo = Number(entry.total_proventos ?? entry.gross_salary ?? 0) + Number(entry.fgts ?? 0);
 
@@ -101,6 +103,13 @@ export default function DetalheFolhaModal({ entry, onClose }: { entry: PayrollEn
             <Bloco titulo="Proventos" cor="text-green-700" itens={proventos} total={proventos.reduce((s, g) => s + g.total, 0)} />
             <Bloco titulo="Descontos" cor="text-red-600" itens={descontos} total={descontos.reduce((s, g) => s + g.total, 0)} />
           </div>
+
+          {pagoRescisao > 0 && (
+            <div className="flex items-center justify-between border border-zinc-200 bg-zinc-50 rounded-lg px-3 py-2">
+              <span className="text-xs font-semibold text-zinc-700">{labelCategoria('liquido_rescisao')} (TRCT) — é o líquido, não um desconto</span>
+              <span className="text-sm font-bold text-zinc-800">{formatCurrency(pagoRescisao)}</span>
+            </div>
+          )}
 
           {Number(entry.fgts ?? 0) > 0 && (
             <div className="flex items-center justify-between border border-amber-100 bg-amber-50/50 rounded-lg px-3 py-2">

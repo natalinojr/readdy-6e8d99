@@ -65,6 +65,9 @@ function mapearFolha(f: FuncionarioExtrato, modo: ModoImport = 'completa') {
   const adicNot = pega(P, /ADIC(IONAL|\.)?\s*NOTURNO/, uP);
   const outrosP = P.filter((r) => !uP.has(r));
   const uD = new Set<Rubrica>();
+  // "LIQUIDO RESCISAO" vem como desconto no extrato (o Domínio zera o líquido do mês porque o valor
+  // foi pago no TRCT), mas é o dinheiro que a pessoa recebeu: volta para o líquido, sai dos descontos.
+  const liqResc = soma(pega(D, /LIQUIDO\s+RESCIS/, uD));
   const inss = pega(D, /I\.?N\.?S\.?S/, uD);
   const irrf = pega(D, /I\.?R\.?R\.?F|IMPOSTO DE RENDA/, uD);
   const faltas = pega(D, /FALTA|ATRASO/, uD);
@@ -96,8 +99,8 @@ function mapearFolha(f: FuncionarioExtrato, modo: ModoImport = 'completa') {
     vale_transporte: soma(vt), vale_transporte_uses: vt.length > 0, vale_refeicao: soma(vr),
     desconto_faltas: soma(faltas), horas_faltantes: horas(faltas), dias_faltas: 0,
     other_deductions: soma(outrosD),
-    deductions: f.descontos, total_proventos: f.proventos, total_descontos: f.descontos,
-    gross_salary: f.proventos, net_salary: f.liquido,
+    deductions: round2(f.descontos - liqResc), total_proventos: f.proventos, total_descontos: round2(f.descontos - liqResc),
+    gross_salary: f.proventos, net_salary: round2(f.liquido + liqResc),
     custom_proventos: [], custom_descontos: [], dependentes: 0,
     rubricas: f.rubricas.map((r) => ({ ...r, categoria: categorizarRubrica(r) })),
     status: 'pending', entry_type: 'regular', notes: notas,

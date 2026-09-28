@@ -207,7 +207,7 @@ export default function RHRelatorioTab() {
       porDesc: Record<string, number>; porMes: Record<string, number>; porFunc: Record<string, number> };
     const acc: Record<string, Acc> = {};
     const add = (cat: string, valor: number, desc: string, mes: string, func: string) => {
-      if (!valor) return;
+      if (!valor || cat === 'liquido_rescisao') return; // é o líquido pago no TRCT, não desconto
       const def = CATEGORIAS_FOLHA[cat] ?? CATEGORIAS_FOLHA.outros_proventos;
       const it = acc[cat] ?? (acc[cat] = { key: cat, label: def.label, type: def.tipo, total: 0, porDesc: {}, porMes: {}, porFunc: {} });
       it.total += valor;
