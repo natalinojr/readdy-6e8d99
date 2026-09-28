@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { brl, dataBR } from '../api';
 import { ICONE_TIPO, ROTULO_TIPO, chamarPedidos, situacao, type Categoria, type Pedido } from './api';
 import { Categorias, lerValor } from './ui';
+import { ResumoLido } from './NovoPedido';
 import JanelaPagamento, { type AvisoPagamento } from './JanelaPagamento';
 import { confirmar } from '@/components/base/Dialogos';
 
@@ -152,7 +153,7 @@ function BotaoComprovante({ p, tenantId, onErro }: { p: Pedido; tenantId: string
   return (
     <>
       <button type="button" onClick={abrir} className="flex-1 py-3 rounded-2xl border-2 border-zinc-200 text-zinc-700 text-sm font-bold flex items-center justify-center gap-1.5 cursor-pointer">
-        <i className="ri-image-line" /> {abrindo ? 'Abrindo…' : 'Comprovante'}
+        <i className="ri-image-line" /> {abrindo ? 'Abrindo…' : p.tipo === 'compra_online' ? 'Ver print' : 'Comprovante'}
       </button>
       {ver && <VerComprovante url={ver.url} pdf={ver.pdf} titulo={`${p.favorecido_nome} · ${brl(p.valor)}`} onFechar={() => setVer(null)} />}
     </>
@@ -297,7 +298,9 @@ function CartaoMeu({ p, tenantId, onErro, onFeito, onJanela, mostrarQuem }: { p:
       {p.status === 'recusada' && p.motivo_recusa && <p className="mt-2 text-sm text-red-700 bg-red-50 rounded-xl px-3 py-2">Motivo: {p.motivo_recusa}</p>}
       {p.status === 'aprovada' && p.decidido_por_nome && <p className="mt-2 text-xs text-zinc-500">Aprovado por {p.decidido_por_nome}{p.pago_em ? ` · pago em ${dataBR(p.pago_em)}` : ''}</p>}
       {p.tipo === 'compra_online' && p.status !== 'comprada' && p.status !== 'cancelada' && p.status !== 'recusada' && <AbrirLink p={p} />}
+      {p.tipo === 'compra_online' && p.compra_detalhe && mostrarQuem && <div className="mt-3"><ResumoLido l={p.compra_detalhe} /></div>}
       {p.tipo === 'compra_online' && (p.status === 'comprada' || mostrarQuem) && <Detalhes p={p} />}
+      {p.tipo === 'compra_online' && mostrarQuem && p.tem_comprovante && <div className="mt-3 flex"><BotaoComprovante p={p} tenantId={tenantId} onErro={onErro} /></div>}
       {mostrarQuem && onJanela && p.tipo === 'compra_online' && p.status === 'aprovada' && <JaComprei p={p} tenantId={tenantId} onErro={onErro} onFeito={onFeito} />}
       {mostrarQuem && onJanela && p.tipo !== 'compra_online' && p.status === 'aprovada' && !p.pago && (!p.pix_inter || p.pix_inter === 'recusado') && <PagarDeNovo p={p} tenantId={tenantId} onErro={onErro} onJanela={onJanela} />}
       {!mostrarQuem && p.status === 'pendente' && !p.purchase_id && (
@@ -342,6 +345,7 @@ function CartaoAprovar({ p, tenantId, categorias, onErro, onFeito, onJanela }: {
       <Cabecalho p={p} mostrarQuem />
       <Detalhes p={p} />
       <Pix chave={p.pix_chave} />
+      {compra && p.compra_detalhe && <div className="mt-3"><ResumoLido l={p.compra_detalhe} /></div>}
       {compra && <AbrirLink p={p} />}
       {compra && <p className="mt-3 text-xs text-sky-800 bg-sky-50 rounded-xl px-3 py-2">Autorizar não cria conta a pagar. Compre na conta da loja (CNPJ) e toque em "Já comprei"; a nota do vendedor entra sozinha e vira a compra.</p>}
       {p.purchase_id && <p className="mt-3 text-xs text-violet-700 bg-violet-50 rounded-xl px-3 py-2">Mercadoria: a compra já foi lançada e entrou no estoque, sem conta a pagar. Aprovar cria a conta do reembolso; recusar deixa a compra sem conta (ajuste em Financeiro › Compras se precisar).</p>}

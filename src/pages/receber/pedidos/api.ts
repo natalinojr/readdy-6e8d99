@@ -54,6 +54,15 @@ export interface Pedido {
   valor_pago?: number | null;
   comprado_em?: string | null;
   comprado_por_nome?: string | null;
+  compra_detalhe?: PrintLido | null;
+}
+
+/** O que a IA leu do print do checkout (Edge pedidos-pagamento › ler_print). */
+export interface PrintLido {
+  site: string | null;
+  itens: { descricao: string; quantidade: number; valor: number | null }[];
+  subtotal: number | null; desconto: number | null; frete: number | null; total: number | null;
+  entrega: string | null; numero_pedido: string | null;
 }
 
 export interface Categoria { id: string; nome: string }

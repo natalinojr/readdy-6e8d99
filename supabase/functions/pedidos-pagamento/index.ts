@@ -13,6 +13,7 @@ import {
   BUCKET_PEDIDOS, PERM_DO_TIPO, fecharPendencia, lerLinkCompra, nomeDoUsuario, pendenciaDoPedido, permissoesPedido, salvarComprovante,
   type TipoPedido,
 } from '../_shared/pedidos-pagamento.ts';
+import { lerPrintCompra } from './print-compra.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -30,7 +31,7 @@ const somaDias = (iso: string, d: number) => new Date(Date.parse(`${iso}T12:00:0
 const txt = (s: unknown, max = 300) => String(s ?? '').trim().slice(0, max);
 const dataOk = (d: unknown) => typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d) && !Number.isNaN(Date.parse(`${d}T12:00:00Z`));
 
-const CAMPOS = 'id, tipo, status, descricao, valor, data_gasto, vencimento, favorecido_nome, favorecido_doc, pix_chave, dre_category_id, supplier_id, freelancer_id, freelancer_funcao, dias, valores_dia, comprovante_path, purchase_id, bill_id, obs, solicitado_por, solicitado_por_nome, decidido_por_nome, decidido_em, motivo_recusa, created_at, link_url, anuncio_id, quantidade, pedido_externo, valor_pago, comprado_em, comprado_por_nome';
+const CAMPOS = 'id, tipo, status, descricao, valor, data_gasto, vencimento, favorecido_nome, favorecido_doc, pix_chave, dre_category_id, supplier_id, freelancer_id, freelancer_funcao, dias, valores_dia, comprovante_path, purchase_id, bill_id, obs, solicitado_por, solicitado_por_nome, decidido_por_nome, decidido_em, motivo_recusa, created_at, link_url, anuncio_id, quantidade, pedido_externo, valor_pago, comprado_em, comprado_por_nome, compra_detalhe';
 
 interface Ctx { admin: any; tenantId: string; userId: string; email: string | null; role: string; perms: Record<string, boolean> }
 
@@ -127,15 +128,20 @@ async function criar(ctx: Ctx, body: Record<string, any>) {
     if (!dataOk(body.data_gasto) || body.data_gasto > hoje || body.data_gasto < somaDias(hoje, -90)) return erro('Informe o dia da compra (até 90 dias atrás)');
     Object.assign(linha, { descricao, favorecido_nome: nome, data_gasto: body.data_gasto });
   } else if (tipo === 'compra_online') {
-    const link = lerLinkCompra(await linkCompleto(txt(body.link, 2000)));
-    if (!link) return erro('Cole o link do produto (copie no app ou no site da loja)');
+    // Print do checkout é o principal (2026-09-28); link é opcional (vem do "Compartilhar" do app)
+    const textoLink = txt(body.link, 2000);
+    const link = textoLink ? lerLinkCompra(await linkCompleto(textoLink)) : null;
+    if (textoLink && !link) return erro('O link não foi reconhecido. Apague o campo do link ou cole de novo.');
+    if (!link && !body.comprovante?.base64) return erro('Mande o print da compra (tela de finalizar, com o total)');
     const qtd = Math.round(Number(body.quantidade ?? 1) * 1000) / 1000;
     if (!(qtd > 0) || qtd > 10000) return erro('Informe a quantidade');
-    const oque = descricao || link.titulo || '';
+    const oque = descricao || link?.titulo || '';
     if (!oque) return erro('Diga o que é o produto');
+    const det = detalheCompra(body.lido);
     Object.assign(linha, {
-      descricao: oque, favorecido_nome: link.site, link_url: link.url.slice(0, 1000), anuncio_id: link.anuncio_id, quantidade: qtd,
-      pix_chave: null, favorecido_doc: null,
+      descricao: oque, favorecido_nome: link?.site ?? (txt(det?.site, 60) || 'Compra online'),
+      link_url: link?.url.slice(0, 1000) ?? null, anuncio_id: link?.anuncio_id ?? null, quantidade: qtd,
+      compra_detalhe: det, pix_chave: null, favorecido_doc: null,
     });
   } else if (tipo === 'fornecedor') {
     if (!descricao) return erro('Conte o que está sendo pago');
@@ -229,13 +235,16 @@ async function duplicado(ctx: Ctx, tipo: TipoPedido, l: Record<string, any>): Pr
     (!!nome && normNome(r.favorecido_nome) === nome);
 
   let q = ctx.admin.from('fin_payment_requests')
-    .select('id, status, valor, favorecido_nome, pix_chave, freelancer_id, supplier_id, data_gasto, vencimento, dias, solicitado_por_nome, created_at, link_url, anuncio_id')
+    .select('id, status, valor, descricao, favorecido_nome, pix_chave, freelancer_id, supplier_id, data_gasto, vencimento, dias, solicitado_por_nome, created_at, link_url, anuncio_id')
     .eq('tenant_id', ctx.tenantId).eq('tipo', tipo).in('status', ['pendente', 'aprovada']);
   if (tipo === 'compra_online') {
     // Mesmo produto já pedido (esperando ou autorizado, ainda não comprado)
     const { data: cs, error: ec } = await q.limit(100);
     if (ec) throw new Error(`Falha ao conferir pedido repetido: ${ec.message}`);
-    const igual: any = (cs ?? []).find((r: any) => (r.anuncio_id && l.anuncio_id ? r.anuncio_id === l.anuncio_id : r.link_url === l.link_url));
+    // Com link: mesmo anúncio. Só print: mesmo produto e mesmo valor.
+    const igual: any = (cs ?? []).find((r: any) => (l.anuncio_id && r.anuncio_id ? r.anuncio_id === l.anuncio_id
+      : l.link_url && r.link_url ? r.link_url === l.link_url
+      : Number(r.valor) === Number(l.valor) && normNome(r.descricao) === normNome(l.descricao)));
     if (!igual) return null;
     const quem = igual.solicitado_por_nome ? ` por ${igual.solicitado_por_nome}` : '';
     return `Esse produto já foi pedido${quem} e ${igual.status === 'aprovada' ? 'já está autorizado (falta comprar)' : 'está esperando aprovação'}. Veja em "Meus pedidos" ou fale com o financeiro.`;
@@ -273,6 +282,16 @@ async function duplicado(ctx: Ctx, tipo: TipoPedido, l: Record<string, any>): Pr
 }
 
 const brl = (n: number) => `R$ ${Number(n).toFixed(2).replace('.', ',')}`;
+
+/** O que a IA leu do print (vem da tela, depois de conferido): só guarda o formato esperado. */
+function detalheCompra(x: any) {
+  if (!x || typeof x !== 'object') return null;
+  const n = (v: any) => (typeof v === 'number' && Number.isFinite(v) && Math.abs(v) < 1e6 ? round2(v) : null);
+  const itens = (Array.isArray(x.itens) ? x.itens : []).slice(0, 30)
+    .map((i: any) => ({ descricao: txt(i?.descricao, 200), quantidade: Number(i?.quantidade) > 0 ? Number(i.quantidade) : 1, valor: n(i?.valor) }))
+    .filter((i: any) => i.descricao);
+  return { site: txt(x.site, 60) || null, itens, subtotal: n(x.subtotal), desconto: n(x.desconto), frete: n(x.frete), total: n(x.total), entrega: txt(x.entrega, 200) || null, numero_pedido: txt(x.numero_pedido, 60) || null };
+}
 const ROTULO: Record<string, string> = { reembolso: 'Reembolso', freelancer: 'Freelancer', fornecedor: 'Fornecedor sem nota', compra_online: 'Compra online' };
 
 /** Link curto do app do Mercado Livre (mercadolivre.com/sec/…) não tem o nº nem o nome: segue o
@@ -493,6 +512,12 @@ Deno.serve(async (req) => {
         return json({ fornecedores: (data ?? []).map((f: any) => ({ id: f.id, nome: f.name, cnpj: f.cnpj, tem_pix: !!f.pix_key })) });
       }
       case 'criar': return await criar(ctx, body);
+      case 'ler_print': {
+        if (!perms.pag_compra_online && !aprovador) return erro('Seu perfil não pode pedir compra online.', 403);
+        const r = await lerPrintCompra(admin, tenantId, caller.userId, body.imagem ?? {});
+        if (r.erro) return erro(r.erro, r.status ?? 400);
+        return json({ lido: r.lido });
+      }
       case 'meus': {
         const { data, error } = await admin.from('fin_payment_requests').select(CAMPOS)
           .eq('tenant_id', tenantId).eq('solicitado_por', caller.userId).gte('created_at', `${somaDias(hojeBR(), -60)}T00:00:00-03:00`)

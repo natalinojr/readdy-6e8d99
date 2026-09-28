@@ -3,7 +3,7 @@
 // Compra online (2026-09-28): a pessoa cola o link do produto; o dono autoriza e compra na conta da loja.
 import { useEffect, useMemo, useState } from 'react';
 import { brl, dataBR, hojeISO, normalizar, somaDias } from '../api';
-import { chamarPedidos, comprovanteParaEnvio, type Categoria, type ContextoPedidos, type Fornecedor, type Freela, type TipoPedido } from './api';
+import { chamarPedidos, comprovanteParaEnvio, type Categoria, type ContextoPedidos, type Fornecedor, type Freela, type PrintLido, type TipoPedido } from './api';
 import { Categorias, Chips, Comprovante, Enviar, Rotulo, Texto, Valor, cls, lerValor } from './ui';
 import { lerLinkCompra } from './linkCompra';
 
@@ -59,7 +59,31 @@ export default function NovoPedido({ tipo, tenantId, contexto, onEnviado, onErro
   const anuncio = useMemo(() => (tipo === 'compra_online' ? lerLinkCompra(link) : null), [tipo, link]);
   // Nome do produto vem do link; a pessoa pode corrigir (só preenche enquanto o campo não foi mexido)
   const [descricaoMexida, setDescricaoMexida] = useState(false);
-  useEffect(() => { if (tipo === 'compra_online' && !descricaoMexida) setDescricao(anuncio?.titulo ?? ''); }, [tipo, anuncio, descricaoMexida]);
+  // Print do checkout (2026-09-28): o jeito principal — a IA lê itens, desconto, frete e total
+  const [lido, setLido] = useState<PrintLido | null>(null);
+  const [lendo, setLendo] = useState(false);
+  const [verLink, setVerLink] = useState(!!linkInicial);
+  useEffect(() => { if (tipo === 'compra_online' && !descricaoMexida && !lido) setDescricao(anuncio?.titulo ?? ''); }, [tipo, anuncio, descricaoMexida, lido]);
+  const lerPrint = async (f: File | null) => {
+    setFoto(f);
+    if (!f) return;
+    setLendo(true); setLido(null); onErro(null);
+    try {
+      const imagem = await comprovanteParaEnvio(f);
+      const { data, erro } = await chamarPedidos<{ lido: PrintLido }>('ler_print', tenantId, { imagem });
+      if (erro || !data?.lido) { onErro(`${erro ?? 'Não consegui ler o print'}. Confira e preencha os campos abaixo.`); return; }
+      const l = data.lido;
+      setLido(l);
+      const itens = l.itens ?? [];
+      if (!descricaoMexida && itens.length) setDescricao(itens.length === 1 ? itens[0].descricao : `${itens.length} itens: ${itens.map((i) => i.descricao).join('; ')}`.slice(0, 300));
+      setQuantidade(String(itens.length === 1 ? itens[0].quantidade : 1).replace('.', ','));
+      if (l.total != null) setValor(l.total.toFixed(2).replace('.', ','));
+    } catch (e) {
+      onErro((e as Error).message);
+    } finally {
+      setLendo(false);
+    }
+  };
 
   useEffect(() => {
     if (tipo !== 'freelancer' && tipo !== 'compra_online') {
@@ -103,7 +127,9 @@ export default function NovoPedido({ tipo, tenantId, contexto, onEnviado, onErro
   const faltando = (() => {
     if (tipo === 'freelancer' && diaSemValor) return `Informe o valor de ${dataBR(diaSemValor).slice(0, 5)}`;
     if (tipo === 'compra_online') {
-      if (!anuncio) return 'Cole o link do produto';
+      if (lendo) return 'Lendo o print…';
+      if (!foto && !anuncio) return 'Mande o print da compra';
+      if (link.trim() && !anuncio) return 'Link não reconhecido';
       if (!descricao.trim()) return 'Diga o que é o produto';
       if (!(lerValor(quantidade) > 0)) return 'Informe a quantidade';
     }
@@ -138,6 +164,7 @@ export default function NovoPedido({ tipo, tenantId, contexto, onEnviado, onErro
         data_gasto: dataGasto, supplier_id: fornecedorId, vencimento,
         freelancer_id: freelaId, funcao, dias,
         link: tipo === 'compra_online' ? link : undefined, quantidade: tipo === 'compra_online' ? lerValor(quantidade) : undefined,
+        lido: tipo === 'compra_online' ? lido : undefined,
         valores_dia: tipo === 'freelancer' ? Object.fromEntries(dias.map((d) => [d, lerValor(valoresDia[d] ?? '')])) : undefined,
       });
       if (erro) { onErro(erro); return; }
@@ -290,8 +317,15 @@ export default function NovoPedido({ tipo, tenantId, contexto, onEnviado, onErro
               <i className="ri-arrow-right-s-line text-zinc-400" />
             </button>
           )}
+          <Comprovante arquivo={foto} onArquivo={lerPrint} obrigatorio={!anuncio} titulo="Print da compra"
+            dica="Tela de finalizar a compra, com o produto e o total. O sistema lê sozinho." />
+          {lendo && <p className="text-sm text-amber-700 px-1 flex items-center gap-2"><i className="ri-loader-4-line animate-spin" /> Lendo o print…</p>}
+          {lido && <ResumoLido l={lido} />}
+          {!verLink ? (
+            <button type="button" onClick={() => setVerLink(true)} className="text-sm font-semibold text-amber-700 px-1 cursor-pointer">+ Tem o link do produto? (opcional)</button>
+          ) : (
           <div>
-            <Rotulo dica="No app do Mercado Livre: Compartilhar › Copiar link. Pode colar o texto todo.">Link do produto</Rotulo>
+            <Rotulo dica="Opcional. No app do Mercado Livre: Compartilhar › Copiar link.">Link do produto</Rotulo>
             <textarea rows={2} value={link} onChange={(e) => setLink(e.target.value)} placeholder="https://www.mercadolivre.com.br/…" className={cls} />
             {link.trim() && !anuncio && <p className="text-xs text-red-600 px-1 mt-1">Não achei um link aqui. Copie o link do produto e cole de novo.</p>}
             {anuncio && (
@@ -305,10 +339,10 @@ export default function NovoPedido({ tipo, tenantId, contexto, onEnviado, onErro
               </div>
             )}
           </div>
+          )}
           <Texto label="O que é?" valor={descricao} onValor={(x) => { setDescricaoMexida(true); setDescricao(x); }} placeholder="Ex.: pegador de massa inox 30 cm" />
           <Texto label="Quantidade" valor={quantidade} onValor={(x) => setQuantidade(x.replace(/[^\d.,]/g, ''))} inputMode="decimal" />
           <Valor label="Valor total (com frete)" valor={valor} onValor={setValor} />
-          <Comprovante arquivo={foto} onArquivo={setFoto} titulo="Print (opcional)" dica="Print do carrinho ou do anúncio, se ajudar" />
           <p className="text-xs text-zinc-500 px-1">Não compre pela sua conta: o financeiro compra na conta da loja (CNPJ), e a nota do vendedor entra sozinha no sistema.</p>
         </>
       )}
@@ -327,6 +361,29 @@ export default function NovoPedido({ tipo, tenantId, contexto, onEnviado, onErro
       <Enviar onClick={enviar} disabled={!!faltando || enviando}>
         {enviando ? 'Enviando…' : faltando ?? 'Enviar para aprovação'}
       </Enviar>
+    </div>
+  );
+}
+
+/** O que foi lido do print, para a pessoa conferir antes de enviar. */
+export function ResumoLido({ l }: { l: PrintLido }) {
+  const linhas: [string, number | null][] = [['Produtos', l.subtotal], ['Desconto', l.desconto != null && l.desconto > 0 ? -l.desconto : null], ['Frete', l.frete]];
+  return (
+    <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-3.5 space-y-1.5 text-sm">
+      <p className="text-xs font-bold text-emerald-800 uppercase tracking-wide">Lido do print{l.site ? ` · ${l.site}` : ''}</p>
+      {l.itens.map((i, k) => (
+        <p key={k} className="flex justify-between gap-3 text-zinc-700">
+          <span className="min-w-0">{i.quantidade !== 1 ? `${String(i.quantidade).replace('.', ',')}× ` : ''}{i.descricao}</span>
+          {i.valor != null && <span className="whitespace-nowrap">{brl(i.valor)}</span>}
+        </p>
+      ))}
+      <div className="pt-1.5 border-t border-emerald-200 space-y-0.5">
+        {linhas.filter(([, v]) => v != null).map(([r, v]) => (
+          <p key={r} className="flex justify-between text-zinc-600"><span>{r}</span><span>{v === 0 && r === 'Frete' ? 'Grátis' : brl(v!)}</span></p>
+        ))}
+        {l.total != null && <p className="flex justify-between font-bold text-zinc-900"><span>Total</span><span>{brl(l.total)}</span></p>}
+      </div>
+      {l.entrega && <p className="text-xs text-zinc-500 pt-1"><i className="ri-map-pin-line" /> {l.entrega}</p>}
     </div>
   );
 }
