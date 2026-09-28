@@ -28,6 +28,7 @@
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
 import Anthropic from 'npm:@anthropic-ai/sdk@0.125.0';
 import { registrarUsoIa } from '../_shared/ai-usage.ts';
+import { pedirArtes, urlsDasArtes, revisarArte, subirImagem, marcarPublicada, trocarCriativo, type ArteRef } from './estudio.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -427,7 +428,7 @@ type ExecResult = { ok: boolean; result: Json; error?: string };
 
 function whatsappLink(num: string, text: string) { return `https://api.whatsapp.com/send?phone=${num}&text=${encodeURIComponent(text)}`; }
 
-async function createCampaign(token: string, adAccountId: string, s: Settings, ctx: Ctx, p: Row): Promise<ExecResult> {
+async function createCampaign(admin: SupabaseClient, tenantId: string, token: string, adAccountId: string, s: Settings, ctx: Ctx, p: Row, quem: string): Promise<ExecResult> {
   const objetivo = String(p.objetivo ?? s.objetivo);
   const loc = ctx.store_location;
   if (!s.page_id) return { ok: false, result: {}, error: 'Página do Facebook não configurada no agente.' };
@@ -478,6 +479,19 @@ async function createCampaign(token: string, adAccountId: string, s: Settings, c
   if (!photo) return { ok: false, result: { step: 'creative', campaign_id: campaignId, adset_id: adsetId }, error: 'Nenhum item do cardápio tem foto para o anúncio.' };
   const cta = objetivo === 'whatsapp' ? 'WHATSAPP_MESSAGE' : (['ORDER_NOW', 'SHOP_NOW', 'LEARN_MORE'].includes(String(p.cta)) ? String(p.cta) : 'ORDER_NOW');
   const linkData: Json = { message: primary, name: headline, description: p.description ? String(p.description).slice(0, 90) : undefined, picture: photo };
+  // F3: arte do Estúdio (se houver e passar no Revisor) substitui a foto crua do cardápio.
+  let arteUsada: { creative_id: string; image_hash: string } | null = null; let arteRecusa: string | null = null;
+  const arte = ((p.artes as ArteRef[] | undefined) ?? [])[0];
+  if (arte) {
+    const rev = await revisarArte(admin, tenantId, arte.creative_id);
+    if (!rev.ok) arteRecusa = rev.motivo;
+    else {
+      const img = await subirImagem(graphPost, graphErr, token, adAccountId, rev.png);
+      if ('erro' in img) arteRecusa = img.erro;
+      else { arteUsada = { creative_id: arte.creative_id, image_hash: img.hash }; delete linkData.picture; linkData.image_hash = img.hash; }
+    }
+    if (arteRecusa) log('WARN', 'arte do Estúdio não usada; vai a foto do cardápio', { tenantId, arte: arte.creative_id, motivo: arteRecusa });
+  }
   if (objetivo === 'whatsapp') {
     linkData.link = whatsappLink(wa!, `Oi! Vi o anúncio do ${ctx.store.name} e quero pedir.`);
     linkData.call_to_action = { type: 'WHATSAPP_MESSAGE', value: { app_destination: 'WHATSAPP' } };
@@ -492,15 +506,17 @@ async function createCampaign(token: string, adAccountId: string, s: Settings, c
   const ad = await graphPost(`${adAccountId}/ads`, { name: `${name} · ${String(p.item_name || 'anúncio').slice(0, 40)}`, adset_id: adsetId, creative: { creative_id: creativeId }, status: 'PAUSED' }, token);
   if (!ad.ok) return { ok: false, result: { step: 'ad', campaign_id: campaignId, adset_id: adsetId, creative_id: creativeId }, error: graphErr(ad.body) };
   const adId = String(ad.body.id);
+  if (arteUsada) await marcarPublicada(admin, tenantId, arteUsada.creative_id, { image_hash: arteUsada.image_hash, creative_id: creativeId, ad_id: adId }, quem);
   // Tudo criado pausado; ativa em ordem (campanha por último) para não entregar antes de existir anúncio.
   for (const id of [adId, adsetId, campaignId]) {
     const r = await graphPost(id, { status: 'ACTIVE' }, token);
     if (!r.ok) return { ok: false, result: { campaign_id: campaignId, adset_id: adsetId, creative_id: creativeId, ad_id: adId, activated_until: id }, error: `Criado, mas não ativou: ${graphErr(r.body)}` };
   }
-  return { ok: true, result: { campaign_id: campaignId, adset_id: adsetId, creative_id: creativeId, ad_id: adId, daily_budget: budget, radius_km: radius, objective, link: linkData.link, photo } };
+  return { ok: true, result: { campaign_id: campaignId, adset_id: adsetId, creative_id: creativeId, ad_id: adId, daily_budget: budget, radius_km: radius, objective, link: linkData.link,
+    photo: arteUsada ? null : photo, arte_estudio: arteUsada?.creative_id ?? null, arte_recusada: arteRecusa } };
 }
 
-async function executeAction(admin: SupabaseClient, tenantId: string, action: Row, s: Settings): Promise<ExecResult> {
+async function executeAction(admin: SupabaseClient, tenantId: string, action: Row, s: Settings, quem = 'Agente'): Promise<ExecResult> {
   const { data: conn } = await admin.from('meta_ad_connections').select('access_token, ad_account_id').eq('tenant_id', tenantId).maybeSingle();
   if (!conn?.access_token || !conn.ad_account_id) return { ok: false, result: {}, error: 'Loja não conectada à Meta.' };
   const token = String(conn.access_token); const acct = String(conn.ad_account_id);
@@ -520,9 +536,13 @@ async function executeAction(admin: SupabaseClient, tenantId: string, action: Ro
   }
   if (kind === 'create_campaign') {
     const ctx = await erposContext(admin, tenantId);
-    return createCampaign(token, acct, s, ctx, p);
+    return createCampaign(admin, tenantId, token, acct, s, ctx, p, quem);
   }
-  if (kind === 'rotate_creative' || kind === 'alert') return { ok: true, result: { note: 'Registrado para o dono providenciar.' } };
+  if (kind === 'rotate_creative') {
+    if (!/^\d{5,30}$/.test(id)) return { ok: false, result: {}, error: 'Alvo inválido.' };
+    return trocarCriativo(admin, graphGet, graphPost, graphErr, token, acct, tenantId, id, (p.artes as ArteRef[] | undefined) ?? [], quem);
+  }
+  if (kind === 'alert') return { ok: true, result: { note: 'Registrado para o dono providenciar.' } };
   return { ok: false, result: {}, error: `Ação desconhecida: ${kind}` };
 }
 
@@ -591,6 +611,25 @@ async function shadowRun(admin: SupabaseClient, tenantId: string, realRunId: str
   }
 }
 
+// ─── F3: pedido de arte ao Estúdio ───────────────────────────────────────────
+// create_campaign → 1 arte feed 4:5 do prato escolhido pela IA (photo_url). rotate_creative → 2
+// artes feed 4:5 de pratos diferentes (os melhores da Biblioteca). Só gera: publicar é a execução
+// da ação (aprovação do dono ou autônomo), depois do Revisor. Falha do Estúdio não derruba a rodada.
+async function prepararArtes(tenantId: string, runId: string, final: Row[], ctx: Ctx) {
+  for (const a of final) {
+    const p = (a.params ?? {}) as Row;
+    if (a.kind === 'create_campaign') {
+      const r = await pedirArtes(tenantId, { templates: ['feed_4x5_foto_faixa'], photoUrl: p.photo_url ? String(p.photo_url) : (ctx.featured[0]?.photo_url ?? null), ref: `run:${runId}` });
+      a.params = { ...p, artes: r.artes, arte_erro: r.artes.length ? null : r.erro };
+    } else if (a.kind === 'rotate_creative') {
+      const r1 = await pedirArtes(tenantId, { templates: ['feed_4x5_foto_faixa'], ref: `run:${runId}` });
+      const r2 = await pedirArtes(tenantId, { templates: ['feed_4x5_foto_faixa'], evitarItemIds: r1.artes.map((x) => x.item_id).filter(Boolean) as string[], ref: `run:${runId}` });
+      const artes = [...r1.artes, ...r2.artes];
+      a.params = { ...p, artes, arte_erro: artes.length ? null : (r1.erro ?? r2.erro) };
+    }
+  }
+}
+
 // ─── Rodada completa de uma loja ─────────────────────────────────────────────
 async function runForTenant(admin: SupabaseClient, tenantId: string, trigger: 'manual' | 'cron' | 'assistente', force = false) {
   const s = await loadSettings(admin, tenantId);
@@ -623,13 +662,14 @@ async function runForTenant(admin: SupabaseClient, tenantId: string, trigger: 'm
     const model = s.model ?? DEFAULT_MODEL;
     const ai = await askModel(payload, model, { admin, tenantId, feature: 'trafego-meta-ads', ref: runId });
     const final = guardrails(ai.out, candidates, i7, s, tenantId, runId);
+    await prepararArtes(tenantId, runId, final, ctx);
 
     // Modo autônomo: executa o que é seguro; criar campanha só com autonomia_criar.
     let executed = 0;
     const autoOk = (a: Row) => s.mode === 'autonomo' && (a.kind === 'pause' || a.kind === 'resume' || a.kind === 'set_budget' || (a.kind === 'create_campaign' && s.autonomia_criar));
     for (const a of final) {
       if (autoOk(a)) {
-        const r = await executeAction(admin, tenantId, a, s);
+        const r = await executeAction(admin, tenantId, a, s, 'Agente (autônomo)');
         Object.assign(a, { auto: true, status: r.ok ? 'executada' : 'falhou', executed_at: new Date().toISOString(), result: r.result, error: r.error ?? null, decided_by_name: 'Agente (autônomo)', decided_at: new Date().toISOString() });
         if (r.ok) executed += 1;
       }
@@ -729,7 +769,7 @@ Deno.serve(async (req: Request) => {
       if (body.status) q = q.eq('status', String(body.status));
       const { data, error } = await q;
       if (error) return json({ success: false, error: error.message }, 500);
-      return json({ success: true, actions: data ?? [] });
+      return json({ success: true, actions: await urlsDasArtes(admin, tenantId, (data ?? []) as Row[]) });
     }
 
     if (action === 'decide') {
@@ -744,7 +784,7 @@ Deno.serve(async (req: Request) => {
         return json({ success: true, status: 'rejeitada' });
       }
       const s = await loadSettings(admin, tenantId);
-      const r = await executeAction(admin, tenantId, a as Row, s);
+      const r = await executeAction(admin, tenantId, a as Row, s, auth.name || 'Dono');
       const status = r.ok ? 'executada' : 'falhou';
       await admin.from('meta_agent_actions').update({ status, ...who, executed_at: new Date().toISOString(), result: r.result, error: r.error ?? null }).eq('id', actionId);
       return json({ success: r.ok, status, result: r.result, error: r.error ?? null });

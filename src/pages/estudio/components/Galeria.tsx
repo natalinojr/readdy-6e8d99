@@ -21,6 +21,7 @@ const FILTROS: { id: CreativeStatus | 'todas'; label: string }[] = [
   { id: 'rascunho', label: 'Rascunho' },
   { id: 'aprovada', label: 'Aprovada' },
   { id: 'reprovada', label: 'Reprovada' },
+  { id: 'publicada', label: 'No anúncio' },
 ];
 
 export default function GaleriaTab({ tenantId, creatives, loading, error, isManager, onChanged, onDeleted }: Props) {
@@ -83,7 +84,7 @@ export default function GaleriaTab({ tenantId, creatives, loading, error, isMana
               <div className="p-2.5 flex-1 flex flex-col gap-1">
                 <p className="text-xs font-bold text-zinc-800 truncate">{c.item_name ?? '—'}</p>
                 <p className="text-[10px] text-zinc-400">{FORMATO_LABEL[c.formato] ?? c.formato}</p>
-                <p className="text-[10px] text-zinc-400">{dataHora(c.created_at)}{c.created_by_name ? ` · ${c.created_by_name}` : ''}</p>
+                <p className="text-[10px] text-zinc-400">{dataHora(c.created_at)}{c.origem === 'trafego' ? ' · pedida pelo Tráfego Pago' : c.created_by_name ? ` · ${c.created_by_name}` : ''}</p>
                 <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
                   <a href={c.url} download className="inline-flex items-center justify-center w-7 h-7 rounded-lg bg-zinc-100 text-zinc-600 hover:bg-zinc-200 cursor-pointer" title="Baixar">
                     <Download size={13} />

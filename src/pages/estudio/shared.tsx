@@ -73,7 +73,7 @@ export interface LibItem {
   analise: { pontos_fortes?: string[]; problemas?: string[]; serve_para_anuncio?: boolean } | null;
 }
 
-export type CreativeStatus = 'rascunho' | 'aprovada' | 'reprovada';
+export type CreativeStatus = 'rascunho' | 'aprovada' | 'reprovada' | 'publicada';
 
 export interface Creative {
   id: string;
@@ -95,11 +95,13 @@ export const STATUS_LABEL: Record<CreativeStatus, string> = {
   rascunho: 'Rascunho',
   aprovada: 'Aprovada',
   reprovada: 'Reprovada',
+  publicada: 'No anúncio',
 };
 export const STATUS_CLS: Record<CreativeStatus, string> = {
   rascunho: 'bg-zinc-100 text-zinc-500 border-zinc-200',
   aprovada: 'bg-emerald-50 text-emerald-700 border-emerald-200',
   reprovada: 'bg-red-50 text-red-600 border-red-200',
+  publicada: 'bg-sky-50 text-sky-700 border-sky-200',
 };
 
 export const FORMATO_LABEL: Record<string, string> = {

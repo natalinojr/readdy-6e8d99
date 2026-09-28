@@ -401,17 +401,19 @@ Deno.serve(async (req: Request) => {
       if (!podeEscrever) return soGerente();
       const status = String(body.status ?? '');
       if (!['aprovada', 'reprovada', 'rascunho'].includes(status)) return json({ success: false, error: 'status inválido' }, 400);
+      // Arte já no anúncio não volta para rascunho/aprovação (os ids da Meta ficam registrados).
       const { data, error } = await admin.from('studio_creatives').update({ status, decided_by_name: userName, decided_at: new Date().toISOString() })
-        .eq('tenant_id', tenantId).eq('id', String(body.creative_id ?? '')).select('*').maybeSingle();
+        .eq('tenant_id', tenantId).eq('id', String(body.creative_id ?? '')).neq('status', 'publicada').select('*').maybeSingle();
       if (error) return json({ success: false, error: error.message }, 500);
-      if (!data) return json({ success: false, error: 'Arte não encontrada' }, 404);
+      if (!data) return json({ success: false, error: 'Arte não encontrada ou já está em anúncio' }, 404);
       return json({ success: true, creative: { ...data, url: await signed(admin, String(data.image_path)) } });
     }
 
     if (action === 'delete_creative') {
       if (!podeEscrever) return soGerente();
-      const { data } = await admin.from('studio_creatives').select('image_path').eq('tenant_id', tenantId).eq('id', String(body.creative_id ?? '')).maybeSingle();
+      const { data } = await admin.from('studio_creatives').select('image_path, status').eq('tenant_id', tenantId).eq('id', String(body.creative_id ?? '')).maybeSingle();
       if (!data) return json({ success: false, error: 'Arte não encontrada' }, 404);
+      if (data.status === 'publicada') return json({ success: false, error: 'Esta arte está num anúncio; não dá para excluir.' }, 409);
       await admin.storage.from(BUCKET).remove([String(data.image_path)]);
       await admin.from('studio_creatives').delete().eq('tenant_id', tenantId).eq('id', String(body.creative_id));
       return json({ success: true });

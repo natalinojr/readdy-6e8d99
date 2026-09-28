@@ -243,10 +243,10 @@ Integração no cardápio: botão "Gerar arte/foto padronizada" no item, que abr
 | Fase | Entrega | Depende de |
 |---|---|---|
 | **F0** | ✅ **Feito em 2026-09-27** (migração aplicada, função publicada v13, tela na branch): modelo configurável por loja + **modo sombra**; custo por rodada e quadro real × sombra na aba Agente. Falta: ligar a sombra na El Patrón e acompanhar 1–2 semanas; enxugar o payload | nada |
-| **F1** | **Kit da Marca** (questionário + pré-preenchimento por IA) + Biblioteca com nota das fotos do cardápio + **ligar pasta do OneDrive** (reusa `ms-graph`) | nada |
+| **F1** | ✅ **No ar 2026-09-28** (sem OneDrive ainda). **Kit da Marca** (questionário + pré-preenchimento por IA) + Biblioteca com nota das fotos do cardápio + **ligar pasta do OneDrive** (reusa `ms-graph`) | nada |
 | **F1b** | Google Drive / Dropbox / posts do Instagram como banco de imagens | F1 |
-| **F2** | **Estúdio v1**: 4–6 modelos de arte (feed, story, item padronizado, promoção), Diretor de Arte (Sonnet), renderização no servidor, galeria com aprovar/baixar | F1 |
-| **F3** | Ligar Tráfego → Estúdio: `rotate_creative`/`create_campaign` geram pedido de arte; **Revisor** antes de subir; subir criativo novo no conjunto | F2 + permissões `ads_management`/`pages_manage_ads` |
+| **F2** | ✅ **No ar 2026-09-28** (4 modelos, sem Diretor de Arte por IA ainda). **Estúdio v1**: 4–6 modelos de arte (feed, story, item padronizado, promoção), Diretor de Arte (Sonnet), renderização no servidor, galeria com aprovar/baixar | F1 |
+| **F3** | ✅ **Código no ar em 2026-09-28** (sem subida real na Meta ainda): `rotate_creative`/`create_campaign` pedem arte ao Estúdio (`request_creative`) na rodada; a sugestão mostra as artes; ao aprovar, **Revisor** em código (arte existe, não reprovada, item ativo, preço da arte = cardápio) → `/adimages` → criativo novo. Falta: 1º teste real numa conta com `ads_management` e Revisor visual (Haiku) | F2 + permissões `ads_management`/`pages_manage_ads` |
 | **F4** | **Monitor** 3/3h + **Analista de Resultados** (arte ↔ resultado ↔ pedidos ERPOS) + relatório semanal | F3 |
 | **F4b** | **Manual do gestor** v1 por pesquisa profunda na web (fontes hierarquizadas) + agente Pesquisador mensal + teste do Estrategista com o passado da El Patrón | pode começar já, em paralelo |
 | **F5a** | **Inteligência da loja**: fatos por canal (balcão, mesa, autoatendimento, delivery próprio, iFood, retirada) + margem + estoque + clientes; relatório semanal "oportunidades" só para leitura | nada (pode vir antes, em paralelo à F1) |
