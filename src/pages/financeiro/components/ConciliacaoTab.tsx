@@ -491,17 +491,30 @@ export default function ConciliacaoTab() {
   const shiftISO = (iso: string, n: number) => {
     const d = new Date(`${iso}T12:00:00Z`); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10);
   };
-  // Repasse da Stone que já caiu no banco mas ainda não casou: o arquivo de conciliação da Stone
-  // de um dia só sai no dia seguinte (~07h15, cron + abertura da tela). Até lá o crédito fica
-  // pendente por ordem natural das coisas, não por erro — a linha avisa. Passado esse prazo,
-  // some o aviso: aí sim é pendência de verdade (2026-09-28).
-  const aguardandoStone = (s: StatementImport): string | null => {
-    if (!usaStone || s.transaction_type !== 'credit' || s.match_kind || s.reconciled || s.status !== 'pending') return null;
-    const alvo = (cardProviders.find(p => p.provider === 'stone')?.deposit_match || 'stone').toLowerCase();
-    if (!(s.description ?? '').toLowerCase().includes(alvo)) return null;
+  // Repasse da maquininha que já caiu no banco mas ainda não casou: o arquivo da Stone e o
+  // relatório de liberações do Mercado Pago de um dia só saem no dia seguinte (~07h, cron +
+  // abertura da tela). Até lá o crédito fica sem casar pela ordem natural das coisas — a linha
+  // avisa. Passado esse prazo o aviso some: aí é pendência de verdade (2026-09-28).
+  // O saque do MP chega como Pix do próprio CNPJ ("Pix recebido - Ep Par Mall Ltda"): o nome do
+  // MP só vem em raw.detalhes.nomeEmpresaPagador, e até casar a regra de transferência entre
+  // contas o marca internal_transfer (fn_match_mp_payouts depois troca para card_deposit).
+  const aguardandoMaquininha = (s: StatementImport): string | null => {
+    if (s.transaction_type !== 'credit' || s.reconciled || s.match_group) return null;
     const hoje = hojeBR();
-    if (s.transaction_date >= hoje) return 'Aguardando o arquivo da Stone, que sai amanhã de manhã (~07h). Concilia sozinho, não é erro.';
-    if (s.transaction_date === shiftISO(hoje, -1)) return 'Aguardando o arquivo da Stone, que sai hoje de manhã (~07h). Concilia sozinho, não é erro.';
+    const quando = s.transaction_date >= hoje ? 'amanhã' : s.transaction_date === shiftISO(hoje, -1) ? 'hoje' : null;
+    if (!quando) return null;
+    const pendente = !s.match_kind && s.status === 'pending';
+    const texto = [s.description, s.counterpart_name].filter(Boolean).join(' ').toLowerCase();
+    // Pagador só vale no Pix do próprio CNPJ: cliente pagando pela conta dele no MP também
+    // traz "MERCADO PAGO" como instituição pagadora.
+    const pagador = String(((s.raw?.detalhes ?? {}) as Record<string, unknown>).nomeEmpresaPagador ?? '').toLowerCase();
+    const alvo = (provider: 'stone' | 'mercadopago', padrao: string) =>
+      (cardProviders.find(p => p.provider === provider)?.deposit_match || padrao).toLowerCase();
+    if (usaStone && pendente && texto.includes(alvo('stone', 'stone')))
+      return `Aguardando o arquivo da Stone, que sai ${quando} de manhã (~07h). Concilia sozinho.`;
+    const mp = alvo('mercadopago', 'mercado pago');
+    if (usaMp && ((pendente && texto.includes(mp)) || (s.match_kind === 'internal_transfer' && pagador.includes(mp))))
+      return `Saque do Mercado Pago: aguardando o relatório do Mercado Pago, que sai ${quando} de manhã (~07h). Concilia sozinho.`;
     return null;
   };
   const [periodFrom, setPeriodFrom] = useState(() => shiftISO(hojeBR(), -30));
@@ -1683,7 +1696,7 @@ export default function ConciliacaoTab() {
                           </p>
                         )}
                         {s.notes && <p className="text-xs text-amber-500 mt-0.5 break-words line-clamp-1"><i className="ri-sticky-note-line text-xs" /> {s.notes}</p>}
-                        {aguardandoStone(s) && <p className="text-xs text-sky-600 mt-0.5 break-words line-clamp-2"><i className="ri-time-line text-xs" /> {aguardandoStone(s)}</p>}
+                        {aguardandoMaquininha(s) && <p className="text-xs text-sky-600 mt-0.5 break-words line-clamp-2"><i className="ri-time-line text-xs" /> {aguardandoMaquininha(s)}</p>}
                         <div className="flex items-center gap-1.5 flex-wrap mt-2">
                           <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold ${cfg.color}`}>
                             <i className={`${cfg.icon} text-xs`} />{cfg.label}
@@ -1780,8 +1793,8 @@ export default function ConciliacaoTab() {
                         {s.notes && (
                           <p className="text-xs text-amber-500 mt-0.5 truncate"><i className="ri-sticky-note-line text-xs" /> {s.notes}</p>
                         )}
-                        {aguardandoStone(s) && (
-                          <p className="text-xs text-sky-600 mt-0.5 truncate" title={aguardandoStone(s) ?? ''}><i className="ri-time-line text-xs" /> {aguardandoStone(s)}</p>
+                        {aguardandoMaquininha(s) && (
+                          <p className="text-xs text-sky-600 mt-0.5 truncate" title={aguardandoMaquininha(s) ?? ''}><i className="ri-time-line text-xs" /> {aguardandoMaquininha(s)}</p>
                         )}
                         {s.match_detail && (s.match_kind === 'payable' || s.match_kind === 'inbound_doc' || s.match_kind === 'payroll' || s.match_kind === 'rule') && (
                           <p className={'text-xs mt-0.5 truncate ' + (s.reconciled ? 'text-emerald-600' : 'text-blue-600')}>
