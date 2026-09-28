@@ -1,13 +1,14 @@
 // Pedidos de pagamento da loja (reembolso, freelancer, fornecedor sem nota) — 2026-09-24.
+// Compra online (2026-09-28): link do produto → dono autoriza e compra na conta da loja; sem conta a pagar.
 // Usado pela Edge pedidos-pagamento e pela receber-mercadoria ("Paguei do meu bolso" no recebimento).
 // Regra do dono: o pedido só vira conta a pagar depois que ele aprova (fn_pedido_pagamento_aprovar).
 // deno-lint-ignore-file no-explicit-any
 
-export type TipoPedido = 'reembolso' | 'freelancer' | 'fornecedor';
-export type PermPedido = 'pag_reembolso' | 'pag_freelancer' | 'pag_fornecedor' | 'pag_aprovar';
+export type TipoPedido = 'reembolso' | 'freelancer' | 'fornecedor' | 'compra_online';
+export type PermPedido = 'pag_reembolso' | 'pag_freelancer' | 'pag_fornecedor' | 'pag_compra_online' | 'pag_aprovar';
 
 export const PERM_DO_TIPO: Record<TipoPedido, PermPedido> = {
-  reembolso: 'pag_reembolso', freelancer: 'pag_freelancer', fornecedor: 'pag_fornecedor',
+  reembolso: 'pag_reembolso', freelancer: 'pag_freelancer', fornecedor: 'pag_fornecedor', compra_online: 'pag_compra_online',
 };
 export const BUCKET_PEDIDOS = 'pedidos-pagamento';
 
@@ -26,7 +27,7 @@ function padrao(role: string, key: PermPedido): boolean {
 
 /** Permissões de pedido de pagamento do papel na loja. Admin tem todas (o dono aprova). */
 export async function permissoesPedido(admin: any, tenantId: string, role: string): Promise<Record<PermPedido, boolean>> {
-  const keys: PermPedido[] = ['pag_reembolso', 'pag_freelancer', 'pag_fornecedor', 'pag_aprovar'];
+  const keys: PermPedido[] = ['pag_reembolso', 'pag_freelancer', 'pag_fornecedor', 'pag_compra_online', 'pag_aprovar'];
   const papel = PT_PARA_EN[role] ?? role;
   const out = Object.fromEntries(keys.map((k) => [k, padrao(papel, k)])) as Record<PermPedido, boolean>;
   if (papel === 'admin') return out;
@@ -56,7 +57,7 @@ export async function salvarComprovante(admin: any, tenantId: string, ref: strin
 }
 
 const brl = (n: number) => `R$ ${Number(n).toFixed(2).replace('.', ',').replace(/\B(?=(\d{3})+(?!\d))/g, '.')}`;
-const ROTULO: Record<TipoPedido, string> = { reembolso: 'Reembolso', freelancer: 'Freelancer', fornecedor: 'Fornecedor sem nota' };
+const ROTULO: Record<TipoPedido, string> = { reembolso: 'Reembolso', freelancer: 'Freelancer', fornecedor: 'Fornecedor sem nota', compra_online: 'Compra online' };
 
 const SEMANA = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
 /** '2026-09-26' → '26/09 (sáb)'. */
@@ -78,7 +79,7 @@ export async function pendenciaDoPedido(admin: any, p: { id: string; tenant_id: 
   const { error } = await admin.rpc('fn_pendencia_upsert', {
     p_tenant: p.tenant_id, p_kind: 'pedido_pagamento', p_ref: p.id,
     p_titulo: `${ROTULO[p.tipo]} de ${brl(p.valor)} — ${p.favorecido_nome}`,
-    p_detalhe: `${p.descricao.replace(/\.$/, '')}.${dias ? ` ${dias}.` : ''} Pedido por ${p.solicitado_por_nome ?? 'alguém da loja'}. Só vira conta a pagar depois de aprovado.`,
+    p_detalhe: `${p.descricao.replace(/\.$/, '')}.${dias ? ` ${dias}.` : ''} Pedido por ${p.solicitado_por_nome ?? 'alguém da loja'}. ${p.tipo === 'compra_online' ? 'Autorizar e comprar na conta da loja (a nota do vendedor vira a compra).' : 'Só vira conta a pagar depois de aprovado.'}`,
     p_payload: { pedido_id: p.id, tipo: p.tipo, valor: p.valor, ...(p.dias?.length ? { dias: p.dias } : {}) },
     p_rota: '/receber?aprovar=1', p_urgencia: 'normal', p_acao_requerida: true, p_origem: 'app', p_reabrir: false,
   });
@@ -93,4 +94,33 @@ export async function fecharPendencia(admin: any, tenantId: string, pedidoId: st
 export async function nomeDoUsuario(admin: any, userId: string, email: string | null): Promise<string> {
   const { data } = await admin.from('users').select('name').eq('id', userId).maybeSingle();
   return String(data?.name ?? '').trim() || (email ?? '').split('@')[0] || 'alguém da loja';
+}
+
+// ── Compra online: o link colado (2026-09-28) ──
+// O app do Mercado Livre compartilha "Olha o que encontrei… <título> https://…" — vale o 1º link do texto.
+// A API do ML não lê anúncio com o token da loja (403), então nome e nº saem do próprio endereço.
+const SITES: [RegExp, string][] = [
+  [/(^|\.)mercadoli(vre|bre)\.com(\.br)?$/, 'Mercado Livre'], [/(^|\.)mercadopago\.com(\.br)?$/, 'Mercado Pago'],
+  [/(^|\.)shopee\.com\.br$/, 'Shopee'], [/(^|\.)amazon\.com(\.br)?$/, 'Amazon'], [/(^|\.)amzn\.to$/, 'Amazon'],
+  [/(^|\.)(magazineluiza|magalu)\.com(\.br)?$/, 'Magalu'], [/(^|\.)aliexpress\.com$/, 'AliExpress'],
+];
+export function lerLinkCompra(texto: string): { url: string; site: string; anuncio_id: string | null; titulo: string | null } | null {
+  const m = String(texto ?? '').match(/https?:\/\/[^\s<>"']+/i);
+  if (!m) return null;
+  let u: URL;
+  try { u = new URL(m[0].replace(/[).,;!?]+$/, '')); } catch { return null; }
+  const host = u.hostname.toLowerCase();
+  const site = SITES.find(([re]) => re.test(host))?.[1] ?? host.replace(/^www\./, '');
+  const id = u.pathname.match(/MLB-?(\d{6,})/i);
+  const anuncio_id = id ? `MLB${id[1]}` : null;
+  // Título: texto antes do link (compartilhar do app) ou o "slug" do endereço
+  const antes = String(texto).slice(0, m.index).replace(/^.*?(encontrei|achei)[^!:\n]*[!:]?\s*/i, '').replace(/[\s:–—-]+$/, '').trim();
+  const partes = u.pathname.split('/').filter(Boolean);
+  const depoisDoId = id ? u.pathname.split(/MLB-?\d{6,}-?/i)[1]?.split('/')[0] ?? '' : '';
+  const slug = depoisDoId || partes.find((p) => /[a-z]-[a-z]/i.test(p)) || '';
+  let doSlug = '';
+  try { doSlug = decodeURIComponent(slug); } catch { doSlug = slug; }
+  doSlug = doSlug.replace(/[-_]+JM$/i, '').replace(/-i\.\d+\.\d+$/, '').replace(/[-_]+/g, ' ').trim();
+  const titulo = (antes.length >= 4 ? antes : doSlug).slice(0, 200) || null;
+  return { url: u.toString(), site, anuncio_id, titulo: titulo ? titulo.charAt(0).toUpperCase() + titulo.slice(1) : null };
 }

@@ -94,10 +94,10 @@ export default function ReceberPage() {
   useEffect(() => {
     const pedido = params.get('pedido');
     const alvo: Tela | null = pedido === 'reembolso' ? 'reembolso_o_que'
-      : pedido === 'freelancer' || pedido === 'fornecedor' ? 'pedido'
+      : pedido === 'freelancer' || pedido === 'fornecedor' || pedido === 'compra_online' ? 'pedido'
       : params.get('aprovar') ? 'aprovar' : params.get('meus') ? 'meus' : null;
     if (!alvo) return;
-    if (pedido === 'freelancer' || pedido === 'fornecedor') setTipoPedido(pedido);
+    if (pedido === 'freelancer' || pedido === 'fornecedor' || pedido === 'compra_online') setTipoPedido(pedido);
     setErro(null); setR(null); setTela(alvo);
     setParams({}, { replace: true });
   }, [params, setParams]);
@@ -324,11 +324,11 @@ export default function ReceberPage() {
     resumo: 'Confirmar recebimento', gravando: 'Confirmando…', feito: 'Pronto', sem_nota_pergunta: 'Chegou sem nota',
     sem_nota: 'Chegou sem nota', aguardando: 'Nota vem depois', nao_achou: 'Nota não encontrada', duplicado: 'Já lançado',
     busca: 'Resultado da busca', digitar: 'Digitar a nota', parecidas: 'Já lançado?',
-    reembolso_o_que: 'Pedir reembolso', pedido: `Pedir pagamento · ${ROTULO_TIPO[tipoPedido]}`, pedido_ok: 'Pedido enviado',
+    reembolso_o_que: 'Pedir reembolso', pedido: tipoPedido === 'compra_online' ? 'Pedir compra online' : `Pedir pagamento · ${ROTULO_TIPO[tipoPedido]}`, pedido_ok: 'Pedido enviado',
     meus: 'Meus pedidos', aprovar: 'Aprovar pedidos',
   };
   const perms = ctxPed?.perms;
-  const podePedir = !!perms && (perms.pag_reembolso || perms.pag_freelancer || perms.pag_fornecedor);
+  const podePedir = !!perms && (perms.pag_reembolso || perms.pag_freelancer || perms.pag_fornecedor || !!perms.pag_compra_online);
 
   const lista = useMemo(() => {
     const q = normalizar(filtro);
@@ -381,7 +381,7 @@ export default function ReceberPage() {
                 <i className="ri-checkbox-multiple-line text-3xl" />
                 <div className="flex-1">
                   <p className="text-[15px] font-bold">{ctxPed!.para_aprovar} pedido{ctxPed!.para_aprovar > 1 ? 's' : ''} de pagamento para aprovar</p>
-                  <p className="text-xs text-white/85">Reembolso, freelancer ou fornecedor sem nota</p>
+                  <p className="text-xs text-white/85">Reembolso, freelancer, fornecedor sem nota ou compra online</p>
                 </div>
                 <i className="ri-arrow-right-s-line text-2xl" />
               </button>
@@ -394,6 +394,7 @@ export default function ReceberPage() {
                   {perms!.pag_reembolso && <BotaoPedido icone="ri-refund-2-line" titulo="Reembolso" onClick={() => { setErro(null); setTela('reembolso_o_que'); }} />}
                   {perms!.pag_freelancer && <BotaoPedido icone="ri-user-star-line" titulo="Freelancer" onClick={() => abrirPedido('freelancer')} />}
                   {perms!.pag_fornecedor && <BotaoPedido icone="ri-store-2-line" titulo="Fornecedor sem nota" onClick={() => abrirPedido('fornecedor')} />}
+                  {perms!.pag_compra_online && <BotaoPedido icone="ri-shopping-cart-2-line" titulo="Compra online" onClick={() => abrirPedido('compra_online')} />}
                 </div>
                 <div className="mt-2.5 flex gap-2">
                   <button onClick={() => setTela('meus')} className="flex-1 py-3 rounded-2xl bg-white border border-zinc-100 text-sm font-semibold text-zinc-700 cursor-pointer">

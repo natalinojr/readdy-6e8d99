@@ -1,9 +1,11 @@
 // Formulário de pedido de pagamento: reembolso (despesa que não é mercadoria), freelancer e
 // fornecedor sem nota. Mercadoria paga do bolso NÃO vem aqui: vai pelo recebimento (entra no CMV).
+// Compra online (2026-09-28): a pessoa cola o link do produto; o dono autoriza e compra na conta da loja.
 import { useEffect, useMemo, useState } from 'react';
 import { brl, dataBR, hojeISO, normalizar, somaDias } from '../api';
 import { chamarPedidos, comprovanteParaEnvio, type Categoria, type ContextoPedidos, type Fornecedor, type Freela, type TipoPedido } from './api';
 import { Categorias, Chips, Comprovante, Enviar, Rotulo, Texto, Valor, cls, lerValor } from './ui';
+import { lerLinkCompra } from './linkCompra';
 
 interface Props {
   tipo: TipoPedido;
@@ -45,9 +47,16 @@ export default function NovoPedido({ tipo, tenantId, contexto, onEnviado, onErro
   const [busca, setBusca] = useState('');
   // Valor de cada dia trabalhado (dono, 2026-09-27): o total é a soma, o sistema calcula
   const [valoresDia, setValoresDia] = useState<Record<string, string>>({});
+  // compra online
+  const [link, setLink] = useState('');
+  const [quantidade, setQuantidade] = useState('1');
+  const anuncio = useMemo(() => (tipo === 'compra_online' ? lerLinkCompra(link) : null), [tipo, link]);
+  // Nome do produto vem do link; a pessoa pode corrigir (só preenche enquanto o campo não foi mexido)
+  const [descricaoMexida, setDescricaoMexida] = useState(false);
+  useEffect(() => { if (tipo === 'compra_online' && !descricaoMexida) setDescricao(anuncio?.titulo ?? ''); }, [tipo, anuncio, descricaoMexida]);
 
   useEffect(() => {
-    if (tipo !== 'freelancer') {
+    if (tipo !== 'freelancer' && tipo !== 'compra_online') {
       chamarPedidos<{ categorias: Categoria[] }>('categorias', tenantId).then(({ data, erro }) => { if (erro) onErro(erro); setCategorias(data?.categorias ?? []); });
     }
     if (tipo === 'freelancer') {
@@ -84,10 +93,15 @@ export default function NovoPedido({ tipo, tenantId, contexto, onEnviado, onErro
   const totalDias = Math.round(dias.reduce((s, d) => s + (lerValor(valoresDia[d] ?? '') || 0), 0) * 100) / 100;
   const diaSemValor = dias.find((d) => !(lerValor(valoresDia[d] ?? '') > 0));
   const v = tipo === 'freelancer' ? totalDias : lerValor(valor);
-  const precisaPix = tipo === 'reembolso' || (tipo === 'fornecedor' && !fornecedor?.tem_pix) || (tipo === 'freelancer' && !freela?.tem_pix);
+  const precisaPix = tipo === 'compra_online' ? false : tipo === 'reembolso' || (tipo === 'fornecedor' && !fornecedor?.tem_pix) || (tipo === 'freelancer' && !freela?.tem_pix);
   const faltando = (() => {
     if (tipo === 'freelancer' && diaSemValor) return `Informe o valor de ${dataBR(diaSemValor).slice(0, 5)}`;
-    if (!(v > 0)) return 'Informe o valor';
+    if (tipo === 'compra_online') {
+      if (!anuncio) return 'Cole o link do produto';
+      if (!descricao.trim()) return 'Diga o que é o produto';
+      if (!(lerValor(quantidade) > 0)) return 'Informe a quantidade';
+    }
+    if (!(v > 0)) return tipo === 'compra_online' ? 'Informe o valor total (com frete)' : 'Informe o valor';
     if (tipo === 'reembolso') {
       if (!descricao.trim()) return 'Conte o que foi comprado';
       if (!dre) return 'Escolha a classificação';
@@ -117,6 +131,7 @@ export default function NovoPedido({ tipo, tenantId, contexto, onEnviado, onErro
         favorecido_nome: nome, favorecido_doc: doc, pix_chave: pix,
         data_gasto: dataGasto, supplier_id: fornecedorId, vencimento,
         freelancer_id: freelaId, funcao, dias,
+        link: tipo === 'compra_online' ? link : undefined, quantidade: tipo === 'compra_online' ? lerValor(quantidade) : undefined,
         valores_dia: tipo === 'freelancer' ? Object.fromEntries(dias.map((d) => [d, lerValor(valoresDia[d] ?? '')])) : undefined,
       });
       if (erro) { onErro(erro); return; }
@@ -260,6 +275,31 @@ export default function NovoPedido({ tipo, tenantId, contexto, onEnviado, onErro
         </>
       )}
 
+      {tipo === 'compra_online' && (
+        <>
+          <div>
+            <Rotulo dica="No app do Mercado Livre: Compartilhar › Copiar link. Pode colar o texto todo.">Link do produto</Rotulo>
+            <textarea rows={2} value={link} onChange={(e) => setLink(e.target.value)} placeholder="https://www.mercadolivre.com.br/…" className={cls} />
+            {link.trim() && !anuncio && <p className="text-xs text-red-600 px-1 mt-1">Não achei um link aqui. Copie o link do produto e cole de novo.</p>}
+            {anuncio && (
+              <div className="mt-2 flex items-center gap-3 bg-amber-50 border-2 border-amber-300 rounded-2xl px-4 py-3">
+                <i className="ri-shopping-cart-2-line text-2xl text-amber-600" />
+                <div className="flex-1 min-w-0">
+                  <p className="font-bold text-zinc-800 truncate">{anuncio.site}</p>
+                  <p className="text-xs text-zinc-500 truncate">{anuncio.anuncio_id ?? anuncio.url}</p>
+                </div>
+                <a href={anuncio.url} target="_blank" rel="noreferrer" className="text-sm font-semibold text-amber-700">Abrir</a>
+              </div>
+            )}
+          </div>
+          <Texto label="O que é?" valor={descricao} onValor={(x) => { setDescricaoMexida(true); setDescricao(x); }} placeholder="Ex.: pegador de massa inox 30 cm" />
+          <Texto label="Quantidade" valor={quantidade} onValor={(x) => setQuantidade(x.replace(/[^\d.,]/g, ''))} inputMode="decimal" />
+          <Valor label="Valor total (com frete)" valor={valor} onValor={setValor} />
+          <Comprovante arquivo={foto} onArquivo={setFoto} titulo="Print (opcional)" dica="Print do carrinho ou do anúncio, se ajudar" />
+          <p className="text-xs text-zinc-500 px-1">Não compre pela sua conta: o financeiro compra na conta da loja (CNPJ), e a nota do vendedor entra sozinha no sistema.</p>
+        </>
+      )}
+
       {tipo !== 'reembolso' && precisaPix && (
         <div className="bg-white rounded-3xl border border-zinc-100 p-4 space-y-3">
           <p className="text-sm font-bold text-zinc-700">Para onde vai o Pix</p>
@@ -268,8 +308,8 @@ export default function NovoPedido({ tipo, tenantId, contexto, onEnviado, onErro
         </div>
       )}
 
-      <Texto label="Observação (opcional)" valor={obs} onValor={setObs} multilinha placeholder="Algo que o financeiro precisa saber" />
-      <p className="text-xs text-zinc-500 px-1">O pedido vai para o financeiro aprovar. Só depois vira conta a pagar.</p>
+      <Texto label={tipo === 'compra_online' ? 'Para que é? (opcional)' : 'Observação (opcional)'} valor={obs} onValor={setObs} multilinha placeholder={tipo === 'compra_online' ? 'Ex.: o nosso quebrou; precisa até sexta' : 'Algo que o financeiro precisa saber'} />
+      <p className="text-xs text-zinc-500 px-1">{tipo === 'compra_online' ? 'O pedido vai para o financeiro autorizar e comprar.' : 'O pedido vai para o financeiro aprovar. Só depois vira conta a pagar.'}</p>
 
       <Enviar onClick={enviar} disabled={!!faltando || enviando}>
         {enviando ? 'Enviando…' : faltando ?? 'Enviar para aprovação'}

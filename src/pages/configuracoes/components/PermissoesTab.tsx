@@ -53,6 +53,8 @@ const permissoes: Permissao[] = [
   { id: 'pag_reembolso', categoria: 'Pedidos de pagamento', descricao: 'Pedir reembolso (gastou do próprio bolso)' },
   { id: 'pag_freelancer', categoria: 'Pedidos de pagamento', descricao: 'Pedir pagamento de freelancer' },
   { id: 'pag_fornecedor', categoria: 'Pedidos de pagamento', descricao: 'Pedir pagamento de fornecedor sem nota' },
+  // 2026-09-28: link do produto (Mercado Livre etc.) → o dono autoriza e compra na conta da loja
+  { id: 'pag_compra_online', categoria: 'Pedidos de pagamento', descricao: 'Pedir compra online (link do Mercado Livre, Shopee…)' },
   { id: 'pag_aprovar', categoria: 'Pedidos de pagamento', descricao: 'Aprovar pedidos de pagamento (vira conta a pagar)', somenteGerente: true },
   { id: 'kds_acessar', categoria: 'Cozinha', descricao: 'Acessar KDS (Display de Cozinha)' },
   { id: 'gestor_pedidos_acessar', categoria: 'Cozinha', descricao: 'Acessar Gestor de Pedidos' },
@@ -88,7 +90,7 @@ const defaultPermissoes: Record<Papel, string[]> = {
     'pdv_cancelar_pedido', 'pdv_cancelar_item', 'pdv_estornar_pagamento',
     'garcom_fechar_mesa', 'garcom_transferir_mesa', 'cardapio_editar',
     'estoque_movimentar', 'estoque_inventario', 'estoque_receber',
-    'pag_reembolso', 'pag_freelancer', 'pag_fornecedor',
+    'pag_reembolso', 'pag_freelancer', 'pag_fornecedor', 'pag_compra_online',
     'kds_acessar', 'gestor_pedidos_acessar', 'gestor_pedidos_entregar',
     'relatorio_financeiro', 'marketing_estudio', 'relatorio_estoque', 'clientes_ver', 'auditoria_ver',
     // Sem `configuracoes_editar`: as abas só valem se o dono abrir a tela para o Gerente.

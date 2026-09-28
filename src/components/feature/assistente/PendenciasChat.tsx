@@ -425,7 +425,7 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
             {ehPedido && (
               <>
                 <button onClick={() => aprovarEPagar(p)} disabled={busy} className={PRINCIPAL}>
-                  {busy ? 'Aprovando…' : <><i className="ri-check-line" /> Aprovar e pagar</>}
+                  {busy ? 'Aprovando…' : <><i className="ri-check-line" /> {p.payload?.tipo === 'compra_online' ? 'Autorizar compra' : 'Aprovar e pagar'}</>}
                 </button>
                 <button onClick={() => { setMotivoDe(p.id); setMotivo(''); }} disabled={busy} className={NEUTRO}>
                   <i className="ri-close-line" /> Recusar

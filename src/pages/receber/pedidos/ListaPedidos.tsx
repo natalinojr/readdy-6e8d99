@@ -1,9 +1,11 @@
 // "Meus pedidos" (quem pediu acompanha) e "Aprovar pedidos" (dono aprova ou recusa).
 // Aprovado vira conta a pagar em aberto; o Pix sai pelo caminho de sempre e a conciliação baixa.
+// Compra online (2026-09-28): aprovar só autoriza; o dono abre o link, compra na conta da loja e
+// registra em "Já comprei" (nº do pedido + quanto saiu). Sem conta a pagar: o custo vem da nota.
 import { useCallback, useEffect, useState } from 'react';
 import { brl, dataBR } from '../api';
 import { ICONE_TIPO, ROTULO_TIPO, chamarPedidos, situacao, type Categoria, type Pedido } from './api';
-import { Categorias } from './ui';
+import { Categorias, lerValor } from './ui';
 import JanelaPagamento, { type AvisoPagamento } from './JanelaPagamento';
 import { confirmar } from '@/components/base/Dialogos';
 
@@ -96,7 +98,7 @@ function Cabecalho({ p, mostrarQuem }: { p: Pedido; mostrarQuem?: boolean }) {
       <div className="min-w-0 flex-1">
         <div className="flex items-start justify-between gap-2">
           <p className="text-[15px] font-bold text-zinc-800 truncate">{p.favorecido_nome}</p>
-          <p className="text-[15px] font-black text-zinc-900 whitespace-nowrap">{brl(p.valor)}</p>
+          <p className="text-[15px] font-black text-zinc-900 whitespace-nowrap">{brl(p.valor_pago ?? p.valor)}</p>
         </div>
         <p className="text-sm text-zinc-600">{p.descricao}</p>
         <p className="text-xs text-zinc-400 mt-0.5">
@@ -118,6 +120,12 @@ function Detalhes({ p }: { p: Pedido }) {
   if (p.vencimento) linhas.push(['Vence', dataBR(p.vencimento)]);
   if (p.categoria) linhas.push(['Classificação', p.categoria]);
   if (p.favorecido_doc) linhas.push(['CPF/CNPJ', p.favorecido_doc]);
+  if (p.tipo === 'compra_online') {
+    if (p.quantidade) linhas.push(['Quantidade', String(p.quantidade).replace('.', ',')]);
+    if (p.anuncio_id) linhas.push(['Anúncio', p.anuncio_id]);
+    if (p.valor_pago != null) linhas.push(['Pedido de', brl(p.valor)]);
+    if (p.comprado_em) linhas.push(['Comprado', `${dataHora(p.comprado_em)}${p.comprado_por_nome ? ` · ${p.comprado_por_nome}` : ''}`]);
+  }
   if (p.obs) linhas.push(['Obs.', p.obs]);
   if (!linhas.length) return null;
   return (
@@ -221,6 +229,58 @@ function Pix({ chave }: { chave: string | null }) {
   );
 }
 
+function AbrirLink({ p }: { p: Pedido }) {
+  if (!p.link_url) return null;
+  return (
+    <a href={p.link_url} target="_blank" rel="noreferrer" className="mt-3 flex items-center gap-2 bg-zinc-50 rounded-2xl px-3 py-2.5 active:bg-zinc-100">
+      <i className="ri-external-link-line text-zinc-400" />
+      <span className="flex-1 min-w-0 text-sm text-zinc-700 truncate">Ver no <b>{p.favorecido_nome}</b></span>
+      <i className="ri-arrow-right-s-line text-zinc-400" />
+    </a>
+  );
+}
+
+/** Depois de comprar na conta da loja: nº do pedido no site e quanto saiu (com frete). */
+function JaComprei({ p, tenantId, onErro, onFeito }: { p: Pedido; tenantId: string; onErro: (m: string | null) => void; onFeito: () => void }) {
+  const [aberto, setAberto] = useState(false);
+  const [numero, setNumero] = useState('');
+  const [valor, setValor] = useState(p.valor.toFixed(2).replace('.', ','));
+  const [gravando, setGravando] = useState(false);
+  const v = lerValor(valor);
+  const gravar = async () => {
+    setGravando(true);
+    onErro(null);
+    const { erro } = await chamarPedidos('comprado', tenantId, { id: p.id, pedido_externo: numero, valor_pago: v });
+    setGravando(false);
+    if (erro) { onErro(erro); return; }
+    onFeito();
+  };
+  if (!aberto) {
+    return (
+      <button type="button" onClick={() => setAberto(true)} className="mt-3 w-full py-3 rounded-2xl bg-emerald-500 active:bg-emerald-600 text-white text-sm font-bold flex items-center justify-center gap-1.5 cursor-pointer">
+        <i className="ri-shopping-bag-3-line" /> Já comprei
+      </button>
+    );
+  }
+  const campo = 'w-full border-2 border-zinc-100 focus:border-emerald-300 rounded-2xl px-3 py-2.5 text-base outline-none';
+  return (
+    <div className="mt-3 space-y-2 bg-emerald-50/60 rounded-2xl p-3">
+      <label className="block text-xs font-semibold text-zinc-600">Nº do pedido no site (opcional)
+        <input value={numero} onChange={(e) => setNumero(e.target.value)} placeholder="Ex.: 2000009876543210" className={`${campo} mt-1`} />
+      </label>
+      <label className="block text-xs font-semibold text-zinc-600">Quanto saiu (com frete)
+        <input value={valor} inputMode="decimal" onChange={(e) => setValor(e.target.value.replace(/[^\d.,]/g, ''))} className={`${campo} mt-1 font-bold`} />
+      </label>
+      <div className="flex gap-2">
+        <button type="button" onClick={() => setAberto(false)} className="flex-1 py-3 rounded-2xl border-2 border-zinc-200 text-zinc-600 text-sm font-bold cursor-pointer">Voltar</button>
+        <button type="button" onClick={gravar} disabled={gravando || !(v > 0)} className="flex-[1.4] py-3 rounded-2xl bg-emerald-500 disabled:bg-zinc-200 text-white text-sm font-bold cursor-pointer">
+          {gravando ? 'Gravando…' : 'Registrar compra'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function CartaoMeu({ p, tenantId, onErro, onFeito, onJanela, mostrarQuem }: { p: Pedido; tenantId: string; onErro: (m: string | null) => void; onFeito: () => void; onJanela?: (a: AvisoPagamento) => void; mostrarQuem?: boolean }) {
   const [cancelando, setCancelando] = useState(false);
   const cancelar = async () => {
@@ -236,7 +296,10 @@ function CartaoMeu({ p, tenantId, onErro, onFeito, onJanela, mostrarQuem }: { p:
       <Cabecalho p={p} mostrarQuem={mostrarQuem} />
       {p.status === 'recusada' && p.motivo_recusa && <p className="mt-2 text-sm text-red-700 bg-red-50 rounded-xl px-3 py-2">Motivo: {p.motivo_recusa}</p>}
       {p.status === 'aprovada' && p.decidido_por_nome && <p className="mt-2 text-xs text-zinc-500">Aprovado por {p.decidido_por_nome}{p.pago_em ? ` · pago em ${dataBR(p.pago_em)}` : ''}</p>}
-      {mostrarQuem && onJanela && p.status === 'aprovada' && !p.pago && (!p.pix_inter || p.pix_inter === 'recusado') && <PagarDeNovo p={p} tenantId={tenantId} onErro={onErro} onJanela={onJanela} />}
+      {p.tipo === 'compra_online' && p.status !== 'comprada' && p.status !== 'cancelada' && p.status !== 'recusada' && <AbrirLink p={p} />}
+      {p.tipo === 'compra_online' && (p.status === 'comprada' || mostrarQuem) && <Detalhes p={p} />}
+      {mostrarQuem && onJanela && p.tipo === 'compra_online' && p.status === 'aprovada' && <JaComprei p={p} tenantId={tenantId} onErro={onErro} onFeito={onFeito} />}
+      {mostrarQuem && onJanela && p.tipo !== 'compra_online' && p.status === 'aprovada' && !p.pago && (!p.pix_inter || p.pix_inter === 'recusado') && <PagarDeNovo p={p} tenantId={tenantId} onErro={onErro} onJanela={onJanela} />}
       {!mostrarQuem && p.status === 'pendente' && !p.purchase_id && (
         <button type="button" onClick={cancelar} disabled={cancelando} className="mt-3 w-full py-3 rounded-2xl border-2 border-zinc-200 text-zinc-600 text-sm font-bold cursor-pointer">
           {cancelando ? 'Cancelando…' : 'Cancelar pedido'}
@@ -251,7 +314,8 @@ function CartaoAprovar({ p, tenantId, categorias, onErro, onFeito, onJanela }: {
   const [recusando, setRecusando] = useState(false);
   const [motivo, setMotivo] = useState('');
   const [gravando, setGravando] = useState(false);
-  const precisaDre = p.tipo !== 'freelancer' && !p.purchase_id;
+  const compra = p.tipo === 'compra_online';
+  const precisaDre = !compra && p.tipo !== 'freelancer' && !p.purchase_id;
 
   const aprovar = async () => {
     if (precisaDre && !dre) { onErro('Escolha a classificação antes de aprovar'); return; }
@@ -260,7 +324,8 @@ function CartaoAprovar({ p, tenantId, categorias, onErro, onFeito, onJanela }: {
     const { data, erro } = await chamarPedidos<{ pagamento?: ResultadoPagamento }>('aprovar', tenantId, { id: p.id, dre_category_id: precisaDre ? dre : null });
     setGravando(false);
     if (erro) { onErro(erro); return; }
-    avisarPagamento(data?.pagamento, p, onErro, onJanela);
+    // Compra online não tem Pix: o cartão vai para "Decididos" com "Já comprei"
+    if (!compra) avisarPagamento(data?.pagamento, p, onErro, onJanela);
     onFeito();
   };
   const recusar = async () => {
@@ -277,6 +342,8 @@ function CartaoAprovar({ p, tenantId, categorias, onErro, onFeito, onJanela }: {
       <Cabecalho p={p} mostrarQuem />
       <Detalhes p={p} />
       <Pix chave={p.pix_chave} />
+      {compra && <AbrirLink p={p} />}
+      {compra && <p className="mt-3 text-xs text-sky-800 bg-sky-50 rounded-xl px-3 py-2">Autorizar não cria conta a pagar. Compre na conta da loja (CNPJ) e toque em "Já comprei"; a nota do vendedor entra sozinha e vira a compra.</p>}
       {p.purchase_id && <p className="mt-3 text-xs text-violet-700 bg-violet-50 rounded-xl px-3 py-2">Mercadoria: a compra já foi lançada e entrou no estoque, sem conta a pagar. Aprovar cria a conta do reembolso; recusar deixa a compra sem conta (ajuste em Financeiro › Compras se precisar).</p>}
       {precisaDre && (
         <div className="mt-3">
@@ -296,7 +363,7 @@ function CartaoAprovar({ p, tenantId, categorias, onErro, onFeito, onJanela }: {
           <BotaoComprovante p={p} tenantId={tenantId} onErro={onErro} />
           <button type="button" onClick={() => setRecusando(true)} disabled={gravando} className="flex-1 py-3 rounded-2xl border-2 border-red-200 text-red-600 text-sm font-bold cursor-pointer">Recusar</button>
           <button type="button" onClick={aprovar} disabled={gravando} className="flex-[1.4] py-3 rounded-2xl bg-emerald-500 active:bg-emerald-600 disabled:bg-zinc-200 text-white text-sm font-bold cursor-pointer">
-            {gravando ? 'Aprovando…' : 'Aprovar e pagar'}
+            {gravando ? 'Aprovando…' : compra ? 'Autorizar compra' : 'Aprovar e pagar'}
           </button>
         </div>
       )}

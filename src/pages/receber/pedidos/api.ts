@@ -2,10 +2,10 @@
 // O pedido só vira conta a pagar quando o dono aprova. POST único, sem retry (a ref evita duplicar).
 import { SUPABASE_URL, SUPABASE_ANON_KEY, ensureFreshSession } from '@/lib/supabase';
 
-export type TipoPedido = 'reembolso' | 'freelancer' | 'fornecedor';
-export type StatusPedido = 'pendente' | 'aprovada' | 'recusada' | 'cancelada';
+export type TipoPedido = 'reembolso' | 'freelancer' | 'fornecedor' | 'compra_online';
+export type StatusPedido = 'pendente' | 'aprovada' | 'recusada' | 'cancelada' | 'comprada';
 
-export interface PermsPedido { pag_reembolso: boolean; pag_freelancer: boolean; pag_fornecedor: boolean; pag_aprovar: boolean }
+export interface PermsPedido { pag_reembolso: boolean; pag_freelancer: boolean; pag_fornecedor: boolean; pag_compra_online?: boolean; pag_aprovar: boolean }
 
 export interface ContextoPedidos {
   perms: PermsPedido;
@@ -46,14 +46,22 @@ export interface Pedido {
   /** Pix da conta no Inter antes da baixa do extrato: 'aguardando' (aprovar no app do Inter) ou 'pago'. */
   pix_inter?: 'aguardando' | 'pago' | 'recusado' | null;
   tem_comprovante: boolean;
+  // Compra online (2026-09-28)
+  link_url?: string | null;
+  anuncio_id?: string | null;
+  quantidade?: number | null;
+  pedido_externo?: string | null;
+  valor_pago?: number | null;
+  comprado_em?: string | null;
+  comprado_por_nome?: string | null;
 }
 
 export interface Categoria { id: string; nome: string }
 export interface Freela { id: string; nome: string; funcao: string | null; diaria: number | null; tem_pix: boolean }
 export interface Fornecedor { id: string; nome: string; cnpj: string | null; tem_pix: boolean }
 
-export const ROTULO_TIPO: Record<TipoPedido, string> = { reembolso: 'Reembolso', freelancer: 'Freelancer', fornecedor: 'Fornecedor sem nota' };
-export const ICONE_TIPO: Record<TipoPedido, string> = { reembolso: 'ri-refund-2-line', freelancer: 'ri-user-star-line', fornecedor: 'ri-store-2-line' };
+export const ROTULO_TIPO: Record<TipoPedido, string> = { reembolso: 'Reembolso', freelancer: 'Freelancer', fornecedor: 'Fornecedor sem nota', compra_online: 'Compra online' };
+export const ICONE_TIPO: Record<TipoPedido, string> = { reembolso: 'ri-refund-2-line', freelancer: 'ri-user-star-line', fornecedor: 'ri-store-2-line', compra_online: 'ri-shopping-cart-2-line' };
 
 export async function chamarPedidos<T>(action: string, tenantId: string, corpo: Record<string, unknown> = {}): Promise<{ data: T | null; erro: string | null }> {
   const sessao = await ensureFreshSession();
@@ -81,6 +89,8 @@ export function situacao(p: Pedido): { texto: string; cor: string } {
   if (p.status === 'pendente') return { texto: 'Esperando aprovação', cor: 'bg-amber-100 text-amber-800' };
   if (p.status === 'recusada') return { texto: 'Recusado', cor: 'bg-red-100 text-red-700' };
   if (p.status === 'cancelada') return { texto: 'Cancelado', cor: 'bg-zinc-100 text-zinc-500' };
+  if (p.status === 'comprada') return { texto: `Comprado${p.pedido_externo ? ` · pedido ${p.pedido_externo}` : ''}`, cor: 'bg-emerald-100 text-emerald-700' };
+  if (p.tipo === 'compra_online') return { texto: 'Autorizado · falta comprar', cor: 'bg-sky-100 text-sky-700' };
   if (p.pago) return { texto: 'Pago', cor: 'bg-emerald-100 text-emerald-700' };
   if (p.pix_inter === 'pago') return { texto: 'Pix enviado · falta a baixa do extrato', cor: 'bg-emerald-100 text-emerald-700' };
   if (p.pix_inter === 'aguardando') return { texto: 'Pix enviado · aprovar no app do Inter', cor: 'bg-violet-100 text-violet-700' };

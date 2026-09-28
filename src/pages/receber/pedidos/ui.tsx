@@ -104,7 +104,7 @@ export function Categorias({ categorias, valor, onValor, dica }: { categorias: C
 }
 
 /** Comprovante: tirar foto na hora (câmera) ou anexar foto/PDF que já está no celular (galeria, arquivos, WhatsApp). */
-export function Comprovante({ arquivo, onArquivo, obrigatorio }: { arquivo: File | null; onArquivo: (f: File | null) => void; obrigatorio?: boolean }) {
+export function Comprovante({ arquivo, onArquivo, obrigatorio, titulo, dica }: { arquivo: File | null; onArquivo: (f: File | null) => void; obrigatorio?: boolean; titulo?: string; dica?: string }) {
   const camera = useRef<HTMLInputElement>(null);
   const anexo = useRef<HTMLInputElement>(null);
   const url = useMemo(() => (arquivo && arquivo.type.startsWith('image/') ? URL.createObjectURL(arquivo) : null), [arquivo]);
@@ -113,14 +113,14 @@ export function Comprovante({ arquivo, onArquivo, obrigatorio }: { arquivo: File
   const botao = 'flex-1 rounded-2xl border-2 border-dashed border-zinc-300 text-zinc-600 font-semibold flex items-center justify-center gap-2 cursor-pointer active:bg-zinc-100';
   return (
     <div>
-      <Rotulo dica={obrigatorio ? 'Obrigatório: cupom, recibo ou nota do que foi pago' : 'Recibo, orçamento ou conversa (opcional)'}>Comprovante</Rotulo>
+      <Rotulo dica={dica ?? (obrigatorio ? 'Obrigatório: cupom, recibo ou nota do que foi pago' : 'Recibo, orçamento ou conversa (opcional)')}>{titulo ?? 'Comprovante'}</Rotulo>
       <input ref={camera} type="file" accept="image/*" capture="environment" className="hidden" onChange={escolher} />
       {/* Sem `capture`: o celular oferece galeria, arquivos e outros apps */}
       <input ref={anexo} type="file" accept="image/*,application/pdf" className="hidden" onChange={escolher} />
       {arquivo ? (
         <div className="mt-1.5 flex items-center gap-3 bg-white border-2 border-emerald-200 rounded-2xl p-2.5">
           {url ? <img src={url} alt="" className="w-14 h-14 object-cover rounded-xl" /> : <div className="w-14 h-14 rounded-xl bg-zinc-100 flex items-center justify-center"><i className="ri-file-pdf-2-line text-2xl text-red-500" /></div>}
-          <p className="flex-1 min-w-0 text-sm text-emerald-700 font-semibold truncate">{url ? 'Comprovante anexado' : arquivo.name}</p>
+          <p className="flex-1 min-w-0 text-sm text-emerald-700 font-semibold truncate">{url ? `${titulo ? 'Print' : 'Comprovante'} anexado` : arquivo.name}</p>
           <button type="button" onClick={() => camera.current?.click()} className="p-2 text-zinc-500 cursor-pointer" aria-label="Tirar outra foto"><i className="ri-camera-line text-xl" /></button>
           <button type="button" onClick={() => anexo.current?.click()} className="p-2 text-zinc-500 cursor-pointer" aria-label="Anexar outro arquivo"><i className="ri-attachment-2 text-xl" /></button>
         </div>
