@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 
 // Mapa de calor dia da semana × hora (Brasília): cor = nº de pedidos, totais em R$ por dia (direita) e por hora (embaixo).
-// Usado em Relatórios › iFood e › Calendário.
+// Usado em Relatórios › iFood e › Calendário. A coluna do dia fica fixa ao rolar para o lado (celular).
 
 export interface PontoSemanaHora {
   semana: number; // 0 = domingo
@@ -44,12 +44,12 @@ export default function HeatmapSemanaHora({ pontos, rgb = '234,29,44', texto = '
   return (
     <div className="overflow-x-auto">
       <div className="inline-grid gap-[3px] min-w-full" style={{ gridTemplateColumns: `36px ${heat.horas.map((h) => (heat.porHora[h].n ? 'minmax(54px, 1fr)' : '22px')).join(' ')} 70px` }}>
-        <div />
+        <div className="sticky left-0 z-10 bg-white shadow-[3px_0_0_#fff]" />
         {heat.horas.map((h) => <div key={h} className={`text-zinc-400 text-center ${heat.porHora[h].n ? 'text-[10px]' : 'text-[8px]'}`}>{h}h</div>)}
         <div className="text-[10px] text-zinc-400 text-right pr-1">Total</div>
         {heat.g.map((linha, s) => (
           <div key={s} className="contents">
-            <div className="text-[11px] font-semibold text-zinc-500 flex items-center">{SEMANA[s]}</div>
+            <div className="text-[11px] font-semibold text-zinc-500 flex items-center sticky left-0 z-10 bg-white shadow-[3px_0_0_#fff]">{SEMANA[s]}</div>
             {heat.horas.map((h) => {
               const c = linha[h];
               const a = c.n / heat.max;
@@ -64,7 +64,7 @@ export default function HeatmapSemanaHora({ pontos, rgb = '234,29,44', texto = '
             <div className="text-[11px] text-zinc-600 font-semibold text-right pr-1 flex items-center justify-end tabular-nums">{brl0(heat.porSemana[s])}</div>
           </div>
         ))}
-        <div className="text-[11px] font-semibold text-zinc-500 flex items-center pt-1 border-t border-zinc-100">Total</div>
+        <div className="text-[11px] font-semibold text-zinc-500 flex items-center pt-1 border-t border-zinc-100 sticky left-0 z-10 bg-white shadow-[3px_0_0_#fff]">Total</div>
         {heat.horas.map((h) => (
           <div key={h} onMouseEnter={mostrar(-1, h)} onMouseLeave={esconder}
             className="cursor-default text-[10px] text-zinc-600 font-semibold text-center pt-1 border-t border-zinc-100 tabular-nums whitespace-nowrap">
