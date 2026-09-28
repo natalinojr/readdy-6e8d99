@@ -151,3 +151,13 @@ cupom e quem paga, código de coleta e CPF da nota. Se falhar, anotar o passo e 
   o app C na homologação. Quando liberar: gerar código no ERPOS, autorizar no Portal do Parceiro (mesmo navegador),
   colar o código, religar pelo banco homologação + order_enabled/merchant 4117700 + modo operar, e repetir "Testar
   conexão".
+
+### Respostas aos chamados — 2026-09-28 (tarde)
+- CNPJ da integradora vinculado à conta dev: **19.831.665/0001-75** (IDEAR PROJETOS COMPLEMENTARES LTDA).
+- **34064791** (Shipping/Merchant/Review): responder só com o CNPJ + razão social + e-mail da conta dev.
+- **34062004** (Order): CNPJ; confirmar que é o módulo **Order** do app ERPOS PDV; **1ª tentativa** da homologação
+  automática (falhou na etapa "Testar conexão" por usar o app C); último chamado **33335462** (app ERPOS, Financial +
+  Merchant, homologado 25/09). Pedir que aceitem o C ou liberem o D.
+- **Chamado novo** (separado, pedido pelo suporte): acesso ao Portal do Parceiro da loja de teste 4117700 para
+  autorizar o app de teste "Teste (D)".
+- Tela: botões de tipo em Avançado agora dizem "Distribuído (app de teste "D")" / "Centralizado (app de teste "C")".
