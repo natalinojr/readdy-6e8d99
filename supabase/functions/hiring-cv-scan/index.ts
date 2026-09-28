@@ -75,7 +75,7 @@ async function orsRoute(aLat: number, aLng: number, bLat: number, bLng: number):
   } catch { return null; }
 }
 
-type Geo = { lat: number; lng: number; label: string; precision: 'endereco' | 'rua' | 'bairro' | 'cidade' };
+type Geo = { lat: number; lng: number; label: string; precision: 'endereco' | 'rua' | 'bairro' | 'cidade'; cidade?: string };
 async function geocode(text: string, focus?: { lat: number; lng: number }): Promise<Geo | null> {
   const apiKey = Deno.env.get('ORS_API_KEY');
   if (!apiKey || !text.trim()) return null;
@@ -98,7 +98,8 @@ async function geocode(text: string, focus?: { lat: number; lng: number }): Prom
     const precision = ['address', 'venue'].includes(layer) ? 'endereco'
       : layer === 'street' ? 'rua'
       : ['neighbourhood', 'borough', 'macrohood', 'postalcode'].includes(layer) ? 'bairro' : 'cidade';
-    return { lat, lng, label: String(f.properties?.label ?? text), precision };
+    const p = f.properties ?? {};
+    return { lat, lng, label: String(p.label ?? text), precision, cidade: [p.locality, p.localadmin, p.county].filter(Boolean).join(' | ') };
   } catch { return null; }
 }
 
@@ -116,7 +117,7 @@ async function ensureCandidateGeo(admin: SupabaseClient, c: Record<string, any>,
   // por fim, só a cidade (precisão menor, mas no lugar certo).
   const semAcento = (s: string) => s.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
   const nomeCidade = cidade ? semAcento(String(cidade)).split(/[/,(]| - /)[0].trim() : ''; // "Paranaguá/PR" → "paranagua"
-  const naCidade = (g: Geo | null) => !!g && (!nomeCidade || semAcento(g.label).includes(nomeCidade));
+  const naCidade = (g: Geo | null) => !!g && (!nomeCidade || semAcento(g.cidade ?? '').includes(nomeCidade)); // cidade do resultado, não o texto todo ("Rua Maturin, Manaus")
   let g = await geocode(text, focus);
   if (g && !naCidade(g) && cidade) {
     const tentativas = [[c.neighborhood, cidade].filter(Boolean).join(', '), String(cidade)];
