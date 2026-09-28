@@ -7,6 +7,7 @@ import { Link } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { gerarOportunidades, CANAL_LABEL, DIA_LABEL, type FatosCanais, type Oportunidade } from '@/lib/mktOportunidades';
 import { brl } from '../shared';
+import ManualGestor from './ManualGestor';
 
 const PRIO_CLS: Record<number, string> = {
   1: 'border-amber-300 bg-amber-50/60',
@@ -156,6 +157,8 @@ export default function OportunidadesTab({ tenantId }: { tenantId: string }) {
           )}
         </>
       )}
+
+      <ManualGestor tenantId={tenantId} />
     </div>
   );
 }
