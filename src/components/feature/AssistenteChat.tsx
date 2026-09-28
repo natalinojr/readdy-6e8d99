@@ -1418,7 +1418,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
             {!!r?.unread && (
               <span className="min-w-[20px] h-5 px-1.5 flex items-center justify-center rounded-full bg-violet-600 text-white text-[11px] font-black" aria-label={`${r.unread} não lida(s)`}>{r.unread > 99 ? '99+' : r.unread}</span>
             )}
-            <span className="min-w-[22px] h-[22px] px-1.5 flex items-center justify-center rounded-full bg-zinc-800 text-white text-[11px] font-bold" aria-label={`${total} mensagem(ns)`}>{total}</span>
+            {/* Só o número de não vistas (pedido do dono, 2026-09-27): o total não ajudava em nada. */}
             <i className="ri-arrow-down-s-line text-zinc-400" />
           </button>
         );
@@ -1489,7 +1489,6 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
                 className="w-full flex items-center gap-2 px-3 pb-2 text-left cursor-pointer">
                 <span className={`w-7 h-7 flex-shrink-0 flex items-center justify-center rounded-lg ${t?.cor ?? ''}`}><i className={t?.icon} /></span>
                 <span className="flex-1 min-w-0 text-[13px] font-bold text-zinc-800 truncate">{t?.label}</span>
-                {r && <span className="min-w-[22px] h-[22px] px-1.5 flex items-center justify-center rounded-full bg-zinc-800 text-white text-[11px] font-bold">{r.total}</span>}
                 <i className="ri-arrow-up-s-line text-zinc-400" />
               </button>
             );

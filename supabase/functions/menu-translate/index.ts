@@ -19,6 +19,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
 import Anthropic from 'npm:@anthropic-ai/sdk@0.125.0';
 import { authenticate, tenantRole, isManagerRole } from '../_shared/tenant-auth.ts';
+import { registrarUsoIa } from '../_shared/ai-usage.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -147,12 +148,13 @@ function parseJsonArray(text: string): Array<Record<string, unknown>> {
   return JSON.parse(cleaned.slice(start, end + 1));
 }
 
-async function translateBatch(client: Anthropic, locale: string, batch: Source[]): Promise<Map<string, { name: string; description: string | null }>> {
+async function translateBatch(client: Anthropic, locale: string, batch: Source[], admin?: any, tenantId?: string | null, userId?: string | null): Promise<Map<string, { name: string; description: string | null }>> {
   const response = await client.messages.create({
     model: MODEL,
     max_tokens: 8000,
     messages: [{ role: 'user', content: buildPrompt(locale, batch) }],
   });
+  if (admin) await registrarUsoIa(admin, { feature: 'traducao-cardapio', model: response.model, usage: response.usage, tenantId: tenantId ?? null, userId: userId ?? null });
   const text = response.content.filter((c: any) => c.type === 'text').map((c: any) => c.text).join('');
   const rows = parseJsonArray(text);
 
@@ -310,7 +312,7 @@ Deno.serve(async (req) => {
         const batch = slice.slice(i, i + BATCH_SIZE);
         let result: Map<string, { name: string; description: string | null }>;
         try {
-          result = await translateBatch(client, locale, batch);
+          result = await translateBatch(client, locale, batch, admin, tenantId, caller.userId ?? null);
         } catch (err) {
           log('ERROR', 'translate', 'lote falhou', { tenant_id: tenantId, locale, from: i, error: String((err as Error).message).slice(0, 300) });
           failed.push(...batch.map((b) => b.name));

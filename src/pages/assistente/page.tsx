@@ -8,11 +8,12 @@ import { Navigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
 import PixPermitidosCard from './PixPermitidosCard';
+import CustosIaCard from './CustosIaCard';
 import AssistenteChat from '@/components/feature/AssistenteChat';
 
 const OWNER_EMAIL = 'natalinojr.engel@gmail.com';
 
-type Tab = 'conversa' | 'lembretes' | 'memorias' | 'config';
+type Tab = 'conversa' | 'lembretes' | 'memorias' | 'custos' | 'config';
 interface Tenant { id: string; name: string; is_active: boolean }
 interface Memory { id: number; content: string; created_at: string }
 interface Reminder { id: number; text: string; due_at: string; sent_at: string | null }
@@ -181,6 +182,7 @@ export default function AssistentePage() {
     { id: 'conversa', label: 'Conversa', icon: 'ri-chat-3-line' },
     { id: 'lembretes', label: 'Lembretes', icon: 'ri-alarm-line', count: ov?.reminders.pending.length },
     { id: 'memorias', label: 'Memórias', icon: 'ri-brain-line', count: ov?.memories.length },
+    { id: 'custos', label: 'Custos da IA', icon: 'ri-money-dollar-circle-line' },
     { id: 'config', label: 'Configurações', icon: 'ri-settings-3-line' },
   ];
 
@@ -347,6 +349,9 @@ export default function AssistentePage() {
               </ul>
             </div>
           )}
+
+          {/* Custos da IA: API da Anthropic por loja, pessoa e uso */}
+          {tab === 'custos' && <CustosIaCard />}
 
           {/* Pix permitidos (protegido por PIN próprio do dono) */}
           {tab === 'config' && (

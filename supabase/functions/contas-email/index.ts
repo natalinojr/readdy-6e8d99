@@ -295,7 +295,7 @@ async function processarSeguro(admin: Admin, tenantId: string, mailId: string, e
 async function processar(admin: Admin, tenantId: string, mailId: string, email: EmailParaLer) {
   const { data: t } = await admin.from('tenants').select('cnpj').eq('id', tenantId).maybeSingle();
   const cnpjLoja = onlyDigits(t?.cnpj) || null;
-  const { boletos, avisos, pareceBoleto } = await lerBoletos(email, cnpjLoja);
+  const { boletos, avisos, pareceBoleto } = await lerBoletos(email, cnpjLoja, admin, tenantId);
   const { remetente, porCnpj } = await fornecedores(admin, tenantId, email.remetenteEmail, boletos.map((b) => b.cnpj).filter(Boolean) as string[]);
   const { data: atual } = await admin.from('fin_mail_messages').select('raw, subject, from_email, from_name').eq('id', mailId).single();
   const base = { ...(atual?.raw ?? {}), avisos, leitura_em: new Date().toISOString() };

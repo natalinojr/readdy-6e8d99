@@ -24,6 +24,7 @@ import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-
 import Anthropic from 'npm:@anthropic-ai/sdk@0.125.0';
 import { graph, waConfig, waOwnNumber, waSendText, type WaConfig } from '../_shared/wa.ts';
 import { assinarWebhook, confirmarCodigo, criarNumero, desregistrar, esConfig, nomeValido, numerosDaConta, pedirCodigo, registrar, separarNumero, situacao, trocarCodigo } from './numero.ts';
+import { registrarUsoIa } from '../_shared/ai-usage.ts';
 import { acharItem, arrumarLinks, brl, conferir, semBastidores, DIAS, disseQueChamouEquipe, idiomaDe, linkQueFalta, menuItems, type MenuItem, norm, precoTxt, spNow, temTermo } from './travas.ts';
 
 const corsHeaders = {
@@ -325,6 +326,9 @@ export interface Pensar {
   regras?: string; // só na simulação: instruções alternativas em teste
   equipeJaAvisada?: boolean; // a conversa já pediu atendente antes (não avisa de novo sozinho)
   modelo?: string; // só na simulação: comparar outro modelo (ver MODELOS_SIM)
+  admin?: SupabaseClient; // para registrar o custo em ai_usage_events (custo da IA)
+  simulacao?: boolean; // true = chamada de treino (feature 'atendimento-simulacao')
+  convId?: string; // id de wa_loja_conversas, para o "ref" do registro de custo
 }
 // O "cérebro": cardápio + instruções + ferramentas → resposta. Usado na conversa real e na simulação.
 export async function pensar(o: Pensar) {
@@ -386,6 +390,7 @@ export async function pensar(o: Pensar) {
     for (let i = 0; i < limite; i++) {
       const res = await client.messages.create({ model: o.modelo ?? MODEL, max_tokens: 700, system, tools: TOOLS, messages: msgs });
       calls++;
+      if (o.admin) await registrarUsoIa(o.admin, { feature: o.simulacao ? 'atendimento-simulacao' : 'atendimento-whatsapp', model: res.model, usage: res.usage, tenantId: o.tenant?.id ?? null, ref: o.convId ?? null });
       const u = res.usage;
       const fator = MODELOS_SIM[o.modelo ?? MODEL] ?? 1;
       cost += (((u.input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) * 1.25 + (u.cache_read_input_tokens ?? 0) * 0.1) * PRICE_IN + (u.output_tokens ?? 0) * PRICE_OUT) * fator;
@@ -546,6 +551,7 @@ async function handleIncoming(admin: SupabaseClient, m: Incoming): Promise<void>
   const historico = (hist ?? []).reverse().map((h: Row) => ({ role: h.role === 'user' ? 'user' as const : 'assistant' as const, content: String(h.content) }));
   const r = await pensar({
     bot, tenant, menu, historico, nome: m.name ?? null, equipeJaAvisada: !!fresh?.needs_human,
+    admin, convId: c.id,
     pedidos: () => meusPedidos(admin, m.tenant_id, m.number),
     chamarEquipe: async (motivo) => {
       await admin.from('wa_loja_conversas').update({ needs_human: true }).eq('id', c.id);
@@ -598,6 +604,7 @@ async function simular(admin: SupabaseClient, b: Row) {
     const r = await pensar({
       bot, tenant, menu, historico, nome: b.nome ?? null, regras: b.regras ? String(b.regras) : undefined, equipeJaAvisada: equipe,
       modelo: MODELOS_SIM[String(b.modelo)] ? String(b.modelo) : undefined,
+      admin, simulacao: true,
       pedidos: async () => String(b.pedidos ?? 'Nenhum pedido de delivery encontrado com este telefone.'),
       chamarEquipe: async () => { equipe = true; },
     });
@@ -617,6 +624,7 @@ Escreva SÓ a próxima mensagem do cliente, curta e natural como no WhatsApp bra
 Quando a conversa tiver terminado para o cliente (já pegou o link e vai pedir, desistiu, se despediu, ou foi passado para a equipe), responda exatamente [FIM].`,
       messages: [{ role: 'user', content: `Conversa até agora:\n${historico.map((h) => `${h.role === 'user' ? 'CLIENTE' : 'LOJA'}: ${h.content}`).join('\n')}\n\nPróxima mensagem do CLIENTE:` }],
     });
+    await registrarUsoIa(admin, { feature: 'atendimento-simulacao', model: c.model, usage: c.usage, tenantId });
     custo += (c.usage.input_tokens ?? 0) * PRICE_IN + (c.usage.output_tokens ?? 0) * PRICE_OUT;
     fala = c.content.filter((x): x is Anthropic.TextBlock => x.type === 'text').map((x) => x.text).join(' ').trim();
     if (!fala || /\[FIM\]/.test(fala)) break;
@@ -639,6 +647,7 @@ Sobre links: o que importa é o link que o cliente recebeu. Um link válido que 
 Seja breve: no máximo 5 problemas, trechos curtos.`,
       messages: [{ role: 'user', content: `INSTRUÇÕES E FATOS DO ATENDENTE\n${fatos}\n\nPERSONA DO CLIENTE: ${b.persona ?? '-'}\n\nCONVERSA (com as ferramentas usadas):\n${JSON.stringify(log, null, 1).slice(0, 30000)}` }],
     });
+    await registrarUsoIa(admin, { feature: 'atendimento-simulacao', model: j.model, usage: j.usage, tenantId });
     custo += (j.usage.input_tokens ?? 0) * 3 / 1e6 + (j.usage.output_tokens ?? 0) * 15 / 1e6;
     const txt = j.content.filter((x): x is Anthropic.TextBlock => x.type === 'text').map((x) => x.text).join('');
     try { avaliacao = JSON.parse(txt.slice(txt.indexOf('{'), txt.lastIndexOf('}') + 1)); } catch { avaliacao = { bruto: txt.slice(0, 2000) }; }

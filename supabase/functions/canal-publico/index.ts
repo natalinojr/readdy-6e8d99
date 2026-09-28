@@ -17,6 +17,7 @@ import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-
 import Anthropic from 'npm:@anthropic-ai/sdk@0.125.0';
 import { unzipSync, strFromU8 } from 'npm:fflate@0.8.2';
 import { waConfig, waOwnNumber, waReact, waSendText, waTyping, type WaKey } from '../_shared/wa.ts';
+import { registrarUsoIa } from '../_shared/ai-usage.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -742,6 +743,7 @@ async function handleIncoming(admin: SupabaseClient, m: Incoming): Promise<void>
   for (let i = 0; i < 4; i++) {
     const res = await client.messages.create({ model: MODEL, max_tokens: 700, system, tools: TOOLS, messages: msgs });
     calls++;
+    await registrarUsoIa(admin, { feature: 'canal-publico', model: res.model, usage: res.usage, ref: conv.id });
     cost += (res.usage.input_tokens ?? 0) * PRICE_IN + (res.usage.output_tokens ?? 0) * PRICE_OUT;
     const texto = res.content.filter((b): b is Anthropic.TextBlock => b.type === 'text').map((b) => b.text).join('\n').trim();
     const uses = res.content.filter((b): b is Anthropic.ToolUseBlock => b.type === 'tool_use');
@@ -760,6 +762,7 @@ async function handleIncoming(admin: SupabaseClient, m: Incoming): Promise<void>
     log('WARN', 'modelo disse que anotou sem gravar: forçando completar_ficha', { conv: conv.id });
     const f = await client.messages.create({ model: MODEL, max_tokens: 400, system, tools: TOOLS, tool_choice: { type: 'tool', name: 'completar_ficha' }, messages: conversa });
     calls++;
+    await registrarUsoIa(admin, { feature: 'canal-publico', model: f.model, usage: f.usage, ref: conv.id });
     cost += (f.usage.input_tokens ?? 0) * PRICE_IN + (f.usage.output_tokens ?? 0) * PRICE_OUT;
     const u = f.content.find((b): b is Anthropic.ToolUseBlock => b.type === 'tool_use');
     if (u) await runTool(u);

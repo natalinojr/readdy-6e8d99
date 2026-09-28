@@ -19,6 +19,7 @@ import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4
 import Anthropic from 'npm:@anthropic-ai/sdk@0.125.0';
 import { findBoletos, tryDecodeBoleto, type Decoded } from '../_shared/boleto.ts';
 import { textoDoPdf } from '../_shared/pdf-texto.ts';
+import { registrarUsoIa } from '../_shared/ai-usage.ts';
 
 type Admin = SupabaseClient;
 export interface Anexo { nome: string; tipo: string; base64: string }
@@ -119,7 +120,7 @@ const SISTEMA = `Você lê boletos bancários e guias de arrecadação brasileir
 - vencimento: AAAA-MM-DD ("" se não aparecer).
 e_boleto = false se o documento não for boleto/guia (nota fiscal, contrato, propaganda...). Nunca invente números.`;
 
-async function lerComIa(anexo: Anexo, modelo: string): Promise<any[] | null> {
+async function lerComIa(anexo: Anexo, modelo: string, admin?: Admin, tenantId?: string | null): Promise<any[] | null> {
   const apiKey = Deno.env.get('ANTHROPIC_API_KEY') ?? '';
   if (!apiKey) return null;
   const client = new Anthropic({ apiKey });
@@ -135,6 +136,7 @@ async function lerComIa(anexo: Anexo, modelo: string): Promise<any[] | null> {
       output_config: { format: { type: 'json_schema', schema: SCHEMA } },
       messages: [{ role: 'user', content: [bloco, { type: 'text', text: 'Leia os boletos deste arquivo.' }] }],
     } as any);
+    if (admin) await registrarUsoIa(admin, { feature: 'contas-email', model: r.model, usage: r.usage, tenantId: tenantId ?? null });
     const txt = (r.content ?? []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('');
     const out = JSON.parse(txt);
     log('INFO', 'ia', 'leitura', { modelo, ms: Date.now() - t0, in: r.usage?.input_tokens, out: r.usage?.output_tokens, boletos: out?.boletos?.length ?? 0 });
@@ -170,7 +172,7 @@ function deDecoded(d: Decoded, extra: Partial<BoletoLido> & Pick<BoletoLido, 'or
 }
 
 /** Lê os boletos de um e-mail. `textos` volta junto para quem quiser guardar/mostrar. */
-export async function lerBoletos(email: { subject: string; texto: string; anexos: Anexo[] }, cnpjLoja: string | null) {
+export async function lerBoletos(email: { subject: string; texto: string; anexos: Anexo[] }, cnpjLoja: string | null, admin?: Admin, tenantId?: string | null) {
   const vistos = new Map<string, BoletoLido>();
   const pdfsSemTexto: Anexo[] = [];
   const avisos: string[] = [];
@@ -206,11 +208,11 @@ export async function lerBoletos(email: { subject: string; texto: string; anexos
     paraIa.push(...email.anexos.filter((a) => ehImagem(a) && a.base64.length * 0.75 > 40_000));
   }
   for (const a of paraIa.slice(0, 4)) {
-    let lidos = await lerComIa(a, MODELO_LEITURA);
+    let lidos = await lerComIa(a, MODELO_LEITURA, admin, tenantId);
     let ok = (lidos ?? []).map((l) => ({ l, d: tryDecodeBoleto(onlyDigits(l.linha_digitavel)) }));
     // Leu "boleto" mas nenhum número fechou no DV: uma segunda leitura com o modelo maior.
     if (lidos?.length && !ok.some((x) => x.d)) {
-      lidos = await lerComIa(a, MODELO_SEGUNDA);
+      lidos = await lerComIa(a, MODELO_SEGUNDA, admin, tenantId);
       ok = (lidos ?? []).map((l) => ({ l, d: tryDecodeBoleto(onlyDigits(l.linha_digitavel)) }));
     }
     if (lidos === null) avisos.push(`Não consegui ler o anexo ${a.nome} (falha na leitura).`);

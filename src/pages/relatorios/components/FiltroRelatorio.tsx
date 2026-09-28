@@ -68,7 +68,9 @@ export default function FiltroRelatorio({ periodo, onPeriodo }: FiltroRelatorioP
   };
 
   return (
-    <div className="flex items-center gap-1.5 md:gap-3 min-w-0">
+    // flex-wrap: no celular os presets ocupam a linha toda e Mês/Personalizado
+    // descem para a linha de baixo (antes ficavam escondidos com `hidden sm:block`).
+    <div className="flex flex-wrap items-center gap-1.5 md:gap-3 min-w-0">
       {/* Presets: rolam na horizontal quando não cabem, em vez de vazar por
           cima dos botões vizinhos (Atualizar/Exportar) no mobile. */}
       <div className="flex items-center gap-0.5 bg-zinc-100 rounded-lg p-0.5 md:p-1 min-w-0 overflow-x-auto scrollbar-hide">
@@ -88,7 +90,7 @@ export default function FiltroRelatorio({ periodo, onPeriodo }: FiltroRelatorioP
       </div>
 
       {/* Seletor de MÊS — mês atual, mês anterior ou qualquer mês */}
-      <div className="relative hidden sm:block">
+      <div className="relative">
         <button
           onClick={() => setOpenPanel(openPanel === 'mes' ? null : 'mes')}
           className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium border rounded-lg transition-colors whitespace-nowrap cursor-pointer ${
@@ -109,7 +111,7 @@ export default function FiltroRelatorio({ periodo, onPeriodo }: FiltroRelatorioP
         </button>
 
         {openPanel === 'mes' && (
-          <div className="absolute right-0 mt-1 z-20 bg-white border border-zinc-200 rounded-xl p-4 w-60 shadow-lg">
+          <div className="absolute left-0 sm:left-auto sm:right-0 mt-1 z-20 bg-white border border-zinc-200 rounded-xl p-4 w-60 shadow-lg">
             <p className="text-xs font-semibold text-zinc-700 mb-3">Mês inteiro</p>
             <div className="flex gap-2 mb-3">
               <button
@@ -152,7 +154,7 @@ export default function FiltroRelatorio({ periodo, onPeriodo }: FiltroRelatorioP
         )}
       </div>
 
-      <div className="relative hidden sm:block">
+      <div className="relative">
         <button
           onClick={() => setOpenPanel(openPanel === 'custom' ? null : 'custom')}
           className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium border rounded-lg transition-colors whitespace-nowrap cursor-pointer ${

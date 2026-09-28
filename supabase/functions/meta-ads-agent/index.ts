@@ -27,6 +27,7 @@
 
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
 import Anthropic from 'npm:@anthropic-ai/sdk@0.125.0';
+import { registrarUsoIa } from '../_shared/ai-usage.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -402,7 +403,7 @@ function compact(i: Insights | null, label: string) {
   };
 }
 
-async function askModel(payload: Json, model: ModelId): Promise<{ out: Row; model: string; usage: Row | null }> {
+async function askModel(payload: Json, model: ModelId, uso?: { admin: SupabaseClient; tenantId: string; feature: string; ref: string }): Promise<{ out: Row; model: string; usage: Row | null }> {
   const apiKey = Deno.env.get('ANTHROPIC_API_KEY') ?? '';
   if (!apiKey) throw new Error('IA não configurada (falta ANTHROPIC_API_KEY).');
   const client = new Anthropic({ apiKey });
@@ -414,6 +415,7 @@ async function askModel(payload: Json, model: ModelId): Promise<{ out: Row; mode
     messages: [{ role: 'user', content: `Dados da loja e da conta de anúncios (JSON):\n${JSON.stringify(payload)}` }],
   // deno-lint-ignore no-explicit-any
   } as any);
+  if (uso) await registrarUsoIa(uso.admin, { feature: uso.feature, model: response.model ?? model, usage: response.usage, tenantId: uso.tenantId, ref: uso.ref });
   if (response.stop_reason === 'refusal') throw new Error('A IA recusou analisar estes dados.');
   if (response.stop_reason === 'max_tokens') throw new Error('Resposta da IA ficou longa demais.');
   const text = (response.content ?? []).filter((b: Row) => b.type === 'text').map((b: Row) => String(b.text)).join('');
@@ -574,7 +576,7 @@ async function shadowRun(admin: SupabaseClient, tenantId: string, realRunId: str
   if (insErr || !run?.id) { log('WARN', 'sombra: não criou a rodada (migração aplicada?)', insErr?.message); return; }
   const runId = String(run.id);
   try {
-    const ai = await askModel(payload, model);
+    const ai = await askModel(payload, model, { admin, tenantId, feature: 'trafego-meta-ads-sombra', ref: runId });
     const final = guardrails(ai.out, candidates, i7, s, tenantId, runId);
     await admin.from('meta_agent_runs').update({
       status: 'done', finished_at: new Date().toISOString(), summary: String(ai.out.summary ?? ''), health_score: Math.max(0, Math.min(100, Math.round(n(ai.out.health_score)))),
@@ -619,7 +621,7 @@ async function runForTenant(admin: SupabaseClient, tenantId: string, trigger: 'm
       acoes_recentes: (recent ?? []).map((a: Row) => ({ kind: a.kind, target_id: a.target_id, status: a.status, created_at: a.created_at })),
     };
     const model = s.model ?? DEFAULT_MODEL;
-    const ai = await askModel(payload, model);
+    const ai = await askModel(payload, model, { admin, tenantId, feature: 'trafego-meta-ads', ref: runId });
     const final = guardrails(ai.out, candidates, i7, s, tenantId, runId);
 
     // Modo autônomo: executa o que é seguro; criar campanha só com autonomia_criar.
