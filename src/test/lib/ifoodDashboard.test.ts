@@ -57,6 +57,18 @@ describe('montarPedidos / resumir', () => {
     expect(r.cancelados).toBe(1);
     expect(r.valorCancelado).toBe(50);
   });
+
+  it('sob demanda: cobrança do iFood e taxa de entrega paga pelo cliente (Entrada − cesta)', () => {
+    const rows = [
+      linha('D', 'Entrada Financeira', 'Entrada Financeira', 45.4, { cesta: '36.90' }),
+      linha('D', 'Cobrança', 'Solicitação de entrega Sob Demanda Off', -12.99),
+      linha('D', 'Cobrança', 'Taxa de serviço de entrega Sob Demanda Off', -1),
+    ];
+    const [p] = montarPedidos(rows, {});
+    expect(p.logistica).toBe('sob_demanda');
+    expect(p.entregaSobDemanda).toBeCloseTo(13.99);
+    expect(p.entregaCliente).toBeCloseTo(8.5);
+  });
 });
 
 describe('cancelamento', () => {
