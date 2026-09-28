@@ -620,13 +620,12 @@ export default function ConciliacaoTab() {
     if (achado) { setSelectedTransaction(achado); setAbrirDepois(null); }
   }, [imports, abrirDepois]);
 
-  // Extratos dos bancos integrados (Inter, Stone e iFood): o cron diário das 07h já busca;
+  // Extratos dos bancos integrados (Inter, Stone e Mercado Pago): o cron diário das 07h já busca;
   // aqui buscamos de novo ao abrir a tela e pelo menu "Importar".
   // auto (abertura da tela): cada banco só é consultado se a última busca dele (cron, outra pessoa,
   // outra aba) tem mais de 15 min ou deu erro — senão abrir a aba levava ~10–25 s à toa (2026-09-26).
   // O menu "Atualizar bancos agora" continua indo sempre aos bancos.
   const SYNC_MAX_AGE_MIN = 15;
-  const IFOOD_MAX_AGE_MIN = 360;
   const [bankSync, setBankSync] = useState<{ running: boolean; msg: string | null; error: boolean }>({ running: false, msg: null, error: false });
   const runBankSync = useCallback(async (range?: { from: string; to: string }, stoneSince?: string, auto = false) => {
     if (!user?.tenantId) return;
@@ -656,18 +655,6 @@ export default function ConciliacaoTab() {
       return { data: { success: ok || !lastErr, inserted, error: ok ? undefined : lastErr }, error: null };
     };
 
-    // iFood: relatório de conciliação por competência (mês); o período escolhido vira a lista de meses.
-    const competencias = (() => {
-      if (!range) return undefined;
-      const out: string[] = [];
-      for (let m = range.from.slice(0, 7); m <= range.to.slice(0, 7) && out.length < 12; ) {
-        out.push(m);
-        const [y, mm] = m.split('-').map(Number);
-        m = mm === 12 ? `${y + 1}-01` : `${y}-${String(mm + 1).padStart(2, '0')}`;
-      }
-      return out;
-    })();
-
     // Mercado Pago: a busca de pagamentos aceita o dia de HOJE e no máximo 31 dias por chamada.
     const mpRange = async (): Promise<Resp> => {
       let inserted = 0; let lastErr: string | undefined; let ok = false; let notConf = false;
@@ -693,15 +680,11 @@ export default function ConciliacaoTab() {
         ? stoneRange()
         : invokeWithAuth<SyncResp>('stone-conciliation', { body: { action: 'sync', tenant_id: user.tenantId, ...maxAge, ...(stoneSince ? { date_from: stoneSince } : {}) } }),
     ]);
-    // Depois do Inter: os saques do Mercado Pago e os depósitos do iFood casam com o extrato
-    // que acabou de chegar (a mesma razão pela qual o cron roda o Inter primeiro).
-    // O iFood (relatórios + 30 dias de vendas + repasses, 30–60 s) não segura mais a lista: ela é
-    // relida quando o Mercado Pago termina e de novo quando o iFood termina. Ao abrir a tela, o
-    // iFood só é buscado se a última busca tem mais de 6 h (2026-09-28).
-    const ifoodMaxAge = auto && !range && !stoneSince ? { max_age_min: IFOOD_MAX_AGE_MIN } : {};
-    const ifoodP = invokeWithAuth<SyncResp>('ifood-financial', {
-      body: { action: 'sync', tenant_id: user.tenantId, ...ifoodMaxAge, ...(competencias ? { competences: competencias } : {}), ...(range ? { sales_from: range.from, sales_to: range.to } : {}) },
-    });
+    // Depois do Inter: os saques do Mercado Pago casam com o extrato que acabou de chegar
+    // (a mesma razão pela qual o cron roda o Inter primeiro).
+    // iFood NÃO é buscado aqui (2026-09-28): a busca dele (relatórios + vendas + repasses) levava 33–58 s e
+    // a Conciliação só usa o repasse esperado, que já está no banco (cron das 07h / Configurar › iFood ›
+    // Buscar agora) — o casamento do depósito é feito pelo inter-bank e pelo rematch abaixo.
     const mp = range
       ? await mpRange()
       : await invokeWithAuth<SyncResp>('mp-conciliation', { body: { action: 'sync', tenant_id: user.tenantId, ...maxAge, ...(stoneSince ? { date_from: stoneSince } : {}) } });
@@ -728,35 +711,17 @@ export default function ConciliacaoTab() {
     read('Mercado Pago', mp);
     const fmtHora = (d: Date) => d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' });
     const periodo = range ? ` (${fmtDataBR(range.from)} a ${fmtDataBR(range.to)})` : '';
-    const montarMsg = (extra?: string) => {
-      const p = extra ? [...parts, extra] : parts;
-      return p.length === 0 ? null
-        : !buscou && !hasError && ultimaBusca
-          ? `Bancos em dia · última busca às ${fmtHora(new Date(ultimaBusca))} (para buscar agora: Importar › Atualizar bancos agora)${extra ? ` · ${extra}` : ''}`
-          : `Bancos atualizados às ${fmtHora(new Date())}${periodo} · ${p.join(' · ')}`;
-    };
+    const msg = parts.length === 0 ? null
+      : !buscou && !hasError && ultimaBusca
+        ? `Bancos em dia · última busca às ${fmtHora(new Date(ultimaBusca))} (para buscar agora: Importar › Atualizar bancos agora)`
+        : `Bancos atualizados às ${fmtHora(new Date())}${periodo} · ${parts.join(' · ')}`;
+    setBankSync({ running: false, error: hasError, msg });
     // Sugere de novo os vínculos pagamento × nota/conta (a nota pode ter chegado depois do pagamento).
     // A lista é relida por trás (sem "Carregando..."): quem já está mexendo na tabela não perde o lugar.
-    const reler = async () => {
-      await invokeWithAuth('conciliacao-pagamentos', { body: { action: 'rematch', tenant_id: user.tenantId } });
-      refresh(true);
-      loadAlerts();
-      if (buscou) { refetchAccounts(); setInterRefreshKey((k) => k + 1); }
-    };
-    // Primeira leva (Inter, Stone, Mercado Pago): a tela já mostra enquanto o iFood termina.
-    // iFood em dia / não integrado responde em < 1 s: aí fica tudo numa leva só.
-    const rapido = await Promise.race([ifoodP, new Promise<null>((r) => setTimeout(() => r(null), 1500))]);
-    let releu = false;
-    if (!rapido) {
-      setBankSync({ running: false, error: hasError, msg: montarMsg('iFood: buscando…') });
-      await reler();
-      releu = true;
-    }
-    const ifood = rapido ?? await ifoodP;
-    read('iFood', ifood);
-    setBankSync({ running: false, error: hasError, msg: montarMsg() });
-    const ifoodBuscou = Boolean(ifood.data?.success && !ifood.data.fresh && !ifood.data.skipped);
-    if (!releu || ifoodBuscou) await reler();
+    await invokeWithAuth('conciliacao-pagamentos', { body: { action: 'rematch', tenant_id: user.tenantId } });
+    refresh(true);
+    loadAlerts();
+    if (buscou) { refetchAccounts(); setInterRefreshKey((k) => k + 1); }
   }, [user?.tenantId, refresh, refetchAccounts, loadAlerts]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Uma vez ao abrir a tela (e ao trocar de loja) — DEPOIS que a lista aparece. Rodando junto,
@@ -1243,7 +1208,7 @@ export default function ConciliacaoTab() {
             <MenuItem
               icon="ri-refresh-line"
               label="Atualizar bancos agora"
-              hint={periodoValido ? `Inter, Stone e iFood: só o que falta desde ${fmtDataBR(periodFrom)}` : 'Inter, Stone e iFood: só o que falta'}
+              hint={periodoValido ? `Inter, Stone e Mercado Pago: só o que falta desde ${fmtDataBR(periodFrom)}` : 'Inter, Stone e Mercado Pago: só o que falta'}
               onClick={() => { setMenuImportar(false); runBankSync(undefined, periodoValido ? periodFrom : undefined); }}
             />
             <MenuItem
