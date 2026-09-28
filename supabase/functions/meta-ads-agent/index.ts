@@ -36,14 +36,14 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 const GRAPH = 'https://graph.facebook.com/v20.0';
-// Modelo da rodada real: por loja (meta_agent_settings.model) → env META_AGENT_MODEL → Opus 5.
+// Modelo da rodada real: por loja (meta_agent_settings.model) → env META_AGENT_MODEL → Opus 5.5 (desde 2026-09-28).
 // Fase 0 do plano (2026-09-27): `shadow_model` roda o candidato (ex.: Sonnet 5) em paralelo
 // sobre o MESMO payload, sem executar nada, para comparar decisões e custo antes de trocar.
-// claude-sonnet-5 fica aceito só por compatibilidade com rodadas/configs antigas; a tela oferece o 5.5.
-const MODELS_ALLOWED = ['claude-opus-5', 'claude-sonnet-5-5', 'claude-sonnet-5', 'claude-haiku-4-5'] as const;
+// claude-opus-5 e claude-sonnet-5 ficam aceitos só por compatibilidade com rodadas/configs antigas; a tela oferece os 5.5.
+const MODELS_ALLOWED = ['claude-opus-5-5', 'claude-opus-5', 'claude-sonnet-5-5', 'claude-sonnet-5', 'claude-haiku-4-5'] as const;
 type ModelId = typeof MODELS_ALLOWED[number];
 const DEFAULT_MODEL: ModelId = (MODELS_ALLOWED as readonly string[]).includes(Deno.env.get('META_AGENT_MODEL') ?? '')
-  ? (Deno.env.get('META_AGENT_MODEL') as ModelId) : 'claude-opus-5';
+  ? (Deno.env.get('META_AGENT_MODEL') as ModelId) : 'claude-opus-5-5';
 const modelOr = (v: unknown, fallback: ModelId | null): ModelId | null =>
   (MODELS_ALLOWED as readonly string[]).includes(String(v ?? '')) ? (v as ModelId) : fallback;
 const APP_URL_DEFAULT = 'https://erpos.vercel.app';
@@ -412,8 +412,9 @@ async function askModel(payload: Json, model: ModelId, uso?: { admin: SupabaseCl
   // deno-lint-ignore no-explicit-any
   const response: any = await client.messages.create({
     model, max_tokens: 8000,
+    // Opus 5.5 tem esforço padrão 'medium' (o Opus 5 era 'high'): fixa 'high' para manter a mesma profundidade.
     system: [{ type: 'text', text: SYSTEM, cache_control: { type: 'ephemeral' } }],
-    output_config: { format: { type: 'json_schema', schema: OUTPUT_SCHEMA } },
+    output_config: { ...(model === 'claude-opus-5-5' ? { effort: 'high' } : {}), format: { type: 'json_schema', schema: OUTPUT_SCHEMA } },
     messages: [{ role: 'user', content: `Dados da loja e da conta de anúncios (JSON):\n${JSON.stringify(payload)}` }],
   // deno-lint-ignore no-explicit-any
   } as any);
