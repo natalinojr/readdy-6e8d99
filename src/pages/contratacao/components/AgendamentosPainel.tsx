@@ -27,14 +27,31 @@ const quandoLongo = (s: string) => new Date(s).toLocaleString('pt-BR', { timeZon
 export function DecidirPedido({ sess, onFeito }: { sess: Pick<Sess, 'id' | 'pending_request'>; onFeito: () => void }) {
   const [propondo, setPropondo] = useState(false);
   const [quandoProp, setQuandoProp] = useState('');
+  // Proposta em faixa (2026-09-28): vários dias + "das HH:MM às HH:MM"; o hiring-scheduler monta os
+  // horários livres (duração/intervalo da vaga) e manda a lista numerada ao candidato.
+  const [modo, setModo] = useState<'faixa' | 'um'>('faixa');
+  const [dias, setDias] = useState<string[]>([]);
+  const [de, setDe] = useState('13:00');
+  const [ate, setAte] = useState('18:00');
   const [enviando, setEnviando] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; texto: string } | null>(null);
   const temData = !!sess.pending_request?.starts_at;
+  const proximosDias = useMemo(() => Array.from({ length: 14 }, (_, i) => {
+    const d = new Date(Date.now() + i * 86_400_000);
+    return {
+      iso: d.toLocaleDateString('en-CA', { timeZone: TZ }),
+      sem: d.toLocaleDateString('pt-BR', { timeZone: TZ, weekday: 'short' }).replace('.', ''),
+      dm: d.toLocaleDateString('pt-BR', { timeZone: TZ, day: '2-digit', month: '2-digit' }),
+    };
+  }), []);
+  const faixaOk = dias.length > 0 && !!de && !!ate && de < ate;
+  const podeEnviar = modo === 'um' ? !!quandoProp : faixaOk;
 
   const decidir = async (op: 'aceitar' | 'recusar' | 'propor') => {
     setEnviando(true); setMsg(null);
+    const proposta = op !== 'propor' ? {} : modo === 'um' ? { starts_at: quandoProp } : { janela: { dias, de, ate } };
     const { data, error } = await supabase.functions.invoke('hiring-scheduler', {
-      body: { action: 'decide', session_id: sess.id, op, ...(op === 'propor' ? { starts_at: quandoProp } : {}) },
+      body: { action: 'decide', session_id: sess.id, op, ...proposta },
     });
     let texto = (data as { message?: string; error?: string } | null)?.message ?? (data as { error?: string } | null)?.error;
     if (error) {
@@ -67,11 +84,41 @@ export function DecidirPedido({ sess, onFeito }: { sess: Pick<Sess, 'id' | 'pend
         </button>
       </div>
       {propondo && (
-        <div className="flex items-center gap-1.5 mt-2">
-          <input type="datetime-local" value={quandoProp} onChange={(e) => setQuandoProp(e.target.value)}
-            className="h-8 px-2 rounded-lg border border-zinc-200 text-sm bg-white" />
-          <button onClick={() => decidir('propor')} disabled={enviando || !quandoProp}
-            className="h-8 px-3 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold disabled:opacity-40 cursor-pointer">
+        <div className="mt-2 p-2 rounded-lg bg-white border border-amber-200">
+          <div className="flex gap-1 mb-2">
+            {([['faixa', 'Vários dias e horários'], ['um', 'Um horário só']] as const).map(([k, l]) => (
+              <button key={k} onClick={() => setModo(k)}
+                className={`h-7 px-2.5 rounded-md text-[11px] font-bold cursor-pointer ${modo === k ? 'bg-amber-600 text-white' : 'bg-amber-50 text-amber-800 border border-amber-200'}`}>
+                {l}
+              </button>
+            ))}
+          </div>
+          {modo === 'um' ? (
+            <input type="datetime-local" value={quandoProp} onChange={(e) => setQuandoProp(e.target.value)}
+              className="h-8 px-2 rounded-lg border border-zinc-200 text-sm bg-white" />
+          ) : (
+            <>
+              <p className="text-[11px] text-zinc-600 mb-1">Dias:</p>
+              <div className="flex flex-wrap gap-1">
+                {proximosDias.map((d) => {
+                  const on = dias.includes(d.iso);
+                  return (
+                    <button key={d.iso} onClick={() => setDias((l) => (on ? l.filter((x) => x !== d.iso) : [...l, d.iso].sort()))}
+                      className={`w-12 py-1 rounded-md text-[11px] leading-tight cursor-pointer border ${on ? 'bg-amber-600 border-amber-600 text-white font-bold' : 'bg-white border-zinc-200 text-zinc-700'}`}>
+                      <span className="block capitalize">{d.sem}</span>{d.dm}
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5 mt-2 text-xs text-zinc-700">
+                das <input type="time" value={de} onChange={(e) => setDe(e.target.value)} className="h-8 px-2 rounded-lg border border-zinc-200 text-sm bg-white" />
+                às <input type="time" value={ate} onChange={(e) => setAte(e.target.value)} className="h-8 px-2 rounded-lg border border-zinc-200 text-sm bg-white" />
+              </div>
+              <p className="mt-1 text-[10px] text-zinc-500">O sistema monta os horários livres nessa faixa (duração e intervalo da vaga, sem bater com entrevistas marcadas) e manda a lista para o candidato escolher.</p>
+            </>
+          )}
+          <button onClick={() => decidir('propor')} disabled={enviando || !podeEnviar}
+            className="mt-2 h-8 px-3 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold disabled:opacity-40 cursor-pointer">
             Enviar ao candidato
           </button>
         </div>

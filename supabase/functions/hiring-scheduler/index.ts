@@ -400,9 +400,84 @@ async function askInterviewers(admin: SupabaseClient, c: Ctx, startsAt: string |
     status: 'aguardando_gestor', code, pending_request: { kind: 'pedido_candidato', starts_at: startsAt, texto: pedido.slice(0, 300), at: new Date().toISOString() },
     updated_at: new Date().toISOString(),
   }).eq('id', c.sess.id);
-  await toInterviewers(c, `🗓️ Pedido de horário — ${c.job.title}\n${c.cand.full_name} (${digits(c.cand.phone)}) pediu: ${startsAt ? fmtSlot(startsAt) : `"${pedido.slice(0, 200)}"`}\n\nResponda aqui:\n#${code} 1 → aceitar${startsAt ? '' : ' (mande a data e hora)'}\n#${code} 2 → recusar\n#${code} dd/mm hh:mm → propor outro horário`);
+  await toInterviewers(c, `🗓️ Pedido de horário — ${c.job.title}\n${c.cand.full_name} (${digits(c.cand.phone)}) pediu: ${startsAt ? fmtSlot(startsAt) : `"${pedido.slice(0, 200)}"`}\n\nResponda aqui:\n#${code} 1 → aceitar${startsAt ? '' : ' (mande a data e hora)'}\n#${code} 2 → recusar\n#${code} dd/mm hh:mm → propor outro horário\n#${code} dd/mm dd/mm 13:00-18:00 → propor vários dias numa faixa`);
   await toCand(admin, c, 'Vou confirmar esse horário com a equipe e já te retorno 🙂');
 }
+
+// ── proposta da equipe em FAIXA (2026-09-28, pedido do dono) ──
+// Antes o entrevistador só propunha UM dia e hora (Noemi: não podia nos dias da agenda e a equipe tinha
+// vários dias livres). Agora escolhe vários dias + um intervalo ("das 13:00 às 18:00"); o sistema monta
+// os horários (duração + intervalo da vaga), tira os que batem com entrevista já marcada (vaga ou loja)
+// e manda a lista numerada. O que o candidato escolher dessa lista é reservado mesmo fora da agenda.
+interface Janela { dias: string[]; de: string; ate: string }
+const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
+const pad2 = (n: number) => String(n).padStart(2, '0');
+// "#ABCD 29/09 30/09 13:00-18:00", "29/9, 1/10 das 13h às 18h"
+function parseJanelaBR(text: string): Janela | null {
+  const f = text.replace(/\d{1,2}\/\d{1,2}(?:\/\d{2,4})?/g, ' ')
+    .match(/\b(\d{1,2})(?:[:h](\d{2}))?\s*h?\s*(?:-|–|a|às|as|até|ate)\s*(\d{1,2})(?:[:h](\d{2}))?/i);
+  if (!f) return null;
+  const de = `${pad2(Number(f[1]))}:${f[2] ?? '00'}`, ate = `${pad2(Number(f[3]))}:${f[4] ?? '00'}`;
+  if (!HHMM.test(de) || !HHMM.test(ate) || de >= ate) return null;
+  const hoje = localDate(new Date());
+  const dias: string[] = [];
+  for (const m of text.matchAll(/(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?/g)) {
+    const dd = Number(m[1]), mm = Number(m[2]);
+    if (dd < 1 || dd > 31 || mm < 1 || mm > 12) continue;
+    let y = m[3] ? Number(m[3].length === 2 ? `20${m[3]}` : m[3]) : Number(hoje.slice(0, 4));
+    let d = `${y}-${pad2(mm)}-${pad2(dd)}`;
+    if (!m[3] && d < hoje) { y += 1; d = `${y}-${pad2(mm)}-${pad2(dd)}`; }
+    dias.push(d);
+  }
+  return dias.length ? { dias: [...new Set(dias)].sort(), de, ate } : null;
+}
+function janelaValida(j: unknown): Janela | null {
+  const o = (j ?? {}) as Row;
+  const dias = Array.isArray(o.dias) ? [...new Set(o.dias.map(String).filter((d: string) => /^\d{4}-\d{2}-\d{2}$/.test(d)))].sort() as string[] : [];
+  const de = String(o.de ?? ''), ate = String(o.ate ?? '');
+  if (!dias.length || dias.length > 31 || !HHMM.test(de) || !HHMM.test(ate) || de >= ate) return null;
+  return { dias, de, ate };
+}
+// Horários da lista que ainda não batem com entrevista marcada (mesma regra de fn_hiring_free_slots).
+async function semConflito(admin: SupabaseClient, c: Ctx, slots: string[]): Promise<string[]> {
+  if (!slots.length) return [];
+  const dur = Number(c.cfg.duration_min) || 30, perSlot = Number(c.cfg.per_slot) || 1;
+  const ordenados = [...slots].sort();
+  let q = admin.from('hiring_interviews').select('scheduled_at, duration_min').eq('status', 'agendada')
+    .gte('scheduled_at', new Date(Date.parse(ordenados[0]) - 86_400_000).toISOString())
+    .lt('scheduled_at', new Date(Date.parse(ordenados.at(-1)!) + dur * 60_000).toISOString());
+  q = c.job.company_id ? q.or(`job_id.eq.${c.job.id},company_id.eq.${c.job.company_id}`) : q.eq('job_id', c.job.id);
+  const { data, error } = await q;
+  if (error) throw new Error(`agenda: ${error.message}`);
+  const ivs = ((data ?? []) as Row[]).map((i) => { const a = Date.parse(i.scheduled_at); return [a, a + (Number(i.duration_min) || dur) * 60_000]; });
+  return slots.filter((s) => { const a = Date.parse(s), b = a + dur * 60_000; return ivs.filter(([x, y]) => x < b && y > a).length < perSlot; });
+}
+async function horariosNaJanela(admin: SupabaseClient, c: Ctx, j: Janela): Promise<string[]> {
+  const dur = Number(c.cfg.duration_min) || 30, passo = dur + (Number(c.cfg.gap_min) || 0);
+  const out: string[] = [];
+  for (const d of j.dias) {
+    const fim = Date.parse(spToIso(`${d}T${j.ate}`));
+    for (let t = Date.parse(spToIso(`${d}T${j.de}`)); t + dur * 60_000 <= fim; t += passo * 60_000) {
+      if (t > Date.now() + 30 * 60_000) out.push(new Date(t).toISOString());
+    }
+  }
+  return await semConflito(admin, c, out);
+}
+// Lista longa (vários dias × faixa grande): no máximo n, espalhados em TODOS os dias escolhidos.
+function espalharDias(slots: string[], n: number): string[] {
+  if (slots.length <= n) return slots;
+  const porDia = new Map<string, string[]>();
+  for (const s of slots) { const d = localParts(s).d; porDia.set(d, [...(porDia.get(d) ?? []), s]); }
+  const cota = Math.max(1, Math.floor(n / porDia.size));
+  const out: string[] = [];
+  for (const l of porDia.values()) {
+    const k = Math.min(cota, l.length);
+    for (let i = 0; i < k; i++) out.push(l[Math.round((i * (l.length - 1)) / Math.max(1, k - 1))]);
+  }
+  return [...new Set(out)].sort();
+}
+const descrJanela = (j: Janela) => `${j.dias.map((d) => `${d.slice(8, 10)}/${d.slice(5, 7)}`).join(', ')} · ${j.de}–${j.ate}`;
+const MAX_JANELA = 15;
 
 // Preferência vaga do candidato ("segunda depois das 16h", "terça de manhã") → horários livres que casam.
 const localParts = (iso: string) => { const l = new Date(iso).toLocaleString('sv-SE', { timeZone: TZ }); return { d: l.slice(0, 10), hm: l.slice(11, 16) }; };
@@ -585,8 +660,11 @@ async function handleCandidate(admin: SupabaseClient, sess: Row, text: string, j
     return;
   }
 
+  // Horário da lista que a equipe abriu (proposta em faixa): reserva mesmo fora da agenda, se continuar livre.
+  const daEquipe: string[] = pend?.kind === 'janela_gestor' && Array.isArray(pend.slots) ? pend.slots.map(String) : [];
+  const reservar = async (iso: string) => book(admin, c, iso, daEquipe.includes(iso) && (await semConflito(admin, c, [iso])).length > 0);
   const num = t.match(/^\s*(?:op[çc][aã]o\s*)?(\d{1,2})\s*[).]?\s*$/i);
-  if (num && offered[Number(num[1]) - 1] && sess.status !== 'aguardando_gestor') { await book(admin, c, offered[Number(num[1]) - 1], false); return; }
+  if (num && offered[Number(num[1]) - 1] && sess.status !== 'aguardando_gestor') { await reservar(offered[Number(num[1]) - 1]); return; }
 
   const r = await classify(c, t, offered, admin);
   let intencao = String(r.intencao ?? 'outro'); // pode virar 'propor' na trava do dia (abaixo)
@@ -609,11 +687,12 @@ async function handleCandidate(admin: SupabaseClient, sess: Row, text: string, j
   const optEscolhida = intencao === 'escolher' && Number(r.opcao) >= 1 ? offered[Number(r.opcao) - 1] : undefined;
   const diaFalado = r.data_hora && /^\d{4}-\d{2}-\d{2}/.test(String(r.data_hora)) ? String(r.data_hora).slice(0, 10) : null;
   if (optEscolhida && diaFalado && localParts(optEscolhida).d !== diaFalado) { r.intencao = intencao = 'propor'; }
-  if (intencao === 'escolher' && optEscolhida) { await book(admin, c, optEscolhida, false); return; }
+  if (intencao === 'escolher' && optEscolhida) { await reservar(optEscolhida); return; }
   if (intencao === 'propor' || ((intencao === 'cancelar' || intencao === 'remarcar') && sess.status === 'agendado')) {
     if (intencao !== 'propor') await cancelInterview(admin, c);
     const quer = r.data_hora && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(String(r.data_hora)) ? spToIso(String(r.data_hora)) : null;
     if (quer) {
+      if (daEquipe.includes(quer)) { await reservar(quer); return; }
       const livres = await freeSlots(admin, c.job.id, 1000);
       if (livres.includes(quer)) { await book(admin, c, quer, false); return; }
       await askInterviewers(admin, c, quer, t);
@@ -698,16 +777,17 @@ async function handleInterviewer(admin: SupabaseClient, jobIds: string[], text: 
     return true;
   }
   const resto = codeM ? t.replace(codeM[0], '').trim() : t;
-  const data = parseDataBR(resto);
-  const op: Decisao | null = data ? 'propor'
+  const janela = parseJanelaBR(resto);
+  const data = janela ? null : parseDataBR(resto);
+  const op: Decisao | null = janela || data ? 'propor'
     : /^(1|sim|aceito|aceita|pode|ok|confirm)/i.test(resto) ? 'aceitar'
     : /^(2|n[aã]o|recus)/i.test(resto) ? 'recusar' : null;
   if (!op) {
     const { data: cd } = await admin.from('hiring_candidates').select('full_name').eq('id', sess.candidate_id).maybeSingle();
-    await sendText(number, `Não entendi. Para o pedido de ${cd?.full_name ?? 'candidato'}: #${sess.code} 1 (aceitar), #${sess.code} 2 (recusar) ou #${sess.code} dd/mm hh:mm (propor).`);
+    await sendText(number, `Não entendi. Para o pedido de ${cd?.full_name ?? 'candidato'}: #${sess.code} 1 (aceitar), #${sess.code} 2 (recusar) ou #${sess.code} dd/mm hh:mm (propor) ou #${sess.code} dd/mm dd/mm 13:00-18:00 (vários dias numa faixa).`);
     return true;
   }
-  const r = await decidirPedido(admin, sess, op, data, t);
+  const r = await decidirPedido(admin, sess, op, data, t, janela);
   await sendText(number, op === 'aceitar' && r.semData ? `${r.msg} Mande: #${sess.code} dd/mm hh:mm` : r.msg);
   return true;
 }
@@ -715,10 +795,20 @@ async function handleInterviewer(admin: SupabaseClient, jobIds: string[], text: 
 // Decisão do entrevistador sobre um pedido de horário fora da agenda. Uma função só para as duas
 // portas: resposta por código no WhatsApp (handleInterviewer) e botões na tela (ação `decide`).
 type Decisao = 'aceitar' | 'recusar' | 'propor';
-async function decidirPedido(admin: SupabaseClient, sess: Row, op: Decisao, propostaIso: string | null, registro: string): Promise<{ ok: boolean; msg: string; semData?: boolean }> {
+async function decidirPedido(admin: SupabaseClient, sess: Row, op: Decisao, propostaIso: string | null, registro: string, janela: Janela | null = null): Promise<{ ok: boolean; msg: string; semData?: boolean }> {
   const c = await loadCtx(admin, sess);
   if (!c) return { ok: false, msg: 'Vaga ou candidato não encontrado.' };
   const pr = (sess.pending_request ?? {}) as Row;
+  if (op === 'propor' && janela) {
+    const todos = await horariosNaJanela(admin, c, janela);
+    if (!todos.length) return { ok: false, msg: `Nenhum horário livre em ${descrJanela(janela)} (já passou ou está ocupado). Escolha outros dias ou outra faixa.` };
+    const lista = espalharDias(todos, MAX_JANELA);
+    c.sess.status = 'negociando';
+    await toCand(admin, c, `A equipe abriu estes horários pra você (${onde(c)}):\n${slotsText(lista)}\n\n${COMO_RESPONDER}`,
+      { offered: lista, status: 'negociando', pending_request: { kind: 'janela_gestor', slots: lista, dias: janela.dias, de: janela.de, ate: janela.ate, at: new Date().toISOString() }, updated_at: new Date().toISOString() });
+    await addHist(admin, sess.id, 'gestor', registro);
+    return { ok: true, msg: `Ok! Mandei ${lista.length} horário${lista.length > 1 ? 's' : ''} (${descrJanela(janela)}) para ${firstName(c.cand.full_name)} escolher.` };
+  }
   if (op === 'propor') {
     if (!propostaIso) return { ok: false, msg: 'Informe a data e hora que quer propor.' };
     await admin.from('hiring_scheduling_sessions').update({ status: 'negociando', pending_request: { kind: 'proposta_gestor', starts_at: propostaIso, at: new Date().toISOString() }, updated_at: new Date().toISOString() }).eq('id', sess.id);
@@ -1012,11 +1102,13 @@ async function decideDaTela(req: Request, admin: SupabaseClient, body: Row): Pro
   if (!sess) return resp({ success: false, error: 'Pedido não encontrado.' }, 404);
   // Outro entrevistador pode ter respondido antes (WhatsApp ou tela): não decide duas vezes.
   if (sess.status !== 'aguardando_gestor') return resp({ success: false, error: 'Esse pedido já foi respondido.' }, 409);
-  const proposta = op === 'propor' && body.starts_at ? spToIso(String(body.starts_at)) : null;
-  if (op === 'propor' && (!proposta || Number.isNaN(Date.parse(proposta)))) return resp({ success: false, error: 'Data e hora inválidas.' }, 400);
+  const janela = op === 'propor' && body.janela ? janelaValida(body.janela) : null;
+  if (op === 'propor' && body.janela && !janela) return resp({ success: false, error: 'Escolha pelo menos um dia e um horário de início menor que o de fim.' }, 400);
+  const proposta = op === 'propor' && !janela && body.starts_at ? spToIso(String(body.starts_at)) : null;
+  if (op === 'propor' && !janela && (!proposta || Number.isNaN(Date.parse(proposta)))) return resp({ success: false, error: 'Data e hora inválidas.' }, 400);
 
   const quem = user.email ?? 'tela';
-  const r = await decidirPedido(admin, sess as Row, op, proposta, `[pela tela, ${quem}] ${op}${proposta ? ` ${fmtSlot(proposta)}` : ''}`);
+  const r = await decidirPedido(admin, sess as Row, op, proposta, `[pela tela, ${quem}] ${op}${proposta ? ` ${fmtSlot(proposta)}` : ''}${janela ? ` ${descrJanela(janela)}` : ''}`, janela);
   log('INFO', 'pedido decidido pela tela', { sess: sess.id, op, por: quem, ok: r.ok });
   return resp({ success: r.ok, message: r.msg, ...(r.ok ? {} : { error: r.msg }) }, r.ok ? 200 : 400);
 }
