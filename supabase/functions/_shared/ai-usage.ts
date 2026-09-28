@@ -27,6 +27,8 @@ export type UsoIa = {
   tenantId?: string | null;
   userId?: string | null;
   ref?: string | null;
+  /** Detalhe do uso para abrir na tela (ex.: assistente → 'canal|assunto'). */
+  detalhe?: string | null;
 };
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -60,6 +62,7 @@ export async function registrarUsoIa(admin: SupabaseClient, uso: UsoIa): Promise
       web_searches: Number(u.server_tool_use?.web_search_requests ?? 0),
       cost_usd: Number(custoIaUsd(uso.model, u).toFixed(6)),
       ref: uso.ref ? String(uso.ref).slice(0, 200) : null,
+      detalhe: uso.detalhe ? String(uso.detalhe).slice(0, 120) : null,
     });
     if (error) console.error(JSON.stringify({ level: 'WARN', msg: 'ai_usage_events', error: error.message }));
   } catch (e) {

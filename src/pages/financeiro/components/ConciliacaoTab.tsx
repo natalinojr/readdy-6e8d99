@@ -672,22 +672,23 @@ export default function ConciliacaoTab() {
       return { data: { success: ok || !lastErr, inserted, error: ok ? undefined : lastErr }, error: null };
     };
 
-    const [inter, stone] = await Promise.all([
+    // Inter, Stone e Mercado Pago em paralelo (2026-09-28). O saque do MP × crédito no Inter antes
+    // obrigava o MP a esperar o Inter; agora esse casamento (fn_match_mp_payouts) roda também no
+    // rematch abaixo, depois dos três.
+    // iFood NÃO é buscado aqui (2026-09-28): a busca dele (relatórios + vendas + repasses) levava 33–58 s e
+    // a Conciliação só usa o repasse esperado, que já está no banco (cron das 07h / Configurar › iFood ›
+    // Buscar agora) — o casamento do depósito é feito pelo inter-bank e pelo rematch abaixo.
+    const [inter, stone, mp] = await Promise.all([
       invokeWithAuth<SyncResp>('inter-bank', {
         body: { action: 'sync', tenant_id: user.tenantId, ...maxAge, ...(range ? { date_from: range.from, date_to: range.to } : {}) },
       }),
       range
         ? stoneRange()
         : invokeWithAuth<SyncResp>('stone-conciliation', { body: { action: 'sync', tenant_id: user.tenantId, ...maxAge, ...(stoneSince ? { date_from: stoneSince } : {}) } }),
+      range
+        ? mpRange()
+        : invokeWithAuth<SyncResp>('mp-conciliation', { body: { action: 'sync', tenant_id: user.tenantId, ...maxAge, ...(stoneSince ? { date_from: stoneSince } : {}) } }),
     ]);
-    // Depois do Inter: os saques do Mercado Pago casam com o extrato que acabou de chegar
-    // (a mesma razão pela qual o cron roda o Inter primeiro).
-    // iFood NÃO é buscado aqui (2026-09-28): a busca dele (relatórios + vendas + repasses) levava 33–58 s e
-    // a Conciliação só usa o repasse esperado, que já está no banco (cron das 07h / Configurar › iFood ›
-    // Buscar agora) — o casamento do depósito é feito pelo inter-bank e pelo rematch abaixo.
-    const mp = range
-      ? await mpRange()
-      : await invokeWithAuth<SyncResp>('mp-conciliation', { body: { action: 'sync', tenant_id: user.tenantId, ...maxAge, ...(stoneSince ? { date_from: stoneSince } : {}) } });
     const parts: string[] = [];
     let hasError = false;
     let buscou = false; // algum banco foi consultado de verdade (não só "em dia")

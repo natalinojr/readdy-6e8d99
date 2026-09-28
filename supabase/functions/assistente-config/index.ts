@@ -279,7 +279,7 @@ Deno.serve(async (req) => {
         const rows: any[] = [];
         for (let from = 0; from < 100_000; from += 1000) {
           const { data, error } = await admin.from('ai_usage_events')
-            .select('created_at, tenant_id, user_id, feature, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd, backfill')
+            .select('created_at, tenant_id, user_id, feature, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd, backfill, detalhe')
             .gte('created_at', ini).lt('created_at', fim).order('id').range(from, from + 999);
           if (error) throw new Error(error.message);
           rows.push(...(data ?? []));
@@ -289,6 +289,8 @@ Deno.serve(async (req) => {
         const grupos: Record<string, Map<string, Soma>> = { loja: new Map(), pessoa: new Map(), uso: new Map(), modelo: new Map(), dia: new Map() };
         // Cada loja (e o "sem loja") abre na tela mostrando de quais usos veio o gasto.
         const lojaUso = new Map<string, Map<string, { usd: number; chamadas: number }>>();
+        // Idem para cada uso: o detalhe gravado (no assistente, 'canal|assunto').
+        const usoDetalhe = new Map<string, Map<string, { usd: number; chamadas: number }>>();
         const somar = (g: string, chave: string, r: Record<string, number>) => {
           const m = grupos[g];
           const s = m.get(chave) ?? { chave, usd: 0, chamadas: 0, tokens_in: 0, tokens_out: 0 };
@@ -307,6 +309,12 @@ Deno.serve(async (req) => {
           const x = lu.get(r.feature) ?? { usd: 0, chamadas: 0 };
           x.usd += Number(r.cost_usd ?? 0); x.chamadas += 1;
           lu.set(r.feature, x); lojaUso.set(r.tenant_id ?? '', lu);
+          if (r.detalhe) {
+            const ud = usoDetalhe.get(r.feature) ?? new Map();
+            const y = ud.get(r.detalhe) ?? { usd: 0, chamadas: 0 };
+            y.usd += Number(r.cost_usd ?? 0); y.chamadas += 1;
+            ud.set(r.detalhe, y); usoDetalhe.set(r.feature, ud);
+          }
           somar('pessoa', r.user_id ?? '', r);
           somar('uso', r.feature, r);
           somar('modelo', r.model, r);
@@ -336,7 +344,15 @@ Deno.serve(async (req) => {
               .sort((a, b) => b.usd - a.usd),
           })),
           por_pessoa: lista('pessoa', (k) => (k ? String(nomePessoa.get(k) ?? 'Usuário removido') : 'Automático / clientes')),
-          por_uso: lista('uso', (k) => k),
+          por_uso: lista('uso', (k) => k).map((u) => {
+            const d = usoDetalhe.get(u.chave);
+            return d ? {
+              ...u,
+              detalhes: [...d.entries()]
+                .map(([detalhe, v]) => ({ detalhe, usd: Math.round(v.usd * 10000) / 10000, chamadas: v.chamadas }))
+                .sort((a, b) => b.usd - a.usd),
+            } : u;
+          }),
           por_modelo: lista('modelo', (k) => k),
           por_dia: lista('dia', (k) => k).sort((a, b) => a.chave.localeCompare(b.chave)),
         });

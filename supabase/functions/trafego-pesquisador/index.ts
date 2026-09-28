@@ -73,7 +73,8 @@ const SYSTEM_ESTRUTURA = `Transforme o relatório de pesquisa em propostas para 
 // deno-lint-ignore no-explicit-any
 type Msg = any;
 
-async function pesquisar(admin: SupabaseClient, pesquisaId: string) {
+// quem: loja e pessoa que pediram (custo da IA na tela Assistente › Custos da IA); cron = sem loja.
+async function pesquisar(admin: SupabaseClient, pesquisaId: string, quem: { tenantId: string | null; userId: string | null } = { tenantId: null, userId: null }) {
   const client = new Anthropic({ apiKey: Deno.env.get('ANTHROPIC_API_KEY') ?? '' });
   const { data: itens } = await admin.from('trafego_manual_itens').select('chave, tema, regra, valor, confianca, fonte_url, verificado_em, status').neq('status', 'revogada').order('tema');
   const lista = ((itens ?? []) as Row[]).map((i) => `- ${i.chave} [${i.confianca}] ${i.tema}: ${i.regra}${i.valor ? ` = ${i.valor}` : ''}${i.fonte_url ? ` (fonte atual: ${i.fonte_url})` : ''}`).join('\n');
@@ -94,7 +95,7 @@ async function pesquisar(admin: SupabaseClient, pesquisaId: string) {
     // deno-lint-ignore no-explicit-any
     } as any);
     usos.push(r.usage ?? {});
-    await registrarUsoIa(admin, { feature: 'trafego-pesquisador', model: r.model ?? MODELO_PESQUISA, usage: r.usage, ref: pesquisaId });
+    await registrarUsoIa(admin, { feature: 'trafego-pesquisador', model: r.model ?? MODELO_PESQUISA, usage: r.usage, ref: pesquisaId, tenantId: quem.tenantId, userId: quem.userId });
     buscas += Number(r.usage?.server_tool_use?.web_search_requests ?? 0);
     for (const b of (r.content ?? []) as Row[]) {
       if (b.type === 'web_search_tool_result' && Array.isArray(b.content)) {
@@ -121,7 +122,7 @@ async function pesquisar(admin: SupabaseClient, pesquisaId: string) {
   // deno-lint-ignore no-explicit-any
   } as any);
   usos.push(e.usage ?? {});
-  await registrarUsoIa(admin, { feature: 'trafego-pesquisador', model: e.model ?? MODELO_ESTRUTURA, usage: e.usage, ref: pesquisaId });
+  await registrarUsoIa(admin, { feature: 'trafego-pesquisador', model: e.model ?? MODELO_ESTRUTURA, usage: e.usage, ref: pesquisaId, tenantId: quem.tenantId, userId: quem.userId });
   const texto = (e.content ?? []).filter((b: Row) => b.type === 'text').map((b: Row) => String(b.text)).join('');
   const propostas = ((JSON.parse(texto) as Row).propostas ?? []) as Row[];
 
@@ -187,6 +188,7 @@ Deno.serve(async (req: Request) => {
 
     // Manual é global, mas o acesso passa pela loja do usuário: membro lê, admin roda/decide.
     let quem = 'Sistema'; let ehAdmin = interno;
+    let quemIds: { tenantId: string | null; userId: string | null } = { tenantId: null, userId: null };
     if (!interno) {
       const caller = await authenticate(req, admin);
       if (!caller) return json({ success: false, error: 'Não autenticado' }, 401);
@@ -195,6 +197,7 @@ Deno.serve(async (req: Request) => {
         const role = tenantId ? await tenantRole(admin, caller.userId!, tenantId) : null;
         if (!role) return json({ success: false, error: 'Sem acesso' }, 403);
         ehAdmin = roleRank(role) >= 3;
+        quemIds = { tenantId, userId: caller.userId ?? null };
         const { data: u } = await admin.from('users').select('name').eq('id', caller.userId!).maybeSingle();
         quem = String(u?.name ?? caller.email ?? 'Admin');
       } else ehAdmin = true;
@@ -207,7 +210,7 @@ Deno.serve(async (req: Request) => {
       const { data: p, error } = await admin.from('trafego_pesquisas').insert({ trigger: interno ? 'cron' : 'manual', requested_by: quem }).select('id').single();
       if (error || !p) return json({ success: false, error: error?.message ?? 'não criou a pesquisa' }, 500);
       const id = String(p.id);
-      const tarefa = pesquisar(admin, id).catch(async (e) => {
+      const tarefa = pesquisar(admin, id, quemIds).catch(async (e) => {
         const msg = e instanceof Error ? e.message : String(e);
         log('ERROR', 'pesquisa falhou', { id, msg });
         await admin.from('trafego_pesquisas').update({ status: 'error', finished_at: new Date().toISOString(), error: msg.slice(0, 1000) }).eq('id', id);

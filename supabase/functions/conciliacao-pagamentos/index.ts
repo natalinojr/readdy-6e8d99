@@ -1073,6 +1073,11 @@ Deno.serve(async (req: Request) => {
       const to = todayBR();
       const from = addDays(to, -120);
       await applyTopups(ctx); // antes do casamento: recarga de pré-pago não vira sugestão de nota
+      // Saque do Mercado Pago × crédito no banco (2026-09-28): a Conciliação agora busca Inter e MP em
+      // paralelo, então o casamento que o mp-conciliation faz no fim do sync pode não ver o crédito do
+      // Inter que chegou na mesma busca — este rematch roda depois dos dois. Janela = MATCH_WINDOW_DAYS do MP.
+      const { error: mpe } = await admin.rpc('fn_match_mp_payouts', { p_tenant: tenantId, p_from: addDays(to, -20), p_to: to });
+      if (mpe) log('WARN', 'rematch', 'fn_match_mp_payouts falhou', { tenantId, error: mpe.message });
       const { data, error } = await admin.rpc('fn_match_payments', { p_tenant: tenantId, p_from: from, p_to: to });
       if (error) return errResp('Sugerir vínculos: ' + error.message, 500);
       const { data: folha, error: fe } = await admin.rpc('fn_match_payroll', { p_tenant: tenantId, p_from: from, p_to: to });

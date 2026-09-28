@@ -8,6 +8,8 @@ interface Soma {
   chave: string; nome: string; usd: number; chamadas: number; tokens_in: number; tokens_out: number;
   /** Só em por_loja: de quais usos veio o gasto da loja (abre ao tocar na linha). */
   usos?: { feature: string; usd: number; chamadas: number }[];
+  /** Só em por_uso: detalhe gravado (assistente: 'canal|assunto'). */
+  detalhes?: { detalhe: string; usd: number; chamadas: number }[];
 }
 interface Relatorio {
   de: string; ate: string; total_usd: number; chamadas: number; estimado: boolean;
@@ -37,6 +39,18 @@ const USO_LABEL: Record<string, string> = {
 // A API devolve às vezes o nome com data (claude-haiku-4-5-20251001): a data sai do rótulo.
 const MODELO_LABEL = (m: string) => m.replace(/^claude-/, '').replace(/-\d{8}$/, '').replace(/-(\d)-(\d)$/, ' $1.$2').replace(/-(\d)$/, ' $1')
   .replace(/^./, (c) => c.toUpperCase());
+
+// Detalhe do assistente: 'canal|assunto' → "Telegram · Pagamentos".
+const CANAL_LABEL: Record<string, string> = {
+  telegram: 'Telegram', app: 'Chat do ERPOS', whatsapp: 'WhatsApp', cron: 'Automático (resumo, lembretes, cobranças)',
+  grupo: 'Leitura de foto/PDF dos grupos', test: 'Teste',
+};
+const ASSUNTO_LABEL: Record<string, string> = { geral: 'Geral', pagamentos: 'Pagamentos', compras: 'Compras', curriculos: 'Currículos', avisos: 'Avisos' };
+const nomeDetalhe = (d: string) => {
+  const [canal, assunto] = d.split('|');
+  if (assunto === undefined) return d;
+  return `${CANAL_LABEL[canal] ?? canal} · ${ASSUNTO_LABEL[assunto] ?? assunto}`;
+};
 
 type Periodo = 'mes' | 'mes_passado' | '7d' | '30d' | 'custom';
 const iso = (d: Date) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
@@ -87,6 +101,12 @@ export default function CustosIaCard() {
   const usdTxt = (usd: number) => `US$ ${usd.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   const [abertas, setAbertas] = useState<Set<string>>(new Set());
   const alternar = (k: string) => setAbertas((prev) => { const n = new Set(prev); if (n.has(k)) n.delete(k); else n.add(k); return n; });
+  // Sub-itens que abrem ao tocar: usos de uma loja, ou o detalhe de um uso (canal · assunto).
+  const subitens = (s: Soma) => (s.usos
+    ? s.usos.map((u) => ({ chave: u.feature, nome: nomeUso(u.feature), usd: u.usd, chamadas: u.chamadas }))
+    : s.detalhes && s.detalhes.length > 0
+      ? s.detalhes.map((d) => ({ chave: d.detalhe, nome: nomeDetalhe(d.detalhe), usd: d.usd, chamadas: d.chamadas }))
+      : null);
   const nomeUso = (k: string) => USO_LABEL[k] ?? k.replace(/-/g, ' ').replace(/^./, (c) => c.toUpperCase());
   const maxDia = Math.max(0.0001, ...(rel?.por_dia ?? []).map((d) => d.usd));
 
@@ -100,10 +120,10 @@ export default function CustosIaCard() {
           {itens.map((s) => (
             <li key={s.chave || '_'} className="px-4 py-2.5">
               <div
-                className={`flex items-baseline gap-3 ${s.usos ? 'cursor-pointer' : ''}`}
-                onClick={s.usos ? () => alternar(s.chave || '_') : undefined}
+                className={`flex items-baseline gap-3 ${subitens(s) ? 'cursor-pointer' : ''}`}
+                onClick={subitens(s) ? () => alternar(`${titulo}:${s.chave || '_'}`) : undefined}
               >
-                {s.usos && <i className={`text-zinc-400 ${abertas.has(s.chave || '_') ? 'ri-arrow-down-s-line' : 'ri-arrow-right-s-line'}`} />}
+                {subitens(s) && <i className={`text-zinc-400 ${abertas.has(`${titulo}:${s.chave || '_'}`) ? 'ri-arrow-down-s-line' : 'ri-arrow-right-s-line'}`} />}
                 <p className="flex-1 min-w-0 text-sm text-zinc-800 truncate">{rotulo ? rotulo(s) : s.nome}</p>
                 <p className="text-sm font-bold text-zinc-900 tabular-nums">{brl(s.usd)}</p>
               </div>
@@ -115,11 +135,11 @@ export default function CustosIaCard() {
                   {usdTxt(s.usd)} · {s.chamadas} {s.chamadas === 1 ? 'chamada' : 'chamadas'}
                 </p>
               </div>
-              {s.usos && abertas.has(s.chave || '_') && (
+              {subitens(s) && abertas.has(`${titulo}:${s.chave || '_'}`) && (
                 <ul className="mt-2 ml-5 space-y-1 border-l border-zinc-100 pl-3">
-                  {s.usos.map((u) => (
-                    <li key={u.feature} className="flex items-baseline gap-3 text-xs">
-                      <span className="flex-1 min-w-0 truncate text-zinc-600">{nomeUso(u.feature)}</span>
+                  {subitens(s)!.map((u) => (
+                    <li key={u.chave} className="flex items-baseline gap-3 text-xs">
+                      <span className="flex-1 min-w-0 truncate text-zinc-600">{u.nome}</span>
                       <span className="text-zinc-400 tabular-nums whitespace-nowrap">{u.chamadas}×</span>
                       <span className="font-semibold text-zinc-800 tabular-nums whitespace-nowrap">{brl(u.usd)}</span>
                     </li>
@@ -208,7 +228,7 @@ export default function CustosIaCard() {
           </div>
 
           <div className="grid gap-4 md:grid-cols-2">
-            <Lista titulo="Por uso" icone="ri-apps-2-line" itens={rel.por_uso} rotulo={(s) => nomeUso(s.chave)} />
+            <Lista titulo="Por uso (toque para detalhar)" icone="ri-apps-2-line" itens={rel.por_uso} rotulo={(s) => nomeUso(s.chave)} />
             <Lista titulo="Por loja (toque para ver os usos)" icone="ri-store-2-line" itens={rel.por_loja}
               rotulo={(s) => (s.chave ? s.nome : 'Sem loja (assistente sem loja definida, contratação, pesquisa)')} />
             <Lista titulo="Por pessoa" icone="ri-user-3-line" itens={rel.por_pessoa} />

@@ -3543,6 +3543,8 @@ Sem SW ativo o POST cai no Vercel e falha — por isso o destino só existe no S
   (`fin_ifood_entries`), que o cron diário grava; o depósito é casado por `fn_match_ifood_inter` no `inter-bank` e no
   `rematch` do `conciliacao-pagamentos`. Busca manual do iFood: Configurar › iFood › Buscar agora.
   A lista em si (`list_statement_imports`) leva < 1 s.
+  Inter, Stone e MP rodam em paralelo; o casamento saque do MP × crédito no Inter (`fn_match_mp_payouts`) roda também
+  no `rematch` do `conciliacao-pagamentos` (antes das sugestões), que a tela chama depois dos três.
 - **Ordem da DRE (2026-09-26)**: grupos que subtraem do resultado (`expense` + grupos da loja) e categorias (entre irmãs)
   têm ↑↓ em Categorias DRE. Posição em `fin_dre_groups.sort_order` (o `expense` ganha linha própria só para guardar a posição —
   não é "apelido": apelido = nome/ícone diferente do de fábrica) e `fin_dre_categories.sort_order`. Toda tela que lista grupos

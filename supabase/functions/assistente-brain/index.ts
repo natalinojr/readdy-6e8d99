@@ -2931,28 +2931,6 @@ Deno.serve(async (req) => {
       if (round === MAX_TOOL_ROUNDS) reply = textOut || 'Fiz várias consultas mas não consegui fechar a resposta. Pode repetir de forma mais simples?';
     }
 
-    // Custo da IA (dono, 2026-09-28): uma linha por resposta do loop. tenant_id só quando as
-    // ferramentas usadas (campo "loja") apontam para uma única loja; em modo de grupo (triagem,
-    // entrada de compra, dias de freelancer) não é o dono perguntando, então userId fica null.
-    {
-      const lojasUsadas = new Set<string>();
-      for (const tc of toolCalls) {
-        const inp = tc.input as Record<string, unknown> | null;
-        const loja = inp && typeof inp === 'object' ? inp.loja : null;
-        if (typeof loja === 'string' && loja) lojasUsadas.add(resolveTenant(ctx, loja).id);
-        // Consulta ao banco traz o id da loja dentro do SQL (tenant_id='…'): também conta.
-        const txt = JSON.stringify(tc.input ?? '');
-        for (const t of ctx.tenants) if (txt.includes(t.id)) lojasUsadas.add(t.id);
-      }
-      const tenantIdUso = lojasUsadas.size === 1 ? [...lojasUsadas][0] : null;
-      const emGrupo = body.modo === 'triagem_grupo' || body.modo === 'entrada_compra_grupo' || body.modo === 'dias_freelancer';
-      const featureUso = emGrupo ? 'assistente-grupo' : 'assistente';
-      const userIdUso = emGrupo ? null : ownerId;
-      for (const ev of usageEvents) {
-        await registrarUsoIa(admin, { feature: featureUso, model: ev.model, usage: ev.usage, tenantId: tenantIdUso, userId: userIdUso, ref: chatId });
-      }
-    }
-
     // O modelo IMITA os marcadores que vê no histórico (2026-09-16): passou a escrever
     // '[Botão enviado: "…" → /rota]' dentro da própria resposta, e o marcador de verdade era
     // acrescentado embaixo — resultado na tela do dono: balão vazio (o chat limpa os dois) e o
@@ -3009,6 +2987,27 @@ Deno.serve(async (req) => {
       ?? (porFerramentas !== 'geral' ? porFerramentas
         : channel !== 'app' && TOPICS.includes(String(userRow?.topic)) ? String(userRow?.topic) : 'geral');
     if (!topicoPedido && userRow?.id && userRow.topic !== topic) await admin.from('asst_messages').update({ topic }).eq('id', userRow.id);
+    // Custo da IA (dono, 2026-09-28): uma linha por resposta do loop. tenant_id só quando as
+    // ferramentas usadas (campo "loja") apontam para uma única loja; em modo de grupo (triagem,
+    // entrada de compra, dias de freelancer) não é o dono perguntando, então userId fica null.
+    {
+      const lojasUsadas = new Set<string>();
+      for (const tc of toolCalls) {
+        const inp = tc.input as Record<string, unknown> | null;
+        const loja = inp && typeof inp === 'object' ? inp.loja : null;
+        if (typeof loja === 'string' && loja) lojasUsadas.add(resolveTenant(ctx, loja).id);
+        // Consulta ao banco traz o id da loja dentro do SQL (tenant_id='…'): também conta.
+        const txt = JSON.stringify(tc.input ?? '');
+        for (const t of ctx.tenants) if (txt.includes(t.id)) lojasUsadas.add(t.id);
+      }
+      const tenantIdUso = lojasUsadas.size === 1 ? [...lojasUsadas][0] : null;
+      const emGrupo = body.modo === 'triagem_grupo' || body.modo === 'entrada_compra_grupo' || body.modo === 'dias_freelancer';
+      const featureUso = emGrupo ? 'assistente-grupo' : 'assistente';
+      const userIdUso = emGrupo ? null : ownerId;
+      for (const ev of usageEvents) {
+        await registrarUsoIa(admin, { feature: featureUso, model: ev.model, usage: ev.usage, tenantId: tenantIdUso, userId: userIdUso, ref: chatId, detalhe: `${channel}|${topic}` });
+      }
+    }
     await admin.from('asst_messages').insert({ channel, chat_id: chatId, role: 'assistant', content: historyContent, tool_calls: toolCalls, usage, topic, group_jid: grupoJid });
     log('INFO', 'reply', { chat: chatId, ms: Date.now() - started, tools: toolCalls.map((t) => t.name), actions: ctx.outbound.map((a) => a.type), usage });
     return json({ success: true, reply, actions: ctx.outbound, tool_calls: toolCalls, usage });
