@@ -3537,6 +3537,12 @@ Sem SW ativo o POST cai no Vercel e falha — por isso o destino só existe no S
   responde `{ fresh: true, last_sync_at }` sem chamar o provedor (~1–2 s). Menu "Atualizar bancos agora"/"Buscar o período"
   não mandam o parâmetro e vão sempre. Depois da busca a lista é relida com `refresh(true)` (silenciosa, sem "Carregando...").
   Nova busca automática em tela = sempre com `max_age_min`; o cron nunca manda.
+  **2026-09-28:** mesmo assim, passados 15 min a tela esperava o iFood (33–58 s, refaz relatórios + 30 dias de vendas +
+  repasses por loja do iFood, tudo em sequência) para reler a lista. Decisão do dono: a Conciliação NÃO chama mais o
+  `ifood-financial` (nem ao abrir, nem em "Atualizar bancos agora"/"Buscar o período"). Ela só usa o repasse esperado
+  (`fin_ifood_entries`), que o cron diário grava; o depósito é casado por `fn_match_ifood_inter` no `inter-bank` e no
+  `rematch` do `conciliacao-pagamentos`. Busca manual do iFood: Configurar › iFood › Buscar agora.
+  A lista em si (`list_statement_imports`) leva < 1 s.
 - **Ordem da DRE (2026-09-26)**: grupos que subtraem do resultado (`expense` + grupos da loja) e categorias (entre irmãs)
   têm ↑↓ em Categorias DRE. Posição em `fin_dre_groups.sort_order` (o `expense` ganha linha própria só para guardar a posição —
   não é "apelido": apelido = nome/ícone diferente do de fábrica) e `fin_dre_categories.sort_order`. Toda tela que lista grupos
