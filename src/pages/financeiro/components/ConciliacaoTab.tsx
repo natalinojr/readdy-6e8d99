@@ -491,6 +491,19 @@ export default function ConciliacaoTab() {
   const shiftISO = (iso: string, n: number) => {
     const d = new Date(`${iso}T12:00:00Z`); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10);
   };
+  // Repasse da Stone que já caiu no banco mas ainda não casou: o arquivo de conciliação da Stone
+  // de um dia só sai no dia seguinte (~07h15, cron + abertura da tela). Até lá o crédito fica
+  // pendente por ordem natural das coisas, não por erro — a linha avisa. Passado esse prazo,
+  // some o aviso: aí sim é pendência de verdade (2026-09-28).
+  const aguardandoStone = (s: StatementImport): string | null => {
+    if (!usaStone || s.transaction_type !== 'credit' || s.match_kind || s.reconciled || s.status !== 'pending') return null;
+    const alvo = (cardProviders.find(p => p.provider === 'stone')?.deposit_match || 'stone').toLowerCase();
+    if (!(s.description ?? '').toLowerCase().includes(alvo)) return null;
+    const hoje = hojeBR();
+    if (s.transaction_date >= hoje) return 'Aguardando o arquivo da Stone, que sai amanhã de manhã (~07h). Concilia sozinho, não é erro.';
+    if (s.transaction_date === shiftISO(hoje, -1)) return 'Aguardando o arquivo da Stone, que sai hoje de manhã (~07h). Concilia sozinho, não é erro.';
+    return null;
+  };
   const [periodFrom, setPeriodFrom] = useState(() => shiftISO(hojeBR(), -30));
   const [periodTo, setPeriodTo] = useState(() => hojeBR());
   const periodoValido = Boolean(periodFrom && periodTo && periodFrom <= periodTo);
@@ -1670,6 +1683,7 @@ export default function ConciliacaoTab() {
                           </p>
                         )}
                         {s.notes && <p className="text-xs text-amber-500 mt-0.5 break-words line-clamp-1"><i className="ri-sticky-note-line text-xs" /> {s.notes}</p>}
+                        {aguardandoStone(s) && <p className="text-xs text-sky-600 mt-0.5 break-words line-clamp-2"><i className="ri-time-line text-xs" /> {aguardandoStone(s)}</p>}
                         <div className="flex items-center gap-1.5 flex-wrap mt-2">
                           <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold ${cfg.color}`}>
                             <i className={`${cfg.icon} text-xs`} />{cfg.label}
@@ -1765,6 +1779,9 @@ export default function ConciliacaoTab() {
                         )}
                         {s.notes && (
                           <p className="text-xs text-amber-500 mt-0.5 truncate"><i className="ri-sticky-note-line text-xs" /> {s.notes}</p>
+                        )}
+                        {aguardandoStone(s) && (
+                          <p className="text-xs text-sky-600 mt-0.5 truncate" title={aguardandoStone(s) ?? ''}><i className="ri-time-line text-xs" /> {aguardandoStone(s)}</p>
                         )}
                         {s.match_detail && (s.match_kind === 'payable' || s.match_kind === 'inbound_doc' || s.match_kind === 'payroll' || s.match_kind === 'rule') && (
                           <p className={'text-xs mt-0.5 truncate ' + (s.reconciled ? 'text-emerald-600' : 'text-blue-600')}>
