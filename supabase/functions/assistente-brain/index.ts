@@ -2940,6 +2940,9 @@ Deno.serve(async (req) => {
         const inp = tc.input as Record<string, unknown> | null;
         const loja = inp && typeof inp === 'object' ? inp.loja : null;
         if (typeof loja === 'string' && loja) lojasUsadas.add(resolveTenant(ctx, loja).id);
+        // Consulta ao banco traz o id da loja dentro do SQL (tenant_id='…'): também conta.
+        const txt = JSON.stringify(tc.input ?? '');
+        for (const t of ctx.tenants) if (txt.includes(t.id)) lojasUsadas.add(t.id);
       }
       const tenantIdUso = lojasUsadas.size === 1 ? [...lojasUsadas][0] : null;
       const emGrupo = body.modo === 'triagem_grupo' || body.modo === 'entrada_compra_grupo' || body.modo === 'dias_freelancer';

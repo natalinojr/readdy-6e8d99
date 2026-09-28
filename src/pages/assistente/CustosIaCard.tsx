@@ -4,7 +4,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 
-interface Soma { chave: string; nome: string; usd: number; chamadas: number; tokens_in: number; tokens_out: number }
+interface Soma {
+  chave: string; nome: string; usd: number; chamadas: number; tokens_in: number; tokens_out: number;
+  /** Só em por_loja: de quais usos veio o gasto da loja (abre ao tocar na linha). */
+  usos?: { feature: string; usd: number; chamadas: number }[];
+}
 interface Relatorio {
   de: string; ate: string; total_usd: number; chamadas: number; estimado: boolean;
   cotacao: { rate: number; source: string; at: string } | null;
@@ -81,6 +85,9 @@ export default function CustosIaCard() {
     ? (usd * rate).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
     : `US$ ${usd.toFixed(2)}`);
   const usdTxt = (usd: number) => `US$ ${usd.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const [abertas, setAbertas] = useState<Set<string>>(new Set());
+  const alternar = (k: string) => setAbertas((prev) => { const n = new Set(prev); if (n.has(k)) n.delete(k); else n.add(k); return n; });
+  const nomeUso = (k: string) => USO_LABEL[k] ?? k.replace(/-/g, ' ').replace(/^./, (c) => c.toUpperCase());
   const maxDia = Math.max(0.0001, ...(rel?.por_dia ?? []).map((d) => d.usd));
 
   const Lista = ({ titulo, icone, itens, rotulo }: { titulo: string; icone: string; itens: Soma[]; rotulo?: (s: Soma) => string }) => {
@@ -92,7 +99,11 @@ export default function CustosIaCard() {
         <ul className="divide-y divide-zinc-50">
           {itens.map((s) => (
             <li key={s.chave || '_'} className="px-4 py-2.5">
-              <div className="flex items-baseline gap-3">
+              <div
+                className={`flex items-baseline gap-3 ${s.usos ? 'cursor-pointer' : ''}`}
+                onClick={s.usos ? () => alternar(s.chave || '_') : undefined}
+              >
+                {s.usos && <i className={`text-zinc-400 ${abertas.has(s.chave || '_') ? 'ri-arrow-down-s-line' : 'ri-arrow-right-s-line'}`} />}
                 <p className="flex-1 min-w-0 text-sm text-zinc-800 truncate">{rotulo ? rotulo(s) : s.nome}</p>
                 <p className="text-sm font-bold text-zinc-900 tabular-nums">{brl(s.usd)}</p>
               </div>
@@ -104,6 +115,17 @@ export default function CustosIaCard() {
                   {usdTxt(s.usd)} · {s.chamadas} {s.chamadas === 1 ? 'chamada' : 'chamadas'}
                 </p>
               </div>
+              {s.usos && abertas.has(s.chave || '_') && (
+                <ul className="mt-2 ml-5 space-y-1 border-l border-zinc-100 pl-3">
+                  {s.usos.map((u) => (
+                    <li key={u.feature} className="flex items-baseline gap-3 text-xs">
+                      <span className="flex-1 min-w-0 truncate text-zinc-600">{nomeUso(u.feature)}</span>
+                      <span className="text-zinc-400 tabular-nums whitespace-nowrap">{u.chamadas}×</span>
+                      <span className="font-semibold text-zinc-800 tabular-nums whitespace-nowrap">{brl(u.usd)}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </li>
           ))}
         </ul>
@@ -186,8 +208,9 @@ export default function CustosIaCard() {
           </div>
 
           <div className="grid gap-4 md:grid-cols-2">
-            <Lista titulo="Por uso" icone="ri-apps-2-line" itens={rel.por_uso} rotulo={(s) => USO_LABEL[s.chave] ?? s.chave.replace(/-/g, ' ').replace(/^./, (c) => c.toUpperCase())} />
-            <Lista titulo="Por loja" icone="ri-store-2-line" itens={rel.por_loja} />
+            <Lista titulo="Por uso" icone="ri-apps-2-line" itens={rel.por_uso} rotulo={(s) => nomeUso(s.chave)} />
+            <Lista titulo="Por loja (toque para ver os usos)" icone="ri-store-2-line" itens={rel.por_loja}
+              rotulo={(s) => (s.chave ? s.nome : 'Sem loja (assistente sem loja definida, contratação, pesquisa)')} />
             <Lista titulo="Por pessoa" icone="ri-user-3-line" itens={rel.por_pessoa} />
             <Lista titulo="Por modelo" icone="ri-cpu-line" itens={rel.por_modelo} rotulo={(s) => MODELO_LABEL(s.chave)} />
           </div>

@@ -287,6 +287,8 @@ Deno.serve(async (req) => {
         }
         type Soma = { chave: string; usd: number; chamadas: number; tokens_in: number; tokens_out: number };
         const grupos: Record<string, Map<string, Soma>> = { loja: new Map(), pessoa: new Map(), uso: new Map(), modelo: new Map(), dia: new Map() };
+        // Cada loja (e o "sem loja") abre na tela mostrando de quais usos veio o gasto.
+        const lojaUso = new Map<string, Map<string, { usd: number; chamadas: number }>>();
         const somar = (g: string, chave: string, r: Record<string, number>) => {
           const m = grupos[g];
           const s = m.get(chave) ?? { chave, usd: 0, chamadas: 0, tokens_in: 0, tokens_out: 0 };
@@ -301,6 +303,10 @@ Deno.serve(async (req) => {
           total += Number(r.cost_usd ?? 0);
           if (r.backfill) estimado = true;
           somar('loja', r.tenant_id ?? '', r);
+          const lu = lojaUso.get(r.tenant_id ?? '') ?? new Map();
+          const x = lu.get(r.feature) ?? { usd: 0, chamadas: 0 };
+          x.usd += Number(r.cost_usd ?? 0); x.chamadas += 1;
+          lu.set(r.feature, x); lojaUso.set(r.tenant_id ?? '', lu);
           somar('pessoa', r.user_id ?? '', r);
           somar('uso', r.feature, r);
           somar('modelo', r.model, r);
@@ -323,7 +329,12 @@ Deno.serve(async (req) => {
         return ok({
           de, ate, total_usd: Math.round(total * 10000) / 10000, chamadas: rows.length, estimado,
           cotacao: fx ? { rate: fx.rate, source: fx.source, at: fx.at } : null,
-          por_loja: lista('loja', (k) => (k ? String(nomeLoja.get(k) ?? 'Loja removida') : 'Geral (sem loja)')),
+          por_loja: lista('loja', (k) => (k ? String(nomeLoja.get(k) ?? 'Loja removida') : 'Sem loja')).map((l) => ({
+            ...l,
+            usos: [...(lojaUso.get(l.chave)?.entries() ?? [])]
+              .map(([feature, v]) => ({ feature, usd: Math.round(v.usd * 10000) / 10000, chamadas: v.chamadas }))
+              .sort((a, b) => b.usd - a.usd),
+          })),
           por_pessoa: lista('pessoa', (k) => (k ? String(nomePessoa.get(k) ?? 'Usuário removido') : 'Automático / clientes')),
           por_uso: lista('uso', (k) => k),
           por_modelo: lista('modelo', (k) => k),
