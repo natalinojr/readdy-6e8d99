@@ -79,7 +79,7 @@ export async function pendenciaDoPedido(admin: any, p: { id: string; tenant_id: 
   const { error } = await admin.rpc('fn_pendencia_upsert', {
     p_tenant: p.tenant_id, p_kind: 'pedido_pagamento', p_ref: p.id,
     p_titulo: `${ROTULO[p.tipo]} de ${brl(p.valor)} — ${p.favorecido_nome}`,
-    p_detalhe: `${p.descricao.replace(/\.$/, '')}.${dias ? ` ${dias}.` : ''} Pedido por ${p.solicitado_por_nome ?? 'alguém da loja'}. ${p.tipo === 'compra_online' ? 'Autorizar e comprar na conta da loja (a nota do vendedor vira a compra).' : 'Só vira conta a pagar depois de aprovado.'}`,
+    p_detalhe: `${p.descricao.replace(/\.$/, '')}.${dias ? ` ${dias}.` : ''} Pedido por ${p.solicitado_por_nome ?? 'alguém da loja'}. ${p.tipo === 'compra_online' ? 'Classifique (despesa ou CMV) e pague o Pix do site — vira compra e o Pix sai pelo Inter.' : 'Só vira conta a pagar depois de aprovado.'}`,
     p_payload: { pedido_id: p.id, tipo: p.tipo, valor: p.valor, ...(p.dias?.length ? { dias: p.dias } : {}) },
     p_rota: '/receber?aprovar=1', p_urgencia: 'normal', p_acao_requerida: true, p_origem: 'app', p_reabrir: false,
   });
