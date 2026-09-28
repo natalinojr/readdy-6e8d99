@@ -197,18 +197,20 @@ export default function IfoodTab({ periodo }: Props) {
   const sobDemanda = useMemo(() => {
     const doIfood = new Map(pedidos.map((p) => [p.id, p]));
     const linhas: { id: string; at: Date; origem: 'iFood' | 'Delivery'; ref: string; ifood: number; cliente: number | null }[] = [];
+    // Entrega chamada pelo ERPOS: a taxa do cliente é a do pedido do ERPOS; o custo é o que o iFood cobrou
+    // (conciliação/API, quando já chegou) ou a cotação. O pedido que o iFood cria para ela não conta de novo.
+    const doErpos = new Set<string>();
+    for (const e of entregasErpos) {
+      if (loja && e.loja !== loja) continue;
+      const conc = e.ifoodOrderId ? doIfood.get(e.ifoodOrderId) : undefined;
+      if (e.ifoodOrderId) doErpos.add(e.ifoodOrderId);
+      linhas.push({ id: e.id, at: e.at, origem: 'Delivery', ref: e.numero ? `#${e.numero}` : '—', ifood: conc && conc.entregaSobDemanda > 0.005 ? conc.entregaSobDemanda : e.ifood, cliente: e.cliente });
+    }
     for (const p of validos) {
-      if (p.entregaSobDemanda < 0.005) continue;
+      if (p.entregaSobDemanda < 0.005 || doErpos.has(p.id)) continue;
       linhas.push({ id: p.id, at: p.at, origem: 'iFood', ref: `#${p.id.slice(0, 4)}`, ifood: p.entregaSobDemanda,
         // Taxa 0 no pedido do iFood = a loja não lançou a entrega ao registrar o pedido (não dá para saber quanto o cliente pagou).
         cliente: p.entregaCliente > 0.005 ? p.entregaCliente : null });
-    }
-    for (const e of entregasErpos) {
-      if (loja && e.loja !== loja) continue;
-      // Se a conciliação já trouxe a cobrança dessa entrega, vale o valor cobrado (não a cotação).
-      const conc = e.ifoodOrderId ? doIfood.get(e.ifoodOrderId) : undefined;
-      if (conc && !conc.cancelado) continue; // já contado como pedido do iFood
-      linhas.push({ id: e.id, at: e.at, origem: 'Delivery', ref: e.numero ? `#${e.numero}` : '—', ifood: conc && conc.entregaSobDemanda > 0.005 ? conc.entregaSobDemanda : e.ifood, cliente: e.cliente });
     }
     linhas.sort((a, b) => b.at.getTime() - a.at.getTime());
     const ifood = linhas.reduce((a, l) => a + l.ifood, 0);
