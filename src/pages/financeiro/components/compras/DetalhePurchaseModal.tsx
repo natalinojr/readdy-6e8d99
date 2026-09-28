@@ -169,6 +169,40 @@ export default function DetalhePurchaseModal({ purchase, installments, loadingIn
 
   const isDelivered = !!purchase.delivery_confirmed_at;
 
+  // Corrigir a data do recebimento já confirmado (leva junto a data da entrada no estoque)
+  const hojeBR = new Date(Date.now() - 3 * 3600_000).toISOString().slice(0, 10);
+  const dataRecebidaBR = purchase.delivery_confirmed_at
+    ? new Date(new Date(purchase.delivery_confirmed_at).getTime() - 3 * 3600_000).toISOString().slice(0, 10)
+    : hojeBR;
+  const [editandoData, setEditandoData] = useState(false);
+  const [novaData, setNovaData] = useState(dataRecebidaBR);
+  const [salvandoData, setSalvandoData] = useState(false);
+  const [erroData, setErroData] = useState('');
+
+  const handleMudarData = async () => {
+    if (!user?.tenantId || !novaData) return;
+    if (novaData === dataRecebidaBR) { setEditandoData(false); return; }
+    setSalvandoData(true);
+    setErroData('');
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch(`${SUPABASE_URL}/functions/v1/purchase-confirm-delivery`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token}` },
+        body: JSON.stringify({ action: 'change_received_at', tenant_id: user.tenantId, payload: { purchase_id: purchase.id, received_at: novaData } }),
+      });
+      const result = await res.json().catch(() => ({}));
+      if (!res.ok || result.error) { setErroData(result.error || 'Erro ao mudar a data'); return; }
+      setEditandoData(false);
+      onDeliveryConfirmed?.();
+      onClose();
+    } catch {
+      setErroData('Erro de conexão');
+    } finally {
+      setSalvandoData(false);
+    }
+  };
+
   const handleConfirmDelivery = async () => {
     if (!user?.tenantId) return;
     if (!receivedAt) { setDeliveryError('Informe a data do recebimento.'); return; }
@@ -431,9 +465,45 @@ export default function DetalhePurchaseModal({ purchase, installments, loadingIn
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-bold text-green-800">Mercadoria Recebida</p>
-                <p className="text-xs text-green-600 mt-0.5">
-                  Recebido em {new Date(purchase.delivery_confirmed_at!).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })}
-                </p>
+                {!editandoData ? (
+                  <p className="text-xs text-green-600 mt-0.5">
+                    Recebido em {new Date(purchase.delivery_confirmed_at!).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })}
+                    <button
+                      onClick={() => { setNovaData(dataRecebidaBR); setErroData(''); setEditandoData(true); }}
+                      className="ml-2 text-green-700 underline hover:text-green-900 cursor-pointer"
+                    >
+                      Alterar data
+                    </button>
+                  </p>
+                ) : (
+                  <div className="mt-1.5 space-y-1.5">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <input
+                        type="date"
+                        value={novaData}
+                        max={hojeBR}
+                        onChange={e => setNovaData(e.target.value)}
+                        className="border border-green-300 rounded-lg px-2 py-1 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-green-400"
+                      />
+                      <button
+                        onClick={handleMudarData}
+                        disabled={salvandoData || !novaData}
+                        className="px-3 py-1.5 bg-green-500 hover:bg-green-600 text-white rounded-lg text-xs font-bold cursor-pointer disabled:opacity-60"
+                      >
+                        {salvandoData ? 'Salvando...' : 'Salvar'}
+                      </button>
+                      <button
+                        onClick={() => { setEditandoData(false); setErroData(''); }}
+                        disabled={salvandoData}
+                        className="px-3 py-1.5 border border-zinc-200 bg-white rounded-lg text-xs font-semibold text-zinc-600 hover:bg-zinc-50 cursor-pointer"
+                      >
+                        Cancelar
+                      </button>
+                    </div>
+                    <p className="text-[11px] text-green-700">A entrada no estoque desta compra passa para esta data (a quantidade não muda).</p>
+                    {erroData && <p className="text-xs text-red-600"><i className="ri-error-warning-line mr-1" />{erroData}</p>}
+                  </div>
+                )}
                 {purchase.delivery_notes && (
                   <p className="text-xs text-green-700 mt-1 italic">"{purchase.delivery_notes}"</p>
                 )}
@@ -717,7 +787,7 @@ export default function DetalhePurchaseModal({ purchase, installments, loadingIn
                       onChange={e => setReceivedAt(e.target.value)}
                       className="border border-green-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-400 bg-white"
                     />
-                    <p className="text-[11px] text-green-700 mt-1">Dia em que a mercadoria chegou. Aparece na lista de Compras e na conta a pagar.</p>
+                    <p className="text-[11px] text-green-700 mt-1">Dia em que a mercadoria chegou. É a data da entrada no estoque e aparece na lista de Compras e na conta a pagar.</p>
                   </div>
 
                   <div>

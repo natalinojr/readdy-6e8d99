@@ -77,18 +77,81 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ ingredients: ings, suggestions, stock_already_applied: Boolean(purchase.stock_applied_at) }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
-    if (purchase.delivery_confirmed_at) return new Response(JSON.stringify({ error: 'Recebimento já confirmado anteriormente' }), { status: 409, headers: corsHeaders });
-
     // Data em que a mercadoria chegou, escolhida pelo usuário (AAAA-MM-DD). Sem data = agora.
     // Gravada ao meio-dia de Brasília para não trocar de dia por causa do fuso.
     const hojeBR = new Date(Date.now() - 3 * 3600_000).toISOString().slice(0, 10);
-    let confirmedAt = new Date().toISOString();
-    if (received_at != null && received_at !== '') {
-      const d = String(received_at).slice(0, 10);
+    const lerData = (v: unknown): string | Response => {
+      const d = String(v).slice(0, 10);
       if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return new Response(JSON.stringify({ error: 'Data do recebimento inválida' }), { status: 400, headers: corsHeaders });
       if (d > hojeBR) return new Response(JSON.stringify({ error: 'A data do recebimento não pode ser no futuro' }), { status: 400, headers: corsHeaders });
-      confirmedAt = new Date(d + 'T12:00:00-03:00').toISOString();
+      return new Date(d + 'T12:00:00-03:00').toISOString();
+    };
+    // Contagem de estoque (inventário) de algum destes insumos entre duas datas. Entrada não atravessa
+    // contagem: o ajuste da contagem foi calculado com o saldo daquela hora.
+    const contagemEntre = async (ings: string[], de: string, ate: string) => {
+      if (!ings.length || de === ate) return null;
+      const [a, b] = de < ate ? [de, ate] : [ate, de];
+      const { data } = await supabase.from('stock_movements').select('created_at')
+        .eq('tenant_id', tenant_id).in('ingredient_id', ings).eq('type', 'inventory_adjustment')
+        .gt('created_at', a).lt('created_at', b).order('created_at', { ascending: false }).limit(1);
+      return (data?.[0]?.created_at as string | undefined) ?? null;
+    };
+    const diaBR = (iso: string) => new Date(new Date(iso).getTime() - 3 * 3600_000).toISOString().slice(0, 10).split('-').reverse().join('/');
+
+    // Corrigir a data do recebimento já confirmado (2026-09-28): leva junto a data da entrada no
+    // estoque desta compra (movimentos com purchase_id), a da conta a pagar e a da lista de Compras.
+    // O saldo do estoque não muda; só o dia em que a entrada aparece.
+    if (body.action === 'change_received_at') {
+      if (!purchase.delivery_confirmed_at) return new Response(JSON.stringify({ error: 'Esta compra ainda não foi recebida' }), { status: 400, headers: corsHeaders });
+      const novo = lerData(received_at);
+      if (novo instanceof Response) return novo;
+      const antigo = String(purchase.delivery_confirmed_at);
+      const { data: movs, error: mvErr } = await supabase.from('stock_movements').select('id, ingredient_id, created_at')
+        .eq('tenant_id', tenant_id).eq('purchase_id', purchase_id);
+      if (mvErr) return new Response(JSON.stringify({ error: mvErr.message }), { status: 500, headers: corsHeaders });
+      const lista = (movs ?? []) as Array<{ id: string; ingredient_id: string; created_at: string }>;
+      for (const m of lista) {
+        const cont = await contagemEntre([m.ingredient_id], m.created_at, novo);
+        if (cont) {
+          return new Response(JSON.stringify({ error: `Houve contagem de estoque em ${diaBR(cont)}, entre a data atual da entrada e a nova. Mudar a data faria a entrada pular a contagem; escolha uma data do mesmo lado da contagem.` }), { status: 409, headers: corsHeaders });
+        }
+      }
+      const { error: upErr } = await supabase.from('fin_purchases').update({
+        delivery_confirmed_at: novo,
+        // Compra cujo estoque entrou no recebimento: a data da entrada acompanha
+        ...(purchase.stock_applied_at === antigo ? { stock_applied_at: novo } : {}),
+      }).eq('id', purchase_id).eq('tenant_id', tenant_id).eq('delivery_confirmed_at', antigo);
+      if (upErr) return new Response(JSON.stringify({ error: upErr.message }), { status: 500, headers: corsHeaders });
+      if (lista.length) {
+        const { error: e2 } = await supabase.from('stock_movements').update({ created_at: novo })
+          .eq('tenant_id', tenant_id).eq('purchase_id', purchase_id);
+        if (e2) return new Response(JSON.stringify({ error: 'Data da compra mudou, mas a do estoque não: ' + e2.message }), { status: 500, headers: corsHeaders });
+      }
+      await supabase.from('fin_accounts_payable').update({ delivery_confirmed_at: novo })
+        .eq('reference_id', purchase_id).eq('tenant_id', tenant_id).not('delivery_confirmed_at', 'is', null);
+      return new Response(JSON.stringify({ data: { confirmed_at: novo, movimentos: lista.length } }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
+
+    if (purchase.delivery_confirmed_at) return new Response(JSON.stringify({ error: 'Recebimento já confirmado anteriormente' }), { status: 409, headers: corsHeaders });
+
+    let confirmedAt = new Date().toISOString();
+    if (received_at != null && received_at !== '') {
+      const d = lerData(received_at);
+      if (d instanceof Response) return d;
+      confirmedAt = d;
+    }
+    // Movimento de estoque do recebimento: fica ligado à compra e com a data do recebimento
+    // (se não houver contagem do insumo depois dessa data; senão fica na hora de agora).
+    const nowIso = new Date().toISOString();
+    const datarMovimento = async (res: unknown, ingredientId: string) => {
+      const movId = (res as { movement_id?: string } | null)?.movement_id;
+      if (!movId) return;
+      const pulaContagem = confirmedAt < nowIso ? await contagemEntre([ingredientId], confirmedAt, nowIso) : null;
+      const { error } = await supabase.from('stock_movements')
+        .update({ purchase_id, ...(pulaContagem ? {} : { created_at: confirmedAt }) })
+        .eq('id', movId).eq('tenant_id', tenant_id);
+      if (error) console.error('[purchase-confirm-delivery] datar movimento:', error.message);
+    };
 
     // Valida os insumos escolhidos ANTES da trava: um 400 aqui não pode deixar a compra "confirmada".
     const withLink = Array.isArray(received_items)
@@ -223,7 +286,7 @@ Deno.serve(async (req) => {
             const entrada = receivedQty * factor;
             if (entrada > 0) {
               stockMoved = true; // a partir daqui a trava não é mais desfeita
-              const { error: mvErr } = await supabase.rpc('fn_add_stock_movement', {
+              const { data: mvRes, error: mvErr } = await supabase.rpc('fn_add_stock_movement', {
                 p_tenant_id: tenant_id,
                 p_ingredient_id: item.ingredient_id,
                 p_type: 'in',
@@ -236,6 +299,7 @@ Deno.serve(async (req) => {
                 p_batch_id: null,
               });
               if (mvErr) console.error('[purchase-confirm-delivery] entrada fn_add_stock_movement error:', mvErr.message ?? mvErr);
+              else await datarMovimento(mvRes, String(item.ingredient_id));
             }
           }
 
@@ -243,7 +307,7 @@ Deno.serve(async (req) => {
           const deltaStock = stockAlreadyApplied && !newlyLinked.has(itemId) ? (receivedQty - originalQty) * factor : 0;
           if (deltaStock !== 0) {
             stockMoved = true; // a partir daqui a trava não é mais desfeita
-            const { error: mvErr } = await supabase.rpc('fn_add_stock_movement', {
+            const { data: mvRes, error: mvErr } = await supabase.rpc('fn_add_stock_movement', {
               p_tenant_id: tenant_id,
               p_ingredient_id: item.ingredient_id,
               p_type: deltaStock > 0 ? 'in' : 'manual_out',
@@ -256,6 +320,7 @@ Deno.serve(async (req) => {
               p_batch_id: null,
             });
             if (mvErr) console.error('[purchase-confirm-delivery] ajuste fn_add_stock_movement error:', mvErr.message ?? mvErr);
+            else await datarMovimento(mvRes, String(item.ingredient_id));
           }
 
           const supplierPayload: Record<string, unknown> = {};

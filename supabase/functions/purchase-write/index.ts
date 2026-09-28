@@ -332,13 +332,15 @@ async function applyStockEntry(
     const stockQty = qty * upp;
     if (!(stockQty > 0)) continue;
     // Movimentacao via RPC (insere movimento + atualiza current_stock atomicamente)
-    const { error: mvErr } = await supabase.rpc('fn_add_stock_movement', {
+    const { data: mvRes, error: mvErr } = await supabase.rpc('fn_add_stock_movement', {
       p_tenant_id: tenant_id, p_ingredient_id: item.ingredient_id,
       p_type: 'in', p_quantity: stockQty, p_unit: null,
       p_reason: `Compra: ${purchase.supplier} - NF ${purchase.invoice_number || 'S/N'}`,
       p_notes: null, p_order_id: null, p_operator_id: user.id, p_batch_id: null,
     });
     if (mvErr) console.error('[purchase-write] fn_add_stock_movement error:', mvErr.message ?? mvErr);
+    // Liga o movimento à compra (permite corrigir a data do recebimento depois)
+    else if (mvRes?.movement_id) await supabase.from('stock_movements').update({ purchase_id: purchase.id }).eq('id', mvRes.movement_id).eq('tenant_id', tenant_id);
   }
 }
 
@@ -365,12 +367,23 @@ async function entradasDaCompra(
     `Correção de conversão: ${sup} - NF ${nf || 'S/N'}`,
     `Ajuste por edição da compra: ${sup}${nf ? ` NF ${nf}` : ''}`,
   ].map((m) => m.slice(0, 250));
-  const { data, error } = await supabase.from('stock_movements')
-    .select('ingredient_id, signed_quantity')
-    .eq('tenant_id', tenant_id).in('ingredient_id', ings).in('reason', motivos)
-    .gte('created_at', purchase.created_at);
+  // Movimento ligado à compra (purchase_id, desde 2026-09-28) conta mesmo datado antes da criação dela
+  // (recebimento com data passada); os antigos, sem ligação, pelo motivo + data.
+  const [porMotivo, porCompra] = await Promise.all([
+    supabase.from('stock_movements')
+      .select('id, ingredient_id, signed_quantity')
+      .eq('tenant_id', tenant_id).in('ingredient_id', ings).in('reason', motivos)
+      .gte('created_at', purchase.created_at),
+    supabase.from('stock_movements')
+      .select('id, ingredient_id, signed_quantity')
+      .eq('tenant_id', tenant_id).eq('purchase_id', purchase.id),
+  ]);
+  const error = porMotivo.error ?? porCompra.error;
   if (error) { console.error('[purchase-write] entradasDaCompra:', error.message); return out; }
-  for (const m of (data ?? []) as Array<{ ingredient_id: string; signed_quantity: number | null }>) {
+  const vistos = new Set<string>();
+  for (const m of [...(porMotivo.data ?? []), ...(porCompra.data ?? [])] as Array<{ id: string; ingredient_id: string; signed_quantity: number | null }>) {
+    if (vistos.has(m.id) || !ings.includes(m.ingredient_id)) continue;
+    vistos.add(m.id);
     out.set(m.ingredient_id, (out.get(m.ingredient_id) ?? 0) + Number(m.signed_quantity ?? 0));
   }
   return out;
