@@ -64,8 +64,12 @@ export default function NovoPedido({ tipo, tenantId, contexto, onEnviado, onErro
   const [lido, setLido] = useState<PrintLido | null>(null);
   // Pix copia e cola do checkout (2026-09-28): valor exato e quem recebe
   const [pixTexto, setPixTexto] = useState('');
+  // Compra que já foi paga (2026-09-28): sem Pix; informa quando e como
+  const [jaPago, setJaPago] = useState(false);
+  const [pagoEm, setPagoEm] = useState(hoje);
+  const [pagoForma, setPagoForma] = useState<'pix' | 'cartao' | 'mercado_pago' | ''>('');
   const pixLido = useMemo(() => (tipo === 'compra_online' && pixTexto.trim() ? lerPixCopia(pixTexto) : null), [tipo, pixTexto]);
-  useEffect(() => { if (pixLido?.valor) setValor(pixLido.valor.toFixed(2).replace('.', ',')); }, [pixLido]);
+  useEffect(() => { if (pixLido?.valor && !jaPago) setValor(pixLido.valor.toFixed(2).replace('.', ',')); }, [pixLido, jaPago]);
   const [lendo, setLendo] = useState(false);
   const [verLink, setVerLink] = useState(!!linkInicial);
   useEffect(() => { if (tipo === 'compra_online' && !descricaoMexida && !lido) setDescricao(anuncio?.titulo ?? ''); }, [tipo, anuncio, descricaoMexida, lido]);
@@ -134,10 +138,14 @@ export default function NovoPedido({ tipo, tenantId, contexto, onEnviado, onErro
     if (tipo === 'compra_online') {
       if (lendo) return 'Lendo o print…';
       if (!foto && !anuncio) return 'Mande o print da compra';
-      if (!pixTexto.trim()) return 'Cole o Pix copia e cola';
-      if (!pixLido) return 'Pix copia e cola incompleto';
-      if (pixLido.dinamico) return 'Pix sem a chave no código';
-      if (!pixLido.valor) return 'Esse Pix não tem valor';
+      if (jaPago) {
+        if (!pagoForma) return 'Como foi pago?';
+      } else {
+        if (!pixTexto.trim()) return 'Cole o Pix copia e cola';
+        if (!pixLido) return 'Pix copia e cola incompleto';
+        if (pixLido.dinamico) return 'Pix sem a chave no código';
+        if (!pixLido.valor) return 'Esse Pix não tem valor';
+      }
       if (link.trim() && !anuncio) return 'Link não reconhecido';
       if (!descricao.trim()) return 'Diga o que é o produto';
       if (!(lerValor(quantidade) > 0)) return 'Informe a quantidade';
@@ -174,7 +182,8 @@ export default function NovoPedido({ tipo, tenantId, contexto, onEnviado, onErro
         freelancer_id: freelaId, funcao, dias,
         link: tipo === 'compra_online' ? link : undefined, quantidade: tipo === 'compra_online' ? lerValor(quantidade) : undefined,
         lido: tipo === 'compra_online' ? lido : undefined,
-        pix_copia_e_cola: tipo === 'compra_online' ? pixLido?.codigo : undefined,
+        pix_copia_e_cola: tipo === 'compra_online' && !jaPago ? pixLido?.codigo : undefined,
+        ...(tipo === 'compra_online' && jaPago ? { ja_pago: true, pago_em: pagoEm, pago_forma: pagoForma } : {}),
         valores_dia: tipo === 'freelancer' ? Object.fromEntries(dias.map((d) => [d, lerValor(valoresDia[d] ?? '')])) : undefined,
       });
       if (erro) { onErro(erro); return; }
@@ -352,14 +361,43 @@ export default function NovoPedido({ tipo, tenantId, contexto, onEnviado, onErro
           )}
           <Texto label="O que é?" valor={descricao} onValor={(x) => { setDescricaoMexida(true); setDescricao(x); }} placeholder="Ex.: pegador de massa inox 30 cm" />
           <Texto label="Quantidade" valor={quantidade} onValor={(x) => setQuantidade(x.replace(/[^\d.,]/g, ''))} inputMode="decimal" />
-          <div>
-            <Rotulo dica="Na tela de pagamento do site, escolha Pix e toque em Copiar código.">Pix copia e cola</Rotulo>
-            <textarea rows={3} value={pixTexto} onChange={(e) => setPixTexto(e.target.value)} placeholder="00020126…" className={`${cls} font-mono text-xs`} />
-            {pixTexto.trim() && !pixLido && <p className="text-xs text-red-600 px-1 mt-1">Código incompleto ou alterado. Copie de novo no site e cole inteiro.</p>}
-            {pixLido && <ConferePix pix={pixLido} total={lido?.total ?? null} />}
-          </div>
-          {!pixLido?.valor && <Valor label="Valor total (com frete)" valor={valor} onValor={setValor} />}
-          <p className="text-xs text-zinc-500 px-1">Vá até a tela de pagamento, escolha Pix e copie o código. Não pague: o financeiro aprova e paga pelo banco da loja. Se der, use a conta da loja (CNPJ).</p>
+          <label className="flex items-center gap-3 bg-white border-2 border-zinc-100 rounded-2xl px-4 py-3 cursor-pointer">
+            <input type="checkbox" checked={jaPago} onChange={(e) => setJaPago(e.target.checked)} className="w-5 h-5 accent-amber-500" />
+            <span className="flex-1">
+              <span className="block text-sm font-bold text-zinc-800">Essa compra já foi paga</span>
+              <span className="block text-xs text-zinc-500">Pagaram antes de pedir aqui: sem Pix, só lançar e classificar</span>
+            </span>
+          </label>
+          {jaPago ? (
+            <>
+              <div>
+                <Rotulo>Quando foi pago?</Rotulo>
+                <div className="mt-1.5 flex gap-2">
+                  <Chips opcoes={[{ v: hoje, label: 'Hoje' }, { v: somaDias(hoje, -1), label: 'Ontem' }]} valor={pagoEm} onValor={setPagoEm} />
+                  <input type="date" max={hoje} min={somaDias(hoje, -90)} value={pagoEm} onChange={(e) => e.target.value && setPagoEm(e.target.value)} className="flex-1 min-w-0 border border-zinc-200 rounded-xl px-3 text-sm bg-white" />
+                </div>
+              </div>
+              <div>
+                <Rotulo>Como foi pago?</Rotulo>
+                <div className="mt-1.5">
+                  <Chips opcoes={[{ v: 'pix', label: 'Pix do banco da loja' }, { v: 'cartao', label: 'Cartão' }, { v: 'mercado_pago', label: 'Saldo Mercado Pago' }]} valor={pagoForma} onValor={(x) => setPagoForma(x as 'pix' | 'cartao' | 'mercado_pago')} />
+                </div>
+              </div>
+              <Valor label="Valor pago (com frete)" valor={valor} onValor={setValor} />
+              <p className="text-xs text-zinc-500 px-1">Se pagou do próprio bolso, use <b>Reembolso</b>.</p>
+            </>
+          ) : (
+            <>
+              <div>
+                <Rotulo dica="Na tela de pagamento do site, escolha Pix e toque em Copiar código.">Pix copia e cola</Rotulo>
+                <textarea rows={3} value={pixTexto} onChange={(e) => setPixTexto(e.target.value)} placeholder="00020126…" className={`${cls} font-mono text-xs`} />
+                {pixTexto.trim() && !pixLido && <p className="text-xs text-red-600 px-1 mt-1">Código incompleto ou alterado. Copie de novo no site e cole inteiro.</p>}
+                {pixLido && <ConferePix pix={pixLido} total={lido?.total ?? null} />}
+              </div>
+              {!pixLido?.valor && <Valor label="Valor total (com frete)" valor={valor} onValor={setValor} />}
+              <p className="text-xs text-zinc-500 px-1">Vá até a tela de pagamento, escolha Pix e copie o código. Não pague: o financeiro aprova e paga pelo banco da loja. Se der, use a conta da loja (CNPJ).</p>
+            </>
+          )}
         </>
       )}
 

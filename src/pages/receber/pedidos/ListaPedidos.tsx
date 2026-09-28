@@ -9,7 +9,9 @@ import { Categorias, lerValor } from './ui';
 import { ConferePix, ResumoLido } from './NovoPedido';
 import { lerPixCopia } from './pixCopia';
 import JanelaPagamento, { type AvisoPagamento } from './JanelaPagamento';
-import { confirmar } from '@/components/base/Dialogos';
+import { avisar, confirmar } from '@/components/base/Dialogos';
+
+const FORMA_PAGO: Record<string, string> = { pix: 'Pix do banco da loja', cartao: 'cartão', mercado_pago: 'saldo do Mercado Pago' };
 
 interface Props {
   modo: 'meus' | 'aprovar';
@@ -304,8 +306,8 @@ function CartaoMeu({ p, tenantId, onErro, onFeito, onJanela, mostrarQuem }: { p:
           não só quem aprovou e quando pagou (dono, 2026-09-28) */}
       {(mostrarQuem || (p.tipo === 'compra_online' && p.status === 'comprada')) && <Detalhes p={p} />}
       {mostrarQuem && p.tem_comprovante && <div className="mt-3 flex"><BotaoComprovante p={p} tenantId={tenantId} onErro={onErro} /></div>}
-      {mostrarQuem && onJanela && p.tipo === 'compra_online' && !p.pix_copia_e_cola && p.status === 'aprovada' && <JaComprei p={p} tenantId={tenantId} onErro={onErro} onFeito={onFeito} />}
-      {mostrarQuem && onJanela && (p.tipo !== 'compra_online' || !!p.pix_copia_e_cola) && p.status === 'aprovada' && !p.pago && (!p.pix_inter || p.pix_inter === 'recusado') && <PagarDeNovo p={p} tenantId={tenantId} onErro={onErro} onJanela={onJanela} />}
+      {mostrarQuem && onJanela && p.tipo === 'compra_online' && !p.pix_copia_e_cola && !p.ja_pago && p.status === 'aprovada' && <JaComprei p={p} tenantId={tenantId} onErro={onErro} onFeito={onFeito} />}
+      {mostrarQuem && onJanela && (p.tipo !== 'compra_online' || (!!p.pix_copia_e_cola && !p.ja_pago)) && p.status === 'aprovada' && !p.pago && (!p.pix_inter || p.pix_inter === 'recusado') && <PagarDeNovo p={p} tenantId={tenantId} onErro={onErro} onJanela={onJanela} />}
       {!mostrarQuem && p.status === 'pendente' && !p.purchase_id && (
         <button type="button" onClick={cancelar} disabled={cancelando} className="mt-3 w-full py-3 rounded-2xl border-2 border-zinc-200 text-zinc-600 text-sm font-bold cursor-pointer">
           {cancelando ? 'Cancelando…' : 'Cancelar pedido'}
@@ -321,30 +323,40 @@ function CartaoAprovar({ p, tenantId, categorias, onErro, onFeito, onJanela }: {
   const [motivo, setMotivo] = useState('');
   const [gravando, setGravando] = useState(false);
   const compra = p.tipo === 'compra_online';
-  // Compra online com Pix (2026-09-28): o dono classifica — Despesa (categoria do DRE) ou CMV (categoria de mercadoria)
+  // Compra online com Pix ou já paga (2026-09-28): o dono classifica cada item — Despesa (categoria do
+  // DRE) ou CMV (categoria de mercadoria). A lista é a mesma que a Edge usa (itens do print com valor).
   const comPix = compra && !!p.pix_copia_e_cola;
-  const [classe, setClasse] = useState<'despesa' | 'cmv' | null>(null);
+  const jaPago = compra && !!p.ja_pago;
+  const nova = comPix || jaPago;
+  const itensLidos = (p.compra_detalhe?.itens ?? []).filter((i) => i.descricao && Number(i.valor) > 0);
+  const itens = itensLidos.length ? itensLidos : [{ descricao: p.descricao, quantidade: Number(p.quantidade) || 1, valor: p.valor }];
+  const [cls, setCls] = useState<{ classe: 'despesa' | 'cmv' | null; cat: string | null }[]>(() => itens.map(() => ({ classe: null, cat: null })));
   const [catMerc, setCatMerc] = useState<Categoria[] | null>(null);
-  const [catId, setCatId] = useState<string | null>(null);
+  const querCmv = cls.some((c) => c.classe === 'cmv');
   useEffect(() => {
-    if (classe !== 'cmv' || catMerc) return;
+    if (!querCmv || catMerc) return;
     chamarPedidos<{ categorias: Categoria[] }>('categorias_mercadoria', tenantId).then(({ data, erro }) => { if (erro) onErro(erro); setCatMerc(data?.categorias ?? []); });
-  }, [classe, catMerc, tenantId, onErro]);
+  }, [querCmv, catMerc, tenantId, onErro]);
+  const mudar = (k: number | 'todos', v: { classe: 'despesa' | 'cmv' | null; cat: string | null }) =>
+    setCls((xs) => xs.map((x, i) => (k === 'todos' || k === i ? v : x)));
   const pixDoPedido = comPix ? lerPixCopia(p.pix_copia_e_cola!) : null;
   const precisaDre = !compra && p.tipo !== 'freelancer' && !p.purchase_id;
 
   const aprovar = async () => {
     if (precisaDre && !dre) { onErro('Escolha a classificação antes de aprovar'); return; }
-    if (comPix && (!classe || !catId)) { onErro(classe ? 'Escolha a categoria' : 'Escolha se é Despesa ou CMV'); return; }
+    const falta = nova ? cls.findIndex((c) => !c.classe || !c.cat) : -1;
+    if (falta >= 0) { onErro(`${cls[falta].classe ? 'Escolha a categoria' : 'Escolha se é Despesa ou CMV'}${itens.length > 1 ? ` — ${itens[falta].descricao.slice(0, 40)}` : ''}`); return; }
     setGravando(true);
     onErro(null);
-    const { data, erro } = await chamarPedidos<{ pagamento?: ResultadoPagamento }>('aprovar', tenantId, {
-      id: p.id, dre_category_id: precisaDre ? dre : null, ...(comPix ? { classe, categoria_id: catId } : {}),
+    const { data, erro } = await chamarPedidos<{ pagamento?: ResultadoPagamento; aviso?: string }>('aprovar', tenantId, {
+      id: p.id, dre_category_id: precisaDre ? dre : null,
+      ...(nova ? { itens_classe: cls.map((c) => ({ classe: c.classe, categoria_id: c.cat })) } : {}),
     });
     setGravando(false);
     if (erro) { onErro(erro); return; }
-    // Compra online sem Pix (pedido antigo): o cartão vai para "Decididos" com "Já comprei"
-    if (!compra || comPix) avisarPagamento(data?.pagamento, p, onErro, onJanela);
+    // Já paga: sem Pix — só conta o que aconteceu com a baixa. Sem Pix e sem "já pago" (pedido antigo): "Já comprei".
+    if (jaPago) await avisar(data?.aviso ?? 'Compra lançada.', { titulo: 'Compra lançada' });
+    else if (!compra || comPix) avisarPagamento(data?.pagamento, p, onErro, onJanela);
     onFeito();
   };
   const recusar = async () => {
@@ -367,22 +379,37 @@ function CartaoAprovar({ p, tenantId, categorias, onErro, onFeito, onJanela }: {
         <p className="mt-2 text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">A chave <b>{p.pix_chave}</b> ainda não está nos Pix permitidos: o Inter vai recusar. Cadastre uma vez em Assistente › Configurações › Pix permitidos (com o seu PIN) e aprove.</p>
       )}
       {compra && <AbrirLink p={p} />}
-      {compra && !comPix && <p className="mt-3 text-xs text-sky-800 bg-sky-50 rounded-xl px-3 py-2">Autorizar não cria conta a pagar. Compre na conta da loja (CNPJ) e toque em "Já comprei"; a nota do vendedor entra sozinha e vira a compra.</p>}
-      {comPix && (
+      {jaPago && <p className="mt-3 text-sm text-emerald-800 bg-emerald-50 rounded-xl px-3 py-2"><i className="ri-checkbox-circle-line" /> Já foi pago em <b>{p.ja_pago_em ? dataBR(p.ja_pago_em) : '—'}</b> ({FORMA_PAGO[p.pago_forma ?? ''] ?? 'forma não informada'}). Aprovar lança a compra; {p.pago_forma === 'pix' ? 'a saída do extrato é ligada sozinha quando dá' : 'a baixa sai pela conciliação'}.</p>}
+      {compra && !nova && <p className="mt-3 text-xs text-sky-800 bg-sky-50 rounded-xl px-3 py-2">Autorizar não cria conta a pagar. Compre na conta da loja (CNPJ) e toque em "Já comprei"; a nota do vendedor entra sozinha e vira a compra.</p>}
+      {nova && (
         <div className="mt-3 space-y-2">
-          <p className="text-sm font-semibold text-zinc-700 px-1">Classificação</p>
-          <div className="grid grid-cols-2 gap-2">
-            {([['despesa', 'Despesa', 'Utensílio, manutenção, limpeza…'], ['cmv', 'CMV', 'Mercadoria, insumo, embalagem']] as const).map(([v, t, d]) => (
-              <button key={v} type="button" onClick={() => { setClasse(v); setCatId(null); }}
-                className={`text-left rounded-2xl border-2 px-3 py-2.5 cursor-pointer ${classe === v ? 'border-amber-400 bg-amber-50' : 'border-zinc-100 bg-white'}`}>
-                <p className="text-sm font-bold text-zinc-800">{t}</p>
-                <p className="text-[11px] text-zinc-500 leading-tight">{d}</p>
-              </button>
-            ))}
-          </div>
-          {classe === 'despesa' && <Categorias categorias={categorias} valor={catId} onValor={setCatId} titulo="Categoria da despesa" />}
-          {classe === 'cmv' && <Categorias categorias={catMerc} valor={catId} onValor={setCatId} titulo="Categoria da mercadoria" />}
-          <p className="text-xs text-zinc-500 px-1">Aprovar lança a compra (aparece em "Esperando chegar") e prepara o Pix pelo Inter com o seu PIN. A nota do vendedor, se chegar, é ignorada.</p>
+          <p className="text-sm font-semibold text-zinc-700 px-1">Classificação{itens.length > 1 ? ' de cada item' : ''}</p>
+          {itens.length > 1 && (
+            <div className="flex items-center gap-2 px-1 text-xs text-zinc-500">
+              <span>Tudo igual:</span>
+              <button type="button" onClick={() => mudar('todos', { classe: 'despesa', cat: null })} className="px-2.5 py-1 rounded-lg border border-zinc-200 font-semibold cursor-pointer">Despesa</button>
+              <button type="button" onClick={() => mudar('todos', { classe: 'cmv', cat: null })} className="px-2.5 py-1 rounded-lg border border-zinc-200 font-semibold cursor-pointer">CMV</button>
+            </div>
+          )}
+          {itens.map((it, k) => (
+            <div key={k} className={itens.length > 1 ? 'rounded-2xl border border-zinc-100 p-2.5 space-y-2' : 'space-y-2'}>
+              {itens.length > 1 && <p className="text-sm text-zinc-800 px-1"><b>{it.quantidade !== 1 ? `${String(it.quantidade).replace('.', ',')}× ` : ''}</b>{it.descricao}{it.valor != null ? <span className="text-zinc-400"> · {brl(Number(it.valor))}</span> : null}</p>}
+              <div className="grid grid-cols-2 gap-2">
+                {([['despesa', 'Despesa', 'Utensílio, manutenção, limpeza…'], ['cmv', 'CMV', 'Mercadoria, insumo, embalagem']] as const).map(([v, t, d]) => (
+                  <button key={v} type="button" onClick={() => mudar(k, { classe: v, cat: cls[k].classe === v ? cls[k].cat : null })}
+                    className={`text-left rounded-2xl border-2 px-3 py-2 cursor-pointer ${cls[k].classe === v ? 'border-amber-400 bg-amber-50' : 'border-zinc-100 bg-white'}`}>
+                    <p className="text-sm font-bold text-zinc-800">{t}</p>
+                    {itens.length === 1 && <p className="text-[11px] text-zinc-500 leading-tight">{d}</p>}
+                  </button>
+                ))}
+              </div>
+              {cls[k].classe === 'despesa' && <Categorias categorias={categorias} valor={cls[k].cat} onValor={(id) => mudar(k, { classe: 'despesa', cat: id })} titulo="Categoria da despesa" />}
+              {cls[k].classe === 'cmv' && <Categorias categorias={catMerc} valor={cls[k].cat} onValor={(id) => mudar(k, { classe: 'cmv', cat: id })} titulo="Categoria da mercadoria" />}
+            </div>
+          ))}
+          <p className="text-xs text-zinc-500 px-1">{jaPago
+            ? 'Aprovar lança a compra (aparece em "Esperando chegar"; o que for CMV entra no estoque no recebimento). A nota do vendedor, se chegar, é ignorada.'
+            : 'Aprovar lança a compra (aparece em "Esperando chegar") e prepara o Pix pelo Inter com o seu PIN. A nota do vendedor, se chegar, é ignorada.'}</p>
         </div>
       )}
       {p.purchase_id && <p className="mt-3 text-xs text-violet-700 bg-violet-50 rounded-xl px-3 py-2">Mercadoria: a compra já foi lançada e entrou no estoque, sem conta a pagar. Aprovar cria a conta do reembolso; recusar deixa a compra sem conta (ajuste em Financeiro › Compras se precisar).</p>}
@@ -404,7 +431,7 @@ function CartaoAprovar({ p, tenantId, categorias, onErro, onFeito, onJanela }: {
           <BotaoComprovante p={p} tenantId={tenantId} onErro={onErro} />
           <button type="button" onClick={() => setRecusando(true)} disabled={gravando} className="flex-1 py-3 rounded-2xl border-2 border-red-200 text-red-600 text-sm font-bold cursor-pointer">Recusar</button>
           <button type="button" onClick={aprovar} disabled={gravando} className="flex-[1.4] py-3 rounded-2xl bg-emerald-500 active:bg-emerald-600 disabled:bg-zinc-200 text-white text-sm font-bold cursor-pointer">
-            {gravando ? 'Aprovando…' : compra && !comPix ? 'Autorizar compra' : 'Aprovar e pagar'}
+            {gravando ? 'Aprovando…' : compra && !nova ? 'Autorizar compra' : jaPago ? 'Aprovar e lançar' : 'Aprovar e pagar'}
           </button>
         </div>
       )}
