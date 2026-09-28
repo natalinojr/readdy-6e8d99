@@ -196,10 +196,12 @@ export default function IfoodTab({ periodo }: Props) {
   // Pedidos do iFood com entrega sob demanda (conciliação/API) + delivery do ERPOS com entregador iFood.
   const sobDemanda = useMemo(() => {
     const doIfood = new Map(pedidos.map((p) => [p.id, p]));
-    const linhas: { id: string; at: Date; origem: 'iFood' | 'Delivery'; ref: string; ifood: number; cliente: number }[] = [];
+    const linhas: { id: string; at: Date; origem: 'iFood' | 'Delivery'; ref: string; ifood: number; cliente: number | null }[] = [];
     for (const p of validos) {
       if (p.entregaSobDemanda < 0.005) continue;
-      linhas.push({ id: p.id, at: p.at, origem: 'iFood', ref: `#${p.id.slice(0, 4)}`, ifood: p.entregaSobDemanda, cliente: p.entregaCliente });
+      linhas.push({ id: p.id, at: p.at, origem: 'iFood', ref: `#${p.id.slice(0, 4)}`, ifood: p.entregaSobDemanda,
+        // Taxa 0 no pedido do iFood = a loja não lançou a entrega ao registrar o pedido (não dá para saber quanto o cliente pagou).
+        cliente: p.entregaCliente > 0.005 ? p.entregaCliente : null });
     }
     for (const e of entregasErpos) {
       if (loja && e.loja !== loja) continue;
@@ -210,8 +212,16 @@ export default function IfoodTab({ periodo }: Props) {
     }
     linhas.sort((a, b) => b.at.getTime() - a.at.getTime());
     const ifood = linhas.reduce((a, l) => a + l.ifood, 0);
-    const cliente = linhas.reduce((a, l) => a + l.cliente, 0);
-    return { linhas, n: linhas.length, ifood, cliente, dif: cliente - ifood, bancadas: linhas.filter((l) => l.cliente - l.ifood < -0.005).length };
+    // Diferença só onde o valor do cliente é conhecido; sem taxa lançada fica à parte.
+    const com = linhas.filter((l) => l.cliente != null);
+    const sem = linhas.filter((l) => l.cliente == null);
+    const cliente = com.reduce((a, l) => a + (l.cliente ?? 0), 0);
+    const ifoodCom = com.reduce((a, l) => a + l.ifood, 0);
+    return {
+      linhas, n: linhas.length, ifood, cliente, nCom: com.length, ifoodCom, dif: cliente - ifoodCom,
+      bancadas: com.filter((l) => (l.cliente ?? 0) - l.ifood < -0.005).length,
+      nSem: sem.length, ifoodSem: sem.reduce((a, l) => a + l.ifood, 0),
+    };
   }, [pedidos, validos, entregasErpos, loja]);
 
   // ── Formas de pagamento ────────────────────────────────────────────────────
@@ -350,7 +360,7 @@ export default function IfoodTab({ periodo }: Props) {
       out.push({ icon: 'ri-e-bike-2-line', cor: '#8b5cf6', titulo: 'Logística mais barata', texto: `${a.label} custa ${pct(a.custoPct)} das vendas contra ${pct(b.custoPct)} de ${b.label.toLowerCase()} (${pct(b.custoPct - a.custoPct)} de diferença). Na entrega própria, some o custo do motoboy antes de decidir.` });
     }
     if (sobDemanda.n > 0) {
-      out.push({ icon: 'ri-riding-line', cor: '#8b5cf6', titulo: 'Entrega sob demanda', texto: `O iFood cobrou ${brl(sobDemanda.ifood)} por ${sobDemanda.n} entrega(s) e os clientes pagaram ${brl(sobDemanda.cliente)} de taxa de entrega. ${sobDemanda.dif < -0.005 ? `A loja bancou ${brl(-sobDemanda.dif)} da diferença${sobDemanda.bancadas ? ` (${sobDemanda.bancadas} entrega(s) no prejuízo)` : ''} — vale rever a taxa de entrega cobrada.` : `Sobrou ${brl(sobDemanda.dif)} para a loja.`}` });
+      out.push({ icon: 'ri-riding-line', cor: '#8b5cf6', titulo: 'Entrega sob demanda', texto: `O iFood cobrou ${brl(sobDemanda.ifood)} por ${sobDemanda.n} entrega(s).${sobDemanda.nCom ? ` Nas ${sobDemanda.nCom} com taxa lançada, os clientes pagaram ${brl(sobDemanda.cliente)} contra ${brl(sobDemanda.ifoodCom)} do iFood.` : ''}${sobDemanda.nSem ? ` ${sobDemanda.nSem} pedido(s) foram registrados no iFood sem taxa de entrega (${brl(sobDemanda.ifoodSem)} de entregador sem valor do cliente para comparar).` : ''} ${!sobDemanda.nCom ? '' : sobDemanda.dif < -0.005 ? `A loja bancou ${brl(-sobDemanda.dif)} da diferença${sobDemanda.bancadas ? ` (${sobDemanda.bancadas} entrega(s) no prejuízo)` : ''} — vale rever a taxa de entrega cobrada.` : `Sobrou ${brl(sobDemanda.dif)} para a loja.`}` });
     }
     if (r.promoLoja > 0 && promo.pedidosComLoja > 0) {
       out.push({ icon: 'ri-coupon-3-line', cor: '#f59e0b', titulo: 'Promoções da loja', texto: `A loja bancou ${brl(r.promoLoja)} em promoções (${pct((r.promoLoja / r.vendas) * 100)} das vendas) em ${promo.pedidosComLoja} pedidos. O iFood colocou ${brl(r.promoIfood)} do bolso dele. Pedidos com promoção têm ticket de ${brl(promo.ticketCom)} contra ${brl(promo.ticketSem)} sem.` });
@@ -560,28 +570,34 @@ export default function IfoodTab({ periodo }: Props) {
             </div>
             <div className="rounded-xl p-3" style={{ background: '#eff6ff' }}>
               <p className="text-[11px] font-semibold uppercase text-blue-700">Cliente pagou</p>
-              <p className="text-xl font-black text-zinc-800">{brl(sobDemanda.cliente)}</p>
-              <p className="text-xs text-zinc-500">média {brl(sobDemanda.cliente / sobDemanda.n)} de taxa de entrega</p>
+              <p className="text-xl font-black text-zinc-800">{sobDemanda.nCom ? brl(sobDemanda.cliente) : '—'}</p>
+              <p className="text-xs text-zinc-500">{sobDemanda.nCom ? `média ${brl(sobDemanda.cliente / sobDemanda.nCom)} em ${sobDemanda.nCom} entrega(s) com taxa lançada` : 'nenhum pedido com taxa de entrega lançada'}</p>
             </div>
             <div className={`rounded-xl p-3 ${sobDemanda.dif < -0.005 ? 'bg-red-50' : 'bg-emerald-50'}`}>
               <p className={`text-[11px] font-semibold uppercase ${sobDemanda.dif < -0.005 ? 'text-red-600' : 'text-emerald-700'}`}>{sobDemanda.dif < -0.005 ? 'Loja bancou' : 'Sobrou para a loja'}</p>
               <p className={`text-xl font-black ${sobDemanda.dif < -0.005 ? 'text-red-600' : 'text-emerald-600'}`}>{brl(Math.abs(sobDemanda.dif))}</p>
-              <p className="text-xs text-zinc-500">{sobDemanda.bancadas} de {sobDemanda.n} entrega(s) com cliente pagando menos que o iFood</p>
+              <p className="text-xs text-zinc-500">{sobDemanda.bancadas} de {sobDemanda.nCom} entrega(s) com cliente pagando menos que o iFood (iFood {brl(sobDemanda.ifoodCom)} nessas)</p>
             </div>
           </div>
+          {sobDemanda.nSem > 0 && (
+            <p className="text-xs text-amber-700 bg-amber-50 rounded-lg p-2 mt-3">
+              <i className="ri-error-warning-line mr-1" />
+              {sobDemanda.nSem} pedido(s) foram registrados no iFood <b>sem taxa de entrega</b> ({brl(sobDemanda.ifoodSem)} cobrados pelo iFood). Sem esse valor não dá para saber quanto o cliente pagou, por isso ficam fora da diferença. Ao registrar o pedido no iFood, lance a taxa de entrega cobrada do cliente.
+            </p>
+          )}
           <div className="overflow-x-auto mt-3 max-h-72 overflow-y-auto">
             <table className="w-full text-xs min-w-[420px]">
               <thead className="sticky top-0 bg-white"><tr className="text-zinc-400 text-left"><th className="font-semibold py-1">Data</th><th className="font-semibold">Pedido</th><th className="font-semibold text-right">iFood cobrou</th><th className="font-semibold text-right">Cliente pagou</th><th className="font-semibold text-right">Diferença</th></tr></thead>
               <tbody>
                 {sobDemanda.linhas.map((l) => {
-                  const d = l.cliente - l.ifood;
+                  const d = l.cliente == null ? null : l.cliente - l.ifood;
                   return (
                     <tr key={l.id} className="border-t border-zinc-50">
                       <td className="py-1.5 pr-2 text-zinc-600 tabular-nums">{l.at.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</td>
                       <td className="pr-2 text-zinc-700">{l.origem === 'iFood' ? 'Pedido iFood' : `Delivery ${l.ref}`}</td>
                       <td className="text-right tabular-nums">{brl(l.ifood)}</td>
-                      <td className="text-right tabular-nums">{brl(l.cliente)}</td>
-                      <td className={`text-right tabular-nums font-semibold ${d < -0.005 ? 'text-red-600' : 'text-emerald-600'}`}>{d > 0.005 ? '+' : ''}{brl(d)}</td>
+                      <td className="text-right tabular-nums">{l.cliente == null ? <span className="text-amber-600" title="Pedido registrado no iFood sem taxa de entrega">não lançada</span> : brl(l.cliente)}</td>
+                      <td className={`text-right tabular-nums font-semibold ${d == null ? 'text-zinc-300' : d < -0.005 ? 'text-red-600' : 'text-emerald-600'}`}>{d == null ? '—' : `${d > 0.005 ? '+' : ''}${brl(d)}`}</td>
                     </tr>
                   );
                 })}
