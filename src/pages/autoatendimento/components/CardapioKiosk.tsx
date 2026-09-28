@@ -34,8 +34,9 @@ function TecladoVirtual({ value, onChange, placeholder }: TecladoVirtualProps) {
     <div>
       {/* Display */}
       <div className="flex items-center justify-between mb-3">
-        <div className={`flex-1 min-h-[3rem] bg-zinc-800 text-white text-base font-semibold rounded-xl px-4 py-2.5 border-2 transition-colors mr-3 ${value ? 'border-amber-500/40' : 'border-transparent'}`}>
-          {value || <span className="text-zinc-600 font-normal text-sm">{placeholder}</span>}
+        {/* whitespace-pre-wrap: sem isso o espaço no fim do texto não aparece e parece que o botão Espaço não funciona */}
+        <div className={`flex-1 min-h-[3rem] bg-zinc-800 text-white text-base font-semibold rounded-xl px-4 py-2.5 border-2 whitespace-pre-wrap break-words transition-colors mr-3 ${value ? 'border-amber-500/40' : 'border-transparent'}`}>
+          {value ? <>{value}<span className="animate-pulse text-amber-400 font-normal">|</span></> : <span className="text-zinc-600 font-normal text-sm">{placeholder}</span>}
         </div>
         <div className="flex items-center gap-1 bg-zinc-800 rounded-xl p-1 flex-shrink-0">
           <button onClick={() => setModo('letras')}
