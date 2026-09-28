@@ -74,6 +74,7 @@ const ONDE: Record<string, string> = {
   recebimento_parado: 'Financeiro › Notas de entrada — o botão roxo abaixo abre essa nota direto.',
   nota_nao_lancada: 'Financeiro › Notas de entrada — lance a nota para virar conta a pagar.',
   recebimento_sem_nota: 'Financeiro › Notas de entrada, quando a nota chegar — "Procurar a nota" busca por aqui.',
+  boleto_faltando: 'aqui no chat — peça o boleto ao fornecedor e mande a foto, o PDF ou o código (ou encaminhe ao e-mail de contas); eu ligo nesta conta e a pendência fecha sozinha. Pagou de outro jeito? "Não vou fazer" com o motivo.',
 };
 // Pedido de pagamento do /receber (reembolso, freelancer, fornecedor sem nota).
 const pedidoDa = (p: PendenciaChat) => (typeof p.payload?.pedido_id === 'string' ? p.payload.pedido_id : null);

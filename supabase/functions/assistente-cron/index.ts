@@ -1257,6 +1257,45 @@ async function syncPendenciasOperacao(admin: SupabaseClient, tenants: Array<{ id
         });
       }
 
+      // Conta de boleto sem o boleto (dono, 2026-09-28): a NF-e traz vencimento e valor da
+      // duplicata, mas não o código — sem ele não há como pagar pelo Inter. Uma pendência POR
+      // CONTA (o dono vai atrás de cada fornecedor), só as que ainda não venceram: vencida já
+      // aparece em 'conta_atrasada'. Fecha sozinha quando o boleto chega (chat, e-mail, tela),
+      // quando a conta é paga/cancelada ou quando vence. Descartada ("pago por Pix"), não volta.
+      const semBoleto = await db()<Array<{ id: string; supplier: string | null; description: string; saldo: number; venc: string; dias: number; purchase_id: string | null }>>`
+        select a.id::text, a.supplier, a.description, (a.amount - coalesce(a.paid_amount, 0))::float saldo,
+               to_char(a.due_date, 'DD/MM') venc,
+               (a.due_date - (now() at time zone 'America/Sao_Paulo')::date)::int dias,
+               case when a.reference_type = 'purchase' then a.reference_id::text end purchase_id
+          from fin_accounts_payable a
+          left join fin_purchases p on a.reference_type = 'purchase' and p.id = a.reference_id
+         where a.tenant_id = ${t.id} and a.status not in ('paid', 'cancelled')
+           and coalesce(a.payment_method, p.payment_method, '') ilike '%boleto%'
+           and a.boleto_digitavel is null and a.boleto_barcode is null and a.boleto_pix_copia is null
+           and a.due_date >= (now() at time zone 'America/Sao_Paulo')::date
+         order by a.due_date`;
+      for (const b of semBoleto) {
+        const quando = b.dias === 0 ? 'vence HOJE' : b.dias === 1 ? 'vence amanhã' : `vence ${b.venc}`;
+        await admin.rpc('fn_pendencia_upsert', {
+          p_tenant: t.id, p_kind: 'boleto_faltando', p_ref: b.id,
+          p_titulo: `Falta o boleto: ${b.supplier ?? b.description} — ${brl(b.saldo)}, ${quando}`.slice(0, 200),
+          p_detalhe: 'A conta está lançada (veio da nota), mas sem o código do boleto não dá para pagar pelo Inter.',
+          p_payload: { bill_id: b.id, purchase_id: b.purchase_id, valor: b.saldo, vencimento: b.venc },
+          p_rota: b.purchase_id ? `/financeiro?tab=compras&foco=${b.purchase_id}` : '/financeiro?tab=pagar',
+          p_urgencia: b.dias <= 2 ? 'alta' : 'normal', p_acao_requerida: true, p_origem: 'cron', p_reabrir: false,
+        });
+      }
+      const { data: abertasSemBoleto } = await admin.from('pendencias').select('ref')
+        .eq('tenant_id', t.id).eq('kind', 'boleto_faltando').in('status', ['aberta', 'vista']);
+      const aindaFaltam = new Set(semBoleto.map((b) => b.id));
+      for (const r of (abertasSemBoleto ?? []) as Array<{ ref: string }>) {
+        if (aindaFaltam.has(r.ref)) continue;
+        await admin.rpc('fn_pendencia_resolver_ref', {
+          p_tenant: t.id, p_kind: 'boleto_faltando', p_ref: r.ref,
+          p_motivo: 'boleto chegou, conta paga/cancelada ou vencida (segue em contas atrasadas)',
+        });
+      }
+
       // Nota de entrada que chegou da SEFAZ com boleto e ainda não foi lançada (2026-09-21).
       // Sem isto ela é invisível: não tem linha em fin_accounts_payable, então não cai em
       // 'conta_atrasada' nem em lugar nenhum — o fornecedor cobra e o sistema nunca avisou.

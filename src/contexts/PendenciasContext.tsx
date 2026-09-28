@@ -63,6 +63,8 @@ export const KIND_CONFIG: Record<string, { label: string; icone: string; corBg: 
   sangria_valor_diferente: { label: 'Sangria diferente', icone: 'ri-scales-3-line', corBg: 'bg-amber-100', corTexto: 'text-amber-700' },
   // Boleto que chegou por e-mail e ficou para decidir (2026-09-25): remetente novo ou CNPJ diferente.
   boleto_email: { label: 'Boleto por e-mail', icone: 'ri-mail-download-line', corBg: 'bg-amber-100', corTexto: 'text-amber-800' },
+  // Conta de boleto lançada pela nota, sem o código do boleto (2026-09-28): o dono vai atrás.
+  boleto_faltando: { label: 'Falta o boleto', icone: 'ri-barcode-line', corBg: 'bg-amber-100', corTexto: 'text-amber-800' },
 };
 // Quem vê o quê (2026-09-28): a caixa passou a existir para TODOS os usuários (o sino saiu).
 // Aprovação (cancelamento/desconto do PDV) é de quem pode aprovar; o operacional é de todos;
