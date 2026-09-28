@@ -66,9 +66,8 @@ function CriarLojaModal({ onClose }: { onClose: () => void }) {
     </div>
   );
 }
-import CentralNotificacoes from './CentralNotificacoes';
+import BotaoPendencias from './BotaoPendencias';
 import PrintQueueBadge from './PrintQueueBadge';
-import type { PerfilAlvo } from '../../contexts/NotificacoesContext';
 import { countPendingOrders } from '@/lib/offlineDB';
 import { startAutoSync, stopAutoSync } from '@/lib/offlineSync';
 import { abrirNovaJanela } from '@/lib/novaJanela';
@@ -268,7 +267,8 @@ export default function TopBar({ onMenuToggle }: TopBarProps) {
             dedos acima — repetir aqui só roubava espaço do cabeçalho. */}
         <span className="hidden md:inline text-sm font-semibold text-zinc-700 tabular-nums mr-2">{formattedTime}</span>
 
-        <CentralNotificacoes perfil={(user?.perfil as PerfilAlvo) ?? 'caixa'} />
+        {/* O sino saiu para todo mundo (decisão do dono, 2026-09-28): o que espera alguém fica em Pendências. */}
+        <BotaoPendencias />
 
         <div className="relative" ref={menuRef}>
           <button
