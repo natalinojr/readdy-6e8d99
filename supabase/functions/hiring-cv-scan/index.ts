@@ -22,7 +22,7 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-internal-key',
 };
 const OWNER_EMAIL = 'natalinojr.engel@gmail.com';
-// Mesmo modelo da leitura de notinhas (custo baixo). Se a extração vier fraca, trocar para 'claude-sonnet-5'.
+// Mesmo modelo da leitura de notinhas (custo baixo). Se a extração vier fraca, trocar para 'claude-sonnet-5-5'.
 const MODEL = 'claude-haiku-4-5';
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
@@ -103,6 +103,22 @@ async function geocode(text: string, focus?: { lat: number; lng: number }): Prom
   } catch { return null; }
 }
 
+// CEP no endereço → rua/bairro/cidade pelo ViaCEP (grátis, sem chave). Só quando o endereço não tem rua escrita.
+async function porCep(address: string): Promise<{ rua: string; bairro: string; cidade: string } | null> {
+  const cep = address.match(/\b(\d{5})-?(\d{3})\b/);
+  if (!cep || /\b(rua|r\.|av\.?|avenida|travessa|tv\.?|rod\.?|rodovia|estrada|alameda|servid[aã]o)(\s|$)/i.test(address)) return null;
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 5000);
+    const res = await fetch(`https://viacep.com.br/ws/${cep[1]}${cep[2]}/json/`, { signal: ctrl.signal });
+    clearTimeout(timer);
+    if (!res.ok) return null;
+    const j = await res.json();
+    if (j?.erro || !j?.localidade) return null;
+    return { rua: String(j.logradouro ?? ''), bairro: String(j.bairro ?? ''), cidade: String(j.localidade) };
+  } catch { return null; }
+}
+
 type GeoCompany = { id: string; city: string | null; lat: number | null; lng: number | null };
 
 // deno-lint-ignore no-explicit-any
@@ -110,8 +126,16 @@ async function ensureCandidateGeo(admin: SupabaseClient, c: Record<string, any>,
   if (c.lat != null && c.lng != null) return { lat: Number(c.lat), lng: Number(c.lng), label: c.geo_label ?? '', precision: c.geo_precision ?? 'bairro' };
   if (c.geo_precision === 'nao_encontrado' || !Deno.env.get('ORS_API_KEY')) return null;
   if (!c.address && !c.neighborhood && !c.city) return null;
-  const cidade = c.city ?? fallbackCity;
-  const text = [c.address, c.neighborhood, cidade].filter(Boolean).join(', ');
+  let cidade = c.city ?? fallbackCity;
+  let text = [c.address, c.neighborhood, cidade].filter(Boolean).join(', ');
+  // Endereço que é só CEP (Elisandra, 2026-09-28: "Paranaguá, PR 83221565" → não encontrado): o ViaCEP
+  // devolve rua, bairro e cidade, e o geocode vai com isso (o número da casa, se houver, fica junto da rua).
+  const viaCep = await porCep(String(c.address ?? ''));
+  if (viaCep) {
+    const num = String(c.address ?? '').replace(/\d{5}-?\d{3}/, '').match(/\b\d{1,5}\b/)?.[0];
+    cidade = viaCep.cidade || cidade;
+    text = [viaCep.rua ? `${viaCep.rua}${num ? ` ${num}` : ''}` : null, viaCep.bairro || c.neighborhood, cidade].filter(Boolean).join(', ');
+  }
   // O geocoder às vezes acha a rua em OUTRA cidade (2026-09-28: "Rua Maranhão, 125, Paranaguá" →
   // Sapucaia do Sul/RS, 733 km). Resultado fora da cidade da ficha não vale: tenta bairro + cidade e,
   // por fim, só a cidade (precisão menor, mas no lugar certo).

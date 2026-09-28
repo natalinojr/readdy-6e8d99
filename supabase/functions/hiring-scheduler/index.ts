@@ -401,7 +401,8 @@ async function askInterviewers(admin: SupabaseClient, c: Ctx, startsAt: string |
     updated_at: new Date().toISOString(),
   }).eq('id', c.sess.id);
   await toInterviewers(c, `🗓️ Pedido de horário — ${c.job.title}\n${c.cand.full_name} (${digits(c.cand.phone)}) pediu: ${startsAt ? fmtSlot(startsAt) : `"${pedido.slice(0, 200)}"`}\n\nResponda aqui:\n#${code} 1 → aceitar${startsAt ? '' : ' (mande a data e hora)'}\n#${code} 2 → recusar\n#${code} dd/mm hh:mm → propor outro horário\n#${code} dd/mm dd/mm 13:00-18:00 → propor vários dias numa faixa`);
-  await toCand(admin, c, 'Vou confirmar esse horário com a equipe e já te retorno 🙂');
+  // Sem hora exata ("amanhã eu estou livre", Noemi 2026-09-28) não há "esse horário" para confirmar.
+  await toCand(admin, c, startsAt ? 'Vou confirmar esse horário com a equipe e já te retorno 🙂' : 'Vou ver com a equipe um horário que dê certo pra você e já te retorno 🙂');
 }
 
 // ── proposta da equipe em FAIXA (2026-09-28, pedido do dono) ──
@@ -824,6 +825,15 @@ async function decidirPedido(admin: SupabaseClient, sess: Row, op: Decisao, prop
     return { ok, msg: ok ? `Confirmado ✅ ${c.cand.full_name} — ${fmtSlot(pr.starts_at)}.` : 'Não consegui reservar; o candidato recebeu outras opções.' };
   }
   await addHist(admin, sess.id, 'gestor', registro);
+  // Recusa de um pedido: não repete a lista que a pessoa já recusou (Noemi, 2026-09-28: pediu outro dia,
+  // a equipe recusou e ela recebeu de novo os mesmos horários de hoje, que já tinha dito que não dava).
+  const jaOferecidos = new Set((Array.isArray(sess.offered) ? sess.offered : []).map(String));
+  const novos = (await freeSlots(admin, c.job.id)).filter((s) => !jaOferecidos.has(s));
+  if (!novos.length && jaOferecidos.size) {
+    await toCand(admin, c, 'Esse pedido não vai ser possível 😕 Se algum dos horários que te mandei antes servir, é só me dizer o número. Se não, me diga outro dia e horário que eu vejo com a equipe.',
+      { status: 'negociando', pending_request: null });
+    return { ok: true, msg: `Ok, avisei ${c.cand.full_name}; não havia horários novos na agenda além dos que ele já tinha recebido.` };
+  }
   await offerAgain(admin, c, 'Esse horário não vai ser possível 😕 Temos estes:');
   return { ok: true, msg: `Ok, avisei ${c.cand.full_name} e ofereci os horários da agenda.` };
 }
