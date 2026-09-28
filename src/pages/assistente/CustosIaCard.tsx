@@ -28,6 +28,7 @@ const USO_LABEL: Record<string, string> = {
   'trafego-meta-ads-sombra': 'Gestor de tráfego (comparação de modelo)',
   'estudio-nota-foto': 'Estúdio de Criação (nota das fotos)',
   'estudio-kit': 'Estúdio de Criação (kit da marca)',
+  'trafego-pesquisador': 'Tráfego Pago (pesquisador de oportunidades)',
 };
 // A API devolve às vezes o nome com data (claude-haiku-4-5-20251001): a data sai do rótulo.
 const MODELO_LABEL = (m: string) => m.replace(/^claude-/, '').replace(/-\d{8}$/, '').replace(/-(\d)-(\d)$/, ' $1.$2').replace(/-(\d)$/, ' $1')
