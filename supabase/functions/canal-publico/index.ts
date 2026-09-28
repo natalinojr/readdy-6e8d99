@@ -74,6 +74,7 @@ const FIELD_LABELS: Record<string, string> = {
   address: 'endereço (rua e número)', neighborhood: 'bairro', city: 'cidade', marital_status: 'estado civil',
   education: 'escolaridade', experiences: 'experiências anteriores', availability: 'disponibilidade de horário',
   desired_role: 'função pretendida', salary_expectation: 'pretensão salarial', driver_license: 'CNH',
+  confirmar_endereco: 'confirmar a cidade onde mora',
 };
 const FIELD_ASK: Record<string, string> = {
   full_name: 'Qual é o seu nome completo?',
@@ -90,6 +91,7 @@ const FIELD_ASK: Record<string, string> = {
   desired_role: 'Para qual função você quer se candidatar?',
   salary_expectation: 'Qual é a sua pretensão salarial?',
   driver_license: 'Você tem CNH? Se tiver, qual categoria?',
+  confirmar_endereco: 'Só pra confirmar: em qual bairro e cidade você mora hoje?',
 };
 const listaFaltas = (f: string[]) => f.map((x) => FIELD_LABELS[x] ?? x).join(', ');
 // deno-lint-ignore no-explicit-any
@@ -97,8 +99,19 @@ async function missingOf(admin: any, candId: string | null): Promise<string[]> {
   if (!candId) return [];
   const { data, error } = await admin.rpc('hiring_missing_fields_by_id', { p_id: candId });
   if (error) { log('WARN', 'dados mínimos', { error: error.message }); return []; }
-  return Array.isArray(data) ? data.map(String) : [];
+  const faltas = Array.isArray(data) ? data.map(String) : [];
+  // Distância grande = endereço suspeito (Ana Claudia, 2026-09-28: "Naturalidade: Curitiba" virou a cidade
+  // e deu 94 km da loja). Enquanto a pessoa não confirmar, o atendente pergunta onde ela mora hoje.
+  if (!faltas.includes('city') && !faltas.includes('address')) {
+    const [{ data: dist }, { data: c }] = await Promise.all([
+      admin.from('hiring_distances').select('km').eq('candidate_id', candId).order('km').limit(1).maybeSingle(),
+      admin.from('hiring_candidates').select('extra_fields').eq('id', candId).maybeSingle(),
+    ]);
+    if (Number(dist?.km) > KM_CONFERIR && c?.extra_fields?.endereco_conferido !== 'sim') faltas.push('confirmar_endereco');
+  }
+  return faltas;
 }
+const KM_CONFERIR = 50; // acima disso, o endereço é conferido com o candidato
 // Dados criados pelo dono (hiring_settings.data.custom_fields, id "x_…"): entram nos rótulos/perguntas.
 // deno-lint-ignore no-explicit-any
 async function loadCustomFields(admin: any) {
@@ -218,6 +231,7 @@ DADOS QUE FALTAM NA FICHA (o currículo já foi recebido, mas veio sem): ${falta
 - A cada resposta, chame completar_ficha só com o que a pessoa disse (pode ser mais de um campo). Não invente nem complete sozinho. Os ids que começam com x_ vão dentro de "extras".
 - Grave TUDO o que a resposta trouxer, mesmo o que não foi perguntado. Ex.: "Ipanema, Pontal do Paraná" → neighborhood "Ipanema" e city "Pontal do Paraná"; "Rua X, 50, Centro" → address "Rua X, 50" e neighborhood "Centro". Tudo numa só chamada de completar_ficha.
 - Depois de gravar, SEMPRE escreva a próxima pergunta (ou o agradecimento, se a ficha ficou completa). Nunca termine sem texto.
+- confirmar_endereco: o endereço da ficha deu muito longe da loja e pode estar errado (ex.: cidade natal no lugar de onde mora). Pergunte em qual bairro e cidade a pessoa mora HOJE, sem dizer qual cidade está na ficha. Resposta com o lugar → completar_ficha com neighborhood/city (e address, se ela disser a rua). Se ela disser que mora mesmo longe, grave o que ela disse e endereco_confirmado true.
 - Data de nascimento sempre em AAAA-MM-DD. Se a pessoa não quiser informar algum dado, não insista: chame chamar_equipe dizendo qual ficou faltando.
 - Se a pessoa fizer uma pergunta no meio, responda e depois volte ao dado que falta.` : ''}
 ${temFicha ? `
@@ -257,6 +271,7 @@ const TOOLS: Anthropic.Tool[] = [
         education: { type: 'string', description: 'Escolaridade, ex.: "Ensino médio completo"' },
         experiences: { type: 'string', description: 'Experiências como a pessoa contou: empresa, função, tempo' },
         sem_experiencia: { type: 'boolean', description: 'true se a pessoa disse que nunca trabalhou (primeiro emprego)' },
+        endereco_confirmado: { type: 'boolean', description: 'confirmar_endereco: true se a pessoa confirmou que mora mesmo na cidade/bairro da ficha. Se disse outro lugar, mande neighborhood/city (e address) em vez disso.' },
         availability: { type: 'string' }, desired_role: { type: 'string' }, salary_expectation: { type: 'string' }, driver_license: { type: 'string' },
         extras: {
           type: 'object', additionalProperties: { type: 'string' },
@@ -269,7 +284,7 @@ const TOOLS: Anthropic.Tool[] = [
 
 // Resposta do candidato → colunas da ficha. Devolve o que faltar depois de gravar.
 async function completarFicha(admin: SupabaseClient, candId: string, inp: Row): Promise<{ ok: boolean; faltas: string[]; erro?: string; idade?: number | null }> {
-  const { data: c } = await admin.from('hiring_candidates').select('education, experiences, extra_fields').eq('id', candId).maybeSingle();
+  const { data: c } = await admin.from('hiring_candidates').select('education, experiences, extra_fields, city, neighborhood, address').eq('id', candId).maybeSingle();
   if (!c) return { ok: false, faltas: [], erro: 'ficha não encontrada' };
   const txt = (k: string) => { const v = String(inp[k] ?? '').trim(); return v ? v.slice(0, 500) : null; };
   const patch: Row = {};
@@ -288,8 +303,14 @@ async function completarFicha(admin: SupabaseClient, candId: string, inp: Row): 
   if (txt('education')) patch.education = [...(Array.isArray(c.education) ? c.education : []), { instituicao: null, curso: null, nivel: txt('education'), situacao: null }];
   const exp = txt('experiences') ?? (inp.sem_experiencia === true ? 'Sem experiência anterior (primeiro emprego), informado pelo candidato' : null);
   if (exp) patch.experiences = [...(Array.isArray(c.experiences) ? c.experiences : []), { empresa: null, cargo: null, inicio: null, fim: null, atual: false, descricao: exp }];
+  const extra: Row = { ...(c.extra_fields && typeof c.extra_fields === 'object' ? c.extra_fields : {}) };
+  // Conferência da distância grande: confirmou o mesmo lugar ou mandou outro endereço → não pergunta mais.
+  if (inp.endereco_confirmado === true || patch.city || patch.neighborhood || patch.address) {
+    if (extra.endereco_conferido !== 'sim') { extra.endereco_conferido = 'sim'; patch.extra_fields = extra; }
+  }
+  // Mesmo texto que já estava na ficha não é endereço novo (não apaga a localização à toa).
+  for (const k of ['city', 'neighborhood', 'address']) if (patch[k] && String(patch[k]).trim().toLowerCase() === String(c[k] ?? '').trim().toLowerCase()) delete patch[k];
   if (inp.extras && typeof inp.extras === 'object') {
-    const extra: Row = { ...(c.extra_fields && typeof c.extra_fields === 'object' ? c.extra_fields : {}) };
     let mudou = false;
     for (const [k, val] of Object.entries(inp.extras as Row)) {
       const v = String(val ?? '').trim();
@@ -469,7 +490,7 @@ async function intake(admin: SupabaseClient, ch: Row, conv: Row, m: Incoming, en
   if (ch.notify_owner) {
     const km = out.distance?.km != null ? ` · ${Number(out.distance.km).toFixed(1).replace('.', ',')} km` : '';
     const match = out.match?.score != null ? `\nAderência à vaga: *${out.match.score}*${out.match.resumo ? ` — ${out.match.resumo}` : ''}` : '';
-    await notifyOwner(admin, `📥 *Currículo pelo link "${ch.name}"*${conv.is_test ? ' (teste)' : ''}\n${cand.full_name ?? 'Candidato'}${cand.desired_role ? ` — ${cand.desired_role}` : ''}${km}\nWhatsApp: +${m.number}${out.duplicate ? `\n⚠️ Já existia: ${out.duplicate}` : ''}${match}${out.pending_ai ? `\n⚠️ Salvo SEM leitura da IA (${String(out.ai_error ?? 'IA indisponível')}). Abra a ficha e use "Organizar com IA" quando a IA voltar.` : ''}${avisoIdade(idade)}${confereNome}${faltas.length ? `\n📝 Ficha incompleta (faltam: ${listaFaltas(faltas)}) — perguntando ao candidato.` : ''}`);
+    await notifyOwner(admin, `📥 *Currículo pelo link "${ch.name}"*${conv.is_test ? ' (teste)' : ''}\n${cand.full_name ?? 'Candidato'}${cand.desired_role ? ` — ${cand.desired_role}` : ''}${km}\nWhatsApp: +${m.number}${out.duplicate ? `\n⚠️ Já existia: ${out.duplicate}` : ''}${match}${out.pending_ai ? `\n⚠️ Salvo SEM leitura da IA (${String(out.ai_error ?? 'IA indisponível')}). Abra a ficha e use "Organizar com IA" quando a IA voltar.` : ''}${avisoIdade(idade)}${confereNome}${faltas.includes('confirmar_endereco') ? `\n📍 Endereço muito longe da loja — conferindo com o candidato onde ele mora.` : ''}${faltas.filter((f) => f !== 'confirmar_endereco').length ? `\n📝 Ficha incompleta (faltam: ${listaFaltas(faltas.filter((f) => f !== 'confirmar_endereco'))}) — perguntando ao candidato.` : ''}`);
   }
   return { ok: true as const, candidate: cand, duplicate: out.duplicate ?? null, faltas };
 }

@@ -109,8 +109,22 @@ async function ensureCandidateGeo(admin: SupabaseClient, c: Record<string, any>,
   if (c.lat != null && c.lng != null) return { lat: Number(c.lat), lng: Number(c.lng), label: c.geo_label ?? '', precision: c.geo_precision ?? 'bairro' };
   if (c.geo_precision === 'nao_encontrado' || !Deno.env.get('ORS_API_KEY')) return null;
   if (!c.address && !c.neighborhood && !c.city) return null;
-  const text = [c.address, c.neighborhood, c.city ?? fallbackCity].filter(Boolean).join(', ');
-  const g = await geocode(text, focus);
+  const cidade = c.city ?? fallbackCity;
+  const text = [c.address, c.neighborhood, cidade].filter(Boolean).join(', ');
+  // O geocoder às vezes acha a rua em OUTRA cidade (2026-09-28: "Rua Maranhão, 125, Paranaguá" →
+  // Sapucaia do Sul/RS, 733 km). Resultado fora da cidade da ficha não vale: tenta bairro + cidade e,
+  // por fim, só a cidade (precisão menor, mas no lugar certo).
+  const semAcento = (s: string) => s.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
+  const nomeCidade = cidade ? semAcento(String(cidade)).split(/[/,(]| - /)[0].trim() : ''; // "Paranaguá/PR" → "paranagua"
+  const naCidade = (g: Geo | null) => !!g && (!nomeCidade || semAcento(g.label).includes(nomeCidade));
+  let g = await geocode(text, focus);
+  if (g && !naCidade(g) && cidade) {
+    const tentativas = [[c.neighborhood, cidade].filter(Boolean).join(', '), String(cidade)];
+    let achou: Geo | null = null;
+    for (const t of [...new Set(tentativas)]) { const r = await geocode(t, focus); if (naCidade(r)) { achou = r; break; } }
+    log('WARN', 'geocode fora da cidade', { cand: c.id, label: g.label, cidade, novo: achou?.label ?? null });
+    g = achou;
+  }
   const now = new Date().toISOString();
   await admin.from('hiring_candidates').update(g
     ? { lat: g.lat, lng: g.lng, geo_label: g.label, geo_precision: g.precision, geo_at: now }
@@ -207,6 +221,7 @@ Regras:
 - Transcreva só o que está no currículo. Nunca invente dado. O que não estiver lá: texto "" (vazio), número 0, lista vazia.
 - nome com iniciais maiúsculas. telefone só com dígitos, com DDD (ex.: 41999998888). email em minúsculas.
 - endereco: rua, número e complemento como estão no currículo (sem cidade/UF, que vão em cidade; bairro vai em bairro).
+- cidade: SÓ a cidade onde a pessoa MORA (a do endereço). "Naturalidade", "natural de", "nascido(a) em" e local de nascimento NÃO são a cidade onde mora: se o endereço não traz a cidade, deixe cidade "" e escreva em avisos "Cidade do endereço não informada (naturalidade: X)". Nunca complete a cidade pelo DDD do telefone.
 - estado_civil: como escrito (Solteiro(a), Casado(a), União estável, Divorciado(a), Viúvo(a)); "" se não estiver.
 - cursos: cursos complementares e livres (fora a formação escolar/acadêmica, que vai em formacao).
 - data_nascimento no formato AAAA-MM-DD, só se estiver escrita. idade: a escrita no currículo, ou calculada da data de nascimento (hoje é ${new Date().toISOString().slice(0, 10)}).
