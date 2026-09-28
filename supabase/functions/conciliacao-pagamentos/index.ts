@@ -329,6 +329,23 @@ interface CreateOpts {
   allowPayroll: boolean;
   /** 'YYYY-MM': mês a que o gasto pertence (fin_accounts_payable.competence_month) */
   competenceMonth?: string | null;
+  /** compra (2026-09-28): itens da compra, cada um opcionalmente ligado a um insumo. A soma tem que
+   *  bater com o valor do pagamento. Sem itens = 1 item com a descrição (comportamento anterior). */
+  items?: CompraItem[] | null;
+  /** compra com itens: "já recebi" → confirma o recebimento na hora (insumos entram no estoque) */
+  received?: boolean;
+}
+interface CompraItem { description: string; quantity: number; total: number; unit_label: string | null; ingredient_id: string | null }
+
+function parseItens(v: unknown): CompraItem[] | null {
+  if (!Array.isArray(v) || v.length === 0) return null;
+  return (v as Row[]).slice(0, 60).map((i) => ({
+    description: String(i.description ?? '').trim().slice(0, 200),
+    quantity: Number(i.quantity),
+    total: round2(Number(i.total)),
+    unit_label: i.unit_label ? String(i.unit_label).trim().slice(0, 20) : null,
+    ingredient_id: i.ingredient_id ? String(i.ingredient_id) : null,
+  }));
 }
 
 const competenciaOk = (v: unknown) => (typeof v === 'string' && /^\d{4}-(0[1-9]|1[0-2])$/.test(v) ? v : null);
@@ -456,6 +473,7 @@ async function createOneClaimed(ctx: Ctx, rowId: string, o: CreateOpts, row: Row
   let billId: string | null = null;
   let purchaseId: string | null = null;
   let categoria = 'Compras';
+  const avisosCompra: string[] = [];
 
   if (o.kind === 'despesa' || o.kind === 'freelancer' || o.kind === 'prestador') {
     // Freelancer e serviço do prestador MEI entram sempre em RH, a mesma categoria do Pix pago pelo ERPOS
@@ -499,16 +517,46 @@ async function createOneClaimed(ctx: Ctx, rowId: string, o: CreateOpts, row: Row
       if (s?.name) fornecedor = String(s.name);
     }
     if (!fornecedor) fornecedor = 'Fornecedor sem nota';
+    // Itens informados (2026-09-28): a soma tem que fechar com o pagamento — a compra nasce paga por
+    // esse valor, e diferença deixaria conta a pagar parcial ou CMV errado (dono: bloquear até fechar).
+    // unit_price = total/quantidade com precisão cheia: purchase-write arredonda quantidade × preço
+    // para os centavos e volta exatamente o total digitado.
+    let itens: Row[];
+    if (o.items?.length) {
+      for (const it of o.items) {
+        if (!it.description) return fail('Todo item precisa de descrição');
+        if (!(it.quantity > 0)) return fail('Quantidade inválida em "' + it.description + '"');
+        if (!(it.total > 0)) return fail('Valor inválido em "' + it.description + '"');
+      }
+      const soma = round2(o.items.reduce((s, it) => s + it.total, 0));
+      if (Math.abs(soma - valor) > 0.001) return fail('Os itens somam R$ ' + brl(soma) + ' e o pagamento é R$ ' + brl(valor) + ': ajuste até fechar');
+      const ingIds = [...new Set(o.items.map((it) => it.ingredient_id).filter(Boolean) as string[])];
+      if (ingIds.length) {
+        const { data: ings } = await admin.from('ingredients').select('id').eq('tenant_id', tenantId).is('deleted_at', null).in('id', ingIds);
+        if ((ings ?? []).length !== ingIds.length) return fail('Insumo inválido para esta loja');
+      }
+      itens = o.items.map((it) => ({
+        description: it.description, quantity: it.quantity, unit_price: it.total / it.quantity, unit_label: it.unit_label || 'un',
+        ingredient_id: it.ingredient_id, merchandise_category_id: o.mercCategoryId,
+      }));
+    } else {
+      itens = [{ description: descricao, quantity: 1, unit_price: valor, unit_label: 'un', merchandise_category_id: o.mercCategoryId }];
+    }
     const cp = await callEdge(ctx, 'purchase-write', {
       action: 'create_purchase', tenant_id: tenantId,
       payload: {
         supplier: fornecedor, purchase_date: paidDate, due_date: paidDate, payment_status: 'pending', payment_method: metodo,
-        bank_account_id: row.bank_account_id, cost_center_id: o.costCenterId, notes: nota,
-        items: [{ description: descricao, quantity: 1, unit_price: valor, unit_label: 'un', merchandise_category_id: o.mercCategoryId }],
+        bank_account_id: row.bank_account_id, cost_center_id: o.costCenterId, notes: nota, items: itens,
       },
     });
     purchaseId = cp.data?.data?.id ?? null;
     if (!purchaseId) return fail('Criar a compra: ' + (cp.error ?? 'falhou'));
+    avisosCompra.push(...((cp.data?.avisos_conversao ?? []) as string[]));
+    const totalCompra = round2(Number(cp.data?.data?.total_amount ?? valor));
+    if (Math.abs(totalCompra - valor) > 0.001) {
+      await callEdge(ctx, 'purchase-write', { action: 'delete_purchase', tenant_id: tenantId, payload: { id: purchaseId } });
+      return fail('A compra ficou com R$ ' + brl(totalCompra) + ' e o pagamento é R$ ' + brl(valor) + '; nada foi lançado');
+    }
     const { data: bills } = await admin.from('fin_accounts_payable').select('id').eq('tenant_id', tenantId).eq('reference_type', 'purchase').eq('reference_id', purchaseId);
     billId = (bills ?? []).length === 1 ? bills![0].id : null;
     if (!billId) {
@@ -568,6 +616,29 @@ async function createOneClaimed(ctx: Ctx, rowId: string, o: CreateOpts, row: Row
     }
   }
 
+  // "Já recebi": confirma o recebimento como a tela de Compras faria — os itens com insumo entram
+  // no estoque (e o custo do insumo segue a compra). Se falhar, a compra paga fica; o recebimento
+  // se confirma depois em Compras. O "Desfazer" estorna o estoque junto (delete_purchase).
+  let estoqueMsg = '';
+  if (purchaseId && o.received && o.items?.some((it) => it.ingredient_id)) {
+    // Todos os itens vão explícitos, recebidos como comprados e com o insumo que ficou na compra:
+    // sem isso o confirm-delivery liga item "Sem insumo" pelo vínculo memorizado do fornecedor
+    // (revisão 2026-09-28) — a escolha feita aqui é a que vale.
+    const { data: its } = await admin.from('fin_purchase_items').select('id, ingredient_id, quantity, total_price, units_per_package')
+      .eq('tenant_id', tenantId).eq('purchase_id', purchaseId);
+    const received_items = ((its ?? []) as Row[]).map((it) => ({
+      item_id: it.id, ingredient_id: it.ingredient_id ?? null, units_per_package: Number(it.units_per_package) || 1,
+      received_quantity: Number(it.quantity), received_total_price: Number(it.total_price),
+    }));
+    const rec = await callEdge(ctx, 'purchase-confirm-delivery', { tenant_id: tenantId, payload: { purchase_id: purchaseId, received_items } });
+    if (rec.ok) estoqueMsg = ' e os insumos entraram no estoque';
+    else {
+      log('WARN', 'create', 'confirmar recebimento falhou', { tenantId, purchaseId, error: rec.error });
+      estoqueMsg = '. A entrada no estoque falhou (' + (rec.error ?? 'erro') + '): confirme o recebimento em Financeiro › Compras';
+    }
+  }
+  if (avisosCompra.length) estoqueMsg += '. Atenção: ' + avisosCompra.join(' ');
+
   const now = new Date().toISOString();
   const confirmed = { bill_id: billId, juros_bill_id: null, pay_amount: valor, juros: 0, desconto: 0, auto_imported: false, created: o.kind, purchase_id: purchaseId, at: now, by: ctx.userId };
   const { error: upErr } = await admin.from('fin_bank_statement_imports').update({
@@ -580,7 +651,7 @@ async function createOneClaimed(ctx: Ctx, rowId: string, o: CreateOpts, row: Row
     },
   }).eq('id', row.id);
   if (upErr) log('ERROR', 'create', 'marcar extrato falhou', { tenantId, rowId, error: upErr.message });
-  return { id: row.id, ok: true, msg: (o.kind === 'compra' ? 'Compra' : o.kind === 'freelancer' ? 'Pagamento de freelancer' : o.kind === 'prestador' ? (o.prestadorTipo === 'servico' ? 'Serviço do prestador' : 'Reembolso do prestador') : 'Despesa') + ' de R$ ' + brl(valor) + ' lançado: "' + descricao + '"' + freelaMsg };
+  return { id: row.id, ok: true, msg: (o.kind === 'compra' ? 'Compra' : o.kind === 'freelancer' ? 'Pagamento de freelancer' : o.kind === 'prestador' ? (o.prestadorTipo === 'servico' ? 'Serviço do prestador' : 'Reembolso do prestador') : 'Despesa') + ' de R$ ' + brl(valor) + ' lançado: "' + descricao + '"' + freelaMsg + estoqueMsg };
 }
 
 // ── Nota do mês: 1 nota ↔ vários pagamentos ─────────────────────────────────
@@ -1303,7 +1374,11 @@ Deno.serve(async (req: Request) => {
         funcao: body.funcao ? String(body.funcao).slice(0, 60) : null,
         prestadorId: body.prestador_id ? String(body.prestador_id) : null,
         prestadorTipo: body.prestador_tipo === 'servico' || body.prestador_tipo === 'reembolso' ? body.prestador_tipo : null,
+        // Itens valem para UM pagamento (a soma fecha com o valor dele); em lote seriam aplicados a todos
+        items: kind === 'compra' ? parseItens(body.items) : null,
+        received: body.received === true,
       };
+      if (opts.items && ids.length > 1) return errResp('Compra com itens se lança um pagamento por vez');
       const results: Result[] = [];
       for (const id of ids) {
         try { results.push(await createOne(ctx, id, opts)); }

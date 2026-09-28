@@ -48,7 +48,48 @@ export interface LancarOpcoes {
   /** prestador MEI (2026-09-28): quem e se é o serviço do mês ou um reembolso */
   prestador_id?: string | null;
   prestador_tipo?: 'servico' | 'reembolso' | null;
+  /** compra (2026-09-28): itens com insumo opcional; a soma tem que fechar com o pagamento */
+  items?: Array<{ description: string; quantity: number; total: number; unit_label: string | null; ingredient_id: string | null }> | null;
+  /** compra com itens: já recebi → os insumos entram no estoque na hora */
+  received?: boolean;
 }
+
+/** Insumos da loja para ligar os itens da compra (só carrega quando a compra é aberta). */
+type InsumoLista = { id: string; name: string; unit: string | null };
+export function useInsumos(ativo: boolean) {
+  const { user } = useAuth();
+  const [lista, setLista] = useState<{ tenant: string; itens: InsumoLista[] } | null>(null);
+  useEffect(() => {
+    if (!ativo || !user?.tenantId || lista?.tenant === user.tenantId) return;
+    const tenant = user.tenantId;
+    let vivo = true;
+    supabase.from('ingredients').select('id, name, unit').eq('tenant_id', tenant).is('deleted_at', null).order('name')
+      .then(({ data }) => { if (vivo) setLista({ tenant, itens: (data ?? []) as InsumoLista[] }); });
+    return () => { vivo = false; };
+  }, [ativo, user?.tenantId]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Troca de loja: nunca mostra os insumos da loja anterior
+  const itens = lista && lista.tenant === user?.tenantId ? lista.itens : [];
+  const options = useMemo(() => [
+    { id: SEM_INSUMO, label: 'Sem insumo (não entra no estoque)', sub: null },
+    ...itens.map((i) => ({ id: i.id, label: i.name, sub: i.unit ?? null })),
+  ], [itens]);
+  return { insumos: itens, insumoOptions: options };
+}
+const SEM_INSUMO = '__sem_insumo';
+type ItemCompra = { key: number; descricao: string; qtd: string; unidade: string; total: string; insumoId: string };
+// "1.234,56" e "12,50" (vírgula = decimal) ou "12.50" (ponto como decimal, sem vírgula)
+const numBR = (s: string) => {
+  const t = String(s).trim();
+  const n = Number(t.includes(',') ? t.replace(/\./g, '').replace(',', '.') : t);
+  return t && Number.isFinite(n) ? n : NaN;
+};
+// Quantidade: "1,5" e "1.5" = um e meio; "1.000" / "12.500" (ponto + 3 dígitos, sem vírgula) = milhar —
+// em insumo controlado em g, ler "1.000" como 1 jogaria 1 g no estoque e o custo da grama 1000× (revisão 2026-09-28)
+const numBRqtd = (s: string) => {
+  const t = String(s).trim();
+  const n = Number(t.includes(',') ? t.replace(/\./g, '').replace(',', '.') : /^\d{1,3}(\.\d{3})+$/.test(t) ? t.replace(/\./g, '') : t);
+  return t && Number.isFinite(n) ? n : NaN;
+};
 
 // A edge aceita até 30 por chamada (e ignora o resto): manda em blocos.
 export async function lancarDoExtrato(tenantId: string, ids: string[], opts: LancarOpcoes) {
@@ -173,6 +214,22 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
   const [permitirFolha, setPermitirFolha] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Compra com itens (2026-09-28): cada item pode ser ligado a um insumo; a soma fecha com o pagamento
+  const { insumos, insumoOptions } = useInsumos(aberto && tipo === 'compra');
+  const [itens, setItens] = useState<ItemCompra[]>([]);
+  const [recebido, setRecebido] = useState(true);
+  const [avisoFinal, setAvisoFinal] = useState<string | null>(null);
+  const valorPag = Math.round(Number(transaction.amount) * 100) / 100;
+  const somaItens = Math.round(itens.reduce((s, it) => s + (numBR(it.total) || 0), 0) * 100) / 100;
+  const faltaItens = Math.round((valorPag - somaItens) * 100) / 100;
+  const itemInvalido = itens.find((it) => !it.descricao.trim() || !(numBRqtd(it.qtd) > 0) || !(numBR(it.total) > 0));
+  const itensComInsumo = itens.some((it) => it.insumoId);
+  const itensOk = tipo !== 'compra' || itens.length === 0 || (!itemInvalido && Math.abs(faltaItens) < 0.005);
+  const novoItem = (): ItemCompra => ({
+    key: Date.now() + Math.random(), descricao: itens.length === 0 ? (descricao.trim() === nomePadrao ? '' : descricao.trim()) : '',
+    qtd: '1', unidade: 'un', total: faltaItens > 0 ? faltaItens.toFixed(2).replace('.', ',') : '', insumoId: '',
+  });
+  const mudaItem = (key: number, patch: Partial<ItemCompra>) => setItens((v) => v.map((it) => (it.key === key ? { ...it, ...patch } : it)));
 
   useEffect(() => {
     setAberto(false); setTipo('despesa'); setDescricao(nomePadrao); setFornecedor(transaction.counterpart_name || '');
@@ -180,6 +237,7 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
     setDias([]); setDiaNovo(transaction.transaction_date); setFuncao(''); setFreelaId(''); setMotivo('');
     setCompModo('same'); setCompOutro(transaction.transaction_date.slice(0, 7));
     setPrestadorId(''); setPrestadorTipo('servico');
+    setItens([]); setRecebido(true);
   }, [transaction.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Quem recebeu o Pix já está cadastrado? Então a opção certa vem marcada sozinha.
@@ -212,6 +270,8 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
     if (tipo === 'fora_dre' && !motivo) { setErro('Escolha o motivo de não entrar no DRE.'); return; }
     if (tipo === 'prestador' && !prestadorId) { setErro('Escolha o prestador.'); return; }
     if (tipo === 'prestador' && prestadorTipo === 'reembolso' && !dreCat) { setErro('Escolha a categoria do que foi reembolsado.'); return; }
+    if (tipo === 'compra' && itemInvalido) { setErro('Todo item precisa de descrição, quantidade e valor.'); return; }
+    if (!itensOk) { setErro(`Os itens somam ${formatCurrency(somaItens)} e o pagamento é ${formatCurrency(valorPag)}: ajuste até fechar.`); return; }
     setErro(null);
     setBusy(true);
     const { results, error } = await lancarDoExtrato(user.tenantId, [transaction.id], {
@@ -227,6 +287,11 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
       competence_month: /^\d{4}-\d{2}$/.test(competencia) ? competencia : null,
       prestador_id: tipo === 'prestador' ? prestadorId : null,
       prestador_tipo: tipo === 'prestador' ? prestadorTipo : null,
+      items: tipo === 'compra' && itens.length ? itens.map((it) => ({
+        description: it.descricao.trim(), quantity: numBRqtd(it.qtd), total: Math.round(numBR(it.total) * 100) / 100,
+        unit_label: it.unidade.trim() || null, ingredient_id: it.insumoId || null,
+      })) : null,
+      received: tipo === 'compra' && itensComInsumo && recebido,
     });
     const r = results[0];
     if (error || !r) { setBusy(false); setErro(error ?? 'Não foi possível lançar.'); return; }
@@ -253,8 +318,20 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
       if (e) { setBusy(false); setErro('Lançado, mas a regra não foi salva: ' + e); return; }
     }
     setBusy(false);
+    // Compra com itens: aviso de conversão de unidade ou de estoque que falhou não pode sumir com o painel
+    if (/Atenção:|falhou/.test(r.msg)) { setAvisoFinal(r.msg); return; }
     onDone();
   };
+
+  if (avisoFinal) {
+    return (
+      <div className="border border-amber-300 rounded-xl p-3 space-y-2 bg-amber-50 text-xs text-amber-900">
+        <p><i className="ri-alert-line mr-1" />{avisoFinal}</p>
+        <button onClick={() => { setAvisoFinal(null); onDone(); }}
+          className="px-3 py-1.5 bg-amber-600 text-white rounded-lg text-xs font-semibold cursor-pointer hover:bg-amber-700">Entendi</button>
+      </div>
+    );
+  }
 
   if (!aberto) {
     return (
@@ -288,7 +365,7 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
         {tipo === 'despesa'
           ? 'Vira uma conta a pagar já baixada nesta data, com a categoria da DRE (limpeza, manutenção, serviço, frete…).'
           : tipo === 'compra'
-          ? 'Vira uma compra de mercadoria já paga nesta data: entra no CMV na categoria escolhida. Não mexe no estoque.'
+          ? 'Vira uma compra de mercadoria já paga nesta data: entra no CMV na categoria escolhida. Para mexer no estoque, adicione os itens e ligue cada um ao insumo.'
           : tipo === 'prestador'
           ? 'Serviço do mês: despesa de RH na competência. Reembolso: despesa na categoria do que ele comprou para a loja. Aparece em RH / Folha › Prestadores MEI.'
           : tipo === 'freelancer'
@@ -441,6 +518,71 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
       </div>
       )}
 
+      {tipo === 'compra' && (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <label className="text-xs font-medium text-zinc-600">Itens {itens.length === 0 && <span className="text-zinc-400 font-normal">(opcional: sem itens, a compra fica com 1 item e não mexe no estoque)</span>}</label>
+            <button type="button" onClick={() => setItens((v) => [...v, novoItem()])}
+              className="px-2 py-1 rounded-lg border border-violet-300 text-violet-700 text-xs font-semibold cursor-pointer hover:bg-violet-50 whitespace-nowrap">
+              <i className="ri-add-line" /> Adicionar item
+            </button>
+          </div>
+          {itens.map((it) => {
+            const ins = insumos.find((x) => x.id === it.insumoId);
+            return (
+              <div key={it.key} className="bg-white border border-zinc-200 rounded-lg p-2 space-y-1.5">
+                <div className="flex items-center gap-1.5">
+                  <input value={it.descricao} onChange={(e) => mudaItem(it.key, { descricao: e.target.value })} placeholder="Item (ex.: Gelo 5 kg)"
+                    className="flex-1 min-w-0 px-2 py-1.5 border border-zinc-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-violet-300" />
+                  <button type="button" onClick={() => setItens((v) => v.filter((x) => x.key !== it.key))} aria-label="Tirar item"
+                    className="w-8 h-8 flex items-center justify-center rounded-lg text-zinc-400 hover:text-red-600 hover:bg-red-50 cursor-pointer">
+                    <i className="ri-delete-bin-line" />
+                  </button>
+                </div>
+                <div className="grid grid-cols-3 gap-1.5">
+                  <label className="text-[11px] text-zinc-500">Qtd
+                    <input value={it.qtd} onChange={(e) => mudaItem(it.key, { qtd: e.target.value })} inputMode="decimal"
+                      className="w-full px-2 py-1.5 border border-zinc-200 rounded-lg text-sm text-zinc-800" />
+                  </label>
+                  <label className="text-[11px] text-zinc-500">Unidade
+                    <input value={it.unidade} onChange={(e) => mudaItem(it.key, { unidade: e.target.value })} maxLength={20}
+                      className="w-full px-2 py-1.5 border border-zinc-200 rounded-lg text-sm text-zinc-800" />
+                  </label>
+                  <label className="text-[11px] text-zinc-500">Valor total (R$)
+                    <input value={it.total} onChange={(e) => mudaItem(it.key, { total: e.target.value })} inputMode="decimal" placeholder="0,00"
+                      className="w-full px-2 py-1.5 border border-zinc-200 rounded-lg text-sm text-zinc-800" />
+                  </label>
+                </div>
+                <CategoriaCombobox value={it.insumoId || SEM_INSUMO} options={insumoOptions} placeholder="Insumo do estoque…"
+                  onChange={(id) => {
+                    const novo = insumos.find((x) => x.id === id);
+                    // Unidade do insumo por padrão: a compra entra 1:1 no estoque sem pedir conversão
+                    mudaItem(it.key, { insumoId: id === SEM_INSUMO ? '' : id, ...(novo?.unit ? { unidade: novo.unit } : {}), ...(novo && !it.descricao.trim() ? { descricao: novo.name } : {}) });
+                  }}
+                  buttonClassName="w-full px-2 py-1.5 border border-zinc-200 rounded-lg text-sm bg-white cursor-pointer" />
+                {ins && ins.unit && it.unidade.trim() && it.unidade.trim().toLowerCase() !== ins.unit.toLowerCase() && (
+                  <p className="text-[11px] text-amber-700">
+                    O insumo é controlado em "{ins.unit}". Em "{it.unidade.trim()}" o sistema só converte kg↔g e L↔ml; senão o item fica fora do estoque até você informar a conversão na Classificação de itens.
+                  </p>
+                )}
+              </div>
+            );
+          })}
+          {itens.length > 0 && (
+            <p className={`text-xs font-semibold ${Math.abs(faltaItens) < 0.005 ? 'text-emerald-700' : 'text-red-600'}`}>
+              Itens: {formatCurrency(somaItens)} de {formatCurrency(valorPag)}
+              {Math.abs(faltaItens) < 0.005 ? ' ✓ fechou' : faltaItens > 0 ? ` · faltam ${formatCurrency(faltaItens)}` : ` · passou ${formatCurrency(-faltaItens)}`}
+            </p>
+          )}
+          {itensComInsumo && (
+            <label className="flex items-start gap-2 text-xs text-zinc-700 cursor-pointer">
+              <input type="checkbox" checked={recebido} onChange={(e) => setRecebido(e.target.checked)} className="mt-0.5" />
+              <span><b>Já recebi a mercadoria</b>: os itens ligados a insumo entram no estoque agora. Desmarcado, entram quando o recebimento for confirmado em Compras.</span>
+            </label>
+          )}
+        </div>
+      )}
+
       {/* Fora do DRE não tem competência nem regra "fazer sempre assim" (a edge não cria nada) */}
       {tipo !== 'fora_dre' && (
       <div>
@@ -483,7 +625,7 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
       {erro && <p className="text-xs text-red-600">{erro}</p>}
 
       <div className="flex items-center gap-2">
-        <button onClick={lancar} disabled={busy || (!!avisoFolha && !permitirFolha)}
+        <button onClick={lancar} disabled={busy || (!!avisoFolha && !permitirFolha) || !itensOk}
           className="px-4 py-2 bg-violet-600 text-white rounded-lg text-sm font-semibold hover:bg-violet-700 disabled:opacity-50 cursor-pointer">
           {busy ? 'Lançando...' : tipo === 'despesa' ? 'Lançar despesa paga' : tipo === 'compra' ? 'Lançar compra paga' : tipo === 'freelancer' ? 'Lançar pagamento de freelancer' : tipo === 'prestador' ? (prestadorTipo === 'servico' ? 'Lançar serviço do prestador' : 'Lançar reembolso') : 'Marcar como fora do DRE'}
         </button>
