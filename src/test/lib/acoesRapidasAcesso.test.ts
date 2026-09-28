@@ -20,7 +20,7 @@ describe('ações rápidas por acesso', () => {
 
   it('caixa vê o que o caixa faz, sem financeiro nem estoque', () => {
     const ids = liberadas(ctx('caixa'));
-    expect(ids).toEqual(expect.arrayContaining(['caixa-aberto', 'pausar-delivery', 'clima']));
+    expect(ids).toEqual(expect.arrayContaining(['caixa-aberto', 'fechamento-caixa', 'pausar-delivery', 'clima']));
     expect(ids).not.toContain('lancar-despesa');
     expect(ids).not.toContain('registrar-perda');
     expect(ids).not.toContain('nova-tarefa');

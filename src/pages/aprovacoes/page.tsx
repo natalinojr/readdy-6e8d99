@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useAprovacoes, type SolicitacaoAprovacao, type StatusAprovacao } from '../../contexts/AprovacoesContext';
 import { useAuth } from '../../contexts/AuthContext';
+import { useToast } from '../../contexts/ToastContext';
 
 const fmt = (ts: number) => {
   const diff = Math.floor((Date.now() - ts) / 60000);
@@ -270,8 +271,15 @@ export default function AprovacoesPage() {
   const [filtro, setFiltro] = useState<FilterStatus>('pendente');
   const operador = user?.nome ?? 'Gerente';
 
-  const handleAprovar = (id: string) => aprovar(id, operador);
-  const handleRejeitar = (id: string) => rejeitar(id, operador);
+  const { error: toastErro } = useToast();
+
+  // A decisão vai para o banco; erro comum é "já resolvida" em outro aparelho ou papel sem permissão.
+  const handleAprovar = (id: string) => {
+    aprovar(id, operador).catch((e: Error) => toastErro('Não foi possível aprovar', e.message));
+  };
+  const handleRejeitar = (id: string) => {
+    rejeitar(id, operador).catch((e: Error) => toastErro('Não foi possível recusar', e.message));
+  };
 
   const filtradas = solicitacoes.filter((s) => filtro === 'todos' || s.status === filtro);
 

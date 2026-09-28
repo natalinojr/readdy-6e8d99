@@ -8,8 +8,8 @@ import { getPeriodDates, getPeriodoAnterior, labelPeriodoAnterior } from '@/lib/
 import { useSalesReport } from '@/hooks/useSalesReport';
 import HeatmapSemanaHora from './HeatmapSemanaHora';
 import {
-  fetchPedidosIfood, fetchOperacaoIfood, fetchCardapioIfood, resumir, mediana, motivoCurto, culpaCancelamento,
-  type PedidoIfood, type OperacaoPedido, type MenuLinha, type Logistica,
+  fetchPedidosIfood, fetchOperacaoIfood, fetchCardapioIfood, fetchEntregasSobDemandaErpos, resumir, mediana, motivoCurto, culpaCancelamento,
+  type PedidoIfood, type OperacaoPedido, type MenuLinha, type Logistica, type EntregaErpos,
 } from '@/lib/ifoodDashboard';
 
 // Relatórios › iFood (2026-09-25). Tudo sai do que já foi importado em Financeiro › iFood
@@ -100,6 +100,7 @@ export default function IfoodTab({ periodo }: Props) {
   const [operacao, setOperacao] = useState<OperacaoPedido[]>([]);
   const [cardapio, setCardapio] = useState<{ linhas: MenuLinha[]; doPeriodo: boolean }>({ linhas: [], doPeriodo: true });
   const [ultimaData, setUltimaData] = useState<string | null>(null);
+  const [entregasErpos, setEntregasErpos] = useState<EntregaErpos[]>([]);
 
   const { from, to } = getPeriodDates(periodo);
   const periodoAnt = getPeriodoAnterior(periodo);
@@ -115,6 +116,7 @@ export default function IfoodTab({ periodo }: Props) {
     fetchPedidosIfood(tenantId, ant.from, ant.to).then((d) => { if (vivo) setAnterior(d); });
     fetchOperacaoIfood(tenantId, from, to).then((d) => { if (vivo) setOperacao(d); });
     fetchCardapioIfood(tenantId, from.slice(0, 10), to.slice(0, 10)).then((d) => { if (vivo) setCardapio(d); });
+    fetchEntregasSobDemandaErpos(tenantId, from, to).then((d) => { if (vivo) setEntregasErpos(d); });
     // Período com hoje/ontem: busca leve na API do iFood (mesma do "Vendas do dia") e recarrega.
     const ontem = new Date(Date.now() - 86_400_000).toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
     if (to.slice(0, 10) >= ontem) {
@@ -189,6 +191,28 @@ export default function IfoodTab({ periodo }: Props) {
     const custo = ps.reduce((a, p) => a + (p.vendas - p.liquido), 0);
     return { k, ...LOGISTICA[k], pedidos: ps.length, vendas, ticket: ps.length ? vendas / ps.length : 0, custoPct: vendas > 0 ? (custo / vendas) * 100 : 0, comissaoPct: vendas > 0 ? (ps.reduce((a, p) => a + p.comissao, 0) / vendas) * 100 : 0 };
   }).filter((x) => x.pedidos > 0), [validos]);
+
+  // ── Sob demanda: quanto o iFood cobrou × quanto o cliente pagou de entrega ──
+  // Pedidos do iFood com entrega sob demanda (conciliação/API) + delivery do ERPOS com entregador iFood.
+  const sobDemanda = useMemo(() => {
+    const doIfood = new Map(pedidos.map((p) => [p.id, p]));
+    const linhas: { id: string; at: Date; origem: 'iFood' | 'Delivery'; ref: string; ifood: number; cliente: number }[] = [];
+    for (const p of validos) {
+      if (p.entregaSobDemanda < 0.005) continue;
+      linhas.push({ id: p.id, at: p.at, origem: 'iFood', ref: `#${p.id.slice(0, 4)}`, ifood: p.entregaSobDemanda, cliente: p.entregaCliente });
+    }
+    for (const e of entregasErpos) {
+      if (loja && e.loja !== loja) continue;
+      // Se a conciliação já trouxe a cobrança dessa entrega, vale o valor cobrado (não a cotação).
+      const conc = e.ifoodOrderId ? doIfood.get(e.ifoodOrderId) : undefined;
+      if (conc && !conc.cancelado) continue; // já contado como pedido do iFood
+      linhas.push({ id: e.id, at: e.at, origem: 'Delivery', ref: e.numero ? `#${e.numero}` : '—', ifood: conc && conc.entregaSobDemanda > 0.005 ? conc.entregaSobDemanda : e.ifood, cliente: e.cliente });
+    }
+    linhas.sort((a, b) => b.at.getTime() - a.at.getTime());
+    const ifood = linhas.reduce((a, l) => a + l.ifood, 0);
+    const cliente = linhas.reduce((a, l) => a + l.cliente, 0);
+    return { linhas, n: linhas.length, ifood, cliente, dif: cliente - ifood, bancadas: linhas.filter((l) => l.cliente - l.ifood < -0.005).length };
+  }, [pedidos, validos, entregasErpos, loja]);
 
   // ── Formas de pagamento ────────────────────────────────────────────────────
   const porPagamento = useMemo(() => {
@@ -325,6 +349,9 @@ export default function IfoodTab({ periodo }: Props) {
       const [a, b] = [...porLogistica].sort((x, y) => x.custoPct - y.custoPct);
       out.push({ icon: 'ri-e-bike-2-line', cor: '#8b5cf6', titulo: 'Logística mais barata', texto: `${a.label} custa ${pct(a.custoPct)} das vendas contra ${pct(b.custoPct)} de ${b.label.toLowerCase()} (${pct(b.custoPct - a.custoPct)} de diferença). Na entrega própria, some o custo do motoboy antes de decidir.` });
     }
+    if (sobDemanda.n > 0) {
+      out.push({ icon: 'ri-riding-line', cor: '#8b5cf6', titulo: 'Entrega sob demanda', texto: `O iFood cobrou ${brl(sobDemanda.ifood)} por ${sobDemanda.n} entrega(s) e os clientes pagaram ${brl(sobDemanda.cliente)} de taxa de entrega. ${sobDemanda.dif < -0.005 ? `A loja bancou ${brl(-sobDemanda.dif)} da diferença${sobDemanda.bancadas ? ` (${sobDemanda.bancadas} entrega(s) no prejuízo)` : ''} — vale rever a taxa de entrega cobrada.` : `Sobrou ${brl(sobDemanda.dif)} para a loja.`}` });
+    }
     if (r.promoLoja > 0 && promo.pedidosComLoja > 0) {
       out.push({ icon: 'ri-coupon-3-line', cor: '#f59e0b', titulo: 'Promoções da loja', texto: `A loja bancou ${brl(r.promoLoja)} em promoções (${pct((r.promoLoja / r.vendas) * 100)} das vendas) em ${promo.pedidosComLoja} pedidos. O iFood colocou ${brl(r.promoIfood)} do bolso dele. Pedidos com promoção têm ticket de ${brl(promo.ticketCom)} contra ${brl(promo.ticketSem)} sem.` });
     }
@@ -344,7 +371,7 @@ export default function IfoodTab({ periodo }: Props) {
       out.push({ icon: 'ri-eye-line', cor: '#ec4899', titulo: 'Muita visita, pouca venda', texto: `"${v.nome}" teve ${v.visitas} visitas e converteu ${pct(v.conv)} (média do cardápio ${pct(menu.convMedia)}). Vale revisar foto, descrição ou preço.` });
     }
     return out;
-  }, [heat, validos, r, ra, porLogistica, promo, cancel, porPagamento, op, menu]);
+  }, [heat, validos, r, ra, porLogistica, sobDemanda, promo, cancel, porPagamento, op, menu]);
 
   // ── Render ─────────────────────────────────────────────────────────────────
   if (!atual) {
@@ -521,6 +548,49 @@ export default function IfoodTab({ periodo }: Props) {
           </table>
         </Card>
       </div>
+
+      {/* Sob demanda: iFood cobrou × cliente pagou */}
+      {sobDemanda.n > 0 && (
+        <Card titulo="Entrega sob demanda: iFood × cliente" sub={`${sobDemanda.n} entrega(s) com entregador iFood avulso — quanto o iFood cobrou e quanto o cliente pagou de taxa de entrega`}>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="rounded-xl p-3" style={{ background: '#f5f3ff' }}>
+              <p className="text-[11px] font-semibold uppercase text-violet-700">iFood cobrou</p>
+              <p className="text-xl font-black text-zinc-800">{brl(sobDemanda.ifood)}</p>
+              <p className="text-xs text-zinc-500">média {brl(sobDemanda.ifood / sobDemanda.n)} por entrega</p>
+            </div>
+            <div className="rounded-xl p-3" style={{ background: '#eff6ff' }}>
+              <p className="text-[11px] font-semibold uppercase text-blue-700">Cliente pagou</p>
+              <p className="text-xl font-black text-zinc-800">{brl(sobDemanda.cliente)}</p>
+              <p className="text-xs text-zinc-500">média {brl(sobDemanda.cliente / sobDemanda.n)} de taxa de entrega</p>
+            </div>
+            <div className={`rounded-xl p-3 ${sobDemanda.dif < -0.005 ? 'bg-red-50' : 'bg-emerald-50'}`}>
+              <p className={`text-[11px] font-semibold uppercase ${sobDemanda.dif < -0.005 ? 'text-red-600' : 'text-emerald-700'}`}>{sobDemanda.dif < -0.005 ? 'Loja bancou' : 'Sobrou para a loja'}</p>
+              <p className={`text-xl font-black ${sobDemanda.dif < -0.005 ? 'text-red-600' : 'text-emerald-600'}`}>{brl(Math.abs(sobDemanda.dif))}</p>
+              <p className="text-xs text-zinc-500">{sobDemanda.bancadas} de {sobDemanda.n} entrega(s) com cliente pagando menos que o iFood</p>
+            </div>
+          </div>
+          <div className="overflow-x-auto mt-3 max-h-72 overflow-y-auto">
+            <table className="w-full text-xs min-w-[420px]">
+              <thead className="sticky top-0 bg-white"><tr className="text-zinc-400 text-left"><th className="font-semibold py-1">Data</th><th className="font-semibold">Pedido</th><th className="font-semibold text-right">iFood cobrou</th><th className="font-semibold text-right">Cliente pagou</th><th className="font-semibold text-right">Diferença</th></tr></thead>
+              <tbody>
+                {sobDemanda.linhas.map((l) => {
+                  const d = l.cliente - l.ifood;
+                  return (
+                    <tr key={l.id} className="border-t border-zinc-50">
+                      <td className="py-1.5 pr-2 text-zinc-600 tabular-nums">{l.at.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</td>
+                      <td className="pr-2 text-zinc-700">{l.origem === 'iFood' ? 'Pedido iFood' : `Delivery ${l.ref}`}</td>
+                      <td className="text-right tabular-nums">{brl(l.ifood)}</td>
+                      <td className="text-right tabular-nums">{brl(l.cliente)}</td>
+                      <td className={`text-right tabular-nums font-semibold ${d < -0.005 ? 'text-red-600' : 'text-emerald-600'}`}>{d > 0.005 ? '+' : ''}{brl(d)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <p className="text-[11px] text-zinc-400 mt-2">Pedido iFood: cobrança da conciliação (ou API) e taxa de entrega paga no pedido. Delivery: entregas pedidas pelo Gestor de Entregas (valor da cotação do iFood × taxa de entrega do pedido).</p>
+        </Card>
+      )}
 
       {/* Promoções + faixas de ticket */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

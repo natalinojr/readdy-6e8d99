@@ -25,6 +25,10 @@ import { useModoFaturamento } from '@/contexts/ModoFaturamentoContext';
 import { useSessaoFaturamento } from '@/hooks/useSessaoFaturamento';
 import { useSessao } from '@/contexts/SessaoContext';
 import { useIfoodVendas } from '@/hooks/useIfoodVendas';
+import { useVendasHoraComparativo } from '@/hooks/useVendasHoraComparativo';
+import { todayBrasilia } from '@/lib/dateUtils';
+import { diasComparacao, montarVendasHora, type Comparacao } from '@/lib/vendasHoraComparativo';
+import { useComparacoesLigadas } from '@/components/feature/ComparacaoVendasHora';
 
 const fmt = (v: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
@@ -102,20 +106,20 @@ export default function Dashboard() {
   const ticketMedio = pedidosHoje > 0 ? faturamentoHoje / pedidosHoje : 0;
   const ticketMedioOntem = pedidosOntem > 0 ? faturamentoOntem / pedidosOntem : 0;
 
-  // Vendas por hora do dia (PDV + iFood por cima), sempre do dia de hoje.
+  // Vendas por hora do dia (PDV + iFood por cima), sempre do dia de hoje, com linhas de
+  // comparação ligáveis (ontem, mesmo dia da semana passada, mesmo dia do mês passado).
+  const [comparacoes, alternarComparacao] = useComparacoesLigadas('dashboard.vendasHora.comparacoes');
+  const hojeBR = todayBrasilia();
+  const diasComp = useMemo(() => diasComparacao(hojeBR), [hojeBR]);
+  const seriesComp = useVendasHoraComparativo(diasComp, comparacoes);
   const vendasPorHora = (() => {
-    const base = new Map<string, { valor: number; ifood: number }>();
-    for (const h of m?.vendas_por_hora ?? []) base.set(h.hora.slice(0, 2), { valor: Number(h.valor), ifood: 0 });
-    for (const [hm, v] of Object.entries(ifDia?.porHora ?? {})) {
-      const x = base.get(hm.slice(0, 2)) ?? { valor: 0, ifood: 0 };
-      x.ifood += v;
-      base.set(hm.slice(0, 2), x);
-    }
-    return [...base.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([h, v]) => ({
-      hora: `${h}:00`,
-      valor: Math.round((v.valor + v.ifood) * 100) / 100,
-      ifood: Math.round(v.ifood * 100) / 100,
-    }));
+    const pdv: Record<string, number> = {};
+    for (const h of m?.vendas_por_hora ?? []) pdv[h.hora.slice(0, 2)] = (pdv[h.hora.slice(0, 2)] ?? 0) + Number(h.valor);
+    const ifoodHora: Record<string, number> = {};
+    for (const [hm, v] of Object.entries(ifDia?.porHora ?? {})) ifoodHora[hm.slice(0, 2)] = (ifoodHora[hm.slice(0, 2)] ?? 0) + v;
+    const ligadas = Object.fromEntries(Object.entries(seriesComp).filter(([k]) => comparacoes[k as Comparacao]));
+    const horaAgora = Number(new Date().toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', hour12: false }).slice(0, 2));
+    return montarVendasHora(pdv, ifoodHora, ligadas, horaAgora);
   })();
   const mesasOcupadas = m?.mesas_ocupadas ?? 0;
   const mesasTotal = m?.mesas_total ?? 0;
@@ -274,7 +278,8 @@ export default function Dashboard() {
       {/* Chart + Status */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="lg:col-span-2">
-          <SalesChart data={vendasPorHora} lastUpdated={lastUpdated} />
+          <SalesChart data={vendasPorHora} lastUpdated={lastUpdated}
+            comparacoes={comparacoes} diasComparacao={diasComp} onAlternarComparacao={alternarComparacao} />
         </div>
         <div>
           <PedidosStatus

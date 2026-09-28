@@ -49,7 +49,8 @@ export default function CancelamentoModal({
   const [executando, setExecutando] = useState(false);
   const [restockItems, setRestockItems] = useState(true);
   const [refundResult, setRefundResult] = useState<{ refundAmount: number; paymentsRefunded: number } | null>(null);
-  const { addSolicitacao } = useAprovacoes();
+  const { addSolicitacao, cancelarSolicitacao } = useAprovacoes();
+  const solicitacaoIdRef = useRef<string | null>(null);
   const { registrarEvento } = useAuditoria();
   const { user } = useAuth();
   const { success } = useToast();
@@ -164,13 +165,14 @@ export default function CancelamentoModal({
     }
   };
 
-  const handleSolicitarAprovacao = () => {
+  const handleSolicitarAprovacao = async () => {
     if (!motivoFinal) {
       setErro('Informe o motivo do cancelamento');
       return;
     }
 
-    addSolicitacao({
+    setEtapa('aguardando');
+    const id = await addSolicitacao({
       tipo: 'cancelamento',
       mesaNome: `Pedido #${orderNumber}`,
       garcomNome: user?.nome ?? 'Operador',
@@ -194,7 +196,21 @@ export default function CancelamentoModal({
       },
     });
 
-    setEtapa('aguardando');
+    if (!id) {
+      setErro('Não foi possível enviar a solicitação ao gerente. Verifique a conexão ou use a senha do gerente.');
+      setEtapa('erro');
+      return;
+    }
+    solicitacaoIdRef.current = id;
+  };
+
+  // Fechar enquanto espera = desistir: a solicitação sai da fila do gerente.
+  const handleFecharAguardando = () => {
+    if (solicitacaoIdRef.current) {
+      cancelarSolicitacao(solicitacaoIdRef.current);
+      solicitacaoIdRef.current = null;
+    }
+    onFechar();
   };
 
   const handleSenhaAprovada = (nome: string) => {
@@ -323,7 +339,7 @@ export default function CancelamentoModal({
               <p className="text-xs text-amber-600 mt-0.5 leading-snug">Solicitação enviada ao gerente</p>
             </div>
             <button
-              onClick={onFechar}
+              onClick={handleFecharAguardando}
               className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-amber-100 text-amber-400 cursor-pointer transition-colors flex-shrink-0"
             >
               <i className="ri-close-line text-base" />
@@ -339,7 +355,7 @@ export default function CancelamentoModal({
               <p className="text-xs text-zinc-400 text-center">Motivo: {motivoFinal}</p>
             </div>
             <button
-              onClick={onFechar}
+              onClick={handleFecharAguardando}
               className="w-full py-2.5 border border-zinc-200 text-zinc-600 text-sm font-semibold rounded-xl cursor-pointer hover:bg-zinc-50 transition-colors whitespace-nowrap"
             >
               Cancelar solicitação

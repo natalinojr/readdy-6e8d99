@@ -49,8 +49,8 @@ export function rotaLiberada(rota: string, c: ContextoAcesso): boolean {
   if (caminho.startsWith('/pedidos')) return c.pode('gestao_pedidos');
   if (caminho.startsWith('/relatorios')) return algum(c, ...REL_KEYS);
   if (caminho.startsWith('/trafego-pago')) return c.pode('relatorio_financeiro');
-  // Pendências da loja: mesma turma do Financeiro.
-  if (caminho.startsWith('/pendencias')) return !!c.perfil && PAPEIS_FINANCEIRO.includes(c.perfil);
+  // Pendências da loja: todos (2026-09-28); a própria caixa filtra o que cada papel vê.
+  if (caminho.startsWith('/pendencias')) return !!c.perfil;
   return false;
 }
 
@@ -74,6 +74,8 @@ const REGRAS: Record<string, (c: ContextoAcesso) => boolean> = {
   'pedidos-atrasados': (c) => algum(c, 'gestao_pedidos', 'gestor_pedidos_acessar', 'kds_acessar'),
   'impressora-parada': (c) => (c.pode('configuracoes_editar') && c.pode('cfg_impressoras')) || c.pode('gestao_pedidos'),
   'caixa-aberto': (c) => algum(c, 'pdv_abrir_caixa', 'pdv_fechar_caixa', 'rel_caixa'),
+  // Fechamentos passados: quem fecha caixa ou vê o Relatórios › Caixa.
+  'fechamento-caixa': (c) => algum(c, 'pdv_fechar_caixa', 'rel_caixa'),
   // iFood: vendas é leitura de faturamento (mesma turma do Vendas do dia) ou quem vê a aba iFood;
   // repasses e custo são do Financeiro › iFood.
   // Loja sem iFood: nenhuma (dono, 2026-09-26).
