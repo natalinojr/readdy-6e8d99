@@ -5,7 +5,7 @@ import {
   Megaphone, RefreshCw, Link2Off, AlertTriangle, Loader2,
   TrendingUp, Eye, MousePointerClick, Target, Wallet,
   Users, Percent, DollarSign, Gauge, BarChart3, Layers,
-  ShoppingCart, Banknote, Store, Share2, Copy, Check, Trash2, X, Lock, Bot,
+  ShoppingCart, Banknote, Store, Share2, Copy, Check, Trash2, X, Lock, Bot, Lightbulb,
 } from 'lucide-react';
 import {
   ResponsiveContainer, ComposedChart, Area, Line, BarChart, Bar,
@@ -19,6 +19,7 @@ import {
 } from './shared';
 import { ContaStrip, ConjuntosTable, AreaEntregaCard } from './components/ContaEConjuntos';
 import { AgenteTab } from './components/Agente';
+import OportunidadesTab from './components/Oportunidades';
 import { PreviaModal, RankingsInline, RetencaoVideoCard, PecasCriativasCard } from './components/Criativos';
 import { AparelhoRegiaoCards, FrequenciaCard, PublicosCard, RecomendacoesCard, montarAvisos } from './components/Quebras';
 import { confirmar } from '@/components/base/Dialogos';
@@ -322,7 +323,8 @@ export default function TrafegoPagoPage() {
   const [insightsError, setInsightsError] = useState<string | null>(null);
   const [campanhaSel, setCampanhaSel] = useState<string | null>(null);
   // Aba: painel (relatório) × agente (gestor de tráfego IA). O link público só tem o painel.
-  const [aba, setAba] = useState<'painel' | 'agente'>(() => (window.location.hash === '#agente' ? 'agente' : 'painel'));
+  // Oportunidades (F5a) lê só o ERPOS: abre mesmo sem a Meta conectada.
+  const [aba, setAba] = useState<'painel' | 'agente' | 'oportunidades'>(() => (window.location.hash === '#agente' ? 'agente' : window.location.hash === '#oportunidades' ? 'oportunidades' : 'painel'));
 
   // ── Status da conexão ──
   const loadStatus = useCallback(async () => {
@@ -888,7 +890,15 @@ export default function TrafegoPagoPage() {
       )}
 
       {/* Não conectado → botão Conectar */}
-      {!publico && !loadingStatus && !exchanging && !connection?.ad_account_id && (
+      {!publico && !loadingStatus && !exchanging && !connection?.ad_account_id && aba === 'oportunidades' && (
+        <div className="mb-5 flex items-center gap-2">
+          <button onClick={() => { setAba('painel'); window.location.hash = ''; }}
+            className="text-xs font-semibold text-zinc-500 hover:text-zinc-700 cursor-pointer">← Conectar conta de anúncios</button>
+        </div>
+      )}
+      {!publico && !loadingStatus && !exchanging && !connection?.ad_account_id && aba === 'oportunidades' && <OportunidadesTab tenantId={tenantId} />}
+
+      {!publico && !loadingStatus && !exchanging && !connection?.ad_account_id && aba !== 'oportunidades' && (
         <div className="flex flex-col items-center justify-center py-16 px-4 text-center bg-white border border-zinc-200 rounded-2xl">
           <div className="w-16 h-16 flex items-center justify-center rounded-2xl bg-amber-50 border border-amber-100 mb-5">
             <Megaphone size={30} className="text-amber-500" />
@@ -914,6 +924,12 @@ export default function TrafegoPagoPage() {
             {connecting ? 'Abrindo...' : 'Conectar com Facebook'}
           </button>
           <p className="text-xs text-zinc-400 mt-5 max-w-md">
+            Enquanto isso, veja as{' '}
+            <button onClick={() => { setAba('oportunidades'); window.location.hash = 'oportunidades'; }} className="text-amber-600 font-semibold underline cursor-pointer">
+              oportunidades de venda da loja
+            </button>{' '}(não precisa da Meta).
+          </p>
+          <p className="text-xs text-zinc-400 mt-2 max-w-md">
             Usamos apenas leitura dos dados de desempenho (ads_read). Veja nossa{' '}
             <a href="/privacidade" target="_blank" rel="noreferrer" className="text-amber-600 font-semibold underline">
               política de privacidade
@@ -959,12 +975,18 @@ export default function TrafegoPagoPage() {
                   className={`inline-flex items-center gap-1 px-3 py-1.5 text-xs font-bold rounded-lg cursor-pointer ${aba === 'agente' ? 'bg-violet-600 text-white' : 'text-zinc-500 hover:bg-zinc-50'}`}>
                   <Bot size={13} /> Agente IA
                 </button>
+                <button onClick={() => { setAba('oportunidades'); window.location.hash = 'oportunidades'; }}
+                  className={`inline-flex items-center gap-1 px-3 py-1.5 text-xs font-bold rounded-lg cursor-pointer ${aba === 'oportunidades' ? 'bg-amber-500 text-white' : 'text-zinc-500 hover:bg-zinc-50'}`}>
+                  <Lightbulb size={13} /> Oportunidades
+                </button>
               </div>
             </div>
           )}
 
           {!publico && aba === 'agente' ? (
             <AgenteTab tenantId={tenantId} isAdmin={user?.perfil === 'admin'} />
+          ) : !publico && aba === 'oportunidades' ? (
+            <OportunidadesTab tenantId={tenantId} />
           ) : (
           <>
 
