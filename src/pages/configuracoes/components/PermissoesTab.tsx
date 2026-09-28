@@ -62,6 +62,7 @@ const permissoes: Permissao[] = [
   ...FIN_ABAS.map((a) => ({ id: a.key, categoria: 'Financeiro', descricao: `Aba ${a.label}`, somenteGerente: true })),
   ...REL_ABAS.map((a) => ({ id: a.key, categoria: 'Relatórios', descricao: `Aba ${a.label}` })),
   { id: 'relatorio_financeiro', categoria: 'Marketing', descricao: 'Acessar Tráfego Pago' },
+  { id: 'marketing_estudio', categoria: 'Marketing', descricao: 'Acessar Estúdio de Criação (artes)' },
   { id: 'clientes_ver', categoria: 'Clientes', descricao: 'Ver base de clientes (CRM)' },
   { id: 'usuarios_gerenciar', categoria: 'Usuários', descricao: 'Gerenciar usuários' },
   { id: 'configuracoes_editar', categoria: 'Configurações', descricao: 'Abrir a tela de Configurações' },
@@ -89,7 +90,7 @@ const defaultPermissoes: Record<Papel, string[]> = {
     'estoque_movimentar', 'estoque_inventario', 'estoque_receber',
     'pag_reembolso', 'pag_freelancer', 'pag_fornecedor',
     'kds_acessar', 'gestor_pedidos_acessar', 'gestor_pedidos_entregar',
-    'relatorio_financeiro', 'relatorio_estoque', 'clientes_ver', 'auditoria_ver',
+    'relatorio_financeiro', 'marketing_estudio', 'relatorio_estoque', 'clientes_ver', 'auditoria_ver',
     // Sem `configuracoes_editar`: as abas só valem se o dono abrir a tela para o Gerente.
     ...FIN_KEYS, ...REL_KEYS, ...CFG_KEYS_GERENTE, CFG_MAQUININHA_KEY, ...GESTAO_KEYS,
   ],

@@ -29,6 +29,7 @@ export type PermissaoKey =
   | 'gestor_pedidos_entregar'
   | 'gestor_entregas_acessar'
   | 'relatorio_financeiro'
+  | 'marketing_estudio'
   | 'relatorio_estoque'
   | 'clientes_ver'
   | 'usuarios_gerenciar'
@@ -71,7 +72,7 @@ export const DEFAULT_PERMISSOES: Record<Papel, PermissaoKey[]> = {
     'pdv_cancelar_pedido', 'pdv_cancelar_item', 'pdv_editar_item_pos_kds', 'pdv_estornar_pagamento',
     'garcom_fechar_mesa', 'garcom_transferir_mesa', 'cardapio_editar', 'cardapio_alterar_preco',
     'estoque_movimentar', 'estoque_inventario', 'estoque_receber', 'kds_acessar', 'gestor_pedidos_acessar',
-    'gestor_pedidos_entregar', 'gestor_entregas_acessar', 'relatorio_financeiro', 'relatorio_estoque', 'clientes_ver',
+    'gestor_pedidos_entregar', 'gestor_entregas_acessar', 'relatorio_financeiro', 'marketing_estudio', 'relatorio_estoque', 'clientes_ver',
     'usuarios_gerenciar', 'configuracoes_editar', 'auditoria_ver', ...PEDIDO_KEYS,
     ...FIN_KEYS, ...REL_KEYS, ...CFG_KEYS, CFG_MAQUININHA_KEY, ...GESTAO_KEYS,
   ],
@@ -80,7 +81,7 @@ export const DEFAULT_PERMISSOES: Record<Papel, PermissaoKey[]> = {
     'pdv_cancelar_pedido', 'pdv_cancelar_item', 'pdv_estornar_pagamento',
     'garcom_fechar_mesa', 'garcom_transferir_mesa', 'cardapio_editar',
     'estoque_movimentar', 'estoque_inventario', 'estoque_receber', 'kds_acessar', 'gestor_pedidos_acessar',
-    'gestor_pedidos_entregar', 'gestor_entregas_acessar', 'relatorio_financeiro', 'relatorio_estoque', 'clientes_ver', 'auditoria_ver',
+    'gestor_pedidos_entregar', 'gestor_entregas_acessar', 'relatorio_financeiro', 'marketing_estudio', 'relatorio_estoque', 'clientes_ver', 'auditoria_ver',
     'pag_reembolso', 'pag_freelancer', 'pag_fornecedor',
     // As abas de Configurações só entram em cena se o dono ligar
     // `configuracoes_editar` para o Gerente — a tela inteira depende dela.
