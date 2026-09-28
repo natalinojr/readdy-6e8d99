@@ -3,6 +3,7 @@ import type { RealtimeChannel } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useNotificacoes } from '@/contexts/NotificacoesContext';
+import { useToast } from '@/contexts/ToastContext';
 
 export type TipoProblema = 'item_errado' | 'nao_chegou' | 'qualidade' | 'quantidade' | 'alergia' | 'outro';
 export type ResolucaoDesejada = 'substituicao' | 'reembolso' | 'desconto' | 'registro';
@@ -116,6 +117,7 @@ function mensagemErro(e: unknown) {
 export function AprovacoesProvider({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
   const { dispararNotificacao } = useNotificacoes();
+  const { warning: avisar } = useToast();
   const tenantId = user?.tenantId ?? null;
   const perfil = user?.perfil;
   const decide = perfil === 'admin' || perfil === 'gerente' || perfil === 'supervisao';
@@ -151,7 +153,8 @@ export function AprovacoesProvider({ children }: { children: React.ReactNode }) 
     }
     setEsperando(callbacksRef.current.size);
 
-    // Avisa (sino + bipe) quem decide quando chega pedido novo de outro aparelho.
+    // Avisa (bipe + aviso na tela) quem decide quando chega pedido novo de outro aparelho.
+    // O sino saiu (2026-09-28): o pedido fica em Pendências até alguém decidir.
     const pendentes = lista.filter((r) => r.status === 'pendente');
     if (vistosRef.current === null) {
       vistosRef.current = new Set(pendentes.map((r) => r.id));
@@ -162,18 +165,20 @@ export function AprovacoesProvider({ children }: { children: React.ReactNode }) 
       vistosRef.current.add(r.id);
       if (!decide || r.requested_by === user?.id) continue;
       const s = rowParaSolicitacao(r);
+      const titulo = s.tipo === 'cancelamento' ? 'Pedido de cancelamento' : s.tipo === 'desconto' ? 'Pedido de desconto' : 'Problema relatado';
+      avisar(titulo, `${s.garcomNome}: ${s.descricao || s.itemNome} — veja em Pendências`);
       dispararNotificacao({
         tipo: 'aprovacao_pendente',
-        titulo: s.tipo === 'cancelamento' ? 'Pedido de cancelamento' : s.tipo === 'desconto' ? 'Pedido de desconto' : 'Problema relatado',
+        titulo,
         mensagem: `${s.garcomNome}: ${s.descricao || s.itemNome}`,
         urgente: s.urgente,
         perfisAlvo: ['admin', 'gerente'],
         icone: 'ri-shield-keyhole-line',
         cor: 'orange',
-        extra: { solicitacaoId: r.id, link: '/aprovacoes' },
+        extra: { solicitacaoId: r.id, link: '/pendencias' },
       });
     }
-  }, [tenantId, decide, user?.id, dispararNotificacao]);
+  }, [tenantId, decide, user?.id, dispararNotificacao, avisar]);
 
   const carregarRef = useRef(carregar);
   carregarRef.current = carregar;

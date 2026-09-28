@@ -19,6 +19,7 @@ export interface EntryRow {
   impacto_repasse: boolean;
   metodo_pagamento: string | null;
   motivo: string | null;
+  cesta?: string | number | null; // valor_cesta_final (Entrada − cesta = taxa de entrega paga pelo cliente)
 }
 
 export type Logistica = 'ifood' | 'propria' | 'sob_demanda';
@@ -37,6 +38,7 @@ export interface PedidoIfood {
   promoLoja: number;
   promoIfood: number;
   entregaSobDemanda: number;
+  entregaCliente: number; // taxa de entrega que o cliente pagou no pedido
   outrosServicos: number;
   ajustes: number;
   liquido: number;
@@ -93,7 +95,7 @@ export function montarPedidos(rows: EntryRow[], lojaDoImport: Record<string, str
       const [y, m, d] = dia.split('-').map(Number);
       p = {
         id: r.order_id, loja: lojaDoImport[r.import_id] ?? '', at, dia, hora, semana: new Date(Date.UTC(y, m - 1, d)).getUTCDay(),
-        vendas: 0, bruto: 0, comissao: 0, transacao: 0, promoLoja: 0, promoIfood: 0, entregaSobDemanda: 0, outrosServicos: 0,
+        vendas: 0, bruto: 0, comissao: 0, transacao: 0, promoLoja: 0, promoIfood: 0, entregaSobDemanda: 0, entregaCliente: 0, outrosServicos: 0,
         ajustes: 0, liquido: 0, pagamento: '', logistica: 'propria', cancelado: false, parcial: false, motivo: null,
         _temEntregaIfood: false, _temPropria: false, _temSobDemanda: false,
       };
@@ -107,6 +109,8 @@ export function montarPedidos(rows: EntryRow[], lojaDoImport: Record<string, str
     p.ajustes += b.ajustes;
     if (t.includes('entrada')) {
       if (valor > 0) p.bruto += valor;
+      const cesta = r.cesta == null || r.cesta === '' ? NaN : Number(r.cesta);
+      if (valor > 0 && Number.isFinite(cesta)) p.entregaCliente += Math.max(0, r2(valor - cesta));
       if (r.metodo_pagamento && !p.pagamento) p.pagamento = r.metodo_pagamento;
     }
     if (t.includes('cobran')) {
@@ -208,7 +212,7 @@ const MOTIVO_API: Record<number, string> = {
 /** Pedidos da API de Vendas no formato do dashboard (mesmas contas da conciliação). */
 export function montarPedidosApi(sales: SaleFinRow[]): PedidoIfood[] {
   const rows: EntryRow[] = [];
-  const extra = new Map<string, { cancelado: boolean; bruto: number; motivo: string | null; pagamento: string | null }>();
+  const extra = new Map<string, { cancelado: boolean; bruto: number; motivo: string | null; pagamento: string | null; entrega: number }>();
   for (const s of sales) {
     const antes = rows.length;
     const base = { import_id: s.merchant_id, order_id: s.sale_id, order_created_at: s.sale_created_at, impacto_repasse: true, metodo_pagamento: null, motivo: null };
@@ -245,6 +249,7 @@ export function montarPedidosApi(sales: SaleFinRow[]): PedidoIfood[] {
       bruto,
       motivo: cod ? `${cod} - ${MOTIVO_API[cod] ?? 'Cancelamento'}` : null,
       pagamento: PAGAMENTO_API[metodo] ?? null,
+      entrega: Number(s.delivery_fee) || 0,
     });
     // Pedido sem nenhum lançamento (ex.: cancelado sem ressarcimento) ainda precisa aparecer.
     if (rows.length === antes) rows.push({ ...base, tipo_lancamento: 'Ajuste', descricao: '', valor: 0 });
@@ -255,6 +260,7 @@ export function montarPedidosApi(sales: SaleFinRow[]): PedidoIfood[] {
     const x = extra.get(p.id);
     if (!x) continue;
     if (x.pagamento) p.pagamento = x.pagamento;
+    p.entregaCliente = x.entrega;
     if (x.cancelado) {
       // A API zera os lançamentos do cancelado; a conciliação guarda o valor perdido nas Entradas.
       p.cancelado = true;
@@ -289,7 +295,7 @@ export async function fetchPedidosIfood(tenantId: string, fromISO: string, toISO
   const [ent, imp] = await Promise.all([
     fetchAllRows<EntryRow>((from, to) => supabase
       .from('fin_ifood_entries')
-      .select('import_id, order_id, order_created_at, tipo_lancamento, descricao, valor, impacto_repasse, metodo_pagamento, motivo:raw->>motivo_cancelamento')
+      .select('import_id, order_id, order_created_at, tipo_lancamento, descricao, valor, impacto_repasse, metodo_pagamento, motivo:raw->>motivo_cancelamento, cesta:raw->>valor_cesta_final')
       .eq('tenant_id', tenantId)
       .not('order_created_at', 'is', null)
       .gte('order_created_at', fromISO)
@@ -307,6 +313,34 @@ export async function fetchPedidosIfood(tenantId: string, fromISO: string, toISO
   const api = await fetchComplementoApi(tenantId, fromISO, toISO, new Set(conciliados.map((p) => p.id))).catch(() => [] as PedidoIfood[]);
   const pedidos = [...conciliados, ...api].sort((a, b) => a.at.getTime() - b.at.getTime());
   return { pedidos, daApi: api.length, error: null as string | null };
+}
+
+// ── Entregas sob demanda pedidas pelo ERPOS (Gestor de Entregas › "Chamar iFood") ──
+// Pedido de delivery do próprio ERPOS: iFood cobra `ifood_fee` (cotação) e o cliente pagou `merchant_fee`
+// (taxa de entrega do pedido). Só as concluídas (cancelada/sem entregador não cobra).
+export interface EntregaErpos {
+  id: string;
+  loja: string; // merchant_id do iFood que despachou
+  ifoodOrderId: string | null;
+  numero: string | null;
+  at: Date;
+  ifood: number;
+  cliente: number;
+}
+
+export async function fetchEntregasSobDemandaErpos(tenantId: string, fromISO: string, toISO: string): Promise<EntregaErpos[]> {
+  const { data, error } = await supabase.from('ifood_shipping_orders')
+    .select('id, merchant_id, ifood_order_id, ifood_fee, merchant_fee, created_at, order:orders(number, delivery_fee)')
+    .eq('tenant_id', tenantId).eq('status', 'concluded')
+    .gte('created_at', fromISO).lte('created_at', toISO)
+    .order('created_at', { ascending: true });
+  if (error) return [];
+  type Row = { id: string; merchant_id: string; ifood_order_id: string | null; ifood_fee: number | null; merchant_fee: number | null; created_at: string; order: { number: string | null; delivery_fee: number | null } | null };
+  return ((data ?? []) as unknown as Row[]).map((r) => ({
+    id: r.id, loja: r.merchant_id, ifoodOrderId: r.ifood_order_id, numero: r.order?.number ?? null, at: new Date(r.created_at),
+    ifood: Number(r.ifood_fee) || 0,
+    cliente: Number(r.merchant_fee ?? r.order?.delivery_fee) || 0,
+  }));
 }
 
 // ── Operação (API de Vendas) ─────────────────────────────────────────────────

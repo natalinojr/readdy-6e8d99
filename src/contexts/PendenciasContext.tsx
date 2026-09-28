@@ -64,6 +64,19 @@ export const KIND_CONFIG: Record<string, { label: string; icone: string; corBg: 
   // Boleto que chegou por e-mail e ficou para decidir (2026-09-25): remetente novo ou CNPJ diferente.
   boleto_email: { label: 'Boleto por e-mail', icone: 'ri-mail-download-line', corBg: 'bg-amber-100', corTexto: 'text-amber-800' },
 };
+// Quem vê o quê (2026-09-28): a caixa passou a existir para TODOS os usuários (o sino saiu).
+// Aprovação (cancelamento/desconto do PDV) é de quem pode aprovar; o operacional é de todos;
+// o resto é dinheiro e continua com a turma do Financeiro, como antes.
+const PERFIS_APROVAM = ['admin', 'gerente', 'supervisao'];
+const PERFIS_FINANCEIRO = ['admin', 'gerente', 'financeiro'];
+const KINDS_OPERACIONAIS = new Set(['tarefa_vencida', 'estoque_critico', 'recebimento_sem_nota', 'recebimento_parado']);
+export function pendenciaVisivelPara(kind: string, perfil: string | undefined): boolean {
+  if (!perfil) return false;
+  if (kind === 'aprovacao') return PERFIS_APROVAM.includes(perfil);
+  if (KINDS_OPERACIONAIS.has(kind)) return true;
+  return PERFIS_FINANCEIRO.includes(perfil);
+}
+
 export const KIND_FALLBACK = { label: 'Pendência', icone: 'ri-inbox-line', corBg: 'bg-zinc-100', corTexto: 'text-zinc-700' };
 export const kindConfig = (kind: string) => KIND_CONFIG[kind] ?? KIND_FALLBACK;
 
@@ -127,6 +140,7 @@ const COLS = 'id, tenant_id, kind, ref, titulo, detalhe, payload, rota, urgencia
 export function PendenciasProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
   const tenantId = user?.tenantId;
+  const perfil = user?.perfil;
   const [linhas, setLinhas] = useState<Pendencia[]>([]);
   const [carregando, setCarregando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
@@ -145,9 +159,12 @@ export function PendenciasProvider({ children }: { children: ReactNode }) {
       .order('criada_em', { ascending: false })
       .limit(500);
     if (error) setErro(error.message);
-    else { setErro(null); setLinhas((data ?? []).map((r) => fromDB(r as DBPendencia))); }
+    else {
+      setErro(null);
+      setLinhas((data ?? []).map((r) => fromDB(r as DBPendencia)).filter((p) => pendenciaVisivelPara(p.kind, perfil)));
+    }
     setCarregando(false);
-  }, [tenantId]);
+  }, [tenantId, perfil]);
 
   useEffect(() => {
     carregar();

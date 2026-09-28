@@ -1,11 +1,13 @@
 // Assistente para quem NÃO é o dono (2026-09-23): por enquanto só a página de ações rápidas.
-// Sem conversa, sem pendências, sem pagamentos — nada que passe pelo assistente-app (que é só do
+// Sem conversa com o assistente e sem pagamentos — nada que passe pelo assistente-app (que é só do
 // dono). Cada ação roda pelo mesmo caminho da tela, com a permissão do próprio usuário, e o menu
 // mostra só as ações liberadas para ele (acoes/acesso.ts).
 // Conversas com a equipe (2026-09-23): o painel ganhou a aba Conversas — falar com as pessoas da
 // loja (equipe/). Ela aparece para todo mundo; a aba de ações só para quem tem alguma liberada.
 // Avisos (2026-09-25): a conversa Avisos fica no topo das Conversas — pagamento dos pedidos da pessoa e
 // alertas da loja que o acesso dela cobre (avisos/AvisosConversa.tsx).
+// Pendências (2026-09-28): o botão de caixa ao lado do X, como no chat do dono — cada pessoa vê só
+// as pendências das lojas em que está, pelo papel dela, e as tarefas dela (PendenciasEquipe.tsx).
 import { Suspense, useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useVoltarFecha } from '@/lib/voltarAndroid';
@@ -14,6 +16,8 @@ import { acaoLiberada, useAcessoAcoes } from './acoes/acesso';
 import { useFabArrastavel } from './useFabArrastavel';
 import { useEquipeNoChat } from '@/components/feature/equipe/useEquipeNoChat';
 import AvisosConversa, { LinhaAvisos, useAvisos } from '@/components/feature/avisos/AvisosConversa';
+import { useAuth } from '@/contexts/AuthContext';
+import PendenciasEquipe, { usePendenciasEquipe } from './PendenciasEquipe';
 
 const semAcento = (t: string) => t.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
 
@@ -44,10 +48,27 @@ export default function AcoesRapidasFlutuante({ variant }: { variant: 'floating'
   useEffect(() => { if (!aberto) setAvisosAberto(false); }, [aberto]);
   const naoLidas = equipe.naoLidas + avisos.naoLidos;
 
+  const { user, selectTenant } = useAuth();
+  const pend = usePendenciasEquipe();
+  const [pendAberta, setPendAberta] = useState(false);
+  useEffect(() => { if (!aberto) setPendAberta(false); }, [aberto]);
+  useVoltarFecha(aberto && pendAberta, () => setPendAberta(false), 'acoes-rapidas-pendencias');
+  const abrirRotaPendencia = async (tenantId: string, rota: string) => {
+    setPendAberta(false);
+    if (tenantId !== user?.tenantId) await selectTenant(tenantId);
+    fechar();
+    navigate(rota);
+  };
+
   useVoltarFecha(variant === 'floating' && aberto, () => setAberto(false), 'acoes-rapidas-painel');
   useVoltarFecha(aberto && !!acao, () => setAcao(null), 'acoes-rapidas-acao');
   // O botão fechado anda pela tela como o do assistente do dono (arrasta e ele fica lá).
-  const fab = useFabArrastavel(() => { if (naoLidas) setAba('conversas'); setAberto(true); });
+  const fab = useFabArrastavel(() => {
+    if (naoLidas) setAba('conversas');
+    else if (pend.novas) setPendAberta(true);
+    setAberto(true);
+  });
+  const bolinha = naoLidas + pend.novas;
 
   const liberadas = acesso.carregando ? [] : ACOES.filter((a) => acaoLiberada(a.id, acesso));
   // Sem ação liberada o botão continua: as conversas com a equipe são para todo mundo.
@@ -62,11 +83,11 @@ export default function AcoesRapidasFlutuante({ variant }: { variant: 'floating'
     return (
       <button {...fab.props}
         className={`fixed z-[55] ${fab.classePosicao} w-14 h-14 rounded-full bg-violet-600 hover:bg-violet-500 text-white shadow-lg flex items-center justify-center ${fab.arrastando ? 'cursor-grabbing scale-110' : 'cursor-pointer'} select-none`}
-        aria-label={naoLidas ? `Chat: ${naoLidas} ${naoLidas === 1 ? 'novidade' : 'novidades'}` : 'Chat e ações rápidas'}>
+        aria-label={bolinha ? `Chat: ${bolinha} ${bolinha === 1 ? 'novidade' : 'novidades'}` : 'Chat e ações rápidas'}>
         <i className="ri-chat-3-line text-2xl" />
-        {naoLidas > 0 && (
+        {bolinha > 0 && (
           <span className="absolute -top-1 -right-1 min-w-[22px] h-[22px] px-1 flex items-center justify-center rounded-full bg-red-500 text-white text-xs font-black border-2 border-white">
-            {naoLidas > 9 ? '9+' : naoLidas}
+            {bolinha > 9 ? '9+' : bolinha}
           </span>
         )}
       </button>
@@ -87,6 +108,16 @@ export default function AcoesRapidasFlutuante({ variant }: { variant: 'floating'
           <p className="text-sm font-black text-zinc-900 leading-tight">{abaAtual === 'conversas' ? 'Conversas' : 'Ações rápidas'}</p>
           <p className="text-[11px] text-zinc-400 leading-tight">{abaAtual === 'conversas' ? 'Fale com as pessoas da loja' : 'Só o que o seu acesso permite'}</p>
         </div>
+        <button onClick={() => setPendAberta(true)}
+          className="relative w-9 h-9 flex items-center justify-center rounded-xl text-indigo-600 hover:bg-indigo-50 cursor-pointer"
+          aria-label={pend.novas ? `Pendências: ${pend.novas} nova${pend.novas > 1 ? 's' : ''}` : 'Pendências'}>
+          <i className="ri-inbox-archive-line text-xl" />
+          {pend.novas > 0 && (
+            <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full bg-red-500 text-white text-[10px] font-black border-2 border-white">
+              {pend.novas > 9 ? '9+' : pend.novas}
+            </span>
+          )}
+        </button>
         {variant === 'floating' && (
           <button onClick={() => setAberto(false)} className="w-9 h-9 flex items-center justify-center rounded-xl text-zinc-400 hover:bg-zinc-100 cursor-pointer" aria-label="Fechar ações rápidas">
             <i className="ri-close-line text-xl" />
@@ -160,6 +191,9 @@ export default function AcoesRapidasFlutuante({ variant }: { variant: 'floating'
           onFechar={variant === 'floating' ? () => setAberto(false) : undefined}
           onBotao={(rota) => { setAvisosAberto(false); fechar(); navigate(rota); }}
         />
+      )}
+      {pendAberta && (
+        <PendenciasEquipe dados={pend} onFechar={() => setPendAberta(false)} onAbrirRota={abrirRotaPendencia} />
       )}
       {/* A ação cobre o painel inteiro (tem cabeçalho próprio com o X), como no chat do dono. */}
       {C && (
