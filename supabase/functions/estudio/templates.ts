@@ -38,6 +38,17 @@ export function contraste(hex: string): string {
   const v = parseInt(m[1], 16); const r = (v >> 16) & 255, g = (v >> 8) & 255, b = v & 255;
   return (0.299 * r + 0.587 * g + 0.114 * b) > 150 ? '#1a1a1a' : '#ffffff';
 }
+function lum(hex: string): number {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim()); if (!m) return 1;
+  const v = parseInt(m[1], 16);
+  const c = [(v >> 16) & 255, (v >> 8) & 255, v & 255].map((x) => { const s = x / 255; return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4; });
+  return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+}
+const razao = (a: string, b: string) => { const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p); return (x + 0.05) / (y + 0.05); };
+// Cor de destaque (texto solto, ex.: preço) sobre `fundo`: secundária, senão primária, senão preto/branco.
+export function destaque(kit: Kit, fundo: string): string {
+  return [kit.cor_secundaria, kit.cor_primaria].find((c) => razao(c, fundo) >= 3) ?? contraste(fundo);
+}
 // Tamanho de fonte que cabe: reduz conforme o texto cresce.
 const fit = (txt: string, base: number, maxChars: number) => (txt.length <= maxChars ? base : Math.max(Math.round(base * maxChars / txt.length), Math.round(base * 0.55)));
 
@@ -99,7 +110,7 @@ function story(input: RenderInput, W: number, H: number): El {
     h('div', { style: { flexDirection: 'column', flex: 1, paddingLeft: p, paddingRight: p, paddingBottom: zonaSegura, color: fgFundo } },
       h('div', { style: { fontSize: fit(titulo, Math.round(W * 0.088), 16), fontWeight: 700, lineHeight: 1.02 } }, titulo),
       sub && h('div', { style: { fontSize: Math.round(W * 0.034), opacity: 0.85, marginTop: Math.round(p * 0.2) } }, sub),
-      kit.mostrar_preco && preco != null && preco > 0 && h('div', { style: { fontSize: Math.round(W * 0.066), color: kit.cor_secundaria, fontWeight: 700, marginTop: Math.round(p * 0.2) } }, brl(preco)),
+      kit.mostrar_preco && preco != null && preco > 0 && h('div', { style: { fontSize: Math.round(W * 0.066), color: destaque(kit, kit.cor_fundo), fontWeight: 700, marginTop: Math.round(p * 0.2) } }, brl(preco)),
       h('div', { style: { marginTop: Math.round(p * 0.6), alignSelf: 'flex-start', background: kit.cor_primaria, color: contraste(kit.cor_primaria), border: `4px solid ${kit.cor_secundaria}`, paddingLeft: p * 0.7, paddingRight: p * 0.7, paddingTop: p * 0.32, paddingBottom: p * 0.32, borderRadius: 999, fontSize: Math.round(W * 0.037), fontWeight: 700 } }, clip(cta, 24)),
     ),
   );

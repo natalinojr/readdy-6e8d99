@@ -1,5 +1,5 @@
 // Estúdio de Criação › Criar — escolhe item + modelo, gera a arte (PNG) e decide (aprovar/reprovar).
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Wand2, Loader2, Download, Check, X, RefreshCw, AlertTriangle, LayoutTemplate } from 'lucide-react';
 import { invokeWithAuth } from '@/lib/supabase';
 import { brl } from '../../trafego-pago/shared';
@@ -20,21 +20,31 @@ interface Textos { titulo: string; subtitulo: string; preco: string; cta: string
 export default function CriarTab({ tenantId, items, templates, kit, isManager, presetItemId, onGerada }: Props) {
   const comFoto = useMemo(() => items.filter((i) => i.photo_url), [items]);
   const [busca, setBusca] = useState('');
-  const [itemId, setItemId] = useState<string | null>(presetItemId ?? comFoto[0]?.item_id ?? null);
+  const [itemId, setItemId] = useState<string | null>(presetItemId ?? null);
   const [templateId, setTemplateId] = useState<string | null>(templates[0]?.id ?? null);
   const [textos, setTextos] = useState<Textos>({ titulo: '', subtitulo: '', preco: '', cta: kit?.cta_padrao ?? '', selo: '' });
   const [gerando, setGerando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [creative, setCreative] = useState<Creative | null>(null);
   const [decidindo, setDecidindo] = useState<'aprovada' | 'reprovada' | null>(null);
+  const previaRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => { if (presetItemId) setItemId(presetItemId); }, [presetItemId]);
+  // Biblioteca/modelos podem chegar depois do 1º render: escolhe o padrão quando chegarem.
+  useEffect(() => {
+    if (itemId || !comFoto.length) return;
+    // Padrão: a foto de melhor nota (a lista já vem por mais vendidos).
+    const melhor = [...comFoto].sort((a, b) => (b.nota_qualidade ?? -1) - (a.nota_qualidade ?? -1))[0];
+    setItemId(melhor.item_id);
+  }, [itemId, comFoto]);
+  useEffect(() => { if (!templateId && templates[0]) setTemplateId(templates[0].id); }, [templateId, templates]);
 
   const item = comFoto.find((i) => i.item_id === itemId) ?? null;
+  // Trocou de item → preço do cardápio desse item (não carrega o preço do item anterior).
   useEffect(() => {
-    if (item) setTextos((t) => ({ ...t, preco: t.preco || String(item.price) }));
+    if (item) setTextos((t) => ({ ...t, preco: String(item.price) }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [itemId]);
+  }, [itemId, item?.price]);
 
   const itensFiltrados = useMemo(() => {
     const q = busca.trim().toLowerCase();
@@ -62,6 +72,8 @@ export default function CriarTab({ tenantId, items, templates, kit, isManager, p
     if (error || !data?.success) { setErro(error?.message ?? data?.error ?? 'Não consegui gerar a arte agora.'); return; }
     setCreative(data.creative);
     onGerada(data.creative);
+    // No celular a prévia fica embaixo de tudo: rola até ela.
+    setTimeout(() => previaRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
   };
 
   const decidir = async (status: 'aprovada' | 'reprovada') => {
@@ -141,7 +153,7 @@ export default function CriarTab({ tenantId, items, templates, kit, isManager, p
         </button>
       </div>
 
-      <div className="bg-white border border-zinc-200 rounded-2xl p-4 h-fit lg:sticky lg:top-4">
+      <div ref={previaRef} className="bg-white border border-zinc-200 rounded-2xl p-4 h-fit lg:sticky lg:top-4">
         <p className="text-sm font-bold text-zinc-800 mb-3">Prévia</p>
         {gerando ? (
           <div className="aspect-square rounded-xl bg-zinc-50 flex flex-col items-center justify-center text-zinc-400 gap-2">

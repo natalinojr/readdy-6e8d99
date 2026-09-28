@@ -24,6 +24,7 @@ import Anthropic from 'npm:@anthropic-ai/sdk@0.125.0';
 import satori from 'npm:satori@0.12.2';
 import { initWasm, Resvg } from 'npm:@resvg/resvg-wasm@2.6.2';
 import { authenticate, tenantRole, isManagerRole } from '../_shared/tenant-auth.ts';
+import { registrarUsoIa } from '../_shared/ai-usage.ts';
 import { TEMPLATES, buildTree, type Kit as KitVisual, type Textos } from './templates.ts';
 
 const corsHeaders = {
@@ -98,8 +99,9 @@ function anthropic() {
   if (!apiKey) throw new Error('IA não configurada (falta ANTHROPIC_API_KEY).');
   return new Anthropic({ apiKey });
 }
+type UsoCtx = { admin: SupabaseClient; tenantId: string; userId: string | null; feature: string; ref?: string | null };
 // deno-lint-ignore no-explicit-any
-async function askVision(system: string, blocks: any[], schema: Row): Promise<Row> {
+async function askVision(system: string, blocks: any[], schema: Row, uso: UsoCtx): Promise<Row> {
   // deno-lint-ignore no-explicit-any
   const r: any = await anthropic().messages.create({
     model: VISION_MODEL, max_tokens: 1500, system,
@@ -107,6 +109,7 @@ async function askVision(system: string, blocks: any[], schema: Row): Promise<Ro
     messages: [{ role: 'user', content: blocks }],
   // deno-lint-ignore no-explicit-any
   } as any);
+  await registrarUsoIa(uso.admin, { feature: uso.feature, model: r.model ?? VISION_MODEL, usage: r.usage, tenantId: uso.tenantId, userId: uso.userId, ref: uso.ref ?? null });
   if (r.stop_reason === 'refusal') throw new Error('A IA recusou analisar a imagem.');
   const text = (r.content ?? []).filter((b: Row) => b.type === 'text').map((b: Row) => String(b.text)).join('');
   return JSON.parse(text) as Row;
@@ -179,6 +182,60 @@ async function renderPng(templateId: string, kit: Kit, item: { name: string; pri
   return { png, def };
 }
 
+// ─── Geração de uma arte (usada pela tela e pelos pedidos de outros módulos) ──
+type ArteMeta = { origem: string; requestRef: string | null; userId: string | null; userName: string };
+async function gerarArte(admin: SupabaseClient, tenantId: string, templateId: string, itemId: string, t: Row, meta: ArteMeta):
+  Promise<{ creative: Row } | { error: string; status: number }> {
+  if (!TEMPLATES.some((x) => x.id === templateId)) return { error: 'Modelo inválido.', status: 400 };
+  const { data: it } = await admin.from('menu_items').select('id, name, price, description, photo_url').eq('tenant_id', tenantId).eq('id', itemId).maybeSingle();
+  if (!it) return { error: 'Item não encontrado nesta loja.', status: 404 };
+  if (!it.photo_url) return { error: 'Este item não tem foto. Cadastre a foto no cardápio primeiro.', status: 400 };
+  const textos: Textos = {
+    titulo: t.titulo ? String(t.titulo).slice(0, 60) : null, subtitulo: t.subtitulo !== undefined ? (t.subtitulo ? String(t.subtitulo).slice(0, 90) : '') : undefined,
+    preco: t.preco === null ? null : t.preco !== undefined ? n(t.preco) : undefined, cta: t.cta ? String(t.cta).slice(0, 30) : null, selo: t.selo ? String(t.selo).slice(0, 20) : null,
+  };
+  const kit = await loadKit(admin, tenantId);
+  const logoUrl = await signed(admin, kit.logo_path, 300);
+  const t0 = Date.now();
+  const { png, def } = await renderPng(templateId, kit, { name: String(it.name), price: n(it.price), description: it.description ? String(it.description) : null }, textos, String(it.photo_url), logoUrl);
+  const path = `${tenantId}/artes/${new Date().toISOString().slice(0, 10)}/${crypto.randomUUID()}.png`;
+  const up = await admin.storage.from(BUCKET).upload(path, png, { contentType: 'image/png', upsert: false });
+  if (up.error) return { error: up.error.message, status: 500 };
+  const { data: row, error } = await admin.from('studio_creatives').insert({
+    tenant_id: tenantId, template: def.id, formato: def.formato, largura: def.largura, altura: def.altura, menu_item_id: it.id, item_name: it.name,
+    // preco_usado = preço que aparece na arte; o Revisor do tráfego confere com o cardápio antes de publicar.
+    textos: { ...textos, preco_usado: kit.mostrar_preco ? (textos.preco === null ? null : textos.preco ?? n(it.price)) : null },
+    image_path: path, origem: meta.origem.slice(0, 20), request_ref: meta.requestRef ? meta.requestRef.slice(0, 80) : null,
+    created_by_user_id: meta.userId, created_by_name: meta.userName,
+  }).select('*').single();
+  if (error) return { error: error.message, status: 500 };
+  log('INFO', 'arte gerada', { tenantId, template: def.id, origem: meta.origem, ms: Date.now() - t0, kb: Math.round(png.length / 1024) });
+  return { creative: { ...row, url: await signed(admin, path) } };
+}
+
+// Item para a arte pedida por outro módulo: o pedido explícito; senão o item dessa foto; senão o
+// de melhor nota (≥ 7) que mais vendeu em 30 dias e não está em `evitar` (ex.: prato da arte cansada).
+async function escolherItem(admin: SupabaseClient, tenantId: string, itemId: string | null, photoUrl: string | null, evitar: string[]): Promise<string | null> {
+  if (itemId) return itemId;
+  if (photoUrl) {
+    const { data } = await admin.from('menu_items').select('id').eq('tenant_id', tenantId).eq('photo_url', photoUrl).eq('is_active', true).is('deleted_at', null).limit(1).maybeSingle();
+    if (data?.id) return String(data.id);
+  }
+  const [{ data: items }, { data: assets }, { data: vendas }] = await Promise.all([
+    admin.from('menu_items').select('id').eq('tenant_id', tenantId).eq('is_active', true).is('deleted_at', null).not('photo_url', 'is', null).neq('photo_url', '').limit(500),
+    admin.from('studio_assets').select('menu_item_id, nota_qualidade').eq('tenant_id', tenantId).eq('source', 'cardapio'),
+    admin.from('order_items').select('item_id, quantity').eq('tenant_id', tenantId).gte('created_at', new Date(Date.now() - 30 * 86400000).toISOString()).limit(20000),
+  ]);
+  const nota = new Map(((assets ?? []) as Row[]).map((a) => [String(a.menu_item_id), a.nota_qualidade === null ? null : n(a.nota_qualidade)]));
+  const qty = new Map<string, number>();
+  for (const v of (vendas ?? []) as Row[]) qty.set(String(v.item_id), (qty.get(String(v.item_id)) ?? 0) + n(v.quantity));
+  const cands = ((items ?? []) as Row[]).map((i) => String(i.id)).filter((id) => !evitar.includes(id));
+  // Foto avaliada com nota < 7 fica por último; sem avaliação fica no meio.
+  const peso = (id: string) => { const x = nota.get(id); return x === undefined || x === null ? 1 : x >= 7 ? 2 : 0; };
+  cands.sort((a, b) => peso(b) - peso(a) || (qty.get(b) ?? 0) - (qty.get(a) ?? 0));
+  return cands[0] ?? null;
+}
+
 // ─── HTTP ────────────────────────────────────────────────────────────────────
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
@@ -196,8 +253,8 @@ Deno.serve(async (req: Request) => {
       const r = await tenantRole(admin, caller.userId!, tenantId);
       if (!r) return json({ success: false, error: 'Sem acesso a esta loja' }, 403);
       role = r; userName = caller.email ?? 'Usuário';
-      const { data: u } = await admin.auth.admin.getUserById(caller.userId!);
-      userName = String(u?.user?.user_metadata?.name ?? u?.user?.user_metadata?.full_name ?? userName);
+      const { data: u } = await admin.from('users').select('name').eq('id', caller.userId!).maybeSingle();
+      if (u?.name) userName = String(u.name);
     }
     const podeEscrever = caller.isServiceRole || isManagerRole(role);
     const soGerente = () => json({ success: false, error: 'Só gerente ou admin da loja pode fazer isso' }, 403);
@@ -209,7 +266,10 @@ Deno.serve(async (req: Request) => {
 
     if (action === 'save_kit') {
       if (!podeEscrever) return soGerente();
-      const patch = sanitizeKit((body.kit ?? {}) as Row);
+      const k = (body.kit ?? {}) as Row;
+      const corRuim = ['cor_primaria', 'cor_secundaria', 'cor_fundo', 'cor_texto'].find((c) => c in k && !HEX.test(String(k[c] ?? '')));
+      if (corRuim) return json({ success: false, error: `Cor inválida em "${corRuim.replace('cor_', '')}": use o formato #rrggbb (ex.: #7a1f1f).` }, 400);
+      const patch = sanitizeKit(k);
       const { error } = await admin.from('brand_kit').upsert({ ...patch, tenant_id: tenantId, updated_at: new Date().toISOString(), updated_by_user_id: caller.userId }, { onConflict: 'tenant_id' });
       if (error) return json({ success: false, error: error.message }, 500);
       const kit = await loadKit(admin, tenantId);
@@ -241,7 +301,7 @@ Deno.serve(async (req: Request) => {
       for (const it of (items ?? []) as Row[]) blocks.push({ type: 'text', text: `Foto do cardápio: ${it.name}` }, imgBlock(String(it.photo_url)));
       if (!blocks.length) return json({ success: false, error: 'Envie o logo ou cadastre fotos no cardápio para a IA sugerir o kit.' }, 400);
       blocks.push({ type: 'text', text: `Nome da marca: ${kit.nome_marca ?? '(não informado)'}. Sugira o Kit da Marca.` });
-      const out = await askVision(KIT_SYSTEM, blocks, KIT_SCHEMA);
+      const out = await askVision(KIT_SYSTEM, blocks, KIT_SCHEMA, { admin, tenantId, userId: caller.userId, feature: 'estudio-kit' });
       const sug: Row = {};
       for (const k of ['cor_primaria', 'cor_secundaria', 'cor_fundo']) if (HEX.test(String(out[k] ?? ''))) sug[k] = String(out[k]).toLowerCase();
       if (['descontraido', 'familiar', 'premium', 'jovem'].includes(String(out.tom_voz))) sug.tom_voz = out.tom_voz;
@@ -285,7 +345,8 @@ Deno.serve(async (req: Request) => {
       let analisados = 0; const erros: string[] = [];
       const avaliar = async (it: Row) => {
         try {
-          const out = await askVision(NOTA_SYSTEM, [imgBlock(String(it.photo_url)), { type: 'text', text: `Item do cardápio: ${it.name}. Avalie a foto.` }], NOTA_SCHEMA);
+          const out = await askVision(NOTA_SYSTEM, [imgBlock(String(it.photo_url)), { type: 'text', text: `Item do cardápio: ${it.name}. Avalie a foto.` }], NOTA_SCHEMA,
+            { admin, tenantId, userId: caller.userId, feature: 'estudio-nota-foto', ref: String(it.id) });
           const nota = Math.max(0, Math.min(10, Math.round(n(out.nota))));
           const { error } = await admin.from('studio_assets').upsert({ tenant_id: tenantId, source: 'cardapio', menu_item_id: it.id, url: it.photo_url, nota_qualidade: nota,
             analise: { pontos_fortes: out.pontos_fortes ?? [], problemas: out.problemas ?? [], serve_para_anuncio: out.serve_para_anuncio === true, o_que_aparece: out.o_que_aparece ?? '' }, analisado_em: new Date().toISOString() }, { onConflict: 'tenant_id,source,menu_item_id' });
@@ -299,31 +360,30 @@ Deno.serve(async (req: Request) => {
     }
 
     if (action === 'render') {
-      const templateId = String(body.template ?? ''); const itemId = String(body.item_id ?? '');
-      if (!TEMPLATES.some((t) => t.id === templateId)) return json({ success: false, error: 'Modelo inválido.' }, 400);
-      const { data: it } = await admin.from('menu_items').select('id, name, price, description, photo_url').eq('tenant_id', tenantId).eq('id', itemId).maybeSingle();
-      if (!it) return json({ success: false, error: 'Item não encontrado nesta loja.' }, 404);
-      if (!it.photo_url) return json({ success: false, error: 'Este item não tem foto. Cadastre a foto no cardápio primeiro.' }, 400);
-      const t = (body.textos ?? {}) as Row;
-      const textos: Textos = {
-        titulo: t.titulo ? String(t.titulo).slice(0, 60) : null, subtitulo: t.subtitulo !== undefined ? (t.subtitulo ? String(t.subtitulo).slice(0, 90) : '') : undefined,
-        preco: t.preco === null ? null : t.preco !== undefined ? n(t.preco) : undefined, cta: t.cta ? String(t.cta).slice(0, 30) : null, selo: t.selo ? String(t.selo).slice(0, 20) : null,
-      };
-      const kit = await loadKit(admin, tenantId);
-      const logoUrl = await signed(admin, kit.logo_path, 300);
-      const t0 = Date.now();
-      const { png, def } = await renderPng(templateId, kit, { name: String(it.name), price: n(it.price), description: it.description ? String(it.description) : null }, textos, String(it.photo_url), logoUrl);
-      const path = `${tenantId}/artes/${new Date().toISOString().slice(0, 10)}/${crypto.randomUUID()}.png`;
-      const up = await admin.storage.from(BUCKET).upload(path, png, { contentType: 'image/png', upsert: false });
-      if (up.error) return json({ success: false, error: up.error.message }, 500);
-      const { data: row, error } = await admin.from('studio_creatives').insert({
-        tenant_id: tenantId, template: def.id, formato: def.formato, largura: def.largura, altura: def.altura, menu_item_id: it.id, item_name: it.name,
-        textos, image_path: path, origem: String(body.origem ?? 'manual').slice(0, 20), request_ref: body.request_ref ? String(body.request_ref).slice(0, 80) : null,
-        created_by_user_id: caller.userId, created_by_name: userName,
-      }).select('*').single();
-      if (error) return json({ success: false, error: error.message }, 500);
-      log('INFO', 'arte gerada', { tenantId, template: def.id, ms: Date.now() - t0, kb: Math.round(png.length / 1024) });
-      return json({ success: true, creative: { ...row, url: await signed(admin, path) } });
+      const r = await gerarArte(admin, tenantId, String(body.template ?? ''), String(body.item_id ?? ''), (body.textos ?? {}) as Row,
+        { origem: String(body.origem ?? 'manual'), requestRef: body.request_ref ? String(body.request_ref) : null, userId: caller.userId, userName });
+      if ('error' in r) return json({ success: false, error: r.error }, r.status);
+      return json({ success: true, creative: r.creative });
+    }
+
+    // Pedido de arte de outro módulo (F3: Tráfego Pago em create_campaign/rotate_creative).
+    // Só interno (service role) ou gerente. Gera 1 arte por modelo pedido; falha de um modelo não
+    // derruba os outros. Item: item_id, ou o item cuja foto é photo_url, ou o melhor da biblioteca.
+    if (action === 'request_creative') {
+      if (!podeEscrever) return soGerente();
+      const templates = (Array.isArray(body.templates) ? (body.templates as unknown[]).map(String) : ['feed_4x5_foto_faixa', 'story_foto'])
+        .filter((t) => TEMPLATES.some((x) => x.id === t)).slice(0, 4);
+      if (!templates.length) return json({ success: false, error: 'Nenhum modelo válido pedido.' }, 400);
+      const itemId = await escolherItem(admin, tenantId, body.item_id ? String(body.item_id) : null, body.photo_url ? String(body.photo_url) : null, Array.isArray(body.evitar_item_ids) ? (body.evitar_item_ids as unknown[]).map(String) : []);
+      if (!itemId) return json({ success: false, error: 'Nenhum item do cardápio com foto para montar a arte.' }, 400);
+      const creatives: Row[] = []; const erros: string[] = [];
+      for (const t of templates) {
+        const r = await gerarArte(admin, tenantId, t, itemId, (body.textos ?? {}) as Row,
+          { origem: String(body.origem ?? 'trafego'), requestRef: body.request_ref ? String(body.request_ref) : null, userId: caller.userId, userName });
+        if ('error' in r) erros.push(`${t}: ${r.error}`); else creatives.push(r.creative);
+      }
+      if (!creatives.length) return json({ success: false, error: erros.join(' · ') || 'Não gerou nenhuma arte.' }, 500);
+      return json({ success: true, item_id: itemId, creatives, erros });
     }
 
     if (action === 'list_creatives') {

@@ -118,7 +118,7 @@ export function NotaBadge({ nota }: { nota: number | null }) {
     : nota >= 5
       ? 'bg-amber-50 text-amber-700 border-amber-200'
       : 'bg-red-50 text-red-600 border-red-200';
-  return <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold border ${cls}`}>nota {nota.toFixed(1)}</span>;
+  return <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold border ${cls}`}>nota {Math.round(nota)}</span>;
 }
 
 export function Secao({ titulo, icon: Icon, extra, children }: {
