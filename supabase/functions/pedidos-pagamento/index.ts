@@ -35,7 +35,7 @@ const somaDias = (iso: string, d: number) => new Date(Date.parse(`${iso}T12:00:0
 const txt = (s: unknown, max = 300) => String(s ?? '').trim().slice(0, max);
 const dataOk = (d: unknown) => typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d) && !Number.isNaN(Date.parse(`${d}T12:00:00Z`));
 
-const CAMPOS = 'id, tipo, status, descricao, valor, data_gasto, vencimento, favorecido_nome, favorecido_doc, pix_chave, dre_category_id, supplier_id, freelancer_id, freelancer_funcao, dias, valores_dia, comprovante_path, purchase_id, bill_id, obs, solicitado_por, solicitado_por_nome, decidido_por_nome, decidido_em, motivo_recusa, created_at, link_url, anuncio_id, quantidade, pedido_externo, valor_pago, comprado_em, comprado_por_nome, compra_detalhe, pix_copia_e_cola, ja_pago, ja_pago_em, pago_forma';
+const CAMPOS = 'id, tipo, status, descricao, valor, data_gasto, vencimento, favorecido_nome, favorecido_doc, pix_chave, dre_category_id, supplier_id, freelancer_id, freelancer_funcao, dias, valores_dia, comprovante_path, purchase_id, bill_id, obs, solicitado_por, solicitado_por_nome, decidido_por_nome, decidido_em, motivo_recusa, created_at, link_url, anuncio_id, quantidade, pedido_externo, valor_pago, comprado_em, comprado_por_nome, compra_detalhe, pix_copia_e_cola, ja_pago, ja_pago_em, pago_forma, pago_ref_tipo, pago_ref_id';
 
 interface Ctx { admin: any; tenantId: string; userId: string; email: string | null; role: string; perms: Record<string, boolean>; token?: string }
 
@@ -162,8 +162,26 @@ async function criar(ctx: Ctx, body: Record<string, any>) {
       const pagoEm = dataOk(body.pago_em) ? String(body.pago_em) : '';
       if (!pagoEm || pagoEm > hoje || pagoEm < somaDias(hoje, -90)) return erro('Informe quando foi pago (até 90 dias atrás)');
       const forma = String(body.pago_forma ?? '');
-      if (!['pix', 'cartao', 'mercado_pago'].includes(forma)) return erro('Informe como foi pago');
-      Object.assign(linha, base, { favorecido_nome: link?.site ?? (txt(det?.site, 60) || 'Compra online'), ja_pago: true, ja_pago_em: pagoEm, pago_forma: forma, pix_chave: null });
+      if (!['pix', 'boleto', 'dinheiro'].includes(forma)) return erro('Informe como foi pago: Pix, boleto ou dinheiro');
+      // Regra do dono (2026-09-28): o pagamento tem que estar no sistema — sem ele, a compra não entra
+      const valorPago = round2(Number(body.valor));
+      const ref = body.pagamento_ref ?? {};
+      const cands = await candidatosPagamento(ctx, forma as FormaPaga, valorPago, pagoEm);
+      const achado = cands.find((c) => c.tipo === ref.tipo && c.id === String(ref.id ?? ''));
+      if (!achado && ref.id) {
+        const { data: usado } = await ctx.admin.from('fin_payment_requests').select('solicitado_por_nome')
+          .eq('tenant_id', ctx.tenantId).eq('pago_ref_id', String(ref.id)).in('status', ['pendente', 'aprovada']).maybeSingle();
+        if (usado) return erro(`Esse pagamento já está ligado a outro pedido${usado.solicitado_por_nome ? ` (de ${usado.solicitado_por_nome})` : ''}.`, 409);
+      }
+      if (!achado) {
+        return erro(cands.length
+          ? 'Escolha qual pagamento é o desta compra'
+          : `Não achei esse pagamento no sistema (${forma === 'dinheiro' ? 'sangria de fornecedor no caixa' : 'saída no extrato do banco'} de ${brl(valorPago)} perto de ${diaBR(pagoEm)}). Sem o pagamento lançado, a compra não entra.`);
+      }
+      Object.assign(linha, base, {
+        favorecido_nome: link?.site ?? (txt(det?.site, 60) || 'Compra online'), ja_pago: true, ja_pago_em: achado.data, pago_forma: forma,
+        pago_ref_tipo: achado.tipo, pago_ref_id: achado.id, pix_chave: null,
+      });
     } else {
       // Pix copia e cola do checkout: o valor exato e quem recebe saem dele (não do print)
       const copia = acharCopiaECola(txt(body.pix_copia_e_cola, 1000));
@@ -237,6 +255,7 @@ async function criar(ctx: Ctx, body: Record<string, any>) {
   const { data: novo, error } = await ctx.admin.from('fin_payment_requests').insert(linha).select('id').single();
   if (error) {
     if (error.code === '23505') {
+      if (/pago_ref/.test(error.message)) return erro('Esse pagamento já está ligado a outro pedido.', 409);
       const { data: r } = await ctx.admin.from('fin_payment_requests').select('id').eq('tenant_id', ctx.tenantId).eq('ref', ref).maybeSingle();
       return json({ ok: true, id: r?.id ?? null, repetido: true });
     }
@@ -477,7 +496,7 @@ async function prepararPagamento(ctx: Ctx, pedidoId: string): Promise<{ preparad
  * Pix quita. Despesa → itens com a categoria do DRE (a DRE tira do CMV); CMV → categoria de mercadoria.
  * O pedido é travado em 'aprovada' ANTES de criar a compra (dois toques não criam duas compras).
  */
-async function aprovarCompraOnline(ctx: Ctx, p: any, body: Record<string, any>): Promise<{ purchase_id: string; bill_id: string; aviso?: string } | { erro: string; status?: number }> {
+async function aprovarCompraOnline(ctx: Ctx, p: any, body: Record<string, any>): Promise<{ purchase_id: string; bill_id: string | null; aviso?: string } | { erro: string; status?: number }> {
   // Itens do print (a mesma lista que a tela mostra para classificar)
   const total = round2(Number(p.valor));
   const lidos = ((p.compra_detalhe?.itens ?? []) as any[]).filter((i) => i?.descricao && Number(i.valor) > 0);
@@ -498,6 +517,12 @@ async function aprovarCompraOnline(ctx: Ctx, p: any, body: Record<string, any>):
   const classe = porItem.every((c) => c.classe === 'cmv') ? 'cmv' : porItem.every((c) => c.classe === 'despesa') ? 'despesa' : 'misto';
   const cat = porItem.find((c) => c.classe === 'despesa')?.cat ?? null;
   if (p.status !== 'pendente') return { erro: `Esse pedido já foi ${p.status}` };
+  if (p.ja_pago && p.pago_ref_id) {
+    const livre = p.pago_ref_tipo === 'sangria'
+      ? await ctx.admin.from('cash_movements').select('id').eq('id', p.pago_ref_id).is('purchase_id', null).maybeSingle()
+      : await ctx.admin.from('fin_bank_statement_imports').select('id').eq('id', p.pago_ref_id).eq('status', 'pending').eq('reconciled', false).maybeSingle();
+    if (!livre.data) return { erro: 'O pagamento deste pedido já foi ligado a outra coisa (conciliado ou usado em outra compra). Recuse e peça de novo.' };
+  }
   const nome = await nomeDoUsuario(ctx.admin, ctx.userId, ctx.email);
   const agora = new Date().toISOString();
   const { data: trava } = await ctx.admin.from('fin_payment_requests').update({
@@ -530,15 +555,17 @@ async function aprovarCompraOnline(ctx: Ctx, p: any, body: Record<string, any>):
 
   const hoje = hojeBR();
   const dia = p.ja_pago && p.ja_pago_em ? String(p.ja_pago_em) : hoje;
-  const FORMA: Record<string, string> = { pix: 'PIX', cartao: 'Cartão de crédito', mercado_pago: 'Mercado Pago' };
+  const FORMA: Record<string, string> = { pix: 'PIX', boleto: 'Boleto', dinheiro: 'Dinheiro', cartao: 'Cartão de crédito', mercado_pago: 'Mercado Pago' };
   const forma = p.ja_pago ? FORMA[String(p.pago_forma)] ?? 'PIX' : 'PIX';
+  // Dinheiro: a compra nasce paga (a saída é a sangria); banco: em aberto até a Conciliação dar a baixa
+  const emDinheiro = p.ja_pago && p.pago_forma === 'dinheiro';
   const r = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/purchase-write`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${Deno.env.get('SUPABASE_ANON_KEY') ?? ''}`, apikey: Deno.env.get('SUPABASE_ANON_KEY') ?? '', 'x-internal-key': Deno.env.get('FISCAL_INTERNAL_KEY') ?? '' },
     body: JSON.stringify({
       action: 'create_purchase', tenant_id: ctx.tenantId,
       payload: {
-        supplier: p.favorecido_nome || 'Compra online', purchase_date: dia, payment_method: forma, payment_status: 'pending', due_date: dia,
+        supplier: p.favorecido_nome || 'Compra online', purchase_date: dia, payment_method: forma, payment_status: emDinheiro ? 'paid' : 'pending', due_date: dia,
         notes: [`Compra online pedida por ${p.solicitado_por_nome ?? 'alguém da loja'} e aprovada por ${nome} — ${p.ja_pago ? `já paga em ${diaBR(dia)} (${forma}); a conciliação dá a baixa` : 'Pix copia e cola pelo Inter'}`,
           p.anuncio_id ? `anúncio ${p.anuncio_id}` : null, p.compra_detalhe?.entrega ? `entrega: ${p.compra_detalhe.entrega}` : null].filter(Boolean).join(' · '),
         items,
@@ -552,40 +579,92 @@ async function aprovarCompraOnline(ctx: Ctx, p: any, body: Record<string, any>):
   if (!r.ok || !compra?.id) return await desfazer(`Não consegui lançar a compra: ${out?.error ?? txtR.slice(0, 200)}`);
   const { data: conta } = await ctx.admin.from('fin_accounts_payable').select('id, amount')
     .eq('tenant_id', ctx.tenantId).eq('reference_type', 'purchase').eq('reference_id', compra.id).order('due_date').limit(1).maybeSingle();
-  if (!conta) return await desfazer('A compra foi lançada sem conta a pagar. Avise o suporte.');
-  await ctx.admin.from('fin_payment_requests').update({ purchase_id: compra.id, bill_id: conta.id, updated_at: new Date().toISOString() }).eq('id', p.id);
+  // Paga em dinheiro nasce 'paid' sem conta a pagar (a saída é a sangria); nos outros casos a conta é obrigatória
+  if (!conta && !emDinheiro) {
+    // Não deixa compra solta: desfaz o que o purchase-write gravou antes de devolver o pedido
+    await ctx.admin.from('fin_cash_flow').delete().eq('tenant_id', ctx.tenantId).eq('reference_id', compra.id);
+    await ctx.admin.from('fin_purchase_items').delete().eq('tenant_id', ctx.tenantId).eq('purchase_id', compra.id);
+    await ctx.admin.from('fin_purchases').delete().eq('tenant_id', ctx.tenantId).eq('id', compra.id);
+    return await desfazer('A compra não ganhou conta a pagar — nada foi lançado. Avise o suporte.');
+  }
+  await ctx.admin.from('fin_payment_requests').update({ purchase_id: compra.id, bill_id: conta?.id ?? null, updated_at: new Date().toISOString() }).eq('id', p.id);
   await fecharPendencia(ctx.admin, ctx.tenantId, p.id, ctx.userId, 'resolvida', `Aprovado como ${classe === 'cmv' ? 'CMV' : classe === 'despesa' ? 'despesa' : 'CMV + despesa'}`);
-  const aviso = p.ja_pago ? await conciliarJaPaga(ctx, p, conta.id, dia, total) : undefined;
-  return { purchase_id: compra.id, bill_id: conta.id, aviso };
+  // Pedido antigo "já pago" sem pagamento escolhido (antes da regra): fica para a Conciliação
+  const aviso = p.ja_pago ? (p.pago_ref_id ? await ligarPagamentoAchado(ctx, p, conta?.id ?? null, compra.id) : 'Compra lançada. A baixa sai pela Conciliação.') : undefined;
+  return { purchase_id: compra.id, bill_id: conta?.id ?? null, aviso };
+}
+
+type FormaPaga = 'pix' | 'boleto' | 'dinheiro';
+type Candidato = { tipo: 'extrato' | 'sangria'; id: string; data: string; valor: number; descricao: string };
+
+/**
+ * Pagamentos já lançados no sistema que podem ser o desta compra (regra do dono, 2026-09-28): mesmo
+ * valor (±R$ 0,01), até 3 dias da data informada e ainda sem dono. Pix/boleto = saída do extrato do
+ * banco ainda não conciliada (boleto = PAGAMENTO no Inter); dinheiro = sangria de fornecedor do caixa
+ * ainda sem compra. Pagamento já usado por outro pedido de compra online não aparece.
+ */
+async function candidatosPagamento(ctx: Ctx, forma: FormaPaga, valor: number, dia: string): Promise<Candidato[]> {
+  if (!(valor > 0)) return [];
+  const out: Candidato[] = [];
+  if (forma === 'dinheiro') {
+    const { data, error } = await ctx.admin.from('cash_movements').select('id, amount, reason, created_at, category')
+      .eq('tenant_id', ctx.tenantId).eq('type', 'out').is('purchase_id', null)
+      .gte('amount', round2(valor - 0.01)).lte('amount', round2(valor + 0.01))
+      .gte('created_at', `${somaDias(dia, -3)}T00:00:00-03:00`).lte('created_at', `${somaDias(dia, 3)}T23:59:59-03:00`)
+      .order('created_at', { ascending: false }).limit(20);
+    if (error) throw new Error(`Procurar sangria: ${error.message}`);
+    for (const m of (data ?? []) as any[]) {
+      if (!(m.category === 'fornecedor' || (!m.category && /^fornecedor/i.test(String(m.reason ?? ''))))) continue;
+      out.push({ tipo: 'sangria', id: m.id, data: new Date(Date.parse(m.created_at) - 3 * 3600_000).toISOString().slice(0, 10), valor: round2(Number(m.amount)), descricao: `Sangria do caixa — ${String(m.reason ?? 'fornecedor').slice(0, 80)}` });
+    }
+  } else {
+    const { data, error } = await ctx.admin.from('fin_bank_statement_imports').select('id, amount, transaction_date, description, counterpart_name, raw')
+      .eq('tenant_id', ctx.tenantId).eq('transaction_type', 'debit').eq('status', 'pending').eq('reconciled', false)
+      .gte('amount', round2(valor - 0.01)).lte('amount', round2(valor + 0.01))
+      .gte('transaction_date', somaDias(dia, -3)).lte('transaction_date', somaDias(dia, 3))
+      .order('transaction_date', { ascending: false }).limit(20);
+    if (error) throw new Error(`Procurar no extrato: ${error.message}`);
+    for (const r of (data ?? []) as any[]) {
+      const tipoInter = String(r.raw?.tipoTransacao ?? '').toUpperCase();
+      if (tipoInter && (forma === 'boleto') !== (tipoInter === 'PAGAMENTO')) continue;
+      out.push({ tipo: 'extrato', id: r.id, data: r.transaction_date, valor: round2(Number(r.amount)), descricao: [r.counterpart_name, r.description].filter(Boolean).join(' — ').slice(0, 120) || 'Saída no extrato' });
+    }
+  }
+  if (!out.length) return out;
+  const { data: usados } = await ctx.admin.from('fin_payment_requests').select('pago_ref_id')
+    .eq('tenant_id', ctx.tenantId).in('status', ['pendente', 'aprovada']).in('pago_ref_id', out.map((c) => c.id));
+  const ja = new Set((usados ?? []).map((u: any) => String(u.pago_ref_id)));
+  return out.filter((c) => !ja.has(c.id));
 }
 
 /**
- * Compra online já paga por Pix do banco da loja: procura a saída no extrato (mesmo valor, até 3 dias
- * da data informada, ainda sem vínculo) e liga à conta pela Conciliação (link_manual, com o usuário
- * logado — é ela que dá a baixa). Só liga quando há UMA saída candidata; senão fica para a Conciliação.
+ * Compra online já paga: liga a compra ao pagamento escolhido no pedido. Extrato → Conciliação
+ * (link_manual com o usuário logado: baixa a conta e concilia a saída). Sangria → mesma ligação do
+ * fn_sangria_da_compra (a sangria passa a ser desta compra e deixa de contar como despesa solta).
  */
-async function conciliarJaPaga(ctx: Ctx, p: any, billId: string, dia: string, total: number): Promise<string> {
-  const pendente = 'Compra lançada. O pagamento fica em aberto até a Conciliação ligar a saída do extrato.';
-  if (p.pago_forma !== 'pix') return `Compra lançada. Pagamento por ${p.pago_forma === 'cartao' ? 'cartão' : 'Mercado Pago'}: a baixa sai pela conciliação dessa conta.`;
-  const { data: rows } = await ctx.admin.from('fin_bank_statement_imports').select('id, transaction_date, counterpart_name, match_kind')
-    .eq('tenant_id', ctx.tenantId).eq('transaction_type', 'debit').eq('status', 'pending').eq('reconciled', false)
-    .gte('amount', round2(total - 0.01)).lte('amount', round2(total + 0.01))
-    .gte('transaction_date', somaDias(dia, -3)).lte('transaction_date', somaDias(dia, 3)).limit(5);
-  const cand = (rows ?? []).filter((r: any) => !['payable', 'inbound_doc'].includes(String(r.match_kind ?? '')));
-  if (cand.length !== 1 || !ctx.token) {
-    return cand.length > 1 ? `${pendente} Há ${cand.length} saídas de ${brl(total)} perto de ${diaBR(dia)} — escolha na Conciliação qual é.` : `${pendente} Ainda não achei a saída de ${brl(total)} no extrato perto de ${diaBR(dia)}.`;
+async function ligarPagamentoAchado(ctx: Ctx, p: any, billId: string | null, purchaseId: string): Promise<string> {
+  if (p.pago_ref_tipo === 'sangria') {
+    const { data: upd, error } = await ctx.admin.from('cash_movements')
+      .update({ purchase_id: purchaseId, needs_receipt: false, category: 'fornecedor', updated_at: new Date().toISOString() })
+      .eq('id', p.pago_ref_id).eq('tenant_id', ctx.tenantId).is('purchase_id', null).select('id');
+    if (error || !upd?.length) return `Compra lançada, mas a sangria escolhida não pôde ser ligada (${error?.message ?? 'já ligada a outra compra'}). Confira no caixa.`;
+    await ctx.admin.from('fin_cash_flow').delete().eq('origin', 'auto_sangria').eq('reference_id', p.pago_ref_id);
+    await ctx.admin.from('pendencias').update({ status: 'resolvida', resolvida_em: new Date().toISOString(), motivo: 'ligada à compra online', updated_at: new Date().toISOString() })
+      .eq('kind', 'sangria_sem_cupom').eq('ref', String(p.pago_ref_id)).in('status', ['aberta', 'vista']);
+    return 'Compra lançada e ligada à sangria do caixa (paga em dinheiro).';
   }
+  if (p.pago_ref_tipo !== 'extrato' || !ctx.token || !billId) return 'Compra lançada. A baixa sai pela Conciliação.';
   const r = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/conciliacao-pagamentos`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ctx.token}`, apikey: Deno.env.get('SUPABASE_ANON_KEY') ?? '' },
-    body: JSON.stringify({ action: 'link_manual', tenant_id: ctx.tenantId, id: cand[0].id, alvo: { kind: 'payable', ref_id: billId } }),
+    body: JSON.stringify({ action: 'link_manual', tenant_id: ctx.tenantId, id: p.pago_ref_id, alvo: { kind: 'payable', ref_id: billId } }),
   }).catch(() => null);
   const out: any = r ? await r.json().catch(() => null) : null;
   if (!r?.ok || out?.error || out?.success === false) {
-    console.error('[pedidos-pagamento] conciliar já paga', p.id, out?.error ?? r?.status);
-    return `${pendente} (não consegui ligar a saída de ${diaBR(cand[0].transaction_date)} sozinho: ${out?.error ?? 'erro'}).`;
+    console.error('[pedidos-pagamento] ligar extrato', p.id, out?.error ?? r?.status);
+    return `Compra lançada, mas não consegui ligar a saída do extrato (${out?.error ?? 'erro'}). Ligue na Conciliação.`;
   }
-  return `Compra lançada e já ligada ao pagamento de ${diaBR(cand[0].transaction_date)} no extrato${cand[0].counterpart_name ? ` (${cand[0].counterpart_name})` : ''} — baixa feita.`;
+  return `Compra lançada e ligada à saída de ${diaBR(p.ja_pago_em ?? hojeBR())} no extrato — baixa feita.`;
 }
 
 async function carregarPedido(ctx: Ctx, id: string) {
@@ -667,6 +746,15 @@ Deno.serve(async (req) => {
           .eq('tenant_id', tenantId).eq('is_active', true).order('sort_order').order('name').limit(500);
         if (error) throw new Error(error.message);
         return json({ categorias: (data ?? []).map((c: any) => ({ id: c.id, nome: c.name })) });
+      }
+      case 'buscar_pagamento': {
+        if (!perms.pag_compra_online && !aprovador) return erro('Sem permissão', 403);
+        const forma = String(body.forma ?? '');
+        if (!['pix', 'boleto', 'dinheiro'].includes(forma)) return erro('Escolha como foi pago');
+        const valor = round2(Number(body.valor));
+        if (!(valor > 0)) return erro('Informe o valor pago');
+        const dia = dataOk(body.data) ? String(body.data) : hojeBR();
+        return json({ candidatos: await candidatosPagamento(ctx, forma as FormaPaga, valor, dia) });
       }
       case 'ler_print': {
         if (!perms.pag_compra_online && !aprovador) return erro('Seu perfil não pode pedir compra online.', 403);

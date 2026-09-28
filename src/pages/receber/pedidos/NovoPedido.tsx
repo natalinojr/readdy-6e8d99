@@ -8,6 +8,8 @@ import { Categorias, Chips, Comprovante, Enviar, Rotulo, Texto, Valor, cls, lerV
 import { lerLinkCompra } from './linkCompra';
 import { lerPixCopia } from './pixCopia';
 
+interface CandidatoPagamento { tipo: 'extrato' | 'sangria'; id: string; data: string; valor: number; descricao: string }
+
 interface Props {
   tipo: TipoPedido;
   tenantId: string;
@@ -67,7 +69,28 @@ export default function NovoPedido({ tipo, tenantId, contexto, onEnviado, onErro
   // Compra que já foi paga (2026-09-28): sem Pix; informa quando e como
   const [jaPago, setJaPago] = useState(false);
   const [pagoEm, setPagoEm] = useState(hoje);
-  const [pagoForma, setPagoForma] = useState<'pix' | 'cartao' | 'mercado_pago' | ''>('');
+  const [pagoForma, setPagoForma] = useState<'pix' | 'boleto' | 'dinheiro' | ''>('');
+  // O pagamento tem que estar no sistema (regra do dono): extrato do banco ou sangria do caixa
+  const [cands, setCands] = useState<CandidatoPagamento[] | null>(null);
+  const [procurando, setProcurando] = useState(false);
+  const [pagRef, setPagRef] = useState<string | null>(null);
+  const valorPago = lerValor(valor);
+  useEffect(() => {
+    setCands(null); setPagRef(null);
+    if (tipo !== 'compra_online' || !jaPago || !pagoForma || !(valorPago > 0)) return;
+    let vivo = true;
+    const t = window.setTimeout(async () => {
+      setProcurando(true);
+      const { data, erro } = await chamarPedidos<{ candidatos: CandidatoPagamento[] }>('buscar_pagamento', tenantId, { forma: pagoForma, valor: valorPago, data: pagoEm });
+      if (!vivo) return;
+      setProcurando(false);
+      if (erro) { onErro(erro); setCands([]); return; }
+      const c = data?.candidatos ?? [];
+      setCands(c);
+      if (c.length === 1) setPagRef(`${c[0].tipo}:${c[0].id}`);
+    }, 500);
+    return () => { vivo = false; window.clearTimeout(t); };
+  }, [tipo, jaPago, pagoForma, valorPago, pagoEm, tenantId, onErro]);
   const pixLido = useMemo(() => (tipo === 'compra_online' && pixTexto.trim() ? lerPixCopia(pixTexto) : null), [tipo, pixTexto]);
   useEffect(() => { if (pixLido?.valor && !jaPago) setValor(pixLido.valor.toFixed(2).replace('.', ',')); }, [pixLido, jaPago]);
   const [lendo, setLendo] = useState(false);
@@ -140,6 +163,10 @@ export default function NovoPedido({ tipo, tenantId, contexto, onEnviado, onErro
       if (!foto && !anuncio) return 'Mande o print da compra';
       if (jaPago) {
         if (!pagoForma) return 'Como foi pago?';
+        if (!(valorPago > 0)) return 'Informe o valor pago';
+        if (procurando || cands === null) return 'Procurando o pagamento…';
+        if (!cands.length) return 'Pagamento não encontrado no sistema';
+        if (!pagRef) return 'Escolha qual é o pagamento';
       } else {
         if (!pixTexto.trim()) return 'Cole o Pix copia e cola';
         if (!pixLido) return 'Pix copia e cola incompleto';
@@ -183,7 +210,10 @@ export default function NovoPedido({ tipo, tenantId, contexto, onEnviado, onErro
         link: tipo === 'compra_online' ? link : undefined, quantidade: tipo === 'compra_online' ? lerValor(quantidade) : undefined,
         lido: tipo === 'compra_online' ? lido : undefined,
         pix_copia_e_cola: tipo === 'compra_online' && !jaPago ? pixLido?.codigo : undefined,
-        ...(tipo === 'compra_online' && jaPago ? { ja_pago: true, pago_em: pagoEm, pago_forma: pagoForma } : {}),
+        ...(tipo === 'compra_online' && jaPago ? {
+          ja_pago: true, pago_em: pagoEm, pago_forma: pagoForma,
+          pagamento_ref: pagRef ? { tipo: pagRef.split(':')[0], id: pagRef.split(':')[1] } : null,
+        } : {}),
         valores_dia: tipo === 'freelancer' ? Object.fromEntries(dias.map((d) => [d, lerValor(valoresDia[d] ?? '')])) : undefined,
       });
       if (erro) { onErro(erro); return; }
@@ -380,10 +410,36 @@ export default function NovoPedido({ tipo, tenantId, contexto, onEnviado, onErro
               <div>
                 <Rotulo>Como foi pago?</Rotulo>
                 <div className="mt-1.5">
-                  <Chips opcoes={[{ v: 'pix', label: 'Pix do banco da loja' }, { v: 'cartao', label: 'Cartão' }, { v: 'mercado_pago', label: 'Saldo Mercado Pago' }]} valor={pagoForma} onValor={(x) => setPagoForma(x as 'pix' | 'cartao' | 'mercado_pago')} />
+                  <Chips opcoes={[{ v: 'pix', label: 'Pix' }, { v: 'boleto', label: 'Boleto' }, { v: 'dinheiro', label: 'Dinheiro do caixa' }]} valor={pagoForma} onValor={(x) => setPagoForma(x as 'pix' | 'boleto' | 'dinheiro')} />
                 </div>
               </div>
               <Valor label="Valor pago (com frete)" valor={valor} onValor={setValor} />
+              {pagoForma && valorPago > 0 && (
+                <div>
+                  <Rotulo dica={pagoForma === 'dinheiro' ? 'Sangria de fornecedor lançada no caixa' : 'Saída no extrato do banco da loja'}>Pagamento no sistema</Rotulo>
+                  {(procurando || cands === null) && <p className="text-sm text-zinc-500 px-1 mt-1.5"><i className="ri-loader-4-line animate-spin" /> Procurando…</p>}
+                  {cands && !procurando && cands.length === 0 && (
+                    <p className="mt-1.5 text-sm text-red-700 bg-red-50 border border-red-200 rounded-2xl px-3 py-2.5">
+                      Não achei {pagoForma === 'dinheiro' ? 'uma sangria de fornecedor' : 'uma saída no extrato'} de <b>{brl(valorPago)}</b> perto de {dataBR(pagoEm)}. Sem o pagamento lançado no sistema, a compra não entra.
+                      {pagoForma === 'dinheiro' ? ' Lance a sangria no caixa (motivo Fornecedor) e tente de novo.' : ' O extrato atualiza às 7h e ao abrir a Conciliação — se pagou agora, tente mais tarde.'}
+                    </p>
+                  )}
+                  {cands && !procurando && cands.length > 0 && (
+                    <div className="mt-1.5 space-y-2">
+                      {cands.map((c) => {
+                        const k = `${c.tipo}:${c.id}`;
+                        return (
+                          <button key={k} type="button" onClick={() => setPagRef(k)}
+                            className={`w-full text-left rounded-2xl border-2 px-3 py-2.5 cursor-pointer ${pagRef === k ? 'border-emerald-400 bg-emerald-50' : 'border-zinc-100 bg-white'}`}>
+                            <p className="flex justify-between gap-2 text-sm"><span className="font-semibold text-zinc-800">{dataBR(c.data)}</span><span className="font-bold text-zinc-900">{brl(c.valor)}</span></p>
+                            <p className="text-xs text-zinc-500 truncate">{c.descricao}</p>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
               <p className="text-xs text-zinc-500 px-1">Se pagou do próprio bolso, use <b>Reembolso</b>.</p>
             </>
           ) : (

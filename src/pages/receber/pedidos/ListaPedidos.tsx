@@ -11,7 +11,7 @@ import { lerPixCopia } from './pixCopia';
 import JanelaPagamento, { type AvisoPagamento } from './JanelaPagamento';
 import { avisar, confirmar } from '@/components/base/Dialogos';
 
-const FORMA_PAGO: Record<string, string> = { pix: 'Pix do banco da loja', cartao: 'cartão', mercado_pago: 'saldo do Mercado Pago' };
+const FORMA_PAGO: Record<string, string> = { pix: 'Pix', boleto: 'boleto', dinheiro: 'dinheiro do caixa', cartao: 'cartão', mercado_pago: 'saldo do Mercado Pago' };
 
 interface Props {
   modo: 'meus' | 'aprovar';
@@ -379,7 +379,7 @@ function CartaoAprovar({ p, tenantId, categorias, onErro, onFeito, onJanela }: {
         <p className="mt-2 text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">A chave <b>{p.pix_chave}</b> ainda não está nos Pix permitidos: o Inter vai recusar. Cadastre uma vez em Assistente › Configurações › Pix permitidos (com o seu PIN) e aprove.</p>
       )}
       {compra && <AbrirLink p={p} />}
-      {jaPago && <p className="mt-3 text-sm text-emerald-800 bg-emerald-50 rounded-xl px-3 py-2"><i className="ri-checkbox-circle-line" /> Já foi pago em <b>{p.ja_pago_em ? dataBR(p.ja_pago_em) : '—'}</b> ({FORMA_PAGO[p.pago_forma ?? ''] ?? 'forma não informada'}). Aprovar lança a compra; {p.pago_forma === 'pix' ? 'a saída do extrato é ligada sozinha quando dá' : 'a baixa sai pela conciliação'}.</p>}
+      {jaPago && <p className="mt-3 text-sm text-emerald-800 bg-emerald-50 rounded-xl px-3 py-2"><i className="ri-checkbox-circle-line" /> Já foi pago em <b>{p.ja_pago_em ? dataBR(p.ja_pago_em) : '—'}</b> ({FORMA_PAGO[p.pago_forma ?? ''] ?? 'forma não informada'}). Aprovar lança a compra e liga {p.pago_ref_tipo === 'sangria' ? 'à sangria do caixa' : p.pago_ref_tipo === 'extrato' ? 'à saída do extrato (baixa na hora)' : 'pela Conciliação'}.</p>}
       {compra && !nova && <p className="mt-3 text-xs text-sky-800 bg-sky-50 rounded-xl px-3 py-2">Autorizar não cria conta a pagar. Compre na conta da loja (CNPJ) e toque em "Já comprei"; a nota do vendedor entra sozinha e vira a compra.</p>}
       {nova && (
         <div className="mt-3 space-y-2">

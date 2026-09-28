@@ -61,7 +61,8 @@ export interface Pedido {
   /** Compra que já foi paga antes de pedir (sem Pix). */
   ja_pago?: boolean;
   ja_pago_em?: string | null;
-  pago_forma?: 'pix' | 'cartao' | 'mercado_pago' | null;
+  pago_forma?: 'pix' | 'boleto' | 'dinheiro' | 'cartao' | 'mercado_pago' | null;
+  pago_ref_tipo?: 'extrato' | 'sangria' | null;
 }
 
 /** O que a IA leu do print do checkout (Edge pedidos-pagamento › ler_print). */
