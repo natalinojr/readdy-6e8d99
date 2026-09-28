@@ -651,9 +651,11 @@ export default function CategoriasDRETab() {
       <div className="flex items-start gap-2 text-[11px] text-zinc-500 bg-zinc-50 border border-zinc-200 rounded-xl px-4 py-2.5">
         <i className="ri-information-line text-zinc-400 mt-px" />
         <span>
+          <strong className="text-zinc-700">Deduções da receita bruta</strong> saem da receita (impostos como o DAS);{' '}
           <strong className="text-zinc-700">Despesas operacionais</strong> e os <strong className="text-zinc-700">grupos criados por você</strong> são subtraídos do resultado da DRE.
           Contas a pagar e itens de compra podem apontar para qualquer nível; a linha-mãe soma as subcategorias.
-          Compra sem classificação vai para o CMV.
+          Compra sem classificação vai para o CMV. Categorias <i className="ri-lock-line" /> Sistema são custos que o próprio sistema lança:
+          dá para renomear e mudar de grupo, mas não excluir.
         </span>
       </div>
 
