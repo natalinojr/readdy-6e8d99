@@ -26,8 +26,11 @@ const USO_LABEL: Record<string, string> = {
   'traducao-cardapio': 'Tradução do cardápio',
   'trafego-meta-ads': 'Gestor de tráfego (Meta Ads)',
   'trafego-meta-ads-sombra': 'Gestor de tráfego (comparação de modelo)',
+  'estudio-nota-foto': 'Estúdio de Criação (nota das fotos)',
+  'estudio-kit': 'Estúdio de Criação (kit da marca)',
 };
-const MODELO_LABEL = (m: string) => m.replace(/^claude-/, '').replace(/-(\d)-(\d)$/, ' $1.$2').replace(/-(\d)$/, ' $1')
+// A API devolve às vezes o nome com data (claude-haiku-4-5-20251001): a data sai do rótulo.
+const MODELO_LABEL = (m: string) => m.replace(/^claude-/, '').replace(/-\d{8}$/, '').replace(/-(\d)-(\d)$/, ' $1.$2').replace(/-(\d)$/, ' $1')
   .replace(/^./, (c) => c.toUpperCase());
 
 type Periodo = 'mes' | 'mes_passado' | '7d' | '30d' | 'custom';
@@ -182,7 +185,7 @@ export default function CustosIaCard() {
           </div>
 
           <div className="grid gap-4 md:grid-cols-2">
-            <Lista titulo="Por uso" icone="ri-apps-2-line" itens={rel.por_uso} rotulo={(s) => USO_LABEL[s.chave] ?? s.chave} />
+            <Lista titulo="Por uso" icone="ri-apps-2-line" itens={rel.por_uso} rotulo={(s) => USO_LABEL[s.chave] ?? s.chave.replace(/-/g, ' ').replace(/^./, (c) => c.toUpperCase())} />
             <Lista titulo="Por loja" icone="ri-store-2-line" itens={rel.por_loja} />
             <Lista titulo="Por pessoa" icone="ri-user-3-line" itens={rel.por_pessoa} />
             <Lista titulo="Por modelo" icone="ri-cpu-line" itens={rel.por_modelo} rotulo={(s) => MODELO_LABEL(s.chave)} />
