@@ -466,7 +466,7 @@ export default function NovoPedido({ tipo, tenantId, contexto, onEnviado, onErro
       )}
 
       <Texto label={tipo === 'compra_online' ? 'Para que é? (opcional)' : 'Observação (opcional)'} valor={obs} onValor={setObs} multilinha placeholder={tipo === 'compra_online' ? 'Ex.: o nosso quebrou; precisa até sexta' : 'Algo que o financeiro precisa saber'} />
-      <p className="text-xs text-zinc-500 px-1">{tipo === 'compra_online' ? 'O pedido vai para o financeiro aprovar e pagar o Pix. O Pix do site costuma vencer rápido: peça logo depois de gerar.' : 'O pedido vai para o financeiro aprovar. Só depois vira conta a pagar.'}</p>
+      <p className="text-xs text-zinc-500 px-1">{tipo === 'compra_online' ? (jaPago ? 'O pedido vai para o financeiro classificar e lançar a compra, já ligada ao pagamento escolhido.' : 'O pedido vai para o financeiro aprovar e pagar o Pix. O Pix do site costuma vencer rápido: peça logo depois de gerar.') : 'O pedido vai para o financeiro aprovar. Só depois vira conta a pagar.'}</p>
 
       <Enviar onClick={enviar} disabled={!!faltando || enviando}>
         {enviando ? 'Enviando…' : faltando ?? 'Enviar para aprovação'}
