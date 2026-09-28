@@ -16,6 +16,25 @@ O agente deve aplicar as regras nesta ordem de prioridade, da mais forte para a 
 
 Sempre que uma decisão de alto risco depender de um número marcado "(a confirmar na fonte)" — por exemplo, políticas de conteúdo restrito (álcool) ou o texto exato de "edição significativa" que reinicia o aprendizado —, o agente deve preferir a opção mais conservadora e sinalizar ao dono da loja ou ao próximo ciclo de pesquisa mensal (o agente "Pesquisador") que aquele ponto precisa de confirmação direta na fonte.
 
+## Confirmação na fonte — 2026-09-28
+
+Os pontos marcados "(a confirmar na fonte)" foram lidos direto nas páginas oficiais da Meta (Chrome, sem login) e pelo 1º ciclo do agente Pesquisador. Onde o texto abaixo ainda diz "(a confirmar na fonte)", vale esta tabela. O manual estruturado que os agentes leem fica na tabela `trafego_manual_itens` (tela: Tráfego Pago › Oportunidades › Manual do gestor).
+
+| Ponto | Resultado | Página oficial |
+|---|---|---|
+| Aprendizado: ~50 eventos em 7 dias por conjunto | **Confirmado** — ~50 resultados na semana após a última edição significativa | [business/help/112167992830700](https://www.facebook.com/business/help/112167992830700) |
+| "Mudar orçamento mais de 20% reinicia o aprendizado" | **Diverge** — a Meta não publica percentual; orçamento/lance "pode ou não" ser edição significativa conforme o tamanho (exemplo: US$100→101 não; US$100→1.000 provavelmente sim). Sempre significativas: público, criativo, evento de otimização, novo anúncio, pausa de 7+ dias, estratégia de lance. **20% segue como [PRÁTICA DE MERCADO]** | [business/help/316478108955072](https://www.facebook.com/business/help/316478108955072) |
+| Diagnósticos de relevância só a partir de 500 impressões | **Confirmado** | [business/help/403110480493160](https://www.facebook.com/business/help/403110480493160) |
+| Álcool permitido no Brasil, 18+, leis locais | **Confirmado** (Brasil fora da lista de proibição; 18 anos mínimo global) | [transparency.meta.com — Alcohol](https://transparency.meta.com/policies/ad-standards/restricted-goods-services/alcohol/) |
+| Dayparting só com orçamento vitalício | **Confirmado** | [business/help/190490051321426](https://www.facebook.com/business/help/190490051321426) |
+| Opportunity Score 0–100 | **Confirmado** — mede recomendações aplicadas, ponderadas pelo impacto estimado | [business/help/804913634782260](https://www.facebook.com/business/help/804913634782260) |
+| Advantage+ campaign budget (ex-CBO) | **Parcial** — nome confirmado; a página não diz que é o padrão | [business/help/153514848493595](https://www.facebook.com/business/help/153514848493595) |
+| Categorias especiais de anúncio | **Confirmado** — financeiros, emprego, moradia, temas sociais/eleições/política; **nada para alimentação ou álcool** (fecha a lacuna da seção de contradições) | [business/help/298000447747885](https://www.facebook.com/business/help/298000447747885) |
+| CAPI for Business Messaging (`business_messaging`, `whatsapp`, `ctwa_clid`) | **Confirmado** | [developers — business-messaging](https://developers.facebook.com/docs/marketing-api/conversions-api/business-messaging/) |
+| "Até 6 anúncios por conjunto" | **Não achado** na Meta — só "menos anúncios por conjunto, com criativos diversos", sem número. Fica como [PRÁTICA DE MERCADO] | [business/help/2720085414702598](https://www.facebook.com/business/help/2720085414702598) |
+
+Limitação conhecida do Pesquisador automático: a busca na web da API não lê o texto da Central de Ajuda da Meta (a página monta o conteúdo por JavaScript), então itens da Central de Ajuda tendem a ficar "pendentes" até alguém ler a página direto; Transparency Center e Meta for Developers ele lê normalmente.
+
 ## Fundamentos oficiais do Meta Ads que o agente precisa respeitar
 
 A estrutura de conta continua em três níveis — campanha, conjunto de anúncios (ad set) e anúncio — e isso não mudou **[OFICIAL META, 2026-09-27]**. O que mudou é o padrão de orçamento: o antigo "Campaign Budget Optimization" (CBO, orçamento controlado no nível da campanha) foi renomeado para **"Meta Advantage+ campaign budget"**, e fontes de mercado relatam que passou a ser o padrão para novas campanhas a partir de fevereiro de 2026, distribuindo o orçamento automaticamente entre conjuntos de anúncios em tempo real ([Meta for Business](https://www.facebook.com/business/ads/meta-advantage-plus/budget), 2026-09-27, **[OFICIAL META] (a confirmar na fonte)**; ver também [1clickreport.com](https://www.1clickreport.com/blog/meta-advantage-plus-campaign-setup-2026), 2026, **[PRÁTICA DE MERCADO]**). Isso convive com a opção manual de orçamento por conjunto (ABO), que ainda existe como alternativa.
