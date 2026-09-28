@@ -213,7 +213,7 @@ export default function IfoodEntregaConfigModal({ tenantId, onClose, onChanged }
                 {avancado && <div className="px-3 pb-3 space-y-2">
                 <p className="text-[11px] text-zinc-400">Só para testar com um app de teste do Portal do Desenvolvedor. As lojas de verdade usam o app ERPOS PDV, já configurado no sistema.</p>
                 <div className="flex gap-1.5">
-                  {([['distributed', 'ERPOS PDV (lojas reais)'], ['centralized', 'App de teste "C" (loja de teste)']] as const).map(([k, t]) => (
+                  {([['distributed', 'Distribuído (app de teste "D")'], ['centralized', 'Centralizado (app de teste "C")']] as const).map(([k, t]) => (
                     <button key={k} type="button" onClick={() => setAppType(k)}
                       className={`flex-1 py-1.5 rounded-lg text-[11px] font-bold border ${appType === k ? 'bg-zinc-800 text-white border-zinc-800' : 'bg-white text-zinc-600 border-zinc-200'}`}>{t}</button>
                   ))}
