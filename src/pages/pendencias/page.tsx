@@ -4,6 +4,8 @@ import { usePendencias, kindConfig, type Pendencia, type PendenciaUrgencia } fro
 import { useToast } from '@/contexts/ToastContext';
 import PullToRefresh from '@/components/feature/PullToRefresh';
 import { perguntar } from '@/components/base/Dialogos';
+import { useAprovacoes } from '@/contexts/AprovacoesContext';
+import { useAuth } from '@/contexts/AuthContext';
 
 /**
  * Caixa de pendências — a lista que não rola para cima.
@@ -42,14 +44,18 @@ function quando(iso: string): string {
 }
 
 function CardPendencia({
-  p, onResolver, onCiente, onDescartar, onReabrir,
+  p, onResolver, onCiente, onDescartar, onReabrir, onDecidir,
 }: {
   p: Pendencia;
   onResolver: (p: Pendencia) => void;
   onCiente: (p: Pendencia) => void;
   onDescartar: (p: Pendencia) => void;
   onReabrir: (p: Pendencia) => void;
+  onDecidir: (p: Pendencia, aprovar: boolean) => void;
 }) {
+  // Pedido de aprovação do PDV (cancelamento/desconto): decide aqui mesmo. A pendência fecha
+  // sozinha pelo banco quando a solicitação sai de "pendente".
+  const ehAprovacao = p.kind === 'aprovacao';
   const cfg = kindConfig(p.kind);
   const badge = URGENCIA_BADGE[p.urgencia];
   const fechada = p.status === 'resolvida' || p.status === 'descartada';
@@ -84,7 +90,23 @@ function CardPendencia({
           )}
 
           <div className="flex items-center gap-1.5 mt-2.5 flex-wrap">
-            {!fechada && p.rota && (
+            {!fechada && ehAprovacao && (
+              <>
+                <button
+                  onClick={() => onDecidir(p, true)}
+                  className="text-[11px] font-bold bg-green-500 hover:bg-green-600 text-white px-3 py-1.5 rounded-lg cursor-pointer whitespace-nowrap transition-colors"
+                >
+                  <i className="ri-check-line mr-1" />Aprovar
+                </button>
+                <button
+                  onClick={() => onDecidir(p, false)}
+                  className="text-[11px] font-bold bg-red-100 hover:bg-red-200 text-red-600 px-3 py-1.5 rounded-lg cursor-pointer whitespace-nowrap transition-colors"
+                >
+                  <i className="ri-close-line mr-1" />Recusar
+                </button>
+              </>
+            )}
+            {!fechada && p.rota && !ehAprovacao && (
               <button
                 onClick={() => onResolver(p)}
                 className="text-[11px] font-bold bg-indigo-500 hover:bg-indigo-600 text-white px-3 py-1.5 rounded-lg cursor-pointer whitespace-nowrap transition-colors"
@@ -102,7 +124,7 @@ function CardPendencia({
                 Ciente
               </button>
             )}
-            {!fechada && (
+            {!fechada && !ehAprovacao && (
               <button
                 onClick={() => onDescartar(p)}
                 className="text-[11px] font-semibold text-zinc-400 hover:text-red-600 px-2.5 py-1.5 rounded-lg hover:bg-red-50 cursor-pointer whitespace-nowrap transition-colors"
@@ -110,7 +132,7 @@ function CardPendencia({
                 Não vou fazer
               </button>
             )}
-            {fechada && (
+            {fechada && !ehAprovacao && (
               <button
                 onClick={() => onReabrir(p)}
                 className="text-[11px] font-semibold text-zinc-400 hover:text-zinc-800 px-2.5 py-1.5 rounded-lg hover:bg-zinc-100 cursor-pointer whitespace-nowrap transition-colors"
@@ -129,6 +151,8 @@ export default function PendenciasPage() {
   const navigate = useNavigate();
   const toast = useToast();
   const { pendencias, historico, carregando, erro, recarregar, marcar } = usePendencias();
+  const { aprovar, rejeitar } = useAprovacoes();
+  const { user } = useAuth();
   const [aba, setAba] = useState<Aba>('abertas');
   const [kindFiltro, setKindFiltro] = useState<string | null>(null);
 
@@ -162,6 +186,18 @@ export default function PendenciasPage() {
     }
   };
 
+  const handleDecidir = async (p: Pendencia, sim: boolean) => {
+    const nome = user?.nome ?? 'Gerente';
+    try {
+      await (sim ? aprovar(p.ref, nome) : rejeitar(p.ref, nome));
+      toast.success(sim ? 'Aprovado' : 'Recusado', 'O caixa recebe a resposta na hora.');
+      recarregar();
+    } catch (e) {
+      toast.error(sim ? 'Não foi possível aprovar' : 'Não foi possível recusar', e instanceof Error ? e.message : undefined);
+      recarregar();
+    }
+  };
+
   const handleDescartar = async (p: Pendencia) => {
     const motivo = await perguntar({ titulo: 'Por que não vai fazer?', mensagem: p.titulo, opcional: true });
     if (motivo === null) return;          // cancelou o diálogo
@@ -181,7 +217,7 @@ export default function PendenciasPage() {
           <div className="flex-1">
             <h1 className="text-xl font-black text-zinc-900">Pendências</h1>
             <p className="text-xs text-zinc-400">
-              Tudo que ainda espera você. Nada sai daqui sozinho.
+              Tudo que ainda espera você na loja. Nada sai daqui sozinho.
             </p>
           </div>
           <button
@@ -259,6 +295,7 @@ export default function PendenciasPage() {
                 onCiente={(x) => acao(x, 'vista')}
                 onDescartar={handleDescartar}
                 onReabrir={(x) => acao(x, 'reabrir')}
+                onDecidir={handleDecidir}
               />
             ))}
           </div>

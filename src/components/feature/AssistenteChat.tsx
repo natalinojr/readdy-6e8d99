@@ -21,6 +21,7 @@ import { useEquipeNoChat } from '@/components/feature/equipe/useEquipeNoChat';
 import ItensClassificarCard from '@/components/feature/assistente/ItensClassificarCard';
 import PainelMensagem, { painelDoTexto } from '@/components/feature/assistente/PainelMensagem';
 import PendenciasChat, { type PendenciaChat } from '@/components/feature/assistente/PendenciasChat';
+import HistoricoPagamentos from '@/components/feature/assistente/HistoricoPagamentos';
 import { minhasTarefasPendentes } from '@/components/feature/assistente/TarefasPendencia';
 
 export const ASSISTENTE_OWNER_EMAIL = 'natalinojr.engel@gmail.com';
@@ -527,6 +528,9 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
   const [pendAberta, setPendAberta] = useState(false);
   const [pendVersao, setPendVersao] = useState(0);
   const [pendNovas, setPendNovas] = useState(0);
+  // Histórico de solicitações de pagamento (dono, 2026-09-27): uma linha por pedido, com o status atual.
+  const [histPagAberto, setHistPagAberto] = useState(false);
+  useEffect(() => { if (!open) setHistPagAberto(false); }, [open]);
   // "Ver a mensagem" do pedido do grupo: a conversa do grupo abre NESSA mensagem (não no fim) e ela
   // pisca destacada. focoMsg vale para a próxima carga da conversa; destaque some sozinho.
   const focoMsg = useRef<number | null>(null);
@@ -750,6 +754,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
   // Ações rápidas em tela cheia são mais uma camada: o voltar fecha só elas.
   useVoltarFecha(open && menuAcoes && (modo === 'full' || variant === 'embedded'), () => setMenuAcoes(false), 'assistente-acoes');
   useVoltarFecha(open && pendAberta, () => setPendAberta(false), 'assistente-pendencias');
+  useVoltarFecha(open && histPagAberto, () => setHistPagAberto(false), 'assistente-historico-pagamentos');
   // Ação rápida aberta (Vendas do dia, Contas vencendo…) é mais uma camada: o voltar fecha só ela
   // e volta ao chat. Sem isso o voltar do Android fechava o chat inteiro (dono, 2026-09-19).
   useVoltarFecha(open && !!acao, () => setAcao(null), 'assistente-acao');
@@ -1413,7 +1418,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
             {!!r?.unread && (
               <span className="min-w-[20px] h-5 px-1.5 flex items-center justify-center rounded-full bg-violet-600 text-white text-[11px] font-black" aria-label={`${r.unread} não lida(s)`}>{r.unread > 99 ? '99+' : r.unread}</span>
             )}
-            <span className="min-w-[22px] h-[22px] px-1.5 flex items-center justify-center rounded-full bg-zinc-800 text-white text-[11px] font-bold" aria-label={`${total} mensagem(ns)`}>{total}</span>
+            {/* Só o número de não vistas (pedido do dono, 2026-09-27): o total não ajudava em nada. */}
             <i className="ri-arrow-down-s-line text-zinc-400" />
           </button>
         );
@@ -1461,7 +1466,12 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
       {vista === 'conversa' && TIPOS_DA_CONVERSA[aba] && (
         <div className="flex-shrink-0 border-b border-zinc-100">
           <div className="flex items-center gap-2 px-3 py-2">
-            <span className="flex-1 text-[11px] font-semibold text-zinc-400">{agrupar === 'tipo' ? 'Separado por tipo' : 'Tudo na ordem de chegada'}</span>
+            <span className="flex-1 min-w-0 truncate text-[11px] font-semibold text-zinc-400">{agrupar === 'tipo' ? 'Separado por tipo' : 'Tudo na ordem de chegada'}</span>
+            {aba === 'pagamentos' && (
+              <button onClick={() => setHistPagAberto(true)} className="h-8 px-2.5 flex-shrink-0 flex items-center gap-1 rounded-xl bg-emerald-50 text-emerald-700 text-xs font-bold hover:bg-emerald-100 cursor-pointer">
+                <i className="ri-history-line" /> Histórico
+              </button>
+            )}
             <div className="flex p-0.5 rounded-xl bg-zinc-100 flex-shrink-0" role="group" aria-label="Agrupar">
               {([['chegada', 'ri-time-line', 'Chegada'], ['tipo', 'ri-stack-line', 'Tipo']] as const).map(([id, icone, nome]) => (
                 <button key={id} onClick={() => escolherAgrupar(id)} aria-pressed={agrupar === id}
@@ -1479,7 +1489,6 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
                 className="w-full flex items-center gap-2 px-3 pb-2 text-left cursor-pointer">
                 <span className={`w-7 h-7 flex-shrink-0 flex items-center justify-center rounded-lg ${t?.cor ?? ''}`}><i className={t?.icon} /></span>
                 <span className="flex-1 min-w-0 text-[13px] font-bold text-zinc-800 truncate">{t?.label}</span>
-                {r && <span className="min-w-[22px] h-[22px] px-1.5 flex items-center justify-center rounded-full bg-zinc-800 text-white text-[11px] font-bold">{r.total}</span>}
                 <i className="ri-arrow-up-s-line text-zinc-400" />
               </button>
             );
@@ -1737,6 +1746,16 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
           onPagarConta={pagarConta}
           onAbrir={abrirPendencia}
           onPedir={pedirPendencia}
+        />
+      )}
+
+      {/* Depois das pendências e antes do PIN: o "Pagar" daqui abre o PIN por cima do histórico. */}
+      {histPagAberto && (
+        <HistoricoPagamentos
+          call={call}
+          onFechar={() => setHistPagAberto(false)}
+          onAcao={(p, op) => acaoPagamento(p as unknown as Payment, op)}
+          versao={pendVersao}
         />
       )}
 

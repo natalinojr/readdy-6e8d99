@@ -56,16 +56,19 @@ async function comPagamento(ctx: Ctx, pedidos: any[]) {
     bills.length ? ctx.admin.from('fin_accounts_payable').select('id, status, paid_date').in('id', bills) : Promise.resolve({ data: [] }),
     cats.length ? ctx.admin.from('fin_dre_categories').select('id, name').in('id', cats) : Promise.resolve({ data: [] }),
     bills.length ? ctx.admin.from('fin_inter_payments').select('bill_id, status').eq('tenant_id', ctx.tenantId).in('bill_id', bills)
-      .in('status', ['sending', 'sent', 'pending_approval', 'approved', 'scheduled', 'paid']) : Promise.resolve({ data: [] }),
+      .in('status', ['sending', 'sent', 'pending_approval', 'approved', 'scheduled', 'paid', 'cancelled', 'rejected']) : Promise.resolve({ data: [] }),
   ]);
   const bm = new Map((bs ?? []).map((b: any) => [b.id, b]));
   const cm = new Map((cs ?? []).map((c: any) => [c.id, c.name]));
   // Pix já saiu pelo Inter mas a conta só vira "paga" na baixa do extrato: sem isto a tela mostrava
   // "a pagar" + "Mandar para pagar" num pedido já pago (dono, 2026-09-25).
-  const pix = new Map<string, 'pago' | 'aguardando'>();
+  // Pix recusado/cancelado no app do Inter (dono, 2026-09-27): o pedido continua aprovado e a pagar, mas
+  // dizia só "Aprovado · a pagar" — agora avisa que o Pix foi recusado. Vale só se não há outro em curso.
+  const pix = new Map<string, 'pago' | 'aguardando' | 'recusado'>();
   for (const x of (ps ?? []) as any[]) {
     if (x.status === 'paid') pix.set(x.bill_id, 'pago');
-    else if (!pix.has(x.bill_id)) pix.set(x.bill_id, 'aguardando');
+    else if (['cancelled', 'rejected'].includes(x.status)) { if (!pix.has(x.bill_id)) pix.set(x.bill_id, 'recusado'); }
+    else if (pix.get(x.bill_id) !== 'pago') pix.set(x.bill_id, 'aguardando');
   }
   return pedidos.map((p) => {
     const b: any = p.bill_id ? bm.get(p.bill_id) : null;
@@ -287,12 +290,28 @@ async function prepararPagamento(ctx: Ctx, pedidoId: string): Promise<{ preparad
   }
   const titulo = `${ROTULO[p.tipo] ?? 'Pagamento'} aprovado: Pix de ${brl(valor)} para ${p.favorecido_nome}`;
   // Devolve o id da pendência: a tela de aprovar paga ali mesmo (PIN) pelo assistente-app › pendencia_pagar.
-  const pendenciaPix = async (payId: string): Promise<string | null> => (await ctx.admin.rpc('fn_pendencia_upsert', {
-    p_tenant: ctx.tenantId, p_kind: 'pagamento_pendente', p_ref: payId,
-    p_titulo: titulo, p_detalhe: `${chave ? `Chave ${chave}. ` : ''}Toque em Pagar e confirme com o PIN.`,
-    p_payload: { payment_id: payId, bill_id: bill.id, pedido_id: p.id }, p_rota: null,
-    p_urgencia: 'alta', p_acao_requerida: true, p_origem: 'app', p_reabrir: true,
-  }))?.data?.id ?? null;
+  const pendenciaPix = async (payId: string): Promise<string | null> => {
+    // Pix recusado no Inter deixa a pendência dele aberta até pagar (20260928130000); o Pix novo ganha a
+    // sua — a antiga sai para não aparecer duas vezes no 📥. Só se o Pix dela já não está vivo no Inter
+    // (aguardando aprovação…): essa pendência é o que lembra de recusá-lo.
+    const { data: velhas } = await ctx.admin.from('pendencias').select('id, ref')
+      .eq('tenant_id', ctx.tenantId).eq('kind', 'pagamento_pendente').eq('payload->>bill_id', bill.id).neq('ref', payId).in('status', ['aberta', 'vista']);
+    if (velhas?.length) {
+      const { data: vivos } = await ctx.admin.from('fin_inter_payments').select('id').in('id', velhas.map((v) => v.ref))
+        .in('status', ['sending', 'sent', 'pending_approval', 'approved', 'scheduled']);
+      const fechar = velhas.filter((v) => !(vivos ?? []).some((x) => String(x.id) === String(v.ref))).map((v) => v.id);
+      if (fechar.length) {
+        await ctx.admin.from('pendencias').update({ status: 'resolvida', resolvida_em: new Date().toISOString(), resolvida_por: ctx.userId, motivo: 'Pix novo preparado' })
+          .in('id', fechar).in('status', ['aberta', 'vista']);
+      }
+    }
+    return (await ctx.admin.rpc('fn_pendencia_upsert', {
+      p_tenant: ctx.tenantId, p_kind: 'pagamento_pendente', p_ref: payId,
+      p_titulo: titulo, p_detalhe: `${chave ? `Chave ${chave}. ` : ''}Toque em Pagar e confirme com o PIN.`,
+      p_payload: { payment_id: payId, bill_id: bill.id, pedido_id: p.id }, p_rota: null,
+      p_urgencia: 'alta', p_acao_requerida: true, p_origem: 'app', p_reabrir: true,
+    }))?.data?.id ?? null;
+  };
   let motivo = '';
   if (chave) {
     const r = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/inter-bank`, {
@@ -388,17 +407,29 @@ Deno.serve(async (req) => {
     switch (action) {
       case 'contexto': {
         let aprovar = 0;
+        let aprovadosNaoPagos = 0;
         if (aprovador) {
-          const { count } = await admin.from('fin_payment_requests').select('id', { count: 'exact', head: true })
-            .eq('tenant_id', tenantId).eq('status', 'pendente');
+          const [{ count }, { data: aprov }] = await Promise.all([
+            admin.from('fin_payment_requests').select('id', { count: 'exact', head: true })
+              .eq('tenant_id', tenantId).eq('status', 'pendente'),
+            admin.from('fin_payment_requests').select('id, bill_id, dre_category_id, comprovante_path')
+              .eq('tenant_id', tenantId).eq('status', 'aprovada').order('created_at', { ascending: false }).limit(300),
+          ]);
           aprovar = count ?? 0;
+          // Número no botão Aprovar (dono, 2026-09-27): aprovados que ainda não foram pagos. Pix que já
+          // saiu pelo Inter (só falta a baixa do extrato) não conta — o dinheiro já foi.
+          const lista = aprov ?? [];
+          for (let i = 0; i < lista.length; i += 100) {
+            const com = await comPagamento(ctx, lista.slice(i, i + 100));
+            aprovadosNaoPagos += com.filter((p: any) => !p.pago && p.pix_inter !== 'pago').length;
+          }
         }
         // Última chave Pix usada pela pessoa num reembolso (evita digitar toda vez)
         const { data: ult } = await admin.from('fin_payment_requests').select('pix_chave, favorecido_nome')
           .eq('tenant_id', tenantId).eq('solicitado_por', caller.userId).eq('tipo', 'reembolso')
           .not('pix_chave', 'is', null).order('created_at', { ascending: false }).limit(1).maybeSingle();
         return json({
-          perms, para_aprovar: aprovar,
+          perms, para_aprovar: aprovar, aprovados_nao_pagos: aprovadosNaoPagos,
           nome: await nomeDoUsuario(admin, caller.userId, caller.email),
           ultimo_reembolso: ult ? { pix_chave: ult.pix_chave, nome: ult.favorecido_nome } : null,
         });

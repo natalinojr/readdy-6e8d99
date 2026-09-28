@@ -20,6 +20,8 @@
 //                                                    (lojas onde o dono é admin/gerente) + categorias
 //   item_classify { tenant_id, ids, classe, dre_category_id?, merchandise_category_id? }
 //                                                  → classifica pelo chat (fn_item_classify com o JWT do dono)
+//   item_link { tenant_id, id, ingredient_id, units_per_package }
+//                                                  → liga o item a um insumo do estoque (fn_item_link_ingredient; vira CMV)
 //   history/topics aceitam group_jid: conversa de um GRUPO do WhatsApp (asst_messages.group_jid)
 //   history aceita kind (conversa|pagamento|caixa|grupo|automatico): filtro por tipo dentro da conversa
 //   kinds     { topic? }                           → por tipo: total, não lidas e a última mensagem
@@ -500,6 +502,56 @@ Deno.serve(async (req) => {
       return json({ success: true, data: { payments: await payCards(admin, data ?? []) } });
     }
 
+    // Histórico de solicitações de pagamento (dono, 2026-09-27): no Financeiro cada mudança de status é
+    // uma mensagem solta ("aguardando aprovação", depois "pago") e o mesmo Pix aparecia 2–3 vezes.
+    // Aqui é UMA linha por solicitação, com o status atual e a linha do tempo das mudanças.
+    if (action === 'payments_history') {
+      const LIMITE = 30;
+      const filtro = String(body.filtro ?? 'todos');
+      let q = admin.from('fin_inter_payments').select('*').eq('chat_id', chatKey);
+      if (filtro === 'aberto') q = q.in('status', PAY_OPEN);
+      else if (filtro === 'pagos') q = q.eq('status', 'paid');
+      else if (filtro === 'nao_pagos') q = q.in('status', ['cancelled', 'rejected', 'failed', 'expired']);
+      const antes = String(body.before ?? '');
+      if (antes && !Number.isNaN(Date.parse(antes))) q = q.lt('created_at', antes);
+      const { data, error } = await q.order('created_at', { ascending: false }).limit(LIMITE + 1);
+      if (error) throw new Error(error.message);
+      const rows = (data ?? []).slice(0, LIMITE);
+      const cards = await payCards(admin, rows);
+      const ids = rows.map((r) => String(r.id));
+      const lojaIds = [...new Set(rows.map((r) => String(r.tenant_id)))];
+      const [{ data: msgs }, { data: lojas }] = await Promise.all([
+        ids.length
+          ? admin.from('asst_messages').select('content, created_at, channel').eq('chat_id', chatKey).like('content', '[Pagamento %')
+            .or(ids.map((id) => `content.like.*id ${id}`).join(',')).order('id', { ascending: true }).limit(600)
+          : Promise.resolve({ data: [] as { content: string; created_at: string; channel: string }[] }),
+        lojaIds.length ? admin.from('tenants').select('id, name').in('id', lojaIds) : Promise.resolve({ data: [] as { id: string; name: string }[] }),
+      ]);
+      const passos = new Map<string, { at: string; texto: string; canal: string }[]>();
+      for (const m of msgs ?? []) {
+        const c = String(m.content);
+        const id = c.match(/\]\s*id\s+(\S+)\s*$/)?.[1];
+        const st = c.match(/^\[Pagamento [^:\]]*: ([^\]]+)\]/)?.[1];
+        if (!id || !st) continue;
+        const texto = st.replace(/\s*\(atualizado automaticamente\)/i, '').replace(/\s*—\s*pelo ERPOS\s*$/i, '').replace(/^cancelado pelo ERPOS$/i, 'cancelado').trim();
+        const lista = passos.get(id) ?? [];
+        // Mesma frase repetida (o cron confere de novo e grava igual): fica só a primeira.
+        if (lista[lista.length - 1]?.texto !== texto) lista.push({ at: m.created_at, texto, canal: String(m.channel ?? '') });
+        passos.set(id, lista);
+      }
+      const nomeLoja = new Map((lojas ?? []).map((l) => [String(l.id), String(l.name)]));
+      const payments = cards.map((c, i) => ({
+        ...c,
+        loja: nomeLoja.get(String(rows[i].tenant_id)) ?? null,
+        origem: rows[i].channel ?? null,
+        sent_at: rows[i].sent_at ?? null,
+        updated_at: rows[i].updated_at ?? null,
+        substituido: !!rows[i].replaced_by && rows[i].replaced_by !== rows[i].id,
+        linha_do_tempo: passos.get(String(rows[i].id)) ?? [],
+      }));
+      return json({ success: true, data: { payments, has_more: (data ?? []).length > LIMITE } });
+    }
+
     if (action === 'pay') {
       const id = String(body.id ?? '');
       const op = String(body.op ?? '');
@@ -833,7 +885,10 @@ Deno.serve(async (req) => {
       const cards: any[] = [];
       const erros: string[] = [];
       for (const p of pontas) {
-        if (['paid', 'cancelled'].includes(p.status)) continue;
+        if (p.status === 'paid') continue;
+        // Recusado/cancelado no app do Inter com a conta ainda a pagar (dono, 2026-09-27): a pendência fica
+        // aberta até pagar, e o Pagar prepara um Pix novo. Sem conta (Pix avulso, pedido do grupo): cancelado encerra.
+        if (p.status === 'cancelled' && (pend.kind !== 'pagamento_pendente' || !billId)) continue;
         let atual = p;
         const vencido = ['draft', 'awaiting_pin'].includes(p.status) && Date.now() - new Date(p.created_at).getTime() > PAY_TTL_MS;
         if (vencido) {
@@ -845,7 +900,7 @@ Deno.serve(async (req) => {
           cards.push(await payCard1(admin, atual));
           continue;
         }
-        if (['expired', 'failed', 'rejected'].includes(atual.status)) {
+        if (['expired', 'failed', 'rejected', 'cancelled'].includes(atual.status)) {
           try {
             const out = await callInter('reprepare_payment', { tenant_id: p.tenant_id, payment_id: p.id });
             atual = out.payment;
@@ -872,13 +927,15 @@ Deno.serve(async (req) => {
       // deno-lint-ignore no-explicit-any
       const ids = ((lojas ?? []) as any[]).map((l) => String(l.tenant_id));
       if (!ids.length) return json({ success: true, data: { tenants: [] } });
-      const [itens, cats, mercs] = await Promise.all([
+      const [itens, cats, mercs, ings] = await Promise.all([
         admin.from('fin_item_classifications')
           .select('id, tenant_id, description, supplier_name, unit_label, last_unit_price, suggested_classe, suggested_dre_category_id, suggestion_reason, merchandise_category_id, is_service, created_at')
           .in('tenant_id', ids).is('classe', null).order('created_at', { ascending: false }).limit(300),
         admin.from('fin_dre_categories').select('id, tenant_id, name, group_type').in('tenant_id', ids)
           .is('deleted_at', null).eq('is_active', true).not('group_type', 'in', '(revenue,tax,cost)').order('name'),
         admin.from('fin_merchandise_categories').select('id, tenant_id, name').in('tenant_id', ids).eq('is_active', true).order('name'),
+        // Insumos para o vínculo com o estoque (mesma lista do fn_item_link_options)
+        admin.from('ingredients').select('id, tenant_id, name, unit').in('tenant_id', ids).is('deleted_at', null).order('name'),
       ]);
       if (itens.error) throw new Error(itens.error.message);
       // deno-lint-ignore no-explicit-any
@@ -889,6 +946,7 @@ Deno.serve(async (req) => {
           items: (itens.data ?? []).filter((i) => i.tenant_id === tid),
           dre_categories: (cats.data ?? []).filter((c) => c.tenant_id === tid).map((c) => ({ id: c.id, name: c.name, group_type: c.group_type })),
           merchandise_categories: (mercs.data ?? []).filter((m) => m.tenant_id === tid).map((m) => ({ id: m.id, name: m.name })),
+          ingredients: (ings.data ?? []).filter((g) => g.tenant_id === tid).map((g) => ({ id: g.id, name: g.name, unit: g.unit })),
         };
       }).filter((t) => t.items.length).sort((a, b) => a.name.localeCompare(b.name));
       return json({ success: true, data: { tenants } });
@@ -906,6 +964,20 @@ Deno.serve(async (req) => {
       });
       if (error) return fail(error.message);
       log('INFO', 'item classificado pelo chat', { tenant: body.tenant_id, n: ids.length, classe });
+      await syncPendenciaContagem(admin, String(body.tenant_id), 'item_sem_classe').catch(() => null);
+      return json({ success: true, data });
+    }
+
+    // Vínculo com insumo do estoque pelo chat (dono, 2026-09-27): mesma RPC da tela Classificação de
+    // Itens, com o JWT do dono (confere admin/gerente). O item vira CMV na categoria do insumo.
+    if (action === 'item_link') {
+      const upp = Number(body.units_per_package);
+      if (!body.tenant_id || !body.id || !body.ingredient_id || !(upp > 0)) return fail('Dados incompletos para vincular.');
+      const { data, error } = await userClient.rpc('fn_item_link_ingredient', {
+        p_tenant: String(body.tenant_id), p_id: String(body.id), p_ingredient_id: String(body.ingredient_id), p_units_per_package: upp,
+      });
+      if (error) return fail(error.message);
+      log('INFO', 'item vinculado a insumo pelo chat', { tenant: body.tenant_id, id: body.id });
       await syncPendenciaContagem(admin, String(body.tenant_id), 'item_sem_classe').catch(() => null);
       return json({ success: true, data });
     }

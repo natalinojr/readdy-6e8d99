@@ -1,11 +1,14 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { confirmar } from '@/components/base/Dialogos';
+import { un, mesmaUnidade, uppInicial, avisoConversao } from '@/lib/vinculoConversao';
 
 // Classificar itens de fornecedor (CMV × despesa) DENTRO do chat do assistente (2026-09-16).
 // Aparece embaixo do aviso "Itens novos para classificar" do assistente-cron. Carrega os pendentes
 // na hora de abrir (não o que estava no aviso), então aviso antigo mostra "tudo classificado".
 // Mesma regra da tela Financeiro › Classificação de Itens (fn_item_classify, via assistente-app):
-// despesa exige categoria DRE; CMV aceita categoria de mercadoria opcional. Vínculo com insumo
-// continua só pela tela (botão "Abrir a tela").
+// despesa exige categoria DRE; CMV aceita categoria de mercadoria opcional. Desde 2026-09-27 o CMV
+// também liga a um insumo do estoque já existente (fn_item_link_ingredient, via assistente-app
+// item_link — vira CMV na categoria do insumo); criar insumo novo continua só pela tela.
 
 interface Item {
   id: string; description: string; supplier_name: string | null; unit_label: string | null;
@@ -17,6 +20,7 @@ interface Loja {
   id: string; name: string; items: Item[];
   dre_categories: Array<{ id: string; name: string; group_type: string }>;
   merchandise_categories: Array<{ id: string; name: string }>;
+  ingredients?: Array<{ id: string; name: string; unit: string | null }>;
 }
 type Call = <T>(action: string, extra?: Record<string, unknown>) => Promise<T>;
 
@@ -27,8 +31,40 @@ function Linha({ loja, item, call, onFeito }: { loja: Loja; item: Item; call: Ca
   const [modo, setModo] = useState<'cmv' | 'despesa' | null>(null);
   const [cat, setCat] = useState(item.suggested_dre_category_id ?? '');
   const [merc, setMerc] = useState(item.merchandise_category_id ?? '');
+  // Vínculo com insumo: busca → escolhe → "1 <un da nota> = N <un do insumo>"
+  const [busca, setBusca] = useState('');
+  const [ingId, setIngId] = useState<string | null>(null);
+  const [upp, setUpp] = useState('');
+  const insumos = loja.ingredients ?? [];
+  const ing = ingId ? insumos.find((g) => g.id === ingId) : undefined;
+  const achados = useMemo(() => {
+    const norm = (t: string) => t.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+    const q = norm(busca.trim());
+    if (!q) return [];
+    return insumos.filter((g) => norm(g.name).includes(q)).slice(0, 6);
+  }, [busca, insumos]);
+  const itemUn = item.unit_label === 'unit' ? 'un' : item.unit_label;
   const [busy, setBusy] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
+
+  const vincular = async () => {
+    if (!ing) return;
+    const n = Number(upp.replace(',', '.'));
+    if (!(n > 0)) { setErro(`Informe quanto do insumo (${un(ing.unit)}) vem em 1 ${itemUn || 'un'}`); return; }
+    if (n === 1 && !mesmaUnidade(item.unit_label, ing.unit)
+      && !(await confirmar({ titulo: `Confere? 1 ${itemUn || 'un'} de "${item.description}" = 1 ${un(ing.unit)} do insumo.`, confirmarLabel: 'Confirmar' }))) return;
+    const aviso = avisoConversao(item.unit_label, ing.unit, n);
+    if (aviso && !(await confirmar({ titulo: aviso, confirmarLabel: 'Confirmar' }))) return;
+    setBusy(true); setErro(null);
+    try {
+      await call('item_link', { tenant_id: loja.id, id: item.id, ingredient_id: ing.id, units_per_package: n });
+      onFeito(item.id);
+      window.dispatchEvent(new CustomEvent('itens-classificados', { detail: { tenantId: loja.id } }));
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : 'Não foi possível vincular');
+      setBusy(false);
+    }
+  };
 
   const salvar = async (classe: 'cmv' | 'despesa') => {
     if (classe === 'despesa' && !cat) { setErro('Escolha a categoria da despesa'); return; }
@@ -66,13 +102,50 @@ function Linha({ loja, item, call, onFeito }: { loja: Loja; item: Item; call: Ca
       )}
       {modo === 'cmv' && (
         <div className="mt-2 space-y-2">
-          <select value={merc} onChange={(e) => setMerc(e.target.value)} className={sel}>
-            <option value="">Categoria de mercadoria (opcional)</option>
-            {loja.merchandise_categories.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
-          </select>
+          {!item.is_service && (ing ? (
+            <div className="rounded-lg border border-emerald-200 bg-emerald-50/60 p-2 space-y-1.5">
+              <div className="flex items-center gap-1.5">
+                <i className="ri-links-line text-emerald-600" />
+                <p className="flex-1 min-w-0 text-sm font-semibold text-zinc-800 truncate">{ing.name}</p>
+                <button disabled={busy} onClick={() => { setIngId(null); setUpp(''); }} className="text-xs text-zinc-500 underline cursor-pointer">trocar</button>
+              </div>
+              <label className="flex items-center gap-1.5 text-sm text-zinc-700">
+                1 {itemUn || 'un'} =
+                <input autoFocus value={upp} inputMode="decimal" placeholder="?" onChange={(e) => setUpp(e.target.value)}
+                  className="w-20 h-8 rounded border border-zinc-200 bg-white px-2 text-sm" />
+                {un(ing.unit)}
+              </label>
+              <p className="text-[11px] text-zinc-500">Quanto do insumo entra no estoque a cada {itemUn || 'unidade'} comprada. O item vira CMV na categoria do insumo.</p>
+            </div>
+          ) : insumos.length > 0 && (
+            <div>
+              <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Ligar a insumo do estoque (buscar)…" className={sel} />
+              {achados.length > 0 && (
+                <div className="mt-1 rounded-lg border border-zinc-200 bg-white divide-y divide-zinc-100 overflow-hidden">
+                  {achados.map((g) => (
+                    <button key={g.id} onClick={() => { setIngId(g.id); setUpp(uppInicial(item.unit_label, g.unit)); setErro(null); }}
+                      className="w-full flex items-center justify-between gap-2 px-2.5 py-2 text-left text-sm text-zinc-800 hover:bg-emerald-50 cursor-pointer">
+                      <span className="truncate">{g.name}</span><span className="text-[11px] text-zinc-400 shrink-0">{un(g.unit)}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {busca.trim() && !achados.length && <p className="text-[11px] text-zinc-500 mt-1">Nenhum insumo com esse nome. Para criar um novo, abra a tela.</p>}
+            </div>
+          ))}
+          {!ing && (
+            <select value={merc} onChange={(e) => setMerc(e.target.value)} className={sel}>
+              <option value="">Categoria de mercadoria (opcional)</option>
+              {loja.merchandise_categories.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+            </select>
+          )}
           <div className="flex gap-2">
-            <button disabled={busy} onClick={() => setModo(null)} className="h-9 px-3 rounded-lg border border-zinc-200 text-sm text-zinc-600 cursor-pointer">Voltar</button>
-            <button disabled={busy} onClick={() => salvar('cmv')} className="flex-1 h-9 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold cursor-pointer disabled:opacity-50">{busy ? 'Salvando…' : 'Salvar como CMV'}</button>
+            <button disabled={busy} onClick={() => { setModo(null); setIngId(null); setBusca(''); setUpp(''); }} className="h-9 px-3 rounded-lg border border-zinc-200 text-sm text-zinc-600 cursor-pointer">Voltar</button>
+            {ing ? (
+              <button disabled={busy} onClick={vincular} className="flex-1 h-9 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold cursor-pointer disabled:opacity-50">{busy ? 'Salvando…' : 'Vincular e salvar CMV'}</button>
+            ) : (
+              <button disabled={busy} onClick={() => salvar('cmv')} className="flex-1 h-9 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold cursor-pointer disabled:opacity-50">{busy ? 'Salvando…' : 'Salvar como CMV'}</button>
+            )}
           </div>
         </div>
       )}

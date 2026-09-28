@@ -49,8 +49,8 @@ export function rotaLiberada(rota: string, c: ContextoAcesso): boolean {
   if (caminho.startsWith('/pedidos')) return c.pode('gestao_pedidos');
   if (caminho.startsWith('/relatorios')) return algum(c, ...REL_KEYS);
   if (caminho.startsWith('/trafego-pago')) return c.pode('relatorio_financeiro');
-  // Pendências da loja: mesma turma do Financeiro.
-  if (caminho.startsWith('/pendencias')) return !!c.perfil && PAPEIS_FINANCEIRO.includes(c.perfil);
+  // Pendências da loja: todos (2026-09-28); a própria caixa filtra o que cada papel vê.
+  if (caminho.startsWith('/pendencias')) return !!c.perfil;
   return false;
 }
 
