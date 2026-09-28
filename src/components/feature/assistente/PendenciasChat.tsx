@@ -424,13 +424,20 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
             {/* Pedido de pagamento (2026-09-24): decide aqui; aprovar já chama o Pix com PIN. */}
             {ehPedido && (
               <>
-                <button onClick={() => aprovarEPagar(p)} disabled={busy} className={PRINCIPAL}>
-                  {busy ? 'Aprovando…' : <><i className="ri-check-line" /> {p.payload?.tipo === 'compra_online' ? 'Autorizar compra' : 'Aprovar e pagar'}</>}
-                </button>
+                {/* Compra online: o dono classifica (Despesa/CMV) antes — abre o pedido na tela de aprovar */}
+                {p.payload?.tipo === 'compra_online' ? (
+                  <button onClick={() => onAbrir(p)} disabled={busy} className={PRINCIPAL}>
+                    <i className="ri-price-tag-3-line" /> Classificar e pagar
+                  </button>
+                ) : (
+                  <button onClick={() => aprovarEPagar(p)} disabled={busy} className={PRINCIPAL}>
+                    {busy ? 'Aprovando…' : <><i className="ri-check-line" /> Aprovar e pagar</>}
+                  </button>
+                )}
                 <button onClick={() => { setMotivoDe(p.id); setMotivo(''); }} disabled={busy} className={NEUTRO}>
                   <i className="ri-close-line" /> Recusar
                 </button>
-                {p.rota && (
+                {p.rota && p.payload?.tipo !== 'compra_online' && (
                   <button onClick={() => onAbrir(p)} disabled={busy} className={SECUNDARIO}>
                     <i className="ri-file-list-3-line" /> Ver pedido
                   </button>

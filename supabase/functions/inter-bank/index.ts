@@ -637,7 +637,31 @@ async function preparePayment(admin: Admin, tenantId: string, body: Record<strin
     if (!copiaValida(copia)) throw new Error('Pix copia e cola inválido (o código de conferência não bate). Confira se veio inteiro.');
     const info = lerCopia(copia);
     const host = String(info.location ?? '').toLowerCase().split('/')[0];
-    if (!PIX_COPIA_HOSTS.has(host)) throw new Error(`Pix copia e cola só é aceito de guia do governo (FGTS Digital). Este é de "${info.nome ?? host ?? 'emissor desconhecido'}": pague pelo app do Inter.`);
+    // Compra online (2026-09-28): copia e cola ESTÁTICO (a chave vem no código, sem location) vale
+    // quando essa chave está em Fornecedores ou nos Pix permitidos — mesma regra do Pix por chave
+    // (ex.: pix_marketplace@mercadolibre.com cadastrada pelo dono com o PIN). Dinâmico só de guia.
+    let cadastro: Record<string, unknown> | null = null;
+    if (!PIX_COPIA_HOSTS.has(host)) {
+      const k = !info.location && info.chave ? normPixKey(String(info.chave)) : null;
+      if (k && k.kind !== 'desconhecida') {
+        const { data: sups } = await admin.from('fin_suppliers').select('id, name, legal_name, cnpj, pix_key, is_active').eq('tenant_id', tenantId).not('pix_key', 'is', null).limit(5000);
+        const sup = (sups ?? []).find((x) => x.is_active !== false && normPixKey(String(x.pix_key)).key === k.key);
+        if (sup) cadastro = { supplier_id: sup.id, pix_key: k.key, pix_key_kind: k.kind, beneficiary_name: sup.legal_name || sup.name, beneficiary_doc: sup.cnpj ?? null };
+        else {
+          const { data: fav } = await admin.from('fin_pix_favorecidos').select('id, name, pix_key_kind').eq('tenant_id', tenantId).eq('pix_key', k.key).eq('is_active', true).maybeSingle();
+          if (fav) cadastro = { favorecido_id: fav.id, pix_key: k.key, pix_key_kind: k.kind, beneficiary_name: fav.name };
+        }
+      }
+      if (!cadastro) {
+        throw new Error(info.chave && !info.location
+          ? `A chave desse Pix (${info.chave}, ${info.nome ?? 'sem nome'}) não está em Fornecedores nem nos Pix permitidos. Cadastre em Assistente › Pix permitidos para pagar por aqui.`
+          : `Pix copia e cola só é aceito de guia do governo ou com chave cadastrada. Este é de "${info.nome ?? host ?? 'emissor desconhecido'}": pague pelo app do Inter.`);
+      }
+      // O valor é o do código: pagar outro valor para uma cobrança com valor definido não vale
+      if (info.valor != null && body.valor != null && Math.abs(Number(body.valor) - Number(info.valor)) > 0.009) {
+        throw new Error(`O valor pedido (${brl(body.valor)}) é diferente do valor do Pix (${brl(info.valor)}).`);
+      }
+    }
     const valor = round2(Number(body.valor ?? info.valor ?? 0));
     if (!(valor > 0)) throw new Error('Informe o valor da guia.');
     const { data: dup } = await admin.from('fin_inter_payments').select('id').eq('tenant_id', tenantId).eq('pix_copia_e_cola', copia).in('status', PAY_LIVE).limit(1);
@@ -650,6 +674,7 @@ async function preparePayment(admin: Admin, tenantId: string, body: Record<strin
     Object.assign(row, {
       amount: valor, pix_copia_e_cola: copia, beneficiary_name: bill?.supplier ?? info.nome ?? null,
       due_date: bill?.due_date ?? null,
+      ...(cadastro ?? {}),
     });
   } else if (tipo === 'pix') {
     const k = normPixKey(String(body.chave ?? ''));

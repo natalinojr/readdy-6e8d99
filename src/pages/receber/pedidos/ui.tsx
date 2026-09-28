@@ -69,7 +69,7 @@ export function Chips({ opcoes, valor, onValor }: { opcoes: { v: string; label: 
 }
 
 /** Lista de categorias de despesa com busca (poucas dezenas; cabe na tela). */
-export function Categorias({ categorias, valor, onValor, dica }: { categorias: Categoria[] | null; valor: string | null; onValor: (id: string) => void; dica?: string }) {
+export function Categorias({ categorias, valor, onValor, dica, titulo }: { categorias: Categoria[] | null; valor: string | null; onValor: (id: string) => void; dica?: string; titulo?: string }) {
   const [busca, setBusca] = useState('');
   const [aberto, setAberto] = useState(false);
   const escolhida = categorias?.find((c) => c.id === valor);
@@ -79,7 +79,7 @@ export function Categorias({ categorias, valor, onValor, dica }: { categorias: C
   }, [categorias, busca]);
   return (
     <div>
-      <Rotulo dica={dica}>Classificação (no que foi o gasto)</Rotulo>
+      <Rotulo dica={dica}>{titulo ?? 'Classificação (no que foi o gasto)'}</Rotulo>
       {!aberto ? (
         <button type="button" onClick={() => setAberto(true)} className={`${cls} text-left flex items-center justify-between cursor-pointer`}>
           <span className={escolhida ? 'text-zinc-800' : 'text-zinc-400'}>{escolhida?.nome ?? (categorias ? 'Escolher…' : 'Carregando…')}</span>

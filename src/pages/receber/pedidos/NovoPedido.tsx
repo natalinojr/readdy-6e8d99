@@ -6,6 +6,7 @@ import { brl, dataBR, hojeISO, normalizar, somaDias } from '../api';
 import { chamarPedidos, comprovanteParaEnvio, type Categoria, type ContextoPedidos, type Fornecedor, type Freela, type PrintLido, type TipoPedido } from './api';
 import { Categorias, Chips, Comprovante, Enviar, Rotulo, Texto, Valor, cls, lerValor } from './ui';
 import { lerLinkCompra } from './linkCompra';
+import { lerPixCopia } from './pixCopia';
 
 interface Props {
   tipo: TipoPedido;
@@ -61,6 +62,10 @@ export default function NovoPedido({ tipo, tenantId, contexto, onEnviado, onErro
   const [descricaoMexida, setDescricaoMexida] = useState(false);
   // Print do checkout (2026-09-28): o jeito principal — a IA lê itens, desconto, frete e total
   const [lido, setLido] = useState<PrintLido | null>(null);
+  // Pix copia e cola do checkout (2026-09-28): valor exato e quem recebe
+  const [pixTexto, setPixTexto] = useState('');
+  const pixLido = useMemo(() => (tipo === 'compra_online' && pixTexto.trim() ? lerPixCopia(pixTexto) : null), [tipo, pixTexto]);
+  useEffect(() => { if (pixLido?.valor) setValor(pixLido.valor.toFixed(2).replace('.', ',')); }, [pixLido]);
   const [lendo, setLendo] = useState(false);
   const [verLink, setVerLink] = useState(!!linkInicial);
   useEffect(() => { if (tipo === 'compra_online' && !descricaoMexida && !lido) setDescricao(anuncio?.titulo ?? ''); }, [tipo, anuncio, descricaoMexida, lido]);
@@ -77,7 +82,7 @@ export default function NovoPedido({ tipo, tenantId, contexto, onEnviado, onErro
       const itens = l.itens ?? [];
       if (!descricaoMexida && itens.length) setDescricao(itens.length === 1 ? itens[0].descricao : `${itens.length} itens: ${itens.map((i) => i.descricao).join('; ')}`.slice(0, 300));
       setQuantidade(String(itens.length === 1 ? itens[0].quantidade : 1).replace('.', ','));
-      if (l.total != null) setValor(l.total.toFixed(2).replace('.', ','));
+      if (l.total != null && !pixLido?.valor) setValor(l.total.toFixed(2).replace('.', ','));
     } catch (e) {
       onErro((e as Error).message);
     } finally {
@@ -129,6 +134,10 @@ export default function NovoPedido({ tipo, tenantId, contexto, onEnviado, onErro
     if (tipo === 'compra_online') {
       if (lendo) return 'Lendo o print…';
       if (!foto && !anuncio) return 'Mande o print da compra';
+      if (!pixTexto.trim()) return 'Cole o Pix copia e cola';
+      if (!pixLido) return 'Pix copia e cola incompleto';
+      if (pixLido.dinamico) return 'Pix sem a chave no código';
+      if (!pixLido.valor) return 'Esse Pix não tem valor';
       if (link.trim() && !anuncio) return 'Link não reconhecido';
       if (!descricao.trim()) return 'Diga o que é o produto';
       if (!(lerValor(quantidade) > 0)) return 'Informe a quantidade';
@@ -165,6 +174,7 @@ export default function NovoPedido({ tipo, tenantId, contexto, onEnviado, onErro
         freelancer_id: freelaId, funcao, dias,
         link: tipo === 'compra_online' ? link : undefined, quantidade: tipo === 'compra_online' ? lerValor(quantidade) : undefined,
         lido: tipo === 'compra_online' ? lido : undefined,
+        pix_copia_e_cola: tipo === 'compra_online' ? pixLido?.codigo : undefined,
         valores_dia: tipo === 'freelancer' ? Object.fromEntries(dias.map((d) => [d, lerValor(valoresDia[d] ?? '')])) : undefined,
       });
       if (erro) { onErro(erro); return; }
@@ -342,8 +352,14 @@ export default function NovoPedido({ tipo, tenantId, contexto, onEnviado, onErro
           )}
           <Texto label="O que é?" valor={descricao} onValor={(x) => { setDescricaoMexida(true); setDescricao(x); }} placeholder="Ex.: pegador de massa inox 30 cm" />
           <Texto label="Quantidade" valor={quantidade} onValor={(x) => setQuantidade(x.replace(/[^\d.,]/g, ''))} inputMode="decimal" />
-          <Valor label="Valor total (com frete)" valor={valor} onValor={setValor} />
-          <p className="text-xs text-zinc-500 px-1">Não compre pela sua conta: o financeiro compra na conta da loja (CNPJ), e a nota do vendedor entra sozinha no sistema.</p>
+          <div>
+            <Rotulo dica="Na tela de pagamento do site, escolha Pix e toque em Copiar código.">Pix copia e cola</Rotulo>
+            <textarea rows={3} value={pixTexto} onChange={(e) => setPixTexto(e.target.value)} placeholder="00020126…" className={`${cls} font-mono text-xs`} />
+            {pixTexto.trim() && !pixLido && <p className="text-xs text-red-600 px-1 mt-1">Código incompleto ou alterado. Copie de novo no site e cole inteiro.</p>}
+            {pixLido && <ConferePix pix={pixLido} total={lido?.total ?? null} />}
+          </div>
+          {!pixLido?.valor && <Valor label="Valor total (com frete)" valor={valor} onValor={setValor} />}
+          <p className="text-xs text-zinc-500 px-1">Vá até a tela de pagamento, escolha Pix e copie o código. Não pague: o financeiro aprova e paga pelo banco da loja. Se der, use a conta da loja (CNPJ).</p>
         </>
       )}
 
@@ -356,7 +372,7 @@ export default function NovoPedido({ tipo, tenantId, contexto, onEnviado, onErro
       )}
 
       <Texto label={tipo === 'compra_online' ? 'Para que é? (opcional)' : 'Observação (opcional)'} valor={obs} onValor={setObs} multilinha placeholder={tipo === 'compra_online' ? 'Ex.: o nosso quebrou; precisa até sexta' : 'Algo que o financeiro precisa saber'} />
-      <p className="text-xs text-zinc-500 px-1">{tipo === 'compra_online' ? 'O pedido vai para o financeiro autorizar e comprar.' : 'O pedido vai para o financeiro aprovar. Só depois vira conta a pagar.'}</p>
+      <p className="text-xs text-zinc-500 px-1">{tipo === 'compra_online' ? 'O pedido vai para o financeiro aprovar e pagar o Pix. O Pix do site costuma vencer rápido: peça logo depois de gerar.' : 'O pedido vai para o financeiro aprovar. Só depois vira conta a pagar.'}</p>
 
       <Enviar onClick={enviar} disabled={!!faltando || enviando}>
         {enviando ? 'Enviando…' : faltando ?? 'Enviar para aprovação'}
@@ -384,6 +400,21 @@ export function ResumoLido({ l }: { l: PrintLido }) {
         {l.total != null && <p className="flex justify-between font-bold text-zinc-900"><span>Total</span><span>{brl(l.total)}</span></p>}
       </div>
       {l.entrega && <p className="text-xs text-zinc-500 pt-1"><i className="ri-map-pin-line" /> {l.entrega}</p>}
+    </div>
+  );
+}
+
+/** O que o Pix diz (quem recebe e quanto) conferido com o total lido do print. */
+export function ConferePix({ pix, total }: { pix: { nome: string | null; chave: string | null; valor: number | null; dinamico: boolean }; total: number | null }) {
+  const bate = total != null && pix.valor != null ? Math.abs(total - pix.valor) <= 0.02 : null;
+  return (
+    <div className={`mt-2 rounded-2xl border p-3 text-sm space-y-1 ${pix.dinamico || bate === false ? 'bg-red-50 border-red-200' : 'bg-white border-zinc-100'}`}>
+      <p className="flex justify-between gap-3"><span className="text-zinc-500">Quem recebe</span><span className="font-semibold text-zinc-800 text-right">{pix.nome ?? '—'}</span></p>
+      {pix.chave && <p className="flex justify-between gap-3"><span className="text-zinc-500">Chave</span><span className="text-zinc-700 text-right break-all">{pix.chave}</span></p>}
+      <p className="flex justify-between gap-3"><span className="text-zinc-500">Valor do Pix</span><span className="font-bold text-zinc-900">{pix.valor != null ? brl(pix.valor) : 'sem valor'}</span></p>
+      {pix.dinamico && <p className="text-xs text-red-700">Esse Pix não traz a chave no código (cobrança dinâmica): não dá para conferir quem recebe.</p>}
+      {bate === true && <p className="text-xs font-semibold text-emerald-700"><i className="ri-checkbox-circle-line" /> Bate com o total do print</p>}
+      {bate === false && <p className="text-xs font-semibold text-red-700"><i className="ri-error-warning-line" /> Diferente do total do print ({brl(total!)}). Confira se é o Pix desta compra.</p>}
     </div>
   );
 }

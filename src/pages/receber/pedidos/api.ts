@@ -55,6 +55,9 @@ export interface Pedido {
   comprado_em?: string | null;
   comprado_por_nome?: string | null;
   compra_detalhe?: PrintLido | null;
+  pix_copia_e_cola?: string | null;
+  /** Compra online: a chave do Pix está em Fornecedores/Pix permitidos (senão o Inter recusa). */
+  pix_liberado?: boolean;
 }
 
 /** O que a IA leu do print do checkout (Edge pedidos-pagamento › ler_print). */
@@ -99,7 +102,7 @@ export function situacao(p: Pedido): { texto: string; cor: string } {
   if (p.status === 'recusada') return { texto: 'Recusado', cor: 'bg-red-100 text-red-700' };
   if (p.status === 'cancelada') return { texto: 'Cancelado', cor: 'bg-zinc-100 text-zinc-500' };
   if (p.status === 'comprada') return { texto: `Comprado${p.pedido_externo ? ` · pedido ${p.pedido_externo}` : ''}`, cor: 'bg-emerald-100 text-emerald-700' };
-  if (p.tipo === 'compra_online') return { texto: 'Autorizado · falta comprar', cor: 'bg-sky-100 text-sky-700' };
+  if (p.tipo === 'compra_online' && !p.pix_copia_e_cola) return { texto: 'Autorizado · falta comprar', cor: 'bg-sky-100 text-sky-700' };
   if (p.pago) return { texto: 'Pago', cor: 'bg-emerald-100 text-emerald-700' };
   if (p.pix_inter === 'pago') return { texto: 'Pix enviado · falta a baixa do extrato', cor: 'bg-emerald-100 text-emerald-700' };
   if (p.pix_inter === 'aguardando') return { texto: 'Pix enviado · aprovar no app do Inter', cor: 'bg-violet-100 text-violet-700' };

@@ -5,6 +5,9 @@
 // Nada aqui paga: o Pix continua pelo caminho de sempre (trava de Pix permitidos intacta).
 // Compra online (2026-09-28): o pedido traz o link; aprovar só AUTORIZA (sem conta a pagar) e o dono
 // compra na conta da loja e registra (ação 'comprado'). O custo entra pela NF-e do vendedor.
+// Desde 2026-09-28 (tarde): o pedido traz o Pix copia e cola do checkout; o dono classifica
+// (Despesa/CMV) ao aprovar, nasce a compra com a conta a pagar e o Pix sai pelo Inter com o PIN.
+// A NF-e do vendedor que chegar depois é ignorada (gatilho trg_nota_da_compra_online).
 // verify_jwt = true.
 // deno-lint-ignore-file no-explicit-any
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
@@ -14,6 +17,7 @@ import {
   type TipoPedido,
 } from '../_shared/pedidos-pagamento.ts';
 import { lerPrintCompra } from './print-compra.ts';
+import { acharCopiaECola, lerCopia } from '../_shared/guias.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -31,7 +35,7 @@ const somaDias = (iso: string, d: number) => new Date(Date.parse(`${iso}T12:00:0
 const txt = (s: unknown, max = 300) => String(s ?? '').trim().slice(0, max);
 const dataOk = (d: unknown) => typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d) && !Number.isNaN(Date.parse(`${d}T12:00:00Z`));
 
-const CAMPOS = 'id, tipo, status, descricao, valor, data_gasto, vencimento, favorecido_nome, favorecido_doc, pix_chave, dre_category_id, supplier_id, freelancer_id, freelancer_funcao, dias, valores_dia, comprovante_path, purchase_id, bill_id, obs, solicitado_por, solicitado_por_nome, decidido_por_nome, decidido_em, motivo_recusa, created_at, link_url, anuncio_id, quantidade, pedido_externo, valor_pago, comprado_em, comprado_por_nome, compra_detalhe';
+const CAMPOS = 'id, tipo, status, descricao, valor, data_gasto, vencimento, favorecido_nome, favorecido_doc, pix_chave, dre_category_id, supplier_id, freelancer_id, freelancer_funcao, dias, valores_dia, comprovante_path, purchase_id, bill_id, obs, solicitado_por, solicitado_por_nome, decidido_por_nome, decidido_em, motivo_recusa, created_at, link_url, anuncio_id, quantidade, pedido_externo, valor_pago, comprado_em, comprado_por_nome, compra_detalhe, pix_copia_e_cola';
 
 interface Ctx { admin: any; tenantId: string; userId: string; email: string | null; role: string; perms: Record<string, boolean> }
 
@@ -73,6 +77,16 @@ async function comPagamento(ctx: Ctx, pedidos: any[]) {
     else if (['cancelled', 'rejected'].includes(x.status)) { if (!pix.has(x.bill_id)) pix.set(x.bill_id, 'recusado'); }
     else if (pix.get(x.bill_id) !== 'pago') pix.set(x.bill_id, 'aguardando');
   }
+  // Compra online: a chave de dentro do Pix está em Fornecedores ou nos Pix permitidos? (senão o Inter recusa)
+  const chaves = [...new Set(pedidos.filter((p) => p.tipo === 'compra_online' && p.pix_chave).map((p) => String(p.pix_chave)))];
+  const liberadas = new Set<string>();
+  if (chaves.length) {
+    const [{ data: fv }, { data: sp }] = await Promise.all([
+      ctx.admin.from('fin_pix_favorecidos').select('pix_key').eq('tenant_id', ctx.tenantId).eq('is_active', true).in('pix_key', chaves),
+      ctx.admin.from('fin_suppliers').select('pix_key').eq('tenant_id', ctx.tenantId).in('pix_key', chaves),
+    ]);
+    for (const x of [...(fv ?? []), ...(sp ?? [])] as any[]) liberadas.add(String(x.pix_key));
+  }
   return pedidos.map((p) => {
     const b: any = p.bill_id ? bm.get(p.bill_id) : null;
     return {
@@ -83,6 +97,7 @@ async function comPagamento(ctx: Ctx, pedidos: any[]) {
       pago_em: b?.status === 'paid' ? b.paid_date : null,
       tem_comprovante: !!p.comprovante_path,
       comprovante_path: undefined,
+      ...(p.tipo === 'compra_online' ? { pix_liberado: !!p.pix_chave && liberadas.has(String(p.pix_chave)) } : {}),
     };
   });
 }
@@ -138,10 +153,17 @@ async function criar(ctx: Ctx, body: Record<string, any>) {
     const oque = descricao || link?.titulo || '';
     if (!oque) return erro('Diga o que é o produto');
     const det = detalheCompra(body.lido);
+    // Pix copia e cola do checkout: o valor exato e quem recebe saem dele (não do print)
+    const copia = acharCopiaECola(txt(body.pix_copia_e_cola, 1000));
+    if (!copia) return erro('Cole o Pix copia e cola da tela de pagamento (o código inteiro)');
+    const pix = lerCopia(copia);
+    if (!(Number(pix.valor) > 0)) return erro('Esse Pix não traz o valor. Gere de novo no site e cole o código.');
+    if (pix.location) return erro('Esse Pix é de cobrança dinâmica (sem a chave no código) — não dá para conferir quem recebe. Escolha pagar com Pix no site e copie o código de novo.');
+    linha.valor = round2(Number(pix.valor));
     Object.assign(linha, {
-      descricao: oque, favorecido_nome: link?.site ?? (txt(det?.site, 60) || 'Compra online'),
+      descricao: oque, favorecido_nome: link?.site ?? (txt(det?.site, 60) || txt(pix.nome, 60) || 'Compra online'),
       link_url: link?.url.slice(0, 1000) ?? null, anuncio_id: link?.anuncio_id ?? null, quantidade: qtd,
-      compra_detalhe: det, pix_chave: null, favorecido_doc: null,
+      compra_detalhe: det, pix_copia_e_cola: copia, pix_chave: pix.chave ?? null, favorecido_doc: null,
     });
   } else if (tipo === 'fornecedor') {
     if (!descricao) return erro('Conte o que está sendo pago');
@@ -235,14 +257,14 @@ async function duplicado(ctx: Ctx, tipo: TipoPedido, l: Record<string, any>): Pr
     (!!nome && normNome(r.favorecido_nome) === nome);
 
   let q = ctx.admin.from('fin_payment_requests')
-    .select('id, status, valor, descricao, favorecido_nome, pix_chave, freelancer_id, supplier_id, data_gasto, vencimento, dias, solicitado_por_nome, created_at, link_url, anuncio_id')
+    .select('id, status, valor, descricao, favorecido_nome, pix_chave, freelancer_id, supplier_id, data_gasto, vencimento, dias, solicitado_por_nome, created_at, link_url, anuncio_id, pix_copia_e_cola')
     .eq('tenant_id', ctx.tenantId).eq('tipo', tipo).in('status', ['pendente', 'aprovada']);
   if (tipo === 'compra_online') {
     // Mesmo produto já pedido (esperando ou autorizado, ainda não comprado)
     const { data: cs, error: ec } = await q.limit(100);
     if (ec) throw new Error(`Falha ao conferir pedido repetido: ${ec.message}`);
-    // Com link: mesmo anúncio. Só print: mesmo produto e mesmo valor.
-    const igual: any = (cs ?? []).find((r: any) => (l.anuncio_id && r.anuncio_id ? r.anuncio_id === l.anuncio_id
+    // Mesmo Pix copia e cola; com link: mesmo anúncio. Só print: mesmo produto e mesmo valor.
+    const igual: any = (cs ?? []).find((r: any) => (l.pix_copia_e_cola && r.pix_copia_e_cola === l.pix_copia_e_cola) || (l.anuncio_id && r.anuncio_id ? r.anuncio_id === l.anuncio_id
       : l.link_url && r.link_url ? r.link_url === l.link_url
       : Number(r.valor) === Number(l.valor) && normNome(r.descricao) === normNome(l.descricao)));
     if (!igual) return null;
@@ -324,7 +346,7 @@ async function linkCompleto(texto: string): Promise<string> {
  */
 async function prepararPagamento(ctx: Ctx, pedidoId: string): Promise<{ preparado: boolean; motivo?: string; aviso?: string; pendencia_id?: string | null }> {
   const { data: p } = await ctx.admin.from('fin_payment_requests')
-    .select('id, tipo, status, valor, favorecido_nome, pix_chave, freelancer_id, bill_id, descricao')
+    .select('id, tipo, status, valor, favorecido_nome, pix_chave, pix_copia_e_cola, freelancer_id, bill_id, descricao')
     .eq('id', pedidoId).eq('tenant_id', ctx.tenantId).maybeSingle();
   if (!p || p.status !== 'aprovada' || !p.bill_id) return { preparado: false, motivo: 'pedido sem conta a pagar', aviso: 'Esse pedido não tem conta a pagar.' };
   // O aviso "pague pelo app do banco" (pedido_pagamento_pagar) sai quando o pagamento se resolve
@@ -376,12 +398,13 @@ async function prepararPagamento(ctx: Ctx, pedidoId: string): Promise<{ preparad
     }))?.data?.id ?? null;
   };
   let motivo = '';
-  if (chave) {
+  const copia: string | null = p.tipo === 'compra_online' ? p.pix_copia_e_cola : null;
+  if (chave || copia) {
     const r = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/inter-bank`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-internal-key': Deno.env.get('FISCAL_INTERNAL_KEY') ?? '' },
       body: JSON.stringify({
-        action: 'prepare_payment', tenant_id: ctx.tenantId, tipo: 'pix', chave, valor, bill_id: bill.id,
+        action: 'prepare_payment', tenant_id: ctx.tenantId, tipo: 'pix', ...(copia ? { copia_e_cola: copia } : { chave }), valor, bill_id: bill.id,
         descricao: `${ROTULO[p.tipo] ?? 'Pedido'} — ${p.descricao}`.slice(0, 140), requested_by: ctx.userId, channel: 'app',
       }),
     }).catch((e) => ({ ok: false, status: 0, json: async () => ({ error: String(e) }) }) as unknown as Response);
@@ -432,11 +455,90 @@ async function prepararPagamento(ctx: Ctx, pedidoId: string): Promise<{ preparad
   await ctx.admin.rpc('fn_pendencia_upsert', {
     p_tenant: ctx.tenantId, p_kind: 'pedido_pagamento_pagar', p_ref: p.id,
     p_titulo: titulo,
-    p_detalhe: `${chave ? `Chave ${chave}. ` : ''}O assistente não preparou o Pix: ${motivo}. Pague pelo app do banco — a conciliação dá baixa na conta.`,
+    p_detalhe: `${chave ? `Chave ${chave}. ` : ''}O assistente não preparou o Pix: ${motivo.replace(/\.+$/, '')}. Pague pelo app do banco — a conciliação dá baixa na conta.`,
     p_payload: { pedido_id: p.id, bill_id: bill.id, chave }, p_rota: '/receber?aprovar=1',
     p_urgencia: 'alta', p_acao_requerida: true, p_origem: 'app', p_reabrir: true,
   });
-  return { preparado: false, motivo, aviso: `O Pix não foi preparado: ${motivo}. Pague pelo app do banco — a conciliação dá baixa.` };
+  return { preparado: false, motivo, aviso: `O Pix não foi preparado: ${motivo.replace(/\.+$/, '')}. Pague pelo app do banco — a conciliação dá baixa.` };
+}
+
+/**
+ * Compra online com Pix (2026-09-28): o dono classifica e a compra nasce (purchase-write, chave interna)
+ * com os itens lidos do print, somando exatamente o valor do Pix; a conta a pagar da compra é a que o
+ * Pix quita. Despesa → itens com a categoria do DRE (a DRE tira do CMV); CMV → categoria de mercadoria.
+ * O pedido é travado em 'aprovada' ANTES de criar a compra (dois toques não criam duas compras).
+ */
+async function aprovarCompraOnline(ctx: Ctx, p: any, body: Record<string, any>): Promise<{ purchase_id: string; bill_id: string } | { erro: string; status?: number }> {
+  const classe = String(body.classe ?? '');
+  const cat = txt(body.categoria_id, 40) || null;
+  if (!['despesa', 'cmv'].includes(classe)) return { erro: 'Escolha se é Despesa ou CMV (mercadoria)' };
+  if (classe === 'despesa') {
+    if (!cat || !(await categorias(ctx)).some((c: any) => c.id === cat)) return { erro: 'Escolha a categoria da despesa' };
+  } else if (cat) {
+    const { data: mc } = await ctx.admin.from('fin_merchandise_categories').select('id').eq('id', cat).eq('tenant_id', ctx.tenantId).maybeSingle();
+    if (!mc) return { erro: 'Categoria de mercadoria inválida' };
+  } else {
+    return { erro: 'Escolha a categoria da mercadoria' };
+  }
+  if (p.status !== 'pendente') return { erro: `Esse pedido já foi ${p.status}` };
+  const nome = await nomeDoUsuario(ctx.admin, ctx.userId, ctx.email);
+  const agora = new Date().toISOString();
+  const { data: trava } = await ctx.admin.from('fin_payment_requests').update({
+    status: 'aprovada', decidido_por: ctx.userId, decidido_por_nome: nome, decidido_em: agora, updated_at: agora,
+    ...(classe === 'despesa' ? { dre_category_id: cat } : {}),
+  }).eq('id', p.id).eq('status', 'pendente').select('id');
+  if (!trava?.length) return { erro: 'O pedido mudou enquanto você aprovava. Atualize a tela.' };
+  const desfazer = async (msg: string) => {
+    await ctx.admin.from('fin_payment_requests').update({ status: 'pendente', decidido_por: null, decidido_por_nome: null, decidido_em: null, updated_at: new Date().toISOString() }).eq('id', p.id).eq('status', 'aprovada').is('purchase_id', null);
+    return { erro: msg, status: 500 };
+  };
+
+  // Itens do print, ajustados para somar o valor do Pix (desconto/frete rateados na proporção)
+  const total = round2(Number(p.valor));
+  const lidos = ((p.compra_detalhe?.itens ?? []) as any[]).filter((i) => i?.descricao && Number(i.valor) > 0);
+  const base = lidos.length ? lidos : [{ descricao: p.descricao, quantidade: Number(p.quantidade) > 0 ? Number(p.quantidade) : 1, valor: total }];
+  const soma = base.reduce((t, i) => t + Number(i.valor), 0);
+  let resto = total;
+  const classeItem = classe === 'despesa' ? { dre_category_id: cat } : { merchandise_category_id: cat };
+  const items = base.map((i, k) => {
+    const q = Number(i.quantidade) > 0 ? Number(i.quantidade) : 1;
+    const linhaTotal = k === base.length - 1 ? round2(resto) : round2(total * Number(i.valor) / soma);
+    resto = round2(resto - linhaTotal);
+    return { description: String(i.descricao).slice(0, 200), quantity: q, unit_price: Math.round((linhaTotal / q) * 10000) / 10000, ...classeItem };
+  });
+  // Arredondamento do preço unitário não pode mudar o total: sobra vai no último item como 1 unidade
+  const somaItens = round2(items.reduce((t, i) => t + round2(i.quantity * i.unit_price), 0));
+  if (Math.abs(somaItens - total) > 0.009) {
+    const ult = items[items.length - 1];
+    const antes = round2(somaItens - round2(ult.quantity * ult.unit_price));
+    items[items.length - 1] = { ...ult, description: ult.quantity !== 1 ? `${ult.quantity}× ${ult.description}` : ult.description, quantity: 1, unit_price: round2(total - antes) };
+  }
+
+  const hoje = hojeBR();
+  const r = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/purchase-write`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${Deno.env.get('SUPABASE_ANON_KEY') ?? ''}`, apikey: Deno.env.get('SUPABASE_ANON_KEY') ?? '', 'x-internal-key': Deno.env.get('FISCAL_INTERNAL_KEY') ?? '' },
+    body: JSON.stringify({
+      action: 'create_purchase', tenant_id: ctx.tenantId,
+      payload: {
+        supplier: p.favorecido_nome || 'Compra online', purchase_date: hoje, payment_method: 'PIX', payment_status: 'pending', due_date: hoje,
+        notes: [`Compra online pedida por ${p.solicitado_por_nome ?? 'alguém da loja'} e aprovada por ${nome} — Pix copia e cola pelo Inter`,
+          p.anuncio_id ? `anúncio ${p.anuncio_id}` : null, p.compra_detalhe?.entrega ? `entrega: ${p.compra_detalhe.entrega}` : null].filter(Boolean).join(' · '),
+        items,
+      },
+    }),
+  }).catch((e) => ({ ok: false, status: 0, text: async () => String(e) }) as unknown as Response);
+  const txtR = await r.text();
+  let out: any = null;
+  try { out = JSON.parse(txtR); } catch { /* texto */ }
+  const compra = out?.data ?? out?.result?.data ?? null;
+  if (!r.ok || !compra?.id) return await desfazer(`Não consegui lançar a compra: ${out?.error ?? txtR.slice(0, 200)}`);
+  const { data: conta } = await ctx.admin.from('fin_accounts_payable').select('id, amount')
+    .eq('tenant_id', ctx.tenantId).eq('reference_type', 'purchase').eq('reference_id', compra.id).order('due_date').limit(1).maybeSingle();
+  if (!conta) return await desfazer('A compra foi lançada sem conta a pagar. Avise o suporte.');
+  await ctx.admin.from('fin_payment_requests').update({ purchase_id: compra.id, bill_id: conta.id, updated_at: new Date().toISOString() }).eq('id', p.id);
+  await fecharPendencia(ctx.admin, ctx.tenantId, p.id, ctx.userId, 'resolvida', `Aprovado como ${classe === 'cmv' ? 'CMV' : 'despesa'}`);
+  return { purchase_id: compra.id, bill_id: conta.id };
 }
 
 async function carregarPedido(ctx: Ctx, id: string) {
@@ -512,6 +614,13 @@ Deno.serve(async (req) => {
         return json({ fornecedores: (data ?? []).map((f: any) => ({ id: f.id, nome: f.name, cnpj: f.cnpj, tem_pix: !!f.pix_key })) });
       }
       case 'criar': return await criar(ctx, body);
+      case 'categorias_mercadoria': {
+        if (!aprovador) return erro('Sem permissão', 403);
+        const { data, error } = await admin.from('fin_merchandise_categories').select('id, name')
+          .eq('tenant_id', tenantId).eq('is_active', true).order('sort_order').order('name').limit(500);
+        if (error) throw new Error(error.message);
+        return json({ categorias: (data ?? []).map((c: any) => ({ id: c.id, nome: c.name })) });
+      }
       case 'ler_print': {
         if (!perms.pag_compra_online && !aprovador) return erro('Seu perfil não pode pedir compra online.', 403);
         const r = await lerPrintCompra(admin, tenantId, caller.userId, body.imagem ?? {});
@@ -561,8 +670,14 @@ Deno.serve(async (req) => {
         if (!p) return erro('Pedido não encontrado', 404);
         // Ninguém aprova o próprio pedido — só o Admin (o dono)
         if (p.solicitado_por === caller.userId && role !== 'admin') return erro('Você não pode aprovar o seu próprio pedido. Peça ao financeiro.', 403);
+        if (p.tipo === 'compra_online' && p.pix_copia_e_cola) {
+          const r = await aprovarCompraOnline(ctx, p, body);
+          if ('erro' in r) return erro(r.erro, r.status ?? 400);
+          const pagamento = await prepararPagamento(ctx, p.id).catch((e) => ({ preparado: false, motivo: String((e as Error)?.message ?? e) }));
+          return json({ ok: true, compra_online: true, purchase_id: r.purchase_id, bill_id: r.bill_id, pagamento });
+        }
         if (p.tipo === 'compra_online') {
-          // Autorizar a compra: sem conta a pagar (o pagamento sai no checkout; o custo vem da nota)
+          // Pedido antigo (sem Pix): só autoriza; o dono compra no site e registra "Já comprei"
           if (p.status !== 'pendente') return erro(`Esse pedido já foi ${p.status}`);
           const { data: upd } = await admin.from('fin_payment_requests').update({
             status: 'aprovada', decidido_por: caller.userId, decidido_por_nome: await nomeDoUsuario(admin, caller.userId, caller.email),
@@ -590,7 +705,7 @@ Deno.serve(async (req) => {
         const p = await carregarPedido(ctx, String(body.id ?? ''));
         if (!p) return erro('Pedido não encontrado', 404);
         if (p.status !== 'aprovada') return erro('Só pedido aprovado vai para pagamento');
-        if (p.tipo === 'compra_online') return erro('Compra online é paga no site, na conta da loja — não pelo Pix.');
+        if (p.tipo === 'compra_online' && !p.pix_copia_e_cola) return erro('Esse pedido não tem Pix: a compra é paga no site, na conta da loja.');
         return json({ ok: true, pagamento: await prepararPagamento(ctx, p.id) });
       }
       case 'comprado': {
