@@ -234,7 +234,7 @@ Deno.serve(async (req: Request) => {
     if (action === 'prefill_kit') {
       const kit = await loadKit(admin, tenantId);
       const logoUrl = await signed(admin, kit.logo_path);
-      const { data: items } = await admin.from('menu_items').select('name, photo_url').eq('tenant_id', tenantId).eq('is_active', true).is('deleted_at', null).not('photo_url', 'is', null).limit(4);
+      const { data: items } = await admin.from('menu_items').select('name, photo_url').eq('tenant_id', tenantId).eq('is_active', true).is('deleted_at', null).not('photo_url', 'is', null).neq('photo_url', '').limit(4);
       // deno-lint-ignore no-explicit-any
       const blocks: any[] = [];
       if (logoUrl) blocks.push({ type: 'text', text: 'Logo da marca:' }, imgBlock(logoUrl));
@@ -270,21 +270,32 @@ Deno.serve(async (req: Request) => {
 
     if (action === 'analyze_library') {
       if (!podeEscrever) return soGerente();
-      const ids = Array.isArray(body.item_ids) ? (body.item_ids as unknown[]).map(String).slice(0, 20) : null;
-      let q = admin.from('menu_items').select('id, name, photo_url').eq('tenant_id', tenantId).eq('is_active', true).is('deleted_at', null).not('photo_url', 'is', null).limit(20);
+      // Lote de até LOTE fotos por chamada (a tela repete até acabar). Sem item_ids: só as que
+      // ainda não têm nota ou cuja foto mudou desde a análise (url diferente).
+      const LOTE = 12;
+      const ids = Array.isArray(body.item_ids) ? (body.item_ids as unknown[]).map(String).slice(0, LOTE) : null;
+      let q = admin.from('menu_items').select('id, name, photo_url').eq('tenant_id', tenantId).eq('is_active', true).is('deleted_at', null).not('photo_url', 'is', null).neq('photo_url', '').order('name').limit(500);
       if (ids) q = q.in('id', ids);
-      const { data: items } = await q;
+      const [{ data: todos }, { data: feitos }] = await Promise.all([
+        q, admin.from('studio_assets').select('menu_item_id, url').eq('tenant_id', tenantId).eq('source', 'cardapio'),
+      ]);
+      const jaTem = new Map(((feitos ?? []) as Row[]).map((a) => [String(a.menu_item_id), String(a.url ?? '')]));
+      const pendentes = ((todos ?? []) as Row[]).filter((it) => ids || jaTem.get(String(it.id)) !== String(it.photo_url));
+      const lote = pendentes.slice(0, LOTE);
       let analisados = 0; const erros: string[] = [];
-      for (const it of (items ?? []) as Row[]) {
+      const avaliar = async (it: Row) => {
         try {
           const out = await askVision(NOTA_SYSTEM, [imgBlock(String(it.photo_url)), { type: 'text', text: `Item do cardápio: ${it.name}. Avalie a foto.` }], NOTA_SCHEMA);
           const nota = Math.max(0, Math.min(10, Math.round(n(out.nota))));
-          await admin.from('studio_assets').upsert({ tenant_id: tenantId, source: 'cardapio', menu_item_id: it.id, url: it.photo_url, nota_qualidade: nota,
+          const { error } = await admin.from('studio_assets').upsert({ tenant_id: tenantId, source: 'cardapio', menu_item_id: it.id, url: it.photo_url, nota_qualidade: nota,
             analise: { pontos_fortes: out.pontos_fortes ?? [], problemas: out.problemas ?? [], serve_para_anuncio: out.serve_para_anuncio === true, o_que_aparece: out.o_que_aparece ?? '' }, analisado_em: new Date().toISOString() }, { onConflict: 'tenant_id,source,menu_item_id' });
+          if (error) throw new Error(error.message);
           analisados += 1;
-        } catch (e) { erros.push(`${it.name}: ${e instanceof Error ? e.message : String(e)}`); }
-      }
-      return json({ success: true, analisados, erros: erros.slice(0, 5) });
+        } catch (e) { erros.push(`${it.name}: ${e instanceof Error ? e.message : String(e)}`); log('WARN', 'nota da foto', { item: it.name, err: String(e) }); }
+      };
+      // 4 em paralelo: 12 fotos em ~3 rodadas de Haiku, bem abaixo do limite de tempo da função.
+      for (let i = 0; i < lote.length; i += 4) await Promise.all(lote.slice(i, i + 4).map(avaliar));
+      return json({ success: true, analisados, restantes: Math.max(0, pendentes.length - lote.length), erros: erros.slice(0, 5) });
     }
 
     if (action === 'render') {

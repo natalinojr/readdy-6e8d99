@@ -10,17 +10,18 @@ interface Props {
   loading: boolean;
   error: string | null;
   isManager: boolean;
-  onAnalisar: () => Promise<void>;
+  onAnalisar: () => Promise<string>;
   onCriarArte: (itemId: string) => void;
 }
 
 export default function BibliotecaTab({ items, loading, error, isManager, onAnalisar, onCriarArte }: Props) {
   const [analisando, setAnalisando] = useState(false);
   const [aberto, setAberto] = useState<string | null>(null);
+  const [resultado, setResultado] = useState<string | null>(null);
 
   const analisar = async () => {
-    setAnalisando(true);
-    try { await onAnalisar(); } finally { setAnalisando(false); }
+    setAnalisando(true); setResultado(null);
+    try { setResultado(await onAnalisar()); } finally { setAnalisando(false); }
   };
 
   if (loading) {
@@ -50,6 +51,7 @@ export default function BibliotecaTab({ items, loading, error, isManager, onAnal
           </button>
         )}
       </div>
+      {resultado && <p className="text-xs text-zinc-600 bg-fuchsia-50 border border-fuchsia-100 rounded-lg px-3 py-2">{resultado}</p>}
 
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
         {comFoto.map((item) => {

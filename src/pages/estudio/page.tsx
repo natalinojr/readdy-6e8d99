@@ -72,9 +72,10 @@ export default function EstudioPage() {
     setKitLoading(false);
   }, [tenantId]);
 
-  const carregarLibrary = useCallback(async () => {
+  const carregarLibrary = useCallback(async (silencioso = false) => {
     if (!tenantId) return;
-    setLibLoading(true); setLibError(null);
+    if (!silencioso) setLibLoading(true);
+    setLibError(null);
     const { data, error } = await invokeWithAuth<{ success: boolean; items: LibItem[]; error?: string }>('estudio', {
       body: { action: 'library', tenant_id: tenantId },
     });
@@ -98,10 +99,21 @@ export default function EstudioPage() {
   useEffect(() => { void carregarLibrary(); }, [carregarLibrary]);
   useEffect(() => { void carregarCreatives(); }, [carregarCreatives]);
 
-  const analisarBiblioteca = useCallback(async () => {
-    if (!tenantId) return;
-    await invokeWithAuth('estudio', { body: { action: 'analyze_library', tenant_id: tenantId } });
-    await carregarLibrary();
+  // A função avalia em lotes (12 fotos por chamada); repete até não sobrar foto sem nota.
+  const analisarBiblioteca = useCallback(async (): Promise<string> => {
+    if (!tenantId) return '';
+    let total = 0; const erros: string[] = [];
+    for (let rodada = 0; rodada < 20; rodada++) {
+      const { data, error } = await invokeWithAuth<{ success: boolean; analisados: number; restantes: number; erros: string[]; error?: string }>('estudio', {
+        body: { action: 'analyze_library', tenant_id: tenantId },
+      });
+      if (error || !data?.success) { erros.push(error?.message ?? data?.error ?? 'Falha ao avaliar as fotos.'); break; }
+      total += data.analisados; erros.push(...(data.erros ?? []));
+      await carregarLibrary(true);
+      if (!data.restantes || !data.analisados) break;
+    }
+    const base = total ? `${total} foto(s) avaliada(s).` : 'Nenhuma foto nova para avaliar.';
+    return erros.length ? `${base} Problemas: ${erros.slice(0, 3).join(' · ')}` : base;
   }, [tenantId, carregarLibrary]);
 
   const irCriarArte = (itemId: string) => {
