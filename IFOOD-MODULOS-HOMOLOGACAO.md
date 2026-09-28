@@ -139,3 +139,15 @@ retirada (TAKEOUT: só "Pronto"); **Cancelar pedido** escolhendo o motivo da lis
 responder no bloco vermelho (**Aceitar** / **Recusar**). Conferir no card itens, complementos, observações, troco,
 cupom e quem paga, código de coleta e CPF da nota. Se falhar, anotar o passo e o horário para eu ler `ifood_pdv_events`.
 
+
+### Homologação automática do Order — 2026-09-28 (bloqueada)
+- Iniciada pelo dono (loja de teste 4117700, eventos por POLLING). Etapa 1 "Testar conexão" falhou: "Cliente de heartbeat
+  diferente do esperado. Esperado: …teste-d. Atual: …teste-c". A homologação do Order exige o app de teste DISTRIBUÍDO
+  "Teste (D)" (o ERPOS PDV é distribuído); todos os testes até aqui usaram o "Teste (C)" centralizado.
+- O D foi salvo na Testes PDV (Avançado, tipo distribuído, client 1deede1c…) mas NÃO autorizado: a loja de teste não
+  entra no Portal do Parceiro (e-mail da conta dev natalinojunior@idearprojetos.com.br dá "inválido"; "Esqueci" não
+  manda e-mail; "Configurações da Loja" também pede login). Com o D sem autorização a Testes PDV NÃO faz polling.
+- **Chamado 34062004** (28/09 10:22, "Em análise"): pedido de acesso ao Portal do Parceiro da loja de teste OU aceitar
+  o app C na homologação. Quando liberar: gerar código no ERPOS, autorizar no Portal do Parceiro (mesmo navegador),
+  colar o código, religar pelo banco homologação + order_enabled/merchant 4117700 + modo operar, e repetir "Testar
+  conexão".
