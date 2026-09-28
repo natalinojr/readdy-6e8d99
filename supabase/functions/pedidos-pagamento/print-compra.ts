@@ -8,7 +8,7 @@
 import Anthropic from 'npm:@anthropic-ai/sdk@0.125.0';
 import { registrarUsoIa } from '../_shared/ai-usage.ts';
 
-const MODEL = Deno.env.get('PRINT_COMPRA_MODEL') || 'claude-sonnet-5';
+const MODEL = Deno.env.get('PRINT_COMPRA_MODEL') || 'claude-sonnet-5-5'; // 5.5 desde 2026-09-28
 const TIPOS = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 const MAX_BYTES = 8 * 1024 * 1024;
 

@@ -88,7 +88,7 @@ function vencimentoDoTexto(texto: string): string | null {
 
 // ── IA (só quando o PDF/foto não tem texto) ─────────────────────────────────
 const MODELO_LEITURA = 'claude-haiku-4-5';
-const MODELO_SEGUNDA = 'claude-sonnet-5';   // 2ª tentativa quando o DV reprova a leitura do Haiku
+const MODELO_SEGUNDA = 'claude-sonnet-5-5';   // 2ª tentativa quando o DV reprova a leitura do Haiku
 const SCHEMA = {
   type: 'object',
   additionalProperties: false,

@@ -266,6 +266,18 @@ Quando o usuario pedir "muda X":
 
 Secao viva: registrar aqui padroes, decisoes e pegadinhas reutilizaveis conforme o sistema evolui. Cada entrada com data
 
+### 2026-09-28 — Sonnet 5 → Sonnet 5.5 em todo o sistema
+- Trocado `claude-sonnet-5` → `claude-sonnet-5-5` (mesmo preço US$ 2/10) em `assistente-brain` (chat + leitura de foto/PDF),
+  `atendimento-loja` (atendente + juiz), `contas-email` (2ª leitura de boleto), `pedidos-pagamento/print-compra.ts`,
+  `trafego-pesquisador`. `meta-ads-agent` aceita os dois (rodadas antigas) e a sombra das lojas passou para o 5.5
+  (migração `20260928200000_meta_agent_sonnet_5_5.sql`). Nenhuma chamada usava o que o 5.5 recusa (`thinking disabled`,
+  `tool_choice` any/tool, `temperature`).
+- **Pegadinha medida — o esforço foi recalibrado:** no atendente, o 5.5 no esforço padrão (`high`) saiu 48% mais caro
+  (respostas mais longas, mais "chama a equipe"). Bateria de 60 cenários, avaliação às cegas: Sonnet 5 nota 7,97 / 4
+  graves / vendeu 41 / US$ 0,047 × 5.5 high 8,22 / 1 / 37 / US$ 0,069 × **5.5 `low` 8,30 / 1 / 43 / US$ 0,049** → ficou
+  `EFFORT = 'low'` em `atendimento-loja`. A simulação aceita `{"effort": "low|medium|high"}` para comparar.
+- Ao trocar de modelo: não levar o `effort` antigo às cegas — medir de novo. O assistente já usa `asst_settings.effort = low`.
+
 ### 2026-09-26 — Várias abas/janelas no computador
 - **Loja ativa é POR ABA:** `src/lib/lojaAtiva.ts` (`getLojaAtiva`/`setLojaAtiva`/`fixarLojaNestaAba`/`limparLojaAtiva`) — sessionStorage da aba primeiro, localStorage só como padrão da aba nova. Nunca ler `erpos_selected_tenant_id` direto do localStorage: o header `x-tenant-id` de uma aba seguia a troca de loja feita em outra.
 - **Navegação = link de verdade** (`<a href>`/`NavLink`) para rodinha/Ctrl+clique abrirem aba; clique simples intercepta com `cliqueParaNovaAba` (`src/lib/novaJanela.ts`). `abrirNovaJanela` = popup no navegador, janela do app no PWA.
@@ -3600,7 +3612,8 @@ Sem SW ativo o POST cai no Vercel e falha — por isso o destino só existe no S
   `smb_message_echoes` pausa o assistente 2 h. `phone_id/waba_id` de `wa_loja_bots` só o servidor grava
   (privilégio de coluna). O que o dono faz na Meta: `WHATSAPP-CONECTAR-META.md`.
   **Treino (2026-09-27, v4→v12):** modelo = **Sonnet 5** (60 cenários, mesmas travas: Haiku 4.5 nota 7,3 / 18 erros
-  graves / US$ 0,023 por conversa × Sonnet 5 nota 8,6 / 1 erro grave / US$ 0,044 — `MODEL` em `index.ts`). As travas
+  graves / US$ 0,023 por conversa × Sonnet 5 nota 8,6 / 1 erro grave / US$ 0,044 — `MODEL` em `index.ts`).
+  **Desde 2026-09-28: Sonnet 5.5 com `effort: low`** (ver histórico de 09-28). As travas
   ficam em `atendimento-loja/travas.ts` (código puro, sem imports): `conferir()` gera a volta de correção,
   `linkQueFalta()` anexa o link quando o modelo ignora a correção, `arrumarLinks()` troca link inventado. Testes em
   `src/test/edge/atendimentoTravas.test.ts`. System em 2 partes: estável com `cache_control` (regras + cardápio

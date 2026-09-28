@@ -48,7 +48,7 @@ Decisões:
 - Loja é resolvida por nome parcial (`loja: "mall"`); sem nome, usa a principal.
 - Data/hora atual entra na mensagem do usuário (não no system) para não invalidar
   o cache do prompt. Fuso fixo `America/Sao_Paulo`.
-- Modelo **`claude-sonnet-5`** desde 2026-09-11 (pedido do dono, custo), `effort: medium`.
+- Modelo **`claude-sonnet-5-5`** desde 2026-09-28 (antes `claude-sonnet-5`, desde 2026-09-11 — pedido do dono, custo; mesmo preço), `effort` em `asst_settings.effort`.
   Com Opus 5 medimos ~2k tokens de entrada + ~5k de cache + ~400 de saída por
   mensagem ≈ US$ 0,02–0,03; Sonnet 5 custa ~40% disso. Se errar datas/consultas,
   voltar para `claude-opus-5` (mesma API).

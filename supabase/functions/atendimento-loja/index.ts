@@ -13,7 +13,7 @@
 //   • treino (x-internal-key) → { action: 'simulate', tenant_id, persona, primeira, turnos, aberto?, sem_estoque?,
 //     bot? } — cliente simulado × o mesmo cérebro, sem WhatsApp e sem gravar; devolve conversa + avaliação.
 //
-// Segurança: o modelo (Sonnet 5; ver MODEL) só lê o cardápio público da loja (o mesmo do link do delivery) e os
+// Segurança: o modelo (Sonnet 5.5; ver MODEL) só lê o cardápio público da loja (o mesmo do link do delivery) e os
 // pedidos do PRÓPRIO telefone que está falando. Ferramentas: buscar_cardapio, link_do_pedido,
 // meus_pedidos, chamar_atendente, encerrar_conversa.
 //
@@ -41,10 +41,10 @@ function log(level: 'INFO' | 'WARN' | 'ERROR', msg: string, ctx?: Record<string,
 
 // Sonnet 5 desde 2026-09-27: mesma bateria de 60 cenários, mesmas travas — Haiku 4.5 nota 7,3 / 18 erros graves /
 // US$ 0,023 por conversa; Sonnet 5 nota 8,6 / 1 erro grave / US$ 0,044. Voltar para o Haiku = trocar esta linha.
-const MODEL = 'claude-sonnet-5';
+const MODEL = 'claude-sonnet-5-5'; // Sonnet 5.5 desde 2026-09-28 (mesmo preço)
 const PRICE_IN = 1 / 1e6, PRICE_OUT = 5 / 1e6; // US$ por token do Haiku 4.5 (base; o fator de cada modelo vem de MODELOS_SIM)
 // Preço relativo ao Haiku 4.5 (Sonnet 5 = US$ 2/10 por MTok) e modelos que a simulação pode comparar.
-const MODELOS_SIM: Record<string, number> = { 'claude-haiku-4-5': 1, 'claude-sonnet-5': 2 };
+const MODELOS_SIM: Record<string, number> = { 'claude-haiku-4-5': 1, 'claude-sonnet-5': 2, 'claude-sonnet-5-5': 2 };
 const DEBOUNCE_MS = 3000;
 const MAX_REPLIES_DAY = 40;          // por conversa
 const CONV_TTL_MS = 3 * 86_400_000;  // conversa parada há mais que isso: a próxima começa outra
@@ -326,6 +326,7 @@ export interface Pensar {
   regras?: string; // só na simulação: instruções alternativas em teste
   equipeJaAvisada?: boolean; // a conversa já pediu atendente antes (não avisa de novo sozinho)
   modelo?: string; // só na simulação: comparar outro modelo (ver MODELOS_SIM)
+  effort?: string; // só na simulação: comparar nível de raciocínio (low/medium/high)
   admin?: SupabaseClient; // para registrar o custo em ai_usage_events (custo da IA)
   simulacao?: boolean; // true = chamada de treino (feature 'atendimento-simulacao')
   convId?: string; // id de wa_loja_conversas, para o "ref" do registro de custo
@@ -388,7 +389,8 @@ export async function pensar(o: Pensar) {
   const usadas = new Set<string>();
   const rodada = async (limite: number) => {
     for (let i = 0; i < limite; i++) {
-      const res = await client.messages.create({ model: o.modelo ?? MODEL, max_tokens: 700, system, tools: TOOLS, messages: msgs });
+      const effort = o.effort ?? EFFORT;
+      const res = await client.messages.create({ model: o.modelo ?? MODEL, max_tokens: 700, ...(effort ? { output_config: { effort } } : {}), system, tools: TOOLS, messages: msgs } as Anthropic.MessageCreateParamsNonStreaming);
       calls++;
       if (o.admin) await registrarUsoIa(o.admin, { feature: o.simulacao ? 'atendimento-simulacao' : 'atendimento-whatsapp', model: res.model, usage: res.usage, tenantId: o.tenant?.id ?? null, ref: o.convId ?? null });
       const u = res.usage;
@@ -574,7 +576,11 @@ async function handleIncoming(admin: SupabaseClient, m: Incoming): Promise<void>
 // ── Simulação (treino): um cliente simulado conversa com o MESMO cérebro (pensar), com o cardápio real,
 // sem WhatsApp e sem gravar nada. Um avaliador (Sonnet) lê a conversa e aponta os erros.
 const SIM_MODEL = 'claude-haiku-4-5';
-const JUDGE_MODEL = 'claude-sonnet-5';
+// Nível de raciocínio do atendente. Bateria de 60 cenários (2026-09-28, avaliação às cegas):
+// Sonnet 5 padrão nota 7,97 / 4 graves / vendeu 41 / US$ 0,047; Sonnet 5.5 padrão (high) 8,22 / 1 / 37 / US$ 0,069;
+// Sonnet 5.5 low 8,30 / 1 / 43 / US$ 0,049. Simulação pode trocar com {effort}.
+const EFFORT: string | undefined = 'low';
+const JUDGE_MODEL = 'claude-sonnet-5-5';
 async function simular(admin: SupabaseClient, b: Row) {
   const tenantId = String(b.tenant_id ?? '');
   const { data: tenant } = await admin.from('tenants').select('id, name, slug, address, city').eq('id', tenantId).maybeSingle();
@@ -604,6 +610,7 @@ async function simular(admin: SupabaseClient, b: Row) {
     const r = await pensar({
       bot, tenant, menu, historico, nome: b.nome ?? null, regras: b.regras ? String(b.regras) : undefined, equipeJaAvisada: equipe,
       modelo: MODELOS_SIM[String(b.modelo)] ? String(b.modelo) : undefined,
+      effort: ['low', 'medium', 'high'].includes(String(b.effort)) ? String(b.effort) : undefined,
       admin, simulacao: true,
       pedidos: async () => String(b.pedidos ?? 'Nenhum pedido de delivery encontrado com este telefone.'),
       chamarEquipe: async () => { equipe = true; },

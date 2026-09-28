@@ -18,7 +18,7 @@ type Settings = {
   last_run_at: string | null; autopilot_since: string | null;
   model: ModelId | null; shadow_model: ModelId | null;
 };
-type ModelId = 'claude-opus-5' | 'claude-sonnet-5' | 'claude-haiku-4-5';
+type ModelId = 'claude-opus-5' | 'claude-sonnet-5-5' | 'claude-sonnet-5' | 'claude-haiku-4-5';
 type Usage = { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number } | null;
 type SombraAcao = { kind: string; level: string | null; target_id: string | null; target_name: string | null; params: Record<string, unknown>; reason: string | null; risk: string };
 type Run = {
@@ -30,9 +30,11 @@ type Run = {
 // Preço de lista da API (US$ por milhão de tokens, 2026-09): leitura de cache ≈ 10%, gravação ≈ 125%.
 // Só para o dono comparar custo entre modelos; não é fatura.
 const PRECO_USD: Record<string, { in: number; out: number }> = {
-  'claude-opus-5': { in: 5, out: 25 }, 'claude-sonnet-5': { in: 2, out: 10 }, 'claude-haiku-4-5': { in: 1, out: 5 },
+  'claude-opus-5': { in: 5, out: 25 }, 'claude-sonnet-5-5': { in: 2, out: 10 }, 'claude-sonnet-5': { in: 2, out: 10 }, 'claude-haiku-4-5': { in: 1, out: 5 },
 };
-const MODEL_LABEL: Record<string, string> = { 'claude-opus-5': 'Opus 5', 'claude-sonnet-5': 'Sonnet 5', 'claude-haiku-4-5': 'Haiku 4.5' };
+const MODEL_LABEL: Record<string, string> = { 'claude-opus-5': 'Opus 5', 'claude-sonnet-5-5': 'Sonnet 5.5', 'claude-sonnet-5': 'Sonnet 5', 'claude-haiku-4-5': 'Haiku 4.5' };
+// Modelos oferecidos na escolha (o Sonnet 5 fica só no rótulo, para rodadas antigas).
+const MODELOS_OPCOES: ModelId[] = ['claude-opus-5', 'claude-sonnet-5-5', 'claude-haiku-4-5'];
 const modeloNome = (m?: string | null) => (m ? (MODEL_LABEL[m] ?? Object.entries(MODEL_LABEL).find(([k]) => m.startsWith(k))?.[1] ?? m) : '—');
 function custoUsd(model?: string | null, u?: Usage): number | null {
   if (!model || !u) return null;
@@ -492,14 +494,14 @@ export function AgenteTab({ tenantId, isAdmin }: { tenantId: string; isAdmin: bo
               <span className={lbl}>Modelo da IA (rodada real)</span>
               <select value={form.model ?? ''} onChange={(e) => F('model', e.target.value || null)} disabled={!isAdmin} className={inp}>
                 <option value="">Padrão ({modeloNome(modeloPadrao)})</option>
-                {(Object.keys(MODEL_LABEL) as ModelId[]).map((m) => <option key={m} value={m}>{MODEL_LABEL[m]} · US$ {PRECO_USD[m].in}/{PRECO_USD[m].out} por 1M tokens</option>)}
+                {MODELOS_OPCOES.map((m) => <option key={m} value={m}>{MODEL_LABEL[m]} · US$ {PRECO_USD[m].in}/{PRECO_USD[m].out} por 1M tokens</option>)}
               </select>
             </div>
             <div>
               <span className={lbl}>Modo sombra (só compara, não executa)</span>
               <select value={form.shadow_model ?? ''} onChange={(e) => F('shadow_model', e.target.value || null)} disabled={!isAdmin} className={inp}>
                 <option value="">Desligado</option>
-                {(Object.keys(MODEL_LABEL) as ModelId[]).filter((m) => m !== (form.model ?? modeloPadrao)).map((m) => <option key={m} value={m}>{MODEL_LABEL[m]} roda em paralelo</option>)}
+                {MODELOS_OPCOES.filter((m) => m !== (form.model ?? modeloPadrao)).map((m) => <option key={m} value={m}>{MODEL_LABEL[m]} roda em paralelo</option>)}
               </select>
               <span className="text-[10px] text-zinc-400 leading-tight block mt-0.5">Roda o outro modelo sobre os mesmos dados e guarda o que ele decidiria. Use 1–2 semanas antes de trocar o modelo real.</span>
             </div>

@@ -21,7 +21,7 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-internal-key',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
-const MODELO_PESQUISA = 'claude-sonnet-5'; // plano: Pesquisador em Sonnet (busca + julgamento de fonte)
+const MODELO_PESQUISA = 'claude-sonnet-5-5'; // plano: Pesquisador em Sonnet (busca + julgamento de fonte)
 const MODELO_ESTRUTURA = 'claude-haiku-4-5'; // só transforma o relatório em JSON
 const MAX_BUSCAS = 12;
 const HOSTS_META = ['facebook.com', 'meta.com', 'fb.com', 'instagram.com', 'whatsapp.com'];

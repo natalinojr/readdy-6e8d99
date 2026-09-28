@@ -39,7 +39,8 @@ const GRAPH = 'https://graph.facebook.com/v20.0';
 // Modelo da rodada real: por loja (meta_agent_settings.model) → env META_AGENT_MODEL → Opus 5.
 // Fase 0 do plano (2026-09-27): `shadow_model` roda o candidato (ex.: Sonnet 5) em paralelo
 // sobre o MESMO payload, sem executar nada, para comparar decisões e custo antes de trocar.
-const MODELS_ALLOWED = ['claude-opus-5', 'claude-sonnet-5', 'claude-haiku-4-5'] as const;
+// claude-sonnet-5 fica aceito só por compatibilidade com rodadas/configs antigas; a tela oferece o 5.5.
+const MODELS_ALLOWED = ['claude-opus-5', 'claude-sonnet-5-5', 'claude-sonnet-5', 'claude-haiku-4-5'] as const;
 type ModelId = typeof MODELS_ALLOWED[number];
 const DEFAULT_MODEL: ModelId = (MODELS_ALLOWED as readonly string[]).includes(Deno.env.get('META_AGENT_MODEL') ?? '')
   ? (Deno.env.get('META_AGENT_MODEL') as ModelId) : 'claude-opus-5';

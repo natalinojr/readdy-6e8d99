@@ -35,7 +35,7 @@ bash scripts/atendimento-treino/exportar.sh r1                   # → $TEMP/ate
 3. **Mudou uma trava?** Antes de gastar API: `esbuild supabase/functions/atendimento-loja/travas.ts --bundle
    --platform=node --format=esm --outfile=$TEMP/atendimento-aval/travas.mjs`, `menu.json` (delivery-write ›
    get_delivery_config) e `todas.json` na pasta, e `node scripts/atendimento-treino/replay.mjs '^r1'`.
-4. **Comparar modelo:** `rodar.sh r2 '{"avaliar": false, "modelo": "claude-sonnet-5"}'` (`MODELOS_SIM` no index.ts).
+4. **Comparar modelo/esforço:** `rodar.sh r2 '{"avaliar": false, "modelo": "claude-sonnet-5-5", "effort": "low"}'` (`MODELOS_SIM` no index.ts; `effort` = low/medium/high).
 5. **No fim:** `drop schema treino cascade;` (é rascunho; `net._http_response` some sozinho em ~6 h).
 
 Custo de referência (2026-09-27): ~US$ 0,02 (Haiku) a ~0,05 (Sonnet) por conversa de 6 turnos, com o cliente

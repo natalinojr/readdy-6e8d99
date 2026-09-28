@@ -12,7 +12,7 @@ Para o fluxo **SDD** (specs, gates de qualidade, branches, restrições), consul
 
 **Antes de começar qualquer atividade, avaliar qual modelo usar** — o que resolve bem com o menor custo de tokens:
 - **Haiku 4.5**: consulta pontual, leitura/extração simples, contagem, conferência mecânica (ex.: "qual o status disso?", ler um log).
-- **Sonnet 5**: padrão para subagentes — pesquisa no código (Explore), executor de ticket claro, revisor, testador.
+- **Sonnet 5.5** (desde 2026-09-28; antes Sonnet 5): padrão para subagentes — pesquisa no código (Explore), executor de ticket claro, revisor, testador.
 - **Opus 5**: só onde errar custa caro — desenho de solução com dinheiro/fiscal/segurança/multi-loja, revisão de risco alto, depuração difícil.
 - Ao disparar subagente, passar `model` explicitamente; não herdar o modelo da sessão por padrão.
 - **Fable 5.1: só quando o dono trocar o modelo da sessão ele mesmo.** Nunca escolher `fable` para subagente nem sugerir a troca.
