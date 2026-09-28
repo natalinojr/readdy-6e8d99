@@ -757,8 +757,14 @@ async function handleIncoming(admin: SupabaseClient, m: Incoming): Promise<void>
   // Trava do "anotei" sem gravar (Luciane, 2026-09-15): faltava dado, o modelo disse que anotou/ficha
   // completa e não chamou completar_ficha. Força a ferramenta sobre a última mensagem e a resposta
   // passa a ser montada abaixo com o que ficou gravado de verdade.
+  // Também quando a resposta não pergunta nada (sem "?"): com dado faltando, o modelo devia estar
+  // pedindo o próximo; se não pede, achou que acabou (Noemi, 2026-09-28: "Sua ficha está atualizada"
+  // escapava da lista de palavras e a escolaridade nunca foi gravada).
+  let semGravar = '';
   if (faltas.length && !usadas.has('completar_ficha') && !usadas.has('registrar_sem_curriculo')
-    && /anot|regist|grav|salv|ficha\s+(est[aá]\s+)?complet/i.test(reply)) {
+    && !usadas.has('chamar_equipe') && !closeAfter
+    && (/anot|regist|grav|salv|atualiz|ficha\s+(est[aá]\s+)?complet/i.test(reply) || !reply.includes('?'))) {
+    semGravar = reply;
     log('WARN', 'modelo disse que anotou sem gravar: forçando completar_ficha', { conv: conv.id });
     const f = await client.messages.create({ model: MODEL, max_tokens: 400, system, tools: TOOLS, tool_choice: { type: 'tool', name: 'completar_ficha' }, messages: conversa });
     calls++;
@@ -767,6 +773,11 @@ async function handleIncoming(admin: SupabaseClient, m: Incoming): Promise<void>
     const u = f.content.find((b): b is Anthropic.ToolUseBlock => b.type === 'tool_use');
     if (u) await runTool(u);
     reply = '';
+    // Não havia dado na mensagem (ex.: ela só fez uma pergunta): mantém a resposta do modelo e pede o dado.
+    const faltasDepois = await missingOf(admin, fichaId());
+    if (faltasDepois.length && faltasDepois.join(',') === faltas.join(',') && semGravar && !/anot|regist|grav|salv|atualiz|complet/i.test(semGravar)) {
+      reply = `${semGravar}\n\n${FIELD_ASK[faltasDepois[0]] ?? `Pode me informar: ${FIELD_LABELS[faltasDepois[0]] ?? faltasDepois[0]}?`}`;
+    }
   }
   await admin.from('bot_conversations').update({ model_calls: Number(fresh?.model_calls ?? 0) + calls, cost_usd: Number(fresh?.cost_usd ?? 0) + cost }).eq('id', conv.id);
   // O modelo às vezes termina só com ferramenta e sem texto: o candidato ficava sem resposta
