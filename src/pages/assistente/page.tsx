@@ -234,7 +234,7 @@ export default function AssistentePage() {
               { label: 'Memórias', value: ov.memories.length, icon: 'ri-brain-line' },
               { label: 'Respostas (30 dias)', value: ov.usage30d.replies, icon: 'ri-chat-check-line' },
               {
-                label: 'Custo IA estimado (30 dias)',
+                label: 'Custo da IA (30 dias)',
                 value: ov.usage30d.brl != null
                   ? ov.usage30d.brl.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
                   : `US$ ${ov.usage30d.usd.toFixed(2)}`,
@@ -242,10 +242,16 @@ export default function AssistentePage() {
                 sub: ov.usage30d.rate != null
                   ? `US$ ${ov.usage30d.usd.toFixed(2)} · dólar R$ ${ov.usage30d.rate.toFixed(2).replace('.', ',')} (${ov.usage30d.rate_source})`
                   : 'Cotação do dólar indisponível agora',
-                title: 'Cotação comercial de venda do dia, sem o IOF do cartão.',
+                title: 'Todos os usos da IA (assistente, WhatsApp, notinhas, Estúdio…) nos últimos 30 dias, igual ao botão "30 dias" da aba Custos da IA. Cotação comercial de venda do dia, sem o IOF do cartão.',
+                onClick: () => setTab('custos'),
               },
-            ].map((c) => (
-              <div key={c.label} className="rounded-2xl border border-zinc-200 bg-white px-4 py-3" title={c.title}>
+            ].map((c: { label: string; value: string | number; icon: string; sub?: string; title?: string; onClick?: () => void }) => (
+              <div
+                key={c.label}
+                className={`rounded-2xl border border-zinc-200 bg-white px-4 py-3 ${c.onClick ? 'cursor-pointer hover:border-violet-300' : ''}`}
+                title={c.title}
+                onClick={c.onClick}
+              >
                 <div className="flex items-center gap-1.5 text-[11px] text-zinc-400 font-semibold">
                   <i className={c.icon} /> {c.label}
                 </div>

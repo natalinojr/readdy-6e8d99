@@ -35,9 +35,6 @@ const corsHeaders = {
 };
 const OWNER_EMAIL = 'natalinojr.engel@gmail.com';
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-// US$ por milhão de tokens (Sonnet 5). Respostas antigas foram com Opus 5, então
-// o valor dos primeiros dias é aproximado — por isso a tela chama de "estimado".
-const PRICE = { input: 2, output: 10, cache_read: 0.2, cache_write: 2.5, cache_write_1h: 4 };
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
@@ -221,16 +218,20 @@ Deno.serve(async (req) => {
           // channel 'grupo' = leitura automática de foto/PDF dos grupos: conta no custo,
           // mas não é conversa, então fica fora da lista da tela.
           admin.from('asst_messages').select('id, role, content, channel, created_at').neq('channel', 'grupo').order('created_at', { ascending: false }).limit(80),
-          admin.from('asst_messages').select('usage').eq('role', 'assistant').gte('created_at', since).not('usage', 'is', null).limit(5000),
+          admin.from('asst_messages').select('id').eq('role', 'assistant').gte('created_at', since).not('usage', 'is', null).limit(5000),
           whatsappState(),
         ]);
+        // Custo do card de cima = mesma fonte e mesmo período do botão "30 dias" da aba Custos da IA
+        // (todos os usos da API em ai_usage_events, de hoje-29 00:00 até agora, horário de Brasília).
+        // Antes somava só as respostas do assistente e não batia com a aba (dono, 2026-09-28).
+        const hojeLocal = new Date(Date.now() - 3 * 3600_000).toISOString().slice(0, 10);
+        const ini30 = new Date(new Date(`${hojeLocal}T00:00:00-03:00`).getTime() - 29 * 86400_000).toISOString();
         let usd = 0;
-        for (const r of usageRows.data ?? []) {
-          // deno-lint-ignore no-explicit-any
-          const u = (r.usage ?? {}) as any;
-          const w1h = u.cache_write_1h ?? 0; // cache de 1 h custa 2x; o resto é o de 5 min (1,25x)
-          usd += ((u.input ?? 0) * PRICE.input + (u.output ?? 0) * PRICE.output + (u.cache_read ?? 0) * PRICE.cache_read
-            + ((u.cache_write ?? 0) - w1h) * PRICE.cache_write + w1h * PRICE.cache_write_1h) / 1e6;
+        for (let from = 0; from < 100_000; from += 1000) {
+          const { data, error } = await admin.from('ai_usage_events').select('cost_usd').gte('created_at', ini30).order('id').range(from, from + 999);
+          if (error) throw new Error(error.message);
+          for (const r of data ?? []) usd += Number(r.cost_usd ?? 0);
+          if ((data ?? []).length < 1000) break;
         }
         const fx = await usdBrl(admin, cfg);
         const { data: gs } = await admin.from('asst_groups').select('group_jid, name, is_enabled, task_list_id, read_media').order('name');
