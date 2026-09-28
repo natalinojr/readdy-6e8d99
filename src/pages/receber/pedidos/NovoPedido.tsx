@@ -13,13 +13,17 @@ interface Props {
   contexto: ContextoPedidos;
   onEnviado: () => void;
   onErro: (msg: string | null) => void;
+  /** Compra online vinda do "Compartilhar" do celular: o texto já entra no campo do link. */
+  linkInicial?: string;
+  /** Veio do "Compartilhar" e não é compra: manda o mesmo conteúdo para as Tarefas. */
+  onCriarTarefa?: () => void;
 }
 
 const SEMANA = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
 const diaSemana = (iso: string) => SEMANA[new Date(`${iso}T12:00:00Z`).getUTCDay()];
 const novaRef = () => (crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2, 12)}`);
 
-export default function NovoPedido({ tipo, tenantId, contexto, onEnviado, onErro }: Props) {
+export default function NovoPedido({ tipo, tenantId, contexto, onEnviado, onErro, linkInicial, onCriarTarefa }: Props) {
   const hoje = hojeISO();
   const [ref] = useState(novaRef);
   const [enviando, setEnviando] = useState(false);
@@ -48,7 +52,9 @@ export default function NovoPedido({ tipo, tenantId, contexto, onEnviado, onErro
   // Valor de cada dia trabalhado (dono, 2026-09-27): o total é a soma, o sistema calcula
   const [valoresDia, setValoresDia] = useState<Record<string, string>>({});
   // compra online
-  const [link, setLink] = useState('');
+  const [link, setLink] = useState(linkInicial ?? '');
+  // O texto do compartilhamento chega depois de abrir a tela (lido do cache do service worker)
+  useEffect(() => { if (linkInicial) setLink((l) => l || linkInicial); }, [linkInicial]);
   const [quantidade, setQuantidade] = useState('1');
   const anuncio = useMemo(() => (tipo === 'compra_online' ? lerLinkCompra(link) : null), [tipo, link]);
   // Nome do produto vem do link; a pessoa pode corrigir (só preenche enquanto o campo não foi mexido)
@@ -277,6 +283,13 @@ export default function NovoPedido({ tipo, tenantId, contexto, onEnviado, onErro
 
       {tipo === 'compra_online' && (
         <>
+          {onCriarTarefa && (
+            <button type="button" onClick={onCriarTarefa} className="w-full text-left flex items-center gap-2 bg-white border border-zinc-100 rounded-2xl px-4 py-3 text-sm text-zinc-600 cursor-pointer">
+              <i className="ri-task-line text-lg text-zinc-400" />
+              <span className="flex-1">Não é para comprar? <b className="text-amber-700">Criar tarefa com isso</b></span>
+              <i className="ri-arrow-right-s-line text-zinc-400" />
+            </button>
+          )}
           <div>
             <Rotulo dica="No app do Mercado Livre: Compartilhar › Copiar link. Pode colar o texto todo.">Link do produto</Rotulo>
             <textarea rows={2} value={link} onChange={(e) => setLink(e.target.value)} placeholder="https://www.mercadolivre.com.br/…" className={cls} />

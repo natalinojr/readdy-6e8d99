@@ -4,7 +4,8 @@
 // Toda a regra fica na Edge receber-mercadoria, que reaproveita as Edges de compra/nota/estoque.
 // Pedir pagamento (2026-09-24): reembolso, freelancer e fornecedor sem nota viram pedido para o dono
 // aprovar (Edge pedidos-pagamento); mercadoria paga do bolso vai pelo recebimento ("Paguei do meu bolso").
-// Links: ?pedido=reembolso|freelancer|fornecedor, ?aprovar=1, ?meus=1.
+// Links: ?pedido=reembolso|freelancer|fornecedor|compra_online, ?aprovar=1, ?meus=1.
+// ?compartilhado=1: veio do "Compartilhar" do celular com link de loja online (sw.js) — o link já vem colado.
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
@@ -12,6 +13,7 @@ import { usePermissoes } from '@/hooks/usePermissoes';
 import NovoPedido from './pedidos/NovoPedido';
 import ListaPedidos from './pedidos/ListaPedidos';
 import { chamarPedidos, comprovanteParaEnvio, ROTULO_TIPO, type ContextoPedidos, type TipoPedido } from './pedidos/api';
+import { lerTextoCompartilhado, limparCompartilhado } from './pedidos/compartilhado';
 import Conferir from './components/Conferir';
 import Pagamento, { descreverPagamento } from './components/Pagamento';
 import SemNota from './components/SemNota';
@@ -46,6 +48,8 @@ export default function ReceberPage() {
   const modoReembolso = useRef(false);
   const fotoCupom = useRef<File | null>(null);
   const [scanner, setScanner] = useState(false);
+  /** Texto do "Compartilhar" (link do produto); null = não veio de compartilhamento. */
+  const [compartilhado, setCompartilhado] = useState<string | null>(null);
 
   const [tela, setTela] = useState<Tela>('inicio');
   const [msgCarregando, setMsgCarregando] = useState('');
@@ -98,9 +102,15 @@ export default function ReceberPage() {
       : params.get('aprovar') ? 'aprovar' : params.get('meus') ? 'meus' : null;
     if (!alvo) return;
     if (pedido === 'freelancer' || pedido === 'fornecedor' || pedido === 'compra_online') setTipoPedido(pedido);
+    if (pedido === 'compra_online' && params.get('compartilhado')) lerTextoCompartilhado().then((t) => setCompartilhado(t ?? ''));
     setErro(null); setR(null); setTela(alvo);
     setParams({}, { replace: true });
   }, [params, setParams]);
+
+  // Sem permissão de pedir compra online: o compartilhamento vai para as Tarefas, como antes
+  useEffect(() => {
+    if (compartilhado !== null && ctxPed && !ctxPed.perms.pag_compra_online) navigate('/tarefas?compartilhado=1', { replace: true });
+  }, [compartilhado, ctxPed, navigate]);
 
   const comReembolso = (x: Rascunho): Rascunho => (modoReembolso.current ? {
     ...x, pagamento: 'reembolso',
@@ -487,7 +497,10 @@ export default function ReceberPage() {
         )}
 
         {tela === 'pedido' && (ctxPed
-          ? <NovoPedido key={tipoPedido} tipo={tipoPedido} tenantId={tenantId} contexto={ctxPed} onErro={setErro} onEnviado={() => { setTela('pedido_ok'); carregarCtxPed(); }} />
+          ? <NovoPedido key={`${tipoPedido}-${compartilhado !== null}`} tipo={tipoPedido} tenantId={tenantId} contexto={ctxPed} onErro={setErro}
+              linkInicial={tipoPedido === 'compra_online' ? compartilhado ?? undefined : undefined}
+              onCriarTarefa={tipoPedido === 'compra_online' && compartilhado !== null ? () => navigate('/tarefas?compartilhado=1') : undefined}
+              onEnviado={() => { if (compartilhado !== null) { limparCompartilhado(); setCompartilhado(null); } setTela('pedido_ok'); carregarCtxPed(); }} />
           : <Spinner texto="Carregando…" grande />)}
 
         {tela === 'pedido_ok' && (

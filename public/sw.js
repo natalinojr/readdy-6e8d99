@@ -61,8 +61,12 @@ self.addEventListener('activate', (event) => {
    /tarefas?compartilhado=1, onde a tela monta a tarefa (CompartilhadoParaTarefa.tsx). Cada
    compartilhamento substitui o anterior. */
 const SHARE_CACHE = 'erpos-compartilhado';
+// Link de loja online sem anexo (ex.: "Compartilhar" do app do Mercado Livre, 2026-09-28) vira
+// pedido de compra online em /receber; a tela oferece "criar tarefa" se não for compra.
+const LOJA_ONLINE = /https?:\/\/([a-z0-9-]+\.)*(mercadoli(vre|bre)\.com(\.br)?|shopee\.com\.br|amazon\.com(\.br)?|amzn\.to|magazineluiza\.com\.br|magalu\.com|aliexpress\.com)(?=[/?#:\s]|$)/i;
 
 async function receberCompartilhado(req) {
+  let destino = '/tarefas?compartilhado=1';
   try {
     const form = await req.formData();
     const cache = await caches.open(SHARE_CACHE);
@@ -77,10 +81,11 @@ async function receberCompartilhado(req) {
     };
     await Promise.all(arquivos.map((f, i) => cache.put(meta.arquivos[i].chave, new Response(f, { headers: { 'Content-Type': meta.arquivos[i].tipo } }))));
     await cache.put('/__compartilhado/meta', new Response(JSON.stringify(meta), { headers: { 'Content-Type': 'application/json' } }));
+    if (!arquivos.length && LOJA_ONLINE.test(`${meta.text} ${meta.url} ${meta.title}`)) destino = '/receber?pedido=compra_online&compartilhado=1';
   } catch (_) {
     /* sem o formulário: a tela avisa que não chegou nada */
   }
-  return Response.redirect('/tarefas?compartilhado=1', 303);
+  return Response.redirect(destino, 303);
 }
 
 self.addEventListener('fetch', (event) => {
