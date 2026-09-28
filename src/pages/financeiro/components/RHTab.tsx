@@ -13,6 +13,8 @@ import FolhaRelatorioPDF from './FolhaRelatorioPDF';
 import RHRelatorioTab from './RHRelatorioTab';
 import CamposCustomizadosModal from './CamposCustomizadosModal';
 import DetalheFolhaModal from './DetalheFolhaModal';
+import FreelancersTab from './FreelancersTab';
+import PrestadoresTab from './PrestadoresTab';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 const today = new Date();
@@ -1244,8 +1246,11 @@ function EmployeeRow({
 }
 
 // ─── Main Component ───────────────────────────────────────────────────────────
-export default function RHTab({ inicial }: { inicial?: 'folha' | 'funcionarios' | 'relatorio' } = {}) {
-  const [activeView, setActiveView] = useState<'folha' | 'funcionarios' | 'relatorio'>(inicial ?? 'folha');
+export type RHView = 'folha' | 'funcionarios' | 'freelancers' | 'prestadores' | 'relatorio';
+export default function RHTab({ inicial }: { inicial?: RHView } = {}) {
+  const [activeView, setActiveView] = useState<RHView>(inicial ?? 'folha');
+  // Link para outra subaba com o RH já aberto (ex.: ?tab=freelancers)
+  useEffect(() => { if (inicial) setActiveView(inicial); }, [inicial]);
   const [selectedMonth, setSelectedMonth] = useState(currentMonth);
   const [employeeModal, setEmployeeModal] = useState<Partial<Employee> | null | false>(false);
   const [payrollModal, setPayrollModal] = useState<Partial<PayrollEntry> | null | false>(false);
@@ -1369,8 +1374,8 @@ export default function RHTab({ inicial }: { inicial?: 'folha' | 'funcionarios' 
 
   return (
     <div className="p-4 md:p-6 space-y-4 md:space-y-5">
-      {/* KPIs */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
+      {/* KPIs (da folha: não aparecem em Freelancers / Prestadores MEI, que têm os próprios totais) */}
+      <div className={`grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4 ${activeView === 'freelancers' || activeView === 'prestadores' ? 'hidden' : ''}`}>
         <div className="bg-white rounded-xl border border-zinc-200 p-5">
           <div className="flex items-center justify-between mb-2">
             <span className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">Funcionários Ativos</span>
@@ -1473,6 +1478,14 @@ export default function RHTab({ inicial }: { inicial?: 'folha' | 'funcionarios' 
           <button onClick={() => setActiveView('funcionarios')}
             className={`px-3 sm:px-4 py-2.5 text-xs font-semibold cursor-pointer transition-colors whitespace-nowrap flex items-center gap-1.5 ${activeView === 'funcionarios' ? 'bg-amber-500 text-white' : 'text-zinc-600 hover:bg-zinc-50'}`}>
             <i className="ri-team-line" /> Funcionários
+          </button>
+          <button onClick={() => setActiveView('freelancers')}
+            className={`px-3 sm:px-4 py-2.5 text-xs font-semibold cursor-pointer transition-colors whitespace-nowrap flex items-center gap-1.5 ${activeView === 'freelancers' ? 'bg-amber-500 text-white' : 'text-zinc-600 hover:bg-zinc-50'}`}>
+            <i className="ri-user-star-line" /> Freelancers
+          </button>
+          <button onClick={() => setActiveView('prestadores')}
+            className={`px-3 sm:px-4 py-2.5 text-xs font-semibold cursor-pointer transition-colors whitespace-nowrap flex items-center gap-1.5 ${activeView === 'prestadores' ? 'bg-amber-500 text-white' : 'text-zinc-600 hover:bg-zinc-50'}`}>
+            <i className="ri-briefcase-line" /> <span className="sm:hidden">MEI</span><span className="hidden sm:inline">Prestadores MEI</span>
           </button>
           <button onClick={() => setActiveView('relatorio')}
             className={`px-3 sm:px-4 py-2.5 text-xs font-semibold cursor-pointer transition-colors whitespace-nowrap flex items-center gap-1.5 ${activeView === 'relatorio' ? 'bg-amber-500 text-white' : 'text-zinc-600 hover:bg-zinc-50'}`}>
@@ -1786,6 +1799,10 @@ export default function RHTab({ inicial }: { inicial?: 'folha' | 'funcionarios' 
           )}
         </div>
       )}
+
+      {/* ── FREELANCERS e PRESTADORES MEI (2026-09-28: a aba Freelancers veio para dentro do RH) ── */}
+      {activeView === 'freelancers' && <FreelancersTab embutido />}
+      {activeView === 'prestadores' && <PrestadoresTab />}
 
       {/* ── RELATÓRIOS ── */}
       {activeView === 'relatorio' && (

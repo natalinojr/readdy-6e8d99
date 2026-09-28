@@ -28,7 +28,7 @@
 //   prepaid_move_delete { id }   apaga um acerto
 //   prepaid_consume     { document_id }   lança a nota do crédito;  prepaid_unconsume { document_id } desfaz
 //   save_counterpart_rule  { counterpart_doc, counterpart_label?, category, cost_center_id?, transaction_type }
-//   create_from_statement  { ids, kind: 'despesa'|'compra'|'freelancer' (dias?: 'YYYY-MM-DD'[], funcao?)|'fora_dre' (motivo: retirada_dono|transferencia|emprestimo|particular|investimento|outro), dre_category_id?, merchandise_category_id?, description?,
+//   create_from_statement  { ids, kind: 'despesa'|'compra'|'freelancer' (dias?: 'YYYY-MM-DD'[], funcao?)|'prestador' (prestador_id, prestador_tipo: 'servico'|'reembolso')|'fora_dre' (motivo: retirada_dono|transferencia|emprestimo|particular|investimento|outro), dre_category_id?, merchandise_category_id?, description?,
 //                            supplier?, cost_center_id?, allow_payroll?, competence_month?: 'YYYY-MM' }   admin/gerente — pagamento SEM NOTA:
 //                          despesa = conta a pagar (reference_type 'conciliacao_extrato') já baixada; compra = compra
 //                          (purchase-write) com 1 item, parcela baixada. Mesma data e conta do extrato. Pix para CPF de
@@ -311,7 +311,11 @@ const MOTIVOS_FORA_DRE: Record<string, string> = {
 interface CreateOpts {
   /** 'freelancer' (2026-09-20) e uma despesa em RH que tambem registra o freela e as diarias;
    *  'fora_dre' (2026-09-20) nao cria nada: marca a saida como fora do resultado, com motivo */
-  kind: 'despesa' | 'compra' | 'freelancer' | 'fora_dre';
+  kind: 'despesa' | 'compra' | 'freelancer' | 'fora_dre' | 'prestador';
+  /** prestador (2026-09-28): MEI de hr_prestadores; 'servico' = despesa em RH na competência,
+   *  'reembolso' = despesa na categoria da DRE escolhida (o que ele comprou para a loja) */
+  prestadorId?: string | null;
+  prestadorTipo?: 'servico' | 'reembolso' | null;
   /** fora_dre: chave de MOTIVOS_FORA_DRE */
   motivo?: string | null;
   /** freelancer: dias trabalhados ('YYYY-MM-DD'); vazio = a aba Freelancers pergunta depois */
@@ -403,9 +407,37 @@ async function createOneClaimed(ctx: Ctx, rowId: string, o: CreateOpts, row: Row
     return { id: row.id, ok: true, msg: 'R$ ' + brl(valor) + ' marcado como "' + rotulo + '": fora do DRE.' };
   }
 
+  // Prestador MEI: confere o cadastro antes de criar qualquer coisa
+  let prestador: Row | null = null;
+  // Competência do serviço: a informada ou, sem ela, a regra do cadastro (mês anterior ou o próprio)
+  const mesAnterior = (ym: string) => { const [y, m] = ym.split('-').map(Number); return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}`; };
+  let compPrest = competenciaOk(o.competenceMonth) ?? String(row.transaction_date).slice(0, 7);
+  if (o.kind === 'prestador') {
+    const { data: pr } = await admin.from('hr_prestadores').select('id, name, competencia_regra').eq('id', String(o.prestadorId ?? '')).eq('tenant_id', tenantId).maybeSingle();
+    if (!pr) return fail('Escolha o prestador (cadastro em RH / Folha › Prestadores MEI)');
+    if (o.prestadorTipo !== 'servico' && o.prestadorTipo !== 'reembolso') return fail('Diga se é pagamento do serviço ou reembolso');
+    if (o.prestadorTipo === 'reembolso' && !o.dreCategoryId) return fail('Escolha a categoria do que foi reembolsado');
+    if (!competenciaOk(o.competenceMonth) && pr.competencia_regra !== 'same') compPrest = mesAnterior(String(row.transaction_date).slice(0, 7));
+    // Serviço do mesmo mês já lançado (pelo pedido recorrente ou por outro Pix), pago ou em aberto:
+    // lançar de novo daria duas despesas — o certo é ligar este Pix à conta que já existe.
+    if (o.prestadorTipo === 'servico') {
+      const { data: ja } = await admin.from('hr_prestador_pagamentos')
+        .select('competencia, fin_accounts_payable!inner(status)').eq('tenant_id', tenantId).eq('prestador_id', pr.id).eq('tipo', 'servico')
+        .neq('fin_accounts_payable.status', 'cancelled');
+      const lista = (ja ?? []) as Row[];
+      if (lista.some((x) => String(x.competencia ?? '').slice(0, 7) === compPrest)) {
+        return fail('O serviço de ' + compPrest.slice(5, 7) + '/' + compPrest.slice(0, 4) + ' de ' + pr.name + ' já está lançado. Se este Pix é esse pagamento, ligue à conta a pagar que já existe; se é de outro mês, mude a competência.');
+      }
+      if (lista.some((x) => ['pending', 'overdue'].includes(String((x.fin_accounts_payable as Row)?.status)))) {
+        return fail('Esse prestador tem pagamento do serviço aprovado e ainda em aberto (pedido recorrente). Ligue este Pix à conta a pagar desse pedido em vez de lançar de novo.');
+      }
+    }
+    prestador = pr;
+  }
+
   // Pix para CPF de funcionário: o salário já entra na DRE pela folha (hr_payroll).
   // Quem saiu (status 'inactive') não trava: é o caso do ex-funcionário que hoje trabalha de freela.
-  if (doc.length === 11 && !o.allowPayroll) {
+  if (doc.length === 11 && !o.allowPayroll && o.kind !== 'prestador') {
     const { data: emps } = await admin.from('hr_employees').select('name, cpf, status').eq('tenant_id', tenantId).neq('status', 'inactive');
     const func = ((emps ?? []) as Row[]).find((e) => soDigitos(e.cpf) === doc);
     if (func) return fail('O CPF é de ' + func.name + ', funcionário cadastrado: salário já entra na DRE pela folha. Se não for salário, lance mesmo assim.', 'folha');
@@ -415,16 +447,21 @@ async function createOneClaimed(ctx: Ctx, rowId: string, o: CreateOpts, row: Row
   const tipo = String(row.raw?.tipoTransacao ?? '');
   const metodo = tipo === 'PAGAMENTO' ? 'Boleto' : tipo === 'PIX' ? 'Pix' : 'Transferência';
   const quem = String(row.counterpart_name ?? '').trim();
-  const descricao = (o.description ?? '').trim().slice(0, 200) || quem || String(row.description ?? 'Pagamento');
+  const descricao = prestador
+    ? (o.prestadorTipo === 'servico'
+      ? 'Prestador MEI — ' + prestador.name + ' (serviço ' + compPrest.slice(5, 7) + '/' + compPrest.slice(0, 4) + ')'
+      : ('Reembolso — ' + prestador.name + ((o.description ?? '').trim() ? ': ' + (o.description ?? '').trim() : ''))).slice(0, 200)
+    : (o.description ?? '').trim().slice(0, 200) || quem || String(row.description ?? 'Pagamento');
   const nota = 'Lançado pela conciliação bancária: pagamento sem nota de ' + br(paidDate) + (quem ? ' para ' + quem : '') + (doc ? ' (' + doc + ')' : '');
   let billId: string | null = null;
   let purchaseId: string | null = null;
   let categoria = 'Compras';
 
-  if (o.kind === 'despesa' || o.kind === 'freelancer') {
-    // Freelancer entra sempre em RH, a mesma categoria do Pix pago pelo ERPOS (fn_freelancer_registrar_pagamento)
+  if (o.kind === 'despesa' || o.kind === 'freelancer' || o.kind === 'prestador') {
+    // Freelancer e serviço do prestador MEI entram sempre em RH, a mesma categoria do Pix pago pelo ERPOS
+    // (fn_freelancer_registrar_pagamento); reembolso do prestador vai na categoria escolhida
     let catId = o.dreCategoryId;
-    if (o.kind === 'freelancer') {
+    if (o.kind === 'freelancer' || (o.kind === 'prestador' && o.prestadorTipo === 'servico')) {
       const { data: rh } = await admin.from('fin_dre_categories').select('id').eq('tenant_id', tenantId)
         .eq('group_type', 'expense').is('parent_id', null).is('deleted_at', null).ilike('name', 'RH').maybeSingle();
       catId = rh?.id ?? null;
@@ -441,7 +478,7 @@ async function createOneClaimed(ctx: Ctx, rowId: string, o: CreateOpts, row: Row
     const nb = await callEdge(ctx, 'financial-write', {
       action: 'upsert_bill', tenant_id: tenantId,
       payload: {
-        description: descricao, supplier: quem || null, amount: valor, due_date: paidDate, status: 'pending',
+        description: descricao, supplier: prestador ? prestador.name : quem || null, amount: valor, due_date: paidDate, status: 'pending',
         category: categoria, dre_category_id: cat.id, cost_center_id: o.costCenterId, is_recurring: false,
         bank_account_id: row.bank_account_id, reference_type: 'conciliacao_extrato', reference_id: row.id, notes: nota,
       },
@@ -484,7 +521,7 @@ async function createOneClaimed(ctx: Ctx, rowId: string, o: CreateOpts, row: Row
       .eq('tenant_id', tenantId).eq('last_ref_id', purchaseId).is('classe', null);
   }
 
-  const competencia = competenciaOk(o.competenceMonth);
+  const competencia = o.kind === 'prestador' && o.prestadorTipo === 'servico' ? compPrest : competenciaOk(o.competenceMonth);
   if (competencia) {
     const { error: ce } = await admin.from('fin_accounts_payable').update({ competence_month: competencia + '-01' }).eq('id', billId).eq('tenant_id', tenantId);
     if (ce) log('WARN', 'create', 'gravar competência falhou', { tenantId, billId, error: ce.message });
@@ -519,19 +556,31 @@ async function createOneClaimed(ctx: Ctx, rowId: string, o: CreateOpts, row: Row
       : ' (dias a informar em Financeiro > Freelancers)';
   }
 
+  if (prestador) {
+    const { error: pe } = await admin.from('hr_prestador_pagamentos').insert({
+      tenant_id: tenantId, prestador_id: prestador.id, bill_id: billId, statement_id: row.id, tipo: o.prestadorTipo,
+      competencia: competencia ? competencia + '-01' : null, amount: valor, paid_date: paidDate,
+    });
+    if (pe) {
+      await reversePayment(ctx, billId!, valor, row.bank_account_id, paidDate);
+      await admin.from('fin_accounts_payable').delete().eq('id', billId).eq('tenant_id', tenantId);
+      return fail('Registrar o pagamento do prestador: ' + pe.message);
+    }
+  }
+
   const now = new Date().toISOString();
   const confirmed = { bill_id: billId, juros_bill_id: null, pay_amount: valor, juros: 0, desconto: 0, auto_imported: false, created: o.kind, purchase_id: purchaseId, at: now, by: ctx.userId };
   const { error: upErr } = await admin.from('fin_bank_statement_imports').update({
     status: 'matched', reconciled: true, reconciled_at: now, reconciled_by: ctx.userId, matched_at: now, matched_by: ctx.userId,
     match_kind: 'payable', match_ref_id: billId, match_confidence: 'manual', category: categoria,
     match_detail: {
-      label: (o.kind === 'compra' ? 'Compra sem nota: ' : o.kind === 'freelancer' ? 'Freelancer: ' : 'Despesa sem nota: ') + descricao + (competencia ? ' · competência ' + competencia.slice(5, 7) + '/' + competencia.slice(0, 4) : ''),
+      label: (o.kind === 'compra' ? 'Compra sem nota: ' : o.kind === 'freelancer' ? 'Freelancer: ' : o.kind === 'prestador' ? '' : 'Despesa sem nota: ') + descricao + (competencia ? ' · competência ' + competencia.slice(5, 7) + '/' + competencia.slice(0, 4) : ''),
       valor, created: o.kind, competencia,
       prev_category: row.category ?? null, prev_match_kind: row.match_kind === 'rule' ? null : row.match_kind ?? null, confirmed,
     },
   }).eq('id', row.id);
   if (upErr) log('ERROR', 'create', 'marcar extrato falhou', { tenantId, rowId, error: upErr.message });
-  return { id: row.id, ok: true, msg: (o.kind === 'compra' ? 'Compra' : o.kind === 'freelancer' ? 'Pagamento de freelancer' : 'Despesa') + ' de R$ ' + brl(valor) + ' lançado: "' + descricao + '"' + freelaMsg };
+  return { id: row.id, ok: true, msg: (o.kind === 'compra' ? 'Compra' : o.kind === 'freelancer' ? 'Pagamento de freelancer' : o.kind === 'prestador' ? (o.prestadorTipo === 'servico' ? 'Serviço do prestador' : 'Reembolso do prestador') : 'Despesa') + ' de R$ ' + brl(valor) + ' lançado: "' + descricao + '"' + freelaMsg };
 }
 
 // ── Nota do mês: 1 nota ↔ vários pagamentos ─────────────────────────────────
@@ -900,7 +949,8 @@ async function undoOne(ctx: Ctx, rowId: string): Promise<Result> {
   const b = await reversePayment(ctx, c.bill_id, round2(Number(c.pay_amount)), row.bank_account_id, date);
 
   // Lançado a partir do extrato: apaga o que foi criado e a linha volta a ser um pagamento sem destino
-  const criado = ['despesa', 'compra', 'freelancer'].includes(String(c.created)) ? String(c.created) : null;
+  // prestador: hr_prestador_pagamentos some junto com a conta (on delete cascade)
+  const criado = ['despesa', 'compra', 'freelancer', 'prestador'].includes(String(c.created)) ? String(c.created) : null;
   if (criado) {
     if (criado === 'freelancer') {
       // As diarias vivem pela conta criada aqui: somem junto com ela.
@@ -916,7 +966,7 @@ async function undoOne(ctx: Ctx, rowId: string): Promise<Result> {
       status: 'pending', reconciled: false, reconciled_at: null, reconciled_by: null, matched_at: null, matched_by: null,
       match_kind: det.prev_match_kind ?? null, match_ref_id: null, match_confidence: null, match_detail: null, category: det.prev_category ?? null,
     }).eq('id', row.id);
-    return { id: row.id, ok: true, msg: (criado === 'compra' ? 'Compra' : criado === 'freelancer' ? 'Pagamento de freelancer (e as diárias)' : 'Despesa') + ' lançado pelo extrato foi desfeito: o pagamento voltou a pendente.' };
+    return { id: row.id, ok: true, msg: (criado === 'compra' ? 'Compra' : criado === 'freelancer' ? 'Pagamento de freelancer (e as diárias)' : criado === 'prestador' ? 'Pagamento do prestador' : 'Despesa') + ' lançado pelo extrato foi desfeito: o pagamento voltou a pendente.' };
   }
 
   if (b && Number(c.desconto) > 0) {
@@ -1236,7 +1286,7 @@ Deno.serve(async (req: Request) => {
       if (!isManager) return errResp('Apenas administradores e gerentes podem lançar pelo extrato', 403);
       const ids = Array.isArray(body.ids) ? [...new Set((body.ids as unknown[]).map(String))].slice(0, MAX_BATCH) : [];
       if (ids.length === 0) return errResp('Nenhum lançamento informado');
-      const KINDS = ['despesa', 'compra', 'freelancer', 'fora_dre'] as const;
+      const KINDS = ['despesa', 'compra', 'freelancer', 'fora_dre', 'prestador'] as const;
       const kind = KINDS.find((k) => k === body.kind) ?? null;
       if (!kind) return errResp('Escolha despesa, compra, freelancer ou "não entra no DRE"');
       const opts: CreateOpts = {
@@ -1251,6 +1301,8 @@ Deno.serve(async (req: Request) => {
         competenceMonth: competenciaOk(body.competence_month),
         dias: Array.isArray(body.dias) ? (body.dias as unknown[]).map(String).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)).slice(0, 31) : [],
         funcao: body.funcao ? String(body.funcao).slice(0, 60) : null,
+        prestadorId: body.prestador_id ? String(body.prestador_id) : null,
+        prestadorTipo: body.prestador_tipo === 'servico' || body.prestador_tipo === 'reembolso' ? body.prestador_tipo : null,
       };
       const results: Result[] = [];
       for (const id of ids) {

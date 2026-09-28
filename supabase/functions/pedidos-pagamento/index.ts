@@ -35,7 +35,7 @@ const somaDias = (iso: string, d: number) => new Date(Date.parse(`${iso}T12:00:0
 const txt = (s: unknown, max = 300) => String(s ?? '').trim().slice(0, max);
 const dataOk = (d: unknown) => typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d) && !Number.isNaN(Date.parse(`${d}T12:00:00Z`));
 
-const CAMPOS = 'id, tipo, status, descricao, valor, data_gasto, vencimento, favorecido_nome, favorecido_doc, pix_chave, dre_category_id, supplier_id, freelancer_id, freelancer_funcao, dias, valores_dia, comprovante_path, purchase_id, bill_id, obs, solicitado_por, solicitado_por_nome, decidido_por_nome, decidido_em, motivo_recusa, created_at, link_url, anuncio_id, quantidade, pedido_externo, valor_pago, comprado_em, comprado_por_nome, compra_detalhe, pix_copia_e_cola, ja_pago, ja_pago_em, pago_forma, pago_ref_tipo, pago_ref_id';
+const CAMPOS = 'id, tipo, status, prestador_id, competencia, descricao, valor, data_gasto, vencimento, favorecido_nome, favorecido_doc, pix_chave, dre_category_id, supplier_id, freelancer_id, freelancer_funcao, dias, valores_dia, comprovante_path, purchase_id, bill_id, obs, solicitado_por, solicitado_por_nome, decidido_por_nome, decidido_em, motivo_recusa, created_at, link_url, anuncio_id, quantidade, pedido_externo, valor_pago, comprado_em, comprado_por_nome, compra_detalhe, pix_copia_e_cola, ja_pago, ja_pago_em, pago_forma, pago_ref_tipo, pago_ref_id';
 
 interface Ctx { admin: any; tenantId: string; userId: string; email: string | null; role: string; perms: Record<string, boolean>; token?: string }
 
@@ -342,7 +342,8 @@ function detalheCompra(x: any) {
     .filter((i: any) => i.descricao);
   return { site: txt(x.site, 60) || null, itens, subtotal: n(x.subtotal), desconto: n(x.desconto), frete: n(x.frete), total: n(x.total), entrega: txt(x.entrega, 200) || null, numero_pedido: txt(x.numero_pedido, 60) || null };
 }
-const ROTULO: Record<string, string> = { reembolso: 'Reembolso', freelancer: 'Freelancer', fornecedor: 'Fornecedor sem nota', compra_online: 'Compra online' };
+// 'prestador' (2026-09-28): pedido mensal do prestador MEI, gerado pela recorrência (fn_prestador_gerar_pedidos)
+const ROTULO: Record<string, string> = { reembolso: 'Reembolso', freelancer: 'Freelancer', fornecedor: 'Fornecedor sem nota', compra_online: 'Compra online', prestador: 'Prestador MEI' };
 
 /** Link curto do app do Mercado Livre (mercadolivre.com/sec/…) não tem o nº nem o nome: segue o
  *  redirecionamento (só desses hosts, 4 s) para guardar o endereço do anúncio. Falhou → fica o curto. */
@@ -374,7 +375,7 @@ async function linkCompleto(texto: string): Promise<string> {
  */
 async function prepararPagamento(ctx: Ctx, pedidoId: string): Promise<{ preparado: boolean; motivo?: string; aviso?: string; pendencia_id?: string | null }> {
   const { data: p } = await ctx.admin.from('fin_payment_requests')
-    .select('id, tipo, status, valor, favorecido_nome, pix_chave, pix_copia_e_cola, freelancer_id, bill_id, descricao')
+    .select('id, tipo, status, valor, favorecido_nome, pix_chave, pix_copia_e_cola, freelancer_id, prestador_id, bill_id, descricao')
     .eq('id', pedidoId).eq('tenant_id', ctx.tenantId).maybeSingle();
   if (!p || p.status !== 'aprovada' || !p.bill_id) return { preparado: false, motivo: 'pedido sem conta a pagar', aviso: 'Esse pedido não tem conta a pagar.' };
   // O aviso "pague pelo app do banco" (pedido_pagamento_pagar) sai quando o pagamento se resolve
@@ -390,6 +391,14 @@ async function prepararPagamento(ctx: Ctx, pedidoId: string): Promise<{ preparad
     const { data: f } = await ctx.admin.from('hr_freelancers').select('pix_favorecido_id').eq('id', p.freelancer_id).maybeSingle();
     if (f?.pix_favorecido_id) {
       const { data: fav } = await ctx.admin.from('fin_pix_favorecidos').select('pix_key').eq('id', f.pix_favorecido_id).maybeSingle();
+      chave = fav?.pix_key ?? null;
+    }
+  }
+  // Prestador MEI: a chave Pix escolhida no cadastro depois que o pedido nasceu
+  if (!chave && p.prestador_id) {
+    const { data: pr } = await ctx.admin.from('hr_prestadores').select('pix_favorecido_id').eq('id', p.prestador_id).eq('tenant_id', ctx.tenantId).maybeSingle();
+    if (pr?.pix_favorecido_id) {
+      const { data: fav } = await ctx.admin.from('fin_pix_favorecidos').select('pix_key').eq('id', pr.pix_favorecido_id).eq('is_active', true).maybeSingle();
       chave = fav?.pix_key ?? null;
     }
   }

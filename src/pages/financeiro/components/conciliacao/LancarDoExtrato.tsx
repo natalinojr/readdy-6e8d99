@@ -19,7 +19,7 @@ export function podeLancarDoExtrato(s: StatementImport) {
   return s.transaction_type === 'debit' && s.status === 'pending' && !s.reconciled && !JA_TEM_DESTINO.includes(String(s.match_kind ?? ''));
 }
 
-export type LancarTipo = 'despesa' | 'compra' | 'freelancer' | 'fora_dre';
+export type LancarTipo = 'despesa' | 'compra' | 'freelancer' | 'fora_dre' | 'prestador';
 
 /** Saída que não é despesa da loja: não vira conta nem compra, só sai das pendências com o motivo. */
 export const MOTIVOS_FORA_DRE = [
@@ -45,6 +45,9 @@ export interface LancarOpcoes {
   funcao?: string | null;
   /** 'YYYY-MM': mês a que o gasto pertence (competência). Vazio = só a data do pagamento. */
   competence_month?: string | null;
+  /** prestador MEI (2026-09-28): quem e se é o serviço do mês ou um reembolso */
+  prestador_id?: string | null;
+  prestador_tipo?: 'servico' | 'reembolso' | null;
 }
 
 // A edge aceita até 30 por chamada (e ignora o resto): manda em blocos.
@@ -75,6 +78,23 @@ export function useFreelancers() {
   }, [user?.tenantId]);
   const options = useMemo(() => lista.map((f) => ({ id: f.id, label: f.name, sub: f.role ?? null })), [lista]);
   return { freelancers: lista, freelaOptions: options };
+}
+
+/** Prestadores MEI da loja (RH / Folha › Prestadores MEI). */
+type PrestadorLista = { id: string; name: string; role: string | null; cpf: string | null; cnpj: string | null; competencia_regra: 'same' | 'prev' };
+export function usePrestadores() {
+  const { user } = useAuth();
+  const [lista, setLista] = useState<PrestadorLista[]>([]);
+  useEffect(() => {
+    setLista([]);
+    if (!user?.tenantId) return;
+    let vivo = true;
+    supabase.from('hr_prestadores').select('id, name, role, cpf, cnpj, competencia_regra').eq('tenant_id', user.tenantId).eq('is_active', true).order('name')
+      .then(({ data }) => { if (vivo) setLista((data ?? []) as PrestadorLista[]); });
+    return () => { vivo = false; };
+  }, [user?.tenantId]);
+  const options = useMemo(() => lista.map((p) => ({ id: p.id, label: p.name, sub: p.role ?? 'MEI' })), [lista]);
+  return { prestadores: lista, prestadorOptions: options };
 }
 
 /** Categorias de despesa (DRE) e de mercadoria (CMV) da loja, no formato do CategoriaCombobox. */
@@ -116,6 +136,9 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
   const { user } = useAuth();
   const { dreOptions, mercOptions } = useCategoriasLancamento();
   const { freelancers, freelaOptions } = useFreelancers();
+  const { prestadores, prestadorOptions } = usePrestadores();
+  const [prestadorId, setPrestadorId] = useState('');
+  const [prestadorTipo, setPrestadorTipo] = useState<'servico' | 'reembolso'>('servico');
   const nomePadrao = transaction.counterpart_name || transaction.description || '';
   const [aberto, setAberto] = useState(false);
   useEffect(() => { onAbertoChange?.(aberto); }, [aberto, onAbertoChange]);
@@ -156,6 +179,7 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
     setDreCat(''); setMerc(''); setLembrar(false); setAvisoFolha(null); setPermitirFolha(false); setErro(null);
     setDias([]); setDiaNovo(transaction.transaction_date); setFuncao(''); setFreelaId(''); setMotivo('');
     setCompModo('same'); setCompOutro(transaction.transaction_date.slice(0, 7));
+    setPrestadorId(''); setPrestadorTipo('servico');
   }, [transaction.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Quem recebeu o Pix já está cadastrado? Então a opção certa vem marcada sozinha.
@@ -167,16 +191,33 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
 
   const doc = transaction.counterpart_doc ?? '';
 
+  // Pix para o CPF/CNPJ de um prestador MEI: abre já em "Prestador MEI" com ele escolhido
+  const docDig = doc.replace(/\D/g, '');
+  const prestadorDoPix = docDig ? prestadores.find((p) => p.cpf === docDig || p.cnpj === docDig) : undefined;
+  useEffect(() => {
+    if (!aberto || !prestadorDoPix || prestadorId) return;
+    setTipo('prestador'); setPrestadorId(prestadorDoPix.id);
+  }, [aberto, prestadorDoPix?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Serviço do prestador: a competência já vem da regra do cadastro (em geral, o mês anterior ao Pix) —
+  // lançar no mês do pagamento deixaria o gerador recorrente pedir aquele mês de novo (revisão 2026-09-28)
+  useEffect(() => {
+    if (tipo !== 'prestador' || prestadorTipo !== 'servico') return;
+    const pr = prestadores.find((x) => x.id === prestadorId);
+    if (pr) setCompModo(pr.competencia_regra === 'same' ? 'same' : 'prev');
+  }, [tipo, prestadorTipo, prestadorId, prestadores]);
+
   const lancar = async () => {
     if (!user?.tenantId) return;
     if (tipo === 'despesa' && !dreCat) { setErro('Escolha a categoria da despesa.'); return; }
     if (tipo === 'fora_dre' && !motivo) { setErro('Escolha o motivo de não entrar no DRE.'); return; }
+    if (tipo === 'prestador' && !prestadorId) { setErro('Escolha o prestador.'); return; }
+    if (tipo === 'prestador' && prestadorTipo === 'reembolso' && !dreCat) { setErro('Escolha a categoria do que foi reembolsado.'); return; }
     setErro(null);
     setBusy(true);
     const { results, error } = await lancarDoExtrato(user.tenantId, [transaction.id], {
       kind: tipo,
       motivo: tipo === 'fora_dre' ? motivo : null,
-      dre_category_id: tipo === 'despesa' ? dreCat : null,
+      dre_category_id: tipo === 'despesa' || (tipo === 'prestador' && prestadorTipo === 'reembolso') ? dreCat : null,
       merchandise_category_id: tipo === 'compra' ? merc || null : null,
       description: descricao.trim() || null,
       supplier: tipo === 'compra' ? fornecedor.trim() || null : null,
@@ -184,6 +225,8 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
       funcao: tipo === 'freelancer' ? funcao.trim() || null : null,
       allow_payroll: permitirFolha,
       competence_month: /^\d{4}-\d{2}$/.test(competencia) ? competencia : null,
+      prestador_id: tipo === 'prestador' ? prestadorId : null,
+      prestador_tipo: tipo === 'prestador' ? prestadorTipo : null,
     });
     const r = results[0];
     if (error || !r) { setBusy(false); setErro(error ?? 'Não foi possível lançar.'); return; }
@@ -195,7 +238,7 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
     }
     // "Fazer sempre assim": regra de LANÇAMENTO para este CPF/CNPJ/chave (2026-09-18). Antes só
     // etiquetava o extrato — não entrava na DRE e ainda escondia o pagamento do alerta.
-    if (lembrar && doc && tipo !== 'fora_dre') {
+    if (lembrar && doc && tipo !== 'fora_dre' && tipo !== 'prestador') {
       const rr = await invokeWithAuth<{ success?: boolean; error?: string }>('conciliacao-pagamentos', {
         body: {
           action: 'launch_rule_save', tenant_id: user.tenantId, counterpart_doc: doc,
@@ -234,7 +277,7 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
       </div>
 
       <div className="flex flex-wrap bg-white border border-zinc-200 rounded-lg overflow-hidden w-fit max-w-full">
-        {([['despesa', 'Despesa', 'ri-file-list-3-line'], ['compra', 'Compra (CMV)', 'ri-shopping-cart-line'], ['freelancer', 'Freelancer', 'ri-user-star-line'], ['fora_dre', 'Não entra no DRE', 'ri-eye-off-line']] as const).map(([k, label, icon]) => (
+        {([['despesa', 'Despesa', 'ri-file-list-3-line'], ['compra', 'Compra (CMV)', 'ri-shopping-cart-line'], ['freelancer', 'Freelancer', 'ri-user-star-line'], ['prestador', 'Prestador MEI', 'ri-briefcase-line'], ['fora_dre', 'Não entra no DRE', 'ri-eye-off-line']] as const).map(([k, label, icon]) => (
           <button key={k} onClick={() => setTipo(k)}
             className={`px-3 py-1.5 text-xs font-semibold cursor-pointer flex items-center gap-1 ${tipo === k ? 'bg-violet-600 text-white' : 'text-zinc-600 hover:bg-zinc-50'}`}>
             <i className={icon} /> {label}
@@ -246,10 +289,45 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
           ? 'Vira uma conta a pagar já baixada nesta data, com a categoria da DRE (limpeza, manutenção, serviço, frete…).'
           : tipo === 'compra'
           ? 'Vira uma compra de mercadoria já paga nesta data: entra no CMV na categoria escolhida. Não mexe no estoque.'
+          : tipo === 'prestador'
+          ? 'Serviço do mês: despesa de RH na competência. Reembolso: despesa na categoria do que ele comprou para a loja. Aparece em RH / Folha › Prestadores MEI.'
           : tipo === 'freelancer'
           ? 'Vira despesa de RH já paga nesta data e registra a diária em Financeiro › Freelancers. Sem informar os dias, o freela fica com "dias a informar".'
           : 'Não cria conta nem compra: o pagamento só sai das pendências com o motivo e não mexe no resultado (DRE).'}
       </p>
+
+      {tipo === 'prestador' && (
+        <div className="space-y-2">
+          <div>
+            <label className="block text-xs font-medium text-zinc-600 mb-1">Prestador *</label>
+            <CategoriaCombobox value={prestadorId} options={prestadorOptions} onChange={setPrestadorId} placeholder="Escolha o prestador…"
+              buttonClassName="w-full px-3 py-2 border border-zinc-200 rounded-lg text-sm bg-white cursor-pointer" />
+            {prestadores.length === 0 && <p className="text-[11px] text-amber-700 mt-1">Nenhum prestador cadastrado: cadastre em RH / Folha › Prestadores MEI.</p>}
+          </div>
+          <div className="flex flex-wrap bg-white border border-zinc-200 rounded-lg overflow-hidden w-fit">
+            {([['servico', 'Serviço do mês'], ['reembolso', 'Reembolso']] as const).map(([k, label]) => (
+              <button key={k} type="button" onClick={() => { setPrestadorTipo(k); if (k === 'reembolso' && descricao === nomePadrao) setDescricao(''); }}
+                className={`px-3 py-1.5 text-xs font-semibold cursor-pointer ${prestadorTipo === k ? 'bg-violet-600 text-white' : 'text-zinc-600 hover:bg-zinc-50'}`}>
+                {label}
+              </button>
+            ))}
+          </div>
+          {prestadorTipo === 'reembolso' && (
+            <>
+              <div>
+                <label className="block text-xs font-medium text-zinc-600 mb-1">O que ele comprou</label>
+                <input value={descricao} onChange={(e) => setDescricao(e.target.value)} placeholder="Ex.: gás, material de limpeza"
+                  className="w-full px-3 py-2 border border-zinc-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-violet-300" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-zinc-600 mb-1">Categoria da DRE *</label>
+                <CategoriaCombobox value={dreCat} options={dreOptions} onChange={setDreCat} placeholder="Escolha a categoria…"
+                  buttonClassName="w-full px-3 py-2 border border-zinc-200 rounded-lg text-sm bg-white cursor-pointer" />
+              </div>
+            </>
+          )}
+        </div>
+      )}
 
       {tipo === 'fora_dre' && (
         <div>
@@ -266,6 +344,7 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
         </div>
       )}
 
+      {tipo !== 'prestador' && (
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         <div className="sm:col-span-2">
           <label className="block text-xs font-medium text-zinc-600 mb-1">{tipo === 'compra' ? 'O que foi comprado' : tipo === 'freelancer' ? 'Quem trabalhou' : 'Descrição'}</label>
@@ -360,6 +439,7 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
         </div>
         )}
       </div>
+      )}
 
       {/* Fora do DRE não tem competência nem regra "fazer sempre assim" (a edge não cria nada) */}
       {tipo !== 'fora_dre' && (
@@ -380,7 +460,7 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
       </div>
       )}
 
-      {doc && tipo !== 'fora_dre' && (
+      {doc && tipo !== 'fora_dre' && tipo !== 'prestador' && (
         <label className="flex items-start gap-2 text-xs text-zinc-700 cursor-pointer">
           <input type="checkbox" checked={lembrar} onChange={(e) => setLembrar(e.target.checked)} className="mt-0.5" />
           <span>
@@ -405,7 +485,7 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
       <div className="flex items-center gap-2">
         <button onClick={lancar} disabled={busy || (!!avisoFolha && !permitirFolha)}
           className="px-4 py-2 bg-violet-600 text-white rounded-lg text-sm font-semibold hover:bg-violet-700 disabled:opacity-50 cursor-pointer">
-          {busy ? 'Lançando...' : tipo === 'despesa' ? 'Lançar despesa paga' : tipo === 'compra' ? 'Lançar compra paga' : tipo === 'freelancer' ? 'Lançar pagamento de freelancer' : 'Marcar como fora do DRE'}
+          {busy ? 'Lançando...' : tipo === 'despesa' ? 'Lançar despesa paga' : tipo === 'compra' ? 'Lançar compra paga' : tipo === 'freelancer' ? 'Lançar pagamento de freelancer' : tipo === 'prestador' ? (prestadorTipo === 'servico' ? 'Lançar serviço do prestador' : 'Lançar reembolso') : 'Marcar como fora do DRE'}
         </button>
         <span className="text-[11px] text-zinc-400">Dá para desfazer depois, no próprio pagamento.</span>
       </div>

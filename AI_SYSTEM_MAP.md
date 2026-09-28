@@ -2720,6 +2720,30 @@ categoria RH existente.
   Webhook: triagem manda `solicitacao_grupo_id`; liga TODOS os pagamentos da mensagem ao pedido (antes
   só o 1º — o 2º ficava sem comprovante); mensagem com cara de data num grupo com diária pendente vai
   para o brain em modo `dias_freelancer`.
+- **2026-09-28:** a aba Freelancers foi para dentro de **RH / Folha** (subaba; `?tab=freelancers` ainda
+  abre direto; quem só tem `fin_freelancers` vê só os freelancers, sem folha). Cadastro novo pela tela
+  (`fn_freelancer_criar`). Diária "aguardando dias" que veio do extrato (sem `payment_id`, só `bill_id`)
+  recebe os dias por `fn_freelancer_do_extrato` — antes o botão Salvar não fazia nada nesses casos.
+
+### Prestadores MEI (2026-09-28)
+
+Quem trabalha pela loja com CNPJ de MEI (ex.: supervisor), fora da folha do Domínio (sem INSS/FGTS/13º).
+Tela: RH / Folha › **Prestadores MEI** (`PrestadoresTab.tsx`). Tabelas `hr_prestadores` e
+`hr_prestador_pagamentos` (1 linha por conta a pagar, `on delete cascade` — desfazer a conta apaga).
+Leitura por RLS `auth_is_member_of`; escrita só por `fn_prestador_salvar`.
+
+- **Pelo extrato:** Conciliação › Lançar › **Prestador MEI** (`conciliacao-pagamentos`, kind `prestador`):
+  *Serviço do mês* = despesa em RH na competência; *Reembolso* = despesa na categoria da DRE do que ele
+  comprou (não é custo de pessoal). Pix para CPF/CNPJ do prestador abre já nessa opção. Recusa lançar
+  "serviço" se há conta aberta de pedido recorrente dele (é o mesmo Pix: ligar à conta).
+- **Recorrente:** `fn_prestador_gerar_pedidos` (cron `prestador-pedidos-mensais`, 08:10) cria no dia
+  combinado um **pedido de pagamento** (`fin_payment_requests` tipo `prestador`, `solicitado_por` nulo)
+  + cartão no 📥. O dono confere/muda o valor (campo no cartão e em /receber › Aprovar) e aprova →
+  `fn_pedido_pagamento_aprovar` (ramo prestador: conta em RH com `competence_month`) → Pix no Inter com
+  PIN → baixa. Recusar = não paga o mês (o automático não recria). Botão "Pedir pagamento" gera na hora.
+- **Pegadinhas:** `recorrente_desde` — ligar a recorrência depois do dia de pagamento do mês NÃO gera o
+  mês (senão pagaria de novo o que já saiu). Índice único de pedido vivo por prestador+competência.
+  Chave Pix só dos Pix permitidos (`fn_pix_favorecidos_opcoes`, lista branca só se edita no Assistente).
 
 ### Baixa pela conciliação casava com o débito ERRADO (2026-09-16)
 
@@ -3786,3 +3810,4 @@ Causa: `AprovacoesContext` (e o `NotificacoesContext`) eram só memória do apar
 - **2026-09-28 — Pendências no chat de todos os usuários.** O chat de quem não é o dono (`AcoesRapidasFlutuante`) ganhou o botão de caixa ao lado do X (número entra também na bolinha do botão fechado) → `assistente/PendenciasEquipe.tsx`: pendências de TODAS as lojas em que a pessoa está (RLS), filtradas pelo papel dela em cada loja (`pendenciaVisivelPara` + `availableTenants[].role`), mais aba "Minhas tarefas" (`TarefasPendencia` sem loja). Ações sem assistente-app: aprovação → `fn_pdv_approval_decide`; OK/"Não vou fazer" → `fn_pendencia_marcar`; resto → troca de loja + rota. Sem realtime de propósito (o botão está em todo PDV/KDS): polling 45 s + recarga ao abrir.
 - **2026-09-28 — Custos da IA num lugar só (Assistente › Custos da IA).** Tabela `ai_usage_events` (migração `20260928170000`; RLS sem policy, só service_role) + helper `_shared/ai-usage.ts` (`registrarUsoIa(admin, {feature, model, usage, tenantId?, userId?, ref?})`, preço de lista por modelo, cache 0,1×/1,25×/2×, web search US$ 0,01; nunca lança erro). Toda Edge que chama a Anthropic registra **cada** resposta: assistente-brain (`assistente`, `assistente-grupo`, `assistente-midia`, `assistente-aquecimento`), atendimento-loja (`atendimento-whatsapp`, `atendimento-simulacao`), canal-publico, contas-email, hiring-cv-scan (`curriculos`), hiring-scheduler (`agendamento-entrevista`), meta-ads-agent (`trafego-meta-ads`), purchase-receipt-scan (`leitura-notinha`), menu-translate (`traducao-cardapio`). **Critério:** Edge nova com IA tem que chamar `registrarUsoIa`, senão o gasto some da tela. Relatório: `assistente-config` action `ai_usage {de, ate}` → por loja/pessoa/uso/modelo/dia. Histórico até 28/09 veio de `asst_messages.usage`, `wa_loja_conversas.cost_usd`, `bot_conversations.cost_usd`, `meta_agent_runs.usage` (`backfill=true`, estimado). **Treino/avaliação de prompt roda no Claude Code, nunca pela API** (27/09 as baterias do atendimento custaram ~US$ 39 e não foram gravadas).
 - **2026-09-28 — `fn_get_cmv_report` (aba Relatórios › CMV & Margem) destravada** (migração `20260928120000`). Nunca tinha funcionado: foi criada fora das migrações (Readdy) chamando `convert_unit(ii.quantity, ii.unit, ing.unit)` com colunas do enum `ingredient_unit`, e só existe `convert_unit(numeric, text, text)` → 42883; atrás disso, `tem_ficha_tecnica` fora do GROUP BY (42803, virou `bool_or`). O `useCmvRelatorio` engole o erro e mostra tudo zerado. **Critério:** `ingredients.unit`/`item_ingredients.unit` são enum → sempre `::text` ao passar para `convert_unit` (`combo_ingredients.unit` e `options.consumption_unit` já são text). Função que só existe no banco pode nunca ter rodado: chamar de verdade antes de confiar. `convert_unit` devolve NULL em unidade incompatível e o SUM ignora (custo sai menor sem aviso) — hoje só 1 linha, na loja QA.
+- **2026-09-28 — Folha do Domínio: "LIQUIDO RESCISAO" não é desconto.** O extrato mensal traz essa rubrica como desconto e zera o líquido do mês (o valor foi pago no TRCT). O importador (`ImportarFolhaDominioModal › mapearFolha`) devolve ao líquido e tira dos descontos; detalhe e relatório de RH não mostram como desconto. Sem isso o Pix da rescisão não tinha com o que casar na conciliação.

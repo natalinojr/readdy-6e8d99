@@ -10,6 +10,7 @@ import { ConferePix, ResumoLido } from './NovoPedido';
 import { lerPixCopia } from './pixCopia';
 import JanelaPagamento, { type AvisoPagamento } from './JanelaPagamento';
 import { avisar, confirmar } from '@/components/base/Dialogos';
+import { lerValorBR } from '@/lib/formatters';
 
 const FORMA_PAGO: Record<string, string> = { pix: 'Pix', boleto: 'boleto', dinheiro: 'dinheiro do caixa', cartao: 'cartão', mercado_pago: 'saldo do Mercado Pago' };
 
@@ -340,16 +341,23 @@ function CartaoAprovar({ p, tenantId, categorias, onErro, onFeito, onJanela }: {
   const mudar = (k: number | 'todos', v: { classe: 'despesa' | 'cmv' | null; cat: string | null }) =>
     setCls((xs) => xs.map((x, i) => (k === 'todos' || k === i ? v : x)));
   const pixDoPedido = comPix ? lerPixCopia(p.pix_copia_e_cola!) : null;
-  const precisaDre = !compra && p.tipo !== 'freelancer' && !p.purchase_id;
+  const precisaDre = !compra && p.tipo !== 'freelancer' && p.tipo !== 'prestador' && !p.purchase_id;
+  // Prestador MEI: pedido mensal com o valor combinado; o dono confere e pode mudar antes de aprovar
+  const [valorMes, setValorMes] = useState(() => Number(p.valor).toFixed(2).replace('.', ','));
 
   const aprovar = async () => {
     if (precisaDre && !dre) { onErro('Escolha a classificação antes de aprovar'); return; }
     const falta = nova ? cls.findIndex((c) => !c.classe || !c.cat) : -1;
     if (falta >= 0) { onErro(`${cls[falta].classe ? 'Escolha a categoria' : 'Escolha se é Despesa ou CMV'}${itens.length > 1 ? ` — ${itens[falta].descricao.slice(0, 40)}` : ''}`); return; }
+    let valor: number | null = null;
+    if (p.tipo === 'prestador') {
+      valor = lerValorBR(valorMes);
+      if (!(valor > 0)) { onErro('Valor inválido'); return; }
+    }
     setGravando(true);
     onErro(null);
     const { data, erro } = await chamarPedidos<{ pagamento?: ResultadoPagamento; aviso?: string }>('aprovar', tenantId, {
-      id: p.id, dre_category_id: precisaDre ? dre : null,
+      id: p.id, dre_category_id: precisaDre ? dre : null, ...(valor != null ? { valor } : {}),
       ...(nova ? { itens_classe: cls.map((c) => ({ classe: c.classe, categoria_id: c.cat })) } : {}),
     });
     setGravando(false);
@@ -373,6 +381,13 @@ function CartaoAprovar({ p, tenantId, categorias, onErro, onFeito, onJanela }: {
       <Cabecalho p={p} mostrarQuem />
       <Detalhes p={p} />
       {!compra && <Pix chave={p.pix_chave} />}
+      {p.tipo === 'prestador' && (
+        <label className="mt-3 flex items-center gap-2 text-sm text-zinc-700 px-1">
+          Valor deste mês
+          <input value={valorMes} onChange={(e) => setValorMes(e.target.value)} inputMode="decimal"
+            className="w-32 h-10 px-3 rounded-xl border-2 border-amber-200 text-base font-bold text-zinc-900 focus:outline-none focus:border-amber-400" />
+        </label>
+      )}
       {compra && p.compra_detalhe && <div className="mt-3"><ResumoLido l={p.compra_detalhe} /></div>}
       {pixDoPedido && <ConferePix pix={pixDoPedido} total={p.compra_detalhe?.total ?? null} />}
       {comPix && p.pix_liberado === false && (

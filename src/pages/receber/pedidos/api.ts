@@ -2,7 +2,8 @@
 // O pedido só vira conta a pagar quando o dono aprova. POST único, sem retry (a ref evita duplicar).
 import { SUPABASE_URL, SUPABASE_ANON_KEY, ensureFreshSession } from '@/lib/supabase';
 
-export type TipoPedido = 'reembolso' | 'freelancer' | 'fornecedor' | 'compra_online';
+// 'prestador' (2026-09-28): pedido mensal do prestador MEI — só nasce pela recorrência, ninguém cria pela tela
+export type TipoPedido = 'reembolso' | 'freelancer' | 'fornecedor' | 'compra_online' | 'prestador';
 export type StatusPedido = 'pendente' | 'aprovada' | 'recusada' | 'cancelada' | 'comprada';
 
 export interface PermsPedido { pag_reembolso: boolean; pag_freelancer: boolean; pag_fornecedor: boolean; pag_compra_online?: boolean; pag_aprovar: boolean }
@@ -77,8 +78,8 @@ export interface Categoria { id: string; nome: string }
 export interface Freela { id: string; nome: string; funcao: string | null; diaria: number | null; tem_pix: boolean }
 export interface Fornecedor { id: string; nome: string; cnpj: string | null; tem_pix: boolean }
 
-export const ROTULO_TIPO: Record<TipoPedido, string> = { reembolso: 'Reembolso', freelancer: 'Freelancer', fornecedor: 'Fornecedor sem nota', compra_online: 'Compra online' };
-export const ICONE_TIPO: Record<TipoPedido, string> = { reembolso: 'ri-refund-2-line', freelancer: 'ri-user-star-line', fornecedor: 'ri-store-2-line', compra_online: 'ri-shopping-cart-2-line' };
+export const ROTULO_TIPO: Record<TipoPedido, string> = { reembolso: 'Reembolso', freelancer: 'Freelancer', fornecedor: 'Fornecedor sem nota', compra_online: 'Compra online', prestador: 'Prestador MEI' };
+export const ICONE_TIPO: Record<TipoPedido, string> = { reembolso: 'ri-refund-2-line', freelancer: 'ri-user-star-line', fornecedor: 'ri-store-2-line', compra_online: 'ri-shopping-cart-2-line', prestador: 'ri-briefcase-line' };
 
 export async function chamarPedidos<T>(action: string, tenantId: string, corpo: Record<string, unknown> = {}): Promise<{ data: T | null; erro: string | null }> {
   const sessao = await ensureFreshSession();

@@ -68,3 +68,15 @@ export function formatDateTime(date: string | Date): string {
 export function formatDateInput(date: Date): string {
   return date.toISOString().split('T')[0];
 }
+
+/**
+ * Valor digitado em reais → número. Aceita "1.500,50", "1500,50", "1500.50" e "1.500" (ponto seguido de
+ * exatamente 3 dígitos = milhar — antes "1.500" virava R$ 1,50). Inválido → NaN.
+ */
+export function lerValorBR(texto: string): number {
+  const t = String(texto ?? '').trim().replace(/^R\$\s*/i, '').replace(/\s/g, '');
+  if (!t) return NaN;
+  if (t.includes(',')) return Number(t.replace(/\./g, '').replace(',', '.'));
+  if (/^\d{1,3}(\.\d{3})+$/.test(t)) return Number(t.replace(/\./g, ''));
+  return Number(t);
+}

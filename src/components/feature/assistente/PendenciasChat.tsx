@@ -23,6 +23,7 @@ import { chamarPedidos } from '@/pages/receber/pedidos/api';
 import { LigarSangria, ProcurarNota, ResumoCompra } from '@/components/feature/assistente/PendenciaDireta';
 import BoletoEmailDecisao from '@/pages/financeiro/components/BoletoEmailDecisao';
 import DreClassificacaoSelect, { precisaClassificarDRE, useDreEscolha } from '@/pages/financeiro/components/DreClassificacaoSelect';
+import { lerValorBR } from '@/lib/formatters';
 
 type Call = <T>(action: string, extra?: Record<string, unknown>) => Promise<T>;
 
@@ -216,13 +217,20 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
   // Pedido de pagamento (dono, 2026-09-24): aprovar ali mesmo e já seguir para o Pix. Aprovar gera a
   // conta a pagar e o Edge prepara o Pix (pendência 'pagamento_pendente'); aí é o mesmo Pagar com PIN
   // dos pagamentos do grupo. Se o Pix não foi preparado (sem chave, trava do Pix), fica o aviso.
+  // Prestador MEI (pedido mensal da recorrência): o dono confere o valor e pode mudar antes de aprovar
+  const [valorPedido, setValorPedido] = useState<Record<string, string>>({});
   const aprovarEPagar = async (p: PendenciaChat, soPreparar = false) => {
     const pedido = pedidoDa(p);
     if (!pedido) return;
+    let valor: number | undefined;
+    if (!soPreparar && p.payload?.tipo === 'prestador' && valorPedido[p.id] != null) {
+      valor = lerValorBR(valorPedido[p.id]);
+      if (!(valor > 0)) { setErros((x) => ({ ...x, [p.id]: 'Valor inválido.' })); return; }
+    }
     setOcupada(p.id);
     setErros((e) => { const n = { ...e }; delete n[p.id]; return n; });
     try {
-      const { data, erro } = await chamarPedidos<{ pagamento?: { preparado: boolean; motivo?: string; aviso?: string } }>(soPreparar ? 'preparar_pagamento' : 'aprovar', p.tenantId, { id: pedido });
+      const { data, erro } = await chamarPedidos<{ pagamento?: { preparado: boolean; motivo?: string; aviso?: string } }>(soPreparar ? 'preparar_pagamento' : 'aprovar', p.tenantId, { id: pedido, ...(valor != null ? { valor } : {}) });
       if (erro) throw new Error(erro);
       if (!data?.pagamento?.preparado) {
         await recarregar(); onMudou?.();
@@ -422,6 +430,14 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
               </>
             )}
             {/* Pedido de pagamento (2026-09-24): decide aqui; aprovar já chama o Pix com PIN. */}
+            {ehPedido && p.payload?.tipo === 'prestador' && (
+              <label className="w-full flex items-center gap-2 text-xs text-zinc-600">
+                Valor deste mês
+                <input value={valorPedido[p.id] ?? Number(p.payload?.valor ?? 0).toFixed(2).replace('.', ',')}
+                  onChange={(e) => setValorPedido((v) => ({ ...v, [p.id]: e.target.value }))} inputMode="decimal"
+                  className="w-28 h-8 px-2 rounded-lg border border-violet-200 text-sm font-semibold text-zinc-900 focus:outline-none focus:ring-2 focus:ring-violet-300" />
+              </label>
+            )}
             {ehPedido && (
               <>
                 {/* Compra online: o dono classifica (Despesa/CMV) antes — abre o pedido na tela de aprovar */}

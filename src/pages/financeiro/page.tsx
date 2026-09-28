@@ -40,7 +40,6 @@ const TABS = [
   { id: 'itens', label: 'Classificação de Itens', icon: 'ri-price-tag-3-line' },
   { id: 'rh', label: 'RH / Folha', icon: 'ri-team-line' },
   { id: 'guias', label: 'Guias e impostos', icon: 'ri-file-upload-line' },
-  { id: 'freelancers', label: 'Freelancers', icon: 'ri-user-star-line' },
   { id: 'entregadores', label: 'Entregadores', icon: 'ri-e-bike-2-line' },
   { id: 'centros', label: 'Centro de Custos', icon: 'ri-pie-chart-line' },
   { id: 'dre', label: 'DRE', icon: 'ri-file-chart-line' },
@@ -56,7 +55,11 @@ export default function FinanceiroPage() {
   // Abas liberadas para o papel (Configurações › Permissões; admin vê todas).
   const { hasPermissao } = usePermissoes();
   const podeAba = (t: string) => { const k = finKeyDaAba(t); return !!k && hasPermissao(k); };
-  const abas = TABS.filter((t) => podeAba(t.id));
+  // Freelancers virou subaba de RH / Folha (2026-09-28): quem só tem a permissão de Freelancers
+  // continua vendo a aba RH, mas só com os freelancers (sem folha nem salários).
+  const podeRH = podeAba('rh');
+  const podeAbaOuFreela = (t: string) => podeAba(t) || (t === 'rh' && podeAba('freelancers'));
+  const abas = TABS.filter((t) => podeAbaOuFreela(t.id));
   // Mesmo número do menu lateral (contas vencidas + vencendo em 7 dias + folha pendente),
   // quebrado nas abas onde cada parte se resolve — antes só o menu mostrava o total.
   const { contasVencidas, contasVencendo, folhaPendente } = useFinanceiroAlertas();
@@ -71,7 +74,7 @@ export default function FinanceiroPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const daUrl = searchParams.get('tab');
   const doState = (location.state as { activeTab?: string } | null)?.activeTab;
-  const valida = (t: string | null | undefined) => (t && (TABS.some((x) => x.id === t) || t === 'previsao' || t === 'rh-relatorio') && podeAba(t) ? t : null);
+  const valida = (t: string | null | undefined) => (t && (TABS.some((x) => x.id === t) || t === 'previsao' || t === 'rh-relatorio' || t === 'freelancers') && podeAbaOuFreela(t) ? t : null);
   const activeTab = valida(daUrl) ?? valida(doState) ?? abas[0]?.id ?? 'visao';
   const setActiveTab = (t: string) => setSearchParams({ tab: t }, { replace: true });
   // ?foco=<id da compra> abre a aba Compras já piscando naquela linha — usado pelo Rastreamento
@@ -152,7 +155,7 @@ export default function FinanceiroPage() {
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
               className={`flex items-center gap-1 md:gap-1.5 px-2.5 md:px-3 py-2.5 text-xs font-semibold whitespace-nowrap border-b-2 transition-colors cursor-pointer flex-shrink-0 ${
-                (activeTab === 'rh-relatorio' ? 'rh' : activeTab) === tab.id
+                (activeTab === 'rh-relatorio' || activeTab === 'freelancers' ? 'rh' : activeTab) === tab.id
                   ? 'border-amber-500 text-amber-600'
                   : 'border-transparent text-zinc-400 hover:text-zinc-700'
               }`}
@@ -186,10 +189,11 @@ export default function FinanceiroPage() {
         {activeTab === 'notas-entrada' && <NotasEntradaTab />}
         {activeTab === 'itens' && <ItensClassificacaoTab />}
         {activeTab === 'compras' && <ComprasTab highlightId={highlightPurchaseId} onHighlightConsumed={handleClearHighlight} />}
-        {/* 'rh-relatorio' (aba antiga, links salvos e o assistente) abre RH já em Relatórios */}
-        {(activeTab === 'rh' || activeTab === 'rh-relatorio') && <RHTab inicial={activeTab === 'rh-relatorio' ? 'relatorio' : undefined} />}
+        {/* 'rh-relatorio' e 'freelancers' (abas antigas, links salvos e o assistente) abrem RH já na subaba */}
+        {(activeTab === 'rh' || activeTab === 'rh-relatorio' || activeTab === 'freelancers') && (podeRH
+          ? <RHTab inicial={activeTab === 'rh-relatorio' ? 'relatorio' : activeTab === 'freelancers' ? 'freelancers' : undefined} />
+          : <FreelancersTab />)}
         {activeTab === 'guias' && <GuiasTab />}
-        {activeTab === 'freelancers' && <FreelancersTab />}
         {activeTab === 'entregadores' && <EntregadoresTab />}
         {activeTab === 'centros' && <CentroCustosTab />}
         {activeTab === 'dre' && <DREContainer />}
