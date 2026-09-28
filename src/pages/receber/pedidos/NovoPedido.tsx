@@ -420,7 +420,7 @@ export default function NovoPedido({ tipo, tenantId, contexto, onEnviado, onErro
                   {(procurando || cands === null) && <p className="text-sm text-zinc-500 px-1 mt-1.5"><i className="ri-loader-4-line animate-spin" /> Procurando…</p>}
                   {cands && !procurando && cands.length === 0 && (
                     <p className="mt-1.5 text-sm text-red-700 bg-red-50 border border-red-200 rounded-2xl px-3 py-2.5">
-                      Não achei {pagoForma === 'dinheiro' ? 'uma sangria de fornecedor' : 'uma saída no extrato'} de <b>{brl(valorPago)}</b> perto de {dataBR(pagoEm)}. Sem o pagamento lançado no sistema, a compra não entra.
+                      Não achei {pagoForma === 'dinheiro' ? 'uma sangria de fornecedor' : 'uma saída no extrato'} de <b>{brl(valorPago)}</b> entre {dataBR(somaDias(pagoEm, -60))} e {dataBR(somaDias(pagoEm, 3))}. Sem o pagamento lançado no sistema, a compra não entra.
                       {pagoForma === 'dinheiro' ? ' Lance a sangria no caixa (motivo Fornecedor) e tente de novo.' : ' O extrato atualiza às 7h e ao abrir a Conciliação — se pagou agora, tente mais tarde.'}
                     </p>
                   )}

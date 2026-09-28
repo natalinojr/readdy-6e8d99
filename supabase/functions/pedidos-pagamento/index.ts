@@ -176,7 +176,7 @@ async function criar(ctx: Ctx, body: Record<string, any>) {
       if (!achado) {
         return erro(cands.length
           ? 'Escolha qual pagamento é o desta compra'
-          : `Não achei esse pagamento no sistema (${forma === 'dinheiro' ? 'sangria de fornecedor no caixa' : 'saída no extrato do banco'} de ${brl(valorPago)} perto de ${diaBR(pagoEm)}). Sem o pagamento lançado, a compra não entra.`);
+          : `Não achei esse pagamento no sistema (${forma === 'dinheiro' ? 'sangria de fornecedor no caixa' : 'saída no extrato do banco'} de ${brl(valorPago)} entre ${diaBR(somaDias(pagoEm, -JANELA_DIAS))} e ${diaBR(somaDias(pagoEm, 3))}). Sem o pagamento lançado, a compra não entra.`);
       }
       Object.assign(linha, base, {
         favorecido_nome: link?.site ?? (txt(det?.site, 60) || 'Compra online'), ja_pago: true, ja_pago_em: achado.data, pago_forma: forma,
@@ -604,11 +604,14 @@ async function aprovarCompraOnline(ctx: Ctx, p: any, body: Record<string, any>):
 }
 
 type FormaPaga = 'pix' | 'boleto' | 'dinheiro';
+/** Até quantos dias antes da data informada o pagamento é procurado (dono, 2026-09-28: 60). */
+const JANELA_DIAS = 60;
 type Candidato = { tipo: 'extrato' | 'sangria'; id: string; data: string; valor: number; descricao: string };
 
 /**
  * Pagamentos já lançados no sistema que podem ser o desta compra (regra do dono, 2026-09-28): mesmo
- * valor (±R$ 0,01), até 3 dias da data informada e ainda sem dono. Pix/boleto = saída do extrato do
+ * valor (±R$ 0,01), de JANELA_DIAS (60) dias antes até 3 dias depois da data informada — os mais perto da
+ * data primeiro — e ainda sem dono. Pix/boleto = saída do extrato do
  * banco ainda não conciliada (boleto = PAGAMENTO no Inter); dinheiro = sangria de fornecedor do caixa
  * ainda sem compra. Pagamento já usado por outro pedido de compra online não aparece.
  */
@@ -619,8 +622,8 @@ async function candidatosPagamento(ctx: Ctx, forma: FormaPaga, valor: number, di
     const { data, error } = await ctx.admin.from('cash_movements').select('id, amount, reason, created_at, category')
       .eq('tenant_id', ctx.tenantId).eq('type', 'out').is('purchase_id', null)
       .gte('amount', round2(valor - 0.01)).lte('amount', round2(valor + 0.01))
-      .gte('created_at', `${somaDias(dia, -3)}T00:00:00-03:00`).lte('created_at', `${somaDias(dia, 3)}T23:59:59-03:00`)
-      .order('created_at', { ascending: false }).limit(20);
+      .gte('created_at', `${somaDias(dia, -JANELA_DIAS)}T00:00:00-03:00`).lte('created_at', `${somaDias(dia, 3)}T23:59:59-03:00`)
+      .order('created_at', { ascending: false }).limit(50);
     if (error) throw new Error(`Procurar sangria: ${error.message}`);
     for (const m of (data ?? []) as any[]) {
       if (!(m.category === 'fornecedor' || (!m.category && /^fornecedor/i.test(String(m.reason ?? ''))))) continue;
@@ -630,8 +633,8 @@ async function candidatosPagamento(ctx: Ctx, forma: FormaPaga, valor: number, di
     const { data, error } = await ctx.admin.from('fin_bank_statement_imports').select('id, amount, transaction_date, description, counterpart_name, raw')
       .eq('tenant_id', ctx.tenantId).eq('transaction_type', 'debit').eq('status', 'pending').eq('reconciled', false)
       .gte('amount', round2(valor - 0.01)).lte('amount', round2(valor + 0.01))
-      .gte('transaction_date', somaDias(dia, -3)).lte('transaction_date', somaDias(dia, 3))
-      .order('transaction_date', { ascending: false }).limit(20);
+      .gte('transaction_date', somaDias(dia, -JANELA_DIAS)).lte('transaction_date', somaDias(dia, 3))
+      .order('transaction_date', { ascending: false }).limit(50);
     if (error) throw new Error(`Procurar no extrato: ${error.message}`);
     for (const r of (data ?? []) as any[]) {
       const tipoInter = String(r.raw?.tipoTransacao ?? '').toUpperCase();
@@ -640,6 +643,9 @@ async function candidatosPagamento(ctx: Ctx, forma: FormaPaga, valor: number, di
     }
   }
   if (!out.length) return out;
+  // Mais perto da data informada primeiro
+  const dist = (c: Candidato) => Math.abs(Date.parse(`${c.data}T12:00:00Z`) - Date.parse(`${dia}T12:00:00Z`));
+  out.sort((a, b) => dist(a) - dist(b));
   const { data: usados } = await ctx.admin.from('fin_payment_requests').select('pago_ref_id')
     .eq('tenant_id', ctx.tenantId).in('status', ['pendente', 'aprovada']).in('pago_ref_id', out.map((c) => c.id));
   const ja = new Set((usados ?? []).map((u: any) => String(u.pago_ref_id)));
