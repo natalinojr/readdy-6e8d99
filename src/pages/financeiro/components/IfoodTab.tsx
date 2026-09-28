@@ -154,7 +154,8 @@ export default function IfoodTab() {
     return {
       ...z, faturamento, liquido: faturamento - z.loja, custoTotal: z.taxas + z.servicos - z.ajustes,
       promoLoja, promoIfood, pedidos, cancelados,
-      ticket: pedidos > 0 ? z.vendas / pedidos : 0,
+      // Ticket sem o desconto que a loja deu (o que o iFood bancou fica): mesma regra de valorTicket (ifoodDashboard).
+      ticket: pedidos > 0 ? (z.vendas - promoLoja) / pedidos : 0,
       taxaEfetiva: z.vendas > 0 ? ((z.taxas + z.servicos - z.ajustes) / z.vendas) * 100 : 0,
       taxasLista: [...custo.entries()].filter(([, v]) => Math.abs(v) > 0.004).sort((a, b) => b[1] - a[1]),
     };

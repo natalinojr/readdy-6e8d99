@@ -8,7 +8,7 @@ import { getPeriodDates, getPeriodoAnterior, labelPeriodoAnterior } from '@/lib/
 import { useSalesReport } from '@/hooks/useSalesReport';
 import HeatmapSemanaHora from './HeatmapSemanaHora';
 import {
-  fetchPedidosIfood, fetchOperacaoIfood, fetchCardapioIfood, resumir, mediana, motivoCurto, culpaCancelamento,
+  fetchPedidosIfood, fetchOperacaoIfood, fetchCardapioIfood, resumir, valorTicket, mediana, motivoCurto, culpaCancelamento,
   type PedidoIfood, type OperacaoPedido, type MenuLinha, type Logistica,
 } from '@/lib/ifoodDashboard';
 
@@ -187,7 +187,7 @@ export default function IfoodTab({ periodo }: Props) {
     const ps = validos.filter((p) => p.logistica === k);
     const vendas = ps.reduce((a, p) => a + p.vendas, 0);
     const custo = ps.reduce((a, p) => a + (p.vendas - p.liquido), 0);
-    return { k, ...LOGISTICA[k], pedidos: ps.length, vendas, ticket: ps.length ? vendas / ps.length : 0, custoPct: vendas > 0 ? (custo / vendas) * 100 : 0, comissaoPct: vendas > 0 ? (ps.reduce((a, p) => a + p.comissao, 0) / vendas) * 100 : 0 };
+    return { k, ...LOGISTICA[k], pedidos: ps.length, vendas, ticket: ps.length ? ps.reduce((a, p) => a + valorTicket(p), 0) / ps.length : 0, custoPct: vendas > 0 ? (custo / vendas) * 100 : 0, comissaoPct: vendas > 0 ? (ps.reduce((a, p) => a + p.comissao, 0) / vendas) * 100 : 0 };
   }).filter((x) => x.pedidos > 0), [validos]);
 
   // ── Formas de pagamento ────────────────────────────────────────────────────
@@ -207,7 +207,7 @@ export default function IfoodTab({ periodo }: Props) {
     const com = validos.filter((p) => p.promoLoja > 0.005 || p.promoIfood > 0.005);
     const sem = validos.filter((p) => !(p.promoLoja > 0.005 || p.promoIfood > 0.005));
     const comLoja = validos.filter((p) => p.promoLoja > 0.005);
-    const t = (ps: PedidoIfood[]) => (ps.length ? ps.reduce((a, p) => a + p.vendas, 0) / ps.length : 0);
+    const t = (ps: PedidoIfood[]) => (ps.length ? ps.reduce((a, p) => a + valorTicket(p), 0) / ps.length : 0);
     return {
       com: com.length, sem: sem.length, ticketCom: t(com), ticketSem: t(sem),
       pctPedidos: validos.length ? (com.length / validos.length) * 100 : 0,
@@ -220,8 +220,8 @@ export default function IfoodTab({ periodo }: Props) {
     const lim = [0, 30, 50, 70, 100, 150, Infinity];
     return lim.slice(0, -1).map((a, i) => {
       const b = lim[i + 1];
-      const ps = validos.filter((p) => p.vendas >= a && p.vendas < b);
-      return { faixa: b === Infinity ? `${a}+` : `${a}–${b}`, pedidos: ps.length, vendas: Math.round(ps.reduce((s, p) => s + p.vendas, 0)) };
+      const ps = validos.filter((p) => valorTicket(p) >= a && valorTicket(p) < b);
+      return { faixa: b === Infinity ? `${a}+` : `${a}–${b}`, pedidos: ps.length, vendas: Math.round(ps.reduce((s, p) => s + valorTicket(p), 0)) };
     });
   }, [validos]);
 

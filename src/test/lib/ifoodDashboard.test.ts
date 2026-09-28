@@ -37,6 +37,8 @@ describe('montarPedidos / resumir', () => {
     const r = resumir([p]);
     expect(r.pedidos).toBe(1);
     expect(r.custoPct).toBeCloseTo(((23 + 3 + 10) / 97) * 100);
+    // ticket tira só a promoção da loja; a do iFood fica: 97 − 10 = 87
+    expect(r.ticket).toBeCloseTo(87);
   });
 
   it('pedido que zera é cancelado e guarda o valor perdido e o motivo', () => {

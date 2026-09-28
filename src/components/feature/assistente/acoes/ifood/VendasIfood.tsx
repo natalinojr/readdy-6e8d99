@@ -52,7 +52,9 @@ export default function VendasIfood({ onFechar, irPara }: AcaoProps) {
     }
     const rotulo = `${DIA_SEMANA[new Date(`${semanaPassada}T12:00:00-03:00`).getDay()]} passada`;
     const base = (v: number | undefined) => (a && a.pedidos > 0 ? v ?? 0 : null);
-    const ticket = r.pedidos ? r.vendido / r.pedidos : 0;
+    // Ticket sem o desconto que a loja deu (o que o iFood bancou fica) — mesma regra de Relatórios › iFood.
+    const ticket = r.pedidos ? (r.vendido - r.promoLoja) / r.pedidos : 0;
+    const ticketAnt = a && a.pedidos > 0 ? (a.vendido - a.promoLoja) / a.pedidos : null;
     const comVenda = [...Array(24).keys()].filter((h) => r.porHora[h] > 0 || (a?.porHora[h] ?? 0) > 0);
     const pontos = comVenda.length >= 2
       ? Array.from({ length: comVenda[comVenda.length - 1] - comVenda[0] + 1 }, (_, i) => comVenda[0] + i)
@@ -67,7 +69,7 @@ export default function VendasIfood({ onFechar, irPara }: AcaoProps) {
           principal={{ label: 'Vendido no iFood', valor: brl(r.vendido), extra: <Variacao atual={r.vendido} base={base(a?.vendido)} rotulo={`vs ${rotulo}`} /> }}
           outros={[
             { label: 'Pedidos', valor: String(r.pedidos), extra: <Variacao atual={r.pedidos} base={base(a?.pedidos)} rotulo={`vs ${rotulo}`} /> },
-            { label: 'Ticket médio', valor: brl(ticket), extra: <Variacao atual={ticket} base={a && a.pedidos > 0 ? a.vendido / a.pedidos : null} rotulo={`vs ${rotulo}`} /> },
+            { label: 'Ticket médio', valor: brl(ticket), extra: <Variacao atual={ticket} base={ticketAnt} rotulo={`vs ${rotulo}`} /> },
             { label: 'Líquido', valor: brl(r.liquido) },
           ]}
         />

@@ -60,11 +60,18 @@ export interface Resumo {
   ajustes: number;
   cancelados: number;
   valorCancelado: number;
-  ticket: number;
+  ticket: number; // (vendas − promoção paga pela loja) / pedidos — ver valorTicket
   custoPct: number; // (taxas + serviços − ajustes) / vendas
 }
 
 const r2 = (v: number) => Math.round(v * 100) / 100;
+
+/**
+ * Valor do pedido para o ticket médio (regra do dono, 2026-09-28): as vendas do Portal já somam de volta
+ * as duas promoções; no ticket sai só o desconto que a loja deu. O que o iFood bancou continua no ticket
+ * (o cliente não pagou, mas a loja recebe).
+ */
+export const valorTicket = (p: Pick<PedidoIfood, 'vendas' | 'promoLoja'>) => p.vendas - p.promoLoja;
 
 /** Nome curto do motivo de cancelamento (o iFood às vezes cola o laudo inteiro do atendimento). */
 export function motivoCurto(m: string): string {
@@ -143,13 +150,14 @@ export function resumir(pedidos: PedidoIfood[]): Resumo {
     pedidos: 0, vendas: 0, liquido: 0, comissao: 0, transacao: 0, promoLoja: 0, promoIfood: 0, entregaSobDemanda: 0,
     outrosServicos: 0, ajustes: 0, cancelados: 0, valorCancelado: 0, ticket: 0, custoPct: 0,
   };
+  let somaTicket = 0;
   for (const p of pedidos) {
     z.vendas += p.vendas; z.liquido += p.liquido; z.comissao += p.comissao; z.transacao += p.transacao;
     z.promoLoja += p.promoLoja; z.promoIfood += p.promoIfood; z.entregaSobDemanda += p.entregaSobDemanda;
     z.outrosServicos += p.outrosServicos; z.ajustes += p.ajustes;
-    if (p.cancelado) { z.cancelados += 1; z.valorCancelado += p.bruto; } else z.pedidos += 1;
+    if (p.cancelado) { z.cancelados += 1; z.valorCancelado += p.bruto; } else { z.pedidos += 1; somaTicket += valorTicket(p); }
   }
-  z.ticket = z.pedidos > 0 ? z.vendas / z.pedidos : 0;
+  z.ticket = z.pedidos > 0 ? somaTicket / z.pedidos : 0;
   const custo = z.comissao + z.transacao + z.promoLoja + z.entregaSobDemanda + z.outrosServicos - z.ajustes;
   z.custoPct = z.vendas > 0 ? (custo / z.vendas) * 100 : 0;
   for (const k of Object.keys(z) as (keyof Resumo)[]) if (k !== 'pedidos' && k !== 'cancelados') z[k] = r2(z[k]);
