@@ -32,6 +32,10 @@
 //   pendencias_pagamento_info { ids }              → por pendência de pagamento: para quem vai e se a mercadoria já chegou
 //   conta_dre     { tenant_id, bill_id, dre_category_id } → classifica a conta (só se ainda estiver sem)
 //   pedido_origem { id }                           → mensagem (asst_messages.id) que gerou o pedido do grupo
+//   Trilha versão D (2026-09-29) — ações do cartão da conta, sem IA:
+//   conta_guardar_boleto  { bill_id, linha? | copia_e_cola?, confirmar_valor? } → guarda o boleto/Pix na conta (DV/CRC conferidos)
+//   conta_desfazer_boleto { bill_id }             → tira o boleto guardado pela tela (desfazer)
+//   conta_pedir_boleto    { bill_id }             → registra o pedido na pendência e devolve o texto p/ o WhatsApp do dono
 //
 // O PIN é o mesmo do Telegram (asst_settings.pay_pin, hash com o id do chat do Telegram) e nunca
 // vai ao modelo nem ao histórico. Mesmo bloqueio: 3 erros → 15 minutos.
@@ -40,7 +44,9 @@
 // Secrets: ASSISTENTE_INTERNAL_KEY (brain/telegram), FISCAL_INTERNAL_KEY (inter-bank), WHISPER_URL, WHISPER_API_KEY.
 
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
-import { lerGuia } from '../_shared/guias.ts';
+import { copiaValida, lerCopia, lerGuia } from '../_shared/guias.ts';
+import { decodeBoleto } from '../_shared/boleto.ts';
+import { brl as brlTxt, ddmm, hojeBrasilia, mensagemPedidoBoleto, normNome, precisaConfirmarValor, registrarPedido, round2 } from '../_shared/trilha-acoes.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -788,6 +794,165 @@ Deno.serve(async (req) => {
         descricao: String(b.supplier || b.description || 'Conta').slice(0, 140), requested_by: user.id, channel: 'app', chat_id: chatKey,
       });
       return json({ success: true, data: { payment: await payCard1(admin, out.payment) } });
+    }
+
+    // ── Trilha versão D (2026-09-29): guardar / desfazer / pedir o boleto de uma conta ──────────
+    // Nada aqui paga nem cadastra fornecedor ou chave Pix: pagar continua sendo conta_pagar + pay (PIN),
+    // e o recebedor do Pix é conferido pelo inter-bank › prepare_payment (lista branca) na hora de pagar.
+    if (action === 'conta_guardar_boleto' || action === 'conta_desfazer_boleto' || action === 'conta_pedir_boleto') {
+      const { data: b } = await admin.from('fin_accounts_payable')
+        .select('id, tenant_id, supplier, description, amount, paid_amount, due_date, status, installments, installment_number, reference_type, reference_id, boleto_digitavel, boleto_barcode, boleto_pix_copia, boleto_origem')
+        .eq('id', String(body.bill_id ?? '')).maybeSingle();
+      if (!b) return fail('Conta não encontrada.', 404);
+      const tenant = String(b.tenant_id);
+      if (!(await ehGestor(admin, user.id, tenant))) return fail('Sem acesso a essa loja.', 403);
+      const temBoleto = !!(b.boleto_digitavel || b.boleto_barcode || b.boleto_pix_copia);
+      const saldo = round2(Number(b.amount) - Number(b.paid_amount ?? 0));
+
+      if (action === 'conta_guardar_boleto') {
+        if (['paid', 'cancelled'].includes(String(b.status))) return fail(b.status === 'paid' ? 'Essa conta já está paga.' : 'Essa conta foi cancelada.');
+        if (temBoleto) {
+          return fail(b.boleto_digitavel || b.boleto_barcode
+            ? `Essa conta já tem um boleto guardado (${String(b.boleto_digitavel ?? b.boleto_barcode).slice(0, 12)}…). Desfaça antes de guardar outro.`
+            : 'Essa conta já tem um Pix copia e cola guardado. Desfaça antes de guardar outro.');
+        }
+        const linha = String(body.linha ?? '').trim();
+        // Copia e cola tem espaço no nome do recebedor: só tira quebra de linha e as pontas.
+        const copia = String(body.copia_e_cola ?? '').replace(/\r?\n/g, '').trim();
+        if (!!linha === !!copia) return fail('Mande a linha digitável do boleto OU o Pix copia e cola (um dos dois).');
+        const avisos: string[] = [];
+        let tipo: 'boleto' | 'pix';
+        let valor: number | null;
+        let vencimento: string | null = null;
+        // deno-lint-ignore no-explicit-any
+        let campos: Record<string, any>;
+        if (linha) {
+          tipo = 'boleto';
+          // A conferência é o dígito verificador (mesma leitura do inter-bank): número que não fecha não é gravado.
+          let dec;
+          try { dec = decodeBoleto(linha); } catch (e) {
+            const m = errMsg(e);
+            return fail(m.startsWith('Esperava') ? m : 'Os números do boleto não conferem — confira a linha digitável.');
+          }
+          const digitavel = dec.digitavel ?? linha.replace(/\D/g, '');
+          valor = dec.valor;
+          vencimento = dec.vencimento;
+          // Mesmo boleto já guardado em outra conta da loja: gravar de novo abriria caminho para pagar duas vezes.
+          const { data: dup } = await admin.from('fin_accounts_payable').select('id, supplier, description')
+            .eq('tenant_id', tenant).neq('status', 'cancelled').neq('id', b.id)
+            .or(`boleto_digitavel.eq.${digitavel},boleto_barcode.eq.${dec.barcode}`).limit(1);
+          if (dup?.length) return fail(`Esse boleto já está guardado em outra conta: ${dup[0].supplier || dup[0].description}.`);
+          campos = { boleto_digitavel: digitavel, boleto_barcode: dec.barcode ?? null, boleto_pix_copia: null };
+          if (valor == null) avisos.push('O código não traz o valor: confira o valor na hora de pagar.');
+          if (vencimento && b.due_date && vencimento !== String(b.due_date)) {
+            avisos.push(`O boleto vence em ${ddmm(vencimento)} e a conta está com vencimento ${ddmm(b.due_date)} (a conta não foi mudada).`);
+          }
+        } else {
+          tipo = 'pix';
+          if (!copia.startsWith('000201') || !copiaValida(copia)) return fail('Pix copia e cola inválido (o código de conferência não bate). Confira se veio inteiro.');
+          const { data: dup } = await admin.from('fin_accounts_payable').select('id, supplier, description')
+            .eq('tenant_id', tenant).neq('status', 'cancelled').neq('id', b.id).eq('boleto_pix_copia', copia).limit(1);
+          if (dup?.length) return fail(`Esse Pix já está guardado em outra conta: ${dup[0].supplier || dup[0].description}.`);
+          valor = lerCopia(copia).valor;
+          campos = { boleto_digitavel: null, boleto_barcode: null, boleto_pix_copia: copia };
+          avisos.push('O recebedor do Pix não é conferido agora: na hora de pagar, o Inter só aceita recebedor da lista de fornecedores.');
+        }
+        // Valor do documento ≠ saldo da conta: não grava sem o dono confirmar (boleto de outra parcela/conta).
+        if (precisaConfirmarValor(valor, saldo)) {
+          if (body.confirmar_valor !== true) return json({ success: true, data: { precisa_confirmar: true, valor_boleto: valor, valor_conta: saldo } });
+          avisos.push(`Guardado com valor diferente da conta: documento ${brlTxt(valor!)} × conta ${brlTxt(saldo)}.`);
+        }
+        // Grava só se continuar em aberto e sem boleto (duas abas/dois toques não sobrescrevem).
+        const { data: gravou, error: eg } = await admin.from('fin_accounts_payable')
+          .update({ ...campos, boleto_recebido_em: nowIso(), boleto_origem: 'erpos' })
+          .eq('id', b.id).eq('tenant_id', tenant).not('status', 'in', '(paid,cancelled)')
+          .is('boleto_digitavel', null).is('boleto_barcode', null).is('boleto_pix_copia', null).select('id');
+        if (eg) return fail(`Não consegui guardar: ${eg.message}`, 500);
+        if (!gravou?.length) return fail('A conta mudou enquanto isso (paga ou com boleto). Atualize a tela.');
+        await admin.rpc('fn_pendencia_resolver_ref', { p_tenant: tenant, p_kind: 'boleto_faltando', p_ref: b.id, p_motivo: 'boleto guardado pela Trilha' });
+        log('INFO', 'boleto guardado pela Trilha', { tenant, bill: b.id, tipo });
+        return json({ success: true, data: { bill_id: b.id, tipo, valor, vencimento, avisos } });
+      }
+
+      if (action === 'conta_desfazer_boleto') {
+        if (b.status === 'paid') return fail('Essa conta já está paga — o boleto fica.');
+        if (!temBoleto) return fail('Essa conta não tem boleto guardado.');
+        // Só desfaz o que a própria tela guardou: boleto do e-mail, do WhatsApp ou de guia não some por aqui.
+        if (b.boleto_origem !== 'erpos') return fail('Esse boleto não foi guardado pela Trilha (veio do e-mail, do WhatsApp ou de uma guia). Troque pela tela de Contas a Pagar.');
+        // Pagamento do Inter com esse boleto em andamento: tirar o código não cancela o Pix/boleto já montado.
+        const { data: pays } = await admin.from('fin_inter_payments').select('status, created_at, amount').eq('bill_id', b.id).in('status', PAY_OPEN);
+        const vivo = (pays ?? []).find((p) => !(['draft', 'awaiting_pin'].includes(p.status) && Date.now() - new Date(p.created_at).getTime() > PAY_TTL_MS));
+        if (vivo) return fail(`Há um pagamento de ${brl(vivo.amount)} dessa conta ${PAY_STATUS[vivo.status] ?? vivo.status}. Cancele-o antes de desfazer.`);
+        const { data: limpou, error: el } = await admin.from('fin_accounts_payable')
+          .update({ boleto_digitavel: null, boleto_barcode: null, boleto_pix_copia: null, boleto_recebido_em: null, boleto_origem: null })
+          .eq('id', b.id).eq('tenant_id', tenant).neq('status', 'paid').eq('boleto_origem', 'erpos').select('id');
+        if (el) return fail(`Não consegui desfazer: ${el.message}`, 500);
+        if (!limpou?.length) return fail('A conta mudou enquanto isso. Atualize a tela.');
+        // A pendência "falta o boleto" que o guardar fechou volta a valer (o cron não reabre resolvida).
+        await admin.from('pendencias').update({ status: 'aberta', resolvida_em: null, resolvida_por: null, motivo: null })
+          .eq('tenant_id', tenant).eq('kind', 'boleto_faltando').eq('ref', b.id).eq('status', 'resolvida').eq('motivo', 'boleto guardado pela Trilha');
+        log('INFO', 'boleto desfeito pela Trilha', { tenant, bill: b.id });
+        return json({ success: true, data: { bill_id: b.id } });
+      }
+
+      // conta_pedir_boleto — o sistema NÃO manda mensagem ao fornecedor (não há canal de saída para
+      // ele): registra o pedido na pendência e devolve o texto para o dono mandar pelo WhatsApp dele.
+      if (['paid', 'cancelled'].includes(String(b.status))) return fail(b.status === 'paid' ? 'Essa conta já está paga.' : 'Essa conta foi cancelada.');
+      if (temBoleto) return fail('Essa conta já tem boleto ou Pix guardado — não precisa pedir.');
+      const hoje = hojeBrasilia();
+      const compraId = b.reference_type === 'purchase' && b.reference_id ? String(b.reference_id) : null;
+      const { data: compra } = compraId
+        ? await admin.from('fin_purchases').select('id, supplier, supplier_id, invoice_number').eq('id', compraId).eq('tenant_id', tenant).maybeSingle()
+        : { data: null };
+      const fornecedor = String(b.supplier || compra?.supplier || '').trim() || null;
+      // Contato: pelo supplier_id da compra; sem ele, pelo nome (sem acento/caixa) no cadastro da loja.
+      // deno-lint-ignore no-explicit-any
+      let sup: any = null;
+      if (compra?.supplier_id) {
+        const { data } = await admin.from('fin_suppliers').select('id, name, phone, email').eq('id', compra.supplier_id).eq('tenant_id', tenant).maybeSingle();
+        sup = data;
+      }
+      if (!sup && fornecedor) {
+        const { data: sups } = await admin.from('fin_suppliers').select('id, name, legal_name, phone, email').eq('tenant_id', tenant).is('deleted_at', null).limit(2000);
+        const alvo = normNome(fornecedor);
+        const achados = (sups ?? []).filter((s) => normNome(s.name) === alvo || (s.legal_name && normNome(s.legal_name) === alvo));
+        sup = achados.length === 1 ? achados[0] : null; // dois cadastros com o mesmo nome: não chuta
+      }
+      const { data: pend } = await admin.from('pendencias').select('id, status, payload')
+        .eq('tenant_id', tenant).eq('kind', 'boleto_faltando').eq('ref', b.id).maybeSingle();
+      const venc = String(b.due_date ?? '');
+      const dias = venc ? Math.round((Date.parse(`${venc}T00:00:00Z`) - Date.parse(`${hoje}T00:00:00Z`)) / 86_400_000) : 0;
+      // Mesmo formato do assistente-cron (boleto_faltando), mais o registro do pedido.
+      const base = pend?.payload ?? { bill_id: b.id, purchase_id: compraId, valor: saldo, vencimento: ddmm(venc), vencida: dias < 0 };
+      const payload = registrarPedido(base, hoje);
+      if (pend) {
+        // Resolvida/descartada volta a aberta: o dono acabou de pedir o boleto dessa conta, então ela vale de novo.
+        const reabre = ['aberta', 'vista'].includes(pend.status) ? {} : { status: 'aberta', resolvida_em: null, resolvida_por: null, motivo: null };
+        const { error: ep } = await admin.from('pendencias').update({ payload, ...reabre }).eq('id', pend.id);
+        if (ep) return fail(`Não consegui registrar o pedido: ${ep.message}`, 500);
+      } else {
+        const quando = dias < 0 ? `VENCIDA em ${ddmm(venc)}` : dias === 0 ? 'vence HOJE' : dias === 1 ? 'vence amanhã' : `vence ${ddmm(venc)}`;
+        const { error: ep } = await admin.rpc('fn_pendencia_upsert', {
+          p_tenant: tenant, p_kind: 'boleto_faltando', p_ref: b.id,
+          p_titulo: `Falta o boleto: ${b.supplier ?? b.description} — ${brl(saldo)}, ${quando}`.slice(0, 200),
+          p_detalhe: dias < 0
+            ? 'Venceu sem o boleto no sistema. Se já foi pago, dê a baixa; se não, peça o boleto atualizado ao fornecedor.'
+            : 'A conta está lançada (veio da nota), mas sem o código do boleto não dá para pagar pelo Inter.',
+          p_payload: payload,
+          p_rota: compraId ? `/financeiro?tab=compras&foco=${compraId}` : '/financeiro?tab=pagar',
+          p_urgencia: dias <= 2 ? 'alta' : 'normal', p_acao_requerida: true, p_origem: 'app', p_reabrir: false,
+        });
+        if (ep) return fail(`Não consegui registrar o pedido: ${ep.message}`, 500);
+      }
+      const { data: loja } = await admin.from('tenants').select('name').eq('id', tenant).maybeSingle();
+      const parcela = Number(b.installments ?? 0) > 1 && b.installment_number ? ` (parcela ${b.installment_number}/${b.installments})` : '';
+      const descricao = (compra?.invoice_number ? `nota fiscal nº ${compra.invoice_number}` : String(b.description ?? 'conta')) + parcela;
+      const mensagem = mensagemPedidoBoleto({ loja: String(loja?.name ?? 'restaurante'), descricao, valor: saldo, vencimento: venc || null, hoje, pedidoAnterior: payload.pedido_anterior });
+      log('INFO', 'boleto pedido pela Trilha', { tenant, bill: b.id, pedidos: payload.pedidos });
+      return json({ success: true, data: {
+        fornecedor: sup?.name ?? fornecedor, telefone: sup?.phone ?? null, email: sup?.email ?? null,
+        pedido_em: payload.pedido_em, pedidos: payload.pedidos, mensagem,
+      } });
     }
 
     if (action === 'pendencia_recusar') {

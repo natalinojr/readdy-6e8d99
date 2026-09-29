@@ -56,6 +56,13 @@
 //                  lembrar grava o apelido "quem recebe X = fornecedor Y" (fin_counterpart_aliases)
 //                  e refaz as sugestões — os próximos pagamentos a essa pessoa casam sozinhos.
 //
+//   CONTA JÁ PAGA × EXTRATO (Trilha versão D, 2026-09-29): liga a saída do banco a uma conta que já
+//   tem baixa, SEM dar outra baixa (confirmed.via = 'link_paid'; o undo dessa linha só desliga).
+//   paid_link_search { bill_id }                → { candidatos: [{ id, transaction_date, amount, description,
+//                                                 counterpart_name, bank_account_id, dias_diferenca }], motivo }
+//   link_paid        { bill_id, statement_id }  admin/gerente
+//   unlink_paid      { statement_id }           admin/gerente (só linha ligada por link_paid)
+//
 //   INÍCIO DO FINANCEIRO (2026-09-19): a loja escolhe de que mês em diante o financeiro vale e fecha o
 //   que ficou para trás. Só mexe no que está PENDENTE (extrato, conta a pagar em aberto, nota da SEFAZ
 //   não lançada); baixa feita, nota lançada, classificação e vínculo continuam como estão. Reversível.
@@ -68,6 +75,7 @@
 // O estorno (undo) é feito aqui, com service role, porque não existe "despagar" no financial-write.
 
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
+import { janelaPagoExtrato, ordenarPorDias, valorIgual, valorPago } from '../_shared/trilha-acoes.ts';
 
 type Admin = SupabaseClient;
 type Row = Record<string, any>;
@@ -992,12 +1000,50 @@ async function reversePayment(ctx: Ctx, billId: string, amount: number, bankAcco
   return b;
 }
 
+// ── Extrato × conta JÁ PAGA (Trilha versão D, 2026-09-29) ─────────────────────────────────────
+// "Marcado como pago, mas a saída não foi achada no extrato": a baixa foi dada à mão (ou por outro
+// caminho) e a linha do banco ficou solta. Ligar aqui NÃO dá baixa nem mexe em paid_* da conta —
+// só grava na linha o mesmo formato de uma confirmação (confirmed.bill_id), com via 'link_paid'.
+// Linha livre = mesmo critério do createOne (débito pendente, não reservado, sem destino) e sem
+// sugestão de folha.
+const LIVRE_EXCETO = [...JA_TEM_DESTINO, 'payroll'];
+const linhaLivre = (r: Row) => r.transaction_type === 'debit' && r.status === 'pending' && !r.reconciled
+  && !LIVRE_EXCETO.includes(String(r.match_kind ?? '')) && !(r.match_detail as Row | null)?.confirmed;
+
+async function contaPagaLigada(ctx: Ctx, billId: string): Promise<Row | null> {
+  const { admin, tenantId } = ctx;
+  const { data: a } = await admin.from('fin_bank_statement_imports').select('id, transaction_date, amount')
+    .eq('tenant_id', tenantId).eq('match_detail->confirmed->>bill_id', billId).limit(1);
+  if (a?.length) return a[0];
+  const { data: b } = await admin.from('fin_bank_statement_imports').select('id, transaction_date, amount')
+    .eq('tenant_id', tenantId).eq('match_kind', 'payable').eq('match_ref_id', billId).neq('status', 'pending').limit(1);
+  return b?.length ? b[0] : null;
+}
+
+async function unlinkPaid(ctx: Ctx, row: Row): Promise<Result> {
+  const { admin, tenantId } = ctx;
+  const det = (row.match_detail ?? {}) as Row;
+  if ((det.confirmed as Row | undefined)?.via !== 'link_paid') return { id: String(row.id), ok: false, msg: 'Esta linha não foi ligada pela Trilha (use o desfazer da Conciliação)' };
+  const prev = (det.prev ?? {}) as Row;
+  const { data: feito, error } = await admin.from('fin_bank_statement_imports').update({
+    status: 'pending', reconciled: false, reconciled_at: null, reconciled_by: null, matched_at: null, matched_by: null,
+    match_kind: prev.match_kind ?? null, match_ref_id: prev.match_ref_id ?? null, match_confidence: prev.match_confidence ?? null,
+    match_detail: prev.match_detail ?? null,
+  }).eq('id', row.id).eq('tenant_id', tenantId).eq('status', 'matched').select('id');
+  if (error) return { id: String(row.id), ok: false, msg: 'Desligar: ' + error.message };
+  if (!feito?.length) return { id: String(row.id), ok: false, msg: 'A linha mudou enquanto isso: atualize a tela' };
+  return { id: String(row.id), ok: true, msg: 'Desligado: o pagamento voltou a pendente (a baixa da conta não mudou).' };
+}
+
 async function undoOne(ctx: Ctx, rowId: string): Promise<Result> {
   const { admin, tenantId } = ctx;
   const { data: row } = await admin.from('fin_bank_statement_imports').select('*').eq('id', rowId).eq('tenant_id', tenantId).maybeSingle();
   if (!row) return { id: rowId, ok: false, msg: 'Lançamento não encontrado' };
   const det = (row.match_detail ?? {}) as Row;
   const c = det.confirmed as Row | undefined;
+  // Ligada a conta já paga (link_paid): a baixa não foi feita aqui, então o desfazer só desliga —
+  // o caminho normal abaixo estornaria uma baixa que a conciliação não deu.
+  if (c?.via === 'link_paid') return unlinkPaid(ctx, row);
   if (c?.payroll_id) {
     // Folha confirmada pelo Pix: volta a pendente e sai o fluxo de caixa que o pay_payroll gravou.
     await admin.from('hr_payroll').update({ status: 'pending', paid_date: null, payment_method: null, updated_at: new Date().toISOString() })
@@ -1801,6 +1847,72 @@ Deno.serve(async (req: Request) => {
       }
       log('INFO', 'link_manual', 'ok', { tenantId, userId, rowId, kind, lembrou: !!lembrou });
       return json({ success: true, results: [r], lembrou });
+    }
+
+    // ── Conta já paga × linha do extrato (Trilha versão D) ────────────────────
+    if (action === 'paid_link_search' || action === 'link_paid') {
+      if (action === 'link_paid' && !isManager) return errResp('Apenas administradores e gerentes podem vincular pagamentos', 403);
+      const { data: bill } = await admin.from('fin_accounts_payable').select('id, description, supplier, amount, paid_amount, paid_date, due_date, status')
+        .eq('id', String(body.bill_id ?? '')).eq('tenant_id', tenantId).maybeSingle();
+      if (!bill) return errResp('Conta a pagar não encontrada', 404);
+      if (bill.status !== 'paid') return errResp('Esta conta não está paga: use o vínculo normal (link_manual), que dá a baixa');
+      const valor = valorPago(bill);
+      if (!(valor > 0)) return errResp('A conta está paga sem valor pago registrado');
+      const ja = await contaPagaLigada(ctx, String(bill.id));
+
+      if (action === 'paid_link_search') {
+        if (ja) return json({ success: true, candidatos: [], motivo: 'Esta conta já tem pagamento do extrato ligado (' + br(String(ja.transaction_date)) + ', ' + br$(Math.abs(Number(ja.amount))) + ')' });
+        const jan = janelaPagoExtrato(bill.paid_date, bill.due_date);
+        if (!jan) return json({ success: true, candidatos: [], motivo: 'A conta não tem data de pagamento nem vencimento' });
+        const { data: linhas, error } = await admin.from('fin_bank_statement_imports')
+          .select('id, transaction_date, amount, description, counterpart_name, bank_account_id, transaction_type, status, reconciled, match_kind, match_detail')
+          .eq('tenant_id', tenantId).eq('transaction_type', 'debit').eq('status', 'pending')
+          .gte('transaction_date', jan.de).lte('transaction_date', jan.ate).limit(500);
+        if (error) return errResp('Buscar no extrato: ' + error.message, 500);
+        const cands = ((linhas ?? []) as Row[]).filter((r) => linhaLivre(r) && valorIgual(Math.abs(Number(r.amount)), valor))
+          .map((r) => ({ id: r.id, transaction_date: String(r.transaction_date), amount: round2(Math.abs(Number(r.amount))), description: r.description ?? null, counterpart_name: r.counterpart_name ?? null, bank_account_id: r.bank_account_id ?? null }));
+        const candidatos = ordenarPorDias(cands, jan.base, 10);
+        return json({ success: true, candidatos, motivo: candidatos.length ? null : 'Nenhuma saída livre de ' + br$(valor) + ' entre ' + br(jan.de) + ' e ' + br(jan.ate) });
+      }
+
+      // link_paid: confere tudo de novo antes de gravar
+      if (ja) return errResp('Esta conta já tem pagamento do extrato ligado');
+      const { data: row } = await admin.from('fin_bank_statement_imports').select('*').eq('id', String(body.statement_id ?? '')).eq('tenant_id', tenantId).maybeSingle();
+      if (!row) return errResp('Lançamento não encontrado', 404);
+      if (!linhaLivre(row)) return errResp('Esta linha do extrato não está livre (já conciliada, reservada ou com vínculo sugerido)');
+      if (!valorIgual(Math.abs(Number(row.amount)), valor)) return errResp('O valor da linha (' + br$(Math.abs(Number(row.amount))) + ') não é o valor pago da conta (' + br$(valor) + ')');
+      const agora = new Date().toISOString();
+      const det: Row = {
+        label: String(bill.description ?? ''), nome: bill.supplier ?? null, valor, vencimento: bill.due_date, manual: true,
+        boleto: String(row.raw?.tipoTransacao ?? '') === 'PAGAMENTO',
+        // Estado anterior da linha, para o unlink_paid devolver exatamente como estava
+        prev: { match_kind: row.match_kind ?? null, match_ref_id: row.match_ref_id ?? null, match_confidence: row.match_confidence ?? null, match_detail: row.match_detail ?? null },
+        confirmed: { bill_id: bill.id, juros_bill_id: null, pay_amount: valor, juros: 0, desconto: 0, auto_imported: false, via: 'link_paid', at: agora, by: userId },
+      };
+      const { data: feito, error: upErr } = await admin.from('fin_bank_statement_imports').update({
+        status: 'matched', reconciled: true, reconciled_at: agora, reconciled_by: userId, matched_at: agora, matched_by: userId,
+        match_kind: 'payable', match_ref_id: bill.id, match_confidence: 'manual', match_detail: det,
+      }).eq('id', row.id).eq('tenant_id', tenantId).eq('status', 'pending').eq('reconciled', false).select('id');
+      if (upErr) return errResp('Ligar: ' + upErr.message, 500);
+      if (!feito?.length) return errResp('Esta linha acabou de ser conciliada por outra pessoa: atualize a tela', 409);
+      // Duas linhas ligadas à mesma conta ao mesmo tempo (duas abas): a nossa sai.
+      const { data: ligadas } = await admin.from('fin_bank_statement_imports').select('id')
+        .eq('tenant_id', tenantId).eq('match_detail->confirmed->>bill_id', String(bill.id));
+      if ((ligadas ?? []).length > 1) {
+        await unlinkPaid(ctx, { ...row, match_detail: det });
+        return errResp('Esta conta acabou de ser ligada a outra linha: atualize a tela', 409);
+      }
+      log('INFO', 'link_paid', 'ok', { tenantId, userId, billId: bill.id, rowId: row.id });
+      return json({ success: true, results: [{ id: row.id, ok: true, msg: 'Pagamento do extrato ligado à conta "' + String(bill.description ?? '') + '" (a baixa não mudou).' }] });
+    }
+
+    if (action === 'unlink_paid') {
+      if (!isManager) return errResp('Apenas administradores e gerentes podem desfazer vínculos', 403);
+      const { data: row } = await admin.from('fin_bank_statement_imports').select('*').eq('id', String(body.statement_id ?? '')).eq('tenant_id', tenantId).maybeSingle();
+      if (!row) return errResp('Lançamento não encontrado', 404);
+      const r = await unlinkPaid(ctx, row);
+      log('INFO', 'unlink_paid', r.ok ? 'ok' : 'recusado', { tenantId, userId, rowId: row.id });
+      return r.ok ? json({ success: true, results: [r], message: r.msg }) : errResp(r.msg);
     }
 
     // ── Início do financeiro ──────────────────────────────────────────────────

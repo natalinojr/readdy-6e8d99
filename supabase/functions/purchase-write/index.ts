@@ -1,6 +1,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { isFinanceiroRole } from '../_shared/tenant-auth.ts';
 import { cnpjDaCompra, ligarItem, vinculosMemorizados } from '../_shared/vinculos-memorizados.ts';
+import { hojeBrasilia, statusPorVencimento, validarParcelas } from '../_shared/trilha-acoes.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -446,6 +447,46 @@ interface InstallmentOpts {
   installmentIntervalDays?: number;
 }
 
+// Parcelas com data e valor escolhidos (Nova Compra e, desde 2026-09-29, create_missing_bills da
+// Trilha). Extraído do createBillsForPurchase sem mudar o formato: descrição "(i/n)", parent_id na
+// 1ª, installments. Uma parcela só sai no formato da conta única (sem "(1/1)"). `hoje` (Brasília)
+// só vem da Trilha: conta lançada depois do vencimento nasce 'overdue'; sem ele, 'pending' como antes.
+async function insertInstallmentBills(
+  // deno-lint-ignore no-explicit-any
+  supabase: any,
+  tenant_id: string,
+  // deno-lint-ignore no-explicit-any
+  purchase: any,
+  purchaseData: Record<string, unknown>,
+  // deno-lint-ignore no-explicit-any
+  parcelas: any[],
+  hoje?: string,
+  // Nova Compra sempre gravou "(i/n)" + installments, mesmo com 1 parcela; mantém igual.
+  sempreParcelado = false,
+): Promise<string[]> {
+  const n = parcelas.length;
+  const parc = n > 1 || sempreParcelado;
+  const nf = `Compra - ${purchase.supplier}${purchase.invoice_number ? ` NF ${purchase.invoice_number}` : ''}`;
+  const ids: string[] = [];
+  let parentId: string | null = null;
+  for (let i = 0; i < n; i++) {
+    const inst = parcelas[i];
+    const { data: bill, error } = await supabase.from('fin_accounts_payable').insert({
+      tenant_id, supplier: purchase.supplier,
+      description: parc ? `${nf} (${i + 1}/${n})` : nf,
+      category: 'Compras', cost_center_id: purchaseData.cost_center_id || null,
+      bank_account_id: purchaseData.bank_account_id || null, amount: Number(inst.amount),
+      due_date: inst.due_date, status: hoje ? statusPorVencimento(String(inst.due_date), hoje) : 'pending', is_recurring: false,
+      ...(parc ? { installments: n, installment_number: i + 1, ...(parentId ? { parent_id: parentId } : {}) } : {}),
+      notes: purchaseData.notes || null, reference_id: purchase.id, reference_type: 'purchase',
+    }).select('id').single();
+    if (error) throw error;
+    ids.push(String(bill.id));
+    if (i === 0) parentId = String(bill.id);
+  }
+  return ids;
+}
+
 // Gera as contas a pagar (ou o lançamento direto no caixa, se paga à vista)
 // para uma compra já criada/atualizada.
 async function createBillsForPurchase(
@@ -463,31 +504,7 @@ async function createBillsForPurchase(
   if (purchaseData.is_bonus === true) return;
 
   if (hasCustomInstallments) {
-    const numParcelas = customInstallments.length;
-    const firstInst = customInstallments[0];
-    const { data: parentBill, error: parentErr } = await supabase.from('fin_accounts_payable').insert({
-      tenant_id, supplier: purchase.supplier,
-      description: `Compra - ${purchase.supplier}${purchase.invoice_number ? ` NF ${purchase.invoice_number}` : ''} (1/${numParcelas})`,
-      category: 'Compras', cost_center_id: purchaseData.cost_center_id || null,
-      bank_account_id: purchaseData.bank_account_id || null, amount: Number(firstInst.amount),
-      due_date: firstInst.due_date, status: 'pending', is_recurring: false,
-      installments: numParcelas, installment_number: 1, notes: purchaseData.notes || null,
-      reference_id: purchase.id, reference_type: 'purchase',
-    }).select().single();
-    if (parentErr) throw parentErr;
-    for (let i = 1; i < numParcelas; i++) {
-      const inst = customInstallments[i];
-      const { error: instErr } = await supabase.from('fin_accounts_payable').insert({
-        tenant_id, supplier: purchase.supplier,
-        description: `Compra - ${purchase.supplier}${purchase.invoice_number ? ` NF ${purchase.invoice_number}` : ''} (${i + 1}/${numParcelas})`,
-        category: 'Compras', cost_center_id: purchaseData.cost_center_id || null,
-        bank_account_id: purchaseData.bank_account_id || null, amount: Number(inst.amount),
-        due_date: inst.due_date, status: 'pending', is_recurring: false,
-        installments: numParcelas, installment_number: i + 1, parent_id: parentBill.id,
-        notes: purchaseData.notes || null, reference_id: purchase.id, reference_type: 'purchase',
-      });
-      if (instErr) throw instErr;
-    }
+    await insertInstallmentBills(supabase, tenant_id, purchase, purchaseData, customInstallments, undefined, true);
   } else if (isLegacyInstallment) {
     const numParcelas = Number(installmentCount);
     const intervalDays = Number(installmentIntervalDays ?? 30);
@@ -1012,6 +1029,100 @@ Deno.serve(async (req) => {
           data: { purchase_id, itens: computedItems.length, estoque: jaNoEstoque ? 'ajustado' : 'entra no recebimento' },
           ...(avisosConversao.length ? { avisos_conversao: avisosConversao } : {}),
         };
+        break;
+      }
+
+      // Conta que falta numa compra (Trilha versão D, 2026-09-29): compra a prazo lançada sem conta a
+      // pagar (nota importada "paga", conta apagada por engano...). Só cria quando a compra claramente
+      // não tem conta NEM saída de caixa: qualquer sinal de que já foi paga/lançada recusa.
+      case 'create_missing_bills': {
+        const { purchase_id, parcelas } = payload ?? {};
+        if (!purchase_id) return new Response(JSON.stringify({ error: 'purchase_id required' }), { status: 400, headers: corsHeaders });
+        const { data: compra, error: cErr } = await supabase.from('fin_purchases')
+          .select('id, supplier, invoice_number, total_amount, payment_status, is_bonus, cost_center_id, bank_account_id, notes, delivery_confirmed_at')
+          .eq('id', purchase_id).eq('tenant_id', tenant_id).maybeSingle();
+        if (cErr) throw cErr;
+        if (!compra) return new Response(JSON.stringify({ error: 'Compra não encontrada' }), { status: 404, headers: corsHeaders });
+        const recusa = (msg: string) => new Response(JSON.stringify({ error: msg }), { status: 409, headers: corsHeaders });
+        if (compra.is_bonus) return recusa('Bonificação não tem conta a pagar.');
+        if (compra.payment_status === 'paid') return recusa('A compra está como paga: não cria conta a pagar.');
+        const { data: jaContas } = await supabase.from('fin_accounts_payable').select('id')
+          .eq('tenant_id', tenant_id).eq('reference_type', 'purchase').eq('reference_id', purchase_id).neq('status', 'cancelled').limit(1);
+        if (jaContas?.length) return recusa('Essa compra já tem conta a pagar. Atualize a tela.');
+        const { data: caixa } = await supabase.from('fin_cash_flow').select('id')
+          .eq('tenant_id', tenant_id).eq('origin', 'auto_purchase').eq('reference_id', purchase_id).limit(1);
+        if (caixa?.length) return recusa('Essa compra foi lançada como paga à vista (saída de caixa): não cria conta a pagar.');
+        const v = validarParcelas(parcelas, Number(compra.total_amount));
+        if (!v.ok) return new Response(JSON.stringify({ error: v.erro }), { status: 400, headers: corsHeaders });
+
+        const purchaseData = { cost_center_id: compra.cost_center_id, bank_account_id: compra.bank_account_id, notes: compra.notes };
+        let billIds: string[];
+        try {
+          billIds = await insertInstallmentBills(supabase, tenant_id, compra, purchaseData, v.parcelas, hojeBrasilia());
+        } catch (e) {
+          // Tudo ou nada: acima foi conferido que a compra não tinha conta, então as que existem agora são daqui.
+          await supabase.from('fin_accounts_payable').delete().eq('tenant_id', tenant_id).eq('reference_type', 'purchase')
+            .eq('reference_id', purchase_id).in('status', ['pending', 'overdue']).is('paid_date', null);
+          throw e;
+        }
+        // Mesmo estado que o create_purchase deixa: parcelado = 'partial', conta única = 'pending'.
+        await supabase.from('fin_purchases').update({ payment_status: billIds.length > 1 ? 'partial' : 'pending' })
+          .eq('id', purchase_id).eq('tenant_id', tenant_id).neq('payment_status', 'paid');
+        // Mercadoria já recebida: as contas nascem com o recebimento marcado (igual ao confirm_delivery).
+        if (compra.delivery_confirmed_at) {
+          await supabase.from('fin_accounts_payable').update({ delivery_confirmed: true, delivery_confirmed_at: compra.delivery_confirmed_at })
+            .in('id', billIds).eq('tenant_id', tenant_id);
+        }
+        console.log('[purchase-write] create_missing_bills', JSON.stringify({ tenant_id, purchase_id, n: billIds.length, user: user?.id }));
+        result = { bill_ids: billIds };
+        break;
+      }
+
+      // Desfazer do create_missing_bills: só apaga conta intocada (sem baixa, sem extrato, sem Inter).
+      case 'delete_missing_bills': {
+        const { purchase_id, bill_ids } = payload ?? {};
+        const ids = Array.isArray(bill_ids) ? [...new Set(bill_ids.map(String))] : [];
+        if (!purchase_id || ids.length === 0 || ids.length > 60) return new Response(JSON.stringify({ error: 'purchase_id e bill_ids obrigatórios' }), { status: 400, headers: corsHeaders });
+        const recusa = (msg: string) => new Response(JSON.stringify({ error: msg }), { status: 409, headers: corsHeaders });
+        const { data: contas, error: bErr } = await supabase.from('fin_accounts_payable')
+          .select('id, status, paid_amount, paid_date, reference_type, reference_id').eq('tenant_id', tenant_id).in('id', ids);
+        if (bErr) throw bErr;
+        if ((contas ?? []).length !== ids.length) return recusa('Alguma dessas contas não existe mais. Atualize a tela.');
+        for (const c of contas ?? []) {
+          if (c.reference_type !== 'purchase' || String(c.reference_id) !== String(purchase_id)) return recusa('Essas contas não são dessa compra.');
+          if (!['pending', 'overdue'].includes(String(c.status)) || Number(c.paid_amount ?? 0) > 0 || c.paid_date) return recusa('Uma das contas já teve pagamento: estorne pela tela de Contas a Pagar.');
+        }
+        // Extrato: conciliação confirmada recusa; sugestão ainda não confirmada é só limpa.
+        const { data: ext1 } = await supabase.from('fin_bank_statement_imports').select('id, status, reconciled')
+          .eq('tenant_id', tenant_id).in('match_ref_id', ids);
+        const { data: ext2 } = await supabase.from('fin_bank_statement_imports').select('id')
+          .eq('tenant_id', tenant_id).in('match_detail->confirmed->>bill_id', ids).limit(1);
+        if (ext2?.length || (ext1 ?? []).some((r: Record<string, unknown>) => r.reconciled || r.status !== 'pending')) {
+          return recusa('Uma das contas está ligada a um pagamento do extrato: desfaça na Conciliação.');
+        }
+        const { data: legado } = await supabase.from('fin_bank_statements').select('id').in('accounts_payable_id', ids).limit(1);
+        if (legado?.length) return recusa('Uma das contas está conciliada no extrato antigo.');
+        const { data: inter } = await supabase.from('fin_inter_payments').select('id, status').in('bill_id', ids)
+          .in('status', ['draft', 'awaiting_pin', 'sending', 'sent', 'pending_approval', 'approved', 'scheduled']).limit(1);
+        if (inter?.length) return recusa('Há pagamento do Inter preparado para uma dessas contas: cancele antes.');
+        const { data: pedidos } = await supabase.from('fin_payment_requests').select('id').in('bill_id', ids).limit(1);
+        if (pedidos?.length) return recusa('Uma dessas contas está ligada a um pedido de pagamento.');
+
+        if ((ext1 ?? []).length) {
+          await supabase.from('fin_bank_statement_imports').update({ match_kind: null, match_ref_id: null, match_confidence: null, match_detail: null })
+            .eq('tenant_id', tenant_id).in('match_ref_id', ids).eq('match_kind', 'payable').eq('status', 'pending').eq('reconciled', false);
+        }
+        const { error: dErr } = await supabase.from('fin_accounts_payable').delete().eq('tenant_id', tenant_id).in('id', ids)
+          .in('status', ['pending', 'overdue']).is('paid_date', null);
+        if (dErr) throw dErr;
+        // Sem conta nenhuma: a compra volta ao estado anterior à criação (parcelado → pendente).
+        const { data: resto } = await supabase.from('fin_accounts_payable').select('id')
+          .eq('tenant_id', tenant_id).eq('reference_type', 'purchase').eq('reference_id', purchase_id).neq('status', 'cancelled').limit(1);
+        if (!resto?.length) {
+          await supabase.from('fin_purchases').update({ payment_status: 'pending' }).eq('id', purchase_id).eq('tenant_id', tenant_id).eq('payment_status', 'partial');
+        }
+        console.log('[purchase-write] delete_missing_bills', JSON.stringify({ tenant_id, purchase_id, n: ids.length, user: user?.id }));
+        result = { deleted: ids };
         break;
       }
 

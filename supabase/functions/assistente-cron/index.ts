@@ -21,6 +21,7 @@
 
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
 import postgres from 'npm:postgres@3.4.5';
+import { deveCobrar, mesclarPedidoBoleto } from '../_shared/trilha-acoes.ts';
 
 const TZ = 'America/Sao_Paulo';
 const json = (body: unknown, status = 200) =>
@@ -1274,6 +1275,14 @@ async function syncPendenciasOperacao(admin: SupabaseClient, tenants: Array<{ id
            and coalesce(a.payment_method, p.payment_method, '') ilike '%boleto%'
            and a.boleto_digitavel is null and a.boleto_barcode is null and a.boleto_pix_copia is null
          order by a.due_date`;
+      // Pedido de boleto feito pela Trilha (assistente-app › conta_pedir_boleto) mora no payload; o
+      // upsert abaixo troca o payload inteiro, então o registro do pedido é carregado junto. Pedido
+      // de 2+ dias sem o boleto chegar vira payload.cobrar (a tela mostra "Cobrar de novo").
+      const hojeSP = localDate();
+      const { data: pendsBoleto } = await admin.from('pendencias').select('ref, status, payload')
+        .eq('tenant_id', t.id).eq('kind', 'boleto_faltando');
+      // deno-lint-ignore no-explicit-any
+      const payloadAntigo = new Map<string, any>((pendsBoleto ?? []).map((r) => [String(r.ref), r.payload]));
       for (const b of semBoleto) {
         const quando = b.dias < 0 ? `VENCIDA em ${b.venc}` : b.dias === 0 ? 'vence HOJE' : b.dias === 1 ? 'vence amanhã' : `vence ${b.venc}`;
         await admin.rpc('fn_pendencia_upsert', {
@@ -1282,7 +1291,7 @@ async function syncPendenciasOperacao(admin: SupabaseClient, tenants: Array<{ id
           p_detalhe: b.dias < 0
             ? 'Venceu sem o boleto no sistema. Se já foi pago, dê a baixa; se não, peça o boleto atualizado ao fornecedor.'
             : 'A conta está lançada (veio da nota), mas sem o código do boleto não dá para pagar pelo Inter.',
-          p_payload: { bill_id: b.id, purchase_id: b.purchase_id, valor: b.saldo, vencimento: b.venc, vencida: b.dias < 0 },
+          p_payload: mesclarPedidoBoleto({ bill_id: b.id, purchase_id: b.purchase_id, valor: b.saldo, vencimento: b.venc, vencida: b.dias < 0 }, payloadAntigo.get(b.id), hojeSP),
           p_rota: b.purchase_id ? `/financeiro?tab=compras&foco=${b.purchase_id}` : '/financeiro?tab=pagar',
           p_urgencia: b.dias <= 2 ? 'alta' : 'normal', p_acao_requerida: true, p_origem: 'cron', p_reabrir: false,
         });
@@ -1292,6 +1301,21 @@ async function syncPendenciasOperacao(admin: SupabaseClient, tenants: Array<{ id
       const aindaFaltam = new Set(semBoleto.map((b) => b.id));
       for (const r of (abertasSemBoleto ?? []) as Array<{ ref: string }>) {
         if (aindaFaltam.has(r.ref)) continue;
+        // Pendência aberta pelo pedido da Trilha numa conta que não é "de boleto" (a query acima só
+        // pega forma de pagamento boleto): continua enquanto a conta estiver em aberto e sem boleto/Pix.
+        const antigo = payloadAntigo.get(r.ref);
+        if (antigo?.pedido_em) {
+          const { data: conta } = await admin.from('fin_accounts_payable').select('status, boleto_digitavel, boleto_barcode, boleto_pix_copia')
+            .eq('id', r.ref).eq('tenant_id', t.id).maybeSingle();
+          if (conta && !['paid', 'cancelled'].includes(String(conta.status)) && !conta.boleto_digitavel && !conta.boleto_barcode && !conta.boleto_pix_copia) {
+            const cobrar = deveCobrar(antigo, hojeSP);
+            if (cobrar !== !!antigo.cobrar) {
+              await admin.from('pendencias').update({ payload: { ...antigo, cobrar } })
+                .eq('tenant_id', t.id).eq('kind', 'boleto_faltando').eq('ref', r.ref).in('status', ['aberta', 'vista']);
+            }
+            continue;
+          }
+        }
         await admin.rpc('fn_pendencia_resolver_ref', {
           p_tenant: t.id, p_kind: 'boleto_faltando', p_ref: r.ref,
           p_motivo: 'boleto chegou ou conta paga/cancelada',
