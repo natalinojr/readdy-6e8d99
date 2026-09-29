@@ -117,22 +117,22 @@ const C = (id,tipo,titulo,sub,data,valor,e,avisos=[]) => ({id,tipo,titulo,sub,da
 const casos = [
   C('jumbo','compra','JUMBO COMERCIO DE UTILIDADES','NF 28811 · 5 itens','28/09',84.87,{documento:['ok','NF-e nº 28811'],lancamento:['ok','Compra lançada'],estoque:['ok','Entrou no estoque'],conta:['na','Paga à vista'],pagamento:['ok','Paga na hora','Dinheiro'],banco:['na','Pago em dinheiro']}),
   C('toko','compra','TOKO FRIOS ALIMENTOS','NF 78421 · 4 itens','27/09',137.78,{documento:['ok','NF-e nº 78421'],lancamento:['ok','Compra lançada'],estoque:['ok','Entrou no estoque'],conta:['na','Paga à vista'],pagamento:['ok','Saiu do banco','27/09'],banco:['ok','Achado no extrato']}),
-  C('costa','compra','COSTA E MONTENEGRO','NF 14688 · 12 itens','01/09',1444,{documento:['ok','NF-e nº 14688'],lancamento:['ok','Compra lançada'],estoque:['ok','Entrou no estoque'],conta:['ok','Conta criada','vence 01/09'],pagamento:['atrasado','Vencida','28 dias'],banco:['espera','Aguardando pagamento']},['Conta vencida há 28 dias']),
-  C('beemax','compra','BEEMAX DISTRIBUIDORA','NF 5521 · 8 itens','12/09',149.49,{documento:['ok','NF-e nº 5521'],lancamento:['ok','Compra lançada'],estoque:['pendente','Aguardando recebimento'],conta:['ok','Conta criada','vence 19/09'],pagamento:['atrasado','Vencida','10 dias'],banco:['espera','Aguardando pagamento']},['Conta vencida há 10 dias']),
-  C('bebidas','compra','BEBIDAS PARANAGUÁ','NF 9903 · 20 itens','15/09',374.46,{documento:['ok','NF-e nº 9903'],lancamento:['ok','Compra lançada'],estoque:['problema','Recebida, estoque não entrou','recebida 16/09'],conta:['ok','Conta criada','vence 22/09'],pagamento:['atrasado','Vencida','7 dias'],banco:['espera','Aguardando pagamento']},['Recebida mas o estoque não entrou','Conta vencida há 7 dias']),
+  C('costa','compra','COSTA E MONTENEGRO','NF 14688 · 12 itens','01/09',1444,{documento:['ok','NF-e nº 14688'],lancamento:['ok','Compra lançada'],estoque:['ok','Entrou no estoque'],conta:['ok','Conta a pagar criada','vence 01/09'],pagamento:['atrasado','Vencida','28 dias'],banco:['espera','Aguardando pagamento']},['Conta vencida há 28 dias']),
+  C('beemax','compra','BEEMAX DISTRIBUIDORA','NF 5521 · 8 itens','12/09',149.49,{documento:['ok','NF-e nº 5521'],lancamento:['ok','Compra lançada'],estoque:['pendente','Aguardando recebimento'],conta:['ok','Conta a pagar criada','vence 19/09'],pagamento:['atrasado','Vencida','10 dias'],banco:['espera','Aguardando pagamento']},['Conta vencida há 10 dias']),
+  C('bebidas','compra','BEBIDAS PARANAGUÁ','NF 9903 · 20 itens','15/09',374.46,{documento:['ok','NF-e nº 9903'],lancamento:['ok','Compra lançada'],estoque:['problema','Recebida, estoque não entrou','recebida 16/09'],conta:['ok','Conta a pagar criada','vence 22/09'],pagamento:['atrasado','Vencida','7 dias'],banco:['espera','Aguardando pagamento']},['Recebida mas o estoque não entrou','Conta vencida há 7 dias']),
   C('cozinha','compra','EL PATRON COZINHA INDUSTRIAL','NF 1203 · 31 itens','05/09',5553.23,{documento:['ok','NF-e nº 1203'],lancamento:['ok','Compra lançada'],estoque:['ok','Entrou no estoque'],conta:['ok','3 parcelas'],pagamento:['pendente','1 de 3 pagas','próxima 05/10'],banco:['ok','Achado no extrato']}),
-  C('atacadao','compra','ATACADÃO S.A.','NF 77120 · 44 itens','18/09',2310.15,{documento:['ok','NF-e nº 77120'],lancamento:['ok','Compra lançada'],estoque:['ok','Entrou no estoque'],conta:['ok','Conta criada','vence 18/10'],pagamento:['pendente','Em aberto','vence 18/10'],banco:['espera','Aguardando pagamento']}),
+  C('atacadao','compra','ATACADÃO S.A.','NF 77120 · 44 itens','18/09',2310.15,{documento:['ok','NF-e nº 77120'],lancamento:['ok','Compra lançada'],estoque:['ok','Entrou no estoque'],conta:['ok','Conta a pagar criada','vence 18/10'],pagamento:['pendente','Em aberto','vence 18/10'],banco:['espera','Aguardando pagamento']}),
   C('serra','compra','HORTIFRUTI SERRA VERDE','sem nota · 9 itens','22/09',412,{documento:['na','Sem nota fiscal'],lancamento:['ok','Compra lançada'],estoque:['ok','Entrou no estoque'],conta:['na','Paga à vista'],pagamento:['ok','Saiu do banco','22/09'],banco:['pendente','Não achado no extrato']}),
-  C('padaria','compra','PADARIA SÃO JOÃO','NF 441 · 2 itens','25/09',96,{documento:['ok','NF 441'],lancamento:['ok','Compra lançada'],estoque:['na','Sem insumo ligado'],conta:['problema','Compra sem conta a pagar'],pagamento:['espera','Aguardando conta'],banco:['espera','Aguardando pagamento']},['Compra sem conta a pagar']),
-  C('copel','despesa','COPEL','Energia elétrica','10/09',1873.4,{documento:['ok','Boleto'],lancamento:['ok','Despesa lançada','Energia'],estoque:['na','Não vai ao estoque'],conta:['ok','Conta criada'],pagamento:['ok','Paga','20/09'],banco:['ok','Achado no extrato']}),
-  C('sanepar','despesa','SANEPAR','Água e esgoto','12/09',512.7,{documento:['ok','Boleto'],lancamento:['ok','Despesa lançada','Água'],estoque:['na','Não vai ao estoque'],conta:['ok','Conta criada'],pagamento:['ok','Paga','25/09'],banco:['pendente','Não achado no extrato']}),
-  C('mare','despesa','CONTABILIDADE MARÉ','Honorários','05/09',950,{documento:['ok','NFS-e nº 2210'],lancamento:['pendente','Despesa sem classificação'],estoque:['na','Não vai ao estoque'],conta:['ok','Conta criada','vence 10/10'],pagamento:['pendente','Em aberto'],banco:['espera','Aguardando pagamento']}),
-  C('aluguel','despesa','IMOBILIÁRIA LITORAL','Aluguel da loja','01/09',6500,{documento:['na','Sem nota fiscal'],lancamento:['ok','Despesa lançada','Aluguel'],estoque:['na','Não vai ao estoque'],conta:['ok','Conta criada'],pagamento:['ok','Paga','05/09'],banco:['ok','Achado no extrato']}),
-  C('nortesul','nota','DISTRIBUIDORA NORTE SUL','NF-e 33012 · pela SEFAZ','24/09',870.3,{documento:['ok','NF-e nº 33012'],lancamento:['pendente','Nota ainda não lançada'],estoque:['espera','Aguardando lançamento'],conta:['espera','Ainda não criada'],pagamento:['espera','Aguardando conta'],banco:['espera','Aguardando pagamento']}),
-  C('embal','nota','EMBALAGENS PR','NF-e 6710 · pela SEFAZ','26/09',322.1,{documento:['ok','NF-e nº 6710'],lancamento:['pendente','Nota ainda não lançada'],estoque:['espera','Aguardando lançamento'],conta:['espera','Ainda não criada'],pagamento:['espera','Aguardando conta'],banco:['espera','Aguardando pagamento']}),
+  C('padaria','compra','PADARIA SÃO JOÃO','NF 441 · 2 itens','25/09',96,{documento:['ok','NF 441'],lancamento:['ok','Compra lançada'],estoque:['na','Sem insumo ligado'],conta:['problema','Compra sem conta a pagar','não foi paga na hora e não há conta a pagar lançada'],pagamento:['espera','Aguardando a conta a pagar'],banco:['espera','Aguardando pagamento']},['Compra sem conta a pagar']),
+  C('copel','despesa','COPEL','Energia elétrica','10/09',1873.4,{documento:['ok','Boleto'],lancamento:['ok','Despesa lançada','Energia'],estoque:['na','Não vai ao estoque'],conta:['ok','Conta a pagar criada'],pagamento:['ok','Paga','20/09'],banco:['ok','Achado no extrato']}),
+  C('sanepar','despesa','SANEPAR','Água e esgoto','12/09',512.7,{documento:['ok','Boleto'],lancamento:['ok','Despesa lançada','Água'],estoque:['na','Não vai ao estoque'],conta:['ok','Conta a pagar criada'],pagamento:['ok','Paga','25/09'],banco:['pendente','Não achado no extrato']}),
+  C('mare','despesa','CONTABILIDADE MARÉ','Honorários','05/09',950,{documento:['ok','NFS-e nº 2210'],lancamento:['pendente','Despesa sem classificação'],estoque:['na','Não vai ao estoque'],conta:['ok','Conta a pagar criada','vence 10/10'],pagamento:['pendente','Em aberto'],banco:['espera','Aguardando pagamento']}),
+  C('aluguel','despesa','IMOBILIÁRIA LITORAL','Aluguel da loja','01/09',6500,{documento:['na','Sem nota fiscal'],lancamento:['ok','Despesa lançada','Aluguel'],estoque:['na','Não vai ao estoque'],conta:['ok','Conta a pagar criada'],pagamento:['ok','Paga','05/09'],banco:['ok','Achado no extrato']}),
+  C('nortesul','nota','DISTRIBUIDORA NORTE SUL','NF-e 33012 · pela SEFAZ','24/09',870.3,{documento:['ok','NF-e nº 33012'],lancamento:['pendente','Nota ainda não lançada'],estoque:['espera','Aguardando lançamento'],conta:['espera','Conta a pagar ainda não criada'],pagamento:['espera','Aguardando a conta a pagar'],banco:['espera','Aguardando pagamento']}),
+  C('embal','nota','EMBALAGENS PR','NF-e 6710 · pela SEFAZ','26/09',322.1,{documento:['ok','NF-e nº 6710'],lancamento:['pendente','Nota ainda não lançada'],estoque:['espera','Aguardando lançamento'],conta:['espera','Conta a pagar ainda não criada'],pagamento:['espera','Aguardando a conta a pagar'],banco:['espera','Aguardando pagamento']}),
   C('joao','pagamento','PIX — JOÃO P. SILVA','saída sem lançamento','19/09',250,{documento:['na','Sem nota fiscal'],lancamento:['problema','Pagamento sem lançamento'],estoque:['na','Não vai ao estoque'],conta:['na','—'],pagamento:['ok','Saiu do banco','19/09'],banco:['problema','No extrato, sem vínculo']},['Pix sem lançamento']),
   C('porto','pagamento','PIX — MERCADO DO PORTO','saída sem lançamento','23/09',188.6,{documento:['na','Sem nota fiscal'],lancamento:['problema','Pagamento sem lançamento'],estoque:['na','Não vai ao estoque'],conta:['na','—'],pagamento:['ok','Saiu do banco','23/09'],banco:['problema','No extrato, sem vínculo']},['Pix sem lançamento']),
-  C('frigo','compra','FRIGORÍFICO LITORAL','NF 55012 · 6 itens','20/09',1980,{documento:['ok','NF-e nº 55012'],lancamento:['ok','Compra lançada'],estoque:['ok','Entrou no estoque'],conta:['ok','Conta criada','vence 04/10'],pagamento:['pendente','Em aberto','vence 04/10'],banco:['espera','Aguardando pagamento']}),
+  C('frigo','compra','FRIGORÍFICO LITORAL','NF 55012 · 6 itens','20/09',1980,{documento:['ok','NF-e nº 55012'],lancamento:['ok','Compra lançada'],estoque:['ok','Entrou no estoque'],conta:['ok','Conta a pagar criada','vence 04/10'],pagamento:['pendente','Em aberto','vence 04/10'],banco:['espera','Aguardando pagamento']}),
   C('gas','compra','DISTRIBUIDORA DE GÁS PR','NF 9021 · 2 itens','21/09',260,{documento:['ok','NF-e nº 9021'],lancamento:['ok','Compra lançada'],estoque:['na','Sem insumo ligado'],conta:['na','Paga à vista'],pagamento:['ok','Saiu do banco','21/09'],banco:['ok','Achado no extrato']}),
   C('meta','despesa','META (Facebook)','Anúncios · pré-pago','03/09',600,{documento:['ok','Nota de consumo'],lancamento:['ok','Despesa lançada','Marketing'],estoque:['na','Não vai ao estoque'],conta:['na','Paga à vista'],pagamento:['ok','Saiu do banco'],banco:['ok','Achado no extrato']}),
 ];
@@ -150,8 +150,8 @@ const OUTRO = {
     {l:'Lançar como compra de mercadoria', ic:'ri-shopping-cart-2-line', campo:'texto', ph:'o que foi comprado (ou use "Ler notinha")'},
     {l:'Diária de freelancer', ic:'ri-user-line', campo:'escolha', ops:['João P. Silva','Ana Costa','Cadastrar novo freelancer…']},
     {l:'Pagamento de prestador MEI', ic:'ri-briefcase-line', campo:'escolha', ops:['Eduardo (manutenção)','Cadastrar novo prestador…']},
-    {l:'Ligar a uma conta que já existe', ic:'ri-links-line', campo:'escolha', ops:['Conta: Contabilidade Maré — R$ 950,00 (vence 10/10)','Conta: Atacadão — R$ 2.310,15 (vence 18/10)']},
-    {l:'Transferência entre contas da loja', ic:'ri-exchange-line', campo:'escolha', ops:['Para a conta da maquininha','Para o caixa (troco)']},
+    {l:'Ligar a uma conta a pagar já lançada', ic:'ri-links-line', campo:'escolha', ops:['Conta a pagar: Contabilidade Maré — R$ 950,00 (vence 10/10)','Conta a pagar: Atacadão — R$ 2.310,15 (vence 18/10)']},
+    {l:'Transferência entre contas bancárias da loja', ic:'ri-exchange-line', campo:'escolha', ops:['Para a conta bancária da maquininha','Para o caixa (troco)']},
     {l:'Retirada do sócio / não entra no DRE', ic:'ri-forbid-line', campo:'texto', ph:'motivo (fica registrado)'},
   ],
   vencidas: [
@@ -159,7 +159,7 @@ const OUTRO = {
     {l:'Já paguei — ligar ao extrato', ic:'ri-links-line', campo:'escolha', ops:['Saída 23/09 · R$ 1.444,00 · COSTA E MONT','Procurar outra linha…']},
     {l:'Paguei em dinheiro', ic:'ri-money-dollar-box-line', campo:'data'},
     {l:'Renegociei — mudar vencimento', ic:'ri-calendar-event-line', campo:'data'},
-    {l:'Cancelar a conta (não é devida)', ic:'ri-close-circle-line', campo:'texto', ph:'motivo (fica registrado)'},
+    {l:'Cancelar a conta a pagar (não é devida)', ic:'ri-close-circle-line', campo:'texto', ph:'motivo (fica registrado)'},
   ],
   estoque: [
     {l:'Vincular os itens aos insumos aqui', ic:'ri-links-line', campo:'nenhum'},
@@ -180,10 +180,10 @@ const OUTRO = {
     {l:'Ligar a outra linha do extrato', ic:'ri-links-line', campo:'escolha', ops:['21/09 · R$ 412,00 · PIX ENVIADO','Procurar outra…']},
     {l:'Foi pago em dinheiro', ic:'ri-money-dollar-box-line', campo:'data'},
     {l:'Ainda não saiu do banco', ic:'ri-time-line', campo:'nenhum'},
-    {l:'Foi pago por outra conta (Itaú, cartão…)', ic:'ri-bank-card-line', campo:'escolha', ops:['Itaú (sem API)','Cartão de crédito da loja']},
+    {l:'Foi pago por outra conta bancária (Itaú) ou cartão', ic:'ri-bank-card-line', campo:'escolha', ops:['Itaú (sem API)','Cartão de crédito da loja']},
   ],
   conta: [
-    {l:'Criar conta a pagar', ic:'ri-add-line', campo:'data'},
+    {l:'Criar a conta a pagar (vencimento)', ic:'ri-add-line', campo:'data'},
     {l:'Foi paga em dinheiro', ic:'ri-money-dollar-box-line', campo:'data'},
     {l:'Foi paga pelo banco — ligar ao extrato', ic:'ri-links-line', campo:'escolha', ops:['25/09 · R$ 96,00 · PADARIA S JOAO']},
     {l:'Bonificação (sem pagamento)', ic:'ri-gift-line', campo:'nenhum'},
@@ -192,8 +192,8 @@ const OUTRO = {
 
 const GRUPOS = [
   { id:'pix', ic:'ri-bank-line', nome:'Ligar saídas do banco', desc:'Saiu dinheiro e não virou lançamento', cor:'red', lote:'Aceitar as sugestões marcadas' },
-  { id:'vencidas', ic:'ri-alarm-warning-line', nome:'Pagar contas vencidas', desc:'Juros correndo', cor:'red', lote:'Pagar marcadas pelo Inter' },
-  { id:'conta', ic:'ri-bill-line', nome:'Criar conta a pagar', desc:'Compra não paga e sem conta', cor:'red' },
+  { id:'vencidas', ic:'ri-alarm-warning-line', nome:'Pagar contas a pagar vencidas', desc:'Juros correndo', cor:'red', lote:'Pagar marcadas pelo Inter' },
+  { id:'conta', ic:'ri-bill-line', nome:'Criar conta a pagar', desc:'Compra não paga e sem conta a pagar lançada', cor:'red' },
   { id:'estoque', ic:'ri-archive-2-line', nome:'Acertar estoque', desc:'Recebido e não entrou / confirmar', cor:'amber', lote:'Confirmar recebimento das marcadas' },
   { id:'notas', ic:'ri-file-text-line', nome:'Lançar notas que chegaram', desc:'NF-e da SEFAZ sem lançamento', cor:'amber', lote:'Lançar marcadas com a sugestão' },
   { id:'classificar', ic:'ri-price-tag-3-line', nome:'Classificar no DRE', desc:'Despesa sem categoria', cor:'amber' },
@@ -206,10 +206,10 @@ let T = [
   { id:3, g:'vencidas', caso:'costa', etapas:['pagamento','banco'], urg:true, sel:true, porque:'28 dias de atraso · juros estimados R$ 43,32 se pagar hoje.', sug:[['Pagar agora — R$ 1.487,32 com juros','ri-bank-line']] },
   { id:4, g:'vencidas', caso:'beemax', etapas:['pagamento','banco'], urg:true, sel:true, porque:'10 dias de atraso.', sug:[['Pagar agora','ri-bank-line']] },
   { id:5, g:'vencidas', caso:'bebidas', etapas:['pagamento','banco'], urg:true, sel:true, porque:'7 dias de atraso.', sug:[['Pagar agora','ri-bank-line']] },
-  { id:6, g:'conta', caso:'padaria', etapas:['conta'], urg:true, porque:'Não está paga e não há conta. A padaria costuma dar 30 dias.', sug:[['Criar conta vencendo 25/10','ri-add-line']] },
+  { id:6, g:'conta', caso:'padaria', etapas:['conta'], urg:true, porque:'A compra não foi paga na hora e ninguém lançou a conta a pagar dela — assim ela nunca aparece para pagar. A padaria costuma dar 30 dias.', sug:[['Criar conta a pagar vencendo 25/10','ri-add-line']] },
   { id:7, g:'estoque', caso:'bebidas', etapas:['estoque'], urg:true, porque:'Recebida em 16/09, mas 12 de 20 itens não têm insumo ligado.', sug:[['Vincular os 12 itens aqui','ri-links-line']] },
   { id:8, g:'estoque', caso:'beemax', etapas:['estoque'], urg:false, sel:true, porque:'Lançada em 12/09 e o recebimento não foi confirmado.', sug:[['Chegou hoje','ri-check-line']] },
-  { id:9, g:'notas', caso:'nortesul', etapas:['lancamento','estoque','conta'], urg:false, sel:true, porque:'Os 7 itens já têm vínculo pela Classificação; prazo de 30 dias veio no XML.', sug:[['Lançar como compra (conta vence 24/10)','ri-shopping-cart-2-line']] },
+  { id:9, g:'notas', caso:'nortesul', etapas:['lancamento','estoque','conta'], urg:false, sel:true, porque:'Os 7 itens já têm vínculo pela Classificação; prazo de 30 dias veio no XML.', sug:[['Lançar como compra (conta a pagar vence 24/10)','ri-shopping-cart-2-line']] },
   { id:10, g:'notas', caso:'embal', etapas:['lancamento','estoque','conta'], urg:false, sel:true, porque:'Regra do fornecedor: embalagem é despesa. O boleto já está nas Pendências.', sug:[['Lançar como despesa — Embalagens','ri-bill-line']] },
   { id:11, g:'classificar', caso:'mare', etapas:['lancamento'], urg:false, porque:'Honorários de contador nos meses anteriores foram para:', sug:[['Serviços contábeis','ri-price-tag-3-line'],['Serviços de terceiros','ri-price-tag-3-line']] },
   { id:12, g:'extrato', caso:'serra', etapas:['banco'], urg:false, sel:true, porque:'Mesmo valor e mesma data no extrato.', sug:[['Ligar a: Pix 22/09 · R$ 412,00 · SERRA VERDE HORTI','ri-links-line']] },
@@ -217,7 +217,7 @@ let T = [
 ];
 const TOTAL = T.length;
 
-let modo='tarefas', grupo=null, etapaF=null, soUrg=false, busca='', feitos=[], abertoOutro=null, escolhido={};
+let expandido=new Set(); let modo='tarefas', grupo=null, etapaF=null, soUrg=false, busca='', feitos=[], abertoOutro=null, escolhido={};
 const passa = c => (!soUrg||c.sit==='atencao') && (!etapaF||ruim(c.etapas.find(e=>e.id===etapaF).estado)) && (!busca||(c.titulo+' '+c.sub+' '+c.valor.toFixed(2).replace('.',',')).toLowerCase().includes(busca));
 const passaT = t => { const c=porId[t.caso]; return (!soUrg||t.urg) && (!etapaF||t.etapas.includes(etapaF)) && (!busca||(c.titulo+' '+c.sub+' '+c.valor.toFixed(2).replace('.',',')).toLowerCase().includes(busca)); };
 
@@ -262,6 +262,32 @@ function campoHTML(t,i,o){
   if(o.campo==='escolha') return `<select class="h-9 w-full sm:w-auto max-w-full border border-zinc-200 rounded-lg px-2 text-xs bg-white">${o.ops.map(c=>`<option>${c}</option>`).join('')}</select>`;
   return '';
 }
+// Linha do tempo horizontal: as 6 etapas do caso; as que ESTA tarefa fecha ficam destacadas.
+function trilho(c, fecha){
+  return `<div class="mt-2.5 flex items-start">${c.etapas.map((e,i)=>{
+    const alvo=fecha.includes(e.id), s=EST[e.estado];
+    const bola = e.estado==='ok'?'bg-emerald-500 text-white border-emerald-500':grave(e.estado)?'bg-red-500 text-white border-red-500':e.estado==='pendente'?'bg-amber-400 text-white border-amber-400':e.estado==='na'?'bg-zinc-50 text-zinc-300 border-dashed border-zinc-200':'bg-white text-zinc-300 border-zinc-300';
+    return `<div class="flex-1 min-w-0 flex flex-col items-center relative">
+      ${i>0?`<div class="absolute top-3.5 h-0.5 ${c.etapas[i-1].estado==='ok'?'bg-emerald-300':'bg-zinc-200'}" style="left:-50%;right:50%"></div>`:''}
+      <div title="${e.nome}: ${e.resumo}" class="relative z-10 w-7 h-7 rounded-full border-2 flex items-center justify-center text-xs ${bola} ${alvo?'ring-4 ring-amber-200':''}"><i class="${e.estado==='ok'?'ri-check-line':e.ic}"></i></div>
+      <p class="text-[10px] font-semibold mt-1 text-center leading-tight ${alvo?'text-amber-700':'text-zinc-500'}">${e.nome}</p>
+      <p class="hidden md:block text-[10px] text-center leading-tight mt-0.5 px-1 line-clamp-2 ${s.txt}">${e.estado==='na'?'—':e.resumo}</p>
+      ${alvo?'<span class="mt-0.5 text-[9px] font-bold uppercase tracking-wide text-amber-600">esta tarefa</span>':''}
+    </div>`;}).join('')}</div>`;
+}
+// Linha do tempo aberta: uma linha por etapa, com o detalhe e o atalho.
+function etapasAbertas(c, fecha){
+  return `<div class="mt-3 rounded-lg border border-zinc-200 bg-zinc-50/60 px-3 py-3">
+    <p class="text-[11px] font-semibold uppercase tracking-wide text-zinc-400 mb-2">O caminho desta ${c.tipo==='despesa'?'despesa':c.tipo==='pagamento'?'saída do banco':c.tipo==='nota'?'nota':'compra'}, do documento ao banco</p>
+    <ol>${c.etapas.map((e,i)=>{const alvo=fecha.includes(e.id); return `<li class="flex gap-3 pb-3 last:pb-0 relative">
+      ${i<5?`<span class="absolute left-[13px] top-7 bottom-0 w-0.5 ${e.estado==='ok'?'bg-emerald-300':'bg-zinc-200'}"></span>`:''}
+      <div class="relative z-10 w-7 h-7 shrink-0 rounded-full flex items-center justify-center text-xs ${e.estado==='ok'?'bg-emerald-500 text-white':grave(e.estado)?'bg-red-500 text-white':e.estado==='pendente'?'bg-amber-400 text-white':'bg-white text-zinc-400 border border-dashed border-zinc-300'} ${alvo?'ring-4 ring-amber-200':''}"><i class="${e.ic}"></i></div>
+      <div class="flex-1 min-w-0 flex items-start justify-between gap-2">
+        <div class="min-w-0"><p class="text-[11px] text-zinc-400">${e.nome} · <span class="font-semibold ${EST[e.estado].txt}">${EST[e.estado].rot}</span>${alvo?' · <span class="font-bold text-amber-600">é aqui que esta tarefa age</span>':''}</p>
+          <p class="text-sm font-semibold ${e.estado==='na'||e.estado==='espera'?'text-zinc-400':'text-zinc-800'}">${e.resumo}</p>${e.det?`<p class="text-xs text-zinc-500">${e.det}</p>`:''}</div>
+        ${e.estado==='ok'?`<button class="shrink-0 text-[11px] px-2 py-1 rounded-lg border border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50">Abrir <i class="ri-arrow-right-up-line"></i></button>`:''}
+      </div></li>`;}).join('')}</ol></div>`;
+}
 function tarefa(t){
   const c=porId[t.caso], g=GRUPOS.find(x=>x.id===t.g), aberto=abertoOutro===t.id, esc=escolhido[t.id];
   const outros=OUTRO[t.g];
@@ -270,9 +296,11 @@ function tarefa(t){
       ${g.lote?`<input type="checkbox" data-s="${t.id}" ${t.sel?'checked':''} class="mt-1 accent-amber-500" title="Marcar para resolver em lote com a sugestão">`:''}
       <div class="flex-1 min-w-0">
         <div class="flex items-start justify-between gap-2">
-          <button data-caso="${c.id}" class="min-w-0 text-left group"><p class="text-sm font-semibold text-zinc-800 truncate group-hover:underline">${t.urg?'<i class="ri-fire-fill text-red-500 mr-1"></i>':''}${c.titulo}</p><p class="text-[11px] text-zinc-400">${c.data} · ${c.sub} · <span class="text-zinc-500">ver trilha <i class="ri-arrow-right-s-line"></i></span></p></button>
+          <button data-exp="${t.id}" class="min-w-0 text-left group"><p class="text-sm font-semibold text-zinc-800 truncate group-hover:underline">${t.urg?'<i class="ri-fire-fill text-red-500 mr-1"></i>':''}${c.titulo}</p><p class="text-[11px] text-zinc-400">${c.data} · ${c.sub} · <span class="text-amber-700 font-semibold">${expandido.has(t.id)?'esconder etapas':'ver etapas'} <i class="${expandido.has(t.id)?'ri-arrow-up-s-line':'ri-arrow-down-s-line'}"></i></span></p></button>
           <span class="text-sm font-bold tabnum whitespace-nowrap">${brl(c.valor)}</span>
         </div>
+        <button data-exp="${t.id}" class="block w-full text-left" title="Clique para ver as etapas em detalhe">${trilho(c, t.etapas)}</button>
+        ${expandido.has(t.id)?etapasAbertas(c, t.etapas):''}
         <div class="mt-2 rounded-lg bg-amber-50/60 border border-amber-100 px-2.5 py-2">
           <p class="text-[11px] text-amber-800 flex items-start gap-1.5"><i class="ri-sparkling-2-line mt-px"></i><span><strong>Sugestão</strong> — ${t.porque}</span></p>
           <div class="flex flex-wrap gap-1.5 mt-2">
@@ -307,6 +335,7 @@ function lista(){
   document.querySelectorAll('[data-sug]').forEach(b=>b.onclick=()=>resolver(+b.dataset.sug,b.dataset.l));
   document.querySelectorAll('[data-conf]').forEach(b=>b.onclick=e=>{e.preventDefault(); resolver(+b.dataset.conf,b.dataset.l+' (manual)');});
   document.querySelectorAll('[data-outro]').forEach(b=>b.onclick=()=>{const id=+b.dataset.outro; abertoOutro=abertoOutro===id?null:id; lista();});
+  document.querySelectorAll('[data-exp]').forEach(b=>b.onclick=()=>{const id=+b.dataset.exp; expandido.has(id)?expandido.delete(id):expandido.add(id); lista();});
   document.querySelectorAll('[data-esc]').forEach(r=>r.onchange=()=>{escolhido[+r.dataset.esc]=+r.dataset.i; lista();});
   document.querySelectorAll('[data-s]').forEach(c=>c.onchange=()=>{T.find(t=>t.id==c.dataset.s).sel=c.checked;});
   document.querySelectorAll('[data-lote]').forEach(b=>b.onclick=()=>{const g=b.dataset.lote; T.filter(t=>t.g===g&&t.sel&&passaT(t)).map(t=>t.id).forEach(id=>resolver(id,'em lote: '+GRUPOS.find(x=>x.id===g).lote,true)); setTimeout(render,380);});
