@@ -5,6 +5,7 @@
 
 export const FIN_ABAS = [
   { aba: 'visao', key: 'fin_visao', label: 'Visão Geral' },
+  { aba: 'trilha', key: 'fin_trilha', label: 'Trilha das despesas' },
   { aba: 'receitas', key: 'fin_receitas', label: 'Receitas' },
   { aba: 'ifood', key: 'fin_ifood', label: 'iFood' },
   { aba: 'despesas', key: 'fin_despesas', label: 'Despesas' },

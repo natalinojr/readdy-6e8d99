@@ -25,9 +25,11 @@ import IfoodTab from './components/IfoodTab';
 import FreelancersTab from './components/FreelancersTab';
 import EntregadoresTab from './components/EntregadoresTab';
 import GuiasTab from './components/GuiasTab';
+import TrilhaTab from './components/TrilhaTab';
 
 const TABS = [
   { id: 'visao', label: 'Visão Geral', icon: 'ri-dashboard-line' },
+  { id: 'trilha', label: 'Trilha', icon: 'ri-route-line' },
   { id: 'receitas', label: 'Receitas', icon: 'ri-arrow-down-circle-line' },
   { id: 'ifood', label: 'iFood', icon: 'ri-restaurant-2-line' },
   { id: 'despesas', label: 'Despesas', icon: 'ri-pie-chart-2-line' },
@@ -176,6 +178,7 @@ export default function FinanceiroPage() {
       {/* Content */}
       <div className="flex-1 overflow-y-auto">
         {activeTab === 'visao' && <VisaoGeralFinTab />}
+        {activeTab === 'trilha' && <TrilhaTab />}
         {activeTab === 'receitas' && <ReceitasTab />}
         {activeTab === 'ifood' && <IfoodTab />}
         {activeTab === 'despesas' && <DespesasTab />}
