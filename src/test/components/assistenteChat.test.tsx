@@ -26,6 +26,8 @@ vi.mock('@/lib/supabase', () => ({
       q.then = (ok: (v: unknown) => unknown) => Promise.resolve({ data: [], error: null }).then(ok);
       return q;
     },
+    // Conversa "Currículos" (CurriculosConversa) lê fn_hiring_chat_feed: aqui, sempre vazia.
+    rpc: () => Promise.resolve({ data: [], error: null }),
   },
   invokeWithAuth: vi.fn().mockResolvedValue({ data: {}, error: null }),
   SUPABASE_URL: 'http://localhost',
