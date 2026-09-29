@@ -194,6 +194,25 @@ async function loadLinks(admin: SupabaseClient, tenantId: string, supplierKey: s
   };
 }
 
+// Vínculo item → insumo que uma pessoa confirmou na Classificação de itens (mesmo item, mesmo fornecedor,
+// com conversão) — a mesma regra que o salvamento aplica (fn_item_memo_links). Mostra na conferência o que
+// vai entrar no estoque; nunca sugere por nome parecido (regra do dono, 2026-09-24).
+async function loadConfirmed(
+  admin: SupabaseClient, tenantId: string, cnpj: unknown, name: unknown,
+  items: Array<{ code?: string | null; description: string }>,
+): Promise<Map<number, { ingredient_id: string; units_per_package: number }>> {
+  const out = new Map<number, { ingredient_id: string; units_per_package: number }>();
+  if (!items.length) return out;
+  const { data, error } = await admin.rpc('fn_item_confirmed_links_for_receipt', {
+    p_tenant: tenantId, p_cnpj: onlyDigits(cnpj) || null, p_name: name ? String(name) : null, p_items: items,
+  });
+  if (error) { log('WARN', 'confirmed', 'rpc failed', { error: error.message }); return out; }
+  for (const r of (data ?? []) as Array<{ idx: number; ingredient_id: string; units_per_package: number }>) {
+    out.set(Number(r.idx), { ingredient_id: String(r.ingredient_id), units_per_package: Number(r.units_per_package) });
+  }
+  return out;
+}
+
 // ── QR Code da NFC-e (consulta pública da SEFAZ) — grátis, dados oficiais ────
 // Por enquanto só o portal do Paraná (lojas atuais). Host fixo: a Edge nunca
 // busca uma URL arbitrária enviada pelo cliente.
@@ -271,11 +290,14 @@ async function actionQrcode(admin: SupabaseClient, tenantId: string, body: Recor
 
   const supplierKey = supplierKeyOf(supplierCnpj, supplierName);
   const linkFor = await loadLinks(admin, tenantId, supplierKey, parsed.map((it) => it.descricao));
+  const confirmed = await loadConfirmed(admin, tenantId, supplierCnpj, supplierName,
+    parsed.map((it) => ({ code: it.codigo || null, description: it.descricao })));
 
-  const items = parsed.map((it) => {
+  const items = parsed.map((it, idx) => {
     const link = linkFor(normKey(it.descricao));
+    const conf = confirmed.get(idx);
     const catalogId: string | null = null;
-    const ingredientId: string | null = null;
+    const ingredientId: string | null = conf?.ingredient_id ?? null;
     let merchId: string | null = null;
     let dreId: string | null = null;
     let unitLabel = QR_UNITS[it.un] ?? 'un';
@@ -290,6 +312,8 @@ async function actionQrcode(admin: SupabaseClient, tenantId: string, body: Recor
       if (link.pack_count) { packCount = Number(link.pack_count); packSize = link.pack_size != null ? Number(link.pack_size) : null; }
       source = 'memoria';
     }
+    // Conversão confirmada na Classificação vence a embalagem memorizada (1 un = N da unidade do insumo)
+    if (conf) { packCount = 1; packSize = conf.units_per_package; source = 'memoria'; }
     const gross = round2(it.qtd * it.vunit);
     return {
       raw_description: it.descricao,
@@ -434,13 +458,16 @@ async function actionScan(admin: SupabaseClient, tenantId: string, body: Record<
 
   const rawItems = Array.isArray(out.itens) ? out.itens : [];
   const linkFor = await loadLinks(admin, tenantId, supplierKey, rawItems.map((it: { descricao: string }) => it.descricao));
+  const confirmed = await loadConfirmed(admin, tenantId, out.fornecedor_cnpj, out.fornecedor_nome,
+    rawItems.map((it: { descricao: string }) => ({ description: String(it.descricao ?? '') })));
 
   // deno-lint-ignore no-explicit-any
-  const items = rawItems.map((it: any) => {
+  const items = rawItems.map((it: any, idx: number) => {
     const dk = normKey(it.descricao);
     const link = linkFor(dk);
+    const conf = confirmed.get(idx);
     const catalogId: string | null = null;
-    const ingredientId: string | null = null;
+    const ingredientId: string | null = conf?.ingredient_id ?? null;
     let merchId: string | null = merchIds.has(it.categoria_mercadoria_id) ? it.categoria_mercadoria_id : null;
     let dreId: string | null = dreIds.has(it.categoria_dre_id) ? it.categoria_dre_id : null;
     let unitLabel: string = String(it.unidade || 'un');
@@ -455,6 +482,7 @@ async function actionScan(admin: SupabaseClient, tenantId: string, body: Record<
       if (link.pack_count) { packCount = Number(link.pack_count); packSize = link.pack_size != null ? Number(link.pack_size) : null; }
       source = 'memoria';
     }
+    if (conf) { packCount = 1; packSize = conf.units_per_package; source = 'memoria'; }
 
     const qty = Number(it.quantidade) || 0;
     return {
