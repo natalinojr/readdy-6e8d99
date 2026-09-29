@@ -27,6 +27,7 @@
 //   payment_status   { payment_id }   (interno ou admin/gerente) atualiza o status no Inter
 //   list_payments    { limit? }       (interno ou admin/gerente)
 //   check_payment_scopes {}           (admin/gerente ou interno) token com escopos de pagamento + consulta só leitura
+//   webhook { op: get|put|delete|callbacks }  (admin/gerente ou interno) webhook pix-pagamento/boleto-pagamento → Edge inter-webhook
 //   save_pay_credentials { client_id, client_secret, cert_pem, key_pem, conta_corrente? }  (admin/gerente) credencial PRÓPRIA de
 //                    pagamento; só grava se o Inter der token com os escopos de pagamento · delete_pay_credentials {}
 //   (Pix permitidos: fin_pix_favorecidos é gerenciada na tela Assistente — assistente-config, com PIN próprio)
@@ -1110,6 +1111,47 @@ Deno.serve(async (req: Request) => {
         }
         return json({ success: true, client_id_tail: String(creds.client_id).slice(-4), results: out });
       } finally { try { client?.close?.(); } catch { /* noop */ } }
+    }
+    // Webhook de pagamento do Inter (2026-09-29): o Inter avisa na hora quando um Pix/boleto que mandamos
+    // muda de status (pix-pagamento / boleto-pagamento). URL = Edge inter-webhook com chave própria na
+    // query (INTER_WEBHOOK_KEY) — o aviso só dispara uma consulta; o status continua vindo do Inter.
+    // op: 'get' (padrão) | 'put' (cadastra/atualiza) | 'delete' | 'callbacks' (últimos envios, p/ depurar).
+    if (action === 'webhook') {
+      if (!isManager) return errResp('Apenas admin/gerente', 403);
+      const op = String(body.op ?? 'get');
+      const chave = Deno.env.get('INTER_WEBHOOK_KEY') ?? '';
+      if (op === 'put' && chave.length < 24) return errResp('INTER_WEBHOOK_KEY não configurada');
+      const cfg = await loadCfg(admin, tenantId);
+      const cands = await payCandidates(admin, cfg, tenantId);
+      const ordem = [...cands].sort((a, b) => Number(b.source === cfg.pay_source) - Number(a.source === cfg.pay_source));
+      const url = `${Deno.env.get('SUPABASE_URL')}/functions/v1/inter-webhook?t=${tenantId}&k=${chave}`;
+      const erros: string[] = [];
+      for (const c of ordem) {
+        let client: HttpClient | null = null;
+        try {
+          client = makeClient(c.creds.cert_pem, c.creds.key_pem);
+          const token = await getToken(c.creds, client, 'webhook-banking.read webhook-banking.write');
+          const out: Record<string, unknown> = {};
+          for (const tipo of ['pix-pagamento', 'boleto-pagamento']) {
+            const base = `/banking/v2/webhooks/${tipo}`;
+            let r;
+            if (op === 'put') r = await interFetch(c.creds, client, base, { method: 'PUT', token, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ webhookUrl: url }) });
+            else if (op === 'delete') r = await interFetch(c.creds, client, base, { method: 'DELETE', token });
+            else if (op === 'callbacks') {
+              const fim = new Date(); const ini = new Date(fim.getTime() - 2 * 86400_000);
+              const q = new URLSearchParams({ dataHoraInicio: ini.toISOString().slice(0, 19) + 'Z', dataHoraFim: fim.toISOString().slice(0, 19) + 'Z', tamanhoPagina: '20' });
+              r = await interFetch(c.creds, client, `${base}/callbacks?${q}`, { token });
+            } else r = await interFetch(c.creds, client, base, { token });
+            // A URL cadastrada tem a chave: nunca devolve ela inteira.
+            out[tipo] = { status: r.status, ok: r.ok, data: (() => { const t = JSON.stringify(r.data ?? r.raw.slice(0, 300)); return JSON.parse(chave ? t.split(chave).join('***') : t); })() };
+          }
+          log('INFO', 'webhook', op, { tenantId, source: c.source });
+          return json({ success: true, source: c.source, resultado: out });
+        } catch (e) {
+          erros.push(`${c.source}: ${String((e as Error)?.message ?? e).slice(0, 160)}`);
+        } finally { try { client?.close?.(); } catch { /* noop */ } }
+      }
+      return errResp(`Nenhuma integração com escopo de webhook: ${erros.join(' | ')}`);
     }
     // Pagamento confirmado → extrato do Inter na hora (o débito já aparece e concilia
     // sem esperar a rotina diária). Falha aqui não desfaz nem esconde o pagamento.

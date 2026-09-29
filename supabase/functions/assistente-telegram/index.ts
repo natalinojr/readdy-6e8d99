@@ -594,10 +594,14 @@ async function afterPayStatus(admin: SupabaseClient, chatId: number, mid: number
   if (mid && await tgOut(admin)) await editPay(chatId, mid, p, statusLine(p) + (extras.length ? `\n${extras.join('\n')}` : ''));
   return extras.join('\n');
 }
-async function payWatch() {
+// ids: aviso do webhook do Inter (inter-webhook, 2026-09-29) — confere SÓ esses, na hora, sem a espera
+// entre conferências. O aviso não é confiado: o status vem sempre da consulta ao Inter.
+async function payWatch(ids?: string[]) {
   const admin = createClient(supabaseUrl, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
-  const { data: rows } = await admin.from('fin_inter_payments').select('*').in('status', PAY_WATCH).like('chat_id', 'tg:%')
-    .gte('sent_at', new Date(Date.now() - 7 * 86400_000).toISOString()).order('sent_at', { ascending: false }).limit(20);
+  let q = admin.from('fin_inter_payments').select('*').in('status', PAY_WATCH).like('chat_id', 'tg:%')
+    .gte('sent_at', new Date(Date.now() - 7 * 86400_000).toISOString());
+  if (ids?.length) q = q.in('id', ids.slice(0, 20));
+  const { data: rows } = await q.order('sent_at', { ascending: false }).limit(20);
   let checked = 0, changed = 0;
   for (const p of rows ?? []) {
     // Esperando o dono aprovar no app (ou recém-aprovado): a cada ~minuto nas primeiras 24 h — ele
@@ -606,7 +610,7 @@ async function payWatch() {
     const idade = Date.now() - new Date(p.sent_at).getTime();
     const espera = p.status === 'scheduled' ? (idade < 2 * 3600_000 ? 45_000 : 30 * 60_000)
       : (idade < 24 * 3600_000 ? 45_000 : 5 * 60_000);
-    if (Date.now() - new Date(p.updated_at).getTime() < espera) continue;
+    if (!ids?.length && Date.now() - new Date(p.updated_at).getTime() < espera) continue;
     checked++;
     const antes = p.status;
     try {
@@ -982,7 +986,9 @@ Deno.serve(async (req) => {
     } catch (e) { return json({ error: errMsg(e) }, 500); }
   }
   if (acao === 'pay_watch' && internalOk) {
-    try { return json({ ok: true, ...(await payWatch()) }); }
+    // deno-lint-ignore no-explicit-any
+    const ids = Array.isArray((update as any).ids) ? ((update as any).ids as unknown[]).map(String) : undefined;
+    try { return json({ ok: true, ...(await payWatch(ids)) }); }
     catch (e) { log('ERROR', 'pay_watch falhou', { error: errMsg(e) }); return json({ error: errMsg(e) }, 500); }
   }
   // Quem chega só com a chave interna (outra Edge Function) manda aviso, nunca update do Telegram.
