@@ -27,6 +27,8 @@ export interface TrExtrato {
   id: string; bank_account_id?: string | null; transaction_date: string; amount: number; description: string | null;
   counterpart_name: string | null; status: string; match_kind: string | null; reconciled: boolean;
   bill_id: string | null; juros_bill_id: string | null; purchase_id: string | null; source: string | null;
+  /** vindos do RPC (fase 2): confiança do casamento e texto da sugestão de lançamento, quando houver */
+  match_confidence?: string | null; match_ref_id?: string | null; sugestao?: string | null;
 }
 export interface TrCaixa { id: string; date: string | null; amount: number; reference_id: string | null }
 export interface TrPedido {

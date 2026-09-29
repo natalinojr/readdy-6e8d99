@@ -1,23 +1,32 @@
 // Cartão de uma tarefa da Trilha: título, "ver fases", "O que houve" e os botões de ação.
 // Só há ações que JÁ existem no sistema (abrir a tela certa ou a janela que resolve); nada novo aqui.
-import { diaBR, type CasoTrilha, type TarefaTrilha } from '@/lib/trilhaDespesas';
+import { useState } from 'react';
+import { diaBR, type CasoTrilha, type TarefaTrilha, type TrConta } from '@/lib/trilhaDespesas';
 import { FasesLinha } from './Fases';
 import { fmtBRL, type AcoesTrilha } from './comum';
+import { temBoleto } from './api';
+import { diasAtraso } from '@/lib/trilhaAcoes';
+import { AcharSaida, CriarConta, FaltaJeitoDePagar, PagarConta, PedirBoleto, SugestaoExtrato } from './Paineis';
 
-interface Botao { label: string; icone: string; onClick: () => void }
+interface Botao { label: string; icone: string; onClick: () => void; /** botão que abre painel inline: mostra ▾/▴ */ painel?: 'aberto' | 'fechado' }
 interface Plano { botoes: Botao[]; ajuda?: string }
 
+/** Painel inline aberto no cartão (um por vez); clicar de novo no mesmo botão fecha. */
+interface Ctx { painel: string | null; alternar: (id: string) => void }
+const vencida = (c: TrConta, hoje: string) => c.status !== 'paid' && (c.status === 'overdue' || (!!c.due_date && String(c.due_date).slice(0, 10) < hoje));
+
+const contaPagaDoCaso = (c: CasoTrilha) => c.contas.find((k) => k.status === 'paid');
 const qs = (tab: string, extra = '') => `/financeiro?tab=${tab}${extra}`;
 
 /** Quais botões cada grupo de tarefa oferece (o primeiro é o principal). */
-export function planoDaTarefa(t: TarefaTrilha, c: CasoTrilha, a: AcoesTrilha): Plano {
+export function planoDaTarefa(t: TarefaTrilha, c: CasoTrilha, a: AcoesTrilha, x: Ctx): Plano {
   const compraId = c.compra?.id;
   switch (t.grupo) {
     case 'saida_banco': {
       const e = c.extrato[0];
       return {
         botoes: [
-          ...(e ? [{ label: 'Dizer o que foi', icone: 'ri-question-answer-line', onClick: () => a.extrato(e, `Disse o que foi a saída de ${c.titulo}`) }] : []),
+          ...(e ? [{ label: e.sugestao ? 'Resolver de outro jeito…' : 'Dizer o que foi', icone: 'ri-question-answer-line', onClick: () => a.extrato(e, `Disse o que foi a saída de ${c.titulo}`) }] : []),
           { label: 'Abrir na Conciliação', icone: 'ri-bank-line', onClick: () => a.rota(qs('conciliacao')) },
         ],
       };
@@ -26,13 +35,15 @@ export function planoDaTarefa(t: TarefaTrilha, c: CasoTrilha, a: AcoesTrilha): P
       const busca = c.etapas.find((e) => e.id === 'pagamento')?.atalho?.valor;
       return {
         botoes: [{ label: 'Abrir em Contas a pagar', icone: 'ri-bill-line', onClick: () => a.rota(qs('pagar', busca ? '&busca=' + encodeURIComponent(busca) : '')) }],
-        ajuda: 'Para pagar pelo Inter use o assistente (chat) — pagar direto daqui vem na próxima etapa.',
+        ajuda: a.dono ? undefined : 'Para pagar pelo Inter use o assistente (chat) — só o dono paga por aqui.',
       };
     }
     case 'sem_conta':
       return {
-        botoes: compraId ? [{ label: 'Abrir a compra', icone: 'ri-shopping-cart-2-line', onClick: () => a.rota(qs('compras', '&foco=' + encodeURIComponent(compraId))) }] : [],
-        ajuda: 'Criar a conta a pagar direto daqui vem na próxima etapa.',
+        botoes: compraId ? [
+          { label: 'Criar a conta a pagar', icone: 'ri-add-circle-line', painel: x.painel === 'criar' ? 'aberto' : 'fechado', onClick: () => x.alternar('criar') },
+          { label: 'Abrir a compra', icone: 'ri-shopping-cart-2-line', onClick: () => a.rota(qs('compras', '&foco=' + encodeURIComponent(compraId))) },
+        ] : [],
       };
     case 'estoque':
       if (!compraId) return { botoes: [] };
@@ -52,8 +63,16 @@ export function planoDaTarefa(t: TarefaTrilha, c: CasoTrilha, a: AcoesTrilha): P
       return { botoes: [{ label: 'Abrir pedidos', icone: 'ri-hand-coin-line', onClick: () => a.rota('/receber') }] };
     case 'classificar':
       return { botoes: [{ label: 'Escolher a categoria', icone: 'ri-price-tag-3-line', onClick: () => a.classificar(c, `Escolheu a categoria de ${c.titulo}`) }] };
-    case 'extrato':
-      return { botoes: [{ label: 'Achar no extrato', icone: 'ri-links-line', onClick: () => a.rota(qs('conciliacao')) }] };
+    case 'extrato': {
+      const conta = contaPagaDoCaso(c);
+      const achar = c.etapas.find((e) => e.id === 'banco')?.estado === 'pendente' && !!conta;
+      return {
+        botoes: [
+          ...(achar ? [{ label: 'Achar a saída', icone: 'ri-search-line', painel: (x.painel === 'achar' ? 'aberto' : 'fechado') as 'aberto' | 'fechado', onClick: () => x.alternar('achar') }] : []),
+          { label: 'Abrir na Conciliação', icone: 'ri-links-line', onClick: () => a.rota(qs('conciliacao')) },
+        ],
+      };
+    }
     default:
       return { botoes: [] };
   }
@@ -63,9 +82,54 @@ interface Props {
   caso: CasoTrilha; tarefa: TarefaTrilha; expandido: boolean; onToggle: () => void; acoes: AcoesTrilha;
 }
 
+/** Linha de uma conta vencida (só dono): pagar agora, ou o que falta para poder pagar. */
+function ContaVencida({ conta, acoes, painel, alternar }: { conta: TrConta; acoes: AcoesTrilha; painel: string | null; alternar: (id: string) => void }) {
+  const [pedidoEm, setPedidoEm] = useState<string | null>(null);
+  const boleto = acoes.boletos.get(conta.id);
+  if (!boleto) return null; // ainda carregando (ou não é dono)
+  const tem = temBoleto(boleto);
+  const dias = diasAtraso(String(conta.due_date ?? ''), acoes.hoje);
+  const pId = `pagar:${conta.id}`, fId = `falta:${conta.id}`, qId = `pedir:${conta.id}`;
+  const seta = (id: string) => (painel === id ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line');
+  return (
+    <div className="mt-2 rounded-lg border border-red-100 bg-white px-2.5 py-2">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-zinc-600">
+        <span className="font-semibold text-zinc-800 break-words">{conta.description ?? conta.supplier}</span>
+        <span>vence {diaBR(conta.due_date)} · {dias} {dias === 1 ? 'dia' : 'dias'} de atraso · {fmtBRL(Number(conta.amount) - Number(conta.paid_amount || 0))}</span>
+        {!tem && <span className="px-1.5 py-0.5 rounded-md bg-zinc-100 text-zinc-600 font-semibold">sem boleto nem Pix</span>}
+        {pedidoEm && <span className="px-1.5 py-0.5 rounded-md bg-sky-50 text-sky-700 font-semibold">boleto pedido em {diaBR(pedidoEm)}</span>}
+      </div>
+      <div className="flex flex-wrap gap-1.5 mt-1.5">
+        {tem ? (
+          <button onClick={() => alternar(pId)} className="text-xs px-2.5 py-1.5 rounded-lg font-semibold cursor-pointer bg-red-500 text-white hover:bg-red-600">
+            <i className="ri-bank-line" /> Pagar agora <i className={seta(pId)} />
+          </button>
+        ) : (
+          <>
+            <button onClick={() => alternar(fId)} className="text-xs px-2.5 py-1.5 rounded-lg font-semibold cursor-pointer bg-red-500 text-white hover:bg-red-600">
+              <i className="ri-barcode-line" /> Falta o jeito de pagar <i className={seta(fId)} />
+            </button>
+            <button onClick={() => alternar(qId)} className="text-xs px-2.5 py-1.5 rounded-lg font-semibold cursor-pointer bg-white border border-red-200 text-red-700 hover:bg-red-50">
+              <i className="ri-mail-send-line" /> {pedidoEm ? 'Pedir de novo' : 'Pedir o boleto…'} <i className={seta(qId)} />
+            </button>
+          </>
+        )}
+      </div>
+      {painel === pId && tem && <PagarConta conta={conta} boleto={boleto} acoes={acoes} onFechar={() => alternar(pId)} />}
+      {painel === fId && !tem && <FaltaJeitoDePagar conta={conta} acoes={acoes} onPedir={() => alternar(qId)} />}
+      {painel === qId && !tem && <PedirBoleto conta={conta} acoes={acoes} jaPedido={pedidoEm} onPedido={(em) => setPedidoEm(em ?? acoes.hoje)} />}
+    </div>
+  );
+}
+
 export default function TarefaCard({ caso, tarefa, expandido, onToggle, acoes }: Props) {
-  const plano = planoDaTarefa(tarefa, caso, acoes);
+  const [painel, setPainel] = useState<string | null>(null);
+  const alternar = (id: string) => setPainel((p) => (p === id ? null : id));
+  const plano = planoDaTarefa(tarefa, caso, acoes, { painel, alternar });
   const u = tarefa.urgente;
+  const sugestao = tarefa.grupo === 'saida_banco' ? caso.extrato[0] : undefined;
+  const vencidas = tarefa.grupo === 'vencidas' && acoes.dono ? caso.contas.filter((c) => vencida(c, acoes.hoje)) : [];
+  const contaPaga = tarefa.grupo === 'extrato' ? caso.contas.find((k) => k.status === 'paid') : undefined;
   return (
     <div className={`rounded-xl border p-3 ${u ? 'border-red-200 bg-red-50/20' : 'border-zinc-200 bg-white'}`}>
       <div className="flex items-start justify-between gap-2">
@@ -87,19 +151,23 @@ export default function TarefaCard({ caso, tarefa, expandido, onToggle, acoes }:
         <p className={`text-[11px] flex items-start gap-1.5 ${u ? 'text-red-800' : 'text-amber-800'}`}>
           <i className="ri-information-line mt-px" /><span><strong>O que houve</strong> — {tarefa.porque}</span>
         </p>
+        {sugestao?.sugestao && <SugestaoExtrato extrato={sugestao} acoes={acoes} />}
+        {vencidas.map((c) => <ContaVencida key={c.id} conta={c} acoes={acoes} painel={painel} alternar={alternar} />)}
         {plano.botoes.length > 0 && (
           <div className="flex flex-wrap gap-1.5 mt-2">
             {plano.botoes.map((b, i) => (
               <button key={b.label} onClick={b.onClick}
-                className={`text-xs px-2.5 py-1.5 rounded-lg font-semibold cursor-pointer ${i === 0
+                className={`text-xs px-2.5 py-1.5 rounded-lg font-semibold cursor-pointer ${i === 0 && !sugestao?.sugestao && vencidas.length === 0
                   ? (u ? 'bg-red-500 text-white hover:bg-red-600' : 'bg-amber-500 text-white hover:bg-amber-600')
                   : (u ? 'bg-white border border-red-200 text-red-700 hover:bg-red-50' : 'bg-white border border-amber-200 text-amber-800 hover:bg-amber-50')}`}>
-                <i className={b.icone} /> {b.label}
+                <i className={b.icone} /> {b.label}{b.painel && <> <i className={b.painel === 'aberto' ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} /></>}
               </button>
             ))}
           </div>
         )}
         {plano.ajuda && <p className="mt-1.5 text-[11px] text-zinc-500">{plano.ajuda}</p>}
+        {painel === 'criar' && caso.compra && <CriarConta caso={caso} acoes={acoes} />}
+        {painel === 'achar' && contaPaga && <AcharSaida conta={contaPaga} caso={caso} acoes={acoes} />}
       </div>
       {caso.avisos.length > 0 && (
         <div className="mt-1.5 space-y-0.5">

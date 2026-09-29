@@ -11,6 +11,7 @@ import { useEstoque } from '@/contexts/EstoqueContext';
 import { supabase } from '@/lib/supabase';
 import { todayBrasilia } from '@/lib/dateUtils';
 import { avisar } from '@/components/base/Dialogos';
+import { ASSISTENTE_OWNER_EMAIL } from '@/components/feature/AssistenteChat';
 import type { BillPayable, Purchase } from '@/types/financeiro';
 import { MonthNav, mesExtenso } from './dreUi';
 import LinhaExtratoModal from './conciliacao/LinhaExtratoModal';
@@ -25,6 +26,7 @@ import TarefaCard from './trilha/TarefaCard';
 import Esteira from './trilha/Esteira';
 import Matriz from './trilha/Matriz';
 import Gaveta from './trilha/Gaveta';
+import type { BoletoInfo } from './trilha/api';
 
 const limitesMes = (ano: number, mes: number) => {
   const de = `${ano}-${String(mes + 1).padStart(2, '0')}-01`;
@@ -33,7 +35,7 @@ const limitesMes = (ano: number, mes: number) => {
 };
 
 type Modo = 'tarefas' | 'esteira' | 'matriz';
-interface Resolvido { key: string; titulo: string; grupo: GrupoTarefa; rotulo: string }
+interface Resolvido { key: string; titulo: string; grupo: GrupoTarefa; rotulo: string; desfazer?: () => Promise<void> }
 interface CompraAberta { purchase: Purchase; installments: BillInst[]; loading: boolean }
 interface BillInst { id: string; installment_number: number; installments: number; amount: number; due_date: string; status: string; paid_date?: string; paid_amount?: number }
 
@@ -63,7 +65,10 @@ export default function TrilhaTab() {
   const [linha, setLinha] = useState<TrExtrato | null>(null);
   const [compra, setCompra] = useState<CompraAberta | null>(null);
   const [billsDRE, setBillsDRE] = useState<BillPayable[] | null>(null);
+  const [boletos, setBoletos] = useState<Map<string, BoletoInfo>>(new Map());
   const rotuloRef = useRef<string>('');
+  const desfazerRef = useRef<(() => Promise<void>) | undefined>(undefined);
+  const dono = user?.email?.toLowerCase() === ASSISTENTE_OWNER_EMAIL;
   const antesRef = useRef<Map<string, { titulo: string; grupo: GrupoTarefa }>>(new Map());
   const { de, ate } = limitesMes(ano, mes);
 
@@ -81,8 +86,10 @@ export default function TrilhaTab() {
       const somem = [...antesRef.current].filter(([k]) => !novas.has(k));
       if (somem.length) {
         const rotulo = rotuloRef.current || 'Resolvido pela Trilha';
-        setResolvidos((prev) => [...somem.map(([key, v]) => ({ key, ...v, rotulo })), ...prev.filter((r) => !somem.some(([k]) => k === r.key))]);
+        const desfazer = desfazerRef.current;
+        setResolvidos((prev) => [...somem.map(([key, v]) => ({ key, ...v, rotulo, desfazer })), ...prev.filter((r) => !somem.some(([k]) => k === r.key))]);
       }
+      desfazerRef.current = undefined;
     }
     setDados(d);
   }, [user?.tenantId, de, ate]);
@@ -97,6 +104,27 @@ export default function TrilhaTab() {
   useEffect(() => {
     antesRef.current = new Map(todasTarefas.map(({ tarefa, caso }) => [tarefa.key, { titulo: caso.titulo, grupo: tarefa.grupo }]));
   }, [todasTarefas]);
+
+  // Boleto/Pix guardado das contas vencidas — só o dono paga por aqui, então só ele carrega.
+  const idsVencidas = useMemo(() => (dono ? [...new Set(todasTarefas.filter((x) => x.tarefa.grupo === 'vencidas')
+    .flatMap((x) => x.caso.contas.filter((c) => c.status !== 'paid' && (c.status === 'overdue' || String(c.due_date ?? '').slice(0, 10) < hoje)).map((c) => c.id)))] : []), [dono, todasTarefas, hoje]);
+  const chaveVencidas = idsVencidas.join(',');
+  useEffect(() => {
+    if (!user?.tenantId || idsVencidas.length === 0) { setBoletos(new Map()); return; }
+    let vivo = true;
+    (async () => {
+      const mapa = new Map<string, BoletoInfo>();
+      for (let i = 0; i < idsVencidas.length; i += 150) {
+        const { data } = await supabase.from('fin_accounts_payable')
+          .select('id, boleto_digitavel, boleto_barcode, boleto_pix_copia, boleto_origem')
+          .eq('tenant_id', user.tenantId).in('id', idsVencidas.slice(i, i + 150));
+        for (const b of (data ?? []) as BoletoInfo[]) mapa.set(b.id, b);
+      }
+      if (vivo) setBoletos(mapa);
+    })();
+    return () => { vivo = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.tenantId, chaveVencidas]);
 
   // ── filtros ────────────────────────────────────────────────────────────────
   const q = busca.trim().toLowerCase();
@@ -167,7 +195,21 @@ export default function TrilhaTab() {
     extrato: (e, rotulo) => { rotuloRef.current = rotulo; setLinha(e); },
     compra: (id, rotulo) => { void abrirCompra(id, rotulo); },
     classificar: (c, rotulo) => { void abrirClassificar(c, rotulo); },
-  }), [ir, navigate, abrirCompra, abrirClassificar]);
+    dono, tenantId: user?.tenantId ?? '', hoje, boletos,
+    concluir: async (rotulo, desfazer) => { rotuloRef.current = rotulo; desfazerRef.current = desfazer; await carregar(true); },
+    recarregar: async () => { await carregar(); },
+  }), [ir, navigate, abrirCompra, abrirClassificar, dono, user?.tenantId, hoje, boletos, carregar]);
+
+  const desfazerResolvido = async (r: Resolvido) => {
+    if (!r.desfazer) return;
+    try {
+      await r.desfazer();
+      setResolvidos((prev) => prev.filter((x) => x.key !== r.key));
+      await carregar();
+    } catch (e) {
+      void avisar(e instanceof Error ? e.message : String(e), { erro: true, titulo: 'Não deu para desfazer' });
+    }
+  };
 
   const aposCompra = () => {
     setCompra(null);
@@ -206,8 +248,8 @@ export default function TrilhaTab() {
     <div className="p-4 md:p-6 space-y-5 max-w-[1400px] mx-auto overflow-x-hidden">
       {/* ── Topo: placar + funil ── */}
       <div className="bg-white rounded-2xl border border-zinc-200 p-4 md:p-5">
-        <div className="flex flex-col lg:flex-row gap-5">
-          <div className="flex items-center gap-4 lg:w-[380px] shrink-0">
+        <div className="flex flex-col xl:flex-row gap-5">
+          <div className="flex items-center gap-4 xl:w-[380px] shrink-0">
             <div className="relative w-24 h-24 shrink-0">
               <svg viewBox="0 0 36 36" className="w-24 h-24 -rotate-90">
                 <circle cx="18" cy="18" r="15.9" fill="none" stroke="#f4f4f5" strokeWidth="3.4" />
@@ -251,8 +293,8 @@ export default function TrilhaTab() {
               {funil.map((f) => (
                 <button key={f.id} onClick={() => setEtapaF(etapaF === f.id ? null : f.id)}
                   className={`text-left rounded-xl border p-2.5 transition cursor-pointer min-w-0 ${etapaF === f.id ? 'border-amber-400 ring-2 ring-amber-100 bg-amber-50/40' : 'border-zinc-200 hover:border-zinc-300'}`}>
-                  <div className="flex items-center justify-between gap-1">
-                    <span className="flex items-center gap-1.5 text-[11px] font-semibold text-zinc-600 truncate"><i className={ICONE_ETAPA[f.id]} />{NOMES_ETAPA[f.id]}</span>
+                  <div className="flex items-start justify-between gap-1">
+                    <span className="flex items-start gap-1.5 text-[11px] font-semibold text-zinc-600 leading-tight min-w-0"><i className={`${ICONE_ETAPA[f.id]} mt-px`} /><span className="min-w-0 break-words">{NOMES_ETAPA[f.id]}</span></span>
                     {f.n > 0
                       ? <span className={`text-[10px] font-bold px-1.5 rounded-md ${f.grave ? 'bg-red-50 text-red-600' : 'bg-amber-50 text-amber-700'}`}>{f.n}</span>
                       : <i className="ri-check-double-line text-emerald-500 text-xs" />}
@@ -325,7 +367,9 @@ export default function TrilhaTab() {
                   <li key={r.key} className="flex items-start gap-1.5">
                     <i className="ri-check-line text-emerald-500 mt-px" />
                     <span className="flex-1 min-w-0"><strong className="text-zinc-700">{r.titulo}</strong><br /><span className="text-zinc-400">{r.rotulo}</span></span>
-                    <button onClick={() => navigate(GRUPO_POR_ID[r.grupo].origem)} className="shrink-0 text-[11px] font-semibold text-zinc-400 hover:text-zinc-800 px-1.5 py-0.5 rounded-md hover:bg-zinc-100 cursor-pointer" title="Abrir a tela de origem">Abrir <i className="ri-arrow-right-up-line" /></button>
+                    {r.desfazer
+                      ? <button onClick={() => void desfazerResolvido(r)} className="shrink-0 text-[11px] font-semibold text-zinc-400 hover:text-zinc-800 px-1.5 py-0.5 rounded-md hover:bg-zinc-100 cursor-pointer" title="Voltar esta tarefa para a lista"><i className="ri-arrow-go-back-line" /> desfazer</button>
+                      : <button onClick={() => navigate(GRUPO_POR_ID[r.grupo].origem)} className="shrink-0 text-[11px] font-semibold text-zinc-400 hover:text-zinc-800 px-1.5 py-0.5 rounded-md hover:bg-zinc-100 cursor-pointer" title="Abrir a tela de origem">Abrir <i className="ri-arrow-right-up-line" /></button>}
                   </li>
                 ))}
               </ul>

@@ -1,4 +1,5 @@
 // Constantes e tipos compartilhados pelas peças da Trilha (Financeiro › Trilha).
+import type { BoletoInfo } from './api';
 import type { Atalho, CasoTrilha, EstadoEtapa, EtapaId, GrupoTarefa, TarefaTrilha, TipoCaso, TrExtrato } from '@/lib/trilhaDespesas';
 
 export const ETAPAS_ORDEM: EtapaId[] = ['documento', 'lancamento', 'estoque', 'conta', 'pagamento', 'banco'];
@@ -63,6 +64,18 @@ export interface AcoesTrilha {
   compra: (compraId: string, rotulo: string) => void;
   /** abre a escolha de categoria do DRE das contas do caso */
   classificar: (caso: CasoTrilha, rotulo: string) => void;
+  // ── fase 2: botões ligados ao backend ──
+  /** só o dono vê boleto/pagar (o próprio assistente-app recusa os outros) */
+  dono: boolean;
+  tenantId: string;
+  /** hoje em Brasília (AAAA-MM-DD) */
+  hoje: string;
+  /** boleto/Pix guardado de cada conta vencida (só carregado para o dono) */
+  boletos: Map<string, BoletoInfo>;
+  /** uma ação terminou: registra em "Resolvido agora" (com desfazer, se tiver) e recarrega a trilha */
+  concluir: (rotulo: string, desfazer?: () => Promise<void>) => Promise<void>;
+  /** recarrega sem registrar nada em "Resolvido agora" */
+  recarregar: () => Promise<void>;
 }
 
 export interface TarefaComCaso { tarefa: TarefaTrilha; caso: CasoTrilha }
