@@ -85,7 +85,9 @@ export function Segmented<T extends string>({
   value, onChange, options,
 }: {
   value: T;
-  onChange: (v: T) => void;
+  // NoInfer: o setState passado aqui aceita "valor ou função"; deduzir o T por ele
+  // derruba o tipo para `string` e o setState deixa de encaixar. O T vem do value/opções.
+  onChange: (v: NoInfer<T>) => void;
   options: { id: T; label: string; icon: string; title?: string }[];
 }) {
   return (

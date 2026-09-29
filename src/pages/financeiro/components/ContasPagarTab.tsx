@@ -13,6 +13,7 @@ import CaixaBoletosModal from '@/pages/financeiro/components/CaixaBoletosModal';
 import DreClassificacaoSelect, { precisaClassificarDRE, useDreEscolha } from '@/pages/financeiro/components/DreClassificacaoSelect';
 import PerguntarAoAssistente from '@/components/feature/PerguntarAoAssistente';
 import { useFocoTela } from '@/lib/assistenteFoco';
+import { KpiCard, MonthNav, Segmented } from './dreUi';
 
 interface Props {
   onNavigateToCompras?: (purchaseId?: string) => void;
@@ -21,10 +22,10 @@ interface Props {
 // ... existing code ...
 
 const STATUS_BADGE: Record<BillStatus, string> = {
-  pending: 'bg-amber-100 text-amber-700',
-  paid: 'bg-green-100 text-green-700',
-  overdue: 'bg-red-100 text-red-700',
-  partial: 'bg-sky-100 text-sky-700',
+  pending: 'bg-amber-50 text-amber-700',
+  paid: 'bg-emerald-50 text-emerald-700',
+  overdue: 'bg-red-50 text-red-600',
+  partial: 'bg-sky-50 text-sky-700',
 };
 const STATUS_LABEL: Record<BillStatus, string> = {
   pending: 'Pendente', paid: 'Pago', overdue: 'Vencido', partial: 'Parcial',
@@ -101,14 +102,10 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
   const anoAtual = nowDate.getFullYear();
   const isMesAtual = mesSelecionado === mesAtual && anoSelecionado === anoAtual;
 
-  const irParaMesAnterior = () => {
-    if (mesSelecionado === 0) { setMesSelecionado(11); setAnoSelecionado(a => a - 1); }
-    else setMesSelecionado(m => m - 1);
-    setPage(1);
-  };
-  const irParaProximoMes = () => {
-    if (mesSelecionado === 11) { setMesSelecionado(0); setAnoSelecionado(a => a + 1); }
-    else setMesSelecionado(m => m + 1);
+  const trocarMes = (m: string) => {
+    const [y, mm] = m.split('-').map(Number);
+    setAnoSelecionado(y);
+    setMesSelecionado(mm - 1);
     setPage(1);
   };
   const voltarMesAtual = () => {
@@ -425,47 +422,52 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
   });
 
   return (
-    <div className="p-4 md:p-6 space-y-4 md:space-y-5">
+    <div className="p-4 md:p-6 space-y-5 max-w-[1400px] mx-auto">
 
-      {/* ── Navegação por mês ── */}
-      <div className="flex items-center justify-between bg-white border border-zinc-200 rounded-xl px-5 py-3">
-        <button
-          onClick={irParaMesAnterior}
-          className="w-8 h-8 flex items-center justify-center rounded-lg border border-zinc-200 hover:bg-zinc-50 cursor-pointer transition-colors text-zinc-500"
-        >
-          <i className="ri-arrow-left-s-line text-base" />
-        </button>
+      {/* ── Mês + ações ── */}
+      <div className="flex flex-wrap items-center gap-2 lg:gap-3">
+        <MonthNav mes={mesPrefix} onChange={trocarMes} canGoNext />
+        {!isMesAtual && (
+          <button
+            onClick={voltarMesAtual}
+            className="text-xs font-semibold px-3 py-2 bg-amber-50 text-amber-700 border border-amber-200 rounded-xl hover:bg-amber-100 cursor-pointer transition-colors whitespace-nowrap"
+          >
+            Mês atual
+          </button>
+        )}
+        <p className="text-xs text-zinc-400">
+          {billsDoMes.length} conta{billsDoMes.length !== 1 ? 's' : ''} neste mês
+        </p>
 
-        <div className="flex items-center gap-3">
-          <div className="text-center">
-            <p className="text-sm font-bold text-zinc-900 capitalize">
-              {MESES_NOMES[mesSelecionado]} {anoSelecionado}
-            </p>
-            <p className="text-xs text-zinc-400">
-              {billsDoMes.length} conta{billsDoMes.length !== 1 ? 's' : ''} neste mês
-            </p>
-          </div>
-          {!isMesAtual && (
-            <button
-              onClick={voltarMesAtual}
-              className="text-xs font-semibold px-3 py-1.5 bg-amber-50 text-amber-700 border border-amber-200 rounded-lg hover:bg-amber-100 cursor-pointer transition-colors whitespace-nowrap"
-            >
-              Mês atual
-            </button>
-          )}
+        <div className="ml-auto flex items-center gap-2 overflow-x-auto max-w-full">
+          <button
+            onClick={() => setShowCaixaBoletos(true)}
+            className="hidden sm:flex items-center gap-1.5 px-3 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 rounded-xl text-xs font-semibold text-zinc-600 cursor-pointer transition-colors whitespace-nowrap shadow-sm"
+            title="Boleto que chega por e-mail vira conta a pagar"
+          >
+            <i className="ri-mail-download-line text-amber-500" /> E-mail
+          </button>
+          <button onClick={() => exportCSV(filtered)}
+            className="hidden sm:flex items-center gap-1.5 px-3 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 rounded-xl text-xs font-semibold text-zinc-600 cursor-pointer transition-colors whitespace-nowrap shadow-sm">
+            <i className="ri-download-2-line" /> CSV
+          </button>
+          <button
+            onClick={() => setShowDREModal(true)}
+            className="flex items-center gap-1.5 px-3 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 rounded-xl text-xs font-semibold text-zinc-600 cursor-pointer transition-colors whitespace-nowrap shadow-sm"
+            title="Vincular categorias DRE em massa"
+          >
+            <i className="ri-folder-chart-line text-amber-500" /> DRE
+          </button>
+          <button onClick={() => setShowModal(true)}
+            className="flex items-center gap-1.5 bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-xl text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors shadow-sm">
+            <i className="ri-add-line" /> <span className="hidden sm:inline">Nova Conta</span><span className="sm:hidden">Nova</span>
+          </button>
         </div>
-
-        <button
-          onClick={irParaProximoMes}
-          className="w-8 h-8 flex items-center justify-center rounded-lg border border-zinc-200 hover:bg-zinc-50 cursor-pointer transition-colors text-zinc-500"
-        >
-          <i className="ri-arrow-right-s-line text-base" />
-        </button>
       </div>
 
       {/* Banner de alertas de vencimento */}
       {showAlertBanner && (vencendoEmBreve.length > 0 || totalVencido > 0) && (
-        <div className={`rounded-xl border p-4 flex items-start gap-3 ${totalVencido > 0 ? 'bg-red-50 border-red-200' : 'bg-amber-50 border-amber-200'}`}>
+        <div className={`rounded-xl border px-4 py-3 flex items-start gap-3 ${totalVencido > 0 ? 'bg-red-50 border-red-200' : 'bg-amber-50 border-amber-200'}`}>
           <div className={`w-8 h-8 flex items-center justify-center rounded-lg flex-shrink-0 ${totalVencido > 0 ? 'bg-red-100' : 'bg-amber-100'}`}>
             <i className={`${totalVencido > 0 ? 'ri-alarm-warning-line text-red-600' : 'ri-time-line text-amber-600'} text-base`} />
           </div>
@@ -502,7 +504,7 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
 
       {/* Banner: compras com vencimento provisório */}
       {showProvAlertBanner && contasVencimentoProvisorio.length > 0 && (
-        <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 flex items-start gap-3">
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 flex items-start gap-3">
           <div className="w-8 h-8 flex items-center justify-center bg-amber-100 rounded-lg flex-shrink-0">
             <i className="ri-calendar-todo-line text-amber-600 text-base" />
           </div>
@@ -539,34 +541,22 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
       )}
 
       {/* KPIs */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
-        {[
-          { label: 'Total Pendente', value: formatCurrency(totalPendente), color: 'text-amber-600', bg: 'bg-amber-50', icon: 'ri-time-line' },
-          { label: 'Total Vencido', value: formatCurrency(totalVencido), color: 'text-red-600', bg: 'bg-red-50', icon: 'ri-alarm-warning-line' },
-          { label: 'Total Pago', value: formatCurrency(totalPago), color: 'text-green-600', bg: 'bg-green-50', icon: 'ri-checkbox-circle-line' },
-          { label: 'Despesas Fixas', value: `${totalRecorrentes} contas`, color: 'text-zinc-700', bg: 'bg-zinc-50', icon: 'ri-repeat-line' },
-        ].map(k => (
-          <div key={k.label} className="bg-white rounded-xl border border-zinc-200 p-4 flex items-center gap-3">
-            <div className={`w-10 h-10 flex items-center justify-center rounded-lg ${k.bg}`}>
-              <i className={`${k.icon} ${k.color} text-lg`} />
-            </div>
-            <div>
-              <p className="text-xs text-zinc-500">{k.label}</p>
-              <p className={`text-base font-bold ${k.color}`}>{k.value}</p>
-            </div>
-          </div>
-        ))}
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+        <KpiCard label="Total pendente" icon="ri-time-line" value={formatCurrency(totalPendente)} valueTone="text-amber-700" atual={totalPendente} semVariacao />
+        <KpiCard label="Total vencido" icon="ri-alarm-warning-line" value={formatCurrency(totalVencido)} valueTone={totalVencido > 0 ? 'text-red-600' : undefined} atual={totalVencido} semVariacao />
+        <KpiCard label="Total pago" icon="ri-checkbox-circle-line" value={formatCurrency(totalPago)} valueTone="text-emerald-700" atual={totalPago} semVariacao />
+        <KpiCard label="Despesas fixas" icon="ri-repeat-line" value={`${totalRecorrentes} contas`} atual={totalRecorrentes} semVariacao />
       </div>
 
       {/* Toolbar */}
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3 flex-wrap">
-        <div className="relative flex-1 min-w-0">
+        <div className="relative flex-1 min-w-0 sm:min-w-[220px]">
           <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 text-sm" />
           <input
             value={search}
             onChange={e => { setSearch(e.target.value); setPage(1); }}
             placeholder="Buscar por descrição, fornecedor..."
-            className="w-full pl-9 pr-3 py-2 border border-zinc-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white"
+            className="w-full h-10 rounded-xl border border-zinc-200 shadow-sm pl-9 pr-3 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white"
           />
           {search && (
             <button onClick={() => setSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 cursor-pointer">
@@ -576,27 +566,35 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
-          <div className="flex bg-white border border-zinc-200 rounded-lg overflow-hidden">
-            {[['all', 'Todas'], ['pending', 'Pend.'], ['partial', 'Parcial'], ['overdue', 'Venc.'], ['paid', 'Pago']].map(([v, l]) => (
-              <button key={v} onClick={() => { setFilterStatus(v); setPage(1); }}
-                className={`px-2.5 py-2 text-xs font-semibold cursor-pointer transition-colors whitespace-nowrap ${filterStatus === v ? 'bg-amber-500 text-white' : 'text-zinc-600 hover:bg-zinc-50'}`}>
-                {l}
-              </button>
-            ))}
+          <div className="overflow-x-auto max-w-full">
+            <Segmented
+              value={filterStatus}
+              onChange={(v) => { setFilterStatus(v); setPage(1); }}
+              options={[
+                { id: 'all', label: 'Todas', icon: 'ri-list-check' },
+                { id: 'pending', label: 'Pend.', icon: 'ri-time-line', title: 'Pendentes' },
+                { id: 'partial', label: 'Parcial', icon: 'ri-progress-3-line' },
+                { id: 'overdue', label: 'Venc.', icon: 'ri-alarm-warning-line', title: 'Vencidas' },
+                { id: 'paid', label: 'Pago', icon: 'ri-checkbox-circle-line' },
+              ]}
+            />
           </div>
 
-          <div className="flex bg-white border border-zinc-200 rounded-lg overflow-hidden">
-            {[['all', 'Todas'], ['recurring', 'Fixas'], ['fixed', 'Avulsas']].map(([v, l]) => (
-              <button key={v} onClick={() => { setFilterRecurring(v); setPage(1); }}
-                className={`px-2.5 py-2 text-xs font-semibold cursor-pointer transition-colors whitespace-nowrap ${filterRecurring === v ? 'bg-zinc-800 text-white' : 'text-zinc-600 hover:bg-zinc-50'}`}>
-                {l}
-              </button>
-            ))}
+          <div className="overflow-x-auto max-w-full">
+            <Segmented
+              value={filterRecurring}
+              onChange={(v) => { setFilterRecurring(v); setPage(1); }}
+              options={[
+                { id: 'all', label: 'Todas', icon: 'ri-list-check' },
+                { id: 'recurring', label: 'Fixas', icon: 'ri-repeat-line' },
+                { id: 'fixed', label: 'Avulsas', icon: 'ri-file-line' },
+              ]}
+            />
           </div>
 
           <button
             onClick={() => setShowFilters(f => !f)}
-            className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold cursor-pointer border transition-colors whitespace-nowrap ${showFilters || activeFiltersCount > 0 ? 'bg-amber-50 border-amber-300 text-amber-700' : 'bg-white border-zinc-200 text-zinc-600 hover:bg-zinc-50'}`}
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold cursor-pointer border transition-colors whitespace-nowrap shadow-sm ${showFilters || activeFiltersCount > 0 ? 'bg-amber-50 border-amber-200 text-amber-700' : 'bg-white border-zinc-200 text-zinc-600 hover:bg-zinc-50'}`}
           >
             <i className="ri-filter-3-line" />
             Filtros {activeFiltersCount > 0 && <span className="bg-amber-500 text-white rounded-full w-4 h-4 flex items-center justify-center text-xs">{activeFiltersCount}</span>}
@@ -604,13 +602,13 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
 
           <button
             onClick={() => setShowAging(v => !v)}
-            className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold cursor-pointer border transition-colors whitespace-nowrap ${showAging ? 'bg-red-50 border-red-300 text-red-700' : 'bg-white border-zinc-200 text-zinc-600 hover:bg-zinc-50'}`}
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold cursor-pointer border transition-colors whitespace-nowrap shadow-sm ${showAging ? 'bg-red-50 border-red-200 text-red-700' : 'bg-white border-zinc-200 text-zinc-600 hover:bg-zinc-50'}`}
           >
             <i className="ri-bar-chart-grouped-line" /> Aging
           </button>
 
           {agingBucket && (
-            <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-lg px-3 py-1.5">
+            <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-xl px-3 py-2">
               <i className="ri-filter-line text-red-500 text-xs" />
               <span className="text-xs font-semibold text-red-700">{agingBucket}</span>
               <button
@@ -627,32 +625,6 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
               Limpar
             </button>
           )}
-
-          <button
-            onClick={() => setShowCaixaBoletos(true)}
-            className="hidden sm:flex items-center gap-2 bg-white border border-zinc-200 hover:bg-zinc-50 text-zinc-700 px-3 py-2 rounded-lg text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors"
-            title="Boleto que chega por e-mail vira conta a pagar"
-          >
-            <i className="ri-mail-download-line text-amber-500" /> E-mail
-          </button>
-
-          <button onClick={() => exportCSV(filtered)}
-            className="hidden sm:flex items-center gap-2 bg-white border border-zinc-200 hover:bg-zinc-50 text-zinc-700 px-3 py-2 rounded-lg text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors">
-            <i className="ri-download-2-line" /> CSV
-          </button>
-
-          <button
-            onClick={() => setShowDREModal(true)}
-            className="flex items-center gap-2 bg-white border border-zinc-200 hover:bg-zinc-50 text-zinc-700 px-3 py-2 rounded-lg text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors"
-            title="Vincular categorias DRE em massa"
-          >
-            <i className="ri-folder-chart-line text-amber-500" /> DRE
-          </button>
-
-          <button onClick={() => setShowModal(true)}
-            className="flex items-center gap-2 bg-amber-500 hover:bg-amber-600 text-white px-3 md:px-4 py-2 rounded-lg text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors">
-            <i className="ri-add-line" /> <span className="hidden sm:inline">Nova Conta</span><span className="sm:hidden">Nova</span>
-          </button>
         </div>
       </div>
 
@@ -671,7 +643,7 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
 
       {/* Advanced filters */}
       {showFilters && (
-        <div className="bg-white border border-zinc-200 rounded-xl p-4 grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="bg-white border border-zinc-200 rounded-2xl p-4 grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div>
             <label className="text-xs font-semibold text-zinc-600 block mb-1">Categoria</label>
             <select value={filterCategory} onChange={e => { setFilterCategory(e.target.value); setPage(1); }}
@@ -702,7 +674,7 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
 
       {/* Barra de seleção múltipla */}
       {selectedIds.size > 0 && (
-        <div className="flex items-center justify-between bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-2 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
           <div className="flex items-center gap-3">
             <span className="text-sm font-bold text-amber-800">
               {selectedIds.size} conta{selectedIds.size > 1 ? 's' : ''} selecionada{selectedIds.size > 1 ? 's' : ''}
@@ -750,13 +722,13 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
       )}
 
       {/* Tabela (desktop) / Cards (mobile) */}
-      <div className="bg-white rounded-xl border border-zinc-200 overflow-hidden">
+      <div className="bg-white rounded-2xl border border-zinc-200 overflow-hidden">
         {/* Desktop table */}
-        <div className="hidden md:block">
+        <div className="hidden md:block overflow-x-auto">
           <table className="w-full text-sm">
-            <thead className="bg-zinc-50 border-b border-zinc-200">
+            <thead className="border-b border-zinc-200">
               <tr>
-                <th className="px-4 py-3 w-10">
+                <th className="pl-5 pr-2 py-2.5 w-10">
                   <button
                     onClick={selectAllPending}
                     className="w-5 h-5 flex items-center justify-center rounded border border-zinc-300 hover:border-amber-400 cursor-pointer transition-colors"
@@ -765,40 +737,40 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
                     <i className="ri-checkbox-indeterminate-line text-zinc-400 text-xs" />
                   </button>
                 </th>
-                <th className="text-left px-4 py-3 text-xs font-semibold text-zinc-500">
+                <th className="text-left px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
                   <button onClick={() => handleSort('description')} className="flex items-center cursor-pointer hover:text-zinc-800 whitespace-nowrap">
                     Descrição <SortIcon field="description" />
                   </button>
                 </th>
-                <th className="text-left px-4 py-3 text-xs font-semibold text-zinc-500 whitespace-nowrap">Fornecedor</th>
-                <th className="text-left px-4 py-3 text-xs font-semibold text-zinc-500 whitespace-nowrap">Categoria</th>
-                <th className="text-left px-4 py-3 text-xs font-semibold text-zinc-500 whitespace-nowrap">DRE</th>
-                <th className="text-left px-4 py-3 text-xs font-semibold text-zinc-500">
+                <th className="text-left px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400 whitespace-nowrap">Fornecedor</th>
+                <th className="text-left px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400 whitespace-nowrap">Categoria</th>
+                <th className="text-left px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400 whitespace-nowrap">DRE</th>
+                <th className="text-left px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
                   <button onClick={() => handleSort('due_date')} className="flex items-center cursor-pointer hover:text-zinc-800 whitespace-nowrap">
                     Vencimento <SortIcon field="due_date" />
                   </button>
                 </th>
-                <th className="text-left px-4 py-3 text-xs font-semibold text-zinc-500">
+                <th className="text-left px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
                   <button onClick={() => handleSort('amount')} className="flex items-center cursor-pointer hover:text-zinc-800 whitespace-nowrap">
                     Valor <SortIcon field="amount" />
                   </button>
                 </th>
-                <th className="text-left px-4 py-3 text-xs font-semibold text-zinc-500">
+                <th className="text-left px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
                   <button onClick={() => handleSort('status')} className="flex items-center cursor-pointer hover:text-zinc-800 whitespace-nowrap">
                     Status <SortIcon field="status" />
                   </button>
                 </th>
-                <th className="text-left px-4 py-3 text-xs font-semibold text-zinc-500 whitespace-nowrap">Pago em</th>
-                <th className="text-left px-4 py-3 text-xs font-semibold text-zinc-500 whitespace-nowrap">Ações</th>
+                <th className="text-left px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400 whitespace-nowrap">Pago em</th>
+                <th className="text-left px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400 whitespace-nowrap">Ações</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-zinc-50">
+            <tbody className="divide-y divide-zinc-100/80">
               {loading ? (
-                <tr><td colSpan={9} className="text-center py-10 text-zinc-400 text-sm">Carregando...</td></tr>
+                <tr><td colSpan={9} className="py-14 text-center"><i className="ri-loader-4-line text-4xl text-zinc-200 block mb-2 animate-spin" /><p className="text-zinc-400 text-sm">Carregando...</p></td></tr>
               ) : paginated.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="text-center py-12">
-                    <i className="ri-file-search-line text-3xl text-zinc-300 block mb-2" />
+                  <td colSpan={9} className="text-center py-14">
+                    <i className="ri-file-search-line text-4xl text-zinc-200 block mb-2" />
                     <p className="text-zinc-400 text-sm">Nenhuma conta em {MESES_NOMES[mesSelecionado]} {anoSelecionado}</p>
                     {(search || activeFiltersCount > 0) && (
                       <button onClick={clearFilters} className="text-xs text-amber-600 mt-1 cursor-pointer hover:underline">Limpar filtros</button>
@@ -911,7 +883,7 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
                         </p>
                       )}
                     </td>
-                    <td className="px-4 py-3 font-semibold text-zinc-800">
+                    <td className="px-4 py-3 font-semibold text-zinc-800 tabular-nums whitespace-nowrap">
                       {formatCurrency(b.amount)}
                       {/* Com pagamento parcial o valor original esconde o que
                           ainda falta pagar — sem isso a conta exibia R$1.000
@@ -924,7 +896,7 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
                       {b.is_recurring && <p className="text-xs text-zinc-400 font-normal">valor variável</p>}
                     </td>
                     <td className="px-4 py-3">
-                      <span className={`text-xs font-semibold px-2 py-1 rounded-full ${STATUS_BADGE[b.status]}`}>
+                      <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-md ${STATUS_BADGE[b.status]}`}>
                         {STATUS_LABEL[b.status]}
                       </span>
                     </td>
@@ -969,10 +941,10 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
         {/* Mobile cards */}
         <div className="md:hidden">
           {loading ? (
-            <div className="p-4 text-center text-zinc-400 text-sm">Carregando...</div>
+            <div className="py-14 text-center"><i className="ri-loader-4-line text-4xl text-zinc-200 block mb-2 animate-spin" /><p className="text-zinc-400 text-sm">Carregando...</p></div>
           ) : paginated.length === 0 ? (
-            <div className="p-8 text-center">
-              <i className="ri-file-search-line text-3xl text-zinc-300 block mb-2" />
+            <div className="py-14 text-center">
+              <i className="ri-file-search-line text-4xl text-zinc-200 block mb-2" />
               <p className="text-zinc-400 text-sm">Nenhuma conta em {MESES_NOMES[mesSelecionado]} {anoSelecionado}</p>
             </div>
           ) : (
@@ -1006,7 +978,7 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
                         {Number(b.paid_amount ?? 0) > 0 && b.status !== 'paid' && (
                           <p className="text-xs text-sky-600 font-semibold">falta {formatCurrency(saldoRestante(b))}</p>
                         )}
-                        <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${STATUS_BADGE[b.status]}`}>
+                        <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-md ${STATUS_BADGE[b.status]}`}>
                           {STATUS_LABEL[b.status]}
                         </span>
                       </div>
@@ -1058,8 +1030,8 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
         </div>
 
         {totalPages > 1 && (
-          <div className="flex items-center justify-between px-4 py-3 border-t border-zinc-100 bg-zinc-50">
-            <p className="text-xs text-zinc-500">
+          <div className="flex items-center justify-between px-4 py-3 border-t border-zinc-100">
+            <p className="text-xs text-zinc-400">
               Mostrando {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, filtered.length)} de {filtered.length}
             </p>
             <div className="flex items-center gap-1">

@@ -4,6 +4,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { formatCurrency } from '@/lib/formatters';
 import { todayBrasilia } from '@/lib/dateUtils';
 import { fetchAllRows } from '@/lib/fetchAllRows';
+import { KpiCard, Segmented } from './dreUi';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from 'recharts';
@@ -31,10 +32,10 @@ type Bucket = {
 };
 
 const PERIODS = [
-  { value: '7', label: '7 dias' },
-  { value: '30', label: '30 dias' },
-  { value: 'month', label: 'Mês atual' },
-  { value: 'prev_month', label: 'Mês anterior' },
+  { value: '7', label: '7 dias', icon: 'ri-calendar-week-line' },
+  { value: '30', label: '30 dias', icon: 'ri-calendar-line' },
+  { value: 'month', label: 'Mês atual', icon: 'ri-calendar-2-line' },
+  { value: 'prev_month', label: 'Mês anterior', icon: 'ri-history-line' },
 ];
 
 function addDaysISO(iso: string, days: number) {
@@ -209,19 +210,19 @@ export default function RealizadoProjetadoTab() {
   const Delta = ({ real, prev }: { real: number; prev: number }) => {
     const d = real - prev;
     if (Math.abs(d) < 0.005) return <span className="text-zinc-400">=</span>;
-    return <span className={d > 0 ? 'text-red-600' : 'text-green-700'}>{d > 0 ? '+' : ''}{formatCurrency(d)}</span>;
+    return <span className={d > 0 ? 'text-red-600' : 'text-emerald-700'}>{d > 0 ? '+' : ''}{formatCurrency(d)}</span>;
   };
 
   const ChartBlock = ({ title, keys }: { title: string; keys: { prev: keyof Bucket; erp: keyof Bucket; banco: keyof Bucket } }) => (
-    <div className="bg-white rounded-xl border border-zinc-200 p-4">
-      <h3 className="text-sm font-semibold text-zinc-700 mb-2">{title}</h3>
+    <div className="bg-white rounded-2xl border border-zinc-200 p-5">
+      <h3 className="text-sm font-bold text-zinc-800 mb-3">{title}</h3>
       <div className="h-56">
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={grouped} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-            <XAxis dataKey="label" tick={{ fontSize: 10 }} />
-            <YAxis tick={{ fontSize: 10 }} tickFormatter={(v: number) => (v >= 1000 ? `${Math.round(v / 1000)}k` : String(v))} width={40} />
-            <Tooltip formatter={(v: number) => formatCurrency(Number(v))} />
+            <CartesianGrid strokeDasharray="3 3" stroke="#f4f4f5" vertical={false} />
+            <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#71717a' }} axisLine={false} tickLine={false} />
+            <YAxis tick={{ fontSize: 10, fill: '#a1a1aa' }} axisLine={false} tickLine={false} tickFormatter={(v: number) => (v >= 1000 ? `${Math.round(v / 1000)}k` : String(v))} width={40} />
+            <Tooltip formatter={(v: number) => formatCurrency(Number(v))} cursor={{ fill: '#fafafa' }} />
             <Legend wrapperStyle={{ fontSize: 11 }} />
             <Bar dataKey={keys.prev} name="Previsto" fill={COLORS.prev} radius={[3, 3, 0, 0]} />
             <Bar dataKey={keys.erp} name="ERP (realizado)" fill={COLORS.erp} radius={[3, 3, 0, 0]} />
@@ -233,89 +234,87 @@ export default function RealizadoProjetadoTab() {
   );
 
   return (
-    <div className="p-4 md:p-6 space-y-5">
-      <div className="flex items-center gap-3 flex-wrap">
-        <div className="flex bg-white border border-zinc-200 rounded-lg overflow-hidden">
-          {PERIODS.map((p) => (
-            <button key={p.value} onClick={() => setPeriod(p.value)}
-              className={`px-3 py-2 text-xs font-semibold cursor-pointer transition-colors whitespace-nowrap ${period === p.value ? 'bg-amber-500 text-white' : 'text-zinc-600 hover:bg-zinc-50'}`}>
-              {p.label}
-            </button>
-          ))}
+    <div className="p-4 md:p-6 space-y-5 max-w-[1400px] mx-auto">
+      <div className="flex flex-wrap items-center gap-2 lg:gap-3">
+        <div className="overflow-x-auto max-w-full">
+          <Segmented
+            value={period}
+            onChange={setPeriod}
+            options={PERIODS.map((p) => ({ id: p.value, label: p.label, icon: p.icon }))}
+          />
         </div>
         <span className="text-xs text-zinc-400">{fmtShort(start)} a {fmtShort(end)}</span>
         {daysDiff(start, end) > 14 && (
-          <div className="ml-auto inline-flex items-center gap-1 bg-zinc-100 rounded-lg p-0.5">
-            {(['semana', 'dia'] as const).map((g) => (
-              <button key={g} onClick={() => setGranularity(g)} className={`px-2.5 py-1 text-[11px] font-semibold rounded-md cursor-pointer ${granularity === g ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500'}`}>
-                {g === 'semana' ? 'Por semana' : 'Por dia'}
-              </button>
-            ))}
+          <div className="ml-auto overflow-x-auto max-w-full">
+            <Segmented
+              value={granularity}
+              onChange={setGranularity}
+              options={[
+                { id: 'semana', label: 'Por semana', icon: 'ri-calendar-week-line' },
+                { id: 'dia', label: 'Por dia', icon: 'ri-calendar-line' },
+              ]}
+            />
           </div>
         )}
       </div>
 
       {error && (
-        <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm text-red-700 flex items-center gap-2">
+        <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-xs text-red-800 flex items-start gap-3">
           <i className="ri-error-warning-line" /> Não foi possível carregar: {error}
         </div>
       )}
 
       {loading ? (
-        <div className="flex items-center justify-center py-16">
+        <div className="flex items-center justify-center py-14">
           <div className="w-8 h-8 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
         </div>
       ) : (
         <>
           {/* Saldo: banco × ERP */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-            <div className="bg-white rounded-xl border border-zinc-200 p-4">
-              <p className="text-xs text-zinc-500 flex items-center gap-1.5"><i className="ri-bank-line text-blue-600" /> Saldo real no banco (API)</p>
-              {kpi.saldoBanco != null ? (
-                <>
-                  <p className={`text-xl font-bold mt-1 ${kpi.saldoBanco >= 0 ? 'text-zinc-900' : 'text-red-700'}`}>{formatCurrency(kpi.saldoBanco)}</p>
-                  <p className="text-[11px] text-zinc-400 mt-0.5">
-                    {kpi.contasIntegradas} de {kpi.contasTotal} conta(s) integrada(s){kpi.saldoBancoAt ? ` · ${new Date(kpi.saldoBancoAt).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}` : ''}
-                  </p>
-                </>
-              ) : (
-                <>
-                  <p className="text-xl font-bold mt-1 text-zinc-300">—</p>
-                  <p className="text-[11px] text-zinc-400 mt-0.5">Conecte o Banco Inter em Conciliação para ver o saldo real.</p>
-                </>
-              )}
-            </div>
-            <div className="bg-white rounded-xl border border-zinc-200 p-4">
-              <p className="text-xs text-zinc-500 flex items-center gap-1.5"><i className="ri-computer-line text-amber-600" /> Saldo das contas no ERP</p>
-              <p className={`text-xl font-bold mt-1 ${kpi.saldoErp >= 0 ? 'text-zinc-900' : 'text-red-700'}`}>{formatCurrency(kpi.saldoErp)}</p>
-              <p className="text-[11px] text-zinc-400 mt-0.5">Σ current_balance das contas ativas (razão interno)</p>
-            </div>
-            <div className={`rounded-xl border p-4 ${divergSaldo == null ? 'bg-white border-zinc-200' : Math.abs(divergSaldo) < 1 ? 'bg-green-50 border-green-200' : 'bg-amber-50 border-amber-200'}`}>
-              <p className="text-xs text-zinc-500 flex items-center gap-1.5"><i className="ri-scales-3-line" /> Divergência banco − ERP</p>
-              {divergSaldo == null ? (
-                <p className="text-xl font-bold mt-1 text-zinc-300">—</p>
-              ) : (
-                <>
-                  <p className={`text-xl font-bold mt-1 ${Math.abs(divergSaldo) < 1 ? 'text-green-700' : 'text-amber-700'}`}>{divergSaldo > 0 ? '+' : ''}{formatCurrency(divergSaldo)}</p>
-                  <p className="text-[11px] text-zinc-500 mt-0.5">
-                    {Math.abs(divergSaldo) < 1 ? 'ERP e banco batem.' : divergSaldo > 0 ? 'Há dinheiro no banco que o ERP não registrou (venda/entrada sem lançamento?).' : 'O ERP acha que tem mais do que o banco tem (saída não lançada ou taxa?).'}
-                  </p>
-                </>
-              )}
-            </div>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+            <KpiCard
+              label="Saldo real no banco (API)"
+              icon="ri-bank-line"
+              value={kpi.saldoBanco != null ? formatCurrency(kpi.saldoBanco) : '—'}
+              valueTone={kpi.saldoBanco != null ? (kpi.saldoBanco >= 0 ? undefined : 'text-red-600') : 'text-zinc-300'}
+              sub={kpi.saldoBanco != null
+                ? `${kpi.contasIntegradas} de ${kpi.contasTotal} conta(s) integrada(s)${kpi.saldoBancoAt ? ` · ${new Date(kpi.saldoBancoAt).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}` : ''}`
+                : 'Conecte o Banco Inter em Conciliação para ver o saldo real.'}
+              atual={kpi.saldoBanco ?? 0}
+              semVariacao
+            />
+            <KpiCard
+              label="Saldo das contas no ERP"
+              icon="ri-computer-line"
+              value={formatCurrency(kpi.saldoErp)}
+              valueTone={kpi.saldoErp >= 0 ? undefined : 'text-red-600'}
+              sub="Σ current_balance das contas ativas (razão interno)"
+              atual={kpi.saldoErp}
+              semVariacao
+            />
+            <KpiCard
+              label="Divergência banco − ERP"
+              icon="ri-scales-3-line"
+              value={divergSaldo == null ? '—' : `${divergSaldo > 0 ? '+' : ''}${formatCurrency(divergSaldo)}`}
+              valueTone={divergSaldo == null ? 'text-zinc-300' : Math.abs(divergSaldo) < 1 ? 'text-emerald-700' : 'text-amber-700'}
+              highlight={divergSaldo != null && Math.abs(divergSaldo) < 1 ? 'pos' : undefined}
+              sub={divergSaldo == null ? undefined : Math.abs(divergSaldo) < 1 ? 'ERP e banco batem.' : divergSaldo > 0 ? 'Há dinheiro no banco que o ERP não registrou (venda/entrada sem lançamento?).' : 'O ERP acha que tem mais do que o banco tem (saída não lançada ou taxa?).'}
+              atual={divergSaldo ?? 0}
+              semVariacao
+            />
           </div>
 
           {/* Entradas / Saídas: previsto × ERP × banco */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-            <div className="bg-white rounded-xl border border-zinc-200 p-4 space-y-2">
-              <p className="text-xs font-semibold text-zinc-700 flex items-center gap-1.5"><i className="ri-arrow-down-circle-line text-green-600" /> Entradas no período</p>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+            <div className="bg-white rounded-2xl border border-zinc-200 p-4 space-y-2">
+              <p className="text-xs font-semibold text-zinc-700 flex items-center gap-1.5"><i className="ri-arrow-down-circle-line text-emerald-600" /> Entradas no período</p>
               <div className="grid grid-cols-3 gap-2 text-center">
                 <div><p className="text-[10px] text-zinc-400">Previsto</p><p className="text-sm font-bold text-zinc-600">{formatCurrency(kpi.entPrev)}</p><p className="text-[10px] text-zinc-400">recebíveis</p></div>
                 <div><p className="text-[10px] text-zinc-400">ERP</p><p className="text-sm font-bold text-amber-700">{formatCurrency(kpi.entErp)}</p><p className="text-[10px]"><Delta real={kpi.entErp} prev={kpi.entPrev} /></p></div>
                 <div><p className="text-[10px] text-zinc-400">Banco</p><p className="text-sm font-bold text-blue-700">{hasBanco ? formatCurrency(kpi.entBanco) : '—'}</p><p className="text-[10px]">{hasBanco ? <Delta real={kpi.entBanco} prev={kpi.entErp} /> : <span className="text-zinc-300">sem extrato</span>}</p></div>
               </div>
             </div>
-            <div className="bg-white rounded-xl border border-zinc-200 p-4 space-y-2">
+            <div className="bg-white rounded-2xl border border-zinc-200 p-4 space-y-2">
               <p className="text-xs font-semibold text-zinc-700 flex items-center gap-1.5"><i className="ri-arrow-up-circle-line text-red-500" /> Saídas no período</p>
               <div className="grid grid-cols-3 gap-2 text-center">
                 <div><p className="text-[10px] text-zinc-400">Previsto</p><p className="text-sm font-bold text-zinc-600">{formatCurrency(kpi.saiPrev)}</p><p className="text-[10px] text-zinc-400">contas + folha</p></div>
@@ -324,11 +323,11 @@ export default function RealizadoProjetadoTab() {
               </div>
             </div>
             <div className="grid grid-cols-1 gap-3">
-              <div className={`rounded-xl border p-3 ${kpi.vencidasAbertasCount > 0 ? 'bg-red-50 border-red-200' : 'bg-white border-zinc-200'}`}>
+              <div className={`rounded-2xl border p-3 ${kpi.vencidasAbertasCount > 0 ? 'bg-red-50 border-red-200' : 'bg-white border-zinc-200'}`}>
                 <p className="text-[11px] text-zinc-500">Previsto que NÃO realizou (vencidas em aberto)</p>
                 <p className={`text-base font-bold ${kpi.vencidasAbertasCount > 0 ? 'text-red-700' : 'text-zinc-800'}`}>{formatCurrency(kpi.vencidasAbertas)} <span className="text-xs font-normal text-zinc-500">· {kpi.vencidasAbertasCount} conta(s)</span></p>
               </div>
-              <div className="rounded-xl border border-zinc-200 bg-white p-3">
+              <div className="rounded-2xl border border-zinc-200 bg-white p-3">
                 <p className="text-[11px] text-zinc-500">Extrato conciliado no período</p>
                 {hasBanco ? (
                   <p className="text-base font-bold text-zinc-800">{pctConc}% <span className="text-xs font-normal text-zinc-500">· {kpi.extratoConciliadas}/{kpi.extratoLinhas} linhas · {formatCurrency(kpi.extratoPendentesValor)} sem explicação</span></p>
@@ -341,60 +340,66 @@ export default function RealizadoProjetadoTab() {
           </div>
 
           {/* Gráficos */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
             <ChartBlock title="Entradas — previsto × realizado" keys={{ prev: 'entPrev', erp: 'entErp', banco: 'entBanco' }} />
             <ChartBlock title="Saídas — previsto × realizado" keys={{ prev: 'saiPrev', erp: 'saiErp', banco: 'saiBanco' }} />
           </div>
 
           {/* Tabela */}
-          <div className="bg-white rounded-xl border border-zinc-200 overflow-hidden">
+          <div className="bg-white rounded-2xl border border-zinc-200 overflow-hidden">
+            <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-100 gap-3 flex-wrap">
+              <div><h3 className="text-sm font-bold text-zinc-800">Previsto × realizado por {granularity === 'semana' ? 'semana' : 'dia'}</h3><p className="text-xs text-zinc-400">Previsto, ERP e banco lado a lado</p></div>
+            </div>
             <div className="overflow-x-auto">
               <table className="w-full text-xs">
-                <thead className="bg-zinc-50 border-b border-zinc-200">
+                <thead className="border-b border-zinc-200">
                   <tr>
-                    <th rowSpan={2} className="px-3 py-2 text-left text-zinc-500 font-semibold">{granularity === 'semana' ? 'Semana' : 'Dia'}</th>
-                    <th colSpan={hasBanco ? 3 : 2} className="px-3 py-1.5 text-center text-green-700 font-semibold border-l border-zinc-200">Entradas</th>
-                    <th colSpan={hasBanco ? 3 : 2} className="px-3 py-1.5 text-center text-red-600 font-semibold border-l border-zinc-200">Saídas</th>
-                    <th rowSpan={2} className="px-3 py-2 text-right text-zinc-500 font-semibold border-l border-zinc-200">Saídas: ERP − previsto</th>
+                    <th rowSpan={2} className="pl-5 pr-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wide text-zinc-400">{granularity === 'semana' ? 'Semana' : 'Dia'}</th>
+                    <th colSpan={hasBanco ? 3 : 2} className="px-3 py-1.5 text-center text-[11px] uppercase tracking-wide text-emerald-700 font-semibold border-l border-zinc-200">Entradas</th>
+                    <th colSpan={hasBanco ? 3 : 2} className="px-3 py-1.5 text-center text-[11px] uppercase tracking-wide text-red-600 font-semibold border-l border-zinc-200">Saídas</th>
+                    <th rowSpan={2} className="px-3 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wide text-zinc-400 border-l border-zinc-200">Saídas: ERP − previsto</th>
                   </tr>
                   <tr className="text-[10px] text-zinc-400">
                     <th className="px-3 py-1 text-right border-l border-zinc-200">Previsto</th><th className="px-3 py-1 text-right">ERP</th>{hasBanco && <th className="px-3 py-1 text-right">Banco</th>}
                     <th className="px-3 py-1 text-right border-l border-zinc-200">Previsto</th><th className="px-3 py-1 text-right">ERP</th>{hasBanco && <th className="px-3 py-1 text-right">Banco</th>}
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-zinc-100">
+                <tbody className="divide-y divide-zinc-100/80">
                   {grouped.map((b) => (
                     <tr key={b.key} className="hover:bg-zinc-50">
-                      <td className="px-3 py-2 font-medium text-zinc-700 whitespace-nowrap">{b.label}</td>
-                      <td className="px-3 py-2 text-right text-zinc-500 border-l border-zinc-100">{formatCurrency(b.entPrev)}</td>
-                      <td className="px-3 py-2 text-right text-amber-700 font-semibold">{formatCurrency(b.entErp)}</td>
-                      {hasBanco && <td className="px-3 py-2 text-right text-blue-700 font-semibold">{formatCurrency(b.entBanco)}</td>}
-                      <td className="px-3 py-2 text-right text-zinc-500 border-l border-zinc-100">{formatCurrency(b.saiPrev)}</td>
-                      <td className="px-3 py-2 text-right text-amber-700 font-semibold">{formatCurrency(b.saiErp)}</td>
-                      {hasBanco && <td className="px-3 py-2 text-right text-blue-700 font-semibold">{formatCurrency(b.saiBanco)}</td>}
-                      <td className="px-3 py-2 text-right font-semibold border-l border-zinc-100"><Delta real={b.saiErp} prev={b.saiPrev} /></td>
+                      <td className="pl-5 pr-3 py-2 font-medium text-zinc-700 whitespace-nowrap">{b.label}</td>
+                      <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap text-zinc-500 border-l border-zinc-100">{formatCurrency(b.entPrev)}</td>
+                      <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap text-amber-700 font-semibold">{formatCurrency(b.entErp)}</td>
+                      {hasBanco && <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap text-blue-700 font-semibold">{formatCurrency(b.entBanco)}</td>}
+                      <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap text-zinc-500 border-l border-zinc-100">{formatCurrency(b.saiPrev)}</td>
+                      <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap text-amber-700 font-semibold">{formatCurrency(b.saiErp)}</td>
+                      {hasBanco && <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap text-blue-700 font-semibold">{formatCurrency(b.saiBanco)}</td>}
+                      <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap font-semibold border-l border-zinc-100"><Delta real={b.saiErp} prev={b.saiPrev} /></td>
                     </tr>
                   ))}
                 </tbody>
-                <tfoot className="bg-zinc-50 border-t border-zinc-200 font-bold">
+                <tfoot className="bg-zinc-50 border-t-2 border-zinc-200 font-bold">
                   <tr>
-                    <td className="px-3 py-2 text-zinc-700">Total</td>
-                    <td className="px-3 py-2 text-right text-zinc-600 border-l border-zinc-200">{formatCurrency(kpi.entPrev)}</td>
-                    <td className="px-3 py-2 text-right text-amber-700">{formatCurrency(kpi.entErp)}</td>
-                    {hasBanco && <td className="px-3 py-2 text-right text-blue-700">{formatCurrency(kpi.entBanco)}</td>}
-                    <td className="px-3 py-2 text-right text-zinc-600 border-l border-zinc-200">{formatCurrency(kpi.saiPrev)}</td>
-                    <td className="px-3 py-2 text-right text-amber-700">{formatCurrency(kpi.saiErp)}</td>
-                    {hasBanco && <td className="px-3 py-2 text-right text-blue-700">{formatCurrency(kpi.saiBanco)}</td>}
-                    <td className="px-3 py-2 text-right border-l border-zinc-200"><Delta real={kpi.saiErp} prev={kpi.saiPrev} /></td>
+                    <td className="pl-5 pr-3 py-2 text-zinc-900">Total</td>
+                    <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap text-zinc-600 border-l border-zinc-200">{formatCurrency(kpi.entPrev)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap text-amber-700">{formatCurrency(kpi.entErp)}</td>
+                    {hasBanco && <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap text-blue-700">{formatCurrency(kpi.entBanco)}</td>}
+                    <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap text-zinc-600 border-l border-zinc-200">{formatCurrency(kpi.saiPrev)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap text-amber-700">{formatCurrency(kpi.saiErp)}</td>
+                    {hasBanco && <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap text-blue-700">{formatCurrency(kpi.saiBanco)}</td>}
+                    <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap border-l border-zinc-200"><Delta real={kpi.saiErp} prev={kpi.saiPrev} /></td>
                   </tr>
                 </tfoot>
               </table>
             </div>
           </div>
 
-          <div className="bg-blue-50 border border-blue-200 rounded-xl px-4 py-3 text-xs text-blue-800 space-y-1">
+          <div className="bg-sky-50 border border-sky-200 rounded-xl px-4 py-3 flex items-start gap-3 text-xs text-sky-800">
+            <i className="ri-information-line mt-px flex-shrink-0" />
+            <div className="space-y-1">
             <p><strong>Como ler:</strong> <span className="text-zinc-500">Previsto</span> = contas a pagar e folha pelo vencimento, recebíveis de cartão pela liquidação. <span className="text-amber-700">ERP</span> = o que o sistema registrou no fluxo de caixa. <span className="text-blue-700">Banco</span> = o extrato importado (API do Inter, OFX ou Stone).</p>
             <p>Entradas previstas só contam recebíveis já vendidos (a projeção não chuta vendas futuras). Vendas à vista aparecem no ERP e no banco, não no previsto.</p>
+            </div>
           </div>
         </>
       )}

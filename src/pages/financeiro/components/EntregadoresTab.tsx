@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatCurrency } from '@/lib/formatters';
+import { KpiCard, Segmented } from './dreUi';
 
 interface ResumoMotoboy {
   driver_id: string; name: string; phone: string | null; pix_key: string | null; pix_key_kind: string | null; is_active: boolean;
@@ -109,56 +110,89 @@ export default function EntregadoresTab() {
     setAviso('Acerto desfeito.'); carregar();
   };
 
-  if (!tenantId) return <p className="p-6 text-sm text-zinc-400">Escolha uma loja.</p>;
+  const totalEntregas = resumo.reduce((s, x) => s + Number(x.entregas), 0);
+  const comSaldo = resumo.filter((x) => Number(x.total) > 0).length;
+  const acertosFechados = acertos.filter((a) => a.status === 'fechado').length;
+  const periodoAtivo = (['semana', 'semana_passada', 'mes', 'mes_passado'] as const).find((k) => {
+    const [a, b] = periodoRapido(k);
+    return a === de && b === ate;
+  }) ?? 'custom';
+
+  if (!tenantId) return <div className="py-14 text-center"><i className="ri-store-2-line text-4xl text-zinc-200" /><p className="text-zinc-400 text-sm mt-2">Escolha uma loja.</p></div>;
 
   return (
-    <div className="p-4 md:p-6 space-y-5">
+    <div className="p-4 md:p-6 space-y-5 max-w-[1400px] mx-auto">
       {/* Período */}
-      <div className="flex flex-wrap items-end gap-2">
-        <label className="text-xs text-zinc-500">De
+      <div className="flex flex-wrap items-end gap-2 lg:gap-3">
+        <label className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400">De
           <input type="date" value={de} max={ate} onChange={(e) => e.target.value && setPeriodo([e.target.value, ate])}
-            className="block mt-1 px-2 py-1.5 rounded-lg border border-zinc-200 text-sm" />
+            className="block mt-1 h-10 px-3 rounded-xl border border-zinc-200 shadow-sm bg-white text-sm normal-case tracking-normal font-normal text-zinc-800" />
         </label>
-        <label className="text-xs text-zinc-500">Até
+        <label className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Até
           <input type="date" value={ate} min={de} max={hojeISO()} onChange={(e) => e.target.value && setPeriodo([de, e.target.value])}
-            className="block mt-1 px-2 py-1.5 rounded-lg border border-zinc-200 text-sm" />
+            className="block mt-1 h-10 px-3 rounded-xl border border-zinc-200 shadow-sm bg-white text-sm normal-case tracking-normal font-normal text-zinc-800" />
         </label>
-        <div className="flex flex-wrap gap-1">
-          {([['semana', 'Esta semana'], ['semana_passada', 'Semana passada'], ['mes', 'Este mês'], ['mes_passado', 'Mês passado']] as const).map(([k, l]) => (
-            <button key={k} type="button" onClick={() => setPeriodo(periodoRapido(k))}
-              className="px-2.5 py-1.5 rounded-lg border border-zinc-200 text-xs font-semibold text-zinc-600 hover:bg-zinc-50">{l}</button>
-          ))}
-        </div>
-        <div className="ml-auto text-right">
-          <p className="text-[11px] text-zinc-400">A pagar até {br(ate)}</p>
-          <p className="text-lg font-black text-zinc-900">{formatCurrency(totalGeral)}</p>
+        <div className="overflow-x-auto max-w-full">
+          <Segmented
+            value={periodoAtivo}
+            onChange={(k) => { if (k !== 'custom') setPeriodo(periodoRapido(k)); }}
+            options={[
+              { id: 'semana', label: 'Esta semana', icon: 'ri-calendar-line' },
+              { id: 'semana_passada', label: 'Semana passada', icon: 'ri-history-line' },
+              { id: 'mes', label: 'Este mês', icon: 'ri-calendar-2-line' },
+              { id: 'mes_passado', label: 'Mês passado', icon: 'ri-calendar-check-line' },
+            ]}
+          />
         </div>
       </div>
 
-      {erro ? <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{erro}</p> : null}
-      {aviso ? <p className="text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">{aviso}</p> : null}
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+        <KpiCard label={`A pagar até ${br(ate)}`} icon="ri-money-dollar-circle-line" value={formatCurrency(totalGeral)} valueTone={totalGeral > 0 ? 'text-amber-700' : undefined} atual={totalGeral} semVariacao />
+        <KpiCard label="Entregadores com saldo" icon="ri-motorbike-line" value={String(comSaldo)} sub={`${resumo.length} em aberto no total`} atual={comSaldo} semVariacao />
+        <KpiCard label="Entregas em aberto" icon="ri-e-bike-2-line" value={String(totalEntregas)} atual={totalEntregas} semVariacao />
+        <KpiCard label="Acertos fechados" icon="ri-checkbox-circle-line" value={String(acertosFechados)} sub="no período" atual={acertosFechados} semVariacao />
+      </div>
+
+      {erro ? (
+        <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 flex items-start gap-3">
+          <i className="ri-error-warning-line text-red-500" />
+          <p className="text-xs text-red-700">{erro}</p>
+        </div>
+      ) : null}
+      {aviso ? (
+        <div className="bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-3 flex items-start gap-3">
+          <i className="ri-checkbox-circle-line text-emerald-600" />
+          <p className="text-xs text-emerald-800">{aviso}</p>
+        </div>
+      ) : null}
 
       {/* Em aberto por motoboy */}
-      <section className="rounded-2xl border border-zinc-200 bg-white overflow-hidden">
-        <h3 className="px-4 py-3 text-sm font-black text-zinc-900 border-b border-zinc-100">
-          Em aberto até {br(ate)}
-          <span className="block text-[11px] font-normal text-zinc-400">O acerto fecha tudo o que está pendente até a data final (inclusive adiantamentos e estornos de antes do período).</span>
-        </h3>
+      <section className="bg-white rounded-2xl border border-zinc-200 overflow-hidden">
+        <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-100 gap-3 flex-wrap">
+          <div>
+            <h3 className="text-sm font-bold text-zinc-800">Em aberto até {br(ate)}</h3>
+            <p className="text-xs text-zinc-400">O acerto fecha tudo o que está pendente até a data final (inclusive adiantamentos e estornos de antes do período).</p>
+          </div>
+          <span className="text-[11px] text-zinc-400 flex items-center gap-1"><i className="ri-cursor-line" /> clique no nome para ver os lançamentos</span>
+        </div>
         {carregando && resumo.length === 0 ? (
-          <p className="p-6 text-center text-sm text-zinc-400">Carregando…</p>
+          <div className="py-14 text-center"><i className="ri-loader-4-line animate-spin text-4xl text-zinc-200" /><p className="text-zinc-400 text-sm mt-2">Carregando…</p></div>
         ) : resumo.length === 0 ? (
-          <p className="p-6 text-center text-sm text-zinc-400">
-            Nada em aberto neste período. As entregas entram aqui quando o pedido é marcado como entregue
-            (com a regra ligada em Config. do Delivery › Pagamento dos entregadores).
-          </p>
+          <div className="py-14 text-center">
+            <i className="ri-motorbike-line text-4xl text-zinc-200" />
+            <p className="text-zinc-400 text-sm mt-2 max-w-md mx-auto">
+              Nada em aberto neste período. As entregas entram aqui quando o pedido é marcado como entregue
+              (com a regra ligada em Config. do Delivery › Pagamento dos entregadores).
+            </p>
+          </div>
         ) : (
-          <ul className="divide-y divide-zinc-100">
+          <ul className="divide-y divide-zinc-100/80">
             {resumo.map((r) => (
-              <li key={r.driver_id} className="px-4 py-3">
+              <li key={r.driver_id} className="px-5 py-3 hover:bg-zinc-50/60">
                 <div className="flex flex-wrap items-center gap-3">
                   <button type="button" onClick={() => setAberto(aberto === r.driver_id ? null : r.driver_id)} className="flex-1 min-w-[180px] text-left">
                     <p className="text-sm font-bold text-zinc-800">{r.name}{r.is_active ? '' : ' (bloqueado)'}</p>
-                    <p className="text-xs text-zinc-500">
+                    <p className="text-xs text-zinc-500 break-words">
                       {r.entregas} entrega(s) · {Number(r.km).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} km · entregas {formatCurrency(Number(r.valor_entregas))}
                       {Number(r.valor_diarias) ? ` · diárias ${formatCurrency(Number(r.valor_diarias))}` : ''}
                       {Number(r.adiantamentos) ? ` · adiantamentos ${formatCurrency(Number(r.adiantamentos))}` : ''}
@@ -168,12 +202,12 @@ export default function EntregadoresTab() {
                       {r.pix_key ? `Pix: ${r.pix_key}` : 'Sem chave Pix'}{r.sem_km ? ` · ${r.sem_km} entrega(s) sem distância` : ''}
                     </p>
                   </button>
-                  <p className={'text-base font-black ' + (Number(r.total) > 0 ? 'text-zinc-900' : 'text-red-600')}>{formatCurrency(Number(r.total))}</p>
+                  <p className={'text-lg font-bold tabular-nums tracking-tight whitespace-nowrap ' + (Number(r.total) > 0 ? 'text-zinc-900' : 'text-red-600')}>{formatCurrency(Number(r.total))}</p>
                   <div className="flex flex-wrap gap-1.5">
-                    <button type="button" onClick={() => setAdiantando(r)} className="px-2.5 py-1.5 rounded-lg border border-zinc-200 text-xs font-semibold text-zinc-600 hover:bg-zinc-50">Adiantamento</button>
-                    <button type="button" onClick={() => setPixDe(r)} className="px-2.5 py-1.5 rounded-lg border border-zinc-200 text-xs font-semibold text-zinc-600 hover:bg-zinc-50">Pix</button>
+                    <button type="button" onClick={() => setAdiantando(r)} className="px-3 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 rounded-xl text-xs font-semibold text-zinc-600 cursor-pointer transition-colors whitespace-nowrap shadow-sm">Adiantamento</button>
+                    <button type="button" onClick={() => setPixDe(r)} className="px-3 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 rounded-xl text-xs font-semibold text-zinc-600 cursor-pointer transition-colors whitespace-nowrap shadow-sm">Pix</button>
                     <button type="button" disabled={Number(r.total) <= 0} onClick={() => setFechando(r)}
-                      className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold disabled:opacity-40">Fechar acerto</button>
+                      className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors shadow-sm disabled:opacity-40 disabled:cursor-default">Fechar acerto</button>
                   </div>
                 </div>
                 {aberto === r.driver_id ? <DetalheLancamentos tenantId={tenantId} driverId={r.driver_id} ate={ate} onMudou={carregar} /> : null}
@@ -184,17 +218,20 @@ export default function EntregadoresTab() {
       </section>
 
       {/* Acertos fechados */}
-      <section className="rounded-2xl border border-zinc-200 bg-white overflow-hidden">
-        <h3 className="px-4 py-3 text-sm font-black text-zinc-900 border-b border-zinc-100">Acertos do período</h3>
+      <section className="bg-white rounded-2xl border border-zinc-200 overflow-hidden">
+        <div className="px-5 py-3 border-b border-zinc-100">
+          <h3 className="text-sm font-bold text-zinc-800">Acertos do período</h3>
+          <p className="text-xs text-zinc-400">Acertos fechados que tocam as datas escolhidas</p>
+        </div>
         {acertos.length === 0 ? (
-          <p className="p-4 text-center text-sm text-zinc-400">Nenhum acerto fechado neste período.</p>
+          <div className="py-14 text-center"><i className="ri-file-list-3-line text-4xl text-zinc-200" /><p className="text-zinc-400 text-sm mt-2">Nenhum acerto fechado neste período.</p></div>
         ) : (
-          <ul className="divide-y divide-zinc-100">
+          <ul className="divide-y divide-zinc-100/80">
             {acertos.map((a) => {
               const conta = um(a.payable);
               const pago = conta && (conta.status === 'paid' || Number(conta.paid_amount ?? 0) > 0);
               return (
-                <li key={a.id} className={'px-4 py-2.5 flex flex-wrap items-center gap-2 ' + (a.status === 'cancelado' ? 'opacity-50' : '')}>
+                <li key={a.id} className={'px-5 py-3 hover:bg-zinc-50/60 flex flex-wrap items-center gap-2 ' + (a.status === 'cancelado' ? 'opacity-50' : '')}>
                   <div className="flex-1 min-w-[180px]">
                     <p className="text-sm font-semibold text-zinc-800">{um(a.driver)?.name ?? '—'} · {br(a.period_start)}{a.period_start !== a.period_end ? ` a ${br(a.period_end)}` : ''}</p>
                     <p className="text-[11px] text-zinc-400">
@@ -202,9 +239,12 @@ export default function EntregadoresTab() {
                       {a.status === 'cancelado' ? ' · desfeito' : pago ? ' · conta paga' : ' · conta a pagar pendente'}
                     </p>
                   </div>
-                  <p className="text-sm font-black text-zinc-900">{formatCurrency(Number(a.total))}</p>
+                  <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-md ${a.status === 'cancelado' ? 'bg-zinc-100 text-zinc-600' : pago ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
+                    {a.status === 'cancelado' ? 'Desfeito' : pago ? 'Paga' : 'Pendente'}
+                  </span>
+                  <p className="text-sm font-bold tabular-nums whitespace-nowrap text-zinc-900">{formatCurrency(Number(a.total))}</p>
                   {a.status === 'fechado' && !pago ? (
-                    <button type="button" onClick={() => desfazer(a)} className="px-2.5 py-1.5 rounded-lg border border-zinc-200 text-xs font-semibold text-zinc-600 hover:bg-zinc-50">Desfazer</button>
+                    <button type="button" onClick={() => desfazer(a)} className="px-3 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 rounded-xl text-xs font-semibold text-zinc-600 cursor-pointer transition-colors whitespace-nowrap shadow-sm">Desfazer</button>
                   ) : null}
                 </li>
               );
@@ -214,41 +254,44 @@ export default function EntregadoresTab() {
       </section>
 
       {/* Ranking */}
-      <section className="rounded-2xl border border-zinc-200 bg-white overflow-hidden">
-        <h3 className="px-4 py-3 text-sm font-black text-zinc-900 border-b border-zinc-100">Ranking por entregador</h3>
+      <section className="bg-white rounded-2xl border border-zinc-200 overflow-hidden">
+        <div className="px-5 py-3 border-b border-zinc-100">
+          <h3 className="text-sm font-bold text-zinc-800">Ranking por entregador</h3>
+          <p className="text-xs text-zinc-400">Tempo, atrasos e custo no período</p>
+        </div>
         {ranking.length === 0 ? (
-          <p className="p-4 text-center text-sm text-zinc-400">Sem entregas com motoboy da loja neste período.</p>
+          <div className="py-14 text-center"><i className="ri-trophy-line text-4xl text-zinc-200" /><p className="text-zinc-400 text-sm mt-2">Sem entregas com motoboy da loja neste período.</p></div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
-              <thead className="text-[11px] uppercase text-zinc-400">
-                <tr className="text-left">
-                  <th className="px-4 py-2">Entregador</th>
-                  <th className="px-2 py-2 text-right">Entregas</th>
-                  <th className="px-2 py-2 text-right">Tempo médio</th>
-                  <th className="px-2 py-2 text-right">Em rota</th>
-                  <th className="px-2 py-2 text-right">Atrasos</th>
-                  <th className="px-2 py-2 text-right">Km</th>
-                  <th className="px-2 py-2 text-right">Custo</th>
-                  <th className="px-4 py-2 text-right">Por entrega</th>
+              <thead>
+                <tr className="border-b border-zinc-200 text-left">
+                  <th className="pl-5 pr-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Entregador</th>
+                  <th className="px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400 text-right">Entregas</th>
+                  <th className="px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400 text-right">Tempo médio</th>
+                  <th className="px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400 text-right">Em rota</th>
+                  <th className="px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400 text-right">Atrasos</th>
+                  <th className="px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400 text-right">Km</th>
+                  <th className="px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400 text-right">Custo</th>
+                  <th className="pl-4 pr-5 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400 text-right">Por entrega</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-zinc-100">
+              <tbody className="divide-y divide-zinc-100/80">
                 {ranking.map((k) => (
-                  <tr key={k.driver_id}>
-                    <td className="px-4 py-2 font-semibold text-zinc-800 whitespace-nowrap">{k.name}</td>
-                    <td className="px-2 py-2 text-right">{k.entregas}</td>
-                    <td className="px-2 py-2 text-right whitespace-nowrap">{k.tempo_total_min != null ? `${k.tempo_total_min} min` : '—'}</td>
-                    <td className="px-2 py-2 text-right whitespace-nowrap">{k.tempo_rota_min != null ? `${k.tempo_rota_min} min` : '—'}</td>
+                  <tr key={k.driver_id} className="hover:bg-zinc-50">
+                    <td className="pl-5 pr-4 py-3 font-semibold text-zinc-800 whitespace-nowrap">{k.name}</td>
+                    <td className="px-4 py-3 text-right tabular-nums">{k.entregas}</td>
+                    <td className="px-4 py-3 text-right tabular-nums whitespace-nowrap">{k.tempo_total_min != null ? `${k.tempo_total_min} min` : '—'}</td>
+                    <td className="px-4 py-3 text-right tabular-nums whitespace-nowrap">{k.tempo_rota_min != null ? `${k.tempo_rota_min} min` : '—'}</td>
                     <td className={'px-2 py-2 text-right whitespace-nowrap ' + (k.atrasos > 0 ? 'text-red-600 font-semibold' : '')}>{k.atrasos}{k.pct_atraso != null ? ` (${k.pct_atraso}%)` : ''}</td>
-                    <td className="px-2 py-2 text-right">{Number(k.km).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}</td>
-                    <td className="px-2 py-2 text-right whitespace-nowrap">{formatCurrency(Number(k.custo))}</td>
-                    <td className="px-4 py-2 text-right whitespace-nowrap">{k.custo_por_entrega != null ? formatCurrency(Number(k.custo_por_entrega)) : '—'}</td>
+                    <td className="px-4 py-3 text-right tabular-nums">{Number(k.km).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}</td>
+                    <td className="px-4 py-3 text-right tabular-nums whitespace-nowrap">{formatCurrency(Number(k.custo))}</td>
+                    <td className="pl-4 pr-5 py-3 text-right tabular-nums whitespace-nowrap">{k.custo_por_entrega != null ? formatCurrency(Number(k.custo_por_entrega)) : '—'}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
-            <p className="px-4 py-2 text-[11px] text-zinc-400">Tempo médio: do pedido até a entrega. Em rota: de "coletou" até "entregou". Custo: entregas + diárias lançadas no período.</p>
+            <p className="px-5 py-3 border-t border-zinc-100 text-[11px] text-zinc-400">Tempo médio: do pedido até a entrega. Em rota: de "coletou" até "entregou". Custo: entregas + diárias lançadas no período.</p>
           </div>
         )}
       </section>

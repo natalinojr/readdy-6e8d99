@@ -6,6 +6,7 @@ import { formatCurrency } from '@/lib/formatters';
 import { todayBrasilia, somarDias } from '@/lib/dateUtils';
 import { fetchAllRows } from '@/lib/fetchAllRows';
 import { ocorrenciasRecorrentes } from '@/lib/recorrencias';
+import { KpiCard, Segmented } from './dreUi';
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, ReferenceLine, BarChart, Bar, Legend,
@@ -208,9 +209,9 @@ function DayDetailPanel({
   const saidas = point.detalhes.filter((d) => !ENTRADA_TIPOS.includes(d.tipo));
 
   return (
-    <div className="bg-white border border-zinc-200 rounded-xl flex flex-col h-full overflow-hidden">
+    <div className="bg-white border border-zinc-200 rounded-2xl flex flex-col h-full overflow-hidden">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-100 bg-zinc-50">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-100">
         <div>
           <p className="text-xs text-zinc-400 font-medium">Detalhes do dia</p>
           <p className="text-sm font-bold text-zinc-800">{point.label}</p>
@@ -226,8 +227,8 @@ function DayDetailPanel({
       {/* Resumo do dia */}
       <div className="grid grid-cols-2 gap-2 p-3 border-b border-zinc-100">
         <div className="bg-green-50 rounded-lg p-2.5">
-          <p className="text-[10px] text-green-600 font-semibold uppercase tracking-wide">Entradas</p>
-          <p className="text-sm font-bold text-green-700 mt-0.5">{formatCurrency(totalEntradas)}</p>
+          <p className="text-[11px] text-emerald-700 font-semibold uppercase tracking-wide">Entradas</p>
+          <p className="text-sm font-bold tabular-nums text-emerald-700 mt-0.5">{formatCurrency(totalEntradas)}</p>
         </div>
         <div className="bg-red-50 rounded-lg p-2.5">
           <p className="text-[10px] text-red-600 font-semibold uppercase tracking-wide">Saídas</p>
@@ -298,7 +299,7 @@ function DayDetailPanel({
       </div>
 
       {/* Saldo acumulado até o dia */}
-      <div className="px-3 py-2.5 border-t border-zinc-100 bg-zinc-50">
+      <div className="px-3 py-2.5 border-t-2 border-zinc-200 bg-zinc-50">
         <div className="flex items-center justify-between">
           <span className="text-xs text-zinc-500">Saldo acumulado até {point.label}</span>
           <span className={`text-sm font-bold ${point.saldoAcumulado >= 0 ? 'text-zinc-800' : 'text-red-700'}`}>
@@ -793,48 +794,36 @@ export default function PrevisaoCaixaTab() {
   };
 
   return (
-    <div className="p-6 space-y-5">
+    <div className="p-4 md:p-6 space-y-5 max-w-[1400px] mx-auto">
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <h2 className="text-base font-bold text-zinc-900">Fluxo de Caixa Projetado</h2>
-          <p className="text-xs text-zinc-500 mt-0.5">
+        <div className="min-w-0 flex-1 basis-80">
+          <h2 className="text-sm font-bold text-zinc-800">Fluxo de Caixa Projetado</h2>
+          <p className="text-xs text-zinc-400">
             Saldo de hoje + o que já vendeu a receber (cartão D+N) − contas a pagar, vencidas, folha
             e boletos de notas de entrada ainda não lançadas. Vendas futuras não entram.
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <div className="flex bg-white border border-zinc-200 rounded-lg overflow-hidden">
-            <button
-              onClick={() => setViewMode('area')}
-              className={`px-3 py-1.5 text-xs font-semibold cursor-pointer transition-colors whitespace-nowrap ${viewMode === 'area' ? 'bg-amber-500 text-white' : 'text-zinc-600 hover:bg-zinc-50'}`}
-            >
-              <i className="ri-line-chart-line mr-1" />Linha
-            </button>
-            <button
-              onClick={() => setViewMode('bar')}
-              className={`px-3 py-1.5 text-xs font-semibold cursor-pointer transition-colors whitespace-nowrap ${viewMode === 'bar' ? 'bg-amber-500 text-white' : 'text-zinc-600 hover:bg-zinc-50'}`}
-            >
-              <i className="ri-bar-chart-line mr-1" />Barras
-            </button>
-          </div>
-          <div className="flex bg-white border border-zinc-200 rounded-lg overflow-hidden">
-            {HORIZON_OPTIONS.map((opt) => (
-              <button
-                key={opt.days}
-                onClick={() => setHorizon(opt.days)}
-                className={`px-3 py-1.5 text-xs font-semibold cursor-pointer transition-colors whitespace-nowrap ${horizon === opt.days ? 'bg-amber-500 text-white' : 'text-zinc-600 hover:bg-zinc-50'}`}
-              >
-                {opt.label}
-              </button>
-            ))}
-          </div>
+        <div className="flex items-center gap-2 overflow-x-auto max-w-full">
+          <Segmented
+            value={viewMode}
+            onChange={setViewMode}
+            options={[
+              { id: 'area', label: 'Linha', icon: 'ri-line-chart-line' },
+              { id: 'bar', label: 'Barras', icon: 'ri-bar-chart-line' },
+            ]}
+          />
+          <Segmented
+            value={String(horizon)}
+            onChange={(v) => setHorizon(Number(v))}
+            options={HORIZON_OPTIONS.map((opt) => ({ id: String(opt.days), label: opt.label, icon: 'ri-calendar-line' }))}
+          />
         </div>
       </div>
 
       {/* Legenda visual das 5 séries */}
-      <div className="bg-white border border-zinc-200 rounded-xl px-4 py-3">
-        <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-2.5">Legenda do Gráfico</p>
+      <div className="bg-white border border-zinc-200 rounded-2xl px-5 py-3">
+        <p className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wide mb-2.5">Legenda do Gráfico</p>
         <div className="flex flex-wrap gap-x-5 gap-y-2">
           {/* Entradas */}
           <div className="flex items-center gap-1.5">
@@ -869,7 +858,7 @@ export default function PrevisaoCaixaTab() {
           </div>
         </div>
         {!selectedDay && temDados && (
-          <p className="text-[10px] text-zinc-400 mt-2.5 flex items-center gap-1">
+          <p className="text-[11px] text-zinc-400 mt-2.5 flex items-center gap-1">
             <i className="ri-cursor-line" />
             Clique em um ponto do gráfico para ver o detalhamento do dia
           </p>
@@ -877,74 +866,63 @@ export default function PrevisaoCaixaTab() {
       </div>
 
       {/* KPI Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {[
-          {
-            label: 'Saldo Atual',
-            value: saldoAtual,
-            icon: 'ri-bank-line',
-            color: saldoAtual >= 0 ? 'text-green-700' : 'text-red-700',
-            bg: saldoAtual >= 0 ? 'bg-green-50' : 'bg-red-50',
-            sub: saldoSyncedAt
-              ? `Saldo real do banco (API) · ${new Date(saldoSyncedAt).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}`
-              : saldoSource === 'banco' ? 'Saldo real das contas bancárias' : 'Estimado pelo caixa (configure os bancos p/ saldo real)',
-          },
-          {
-            label: 'Recebíveis D+N',
-            value: totalRecebiveis,
-            icon: 'ri-time-line',
-            color: 'text-green-600',
-            bg: 'bg-green-50',
-            sub: agendaQtd > 0
-              ? `${pendingReceivables.length} parcela(s) + ${agendaQtd} dia(s) de cartão/iFood a receber`
-              : `${pendingReceivables.length} parcela(s) a liquidar`,
-          },
-          {
-            label: 'Saídas Previstas',
-            value: totalSaidas,
-            icon: 'ri-arrow-up-circle-line',
-            color: 'text-red-700',
-            bg: 'bg-red-50',
-            sub: countVencidas > 0
-              ? `Inclui ${countVencidas} vencida(s): ${formatCurrency(totalVencidas)}${totalProvisionado > 0 ? ` · ${formatCurrency(totalProvisionado)} em notas não lançadas` : ''}`
-              : totalProvisionado > 0
-                ? `Contas a pagar + folha · inclui ${formatCurrency(totalProvisionado)} em notas não lançadas`
-                : 'Contas a pagar + folha no período',
-          },
-          {
-            label: `Saldo em ${horizon}d`,
-            value: saldoFinal,
-            icon: 'ri-calendar-check-line',
-            color: saldoFinal >= 0 ? 'text-green-700' : 'text-red-700',
-            bg: saldoFinal >= 0 ? 'bg-green-50' : 'bg-red-50',
-            sub: 'Projeção acumulada',
-          },
-        ].map((kpi) => (
-          <div key={kpi.label} className="bg-white rounded-xl border border-zinc-200 p-4">
-            <div className="flex items-start gap-3">
-              <div className={`w-9 h-9 flex items-center justify-center rounded-lg ${kpi.bg} flex-shrink-0`}>
-                <i className={`${kpi.icon} ${kpi.color} text-base`} />
-              </div>
-              <div className="min-w-0">
-                <p className="text-xs text-zinc-500 truncate">{kpi.label}</p>
-                <p className={`text-base font-bold ${kpi.color}`}>{formatCurrency(kpi.value)}</p>
-                <p className="text-[10px] text-zinc-400 mt-0.5 truncate">{kpi.sub}</p>
-              </div>
-            </div>
-          </div>
-        ))}
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+        <KpiCard
+          label="Saldo Atual"
+          icon="ri-bank-line"
+          value={formatCurrency(saldoAtual)}
+          valueTone={saldoAtual >= 0 ? 'text-emerald-700' : 'text-red-600'}
+          sub={saldoSyncedAt
+            ? `Saldo real do banco (API) · ${new Date(saldoSyncedAt).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}`
+            : saldoSource === 'banco' ? 'Saldo real das contas bancárias' : 'Estimado pelo caixa (configure os bancos p/ saldo real)'}
+          atual={saldoAtual}
+          semVariacao
+        />
+        <KpiCard
+          label="Recebíveis D+N"
+          icon="ri-time-line"
+          value={formatCurrency(totalRecebiveis)}
+          valueTone="text-emerald-700"
+          sub={agendaQtd > 0
+            ? `${pendingReceivables.length} parcela(s) + ${agendaQtd} dia(s) de cartão/iFood a receber`
+            : `${pendingReceivables.length} parcela(s) a liquidar`}
+          atual={totalRecebiveis}
+          semVariacao
+        />
+        <KpiCard
+          label="Saídas Previstas"
+          icon="ri-arrow-up-circle-line"
+          value={formatCurrency(totalSaidas)}
+          valueTone="text-red-600"
+          sub={countVencidas > 0
+            ? `Inclui ${countVencidas} vencida(s): ${formatCurrency(totalVencidas)}${totalProvisionado > 0 ? ` · ${formatCurrency(totalProvisionado)} em notas não lançadas` : ''}`
+            : totalProvisionado > 0
+              ? `Contas a pagar + folha · inclui ${formatCurrency(totalProvisionado)} em notas não lançadas`
+              : 'Contas a pagar + folha no período'}
+          atual={totalSaidas}
+          semVariacao
+        />
+        <KpiCard
+          label={`Saldo em ${horizon}d`}
+          icon="ri-calendar-check-line"
+          value={formatCurrency(saldoFinal)}
+          valueTone={saldoFinal >= 0 ? 'text-emerald-700' : 'text-red-600'}
+          sub="Projeção acumulada"
+          atual={saldoFinal}
+          semVariacao
+        />
       </div>
 
       {/* Notas de entrada que ainda não viraram conta a pagar (2026-09-21).
           Fica ACIMA do alerta de saldo porque é a explicação de por que o número
           mudou: esse dinheiro já pressiona a projeção, mas ninguém conferiu a nota. */}
       {countNotasProvisionadas > 0 && (
-        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3">
+        <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 flex items-start gap-3">
           <div className="w-8 h-8 flex items-center justify-center bg-amber-100 rounded-lg flex-shrink-0">
             <i className="ri-file-warning-line text-amber-700" />
           </div>
           <div className="min-w-0">
-            <p className="text-sm font-semibold text-amber-900">
+            <p className="text-xs font-semibold text-amber-800">
               {formatCurrency(totalProvisionado)} em boletos de {countNotasProvisionadas}{' '}
               {countNotasProvisionadas === 1 ? 'nota não lançada' : 'notas não lançadas'}
             </p>
@@ -965,15 +943,15 @@ export default function PrevisaoCaixaTab() {
 
       {/* Alerta saldo negativo */}
       {criticalDays.length > 0 ? (
-        <div className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-start gap-3">
+        <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 flex items-start gap-3">
           <div className="w-8 h-8 flex items-center justify-center bg-red-100 rounded-lg flex-shrink-0">
             <i className="ri-alert-line text-red-600" />
           </div>
           <div>
-            <p className="text-sm font-semibold text-red-800">
+            <p className="text-xs font-semibold text-red-800">
               O caixa fica negativo em {new Date(criticalDays[0].date + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: 'long' })}
             </p>
-            <p className="text-xs text-red-600 mt-0.5">
+            <p className="text-xs text-red-700 mt-0.5">
               Saldo nesse dia: <strong>{formatCurrency(criticalDays[0].saldoAcumulado)}</strong>
               {' · '}Pior momento do período: <strong>{formatCurrency(piorMomento.saldoAcumulado)}</strong> em{' '}
               {new Date(piorMomento.date + 'T12:00:00').toLocaleDateString('pt-BR')}
@@ -985,15 +963,15 @@ export default function PrevisaoCaixaTab() {
           </div>
         </div>
       ) : temDados && (
-        <div className="bg-green-50 border border-green-200 rounded-xl p-4 flex items-start gap-3">
+        <div className="bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-3 flex items-start gap-3">
           <div className="w-8 h-8 flex items-center justify-center bg-green-100 rounded-lg flex-shrink-0">
             <i className="ri-shield-check-line text-green-600" />
           </div>
           <div>
-            <p className="text-sm font-semibold text-green-800">
+            <p className="text-xs font-semibold text-emerald-800">
               Caixa cobre os compromissos dos próximos {horizon} dias
             </p>
-            <p className="text-xs text-green-600 mt-0.5">
+            <p className="text-xs text-emerald-700 mt-0.5">
               Pior momento do período: <strong>{formatCurrency(piorMomento.saldoAcumulado)}</strong> em{' '}
               {new Date(piorMomento.date + 'T12:00:00').toLocaleDateString('pt-BR')}. Projeção considera apenas
               os compromissos já lançados — vendas novas não estão previstas.
@@ -1003,12 +981,12 @@ export default function PrevisaoCaixaTab() {
       )}
 
       {/* Gráfico + Painel lateral */}
-      <div className={`flex gap-4 ${selectedDay ? 'items-start' : ''}`}>
+      <div className={`flex flex-col lg:flex-row gap-4 ${selectedDay ? 'lg:items-start' : ''}`}>
         {/* Gráfico principal */}
-        <div className={`bg-white rounded-xl border border-zinc-200 p-5 transition-all ${selectedDay ? 'flex-1 min-w-0' : 'w-full'}`}>
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-sm font-semibold text-zinc-700">Evolução do Saldo Acumulado</h3>
-            <span className="text-xs text-zinc-400">
+        <div className={`bg-white rounded-2xl border border-zinc-200 p-5 transition-all ${selectedDay ? 'flex-1 min-w-0' : 'w-full'}`}>
+          <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
+            <div><h3 className="text-sm font-bold text-zinc-800">Evolução do Saldo Acumulado</h3><p className="text-xs text-zinc-400">Projeção dia a dia dos próximos {horizon} dias</p></div>
+            <span className="text-[11px] text-zinc-400">
               {selectedDay ? (
                 <span className="flex items-center gap-1 text-amber-600">
                   <i className="ri-focus-3-line" />
@@ -1018,13 +996,13 @@ export default function PrevisaoCaixaTab() {
             </span>
           </div>
           {loading ? (
-            <div className="flex items-center justify-center h-64">
+            <div className="flex items-center justify-center py-14">
               <div className="w-6 h-6 border-2 border-amber-400 border-t-transparent rounded-full animate-spin mr-2" />
               <span className="text-zinc-400 text-sm">Calculando projeção...</span>
             </div>
           ) : !temDados ? (
-            <div className="flex flex-col items-center justify-center h-64 text-zinc-400">
-              <i className="ri-line-chart-line text-4xl mb-3 text-zinc-300" />
+            <div className="flex flex-col items-center justify-center py-14 text-zinc-400">
+              <i className="ri-line-chart-line text-4xl mb-3 text-zinc-200" />
               <p className="text-sm font-semibold text-zinc-500">Nenhuma movimentação prevista</p>
               <p className="text-xs text-zinc-400 mt-1 text-center max-w-xs">
                 Cadastre contas a pagar ou registre vendas com cartão para ver a projeção aqui.
@@ -1048,9 +1026,9 @@ export default function PrevisaoCaixaTab() {
                     <stop offset="95%" stopColor={SERIES_COLORS.entradasAuto} stopOpacity={0} />
                   </linearGradient>
                 </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f4f4f5" />
-                <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#71717a' }} />
-                <YAxis tick={{ fontSize: 11, fill: '#71717a' }} tickFormatter={(v) => `R$${(v / 1000).toFixed(0)}k`} />
+                <CartesianGrid strokeDasharray="3 3" stroke="#f4f4f5" vertical={false} />
+                <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#71717a' }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fontSize: 10, fill: '#a1a1aa' }} axisLine={false} tickLine={false} tickFormatter={(v) => `R$${(v / 1000).toFixed(0)}k`} />
                 <Tooltip content={<CustomTooltip />} />
                 <Legend
                   wrapperStyle={{ fontSize: 10 }}
@@ -1149,10 +1127,10 @@ export default function PrevisaoCaixaTab() {
                 onClick={handleChartClick}
                 style={{ cursor: 'pointer' }}
               >
-                <CartesianGrid strokeDasharray="3 3" stroke="#f4f4f5" />
-                <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#71717a' }} />
-                <YAxis tick={{ fontSize: 11, fill: '#71717a' }} tickFormatter={(v) => `R$${(v / 1000).toFixed(0)}k`} />
-                <Tooltip content={<CustomTooltip />} />
+                <CartesianGrid strokeDasharray="3 3" stroke="#f4f4f5" vertical={false} />
+                <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#71717a' }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fontSize: 10, fill: '#a1a1aa' }} axisLine={false} tickLine={false} tickFormatter={(v) => `R$${(v / 1000).toFixed(0)}k`} />
+                <Tooltip content={<CustomTooltip />} cursor={{ fill: '#fafafa' }} />
                 <Legend
                   wrapperStyle={{ fontSize: 10 }}
                   formatter={(value) => SERIES_LABELS[value as keyof typeof SERIES_LABELS] ?? value}
@@ -1170,7 +1148,7 @@ export default function PrevisaoCaixaTab() {
 
         {/* Painel lateral de detalhes do dia */}
         {selectedDay && (
-          <div className="w-72 flex-shrink-0" style={{ minHeight: 340 }}>
+          <div className="w-full lg:w-72 flex-shrink-0" style={{ minHeight: 340 }}>
             <DayDetailPanel
               point={selectedDay}
               onClose={() => setSelectedDay(null)}
@@ -1181,11 +1159,11 @@ export default function PrevisaoCaixaTab() {
 
       {/* Painel de recebíveis por forma de pagamento */}
       {receivablesByMethod.length > 0 && (
-        <div className="bg-white rounded-xl border border-zinc-200 p-5">
-          <div className="flex items-center justify-between mb-4">
+        <div className="bg-white rounded-2xl border border-zinc-200 p-5">
+          <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
             <div>
-              <h3 className="text-sm font-semibold text-zinc-800">Recebíveis D+N por Forma de Pagamento</h3>
-              <p className="text-xs text-zinc-400 mt-0.5">Valores a liquidar no período de {horizon} dias</p>
+              <h3 className="text-sm font-bold text-zinc-800">Recebíveis D+N por Forma de Pagamento</h3>
+              <p className="text-xs text-zinc-400">Valores a liquidar no período de {horizon} dias</p>
             </div>
             <button
               onClick={() => setShowDetail(!showDetail)}
@@ -1208,7 +1186,7 @@ export default function PrevisaoCaixaTab() {
                     </div>
                     <div className="flex items-center gap-3">
                       <span className="text-xs text-zinc-400">{pct.toFixed(1)}%</span>
-                      <span className="text-sm font-bold text-green-700">{formatCurrency(total)}</span>
+                      <span className="text-sm font-bold tabular-nums text-emerald-700">{formatCurrency(total)}</span>
                     </div>
                   </div>
                   <div className="h-1.5 bg-zinc-100 rounded-full overflow-hidden">
@@ -1264,10 +1242,10 @@ export default function PrevisaoCaixaTab() {
 
       {/* Tabela diária (só 30 dias) */}
       {horizon === 30 && !loading && (
-        <div className="bg-white rounded-xl border border-zinc-200 overflow-hidden">
-          <div className="px-5 py-3 border-b border-zinc-100 flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-zinc-700">Detalhamento Diário</h3>
-            <div className="flex items-center gap-3 text-xs text-zinc-400">
+        <div className="bg-white rounded-2xl border border-zinc-200 overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-100 gap-3 flex-wrap">
+            <div><h3 className="text-sm font-bold text-zinc-800">Detalhamento Diário</h3><p className="text-xs text-zinc-400">Clique numa linha para ver o que compõe o dia</p></div>
+            <div className="flex items-center gap-3 flex-wrap text-[11px] text-zinc-400">
               <span className="flex items-center gap-1">
                 <span className="w-2 h-2 rounded-full inline-block" style={{ background: SERIES_COLORS.entradasAuto }} />
                 Automáticas
@@ -1296,14 +1274,14 @@ export default function PrevisaoCaixaTab() {
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
-              <thead className="bg-zinc-50">
+              <thead className="border-b border-zinc-200">
                 <tr>
-                  {['Data', 'Entradas Automáticas', 'Entradas Manuais', 'Contas a Pagar', 'Folha', 'Notas não lançadas', 'Saldo do Dia', 'Saldo Acumulado'].map((h) => (
-                    <th key={h} className="text-left px-4 py-2.5 text-xs font-semibold text-zinc-500 whitespace-nowrap">{h}</th>
+                  {['Data', 'Entradas Automáticas', 'Entradas Manuais', 'Contas a Pagar', 'Folha', 'Notas não lançadas', 'Saldo do Dia', 'Saldo Acumulado'].map((h, i) => (
+                    <th key={h} className={`text-left ${i === 0 ? 'pl-5 pr-4' : 'px-4'} py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400 whitespace-nowrap`}>{h}</th>
                   ))}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-zinc-100">
+              <tbody className="divide-y divide-zinc-100/80">
                 {projection.filter((p) => p.totalEntradas > 0 || p.totalSaidas > 0).map((p) => (
                   <>
                     <tr
@@ -1314,7 +1292,7 @@ export default function PrevisaoCaixaTab() {
                       }}
                       className={`transition-colors ${p.saldoAcumulado < 0 ? 'bg-red-50/40' : ''} ${p.detalhes.length > 0 ? 'cursor-pointer hover:bg-zinc-50' : ''}`}
                     >
-                      <td className="px-4 py-2.5 text-zinc-700 font-medium whitespace-nowrap">
+                      <td className="pl-5 pr-4 py-2.5 text-zinc-700 font-medium whitespace-nowrap">
                         <div className="flex items-center gap-1.5">
                           {p.detalhes.length > 0 && (
                             <i className={`text-zinc-400 text-xs transition-transform ${expandedDays.has(p.date) ? 'ri-arrow-down-s-line' : 'ri-arrow-right-s-line'}`} />
@@ -1322,25 +1300,25 @@ export default function PrevisaoCaixaTab() {
                           {p.label}
                         </div>
                       </td>
-                      <td className="px-4 py-2.5 whitespace-nowrap" style={{ color: SERIES_COLORS.entradasAuto }}>
+                      <td className="px-4 py-2.5 tabular-nums whitespace-nowrap" style={{ color: SERIES_COLORS.entradasAuto }}>
                         {p.entradasAuto > 0 ? <span className="font-medium">{formatCurrency(p.entradasAuto)}</span> : <span className="text-zinc-300">—</span>}
                       </td>
-                      <td className="px-4 py-2.5 whitespace-nowrap" style={{ color: SERIES_COLORS.entradasManuais }}>
+                      <td className="px-4 py-2.5 tabular-nums whitespace-nowrap" style={{ color: SERIES_COLORS.entradasManuais }}>
                         {p.entradasManuais > 0 ? <span className="font-medium">{formatCurrency(p.entradasManuais)}</span> : <span className="text-zinc-300">—</span>}
                       </td>
-                      <td className="px-4 py-2.5 whitespace-nowrap" style={{ color: SERIES_COLORS.saidasContas }}>
+                      <td className="px-4 py-2.5 tabular-nums whitespace-nowrap" style={{ color: SERIES_COLORS.saidasContas }}>
                         {p.saidasContas > 0 ? <span className="font-medium">{formatCurrency(p.saidasContas)}</span> : <span className="text-zinc-300">—</span>}
                       </td>
-                      <td className="px-4 py-2.5 whitespace-nowrap" style={{ color: SERIES_COLORS.saidasFolha }}>
+                      <td className="px-4 py-2.5 tabular-nums whitespace-nowrap" style={{ color: SERIES_COLORS.saidasFolha }}>
                         {p.saidasFolha > 0 ? <span className="font-medium">{formatCurrency(p.saidasFolha)}</span> : <span className="text-zinc-300">—</span>}
                       </td>
-                      <td className="px-4 py-2.5 whitespace-nowrap" style={{ color: SERIES_COLORS.saidasProvisionadas }}>
+                      <td className="px-4 py-2.5 tabular-nums whitespace-nowrap" style={{ color: SERIES_COLORS.saidasProvisionadas }}>
                         {p.saidasProvisionadas > 0 ? <span className="font-medium">{formatCurrency(p.saidasProvisionadas)}</span> : <span className="text-zinc-300">—</span>}
                       </td>
-                      <td className={`px-4 py-2.5 font-semibold whitespace-nowrap ${p.saldo >= 0 ? 'text-green-700' : 'text-red-600'}`}>
+                      <td className={`px-4 py-2.5 font-semibold tabular-nums whitespace-nowrap ${p.saldo >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>
                         {formatCurrency(p.saldo)}
                       </td>
-                      <td className={`px-4 py-2.5 font-bold whitespace-nowrap ${p.saldoAcumulado >= 0 ? 'text-zinc-900' : 'text-red-700'}`}>
+                      <td className={`px-4 py-2.5 font-bold tabular-nums whitespace-nowrap ${p.saldoAcumulado >= 0 ? 'text-zinc-900' : 'text-red-700'}`}>
                         {formatCurrency(p.saldoAcumulado)}
                       </td>
                     </tr>
@@ -1375,8 +1353,8 @@ export default function PrevisaoCaixaTab() {
               </tbody>
             </table>
             {projection.filter((p) => p.totalEntradas > 0 || p.totalSaidas > 0).length === 0 && (
-              <div className="flex flex-col items-center justify-center py-12 text-zinc-400">
-                <i className="ri-calendar-line text-3xl mb-2" />
+              <div className="flex flex-col items-center justify-center py-14 text-zinc-400">
+                <i className="ri-calendar-line text-4xl mb-2 text-zinc-200" />
                 <p className="text-sm">Nenhuma movimentação prevista no período</p>
               </div>
             )}

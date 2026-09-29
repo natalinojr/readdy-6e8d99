@@ -7,13 +7,9 @@ import { fetchAllRows } from '@/lib/fetchAllRows';
 import { formatCurrency } from '@/lib/formatters';
 import type { CashFlowEntry } from '@/types/financeiro';
 import { ocorrenciasRecorrentes } from '@/lib/recorrencias';
+import { KpiCard, MonthNav, Segmented } from './dreUi';
 
 const DIAS_SEMANA = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
-const MESES = [
-  'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
-  'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro',
-];
-
 type ViewMode = 'mensal' | 'semanal';
 
 interface DiaCalendario {
@@ -358,20 +354,6 @@ export default function CalendarioFluxoCaixa() {
 
   const { dias, abertura: aberturaPeriodo } = viewMode === 'mensal' ? diasMensal : diasSemanal;
 
-  const goPrevMonth = useCallback(() => {
-    setViewMonth(m => {
-      if (m === 0) { setViewYear(y => y - 1); return 11; }
-      return m - 1;
-    });
-  }, []);
-
-  const goNextMonth = useCallback(() => {
-    setViewMonth(m => {
-      if (m === 11) { setViewYear(y => y + 1); return 0; }
-      return m + 1;
-    });
-  }, []);
-
   const goPrevWeek = useCallback(() => {
     setWeekBase(d => {
       const nd = new Date(d);
@@ -422,67 +404,68 @@ export default function CalendarioFluxoCaixa() {
   }, [weekBounds]);
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       {/* Header */}
-      <div className="flex items-center justify-between flex-wrap gap-2">
-        <div className="flex items-center gap-2">
-          <button
-            onClick={viewMode === 'mensal' ? goPrevMonth : goPrevWeek}
-            className="w-8 h-8 flex items-center justify-center rounded-lg border border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50 cursor-pointer transition-colors"
-          >
-            <i className="ri-arrow-left-s-line" />
-          </button>
-          <h3 className="text-base font-semibold text-zinc-800 min-w-[160px] text-center">
-            {viewMode === 'mensal' ? `${MESES[viewMonth]} ${viewYear}` : weekLabel}
-          </h3>
-          <button
-            onClick={viewMode === 'mensal' ? goNextMonth : goNextWeek}
-            className="w-8 h-8 flex items-center justify-center rounded-lg border border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50 cursor-pointer transition-colors"
-          >
-            <i className="ri-arrow-right-s-line" />
-          </button>
-        </div>
-
-        <div className="flex items-center gap-2">
-          {/* Toggle Mensal / Semanal */}
-          <div className="flex items-center bg-zinc-100 rounded-lg p-1 gap-1">
+      <div className="flex flex-wrap items-center gap-2 lg:gap-3">
+        {viewMode === 'mensal' ? (
+          <MonthNav
+            mes={`${viewYear}-${String(viewMonth + 1).padStart(2, '0')}`}
+            onChange={m => {
+              const [y, mo] = m.split('-').map(Number);
+              setViewYear(y);
+              setViewMonth(mo - 1);
+            }}
+            canGoNext
+          />
+        ) : (
+          <div className="flex items-center bg-white border border-zinc-200 rounded-xl overflow-hidden shadow-sm">
             <button
-              onClick={() => setViewMode('mensal')}
-              className={`px-3 py-1 text-xs font-semibold rounded-md transition-colors cursor-pointer whitespace-nowrap ${
-                viewMode === 'mensal' ? 'bg-white text-zinc-800 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'
-              }`}
+              onClick={goPrevWeek}
+              className="w-9 h-10 flex items-center justify-center hover:bg-zinc-50 cursor-pointer text-zinc-500 hover:text-zinc-800 transition-colors"
+              title="Semana anterior"
             >
-              Mensal
+              <i className="ri-arrow-left-s-line text-lg" />
             </button>
+            <p className="px-2 min-w-[150px] text-center text-sm font-bold text-zinc-900">{weekLabel}</p>
             <button
-              onClick={() => setViewMode('semanal')}
-              className={`px-3 py-1 text-xs font-semibold rounded-md transition-colors cursor-pointer whitespace-nowrap ${
-                viewMode === 'semanal' ? 'bg-white text-zinc-800 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'
-              }`}
+              onClick={goNextWeek}
+              className="w-9 h-10 flex items-center justify-center hover:bg-zinc-50 cursor-pointer text-zinc-500 hover:text-zinc-800 transition-colors"
+              title="Próxima semana"
             >
-              Semanal
+              <i className="ri-arrow-right-s-line text-lg" />
             </button>
           </div>
-          <button
-            onClick={goToday}
-            className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50 cursor-pointer transition-colors whitespace-nowrap"
-          >
-            Hoje
-          </button>
+        )}
+
+        <button
+          onClick={goToday}
+          className="text-xs font-semibold px-3 py-2 bg-amber-50 text-amber-700 border border-amber-200 rounded-xl hover:bg-amber-100 cursor-pointer transition-colors whitespace-nowrap"
+        >
+          Hoje
+        </button>
+
+        {/* Toggle Mensal / Semanal */}
+        <div className="ml-auto overflow-x-auto max-w-full">
+          <Segmented
+            value={viewMode}
+            onChange={setViewMode}
+            options={[
+              { id: 'mensal', label: 'Mensal', icon: 'ri-calendar-2-line' },
+              { id: 'semanal', label: 'Semanal', icon: 'ri-calendar-week-line' },
+            ]}
+          />
         </div>
       </div>
 
       {/* Alerta de dias com saldo negativo */}
       {aberturaCarregada && resumoPeriodo.diasNegativosCount > 0 && (
         <div className="flex items-start gap-3 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
-          <div className="w-5 h-5 flex items-center justify-center flex-shrink-0 mt-0.5">
-            <i className="ri-error-warning-line text-red-500 text-base" />
-          </div>
+          <i className="ri-error-warning-line text-red-500 text-base flex-shrink-0 mt-px" />
           <div>
-            <p className="text-sm font-semibold text-red-700">
+            <p className="text-xs font-semibold text-red-800">
               {resumoPeriodo.diasNegativosCount} {resumoPeriodo.diasNegativosCount === 1 ? 'dia futuro com saldo projetado negativo' : 'dias futuros com saldo projetado negativo'}
             </p>
-            <p className="text-xs text-red-500 mt-0.5">
+            <p className="text-xs text-red-700 mt-0.5">
               Projeção a partir de {formatCurrency(aberturaPeriodo ?? 0)} ({saldoBanco !== null ? 'saldo real das contas hoje + o previsto até o período' : 'caixa acumulado até o início do período'}).
               Verifique as contas a pagar e entradas previstas para evitar problemas de caixa.
             </p>
@@ -491,57 +474,78 @@ export default function CalendarioFluxoCaixa() {
       )}
 
       {/* Resumo */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 md:gap-3">
-        <div className="bg-white rounded-xl border border-zinc-200 p-3">
-          <p className="text-[10px] text-zinc-400 uppercase tracking-wide font-semibold">Entradas</p>
-          <p className="text-sm font-bold text-green-600 mt-0.5">{formatCurrency(resumoPeriodo.entradas)}</p>
-        </div>
-        <div className="bg-white rounded-xl border border-zinc-200 p-3">
-          <p className="text-[10px] text-zinc-400 uppercase tracking-wide font-semibold">Saídas</p>
-          <p className="text-sm font-bold text-red-500 mt-0.5">{formatCurrency(resumoPeriodo.saidas)}</p>
-        </div>
-        <div className="bg-white rounded-xl border border-zinc-200 p-3">
-          <p className="text-[10px] text-zinc-400 uppercase tracking-wide font-semibold">Saldo do Período</p>
-          <p className={`text-sm font-bold mt-0.5 ${resumoPeriodo.saldo >= 0 ? 'text-amber-600' : 'text-red-500'}`}>
-            {formatCurrency(resumoPeriodo.saldo)}
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+        <KpiCard
+          label="Entradas"
+          icon="ri-arrow-down-circle-line"
+          value={formatCurrency(resumoPeriodo.entradas)}
+          valueTone="text-emerald-700"
+          atual={resumoPeriodo.entradas}
+          semVariacao
+        />
+        <KpiCard
+          label="Saídas"
+          icon="ri-arrow-up-circle-line"
+          value={formatCurrency(resumoPeriodo.saidas)}
+          valueTone="text-red-600"
+          atual={resumoPeriodo.saidas}
+          semVariacao
+        />
+        <KpiCard
+          label="Saldo do Período"
+          icon="ri-scales-line"
+          value={formatCurrency(resumoPeriodo.saldo)}
+          valueTone={resumoPeriodo.saldo >= 0 ? 'text-amber-700' : 'text-red-600'}
+          sub={aberturaPeriodo === null || resumoPeriodo.saldoFinal === null
+            ? 'Período passado: saldo corrido só de hoje em diante'
+            : `${saldoBanco !== null && aberturaPeriodo === saldoBanco ? 'Hoje no banco' : 'Abertura'} ${formatCurrency(aberturaPeriodo)} → ${formatCurrency(resumoPeriodo.saldoFinal)}`}
+          atual={resumoPeriodo.saldo}
+          semVariacao
+        />
+        <div className="rounded-2xl border border-zinc-200 bg-white p-4 flex flex-col gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="w-7 h-7 rounded-lg bg-zinc-100 text-zinc-500 flex items-center justify-center flex-shrink-0">
+              <i className="ri-calendar-schedule-line text-sm" />
+            </span>
+            <span className="text-xs font-semibold text-zinc-500 truncate">Previsão Futura</span>
+          </div>
+          <p className="text-2xl font-bold tabular-nums tracking-tight text-zinc-900 flex flex-wrap items-baseline gap-x-1.5">
+            <span className="text-emerald-700">+{formatCurrency(resumoPeriodo.prevEntradas)}</span>
+            <span className="text-zinc-300 text-lg">/</span>
+            <span className="text-red-600">-{formatCurrency(resumoPeriodo.prevSaidas)}</span>
           </p>
-          <p className="text-[10px] text-zinc-400 mt-0.5">
-            {aberturaPeriodo === null || resumoPeriodo.saldoFinal === null
-              ? 'Período passado: saldo corrido só de hoje em diante'
-              : <>{saldoBanco !== null && aberturaPeriodo === saldoBanco ? 'Hoje no banco' : 'Abertura'} {formatCurrency(aberturaPeriodo)} → {formatCurrency(resumoPeriodo.saldoFinal)}</>}
-          </p>
         </div>
-        <div className="bg-white rounded-xl border border-zinc-200 p-3">
-          <p className="text-[10px] text-zinc-400 uppercase tracking-wide font-semibold">Previsão Futura</p>
-          <p className="text-sm font-bold text-zinc-600 mt-0.5">
-            <span className="text-green-600">+{formatCurrency(resumoPeriodo.prevEntradas)}</span>
-            <span className="text-zinc-300 mx-1">/</span>
-            <span className="text-red-500">-{formatCurrency(resumoPeriodo.prevSaidas)}</span>
-          </p>
-        </div>
-      </div>
-
-      {/* Legenda */}
-      <div className="flex items-center gap-4 flex-wrap text-[10px] text-zinc-400">
-        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-500" /> Entrada</span>
-        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-400" /> Saída</span>
-        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-100 border border-amber-300" /> Hoje</span>
-        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-100 border border-red-300" /> Saldo negativo previsto</span>
       </div>
 
       {/* Grid do calendário */}
-      <div className="bg-white rounded-xl border border-zinc-200 overflow-hidden">
+      <div className="bg-white rounded-2xl border border-zinc-200 overflow-hidden">
+        <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-100 gap-3 flex-wrap">
+          <div>
+            <h3 className="text-sm font-bold text-zinc-800">{viewMode === 'mensal' ? 'Calendário do mês' : 'Calendário da semana'}</h3>
+            <p className="text-xs text-zinc-400">Entradas, saídas e saldo previsto por dia</p>
+          </div>
+          <span className="text-[11px] text-zinc-400 flex items-center gap-1"><i className="ri-cursor-line" /> clique num dia para ver o detalhe</span>
+        </div>
+
+        {/* Legenda */}
+        <div className="flex items-center gap-4 flex-wrap text-[11px] text-zinc-400 px-5 py-2 border-b border-zinc-100">
+          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-500" /> Entrada</span>
+          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-400" /> Saída</span>
+          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-100 border border-amber-300" /> Hoje</span>
+          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-100 border border-red-300" /> Saldo negativo previsto</span>
+        </div>
+
         {/* Cabeçalho dos dias */}
         <div className="grid grid-cols-7 border-b border-zinc-100">
           {DIAS_SEMANA.map(d => (
-            <div key={d} className="py-2 text-center text-[10px] font-semibold text-zinc-400 uppercase tracking-wide">
+            <div key={d} className="py-2 text-center text-[11px] font-semibold text-zinc-400 uppercase tracking-wide">
               {d}
             </div>
           ))}
         </div>
 
         {isLoading ? (
-          <div className="p-10 text-center text-zinc-400 text-sm">Carregando calendário...</div>
+          <div className="py-14 text-center text-zinc-400 text-sm">Carregando calendário...</div>
         ) : viewMode === 'mensal' ? (
           <div className="grid grid-cols-7">
             {dias.map((dia, idx) => <DiaCell key={idx} dia={dia} onSelect={setSelectedDay} />)}

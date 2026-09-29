@@ -12,12 +12,13 @@ import PrevisaoCaixaTab from './PrevisaoCaixaTab';
 import RealizadoProjetadoTab from './RealizadoProjetadoTab';
 import { usePaymentMethods } from '@/hooks/usePaymentMethods';
 import { avisar } from '@/components/base/Dialogos';
+import { KpiCard, Segmented } from './dreUi';
 
 const PERIODS = [
-  { label: 'Hoje', value: 'today' },
-  { label: 'Semana', value: 'week' },
-  { label: 'Mês', value: 'month' },
-  { label: 'Personalizado', value: 'custom' },
+  { label: 'Hoje', value: 'today', icon: 'ri-sun-line' },
+  { label: 'Semana', value: 'week', icon: 'ri-calendar-week-line' },
+  { label: 'Mês', value: 'month', icon: 'ri-calendar-2-line' },
+  { label: 'Personalizado', value: 'custom', icon: 'ri-calendar-event-line' },
 ];
 
 // Datas SEMPRE no fuso de Brasília: `toISOString()` devolve UTC e, das 21h à
@@ -203,21 +204,21 @@ export default function FluxoCaixaTab() {
   };
 
   return (
-    <div className="flex flex-col">
+    <div className="flex flex-col max-w-[1400px] mx-auto w-full">
       {/* Seletor de visão — a PROJEÇÃO é a visão padrão */}
-      <div className="px-4 md:px-6 pt-4 md:pt-6">
-        <div className="inline-flex items-center gap-1 bg-zinc-100 rounded-lg p-0.5">
+      <div className="px-4 md:px-6 pt-4 md:pt-6 space-y-2">
+        <div className="flex gap-1 overflow-x-auto bg-zinc-100/80 rounded-xl p-1 w-full sm:w-fit">
           {VIEWS.map(v => (
             <button
               key={v.id}
               onClick={() => setViewMode(v.id)}
-              className={`px-3 py-1.5 text-xs font-semibold rounded-md cursor-pointer transition-colors whitespace-nowrap flex items-center gap-1.5 ${viewMode === v.id ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'}`}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap cursor-pointer transition-colors ${viewMode === v.id ? 'bg-white text-amber-600 shadow-sm' : 'text-zinc-500 hover:text-zinc-800'}`}
             >
               <i className={v.icon} /> {v.label}
             </button>
           ))}
         </div>
-        <p className="text-xs text-zinc-400 mt-2">{VIEWS.find(v => v.id === viewMode)?.hint}</p>
+        <p className="text-xs text-zinc-400">{VIEWS.find(v => v.id === viewMode)?.hint}</p>
       </div>
 
       {viewMode === 'projecao' && <PrevisaoCaixaTab />}
@@ -231,22 +232,21 @@ export default function FluxoCaixaTab() {
       )}
 
       {viewMode === 'extrato' && (
-      <div className="p-4 md:p-6 space-y-4 md:space-y-5">
+      <div className="p-4 md:p-6 space-y-5">
       {/* Period selector */}
-      <div className="flex items-center gap-2 md:gap-3 flex-wrap">
-        <div className="flex bg-white border border-zinc-200 rounded-lg overflow-hidden">
-          {PERIODS.map(p => (
-            <button key={p.value} onClick={() => { setPeriod(p.value); setPage(1); }}
-              className={`px-3 py-2 text-xs font-semibold cursor-pointer transition-colors whitespace-nowrap ${period === p.value ? 'bg-amber-500 text-white' : 'text-zinc-600 hover:bg-zinc-50'}`}>
-              {p.label}
-            </button>
-          ))}
+      <div className="flex flex-wrap items-center gap-2 lg:gap-3">
+        <div className="overflow-x-auto max-w-full">
+          <Segmented
+            value={period}
+            onChange={v => { setPeriod(v); setPage(1); }}
+            options={PERIODS.map(p => ({ id: p.value, label: p.label, icon: p.icon }))}
+          />
         </div>
         {period === 'custom' && (
           <>
-            <input type="date" value={customStart} onChange={e => { setCustomStart(e.target.value); setPage(1); }} className="border border-zinc-200 rounded-lg px-3 py-2 text-xs bg-white" />
+            <input type="date" value={customStart} onChange={e => { setCustomStart(e.target.value); setPage(1); }} className="h-10 border border-zinc-200 rounded-xl px-3 text-xs bg-white shadow-sm" />
             <span className="text-zinc-400 text-xs">até</span>
-            <input type="date" value={customEnd} onChange={e => { setCustomEnd(e.target.value); setPage(1); }} className="border border-zinc-200 rounded-lg px-3 py-2 text-xs bg-white" />
+            <input type="date" value={customEnd} onChange={e => { setCustomEnd(e.target.value); setPage(1); }} className="h-10 border border-zinc-200 rounded-xl px-3 text-xs bg-white shadow-sm" />
           </>
         )}
 
@@ -254,62 +254,32 @@ export default function FluxoCaixaTab() {
       </div>
 
       {/* KPIs */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 md:gap-4">
-        <div className="bg-white rounded-xl border border-zinc-200 p-4 flex items-center gap-3">
-          <div className="w-10 h-10 flex items-center justify-center rounded-lg bg-green-50">
-            <i className="ri-arrow-down-circle-line text-green-600 text-lg" />
-          </div>
-          <div>
-            <p className="text-xs text-zinc-500">Total Entradas</p>
-            <p className="text-lg font-bold text-green-600">{formatCurrency(totalEntradas)}</p>
-          </div>
-        </div>
-        <div className="bg-white rounded-xl border border-zinc-200 p-4 flex items-center gap-3">
-          <div className="w-10 h-10 flex items-center justify-center rounded-lg bg-red-50">
-            <i className="ri-arrow-up-circle-line text-red-500 text-lg" />
-          </div>
-          <div>
-            <p className="text-xs text-zinc-500">Total Saídas</p>
-            <p className="text-lg font-bold text-red-500">{formatCurrency(totalSaidas)}</p>
-          </div>
-        </div>
-        <div className="bg-white rounded-xl border border-zinc-200 p-4 flex items-center gap-3">
-          <div className={`w-10 h-10 flex items-center justify-center rounded-lg ${saldo >= 0 ? 'bg-amber-50' : 'bg-red-50'}`}>
-            <i className={`ri-scales-line text-lg ${saldo >= 0 ? 'text-amber-600' : 'text-red-600'}`} />
-          </div>
-          <div>
-            <p className="text-xs text-zinc-500">Saldo do Período</p>
-            <p className={`text-lg font-bold ${saldo >= 0 ? 'text-amber-600' : 'text-red-500'}`}>{formatCurrency(saldo)}</p>
-          </div>
-        </div>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <KpiCard label="Total Entradas" icon="ri-arrow-down-circle-line" value={formatCurrency(totalEntradas)} valueTone="text-emerald-700" atual={totalEntradas} semVariacao />
+        <KpiCard label="Total Saídas" icon="ri-arrow-up-circle-line" value={formatCurrency(totalSaidas)} valueTone="text-red-600" atual={totalSaidas} semVariacao />
+        <KpiCard label="Saldo do Período" icon="ri-scales-line" value={formatCurrency(saldo)} valueTone={saldo >= 0 ? 'text-amber-700' : 'text-red-600'} atual={saldo} semVariacao />
       </div>
 
           {/* Gráfico de Saldo / Entradas vs Saídas */}
           {chartData.length > 1 && (
-            <div className="bg-white rounded-xl border border-zinc-200 p-5">
-              <div className="flex items-center justify-between mb-4">
+            <div className="bg-white rounded-2xl border border-zinc-200 p-5">
+              <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
                 <div>
-                  <h3 className="text-sm font-semibold text-zinc-800">
+                  <h3 className="text-sm font-bold text-zinc-800">
                     {chartMode === 'saldo' ? 'Saldo Acumulado' : 'Entradas vs Saídas por Dia'}
                   </h3>
-                  <p className="text-xs text-zinc-400 mt-0.5">
+                  <p className="text-xs text-zinc-400">
                     {chartMode === 'saldo' ? 'Evolução do saldo ao longo do período' : 'Comparativo diário de movimentações'}
                   </p>
                 </div>
-                <div className="flex items-center gap-1 bg-zinc-100 rounded-lg p-0.5">
-                  <button
-                    onClick={() => setChartMode('saldo')}
-                    className={`px-3 py-1.5 text-xs font-semibold rounded-md cursor-pointer transition-colors whitespace-nowrap ${chartMode === 'saldo' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'}`}
-                  >
-                    <i className="ri-line-chart-line mr-1" />Saldo
-                  </button>
-                  <button
-                    onClick={() => setChartMode('barras')}
-                    className={`px-3 py-1.5 text-xs font-semibold rounded-md cursor-pointer transition-colors whitespace-nowrap ${chartMode === 'barras' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'}`}
-                  >
-                    <i className="ri-bar-chart-grouped-line mr-1" />Comparativo
-                  </button>
-                </div>
+                <Segmented
+                  value={chartMode}
+                  onChange={setChartMode}
+                  options={[
+                    { id: 'saldo', label: 'Saldo', icon: 'ri-line-chart-line' },
+                    { id: 'barras', label: 'Comparativo', icon: 'ri-bar-chart-grouped-line' },
+                  ]}
+                />
               </div>
 
               <ResponsiveContainer width="100%" height={180}>
@@ -326,7 +296,7 @@ export default function FluxoCaixaTab() {
                       </linearGradient>
                     </defs>
                     <CartesianGrid strokeDasharray="3 3" stroke="#f4f4f5" vertical={false} />
-                    <XAxis dataKey="dia" tick={{ fontSize: 10, fill: '#a1a1aa' }} axisLine={false} tickLine={false} interval={Math.max(0, Math.floor(chartData.length / 8) - 1)} />
+                    <XAxis dataKey="dia" tick={{ fontSize: 11, fill: '#71717a' }} axisLine={false} tickLine={false} interval={Math.max(0, Math.floor(chartData.length / 8) - 1)} />
                     <YAxis tick={{ fontSize: 10, fill: '#a1a1aa' }} axisLine={false} tickLine={false} width={52}
                       tickFormatter={v => v >= 1000 ? `R$${(v/1000).toFixed(0)}k` : `R$${v}`} />
                     <Tooltip
@@ -347,12 +317,13 @@ export default function FluxoCaixaTab() {
                 ) : (
                   <BarChart data={chartData} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#f4f4f5" vertical={false} />
-                    <XAxis dataKey="dia" tick={{ fontSize: 10, fill: '#a1a1aa' }} axisLine={false} tickLine={false} interval={Math.max(0, Math.floor(chartData.length / 8) - 1)} />
+                    <XAxis dataKey="dia" tick={{ fontSize: 11, fill: '#71717a' }} axisLine={false} tickLine={false} interval={Math.max(0, Math.floor(chartData.length / 8) - 1)} />
                     <YAxis tick={{ fontSize: 10, fill: '#a1a1aa' }} axisLine={false} tickLine={false} width={52}
                       tickFormatter={v => v >= 1000 ? `R$${(v/1000).toFixed(0)}k` : `R$${v}`} />
                     <Tooltip
                       formatter={(v: number, name: string) => [formatCurrency(v), name === 'entrada' ? 'Entradas' : 'Saídas']}
                       contentStyle={{ borderRadius: 8, border: '1px solid #e4e4e7', fontSize: 11 }}
+                      cursor={{ fill: '#fafafa' }}
                     />
                     <Bar dataKey="entrada" name="entrada" fill="#10b981" radius={[3, 3, 0, 0]} maxBarSize={24} />
                     <Bar dataKey="saida" name="saida" fill="#f87171" radius={[3, 3, 0, 0]} maxBarSize={24} />
@@ -363,15 +334,15 @@ export default function FluxoCaixaTab() {
           )}
 
           {/* Toolbar */}
-          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3 flex-wrap">
+          <div className="flex flex-wrap items-center gap-2 lg:gap-3">
             {/* Search */}
-            <div className="relative flex-1 min-w-0">
+            <div className="relative flex-1 min-w-[200px]">
               <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 text-sm" />
               <input
                 value={search}
                 onChange={e => { setSearch(e.target.value); setPage(1); }}
                 placeholder="Buscar por descrição ou categoria..."
-                className="w-full pl-9 pr-3 py-2 border border-zinc-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white"
+                className="w-full h-10 pl-9 pr-8 border border-zinc-200 rounded-xl shadow-sm text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white"
               />
               {search && (
                 <button onClick={() => setSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 cursor-pointer">
@@ -381,19 +352,22 @@ export default function FluxoCaixaTab() {
             </div>
 
             {/* Type quick filter */}
-            <div className="flex bg-white border border-zinc-200 rounded-lg overflow-hidden">
-              {[['all', 'Todos'], ['income', 'Entradas'], ['expense', 'Saídas']].map(([v, l]) => (
-                <button key={v} onClick={() => { setFilterType(v as 'all' | 'income' | 'expense'); setPage(1); }}
-                  className={`px-3 py-2 text-xs font-semibold cursor-pointer transition-colors whitespace-nowrap ${filterType === v ? 'bg-amber-500 text-white' : 'text-zinc-600 hover:bg-zinc-50'}`}>
-                  {l}
-                </button>
-              ))}
+            <div className="overflow-x-auto max-w-full">
+              <Segmented
+                value={filterType}
+                onChange={v => { setFilterType(v); setPage(1); }}
+                options={[
+                  { id: 'all', label: 'Todos', icon: 'ri-list-check' },
+                  { id: 'income', label: 'Entradas', icon: 'ri-arrow-down-circle-line' },
+                  { id: 'expense', label: 'Saídas', icon: 'ri-arrow-up-circle-line' },
+                ]}
+              />
             </div>
 
             {/* Advanced filters */}
             <button
               onClick={() => setShowFilters(f => !f)}
-              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold cursor-pointer border transition-colors whitespace-nowrap ${showFilters || activeFiltersCount > 0 ? 'bg-amber-50 border-amber-300 text-amber-700' : 'bg-white border-zinc-200 text-zinc-600 hover:bg-zinc-50'}`}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold cursor-pointer border transition-colors whitespace-nowrap shadow-sm ${showFilters || activeFiltersCount > 0 ? 'bg-amber-50 border-amber-300 text-amber-700' : 'bg-white border-zinc-200 text-zinc-600 hover:bg-zinc-50'}`}
             >
               <i className="ri-filter-3-line" />
               Filtros {activeFiltersCount > 0 && <span className="bg-amber-500 text-white rounded-full w-4 h-4 flex items-center justify-center text-xs">{activeFiltersCount}</span>}
@@ -402,7 +376,7 @@ export default function FluxoCaixaTab() {
             {/* Sort direction */}
             <button
               onClick={() => setSortDir(d => d === 'desc' ? 'asc' : 'desc')}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold cursor-pointer border border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50 whitespace-nowrap"
+              className="flex items-center gap-1.5 px-3 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 rounded-xl text-xs font-semibold text-zinc-600 cursor-pointer transition-colors whitespace-nowrap shadow-sm"
               title={sortDir === 'desc' ? 'Mais recentes primeiro' : 'Mais antigos primeiro'}
             >
               <i className={sortDir === 'desc' ? 'ri-sort-desc' : 'ri-sort-asc'} />
@@ -410,20 +384,20 @@ export default function FluxoCaixaTab() {
             </button>
 
             <button onClick={handleExport}
-              className="flex items-center gap-2 border border-zinc-200 bg-white hover:bg-zinc-50 text-zinc-700 px-3 py-2 rounded-lg text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors">
+              className="flex items-center gap-1.5 px-3 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 rounded-xl text-xs font-semibold text-zinc-600 cursor-pointer transition-colors whitespace-nowrap shadow-sm">
               <i className="ri-download-line" /> Exportar CSV
             </button>
 
             <button onClick={() => setShowModal(true)}
-              className="flex items-center gap-2 bg-amber-500 hover:bg-amber-600 text-white px-3 md:px-4 py-2 rounded-lg text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors">
+              className="flex items-center gap-1.5 bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-xl text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors shadow-sm">
               <i className="ri-add-line" /> <span className="hidden sm:inline">Nova Movimentação</span><span className="sm:hidden">Nova</span>
             </button>
           </div>
 
           {/* Advanced filters panel */}
           {showFilters && (
-            <div className="bg-white border border-zinc-200 rounded-xl p-4 flex items-end gap-4">
-              <div className="flex-1">
+            <div className="bg-white border border-zinc-200 rounded-2xl p-4 flex flex-wrap items-end gap-4">
+              <div className="flex-1 min-w-[180px]">
                 <label className="text-xs font-semibold text-zinc-600 block mb-1">Categoria</label>
                 <select
                   value={filterCategory}
@@ -435,7 +409,7 @@ export default function FluxoCaixaTab() {
                 </select>
               </div>
               {activeFiltersCount > 0 && (
-                <button onClick={clearFilters} className="px-3 py-2 text-xs text-red-500 hover:bg-red-50 rounded-lg cursor-pointer whitespace-nowrap border border-red-200">
+                <button onClick={clearFilters} className="px-3 py-2 text-xs text-red-500 hover:bg-red-50 rounded-xl cursor-pointer whitespace-nowrap border border-red-200">
                   Limpar filtros
                 </button>
               )}
@@ -451,37 +425,37 @@ export default function FluxoCaixaTab() {
           )}
 
           {/* Lista */}
-          <div className="bg-white rounded-xl border border-zinc-200 overflow-hidden">
-            <div className="px-5 py-3 border-b border-zinc-100 flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-zinc-800">Movimentações</h3>
-              <span className="text-xs text-zinc-400">{filtered.length} registros</span>
+          <div className="bg-white rounded-2xl border border-zinc-200 overflow-hidden">
+            <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-100 gap-3 flex-wrap">
+              <div><h3 className="text-sm font-bold text-zinc-800">Movimentações</h3><p className="text-xs text-zinc-400">Entradas e saídas do período</p></div>
+              <span className="text-[11px] text-zinc-400">{filtered.length} registros</span>
             </div>
             {loading ? (
-              <div className="p-10 text-center text-zinc-400 text-sm">Carregando...</div>
+              <div className="py-14 text-center text-zinc-400 text-sm">Carregando...</div>
             ) : paginated.length === 0 ? (
-              <div className="p-10 text-center">
-                <i className="ri-file-search-line text-3xl text-zinc-300 block mb-2" />
+              <div className="py-14 text-center">
+                <i className="ri-file-search-line text-4xl text-zinc-200 block mb-2" />
                 <p className="text-zinc-400 text-sm">Nenhuma movimentação encontrada</p>
                 {(search || activeFiltersCount > 0) && (
                   <button onClick={clearFilters} className="text-xs text-amber-600 mt-1 cursor-pointer hover:underline">Limpar filtros</button>
                 )}
               </div>
             ) : (
-              <div className="divide-y divide-zinc-50">
+              <div className="divide-y divide-zinc-100/80">
                 {paginated.map(e => (
                   <div key={e.id} className="flex items-center gap-4 px-5 py-3 hover:bg-zinc-50 transition-colors">
-                    <div className={`w-9 h-9 flex items-center justify-center rounded-xl flex-shrink-0 ${e.type === 'income' ? 'bg-green-100' : 'bg-red-100'}`}>
-                      <i className={`text-sm ${e.type === 'income' ? 'ri-arrow-down-line text-green-600' : 'ri-arrow-up-line text-red-500'}`} />
+                    <div className={`w-9 h-9 flex items-center justify-center rounded-xl flex-shrink-0 ${e.type === 'income' ? 'bg-emerald-50' : 'bg-red-50'}`}>
+                      <i className={`text-sm ${e.type === 'income' ? 'ri-arrow-down-line text-emerald-600' : 'ri-arrow-up-line text-red-500'}`} />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-zinc-800 truncate">{e.description}</p>
-                      <div className="flex items-center gap-2 mt-0.5">
+                      <p className="text-sm font-medium text-zinc-800 truncate" title={e.description}>{e.description}</p>
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5">
                         <span className="text-xs text-zinc-400">{new Date(e.date + 'T00:00:00').toLocaleDateString('pt-BR')}</span>
                         <span className="text-zinc-300">·</span>
-                        <span className="text-xs bg-zinc-100 text-zinc-500 px-1.5 py-0.5 rounded-full">{e.category}</span>
+                        <span className="text-[11px] font-semibold bg-zinc-100 text-zinc-600 px-2 py-0.5 rounded-md">{e.category}</span>
                       </div>
                     </div>
-                    <p className={`text-sm font-bold whitespace-nowrap ${e.type === 'income' ? 'text-green-600' : 'text-red-500'}`}>
+                    <p className={`text-sm font-bold tabular-nums whitespace-nowrap ${e.type === 'income' ? 'text-emerald-700' : 'text-red-600'}`}>
                       {e.type === 'income' ? '+' : '-'}{formatCurrency(e.amount)}
                     </p>
                   </div>
@@ -491,7 +465,7 @@ export default function FluxoCaixaTab() {
 
             {/* Pagination */}
             {totalPages > 1 && (
-              <div className="flex items-center justify-between px-4 py-3 border-t border-zinc-100 bg-zinc-50">
+              <div className="flex items-center justify-between px-4 py-3 border-t-2 border-zinc-200 bg-zinc-50 gap-2 flex-wrap">
                 <p className="text-xs text-zinc-500">
                   Mostrando {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, filtered.length)} de {filtered.length}
                 </p>

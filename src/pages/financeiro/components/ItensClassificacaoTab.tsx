@@ -429,7 +429,7 @@ export default function ItensClassificacaoTab() {
   };
 
   return (
-    <div className="p-4 md:p-6 space-y-4">
+    <div className="p-4 md:p-6 space-y-5 max-w-[1400px] mx-auto">
       <div>
         <h2 className="text-sm font-bold text-zinc-800">Classificação de itens</h2>
         <p className="text-xs text-zinc-500 mt-0.5 max-w-3xl">
@@ -440,7 +440,7 @@ export default function ItensClassificacaoTab() {
         </p>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
         {([
           ['pendentes', 'Pendentes', resumo.pendentes, 'text-amber-600', 'sem classificação (contam como CMV)'],
           ['cmv', 'CMV', resumo.cmv, 'text-zinc-700', resumo.cmvSem > 0 ? `${resumo.cmvSem} sem categoria` : 'custo da mercadoria'],
@@ -448,42 +448,52 @@ export default function ItensClassificacaoTab() {
           ['despesa', 'Despesa', resumo.despesa, 'text-violet-600', 'sai do CMV na DRE'],
         ] as const).map(([id, label, n, cor, sub]) => (
           <button key={id} onClick={() => setFiltro(id)}
-            className={`text-left bg-white rounded-xl border p-4 cursor-pointer ${filtro === id ? 'border-amber-400' : 'border-zinc-100 hover:border-zinc-200'}`}>
-            <p className="text-[11px] font-semibold text-zinc-400 uppercase">{label}</p>
-            <p className={`text-xl font-bold mt-1 ${cor}`}>{n}</p>
-            <p className="text-xs text-zinc-500">{sub}</p>
+            className={`text-left rounded-2xl border p-4 flex flex-col gap-2 cursor-pointer transition-colors bg-white ${filtro === id ? 'border-amber-400 ring-1 ring-amber-200' : 'border-zinc-200 hover:border-zinc-300'}`}>
+            <span className="flex items-center gap-2 min-w-0">
+              <span className="w-7 h-7 rounded-lg bg-zinc-100 text-zinc-500 flex items-center justify-center flex-shrink-0">
+                <i className={`${ICONE_RESUMO[id]} text-sm`} />
+              </span>
+              <span className="text-xs font-semibold text-zinc-500 truncate">{label}</span>
+            </span>
+            <span className={`text-2xl font-bold tabular-nums tracking-tight ${cor}`}>{n}</span>
+            <span className="text-xs text-zinc-400">{sub}</span>
           </button>
         ))}
       </div>
 
       {resumo.foraEstoque > 0 && (
-        <div className="bg-orange-50 border border-orange-200 rounded-xl p-3 flex flex-wrap items-center gap-2 text-xs text-orange-800">
+        <div className="bg-orange-50 border border-orange-200 rounded-xl px-4 py-3 flex flex-wrap items-center gap-2 text-xs text-orange-800">
           <i className="ri-error-warning-line text-base" />
           <span className="flex-1 min-w-[200px]">
             <b>{resumo.foraEstoque} produto(s) ligado(s) a insumo</b> têm recebimentos que não entraram no estoque (chegaram antes do vínculo ou foram confirmados sem ele).
           </span>
-          <button onClick={() => setFiltro('fora_estoque')} className="px-3 py-1.5 rounded-lg bg-orange-600 text-white font-semibold hover:bg-orange-700 cursor-pointer">Ver e escolher</button>
+          <button onClick={() => setFiltro('fora_estoque')} className="px-3 py-1.5 rounded-xl bg-orange-600 text-white font-semibold hover:bg-orange-700 cursor-pointer shadow-sm">Ver e escolher</button>
         </div>
       )}
 
-      <div className="bg-white rounded-xl border border-zinc-100 p-3 flex flex-wrap items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2 lg:gap-3">
+        <div className="flex gap-1 overflow-x-auto bg-zinc-100/80 rounded-xl p-1 w-full sm:w-fit max-w-full">
         {filtrosLista.map(([id, label]) => (
           <button key={id} onClick={() => setFiltro(id)}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-lg cursor-pointer ${filtro === id ? 'bg-zinc-900 text-white' : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'}`}>
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap cursor-pointer transition-colors ${filtro === id ? 'bg-white text-amber-600 shadow-sm' : 'text-zinc-500 hover:text-zinc-800'}`}>
             {label}{id === 'cmv_sem' && resumo.cmvSem > 0 ? ` (${resumo.cmvSem})` : ''}{id === 'sem_insumo' && resumo.semInsumo > 0 ? ` (${resumo.semInsumo})` : ''}{id === 'fora_estoque' ? ` (${resumo.foraEstoque})` : ''}{id === 'servicos' && resumo.servicos > 0 ? ` (${resumo.servicos})` : ''}
           </button>
         ))}
+        </div>
         <select value={fornecedor} onChange={(e) => setFornecedor(e.target.value)}
-          className="text-xs border border-zinc-200 rounded-lg px-2 py-1.5 max-w-[220px] focus:outline-none focus:border-amber-400">
+          className="h-10 text-xs font-semibold text-zinc-600 border border-zinc-200 bg-white shadow-sm rounded-xl px-3 max-w-[220px] focus:outline-none focus:border-amber-400">
           <option value="">Todos os fornecedores</option>
           {fornecedores.map((f) => <option key={f} value={f}>{f}</option>)}
         </select>
-        <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Produto, código, NCM, insumo ou categoria"
-          className="flex-1 min-w-[180px] text-sm border border-zinc-200 rounded-lg px-3 py-1.5 focus:outline-none focus:border-amber-400" />
+        <div className="relative flex-1 min-w-[180px]">
+          <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
+          <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Produto, código, NCM, insumo ou categoria"
+            className="w-full h-10 rounded-xl border border-zinc-200 shadow-sm pl-9 pr-3 text-sm focus:outline-none focus:border-amber-400" />
+        </div>
       </div>
 
       {podeClassificar && sel.size > 0 && (
-        <div className="sticky top-0 z-10 bg-zinc-900 text-white rounded-xl p-3 flex flex-wrap items-center gap-2 text-xs">
+        <div className="sticky top-0 z-10 bg-zinc-900 text-white rounded-2xl px-4 py-3 flex flex-wrap items-center gap-2 text-xs">
           <span className="font-semibold">{sel.size} selecionado(s)</span>
           <CategoriaCombobox value={mercLote} options={mercOptions} onChange={setMercLote}
             placeholder="Categoria do CMV…"
@@ -506,20 +516,23 @@ export default function ItensClassificacaoTab() {
         </div>
       )}
 
-      <div className="bg-white rounded-xl border border-zinc-100 overflow-hidden">
+      <div className="bg-white rounded-2xl border border-zinc-200 overflow-hidden">
         {loading ? (
-          <div className="p-8 text-center text-sm text-zinc-400">Carregando…</div>
+          <div className="py-14 text-center">
+            <i className="ri-loader-4-line text-4xl text-zinc-200 animate-spin" />
+            <p className="text-zinc-400 text-sm mt-2">Carregando…</p>
+          </div>
         ) : filtrados.length === 0 ? (
-          <div className="p-10 text-center">
-            <i className="ri-price-tag-3-line text-3xl text-zinc-300" />
-            <p className="text-sm text-zinc-500 mt-2">{rows.length === 0 ? 'Nenhum item ainda: eles aparecem quando chegam notas de entrada ou compras.' : filtro === 'pendentes' ? 'Nenhum item pendente. Tudo classificado.' : filtro === 'cmv_sem' ? 'Todo item de CMV já tem categoria.' : filtro === 'sem_insumo' ? 'Todo produto de CMV já está ligado a um insumo.' : filtro === 'fora_estoque' ? 'Nenhum recebimento pendente de entrada no estoque.' : 'Nada neste filtro.'}</p>
+          <div className="py-14 text-center">
+            <i className="ri-price-tag-3-line text-4xl text-zinc-200" />
+            <p className="text-zinc-400 text-sm mt-2">{rows.length === 0 ? 'Nenhum item ainda: eles aparecem quando chegam notas de entrada ou compras.' : filtro === 'pendentes' ? 'Nenhum item pendente. Tudo classificado.' : filtro === 'cmv_sem' ? 'Todo item de CMV já tem categoria.' : filtro === 'sem_insumo' ? 'Todo produto de CMV já está ligado a um insumo.' : filtro === 'fora_estoque' ? 'Nenhum recebimento pendente de entrada no estoque.' : 'Nada neste filtro.'}</p>
           </div>
         ) : (
           <>
           {/* Celular: um cartão por item — a tabela de 6 colunas não cabe em 375px. */}
-          <ul className="md:hidden p-2 space-y-2 bg-zinc-50/60">
+          <ul className="md:hidden p-2 space-y-2">
             {filtrados.map((r) => (
-              <li key={r.id} className={`rounded-xl border px-3 py-3 ${sel.has(r.id) ? 'border-amber-300 bg-amber-50/60' : 'border-zinc-200 bg-white'}`}>
+              <li key={r.id} className={`rounded-2xl border px-3 py-3 ${sel.has(r.id) ? 'border-amber-300 bg-amber-50/60' : 'border-zinc-200 bg-white'}`}>
                 <div className="flex items-start gap-2">
                   {podeClassificar && (
                     <input type="checkbox" className="mt-1" checked={sel.has(r.id)} onChange={() => toggle(r.id)} />
@@ -542,47 +555,47 @@ export default function ItensClassificacaoTab() {
           <div className="hidden md:block overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="text-[11px] uppercase text-zinc-400 border-b border-zinc-100">
+                <tr className="border-b border-zinc-200">
                   {podeClassificar && (
-                    <th className="px-3 py-2.5 w-8">
+                    <th className="pl-5 pr-2 py-2.5 w-8">
                       <input type="checkbox" checked={todosMarcados}
                         onChange={() => setSel(todosMarcados ? new Set() : new Set(filtrados.map((r) => r.id)))} />
                     </th>
                   )}
-                  <th className="text-left px-3 py-2.5 font-semibold">Fornecedor</th>
-                  <th className="text-left px-3 py-2.5 font-semibold">Produto</th>
-                  <th className="text-left px-3 py-2.5 font-semibold">Insumo do estoque</th>
-                  <th className="text-right px-3 py-2.5 font-semibold">Última compra</th>
-                  <th className="text-left px-3 py-2.5 font-semibold">Classificação</th>
+                  <th className="text-left px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Fornecedor</th>
+                  <th className="text-left px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Produto</th>
+                  <th className="text-left px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Insumo do estoque</th>
+                  <th className="text-right px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Última compra</th>
+                  <th className="text-left px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Classificação</th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody className="divide-y divide-zinc-100/80">
                 {filtrados.map((r) => {
                   const sugCat = r.suggested_dre_category_id ? catNome(r.suggested_dre_category_id) : null;
                   const catCmv = cmvCat(r);
                   return (
-                    <tr key={r.id} className={`border-b border-zinc-50 hover:bg-zinc-50/60 ${sel.has(r.id) ? 'bg-amber-50/50' : ''}`}>
+                    <tr key={r.id} className={`hover:bg-zinc-50 ${sel.has(r.id) ? 'bg-amber-50/50' : ''}`}>
                       {podeClassificar && (
-                        <td className="px-3 py-2.5"><input type="checkbox" checked={sel.has(r.id)} onChange={() => toggle(r.id)} /></td>
+                        <td className="pl-5 pr-2 py-2.5"><input type="checkbox" checked={sel.has(r.id)} onChange={() => toggle(r.id)} /></td>
                       )}
-                      <td className="px-3 py-2.5 min-w-[160px]">
+                      <td className="px-4 py-2.5 min-w-[160px]">
                         <p className="font-medium text-zinc-800 truncate max-w-[200px]" title={r.supplier_name ?? ''}>{r.supplier_name ?? '—'}</p>
                         <p className="text-[10px] text-zinc-400 font-mono">{docFmt(r.supplier_key)}</p>
                       </td>
-                      <td className="px-3 py-2.5 min-w-[240px]">
+                      <td className="px-4 py-2.5 min-w-[240px]">
                         <p className="text-zinc-800 truncate max-w-[340px]" title={r.description}>{r.description || '—'}</p>
                         <p className="text-[10px] text-zinc-400">
                           {r.supplier_code ? `cód. ${r.supplier_code}` : 'sem código'}{r.ncm ? ` · NCM ${r.ncm}` : ''}{r.unit_label ? ` · ${r.unit_label}` : ''}
                         </p>
                       </td>
-                      <td className="px-3 py-2.5 text-xs text-zinc-600 whitespace-nowrap min-w-[200px]">
+                      <td className="px-4 py-2.5 text-xs text-zinc-600 whitespace-nowrap min-w-[200px]">
                         {celulaInsumo(r)}
                       </td>
-                      <td className="px-3 py-2.5 text-right text-xs text-zinc-600 whitespace-nowrap">
+                      <td className="px-4 py-2.5 text-right tabular-nums text-xs text-zinc-600 whitespace-nowrap">
                         <p>{dataBR(r.last_seen_at)}</p>
                         <p className="text-zinc-400">{r.last_unit_price != null ? brl(r.last_unit_price) : ''}</p>
                       </td>
-                      <td className="px-3 py-2.5 min-w-[380px]">
+                      <td className="px-4 py-2.5 min-w-[380px]">
                         {classificacaoDoItem(r)}
                       </td>
                     </tr>
@@ -622,6 +635,13 @@ export default function ItensClassificacaoTab() {
     </div>
   );
 }
+
+const ICONE_RESUMO: Record<string, string> = {
+  pendentes: 'ri-time-line',
+  cmv: 'ri-shopping-basket-2-line',
+  estoque: 'ri-links-line',
+  despesa: 'ri-bill-line',
+};
 
 // Item sem insumo que já chegou: o estoque não mudou nesses recebimentos
 function ForaAviso({ pend }: { pend: Fora }) {

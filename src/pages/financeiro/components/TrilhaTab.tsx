@@ -8,13 +8,13 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency } from '@/lib/formatters';
+import { MonthNav } from './dreUi';
 import LinhaExtratoModal from './conciliacao/LinhaExtratoModal';
 import {
   montarTrilha, diaBR, NOMES_ETAPA,
   type CasoTrilha, type EtapaId, type EstadoEtapa, type EtapaTrilha, type TrilhaDados, type TipoCaso, type Atalho, type TrExtrato,
 } from '@/lib/trilhaDespesas';
 
-const MESES = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
 const hojeBR = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
 const limitesMes = (ano: number, mes: number) => {
   const de = `${ano}-${String(mes + 1).padStart(2, '0')}-01`;
@@ -106,31 +106,31 @@ export default function TrilhaTab() {
       && (!q || `${c.titulo} ${c.subtitulo} ${c.notas.map((n) => n.numero).join(' ')} ${c.compra?.invoice_number ?? ''} ${c.valor.toFixed(2).replace('.', ',')}`.toLowerCase().includes(q)));
   }, [casos, situacao, tipo, etapaFiltro, busca]);
 
-  const mudarMes = (d: number) => {
-    const m = mes + d;
-    if (m < 0) { setMes(11); setAno(ano - 1); } else if (m > 11) { setMes(0); setAno(ano + 1); } else setMes(m);
-  };
+  const mesStr = `${ano}-${String(mes + 1).padStart(2, '0')}`;
+  const mesAtualStr = hoje.slice(0, 7);
+  const trocarMes = (m: string) => { setAno(Number(m.slice(0, 4))); setMes(Number(m.slice(5, 7)) - 1); };
 
   const ir = (a: Atalho) => a.extrato ? setLinha(a.extrato) : navigate('/financeiro?tab=' + a.tab + (a.param && a.valor ? '&' + a.param + '=' + encodeURIComponent(a.valor) : ''));
 
   return (
-    <div className="p-4 md:p-6 space-y-4 max-w-6xl">
+    <div className="p-4 md:p-6 space-y-5 max-w-[1400px] mx-auto">
       {/* Cabeçalho */}
       <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-3">
         <div>
-          <h2 className="text-base font-bold text-zinc-800 flex items-center gap-2"><i className="ri-route-line text-amber-500" />Trilha das despesas</h2>
+          <h2 className="text-lg font-bold text-zinc-900 flex items-center gap-2"><i className="ri-route-line text-amber-500" />Trilha das despesas</h2>
           <p className="text-xs text-zinc-500 mt-0.5">Cada compra e despesa do começo ao fim — da nota até a saída no banco. Verde = feito, amarelo = falta fazer, vermelho = precisa de atenção.</p>
         </div>
-        <div className="flex items-center gap-1 self-start md:self-auto">
-          <button onClick={() => mudarMes(-1)} className="w-8 h-8 rounded-lg border border-zinc-200 bg-white hover:bg-zinc-50 cursor-pointer" aria-label="Mês anterior"><i className="ri-arrow-left-s-line" /></button>
-          <span className="px-3 text-sm font-semibold text-zinc-700 min-w-[140px] text-center">{MESES[mes]} {ano}</span>
-          <button onClick={() => mudarMes(1)} className="w-8 h-8 rounded-lg border border-zinc-200 bg-white hover:bg-zinc-50 cursor-pointer" aria-label="Próximo mês"><i className="ri-arrow-right-s-line" /></button>
-          <button onClick={() => void carregar()} className="w-8 h-8 rounded-lg border border-zinc-200 bg-white hover:bg-zinc-50 cursor-pointer ml-1" aria-label="Atualizar" title="Atualizar"><i className={`ri-refresh-line ${carregando ? 'animate-spin' : ''}`} /></button>
+        <div className="flex flex-wrap items-center gap-2 self-start md:self-auto">
+          <MonthNav mes={mesStr} onChange={trocarMes} canGoNext={mesStr < mesAtualStr} />
+          {mesStr !== mesAtualStr && (
+            <button onClick={() => trocarMes(mesAtualStr)} className="text-xs font-semibold px-3 py-2 bg-amber-50 text-amber-700 border border-amber-200 rounded-xl hover:bg-amber-100 cursor-pointer whitespace-nowrap">Mês atual</button>
+          )}
+          <button onClick={() => void carregar()} className="flex items-center gap-1.5 px-3 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 rounded-xl text-xs font-semibold text-zinc-600 cursor-pointer transition-colors whitespace-nowrap shadow-sm" aria-label="Atualizar" title="Atualizar"><i className={`ri-refresh-line ${carregando ? 'animate-spin' : ''}`} />Atualizar</button>
         </div>
       </div>
 
       {/* Resumo por situação */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
         {([
           { id: 'todas', label: 'Todos os casos', icone: 'ri-stack-line', cor: 'text-zinc-700', fundo: 'border-zinc-300' },
           { id: 'atencao', label: 'Precisam de atenção', icone: 'ri-error-warning-line', cor: 'text-red-600', fundo: 'border-red-300' },
@@ -138,17 +138,20 @@ export default function TrilhaTab() {
           { id: 'ok', label: 'Completos', icone: 'ri-checkbox-circle-line', cor: 'text-emerald-600', fundo: 'border-emerald-300' },
         ] as const).map((s) => (
           <button key={s.id} onClick={() => setSituacao(s.id)}
-            className={`text-left rounded-xl border bg-white px-3 py-2.5 cursor-pointer transition-shadow hover:shadow-sm ${situacao === s.id ? s.fundo + ' ring-2 ring-offset-0 ring-amber-100' : 'border-zinc-200'}`}>
-            <p className={`text-xs font-semibold flex items-center gap-1 ${s.cor}`}><i className={s.icone} />{s.label}</p>
-            <p className="text-2xl font-bold text-zinc-800 mt-0.5">{carregando && !dados ? '…' : contagem[s.id]}</p>
+            className={`text-left rounded-2xl border bg-white p-4 flex flex-col gap-2 cursor-pointer transition-shadow hover:shadow-sm ${situacao === s.id ? s.fundo + ' ring-2 ring-offset-0 ring-amber-100' : 'border-zinc-200'}`}>
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="w-7 h-7 rounded-lg bg-zinc-100 flex items-center justify-center flex-shrink-0"><i className={`${s.icone} text-sm ${s.cor}`} /></span>
+              <span className="text-xs font-semibold text-zinc-500 truncate">{s.label}</span>
+            </div>
+            <p className="text-2xl font-bold tabular-nums tracking-tight text-zinc-900">{carregando && !dados ? '…' : contagem[s.id]}</p>
           </button>
         ))}
       </div>
 
       {/* Onde trava */}
       {gargalos.length > 0 && (
-        <div className="rounded-xl border border-zinc-200 bg-white px-3 py-2.5">
-          <p className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wide mb-1.5">Onde a trilha está parada</p>
+        <div className="rounded-2xl border border-zinc-200 bg-white px-5 py-3">
+          <p className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wide mb-2">Onde a trilha está parada</p>
           <div className="flex flex-wrap gap-1.5">
             {gargalos.map((g) => (
               <button key={g.id} onClick={() => setEtapaFiltro(etapaFiltro === g.id ? null : g.id)}
@@ -163,27 +166,27 @@ export default function TrilhaTab() {
       )}
 
       {/* Filtros */}
-      <div className="flex flex-col md:flex-row gap-2">
-        <div className="flex gap-1 overflow-x-auto scrollbar-hide -mx-4 px-4 md:mx-0 md:px-0 md:flex-wrap">
+      <div className="flex flex-col md:flex-row md:items-center gap-2">
+        <div className="flex gap-1 overflow-x-auto bg-zinc-100/80 rounded-xl p-1 w-full sm:w-fit max-w-full">
           {TIPOS.map((t) => (
             <button key={t.id} onClick={() => setTipo(t.id)}
-              className={`text-xs px-2.5 py-1.5 rounded-lg whitespace-nowrap cursor-pointer border ${tipo === t.id ? 'bg-amber-50 border-amber-300 text-amber-700 font-semibold' : 'bg-white border-zinc-200 text-zinc-600 hover:bg-zinc-50'}`}>
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap cursor-pointer transition-colors ${tipo === t.id ? 'bg-white text-amber-600 shadow-sm' : 'text-zinc-500 hover:text-zinc-800'}`}>
               {t.label}
             </button>
           ))}
         </div>
-        <div className="relative md:ml-auto md:w-64">
-          <i className="ri-search-line absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400 text-sm" />
+        <div className="relative md:ml-auto md:w-72">
+          <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 text-sm" />
           <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Fornecedor, nº da nota, valor…"
-            className="w-full pl-8 pr-3 py-1.5 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:border-amber-400" />
+            className="w-full h-10 pl-9 pr-3 text-sm border border-zinc-200 rounded-xl shadow-sm focus:outline-none focus:border-amber-400" />
         </div>
       </div>
 
       {/* Lista */}
-      {erro && <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">Não foi possível carregar a trilha: {erro}</div>}
-      {carregando && !dados && <div className="rounded-xl border border-zinc-200 bg-white p-6 text-center text-sm text-zinc-500">Montando a trilha…</div>}
+      {erro && <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-xs text-red-800">Não foi possível carregar a trilha: {erro}</div>}
+      {carregando && !dados && <div className="rounded-2xl border border-zinc-200 bg-white py-14 text-center text-sm text-zinc-400">Montando a trilha…</div>}
       {!carregando && !erro && filtrados.length === 0 && (
-        <div className="rounded-xl border border-zinc-200 bg-white p-6 text-center text-sm text-zinc-500">
+        <div className="rounded-2xl border border-zinc-200 bg-white py-14 text-center text-sm text-zinc-400">
           {casos.length === 0 ? 'Nenhuma compra ou despesa neste mês.' : 'Nenhum caso com esses filtros.'}
         </div>
       )}
@@ -194,7 +197,7 @@ export default function TrilhaTab() {
         ))}
       </div>
       {filtrados.length > limite && (
-        <button onClick={() => setLimite(limite + 60)} className="w-full py-2 text-sm text-zinc-600 border border-zinc-200 rounded-xl bg-white hover:bg-zinc-50 cursor-pointer">
+        <button onClick={() => setLimite(limite + 60)} className="w-full py-2.5 text-xs font-semibold text-zinc-600 border border-zinc-200 rounded-xl bg-white hover:bg-zinc-50 cursor-pointer shadow-sm">
           Mostrar mais ({filtrados.length - limite} restantes)
         </button>
       )}
@@ -216,12 +219,12 @@ const BORDA: Record<CasoTrilha['situacao'], string> = { atencao: 'border-l-red-5
 function CasoCard({ caso, aberto, onToggle, ir }: { caso: CasoTrilha; aberto: boolean; onToggle: () => void; ir: (a: Atalho) => void }) {
   const tp = ROTULO_TIPO[caso.tipo];
   return (
-    <div className={`rounded-xl border border-zinc-200 border-l-4 ${BORDA[caso.situacao]} bg-white overflow-hidden`}>
+    <div className={`rounded-2xl border border-zinc-200 border-l-4 ${BORDA[caso.situacao]} bg-white overflow-hidden`}>
       <button onClick={onToggle} className="w-full text-left px-3 md:px-4 py-3 cursor-pointer hover:bg-zinc-50/60">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex items-center gap-1.5 flex-wrap">
-              <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded ${tp.cls}`}>{tp.t}</span>
+              <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-md ${tp.cls}`}>{tp.t}</span>
               <span className="text-sm font-semibold text-zinc-800 truncate">{caso.titulo}</span>
             </div>
             <p className="text-xs text-zinc-500 truncate mt-0.5">{diaBR(caso.data)} · {caso.subtitulo}</p>

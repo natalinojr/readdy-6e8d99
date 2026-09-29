@@ -15,6 +15,7 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatCurrency, lerValorBR } from '@/lib/formatters';
+import { KpiCard, MonthNav } from './dreUi';
 
 export interface Prestador {
   id: string; name: string; cpf: string | null; cnpj: string | null; role: string | null;
@@ -95,62 +96,65 @@ export default function PrestadoresTab() {
   const totalServico = pagamentos.filter((g) => g.tipo === 'servico').reduce((s, g) => s + Number(g.amount), 0);
   const totalReembolso = pagamentos.filter((g) => g.tipo === 'reembolso').reduce((s, g) => s + Number(g.amount), 0);
   const nomeDe = (id: string) => prestadores.find((p) => p.id === id)?.name ?? 'Prestador';
-  const [ano, mm] = mes.split('-').map(Number);
-  const trocarMes = (delta: number) => {
-    const d = new Date(ano, mm - 1 + delta, 1);
-    setMes(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
-  };
+  const mm = Number(mes.split('-')[1]);
 
   if (!tenantId) return <p className="p-6 text-sm text-zinc-400">Escolha uma loja.</p>;
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-wrap items-center gap-2">
-        <button onClick={() => trocarMes(-1)} className="w-9 h-9 rounded-lg border border-zinc-200 bg-white hover:bg-zinc-50 cursor-pointer" aria-label="Mês anterior"><i className="ri-arrow-left-s-line" /></button>
-        <p className="text-sm font-bold text-zinc-800 min-w-[120px] text-center">{MESES[mm - 1]} {ano}</p>
-        <button onClick={() => trocarMes(1)} className="w-9 h-9 rounded-lg border border-zinc-200 bg-white hover:bg-zinc-50 cursor-pointer" aria-label="Próximo mês"><i className="ri-arrow-right-s-line" /></button>
-        <div className="ml-auto flex gap-5 text-right">
-          <div>
-            <p className="text-[11px] text-zinc-400">Serviços (RH)</p>
-            <p className="text-lg font-black text-zinc-900">{formatCurrency(totalServico)}</p>
-          </div>
-          <div>
-            <p className="text-[11px] text-zinc-400">Reembolsos</p>
-            <p className="text-lg font-black text-zinc-500">{formatCurrency(totalReembolso)}</p>
-          </div>
+      <div className="flex flex-wrap items-center gap-2 lg:gap-3">
+        <MonthNav mes={mes} onChange={setMes} canGoNext />
+        {mes !== hojeSP().slice(0, 7) && (
+          <button onClick={() => setMes(hojeSP().slice(0, 7))}
+            className="text-xs font-semibold px-3 py-2 bg-amber-50 text-amber-700 border border-amber-200 rounded-xl hover:bg-amber-100 cursor-pointer whitespace-nowrap">
+            Mês atual
+          </button>
+        )}
+        <div className="ml-auto flex items-center gap-2 overflow-x-auto max-w-full">
+          <button onClick={() => setEditando({})} className="flex items-center gap-1.5 bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-xl text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors shadow-sm">
+            <i className="ri-add-line" /> Novo prestador
+          </button>
         </div>
       </div>
 
-      <div className="rounded-xl border border-sky-100 bg-sky-50/60 px-4 py-3 text-xs text-sky-900 flex flex-wrap items-center gap-2">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <KpiCard label="Serviços (RH)" icon="ri-briefcase-line" value={formatCurrency(totalServico)} atual={totalServico} semVariacao />
+        <KpiCard label="Reembolsos" icon="ri-refund-2-line" value={formatCurrency(totalReembolso)} valueTone="text-zinc-500" atual={totalReembolso} semVariacao />
+      </div>
+
+      <div className="bg-sky-50 border border-sky-200 rounded-xl px-4 py-3 text-xs text-sky-900 flex flex-wrap items-center gap-2">
         <i className="ri-information-line" />
         <span className="flex-1 min-w-[240px]">
           O pagamento é lançado pelo extrato: <b>Conciliação</b> › abra o Pix › <b>Lançar a partir deste pagamento</b> › <b>Prestador MEI</b>, e diga se é o <b>serviço do mês</b> ou um <b>reembolso</b>.
         </span>
-        <button onClick={() => navigate('/financeiro?tab=conciliacao')} className="px-2.5 py-1 rounded-lg border border-sky-200 bg-white text-sky-800 font-semibold hover:bg-sky-50 cursor-pointer">Abrir Conciliação</button>
+        <button onClick={() => navigate('/financeiro?tab=conciliacao')} className="px-3 py-1.5 rounded-xl border border-sky-200 bg-white text-sky-800 font-semibold hover:bg-sky-50 cursor-pointer shadow-sm">Abrir Conciliação</button>
       </div>
 
-      {erro && <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{erro}</p>}
-      {aviso && <p className="text-sm text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">{aviso}</p>}
+      {erro && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-xl px-4 py-3">{erro}</p>}
+      {aviso && <p className="text-xs text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-3">{aviso}</p>}
 
       <section className="rounded-2xl border border-zinc-200 bg-white overflow-hidden">
-        <div className="px-4 py-3 border-b border-zinc-100 flex items-center justify-between gap-2">
-          <h3 className="text-sm font-black text-zinc-900">Prestadores MEI</h3>
-          <button onClick={() => setEditando({})} className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-xs font-semibold cursor-pointer">
-            <i className="ri-add-line" /> Novo prestador
-          </button>
+        <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-100 gap-3 flex-wrap">
+          <div><h3 className="text-sm font-bold text-zinc-800">Prestadores MEI</h3><p className="text-xs text-zinc-400">Serviço do mês e reembolsos</p></div>
         </div>
         {carregando ? (
-          <p className="p-6 text-center text-sm text-zinc-400">Carregando…</p>
+          <div className="py-14 text-center">
+            <i className="ri-loader-4-line text-4xl text-zinc-200 animate-spin" />
+            <p className="text-zinc-400 text-sm mt-2">Carregando…</p>
+          </div>
         ) : prestadores.length === 0 ? (
-          <p className="p-6 text-center text-sm text-zinc-400">Nenhum prestador MEI cadastrado.</p>
+          <div className="py-14 text-center">
+            <i className="ri-briefcase-line text-4xl text-zinc-200" />
+            <p className="text-zinc-400 text-sm mt-2">Nenhum prestador MEI cadastrado.</p>
+          </div>
         ) : (
-          <ul className="divide-y divide-zinc-100">
+          <ul className="divide-y divide-zinc-100/80">
             {prestadores.map((p) => {
               const r = porPrestador.get(p.id);
               const combinado = p.valor_mensal != null ? Number(p.valor_mensal) : null;
               const falta = combinado != null && p.is_active && (r?.servico ?? 0) + 0.005 < combinado;
               return (
-                <li key={p.id} className={`px-4 py-3 flex items-center gap-3 ${p.is_active ? '' : 'opacity-50'}`}>
+                <li key={p.id} className={`px-5 py-3 flex items-center gap-3 hover:bg-zinc-50 ${p.is_active ? '' : 'opacity-50'}`}>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-semibold text-zinc-800 truncate">{p.name}</p>
                     <p className="text-[11px] text-zinc-500 truncate">
@@ -169,12 +173,12 @@ export default function PrestadoresTab() {
                     {falta && r?.servico ? <p className="text-[11px] text-amber-700">Faltam {formatCurrency(combinado! - r.servico)} do combinado</p> : null}
                   </div>
                   <div className="text-right shrink-0">
-                    <p className="text-sm font-bold text-zinc-900">{r ? formatCurrency(r.servico) : '—'}</p>
+                    <p className="text-sm font-bold tabular-nums text-zinc-900">{r ? formatCurrency(r.servico) : '—'}</p>
                     <p className="text-[10px] text-zinc-400">{r?.reembolso ? `+ ${formatCurrency(r.reembolso)} reembolso` : 'serviço no mês'}</p>
                   </div>
                   {combinado != null && p.is_active && (
                     <button onClick={() => pedirAgora(p)} disabled={pedindo === p.id} title="Criar agora o pedido de pagamento do mês"
-                      className="flex items-center gap-1 px-2.5 h-8 rounded-lg border border-amber-200 text-amber-700 text-xs font-semibold hover:bg-amber-50 disabled:opacity-50 cursor-pointer">
+                      className="flex items-center gap-1 px-3 h-8 rounded-xl border border-amber-200 text-amber-700 text-xs font-semibold hover:bg-amber-50 disabled:opacity-50 cursor-pointer">
                       <i className="ri-send-plane-line" /><span className="hidden sm:inline">{pedindo === p.id ? 'Pedindo…' : 'Pedir pagamento'}</span>
                     </button>
                   )}
@@ -188,21 +192,30 @@ export default function PrestadoresTab() {
 
       {pagamentos.length > 0 && (
         <section className="rounded-2xl border border-zinc-200 bg-white overflow-hidden">
-          <h3 className="px-4 py-3 text-sm font-black text-zinc-900 border-b border-zinc-100">Pagamentos de {MESES[mm - 1].toLowerCase()}</h3>
+          <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-100 gap-3 flex-wrap">
+            <div><h3 className="text-sm font-bold text-zinc-800">Pagamentos de {MESES[mm - 1].toLowerCase()}</h3><p className="text-xs text-zinc-400">Serviço e reembolsos lançados</p></div>
+          </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
-              <tbody className="divide-y divide-zinc-100">
+              <thead>
+                <tr className="border-b border-zinc-200">
+                  <th className="text-left pl-5 pr-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Pago em</th>
+                  <th className="text-left px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Prestador</th>
+                  <th className="text-right px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Valor</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-100/80">
                 {pagamentos.map((g) => (
-                  <tr key={g.id}>
-                    <td className="px-4 py-2 text-zinc-600 whitespace-nowrap">{pagoDe(g) ? fmtData(pagoDe(g)) : <span className="text-amber-700">a pagar</span>}</td>
-                    <td className="px-4 py-2 text-zinc-800">
+                  <tr key={g.id} className="hover:bg-zinc-50">
+                    <td className="pl-5 pr-4 py-2.5 text-zinc-600 whitespace-nowrap">{pagoDe(g) ? fmtData(pagoDe(g)) : <span className="text-amber-700">a pagar</span>}</td>
+                    <td className="px-4 py-2.5 text-zinc-800">
                       {nomeDe(g.prestador_id)}
-                      <span className={`ml-2 text-[10px] font-bold px-1.5 py-0.5 rounded ${g.tipo === 'servico' ? 'bg-amber-50 text-amber-700' : 'bg-zinc-100 text-zinc-600'}`}>
+                      <span className={`ml-2 text-[11px] font-semibold px-2 py-0.5 rounded-md ${g.tipo === 'servico' ? 'bg-amber-50 text-amber-700' : 'bg-zinc-100 text-zinc-600'}`}>
                         {g.tipo === 'servico' ? 'SERVIÇO' : 'REEMBOLSO'}
                       </span>
                       {g.tipo === 'reembolso' && g.fin_accounts_payable?.category ? <span className="text-zinc-400 text-xs"> · {g.fin_accounts_payable.category}</span> : null}
                     </td>
-                    <td className="px-4 py-2 text-right font-semibold text-zinc-900 whitespace-nowrap">{formatCurrency(Number(g.amount))}</td>
+                    <td className="px-4 py-2.5 text-right tabular-nums font-semibold text-zinc-900 whitespace-nowrap">{formatCurrency(Number(g.amount))}</td>
                   </tr>
                 ))}
               </tbody>

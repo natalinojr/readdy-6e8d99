@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 import { usePayrollHistory } from '@/hooks/useRH';
 import { CATEGORIAS_FOLHA, categorizarRubrica } from '@/lib/dominioExtrato';
 import { formatCurrency } from '@/lib/formatters';
+import { KpiCard, Segmented } from './dreUi';
 
 const DEPT_COLORS = [
   '#f59e0b', '#10b981', '#ef4444', '#8b5cf6',
@@ -31,7 +32,7 @@ function BarChart({
 }) {
   const maxVal = useMemo(() => Math.max(...data.map(d => d.total), 1), [data]);
   if (data.length === 0) {
-    return <div className="h-64 flex items-center justify-center text-zinc-400 text-sm">Nenhum dado disponível</div>;
+    return <div className="py-14 text-center text-zinc-400 text-sm">Nenhum dado disponível</div>;
   }
   return (
     <div className="w-full overflow-x-auto">
@@ -122,7 +123,6 @@ export default function RHRelatorioTab() {
 
   const lastMonth = monthlyTotals[monthlyTotals.length - 1];
   const prevMonth = monthlyTotals[monthlyTotals.length - 2];
-  const variation = prevMonth && prevMonth.total > 0 ? ((lastMonth?.total ?? 0) - prevMonth.total) / prevMonth.total * 100 : 0;
   const totalPeriod = monthlyTotals.reduce((s, m) => s + m.total, 0);
   const avgMonthly = months.length > 0 ? totalPeriod / months.length : 0;
   const maxMonth = monthlyTotals.reduce((max, m) => m.total > (max?.total ?? 0) ? m : max, monthlyTotals[0]);
@@ -279,92 +279,73 @@ export default function RHRelatorioTab() {
   };
 
   return (
-    <div className="p-6 space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <h2 className="text-base font-bold text-zinc-900">Relatório de Folha de Pagamento</h2>
-          <p className="text-xs text-zinc-500 mt-0.5">Análise completa da folha por múltiplas dimensões</p>
+    <div className="space-y-5">
+      <div>
+        <h2 className="text-sm font-bold text-zinc-800">Relatório de Folha de Pagamento</h2>
+        <p className="text-xs text-zinc-500 mt-0.5">Análise completa da folha por múltiplas dimensões</p>
+      </div>
+
+      {/* Subabas + filtros */}
+      <div className="flex flex-wrap items-center gap-2 lg:gap-3">
+        <div className="flex gap-1 overflow-x-auto bg-zinc-100/80 rounded-xl p-1 w-full sm:w-fit max-w-full">
+          {[
+            { key: 'evolucao', label: 'Evolução', icon: 'ri-bar-chart-2-line' },
+            { key: 'funcionario', label: 'Por Funcionário', icon: 'ri-user-line' },
+            { key: 'item', label: 'Por Item', icon: 'ri-file-list-3-line' },
+            { key: 'categoria', label: 'Por Categoria', icon: 'ri-pie-chart-line' },
+          ].map(t => (
+            <button key={t.key} onClick={() => setReportTab(t.key as typeof reportTab)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap cursor-pointer transition-colors ${reportTab === t.key ? 'bg-white text-amber-600 shadow-sm' : 'text-zinc-500 hover:text-zinc-800'}`}>
+              <i className={t.icon} /> {t.label}
+            </button>
+          ))}
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <div className="flex bg-white border border-zinc-200 rounded-lg overflow-hidden">
-            {[{ label: '6 meses', value: 6 }, { label: '12 meses', value: 12 }, { label: '24 meses', value: 24 }].map(p => (
-              <button key={p.value} onClick={() => setMonthsBack(p.value)}
-                className={`px-3 py-2 text-xs font-semibold cursor-pointer transition-colors whitespace-nowrap ${monthsBack === p.value ? 'bg-amber-500 text-white' : 'text-zinc-600 hover:bg-zinc-50'}`}>
-                {p.label}
-              </button>
-            ))}
+        <div className="ml-auto flex items-center gap-2 flex-wrap">
+          <div className="overflow-x-auto max-w-full">
+            <Segmented
+              value={String(monthsBack) as '6' | '12' | '24'}
+              onChange={(v) => setMonthsBack(Number(v))}
+              options={[
+                { id: '6', label: '6 meses', icon: 'ri-calendar-line' },
+                { id: '12', label: '12 meses', icon: 'ri-calendar-line' },
+                { id: '24', label: '24 meses', icon: 'ri-calendar-line' },
+              ]}
+            />
           </div>
           <select value={entryTypeFilter} onChange={e => setEntryTypeFilter(e.target.value as typeof entryTypeFilter)}
-            className="border border-zinc-200 rounded-lg px-3 py-2 text-xs font-semibold text-zinc-600 bg-white focus:outline-none focus:border-amber-400">
+            className="h-10 border border-zinc-200 rounded-xl px-3 text-xs font-semibold text-zinc-600 bg-white shadow-sm focus:outline-none focus:border-amber-400">
             <option value="all">Todos os lançamentos</option>
             <option value="regular">Folha regular</option>
             <option value="thirteenth">13º Salário</option>
             <option value="vacation">Férias</option>
           </select>
           <button onClick={handleExport}
-            className="flex items-center gap-1.5 border border-zinc-200 bg-white hover:bg-zinc-50 text-zinc-700 px-3 py-2 rounded-lg text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors">
+            className="flex items-center gap-1.5 px-3 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 rounded-xl text-xs font-semibold text-zinc-600 cursor-pointer transition-colors whitespace-nowrap shadow-sm">
             <i className="ri-download-line" /> Exportar CSV
           </button>
         </div>
       </div>
 
-      {/* Tabs */}
-      <div className="flex bg-white border border-zinc-200 rounded-lg overflow-hidden w-fit">
-        {[
-          { key: 'evolucao', label: 'Evolução', icon: 'ri-bar-chart-2-line' },
-          { key: 'funcionario', label: 'Por Funcionário', icon: 'ri-user-line' },
-          { key: 'item', label: 'Por Item', icon: 'ri-file-list-3-line' },
-          { key: 'categoria', label: 'Por Categoria', icon: 'ri-pie-chart-line' },
-        ].map(t => (
-          <button key={t.key} onClick={() => setReportTab(t.key as typeof reportTab)}
-            className={`px-4 py-2.5 text-xs font-semibold cursor-pointer transition-colors whitespace-nowrap flex items-center gap-1.5 ${reportTab === t.key ? 'bg-amber-500 text-white' : 'text-zinc-600 hover:bg-zinc-50'}`}>
-            <i className={t.icon} /> {t.label}
-          </button>
-        ))}
-      </div>
-
       {/* ── TAB: EVOLUÇÃO ── */}
       {reportTab === 'evolucao' && (
-        <div className="space-y-6">
+        <div className="space-y-5">
           {!loading && (
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 lg:gap-4">
-              <div className="bg-white rounded-xl border border-zinc-200 p-4">
-                <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wide mb-2">Total no Período</p>
-                <p className="text-xl font-bold text-zinc-900">{formatCurrency(totalPeriod)}</p>
-                <p className="text-xs text-zinc-400 mt-1">{months.length} meses</p>
-              </div>
-              <div className="bg-white rounded-xl border border-zinc-200 p-4">
-                <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wide mb-2">Média Mensal</p>
-                <p className="text-xl font-bold text-zinc-900">{formatCurrency(avgMonthly)}</p>
-                <p className="text-xs text-zinc-400 mt-1">por mês</p>
-              </div>
-              <div className="bg-white rounded-xl border border-zinc-200 p-4">
-                <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wide mb-2">Mês Mais Alto</p>
-                <p className="text-xl font-bold text-zinc-900">{formatCurrency(maxMonth?.total ?? 0)}</p>
-                <p className="text-xs text-zinc-400 mt-1">{maxMonth ? fullMonthLabel(maxMonth.month) : '—'}</p>
-              </div>
-              <div className="bg-white rounded-xl border border-zinc-200 p-4">
-                <div className="flex items-center justify-between mb-2">
-                  <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">Últ. vs Anterior</p>
-                  <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${variation >= 0 ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}`}>
-                    {variation >= 0 ? '+' : ''}{variation.toFixed(1)}%
-                  </span>
-                </div>
-                <p className="text-xl font-bold text-zinc-900">{formatCurrency(lastMonth?.total ?? 0)}</p>
-                <p className="text-xs text-zinc-400 mt-1">{lastMonth ? fullMonthLabel(lastMonth.month) : '—'}</p>
-              </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+              <KpiCard label="Total no período" icon="ri-money-dollar-circle-line" value={formatCurrency(totalPeriod)} sub={`${months.length} meses`} atual={totalPeriod} semVariacao />
+              <KpiCard label="Média mensal" icon="ri-line-chart-line" value={formatCurrency(avgMonthly)} sub="por mês" atual={avgMonthly} semVariacao />
+              <KpiCard label="Mês mais alto" icon="ri-arrow-up-circle-line" value={formatCurrency(maxMonth?.total ?? 0)} sub={maxMonth ? fullMonthLabel(maxMonth.month) : '—'} atual={maxMonth?.total ?? 0} semVariacao />
+              <KpiCard label="Últ. vs anterior" icon="ri-exchange-line" value={formatCurrency(lastMonth?.total ?? 0)} sub={lastMonth ? fullMonthLabel(lastMonth.month) : '—'} atual={lastMonth?.total ?? 0} anterior={prevMonth?.total} inverse />
             </div>
           )}
 
-          <div className="bg-white rounded-xl border border-zinc-200 p-5">
-            <div className="flex items-center justify-between mb-5 flex-wrap gap-3">
-              <h3 className="text-sm font-semibold text-zinc-800">Evolução Mensal</h3>
+          <div className="bg-white rounded-2xl border border-zinc-200 p-5">
+            <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-100 gap-3 flex-wrap -mx-5 -mt-5 mb-5">
+              <div><h3 className="text-sm font-bold text-zinc-800">Evolução Mensal</h3><p className="text-xs text-zinc-400">Líquido por mês e departamento</p></div>
               <div className="flex items-center gap-2">
-                <div className="flex bg-zinc-100 rounded-lg overflow-hidden p-0.5 gap-0.5">
+                <div className="flex bg-zinc-100 p-1 rounded-xl gap-0.5">
                   {[{ value: 'stacked', icon: 'ri-bar-chart-2-line' }, { value: 'grouped', icon: 'ri-bar-chart-line' }, { value: 'total', icon: 'ri-bar-chart-fill' }].map(m => (
                     <button key={m.value} onClick={() => setViewMode(m.value as typeof viewMode)}
-                      className={`w-8 h-8 flex items-center justify-center rounded-md text-sm cursor-pointer transition-colors ${viewMode === m.value ? 'bg-white text-zinc-800 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'}`}>
+                      className={`w-8 h-8 flex items-center justify-center rounded-lg text-sm cursor-pointer transition-colors ${viewMode === m.value ? 'bg-white text-zinc-800 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'}`}>
                       <i className={m.icon} />
                     </button>
                   ))}
@@ -384,19 +365,19 @@ export default function RHRelatorioTab() {
               </div>
             )}
             {loading ? (
-              <div className="h-64 flex items-center justify-center"><div className="w-6 h-6 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" /></div>
+              <div className="py-14 text-center"><i className="ri-loader-4-line text-4xl text-zinc-200 animate-spin" /></div>
             ) : (
               <BarChart data={chartData} departments={activeDepts} deptColors={deptColors} viewMode={viewMode} />
             )}
           </div>
 
-          <div className="grid grid-cols-2 gap-5">
-            <div className="bg-white rounded-xl border border-zinc-200 p-5">
-              <h3 className="text-sm font-semibold text-zinc-800 mb-4">Distribuição por Departamento</h3>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+            <div className="bg-white rounded-2xl border border-zinc-200 p-5">
+              <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-100 gap-3 flex-wrap -mx-5 -mt-5 mb-5"><h3 className="text-sm font-bold text-zinc-800">Distribuição por Departamento</h3></div>
               {loading ? (
-                <div className="h-32 flex items-center justify-center"><div className="w-5 h-5 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" /></div>
+                <div className="py-14 text-center"><i className="ri-loader-4-line text-4xl text-zinc-200 animate-spin" /></div>
               ) : deptBreakdown.length === 0 ? (
-                <p className="text-sm text-zinc-400 text-center py-8">Nenhum dado disponível</p>
+                <p className="text-zinc-400 text-sm text-center py-14">Nenhum dado disponível</p>
               ) : (
                 <div className="space-y-3">
                   {deptBreakdown.map(d => (
@@ -420,32 +401,32 @@ export default function RHRelatorioTab() {
                 </div>
               )}
             </div>
-            <div className="bg-white rounded-xl border border-zinc-200 overflow-hidden">
-              <div className="px-5 py-3 border-b border-zinc-100"><h3 className="text-sm font-semibold text-zinc-800">Detalhe Mensal</h3></div>
+            <div className="bg-white rounded-2xl border border-zinc-200 overflow-hidden">
+              <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-100 gap-3 flex-wrap"><div><h3 className="text-sm font-bold text-zinc-800">Detalhe Mensal</h3><p className="text-xs text-zinc-400">Mais recente primeiro</p></div></div>
               {loading ? (
-                <div className="h-32 flex items-center justify-center"><div className="w-5 h-5 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" /></div>
+                <div className="py-14 text-center"><i className="ri-loader-4-line text-4xl text-zinc-200 animate-spin" /></div>
               ) : tableData.length === 0 ? (
-                <div className="py-10 text-center text-sm text-zinc-400">Nenhum dado disponível</div>
+                <div className="py-14 text-center text-zinc-400 text-sm">Nenhum dado disponível</div>
               ) : (
                 <div className="overflow-y-auto" style={{ maxHeight: 340 }}>
                   <table className="w-full">
-                    <thead className="sticky top-0 bg-zinc-50">
-                      <tr>
-                        <th className="text-left px-4 py-2.5 text-xs font-semibold text-zinc-500 uppercase tracking-wide">Mês</th>
-                        <th className="text-right px-3 py-2.5 text-xs font-semibold text-zinc-500 uppercase tracking-wide">Func.</th>
-                        <th className="text-right px-3 py-2.5 text-xs font-semibold text-zinc-500 uppercase tracking-wide">Bruto</th>
-                        <th className="text-right px-3 py-2.5 text-xs font-semibold text-zinc-500 uppercase tracking-wide">Líquido</th>
-                        <th className="text-right px-4 py-2.5 text-xs font-semibold text-zinc-500 uppercase tracking-wide">Pago</th>
+                    <thead className="sticky top-0 bg-white">
+                      <tr className="border-b border-zinc-200">
+                        <th className="text-left pl-5 pr-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Mês</th>
+                        <th className="text-right px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Func.</th>
+                        <th className="text-right px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Bruto</th>
+                        <th className="text-right px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Líquido</th>
+                        <th className="text-right pl-3 pr-5 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Pago</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-zinc-50">
+                    <tbody className="divide-y divide-zinc-100/80">
                       {[...tableData].reverse().map(row => (
-                        <tr key={row.month} className="hover:bg-zinc-50/50 transition-colors">
-                          <td className="px-4 py-2.5 text-sm text-zinc-700 font-medium whitespace-nowrap">{fullMonthLabel(row.month)}</td>
-                          <td className="px-3 py-2.5 text-sm text-right text-zinc-500">{row.headcount}</td>
-                          <td className="px-3 py-2.5 text-sm text-right text-zinc-700">{formatCurrency(row.total_gross)}</td>
-                          <td className="px-3 py-2.5 text-sm text-right font-semibold text-zinc-800">{formatCurrency(row.total_net)}</td>
-                          <td className="px-4 py-2.5 text-sm text-right">
+                        <tr key={row.month} className="hover:bg-zinc-50 transition-colors">
+                          <td className="pl-5 pr-3 py-2.5 text-sm text-zinc-700 font-medium whitespace-nowrap">{fullMonthLabel(row.month)}</td>
+                          <td className="px-3 py-2.5 text-sm text-right tabular-nums whitespace-nowrap text-zinc-500">{row.headcount}</td>
+                          <td className="px-3 py-2.5 text-sm text-right tabular-nums whitespace-nowrap text-zinc-700">{formatCurrency(row.total_gross)}</td>
+                          <td className="px-3 py-2.5 text-sm text-right tabular-nums whitespace-nowrap font-semibold text-zinc-800">{formatCurrency(row.total_net)}</td>
+                          <td className="pl-3 pr-5 py-2.5 text-sm text-right tabular-nums whitespace-nowrap">
                             <span className={`font-semibold ${row.paid >= row.total_net ? 'text-green-600' : row.paid > 0 ? 'text-amber-600' : 'text-zinc-400'}`}>
                               {formatCurrency(row.paid)}
                             </span>
@@ -460,26 +441,22 @@ export default function RHRelatorioTab() {
           </div>
 
           {!loading && tableData.length > 0 && (
-            <div className="bg-white rounded-xl border border-zinc-200 p-5">
-              <h3 className="text-sm font-semibold text-zinc-800 mb-4">Resumo de Encargos — Período Completo</h3>
-              <div className="grid grid-cols-5 gap-4">
+            <div className="bg-white rounded-2xl border border-zinc-200 p-5">
+              <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-100 gap-3 flex-wrap -mx-5 -mt-5 mb-5"><h3 className="text-sm font-bold text-zinc-800">Resumo de Encargos — Período Completo</h3></div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5 gap-3">
                 {(() => {
                   const totals = tableData.reduce((acc, row) => ({
                     gross: acc.gross + row.total_gross, net: acc.net + row.total_net,
                     inss: acc.inss + row.total_inss, fgts: acc.fgts + row.total_fgts, paid: acc.paid + row.paid,
                   }), { gross: 0, net: 0, inss: 0, fgts: 0, paid: 0 });
                   return [
-                    { label: 'Total Bruto', value: totals.gross, color: 'text-zinc-800' },
-                    { label: 'Total INSS', value: totals.inss, color: 'text-orange-600', sub: `${totals.gross > 0 ? ((totals.inss / totals.gross) * 100).toFixed(1) : 0}% do bruto` },
-                    { label: 'Total FGTS', value: totals.fgts, color: 'text-amber-600', sub: `${totals.gross > 0 ? ((totals.fgts / totals.gross) * 100).toFixed(1) : 0}% do bruto` },
-                    { label: 'Total Líquido', value: totals.net, color: 'text-zinc-900' },
-                    { label: 'Total Pago', value: totals.paid, color: 'text-green-600', sub: `${totals.net > 0 ? ((totals.paid / totals.net) * 100).toFixed(1) : 0}% do líquido` },
+                    { label: 'Total Bruto', icon: 'ri-money-dollar-circle-line', value: totals.gross, color: 'text-zinc-900' },
+                    { label: 'Total INSS', icon: 'ri-government-line', value: totals.inss, color: 'text-amber-700', sub: `${totals.gross > 0 ? ((totals.inss / totals.gross) * 100).toFixed(1) : 0}% do bruto` },
+                    { label: 'Total FGTS', icon: 'ri-safe-2-line', value: totals.fgts, color: 'text-amber-700', sub: `${totals.gross > 0 ? ((totals.fgts / totals.gross) * 100).toFixed(1) : 0}% do bruto` },
+                    { label: 'Total Líquido', icon: 'ri-wallet-3-line', value: totals.net, color: 'text-zinc-900' },
+                    { label: 'Total Pago', icon: 'ri-check-double-line', value: totals.paid, color: 'text-emerald-700', sub: `${totals.net > 0 ? ((totals.paid / totals.net) * 100).toFixed(1) : 0}% do líquido` },
                   ].map(item => (
-                    <div key={item.label} className="text-center p-3 bg-zinc-50 rounded-xl">
-                      <p className="text-xs text-zinc-500 mb-1">{item.label}</p>
-                      <p className={`text-base font-bold ${item.color}`}>{formatCurrency(item.value)}</p>
-                      {item.sub && <p className="text-xs text-zinc-400 mt-0.5">{item.sub}</p>}
-                    </div>
+                    <KpiCard key={item.label} label={item.label} icon={item.icon} value={formatCurrency(item.value)} valueTone={item.color} sub={item.sub} atual={item.value} semVariacao />
                   ));
                 })()}
               </div>
@@ -490,73 +467,73 @@ export default function RHRelatorioTab() {
 
       {/* ── TAB: POR FUNCIONÁRIO ── */}
       {reportTab === 'funcionario' && (
-        <div className="bg-white rounded-xl border border-zinc-200 overflow-hidden">
-          <div className="px-5 py-3 border-b border-zinc-100">
-            <h3 className="text-sm font-semibold text-zinc-800">Gasto por Funcionário — Período</h3>
-            <p className="text-xs text-zinc-500">{filteredRaw.length} lançamentos no período selecionado</p>
+        <div className="bg-white rounded-2xl border border-zinc-200 overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-100 gap-3 flex-wrap">
+            <div><h3 className="text-sm font-bold text-zinc-800">Gasto por Funcionário — Período</h3>
+            <p className="text-xs text-zinc-400">{filteredRaw.length} lançamentos no período selecionado</p></div>
           </div>
           {loading ? (
-            <div className="h-64 flex items-center justify-center"><div className="w-6 h-6 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" /></div>
+            <div className="py-14 text-center"><i className="ri-loader-4-line text-4xl text-zinc-200 animate-spin" /></div>
           ) : funcionarioData.length === 0 ? (
-            <div className="py-16 text-center text-sm text-zinc-400">Nenhum dado disponível</div>
+            <div className="py-14 text-center text-zinc-400 text-sm">Nenhum dado disponível</div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full">
-                <thead className="bg-zinc-50">
-                  <tr>
-                    <th className="text-left px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wide">Funcionário</th>
-                    <th className="text-left px-3 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wide">Depto</th>
-                    <th className="text-right px-3 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wide">Meses</th>
-                    <th className="text-right px-3 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wide">Salário Base</th>
-                    <th className="text-right px-3 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wide">HE</th>
-                    <th className="text-right px-3 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wide">Noturno</th>
-                    <th className="text-right px-3 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wide">DSR</th>
-                    <th className="text-right px-3 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wide">Bônus</th>
-                    <th className="text-right px-3 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wide">INSS</th>
-                    <th className="text-right px-3 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wide">IRRF</th>
-                    <th className="text-right px-3 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wide">FGTS</th>
-                    <th className="text-right px-3 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wide">Faltas</th>
-                    <th className="text-right px-3 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wide">VT/VR</th>
-                    <th className="text-right px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wide">Líquido</th>
+                <thead>
+                  <tr className="border-b border-zinc-200">
+                    <th className="text-left pl-5 pr-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Funcionário</th>
+                    <th className="text-left px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Depto</th>
+                    <th className="text-right px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Meses</th>
+                    <th className="text-right px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Salário Base</th>
+                    <th className="text-right px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">HE</th>
+                    <th className="text-right px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Noturno</th>
+                    <th className="text-right px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">DSR</th>
+                    <th className="text-right px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Bônus</th>
+                    <th className="text-right px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">INSS</th>
+                    <th className="text-right px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">IRRF</th>
+                    <th className="text-right px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">FGTS</th>
+                    <th className="text-right px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Faltas</th>
+                    <th className="text-right px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">VT/VR</th>
+                    <th className="text-right pl-3 pr-5 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Líquido</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-zinc-100">
+                <tbody className="divide-y divide-zinc-100/80">
                   {funcionarioData.map(f => (
-                    <tr key={f.name} className="hover:bg-zinc-50/50 transition-colors">
-                      <td className="px-4 py-3">
+                    <tr key={f.name} className="hover:bg-zinc-50 transition-colors">
+                      <td className="pl-5 pr-3 py-3">
                         <p className="text-sm font-semibold text-zinc-800">{f.name}</p>
                         <p className="text-xs text-zinc-400">{f.role}</p>
                       </td>
                       <td className="px-3 py-3 text-xs text-zinc-500">{f.department}</td>
-                      <td className="px-3 py-3 text-sm text-right text-zinc-500">{f.months.size}</td>
-                      <td className="px-3 py-3 text-sm text-right text-zinc-700">{formatCurrency(f.base_salary)}</td>
-                      <td className="px-3 py-3 text-sm text-right text-green-600">{formatCurrency(f.overtime_50 + f.overtime_100 + f.overtime_night)}</td>
-                      <td className="px-3 py-3 text-sm text-right text-green-600">{formatCurrency(f.night_shift)}</td>
-                      <td className="px-3 py-3 text-sm text-right text-green-600">{formatCurrency(f.dsr)}</td>
-                      <td className="px-3 py-3 text-sm text-right text-green-600">{formatCurrency(f.bonuses)}</td>
-                      <td className="px-3 py-3 text-sm text-right text-orange-600">-{formatCurrency(f.total_inss)}</td>
-                      <td className="px-3 py-3 text-sm text-right text-red-500">-{formatCurrency(f.total_irrf)}</td>
-                      <td className="px-3 py-3 text-sm text-right text-amber-600">{formatCurrency(f.total_fgts)}</td>
-                      <td className="px-3 py-3 text-sm text-right text-red-500">-{formatCurrency(f.desconto_faltas)}</td>
-                      <td className="px-3 py-3 text-sm text-right text-red-500">-{formatCurrency(f.vale_transporte + f.vale_refeicao)}</td>
-                      <td className="px-4 py-3 text-sm text-right font-bold text-zinc-900">{formatCurrency(f.total_net)}</td>
+                      <td className="px-3 py-3 text-sm text-right tabular-nums whitespace-nowrap text-zinc-500">{f.months.size}</td>
+                      <td className="px-3 py-3 text-sm text-right tabular-nums whitespace-nowrap text-zinc-700">{formatCurrency(f.base_salary)}</td>
+                      <td className="px-3 py-3 text-sm text-right tabular-nums whitespace-nowrap text-green-600">{formatCurrency(f.overtime_50 + f.overtime_100 + f.overtime_night)}</td>
+                      <td className="px-3 py-3 text-sm text-right tabular-nums whitespace-nowrap text-green-600">{formatCurrency(f.night_shift)}</td>
+                      <td className="px-3 py-3 text-sm text-right tabular-nums whitespace-nowrap text-green-600">{formatCurrency(f.dsr)}</td>
+                      <td className="px-3 py-3 text-sm text-right tabular-nums whitespace-nowrap text-green-600">{formatCurrency(f.bonuses)}</td>
+                      <td className="px-3 py-3 text-sm text-right tabular-nums whitespace-nowrap text-orange-600">-{formatCurrency(f.total_inss)}</td>
+                      <td className="px-3 py-3 text-sm text-right tabular-nums whitespace-nowrap text-red-500">-{formatCurrency(f.total_irrf)}</td>
+                      <td className="px-3 py-3 text-sm text-right tabular-nums whitespace-nowrap text-amber-600">{formatCurrency(f.total_fgts)}</td>
+                      <td className="px-3 py-3 text-sm text-right tabular-nums whitespace-nowrap text-red-500">-{formatCurrency(f.desconto_faltas)}</td>
+                      <td className="px-3 py-3 text-sm text-right tabular-nums whitespace-nowrap text-red-500">-{formatCurrency(f.vale_transporte + f.vale_refeicao)}</td>
+                      <td className="pl-3 pr-5 py-3 text-sm text-right tabular-nums whitespace-nowrap font-bold text-zinc-900">{formatCurrency(f.total_net)}</td>
                     </tr>
                   ))}
                 </tbody>
                 <tfoot>
                   <tr className="bg-zinc-50 border-t-2 border-zinc-200">
-                    <td colSpan={3} className="px-4 py-3 text-sm font-bold text-zinc-800">Total ({funcionarioData.length} funcionários)</td>
-                    <td className="px-3 py-3 text-sm font-bold text-right text-zinc-800">{formatCurrency(funcionarioData.reduce((s, f) => s + f.base_salary, 0))}</td>
-                    <td className="px-3 py-3 text-sm font-bold text-right text-green-600">{formatCurrency(funcionarioData.reduce((s, f) => s + f.overtime_50 + f.overtime_100 + f.overtime_night, 0))}</td>
-                    <td className="px-3 py-3 text-sm font-bold text-right text-green-600">{formatCurrency(funcionarioData.reduce((s, f) => s + f.night_shift, 0))}</td>
-                    <td className="px-3 py-3 text-sm font-bold text-right text-green-600">{formatCurrency(funcionarioData.reduce((s, f) => s + f.dsr, 0))}</td>
-                    <td className="px-3 py-3 text-sm font-bold text-right text-green-600">{formatCurrency(funcionarioData.reduce((s, f) => s + f.bonuses, 0))}</td>
-                    <td className="px-3 py-3 text-sm font-bold text-right text-orange-600">-{formatCurrency(funcionarioData.reduce((s, f) => s + f.total_inss, 0))}</td>
-                    <td className="px-3 py-3 text-sm font-bold text-right text-red-500">-{formatCurrency(funcionarioData.reduce((s, f) => s + f.total_irrf, 0))}</td>
-                    <td className="px-3 py-3 text-sm font-bold text-right text-amber-600">{formatCurrency(funcionarioData.reduce((s, f) => s + f.total_fgts, 0))}</td>
-                    <td className="px-3 py-3 text-sm font-bold text-right text-red-500">-{formatCurrency(funcionarioData.reduce((s, f) => s + f.desconto_faltas, 0))}</td>
-                    <td className="px-3 py-3 text-sm font-bold text-right text-red-500">-{formatCurrency(funcionarioData.reduce((s, f) => s + f.vale_transporte + f.vale_refeicao, 0))}</td>
-                    <td className="px-4 py-3 text-sm font-bold text-right text-zinc-900">{formatCurrency(funcionarioData.reduce((s, f) => s + f.total_net, 0))}</td>
+                    <td colSpan={3} className="pl-5 pr-3 py-3 text-sm font-bold text-zinc-900">Total ({funcionarioData.length} funcionários)</td>
+                    <td className="px-3 py-3 text-sm font-bold text-right tabular-nums whitespace-nowrap text-zinc-800">{formatCurrency(funcionarioData.reduce((s, f) => s + f.base_salary, 0))}</td>
+                    <td className="px-3 py-3 text-sm font-bold text-right tabular-nums whitespace-nowrap text-green-600">{formatCurrency(funcionarioData.reduce((s, f) => s + f.overtime_50 + f.overtime_100 + f.overtime_night, 0))}</td>
+                    <td className="px-3 py-3 text-sm font-bold text-right tabular-nums whitespace-nowrap text-green-600">{formatCurrency(funcionarioData.reduce((s, f) => s + f.night_shift, 0))}</td>
+                    <td className="px-3 py-3 text-sm font-bold text-right tabular-nums whitespace-nowrap text-green-600">{formatCurrency(funcionarioData.reduce((s, f) => s + f.dsr, 0))}</td>
+                    <td className="px-3 py-3 text-sm font-bold text-right tabular-nums whitespace-nowrap text-green-600">{formatCurrency(funcionarioData.reduce((s, f) => s + f.bonuses, 0))}</td>
+                    <td className="px-3 py-3 text-sm font-bold text-right tabular-nums whitespace-nowrap text-orange-600">-{formatCurrency(funcionarioData.reduce((s, f) => s + f.total_inss, 0))}</td>
+                    <td className="px-3 py-3 text-sm font-bold text-right tabular-nums whitespace-nowrap text-red-500">-{formatCurrency(funcionarioData.reduce((s, f) => s + f.total_irrf, 0))}</td>
+                    <td className="px-3 py-3 text-sm font-bold text-right tabular-nums whitespace-nowrap text-amber-600">{formatCurrency(funcionarioData.reduce((s, f) => s + f.total_fgts, 0))}</td>
+                    <td className="px-3 py-3 text-sm font-bold text-right tabular-nums whitespace-nowrap text-red-500">-{formatCurrency(funcionarioData.reduce((s, f) => s + f.desconto_faltas, 0))}</td>
+                    <td className="px-3 py-3 text-sm font-bold text-right tabular-nums whitespace-nowrap text-red-500">-{formatCurrency(funcionarioData.reduce((s, f) => s + f.vale_transporte + f.vale_refeicao, 0))}</td>
+                    <td className="pl-3 pr-5 py-3 text-sm font-bold text-right tabular-nums whitespace-nowrap text-zinc-900">{formatCurrency(funcionarioData.reduce((s, f) => s + f.total_net, 0))}</td>
                   </tr>
                 </tfoot>
               </table>
@@ -567,13 +544,13 @@ export default function RHRelatorioTab() {
 
       {/* ── TAB: POR ITEM ── */}
       {reportTab === 'item' && (
-        <div className="space-y-6">
-          <div className="bg-white rounded-xl border border-zinc-200 p-5">
-            <h3 className="text-sm font-semibold text-zinc-800 mb-4">Gasto por Item da Folha</h3>
+        <div className="space-y-5">
+          <div className="bg-white rounded-2xl border border-zinc-200 p-5">
+            <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-100 gap-3 flex-wrap -mx-5 -mt-5 mb-5"><h3 className="text-sm font-bold text-zinc-800">Gasto por Item da Folha</h3></div>
             {loading ? (
-              <div className="h-32 flex items-center justify-center"><div className="w-5 h-5 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" /></div>
+              <div className="py-14 text-center"><i className="ri-loader-4-line text-4xl text-zinc-200 animate-spin" /></div>
             ) : itemData.length === 0 ? (
-              <p className="text-sm text-zinc-400 text-center py-8">Nenhum dado disponível</p>
+              <p className="text-zinc-400 text-sm text-center py-14">Nenhum dado disponível</p>
             ) : (
               <div className="space-y-3">
                 {itemData.map(item => {
@@ -588,7 +565,7 @@ export default function RHRelatorioTab() {
                           <i className={`ri-arrow-${itemAberto === item.key ? 'down' : 'right'}-s-line text-zinc-400`} />
                           <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />
                           <span className="text-sm font-medium text-zinc-700">{item.label}</span>
-                          <span className={`text-xs px-1.5 py-0.5 rounded-full ${item.type === 'provento' ? 'bg-green-100 text-green-700' : item.type === 'desconto' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>
+                          <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-md ${item.type === 'provento' ? 'bg-emerald-50 text-emerald-700' : item.type === 'desconto' ? 'bg-red-50 text-red-600' : 'bg-amber-50 text-amber-700'}`}>
                             {item.type === 'provento' ? 'Provento' : item.type === 'desconto' ? 'Desconto' : 'Encargo'}
                           </span>
                         </div>
@@ -627,45 +604,42 @@ export default function RHRelatorioTab() {
             )}
           </div>
 
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             {(() => {
               const proventos = itemData.filter(i => i.type === 'provento').reduce((s, i) => s + i.total, 0);
               const descontos = itemData.filter(i => i.type === 'desconto').reduce((s, i) => s + i.total, 0);
               const encargos = itemData.filter(i => i.type === 'encargo').reduce((s, i) => s + i.total, 0);
               return [
-                { label: 'Total Proventos', value: proventos, color: 'text-green-600', bg: 'bg-green-50' },
-                { label: 'Total Descontos', value: descontos, color: 'text-red-600', bg: 'bg-red-50' },
-                { label: 'Total Encargos', value: encargos, color: 'text-amber-600', bg: 'bg-amber-50' },
+                { label: 'Total Proventos', icon: 'ri-arrow-up-circle-line', value: proventos, color: 'text-emerald-700' },
+                { label: 'Total Descontos', icon: 'ri-arrow-down-circle-line', value: descontos, color: 'text-red-600' },
+                { label: 'Total Encargos', icon: 'ri-safe-2-line', value: encargos, color: 'text-amber-700' },
               ].map(item => (
-                <div key={item.label} className={`${item.bg} rounded-xl p-4 text-center border border-zinc-200`}>
-                  <p className="text-xs text-zinc-500 mb-1">{item.label}</p>
-                  <p className={`text-xl font-bold ${item.color}`}>{formatCurrency(item.value)}</p>
-                </div>
+                <KpiCard key={item.label} label={item.label} icon={item.icon} value={formatCurrency(item.value)} valueTone={item.color} atual={item.value} semVariacao />
               ));
             })()}
           </div>
 
           {itemData.length > 0 && months.length > 0 && (
-            <div className="bg-white rounded-xl border border-zinc-200">
-              <div className="px-5 py-3 border-b border-zinc-100">
-                <h3 className="text-sm font-semibold text-zinc-800">Cada item, mês a mês</h3>
-                <p className="text-xs text-zinc-400">Quanto foi pago (proventos), descontado (descontos) e recolhido (FGTS) em cada competência.</p>
+            <div className="bg-white rounded-2xl border border-zinc-200 overflow-hidden">
+              <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-100 gap-3 flex-wrap">
+                <div><h3 className="text-sm font-bold text-zinc-800">Cada item, mês a mês</h3>
+                <p className="text-xs text-zinc-400">Quanto foi pago (proventos), descontado (descontos) e recolhido (FGTS) em cada competência.</p></div>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-xs">
-                  <thead className="bg-zinc-50 text-zinc-500">
-                    <tr>
-                      <th className="px-4 py-2 text-left font-semibold sticky left-0 bg-zinc-50">Item</th>
-                      {months.map(m => <th key={m} className="px-3 py-2 text-right font-semibold whitespace-nowrap">{monthLabel(m)}</th>)}
-                      <th className="px-4 py-2 text-right font-semibold">Total</th>
+                  <thead>
+                    <tr className="border-b border-zinc-200">
+                      <th className="pl-5 pr-4 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wide text-zinc-400 sticky left-0 bg-white">Item</th>
+                      {months.map(m => <th key={m} className="px-3 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wide text-zinc-400 whitespace-nowrap">{monthLabel(m)}</th>)}
+                      <th className="pl-3 pr-5 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Total</th>
                     </tr>
                   </thead>
-                  <tbody>
+                  <tbody className="divide-y divide-zinc-100/80">
                     {itemData.map(item => (
-                      <tr key={item.key} className="border-t border-zinc-100">
-                        <td className={`px-4 py-2 font-medium sticky left-0 bg-white whitespace-nowrap ${item.type === 'provento' ? 'text-green-700' : item.type === 'desconto' ? 'text-red-600' : 'text-amber-700'}`}>{item.label}</td>
-                        {months.map(m => <td key={m} className="px-3 py-2 text-right text-zinc-700 whitespace-nowrap">{item.porMes[m] ? formatCurrency(item.porMes[m]) : '—'}</td>)}
-                        <td className="px-4 py-2 text-right font-bold text-zinc-900 whitespace-nowrap">{formatCurrency(item.total)}</td>
+                      <tr key={item.key} className="hover:bg-zinc-50">
+                        <td className={`pl-5 pr-4 py-2 font-medium sticky left-0 bg-white whitespace-nowrap ${item.type === 'provento' ? 'text-green-700' : item.type === 'desconto' ? 'text-red-600' : 'text-amber-700'}`}>{item.label}</td>
+                        {months.map(m => <td key={m} className="px-3 py-2 text-right tabular-nums text-zinc-700 whitespace-nowrap">{item.porMes[m] ? formatCurrency(item.porMes[m]) : '—'}</td>)}
+                        <td className="pl-3 pr-5 py-2 text-right tabular-nums font-bold text-zinc-900 whitespace-nowrap">{formatCurrency(item.total)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -678,14 +652,14 @@ export default function RHRelatorioTab() {
 
       {/* ── TAB: POR CATEGORIA ── */}
       {reportTab === 'categoria' && (
-        <div className="space-y-6">
-          <div className="grid grid-cols-2 gap-5">
-            <div className="bg-white rounded-xl border border-zinc-200 p-5">
-              <h3 className="text-sm font-semibold text-zinc-800 mb-4">Distribuição por Categoria</h3>
+        <div className="space-y-5">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+            <div className="bg-white rounded-2xl border border-zinc-200 p-5">
+              <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-100 gap-3 flex-wrap -mx-5 -mt-5 mb-5"><h3 className="text-sm font-bold text-zinc-800">Distribuição por Categoria</h3></div>
               {loading ? (
-                <div className="h-32 flex items-center justify-center"><div className="w-5 h-5 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" /></div>
+                <div className="py-14 text-center"><i className="ri-loader-4-line text-4xl text-zinc-200 animate-spin" /></div>
               ) : categoriaData.length === 0 ? (
-                <p className="text-sm text-zinc-400 text-center py-8">Nenhum dado disponível</p>
+                <p className="text-zinc-400 text-sm text-center py-14">Nenhum dado disponível</p>
               ) : (
                 <div className="space-y-4">
                   {categoriaData.map(cat => (
@@ -706,8 +680,8 @@ export default function RHRelatorioTab() {
               )}
             </div>
 
-            <div className="bg-white rounded-xl border border-zinc-200 p-5">
-              <h3 className="text-sm font-semibold text-zinc-800 mb-4">Resumo Financeiro</h3>
+            <div className="bg-white rounded-2xl border border-zinc-200 p-5">
+              <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-100 gap-3 flex-wrap -mx-5 -mt-5 mb-5"><h3 className="text-sm font-bold text-zinc-800">Resumo Financeiro</h3></div>
               {(() => {
                 const proventos = categoriaData.find(c => c.label === 'Total Proventos')?.value ?? 0;
                 const descontos = categoriaData.find(c => c.label === 'Total Descontos')?.value ?? 0;

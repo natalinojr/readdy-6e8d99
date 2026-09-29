@@ -11,6 +11,7 @@ import { revenueSourceInfo, moneyFlowLabels } from '@/lib/revenueSources';
 // Fonte da configuração da loja → fonte da linha exibida
 const SETTING_TO_ITEM: Record<RevenueSettingSource, ReceitaSource> = { orders: 'order', stone: 'stone', pix: 'pix', ifood: 'ifood', cash: 'cash', manual: 'manual' };
 import { formatCurrency } from '@/lib/formatters';
+import { KpiCard, Segmented } from './dreUi';
 import { todayBrasilia } from '@/lib/dateUtils';
 import {
   AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell,
@@ -89,7 +90,7 @@ function exportToCSV(items: ReceitaItem[], filename: string) {
 const ChartTooltip = ({ active, payload, label }: { active?: boolean; payload?: { value: number; name?: string }[]; label?: string }) => {
   if (!active || !payload?.length) return null;
   return (
-    <div className="bg-white border border-zinc-200 rounded-xl p-3 text-xs">
+    <div className="bg-white border border-zinc-200 rounded-xl p-3 text-xs shadow-sm">
       {label && <p className="font-semibold text-zinc-700 mb-1">{label}</p>}
       {payload.map((p, i) => (
         <p key={i} className="font-bold text-zinc-900">{p.name ? `${p.name}: ` : ''}{formatCurrency(p.value)}</p>
@@ -97,22 +98,6 @@ const ChartTooltip = ({ active, payload, label }: { active?: boolean; payload?: 
     </div>
   );
 };
-
-// ─── KPI Card ─────────────────────────────────────────────────────────────────
-function KpiCard({ label, value, icon, color, sub }: { label: string; value: string; icon: string; color: string; sub?: string }) {
-  return (
-    <div className="bg-white rounded-xl border border-zinc-200 p-4 md:p-5">
-      <div className="flex items-center justify-between mb-2">
-        <span className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">{label}</span>
-        <div className={`w-8 h-8 flex items-center justify-center rounded-lg ${color}`}>
-          <i className={`${icon} text-sm`} />
-        </div>
-      </div>
-      <p className="text-xl md:text-2xl font-bold text-zinc-900">{value}</p>
-      {sub && <p className="text-xs text-zinc-400 mt-1">{sub}</p>}
-    </div>
-  );
-}
 
 // ─── Modal de Lançamento Manual ───────────────────────────────────────────────
 function NovaReceitaModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
@@ -400,11 +385,11 @@ export default function ReceitasTab() {
   }));
 
   return (
-    <div className="p-4 md:p-6 space-y-4 md:space-y-5">
+    <div className="p-4 md:p-6 space-y-5 max-w-[1400px] mx-auto">
 
       {/* Rótulo do que esta aba está somando — depende das fontes da loja */}
-      <div className="flex items-start gap-2 rounded-lg bg-blue-50 border border-blue-200 px-3 py-2 text-xs text-blue-700">
-        <i className="ri-information-line mt-0.5" />
+      <div className="flex items-start gap-3 rounded-xl bg-blue-50 border border-blue-200 px-4 py-3 text-xs text-blue-800">
+        <i className="ri-information-line mt-0.5 text-blue-500" />
         <span className="flex-1">
           <strong>Contando como recebido:</strong> {enabledSources.map(s => sourceInfo[s].label).join(' + ')}.
           {enabledSources.includes('orders')
@@ -412,7 +397,7 @@ export default function ReceitasTab() {
             : <> Pedidos lançados no sistema não entram: vale o dinheiro que entrou na conta.</>}
         </span>
         <button onClick={() => setShowFontes(true)}
-          className="px-2 py-1 rounded-md border border-blue-300 text-blue-700 font-semibold cursor-pointer hover:bg-blue-100 whitespace-nowrap flex items-center gap-1">
+          className="px-3 py-1.5 rounded-lg border border-blue-300 text-blue-700 font-semibold cursor-pointer hover:bg-blue-100 whitespace-nowrap flex items-center gap-1">
           <i className="ri-settings-3-line" /> Fontes
         </button>
       </div>
@@ -421,7 +406,7 @@ export default function ReceitasTab() {
           aba mostrava R$ 0,00 e "Nenhuma receita encontrada" mesmo quando a
           query voltava erro. */}
       {error && (
-        <div className="flex items-start gap-2 rounded-lg bg-red-50 border border-red-200 px-3 py-2.5 text-xs text-red-700">
+        <div className="flex items-start gap-3 rounded-xl bg-red-50 border border-red-200 px-4 py-3 text-xs text-red-800">
           <i className="ri-error-warning-line mt-0.5" />
           <div className="flex-1">
             <p className="font-semibold">Não foi possível carregar as receitas.</p>
@@ -434,23 +419,25 @@ export default function ReceitasTab() {
       )}
 
       {truncated && !error && (
-        <div className="flex items-start gap-2 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-700">
+        <div className="flex items-start gap-3 rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 text-xs text-amber-800">
           <i className="ri-alert-line mt-0.5" />
           <span>Período muito grande: a lista foi cortada no limite de segurança e os totais estão <strong>subestimados</strong>. Reduza o intervalo.</span>
         </div>
       )}
 
       {/* ── KPIs ── */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
         <KpiCard
+          semVariacao atual={0}
           label="Total de Receitas"
           value={formatCurrency(summary?.total ?? 0)}
           icon="ri-arrow-down-circle-line"
-          color="bg-green-100 text-green-600"
+          valueTone="text-emerald-700"
           sub={`${items.length} lançamento(s)`}
         />
         {enabledSources.includes('stone') || enabledSources.includes('pix') || enabledSources.includes('ifood') ? (
           <KpiCard
+            semVariacao atual={0}
             label={[
               enabledSources.includes('stone') ? `Cartão (${flowLbl.card})` : null,
               enabledSources.includes('pix') ? 'Pix' : null,
@@ -459,7 +446,6 @@ export default function ReceitasTab() {
             ].filter(Boolean).join(' / ')}
             value={formatCurrency((summary?.fromStone ?? 0) + (summary?.fromPix ?? 0) + (summary?.fromIfood ?? 0) + (summary?.fromDinheiro ?? 0))}
             icon="ri-bank-card-line"
-            color="bg-sky-100 text-sky-600"
             sub={[
               enabledSources.includes('stone') ? `Cartão ${formatCurrency(summary?.fromStone ?? 0)}` : null,
               enabledSources.includes('pix') ? `Pix ${formatCurrency(summary?.fromPix ?? 0)}` : null,
@@ -470,21 +456,22 @@ export default function ReceitasTab() {
           />
         ) : (
           <KpiCard
+            semVariacao atual={0}
             label="Vendas (Pedidos)"
             value={formatCurrency(summary?.fromOrders ?? 0)}
             icon="ri-shopping-bag-3-line"
-            color="bg-emerald-100 text-emerald-600"
             sub={`${items.filter(r => r.source === 'order').length} pedido(s) pago(s)`}
           />
         )}
         <KpiCard
+          semVariacao atual={0}
           label="Lançamentos Manuais"
           value={formatCurrency(summary?.fromManual ?? 0)}
           icon="ri-edit-box-line"
-          color="bg-amber-100 text-amber-600"
           sub={`${items.filter(r => r.source === 'manual').length} lançamento(s)`}
         />
         <KpiCard
+          semVariacao atual={0}
           label="Média Diária"
           value={formatCurrency((() => {
             // Média diária conta só os dias JÁ DECORRIDOS: com "Este Mês", endDate é o
@@ -495,7 +482,6 @@ export default function ReceitasTab() {
             return (summary?.total ?? 0) / days;
           })())}
           icon="ri-line-chart-line"
-          color="bg-zinc-100 text-zinc-600"
           sub="no período selecionado"
         />
       </div>
@@ -506,9 +492,9 @@ export default function ReceitasTab() {
       {/* ── Controles ── */}
       <div className="flex flex-col gap-3">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-          <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-2 lg:gap-3 flex-wrap">
             {/* Período */}
-            <div className="flex items-center gap-1 bg-white border border-zinc-200 rounded-lg px-2 py-1.5">
+            <div className="flex items-center gap-1 bg-white border border-zinc-200 rounded-xl px-3 h-10 shadow-sm">
               <input
                 type="date"
                 value={filters.startDate}
@@ -525,19 +511,19 @@ export default function ReceitasTab() {
             </div>
 
             {/* Quick presets */}
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-1.5 overflow-x-auto max-w-full">
               {PERIOD_PRESETS.map(p => (
                 <button key={p.label}
                   onClick={() => { const r = p.get(); setFilters(f => ({ ...f, startDate: r.start, endDate: r.end })); }}
-                  className="px-2 py-1.5 rounded-lg text-xs font-medium cursor-pointer transition-colors bg-white border border-zinc-200 text-zinc-600 hover:bg-zinc-50 whitespace-nowrap">
+                  className="px-3 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 rounded-xl text-xs font-semibold text-zinc-600 cursor-pointer transition-colors whitespace-nowrap shadow-sm">
                   {p.label}
                 </button>
               ))}
             </div>
 
             <button onClick={() => setShowFilters(s => !s)}
-              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors border ${
-                hasActiveFilters ? 'bg-green-50 border-green-200 text-green-700' : 'bg-white border-zinc-200 text-zinc-600 hover:bg-zinc-50'
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors border shadow-sm ${
+                hasActiveFilters ? 'bg-amber-50 border-amber-200 text-amber-700' : 'bg-white border-zinc-200 text-zinc-600 hover:bg-zinc-50'
               }`}>
               <i className="ri-filter-3-line" />
               Filtros {hasActiveFilters && `(${filters.categories.length + filters.sources.length})`}
@@ -551,32 +537,29 @@ export default function ReceitasTab() {
 
             {items.length > 0 && (
               <button onClick={() => exportToCSV(sortedItems, `Receitas_${filters.startDate}_a_${filters.endDate}.csv`)}
-                className="flex items-center gap-1.5 px-3 py-2 bg-white border border-zinc-200 rounded-lg text-xs font-semibold text-zinc-600 hover:bg-zinc-50 cursor-pointer whitespace-nowrap transition-colors">
+                className="flex items-center gap-1.5 px-3 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 rounded-xl text-xs font-semibold text-zinc-600 cursor-pointer transition-colors whitespace-nowrap shadow-sm">
                 <i className="ri-download-line" /> Exportar CSV
               </button>
             )}
           </div>
 
-          <div className="flex items-center gap-2 self-start">
+          <div className="flex items-center gap-2 self-start max-w-full">
             {/* Toggle visualização */}
-            <div className="flex bg-white border border-zinc-200 rounded-lg overflow-hidden">
-              {([
-                { id: 'tabela', icon: 'ri-table-line', label: 'Tabela' },
-                { id: 'graficos', icon: 'ri-bar-chart-grouped-line', label: 'Gráficos' },
-                { id: 'analise', icon: 'ri-line-chart-line', label: 'Análise' },
-              ] as const).map(v => (
-                <button key={v.id} onClick={() => setViewMode(v.id)}
-                  className={`px-3 py-2 text-xs font-semibold cursor-pointer transition-colors whitespace-nowrap flex items-center gap-1 ${
-                    viewMode === v.id ? 'bg-green-500 text-white' : 'text-zinc-500 hover:text-zinc-800'
-                  }`}>
-                  <i className={v.icon} /> {v.label}
-                </button>
-              ))}
+            <div className="overflow-x-auto max-w-full">
+              <Segmented
+                value={viewMode}
+                onChange={setViewMode}
+                options={[
+                  { id: 'tabela', icon: 'ri-table-line', label: 'Tabela' },
+                  { id: 'graficos', icon: 'ri-bar-chart-grouped-line', label: 'Gráficos' },
+                  { id: 'analise', icon: 'ri-line-chart-line', label: 'Análise' },
+                ]}
+              />
             </div>
 
             {/* Botão nova receita */}
             <button onClick={() => setShowNovaReceita(true)}
-              className="flex items-center gap-1.5 px-4 py-2 bg-green-500 hover:bg-green-600 text-white rounded-lg text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors">
+              className="flex items-center gap-1.5 bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-xl text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors shadow-sm">
               <i className="ri-add-line" /> Nova Receita
             </button>
           </div>
@@ -584,14 +567,14 @@ export default function ReceitasTab() {
 
         {/* Painel de filtros */}
         {showFilters && (
-          <div className="bg-white border border-zinc-200 rounded-xl p-4 space-y-4">
+          <div className="bg-white border border-zinc-200 rounded-2xl p-5 space-y-4">
             <div className="relative">
               <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 text-sm" />
               <input
                 value={filters.search}
                 onChange={e => setFilters(f => ({ ...f, search: e.target.value }))}
                 placeholder="Buscar por descrição, categoria ou origem..."
-                className="w-full pl-9 pr-3 py-2 border border-zinc-200 rounded-lg text-sm focus:outline-none focus:border-green-400"
+                className="w-full h-10 pl-9 pr-3 border border-zinc-200 rounded-xl shadow-sm text-sm focus:outline-none focus:border-amber-400"
               />
             </div>
 
@@ -655,7 +638,7 @@ export default function ReceitasTab() {
       {loading && (
         <div className="py-12 flex items-center justify-center">
           <div className="flex flex-col items-center gap-3">
-            <div className="w-6 h-6 border-2 border-green-500 border-t-transparent rounded-full animate-spin" />
+            <div className="w-6 h-6 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
             <p className="text-zinc-400 text-sm">Carregando receitas...</p>
           </div>
         </div>
@@ -663,16 +646,14 @@ export default function ReceitasTab() {
 
       {/* ── Vazio ── */}
       {!loading && items.length === 0 && (
-        <div className="py-16 text-center">
-          <div className="w-14 h-14 flex items-center justify-center bg-green-50 rounded-2xl mx-auto mb-4">
-            <i className="ri-arrow-down-circle-line text-green-400 text-2xl" />
-          </div>
-          <p className="text-sm font-semibold text-zinc-700">Nenhuma receita encontrada</p>
+        <div className="py-14 text-center">
+          <i className="ri-arrow-down-circle-line text-4xl text-zinc-200 block mb-2" />
+          <p className="text-sm font-semibold text-zinc-500">Nenhuma receita encontrada</p>
           <p className="text-xs text-zinc-400 mt-1">
             {hasActiveFilters ? 'Tente ajustar os filtros' : `${enabledSources.map(s => sourceInfo[s].label).join(', ')} aparecerão aqui`}
           </p>
           <button onClick={() => setShowNovaReceita(true)}
-            className="mt-4 inline-flex items-center gap-2 px-4 py-2 bg-green-500 hover:bg-green-600 text-white rounded-lg text-sm font-semibold cursor-pointer transition-colors whitespace-nowrap">
+            className="mt-4 inline-flex items-center gap-1.5 bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-xl text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors shadow-sm">
             <i className="ri-add-line" /> Lançar Receita Manual
           </button>
         </div>
@@ -684,10 +665,10 @@ export default function ReceitasTab() {
       {!loading && viewMode === 'tabela' && items.length > 0 && (
         <>
           {/* Celular: cartão por lançamento (a tabela não cabe em 375px) */}
-          <ul className="md:hidden p-2 space-y-2 bg-zinc-50/60">
+          <ul className="md:hidden space-y-2">
             {sortedItems.map(item => (
               <li key={item.id}>
-                <div className="rounded-xl border border-zinc-200 bg-white px-3 py-3">
+                <div className="rounded-2xl border border-zinc-200 bg-white px-4 py-3">
                   <div className="flex items-baseline justify-between gap-2">
                     <span className="text-[11px] text-zinc-400 whitespace-nowrap">
                       {new Date(item.date + 'T12:00:00').toLocaleDateString('pt-BR')}
@@ -700,7 +681,7 @@ export default function ReceitasTab() {
                   {item.origin_detail && <p className="text-xs text-zinc-400 break-words line-clamp-1">{item.origin_detail}</p>}
                   {item.notes && <p className="text-xs text-zinc-400 mt-0.5 break-words line-clamp-1">{item.notes}</p>}
                   <div className="flex items-center gap-1.5 flex-wrap mt-2">
-                    <span className="text-xs bg-green-50 text-green-700 px-2 py-1 rounded-full font-medium">{item.category}</span>
+                    <span className="text-[11px] font-semibold px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700">{item.category}</span>
                     <div className="flex items-center gap-1.5">
                       <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: SOURCE_COLORS_R[item.source] }} />
                       <span className="text-xs text-zinc-500">{SOURCE_LABELS_R[item.source]}</span>
@@ -711,26 +692,26 @@ export default function ReceitasTab() {
             ))}
           </ul>
 
-        <div className="hidden md:block bg-white rounded-xl border border-zinc-200 overflow-hidden">
+        <div className="hidden md:block bg-white rounded-2xl border border-zinc-200 overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
-                <tr className="bg-zinc-50 border-b border-zinc-200">
-                  <th className="text-left px-5 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wide cursor-pointer hover:text-zinc-700"
+                <tr className="border-b border-zinc-200">
+                  <th className="text-left px-5 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400 cursor-pointer hover:text-zinc-700"
                     onClick={() => toggleSort('date')}>
                     <span className="flex items-center gap-1">
                       Data {sortField === 'date' && <i className={sortDir === 'asc' ? 'ri-arrow-up-line' : 'ri-arrow-down-line'} />}
                     </span>
                   </th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wide">Descrição</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wide cursor-pointer hover:text-zinc-700"
+                  <th className="text-left px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Descrição</th>
+                  <th className="text-left px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400 cursor-pointer hover:text-zinc-700"
                     onClick={() => toggleSort('category')}>
                     <span className="flex items-center gap-1">
                       Categoria {sortField === 'category' && <i className={sortDir === 'asc' ? 'ri-arrow-up-line' : 'ri-arrow-down-line'} />}
                     </span>
                   </th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wide">Fonte</th>
-                  <th className="text-right px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wide cursor-pointer hover:text-zinc-700"
+                  <th className="text-left px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Fonte</th>
+                  <th className="text-right px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400 cursor-pointer hover:text-zinc-700"
                     onClick={() => toggleSort('amount')}>
                     <span className="flex items-center justify-end gap-1">
                       Valor {sortField === 'amount' && <i className={sortDir === 'asc' ? 'ri-arrow-up-line' : 'ri-arrow-down-line'} />}
@@ -738,9 +719,9 @@ export default function ReceitasTab() {
                   </th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-zinc-100">
+              <tbody className="divide-y divide-zinc-100/80">
                 {sortedItems.map(item => (
-                  <tr key={item.id} className="hover:bg-zinc-50/50 transition-colors">
+                  <tr key={item.id} className="hover:bg-zinc-50 transition-colors">
                     <td className="px-5 py-3 text-sm text-zinc-600 whitespace-nowrap">
                       {new Date(item.date + 'T12:00:00').toLocaleDateString('pt-BR')}
                     </td>
@@ -750,7 +731,7 @@ export default function ReceitasTab() {
                       {item.notes && <p className="text-xs text-zinc-400 mt-0.5">{item.notes}</p>}
                     </td>
                     <td className="px-4 py-3">
-                      <span className="text-xs bg-green-50 text-green-700 px-2 py-1 rounded-full font-medium">{item.category}</span>
+                      <span className="text-[11px] font-semibold px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700">{item.category}</span>
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-1.5">
@@ -758,7 +739,7 @@ export default function ReceitasTab() {
                         <span className="text-xs text-zinc-500">{SOURCE_LABELS_R[item.source]}</span>
                       </div>
                     </td>
-                    <td className="px-4 py-3 text-sm font-bold text-right text-green-700">
+                    <td className="px-4 py-3 text-sm font-bold text-right tabular-nums whitespace-nowrap text-emerald-700">
                       {formatCurrency(item.amount)}
                     </td>
                   </tr>
@@ -766,8 +747,8 @@ export default function ReceitasTab() {
               </tbody>
               <tfoot>
                 <tr className="bg-zinc-50 border-t-2 border-zinc-200">
-                  <td colSpan={4} className="px-5 py-3 text-sm font-bold text-zinc-800">Total</td>
-                  <td className="px-4 py-3 text-sm font-bold text-right text-green-700">{formatCurrency(summary?.total ?? 0)}</td>
+                  <td colSpan={4} className="px-5 py-3 text-sm font-bold text-zinc-900">Total</td>
+                  <td className="px-4 py-3 text-sm font-bold text-right tabular-nums whitespace-nowrap text-zinc-900">{formatCurrency(summary?.total ?? 0)}</td>
                 </tr>
               </tfoot>
             </table>
@@ -783,8 +764,8 @@ export default function ReceitasTab() {
         <div className="space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {/* Pizza por categoria */}
-            <div className="bg-white rounded-xl border border-zinc-200 p-5">
-              <h3 className="text-sm font-semibold text-zinc-800 mb-4">Receitas por Categoria</h3>
+            <div className="bg-white rounded-2xl border border-zinc-200 p-5">
+              <h3 className="text-sm font-bold text-zinc-800 mb-4">Receitas por Categoria</h3>
               <ResponsiveContainer width="100%" height={260}>
                 <PieChart>
                   <Pie data={pieData} cx="50%" cy="50%" innerRadius={60} outerRadius={90} paddingAngle={3} dataKey="value" nameKey="name">
@@ -794,7 +775,7 @@ export default function ReceitasTab() {
                     if (!active || !payload?.length) return null;
                     const p = payload[0];
                     return (
-                      <div className="bg-white border border-zinc-200 rounded-xl p-3 text-xs">
+                      <div className="bg-white border border-zinc-200 rounded-xl p-3 text-xs shadow-sm">
                         <p className="font-semibold text-zinc-700">{p.name}</p>
                         <p className="font-bold text-zinc-900 mt-1">{formatCurrency(Number(p.value))}</p>
                         <p className="text-zinc-400">{(p.payload as { percent: number }).percent.toFixed(1)}%</p>
@@ -807,14 +788,14 @@ export default function ReceitasTab() {
             </div>
 
             {/* Barras por fonte */}
-            <div className="bg-white rounded-xl border border-zinc-200 p-5">
-              <h3 className="text-sm font-semibold text-zinc-800 mb-4">Receitas por Fonte</h3>
+            <div className="bg-white rounded-2xl border border-zinc-200 p-5">
+              <h3 className="text-sm font-bold text-zinc-800 mb-4">Receitas por Fonte</h3>
               <ResponsiveContainer width="100%" height={260}>
                 <BarChart data={sourceBarData} margin={{ top: 4, right: 4, left: 0, bottom: 4 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f4f4f5" vertical={false} />
-                  <XAxis dataKey="name" tick={{ fontSize: 10, fill: '#71717a' }} axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fontSize: 10, fill: '#71717a' }} tickFormatter={v => `R$${(v / 1000).toFixed(0)}k`} axisLine={false} tickLine={false} width={48} />
-                  <ReTooltip content={<ChartTooltip />} />
+                  <XAxis dataKey="name" tick={{ fontSize: 11, fill: '#71717a' }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fontSize: 10, fill: '#a1a1aa' }} tickFormatter={v => `R$${(v / 1000).toFixed(0)}k`} axisLine={false} tickLine={false} width={48} />
+                  <ReTooltip content={<ChartTooltip />} cursor={{ fill: '#fafafa' }} />
                   <Bar dataKey="value" radius={[4, 4, 0, 0]} maxBarSize={60}>
                     {sourceBarData.map((entry, i) => <Cell key={i} fill={entry.color} />)}
                   </Bar>
@@ -825,14 +806,14 @@ export default function ReceitasTab() {
 
           {/* Evolução mensal */}
           {monthBarData.length > 1 && (
-            <div className="bg-white rounded-xl border border-zinc-200 p-5">
-              <h3 className="text-sm font-semibold text-zinc-800 mb-4">Evolução Mensal</h3>
+            <div className="bg-white rounded-2xl border border-zinc-200 p-5">
+              <h3 className="text-sm font-bold text-zinc-800 mb-4">Evolução Mensal</h3>
               <ResponsiveContainer width="100%" height={240}>
                 <BarChart data={monthBarData} margin={{ top: 4, right: 4, left: 0, bottom: 4 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f4f4f5" vertical={false} />
-                  <XAxis dataKey="name" tick={{ fontSize: 10, fill: '#71717a' }} axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fontSize: 10, fill: '#71717a' }} tickFormatter={v => `R$${(v / 1000).toFixed(0)}k`} axisLine={false} tickLine={false} width={48} />
-                  <ReTooltip content={<ChartTooltip />} />
+                  <XAxis dataKey="name" tick={{ fontSize: 11, fill: '#71717a' }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fontSize: 10, fill: '#a1a1aa' }} tickFormatter={v => `R$${(v / 1000).toFixed(0)}k`} axisLine={false} tickLine={false} width={48} />
+                  <ReTooltip content={<ChartTooltip />} cursor={{ fill: '#fafafa' }} />
                   <Bar dataKey="total" name="Receita" fill="#10b981" radius={[4, 4, 0, 0]} maxBarSize={40} />
                 </BarChart>
               </ResponsiveContainer>
@@ -841,8 +822,8 @@ export default function ReceitasTab() {
 
           {/* Tendência diária */}
           {summary.dailyTrend.length > 1 && (
-            <div className="bg-white rounded-xl border border-zinc-200 p-5">
-              <h3 className="text-sm font-semibold text-zinc-800 mb-4">Tendência Diária</h3>
+            <div className="bg-white rounded-2xl border border-zinc-200 p-5">
+              <h3 className="text-sm font-bold text-zinc-800 mb-4">Tendência Diária</h3>
               <ResponsiveContainer width="100%" height={200}>
                 <AreaChart data={summary.dailyTrend} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
                   <defs>
@@ -870,8 +851,8 @@ export default function ReceitasTab() {
         <div className="space-y-5">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
             {/* Comparação mês a mês */}
-            <div className="bg-white rounded-xl border border-zinc-200 p-5">
-              <h3 className="text-sm font-semibold text-zinc-800 mb-4">Comparação Mês a Mês</h3>
+            <div className="bg-white rounded-2xl border border-zinc-200 p-5">
+              <h3 className="text-sm font-bold text-zinc-800 mb-4">Comparação Mês a Mês</h3>
               {monthBarData.length > 1 ? (
                 <div className="space-y-3">
                   {monthBarData.map((m, i) => {
@@ -907,8 +888,8 @@ export default function ReceitasTab() {
             </div>
 
             {/* Top categorias */}
-            <div className="bg-white rounded-xl border border-zinc-200 p-5">
-              <h3 className="text-sm font-semibold text-zinc-800 mb-4">Receita por Categoria</h3>
+            <div className="bg-white rounded-2xl border border-zinc-200 p-5">
+              <h3 className="text-sm font-bold text-zinc-800 mb-4">Receita por Categoria</h3>
               <div className="space-y-3">
                 {summary.byCategory.slice(0, 8).map((cat, i) => {
                   const pct = summary.total > 0 ? (cat.total / summary.total) * 100 : 0;
@@ -937,8 +918,8 @@ export default function ReceitasTab() {
           </div>
 
           {/* Resumo do período */}
-          <div className="bg-white rounded-xl border border-zinc-200 p-5">
-            <h3 className="text-sm font-semibold text-zinc-800 mb-4">Resumo do Período</h3>
+          <div className="bg-white rounded-2xl border border-zinc-200 p-5">
+            <h3 className="text-sm font-bold text-zinc-800 mb-4">Resumo do Período</h3>
             {(() => {
               // Média diária conta só os dias JÁ DECORRIDOS: com "Este Mês", endDate é o
               // último dia do mês, então no dia 5 a média dividia por 30 e mostrava 1/6
@@ -977,7 +958,7 @@ export default function ReceitasTab() {
 
             {/* Maiores receitas */}
             <div className="mt-5">
-              <h4 className="text-xs font-bold text-zinc-500 uppercase tracking-wide mb-3">Maiores Receitas do Período</h4>
+              <h4 className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wide mb-3">Maiores Receitas do Período</h4>
               <div className="space-y-2">
                 {[...items].sort((a, b) => b.amount - a.amount).slice(0, 5).map((item, i) => (
                   <div key={item.id} className="flex items-center gap-3 p-2.5 rounded-lg hover:bg-zinc-50 transition-colors">

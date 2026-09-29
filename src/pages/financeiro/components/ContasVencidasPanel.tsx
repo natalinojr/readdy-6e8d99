@@ -5,6 +5,7 @@ import { useBillsPayable } from '@/hooks/useFinanceiro';
 import { formatCurrency } from '@/lib/formatters';
 import DreClassificacaoSelect, { precisaClassificarDRE, useDreEscolha } from '@/pages/financeiro/components/DreClassificacaoSelect';
 import { rotuloImpactoMargem } from '@/lib/impactoMargem';
+import { KpiCard, Segmented } from './dreUi';
 
 interface ContaVencida {
   id: string;
@@ -274,10 +275,10 @@ export default function ContasVencidasPanel() {
 
   if (loading) {
     return (
-      <div className="p-8 flex items-center justify-center">
-        <div className="flex flex-col items-center gap-3">
-          <div className="w-8 h-8 border-2 border-red-500 border-t-transparent rounded-full animate-spin" />
-          <p className="text-zinc-400 text-sm">Carregando contas vencidas...</p>
+      <div className="p-4 md:p-6 max-w-[1400px] mx-auto">
+        <div className="py-14 text-center">
+          <i className="ri-loader-4-line animate-spin text-4xl text-zinc-200" />
+          <p className="text-zinc-400 text-sm mt-2">Carregando contas vencidas...</p>
         </div>
       </div>
     );
@@ -286,80 +287,54 @@ export default function ContasVencidasPanel() {
   const totalGeral = impacto.totalVencido + impacto.totalPendente;
 
   return (
-    <div className="p-6 space-y-5">
+    <div className="p-4 md:p-6 space-y-5 max-w-[1400px] mx-auto">
 
-      {/* Header de alerta */}
       {contas.length === 0 ? (
-        <div className="bg-green-50 border border-green-200 rounded-2xl p-8 text-center">
-          <div className="w-16 h-16 flex items-center justify-center bg-green-100 rounded-full mx-auto mb-4">
-            <i className="ri-checkbox-circle-line text-green-600 text-3xl" />
-          </div>
-          <h3 className="text-lg font-bold text-green-800">Nenhuma conta vencida!</h3>
-          <p className="text-sm text-green-600 mt-1">Todas as contas estão em dia. Continue assim!</p>
+        <div className="bg-white rounded-2xl border border-zinc-200 py-14 text-center">
+          <i className="ri-checkbox-circle-line text-4xl text-emerald-300" />
+          <h3 className="text-sm font-bold text-zinc-800 mt-2">Nenhuma conta vencida!</h3>
+          <p className="text-zinc-400 text-sm mt-1">Todas as contas estão em dia. Continue assim!</p>
         </div>
       ) : (
         <>
-          {/* Banner de impacto */}
-          <div className="bg-red-50 border border-red-200 rounded-2xl p-5">
-            <div className="flex items-start gap-4 mb-4">
-              <div className="w-10 h-10 flex items-center justify-center bg-red-100 rounded-xl flex-shrink-0">
-                <i className="ri-alarm-warning-line text-red-600 text-xl" />
-              </div>
-              <div className="flex-1">
-                <h2 className="text-base font-bold text-red-900">
-                  {contas.length} conta{contas.length > 1 ? 's' : ''} vencida{contas.length > 1 ? 's' : ''} em aberto
-                </h2>
-                <p className="text-sm text-red-700 mt-0.5">
-                  Essas contas estão impactando o <strong>DRE de Competência</strong> e representam passivos não quitados.
-                </p>
-              </div>
-              <div className="text-right flex-shrink-0">
-                <p className="text-2xl font-black text-red-700">{formatCurrency(totalGeral)}</p>
-                <p className="text-xs text-red-500 mt-0.5">total em aberto</p>
-              </div>
+          {/* Aviso de impacto */}
+          <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 flex items-start gap-3">
+            <i className="ri-alarm-warning-line text-red-500 mt-0.5" />
+            <div>
+              <p className="text-xs font-semibold text-red-800">
+                {contas.length} conta{contas.length > 1 ? 's' : ''} vencida{contas.length > 1 ? 's' : ''} em aberto
+              </p>
+              <p className="text-xs text-red-700 mt-0.5">
+                Essas contas estão impactando o <strong>DRE de Competência</strong> e representam passivos não quitados.
+              </p>
             </div>
+          </div>
 
-            {/* KPIs de impacto */}
-            <div className="grid grid-cols-4 gap-3">
-              <div className="bg-white border border-red-100 rounded-xl p-3">
-                <p className="text-xs text-red-500 font-semibold">Vencidas (overdue)</p>
-                <p className="text-lg font-black text-red-700 mt-0.5">{formatCurrency(impacto.totalVencido)}</p>
-                <p className="text-xs text-red-400">{contas.filter(c => c.status === 'overdue').length} contas</p>
-              </div>
-              <div className="bg-white border border-amber-100 rounded-xl p-3">
-                <p className="text-xs text-amber-600 font-semibold">Pendentes vencidas</p>
-                <p className="text-lg font-black text-amber-700 mt-0.5">{formatCurrency(impacto.totalPendente)}</p>
-                <p className="text-xs text-amber-400">{contas.filter(c => c.status === 'pending').length} contas</p>
-              </div>
-              <div className="bg-white border border-orange-100 rounded-xl p-3">
-                <p className="text-xs text-orange-600 font-semibold">Impacto na Margem</p>
-                {impacto.receitaBruta > 0 ? (
-                  <p className="text-lg font-black text-orange-700 mt-0.5">{rotuloImpactoMargem(totalGeral, impacto.receitaBruta)}</p>
-                ) : (
-                  <p className="text-sm font-semibold text-zinc-400 mt-1.5">{rotuloImpactoMargem(totalGeral, impacto.receitaBruta)}</p>
-                )}
-                <p className="text-xs text-orange-400">da receita bruta do mês</p>
-              </div>
-              <div className="bg-white border border-zinc-100 rounded-xl p-3">
-                <p className="text-xs text-zinc-500 font-semibold">Mais antiga</p>
-                <p className="text-lg font-black text-zinc-700 mt-0.5">
-                  {contas.length > 0 ? `${Math.max(...contas.map(c => c.days_overdue))}d` : '—'}
-                </p>
-                <p className="text-xs text-zinc-400">dias em atraso</p>
-              </div>
-            </div>
+          {/* KPIs de impacto */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5 gap-3">
+            <KpiCard label="Total em aberto" icon="ri-money-dollar-circle-line" value={formatCurrency(totalGeral)} valueTone="text-red-600" highlight="neg" atual={totalGeral} semVariacao />
+            <KpiCard label="Vencidas (overdue)" icon="ri-alarm-warning-line" value={formatCurrency(impacto.totalVencido)} valueTone="text-red-600" sub={`${contas.filter(c => c.status === 'overdue').length} contas`} atual={impacto.totalVencido} semVariacao />
+            <KpiCard label="Pendentes vencidas" icon="ri-time-line" value={formatCurrency(impacto.totalPendente)} valueTone="text-amber-700" sub={`${contas.filter(c => c.status === 'pending').length} contas`} atual={impacto.totalPendente} semVariacao />
+            <KpiCard
+              label="Impacto na margem" icon="ri-percent-line"
+              value={rotuloImpactoMargem(totalGeral, impacto.receitaBruta)}
+              valueTone={impacto.receitaBruta > 0 ? 'text-amber-700' : 'text-zinc-400'}
+              sub="da receita bruta do mês" atual={0} semVariacao
+            />
+            <KpiCard label="Mais antiga" icon="ri-hourglass-line" value={contas.length > 0 ? `${Math.max(...contas.map(c => c.days_overdue))}d` : '—'} sub="dias em atraso" atual={0} semVariacao />
           </div>
 
           {/* Impacto por categoria DRE */}
           {impacto.porCategoria.length > 0 && (
-            <div className="bg-white border border-zinc-200 rounded-2xl p-5">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-sm font-bold text-zinc-800">Impacto por Categoria DRE</h3>
-                <span className="text-xs text-zinc-400 bg-zinc-50 border border-zinc-200 px-2 py-1 rounded-lg">
-                  Competência
-                </span>
+            <div className="bg-white border border-zinc-200 rounded-2xl overflow-hidden">
+              <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-100 gap-3 flex-wrap">
+                <div>
+                  <h3 className="text-sm font-bold text-zinc-800">Impacto por categoria DRE</h3>
+                  <p className="text-xs text-zinc-400">Saldo vencido por categoria</p>
+                </div>
+                <span className="text-[11px] font-semibold px-2 py-0.5 rounded-md bg-zinc-100 text-zinc-600">Competência</span>
               </div>
-              <div className="space-y-3">
+              <div className="space-y-3 p-5">
                 {impacto.porCategoria.map(cat => {
                   const pct = totalGeral > 0 ? (cat.total / totalGeral) * 100 : 0;
                   return (
@@ -388,7 +363,7 @@ export default function ContasVencidasPanel() {
                     <div className="flex items-center justify-between mb-1">
                       <div className="flex items-center gap-2">
                         <span className="text-sm font-medium text-zinc-400">Sem categoria DRE</span>
-                        <span className="text-xs bg-amber-100 text-amber-600 px-1.5 py-0.5 rounded-full">Vincular</span>
+                        <span className="text-[11px] font-semibold px-2 py-0.5 rounded-md bg-amber-50 text-amber-700">Vincular</span>
                       </div>
                       <span className="text-sm font-bold text-zinc-500">{formatCurrency(impacto.semCategoria)}</span>
                     </div>
@@ -405,28 +380,26 @@ export default function ContasVencidasPanel() {
           )}
 
           {/* Filtros */}
-          <div className="flex items-center gap-3 flex-wrap">
-            <div className="relative flex-1 min-w-48">
+          <div className="flex flex-wrap items-center gap-2 lg:gap-3">
+            <div className="relative flex-1 min-w-48 max-w-sm">
               <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 text-sm" />
               <input
                 value={search}
                 onChange={e => setSearch(e.target.value)}
                 placeholder="Buscar conta..."
-                className="w-full pl-9 pr-3 py-2 border border-zinc-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-400 bg-white"
+                className="w-full h-10 pl-9 pr-3 rounded-xl border border-zinc-200 shadow-sm text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white"
               />
             </div>
 
             {/* Filtro por idade */}
-            <div className="flex bg-white border border-zinc-200 rounded-lg overflow-hidden">
-              {(Object.keys(AGE_LABELS) as AgeFilter[]).map(f => (
-                <button
-                  key={f}
-                  onClick={() => setAgeFilter(f)}
-                  className={`px-3 py-2 text-xs font-semibold cursor-pointer transition-colors whitespace-nowrap ${ageFilter === f ? 'bg-red-500 text-white' : 'text-zinc-600 hover:bg-zinc-50'}`}
-                >
-                  {AGE_LABELS[f]}
-                </button>
-              ))}
+            <div className="overflow-x-auto max-w-full">
+              <Segmented
+                value={ageFilter}
+                onChange={setAgeFilter}
+                options={(Object.keys(AGE_LABELS) as AgeFilter[]).map(f => ({
+                  id: f, label: AGE_LABELS[f], icon: f === 'all' ? 'ri-list-check' : 'ri-time-line',
+                }))}
+              />
             </div>
 
             {/* Filtro por categoria DRE */}
@@ -434,7 +407,7 @@ export default function ContasVencidasPanel() {
               <select
                 value={catFilter}
                 onChange={e => setCatFilter(e.target.value)}
-                className="border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400 bg-white"
+                className="h-10 border border-zinc-200 rounded-xl shadow-sm px-3 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white max-w-full"
               >
                 <option value="all">Todas as categorias</option>
                 {uniqueDreCats.map(c => (
@@ -450,32 +423,32 @@ export default function ContasVencidasPanel() {
           </div>
 
           {/* Celular: cartão por conta (a tabela com 7 colunas não cabe em 375px) */}
-          <ul className="md:hidden p-2 space-y-2 bg-zinc-50/60">
+          <ul className="md:hidden space-y-2">
             {filtered.length === 0 ? (
-              <li className="text-center py-10 text-zinc-400 text-sm">Nenhuma conta encontrada com os filtros selecionados</li>
+              <li className="py-14 text-center"><i className="ri-search-line text-4xl text-zinc-200" /><p className="text-zinc-400 text-sm mt-2">Nenhuma conta encontrada com os filtros selecionados</p></li>
             ) : filtered.map(c => {
               const colors = ageColor(c.days_overdue);
               return (
-                <li key={c.id} className={`rounded-xl border bg-white px-3 py-3 ${colors.border}`}>
+                <li key={c.id} className={`rounded-2xl border bg-white px-4 py-3 ${colors.border}`}>
                   <div className="flex items-baseline justify-between gap-2">
                     <span className="text-[11px] text-zinc-400 whitespace-nowrap">
                       {new Date(c.due_date + 'T00:00:00').toLocaleDateString('pt-BR')}
                     </span>
-                    <span className="text-base font-bold text-red-600 whitespace-nowrap">{formatCurrency(c.amount)}</span>
+                    <span className="text-base font-bold text-red-600 tabular-nums whitespace-nowrap">{formatCurrency(c.amount)}</span>
                   </div>
                   <p className="text-sm font-medium text-zinc-800 break-words line-clamp-2">{c.description}</p>
                   {c.supplier && <p className="text-xs text-zinc-400 break-words line-clamp-1">{c.supplier}</p>}
                   <div className="flex items-center gap-1.5 flex-wrap mt-2">
-                    <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${colors.badge}`}>
+                    <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-md ${colors.badge}`}>
                       {c.days_overdue === 0 ? 'Hoje' : `${c.days_overdue}d`}
                     </span>
-                    <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${c.status === 'overdue' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>
+                    <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-md ${c.status === 'overdue' ? 'bg-red-50 text-red-600' : 'bg-amber-50 text-amber-700'}`}>
                       {c.status === 'overdue' ? 'Vencido' : 'Pendente'}
                     </span>
                     {c.dre_category_name ? (
-                      <span className="text-xs bg-zinc-100 text-zinc-600 px-2 py-0.5 rounded-full break-words">{c.dre_category_name}</span>
+                      <span className="text-[11px] font-semibold bg-zinc-100 text-zinc-600 px-2 py-0.5 rounded-md break-words">{c.dre_category_name}</span>
                     ) : (
-                      <span className="text-xs bg-amber-50 text-amber-500 px-2 py-0.5 rounded-full border border-amber-200">Sem categoria</span>
+                      <span className="text-[11px] font-semibold bg-amber-50 text-amber-700 px-2 py-0.5 rounded-md">Sem categoria</span>
                     )}
                     <span className="flex-1" />
                     <button
@@ -485,7 +458,7 @@ export default function ContasVencidasPanel() {
                         setPayForm(f => ({ ...f, paid_amount: String(saldoDevedor(c)), paid_date: today }));
                       }}
                       disabled={payingId === c.id}
-                      className="flex items-center gap-1 text-xs bg-green-100 text-green-700 px-3 h-9 rounded-lg cursor-pointer active:bg-green-200 whitespace-nowrap font-semibold transition-colors disabled:opacity-50"
+                      className="flex items-center gap-1 text-xs bg-emerald-50 text-emerald-700 px-3 h-9 rounded-xl cursor-pointer active:bg-emerald-100 whitespace-nowrap font-semibold transition-colors disabled:opacity-50"
                     >
                       <i className="ri-check-line" /> Pagar
                     </button>
@@ -497,73 +470,82 @@ export default function ContasVencidasPanel() {
 
           {/* Tabela */}
           <div className="hidden md:block bg-white rounded-2xl border border-zinc-200 overflow-hidden">
+            <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-100 gap-3 flex-wrap">
+              <div>
+                <h3 className="text-sm font-bold text-zinc-800">Contas vencidas</h3>
+                <p className="text-xs text-zinc-400">Ordene pelos cabeçalhos das colunas</p>
+              </div>
+              <span className="text-[11px] text-zinc-400 flex items-center gap-1"><i className="ri-arrow-up-down-line" /> clique no título para ordenar</span>
+            </div>
+            <div className="overflow-x-auto">
             <table className="w-full text-sm">
-              <thead className="bg-zinc-950 text-white">
+              <thead className="border-b border-zinc-200">
                 <tr>
-                  <th className="text-left px-5 py-3 text-xs font-semibold uppercase tracking-wide">
-                    <button onClick={() => handleSort('description')} className="flex items-center cursor-pointer hover:text-zinc-300">
+                  <th className="text-left pl-5 pr-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
+                    <button onClick={() => handleSort('description')} className="flex items-center cursor-pointer hover:text-zinc-700 uppercase">
                       Descrição <SortIcon field="description" />
                     </button>
                   </th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold uppercase tracking-wide text-zinc-400">Categoria DRE</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold uppercase tracking-wide">
-                    <button onClick={() => handleSort('due_date')} className="flex items-center cursor-pointer hover:text-zinc-300">
+                  <th className="text-left px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Categoria DRE</th>
+                  <th className="text-left px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
+                    <button onClick={() => handleSort('due_date')} className="flex items-center cursor-pointer hover:text-zinc-700 uppercase">
                       Vencimento <SortIcon field="due_date" />
                     </button>
                   </th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold uppercase tracking-wide">
-                    <button onClick={() => handleSort('days_overdue')} className="flex items-center cursor-pointer hover:text-zinc-300">
+                  <th className="text-left px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
+                    <button onClick={() => handleSort('days_overdue')} className="flex items-center cursor-pointer hover:text-zinc-700 uppercase">
                       Atraso <SortIcon field="days_overdue" />
                     </button>
                   </th>
-                  <th className="text-right px-4 py-3 text-xs font-semibold uppercase tracking-wide">
-                    <button onClick={() => handleSort('amount')} className="flex items-center ml-auto cursor-pointer hover:text-zinc-300">
+                  <th className="text-right px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
+                    <button onClick={() => handleSort('amount')} className="flex items-center ml-auto cursor-pointer hover:text-zinc-700 uppercase">
                       Valor <SortIcon field="amount" />
                     </button>
                   </th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold uppercase tracking-wide text-zinc-400">Status</th>
-                  <th className="px-4 py-3 w-24" />
+                  <th className="text-left px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Status</th>
+                  <th className="px-4 py-2.5 pr-5 w-24" />
                 </tr>
               </thead>
-              <tbody className="divide-y divide-zinc-50">
+              <tbody className="divide-y divide-zinc-100/80">
                 {filtered.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="text-center py-10 text-zinc-400 text-sm">
-                      Nenhuma conta encontrada com os filtros selecionados
+                    <td colSpan={7} className="py-14 text-center">
+                      <i className="ri-search-line text-4xl text-zinc-200" />
+                      <p className="text-zinc-400 text-sm mt-2">Nenhuma conta encontrada com os filtros selecionados</p>
                     </td>
                   </tr>
                 ) : filtered.map(c => {
                   const colors = ageColor(c.days_overdue);
                   return (
                     <tr key={c.id} className={`hover:bg-zinc-50 transition-colors ${c.days_overdue > 30 ? 'bg-red-50/20' : ''}`}>
-                      <td className="px-5 py-3">
-                        <p className="font-medium text-zinc-800">{c.description}</p>
-                        {c.supplier && <p className="text-xs text-zinc-400 mt-0.5">{c.supplier}</p>}
+                      <td className="pl-5 pr-4 py-3">
+                        <p className="font-medium text-zinc-800 truncate max-w-[280px]" title={c.description}>{c.description}</p>
+                        {c.supplier && <p className="text-xs text-zinc-400 mt-0.5 truncate max-w-[280px]" title={c.supplier}>{c.supplier}</p>}
                       </td>
                       <td className="px-4 py-3">
                         {c.dre_category_name ? (
-                          <span className="text-xs bg-zinc-100 text-zinc-600 px-2 py-0.5 rounded-full">{c.dre_category_name}</span>
+                          <span className="text-[11px] font-semibold bg-zinc-100 text-zinc-600 px-2 py-0.5 rounded-md">{c.dre_category_name}</span>
                         ) : (
-                          <span className="text-xs bg-amber-50 text-amber-500 px-2 py-0.5 rounded-full border border-amber-200">Sem categoria</span>
+                          <span className="text-[11px] font-semibold bg-amber-50 text-amber-700 px-2 py-0.5 rounded-md">Sem categoria</span>
                         )}
                       </td>
-                      <td className="px-4 py-3 text-zinc-600 text-sm">
+                      <td className="px-4 py-3 text-zinc-600 text-sm whitespace-nowrap">
                         {new Date(c.due_date + 'T00:00:00').toLocaleDateString('pt-BR')}
                       </td>
                       <td className="px-4 py-3">
-                        <span className={`text-xs font-bold px-2 py-1 rounded-full ${colors.badge}`}>
+                        <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-md ${colors.badge}`}>
                           {c.days_overdue === 0 ? 'Hoje' : `${c.days_overdue}d`}
                         </span>
                       </td>
-                      <td className="px-4 py-3 text-right font-bold text-red-600">
+                      <td className="px-4 py-3 text-right font-bold text-red-600 tabular-nums whitespace-nowrap">
                         {formatCurrency(c.amount)}
                       </td>
                       <td className="px-4 py-3">
-                        <span className={`text-xs font-semibold px-2 py-1 rounded-full ${c.status === 'overdue' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>
+                        <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-md ${c.status === 'overdue' ? 'bg-red-50 text-red-600' : 'bg-amber-50 text-amber-700'}`}>
                           {c.status === 'overdue' ? 'Vencido' : 'Pendente'}
                         </span>
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="px-4 py-3 pr-5">
                         <button
                           onClick={() => {
                             setPayModal(c);
@@ -574,7 +556,7 @@ export default function ContasVencidasPanel() {
                             setPayForm(f => ({ ...f, paid_amount: String(saldoDevedor(c)), paid_date: today }));
                           }}
                           disabled={payingId === c.id}
-                          className="flex items-center gap-1 text-xs bg-green-100 text-green-700 px-2.5 py-1.5 rounded-lg cursor-pointer hover:bg-green-200 whitespace-nowrap font-semibold transition-colors disabled:opacity-50"
+                          className="flex items-center gap-1 text-xs bg-emerald-50 text-emerald-700 px-2.5 py-1.5 rounded-lg cursor-pointer hover:bg-emerald-100 whitespace-nowrap font-semibold transition-colors disabled:opacity-50"
                         >
                           <i className="ri-check-line" /> Pagar
                         </button>
@@ -586,10 +568,10 @@ export default function ContasVencidasPanel() {
               {filtered.length > 0 && (
                 <tfoot className="bg-zinc-50 border-t-2 border-zinc-200">
                   <tr>
-                    <td colSpan={4} className="px-5 py-3 text-xs font-bold text-zinc-600 uppercase tracking-wide">
+                    <td colSpan={4} className="pl-5 pr-4 py-3 text-xs font-bold text-zinc-600 uppercase tracking-wide">
                       Total filtrado ({filtered.length} contas)
                     </td>
-                    <td className="px-4 py-3 text-right text-base font-black text-red-600">
+                    <td className="px-4 py-3 text-right text-base font-bold text-zinc-900 tabular-nums whitespace-nowrap">
                       {formatCurrency(filtered.reduce((s, c) => s + c.amount, 0))}
                     </td>
                     <td colSpan={2} />
@@ -597,16 +579,15 @@ export default function ContasVencidasPanel() {
                 </tfoot>
               )}
             </table>
+            </div>
           </div>
 
           {/* Dica de ação */}
-          <div className="bg-zinc-50 border border-zinc-200 rounded-xl p-4 flex items-start gap-3">
-            <div className="w-7 h-7 flex items-center justify-center bg-zinc-100 rounded-lg flex-shrink-0">
-              <i className="ri-lightbulb-line text-zinc-500 text-sm" />
-            </div>
+          <div className="bg-sky-50 border border-sky-200 rounded-xl px-4 py-3 flex items-start gap-3">
+            <i className="ri-lightbulb-line text-sky-500 mt-0.5" />
             <div>
-              <p className="text-xs font-semibold text-zinc-700">Como essas contas afetam o DRE de Competência?</p>
-              <p className="text-xs text-zinc-500 mt-0.5">
+              <p className="text-xs font-semibold text-sky-900">Como essas contas afetam o DRE de Competência?</p>
+              <p className="text-xs text-sky-800 mt-0.5">
                 No regime de competência, <strong>todas as contas com vencimento no período são contabilizadas</strong> como despesa, independente de terem sido pagas. Isso significa que contas vencidas e não pagas já reduziram o resultado do DRE no mês em que venceram. Quitar essas contas não altera o DRE de competência retroativamente — mas melhora o fluxo de caixa e o DRE de caixa do mês atual.
               </p>
             </div>

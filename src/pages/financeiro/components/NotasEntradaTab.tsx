@@ -5,6 +5,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
 import { confirmar } from '@/components/base/Dialogos';
 import { PrePagoConferir, PrePagoModal, listarPrePagos } from './notas/PrePago';
+import { KpiCard, Segmented } from './dreUi';
 
 // ── Notas de entrada (NF-e dos fornecedores contra o CNPJ da loja, via SEFAZ) ──
 // Cada nota é conferida aqui e vira uma COMPRA (mercadoria → CMV, com as parcelas
@@ -408,7 +409,7 @@ export default function NotasEntradaTab() {
   );
 
   return (
-    <div className="p-4 md:p-6 space-y-4">
+    <div className="p-4 md:p-6 space-y-5 max-w-[1400px] mx-auto">
       {/* Cabeçalho */}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
@@ -421,15 +422,15 @@ export default function NotasEntradaTab() {
             {ultimaSync.erro ? <span className="text-red-500"> · Erro: {ultimaSync.erro}</span> : null}
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="ml-auto flex items-center gap-2 overflow-x-auto max-w-full">
           {prePagos.size > 0 && (
             <button onClick={() => setVerCredito(true)} title="Fornecedores pré-pagos: saldo de crédito, recargas e consumos"
-              className="inline-flex items-center gap-2 text-xs font-semibold px-3 py-2 rounded-lg border border-violet-200 text-violet-700 bg-violet-50 hover:bg-violet-100 cursor-pointer whitespace-nowrap">
+              className="flex items-center gap-1.5 px-3 py-2 border border-violet-200 bg-violet-50 hover:bg-violet-100 rounded-xl text-xs font-semibold text-violet-700 cursor-pointer transition-colors whitespace-nowrap shadow-sm">
               <i className="ri-wallet-3-line" />Crédito pré-pago
             </button>
           )}
           <button onClick={sincronizar} disabled={sincronizando}
-            className="inline-flex items-center gap-2 text-xs font-semibold px-3 py-2 rounded-lg bg-amber-500 text-white hover:bg-amber-600 disabled:opacity-50 cursor-pointer whitespace-nowrap">
+            className="flex items-center gap-1.5 bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-xl text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors shadow-sm disabled:opacity-50">
             <i className={sincronizando ? 'ri-loader-4-line animate-spin' : 'ri-download-cloud-2-line'} />
             {sincronizando ? 'Buscando na SEFAZ…' : 'Buscar notas agora'}
           </button>
@@ -437,54 +438,57 @@ export default function NotasEntradaTab() {
       </div>
 
       {/* Resumo */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <div className="bg-white rounded-xl border border-zinc-100 p-4">
-          <p className="text-[11px] font-semibold text-zinc-400 uppercase">A conferir</p>
-          <p className="text-xl font-bold text-amber-600 mt-1">{resumo.novas}</p>
-          <p className="text-xs text-zinc-500">{brl(resumo.valorNovas)}</p>
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+        <div className="rounded-2xl border border-zinc-200 bg-white p-4 flex flex-col gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="w-7 h-7 rounded-lg bg-zinc-100 text-zinc-500 flex items-center justify-center flex-shrink-0"><i className="ri-inbox-archive-line text-sm" /></span>
+            <span className="text-xs font-semibold text-zinc-500 truncate">A conferir</span>
+          </div>
+          <p className="text-2xl font-bold tabular-nums tracking-tight text-amber-700">{resumo.novas}</p>
+          <p className="text-xs text-zinc-400">{brl(resumo.valorNovas)}</p>
           {resumo.vencidas > 0 && (
             <button onClick={() => { setFiltro('new'); setOrdem('vencimento'); }} title="Nota parada não vira conta a pagar: o boleto dela não aparece em Contas a Pagar"
-              className="mt-1 text-[11px] font-semibold text-red-600 hover:underline cursor-pointer text-left">
+              className="text-[11px] font-semibold text-red-600 hover:underline cursor-pointer text-left">
               {resumo.vencidas} com boleto vencido · {brl(resumo.valorVencidas)}
             </button>
           )}
         </div>
-        <div className="bg-white rounded-xl border border-zinc-100 p-4">
-          <p className="text-[11px] font-semibold text-zinc-400 uppercase">Sem XML completo</p>
-          <p className={`text-xl font-bold mt-1 ${resumo.semXml ? 'text-sky-600' : 'text-zinc-700'}`}>{resumo.semXml}</p>
-          <p className="text-xs text-zinc-500">faltam itens e parcelas</p>
-        </div>
-        <div className="bg-white rounded-xl border border-zinc-100 p-4">
-          <p className="text-[11px] font-semibold text-zinc-400 uppercase">Canceladas pelo fornecedor</p>
-          <p className={`text-xl font-bold mt-1 ${resumo.canceladas ? 'text-red-600' : 'text-zinc-700'}`}>{resumo.canceladas}</p>
-          <p className="text-xs text-zinc-500">não devem ser pagas</p>
-        </div>
-        <div className="bg-white rounded-xl border border-zinc-100 p-4">
-          <p className="text-[11px] font-semibold text-zinc-400 uppercase">Total na lista</p>
-          <p className="text-xl font-bold text-zinc-700 mt-1">{docs.length}</p>
-          <p className="text-xs text-zinc-500">últimos 90 dias da SEFAZ</p>
-        </div>
+        <KpiCard label="Sem XML completo" icon="ri-file-warning-line" value={String(resumo.semXml)} valueTone={resumo.semXml ? 'text-sky-700' : undefined} sub="faltam itens e parcelas" atual={resumo.semXml} semVariacao />
+        <KpiCard label="Canceladas pelo fornecedor" icon="ri-close-circle-line" value={String(resumo.canceladas)} valueTone={resumo.canceladas ? 'text-red-600' : undefined} sub="não devem ser pagas" atual={resumo.canceladas} semVariacao />
+        <KpiCard label="Total na lista" icon="ri-list-check-2" value={String(docs.length)} sub="últimos 90 dias da SEFAZ" atual={docs.length} semVariacao />
       </div>
 
       {/* Filtros */}
-      <div className="bg-white rounded-xl border border-zinc-100 p-3 flex flex-wrap items-center gap-2">
-        {([['new', 'A conferir'], ['imported', 'Lançadas'], ['ignored', 'Ignoradas'], ['all', 'Todas']] as const).map(([id, label]) => (
-          <button key={id} onClick={() => setFiltro(id)}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-lg cursor-pointer ${filtro === id ? 'bg-zinc-900 text-white' : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'}`}>
-            {label}
-          </button>
-        ))}
-        <span className="w-px h-5 bg-zinc-200 mx-1" />
-        {([['all', 'Todos os tipos'], ['nfe', 'Mercadorias (NF-e)'], ['nfse', 'Serviços (NFS-e)']] as const).map(([id, label]) => (
-          <button key={id} onClick={() => setTipoDoc(id)}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-lg cursor-pointer ${tipoDoc === id ? 'bg-amber-500 text-white' : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'}`}>
-            {label} <span className="opacity-70">{docs.filter((d) => (id === 'all' ? true : id === 'nfse' ? isServico(d) : !isServico(d))).length}</span>
-          </button>
-        ))}
-        <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Fornecedor, CNPJ ou nº da nota"
-          className="flex-1 min-w-[180px] text-sm border border-zinc-200 rounded-lg px-3 py-1.5 focus:outline-none focus:border-amber-400" />
+      <div className="flex flex-wrap items-center gap-2 lg:gap-3">
+        <div className="overflow-x-auto max-w-full">
+          <Segmented<Filtro>
+            value={filtro}
+            onChange={setFiltro}
+            options={[
+              { id: 'new', label: 'A conferir', icon: 'ri-inbox-archive-line' },
+              { id: 'imported', label: 'Lançadas', icon: 'ri-check-double-line' },
+              { id: 'ignored', label: 'Ignoradas', icon: 'ri-eye-off-line' },
+              { id: 'all', label: 'Todas', icon: 'ri-list-check' },
+            ]}
+          />
+        </div>
+        <div className="overflow-x-auto max-w-full">
+          <Segmented<'all' | 'nfe' | 'nfse'>
+            value={tipoDoc}
+            onChange={setTipoDoc}
+            options={([['all', 'Todos os tipos', 'ri-stack-line'], ['nfe', 'Mercadorias (NF-e)', 'ri-shopping-basket-line'], ['nfse', 'Serviços (NFS-e)', 'ri-customer-service-2-line']] as const).map(([id, label, icon]) => ({
+              id, icon,
+              label: `${label} ${docs.filter((d) => (id === 'all' ? true : id === 'nfse' ? isServico(d) : !isServico(d))).length}`,
+            }))}
+          />
+        </div>
+        <div className="relative flex-1 min-w-[180px]">
+          <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 text-sm" />
+          <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Fornecedor, CNPJ ou nº da nota"
+            className="w-full h-10 rounded-xl border border-zinc-200 shadow-sm pl-9 pr-3 text-sm bg-white focus:outline-none focus:border-amber-400" />
+        </div>
         <select value={ordem} onChange={(e) => setOrdem(e.target.value as 'emissao' | 'vencimento')}
-          className="text-xs border border-zinc-200 rounded-lg px-2 py-1.5 focus:outline-none focus:border-amber-400 cursor-pointer">
+          className="h-10 text-xs font-semibold text-zinc-600 border border-zinc-200 bg-white shadow-sm rounded-xl px-3 focus:outline-none focus:border-amber-400 cursor-pointer">
           <option value="emissao">Mais recentes</option>
           <option value="vencimento">Boleto mais urgente</option>
         </select>
@@ -502,13 +506,13 @@ export default function NotasEntradaTab() {
       )}
 
       {/* Lista */}
-      <div className="bg-white rounded-xl border border-zinc-100 overflow-hidden">
+      <div className="bg-white rounded-2xl border border-zinc-200 overflow-hidden">
         {loading ? (
-          <div className="p-8 text-center text-sm text-zinc-400">Carregando…</div>
+          <div className="py-14 text-center"><i className="ri-loader-4-line animate-spin text-4xl text-zinc-200" /><p className="text-zinc-400 text-sm mt-2">Carregando…</p></div>
         ) : filtrados.length === 0 ? (
-          <div className="p-10 text-center">
-            <i className="ri-inbox-2-line text-3xl text-zinc-300" />
-            <p className="text-sm text-zinc-500 mt-2">{docs.length === 0 ? 'Nenhuma nota de entrada ainda.' : 'Nada neste filtro.'}</p>
+          <div className="py-14 text-center">
+            <i className="ri-inbox-2-line text-4xl text-zinc-200" />
+            <p className="text-sm text-zinc-400 mt-2">{docs.length === 0 ? 'Nenhuma nota de entrada ainda.' : 'Nada neste filtro.'}</p>
             {docs.length === 0 && <p className="text-xs text-zinc-400 mt-1">Clique em "Buscar notas agora". A SEFAZ guarda as notas dos últimos 90 dias.</p>}
           </div>
         ) : (
@@ -520,7 +524,7 @@ export default function NotasEntradaTab() {
               const proxima = (d.parcelas ?? []).find((p) => p.vencimento >= hoje()) ?? (d.parcelas ?? [])[0];
               const isBusy = busy === d.id;
               return (
-                <li key={d.id} className={`rounded-xl border bg-white px-3 py-3 ${cancelada ? 'border-red-200 bg-red-50/40' : d.status === 'new' ? 'border-amber-200' : 'border-zinc-200'}`}>
+                <li key={d.id} className={`rounded-2xl border bg-white px-3 py-3 ${cancelada ? 'border-red-200 bg-red-50/40' : d.status === 'new' ? 'border-amber-200' : 'border-zinc-200'}`}>
                   <div className="flex items-baseline justify-between gap-2">
                     <span className="text-[11px] text-zinc-400 whitespace-nowrap inline-flex items-center gap-2">
                       {d.status === 'new' && (
@@ -553,29 +557,29 @@ export default function NotasEntradaTab() {
           <div className="hidden md:block overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="text-[11px] uppercase text-zinc-400 border-b border-zinc-100">
-                  <th className="pl-4 py-2.5 w-6">
+                <tr className="border-b border-zinc-200">
+                  <th className="pl-5 py-2.5 w-6">
                     {selecionaveis.length > 0 && (
                       <input type="checkbox" checked={todasSel} onChange={toggleTodas} title="Selecionar todas as notas a conferir da lista" className="cursor-pointer" />
                     )}
                   </th>
-                  <th className="text-left px-4 py-2.5 font-semibold">Emissão</th>
-                  <th className="text-left px-4 py-2.5 font-semibold">Fornecedor</th>
-                  <th className="text-left px-4 py-2.5 font-semibold">Nota</th>
-                  <th className="text-right px-4 py-2.5 font-semibold">Valor</th>
-                  <th className="text-left px-4 py-2.5 font-semibold">Vencimentos</th>
-                  <th className="text-left px-4 py-2.5 font-semibold">Situação</th>
-                  <th className="text-right px-4 py-2.5 font-semibold">Ações</th>
+                  <th className="text-left px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Emissão</th>
+                  <th className="text-left px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Fornecedor</th>
+                  <th className="text-left px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Nota</th>
+                  <th className="text-right px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Valor</th>
+                  <th className="text-left px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Vencimentos</th>
+                  <th className="text-left px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Situação</th>
+                  <th className="text-right px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Ações</th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody className="divide-y divide-zinc-100/80">
                 {filtrados.map((d) => {
                   const cancelada = d.sefaz_status === 2;
                   const proxima = (d.parcelas ?? []).find((p) => p.vencimento >= hoje()) ?? (d.parcelas ?? [])[0];
                   const isBusy = busy === d.id;
                   return (
-                    <tr key={d.id} className={`border-b border-zinc-50 hover:bg-zinc-50/60 ${cancelada ? 'bg-red-50/40' : sel.has(d.id) ? 'bg-amber-50/50' : ''}`}>
-                      <td className="pl-4 py-2.5 w-6">
+                    <tr key={d.id} className={`hover:bg-zinc-50 ${cancelada ? 'bg-red-50/40' : sel.has(d.id) ? 'bg-amber-50/50' : ''}`}>
+                      <td className="pl-5 py-2.5 w-6">
                         {d.status === 'new' && <input type="checkbox" checked={sel.has(d.id)} onChange={() => toggleSel(d.id)} aria-label="Selecionar nota" className="cursor-pointer" />}
                       </td>
                       <td className="px-4 py-2.5 text-zinc-600 whitespace-nowrap">{dataBR(d.emitted_at)}</td>
@@ -588,7 +592,7 @@ export default function NotasEntradaTab() {
                         {d.numero ?? '—'}{d.serie ? `/${d.serie}` : ''}
                         {d.natureza && <p className="text-[10px] text-zinc-400 truncate max-w-[160px]" title={d.natureza}>{d.natureza}</p>}
                       </td>
-                      <td className="px-4 py-2.5 text-right font-semibold text-zinc-800 whitespace-nowrap">{brl(d.valor_total)}</td>
+                      <td className="px-4 py-2.5 text-right font-semibold text-zinc-800 tabular-nums whitespace-nowrap">{brl(d.valor_total)}</td>
                       <td className="px-4 py-2.5 text-zinc-600 whitespace-nowrap">
                         {isServico(d) && d.xml_status === 'full' ? (
                           DESCONTA_NO_REPASSE.test(d.emitente_nome ?? '')

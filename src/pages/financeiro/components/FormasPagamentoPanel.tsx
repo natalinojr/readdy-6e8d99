@@ -106,22 +106,23 @@ export default function FormasPagamentoPanel({ startDate, endDate }: { startDate
   const totalTaxa = grupos.reduce((s, g) => s + g.taxa, 0);
 
   return (
-    <div className="bg-white rounded-xl border border-zinc-200 p-4 md:p-5">
-      <div className="flex items-start justify-between gap-3 mb-4 flex-wrap">
+    <div className="bg-white rounded-2xl border border-zinc-200 overflow-hidden">
+      <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-100 gap-3 flex-wrap">
         <div>
-          <h3 className="text-sm font-semibold text-zinc-800">Vendas por forma de pagamento</h3>
-          <p className="text-xs text-zinc-400 mt-0.5">Pedidos pagos no período, pela data do pagamento. Taxa estimada pelo cadastro de cada forma.</p>
+          <h3 className="text-sm font-bold text-zinc-800">Vendas por forma de pagamento</h3>
+          <p className="text-xs text-zinc-400">Pedidos pagos no período, pela data do pagamento. Taxa estimada pelo cadastro de cada forma.</p>
         </div>
         {total > 0 && (
           <div className="text-right">
-            <p className="text-sm font-bold text-zinc-900">{formatCurrency(total)}</p>
+            <p className="text-sm font-bold tabular-nums text-zinc-900">{formatCurrency(total)}</p>
             <p className="text-[11px] text-zinc-400">taxas ≈ {formatCurrency(totalTaxa)} · líquido ≈ {formatCurrency(total - totalTaxa)}</p>
           </div>
         )}
       </div>
 
+      <div className="p-4 md:p-5">
       {error ? (
-        <div className="flex items-start gap-2 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">
+        <div className="flex items-start gap-3 rounded-xl bg-red-50 border border-red-200 px-4 py-3 text-xs text-red-800">
           <i className="ri-error-warning-line mt-0.5" />
           <span>Não foi possível carregar as formas de pagamento (os valores não estão zerados por falta de vendas). Detalhe: {error}</span>
         </div>
@@ -130,7 +131,7 @@ export default function FormasPagamentoPanel({ startDate, endDate }: { startDate
           <div className="w-5 h-5 border-2 border-zinc-300 border-t-transparent rounded-full animate-spin" />
         </div>
       ) : grupos.length === 0 ? (
-        <p className="text-xs text-zinc-400 py-6 text-center">Nenhum pagamento de pedido no período.</p>
+        <p className="text-sm text-zinc-400 py-10 text-center">Nenhum pagamento de pedido no período.</p>
       ) : (
         <div className="space-y-1">
           {grupos.map((g) => {
@@ -191,6 +192,7 @@ export default function FormasPagamentoPanel({ startDate, endDate }: { startDate
           </p>
         </div>
       )}
+      </div>
     </div>
   );
 }

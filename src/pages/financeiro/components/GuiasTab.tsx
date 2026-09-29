@@ -43,10 +43,10 @@ function situacao(g: GuiaEnviada): { label: string; cls: string } {
   if (g.conta_status === 'paid') return { label: `Paga${g.conta_paga_em ? ` em ${dataBR(g.conta_paga_em)}` : ''}`, cls: 'bg-emerald-50 text-emerald-700' };
   if (g.resultado === 'ja_paga') return { label: 'Já estava paga', cls: 'bg-emerald-50 text-emerald-700' };
   if (g.resultado === 'nao_reconhecida') return { label: 'Não reconhecida', cls: 'bg-zinc-100 text-zinc-600' };
-  if (g.resultado === 'erro') return { label: 'Não lançada', cls: 'bg-red-50 text-red-700' };
-  if (g.pagamento_status === 'rejected' || g.pagamento_status === 'cancelled') return { label: 'Pagamento recusado', cls: 'bg-red-50 text-red-700' };
+  if (g.resultado === 'erro') return { label: 'Não lançada', cls: 'bg-red-50 text-red-600' };
+  if (g.pagamento_status === 'rejected' || g.pagamento_status === 'cancelled') return { label: 'Pagamento recusado', cls: 'bg-red-50 text-red-600' };
   if (g.resultado === 'preparada') return { label: 'Aguardando o dono pagar', cls: 'bg-amber-50 text-amber-700' };
-  if (g.vencimento && g.vencimento < new Date().toISOString().slice(0, 10)) return { label: 'Vencida sem pagar', cls: 'bg-red-50 text-red-700' };
+  if (g.vencimento && g.vencimento < new Date().toISOString().slice(0, 10)) return { label: 'Vencida sem pagar', cls: 'bg-red-50 text-red-600' };
   return { label: 'Lançada · paga no vencimento', cls: 'bg-sky-50 text-sky-700' };
 }
 
@@ -132,12 +132,12 @@ export default function GuiasTab() {
   };
 
   return (
-    <div className="p-4 md:p-6 space-y-5 max-w-6xl">
+    <div className="p-4 md:p-6 space-y-5 max-w-[1400px] mx-auto">
       <div className="grid gap-4 md:grid-cols-3">
         {/* Envio das guias */}
-        <div className="md:col-span-2 bg-white rounded-2xl border border-zinc-100 p-4 md:p-5">
-          <h2 className="text-sm font-bold text-zinc-800">Enviar guias do mês</h2>
-          <p className="text-xs text-zinc-500 mt-1">
+        <div className="md:col-span-2 bg-white rounded-2xl border border-zinc-200 p-4 md:p-5">
+          <h3 className="text-sm font-bold text-zinc-800">Enviar guias do mês</h3>
+          <p className="text-xs text-zinc-400 mt-1">
             DAS (Simples Nacional), DARF do INSS da folha e guia do FGTS Digital. Anexe o PDF original, como o sistema do governo gera.
             A conta a pagar é lançada na loja do CNPJ da guia, já com a classificação certa. O pagamento fica pronto no vencimento e só sai quando o dono aprova.
           </p>
@@ -157,7 +157,7 @@ export default function GuiasTab() {
           {envios.length > 0 && (
             <ul className="mt-3 space-y-2">
               {envios.map((e, i) => (
-                <li key={`${e.nome}-${i}`} className={`rounded-lg border px-3 py-2 text-xs ${corEnvio[e.estado]}`}>
+                <li key={`${e.nome}-${i}`} className={`rounded-xl border px-3 py-2 text-xs ${corEnvio[e.estado]}`}>
                   <div className="flex items-center gap-1.5 font-semibold"><i className={iconeEnvio[e.estado]} /> <span className="truncate">{e.nome}</span></div>
                   <p className="mt-1 whitespace-pre-line leading-relaxed">{e.texto}</p>
                 </li>
@@ -167,16 +167,16 @@ export default function GuiasTab() {
         </div>
 
         {/* Outros documentos do mês */}
-        <div className="bg-white rounded-2xl border border-zinc-100 p-4 md:p-5 space-y-3">
-          <h2 className="text-sm font-bold text-zinc-800">Folha de pagamento</h2>
-          <p className="text-xs text-zinc-500">
+        <div className="bg-white rounded-2xl border border-zinc-200 p-4 md:p-5 space-y-3">
+          <h3 className="text-sm font-bold text-zinc-800">Folha de pagamento</h3>
+          <p className="text-xs text-zinc-400">
             A folha entra pelo <b>Extrato Mensal</b> do Domínio em PDF, em RH / Folha › Importar do Domínio. Cada pessoa é conferida (proventos, descontos e líquido).
           </p>
           <button onClick={() => setSearchParams({ tab: 'rh' }, { replace: true })}
-            className="w-full text-xs font-semibold px-3 py-2 rounded-lg bg-amber-500 text-white hover:bg-amber-600 cursor-pointer">
-            <i className="ri-team-line mr-1" /> Ir para RH / Folha
+            className="w-full flex items-center justify-center gap-1.5 bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-xl text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors shadow-sm">
+            <i className="ri-team-line" /> Ir para RH / Folha
           </button>
-          <div className="text-[11px] text-zinc-500 border-t border-zinc-100 pt-3 space-y-1">
+          <div className="text-[11px] text-zinc-400 border-t border-zinc-100 pt-3 space-y-1">
             <p><b>INSS e FGTS</b> não entram de novo na DRE: o custo já vem da folha (bruto + FGTS). A guia serve para pagar.</p>
             <p><b>DAS</b> entra na DRE como Impostos.</p>
             <p>Mandou a guia de novo com multa? A mesma conta é atualizada; não duplica.</p>
@@ -185,24 +185,75 @@ export default function GuiasTab() {
       </div>
 
       {/* Histórico */}
-      <div className="bg-white rounded-2xl border border-zinc-100">
-        <div className="flex items-center justify-between px-4 md:px-5 py-3 border-b border-zinc-100">
-          <h2 className="text-sm font-bold text-zinc-800">Guias enviadas <span className="text-zinc-400 font-normal">· últimos 6 meses</span></h2>
-          <button onClick={carregar} className="text-xs text-zinc-500 hover:text-zinc-800 cursor-pointer"><i className="ri-refresh-line" /> Atualizar</button>
+      <div className="bg-white rounded-2xl border border-zinc-200 overflow-hidden">
+        <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-100 gap-3 flex-wrap">
+          <div>
+            <h3 className="text-sm font-bold text-zinc-800">Guias enviadas</h3>
+            <p className="text-xs text-zinc-400">últimos 6 meses</p>
+          </div>
+          <button onClick={carregar} className="flex items-center gap-1.5 px-3 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 rounded-xl text-xs font-semibold text-zinc-600 cursor-pointer transition-colors whitespace-nowrap shadow-sm"><i className="ri-refresh-line" /> Atualizar</button>
         </div>
         {erroLista ? (
-          <p className="px-5 py-6 text-sm text-red-600">{erroLista}</p>
+          <div className="m-4 bg-red-50 border border-red-200 rounded-xl px-4 py-3 flex items-start gap-3">
+            <i className="ri-error-warning-line text-red-500" />
+            <p className="text-xs text-red-700">{erroLista}</p>
+          </div>
         ) : carregando ? (
-          <p className="px-5 py-6 text-sm text-zinc-400">Carregando…</p>
+          <div className="py-14 text-center"><i className="ri-loader-4-line animate-spin text-4xl text-zinc-200" /><p className="text-zinc-400 text-sm mt-2">Carregando…</p></div>
         ) : lista.length === 0 ? (
-          <p className="px-5 py-6 text-sm text-zinc-400">Nenhuma guia enviada por aqui ainda.</p>
+          <div className="py-14 text-center"><i className="ri-file-list-3-line text-4xl text-zinc-200" /><p className="text-zinc-400 text-sm mt-2">Nenhuma guia enviada por aqui ainda.</p></div>
         ) : (
-          <div className="divide-y divide-zinc-50">
-            {lista.map((g) => {
-              const s = situacao(g);
-              return (
-                <div key={g.id} className="px-4 md:px-5 py-3 flex flex-col md:flex-row md:items-center gap-1.5 md:gap-4">
-                  <div className="flex-1 min-w-0">
+          <>
+            <div className="hidden md:block overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-zinc-200 text-left">
+                    <th className="pl-5 pr-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Guia</th>
+                    <th className="px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Loja</th>
+                    <th className="px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Enviada</th>
+                    <th className="px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Vencimento</th>
+                    <th className="px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400 text-right">Valor</th>
+                    <th className="px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Situação</th>
+                    <th className="pl-4 pr-5 py-2.5" />
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-100/80">
+                  {lista.map((g) => {
+                    const s = situacao(g);
+                    const nome = g.titulo ?? g.arquivo_nome ?? 'Documento';
+                    return (
+                      <tr key={g.id} className="hover:bg-zinc-50">
+                        <td className="pl-5 pr-4 py-3">
+                          <p className="font-semibold text-zinc-800 truncate max-w-[240px]" title={nome}>
+                            {nome} <span className="text-zinc-400 font-normal">· {compBR(g.competencia)}</span>
+                          </p>
+                          {(g.resultado === 'erro' || g.resultado === 'nao_reconhecida') && g.mensagem && (
+                            <p className="text-[11px] text-red-600 mt-0.5 line-clamp-2 max-w-[320px]">{g.mensagem}</p>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-xs text-zinc-500 whitespace-nowrap">{g.loja ?? 'sem loja'}</td>
+                        <td className="px-4 py-3 text-xs text-zinc-500 whitespace-nowrap">{dataBR(g.created_at)} · {g.enviado_por_nome ?? '—'}</td>
+                        <td className="px-4 py-3 text-xs text-zinc-500 whitespace-nowrap">{dataBR(g.vencimento)}</td>
+                        <td className="px-4 py-3 text-right tabular-nums whitespace-nowrap font-semibold text-zinc-800">{brl(g.valor)}</td>
+                        <td className="px-4 py-3"><span className={`text-[11px] font-semibold px-2 py-0.5 rounded-md whitespace-nowrap ${s.cls}`}>{s.label}</span></td>
+                        <td className="pl-4 pr-5 py-3 text-right">
+                          {g.tem_arquivo && (
+                            <button onClick={() => abrirArquivo(g.id)} className="text-xs text-amber-600 hover:text-amber-700 font-semibold cursor-pointer whitespace-nowrap">
+                              <i className="ri-file-pdf-2-line" /> PDF
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div className="md:hidden divide-y divide-zinc-100/80">
+              {lista.map((g) => {
+                const s = situacao(g);
+                return (
+                  <div key={g.id} className="px-4 py-3 flex flex-col gap-1.5">
                     <p className="text-sm font-semibold text-zinc-800 truncate">
                       {g.titulo ?? g.arquivo_nome ?? 'Documento'} <span className="text-zinc-400 font-normal">· {compBR(g.competencia)}</span>
                     </p>
@@ -210,23 +261,23 @@ export default function GuiasTab() {
                       {g.loja ?? 'sem loja'} · enviada {dataBR(g.created_at)} por {g.enviado_por_nome ?? '—'}
                     </p>
                     {(g.resultado === 'erro' || g.resultado === 'nao_reconhecida') && g.mensagem && (
-                      <p className="text-[11px] text-red-600 mt-0.5 line-clamp-2">{g.mensagem}</p>
+                      <p className="text-[11px] text-red-600 line-clamp-2">{g.mensagem}</p>
                     )}
+                    <div className="flex items-center gap-3 text-xs flex-wrap">
+                      <span className="font-semibold text-zinc-800 tabular-nums">{brl(g.valor)}</span>
+                      <span className="text-zinc-500">vence {dataBR(g.vencimento)}</span>
+                      <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-md ${s.cls}`}>{s.label}</span>
+                      {g.tem_arquivo && (
+                        <button onClick={() => abrirArquivo(g.id)} className="text-amber-600 hover:text-amber-700 font-semibold cursor-pointer">
+                          <i className="ri-file-pdf-2-line" /> PDF
+                        </button>
+                      )}
+                    </div>
                   </div>
-                  <div className="flex items-center gap-3 text-xs flex-wrap">
-                    <span className="font-semibold text-zinc-800 tabular-nums">{brl(g.valor)}</span>
-                    <span className="text-zinc-500">vence {dataBR(g.vencimento)}</span>
-                    <span className={`px-2 py-0.5 rounded-full font-semibold ${s.cls}`}>{s.label}</span>
-                    {g.tem_arquivo && (
-                      <button onClick={() => abrirArquivo(g.id)} className="text-amber-600 hover:text-amber-700 font-semibold cursor-pointer">
-                        <i className="ri-file-pdf-2-line" /> PDF
-                      </button>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+          </>
         )}
       </div>
     </div>

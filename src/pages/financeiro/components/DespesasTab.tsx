@@ -6,6 +6,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Legend,
   AreaChart, Area,
 } from 'recharts';
+import { KpiCard, Segmented } from './dreUi';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 const today = new Date();
@@ -96,24 +97,6 @@ const BarTooltip = ({ active, payload, label }: { active?: boolean; payload?: { 
   );
 };
 
-// ─── KPI Card ───────────────────────────────────────────────────────────────
-function KpiCard({ label, value, icon, color, sub }: {
-  label: string; value: string; icon: string; color: string; sub?: string;
-}) {
-  return (
-    <div className="bg-white rounded-xl border border-zinc-200 p-4 md:p-5">
-      <div className="flex items-center justify-between mb-2">
-        <span className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">{label}</span>
-        <div className={`w-8 h-8 flex items-center justify-center rounded-lg ${color}`}>
-          <i className={`${icon} text-sm`} />
-        </div>
-      </div>
-      <p className="text-xl md:text-2xl font-bold text-zinc-900">{value}</p>
-      {sub && <p className="text-xs text-zinc-400 mt-1">{sub}</p>}
-    </div>
-  );
-}
-
 // ─── Detalhes Modal ───────────────────────────────────────────────────────────
 function DetalhesModal({ item, onClose }: { item: DespesaItem; onClose: () => void }) {
   return (
@@ -146,7 +129,7 @@ function DetalhesModal({ item, onClose }: { item: DespesaItem; onClose: () => vo
             </div>
             <div className="bg-zinc-50 rounded-lg p-3">
               <p className="text-xs text-zinc-500">Status</p>
-              <span className={`text-xs font-semibold px-2 py-1 rounded-full ${STATUS_COLORS[item.status]}`}>
+              <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-md ${STATUS_COLORS[item.status]}`}>
                 {STATUS_LABELS[item.status]}
               </span>
             </div>
@@ -290,36 +273,43 @@ export default function DespesasTab() {
   })) ?? [];
 
   return (
-    <div className="p-4 md:p-6 space-y-4 md:space-y-5">
+    <div className="p-4 md:p-6 space-y-5 max-w-[1400px] mx-auto">
       {/* ── KPIs ── */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
         <KpiCard
           label="Total de Despesas"
           value={formatCurrency(summary?.total ?? 0)}
           icon="ri-arrow-up-circle-line"
-          color="bg-red-100 text-red-500"
           sub={`${items.length} lançamento(s)`}
+          atual={summary?.total ?? 0}
+          semVariacao
         />
         <KpiCard
           label="Pago"
           value={formatCurrency(summary?.paid ?? 0)}
+          valueTone="text-emerald-700"
           icon="ri-check-double-line"
-          color="bg-green-100 text-green-600"
           sub={summary && summary.total > 0 ? `${((summary.paid / summary.total) * 100).toFixed(0)}% do total` : ''}
+          atual={summary?.paid ?? 0}
+          semVariacao
         />
         {/* Vencido antes de Pendente: vencido = prazo estourado, exige ação */}
         <KpiCard
           label="Vencido"
           value={formatCurrency(summary?.overdue ?? 0)}
+          valueTone={(summary?.overdue ?? 0) > 0 ? 'text-red-600' : undefined}
           icon="ri-alarm-warning-line"
-          color="bg-red-100 text-red-600"
+          atual={summary?.overdue ?? 0}
+          semVariacao
         />
         <KpiCard
           label="Pendente"
           value={formatCurrency(summary?.pending ?? 0)}
+          valueTone={(summary?.pending ?? 0) > 0 ? 'text-amber-700' : undefined}
           icon="ri-time-line"
-          color="bg-amber-100 text-amber-600"
           sub="no prazo, a vencer"
+          atual={summary?.pending ?? 0}
+          semVariacao
         />
       </div>
 
@@ -327,7 +317,7 @@ export default function DespesasTab() {
       {!loading && summary && items.length > 0 && (
         <div className="flex gap-3 flex-wrap">
           {summary.overdue > 0 && (
-            <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-xl px-4 py-3 flex-1 min-w-64">
+            <div className="flex items-start gap-3 bg-red-50 border border-red-200 rounded-xl px-4 py-3 flex-1 min-w-[16rem]">
               <i className="ri-alarm-warning-line text-red-500 text-lg flex-shrink-0" />
               <div>
                 <p className="text-xs font-semibold text-red-700">{formatCurrency(summary.overdue)} em despesas vencidas</p>
@@ -336,7 +326,7 @@ export default function DespesasTab() {
             </div>
           )}
           {summary.pending > 0 && (
-            <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 flex-1 min-w-64">
+            <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 flex-1 min-w-[16rem]">
               <i className="ri-time-line text-amber-600 text-lg flex-shrink-0" />
               <div>
                 <p className="text-xs font-semibold text-amber-700">{formatCurrency(summary.pending)} pendente de pagamento</p>
@@ -351,7 +341,7 @@ export default function DespesasTab() {
             const variation = prevPeriodAvg > 0 ? ((avgDaily - prevPeriodAvg) / prevPeriodAvg) * 100 : 0;
             if (variation > 20) {
               return (
-                <div className="flex items-center gap-2 bg-orange-50 border border-orange-200 rounded-xl px-4 py-3 flex-1 min-w-64">
+                <div className="flex items-start gap-3 bg-orange-50 border border-orange-200 rounded-xl px-4 py-3 flex-1 min-w-[16rem]">
                   <i className="ri-arrow-up-line text-orange-500 text-lg flex-shrink-0" />
                   <div>
                     <p className="text-xs font-semibold text-orange-700">Despesas {variation.toFixed(0)}% acima da média</p>
@@ -367,10 +357,10 @@ export default function DespesasTab() {
 
       {/* ── Controles: filtros + visualização ── */}
       <div className="flex flex-col gap-3">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-2 lg:gap-3">
           <div className="flex items-center gap-2 flex-wrap">
             {/* Período */}
-            <div className="flex items-center gap-1 bg-white border border-zinc-200 rounded-lg px-2 py-1.5">
+            <div className="flex items-center gap-1 bg-white border border-zinc-200 rounded-xl px-3 h-10 shadow-sm">
               <input
                 type="date"
                 value={filters.startDate}
@@ -387,7 +377,7 @@ export default function DespesasTab() {
             </div>
 
             {/* Quick presets */}
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-1.5 overflow-x-auto max-w-full">
               {PERIOD_PRESETS.map(p => (
                 <button
                   key={p.label}
@@ -395,7 +385,7 @@ export default function DespesasTab() {
                     const range = p.get();
                     setFilters(f => ({ ...f, startDate: range.start, endDate: range.end }));
                   }}
-                  className="px-2 py-1.5 rounded-lg text-xs font-medium cursor-pointer transition-colors bg-white border border-zinc-200 text-zinc-600 hover:bg-zinc-50 whitespace-nowrap"
+                  className="px-3 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 rounded-xl text-xs font-semibold text-zinc-600 cursor-pointer transition-colors whitespace-nowrap shadow-sm"
                 >
                   {p.label}
                 </button>
@@ -404,7 +394,7 @@ export default function DespesasTab() {
 
             <button
               onClick={() => setShowFilters(s => !s)}
-              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors border ${
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors border shadow-sm ${
                 hasActiveFilters ? 'bg-amber-50 border-amber-200 text-amber-700' : 'bg-white border-zinc-200 text-zinc-600 hover:bg-zinc-50'
               }`}
             >
@@ -423,7 +413,7 @@ export default function DespesasTab() {
             {items.length > 0 && (
               <button
                 onClick={() => exportToCSV(sortedItems, `Despesas_${filters.startDate}_a_${filters.endDate}.csv`)}
-                className="flex items-center gap-1.5 px-3 py-2 bg-white border border-zinc-200 rounded-lg text-xs font-semibold text-zinc-600 hover:bg-zinc-50 cursor-pointer whitespace-nowrap transition-colors"
+                className="flex items-center gap-1.5 px-3 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 rounded-xl text-xs font-semibold text-zinc-600 cursor-pointer transition-colors whitespace-nowrap shadow-sm"
               >
                 <i className="ri-download-line" /> Exportar CSV
               </button>
@@ -431,29 +421,23 @@ export default function DespesasTab() {
           </div>
 
           {/* Toggle visualização */}
-          <div className="flex bg-white border border-zinc-200 rounded-lg overflow-hidden self-start">
-            {([
-              { id: 'tabela', label: 'Tabela', icon: 'ri-table-line' },
-              { id: 'graficos', label: 'Gráficos', icon: 'ri-bar-chart-grouped-line' },
-              { id: 'cards', label: 'Cards', icon: 'ri-layout-grid-line' },
-              { id: 'analise', label: 'Análise', icon: 'ri-line-chart-line' },
-            ] as const).map(v => (
-              <button
-                key={v.id}
-                onClick={() => setViewMode(v.id)}
-                className={`px-3 py-2 text-xs font-semibold cursor-pointer transition-colors whitespace-nowrap flex items-center gap-1 ${
-                  viewMode === v.id ? 'bg-amber-500 text-white' : 'text-zinc-500 hover:text-zinc-800'
-                }`}
-              >
-                <i className={v.icon} /> {v.label}
-              </button>
-            ))}
+          <div className="overflow-x-auto max-w-full sm:ml-auto">
+            <Segmented
+              value={viewMode}
+              onChange={setViewMode}
+              options={[
+                { id: 'tabela', label: 'Tabela', icon: 'ri-table-line' },
+                { id: 'graficos', label: 'Gráficos', icon: 'ri-bar-chart-grouped-line' },
+                { id: 'cards', label: 'Cards', icon: 'ri-layout-grid-line' },
+                { id: 'analise', label: 'Análise', icon: 'ri-line-chart-line' },
+              ]}
+            />
           </div>
         </div>
 
         {/* Painel de filtros expandido */}
         {showFilters && (
-          <div className="bg-white border border-zinc-200 rounded-xl p-4 space-y-4">
+          <div className="bg-white border border-zinc-200 rounded-2xl p-4 space-y-4">
             {/* Busca */}
             <div className="relative">
               <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 text-sm" />
@@ -461,7 +445,7 @@ export default function DespesasTab() {
                 value={filters.search}
                 onChange={e => setFilters(f => ({ ...f, search: e.target.value }))}
                 placeholder="Buscar por descrição, categoria ou fornecedor..."
-                className="w-full pl-9 pr-3 py-2 border border-zinc-200 rounded-lg text-sm focus:outline-none focus:border-amber-400"
+                className="w-full h-10 pl-9 pr-3 border border-zinc-200 rounded-xl shadow-sm text-sm focus:outline-none focus:border-amber-400"
               />
             </div>
 
@@ -559,7 +543,7 @@ export default function DespesasTab() {
 
       {/* ── Loading ── */}
       {loading && (
-        <div className="py-12 flex items-center justify-center">
+        <div className="py-14 flex items-center justify-center">
           <div className="flex flex-col items-center gap-3">
             <div className="w-6 h-6 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
             <p className="text-zinc-400 text-sm">Carregando despesas...</p>
@@ -569,11 +553,9 @@ export default function DespesasTab() {
 
       {/* ── Vazio ── */}
       {!loading && items.length === 0 && (
-        <div className="py-16 text-center">
-          <div className="w-14 h-14 flex items-center justify-center bg-zinc-100 rounded-2xl mx-auto mb-4">
-            <i className="ri-pie-chart-2-line text-zinc-400 text-2xl" />
-          </div>
-          <p className="text-sm font-semibold text-zinc-700">Nenhuma despesa encontrada</p>
+        <div className="py-14 text-center">
+          <i className="ri-pie-chart-2-line text-4xl text-zinc-200 block mb-2" />
+          <p className="text-sm font-semibold text-zinc-500">Nenhuma despesa encontrada</p>
           <p className="text-xs text-zinc-400 mt-1">
             {hasActiveFilters ? 'Tente ajustar os filtros' : 'Registre contas a pagar, compras ou folha de pagamento'}
           </p>
@@ -586,18 +568,18 @@ export default function DespesasTab() {
       {!loading && viewMode === 'tabela' && items.length > 0 && (
         <>
           {/* Celular: cartão por lançamento (a tabela não cabe em 375px) */}
-          <ul className="md:hidden p-2 space-y-2 bg-zinc-50/60">
+          <ul className="md:hidden space-y-2">
             {sortedItems.map(item => (
               <li key={item.id}>
                 <div
                   onClick={() => setDetalhesItem(item)}
-                  className="rounded-xl border border-zinc-200 bg-white px-3 py-3 active:bg-zinc-50 cursor-pointer"
+                  className="rounded-2xl border border-zinc-200 bg-white px-4 py-3 active:bg-zinc-50 cursor-pointer"
                 >
                   <div className="flex items-baseline justify-between gap-2">
                     <span className="text-[11px] text-zinc-400 whitespace-nowrap">
                       {new Date(item.date + 'T12:00:00').toLocaleDateString('pt-BR')}
                     </span>
-                    <span className="text-base font-bold text-red-600 whitespace-nowrap">
+                    <span className="text-base font-bold tabular-nums text-red-600 whitespace-nowrap">
                       {formatCurrency(item.amount)}
                     </span>
                   </div>
@@ -605,8 +587,8 @@ export default function DespesasTab() {
                   {item.supplier && <p className="text-xs text-zinc-400 break-words line-clamp-1">{item.supplier}</p>}
                   {item.notes && <p className="text-xs text-zinc-400 mt-0.5 break-words line-clamp-1">{item.notes}</p>}
                   <div className="flex items-center gap-1.5 flex-wrap mt-2">
-                    <span className="text-xs bg-zinc-100 text-zinc-600 px-2 py-1 rounded-full font-medium">{item.category}</span>
-                    <span className={`text-xs font-semibold px-2 py-1 rounded-full ${STATUS_COLORS[item.status]}`}>
+                    <span className="text-[11px] bg-zinc-100 text-zinc-600 px-2 py-0.5 rounded-md font-semibold">{item.category}</span>
+                    <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-md ${STATUS_COLORS[item.status]}`}>
                       {STATUS_LABELS[item.status]}
                     </span>
                     <div className="flex items-center gap-1.5">
@@ -627,39 +609,43 @@ export default function DespesasTab() {
             ))}
           </ul>
 
-        <div className="hidden md:block bg-white rounded-xl border border-zinc-200 overflow-hidden">
+        <div className="hidden md:block bg-white rounded-2xl border border-zinc-200 overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-100 gap-3 flex-wrap">
+            <div><h3 className="text-sm font-bold text-zinc-800">Lançamentos</h3><p className="text-xs text-zinc-400">Despesas do período selecionado</p></div>
+            <span className="text-[11px] text-zinc-400 flex items-center gap-1"><i className="ri-cursor-line" /> clique no cabeçalho para ordenar</span>
+          </div>
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
-                <tr className="bg-zinc-50 border-b border-zinc-200">
-                  <th className="text-left px-5 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wide cursor-pointer hover:text-zinc-700" onClick={() => toggleSort('date')}>
+                <tr className="border-b border-zinc-200">
+                  <th className="text-left pl-5 pr-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400 cursor-pointer hover:text-zinc-700" onClick={() => toggleSort('date')}>
                     <span className="flex items-center gap-1">Data {sortField === 'date' && <i className={sortDir === 'asc' ? 'ri-arrow-up-line' : 'ri-arrow-down-line'} />}</span>
                   </th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wide">Descrição</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wide cursor-pointer hover:text-zinc-700" onClick={() => toggleSort('category')}>
+                  <th className="text-left px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Descrição</th>
+                  <th className="text-left px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400 cursor-pointer hover:text-zinc-700" onClick={() => toggleSort('category')}>
                     <span className="flex items-center gap-1">Categoria {sortField === 'category' && <i className={sortDir === 'asc' ? 'ri-arrow-up-line' : 'ri-arrow-down-line'} />}</span>
                   </th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wide">Fonte</th>
-                  <th className="text-center px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wide">Status</th>
-                  <th className="text-right px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wide cursor-pointer hover:text-zinc-700" onClick={() => toggleSort('amount')}>
+                  <th className="text-left px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Fonte</th>
+                  <th className="text-center px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Status</th>
+                  <th className="text-right px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400 cursor-pointer hover:text-zinc-700" onClick={() => toggleSort('amount')}>
                     <span className="flex items-center justify-end gap-1">Valor {sortField === 'amount' && <i className={sortDir === 'asc' ? 'ri-arrow-up-line' : 'ri-arrow-down-line'} />}</span>
                   </th>
-                  <th className="px-4 py-3" />
+                  <th className="px-4 py-2.5" />
                 </tr>
               </thead>
-              <tbody className="divide-y divide-zinc-100">
+              <tbody className="divide-y divide-zinc-100/80">
                 {sortedItems.map(item => (
-                  <tr key={item.id} className="hover:bg-zinc-50/50 transition-colors">
+                  <tr key={item.id} className="hover:bg-zinc-50 transition-colors">
                     <td className="px-5 py-3 text-sm text-zinc-600 whitespace-nowrap">
                       {new Date(item.date + 'T12:00:00').toLocaleDateString('pt-BR')}
                     </td>
                     <td className="px-4 py-3">
-                      <p className="text-sm font-medium text-zinc-800">{item.description}</p>
-                      {item.supplier && <p className="text-xs text-zinc-400">{item.supplier}</p>}
-                      {item.notes && <p className="text-xs text-zinc-400 mt-0.5">{item.notes}</p>}
+                      <p className="text-sm font-medium text-zinc-800 truncate max-w-[280px]" title={item.description}>{item.description}</p>
+                      {item.supplier && <p className="text-xs text-zinc-400 truncate max-w-[280px]" title={item.supplier}>{item.supplier}</p>}
+                      {item.notes && <p className="text-xs text-zinc-400 mt-0.5 truncate max-w-[280px]" title={item.notes}>{item.notes}</p>}
                     </td>
                     <td className="px-4 py-3">
-                      <span className="text-xs bg-zinc-100 text-zinc-600 px-2 py-1 rounded-full font-medium">{item.category}</span>
+                      <span className="text-[11px] bg-zinc-100 text-zinc-600 px-2 py-0.5 rounded-md font-semibold">{item.category}</span>
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-1.5">
@@ -668,11 +654,11 @@ export default function DespesasTab() {
                       </div>
                     </td>
                     <td className="px-4 py-3 text-center">
-                      <span className={`text-xs font-semibold px-2 py-1 rounded-full ${STATUS_COLORS[item.status]}`}>
+                      <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-md ${STATUS_COLORS[item.status]}`}>
                         {STATUS_LABELS[item.status]}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-sm font-bold text-right text-zinc-800">
+                    <td className="px-4 py-3 text-sm font-bold text-right tabular-nums whitespace-nowrap text-zinc-800">
                       {formatCurrency(item.amount)}
                     </td>
                     <td className="px-4 py-3">
@@ -692,7 +678,7 @@ export default function DespesasTab() {
               <tfoot>
                 <tr className="bg-zinc-50 border-t-2 border-zinc-200">
                   <td colSpan={5} className="px-5 py-3 text-sm font-bold text-zinc-800">Total</td>
-                  <td className="px-4 py-3 text-sm font-bold text-right text-zinc-900">{formatCurrency(summary?.total ?? 0)}</td>
+                  <td className="px-4 py-3 text-sm font-bold text-right tabular-nums whitespace-nowrap text-zinc-900">{formatCurrency(summary?.total ?? 0)}</td>
                   <td />
                 </tr>
               </tfoot>
@@ -710,8 +696,8 @@ export default function DespesasTab() {
           {/* Gráfico 1: Pizza por Categoria + Barras por Fonte */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {/* Pizza */}
-            <div className="bg-white rounded-xl border border-zinc-200 p-5">
-              <h3 className="text-sm font-semibold text-zinc-800 mb-4">Despesas por Categoria</h3>
+            <div className="bg-white rounded-2xl border border-zinc-200 p-5">
+              <h3 className="text-sm font-bold text-zinc-800 mb-4">Despesas por Categoria</h3>
               <ResponsiveContainer width="100%" height={260}>
                 <PieChart>
                   <Pie
@@ -735,14 +721,14 @@ export default function DespesasTab() {
             </div>
 
             {/* Barras por Fonte */}
-            <div className="bg-white rounded-xl border border-zinc-200 p-5">
-              <h3 className="text-sm font-semibold text-zinc-800 mb-4">Despesas por Fonte</h3>
+            <div className="bg-white rounded-2xl border border-zinc-200 p-5">
+              <h3 className="text-sm font-bold text-zinc-800 mb-4">Despesas por Fonte</h3>
               <ResponsiveContainer width="100%" height={260}>
                 <BarChart data={sourceBarData} margin={{ top: 4, right: 4, left: 0, bottom: 4 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f4f4f5" vertical={false} />
-                  <XAxis dataKey="name" tick={{ fontSize: 10, fill: '#71717a' }} axisLine={false} tickLine={false} />
+                  <XAxis dataKey="name" tick={{ fontSize: 11, fill: '#71717a' }} axisLine={false} tickLine={false} />
                   <YAxis tick={{ fontSize: 10, fill: '#71717a' }} tickFormatter={v => `R$${(v / 1000).toFixed(0)}k`} axisLine={false} tickLine={false} width={48} />
-                  <ReTooltip content={<BarTooltip />} />
+                  <ReTooltip content={<BarTooltip />} cursor={{ fill: '#fafafa' }} />
                   <Bar dataKey="value" radius={[4, 4, 0, 0]} maxBarSize={40}>
                     {sourceBarData.map((entry, i) => (
                       <Cell key={i} fill={entry.color} />
@@ -755,15 +741,15 @@ export default function DespesasTab() {
 
           {/* Gráfico 2: Evolução mensal */}
           {monthBarData.length > 1 && (
-            <div className="bg-white rounded-xl border border-zinc-200 p-5">
-              <h3 className="text-sm font-semibold text-zinc-800 mb-4">Evolução Mensal</h3>
+            <div className="bg-white rounded-2xl border border-zinc-200 p-5">
+              <h3 className="text-sm font-bold text-zinc-800 mb-4">Evolução Mensal</h3>
               <ResponsiveContainer width="100%" height={240}>
                 <BarChart data={monthBarData} margin={{ top: 4, right: 4, left: 0, bottom: 4 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f4f4f5" vertical={false} />
-                  <XAxis dataKey="name" tick={{ fontSize: 10, fill: '#71717a' }} axisLine={false} tickLine={false} />
+                  <XAxis dataKey="name" tick={{ fontSize: 11, fill: '#71717a' }} axisLine={false} tickLine={false} />
                   <YAxis tick={{ fontSize: 10, fill: '#71717a' }} tickFormatter={v => `R$${(v / 1000).toFixed(0)}k`} axisLine={false} tickLine={false} width={48} />
                   <Legend wrapperStyle={{ fontSize: 11 }} />
-                  <ReTooltip content={<BarTooltip />} />
+                  <ReTooltip content={<BarTooltip />} cursor={{ fill: '#fafafa' }} />
                   <Bar dataKey="paid" name="Pago" fill="#10b981" radius={[4, 4, 0, 0]} maxBarSize={32} stackId="a" />
                   <Bar dataKey="pending" name="Pendente" fill="#f59e0b" radius={[4, 4, 0, 0]} maxBarSize={32} stackId="a" />
                 </BarChart>
@@ -773,8 +759,8 @@ export default function DespesasTab() {
 
           {/* Gráfico 3: Tendência diária */}
           {summary.dailyTrend.length > 1 && (
-            <div className="bg-white rounded-xl border border-zinc-200 p-5">
-              <h3 className="text-sm font-semibold text-zinc-800 mb-4">Tendência Diária</h3>
+            <div className="bg-white rounded-2xl border border-zinc-200 p-5">
+              <h3 className="text-sm font-bold text-zinc-800 mb-4">Tendência Diária</h3>
               <ResponsiveContainer width="100%" height={200}>
                 <AreaChart data={summary.dailyTrend} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
                   <defs>
@@ -784,7 +770,7 @@ export default function DespesasTab() {
                     </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f4f4f5" vertical={false} />
-                  <XAxis dataKey="date" tick={{ fontSize: 10, fill: '#a1a1aa' }} tickFormatter={dayLabel} axisLine={false} tickLine={false} />
+                  <XAxis dataKey="date" tick={{ fontSize: 11, fill: '#71717a' }} tickFormatter={dayLabel} axisLine={false} tickLine={false} />
                   <YAxis tick={{ fontSize: 10, fill: '#a1a1aa' }} tickFormatter={v => `R$${(v / 1000).toFixed(0)}k`} axisLine={false} tickLine={false} width={48} />
                   <ReTooltip content={<BarTooltip />} />
                   <Area type="monotone" dataKey="amount" stroke="#ef4444" strokeWidth={2} fill="url(#despesaGrad)" dot={false} activeDot={{ r: 4, fill: '#ef4444' }} />
@@ -802,18 +788,18 @@ export default function DespesasTab() {
         <div className="space-y-4">
           {/* Cards por categoria */}
           <div>
-            <h3 className="text-sm font-semibold text-zinc-800 mb-3">Por Categoria</h3>
+            <h3 className="text-sm font-bold text-zinc-800 mb-3">Por Categoria</h3>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
               {summary.byCategory.map((cat, i) => {
                 const pct = summary.total > 0 ? (cat.total / summary.total) * 100 : 0;
                 const color = CATEGORY_COLORS[i % CATEGORY_COLORS.length];
                 return (
-                  <div key={cat.category} className="bg-white rounded-xl border border-zinc-200 p-4">
+                  <div key={cat.category} className="bg-white rounded-2xl border border-zinc-200 p-4">
                     <div className="flex items-center gap-2 mb-3">
                       <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />
                       <p className="text-sm font-semibold text-zinc-800 truncate">{cat.category}</p>
                     </div>
-                    <p className="text-xl font-bold text-zinc-900">{formatCurrency(cat.total)}</p>
+                    <p className="text-xl font-bold tabular-nums tracking-tight text-zinc-900">{formatCurrency(cat.total)}</p>
                     <div className="mt-2">
                       <div className="w-full bg-zinc-100 rounded-full h-1.5">
                         <div className="h-1.5 rounded-full transition-all" style={{ width: `${pct}%`, backgroundColor: color }} />
@@ -831,17 +817,17 @@ export default function DespesasTab() {
 
           {/* Cards por fonte */}
           <div>
-            <h3 className="text-sm font-semibold text-zinc-800 mb-3">Por Fonte</h3>
+            <h3 className="text-sm font-bold text-zinc-800 mb-3">Por Fonte</h3>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3">
               {summary.bySource.map(src => {
                 const pct = summary.total > 0 ? (src.total / summary.total) * 100 : 0;
                 return (
-                  <div key={src.source} className="bg-white rounded-xl border border-zinc-200 p-4">
+                  <div key={src.source} className="bg-white rounded-2xl border border-zinc-200 p-4">
                     <div className="flex items-center gap-2 mb-3">
                       <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: SOURCE_COLORS[src.source] }} />
                       <p className="text-sm font-semibold text-zinc-800">{SOURCE_LABELS[src.source]}</p>
                     </div>
-                    <p className="text-xl font-bold text-zinc-900">{formatCurrency(src.total)}</p>
+                    <p className="text-xl font-bold tabular-nums tracking-tight text-zinc-900">{formatCurrency(src.total)}</p>
                     <div className="mt-2">
                       <div className="w-full bg-zinc-100 rounded-full h-1.5">
                         <div className="h-1.5 rounded-full transition-all" style={{ width: `${pct}%`, backgroundColor: SOURCE_COLORS[src.source] }} />
@@ -859,7 +845,7 @@ export default function DespesasTab() {
 
           {/* Cards por status */}
           <div>
-            <h3 className="text-sm font-semibold text-zinc-800 mb-3">Por Status</h3>
+            <h3 className="text-sm font-bold text-zinc-800 mb-3">Por Status</h3>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               {/* Vencido primeiro: é o que exige ação imediata. Pendente = falta
                   pagar mas ainda no prazo; Vencido = falta pagar e o prazo passou. */}
@@ -870,12 +856,12 @@ export default function DespesasTab() {
               ]).map(s => {
                 const pct = summary.total > 0 ? (s.value / summary.total) * 100 : 0;
                 return (
-                  <div key={s.status} className="bg-white rounded-xl border border-zinc-200 p-4">
+                  <div key={s.status} className="bg-white rounded-2xl border border-zinc-200 p-4">
                     <div className="flex items-center gap-2 mb-3">
                       <div className={`w-3 h-3 rounded-full flex-shrink-0 ${s.color}`} />
                       <p className="text-sm font-semibold text-zinc-800">{s.label}</p>
                     </div>
-                    <p className="text-xl font-bold text-zinc-900">{formatCurrency(s.value)}</p>
+                    <p className="text-xl font-bold tabular-nums tracking-tight text-zinc-900">{formatCurrency(s.value)}</p>
                     <div className="mt-2">
                       <div className="w-full bg-zinc-100 rounded-full h-1.5">
                         <div className={`h-1.5 rounded-full transition-all ${s.color}`} style={{ width: `${pct}%` }} />
@@ -898,8 +884,8 @@ export default function DespesasTab() {
           {/* Row 1: Comparação mês a mês + Top Fornecedores */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
             {/* Comparação mês a mês */}
-            <div className="bg-white rounded-xl border border-zinc-200 p-5">
-              <h3 className="text-sm font-semibold text-zinc-800 mb-4">Comparação Mês a Mês</h3>
+            <div className="bg-white rounded-2xl border border-zinc-200 p-5">
+              <h3 className="text-sm font-bold text-zinc-800 mb-4">Comparação Mês a Mês</h3>
               {monthBarData.length > 1 ? (
                 <div className="space-y-3">
                   {monthBarData.map((m, i) => {
@@ -921,7 +907,7 @@ export default function DespesasTab() {
                           </div>
                         </div>
                         {!isFirst && (
-                          <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${variation >= 0 ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}`}>
+                          <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-md tabular-nums ${variation >= 0 ? 'bg-red-100 text-red-600' : 'bg-emerald-50 text-emerald-700'}`}>
                             {variation >= 0 ? '+' : ''}{variation.toFixed(1)}%
                           </span>
                         )}
@@ -936,8 +922,8 @@ export default function DespesasTab() {
             </div>
 
             {/* Top Fornecedores */}
-            <div className="bg-white rounded-xl border border-zinc-200 p-5">
-              <h3 className="text-sm font-semibold text-zinc-800 mb-4">Top Fornecedores</h3>
+            <div className="bg-white rounded-2xl border border-zinc-200 p-5">
+              <h3 className="text-sm font-bold text-zinc-800 mb-4">Top Fornecedores</h3>
               {(() => {
                 const supplierMap: Record<string, { total: number; count: number }> = {};
                 items.filter(d => d.supplier).forEach(d => {
@@ -990,8 +976,8 @@ export default function DespesasTab() {
           {/* Row 2: Calendário de Vencimentos + Evolução Acumulada */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
             {/* Calendário de Vencimentos */}
-            <div className="bg-white rounded-xl border border-zinc-200 p-5">
-              <h3 className="text-sm font-semibold text-zinc-800 mb-4">Calendário de Vencimentos — {monthLabel(filters.startDate.slice(0, 7))}</h3>
+            <div className="bg-white rounded-2xl border border-zinc-200 p-5">
+              <h3 className="text-sm font-bold text-zinc-800 mb-4">Calendário de Vencimentos — {monthLabel(filters.startDate.slice(0, 7))}</h3>
               {(() => {
                 const pendingItems = items.filter(d => d.status === 'pending' || d.status === 'overdue');
                 if (pendingItems.length === 0) {
@@ -1050,8 +1036,8 @@ export default function DespesasTab() {
             </div>
 
             {/* Evolução Acumulada */}
-            <div className="bg-white rounded-xl border border-zinc-200 p-5">
-              <h3 className="text-sm font-semibold text-zinc-800 mb-4">Evolução Acumulada no Período</h3>
+            <div className="bg-white rounded-2xl border border-zinc-200 p-5">
+              <h3 className="text-sm font-bold text-zinc-800 mb-4">Evolução Acumulada no Período</h3>
               {summary.dailyTrend.length > 1 ? (
                 <ResponsiveContainer width="100%" height={280}>
                   <AreaChart data={(() => {
@@ -1068,7 +1054,7 @@ export default function DespesasTab() {
                       </linearGradient>
                     </defs>
                     <CartesianGrid strokeDasharray="3 3" stroke="#f4f4f5" vertical={false} />
-                    <XAxis dataKey="date" tick={{ fontSize: 10, fill: '#a1a1aa' }} tickFormatter={dayLabel} axisLine={false} tickLine={false} />
+                    <XAxis dataKey="date" tick={{ fontSize: 11, fill: '#71717a' }} tickFormatter={dayLabel} axisLine={false} tickLine={false} />
                     <YAxis tick={{ fontSize: 10, fill: '#a1a1aa' }} tickFormatter={v => `R$${(v / 1000).toFixed(0)}k`} axisLine={false} tickLine={false} width={48} />
                     <ReTooltip content={({ active, payload, label }) => {
                       if (!active || !payload?.length) return null;
@@ -1092,8 +1078,8 @@ export default function DespesasTab() {
           {/* Row 3: Distribuição por Status + Média Diária */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
             {/* Distribuição por Status - Donut */}
-            <div className="bg-white rounded-xl border border-zinc-200 p-5">
-              <h3 className="text-sm font-semibold text-zinc-800 mb-4">Distribuição por Status</h3>
+            <div className="bg-white rounded-2xl border border-zinc-200 p-5">
+              <h3 className="text-sm font-bold text-zinc-800 mb-4">Distribuição por Status</h3>
               <ResponsiveContainer width="100%" height={200}>
                 <PieChart>
                   <Pie
@@ -1135,8 +1121,8 @@ export default function DespesasTab() {
             </div>
 
             {/* Média Diária / Semanal */}
-            <div className="bg-white rounded-xl border border-zinc-200 p-5 lg:col-span-2">
-              <h3 className="text-sm font-semibold text-zinc-800 mb-4">Resumo do Período</h3>
+            <div className="bg-white rounded-2xl border border-zinc-200 p-5 lg:col-span-2">
+              <h3 className="text-sm font-bold text-zinc-800 mb-4">Resumo do Período</h3>
               {(() => {
                 const days = Math.max(1, Math.ceil((new Date(filters.endDate).getTime() - new Date(filters.startDate).getTime()) / 86400000));
                 const avgDaily = (summary?.total ?? 0) / days;
@@ -1146,22 +1132,22 @@ export default function DespesasTab() {
 
                 return (
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    <div className="bg-zinc-50 rounded-xl p-4 text-center">
+                    <div className="bg-zinc-50 rounded-2xl p-4 text-center">
                       <p className="text-xs text-zinc-500 mb-1">Média Diária</p>
                       <p className="text-lg font-bold text-zinc-900">{formatCurrency(avgDaily)}</p>
                       <p className="text-xs text-zinc-400 mt-0.5">em {days} dias</p>
                     </div>
-                    <div className="bg-zinc-50 rounded-xl p-4 text-center">
+                    <div className="bg-zinc-50 rounded-2xl p-4 text-center">
                       <p className="text-xs text-zinc-500 mb-1">Média por Lançamento</p>
                       <p className="text-lg font-bold text-zinc-900">{formatCurrency(avgPerItem)}</p>
                       <p className="text-xs text-zinc-400 mt-0.5">{items.length} itens</p>
                     </div>
-                    <div className="bg-zinc-50 rounded-xl p-4 text-center">
+                    <div className="bg-zinc-50 rounded-2xl p-4 text-center">
                       <p className="text-xs text-zinc-500 mb-1">Dia Mais Alto</p>
                       <p className="text-lg font-bold text-zinc-900">{formatCurrency(maxDay?.amount ?? 0)}</p>
                       <p className="text-xs text-zinc-400 mt-0.5">{maxDay ? dayLabel(maxDay.date) : '—'}</p>
                     </div>
-                    <div className="bg-zinc-50 rounded-xl p-4 text-center">
+                    <div className="bg-zinc-50 rounded-2xl p-4 text-center">
                       <p className="text-xs text-zinc-500 mb-1">% Quitado</p>
                       <p className="text-lg font-bold text-green-600">{paidPct.toFixed(1)}%</p>
                       <p className="text-xs text-zinc-400 mt-0.5">do total do período</p>
@@ -1182,7 +1168,7 @@ export default function DespesasTab() {
                         <p className="text-xs text-zinc-400">{item.category} — {new Date(item.date + 'T12:00:00').toLocaleDateString('pt-BR')}</p>
                       </div>
                       <span className="text-sm font-bold text-zinc-800">{formatCurrency(item.amount)}</span>
-                      <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${STATUS_COLORS[item.status]}`}>
+                      <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-md ${STATUS_COLORS[item.status]}`}>
                         {STATUS_LABELS[item.status]}
                       </span>
                     </div>

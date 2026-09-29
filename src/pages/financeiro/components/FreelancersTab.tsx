@@ -11,6 +11,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatCurrency } from '@/lib/formatters';
+import { KpiCard, MonthNav } from './dreUi';
 
 interface Freelancer {
   id: string; name: string; role: string | null; phone: string | null; cpf: string | null;
@@ -72,32 +73,39 @@ export default function FreelancersTab({ embutido = false }: { embutido?: boolea
     return m;
   }, [diarias]);
   const totalMes = diarias.reduce((s, d) => s + Number(d.amount), 0);
-  const [ano, mm] = mes.split('-').map(Number);
-  const trocarMes = (delta: number) => {
-    const d = new Date(ano, mm - 1 + delta, 1);
-    setMes(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
-  };
+  const mm = Number(mes.split('-')[1]);
 
   if (!tenantId) return <p className="p-6 text-sm text-zinc-400">Escolha uma loja.</p>;
 
   return (
-    <div className={embutido ? 'space-y-5' : 'p-4 md:p-6 space-y-5'}>
-      <div className="flex flex-wrap items-center gap-2">
-        <button onClick={() => trocarMes(-1)} className="w-9 h-9 rounded-lg border border-zinc-200 hover:bg-zinc-50 cursor-pointer" aria-label="Mês anterior"><i className="ri-arrow-left-s-line" /></button>
-        <p className="text-sm font-bold text-zinc-800 min-w-[120px] text-center">{MESES[mm - 1]} {ano}</p>
-        <button onClick={() => trocarMes(1)} className="w-9 h-9 rounded-lg border border-zinc-200 hover:bg-zinc-50 cursor-pointer" aria-label="Próximo mês"><i className="ri-arrow-right-s-line" /></button>
-        <div className="ml-auto text-right">
-          <p className="text-[11px] text-zinc-400">Diárias no mês</p>
-          <p className="text-lg font-black text-zinc-900">{formatCurrency(totalMes)} <span className="text-xs font-semibold text-zinc-400">· {diarias.length} dia(s)</span></p>
+    <div className={embutido ? 'space-y-5' : 'p-4 md:p-6 space-y-5 max-w-[1400px] mx-auto'}>
+      <div className="flex flex-wrap items-center gap-2 lg:gap-3">
+        <MonthNav mes={mes} onChange={setMes} canGoNext />
+        {mes !== hojeSP().slice(0, 7) && (
+          <button onClick={() => setMes(hojeSP().slice(0, 7))}
+            className="text-xs font-semibold px-3 py-2 bg-amber-50 text-amber-700 border border-amber-200 rounded-xl hover:bg-amber-100 cursor-pointer whitespace-nowrap">
+            Mês atual
+          </button>
+        )}
+        <div className="ml-auto flex items-center gap-2 overflow-x-auto max-w-full">
+          <button onClick={() => setNovo(true)} className="flex items-center gap-1.5 bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-xl text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors shadow-sm">
+            <i className="ri-add-line" /> Novo freelancer
+          </button>
         </div>
       </div>
 
-      {erro && <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">Não consegui carregar: {erro}</p>}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        <KpiCard label="Diárias no mês" icon="ri-money-dollar-circle-line" value={formatCurrency(totalMes)} sub={`${diarias.length} dia(s)`} atual={totalMes} semVariacao />
+        <KpiCard label="Freelancers ativos" icon="ri-user-star-line" value={String(freelancers.filter((f) => f.is_active).length)} sub={`${freelancers.length} cadastrado(s)`} atual={freelancers.length} semVariacao />
+        <KpiCard label="Aguardando os dias" icon="ri-time-line" value={String(pendentes.length)} valueTone={pendentes.length > 0 ? 'text-amber-700' : undefined} sub="pagos sem os dias informados" atual={pendentes.length} semVariacao />
+      </div>
+
+      {erro && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-xl px-4 py-3">Não consegui carregar: {erro}</p>}
 
       {/* Aguardando os dias: o que precisa de ação */}
       {pendentes.length > 0 && (
-        <section className="rounded-2xl border border-amber-200 bg-amber-50/60 p-4">
-          <h3 className="text-sm font-black text-amber-900"><i className="ri-time-line" /> Aguardando os dias trabalhados ({pendentes.length})</h3>
+        <section className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+          <h3 className="text-sm font-bold text-amber-900"><i className="ri-time-line" /> Aguardando os dias trabalhados ({pendentes.length})</h3>
           <p className="text-xs text-amber-800 mt-0.5">Pagos, mas ainda não se sabe a que dias se referem. O assistente pergunta no grupo; você também pode informar aqui.</p>
           <div className="mt-3 space-y-2">
             {pendentes.map((p) => <InformarDias key={p.id} diaria={p} onFeito={carregar} />)}
@@ -107,22 +115,25 @@ export default function FreelancersTab({ embutido = false }: { embutido?: boolea
 
       {/* Freelancers */}
       <section className="rounded-2xl border border-zinc-200 bg-white overflow-hidden">
-        <div className="px-4 py-3 border-b border-zinc-100 flex items-center justify-between gap-2">
-          <h3 className="text-sm font-black text-zinc-900">Freelancers</h3>
-          <button onClick={() => setNovo(true)} className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-xs font-semibold cursor-pointer">
-            <i className="ri-add-line" /> Novo freelancer
-          </button>
+        <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-100 gap-3 flex-wrap">
+          <div><h3 className="text-sm font-bold text-zinc-800">Freelancers</h3><p className="text-xs text-zinc-400">Dias trabalhados e total no mês</p></div>
         </div>
         {carregando ? (
-          <p className="p-6 text-center text-sm text-zinc-400">Carregando…</p>
+          <div className="py-14 text-center">
+            <i className="ri-loader-4-line text-4xl text-zinc-200 animate-spin" />
+            <p className="text-zinc-400 text-sm mt-2">Carregando…</p>
+          </div>
         ) : freelancers.length === 0 ? (
-          <p className="p-6 text-center text-sm text-zinc-400">Nenhum freelancer ainda. Cadastre em "Novo freelancer" ou eles aparecem quando uma diária é paga.</p>
+          <div className="py-14 text-center">
+            <i className="ri-user-star-line text-4xl text-zinc-200" />
+            <p className="text-zinc-400 text-sm mt-2">Nenhum freelancer ainda. Cadastre em "Novo freelancer" ou eles aparecem quando uma diária é paga.</p>
+          </div>
         ) : (
-          <ul className="divide-y divide-zinc-100">
+          <ul className="divide-y divide-zinc-100/80">
             {freelancers.map((f) => {
               const r = porFreelancer.get(f.id);
               return (
-                <li key={f.id} className={`px-4 py-3 flex items-center gap-3 ${f.is_active ? '' : 'opacity-50'}`}>
+                <li key={f.id} className={`px-5 py-3 flex items-center gap-3 hover:bg-zinc-50 ${f.is_active ? '' : 'opacity-50'}`}>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-semibold text-zinc-800 truncate">{f.name}</p>
                     <p className="text-[11px] text-zinc-500 truncate">
@@ -133,7 +144,7 @@ export default function FreelancersTab({ embutido = false }: { embutido?: boolea
                     ) : null}
                   </div>
                   <div className="text-right shrink-0">
-                    <p className="text-sm font-bold text-zinc-900">{r ? formatCurrency(r.total) : '—'}</p>
+                    <p className="text-sm font-bold tabular-nums text-zinc-900">{r ? formatCurrency(r.total) : '—'}</p>
                     <p className="text-[10px] text-zinc-400">{r ? `${r.dias.length} dia(s)` : 'no mês'}</p>
                   </div>
                   <button onClick={() => setEditando(f)} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-zinc-100 text-zinc-400 cursor-pointer" aria-label={`Editar ${f.name}`}><i className="ri-edit-line" /></button>
@@ -147,18 +158,29 @@ export default function FreelancersTab({ embutido = false }: { embutido?: boolea
       {/* Diárias do mês, dia a dia */}
       {diarias.length > 0 && (
         <section className="rounded-2xl border border-zinc-200 bg-white overflow-hidden">
-          <h3 className="px-4 py-3 text-sm font-black text-zinc-900 border-b border-zinc-100">Diárias de {MESES[mm - 1].toLowerCase()}</h3>
+          <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-100 gap-3 flex-wrap">
+            <div><h3 className="text-sm font-bold text-zinc-800">Diárias de {MESES[mm - 1].toLowerCase()}</h3><p className="text-xs text-zinc-400">Dia a dia</p></div>
+          </div>
+          <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <tbody className="divide-y divide-zinc-100">
+            <thead>
+              <tr className="border-b border-zinc-200">
+                <th className="text-left pl-5 pr-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Dia</th>
+                <th className="text-left px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Freelancer</th>
+                <th className="text-right px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Valor</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-zinc-100/80">
               {diarias.map((d) => (
-                <tr key={d.id}>
-                  <td className="px-4 py-2 text-zinc-600 whitespace-nowrap capitalize">{d.work_date ? fmtDia(d.work_date) : '—'}</td>
-                  <td className="px-4 py-2 text-zinc-800">{d.hr_freelancers?.name ?? 'Freelancer'}{d.hr_freelancers?.role ? <span className="text-zinc-400"> · {d.hr_freelancers.role}</span> : null}</td>
-                  <td className="px-4 py-2 text-right font-semibold text-zinc-900 whitespace-nowrap">{formatCurrency(Number(d.amount))}</td>
+                <tr key={d.id} className="hover:bg-zinc-50">
+                  <td className="pl-5 pr-4 py-2.5 text-zinc-600 whitespace-nowrap capitalize">{d.work_date ? fmtDia(d.work_date) : '—'}</td>
+                  <td className="px-4 py-2.5 text-zinc-800">{d.hr_freelancers?.name ?? 'Freelancer'}{d.hr_freelancers?.role ? <span className="text-zinc-400"> · {d.hr_freelancers.role}</span> : null}</td>
+                  <td className="px-4 py-2.5 text-right tabular-nums font-semibold text-zinc-900 whitespace-nowrap">{formatCurrency(Number(d.amount))}</td>
                 </tr>
               ))}
             </tbody>
           </table>
+          </div>
         </section>
       )}
 

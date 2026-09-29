@@ -6,6 +6,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import type { Employee, PayrollEntry, EmployeeStatus, ThirteenthStatus } from '@/hooks/useRH';
 import { usePayrollCustomFields } from '@/hooks/usePayrollCustomFields';
 import { formatCurrency } from '@/lib/formatters';
+import { KpiCard, MonthNav } from './dreUi';
 import { calculatePayroll, evaluateFormula } from '@/lib/payrollCalculations';
 import type { CustomFieldValue } from '@/lib/payrollCalculations';
 import TimeInput from '@/components/base/TimeInput';
@@ -1178,7 +1179,7 @@ function EmployeeRow({
   const thirteenthStatus: ThirteenthStatus = emp.thirteenth_status ?? 'pending';
 
   return (
-    <tr className="hover:bg-zinc-50/50 transition-colors">
+    <tr className="hover:bg-zinc-50 transition-colors">
       <td className="px-5 py-3.5">
         <div className="flex items-center gap-3">
           <div className="w-9 h-9 flex items-center justify-center bg-amber-100 rounded-full flex-shrink-0">
@@ -1191,17 +1192,17 @@ function EmployeeRow({
         </div>
       </td>
       <td className="px-4 py-3.5">
-        <span className="text-xs bg-zinc-100 text-zinc-600 px-2 py-1 rounded-full font-medium">{emp.department}</span>
+        <span className="text-[11px] font-semibold bg-zinc-100 text-zinc-600 px-2 py-0.5 rounded-md">{emp.department}</span>
       </td>
       <td className="px-4 py-3.5 text-sm text-zinc-600">
         {emp.hire_date ? new Date(emp.hire_date + 'T12:00:00').toLocaleDateString('pt-BR') : '—'}
       </td>
-      <td className="px-4 py-3.5 text-sm font-bold text-right text-zinc-800">{formatCurrency(emp.salary)}</td>
+      <td className="px-4 py-3.5 text-sm font-bold text-right tabular-nums whitespace-nowrap text-zinc-800">{formatCurrency(emp.salary)}</td>
 
       {/* Férias */}
       <td className="px-4 py-3.5 text-center">
         <div className="flex flex-col items-center gap-0.5">
-          <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${daysAvailable > 0 ? 'bg-amber-100 text-amber-700' : 'bg-zinc-100 text-zinc-500'}`}>
+          <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-md ${daysAvailable > 0 ? 'bg-amber-100 text-amber-700' : 'bg-zinc-100 text-zinc-500'}`}>
             {daysAvailable}d disponíveis
           </span>
           {emp.next_vacation_date && (
@@ -1214,13 +1215,13 @@ function EmployeeRow({
 
       {/* 13º */}
       <td className="px-4 py-3.5 text-center">
-        <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${THIRTEENTH_COLORS[thirteenthStatus]}`}>
+        <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-md ${THIRTEENTH_COLORS[thirteenthStatus]}`}>
           {THIRTEENTH_LABELS[thirteenthStatus]}
         </span>
       </td>
 
       <td className="px-4 py-3.5 text-center">
-        <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${STATUS_COLORS[emp.status]}`}>
+        <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-md ${STATUS_COLORS[emp.status]}`}>
           {STATUS_LABELS[emp.status]}
         </span>
       </td>
@@ -1373,49 +1374,13 @@ export default function RHTab({ inicial }: { inicial?: RHView } = {}) {
   const empWithPending13 = employees.filter(e => e.status === 'active' && (e.thirteenth_status === 'pending' || !e.thirteenth_status));
 
   return (
-    <div className="p-4 md:p-6 space-y-4 md:space-y-5">
+    <div className="p-4 md:p-6 space-y-5 max-w-[1400px] mx-auto">
       {/* KPIs (da folha: não aparecem em Freelancers / Prestadores MEI, que têm os próprios totais) */}
-      <div className={`grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4 ${activeView === 'freelancers' || activeView === 'prestadores' ? 'hidden' : ''}`}>
-        <div className="bg-white rounded-xl border border-zinc-200 p-5">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">Funcionários Ativos</span>
-            <div className="w-8 h-8 flex items-center justify-center bg-amber-100 rounded-lg">
-              <i className="ri-team-line text-amber-600 text-sm" />
-            </div>
-          </div>
-          <p className="text-2xl font-bold text-zinc-900">{activeCount}</p>
-          <p className="text-xs text-zinc-400 mt-1">{employees.length} no total</p>
-        </div>
-        <div className="bg-white rounded-xl border border-zinc-200 p-5">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">Massa Salarial</span>
-            <div className="w-8 h-8 flex items-center justify-center bg-orange-100 rounded-lg">
-              <i className="ri-money-dollar-circle-line text-orange-600 text-sm" />
-            </div>
-          </div>
-          <p className="text-2xl font-bold text-zinc-900">{formatCurrency(totalSalaryMass)}</p>
-          <p className="text-xs text-zinc-400 mt-1">Salários base ativos</p>
-        </div>
-        <div className="bg-white rounded-xl border border-zinc-200 p-5">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">Folha do Mês</span>
-            <div className="w-8 h-8 flex items-center justify-center bg-green-100 rounded-lg">
-              <i className="ri-file-list-3-line text-green-600 text-sm" />
-            </div>
-          </div>
-          <p className="text-2xl font-bold text-zinc-900">{formatCurrency(totalLiquido)}</p>
-          <p className="text-xs text-zinc-400 mt-1">Líquido — {monthLabel(selectedMonth)}</p>
-        </div>
-        <div className="bg-white rounded-xl border border-zinc-200 p-5">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">Pendente</span>
-            <div className="w-8 h-8 flex items-center justify-center bg-red-100 rounded-lg">
-              <i className="ri-time-line text-red-500 text-sm" />
-            </div>
-          </div>
-          <p className="text-2xl font-bold text-red-600">{formatCurrency(totalPendente)}</p>
-          <p className="text-xs text-zinc-400 mt-1">{pendingEntries.length} lançamento(s)</p>
-        </div>
+      <div className={`grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 ${activeView === 'freelancers' || activeView === 'prestadores' ? 'hidden' : ''}`}>
+        <KpiCard label="Funcionários ativos" icon="ri-team-line" value={String(activeCount)} sub={`${employees.length} no total`} atual={activeCount} semVariacao />
+        <KpiCard label="Massa salarial" icon="ri-money-dollar-circle-line" value={formatCurrency(totalSalaryMass)} sub="Salários base ativos" atual={totalSalaryMass} semVariacao />
+        <KpiCard label="Folha do mês" icon="ri-file-list-3-line" value={formatCurrency(totalLiquido)} sub={`Líquido — ${monthLabel(selectedMonth)}`} atual={totalLiquido} semVariacao />
+        <KpiCard label="Pendente" icon="ri-time-line" value={formatCurrency(totalPendente)} valueTone="text-red-600" sub={`${pendingEntries.length} lançamento(s)`} atual={totalPendente} semVariacao />
       </div>
 
       {/* Alertas */}
@@ -1468,91 +1433,88 @@ export default function RHTab({ inicial }: { inicial?: RHView } = {}) {
         />
       )}
 
-      {/* Tabs */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between flex-wrap gap-3">
-        <div className="flex bg-white border border-zinc-200 rounded-lg overflow-x-auto max-w-full">
+      {/* Subabas + ações */}
+      <div className="flex flex-wrap items-center gap-2 lg:gap-3">
+        <div className="flex gap-1 overflow-x-auto bg-zinc-100/80 rounded-xl p-1 w-full sm:w-fit max-w-full">
           <button onClick={() => setActiveView('folha')}
-            className={`px-3 sm:px-4 py-2.5 text-xs font-semibold cursor-pointer transition-colors whitespace-nowrap flex items-center gap-1.5 ${activeView === 'folha' ? 'bg-amber-500 text-white' : 'text-zinc-600 hover:bg-zinc-50'}`}>
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap cursor-pointer transition-colors ${activeView === 'folha' ? 'bg-white text-amber-600 shadow-sm' : 'text-zinc-500 hover:text-zinc-800'}`}>
             <i className="ri-file-list-3-line" /> <span className="sm:hidden">Folha</span><span className="hidden sm:inline">Folha de Pagamento</span>
           </button>
           <button onClick={() => setActiveView('funcionarios')}
-            className={`px-3 sm:px-4 py-2.5 text-xs font-semibold cursor-pointer transition-colors whitespace-nowrap flex items-center gap-1.5 ${activeView === 'funcionarios' ? 'bg-amber-500 text-white' : 'text-zinc-600 hover:bg-zinc-50'}`}>
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap cursor-pointer transition-colors ${activeView === 'funcionarios' ? 'bg-white text-amber-600 shadow-sm' : 'text-zinc-500 hover:text-zinc-800'}`}>
             <i className="ri-team-line" /> Funcionários
           </button>
           <button onClick={() => setActiveView('freelancers')}
-            className={`px-3 sm:px-4 py-2.5 text-xs font-semibold cursor-pointer transition-colors whitespace-nowrap flex items-center gap-1.5 ${activeView === 'freelancers' ? 'bg-amber-500 text-white' : 'text-zinc-600 hover:bg-zinc-50'}`}>
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap cursor-pointer transition-colors ${activeView === 'freelancers' ? 'bg-white text-amber-600 shadow-sm' : 'text-zinc-500 hover:text-zinc-800'}`}>
             <i className="ri-user-star-line" /> Freelancers
           </button>
           <button onClick={() => setActiveView('prestadores')}
-            className={`px-3 sm:px-4 py-2.5 text-xs font-semibold cursor-pointer transition-colors whitespace-nowrap flex items-center gap-1.5 ${activeView === 'prestadores' ? 'bg-amber-500 text-white' : 'text-zinc-600 hover:bg-zinc-50'}`}>
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap cursor-pointer transition-colors ${activeView === 'prestadores' ? 'bg-white text-amber-600 shadow-sm' : 'text-zinc-500 hover:text-zinc-800'}`}>
             <i className="ri-briefcase-line" /> <span className="sm:hidden">MEI</span><span className="hidden sm:inline">Prestadores MEI</span>
           </button>
           <button onClick={() => setActiveView('relatorio')}
-            className={`px-3 sm:px-4 py-2.5 text-xs font-semibold cursor-pointer transition-colors whitespace-nowrap flex items-center gap-1.5 ${activeView === 'relatorio' ? 'bg-amber-500 text-white' : 'text-zinc-600 hover:bg-zinc-50'}`}>
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap cursor-pointer transition-colors ${activeView === 'relatorio' ? 'bg-white text-amber-600 shadow-sm' : 'text-zinc-500 hover:text-zinc-800'}`}>
             <i className="ri-bar-chart-2-line" /> Relatórios
           </button>
         </div>
 
         {activeView === 'folha' && (
-          <div className="flex items-center gap-2 flex-wrap mt-1 sm:mt-0 w-full sm:w-auto">
-            <div className="flex items-center gap-1 bg-white border border-zinc-200 rounded-lg overflow-hidden">
-              <button onClick={() => setSelectedMonth(m => addMonths(m, -1))}
-                className="w-9 h-9 flex items-center justify-center hover:bg-zinc-50 cursor-pointer text-zinc-500 transition-colors">
-                <i className="ri-arrow-left-s-line" />
+          <>
+            <MonthNav mes={selectedMonth} onChange={setSelectedMonth} canGoNext={canGoNext} />
+            {selectedMonth !== currentMonth && (
+              <button onClick={() => setSelectedMonth(currentMonth)}
+                className="text-xs font-semibold px-3 py-2 bg-amber-50 text-amber-700 border border-amber-200 rounded-xl hover:bg-amber-100 cursor-pointer whitespace-nowrap">
+                Mês atual
               </button>
-              <input type="month" value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)}
-                className="border-0 px-2 py-2 text-sm font-semibold text-zinc-800 focus:outline-none bg-transparent text-center" />
-              <button onClick={() => canGoNext && setSelectedMonth(m => addMonths(m, 1))} disabled={!canGoNext}
-                className="w-9 h-9 flex items-center justify-center hover:bg-zinc-50 cursor-pointer text-zinc-500 transition-colors disabled:opacity-30">
-                <i className="ri-arrow-right-s-line" />
+            )}
+            <div className="ml-auto flex items-center gap-2 overflow-x-auto max-w-full">
+              {/* Gerar 13º */}
+              <button onClick={() => setThirteenthModal(true)}
+                className="flex items-center gap-1.5 px-3 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 rounded-xl text-xs font-semibold text-zinc-600 cursor-pointer transition-colors whitespace-nowrap shadow-sm">
+                <i className="ri-gift-line" /> 13º Salário
+              </button>
+              {entries.length === 0 && employees.filter(e => e.status === 'active').length > 0 && (
+                <button onClick={handleGenerateFolha}
+                  className="flex items-center gap-1.5 px-3 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 rounded-xl text-xs font-semibold text-zinc-600 cursor-pointer transition-colors whitespace-nowrap shadow-sm">
+                  <i className="ri-magic-line" /> Gerar do Cadastro
+                </button>
+              )}
+
+              {pendingEntries.length > 0 && (
+                <button onClick={() => setFechamentoModal(true)}
+                  className="flex items-center gap-1.5 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-xl text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors shadow-sm">
+                  <i className="ri-check-double-line" /> Fechar e Pagar ({pendingEntries.length})
+                </button>
+              )}
+              <button onClick={() => setImportarDominio(true)} title="Importar o Extrato Mensal (PDF) do Domínio"
+                className="flex items-center gap-1.5 px-3 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 rounded-xl text-xs font-semibold text-zinc-600 cursor-pointer transition-colors whitespace-nowrap shadow-sm">
+                <i className="ri-file-upload-line" /> Importar do Domínio
+              </button>
+              <button onClick={() => setCamposCustomizadosModal(true)}
+                className="flex items-center gap-1.5 px-3 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 rounded-xl text-xs font-semibold text-zinc-600 cursor-pointer transition-colors whitespace-nowrap shadow-sm">
+                <i className="ri-settings-3-line" /> Campos
+              </button>
+              <button onClick={() => setPayrollModal({})}
+                className="flex items-center gap-1.5 bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-xl text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors shadow-sm">
+                <i className="ri-add-line" /> Adicionar
               </button>
             </div>
-            {/* Gerar 13º */}
-            <button onClick={() => setThirteenthModal(true)}
-              className="flex items-center gap-1.5 px-3 py-2 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 rounded-lg text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors">
-              <i className="ri-gift-line" /> 13º Salário
-            </button>
-            {entries.length === 0 && employees.filter(e => e.status === 'active').length > 0 && (
-              <button onClick={handleGenerateFolha}
-                className="flex items-center gap-1.5 px-3 py-2 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 rounded-lg text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors">
-                <i className="ri-magic-line" /> Gerar do Cadastro
-              </button>
-            )}
-
-            {pendingEntries.length > 0 && (
-              <button onClick={() => setFechamentoModal(true)}
-                className="flex items-center gap-1.5 px-3 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors">
-                <i className="ri-check-double-line" /> Fechar e Pagar ({pendingEntries.length})
-              </button>
-            )}
-            <button onClick={() => setImportarDominio(true)} title="Importar o Extrato Mensal (PDF) do Domínio"
-              className="flex items-center gap-1.5 px-3 py-2 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 rounded-lg text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors">
-              <i className="ri-file-upload-line" /> Importar do Domínio
-            </button>
-            <button onClick={() => setCamposCustomizadosModal(true)}
-              className="flex items-center gap-1.5 px-3 py-2 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 rounded-lg text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors">
-              <i className="ri-settings-3-line" /> Campos
-            </button>
-            <button onClick={() => setPayrollModal({})}
-              className="flex items-center gap-1.5 px-3 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors">
-              <i className="ri-add-line" /> Adicionar
-            </button>
-          </div>
+          </>
         )}
 
         {activeView === 'funcionarios' && (
-          <div className="flex items-center gap-2 flex-wrap mt-1 sm:mt-0 w-full sm:w-auto">
+          <div className="ml-auto flex items-center gap-2 flex-wrap">
             <div className="relative">
               <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 text-sm" />
               <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Buscar funcionário..."
-                className="pl-8 pr-3 py-2 border border-zinc-200 rounded-lg text-sm focus:outline-none focus:border-amber-400 w-48" />
+                className="h-10 rounded-xl border border-zinc-200 shadow-sm pl-9 pr-3 text-sm focus:outline-none focus:border-amber-400 w-48" />
             </div>
             <select value={deptFilter} onChange={e => setDeptFilter(e.target.value)}
-              className="border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-amber-400 bg-white">
+              className="h-10 border border-zinc-200 rounded-xl px-3 text-xs font-semibold text-zinc-600 shadow-sm focus:outline-none focus:border-amber-400 bg-white">
               {departments.map(d => <option key={d} value={d}>{d}</option>)}
             </select>
             <button onClick={() => setEmployeeModal({})}
-              className="flex items-center gap-1.5 px-3 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors">
+              className="flex items-center gap-1.5 bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-xl text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors shadow-sm">
               <i className="ri-add-line" /> Novo Funcionário
             </button>
           </div>
@@ -1563,8 +1525,11 @@ export default function RHTab({ inicial }: { inicial?: RHView } = {}) {
       {activeView === 'folha' && (
         <div className="space-y-4">
           {entries.length > 0 && (
-            <div className="bg-white rounded-xl border border-zinc-200 p-4 md:p-5">
-              <h3 className="text-sm font-semibold text-zinc-800 mb-3 md:mb-4">Resumo — {monthLabel(selectedMonth)}</h3>
+            <div className="bg-white rounded-2xl border border-zinc-200">
+              <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-100 gap-3 flex-wrap">
+                <div><h3 className="text-sm font-bold text-zinc-800">Resumo — {monthLabel(selectedMonth)}</h3><p className="text-xs text-zinc-400">Proventos, descontos, guias e progresso de pagamento</p></div>
+              </div>
+              <div className="p-4 md:p-5">
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3 md:gap-4">
                 {[
                   { label: 'Proventos (bruto)', value: brutoSemSocio, color: 'text-zinc-800' },
@@ -1576,7 +1541,7 @@ export default function RHTab({ inicial }: { inicial?: RHView } = {}) {
                 ].map(item => (
                   <div key={item.label} className="text-center">
                     <p className="text-xs text-zinc-500 mb-1">{item.label}</p>
-                    <p className={`text-base font-bold ${item.color}`}>{formatCurrency(item.value)}</p>
+                    <p className={`text-base font-bold tabular-nums ${item.color}`}>{formatCurrency(item.value)}</p>
                   </div>
                 ))}
               </div>
@@ -1603,41 +1568,41 @@ export default function RHTab({ inicial }: { inicial?: RHView } = {}) {
                     style={{ width: `${totalLiquido > 0 ? (totalPago / totalLiquido) * 100 : 0}%` }} />
                 </div>
               </div>
+              </div>
             </div>
           )}
 
-          <div className="bg-white rounded-xl border border-zinc-200 overflow-hidden">
+          <div className="bg-white rounded-2xl border border-zinc-200 overflow-hidden">
           <div className="overflow-x-auto">
             {payLoading ? (
-              <div className="p-8 flex items-center justify-center">
-                <div className="w-6 h-6 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
+              <div className="py-14 text-center">
+                <i className="ri-loader-4-line text-4xl text-zinc-200 animate-spin" />
+                <p className="text-zinc-400 text-sm mt-2">Carregando…</p>
               </div>
             ) : entries.length === 0 ? (
-              <div className="py-16 text-center">
-                <div className="w-14 h-14 flex items-center justify-center bg-zinc-100 rounded-2xl mx-auto mb-4">
-                  <i className="ri-file-list-3-line text-zinc-400 text-2xl" />
-                </div>
-                <p className="text-sm font-semibold text-zinc-700">Nenhum lançamento em {monthLabel(selectedMonth)}</p>
+              <div className="py-14 text-center">
+                <i className="ri-file-list-3-line text-4xl text-zinc-200" />
+                <p className="text-sm font-semibold text-zinc-700 mt-2">Nenhum lançamento em {monthLabel(selectedMonth)}</p>
                 <p className="text-xs text-zinc-400 mt-1 mb-4">Importe o extrato mensal do Domínio (PDF da contabilidade) ou lance manualmente</p>
                 {ultimaFolha && ultimaFolha !== selectedMonth && (
                   <button onClick={() => setSelectedMonth(ultimaFolha)}
-                    className="mb-4 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-xs font-semibold cursor-pointer hover:bg-amber-100">
+                    className="mb-4 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs font-semibold cursor-pointer hover:bg-amber-100">
                     <i className="ri-history-line" /> Última folha lançada: {monthLabel(ultimaFolha)} — ver
                   </button>
                 )}
                 <div className="flex items-center justify-center gap-3 flex-wrap">
                   <button onClick={() => setImportarDominio(true)}
-                    className="flex items-center gap-1.5 px-4 py-2 bg-sky-600 hover:bg-sky-700 text-white rounded-lg text-sm font-semibold cursor-pointer whitespace-nowrap transition-colors">
+                    className="flex items-center gap-1.5 px-4 py-2 bg-sky-600 hover:bg-sky-700 text-white rounded-xl text-xs font-semibold shadow-sm cursor-pointer whitespace-nowrap transition-colors">
                     <i className="ri-file-upload-line" /> Importar do Domínio
                   </button>
                   {employees.filter(e => e.status === 'active').length > 0 && (
                     <button onClick={handleGenerateFolha}
-                      className="flex items-center gap-1.5 px-4 py-2 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 rounded-lg text-sm font-semibold cursor-pointer whitespace-nowrap transition-colors">
+                      className="flex items-center gap-1.5 px-4 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 text-zinc-600 rounded-xl text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors shadow-sm">
                       <i className="ri-magic-line" /> Gerar do Cadastro
                     </button>
                   )}
                   <button onClick={() => setPayrollModal({})}
-                    className="flex items-center gap-1.5 px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-sm font-semibold cursor-pointer whitespace-nowrap transition-colors">
+                    className="flex items-center gap-1.5 px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors shadow-sm">
                     <i className="ri-add-line" /> Adicionar Manualmente
                   </button>
                 </div>
@@ -1645,22 +1610,22 @@ export default function RHTab({ inicial }: { inicial?: RHView } = {}) {
             ) : (
               <table className="w-full">
                 <thead>
-                  <tr className="bg-zinc-50 border-b border-zinc-200">
-                    <th className="text-left px-5 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wide">Funcionário</th>
-                    <th className="text-left px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wide">Depto / Tipo</th>
-                    <th className="text-right px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wide">Proventos</th>
-                    <th className="text-right px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wide">INSS</th>
-                    <th className="text-right px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wide">IRRF</th>
-                    <th className="text-right px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wide">Descontos</th>
-                    <th className="text-right px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wide">FGTS</th>
-                    <th className="text-right px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wide">Líquido</th>
-                    <th className="text-center px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wide">Status</th>
-                    <th className="px-4 py-3" />
+                  <tr className="border-b border-zinc-200">
+                    <th className="text-left pl-5 pr-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Funcionário</th>
+                    <th className="text-left px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Depto / Tipo</th>
+                    <th className="text-right px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Proventos</th>
+                    <th className="text-right px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">INSS</th>
+                    <th className="text-right px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">IRRF</th>
+                    <th className="text-right px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Descontos</th>
+                    <th className="text-right px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">FGTS</th>
+                    <th className="text-right px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Líquido</th>
+                    <th className="text-center px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Status</th>
+                    <th className="px-4 py-2.5" />
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-zinc-100">
+                <tbody className="divide-y divide-zinc-100/80">
                   {entries.map(entry => (
-                    <tr key={entry.id} className="hover:bg-zinc-50/50 transition-colors">
+                    <tr key={entry.id} className="hover:bg-zinc-50 transition-colors">
                       <td className="px-5 py-3.5">
                         <p className="text-sm font-semibold text-zinc-800">{entry.employee_name}</p>
                         <p className="text-xs text-zinc-400">{entry.role}</p>
@@ -1672,27 +1637,27 @@ export default function RHTab({ inicial }: { inicial?: RHView } = {}) {
                       </td>
                       <td className="px-4 py-3.5">
                         <div className="flex flex-col gap-1">
-                          <span className="text-xs bg-zinc-100 text-zinc-600 px-2 py-0.5 rounded-full font-medium w-fit">{entry.department}</span>
+                          <span className="text-[11px] font-semibold bg-zinc-100 text-zinc-600 px-2 py-0.5 rounded-md w-fit">{entry.department}</span>
                           {entry.entry_type && entry.entry_type !== 'regular' && (
-                            <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-medium w-fit">
+                            <span className="text-[11px] font-semibold bg-amber-50 text-amber-700 px-2 py-0.5 rounded-md w-fit">
                               {ENTRY_TYPE_LABELS[entry.entry_type]}
                             </span>
                           )}
                         </div>
                       </td>
-                      <td className="px-4 py-3.5 text-sm text-right text-zinc-700 font-medium">
+                      <td className="px-4 py-3.5 text-sm text-right tabular-nums whitespace-nowrap text-zinc-700 font-medium">
                         {isSoInss(entry) ? <span className="text-zinc-400">—</span> : formatCurrency(entry.total_proventos ?? entry.gross_salary)}
                       </td>
-                      <td className="px-4 py-3.5 text-sm text-right text-orange-600">
+                      <td className="px-4 py-3.5 text-sm text-right tabular-nums whitespace-nowrap text-orange-600">
                         {formatCurrency(isSoInss(entry) ? Number(entry.gross_salary ?? 0) : entry.inss)}
                         {isSoInss(entry) && <span className="block text-[10px] font-normal text-zinc-400">DARF, código 1099</span>}
                       </td>
-                      <td className="px-4 py-3.5 text-sm text-right text-red-500">{formatCurrency(entry.irrf)}</td>
-                      <td className="px-4 py-3.5 text-sm text-right text-red-600">{formatCurrency(entry.total_descontos ?? entry.deductions)}</td>
-                      <td className="px-4 py-3.5 text-sm text-right text-amber-600">{formatCurrency(entry.fgts)}</td>
-                      <td className="px-4 py-3.5 text-sm text-right font-bold text-zinc-900">{isSoInss(entry) ? <span className="text-zinc-400 font-normal">—</span> : formatCurrency(entry.net_salary)}</td>
+                      <td className="px-4 py-3.5 text-sm text-right tabular-nums whitespace-nowrap text-red-500">{formatCurrency(entry.irrf)}</td>
+                      <td className="px-4 py-3.5 text-sm text-right tabular-nums whitespace-nowrap text-red-600">{formatCurrency(entry.total_descontos ?? entry.deductions)}</td>
+                      <td className="px-4 py-3.5 text-sm text-right tabular-nums whitespace-nowrap text-amber-600">{formatCurrency(entry.fgts)}</td>
+                      <td className="px-4 py-3.5 text-sm text-right tabular-nums whitespace-nowrap font-bold text-zinc-900">{isSoInss(entry) ? <span className="text-zinc-400 font-normal">—</span> : formatCurrency(entry.net_salary)}</td>
                       <td className="px-4 py-3.5 text-center">
-                        <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${PAYROLL_STATUS_COLORS[entry.status]}`}>
+                        <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-md ${PAYROLL_STATUS_COLORS[entry.status]}`}>
                           {PAYROLL_STATUS_LABELS[entry.status]}
                         </span>
                         {entry.paid_date && (
@@ -1732,13 +1697,13 @@ export default function RHTab({ inicial }: { inicial?: RHView } = {}) {
                 </tbody>
                 <tfoot>
                   <tr className="bg-zinc-50 border-t-2 border-zinc-200">
-                    <td colSpan={2} className="px-5 py-3 text-sm font-bold text-zinc-800">Total</td>
-                    <td className="px-4 py-3 text-sm font-bold text-right text-zinc-800">{formatCurrency(brutoSemSocio)}</td>
-                    <td className="px-4 py-3 text-sm font-bold text-right text-orange-600">{formatCurrency(inssColuna)}</td>
-                    <td className="px-4 py-3 text-sm font-bold text-right text-red-500">{formatCurrency(totalIRRF)}</td>
-                    <td className="px-4 py-3 text-sm font-bold text-right text-red-600">{formatCurrency(totalLiquido > 0 ? totalBruto - totalLiquido : 0)}</td>
-                    <td className="px-4 py-3 text-sm font-bold text-right text-amber-600">{formatCurrency(totalFGTS)}</td>
-                    <td className="px-4 py-3 text-sm font-bold text-right text-zinc-900">{formatCurrency(liquidoSemSocio)}</td>
+                    <td colSpan={2} className="px-5 py-3 text-sm font-bold text-zinc-900">Total</td>
+                    <td className="px-4 py-3 text-sm font-bold text-right tabular-nums whitespace-nowrap text-zinc-800">{formatCurrency(brutoSemSocio)}</td>
+                    <td className="px-4 py-3 text-sm font-bold text-right tabular-nums whitespace-nowrap text-orange-600">{formatCurrency(inssColuna)}</td>
+                    <td className="px-4 py-3 text-sm font-bold text-right tabular-nums whitespace-nowrap text-red-500">{formatCurrency(totalIRRF)}</td>
+                    <td className="px-4 py-3 text-sm font-bold text-right tabular-nums whitespace-nowrap text-red-600">{formatCurrency(totalLiquido > 0 ? totalBruto - totalLiquido : 0)}</td>
+                    <td className="px-4 py-3 text-sm font-bold text-right tabular-nums whitespace-nowrap text-amber-600">{formatCurrency(totalFGTS)}</td>
+                    <td className="px-4 py-3 text-sm font-bold text-right tabular-nums whitespace-nowrap text-zinc-900">{formatCurrency(liquidoSemSocio)}</td>
                     <td colSpan={2} />
                   </tr>
                 </tfoot>
@@ -1751,20 +1716,19 @@ export default function RHTab({ inicial }: { inicial?: RHView } = {}) {
 
       {/* ── FUNCIONÁRIOS ── */}
       {activeView === 'funcionarios' && (
-        <div className="bg-white rounded-xl border border-zinc-200 overflow-hidden">
+        <div className="bg-white rounded-2xl border border-zinc-200 overflow-hidden">
           {empLoading ? (
-            <div className="p-8 flex items-center justify-center">
-              <div className="w-6 h-6 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
+            <div className="py-14 text-center">
+              <i className="ri-loader-4-line text-4xl text-zinc-200 animate-spin" />
+              <p className="text-zinc-400 text-sm mt-2">Carregando…</p>
             </div>
           ) : filteredEmployees.length === 0 ? (
-            <div className="py-16 text-center">
-              <div className="w-14 h-14 flex items-center justify-center bg-zinc-100 rounded-2xl mx-auto mb-4">
-                <i className="ri-team-line text-zinc-400 text-2xl" />
-              </div>
-              <p className="text-sm font-semibold text-zinc-700">Nenhum funcionário cadastrado</p>
+            <div className="py-14 text-center">
+              <i className="ri-team-line text-4xl text-zinc-200" />
+              <p className="text-sm font-semibold text-zinc-700 mt-2">Nenhum funcionário cadastrado</p>
               <p className="text-xs text-zinc-400 mt-1 mb-4">Cadastre os funcionários para gerar a folha automaticamente</p>
               <button onClick={() => setEmployeeModal({})}
-                className="inline-flex items-center gap-1.5 px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-sm font-semibold cursor-pointer whitespace-nowrap transition-colors">
+                className="inline-flex items-center gap-1.5 px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors shadow-sm">
                 <i className="ri-add-line" /> Cadastrar Funcionário
               </button>
             </div>
@@ -1772,18 +1736,18 @@ export default function RHTab({ inicial }: { inicial?: RHView } = {}) {
             <div className="overflow-x-auto">
               <table className="w-full min-w-max">
                 <thead>
-                  <tr className="bg-zinc-50 border-b border-zinc-200">
-                    <th className="text-left px-5 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wide">Funcionário</th>
-                    <th className="text-left px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wide">Departamento</th>
-                    <th className="text-left px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wide">Admissão</th>
-                    <th className="text-right px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wide">Salário</th>
-                    <th className="text-center px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wide">Férias</th>
-                    <th className="text-center px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wide">13º</th>
-                    <th className="text-center px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wide">Status</th>
-                    <th className="px-4 py-3" />
+                  <tr className="border-b border-zinc-200">
+                    <th className="text-left pl-5 pr-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Funcionário</th>
+                    <th className="text-left px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Departamento</th>
+                    <th className="text-left px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Admissão</th>
+                    <th className="text-right px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Salário</th>
+                    <th className="text-center px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Férias</th>
+                    <th className="text-center px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">13º</th>
+                    <th className="text-center px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Status</th>
+                    <th className="px-4 py-2.5" />
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-zinc-100">
+                <tbody className="divide-y divide-zinc-100/80">
                   {filteredEmployees.map(emp => (
                     <EmployeeRow
                       key={emp.id}

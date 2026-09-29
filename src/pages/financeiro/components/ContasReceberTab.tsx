@@ -7,6 +7,7 @@ import type { ReceivableInstallment } from '@/types/financeiro';
 import AgingRecebiveis, { buildAgingBuckets } from '@/pages/financeiro/components/AgingRecebiveis';
 import { todayBrasilia } from '@/lib/dateUtils';
 import { confirmar } from '@/components/base/Dialogos';
+import { KpiCard, MonthNav, Segmented } from './dreUi';
 
 const PAGE_SIZE = 10;
 
@@ -290,6 +291,13 @@ export default function ContasReceberTab() {
   const [viewYear, setViewYear] = useState(now.getFullYear());
   const [viewMonth, setViewMonth] = useState(now.getMonth());
 
+  const trocarMes = (m: string) => {
+    const [y, mm] = m.split('-').map(Number);
+    setViewYear(y);
+    setViewMonth(mm - 1);
+    setPage(1);
+  };
+
   const goToPrevMonth = () => {
     if (viewMonth === 0) { setViewYear((y) => y - 1); setViewMonth(11); }
     else setViewMonth((m) => m - 1);
@@ -438,11 +446,33 @@ export default function ContasReceberTab() {
   const antecipados = enriched.filter((i) => i.is_anticipated && i.status !== 'received' && i.due_date && i.due_date >= monthStart && i.due_date <= monthEnd);
 
   return (
-    <div className="p-4 md:p-6 space-y-4 md:space-y-5">
+    <div className="p-4 md:p-6 space-y-5 max-w-[1400px] mx-auto">
+
+      {/* Mês + ações */}
+      <div className="flex flex-wrap items-center gap-2 lg:gap-3">
+        <MonthNav mes={`${viewYear}-${String(viewMonth + 1).padStart(2, '0')}`} onChange={trocarMes} canGoNext />
+        {!isCurrentMonth && (
+          <button
+            onClick={goToToday}
+            className="text-xs font-semibold px-3 py-2 bg-amber-50 text-amber-700 border border-amber-200 rounded-xl hover:bg-amber-100 cursor-pointer transition-colors whitespace-nowrap"
+          >
+            Mês atual
+          </button>
+        )}
+
+        <div className="ml-auto flex items-center gap-2 overflow-x-auto max-w-full">
+          <button
+            onClick={() => setShowAntecipacao(true)}
+            className="flex items-center gap-1.5 bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-xl text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors shadow-sm"
+          >
+            <i className="ri-flashlight-line" /> Antecipar Recebíveis
+          </button>
+        </div>
+      </div>
 
       {/* Banner informativo */}
       {totalPendenteGlobal > 0 && (
-        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3">
+        <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 flex items-start gap-3">
           <div className="w-8 h-8 flex items-center justify-center rounded-lg bg-amber-100 flex-shrink-0">
             <i className="ri-time-line text-amber-600 text-base" />
           </div>
@@ -463,7 +493,7 @@ export default function ContasReceberTab() {
                     <button
                       key={key}
                       onClick={() => { setViewYear(y); setViewMonth(m - 1); setPage(1); }}
-                      className="text-xs bg-amber-100 hover:bg-amber-200 text-amber-800 px-2 py-0.5 rounded-full cursor-pointer transition-colors whitespace-nowrap"
+                      className="text-xs bg-amber-100 hover:bg-amber-200 text-amber-800 px-2 py-0.5 rounded-md cursor-pointer transition-colors whitespace-nowrap"
                     >
                       {new Date(y, m - 1, 1).toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' })} — {formatCurrency(val)}
                     </button>
@@ -475,66 +505,12 @@ export default function ContasReceberTab() {
         </div>
       )}
 
-      {/* Navegação por mês + botão antecipar */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div className="flex items-center gap-2">
-          <button
-            onClick={goToPrevMonth}
-            className="w-8 h-8 flex items-center justify-center rounded-lg border border-zinc-200 bg-white hover:bg-zinc-50 cursor-pointer transition-colors"
-          >
-            <i className="ri-arrow-left-s-line text-zinc-600" />
-          </button>
-          <div className="flex items-center gap-2 px-4 py-2 bg-white border border-zinc-200 rounded-lg min-w-44 justify-center">
-            <i className="ri-calendar-line text-amber-500 text-sm" />
-            <span className="text-sm font-semibold text-zinc-800 capitalize">
-              {getMonthLabel(viewYear, viewMonth)}
-            </span>
-          </div>
-          <button
-            onClick={goToNextMonth}
-            className="w-8 h-8 flex items-center justify-center rounded-lg border border-zinc-200 bg-white hover:bg-zinc-50 cursor-pointer transition-colors"
-          >
-            <i className="ri-arrow-right-s-line text-zinc-600" />
-          </button>
-          {!isCurrentMonth && (
-            <button
-              onClick={goToToday}
-              className="text-xs text-amber-600 hover:text-amber-700 font-semibold cursor-pointer px-2 py-1 rounded-lg hover:bg-amber-50 transition-colors whitespace-nowrap"
-            >
-              Mês atual
-            </button>
-          )}
-        </div>
-
-        <button
-          onClick={() => setShowAntecipacao(true)}
-          className="flex items-center gap-2 bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-lg text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors"
-        >
-          <i className="ri-flashlight-line" /> Antecipar Recebíveis
-        </button>
-      </div>
-
       {/* KPIs do mês */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
-        {[
-          { label: 'A Receber no Mês', value: formatCurrency(totalPendentesMes), icon: 'ri-hand-coin-line', color: 'text-amber-600', bg: 'bg-amber-50' },
-          { label: 'Já Recebido', value: formatCurrency(totalRecebidoMes), icon: 'ri-checkbox-circle-line', color: 'text-green-600', bg: 'bg-green-50' },
-          { label: 'Antecipado', value: formatCurrency(totalAntecipado), icon: 'ri-flashlight-line', color: 'text-violet-600', bg: 'bg-violet-50', count: antecipados.length },
-          { label: 'Antecipações', value: `${anticipations.length} registros`, icon: 'ri-history-line', color: 'text-zinc-600', bg: 'bg-zinc-50' },
-        ].map((k) => (
-          <div key={k.label} className="bg-white rounded-xl border border-zinc-200 p-4 flex items-center gap-3">
-            <div className={`w-10 h-10 flex items-center justify-center rounded-lg ${k.bg}`}>
-              <i className={`${k.icon} ${k.color} text-lg`} />
-            </div>
-            <div>
-              <p className="text-xs text-zinc-500">{k.label}</p>
-              <p className={`text-base font-bold ${k.color}`}>{k.value}</p>
-              {'count' in k && k.count !== undefined && k.count > 0 && (
-                <p className="text-[10px] text-zinc-400">{k.count} parcela(s)</p>
-              )}
-            </div>
-          </div>
-        ))}
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+        <KpiCard label="A receber no mês" icon="ri-hand-coin-line" value={formatCurrency(totalPendentesMes)} valueTone="text-amber-700" atual={totalPendentesMes} semVariacao />
+        <KpiCard label="Já recebido" icon="ri-checkbox-circle-line" value={formatCurrency(totalRecebidoMes)} valueTone="text-emerald-700" atual={totalRecebidoMes} semVariacao />
+        <KpiCard label="Antecipado" icon="ri-flashlight-line" value={formatCurrency(totalAntecipado)} atual={totalAntecipado} semVariacao sub={antecipados.length > 0 ? `${antecipados.length} parcela(s)` : undefined} />
+        <KpiCard label="Antecipações" icon="ri-history-line" value={`${anticipations.length} registros`} atual={anticipations.length} semVariacao />
       </div>
 
       {/* Aging de Recebíveis */}
@@ -551,13 +527,13 @@ export default function ContasReceberTab() {
 
       {/* Toolbar */}
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3 flex-wrap">
-        <div className="relative flex-1 min-w-0">
+        <div className="relative flex-1 min-w-0 sm:min-w-[220px]">
           <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 text-sm" />
           <input
             value={search}
             onChange={(e) => { setSearch(e.target.value); setPage(1); }}
             placeholder="Buscar por pedido..."
-            className="w-full pl-9 pr-3 py-2 border border-zinc-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white"
+            className="w-full h-10 rounded-xl border border-zinc-200 shadow-sm pl-9 pr-3 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white"
           />
           {search && (
             <button onClick={() => setSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 cursor-pointer">
@@ -566,26 +542,22 @@ export default function ContasReceberTab() {
           )}
         </div>
 
-        <div className="flex bg-white border border-zinc-200 rounded-lg overflow-hidden overflow-x-auto">
-          {([
-            ['all', 'Todas'],
-            ['pending', 'Pend.'],
-            ['anticipated', 'Antec.'],
-            ['overdue', 'Venc.'],
-            ['received', 'Receb.'],
-          ] as const).map(([v, l]) => (
-            <button
-              key={v}
-              onClick={() => { setFilterStatus(v); setAgingBucket(null); setPage(1); }}
-              className={`px-3 py-2 text-xs font-semibold cursor-pointer transition-colors whitespace-nowrap ${filterStatus === v && !agingBucket ? 'bg-amber-500 text-white' : 'text-zinc-600 hover:bg-zinc-50'}`}
-            >
-              {l}
-            </button>
-          ))}
+        <div className="overflow-x-auto max-w-full">
+          <Segmented
+            value={(agingBucket ? '' : filterStatus) as typeof filterStatus}
+            onChange={(v) => { setFilterStatus(v); setAgingBucket(null); setPage(1); }}
+            options={[
+              { id: 'all', label: 'Todas', icon: 'ri-list-check' },
+              { id: 'pending', label: 'Pend.', icon: 'ri-time-line', title: 'Pendentes' },
+              { id: 'anticipated', label: 'Antec.', icon: 'ri-flashlight-line', title: 'Antecipadas' },
+              { id: 'overdue', label: 'Venc.', icon: 'ri-alarm-warning-line', title: 'Vencidas' },
+              { id: 'received', label: 'Receb.', icon: 'ri-checkbox-circle-line', title: 'Recebidas' },
+            ]}
+          />
         </div>
 
         {agingBucket && (
-          <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5">
+          <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
             <i className="ri-filter-line text-amber-600 text-xs" />
             <span className="text-xs font-semibold text-amber-700">{agingBucket}</span>
             <button
@@ -599,18 +571,19 @@ export default function ContasReceberTab() {
       </div>
 
       {/* Tabela de parcelas */}
-      <div className="bg-white rounded-xl border border-zinc-200 overflow-hidden">
-        <div className="px-5 py-3 border-b border-zinc-100 flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-zinc-800">
-            Recebíveis — <span className="capitalize text-amber-600">{getMonthLabel(viewYear, viewMonth)}</span>
-          </h3>
+      <div className="bg-white rounded-2xl border border-zinc-200 overflow-hidden">
+        <div className="px-5 py-3 border-b border-zinc-100 flex items-center justify-between gap-3 flex-wrap">
+          <div>
+            <h3 className="text-sm font-bold text-zinc-800">Recebíveis</h3>
+            <p className="text-xs text-zinc-400 capitalize">{getMonthLabel(viewYear, viewMonth)}</p>
+          </div>
           <span className="text-xs text-zinc-400">{filtered.length} parcela{filtered.length !== 1 ? 's' : ''}</span>
         </div>
         {loading ? (
-          <div className="p-10 text-center text-zinc-400 text-sm">Carregando...</div>
+          <div className="py-14 text-center"><i className="ri-loader-4-line text-4xl text-zinc-200 block mb-2 animate-spin" /><p className="text-zinc-400 text-sm">Carregando...</p></div>
         ) : paginated.length === 0 ? (
-          <div className="p-10 text-center">
-            <i className="ri-hand-coin-line text-3xl text-zinc-300 block mb-2" />
+          <div className="py-14 text-center">
+            <i className="ri-hand-coin-line text-4xl text-zinc-200 block mb-2" />
             <p className="text-zinc-400 text-sm">Nenhuma parcela em {getMonthLabel(viewYear, viewMonth)}</p>
             <div className="flex items-center justify-center gap-2 mt-3">
               <button onClick={goToPrevMonth} className="text-xs text-amber-600 cursor-pointer hover:underline">
@@ -625,7 +598,7 @@ export default function ContasReceberTab() {
         ) : (
           <>
           {/* Celular: um cartão por parcela — a tabela de 6 colunas não cabe em 375px. */}
-          <ul className="md:hidden p-2 space-y-2 bg-zinc-50/60">
+          <ul className="md:hidden p-2 space-y-2">
             {paginated.map((inst) => {
               const daysUntil = inst.due_date
                 ? Math.ceil((new Date(inst.due_date).getTime() - new Date(today).getTime()) / 86400000)
@@ -634,7 +607,7 @@ export default function ContasReceberTab() {
               const isReceived = inst.status === 'received';
               const isReceiving = receivingId === inst.id;
               return (
-                <li key={inst.id} className={`rounded-xl border px-3 py-3 ${inst.isOverdue ? 'border-red-200 bg-red-50/40' : isAntecipado ? 'border-violet-200 bg-violet-50/30' : 'border-zinc-200 bg-white'}`}>
+                <li key={inst.id} className={`rounded-2xl border px-3 py-3 ${inst.isOverdue ? 'border-red-200 bg-red-50/40' : isAntecipado ? 'border-violet-200 bg-violet-50/30' : 'border-zinc-200 bg-white'}`}>
                   <div className="flex items-start justify-between gap-2">
                     <span className="text-xs font-bold text-zinc-800">
                       {inst.isIfood ? <span className="text-red-600"><i className="ri-restaurant-2-line" /> iFood</span>
@@ -652,7 +625,7 @@ export default function ContasReceberTab() {
                     )}
                   </p>
                   <div className="flex items-center gap-1.5 flex-wrap mt-2">
-                    <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${isReceived ? 'bg-green-100 text-green-700' : isAntecipado ? 'bg-violet-100 text-violet-700' : inst.isOverdue ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>
+                    <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-md ${isReceived ? 'bg-emerald-50 text-emerald-700' : isAntecipado ? 'bg-violet-50 text-violet-700' : inst.isOverdue ? 'bg-red-50 text-red-600' : 'bg-amber-50 text-amber-700'}`}>
                       {isReceived ? 'Recebido' : isAntecipado ? 'Antecipado' : inst.isOverdue ? 'Vencido' : 'Pendente'}
                     </span>
                     {inst.payment_method_name && (
@@ -684,14 +657,14 @@ export default function ContasReceberTab() {
 
           <div className="hidden md:block overflow-x-auto">
           <table className="w-full text-sm min-w-[500px]">
-            <thead className="bg-zinc-50 border-b border-zinc-200">
+            <thead className="border-b border-zinc-200">
               <tr>
-                {['Pedido', 'Forma Pgto', 'Valor', 'Vencimento', 'Status', 'Ação'].map((h) => (
-                  <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
+                {['Pedido', 'Forma Pgto', 'Valor', 'Vencimento', 'Status', 'Ação'].map((h, idx) => (
+                  <th key={h} className={`text-left py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400 whitespace-nowrap ${idx === 0 ? 'pl-5 pr-4' : 'px-4'}`}>{h}</th>
                 ))}
               </tr>
             </thead>
-            <tbody className="divide-y divide-zinc-50">
+            <tbody className="divide-y divide-zinc-100/80">
               {paginated.map((inst) => {
                 const daysUntil = inst.due_date
                   ? Math.ceil((new Date(inst.due_date).getTime() - new Date(today).getTime()) / 86400000)
@@ -723,7 +696,7 @@ export default function ContasReceberTab() {
                         <span className="text-xs text-zinc-300">—</span>
                       )}
                     </td>
-                    <td className="px-4 py-3 font-semibold text-zinc-800">{formatCurrency(inst.amount)}</td>
+                    <td className="px-4 py-3 font-semibold text-zinc-800 tabular-nums whitespace-nowrap">{formatCurrency(inst.amount)}</td>
                     <td className="px-4 py-3">
                       <p className="text-zinc-700">{inst.due_date ? new Date(inst.due_date + 'T00:00:00').toLocaleDateString('pt-BR') : '—'}</p>
                       {daysUntil !== null && !isReceived && !isAntecipado && (
@@ -739,20 +712,20 @@ export default function ContasReceberTab() {
                     </td>
                     <td className="px-4 py-3">
                       {isReceived ? (
-                        <span className="text-xs font-semibold px-2 py-1 rounded-full bg-green-100 text-green-700">
+                        <span className="text-[11px] font-semibold px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700">
                           Recebido
                         </span>
                       ) : isAntecipado ? (
-                        <span className="text-xs font-semibold px-2 py-1 rounded-full bg-violet-100 text-violet-700 flex items-center gap-1 w-fit">
+                        <span className="text-[11px] font-semibold px-2 py-0.5 rounded-md bg-violet-50 text-violet-700 flex items-center gap-1 w-fit">
                           <i className="ri-flashlight-line text-xs" />
                           Antecipado
                         </span>
                       ) : inst.isOverdue ? (
-                        <span className="text-xs font-semibold px-2 py-1 rounded-full bg-red-100 text-red-700">
+                        <span className="text-[11px] font-semibold px-2 py-0.5 rounded-md bg-red-50 text-red-600">
                           Vencido
                         </span>
                       ) : (
-                        <span className="text-xs font-semibold px-2 py-1 rounded-full bg-amber-100 text-amber-700">
+                        <span className="text-[11px] font-semibold px-2 py-0.5 rounded-md bg-amber-50 text-amber-700">
                           Pendente
                         </span>
                       )}
@@ -809,8 +782,8 @@ export default function ContasReceberTab() {
 
         {/* Pagination */}
         {totalPages > 1 && (
-          <div className="flex items-center justify-between px-4 py-3 border-t border-zinc-100 bg-zinc-50">
-            <p className="text-xs text-zinc-500">
+          <div className="flex items-center justify-between px-4 py-3 border-t border-zinc-100">
+            <p className="text-xs text-zinc-400">
               Mostrando {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, filtered.length)} de {filtered.length}
             </p>
             <div className="flex items-center gap-1">
@@ -847,12 +820,12 @@ export default function ContasReceberTab() {
 
       {/* Histórico de antecipações */}
       {anticipations.length > 0 && (
-        <div className="bg-white rounded-xl border border-zinc-200 p-5">
-          <h3 className="text-sm font-semibold text-zinc-800 mb-3 flex items-center gap-2">
-            <i className="ri-flashlight-line text-amber-500" />
-            Histórico de Antecipações
-          </h3>
-          <div className="divide-y divide-zinc-100">
+        <div className="bg-white rounded-2xl border border-zinc-200 overflow-hidden">
+          <div className="px-5 py-3 border-b border-zinc-100">
+            <h3 className="text-sm font-bold text-zinc-800">Histórico de antecipações</h3>
+            <p className="text-xs text-zinc-400">Operações registradas com a taxa da operadora</p>
+          </div>
+          <div className="divide-y divide-zinc-100/80 px-5">
             {anticipations.map((a) => (
               <div key={a.id} className="flex items-center justify-between py-3 gap-4">
                 <div className="flex-1 min-w-0">
@@ -861,11 +834,11 @@ export default function ContasReceberTab() {
                       {a.notes || `Antecipação — taxa ${a.fee_percent}%`}
                     </p>
                     {a.installment_ids && a.installment_ids.length > 0 && (
-                      <span className="text-xs bg-violet-100 text-violet-700 px-2 py-0.5 rounded-full font-semibold">
+                      <span className="text-[11px] bg-violet-50 text-violet-700 px-2 py-0.5 rounded-md font-semibold">
                         {a.installment_ids.length} parcela(s)
                       </span>
                     )}
-                    <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${a.status === 'settled' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
+                    <span className={`text-[11px] px-2 py-0.5 rounded-md font-semibold ${a.status === 'settled' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
                       {a.status === 'settled' ? 'Liquidado' : 'Ativo'}
                     </span>
                   </div>

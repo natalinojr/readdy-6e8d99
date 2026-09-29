@@ -119,8 +119,8 @@ export default function AgingContasPagar({ bills, activeBucket, onBucketClick }:
   return (
     <div className="space-y-4">
       {/* ── Aging por faixa ── */}
-      <div className="bg-white rounded-xl border border-zinc-200 overflow-hidden">
-        <div className="px-5 py-4 border-b border-zinc-100 flex items-center justify-between">
+      <div className="bg-white rounded-2xl border border-zinc-200 overflow-hidden">
+        <div className="px-5 py-3 border-b border-zinc-100 flex items-center justify-between gap-3 flex-wrap">
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 flex items-center justify-center rounded-lg bg-red-50">
               <i className="ri-bar-chart-grouped-line text-red-500 text-sm" />
@@ -131,7 +131,7 @@ export default function AgingContasPagar({ bills, activeBucket, onBucketClick }:
             </div>
           </div>
           {hasHighOverdue && (
-            <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-lg px-3 py-1.5">
+            <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-xl px-3 py-1.5">
               <i className="ri-alarm-warning-line text-red-500 text-sm" />
               <span className="text-xs font-bold text-red-700">
                 {pctVencido.toFixed(0)}% vencido — risco de inadimplência!
@@ -166,7 +166,7 @@ export default function AgingContasPagar({ bills, activeBucket, onBucketClick }:
         </div>
 
         {/* Grid de buckets */}
-        <div className="px-5 pb-5 grid grid-cols-4 gap-3 mt-2">
+        <div className="px-5 pb-5 grid grid-cols-2 sm:grid-cols-4 gap-3 mt-2">
           {buckets.map((b) => {
             const isActive = activeBucket === b.label;
             const isOverdue = b.minDays >= 1;
@@ -174,7 +174,7 @@ export default function AgingContasPagar({ bills, activeBucket, onBucketClick }:
               <button
                 key={b.label}
                 onClick={() => b.count > 0 && onBucketClick(isActive ? null : b.label)}
-                className={`text-left p-3 rounded-xl border-2 transition-all ${
+                className={`text-left p-3 rounded-xl border transition-all ${
                   b.count === 0
                     ? 'bg-zinc-50 border-zinc-100 opacity-40 cursor-default'
                     : isActive
@@ -209,7 +209,7 @@ export default function AgingContasPagar({ bills, activeBucket, onBucketClick }:
 
         {/* Resumo vencidos */}
         {totalVencido > 0 && (
-          <div className={`mx-5 mb-5 rounded-xl p-3 flex items-center justify-between ${hasHighOverdue ? 'bg-red-50 border border-red-200' : 'bg-orange-50 border border-orange-200'}`}>
+          <div className={`mx-5 mb-5 rounded-xl px-4 py-3 flex items-center justify-between gap-2 flex-wrap ${hasHighOverdue ? 'bg-red-50 border border-red-200' : 'bg-orange-50 border border-orange-200'}`}>
             <div className="flex items-center gap-2">
               <i className={`ri-error-warning-line text-sm ${hasHighOverdue ? 'text-red-500' : 'text-orange-500'}`} />
               <span className={`text-xs font-semibold ${hasHighOverdue ? 'text-red-700' : 'text-orange-700'}`}>
@@ -233,14 +233,12 @@ export default function AgingContasPagar({ bills, activeBucket, onBucketClick }:
 
       {/* ── Aging por Fornecedor ── */}
       {supplierAging.length > 0 && (
-        <div className="bg-white rounded-xl border border-zinc-200 overflow-hidden">
-          <div className="px-5 py-3.5 border-b border-zinc-100 bg-zinc-50">
-            <h3 className="text-xs font-bold text-zinc-600 uppercase tracking-wide flex items-center gap-2">
-              <i className="ri-building-2-line text-zinc-400" /> Inadimplência por Fornecedor
-            </h3>
-            <p className="text-xs text-zinc-400 mt-0.5">Fornecedores com débitos em aberto, ordenados por valor vencido</p>
+        <div className="bg-white rounded-2xl border border-zinc-200 overflow-hidden">
+          <div className="px-5 py-3 border-b border-zinc-100">
+            <h3 className="text-sm font-bold text-zinc-800">Inadimplência por fornecedor</h3>
+            <p className="text-xs text-zinc-400">Fornecedores com débitos em aberto, ordenados por valor vencido</p>
           </div>
-          <div className="divide-y divide-zinc-50">
+          <div className="divide-y divide-zinc-100/80">
             {supplierAging.map((s) => {
               const today = new Date();
               today.setHours(0, 0, 0, 0);
@@ -265,7 +263,7 @@ export default function AgingContasPagar({ bills, activeBucket, onBucketClick }:
                     <div className="flex items-center gap-2 flex-wrap">
                       <p className="text-sm font-semibold text-zinc-800 truncate">{s.supplier}</p>
                       {isCritical && (
-                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-red-100 text-red-700 border border-red-200 whitespace-nowrap">
+                        <span className="text-[11px] font-semibold px-2 py-0.5 rounded-md bg-red-50 text-red-600 whitespace-nowrap">
                           +30 dias vencido
                         </span>
                       )}
@@ -309,7 +307,7 @@ export default function AgingContasPagar({ bills, activeBucket, onBucketClick }:
 
                   {/* Valores */}
                   <div className="text-right flex-shrink-0 space-y-0.5">
-                    <p className="text-sm font-bold text-zinc-800">{formatCurrency(s.total)}</p>
+                    <p className="text-sm font-bold text-zinc-800 tabular-nums whitespace-nowrap">{formatCurrency(s.total)}</p>
                     {s.overdue > 0 && (
                       <p className="text-xs font-semibold text-red-600">
                         <i className="ri-alarm-warning-line mr-0.5" />

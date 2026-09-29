@@ -73,9 +73,9 @@ export default function AgingRecebiveis({ installments, activeBucket, onBucketCl
   if (totalPendente === 0) return null;
 
   return (
-    <div className="bg-white rounded-xl border border-zinc-200 overflow-hidden">
+    <div className="bg-white rounded-2xl border border-zinc-200 overflow-hidden">
       {/* Header */}
-      <div className="px-5 py-4 border-b border-zinc-100 flex items-center justify-between">
+      <div className="px-5 py-3 border-b border-zinc-100 flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-2">
           <div className="w-8 h-8 flex items-center justify-center rounded-lg bg-amber-50">
             <i className="ri-bar-chart-grouped-line text-amber-600 text-sm" />
@@ -86,7 +86,7 @@ export default function AgingRecebiveis({ installments, activeBucket, onBucketCl
           </div>
         </div>
         {hasHighOverdue && (
-          <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-lg px-3 py-1.5">
+          <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-xl px-3 py-1.5">
             <i className="ri-alarm-warning-line text-red-500 text-sm" />
             <span className="text-xs font-bold text-red-700">
               {pctVencido.toFixed(0)}% vencido — atenção!
@@ -121,7 +121,7 @@ export default function AgingRecebiveis({ installments, activeBucket, onBucketCl
       </div>
 
       {/* Grid de buckets */}
-      <div className="px-5 pb-5 grid grid-cols-4 gap-3 mt-2">
+      <div className="px-5 pb-5 grid grid-cols-2 sm:grid-cols-4 gap-3 mt-2">
         {buckets.map((b) => {
           const isActive = activeBucket === b.label;
           const isOverdue = b.minDays >= 1;
@@ -132,7 +132,7 @@ export default function AgingRecebiveis({ installments, activeBucket, onBucketCl
               // sem ela o usuário filtrava por uma faixa sem nenhum título e via a lista vazia.
               disabled={b.count === 0}
               onClick={() => { if (b.count > 0) onBucketClick(isActive ? null : b.label); }}
-              className={`text-left p-3 rounded-xl border-2 transition-all cursor-pointer ${
+              className={`text-left p-3 rounded-xl border transition-all cursor-pointer ${
                 isActive
                   ? `${b.bgColor} ${b.color} ring-2 ring-offset-1 ring-zinc-300`
                   : b.count > 0
@@ -167,7 +167,7 @@ export default function AgingRecebiveis({ installments, activeBucket, onBucketCl
 
       {/* Resumo de vencidos */}
       {totalVencido > 0 && (
-        <div className={`mx-5 mb-5 rounded-xl p-3 flex items-center justify-between ${hasHighOverdue ? 'bg-red-50 border border-red-200' : 'bg-orange-50 border border-orange-200'}`}>
+        <div className={`mx-5 mb-5 rounded-xl px-4 py-3 flex items-center justify-between gap-2 flex-wrap ${hasHighOverdue ? 'bg-red-50 border border-red-200' : 'bg-orange-50 border border-orange-200'}`}>
           <div className="flex items-center gap-2">
             <i className={`ri-error-warning-line text-sm ${hasHighOverdue ? 'text-red-500' : 'text-orange-500'}`} />
             <span className={`text-xs font-semibold ${hasHighOverdue ? 'text-red-700' : 'text-orange-700'}`}>
