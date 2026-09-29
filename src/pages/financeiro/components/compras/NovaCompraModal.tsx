@@ -3,6 +3,7 @@ import { formatCurrency } from '@/lib/formatters';
 import type { Purchase, PurchaseItem } from '@/types/financeiro';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
+import { lerNotinhaArquivo, lerNotinhaLink, aprenderVinculos, type ScanResult } from '@/lib/leituraNotinha';
 import { useMerchandiseCategories } from '@/hooks/useMerchandiseCategories';
 
 interface IngredientOption {
@@ -45,91 +46,7 @@ type ItemRow = Partial<PurchaseItem> & {
   _src?: 'memoria' | 'ia' | null;
 };
 
-// Resultado da Edge purchase-receipt-scan (ação scan).
-interface ScanItem {
-  raw_description: string; quantity: number; unit_label: string; unit_price: number;
-  line_total: number; line_discount: number;
-  catalog_id: string | null; ingredient_id: string | null;
-  merchandise_category_id: string | null; dre_category_id: string | null;
-  pack_count: number | null; pack_size: number | null;
-  confidence: string; match_source: 'memoria' | 'ia' | null;
-}
-interface ScanResult {
-  source?: 'qrcode';                 // presente quando veio da SEFAZ pelo QR Code
-  access_key?: string;               // chave de acesso da NFC-e (44 dígitos)
-  duplicate?: { id: string; purchase_date: string } | null;
-  readable: boolean; supplier_name: string | null; supplier_key: string;
-  invoice_number: string | null; purchase_date: string | null; payment_method: string | null;
-  document_total: number | null; discount_total: number | null; items_sum: number;
-  items: ScanItem[]; warnings: string[];
-}
 interface DreCategory { id: string; name: string; group_type: string | null; }
-
-function loadImage(url: string): Promise<HTMLImageElement> {
-  return new Promise((resolve, reject) => {
-    const i = new Image();
-    i.onload = () => resolve(i);
-    i.onerror = () => reject(new Error('Não foi possível abrir a imagem'));
-    i.src = url;
-  });
-}
-
-// Procura o QR Code da NFC-e na foto (no navegador, sem custo). Tenta alguns
-// tamanhos: QR pequeno numa foto grande precisa de resolução; foto tremida lê
-// melhor reduzida. jsQR é carregado só quando usado.
-async function decodeQrFromFile(file: File): Promise<string | null> {
-  if (!file.type.startsWith('image/')) return null;
-  const { default: jsQR } = await import('jsqr');
-  const url = URL.createObjectURL(file);
-  try {
-    const img = await loadImage(url);
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
-    for (const max of [1600, 2400, 1000]) {
-      const scale = Math.min(1, max / Math.max(img.width, img.height));
-      canvas.width = Math.round(img.width * scale);
-      canvas.height = Math.round(img.height * scale);
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-      const px = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const code = jsQR(px.data, px.width, px.height, { inversionAttempts: 'attemptBoth' });
-      if (code?.data) return code.data;
-      if (scale === 1) break; // imagem já menor que os próximos tamanhos
-    }
-    return null;
-  } finally {
-    URL.revokeObjectURL(url);
-  }
-}
-
-// QR de NFC-e do Paraná (única SEFAZ suportada pela Edge por enquanto).
-const isNfcePrQr = (s: string) => /^https?:\/\/(www\.)?fazenda\.pr\.gov\.br\/nfce\/qrcode\?p=\d{44}/i.test(s.trim());
-
-// Foto do celular chega com 4–12 MB: reduz para ~2000px em JPEG antes de enviar
-// (lê igual e sobe em segundos no 4G). PDF vai como está.
-async function fileToPayload(file: File): Promise<{ base64: string; mediaType: string }> {
-  const readB64 = (blob: Blob) => new Promise<string>((resolve, reject) => {
-    const r = new FileReader();
-    r.onload = () => resolve(String(r.result).split(',')[1] ?? '');
-    r.onerror = () => reject(r.error);
-    r.readAsDataURL(blob);
-  });
-  if (file.type === 'application/pdf') return { base64: await readB64(file), mediaType: 'application/pdf' };
-  const url = URL.createObjectURL(file);
-  try {
-    const img = await loadImage(url);
-    const MAX = 2000;
-    const scale = Math.min(1, MAX / Math.max(img.width, img.height));
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.round(img.width * scale);
-    canvas.height = Math.round(img.height * scale);
-    canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height);
-    const blob = await new Promise<Blob>((resolve, reject) =>
-      canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('Falha ao processar a imagem'))), 'image/jpeg', 0.85));
-    return { base64: await readB64(blob), mediaType: 'image/jpeg' };
-  } finally {
-    URL.revokeObjectURL(url);
-  }
-}
 
 function genId() {
   return Math.random().toString(36).slice(2, 10);
@@ -555,24 +472,6 @@ export default function NovaCompraModal({
   // A Edge purchase-receipt-scan lê o documento e já devolve, por linha, o
   // vínculo memorizado (ou sugerido) com insumo/catálogo/categorias. Aqui só
   // montamos as linhas do formulário — o usuário confere e salva normalmente.
-  // Chama a Edge e devolve o resultado — ou lança erro com a mensagem do servidor.
-  const callScan = async (body: Record<string, unknown>): Promise<ScanResult> => {
-    const { data, error } = await supabase.functions.invoke('purchase-receipt-scan', {
-      body: { ...body, tenant_id: user?.tenantId },
-    });
-    if (error) {
-      let msg = error.message;
-      const ctx = (error as { context?: Response }).context;
-      if (ctx && typeof ctx.json === 'function') {
-        try { const b = await ctx.json(); if (b?.error) msg = String(b.error); } catch { /* corpo não-JSON */ }
-      }
-      throw new Error(msg);
-    }
-    const resp = data as { success?: boolean; error?: string; data?: ScanResult } | null;
-    if (!resp?.success || !resp.data) throw new Error(resp?.error || 'Falha ao ler a nota');
-    return resp.data;
-  };
-
   // Joga o resultado da leitura (QR Code ou foto) no formulário.
   const applyScanResult = (r: ScanResult) => {
     if (!r.readable || r.items.length === 0) {
@@ -637,30 +536,13 @@ export default function NovaCompraModal({
   // Foto/PDF: primeiro procura o QR Code da NFC-e (grátis, dados oficiais da
   // SEFAZ); sem QR — notinha à mão, DANFE, pedido — lê a imagem com IA.
   const handleScanFile = async (file: File) => {
-    if (file.size > 25 * 1024 * 1024) { setScanError('Arquivo grande demais (máx. 25 MB).'); return; }
     setScanError(null);
     setScanning(true);
     onLoadIngredients();
-    let qrErr: string | null = null;
     try {
-      setScanStage('Procurando o QR Code da nota…');
-      const qr = await decodeQrFromFile(file).catch(() => null);
-      if (qr && isNfcePrQr(qr)) {
-        setScanStage('Consultando a nota na SEFAZ…');
-        try {
-          applyScanResult(await callScan({ action: 'qrcode', url: qr }));
-          return;
-        } catch (err) {
-          // SEFAZ fora do ar ou nota ainda não disponível: segue pela leitura da imagem.
-          qrErr = err instanceof Error ? err.message : 'Falha na consulta à SEFAZ';
-        }
-      }
-      setScanStage('Lendo a nota com IA… (leva alguns segundos)');
-      const { base64, mediaType } = await fileToPayload(file);
-      applyScanResult(await callScan({ action: 'scan', file_base64: base64, media_type: mediaType }));
+      applyScanResult(await lerNotinhaArquivo(user?.tenantId, file, setScanStage));
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Falha ao ler a nota. Tente de novo.';
-      setScanError(qrErr ? `QR Code: ${qrErr} — leitura da foto: ${msg}` : msg);
+      setScanError(err instanceof Error ? err.message : 'Falha ao ler a nota. Tente de novo.');
     } finally {
       setScanning(false);
     }
@@ -675,7 +557,7 @@ export default function NovaCompraModal({
     onLoadIngredients();
     try {
       setScanStage('Consultando a nota na SEFAZ…');
-      applyScanResult(await callScan({ action: 'qrcode', url: link }));
+      applyScanResult(await lerNotinhaLink(user?.tenantId, link));
       setQrLinkOpen(false);
       setQrLink('');
     } catch (err) {
@@ -846,21 +728,11 @@ export default function NovaCompraModal({
       // nota do mesmo fornecedor o vínculo já vem pronto. Sem await: a compra já
       // está salva e o modal pode fechar; falha aqui não afeta nada.
       if (scan) {
-        const toLearn = items.filter((it) => it._raw).map((it) => ({
-          raw_description: it._raw,
-          ingredient_id: it.ingredient_id ?? null,
-          catalog_id: it.catalog_id ?? null,
-          merchandise_category_id: it.merchandise_category_id ?? null,
-          dre_category_id: it.dre_category_id ?? null,
-          unit_label: it.unit_label ?? null,
-          pack_count: it.pack_count ?? null,
-          pack_size: it.pack_size ?? null,
-        }));
-        if (toLearn.length > 0) {
-          supabase.functions.invoke('purchase-receipt-scan', {
-            body: { action: 'learn', tenant_id: user?.tenantId, supplier_key: scan.supplier_key, items: toLearn },
-          }).catch(() => { /* memória é conveniência */ });
-        }
+        aprenderVinculos(user?.tenantId, scan.supplier_key, items.filter((it) => it._raw).map((it) => ({
+          raw_description: it._raw!, ingredient_id: it.ingredient_id ?? null, catalog_id: it.catalog_id ?? null,
+          merchandise_category_id: it.merchandise_category_id ?? null, dre_category_id: it.dre_category_id ?? null,
+          unit_label: it.unit_label ?? null, pack_count: it.pack_count ?? null, pack_size: it.pack_size ?? null,
+        })));
       }
     } catch (err: any) {
       setSubmitError(err?.message || 'Erro ao salvar compra. Tente novamente.');

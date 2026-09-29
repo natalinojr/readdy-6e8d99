@@ -4,6 +4,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useDreGroups, isGrupoDespesa } from '@/hooks/useDreGroups';
 import { formatCurrency } from '@/lib/formatters';
 import CategoriaCombobox from '../CategoriaCombobox';
+import LerNotaBotoes from '../compras/LerNotaBotoes';
+import { linhasParaValor, aprenderVinculos, type ScanResult } from '@/lib/leituraNotinha';
 import type { StatementImport } from '@/hooks/useConciliacao';
 
 // Pagamento sem nota: lança uma DESPESA (conta a pagar já baixada, com categoria da DRE), uma
@@ -52,6 +54,9 @@ export interface LancarOpcoes {
   items?: Array<{ description: string; quantity: number; total: number; unit_label: string | null; ingredient_id: string | null }> | null;
   /** compra com itens: já recebi → os insumos entram no estoque na hora */
   received?: boolean;
+  /** compra lida da nota (2026-09-29): nº da nota e chave da NFC-e vão para a compra */
+  invoice_number?: string | null;
+  access_key?: string | null;
 }
 
 /** Insumos da loja para ligar os itens da compra (só carrega quando a compra é aberta). */
@@ -75,17 +80,18 @@ export function useInsumos(ativo: boolean) {
   ], [itens]);
   return { insumos: itens, insumoOptions: options };
 }
-const SEM_INSUMO = '__sem_insumo';
-type ItemCompra = { key: number; descricao: string; qtd: string; unidade: string; total: string; insumoId: string };
+export const SEM_INSUMO = '__sem_insumo';
+// raw = descrição como veio na nota (para memorizar o vínculo com o insumo)
+type ItemCompra = { key: number; descricao: string; qtd: string; unidade: string; total: string; insumoId: string; raw?: string };
 // "1.234,56" e "12,50" (vírgula = decimal) ou "12.50" (ponto como decimal, sem vírgula)
-const numBR = (s: string) => {
+export const numBR = (s: string) => {
   const t = String(s).trim();
   const n = Number(t.includes(',') ? t.replace(/\./g, '').replace(',', '.') : t);
   return t && Number.isFinite(n) ? n : NaN;
 };
 // Quantidade: "1,5" e "1.5" = um e meio; "1.000" / "12.500" (ponto + 3 dígitos, sem vírgula) = milhar —
 // em insumo controlado em g, ler "1.000" como 1 jogaria 1 g no estoque e o custo da grama 1000× (revisão 2026-09-28)
-const numBRqtd = (s: string) => {
+export const numBRqtd = (s: string) => {
   const t = String(s).trim();
   const n = Number(t.includes(',') ? t.replace(/\./g, '').replace(',', '.') : /^\d{1,3}(\.\d{3})+$/.test(t) ? t.replace(/\./g, '') : t);
   return t && Number.isFinite(n) ? n : NaN;
@@ -219,6 +225,8 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
   const [itens, setItens] = useState<ItemCompra[]>([]);
   const [recebido, setRecebido] = useState(true);
   const [avisoFinal, setAvisoFinal] = useState<string | null>(null);
+  // Nota lida (QR/foto/arquivo): preenche fornecedor e itens; nº da nota vai junto na compra
+  const [lida, setLida] = useState<ScanResult | null>(null);
   const valorPag = Math.round(Number(transaction.amount) * 100) / 100;
   const somaItens = Math.round(itens.reduce((s, it) => s + (numBR(it.total) || 0), 0) * 100) / 100;
   const faltaItens = Math.round((valorPag - somaItens) * 100) / 100;
@@ -229,6 +237,17 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
     key: Date.now() + Math.random(), descricao: itens.length === 0 ? (descricao.trim() === nomePadrao ? '' : descricao.trim()) : '',
     qtd: '1', unidade: 'un', total: faltaItens > 0 ? faltaItens.toFixed(2).replace('.', ',') : '', insumoId: '',
   });
+  const aplicarNota = (r: ScanResult) => {
+    const fmt = (n: number) => String(Math.round(n * 1000) / 1000).replace('.', ',');
+    const linhas = linhasParaValor(r, valorPag).map((l, i): ItemCompra => ({
+      key: Date.now() + i + Math.random(), descricao: l.descricao, qtd: fmt(l.qtd), unidade: l.unidade,
+      total: l.total.toFixed(2).replace('.', ','), insumoId: l.insumoId ?? '', raw: l.raw,
+    }));
+    // Linhas que a pessoa já preencheu ficam; as da nota entram depois
+    setItens((v) => [...v.filter((it) => it.descricao.trim() && !it.raw), ...linhas]);
+    if (r.supplier_name && (!fornecedor.trim() || fornecedor === (transaction.counterpart_name || ''))) setFornecedor(r.supplier_name);
+    setLida(r);
+  };
   const mudaItem = (key: number, patch: Partial<ItemCompra>) => setItens((v) => v.map((it) => (it.key === key ? { ...it, ...patch } : it)));
 
   useEffect(() => {
@@ -237,7 +256,7 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
     setDias([]); setDiaNovo(transaction.transaction_date); setFuncao(''); setFreelaId(''); setMotivo('');
     setCompModo('same'); setCompOutro(transaction.transaction_date.slice(0, 7));
     setPrestadorId(''); setPrestadorTipo('servico');
-    setItens([]); setRecebido(true);
+    setItens([]); setRecebido(true); setLida(null);
   }, [transaction.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Quem recebeu o Pix já está cadastrado? Então a opção certa vem marcada sozinha.
@@ -292,6 +311,8 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
         unit_label: it.unidade.trim() || null, ingredient_id: it.insumoId || null,
       })) : null,
       received: tipo === 'compra' && itensComInsumo && recebido,
+      invoice_number: tipo === 'compra' ? lida?.invoice_number ?? null : null,
+      access_key: tipo === 'compra' ? lida?.access_key ?? null : null,
     });
     const r = results[0];
     if (error || !r) { setBusy(false); setErro(error ?? 'Não foi possível lançar.'); return; }
@@ -300,6 +321,12 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
       if (r.code === 'folha') { setAvisoFolha(r.msg); return; }
       setErro(r.msg);
       return;
+    }
+    // Nota lida: memoriza o insumo que a pessoa ligou em cada linha (a próxima nota já vem ligada)
+    if (tipo === 'compra' && lida) {
+      aprenderVinculos(user.tenantId, lida.supplier_key, itens.filter((it) => it.raw).map((it) => ({
+        raw_description: it.raw!, ingredient_id: it.insumoId || null, unit_label: it.unidade.trim() || null,
+      })));
     }
     // "Fazer sempre assim": regra de LANÇAMENTO para este CPF/CNPJ/chave (2026-09-18). Antes só
     // etiquetava o extrato — não entrava na DRE e ainda escondia o pagamento do alerta.
@@ -527,6 +554,23 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
               <i className="ri-add-line" /> Adicionar item
             </button>
           </div>
+          <LerNotaBotoes onLido={aplicarNota} disabled={busy} />
+          {lida && (
+            <div className="rounded-lg bg-violet-50 border border-violet-200 px-2.5 py-2 text-xs text-violet-900 space-y-0.5">
+              <p>
+                <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold mr-1 ${lida.source === 'qrcode' ? 'bg-emerald-100 text-emerald-700' : 'bg-violet-100 text-violet-700'}`}>
+                  {lida.source === 'qrcode' ? 'SEFAZ · QR Code' : 'Leitura por IA'}
+                </span>
+                {lida.supplier_name ?? 'Nota'}{lida.invoice_number ? ' · nº ' + lida.invoice_number : ''}
+                {lida.document_total != null ? ' · total ' + formatCurrency(lida.document_total) : ''}
+              </p>
+              {lida.document_total != null && Math.abs(lida.document_total - valorPag) >= 0.01 && (
+                <p className="text-amber-700">O total da nota é diferente do pagamento ({formatCurrency(valorPag)}): ajuste os itens até fechar, ou use "Este pagamento é de…" se ela já foi lançada.</p>
+              )}
+              {lida.warnings.map((w) => <p key={w} className="text-amber-700">{w}</p>)}
+              <p className="text-violet-700">Confira os itens e ligue ao insumo o que for de estoque — o vínculo fica lembrado para a próxima nota.</p>
+            </div>
+          )}
           {itens.map((it) => {
             const ins = insumos.find((x) => x.id === it.insumoId);
             return (

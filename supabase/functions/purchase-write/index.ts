@@ -918,6 +918,87 @@ Deno.serve(async (req) => {
         break;
       }
 
+      // Detalhar itens (2026-09-29): troca os itens de uma compra JÁ lançada — inclusive paga ou recebida —
+      // sem mexer no valor. Caso típico: compra lançada pelo extrato como 1 item "Compra" e depois a nota
+      // (foto/QR) ou a digitação diz o que veio. O total dos itens + frete tem que fechar com o da compra,
+      // então contas a pagar, pagamento e caixa não mudam. Estoque: se a compra já entrou no estoque, sai
+      // só o que comprovadamente entrou pelos itens antigos e entra o dos novos.
+      case 'replace_items': {
+        const { purchase_id, items, invoice_number } = payload ?? {};
+        if (!purchase_id) return new Response(JSON.stringify({ error: 'purchase_id required' }), { status: 400, headers: corsHeaders });
+        if (!Array.isArray(items) || items.length === 0) return new Response(JSON.stringify({ error: 'Informe ao menos um item' }), { status: 400, headers: corsHeaders });
+        const { data: existing, error: fetchErr } = await supabase
+          .from('fin_purchases').select('*, items:fin_purchase_items(*)')
+          .eq('id', purchase_id).eq('tenant_id', tenant_id).maybeSingle();
+        if (fetchErr) throw fetchErr;
+        if (!existing) return new Response(JSON.stringify({ error: 'Compra não encontrada' }), { status: 404, headers: corsHeaders });
+
+        // Frete da compra rateado pelo valor de cada item (entra no custo do insumo, como na Nova Compra)
+        const freteCompra = Number(existing.freight_amount ?? 0);
+        if (freteCompra > 0) {
+          const bruto = (it: Record<string, unknown>) => Number(it.quantity ?? 0) * Math.max(0, Number(it.unit_price ?? 0) - Number(it.discount_per_unit ?? 0));
+          const base = (items as Array<Record<string, unknown>>).reduce((s, it) => s + bruto(it), 0);
+          let acc = 0;
+          (items as Array<Record<string, unknown>>).forEach((it, i, arr) => {
+            const parte = i < arr.length - 1 ? Math.round((base > 0 ? freteCompra * bruto(it) / base : 0) * 100) / 100 : Math.round((freteCompra - acc) * 100) / 100;
+            it.freight_allocated = parte;
+            acc += parte;
+          });
+        }
+        const computedItems = computePurchaseItems(tenant_id, items);
+        for (const it of computedItems) {
+          if (!String(it.description ?? '').trim()) return new Response(JSON.stringify({ error: 'Todo item precisa de descrição' }), { status: 400, headers: corsHeaders });
+          if (!(Number(it.quantity) > 0) || !(Number(it.total_price) > 0)) {
+            return new Response(JSON.stringify({ error: `Quantidade e valor são obrigatórios em "${it.description}"` }), { status: 400, headers: corsHeaders });
+          }
+        }
+        const ingIds = [...new Set(computedItems.map((it) => it.ingredient_id).filter(Boolean) as string[])];
+        if (ingIds.length) {
+          const { data: ings } = await supabase.from('ingredients').select('id').eq('tenant_id', tenant_id).is('deleted_at', null).in('id', ingIds);
+          if ((ings ?? []).length !== ingIds.length) return new Response(JSON.stringify({ error: 'Insumo inválido para esta loja' }), { status: 400, headers: corsHeaders });
+        }
+        const avisosConversao = await applyIngredientConversions(supabase, tenant_id, items, computedItems);
+        const freight = Number(existing.freight_amount ?? 0);
+        const soma = Math.round((computedItems.reduce((s, it) => s + Number(it.total_price ?? 0), 0) + freight) * 100) / 100;
+        const total = Math.round(Number(existing.total_amount ?? 0) * 100) / 100;
+        if (Math.abs(soma - total) > 0.01) {
+          const brl = (v: number) => v.toFixed(2).replace('.', ',');
+          return new Response(JSON.stringify({
+            error: `Os itens${freight ? ' + frete' : ''} somam R$ ${brl(soma)} e a compra é R$ ${brl(total)}: ajuste até fechar (o valor pago não muda).`,
+          }), { status: 409, headers: corsHeaders });
+        }
+        await inheritMerchandiseCategories(supabase, tenant_id, computedItems);
+
+        const oldItems = (existing.items ?? []) as Array<Record<string, unknown>>;
+        const rotulo = `${existing.supplier}${existing.invoice_number ? ` NF ${existing.invoice_number}` : ''}`;
+        const jaNoEstoque = !!existing.stock_applied_at;
+        if (jaNoEstoque) {
+          // Só o que entrou por esta compra sai (mesma guarda da exclusão)
+          await reverseStockForItems(supabase, tenant_id, oldItems, user, `Detalhamento dos itens da compra: ${rotulo}`, existing);
+        }
+        await supabase.from('fin_purchase_items').delete().eq('purchase_id', purchase_id).eq('tenant_id', tenant_id);
+        const { data: novos, error: itemsError } = await supabase.from('fin_purchase_items')
+          .insert(computedItems.map((it) => ({ ...it, purchase_id }))).select('*');
+        if (itemsError) throw itemsError;
+
+        const nf = invoice_number ? String(invoice_number).trim().slice(0, 30) : '';
+        let compra = existing;
+        if (nf && !existing.invoice_number) {
+          const { data: updated } = await supabase.from('fin_purchases').update({ invoice_number: nf })
+            .eq('id', purchase_id).eq('tenant_id', tenant_id).select().single();
+          if (updated) compra = updated;
+        }
+        await applyStockAndPricing(supabase, tenant_id, compra, computedItems, user, existing.supplier_id ?? null);
+        await upsertCatalogPresentations(supabase, tenant_id, compra, computedItems, existing.supplier_id ?? null);
+        if (jaNoEstoque) await applyStockEntry(supabase, tenant_id, compra, (novos ?? []) as Array<Record<string, unknown>>, user);
+
+        result = {
+          data: { purchase_id, itens: computedItems.length, estoque: jaNoEstoque ? 'ajustado' : 'entra no recebimento' },
+          ...(avisosConversao.length ? { avisos_conversao: avisosConversao } : {}),
+        };
+        break;
+      }
+
       case 'confirm_delivery': {
         const { purchase_id, delivery_notes } = payload;
         if (!purchase_id) return new Response(JSON.stringify({ error: 'purchase_id required' }), { status: 400, headers: corsHeaders });

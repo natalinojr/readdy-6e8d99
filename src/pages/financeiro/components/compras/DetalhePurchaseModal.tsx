@@ -6,6 +6,7 @@ import { formatCurrency } from '@/lib/formatters';
 import type { Purchase } from '@/types/financeiro';
 import { ehAcrescimoNota } from '@/lib/acrescimoNota';
 import { avisar } from '@/components/base/Dialogos';
+import DetalharItensModal from './DetalharItensModal';
 
 interface BillInstallment {
   id: string;
@@ -43,10 +44,13 @@ interface Props {
   onClose: () => void;
   onDeliveryConfirmed?: () => void;
   onDeleted?: () => void;
+  /** Itens trocados pelo "Detalhar itens" (recarregar a lista e o estoque) */
+  onItemsChanged?: () => void;
 }
 
-export default function DetalhePurchaseModal({ purchase, installments, loadingInstallments, onClose, onDeliveryConfirmed, onDeleted }: Props) {
+export default function DetalhePurchaseModal({ purchase, installments, loadingInstallments, onClose, onDeliveryConfirmed, onDeleted, onItemsChanged }: Props) {
   const { user } = useAuth();
+  const [detalhando, setDetalhando] = useState(false);
   const [confirmingDelivery, setConfirmingDelivery] = useState(false);
   const [deliveryNotes, setDeliveryNotes] = useState('');
   // Data em que a mercadoria chegou (padrão: hoje, no fuso de Brasília)
@@ -403,9 +407,25 @@ export default function DetalhePurchaseModal({ purchase, installments, loadingIn
           )}
 
           {/* Itens da compra */}
+          {(!purchase.items || purchase.items.length === 0) && (
+            <div className="flex items-center justify-between gap-2 rounded-xl border border-dashed border-zinc-300 px-3 py-2.5">
+              <p className="text-xs text-zinc-500">Compra sem itens detalhados.</p>
+              <button type="button" onClick={() => setDetalhando(true)}
+                className="flex items-center gap-1 px-2 py-1 rounded-lg border border-violet-300 text-violet-700 text-xs font-semibold cursor-pointer hover:bg-violet-50 whitespace-nowrap">
+                <i className="ri-list-check-2" />Detalhar itens
+              </button>
+            </div>
+          )}
           {purchase.items && purchase.items.length > 0 && (
             <div>
-              <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wide mb-2">Itens da Compra</p>
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">Itens da Compra</p>
+                {/* Troca só os itens (à mão ou pela nota) sem mudar o valor — vale para compra paga/recebida */}
+                <button type="button" onClick={() => setDetalhando(true)}
+                  className="flex items-center gap-1 px-2 py-1 rounded-lg border border-violet-300 text-violet-700 text-xs font-semibold cursor-pointer hover:bg-violet-50 whitespace-nowrap">
+                  <i className="ri-list-check-2" />Detalhar itens
+                </button>
+              </div>
 
               {/* Celular: cartão por item (a tabela não cabe em 375px) */}
               <ul className="md:hidden space-y-2">
@@ -914,6 +934,13 @@ export default function DetalhePurchaseModal({ purchase, installments, loadingIn
             </div>
           </div>
         </div>
+      )}
+      {detalhando && (
+        <DetalharItensModal
+          purchase={purchase}
+          onClose={() => setDetalhando(false)}
+          onSaved={() => { setDetalhando(false); onItemsChanged?.(); }}
+        />
       )}
     </div>
   );

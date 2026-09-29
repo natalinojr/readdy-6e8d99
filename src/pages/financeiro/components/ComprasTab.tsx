@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useRef } from 'react';
+import { Fragment, useState, useMemo, useEffect, useRef } from 'react';
 import { usePurchases, useCostCenters, useBankAccounts } from '@/hooks/useFinanceiro';
 import { useSuppliers } from '@/hooks/useSuppliers';
 import { supabase } from '@/lib/supabase';
@@ -15,6 +15,7 @@ import NovaCompraModal from './compras/NovaCompraModal';
 import CatalogoComprasModal from './compras/CatalogoComprasModal';
 import GerenciarFornecedoresModal from '@/components/GerenciarFornecedoresModal';
 import CategoriasMercadoriaModal from './compras/CategoriasMercadoriaModal';
+import { KpiCard, MonthNav, Segmented, addMeses, mesExtenso } from './dreUi';
 
 interface BillInstallment {
   id: string;
@@ -28,9 +29,9 @@ interface BillInstallment {
 }
 
 const STATUS_BADGE: Record<string, string> = {
-  paid: 'bg-green-100 text-green-700',
-  pending: 'bg-amber-100 text-amber-700',
-  partial: 'bg-sky-100 text-sky-700',
+  paid: 'bg-emerald-50 text-emerald-700',
+  pending: 'bg-amber-50 text-amber-700',
+  partial: 'bg-sky-50 text-sky-700',
 };
 const STATUS_LABEL: Record<string, string> = {
   paid: 'Pago', pending: 'A Pagar', partial: 'Parcelado',
@@ -117,16 +118,6 @@ export default function ComprasTab({ highlightId, onHighlightConsumed }: Compras
   const [mesSelecionado, setMesSelecionado] = useState(hoje.getMonth());
   const [anoSelecionado, setAnoSelecionado] = useState(hoje.getFullYear());
   const isMesAtual = mesSelecionado === hoje.getMonth() && anoSelecionado === hoje.getFullYear();
-  const irParaMesAnterior = () => {
-    if (mesSelecionado === 0) { setMesSelecionado(11); setAnoSelecionado((a) => a - 1); }
-    else setMesSelecionado((m) => m - 1);
-    setPage(1);
-  };
-  const irParaProximoMes = () => {
-    if (mesSelecionado === 11) { setMesSelecionado(0); setAnoSelecionado((a) => a + 1); }
-    else setMesSelecionado((m) => m + 1);
-    setPage(1);
-  };
   const voltarMesAtual = () => { setMesSelecionado(hoje.getMonth()); setAnoSelecionado(hoje.getFullYear()); setPage(1); };
   const mesPrefix = `${anoSelecionado}-${String(mesSelecionado + 1).padStart(2, '0')}`;
   const usandoIntervalo = !!filterDateFrom || !!filterDateTo;
@@ -312,6 +303,13 @@ export default function ComprasTab({ highlightId, onHighlightConsumed }: Compras
   const totalPago = comprasBase.filter((p) => p.payment_status === 'paid').reduce((s, p) => s + Number(p.total_amount), 0);
   const totalAPagar = comprasBase.filter((p) => p.payment_status !== 'paid').reduce((s, p) => s + Number(p.total_amount), 0);
   const totalParcelado = comprasBase.filter((p) => p.payment_status === 'partial').reduce((s, p) => s + Number(p.total_amount), 0);
+  const aguardandoRecebimento = comprasBase.filter((p) => !p.delivery_confirmed_at).length;
+  // Comparação do cartão "Total de compras" com o mês anterior (só na navegação por mês)
+  const mesAnterior = addMeses(mesPrefix, -1);
+  const totalMesAnterior = useMemo(
+    () => purchases.filter((p) => p.purchase_date?.startsWith(mesAnterior)).reduce((s, p) => s + Number(p.total_amount), 0),
+    [purchases, mesAnterior],
+  );
 
   // Combina fornecedores cadastrados + os que aparecem nas compras (retrocompatibilidade)
   const suppliers = useMemo(() => {
@@ -337,56 +335,60 @@ export default function ComprasTab({ highlightId, onHighlightConsumed }: Compras
     URL.revokeObjectURL(url);
   };
 
+  const VIEWS = [
+    { id: 'lista', label: 'Compras', icon: 'ri-shopping-cart-2-line', desc: 'Lançamentos do mês' },
+    { id: 'relatorios', label: 'Relatórios', icon: 'ri-file-chart-line', desc: 'Por categoria e item' },
+    { id: 'relatorio', label: 'Por fornecedor', icon: 'ri-truck-line', desc: 'Ranking e pagamentos' },
+    { id: 'centrocusto', label: 'Por centro de custo', icon: 'ri-price-tag-3-line', desc: 'Onde o dinheiro foi' },
+  ] as const;
+
   return (
-    <div className="p-4 md:p-6 space-y-4 md:space-y-5">
-      {/* View toggle */}
-      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3 flex-wrap">
-        <div className="flex bg-white border border-zinc-200 rounded-lg overflow-hidden">
-          <button onClick={() => setActiveView('lista')}
-            className={`px-4 py-2 text-xs font-semibold cursor-pointer transition-colors whitespace-nowrap flex items-center gap-1.5 ${activeView === 'lista' ? 'bg-amber-500 text-white' : 'text-zinc-600 hover:bg-zinc-50'}`}>
-            <i className="ri-list-check" /> Lista
-          </button>
-          <button onClick={() => setActiveView('relatorios')}
-            className={`px-4 py-2 text-xs font-semibold cursor-pointer transition-colors whitespace-nowrap flex items-center gap-1.5 ${activeView === 'relatorios' ? 'bg-amber-500 text-white' : 'text-zinc-600 hover:bg-zinc-50'}`}>
-            <i className="ri-file-chart-line" /> Relatórios
-          </button>
-          <button onClick={() => setActiveView('relatorio')}
-            className={`px-4 py-2 text-xs font-semibold cursor-pointer transition-colors whitespace-nowrap flex items-center gap-1.5 ${activeView === 'relatorio' ? 'bg-amber-500 text-white' : 'text-zinc-600 hover:bg-zinc-50'}`}>
-            <i className="ri-bar-chart-line" /> Por Fornecedor
-          </button>
-          <button onClick={() => setActiveView('centrocusto')}
-            className={`px-4 py-2 text-xs font-semibold cursor-pointer transition-colors whitespace-nowrap flex items-center gap-1.5 ${activeView === 'centrocusto' ? 'bg-amber-500 text-white' : 'text-zinc-600 hover:bg-zinc-50'}`}>
-            <i className="ri-price-tag-3-line" /> Por Centro de Custo
-          </button>
+    <div className="min-h-full">
+      {/* ── Sub-navegação (mesmo padrão do DRE) + cadastros e Nova compra ── */}
+      <div className="bg-white border-b border-zinc-200 px-3 md:px-6 pt-3 pb-0 flex flex-col lg:flex-row lg:items-end gap-2 lg:gap-4">
+        <div className="flex items-center gap-1 overflow-x-auto">
+          {VIEWS.map(v => (
+            <button
+              key={v.id}
+              onClick={() => setActiveView(v.id)}
+              className={`flex items-center gap-2 px-4 py-2.5 text-xs font-semibold whitespace-nowrap border-b-2 transition-colors cursor-pointer rounded-t-lg ${
+                activeView === v.id
+                  ? 'border-amber-500 text-amber-600 bg-amber-50/50'
+                  : 'border-transparent text-zinc-500 hover:text-zinc-700 hover:bg-zinc-50'
+              }`}
+            >
+              <i className={`${v.icon} text-sm`} />
+              {v.label}
+              {activeView === v.id && (
+                <span className="text-xs text-amber-400 font-normal hidden xl:inline">— {v.desc}</span>
+              )}
+            </button>
+          ))}
         </div>
-        <div className="ml-auto flex items-center gap-2">
-          <button
-            onClick={() => setShowCatalogo(true)}
-            className="flex items-center gap-2 border border-zinc-200 bg-white hover:bg-zinc-50 text-zinc-700 px-4 py-2 rounded-lg text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors"
-          >
-            <i className="ri-archive-line" /> Catálogo de Itens
-          </button>
-          <button
-            onClick={() => setShowCategorias(true)}
-            className="flex items-center gap-2 border border-zinc-200 bg-white hover:bg-zinc-50 text-zinc-700 px-4 py-2 rounded-lg text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors"
-          >
-            <i className="ri-price-tag-3-line" /> Categorias
-          </button>
-          <button
-            onClick={() => setShowFornecedores(true)}
-            className="flex items-center gap-2 border border-zinc-200 bg-white hover:bg-zinc-50 text-zinc-700 px-4 py-2 rounded-lg text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors"
-          >
-            <i className="ri-truck-line" /> Fornecedores
-          </button>
+        <div className="lg:ml-auto flex items-center gap-2 pb-2.5 overflow-x-auto">
+          {[
+            { label: 'Catálogo de itens', icon: 'ri-archive-line', onClick: () => setShowCatalogo(true) },
+            { label: 'Categorias', icon: 'ri-price-tag-3-line', onClick: () => setShowCategorias(true) },
+            { label: 'Fornecedores', icon: 'ri-truck-line', onClick: () => setShowFornecedores(true) },
+          ].map(b => (
+            <button
+              key={b.label}
+              onClick={b.onClick}
+              className="flex items-center gap-1.5 px-3 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 rounded-xl text-xs font-semibold text-zinc-600 cursor-pointer transition-colors whitespace-nowrap shadow-sm"
+            >
+              <i className={`${b.icon} text-sm`} /> {b.label}
+            </button>
+          ))}
           <button
             onClick={() => { setShowModal(true); loadIngredients(); }}
-            className="flex items-center gap-2 bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-lg text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors"
+            className="flex items-center gap-1.5 bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-xl text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors shadow-sm"
           >
-            <i className="ri-add-line" /> Nova Compra
+            <i className="ri-add-line text-sm" /> Nova compra
           </button>
         </div>
       </div>
 
+      <div className="p-4 md:p-6 space-y-5 max-w-[1400px] mx-auto">
       {activeView === 'relatorios' && <ComprasRelatoriosPanel purchases={purchases} onOpenPurchase={openDetail} />}
       {activeView === 'relatorio' && <ComprasRelatorioPanel purchases={purchases} />}
       {activeView === 'centrocusto' && <ComprasCentroCustoPanel purchases={purchases} centers={centers} />}
@@ -394,8 +396,8 @@ export default function ComprasTab({ highlightId, onHighlightConsumed }: Compras
       {activeView === 'lista' && (
         <>
           {editBlockedMessage && (
-            <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-start gap-2">
-              <i className="ri-lock-line text-amber-500 mt-0.5 flex-shrink-0" />
+            <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 flex items-start gap-3">
+              <i className="ri-lock-line text-amber-600 mt-0.5 flex-shrink-0" />
               <p className="text-xs text-amber-800 flex-1">{editBlockedMessage}</p>
               <button onClick={() => setEditBlockedMessage(null)} className="text-amber-500 hover:text-amber-700 cursor-pointer flex-shrink-0">
                 <i className="ri-close-line text-sm" />
@@ -403,93 +405,99 @@ export default function ComprasTab({ highlightId, onHighlightConsumed }: Compras
             </div>
           )}
 
-          {/* ── Navegação por mês (igual à aba Contas a Pagar) ── */}
-          <div className="flex items-center justify-between bg-white border border-zinc-200 rounded-xl px-5 py-3">
-            <button
-              onClick={irParaMesAnterior}
-              disabled={usandoIntervalo}
-              className="w-8 h-8 flex items-center justify-center rounded-lg border border-zinc-200 hover:bg-zinc-50 cursor-pointer transition-colors text-zinc-500 disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              <i className="ri-arrow-left-s-line text-base" />
-            </button>
-
-            <div className="flex items-center gap-3">
-              <div className="text-center">
-                {usandoIntervalo ? (
-                  <>
-                    <p className="text-sm font-bold text-zinc-900">
-                      {filterDateFrom ? new Date(filterDateFrom + 'T00:00:00').toLocaleDateString('pt-BR') : 'Início'}
-                      {' – '}
-                      {filterDateTo ? new Date(filterDateTo + 'T00:00:00').toLocaleDateString('pt-BR') : 'hoje'}
-                    </p>
-                    <p className="text-xs text-zinc-400">
-                      {comprasBase.length} compra{comprasBase.length !== 1 ? 's' : ''} no período
-                    </p>
-                  </>
-                ) : (
-                  <>
-                    <p className="text-sm font-bold text-zinc-900 capitalize">
-                      {new Date(anoSelecionado, mesSelecionado, 1).toLocaleDateString('pt-BR', { month: 'long' })} {anoSelecionado}
-                    </p>
-                    <p className="text-xs text-zinc-400">
-                      {comprasDoMes.length} compra{comprasDoMes.length !== 1 ? 's' : ''} neste mês
-                    </p>
-                  </>
-                )}
+          {/* ── Barra de controles: mês (ou intervalo "Data de/até") ── */}
+          <div className="flex items-center gap-3 flex-wrap">
+            {usandoIntervalo ? (
+              <div className="flex items-center gap-2 bg-white border border-zinc-200 rounded-xl px-4 h-10 shadow-sm">
+                <i className="ri-calendar-2-line text-zinc-400" />
+                <p className="text-sm font-bold text-zinc-900 whitespace-nowrap">
+                  {filterDateFrom ? new Date(filterDateFrom + 'T00:00:00').toLocaleDateString('pt-BR') : 'Início'}
+                  {' – '}
+                  {filterDateTo ? new Date(filterDateTo + 'T00:00:00').toLocaleDateString('pt-BR') : 'hoje'}
+                </p>
               </div>
-              {usandoIntervalo ? (
-                <button
-                  onClick={() => { setFilterDateFrom(''); setFilterDateTo(''); setPage(1); }}
-                  className="text-xs font-semibold px-3 py-1.5 bg-amber-50 text-amber-700 border border-amber-200 rounded-lg hover:bg-amber-100 cursor-pointer transition-colors whitespace-nowrap"
-                >
-                  Voltar ao mês
-                </button>
-              ) : !isMesAtual && (
-                <button
-                  onClick={voltarMesAtual}
-                  className="text-xs font-semibold px-3 py-1.5 bg-amber-50 text-amber-700 border border-amber-200 rounded-lg hover:bg-amber-100 cursor-pointer transition-colors whitespace-nowrap"
-                >
-                  Mês atual
-                </button>
-              )}
-            </div>
-
-            <button
-              onClick={irParaProximoMes}
-              disabled={usandoIntervalo}
-              className="w-8 h-8 flex items-center justify-center rounded-lg border border-zinc-200 hover:bg-zinc-50 cursor-pointer transition-colors text-zinc-500 disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              <i className="ri-arrow-right-s-line text-base" />
-            </button>
+            ) : (
+              <MonthNav
+                mes={mesPrefix}
+                canGoNext
+                onChange={(m) => {
+                  const [y, mm] = m.split('-').map(Number);
+                  setAnoSelecionado(y); setMesSelecionado(mm - 1); setPage(1);
+                }}
+              />
+            )}
+            {usandoIntervalo ? (
+              <button
+                onClick={() => { setFilterDateFrom(''); setFilterDateTo(''); setPage(1); }}
+                className="text-xs font-semibold px-3 py-2 bg-amber-50 text-amber-700 border border-amber-200 rounded-xl hover:bg-amber-100 cursor-pointer transition-colors whitespace-nowrap"
+              >
+                Voltar ao mês
+              </button>
+            ) : !isMesAtual && (
+              <button
+                onClick={voltarMesAtual}
+                className="text-xs font-semibold px-3 py-2 bg-amber-50 text-amber-700 border border-amber-200 rounded-xl hover:bg-amber-100 cursor-pointer transition-colors whitespace-nowrap"
+              >
+                Mês atual
+              </button>
+            )}
+            <span className="text-xs text-zinc-400">
+              {comprasBase.length} compra{comprasBase.length !== 1 ? 's' : ''} {usandoIntervalo ? 'no período' : 'neste mês'}
+            </span>
           </div>
 
-          {/* KPIs */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
-            {[
-              { label: 'Total de Compras', value: formatCurrency(totalCompras), icon: 'ri-shopping-cart-2-line', color: 'text-zinc-700', bg: 'bg-zinc-50' },
-              { label: 'Total Pago', value: formatCurrency(totalPago), icon: 'ri-checkbox-circle-line', color: 'text-green-700', bg: 'bg-green-50' },
-              { label: 'A Pagar / Parcelado', value: formatCurrency(totalAPagar), icon: 'ri-time-line', color: 'text-amber-700', bg: 'bg-amber-50' },
-              { label: 'Parcelado', value: formatCurrency(totalParcelado), icon: 'ri-calendar-schedule-line', color: 'text-sky-700', bg: 'bg-sky-50' },
-            ].map((k) => (
-              <div key={k.label} className="bg-white rounded-xl border border-zinc-200 p-4 flex items-center gap-3">
-                <div className={`w-10 h-10 flex items-center justify-center rounded-lg ${k.bg}`}>
-                  <i className={`${k.icon} ${k.color} text-lg`} />
-                </div>
-                <div>
-                  <p className="text-xs text-zinc-500">{k.label}</p>
-                  <p className={`text-base font-bold ${k.color}`}>{k.value}</p>
-                </div>
-              </div>
-            ))}
+          {/* ── Cards de resumo ── */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+            <KpiCard
+              label="Total de compras"
+              icon="ri-shopping-cart-2-line"
+              value={formatCurrency(totalCompras)}
+              sub={usandoIntervalo
+                ? `${comprasBase.length} compra${comprasBase.length !== 1 ? 's' : ''} no período`
+                : `${mesExtenso(mesAnterior)}: ${formatCurrency(totalMesAnterior)}`}
+              atual={totalCompras}
+              anterior={usandoIntervalo ? undefined : totalMesAnterior}
+              inverse
+              semVariacao={usandoIntervalo}
+            />
+            <KpiCard
+              label="Pago"
+              icon="ri-checkbox-circle-line"
+              value={formatCurrency(totalPago)}
+              valueTone="text-emerald-700"
+              sub={totalCompras > 0 ? `${((totalPago / totalCompras) * 100).toFixed(0)}% do total` : 'Sem compras'}
+              atual={totalPago}
+              semVariacao
+            />
+            <KpiCard
+              label="A pagar"
+              icon="ri-time-line"
+              value={formatCurrency(totalAPagar)}
+              valueTone={totalAPagar > 0 ? 'text-amber-700' : undefined}
+              sub="Inclui as compras parceladas"
+              atual={totalAPagar}
+              semVariacao
+            />
+            <KpiCard
+              label="Parcelado"
+              icon="ri-calendar-schedule-line"
+              value={formatCurrency(totalParcelado)}
+              sub={aguardandoRecebimento > 0
+                ? `${aguardandoRecebimento} compra${aguardandoRecebimento !== 1 ? 's' : ''} aguardando recebimento`
+                : 'Nenhuma compra aguardando recebimento'}
+              subTone={aguardandoRecebimento > 0 ? 'text-amber-600 font-semibold' : undefined}
+              atual={totalParcelado}
+              semVariacao
+            />
           </div>
 
-          {/* Toolbar */}
-          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3 flex-wrap">
-            <div className="relative flex-1 min-w-0">
+          {/* ── Busca e filtros ── */}
+          <div className="flex flex-col lg:flex-row items-stretch lg:items-center gap-2 lg:gap-3 flex-wrap">
+            <div className="relative flex-1 min-w-[220px]">
               <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 text-sm" />
               <input value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }}
                 placeholder="Buscar por fornecedor, NF..."
-                className="w-full pl-9 pr-8 py-2 border border-zinc-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white" />
+                className="w-full pl-9 pr-8 h-10 border border-zinc-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white shadow-sm" />
               {search && (
                 <button onClick={() => setSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 cursor-pointer">
                   <i className="ri-close-line text-zinc-400 text-sm" />
@@ -497,51 +505,53 @@ export default function ComprasTab({ highlightId, onHighlightConsumed }: Compras
               )}
             </div>
 
-            <div className="flex bg-white border border-zinc-200 rounded-lg overflow-hidden">
-              {[['all','Todas'],['paid','Pago'],['pending','A Pagar'],['partial','Parcelado']].map(([v,l]) => (
-                <button key={v} onClick={() => { setFilterStatus(v); setPage(1); }}
-                  className={`px-3 py-2 text-xs font-semibold cursor-pointer transition-colors whitespace-nowrap ${filterStatus === v ? 'bg-amber-500 text-white' : 'text-zinc-600 hover:bg-zinc-50'}`}>
-                  {l}
-                </button>
-              ))}
+            <div className="overflow-x-auto">
+              <Segmented
+                value={filterStatus}
+                onChange={(v) => { setFilterStatus(v); setPage(1); }}
+                options={[
+                  { id: 'all', label: 'Todas', icon: 'ri-list-check' },
+                  { id: 'paid', label: 'Pago', icon: 'ri-checkbox-circle-line' },
+                  { id: 'pending', label: 'A pagar', icon: 'ri-time-line' },
+                  { id: 'partial', label: 'Parcelado', icon: 'ri-calendar-schedule-line' },
+                ]}
+              />
             </div>
 
-            {/* Filtro de recebimento */}
-            <div className="flex bg-white border border-zinc-200 rounded-lg overflow-hidden">
-              {([['all', 'Todos'], ['pending', 'Aguard. Receb.'], ['confirmed', 'Recebido']] as [string, string][]).map(([v, l]) => (
-                <button key={v} onClick={() => { setFilterDelivery(v); setPage(1); }}
-                  className={`px-3 py-2 text-xs font-semibold cursor-pointer transition-colors whitespace-nowrap flex items-center gap-1 ${
-                    filterDelivery === v
-                      ? v === 'pending' ? 'bg-amber-500 text-white' : v === 'confirmed' ? 'bg-green-500 text-white' : 'bg-amber-500 text-white'
-                      : 'text-zinc-600 hover:bg-zinc-50'
-                  }`}>
-                  {v === 'pending' && <i className="ri-time-line text-xs" />}
-                  {v === 'confirmed' && <i className="ri-truck-line text-xs" />}
-                  {l}
-                </button>
-              ))}
+            <div className="overflow-x-auto">
+              <Segmented
+                value={filterDelivery}
+                onChange={(v) => { setFilterDelivery(v); setPage(1); }}
+                options={[
+                  { id: 'all', label: 'Todos', icon: 'ri-inbox-line' },
+                  { id: 'pending', label: 'Aguard. receb.', icon: 'ri-hourglass-line' },
+                  { id: 'confirmed', label: 'Recebido', icon: 'ri-truck-line' },
+                ]}
+              />
             </div>
 
-            <button onClick={() => setShowFilters((f) => !f)}
-              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold cursor-pointer border transition-colors whitespace-nowrap ${showFilters || activeFiltersCount > 0 ? 'bg-amber-50 border-amber-300 text-amber-700' : 'bg-white border-zinc-200 text-zinc-600 hover:bg-zinc-50'}`}>
-              <i className="ri-filter-3-line" />
-              Filtros {activeFiltersCount > 0 && (
-                <span className="bg-amber-500 text-white rounded-full w-4 h-4 flex items-center justify-center text-xs">{activeFiltersCount}</span>
+            <div className="flex items-center gap-2">
+              <button onClick={() => setShowFilters((f) => !f)}
+                className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold cursor-pointer border transition-colors whitespace-nowrap shadow-sm ${showFilters || activeFiltersCount > 0 ? 'bg-amber-50 border-amber-300 text-amber-700' : 'bg-white border-zinc-200 text-zinc-600 hover:bg-zinc-50'}`}>
+                <i className="ri-filter-3-line text-sm" />
+                Filtros {activeFiltersCount > 0 && (
+                  <span className="bg-amber-500 text-white rounded-full w-4 h-4 flex items-center justify-center text-[10px]">{activeFiltersCount}</span>
+                )}
+              </button>
+
+              {activeFiltersCount > 0 && (
+                <button onClick={clearFilters} className="text-xs text-zinc-400 hover:text-red-500 cursor-pointer whitespace-nowrap">Limpar</button>
               )}
-            </button>
 
-            {activeFiltersCount > 0 && (
-              <button onClick={clearFilters} className="text-xs text-zinc-400 hover:text-red-500 cursor-pointer whitespace-nowrap">Limpar</button>
-            )}
-
-            <button onClick={handleExport}
-              className="flex items-center gap-2 border border-zinc-200 bg-white hover:bg-zinc-50 text-zinc-700 px-3 py-2 rounded-lg text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors">
-              <i className="ri-download-line" /> CSV
-            </button>
+              <button onClick={handleExport}
+                className="flex items-center gap-1.5 px-3 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 rounded-xl text-xs font-semibold text-zinc-600 cursor-pointer transition-colors whitespace-nowrap shadow-sm">
+                <i className="ri-download-line text-sm" /> CSV
+              </button>
+            </div>
           </div>
 
           {showFilters && (
-            <div className="bg-white border border-zinc-200 rounded-xl p-4 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="bg-white border border-zinc-200 rounded-2xl p-4 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
               <div>
                 <label className="text-xs font-semibold text-zinc-600 block mb-1">Forma de Pagamento</label>
                 <select value={filterPayment} onChange={(e) => { setFilterPayment(e.target.value); setPage(1); }}
@@ -571,15 +581,24 @@ export default function ComprasTab({ highlightId, onHighlightConsumed }: Compras
             </div>
           )}
 
-          {(search || activeFiltersCount > 0) && (
-            <p className="text-xs text-zinc-500">
-              {filtered.length} resultado{filtered.length !== 1 ? 's' : ''} encontrado{filtered.length !== 1 ? 's' : ''}
-              {comprasBase.length !== filtered.length && ` de ${comprasBase.length} compras ${usandoIntervalo ? 'no período' : 'no mês'}`}
-            </p>
-          )}
-
-          {/* Tabela */}
-          <div className="bg-white rounded-xl border border-zinc-200 overflow-hidden">
+          {/* ── Tabela ── */}
+          <div className="bg-white rounded-2xl border border-zinc-200 overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-100 gap-3 flex-wrap">
+            <div>
+              <h3 className="text-sm font-bold text-zinc-800">
+                {usandoIntervalo ? 'Compras do período' : `Compras de ${mesExtenso(mesPrefix).toLowerCase()}`}
+              </h3>
+              {(search || activeFiltersCount > 0) && (
+                <p className="text-xs text-zinc-400">
+                  {filtered.length} resultado{filtered.length !== 1 ? 's' : ''}
+                  {comprasBase.length !== filtered.length && ` de ${comprasBase.length} compras ${usandoIntervalo ? 'no período' : 'no mês'}`}
+                </p>
+              )}
+            </div>
+            <span className="text-[11px] text-zinc-400 hidden md:flex items-center gap-1">
+              <i className="ri-cursor-line" /> Clique numa compra para ver o detalhe
+            </span>
+          </div>
 
           {/* Celular: cartão por compra (a tabela não cabe em 375px) */}
           <ul className="md:hidden p-2 space-y-2 bg-zinc-50/60">
@@ -597,24 +616,24 @@ export default function ComprasTab({ highlightId, onHighlightConsumed }: Compras
               <li key={p.id} ref={flashId === p.id ? (el) => { highlightRowRef.current = el; } : undefined}>
                 <div
                   onClick={() => openDetail(p)}
-                  className={`rounded-xl border bg-white px-3 py-3 active:bg-zinc-50 cursor-pointer ${flashId === p.id ? 'animate-pulse bg-amber-50 ring-2 ring-inset ring-amber-400' : 'border-zinc-200'}`}
+                  className={`rounded-2xl border bg-white px-3 py-3 active:bg-zinc-50 cursor-pointer ${flashId === p.id ? 'animate-pulse bg-amber-50 ring-2 ring-inset ring-amber-400' : 'border-zinc-200'}`}
                 >
                   <div className="flex items-baseline justify-between gap-2">
                     <span className="text-[11px] text-zinc-400 whitespace-nowrap">
                       {new Date(p.purchase_date + 'T00:00:00').toLocaleDateString('pt-BR')}
                     </span>
-                    <span className="text-base font-bold text-red-600 whitespace-nowrap">{formatCurrency(p.total_amount)}</span>
+                    <span className="text-base font-bold text-zinc-900 tabular-nums whitespace-nowrap">{formatCurrency(p.total_amount)}</span>
                   </div>
                   <p className="text-sm font-medium text-zinc-800 break-words line-clamp-2">{p.supplier}</p>
                   {p.notes && <p className="text-xs text-zinc-400 break-words line-clamp-1">{p.notes}</p>}
                   <p className="text-xs text-zinc-400 mt-0.5">NF {p.invoice_number || '—'} · {p.payment_method}</p>
 
                   <div className="flex items-center gap-1.5 flex-wrap mt-2">
-                    <span className={`text-xs font-semibold px-2 py-1 rounded-full ${STATUS_BADGE[p.payment_status] ?? 'bg-zinc-100 text-zinc-600'}`}>
+                    <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-md ${STATUS_BADGE[p.payment_status] ?? 'bg-zinc-100 text-zinc-600'}`}>
                       {STATUS_LABEL[p.payment_status] ?? p.payment_status}
                     </span>
                     {p.delivery_confirmed_at ? (
-                      <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-green-100 text-green-700 flex items-center gap-1">
+                      <span className="text-[11px] font-semibold px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 flex items-center gap-1">
                         <i className="ri-truck-line text-xs" /> Recebido
                       </span>
                     ) : (
@@ -668,35 +687,35 @@ export default function ComprasTab({ highlightId, onHighlightConsumed }: Compras
 
           <div className="hidden md:block overflow-x-auto">
             <table className="w-full text-sm min-w-[600px]">
-              <thead className="bg-zinc-50 border-b border-zinc-200">
+              <thead className="border-b border-zinc-200">
                 <tr>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-zinc-500">
-                    <button onClick={() => handleSort('purchase_date')} className="flex items-center cursor-pointer hover:text-zinc-800 whitespace-nowrap">
+                  <th className="text-left px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
+                    <button onClick={() => handleSort('purchase_date')} className="flex items-center cursor-pointer hover:text-zinc-800 whitespace-nowrap uppercase">
                       Data <SortIcon field="purchase_date" />
                     </button>
                   </th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-zinc-500">
-                    <button onClick={() => handleSort('supplier')} className="flex items-center cursor-pointer hover:text-zinc-800 whitespace-nowrap">
+                  <th className="text-left px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
+                    <button onClick={() => handleSort('supplier')} className="flex items-center cursor-pointer hover:text-zinc-800 whitespace-nowrap uppercase">
                       Fornecedor <SortIcon field="supplier" />
                     </button>
                   </th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-zinc-500 whitespace-nowrap">NF</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-zinc-500 whitespace-nowrap">Itens</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-zinc-500">
-                    <button onClick={() => handleSort('total_amount')} className="flex items-center cursor-pointer hover:text-zinc-800 whitespace-nowrap">
+                  <th className="text-left px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400 whitespace-nowrap">NF</th>
+                  <th className="text-left px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400 whitespace-nowrap">Itens</th>
+                  <th className="text-right px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
+                    <button onClick={() => handleSort('total_amount')} className="flex items-center justify-end ml-auto cursor-pointer hover:text-zinc-800 whitespace-nowrap uppercase">
                       Total <SortIcon field="total_amount" />
                     </button>
                   </th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-zinc-500 whitespace-nowrap">Pagamento</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-zinc-500">
-                    <button onClick={() => handleSort('payment_status')} className="flex items-center cursor-pointer hover:text-zinc-800 whitespace-nowrap">
+                  <th className="text-left px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400 whitespace-nowrap">Pagamento</th>
+                  <th className="text-left px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
+                    <button onClick={() => handleSort('payment_status')} className="flex items-center cursor-pointer hover:text-zinc-800 whitespace-nowrap uppercase">
                       Status <SortIcon field="payment_status" />
                     </button>
                   </th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-zinc-500 whitespace-nowrap">Ações</th>
+                  <th className="text-right px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400 whitespace-nowrap">Ações</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-zinc-50">
+              <tbody className="divide-y divide-zinc-100/80">
                 {loading ? (
                   <tr><td colSpan={8} className="text-center py-10 text-zinc-400 text-sm">Carregando...</td></tr>
                 ) : paginated.length === 0 ? (
@@ -710,13 +729,13 @@ export default function ComprasTab({ highlightId, onHighlightConsumed }: Compras
                     </td>
                   </tr>
                 ) : paginated.map((p) => (
-                  <>
+                  <Fragment key={p.id}>
                   <tr
-                    key={p.id}
                     ref={flashId === p.id ? (el) => { highlightRowRef.current = el; } : undefined}
-                    className={`hover:bg-zinc-50 transition-colors ${flashId === p.id ? 'animate-pulse bg-amber-50 ring-2 ring-inset ring-amber-400' : ''}`}
+                    onClick={() => openDetail(p)}
+                    className={`hover:bg-amber-50/40 cursor-pointer transition-colors ${flashId === p.id ? 'animate-pulse bg-amber-50 ring-2 ring-inset ring-amber-400' : ''}`}
                   >
-                    <td className="px-4 py-3 text-zinc-600 text-sm">
+                    <td className="px-4 py-3 text-zinc-600 text-sm tabular-nums whitespace-nowrap">
                       {new Date(p.purchase_date + 'T00:00:00').toLocaleDateString('pt-BR')}
                     </td>
                     <td className="px-4 py-3">
@@ -726,22 +745,22 @@ export default function ComprasTab({ highlightId, onHighlightConsumed }: Compras
                     <td className="px-4 py-3 text-zinc-400 text-xs font-mono">{p.invoice_number || '—'}</td>
                     <td className="px-4 py-3">
                       <button
-                        onClick={() => toggleExpandRow(p.id)}
+                        onClick={(e) => { e.stopPropagation(); toggleExpandRow(p.id); }}
                         className="text-xs bg-zinc-100 hover:bg-amber-50 text-zinc-600 hover:text-amber-700 px-2 py-0.5 rounded-full cursor-pointer transition-colors flex items-center gap-1"
                       >
                         {p.items?.length ?? 0} item{(p.items?.length ?? 0) !== 1 ? 's' : ''}
                         <i className={expandedRows.has(p.id) ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} />
                       </button>
                     </td>
-                    <td className="px-4 py-3 font-semibold text-zinc-900">{formatCurrency(p.total_amount)}</td>
+                    <td className="px-4 py-3 text-right font-semibold text-zinc-900 tabular-nums whitespace-nowrap">{formatCurrency(p.total_amount)}</td>
                     <td className="px-4 py-3 text-zinc-500 text-xs">{p.payment_method}</td>
                     <td className="px-4 py-3">
                       <div className="flex flex-col gap-1">
-                        <span className={`text-xs font-semibold px-2 py-1 rounded-full w-fit ${STATUS_BADGE[p.payment_status] ?? 'bg-zinc-100 text-zinc-600'}`}>
+                        <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-md w-fit ${STATUS_BADGE[p.payment_status] ?? 'bg-zinc-100 text-zinc-600'}`}>
                           {STATUS_LABEL[p.payment_status] ?? p.payment_status}
                         </span>
                         {p.delivery_confirmed_at ? (
-                          <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-green-100 text-green-700 w-fit flex items-center gap-1">
+                          <span className="text-[11px] font-semibold px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 w-fit flex items-center gap-1">
                             <i className="ri-truck-line text-xs" /> Recebido {new Date(p.delivery_confirmed_at).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', year: '2-digit' })}
                           </span>
                         ) : (
@@ -751,8 +770,8 @@ export default function ComprasTab({ highlightId, onHighlightConsumed }: Compras
                         )}
                       </div>
                     </td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-1">
+                    <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                      <div className="flex items-center justify-end gap-1">
                         <button onClick={() => openDetail(p)}
                           className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-zinc-100 text-zinc-400 hover:text-zinc-700 cursor-pointer" title="Ver detalhes">
                           <i className="ri-eye-line text-sm" />
@@ -778,7 +797,7 @@ export default function ComprasTab({ highlightId, onHighlightConsumed }: Compras
                     </td>
                   </tr>
                   {expandedRows.has(p.id) && p.items && p.items.length > 0 && (
-                    <tr key={`${p.id}-items`}>
+                    <tr>
                       <td colSpan={8} className="px-4 py-3 bg-zinc-50/50">
                         <div className="rounded-xl border border-zinc-200 overflow-hidden overflow-x-auto">
                           <table className="w-full text-xs">
@@ -813,14 +832,14 @@ export default function ComprasTab({ highlightId, onHighlightConsumed }: Compras
                       </td>
                     </tr>
                   )}
-                  </>
+                  </Fragment>
                 ))}
               </tbody>
             </table>
             </div>
 
             {totalPages > 1 && (
-              <div className="flex items-center justify-between px-4 py-3 border-t border-zinc-100 bg-zinc-50">
+              <div className="flex items-center justify-between px-5 py-3 border-t border-zinc-100">
                 <p className="text-xs text-zinc-500">
                   Mostrando {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, filtered.length)} de {filtered.length}
                 </p>
@@ -848,6 +867,7 @@ export default function ComprasTab({ highlightId, onHighlightConsumed }: Compras
           </div>
         </>
       )}
+      </div>
 
       {/* Detalhe modal */}
       {detailPurchase && (
@@ -858,6 +878,7 @@ export default function ComprasTab({ highlightId, onHighlightConsumed }: Compras
           onClose={() => setDetailPurchase(null)}
           onDeliveryConfirmed={handleDeliveryConfirmed}
           onDeleted={handleDeleted}
+          onItemsChanged={handleDeliveryConfirmed}
         />
       )}
 

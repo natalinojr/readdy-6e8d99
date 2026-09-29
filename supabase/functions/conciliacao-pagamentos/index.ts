@@ -334,6 +334,9 @@ interface CreateOpts {
   items?: CompraItem[] | null;
   /** compra com itens: "já recebi" → confirma o recebimento na hora (insumos entram no estoque) */
   received?: boolean;
+  /** compra lida da nota (2026-09-29, QR/foto no Lançar): nº da nota e chave da NFC-e */
+  invoiceNumber?: string | null;
+  accessKey?: string | null;
 }
 interface CompraItem { description: string; quantity: number; total: number; unit_label: string | null; ingredient_id: string | null }
 
@@ -546,7 +549,8 @@ async function createOneClaimed(ctx: Ctx, rowId: string, o: CreateOpts, row: Row
       action: 'create_purchase', tenant_id: tenantId,
       payload: {
         supplier: fornecedor, purchase_date: paidDate, due_date: paidDate, payment_status: 'pending', payment_method: metodo,
-        bank_account_id: row.bank_account_id, cost_center_id: o.costCenterId, notes: nota, items: itens,
+        invoice_number: o.invoiceNumber ?? null,
+        bank_account_id: row.bank_account_id, cost_center_id: o.costCenterId, notes: o.accessKey ? nota + ' · NFC-e ' + o.accessKey : nota, items: itens,
       },
     });
     purchaseId = cp.data?.data?.id ?? null;
@@ -1382,6 +1386,8 @@ Deno.serve(async (req: Request) => {
         // Itens valem para UM pagamento (a soma fecha com o valor dele); em lote seriam aplicados a todos
         items: kind === 'compra' ? parseItens(body.items) : null,
         received: body.received === true,
+        invoiceNumber: kind === 'compra' && body.invoice_number ? String(body.invoice_number).trim().slice(0, 30) : null,
+        accessKey: kind === 'compra' && /^\d{44}$/.test(String(body.access_key ?? '')) ? String(body.access_key) : null,
       };
       if (opts.items && ids.length > 1) return errResp('Compra com itens se lança um pagamento por vez');
       const results: Result[] = [];
