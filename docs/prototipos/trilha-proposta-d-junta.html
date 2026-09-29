@@ -222,7 +222,7 @@ const OUTRO = {
     {l:'Cancelar a conta a pagar (não é devida)', ic:'ri-close-circle-line', campo:'texto', ph:'motivo (fica registrado)'},
   ],
   estoque: [
-    {l:'Vincular os itens aos insumos aqui', ic:'ri-links-line', campo:'nenhum'},
+    {l:'Ligar os itens da nota aos insumos', ic:'ri-links-line', campo:'vincular'},
     {l:'Chegou em outra data', ic:'ri-calendar-line', campo:'data'},
     {l:'Chegou só uma parte', ic:'ri-contrast-line', campo:'texto', ph:'o que faltou'},
     {l:'Foi devolvido', ic:'ri-arrow-go-back-line', campo:'texto', ph:'motivo'},
@@ -267,7 +267,7 @@ let T = [
   { id:4, g:'vencidas', caso:'beemax', etapas:['pagamento','banco'], urg:true, sel:true, porque:'Venceu há 10 dias.', sug:[['Pagar agora','ri-bank-line','pagar']] },
   { id:5, g:'vencidas', caso:'bebidas', etapas:['pagamento','banco'], urg:true, sel:true, porque:'Venceu há 7 dias.', sug:[['Pagar agora','ri-bank-line','pagar']] },
   { id:6, g:'conta', caso:'padaria', etapas:['conta'], urg:true, porque:'A compra não foi paga na hora e ninguém lançou a conta a pagar dela — assim ela nunca aparece para pagar. A padaria costuma dar 30 dias.', sug:[['Criar conta a pagar vencendo 25/10','ri-add-line']] },
-  { id:7, g:'estoque', caso:'bebidas', etapas:['estoque'], urg:true, porque:'Chegou em 16/09, mas 12 dos 20 itens não estão ligados a nenhum insumo — por isso não entraram no estoque.', sug:[['Vincular os 12 itens aqui','ri-links-line']] },
+  { id:7, g:'estoque', caso:'bebidas', etapas:['estoque'], urg:true, porque:'Chegou em 16/09, mas 12 dos 20 itens não estão ligados a nenhum insumo — por isso não entraram no estoque.', sug:[['Ver os itens e ligar os 12 que faltam','ri-links-line','vincular']] },
   { id:8, g:'estoque', caso:'beemax', etapas:['estoque'], urg:false, sel:true, porque:'A compra foi lançada em 12/09, mas ninguém confirmou que a mercadoria chegou.', sug:[['Chegou hoje','ri-check-line']] },
   { id:9, g:'notas', caso:'nortesul', etapas:['lancamento','estoque','conta'], urg:false, sel:true, porque:'Os 7 itens da nota já estão ligados a insumos, e a nota diz que o prazo é de 30 dias.', sug:[['Lançar como compra (conta a pagar vence 24/10)','ri-shopping-cart-2-line']] },
   { id:10, g:'notas', caso:'embal', etapas:['lancamento','estoque','conta'], urg:false, sel:true, porque:'Nota desse fornecedor é sempre embalagem, que é despesa. O boleto dela já chegou.', sug:[['Lançar como despesa — Embalagens','ri-bill-line']] },
@@ -315,7 +315,7 @@ function nav(){
 }
 // Insumos da loja e VÍNCULOS JÁ CONFIRMADOS (Classificação de itens / compras anteriores).
 // Regra do sistema: só liga sozinho quando o vínculo já foi confirmado; nunca "chuta" insumo.
-const INSUMOS = ['Tomate italiano (kg)','Cebola branca (kg)','Alface americana (un)','Limão tahiti (kg)','Cheiro-verde (maço)','Batata (kg)','Pimentão verde (kg)','Carne moída (kg)','Queijo mussarela (kg)','Óleo de soja (L)'];
+const INSUMOS = ['Coca-Cola lata 350ml','Coca-Cola 2L','Guaraná Antarctica lata 350ml','Guaraná 2L','Fanta laranja lata 350ml','Sprite lata 350ml','Água mineral 500ml','Água com gás 500ml','Heineken long neck 330ml','Brahma lata 350ml','Skol lata 350ml','Suco Del Valle uva 1L','Suco Del Valle laranja 1L','H2OH limão 500ml','Red Bull 250ml','Gelo (saco 5kg)','Tomate italiano (kg)','Cebola branca (kg)','Alface americana (un)','Limão tahiti (kg)','Cheiro-verde (maço)','Batata (kg)','Pimentão verde (kg)','Carne moída (kg)','Queijo mussarela (kg)','Óleo de soja (L)'];
 const VINCULOS = { 'tomate':'Tomate italiano (kg)', 'tomate italiano':'Tomate italiano (kg)', 'cebola':'Cebola branca (kg)', 'alface':'Alface americana (un)', 'limao':'Limão tahiti (kg)', 'cheiro verde':'Cheiro-verde (maço)' };
 const norm = x => (x||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9 ]/g,' ').replace(/\s+/g,' ').trim();
 const ULTIMA = { porto:[ ['Tomate',3,'kg',8.9], ['Cebola',2,'kg',6.5], ['Limão',1.5,'kg',7.2] ] };
@@ -457,8 +457,60 @@ function pagarHTML(t){
     <p class="px-3 pb-2.5 pt-1 text-[11px] text-zinc-400">Depois de pago: a conta a pagar recebe a baixa e a saída já fica ligada no extrato do Inter — Pagamento e Extrato do banco ficam verdes.</p>
   </div>`;
 }
+// ── Ligar os itens da nota aos insumos: mostra TODOS os itens, os já ligados para conferir ──
+const NOTA_ITENS = { bebidas: [
+  ['7894900011517','REFRIG COCA COLA LT 350ML CX12',4,'Coca-Cola lata 350ml'], ['7894900027013','REFRIG COCA COLA PET 2L',6,'Coca-Cola 2L'],
+  ['7891991000833','REFRIG GUARANA ANTARCTICA LT 350ML',4,'Guaraná Antarctica lata 350ml'], ['7894900530001','AGUA MIN CRYSTAL S/GAS 500ML',5,'Água mineral 500ml'],
+  ['7896045504831','CERV HEINEKEN LN 330ML CX24',3,'Heineken long neck 330ml'], ['7891149103102','CERV BRAHMA LT 350ML',6,'Brahma lata 350ml'],
+  ['7891149101900','CERV SKOL LT 350ML',6,'Skol lata 350ml'], ['7894900700046','SUCO DEL VALLE UVA 1L',4,'Suco Del Valle uva 1L'],
+  ['7894900011609','REFRIG FANTA LARANJA LT 350ML',2,''], ['7894900681000','REFRIG SPRITE LT 350ML',2,''], ['7891991010856','REFRIG GUARANA ANTARCTICA PET 2L',4,''],
+  ['7894900530117','AGUA MIN CRYSTAL C/GAS 500ML',3,''], ['7894900700053','SUCO DEL VALLE LARANJA 1L',3,''], ['7892840800079','H2OH LIMAO 500ML',2,''],
+  ['9002490100070','ENERG RED BULL 250ML',2,''], ['7896005800027','GELO FILTRADO 5KG',4,''], ['7891149104000','CERV BRAHMA DUPLO MALTE LT',2,''],
+  ['7894900019995','REFRIG COCA COLA ZERO LT 350ML',2,''], ['7891991015479','CHA MATTE LEAO LIMAO 1,5L',1,''], ['0000000000017','VASILHAME / CAIXA RETORNAVEL',1,''],
+]};
+let vinc = {};
+const iniVinc = t => vinc[t.id] ??= (NOTA_ITENS[t.caso]||[]).map(([cod,d,q,ins])=>({cod,d,q,ins,auto:!!ins,fora:false}));
+function vincHTML(t){
+  const V=iniVinc(t), ok=V.filter(x=>x.ins||x.fora).length, falta=V.length-ok;
+  const linha=(x,k)=>`<tr class="${x.ins||x.fora?'':'bg-amber-50/40'}">
+      <td class="px-3 py-1.5"><p class="text-xs font-medium text-zinc-800">${x.d}</p><p class="text-[10px] text-zinc-400 tabnum">cód. ${x.cod} · ${x.q} un.</p></td>
+      <td class="px-2 py-1.5 min-w-[240px]">${
+        x.fora ? `<span class="text-xs text-zinc-500">não vai ao estoque</span> <button data-v-desfaz="${t.id}:${k}" class="text-[11px] text-zinc-400 underline">desfazer</button>`
+        : x.ins ? `<div class="flex items-center gap-1.5"><span class="text-xs font-semibold text-zinc-800">${x.ins}</span>${x.auto?'<span class="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-emerald-50 text-emerald-700"><i class="ri-link"></i> já ligado</span>':'<span class="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-zinc-100 text-zinc-600">ligado agora</span>'}<button data-v-trocar="${t.id}:${k}" class="text-[11px] text-zinc-400 hover:text-zinc-700 underline">trocar</button></div>`
+        : `<div class="flex items-center gap-2"><div class="relative flex-1"><i class="ri-search-line absolute left-2 top-1/2 -translate-y-1/2 text-zinc-400 text-xs"></i><input list="insumosLista" data-v-ins="${t.id}:${k}" placeholder="procurar insumo…" class="w-full h-8 pl-6 pr-2 rounded-lg border border-amber-300 bg-white text-xs focus:outline-none focus:border-amber-500"></div>
+             <button data-v-fora="${t.id}:${k}" class="shrink-0 text-[11px] text-zinc-500 hover:text-zinc-800 underline">não vai ao estoque</button></div>`}
+      </td></tr>`;
+  const semV=V.map((x,k)=>[x,k]).filter(([x])=>!x.auto), comV=V.map((x,k)=>[x,k]).filter(([x])=>x.auto);
+  return `<div id="vinc${t.id}" class="mx-3 mb-3 rounded-xl border border-zinc-200 bg-white overflow-hidden">
+    <div class="flex items-center justify-between gap-3 px-3 py-2.5 bg-zinc-50 border-b border-zinc-100 flex-wrap">
+      <p class="text-xs text-zinc-600"><strong>Itens da nota nº 9903</strong> · ${V.length} itens</p>
+      <div class="flex items-center gap-2 min-w-[200px]">
+        <div class="w-32 h-1.5 rounded-full bg-zinc-200 overflow-hidden"><div class="h-full bg-emerald-500" style="width:${ok/V.length*100}%"></div></div>
+        <span class="text-xs tabnum ${falta?'text-amber-700 font-semibold':'text-emerald-700 font-semibold'}">${falta?`faltam ${falta}`:'todos ligados'}</span>
+      </div>
+    </div>
+    <div class="max-h-[420px] overflow-y-auto">
+      <p class="px-3 pt-2.5 pb-1 text-[10px] font-bold uppercase tracking-wide text-amber-700">Sem vínculo — escolha o insumo (${semV.length})</p>
+      <table class="w-full"><tbody class="divide-y divide-zinc-100">${semV.map(([x,k])=>linha(x,k)).join('')}</tbody></table>
+      <p class="px-3 pt-3 pb-1 text-[10px] font-bold uppercase tracking-wide text-zinc-400">Já ligados antes — confira (${comV.length})</p>
+      <table class="w-full"><tbody class="divide-y divide-zinc-100">${comV.map(([x,k])=>linha(x,k)).join('')}</tbody></table>
+    </div>
+    <div class="flex items-center justify-between gap-3 px-3 py-2.5 border-t border-zinc-100 bg-zinc-50/60 flex-wrap">
+      <label class="flex items-center gap-1.5 text-[11px] text-zinc-500"><input type="checkbox" checked class="w-3.5 h-3.5 accent-zinc-700"> lembrar os vínculos novos para as próximas notas desse fornecedor</label>
+      <button data-v-ok="${t.id}" ${falta?'disabled':''} class="text-xs font-semibold px-3 py-2 rounded-lg ${falta?'bg-zinc-200 text-zinc-400 cursor-not-allowed':'bg-amber-500 hover:bg-amber-600 text-white'}"><i class="ri-archive-2-line"></i> ${falta?`Faltam ${falta} itens`:'Dar entrada no estoque'}</button>
+    </div></div>`;
+}
+function bindVinc(){
+  const redes = id => { const el=document.getElementById('vinc'+id); if(!el) return; const st=el.querySelector('.overflow-y-auto')?.scrollTop||0; el.outerHTML=vincHTML(T.find(x=>x.id===id)); bindVinc(); const n=document.querySelector(`#vinc${id} .overflow-y-auto`); if(n) n.scrollTop=st; };
+  const pega = s => s.split(':').map(Number);
+  document.querySelectorAll('[data-v-ins]').forEach(inp=>inp.onchange=()=>{ const [id,k]=pega(inp.dataset.vIns); if(!INSUMOS.includes(inp.value)) return; Object.assign(vinc[id][k],{ins:inp.value,auto:false}); redes(id); });
+  document.querySelectorAll('[data-v-fora]').forEach(b=>b.onclick=e=>{ e.preventDefault(); const [id,k]=pega(b.dataset.vFora); vinc[id][k].fora=true; redes(id); });
+  document.querySelectorAll('[data-v-desfaz]').forEach(b=>b.onclick=e=>{ e.preventDefault(); const [id,k]=pega(b.dataset.vDesfaz); vinc[id][k].fora=false; redes(id); });
+  document.querySelectorAll('[data-v-trocar]').forEach(b=>b.onclick=e=>{ e.preventDefault(); const [id,k]=pega(b.dataset.vTrocar); Object.assign(vinc[id][k],{ins:'',auto:false}); redes(id); });
+  document.querySelectorAll('[data-v-ok]').forEach(b=>b.onclick=e=>{ e.preventDefault(); if(b.disabled) return; resolver(+b.dataset.vOk,'20 itens ligados — entrada no estoque feita'); });
+}
 function campoHTML(t,i,o){
-  if(o.campo==='itens'||o.campo==='diarias'||o.campo==='pagar') return '';
+  if(['itens','diarias','pagar','vincular'].includes(o.campo)) return '';
   const k=`${t.id}-${i}`;
   if(o.campo==='nenhum') return '';
   if(o.campo==='data') return `<input type="date" value="2026-09-29" class="h-9 border border-zinc-200 rounded-lg px-2 text-xs">`;
@@ -542,8 +594,8 @@ function tarefa(t){
           <div class="divide-y divide-zinc-100">
           ${outros.map((o,i)=>`<label class="flex flex-col sm:flex-row sm:items-center gap-2 px-3 py-2 cursor-pointer ${esc===i?'bg-amber-50/50':'hover:bg-zinc-50'}">
             <span class="flex items-center gap-2 text-sm flex-1 min-w-0"><input type="radio" name="o${t.id}" data-esc="${t.id}" data-i="${i}" ${esc===i?'checked':''} class="accent-amber-500"><i class="${o.ic} text-zinc-400"></i>${o.l}</span>
-            ${esc===i&&o.campo!=='pagar'?`<span class="flex flex-wrap items-center gap-2 pl-6 sm:pl-0">${campoHTML(t,i,o)}<button data-conf="${t.id}" data-l="${o.l}" class="h-9 px-3 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-xs font-semibold"><i class="ri-check-line"></i> Confirmar</button></span>`:''}
-          </label>${esc===i&&o.campo==='itens'?itensHTML(t):''}${esc===i&&o.campo==='diarias'?diariasHTML(t):''}${esc===i&&o.campo==='pagar'?pagarHTML(t):''}`).join('')}
+            ${esc===i&&o.campo!=='pagar'&&o.campo!=='vincular'?`<span class="flex flex-wrap items-center gap-2 pl-6 sm:pl-0">${campoHTML(t,i,o)}<button data-conf="${t.id}" data-l="${o.l}" class="h-9 px-3 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-xs font-semibold"><i class="ri-check-line"></i> Confirmar</button></span>`:''}
+          </label>${esc===i&&o.campo==='itens'?itensHTML(t):''}${esc===i&&o.campo==='diarias'?diariasHTML(t):''}${esc===i&&o.campo==='pagar'?pagarHTML(t):''}${esc===i&&o.campo==='vincular'?vincHTML(t):''}`).join('')}
           <div class="px-3 py-2 flex items-center justify-between gap-2 bg-zinc-50/70 rounded-b-lg">
             <span class="text-[11px] text-zinc-400">Caso diferente de tudo isso?</span>
             <button class="text-xs font-semibold text-zinc-600 hover:text-zinc-900"><i class="ri-external-link-line"></i> Abrir na tela de ${g.id==='vencidas'?'Contas a pagar':g.id==='notas'?'Notas de entrada':g.id==='estoque'?'Compras':g.id==='pix'||g.id==='extrato'?'Conciliação':'Contas a pagar'}</button>
@@ -563,10 +615,10 @@ function lista(){
   document.getElementById('lista').innerHTML = html || `<div class="bg-white rounded-2xl border border-emerald-200 py-16 text-center"><i class="ri-checkbox-circle-fill text-5xl text-emerald-400 block mb-2"></i><p class="font-semibold">Nada pendente ${etapaF||busca||soUrg?'com esses filtros':''}</p></div>`;
   document.querySelectorAll('[data-sug]').forEach(b=>b.onclick=()=>{
     const id=+b.dataset.sug;
-    if(b.dataset.abre){ const t=T.find(x=>x.id===id), campo=b.dataset.abre; abertoOutro=id; escolhido[id]=OUTRO[t.g].findIndex(o=>o.campo===campo); if(campo==='diarias') iniDias(t, t.caso==='joao'?2:1); lista(); document.getElementById(({itens:'itens',diarias:'dias',pagar:'pagar'})[campo]+id)?.scrollIntoView({block:'nearest',behavior:'smooth'}); return; }
+    if(b.dataset.abre){ const t=T.find(x=>x.id===id), campo=b.dataset.abre; abertoOutro=id; escolhido[id]=OUTRO[t.g].findIndex(o=>o.campo===campo); if(campo==='diarias') iniDias(t, t.caso==='joao'?2:1); lista(); document.getElementById(({itens:'itens',diarias:'dias',pagar:'pagar',vincular:'vinc'})[campo]+id)?.scrollIntoView({block:'nearest',behavior:'smooth'}); return; }
     resolver(id,b.dataset.l);
   });
-  bindItens(); bindDias();
+  bindItens(); bindDias(); bindVinc();
   document.querySelectorAll('[data-pag-ok]').forEach(b=>b.onclick=e=>{ e.preventDefault(); resolver(+b.dataset.pagOk, b.dataset.l); });
   document.querySelectorAll('[data-pag-cancel]').forEach(b=>b.onclick=e=>{ e.preventDefault(); abertoOutro=null; lista(); });
   document.querySelectorAll('[data-conf]').forEach(b=>b.onclick=e=>{e.preventDefault(); resolver(+b.dataset.conf,b.dataset.l+' (manual)');});
