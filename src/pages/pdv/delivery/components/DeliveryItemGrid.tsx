@@ -287,14 +287,20 @@ export default function DeliveryItemGrid({ onAdd }: Props) {
     return categorias.filter((c) => c.ativo && idsComItens.has(c.id));
   }, [categorias, itensDelivery]);
 
+  const catsInativas = useMemo(
+    () => new Set(categorias.filter((c) => !c.ativo).map((c) => c.id)),
+    [categorias],
+  );
+
   const itensFiltrados = useMemo(
     () =>
       itensDelivery.filter((i) => {
+        if (catsInativas.has(i.categoriaId)) return false; // categoria desligada no Cardápio
         if (catAtiva !== 'todas' && i.categoriaId !== catAtiva) return false;
         if (busca.trim() && !i.nome.toLowerCase().includes(busca.toLowerCase())) return false;
         return true;
       }),
-    [itensDelivery, catAtiva, busca],
+    [itensDelivery, catsInativas, catAtiva, busca],
   );
 
   const handleAdd = (ci: Omit<DeliveryCarrinhoItem, 'cartId'>) => {

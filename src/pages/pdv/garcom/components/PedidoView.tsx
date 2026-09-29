@@ -130,12 +130,14 @@ export default function PedidoView({
     return allKDSPedidos.filter((p) => p.destino === 'mesa' && p.mesaNumero === mesaNumero && p.status !== 'entregue').length;
   }, [mesaNumero, allKDSPedidos]);
 
-  const cats = todasCategorias.filter((c) => c.ativo);
+  const cats = useMemo(() => todasCategorias.filter((c) => c.ativo), [todasCategorias]);
   const itens = useMemo(() => {
+    const idsCatsAtivas = new Set(cats.map((c) => c.id));
     return todosItens
+      .filter((i) => idsCatsAtivas.has(i.categoriaId))
       .filter((i) => catAtiva === 'todas' || i.categoriaId === catAtiva)
       .filter((i) => !busca || i.nome.toLowerCase().includes(busca.toLowerCase()));
-  }, [catAtiva, busca, todosItens]);
+  }, [catAtiva, busca, todosItens, cats]);
 
   const totalItens = carrinho.reduce((a, i) => a + i.quantidade, 0);
   const totalValor = carrinho.reduce((a, i) => a + i.precoTotal * i.quantidade, 0);

@@ -81,7 +81,7 @@ function InsumosFaltandoTooltip({ insumos, visible }: { insumos: InsumoFaltando[
 }
 
 export default function ItemGridPDV({ categoriaAtiva, busca, onItemClick, onItemObs }: Props) {
-  const { itensAtivos, numerosMap: globalNumberMap } = useCardapio();
+  const { itensAtivos, categorias, numerosMap: globalNumberMap } = useCardapio();
   const { itensDesabilitadosIds } = useEstoque();
   const { mapaItens: itensSemEstoque } = useItensSemEstoque();
   const [tooltipItemId, setTooltipItemId] = useState<string | null>(null);
@@ -99,7 +99,10 @@ export default function ItemGridPDV({ categoriaAtiva, busca, onItemClick, onItem
   const searchNumber = isPureNumber ? parseInt(busca.trim(), 10) : null;
 
   const itens = useMemo(() => {
+    // Categoria desligada no Cardápio: os itens dela também somem do PDV
+    const catsInativas = new Set(categorias.filter((c) => !c.ativo).map((c) => c.id));
     return itensAtivos
+      .filter((item) => !catsInativas.has(item.categoriaId))
       .filter((item) => categoriaAtiva === 'todas' || item.categoriaId === categoriaAtiva)
       .filter((item) => {
         if (!busca) return true;
@@ -108,7 +111,7 @@ export default function ItemGridPDV({ categoriaAtiva, busca, onItemClick, onItem
         }
         return item.nome.toLowerCase().includes(busca.toLowerCase());
       });
-  }, [itensAtivos, categoriaAtiva, busca, searchNumber, globalNumberMap]);
+  }, [itensAtivos, categorias, categoriaAtiva, busca, searchNumber, globalNumberMap]);
 
   if (itens.length === 0) {
     return (

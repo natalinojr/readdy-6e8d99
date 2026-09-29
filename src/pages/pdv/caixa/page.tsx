@@ -419,8 +419,11 @@ function PDVOperacional({ onAbrirFechamento }: PDVOperacionalProps) {
   useCaixaPing(user?.tenantId, loadMovimentacoes);
 
   // Global number map for quick-add by number
+  const catsInativas = new Set(categorias.filter((c) => !c.ativo).map((c) => c.id));
   const numberToItem = new Map<number, Item>(
-    itensAtivos.map((item, idx) => [idx + 1, item])
+    itensAtivos
+      .map((item, idx) => [idx + 1, item] as [number, Item])
+      .filter(([, item]) => !catsInativas.has(item.categoriaId))
   );
 
   // Atalhos de teclado globais do PDV
