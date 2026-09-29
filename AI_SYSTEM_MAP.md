@@ -301,6 +301,10 @@ Secao viva: registrar aqui padroes, decisoes e pegadinhas reutilizaveis conforme
 - **Solução (só exibição, total igual):** `fin_pix_recebidos` devolve `category`; `pixEtiqueta()` e `maquininhaDaVenda()` (Stone × Mercado Pago pelo texto que cada conector grava na linha `stone_sale`) alimentam sublinhas no DRE/DRE Comparativo (`linhasDetalhe`, só com 2+ itens) e a categoria em Receitas. Teste: `src/test/lib/revenueDetalhe.test.ts`.
 - **Pegadinha:** mudar o texto da descrição em `stone-conciliation`/`mp-conciliation` quebra a separação por maquininha — manter "Stone" / "Mercado Pago" no texto.
 
+### 2026-09-29 — Nota de taxa descontada no repasse (Ticket, Goomer/Tuna) não vira conta
+- **Problema:** NFS-e da Ticket ("REEMBOLSO LÍQUIDO") e da Goomer ("processamento de pagamento online", repasse pela Tuna) viravam conta a pagar vencida — o emitente já ficou com o valor.
+- **Regra:** o repasse entra LÍQUIDO na receita (Pix recebido), então a taxa já está descontada: a nota é **ignorada**, nem como despesa paga (contaria 2×). `fiscal-inbound › descontadoNoRepasse()` lê natureza+itens (não o nome — a mensalidade da Goomer, mesmo CNPJ, é boleto real); o lançamento automático marca `ignored` com `ignore_reason`. Mesma regex em `NotasEntradaTab` (aviso). Se um dia a receita passar a ser bruta, aí a taxa vira despesa.
+
 ### 2026-09-26 — Fornecedor pré-pago (Facebook/Meta Ads: Pix de recarga × nota do consumo)
 - **Causa:** o Pix ao Facebook é **recarga de crédito**; a NFS-e do dia 03 é o **consumo do mês anterior** (`dCompet` = último dia do mês dos anúncios). "Nota do mês" (1 nota ↔ N pagamentos) nunca fecha e a diferença virava conta a pagar falsa.
 - **Solução:** migração `20260927120000_fornecedor_pre_pago.sql` — `fin_prepaid_suppliers` (CNPJ casado pela raiz, categoria DRE, `start_date`, `opening_balance`) e `fin_prepaid_moves` (topup +, consumption −, adjust ±; saldo = abertura + soma). Só a edge lê/grava (sem grant a authenticated).
