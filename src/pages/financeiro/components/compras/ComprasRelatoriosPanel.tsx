@@ -546,8 +546,8 @@ export default function ComprasRelatoriosPanel({ purchases, onOpenPurchase }: Pr
     <div className="space-y-5">
       {/* Período + agrupamento */}
       <div className="bg-white rounded-2xl border border-zinc-200 p-4 space-y-3">
-        <div className="flex flex-col lg:flex-row lg:items-center gap-2 lg:gap-3">
-          <div className="overflow-x-auto">
+        <div className="flex flex-wrap items-center gap-2 lg:gap-3">
+          <div className="overflow-x-auto max-w-full">
             <Segmented<Periodo>
               value={periodo}
               onChange={setPeriodo}
@@ -568,7 +568,7 @@ export default function ComprasRelatoriosPanel({ purchases, onOpenPurchase }: Pr
             <span className="text-zinc-300 mx-1.5">·</span>
             comparado a {fmtData(prevFrom)} – {fmtData(prevTo)}
           </p>
-          <div className="lg:ml-auto flex items-center gap-2">
+          <div className="ml-auto flex items-center gap-2">
             <button onClick={exportar} disabled={linhas.length === 0}
               className="flex items-center gap-1.5 px-3 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 rounded-xl text-xs font-semibold text-zinc-600 cursor-pointer transition-colors whitespace-nowrap shadow-sm disabled:opacity-40">
               <i className="ri-download-2-line" /> CSV ({linhas.length} itens)
@@ -608,7 +608,7 @@ export default function ComprasRelatoriosPanel({ purchases, onOpenPurchase }: Pr
       </div>
 
       {/* KPIs */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5 gap-3">
         <KpiCard
           label="Total comprado"
           icon="ri-shopping-cart-2-line"

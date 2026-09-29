@@ -115,6 +115,7 @@ export default function ComprasCentroCustoPanel({ purchases, centers }: Props) {
     { id: 'all', label: 'Tudo', icon: 'ri-infinity-line' },
   ] as { id: PeriodFilter; label: string; icon: string }[];
   const semCentro = grouped.find((g) => g.id === '__none__')?.total ?? 0;
+  const comCentro = grouped.filter((g) => g.id !== '__none__');
 
   return (
     <div className="space-y-5">
@@ -138,8 +139,8 @@ export default function ComprasCentroCustoPanel({ purchases, centers }: Props) {
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <KpiCard label="Total no período" icon="ri-shopping-cart-2-line" value={fmt(grandTotal)}
           sub={`${filteredPurchases.length} compra${filteredPurchases.length !== 1 ? 's' : ''}`} atual={grandTotal} semVariacao />
-        <KpiCard label="Centros de custo" icon="ri-price-tag-3-line" value={String(grouped.filter((g) => g.id !== '__none__').length)}
-          sub={grouped[0] ? `Maior: ${grouped[0].name}` : undefined} atual={grouped.length} semVariacao />
+        <KpiCard label="Centros de custo" icon="ri-price-tag-3-line" value={String(comCentro.length)}
+          sub={comCentro[0] ? `Maior: ${comCentro[0].name}` : 'Nenhuma compra com centro de custo'} atual={comCentro.length} semVariacao />
         <KpiCard label="Sem centro de custo" icon="ri-question-line" value={fmt(semCentro)}
           valueTone={semCentro > 0 ? 'text-amber-700' : 'text-emerald-700'}
           sub={semCentro > 0 && grandTotal > 0 ? `${((semCentro / grandTotal) * 100).toFixed(1).replace('.', ',')}% do total` : 'Tudo com centro de custo'}

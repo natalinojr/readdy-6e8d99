@@ -107,6 +107,7 @@ export default function ComprasRelatorioPanel({ purchases }: Props) {
   const totalGeral = porFornecedor.reduce((s, f) => s + f.total, 0);
   const mediaCompra = filtered.length > 0 ? totalGeral / filtered.length : 0;
   const maiorCompra = filtered.reduce((max, p) => Math.max(max, p.total_amount), 0);
+  const maiorCompraDe = filtered.find(p => p.total_amount === maiorCompra)?.supplier;
 
   if (purchases.length === 0) {
     return (
@@ -141,7 +142,7 @@ export default function ComprasRelatorioPanel({ purchases }: Props) {
         <KpiCard label="Ticket médio" icon="ri-scales-line" value={formatCurrency(mediaCompra)}
           sub="Valor médio por compra" atual={mediaCompra} semVariacao />
         <KpiCard label="Maior compra" icon="ri-trophy-line" value={formatCurrency(maiorCompra)}
-          sub={porFornecedor[0] ? `Quem mais vendeu: ${porFornecedor[0].name}` : undefined} atual={maiorCompra} semVariacao />
+          sub={maiorCompraDe ? `De ${maiorCompraDe}` : undefined} atual={maiorCompra} semVariacao />
       </div>
 
       {/* Chart: Por Mês */}

@@ -343,29 +343,24 @@ export default function ComprasTab({ highlightId, onHighlightConsumed }: Compras
   ] as const;
 
   return (
-    <div className="min-h-full">
-      {/* ── Sub-navegação (mesmo padrão do DRE) + cadastros e Nova compra ── */}
-      <div className="bg-white border-b border-zinc-200 px-3 md:px-6 pt-3 pb-0 flex flex-col lg:flex-row lg:items-end gap-2 lg:gap-4">
-        <div className="flex items-center gap-1 overflow-x-auto">
+    <div className="p-4 md:p-6 space-y-5 max-w-[1400px] mx-auto">
+      {/* ── Subabas (mesmo padrão da aba iFood) + cadastros e Nova compra ── */}
+      <div className="flex flex-wrap items-center gap-2 lg:gap-3">
+        <div className="flex gap-1 overflow-x-auto bg-zinc-100/80 rounded-xl p-1 w-full sm:w-fit">
           {VIEWS.map(v => (
             <button
               key={v.id}
               onClick={() => setActiveView(v.id)}
-              className={`flex items-center gap-2 px-4 py-2.5 text-xs font-semibold whitespace-nowrap border-b-2 transition-colors cursor-pointer rounded-t-lg ${
-                activeView === v.id
-                  ? 'border-amber-500 text-amber-600 bg-amber-50/50'
-                  : 'border-transparent text-zinc-500 hover:text-zinc-700 hover:bg-zinc-50'
+              title={v.desc}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap cursor-pointer transition-colors ${
+                activeView === v.id ? 'bg-white text-amber-600 shadow-sm' : 'text-zinc-500 hover:text-zinc-800'
               }`}
             >
-              <i className={`${v.icon} text-sm`} />
-              {v.label}
-              {activeView === v.id && (
-                <span className="text-xs text-amber-400 font-normal hidden xl:inline">— {v.desc}</span>
-              )}
+              <i className={v.icon} /> {v.label}
             </button>
           ))}
         </div>
-        <div className="lg:ml-auto flex items-center gap-2 pb-2.5 overflow-x-auto">
+        <div className="ml-auto flex items-center gap-2 overflow-x-auto max-w-full">
           {[
             { label: 'Catálogo de itens', icon: 'ri-archive-line', onClick: () => setShowCatalogo(true) },
             { label: 'Categorias', icon: 'ri-price-tag-3-line', onClick: () => setShowCategorias(true) },
@@ -388,7 +383,6 @@ export default function ComprasTab({ highlightId, onHighlightConsumed }: Compras
         </div>
       </div>
 
-      <div className="p-4 md:p-6 space-y-5 max-w-[1400px] mx-auto">
       {activeView === 'relatorios' && <ComprasRelatoriosPanel purchases={purchases} onOpenPurchase={openDetail} />}
       {activeView === 'relatorio' && <ComprasRelatorioPanel purchases={purchases} />}
       {activeView === 'centrocusto' && <ComprasCentroCustoPanel purchases={purchases} centers={centers} />}
@@ -740,20 +734,20 @@ export default function ComprasTab({ highlightId, onHighlightConsumed }: Compras
                     </td>
                     <td className="px-4 py-3">
                       <p className="font-medium text-zinc-800">{p.supplier}</p>
-                      {p.notes && <p className="text-xs text-zinc-400 truncate max-w-xs mt-0.5">{p.notes}</p>}
+                      {p.notes && <p className="text-xs text-zinc-400 truncate max-w-[240px] mt-0.5" title={p.notes}>{p.notes}</p>}
                     </td>
                     <td className="px-4 py-3 text-zinc-400 text-xs font-mono">{p.invoice_number || '—'}</td>
                     <td className="px-4 py-3">
                       <button
                         onClick={(e) => { e.stopPropagation(); toggleExpandRow(p.id); }}
-                        className="text-xs bg-zinc-100 hover:bg-amber-50 text-zinc-600 hover:text-amber-700 px-2 py-0.5 rounded-full cursor-pointer transition-colors flex items-center gap-1"
+                        className="text-xs bg-zinc-100 hover:bg-amber-50 text-zinc-600 hover:text-amber-700 px-2 py-0.5 rounded-full cursor-pointer transition-colors flex items-center gap-1 whitespace-nowrap"
                       >
                         {p.items?.length ?? 0} item{(p.items?.length ?? 0) !== 1 ? 's' : ''}
                         <i className={expandedRows.has(p.id) ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} />
                       </button>
                     </td>
                     <td className="px-4 py-3 text-right font-semibold text-zinc-900 tabular-nums whitespace-nowrap">{formatCurrency(p.total_amount)}</td>
-                    <td className="px-4 py-3 text-zinc-500 text-xs">{p.payment_method}</td>
+                    <td className="px-4 py-3 text-zinc-500 text-xs whitespace-nowrap">{p.payment_method}</td>
                     <td className="px-4 py-3">
                       <div className="flex flex-col gap-1">
                         <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-md w-fit ${STATUS_BADGE[p.payment_status] ?? 'bg-zinc-100 text-zinc-600'}`}>
@@ -772,10 +766,6 @@ export default function ComprasTab({ highlightId, onHighlightConsumed }: Compras
                     </td>
                     <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center justify-end gap-1">
-                        <button onClick={() => openDetail(p)}
-                          className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-zinc-100 text-zinc-400 hover:text-zinc-700 cursor-pointer" title="Ver detalhes">
-                          <i className="ri-eye-line text-sm" />
-                        </button>
                         <button
                           onClick={() => openEdit(p)}
                           disabled={checkingEdit === p.id}
@@ -867,7 +857,6 @@ export default function ComprasTab({ highlightId, onHighlightConsumed }: Compras
           </div>
         </>
       )}
-      </div>
 
       {/* Detalhe modal */}
       {detailPurchase && (
