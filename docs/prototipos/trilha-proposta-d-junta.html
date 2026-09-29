@@ -1,0 +1,390 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Trilha — proposta D (B + C)</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link href="https://cdn.jsdelivr.net/npm/remixicon@4.3.0/fonts/remixicon.css" rel="stylesheet" />
+<style>
+  body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; background:#fafafa; }
+  .tabnum { font-variant-numeric: tabular-nums; }
+  .sai { animation: sai .35s ease forwards; }
+  @keyframes sai { to { opacity:0; transform: translateX(24px); } }
+  .drawer { transition: transform .22s ease; } .fade { transition: opacity .2s; }
+</style>
+</head>
+<body class="text-zinc-800">
+<div class="p-4 md:p-6 space-y-5 max-w-[1400px] mx-auto">
+
+  <div class="rounded-xl border border-sky-200 bg-sky-50 px-4 py-2.5 text-xs text-sky-800">
+    <i class="ri-flask-line mr-1"></i><strong>Protótipo — Trilha "B + C".</strong> Dados de exemplo, fora do sistema. Resolva tarefas (sugestão ou "Resolver de outro jeito…"), clique no nome do caso para ver a trilha, troque para Esteira/Matriz, clique nas etapas do funil.
+  </div>
+
+  <!-- ── Topo: placar + funil ── -->
+  <div class="bg-white rounded-2xl border border-zinc-200 p-4 md:p-5">
+    <div class="flex flex-col lg:flex-row gap-5">
+      <div class="flex items-center gap-4 lg:w-[360px] shrink-0">
+        <div class="relative w-24 h-24 shrink-0">
+          <svg viewBox="0 0 36 36" class="w-24 h-24 -rotate-90">
+            <circle cx="18" cy="18" r="15.9" fill="none" stroke="#f4f4f5" stroke-width="3.4"/>
+            <circle id="anel" cx="18" cy="18" r="15.9" fill="none" stroke="#f59e0b" stroke-width="3.4" stroke-linecap="round" stroke-dasharray="0 100" style="transition:stroke-dasharray .5s"/>
+          </svg>
+          <div class="absolute inset-0 flex flex-col items-center justify-center"><span id="pct" class="text-xl font-bold tabnum"></span><span class="text-[10px] text-zinc-400">fechado</span></div>
+        </div>
+        <div class="min-w-0">
+          <div class="flex items-center gap-2">
+            <h2 class="text-base font-bold text-zinc-900 flex items-center gap-1.5"><i class="ri-route-line text-amber-500"></i>Trilha de setembro</h2>
+          </div>
+          <div class="flex items-center bg-white border border-zinc-200 rounded-xl overflow-hidden shadow-sm w-fit mt-1.5">
+            <button class="w-8 h-8 text-zinc-500 hover:bg-zinc-50"><i class="ri-arrow-left-s-line"></i></button>
+            <span class="px-2 text-xs font-bold">Setembro de 2026</span>
+            <button class="w-8 h-8 text-zinc-300"><i class="ri-arrow-right-s-line"></i></button>
+          </div>
+          <p class="text-xs text-zinc-500 mt-2" id="frase"></p>
+        </div>
+      </div>
+      <div class="flex-1 min-w-0">
+        <div class="flex items-baseline justify-between gap-2 mb-2">
+          <p class="text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Quanto do dinheiro do mês já passou por cada etapa</p>
+          <button id="limparEtapa" class="hidden text-xs text-zinc-500 underline">limpar etapa</button>
+        </div>
+        <div class="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-2" id="funil"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Barra: formas de ver + filtros ── -->
+  <div class="flex flex-wrap items-center gap-2 lg:gap-3">
+    <div class="flex gap-1 bg-zinc-100/80 rounded-xl p-1" id="modo"></div>
+    <label class="flex items-center gap-2 text-xs text-zinc-600 cursor-pointer select-none"><input type="checkbox" id="soUrg" class="accent-amber-500"> só urgentes</label>
+    <div class="relative ml-auto w-full sm:w-72">
+      <i class="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 text-sm"></i>
+      <input id="busca" placeholder="Fornecedor, nº da nota, valor…" class="w-full h-10 pl-9 pr-3 text-sm border border-zinc-200 rounded-xl shadow-sm focus:outline-none focus:border-amber-400 bg-white">
+    </div>
+  </div>
+
+  <!-- ── TAREFAS ── -->
+  <div id="vTarefas" class="grid grid-cols-1 lg:grid-cols-[270px_1fr] gap-4 items-start">
+    <div class="space-y-3 lg:sticky lg:top-4">
+      <nav class="bg-white rounded-2xl border border-zinc-200 p-2" id="grupos"></nav>
+      <div class="bg-white rounded-2xl border border-zinc-200 p-4">
+        <h3 class="text-sm font-bold text-zinc-800">Resolvido agora</h3>
+        <ul id="feitos" class="mt-2 space-y-1.5 text-xs max-h-48 overflow-y-auto"></ul>
+        <button id="desfazer" class="hidden mt-2 text-xs text-zinc-500 underline">desfazer o último</button>
+      </div>
+    </div>
+    <section class="space-y-3 min-w-0" id="lista"></section>
+  </div>
+
+  <!-- ── ESTEIRA ── -->
+  <div id="vEsteira" class="hidden">
+    <p class="text-[11px] text-zinc-400 mb-2"><i class="ri-information-line mr-1"></i>Cada caso fica na coluna da <strong class="text-zinc-500">primeira etapa que ainda não fechou</strong>.</p>
+    <div class="flex gap-3 overflow-x-auto pb-2" id="colunas"></div>
+  </div>
+
+  <!-- ── MATRIZ ── -->
+  <div id="vMatriz" class="hidden bg-white rounded-2xl border border-zinc-200 overflow-hidden">
+    <div class="px-5 py-3 border-b border-zinc-100"><h3 class="text-sm font-bold text-zinc-800">Todos os casos × etapas</h3><p class="text-xs text-zinc-400">Uma linha por caso — clique para ver a trilha</p></div>
+    <div class="overflow-x-auto"><table class="w-full min-w-[900px] text-sm"><thead id="mHead"></thead><tbody id="mBody" class="divide-y divide-zinc-100/80"></tbody></table></div>
+  </div>
+</div>
+
+<div id="veu" class="fixed inset-0 bg-zinc-900/20 fade opacity-0 pointer-events-none"></div>
+<aside id="gaveta" class="drawer fixed top-0 right-0 h-full w-full sm:w-[460px] bg-white shadow-2xl border-l border-zinc-200 translate-x-full overflow-y-auto"></aside>
+
+<script>
+const brl = v => v.toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
+const ETAPAS = [
+  { id:'documento', nome:'Documento', ic:'ri-file-text-line' }, { id:'lancamento', nome:'Lançamento', ic:'ri-shopping-cart-2-line' },
+  { id:'estoque', nome:'Estoque', ic:'ri-archive-2-line' }, { id:'conta', nome:'Conta a pagar', ic:'ri-bill-line' },
+  { id:'pagamento', nome:'Pagamento', ic:'ri-money-dollar-circle-line' }, { id:'banco', nome:'Banco', ic:'ri-bank-line' },
+];
+const EST = {
+  ok:{cor:'bg-emerald-500', txt:'text-emerald-700', cel:'bg-emerald-50 text-emerald-700', rot:'Feito', ic:'ri-check-line'},
+  pendente:{cor:'bg-amber-400', txt:'text-amber-700', cel:'bg-amber-50 text-amber-700', rot:'Falta fazer', ic:'ri-time-line'},
+  atrasado:{cor:'bg-red-500', txt:'text-red-700', cel:'bg-red-50 text-red-700', rot:'Atrasado', ic:'ri-alarm-warning-line'},
+  problema:{cor:'bg-red-500', txt:'text-red-700', cel:'bg-red-50 text-red-700', rot:'Problema', ic:'ri-error-warning-line'},
+  espera:{cor:'bg-zinc-200', txt:'text-zinc-400', cel:'bg-white text-zinc-400', rot:'Aguardando', ic:'ri-more-line'},
+  na:{cor:'bg-zinc-100', txt:'text-zinc-300', cel:'bg-zinc-50 text-zinc-300', rot:'Não se aplica', ic:'ri-subtract-line'},
+};
+const TIPO = { compra:['Compra','bg-blue-50 text-blue-700'], despesa:['Despesa','bg-violet-50 text-violet-700'], nota:['Nota','bg-zinc-100 text-zinc-700'], pagamento:['Banco','bg-orange-50 text-orange-700'] };
+const ruim = e => e==='pendente'||e==='atrasado'||e==='problema';
+const grave = e => e==='atrasado'||e==='problema';
+
+// ── Casos (a trilha de cada um) ──
+const C = (id,tipo,titulo,sub,data,valor,e,avisos=[]) => ({id,tipo,titulo,sub,data,valor,e,avisos});
+const casos = [
+  C('jumbo','compra','JUMBO COMERCIO DE UTILIDADES','NF 28811 · 5 itens','28/09',84.87,{documento:['ok','NF-e nº 28811'],lancamento:['ok','Compra lançada'],estoque:['ok','Entrou no estoque'],conta:['na','Paga à vista'],pagamento:['ok','Paga na hora','Dinheiro'],banco:['na','Pago em dinheiro']}),
+  C('toko','compra','TOKO FRIOS ALIMENTOS','NF 78421 · 4 itens','27/09',137.78,{documento:['ok','NF-e nº 78421'],lancamento:['ok','Compra lançada'],estoque:['ok','Entrou no estoque'],conta:['na','Paga à vista'],pagamento:['ok','Saiu do banco','27/09'],banco:['ok','Achado no extrato']}),
+  C('costa','compra','COSTA E MONTENEGRO','NF 14688 · 12 itens','01/09',1444,{documento:['ok','NF-e nº 14688'],lancamento:['ok','Compra lançada'],estoque:['ok','Entrou no estoque'],conta:['ok','Conta criada','vence 01/09'],pagamento:['atrasado','Vencida','28 dias'],banco:['espera','Aguardando pagamento']},['Conta vencida há 28 dias']),
+  C('beemax','compra','BEEMAX DISTRIBUIDORA','NF 5521 · 8 itens','12/09',149.49,{documento:['ok','NF-e nº 5521'],lancamento:['ok','Compra lançada'],estoque:['pendente','Aguardando recebimento'],conta:['ok','Conta criada','vence 19/09'],pagamento:['atrasado','Vencida','10 dias'],banco:['espera','Aguardando pagamento']},['Conta vencida há 10 dias']),
+  C('bebidas','compra','BEBIDAS PARANAGUÁ','NF 9903 · 20 itens','15/09',374.46,{documento:['ok','NF-e nº 9903'],lancamento:['ok','Compra lançada'],estoque:['problema','Recebida, estoque não entrou','recebida 16/09'],conta:['ok','Conta criada','vence 22/09'],pagamento:['atrasado','Vencida','7 dias'],banco:['espera','Aguardando pagamento']},['Recebida mas o estoque não entrou','Conta vencida há 7 dias']),
+  C('cozinha','compra','EL PATRON COZINHA INDUSTRIAL','NF 1203 · 31 itens','05/09',5553.23,{documento:['ok','NF-e nº 1203'],lancamento:['ok','Compra lançada'],estoque:['ok','Entrou no estoque'],conta:['ok','3 parcelas'],pagamento:['pendente','1 de 3 pagas','próxima 05/10'],banco:['ok','Achado no extrato']}),
+  C('atacadao','compra','ATACADÃO S.A.','NF 77120 · 44 itens','18/09',2310.15,{documento:['ok','NF-e nº 77120'],lancamento:['ok','Compra lançada'],estoque:['ok','Entrou no estoque'],conta:['ok','Conta criada','vence 18/10'],pagamento:['pendente','Em aberto','vence 18/10'],banco:['espera','Aguardando pagamento']}),
+  C('serra','compra','HORTIFRUTI SERRA VERDE','sem nota · 9 itens','22/09',412,{documento:['na','Sem nota fiscal'],lancamento:['ok','Compra lançada'],estoque:['ok','Entrou no estoque'],conta:['na','Paga à vista'],pagamento:['ok','Saiu do banco','22/09'],banco:['pendente','Não achado no extrato']}),
+  C('padaria','compra','PADARIA SÃO JOÃO','NF 441 · 2 itens','25/09',96,{documento:['ok','NF 441'],lancamento:['ok','Compra lançada'],estoque:['na','Sem insumo ligado'],conta:['problema','Compra sem conta a pagar'],pagamento:['espera','Aguardando conta'],banco:['espera','Aguardando pagamento']},['Compra sem conta a pagar']),
+  C('copel','despesa','COPEL','Energia elétrica','10/09',1873.4,{documento:['ok','Boleto'],lancamento:['ok','Despesa lançada','Energia'],estoque:['na','Não vai ao estoque'],conta:['ok','Conta criada'],pagamento:['ok','Paga','20/09'],banco:['ok','Achado no extrato']}),
+  C('sanepar','despesa','SANEPAR','Água e esgoto','12/09',512.7,{documento:['ok','Boleto'],lancamento:['ok','Despesa lançada','Água'],estoque:['na','Não vai ao estoque'],conta:['ok','Conta criada'],pagamento:['ok','Paga','25/09'],banco:['pendente','Não achado no extrato']}),
+  C('mare','despesa','CONTABILIDADE MARÉ','Honorários','05/09',950,{documento:['ok','NFS-e nº 2210'],lancamento:['pendente','Despesa sem classificação'],estoque:['na','Não vai ao estoque'],conta:['ok','Conta criada','vence 10/10'],pagamento:['pendente','Em aberto'],banco:['espera','Aguardando pagamento']}),
+  C('aluguel','despesa','IMOBILIÁRIA LITORAL','Aluguel da loja','01/09',6500,{documento:['na','Sem nota fiscal'],lancamento:['ok','Despesa lançada','Aluguel'],estoque:['na','Não vai ao estoque'],conta:['ok','Conta criada'],pagamento:['ok','Paga','05/09'],banco:['ok','Achado no extrato']}),
+  C('nortesul','nota','DISTRIBUIDORA NORTE SUL','NF-e 33012 · pela SEFAZ','24/09',870.3,{documento:['ok','NF-e nº 33012'],lancamento:['pendente','Nota ainda não lançada'],estoque:['espera','Aguardando lançamento'],conta:['espera','Ainda não criada'],pagamento:['espera','Aguardando conta'],banco:['espera','Aguardando pagamento']}),
+  C('embal','nota','EMBALAGENS PR','NF-e 6710 · pela SEFAZ','26/09',322.1,{documento:['ok','NF-e nº 6710'],lancamento:['pendente','Nota ainda não lançada'],estoque:['espera','Aguardando lançamento'],conta:['espera','Ainda não criada'],pagamento:['espera','Aguardando conta'],banco:['espera','Aguardando pagamento']}),
+  C('joao','pagamento','PIX — JOÃO P. SILVA','saída sem lançamento','19/09',250,{documento:['na','Sem nota fiscal'],lancamento:['problema','Pagamento sem lançamento'],estoque:['na','Não vai ao estoque'],conta:['na','—'],pagamento:['ok','Saiu do banco','19/09'],banco:['problema','No extrato, sem vínculo']},['Pix sem lançamento']),
+  C('porto','pagamento','PIX — MERCADO DO PORTO','saída sem lançamento','23/09',188.6,{documento:['na','Sem nota fiscal'],lancamento:['problema','Pagamento sem lançamento'],estoque:['na','Não vai ao estoque'],conta:['na','—'],pagamento:['ok','Saiu do banco','23/09'],banco:['problema','No extrato, sem vínculo']},['Pix sem lançamento']),
+  C('frigo','compra','FRIGORÍFICO LITORAL','NF 55012 · 6 itens','20/09',1980,{documento:['ok','NF-e nº 55012'],lancamento:['ok','Compra lançada'],estoque:['ok','Entrou no estoque'],conta:['ok','Conta criada','vence 04/10'],pagamento:['pendente','Em aberto','vence 04/10'],banco:['espera','Aguardando pagamento']}),
+  C('gas','compra','DISTRIBUIDORA DE GÁS PR','NF 9021 · 2 itens','21/09',260,{documento:['ok','NF-e nº 9021'],lancamento:['ok','Compra lançada'],estoque:['na','Sem insumo ligado'],conta:['na','Paga à vista'],pagamento:['ok','Saiu do banco','21/09'],banco:['ok','Achado no extrato']}),
+  C('meta','despesa','META (Facebook)','Anúncios · pré-pago','03/09',600,{documento:['ok','Nota de consumo'],lancamento:['ok','Despesa lançada','Marketing'],estoque:['na','Não vai ao estoque'],conta:['na','Paga à vista'],pagamento:['ok','Saiu do banco'],banco:['ok','Achado no extrato']}),
+];
+const porId = Object.fromEntries(casos.map(c=>[c.id,c]));
+casos.forEach(c=>{ c.etapas = ETAPAS.map(et=>({...et, estado:c.e[et.id][0], resumo:c.e[et.id][1], det:c.e[et.id][2]})); });
+function recalc(c){ const p=c.etapas.findIndex(x=>x.estado!=='ok'&&x.estado!=='na'); c.coluna=p<0?'fim':c.etapas[p].id; c.sit=c.etapas.some(x=>grave(x.estado))?'atencao':p<0?'ok':'andamento'; }
+casos.forEach(recalc);
+
+// ── "Resolver de outro jeito": TODAS as saídas possíveis por tipo de ação ──
+// campo: data | categoria | texto | escolha:[...] | nenhum
+const CATS = ['Mercadoria (CMV)','Embalagens','Energia','Água','Serviços contábeis','Serviços de terceiros','Manutenção','Marketing','Administrativo','Impostos e taxas'];
+const OUTRO = {
+  pix: [
+    {l:'Lançar como despesa', ic:'ri-bill-line', campo:'categoria'},
+    {l:'Lançar como compra de mercadoria', ic:'ri-shopping-cart-2-line', campo:'texto', ph:'o que foi comprado (ou use "Ler notinha")'},
+    {l:'Diária de freelancer', ic:'ri-user-line', campo:'escolha', ops:['João P. Silva','Ana Costa','Cadastrar novo freelancer…']},
+    {l:'Pagamento de prestador MEI', ic:'ri-briefcase-line', campo:'escolha', ops:['Eduardo (manutenção)','Cadastrar novo prestador…']},
+    {l:'Ligar a uma conta que já existe', ic:'ri-links-line', campo:'escolha', ops:['Conta: Contabilidade Maré — R$ 950,00 (vence 10/10)','Conta: Atacadão — R$ 2.310,15 (vence 18/10)']},
+    {l:'Transferência entre contas da loja', ic:'ri-exchange-line', campo:'escolha', ops:['Para a conta da maquininha','Para o caixa (troco)']},
+    {l:'Retirada do sócio / não entra no DRE', ic:'ri-forbid-line', campo:'texto', ph:'motivo (fica registrado)'},
+  ],
+  vencidas: [
+    {l:'Pagar agora (Pix/boleto pelo Inter)', ic:'ri-bank-line', campo:'nenhum'},
+    {l:'Já paguei — ligar ao extrato', ic:'ri-links-line', campo:'escolha', ops:['Saída 23/09 · R$ 1.444,00 · COSTA E MONT','Procurar outra linha…']},
+    {l:'Paguei em dinheiro', ic:'ri-money-dollar-box-line', campo:'data'},
+    {l:'Renegociei — mudar vencimento', ic:'ri-calendar-event-line', campo:'data'},
+    {l:'Cancelar a conta (não é devida)', ic:'ri-close-circle-line', campo:'texto', ph:'motivo (fica registrado)'},
+  ],
+  estoque: [
+    {l:'Vincular os itens aos insumos aqui', ic:'ri-links-line', campo:'nenhum'},
+    {l:'Chegou em outra data', ic:'ri-calendar-line', campo:'data'},
+    {l:'Chegou só uma parte', ic:'ri-contrast-line', campo:'texto', ph:'o que faltou'},
+    {l:'Foi devolvido', ic:'ri-arrow-go-back-line', campo:'texto', ph:'motivo'},
+    {l:'Não vai ao estoque (uso e consumo)', ic:'ri-forbid-line', campo:'nenhum'},
+  ],
+  notas: [
+    {l:'Lançar como compra', ic:'ri-shopping-cart-2-line', campo:'nenhum'},
+    {l:'Lançar como despesa', ic:'ri-bill-line', campo:'categoria'},
+    {l:'Já lancei — ligar à compra existente', ic:'ri-links-line', campo:'escolha', ops:['Compra 24/09 · R$ 870,30 · Norte Sul','Procurar outra…']},
+    {l:'Bonificação (sem pagamento)', ic:'ri-gift-line', campo:'nenhum'},
+    {l:'Não é desta loja / ignorar', ic:'ri-forbid-line', campo:'texto', ph:'motivo'},
+  ],
+  classificar: [ {l:'Escolher outra categoria', ic:'ri-price-tag-3-line', campo:'categoria'}, {l:'Não entra no DRE', ic:'ri-forbid-line', campo:'texto', ph:'motivo'} ],
+  extrato: [
+    {l:'Ligar a outra linha do extrato', ic:'ri-links-line', campo:'escolha', ops:['21/09 · R$ 412,00 · PIX ENVIADO','Procurar outra…']},
+    {l:'Foi pago em dinheiro', ic:'ri-money-dollar-box-line', campo:'data'},
+    {l:'Ainda não saiu do banco', ic:'ri-time-line', campo:'nenhum'},
+    {l:'Foi pago por outra conta (Itaú, cartão…)', ic:'ri-bank-card-line', campo:'escolha', ops:['Itaú (sem API)','Cartão de crédito da loja']},
+  ],
+  conta: [
+    {l:'Criar conta a pagar', ic:'ri-add-line', campo:'data'},
+    {l:'Foi paga em dinheiro', ic:'ri-money-dollar-box-line', campo:'data'},
+    {l:'Foi paga pelo banco — ligar ao extrato', ic:'ri-links-line', campo:'escolha', ops:['25/09 · R$ 96,00 · PADARIA S JOAO']},
+    {l:'Bonificação (sem pagamento)', ic:'ri-gift-line', campo:'nenhum'},
+  ],
+};
+
+const GRUPOS = [
+  { id:'pix', ic:'ri-bank-line', nome:'Ligar saídas do banco', desc:'Saiu dinheiro e não virou lançamento', cor:'red', lote:'Aceitar as sugestões marcadas' },
+  { id:'vencidas', ic:'ri-alarm-warning-line', nome:'Pagar contas vencidas', desc:'Juros correndo', cor:'red', lote:'Pagar marcadas pelo Inter' },
+  { id:'conta', ic:'ri-bill-line', nome:'Criar conta a pagar', desc:'Compra não paga e sem conta', cor:'red' },
+  { id:'estoque', ic:'ri-archive-2-line', nome:'Acertar estoque', desc:'Recebido e não entrou / confirmar', cor:'amber', lote:'Confirmar recebimento das marcadas' },
+  { id:'notas', ic:'ri-file-text-line', nome:'Lançar notas que chegaram', desc:'NF-e da SEFAZ sem lançamento', cor:'amber', lote:'Lançar marcadas com a sugestão' },
+  { id:'classificar', ic:'ri-price-tag-3-line', nome:'Classificar no DRE', desc:'Despesa sem categoria', cor:'amber' },
+  { id:'extrato', ic:'ri-links-line', nome:'Achar no extrato', desc:'Pago no sistema, saída não ligada', cor:'amber', lote:'Ligar as marcadas' },
+];
+// tarefa → caso + etapa que ela fecha + sugestões
+let T = [
+  { id:1, g:'pix', caso:'joao', etapas:['lancamento','banco'], urg:true, sel:true, porque:'João recebeu R$ 250,00 em 3 sábados de agosto, todos lançados como diária.', sug:[['Lançar como diária de freelancer (João P. Silva)','ri-user-line']] },
+  { id:2, g:'pix', caso:'porto', etapas:['lancamento','banco'], urg:true, sel:false, porque:'Último lançamento para este destinatário foi compra de hortifruti.', sug:[['Lançar como compra — Hortifruti','ri-shopping-cart-2-line'],['Ler a notinha (foto/QR)','ri-camera-line']] },
+  { id:3, g:'vencidas', caso:'costa', etapas:['pagamento','banco'], urg:true, sel:true, porque:'28 dias de atraso · juros estimados R$ 43,32 se pagar hoje.', sug:[['Pagar agora — R$ 1.487,32 com juros','ri-bank-line']] },
+  { id:4, g:'vencidas', caso:'beemax', etapas:['pagamento','banco'], urg:true, sel:true, porque:'10 dias de atraso.', sug:[['Pagar agora','ri-bank-line']] },
+  { id:5, g:'vencidas', caso:'bebidas', etapas:['pagamento','banco'], urg:true, sel:true, porque:'7 dias de atraso.', sug:[['Pagar agora','ri-bank-line']] },
+  { id:6, g:'conta', caso:'padaria', etapas:['conta'], urg:true, porque:'Não está paga e não há conta. A padaria costuma dar 30 dias.', sug:[['Criar conta vencendo 25/10','ri-add-line']] },
+  { id:7, g:'estoque', caso:'bebidas', etapas:['estoque'], urg:true, porque:'Recebida em 16/09, mas 12 de 20 itens não têm insumo ligado.', sug:[['Vincular os 12 itens aqui','ri-links-line']] },
+  { id:8, g:'estoque', caso:'beemax', etapas:['estoque'], urg:false, sel:true, porque:'Lançada em 12/09 e o recebimento não foi confirmado.', sug:[['Chegou hoje','ri-check-line']] },
+  { id:9, g:'notas', caso:'nortesul', etapas:['lancamento','estoque','conta'], urg:false, sel:true, porque:'Os 7 itens já têm vínculo pela Classificação; prazo de 30 dias veio no XML.', sug:[['Lançar como compra (conta vence 24/10)','ri-shopping-cart-2-line']] },
+  { id:10, g:'notas', caso:'embal', etapas:['lancamento','estoque','conta'], urg:false, sel:true, porque:'Regra do fornecedor: embalagem é despesa. O boleto já está nas Pendências.', sug:[['Lançar como despesa — Embalagens','ri-bill-line']] },
+  { id:11, g:'classificar', caso:'mare', etapas:['lancamento'], urg:false, porque:'Honorários de contador nos meses anteriores foram para:', sug:[['Serviços contábeis','ri-price-tag-3-line'],['Serviços de terceiros','ri-price-tag-3-line']] },
+  { id:12, g:'extrato', caso:'serra', etapas:['banco'], urg:false, sel:true, porque:'Mesmo valor e mesma data no extrato.', sug:[['Ligar a: Pix 22/09 · R$ 412,00 · SERRA VERDE HORTI','ri-links-line']] },
+  { id:13, g:'extrato', caso:'sanepar', etapas:['banco'], urg:false, sel:true, porque:'Mesmo valor, 1 dia depois do pagamento.', sug:[['Ligar a: Pagto boleto 26/09 · R$ 512,70','ri-links-line']] },
+];
+const TOTAL = T.length;
+
+let modo='tarefas', grupo=null, etapaF=null, soUrg=false, busca='', feitos=[], abertoOutro=null, escolhido={};
+const passa = c => (!soUrg||c.sit==='atencao') && (!etapaF||ruim(c.etapas.find(e=>e.id===etapaF).estado)) && (!busca||(c.titulo+' '+c.sub+' '+c.valor.toFixed(2).replace('.',',')).toLowerCase().includes(busca));
+const passaT = t => { const c=porId[t.caso]; return (!soUrg||t.urg) && (!etapaF||t.etapas.includes(etapaF)) && (!busca||(c.titulo+' '+c.sub+' '+c.valor.toFixed(2).replace('.',',')).toLowerCase().includes(busca)); };
+
+function topo(){
+  const ok=casos.filter(c=>c.sit==='ok').length, pct=Math.round(ok/casos.length*100);
+  const a=document.getElementById('anel'); a.setAttribute('stroke-dasharray',`${pct} 100`); a.setAttribute('stroke', pct===100?'#10b981':pct>=70?'#10b981':'#f59e0b');
+  document.getElementById('pct').textContent=pct+'%';
+  const urg=T.filter(t=>t.urg).length;
+  document.getElementById('frase').innerHTML = T.length? `<strong>${T.length} tarefas</strong> para fechar o mês${urg?` · <span class="text-red-600 font-semibold">${urg} urgentes</span>`:''} · ${ok} de ${casos.length} casos completos` : '<span class="text-emerald-700 font-semibold">Mês fechado</span> — nota, estoque, conta, pagamento e banco batem em todos os casos.';
+  document.getElementById('funil').innerHTML = ETAPAS.map(et=>{
+    let ok=0,pend=0,prob=0,n=0;
+    casos.forEach(c=>{const e=c.etapas.find(x=>x.id===et.id).estado; if(e==='na')return; if(e==='ok')ok+=c.valor; else if(grave(e)){prob+=c.valor;n++} else {pend+=c.valor; if(ruim(e))n++;}});
+    const tot=ok+pend+prob||1, p=Math.round(ok/tot*100), sel=etapaF===et.id;
+    return `<button data-e="${et.id}" class="text-left rounded-xl border p-2.5 transition ${sel?'border-amber-400 ring-2 ring-amber-100 bg-amber-50/40':'border-zinc-200 hover:border-zinc-300'}">
+      <div class="flex items-center justify-between gap-1"><span class="flex items-center gap-1.5 text-[11px] font-semibold text-zinc-600 truncate"><i class="${et.ic}"></i>${et.nome}</span>
+      ${n?`<span class="text-[10px] font-bold px-1.5 rounded-md ${prob?'bg-red-50 text-red-600':'bg-amber-50 text-amber-700'}">${n}</span>`:'<i class="ri-check-double-line text-emerald-500 text-xs"></i>'}</div>
+      <p class="text-lg font-bold tabnum mt-1 ${p===100?'text-emerald-700':''}">${p}%</p>
+      <div class="flex h-1.5 rounded-full overflow-hidden bg-zinc-100 gap-px"><div class="bg-emerald-500" style="width:${ok/tot*100}%"></div><div class="bg-amber-400" style="width:${pend/tot*100}%"></div><div class="bg-red-500" style="width:${prob/tot*100}%"></div></div>
+    </button>`;}).join('');
+  document.querySelectorAll('#funil button').forEach(b=>b.onclick=()=>{etapaF=etapaF===b.dataset.e?null:b.dataset.e; render();});
+  document.getElementById('limparEtapa').classList.toggle('hidden',!etapaF);
+  const M=[['tarefas','Tarefas','ri-checkbox-multiple-line',T.length],['esteira','Esteira','ri-layout-column-line'],['matriz','Matriz','ri-grid-line']];
+  document.getElementById('modo').innerHTML = M.map(([id,l,ic,n])=>`<button data-m="${id}" class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap ${modo===id?'bg-white text-amber-600 shadow-sm':'text-zinc-500 hover:text-zinc-800'}"><i class="${ic}"></i>${l}${n?` <span class="text-[10px] bg-amber-500 text-white rounded-full px-1.5">${n}</span>`:''}</button>`).join('');
+  document.querySelectorAll('#modo button').forEach(b=>b.onclick=()=>{modo=b.dataset.m; render();});
+}
+
+// ── Tarefas ──
+function nav(){
+  const L=T.filter(passaT);
+  document.getElementById('grupos').innerHTML = [`<button data-g="" class="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-left ${!grupo?'bg-amber-50 text-amber-700':'hover:bg-zinc-50'}"><i class="ri-inbox-line"></i><span class="flex-1 text-sm font-semibold">Todas</span><span class="text-xs font-bold tabnum">${L.length}</span></button>`]
+  .concat(GRUPOS.map(g=>{const n=L.filter(t=>t.g===g.id).length, total=T.filter(t=>t.g===g.id).length;
+    if(!total) return `<div class="flex items-center gap-2.5 px-3 py-2 text-zinc-300"><i class="${g.ic}"></i><span class="flex-1 text-sm line-through truncate">${g.nome}</span><i class="ri-check-line text-emerald-400"></i></div>`;
+    return `<button data-g="${g.id}" class="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-left ${grupo===g.id?'bg-amber-50 text-amber-700':'hover:bg-zinc-50'} ${n?'':'opacity-50'}"><i class="${g.ic} ${g.cor==='red'?'text-red-500':'text-amber-500'}"></i><span class="flex-1 min-w-0"><span class="block text-sm font-semibold truncate">${g.nome}</span><span class="block text-[11px] text-zinc-400 truncate">${g.desc}</span></span><span class="text-[11px] font-bold px-1.5 py-0.5 rounded-md ${g.cor==='red'?'bg-red-50 text-red-600':'bg-amber-50 text-amber-700'}">${n}</span></button>`;})).join('');
+  document.querySelectorAll('#grupos button').forEach(b=>b.onclick=()=>{grupo=b.dataset.g||null; render();});
+}
+function campoHTML(t,i,o){
+  const k=`${t.id}-${i}`;
+  if(o.campo==='nenhum') return '';
+  if(o.campo==='data') return `<input type="date" value="2026-09-29" class="h-9 border border-zinc-200 rounded-lg px-2 text-xs">`;
+  if(o.campo==='texto') return `<input placeholder="${o.ph||''}" class="h-9 w-full sm:w-72 border border-zinc-200 rounded-lg px-2 text-xs">`;
+  if(o.campo==='categoria') return `<select class="h-9 border border-zinc-200 rounded-lg px-2 text-xs bg-white">${CATS.map(c=>`<option>${c}</option>`).join('')}</select>`;
+  if(o.campo==='escolha') return `<select class="h-9 w-full sm:w-auto max-w-full border border-zinc-200 rounded-lg px-2 text-xs bg-white">${o.ops.map(c=>`<option>${c}</option>`).join('')}</select>`;
+  return '';
+}
+function tarefa(t){
+  const c=porId[t.caso], g=GRUPOS.find(x=>x.id===t.g), aberto=abertoOutro===t.id, esc=escolhido[t.id];
+  const outros=OUTRO[t.g];
+  return `<div id="t${t.id}" class="rounded-xl border ${t.urg?'border-red-200 bg-red-50/20':'border-zinc-200 bg-white'} p-3">
+    <div class="flex gap-3">
+      ${g.lote?`<input type="checkbox" data-s="${t.id}" ${t.sel?'checked':''} class="mt-1 accent-amber-500" title="Marcar para resolver em lote com a sugestão">`:''}
+      <div class="flex-1 min-w-0">
+        <div class="flex items-start justify-between gap-2">
+          <button data-caso="${c.id}" class="min-w-0 text-left group"><p class="text-sm font-semibold text-zinc-800 truncate group-hover:underline">${t.urg?'<i class="ri-fire-fill text-red-500 mr-1"></i>':''}${c.titulo}</p><p class="text-[11px] text-zinc-400">${c.data} · ${c.sub} · <span class="text-zinc-500">ver trilha <i class="ri-arrow-right-s-line"></i></span></p></button>
+          <span class="text-sm font-bold tabnum whitespace-nowrap">${brl(c.valor)}</span>
+        </div>
+        <div class="mt-2 rounded-lg bg-amber-50/60 border border-amber-100 px-2.5 py-2">
+          <p class="text-[11px] text-amber-800 flex items-start gap-1.5"><i class="ri-sparkling-2-line mt-px"></i><span><strong>Sugestão</strong> — ${t.porque}</span></p>
+          <div class="flex flex-wrap gap-1.5 mt-2">
+            ${t.sug.map(([l,ic],i)=>`<button data-sug="${t.id}" data-l="${l}" class="text-xs px-2.5 py-1.5 rounded-lg font-semibold ${i===0?'bg-amber-500 text-white hover:bg-amber-600':'bg-white border border-amber-200 text-amber-800 hover:bg-amber-50'}"><i class="${ic}"></i> ${l}</button>`).join('')}
+            <button data-outro="${t.id}" class="text-xs px-2.5 py-1.5 rounded-lg font-semibold border ${aberto?'bg-zinc-800 text-white border-zinc-800':'bg-white border-zinc-300 text-zinc-700 hover:bg-zinc-50'}"><i class="ri-more-2-line"></i> Resolver de outro jeito…</button>
+          </div>
+        </div>
+        ${aberto?`<div class="mt-2 rounded-lg border border-zinc-200 bg-white">
+          <p class="px-3 pt-2.5 pb-1.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Nenhuma sugestão serve? Escolha o que aconteceu</p>
+          <div class="divide-y divide-zinc-100">
+          ${outros.map((o,i)=>`<label class="flex flex-col sm:flex-row sm:items-center gap-2 px-3 py-2 cursor-pointer ${esc===i?'bg-amber-50/50':'hover:bg-zinc-50'}">
+            <span class="flex items-center gap-2 text-sm flex-1 min-w-0"><input type="radio" name="o${t.id}" data-esc="${t.id}" data-i="${i}" ${esc===i?'checked':''} class="accent-amber-500"><i class="${o.ic} text-zinc-400"></i>${o.l}</span>
+            ${esc===i?`<span class="flex flex-wrap items-center gap-2 pl-6 sm:pl-0">${campoHTML(t,i,o)}<button data-conf="${t.id}" data-l="${o.l}" class="h-9 px-3 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-xs font-semibold"><i class="ri-check-line"></i> Confirmar</button></span>`:''}
+          </label>`).join('')}
+          <div class="px-3 py-2 flex items-center justify-between gap-2 bg-zinc-50/70 rounded-b-lg">
+            <span class="text-[11px] text-zinc-400">Caso diferente de tudo isso?</span>
+            <button class="text-xs font-semibold text-zinc-600 hover:text-zinc-900"><i class="ri-external-link-line"></i> Abrir na tela de ${g.id==='vencidas'?'Contas a pagar':g.id==='notas'?'Notas de entrada':g.id==='estoque'?'Compras':g.id==='pix'||g.id==='extrato'?'Conciliação':'Contas a pagar'}</button>
+          </div></div></div>`:''}
+      </div>
+    </div></div>`;
+}
+function lista(){
+  const L=T.filter(passaT), gs=grupo?GRUPOS.filter(g=>g.id===grupo):GRUPOS;
+  const html=gs.map(g=>{const ts=L.filter(t=>t.g===g.id).sort((a,b)=>b.urg-a.urg||porId[b.caso].valor-porId[a.caso].valor); if(!ts.length) return '';
+    return `<div class="bg-white rounded-2xl border border-zinc-200 overflow-hidden">
+      <div class="flex items-center justify-between px-4 md:px-5 py-3 border-b border-zinc-100 gap-3 flex-wrap">
+        <div class="flex items-center gap-2.5 min-w-0"><span class="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${g.cor==='red'?'bg-red-50 text-red-600':'bg-amber-50 text-amber-600'}"><i class="${g.ic}"></i></span>
+          <div class="min-w-0"><h3 class="text-sm font-bold text-zinc-800">${g.nome} <span class="text-zinc-400 font-normal">· ${ts.length}</span></h3><p class="text-xs text-zinc-400 truncate">${g.desc} · ${brl(ts.reduce((s,t)=>s+porId[t.caso].valor,0))}</p></div></div>
+        ${g.lote?`<button data-lote="${g.id}" class="flex items-center gap-1.5 px-3 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 rounded-xl text-xs font-semibold text-zinc-600 shadow-sm whitespace-nowrap"><i class="ri-stack-line"></i>${g.lote}</button>`:''}
+      </div><div class="p-3 space-y-2">${ts.map(tarefa).join('')}</div></div>`;}).join('');
+  document.getElementById('lista').innerHTML = html || `<div class="bg-white rounded-2xl border border-emerald-200 py-16 text-center"><i class="ri-checkbox-circle-fill text-5xl text-emerald-400 block mb-2"></i><p class="font-semibold">Nada pendente ${etapaF||busca||soUrg?'com esses filtros':''}</p></div>`;
+  document.querySelectorAll('[data-sug]').forEach(b=>b.onclick=()=>resolver(+b.dataset.sug,b.dataset.l));
+  document.querySelectorAll('[data-conf]').forEach(b=>b.onclick=e=>{e.preventDefault(); resolver(+b.dataset.conf,b.dataset.l+' (manual)');});
+  document.querySelectorAll('[data-outro]').forEach(b=>b.onclick=()=>{const id=+b.dataset.outro; abertoOutro=abertoOutro===id?null:id; lista();});
+  document.querySelectorAll('[data-esc]').forEach(r=>r.onchange=()=>{escolhido[+r.dataset.esc]=+r.dataset.i; lista();});
+  document.querySelectorAll('[data-s]').forEach(c=>c.onchange=()=>{T.find(t=>t.id==c.dataset.s).sel=c.checked;});
+  document.querySelectorAll('[data-lote]').forEach(b=>b.onclick=()=>{const g=b.dataset.lote; T.filter(t=>t.g===g&&t.sel&&passaT(t)).map(t=>t.id).forEach(id=>resolver(id,'em lote: '+GRUPOS.find(x=>x.id===g).lote,true)); setTimeout(render,380);});
+  bindCasos();
+}
+function resolver(id,rotulo,lote){
+  const t=T.find(x=>x.id===id); if(!t) return;
+  const el=document.getElementById('t'+id); if(el) el.classList.add('sai');
+  setTimeout(()=>{
+    const c=porId[t.caso], antes=c.etapas.map(e=>({...e}));
+    t.etapas.forEach(eid=>{const e=c.etapas.find(x=>x.id===eid); if(ruim(e.estado)||e.estado==='espera'){ e.estado='ok'; e.resumo=rotulo.replace(' (manual)',''); }});
+    // o que estava esperando essa etapa passa a "falta fazer" (ex.: conta criada → pagamento em aberto)
+    const i=c.etapas.findIndex(e=>e.estado==='espera'); if(i>=0 && c.etapas.slice(0,i).every(e=>e.estado==='ok'||e.estado==='na')) { c.etapas[i].estado='pendente'; }
+    c.avisos=c.avisos.filter(()=>c.etapas.some(e=>grave(e.estado))); recalc(c);
+    T=T.filter(x=>x.id!==id); if(abertoOutro===id) abertoOutro=null; feitos.unshift({t,rotulo,antes});
+    if(!lote) render();
+  }, lote?0:330);
+}
+function feitosUI(){
+  document.getElementById('feitos').innerHTML = feitos.length ? feitos.map(f=>`<li class="flex items-start gap-1.5"><i class="ri-check-line text-emerald-500 mt-px"></i><span><strong class="text-zinc-700">${porId[f.t.caso].titulo}</strong><br><span class="text-zinc-400">${f.rotulo}</span></span></li>`).join('') : '<li class="text-zinc-400">Nada ainda — comece pelos urgentes.</li>';
+  document.getElementById('desfazer').classList.toggle('hidden',!feitos.length);
+}
+document.getElementById('desfazer').onclick=()=>{const f=feitos.shift(); if(!f) return; const c=porId[f.t.caso]; c.etapas=f.antes; recalc(c); T.push(f.t); render();};
+
+// ── Esteira e matriz (da proposta B) ──
+const mini = c => `<div class="flex gap-0.5 mt-2">${c.etapas.map(e=>`<span title="${e.nome}: ${e.resumo}" class="h-1.5 flex-1 rounded-full ${EST[e.estado].cor}"></span>`).join('')}</div>`;
+function esteira(){
+  const L=casos.filter(passa), cols=[...ETAPAS,{id:'fim',nome:'Concluído',ic:'ri-checkbox-circle-line'}];
+  document.getElementById('colunas').innerHTML = cols.map(col=>{
+    const cs=L.filter(c=>c.coluna===col.id).sort((a,b)=>(b.sit==='atencao')-(a.sit==='atencao')||b.valor-a.valor), fim=col.id==='fim';
+    return `<div class="shrink-0 w-[250px] flex flex-col rounded-2xl ${fim?'bg-emerald-50/50 border border-emerald-100':'bg-zinc-100/70'}">
+      <div class="px-3 pt-3 pb-2"><div class="flex items-center justify-between"><span class="text-xs font-bold ${fim?'text-emerald-700':'text-zinc-700'}"><i class="${col.ic} mr-1"></i>${fim?'Concluído':'Parado em '+col.nome.toLowerCase()}</span><span class="text-[11px] font-bold text-zinc-500 bg-white rounded-md px-1.5">${cs.length}</span></div>
+      <p class="text-[11px] text-zinc-400 tabnum">${brl(cs.reduce((s,c)=>s+c.valor,0))}</p></div>
+      <div class="px-2 pb-2 space-y-2 max-h-[560px] overflow-y-auto">${cs.map(c=>{const pe=c.coluna==='fim'?null:c.etapas.find(e=>e.id===c.coluna); const nt=T.filter(t=>t.caso===c.id).length;
+        return `<button data-caso="${c.id}" class="w-full text-left rounded-xl border border-zinc-200 border-l-4 ${c.sit==='atencao'?'border-l-red-500':c.sit==='ok'?'border-l-emerald-500':'border-l-amber-400'} bg-white p-3 hover:shadow-sm">
+          <div class="flex justify-between gap-2"><span class="text-[10px] font-semibold px-1.5 py-0.5 rounded ${TIPO[c.tipo][1]}">${TIPO[c.tipo][0]}</span><span class="text-sm font-bold tabnum">${brl(c.valor)}</span></div>
+          <p class="text-[13px] font-semibold mt-1.5 leading-snug">${c.titulo}</p><p class="text-[11px] text-zinc-400">${c.data} · ${c.sub}</p>
+          ${pe?`<p class="text-[11px] mt-1.5 font-semibold ${EST[pe.estado].txt}"><i class="${EST[pe.estado].ic}"></i> ${pe.resumo}</p>`:''}
+          ${nt?`<p class="text-[11px] mt-1 text-amber-700"><i class="ri-checkbox-multiple-line"></i> ${nt} tarefa${nt>1?'s':''}</p>`:''}${mini(c)}</button>`;}).join('')||'<p class="text-[11px] text-zinc-400 text-center py-6">nada aqui</p>'}</div></div>`;}).join('');
+  bindCasos();
+}
+function matriz(){
+  const L=casos.filter(passa).sort((a,b)=>({atencao:0,andamento:1,ok:2}[a.sit]-{atencao:0,andamento:1,ok:2}[b.sit])||b.valor-a.valor);
+  document.getElementById('mHead').innerHTML=`<tr class="border-b border-zinc-200 text-zinc-400"><th class="text-left pl-5 pr-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide">Caso</th><th class="text-right px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide">Valor</th>${ETAPAS.map(e=>`<th class="px-2 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-center"><i class="${e.ic} block text-sm"></i>${e.nome}</th>`).join('')}</tr>`;
+  document.getElementById('mBody').innerHTML=L.map(c=>`<tr data-caso="${c.id}" class="hover:bg-amber-50/40 cursor-pointer"><td class="pl-5 pr-3 py-2"><p class="font-semibold truncate max-w-[240px]">${c.titulo}</p><p class="text-[11px] text-zinc-400">${c.data} · ${c.sub}</p></td><td class="px-3 text-right font-semibold tabnum whitespace-nowrap">${brl(c.valor)}</td>${c.etapas.map(e=>`<td class="px-1.5 py-2"><div class="rounded-lg px-2 py-1.5 text-[11px] leading-tight ${EST[e.estado].cel} min-h-[34px]"><i class="${EST[e.estado].ic}"></i> ${e.estado==='na'?'—':e.resumo}</div></td>`).join('')}</tr>`).join('');
+  bindCasos();
+}
+
+// ── Gaveta: trilha do caso + as tarefas dele ──
+function bindCasos(){ document.querySelectorAll('[data-caso]').forEach(el=>el.onclick=()=>abrir(porId[el.dataset.caso])); }
+function abrir(c){
+  const ts=T.filter(t=>t.caso===c.id);
+  document.getElementById('gaveta').innerHTML=`<div class="sticky top-0 bg-white border-b border-zinc-100 px-5 py-4 flex items-start justify-between gap-3 z-10">
+    <div class="min-w-0"><span class="text-[11px] font-semibold px-2 py-0.5 rounded-md ${TIPO[c.tipo][1]}">${TIPO[c.tipo][0]}</span><p class="text-base font-bold mt-1.5">${c.titulo}</p><p class="text-xs text-zinc-400">${c.data} · ${c.sub}</p></div>
+    <div class="text-right shrink-0"><p class="text-lg font-bold tabnum">${brl(c.valor)}</p><button id="fechar" class="text-zinc-400 hover:text-zinc-700 text-xl"><i class="ri-close-line"></i></button></div></div>
+    <div class="px-5 py-4 space-y-4">
+      ${ts.length?`<div class="rounded-xl border border-amber-200 bg-amber-50/50 px-4 py-3"><p class="text-xs font-semibold text-amber-800 mb-1.5"><i class="ri-checkbox-multiple-line"></i> ${ts.length} tarefa${ts.length>1?'s':''} para fechar este caso</p>${ts.map(t=>`<button data-ir="${t.id}" class="block text-xs text-amber-900 underline text-left">${GRUPOS.find(g=>g.id===t.g).nome}: ${t.sug[0][0]}</button>`).join('')}</div>`
+        : c.sit==='ok'?`<div class="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs text-emerald-800"><i class="ri-checkbox-circle-fill"></i> Trilha completa — da nota ao banco.</div>`:''}
+      <ol>${c.etapas.map((e,i)=>`<li class="flex gap-3 pb-4 last:pb-0 relative">${i<5?`<span class="absolute left-[15px] top-8 bottom-0 w-0.5 ${e.estado==='ok'?'bg-emerald-300':'bg-zinc-200'}"></span>`:''}
+        <div class="relative z-10 w-8 h-8 shrink-0 rounded-full flex items-center justify-center text-sm ${e.estado==='ok'?'bg-emerald-500 text-white':grave(e.estado)?'bg-red-500 text-white':e.estado==='pendente'?'bg-amber-400 text-white':'bg-zinc-100 text-zinc-400 border border-dashed border-zinc-300'}"><i class="${e.ic}"></i></div>
+        <div class="pt-0.5 min-w-0"><p class="text-[11px] text-zinc-400 uppercase tracking-wide font-semibold">${e.nome} · <span class="${EST[e.estado].txt}">${EST[e.estado].rot}</span></p><p class="text-sm font-semibold ${e.estado==='na'||e.estado==='espera'?'text-zinc-400':''}">${e.resumo}</p>${e.det?`<p class="text-xs text-zinc-500">${e.det}</p>`:''}</div></li>`).join('')}</ol>
+    </div>`;
+  document.getElementById('gaveta').classList.remove('translate-x-full'); document.getElementById('veu').classList.remove('opacity-0','pointer-events-none');
+  document.getElementById('fechar').onclick=fechar;
+  document.querySelectorAll('[data-ir]').forEach(b=>b.onclick=()=>{fechar(); modo='tarefas'; grupo=null; render(); setTimeout(()=>{const el=document.getElementById('t'+b.dataset.ir); el&&el.scrollIntoView({behavior:'smooth',block:'center'}); el&&el.classList.add('ring-2','ring-amber-400');},50);});
+}
+function fechar(){ document.getElementById('gaveta').classList.add('translate-x-full'); document.getElementById('veu').classList.add('opacity-0','pointer-events-none'); }
+document.getElementById('veu').onclick=fechar; document.addEventListener('keydown',e=>{if(e.key==='Escape')fechar();});
+
+function render(){
+  topo();
+  ['tarefas','esteira','matriz'].forEach(m=>document.getElementById('v'+m[0].toUpperCase()+m.slice(1)).classList.toggle('hidden',modo!==m));
+  if(modo==='tarefas'){ nav(); lista(); feitosUI(); } else if(modo==='esteira') esteira(); else matriz();
+}
+document.getElementById('soUrg').onchange=e=>{soUrg=e.target.checked; render();};
+document.getElementById('busca').oninput=e=>{busca=e.target.value.trim().toLowerCase(); render();};
+document.getElementById('limparEtapa').onclick=()=>{etapaF=null; render();};
+render();
+</script>
+</body>
+</html>
