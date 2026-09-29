@@ -8,6 +8,8 @@
 // alertas da loja que o acesso dela cobre (avisos/AvisosConversa.tsx).
 // Pendências (2026-09-28): o botão de caixa ao lado do X, como no chat do dono — cada pessoa vê só
 // as pendências das lojas em que está, pelo papel dela, e as tarefas dela (PendenciasEquipe.tsx).
+// Currículos (2026-09-29): quem tem acesso à Contratação vê a conversa Currículos logo abaixo de
+// Avisos — os avisos automáticos do módulo, só leitura (curriculos/CurriculosConversa.tsx).
 import { Suspense, useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useVoltarFecha } from '@/lib/voltarAndroid';
@@ -18,6 +20,7 @@ import { useEquipeNoChat } from '@/components/feature/equipe/useEquipeNoChat';
 import AvisosConversa, { LinhaAvisos, useAvisos } from '@/components/feature/avisos/AvisosConversa';
 import { useAuth } from '@/contexts/AuthContext';
 import PendenciasEquipe, { usePendenciasEquipe } from './PendenciasEquipe';
+import CurriculosConversa, { LinhaCurriculos, useCurriculosConversa } from '@/components/feature/curriculos/CurriculosConversa';
 
 const semAcento = (t: string) => t.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
 
@@ -46,7 +49,10 @@ export default function AcoesRapidasFlutuante({ variant }: { variant: 'floating'
     navigate({ pathname: location.pathname, search: q.toString() ? `?${q}` : '' }, { replace: true });
   }, [location.search]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (!aberto) setAvisosAberto(false); }, [aberto]);
-  const naoLidas = equipe.naoLidas + avisos.naoLidos;
+  const curriculos = useCurriculosConversa(true);
+  const [curriculosAberto, setCurriculosAberto] = useState(false);
+  useEffect(() => { if (!aberto) setCurriculosAberto(false); }, [aberto]);
+  const naoLidas = equipe.naoLidas + avisos.naoLidos + curriculos.naoLidos;
 
   const { user, selectTenant } = useAuth();
   const pend = usePendenciasEquipe();
@@ -142,6 +148,9 @@ export default function AcoesRapidasFlutuante({ variant }: { variant: 'floating'
       {abaAtual === 'conversas' ? (
         <div className="flex-1 overflow-y-auto bg-white">
           <LinhaAvisos ultimo={avisos.ultimo} naoLidos={avisos.naoLidos} onAbrir={() => { setAvisosAberto(true); avisos.recarregar(); }} />
+          {curriculos.liberado && (
+            <LinhaCurriculos ultimo={curriculos.ultimo} naoLidos={curriculos.naoLidos} onAbrir={() => { setCurriculosAberto(true); curriculos.recarregar(); }} />
+          )}
           {equipe.secao}
         </div>
       ) : (
@@ -190,6 +199,14 @@ export default function AcoesRapidasFlutuante({ variant }: { variant: 'floating'
           onVoltar={() => setAvisosAberto(false)}
           onFechar={variant === 'floating' ? () => setAberto(false) : undefined}
           onBotao={(rota) => { setAvisosAberto(false); fechar(); navigate(rota); }}
+        />
+      )}
+      {curriculosAberto && (
+        <CurriculosConversa
+          avisos={curriculos.avisos} carregado={curriculos.carregado} visto={curriculos.visto} marcarLidos={curriculos.marcarLidos}
+          onVoltar={() => setCurriculosAberto(false)}
+          onFechar={variant === 'floating' ? () => setAberto(false) : undefined}
+          onBotao={(rota) => { setCurriculosAberto(false); fechar(); navigate(rota); }}
         />
       )}
       {pendAberta && (

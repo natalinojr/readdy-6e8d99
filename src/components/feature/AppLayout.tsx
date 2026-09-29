@@ -121,6 +121,8 @@ export default function AppLayout() {
             <Outlet />
           </Suspense>
         </main>
+        {/* Sem loja na Contratação: o balão traz a conversa Currículos (2026-09-29). */}
+        {location.pathname.startsWith('/contratacao') && <AssistenteChat variant="floating" />}
       </div>
     );
   }
