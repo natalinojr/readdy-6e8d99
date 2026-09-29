@@ -27,6 +27,9 @@ import { useVoltarFecha } from '@/lib/voltarAndroid';
 /** O que está na "área de transferência" interna de tarefas (Ctrl+C/Ctrl+V, 2026-09-24). */
 export interface ClipboardTarefas { ids: string[]; label: string }
 
+/** Quanto cada nível de subtarefa anda para a direita. */
+const RECUO_SUBTAREFA = 28;
+
 interface ViewListaProps {
   /** null = tarefas de mais de uma pasta (Minhas/Compartilhadas/Todas). */
   list: TaskList | null;
@@ -667,7 +670,9 @@ export default function ViewLista({
           className={`relative flex items-start md:items-center gap-3 px-4 py-3 md:py-2.5 hover:bg-slate-50 active:bg-slate-100 cursor-pointer group ${
             selecionada ? 'bg-indigo-50/60 hover:bg-indigo-50/60' : ''
           } ${arrasto?.taskId === task.id ? 'opacity-40' : ''}`}
-          style={{ paddingLeft: `${16 + nivel * 22}px` }}
+          // Recuo por nível: com o espaço da caixinha e da seta reservado também na
+          // subtarefa (abaixo), o círculo dela fica embaixo do título da tarefa de cima (2026-09-29).
+          style={{ paddingLeft: `${16 + nivel * RECUO_SUBTAREFA}px` }}
         >
           {alvoAqui && (
             <span className={`pointer-events-none absolute left-2 right-2 h-0.5 rounded bg-indigo-500 z-10 ${alvoArrasto!.antes ? '-top-px' : '-bottom-px'}`} />
@@ -692,6 +697,7 @@ export default function ViewLista({
               {selecionada && <Check size={11} className="text-white" />}
             </button>
           )}
+          {nivel > 0 && <span className="hidden md:block w-4 shrink-0" />}
 
           {subtarefas.length > 0 ? (
             <button
@@ -709,7 +715,7 @@ export default function ViewLista({
               {aberta ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
             </button>
           ) : (
-            nivel === 0 && <span className="hidden md:block w-[13px] shrink-0" />
+            <span className="hidden md:block w-[13px] shrink-0" />
           )}
 
           {/* Clicar abre o seletor de status — antes ia direto pra "concluído",
@@ -854,7 +860,7 @@ export default function ViewLista({
 
         {aberta && subtarefas.map((sub) => renderLinha(sub, nivel + 1))}
         {novaSub?.parentId === task.id && (
-          <div className="flex items-center gap-2 py-2 pr-4 bg-slate-50/50" style={{ paddingLeft: `${16 + (nivel + 1) * 22 + 29}px` }}>
+          <div className="flex items-center gap-2 py-2 pr-4 bg-slate-50/50" style={{ paddingLeft: `${16 + (nivel + 1) * RECUO_SUBTAREFA + 53}px` }}>
             <GitBranch size={12} className="text-slate-300 shrink-0" />
             <input
               autoFocus
