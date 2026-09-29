@@ -343,9 +343,12 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
     // Pix de pedido aprovado (dono, 2026-09-29: "informação duplicada"): o título já diz valor e para
     // quem, a caixa roxa diz o nome completo + a chave, e "Toque em Pagar…" é o próprio botão.
     const pedidoPix = ehPagamento && infoPag[p.id] ? origemPedido(p) : null;
-    const chavePix = pedidoPix ? /^Chave (.+?)\. /.exec(p.detalhe ?? '')?.[1] ?? null : null;
+    // Título do Pix de pedido: o nome curto do pedido vira o nome que o banco devolveu ("Eduardo" → "Eduardo Oriente").
+    const paraBanco = pedidoPix != null ? infoPag[p.id]?.para : null;
+    const titulo = paraBanco ? p.titulo.replace(/para (.+)$/, (m, n: string) => (paraBanco.toLowerCase().startsWith(n.toLowerCase()) ? `para ${paraBanco}` : m)) : p.titulo;
+    const chavePix = pedidoPix != null ? /^Chave (.+?)\. /.exec(p.detalhe ?? '')?.[1] ?? null : null;
     const detalhe = ehPedido ? p.detalhe?.replace(/\s*Só vira conta a pagar depois de aprovado\.?/i, '')
-      : ehPagamento ? p.detalhe?.replace(/^Chave .+?\. (?=Toque em Pagar)/, pedidoPix ? '' : '$&').replace(/\s*Toque em Pagar e confirme com o PIN\.?/i, '').trim() || null
+      : ehPagamento ? p.detalhe?.replace(/^Chave .+?\. (?=Toque em Pagar)/, pedidoPix != null ? '' : '$&').replace(/\s*Toque em Pagar e confirme com o PIN\.?/i, '').trim() || null
       : p.detalhe;
     const busy = ocupada === p.id;
     return (
@@ -362,7 +365,7 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
               {p.urgencia === 'alta' && <span className="px-1.5 rounded bg-red-100 text-red-700 font-bold">Urgente</span>}
               {p.status === 'vista' && <span className="text-zinc-400"><i className="ri-eye-line" /> vista</span>}
             </p>
-            <p data-titulo className="font-semibold text-zinc-900 leading-snug mt-0.5">{p.titulo}</p>
+            <p data-titulo className="font-semibold text-zinc-900 leading-snug mt-0.5">{titulo}</p>
           </div>
           <div className="flex-shrink-0 text-right" title={`Chegou em ${new Date(p.criadaEm).toLocaleString('pt-BR')}`}>
             <p className="text-[11px] font-semibold text-zinc-600 whitespace-nowrap tabular-nums">{dataHora(p.criadaEm)}</p>
@@ -370,7 +373,13 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
           </div>
         </div>
         <div className="pl-[42px]">
-          {ehPagamento && infoPag[p.id] && <LinhaPagamento info={infoPag[p.id]} pedido={pedidoPix} chave={chavePix} />}
+          {ehPagamento && infoPag[p.id] && (pedidoPix != null ? (
+            (chavePix || pedidoPix) && (
+              <p className="mt-1 text-xs text-zinc-500 break-words">
+                {chavePix && <>Chave <span className="font-semibold text-zinc-700">{chavePix}</span></>}{chavePix && pedidoPix ? ' · ' : ''}{pedidoPix}
+              </p>
+            )
+          ) : <LinhaPagamento info={infoPag[p.id]} />)}
           {p.kind === 'sangria_valor_diferente' ? (
             // Saiu × nota lado a lado: o texto longo do servidor dizia o mesmo em três linhas.
             <div className="mt-1.5 grid grid-cols-3 gap-1 rounded-lg bg-amber-50 border border-amber-100 px-2.5 py-1.5 text-center">
@@ -768,38 +777,27 @@ interface InfoPagamento {
 
 // Pix de pedido de pagamento aprovado (/receber): freela, reembolso ou fornecedor sem nota não
 // passam pelo recebimento de mercadoria — a linha "recebimento não confirmado" não se aplica.
+// O título já diz o tipo, "aprovado", valor e para quem (dono, 2026-09-29: "aparece duas vezes") —
+// aqui fica só o que ele não diz.
 const ORIGEM_PEDIDO: [RegExp, string][] = [
-  [/^Freelancer/i, 'Diária de freelancer — pedido aprovado, não é compra'],
-  [/^Reembolso/i, 'Reembolso — pedido aprovado, não é compra de mercadoria'],
-  [/^Fornecedor sem nota/i, 'Fornecedor sem nota — pedido aprovado'],
+  [/^Freelancer/i, 'não é compra'],
+  [/^Reembolso/i, 'não é compra de mercadoria'],
 ];
 const origemPedido = (p: PendenciaChat): string | null => {
   if (!pedidoDa(p)) return null;
-  return ORIGEM_PEDIDO.find(([re]) => re.test(p.titulo ?? ''))?.[1] ?? 'Pedido de pagamento aprovado';
+  return ORIGEM_PEDIDO.find(([re]) => re.test(p.titulo ?? ''))?.[1] ?? '';
 };
 
 // Para quem vai (em destaque) e se a mercadoria já chegou — o que se confere antes de pagar.
-function LinhaPagamento({ info, pedido, chave }: { info: InfoPagamento; pedido?: string | null; chave?: string | null }) {
+function LinhaPagamento({ info }: { info: InfoPagamento }) {
   return (
     <div className="mt-1.5 rounded-lg bg-violet-50 border border-violet-100 px-2.5 py-1.5">
-      {pedido ? (
-        // Pedido aprovado: o título já tem "Pix de R$ X para Fulano" — aqui só o nome completo e a chave.
-        <p className="text-xs text-zinc-800 break-words">
-          Para <b className="font-bold text-violet-800">{info.para || 'destinatário não identificado'}</b>
-          {chave && <span className="text-zinc-500"> · chave {chave}</span>}
-        </p>
-      ) : (
       <p className="text-xs text-zinc-800 break-words">
         {info.tipo === 'boleto' ? 'Boleto' : info.tipo === 'pix' ? 'Pix' : 'Pagar'}
         {info.valor ? <> de <b>{brl(info.valor)}</b></> : null} para{' '}
         <b className="font-bold text-violet-800">{info.para || 'destinatário não identificado'}</b>
       </p>
-      )}
-      {pedido ? (
-        <p className="text-[11px] font-semibold mt-0.5 text-zinc-600">
-          <i className="ri-file-list-3-line" /> {pedido}
-        </p>
-      ) : info.guia ? (
+      {info.guia ? (
         <p className="text-[11px] font-semibold mt-0.5 text-zinc-600">
           <i className="ri-government-line" /> {info.guia}
         </p>
