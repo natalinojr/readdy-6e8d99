@@ -109,12 +109,14 @@ export default function TransacaoDetalheModal({
     const body = kind === 'confirm'
       ? { action: 'confirm', tenant_id: user?.tenantId, ids: [transaction.id] }
       : { action: 'undo', tenant_id: user?.tenantId, id: transaction.id };
-    const r = await invokeWithAuth<{ success?: boolean; error?: string; message?: string; results?: Array<{ ok: boolean; msg: string }> }>('conciliacao-pagamentos', { body });
+    const r = await invokeWithAuth<{ success?: boolean; error?: string; message?: string; results?: Array<{ ok: boolean; msg: string; aviso?: string }> }>('conciliacao-pagamentos', { body });
     setVinculoBusy(false);
     const res = r.data?.results?.[0];
     const err = r.data?.error ?? r.error?.message ?? (res && !res.ok ? res.msg : null);
     if (err) { setVinculoMsg('Não foi possível: ' + err); return; }
     onChanged?.();
+    // Baixa feita, mas os juros não entraram: fica aberto para a pessoa ler o aviso
+    if (res?.aviso) { setVinculoMsg('Conciliado, mas atenção: ' + res.aviso); return; }
     onClose();
   };
 
@@ -396,6 +398,9 @@ export default function TransacaoDetalheModal({
                 )}
                 {conf?.auto_imported === true && (
                   <p className="text-emerald-700"><i className="ri-magic-line mr-1" />Nota importada automaticamente pela conciliação. Os itens não foram ligados ao estoque: confira em Notas de Entrada se precisar.</p>
+                )}
+                {!!conf?.juros_erro && (
+                  <p className="text-amber-700"><i className="ri-error-warning-line mr-1" />Juros de {formatCurrency(Number(conf.juros ?? 0))} não foram lançados na DRE ({String(conf.juros_erro)}).</p>
                 )}
                 {vinculoMsg && <p className="text-red-600">{vinculoMsg}</p>}
                 <div className="flex gap-2">

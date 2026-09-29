@@ -791,7 +791,7 @@ export default function ConciliacaoTab() {
   const confirmarVinculos = useCallback(async (ids: string[]) => {
     if (!user?.tenantId || ids.length === 0) return;
     setConfirmando(true);
-    type Res = { ok: boolean; msg: string; auto_imported?: boolean };
+    type Res = { ok: boolean; msg: string; auto_imported?: boolean; aviso?: string };
     // A edge aceita até 30 por chamada
     const res: Res[] = [];
     let err: string | undefined;
@@ -805,10 +805,12 @@ export default function ConciliacaoTab() {
     const ok = res.filter(x => x.ok).length;
     const auto = res.filter(x => x.ok && x.auto_imported).length;
     const falhas = res.filter(x => !x.ok);
+    const avisos = res.filter(x => x.ok && x.aviso);
     if (err) showToast(err, 'error');
     else showToast(
-      ok + ' pagamento(s) conciliado(s)' + (auto ? ', ' + auto + ' nota(s) importada(s) automaticamente' : '') + (falhas.length ? ' · ' + falhas.length + ' com problema: ' + falhas[0].msg : ''),
-      falhas.length ? 'error' : 'success',
+      ok + ' pagamento(s) conciliado(s)' + (auto ? ', ' + auto + ' nota(s) importada(s) automaticamente' : '') + (falhas.length ? ' · ' + falhas.length + ' com problema: ' + falhas[0].msg : '')
+        + (avisos.length ? ' · ' + avisos.length + ' com aviso: ' + avisos[0].aviso : ''),
+      falhas.length || avisos.length ? 'error' : 'success',
     );
     refresh();
     loadAlerts();
