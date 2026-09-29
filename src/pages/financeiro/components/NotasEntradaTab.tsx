@@ -73,8 +73,9 @@ function isBonificacao(d: { cfops: string | null }): boolean {
 }
 // Plataformas cuja NFS-e é a comissão/taxa já descontada do repasse — lançar de novo duplica.
 const DESCONTA_NO_REPASSE = /IFOOD|RAPPI|99\s?FOOD|AIQFOME|UBER\s?EATS|KEETA/i;
-// A própria nota diz que a taxa saiu do repasse (Ticket "REEMBOLSO LÍQUIDO", Goomer online):
-// lançada como despesa, entra já quitada (fiscal-inbound › descontadoNoRepasse — mesma regra).
+// A própria nota diz que a taxa saiu do repasse (Ticket "REEMBOLSO LÍQUIDO", Goomer/Tuna online).
+// O repasse entra líquido na receita, então lançar duplica: o lançamento automático já ignora
+// (fiscal-inbound › descontadoNoRepasse — mesma regra).
 const TEXTO_DESCONTADO = /REEMBOLSO\s+L[IÍ]QUIDO|PROCESSAMENTO\s+DE\s+PAGAMENTO\s+ONLINE|(DESCONTAD|RETID)[OA]S?\s+(DO|NO|DOS|NOS)\s+(REPASSE|REEMBOLSO)/i;
 const descontadoNoRepasse = (d: { natureza: string | null; itens?: { descricao?: string | null }[] | null }) =>
   TEXTO_DESCONTADO.test([d.natureza, ...(d.itens ?? []).map((it) => it?.descricao)].filter(Boolean).join(' '));
@@ -107,6 +108,7 @@ function motivoParada(d: DocRow, h: Historico | undefined, prePago = false): { t
   if (prePago) return { txt: 'Fornecedor pré-pago', dica: 'Esta nota é o consumo do crédito: abra em Conferir e use "Lançar do crédito".' };
   if (d.xml_status !== 'full') return { txt: 'Aguardando XML completo', dica: 'Sem o XML não dá para ver itens e boletos. Use "Pedir XML" ou espere a próxima busca.' };
   if (d.auto_launch_blocked) return { txt: 'Lançamento automático desfeito', dica: 'Alguém desfez o lançamento automático desta nota: ela só entra conferindo à mão.' };
+  if (descontadoNoRepasse(d)) return { txt: 'Taxa descontada no repasse', dica: 'A nota diz que a taxa já saiu do repasse, que entra líquido na receita: lançar duplica. Ignore (a busca automática já ignora).' };
   if (!servico && isBonificacao(d)) return { txt: 'Bonificação', dica: 'Bonificação entra sozinha na próxima busca (06h e 12h). Se continuar aqui, confira o erro.' };
   if (!h) return { txt: 'Fornecedor novo nesta loja', dica: 'Primeira nota deste CNPJ nesta loja (lançamentos de outra loja não contam). Depois que você lançar uma, as próximas entram sozinhas do mesmo jeito.' };
   if (h.ultima.settlement === 'monthly') return { txt: 'Nota do mês', dica: 'A última nota deste fornecedor foi quitada pelos pagamentos do extrato. Esta também precisa ser vinculada aos pagamentos em Conferir.' };
@@ -592,7 +594,7 @@ export default function NotasEntradaTab() {
                           DESCONTA_NO_REPASSE.test(d.emitente_nome ?? '')
                             ? <span className="text-[11px] font-semibold text-violet-600" title="Taxa/comissão já descontada do repasse da plataforma — lançar de novo pode duplicar">descontado no repasse?</span>
                             : descontadoNoRepasse(d)
-                            ? <span className="text-[11px] font-semibold text-violet-600" title="A nota diz que a taxa já saiu do repasse: lançada como despesa, entra já paga">descontado no repasse</span>
+                            ? <span className="text-[11px] font-semibold text-violet-600" title="A nota diz que a taxa já saiu do repasse, que entra líquido na receita — lançar duplica; ignore">descontado no repasse</span>
                             : <span className="text-[11px] text-zinc-500">serviço · comp. {dataBR((d.itens ?? [])[0]?.competencia ?? null)}</span>
                         ) : d.xml_status !== 'full' ? <span className="text-[11px] text-sky-600">aguardando XML</span>
                           : isBonificacao(d) ? <span className="text-[11px] font-semibold text-emerald-700" title="Bonificação: sem custo, mas a mercadoria entra no estoque no recebimento">bonificação</span>
@@ -838,7 +840,7 @@ function ConferirModal({ doc, podeLancar, tenantId, onClose, onLancado, call, on
           {descontadoNoRepasse(doc) && (
             <div className="flex items-start gap-2 bg-violet-50 border border-violet-100 rounded-lg p-3">
               <i className="ri-information-line text-violet-500" />
-              <p className="text-xs text-violet-800">A nota diz que esta taxa <strong>já foi descontada do repasse</strong> pelo emitente. Lançada como despesa, ela entra na DRE <strong>já paga</strong> na data da nota — sem conta a pagar e sem saída do banco.</p>
+              <p className="text-xs text-violet-800">A nota diz que esta taxa <strong>já foi descontada do repasse</strong> pelo emitente. O repasse entra líquido na receita (Pix recebido), então a taxa já está descontada lá: lançar aqui duplica. <strong>Ignore esta nota.</strong></p>
             </div>
           )}
 
