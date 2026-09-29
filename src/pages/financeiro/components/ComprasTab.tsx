@@ -49,7 +49,7 @@ interface ComprasTabProps {
 
 export default function ComprasTab({ highlightId, onHighlightConsumed }: ComprasTabProps) {
   const { user } = useAuth();
-  const { purchases, loading, create, update, refresh: refreshPurchases } = usePurchases();
+  const { purchases, loading, create, update, setPaymentMethod, refresh: refreshPurchases } = usePurchases();
   const { registrarEvento } = useAuditoria();
   const { centers } = useCostCenters();
   const { accounts: bankAccounts } = useBankAccounts();
@@ -77,6 +77,10 @@ export default function ComprasTab({ highlightId, onHighlightConsumed }: Compras
   const [editInstallments, setEditInstallments] = useState<{ due_date: string; amount: number }[]>([]);
   const [checkingEdit, setCheckingEdit] = useState<string | null>(null);
   const [editBlockedMessage, setEditBlockedMessage] = useState<string | null>(null);
+  // Compra recebida/paga: a edição completa é travada, mas a forma de pagamento sempre pode mudar.
+  const [metodoEdit, setMetodoEdit] = useState<{ purchase: Purchase; motivo: string; metodo: string } | null>(null);
+  const [metodoSalvando, setMetodoSalvando] = useState(false);
+  const [metodoErro, setMetodoErro] = useState<string | null>(null);
   const [ingredients, setIngredients] = useState<{ id: string; name: string; unit: string; purchase_unit?: string | null; purchase_factor?: number | null }[]>([]);
   const [flashId, setFlashId] = useState<string | undefined>(highlightId);
   // HTMLElement (não HTMLTableRowElement): o mesmo ref serve pro <tr> do
@@ -210,16 +214,35 @@ export default function ComprasTab({ highlightId, onHighlightConsumed }: Compras
     refreshEstoque();
   };
 
+  const abrirSoMetodo = (p: Purchase, motivo: string) => {
+    setMetodoErro(null);
+    setMetodoEdit({ purchase: p, motivo, metodo: p.payment_method || PAYMENT_METHODS[0] });
+  };
+
+  const salvarMetodo = async () => {
+    if (!metodoEdit) return;
+    setMetodoSalvando(true);
+    setMetodoErro(null);
+    try {
+      await setPaymentMethod(metodoEdit.purchase.id, metodoEdit.metodo);
+      setMetodoEdit(null);
+    } catch (e) {
+      setMetodoErro(e instanceof Error ? e.message : 'Erro ao salvar');
+    } finally {
+      setMetodoSalvando(false);
+    }
+  };
+
   // Verifica se a compra pode ser editada e, se puder, busca as parcelas
   // (nenhuma delas paga — já checado aqui) para pré-preencher o modal.
   const openEdit = async (p: Purchase) => {
     setEditBlockedMessage(null);
     if (p.delivery_confirmed_at) {
-      setEditBlockedMessage(`"${p.supplier}": recebimento já confirmado — não é possível editar. Exclua e lance novamente para corrigir.`);
+      abrirSoMetodo(p, 'O recebimento já foi confirmado');
       return;
     }
     if (p.payment_status === 'paid') {
-      setEditBlockedMessage(`"${p.supplier}": compra já paga — não é possível editar. Exclua e lance novamente para corrigir.`);
+      abrirSoMetodo(p, 'A compra já está paga');
       return;
     }
     setCheckingEdit(p.id);
@@ -234,7 +257,7 @@ export default function ComprasTab({ highlightId, onHighlightConsumed }: Compras
       const bills = (data ?? []) as BillInstallment[];
       const hasPayment = bills.some((b) => b.status === 'paid' || Number(b.paid_amount ?? 0) > 0);
       if (hasPayment) {
-        setEditBlockedMessage(`"${p.supplier}": já existe pagamento registrado nesta compra — não é possível editar. Exclua e lance novamente para corrigir.`);
+        abrirSoMetodo(p, 'Já existe pagamento registrado nesta compra');
         return;
       }
       setEditInstallments(bills.map((b) => ({ due_date: b.due_date, amount: Number(b.amount) })));
@@ -899,6 +922,45 @@ export default function ComprasTab({ highlightId, onHighlightConsumed }: Compras
           onSubmit={handleSubmit}
           onClose={() => setShowModal(false)}
         />
+      )}
+
+      {/* Compra travada: só a forma de pagamento */}
+      {metodoEdit && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={() => !metodoSalvando && setMetodoEdit(null)}>
+          <div className="bg-white rounded-xl w-full max-w-sm p-5 space-y-4" onClick={(e) => e.stopPropagation()}>
+            <div>
+              <h3 className="text-sm font-bold text-zinc-800">Forma de pagamento</h3>
+              <p className="text-xs text-zinc-500 mt-0.5">{metodoEdit.purchase.supplier}</p>
+            </div>
+            <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 flex items-start gap-2">
+              <i className="ri-lock-line text-amber-600 mt-0.5 flex-shrink-0" />
+              <p className="text-xs text-amber-800">
+                {metodoEdit.motivo} — por isso só a forma de pagamento pode ser trocada aqui. Para mudar itens, valores ou parcelas, exclua e lance novamente.
+              </p>
+            </div>
+            <select
+              value={metodoEdit.metodo}
+              onChange={(e) => setMetodoEdit((m) => (m ? { ...m, metodo: e.target.value } : m))}
+              className="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
+            >
+              {!PAYMENT_METHODS.includes(metodoEdit.purchase.payment_method) && metodoEdit.purchase.payment_method && (
+                <option>{metodoEdit.purchase.payment_method}</option>
+              )}
+              {PAYMENT_METHODS.map((m) => <option key={m}>{m}</option>)}
+            </select>
+            {metodoErro && <p className="text-xs text-red-600">{metodoErro}</p>}
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setMetodoEdit(null)} disabled={metodoSalvando}
+                className="px-3 py-2 text-sm rounded-lg text-zinc-600 hover:bg-zinc-100 cursor-pointer disabled:opacity-50">
+                Cancelar
+              </button>
+              <button onClick={salvarMetodo} disabled={metodoSalvando || metodoEdit.metodo === metodoEdit.purchase.payment_method}
+                className="px-3 py-2 text-sm rounded-lg bg-amber-500 hover:bg-amber-600 text-white font-semibold cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
+                {metodoSalvando ? 'Salvando...' : 'Salvar'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Editar compra modal */}

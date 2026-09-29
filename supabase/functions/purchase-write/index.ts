@@ -918,6 +918,22 @@ Deno.serve(async (req) => {
         break;
       }
 
+      // Trocar só a forma de pagamento (2026-09-29): vale para qualquer compra — paga, recebida ou
+      // com parcela baixada. É só o rótulo da compra; estoque, contas a pagar e caixa não mudam.
+      case 'set_payment_method': {
+        const { id, payment_method } = payload;
+        const metodo = String(payment_method ?? '').trim();
+        if (!id || !metodo) return new Response(JSON.stringify({ error: 'id e payment_method obrigatórios' }), { status: 400, headers: corsHeaders });
+        const { data: updated, error: updErr } = await supabase
+          .from('fin_purchases').update({ payment_method: metodo })
+          .eq('id', id).eq('tenant_id', tenant_id)
+          .select('id, payment_method').maybeSingle();
+        if (updErr) throw updErr;
+        if (!updated) return new Response(JSON.stringify({ error: 'Compra não encontrada' }), { status: 404, headers: corsHeaders });
+        result = { data: updated };
+        break;
+      }
+
       // Detalhar itens (2026-09-29): troca os itens de uma compra JÁ lançada — inclusive paga ou recebida —
       // sem mexer no valor. Caso típico: compra lançada pelo extrato como 1 item "Compra" e depois a nota
       // (foto/QR) ou a digitação diz o que veio. O total dos itens + frete tem que fechar com o da compra,

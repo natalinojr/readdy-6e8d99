@@ -441,6 +441,20 @@ export function usePurchases() {
     return result;
   };
 
+  // Troca só a forma de pagamento — aceita em qualquer compra (paga/recebida).
+  const setPaymentMethod = async (id: string, paymentMethod: string) => {
+    const { data: { session } } = await supabase.auth.getSession();
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/purchase-write`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token}` },
+      body: JSON.stringify({ action: 'set_payment_method', tenant_id: user!.tenantId, payload: { id, payment_method: paymentMethod } }),
+    });
+    const result = await res.json();
+    if (!res.ok || result.error) throw new Error(typeof result.error === 'string' ? result.error : 'Erro ao trocar a forma de pagamento');
+    fetchPurchases();
+    return result;
+  };
+
   const remove = async (id: string, auditFn?: (p: import('@/contexts/AuditoriaContext').RegistrarEventoParams) => void) => {
     const purchase = purchases.find((p) => p.id === id);
     const { data: { session } } = await supabase.auth.getSession();
@@ -467,7 +481,7 @@ export function usePurchases() {
     fetchPurchases();
   };
 
-  return { purchases, loading, create, update, remove, refresh: fetchPurchases, _auditRef: auditRef };
+  return { purchases, loading, create, update, setPaymentMethod, remove, refresh: fetchPurchases, _auditRef: auditRef };
 }
 
 // ─── Suppliers ────────────────────────────────────────────────────────────────
