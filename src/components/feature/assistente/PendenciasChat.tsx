@@ -178,11 +178,14 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
     try { setNTarefas((await minhasTarefasPendentes(meuId)).length); } catch { /* aba some */ }
   }, [meuId, call]);
 
+  // Pix esperando aprovação no app do Inter: confere a cada 8 s (o servidor olha o Inter a cada ~45 s)
+  // para o cartão sumir logo que o banco confirmar (dono, 2026-09-29: aprovou e a tela não mudou).
+  const esperandoInter = Object.values(infoPag).some((x) => x.no_inter);
   useEffect(() => {
     recarregar();
-    const t = setInterval(() => { if (!document.hidden) recarregar(); }, 30000);
+    const t = setInterval(() => { if (!document.hidden) recarregar(); }, esperandoInter ? 8000 : 30000);
     return () => clearInterval(t);
-  }, [recarregar, versao]);
+  }, [recarregar, versao, esperandoInter]);
 
   const marcar = async (p: PendenciaChat, acao: 'vista' | 'descartada' | 'resolvida', m?: string) => {
     setOcupada(p.id);

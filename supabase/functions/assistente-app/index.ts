@@ -539,8 +539,12 @@ Deno.serve(async (req) => {
         const id = c.match(/\]\s*id\s+(\S+)\s*$/)?.[1];
         const st = c.match(/^\[Pagamento [^:\]]*: ([^\]]+)\]/)?.[1];
         if (!id || !st) continue;
-        const texto = st.replace(/\s*\(atualizado automaticamente\)/i, '').replace(/\s*—\s*pelo ERPOS\s*$/i, '').replace(/^cancelado pelo ERPOS$/i, 'cancelado').trim();
+        let texto = st.replace(/\s*\(atualizado automaticamente\)/i, '').replace(/\s*—\s*pelo ERPOS\s*$/i, '').replace(/^cancelado pelo ERPOS$/i, 'cancelado').trim();
         const lista = passos.get(id) ?? [];
+        // "Enviado ao Inter" DEPOIS de "aguardando aprovação" é o Inter processando o que o dono acabou de
+        // aprovar no app (status que não é aguardando nem pago) — dizer "enviado" de novo não batia com o
+        // "Enviado ao Inter" do começo (dono, 2026-09-29).
+        if (/^enviado ao Inter$/i.test(texto) && lista.some((x) => /^aguardando/i.test(x.texto))) texto = 'aprovado no app do Inter — processando';
         // Mesma frase repetida (o cron confere de novo e grava igual): fica só a primeira.
         if (lista[lista.length - 1]?.texto !== texto) lista.push({ at: m.created_at, texto, canal: String(m.channel ?? '') });
         passos.set(id, lista);
