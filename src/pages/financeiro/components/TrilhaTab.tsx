@@ -241,7 +241,10 @@ export default function TrilhaTab() {
       .sort((a, b) => Number(b.tarefa.urgente) - Number(a.tarefa.urgente) || b.caso.valor - a.caso.valor);
     return { g, ts, total: todasTarefas.filter((x) => x.tarefa.grupo === g.id).length };
   });
-  const visiveis = listaPorGrupo.filter(({ g, ts }) => ts.length > 0 && (!grupo || grupo === g.id));
+  // Grupo escolhido que ficou vazio com os outros filtros (fase/urgentes/busca) não esconde a lista:
+  // mostra todos os grupos, senão a tela dizia "nada pendente" com o funil apontando pendência.
+  const grupoAtivo = grupo && listaPorGrupo.some(({ g, ts }) => g.id === grupo && ts.length > 0) ? grupo : null;
+  const visiveis = listaPorGrupo.filter(({ g, ts }) => ts.length > 0 && (!grupoAtivo || grupoAtivo === g.id));
   const resolvidosVisiveis = resolvidos.filter((r) => !todasTarefas.some((x) => x.tarefa.key === r.key));
 
   const MODOS: { id: Modo; label: string; icone: string; n?: number }[] = [
@@ -297,7 +300,7 @@ export default function TrilhaTab() {
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-2">
               {funil.map((f) => (
-                <button key={f.id} onClick={() => setEtapaF(etapaF === f.id ? null : f.id)}
+                <button key={f.id} onClick={() => { setGrupo(null); setEtapaF(etapaF === f.id ? null : f.id); }}
                   className={`text-left rounded-xl border p-2.5 transition cursor-pointer min-w-0 ${etapaF === f.id ? 'border-amber-400 ring-2 ring-amber-100 bg-amber-50/40' : 'border-zinc-200 hover:border-zinc-300'}`}>
                   <div className="flex items-start justify-between gap-1">
                     <span className="flex items-start gap-1.5 text-[11px] font-semibold text-zinc-600 leading-tight min-w-0"><i className={`${ICONE_ETAPA[f.id]} mt-px`} /><span className="min-w-0 break-words">{NOMES_ETAPA[f.id]}</span></span>
@@ -346,7 +349,7 @@ export default function TrilhaTab() {
         <div className="grid grid-cols-1 lg:grid-cols-[290px_minmax(0,1fr)] gap-4 items-start">
           <div className="space-y-3 lg:sticky lg:top-4 min-w-0">
             <nav className="bg-white rounded-2xl border border-zinc-200 p-2">
-              <button onClick={() => setGrupo(null)} className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-left cursor-pointer ${!grupo ? 'bg-amber-50 text-amber-700' : 'hover:bg-zinc-50'}`}>
+              <button onClick={() => setGrupo(null)} className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-left cursor-pointer ${!grupoAtivo ? 'bg-amber-50 text-amber-700' : 'hover:bg-zinc-50'}`}>
                 <i className="ri-inbox-line" /><span className="flex-1 text-sm font-semibold">Todas</span><span className="text-xs font-bold tabular-nums">{tarefasFiltradas.length}</span>
               </button>
               {listaPorGrupo.map(({ g, ts, total }) => total === 0 ? (
@@ -355,7 +358,7 @@ export default function TrilhaTab() {
                 </div>
               ) : (
                 <button key={g.id} onClick={() => setGrupo(g.id)}
-                  className={`w-full flex items-start gap-2.5 px-3 py-2.5 rounded-xl text-left cursor-pointer ${grupo === g.id ? 'bg-amber-50 text-amber-700' : 'hover:bg-zinc-50'} ${ts.length ? '' : 'opacity-50'}`}>
+                  className={`w-full flex items-start gap-2.5 px-3 py-2.5 rounded-xl text-left cursor-pointer ${grupoAtivo === g.id ? 'bg-amber-50 text-amber-700' : 'hover:bg-zinc-50'} ${ts.length ? '' : 'opacity-50'}`}>
                   <i className={`${g.icone} mt-0.5 ${g.cor === 'red' ? 'text-red-500' : 'text-amber-500'}`} />
                   <span className="flex-1 min-w-0">
                     <span className="block text-sm font-semibold leading-snug">{g.nome}</span>
