@@ -205,12 +205,16 @@ async function freeSlots(admin: SupabaseClient, jobId: string, limit = OFFER): P
   const todos = ((data ?? []) as Row[]).map((r) => new Date(r.starts_at).toISOString());
   return limit === OFFER ? espalhar(todos, OFFER) : todos;
 }
-// Até 3 dias; em cada dia, horários distribuídos ao longo do dia (não só os primeiros). Ordem cronológica.
+// 2 dias (3º só se os dois não enchem a lista); em cada dia, horários distribuídos ao longo do dia
+// (não só os primeiros). Ordem cronológica. Com 3 dias fixos, vaga de terça+quarta oferecia a terça
+// da semana seguinte com hoje e amanhã ainda cheios de horário (29/09).
 function espalhar(slots: string[], n: number): string[] {
   if (slots.length <= n) return slots;
   const porDia = new Map<string, string[]>();
   for (const s of slots) { const d = localParts(s).d; porDia.set(d, [...(porDia.get(d) ?? []), s]); }
-  const dias = [...porDia.keys()].slice(0, 3);
+  const todosDias = [...porDia.keys()];
+  const doisDias = todosDias.slice(0, 2);
+  const dias = doisDias.reduce((a, d) => a + porDia.get(d)!.length, 0) >= n ? doisDias : todosDias.slice(0, 3);
   const escolhidos = new Set<string>();
   const cota = Math.ceil(n / dias.length);
   for (const d of dias) {
