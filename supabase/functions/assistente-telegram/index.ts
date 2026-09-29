@@ -600,9 +600,13 @@ async function payWatch() {
     .gte('sent_at', new Date(Date.now() - 7 * 86400_000).toISOString()).order('sent_at', { ascending: false }).limit(20);
   let checked = 0, changed = 0;
   for (const p of rows ?? []) {
-    // Recém-enviado (2 h): a cada ~minuto. Depois (ex.: boleto agendado): a cada 30 min, por até 7 dias.
-    const recent = Date.now() - new Date(p.sent_at).getTime() < 2 * 3600_000;
-    if (Date.now() - new Date(p.updated_at).getTime() < (recent ? 45_000 : 30 * 60_000)) continue;
+    // Esperando o dono aprovar no app (ou recém-aprovado): a cada ~minuto nas primeiras 24 h — ele
+    // aprova horas depois e a tela tem que mudar na hora (dono, 2026-09-29: Pix aprovado 3 h depois
+    // ficava até 30 min sem baixa). Depois disso a cada 5 min. Boleto agendado: a cada 30 min.
+    const idade = Date.now() - new Date(p.sent_at).getTime();
+    const espera = p.status === 'scheduled' ? (idade < 2 * 3600_000 ? 45_000 : 30 * 60_000)
+      : (idade < 24 * 3600_000 ? 45_000 : 5 * 60_000);
+    if (Date.now() - new Date(p.updated_at).getTime() < espera) continue;
     checked++;
     const antes = p.status;
     try {
