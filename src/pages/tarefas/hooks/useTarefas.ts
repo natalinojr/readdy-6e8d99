@@ -555,9 +555,28 @@ function useTarefasReal() {
     [pronto, tenantId],
   );
 
+  /** Ordem das pastas irmãs (arrastar na barra lateral): sort_order = posição × 10.
+   *  Otimista; só grava as que mudaram e recarrega uma vez no fim. */
+  const reordenarPastas = useCallback(
+    async (idsEmOrdem: string[]): Promise<void> => {
+      if (!pronto) return;
+      const nova = new Map(idsEmOrdem.map((id, i) => [id, i * 10]));
+      const mudaram = lists.filter((l) => nova.has(l.id) && l.sort_order !== nova.get(l.id)).map((l) => l.id);
+      if (mudaram.length === 0) return;
+      setLists((prev) => prev.map((l) => (nova.has(l.id) ? { ...l, sort_order: nova.get(l.id)! } : l)));
+      const res = await Promise.all(mudaram.map((id) => invokeWithAuth<{ success?: boolean; error?: string }>('task-write', {
+        body: { action: 'update_list', active_tenant_id: tenantId, list_id: id, sort_order: nova.get(id) },
+      })));
+      const falha = res.find((r) => r.error || !r.data?.success);
+      if (falha) toast.error('Não deu para mudar a ordem', falha.data?.error ?? falha.error?.message ?? 'Erro desconhecido');
+      reload();
+    },
+    [pronto, lists, tenantId, reload, toast],
+  );
+
   return {
     lists, tasks, tags, campos, notificacoes, views, templates,
-    loading, error, reload, write, fetchDetail,
+    loading, error, reload, write, fetchDetail, reordenarPastas,
     fetchAnexos, enviarAnexo, abrirAnexo,
   };
 }

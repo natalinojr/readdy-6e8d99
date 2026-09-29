@@ -106,7 +106,7 @@ export default function TarefasPage() {
   });
   const {
     lists, tasks, tags, campos, notificacoes, views, templates,
-    loading, error, reload, write, fetchDetail, fetchAnexos, enviarAnexo, abrirAnexo,
+    loading, error, reload, write, fetchDetail, fetchAnexos, enviarAnexo, abrirAnexo, reordenarPastas,
   } = useTarefas();
   const { usuarios: usuariosLoja } = useUsuarios();
   // Quem pode ser responsável: fn_get_task_pessoas (quem tem Tarefas + quem divide
@@ -609,6 +609,7 @@ export default function TarefasPage() {
             onNovaSubpasta={abrirNovaPasta}
             onExcluir={excluirPasta}
             onCompartilhar={setCompartilhando}
+            onReordenar={reordenarPastas}
           />
 
           {raizesCompartilhadas.length > 0 && (

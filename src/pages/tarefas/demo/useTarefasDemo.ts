@@ -241,9 +241,14 @@ export function useTarefasDemo() {
     open_count: tasks.filter((t) => t.list_id === l.id && !t.parent_task_id && t.status_category !== 'done').length,
   }));
 
+  const reordenarPastas = useCallback(async (idsEmOrdem: string[]) => {
+    const nova = new Map(idsEmOrdem.map((id, i) => [id, i * 10]));
+    setLists((prev) => prev.map((l) => (nova.has(l.id) ? { ...l, sort_order: nova.get(l.id)! } : l)));
+  }, []);
+
   return {
     lists: listasComContagem, tasks, tags, campos: [], notificacoes: [], views: [], templates: [],
-    loading: false, error: null as string | null, reload: FIXOS.reload, write, fetchDetail,
+    loading: false, error: null as string | null, reload: FIXOS.reload, write, fetchDetail, reordenarPastas,
     fetchAnexos: FIXOS.fetchAnexos, enviarAnexo: FIXOS.enviarAnexo, abrirAnexo: FIXOS.abrirAnexo,
   };
 }

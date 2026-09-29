@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { ChevronRight, ChevronDown, EyeOff, Plus, Trash2, Users, Share2 } from 'lucide-react';
-import type { NoPasta } from '../lib/pastas';
+import { reordenarIrmas, type NoPasta } from '../lib/pastas';
 
 /** Põe o texto inteiro como dica (title) só quando ele está cortado com "…". */
 export function mostrarSeCortado(el: HTMLElement, texto: string) {
@@ -18,10 +18,19 @@ interface ArvorePastasProps {
   onCompartilhar?: (no: NoPasta) => void;
   /** No celular a folha inteira é clicável e some ao selecionar — sem hover de "+". */
   compacto?: boolean;
+  /** Arrastar muda a ordem entre pastas do mesmo nível (só no computador, só pastas minhas). */
+  onReordenar?: (idsIrmasEmOrdem: string[]) => void;
 }
 
-export default function ArvorePastas({ nos, selectedId, onSelecionar, onNovaSubpasta, onExcluir, onCompartilhar, compacto = false }: ArvorePastasProps) {
+type Alvo = { id: string; posicao: 'antes' | 'depois' };
+
+export default function ArvorePastas({ nos, selectedId, onSelecionar, onNovaSubpasta, onExcluir, onCompartilhar, compacto = false, onReordenar }: ArvorePastasProps) {
   const [recolhidas, setRecolhidas] = useState<Set<string>>(new Set());
+  // Arrasto em andamento: a pasta e as irmãs dela (só dá pra soltar entre as irmãs).
+  const [arrasto, setArrasto] = useState<{ id: string; irmas: string[] } | null>(null);
+  const [alvo, setAlvo] = useState<Alvo | null>(null);
+
+  const fimArrasto = () => { setArrasto(null); setAlvo(null); };
 
   const alternar = (id: string) => {
     setRecolhidas((prev) => {
@@ -32,7 +41,7 @@ export default function ArvorePastas({ nos, selectedId, onSelecionar, onNovaSubp
     });
   };
 
-  const renderNo = (no: NoPasta): React.ReactNode => {
+  const renderNo = (no: NoPasta, irmas: NoPasta[]): React.ReactNode => {
     const temFilhas = no.filhas.length > 0;
     const recolhida = recolhidas.has(no.id);
     const ativa = selectedId === no.id;
@@ -45,6 +54,10 @@ export default function ArvorePastas({ nos, selectedId, onSelecionar, onNovaSubp
     const compartilhada = acesso !== 'owner' || pessoas > 0;
     const foraDoCompartilhamento = acesso === 'owner' && !!no.share_excluded;
     const acaoCls = `shrink-0 rounded text-slate-300 ${compacto ? 'p-2.5 text-slate-400' : 'p-1.5'}`;
+    const idsIrmas = irmas.map((i) => i.id);
+    const arrastavel = !!onReordenar && !compacto && acesso === 'owner' && irmas.length > 1;
+    const ehAlvo = !!arrasto && arrasto.id !== no.id && arrasto.irmas.includes(no.id);
+    const linha = alvo?.id === no.id ? alvo.posicao : null;
 
     return (
       <div key={no.id}>
@@ -52,7 +65,35 @@ export default function ArvorePastas({ nos, selectedId, onSelecionar, onNovaSubp
           className={`group w-full flex items-center gap-1 text-sm ${compacto ? '' : 'pr-2'} ${
             ativa ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-slate-600 hover:bg-slate-50'
           }`}
-          style={{ paddingLeft: `${16 + no.profundidade * 16}px` }}
+          style={{
+            paddingLeft: `${16 + no.profundidade * 16}px`,
+            // Linha azul onde a pasta vai cair.
+            boxShadow: linha === 'antes' ? 'inset 0 2px 0 #6366f1' : linha === 'depois' ? 'inset 0 -2px 0 #6366f1' : undefined,
+            opacity: arrasto?.id === no.id ? 0.4 : undefined,
+          }}
+          draggable={arrastavel}
+          onDragStart={arrastavel ? (e) => {
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', no.id); // Firefox só arrasta com dado
+            setArrasto({ id: no.id, irmas: idsIrmas });
+          } : undefined}
+          onDragEnd={arrastavel ? fimArrasto : undefined}
+          onDragOver={ehAlvo ? (e) => {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            const r = e.currentTarget.getBoundingClientRect();
+            const posicao = e.clientY < r.top + r.height / 2 ? 'antes' : 'depois';
+            if (alvo?.id !== no.id || alvo.posicao !== posicao) setAlvo({ id: no.id, posicao });
+          } : undefined}
+          onDragLeave={ehAlvo ? () => setAlvo((a) => (a?.id === no.id ? null : a)) : undefined}
+          onDrop={ehAlvo ? (e) => {
+            e.preventDefault();
+            const posicao = alvo?.id === no.id ? alvo.posicao : 'depois';
+            const nova = reordenarIrmas(arrasto!.irmas, arrasto!.id, no.id, posicao);
+            fimArrasto();
+            if (nova.join() !== arrasto!.irmas.join()) onReordenar?.(nova);
+          } : undefined}
+          title={arrastavel ? 'Arraste para mudar a ordem' : undefined}
         >
           <button
             onClick={() => alternar(no.id)}
@@ -117,10 +158,10 @@ export default function ArvorePastas({ nos, selectedId, onSelecionar, onNovaSubp
             )}
           </div>
         </div>
-        {!recolhida && temFilhas && no.filhas.map((filha) => renderNo(filha))}
+        {!recolhida && temFilhas && no.filhas.map((filha) => renderNo(filha, no.filhas))}
       </div>
     );
   };
 
-  return <div>{nos.map((no) => renderNo(no))}</div>;
+  return <div>{nos.map((no) => renderNo(no, nos))}</div>;
 }
