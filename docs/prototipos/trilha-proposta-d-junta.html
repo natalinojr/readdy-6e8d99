@@ -97,7 +97,7 @@
 <script>
 const brl = v => v.toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
 const ETAPAS = [
-  { id:'documento', nome:'Nota fiscal', ic:'ri-file-text-line' }, { id:'lancamento', nome:'Registro', ic:'ri-edit-box-line' },
+  { id:'documento', nome:'Nota fiscal', ic:'ri-file-text-line' }, { id:'lancamento', nome:'Compra ou despesa', ic:'ri-edit-box-line' },
   { id:'estoque', nome:'Estoque', ic:'ri-archive-2-line' }, { id:'conta', nome:'Conta a pagar', ic:'ri-bill-line' },
   { id:'pagamento', nome:'Pagamento', ic:'ri-money-dollar-circle-line' }, { id:'banco', nome:'Extrato do banco', ic:'ri-bank-line' },
 ];
@@ -117,82 +117,82 @@ const grave = e => e==='atrasado'||e==='problema';
 const C = (id,tipo,titulo,sub,data,valor,e,avisos=[]) => ({id,tipo,titulo,sub,data,valor,e,avisos});
 const casos = [
   C('jumbo','compra','JUMBO COMERCIO DE UTILIDADES','NF 28811 · 5 itens','28/09',84.87,{
-    documento:['ok','Nota nº 28811 recebida'], lancamento:['ok','Registrada em Compras'], estoque:['ok','Os 5 itens entraram no estoque'],
+    documento:['ok','Nota nº 28811 recebida'], lancamento:['ok','Lançada em Compras'], estoque:['ok','Os 5 itens entraram no estoque'],
     conta:['na','Não precisa: foi paga na hora'], pagamento:['ok','Pago em dinheiro no caixa','','28/09'], banco:['na','Não precisa: dinheiro não passa pelo banco']}),
   C('toko','compra','TOKO FRIOS ALIMENTOS','NF 78421 · 4 itens','27/09',137.78,{
-    documento:['ok','Nota nº 78421 recebida'], lancamento:['ok','Registrada em Compras'], estoque:['ok','Os 4 itens entraram no estoque'],
+    documento:['ok','Nota nº 78421 recebida'], lancamento:['ok','Lançada em Compras'], estoque:['ok','Os 4 itens entraram no estoque'],
     conta:['na','Não precisa: foi paga na hora'], pagamento:['ok','Pago por Pix','','27/09'], banco:['ok','Saída encontrada e ligada no extrato']}),
   C('costa','compra','COSTA E MONTENEGRO','NF 14688 · 12 itens','01/09',1444,{
-    documento:['ok','Nota nº 14688 recebida'], lancamento:['ok','Registrada em Compras'], estoque:['ok','Os 12 itens entraram no estoque'],
+    documento:['ok','Nota nº 14688 recebida'], lancamento:['ok','Lançada em Compras'], estoque:['ok','Os 12 itens entraram no estoque'],
     conta:['ok','Conta a pagar criada','','vence 01/09'], pagamento:['atrasado','Venceu em 01/09 e não foi paga','pagar — 28 dias de atraso'],
     banco:['espera','Espera o pagamento']},['Conta a pagar vencida há 28 dias']),
   C('beemax','compra','BEEMAX DISTRIBUIDORA','NF 5521 · 8 itens','12/09',149.49,{
-    documento:['ok','Nota nº 5521 recebida'], lancamento:['ok','Registrada em Compras'],
+    documento:['ok','Nota nº 5521 recebida'], lancamento:['ok','Lançada em Compras'],
     estoque:['pendente','Ninguém confirmou que a mercadoria chegou','confirmar a entrega para os itens entrarem no estoque'],
     conta:['ok','Conta a pagar criada','','vence 19/09'], pagamento:['atrasado','Venceu em 19/09 e não foi paga','pagar — 10 dias de atraso'],
     banco:['espera','Espera o pagamento']},['Conta a pagar vencida há 10 dias']),
   C('bebidas','compra','BEBIDAS PARANAGUÁ','NF 9903 · 20 itens','15/09',374.46,{
-    documento:['ok','Nota nº 9903 recebida'], lancamento:['ok','Registrada em Compras'],
+    documento:['ok','Nota nº 9903 recebida'], lancamento:['ok','Lançada em Compras'],
     estoque:['problema','Chegou em 16/09, mas 12 dos 20 itens não entraram no estoque','ligar esses 12 itens aos insumos'],
     conta:['ok','Conta a pagar criada','','vence 22/09'], pagamento:['atrasado','Venceu em 22/09 e não foi paga','pagar — 7 dias de atraso'],
     banco:['espera','Espera o pagamento']},['Chegou, mas parte dos itens não entrou no estoque','Conta a pagar vencida há 7 dias']),
   C('cozinha','compra','EL PATRON COZINHA INDUSTRIAL','NF 1203 · 31 itens','05/09',5553.23,{
-    documento:['ok','Nota nº 1203 recebida'], lancamento:['ok','Registrada em Compras'], estoque:['ok','Os 31 itens entraram no estoque'],
+    documento:['ok','Nota nº 1203 recebida'], lancamento:['ok','Lançada em Compras'], estoque:['ok','Os 31 itens entraram no estoque'],
     conta:['ok','3 parcelas criadas em Contas a pagar'], pagamento:['pendente','1 de 3 parcelas paga','pagar a próxima até 05/10 (no prazo)'],
     banco:['ok','Parcela paga encontrada no extrato']}),
   C('atacadao','compra','ATACADÃO S.A.','NF 77120 · 44 itens','18/09',2310.15,{
-    documento:['ok','Nota nº 77120 recebida'], lancamento:['ok','Registrada em Compras'], estoque:['ok','Os 44 itens entraram no estoque'],
+    documento:['ok','Nota nº 77120 recebida'], lancamento:['ok','Lançada em Compras'], estoque:['ok','Os 44 itens entraram no estoque'],
     conta:['ok','Conta a pagar criada','','vence 18/10'], pagamento:['pendente','Ainda não paga — vence em 18/10','pagar até 18/10 (no prazo)'],
     banco:['espera','Espera o pagamento']}),
   C('serra','compra','HORTIFRUTI SERRA VERDE','sem nota · 9 itens','22/09',412,{
-    documento:['na','Não precisa: compra sem nota fiscal'], lancamento:['ok','Registrada em Compras'], estoque:['ok','Os 9 itens entraram no estoque'],
+    documento:['na','Não precisa: compra sem nota fiscal'], lancamento:['ok','Lançada em Compras'], estoque:['ok','Os 9 itens entraram no estoque'],
     conta:['na','Não precisa: foi paga na hora'], pagamento:['ok','Marcada como paga por Pix','','22/09'],
     banco:['pendente','Marcada como paga, mas a saída não foi achada no extrato','ligar a saída do extrato a esta compra']}),
   C('padaria','compra','PADARIA SÃO JOÃO','NF 441 · 2 itens','25/09',96,{
-    documento:['ok','Nota nº 441 (número digitado, sem o arquivo)'], lancamento:['ok','Registrada em Compras'], estoque:['na','Não precisa: itens não controlados no estoque'],
+    documento:['ok','Nota nº 441 (número digitado, sem o arquivo)'], lancamento:['ok','Lançada em Compras'], estoque:['na','Não precisa: itens não controlados no estoque'],
     conta:['problema','Não foi paga na hora, mas ninguém criou a conta a pagar','criar a conta a pagar — senão ela nunca aparece para pagar'],
     pagamento:['espera','Espera a conta a pagar'], banco:['espera','Espera o pagamento']},['Compra sem conta a pagar']),
   C('copel','despesa','COPEL','Energia elétrica','10/09',1873.4,{
-    documento:['ok','Boleto recebido'], lancamento:['ok','Registrada em Despesas — categoria Energia'], estoque:['na','Não precisa: despesa não vai ao estoque'],
+    documento:['ok','Boleto recebido'], lancamento:['ok','Lançada em Despesas — categoria Energia'], estoque:['na','Não precisa: despesa não vai ao estoque'],
     conta:['ok','Conta a pagar criada','','vence 20/09'], pagamento:['ok','Pago no vencimento','','20/09'], banco:['ok','Saída encontrada e ligada no extrato']}),
   C('sanepar','despesa','SANEPAR','Água e esgoto','12/09',512.7,{
-    documento:['ok','Boleto recebido'], lancamento:['ok','Registrada em Despesas — categoria Água'], estoque:['na','Não precisa: despesa não vai ao estoque'],
+    documento:['ok','Boleto recebido'], lancamento:['ok','Lançada em Despesas — categoria Água'], estoque:['na','Não precisa: despesa não vai ao estoque'],
     conta:['ok','Conta a pagar criada'], pagamento:['ok','Marcada como paga','','25/09'],
     banco:['pendente','Marcada como paga, mas a saída não foi achada no extrato','ligar a saída do extrato a esta conta']}),
   C('mare','despesa','CONTABILIDADE MARÉ','Honorários','05/09',950,{
     documento:['ok','Nota de serviço nº 2210 recebida'],
-    lancamento:['pendente','Registrada em Despesas, mas sem categoria','escolher a categoria do DRE'],
+    lancamento:['pendente','Lançada em Despesas, mas sem categoria','escolher a categoria do DRE'],
     estoque:['na','Não precisa: despesa não vai ao estoque'], conta:['ok','Conta a pagar criada','','vence 10/10'],
     pagamento:['pendente','Ainda não paga — vence em 10/10','pagar até 10/10 (no prazo)'], banco:['espera','Espera o pagamento']}),
   C('aluguel','despesa','IMOBILIÁRIA LITORAL','Aluguel da loja','01/09',6500,{
-    documento:['na','Não precisa: aluguel sem nota fiscal'], lancamento:['ok','Registrado em Despesas — categoria Aluguel'], estoque:['na','Não precisa: despesa não vai ao estoque'],
+    documento:['na','Não precisa: aluguel sem nota fiscal'], lancamento:['ok','Lançado em Despesas — categoria Aluguel'], estoque:['na','Não precisa: despesa não vai ao estoque'],
     conta:['ok','Conta a pagar criada','','vence 05/09'], pagamento:['ok','Pago no vencimento','','05/09'], banco:['ok','Saída encontrada e ligada no extrato']}),
   C('nortesul','nota','DISTRIBUIDORA NORTE SUL','NF-e 33012 · chegou pela SEFAZ','24/09',870.3,{
     documento:['ok','Nota nº 33012 chegou pela SEFAZ'],
-    lancamento:['pendente','A nota chegou, mas ainda não foi registrada no sistema','registrar como compra ou despesa'],
-    estoque:['espera','Espera o registro'], conta:['espera','Espera o registro'], pagamento:['espera','Espera a conta a pagar'], banco:['espera','Espera o pagamento']}),
+    lancamento:['pendente','A nota chegou, mas ainda não virou compra nem despesa','lançar como compra ou despesa'],
+    estoque:['espera','Espera virar compra ou despesa'], conta:['espera','Espera virar compra ou despesa'], pagamento:['espera','Espera a conta a pagar'], banco:['espera','Espera o pagamento']}),
   C('embal','nota','EMBALAGENS PR','NF-e 6710 · chegou pela SEFAZ','26/09',322.1,{
     documento:['ok','Nota nº 6710 chegou pela SEFAZ'],
-    lancamento:['pendente','A nota chegou, mas ainda não foi registrada no sistema','registrar como compra ou despesa'],
-    estoque:['espera','Espera o registro'], conta:['espera','Espera o registro'], pagamento:['espera','Espera a conta a pagar'], banco:['espera','Espera o pagamento']}),
-  C('joao','pagamento','PIX PARA JOÃO P. SILVA','saiu do banco sem registro','19/09',250,{
+    lancamento:['pendente','A nota chegou, mas ainda não virou compra nem despesa','lançar como compra ou despesa'],
+    estoque:['espera','Espera virar compra ou despesa'], conta:['espera','Espera virar compra ou despesa'], pagamento:['espera','Espera a conta a pagar'], banco:['espera','Espera o pagamento']}),
+  C('joao','pagamento','PIX PARA JOÃO P. SILVA','saiu do banco sem dizer o que foi','19/09',250,{
     documento:['na','Não precisa: Pix sem nota'],
-    lancamento:['problema','Saiu do banco, mas não foi registrado no sistema','dizer o que foi esse pagamento'],
+    lancamento:['problema','Saiu do banco, mas ninguém disse se foi compra, despesa ou outra coisa','dizer o que foi esse Pix'],
     estoque:['na','Não precisa'], conta:['na','Não precisa: já foi pago'], pagamento:['ok','Pago por Pix','','19/09'],
-    banco:['problema','Está no extrato, mas não está ligado a nenhum registro','vai ficar certo quando o registro for feito']},['Pix sem registro no sistema']),
-  C('porto','pagamento','PIX PARA MERCADO DO PORTO','saiu do banco sem registro','23/09',188.6,{
+    banco:['problema','Está no extrato, mas não está ligado a nenhuma compra ou despesa','nada aqui — se liga sozinho quando você disser o que foi o Pix']},['Pix sem dizer o que foi']),
+  C('porto','pagamento','PIX PARA MERCADO DO PORTO','saiu do banco sem dizer o que foi','23/09',188.6,{
     documento:['na','Não precisa: Pix sem nota'],
-    lancamento:['problema','Saiu do banco, mas não foi registrado no sistema','dizer o que foi esse pagamento'],
+    lancamento:['problema','Saiu do banco, mas ninguém disse se foi compra, despesa ou outra coisa','dizer o que foi esse Pix'],
     estoque:['na','Não precisa'], conta:['na','Não precisa: já foi pago'], pagamento:['ok','Pago por Pix','','23/09'],
-    banco:['problema','Está no extrato, mas não está ligado a nenhum registro','vai ficar certo quando o registro for feito']},['Pix sem registro no sistema']),
+    banco:['problema','Está no extrato, mas não está ligado a nenhuma compra ou despesa','nada aqui — se liga sozinho quando você disser o que foi o Pix']},['Pix sem dizer o que foi']),
   C('frigo','compra','FRIGORÍFICO LITORAL','NF 55012 · 6 itens','20/09',1980,{
-    documento:['ok','Nota nº 55012 recebida'], lancamento:['ok','Registrada em Compras'], estoque:['ok','Os 6 itens entraram no estoque'],
+    documento:['ok','Nota nº 55012 recebida'], lancamento:['ok','Lançada em Compras'], estoque:['ok','Os 6 itens entraram no estoque'],
     conta:['ok','Conta a pagar criada','','vence 04/10'], pagamento:['pendente','Ainda não paga — vence em 04/10','pagar até 04/10 (no prazo)'], banco:['espera','Espera o pagamento']}),
   C('gas','compra','DISTRIBUIDORA DE GÁS PR','NF 9021 · 2 itens','21/09',260,{
-    documento:['ok','Nota nº 9021 recebida'], lancamento:['ok','Registrada em Compras'], estoque:['na','Não precisa: gás não é controlado no estoque'],
+    documento:['ok','Nota nº 9021 recebida'], lancamento:['ok','Lançada em Compras'], estoque:['na','Não precisa: gás não é controlado no estoque'],
     conta:['na','Não precisa: foi paga na hora'], pagamento:['ok','Pago por Pix','','21/09'], banco:['ok','Saída encontrada e ligada no extrato']}),
   C('meta','despesa','META (Facebook)','Anúncios · crédito pré-pago','03/09',600,{
-    documento:['ok','Nota de consumo recebida'], lancamento:['ok','Registrada em Despesas — categoria Marketing'], estoque:['na','Não precisa: despesa não vai ao estoque'],
+    documento:['ok','Nota de consumo recebida'], lancamento:['ok','Lançada em Despesas — categoria Marketing'], estoque:['na','Não precisa: despesa não vai ao estoque'],
     conta:['na','Não precisa: foi paga na hora'], pagamento:['ok','Pago por Pix','','03/09'], banco:['ok','Saída encontrada e ligada no extrato']}),
 ];
 const porId = Object.fromEntries(casos.map(c=>[c.id,c]));
@@ -250,24 +250,24 @@ const OUTRO = {
 };
 
 const GRUPOS = [
-  { id:'pix', ic:'ri-bank-line', nome:'Registrar saídas do banco', desc:'Saiu dinheiro do banco sem registro no sistema', cor:'red', lote:'Aceitar as sugestões marcadas' },
+  { id:'pix', ic:'ri-bank-line', nome:'Dizer o que foram as saídas do banco', desc:'Saiu dinheiro e ninguém disse se foi compra ou despesa', cor:'red', lote:'Aceitar as sugestões marcadas' },
   { id:'vencidas', ic:'ri-alarm-warning-line', nome:'Pagar contas a pagar vencidas', desc:'Juros correndo', cor:'red', lote:'Pagar marcadas pelo Inter' },
   { id:'conta', ic:'ri-bill-line', nome:'Criar conta a pagar', desc:'Compra não paga e sem conta a pagar lançada', cor:'red' },
   { id:'estoque', ic:'ri-archive-2-line', nome:'Acertar estoque', desc:'Mercadoria que chegou e não entrou no estoque', cor:'amber', lote:'Confirmar recebimento das marcadas' },
-  { id:'notas', ic:'ri-file-text-line', nome:'Registrar notas que chegaram', desc:'Notas da SEFAZ ainda não registradas', cor:'amber', lote:'Lançar marcadas com a sugestão' },
+  { id:'notas', ic:'ri-file-text-line', nome:'Lançar notas que chegaram', desc:'Notas da SEFAZ que ainda não viraram compra nem despesa', cor:'amber', lote:'Lançar marcadas com a sugestão' },
   { id:'classificar', ic:'ri-price-tag-3-line', nome:'Classificar no DRE', desc:'Despesa sem categoria', cor:'amber' },
   { id:'extrato', ic:'ri-links-line', nome:'Achar no extrato', desc:'Marcado como pago, mas não achado no extrato', cor:'amber', lote:'Ligar as marcadas' },
 ];
 // tarefa → caso + etapa que ela fecha + sugestões
 let T = [
   { id:1, g:'pix', caso:'joao', etapas:['lancamento','banco'], urg:true, sel:true, porque:'João recebeu R$ 250,00 em 3 sábados de agosto, todos lançados como diária.', sug:[['Lançar como diária de freelancer (João P. Silva)','ri-user-line']] },
-  { id:2, g:'pix', caso:'porto', etapas:['lancamento','banco'], urg:true, sel:false, porque:'Da última vez que você pagou este destinatário, foi registrado como compra de hortifruti.', sug:[['Lançar como compra — Hortifruti','ri-shopping-cart-2-line'],['Ler a notinha (foto/QR)','ri-camera-line']] },
+  { id:2, g:'pix', caso:'porto', etapas:['lancamento','banco'], urg:true, sel:false, porque:'Da última vez que você pagou este destinatário, foi lançado como compra de hortifruti.', sug:[['Lançar como compra — Hortifruti','ri-shopping-cart-2-line'],['Ler a notinha (foto/QR)','ri-camera-line']] },
   { id:3, g:'vencidas', caso:'costa', etapas:['pagamento','banco'], urg:true, sel:true, porque:'Venceu há 28 dias. Pagando hoje, os juros ficam em cerca de R$ 43,32.', sug:[['Pagar agora — R$ 1.487,32 com juros','ri-bank-line']] },
   { id:4, g:'vencidas', caso:'beemax', etapas:['pagamento','banco'], urg:true, sel:true, porque:'Venceu há 10 dias.', sug:[['Pagar agora','ri-bank-line']] },
   { id:5, g:'vencidas', caso:'bebidas', etapas:['pagamento','banco'], urg:true, sel:true, porque:'Venceu há 7 dias.', sug:[['Pagar agora','ri-bank-line']] },
   { id:6, g:'conta', caso:'padaria', etapas:['conta'], urg:true, porque:'A compra não foi paga na hora e ninguém lançou a conta a pagar dela — assim ela nunca aparece para pagar. A padaria costuma dar 30 dias.', sug:[['Criar conta a pagar vencendo 25/10','ri-add-line']] },
   { id:7, g:'estoque', caso:'bebidas', etapas:['estoque'], urg:true, porque:'Chegou em 16/09, mas 12 dos 20 itens não estão ligados a nenhum insumo — por isso não entraram no estoque.', sug:[['Vincular os 12 itens aqui','ri-links-line']] },
-  { id:8, g:'estoque', caso:'beemax', etapas:['estoque'], urg:false, sel:true, porque:'A compra foi registrada em 12/09, mas ninguém confirmou que a mercadoria chegou.', sug:[['Chegou hoje','ri-check-line']] },
+  { id:8, g:'estoque', caso:'beemax', etapas:['estoque'], urg:false, sel:true, porque:'A compra foi lançada em 12/09, mas ninguém confirmou que a mercadoria chegou.', sug:[['Chegou hoje','ri-check-line']] },
   { id:9, g:'notas', caso:'nortesul', etapas:['lancamento','estoque','conta'], urg:false, sel:true, porque:'Os 7 itens da nota já estão ligados a insumos, e a nota diz que o prazo é de 30 dias.', sug:[['Lançar como compra (conta a pagar vence 24/10)','ri-shopping-cart-2-line']] },
   { id:10, g:'notas', caso:'embal', etapas:['lancamento','estoque','conta'], urg:false, sel:true, porque:'Nota desse fornecedor é sempre embalagem, que é despesa. O boleto dela já chegou.', sug:[['Lançar como despesa — Embalagens','ri-bill-line']] },
   { id:11, g:'classificar', caso:'mare', etapas:['lancamento'], urg:false, porque:'Nos meses anteriores, os honorários do contador foram para estas categorias:', sug:[['Serviços contábeis','ri-price-tag-3-line'],['Serviços de terceiros','ri-price-tag-3-line']] },
@@ -361,7 +361,7 @@ function etapasAbertas(c, fecha){
             <div class="mt-2 w-full rounded-xl px-1.5 py-1.5 ${alvo?'bg-amber-50/70 ring-1 ring-amber-200':''}">
               <p class="text-[10px] font-bold uppercase tracking-wide text-zinc-400 leading-tight">${e.nome}</p>
               <span class="inline-block mt-1.5 text-[10px] font-semibold px-2 py-0.5 rounded-full ring-1 ${CHIP[e.estado]}">${s.rot}</span>
-              <p class="mt-1.5 text-[11px] font-semibold leading-snug ${e.estado==='na'||e.estado==='espera'?'text-zinc-400':'text-zinc-800'}">${e.resumo}</p>
+              <p class="mt-1.5 text-[11px] font-semibold leading-snug ${e.estado==='na'||e.estado==='espera'?'text-zinc-400':'text-zinc-800'}">${e.resumo.replace(/^Não precisa:? ?/,'')}</p>
               ${e.det?`<p class="mt-0.5 text-[11px] leading-snug text-zinc-500">${e.det}</p>`:''}
               ${e.falta&&ruim(e.estado)?`<p class="mt-1.5 text-[11px] leading-snug font-semibold ${grave(e.estado)?'text-red-600':'text-amber-700'}"><i class="ri-arrow-right-line"></i> Falta: ${e.falta}</p>`:''}
               ${e.estado==='ok'?`<button class="mt-1.5 text-[11px] font-semibold text-zinc-500 hover:text-amber-700">Abrir <i class="ri-arrow-right-up-line"></i></button>`:''}
@@ -384,10 +384,10 @@ function tarefa(t){
           <span class="text-sm font-bold tabnum whitespace-nowrap">${brl(c.valor)}</span>
         </div>
         ${expandido.has(t.id)?etapasAbertas(c, t.etapas):''}
-        <div class="mt-2 rounded-lg bg-amber-50/60 border border-amber-100 px-2.5 py-2">
-          <p class="text-[11px] text-amber-800 flex items-start gap-1.5"><i class="ri-sparkling-2-line mt-px"></i><span><strong>Sugestão</strong> — ${t.porque}</span></p>
+        <div class="mt-2 rounded-lg ${t.urg?'bg-red-50 border border-red-200':'bg-amber-50/60 border border-amber-100'} px-2.5 py-2">
+          <p class="text-[11px] ${t.urg?'text-red-800':'text-amber-800'} flex items-start gap-1.5"><i class="ri-sparkling-2-line mt-px"></i><span><strong>Sugestão</strong> — ${t.porque}</span></p>
           <div class="flex flex-wrap gap-1.5 mt-2">
-            ${t.sug.map(([l,ic],i)=>`<button data-sug="${t.id}" data-l="${l}" class="text-xs px-2.5 py-1.5 rounded-lg font-semibold ${i===0?'bg-amber-500 text-white hover:bg-amber-600':'bg-white border border-amber-200 text-amber-800 hover:bg-amber-50'}"><i class="${ic}"></i> ${l}</button>`).join('')}
+            ${t.sug.map(([l,ic],i)=>`<button data-sug="${t.id}" data-l="${l}" class="text-xs px-2.5 py-1.5 rounded-lg font-semibold ${i===0?(t.urg?'bg-red-500 text-white hover:bg-red-600':'bg-amber-500 text-white hover:bg-amber-600'):(t.urg?'bg-white border border-red-200 text-red-700 hover:bg-red-50':'bg-white border border-amber-200 text-amber-800 hover:bg-amber-50')}"><i class="${ic}"></i> ${l}</button>`).join('')}
             <button data-outro="${t.id}" class="text-xs px-2.5 py-1.5 rounded-lg font-semibold border ${aberto?'bg-zinc-800 text-white border-zinc-800':'bg-white border-zinc-300 text-zinc-700 hover:bg-zinc-50'}"><i class="ri-more-2-line"></i> Resolver de outro jeito…</button>
           </div>
         </div>
