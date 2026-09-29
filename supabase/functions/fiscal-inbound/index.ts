@@ -482,6 +482,40 @@ async function saveItemLinks(admin: Admin, tenantId: string, doc: any, links: Ma
   }
 }
 
+// Compra lançada à mão para esta mesma nota: mesmo fornecedor (cadastro ou nome) e mesmo número
+// (ignorando zeros à esquerda), data até 60 dias da emissão, não bonificação e ainda sem nota ligada.
+// Com mais de uma, a de valor mais perto do da nota.
+const numeroNfChave = (v: unknown) => String(v ?? '').replace(/\D/g, '').replace(/^0+/, '');
+// deno-lint-ignore no-explicit-any
+async function compraJaLancada(admin: Admin, tenantId: string, doc: any, supplier: { id: string; name: string }, numeroNf: string) {
+  const alvo = numeroNfChave(numeroNf);
+  if (!alvo) return null;
+  const emissao = new Date(String(doc.emitted_at ?? new Date().toISOString()).slice(0, 10) + 'T12:00:00Z');
+  const de = new Date(emissao.getTime() - 60 * 86400_000).toISOString().slice(0, 10);
+  const ate = new Date(emissao.getTime() + 60 * 86400_000).toISOString().slice(0, 10);
+  const sel = 'id, supplier, supplier_id, invoice_number, total_amount, notes, is_bonus, created_at';
+  const [porId, porNome] = await Promise.all([
+    admin.from('fin_purchases').select(sel).eq('tenant_id', tenantId).eq('supplier_id', supplier.id).gte('purchase_date', de).lte('purchase_date', ate),
+    admin.from('fin_purchases').select(sel).eq('tenant_id', tenantId).ilike('supplier', supplier.name.replace(/[%_\\]/g, '\\$&')).gte('purchase_date', de).lte('purchase_date', ate),
+  ]);
+  const vistos = new Map<string, any>();
+  for (const p of [...(porId.data ?? []), ...(porNome.data ?? [])]) {
+    if (!p.is_bonus && numeroNfChave(p.invoice_number) === alvo) vistos.set(String(p.id), p);
+  }
+  if (vistos.size === 0) return null;
+  const { data: jaLigadas } = await admin.from('fiscal_inbound_documents').select('purchase_id')
+    .eq('tenant_id', tenantId).neq('id', doc.id).in('purchase_id', [...vistos.keys()]);
+  for (const l of jaLigadas ?? []) vistos.delete(String(l.purchase_id));
+  const total = Number(doc.valor_total ?? 0);
+  return [...vistos.values()].sort((a, b) => Math.abs(Number(a.total_amount) - total) - Math.abs(Number(b.total_amount) - total))[0] ?? null;
+}
+
+// Compra que já existia antes da nota ser importada (ligada por compraJaLancada): desfazer a
+// importação só solta a nota; a compra é de quem a lançou e não pode ser apagada junto.
+// deno-lint-ignore no-explicit-any
+const compraAnteriorANota = (purchase: any, doc: any) =>
+  !!(purchase?.created_at && doc?.imported_at && new Date(purchase.created_at).getTime() < new Date(doc.imported_at).getTime());
+
 // ── Importar uma nota (tela, conciliação e lançamento automático) ───────────
 type ImportResult = { ok: true; data: Record<string, unknown> } | { ok: false; error: string; status: number };
 interface ImportCtx {
@@ -561,6 +595,29 @@ async function importDocumentLocked(ctx: ImportCtx, doc: any, action: 'import_pu
     `NF-e de entrada — chave ${doc.chave}`,
   ].filter(Boolean).join(' · ');
   const now = new Date().toISOString();
+
+  // A compra já foi lançada à mão (mesmo fornecedor + mesmo número de NF): a nota passa a ser
+  // dela, em vez de criar outra compra com outra conta a pagar (2026-09-29). Sem isso o boleto
+  // baixava uma das cópias e a outra ficava vencida para sempre, com o CMV contado 2×.
+  if (action === 'import_purchase' && !bonus && numeroNf) {
+    const existente = await compraJaLancada(admin, tenantId, doc, supplier, numeroNf);
+    if (existente) {
+      const { data: bills } = await admin.from('fin_accounts_payable').select('id')
+        .eq('tenant_id', tenantId).eq('reference_id', existente.id).eq('reference_type', 'purchase');
+      const chave = `NF-e de entrada — chave ${doc.chave}`;
+      await admin.from('fin_purchases').update({
+        supplier_id: existente.supplier_id ?? supplier.id,
+        notes: String(existente.notes ?? '').includes(String(doc.chave)) ? existente.notes : [existente.notes, chave].filter(Boolean).join(' · '),
+      }).eq('id', existente.id).eq('tenant_id', tenantId);
+      await admin.from('fiscal_inbound_documents').update({
+        status: 'imported', import_type: 'purchase', purchase_id: existente.id, supplier_id: supplier.id,
+        payable_ids: (bills ?? []).map((b: any) => b.id), imported_at: now, imported_by: userId, error_message: null, updated_at: now,
+      }).eq('id', doc.id);
+      const diff = round2(Number(existente.total_amount ?? 0) - Number(doc.valor_total ?? 0));
+      log('INFO', 'import_purchase', 'nota ligada à compra já lançada', { tenantId, doc: doc.id, purchase: existente.id, diff });
+      return { ok: true, data: { purchase_id: existente.id, parcelas: (bills ?? []).length, supplier: supplier.name, ligada_a_compra_existente: true, diferenca_valor: diff } };
+    }
+  }
 
   if (action === 'import_purchase') {
     // Pelo purchase-write (fonte única da regra de compra: fornecedor, parcelas com
@@ -1017,9 +1074,18 @@ Deno.serve(async (req: Request) => {
       const now = new Date().toISOString();
       if ((doc.import_type === 'purchase' || doc.import_type === 'bonus') && doc.purchase_id) {
         const [{ data: p }, { data: bs }] = await Promise.all([
-          admin.from('fin_purchases').select('stock_applied_at').eq('id', doc.purchase_id).eq('tenant_id', tenantId).maybeSingle(),
+          admin.from('fin_purchases').select('stock_applied_at, created_at').eq('id', doc.purchase_id).eq('tenant_id', tenantId).maybeSingle(),
           admin.from('fin_accounts_payable').select('status, paid_amount').eq('tenant_id', tenantId).eq('reference_id', doc.purchase_id),
         ]);
+        // Nota só ligada a uma compra lançada antes dela: solta a nota, a compra fica
+        if (compraAnteriorANota(p, doc)) {
+          await admin.from('fiscal_inbound_documents').update({
+            status: 'new', import_type: null, purchase_id: null, payable_ids: [], imported_at: null, imported_by: null,
+            auto_imported: false, auto_imported_at: null, auto_launch_blocked: true, error_message: null, updated_at: now,
+          }).eq('id', doc.id);
+          log('INFO', 'undo_auto_import', 'nota solta da compra já lançada', { tenantId, doc: doc.id, userId });
+          return json({ success: true });
+        }
         if (p?.stock_applied_at) return errResp('A mercadoria já deu entrada no estoque: desfaça o recebimento antes');
         if ((bs ?? []).some((b: any) => b.status === 'paid' || Number(b.paid_amount ?? 0) > 0)) return errResp('Já tem parcela paga: estorne o pagamento antes de desfazer');
         const r = await fetch(`${supabaseUrl}/functions/v1/purchase-write`, {

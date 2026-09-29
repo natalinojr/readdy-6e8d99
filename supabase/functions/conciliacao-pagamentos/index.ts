@@ -795,9 +795,12 @@ async function unlinkMonthly(ctx: Ctx, doc: Row, silencioso = false): Promise<{ 
   const { admin, tenantId } = ctx;
   const { data: cur } = await admin.from('fiscal_inbound_documents').select('*').eq('id', doc.id).eq('tenant_id', tenantId).maybeSingle();
   if (!cur || cur.settlement !== 'monthly' || cur.status !== 'imported') return { ok: false, msg: 'Esta nota não foi vinculada a pagamentos do mês' };
+  // Compra lançada à mão antes da nota (o fiscal-inbound só ligou a nota a ela): não é apagada aqui
+  let compraAnterior = false;
   if (cur.purchase_id) {
-    const { data: p } = await admin.from('fin_purchases').select('stock_applied_at').eq('id', cur.purchase_id).maybeSingle();
-    if (p?.stock_applied_at) return { ok: false, msg: 'A mercadoria já deu entrada no estoque: desfaça o recebimento antes' };
+    const { data: p } = await admin.from('fin_purchases').select('stock_applied_at, created_at').eq('id', cur.purchase_id).maybeSingle();
+    compraAnterior = !!(p?.created_at && cur.imported_at && new Date(p.created_at).getTime() < new Date(cur.imported_at).getTime());
+    if (p?.stock_applied_at && !compraAnterior) return { ok: false, msg: 'A mercadoria já deu entrada no estoque: desfaça o recebimento antes' };
   }
   const linhas = ((cur.settlement_statement_ids ?? []) as string[]);
   const { data: rs } = linhas.length
@@ -826,7 +829,9 @@ async function unlinkMonthly(ctx: Ctx, doc: Row, silencioso = false): Promise<{ 
       match_kind: det.prev_match_kind ?? null, match_ref_id: null, match_confidence: null, match_detail: null, category: det.prev_category ?? null,
     }).eq('id', r.id);
   }
-  if (cur.purchase_id) {
+  if (compraAnterior) {
+    // fica a compra com as contas dela; só a nota volta a ficar solta
+  } else if (cur.purchase_id) {
     const del = await callEdge(ctx, 'purchase-write', { action: 'delete_purchase', tenant_id: tenantId, payload: { id: cur.purchase_id } });
     if (!del.ok) return { ok: false, msg: 'Pagamentos estornados, mas excluir a compra falhou: ' + (del.error ?? '') };
   } else if (payIds.length) {
