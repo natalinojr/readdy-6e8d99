@@ -4,10 +4,12 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Trilha — proposta D (B + C)</title>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
 <script src="https://cdn.tailwindcss.com"></script>
+<script>tailwind.config = { theme: { extend: { fontFamily: { sans: ['Plus Jakarta Sans','sans-serif'] } } } };</script>
 <link href="https://cdn.jsdelivr.net/npm/remixicon@4.3.0/fonts/remixicon.css" rel="stylesheet" />
 <style>
-  body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; background:#fafafa; }
+  body { font-family: 'Plus Jakarta Sans', sans-serif; background:#fafafa; }
   .tabnum { font-variant-numeric: tabular-nums; }
   .sai { animation: sai .35s ease forwards; }
   @keyframes sai { to { opacity:0; transform: translateX(24px); } }
@@ -92,8 +94,13 @@
 </div>
 
 <datalist id="insumosLista"></datalist>
-<div id="veu" class="fixed inset-0 bg-zinc-900/20 fade opacity-0 pointer-events-none"></div>
-<aside id="gaveta" class="drawer fixed top-0 right-0 h-full w-full sm:w-[460px] bg-white shadow-2xl border-l border-zinc-200 translate-x-full overflow-y-auto"></aside>
+<div id="combo" style="position:fixed;width:288px;z-index:70;display:none" class="bg-white border border-zinc-200 rounded-xl shadow-lg overflow-hidden text-zinc-800">
+  <div class="p-2 border-b border-zinc-100"><input placeholder="Digite para buscar o insumo…" class="w-full text-sm border border-zinc-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-amber-400"></div>
+  <ul id="comboUl" role="listbox" class="max-h-64 overflow-y-auto py-1"></ul>
+  <button id="comboCriar" class="w-full flex items-center gap-1.5 px-3 py-2 border-t border-zinc-100 text-left text-sm font-semibold text-emerald-700 hover:bg-emerald-50"></button>
+</div>
+<div id="veu" class="fixed inset-0 z-40 bg-zinc-900/20 fade opacity-0 pointer-events-none"></div>
+<aside id="gaveta" class="drawer fixed top-0 right-0 z-50 h-full w-full sm:w-[460px] bg-white shadow-2xl border-l border-zinc-200 translate-x-full overflow-y-auto"></aside>
 
 <script>
 const brl = v => v.toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
@@ -301,7 +308,7 @@ function topo(){
   document.getElementById('limparEtapa').classList.toggle('hidden',!etapaF);
   const M=[['tarefas','Tarefas','ri-checkbox-multiple-line',T.length],['esteira','Esteira','ri-layout-column-line'],['matriz','Matriz','ri-grid-line']];
   document.getElementById('modo').innerHTML = M.map(([id,l,ic,n])=>`<button data-m="${id}" class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap ${modo===id?'bg-white text-amber-600 shadow-sm':'text-zinc-500 hover:text-zinc-800'}"><i class="${ic}"></i>${l}${n?` <span class="text-[10px] bg-amber-500 text-white rounded-full px-1.5">${n}</span>`:''}</button>`).join('');
-  document.querySelectorAll('#modo button').forEach(b=>b.onclick=()=>{modo=b.dataset.m; render();});
+  document.querySelectorAll('#modo button').forEach(b=>b.onclick=()=>{fechar(); modo=b.dataset.m; render();});
 }
 
 // ── Tarefas ──
@@ -315,22 +322,68 @@ function nav(){
 }
 // Insumos da loja e VÍNCULOS JÁ CONFIRMADOS (Classificação de itens / compras anteriores).
 // Regra do sistema: só liga sozinho quando o vínculo já foi confirmado; nunca "chuta" insumo.
-const INSUMOS = ['Coca-Cola lata 350ml','Coca-Cola 2L','Guaraná Antarctica lata 350ml','Guaraná 2L','Fanta laranja lata 350ml','Sprite lata 350ml','Água mineral 500ml','Água com gás 500ml','Heineken long neck 330ml','Brahma lata 350ml','Skol lata 350ml','Suco Del Valle uva 1L','Suco Del Valle laranja 1L','H2OH limão 500ml','Red Bull 250ml','Gelo (saco 5kg)','Tomate italiano (kg)','Cebola branca (kg)','Alface americana (un)','Limão tahiti (kg)','Cheiro-verde (maço)','Batata (kg)','Pimentão verde (kg)','Carne moída (kg)','Queijo mussarela (kg)','Óleo de soja (L)'];
+const INS_LISTA = ['Coca-Cola lata 350ml','Coca-Cola 2L','Guaraná Antarctica lata 350ml','Guaraná 2L','Fanta laranja lata 350ml','Sprite lata 350ml','Água mineral 500ml','Água com gás 500ml','Heineken long neck 330ml','Brahma lata 350ml','Skol lata 350ml','Suco Del Valle uva 1L','Suco Del Valle laranja 1L','H2OH limão 500ml','Red Bull 250ml','Gelo (saco 5kg)','Tomate italiano (kg)','Cebola branca (kg)','Alface americana (un)','Limão tahiti (kg)','Cheiro-verde (maço)','Batata (kg)','Pimentão verde (kg)','Carne moída (kg)','Queijo mussarela (kg)','Óleo de soja (L)'];
+const catDe = n => /kg\)|maço|\(un\)/.test(n) && !/Carne|Queijo/.test(n) ? 'Hortifruti' : /Carne|Queijo|Óleo/.test(n) ? 'Mercearia e frios' : /Gelo/.test(n) ? 'Outros' : /Heineken|Brahma|Skol/.test(n) ? 'Cervejas' : 'Bebidas não alcoólicas';
+const unDe = n => (n.match(/\((kg|un|maço|L)\)/)||[])[1] || 'un';
+const INSUMOS = INS_LISTA;
+const INS_INFO = Object.fromEntries(INS_LISTA.map(n=>[n,{un:unDe(n), cat:catDe(n)}]));
 const VINCULOS = { 'tomate':'Tomate italiano (kg)', 'tomate italiano':'Tomate italiano (kg)', 'cebola':'Cebola branca (kg)', 'alface':'Alface americana (un)', 'limao':'Limão tahiti (kg)', 'cheiro verde':'Cheiro-verde (maço)' };
 const norm = x => (x||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9 ]/g,' ').replace(/\s+/g,' ').trim();
 const ULTIMA = { porto:[ ['Tomate',3,'kg',8.9], ['Cebola',2,'kg',6.5], ['Limão',1.5,'kg',7.2] ] };
 let itens = {};
-const iniItens = t => itens[t.id] ??= (ULTIMA[t.caso]||[['',1,'un',0]]).map(([d,q,u,v])=>({d,q,u,v, ins:VINCULOS[norm(d)]||'', auto:!!VINCULOS[norm(d)], lembrar:false}));
+const iniItens = t => itens[t.id] ??= (ULTIMA[t.caso]||[['',1,'un',0]]).map(([d,q,u,v])=>({d,q,u,v, ins:VINCULOS[norm(d)]||'', auto:!!VINCULOS[norm(d)], upp:VINCULOS[norm(d)]?'1':''}));
+// Seletor com busca: clica, digita parte do nome, escolhe com clique ou ↑/↓ + Enter; "Criar insumo" no rodapé.
+// Depois de escolher pergunta a conversão (1 cx = 12 un), como na Classificação.
+let comboAlvo=null, comboHi=0, comboDesde=0;
+const comboBtn = key => `<button data-combo="${key}" class="inline-flex items-center justify-between gap-1 text-left text-[11px] font-semibold rounded-lg px-1.5 py-1 w-[190px] cursor-pointer bg-zinc-50 text-zinc-500 border border-dashed border-zinc-200 hover:border-emerald-300"><span class="truncate">Vincular insumo…</span><i class="ri-arrow-down-s-line flex-shrink-0"></i></button>`;
+function comboAbrir(btn){
+  const r=btn.getBoundingClientRect(), W=288, left=Math.max(8,Math.min(r.left, innerWidth-W-8)), up=innerHeight-r.bottom<320&&r.top>320;
+  comboAlvo=btn.dataset.combo; comboHi=0;
+  const el=document.getElementById('combo');
+  Object.assign(el.style,{left:left+'px', top:up?'':(r.bottom+4)+'px', bottom:up?(innerHeight-r.top+4)+'px':'', display:'block'});
+  el.querySelector('input').value=''; comboLista(); comboDesde=Date.now(); el.querySelector('input').focus({preventScroll:true});
+}
+function comboFechar(){ document.getElementById('combo').style.display='none'; comboAlvo=null; }
+function comboFiltrados(){ const w=norm(document.querySelector('#combo input').value).split(' ').filter(Boolean); return INS_LISTA.filter(n=>{ const h=norm(n+' '+INS_INFO[n].un+' '+INS_INFO[n].cat); return w.every(x=>h.includes(x)); }); }
+function comboLista(){
+  const L=comboFiltrados(), q=document.querySelector('#combo input').value.trim();
+  document.getElementById('comboUl').innerHTML = L.length ? L.map((n,i)=>`<li data-ci="${i}" data-n="${n}" class="px-3 py-1.5 cursor-pointer ${i===comboHi?'bg-amber-50':''}"><span class="block text-sm">${n}</span><span class="block text-[11px] text-zinc-400">${INS_INFO[n].un} · ${INS_INFO[n].cat}</span></li>`).join('')
+    : `<li class="px-3 py-3 text-xs text-zinc-400 text-center">Nenhum insumo com “${q}”</li>`;
+  document.getElementById('comboCriar').innerHTML = `<i class="ri-add-circle-line"></i> <span class="truncate">${q?`Criar insumo “${q}”`:'Criar novo insumo'}</span>`;
+  document.querySelectorAll('#comboUl [data-ci]').forEach(li=>{ li.onmouseenter=()=>{comboHi=+li.dataset.ci; document.querySelectorAll('#comboUl [data-ci]').forEach(x=>x.classList.toggle('bg-amber-50',+x.dataset.ci===comboHi));}; li.onmousedown=e=>{e.preventDefault(); comboEscolher(li.dataset.n);}; });
+  document.querySelector(`#comboUl [data-ci="${comboHi}"]`)?.scrollIntoView({block:'nearest'});
+}
+// objeto do item a partir da chave: "i:<tarefa>:<linha>" (compra) ou "v:<tarefa>:<linha>" (nota)
+const itemDe = key => { const [tp,id,k]=key.split(':'); return tp==='i'?itens[+id][+k]:vinc[+id][+k]; };
+const redesItem = key => { const [tp,id]=key.split(':'); tp==='i' ? redesItens(+id) : redesVinc(+id); };
+const unItem = it => (it.u || (/CX\s?\d+/i.test(it.d)?'cx':'un')).toLowerCase();
+const convInicial = (it,ins) => { const m=(it.d||'').match(/CX\s?(\d+)/i); if(m) return m[1]; return unItem(it)===INS_INFO[ins].un ? '1' : ''; };
+function comboEscolher(n){ const key=comboAlvo; if(!key) return; comboFechar(); const it=itemDe(key); Object.assign(it,{ins:n, auto:false, upp:convInicial(it,n), editConv:true}); redesItem(key); }
+function insumoCelula(key,it){
+  if(it.editConv) return `<div class="bg-amber-50 border border-amber-200 rounded-lg p-2 space-y-1.5 w-[250px]">
+      <p class="text-[11px] font-semibold text-zinc-700 truncate"><i class="ri-links-line text-emerald-600"></i> ${it.ins}</p>
+      <label class="flex items-center gap-1.5 text-[11px] text-zinc-600 whitespace-nowrap">1 ${unItem(it)} =
+        <input data-conv="${key}" value="${it.upp||''}" inputmode="decimal" placeholder="?" class="w-16 border border-zinc-200 rounded px-1.5 py-0.5 text-xs bg-white focus:outline-none focus:border-amber-400"> ${INS_INFO[it.ins].un}</label>
+      <p class="text-[10px] text-zinc-400">Quanto do insumo entra no estoque a cada ${unItem(it)} comprada.</p>
+      <div class="flex gap-1.5"><button data-conv-ok="${key}" class="px-2 py-1 rounded bg-amber-500 text-white text-[11px] font-semibold hover:bg-amber-600">Salvar</button><button data-conv-cancel="${key}" class="px-2 py-1 rounded text-[11px] text-zinc-500 hover:bg-zinc-100">Cancelar</button></div></div>`;
+  if(it.ins) return `<div class="flex items-center gap-1 flex-wrap">
+      <span class="inline-flex items-center gap-1 min-w-0 text-xs"><i class="ri-links-line text-emerald-600"></i><span class="truncate max-w-[170px] font-medium" title="${it.ins}">${it.ins}</span></span>
+      <span class="text-[10px] text-zinc-400">1 ${unItem(it)} = ${it.upp||1} ${INS_INFO[it.ins].un}</span>
+      ${it.auto?'<span class="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-emerald-50 text-emerald-700" title="Vínculo já confirmado antes (Classificação de itens)">já ligado</span>':''}
+      <button data-conv-edit="${key}" class="w-6 h-6 flex items-center justify-center rounded text-zinc-400 hover:text-amber-600 hover:bg-amber-50" title="Editar vínculo"><i class="ri-pencil-line"></i></button>
+      <button data-desvinc="${key}" class="w-6 h-6 flex items-center justify-center rounded text-zinc-300 hover:text-red-500 hover:bg-red-50" title="Tirar vínculo"><i class="ri-link-unlink"></i></button></div>`;
+  return comboBtn(key);
+}
+function bindInsumo(){
+  document.querySelectorAll('[data-combo]').forEach(b=>b.onclick=e=>{ e.preventDefault(); comboAlvo===b.dataset.combo ? comboFechar() : comboAbrir(b); });
+  document.querySelectorAll('[data-conv]').forEach(i=>{ i.oninput=()=>{ itemDe(i.dataset.conv).upp=i.value; }; i.onkeydown=e=>{ if(e.key==='Enter') document.querySelector(`[data-conv-ok="${i.dataset.conv}"]`).click(); if(e.key==='Escape') document.querySelector(`[data-conv-cancel="${i.dataset.conv}"]`).click(); }; });
+  document.querySelectorAll('[data-conv-ok]').forEach(b=>b.onclick=e=>{ e.preventDefault(); const it=itemDe(b.dataset.convOk); if(!(Number(String(it.upp).replace(',','.'))>0)) { b.closest('div').previousElementSibling.previousElementSibling.querySelector('input').classList.add('border-red-400'); return; } it.editConv=false; redesItem(b.dataset.convOk); });
+  document.querySelectorAll('[data-conv-cancel]').forEach(b=>b.onclick=e=>{ e.preventDefault(); const it=itemDe(b.dataset.convCancel); if(!it.upp || it.upp==='') { it.ins=''; } it.editConv=false; redesItem(b.dataset.convCancel); });
+  document.querySelectorAll('[data-conv-edit]').forEach(b=>b.onclick=e=>{ e.preventDefault(); itemDe(b.dataset.convEdit).editConv=true; redesItem(b.dataset.convEdit); });
+  document.querySelectorAll('[data-desvinc]').forEach(b=>b.onclick=e=>{ e.preventDefault(); const it=itemDe(b.dataset.desvinc); if(!confirm(`Tirar o vínculo de "${it.d}" com ${it.ins}?`)) return; Object.assign(it,{ins:'',auto:false,upp:''}); redesItem(b.dataset.desvinc); });
+}
 function itemInsumoHTML(t,k,it){
-  if(it.ins) return `<div class="flex items-center gap-1.5 min-w-0">
-      <span class="truncate text-xs font-semibold text-zinc-800">${it.ins}</span>
-      ${it.auto?'<span class="shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-emerald-50 text-emerald-700" title="Esse item já foi ligado a esse insumo antes (vínculo confirmado)"><i class="ri-link"></i> já ligado</span>'
-               :'<span class="shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-zinc-100 text-zinc-600">escolhido agora</span>'}
-      <button data-ins-limpar="${t.id}:${k}" class="shrink-0 text-zinc-400 hover:text-zinc-700" title="Trocar insumo"><i class="ri-close-line"></i></button></div>
-      ${!it.auto?`<label class="mt-1 flex items-center gap-1 text-[10px] text-zinc-500"><input type="checkbox" data-lembrar="${t.id}:${k}" ${it.lembrar?'checked':''} class="accent-amber-500"> lembrar: "${it.d||'…'}" é sempre ${it.ins}</label>`:''}`;
-  return `<div class="relative"><i class="ri-search-line absolute left-2 top-1/2 -translate-y-1/2 text-zinc-400 text-xs"></i>
-      <input list="insumosLista" data-ins="${t.id}:${k}" placeholder="procurar insumo…" class="w-full h-8 pl-6 pr-2 rounded-lg border border-amber-300 bg-amber-50/40 text-xs focus:outline-none focus:border-amber-500"></div>
-      <p class="mt-0.5 text-[10px] text-amber-700">sem vínculo — escolha o insumo (ou deixe vazio se não vai ao estoque)</p>`;
+  return insumoCelula(`i:${t.id}:${k}`, it) + (!it.ins?`<p class="mt-0.5 text-[10px] text-zinc-400">sem vínculo — ou deixe assim se não vai ao estoque</p>`:'');
 }
 function itensHTML(t){
   const c=porId[t.caso], L=iniItens(t), soma=L.reduce((a,it)=>a+(+it.q||0)*(+it.v||0),0), bate=Math.abs(soma-c.valor)<0.005;
@@ -341,7 +394,7 @@ function itensHTML(t){
     </div>
     <div class="overflow-x-auto"><table class="w-full min-w-[640px] text-xs">
       <thead><tr class="text-[10px] uppercase tracking-wide text-zinc-400 border-b border-zinc-100">
-        <th class="text-left font-semibold px-3 py-1.5 w-[28%]">Item comprado</th><th class="text-left font-semibold px-2 py-1.5">Insumo do estoque</th>
+        <th class="text-left font-semibold px-3 py-1.5 w-[28%]">Item comprado</th><th class="text-left font-semibold px-2 py-1.5 w-[270px]">Insumo do estoque</th>
         <th class="text-right font-semibold px-2 py-1.5 w-16">Qtd</th><th class="text-left font-semibold px-2 py-1.5 w-14">Un.</th><th class="text-right font-semibold px-2 py-1.5 w-24">Preço un.</th><th class="text-right font-semibold px-3 py-1.5 w-24">Total</th><th class="w-6"></th></tr></thead>
       <tbody class="divide-y divide-zinc-100">${L.map((it,k)=>`<tr class="align-top">
         <td class="px-3 py-1.5"><input data-it="${t.id}:${k}:d" value="${it.d}" placeholder="ex.: tomate" class="w-full h-8 px-2 rounded-lg border border-zinc-200 text-xs"></td>
@@ -356,23 +409,22 @@ function itensHTML(t){
       <p id="soma${t.id}" class="text-xs tabnum ${bate?'text-emerald-700':'text-amber-700'}">Soma dos itens <strong>${brl(soma)}</strong> de ${brl(c.valor)} ${bate?'<i class="ri-check-line"></i> bate com o Pix':`· falta ${brl(c.valor-soma)}`}</p>
     </div></div>`;
 }
+function redesItens(id){ const el=document.getElementById('itens'+id); if(!el) return; el.outerHTML=itensHTML(T.find(x=>x.id===id)); bindItens(); }
 function bindItens(){
-  const redesenhar = id => { const el=document.getElementById('itens'+id); if(!el) return; const t=T.find(x=>x.id===id); el.outerHTML=itensHTML(t); bindItens(); };
+  bindInsumo();
+  const redesenhar = redesItens;
   document.querySelectorAll('[data-it]').forEach(inp=>inp.oninput=()=>{
     const [id,k,campo]=inp.dataset.it.split(':'); const it=itens[+id][+k]; it[campo]=inp.value;
     if(campo==='d'){ // item conhecido → insumo sai sozinho; desconhecido → volta a procurar
       const v=VINCULOS[norm(inp.value)];
-      if(v){ it.ins=v; it.auto=true; } else if(it.auto){ it.ins=''; it.auto=false; }
+      if(v){ it.ins=v; it.auto=true; it.upp='1'; it.editConv=false; } else if(it.auto){ it.ins=''; it.auto=false; }
       document.getElementById(`insc${id}_${k}`).innerHTML=itemInsumoHTML(T.find(x=>x.id===+id),+k,it); bindItens();
     }
     const t=T.find(x=>x.id===+id), c=porId[t.caso], soma=itens[+id].reduce((a,x)=>a+(+x.q||0)*(+x.v||0),0), bate=Math.abs(soma-c.valor)<0.005;
     const tt=document.getElementById(`tot${id}_${k}`); if(tt) tt.textContent=brl((+it.q||0)*(+it.v||0));
     const sm=document.getElementById('soma'+id); if(sm){ sm.className='text-xs tabnum '+(bate?'text-emerald-700':'text-amber-700'); sm.innerHTML=`Soma dos itens <strong>${brl(soma)}</strong> de ${brl(c.valor)} ${bate?'<i class="ri-check-line"></i> bate com o Pix':'· falta '+brl(c.valor-soma)}`; }
   });
-  document.querySelectorAll('[data-ins]').forEach(inp=>inp.onchange=()=>{ const [id,k]=inp.dataset.ins.split(':'); if(!INSUMOS.includes(inp.value)) return; const it=itens[+id][+k]; it.ins=inp.value; it.auto=false; it.lembrar=true; redesenhar(+id); });
-  document.querySelectorAll('[data-ins-limpar]').forEach(b=>b.onclick=e=>{ e.preventDefault(); const [id,k]=b.dataset.insLimpar.split(':'); const it=itens[+id][+k]; it.ins=''; it.auto=false; redesenhar(+id); });
-  document.querySelectorAll('[data-lembrar]').forEach(c=>c.onchange=()=>{ const [id,k]=c.dataset.lembrar.split(':'); itens[+id][+k].lembrar=c.checked; });
-  document.querySelectorAll('[data-it-add]').forEach(b=>b.onclick=()=>{ const id=+b.dataset.itAdd; itens[id].push({d:'',q:1,u:'un',v:0,ins:'',auto:false,lembrar:false}); redesenhar(id); });
+  document.querySelectorAll('[data-it-add]').forEach(b=>b.onclick=()=>{ const id=+b.dataset.itAdd; itens[id].push({d:'',q:1,u:'un',v:0,ins:'',auto:false,upp:''}); redesenhar(id); });
   document.querySelectorAll('[data-it-del]').forEach(b=>b.onclick=()=>{ const [id,k]=b.dataset.itDel.split(':'); itens[+id].splice(+k,1); redesenhar(+id); });
 }
 // ── Diárias de freelancer: quantos dias e o valor de cada um ──
@@ -469,16 +521,19 @@ const NOTA_ITENS = { bebidas: [
   ['7894900019995','REFRIG COCA COLA ZERO LT 350ML',2,''], ['7891991015479','CHA MATTE LEAO LIMAO 1,5L',1,''], ['0000000000017','VASILHAME / CAIXA RETORNAVEL',1,''],
 ]};
 let vinc = {};
-const iniVinc = t => vinc[t.id] ??= (NOTA_ITENS[t.caso]||[]).map(([cod,d,q,ins])=>({cod,d,q,ins,auto:!!ins,fora:false}));
+const iniVinc = t => vinc[t.id] ??= (NOTA_ITENS[t.caso]||[]).map(([cod,d,q,ins])=>({cod,d,q,ins,auto:!!ins,fora:false, upp:(d.match(/CX\s?(\d+)/)||[])[1]||'1'}));
+const ULTIMA_CONTAGEM = '2026-09-20';           // último inventário confirmado da loja
+const RECEBIDA_EM = { bebidas:'2026-09-16', beemax:'2026-09-29' };
+let vincData = {};
+const dBR = iso => iso.split('-').reverse().slice(0,2).join('/');
 function vincHTML(t){
   const V=iniVinc(t), ok=V.filter(x=>x.ins||x.fora).length, falta=V.length-ok;
   const linha=(x,k)=>`<tr class="${x.ins||x.fora?'':'bg-amber-50/40'}">
       <td class="px-3 py-1.5"><p class="text-xs font-medium text-zinc-800">${x.d}</p><p class="text-[10px] text-zinc-400 tabnum">cód. ${x.cod} · ${x.q} un.</p></td>
-      <td class="px-2 py-1.5 min-w-[240px]">${
+      <td class="px-2 py-1.5 min-w-[280px]">${
         x.fora ? `<span class="text-xs text-zinc-500">não vai ao estoque</span> <button data-v-desfaz="${t.id}:${k}" class="text-[11px] text-zinc-400 underline">desfazer</button>`
-        : x.ins ? `<div class="flex items-center gap-1.5"><span class="text-xs font-semibold text-zinc-800">${x.ins}</span>${x.auto?'<span class="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-emerald-50 text-emerald-700"><i class="ri-link"></i> já ligado</span>':'<span class="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-zinc-100 text-zinc-600">ligado agora</span>'}<button data-v-trocar="${t.id}:${k}" class="text-[11px] text-zinc-400 hover:text-zinc-700 underline">trocar</button></div>`
-        : `<div class="flex items-center gap-2"><div class="relative flex-1"><i class="ri-search-line absolute left-2 top-1/2 -translate-y-1/2 text-zinc-400 text-xs"></i><input list="insumosLista" data-v-ins="${t.id}:${k}" placeholder="procurar insumo…" class="w-full h-8 pl-6 pr-2 rounded-lg border border-amber-300 bg-white text-xs focus:outline-none focus:border-amber-500"></div>
-             <button data-v-fora="${t.id}:${k}" class="shrink-0 text-[11px] text-zinc-500 hover:text-zinc-800 underline">não vai ao estoque</button></div>`}
+        : x.ins || x.editConv ? insumoCelula(`v:${t.id}:${k}`, x)
+        : `<div class="flex items-center gap-2">${insumoCelula(`v:${t.id}:${k}`, x)}<button data-v-fora="${t.id}:${k}" class="shrink-0 text-[11px] text-zinc-500 hover:text-zinc-800 underline">não vai ao estoque</button></div>`}
       </td></tr>`;
   const semV=V.map((x,k)=>[x,k]).filter(([x])=>!x.auto), comV=V.map((x,k)=>[x,k]).filter(([x])=>x.auto);
   return `<div id="vinc${t.id}" class="mx-3 mb-3 rounded-xl border border-zinc-200 bg-white overflow-hidden">
@@ -496,18 +551,30 @@ function vincHTML(t){
       <table class="w-full"><tbody class="divide-y divide-zinc-100">${comV.map(([x,k])=>linha(x,k)).join('')}</tbody></table>
     </div>
     <div class="flex items-center justify-between gap-3 px-3 py-2.5 border-t border-zinc-100 bg-zinc-50/60 flex-wrap">
-      <label class="flex items-center gap-1.5 text-[11px] text-zinc-500"><input type="checkbox" checked class="w-3.5 h-3.5 accent-zinc-700"> lembrar os vínculos novos para as próximas notas desse fornecedor</label>
+      <div class="flex flex-col gap-1.5">
+        <label class="flex items-center gap-2 text-xs text-zinc-600">Entrou no estoque em
+          <input type="date" data-v-data="${t.id}" value="${vincData[t.id]||RECEBIDA_EM[t.caso]||'2026-09-29'}" max="2026-09-29" class="h-8 border border-zinc-200 rounded-lg px-2 text-xs bg-white"></label>
+        <label class="flex items-center gap-1.5 text-[11px] text-zinc-500"><input type="checkbox" checked class="w-3.5 h-3.5 accent-zinc-700"> lembrar os vínculos novos para as próximas notas desse fornecedor</label>
+      </div>
       <button data-v-ok="${t.id}" ${falta?'disabled':''} class="text-xs font-semibold px-3 py-2 rounded-lg ${falta?'bg-zinc-200 text-zinc-400 cursor-not-allowed':'bg-amber-500 hover:bg-amber-600 text-white'}"><i class="ri-archive-2-line"></i> ${falta?`Faltam ${falta} itens`:'Dar entrada no estoque'}</button>
-    </div></div>`;
+    </div>
+    <div id="vaviso${t.id}">${avisoContagem(t)}</div></div>`;
 }
+function avisoContagem(t){
+  const d=vincData[t.id]||RECEBIDA_EM[t.caso]||'2026-09-29';
+  if(d > ULTIMA_CONTAGEM) return `<p class="px-3 pb-2.5 text-[11px] text-zinc-500"><i class="ri-information-line"></i> Depois da última contagem (${dBR(ULTIMA_CONTAGEM)}): os itens <strong>somam no estoque atual</strong>.</p>`;
+  return `<div class="mx-3 mb-3 flex items-start gap-2 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-[11px] text-sky-800">
+    <i class="ri-information-line mt-px"></i><span><strong>${dBR(d)} é antes da última contagem do estoque (${dBR(ULTIMA_CONTAGEM)}).</strong> A entrada fica no histórico e no custo dos insumos, mas <strong>não muda o estoque atual</strong> — a contagem de ${dBR(ULTIMA_CONTAGEM)} já considerou o que havia na loja.</span></div>`;
+}
+function redesVinc(id){ const el=document.getElementById('vinc'+id); if(!el) return; const st=el.querySelector('.overflow-y-auto')?.scrollTop||0; el.outerHTML=vincHTML(T.find(x=>x.id===id)); bindVinc(); const n=document.querySelector(`#vinc${id} .overflow-y-auto`); if(n) n.scrollTop=st; }
 function bindVinc(){
-  const redes = id => { const el=document.getElementById('vinc'+id); if(!el) return; const st=el.querySelector('.overflow-y-auto')?.scrollTop||0; el.outerHTML=vincHTML(T.find(x=>x.id===id)); bindVinc(); const n=document.querySelector(`#vinc${id} .overflow-y-auto`); if(n) n.scrollTop=st; };
+  bindInsumo();
+  document.querySelectorAll('[data-v-data]').forEach(i=>i.onchange=()=>{ vincData[+i.dataset.vData]=i.value; document.getElementById('vaviso'+i.dataset.vData).innerHTML=avisoContagem(T.find(x=>x.id===+i.dataset.vData)); });
+  const redes = redesVinc;
   const pega = s => s.split(':').map(Number);
-  document.querySelectorAll('[data-v-ins]').forEach(inp=>inp.onchange=()=>{ const [id,k]=pega(inp.dataset.vIns); if(!INSUMOS.includes(inp.value)) return; Object.assign(vinc[id][k],{ins:inp.value,auto:false}); redes(id); });
   document.querySelectorAll('[data-v-fora]').forEach(b=>b.onclick=e=>{ e.preventDefault(); const [id,k]=pega(b.dataset.vFora); vinc[id][k].fora=true; redes(id); });
   document.querySelectorAll('[data-v-desfaz]').forEach(b=>b.onclick=e=>{ e.preventDefault(); const [id,k]=pega(b.dataset.vDesfaz); vinc[id][k].fora=false; redes(id); });
-  document.querySelectorAll('[data-v-trocar]').forEach(b=>b.onclick=e=>{ e.preventDefault(); const [id,k]=pega(b.dataset.vTrocar); Object.assign(vinc[id][k],{ins:'',auto:false}); redes(id); });
-  document.querySelectorAll('[data-v-ok]').forEach(b=>b.onclick=e=>{ e.preventDefault(); if(b.disabled) return; resolver(+b.dataset.vOk,'20 itens ligados — entrada no estoque feita'); });
+  document.querySelectorAll('[data-v-ok]').forEach(b=>b.onclick=e=>{ e.preventDefault(); if(b.disabled) return; const id=+b.dataset.vOk, d=vincData[id]||RECEBIDA_EM[T.find(x=>x.id===id).caso]; resolver(id,`Itens ligados — entrada no estoque em ${dBR(d)}${d<=ULTIMA_CONTAGEM?' (antes da contagem: não mudou o estoque atual)':''}`); });
 }
 function campoHTML(t,i,o){
   if(['itens','diarias','pagar','vincular'].includes(o.campo)) return '';
@@ -612,7 +679,8 @@ function lista(){
           <div class="min-w-0"><h3 class="text-sm font-bold text-zinc-800">${g.nome} <span class="text-zinc-400 font-normal">· ${ts.length}</span></h3><p class="text-xs text-zinc-400 truncate">${g.desc} · ${brl(ts.reduce((s,t)=>s+porId[t.caso].valor,0))}</p></div></div>
         ${g.lote?`<button data-lote="${g.id}" class="flex items-center gap-1.5 px-3 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 rounded-xl text-xs font-semibold text-zinc-600 shadow-sm whitespace-nowrap"><i class="ri-stack-line"></i>${g.lote}</button>`:''}
       </div><div class="p-3 space-y-2">${ts.map(tarefa).join('')}</div></div>`;}).join('');
-  document.getElementById('lista').innerHTML = html || `<div class="bg-white rounded-2xl border border-emerald-200 py-16 text-center"><i class="ri-checkbox-circle-fill text-5xl text-emerald-400 block mb-2"></i><p class="font-semibold">Nada pendente ${etapaF||busca||soUrg?'com esses filtros':''}</p></div>`;
+  document.getElementById('lista').innerHTML = modo!=='tarefas' ? '' : html || `<div class="bg-white rounded-2xl border border-emerald-200 py-16 text-center"><i class="ri-checkbox-circle-fill text-5xl text-emerald-400 block mb-2"></i><p class="font-semibold">Nada pendente ${etapaF||busca||soUrg?'com esses filtros':''}</p></div>`;
+  if(gavetaCaso) desenharGaveta();
   document.querySelectorAll('[data-sug]').forEach(b=>b.onclick=()=>{
     const id=+b.dataset.sug;
     if(b.dataset.abre){ const t=T.find(x=>x.id===id), campo=b.dataset.abre; abertoOutro=id; escolhido[id]=OUTRO[t.g].findIndex(o=>o.campo===campo); if(campo==='diarias') iniDias(t, t.caso==='joao'?2:1); lista(); document.getElementById(({itens:'itens',diarias:'dias',pagar:'pagar',vincular:'vinc'})[campo]+id)?.scrollIntoView({block:'nearest',behavior:'smooth'}); return; }
@@ -646,10 +714,20 @@ function resolver(id,rotulo,lote){
   }, lote?0:330);
 }
 function feitosUI(){
-  document.getElementById('feitos').innerHTML = feitos.length ? feitos.map(f=>`<li class="flex items-start gap-1.5"><i class="ri-check-line text-emerald-500 mt-px"></i><span><strong class="text-zinc-700">${porId[f.t.caso].titulo}</strong><br><span class="text-zinc-400">${f.rotulo}</span></span></li>`).join('') : '<li class="text-zinc-400">Nada ainda — comece pelos urgentes.</li>';
-  document.getElementById('desfazer').classList.toggle('hidden',!feitos.length);
+  document.getElementById('feitos').innerHTML = feitos.length ? feitos.map((f,i)=>`<li class="group flex items-start gap-1.5 rounded-lg px-1.5 py-1 -mx-1.5 hover:bg-zinc-50">
+      <i class="ri-check-line text-emerald-500 mt-px"></i>
+      <span class="flex-1 min-w-0"><strong class="text-zinc-700">${porId[f.t.caso].titulo}</strong><br><span class="text-zinc-400">${f.rotulo}</span></span>
+      <button data-desfazer="${i}" class="shrink-0 text-[11px] font-semibold text-zinc-400 hover:text-zinc-800 px-1.5 py-0.5 rounded-md hover:bg-zinc-200/70" title="Voltar esta tarefa para a lista"><i class="ri-arrow-go-back-line"></i> desfazer</button></li>`).join('') : '<li class="text-zinc-400">Nada ainda — comece pelos urgentes.</li>';
+  document.getElementById('desfazer').classList.add('hidden');
+  document.querySelectorAll('[data-desfazer]').forEach(b=>b.onclick=()=>desfazer(+b.dataset.desfazer));
 }
-document.getElementById('desfazer').onclick=()=>{const f=feitos.shift(); if(!f) return; const c=porId[f.t.caso]; c.etapas=f.antes; recalc(c); T.push(f.t); render();};
+// Desfaz QUALQUER item: volta só as fases que aquela ação mexeu (e o que ela destravou em seguida),
+// sem apagar o que foi resolvido depois em outras fases do mesmo caso.
+function desfazer(i){
+  const f=feitos[i]; if(!f) return; const c=porId[f.t.caso];
+  c.etapas = c.etapas.map((e,k)=>{ const a=f.antes[k]; const mexeu = f.t.etapas.includes(e.id) || (a.estado==='espera' && e.estado==='pendente'); return mexeu ? {...a} : e; });
+  recalc(c); feitos.splice(i,1); T.push(f.t); render();
+}
 
 // ── Esteira e matriz (da proposta B) ──
 const mini = c => `<div class="flex gap-0.5 mt-2">${c.etapas.map(e=>`<span title="${e.nome}: ${e.resumo}" class="h-1.5 flex-1 rounded-full ${EST[e.estado].cor}"></span>`).join('')}</div>`;
@@ -678,7 +756,7 @@ function esteira(){
 function matriz(){
   const L=casos.filter(passa);
   const GR=[['atencao','Precisam de atenção','ri-error-warning-line','text-red-600 bg-red-50'],['andamento','Em andamento','ri-time-line','text-amber-600 bg-amber-50'],['ok','Tudo certo','ri-checkbox-circle-line','text-emerald-600 bg-emerald-50']];
-  const cab = `<div class="grid grid-cols-[minmax(200px,1fr)_100px_repeat(6,minmax(118px,1fr))] gap-1.5 px-4 py-2.5 border-b border-zinc-200 bg-white sticky top-0 z-10">
+  const cab = `<div class="grid grid-cols-[minmax(200px,1fr)_100px_repeat(6,minmax(118px,1fr))] gap-1.5 items-center px-4 py-2.5 border-b border-zinc-200 bg-white sticky top-0 z-10">
     <span class="text-[11px] font-semibold uppercase tracking-wide text-zinc-400 pl-3.5">Despesa</span><span class="text-right text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Valor</span>
     ${ETAPAS.map(e=>`<span class="flex items-center gap-1.5 px-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400"><span class="w-5 h-5 rounded-md bg-zinc-100 text-zinc-500 flex items-center justify-center"><i class="${e.ic} text-xs"></i></span>${e.nome}</span>`).join('')}</div>`;
   // Célula da matriz: texto legível; a cor diz a gravidade, sem blocos pesados.
@@ -722,34 +800,56 @@ function matriz(){
 
 // ── Gaveta: trilha do caso + as tarefas dele ──
 function bindCasos(){ document.querySelectorAll('[data-caso]').forEach(el=>el.onclick=()=>abrir(porId[el.dataset.caso])); }
+let gavetaCaso=null;
 function abrir(c){
-  const ts=T.filter(t=>t.caso===c.id);
-  document.getElementById('gaveta').innerHTML=`<div class="sticky top-0 bg-white border-b border-zinc-100 px-5 py-4 flex items-start justify-between gap-3 z-10">
+  gavetaCaso=c.id; abertoOutro=null;
+  document.getElementById('gaveta').classList.remove('translate-x-full'); document.getElementById('veu').classList.remove('opacity-0','pointer-events-none');
+  lista();   // desenha a gaveta e liga os botões das tarefas
+}
+function desenharGaveta(){
+  const c=porId[gavetaCaso], ts=T.filter(t=>t.caso===c.id).sort((a,b)=>b.urg-a.urg);
+  const g=document.getElementById('gaveta'), st=g.scrollTop;
+  g.innerHTML=`<div class="sticky top-0 bg-white border-b border-zinc-100 px-5 py-4 flex items-start justify-between gap-3 z-10">
     <div class="min-w-0"><span class="text-[11px] font-semibold px-2 py-0.5 rounded-md ${TIPO[c.tipo][1]}">${TIPO[c.tipo][0]}</span><p class="text-base font-bold mt-1.5">${c.titulo}</p><p class="text-xs text-zinc-400">${c.data} · ${c.sub}</p></div>
     <div class="text-right shrink-0"><p class="text-lg font-bold tabnum">${brl(c.valor)}</p><button id="fechar" class="text-zinc-400 hover:text-zinc-700 text-xl"><i class="ri-close-line"></i></button></div></div>
-    <div class="px-5 py-4 space-y-4">
-      ${ts.length?`<div class="rounded-xl border border-amber-200 bg-amber-50/50 px-4 py-3"><p class="text-xs font-semibold text-amber-800 mb-1.5"><i class="ri-checkbox-multiple-line"></i> ${ts.length} tarefa${ts.length>1?'s':''} para fechar este caso</p>${ts.map(t=>`<button data-ir="${t.id}" class="block text-xs text-amber-900 underline text-left">${GRUPOS.find(g=>g.id===t.g).nome}: ${t.sug[0][0]}</button>`).join('')}</div>`
-        : c.sit==='ok'?`<div class="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs text-emerald-800"><i class="ri-checkbox-circle-fill"></i> Trilha completa — da nota ao banco.</div>`:''}
+    <div class="px-4 py-4 space-y-4">
+      ${ts.length?`<div>
+          <p class="px-1 mb-2 text-[11px] font-bold uppercase tracking-wide text-zinc-500"><i class="ri-checkbox-multiple-line"></i> Resolver aqui mesmo · ${ts.length} tarefa${ts.length>1?'s':''}</p>
+          <div class="space-y-2">${ts.map(t=>`<div><p class="px-1 mb-1 text-[11px] font-semibold ${GRUPOS.find(x=>x.id===t.g).cor==='red'?'text-red-600':'text-amber-700'}"><i class="${GRUPOS.find(x=>x.id===t.g).ic}"></i> ${GRUPOS.find(x=>x.id===t.g).nome}</p>${tarefa(t)}</div>`).join('')}</div></div>`
+        : `<div class="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs text-emerald-800"><i class="ri-checkbox-circle-fill"></i> ${c.sit==='ok'?'Tudo certo — da nota fiscal ao extrato do banco.':'Nada para resolver agora — falta só o que depende do prazo (ex.: pagar até o vencimento).'}</div>`}
+      <div class="rounded-xl border border-zinc-200 px-4 py-3">
+      <p class="mb-3 text-[11px] font-bold uppercase tracking-wide text-zinc-500">O caminho desta despesa</p>
       <ol>${c.etapas.map((e,i)=>`<li class="flex gap-3 pb-4 last:pb-0 relative">${i<5?`<span class="absolute left-[15px] top-8 bottom-0 w-0.5 ${e.estado==='ok'?'bg-emerald-300':'bg-zinc-200'}"></span>`:''}
         <div class="relative z-10 w-8 h-8 shrink-0 rounded-full flex items-center justify-center text-sm ${e.estado==='ok'?'bg-emerald-500 text-white':grave(e.estado)?'bg-red-500 text-white':e.estado==='pendente'?'bg-amber-400 text-white':'bg-zinc-100 text-zinc-400 border border-dashed border-zinc-300'}"><i class="${e.ic}"></i></div>
-        <div class="pt-0.5 min-w-0"><p class="text-[11px] text-zinc-400 uppercase tracking-wide font-semibold">${e.nome} · <span class="${EST[e.estado].txt}">${EST[e.estado].rot}</span></p><p class="text-sm font-semibold ${e.estado==='na'||e.estado==='espera'?'text-zinc-400':''}">${e.resumo}</p>${e.det?`<p class="text-xs text-zinc-500">${e.det}</p>`:''}${e.falta&&ruim(e.estado)?`<p class="text-xs font-semibold mt-0.5 ${grave(e.estado)?'text-red-600':'text-amber-700'}"><i class="ri-arrow-right-line"></i> Falta: ${e.falta}</p>`:''}</div></li>`).join('')}</ol>
+        <div class="pt-0.5 min-w-0"><p class="text-[11px] text-zinc-400 uppercase tracking-wide font-semibold">${e.nome} · <span class="${EST[e.estado].txt}">${EST[e.estado].rot}</span></p><p class="text-sm font-semibold ${e.estado==='na'||e.estado==='espera'?'text-zinc-400':''}">${e.resumo.replace(/^Não precisa:? ?/,'')}</p>${e.det?`<p class="text-xs text-zinc-500">${e.det}</p>`:''}${e.falta&&ruim(e.estado)?`<p class="text-xs font-semibold mt-0.5 ${grave(e.estado)?'text-red-600':'text-amber-700'}"><i class="ri-arrow-right-line"></i> Falta: ${e.falta}</p>`:''}</div></li>`).join('')}</ol>
+      </div>
     </div>`;
-  document.getElementById('gaveta').classList.remove('translate-x-full'); document.getElementById('veu').classList.remove('opacity-0','pointer-events-none');
+  g.scrollTop=st;
   document.getElementById('fechar').onclick=fechar;
-  document.querySelectorAll('[data-ir]').forEach(b=>b.onclick=()=>{fechar(); modo='tarefas'; grupo=null; render(); setTimeout(()=>{const el=document.getElementById('t'+b.dataset.ir); el&&el.scrollIntoView({behavior:'smooth',block:'center'}); el&&el.classList.add('ring-2','ring-amber-400');},50);});
 }
-function fechar(){ document.getElementById('gaveta').classList.add('translate-x-full'); document.getElementById('veu').classList.add('opacity-0','pointer-events-none'); }
+function fechar(){ gavetaCaso=null; abertoOutro=null; document.getElementById('gaveta').classList.add('translate-x-full'); document.getElementById('veu').classList.add('opacity-0','pointer-events-none'); }
 document.getElementById('veu').onclick=fechar; document.addEventListener('keydown',e=>{if(e.key==='Escape')fechar();});
 
 function render(){
   topo();
   ['tarefas','esteira','matriz'].forEach(m=>document.getElementById('v'+m[0].toUpperCase()+m.slice(1)).classList.toggle('hidden',modo!==m));
-  if(modo==='tarefas'){ nav(); lista(); feitosUI(); } else if(modo==='esteira') esteira(); else matriz();
+  if(modo==='tarefas'){ nav(); lista(); feitosUI(); } else { if(modo==='esteira') esteira(); else matriz(); if(gavetaCaso) lista(); feitosUI(); }
 }
 document.getElementById('soUrg').onchange=e=>{soUrg=e.target.checked; render();};
 document.getElementById('busca').oninput=e=>{busca=e.target.value.trim().toLowerCase(); render();};
 document.getElementById('limparEtapa').onclick=()=>{etapaF=null; render();};
 document.getElementById('insumosLista').innerHTML=INSUMOS.map(i=>`<option value="${i}">`).join('');
+(()=>{ const inp=document.querySelector('#combo input');
+  inp.oninput=()=>{ comboHi=0; comboLista(); };
+  inp.onkeydown=e=>{ const L=comboFiltrados();
+    if(e.key==='ArrowDown'){ e.preventDefault(); comboHi=Math.min(comboHi+1,L.length-1); comboLista(); }
+    else if(e.key==='ArrowUp'){ e.preventDefault(); comboHi=Math.max(comboHi-1,0); comboLista(); }
+    else if(e.key==='Enter'){ e.preventDefault(); if(L[comboHi]) comboEscolher(L[comboHi]); }
+    else if(e.key==='Escape'){ e.preventDefault(); comboFechar(); } };
+  document.getElementById('comboCriar').onmousedown=e=>{ e.preventDefault(); const q=inp.value.trim()||'Novo insumo'; INS_LISTA.push(q); INS_INFO[q]={un:'un',cat:'Sem categoria'}; comboEscolher(q); };
+  document.addEventListener('mousedown',e=>{ const c=document.getElementById('combo'); if(comboAlvo && !c.contains(e.target) && !e.target.closest('[data-combo]')) comboFechar(); });
+  window.addEventListener('scroll',e=>{ if(comboAlvo && Date.now()-comboDesde>300 && !document.getElementById('combo').contains(e.target)) comboFechar(); },true);
+})();
 render();
 </script>
 </body>
