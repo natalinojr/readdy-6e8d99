@@ -51,7 +51,7 @@
           <p class="text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Quanto do dinheiro do mês já passou por cada etapa</p>
           <button id="limparEtapa" class="hidden text-xs text-zinc-500 underline">limpar etapa</button>
         </div>
-        <div class="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-2" id="funil"></div>
+        <div class="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-2" id="funil"></div>
       </div>
     </div>
   </div>
@@ -305,7 +305,7 @@ function topo(){
   document.getElementById('pct').textContent=pct+'%';
   const urg=T.filter(t=>t.urg).length;
   document.getElementById('frase').innerHTML = T.length? `<strong>${T.length} tarefas</strong> para fechar o mês${urg?` · <span class="text-red-600 font-semibold">${urg} urgentes</span>`:''} · ${ok} de ${casos.length} casos completos` : '<span class="text-emerald-700 font-semibold">Mês fechado</span> — nota, estoque, conta, pagamento e banco batem em todos os casos.';
-  document.getElementById('funil').innerHTML = ETAPAS.map(et=>{
+  document.getElementById('funil').innerHTML = ETAPAS.filter(et=>et.id!=='documento').map(et=>{
     let ok=0,pend=0,prob=0,n=0;
     casos.forEach(c=>{const e=c.etapas.find(x=>x.id===et.id).estado; if(e==='na')return; if(e==='ok')ok+=c.valor; else if(grave(e)){prob+=c.valor;n++} else {pend+=c.valor; if(ruim(e))n++;}});
     const tot=ok+pend+prob||1, p=Math.round(ok/tot*100), sel=etapaF===et.id;
