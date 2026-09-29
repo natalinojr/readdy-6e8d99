@@ -85,9 +85,9 @@
 
   <!-- ── MATRIZ ── -->
   <div id="vMatriz" class="hidden bg-white rounded-2xl border border-zinc-200 overflow-hidden">
-    <div class="px-5 py-3 border-b border-zinc-100 flex items-center justify-between gap-3 flex-wrap"><div><h3 class="text-sm font-bold text-zinc-800">Todas as despesas do mês, fase a fase</h3><p class="text-xs text-zinc-400">Cada linha é o caminho de uma despesa — passe o mouse numa bolinha para ver o detalhe, clique na linha para abrir</p></div>
+    <div class="px-5 py-3 border-b border-zinc-100 flex items-center justify-between gap-3 flex-wrap"><div><h3 class="text-sm font-bold text-zinc-800">Todas as despesas do mês, fase a fase</h3><p class="text-xs text-zinc-400">Cada linha é o caminho de uma despesa — o que está feito fica discreto; o que falta aparece em destaque com o próximo passo. Clique na linha para abrir</p></div>
       <div class="flex items-center gap-3 text-[11px] text-zinc-500"><span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>feito</span><span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-amber-400"></span>a fazer</span><span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-red-500"></span>atrasado/problema</span><span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full border border-dashed border-zinc-400"></span>não precisa</span></div></div>
-    <div class="overflow-x-auto"><div id="mCorpo" class="min-w-[340px] md:min-w-[820px] pb-2"></div></div>
+    <div class="overflow-x-auto"><div id="mCorpo" class="min-w-[1040px] pb-2"></div></div>
   </div>
 </div>
 
@@ -470,36 +470,44 @@ function esteira(){
 function matriz(){
   const L=casos.filter(passa);
   const GR=[['atencao','Precisam de atenção','ri-error-warning-line','text-red-600 bg-red-50'],['andamento','Em andamento','ri-time-line','text-amber-600 bg-amber-50'],['ok','Tudo certo','ri-checkbox-circle-line','text-emerald-600 bg-emerald-50']];
-  const cab = `<div class="hidden md:grid grid-cols-[minmax(220px,1.1fr)_110px_minmax(420px,2.4fr)] gap-4 px-5 py-2.5 border-b border-zinc-200 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
-    <span>Despesa</span><span class="text-right">Valor</span>
-    <span class="grid grid-cols-6 text-center">${ETAPAS.map(e=>`<span><i class="${e.ic} block text-sm mb-0.5"></i>${e.nome}</span>`).join('')}</span></div>`;
+  const cab = `<div class="grid grid-cols-[minmax(200px,1fr)_100px_repeat(6,minmax(118px,1fr))] gap-1.5 px-4 py-2.5 border-b border-zinc-200 bg-white sticky top-0 z-10">
+    <span class="text-[11px] font-semibold uppercase tracking-wide text-zinc-400 pl-3.5">Despesa</span><span class="text-right text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Valor</span>
+    ${ETAPAS.map(e=>`<span class="flex items-center gap-1.5 px-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400"><span class="w-5 h-5 rounded-md bg-zinc-100 text-zinc-500 flex items-center justify-center"><i class="${e.ic} text-xs"></i></span>${e.nome}</span>`).join('')}</div>`;
+  // Célula da matriz: texto legível; a cor diz a gravidade, sem blocos pesados.
+  const cel = e => {
+    const semTexto = e.estado==='na' || e.estado==='espera';
+    const txt = e.resumo.replace(/^Não precisa: ?/,'');
+    if (e.estado==='ok') return `<div class="h-full rounded-xl px-2.5 py-2 text-[11px] leading-snug text-zinc-600 flex items-start gap-1.5">
+        <span class="mt-px w-4 h-4 shrink-0 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center text-[10px]"><i class="ri-check-line"></i></span><span>${txt}${e.det?`<span class="block text-zinc-400">${e.det}</span>`:''}</span></div>`;
+    if (semTexto) return `<div class="h-full rounded-xl px-2.5 py-2 text-[11px] leading-snug text-zinc-300 flex items-start gap-1.5">
+        <span class="mt-px w-4 h-4 shrink-0 rounded-full border border-dashed border-zinc-300"></span><span>${e.estado==='espera'?txt:(txt||'não precisa')}</span></div>`;
+    const g = grave(e.estado);
+    return `<div class="h-full rounded-xl px-2.5 py-2 text-[11px] leading-snug border ${g?'bg-red-50/70 border-red-100':'bg-amber-50/70 border-amber-100'}">
+        <p class="flex items-center gap-1 font-bold ${g?'text-red-600':'text-amber-700'}"><i class="${EST[e.estado].ic}"></i>${EST[e.estado].rot}</p>
+        <p class="mt-0.5 text-zinc-700">${txt}</p>
+        ${e.falta?`<p class="mt-1 font-semibold ${g?'text-red-600':'text-amber-700'}"><i class="ri-arrow-right-line"></i> Falta: ${e.falta}</p>`:''}
+      </div>`;
+  };
   const linha = c => {
     const feitas=c.etapas.filter(e=>e.estado==='ok'||e.estado==='na').length;
-    return `<div data-caso="${c.id}" class="grid grid-cols-1 md:grid-cols-[minmax(220px,1.1fr)_110px_minmax(420px,2.4fr)] gap-2 md:gap-4 items-center px-5 py-3 hover:bg-amber-50/30 cursor-pointer transition-colors">
-      <div class="min-w-0 flex items-center gap-3">
-        <div class="relative w-9 h-9 shrink-0">
-          <svg viewBox="0 0 36 36" class="w-9 h-9 -rotate-90"><circle cx="18" cy="18" r="15" fill="none" stroke="#f4f4f5" stroke-width="4"/><circle cx="18" cy="18" r="15" fill="none" stroke="${c.sit==='atencao'?'#ef4444':c.sit==='ok'?'#10b981':'#f59e0b'}" stroke-width="4" stroke-linecap="round" stroke-dasharray="${feitas/6*94.2} 94.2"/></svg>
-          <span class="absolute inset-0 flex items-center justify-center text-[10px] font-bold text-zinc-600">${feitas}/6</span>
+    const cor = c.sit==='atencao'?'bg-red-500':c.sit==='ok'?'bg-emerald-500':'bg-amber-400';
+    return `<div data-caso="${c.id}" class="grid grid-cols-[minmax(200px,1fr)_100px_repeat(6,minmax(118px,1fr))] gap-1.5 items-stretch px-4 py-2 hover:bg-zinc-50/80 cursor-pointer transition-colors">
+      <div class="min-w-0 flex items-start gap-2.5 py-1.5">
+        <span class="w-1 self-stretch rounded-full ${cor}"></span>
+        <div class="min-w-0">
+          <p class="text-sm font-semibold text-zinc-800 leading-snug">${c.titulo}</p>
+          <p class="text-[11px] text-zinc-400 mt-0.5"><span class="${TIPO[c.tipo][1]} px-1.5 py-px rounded font-semibold">${TIPO[c.tipo][0]}</span> ${c.data} · ${c.sub}</p>
+          <div class="mt-1.5 flex items-center gap-1.5"><div class="flex gap-0.5">${c.etapas.map(e=>`<span class="w-3 h-1 rounded-full ${EST[e.estado].cor}"></span>`).join('')}</div><span class="text-[10px] text-zinc-400">${feitas} de 6 fases</span></div>
         </div>
-        <div class="min-w-0"><p class="text-sm font-semibold text-zinc-800 truncate">${c.titulo}</p>
-          <p class="text-[11px] text-zinc-400 truncate"><span class="${TIPO[c.tipo][1]} px-1 rounded font-semibold">${TIPO[c.tipo][0]}</span> ${c.data} · ${c.sub}</p></div>
       </div>
-      <p class="md:text-right text-sm font-bold tabnum text-zinc-900">${brl(c.valor)}</p>
-      <div class="relative grid grid-cols-6">
-        <div class="absolute left-[8.33%] right-[8.33%] top-[11px] h-0.5 bg-zinc-200"></div>
-        ${c.etapas.map((e,i)=>{ const dot = e.estado==='ok'?'bg-emerald-500 text-white':grave(e.estado)?'bg-red-500 text-white':e.estado==='pendente'?'bg-amber-400 text-white':e.estado==='na'?'bg-white text-zinc-300 border border-dashed border-zinc-300':'bg-white text-zinc-300 border border-zinc-300';
-          const seg = i<5 && (e.estado==='ok'||e.estado==='na') && (c.etapas[i+1].estado==='ok'||c.etapas[i+1].estado==='na');
-          return `<div class="relative flex flex-col items-center group" title="${e.nome}: ${e.resumo}${e.falta&&ruim(e.estado)?' — Falta: '+e.falta:''}">
-            ${seg?'<div class="absolute left-1/2 right-[-50%] top-[11px] h-0.5 bg-emerald-300"></div>':''}
-            <div class="relative z-10 w-6 h-6 rounded-full flex items-center justify-center text-[11px] ${dot} ${ruim(e.estado)?'ring-4 '+(grave(e.estado)?'ring-red-100':'ring-amber-100'):''}"><i class="${e.estado==='ok'?'ri-check-line':e.estado==='na'?'ri-subtract-line':e.ic}"></i></div>
-            <span class="mt-1 text-[10px] leading-tight text-center px-0.5 ${ruim(e.estado)?EST[e.estado].txt+' font-semibold':'text-zinc-400'}">${ruim(e.estado)||e.estado==='espera'?EST[e.estado].rot:''}</span>
-          </div>`;}).join('')}
-      </div></div>`;
+      <p class="text-right text-sm font-bold tabnum text-zinc-900 py-2">${brl(c.valor)}</p>
+      ${c.etapas.map(cel).join('')}
+    </div>`;
   };
   const corpo = GR.map(([id,nome,ic,cor])=>{ const cs=L.filter(c=>c.sit===id).sort((a,b)=>b.valor-a.valor); if(!cs.length) return '';
     return `<div class="px-5 pt-4 pb-1 flex items-center gap-2.5"><span class="w-6 h-6 rounded-md flex items-center justify-center ${cor}"><i class="${ic} text-sm"></i></span>
-      <span class="text-[11px] font-bold uppercase tracking-wider text-zinc-500">${nome}</span><span class="text-[11px] text-zinc-400">· ${cs.length} · ${brl(cs.reduce((s,c)=>s+c.valor,0))}</span><span class="flex-1 h-px bg-zinc-100"></span></div>
-      <div class="divide-y divide-zinc-100/80">${cs.map(linha).join('')}</div>`; }).join('');
+      <span class="text-[11px] font-bold uppercase tracking-wider text-zinc-600">${nome}</span><span class="text-[11px] text-zinc-400">· ${cs.length} · ${brl(cs.reduce((s,c)=>s+c.valor,0))}</span><span class="flex-1 h-px bg-zinc-100"></span></div>
+      <div class="divide-y divide-zinc-100">${cs.map(linha).join('')}</div>`; }).join('');
   document.getElementById('mCorpo').innerHTML = cab + (corpo || '<p class="py-14 text-center text-sm text-zinc-400">Nenhuma despesa com esses filtros</p>');
   bindCasos();
 }
