@@ -114,7 +114,7 @@ async function callEdge(ctx: Ctx, fn: string, body: Record<string, unknown>): Pr
 }
 
 // ── Confirmar um vínculo ─────────────────────────────────────────────────────
-type Result = { id: string; ok: boolean; msg: string; auto_imported?: boolean; code?: string };
+type Result = { id: string; ok: boolean; msg: string; auto_imported?: boolean; code?: string; aviso?: string };
 
 // Trava atômica na linha do extrato (go-live 09-17): dois cliques/duas abas confirmavam
 // ou lançavam a mesma linha 2× (despesa e débito duplicados). A linha é "reservada" com um
@@ -233,6 +233,10 @@ async function confirmOneClaimed(ctx: Ctx, rowId: string, row: Row): Promise<Res
   // Pago acima da parcela = juros/multa: vira uma despesa própria, já paga no mesmo dia
   const juros = round2(paid - payAmount);
   let jurosBillId: string | null = null;
+  // Falha nos juros não desfaz a baixa (a parcela já foi paga), mas não pode ser silenciosa:
+  // em 11/09 o check de reference_type recusou 17 contas de juros e nada avisou (R$ 166,57 fora da DRE).
+  // O erro fica gravado em confirmed.juros_erro e aparece na resposta.
+  let jurosErro: string | null = null;
   if (juros > 0.004) {
     const nb = await callEdge(ctx, 'financial-write', {
       action: 'upsert_bill', tenant_id: tenantId,
@@ -250,12 +254,18 @@ async function confirmOneClaimed(ctx: Ctx, rowId: string, row: Row): Promise<Res
         // pay_bill exige classificação DRE: juros/multa vão para "Juros e multas" (despesa)
         payload: { id: jurosBillId, paid_date: paidDate, paid_amount: juros, payment_method: metodo, bank_account_id: row.bank_account_id, dre_group: 'expense', dre_category_name: 'Juros e multas' },
       });
-      if (!pj.ok) log('WARN', 'confirm', 'baixa dos juros falhou', { tenantId, rowId, error: pj.error });
-    } else log('WARN', 'confirm', 'criar conta de juros falhou', { tenantId, rowId, error: nb.error });
+      if (!pj.ok) {
+        jurosErro = 'baixa dos juros: ' + (pj.error ?? 'falhou');
+        log('ERROR', 'confirm', 'baixa dos juros falhou', { tenantId, rowId, error: pj.error });
+      }
+    } else {
+      jurosErro = 'criar a conta de juros: ' + (nb.error ?? 'resposta sem id');
+      log('ERROR', 'confirm', 'criar conta de juros falhou', { tenantId, rowId, error: nb.error });
+    }
   }
 
   const now = new Date().toISOString();
-  const confirmed = { bill_id: bill.id, juros_bill_id: jurosBillId, pay_amount: round2(payAmount), juros, desconto, auto_imported: autoImported, at: now, by: ctx.userId };
+  const confirmed = { bill_id: bill.id, juros_bill_id: jurosBillId, pay_amount: round2(payAmount), juros, desconto, auto_imported: autoImported, at: now, by: ctx.userId, ...(jurosErro ? { juros_erro: jurosErro } : {}) };
   const { error: upErr } = await admin.from('fin_bank_statement_imports').update({
     status: 'matched', reconciled: true, reconciled_at: now, reconciled_by: ctx.userId, matched_at: now, matched_by: ctx.userId,
     match_ref_id: bill.id, match_detail: { ...det, confirmed },
@@ -263,10 +273,10 @@ async function confirmOneClaimed(ctx: Ctx, rowId: string, row: Row): Promise<Res
   if (upErr) log('ERROR', 'confirm', 'marcar extrato falhou', { tenantId, rowId, error: upErr.message });
 
   const partes = ['Baixa de R$ ' + brl(payAmount) + ' em "' + String(bill.description ?? '') + '"'];
-  if (juros > 0.004) partes.push('juros R$ ' + brl(juros));
+  if (juros > 0.004) partes.push(jurosErro ? 'ATENÇÃO: juros R$ ' + brl(juros) + ' NÃO lançados (' + jurosErro + ')' : 'juros R$ ' + brl(juros));
   if (desconto > 0) partes.push('desconto R$ ' + brl(desconto));
   if (autoImported) partes.push('nota importada automaticamente');
-  return { id: row.id, ok: true, msg: partes.join(' · '), auto_imported: autoImported };
+  return { id: row.id, ok: true, msg: partes.join(' · '), auto_imported: autoImported, ...(jurosErro ? { aviso: 'Juros de R$ ' + brl(juros) + ' não lançados na DRE (' + jurosErro + ')' } : {}) };
 }
 
 // ── Folha paga pelo Pix (2026-09-18) ───────────────────────────────────────
@@ -1023,7 +1033,9 @@ async function undoOne(ctx: Ctx, rowId: string): Promise<Result> {
   const date = String(row.transaction_date);
 
   if (c.juros_bill_id && Number(c.juros) > 0) {
-    await reversePayment(ctx, c.juros_bill_id, round2(Number(c.juros)), row.bank_account_id, date);
+    // Conta de juros criada mas sem baixa (confirmed.juros_erro): nada saiu do banco, só apaga
+    const { data: jb } = await admin.from('fin_accounts_payable').select('paid_amount').eq('id', c.juros_bill_id).eq('tenant_id', tenantId).maybeSingle();
+    if (Number(jb?.paid_amount ?? 0) > 0) await reversePayment(ctx, c.juros_bill_id, round2(Number(c.juros)), row.bank_account_id, date);
     await admin.from('fin_accounts_payable').delete().eq('id', c.juros_bill_id).eq('tenant_id', tenantId);
   }
   const b = await reversePayment(ctx, c.bill_id, round2(Number(c.pay_amount)), row.bank_account_id, date);
