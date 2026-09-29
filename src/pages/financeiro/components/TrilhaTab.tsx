@@ -41,6 +41,8 @@ interface BillInst { id: string; installment_number: number; installments: numbe
 
 const LIMITE_TAREFAS = 30;
 const estadoDa = (c: CasoTrilha, id: EtapaId): EstadoEtapa => c.etapas.find((e) => e.id === id)!.estado;
+/** Dinheiro que saiu do banco e ninguém disse o que foi (tarefa "Dizer o que foi"). */
+const saidaNaoIdentificada = (c: CasoTrilha) => c.tarefas.some((t) => t.grupo === 'saida_banco');
 
 export default function TrilhaTab() {
   const { user } = useAuth();
@@ -131,7 +133,7 @@ export default function TrilhaTab() {
   const bate = useCallback((c: CasoTrilha) => !q
     || `${c.titulo} ${c.subtitulo} ${c.notas.map((n) => n.numero).join(' ')} ${c.compra?.invoice_number ?? ''} ${c.valor.toFixed(2).replace('.', ',')}`.toLowerCase().includes(q), [q]);
   const casosFiltrados = useMemo(() => casos.filter((c) =>
-    (!soUrg || c.situacao === 'atencao') && (!etapaF || ruim(estadoDa(c, etapaF))) && bate(c)), [casos, soUrg, etapaF, bate]);
+    (!soUrg || c.situacao === 'atencao') && (!etapaF || ruim(estadoDa(c, etapaF)) || (etapaF === 'banco' && saidaNaoIdentificada(c))) && bate(c)), [casos, soUrg, etapaF, bate]);
   const tarefasFiltradas = useMemo(() => todasTarefas.filter(({ tarefa, caso }) =>
     (!soUrg || tarefa.urgente) && (!etapaF || tarefa.etapas.includes(etapaF)) && bate(caso)), [todasTarefas, soUrg, etapaF, bate]);
 
@@ -143,6 +145,10 @@ export default function TrilhaTab() {
     let ok = 0, amarelo = 0, vermelho = 0, n = 0;
     for (const c of casos) {
       const e = estadoDa(c, id);
+      // Saída do banco que ninguém identificou: no cartão é uma tarefa só ("Dizer o que foi") e a fase
+      // Extrato fica "Esperando"; mas no funil é dinheiro que SAIU da conta sem estar ligado a nada —
+      // pesa como não identificado (vermelho), senão o mês aparecia com o extrato 100%.
+      if (id === 'banco' && saidaNaoIdentificada(c)) { vermelho += c.valor; n++; continue; }
       if (e === 'na' || e === 'espera') continue;
       if (e === 'ok') ok += c.valor;
       else if (grave(e)) { vermelho += c.valor; n++; }
