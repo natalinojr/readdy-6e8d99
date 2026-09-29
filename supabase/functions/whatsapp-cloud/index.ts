@@ -405,6 +405,15 @@ Deno.serve(async (req) => {
   if (req.method !== 'POST') return new Response('method not allowed', { status: 405 });
   const admin = createClient(supabaseUrl, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
 
+  // Envio avulso autorizado pelo dono também com a chave interna (fica no vault: assistente_internal_key).
+  // A WHATSAPP_ADMIN_KEY trocada em 09-25 se perdeu; só send_text passa por aqui (2026-09-29).
+  const interna = req.headers.get('x-internal-key') ?? '';
+  if (interna) {
+    if (internalKey.length < 20 || interna !== internalKey) return json({ error: 'Unauthorized' }, 401);
+    const b = await req.json().catch(() => ({}));
+    if (b?.action !== 'send_text') return json({ error: 'Só send_text com a chave interna' }, 403);
+    try { return await adminAction(admin, b); } catch (e) { return json({ error: errMsg(e) }, 500); }
+  }
   const given = req.headers.get('x-admin-key') ?? '';
   if (given) {
     if (adminKey.length < 16 || given !== adminKey) return json({ error: 'Unauthorized' }, 401);
