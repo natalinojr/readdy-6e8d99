@@ -271,7 +271,7 @@ let T = [
   { id:1, g:'pix', caso:'joao', etapas:['lancamento','banco'], urg:true, sel:true, porque:'João recebeu R$ 250,00 em 3 sábados de agosto, todos lançados como diária.', sug:[['Lançar como 1 diária de João P. Silva','ri-user-line'],['Foram vários dias…','ri-calendar-2-line','diarias']] },
   { id:2, g:'pix', caso:'porto', etapas:['lancamento','banco'], urg:true, sel:false, porque:'Da última vez que você pagou este destinatário, foi lançado como compra de hortifruti.', sug:[['Lançar como compra — Hortifruti','ri-shopping-cart-2-line','itens'],['Ler a notinha (foto/QR)','ri-camera-line','itens']] },
   { id:3, g:'vencidas', caso:'costa', etapas:['pagamento','banco'], urg:true, sel:true, porque:'Venceu há 28 dias. Pagando hoje, os juros ficam em cerca de R$ 43,32.', sug:[['Pagar agora — R$ 1.487,32 com juros','ri-bank-line','pagar']] },
-  { id:4, g:'vencidas', caso:'beemax', etapas:['pagamento','banco'], urg:true, sel:true, porque:'Venceu há 10 dias.', sug:[['Pagar agora','ri-bank-line','pagar']] },
+  { id:4, g:'vencidas', caso:'beemax', etapas:['pagamento','banco'], urg:true, sel:false, semForma:true, porque:'Venceu há 10 dias, mas ainda não chegou o boleto e esse fornecedor não tem chave Pix cadastrada — sem isso não dá para pagar pelo Inter.', sug:[['Colar o boleto ou o Pix','ri-barcode-line','pagar'],['Pedir o boleto ao fornecedor','ri-mail-send-line','pedir']] },
   { id:5, g:'vencidas', caso:'bebidas', etapas:['pagamento','banco'], urg:true, sel:true, porque:'Venceu há 7 dias.', sug:[['Pagar agora','ri-bank-line','pagar']] },
   { id:6, g:'conta', caso:'padaria', etapas:['conta'], urg:true, porque:'A compra não foi paga na hora e ninguém lançou a conta a pagar dela — assim ela nunca aparece para pagar. A padaria costuma dar 30 dias.', sug:[['Criar conta a pagar vencendo 25/10','ri-add-line']] },
   { id:7, g:'estoque', caso:'bebidas', etapas:['estoque'], urg:true, porque:'Chegou em 16/09, mas 12 dos 20 itens não estão ligados a nenhum insumo — por isso não entraram no estoque.', sug:[['Ver os itens e ligar os 12 que faltam','ri-links-line','vincular']] },
@@ -482,11 +482,41 @@ function bindDias(){
 // ── Pagar: SEMPRE confirma antes; mostra o que vai sair, de onde e por quê ──
 const PAGTO = {
   costa:{venc:'01/09', dias:28, multa:28.88, juros:14.44, forma:'Boleto', cod:'23793.38128 60000.000003 00000.000400 1 12340000144400'},
-  beemax:{venc:'19/09', dias:10, multa:2.99, juros:0.50, forma:'Boleto', cod:'34191.09008 55210.020000 00000.000500 7 12450000014949'},
+  beemax:{venc:'19/09', dias:10, multa:2.99, juros:0.50, forma:null, cod:'', pedido:null},
   bebidas:{venc:'22/09', dias:7, multa:7.49, juros:0.87, forma:'Pix', cod:'chave CNPJ 12.345.678/0001-90 — Bebidas Paranaguá Ltda'},
 };
+function semFormaHTML(t,c,P){
+  return `<div id="pagar${t.id}" class="mx-3 mb-3 rounded-xl border border-zinc-200 bg-white overflow-hidden">
+    <div class="px-3 py-2 bg-zinc-50 border-b border-zinc-100 text-xs text-zinc-600"><strong>Falta o jeito de pagar</strong> — ${c.titulo} · ${brl(c.valor)} + multa e juros · venceu em ${P.venc}</div>
+    <div class="divide-y divide-zinc-100">
+      <div class="px-3 py-3">
+        <p class="text-xs font-semibold text-zinc-800 flex items-center gap-1.5"><i class="ri-barcode-line text-zinc-400"></i> Tenho o boleto</p>
+        <div class="mt-2 flex flex-wrap items-center gap-2">
+          <input data-cod-boleto="${t.id}" placeholder="cole a linha digitável (47 números)" class="flex-1 min-w-[240px] h-9 px-2.5 rounded-lg border border-zinc-200 text-xs tabnum focus:outline-none focus:border-amber-400">
+          <button class="h-9 text-xs font-semibold px-2.5 rounded-lg border border-zinc-200 bg-white hover:bg-zinc-50"><i class="ri-file-pdf-2-line"></i> PDF</button>
+          <button class="h-9 text-xs font-semibold px-2.5 rounded-lg border border-zinc-200 bg-white hover:bg-zinc-50"><i class="ri-camera-line"></i> Foto</button>
+        </div>
+        <p class="mt-1 text-[11px] text-zinc-400">O sistema confere os dígitos e o valor antes de liberar o pagamento. O boleto fica guardado nesta conta a pagar.</p>
+      </div>
+      <div class="px-3 py-3">
+        <p class="text-xs font-semibold text-zinc-800 flex items-center gap-1.5"><i class="ri-qr-code-line text-zinc-400"></i> Tenho um Pix copia e cola</p>
+        <input data-cod-pix="${t.id}" placeholder="cole o Pix copia e cola (começa com 000201…)" class="mt-2 w-full h-9 px-2.5 rounded-lg border border-zinc-200 text-xs focus:outline-none focus:border-amber-400">
+        <p class="mt-1 text-[11px] text-zinc-400">O sistema confere o recebedor e o valor que vêm dentro do código.</p>
+      </div>
+      <div class="px-3 py-3">
+        <p class="text-xs font-semibold text-zinc-800 flex items-center gap-1.5"><i class="ri-key-2-line text-zinc-400"></i> Pagar na chave Pix do fornecedor</p>
+        <p class="mt-1 text-[11px] text-zinc-500">${c.titulo} não tem chave Pix cadastrada. Por segurança, chave Pix de fornecedor só é cadastrada por uma pessoa, na tela de Fornecedores — nem o sistema nem o assistente cadastram sozinhos.</p>
+        <button class="mt-2 text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-zinc-200 bg-white hover:bg-zinc-50"><i class="ri-external-link-line"></i> Abrir Fornecedores</button>
+      </div>
+      <div class="px-3 py-3 flex items-center justify-between gap-2 flex-wrap bg-zinc-50/60">
+        <p class="text-[11px] text-zinc-500">Não tem nada disso? Peça ao fornecedor — quando o boleto chegar (e-mail ou foto no grupo), ele aparece aqui pronto para pagar.</p>
+        <button data-pedir="${t.id}" class="text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-zinc-800 text-white hover:bg-zinc-900"><i class="ri-mail-send-line"></i> Pedir o boleto</button>
+      </div>
+    </div></div>`;
+}
 function pagarHTML(t){
   const c=porId[t.caso], P=PAGTO[t.caso]||{venc:'—',dias:0,multa:0,juros:0,forma:'Boleto',cod:'—'}, tot=c.valor+P.multa+P.juros;
+  if(!P.forma) return semFormaHTML(t,c,P);
   return `<div id="pagar${t.id}" class="mx-3 mb-3 rounded-xl border border-zinc-200 bg-white overflow-hidden">
     <div class="px-3 py-2 bg-zinc-50 border-b border-zinc-100 text-xs text-zinc-600"><strong>Confira antes de pagar</strong> — nada sai do banco até você confirmar.</div>
     <div class="grid sm:grid-cols-2 gap-x-6 gap-y-1.5 px-3 py-3 text-xs">
@@ -642,10 +672,10 @@ function tarefa(t){
   const outros=OUTRO[t.g];
   return `<div id="t${t.id}" class="rounded-xl border ${t.urg?'border-red-200 bg-red-50/20':'border-zinc-200 bg-white'} p-3">
     <div class="flex gap-3">
-      ${g.lote?`<input type="checkbox" data-s="${t.id}" ${t.sel?'checked':''} class="mt-1 w-4 h-4 accent-zinc-700 cursor-pointer" title="Marcar para resolver em lote com a sugestão">`:''}
+      ${g.lote&&!t.semForma?`<input type="checkbox" data-s="${t.id}" ${t.sel?'checked':''} class="mt-1 w-4 h-4 accent-zinc-700 cursor-pointer" title="Marcar para resolver em lote com a sugestão">`:''}
       <div class="flex-1 min-w-0">
         <div class="flex items-start justify-between gap-2">
-          <button data-exp="${t.id}" class="min-w-0 text-left group"><p class="text-sm font-semibold text-zinc-800 truncate group-hover:underline">${t.urg?'<i class="ri-fire-fill text-red-500 mr-1"></i>':''}${c.titulo}</p><p class="text-[11px] text-zinc-400">${c.data} · ${c.sub} · <span class="inline-flex items-center gap-0.5 ml-0.5 px-1.5 py-px rounded-md bg-zinc-100 text-zinc-600 font-medium group-hover:bg-zinc-200"><i class="ri-route-line"></i> ${expandido.has(t.id)?'esconder fases':'ver fases'} <i class="${expandido.has(t.id)?'ri-arrow-up-s-line':'ri-arrow-down-s-line'}"></i></span></p></button>
+          <button data-exp="${t.id}" class="min-w-0 text-left group"><p class="text-sm font-semibold text-zinc-800 truncate group-hover:underline">${t.urg?'<i class="ri-fire-fill text-red-500 mr-1"></i>':''}${c.titulo}${t.semForma?` <span class="ml-1 align-middle text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-zinc-100 text-zinc-600">${PAGTO[t.caso]?.pedido?'boleto pedido':'sem boleto nem Pix'}</span>`:''}</p><p class="text-[11px] text-zinc-400">${c.data} · ${c.sub} · <span class="inline-flex items-center gap-0.5 ml-0.5 px-1.5 py-px rounded-md bg-zinc-100 text-zinc-600 font-medium group-hover:bg-zinc-200"><i class="ri-route-line"></i> ${expandido.has(t.id)?'esconder fases':'ver fases'} <i class="${expandido.has(t.id)?'ri-arrow-up-s-line':'ri-arrow-down-s-line'}"></i></span></p></button>
           <span class="text-sm font-bold tabnum whitespace-nowrap">${brl(c.valor)}</span>
         </div>
         ${expandido.has(t.id)?etapasAbertas(c, t.etapas):''}
@@ -683,11 +713,15 @@ function lista(){
   if(gavetaCaso) desenharGaveta();
   document.querySelectorAll('[data-sug]').forEach(b=>b.onclick=()=>{
     const id=+b.dataset.sug;
+    if(b.dataset.abre==='pedir'){ pedirBoleto(id); return; }
     if(b.dataset.abre){ const t=T.find(x=>x.id===id), campo=b.dataset.abre; abertoOutro=id; escolhido[id]=OUTRO[t.g].findIndex(o=>o.campo===campo); if(campo==='diarias') iniDias(t, t.caso==='joao'?2:1); lista(); document.getElementById(({itens:'itens',diarias:'dias',pagar:'pagar',vincular:'vinc'})[campo]+id)?.scrollIntoView({block:'nearest',behavior:'smooth'}); return; }
     resolver(id,b.dataset.l);
   });
   bindItens(); bindDias(); bindVinc();
   document.querySelectorAll('[data-pag-ok]').forEach(b=>b.onclick=e=>{ e.preventDefault(); resolver(+b.dataset.pagOk, b.dataset.l); });
+  document.querySelectorAll('[data-cod-boleto]').forEach(i=>i.oninput=()=>{ const n=i.value.replace(/\D/g,''); if(n.length<47) return; const t=T.find(x=>x.id===+i.dataset.codBoleto); Object.assign(PAGTO[t.caso],{forma:'Boleto', cod:i.value}); t.semForma=false; t.porque='Venceu há 10 dias. Boleto colado agora — confira e pague.'; t.sug=[['Pagar agora','ri-bank-line','pagar']]; lista(); });
+  document.querySelectorAll('[data-cod-pix]').forEach(i=>i.oninput=()=>{ if(!/^000201/.test(i.value.trim()) || i.value.trim().length<40) return; const t=T.find(x=>x.id===+i.dataset.codPix); Object.assign(PAGTO[t.caso],{forma:'Pix copia e cola', cod:'recebedor: BEEMAX DISTRIBUIDORA LTDA · valor conferido'}); t.semForma=false; t.porque='Venceu há 10 dias. Pix colado agora — confira e pague.'; t.sug=[['Pagar agora','ri-bank-line','pagar']]; lista(); });
+  document.querySelectorAll('[data-pedir]').forEach(b=>b.onclick=e=>{ e.preventDefault(); pedirBoleto(+b.dataset.pedir); });
   document.querySelectorAll('[data-pag-cancel]').forEach(b=>b.onclick=e=>{ e.preventDefault(); abertoOutro=null; lista(); });
   document.querySelectorAll('[data-conf]').forEach(b=>b.onclick=e=>{e.preventDefault(); resolver(+b.dataset.conf,b.dataset.l+' (manual)');});
   document.querySelectorAll('[data-outro]').forEach(b=>b.onclick=()=>{const id=+b.dataset.outro; abertoOutro=abertoOutro===id?null:id; lista();});
@@ -695,10 +729,17 @@ function lista(){
   document.querySelectorAll('[data-esc]').forEach(r=>r.onchange=()=>{escolhido[+r.dataset.esc]=+r.dataset.i; lista();});
   document.querySelectorAll('[data-s]').forEach(c=>c.onchange=()=>{T.find(t=>t.id==c.dataset.s).sel=c.checked;});
   document.querySelectorAll('[data-lote]').forEach(b=>b.onclick=()=>{const g=b.dataset.lote;
-    if(g==='vencidas'){ const sel=T.filter(t=>t.g===g&&t.sel&&passaT(t)); const tot=sel.reduce((a,t)=>{const P=PAGTO[t.caso]||{multa:0,juros:0}; return a+porId[t.caso].valor+P.multa+P.juros;},0);
+    if(g==='vencidas'){ const semF=T.filter(t=>t.g===g&&t.sel&&t.semForma&&passaT(t)); semF.forEach(t=>t.sel=false); const sel=T.filter(t=>t.g===g&&t.sel&&passaT(t));
+      if(semF.length) alert(`${semF.map(t=>porId[t.caso].titulo).join(', ')} ficou de fora: ainda não tem boleto nem Pix para pagar.`); const tot=sel.reduce((a,t)=>{const P=PAGTO[t.caso]||{multa:0,juros:0}; return a+porId[t.caso].valor+P.multa+P.juros;},0);
       if(!sel.length) return; if(!confirm(`Pagar ${sel.length} contas a pagar vencidas pelo Inter?\n\n${sel.map(t=>'• '+porId[t.caso].titulo).join('\n')}\n\nTotal com multa e juros: ${brl(tot)}\nSai da conta bancária Inter.`)) return; }
     T.filter(t=>t.g===g&&t.sel&&passaT(t)).map(t=>t.id).forEach(id=>resolver(id,'em lote: '+GRUPOS.find(x=>x.id===g).lote,true)); setTimeout(render,380);});
   bindCasos();
+}
+function pedirBoleto(id){
+  const t=T.find(x=>x.id===id), c=porId[t.caso]; PAGTO[t.caso].pedido='29/09';
+  t.porque=`Venceu há 10 dias. <strong>Boleto pedido ao fornecedor em 29/09</strong> — quando chegar (e-mail ou foto no grupo), aparece aqui pronto para pagar. Se passar de 2 dias, o sistema lembra de cobrar.`;
+  t.sug=[['Colar o boleto ou o Pix','ri-barcode-line','pagar'],['Pedir de novo','ri-mail-send-line','pedir']];
+  abertoOutro=null; lista();
 }
 function resolver(id,rotulo,lote){
   const t=T.find(x=>x.id===id); if(!t) return;
