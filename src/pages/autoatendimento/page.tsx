@@ -659,9 +659,11 @@ function AutoatendimentoPageInner() {
     };
 
     const kioskToken = kioskSession?.accessToken ?? undefined;
-    // Pedido zerado (prêmio do clube) já está quitado; o resto só vai pra cozinha pago.
+    // Loja "Pagar agora": sem Pix/maquininha confirmados, só vai pra cozinha quando o caixa receber
+    // (regra do dono 2026-09-29; o servidor aplica a mesma regra). Pedido zerado (clube) já está quitado.
+    const pagamentoAntes = modoPagamento !== 'entrega' && modoPagamento !== 'ambos';
     const seguraAtePagar = segurarAtePagar === true
-      || (typeof paidPixPaymentId !== 'string' && Math.round((subtotal - descontoPedido) * 100) / 100 > 0);
+      || (pagamentoAntes && typeof paidPixPaymentId !== 'string' && Math.round((subtotal - descontoPedido) * 100) / 100 > 0);
 
     console.log('[Autoatendimento] Enviando create_order via useOrderSubmit:', {
       session_id: sessionId,
@@ -721,7 +723,7 @@ function AutoatendimentoPageInner() {
       console.error('[Autoatendimento] Exceção ao criar pedido após retries:', e);
       return null;
     }
-  }, [carrinho, identifNome, identifSenha, cpfNota, modoIdentificacao, pagarNaEntrega, formaPagamentoNome, destino, getTenantAndSession, submitOrder, user?.modoTreino, kioskSession?.accessToken, clube, reservas, descontoClube]);
+  }, [carrinho, identifNome, identifSenha, cpfNota, modoIdentificacao, pagarNaEntrega, modoPagamento, formaPagamentoNome, destino, getTenantAndSession, submitOrder, user?.modoTreino, kioskSession?.accessToken, clube, reservas, descontoClube]);
 
 
   // paidPixPaymentId só vale como texto: esta função também é usada direto em botões (recebe o evento).
