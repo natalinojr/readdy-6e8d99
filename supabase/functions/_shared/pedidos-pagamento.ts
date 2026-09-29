@@ -73,14 +73,27 @@ export function textoDias(dias: string[] | null | undefined, valores?: (number |
   return `${pares.length > 1 ? 'Dias' : 'Dia'} ${pares.map((x) => `${diaCurto(x.d)}${x.v > 0 ? ` ${brl(x.v)}` : ''}`).join(', ')}`;
 }
 
+/** "Pai › Filho" da categoria do DRE (ou só o nome). */
+async function nomeDaCategoria(admin: any, id?: string | null): Promise<string | null> {
+  if (!id) return null;
+  const { data: c } = await admin.from('fin_dre_categories').select('name, parent_id').eq('id', id).maybeSingle();
+  if (!c) return null;
+  if (!c.parent_id) return c.name;
+  const { data: pai } = await admin.from('fin_dre_categories').select('name').eq('id', c.parent_id).maybeSingle();
+  return pai ? `${pai.name} › ${c.name}` : c.name;
+}
+
 /** Avisa o dono no 📥 do chat (uma pendência por pedido). */
-export async function pendenciaDoPedido(admin: any, p: { id: string; tenant_id: string; tipo: TipoPedido; valor: number; favorecido_nome: string; descricao: string; solicitado_por_nome: string | null; dias?: string[] | null; valores_dia?: number[] | null }) {
+export async function pendenciaDoPedido(admin: any, p: { id: string; tenant_id: string; tipo: TipoPedido; valor: number; favorecido_nome: string; descricao: string; solicitado_por_nome: string | null; dias?: string[] | null; valores_dia?: number[] | null; dre_category_id?: string | null; purchase_id?: string | null }) {
   const dias = p.tipo === 'freelancer' ? textoDias(p.dias, p.valores_dia) : '';
+  // Classificação que quem pediu escolheu, para o dono ver no cartão antes de aprovar (dono, 2026-09-29)
+  const categoria = await nomeDaCategoria(admin, p.dre_category_id)
+    ?? (p.purchase_id ? 'Compra lançada (itens da compra)' : null);
   const { error } = await admin.rpc('fn_pendencia_upsert', {
     p_tenant: p.tenant_id, p_kind: 'pedido_pagamento', p_ref: p.id,
     p_titulo: `${ROTULO[p.tipo]} de ${brl(p.valor)} — ${p.favorecido_nome}`,
     p_detalhe: `${p.descricao.replace(/\.$/, '')}.${dias ? ` ${dias}.` : ''} Pedido por ${p.solicitado_por_nome ?? 'alguém da loja'}. ${p.tipo === 'compra_online' ? 'Classifique (despesa ou CMV) e pague o Pix do site — vira compra e o Pix sai pelo Inter.' : 'Só vira conta a pagar depois de aprovado.'}`,
-    p_payload: { pedido_id: p.id, tipo: p.tipo, valor: p.valor, ...(p.dias?.length ? { dias: p.dias } : {}) },
+    p_payload: { pedido_id: p.id, tipo: p.tipo, valor: p.valor, ...(p.dias?.length ? { dias: p.dias } : {}), ...(categoria ? { categoria } : {}) },
     p_rota: '/receber?aprovar=1', p_urgencia: 'normal', p_acao_requerida: true, p_origem: 'app', p_reabrir: false,
   });
   if (error) console.error('[pedidos-pagamento] pendência', error.message);

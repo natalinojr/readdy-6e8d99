@@ -642,7 +642,7 @@ async function pedidoDeReembolso(ctx: Ctx, purchaseId: string, ref: string, forn
   };
   const { data: novo, error } = await admin.from('fin_payment_requests').insert(linha).select('id').single();
   if (error) return error.code === '23505' ? { ok: true } : falhou(error.message);
-  await pendenciaDoPedido(admin, { id: novo.id, tenant_id: tenantId, tipo: 'reembolso', valor, favorecido_nome: reemb.nome, descricao: linha.descricao, solicitado_por_nome: quem });
+  await pendenciaDoPedido(admin, { id: novo.id, tenant_id: tenantId, tipo: 'reembolso', valor, favorecido_nome: reemb.nome, descricao: linha.descricao, solicitado_por_nome: quem, purchase_id: purchaseId });
   return { ok: true };
 }
 

@@ -261,7 +261,7 @@ async function criar(ctx: Ctx, body: Record<string, any>) {
     }
     return erro(`Não consegui gravar o pedido: ${error.message}`, 500);
   }
-  await pendenciaDoPedido(ctx.admin, { id: novo.id, tenant_id: ctx.tenantId, tipo, valor: linha.valor, favorecido_nome: linha.favorecido_nome, descricao: linha.descricao, solicitado_por_nome: linha.solicitado_por_nome, dias: linha.dias ?? null, valores_dia: linha.valores_dia ?? null });
+  await pendenciaDoPedido(ctx.admin, { id: novo.id, tenant_id: ctx.tenantId, tipo, valor: linha.valor, favorecido_nome: linha.favorecido_nome, descricao: linha.descricao, solicitado_por_nome: linha.solicitado_por_nome, dias: linha.dias ?? null, valores_dia: linha.valores_dia ?? null, dre_category_id: linha.dre_category_id ?? null, purchase_id: linha.purchase_id ?? null });
   return json({ ok: true, id: novo.id });
 }
 

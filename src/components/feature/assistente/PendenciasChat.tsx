@@ -380,7 +380,11 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
               {detalhe.length > 140 && <span className="block text-[11px] font-semibold text-violet-700 mt-0.5">{textoAberto.has(p.id) ? 'Mostrar menos' : 'Ler tudo'}</span>}
             </button>
           )}
-          {ONDE[p.kind] && <p className="mt-1 text-[11px] text-zinc-600"><i className="ri-map-pin-2-line text-zinc-400" /> <b className="font-semibold">Onde:</b> {ONDE[p.kind]}</p>}
+          {/* Onde quem pediu classificou o gasto (dono, 2026-09-29): ver antes de aprovar. */}
+          {ehPedido && typeof p.payload?.categoria === 'string' && (
+            <p className="mt-1 text-[11px] text-zinc-600"><i className="ri-price-tag-3-line text-zinc-400" /> <b className="font-semibold">Classificado em:</b> {p.payload.categoria}</p>
+          )}
+          {ONDE[p.kind] &&<p className="mt-1 text-[11px] text-zinc-600"><i className="ri-map-pin-2-line text-zinc-400" /> <b className="font-semibold">Onde:</b> {ONDE[p.kind]}</p>}
           {['compra_pelo_celular', 'sangria_nao_saiu'].includes(p.kind) && compraId && <ResumoCompra call={call} pendId={p.id} />}
         </div>
 
