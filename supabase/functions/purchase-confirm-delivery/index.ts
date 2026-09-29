@@ -98,23 +98,68 @@ Deno.serve(async (req) => {
     };
     const diaBR = (iso: string) => new Date(new Date(iso).getTime() - 3 * 3600_000).toISOString().slice(0, 10).split('-').reverse().join('/');
 
+    // Primeira contagem do insumo entre duas datas (sessão de inventário, mesmo sem diferença, ou ajuste).
+    const primeiraContagemEntre = async (ing: string, de: string, ate: string) => {
+      const [a, b] = de < ate ? [de, ate] : [ate, de];
+      const [sess, adj] = await Promise.all([
+        supabase.from('inventory_sessions').select('created_at').eq('tenant_id', tenant_id)
+          // cs com JSON explícito: .contains() com array de objetos monta o filtro errado
+          .filter('items', 'cs', JSON.stringify([{ ingredient_id: ing }])).gt('created_at', a).lt('created_at', b)
+          .order('created_at', { ascending: true }).limit(1),
+        supabase.from('stock_movements').select('created_at').eq('tenant_id', tenant_id).eq('ingredient_id', ing)
+          .eq('type', 'inventory_adjustment').gt('created_at', a).lt('created_at', b)
+          .order('created_at', { ascending: true }).limit(1),
+      ]);
+      if (sess.error || adj.error) console.error('[purchase-confirm-delivery] contagem:', sess.error?.message ?? adj.error?.message);
+      const ts = [sess.data?.[0]?.created_at, adj.data?.[0]?.created_at].filter(Boolean) as string[];
+      return ts.length ? ts.sort()[0] : null;
+    };
+
     // Corrigir a data do recebimento já confirmado (2026-09-28): leva junto a data da entrada no
     // estoque desta compra (movimentos com purchase_id), a da conta a pagar e a da lista de Compras.
-    // O saldo do estoque não muda; só o dia em que a entrada aparece.
+    // Mesmo lado da contagem: o saldo não muda, só o dia da entrada.
+    // Atravessando uma contagem (dono, 2026-09-29): o que chegou antes da contagem já foi contado —
+    // entrada que vai para ANTES da contagem sai do estoque; a que vai para DEPOIS entra. A correção é
+    // um ajuste de inventário na hora da contagem (o ajuste daquela contagem estava errado por essa
+    // quantidade) e só é feita com confirmar_contagem: true — sem isso, devolve o que mudaria.
     if (body.action === 'change_received_at') {
       if (!purchase.delivery_confirmed_at) return new Response(JSON.stringify({ error: 'Esta compra ainda não foi recebida' }), { status: 400, headers: corsHeaders });
       const novo = lerData(received_at);
       if (novo instanceof Response) return novo;
       const antigo = String(purchase.delivery_confirmed_at);
-      const { data: movs, error: mvErr } = await supabase.from('stock_movements').select('id, ingredient_id, created_at')
-        .eq('tenant_id', tenant_id).eq('purchase_id', purchase_id);
+      const { data: movs, error: mvErr } = await supabase.from('stock_movements').select('id, ingredient_id, created_at, quantity, signed_quantity, type, unit')
+        .eq('tenant_id', tenant_id).eq('purchase_id', purchase_id).neq('type', 'inventory_adjustment');
       if (mvErr) return new Response(JSON.stringify({ error: mvErr.message }), { status: 500, headers: corsHeaders });
-      const lista = (movs ?? []) as Array<{ id: string; ingredient_id: string; created_at: string }>;
+      const lista = (movs ?? []) as Array<{ id: string; ingredient_id: string; created_at: string; quantity: number; signed_quantity: number | null; type: string; unit: string | null }>;
+      const ajustes: Array<{ ingredient_id: string; delta: number; contagem: string; unit: string | null }> = [];
       for (const m of lista) {
-        const cont = await contagemEntre([m.ingredient_id], m.created_at, novo);
-        if (cont) {
-          return new Response(JSON.stringify({ error: `Houve contagem de estoque em ${diaBR(cont)}, entre a data atual da entrada e a nova. Mudar a data faria a entrada pular a contagem; escolha uma data do mesmo lado da contagem.` }), { status: 409, headers: corsHeaders });
-        }
+        if (m.created_at === novo) continue;
+        const cont = await primeiraContagemEntre(m.ingredient_id, m.created_at, novo);
+        if (!cont) continue;
+        const q = m.signed_quantity != null ? Number(m.signed_quantity) : Number(m.quantity) * (m.type === 'out' ? -1 : 1);
+        if (!q) continue;
+        // Indo para antes da contagem: a contagem já tinha essa mercadoria → sai. Indo para depois → entra.
+        ajustes.push({ ingredient_id: m.ingredient_id, delta: novo < m.created_at ? -q : q, contagem: cont, unit: m.unit });
+      }
+      if (ajustes.length && body.confirmar_contagem !== true) {
+        const { data: ings } = await supabase.from('ingredients').select('id, name, unit, current_stock')
+          .eq('tenant_id', tenant_id).in('id', [...new Set(ajustes.map((a) => a.ingredient_id))]);
+        const porId = new Map(((ings ?? []) as any[]).map((g) => [String(g.id), g]));
+        const saldo = new Map<string, number>();
+        const itens = ajustes.map((a) => {
+          const g = porId.get(a.ingredient_id);
+          const atual = saldo.has(a.ingredient_id) ? saldo.get(a.ingredient_id)! : Number(g?.current_stock ?? 0);
+          saldo.set(a.ingredient_id, atual + a.delta);
+          return { insumo: g?.name ?? 'Insumo', unidade: (({ unit: 'un', unidade: 'un' } as Record<string, string>)[String(g?.unit ?? a.unit ?? '')] ?? String(g?.unit ?? a.unit ?? '')), delta: a.delta, estoque_atual: atual, estoque_novo: atual + a.delta, contagem: diaBR(a.contagem) };
+        });
+        const contagens = [...new Set(itens.map((i) => i.contagem))].join(', ');
+        return new Response(JSON.stringify({
+          precisa_confirmar: true,
+          mensagem: novo < antigo
+            ? `Houve contagem de estoque em ${contagens}. A mercadoria chegou antes e já foi contada, então a entrada sai do estoque.`
+            : `Houve contagem de estoque em ${contagens}. A mercadoria chegou depois, então não foi contada e a entrada soma no estoque.`,
+          itens,
+        }), { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }
       const { error: upErr } = await supabase.from('fin_purchases').update({
         delivery_confirmed_at: novo,
@@ -123,13 +168,26 @@ Deno.serve(async (req) => {
       }).eq('id', purchase_id).eq('tenant_id', tenant_id).eq('delivery_confirmed_at', antigo);
       if (upErr) return new Response(JSON.stringify({ error: upErr.message }), { status: 500, headers: corsHeaders });
       if (lista.length) {
+        // A correção da contagem (inventory_adjustment ligado à compra) fica na data da contagem
         const { error: e2 } = await supabase.from('stock_movements').update({ created_at: novo })
-          .eq('tenant_id', tenant_id).eq('purchase_id', purchase_id);
+          .eq('tenant_id', tenant_id).eq('purchase_id', purchase_id).neq('type', 'inventory_adjustment');
         if (e2) return new Response(JSON.stringify({ error: 'Data da compra mudou, mas a do estoque não: ' + e2.message }), { status: 500, headers: corsHeaders });
       }
       await supabase.from('fin_accounts_payable').update({ delivery_confirmed_at: novo })
         .eq('reference_id', purchase_id).eq('tenant_id', tenant_id).not('delivery_confirmed_at', 'is', null);
-      return new Response(JSON.stringify({ data: { confirmed_at: novo, movimentos: lista.length } }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      const dataNota = String(purchase.invoice_number ? `NF ${purchase.invoice_number}` : 'compra');
+      for (const a of ajustes) {
+        const { error: eAj } = await supabase.from('stock_movements').insert({
+          tenant_id, ingredient_id: a.ingredient_id, type: 'inventory_adjustment', quantity: Math.abs(a.delta), signed_quantity: a.delta,
+          unit: a.unit, reason: 'Correção da contagem: data do recebimento mudou',
+          notes: `${dataNota} (${purchase.supplier ?? ''}) recebida em ${diaBR(novo)} — antes em ${diaBR(antigo)}; contagem de ${diaBR(a.contagem)}`,
+          operator_id: user.id, purchase_id, created_at: a.contagem,
+        });
+        if (eAj) return new Response(JSON.stringify({ error: 'Data mudou, mas a correção do estoque falhou: ' + eAj.message }), { status: 500, headers: corsHeaders });
+        const { error: eSt } = await supabase.rpc('fn_update_ingredient_stock', { p_ingredient_id: a.ingredient_id, p_tenant_id: tenant_id, p_delta: a.delta });
+        if (eSt) return new Response(JSON.stringify({ error: 'Data mudou, mas o saldo do estoque não: ' + eSt.message }), { status: 500, headers: corsHeaders });
+      }
+      return new Response(JSON.stringify({ data: { confirmed_at: novo, movimentos: lista.length, ajustes: ajustes.length } }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
     if (purchase.delivery_confirmed_at) return new Response(JSON.stringify({ error: 'Recebimento já confirmado anteriormente' }), { status: 409, headers: corsHeaders });

@@ -48,6 +48,8 @@ interface Props {
   onItemsChanged?: () => void;
 }
 
+const fmtQtd = (n: number) => Number(n ?? 0).toLocaleString('pt-BR', { maximumFractionDigits: 3 });
+
 export default function DetalhePurchaseModal({ purchase, installments, loadingInstallments, onClose, onDeliveryConfirmed, onDeleted, onItemsChanged }: Props) {
   const { user } = useAuth();
   const [detalhando, setDetalhando] = useState(false);
@@ -182,21 +184,29 @@ export default function DetalhePurchaseModal({ purchase, installments, loadingIn
   const [novaData, setNovaData] = useState(dataRecebidaBR);
   const [salvandoData, setSalvandoData] = useState(false);
   const [erroData, setErroData] = useState('');
+  // Data atravessa uma contagem: o estoque muda (a Edge devolve o que muda e só aplica confirmando)
+  const [confirmaContagem, setConfirmaContagem] = useState<{
+    mensagem: string;
+    itens: Array<{ insumo: string; unidade: string; delta: number; estoque_atual: number; estoque_novo: number }>;
+  } | null>(null);
 
-  const handleMudarData = async () => {
+  const handleMudarData = async (confirmar = false) => {
     if (!user?.tenantId || !novaData) return;
     if (novaData === dataRecebidaBR) { setEditandoData(false); return; }
     setSalvandoData(true);
     setErroData('');
+    if (!confirmar) setConfirmaContagem(null);
     try {
       const { data: { session } } = await supabase.auth.getSession();
       const res = await fetch(`${SUPABASE_URL}/functions/v1/purchase-confirm-delivery`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token}` },
-        body: JSON.stringify({ action: 'change_received_at', tenant_id: user.tenantId, payload: { purchase_id: purchase.id, received_at: novaData } }),
+        body: JSON.stringify({ action: 'change_received_at', tenant_id: user.tenantId, payload: { purchase_id: purchase.id, received_at: novaData }, confirmar_contagem: confirmar }),
       });
       const result = await res.json().catch(() => ({}));
+      if (result.precisa_confirmar) { setConfirmaContagem({ mensagem: result.mensagem, itens: result.itens ?? [] }); return; }
       if (!res.ok || result.error) { setErroData(result.error || 'Erro ao mudar a data'); return; }
+      setConfirmaContagem(null);
       setEditandoData(false);
       onDeliveryConfirmed?.();
       onClose();
@@ -502,25 +512,55 @@ export default function DetalhePurchaseModal({ purchase, installments, loadingIn
                         type="date"
                         value={novaData}
                         max={hojeBR}
-                        onChange={e => setNovaData(e.target.value)}
+                        onChange={e => { setNovaData(e.target.value); setConfirmaContagem(null); }}
                         className="border border-green-300 rounded-lg px-2 py-1 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-green-400"
                       />
                       <button
-                        onClick={handleMudarData}
-                        disabled={salvandoData || !novaData}
+                        onClick={() => handleMudarData(false)}
+                        disabled={salvandoData || !novaData || !!confirmaContagem}
                         className="px-3 py-1.5 bg-green-500 hover:bg-green-600 text-white rounded-lg text-xs font-bold cursor-pointer disabled:opacity-60"
                       >
                         {salvandoData ? 'Salvando...' : 'Salvar'}
                       </button>
                       <button
-                        onClick={() => { setEditandoData(false); setErroData(''); }}
+                        onClick={() => { setEditandoData(false); setErroData(''); setConfirmaContagem(null); }}
                         disabled={salvandoData}
                         className="px-3 py-1.5 border border-zinc-200 bg-white rounded-lg text-xs font-semibold text-zinc-600 hover:bg-zinc-50 cursor-pointer"
                       >
                         Cancelar
                       </button>
                     </div>
-                    <p className="text-[11px] text-green-700">A entrada no estoque desta compra passa para esta data (a quantidade não muda).</p>
+                    <p className="text-[11px] text-green-700">A entrada no estoque desta compra passa para esta data. Se passar por uma contagem de estoque, o sistema mostra o que muda antes de salvar.</p>
+                    {confirmaContagem && (
+                      <div className="mt-2 rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 space-y-2">
+                        <p className="font-semibold"><i className="ri-error-warning-line mr-1" />{confirmaContagem.mensagem}</p>
+                        <ul className="space-y-0.5">
+                          {confirmaContagem.itens.map((it, i) => (
+                            <li key={i}>
+                              {it.insumo}: <b>{it.delta > 0 ? '+' : '−'}{fmtQtd(Math.abs(it.delta))} {it.unidade}</b>
+                              {' '}(estoque {fmtQtd(it.estoque_atual)} → {fmtQtd(it.estoque_novo)} {it.unidade})
+                            </li>
+                          ))}
+                        </ul>
+                        <p>Isso altera o estoque. Confirma?</p>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => handleMudarData(true)}
+                            disabled={salvandoData}
+                            className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-xs font-bold cursor-pointer disabled:opacity-60"
+                          >
+                            {salvandoData ? 'Salvando...' : 'Confirmar e ajustar o estoque'}
+                          </button>
+                          <button
+                            onClick={() => setConfirmaContagem(null)}
+                            disabled={salvandoData}
+                            className="px-3 py-1.5 border border-amber-200 bg-white rounded-lg text-xs font-semibold text-amber-800 cursor-pointer"
+                          >
+                            Voltar
+                          </button>
+                        </div>
+                      </div>
+                    )}
                     {erroData && <p className="text-xs text-red-600"><i className="ri-error-warning-line mr-1" />{erroData}</p>}
                   </div>
                 )}
