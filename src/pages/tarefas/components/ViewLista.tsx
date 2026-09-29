@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
-import { Plus, Flag, MessageSquare, CheckSquare, GitBranch, Repeat, ChevronDown, ChevronRight, Check, Trash2, X, ArrowUp, ArrowDown, Play, Pause, Timer, GripVertical, FolderInput, Copy, ClipboardPaste } from 'lucide-react';
+import { Plus, Flag, MessageSquare, CheckSquare, GitBranch, Repeat, ChevronDown, ChevronRight, Check, Trash2, X, ArrowUp, ArrowDown, Play, Pause, Timer, GripVertical, FolderInput, Copy, ClipboardPaste, Pencil } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
 import type { CampoCustom, TaskList, TaskRow, TaskTag } from '../hooks/useTarefas';
 import { PRIORIDADES } from '../hooks/useTarefas';
@@ -255,6 +255,8 @@ export default function ViewLista({
   const [alvoArrasto, setAlvoArrasto] = useState<{ taskId: string | null; grupoKey: string | null; antes: boolean } | null>(null);
   const [editando, setEditando] = useState<{ taskId: string; col: ColunaId; rect: DOMRect } | null>(null);
   const [statusPickerAberto, setStatusPickerAberto] = useState<{ taskId: string; rect: DOMRect } | null>(null);
+  // Renomear direto na linha (lápis ao lado do título), sem abrir a tarefa.
+  const [editandoTitulo, setEditandoTitulo] = useState<{ taskId: string; valor: string } | null>(null);
   const [confirmandoExclusao, setConfirmandoExclusao] = useState<TaskRow | null>(null);
   const [selecionadas, setSelecionadas] = useState<Set<string>>(new Set());
   const [confirmandoExclusaoEmMassa, setConfirmandoExclusaoEmMassa] = useState(false);
@@ -403,6 +405,14 @@ export default function ViewLista({
     const res = await write(action, payload);
     if (!res.success) toast.error('Não foi possível salvar', res.error);
     return res;
+  };
+
+  const tituloCancelado = useRef(false);
+  const salvarTitulo = (task: TaskRow) => {
+    if (tituloCancelado.current) { tituloCancelado.current = false; return; }
+    const valor = editandoTitulo?.taskId === task.id ? editandoTitulo.valor.trim() : '';
+    setEditandoTitulo(null);
+    if (valor && valor !== task.title) gravar('update_task', { task_id: task.id, title: valor });
   };
 
   const excluir = (task: TaskRow) => setConfirmandoExclusao(task);
@@ -588,7 +598,11 @@ export default function ViewLista({
     // Só tarefas-raiz arrastam (subtarefa fica presa na tarefa-pai). Com a
     // lista ordenada por coluna a ordem manual não aparece — arrastar ali
     // confundiria, então fica desligado.
-    const arrastavel = nivel === 0 && !!grupo && !ordenacao;
+    const renomeando = editandoTitulo?.taskId === task.id;
+    // Pasta só de leitura (ou tarefa de pasta alheia vista em "Minhas tarefas" — aí o servidor decide).
+    const podeRenomear = list?.access !== 'view';
+    // Enquanto renomeia, a linha não arrasta (senão selecionar o texto com o mouse puxava a linha).
+    const arrastavel = nivel === 0 && !!grupo && !ordenacao && !renomeando;
     const alvoAqui = alvoArrasto?.taskId === task.id && arrasto?.taskId !== task.id;
 
     return (
@@ -616,7 +630,7 @@ export default function ViewLista({
             e.stopPropagation();
             soltar(grupo!, task.id, alvoArrasto?.antes ?? true);
           } : undefined}
-          onClick={() => onOpenTask(task.id)}
+          onClick={() => { if (!renomeando) onOpenTask(task.id); }}
           className={`relative flex items-start md:items-center gap-3 px-4 py-3 md:py-2.5 hover:bg-slate-50 active:bg-slate-100 cursor-pointer group ${
             selecionada ? 'bg-indigo-50/60 hover:bg-indigo-50/60' : ''
           } ${arrasto?.taskId === task.id ? 'opacity-40' : ''}`}
@@ -691,9 +705,40 @@ export default function ViewLista({
           <div className="flex-1 min-w-0">
             {/* Celular: título em até 2 linhas + um resumo embaixo. Antes o resumo
                 das colunas ficava na MESMA linha e espremia o título até sumir. */}
-            <span className={`block text-[15px] md:text-sm leading-snug line-clamp-2 md:line-clamp-none md:truncate ${concluida ? 'line-through text-slate-400' : 'text-slate-700'}`}>
-              {task.title}
-            </span>
+            {renomeando ? (
+              <input
+                autoFocus
+                value={editandoTitulo!.valor}
+                onChange={(e) => setEditandoTitulo({ taskId: task.id, valor: e.target.value })}
+                onClick={(e) => e.stopPropagation()}
+                onFocus={(e) => e.currentTarget.select()}
+                onBlur={() => salvarTitulo(task)}
+                onKeyDown={(e) => {
+                  e.stopPropagation(); // Ctrl+C/V da lista não pode pegar o texto do campo
+                  if (e.key === 'Enter') e.currentTarget.blur();
+                  else if (e.key === 'Escape') { tituloCancelado.current = true; setEditandoTitulo(null); }
+                }}
+                className="w-full text-[15px] md:text-sm leading-snug text-slate-700 bg-white border border-indigo-300 rounded px-1.5 py-0.5 -my-0.5 -ml-1.5 outline-none focus:ring-2 focus:ring-indigo-100"
+                aria-label="Nome da tarefa"
+              />
+            ) : (
+              <div className="flex items-center gap-1 min-w-0">
+                <span className={`block min-w-0 text-[15px] md:text-sm leading-snug line-clamp-2 md:line-clamp-none md:truncate ${concluida ? 'line-through text-slate-400' : 'text-slate-700'}`}>
+                  {task.title}
+                </span>
+                {podeRenomear && (
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); tituloCancelado.current = false; setEditandoTitulo({ taskId: task.id, valor: task.title }); }}
+                    className="hidden md:block shrink-0 p-0.5 rounded text-slate-300 hover:text-indigo-500 hover:bg-indigo-50 opacity-0 group-hover:opacity-100 focus:opacity-100"
+                    title="Renomear"
+                    aria-label="Renomear tarefa"
+                  >
+                    <Pencil size={12} />
+                  </button>
+                )}
+              </div>
+            )}
             <MetaCelular task={task} mostrarPasta={list === null} subtarefas={subtarefas.length} />
           </div>
 
