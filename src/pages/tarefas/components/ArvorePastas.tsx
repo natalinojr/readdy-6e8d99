@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { ChevronRight, ChevronDown, EyeOff, Plus, Trash2, Users, Share2 } from 'lucide-react';
-import { reordenarIrmas, type NoPasta } from '../lib/pastas';
+import { ChevronRight, ChevronDown, EyeOff, FolderInput, Plus, Trash2, Users, Share2 } from 'lucide-react';
+import { idsSubarvore, reordenarIrmas, type NoPasta } from '../lib/pastas';
 
 /** Põe o texto inteiro como dica (title) só quando ele está cortado com "…". */
 export function mostrarSeCortado(el: HTMLElement, texto: string) {
@@ -20,14 +20,20 @@ interface ArvorePastasProps {
   compacto?: boolean;
   /** Arrastar muda a ordem entre pastas do mesmo nível (só no computador, só pastas minhas). */
   onReordenar?: (idsIrmasEmOrdem: string[]) => void;
+  /** Arrastar para o meio de outra pasta põe dentro dela; para a borda de uma pasta de
+   *  outro nível, muda de nível na posição (2026-09-29). paiId null = raiz. */
+  onMover?: (listId: string, paiId: string | null, ordemIrmas?: string[]) => void;
+  /** Botão "Mover para…" (abre o seletor de pasta — quem chama). */
+  onPedirMover?: (no: NoPasta) => void;
 }
 
-type Alvo = { id: string; posicao: 'antes' | 'depois' };
+type Alvo = { id: string; posicao: 'antes' | 'depois' | 'dentro' };
 
-export default function ArvorePastas({ nos, selectedId, onSelecionar, onNovaSubpasta, onExcluir, onCompartilhar, compacto = false, onReordenar }: ArvorePastasProps) {
+
+export default function ArvorePastas({ nos, selectedId, onSelecionar, onNovaSubpasta, onExcluir, onCompartilhar, compacto = false, onReordenar, onMover, onPedirMover }: ArvorePastasProps) {
   const [recolhidas, setRecolhidas] = useState<Set<string>>(new Set());
-  // Arrasto em andamento: a pasta e as irmãs dela (só dá pra soltar entre as irmãs).
-  const [arrasto, setArrasto] = useState<{ id: string; irmas: string[] } | null>(null);
+  // Arrasto em andamento: a pasta, o pai dela e ela + subpastas (onde não pode cair).
+  const [arrasto, setArrasto] = useState<{ id: string; paiId: string | null; bloqueados: Set<string> } | null>(null);
   const [alvo, setAlvo] = useState<Alvo | null>(null);
 
   const fimArrasto = () => { setArrasto(null); setAlvo(null); };
@@ -55,8 +61,11 @@ export default function ArvorePastas({ nos, selectedId, onSelecionar, onNovaSubp
     const foraDoCompartilhamento = acesso === 'owner' && !!no.share_excluded;
     const acaoCls = `shrink-0 rounded text-slate-300 ${compacto ? 'p-2.5 text-slate-400' : 'p-1.5'}`;
     const idsIrmas = irmas.map((i) => i.id);
-    const arrastavel = !!onReordenar && !compacto && acesso === 'owner' && irmas.length > 1;
-    const ehAlvo = !!arrasto && arrasto.id !== no.id && arrasto.irmas.includes(no.id);
+    const podeArrastar = !!(onReordenar || onMover) && !compacto && acesso === 'owner';
+    const arrastavel = podeArrastar && (!!onMover || irmas.length > 1);
+    const mesmoNivel = !!arrasto && idsIrmas.includes(arrasto.id);
+    // Alvo: pasta minha, fora da subárvore arrastada. Sem onMover, só as irmãs (reordenar).
+    const ehAlvo = !!arrasto && acesso === 'owner' && !arrasto.bloqueados.has(no.id) && (!!onMover || mesmoNivel);
     const linha = alvo?.id === no.id ? alvo.posicao : null;
 
     return (
@@ -67,33 +76,48 @@ export default function ArvorePastas({ nos, selectedId, onSelecionar, onNovaSubp
           }`}
           style={{
             paddingLeft: `${16 + no.profundidade * 16}px`,
-            // Linha azul onde a pasta vai cair.
-            boxShadow: linha === 'antes' ? 'inset 0 2px 0 #6366f1' : linha === 'depois' ? 'inset 0 -2px 0 #6366f1' : undefined,
+            // Linha azul onde a pasta vai cair; contorno = vai para dentro.
+            boxShadow: linha === 'antes' ? 'inset 0 2px 0 #6366f1' : linha === 'depois' ? 'inset 0 -2px 0 #6366f1'
+              : linha === 'dentro' ? 'inset 0 0 0 2px #6366f1' : undefined,
             opacity: arrasto?.id === no.id ? 0.4 : undefined,
           }}
           draggable={arrastavel}
           onDragStart={arrastavel ? (e) => {
             e.dataTransfer.effectAllowed = 'move';
             e.dataTransfer.setData('text/plain', no.id); // Firefox só arrasta com dado
-            setArrasto({ id: no.id, irmas: idsIrmas });
+            setArrasto({ id: no.id, paiId: no.parent_list_id ?? null, bloqueados: idsSubarvore(no) });
           } : undefined}
           onDragEnd={arrastavel ? fimArrasto : undefined}
           onDragOver={ehAlvo ? (e) => {
             e.preventDefault();
             e.dataTransfer.dropEffect = 'move';
             const r = e.currentTarget.getBoundingClientRect();
-            const posicao = e.clientY < r.top + r.height / 2 ? 'antes' : 'depois';
+            const y = (e.clientY - r.top) / r.height;
+            // Com onMover: quarto de cima = antes, de baixo = depois, meio = dentro.
+            const posicao: Alvo['posicao'] = !onMover ? (y < 0.5 ? 'antes' : 'depois')
+              : y < 0.25 ? 'antes' : y > 0.75 ? 'depois' : 'dentro';
             if (alvo?.id !== no.id || alvo.posicao !== posicao) setAlvo({ id: no.id, posicao });
           } : undefined}
           onDragLeave={ehAlvo ? () => setAlvo((a) => (a?.id === no.id ? null : a)) : undefined}
           onDrop={ehAlvo ? (e) => {
             e.preventDefault();
-            const posicao = alvo?.id === no.id ? alvo.posicao : 'depois';
-            const nova = reordenarIrmas(arrasto!.irmas, arrasto!.id, no.id, posicao);
+            const posicao = alvo?.id === no.id ? alvo.posicao : 'dentro';
+            const a = arrasto!;
             fimArrasto();
-            if (nova.join() !== arrasto!.irmas.join()) onReordenar?.(nova);
+            if (posicao === 'dentro') {
+              if (no.id !== a.paiId) {
+                onMover?.(a.id, no.id);
+                setRecolhidas((prev) => { const p = new Set(prev); p.delete(no.id); return p; }); // mostra onde caiu
+              }
+              return;
+            }
+            const paiDestino = no.parent_list_id ?? null;
+            const base = paiDestino === a.paiId ? idsIrmas : [...idsIrmas, a.id];
+            const nova = reordenarIrmas(base, a.id, no.id, posicao);
+            if (paiDestino === a.paiId) { if (nova.join() !== idsIrmas.join()) onReordenar?.(nova); }
+            else onMover?.(a.id, paiDestino, nova);
           } : undefined}
-          title={arrastavel ? 'Arraste para mudar a ordem' : undefined}
+          title={arrastavel ? (onMover ? 'Arraste para mudar a ordem ou solte em cima de outra pasta para pôr dentro dela' : 'Arraste para mudar a ordem') : undefined}
         >
           <button
             onClick={() => alternar(no.id)}
@@ -136,6 +160,16 @@ export default function ArvorePastas({ nos, selectedId, onSelecionar, onNovaSubp
                 title={acesso === 'owner' ? 'Compartilhar' : 'Quem tem acesso'}
               >
                 <Share2 size={12} />
+              </button>
+            )}
+            {onPedirMover && acesso === 'owner' && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onPedirMover(no); }}
+                className={`${acaoCls} hover:text-indigo-500 hover:bg-indigo-50`}
+                title="Mover para outra pasta"
+                aria-label="Mover para outra pasta"
+              >
+                <FolderInput size={12} />
               </button>
             )}
             {podeEditar && (

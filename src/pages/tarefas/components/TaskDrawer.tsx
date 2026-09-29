@@ -48,6 +48,8 @@ interface TaskDrawerProps {
   taskId: string;
   /** A tarefa como está na lista (tem tempo/cronômetro ao vivo). Pode faltar se ela não está carregada. */
   task?: TaskRow;
+  /** Soma das subtarefas estimadas (regra 2026-09-29): quando vem, substitui a estimativa própria. */
+  estimativaSomada?: number | null;
   lists: TaskList[];
   tags: TaskTag[];
   campos: CampoCustom[];
@@ -126,7 +128,7 @@ function Secao({ icone, titulo, contador, acao, children }: {
 }
 
 export default function TaskDrawer({
-  taskId, task, lists, tags, campos, templates, usuarios,
+  taskId, task, estimativaSomada = null, lists, tags, campos, templates, usuarios,
   write, fetchDetail, fetchAnexos, enviarAnexo, abrirAnexo, onClose, onOpenTask, onAbrirRelatorio,
 }: TaskDrawerProps) {
   const toast = useToast();
@@ -238,7 +240,8 @@ export default function TaskDrawer({
   const tarefaPai = detail.parent_task_id ? detail.parent_task_id : null;
 
   const segRegistrado = segundosRegistrados(linha, agora);
-  const segEstimado = linha.time_estimate_minutes ? linha.time_estimate_minutes * 60 : null;
+  const minEstimado = estimativaSomada ?? linha.time_estimate_minutes;
+  const segEstimado = minEstimado ? minEstimado * 60 : null;
   const checklistFeitos = detail.checklist.filter((c) => c.is_done).length;
 
   const abrirEditor = (col: ColunaId) => (e: ReactMouseEvent<HTMLButtonElement>) =>
@@ -374,9 +377,16 @@ export default function TaskDrawer({
               </Propriedade>
 
               <Propriedade icone={<Timer size={14} />} rotulo="Tempo estimado">
-                <button onClick={abrirEditor('estimado')} className={VALOR_CLS}>
-                  {segEstimado ? <span className="text-slate-700">{formatarDuracao(segEstimado)}</span> : VAZIO}
-                </button>
+                {estimativaSomada ? (
+                  <span className={`${VALOR_CLS} cursor-default`} title="Soma das subtarefas — mude o tempo nas subtarefas">
+                    <span className="text-indigo-600">{formatarDuracao(estimativaSomada * 60)}</span>
+                    <span className="text-xs text-slate-400"> · soma das subtarefas</span>
+                  </span>
+                ) : (
+                  <button onClick={abrirEditor('estimado')} className={VALOR_CLS}>
+                    {segEstimado ? <span className="text-slate-700">{formatarDuracao(segEstimado)}</span> : VAZIO}
+                  </button>
+                )}
               </Propriedade>
 
               <Propriedade icone={<Clock size={14} />} rotulo="Cronômetro">

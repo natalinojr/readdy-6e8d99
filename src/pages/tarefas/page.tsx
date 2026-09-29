@@ -28,6 +28,7 @@ import CompartilhadoParaTarefa from './components/CompartilhadoParaTarefa';
 import ViewsSalvas from './components/ViewsSalvas';
 import FiltrosBar from './components/FiltrosBar';
 import ArvorePastas, { mostrarSeCortado } from './components/ArvorePastas';
+import SeletorPasta from './components/SeletorPasta';
 import { useLarguraSidebar } from './hooks/useLarguraSidebar';
 import ConfirmDialog from './components/ConfirmDialog';
 import CompartilharPasta from './components/CompartilharPasta';
@@ -38,8 +39,9 @@ import Relatorios from './relatorios/Relatorios';
 import { chamarDono } from './relatorios/api';
 import type { Filtros, GroupBy } from './lib/agrupamento';
 import { FILTROS_VAZIOS, aplicarFiltros } from './lib/agrupamento';
-import { montarArvorePastas, achatarArvore, type NoPasta } from './lib/pastas';
+import { montarArvorePastas, achatarArvore, idsSubarvore, type NoPasta } from './lib/pastas';
 import { useIsMobile } from './lib/mobile';
+import { estimativasEfetivas } from './lib/tempo';
 import { atualizarBadge } from '@/lib/pwa';
 import { sairDasCamadas, useVoltarFecha } from '@/lib/voltarAndroid';
 
@@ -106,7 +108,7 @@ export default function TarefasPage() {
   });
   const {
     lists, tasks, tags, campos, notificacoes, views, templates,
-    loading, error, reload, write, fetchDetail, fetchAnexos, enviarAnexo, abrirAnexo, reordenarPastas,
+    loading, error, reload, write, fetchDetail, fetchAnexos, enviarAnexo, abrirAnexo, reordenarPastas, moverPasta,
   } = useTarefas();
   const { usuarios: usuariosLoja } = useUsuarios();
   // Quem pode ser responsável: fn_get_task_pessoas (quem tem Tarefas + quem divide
@@ -145,6 +147,8 @@ export default function TarefasPage() {
   const [showStatus, setShowStatus] = useState(false);
   const [showListasSheet, setShowListasSheet] = useState(false);
   const [compartilhando, setCompartilhando] = useState<TaskList | null>(null);
+  // "Mover para…" de uma pasta (o arrastar chama moverPasta direto).
+  const [movendoPasta, setMovendoPasta] = useState<NoPasta | null>(null);
   const [showEscolherPasta, setShowEscolherPasta] = useState(false);
   const [newListName, setNewListName] = useState('');
   const [newListColor, setNewListColor] = useState(CORES_LISTA[0]);
@@ -205,6 +209,7 @@ export default function TarefasPage() {
   }, []);
 
   const arvorePastas = useMemo(() => montarArvorePastas(lists), [lists]);
+  const estimativas = useMemo(() => estimativasEfetivas(tasks), [tasks]);
   // Na barra lateral: as minhas pastas e, à parte, as compartilhadas comigo.
   const minhasRaizes = useMemo(() => arvorePastas.filter((n) => (n.access ?? 'owner') === 'owner'), [arvorePastas]);
   const raizesCompartilhadas = useMemo(() => arvorePastas.filter((n) => (n.access ?? 'owner') !== 'owner'), [arvorePastas]);
@@ -610,6 +615,8 @@ export default function TarefasPage() {
             onExcluir={excluirPasta}
             onCompartilhar={setCompartilhando}
             onReordenar={reordenarPastas}
+            onMover={moverPasta}
+            onPedirMover={setMovendoPasta}
           />
 
           {raizesCompartilhadas.length > 0 && (
@@ -885,6 +892,7 @@ export default function TarefasPage() {
           onAvisos={() => setShowAvisos(true)}
           onMicrosoft={() => setShowMicrosoft(true)}
           onCompartilhar={setCompartilhando}
+          onPedirMover={setMovendoPasta}
           onModelos={() => setTelaModelos({ tipo: 'lista' })}
           onClose={() => { setShowListasSheet(false); setRelatoriosAoEscolher(false); }}
         />
@@ -983,6 +991,19 @@ export default function TarefasPage() {
       )}
 
       {/* ── Status da pasta ── */}
+      {movendoPasta && (
+        <SeletorPasta
+          titulo={`Mover "${movendoPasta.name}" para dentro de…`}
+          lists={lists}
+          somenteMinhas
+          desabilitarIds={new Set([...idsSubarvore(movendoPasta), ...(movendoPasta.parent_list_id ? [movendoPasta.parent_list_id] : [])])}
+          motivoDesabilitada="Já está aqui, ou é ela mesma / uma subpasta dela"
+          onEscolherRaiz={movendoPasta.parent_list_id ? () => moverPasta(movendoPasta.id, null) : undefined}
+          onEscolher={(id) => moverPasta(movendoPasta.id, id)}
+          onClose={() => setMovendoPasta(null)}
+        />
+      )}
+
       {compartilhando && (
         <CompartilharPasta
           list={lists.find((l) => l.id === compartilhando.id) ?? compartilhando}
@@ -1056,6 +1077,7 @@ export default function TarefasPage() {
         <TaskDrawer
           taskId={openTaskId}
           task={tasks.find((t) => t.id === openTaskId)}
+          estimativaSomada={estimativas.get(openTaskId)?.somada ? estimativas.get(openTaskId)!.minutos : null}
           lists={lists}
           tags={tags}
           campos={campos}

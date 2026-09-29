@@ -589,6 +589,35 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         if (error) return json({ error: errMsg(error) }, 500);
         return json({ success: true });
       }
+      case 'move_list': {
+        // Muda a pasta-mãe (arrastar uma pasta para dentro de outra, ou "Mover para…").
+        // parent_list_id null = vira pasta raiz. Só o dono move, e só para dentro de
+        // pasta que também é dele — pasta alheia mudaria de quem é a subárvore (2026-09-29).
+        const { list_id, parent_list_id } = body;
+        if (!list_id) return json({ error: 'list_id is required' }, 400);
+        const pasta = await assertListOwner(list_id);
+        const destinoId = (parent_list_id as string | null | undefined) ?? null;
+        if (destinoId) {
+          if (destinoId === list_id) return json({ error: 'Uma pasta não pode ir para dentro dela mesma' }, 400);
+          const destino = await assertOwned('task_lists', destinoId);
+          if (destino.is_archived) return json({ error: 'Pasta de destino não existe mais' }, 400);
+          if ((await acessoPasta(destinoId)) !== 'owner') return json({ error: 'Só dá para mover para dentro de uma pasta sua' }, 403);
+          if (destino.tenant_id !== pasta.tenant_id) return json({ error: 'As pastas são de lojas diferentes' }, 400);
+          // Sem ciclo: o destino não pode estar dentro da pasta que está sendo movida.
+          let p: string | null = (destino.parent_list_id as string | null) ?? null;
+          for (let n = 0; p && n < 100; n++) {
+            if (p === list_id) return json({ error: 'Não dá para mover uma pasta para dentro de uma subpasta dela' }, 400);
+            const { data } = await admin.from('task_lists').select('parent_list_id').eq('id', p).maybeSingle();
+            p = (data?.parent_list_id as string | null) ?? null;
+          }
+        }
+        // Entra no fim da pasta de destino.
+        const { error } = await admin.from('task_lists')
+          .update({ parent_list_id: destinoId, sort_order: Math.floor(Date.now() / 1000) })
+          .eq('id', list_id);
+        if (error) return json({ error: errMsg(error) }, 500);
+        return json({ success: true });
+      }
       case 'delete_list': {
         // Remove a pasta, todas as subpastas (qualquer profundidade) e as
         // tarefas delas. Arquiva em vez de apagar, como o delete_task — e

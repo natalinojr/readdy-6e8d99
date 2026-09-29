@@ -32,6 +32,8 @@ export interface TarefaCarga {
   due_date: string | null;
   assignee_id: string | null;
   assignees?: Array<{ id: string }> | null;
+  /** Subtarefa: com ele, a tarefa-pai com subtarefa estimada não conta o tempo próprio. */
+  parent_task_id?: string | null;
 }
 
 export interface Parcela<T extends TarefaCarga = TarefaCarga> {
@@ -104,9 +106,19 @@ export function calcularCarga<T extends TarefaCarga>(
   const semData: T[] = [];
   const atrasadas: T[] = [];
   const hoje0 = new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate());
+  // Regra do dono (2026-09-29): a estimativa da tarefa-pai é a soma das subtarefas
+  // estimadas — o trabalho já está nas subtarefas, então a pai não conta de novo.
+  const paiDe = new Map(tasks.map((t) => [t.id, t.parent_task_id ?? null]));
+  const paisSomados = new Set<string>();
+  for (const t of tasks) {
+    if (!t.time_estimate_minutes || t.status_category === 'cancelled') continue;
+    // Sobe até a raiz: avó também passa a valer a soma (limite contra ciclo).
+    for (let p = paiDe.get(t.id), n = 0; p && n < 50; p = paiDe.get(p) ?? null, n++) paisSomados.add(p);
+  }
 
   for (const t of tasks) {
     if (t.status_category === 'cancelled') continue;
+    if (paisSomados.has(t.id)) continue;
     const concluida = t.status_category === 'done';
     const estimativa = t.time_estimate_minutes ?? 0;
     if (!estimativa) { if (!concluida) semEstimativa.push(t); continue; }

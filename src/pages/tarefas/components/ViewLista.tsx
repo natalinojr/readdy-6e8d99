@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
-import { Plus, Flag, MessageSquare, CheckSquare, GitBranch, Repeat, ChevronDown, ChevronRight, Check, Trash2, X, ArrowUp, ArrowDown, Play, Pause, Timer, GripVertical, FolderInput, Copy, ClipboardPaste, Pencil } from 'lucide-react';
+import { Plus, Flag, MessageSquare, CheckSquare, GitBranch, Repeat, ChevronDown, ChevronRight, Check, Trash2, X, ArrowUp, ArrowDown, Play, Pause, Timer, GripVertical, FolderInput, Copy, ClipboardPaste, Pencil, ListPlus } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
 import type { CampoCustom, TaskList, TaskRow, TaskTag } from '../hooks/useTarefas';
 import { PRIORIDADES } from '../hooks/useTarefas';
@@ -12,7 +12,7 @@ import {
   ordenarColunas, salvarColunasVisiveis, salvarLarguras, salvarOrdemColunas,
 } from '../lib/colunas';
 import { rotuloRecorrencia, DICA_RECORRENCIA } from '../lib/recorrencia';
-import { formatarDuracao, formatarRelogio, segundosRegistrados, useAgora } from '../lib/tempo';
+import { estimativasEfetivas, formatarDuracao, formatarRelogio, segundosRegistrados, useAgora, type EstimativaEfetiva } from '../lib/tempo';
 import CampoBadge from './campos/CampoBadge';
 import ColumnsMenu from './ColumnsMenu';
 import ConfirmDialog from './ConfirmDialog';
@@ -56,6 +56,7 @@ function valorOrdenacao(
   subtarefasCount: number,
   usuarios: UsuarioOption[],
   campos: CampoCustom[],
+  est?: EstimativaEfetiva,
 ): string | number | null {
   if (coluna.startsWith('campo:')) {
     const fieldId = coluna.slice('campo:'.length);
@@ -82,7 +83,7 @@ function valorOrdenacao(
     case 'comentarios': return task.comment_count > 0 ? task.comment_count : null;
     case 'criada_em': return task.created_at;
     case 'pasta': return task.list_name;
-    case 'estimado': return task.time_estimate_minutes;
+    case 'estimado': return est ? est.minutos : task.time_estimate_minutes;
     case 'cronometro': return task.time_tracked_seconds > 0 || task.timer_started_at ? segundosRegistrados(task, Date.now()) : null;
     default: return null;
   }
@@ -95,6 +96,7 @@ function celulaColuna(
   usuarios: UsuarioOption[],
   campos: CampoCustom[],
   agora: number = Date.now(),
+  est?: EstimativaEfetiva,
 ) {
   if (coluna.id.startsWith('campo:')) {
     const fieldId = coluna.id.slice('campo:'.length);
@@ -163,14 +165,21 @@ function celulaColuna(
         </span>
       ) : <span className="text-slate-300">—</span>;
 
-    case 'estimado':
-      return task.time_estimate_minutes
-        ? <span className="flex items-center gap-1 justify-end"><Timer size={11} />{formatarDuracao(task.time_estimate_minutes * 60)}</span>
-        : <span className="text-slate-300">—</span>;
+    case 'estimado': {
+      const min = est ? est.minutos : task.time_estimate_minutes;
+      if (!min) return <span className="text-slate-300">—</span>;
+      return (
+        <span className={`flex items-center gap-1 justify-end ${est?.somada ? 'text-indigo-500' : ''}`}
+          title={est?.somada ? 'Soma das subtarefas' : undefined}>
+          {est?.somada ? <GitBranch size={11} /> : <Timer size={11} />}{formatarDuracao(min * 60)}
+        </span>
+      );
+    }
 
     case 'cronometro': {
       const seg = segundosRegistrados(task, agora);
-      const estourou = !!task.time_estimate_minutes && seg > task.time_estimate_minutes * 60;
+      const estMin = est ? est.minutos : task.time_estimate_minutes;
+      const estourou = !!estMin && seg > estMin * 60;
       if (task.timer_started_at) {
         return (
           <span className="flex items-center gap-1.5 justify-end text-emerald-600 font-medium tabular-nums">
@@ -257,6 +266,8 @@ export default function ViewLista({
   const [statusPickerAberto, setStatusPickerAberto] = useState<{ taskId: string; rect: DOMRect } | null>(null);
   // Renomear direto na linha (lápis ao lado do título), sem abrir a tarefa.
   const [editandoTitulo, setEditandoTitulo] = useState<{ taskId: string; valor: string } | null>(null);
+  // Subtarefa criada direto na lista: campo aberto logo abaixo da tarefa-pai.
+  const [novaSub, setNovaSub] = useState<{ parentId: string; valor: string } | null>(null);
   const [confirmandoExclusao, setConfirmandoExclusao] = useState<{ task: TaskRow; ancora: DOMRect | null } | null>(null);
   const [selecionadas, setSelecionadas] = useState<Set<string>>(new Set());
   const [confirmandoExclusaoEmMassa, setConfirmandoExclusaoEmMassa] = useState(false);
@@ -298,7 +309,7 @@ export default function ViewLista({
     if (!ordenacao || !colunasVisiveis.includes(ordenacao.col)) return lista;
     const sinal = ordenacao.dir === 'asc' ? 1 : -1;
     const contagemSub = (id: string) => tasks.filter((t) => t.parent_task_id === id).length;
-    const comValor = lista.map((t) => ({ t, v: valorOrdenacao(ordenacao.col, t, contagemSub(t.id), usuarios, campos) }));
+    const comValor = lista.map((t) => ({ t, v: valorOrdenacao(ordenacao.col, t, contagemSub(t.id), usuarios, campos, efetivas.get(t.id)) }));
     comValor.sort((a, b) => {
       if (a.v === null && b.v === null) return 0;
       if (a.v === null) return 1;
@@ -372,6 +383,7 @@ export default function ViewLista({
   );
   const colunas = ordenarColunas(todasColunas.filter((c) => colunasVisiveis.includes(c.id)), ordemColunas);
   const temCronometro = colunas.some((c) => c.id === 'cronometro');
+  const efetivas = useMemo(() => estimativasEfetivas(tasks), [tasks]);
   const agora = useAgora(temCronometro && tasks.some((t) => t.timer_started_at));
   const somaEstimado = colunas.some((c) => c.id === 'estimado');
 
@@ -413,6 +425,21 @@ export default function ViewLista({
     const valor = editandoTitulo?.taskId === task.id ? editandoTitulo.valor.trim() : '';
     setEditandoTitulo(null);
     if (valor && valor !== task.title) gravar('update_task', { task_id: task.id, title: valor });
+  };
+
+  const abrirNovaSub = (task: TaskRow) => {
+    setExpandidas((prev) => new Set(prev).add(task.id));
+    subCancelada.current = false;
+    setNovaSub({ parentId: task.id, valor: '' });
+  };
+
+  /** Cria a subtarefa na mesma pasta da tarefa-pai. `continuar` = Enter: o campo fica aberto pra próxima. */
+  const subCancelada = useRef(false);
+  const criarSub = (pai: TaskRow, continuar: boolean) => {
+    if (subCancelada.current) { subCancelada.current = false; return; }
+    const title = novaSub?.parentId === pai.id ? novaSub.valor.trim() : '';
+    setNovaSub(continuar ? { parentId: pai.id, valor: '' } : null);
+    if (title) gravar('create_task', { list_id: pai.list_id, parent_task_id: pai.id, title });
   };
 
   const excluir = (task: TaskRow, ancora: DOMRect | null = null) => setConfirmandoExclusao({ task, ancora });
@@ -525,9 +552,11 @@ export default function ViewLista({
   const renderTotais = (raizesDoGrupo: TaskRow[]) => {
     const ids = new Set(raizesDoGrupo.map((t) => t.id));
     const todas = [...raizesDoGrupo, ...tasks.filter((t) => t.parent_task_id && ids.has(t.parent_task_id))];
-    const minEstimado = todas.reduce((acc, t) => acc + (t.time_estimate_minutes ?? 0), 0);
+    // Estimado: a tarefa-raiz já vale a soma das subtarefas estimadas (regra 2026-09-29) — somar
+    // as subtarefas de novo contaria duas vezes. Sem subtarefa estimada, a subtarefa não soma nada.
+    const minEstimado = raizesDoGrupo.reduce((acc, t) => acc + (efetivas.get(t.id)?.minutos ?? 0), 0);
     const segRegistrado = todas.reduce((acc, t) => acc + segundosRegistrados(t, agora), 0);
-    const semEstimativa = todas.filter((t) => !t.time_estimate_minutes).length;
+    const semEstimativa = raizesDoGrupo.filter((t) => !efetivas.get(t.id)?.minutos).length;
     return (
       <div className="hidden md:flex items-center px-4 py-2 bg-slate-50/80 text-xs">
         <span className="flex-1 text-slate-400 font-medium">
@@ -737,6 +766,17 @@ export default function ViewLista({
                     <Pencil size={12} />
                   </button>
                 )}
+                {podeRenomear && (
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); abrirNovaSub(task); }}
+                    className="hidden md:block shrink-0 p-0.5 rounded text-slate-300 hover:text-indigo-500 hover:bg-indigo-50 opacity-0 group-hover:opacity-100 focus:opacity-100"
+                    title="Adicionar subtarefa"
+                    aria-label="Adicionar subtarefa"
+                  >
+                    <ListPlus size={13} />
+                  </button>
+                )}
               </div>
             )}
             <MetaCelular task={task} mostrarPasta={list === null} subtarefas={subtarefas.length} />
@@ -750,7 +790,8 @@ export default function ViewLista({
 
           <div className="hidden md:flex items-center shrink-0">
             {colunas.map((c) => {
-              const editavel = ehEditavel(c.id);
+              // Estimativa somada das subtarefas não se edita na pai (muda nas subtarefas).
+              const editavel = ehEditavel(c.id) && !(c.id === 'estimado' && efetivas.get(task.id)?.somada);
               const emEdicao = editando?.taskId === task.id && editando.col === c.id;
               return (
                 <div key={c.id} style={{ width: largura(c) }} className="relative px-2 shrink-0 flex items-center gap-1">
@@ -777,7 +818,7 @@ export default function ViewLista({
                   >
                     {c.id === 'comentarios' && task.comment_count === 0 && editavel
                       ? <span className="text-slate-300 opacity-0 group-hover:opacity-100 flex items-center gap-1 justify-end"><MessageSquare size={11} />Comentar</span>
-                      : celulaColuna(c, task, subtarefas.length, usuarios, campos, agora)}
+                      : celulaColuna(c, task, subtarefas.length, usuarios, campos, agora, efetivas.get(task.id))}
                   </button>
                   {emEdicao && (
                     <EditorCelula
@@ -807,6 +848,27 @@ export default function ViewLista({
         </div>
 
         {aberta && subtarefas.map((sub) => renderLinha(sub, nivel + 1))}
+        {novaSub?.parentId === task.id && (
+          <div className="flex items-center gap-2 py-2 pr-4 bg-slate-50/50" style={{ paddingLeft: `${16 + (nivel + 1) * 22 + 29}px` }}>
+            <GitBranch size={12} className="text-slate-300 shrink-0" />
+            <input
+              autoFocus
+              value={novaSub.valor}
+              onChange={(e) => setNovaSub({ parentId: task.id, valor: e.target.value })}
+              onBlur={() => criarSub(task, false)}
+              onKeyDown={(e) => {
+                e.stopPropagation();
+                if (e.key === 'Enter') { e.preventDefault(); criarSub(task, true); }
+                else if (e.key === 'Escape') { subCancelada.current = true; setNovaSub(null); }
+              }}
+              name="titulo-subtarefa"
+              autoComplete="off"
+              placeholder="Nova subtarefa… (Enter cria, Esc fecha)"
+              aria-label="Nova subtarefa"
+              className="flex-1 min-w-0 text-sm bg-transparent outline-none placeholder:text-slate-300"
+            />
+          </div>
+        )}
       </div>
     );
   };

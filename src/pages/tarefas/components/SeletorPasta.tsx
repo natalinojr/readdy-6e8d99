@@ -12,6 +12,12 @@ interface SeletorPastaProps {
   desabilitarIds?: Set<string>;
   onEscolher: (listId: string) => void;
   onClose: () => void;
+  /** Só pastas que são minhas (mover pasta: não entra em pasta alheia). */
+  somenteMinhas?: boolean;
+  /** Mostra "Nenhuma — vira pasta principal" no topo (mover pasta para a raiz). */
+  onEscolherRaiz?: () => void;
+  /** Dica das pastas desabilitadas (padrão: "Já está nesta pasta"). */
+  motivoDesabilitada?: string;
 }
 
 /**
@@ -20,10 +26,10 @@ interface SeletorPastaProps {
  * pastas em que dá pra editar (dono ou compartilhada com "editar"): o
  * task-write recusa a pasta destino sem esse acesso, então nem oferece.
  */
-export default function SeletorPasta({ titulo, lists, desabilitarIds, onEscolher, onClose }: SeletorPastaProps) {
+export default function SeletorPasta({ titulo, lists, desabilitarIds, onEscolher, onClose, somenteMinhas = false, onEscolherRaiz, motivoDesabilitada = 'Já está nesta pasta' }: SeletorPastaProps) {
   useVoltarFecha(true, onClose, 'tarefas-seletor-pasta');
   const [busca, setBusca] = useState('');
-  const editaveis = lists.filter((l) => (l.access ?? 'owner') === 'owner' || l.access === 'edit');
+  const editaveis = lists.filter((l) => (l.access ?? 'owner') === 'owner' || (!somenteMinhas && l.access === 'edit'));
   const nos = achatarArvore(montarArvorePastas(editaveis))
     .filter((no) => !busca.trim() || no.name.toLowerCase().includes(busca.trim().toLowerCase()));
 
@@ -44,6 +50,15 @@ export default function SeletorPasta({ titulo, lists, desabilitarIds, onEscolher
           </div>
         )}
         <div className="max-h-72 overflow-y-auto space-y-0.5 -mx-1 px-1">
+          {onEscolherRaiz && !busca.trim() && (
+            <button
+              type="button"
+              onClick={() => { onEscolherRaiz(); onClose(); }}
+              className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-sm text-left text-slate-500 italic hover:bg-slate-50 border-b border-slate-100 mb-1"
+            >
+              Nenhuma — vira pasta principal
+            </button>
+          )}
           {nos.length === 0 && <p className="text-xs text-slate-400 px-2 py-3">Nenhuma pasta editável encontrada.</p>}
           {nos.map((no) => {
             const desabilitada = desabilitarIds?.has(no.id) ?? false;
@@ -57,7 +72,7 @@ export default function SeletorPasta({ titulo, lists, desabilitarIds, onEscolher
                 className={`w-full flex items-center gap-2.5 pr-2.5 py-2 rounded-lg text-sm text-left transition ${
                   desabilitada ? 'text-slate-300 cursor-not-allowed' : 'text-slate-700 hover:bg-slate-50'
                 }`}
-                title={desabilitada ? 'Já está nesta pasta' : undefined}
+                title={desabilitada ? motivoDesabilitada : undefined}
               >
                 <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: no.color }} />
                 <span className="truncate">{no.name}</span>

@@ -54,3 +54,11 @@ export function reordenarIrmas(idsIrmas: string[], arrastadaId: string, alvoId: 
   const i = sem.indexOf(alvoId) + (posicao === 'depois' ? 1 : 0);
   return [...sem.slice(0, i), arrastadaId, ...sem.slice(i)];
 }
+
+/** A pasta e todas as subpastas dela (não dá pra mover uma pasta para dentro dela mesma). */
+export function idsSubarvore(no: NoPasta): Set<string> {
+  const ids = new Set<string>();
+  const visitar = (n: NoPasta) => { ids.add(n.id); n.filhas.forEach(visitar); };
+  visitar(no);
+  return ids;
+}

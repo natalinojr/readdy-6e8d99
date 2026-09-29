@@ -123,7 +123,8 @@ describe('Lista: colunas de tempo', () => {
       tarefa('sub', { parent_task_id: 'a', time_estimate_minutes: 30, time_tracked_seconds: 600 }),
     ]);
     const total = screen.getByText('Total').parentElement!;
-    expect(within(total).getByText('2h')).toBeTruthy();          // 60 + 30 + 30
+    // Regra 2026-09-29: "a" tem subtarefa estimada, então vale a soma dela (30), não os 60 próprios.
+    expect(within(total).getByText('1h')).toBeTruthy();          // a=30 (da sub) + b=30
     expect(within(total).getByText(/40m/)).toBeTruthy();        // 30m + 10m
     expect(within(total).getByText(/1 sem estimativa/)).toBeTruthy();
   });

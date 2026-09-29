@@ -574,9 +574,38 @@ function useTarefasReal() {
     [pronto, lists, tenantId, reload, toast],
   );
 
+  /** Põe a pasta dentro de outra (null = raiz). `ordemIrmas` = ordem no destino, quando
+   *  a pasta caiu entre duas (arrastar); sem ela entra no fim. */
+  const moverPasta = useCallback(
+    async (listId: string, paiId: string | null, ordemIrmas?: string[]): Promise<boolean> => {
+      if (!pronto) return false;
+      const ordem = ordemIrmas ? new Map(ordemIrmas.map((id, i) => [id, i * 10])) : null;
+      setLists((prev) => prev.map((l) => {
+        if (l.id === listId) return { ...l, parent_list_id: paiId, sort_order: ordem?.get(l.id) ?? Number.MAX_SAFE_INTEGER };
+        return ordem?.has(l.id) ? { ...l, sort_order: ordem.get(l.id)! } : l;
+      }));
+      const { data, error: fnError } = await invokeWithAuth<{ success?: boolean; error?: string }>('task-write', {
+        body: { action: 'move_list', active_tenant_id: tenantId, list_id: listId, parent_list_id: paiId },
+      });
+      if (fnError || !data?.success) {
+        toast.error('Não deu para mover a pasta', data?.error ?? fnError?.message ?? 'Erro desconhecido');
+        reload();
+        return false;
+      }
+      if (ordemIrmas) {
+        await Promise.all(ordemIrmas.map((id) => invokeWithAuth('task-write', {
+          body: { action: 'update_list', active_tenant_id: tenantId, list_id: id, sort_order: ordem!.get(id) },
+        })));
+      }
+      reload();
+      return true;
+    },
+    [pronto, tenantId, reload, toast],
+  );
+
   return {
     lists, tasks, tags, campos, notificacoes, views, templates,
-    loading, error, reload, write, fetchDetail, reordenarPastas,
+    loading, error, reload, write, fetchDetail, reordenarPastas, moverPasta,
     fetchAnexos, enviarAnexo, abrirAnexo,
   };
 }

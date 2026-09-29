@@ -60,3 +60,45 @@ export function useAgora(ativo: boolean): number {
   }, [ativo]);
   return agora;
 }
+
+export interface EstimativaEfetiva {
+  /** Minutos que valem para a tarefa (null = sem estimativa). */
+  minutos: number | null;
+  /** true = veio da soma das subtarefas (a estimativa própria da tarefa é ignorada). */
+  somada: boolean;
+}
+
+/** Regra do dono (2026-09-29): tarefa com subtarefas estimadas vale a SOMA delas
+ *  (só as que têm estimativa; recursivo). Sem subtarefa estimada, vale a própria. */
+export function estimativasEfetivas(
+  tasks: Array<Pick<TaskRow, 'id' | 'parent_task_id' | 'time_estimate_minutes' | 'status_category'>>,
+): Map<string, EstimativaEfetiva> {
+  const filhas = new Map<string, string[]>();
+  const porId = new Map(tasks.map((t) => [t.id, t]));
+  for (const t of tasks) {
+    // Subtarefa cancelada não soma (mesma regra da Carga).
+    if (t.parent_task_id && porId.has(t.parent_task_id) && t.status_category !== 'cancelled') {
+      filhas.set(t.parent_task_id, [...(filhas.get(t.parent_task_id) ?? []), t.id]);
+    }
+  }
+  const memo = new Map<string, EstimativaEfetiva>();
+  const calcular = (id: string, visitando: Set<string>): EstimativaEfetiva => {
+    const pronto = memo.get(id);
+    if (pronto) return pronto;
+    const propria = porId.get(id)?.time_estimate_minutes || null;
+    if (visitando.has(id)) return { minutos: propria, somada: false }; // ciclo: não deveria existir
+    visitando.add(id);
+    let soma = 0;
+    let algumaEstimada = false;
+    for (const f of filhas.get(id) ?? []) {
+      const e = calcular(f, visitando);
+      if (e.minutos) { soma += e.minutos; algumaEstimada = true; }
+    }
+    visitando.delete(id);
+    const r = algumaEstimada ? { minutos: soma, somada: true } : { minutos: propria, somada: false };
+    memo.set(id, r);
+    return r;
+  };
+  for (const t of tasks) calcular(t.id, new Set());
+  return memo;
+}
