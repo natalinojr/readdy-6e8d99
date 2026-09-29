@@ -1,14 +1,18 @@
 // Aba Entrevistas da ficha do candidato: lista de entrevistas + registro (leitura do que foi
 // respondido no questionário). Bloco movido verbatim de CandidatoDrawer.tsx (pré-Fase 2).
 import { useState } from 'react';
-import { type Interview, type Settings, decisionOf, withEmpresa, interviewStatusInfo, avgScore, FORMATS, fmtDateTime } from '../../shared';
+import { type Application, type Candidate, type Company, type Interview, type Job, type Settings, type Stage, decisionOf, withEmpresa, interviewStatusInfo, avgScore, FORMATS, fmtDateTime } from '../../shared';
+import type { CandidatePatch } from '../EntrevistaModal';
+import { RegistroPainel } from '../EntrevistasDoDia';
 
 interface Props {
-  interviews: Interview[]; settings: Settings; empresa: string;
+  c: Candidate; interviews: Interview[]; settings: Settings; empresa: string;
+  companies: Company[]; stages: Stage[]; applications: Application[]; jobs: Job[];
   onOpenInterview: (iv: Interview) => void; onAgendar: () => void;
+  onSaved: (iv: Interview, patch?: CandidatePatch) => void;
 }
 
-export default function FichaEntrevistas({ interviews, settings, empresa, onOpenInterview, onAgendar }: Props) {
+export default function FichaEntrevistas({ c, interviews, settings, empresa, companies, stages, applications, jobs, onOpenInterview, onAgendar, onSaved }: Props) {
   const minhas = [...interviews].sort((a, b) => b.scheduled_at.localeCompare(a.scheduled_at));
   return (
     <Section title="Entrevistas">
@@ -34,7 +38,15 @@ export default function FichaEntrevistas({ interviews, settings, empresa, onOpen
                     </p>
                   )}
                 </button>
-                <RegistroEntrevista iv={iv} settings={settings} empresa={empresa} />
+                {/* Agendada: o formulário de preenchimento já aparece aberto (mesmo da aba Entrevistas do dia). */}
+                {iv.status === 'agendada' ? (
+                  <div className="mt-1.5">
+                    <RegistroPainel key={iv.id} iv={iv} c={c} companies={companies} stages={stages} settings={settings}
+                      applications={applications} jobs={jobs} onSaved={onSaved} semCabecalho />
+                  </div>
+                ) : (
+                  <RegistroEntrevista iv={iv} settings={settings} empresa={empresa} />
+                )}
               </li>
             );
           })}

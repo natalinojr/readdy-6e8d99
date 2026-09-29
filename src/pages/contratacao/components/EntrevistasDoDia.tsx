@@ -232,9 +232,11 @@ export default function EntrevistasDoDia({ interviews, candidates, companies, st
   );
 }
 
-function RegistroPainel({ iv, c, companies, stages, settings, applications, jobs, onSaved, onOpenCandidate, onBack }: {
+// Também usado na aba Entrevistas da ficha do candidato (semCabecalho: a ficha já mostra a pessoa).
+// Mesmo rascunho do aparelho nos dois lugares (chave por entrevista).
+export function RegistroPainel({ iv, c, companies, stages, settings, applications, jobs, onSaved, onOpenCandidate, onBack, semCabecalho }: {
   iv: Interview; c: Candidate | null; companies: Company[]; stages: Stage[]; settings: Settings; applications: Application[]; jobs: Job[];
-  onSaved: (iv: Interview, patch?: CandidatePatch) => void; onOpenCandidate: (id: string) => void; onBack: () => void;
+  onSaved: (iv: Interview, patch?: CandidatePatch) => void; onOpenCandidate?: (id: string) => void; onBack?: () => void; semCabecalho?: boolean;
 }) {
   const inicial = {
     status: (iv.status === 'agendada' && new Date(iv.scheduled_at) <= new Date() ? 'realizada' : iv.status) as InterviewStatus,
@@ -335,6 +337,7 @@ function RegistroPainel({ iv, c, companies, stages, settings, applications, jobs
   return (
     <div className="rounded-2xl border border-zinc-200 bg-white">
       {/* Cabeçalho do candidato */}
+      {!semCabecalho && (
       <div className="p-4 border-b border-zinc-100">
         <button onClick={onBack} className="lg:hidden mb-2 text-xs font-bold text-zinc-500 cursor-pointer"><i className="ri-arrow-left-line" /> Voltar para a lista</button>
         <div className="flex flex-wrap items-start gap-3">
@@ -353,7 +356,7 @@ function RegistroPainel({ iv, c, companies, stages, settings, applications, jobs
             <div className="flex flex-wrap gap-1.5">
               {wa && <a href={wa} target="_blank" rel="noopener noreferrer" className="px-3 h-8 rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 text-xs font-bold flex items-center gap-1"><i className="ri-whatsapp-line" /> {fmtPhone(c.whatsapp || c.phone)}</a>}
               {c.file_path && <button onClick={verCurriculo} className="px-3 h-8 rounded-lg border border-zinc-200 text-xs font-bold text-zinc-700 hover:bg-zinc-50 cursor-pointer"><i className="ri-file-text-line" /> Currículo</button>}
-              <button onClick={() => onOpenCandidate(c.id)} className="px-3 h-8 rounded-lg border border-zinc-200 text-xs font-bold text-zinc-700 hover:bg-zinc-50 cursor-pointer"><i className="ri-user-line" /> Ficha completa</button>
+              {onOpenCandidate && <button onClick={() => onOpenCandidate(c.id)} className="px-3 h-8 rounded-lg border border-zinc-200 text-xs font-bold text-zinc-700 hover:bg-zinc-50 cursor-pointer"><i className="ri-user-line" /> Ficha completa</button>}
             </div>
           )}
         </div>
@@ -392,6 +395,7 @@ function RegistroPainel({ iv, c, companies, stages, settings, applications, jobs
           </div>
         )}
       </div>
+      )}
 
       {/* Formulário */}
       <div className="p-4 space-y-4">

@@ -757,6 +757,7 @@ export default function ContratacaoPage() {
           onOrganizar={() => organizarComIA(sel)}
           onAgendar={() => setModal({ interview: null, candidateId: sel.id })}
           onOpenInterview={(iv) => setModal({ interview: iv })}
+          onInterviewSaved={onInterviewSaved}
         />
       )}
 

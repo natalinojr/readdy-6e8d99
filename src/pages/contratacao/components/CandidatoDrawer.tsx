@@ -15,6 +15,7 @@ import EditarCandidatoModal from './EditarCandidatoModal';
 import FichaResumo from './ficha/FichaResumo';
 import FichaCurriculo from './ficha/FichaCurriculo';
 import FichaEntrevistas from './ficha/FichaEntrevistas';
+import type { CandidatePatch } from './EntrevistaModal';
 import FichaConversa from './ficha/FichaConversa';
 import FichaHistorico from './ficha/FichaHistorico';
 
@@ -38,13 +39,14 @@ interface Props {
   onOrganizar: () => Promise<void>;
   onAgendar: () => void;
   onOpenInterview: (iv: Interview) => void;
+  onInterviewSaved: (iv: Interview, patch?: CandidatePatch) => void;
 }
 
 type Aba = 'resumo' | 'curriculo' | 'entrevistas' | 'conversa' | 'historico';
 
 export default function CandidatoDrawer({
   c, companies, stages, ficha, settings, interviews, jobs, applications, analyzing, onApply, onOpenJob, distances, onCalcDistances,
-  onClose, onUpdate, onDelete, onOrganizar, onAgendar, onOpenInterview,
+  onClose, onUpdate, onDelete, onOrganizar, onAgendar, onOpenInterview, onInterviewSaved,
 }: Props) {
   // Distância só até a loja escolhida na ficha (regra do dono). Calcula sozinha ao abrir quando a
   // loja tem pin, o candidato tem endereço e ainda não há distância (uma tentativa por abertura/loja).
@@ -194,7 +196,8 @@ export default function CandidatoDrawer({
             dist={dist} distBusy={distBusy} distErro={distErro} onCalcular={calcular} />
         </div>
         <div className={aba === 'entrevistas' ? 'flex-1 overflow-y-auto px-5 py-4 space-y-5' : 'hidden'}>
-          <FichaEntrevistas interviews={interviews} settings={settings} empresa={empresa} onOpenInterview={onOpenInterview} onAgendar={onAgendar} />
+          <FichaEntrevistas c={c} interviews={interviews} settings={settings} empresa={empresa} companies={companies} stages={stages}
+            applications={applications} jobs={jobs} onOpenInterview={onOpenInterview} onAgendar={onAgendar} onSaved={onInterviewSaved} />
         </div>
         <div className={aba === 'conversa' ? 'flex-1 overflow-y-auto px-5 py-4 space-y-5' : 'hidden'}>
           <FichaConversa c={c} ativa={aba === 'conversa'} />
