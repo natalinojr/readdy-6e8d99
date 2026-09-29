@@ -84,7 +84,7 @@ export const REL_KEYS: RelPermissaoKey[] = REL_ABAS.map((a) => a.key);
  *  despesas, contas, notas, folha) e dar entrada nos documentos do mês (folha do Domínio e guias
  *  DAS/INSS/FGTS). O dono tira ou põe aba em Configurações › Permissões. */
 export const FIN_KEYS_CONTABILIDADE: FinPermissaoKey[] = [
-  'fin_guias', 'fin_rh', 'fin_dre', 'fin_receitas', 'fin_despesas',
+  'fin_guias', 'fin_rh', 'fin_dre', 'fin_receitas', 'fin_despesas', 'fin_trilha',
   'fin_pagar', 'fin_contas_vencidas', 'fin_notas_entrada',
 ];
 

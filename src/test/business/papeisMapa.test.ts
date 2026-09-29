@@ -57,6 +57,7 @@ describe('papel contabilidade nos mapas', () => {
     for (const k of perms) expect(k.startsWith('fin_')).toBe(true);
     expect(perms).toContain('fin_guias');
     expect(perms).toContain('fin_rh');
+    expect(perms).toContain('fin_trilha');
     expect(perms).not.toContain('fin_conciliacao');
     expect(perms).not.toContain('fin_bancos');
   });
