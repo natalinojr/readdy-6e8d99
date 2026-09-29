@@ -88,7 +88,7 @@
   <!-- ── MATRIZ ── -->
   <div id="vMatriz" class="hidden bg-white rounded-2xl border border-zinc-200 overflow-hidden">
     <div class="px-5 py-3 border-b border-zinc-100 flex items-center justify-between gap-3 flex-wrap"><div><h3 class="text-sm font-bold text-zinc-800">Todas as despesas do mês, fase a fase</h3><p class="text-xs text-zinc-400">Cada linha é o caminho de uma despesa — o que está feito fica discreto; o que falta aparece em destaque com o próximo passo. Clique na linha para abrir</p></div>
-      <div class="flex items-center gap-3 text-[11px] text-zinc-500"><span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>feito</span><span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-amber-400"></span>a fazer</span><span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-red-500"></span>atrasado/problema</span><span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full border border-dashed border-zinc-400"></span>não precisa</span></div></div>
+      <div class="flex items-center gap-3 text-[11px] text-zinc-500"><span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>feito</span><span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-amber-400"></span>a fazer</span><span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-sky-400"></span>no prazo</span><span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-red-500"></span>atrasado/problema</span><span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full border border-dashed border-zinc-400"></span>não precisa</span></div></div>
     <div class="overflow-x-auto"><div id="mCorpo" class="min-w-[1040px] pb-2"></div></div>
   </div>
 </div>
@@ -111,6 +111,7 @@ const ETAPAS = [
 ];
 const EST = {
   ok:{cor:'bg-emerald-500', txt:'text-emerald-700', cel:'bg-emerald-50 text-emerald-700', rot:'Feito', ic:'ri-check-line'},
+  prazo:{cor:'bg-sky-400', txt:'text-sky-700', cel:'bg-sky-50 text-sky-700', rot:'No prazo', ic:'ri-calendar-check-line'},
   pendente:{cor:'bg-amber-400', txt:'text-amber-700', cel:'bg-amber-50 text-amber-700', rot:'A fazer', ic:'ri-time-line'},
   atrasado:{cor:'bg-red-500', txt:'text-red-700', cel:'bg-red-50 text-red-700', rot:'Atrasado', ic:'ri-alarm-warning-line'},
   problema:{cor:'bg-red-500', txt:'text-red-700', cel:'bg-red-50 text-red-700', rot:'Tem problema', ic:'ri-error-warning-line'},
@@ -146,11 +147,11 @@ const casos = [
     banco:['espera','Espera o pagamento']},['Chegou, mas parte dos itens não entrou no estoque','Conta a pagar vencida há 7 dias']),
   C('cozinha','compra','EL PATRON COZINHA INDUSTRIAL','NF 1203 · 31 itens','05/09',5553.23,{
     documento:['ok','Nota nº 1203 recebida'], lancamento:['ok','Lançada em Compras'], estoque:['ok','Os 31 itens entraram no estoque'],
-    conta:['ok','3 parcelas criadas em Contas a pagar'], pagamento:['pendente','1 de 3 parcelas paga','pagar a próxima até 05/10 (no prazo)'],
+    conta:['ok','3 parcelas criadas em Contas a pagar'], pagamento:['prazo','1 de 3 parcelas paga — a próxima vence em 05/10'],
     banco:['ok','Parcela paga encontrada no extrato']}),
   C('atacadao','compra','ATACADÃO S.A.','NF 77120 · 44 itens','18/09',2310.15,{
     documento:['ok','Nota nº 77120 recebida'], lancamento:['ok','Lançada em Compras'], estoque:['ok','Os 44 itens entraram no estoque'],
-    conta:['ok','Conta a pagar criada','','vence 18/10'], pagamento:['pendente','Ainda não paga — vence em 18/10','pagar até 18/10 (no prazo)'],
+    conta:['ok','Conta a pagar criada','','vence 18/10'], pagamento:['prazo','Vence em 18/10'],
     banco:['espera','Espera o pagamento']}),
   C('serra','compra','HORTIFRUTI SERRA VERDE','sem nota · 9 itens','22/09',412,{
     documento:['na','Não precisa: compra sem nota fiscal'], lancamento:['ok','Lançada em Compras'], estoque:['ok','Os 9 itens entraram no estoque'],
@@ -171,7 +172,7 @@ const casos = [
     documento:['ok','Nota de serviço nº 2210 recebida'],
     lancamento:['pendente','Lançada em Despesas, mas sem categoria','escolher a categoria do DRE'],
     estoque:['na','Não precisa: despesa não vai ao estoque'], conta:['ok','Conta a pagar criada','','vence 10/10'],
-    pagamento:['pendente','Ainda não paga — vence em 10/10','pagar até 10/10 (no prazo)'], banco:['espera','Espera o pagamento']}),
+    pagamento:['prazo','Vence em 10/10'], banco:['espera','Espera o pagamento']}),
   C('aluguel','despesa','IMOBILIÁRIA LITORAL','Aluguel da loja','01/09',6500,{
     documento:['na','Não precisa: aluguel sem nota fiscal'], lancamento:['ok','Lançado em Despesas — categoria Aluguel'], estoque:['na','Não precisa: despesa não vai ao estoque'],
     conta:['ok','Conta a pagar criada','','vence 05/09'], pagamento:['ok','Pago no vencimento','','05/09'], banco:['ok','Saída encontrada e ligada no extrato']}),
@@ -195,7 +196,7 @@ const casos = [
     banco:['espera','Está no extrato — liga sozinho quando você disser o que foi o Pix']},['Pix sem dizer o que foi']),
   C('frigo','compra','FRIGORÍFICO LITORAL','NF 55012 · 6 itens','20/09',1980,{
     documento:['ok','Nota nº 55012 recebida'], lancamento:['ok','Lançada em Compras'], estoque:['ok','Os 6 itens entraram no estoque'],
-    conta:['ok','Conta a pagar criada','','vence 04/10'], pagamento:['pendente','Ainda não paga — vence em 04/10','pagar até 04/10 (no prazo)'], banco:['espera','Espera o pagamento']}),
+    conta:['ok','Conta a pagar criada','','vence 04/10'], pagamento:['prazo','Vence em 04/10'], banco:['espera','Espera o pagamento']}),
   C('gas','compra','DISTRIBUIDORA DE GÁS PR','NF 9021 · 2 itens','21/09',260,{
     documento:['ok','Nota nº 9021 recebida'], lancamento:['ok','Lançada em Compras'], estoque:['na','Não precisa: gás não é controlado no estoque'],
     conta:['na','Não precisa: foi paga na hora'], pagamento:['ok','Pago por Pix','','21/09'], banco:['ok','Saída encontrada e ligada no extrato']}),
@@ -649,6 +650,7 @@ function trilho(c, fecha){
 }
 // Linha de fases (abre ao clicar na despesa): horizontal, uma coluna por etapa.
 const CHIP = {
+  prazo:'bg-sky-50 text-sky-700 ring-sky-200',
   ok:'bg-emerald-50 text-emerald-700 ring-emerald-200', pendente:'bg-amber-50 text-amber-700 ring-amber-200',
   atrasado:'bg-red-50 text-red-600 ring-red-200', problema:'bg-red-50 text-red-600 ring-red-200',
   espera:'bg-zinc-50 text-zinc-400 ring-zinc-200', na:'bg-zinc-50 text-zinc-400 ring-zinc-200',
@@ -665,7 +667,7 @@ function etapasAbertas(c, fecha){
         <ol class="relative grid grid-cols-6 gap-1.5">
         ${c.etapas.map(e=>{
           const alvo=fecha.includes(e.id)&&ruim(e.estado), s=EST[e.estado];
-          const bola = e.estado==='ok'?'bg-emerald-500 text-white shadow-emerald-200':grave(e.estado)?'bg-red-500 text-white shadow-red-200':e.estado==='pendente'?'bg-amber-400 text-white shadow-amber-200':e.estado==='na'?'bg-white text-zinc-300 border-2 border-dashed border-zinc-200 shadow-none':'bg-white text-zinc-400 border-2 border-zinc-200 shadow-none';
+          const bola = e.estado==='ok'?'bg-emerald-500 text-white shadow-emerald-200':grave(e.estado)?'bg-red-500 text-white shadow-red-200':e.estado==='pendente'?'bg-amber-400 text-white shadow-amber-200':e.estado==='prazo'?'bg-sky-400 text-white shadow-sky-200':e.estado==='na'?'bg-white text-zinc-300 border-2 border-dashed border-zinc-200 shadow-none':'bg-white text-zinc-400 border-2 border-zinc-200 shadow-none';
           return `<li class="flex flex-col items-center text-center">
             <div class="relative">
               <div class="w-9 h-9 rounded-full flex items-center justify-center text-base shadow-md ${bola} ${alvo?'ring-2 ring-white shadow-lg':''}"><i class="${e.estado==='ok'?'ri-check-line':e.ic}"></i></div>
@@ -842,13 +844,15 @@ function desfazer(i){
 // ── Esteira e matriz (da proposta B) ──
 const mini = c => `<div class="flex gap-0.5 mt-2">${c.etapas.map(e=>`<span title="${e.nome}: ${e.resumo}" class="h-1.5 flex-1 rounded-full ${EST[e.estado].cor}"></span>`).join('')}</div>`;
 function esteira(){
-  const L=casos.filter(passa), cols=[...ETAPAS,{id:'fim',nome:'Concluído',ic:'ri-checkbox-circle-line'}];
+  const L=casos.filter(passa), cols=[...ETAPAS,{id:'prazo',nome:'No prazo',ic:'ri-calendar-check-line'},{id:'fim',nome:'Concluído',ic:'ri-checkbox-circle-line'}];
+  const feito = c => c.etapas.every(e=>e.estado==='ok'||e.estado==='na');
   const travadas = c => c.etapas.filter(e=>ruim(e.estado));
   document.getElementById('colunas').innerHTML = cols.map(col=>{
-    const fim=col.id==='fim';
-    const cs=L.filter(c=> fim ? travadas(c).length===0 : ruim(c.etapas.find(e=>e.id===col.id).estado))
+    const fim=col.id==='fim', prazo=col.id==='prazo';
+    const cs=L.filter(c=> fim ? feito(c) : prazo ? travadas(c).length===0 && !feito(c) : ruim(c.etapas.find(e=>e.id===col.id).estado))
       .sort((a,b)=>(b.sit==='atencao')-(a.sit==='atencao')||b.valor-a.valor);
     if(!cs.length && !fim) return '';
+    if(prazo) return `<div class="shrink-0 w-[260px] flex flex-col rounded-2xl bg-sky-50/50 border border-sky-100"><div class="px-3 pt-3 pb-2"><div class="flex items-center justify-between"><span class="text-xs font-bold text-sky-700"><i class="ri-calendar-check-line mr-1"></i>No prazo — nada a fazer agora</span><span class="text-[11px] font-bold text-zinc-500 bg-white rounded-md px-1.5">${cs.length}</span></div><p class="text-[11px] text-zinc-400 tabnum">${brl(cs.reduce((s,c)=>s+c.valor,0))}</p></div><div class="px-2 pb-2 space-y-2 max-h-[600px] overflow-y-auto">${cs.map(c=>{const e=c.etapas.find(x=>x.estado==='prazo')||c.etapas.find(x=>x.estado==='espera'); return `<button data-caso="${c.id}" class="w-full text-left rounded-xl border border-zinc-200 border-l-4 border-l-sky-400 bg-white p-3 hover:shadow-sm"><div class="flex justify-between gap-2"><span class="text-[10px] font-semibold px-1.5 py-0.5 rounded ${TIPO[c.tipo][1]}">${TIPO[c.tipo][0]}</span><span class="text-sm font-bold tabnum">${brl(c.valor)}</span></div><p class="text-[13px] font-semibold mt-1.5 leading-snug">${c.titulo}</p><p class="text-[11px] text-zinc-400">${c.data} · ${c.sub}</p>${e?`<p class="text-[11px] mt-1.5 text-sky-700"><i class="ri-calendar-check-line"></i> ${e.resumo}</p>`:''}${mini(c)}</button>`;}).join('')}</div></div>`;
     return `<div class="shrink-0 w-[260px] flex flex-col rounded-2xl ${fim?'bg-emerald-50/50 border border-emerald-100':'bg-zinc-100/70'}">
       <div class="px-3 pt-3 pb-2"><div class="flex items-center justify-between"><span class="text-xs font-bold ${fim?'text-emerald-700':'text-zinc-700'}"><i class="${col.ic} mr-1"></i>${fim?'Tudo certo':'Travadas em '+col.nome.toLowerCase()}</span><span class="text-[11px] font-bold text-zinc-500 bg-white rounded-md px-1.5">${cs.length}</span></div>
       <p class="text-[11px] text-zinc-400 tabnum">${brl(cs.reduce((s,c)=>s+c.valor,0))}</p></div>
@@ -875,6 +879,7 @@ function matriz(){
     const txt = e.resumo.replace(/^Não precisa: ?/,'');
     if (e.estado==='ok') return `<div class="h-full rounded-xl px-2.5 py-2 text-[11px] leading-snug text-zinc-600 flex items-start gap-1.5">
         <span class="mt-px w-4 h-4 shrink-0 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center text-[10px]"><i class="ri-check-line"></i></span><span>${txt}${e.det?`<span class="block text-zinc-400">${e.det}</span>`:''}</span></div>`;
+    if (e.estado==='prazo') return `<div class="h-full rounded-xl px-2.5 py-2 text-[11px] leading-snug border bg-sky-50/60 border-sky-100"><p class="flex items-center gap-1 font-bold text-sky-700"><i class="ri-calendar-check-line"></i>No prazo</p><p class="mt-0.5 text-zinc-700">${e.resumo}</p></div>`;
     if (semTexto) return `<div class="h-full rounded-xl px-2.5 py-2 text-[11px] leading-snug text-zinc-300 flex items-start gap-1.5">
         <span class="mt-px w-4 h-4 shrink-0 rounded-full border border-dashed border-zinc-300"></span><span>${e.estado==='espera'?txt:(txt||'não precisa')}</span></div>`;
     const g = grave(e.estado);
@@ -930,7 +935,7 @@ function desenharGaveta(){
       <div class="rounded-xl border border-zinc-200 px-4 py-3">
       <p class="mb-3 text-[11px] font-bold uppercase tracking-wide text-zinc-500">O caminho desta despesa</p>
       <ol>${c.etapas.map((e,i)=>`<li class="flex gap-3 pb-4 last:pb-0 relative">${i<5?`<span class="absolute left-[15px] top-8 bottom-0 w-0.5 ${e.estado==='ok'?'bg-emerald-300':'bg-zinc-200'}"></span>`:''}
-        <div class="relative z-10 w-8 h-8 shrink-0 rounded-full flex items-center justify-center text-sm ${e.estado==='ok'?'bg-emerald-500 text-white':grave(e.estado)?'bg-red-500 text-white':e.estado==='pendente'?'bg-amber-400 text-white':'bg-zinc-100 text-zinc-400 border border-dashed border-zinc-300'}"><i class="${e.ic}"></i></div>
+        <div class="relative z-10 w-8 h-8 shrink-0 rounded-full flex items-center justify-center text-sm ${e.estado==='ok'?'bg-emerald-500 text-white':grave(e.estado)?'bg-red-500 text-white':e.estado==='pendente'?'bg-amber-400 text-white':e.estado==='prazo'?'bg-sky-400 text-white':'bg-zinc-100 text-zinc-400 border border-dashed border-zinc-300'}"><i class="${e.ic}"></i></div>
         <div class="pt-0.5 min-w-0"><p class="text-[11px] text-zinc-400 uppercase tracking-wide font-semibold">${e.nome} · <span class="${EST[e.estado].txt}">${EST[e.estado].rot}</span></p><p class="text-sm font-semibold ${e.estado==='na'||e.estado==='espera'?'text-zinc-400':''}">${e.resumo.replace(/^Não precisa:? ?/,'')}</p>${e.det?`<p class="text-xs text-zinc-500">${e.det}</p>`:''}${e.falta&&ruim(e.estado)?`<p class="text-xs font-semibold mt-0.5 ${grave(e.estado)?'text-red-600':'text-amber-700'}"><i class="ri-arrow-right-line"></i> Falta: ${e.falta}</p>`:''}</div></li>`).join('')}</ol>
       </div>
     </div>`;
