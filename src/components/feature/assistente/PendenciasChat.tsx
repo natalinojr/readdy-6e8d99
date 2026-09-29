@@ -63,18 +63,19 @@ const notaDa = (p: PendenciaChat) => (typeof p.payload?.document_id === 'string'
 const compraDa = (p: PendenciaChat) => (typeof p.payload?.purchase_id === 'string' ? p.payload.purchase_id : null);
 // Tipos que se resolvem no próprio cartão (2026-09-24): não levam "Não vou fazer" genérico — cada um
 // tem a sua saída ("Não era compra", "Veio sem nota", "Está certa"…).
-const DIRETO = ['compra_pelo_celular', 'sangria_sem_cupom', 'sangria_nao_saiu', 'sangria_valor_diferente', 'recebimento_sem_nota', 'boleto_email'];
+const DIRETO = ['compra_pelo_celular', 'sangria_sem_cupom', 'sangria_nao_saiu', 'sangria_valor_diferente', 'recebimento_sem_nota', 'boleto_email', 'boleto_faltando'];
 // Fechar com um motivo digitado: o texto do campo e como a pendência fecha.
 const MOTIVO: Record<string, { placeholder: string; acao: 'resolvida' | 'descartada' }> = {
   sangria_sem_cupom: { placeholder: 'O que foi esse dinheiro?', acao: 'resolvida' },
   recebimento_sem_nota: { placeholder: 'Por que veio sem nota?', acao: 'resolvida' },
+  boleto_faltando: { placeholder: 'Como é pago? (ex.: Pix, débito, acerto com o fornecedor)', acao: 'descartada' },
 };
 // Onde se resolve, em uma linha (dono, 2026-09-25: "precisa ser lançada — mas lançada onde?").
 const ONDE: Record<string, string> = {
   recebimento_parado: 'Financeiro › Notas de entrada — o botão roxo abaixo abre essa nota direto.',
   nota_nao_lancada: 'Financeiro › Notas de entrada — lance a nota para virar conta a pagar.',
   recebimento_sem_nota: 'Financeiro › Notas de entrada, quando a nota chegar — "Procurar a nota" busca por aqui.',
-  boleto_faltando: 'aqui no chat — peça o boleto ao fornecedor e mande a foto, o PDF ou o código (ou encaminhe ao e-mail de contas); eu ligo nesta conta e a pendência fecha sozinha. Pagou de outro jeito? "Não vou fazer" com o motivo.',
+  boleto_faltando: 'aqui no chat — peça o boleto ao fornecedor e mande a foto, o PDF ou o código (ou encaminhe ao e-mail de contas); eu ligo nesta conta e a pendência fecha sozinha.',
 };
 // Pedido de pagamento do /receber (reembolso, freelancer, fornecedor sem nota).
 const pedidoDa = (p: PendenciaChat) => (typeof p.payload?.pedido_id === 'string' ? p.payload.pedido_id : null);
@@ -519,6 +520,23 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
                 <i className="ri-file-search-line" /> {expandida === p.id ? 'Fechar' : 'Ver o boleto e decidir'}
               </button>
             )}
+            {/* Conta de boleto sem o boleto (2026-09-28/29): mandar o boleto, dar baixa se já pagou ou dizer que não é boleto. */}
+            {p.kind === 'boleto_faltando' && (
+              <>
+                <button onClick={() => onPedir(`Boleto da conta "${p.titulo.replace(/^Falta o boleto:s*/, '')}"${p.loja ? ` (${p.loja})` : ''}: `)} disabled={busy}
+                  className={p.payload?.vencida ? SECUNDARIO : PRINCIPAL}>
+                  <i className="ri-barcode-line" /> Mandar o boleto
+                </button>
+                {typeof p.payload?.bill_id === 'string' && (
+                  <button onClick={() => setExpandida((x) => (x === p.id ? null : p.id))} disabled={busy}
+                    className={expandida === p.id ? `${SECUNDARIO} bg-violet-100` : p.payload?.vencida ? PRINCIPAL : SECUNDARIO}>
+                    <i className="ri-check-double-line" /> {expandida === p.id ? 'Fechar' : 'Já paguei — dar baixa'}
+                  </button>
+                )}
+                {verCompra && <button onClick={verCompra} disabled={busy} className={NEUTRO}>Ver compra</button>}
+                <button onClick={() => { setMotivoDe(p.id); setMotivo(''); }} disabled={busy} className={NEUTRO}>Não era boleto</button>
+              </>
+            )}
             {/* Mercadoria chegou e a nota não estava no sistema. */}
             {p.kind === 'recebimento_sem_nota' && (
               <>
@@ -573,6 +591,10 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
         )}
         {expandida === p.id && p.kind === 'boleto_email' && !!p.payload?.mail_id && (
           <BoletoEmailDecisao tenantId={p.tenantId} mailId={String(p.payload.mail_id)} onFeito={(msg) => { setAvisoTopo(msg); depoisDeResolver(null, p); }} />
+        )}
+        {expandida === p.id && p.kind === 'boleto_faltando' && typeof p.payload?.bill_id === 'string' && (
+          <BaixaDaConta tenantId={p.tenantId} billId={p.payload.bill_id} onCancelar={() => setExpandida(null)}
+            onFeito={() => { setExpandida(null); marcar(p, 'resolvida', 'conta paga (baixa pelo cartão)'); onMudou?.(); }} />
         )}
         {expandida === p.id && p.kind === 'sangria_sem_cupom' && <LigarSangria call={call} pendId={p.id} onFeito={(msg) => depoisDeResolver(msg, p)} />}
         {expandida === p.id && p.kind === 'recebimento_sem_nota' && (
@@ -933,6 +955,20 @@ function ContasAtrasadasInline({ tenantId, onPagarConta, onAbrir, onMudou }: {
       })}
     </div>
   );
+}
+
+// Baixa de uma conta só, a partir da pendência "Falta o boleto" (2026-09-29): mesmo formulário das atrasadas.
+function BaixaDaConta({ tenantId, billId, onCancelar, onFeito }: { tenantId: string; billId: string; onCancelar: () => void; onFeito: () => void }) {
+  const [conta, setConta] = useState<ContaAtrasada | null | undefined>(undefined);
+  const hoje = new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' });
+  useEffect(() => {
+    supabase.from('fin_accounts_payable').select('id, description, supplier, amount, paid_amount, due_date, dre_category_id, reference_type, boleto_digitavel, boleto_pix_copia, status')
+      .eq('id', billId).eq('tenant_id', tenantId).maybeSingle()
+      .then(({ data }) => setConta(data && !['paid', 'cancelled'].includes(String((data as { status?: string }).status)) ? (data as ContaAtrasada) : null));
+  }, [billId, tenantId]);
+  if (conta === undefined) return <p className="mt-2 text-xs text-zinc-500">Carregando a conta…</p>;
+  if (conta === null) return <p className="mt-2 text-xs font-semibold text-emerald-700"><i className="ri-check-line" /> Essa conta já está paga ou cancelada.</p>;
+  return <BaixaConta conta={conta} tenantId={tenantId} saldo={Number(conta.amount) - Number(conta.paid_amount ?? 0)} hoje={hoje} onCancelar={onCancelar} onFeito={onFeito} />;
 }
 
 // Baixa de conta paga por fora: mesmo caminho do "Pagar" da aba Contas Vencidas (financial-write ›
