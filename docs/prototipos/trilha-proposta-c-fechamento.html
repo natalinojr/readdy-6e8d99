@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Trilha — proposta C (fechamento)</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link href="https://cdn.jsdelivr.net/npm/remixicon@4.3.0/fonts/remixicon.css" rel="stylesheet" />
+<style>
+  body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; background:#fafafa; }
+  .tabnum { font-variant-numeric: tabular-nums; }
+  .sai { animation: sai .35s ease forwards; }
+  @keyframes sai { to { opacity:0; transform: translateX(24px); height:0; margin:0; padding:0; } }
+</style>
+</head>
+<body class="text-zinc-800">
+<div class="p-4 md:p-6 space-y-5 max-w-[1400px] mx-auto">
+
+  <div class="rounded-xl border border-sky-200 bg-sky-50 px-4 py-2.5 text-xs text-sky-800">
+    <i class="ri-flask-line mr-1"></i><strong>Protótipo — proposta C da Trilha: "Fechar o mês".</strong> Dados de exemplo, fora do sistema. Os botões funcionam de mentira: resolva itens e veja o placar subir.
+  </div>
+
+  <!-- Cabeçalho + placar de fechamento -->
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-3">
+    <div class="lg:col-span-2 bg-white rounded-2xl border border-zinc-200 p-5 flex flex-col md:flex-row md:items-center gap-5">
+      <div class="relative w-28 h-28 shrink-0 mx-auto md:mx-0">
+        <svg viewBox="0 0 36 36" class="w-28 h-28 -rotate-90">
+          <circle cx="18" cy="18" r="15.9" fill="none" stroke="#f4f4f5" stroke-width="3.2"/>
+          <circle id="anel" cx="18" cy="18" r="15.9" fill="none" stroke="#10b981" stroke-width="3.2" stroke-linecap="round" stroke-dasharray="0 100" style="transition:stroke-dasharray .5s"/>
+        </svg>
+        <div class="absolute inset-0 flex flex-col items-center justify-center">
+          <span id="pct" class="text-2xl font-bold tabnum">0%</span>
+          <span class="text-[10px] text-zinc-400">fechado</span>
+        </div>
+      </div>
+      <div class="flex-1 min-w-0">
+        <div class="flex items-center gap-2 flex-wrap">
+          <h2 class="text-lg font-bold text-zinc-900 flex items-center gap-2"><i class="ri-route-line text-amber-500"></i>Fechamento de setembro</h2>
+          <div class="flex items-center bg-white border border-zinc-200 rounded-xl overflow-hidden shadow-sm ml-auto">
+            <button class="w-8 h-9 text-zinc-500 hover:bg-zinc-50"><i class="ri-arrow-left-s-line"></i></button>
+            <span class="px-2 text-xs font-bold">Set/2026</span>
+            <button class="w-8 h-9 text-zinc-300"><i class="ri-arrow-right-s-line"></i></button>
+          </div>
+        </div>
+        <p class="text-sm text-zinc-600 mt-1" id="frase"></p>
+        <div class="grid grid-cols-3 gap-2 mt-3">
+          <div class="rounded-xl bg-zinc-50 px-3 py-2"><p class="text-[11px] text-zinc-400">Tarefas abertas</p><p id="kAbertas" class="text-lg font-bold tabnum"></p></div>
+          <div class="rounded-xl bg-red-50 px-3 py-2"><p class="text-[11px] text-red-500">Urgentes</p><p id="kUrg" class="text-lg font-bold tabnum text-red-600"></p></div>
+          <div class="rounded-xl bg-zinc-50 px-3 py-2"><p class="text-[11px] text-zinc-400">Valor envolvido</p><p id="kValor" class="text-lg font-bold tabnum"></p></div>
+        </div>
+      </div>
+    </div>
+    <!-- o que fica fora da trilha -->
+    <div class="bg-white rounded-2xl border border-zinc-200 p-5">
+      <h3 class="text-sm font-bold text-zinc-800">Resolvido hoje</h3>
+      <p class="text-xs text-zinc-400 mb-3">O que você fechou nesta tela</p>
+      <ul id="feitos" class="space-y-1.5 text-xs max-h-40 overflow-y-auto"><li class="text-zinc-400">Nada ainda — comece pelos urgentes.</li></ul>
+      <button id="desfazer" class="hidden mt-3 text-xs text-zinc-500 underline">desfazer o último</button>
+    </div>
+  </div>
+
+  <!-- corpo: grupos à esquerda, tarefas à direita -->
+  <div class="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-4 items-start">
+    <nav class="bg-white rounded-2xl border border-zinc-200 p-2 lg:sticky lg:top-4" id="grupos"></nav>
+    <section class="space-y-3 min-w-0" id="lista"></section>
+  </div>
+
+  <!-- trilha completa, rebaixada para "consulta" -->
+  <details class="bg-white rounded-2xl border border-zinc-200">
+    <summary class="px-5 py-3 cursor-pointer text-sm font-bold text-zinc-800 flex items-center gap-2"><i class="ri-list-check-3"></i>Consultar todos os casos do mês (inclusive os completos)</summary>
+    <p class="px-5 pb-4 text-xs text-zinc-400">Aqui entraria a lista/esteira atual — só para consulta. O dia a dia acontece nas tarefas acima.</p>
+  </details>
+</div>
+
+<script>
+const brl = v => v.toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
+// Cada GRUPO é uma ação. Cada tarefa já vem com a solução sugerida e o botão que resolve aqui mesmo.
+const GRUPOS = [
+  { id:'pix', ic:'ri-bank-line', nome:'Ligar saídas do banco', desc:'Saiu dinheiro e não virou lançamento', cor:'red', lote:'Aceitar todas as sugestões' },
+  { id:'vencidas', ic:'ri-alarm-warning-line', nome:'Pagar contas vencidas', desc:'Juros correndo', cor:'red', lote:'Pagar selecionadas pelo Inter' },
+  { id:'estoque', ic:'ri-archive-2-line', nome:'Acertar estoque', desc:'Recebido e não entrou / falta confirmar', cor:'amber', lote:'Confirmar recebimento de todas' },
+  { id:'notas', ic:'ri-file-text-line', nome:'Lançar notas que chegaram', desc:'NF-e da SEFAZ sem compra/despesa', cor:'amber', lote:'Lançar todas com a sugestão' },
+  { id:'classificar', ic:'ri-price-tag-3-line', nome:'Classificar no DRE', desc:'Despesa sem categoria', cor:'amber', lote:null },
+  { id:'extrato', ic:'ri-links-line', nome:'Achar no extrato', desc:'Pago no sistema, saída não ligada', cor:'amber', lote:'Ligar as que batem valor e data' },
+  { id:'conta', ic:'ri-bill-line', nome:'Criar conta a pagar', desc:'Compra não paga e sem conta', cor:'red', lote:null },
+];
+let T = [
+  { g:'pix', id:1, titulo:'Pix R$ 250,00 — JOÃO P. SILVA', data:'19/09', valor:250, urg:true, sug:'Parece <strong>diária de freelancer</strong> (João recebeu R$ 250 em 3 sábados de agosto).', acoes:[['Lançar como diária','ok'],['É despesa…','sec'],['Não entra no DRE','sec']] },
+  { g:'pix', id:2, titulo:'Pix R$ 188,60 — MERCADO DO PORTO', data:'23/09', valor:188.6, urg:true, sug:'Sem nota. Sugestão: <strong>compra de mercadoria</strong> — categoria Hortifruti (último lançamento desse destinatário).', acoes:[['Lançar compra sugerida','ok'],['Ler notinha (foto)','sec'],['Outra coisa…','sec']] },
+  { g:'vencidas', id:3, titulo:'COSTA E MONTENEGRO — NF 14688', data:'venceu 01/09', valor:1444, urg:true, sug:'28 dias de atraso · juros estimados <strong>R$ 43,32</strong> se pagar hoje (boleto recalculado).', acoes:[['Pagar agora (Pix/boleto)','ok'],['Renegociei, mudar vencimento','sec']], sel:true },
+  { g:'vencidas', id:4, titulo:'BEEMAX DISTRIBUIDORA — NF 5521', data:'venceu 19/09', valor:149.49, urg:true, sug:'10 dias de atraso.', acoes:[['Pagar agora','ok'],['Mudar vencimento','sec']], sel:true },
+  { g:'vencidas', id:5, titulo:'BEBIDAS PARANAGUÁ — NF 9903', data:'venceu 22/09', valor:374.46, urg:true, sug:'7 dias de atraso.', acoes:[['Pagar agora','ok'],['Mudar vencimento','sec']], sel:true },
+  { g:'estoque', id:6, titulo:'BEBIDAS PARANAGUÁ — NF 9903', data:'recebida 16/09', valor:374.46, urg:true, sug:'Recebida mas o estoque não entrou: <strong>12 de 20 itens</strong> sem vínculo com insumo.', acoes:[['Vincular itens aqui','ok'],['Não vai ao estoque','sec']] },
+  { g:'estoque', id:7, titulo:'BEEMAX DISTRIBUIDORA — NF 5521', data:'lançada 12/09', valor:149.49, urg:false, sug:'Chegou? Confirme para entrar no estoque (data da entrega = hoje).', acoes:[['Chegou hoje','ok'],['Chegou em outra data…','sec']] },
+  { g:'notas', id:8, titulo:'DISTRIBUIDORA NORTE SUL — NF-e 33012', data:'24/09', valor:870.3, urg:false, sug:'Todos os 7 itens já têm vínculo pela Classificação → vira <strong>compra</strong> com 1 conta vencendo 24/10 (prazo que veio no XML).', acoes:[['Lançar como compra','ok'],['Ver itens','sec']] },
+  { g:'notas', id:9, titulo:'EMBALAGENS PR — NF-e 6710', data:'26/09', valor:322.1, urg:false, sug:'Embalagem = <strong>despesa</strong> (regra do fornecedor). Boleto já está nas Pendências.', acoes:[['Lançar como despesa','ok'],['Ver itens','sec']] },
+  { g:'classificar', id:10, titulo:'CONTABILIDADE MARÉ — honorários', data:'05/09', valor:950, urg:false, sug:'Escolha a categoria do DRE:', escolha:['Serviços contábeis','Serviços de terceiros','Administrativo'] },
+  { g:'extrato', id:11, titulo:'HORTIFRUTI SERRA VERDE', data:'22/09', valor:412, urg:false, sug:'Achei no extrato: <strong>Pix 22/09 · R$ 412,00 · SERRA VERDE HORTI</strong> (mesmo valor e data).', acoes:[['Ligar','ok'],['Não é essa','sec']] },
+  { g:'extrato', id:12, titulo:'SANEPAR — água', data:'25/09', valor:512.7, urg:false, sug:'Achei no extrato: <strong>Pagto boleto 25/09 · R$ 512,70</strong>.', acoes:[['Ligar','ok'],['Não é essa','sec']] },
+  { g:'conta', id:13, titulo:'PADARIA SÃO JOÃO — NF 441', data:'25/09', valor:96, urg:true, sug:'Compra não paga e sem conta. Criar conta com vencimento:', acoes:[['Criar vencendo 25/10','ok'],['Foi paga em dinheiro','sec']] },
+];
+const TOTAL_CASOS = 20; // casos do mês; os sem tarefa já estão fechados
+let feitos=[], grupo=null;
+const casosAbertos = () => new Set(T.map(t=>t.titulo.split(' — ')[0].split(' R$')[0])).size;
+function placar(){
+  const abertos = casosAbertos(), fech = Math.round((TOTAL_CASOS-abertos)/TOTAL_CASOS*100);
+  document.getElementById('anel').setAttribute('stroke-dasharray', `${fech} 100`);
+  document.getElementById('anel').setAttribute('stroke', fech===100?'#10b981':fech>70?'#10b981':'#f59e0b');
+  document.getElementById('pct').textContent = fech+'%';
+  document.getElementById('kAbertas').textContent = T.length;
+  document.getElementById('kUrg').textContent = T.filter(t=>t.urg).length;
+  document.getElementById('kValor').textContent = brl(T.reduce((s,t)=>s+t.valor,0));
+  document.getElementById('frase').innerHTML = T.length===0
+    ? '<span class="text-emerald-700 font-semibold">Mês fechado.</span> Nota, estoque, conta, pagamento e banco batem em todos os casos — o DRE de setembro está confiável.'
+    : `Faltam <strong>${T.length} tarefas</strong> em ${abertos} casos para o DRE de setembro ficar confiável. ${T.filter(t=>t.urg).length?'Comece pelas <span class="text-red-600 font-semibold">urgentes</span> — têm dinheiro saindo sem registro ou juros correndo.':''}`;
+}
+function nav(){
+  const html = [`<button data-g="" class="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left ${!grupo?'bg-amber-50 text-amber-700':'hover:bg-zinc-50'}"><i class="ri-inbox-line"></i><span class="flex-1 text-sm font-semibold">Todas as tarefas</span><span class="text-xs font-bold tabnum">${T.length}</span></button>`]
+  .concat(GRUPOS.map(g=>{const n=T.filter(t=>t.g===g.id).length; if(!n) return `<div class="flex items-center gap-2.5 px-3 py-2 text-zinc-300"><i class="${g.ic}"></i><span class="flex-1 text-sm line-through">${g.nome}</span><i class="ri-check-line text-emerald-400"></i></div>`;
+    return `<button data-g="${g.id}" class="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left ${grupo===g.id?'bg-amber-50 text-amber-700':'hover:bg-zinc-50'}"><i class="${g.ic} ${g.cor==='red'?'text-red-500':'text-amber-500'}"></i><span class="flex-1 min-w-0"><span class="block text-sm font-semibold truncate">${g.nome}</span><span class="block text-[11px] text-zinc-400 truncate">${g.desc}</span></span><span class="text-[11px] font-bold px-1.5 py-0.5 rounded-md ${g.cor==='red'?'bg-red-50 text-red-600':'bg-amber-50 text-amber-700'}">${n}</span></button>`;}));
+  document.getElementById('grupos').innerHTML = html.join('');
+  document.querySelectorAll('#grupos button').forEach(b=>b.onclick=()=>{grupo=b.dataset.g||null; render();});
+}
+function tarefa(t){
+  const acoes = t.escolha
+    ? `<div class="flex flex-wrap gap-1.5">${t.escolha.map(e=>`<button data-r="${t.id}" data-l="Classificado: ${e}" class="text-xs px-2.5 py-1.5 rounded-lg border border-zinc-200 hover:border-amber-400 hover:bg-amber-50 font-semibold text-zinc-700">${e}</button>`).join('')}</div>`
+    : `<div class="flex flex-wrap gap-1.5">${t.acoes.map(([l,k])=>`<button data-r="${t.id}" data-l="${l}" class="text-xs px-2.5 py-1.5 rounded-lg font-semibold ${k==='ok'?'bg-amber-500 text-white hover:bg-amber-600':'border border-zinc-200 text-zinc-600 hover:bg-zinc-50'}">${k==='ok'?'<i class="ri-check-line"></i> ':''}${l}</button>`).join('')}</div>`;
+  const sel = GRUPOS.find(g=>g.id===t.g).lote ? `<input type="checkbox" data-s="${t.id}" ${t.sel?'checked':''} class="mt-1 accent-amber-500">` : '';
+  return `<div id="t${t.id}" class="rounded-xl border ${t.urg?'border-red-200 bg-red-50/30':'border-zinc-200 bg-white'} p-3 flex gap-3">
+    ${sel}
+    <div class="flex-1 min-w-0">
+      <div class="flex items-start justify-between gap-2">
+        <div class="min-w-0"><p class="text-sm font-semibold text-zinc-800 truncate">${t.urg?'<i class="ri-fire-fill text-red-500 mr-1"></i>':''}${t.titulo}</p><p class="text-[11px] text-zinc-400">${t.data}</p></div>
+        <span class="text-sm font-bold tabnum whitespace-nowrap">${brl(t.valor)}</span>
+      </div>
+      <p class="text-xs text-zinc-600 mt-1.5 mb-2.5 flex items-start gap-1.5"><i class="ri-sparkling-2-line text-amber-500 mt-px"></i><span>${t.sug}</span></p>
+      ${acoes}
+    </div></div>`;
+}
+function lista(){
+  const gs = grupo ? GRUPOS.filter(g=>g.id===grupo) : GRUPOS;
+  const html = gs.map(g=>{
+    const ts=T.filter(t=>t.g===g.id).sort((a,b)=>b.urg-a.urg||b.valor-a.valor); if(!ts.length) return '';
+    const tot=ts.reduce((s,t)=>s+t.valor,0);
+    return `<div class="bg-white rounded-2xl border border-zinc-200 overflow-hidden">
+      <div class="flex items-center justify-between px-5 py-3 border-b border-zinc-100 gap-3 flex-wrap">
+        <div class="flex items-center gap-2.5"><span class="w-8 h-8 rounded-lg flex items-center justify-center ${g.cor==='red'?'bg-red-50 text-red-600':'bg-amber-50 text-amber-600'}"><i class="${g.ic}"></i></span>
+          <div><h3 class="text-sm font-bold text-zinc-800">${g.nome} <span class="text-zinc-400 font-normal">· ${ts.length}</span></h3><p class="text-xs text-zinc-400">${g.desc} · ${brl(tot)}</p></div></div>
+        ${g.lote?`<button data-lote="${g.id}" class="flex items-center gap-1.5 px-3 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 rounded-xl text-xs font-semibold text-zinc-600 shadow-sm"><i class="ri-stack-line"></i>${g.lote}</button>`:''}
+      </div>
+      <div class="p-3 space-y-2">${ts.map(tarefa).join('')}</div></div>`;
+  }).join('');
+  document.getElementById('lista').innerHTML = html || `<div class="bg-white rounded-2xl border border-emerald-200 py-16 text-center"><i class="ri-checkbox-circle-fill text-5xl text-emerald-400 block mb-2"></i><p class="font-semibold text-zinc-800">Nada pendente aqui</p><p class="text-sm text-zinc-400">Setembro está fechado.</p></div>`;
+  document.querySelectorAll('[data-r]').forEach(b=>b.onclick=()=>resolver(+b.dataset.r, b.dataset.l));
+  document.querySelectorAll('[data-s]').forEach(c=>c.onchange=()=>{T.find(t=>t.id==c.dataset.s).sel=c.checked;});
+  document.querySelectorAll('[data-lote]').forEach(b=>b.onclick=()=>{const ids=T.filter(t=>t.g===b.dataset.lote&&(t.sel!==false)).map(t=>t.id); ids.forEach(id=>resolver(id, GRUPOS.find(g=>g.id===b.dataset.lote).lote, true)); setTimeout(render,380);});
+}
+function resolver(id, rotulo, lote){
+  const t=T.find(x=>x.id===id); if(!t) return;
+  const el=document.getElementById('t'+id); if(el) el.classList.add('sai');
+  setTimeout(()=>{ T=T.filter(x=>x.id!==id); feitos.unshift({t, rotulo}); if(!lote) render(); }, lote?0:340);
+}
+function feitosUI(){
+  document.getElementById('feitos').innerHTML = feitos.length ? feitos.map(f=>`<li class="flex items-start gap-1.5"><i class="ri-check-line text-emerald-500 mt-px"></i><span><strong class="text-zinc-700">${f.t.titulo.split(' — ')[0]}</strong> <span class="text-zinc-400">· ${f.rotulo}</span></span></li>`).join('') : '<li class="text-zinc-400">Nada ainda — comece pelos urgentes.</li>';
+  document.getElementById('desfazer').classList.toggle('hidden', !feitos.length);
+}
+document.getElementById('desfazer').onclick=()=>{const f=feitos.shift(); if(f){T.push(f.t); render();}};
+function render(){ placar(); nav(); lista(); feitosUI(); }
+render();
+</script>
+</body>
+</html>
