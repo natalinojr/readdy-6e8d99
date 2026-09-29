@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/lib/supabase';
+import { fetchAllRows } from '@/lib/fetchAllRows';
 import { formatCurrency } from '@/lib/formatters';
 import { custoLinhaFicha } from '@/lib/unitConversion';
 import { confirmar } from '@/components/base/Dialogos';
@@ -45,20 +46,21 @@ export default function IfoodCmv({ tenantId, lojaShort, onImportar }: Props) {
   const [editando, setEditando] = useState<Produto | null>(null);
 
   const carregar = useCallback(async () => {
+    // Em lotes: o Supabase corta cada consulta em 1000 linhas (vendas acumulam todos os períodos).
     const [v, i, c, l] = await Promise.all([
-      supabase.from('fin_ifood_menu_sales').select('merchant_short, period_start, period_end, kind, group_name, name, quantity, total_value')
-        .eq('tenant_id', tenantId).order('period_end', { ascending: false }).limit(20000),
-      supabase.from('ingredients').select('id, name, unit, unit_price').eq('tenant_id', tenantId).is('deleted_at', null).order('name').limit(5000),
-      supabase.from('fin_ifood_cmv_items').select('id, kind, name_key, name, updated_at').eq('tenant_id', tenantId),
-      supabase.from('fin_ifood_cmv_linhas').select('cmv_item_id, ingredient_id, quantity, unit, ordem').eq('tenant_id', tenantId).order('ordem'),
+      fetchAllRows<Venda>((f, t) => supabase.from('fin_ifood_menu_sales').select('merchant_short, period_start, period_end, kind, group_name, name, quantity, total_value')
+        .eq('tenant_id', tenantId).order('period_end', { ascending: false }).order('id').range(f, t), { maxRows: 50000 }),
+      fetchAllRows<Insumo>((f, t) => supabase.from('ingredients').select('id, name, unit, unit_price').eq('tenant_id', tenantId).is('deleted_at', null).order('name').order('id').range(f, t)),
+      fetchAllRows<CmvItem>((f, t) => supabase.from('fin_ifood_cmv_items').select('id, kind, name_key, name, updated_at').eq('tenant_id', tenantId).order('id').range(f, t)),
+      fetchAllRows<Linha>((f, t) => supabase.from('fin_ifood_cmv_linhas').select('cmv_item_id, ingredient_id, quantity, unit, ordem').eq('tenant_id', tenantId).order('ordem').order('id').range(f, t)),
     ]);
     const e = v.error ?? i.error ?? c.error ?? l.error;
     if (e) setErro(e.message);
-    const vs = (v.data ?? []) as Venda[];
+    const vs = v.rows;
     setVendas(vs);
-    setInsumos((i.data ?? []) as Insumo[]);
-    setItens((c.data ?? []) as CmvItem[]);
-    setLinhas(((l.data ?? []) as Linha[]).map((x) => ({ ...x, quantity: n(x.quantity) })));
+    setInsumos(i.rows);
+    setItens(c.rows);
+    setLinhas(l.rows.map((x) => ({ ...x, quantity: n(x.quantity) })));
     setPeriodo((p) => p || (vs[0] ? `${vs[0].period_start}|${vs[0].period_end}` : ''));
     setLoading(false);
   }, [tenantId]);

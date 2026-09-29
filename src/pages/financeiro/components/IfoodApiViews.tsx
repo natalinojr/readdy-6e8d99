@@ -113,8 +113,9 @@ export default function IfoodApiViews({ tenantId, competence, view, merchantId, 
       setError(null);
       let res: { data: any[] | null; error: { message: string } | null };
       if (view === 'pedidos') {
-        res = await porLoja(supabase.from('fin_ifood_sales').select('*').eq('tenant_id', tenantId))
-          .gte('sale_created_at', `${start}T00:00:00-03:00`).lte('sale_created_at', `${end}T23:59:59-03:00`).order('sale_created_at', { ascending: false }).limit(3000);
+        res = await fetchAllRows<any>((f, t) => porLoja(supabase.from('fin_ifood_sales').select('*').eq('tenant_id', tenantId))
+          .gte('sale_created_at', `${start}T00:00:00-03:00`).lte('sale_created_at', `${end}T23:59:59-03:00`).order('sale_created_at', { ascending: false }).order('id').range(f, t))
+          .then((r) => ({ data: r.rows, error: r.error }));
       } else if (view === 'repasses') {
         const [s, a, ev, rec] = await Promise.all([
           porLoja(supabase.from('fin_ifood_settlements').select('*').eq('tenant_id', tenantId)).gte('payment_date', start).lte('payment_date', end).order('payment_date'),
@@ -144,8 +145,10 @@ export default function IfoodApiViews({ tenantId, competence, view, merchantId, 
             .sort((x, y) => x.data.localeCompare(y.data) || x.merchant.localeCompare(y.merchant)));
         }
       } else {
-        res = await supabase.from('fin_ifood_events').select('*').eq('tenant_id', tenantId)
-          .gte('event_at', `${start}T00:00:00-03:00`).lte('event_at', `${end}T23:59:59-03:00`).order('event_at', { ascending: false }).limit(5000);
+        // Set/2026 já tem 1.232 eventos numa loja: sem lotes a lista parava em 1000.
+        res = await fetchAllRows<any>((f, t) => supabase.from('fin_ifood_events').select('*').eq('tenant_id', tenantId)
+          .gte('event_at', `${start}T00:00:00-03:00`).lte('event_at', `${end}T23:59:59-03:00`).order('event_at', { ascending: false }).order('id').range(f, t))
+          .then((r) => ({ data: r.rows, error: r.error }));
       }
       if (!alive) return;
       if (res.error) setError(res.error.message);

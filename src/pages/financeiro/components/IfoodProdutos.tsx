@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency } from '@/lib/formatters';
+import { fetchAllRows } from '@/lib/fetchAllRows';
 
 // Produtos vendidos no iFood — relatório "Cardápio" do Portal do Parceiro importado na aba iFood
 // (fin_ifood_menu_sales). A API Financial não traz os itens dos pedidos; este relatório é a fonte
@@ -28,11 +29,11 @@ export default function IfoodProdutos({ tenantId, lojaShort, onImportar }: Props
     let vivo = true;
     (async () => {
       setLoading(true);
-      const { data, error } = await supabase.from('fin_ifood_menu_sales').select('*').eq('tenant_id', tenantId)
-        .order('period_end', { ascending: false }).limit(20000);
+      // Em lotes: acumula todos os períodos importados e o Supabase corta em 1000 linhas.
+      const { rows, error } = await fetchAllRows<Linha>((f, t) => supabase.from('fin_ifood_menu_sales').select('*').eq('tenant_id', tenantId)
+        .order('period_end', { ascending: false }).order('id').range(f, t), { maxRows: 50000 });
       if (!vivo) return;
       if (error) setErro(error.message);
-      const rows = (data ?? []) as Linha[];
       setLinhas(rows);
       setPeriodo((p) => p || (rows[0] ? `${rows[0].period_start}|${rows[0].period_end}` : ''));
       setLoading(false);

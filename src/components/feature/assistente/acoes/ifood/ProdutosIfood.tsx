@@ -3,6 +3,7 @@
 // (fin_ifood_menu_sales) — mesma leitura e mesma soma por nome da tela (IfoodProdutos).
 import { useEffect, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
+import { fetchAllRows } from '@/lib/fetchAllRows';
 import { useAuth } from '@/contexts/AuthContext';
 import { useAcessoAcoes, rotaLiberada } from '../acesso';
 import { Roteiro, useRoteiro, Fim, brl, dataBR, type AcaoProps } from '../kit';
@@ -33,9 +34,9 @@ export default function ProdutosIfood({ onFechar, irPara }: AcaoProps) {
         setCarregando(false);
         return;
       }
-      const { data, error } = await supabase.from('fin_ifood_menu_sales')
+      const { rows: data, error } = await fetchAllRows<Linha>((f, t) => supabase.from('fin_ifood_menu_sales')
         .select('period_start, period_end, kind, name, quantity, total_value, visits, orders, promo_quantity')
-        .eq('tenant_id', tenantId).eq('period_start', p.period_start).eq('period_end', p.period_end).limit(20000);
+        .eq('tenant_id', tenantId).eq('period_start', p.period_start).eq('period_end', p.period_end).order('id').range(f, t));
       if (error) { bot(`Não consegui ler os produtos: ${error.message}`); setCarregando(false); return; }
       // Soma por nome (com várias lojas do iFood o mesmo produto vem uma vez por loja).
       const agrupa = (kind: Linha['kind']) => {
