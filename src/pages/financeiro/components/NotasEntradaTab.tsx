@@ -73,6 +73,11 @@ function isBonificacao(d: { cfops: string | null }): boolean {
 }
 // Plataformas cuja NFS-e é a comissão/taxa já descontada do repasse — lançar de novo duplica.
 const DESCONTA_NO_REPASSE = /IFOOD|RAPPI|99\s?FOOD|AIQFOME|UBER\s?EATS|KEETA/i;
+// A própria nota diz que a taxa saiu do repasse (Ticket "REEMBOLSO LÍQUIDO", Goomer online):
+// lançada como despesa, entra já quitada (fiscal-inbound › descontadoNoRepasse — mesma regra).
+const TEXTO_DESCONTADO = /REEMBOLSO\s+L[IÍ]QUIDO|PROCESSAMENTO\s+DE\s+PAGAMENTO\s+ONLINE|(DESCONTAD|RETID)[OA]S?\s+(DO|NO|DOS|NOS)\s+(REPASSE|REEMBOLSO)/i;
+const descontadoNoRepasse = (d: { natureza: string | null; itens?: { descricao?: string | null }[] | null }) =>
+  TEXTO_DESCONTADO.test([d.natureza, ...(d.itens ?? []).map((it) => it?.descricao)].filter(Boolean).join(' '));
 const isServico = (d: { modelo: number }) => Number(d.modelo) === 10;
 function formaResumo(pag: Pag[] | undefined): string {
   return [...new Set((pag ?? []).map((p) => TPAG[p.forma] ?? 'Outros'))].join(', ');
@@ -586,6 +591,8 @@ export default function NotasEntradaTab() {
                         {isServico(d) && d.xml_status === 'full' ? (
                           DESCONTA_NO_REPASSE.test(d.emitente_nome ?? '')
                             ? <span className="text-[11px] font-semibold text-violet-600" title="Taxa/comissão já descontada do repasse da plataforma — lançar de novo pode duplicar">descontado no repasse?</span>
+                            : descontadoNoRepasse(d)
+                            ? <span className="text-[11px] font-semibold text-violet-600" title="A nota diz que a taxa já saiu do repasse: lançada como despesa, entra já paga">descontado no repasse</span>
                             : <span className="text-[11px] text-zinc-500">serviço · comp. {dataBR((d.itens ?? [])[0]?.competencia ?? null)}</span>
                         ) : d.xml_status !== 'full' ? <span className="text-[11px] text-sky-600">aguardando XML</span>
                           : isBonificacao(d) ? <span className="text-[11px] font-semibold text-emerald-700" title="Bonificação: sem custo, mas a mercadoria entra no estoque no recebimento">bonificação</span>
@@ -826,6 +833,12 @@ function ConferirModal({ doc, podeLancar, tenantId, onClose, onLancado, call, on
             <div className="flex items-start gap-2 bg-violet-50 border border-violet-100 rounded-lg p-3">
               <i className="ri-error-warning-line text-violet-500" />
               <p className="text-xs text-violet-800">Esta é a nota da <strong>taxa/comissão da plataforma</strong>, que já vem descontada do repasse. Se o repasse já entra líquido no financeiro, lançar aqui duplica a despesa: normalmente se ignora.</p>
+            </div>
+          )}
+          {descontadoNoRepasse(doc) && (
+            <div className="flex items-start gap-2 bg-violet-50 border border-violet-100 rounded-lg p-3">
+              <i className="ri-information-line text-violet-500" />
+              <p className="text-xs text-violet-800">A nota diz que esta taxa <strong>já foi descontada do repasse</strong> pelo emitente. Lançada como despesa, ela entra na DRE <strong>já paga</strong> na data da nota — sem conta a pagar e sem saída do banco.</p>
             </div>
           )}
 

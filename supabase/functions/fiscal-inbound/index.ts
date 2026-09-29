@@ -728,6 +728,11 @@ async function importDocumentLocked(ctx: ImportCtx, doc: any, action: 'import_pu
 
   // import_bill: despesa que não é mercadoria (equipamento, uso e consumo...) — entra na DRE pela categoria
   const categoria = String(body.category ?? 'Outros');
+  // Taxa que o emitente já descontou do repasse (Ticket, Goomer online...): a despesa existe,
+  // mas não há o que pagar — entra quitada na emissão, sem conta bancária e sem fluxo de caixa
+  // (o dinheiro nunca passou pela loja). body.a_pagar força conta a pagar normal.
+  const retida = body.a_pagar !== true && descontadoNoRepasse(doc);
+  const emissao = String(doc.emitted_at ?? now).slice(0, 10);
   const n = parcelas.length;
   const ids: string[] = [];
   let parentId: string | null = null;
@@ -737,9 +742,11 @@ async function importDocumentLocked(ctx: ImportCtx, doc: any, action: 'import_pu
       tenant_id: tenantId, supplier: supplier.name,
       description: `${supplier.name}${numeroNf ? ` NF ${numeroNf}` : ''}${n > 1 ? ` (${i + 1}/${n})` : ''}`,
       category: categoria, dre_category_id: body.dre_category_id ?? null, cost_center_id: body.cost_center_id ?? null,
-      amount: p.valor, due_date: p.vencimento, status: 'pending', is_recurring: false,
-      installments: n, installment_number: i + 1, parent_id: parentId, notes,
+      amount: p.valor, due_date: retida ? emissao : p.vencimento, status: retida ? 'paid' : 'pending', is_recurring: false,
+      installments: n, installment_number: i + 1, parent_id: parentId,
+      notes: retida ? `${RETIDA_NOTE} · ${notes}` : notes,
       reference_id: doc.id, reference_type: 'nfe_entrada',
+      ...(retida ? { paid_date: emissao, paid_amount: p.valor, payment_method: 'Descontado no repasse', competence_month: emissao.slice(0, 7) + '-01' } : {}),
     }).select('id').single();
     if (error) {
       // desfaz o que já entrou para não deixar metade das parcelas
@@ -753,7 +760,7 @@ async function importDocumentLocked(ctx: ImportCtx, doc: any, action: 'import_pu
     status: 'imported', import_type: 'bill', supplier_id: supplier.id, payable_ids: ids,
     imported_at: now, imported_by: userId, error_message: null, updated_at: now,
   }).eq('id', doc.id);
-  return { ok: true, data: { parcelas: ids.length, supplier: supplier.name } };
+  return { ok: true, data: { parcelas: ids.length, supplier: supplier.name, descontado_no_repasse: retida } };
 }
 
 // ── Lançamento automático ────────────────────────────────────────────────────
@@ -767,6 +774,16 @@ const CFOP_NAO_VENDA = /^[56](9(0[1-9]|1[0-9]|2[0-4]|49)|55[0-9])$/;
 const TPAG: Record<string, string> = { '01': 'Dinheiro', '02': 'Cheque', '03': 'Cartão de crédito', '04': 'Cartão de débito', '05': 'Crédito loja', '15': 'Boleto', '16': 'Depósito', '17': 'PIX', '18': 'Transferência', '90': 'Sem pagamento', '99': 'Outros' };
 const PAGO_NA_HORA = new Set(['01', '03', '04', '17', '16', '18']);
 const DESCONTA_NO_REPASSE = /IFOOD|RAPPI|99\s?FOOD|AIQFOME|UBER\s?EATS|KEETA/i;
+// A própria nota diz que o valor saiu do repasse (2026-09-29): Ticket/VR/Alelo ("REEMBOLSO
+// LÍQUIDO"), Goomer ("processamento de pagamento online"). Pelo texto, não pelo nome — a
+// mensalidade da Goomer, do mesmo CNPJ, é boleto de verdade.
+const TEXTO_DESCONTADO = /REEMBOLSO\s+L[IÍ]QUIDO|PROCESSAMENTO\s+DE\s+PAGAMENTO\s+ONLINE|(DESCONTAD|RETID)[OA]S?\s+(DO|NO|DOS|NOS)\s+(REPASSE|REEMBOLSO)/i;
+const RETIDA_NOTE = 'Descontada no repasse pelo emitente — já quitada, sem saída do banco';
+// deno-lint-ignore no-explicit-any
+function descontadoNoRepasse(d: any): boolean {
+  const texto = [d.natureza, ...((d.itens ?? []) as any[]).map((it) => it?.descricao)].filter(Boolean).join(' ');
+  return TEXTO_DESCONTADO.test(texto);
+}
 const AUTO_NOTE = 'Lançada automaticamente: fornecedor já teve nota lançada antes';
 const AUTO_BUDGET_SYNC_MS = 45_000;  // botão "Buscar notas"
 const AUTO_BUDGET_CRON_MS = 20_000;  // por loja no cron (várias lojas na mesma execução)
