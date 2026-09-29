@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { CSSProperties } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import { Plus, Flag, MessageSquare, CheckSquare, GitBranch, Repeat, ChevronDown, ChevronRight, Check, Trash2, X, ArrowUp, ArrowDown, Play, Pause, Timer, GripVertical, FolderInput, Copy, ClipboardPaste, Pencil, ListPlus } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
@@ -26,6 +27,11 @@ import { useVoltarFecha } from '@/lib/voltarAndroid';
 
 /** O que está na "área de transferência" interna de tarefas (Ctrl+C/Ctrl+V, 2026-09-24). */
 export interface ClipboardTarefas { ids: string[]; label: string }
+
+/** Largura mínima do nome da tarefa na lista (computador). */
+const TITULO_MIN = 240;
+/** O resto fixo da linha: margens (2×16), caixinha + seta + status com os espaços (~81) e lixeira (~30). */
+const LARGURA_FIXA_LINHA = 32 + 81 + 30;
 
 /** Quanto cada nível de subtarefa anda para a direita. */
 const RECUO_SUBTAREFA = 28;
@@ -885,7 +891,13 @@ export default function ViewLista({
   };
 
   return (
-    <div className="space-y-6">
+    // Largura mínima da lista (computador): o título nunca fica com menos de TITULO_MIN px.
+    // Sem isto, com muitas colunas numa tela estreita, as colunas (largura fixa) comiam a
+    // linha e o título ia a 0 px — os nomes sumiam (2026-09-29). Não coube → rola de lado.
+    <div
+      className="space-y-6 md:min-w-[var(--lista-min)]"
+      style={{ '--lista-min': `${LARGURA_FIXA_LINHA + TITULO_MIN + colunas.reduce((s, c) => s + largura(c), 0)}px` } as CSSProperties}
+    >
       {selecionadas.size > 0 ? (
         <div className="flex items-center gap-2 bg-indigo-600 text-white rounded-xl px-3 py-2 sticky top-0 z-30 shadow-sm">
           <span className="text-xs font-medium px-1">{selecionadas.size} selecionada{selecionadas.size > 1 ? 's' : ''}</span>
