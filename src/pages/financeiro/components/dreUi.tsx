@@ -108,7 +108,7 @@ export function Segmented<T extends string>({
 }
 
 export function KpiCard({
-  label, icon, value, valueTone, sub, subTone, atual, anterior, inverse, highlight,
+  label, icon, value, valueTone, sub, subTone, atual, anterior, inverse, highlight, semVariacao,
 }: {
   label: string;
   icon: string;
@@ -120,6 +120,8 @@ export function KpiCard({
   anterior?: number;
   inverse?: boolean;
   highlight?: 'pos' | 'neg';
+  /** Cartão sem comparação (esconde o chip de variação em vez de mostrar "—"). */
+  semVariacao?: boolean;
 }) {
   const ring = highlight === 'pos'
     ? 'border-emerald-200 bg-gradient-to-br from-emerald-50 to-white'
@@ -135,7 +137,7 @@ export function KpiCard({
           </span>
           <span className="text-xs font-semibold text-zinc-500 truncate">{label}</span>
         </div>
-        <VarChip atual={atual} anterior={anterior} inverse={inverse} />
+        {!semVariacao && <VarChip atual={atual} anterior={anterior} inverse={inverse} />}
       </div>
       <p className={`text-2xl font-bold tabular-nums tracking-tight ${valueTone ?? 'text-zinc-900'}`}>{value}</p>
       {sub && <p className={`text-xs ${subTone ?? 'text-zinc-400'}`}>{sub}</p>}

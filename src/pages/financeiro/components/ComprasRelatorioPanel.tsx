@@ -1,10 +1,11 @@
 import { useState, useMemo } from 'react';
 import {
-  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, CartesianGrid,
   PieChart, Pie, Legend,
 } from 'recharts';
 import { formatCurrency } from '@/lib/formatters';
 import type { Purchase } from '@/types/financeiro';
+import { KpiCard, Segmented } from './dreUi';
 
 const COLORS = ['#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#06b6d4', '#f97316', '#84cc16', '#ec4899'];
 
@@ -69,7 +70,8 @@ export default function ComprasRelatorioPanel({ purchases }: Props) {
     return Object.entries(map)
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([name, value]) => ({
-        name: new Date(name + '-01').toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' }),
+        // Meio do mês em hora local: 'AAAA-MM-01' puro é UTC e vira o mês anterior no Brasil.
+        name: new Date(name + '-15T00:00:00').toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' }).replace('.', ''),
         value,
       }));
   }, [filtered]);
@@ -108,7 +110,7 @@ export default function ComprasRelatorioPanel({ purchases }: Props) {
 
   if (purchases.length === 0) {
     return (
-      <div className="bg-white rounded-xl border border-zinc-200 py-16 text-center">
+      <div className="bg-white rounded-2xl border border-zinc-200 py-16 text-center">
         <i className="ri-bar-chart-2-line text-4xl text-zinc-200 block mb-2" />
         <p className="text-zinc-400 text-sm">Nenhuma compra para exibir relatório</p>
       </div>
@@ -118,49 +120,43 @@ export default function ComprasRelatorioPanel({ purchases }: Props) {
   return (
     <div className="space-y-5">
       {/* Period filter */}
-      <div className="flex items-center justify-between">
-        <p className="text-sm font-semibold text-zinc-700">
-          Analisando <span className="text-amber-600">{filtered.length}</span> compras
-          {period !== 'all' && <span className="text-zinc-400 font-normal"> no período selecionado</span>}
-        </p>
-        <div className="flex bg-white border border-zinc-200 rounded-lg overflow-hidden">
-          {PERIOD_OPTIONS.map(opt => (
-            <button key={opt.value} onClick={() => setPeriod(opt.value)}
-              className={`px-3 py-1.5 text-xs font-semibold cursor-pointer transition-colors whitespace-nowrap ${period === opt.value ? 'bg-amber-500 text-white' : 'text-zinc-600 hover:bg-zinc-50'}`}>
-              {opt.label}
-            </button>
-          ))}
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="overflow-x-auto">
+          <Segmented
+            value={period}
+            onChange={setPeriod}
+            options={PERIOD_OPTIONS.map(opt => ({ id: opt.value, label: opt.label, icon: opt.value === 'all' ? 'ri-infinity-line' : 'ri-calendar-line' }))}
+          />
         </div>
+        <span className="text-xs text-zinc-400">
+          <strong className="text-zinc-700">{filtered.length}</strong> compra{filtered.length !== 1 ? 's' : ''}
+          {period !== 'all' ? ' no período' : ' no total'}
+        </span>
       </div>
 
       {/* Summary KPIs */}
-      <div className="grid grid-cols-3 gap-4">
-        {[
-          { label: 'Total no Período', value: formatCurrency(totalGeral), icon: 'ri-shopping-cart-2-line', color: 'text-amber-700', bg: 'bg-amber-50' },
-          { label: 'Ticket Médio', value: formatCurrency(mediaCompra), icon: 'ri-scales-line', color: 'text-zinc-700', bg: 'bg-zinc-50' },
-          { label: 'Maior Compra', value: formatCurrency(maiorCompra), icon: 'ri-trophy-line', color: 'text-green-700', bg: 'bg-green-50' },
-        ].map(k => (
-          <div key={k.label} className="bg-white rounded-xl border border-zinc-200 p-4 flex items-center gap-3">
-            <div className={`w-10 h-10 flex items-center justify-center rounded-lg ${k.bg}`}>
-              <i className={`${k.icon} ${k.color} text-lg`} />
-            </div>
-            <div>
-              <p className="text-xs text-zinc-500">{k.label}</p>
-              <p className={`text-base font-bold ${k.color}`}>{k.value}</p>
-            </div>
-          </div>
-        ))}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <KpiCard label="Total no período" icon="ri-shopping-cart-2-line" value={formatCurrency(totalGeral)}
+          sub={`${porFornecedor.length} fornecedor${porFornecedor.length !== 1 ? 'es' : ''}`} atual={totalGeral} semVariacao />
+        <KpiCard label="Ticket médio" icon="ri-scales-line" value={formatCurrency(mediaCompra)}
+          sub="Valor médio por compra" atual={mediaCompra} semVariacao />
+        <KpiCard label="Maior compra" icon="ri-trophy-line" value={formatCurrency(maiorCompra)}
+          sub={porFornecedor[0] ? `Quem mais vendeu: ${porFornecedor[0].name}` : undefined} atual={maiorCompra} semVariacao />
       </div>
 
       {/* Chart: Por Mês */}
       {porMes.length > 0 && (
-        <div className="bg-white rounded-xl border border-zinc-200 p-5">
-          <h4 className="text-sm font-semibold text-zinc-800 mb-4">Compras por Mês</h4>
-          <ResponsiveContainer width="100%" height={180}>
+        <div className="bg-white rounded-2xl border border-zinc-200 p-5">
+          <div className="mb-4">
+            <h3 className="text-sm font-bold text-zinc-800">Compras por mês</h3>
+            <p className="text-xs text-zinc-400">O mês mais recente em destaque</p>
+          </div>
+          <ResponsiveContainer width="100%" height={200}>
             <BarChart data={porMes} margin={{ top: 4, right: 8, left: 0, bottom: 4 }}>
-              <XAxis dataKey="name" tick={{ fontSize: 11, fill: '#71717a' }} />
-              <YAxis tick={{ fontSize: 10, fill: '#71717a' }} tickFormatter={v => `R$${(v / 1000).toFixed(0)}k`} />
-              <Tooltip content={<CustomBarTooltip />} />
+              <CartesianGrid strokeDasharray="3 3" stroke="#f4f4f5" vertical={false} />
+              <XAxis dataKey="name" tick={{ fontSize: 11, fill: '#71717a' }} axisLine={false} tickLine={false} />
+              <YAxis tick={{ fontSize: 10, fill: '#a1a1aa' }} axisLine={false} tickLine={false} tickFormatter={v => `R$${(v / 1000).toFixed(0)}k`} />
+              <Tooltip content={<CustomBarTooltip />} cursor={{ fill: '#fafafa' }} />
               <Bar dataKey="value" radius={[5, 5, 0, 0]} maxBarSize={48}>
                 {porMes.map((_, i) => (
                   <Cell key={i} fill={i === porMes.length - 1 ? '#f59e0b' : '#e5e7eb'} />
@@ -171,14 +167,14 @@ export default function ComprasRelatorioPanel({ purchases }: Props) {
         </div>
       )}
 
-      <div className="grid grid-cols-2 gap-5">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         {/* Ranking fornecedores */}
-        <div className="bg-white rounded-xl border border-zinc-200 overflow-hidden">
+        <div className="bg-white rounded-2xl border border-zinc-200 overflow-hidden">
           <div className="px-5 py-3 border-b border-zinc-100 flex items-center justify-between">
-            <h4 className="text-sm font-semibold text-zinc-800">Ranking de Fornecedores</h4>
+            <h3 className="text-sm font-bold text-zinc-800">Ranking de fornecedores</h3>
             <span className="text-xs text-zinc-400">{porFornecedor.length} fornecedores</span>
           </div>
-          <div className="divide-y divide-zinc-50 max-h-72 overflow-y-auto">
+          <div className="divide-y divide-zinc-100/80 max-h-80 overflow-y-auto">
             {porFornecedor.map((f, i) => {
               const pct = totalGeral > 0 ? (f.total / totalGeral) * 100 : 0;
               return (
@@ -190,7 +186,7 @@ export default function ComprasRelatorioPanel({ purchases }: Props) {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between mb-1">
                       <p className="text-xs font-semibold text-zinc-800 truncate">{f.name}</p>
-                      <p className="text-xs font-bold text-zinc-900 ml-2 whitespace-nowrap">{formatCurrency(f.total)}</p>
+                      <p className="text-xs font-bold text-zinc-900 ml-2 whitespace-nowrap tabular-nums">{formatCurrency(f.total)}</p>
                     </div>
                     <div className="flex items-center gap-2">
                       <div className="flex-1 h-1 bg-zinc-100 rounded-full overflow-hidden">
@@ -207,8 +203,11 @@ export default function ComprasRelatorioPanel({ purchases }: Props) {
         </div>
 
         {/* Pizza: por forma de pagamento */}
-        <div className="bg-white rounded-xl border border-zinc-200 p-5">
-          <h4 className="text-sm font-semibold text-zinc-800 mb-4">Por Forma de Pagamento</h4>
+        <div className="bg-white rounded-2xl border border-zinc-200 p-5">
+          <div className="mb-4">
+            <h3 className="text-sm font-bold text-zinc-800">Por forma de pagamento</h3>
+            <p className="text-xs text-zinc-400">Como as compras do período foram pagas</p>
+          </div>
           {porPagamento.length > 0 ? (
             <>
               <ResponsiveContainer width="100%" height={160}>
@@ -243,7 +242,7 @@ export default function ComprasRelatorioPanel({ purchases }: Props) {
                       <span className="text-zinc-600">{p.name}</span>
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className="font-semibold text-zinc-800">{formatCurrency(p.value)}</span>
+                      <span className="font-semibold text-zinc-800 tabular-nums">{formatCurrency(p.value)}</span>
                       <span className="text-zinc-400 w-10 text-right">{p.pct.toFixed(1)}%</span>
                     </div>
                   </div>

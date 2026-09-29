@@ -1,6 +1,6 @@
 import { Fragment, useState, useMemo, useEffect } from 'react';
 import {
-  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend,
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, CartesianGrid,
 } from 'recharts';
 import { supabase } from '@/lib/supabase';
 import { fetchAllRows } from '@/lib/fetchAllRows';
@@ -8,6 +8,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useMerchandiseCategories } from '@/hooks/useMerchandiseCategories';
 import { formatCurrency, formatCurrencyPreciso } from '@/lib/formatters';
 import type { Purchase, PurchaseItem } from '@/types/financeiro';
+import { KpiCard, Segmented, VarChip } from '../dreUi';
 
 /**
  * Relatórios de compras no nível do ITEM (fin_purchase_items), agrupados por
@@ -117,15 +118,11 @@ function normalizar(s: string): string {
   return s.trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ');
 }
 
+// Compra é custo: subir é ruim (chip vermelho), cair é bom.
 function Variacao({ atual, anterior }: { atual: number; anterior: number }) {
-  if (anterior <= 0) return <span className="text-zinc-300 text-xs">—</span>;
-  const pct = ((atual - anterior) / anterior) * 100;
-  const up = pct > 0.5;
-  const down = pct < -0.5;
   return (
-    <span className={`text-xs font-semibold whitespace-nowrap ${up ? 'text-red-600' : down ? 'text-green-600' : 'text-zinc-500'}`}
-      title={`Período anterior: ${formatCurrency(anterior)}`}>
-      {up ? '▲' : down ? '▼' : '='} {Math.abs(pct).toFixed(0)}%
+    <span title={anterior > 0 ? `Período anterior: ${formatCurrency(anterior)}` : undefined}>
+      <VarChip atual={atual} anterior={anterior > 0 ? anterior : undefined} inverse />
     </span>
   );
 }
@@ -538,7 +535,7 @@ export default function ComprasRelatoriosPanel({ purchases, onOpenPurchase }: Pr
 
   if (purchases.length === 0) {
     return (
-      <div className="bg-white rounded-xl border border-zinc-200 py-16 text-center">
+      <div className="bg-white rounded-2xl border border-zinc-200 py-16 text-center">
         <i className="ri-file-chart-line text-4xl text-zinc-200 block mb-2" />
         <p className="text-zinc-400 text-sm">Nenhuma compra lançada ainda</p>
       </div>
@@ -546,17 +543,16 @@ export default function ComprasRelatoriosPanel({ purchases, onOpenPurchase }: Pr
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       {/* Período + agrupamento */}
-      <div className="bg-white rounded-xl border border-zinc-200 p-3 space-y-3">
+      <div className="bg-white rounded-2xl border border-zinc-200 p-4 space-y-3">
         <div className="flex flex-col lg:flex-row lg:items-center gap-2 lg:gap-3">
-          <div className="flex bg-zinc-50 border border-zinc-200 rounded-lg overflow-hidden overflow-x-auto">
-            {PERIODOS.map((p) => (
-              <button key={p.value} onClick={() => setPeriodo(p.value)}
-                className={`px-3 py-1.5 text-xs font-semibold cursor-pointer transition-colors whitespace-nowrap ${periodo === p.value ? 'bg-amber-500 text-white' : 'text-zinc-600 hover:bg-zinc-100'}`}>
-                {p.label}
-              </button>
-            ))}
+          <div className="overflow-x-auto">
+            <Segmented<Periodo>
+              value={periodo}
+              onChange={setPeriodo}
+              options={PERIODOS.map((p) => ({ id: p.value, label: p.label, icon: p.value === 'custom' ? 'ri-calendar-2-line' : 'ri-calendar-line' }))}
+            />
           </div>
           {periodo === 'custom' && (
             <div className="flex items-center gap-1.5">
@@ -567,14 +563,14 @@ export default function ComprasRelatoriosPanel({ purchases, onOpenPurchase }: Pr
                 className="border border-zinc-200 rounded-lg px-2 py-1.5 text-xs text-zinc-700 focus:outline-none focus:ring-2 focus:ring-amber-200" />
             </div>
           )}
-          <p className="text-xs text-zinc-500 whitespace-nowrap">
-            {fmtData(from)} – {fmtData(to)}
+          <p className="text-xs text-zinc-500 whitespace-nowrap tabular-nums">
+            <strong className="text-zinc-700">{fmtData(from)} – {fmtData(to)}</strong>
             <span className="text-zinc-300 mx-1.5">·</span>
             comparado a {fmtData(prevFrom)} – {fmtData(prevTo)}
           </p>
           <div className="lg:ml-auto flex items-center gap-2">
             <button onClick={exportar} disabled={linhas.length === 0}
-              className="flex items-center gap-1.5 border border-zinc-200 bg-white hover:bg-zinc-50 text-zinc-700 px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer whitespace-nowrap disabled:opacity-40">
+              className="flex items-center gap-1.5 px-3 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 rounded-xl text-xs font-semibold text-zinc-600 cursor-pointer transition-colors whitespace-nowrap shadow-sm disabled:opacity-40">
               <i className="ri-download-2-line" /> CSV ({linhas.length} itens)
             </button>
           </div>
@@ -584,20 +580,20 @@ export default function ComprasRelatoriosPanel({ purchases, onOpenPurchase }: Pr
           <div className="relative flex-1 min-w-[180px]">
             <i className="ri-search-line absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400 text-sm" />
             <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar item, fornecedor ou categoria…"
-              className="w-full border border-zinc-200 rounded-lg pl-8 pr-2 py-1.5 text-xs text-zinc-700 focus:outline-none focus:ring-2 focus:ring-amber-200" />
+              className="w-full border border-zinc-200 rounded-xl pl-8 pr-2 py-2 text-xs text-zinc-700 focus:outline-none focus:ring-2 focus:ring-amber-200" />
           </div>
           <select value={fCategoria} onChange={(e) => setFCategoria(e.target.value)}
-            className="border border-zinc-200 rounded-lg px-2 py-1.5 text-xs text-zinc-700 bg-white focus:outline-none focus:ring-2 focus:ring-amber-200 max-w-[200px]">
+            className="border border-zinc-200 rounded-xl px-2 py-2 text-xs text-zinc-700 bg-white focus:outline-none focus:ring-2 focus:ring-amber-200 max-w-[200px]">
             <option value="all">Todas as categorias</option>
             {categoriasOpts.map(([id, nome]) => <option key={id} value={id}>{nome}</option>)}
           </select>
           <select value={fFornecedor} onChange={(e) => setFFornecedor(e.target.value)}
-            className="border border-zinc-200 rounded-lg px-2 py-1.5 text-xs text-zinc-700 bg-white focus:outline-none focus:ring-2 focus:ring-amber-200 max-w-[200px]">
+            className="border border-zinc-200 rounded-xl px-2 py-2 text-xs text-zinc-700 bg-white focus:outline-none focus:ring-2 focus:ring-amber-200 max-w-[200px]">
             <option value="all">Todos os fornecedores</option>
             {fornecedoresOpts.map(([k, nome]) => <option key={k} value={k}>{nome}</option>)}
           </select>
           <select value={fStatus} onChange={(e) => setFStatus(e.target.value)}
-            className="border border-zinc-200 rounded-lg px-2 py-1.5 text-xs text-zinc-700 bg-white focus:outline-none focus:ring-2 focus:ring-amber-200">
+            className="border border-zinc-200 rounded-xl px-2 py-2 text-xs text-zinc-700 bg-white focus:outline-none focus:ring-2 focus:ring-amber-200">
             <option value="all">Todos os status</option>
             <option value="paid">Pago</option>
             <option value="pending">A Pagar</option>
@@ -612,71 +608,90 @@ export default function ComprasRelatoriosPanel({ purchases, onOpenPurchase }: Pr
       </div>
 
       {/* KPIs */}
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-        <div className="bg-white rounded-xl border border-zinc-200 p-4">
-          <p className="text-xs text-zinc-500">Total comprado</p>
-          <p className="text-lg font-bold text-amber-700 mt-0.5">{formatCurrency(total)}</p>
-          <div className="mt-1 flex items-center gap-1.5 text-xs text-zinc-400">
-            <Variacao atual={total} anterior={totalAnt} /> <span>vs anterior</span>
-          </div>
-        </div>
-        <div className="bg-white rounded-xl border border-zinc-200 p-4">
-          <p className="text-xs text-zinc-500">Compras</p>
-          <p className="text-lg font-bold text-zinc-800 mt-0.5">{nCompras}</p>
-          <p className="text-xs text-zinc-400 mt-1">{nCompras > 0 ? `${formatCurrency(total / nCompras)} / compra` : '—'}</p>
-        </div>
-        <div className="bg-white rounded-xl border border-zinc-200 p-4">
-          <p className="text-xs text-zinc-500">Itens distintos</p>
-          <p className="text-lg font-bold text-zinc-800 mt-0.5">{nItens}</p>
-          <p className="text-xs text-zinc-400 mt-1">{linhas.length} linhas</p>
-        </div>
-        <div className="bg-white rounded-xl border border-zinc-200 p-4">
-          <p className="text-xs text-zinc-500">Fornecedores</p>
-          <p className="text-lg font-bold text-zinc-800 mt-0.5">{nFornecedores}</p>
-          <p className="text-xs text-zinc-400 mt-1">{matriz.length} categoria{matriz.length !== 1 ? 's' : ''}</p>
-        </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3">
+        <KpiCard
+          label="Total comprado"
+          icon="ri-shopping-cart-2-line"
+          value={formatCurrency(total)}
+          sub={`Período anterior: ${formatCurrency(totalAnt)}`}
+          atual={total}
+          anterior={totalAnt > 0 ? totalAnt : undefined}
+          inverse
+        />
+        <KpiCard
+          label="Compras"
+          icon="ri-receipt-line"
+          value={String(nCompras)}
+          sub={nCompras > 0 ? `${formatCurrency(total / nCompras)} por compra` : '—'}
+          atual={nCompras}
+          semVariacao
+        />
+        <KpiCard
+          label="Itens distintos"
+          icon="ri-box-3-line"
+          value={String(nItens)}
+          sub={`${linhas.length} linha${linhas.length !== 1 ? 's' : ''} de nota`}
+          atual={nItens}
+          semVariacao
+        />
+        <KpiCard
+          label="Fornecedores"
+          icon="ri-truck-line"
+          value={String(nFornecedores)}
+          sub={`${matriz.length} categoria${matriz.length !== 1 ? 's' : ''}`}
+          atual={nFornecedores}
+          semVariacao
+        />
         <button onClick={() => { setFCategoria(semCategoria > 0 ? SEM_CATEGORIA : 'all'); setGroupBy('item'); }}
-          className={`rounded-xl border p-4 text-left cursor-pointer transition-colors ${semCategoria > 0 ? 'bg-red-50 border-red-200 hover:bg-red-100' : 'bg-white border-zinc-200'}`}
+          className={`rounded-2xl border p-4 flex flex-col gap-2 text-left cursor-pointer transition-colors ${semCategoria > 0 ? 'border-red-200 bg-gradient-to-br from-red-50 to-white hover:from-red-100' : 'border-zinc-200 bg-white'}`}
           title={semCategoria > 0 ? 'Clique para listar os itens sem categoria' : undefined}>
-          <p className={`text-xs ${semCategoria > 0 ? 'text-red-600' : 'text-zinc-500'}`}>Sem categoria</p>
-          <p className={`text-lg font-bold mt-0.5 ${semCategoria > 0 ? 'text-red-700' : 'text-green-700'}`}>{formatCurrency(semCategoria)}</p>
-          <p className={`text-xs mt-1 ${semCategoria > 0 ? 'text-red-500' : 'text-zinc-400'}`}>
-            {total > 0 ? `${((semCategoria / total) * 100).toFixed(1)}% do total` : '—'}
+          <div className="flex items-center gap-2 min-w-0">
+            <span className={`w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 ${semCategoria > 0 ? 'bg-red-100 text-red-600' : 'bg-zinc-100 text-zinc-500'}`}>
+              <i className="ri-price-tag-3-line text-sm" />
+            </span>
+            <span className={`text-xs font-semibold truncate ${semCategoria > 0 ? 'text-red-600' : 'text-zinc-500'}`}>Sem categoria</span>
+          </div>
+          <p className={`text-2xl font-bold tabular-nums tracking-tight ${semCategoria > 0 ? 'text-red-700' : 'text-emerald-700'}`}>{formatCurrency(semCategoria)}</p>
+          <p className={`text-xs ${semCategoria > 0 ? 'text-red-500 font-semibold' : 'text-zinc-400'}`}>
+            {semCategoria > 0
+              ? `${total > 0 ? ((semCategoria / total) * 100).toFixed(1).replace('.', ',') : 0}% do total · clique para ver`
+              : 'Tudo classificado'}
           </p>
         </button>
       </div>
 
       {linhas.length === 0 ? (
-        <div className="bg-white rounded-xl border border-zinc-200 py-14 text-center">
+        <div className="bg-white rounded-2xl border border-zinc-200 py-14 text-center">
           <i className="ri-filter-off-line text-3xl text-zinc-200 block mb-2" />
           <p className="text-zinc-400 text-sm">Nenhum item de compra no período / filtros selecionados</p>
         </div>
       ) : (
         <>
           {/* Tabela principal agrupada */}
-          <div className="bg-white rounded-xl border border-zinc-200 overflow-hidden">
-            <div className="px-4 py-3 border-b border-zinc-100 flex flex-col sm:flex-row sm:items-center gap-2">
-              <h4 className="text-sm font-semibold text-zinc-800">Compras por</h4>
-              <div className="flex bg-zinc-50 border border-zinc-200 rounded-lg overflow-hidden">
-                {GROUPS.map((g) => (
-                  <button key={g.value} onClick={() => { setGroupBy(g.value); setExpandidos(new Set()); setItensAbertos(new Set()); }}
-                    className={`px-3 py-1.5 text-xs font-semibold cursor-pointer transition-colors whitespace-nowrap flex items-center gap-1 ${groupBy === g.value ? 'bg-zinc-800 text-white' : 'text-zinc-600 hover:bg-zinc-100'}`}>
-                    <i className={g.icon} /> {g.label}
-                  </button>
-                ))}
+          <div className="bg-white rounded-2xl border border-zinc-200 overflow-hidden">
+            <div className="px-5 py-3 border-b border-zinc-100 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
+              <h3 className="text-sm font-bold text-zinc-800">Compras por</h3>
+              <div className="overflow-x-auto">
+                <Segmented<GroupBy>
+                  value={groupBy}
+                  onChange={(v) => { setGroupBy(v); setExpandidos(new Set()); setItensAbertos(new Set()); }}
+                  options={GROUPS.map((g) => ({ id: g.value, label: g.label, icon: g.icon }))}
+                />
               </div>
-              <span className="sm:ml-auto text-xs text-zinc-400">{grupos.length} grupo{grupos.length !== 1 ? 's' : ''} · clique para detalhar</span>
+              <span className="sm:ml-auto text-[11px] text-zinc-400 flex items-center gap-1">
+                <i className="ri-cursor-line" /> {grupos.length} grupo{grupos.length !== 1 ? 's' : ''} · clique numa linha para detalhar
+              </span>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm min-w-[640px]">
-                <thead className="bg-zinc-50 text-xs text-zinc-500">
+                <thead className="border-b border-zinc-200 text-[11px] uppercase tracking-wide text-zinc-400">
                   <tr>
-                    <th className="text-left font-medium px-4 py-2">{GROUPS.find((g) => g.value === groupBy)?.label}</th>
-                    <th className="text-right font-medium px-2 py-2">Total</th>
-                    <th className="text-left font-medium px-2 py-2 w-36">% do total</th>
-                    <th className="text-right font-medium px-2 py-2">vs anterior</th>
-                    <th className="text-center font-medium px-2 py-2">Compras</th>
-                    {groupBy !== 'item' && <th className="text-center font-medium px-2 py-2">Itens</th>}
+                    <th className="text-left font-semibold pl-5 pr-4 py-2.5">{GROUPS.find((g) => g.value === groupBy)?.label}</th>
+                    <th className="text-right font-semibold px-2 py-2.5">Total</th>
+                    <th className="text-left font-semibold px-2 py-2.5 w-36">% do total</th>
+                    <th className="text-right font-semibold px-2 py-2.5">vs anterior</th>
+                    <th className="text-center font-semibold px-2 py-2.5">Compras</th>
+                    {groupBy !== 'item' && <th className="text-center font-semibold px-2 py-2.5">Itens</th>}
                     <th className="w-8" />
                   </tr>
                 </thead>
@@ -689,13 +704,13 @@ export default function ComprasRelatoriosPanel({ purchases, onOpenPurchase }: Pr
                       <Fragment key={g.key}>
                         <tr onClick={() => toggle(expandidos, g.key, setExpandidos)}
                           className={`border-t border-zinc-100 cursor-pointer transition-colors ${aberto ? 'bg-amber-50/40' : 'hover:bg-zinc-50'}`}>
-                          <td className="px-4 py-2.5">
+                          <td className="pl-5 pr-4 py-3">
                             <div className="flex items-center gap-2">
-                              <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: cor }} />
+                              <span className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ backgroundColor: cor }} />
                               <span className={`font-semibold ${g.key === SEM_CATEGORIA ? 'text-red-700' : 'text-zinc-800'}`}>{g.nome}</span>
                             </div>
                           </td>
-                          <td className="px-2 py-2.5 text-right font-bold text-zinc-900 whitespace-nowrap">{formatCurrency(g.total)}</td>
+                          <td className="px-2 py-3 text-right font-bold text-zinc-900 tabular-nums whitespace-nowrap">{formatCurrency(g.total)}</td>
                           <td className="px-2 py-2.5">
                             <div className="flex items-center gap-2">
                               <div className="flex-1 h-1.5 bg-zinc-100 rounded-full overflow-hidden">
@@ -722,10 +737,10 @@ export default function ComprasRelatoriosPanel({ purchases, onOpenPurchase }: Pr
                     );
                   })}
                 </tbody>
-                <tfoot className="bg-zinc-50 border-t border-zinc-200 text-sm">
+                <tfoot className="bg-zinc-50 border-t-2 border-zinc-200 text-sm">
                   <tr>
-                    <td className="px-4 py-2.5 font-semibold text-zinc-700">Total</td>
-                    <td className="px-2 py-2.5 text-right font-bold text-amber-700 whitespace-nowrap">{formatCurrency(total)}</td>
+                    <td className="pl-5 pr-4 py-3 font-bold text-zinc-900">Total</td>
+                    <td className="px-2 py-3 text-right font-bold text-zinc-900 tabular-nums whitespace-nowrap">{formatCurrency(total)}</td>
                     <td className="px-2 py-2.5 text-xs text-zinc-400">100%</td>
                     <td className="px-2 py-2.5 text-right"><Variacao atual={total} anterior={totalAnt} /></td>
                     <td className="px-2 py-2.5 text-center text-xs text-zinc-600">{nCompras}</td>
@@ -740,12 +755,16 @@ export default function ComprasRelatoriosPanel({ purchases, onOpenPurchase }: Pr
           {/* Evolução mensal por categoria (só faz sentido com 2+ meses) */}
           {meses.length >= 2 && (
             <div className="grid grid-cols-1 xl:grid-cols-5 gap-4">
-              <div className="xl:col-span-2 bg-white rounded-xl border border-zinc-200 p-4">
-                <h4 className="text-sm font-semibold text-zinc-800 mb-3">Evolução mensal por categoria</h4>
+              <div className="xl:col-span-2 bg-white rounded-2xl border border-zinc-200 p-5">
+                <div className="mb-4">
+                  <h3 className="text-sm font-bold text-zinc-800">Evolução mensal por categoria</h3>
+                  <p className="text-xs text-zinc-400">As 7 maiores categorias; o resto em "Outras"</p>
+                </div>
                 <ResponsiveContainer width="100%" height={260}>
                   <BarChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 4 }}>
-                    <XAxis dataKey="mes" tick={{ fontSize: 11, fill: '#71717a' }} />
-                    <YAxis tick={{ fontSize: 10, fill: '#71717a' }} tickFormatter={(v: number) => `R$${(v / 1000).toFixed(0)}k`} width={52} />
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f4f4f5" vertical={false} />
+                    <XAxis dataKey="mes" tick={{ fontSize: 11, fill: '#71717a' }} axisLine={false} tickLine={false} />
+                    <YAxis tick={{ fontSize: 10, fill: '#a1a1aa' }} axisLine={false} tickLine={false} tickFormatter={(v: number) => `R$${(v / 1000).toFixed(0)}k`} width={52} />
                     <Tooltip
                       formatter={(v: number, name: string) => [formatCurrency(v), name]}
                       contentStyle={{ fontSize: 12, borderRadius: 10, border: '1px solid #e4e4e7' }}
@@ -760,24 +779,24 @@ export default function ComprasRelatoriosPanel({ purchases, onOpenPurchase }: Pr
               </div>
 
               {/* Matriz categoria × mês (aba CM da planilha) */}
-              <div className="xl:col-span-3 bg-white rounded-xl border border-zinc-200 overflow-hidden">
-                <div className="px-4 py-3 border-b border-zinc-100 flex items-center justify-between">
-                  <h4 className="text-sm font-semibold text-zinc-800">Categoria × Mês</h4>
+              <div className="xl:col-span-3 bg-white rounded-2xl border border-zinc-200 overflow-hidden">
+                <div className="px-5 py-3 border-b border-zinc-100 flex items-center justify-between">
+                  <h3 className="text-sm font-bold text-zinc-800">Categoria × Mês</h3>
                   <span className="text-xs text-zinc-400">{meses.length} meses</span>
                 </div>
                 <div className="overflow-x-auto">
                   <table className="text-xs w-full">
-                    <thead className="bg-zinc-50 text-zinc-500">
+                    <thead className="border-b border-zinc-200 text-[11px] uppercase tracking-wide text-zinc-400">
                       <tr>
-                        <th className="text-left font-medium px-4 py-2 sticky left-0 bg-zinc-50">Categoria</th>
-                        {meses.map((m) => <th key={m} className="text-right font-medium px-3 py-2 whitespace-nowrap">{mesLabel(m)}</th>)}
-                        <th className="text-right font-semibold px-4 py-2 text-zinc-700">Total</th>
+                        <th className="text-left font-semibold pl-5 pr-4 py-2.5 sticky left-0 bg-white">Categoria</th>
+                        {meses.map((m) => <th key={m} className="text-right font-semibold px-3 py-2.5 whitespace-nowrap">{mesLabel(m)}</th>)}
+                        <th className="text-right font-semibold px-4 py-2.5 text-zinc-700">Total</th>
                       </tr>
                     </thead>
                     <tbody>
                       {matriz.map((c) => (
                         <tr key={c.id} className="border-t border-zinc-100 hover:bg-zinc-50">
-                          <td className={`px-4 py-2 font-medium sticky left-0 bg-white whitespace-nowrap ${c.id === SEM_CATEGORIA ? 'text-red-700' : 'text-zinc-800'}`}>{c.nome}</td>
+                          <td className={`pl-5 pr-4 py-2 font-medium sticky left-0 bg-white whitespace-nowrap ${c.id === SEM_CATEGORIA ? 'text-red-700' : 'text-zinc-800'}`}>{c.nome}</td>
                           {meses.map((m) => (
                             <td key={m} className="px-3 py-2 text-right text-zinc-600 whitespace-nowrap">
                               {c.porMes[m] ? formatCurrency(c.porMes[m]) : <span className="text-zinc-300">—</span>}
@@ -787,11 +806,11 @@ export default function ComprasRelatoriosPanel({ purchases, onOpenPurchase }: Pr
                         </tr>
                       ))}
                     </tbody>
-                    <tfoot className="bg-zinc-50 border-t border-zinc-200">
+                    <tfoot className="bg-zinc-50 border-t-2 border-zinc-200">
                       <tr>
-                        <td className="px-4 py-2 font-semibold text-zinc-700 sticky left-0 bg-zinc-50">Total</td>
+                        <td className="pl-5 pr-4 py-2.5 font-bold text-zinc-900 sticky left-0 bg-zinc-50">Total</td>
                         {meses.map((m) => <td key={m} className="px-3 py-2 text-right font-semibold text-zinc-800 whitespace-nowrap">{formatCurrency(totalPorMes[m] ?? 0)}</td>)}
-                        <td className="px-4 py-2 text-right font-bold text-amber-700 whitespace-nowrap">{formatCurrency(total)}</td>
+                        <td className="px-4 py-2.5 text-right font-bold text-zinc-900 whitespace-nowrap">{formatCurrency(total)}</td>
                       </tr>
                     </tfoot>
                   </table>

@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { formatCurrency } from '@/lib/formatters';
 import type { Purchase } from '@/types/financeiro';
+import { KpiCard, Segmented } from '../dreUi';
 
 interface CostCenter { id: string; name: string; color?: string; }
 
@@ -107,41 +108,51 @@ export default function ComprasCentroCustoPanel({ purchases, centers }: Props) {
   const fmt = (v: number) => formatCurrency(v);
   const fmtDate = (d: string) => new Date(d + 'T00:00:00').toLocaleDateString('pt-BR');
 
-  if (filteredPurchases.length === 0) {
-    return (
-      <div className="bg-white rounded-xl border border-zinc-200 p-12 text-center">
-        <i className="ri-pie-chart-2-line text-4xl text-zinc-200 block mb-3" />
-        <p className="text-zinc-400 text-sm">Nenhuma compra no período selecionado</p>
-      </div>
-    );
-  }
+  const PERIODOS = [
+    { id: '30d', label: 'Últimos 30 dias', icon: 'ri-calendar-line' },
+    { id: '90d', label: 'Últimos 90 dias', icon: 'ri-calendar-line' },
+    { id: 'year', label: 'Último ano', icon: 'ri-calendar-line' },
+    { id: 'all', label: 'Tudo', icon: 'ri-infinity-line' },
+  ] as { id: PeriodFilter; label: string; icon: string }[];
+  const semCentro = grouped.find((g) => g.id === '__none__')?.total ?? 0;
 
   return (
-    <div className="space-y-4">
-      {/* Filtro de período */}
-      <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-xs text-zinc-500 font-semibold">Período:</span>
-        {([
-          { key: '30d', label: 'Últimos 30 dias' },
-          { key: '90d', label: 'Últimos 90 dias' },
-          { key: 'year', label: 'Último ano' },
-          { key: 'all', label: 'Tudo' },
-        ] as const).map((opt) => (
-          <button key={opt.key} onClick={() => setPeriod(opt.key)}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-lg cursor-pointer transition-colors whitespace-nowrap ${
-              period === opt.key ? 'bg-amber-500 text-white' : 'bg-white border border-zinc-200 text-zinc-600 hover:border-amber-300'
-            }`}>
-            {opt.label}
-          </button>
-        ))}
-        <span className="ml-auto text-xs text-zinc-400">
-          {filteredPurchases.length} compra{filteredPurchases.length !== 1 ? 's' : ''} · Total: <strong className="text-zinc-700">{fmt(grandTotal)}</strong>
+    <div className="space-y-5">
+      {/* Filtro de período — fica visível mesmo sem compras, para dar para trocar */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="overflow-x-auto">
+          <Segmented<PeriodFilter> value={period} onChange={setPeriod} options={PERIODOS} />
+        </div>
+        <span className="text-xs text-zinc-400">
+          <strong className="text-zinc-700">{filteredPurchases.length}</strong> compra{filteredPurchases.length !== 1 ? 's' : ''} no período
         </span>
       </div>
 
+      {filteredPurchases.length === 0 ? (
+        <div className="bg-white rounded-2xl border border-zinc-200 p-12 text-center">
+          <i className="ri-pie-chart-2-line text-4xl text-zinc-200 block mb-3" />
+          <p className="text-zinc-400 text-sm">Nenhuma compra no período selecionado</p>
+        </div>
+      ) : (
+      <>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <KpiCard label="Total no período" icon="ri-shopping-cart-2-line" value={fmt(grandTotal)}
+          sub={`${filteredPurchases.length} compra${filteredPurchases.length !== 1 ? 's' : ''}`} atual={grandTotal} semVariacao />
+        <KpiCard label="Centros de custo" icon="ri-price-tag-3-line" value={String(grouped.filter((g) => g.id !== '__none__').length)}
+          sub={grouped[0] ? `Maior: ${grouped[0].name}` : undefined} atual={grouped.length} semVariacao />
+        <KpiCard label="Sem centro de custo" icon="ri-question-line" value={fmt(semCentro)}
+          valueTone={semCentro > 0 ? 'text-amber-700' : 'text-emerald-700'}
+          sub={semCentro > 0 && grandTotal > 0 ? `${((semCentro / grandTotal) * 100).toFixed(1).replace('.', ',')}% do total` : 'Tudo com centro de custo'}
+          subTone={semCentro > 0 ? 'text-amber-600 font-semibold' : undefined}
+          atual={semCentro} semVariacao />
+      </div>
+
       {/* Gráfico de barras horizontal */}
-      <div className="bg-white rounded-xl border border-zinc-200 p-5 space-y-3">
-        <h4 className="text-sm font-bold text-zinc-800">Distribuição por Centro de Custo</h4>
+      <div className="bg-white rounded-2xl border border-zinc-200 p-5 space-y-3">
+        <div>
+          <h3 className="text-sm font-bold text-zinc-800">Distribuição por centro de custo</h3>
+          <p className="text-xs text-zinc-400">Item com centro próprio conta no centro dele; o resto vai pelo centro da compra</p>
+        </div>
         <div className="space-y-2.5">
           {grouped.map((g, idx) => {
             const pct = grandTotal > 0 ? (g.total / grandTotal) * 100 : 0;
@@ -156,7 +167,7 @@ export default function ComprasCentroCustoPanel({ purchases, centers }: Props) {
                   </div>
                   <div className="flex items-center gap-3">
                     <span className="text-xs text-zinc-400">{pct.toFixed(1)}%</span>
-                    <span className="text-sm font-bold text-zinc-800">{fmt(g.total)}</span>
+                    <span className="text-sm font-bold text-zinc-800 tabular-nums">{fmt(g.total)}</span>
                   </div>
                 </div>
                 <div className="h-2 bg-zinc-100 rounded-full overflow-hidden">
@@ -179,7 +190,7 @@ export default function ComprasCentroCustoPanel({ purchases, centers }: Props) {
           const isExpanded = expandedId === g.id;
 
           return (
-            <div key={g.id} className="bg-white rounded-xl border border-zinc-200 overflow-hidden">
+            <div key={g.id} className="bg-white rounded-2xl border border-zinc-200 overflow-hidden">
               <button
                 type="button"
                 onClick={() => setExpandedId(isExpanded ? null : g.id)}
@@ -195,7 +206,7 @@ export default function ComprasCentroCustoPanel({ purchases, centers }: Props) {
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
-                  <p className="text-base font-black text-zinc-900">{fmt(g.total)}</p>
+                  <p className="text-base font-bold text-zinc-900 tabular-nums">{fmt(g.total)}</p>
                   {isExpanded
                     ? <i className="ri-arrow-up-s-line text-zinc-400 text-sm" />
                     : <i className="ri-arrow-down-s-line text-zinc-400 text-sm" />
@@ -232,20 +243,21 @@ export default function ComprasCentroCustoPanel({ purchases, centers }: Props) {
       </div>
 
       {/* Tabela resumo */}
-      <div className="bg-white rounded-xl border border-zinc-200 overflow-hidden">
-        <div className="px-5 py-3 border-b border-zinc-100 bg-zinc-50">
-          <h4 className="text-xs font-bold text-zinc-600 uppercase tracking-wide">Resumo Consolidado</h4>
+      <div className="bg-white rounded-2xl border border-zinc-200 overflow-hidden">
+        <div className="px-5 py-3 border-b border-zinc-100">
+          <h3 className="text-sm font-bold text-zinc-800">Resumo consolidado</h3>
         </div>
-        <table className="w-full text-sm">
+        <div className="overflow-x-auto">
+        <table className="w-full text-sm min-w-[480px]">
           <thead>
-            <tr className="border-b border-zinc-100">
-              <th className="text-left px-5 py-2.5 text-xs font-semibold text-zinc-500">Centro de Custo</th>
-              <th className="text-right px-5 py-2.5 text-xs font-semibold text-zinc-500">Compras</th>
-              <th className="text-right px-5 py-2.5 text-xs font-semibold text-zinc-500">Total</th>
-              <th className="text-right px-5 py-2.5 text-xs font-semibold text-zinc-500">% do Total</th>
+            <tr className="border-b border-zinc-200 text-zinc-400">
+              <th className="text-left px-5 py-2.5 text-[11px] font-semibold uppercase tracking-wide">Centro de custo</th>
+              <th className="text-right px-5 py-2.5 text-[11px] font-semibold uppercase tracking-wide">Compras</th>
+              <th className="text-right px-5 py-2.5 text-[11px] font-semibold uppercase tracking-wide">Total</th>
+              <th className="text-right px-5 py-2.5 text-[11px] font-semibold uppercase tracking-wide">% do total</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-zinc-50">
+          <tbody className="divide-y divide-zinc-100/80">
             {grouped.map((g, idx) => {
               const pct = grandTotal > 0 ? (g.total / grandTotal) * 100 : 0;
               const colorClass = COLORS[idx % COLORS.length];
@@ -258,7 +270,7 @@ export default function ComprasCentroCustoPanel({ purchases, centers }: Props) {
                     </div>
                   </td>
                   <td className="px-5 py-2.5 text-right text-xs text-zinc-500">{g.count}</td>
-                  <td className="px-5 py-2.5 text-right text-sm font-bold text-zinc-800">{fmt(g.total)}</td>
+                  <td className="px-5 py-2.5 text-right text-sm font-bold text-zinc-800 tabular-nums">{fmt(g.total)}</td>
                   <td className="px-5 py-2.5 text-right">
                     <span className="text-xs font-semibold text-zinc-500">{pct.toFixed(1)}%</span>
                   </td>
@@ -270,12 +282,15 @@ export default function ComprasCentroCustoPanel({ purchases, centers }: Props) {
             <tr className="border-t-2 border-zinc-200 bg-zinc-50">
               <td className="px-5 py-3 text-xs font-bold text-zinc-700">Total Geral</td>
               <td className="px-5 py-3 text-right text-xs font-bold text-zinc-700">{filteredPurchases.length}</td>
-              <td className="px-5 py-3 text-right text-sm font-black text-zinc-900">{fmt(grandTotal)}</td>
+              <td className="px-5 py-3 text-right text-sm font-bold text-zinc-900 tabular-nums">{fmt(grandTotal)}</td>
               <td className="px-5 py-3 text-right text-xs font-bold text-zinc-500">100%</td>
             </tr>
           </tfoot>
         </table>
+        </div>
       </div>
+      </>
+      )}
     </div>
   );
 }
