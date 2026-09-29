@@ -116,7 +116,7 @@ begin
       where d.tenant_id = p_tenant and d.id = any(v_notas)), '[]'::jsonb),
     'extrato', coalesce((
       select jsonb_agg(jsonb_build_object(
-        'id', b.id, 'transaction_date', b.transaction_date, 'amount', abs(b.amount),
+        'id', b.id, 'bank_account_id', b.bank_account_id, 'transaction_date', b.transaction_date, 'amount', abs(b.amount),
         'description', b.description, 'counterpart_name', b.counterpart_name,
         'status', b.status, 'match_kind', b.match_kind, 'reconciled', coalesce(b.reconciled, false),
         'bill_id', coalesce((b.match_detail->'confirmed'->>'bill_id')::uuid, case when b.match_kind = 'payable' then b.match_ref_id end),

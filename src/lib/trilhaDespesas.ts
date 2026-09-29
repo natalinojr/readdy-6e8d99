@@ -24,7 +24,7 @@ export interface TrNota {
   import_type: string | null; purchase_id: string | null; payable_ids: string[]; auto_imported: boolean;
 }
 export interface TrExtrato {
-  id: string; transaction_date: string; amount: number; description: string | null;
+  id: string; bank_account_id?: string | null; transaction_date: string; amount: number; description: string | null;
   counterpart_name: string | null; status: string; match_kind: string | null; reconciled: boolean;
   bill_id: string | null; juros_bill_id: string | null; purchase_id: string | null; source: string | null;
 }
@@ -43,7 +43,8 @@ export type EtapaId = 'documento' | 'lancamento' | 'estoque' | 'conta' | 'pagame
 /** ok = feito · pendente = falta alguém fazer · atrasado/problema = precisa de atenção ·
  *  espera = etapa ainda não chegou (depende da anterior) · na = não se aplica a este caso */
 export type EstadoEtapa = 'ok' | 'pendente' | 'atrasado' | 'problema' | 'espera' | 'na';
-export interface Atalho { tab: string; param?: string; valor?: string | null }
+/** extrato: abre a linha do extrato na própria Trilha (mesma janela da Conciliação), em vez de ir para a aba. */
+export interface Atalho { tab: string; param?: string; valor?: string | null; extrato?: TrExtrato }
 export interface EtapaTrilha {
   id: EtapaId; nome: string; estado: EstadoEtapa; resumo: string; detalhe?: string; atalho?: Atalho;
 }
@@ -243,7 +244,7 @@ export function montarCaso(r: Rascunho, hoje: string, temExtrato: boolean): Caso
     add('lancamento', 'pendente',
       pedido.status === 'pendente' ? 'Pedido aguardando aprovação' : 'Pedido aprovado, sem lançamento', undefined, { tab: 'pagar' });
   } else {
-    add('lancamento', 'problema', 'Pagamento sem lançamento', 'saiu do banco e não virou compra nem despesa', { tab: 'conciliacao' });
+    add('lancamento', 'problema', 'Pagamento sem lançamento', 'saiu do banco e não virou compra nem despesa — lance como despesa, compra, freelancer ou prestador, ligue a uma conta que já existe, ou marque que não entra no DRE', { tab: 'conciliacao', extrato: r.extrato[0] });
   }
 
   // ── 3. Estoque (só compra) ───────────────────────────────────────────────────
@@ -323,11 +324,11 @@ export function montarCaso(r: Rascunho, hoje: string, temExtrato: boolean): Caso
     const soma = round2(conciliado.reduce((s, e) => s + Number(e.amount || 0), 0));
     add('banco', 'ok', conciliado.length > 1 ? `${conciliado.length} saídas no extrato` : 'Achado no extrato',
       `${diaBR(conciliado[0].transaction_date)} · ${brl(soma)}${conciliado[0].counterpart_name ? ' · ' + conciliado[0].counterpart_name : ''}`,
-      { tab: 'conciliacao' });
+      { tab: 'conciliacao', extrato: conciliado[0] });
     if (r.contas.length && !estaPago) avisos.push('Saiu do banco, mas a conta ainda está em aberto');
   } else if (r.extrato.length) {
     add('banco', 'problema', 'No extrato, sem vínculo', `${diaBR(r.extrato[0].transaction_date)} · ${brl(Number(r.extrato[0].amount))} · ${r.extrato[0].counterpart_name ?? r.extrato[0].description ?? ''}`,
-      { tab: 'conciliacao' });
+      { tab: 'conciliacao', extrato: r.extrato[0] });
   } else if (!estaPago) {
     add('banco', p?.is_bonus ? 'na' : 'espera', p?.is_bonus ? 'Sem saída' : 'Aguardando pagamento');
   } else if (dinheiro(meio)) {

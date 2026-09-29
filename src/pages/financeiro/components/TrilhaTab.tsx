@@ -8,9 +8,10 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency } from '@/lib/formatters';
+import LinhaExtratoModal from './conciliacao/LinhaExtratoModal';
 import {
   montarTrilha, diaBR, NOMES_ETAPA,
-  type CasoTrilha, type EtapaId, type EstadoEtapa, type EtapaTrilha, type TrilhaDados, type TipoCaso, type Atalho,
+  type CasoTrilha, type EtapaId, type EstadoEtapa, type EtapaTrilha, type TrilhaDados, type TipoCaso, type Atalho, type TrExtrato,
 } from '@/lib/trilhaDespesas';
 
 const MESES = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
@@ -60,6 +61,8 @@ export default function TrilhaTab() {
   const [busca, setBusca] = useState('');
   const [aberto, setAberto] = useState<string | null>(null);
   const [limite, setLimite] = useState(60);
+  // Linha do extrato aberta aqui mesmo (mesma janela da Conciliação): lançar/vincular sem sair da Trilha
+  const [linha, setLinha] = useState<TrExtrato | null>(null);
   const { de, ate } = limitesMes(ano, mes);
 
   const carregar = useCallback(async () => {
@@ -108,7 +111,7 @@ export default function TrilhaTab() {
     if (m < 0) { setMes(11); setAno(ano - 1); } else if (m > 11) { setMes(0); setAno(ano + 1); } else setMes(m);
   };
 
-  const ir = (a: Atalho) => navigate('/financeiro?tab=' + a.tab + (a.param && a.valor ? '&' + a.param + '=' + encodeURIComponent(a.valor) : ''));
+  const ir = (a: Atalho) => a.extrato ? setLinha(a.extrato) : navigate('/financeiro?tab=' + a.tab + (a.param && a.valor ? '&' + a.param + '=' + encodeURIComponent(a.valor) : ''));
 
   return (
     <div className="p-4 md:p-6 space-y-4 max-w-6xl">
@@ -195,6 +198,8 @@ export default function TrilhaTab() {
           Mostrar mais ({filtrados.length - limite} restantes)
         </button>
       )}
+
+      {linha && <LinhaExtratoModal linha={linha} onClose={() => setLinha(null)} onChanged={() => void carregar()} />}
     </div>
   );
 }

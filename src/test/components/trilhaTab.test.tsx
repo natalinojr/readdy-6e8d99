@@ -6,6 +6,9 @@ const h = vi.hoisted(() => ({ rpc: vi.fn(), navigate: vi.fn() }));
 vi.mock('@/lib/supabase', () => ({ supabase: { rpc: h.rpc } }));
 vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => ({ user: { tenantId: 't1' } }) }));
 vi.mock('react-router-dom', () => ({ useNavigate: () => h.navigate }));
+vi.mock('@/pages/financeiro/components/conciliacao/LinhaExtratoModal', () => ({
+  default: ({ linha }: { linha: { id: string } }) => <div>janela do extrato {linha.id}</div>,
+}));
 
 import TrilhaTab from '@/pages/financeiro/components/TrilhaTab';
 
@@ -47,6 +50,15 @@ describe('TrilhaTab', () => {
     expect(botoes.length).toBeGreaterThan(0);
     fireEvent.click(botoes[botoes.length - 1]);
     expect(h.navigate).toHaveBeenCalledWith(expect.stringContaining('/financeiro?tab=pagar&busca=Copal'));
+  });
+
+  it('pagamento sem lançamento: Resolver abre a linha do extrato ali mesmo, sem trocar de aba', async () => {
+    h.rpc.mockResolvedValue({ data: dados, error: null });
+    render(<TrilhaTab />);
+    fireEvent.click(await screen.findByText('Fulano'));
+    fireEvent.click(screen.getAllByText('Resolver')[0]);
+    expect(screen.getByText('janela do extrato x1')).toBeInTheDocument();
+    expect(h.navigate).not.toHaveBeenCalled();
   });
 
   it('mostra o erro do banco em vez de lista vazia', async () => {
