@@ -151,7 +151,7 @@ function TelaConfirmacao({
         <div className="bg-amber-500/15 border-2 border-amber-500/60 rounded-xl px-5 py-4 max-w-3xl w-full text-center">
           <div className="flex items-center justify-center gap-3 text-amber-300">
             <i className="ri-money-dollar-circle-line text-2xl md:text-4xl flex-shrink-0" />
-            <p className="text-base md:text-2xl font-black">{t('cliente.vaAoCaixaDinheiro')}</p>
+            <p className="text-base md:text-2xl font-black">{formaPagamentoNome ? t('cliente.vaAoCaixaDinheiro') : t('cliente.vaAoCaixaPagar')}</p>
           </div>
         </div>
       )}
@@ -562,19 +562,39 @@ export default function PagamentoKiosk({
   const total = Math.max(0, Math.round((carrinho.reduce((s, i) => s + i.preco * i.quantidade, 0) - desconto) * 100) / 100);
   const tenantId = kioskSession?.tenantId ?? user?.tenantId ?? '';
 
-  // Busca métodos de pagamento
+  // Busca métodos de pagamento. Falha de rede NÃO vira lista vazia: Tablet 2 de Paranaguá,
+  // 2026-09-29 12:26 — a busca não chegou ao servidor, a lista veio vazia, o cliente só viu
+  // "Pagar no balcão" e o pedido foi pra cozinha sem pagar. Agora tenta 3x e, se não der,
+  // mostra "tentar de novo" (nenhum pedido é criado).
+  const [erroMetodos, setErroMetodos] = useState(false);
+  const [tentativaMetodos, setTentativaMetodos] = useState(0);
   useEffect(() => {
     if (!tenantId) return;
-    supabase
-      .from('payment_methods')
-      .select('id, name, type')
-      .eq('tenant_id', tenantId)
-      .eq('is_active', true)
-      .then(({ data }) => {
-        setPaymentMethods((data as PaymentMethod[] | null) ?? []);
-        setMetodosCarregados(true);
-      });
-  }, [tenantId]);
+    let cancelado = false;
+    setErroMetodos(false);
+    setMetodosCarregados(false);
+    (async () => {
+      for (let tentativa = 0; tentativa < 3; tentativa++) {
+        try {
+          const { data, error } = await supabase
+            .from('payment_methods')
+            .select('id, name, type')
+            .eq('tenant_id', tenantId)
+            .eq('is_active', true);
+          if (!error && data) {
+            if (cancelado) return;
+            setPaymentMethods(data as PaymentMethod[]);
+            setMetodosCarregados(true);
+            return;
+          }
+        } catch { /* tenta de novo */ }
+        if (cancelado) return;
+        if (tentativa < 2) await new Promise((r) => setTimeout(r, 1500 * (tentativa + 1)));
+      }
+      if (!cancelado) setErroMetodos(true);
+    })();
+    return () => { cancelado = true; };
+  }, [tenantId, tentativaMetodos]);
 
   // Resposta anterior fica guardada na sessão do tablet: a partir do 2º pedido as opções
   // aparecem na hora; a consulta ao servidor só atualiza em segundo plano.
@@ -929,7 +949,19 @@ export default function PagamentoKiosk({
             </button>
           </div>
         )}
-        {(!metodosCarregados || pixDisponivel === null) ? (
+        {erroMetodos ? (
+          <div className="flex flex-col items-center gap-4 py-8 text-center">
+            <i className="ri-wifi-off-line text-4xl md:text-5xl text-amber-400" />
+            <p className="text-zinc-300 text-base md:text-2xl max-w-xl">{t('cliente.formasNaoCarregaram')}</p>
+            <button
+              onClick={() => setTentativaMetodos((n) => n + 1)}
+              className="px-8 py-3 md:py-4 bg-amber-500 hover:bg-amber-400 text-zinc-950 font-black text-base md:text-xl rounded-xl md:rounded-2xl cursor-pointer active:scale-95 transition-all"
+            >
+              <i className="ri-refresh-line mr-2" />
+              {t('cliente.tentarDeNovo')}
+            </button>
+          </div>
+        ) : (!metodosCarregados || pixDisponivel === null) ? (
           <div className="flex items-center justify-center gap-3 py-10 text-zinc-400 text-base md:text-xl">
             <div className="w-6 h-6 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
             Carregando formas de pagamento…
@@ -964,8 +996,9 @@ export default function PagamentoKiosk({
             );
           })}
           {metodosVisiveis.length === 0 && (
+            // Nenhuma forma liberada para o tablet: o pedido espera o caixa receber (não vai direto pra cozinha).
             <button
-              onClick={handlePagarNaEntregaEscolhido}
+              onClick={() => { setBalcaoEmDinheiro(true); void handlePagarNaEntregaEscolhido(undefined, true); }}
               className="col-span-2 flex flex-col items-center gap-2 md:gap-3 p-3 md:p-5 rounded-xl md:rounded-2xl cursor-pointer active:scale-95 transition-all bg-zinc-800 hover:bg-zinc-700 text-white"
             >
               <div className="w-12 h-12 md:w-14 md:h-14 flex items-center justify-center rounded-xl bg-zinc-700">
