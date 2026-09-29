@@ -726,7 +726,11 @@ async function handleCandidate(admin: SupabaseClient, sess: Row, text: string, j
   // Horário da lista que a equipe abriu (proposta em faixa): reserva mesmo fora da agenda, se continuar livre.
   const daEquipe: string[] = pend?.kind === 'janela_gestor' && Array.isArray(pend.slots) ? pend.slots.map(String) : [];
   const reservar = async (iso: string) => book(admin, c, iso, daEquipe.includes(iso) && (await semConflito(admin, c, [iso])).length > 0);
-  const num = t.match(/^\s*(?:op[çc][aã]o\s*)?(\d{1,2})\s*[).]?\s*$/i);
+  // Número pode vir junto de um cumprimento nas mensagens juntadas ("Olá, bom dia" + "1" — Vanessa Cristina,
+  // 29/09: o "1" foi ignorado e o horário foi para outra pessoa). Vale se só UMA linha for número.
+  const NUM_RE = /^\s*(?:op[çc][aã]o\s*)?(\d{1,2})\s*[).]?\s*$/i;
+  const linhasNum = t.split('\n').map((l) => l.match(NUM_RE)).filter(Boolean) as RegExpMatchArray[];
+  const num = linhasNum.length === 1 ? linhasNum[0] : null;
   // Número solto só vale para lista numerada (antiga); desde 29/09 a lista vem por dia, sem número,
   // e "16" é hora, não a 16ª opção.
   const listaNumerada = /\n1\) /.test(String(ultimaNossa?.texto ?? ''));
@@ -736,6 +740,17 @@ async function handleCandidate(admin: SupabaseClient, sess: Row, text: string, j
   if (sess.status !== 'agendado' && sess.status !== 'aguardando_gestor' && offered.length) {
     const unica = horaDaLista(t, offered);
     if (unica) { await reservar(unica); return; }
+    // "Qualquer horário" / "o que tiver disponível" (Vanessa Floriano, 29/09: recebeu a lista 2 vezes e
+    // uma pergunta "hoje ou amanhã?"). Oferece o primeiro livre da lista; "sim" marca.
+    if (/^(pode ser )?(qualquer (um|hor[aá]rio|dia|hora)|(o )?que tiver( dispon[ií]vel| livre)?|tanto faz|o primeiro( que tiver)?|o mais cedo|qualquer)[\s!.,]*$/i.test(t.split('\n').at(-1)!.trim())) {
+      const livres = new Set(await freeSlots(admin, c.job.id, 1000));
+      const prim = [...offered].sort().find((s) => livres.has(s) && Date.parse(s) > Date.now() + 30 * 60_000);
+      if (prim) {
+        await toCand(admin, c, `Posso marcar *${fmtSlot(prim)}*? É só me responder "sim" 😊 Se preferir outro, me diga o dia e o horário.`,
+          { status: 'negociando', pending_request: { kind: 'unico_horario', starts_at: prim } });
+        return;
+      }
+    }
   }
 
   const r = await classify(c, t, offered, admin);

@@ -219,6 +219,7 @@ REGRAS:
 1b. As informações liberadas são LITERAIS: não deduza nem complete. Ex.: "6x1" quer dizer 6 dias de trabalho e 1 de folga — NÃO diz quais dias; nunca diga "segunda a sábado", se trabalha domingo/feriado, qual é a folga, se é diária, temporário, fixo ou freelance, a menos que esteja escrito. Pergunta sobre isso = regra 1.
 1c. Toda pergunta da pessoa precisa de resposta, mesmo no meio da coleta de dados. Se ela repetir uma pergunta ou disser que ouviu algo diferente (ex.: "me falaram que era diária"), responda o que está nas informações (ou a regra 1) e chame chamar_equipe — nunca ignore e siga adiante.
 2. Nunca prometa vaga, entrevista ou contratação. Diga que a equipe analisa os currículos e entra em contato se o perfil combinar.
+2b. Se a pessoa já disse que quer se candidatar (ex.: a 1ª mensagem "Quero me candidatar"), nunca pergunte se ela quer se candidatar: responda o cumprimento e peça o currículo.
 3. O currículo é recebido automaticamente quando a pessoa manda um PDF, foto ou arquivo Word — você não precisa fazer nada com arquivos. Se ela ainda não mandou, lembre gentilmente. Se ela só avisou que vai mandar ("estou enviando meu currículo"), responda curto (ex.: "Pode mandar! 😊") — não diga que está lendo, porque o arquivo ainda não chegou. Se a última coisa que ela mandou foi um [Arquivo] e ainda não houve a mensagem "Recebi seu currículo", diga só que está lendo o currículo (não afirme que foi recebido: a confirmação chega sozinha em seguida). Se a última resposta sobre o arquivo foi "Não consegui ler esse arquivo" ou "Tive um probleminha", o currículo NÃO foi recebido: peça gentilmente para mandar de novo (PDF, Word ou foto nítida) e não diga que a equipe vai analisar.
 4. Se a pessoa NÃO tiver currículo, colete em conversa, uma pergunta por vez: nome completo, bairro e cidade, experiências anteriores (onde, função, quanto tempo), escolaridade, disponibilidade de horário. Não pergunte idade, estado civil, filhos, religião, saúde, CPF ou documentos (a não ser o que estiver na lista DADOS QUE FALTAM NA FICHA). Com tudo em mãos, chame registrar_sem_curriculo com um resumo organizado e agradeça.
 5. Assunto fora do processo seletivo (pedido de comida, reclamação, fornecedor, vendas): diga educadamente que este número é só para currículos e que outros assuntos são tratados pelos canais da loja.
@@ -814,6 +815,16 @@ async function handleIncoming(admin: SupabaseClient, m: Incoming): Promise<void>
     else if (faltas.length) reply = 'Pronto, sua ficha está completa! ✅ Nossa equipe vai analisar e, se o seu perfil combinar com a vaga, entramos em contato.';
     else reply = 'Certo! Se tiver alguma dúvida sobre a vaga, é só perguntar 🙂';
     log('WARN', 'modelo sem texto: resposta padrão', { conv: conv.id, faltas: faltasAgora });
+  }
+  // Sem currículo ainda: toda resposta termina pedindo o arquivo (Iva, 2026-09-29: "Bm dia" → a IA
+  // explicou a vaga e terminou em "Tem alguma dúvida?"; ela nunca mandou o currículo e sumiu).
+  if (reply && !closeAfter && !fichaId() && !usadas.has('registrar_sem_curriculo') && !usadas.has('chamar_equipe')
+    && !/curr[ií]culo/i.test(reply)
+    // Quem já disse que não tem currículo está fazendo a ficha na conversa: não repete o pedido.
+    && !(hist ?? []).some((h) => h.role === 'user' && /n[aã]o (tenho|possuo|fiz|tem)( um| o| nenhum)? ?(curr|cv)|sem (curr[ií]culo|cv)|primeiro emprego/i.test(String(h.content)))) {
+    reply = `${reply}
+
+Para participar, me manda seu *currículo* por aqui (PDF, Word ou foto). Se não tiver, me avisa que a gente faz a ficha por aqui mesmo 😊`;
   }
   if (reply) await say(admin, conv, to(m), reply.replace(/\*\*(.+?)\*\*/g, '*$1*'));
   if (closeAfter) await admin.from('bot_conversations').update({ status: 'encerrada' }).eq('id', conv.id);
