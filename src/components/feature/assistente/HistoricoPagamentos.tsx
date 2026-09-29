@@ -146,9 +146,11 @@ function ItemPagamento({ p, onAcao, onStatus }: {
   );
 }
 
-export default function HistoricoPagamentos({ call, onFechar, onAcao, versao = 0 }: {
+export default function HistoricoPagamentos({ call, onFechar, onAcao, versao = 0, embutido = false }: {
   call: Call;
-  onFechar: () => void;
+  onFechar?: () => void;
+  /** Dentro da conversa (grupo Pagamentos do Financeiro, dono 2026-09-29): sem tela por cima nem cabeçalho. */
+  embutido?: boolean;
   /** Pagar (PIN/digital) e Cancelar passam pelo chat, que já cuida do PIN e da faixa de pagamentos. */
   onAcao: (p: PagamentoHistorico, op: 'ok' | 'no') => void | Promise<void>;
   /** Muda quando um pagamento mudou fora daqui (pagou, cancelou): recarrega a lista. */
@@ -184,7 +186,8 @@ export default function HistoricoPagamentos({ call, onFechar, onAcao, versao = 0
 
   const itens = lista ?? [];
   return (
-    <div data-sem-arrasto className="absolute inset-0 z-10 flex flex-col bg-zinc-50">
+    <div data-sem-arrasto className={embutido ? 'flex-1 min-h-0 flex flex-col bg-zinc-50' : 'absolute inset-0 z-10 flex flex-col bg-zinc-50'}>
+      {!embutido && (
       <div className="flex items-center gap-2.5 px-4 h-14 border-b border-zinc-100 bg-white flex-shrink-0">
         <button onClick={onFechar} className="w-8 h-8 flex items-center justify-center rounded-xl text-zinc-500 hover:bg-zinc-100 cursor-pointer" aria-label="Voltar para a conversa">
           <i className="ri-arrow-left-line text-xl" />
@@ -197,6 +200,7 @@ export default function HistoricoPagamentos({ call, onFechar, onAcao, versao = 0
           <i className={`ri-refresh-line text-lg ${carregando ? 'inline-block animate-spin' : ''}`} />
         </button>
       </div>
+      )}
       <div className="flex gap-1.5 px-3 py-2 overflow-x-auto flex-shrink-0 bg-white border-b border-zinc-100" role="group" aria-label="Filtrar pagamentos">
         {FILTROS.map((f) => (
           <button key={f.id} onClick={() => setFiltro(f.id)} aria-pressed={filtro === f.id}

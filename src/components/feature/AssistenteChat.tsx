@@ -528,9 +528,6 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
   const [pendAberta, setPendAberta] = useState(false);
   const [pendVersao, setPendVersao] = useState(0);
   const [pendNovas, setPendNovas] = useState(0);
-  // Histórico de solicitações de pagamento (dono, 2026-09-27): uma linha por pedido, com o status atual.
-  const [histPagAberto, setHistPagAberto] = useState(false);
-  useEffect(() => { if (!open) setHistPagAberto(false); }, [open]);
   // "Ver a mensagem" do pedido do grupo: a conversa do grupo abre NESSA mensagem (não no fim) e ela
   // pisca destacada. focoMsg vale para a próxima carga da conversa; destaque some sozinho.
   const focoMsg = useRef<number | null>(null);
@@ -754,7 +751,6 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
   // Ações rápidas em tela cheia são mais uma camada: o voltar fecha só elas.
   useVoltarFecha(open && menuAcoes && (modo === 'full' || variant === 'embedded'), () => setMenuAcoes(false), 'assistente-acoes');
   useVoltarFecha(open && pendAberta, () => setPendAberta(false), 'assistente-pendencias');
-  useVoltarFecha(open && histPagAberto, () => setHistPagAberto(false), 'assistente-historico-pagamentos');
   // Ação rápida aberta (Vendas do dia, Contas vencendo…) é mais uma camada: o voltar fecha só ela
   // e volta ao chat. Sem isso o voltar do Android fechava o chat inteiro (dono, 2026-09-19).
   useVoltarFecha(open && !!acao, () => setAcao(null), 'assistente-acao');
@@ -1467,11 +1463,6 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
         <div className="flex-shrink-0 border-b border-zinc-100">
           <div className="flex items-center gap-2 px-3 py-2">
             <span className="flex-1 min-w-0 truncate text-[11px] font-semibold text-zinc-400">{agrupar === 'tipo' ? 'Separado por tipo' : 'Tudo na ordem de chegada'}</span>
-            {aba === 'pagamentos' && (
-              <button onClick={() => setHistPagAberto(true)} className="h-8 px-2.5 flex-shrink-0 flex items-center gap-1 rounded-xl bg-emerald-50 text-emerald-700 text-xs font-bold hover:bg-emerald-100 cursor-pointer">
-                <i className="ri-history-line" /> Histórico
-              </button>
-            )}
             <div className="flex p-0.5 rounded-xl bg-zinc-100 flex-shrink-0" role="group" aria-label="Agrupar">
               {([['chegada', 'ri-time-line', 'Chegada'], ['tipo', 'ri-stack-line', 'Tipo']] as const).map(([id, icone, nome]) => (
                 <button key={id} onClick={() => escolherAgrupar(id)} aria-pressed={agrupar === id}
@@ -1497,7 +1488,11 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
       )}
 
       {/* Lista de conversas ou a conversa aberta */}
-      {vista === 'lista' ? listaConversas : listaTipos ? gruposTipo : (
+      {/* Financeiro › Pagamentos (dono, 2026-09-29): as mensagens de status eram só histórico, repetindo
+          o mesmo Pix a cada mudança — o grupo abre direto o histórico, uma linha por solicitação. */}
+      {vista === 'lista' ? listaConversas : listaTipos ? gruposTipo : separaTipos && tipo === 'pagamento' && aba === 'pagamentos' ? (
+        <HistoricoPagamentos embutido call={call} onAcao={(p, op) => acaoPagamento(p as unknown as Payment, op)} versao={pendVersao} />
+      ) : (
       <div
         ref={scrollRef}
         // "No fim" = a poucos pixels do fim. Com 80 px, quem subia uma ou duas linhas para ler ainda
@@ -1746,16 +1741,6 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
           onPagarConta={pagarConta}
           onAbrir={abrirPendencia}
           onPedir={pedirPendencia}
-        />
-      )}
-
-      {/* Depois das pendências e antes do PIN: o "Pagar" daqui abre o PIN por cima do histórico. */}
-      {histPagAberto && (
-        <HistoricoPagamentos
-          call={call}
-          onFechar={() => setHistPagAberto(false)}
-          onAcao={(p, op) => acaoPagamento(p as unknown as Payment, op)}
-          versao={pendVersao}
         />
       )}
 
