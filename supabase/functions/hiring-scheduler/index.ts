@@ -517,6 +517,33 @@ function casaPreferencia(iso: string, p: Row): boolean {
   if (p.periodo === 'noite' && hm < '18:00') return false;
   return true;
 }
+// Mensagem curta com UMA hora exata ("19:40", "hoje 19h40", "quarta 15:00") que casa com um só horário
+// oferecido → esse horário. Com "não", "depois", "antes" ou mais de uma hora, deixa para a IA.
+const DIAS_SEMANA = ['domingo', 'segunda', 'terca', 'quarta', 'quinta', 'sexta', 'sabado'];
+function horaDaLista(texto: string, offered: string[]): string | null {
+  const t = texto.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+  if (t.length > 40 || /\b(nao|depois|antes|ate|apos|entre|ou)\b/.test(t)) return null;
+  const horas = [...t.matchAll(/\b(\d{1,2})\s*(?::|h)\s*(\d{2})?\s*(?:h|hs|min)?\b/g)]
+    .map((m) => `${m[1].padStart(2, '0')}:${m[2] ?? '00'}`).filter((hm) => hm <= '23:59');
+  if (new Set(horas).size !== 1) return null;
+  const hoje = localDate(new Date());
+  let dia: string | null = null;
+  if (/\bhoje\b/.test(t)) dia = hoje;
+  else if (/\bamanha\b/.test(t)) dia = localDate(new Date(Date.now() + 86_400_000));
+  else {
+    const ws = DIAS_SEMANA.findIndex((w) => new RegExp(`\\b${w}\\b`).test(t));
+    const dm = t.match(/\b(\d{1,2})\/(\d{1,2})\b/);
+    if (dm) dia = `${hoje.slice(0, 4)}-${dm[2].padStart(2, '0')}-${dm[1].padStart(2, '0')}`;
+    else if (ws >= 0) {
+      for (let i = 0; i < 7 && !dia; i++) {
+        const d = new Date(Date.now() + i * 86_400_000);
+        if (new Date(`${localDate(d)}T12:00:00-03:00`).getUTCDay() === ws) dia = localDate(d);
+      }
+    }
+  }
+  const casam = offered.filter((s) => { const p = localParts(s); return p.hm === horas[0] && (!dia || p.d === dia); });
+  return casam.length === 1 ? casam[0] : null;
+}
 function descrPref(p: Row): string {
   const partes: string[] = [];
   if (p.data) partes.push(new Date(`${p.data}T12:00:00-03:00`).toLocaleDateString('pt-BR', { timeZone: TZ, weekday: 'long', day: '2-digit', month: '2-digit' }));
@@ -704,6 +731,12 @@ async function handleCandidate(admin: SupabaseClient, sess: Row, text: string, j
   // e "16" é hora, não a 16ª opção.
   const listaNumerada = /\n1\) /.test(String(ultimaNossa?.texto ?? ''));
   if (num && listaNumerada && offered[Number(num[1]) - 1] && sess.status !== 'aguardando_gestor') { await reservar(offered[Number(num[1]) - 1]); return; }
+  // Hora exata da lista, sem IA (Ana Lívia, 2026-09-29: "19:40" + "Hoje" juntos viraram "hoje à noite"
+  // e ela recebeu a lista de novo; só marcou 1 h depois, repetindo "19:40").
+  if (sess.status !== 'agendado' && sess.status !== 'aguardando_gestor' && offered.length) {
+    const unica = horaDaLista(t, offered);
+    if (unica) { await reservar(unica); return; }
+  }
 
   const r = await classify(c, t, offered, admin);
   let intencao = String(r.intencao ?? 'outro'); // pode virar 'propor' na trava do dia (abaixo)
