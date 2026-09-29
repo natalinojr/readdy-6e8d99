@@ -187,12 +187,12 @@ const casos = [
     documento:['na','Não precisa: Pix sem nota'],
     lancamento:['problema','Saiu do banco, mas ninguém disse se foi compra, despesa ou outra coisa','dizer o que foi esse Pix'],
     estoque:['na','Não precisa'], conta:['na','Não precisa: já foi pago'], pagamento:['ok','Pago por Pix','','19/09'],
-    banco:['problema','Está no extrato, mas não está ligado a nenhuma compra ou despesa','nada aqui — se liga sozinho quando você disser o que foi o Pix']},['Pix sem dizer o que foi']),
+    banco:['espera','Está no extrato — liga sozinho quando você disser o que foi o Pix']},['Pix sem dizer o que foi']),
   C('porto','pagamento','PIX PARA MERCADO DO PORTO','saiu do banco sem dizer o que foi','23/09',188.6,{
     documento:['na','Não precisa: Pix sem nota'],
     lancamento:['problema','Saiu do banco, mas ninguém disse se foi compra, despesa ou outra coisa','dizer o que foi esse Pix'],
     estoque:['na','Não precisa'], conta:['na','Não precisa: já foi pago'], pagamento:['ok','Pago por Pix','','23/09'],
-    banco:['problema','Está no extrato, mas não está ligado a nenhuma compra ou despesa','nada aqui — se liga sozinho quando você disser o que foi o Pix']},['Pix sem dizer o que foi']),
+    banco:['espera','Está no extrato — liga sozinho quando você disser o que foi o Pix']},['Pix sem dizer o que foi']),
   C('frigo','compra','FRIGORÍFICO LITORAL','NF 55012 · 6 itens','20/09',1980,{
     documento:['ok','Nota nº 55012 recebida'], lancamento:['ok','Lançada em Compras'], estoque:['ok','Os 6 itens entraram no estoque'],
     conta:['ok','Conta a pagar criada','','vence 04/10'], pagamento:['pendente','Ainda não paga — vence em 04/10','pagar até 04/10 (no prazo)'], banco:['espera','Espera o pagamento']}),
@@ -589,7 +589,7 @@ function campoHTML(t,i,o){
 // Linha do tempo horizontal: as 6 etapas do caso; as que ESTA tarefa fecha ficam destacadas.
 function trilho(c, fecha){
   return `<div class="mt-2.5 flex items-start">${c.etapas.map((e,i)=>{
-    const alvo=fecha.includes(e.id), s=EST[e.estado];
+    const alvo=fecha.includes(e.id)&&ruim(e.estado), s=EST[e.estado];
     const bola = e.estado==='ok'?'bg-emerald-500 text-white border-emerald-500':grave(e.estado)?'bg-red-500 text-white border-red-500':e.estado==='pendente'?'bg-amber-400 text-white border-amber-400':e.estado==='na'?'bg-zinc-50 text-zinc-300 border-dashed border-zinc-200':'bg-white text-zinc-300 border-zinc-300';
     return `<div class="flex-1 min-w-0 flex flex-col items-center relative">
       ${i>0?`<div class="absolute top-3.5 h-0.5 ${c.etapas[i-1].estado==='ok'?'bg-emerald-300':'bg-zinc-200'}" style="left:-50%;right:50%"></div>`:''}
@@ -616,7 +616,7 @@ function etapasAbertas(c, fecha){
         <div class="absolute left-[8.33%] top-[54px] h-1 rounded-full bg-gradient-to-r from-emerald-400 to-emerald-500 transition-all" style="width:calc(${pctLinha}% * 0.8334)"></div>
         <ol class="relative grid grid-cols-6 gap-1.5">
         ${c.etapas.map(e=>{
-          const alvo=fecha.includes(e.id), s=EST[e.estado];
+          const alvo=fecha.includes(e.id)&&ruim(e.estado), s=EST[e.estado];
           const bola = e.estado==='ok'?'bg-emerald-500 text-white shadow-emerald-200':grave(e.estado)?'bg-red-500 text-white shadow-red-200':e.estado==='pendente'?'bg-amber-400 text-white shadow-amber-200':e.estado==='na'?'bg-white text-zinc-300 border-2 border-dashed border-zinc-200 shadow-none':'bg-white text-zinc-400 border-2 border-zinc-200 shadow-none';
           return `<li class="flex flex-col items-center text-center">
             <div class="relative">
