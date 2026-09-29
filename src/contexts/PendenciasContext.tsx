@@ -71,8 +71,13 @@ export const KIND_CONFIG: Record<string, { label: string; icone: string; corBg: 
 // o resto é dinheiro e continua com a turma do Financeiro, como antes.
 const PERFIS_APROVAM = ['admin', 'gerente', 'supervisao'];
 const PERFIS_FINANCEIRO = ['admin', 'gerente', 'financeiro'];
-const KINDS_OPERACIONAIS = new Set(['tarefa_vencida', 'estoque_critico', 'recebimento_sem_nota', 'recebimento_parado']);
-export function pendenciaVisivelPara(kind: string, perfil: string | undefined): boolean {
+const KINDS_OPERACIONAIS = new Set(['estoque_critico', 'recebimento_sem_nota', 'recebimento_parado']);
+// "N tarefas vencidas" (2026-09-29, caso Thatiele): o cron conta as tarefas DO DONO na loja
+// (criadas por ele ou dele), então a linha é só dele. As tarefas vencidas de cada pessoa estão em
+// "Minhas tarefas" no chat. Antes era operacional e todo mundo da loja via as 8 do dono.
+const DONO_EMAIL = 'natalinojr.engel@gmail.com';
+export function pendenciaVisivelPara(kind: string, perfil: string | undefined, email?: string | null): boolean {
+  if (kind === 'tarefa_vencida') return email?.toLowerCase() === DONO_EMAIL;
   if (!perfil) return false;
   if (kind === 'aprovacao') return PERFIS_APROVAM.includes(perfil);
   if (KINDS_OPERACIONAIS.has(kind)) return true;
@@ -143,6 +148,7 @@ export function PendenciasProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
   const tenantId = user?.tenantId;
   const perfil = user?.perfil;
+  const email = user?.email;
   const [linhas, setLinhas] = useState<Pendencia[]>([]);
   const [carregando, setCarregando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
@@ -163,10 +169,10 @@ export function PendenciasProvider({ children }: { children: ReactNode }) {
     if (error) setErro(error.message);
     else {
       setErro(null);
-      setLinhas((data ?? []).map((r) => fromDB(r as DBPendencia)).filter((p) => pendenciaVisivelPara(p.kind, perfil)));
+      setLinhas((data ?? []).map((r) => fromDB(r as DBPendencia)).filter((p) => pendenciaVisivelPara(p.kind, perfil, email)));
     }
     setCarregando(false);
-  }, [tenantId, perfil]);
+  }, [tenantId, perfil, email]);
 
   useEffect(() => {
     carregar();
