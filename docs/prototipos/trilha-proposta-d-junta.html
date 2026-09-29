@@ -225,12 +225,13 @@ const OUTRO = {
     {l:'Pagar agora pelo Inter', ic:'ri-bank-line', campo:'pagar'},
     {l:'Já paguei — ligar ao extrato', ic:'ri-links-line', campo:'escolha', ops:['Saída 23/09 · R$ 1.444,00 · COSTA E MONT','Procurar outra linha…']},
     {l:'Paguei em dinheiro', ic:'ri-money-dollar-box-line', campo:'data'},
+    {l:'Pedir o boleto ao fornecedor', ic:'ri-mail-send-line', campo:'pedir'},
     {l:'Renegociei — mudar vencimento', ic:'ri-calendar-event-line', campo:'data'},
     {l:'Cancelar a conta a pagar (não é devida)', ic:'ri-close-circle-line', campo:'texto', ph:'motivo (fica registrado)'},
   ],
   estoque: [
     {l:'Ligar os itens da nota aos insumos', ic:'ri-links-line', campo:'vincular'},
-    {l:'Chegou em outra data', ic:'ri-calendar-line', campo:'data'},
+    {l:'Chegou em outro dia', ic:'ri-calendar-line', campo:'chegou'},
     {l:'Chegou só uma parte', ic:'ri-contrast-line', campo:'texto', ph:'o que faltou'},
     {l:'Foi devolvido', ic:'ri-arrow-go-back-line', campo:'texto', ph:'motivo'},
     {l:'Não vai ao estoque (uso e consumo)', ic:'ri-forbid-line', campo:'nenhum'},
@@ -270,12 +271,12 @@ const GRUPOS = [
 let T = [
   { id:1, g:'pix', caso:'joao', etapas:['lancamento','banco'], urg:true, sel:true, porque:'João recebeu R$ 250,00 em 3 sábados de agosto, todos lançados como diária.', sug:[['Lançar como 1 diária de João P. Silva','ri-user-line'],['Foram vários dias…','ri-calendar-2-line','diarias']] },
   { id:2, g:'pix', caso:'porto', etapas:['lancamento','banco'], urg:true, sel:false, porque:'Da última vez que você pagou este destinatário, foi lançado como compra de hortifruti.', sug:[['Lançar como compra — Hortifruti','ri-shopping-cart-2-line','itens'],['Ler a notinha (foto/QR)','ri-camera-line','itens']] },
-  { id:3, g:'vencidas', caso:'costa', etapas:['pagamento','banco'], urg:true, sel:true, porque:'Venceu há 28 dias. Pagando hoje, os juros ficam em cerca de R$ 43,32.', sug:[['Pagar agora — R$ 1.487,32 com juros','ri-bank-line','pagar']] },
+  { id:3, g:'vencidas', caso:'costa', etapas:['pagamento','banco'], urg:true, sel:true, porque:'Venceu há 28 dias. Pagando hoje, os juros ficam em cerca de R$ 43,32.', sug:[['Pagar agora','ri-bank-line','pagar']] },
   { id:4, g:'vencidas', caso:'beemax', etapas:['pagamento','banco'], urg:true, sel:false, semForma:true, porque:'Venceu há 10 dias, mas ainda não chegou o boleto e esse fornecedor não tem chave Pix cadastrada — sem isso não dá para pagar pelo Inter.', sug:[['Colar o boleto ou o Pix','ri-barcode-line','pagar'],['Pedir o boleto ao fornecedor','ri-mail-send-line','pedir']] },
   { id:5, g:'vencidas', caso:'bebidas', etapas:['pagamento','banco'], urg:true, sel:true, porque:'Venceu há 7 dias.', sug:[['Pagar agora','ri-bank-line','pagar']] },
   { id:6, g:'conta', caso:'padaria', etapas:['conta'], urg:true, porque:'A compra não foi paga na hora e ninguém lançou a conta a pagar dela — assim ela nunca aparece para pagar. A padaria costuma dar 30 dias.', sug:[['Criar conta a pagar vencendo 25/10','ri-add-line']] },
   { id:7, g:'estoque', caso:'bebidas', etapas:['estoque'], urg:true, porque:'Chegou em 16/09, mas 12 dos 20 itens não estão ligados a nenhum insumo — por isso não entraram no estoque.', sug:[['Ver os itens e ligar os 12 que faltam','ri-links-line','vincular']] },
-  { id:8, g:'estoque', caso:'beemax', etapas:['estoque'], urg:false, sel:true, porque:'A compra foi lançada em 12/09, mas ninguém confirmou que a mercadoria chegou.', sug:[['Chegou hoje','ri-check-line']] },
+  { id:8, g:'estoque', caso:'beemax', etapas:['estoque'], urg:false, sel:true, porque:'A compra foi lançada em 12/09, mas ninguém confirmou que a mercadoria chegou.', sug:[['Chegou hoje','ri-check-line'],['Chegou em outro dia…','ri-calendar-line','chegou']] },
   { id:9, g:'notas', caso:'nortesul', etapas:['lancamento','estoque','conta'], urg:false, sel:true, porque:'Os 7 itens da nota já estão ligados a insumos, e a nota diz que o prazo é de 30 dias.', sug:[['Lançar como compra (conta a pagar vence 24/10)','ri-shopping-cart-2-line']] },
   { id:10, g:'notas', caso:'embal', etapas:['lancamento','estoque','conta'], urg:false, sel:true, porque:'Nota desse fornecedor é sempre embalagem, que é despesa. O boleto dela já chegou.', sug:[['Lançar como despesa — Embalagens','ri-bill-line']] },
   { id:11, g:'classificar', caso:'mare', etapas:['lancamento'], urg:false, porque:'Nos meses anteriores, os honorários do contador foram para estas categorias:', sug:[['Serviços contábeis','ri-price-tag-3-line'],['Serviços de terceiros','ri-price-tag-3-line']] },
@@ -510,7 +511,7 @@ function semFormaHTML(t,c,P){
       </div>
       <div class="px-3 py-3 flex items-center justify-between gap-2 flex-wrap bg-zinc-50/60">
         <p class="text-[11px] text-zinc-500">Não tem nada disso? Peça ao fornecedor — quando o boleto chegar (e-mail ou foto no grupo), ele aparece aqui pronto para pagar.</p>
-        <button data-pedir="${t.id}" class="text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-zinc-800 text-white hover:bg-zinc-900"><i class="ri-mail-send-line"></i> Pedir o boleto</button>
+        <button data-ir-pedir="${t.id}" class="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-zinc-300 bg-white hover:bg-zinc-50"><i class="ri-mail-send-line"></i> Pedir o boleto…</button>
       </div>
     </div></div>`;
 }
@@ -607,7 +608,7 @@ function bindVinc(){
   document.querySelectorAll('[data-v-ok]').forEach(b=>b.onclick=e=>{ e.preventDefault(); if(b.disabled) return; const id=+b.dataset.vOk, d=vincData[id]||RECEBIDA_EM[T.find(x=>x.id===id).caso]; resolver(id,`Itens ligados — entrada no estoque em ${dBR(d)}${d<=ULTIMA_CONTAGEM?' (antes da contagem: não mudou o estoque atual)':''}`); });
 }
 function campoHTML(t,i,o){
-  if(['itens','diarias','pagar','vincular'].includes(o.campo)) return '';
+  if(['itens','diarias','pagar','vincular','pedir','chegou'].includes(o.campo)) return '';
   const k=`${t.id}-${i}`;
   if(o.campo==='nenhum') return '';
   if(o.campo==='data') return `<input type="date" value="2026-09-29" class="h-9 border border-zinc-200 rounded-lg px-2 text-xs">`;
@@ -682,8 +683,8 @@ function tarefa(t){
         <div class="mt-2 rounded-lg ${t.urg?'bg-red-50 border border-red-200':'bg-amber-50/60 border border-amber-100'} px-2.5 py-2">
           <p class="text-[11px] ${t.urg?'text-red-800':'text-amber-800'} flex items-start gap-1.5"><i class="ri-sparkling-2-line mt-px"></i><span><strong>Sugestão</strong> — ${t.porque}</span></p>
           <div class="flex flex-wrap gap-1.5 mt-2">
-            ${t.sug.map(([l,ic,abre],i)=>`<button data-sug="${t.id}" data-l="${l}" ${abre?`data-abre="${abre}"`:''} class="text-xs px-2.5 py-1.5 rounded-lg font-semibold ${i===0?(t.urg?'bg-red-500 text-white hover:bg-red-600':'bg-amber-500 text-white hover:bg-amber-600'):(t.urg?'bg-white border border-red-200 text-red-700 hover:bg-red-50':'bg-white border border-amber-200 text-amber-800 hover:bg-amber-50')}"><i class="${ic}"></i> ${l}</button>`).join('')}
-            <button data-outro="${t.id}" class="text-xs px-2.5 py-1.5 rounded-lg font-semibold border ${aberto?'bg-zinc-800 text-white border-zinc-800':'bg-white border-zinc-300 text-zinc-700 hover:bg-zinc-50'}"><i class="ri-more-2-line"></i> Resolver de outro jeito…</button>
+            ${t.sug.map(([l,ic,abre],i)=>{ const on = abre && aberto && OUTRO[t.g][esc]?.campo===abre; return `<button data-sug="${t.id}" data-l="${l}" ${abre?`data-abre="${abre}"`:''} class="text-xs px-2.5 py-1.5 rounded-lg font-semibold ${i===0?(t.urg?'bg-red-500 text-white hover:bg-red-600':'bg-amber-500 text-white hover:bg-amber-600'):(t.urg?'bg-white border border-red-200 text-red-700 hover:bg-red-50':'bg-white border border-amber-200 text-amber-800 hover:bg-amber-50')}"><i class="${ic}"></i> ${l}${abre?` <i class="${on?'ri-arrow-up-s-line':'ri-arrow-down-s-line'}"></i>`:''}</button>`; }).join('')}
+            <button data-outro="${t.id}" class="text-xs px-2.5 py-1.5 rounded-lg font-semibold border ${aberto&&!t.sug.some(x=>x[2]&&x[2]===OUTRO[t.g][esc]?.campo)?'bg-zinc-800 text-white border-zinc-800':'bg-white border-zinc-300 text-zinc-700 hover:bg-zinc-50'}"><i class="ri-more-2-line"></i> Resolver de outro jeito…</button>
           </div>
         </div>
         ${aberto?`<div class="mt-2 rounded-lg border border-zinc-200 bg-white">
@@ -691,8 +692,8 @@ function tarefa(t){
           <div class="divide-y divide-zinc-100">
           ${outros.map((o,i)=>`<label class="flex flex-col sm:flex-row sm:items-center gap-2 px-3 py-2 cursor-pointer ${esc===i?'bg-amber-50/50':'hover:bg-zinc-50'}">
             <span class="flex items-center gap-2 text-sm flex-1 min-w-0"><input type="radio" name="o${t.id}" data-esc="${t.id}" data-i="${i}" ${esc===i?'checked':''} class="accent-amber-500"><i class="${o.ic} text-zinc-400"></i>${o.l}</span>
-            ${esc===i&&o.campo!=='pagar'&&o.campo!=='vincular'?`<span class="flex flex-wrap items-center gap-2 pl-6 sm:pl-0">${campoHTML(t,i,o)}<button data-conf="${t.id}" data-l="${o.l}" class="h-9 px-3 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-xs font-semibold"><i class="ri-check-line"></i> Confirmar</button></span>`:''}
-          </label>${esc===i&&o.campo==='itens'?itensHTML(t):''}${esc===i&&o.campo==='diarias'?diariasHTML(t):''}${esc===i&&o.campo==='pagar'?pagarHTML(t):''}${esc===i&&o.campo==='vincular'?vincHTML(t):''}`).join('')}
+            ${esc===i&&!['pagar','vincular','pedir','chegou'].includes(o.campo)?`<span class="flex flex-wrap items-center gap-2 pl-6 sm:pl-0">${campoHTML(t,i,o)}<button data-conf="${t.id}" data-l="${o.l}" class="h-9 px-3 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-xs font-semibold"><i class="ri-check-line"></i> Confirmar</button></span>`:''}
+          </label>${esc===i&&o.campo==='itens'?itensHTML(t):''}${esc===i&&o.campo==='diarias'?diariasHTML(t):''}${esc===i&&o.campo==='pagar'?pagarHTML(t):''}${esc===i&&o.campo==='vincular'?vincHTML(t):''}${esc===i&&o.campo==='pedir'?pedirHTML(t):''}${esc===i&&o.campo==='chegou'?chegouHTML(t):''}`).join('')}
           <div class="px-3 py-2 flex items-center justify-between gap-2 bg-zinc-50/70 rounded-b-lg">
             <span class="text-[11px] text-zinc-400">Caso diferente de tudo isso?</span>
             <button class="text-xs font-semibold text-zinc-600 hover:text-zinc-900"><i class="ri-external-link-line"></i> Abrir na tela de ${g.id==='vencidas'?'Contas a pagar':g.id==='notas'?'Notas de entrada':g.id==='estoque'?'Compras':g.id==='pix'||g.id==='extrato'?'Conciliação':'Contas a pagar'}</button>
@@ -713,15 +714,19 @@ function lista(){
   if(gavetaCaso) desenharGaveta();
   document.querySelectorAll('[data-sug]').forEach(b=>b.onclick=()=>{
     const id=+b.dataset.sug;
-    if(b.dataset.abre==='pedir'){ pedirBoleto(id); return; }
-    if(b.dataset.abre){ const t=T.find(x=>x.id===id), campo=b.dataset.abre; abertoOutro=id; escolhido[id]=OUTRO[t.g].findIndex(o=>o.campo===campo); if(campo==='diarias') iniDias(t, t.caso==='joao'?2:1); lista(); document.getElementById(({itens:'itens',diarias:'dias',pagar:'pagar',vincular:'vinc'})[campo]+id)?.scrollIntoView({block:'nearest',behavior:'smooth'}); return; }
+    if(b.dataset.abre){ const t=T.find(x=>x.id===id), campo=b.dataset.abre;
+      const idx=OUTRO[t.g].findIndex(o=>o.campo===campo); if(abertoOutro===id && escolhido[id]===idx){ abertoOutro=null; lista(); return; }
+      abertoOutro=id; escolhido[id]=OUTRO[t.g].findIndex(o=>o.campo===campo); if(campo==='diarias') iniDias(t, t.caso==='joao'?2:1); lista(); document.getElementById(({itens:'itens',diarias:'dias',pagar:'pagar',vincular:'vinc',pedir:'pedir',chegou:'chegou'})[campo]+id)?.scrollIntoView({block:'nearest',behavior:'smooth'}); return; }
     resolver(id,b.dataset.l);
   });
   bindItens(); bindDias(); bindVinc();
   document.querySelectorAll('[data-pag-ok]').forEach(b=>b.onclick=e=>{ e.preventDefault(); resolver(+b.dataset.pagOk, b.dataset.l); });
   document.querySelectorAll('[data-cod-boleto]').forEach(i=>i.oninput=()=>{ const n=i.value.replace(/\D/g,''); if(n.length<47) return; const t=T.find(x=>x.id===+i.dataset.codBoleto); Object.assign(PAGTO[t.caso],{forma:'Boleto', cod:i.value}); t.semForma=false; t.porque='Venceu há 10 dias. Boleto colado agora — confira e pague.'; t.sug=[['Pagar agora','ri-bank-line','pagar']]; lista(); });
   document.querySelectorAll('[data-cod-pix]').forEach(i=>i.oninput=()=>{ if(!/^000201/.test(i.value.trim()) || i.value.trim().length<40) return; const t=T.find(x=>x.id===+i.dataset.codPix); Object.assign(PAGTO[t.caso],{forma:'Pix copia e cola', cod:'recebedor: BEEMAX DISTRIBUIDORA LTDA · valor conferido'}); t.semForma=false; t.porque='Venceu há 10 dias. Pix colado agora — confira e pague.'; t.sug=[['Pagar agora','ri-bank-line','pagar']]; lista(); });
-  document.querySelectorAll('[data-pedir]').forEach(b=>b.onclick=e=>{ e.preventDefault(); pedirBoleto(+b.dataset.pedir); });
+  document.querySelectorAll('[data-ir-pedir]').forEach(b=>b.onclick=e=>{ e.preventDefault(); const id=+b.dataset.irPedir, t=T.find(x=>x.id===id); abertoOutro=id; escolhido[id]=OUTRO[t.g].findIndex(o=>o.campo==='pedir'); lista(); });
+  document.querySelectorAll('[data-chegou-data]').forEach(i=>i.onchange=()=>{ chegouData[+i.dataset.chegouData]=i.value; document.getElementById('chegouAviso'+i.dataset.chegouData).innerHTML=avisoContagemData(i.value); });
+  document.querySelectorAll('[data-chegou-ok]').forEach(b=>b.onclick=e=>{ e.preventDefault(); const id=+b.dataset.chegouOk, d=chegouData[id]||'2026-09-29'; resolver(id, `Chegou em ${dBR(d)}${d<=ULTIMA_CONTAGEM?' (antes da contagem: não mudou o estoque atual)':''}`); });
+  document.querySelectorAll('[data-pedir-enviar]').forEach(b=>b.onclick=e=>{ e.preventDefault(); const id=+b.dataset.pedirEnviar; const canal=document.querySelector(`[data-pedir-canal="${id}"]:checked`)?.value||'e-mail'; pedirBoleto(id, canal); });
   document.querySelectorAll('[data-pag-cancel]').forEach(b=>b.onclick=e=>{ e.preventDefault(); abertoOutro=null; lista(); });
   document.querySelectorAll('[data-conf]').forEach(b=>b.onclick=e=>{e.preventDefault(); resolver(+b.dataset.conf,b.dataset.l+' (manual)');});
   document.querySelectorAll('[data-outro]').forEach(b=>b.onclick=()=>{const id=+b.dataset.outro; abertoOutro=abertoOutro===id?null:id; lista();});
@@ -735,9 +740,50 @@ function lista(){
     T.filter(t=>t.g===g&&t.sel&&passaT(t)).map(t=>t.id).forEach(id=>resolver(id,'em lote: '+GRUPOS.find(x=>x.id===g).lote,true)); setTimeout(render,380);});
   bindCasos();
 }
-function pedirBoleto(id){
+// Pedir o boleto: mostra para quem, por onde e o texto ANTES de enviar (é mensagem para fora).
+const CONTATO = { beemax:{ nome:'BEEMAX DISTRIBUIDORA', email:'financeiro@beemax.com.br', whats:'(41) 99812-4471' } };
+// Chegou em outro dia: escolhe a data; antes da última contagem avisa que não muda o estoque atual
+let chegouData = {};
+function chegouHTML(t){
+  const d=chegouData[t.id]||'2026-09-29';
+  return `<div id="chegou${t.id}" class="mx-3 mb-3 rounded-xl border border-zinc-200 bg-white overflow-hidden">
+    <div class="px-3 py-3 flex items-center gap-3 flex-wrap text-xs">
+      <label class="flex items-center gap-2 text-zinc-600">A mercadoria chegou em
+        <input type="date" data-chegou-data="${t.id}" value="${d}" min="2026-09-12" max="2026-09-29" class="h-8 border border-zinc-200 rounded-lg px-2 text-xs bg-white"></label>
+      <span class="text-[11px] text-zinc-400">(a compra foi lançada em 12/09)</span>
+    </div>
+    <div id="chegouAviso${t.id}">${avisoContagemData(d)}</div>
+    <div class="flex items-center justify-end gap-2 px-3 py-2.5 border-t border-zinc-100 bg-zinc-50/60">
+      <button data-pag-cancel="${t.id}" class="text-xs font-semibold px-3 py-2 rounded-lg border border-zinc-200 bg-white hover:bg-zinc-50">Cancelar</button>
+      <button data-chegou-ok="${t.id}" class="text-xs font-semibold px-3 py-2 rounded-lg bg-amber-500 hover:bg-amber-600 text-white"><i class="ri-check-line"></i> Confirmar entrega</button>
+    </div></div>`;
+}
+function avisoContagemData(d){
+  if(d > ULTIMA_CONTAGEM) return `<p class="px-3 pb-2.5 text-[11px] text-zinc-500"><i class="ri-information-line"></i> Depois da última contagem (${dBR(ULTIMA_CONTAGEM)}): os itens <strong>somam no estoque atual</strong>.</p>`;
+  return `<div class="mx-3 mb-3 flex items-start gap-2 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-[11px] text-sky-800"><i class="ri-information-line mt-px"></i><span><strong>${dBR(d)} é antes da última contagem do estoque (${dBR(ULTIMA_CONTAGEM)}).</strong> A entrada fica no histórico e no custo dos insumos, mas <strong>não muda o estoque atual</strong> — a contagem de ${dBR(ULTIMA_CONTAGEM)} já considerou o que havia na loja.</span></div>`;
+}
+function pedirHTML(t){
+  const c=porId[t.caso], P=PAGTO[t.caso], K=CONTATO[t.caso]||{nome:c.titulo,email:'',whats:''};
+  const msg=P.pedido ? `Olá! Reforçando o pedido de ${P.pedido}: ainda precisamos do boleto (ou da chave Pix) da ${c.sub.split(' · ')[0]}, no valor de ${brl(c.valor)}, vencida em ${P.venc}. Pode nos enviar? Obrigado!` : `Olá! Aqui é do El Patron Paranaguá. Precisamos do boleto (ou da chave Pix) da ${c.sub.split(' · ')[0]}, no valor de ${brl(c.valor)}, que venceu em ${P.venc}. Pode nos enviar por aqui? Obrigado!`;
+  return `<div id="pedir${t.id}" class="mx-3 mb-3 rounded-xl border border-zinc-200 bg-white overflow-hidden">
+    <div class="px-3 py-2 bg-zinc-50 border-b border-zinc-100 text-xs text-zinc-600"><strong>${P.pedido?'Pedir de novo':'Pedir o boleto'} a ${K.nome}</strong>${P.pedido?` · já pedido em ${P.pedido}`:''} — confira antes de enviar.</div>
+    <div class="px-3 py-3 space-y-2.5 text-xs">
+      <div class="flex flex-wrap gap-2">
+        ${K.email?`<label class="flex items-center gap-2 px-2.5 py-2 rounded-lg border border-zinc-200 cursor-pointer has-[:checked]:border-zinc-800 has-[:checked]:bg-zinc-50"><input type="radio" name="canal${t.id}" data-pedir-canal="${t.id}" value="e-mail" checked class="accent-zinc-700"><i class="ri-mail-line text-zinc-400"></i> E-mail · <span class="text-zinc-500">${K.email}</span></label>`:''}
+        ${K.whats?`<label class="flex items-center gap-2 px-2.5 py-2 rounded-lg border border-zinc-200 cursor-pointer has-[:checked]:border-zinc-800 has-[:checked]:bg-zinc-50"><input type="radio" name="canal${t.id}" data-pedir-canal="${t.id}" value="WhatsApp" class="accent-zinc-700"><i class="ri-whatsapp-line text-zinc-400"></i> WhatsApp · <span class="text-zinc-500">${K.whats}</span></label>`:''}
+      </div>
+      <p class="text-[11px] text-zinc-400">Contatos do cadastro do fornecedor (Fornecedores). Para mudar, edite lá.</p>
+      <textarea rows="3" class="w-full rounded-lg border border-zinc-200 px-2.5 py-2 text-xs leading-relaxed focus:outline-none focus:border-amber-400">${msg}</textarea>
+      <p class="text-[11px] text-zinc-400">Quando o boleto chegar (resposta, e-mail ou foto no grupo), ele entra nesta conta a pagar e a tarefa vira "Pagar agora". Se não chegar em 2 dias, o sistema lembra de cobrar.</p>
+    </div>
+    <div class="flex items-center justify-end gap-2 px-3 py-2.5 border-t border-zinc-100 bg-zinc-50/60">
+      <button data-pag-cancel="${t.id}" class="text-xs font-semibold px-3 py-2 rounded-lg border border-zinc-200 bg-white hover:bg-zinc-50">Cancelar</button>
+      <button data-pedir-enviar="${t.id}" class="text-xs font-semibold px-3 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-900 text-white"><i class="ri-send-plane-line"></i> Enviar pedido</button>
+    </div></div>`;
+}
+function pedirBoleto(id, canal){
   const t=T.find(x=>x.id===id), c=porId[t.caso]; PAGTO[t.caso].pedido='29/09';
-  t.porque=`Venceu há 10 dias. <strong>Boleto pedido ao fornecedor em 29/09</strong> — quando chegar (e-mail ou foto no grupo), aparece aqui pronto para pagar. Se passar de 2 dias, o sistema lembra de cobrar.`;
+  t.porque=`Venceu há 10 dias. <strong>Boleto pedido por ${canal} em 29/09</strong> — quando chegar, aparece aqui pronto para pagar. Se não chegar em 2 dias, o sistema lembra de cobrar.`;
   t.sug=[['Colar o boleto ou o Pix','ri-barcode-line','pagar'],['Pedir de novo','ri-mail-send-line','pedir']];
   abertoOutro=null; lista();
 }
