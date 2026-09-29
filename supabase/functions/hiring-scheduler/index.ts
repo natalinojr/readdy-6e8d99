@@ -198,34 +198,55 @@ function fatosDaVaga(c: Ctx): string[] {
 }
 
 async function freeSlots(admin: SupabaseClient, jobId: string, limit = OFFER): Promise<string[]> {
-  // Lista para OFERECER (limit = OFFER): espalhada em até 3 dias. Antes eram os 6 primeiros horários,
-  // sempre do mesmo dia (às vezes o próprio dia), e vários candidatos pediram outro dia (15–21/09).
-  const { data, error } = await admin.rpc('fn_hiring_free_slots', { p_job: jobId, p_limit: limit === OFFER ? 300 : limit });
+  // Lista para OFERECER (limit = OFFER): todos os horários livres da semana (ver `semana`).
+  const { data, error } = await admin.rpc('fn_hiring_free_slots', { p_job: jobId, p_limit: limit === OFFER ? 500 : limit });
   if (error) { log('ERROR', 'fn_hiring_free_slots', { error: error.message }); return []; }
   const todos = ((data ?? []) as Row[]).map((r) => new Date(r.starts_at).toISOString());
-  return limit === OFFER ? espalhar(todos, OFFER) : todos;
+  return limit === OFFER ? semana(todos) : todos;
 }
-// 2 dias (3º só se os dois não enchem a lista); em cada dia, horários distribuídos ao longo do dia
-// (não só os primeiros). Ordem cronológica. Com 3 dias fixos, vaga de terça+quarta oferecia a terça
-// da semana seguinte com hoje e amanhã ainda cheios de horário (29/09).
-function espalhar(slots: string[], n: number): string[] {
-  if (slots.length <= n) return slots;
-  const porDia = new Map<string, string[]>();
-  for (const s of slots) { const d = localParts(s).d; porDia.set(d, [...(porDia.get(d) ?? []), s]); }
-  const todosDias = [...porDia.keys()];
-  const doisDias = todosDias.slice(0, 2);
-  const dias = doisDias.reduce((a, d) => a + porDia.get(d)!.length, 0) >= n ? doisDias : todosDias.slice(0, 3);
-  const escolhidos = new Set<string>();
-  const cota = Math.ceil(n / dias.length);
-  for (const d of dias) {
-    const l = porDia.get(d)!;
-    const k = Math.min(cota, l.length);
-    for (let i = 0; i < k; i++) escolhidos.add(l[Math.round((i * (l.length - 1)) / Math.max(1, k - 1))]);
+// Regra do dono (29/09): todos os horários livres da semana, cada dia da semana na sua próxima data
+// com horário livre. A semana seguinte só entra para o dia que não tem mais horário nesta (convite na
+// quarta → quarta 30/09 + terça 06/10). Antes: 6 horários espalhados em 3 dias, e a vaga de terça+quarta
+// oferecia a terça seguinte com hoje e amanhã cheios de horário.
+function semana(slots: string[]): string[] {
+  const dataDoDia = new Map<number, string>(); // dia da semana → primeira data com horário livre
+  for (const s of slots) {
+    const d = localParts(s).d;
+    const dow = new Date(`${d}T12:00:00-03:00`).getUTCDay();
+    if (!dataDoDia.has(dow)) dataDoDia.set(dow, d);
   }
-  for (const s of slots) { if (escolhidos.size >= n) break; escolhidos.add(s); } // dia com poucos horários
-  return [...escolhidos].sort().slice(0, n);
+  const datas = new Set(dataDoDia.values());
+  return slots.filter((s) => datas.has(localParts(s).d)).sort();
 }
-const slotsText = (slots: string[]) => slots.map((s, i) => `${i + 1}) ${fmtSlot(s)}`).join('\n');
+// Lista separada por dia, sem números (com 20–30 horários a pessoa erraria o número; responde com
+// dia e hora). Lista grande (> 40): cada dia vira faixa "das 14:00 às 19:40, de 20 em 20 min (menos …)".
+function slotsText(slots: string[]): string {
+  const porDia = new Map<string, string[]>();
+  for (const s of [...slots].sort()) { const { d, hm } = localParts(s); porDia.set(d, [...(porDia.get(d) ?? []), hm]); }
+  const hoje = localDate(new Date());
+  const amanha = localDate(new Date(Date.now() + 86_400_000));
+  const blocos: string[] = [];
+  for (const [d, hms] of porDia) {
+    const dt = new Date(`${d}T12:00:00-03:00`);
+    const wd = dt.toLocaleDateString('pt-BR', { timeZone: TZ, weekday: 'long' }).replace('-feira', '');
+    const dm = `${d.slice(8, 10)}/${d.slice(5, 7)}`;
+    const nome = d === hoje ? `Hoje, ${wd} ${dm}` : d === amanha ? `Amanhã, ${wd} ${dm}` : `${wd[0].toUpperCase()}${wd.slice(1)} ${dm}`;
+    blocos.push(`📅 *${nome}*\n${slots.length > 40 ? faixa(hms) : hms.join(' · ')}`);
+  }
+  return blocos.join('\n\n');
+}
+function faixa(hms: string[]): string {
+  if (hms.length < 4) return hms.join(' · ');
+  const min = (hm: string) => Number(hm.slice(0, 2)) * 60 + Number(hm.slice(3, 5));
+  const passo = Math.min(...hms.slice(1).map((h, i) => min(h) - min(hms[i])));
+  const tem = new Set(hms.map(min));
+  const faltam: string[] = [];
+  for (let m = min(hms[0]); m <= min(hms[hms.length - 1]); m += passo) {
+    if (!tem.has(m)) faltam.push(`${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`);
+  }
+  if (passo <= 0 || faltam.length > 4) return hms.join(' · ');
+  return `das ${hms[0]} às ${hms[hms.length - 1]}, de ${passo} em ${passo} min${faltam.length ? ` (menos ${faltam.join(', ')})` : ''}`;
+}
 const onde = (c: Ctx) => c.cfg.format === 'video' ? `online${c.cfg.location ? ` (${c.cfg.location})` : ''}` : c.cfg.format === 'telefone' ? 'por telefone' : `presencial${c.cfg.location ? ` — ${c.cfg.location}` : ''}`;
 const empresa = (c: Ctx) => c.company?.name ?? 'nossa equipe';
 // Link do mapa (entrevista presencial): pelo pin da loja; sem pin, pelo endereço. Vai só depois que
@@ -383,7 +404,7 @@ async function book(admin: SupabaseClient, c: Ctx, startsAt: string, force: bool
     log('WARN', 'reserva recusada', { sess: c.sess.id, error: error?.message ?? r.error });
     const livres = await freeSlots(admin, c.job.id);
     await toCand(admin, c, livres.length
-      ? `Esse horário acabou de ser preenchido 😕 Tenho estes:\n${slotsText(livres)}\n\n${COMO_RESPONDER}`
+      ? `Esse horário acabou de ser preenchido 😕 Tenho estes:\n${slotsText(livres)}\n\n${comoResponder(livres)}`
       : 'Esse horário acabou de ser preenchido 😕 Vou ver outras opções com a equipe e te chamo.', { offered: livres, status: 'negociando' });
     return false;
   }
@@ -512,7 +533,15 @@ function textoRetorno(c: Ctx): string {
   if (!tpl) return '';
   return tpl.replace(/\{nome\}/g, firstName(c.cand.full_name)).replace(/\{empresa\}/g, empresa(c)).replace(/\{vaga\}/g, c.job.title ?? '');
 }
-const COMO_RESPONDER = 'É só me dizer qual prefere: pode ser o número ou o dia e horário (ex.: segunda às 17h).';
+// Exemplo com um dia e hora da própria lista (ex.: *quarta 16:00*); sem lista, só o pedido.
+function comoResponder(slots: string[] = []): string {
+  const s = slots[Math.floor(slots.length / 2)];
+  if (!s) return 'É só me dizer o dia e o horário que prefere.';
+  const d = localParts(s).d;
+  const wd = d === localDate(new Date()) ? 'hoje' : d === localDate(new Date(Date.now() + 86_400_000)) ? 'amanhã'
+    : new Date(s).toLocaleDateString('pt-BR', { timeZone: TZ, weekday: 'long' }).replace('-feira', '');
+  return `É só me dizer o dia e o horário (ex.: *${wd} ${localParts(s).hm}*).`;
+}
 
 // ── interpretação da mensagem do candidato (sem ferramentas) ──
 async function classify(c: Ctx, text: string, offered: string[], admin?: SupabaseClient): Promise<Row> {
@@ -548,6 +577,7 @@ Responda SÓ com JSON válido:
 - Se a entrevista marcada é hoje, diga "hoje" (nunca o dia da semana como se fosse outro dia).
 - Texto simples de WhatsApp: *negrito* com um asterisco só; nunca **dois**.
 - O candidato NÃO precisa responder com número. Entenda o jeito dele de falar.
+- A lista que ele recebeu vem separada por dia, SEM números: um número solto ("16", "16h") é hora, não opção. Se ele disser só a hora e ela existir em mais de um dia da lista, é "pergunta" e a resposta pede o dia.
 - "escolher": escolheu uma das opções oferecidas, pelo número OU pela descrição ("pode ser às 17h", "o de terça", "o primeiro", "esse das 16:30"). Se a descrição casa com uma opção, use "escolher" com o número dela. ATENÇÃO ao dia: se ele citar um dia ("amanhã", "quarta", "dia 17") diferente do dia da opção, NÃO é "escolher" — é "propor" com data_hora (ex.: hoje é terça e ele diz "amanhã às 15:00" → quarta 15:00, mesmo que exista "terça às 15:00" na lista). Sempre que ele citar dia e hora, preencha data_hora também.
 - "propor": quer outro dia/horário ou deu uma preferência. Com dia e hora exatos → data_hora. Preferência vaga ("segunda depois das 16h", "terça de manhã", "qualquer dia à tarde", "amanhã") → preencha "preferencia" (dia da semana = a próxima data com esse dia, contando hoje; "depois das 16h" → depois_de "16:00") e data_hora null.
 - "recusar": SÓ quando ele diz claramente que desiste da vaga ("desisto", "não tenho mais interesse", "arrumei outro emprego", "não quero mais"). Um "não" solto, "não vou conseguir", "não posso nesse horário" NÃO é recusar.
@@ -571,7 +601,7 @@ Responda SÓ com JSON válido:
 async function offerAgain(admin: SupabaseClient, c: Ctx, intro: string) {
   const livres = await freeSlots(admin, c.job.id);
   await toCand(admin, c, livres.length
-    ? `${intro}\n${slotsText(livres)}\n\n${COMO_RESPONDER} Se nenhum der, me diga o melhor dia e horário pra você.`
+    ? `${intro}\n${slotsText(livres)}\n\n${comoResponder(livres)} Se nenhum der, me diga o melhor dia e horário pra você.`
     : `${intro} No momento não tenho horários livres na agenda; me diga o melhor dia e horário pra você que eu vejo com a equipe.`,
   { offered: livres, status: 'negociando', pending_request: null });
 }
@@ -660,8 +690,8 @@ async function handleCandidate(admin: SupabaseClient, sess: Row, text: string, j
   // "Pode sim" / "sim" logo depois da lista de horários (Adriana, 2026-09-19): a IA mandava a lista de
   // novo. Aqui só pede a escolha, sem repetir a lista.
   const SO_SIM = /^(sim|s|pode( sim| ser)?|podemos( sim)?|claro( que sim)?|ok+|quero|tenho interesse|bora|vamos|com certeza)[\s!.,]*$/i;
-  if (sess.status !== 'agendado' && offered.length && SO_SIM.test(t) && /\n1\) /.test(String(ultimaNossa?.texto ?? ''))) {
-    await toCand(admin, c, `Ótimo! 😊 Qual desses horários fica melhor pra você? ${COMO_RESPONDER}`);
+  if (sess.status !== 'agendado' && offered.length && SO_SIM.test(t) && /\n1\) |📅/.test(String(ultimaNossa?.texto ?? ''))) {
+    await toCand(admin, c, `Ótimo! 😊 Qual desses horários fica melhor pra você? ${comoResponder(offered)}`);
     return;
   }
 
@@ -669,7 +699,10 @@ async function handleCandidate(admin: SupabaseClient, sess: Row, text: string, j
   const daEquipe: string[] = pend?.kind === 'janela_gestor' && Array.isArray(pend.slots) ? pend.slots.map(String) : [];
   const reservar = async (iso: string) => book(admin, c, iso, daEquipe.includes(iso) && (await semConflito(admin, c, [iso])).length > 0);
   const num = t.match(/^\s*(?:op[çc][aã]o\s*)?(\d{1,2})\s*[).]?\s*$/i);
-  if (num && offered[Number(num[1]) - 1] && sess.status !== 'aguardando_gestor') { await reservar(offered[Number(num[1]) - 1]); return; }
+  // Número solto só vale para lista numerada (antiga); desde 29/09 a lista vem por dia, sem número,
+  // e "16" é hora, não a 16ª opção.
+  const listaNumerada = /\n1\) /.test(String(ultimaNossa?.texto ?? ''));
+  if (num && listaNumerada && offered[Number(num[1]) - 1] && sess.status !== 'aguardando_gestor') { await reservar(offered[Number(num[1]) - 1]); return; }
 
   const r = await classify(c, t, offered, admin);
   let intencao = String(r.intencao ?? 'outro'); // pode virar 'propor' na trava do dia (abaixo)
@@ -706,9 +739,9 @@ async function handleCandidate(admin: SupabaseClient, sess: Row, text: string, j
     // Preferência vaga: oferece só os horários livres que casam (em vez de repetir a lista inteira).
     const pref = r.preferencia && typeof r.preferencia === 'object' ? r.preferencia as Row : null;
     if (pref && (pref.data || pref.depois_de || pref.antes_de || pref.periodo)) {
-      const casam = (await freeSlots(admin, c.job.id, 1000)).filter((s) => casaPreferencia(s, pref)).slice(0, OFFER);
+      const casam = semana((await freeSlots(admin, c.job.id, 1000)).filter((s) => casaPreferencia(s, pref)));
       if (casam.length) {
-        await toCand(admin, c, `${casam.length === 1 ? 'Tenho este horário' : 'Tenho estes horários'} ${descrPref(pref)}:\n${slotsText(casam)}\n\n${casam.length === 1 ? 'Posso marcar? É só me responder "sim".' : COMO_RESPONDER}`,
+        await toCand(admin, c, `${casam.length === 1 ? 'Tenho este horário' : 'Tenho estes horários'} ${descrPref(pref)}:\n${slotsText(casam)}\n\n${casam.length === 1 ? 'Posso marcar? É só me responder "sim".' : comoResponder(casam)}`,
           { offered: casam, status: 'negociando', pending_request: casam.length === 1 ? { kind: 'unico_horario', starts_at: casam[0] } : null });
         return;
       }
@@ -756,12 +789,12 @@ async function handleCandidate(admin: SupabaseClient, sess: Row, text: string, j
   // horários já ocupados. Resposta com hora vira a lista de verdade.
   const citaHora = /\b\d{1,2}\s*(:|h)\s*\d{0,2}\b/i.test(resp);
   if (resp && citaHora && sess.status !== 'agendado') {
-    if (offered.length) await toCand(admin, c, `Estes são os horários disponíveis:\n${slotsText(offered)}\n\n${COMO_RESPONDER}`);
+    if (offered.length) await toCand(admin, c, `Estes são os horários disponíveis:\n${slotsText(offered)}\n\n${comoResponder(offered)}`);
     else await offerAgain(admin, c, 'Estes são os horários para a entrevista:');
     return;
   }
   if (resp) { await toCand(admin, c, resp.slice(0, 700)); return; }
-  if (sess.status !== 'agendado' && offered.length) await toCand(admin, c, `Pra marcar, me diga qual destes horários fica melhor pra você:\n${slotsText(offered)}\n\n${COMO_RESPONDER}`);
+  if (sess.status !== 'agendado' && offered.length) await toCand(admin, c, `Pra marcar, me diga qual destes horários fica melhor pra você:\n${slotsText(offered)}\n\n${comoResponder(offered)}`);
 }
 
 // ── resposta de entrevistador ──
@@ -809,7 +842,7 @@ async function decidirPedido(admin: SupabaseClient, sess: Row, op: Decisao, prop
     if (!todos.length) return { ok: false, msg: `Nenhum horário livre em ${descrJanela(janela)} (já passou ou está ocupado). Escolha outros dias ou outra faixa.` };
     const lista = espalharDias(todos, MAX_JANELA);
     c.sess.status = 'negociando';
-    await toCand(admin, c, `A equipe abriu estes horários pra você (${onde(c)}):\n${slotsText(lista)}\n\n${COMO_RESPONDER}`,
+    await toCand(admin, c, `A equipe abriu estes horários pra você (${onde(c)}):\n${slotsText(lista)}\n\n${comoResponder(lista)}`,
       { offered: lista, status: 'negociando', pending_request: { kind: 'janela_gestor', slots: lista, dias: janela.dias, de: janela.de, ate: janela.ate, at: new Date().toISOString() }, updated_at: new Date().toISOString() });
     await addHist(admin, sess.id, 'gestor', registro);
     return { ok: true, msg: `Ok! Mandei ${lista.length} horário${lista.length > 1 ? 's' : ''} (${descrJanela(janela)}) para ${firstName(c.cand.full_name)} escolher.` };
@@ -834,7 +867,7 @@ async function decidirPedido(admin: SupabaseClient, sess: Row, op: Decisao, prop
   const jaOferecidos = new Set((Array.isArray(sess.offered) ? sess.offered : []).map(String));
   const novos = (await freeSlots(admin, c.job.id)).filter((s) => !jaOferecidos.has(s));
   if (!novos.length && jaOferecidos.size) {
-    await toCand(admin, c, 'Esse pedido não vai ser possível 😕 Se algum dos horários que te mandei antes servir, é só me dizer o número. Se não, me diga outro dia e horário que eu vejo com a equipe.',
+    await toCand(admin, c, 'Esse pedido não vai ser possível 😕 Se algum dos horários que te mandei antes servir, é só me dizer o dia e o horário. Se não, me diga outro dia e horário que eu vejo com a equipe.',
       { status: 'negociando', pending_request: null });
     return { ok: true, msg: `Ok, avisei ${c.cand.full_name}; não havia horários novos na agenda além dos que ele já tinha recebido.` };
   }
@@ -979,7 +1012,7 @@ async function tick(admin: SupabaseClient, force = false) {
           if (error || !novo) continue; // outra rodada já convidou
           const c = await loadCtx(admin, novo);
           if (!c) continue;
-          const msg = `Oi, ${firstName(cand?.full_name)}! Aqui é da ${empresa(c)} 😊\nRecebemos seu currículo para a vaga de *${c.job.title}* e queremos te conhecer.\n\nTenho estes horários para a entrevista (${onde(c)}):\n${slotsText(livres)}\n\n${COMO_RESPONDER} Se nenhum der, me diga o melhor dia e horário pra você.`;
+          const msg = `Oi, ${firstName(cand?.full_name)}! Aqui é da ${empresa(c)} 😊\nRecebemos seu currículo para a vaga de *${c.job.title}* e queremos te conhecer.\n\nTenho estes horários para a entrevista (${onde(c)}):\n${slotsText(livres)}\n\n${comoResponder(livres)} Se nenhum der, me diga o melhor dia e horário pra você.`;
           try {
             await toCand(admin, c, msg, {}, { name: TEMPLATES.convite.name, params: [firstName(cand?.full_name), empresa(c), c.job.title], aguardaJanela: true });
             res.invited++; vagas--;
@@ -1024,7 +1057,7 @@ async function tick(admin: SupabaseClient, force = false) {
       if (!s.followup_sent_at) {
         const livres = await freeSlots(admin, s.job_id);
         if (!livres.length) continue;
-        await toCand(admin, c, `Oi, ${firstName(c.cand.full_name)}! Ainda tem interesse na vaga de ${c.job.title}? Tenho estes horários:\n${slotsText(livres)}\n\n${COMO_RESPONDER} 🙂`, { offered: livres, followup_sent_at: new Date().toISOString(), attempts: (s.attempts ?? 1) + 1 },
+        await toCand(admin, c, `Oi, ${firstName(c.cand.full_name)}! Ainda tem interesse na vaga de ${c.job.title}? Tenho estes horários:\n${slotsText(livres)}\n\n${comoResponder(livres)} 🙂`, { offered: livres, followup_sent_at: new Date().toISOString(), attempts: (s.attempts ?? 1) + 1 },
           { name: TEMPLATES.convite.name, params: [firstName(c.cand.full_name), empresa(c), c.job.title], aguardaJanela: true });
         res.followups++;
       } else {
