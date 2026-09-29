@@ -1,306 +1,392 @@
-// Trilha das despesas (2026-09-29)
-// "Essa despesa está certa?" num lugar só: cada compra/despesa aparece com as 6 etapas
-// (documento → lançamento → estoque → conta a pagar → pagamento → banco), cada uma verde, amarela,
-// vermelha ou "não se aplica". Clicando no caso abre a trilha detalhada com atalho para a tela
-// de cada etapa. Montagem em src/lib/trilhaDespesas.ts; dados pela RPC fin_trilha_dados.
-import { useCallback, useEffect, useMemo, useState } from 'react';
+// Trilha das despesas (2026-09-29) — versão D: tarefas + esteira + matriz numa tela só.
+// "Essa despesa está certa?": cada compra/despesa é um caso com 6 fases (nota fiscal → compra ou
+// despesa → estoque → conta a pagar → pagamento → extrato do banco). A tela mostra o que falta
+// fazer (Tarefas), onde o dinheiro está parado (Esteira) e tudo fase a fase (Matriz).
+// Montagem em src/lib/trilhaDespesas.ts; dados pela RPC fin_trilha_dados. As ações dos botões são
+// só as que já existem (abrir a tela certa ou a janela que resolve) — nada novo é gravado daqui.
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
+import { useEstoque } from '@/contexts/EstoqueContext';
 import { supabase } from '@/lib/supabase';
-import { formatCurrency } from '@/lib/formatters';
-import { MonthNav } from './dreUi';
+import { todayBrasilia } from '@/lib/dateUtils';
+import { avisar } from '@/components/base/Dialogos';
+import type { BillPayable, Purchase } from '@/types/financeiro';
+import { MonthNav, mesExtenso } from './dreUi';
 import LinhaExtratoModal from './conciliacao/LinhaExtratoModal';
+import DetalhePurchaseModal from './compras/DetalhePurchaseModal';
+import ContasPagarDREModal from './ContasPagarDREModal';
 import {
-  montarTrilha, diaBR, NOMES_ETAPA,
-  type CasoTrilha, type EtapaId, type EstadoEtapa, type EtapaTrilha, type TrilhaDados, type TipoCaso, type Atalho, type TrExtrato,
+  montarTrilha, ruim, grave, NOMES_ETAPA,
+  type Atalho, type CasoTrilha, type EstadoEtapa, type EtapaId, type GrupoTarefa, type TrExtrato, type TrilhaDados,
 } from '@/lib/trilhaDespesas';
+import { GRUPOS, GRUPO_POR_ID, ETAPAS_FUNIL, ICONE_ETAPA, fmtBRL, type AcoesTrilha, type TarefaComCaso } from './trilha/comum';
+import TarefaCard from './trilha/TarefaCard';
+import Esteira from './trilha/Esteira';
+import Matriz from './trilha/Matriz';
+import Gaveta from './trilha/Gaveta';
 
-const hojeBR = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
 const limitesMes = (ano: number, mes: number) => {
   const de = `${ano}-${String(mes + 1).padStart(2, '0')}-01`;
   const ult = new Date(ano, mes + 1, 0).getDate();
   return { de, ate: `${ano}-${String(mes + 1).padStart(2, '0')}-${String(ult).padStart(2, '0')}` };
 };
 
-const ICONE_ETAPA: Record<EtapaId, string> = {
-  documento: 'ri-file-text-line', lancamento: 'ri-shopping-cart-2-line', estoque: 'ri-archive-2-line',
-  conta: 'ri-bill-line', pagamento: 'ri-money-dollar-circle-line', banco: 'ri-bank-line',
-};
-const ESTILO: Record<EstadoEtapa, { bola: string; texto: string; linha: string; icone?: string; rotulo: string }> = {
-  ok: { bola: 'bg-emerald-500 text-white border-emerald-500', texto: 'text-emerald-700', linha: 'bg-emerald-400', icone: 'ri-check-line', rotulo: 'Feito' },
-  pendente: { bola: 'bg-amber-400 text-white border-amber-400', texto: 'text-amber-700', linha: 'bg-zinc-200', icone: 'ri-time-line', rotulo: 'Falta fazer' },
-  atrasado: { bola: 'bg-red-500 text-white border-red-500', texto: 'text-red-700', linha: 'bg-zinc-200', icone: 'ri-alarm-warning-line', rotulo: 'Atrasado' },
-  problema: { bola: 'bg-red-500 text-white border-red-500', texto: 'text-red-700', linha: 'bg-zinc-200', icone: 'ri-error-warning-line', rotulo: 'Problema' },
-  espera: { bola: 'bg-white text-zinc-300 border-zinc-300', texto: 'text-zinc-400', linha: 'bg-zinc-200', rotulo: 'Aguardando' },
-  na: { bola: 'bg-zinc-50 text-zinc-300 border-dashed border-zinc-200', texto: 'text-zinc-400', linha: 'bg-zinc-200', icone: 'ri-subtract-line', rotulo: 'Não se aplica' },
-};
-const ruim = (e: EstadoEtapa) => e === 'problema' || e === 'atrasado' || e === 'pendente';
+type Modo = 'tarefas' | 'esteira' | 'matriz';
+interface Resolvido { key: string; titulo: string; grupo: GrupoTarefa; rotulo: string }
+interface CompraAberta { purchase: Purchase; installments: BillInst[]; loading: boolean }
+interface BillInst { id: string; installment_number: number; installments: number; amount: number; due_date: string; status: string; paid_date?: string; paid_amount?: number }
 
-const TIPOS: { id: 'todos' | TipoCaso; label: string }[] = [
-  { id: 'todos', label: 'Todos' },
-  { id: 'compra', label: 'Compras' },
-  { id: 'despesa', label: 'Despesas' },
-  { id: 'nota', label: 'Notas não lançadas' },
-  { id: 'pagamento', label: 'Pagamentos sem lançamento' },
-  { id: 'pedido', label: 'Pedidos' },
-];
-type Situacao = 'todas' | 'atencao' | 'andamento' | 'ok';
+const LIMITE_TAREFAS = 30;
+const estadoDa = (c: CasoTrilha, id: EtapaId): EstadoEtapa => c.etapas.find((e) => e.id === id)!.estado;
 
 export default function TrilhaTab() {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const hoje = hojeBR();
+  const { reloadInsumos, reloadMovimentacoes } = useEstoque();
+  const hoje = todayBrasilia();
   const [ano, setAno] = useState(Number(hoje.slice(0, 4)));
   const [mes, setMes] = useState(Number(hoje.slice(5, 7)) - 1);
   const [dados, setDados] = useState<TrilhaDados | null>(null);
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
-  const [situacao, setSituacao] = useState<Situacao>('todas');
-  const [tipo, setTipo] = useState<'todos' | TipoCaso>('todos');
-  const [etapaFiltro, setEtapaFiltro] = useState<EtapaId | null>(null);
+  const [modo, setModo] = useState<Modo>('tarefas');
+  const [grupo, setGrupo] = useState<GrupoTarefa | null>(null);
+  const [etapaF, setEtapaF] = useState<EtapaId | null>(null);
+  const [soUrg, setSoUrg] = useState(false);
   const [busca, setBusca] = useState('');
-  const [aberto, setAberto] = useState<string | null>(null);
-  const [limite, setLimite] = useState(60);
-  // Linha do extrato aberta aqui mesmo (mesma janela da Conciliação): lançar/vincular sem sair da Trilha
+  const [expandidos, setExpandidos] = useState<Set<string>>(new Set());
+  const [gavetaKey, setGavetaKey] = useState<string | null>(null);
+  const [limite, setLimite] = useState(LIMITE_TAREFAS);
+  const [resolvidos, setResolvidos] = useState<Resolvido[]>([]);
+  // Janelas abertas aqui mesmo
   const [linha, setLinha] = useState<TrExtrato | null>(null);
+  const [compra, setCompra] = useState<CompraAberta | null>(null);
+  const [billsDRE, setBillsDRE] = useState<BillPayable[] | null>(null);
+  const rotuloRef = useRef<string>('');
+  const antesRef = useRef<Map<string, { titulo: string; grupo: GrupoTarefa }>>(new Map());
   const { de, ate } = limitesMes(ano, mes);
 
-  const carregar = useCallback(async () => {
+  const carregar = useCallback(async (comRastro = false) => {
     if (!user?.tenantId) return;
     setCarregando(true);
     setErro(null);
     const { data, error } = await supabase.rpc('fin_trilha_dados', { p_tenant: user.tenantId, p_start: de, p_end: ate });
     setCarregando(false);
     if (error) { setErro(error.message); setDados(null); return; }
-    setDados(data as TrilhaDados);
+    const d = data as TrilhaDados;
+    if (comRastro) {
+      // "Resolvido agora": tarefas que existiam antes da ação e não existem mais
+      const novas = new Set(montarTrilha(d, de, ate, todayBrasilia()).flatMap((c) => c.tarefas.map((t) => t.key)));
+      const somem = [...antesRef.current].filter(([k]) => !novas.has(k));
+      if (somem.length) {
+        const rotulo = rotuloRef.current || 'Resolvido pela Trilha';
+        setResolvidos((prev) => [...somem.map(([key, v]) => ({ key, ...v, rotulo })), ...prev.filter((r) => !somem.some(([k]) => k === r.key))]);
+      }
+    }
+    setDados(d);
   }, [user?.tenantId, de, ate]);
 
   useEffect(() => { void carregar(); }, [carregar]);
-  useEffect(() => { setLimite(60); setAberto(null); }, [de, situacao, tipo, etapaFiltro, busca]);
+  // Trocou de mês (ou de loja): recomeça a sessão de "resolvido agora"
+  useEffect(() => { setResolvidos([]); antesRef.current = new Map(); setGavetaKey(null); setLimite(LIMITE_TAREFAS); }, [de, user?.tenantId]);
+  useEffect(() => { setLimite(LIMITE_TAREFAS); }, [grupo, etapaF, soUrg, busca]);
 
   const casos = useMemo(() => (dados ? montarTrilha(dados, de, ate, hoje) : []), [dados, de, ate, hoje]);
+  const todasTarefas = useMemo<TarefaComCaso[]>(() => casos.flatMap((caso) => caso.tarefas.map((tarefa) => ({ tarefa, caso }))), [casos]);
+  useEffect(() => {
+    antesRef.current = new Map(todasTarefas.map(({ tarefa, caso }) => [tarefa.key, { titulo: caso.titulo, grupo: tarefa.grupo }]));
+  }, [todasTarefas]);
 
-  const contagem = useMemo(() => ({
-    todas: casos.length,
-    atencao: casos.filter((c) => c.situacao === 'atencao').length,
-    andamento: casos.filter((c) => c.situacao === 'andamento').length,
-    ok: casos.filter((c) => c.situacao === 'ok').length,
+  // ── filtros ────────────────────────────────────────────────────────────────
+  const q = busca.trim().toLowerCase();
+  const bate = useCallback((c: CasoTrilha) => !q
+    || `${c.titulo} ${c.subtitulo} ${c.notas.map((n) => n.numero).join(' ')} ${c.compra?.invoice_number ?? ''} ${c.valor.toFixed(2).replace('.', ',')}`.toLowerCase().includes(q), [q]);
+  const casosFiltrados = useMemo(() => casos.filter((c) =>
+    (!soUrg || c.situacao === 'atencao') && (!etapaF || ruim(estadoDa(c, etapaF))) && bate(c)), [casos, soUrg, etapaF, bate]);
+  const tarefasFiltradas = useMemo(() => todasTarefas.filter(({ tarefa, caso }) =>
+    (!soUrg || tarefa.urgente) && (!etapaF || tarefa.etapas.includes(etapaF)) && bate(caso)), [todasTarefas, soUrg, etapaF, bate]);
+
+  // ── topo ───────────────────────────────────────────────────────────────────
+  const completos = casos.filter((c) => c.situacao === 'ok').length;
+  const pct = casos.length ? Math.round((completos / casos.length) * 100) : 0;
+  const urgentes = todasTarefas.filter((x) => x.tarefa.urgente).length;
+  const funil = useMemo(() => ETAPAS_FUNIL.map((id) => {
+    let ok = 0, amarelo = 0, vermelho = 0, n = 0;
+    for (const c of casos) {
+      const e = estadoDa(c, id);
+      if (e === 'na' || e === 'espera') continue;
+      if (e === 'ok') ok += c.valor;
+      else if (grave(e)) { vermelho += c.valor; n++; }
+      else { amarelo += c.valor; if (ruim(e)) n++; }
+    }
+    const tot = ok + amarelo + vermelho;
+    return { id, ok, amarelo, vermelho, tot, n, pct: tot ? Math.round((ok / tot) * 100) : 100, grave: vermelho > 0 };
   }), [casos]);
-
-  // Onde a corrente trava: quantos casos têm cada etapa em aberto/com problema
-  const gargalos = useMemo(() => {
-    const ids: EtapaId[] = ['documento', 'lancamento', 'estoque', 'conta', 'pagamento', 'banco'];
-    return ids.map((id) => {
-      const com = casos.filter((c) => ruim(c.etapas.find((e) => e.id === id)!.estado));
-      const graves = com.filter((c) => { const e = c.etapas.find((x) => x.id === id)!.estado; return e === 'problema' || e === 'atrasado'; }).length;
-      return { id, n: com.length, graves };
-    }).filter((g) => g.n > 0);
-  }, [casos]);
-
-  const filtrados = useMemo(() => {
-    const q = busca.trim().toLowerCase();
-    return casos.filter((c) =>
-      (situacao === 'todas' || c.situacao === situacao)
-      && (tipo === 'todos' || c.tipo === tipo)
-      && (!etapaFiltro || ruim(c.etapas.find((e) => e.id === etapaFiltro)!.estado))
-      && (!q || `${c.titulo} ${c.subtitulo} ${c.notas.map((n) => n.numero).join(' ')} ${c.compra?.invoice_number ?? ''} ${c.valor.toFixed(2).replace('.', ',')}`.toLowerCase().includes(q)));
-  }, [casos, situacao, tipo, etapaFiltro, busca]);
 
   const mesStr = `${ano}-${String(mes + 1).padStart(2, '0')}`;
   const mesAtualStr = hoje.slice(0, 7);
   const trocarMes = (m: string) => { setAno(Number(m.slice(0, 4))); setMes(Number(m.slice(5, 7)) - 1); };
+  const trocarModo = (m: Modo) => { setGavetaKey(null); setModo(m); };
 
-  const ir = (a: Atalho) => a.extrato ? setLinha(a.extrato) : navigate('/financeiro?tab=' + a.tab + (a.param && a.valor ? '&' + a.param + '=' + encodeURIComponent(a.valor) : ''));
+  // ── ações (donas das janelas) ─────────────────────────────────────────────
+  const abrirCompra = useCallback(async (id: string, rotulo: string) => {
+    if (!user?.tenantId) return;
+    rotuloRef.current = rotulo;
+    const { data, error } = await supabase.from('fin_purchases')
+      .select('*, items:fin_purchase_items(*), cost_center:fin_cost_centers(id,name,color,icon)')
+      .eq('tenant_id', user.tenantId).eq('id', id).maybeSingle();
+    if (error || !data) { void avisar('Não consegui abrir a compra. Tente de novo ou abra pela aba Compras.', { erro: true }); return; }
+    const p = data as Purchase;
+    setCompra({ purchase: p, installments: [], loading: p.payment_status !== 'paid' });
+    if (p.payment_status === 'paid') return;
+    // parcelas pelo VÍNCULO da compra (mesmo critério da aba Compras)
+    const { data: parcelas } = await supabase.from('fin_accounts_payable')
+      .select('id,installment_number,installments,amount,due_date,status,paid_date,paid_amount')
+      .eq('tenant_id', user.tenantId).eq('reference_id', p.id).eq('reference_type', 'purchase').order('installment_number');
+    setCompra({ purchase: p, installments: (parcelas ?? []) as BillInst[], loading: false });
+  }, [user?.tenantId]);
+
+  const abrirClassificar = useCallback(async (caso: CasoTrilha, rotulo: string) => {
+    if (!user?.tenantId) return;
+    rotuloRef.current = rotulo;
+    const ids = caso.contas.map((c) => c.id);
+    const { data, error } = await supabase.from('fin_accounts_payable').select('*').eq('tenant_id', user.tenantId).in('id', ids);
+    if (error || !data?.length) { void avisar('Não consegui carregar as contas a pagar desta despesa.', { erro: true }); return; }
+    setBillsDRE(data as BillPayable[]);
+  }, [user?.tenantId]);
+
+  const ir = useCallback((a: Atalho) => {
+    if (a.extrato) { rotuloRef.current = 'Ligou o extrato'; setLinha(a.extrato); return; }
+    navigate('/financeiro?tab=' + a.tab + (a.param && a.valor ? '&' + a.param + '=' + encodeURIComponent(a.valor) : ''));
+  }, [navigate]);
+
+  const acoes = useMemo<AcoesTrilha>(() => ({
+    ir,
+    rota: (path) => navigate(path),
+    extrato: (e, rotulo) => { rotuloRef.current = rotulo; setLinha(e); },
+    compra: (id, rotulo) => { void abrirCompra(id, rotulo); },
+    classificar: (c, rotulo) => { void abrirClassificar(c, rotulo); },
+  }), [ir, navigate, abrirCompra, abrirClassificar]);
+
+  const aposCompra = () => {
+    setCompra(null);
+    reloadInsumos();
+    reloadMovimentacoes();
+    void carregar(true);
+  };
+
+  const alternarFases = (key: string) => setExpandidos((s) => { const n = new Set(s); if (n.has(key)) n.delete(key); else n.add(key); return n; });
+
+  const casoDaGaveta = gavetaKey ? casos.find((c) => c.key === gavetaKey) ?? null : null;
+  const algumaJanela = !!(linha || compra || billsDRE);
+  useEffect(() => {
+    if (!casoDaGaveta) return;
+    const h = (e: KeyboardEvent) => { if (e.key === 'Escape' && !algumaJanela) setGavetaKey(null); };
+    document.addEventListener('keydown', h);
+    return () => document.removeEventListener('keydown', h);
+  }, [casoDaGaveta, algumaJanela]);
+
+  // ── Tarefas: menu + cards por grupo ───────────────────────────────────────
+  const listaPorGrupo = GRUPOS.map((g) => {
+    const ts = tarefasFiltradas.filter((x) => x.tarefa.grupo === g.id)
+      .sort((a, b) => Number(b.tarefa.urgente) - Number(a.tarefa.urgente) || b.caso.valor - a.caso.valor);
+    return { g, ts, total: todasTarefas.filter((x) => x.tarefa.grupo === g.id).length };
+  });
+  const visiveis = listaPorGrupo.filter(({ g, ts }) => ts.length > 0 && (!grupo || grupo === g.id));
+  const resolvidosVisiveis = resolvidos.filter((r) => !todasTarefas.some((x) => x.tarefa.key === r.key));
+
+  const MODOS: { id: Modo; label: string; icone: string; n?: number }[] = [
+    { id: 'tarefas', label: 'Tarefas', icone: 'ri-checkbox-multiple-line', n: todasTarefas.length },
+    { id: 'esteira', label: 'Esteira', icone: 'ri-layout-column-line' },
+    { id: 'matriz', label: 'Matriz', icone: 'ri-grid-line' },
+  ];
 
   return (
-    <div className="p-4 md:p-6 space-y-5 max-w-[1400px] mx-auto">
-      {/* Cabeçalho */}
-      <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-3">
-        <div>
-          <h2 className="text-lg font-bold text-zinc-900 flex items-center gap-2"><i className="ri-route-line text-amber-500" />Trilha das despesas</h2>
-          <p className="text-xs text-zinc-500 mt-0.5">Cada compra e despesa do começo ao fim — da nota até a saída no banco. Verde = feito, amarelo = falta fazer, vermelho = precisa de atenção.</p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2 self-start md:self-auto">
-          <MonthNav mes={mesStr} onChange={trocarMes} canGoNext={mesStr < mesAtualStr} />
-          {mesStr !== mesAtualStr && (
-            <button onClick={() => trocarMes(mesAtualStr)} className="text-xs font-semibold px-3 py-2 bg-amber-50 text-amber-700 border border-amber-200 rounded-xl hover:bg-amber-100 cursor-pointer whitespace-nowrap">Mês atual</button>
-          )}
-          <button onClick={() => void carregar()} className="flex items-center gap-1.5 px-3 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 rounded-xl text-xs font-semibold text-zinc-600 cursor-pointer transition-colors whitespace-nowrap shadow-sm" aria-label="Atualizar" title="Atualizar"><i className={`ri-refresh-line ${carregando ? 'animate-spin' : ''}`} />Atualizar</button>
-        </div>
-      </div>
-
-      {/* Resumo por situação */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
-        {([
-          { id: 'todas', label: 'Todos os casos', icone: 'ri-stack-line', cor: 'text-zinc-700', fundo: 'border-zinc-300' },
-          { id: 'atencao', label: 'Precisam de atenção', icone: 'ri-error-warning-line', cor: 'text-red-600', fundo: 'border-red-300' },
-          { id: 'andamento', label: 'Em andamento', icone: 'ri-time-line', cor: 'text-amber-600', fundo: 'border-amber-300' },
-          { id: 'ok', label: 'Completos', icone: 'ri-checkbox-circle-line', cor: 'text-emerald-600', fundo: 'border-emerald-300' },
-        ] as const).map((s) => (
-          <button key={s.id} onClick={() => setSituacao(s.id)}
-            className={`text-left rounded-2xl border bg-white p-4 flex flex-col gap-2 cursor-pointer transition-shadow hover:shadow-sm ${situacao === s.id ? s.fundo + ' ring-2 ring-offset-0 ring-amber-100' : 'border-zinc-200'}`}>
-            <div className="flex items-center gap-2 min-w-0">
-              <span className="w-7 h-7 rounded-lg bg-zinc-100 flex items-center justify-center flex-shrink-0"><i className={`${s.icone} text-sm ${s.cor}`} /></span>
-              <span className="text-xs font-semibold text-zinc-500 truncate">{s.label}</span>
+    <div className="p-4 md:p-6 space-y-5 max-w-[1400px] mx-auto overflow-x-hidden">
+      {/* ── Topo: placar + funil ── */}
+      <div className="bg-white rounded-2xl border border-zinc-200 p-4 md:p-5">
+        <div className="flex flex-col lg:flex-row gap-5">
+          <div className="flex items-center gap-4 lg:w-[380px] shrink-0">
+            <div className="relative w-24 h-24 shrink-0">
+              <svg viewBox="0 0 36 36" className="w-24 h-24 -rotate-90">
+                <circle cx="18" cy="18" r="15.9" fill="none" stroke="#f4f4f5" strokeWidth="3.4" />
+                <circle cx="18" cy="18" r="15.9" fill="none" stroke={pct >= 70 ? '#10b981' : '#f59e0b'} strokeWidth="3.4" strokeLinecap="round" strokeDasharray={`${pct} 100`} style={{ transition: 'stroke-dasharray .5s' }} />
+              </svg>
+              <div className="absolute inset-0 flex flex-col items-center justify-center">
+                <span className="text-xl font-bold tabular-nums">{carregando && !dados ? '…' : pct + '%'}</span>
+                <span className="text-[10px] text-zinc-400">fechado</span>
+              </div>
             </div>
-            <p className="text-2xl font-bold tabular-nums tracking-tight text-zinc-900">{carregando && !dados ? '…' : contagem[s.id]}</p>
-          </button>
-        ))}
-      </div>
-
-      {/* Onde trava */}
-      {gargalos.length > 0 && (
-        <div className="rounded-2xl border border-zinc-200 bg-white px-5 py-3">
-          <p className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wide mb-2">Onde a trilha está parada</p>
-          <div className="flex flex-wrap gap-1.5">
-            {gargalos.map((g) => (
-              <button key={g.id} onClick={() => setEtapaFiltro(etapaFiltro === g.id ? null : g.id)}
-                className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full border cursor-pointer ${etapaFiltro === g.id ? 'bg-zinc-800 text-white border-zinc-800' : 'bg-white text-zinc-700 border-zinc-200 hover:border-zinc-400'}`}>
-                <i className={ICONE_ETAPA[g.id]} />{NOMES_ETAPA[g.id]}
-                <span className={`font-bold px-1.5 rounded-full text-[10px] ${g.graves ? 'bg-red-500 text-white' : 'bg-amber-400 text-white'}`}>{g.n}</span>
-              </button>
-            ))}
-            {etapaFiltro && <button onClick={() => setEtapaFiltro(null)} className="text-xs text-zinc-500 underline cursor-pointer px-1">limpar</button>}
+            <div className="min-w-0">
+              <h2 className="text-base font-bold text-zinc-900 flex items-center gap-1.5"><i className="ri-route-line text-amber-500" />Trilha de {mesExtenso(mesStr).split(' de ')[0].toLowerCase()}</h2>
+              <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                <MonthNav mes={mesStr} onChange={trocarMes} canGoNext={mesStr < mesAtualStr} />
+                {mesStr !== mesAtualStr && (
+                  <button onClick={() => trocarMes(mesAtualStr)} className="text-xs font-semibold px-2.5 py-2 bg-amber-50 text-amber-700 border border-amber-200 rounded-xl hover:bg-amber-100 cursor-pointer whitespace-nowrap">Mês atual</button>
+                )}
+                <button onClick={() => void carregar()} aria-label="Atualizar" title="Atualizar" className="flex items-center gap-1.5 px-2.5 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 rounded-xl text-xs font-semibold text-zinc-600 cursor-pointer whitespace-nowrap shadow-sm">
+                  <i className={`ri-refresh-line ${carregando ? 'animate-spin' : ''}`} />Atualizar
+                </button>
+              </div>
+              <p className="text-xs text-zinc-500 mt-2">
+                {!dados ? '' : todasTarefas.length ? (
+                  <>
+                    <strong>{todasTarefas.length} {todasTarefas.length === 1 ? 'tarefa' : 'tarefas'}</strong> para fechar o mês
+                    {urgentes > 0 && <> · <span className="text-red-600 font-semibold">{urgentes} {urgentes === 1 ? 'urgente' : 'urgentes'}</span></>}
+                    {' '}· {completos} de {casos.length} casos completos
+                  </>
+                ) : casos.length ? (
+                  <><span className="text-emerald-700 font-semibold">Nada a fazer agora</span> — {completos} de {casos.length} casos completos; o resto depende do prazo.</>
+                ) : 'Nenhuma compra ou despesa neste mês.'}
+              </p>
+            </div>
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-baseline justify-between gap-2 mb-2">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Quanto do dinheiro do mês já passou por cada fase</p>
+              {etapaF && <button onClick={() => setEtapaF(null)} className="text-xs text-zinc-500 underline cursor-pointer">limpar fase</button>}
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-2">
+              {funil.map((f) => (
+                <button key={f.id} onClick={() => setEtapaF(etapaF === f.id ? null : f.id)}
+                  className={`text-left rounded-xl border p-2.5 transition cursor-pointer min-w-0 ${etapaF === f.id ? 'border-amber-400 ring-2 ring-amber-100 bg-amber-50/40' : 'border-zinc-200 hover:border-zinc-300'}`}>
+                  <div className="flex items-center justify-between gap-1">
+                    <span className="flex items-center gap-1.5 text-[11px] font-semibold text-zinc-600 truncate"><i className={ICONE_ETAPA[f.id]} />{NOMES_ETAPA[f.id]}</span>
+                    {f.n > 0
+                      ? <span className={`text-[10px] font-bold px-1.5 rounded-md ${f.grave ? 'bg-red-50 text-red-600' : 'bg-amber-50 text-amber-700'}`}>{f.n}</span>
+                      : <i className="ri-check-double-line text-emerald-500 text-xs" />}
+                  </div>
+                  <p className={`text-lg font-bold tabular-nums mt-1 ${f.pct === 100 ? 'text-emerald-700' : ''}`}>{f.pct}%</p>
+                  <div className="flex h-1.5 rounded-full overflow-hidden bg-zinc-100 gap-px">
+                    <div className="bg-emerald-500" style={{ width: `${f.tot ? (f.ok / f.tot) * 100 : 100}%` }} />
+                    <div className="bg-amber-400" style={{ width: `${f.tot ? (f.amarelo / f.tot) * 100 : 0}%` }} />
+                    <div className="bg-red-500" style={{ width: `${f.tot ? (f.vermelho / f.tot) * 100 : 0}%` }} />
+                  </div>
+                </button>
+              ))}
+            </div>
           </div>
         </div>
-      )}
+      </div>
 
-      {/* Filtros */}
-      <div className="flex flex-col md:flex-row md:items-center gap-2">
-        <div className="flex gap-1 overflow-x-auto bg-zinc-100/80 rounded-xl p-1 w-full sm:w-fit max-w-full">
-          {TIPOS.map((t) => (
-            <button key={t.id} onClick={() => setTipo(t.id)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap cursor-pointer transition-colors ${tipo === t.id ? 'bg-white text-amber-600 shadow-sm' : 'text-zinc-500 hover:text-zinc-800'}`}>
-              {t.label}
+      {/* ── Barra: formas de ver + filtros ── */}
+      <div className="flex flex-wrap items-center gap-2 lg:gap-3">
+        <div className="flex gap-1 bg-zinc-100/80 rounded-xl p-1">
+          {MODOS.map((m) => (
+            <button key={m.id} onClick={() => trocarModo(m.id)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap cursor-pointer transition-colors ${modo === m.id ? 'bg-white text-amber-600 shadow-sm' : 'text-zinc-500 hover:text-zinc-800'}`}>
+              <i className={m.icone} />{m.label}
+              {!!m.n && <span className="text-[10px] bg-amber-500 text-white rounded-full px-1.5">{m.n}</span>}
             </button>
           ))}
         </div>
-        <div className="relative md:ml-auto md:w-72">
+        <label className="flex items-center gap-2 text-xs text-zinc-600 cursor-pointer select-none">
+          <input type="checkbox" checked={soUrg} onChange={(e) => setSoUrg(e.target.checked)} className="accent-amber-500" /> só urgentes
+        </label>
+        <div className="relative sm:ml-auto w-full sm:w-72">
           <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 text-sm" />
           <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Fornecedor, nº da nota, valor…"
-            className="w-full h-10 pl-9 pr-3 text-sm border border-zinc-200 rounded-xl shadow-sm focus:outline-none focus:border-amber-400" />
+            className="w-full h-10 pl-9 pr-3 text-sm border border-zinc-200 rounded-xl shadow-sm focus:outline-none focus:border-amber-400 bg-white" />
         </div>
       </div>
 
-      {/* Lista */}
       {erro && <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-xs text-red-800">Não foi possível carregar a trilha: {erro}</div>}
       {carregando && !dados && <div className="rounded-2xl border border-zinc-200 bg-white py-14 text-center text-sm text-zinc-400">Montando a trilha…</div>}
-      {!carregando && !erro && filtrados.length === 0 && (
-        <div className="rounded-2xl border border-zinc-200 bg-white py-14 text-center text-sm text-zinc-400">
-          {casos.length === 0 ? 'Nenhuma compra ou despesa neste mês.' : 'Nenhum caso com esses filtros.'}
-        </div>
-      )}
 
-      <div className="space-y-2">
-        {filtrados.slice(0, limite).map((c) => (
-          <CasoCard key={c.key} caso={c} aberto={aberto === c.key} onToggle={() => setAberto(aberto === c.key ? null : c.key)} ir={ir} />
-        ))}
-      </div>
-      {filtrados.length > limite && (
-        <button onClick={() => setLimite(limite + 60)} className="w-full py-2.5 text-xs font-semibold text-zinc-600 border border-zinc-200 rounded-xl bg-white hover:bg-zinc-50 cursor-pointer shadow-sm">
-          Mostrar mais ({filtrados.length - limite} restantes)
-        </button>
-      )}
-
-      {linha && <LinhaExtratoModal linha={linha} onClose={() => setLinha(null)} onChanged={() => void carregar()} />}
-    </div>
-  );
-}
-
-const ROTULO_TIPO: Record<TipoCaso, { t: string; cls: string }> = {
-  compra: { t: 'Compra', cls: 'bg-blue-50 text-blue-700' },
-  despesa: { t: 'Despesa', cls: 'bg-violet-50 text-violet-700' },
-  nota: { t: 'Nota', cls: 'bg-zinc-100 text-zinc-700' },
-  pedido: { t: 'Pedido', cls: 'bg-teal-50 text-teal-700' },
-  pagamento: { t: 'Banco', cls: 'bg-orange-50 text-orange-700' },
-};
-const BORDA: Record<CasoTrilha['situacao'], string> = { atencao: 'border-l-red-500', andamento: 'border-l-amber-400', ok: 'border-l-emerald-500' };
-
-function CasoCard({ caso, aberto, onToggle, ir }: { caso: CasoTrilha; aberto: boolean; onToggle: () => void; ir: (a: Atalho) => void }) {
-  const tp = ROTULO_TIPO[caso.tipo];
-  return (
-    <div className={`rounded-2xl border border-zinc-200 border-l-4 ${BORDA[caso.situacao]} bg-white overflow-hidden`}>
-      <button onClick={onToggle} className="w-full text-left px-3 md:px-4 py-3 cursor-pointer hover:bg-zinc-50/60">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="flex items-center gap-1.5 flex-wrap">
-              <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-md ${tp.cls}`}>{tp.t}</span>
-              <span className="text-sm font-semibold text-zinc-800 truncate">{caso.titulo}</span>
-            </div>
-            <p className="text-xs text-zinc-500 truncate mt-0.5">{diaBR(caso.data)} · {caso.subtitulo}</p>
-          </div>
-          <div className="text-right shrink-0">
-            <p className="text-sm font-bold text-zinc-800">{formatCurrency(caso.valor)}</p>
-            <i className={`text-zinc-400 ${aberto ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'}`} />
-          </div>
-        </div>
-        <Trilho etapas={caso.etapas} />
-        {caso.avisos.length > 0 && !aberto && (
-          <p className="mt-2 text-xs text-red-600 flex items-start gap-1"><i className="ri-error-warning-line mt-px" />{caso.avisos[0]}{caso.avisos.length > 1 ? ` (+${caso.avisos.length - 1})` : ''}</p>
-        )}
-      </button>
-      {aberto && <Detalhe caso={caso} ir={ir} />}
-    </div>
-  );
-}
-
-/** As 6 bolinhas ligadas por uma linha. No celular só as bolinhas + o nome curto. */
-function Trilho({ etapas }: { etapas: EtapaTrilha[] }) {
-  return (
-    <div className="mt-3 flex items-start">
-      {etapas.map((e, i) => {
-        const s = ESTILO[e.estado];
-        return (
-          <div key={e.id} className="flex-1 min-w-0 flex flex-col items-center relative">
-            {i > 0 && <div className={`absolute top-3.5 h-0.5 ${etapas[i - 1].estado === 'ok' ? 'bg-emerald-300' : 'bg-zinc-200'}`} style={{ left: '-50%', right: '50%' }} />}
-            <div title={`${e.nome}: ${e.resumo}`} className={`relative z-10 w-7 h-7 rounded-full border-2 flex items-center justify-center text-sm ${s.bola}`}>
-              <i className={s.icone ?? ICONE_ETAPA[e.id]} />
-            </div>
-            <p className="text-[10px] font-semibold text-zinc-600 mt-1 text-center leading-tight">{e.nome}</p>
-            <p className={`hidden md:block text-[10px] text-center leading-tight mt-0.5 px-1 line-clamp-2 ${s.texto}`}>{e.resumo}</p>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-/** Trilha aberta: uma linha por etapa, com o que aconteceu e o atalho para a tela. */
-function Detalhe({ caso, ir }: { caso: CasoTrilha; ir: (a: Atalho) => void }) {
-  return (
-    <div className="border-t border-zinc-100 bg-zinc-50/60 px-3 md:px-4 py-3">
-      {caso.avisos.length > 0 && (
-        <div className="mb-3 space-y-1">
-          {caso.avisos.map((a) => (
-            <p key={a} className={`text-xs flex items-start gap-1 ${a.startsWith('Juros') ? 'text-zinc-600' : 'text-red-600'}`}><i className="ri-error-warning-line mt-px" />{a}</p>
-          ))}
-        </div>
-      )}
-      <ol className="relative">
-        {caso.etapas.map((e, i) => {
-          const s = ESTILO[e.estado];
-          return (
-            <li key={e.id} className="flex gap-3 pb-3 last:pb-0 relative">
-              {i < caso.etapas.length - 1 && <span className={`absolute left-[13px] top-7 bottom-0 w-0.5 ${e.estado === 'ok' ? 'bg-emerald-300' : 'bg-zinc-200'}`} />}
-              <div className={`relative z-10 w-7 h-7 shrink-0 rounded-full border-2 flex items-center justify-center text-sm ${s.bola}`}>
-                <i className={ICONE_ETAPA[e.id]} />
-              </div>
-              <div className="flex-1 min-w-0 flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <p className="text-xs text-zinc-500">{e.nome} · <span className={`font-semibold ${s.texto}`}>{s.rotulo}</span></p>
-                  <p className={`text-sm font-semibold ${e.estado === 'na' || e.estado === 'espera' ? 'text-zinc-400' : 'text-zinc-800'}`}>{e.resumo}</p>
-                  {e.detalhe && <p className="text-xs text-zinc-500 break-words">{e.detalhe}</p>}
+      {dados && modo === 'tarefas' && (
+        <div className="grid grid-cols-1 lg:grid-cols-[290px_minmax(0,1fr)] gap-4 items-start">
+          <div className="space-y-3 lg:sticky lg:top-4 min-w-0">
+            <nav className="bg-white rounded-2xl border border-zinc-200 p-2">
+              <button onClick={() => setGrupo(null)} className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-left cursor-pointer ${!grupo ? 'bg-amber-50 text-amber-700' : 'hover:bg-zinc-50'}`}>
+                <i className="ri-inbox-line" /><span className="flex-1 text-sm font-semibold">Todas</span><span className="text-xs font-bold tabular-nums">{tarefasFiltradas.length}</span>
+              </button>
+              {listaPorGrupo.map(({ g, ts, total }) => total === 0 ? (
+                <div key={g.id} className="flex items-center gap-2.5 px-3 py-2 text-zinc-300">
+                  <i className={g.icone} /><span className="flex-1 text-sm line-through">{g.nome}</span><i className="ri-check-line text-emerald-400" />
                 </div>
-                {e.atalho && e.estado !== 'na' && (
-                  <button onClick={() => ir(e.atalho!)} className={`shrink-0 text-xs px-2 py-1 rounded-lg border cursor-pointer whitespace-nowrap ${ruim(e.estado) ? 'bg-amber-500 border-amber-500 text-white hover:bg-amber-600' : 'bg-white border-zinc-300 text-zinc-700 hover:bg-zinc-50'}`}>
-                    {ruim(e.estado) ? 'Resolver' : 'Abrir'} <i className="ri-arrow-right-up-line" />
-                  </button>
-                )}
+              ) : (
+                <button key={g.id} onClick={() => setGrupo(g.id)}
+                  className={`w-full flex items-start gap-2.5 px-3 py-2.5 rounded-xl text-left cursor-pointer ${grupo === g.id ? 'bg-amber-50 text-amber-700' : 'hover:bg-zinc-50'} ${ts.length ? '' : 'opacity-50'}`}>
+                  <i className={`${g.icone} mt-0.5 ${g.cor === 'red' ? 'text-red-500' : 'text-amber-500'}`} />
+                  <span className="flex-1 min-w-0">
+                    <span className="block text-sm font-semibold leading-snug">{g.nome}</span>
+                    <span className="block text-[11px] text-zinc-400 leading-snug mt-0.5">{g.desc}</span>
+                  </span>
+                  <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded-md ${g.cor === 'red' ? 'bg-red-50 text-red-600' : 'bg-amber-50 text-amber-700'}`}>{ts.length}</span>
+                </button>
+              ))}
+            </nav>
+            <div className="bg-white rounded-2xl border border-zinc-200 p-4">
+              <h3 className="text-sm font-bold text-zinc-800">Resolvido agora</h3>
+              <ul className="mt-2 space-y-1.5 text-xs max-h-48 overflow-y-auto">
+                {resolvidosVisiveis.length === 0 && <li className="text-zinc-400">Nada ainda — comece pelos urgentes.</li>}
+                {resolvidosVisiveis.map((r) => (
+                  <li key={r.key} className="flex items-start gap-1.5">
+                    <i className="ri-check-line text-emerald-500 mt-px" />
+                    <span className="flex-1 min-w-0"><strong className="text-zinc-700">{r.titulo}</strong><br /><span className="text-zinc-400">{r.rotulo}</span></span>
+                    <button onClick={() => navigate(GRUPO_POR_ID[r.grupo].origem)} className="shrink-0 text-[11px] font-semibold text-zinc-400 hover:text-zinc-800 px-1.5 py-0.5 rounded-md hover:bg-zinc-100 cursor-pointer" title="Abrir a tela de origem">Abrir <i className="ri-arrow-right-up-line" /></button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+          <section className="space-y-3 min-w-0">
+            {visiveis.map(({ g, ts }) => {
+              const mostrar = ts.slice(0, limite);
+              return (
+                <div key={g.id} className="bg-white rounded-2xl border border-zinc-200 overflow-hidden">
+                  <div className="flex items-center gap-2.5 px-4 md:px-5 py-3 border-b border-zinc-100 min-w-0">
+                    <span className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${g.cor === 'red' ? 'bg-red-50 text-red-600' : 'bg-amber-50 text-amber-600'}`}><i className={g.icone} /></span>
+                    <div className="min-w-0">
+                      <h3 className="text-sm font-bold text-zinc-800">{g.nome} <span className="text-zinc-400 font-normal">· {ts.length}</span></h3>
+                      <p className="text-xs text-zinc-400">{g.desc} · {fmtBRL(ts.reduce((s, x) => s + x.caso.valor, 0))}</p>
+                    </div>
+                  </div>
+                  <div className="p-3 space-y-2">
+                    {mostrar.map(({ tarefa, caso }) => (
+                      <TarefaCard key={tarefa.key} caso={caso} tarefa={tarefa} expandido={expandidos.has(tarefa.key)} onToggle={() => alternarFases(tarefa.key)} acoes={acoes} />
+                    ))}
+                    {ts.length > limite && (
+                      <button onClick={() => setLimite(limite + LIMITE_TAREFAS)} className="w-full py-2 text-xs font-semibold text-zinc-600 border border-zinc-200 rounded-xl bg-white hover:bg-zinc-50 cursor-pointer">
+                        Mostrar mais ({ts.length - limite} restantes)
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+            {visiveis.length === 0 && (
+              <div className="bg-white rounded-2xl border border-emerald-200 py-16 text-center">
+                <i className="ri-checkbox-circle-fill text-5xl text-emerald-400 block mb-2" />
+                <p className="font-semibold">Nada pendente{etapaF || busca || soUrg ? ' com esses filtros' : ''}</p>
               </div>
-            </li>
-          );
-        })}
-      </ol>
+            )}
+          </section>
+        </div>
+      )}
+
+      {dados && modo === 'esteira' && <Esteira casos={casosFiltrados} onAbrir={(c) => setGavetaKey(c.key)} />}
+      {dados && modo === 'matriz' && <Matriz casos={casosFiltrados} onAbrir={(c) => setGavetaKey(c.key)} />}
+
+      {casoDaGaveta && (
+        <Gaveta caso={casoDaGaveta} expandidos={expandidos} onToggle={alternarFases} acoes={acoes} onFechar={() => setGavetaKey(null)} />
+      )}
+
+      {/* ── Janelas que já existem no sistema, abertas aqui mesmo ── */}
+      {linha && <LinhaExtratoModal linha={linha} onClose={() => setLinha(null)} onChanged={() => void carregar(true)} />}
+      {compra && (
+        <DetalhePurchaseModal
+          purchase={compra.purchase}
+          installments={compra.installments}
+          loadingInstallments={compra.loading}
+          onClose={() => setCompra(null)}
+          onDeliveryConfirmed={aposCompra}
+          onDeleted={aposCompra}
+          onItemsChanged={aposCompra}
+        />
+      )}
+      {billsDRE && <ContasPagarDREModal bills={billsDRE} onClose={() => setBillsDRE(null)} onSaved={() => void carregar(true)} />}
     </div>
   );
 }

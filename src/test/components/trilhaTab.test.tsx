@@ -6,9 +6,12 @@ const h = vi.hoisted(() => ({ rpc: vi.fn(), navigate: vi.fn() }));
 vi.mock('@/lib/supabase', () => ({ supabase: { rpc: h.rpc } }));
 vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => ({ user: { tenantId: 't1' } }) }));
 vi.mock('react-router-dom', () => ({ useNavigate: () => h.navigate }));
+vi.mock('@/contexts/EstoqueContext', () => ({ useEstoque: () => ({ reloadInsumos: vi.fn(), reloadMovimentacoes: vi.fn() }) }));
 vi.mock('@/pages/financeiro/components/conciliacao/LinhaExtratoModal', () => ({
   default: ({ linha }: { linha: { id: string } }) => <div>janela do extrato {linha.id}</div>,
 }));
+vi.mock('@/pages/financeiro/components/compras/DetalhePurchaseModal', () => ({ default: () => <div>janela da compra</div> }));
+vi.mock('@/pages/financeiro/components/ContasPagarDREModal', () => ({ default: () => <div>janela da categoria</div> }));
 
 import TrilhaTab from '@/pages/financeiro/components/TrilhaTab';
 
@@ -33,32 +36,35 @@ const dados = {
 describe('TrilhaTab', () => {
   beforeEach(() => { h.rpc.mockReset(); h.navigate.mockReset(); });
 
-  it('mostra os casos, filtra os que precisam de atenção e leva para a tela certa', async () => {
+  it('mostra as tarefas por grupo e leva para a tela certa', async () => {
     h.rpc.mockResolvedValue({ data: dados, error: null });
     render(<TrilhaTab />);
-    expect(await screen.findByText('Copal')).toBeInTheDocument();
+    expect((await screen.findAllByText('Copal')).length).toBeGreaterThan(0);
     expect(screen.getByText('Fulano')).toBeInTheDocument();
     expect(h.rpc).toHaveBeenCalledWith('fin_trilha_dados', expect.objectContaining({ p_tenant: 't1' }));
+    expect(screen.getAllByText('Pagar contas a pagar vencidas').length).toBeGreaterThan(0);
 
-    // os dois precisam de atenção (conta vencida; saída do banco sem lançamento)
-    fireEvent.click(screen.getByText('Precisam de atenção'));
-    expect(screen.getByText('Copal')).toBeInTheDocument();
-
-    // abre a trilha e resolve o pagamento vencido
-    fireEvent.click(screen.getByText('Copal'));
-    const botoes = screen.getAllByText('Resolver');
-    expect(botoes.length).toBeGreaterThan(0);
-    fireEvent.click(botoes[botoes.length - 1]);
+    fireEvent.click(screen.getByText('Abrir em Contas a pagar'));
     expect(h.navigate).toHaveBeenCalledWith(expect.stringContaining('/financeiro?tab=pagar&busca=Copal'));
   });
 
-  it('pagamento sem lançamento: Resolver abre a linha do extrato ali mesmo, sem trocar de aba', async () => {
+  it('saída sem lançamento: "Dizer o que foi" abre a linha do extrato ali mesmo, sem trocar de aba', async () => {
     h.rpc.mockResolvedValue({ data: dados, error: null });
     render(<TrilhaTab />);
-    fireEvent.click(await screen.findByText('Fulano'));
-    fireEvent.click(screen.getAllByText('Resolver')[0]);
+    await screen.findByText('Fulano');
+    fireEvent.click(screen.getByText('Dizer o que foi'));
     expect(screen.getByText('janela do extrato x1')).toBeInTheDocument();
     expect(h.navigate).not.toHaveBeenCalled();
+  });
+
+  it('"ver fases" abre a linha de fases e a matriz mostra o caminho de cada despesa', async () => {
+    h.rpc.mockResolvedValue({ data: dados, error: null });
+    render(<TrilhaTab />);
+    await screen.findByText('Fulano');
+    fireEvent.click(screen.getAllByText('ver fases')[0]);
+    expect(screen.getAllByText('Resolver aqui').length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByText('Matriz'));
+    expect(screen.getByText('Todas as despesas do mês, fase a fase')).toBeInTheDocument();
   });
 
   it('mostra o erro do banco em vez de lista vazia', async () => {

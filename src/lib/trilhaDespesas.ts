@@ -41,27 +41,38 @@ export interface TrilhaDados {
 
 export type EtapaId = 'documento' | 'lancamento' | 'estoque' | 'conta' | 'pagamento' | 'banco';
 /** ok = feito · pendente = falta alguém fazer · atrasado/problema = precisa de atenção ·
+ *  prazo = conta a pagar em aberto e ainda dentro do vencimento (não é tarefa) ·
  *  espera = etapa ainda não chegou (depende da anterior) · na = não se aplica a este caso */
-export type EstadoEtapa = 'ok' | 'pendente' | 'atrasado' | 'problema' | 'espera' | 'na';
+export type EstadoEtapa = 'ok' | 'pendente' | 'prazo' | 'atrasado' | 'problema' | 'espera' | 'na';
 /** extrato: abre a linha do extrato na própria Trilha (mesma janela da Conciliação), em vez de ir para a aba. */
 export interface Atalho { tab: string; param?: string; valor?: string | null; extrato?: TrExtrato }
 export interface EtapaTrilha {
-  id: EtapaId; nome: string; estado: EstadoEtapa; resumo: string; detalhe?: string; atalho?: Atalho;
+  id: EtapaId; nome: string; estado: EstadoEtapa; resumo: string; detalhe?: string;
+  /** a ação concreta que falta, em linguagem simples ("→ Falta: …") — só em pendente/atrasado/problema */
+  falta?: string;
+  atalho?: Atalho;
 }
 export type TipoCaso = 'compra' | 'despesa' | 'nota' | 'pedido' | 'pagamento';
 export type SituacaoCaso = 'ok' | 'andamento' | 'atencao';
+export type GrupoTarefa = 'saida_banco' | 'vencidas' | 'sem_conta' | 'estoque' | 'notas' | 'pedidos' | 'classificar' | 'extrato';
+export interface TarefaTrilha { key: string; grupo: GrupoTarefa; etapas: EtapaId[]; urgente: boolean; porque: string }
 export interface CasoTrilha {
   key: string; tipo: TipoCaso; titulo: string; subtitulo: string; valor: number; data: string;
-  etapas: EtapaTrilha[]; situacao: SituacaoCaso; avisos: string[];
+  etapas: EtapaTrilha[]; situacao: SituacaoCaso; avisos: string[]; tarefas: TarefaTrilha[];
   // peças, para o detalhe
   compra: TrCompra | null; contas: TrConta[]; juros: TrConta[]; notas: TrNota[];
   extrato: TrExtrato[]; pedidos: TrPedido[]; caixa: TrCaixa[];
 }
 
 export const NOMES_ETAPA: Record<EtapaId, string> = {
-  documento: 'Documento', lancamento: 'Lançamento', estoque: 'Estoque',
-  conta: 'Conta a pagar', pagamento: 'Pagamento', banco: 'Banco',
+  documento: 'Nota fiscal', lancamento: 'Compra ou despesa', estoque: 'Estoque',
+  conta: 'Conta a pagar', pagamento: 'Pagamento', banco: 'Extrato do banco',
 };
+
+/** Precisa de alguém fazer algo (tarefa). */
+export const ruim = (e: EstadoEtapa) => e === 'problema' || e === 'atrasado' || e === 'pendente';
+/** Precisa de atenção (vermelho). */
+export const grave = (e: EstadoEtapa) => e === 'problema' || e === 'atrasado';
 
 const d10 = (s: string | null | undefined) => (s ? String(s).slice(0, 10) : '');
 export const diaBR = (s: string | null | undefined) => {
@@ -189,7 +200,14 @@ function dataDo(r: Rascunho): string {
   return d10(r.extrato[0]?.transaction_date);
 }
 
-/** Monta as etapas e a situação de um caso. `temExtrato` = a loja tem extrato automático. */
+const diasEntre = (de: string, ate: string) => {
+  if (!de || !ate) return 0;
+  const t = (x: string) => Date.UTC(Number(x.slice(0, 4)), Number(x.slice(5, 7)) - 1, Number(x.slice(8, 10)));
+  return Math.max(0, Math.round((t(ate) - t(de)) / 86400000));
+};
+const plural = (n: number, um: string, varios: string) => (n === 1 ? um : varios);
+
+/** Monta as etapas, a situação e as tarefas de um caso. `temExtrato` = a loja tem extrato automático. */
 export function montarCaso(r: Rascunho, hoje: string, temExtrato: boolean): CasoTrilha {
   const tipo = tipoDo(r);
   const p = r.compra;
@@ -197,8 +215,11 @@ export function montarCaso(r: Rascunho, hoje: string, temExtrato: boolean): Caso
   const pedido = r.pedidos[0] ?? null;
   const avisos: string[] = [];
   const etapas: EtapaTrilha[] = [];
-  const add = (id: EtapaId, estado: EstadoEtapa, resumo: string, detalhe?: string, atalho?: Atalho) =>
-    etapas.push({ id, nome: NOMES_ETAPA[id], estado, resumo, detalhe, atalho });
+  const tarefas: TarefaTrilha[] = [];
+  const add = (id: EtapaId, estado: EstadoEtapa, resumo: string, extra: { detalhe?: string; falta?: string; atalho?: Atalho } = {}) =>
+    etapas.push({ id, nome: NOMES_ETAPA[id], estado, resumo, ...extra });
+  const tarefa = (grupo: GrupoTarefa, ids: EtapaId[], urgente: boolean, porque: string) =>
+    tarefas.push({ key: `${grupo}:${r.key}`, grupo, etapas: ids, urgente, porque });
 
   const totalContas = round2(r.contas.reduce((s, c) => s + Number(c.amount || 0), 0));
   const valor = p ? Number(p.total_amount || 0)
@@ -206,83 +227,115 @@ export function montarCaso(r: Rascunho, hoje: string, temExtrato: boolean): Caso
     : nota ? Number(nota.valor_total || 0)
     : pedido ? Number(pedido.valor || 0)
     : Number(r.extrato[0]?.amount || 0);
+  // Caso "só a saída do banco": saiu dinheiro e ninguém disse o que foi
+  const soSaida = !p && !r.contas.length && !nota && !pedido && r.extrato.length > 0;
 
-  // ── 1. Documento ─────────────────────────────────────────────────────────────
+  // ── 1. Nota fiscal ───────────────────────────────────────────────────────────
   if (nota) {
-    const nome = Number(nota.modelo) === 10 || nota.import_type === 'bill' ? 'Nota de serviço' : 'Nota fiscal';
-    add('documento', 'ok', `${nome} nº ${nota.numero ?? '?'}`,
-      `${nota.emitente_nome ?? ''} · emitida ${diaBR(nota.emitted_at)} · ${brl(Number(nota.valor_total))}${nota.auto_imported ? ' · lançada pela conciliação' : ''}`,
-      { tab: 'notas-entrada', param: 'busca', valor: String(nota.numero ?? nota.emitente_nome ?? '') });
+    const servico = Number(nota.modelo) === 10 || nota.import_type === 'bill';
+    add('documento', 'ok', `${servico ? 'Nota de serviço' : 'Nota'} nº ${nota.numero ?? '?'} recebida`, {
+      detalhe: `${nota.emitente_nome ?? ''} · emitida ${diaBR(nota.emitted_at)} · ${brl(Number(nota.valor_total))}${nota.auto_imported ? ' · lançada pela conciliação' : ''}`,
+      atalho: { tab: 'notas-entrada', param: 'busca', valor: String(nota.numero ?? nota.emitente_nome ?? '') },
+    });
     if (p && !p.is_bonus && Math.abs(Number(nota.valor_total) - Number(p.total_amount)) > 1)
       avisos.push(`Valor da nota (${brl(Number(nota.valor_total))}) diferente da compra (${brl(Number(p.total_amount))})`);
   } else if (pedido) {
-    add('documento', 'ok', `Pedido: ${TIPO_PEDIDO[pedido.tipo] ?? pedido.tipo}`,
-      `${pedido.solicitado_por_nome ? 'por ' + pedido.solicitado_por_nome + ' · ' : ''}${pedido.status}`,
-      { tab: 'pagar' });
+    add('documento', 'ok', `Pedido de pagamento: ${TIPO_PEDIDO[pedido.tipo] ?? pedido.tipo}`, {
+      detalhe: `${pedido.solicitado_por_nome ? 'por ' + pedido.solicitado_por_nome + ' · ' : ''}${pedido.status}`,
+      atalho: { tab: 'pagar' },
+    });
   } else if (p?.invoice_number) {
-    add('documento', 'ok', `NF ${p.invoice_number}`, 'número digitado na compra (sem o XML da nota)');
+    add('documento', 'ok', `Nota nº ${p.invoice_number} (número digitado, sem o arquivo)`);
   } else {
-    add('documento', 'na', 'Sem nota fiscal', r.extrato.length && !p && !r.contas.length ? 'só o pagamento no banco' : undefined);
+    add('documento', 'na', 'Sem nota fiscal', { detalhe: soSaida ? 'só o pagamento no banco' : undefined });
   }
 
-  // ── 2. Lançamento (compra ou despesa) ────────────────────────────────────────
-  const semClassif = r.contas.filter((c) => c.reference_type !== 'purchase' && !c.dre_category_id && !c.category);
+  // ── 2. Compra ou despesa ─────────────────────────────────────────────────────
+  // "Sem categoria" = mesma regra do ContasPagarDREModal / pay_bill: só conta que não é de compra
+  // nem da folha, e sem dre_category_id (o texto `category` não conta).
+  const semClassif = r.contas.filter((c) => c.reference_type !== 'purchase' && c.reference_type !== 'hr_payroll' && !c.dre_category_id);
+  const atalhoConta = r.contas[0] ? { tab: 'pagar', param: 'busca', valor: r.contas[0].description } : undefined;
   if (p) {
-    add('lancamento', 'ok', p.is_bonus ? 'Bonificação lançada' : 'Compra lançada',
-      `${diaBR(p.purchase_date)} · ${brl(Number(p.total_amount))}${p.payment_method ? ' · ' + p.payment_method : ''}`,
-      { tab: 'compras', param: 'foco', valor: p.id });
+    add('lancamento', 'ok', p.is_bonus ? 'Bonificação lançada em Compras' : 'Lançada em Compras', {
+      detalhe: `${diaBR(p.purchase_date)} · ${brl(Number(p.total_amount))}${p.payment_method ? ' · ' + p.payment_method : ''}`,
+      atalho: { tab: 'compras', param: 'foco', valor: p.id },
+    });
   } else if (r.contas.length) {
-    const cat = r.contas[0].category;
-    if (semClassif.length)
-      add('lancamento', 'pendente', 'Despesa sem classificação', 'falta escolher a categoria do DRE', { tab: 'pagar', param: 'busca', valor: r.contas[0].description });
-    else
-      add('lancamento', 'ok', 'Despesa lançada', cat ? 'Categoria: ' + cat : undefined, { tab: 'pagar', param: 'busca', valor: r.contas[0].description });
+    const cat = r.contas.find((c) => c.category)?.category;
+    if (semClassif.length) {
+      add('lancamento', 'pendente', 'Lançada em Despesas, mas sem categoria do DRE', { falta: 'escolher a categoria do DRE', atalho: atalhoConta });
+      tarefa('classificar', ['lancamento'], false,
+        `${plural(semClassif.length, 'A conta a pagar desta despesa', `${semClassif.length} contas a pagar desta despesa`)} ${plural(semClassif.length, 'foi lançada', 'foram lançadas')}, mas sem categoria do DRE.`);
+    } else {
+      add('lancamento', 'ok', cat ? `Lançada em Despesas — categoria ${cat}` : 'Lançada em Despesas', { atalho: atalhoConta });
+    }
   } else if (nota && nota.status === 'new') {
-    add('lancamento', 'pendente', 'Nota ainda não lançada', 'lance como compra ou despesa em Notas de entrada',
-      { tab: 'notas-entrada', param: 'busca', valor: String(nota.numero ?? '') });
+    add('lancamento', 'pendente', 'A nota chegou, mas ainda não virou compra nem despesa', {
+      falta: 'lançar como compra ou despesa', atalho: { tab: 'notas-entrada', param: 'busca', valor: String(nota.numero ?? '') },
+    });
+    tarefa('notas', ['lancamento'], false, `A nota nº ${nota.numero ?? '?'}, emitida em ${diaBR(nota.emitted_at)}, ainda não virou compra nem despesa.`);
   } else if (pedido) {
-    add('lancamento', 'pendente',
-      pedido.status === 'pendente' ? 'Pedido aguardando aprovação' : 'Pedido aprovado, sem lançamento', undefined, { tab: 'pagar' });
+    const pend = pedido.status === 'pendente';
+    add('lancamento', 'pendente', pend ? 'Pedido de pagamento esperando aprovação' : 'Pedido aprovado, mas ainda não lançado', {
+      falta: pend ? 'aprovar ou recusar o pedido' : 'lançar o pedido', atalho: { tab: 'pagar' },
+    });
+    tarefa('pedidos', ['lancamento'], false,
+      `O pedido de ${(TIPO_PEDIDO[pedido.tipo] ?? pedido.tipo).toLowerCase()} de ${brl(Number(pedido.valor))} ${pend ? 'está esperando aprovação' : 'foi aprovado, mas ainda não foi lançado'}.`);
   } else {
-    add('lancamento', 'problema', 'Pagamento sem lançamento', 'saiu do banco e não virou compra nem despesa — lance como despesa, compra, freelancer ou prestador, ligue a uma conta que já existe, ou marque que não entra no DRE', { tab: 'conciliacao', extrato: r.extrato[0] });
+    const e0 = r.extrato[0];
+    add('lancamento', 'problema', 'Saiu do banco, mas ninguém disse se foi compra, despesa ou outra coisa', {
+      falta: 'dizer o que foi esse pagamento', atalho: { tab: 'conciliacao', extrato: e0 },
+    });
+    tarefa('saida_banco', ['lancamento', 'banco'], true,
+      `Saíram ${brl(Math.abs(Number(e0?.amount || 0)))} do banco em ${diaBR(e0?.transaction_date)}${e0?.counterpart_name ? ' (' + e0.counterpart_name + ')' : ''}, e ninguém disse se foi compra, despesa ou outra coisa.`);
   }
 
   // ── 3. Estoque (só compra) ───────────────────────────────────────────────────
+  const aindaNaoLancou = !p && !r.contas.length && (!!nota || !!pedido);
+  const atalhoCompra = p ? { tab: 'compras', param: 'foco', valor: p.id } : undefined;
   if (!p) {
-    add('estoque', 'na', 'Não vai ao estoque');
+    if (aindaNaoLancou) add('estoque', 'espera', 'Espera virar compra ou despesa');
+    else if (r.contas.length) add('estoque', 'na', 'Não precisa: despesa não vai ao estoque');
+    else add('estoque', 'na', 'Não precisa');
   } else if (Number(p.itens_estoque) === 0) {
-    add('estoque', 'na', 'Nenhum item ligado a insumo',
-      Number(p.itens) > 0 ? `${p.itens} ite${Number(p.itens) === 1 ? 'm' : 'ns'} sem insumo — não mexe no estoque` : undefined,
-      { tab: 'compras', param: 'foco', valor: p.id });
+    add('estoque', 'na', 'Não precisa: nenhum item ligado a insumo', {
+      detalhe: Number(p.itens) > 0 ? `${p.itens} ite${Number(p.itens) === 1 ? 'm' : 'ns'} sem insumo — não mexe no estoque` : undefined, atalho: atalhoCompra,
+    });
   } else if (p.stock_applied_at) {
-    const parcial = Number(p.itens_estoque) < Number(p.itens);
-    add('estoque', 'ok', `Entrou no estoque`,
-      `${diaBR(p.delivery_confirmed_at ?? p.stock_applied_at)} · ${p.itens_estoque} de ${p.itens} ite${Number(p.itens) === 1 ? 'm' : 'ns'}${parcial ? ' (os outros sem insumo)' : ''}`,
-      { tab: 'compras', param: 'foco', valor: p.id });
+    const n = Number(p.itens_estoque), m = Number(p.itens);
+    const resumo = n < m ? `${n} de ${m} itens entraram no estoque (os outros sem insumo)`
+      : n === 1 ? 'O item entrou no estoque' : `Os ${n} itens entraram no estoque`;
+    add('estoque', 'ok', resumo, { detalhe: `em ${diaBR(p.delivery_confirmed_at ?? p.stock_applied_at)}`, atalho: atalhoCompra });
   } else if (p.delivery_confirmed_at) {
-    add('estoque', 'problema', 'Recebida, estoque não entrou', `recebida ${diaBR(p.delivery_confirmed_at)}`, { tab: 'compras', param: 'foco', valor: p.id });
+    add('estoque', 'problema', `Chegou em ${diaBR(p.delivery_confirmed_at)}, mas o estoque não entrou`, { falta: 'ligar os itens aos insumos', atalho: atalhoCompra });
+    tarefa('estoque', ['estoque'], true, `A mercadoria chegou em ${diaBR(p.delivery_confirmed_at)}, mas os itens ligados a insumos não entraram no estoque.`);
   } else {
-    add('estoque', 'pendente', 'Aguardando recebimento', 'confirme o recebimento para entrar no estoque', { tab: 'compras', param: 'foco', valor: p.id });
+    add('estoque', 'pendente', 'Ninguém confirmou que a mercadoria chegou', { falta: 'confirmar a entrega para os itens entrarem no estoque', atalho: atalhoCompra });
+    tarefa('estoque', ['estoque'], false, `A compra foi lançada em ${diaBR(p.purchase_date)}, mas ninguém confirmou que a mercadoria chegou.`);
   }
 
   // ── 4. Conta a pagar ─────────────────────────────────────────────────────────
   const aVista = !!p && (r.caixa.length > 0 || (r.contas.length === 0 && p.payment_status === 'paid'));
   if (r.contas.length) {
     const n = r.contas.length;
-    add('conta', 'ok', n > 1 ? `${n} parcelas` : 'Conta criada', `${brl(totalContas)}${n === 1 ? ' · vence ' + diaBR(r.contas[0].due_date) : ''}`,
-      { tab: 'pagar', param: 'busca', valor: r.contas[0].description });
+    add('conta', 'ok', n > 1 ? `${n} parcelas criadas em Contas a pagar` : 'Conta a pagar criada', {
+      detalhe: n === 1 ? `vence ${diaBR(r.contas[0].due_date)}` : brl(totalContas), atalho: atalhoConta,
+    });
     if (p && !p.is_bonus && Math.abs(totalContas - Number(p.total_amount)) > 0.05)
       avisos.push(`Contas somam ${brl(totalContas)}, a compra é ${brl(Number(p.total_amount))}`);
   } else if (p?.is_bonus) {
-    add('conta', 'na', 'Bonificação', 'não gera conta');
+    add('conta', 'na', 'Não precisa: bonificação');
   } else if (aVista) {
-    add('conta', 'na', 'Paga à vista', 'sem conta a pagar');
+    add('conta', 'na', 'Não precisa: foi paga na hora');
   } else if (p) {
-    add('conta', 'problema', 'Compra sem conta a pagar', 'não está paga e não há conta para pagar', { tab: 'compras', param: 'foco', valor: p.id });
-  } else if (r.extrato.length) {
-    add('conta', 'na', '—');
+    add('conta', 'problema', 'Não foi paga na hora, mas ninguém criou a conta a pagar', {
+      falta: 'criar a conta a pagar — senão ela nunca aparece para pagar', atalho: atalhoCompra,
+    });
+    tarefa('sem_conta', ['conta'], true, `A compra foi lançada em ${diaBR(p.purchase_date)} e não foi paga na hora, mas ninguém criou a conta a pagar dela.`);
+  } else if (soSaida) {
+    add('conta', 'na', 'Não precisa: já foi pago');
   } else {
-    add('conta', 'espera', 'Ainda não criada');
+    add('conta', 'espera', 'Espera virar compra ou despesa');
   }
 
   // ── 5. Pagamento ─────────────────────────────────────────────────────────────
@@ -292,58 +345,82 @@ export function montarCaso(r: Rascunho, hoje: string, temExtrato: boolean): Caso
     if (!abertas.length) {
       estaPago = true;
       const ult = r.contas.map((c) => d10(c.paid_date)).filter(Boolean).sort().pop();
-      add('pagamento', 'ok', r.contas.length > 1 ? 'Todas pagas' : 'Paga', ult ? 'em ' + diaBR(ult) : undefined, { tab: 'pagar', param: 'busca', valor: r.contas[0].description });
+      add('pagamento', 'ok', r.contas.length > 1 ? 'Todas as parcelas pagas' : 'Pago', { detalhe: ult ? 'em ' + diaBR(ult) : undefined, atalho: atalhoConta });
     } else {
       const vencidas = abertas.filter((c) => c.status === 'overdue' || (d10(c.due_date) && d10(c.due_date) < hoje));
       const prox = abertas.map((c) => d10(c.due_date)).filter(Boolean).sort()[0];
       const pagas = r.contas.length - abertas.length;
       const falta = round2(abertas.reduce((s, c) => s + Number(c.amount || 0) - Number(c.paid_amount || 0), 0));
-      if (vencidas.length)
-        add('pagamento', 'atrasado', vencidas.length > 1 ? `${vencidas.length} vencidas` : 'Vencida',
-          `desde ${diaBR(vencidas.map((c) => d10(c.due_date)).sort()[0])} · falta ${brl(falta)}`, { tab: 'pagar', param: 'busca', valor: vencidas[0].description });
-      else
-        add('pagamento', 'pendente', pagas ? `${pagas} de ${r.contas.length} pagas` : 'Em aberto',
-          `vence ${diaBR(prox)} · ${brl(falta)}`, { tab: 'pagar', param: 'busca', valor: abertas[0].description });
+      if (vencidas.length) {
+        const maisAntiga = vencidas.map((c) => d10(c.due_date)).filter(Boolean).sort()[0] ?? '';
+        const dias = diasEntre(maisAntiga, hoje);
+        const diasTxt = `${dias} ${plural(dias, 'dia', 'dias')}`;
+        add('pagamento', 'atrasado',
+          vencidas.length > 1 ? `${vencidas.length} parcelas vencidas desde ${diaBR(maisAntiga)}` : `Venceu em ${diaBR(maisAntiga)} e não foi paga`, {
+            detalhe: `falta ${brl(falta)}`, falta: `pagar — ${diasTxt} de atraso`,
+            atalho: { tab: 'pagar', param: 'busca', valor: vencidas[0].description },
+          });
+        tarefa('vencidas', ['pagamento', 'banco'], true, vencidas.length > 1
+          ? `${vencidas.length} parcelas venceram; a mais antiga há ${diasTxt}.` : `Venceu há ${diasTxt}.`);
+      } else {
+        add('pagamento', 'prazo',
+          r.contas.length > 1
+            ? (pagas ? `${pagas} de ${r.contas.length} parcelas pagas — a próxima vence em ${diaBR(prox)}` : `${r.contas.length} parcelas — a próxima vence em ${diaBR(prox)}`)
+            : `Vence em ${diaBR(prox)}`,
+          { detalhe: `falta ${brl(falta)}`, atalho: { tab: 'pagar', param: 'busca', valor: abertas[0].description } });
+      }
     }
   } else if (p?.is_bonus) {
-    add('pagamento', 'na', 'Sem pagamento');
+    add('pagamento', 'na', 'Não precisa: bonificação');
   } else if (aVista) {
     estaPago = true;
-    add('pagamento', 'ok', 'Paga na hora', `${diaBR(r.caixa[0]?.date ?? p?.purchase_date)}${p?.payment_method ? ' · ' + p.payment_method : ''}`);
-  } else if (!p && !r.contas.length && r.extrato.length) {
+    const meio = p?.payment_method;
+    add('pagamento', 'ok', meio ? `Pago na hora (${meio})` : 'Pago na hora', { detalhe: `em ${diaBR(r.caixa[0]?.date ?? p?.purchase_date)}` });
+  } else if (soSaida) {
     estaPago = true;
-    add('pagamento', 'ok', 'Saiu do banco', diaBR(r.extrato[0].transaction_date));
+    add('pagamento', 'ok', 'Pago — saiu do banco', { detalhe: `em ${diaBR(r.extrato[0].transaction_date)}` });
   } else {
-    add('pagamento', 'espera', 'Aguardando conta');
+    add('pagamento', 'espera', 'Espera a conta a pagar');
   }
 
-  // ── 6. Banco (extrato) ───────────────────────────────────────────────────────
-  const meio = p?.payment_method ?? r.contas.find((c) => c.payment_method)?.payment_method ?? null;
+  // ── 6. Extrato do banco ──────────────────────────────────────────────────────
+  const meioPag = p?.payment_method ?? r.contas.find((c) => c.payment_method)?.payment_method ?? null;
   const conciliado = r.extrato.filter((e) => e.status === 'matched' || e.reconciled);
   if (conciliado.length) {
     const soma = round2(conciliado.reduce((s, e) => s + Number(e.amount || 0), 0));
-    add('banco', 'ok', conciliado.length > 1 ? `${conciliado.length} saídas no extrato` : 'Achado no extrato',
-      `${diaBR(conciliado[0].transaction_date)} · ${brl(soma)}${conciliado[0].counterpart_name ? ' · ' + conciliado[0].counterpart_name : ''}`,
-      { tab: 'conciliacao', extrato: conciliado[0] });
+    add('banco', 'ok', conciliado.length > 1 ? `${conciliado.length} saídas encontradas e ligadas no extrato` : 'Saída encontrada e ligada no extrato', {
+      detalhe: `${diaBR(conciliado[0].transaction_date)} · ${brl(soma)}${conciliado[0].counterpart_name ? ' · ' + conciliado[0].counterpart_name : ''}`,
+      atalho: { tab: 'conciliacao', extrato: conciliado[0] },
+    });
     if (r.contas.length && !estaPago) avisos.push('Saiu do banco, mas a conta ainda está em aberto');
   } else if (r.extrato.length) {
-    add('banco', 'problema', 'No extrato, sem vínculo', `${diaBR(r.extrato[0].transaction_date)} · ${brl(Number(r.extrato[0].amount))} · ${r.extrato[0].counterpart_name ?? r.extrato[0].description ?? ''}`,
-      { tab: 'conciliacao', extrato: r.extrato[0] });
+    const e0 = r.extrato[0];
+    const det = `${diaBR(e0.transaction_date)} · ${brl(Number(e0.amount))} · ${e0.counterpart_name ?? e0.description ?? ''}`;
+    if (soSaida) {
+      add('banco', 'espera', 'Está no extrato — liga sozinho quando você disser o que foi o pagamento', { detalhe: det, atalho: { tab: 'conciliacao', extrato: e0 } });
+    } else {
+      add('banco', 'problema', 'Está no extrato, mas não está ligado a nenhuma compra ou despesa', {
+        detalhe: det, falta: 'ligar a saída a esta despesa', atalho: { tab: 'conciliacao', extrato: e0 },
+      });
+      tarefa('extrato', ['banco'], false, `A saída de ${brl(Math.abs(Number(e0.amount)))} em ${diaBR(e0.transaction_date)} está no extrato, mas não está ligada a nenhuma compra ou despesa.`);
+    }
   } else if (!estaPago) {
-    add('banco', p?.is_bonus ? 'na' : 'espera', p?.is_bonus ? 'Sem saída' : 'Aguardando pagamento');
-  } else if (dinheiro(meio)) {
-    add('banco', 'na', 'Pago em dinheiro', 'não passa pelo banco');
+    add('banco', p?.is_bonus ? 'na' : 'espera', p?.is_bonus ? 'Não precisa: bonificação' : 'Espera o pagamento');
+  } else if (dinheiro(meioPag)) {
+    add('banco', 'na', 'Não precisa: dinheiro não passa pelo banco');
   } else if (!temExtrato) {
-    add('banco', 'na', 'Sem extrato automático', 'a loja não tem banco integrado');
+    add('banco', 'na', 'Não precisa: a loja não tem extrato automático');
   } else {
-    add('banco', 'pendente', 'Não achado no extrato', 'pago no sistema, mas a saída do banco não foi ligada', { tab: 'conciliacao' });
+    const dtPago = r.contas.map((c) => d10(c.paid_date)).filter(Boolean).sort().pop() ?? d10(p?.purchase_date);
+    add('banco', 'pendente', 'Marcado como pago, mas a saída não foi achada no extrato', { falta: 'ligar a saída do extrato', atalho: { tab: 'conciliacao' } });
+    tarefa('extrato', ['banco'], false, `Foi marcado como pago${dtPago ? ' em ' + diaBR(dtPago) : ''}, mas a saída não foi achada no extrato.`);
   }
 
   for (const j of r.juros) avisos.push(`Juros/multa de ${brl(Number(j.amount))} pagos junto`);
 
-  const situacao: SituacaoCaso = etapas.some((e) => e.estado === 'problema' || e.estado === 'atrasado') || avisos.some((a) => !a.startsWith('Juros'))
+  const situacao: SituacaoCaso = etapas.some((e) => grave(e.estado)) || avisos.some((a) => !a.startsWith('Juros'))
     ? 'atencao'
-    : etapas.some((e) => e.estado === 'pendente' || e.estado === 'espera') ? 'andamento' : 'ok';
+    : etapas.some((e) => e.estado === 'pendente' || e.estado === 'espera' || e.estado === 'prazo') ? 'andamento' : 'ok';
 
   const titulo = p?.supplier ?? r.contas[0]?.supplier ?? nota?.emitente_nome ?? pedido?.favorecido_nome
     ?? r.contas[0]?.description ?? r.extrato[0]?.counterpart_name ?? r.extrato[0]?.description ?? 'Sem nome';
@@ -354,7 +431,7 @@ export function montarCaso(r: Rascunho, hoje: string, temExtrato: boolean): Caso
     : (r.extrato[0]?.description ?? 'Pagamento no banco');
 
   return {
-    key: r.key, tipo, titulo, subtitulo, valor: round2(valor), data: dataDo(r), etapas, situacao, avisos,
+    key: r.key, tipo, titulo, subtitulo, valor: round2(valor), data: dataDo(r), etapas, situacao, avisos, tarefas,
     compra: p, contas: r.contas, juros: r.juros, notas: r.notas, extrato: r.extrato, pedidos: r.pedidos, caixa: r.caixa,
   };
 }
