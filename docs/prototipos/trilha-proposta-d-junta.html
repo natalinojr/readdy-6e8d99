@@ -210,7 +210,17 @@ casos.forEach(recalc);
 
 // ── "Resolver de outro jeito": TODAS as saídas possíveis por tipo de ação ──
 // campo: data | categoria | texto | escolha:[...] | nenhum
-const CATS = ['Mercadoria (CMV)','Embalagens','Energia','Água','Serviços contábeis','Serviços de terceiros','Manutenção','Marketing','Administrativo','Impostos e taxas'];
+const CAT_DRE = [ // categoria · grupo da DRE
+  ['Serviços contábeis','Despesas administrativas'],['Serviços de terceiros','Despesas administrativas'],['Material de escritório','Despesas administrativas'],
+  ['Aluguel','Despesas com ocupação'],['Energia','Despesas com ocupação'],['Água','Despesas com ocupação'],['Manutenção','Despesas com ocupação'],
+  ['Marketing','Despesas comerciais'],['Embalagens','Despesas comerciais'],['Taxas de cartão e apps','Despesas comerciais'],
+  ['Freelancers','Despesas com pessoal'],['Prestadores MEI','Despesas com pessoal'],
+  ['Tarifas bancárias','Despesas financeiras'],['Juros e multas','Despesas financeiras'],['Impostos e taxas','Deduções'],
+];
+const CAT_MERC = [ // categoria de mercadoria (CMV)
+  ['Hortifruti','CMV'],['Carnes e aves','CMV'],['Frios e laticínios','CMV'],['Mercearia','CMV'],['Bebidas não alcoólicas','CMV'],['Cervejas e destilados','CMV'],['Pães e massas','CMV'],['Gelo','CMV'],
+];
+let catEsc = {};   // chave "tarefa-opção" → { classe:'despesa'|'cmv', cat:'' }
 const OUTRO = {
   pix: [
     {l:'Lançar como despesa', ic:'ri-bill-line', campo:'categoria'},
@@ -243,7 +253,7 @@ const OUTRO = {
     {l:'Bonificação (sem pagamento)', ic:'ri-gift-line', campo:'nenhum'},
     {l:'Não é desta loja / ignorar', ic:'ri-forbid-line', campo:'texto', ph:'motivo'},
   ],
-  classificar: [ {l:'Escolher outra categoria', ic:'ri-price-tag-3-line', campo:'categoria'}, {l:'Não entra no DRE', ic:'ri-forbid-line', campo:'texto', ph:'motivo'} ],
+  classificar: [ {l:'Escolher outra classificação', ic:'ri-price-tag-3-line', campo:'categoria', tipos:true}, {l:'Não entra no DRE', ic:'ri-forbid-line', campo:'texto', ph:'motivo'} ],
   extrato: [
     {l:'Ligar a outra linha do extrato', ic:'ri-links-line', campo:'escolha', ops:['21/09 · R$ 412,00 · PIX ENVIADO','Procurar outra…']},
     {l:'Foi pago em dinheiro', ic:'ri-money-dollar-box-line', campo:'data'},
@@ -335,22 +345,24 @@ let itens = {};
 const iniItens = t => itens[t.id] ??= (ULTIMA[t.caso]||[['',1,'un',0]]).map(([d,q,u,v])=>({d,q,u,v, ins:VINCULOS[norm(d)]||'', auto:!!VINCULOS[norm(d)], upp:VINCULOS[norm(d)]?'1':''}));
 // Seletor com busca: clica, digita parte do nome, escolhe com clique ou ↑/↓ + Enter; "Criar insumo" no rodapé.
 // Depois de escolher pergunta a conversão (1 cx = 12 un), como na Classificação.
-let comboAlvo=null, comboHi=0, comboDesde=0;
+let comboAlvo=null, comboHi=0, comboDesde=0, comboTipo='insumo';
 const comboBtn = key => `<button data-combo="${key}" class="inline-flex items-center justify-between gap-1 text-left text-[11px] font-semibold rounded-lg px-1.5 py-1 w-[190px] cursor-pointer bg-zinc-50 text-zinc-500 border border-dashed border-zinc-200 hover:border-emerald-300"><span class="truncate">Vincular insumo…</span><i class="ri-arrow-down-s-line flex-shrink-0"></i></button>`;
 function comboAbrir(btn){
   const r=btn.getBoundingClientRect(), W=288, left=Math.max(8,Math.min(r.left, innerWidth-W-8)), up=innerHeight-r.bottom<320&&r.top>320;
-  comboAlvo=btn.dataset.combo; comboHi=0;
+  comboAlvo=btn.dataset.combo; comboTipo=btn.dataset.tipo||'insumo'; comboHi=0;
   const el=document.getElementById('combo');
   Object.assign(el.style,{left:left+'px', top:up?'':(r.bottom+4)+'px', bottom:up?(innerHeight-r.top+4)+'px':'', display:'block'});
-  el.querySelector('input').value=''; comboLista(); comboDesde=Date.now(); el.querySelector('input').focus({preventScroll:true});
+  el.querySelector('input').value=''; el.querySelector('input').placeholder = comboTipo==='insumo'?'Digite para buscar o insumo…':'Digite para buscar a categoria…'; comboLista(); comboDesde=Date.now(); el.querySelector('input').focus({preventScroll:true});
 }
 function comboFechar(){ document.getElementById('combo').style.display='none'; comboAlvo=null; }
-function comboFiltrados(){ const w=norm(document.querySelector('#combo input').value).split(' ').filter(Boolean); return INS_LISTA.filter(n=>{ const h=norm(n+' '+INS_INFO[n].un+' '+INS_INFO[n].cat); return w.every(x=>h.includes(x)); }); }
+const comboOpcoes = () => comboTipo==='dre' ? CAT_DRE.map(([n,g])=>({n,sub:g})) : comboTipo==='merc' ? CAT_MERC.map(([n])=>({n,sub:'Mercadoria · CMV'})) : INS_LISTA.map(n=>({n,sub:INS_INFO[n].un+' · '+INS_INFO[n].cat}));
+function comboFiltrados(){ const w=norm(document.querySelector('#combo input').value).split(' ').filter(Boolean); return comboOpcoes().filter(o=>{ const h=norm(o.n+' '+o.sub); return w.every(x=>h.includes(x)); }).map(o=>o.n); }
 function comboLista(){
   const L=comboFiltrados(), q=document.querySelector('#combo input').value.trim();
-  document.getElementById('comboUl').innerHTML = L.length ? L.map((n,i)=>`<li data-ci="${i}" data-n="${n}" class="px-3 py-1.5 cursor-pointer ${i===comboHi?'bg-amber-50':''}"><span class="block text-sm">${n}</span><span class="block text-[11px] text-zinc-400">${INS_INFO[n].un} · ${INS_INFO[n].cat}</span></li>`).join('')
-    : `<li class="px-3 py-3 text-xs text-zinc-400 text-center">Nenhum insumo com “${q}”</li>`;
-  document.getElementById('comboCriar').innerHTML = `<i class="ri-add-circle-line"></i> <span class="truncate">${q?`Criar insumo “${q}”`:'Criar novo insumo'}</span>`;
+  const subDe = Object.fromEntries(comboOpcoes().map(o=>[o.n,o.sub])), oque = comboTipo==='insumo'?'insumo':'categoria';
+  document.getElementById('comboUl').innerHTML = L.length ? L.map((n,i)=>`<li data-ci="${i}" data-n="${n}" class="px-3 py-1.5 cursor-pointer ${i===comboHi?'bg-amber-50':''}"><span class="block text-sm">${n}</span><span class="block text-[11px] text-zinc-400">${subDe[n]}</span></li>`).join('')
+    : `<li class="px-3 py-3 text-xs text-zinc-400 text-center">Nenhum${oque==='categoria'?'a':''} ${oque} com “${q}”</li>`;
+  document.getElementById('comboCriar').innerHTML = `<i class="ri-add-circle-line"></i> <span class="truncate">${q?`Criar ${oque} “${q}”`:`Criar nov${oque==='categoria'?'a':'o'} ${oque}`}</span>`;
   document.querySelectorAll('#comboUl [data-ci]').forEach(li=>{ li.onmouseenter=()=>{comboHi=+li.dataset.ci; document.querySelectorAll('#comboUl [data-ci]').forEach(x=>x.classList.toggle('bg-amber-50',+x.dataset.ci===comboHi));}; li.onmousedown=e=>{e.preventDefault(); comboEscolher(li.dataset.n);}; });
   document.querySelector(`#comboUl [data-ci="${comboHi}"]`)?.scrollIntoView({block:'nearest'});
 }
@@ -359,7 +371,8 @@ const itemDe = key => { const [tp,id,k]=key.split(':'); return tp==='i'?itens[+i
 const redesItem = key => { const [tp,id]=key.split(':'); tp==='i' ? redesItens(+id) : redesVinc(+id); };
 const unItem = it => (it.u || (/CX\s?\d+/i.test(it.d)?'cx':'un')).toLowerCase();
 const convInicial = (it,ins) => { const m=(it.d||'').match(/CX\s?(\d+)/i); if(m) return m[1]; return unItem(it)===INS_INFO[ins].un ? '1' : ''; };
-function comboEscolher(n){ const key=comboAlvo; if(!key) return; comboFechar(); const it=itemDe(key); Object.assign(it,{ins:n, auto:false, upp:convInicial(it,n), editConv:true}); redesItem(key); }
+function comboEscolher(n){ const key=comboAlvo; if(!key) return; comboFechar();
+  if(comboTipo!=='insumo'){ catEsc[key]={...(catEsc[key]||{}), cat:n}; lista(); return; } const it=itemDe(key); Object.assign(it,{ins:n, auto:false, upp:convInicial(it,n), editConv:true}); redesItem(key); }
 function insumoCelula(key,it){
   if(it.editConv) return `<div class="bg-amber-50 border border-amber-200 rounded-lg p-2 space-y-1.5 w-[250px]">
       <p class="text-[11px] font-semibold text-zinc-700 truncate"><i class="ri-links-line text-emerald-600"></i> ${it.ins}</p>
@@ -613,7 +626,11 @@ function campoHTML(t,i,o){
   if(o.campo==='nenhum') return '';
   if(o.campo==='data') return `<input type="date" value="2026-09-29" class="h-9 border border-zinc-200 rounded-lg px-2 text-xs">`;
   if(o.campo==='texto') return `<input placeholder="${o.ph||''}" class="h-9 w-full sm:w-72 border border-zinc-200 rounded-lg px-2 text-xs">`;
-  if(o.campo==='categoria') return `<select class="h-9 border border-zinc-200 rounded-lg px-2 text-xs bg-white">${CATS.map(c=>`<option>${c}</option>`).join('')}</select>`;
+  if(o.campo==='categoria'){
+    const key=`${t.id}-${i}`, E=catEsc[key]||(catEsc[key]={classe:'despesa',cat:''}), tipo=E.classe==='cmv'?'merc':'dre';
+    const seg = o.tipos ? `<div class="flex bg-zinc-100 p-0.5 rounded-lg">${[['despesa','Despesa','ri-bill-line'],['cmv','Mercadoria (CMV)','ri-shopping-basket-2-line']].map(([c,l,ic])=>`<button data-classe="${key}:${c}" class="px-2.5 py-1.5 text-[11px] font-semibold rounded-md flex items-center gap-1 ${E.classe===c?'bg-white text-zinc-900 shadow-sm':'text-zinc-500 hover:text-zinc-800'}"><i class="${ic}"></i>${l}</button>`).join('')}</div>` : '';
+    return `${seg}<button data-combo="${key}" data-tipo="${tipo}" class="inline-flex items-center justify-between gap-1 text-left text-xs rounded-lg px-2.5 h-9 w-[220px] cursor-pointer border ${E.cat?'bg-white border-zinc-300 text-zinc-800 font-semibold':'bg-zinc-50 border-dashed border-zinc-300 text-zinc-500'}"><span class="truncate">${E.cat || (tipo==='merc'?'Categoria da mercadoria…':'Categoria do DRE…')}</span><i class="ri-arrow-down-s-line flex-shrink-0"></i></button>`;
+  }
   if(o.campo==='escolha') return `<select class="h-9 w-full sm:w-auto max-w-full border border-zinc-200 rounded-lg px-2 text-xs bg-white">${o.ops.map(c=>`<option>${c}</option>`).join('')}</select>`;
   return '';
 }
@@ -728,7 +745,13 @@ function lista(){
   document.querySelectorAll('[data-chegou-ok]').forEach(b=>b.onclick=e=>{ e.preventDefault(); const id=+b.dataset.chegouOk, d=chegouData[id]||'2026-09-29'; resolver(id, `Chegou em ${dBR(d)}${d<=ULTIMA_CONTAGEM?' (antes da contagem: não mudou o estoque atual)':''}`); });
   document.querySelectorAll('[data-pedir-enviar]').forEach(b=>b.onclick=e=>{ e.preventDefault(); const id=+b.dataset.pedirEnviar; const canal=document.querySelector(`[data-pedir-canal="${id}"]:checked`)?.value||'e-mail'; pedirBoleto(id, canal); });
   document.querySelectorAll('[data-pag-cancel]').forEach(b=>b.onclick=e=>{ e.preventDefault(); abertoOutro=null; lista(); });
-  document.querySelectorAll('[data-conf]').forEach(b=>b.onclick=e=>{e.preventDefault(); resolver(+b.dataset.conf,b.dataset.l+' (manual)');});
+  document.querySelectorAll('[data-conf]').forEach(b=>b.onclick=e=>{e.preventDefault();
+    const id=+b.dataset.conf, t=T.find(x=>x.id===id), i=escolhido[id], o=OUTRO[t.g][i];
+    if(o.campo==='categoria'){ const E=catEsc[`${id}-${i}`]||{}; if(!E.cat){ const bt=document.querySelector(`[data-combo="${id}-${i}"]`); bt.classList.add('ring-2','ring-red-300'); return; }
+      resolver(id, E.classe==='cmv' ? `Mercadoria (CMV) — ${E.cat}` : `Despesa — ${E.cat}`); return; }
+    resolver(id,b.dataset.l+' (manual)');});
+  document.querySelectorAll('[data-classe]').forEach(b=>b.onclick=e=>{ e.preventDefault(); const [key,c]=b.dataset.classe.split(':'); catEsc[key]={classe:c, cat:''}; lista(); });
+  document.querySelectorAll('[data-combo][data-tipo]').forEach(b=>b.onclick=e=>{ e.preventDefault(); comboAlvo===b.dataset.combo ? comboFechar() : comboAbrir(b); });
   document.querySelectorAll('[data-outro]').forEach(b=>b.onclick=()=>{const id=+b.dataset.outro; abertoOutro=abertoOutro===id?null:id; lista();});
   document.querySelectorAll('[data-exp]').forEach(b=>b.onclick=()=>{const id=+b.dataset.exp; expandido.has(id)?expandido.delete(id):expandido.add(id); lista();});
   document.querySelectorAll('[data-esc]').forEach(r=>r.onchange=()=>{escolhido[+r.dataset.esc]=+r.dataset.i; lista();});
@@ -933,7 +956,7 @@ document.getElementById('insumosLista').innerHTML=INSUMOS.map(i=>`<option value=
     else if(e.key==='ArrowUp'){ e.preventDefault(); comboHi=Math.max(comboHi-1,0); comboLista(); }
     else if(e.key==='Enter'){ e.preventDefault(); if(L[comboHi]) comboEscolher(L[comboHi]); }
     else if(e.key==='Escape'){ e.preventDefault(); comboFechar(); } };
-  document.getElementById('comboCriar').onmousedown=e=>{ e.preventDefault(); const q=inp.value.trim()||'Novo insumo'; INS_LISTA.push(q); INS_INFO[q]={un:'un',cat:'Sem categoria'}; comboEscolher(q); };
+  document.getElementById('comboCriar').onmousedown=e=>{ e.preventDefault(); const q=inp.value.trim()||(comboTipo==='insumo'?'Novo insumo':'Nova categoria'); if(comboTipo==='insumo'){ INS_LISTA.push(q); INS_INFO[q]={un:'un',cat:'Sem categoria'}; } else (comboTipo==='dre'?CAT_DRE:CAT_MERC).push([q, comboTipo==='dre'?'Sem grupo':'CMV']); comboEscolher(q); };
   document.addEventListener('mousedown',e=>{ const c=document.getElementById('combo'); if(comboAlvo && !c.contains(e.target) && !e.target.closest('[data-combo]')) comboFechar(); });
   window.addEventListener('scroll',e=>{ if(comboAlvo && Date.now()-comboDesde>300 && !document.getElementById('combo').contains(e.target)) comboFechar(); },true);
 })();
