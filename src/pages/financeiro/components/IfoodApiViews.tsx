@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { supabase } from '@/lib/supabase';
 import { formatCurrency } from '@/lib/formatters';
+import { fetchAllRows } from '@/lib/fetchAllRows';
 
 // Visões das APIs do módulo Financial do iFood (gravadas pela edge ifood-financial na
 // busca diária): Pedidos (Sales), Repasses (Settlements + Anticipations) e Eventos
@@ -118,8 +119,9 @@ export default function IfoodApiViews({ tenantId, competence, view, merchantId, 
         const [s, a, ev, rec] = await Promise.all([
           porLoja(supabase.from('fin_ifood_settlements').select('*').eq('tenant_id', tenantId)).gte('payment_date', start).lte('payment_date', end).order('payment_date'),
           porLoja(supabase.from('fin_ifood_anticipations').select('*').eq('tenant_id', tenantId)).gte('anticipated_date', start).lte('anticipated_date', end).order('anticipated_date'),
-          porLoja(supabase.from('fin_ifood_events').select('merchant_id, expected_settlement, amount').eq('tenant_id', tenantId)).eq('has_transfer_impact', true).gte('expected_settlement', start).lte('expected_settlement', end).limit(20000),
-          porLoja(supabase.from('fin_ifood_entries').select('merchant_id, data_repasse, valor').eq('tenant_id', tenantId)).eq('impacto_repasse', true).gte('data_repasse', start).lte('data_repasse', end).limit(50000),
+          // Em lotes: o Supabase corta em 1000 linhas e o .limit() maior não muda isso (2026-09-29).
+          fetchAllRows<{ merchant_id: string | null; expected_settlement: string | null; amount: number }>((f, t) => porLoja(supabase.from('fin_ifood_events').select('merchant_id, expected_settlement, amount').eq('tenant_id', tenantId)).eq('has_transfer_impact', true).gte('expected_settlement', start).lte('expected_settlement', end).order('id').range(f, t), { maxRows: 50000 }).then((r) => ({ data: r.rows, error: r.error })),
+          fetchAllRows<{ merchant_id: string | null; data_repasse: string | null; valor: number }>((f, t) => porLoja(supabase.from('fin_ifood_entries').select('merchant_id, data_repasse, valor').eq('tenant_id', tenantId)).eq('impacto_repasse', true).gte('data_repasse', start).lte('data_repasse', end).order('id').range(f, t), { maxRows: 50000 }).then((r) => ({ data: r.rows, error: r.error })),
         ]);
         res = s;
         if (alive) {

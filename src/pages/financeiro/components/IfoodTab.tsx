@@ -8,6 +8,7 @@ import IfoodApiViews, { type IfoodApiView } from './IfoodApiViews';
 import IfoodProdutos from './IfoodProdutos';
 import IfoodCmv from './IfoodCmv';
 import { portalBucket } from '@/lib/ifoodVendas';
+import { fetchAllRows } from '@/lib/fetchAllRows';
 
 // Aba iFood: o relatório de conciliação do iFood (fin_ifood_entries, gravado pela edge
 // ifood-financial) por competência — vendas, comissões/taxas, promoções e repasses,
@@ -112,13 +113,17 @@ export default function IfoodTab() {
   const loadCompetence = useCallback(async () => {
     if (!user?.tenantId || !competence) return;
     setLoading(true);
-    let q = supabase.from('fin_ifood_entries')
-      .select('fato_gerador, tipo_lancamento, descricao, valor, impacto_repasse, responsavel, order_id, data_repasse')
-      .eq('tenant_id', user.tenantId).eq('competence', competence);
-    if (loja) q = q.eq('merchant_id', loja);
-    const { data, error: err } = await q.limit(20000);
+    // Em lotes: o Supabase devolve no máximo 1000 linhas e cortava o mês em silêncio (set/2026 tem 1.232
+    // linhas → faturamento R$ 9,5 mil aqui × R$ 11,2 mil nos Relatórios, 2026-09-29).
+    const { rows: data, error: err } = await fetchAllRows<EntryRow>((from, to) => {
+      let q = supabase.from('fin_ifood_entries')
+        .select('fato_gerador, tipo_lancamento, descricao, valor, impacto_repasse, responsavel, order_id, data_repasse')
+        .eq('tenant_id', user.tenantId).eq('competence', competence);
+      if (loja) q = q.eq('merchant_id', loja);
+      return q.order('id', { ascending: true }).range(from, to);
+    }, { maxRows: 50000 });
     if (err) { setError(err.message); setLoading(false); return; }
-    const rows = ((data ?? []) as EntryRow[]).map((e) => ({ ...e, valor: Number(e.valor) }));
+    const rows = data.map((e) => ({ ...e, valor: Number(e.valor) }));
     setEntries(rows);
     const datas = rows.map((e) => e.data_repasse).filter(Boolean).sort() as string[];
     if (datas.length > 0) {
@@ -172,11 +177,13 @@ export default function IfoodTab() {
   // Exporta o relatório de conciliação da competência (colunas originais do iFood) em CSV.
   const exportCsv = async () => {
     if (!user?.tenantId || !competence) return;
-    let q = supabase.from('fin_ifood_entries').select('raw').eq('tenant_id', user.tenantId).eq('competence', competence);
-    if (loja) q = q.eq('merchant_id', loja);
-    const { data, error: err } = await q.limit(50000);
+    const { rows: data, error: err } = await fetchAllRows<{ raw: Record<string, unknown> | null }>((from, to) => {
+      let q = supabase.from('fin_ifood_entries').select('raw').eq('tenant_id', user.tenantId).eq('competence', competence);
+      if (loja) q = q.eq('merchant_id', loja);
+      return q.order('id', { ascending: true }).range(from, to);
+    }, { maxRows: 50000 });
     if (err) { setError(err.message); return; }
-    const raws = ((data ?? []) as { raw: Record<string, unknown> | null }[]).map((r) => r.raw ?? {});
+    const raws = data.map((r) => r.raw ?? {});
     if (raws.length === 0) return;
     const cols = Object.keys(raws[0]);
     const cell = (v: unknown) => { const s = v === null || v === undefined ? '' : String(v); return /[;"\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
