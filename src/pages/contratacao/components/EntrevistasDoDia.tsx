@@ -40,6 +40,12 @@ const lsDraftKey = (id: string) => `contratacao_rascunho_entrevista_${id}`;
 const lsLer = <T,>(k: string): T | null => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) as T : null; } catch { return null; } };
 const lsGravar = (k: string, v: unknown) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* sem storage */ } };
 const lsApagar = (k: string) => { try { localStorage.removeItem(k); } catch { /* sem storage */ } };
+// Compara respostas/notas ignorando ordem das chaves (o jsonb do Postgres reordena), espaços nas pontas
+// e campos vazios/zerados (o salvar descarta) — senão, depois de salvar, a tela seguia "Não salvo ainda".
+const normObj = (o: Record<string, unknown> | null | undefined) => JSON.stringify(
+  Object.entries(o ?? {}).map(([k, v]) => [k, typeof v === 'string' ? v.trim() : v] as const)
+    .filter(([, v]) => v !== '' && v !== 0 && v != null).sort(([a], [b]) => a.localeCompare(b)),
+);
 
 const rotuloDia = (key: string) => {
   const [y, m, d] = key.split('-').map(Number);
@@ -258,8 +264,8 @@ function RegistroPainel({ iv, c, companies, stages, settings, applications, jobs
   const comRegistro = status !== 'faltou' && status !== 'cancelada';
   const [saving, setSaving] = useState(false);
   const [salvoEm, setSalvoEm] = useState<string | null>(null);
-  const dirty = status !== iv.status || JSON.stringify(answers) !== JSON.stringify(iv.answers ?? {}) || JSON.stringify(scores) !== JSON.stringify(iv.scores ?? {})
-    || notes !== (iv.notes ?? '') || decision !== (iv.recommendation ?? null) || !!novaFase;
+  const dirty = status !== iv.status || normObj(answers) !== normObj(iv.answers) || normObj(scores) !== normObj(iv.scores)
+    || notes.trim() !== (iv.notes ?? '').trim() || decision !== (iv.recommendation ?? null) || !!novaFase;
   // Cada alteração vai para o rascunho do aparelho (some ao salvar ou descartar).
   useEffect(() => {
     const t = setTimeout(() => {
