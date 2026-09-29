@@ -1174,7 +1174,7 @@ Deno.serve(async (req) => {
         // deno-lint-ignore no-explicit-any
         let pays: any[] = [];
         if (payIds.length) {
-          const { data } = await admin.from('fin_inter_payments').select('id, kind, amount, beneficiary_name, bill_id, description').in('id', payIds);
+          const { data } = await admin.from('fin_inter_payments').select('id, kind, amount, beneficiary_name, bill_id, description, status').in('id', payIds);
           pays = data ?? [];
         }
         const valor = Number(pays[0]?.amount ?? ext.valor ?? 0) || null;
@@ -1224,6 +1224,9 @@ Deno.serve(async (req) => {
         info[pd.id] = {
           para, valor, tipo: pays[0]?.kind ?? ext.tipo ?? null,
           compra_lancada: !!compra, guia,
+          // Pix já mandado ao Inter e esperando o dono aprovar no app do banco (dono, 2026-09-29: o
+          // cartão seguia com "Pagar" depois de pedir o pagamento).
+          no_inter: pays.some((x) => ['sending', 'sent', 'pending_approval', 'approved', 'scheduled'].includes(String(x.status))),
           recebido: compra ? !!compra.delivery_confirmed_at : null,
           recebido_em: compra?.delivery_confirmed_at ?? null,
         };

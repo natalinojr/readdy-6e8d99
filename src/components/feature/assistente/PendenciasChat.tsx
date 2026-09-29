@@ -340,7 +340,13 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
     const saiu = Number(p.payload?.valor_saiu ?? 0);
     const nota = Number(p.payload?.valor_nota ?? 0);
     // A frase do servidor é para quem pede; aqui o botão já diz o que acontece.
-    const detalhe = ehPedido ? p.detalhe?.replace(/\s*Só vira conta a pagar depois de aprovado\.?/i, '') : p.detalhe;
+    // Pix de pedido aprovado (dono, 2026-09-29: "informação duplicada"): o título já diz valor e para
+    // quem, a caixa roxa diz o nome completo + a chave, e "Toque em Pagar…" é o próprio botão.
+    const pedidoPix = ehPagamento && infoPag[p.id] ? origemPedido(p) : null;
+    const chavePix = pedidoPix ? /^Chave (.+?)\. /.exec(p.detalhe ?? '')?.[1] ?? null : null;
+    const detalhe = ehPedido ? p.detalhe?.replace(/\s*Só vira conta a pagar depois de aprovado\.?/i, '')
+      : ehPagamento ? p.detalhe?.replace(/^Chave .+?\. (?=Toque em Pagar)/, pedidoPix ? '' : '$&').replace(/\s*Toque em Pagar e confirme com o PIN\.?/i, '').trim() || null
+      : p.detalhe;
     const busy = ocupada === p.id;
     return (
       <div key={p.id} data-pend={p.id}
@@ -364,7 +370,7 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
           </div>
         </div>
         <div className="pl-[42px]">
-          {ehPagamento && infoPag[p.id] && <LinhaPagamento info={infoPag[p.id]} pedido={origemPedido(p)} />}
+          {ehPagamento && infoPag[p.id] && <LinhaPagamento info={infoPag[p.id]} pedido={pedidoPix} chave={chavePix} />}
           {p.kind === 'sangria_valor_diferente' ? (
             // Saiu × nota lado a lado: o texto longo do servidor dizia o mesmo em três linhas.
             <div className="mt-1.5 grid grid-cols-3 gap-1 rounded-lg bg-amber-50 border border-amber-100 px-2.5 py-1.5 text-center">
@@ -423,7 +429,13 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
           // Botões baixos e numa linha só (dono, 2026-09-24: "grandes demais, desproporcionais"); se não
           // couberem no celular, quebram para a linha de baixo (flex-wrap) em vez de vazar.
           <div className="flex flex-wrap gap-1.5 mt-2.5">
-            {ehPagamento && (
+            {ehPagamento && infoPag[p.id]?.no_inter && (
+              // Já pediu o pagamento: falta só aprovar no app do Inter — "Pagar" de novo não faz sentido.
+              <p className="w-full flex items-center gap-1.5 rounded-lg bg-amber-50 border border-amber-200 px-2.5 py-1.5 text-xs font-semibold text-amber-800">
+                <i className="ri-time-line" /> Enviado ao Inter — falta aprovar no app do banco
+              </p>
+            )}
+            {ehPagamento && !infoPag[p.id]?.no_inter && (
               <>
                 <button onClick={() => pagar(p)} disabled={busy} className={p.kind === 'pagamento_grupo' ? `${PRINCIPAL}` : PRINCIPAL}>
                   {busy ? 'Preparando…' : <><i className="ri-check-line" /> Pagar</>}
@@ -751,6 +763,7 @@ interface InfoPagamento {
   para: string | null; valor: number | null; tipo: string | null;
   compra_lancada: boolean; recebido: boolean | null; recebido_em: string | null;
   guia?: string | null; // DAS/DARF/FGTS: "Guia de imposto — não é compra · vence dd/mm"
+  no_inter?: boolean; // Pix já enviado ao Inter, esperando aprovação no app do banco
 }
 
 // Pix de pedido de pagamento aprovado (/receber): freela, reembolso ou fornecedor sem nota não
@@ -766,14 +779,22 @@ const origemPedido = (p: PendenciaChat): string | null => {
 };
 
 // Para quem vai (em destaque) e se a mercadoria já chegou — o que se confere antes de pagar.
-function LinhaPagamento({ info, pedido }: { info: InfoPagamento; pedido?: string | null }) {
+function LinhaPagamento({ info, pedido, chave }: { info: InfoPagamento; pedido?: string | null; chave?: string | null }) {
   return (
     <div className="mt-1.5 rounded-lg bg-violet-50 border border-violet-100 px-2.5 py-1.5">
+      {pedido ? (
+        // Pedido aprovado: o título já tem "Pix de R$ X para Fulano" — aqui só o nome completo e a chave.
+        <p className="text-xs text-zinc-800 break-words">
+          Para <b className="font-bold text-violet-800">{info.para || 'destinatário não identificado'}</b>
+          {chave && <span className="text-zinc-500"> · chave {chave}</span>}
+        </p>
+      ) : (
       <p className="text-xs text-zinc-800 break-words">
         {info.tipo === 'boleto' ? 'Boleto' : info.tipo === 'pix' ? 'Pix' : 'Pagar'}
         {info.valor ? <> de <b>{brl(info.valor)}</b></> : null} para{' '}
         <b className="font-bold text-violet-800">{info.para || 'destinatário não identificado'}</b>
       </p>
+      )}
       {pedido ? (
         <p className="text-[11px] font-semibold mt-0.5 text-zinc-600">
           <i className="ri-file-list-3-line" /> {pedido}
