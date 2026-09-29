@@ -772,9 +772,11 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       const isDeliveryOrigin = mappedOrigin === "delivery" && ["ifood", "rappi", "uber_eats", "99food"].includes(String(deliveryPlatform ?? ""));
       let initialOrderStatus = "new";
       if (isDeliveryOrigin && allSkipKds) { initialOrderStatus = "delivered"; } else if (allSkipKds) { initialOrderStatus = "ready"; }
-      // Autoatendimento em dinheiro: o pedido fica SEGURADO (rascunho: fora do KDS, do gestor e sem
-      // imprimir) até o caixa receber — record_payment libera. Pix pago nunca é segurado.
-      const holdUntilPaid = body.hold_until_paid === true && mappedOrigin === "self_service" && !isValidUuid(body.paid_pix_payment_id);
+      // Autoatendimento: regra do dono (2026-09-29, Paranaguá P-19 foi pra cozinha sem pagar) —
+      // pedido do tablet SÓ vai pra cozinha pago. Sem Pix/cartão confirmado, nasce SEGURADO
+      // (rascunho: fora do KDS, do gestor e sem imprimir) até o caixa receber — record_payment
+      // libera. Vale para qualquer forma e qualquer versão do tablet (inclusive fila offline).
+      const holdUntilPaid = mappedOrigin === "self_service" && !isCortesia && Number(total_amount ?? 0) > 0 && !isValidUuid(body.paid_pix_payment_id);
       if (holdUntilPaid) initialOrderStatus = "draft";
       let finalDestinationName: string | null = null; let finalTableNumber: number | null = null;
       if (mappedDest === "table") { const rawName = customer_name ?? destination_name ?? null; const isMesaFormat = rawName && /^Mesa\s+\d+$/i.test(String(rawName).trim()); finalDestinationName = isMesaFormat ? null : rawName; if (table_number != null && table_number !== "" && table_number !== "null") finalTableNumber = Number(table_number); else if (isMesaFormat) { const match = String(rawName).match(/\d+/); finalTableNumber = match ? Number(match[0]) : null; } }

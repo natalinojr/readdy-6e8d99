@@ -659,6 +659,9 @@ function AutoatendimentoPageInner() {
     };
 
     const kioskToken = kioskSession?.accessToken ?? undefined;
+    // Pedido zerado (prêmio do clube) já está quitado; o resto só vai pra cozinha pago.
+    const seguraAtePagar = segurarAtePagar === true
+      || (typeof paidPixPaymentId !== 'string' && Math.round((subtotal - descontoPedido) * 100) / 100 > 0);
 
     console.log('[Autoatendimento] Enviando create_order via useOrderSubmit:', {
       session_id: sessionId,
@@ -696,10 +699,11 @@ function AutoatendimentoPageInner() {
           notes: notasPedido,
           // Pix já pago: o pedido nasce pago em vez de ficar "em aberto" até o record_payment.
           ...(typeof paidPixPaymentId === 'string' ? { paid_pix_payment_id: paidPixPaymentId } : {}),
-          // Dinheiro: só vai pra cozinha quando o caixa receber (o PDV libera e imprime).
-          ...(segurarAtePagar ? { hold_until_paid: true } : {}),
+          // Sem Pix/cartão confirmado: só vai pra cozinha quando o caixa receber (o PDV libera e
+          // imprime). Regra do dono 2026-09-29 — o servidor também segura, mesmo sem este campo.
+          ...(seguraAtePagar ? { hold_until_paid: true } : {}),
         },
-        { externalToken: kioskToken, paraViagem, enqueuePrint: !segurarAtePagar },
+        { externalToken: kioskToken, paraViagem, enqueuePrint: !seguraAtePagar },
       );
 
       const orderNumber = parseInt(result.number.replace(/\D/g, '').slice(-4), 10) || 0;

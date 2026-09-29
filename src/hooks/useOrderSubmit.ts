@@ -409,7 +409,7 @@ export function useOrderSubmit() {
         const result = await retryAsync(
           async () => {
             const { data, error } = await invokeWithAuth<{
-              data?: { id?: string; number?: string };
+              data?: { id?: string; number?: string; held?: boolean };
               partial?: boolean;
               error?: string;
             }>('order-write', {
@@ -469,7 +469,7 @@ export function useOrderSubmit() {
               throw new Error('Pedido criado mas sem ID retornado — resposta inválida do servidor');
             }
 
-            return { id: orderId, number: orderNumber ?? `P${Date.now()}` };
+            return { id: orderId, number: orderNumber ?? `P${Date.now()}`, held: data?.data?.held === true };
           },
           maxRetries,
           'submitOrder:create_order',
@@ -496,7 +496,8 @@ export function useOrderSubmit() {
         // Funciona de qualquer dispositivo (caixa, garçom, totem, mesa).
         // O agente local no PC da cozinha faz polling e imprime automaticamente.
         let printEnqueued = false;
-        const shouldPrint = options?.enqueuePrint !== false && !payload.is_training;
+        // Pedido segurado pelo servidor (tablet sem pagamento) não imprime: sai quando o caixa receber.
+        const shouldPrint = options?.enqueuePrint !== false && !payload.is_training && !result.held;
         if (shouldPrint) {
           const printDestino: OrderPrintDestino = {
             tipo: payload.destination,
