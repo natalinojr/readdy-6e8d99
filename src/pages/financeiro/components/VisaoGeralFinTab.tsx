@@ -206,7 +206,7 @@ export default function VisaoGeralFinTab() {
 
   if (loading) {
     return (
-      <div className="p-4 md:p-6 max-w-[1400px] mx-auto grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5 gap-3">
+      <div className="p-4 md:p-6 max-w-[1400px] mx-auto grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3">
         {Array.from({ length: 5 }).map((_, i) => (
           <div key={i} className="bg-white rounded-2xl border border-zinc-200 p-5 animate-pulse h-28" />
         ))}
@@ -541,7 +541,7 @@ export default function VisaoGeralFinTab() {
       {headerBar}
       <div className="space-y-5">
         {/* KPI Cards */}
-        <div className={`grid grid-cols-1 sm:grid-cols-2 gap-3 ${temPdv ? 'lg:grid-cols-3 2xl:grid-cols-5' : 'xl:grid-cols-4'}`}>
+        <div className={`grid grid-cols-1 sm:grid-cols-2 gap-3 ${temPdv ? 'lg:grid-cols-3 xl:grid-cols-5' : 'xl:grid-cols-4'}`}>
           <MetricCard
             label="Receita Hoje (caixa)"
             value={formatCurrency(dashboard.receitaHoje)}
