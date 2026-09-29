@@ -84,10 +84,17 @@ export function usePendenciasEquipe() {
   return { itens, erro, novas, recarregar: carregar };
 }
 
-export default function PendenciasEquipe({ dados, onFechar, onAbrirRota }: {
+// Cabeçalho (dono, 2026-09-29, caso Thatiele): o balão abre direto aqui quando há pendência nova, e
+// só com um X ninguém sabia que atrás estavam as Conversas. Agora: seta de voltar + botão "Conversas"
+// (com as não lidas); o X fecha o chat inteiro.
+export default function PendenciasEquipe({ dados, onFechar, onAbrirRota, naoLidasConversas = 0, onFecharTudo }: {
   dados: ReturnType<typeof usePendenciasEquipe>;
+  /** Volta para a lista de conversas. */
   onFechar: () => void;
   onAbrirRota: (tenantId: string, rota: string) => void;
+  naoLidasConversas?: number;
+  /** Fecha o balão inteiro (só no flutuante). */
+  onFecharTudo?: () => void;
 }) {
   const { user } = useAuth();
   const { itens, erro, recarregar } = dados;
@@ -121,20 +128,32 @@ export default function PendenciasEquipe({ dados, onFechar, onAbrirRota }: {
   const BTN = 'text-xs font-bold px-3 py-1.5 rounded-lg cursor-pointer whitespace-nowrap disabled:opacity-40';
   return (
     <div className="absolute inset-0 z-20 flex flex-col bg-zinc-50">
-      <div className="flex items-center gap-2.5 px-4 h-14 border-b border-zinc-100 bg-white flex-shrink-0">
-        <div className="w-8 h-8 flex items-center justify-center rounded-xl bg-indigo-50 border border-indigo-200">
-          <i className="ri-inbox-archive-line text-indigo-600" />
-        </div>
+      <div className="flex items-center gap-2 px-3 h-14 border-b border-zinc-100 bg-white flex-shrink-0">
+        <button onClick={onFechar} className="w-9 h-9 flex-shrink-0 flex items-center justify-center rounded-xl text-zinc-500 hover:bg-zinc-100 cursor-pointer" aria-label="Voltar para as conversas">
+          <i className="ri-arrow-left-line text-xl" />
+        </button>
         <div className="flex-1 min-w-0">
           <p className="text-sm font-black text-zinc-900 leading-tight">Pendências</p>
-          <p className="text-[11px] text-zinc-400 leading-tight">Só o que é seu, nas lojas em que você está</p>
+          <p className="text-[11px] text-zinc-400 leading-tight truncate">Só o que é seu, nas lojas em que você está</p>
         </div>
         <button onClick={recarregar} className="w-9 h-9 flex items-center justify-center rounded-xl text-zinc-400 hover:bg-zinc-100 cursor-pointer" aria-label="Atualizar pendências">
           <i className="ri-refresh-line text-lg" />
         </button>
-        <button onClick={onFechar} className="w-9 h-9 flex items-center justify-center rounded-xl text-zinc-400 hover:bg-zinc-100 cursor-pointer" aria-label="Fechar pendências">
-          <i className="ri-close-line text-xl" />
+        <button onClick={onFechar}
+          className="relative h-9 px-2.5 flex-shrink-0 flex items-center gap-1.5 rounded-xl bg-violet-50 text-violet-700 text-xs font-bold hover:bg-violet-100 cursor-pointer"
+          aria-label={naoLidasConversas ? `Conversas: ${naoLidasConversas} não lida${naoLidasConversas > 1 ? 's' : ''}` : 'Conversas'}>
+          <i className="ri-chat-3-line text-base" /> Conversas
+          {naoLidasConversas > 0 && (
+            <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full bg-red-500 text-white text-[10px] font-black border-2 border-white">
+              {naoLidasConversas > 9 ? '9+' : naoLidasConversas}
+            </span>
+          )}
         </button>
+        {onFecharTudo && (
+          <button onClick={onFecharTudo} className="w-9 h-9 flex-shrink-0 flex items-center justify-center rounded-xl text-zinc-400 hover:bg-zinc-100 cursor-pointer" aria-label="Fechar o chat">
+            <i className="ri-close-line text-xl" />
+          </button>
+        )}
       </div>
       <div className="flex gap-1 px-3 py-2 border-b border-zinc-100 bg-white flex-shrink-0" role="tablist">
         {([['pendencias', 'Pendências'], ['tarefas', 'Minhas tarefas']] as const).map(([id, rotulo]) => (

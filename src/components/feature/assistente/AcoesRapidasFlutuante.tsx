@@ -210,7 +210,8 @@ export default function AcoesRapidasFlutuante({ variant }: { variant: 'floating'
         />
       )}
       {pendAberta && (
-        <PendenciasEquipe dados={pend} onFechar={() => setPendAberta(false)} onAbrirRota={abrirRotaPendencia} />
+        <PendenciasEquipe dados={pend} onFechar={() => { setPendAberta(false); setAba('conversas'); }} onAbrirRota={abrirRotaPendencia}
+          naoLidasConversas={naoLidas} onFecharTudo={variant === 'floating' ? () => setAberto(false) : undefined} />
       )}
       {/* A ação cobre o painel inteiro (tem cabeçalho próprio com o X), como no chat do dono. */}
       {C && (
