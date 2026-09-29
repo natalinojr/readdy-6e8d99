@@ -72,18 +72,16 @@ describe('ViewLista (tarefas)', () => {
     expect(write).toHaveBeenCalledWith('update_task', { task_id: 'b', assignee_ids: ['u1'] });
   });
 
-  it('data: atalhos Hoje/Ontem/Amanhã e escolher qualquer data', () => {
+  it('data: calendário do mês aberto, um clique no dia grava', () => {
     localStorage.setItem('erpos_tarefas_colunas_L1', JSON.stringify(['vencimento']));
     const write = montar();
     const linha = (screen.getByText('Tarefa Sem').closest('.group') as HTMLElement);
     fireEvent.click(within(linha).getAllByText('—')[0]); // [0] = célula do desktop (o resumo do celular vem depois)
-    expect(screen.getByText('Hoje')).toBeTruthy();
-    expect(screen.getByText('Amanhã')).toBeTruthy();
-    expect(screen.getByText('Escolher data')).toBeTruthy();
-    fireEvent.click(screen.getByText('Ontem'));
-    const d = new Date(); d.setDate(d.getDate() - 1);
-    const ontem = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    expect(write).toHaveBeenCalledWith('update_task', { task_id: 'b', due_date: `${ontem}T12:00:00Z`, due_has_time: false });
+    const d = new Date();
+    const meses = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+    fireEvent.click(screen.getByRole('button', { name: `15 de ${meses[d.getMonth()]}` }));
+    const dia = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-15`;
+    expect(write).toHaveBeenCalledWith('update_task', { task_id: 'b', due_date: `${dia}T12:00:00Z`, due_has_time: false });
   });
 
   it('arrastar muda a ordem: soltar antes da primeira linha', () => {

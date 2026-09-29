@@ -257,7 +257,7 @@ export default function ViewLista({
   const [statusPickerAberto, setStatusPickerAberto] = useState<{ taskId: string; rect: DOMRect } | null>(null);
   // Renomear direto na linha (lápis ao lado do título), sem abrir a tarefa.
   const [editandoTitulo, setEditandoTitulo] = useState<{ taskId: string; valor: string } | null>(null);
-  const [confirmandoExclusao, setConfirmandoExclusao] = useState<TaskRow | null>(null);
+  const [confirmandoExclusao, setConfirmandoExclusao] = useState<{ task: TaskRow; ancora: DOMRect | null } | null>(null);
   const [selecionadas, setSelecionadas] = useState<Set<string>>(new Set());
   const [confirmandoExclusaoEmMassa, setConfirmandoExclusaoEmMassa] = useState(false);
   const [acaoEmMassaAberta, setAcaoEmMassaAberta] = useState<'prioridade' | 'responsavel' | null>(null);
@@ -415,12 +415,12 @@ export default function ViewLista({
     if (valor && valor !== task.title) gravar('update_task', { task_id: task.id, title: valor });
   };
 
-  const excluir = (task: TaskRow) => setConfirmandoExclusao(task);
+  const excluir = (task: TaskRow, ancora: DOMRect | null = null) => setConfirmandoExclusao({ task, ancora });
   const fecharEditor = useCallback(() => setEditando(null), []);
 
   const confirmarExclusao = async () => {
     if (!confirmandoExclusao) return;
-    const res = await write('delete_task', { task_id: confirmandoExclusao.id });
+    const res = await write('delete_task', { task_id: confirmandoExclusao.task.id });
     if (!res.success) toast.error('Não foi possível arquivar', res.error);
     setConfirmandoExclusao(null);
   };
@@ -796,7 +796,7 @@ export default function ViewLista({
             })}
             <button
               type="button"
-              onClick={(e) => { e.stopPropagation(); excluir(task); }}
+              onClick={(e) => { e.stopPropagation(); excluir(task, e.currentTarget.getBoundingClientRect()); }}
               className="ml-1 p-1 rounded text-slate-300 opacity-0 group-hover:opacity-100 hover:text-red-500 hover:bg-red-50 transition shrink-0"
               title="Arquivar tarefa"
             >
@@ -1078,9 +1078,10 @@ export default function ViewLista({
 
       {confirmandoExclusao && (
         <ConfirmDialog
-          titulo={`Arquivar a tarefa "${confirmandoExclusao.title}"?`}
+          titulo={`Arquivar a tarefa "${confirmandoExclusao.task.title}"?`}
           descricao="Ela sai de todas as visões, mas pode ser recuperada depois com o suporte."
           textoConfirmar="Arquivar"
+          ancora={confirmandoExclusao.ancora}
           onConfirmar={confirmarExclusao}
           onCancelar={() => setConfirmandoExclusao(null)}
         />

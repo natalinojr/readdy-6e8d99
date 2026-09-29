@@ -1,3 +1,4 @@
+import type { CSSProperties } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import { useVoltarFecha } from '@/lib/voltarAndroid';
 
@@ -10,22 +11,40 @@ interface ConfirmDialogProps {
   perigo?: boolean;
   onConfirmar: () => void;
   onCancelar: () => void;
+  /** Botão que abriu a confirmação: no computador a janela abre colada nele,
+   *  em vez de no meio da tela (2026-09-29). No celular continua centralizada. */
+  ancora?: DOMRect | null;
+}
+
+const LARGURA = 320;
+
+/** Posição junto da âncora: abaixo e alinhada à direita do botão; sem espaço embaixo, sobe. */
+function posicaoJuntoDe(r: DOMRect): CSSProperties {
+  const margem = 8;
+  const left = Math.min(Math.max(margem, r.right - LARGURA), window.innerWidth - LARGURA - margem);
+  const cabeEmbaixo = r.bottom + 170 < window.innerHeight;
+  return cabeEmbaixo
+    ? { position: 'fixed', left, top: r.bottom + 6, width: LARGURA }
+    : { position: 'fixed', left, bottom: window.innerHeight - r.top + 6, width: LARGURA };
 }
 
 /** Substitui o `confirm()` nativo do navegador — mesma cara dos outros modais do módulo. */
 export default function ConfirmDialog({
   titulo, descricao, textoConfirmar = 'Confirmar', textoCancelar = 'Cancelar',
-  perigo = true, onConfirmar, onCancelar,
+  perigo = true, onConfirmar, onCancelar, ancora = null,
 }: ConfirmDialogProps) {
   useVoltarFecha(true, onCancelar, 'tarefas-confirmar');
+  const junto = !!ancora && window.innerWidth >= 768;
   return (
     <div
-      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/30 p-4"
+      className={`fixed inset-0 z-[60] ${junto ? 'bg-transparent' : 'flex items-center justify-center bg-black/30 p-4'}`}
       onClick={(e) => { e.stopPropagation(); onCancelar(); }}
     >
       <div
-        className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-5"
+        className={`bg-white shadow-xl ${junto ? 'rounded-xl border border-slate-200 p-4' : 'rounded-2xl w-full max-w-sm p-5'}`}
+        style={junto ? posicaoJuntoDe(ancora!) : undefined}
         onClick={(e) => e.stopPropagation()}
+        role="dialog"
       >
         <div className="flex items-start gap-3 mb-4">
           <span className={`shrink-0 w-9 h-9 rounded-full flex items-center justify-center ${perigo ? 'bg-red-50 text-red-500' : 'bg-indigo-50 text-indigo-500'}`}>

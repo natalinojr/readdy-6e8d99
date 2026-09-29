@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { Check, Flag, Minus, Pause, Play, Plus, Search, X } from 'lucide-react';
+import { Check, ChevronLeft, ChevronRight, Flag, Minus, Pause, Play, Plus, Search, X } from 'lucide-react';
 import type { CampoCustom, TaskRow, TaskTag } from '../hooks/useTarefas';
 import { PRIORIDADES } from '../hooks/useTarefas';
 import type { UsuarioOption } from '../lib/agrupamento';
@@ -244,6 +244,64 @@ export function prazoParaGravar(dia: string | null, hora: string | null): { due_
   return { due_date: `${dia}T12:00:00Z`, due_has_time: false };
 }
 
+const NOMES_MES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+const iso = (a: number, m: number, d: number) => `${a}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+
+/** Calendário do mês sempre aberto: um clique no dia escolhe (pedido do dono, 2026-09-29). */
+export function MiniCalendario({ atual, onEscolher }: { atual: string | null; onEscolher: (dia: string) => void }) {
+  const hoje = hojeMais(0);
+  const base = atual ?? hoje;
+  const [mes, setMes] = useState({ a: Number(base.slice(0, 4)), m: Number(base.slice(5, 7)) - 1 });
+  const primeiroDiaSemana = new Date(mes.a, mes.m, 1).getDay(); // 0 = domingo
+  const diasNoMes = new Date(mes.a, mes.m + 1, 0).getDate();
+  const casas: Array<number | null> = [...Array(primeiroDiaSemana).fill(null), ...Array.from({ length: diasNoMes }, (_, k) => k + 1)];
+  const andar = (delta: number) => setMes(({ a, m }) => {
+    const d = new Date(a, m + delta, 1);
+    return { a: d.getFullYear(), m: d.getMonth() };
+  });
+
+  return (
+    <div className="px-0.5">
+      <div className="flex items-center justify-between mb-1">
+        <button type="button" onClick={() => andar(-1)} className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600" aria-label="Mês anterior">
+          <ChevronLeft size={14} />
+        </button>
+        <span className="text-xs max-md:text-sm font-semibold text-slate-700 capitalize">{NOMES_MES[mes.m]} {mes.a}</span>
+        <button type="button" onClick={() => andar(1)} className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600" aria-label="Próximo mês">
+          <ChevronRight size={14} />
+        </button>
+      </div>
+      <div className="grid grid-cols-7 text-center">
+        {['D', 'S', 'T', 'Q', 'Q', 'S', 'S'].map((l, k) => (
+          <span key={k} className="text-[10px] max-md:text-xs text-slate-400 py-1">{l}</span>
+        ))}
+        {casas.map((d, k) => {
+          if (d === null) return <span key={`v${k}`} />;
+          const dia = iso(mes.a, mes.m, d);
+          const escolhido = dia === atual;
+          const ehHoje = dia === hoje;
+          return (
+            <button
+              key={dia}
+              type="button"
+              onClick={() => onEscolher(dia)}
+              aria-label={`${d} de ${NOMES_MES[mes.m]}`}
+              aria-pressed={escolhido}
+              className={`h-7 max-md:h-10 rounded-lg text-xs max-md:text-sm tabular-nums transition ${
+                escolhido ? 'bg-indigo-600 text-white font-semibold'
+                  : ehHoje ? 'text-indigo-600 font-semibold ring-1 ring-inset ring-indigo-200 hover:bg-indigo-50'
+                  : 'text-slate-600 hover:bg-slate-100'
+              }`}
+            >
+              {d}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function EditorData({ atual, onEscolher, comHorario = false, horaAtual = null }: {
   atual: string | null;
   onEscolher: (dia: string | null, hora?: string | null) => void;
@@ -252,58 +310,37 @@ function EditorData({ atual, onEscolher, comHorario = false, horaAtual = null }:
   horaAtual?: string | null;
 }) {
   const [hora, setHora] = useState<string>(horaAtual ?? '');
-  const atalhos = [
-    { label: 'Hoje', dia: hojeMais(0) },
-    { label: 'Ontem', dia: hojeMais(-1) },
-    { label: 'Amanhã', dia: hojeMais(1) },
-  ];
   const escolher = (dia: string | null) => onEscolher(dia, comHorario ? (hora || null) : undefined);
 
   return (
     <div>
+      <MiniCalendario atual={atual} onEscolher={escolher} />
       {comHorario && (
-        <div className="px-1 pb-2 mb-1 border-b border-slate-100">
-          <span className="block text-[10px] max-md:text-xs text-slate-400 px-1 mb-1">Horário (opcional)</span>
+        <div className="px-1 pt-2 mt-1 border-t border-slate-100">
           <div className="flex items-center gap-1.5">
+            <span className="text-[10px] max-md:text-xs text-slate-400 shrink-0">Horário</span>
             <input
               type="time"
               value={hora}
               onChange={(e) => setHora(e.target.value)}
-              className="flex-1 min-w-0 border border-slate-200 rounded-lg px-2 py-1.5 text-xs max-md:text-base max-md:py-2.5 bg-white outline-none focus:border-indigo-300"
+              className="flex-1 min-w-0 border border-slate-200 rounded-lg px-2 py-1 text-xs max-md:text-base max-md:py-2 bg-white outline-none focus:border-indigo-300"
               aria-label="Horário do vencimento"
             />
             {atual && hora && hora !== horaAtual && (
               <button type="button" onClick={() => onEscolher(atual, hora)} title="Salvar horário"
-                className="p-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 shrink-0">
+                className="p-1.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 shrink-0">
                 <Check size={13} />
               </button>
             )}
             {horaAtual && (
               <button type="button" onClick={() => onEscolher(atual, null)}
-                className="px-2 py-1.5 rounded-lg text-[11px] max-md:text-sm text-slate-500 hover:bg-slate-100 shrink-0">
+                className="px-1.5 py-1 rounded-lg text-[11px] max-md:text-sm text-slate-500 hover:bg-slate-100 shrink-0">
                 Sem horário
               </button>
             )}
           </div>
         </div>
       )}
-      {atalhos.map((a) => (
-        <Opcao key={a.label} ativo={atual === a.dia} onClick={() => escolher(a.dia)}>
-          <span>{a.label}</span>
-          <span className="ml-auto text-[10px] text-slate-400">{a.dia.slice(8, 10)}/{a.dia.slice(5, 7)}{comHorario && hora ? ` ${hora}` : ''}</span>
-        </Opcao>
-      ))}
-      <div className="border-t border-slate-100 mt-1 pt-1.5 px-1">
-        <span className="block text-[10px] max-md:text-xs text-slate-400 px-1 mb-1">Escolher data</span>
-        <input
-          type="date"
-          defaultValue={atual ?? ''}
-          // Abre o calendário com um clique em qualquer ponto do campo (não só no ícone).
-          onClick={(e) => { try { e.currentTarget.showPicker(); } catch { /* navegador sem showPicker */ } }}
-          onChange={(e) => escolher(e.target.value || null)}
-          className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs max-md:text-base max-md:py-2.5 bg-white outline-none focus:border-indigo-300"
-        />
-      </div>
       {atual && (
         <button
           type="button"
@@ -379,7 +416,7 @@ export default function EditorCelula({ coluna, task, anchorRect, campos, usuario
     }
     if (campo.field_type === 'date') {
       return (
-        <Popover anchorRect={anchorRect} largura={210} onClose={onClose}>
+        <Popover anchorRect={anchorRect} largura={250} onClose={onClose}>
           <EditorData
             atual={typeof valor === 'string' ? valor.slice(0, 10) : null}
             onEscolher={(dia) => { setar(dia); onClose(); }}
@@ -435,7 +472,7 @@ export default function EditorCelula({ coluna, task, anchorRect, campos, usuario
 
     case 'vencimento':
       return (
-        <Popover anchorRect={anchorRect} largura={230} onClose={onClose}>
+        <Popover anchorRect={anchorRect} largura={250} onClose={onClose}>
           <EditorData
             comHorario
             atual={partesDoPrazo(task.due_date, task.due_has_time).dia}
