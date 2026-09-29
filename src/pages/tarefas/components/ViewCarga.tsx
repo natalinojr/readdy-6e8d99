@@ -30,6 +30,8 @@ interface ViewCargaProps {
   meuId?: string | null;
   /** Pastas — pra agrupar a carga por pasta. */
   lists?: TaskList[];
+  /** Tempo padrão para tarefa sem estimativa (o do responsável principal, 2026-09-29). */
+  padraoDe?: (task: TaskRow) => number | null;
 }
 
 const CHAVE_FILTRO_PESSOAS = 'erpos_tarefas_carga_pessoas';
@@ -69,9 +71,17 @@ export function corOcupacao(minutos: number, capHoras: number | null): { fundo: 
 const dataCurta = (dia: string) =>
   new Date(`${dia}T12:00:00`).toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' });
 
-export default function ViewCarga({ tasks, usuarios, write, onOpenTask, meuId, lists = [] }: ViewCargaProps) {
+export default function ViewCarga({ tasks: tasksOriginais, usuarios, write, onOpenTask, meuId, lists = [], padraoDe }: ViewCargaProps) {
   const toast = useToast();
   const celular = useIsMobile();
+  // Tarefa sem tempo entra com o padrão do responsável (a conta da Carga só lê time_estimate_minutes).
+  const tasks = useMemo(() => (padraoDe
+    ? tasksOriginais.map((t) => {
+      if (t.time_estimate_minutes) return t;
+      const p = padraoDe(t);
+      return p ? { ...t, time_estimate_minutes: p } : t;
+    })
+    : tasksOriginais), [tasksOriginais, padraoDe]);
   const [periodo, setPeriodo] = useState<Periodo>('semana');
   const [inicio, setInicio] = useState(() => segundaDaSemana(new Date()));
   // Horas de trabalho por pessoa — vêm do banco (task_user_capacity), valem pra todo mundo.

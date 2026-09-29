@@ -17,7 +17,7 @@ import CampoInput from './campos/CampoInput';
 import ComentarioInput from './ComentarioInput';
 import ConfirmDialog from './ConfirmDialog';
 import { confirmar } from '@/components/base/Dialogos';
-import EditorCelula from './EditorCelula';
+import EditorCelula, { type MeuPadraoEstimativa } from './EditorCelula';
 import EditorRecorrencia from './EditorRecorrencia';
 import { DICA_RECORRENCIA, descreverRecorrencia } from '../lib/recorrencia';
 import PlanoPorDia from './PlanoPorDia';
@@ -50,6 +50,10 @@ interface TaskDrawerProps {
   task?: TaskRow;
   /** Soma das subtarefas estimadas (regra 2026-09-29): quando vem, substitui a estimativa própria. */
   estimativaSomada?: number | null;
+  /** Tempo padrão do responsável — mostrado quando a tarefa não tem tempo próprio. */
+  estimativaPadrao?: number | null;
+  /** Meu padrão, editável na janelinha do tempo estimado. */
+  meuPadrao?: MeuPadraoEstimativa;
   lists: TaskList[];
   tags: TaskTag[];
   campos: CampoCustom[];
@@ -128,7 +132,7 @@ function Secao({ icone, titulo, contador, acao, children }: {
 }
 
 export default function TaskDrawer({
-  taskId, task, estimativaSomada = null, lists, tags, campos, templates, usuarios,
+  taskId, task, estimativaSomada = null, estimativaPadrao = null, meuPadrao, lists, tags, campos, templates, usuarios,
   write, fetchDetail, fetchAnexos, enviarAnexo, abrirAnexo, onClose, onOpenTask, onAbrirRelatorio,
 }: TaskDrawerProps) {
   const toast = useToast();
@@ -240,7 +244,7 @@ export default function TaskDrawer({
   const tarefaPai = detail.parent_task_id ? detail.parent_task_id : null;
 
   const segRegistrado = segundosRegistrados(linha, agora);
-  const minEstimado = estimativaSomada ?? linha.time_estimate_minutes;
+  const minEstimado = estimativaSomada ?? linha.time_estimate_minutes ?? estimativaPadrao;
   const segEstimado = minEstimado ? minEstimado * 60 : null;
   const checklistFeitos = detail.checklist.filter((c) => c.is_done).length;
 
@@ -384,7 +388,9 @@ export default function TaskDrawer({
                   </span>
                 ) : (
                   <button onClick={abrirEditor('estimado')} className={VALOR_CLS}>
-                    {segEstimado ? <span className="text-slate-700">{formatarDuracao(segEstimado)}</span> : VAZIO}
+                    {linha.time_estimate_minutes ? <span className="text-slate-700">{formatarDuracao(linha.time_estimate_minutes * 60)}</span>
+                      : estimativaPadrao ? <span className="text-slate-400 italic" title="Tempo padrão do responsável">{formatarDuracao(estimativaPadrao * 60)} · padrão</span>
+                      : VAZIO}
                   </button>
                 )}
               </Propriedade>
@@ -480,6 +486,7 @@ export default function TaskDrawer({
                 tags={tags}
                 gravar={gravar}
                 onClose={() => setEditor(null)}
+                meuPadrao={meuPadrao}
               />
             )}
 

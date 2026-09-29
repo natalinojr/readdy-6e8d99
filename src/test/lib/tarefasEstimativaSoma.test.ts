@@ -28,3 +28,13 @@ describe('estimativa da tarefa-pai = soma das subtarefas', () => {
     expect(Math.round(total)).toBe(30);
   });
 });
+
+describe('tempo padrão do responsável', () => {
+  it('tarefa sem tempo vale o padrão; com tempo próprio, não; subtarefas com padrão somam na pai', () => {
+    const padrao = () => 30;
+    const m = estimativasEfetivas([t('a', null), t('b', 90), t('p', null), t('s1', null, 'p'), t('s2', 15, 'p')], padrao);
+    expect(m.get('a')).toEqual({ minutos: 30, somada: false, padrao: true });
+    expect(m.get('b')).toEqual({ minutos: 90, somada: false });
+    expect(m.get('p')).toEqual({ minutos: 45, somada: true }); // s1 = 30 (padrão) + s2 = 15
+  });
+});

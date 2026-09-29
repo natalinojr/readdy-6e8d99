@@ -363,6 +363,8 @@ interface EditorCelulaProps {
   tags: TaskTag[];
   gravar: (action: string, payload: Record<string, unknown>) => Promise<{ success: boolean; id?: string; error?: string }>;
   onClose: () => void;
+  /** Linha "Meu padrão" no editor de tempo estimado. */
+  meuPadrao?: MeuPadraoEstimativa;
 }
 
 /** Colunas que abrem um editor ao clicar na célula. */
@@ -371,7 +373,7 @@ export function ehEditavel(id: ColunaId): boolean {
     || id === 'comentarios' || id === 'estimado' || id === 'cronometro' || id.startsWith('campo:');
 }
 
-export default function EditorCelula({ coluna, task, anchorRect, campos, usuarios, tags, gravar, onClose }: EditorCelulaProps) {
+export default function EditorCelula({ coluna, task, anchorRect, campos, usuarios, tags, gravar, onClose, meuPadrao }: EditorCelulaProps) {
   const atualizar = (payload: Record<string, unknown>) => {
     gravar('update_task', { task_id: task.id, ...payload });
     onClose();
@@ -488,6 +490,7 @@ export default function EditorCelula({ coluna, task, anchorRect, campos, usuario
           <EditorEstimativa
             atual={task.time_estimate_minutes}
             onEscolher={(min) => atualizar({ time_estimate_minutes: min })}
+            meuPadrao={meuPadrao}
           />
         </Popover>
       );
@@ -657,7 +660,46 @@ function EditorEtiquetas({ task, tags, anchorRect, gravar, onClose }: {
 
 const PRESETS_ESTIMATIVA = [15, 30, 60, 120, 240, 480];
 
-function EditorEstimativa({ atual, onEscolher }: { atual: number | null; onEscolher: (min: number | null) => void }) {
+/** Meu tempo estimado padrão (vale nas tarefas sem tempo em que sou o responsável principal). */
+export interface MeuPadraoEstimativa {
+  minutos: number | null;
+  salvar: (min: number | null) => void;
+}
+
+function CampoMeuPadrao({ padrao }: { padrao: MeuPadraoEstimativa }) {
+  const [texto, setTexto] = useState(padrao.minutos ? formatarDuracao(padrao.minutos * 60) : '');
+  const lido = lerDuracao(texto);
+  const invalido = texto.trim() !== '' && lido === null;
+  const mudou = texto.trim() === '' ? padrao.minutos !== null : lido !== null && lido !== padrao.minutos;
+  return (
+    <form
+      className="mt-2 pt-2 border-t border-slate-100"
+      onSubmit={(e) => { e.preventDefault(); if (!invalido && mudou) padrao.salvar(texto.trim() === '' ? null : lido); }}
+    >
+      <label className="block text-[10px] max-md:text-xs text-slate-400 px-0.5 mb-1">
+        Meu padrão — vale nas minhas tarefas sem tempo
+      </label>
+      <div className="flex items-center gap-1.5">
+        <input
+          value={texto}
+          onChange={(e) => setTexto(e.target.value)}
+          placeholder="Nenhum (ex.: 30m)"
+          aria-label="Meu tempo estimado padrão"
+          className={`flex-1 min-w-0 border rounded-lg px-2 py-1 text-xs max-md:text-base max-md:py-2 bg-white outline-none ${
+            invalido ? 'border-red-300' : 'border-slate-200 focus:border-indigo-300'
+          }`}
+        />
+        {mudou && !invalido && (
+          <button type="submit" title="Salvar meu padrão" className="p-1.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 shrink-0">
+            <Check size={13} />
+          </button>
+        )}
+      </div>
+    </form>
+  );
+}
+
+function EditorEstimativa({ atual, onEscolher, meuPadrao }: { atual: number | null; onEscolher: (min: number | null) => void; meuPadrao?: MeuPadraoEstimativa }) {
   const [texto, setTexto] = useState(atual ? formatarDuracao(atual * 60) : '');
   const lido = lerDuracao(texto);
   const invalido = texto.trim() !== '' && lido === null;
@@ -708,6 +750,7 @@ function EditorEstimativa({ atual, onEscolher }: { atual: number | null; onEscol
           Remover estimativa
         </button>
       )}
+      {meuPadrao && <CampoMeuPadrao padrao={meuPadrao} />}
     </div>
   );
 }

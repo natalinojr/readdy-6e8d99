@@ -16,7 +16,7 @@ import { estimativasEfetivas, formatarDuracao, formatarRelogio, segundosRegistra
 import CampoBadge from './campos/CampoBadge';
 import ColumnsMenu from './ColumnsMenu';
 import ConfirmDialog from './ConfirmDialog';
-import EditorCelula, { ehEditavel } from './EditorCelula';
+import EditorCelula, { ehEditavel, type MeuPadraoEstimativa } from './EditorCelula';
 import StatusPicker from './StatusPicker';
 import { iniciais, rotuloVencimento } from './TaskCard';
 import { responsaveis, rotuloResponsaveis } from '../lib/responsaveis';
@@ -44,6 +44,10 @@ interface ViewListaProps {
   /** Tarefas copiadas (Ctrl+C) — compartilhado com a página pra sobreviver à troca de visão. */
   clipboard?: ClipboardTarefas | null;
   onClipboardChange?: (c: ClipboardTarefas | null) => void;
+  /** Tempo padrão para tarefa sem estimativa (o do responsável principal). */
+  padraoDe?: (task: TaskRow) => number | null;
+  /** Meu padrão, editável na janelinha do tempo estimado. */
+  meuPadrao?: MeuPadraoEstimativa;
 }
 
 /**
@@ -169,8 +173,8 @@ function celulaColuna(
       const min = est ? est.minutos : task.time_estimate_minutes;
       if (!min) return <span className="text-slate-300">—</span>;
       return (
-        <span className={`flex items-center gap-1 justify-end ${est?.somada ? 'text-indigo-500' : ''}`}
-          title={est?.somada ? 'Soma das subtarefas' : undefined}>
+        <span className={`flex items-center gap-1 justify-end ${est?.somada ? 'text-indigo-500' : est?.padrao ? 'text-slate-300 italic' : ''}`}
+          title={est?.somada ? 'Soma das subtarefas' : est?.padrao ? 'Tempo padrão do responsável (a tarefa não tem tempo próprio)' : undefined}>
           {est?.somada ? <GitBranch size={11} /> : <Timer size={11} />}{formatarDuracao(min * 60)}
         </span>
       );
@@ -235,7 +239,7 @@ function MetaCelular({ task, mostrarPasta, subtarefas }: { task: TaskRow; mostra
 
 export default function ViewLista({
   list, chaveColunas, tasks, campos, usuarios, tags, groupBy, write, onOpenTask,
-  lists = [], clipboard = null, onClipboardChange = () => {},
+  lists = [], clipboard = null, onClipboardChange = () => {}, padraoDe, meuPadrao,
 }: ViewListaProps) {
   const toast = useToast();
   const chaveArmazenamento = list?.id ?? chaveColunas ?? 'agregado';
@@ -383,7 +387,7 @@ export default function ViewLista({
   );
   const colunas = ordenarColunas(todasColunas.filter((c) => colunasVisiveis.includes(c.id)), ordemColunas);
   const temCronometro = colunas.some((c) => c.id === 'cronometro');
-  const efetivas = useMemo(() => estimativasEfetivas(tasks), [tasks]);
+  const efetivas = useMemo(() => estimativasEfetivas(tasks, padraoDe), [tasks, padraoDe]);
   const agora = useAgora(temCronometro && tasks.some((t) => t.timer_started_at));
   const somaEstimado = colunas.some((c) => c.id === 'estimado');
 
@@ -830,6 +834,7 @@ export default function ViewLista({
                       tags={tags}
                       gravar={gravar}
                       onClose={fecharEditor}
+                      meuPadrao={meuPadrao}
                     />
                   )}
                 </div>

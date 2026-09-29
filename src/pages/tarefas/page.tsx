@@ -10,7 +10,7 @@ import PullToRefresh from '@/components/feature/PullToRefresh';
 import { useTarefas } from './hooks/useTarefas';
 import { supabase } from '@/lib/supabase';
 import { modoDemo, USUARIOS_DEMO } from './demo/modoDemo';
-import type { TaskList } from './hooks/useTarefas';
+import type { TaskList, TaskRow } from './hooks/useTarefas';
 import { ehResponsavel, idsResponsaveis, responsaveis } from './lib/responsaveis';
 import ViewLista from './components/ViewLista';
 import type { ClipboardTarefas } from './components/ViewLista';
@@ -42,6 +42,7 @@ import { FILTROS_VAZIOS, aplicarFiltros } from './lib/agrupamento';
 import { montarArvorePastas, achatarArvore, idsSubarvore, type NoPasta } from './lib/pastas';
 import { useIsMobile } from './lib/mobile';
 import { estimativasEfetivas } from './lib/tempo';
+import { usePadroesEstimativa } from './hooks/usePadroesEstimativa';
 import { atualizarBadge } from '@/lib/pwa';
 import { sairDasCamadas, useVoltarFecha } from '@/lib/voltarAndroid';
 
@@ -209,7 +210,6 @@ export default function TarefasPage() {
   }, []);
 
   const arvorePastas = useMemo(() => montarArvorePastas(lists), [lists]);
-  const estimativas = useMemo(() => estimativasEfetivas(tasks), [tasks]);
   // Na barra lateral: as minhas pastas e, à parte, as compartilhadas comigo.
   const minhasRaizes = useMemo(() => arvorePastas.filter((n) => (n.access ?? 'owner') === 'owner'), [arvorePastas]);
   const raizesCompartilhadas = useMemo(() => arvorePastas.filter((n) => (n.access ?? 'owner') !== 'owner'), [arvorePastas]);
@@ -288,6 +288,20 @@ export default function TarefasPage() {
 
   const selectedList = lists.find((l) => l.id === selectedListId) ?? lists[0] ?? null;
   const meuId = eu.id;
+  // Tempo estimado padrão por pessoa (2026-09-29): tarefa sem tempo vale o do responsável principal.
+  const { padroes, salvarPadrao } = usePadroesEstimativa(
+    [...tasks.flatMap((t) => idsResponsaveis(t)), ...(meuId ? [meuId] : [])], eu.tenantId,
+  );
+  const padraoDe = useCallback((t: TaskRow) => padroes[idsResponsaveis(t)[0] ?? ''] ?? null, [padroes]);
+  const estimativas = useMemo(() => estimativasEfetivas(tasks, padraoDe), [tasks, padraoDe]);
+  const meuPadrao = useMemo(() => (meuId ? {
+    minutos: padroes[meuId] ?? null,
+    salvar: async (min: number | null) => {
+      const r = await salvarPadrao(meuId, min);
+      if (!r.success) toast.error('Não deu para salvar o padrão', r.error);
+      else toast.success(min ? 'Padrão salvo' : 'Padrão removido', min ? 'Vale nas suas tarefas sem tempo estimado.' : undefined);
+    },
+  } : undefined), [meuId, padroes, salvarPadrao, toast]);
   // Contagem ao lado de "Tarefas que atribuí": em aberto e quantas já passaram do prazo.
   const diaLocal = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   const resumos = useMemo(() => {
@@ -477,6 +491,8 @@ export default function TarefasPage() {
               lists={lists}
               clipboard={clipboardTarefas}
               onClipboardChange={setClipboardTarefas}
+              padraoDe={padraoDe}
+              meuPadrao={meuPadrao}
             />
           )}
           {display === 'kanban' && (
@@ -509,6 +525,7 @@ export default function TarefasPage() {
               usuarios={usuariosAtivos}
               write={write}
               onOpenTask={setOpenTaskId}
+              padraoDe={padraoDe}
             />
           )}
           {display === 'calendario' && (
@@ -1078,6 +1095,8 @@ export default function TarefasPage() {
           taskId={openTaskId}
           task={tasks.find((t) => t.id === openTaskId)}
           estimativaSomada={estimativas.get(openTaskId)?.somada ? estimativas.get(openTaskId)!.minutos : null}
+          estimativaPadrao={estimativas.get(openTaskId)?.padrao ? estimativas.get(openTaskId)!.minutos : null}
+          meuPadrao={meuPadrao}
           lists={lists}
           tags={tags}
           campos={campos}

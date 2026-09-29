@@ -66,12 +66,16 @@ export interface EstimativaEfetiva {
   minutos: number | null;
   /** true = veio da soma das subtarefas (a estimativa própria da tarefa é ignorada). */
   somada: boolean;
+  /** true = a tarefa não tem tempo e vale o padrão do responsável (2026-09-29). */
+  padrao?: boolean;
 }
 
 /** Regra do dono (2026-09-29): tarefa com subtarefas estimadas vale a SOMA delas
  *  (só as que têm estimativa; recursivo). Sem subtarefa estimada, vale a própria. */
-export function estimativasEfetivas(
-  tasks: Array<Pick<TaskRow, 'id' | 'parent_task_id' | 'time_estimate_minutes' | 'status_category'>>,
+export function estimativasEfetivas<T extends Pick<TaskRow, 'id' | 'parent_task_id' | 'time_estimate_minutes' | 'status_category'>>(
+  tasks: T[],
+  /** Padrão para tarefa sem tempo (ex.: o do responsável principal); null = nenhum. */
+  padraoDe?: (task: T) => number | null,
 ): Map<string, EstimativaEfetiva> {
   const filhas = new Map<string, string[]>();
   const porId = new Map(tasks.map((t) => [t.id, t]));
@@ -85,7 +89,9 @@ export function estimativasEfetivas(
   const calcular = (id: string, visitando: Set<string>): EstimativaEfetiva => {
     const pronto = memo.get(id);
     if (pronto) return pronto;
-    const propria = porId.get(id)?.time_estimate_minutes || null;
+    const t = porId.get(id);
+    const propria = t?.time_estimate_minutes || null;
+    const padrao = !propria && t && padraoDe ? padraoDe(t) || null : null;
     if (visitando.has(id)) return { minutos: propria, somada: false }; // ciclo: não deveria existir
     visitando.add(id);
     let soma = 0;
@@ -95,7 +101,10 @@ export function estimativasEfetivas(
       if (e.minutos) { soma += e.minutos; algumaEstimada = true; }
     }
     visitando.delete(id);
-    const r = algumaEstimada ? { minutos: soma, somada: true } : { minutos: propria, somada: false };
+    const r: EstimativaEfetiva = algumaEstimada ? { minutos: soma, somada: true }
+      : propria ? { minutos: propria, somada: false }
+      : padrao ? { minutos: padrao, somada: false, padrao: true }
+      : { minutos: null, somada: false };
     memo.set(id, r);
     return r;
   };

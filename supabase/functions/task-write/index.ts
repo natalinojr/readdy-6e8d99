@@ -1072,6 +1072,23 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       }
 
       // ═══ Carga de trabalho: horas por dia de cada pessoa ═══
+      case 'set_default_estimate': {
+        // Tempo estimado padrão da pessoa (2026-09-29): vale nas tarefas dela sem tempo.
+        // minutes null = sem padrão. Mesma regra das horas: eu ou quem divide loja comigo.
+        const { user_id: alvo, minutes } = body;
+        if (!alvo) return json({ error: 'user_id is required' }, 400);
+        const valor = minutes === null || minutes === undefined ? null : Number(minutes);
+        if (valor !== null && (!Number.isInteger(valor) || valor <= 0 || valor > 14400)) {
+          return json({ error: 'minutes deve ser um número inteiro de 1 a 14400' }, 400);
+        }
+        if (!(await podeMexerHoras(alvo))) return json({ error: 'Essa pessoa não é de nenhuma das suas lojas' }, 403);
+        // upsert sem "hours": linha nova pega as horas padrão da coluna; a existente mantém as dela.
+        const { error } = await admin.from('task_user_capacity').upsert({
+          user_id: alvo, default_estimate_minutes: valor, updated_by: user.id, updated_at: new Date().toISOString(),
+        }, { onConflict: 'user_id' });
+        if (error) return json({ error: errMsg(error) }, 500);
+        return json({ success: true });
+      }
       case 'set_capacity': {
         // hours[0] = domingo … hours[6] = sábado. Qualquer um pode ajustar as
         // próprias horas ou as de quem divide alguma loja com ele.
