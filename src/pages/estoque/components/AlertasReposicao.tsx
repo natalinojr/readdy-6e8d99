@@ -17,13 +17,13 @@ interface GrupoFornecedor {
 
 function urgenciaBadge(insumo: Insumo) {
   if (insumo.estoqueAtual <= 0 || insumo.esgotado) {
-    return <span className="px-1.5 py-0.5 rounded-full bg-red-100 text-red-700 text-[9px] font-bold whitespace-nowrap">ZERADO</span>;
+    return <span className="px-2 py-0.5 rounded-md bg-red-50 text-red-600 text-[11px] font-semibold whitespace-nowrap">ZERADO</span>;
   }
   const ratio = insumo.estoqueAtual / Math.max(insumo.estoqueMinimo, 0.001);
   if (ratio <= 0.5) {
-    return <span className="px-1.5 py-0.5 rounded-full bg-orange-100 text-orange-700 text-[9px] font-bold whitespace-nowrap">CRÍTICO</span>;
+    return <span className="px-2 py-0.5 rounded-md bg-orange-50 text-orange-700 text-[11px] font-semibold whitespace-nowrap">CRÍTICO</span>;
   }
-  return <span className="px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[9px] font-bold whitespace-nowrap">BAIXO</span>;
+  return <span className="px-2 py-0.5 rounded-md bg-amber-50 text-amber-700 text-[11px] font-semibold whitespace-nowrap">BAIXO</span>;
 }
 
 export default function AlertasReposicao({ onEntradaRapida }: AlertasReposicaoProps) {
@@ -94,7 +94,7 @@ export default function AlertasReposicao({ onEntradaRapida }: AlertasReposicaoPr
 
   return (
     <>
-      <div className="border border-red-200 rounded-xl overflow-hidden">
+      <div className="bg-white border border-red-200 rounded-2xl overflow-hidden">
         {/* Cabeçalho do painel */}
         <div className="flex items-center justify-between px-4 py-3 bg-red-50">
           <div className="flex items-center gap-3">
@@ -105,7 +105,7 @@ export default function AlertasReposicao({ onEntradaRapida }: AlertasReposicaoPr
               <p className="text-xs font-bold text-red-800">
                 {insumosAlerta.length} insumo{insumosAlerta.length > 1 ? 's' : ''} precisam de reposição
                 {totalCriticos > 0 && (
-                  <span className="ml-2 px-1.5 py-0.5 bg-red-600 text-white rounded-full text-[9px] font-bold">
+                  <span className="ml-2 px-2 py-0.5 bg-red-600 text-white rounded-md text-[11px] font-semibold">
                     {totalCriticos} crítico{totalCriticos > 1 ? 's' : ''}
                   </span>
                 )}
@@ -118,7 +118,7 @@ export default function AlertasReposicao({ onEntradaRapida }: AlertasReposicaoPr
         </div>
 
         {/* Grupos por fornecedor */}
-        <div className="bg-white divide-y divide-zinc-50">
+        <div className="bg-white divide-y divide-zinc-100/80">
           {grupos.map((grupo) => {
             const aberto = expandidos.has(grupo.fornecedor);
             const temFornecedor = grupo.fornecedor !== 'Sem fornecedor';
@@ -148,7 +148,7 @@ export default function AlertasReposicao({ onEntradaRapida }: AlertasReposicaoPr
                   {temFornecedor && (
                     <button
                       onClick={() => abrirCompraPorGrupo(grupo)}
-                      className="ml-3 flex items-center gap-1.5 px-2.5 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white text-[10px] font-bold rounded-lg cursor-pointer transition-colors whitespace-nowrap flex-shrink-0"
+                      className="ml-3 flex items-center gap-1.5 px-3 py-2 bg-amber-500 hover:bg-amber-600 text-white text-xs font-semibold rounded-xl shadow-sm cursor-pointer transition-colors whitespace-nowrap flex-shrink-0"
                     >
                       <i className="ri-shopping-cart-2-line" />
                       Nova Compra

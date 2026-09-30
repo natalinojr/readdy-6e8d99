@@ -5,6 +5,7 @@
 import { useMemo, useState } from 'react';
 import { useEstoque, type Insumo } from '../../../contexts/EstoqueContext';
 import type { InventarioSession, InventarioItemContado } from '../../../types/estoque';
+import { KpiCard } from '../../financeiro/components/dreUi';
 
 const fmt = (v: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
@@ -141,29 +142,29 @@ export default function DetalheInventario({ session, sessoesMaisNovas, podeEdita
 
   const originalBadge = (item: InventarioItemContado) =>
     item.qtdOriginal !== undefined && item.qtdOriginal !== item.qtdContada ? (
-      <span className="ml-1.5 text-[9px] font-bold text-sky-700 bg-sky-50 border border-sky-200 px-1.5 py-0.5 rounded-full whitespace-nowrap" title={`Contado originalmente: ${qtdBR(item.qtdOriginal)} ${item.unidade}`}>
+      <span className="ml-1.5 text-[11px] font-semibold text-sky-700 bg-sky-50 px-2 py-0.5 rounded-md whitespace-nowrap" title={`Contado originalmente: ${qtdBR(item.qtdOriginal)} ${item.unidade}`}>
         editado · era {qtdBR(item.qtdOriginal)}
       </span>
     ) : null;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       <div className="flex items-center gap-3 flex-wrap">
         <button
           onClick={onVoltar}
           disabled={salvando}
-          className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-zinc-100 cursor-pointer text-zinc-500 transition-colors"
+          className="w-9 h-9 flex items-center justify-center rounded-xl border border-zinc-200 bg-white shadow-sm hover:bg-zinc-50 cursor-pointer text-zinc-500 transition-colors"
         >
           <i className="ri-arrow-left-line text-sm" />
         </button>
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-bold text-zinc-800">Contagem #{session.numero}</p>
-          <p className="text-xs text-zinc-500">{session.data} às {session.hora} · {session.operador}</p>
+          <h3 className="text-sm font-bold text-zinc-800">Contagem #{session.numero}</h3>
+          <p className="text-xs text-zinc-400">{session.data} às {session.hora} · {session.operador}</p>
         </div>
         {podeEditar && !editando && (
           <button
             onClick={iniciarEdicao}
-            className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold border border-amber-300 text-amber-700 bg-amber-50 hover:bg-amber-100 rounded-lg cursor-pointer transition-colors whitespace-nowrap"
+            className="flex items-center gap-1.5 px-3 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 rounded-xl text-xs font-semibold text-zinc-600 cursor-pointer transition-colors whitespace-nowrap shadow-sm"
           >
             <i className="ri-edit-line text-sm" />
             Editar contagem
@@ -180,7 +181,7 @@ export default function DetalheInventario({ session, sessoesMaisNovas, podeEdita
       )}
 
       {editando && (
-        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-3">
+        <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 space-y-3">
           <div className="flex items-start gap-2">
             <i className="ri-information-line text-amber-600 text-sm mt-0.5" />
             <p className="text-xs text-amber-800 leading-relaxed">
@@ -204,14 +205,14 @@ export default function DetalheInventario({ session, sessoesMaisNovas, podeEdita
               <button
                 onClick={() => { setEditando(false); setErro(null); }}
                 disabled={salvando}
-                className="px-3 py-2 text-xs font-semibold text-zinc-600 bg-white border border-zinc-200 rounded-lg cursor-pointer hover:bg-zinc-50"
+                className="px-3 py-2 text-xs font-semibold text-zinc-600 bg-white border border-zinc-200 rounded-xl shadow-sm cursor-pointer hover:bg-zinc-50"
               >
                 Cancelar
               </button>
               <button
                 onClick={salvar}
                 disabled={salvando || alterados.length === 0}
-                className="px-4 py-2 text-xs font-bold text-white bg-amber-500 hover:bg-amber-600 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg cursor-pointer flex items-center gap-1.5"
+                className="px-4 py-2 text-xs font-semibold text-white bg-amber-500 hover:bg-amber-600 disabled:opacity-40 disabled:cursor-not-allowed rounded-xl shadow-sm cursor-pointer flex items-center gap-1.5"
               >
                 {salvando ? <i className="ri-loader-4-line animate-spin" /> : <i className="ri-save-line" />}
                 Salvar correção
@@ -223,40 +224,45 @@ export default function DetalheInventario({ session, sessoesMaisNovas, podeEdita
       )}
 
       {/* Resumo */}
-      <div className="grid grid-cols-2 gap-3">
-        <div className="bg-white border border-zinc-100 rounded-xl p-4 text-center">
-          <p className="text-xl font-black text-zinc-800">{session.itensContados}</p>
-          <p className="text-[10px] text-zinc-500">itens contados</p>
+      <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
+        <KpiCard label="Itens contados" icon="ri-clipboard-line" value={String(session.itensContados)} atual={session.itensContados} semVariacao />
+        <KpiCard
+          label="Sem diferença"
+          icon="ri-checkbox-circle-line"
+          value={String(session.itensContados - session.itensComDiferenca)}
+          valueTone="text-emerald-700"
+          atual={session.itensContados - session.itensComDiferenca}
+          semVariacao
+        />
+        <KpiCard
+          label="Com diferença"
+          icon="ri-alert-line"
+          value={String(session.itensComDiferenca)}
+          valueTone={session.itensComDiferenca > 0 ? 'text-amber-700' : 'text-zinc-400'}
+          atual={session.itensComDiferenca}
+          semVariacao
+        />
+        <KpiCard
+          label="Impacto do ajuste"
+          icon="ri-scales-3-line"
+          value={`${session.valorAjusteLiquido >= 0 ? '+' : ''}${fmt(session.valorAjusteLiquido)}`}
+          valueTone={session.valorAjusteLiquido < 0 ? 'text-red-600' : session.valorAjusteLiquido > 0 ? 'text-emerald-700' : 'text-zinc-400'}
+          atual={session.valorAjusteLiquido}
+          semVariacao
+        />
+      </div>
+      <div className="bg-white border border-zinc-200 rounded-2xl p-4 flex items-center justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-bold text-zinc-800">Valor total em estoque na contagem</h3>
+          <p className="text-xs text-zinc-400">Soma de qtd contada × preço unitário de todos os insumos</p>
         </div>
-        <div className="bg-white border border-zinc-100 rounded-xl p-4 text-center">
-          <p className="text-xl font-black text-zinc-400">{session.itensContados - session.itensComDiferenca}</p>
-          <p className="text-[10px] text-zinc-500">sem diferença</p>
-        </div>
-        <div className={`bg-white border rounded-xl p-4 text-center ${session.itensComDiferenca > 0 ? 'border-amber-200' : 'border-zinc-100'}`}>
-          <p className={`text-xl font-black ${session.itensComDiferenca > 0 ? 'text-amber-600' : 'text-zinc-400'}`}>
-            {session.itensComDiferenca}
-          </p>
-          <p className="text-[10px] text-zinc-500">com diferença</p>
-        </div>
-        <div className={`bg-white border rounded-xl p-4 text-center ${session.valorAjusteLiquido !== 0 ? (session.valorAjusteLiquido < 0 ? 'border-red-200' : 'border-emerald-200') : 'border-zinc-100'}`}>
-          <p className={`text-xl font-black ${session.valorAjusteLiquido < 0 ? 'text-red-500' : session.valorAjusteLiquido > 0 ? 'text-emerald-600' : 'text-zinc-400'}`}>
-            {session.valorAjusteLiquido >= 0 ? '+' : ''}{fmt(session.valorAjusteLiquido)}
-          </p>
-          <p className="text-[10px] text-zinc-500">impacto do ajuste</p>
-        </div>
-        <div className="col-span-2 bg-zinc-50 border border-zinc-200 rounded-xl p-4 flex items-center justify-between">
-          <div>
-            <p className="text-xs font-semibold text-zinc-600">Valor total em estoque na contagem</p>
-            <p className="text-[10px] text-zinc-400 mt-0.5">Soma de qtd contada × preço unitário de todos os insumos</p>
-          </div>
-          <p className="text-lg font-black text-zinc-900">{fmt(valorTotalContagem)}</p>
-        </div>
+        <p className="text-xl font-bold tabular-nums tracking-tight text-zinc-900 whitespace-nowrap">{fmt(valorTotalContagem)}</p>
       </div>
 
       {/* Itens */}
-      <div className="bg-white border border-zinc-100 rounded-xl overflow-hidden">
-        <div className="px-4 py-3 border-b border-zinc-100 flex items-center justify-between gap-3 flex-wrap">
-          <p className="text-xs font-bold text-zinc-700">Todos os Insumos Contados</p>
+      <div className="bg-white rounded-2xl border border-zinc-200 overflow-hidden">
+        <div className="px-5 py-3 border-b border-zinc-100 flex items-center justify-between gap-3 flex-wrap">
+          <h3 className="text-sm font-bold text-zinc-800">Todos os Insumos Contados</h3>
           <div className="flex items-center gap-2">
             <div className="relative">
               <i className="ri-search-line absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400 text-xs pointer-events-none" />
@@ -265,10 +271,10 @@ export default function DetalheInventario({ session, sessoesMaisNovas, podeEdita
                 value={busca}
                 onChange={(e) => setBusca(e.target.value)}
                 placeholder="Buscar insumo..."
-                className="w-44 h-8 pl-7 pr-2 text-xs border border-zinc-200 rounded-lg bg-white text-zinc-800 focus:outline-none focus:border-amber-400"
+                className="w-44 h-9 pl-7 pr-2 text-xs border border-zinc-200 rounded-xl shadow-sm bg-white text-zinc-800 focus:outline-none focus:border-amber-400"
               />
             </div>
-            <span className="text-[10px] text-zinc-400 whitespace-nowrap">{session.itens.length} insumos</span>
+            <span className="text-[11px] text-zinc-400 whitespace-nowrap">{session.itens.length} insumos</span>
           </div>
         </div>
 
@@ -276,13 +282,13 @@ export default function DetalheInventario({ session, sessoesMaisNovas, podeEdita
         <ul className="md:hidden p-2 space-y-2 bg-zinc-50/60">
           {itensVisiveis.map((item) => (
             <li key={item.insumoId}>
-              <div className={`rounded-xl border bg-white px-3 py-3 ${item.diferenca !== 0 ? 'border-amber-200 bg-amber-50/40' : 'border-zinc-200'}`}>
+              <div className={`rounded-2xl border bg-white px-3 py-3 ${item.diferenca !== 0 ? 'border-amber-200 bg-amber-50/40' : 'border-zinc-200'}`}>
                 <div className="flex items-start justify-between gap-2">
                   <p className="text-sm font-medium text-zinc-800 break-words line-clamp-2">
                     {item.insumoNome}{originalBadge(item)}
                   </p>
                   {item.diferenca !== 0 && (
-                    <span className="text-[9px] font-bold text-amber-600 bg-amber-100 px-1.5 py-0.5 rounded-full whitespace-nowrap flex-shrink-0">
+                    <span className="text-[11px] font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md whitespace-nowrap flex-shrink-0">
                       divergência
                     </span>
                   )}
@@ -294,10 +300,10 @@ export default function DetalheInventario({ session, sessoesMaisNovas, podeEdita
                 {editando && <div className="mt-2">{campoEdicao(item, true)}</div>}
                 {!editando && item.diferenca !== 0 && (
                   <div className="flex items-center gap-1.5 flex-wrap mt-2">
-                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold ${item.diferenca > 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-500'}`}>
+                    <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-semibold ${item.diferenca > 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-500'}`}>
                       {item.diferenca > 0 ? '+' : ''}{item.diferenca} {item.unidade}
                     </span>
-                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${item.diferenca * item.precoUnitario < 0 ? 'bg-red-50 text-red-500' : 'bg-emerald-50 text-emerald-600'}`}>
+                    <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-semibold ${item.diferenca * item.precoUnitario < 0 ? 'bg-red-50 text-red-500' : 'bg-emerald-50 text-emerald-600'}`}>
                       {item.diferenca * item.precoUnitario >= 0 ? '+' : ''}{fmt(item.diferenca * item.precoUnitario)}
                     </span>
                   </div>
@@ -310,37 +316,37 @@ export default function DetalheInventario({ session, sessoesMaisNovas, podeEdita
         {/* Computador */}
         <div className="hidden md:block overflow-x-auto">
           <table className="w-full text-xs" style={{ minWidth: '420px' }}>
-            <thead className="bg-zinc-50 border-b border-zinc-100">
+            <thead className="border-b border-zinc-200">
               <tr>
-                <th className="px-4 py-2.5 text-left font-semibold text-zinc-500">Insumo</th>
-                <th className="px-4 py-2.5 text-right font-semibold text-zinc-500 hidden sm:table-cell">Teórico</th>
-                <th className="px-4 py-2.5 text-right font-semibold text-zinc-500">Contado</th>
-                <th className="px-4 py-2.5 text-right font-semibold text-zinc-500">Diferença</th>
-                <th className="px-4 py-2.5 text-right font-semibold text-zinc-500">Impacto</th>
+                <th className="pl-5 pr-4 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Insumo</th>
+                <th className="px-4 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wide text-zinc-400 hidden sm:table-cell">Teórico</th>
+                <th className="px-4 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Contado</th>
+                <th className="px-4 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Diferença</th>
+                <th className="px-4 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Impacto</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-zinc-50">
+            <tbody className="divide-y divide-zinc-100/80">
               {itensVisiveis.map((item) => (
                 <tr key={item.insumoId} className={`hover:bg-zinc-50 ${item.diferenca !== 0 ? 'bg-amber-50/40' : ''}`}>
-                  <td className="px-4 py-2.5 font-medium text-zinc-800">
+                  <td className="pl-5 pr-4 py-2.5 font-medium text-zinc-800">
                     {item.insumoNome}
                     {originalBadge(item)}
                     {item.diferenca !== 0 && (
-                      <span className="ml-2 text-[9px] font-bold text-amber-600 bg-amber-100 px-1.5 py-0.5 rounded-full">divergência</span>
+                      <span className="ml-2 text-[11px] font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md">divergência</span>
                     )}
                   </td>
-                  <td className="px-4 py-2.5 text-right text-zinc-500 hidden sm:table-cell">{item.qtdTeorica} {item.unidade}</td>
-                  <td className="px-4 py-2.5 text-right font-semibold text-zinc-800">
+                  <td className="px-4 py-2.5 text-right tabular-nums whitespace-nowrap text-zinc-500 hidden sm:table-cell">{item.qtdTeorica} {item.unidade}</td>
+                  <td className="px-4 py-2.5 text-right tabular-nums whitespace-nowrap font-semibold text-zinc-800">
                     {editando ? campoEdicao(item, false) : <>{item.qtdContada} {item.unidade}</>}
                   </td>
-                  <td className="px-4 py-2.5 text-right">
+                  <td className="px-4 py-2.5 text-right tabular-nums whitespace-nowrap">
                     {item.diferenca !== 0 ? (
                       <span className={`font-bold ${item.diferenca > 0 ? 'text-emerald-600' : 'text-red-500'}`}>
                         {item.diferenca > 0 ? '+' : ''}{item.diferenca} {item.unidade}
                       </span>
                     ) : <span className="text-zinc-300">—</span>}
                   </td>
-                  <td className="px-4 py-2.5 text-right">
+                  <td className="px-4 py-2.5 text-right tabular-nums whitespace-nowrap">
                     {item.diferenca !== 0 ? (
                       <span className={`font-semibold ${item.diferenca * item.precoUnitario < 0 ? 'text-red-500' : 'text-emerald-600'}`}>
                         {item.diferenca * item.precoUnitario >= 0 ? '+' : ''}{fmt(item.diferenca * item.precoUnitario)}
@@ -353,19 +359,22 @@ export default function DetalheInventario({ session, sessoesMaisNovas, podeEdita
           </table>
         </div>
         {itensVisiveis.length === 0 && (
-          <p className="text-center text-xs text-zinc-400 py-6">Nenhum insumo com esse nome.</p>
+          <div className="py-14 text-center">
+            <i className="ri-search-line text-4xl text-zinc-200 block" />
+            <p className="text-sm text-zinc-400 mt-2">Nenhum insumo com esse nome.</p>
+          </div>
         )}
       </div>
 
       {/* Histórico de correções */}
       {session.edicoes.length > 0 && (
-        <div className="bg-white border border-zinc-100 rounded-xl overflow-hidden">
-          <div className="px-4 py-3 border-b border-zinc-100">
-            <p className="text-xs font-bold text-zinc-700">Correções feitas depois de confirmada</p>
+        <div className="bg-white rounded-2xl border border-zinc-200 overflow-hidden">
+          <div className="px-5 py-3 border-b border-zinc-100">
+            <h3 className="text-sm font-bold text-zinc-800">Correções feitas depois de confirmada</h3>
           </div>
-          <ul className="divide-y divide-zinc-50">
+          <ul className="divide-y divide-zinc-100/80">
             {[...session.edicoes].reverse().map((ed, idx) => (
-              <li key={idx} className="px-4 py-3 text-xs">
+              <li key={idx} className="px-5 py-3 text-xs">
                 <p className="text-zinc-600">
                   <span className="font-semibold text-zinc-800">{ed.por}</span>
                   {' · '}

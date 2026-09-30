@@ -218,13 +218,13 @@ export default function EstoqueTeoricoTab() {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="p-4 md:p-6 space-y-5 max-w-[1400px] mx-auto">
       {/* Header */}
-      <div className="bg-white border border-zinc-100 rounded-xl p-4">
-        <div className="flex items-center justify-between flex-wrap gap-3 mb-3">
+      <div className="bg-white rounded-2xl border border-zinc-200 px-5 py-4">
+        <div className="flex items-center justify-between flex-wrap gap-3">
           <div>
-            <h3 className="text-sm font-bold text-zinc-900">Estoque teórico por data</h3>
-            <p className="text-[11px] text-zinc-400 mt-0.5">
+            <h3 className="text-sm font-bold text-zinc-800">Estoque teórico por data</h3>
+            <p className="text-xs text-zinc-400">
               O que a teoria previa pro final de cada data — vendas, compras e produção, sem
               contar nenhuma correção de contagem feita naquele mesmo dia. Ative o ícone de
               lista numa coluna pra comparar com o que foi contado de verdade.
@@ -233,7 +233,7 @@ export default function EstoqueTeoricoTab() {
           <div className="relative">
             <button
               onClick={() => setCalendarOpen((v) => !v)}
-              className="flex items-center gap-1.5 px-3 py-2 bg-amber-500 text-white text-xs font-semibold rounded-lg hover:bg-amber-600 transition-colors cursor-pointer whitespace-nowrap"
+              className="flex items-center gap-1.5 bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-xl text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors shadow-sm"
             >
               <Plus size={13} />
               Adicionar data
@@ -249,11 +249,11 @@ export default function EstoqueTeoricoTab() {
         </div>
 
         {selectedDates.length > 0 && (
-          <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-2 flex-wrap mt-3 pt-3 border-t border-zinc-100">
             {datesOrdenadas.map((iso) => (
               <span
                 key={iso}
-                className="inline-flex items-center gap-1.5 pl-2.5 pr-1.5 py-1 bg-zinc-100 rounded-full text-[11px] font-medium text-zinc-600"
+                className="inline-flex items-center gap-1.5 pl-2.5 pr-1.5 py-1 bg-zinc-100 rounded-md text-[11px] font-semibold text-zinc-600"
               >
                 <Calendar size={11} />
                 {formatDateShort(iso)}
@@ -270,30 +270,33 @@ export default function EstoqueTeoricoTab() {
       </div>
 
       {selectedDates.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-16 text-center bg-white border border-dashed border-zinc-200 rounded-xl">
-          <Calendar className="text-zinc-300 mb-3" size={32} />
+        <div className="py-14 text-center bg-white border border-zinc-200 rounded-2xl flex flex-col items-center">
+          <Calendar className="text-zinc-200 mb-3" size={40} />
           <p className="text-sm font-semibold text-zinc-500">Nenhuma data selecionada</p>
           <p className="text-xs text-zinc-400 mt-1">
             Clique em "Adicionar data" pra ver o estoque teórico de todos os insumos naquele dia.
           </p>
         </div>
       ) : (
-        <div className="bg-white border border-zinc-100 rounded-xl overflow-hidden">
-          <div className="p-3 border-b border-zinc-100">
-            <input
-              value={busca}
-              onChange={(e) => setBusca(e.target.value)}
-              placeholder="Buscar insumo..."
-              className="w-full max-w-xs text-xs border border-zinc-200 rounded-lg px-3 py-2 focus:outline-none focus:border-amber-400"
-            />
+        <div className="bg-white rounded-2xl border border-zinc-200 overflow-hidden">
+          <div className="px-5 py-3 border-b border-zinc-100">
+            <div className="relative w-full max-w-xs">
+              <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 text-sm" />
+              <input
+                value={busca}
+                onChange={(e) => setBusca(e.target.value)}
+                placeholder="Buscar insumo..."
+                className="w-full h-10 rounded-xl border border-zinc-200 shadow-sm pl-9 pr-3 text-sm focus:outline-none focus:border-amber-400"
+              />
+            </div>
           </div>
 
           {error && (
-            <div className="p-3 bg-red-50 border-b border-red-100 text-xs text-red-600">{error}</div>
+            <div className="px-5 py-3 bg-red-50 border-b border-red-200 text-xs text-red-700 flex items-start gap-3"><i className="ri-error-warning-line" />{error}</div>
           )}
 
           {loadingTheoretical ? (
-            <div className="flex items-center justify-center py-16 text-zinc-400">
+            <div className="flex items-center justify-center py-14 text-zinc-400">
               <div className="w-5 h-5 border-2 border-amber-400 border-t-transparent rounded-full animate-spin mr-3" />
               <span className="text-sm">Calculando...</span>
             </div>
@@ -301,15 +304,15 @@ export default function EstoqueTeoricoTab() {
             <div className="overflow-x-auto">
               <table className="w-full border-collapse text-xs">
                 <thead>
-                  <tr className="bg-zinc-50">
-                    <th className="text-left font-semibold text-zinc-500 px-3 py-2.5 border-b border-zinc-100 sticky left-0 bg-zinc-50 whitespace-nowrap">
+                  <tr className="border-b border-zinc-200">
+                    <th className="text-left text-[11px] font-semibold uppercase tracking-wide text-zinc-400 pl-5 pr-4 py-2.5 sticky left-0 bg-white whitespace-nowrap">
                       Insumo
                     </th>
                     {datesOrdenadas.map((iso) => {
                       const temSessao = sessaoPorData.has(iso);
                       const ordenandoPorEssa = sortDate === iso;
                       return (
-                        <th key={iso} className="text-center font-semibold text-zinc-500 px-3 py-2.5 border-b border-zinc-100 whitespace-nowrap">
+                        <th key={iso} className="text-center text-[11px] font-semibold uppercase tracking-wide text-zinc-400 px-4 py-2.5 whitespace-nowrap">
                           <div className="flex items-center justify-center gap-1.5">
                             <button
                               onClick={() => toggleSort(iso)}
@@ -341,25 +344,25 @@ export default function EstoqueTeoricoTab() {
                 {linhas.length === 0 ? (
                   <tbody>
                     <tr>
-                      <td colSpan={datesOrdenadas.length + 1} className="text-center py-10 text-zinc-400">
+                      <td colSpan={datesOrdenadas.length + 1} className="text-center py-14 text-sm text-zinc-400">
                         Nenhum insumo encontrado
                       </td>
                     </tr>
                   </tbody>
                 ) : (
                   grupos.map((grupo) => (
-                    <tbody key={grupo.categoria} className="divide-y divide-zinc-50">
+                    <tbody key={grupo.categoria} className="divide-y divide-zinc-100/80">
                       <tr>
                         <td
                           colSpan={datesOrdenadas.length + 1}
-                          className="px-3 py-1.5 bg-amber-50/60 text-[10px] font-bold text-amber-700 uppercase tracking-wide sticky left-0"
+                          className="pl-5 pr-4 pt-4 pb-2 text-[11px] font-bold text-zinc-500 uppercase tracking-wider sticky left-0"
                         >
                           {grupo.categoria}
                         </td>
                       </tr>
                       {grupo.itens.map((row) => (
-                        <tr key={row.id} className="hover:bg-zinc-50/50">
-                          <td className="px-3 py-2.5 font-medium text-zinc-700 sticky left-0 bg-white whitespace-nowrap">
+                        <tr key={row.id} className="hover:bg-zinc-50 group">
+                          <td className="pl-5 pr-4 py-2.5 font-medium text-zinc-700 sticky left-0 bg-white group-hover:bg-zinc-50 whitespace-nowrap">
                             {row.nome}
                             <span className="text-zinc-400 font-normal ml-1">({row.unidade})</span>
                           </td>
@@ -367,7 +370,7 @@ export default function EstoqueTeoricoTab() {
                             const cel = row.celulas.get(iso);
                             const real = showRealCount[iso] ? contagemPorDataEInsumo.get(iso)?.get(row.id) : undefined;
                             return (
-                              <td key={iso} className="px-3 py-2.5 text-center whitespace-nowrap">
+                              <td key={iso} className="px-4 py-2.5 text-center tabular-nums whitespace-nowrap">
                                 {cel?.unreliable ? (
                                   <span className="text-zinc-300" title="Sinal de alguma movimentacao historica desconhecido — nao da pra confiar neste numero">
                                     —

@@ -64,20 +64,20 @@ export default function MiniPriceHistory({ insumo }: MiniPriceHistoryProps) {
       <td colSpan={7} className="px-4 py-3 bg-amber-50/30 border-t border-amber-100/60">
         <div className="flex items-start gap-5 flex-wrap">
           <div className="flex items-center gap-3 flex-wrap">
-            <div className="bg-white border border-zinc-100 rounded-lg px-3 py-2 min-w-[90px]">
-              <p className="text-[9px] text-zinc-400 uppercase tracking-wide mb-0.5">
+            <div className="bg-white border border-zinc-200 rounded-xl px-3 py-2 min-w-[90px]">
+              <p className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wide mb-0.5">
                 {isProduction ? 'Custo médio 6m' : 'Preço médio 3m'}
               </p>
-              <p className="text-xs font-bold text-zinc-800">{fmtPreco(stats.avg3m)}</p>
+              <p className="text-xs font-bold tabular-nums text-zinc-800">{fmtPreco(stats.avg3m)}</p>
             </div>
-            <div className="bg-white border border-zinc-100 rounded-lg px-3 py-2 min-w-[90px]">
-              <p className="text-[9px] text-zinc-400 uppercase tracking-wide mb-0.5">
+            <div className="bg-white border border-zinc-200 rounded-xl px-3 py-2 min-w-[90px]">
+              <p className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wide mb-0.5">
                 {isProduction ? 'Custo médio 30 dias' : 'Média 30 dias'}
               </p>
-              <p className="text-xs font-bold text-zinc-800">{fmtPreco(stats.avg1m)}</p>
+              <p className="text-xs font-bold tabular-nums text-zinc-800">{fmtPreco(stats.avg1m)}</p>
             </div>
-            <div className="bg-white border border-zinc-100 rounded-lg px-3 py-2 min-w-[90px]">
-              <p className="text-[9px] text-zinc-400 uppercase tracking-wide mb-0.5">Variação recente</p>
+            <div className="bg-white border border-zinc-200 rounded-xl px-3 py-2 min-w-[90px]">
+              <p className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wide mb-0.5">Variação recente</p>
               <div className="flex items-center gap-1">
                 {stats.trend === 'stable' ? (
                   <Minus size={11} className="text-zinc-400" />
@@ -95,8 +95,8 @@ export default function MiniPriceHistory({ insumo }: MiniPriceHistoryProps) {
                 </p>
               </div>
             </div>
-            <div className="bg-white border border-zinc-100 rounded-lg px-3 py-2 min-w-[110px]">
-              <p className="text-[9px] text-zinc-400 uppercase tracking-wide mb-0.5">
+            <div className="bg-white border border-zinc-200 rounded-xl px-3 py-2 min-w-[110px]">
+              <p className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wide mb-0.5">
                 {isProduction ? 'Faixa 6m' : 'Faixa 3m'}
               </p>
               <p className="text-xs font-semibold text-zinc-700">{fmtPreco(stats.minPrice)} – {fmtPreco(stats.maxPrice)}</p>
@@ -105,7 +105,7 @@ export default function MiniPriceHistory({ insumo }: MiniPriceHistoryProps) {
 
           {prices.length > 1 && (
             <div className="flex-1 min-w-[200px] max-w-xl">
-              <p className="text-[9px] text-zinc-400 uppercase tracking-wide mb-1">
+              <p className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wide mb-1">
                 {isProduction ? 'Evolução do custo (6 meses)' : 'Evolução do preço (3 meses)'}
               </p>
               {/* Preço em cada ponto (HTML por cima: o SVG estica e deformaria o texto) */}

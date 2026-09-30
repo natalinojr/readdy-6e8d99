@@ -3,6 +3,7 @@ import type { FiltroStatus, FiltroOrigem, ModoPeriodo } from './utils';
 import { MESES, STATUS_LABEL, HOJE, somarDias, formatarDataExibicao } from './utils';
 import type { SessionInfo } from '@/hooks/useSessions';
 import { PLATAFORMAS_DELIVERY } from '@/constants/delivery';
+import { Segmented } from '@/pages/financeiro/components/dreUi';
 
 interface PedidosFiltrosProps {
   busca: string;
@@ -65,15 +66,15 @@ export default function PedidosFiltros({
   const anosDisponiveis = [anoAtual - 2, anoAtual - 1, anoAtual];
 
   return (
-    <div className="bg-white rounded-xl border border-zinc-100 p-3 md:p-4 space-y-3">
-      <div className="flex flex-col gap-2 md:gap-3">
+    <div className="space-y-3">
+      <div className="flex flex-col gap-3">
         <div className="relative flex-1">
           <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 text-sm" />
           <input
             value={busca}
             onChange={(e) => setBusca(e.target.value)}
             placeholder="Buscar por número, cliente, item..."
-            className="w-full pl-9 pr-4 py-2.5 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:border-amber-400 bg-zinc-50 text-zinc-800"
+            className="w-full h-10 pl-9 pr-9 text-sm border border-zinc-200 rounded-xl shadow-sm focus:outline-none focus:border-amber-400 bg-white text-zinc-800"
           />
           {busca && (
             <button onClick={() => setBusca('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 cursor-pointer">
@@ -88,7 +89,7 @@ export default function PedidosFiltros({
             <div className="relative flex-1" ref={refSeletorSessao}>
               <button
                 onClick={() => setSessaoOpen((v) => !v)}
-                className="w-full flex items-center gap-2 px-4 py-2.5 text-sm border border-zinc-200 rounded-lg bg-zinc-50 text-zinc-700 hover:border-amber-400 cursor-pointer transition-colors"
+                className="w-full flex items-center gap-2 px-4 h-10 text-sm border border-zinc-200 rounded-xl shadow-sm bg-white text-zinc-700 hover:border-amber-400 cursor-pointer transition-colors"
               >
                 <i className="ri-history-line text-sm" />
                 <span className="font-medium flex-1 text-left truncate">{labelDataAtiva}</span>
@@ -96,7 +97,7 @@ export default function PedidosFiltros({
                 <i className={`ri-arrow-down-s-line text-xs transition-transform flex-shrink-0 ${sessaoOpen ? 'rotate-180' : ''}`} />
               </button>
               {sessaoOpen && (
-                <div className="absolute left-0 top-full mt-2 w-96 bg-white border border-zinc-100 rounded-xl z-50 overflow-hidden">
+                <div className="absolute left-0 top-full mt-2 w-96 max-w-[calc(100vw-2rem)] bg-white border border-zinc-200 rounded-xl shadow-lg z-50 overflow-hidden">
                   <div className="px-4 py-3 border-b border-zinc-100 bg-zinc-50">
                     <p className="text-xs font-bold text-zinc-700">Selecionar sessão</p>
                   </div>
@@ -156,14 +157,14 @@ export default function PedidosFiltros({
           <div className={`relative flex-1 ${modo === 'sessao' ? 'hidden' : ''}`} ref={refFiltroData}>
             <button
               onClick={() => setFiltroDataOpen((v) => !v)}
-              className="w-full flex items-center gap-2 px-4 py-2.5 text-sm border border-zinc-200 rounded-lg bg-zinc-50 text-zinc-700 hover:border-amber-400 cursor-pointer transition-colors"
+              className="w-full flex items-center gap-2 px-4 h-10 text-sm border border-zinc-200 rounded-xl shadow-sm bg-white text-zinc-700 hover:border-amber-400 cursor-pointer transition-colors"
             >
               <i className="ri-calendar-line text-sm" />
               <span className="font-medium flex-1 text-left truncate">{labelDataAtiva}</span>
               <i className={`ri-arrow-down-s-line text-xs transition-transform flex-shrink-0 ${filtroDataOpen ? 'rotate-180' : ''}`} />
             </button>
             {filtroDataOpen && (
-              <div className="absolute left-0 sm:right-0 sm:left-auto top-full mt-2 w-80 bg-white border border-zinc-100 rounded-xl z-50 overflow-hidden">
+              <div className="absolute left-0 sm:right-0 sm:left-auto top-full mt-2 w-80 max-w-[calc(100vw-2rem)] bg-white border border-zinc-200 rounded-xl shadow-lg z-50 overflow-hidden">
                 <div className="flex border-b border-zinc-100">
                   {[
                     { key: 'preset', label: 'Rápido', icon: 'ri-flashlight-line' },
@@ -249,7 +250,7 @@ export default function PedidosFiltros({
           </div>
 
           <select value={filtroOrigem} onChange={(e) => { setFiltroOrigem(e.target.value as FiltroOrigem); if (e.target.value !== 'delivery') setFiltroPlataforma('todos'); }}
-            className="text-sm border border-zinc-200 rounded-lg px-3 py-2.5 focus:outline-none focus:border-amber-400 bg-zinc-50 text-zinc-700 cursor-pointer whitespace-nowrap"
+            className="text-sm border border-zinc-200 rounded-xl shadow-sm px-3 h-10 focus:outline-none focus:border-amber-400 bg-white text-zinc-700 cursor-pointer whitespace-nowrap"
           >
             <option value="todos">Todas as origens</option>
             <option value="caixa">PDV Caixa</option>
@@ -264,7 +265,7 @@ export default function PedidosFiltros({
             <select
               value={filtroPlataforma}
               onChange={(e) => setFiltroPlataforma(e.target.value)}
-              className="text-sm border border-amber-200 rounded-lg px-3 py-2.5 focus:outline-none focus:border-amber-400 bg-amber-50 text-amber-700 cursor-pointer whitespace-nowrap"
+              className="text-sm border border-amber-200 rounded-xl shadow-sm px-3 h-10 focus:outline-none focus:border-amber-400 bg-amber-50 text-amber-700 cursor-pointer whitespace-nowrap"
             >
               <option value="todos">Todas as plataformas</option>
               {PLATAFORMAS_DELIVERY.map((p) => (
@@ -276,22 +277,18 @@ export default function PedidosFiltros({
         </div>
       </div>
 
-      <div className="flex gap-1 p-1 bg-zinc-100 rounded-xl overflow-x-auto">
-        {([
-          { key: 'todos', label: 'Todos' },
-          { key: 'aberto', label: 'Em aberto' },
-          { key: 'pronto', label: 'Pronto' },
-          { key: 'entregue', label: 'Entregue' },
-          { key: 'cancelado', label: 'Cancelado' },
-        ] as { key: FiltroStatus; label: string }[]).map((s) => (
-          <button key={s.key} onClick={() => setFiltroStatus(s.key)}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-lg cursor-pointer transition-all whitespace-nowrap flex-shrink-0 ${
-              filtroStatus === s.key ? 'bg-white text-zinc-800 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'
-            }`}
-          >
-            {s.label}
-          </button>
-        ))}
+      <div className="overflow-x-auto max-w-full">
+        <Segmented<FiltroStatus>
+          value={filtroStatus}
+          onChange={setFiltroStatus}
+          options={[
+            { id: 'todos', label: 'Todos', icon: 'ri-list-check' },
+            { id: 'aberto', label: 'Em aberto', icon: 'ri-time-line' },
+            { id: 'pronto', label: 'Pronto', icon: 'ri-checkbox-circle-line' },
+            { id: 'entregue', label: 'Entregue', icon: 'ri-check-double-line' },
+            { id: 'cancelado', label: 'Cancelado', icon: 'ri-close-circle-line' },
+          ]}
+        />
       </div>
     </div>
   );

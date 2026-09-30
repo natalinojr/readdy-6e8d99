@@ -62,7 +62,7 @@ export default function HorariosPico({ refreshKey = 0 }: { refreshKey?: number }
 
   if (loading) {
     return (
-      <div className="bg-white rounded-xl border border-zinc-100 p-5 animate-pulse">
+      <div className="bg-white rounded-2xl border border-zinc-200 p-5 animate-pulse">
         <div className="h-4 bg-zinc-100 rounded w-32 mb-4" />
         <div className="grid grid-cols-[repeat(17,minmax(0,1fr))] gap-1">
           {Array.from({ length: 17 }).map((_, i) => (
@@ -74,17 +74,12 @@ export default function HorariosPico({ refreshKey = 0 }: { refreshKey?: number }
   }
 
   return (
-    <div className="bg-white rounded-xl border border-zinc-100 p-5">
+    <div className="bg-white rounded-2xl border border-zinc-200">
       {/* Header */}
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 flex items-center justify-center bg-amber-50 rounded-lg">
-            <i className="ri-fire-line text-amber-500 text-sm" />
-          </div>
-          <div>
-            <h3 className="text-sm font-semibold text-zinc-800">Horários de Pico</h3>
-            <p className="text-xs text-zinc-400">Distribuição de pedidos por hora — últimos 30 dias</p>
-          </div>
+      <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-100 gap-3 flex-wrap">
+        <div>
+          <h3 className="text-sm font-bold text-zinc-800">Horários de Pico</h3>
+          <p className="text-xs text-zinc-400">Distribuição de pedidos por hora — últimos 30 dias</p>
         </div>
 
         {/* Indicadores rápidos */}
@@ -92,7 +87,7 @@ export default function HorariosPico({ refreshKey = 0 }: { refreshKey?: number }
           {dadosHoraAtual && dadosHoraAtual.orders > 0 && (
             <div className="text-right">
               <p className="text-[10px] text-zinc-400">Agora ({horaAtual}h)</p>
-              <p className="text-xs font-bold text-amber-600">{dadosHoraAtual.orders} ped. (30d)</p>
+              <p className="text-xs font-bold text-amber-600 tabular-nums">{dadosHoraAtual.orders} ped. (30d)</p>
             </div>
           )}
           {proximoPico && (
@@ -104,6 +99,7 @@ export default function HorariosPico({ refreshKey = 0 }: { refreshKey?: number }
         </div>
       </div>
 
+      <div className="p-5">
       {/* Mapa de calor por hora */}
       <div>
         <div>
@@ -186,13 +182,14 @@ export default function HorariosPico({ refreshKey = 0 }: { refreshKey?: number }
         </div>
 
         {picoHoje && (
-          <div className="flex items-center gap-1.5 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5">
+          <div className="flex items-center gap-1.5 bg-amber-50 border border-amber-200 rounded-xl px-3 py-1.5">
             <i className="ri-fire-fill text-amber-500 text-xs" />
             <span className="text-xs font-semibold text-amber-700">
               Pico: {picoHoje.hour}h ({picoHoje.orders} pedidos em 30 dias)
             </span>
           </div>
         )}
+      </div>
       </div>
     </div>
   );

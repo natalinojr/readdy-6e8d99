@@ -43,31 +43,32 @@ const ValidadeAlertas = memo(function ValidadeAlertas({ refreshKey = 0 }: { refr
   if (!loading && total === 0) return null;
 
   return (
-    <div className="bg-white border border-zinc-100 rounded-xl p-5">
-      <div className="flex items-center justify-between mb-4">
+    <div className="bg-white rounded-2xl border border-zinc-200">
+      <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-100 gap-3 flex-wrap">
         <div>
-          <h3 className="text-sm font-semibold text-zinc-800">Validade de Ingredientes</h3>
-          <p className="text-xs text-zinc-400 mt-0.5">Lotes próximos do vencimento</p>
+          <h3 className="text-sm font-bold text-zinc-800">Validade de Ingredientes</h3>
+          <p className="text-xs text-zinc-400">Lotes próximos do vencimento</p>
         </div>
         <div className="flex items-center gap-1.5">
           {expired > 0 && (
-            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-100 text-red-600">
+            <span className="text-[11px] font-semibold px-2 py-0.5 rounded-md bg-red-50 text-red-600">
               {expired} vencido{expired !== 1 ? 's' : ''}
             </span>
           )}
           {critical > 0 && (
-            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-orange-100 text-orange-600">
+            <span className="text-[11px] font-semibold px-2 py-0.5 rounded-md bg-orange-50 text-orange-600">
               {critical} crítico{critical !== 1 ? 's' : ''}
             </span>
           )}
           {warning > 0 && (
-            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-600">
+            <span className="text-[11px] font-semibold px-2 py-0.5 rounded-md bg-amber-50 text-amber-700">
               {warning} atenção
             </span>
           )}
         </div>
       </div>
 
+      <div className="p-5">
       {loading ? (
         <div className="flex items-center justify-center py-6">
           <div className="w-5 h-5 border-2 border-amber-400 border-t-transparent rounded-full animate-spin" />
@@ -89,7 +90,7 @@ const ValidadeAlertas = memo(function ValidadeAlertas({ refreshKey = 0 }: { refr
               : `${a.days_until_expiry}d`;
 
             return (
-              <div key={a.batch_id} className={`flex items-center gap-3 px-3 py-2.5 rounded-lg ${bg}`}>
+              <div key={a.batch_id} className={`flex items-center gap-3 px-3 py-2.5 rounded-xl ${bg}`}>
                 <div className={`w-5 h-5 flex items-center justify-center flex-shrink-0 ${subColor}`}>
                   <i className={`${icon} text-sm`} />
                 </div>
@@ -116,6 +117,7 @@ const ValidadeAlertas = memo(function ValidadeAlertas({ refreshKey = 0 }: { refr
         Ver todos em Estoque
         <i className="ri-arrow-right-line text-xs" />
       </button>
+      </div>
     </div>
   );
 });

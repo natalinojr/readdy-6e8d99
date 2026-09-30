@@ -77,18 +77,16 @@ const MesasOverview = memo(function MesasOverview({ mesas }: Props) {
 
   if (mesas.length === 0) {
     return (
-      <div className="bg-white border border-zinc-100 rounded-xl p-5">
-        <div className="flex items-center justify-between mb-4">
+      <div className="bg-white rounded-2xl border border-zinc-200">
+        <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-100 gap-3 flex-wrap">
           <div>
-            <h3 className="text-sm font-semibold text-zinc-800">Mapa de Mesas</h3>
-            <p className="text-xs text-zinc-400 mt-0.5">Nenhuma mesa em uso no momento</p>
+            <h3 className="text-sm font-bold text-zinc-800">Mapa de Mesas</h3>
+            <p className="text-xs text-zinc-400">Nenhuma mesa em uso no momento</p>
           </div>
         </div>
-        <div className="flex flex-col items-center justify-center py-8 text-center">
-          <div className="w-10 h-10 flex items-center justify-center bg-zinc-100 rounded-xl mb-3">
-            <i className="ri-layout-grid-line text-zinc-400 text-lg" />
-          </div>
-          <p className="text-sm text-zinc-400">Nenhuma mesa aberta hoje</p>
+        <div className="py-14 text-center">
+          <i className="ri-layout-grid-line text-4xl text-zinc-200" />
+          <p className="text-zinc-400 text-sm mt-2">Nenhuma mesa aberta hoje</p>
           <p className="text-xs text-zinc-300 mt-1">As mesas aparecerão aqui quando estiverem em uso</p>
         </div>
       </div>
@@ -97,23 +95,23 @@ const MesasOverview = memo(function MesasOverview({ mesas }: Props) {
 
   return (
     <>
-      <div className="bg-white border border-zinc-100 rounded-xl p-5">
-        <div className="flex items-center justify-between mb-4">
+      <div className="bg-white rounded-2xl border border-zinc-200">
+        <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-100 gap-3 flex-wrap">
           <div>
-            <h3 className="text-sm font-semibold text-zinc-800">Mapa de Mesas</h3>
-            <p className="text-xs text-zinc-400 mt-0.5">{ocupadas} ocupadas · {mesas.length - ocupadas} livres</p>
+            <h3 className="text-sm font-bold text-zinc-800">Mapa de Mesas</h3>
+            <p className="text-xs text-zinc-400">{ocupadas} ocupadas · {mesas.length - ocupadas} livres</p>
           </div>
           <div className="flex items-center gap-3 text-xs text-zinc-500">
             <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-amber-400 inline-block" />Ocupada</span>
             <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-zinc-100 border border-zinc-200 inline-block" />Livre</span>
           </div>
         </div>
-        <div className="grid grid-cols-4 sm:grid-cols-6 lg:grid-cols-8 gap-2">
+        <div className="p-5 grid grid-cols-4 sm:grid-cols-6 lg:grid-cols-8 gap-2">
           {mesas.map((mesa) => {
             const isOcupada = mesa.status === 'occupied';
             return (
               <button key={mesa.numero} onClick={() => setMesaSelecionada(mesa)}
-                className={`aspect-square rounded-lg flex flex-col items-center justify-center text-xs font-semibold transition-all cursor-pointer ${isOcupada ? 'bg-amber-50 border border-amber-200 text-amber-700 hover:bg-amber-100' : 'bg-zinc-50 border border-zinc-100 text-zinc-400 hover:bg-zinc-100'}`}>
+                className={`aspect-square rounded-xl flex flex-col items-center justify-center text-xs font-semibold transition-all cursor-pointer ${isOcupada ? 'bg-amber-50 border border-amber-200 text-amber-700 hover:bg-amber-100' : 'bg-zinc-50 border border-zinc-100 text-zinc-400 hover:bg-zinc-100'}`}>
                 <span className="text-sm font-bold">{mesa.numero}</span>
                 {isOcupada && mesa.tempo !== null && (
                   <span className="text-[9px] font-medium text-amber-500 mt-0.5">{formatTempo(mesa.tempo)}</span>

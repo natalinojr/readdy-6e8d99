@@ -214,24 +214,24 @@ const UltimosPedidos = memo(function UltimosPedidos({ pedidos }: Props) {
 
   return (
     <>
-      <div className="bg-white border border-zinc-100 rounded-xl p-5">
-        <div className="flex items-center justify-between mb-4">
+      <div className="bg-white rounded-2xl border border-zinc-200 overflow-hidden">
+        <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-100 gap-3 flex-wrap">
           <div>
-            <h3 className="text-sm font-semibold text-zinc-800">Últimos Pedidos</h3>
-            <p className="text-xs text-zinc-400 mt-0.5">Clique em um pedido para ver detalhes</p>
+            <h3 className="text-sm font-bold text-zinc-800">Últimos Pedidos</h3>
+            <p className="text-xs text-zinc-400">Clique em um pedido para ver detalhes</p>
           </div>
-          {pedidos.length > 0 && <span className="text-[10px] font-bold px-2 py-0.5 bg-emerald-50 text-emerald-600 rounded-full">ao vivo</span>}
+          {pedidos.length > 0 && <span className="text-[11px] font-semibold px-2 py-0.5 bg-emerald-50 text-emerald-700 rounded-md">ao vivo</span>}
         </div>
         {pedidos.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-10 text-zinc-400">
-            <i className="ri-receipt-line text-3xl mb-2" />
-            <p className="text-sm font-medium">Nenhum pedido ainda hoje</p>
-            <p className="text-xs mt-0.5">Os pedidos aparecerão aqui em tempo real</p>
+          <div className="py-14 text-center">
+            <i className="ri-receipt-line text-4xl text-zinc-200" />
+            <p className="text-zinc-400 text-sm mt-2">Nenhum pedido ainda hoje</p>
+            <p className="text-xs text-zinc-300 mt-1">Os pedidos aparecerão aqui em tempo real</p>
           </div>
         ) : (
           <>
           {/* Celular: um cartão por pedido — a tabela de 6 colunas fica apertada em 375px. */}
-          <ul className="md:hidden space-y-2">
+          <ul className="md:hidden space-y-2 p-3">
             {pedidos.map((p) => {
               const st = STATUS_CLS[p.status] ?? STATUS_CLS.new;
               const stLabel = STATUS_LABEL[p.status] ?? p.status;
@@ -239,16 +239,16 @@ const UltimosPedidos = memo(function UltimosPedidos({ pedidos }: Props) {
               const formaPag = (p.pagamentos ?? []).filter((pg) => !pg.is_refunded)[0]?.payment_method_name;
               return (
                 <li key={p.id} onClick={() => setSel(p)}
-                  className="rounded-xl border border-zinc-100 bg-white px-3 py-2.5 cursor-pointer">
+                  className="rounded-2xl border border-zinc-200 bg-white px-3 py-2.5 cursor-pointer">
                   <div className="flex items-baseline justify-between gap-2">
                     <span className="text-sm font-bold text-zinc-700">#{String(p.numero).padStart(4, '0')}</span>
-                    <span className="text-sm font-bold text-zinc-900 whitespace-nowrap">{fmt(Number(p.total) || 0)}</span>
+                    <span className="text-sm font-bold text-zinc-900 whitespace-nowrap tabular-nums">{fmt(Number(p.total) || 0)}</span>
                   </div>
                   <p className="text-xs text-zinc-500 mt-0.5 break-words">
                     {getDestino(p)} · {ORIGIN_LABEL[p.origin] ?? p.origin} · {hora}
                   </p>
                   <div className="flex items-center gap-1.5 flex-wrap mt-1.5">
-                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${st}`}>{stLabel}</span>
+                    <span className={`px-2 py-0.5 rounded-md text-[11px] font-semibold ${st}`}>{stLabel}</span>
                     {formaPag && <span className="text-[10px] text-zinc-400">{formaPag}</span>}
                   </div>
                 </li>
@@ -259,16 +259,16 @@ const UltimosPedidos = memo(function UltimosPedidos({ pedidos }: Props) {
           <div className="hidden md:block overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
-                <tr className="border-b border-zinc-100">
-                  <th className="text-left pb-2 font-semibold text-zinc-400 pr-4">Pedido</th>
-                  <th className="text-left pb-2 font-semibold text-zinc-400 pr-4">Destino</th>
-                  <th className="text-left pb-2 font-semibold text-zinc-400 pr-4">Origem</th>
-                  <th className="text-right pb-2 font-semibold text-zinc-400 pr-4">Valor</th>
-                  <th className="text-left pb-2 font-semibold text-zinc-400 pr-4">Horário</th>
-                  <th className="text-left pb-2 font-semibold text-zinc-400">Status</th>
+                <tr className="border-b border-zinc-200">
+                  <th className="text-left pl-5 pr-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Pedido</th>
+                  <th className="text-left px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Destino</th>
+                  <th className="text-left px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Origem</th>
+                  <th className="text-right px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Valor</th>
+                  <th className="text-left px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Horário</th>
+                  <th className="text-left px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Status</th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody className="divide-y divide-zinc-100/80">
                 {pedidos.map((p) => {
                   const st = STATUS_CLS[p.status] ?? STATUS_CLS.new;
                   const stLabel = STATUS_LABEL[p.status] ?? p.status;
@@ -277,17 +277,17 @@ const UltimosPedidos = memo(function UltimosPedidos({ pedidos }: Props) {
                   const pgAtivos = pagamentos.filter((pg) => !pg.is_refunded);
                   const formaPag = pgAtivos[0]?.payment_method_name;
                   return (
-                    <tr key={p.id} onClick={() => setSel(p)} className="border-b border-zinc-50 hover:bg-zinc-50 transition-colors cursor-pointer group">
-                      <td className="py-2.5 pr-4 font-bold text-zinc-700 group-hover:text-amber-600 transition-colors">
+                    <tr key={p.id} onClick={() => setSel(p)} className="hover:bg-amber-50/40 transition-colors cursor-pointer group">
+                      <td className="py-2.5 pl-5 pr-4 font-bold text-zinc-700 group-hover:text-amber-600 transition-colors">
                         #{String(p.numero).padStart(4, '0')}
                       </td>
-                      <td className="py-2.5 pr-4 text-zinc-600 whitespace-nowrap">{getDestino(p)}</td>
-                      <td className="py-2.5 pr-4 text-zinc-500">{ORIGIN_LABEL[p.origin] ?? p.origin}</td>
-                      <td className="py-2.5 pr-4 font-semibold text-zinc-800 text-right whitespace-nowrap">{fmt(Number(p.total) || 0)}</td>
-                      <td className="py-2.5 pr-4 text-zinc-400 whitespace-nowrap">{hora}</td>
-                      <td className="py-2.5">
+                      <td className="py-2.5 px-4 text-zinc-600 whitespace-nowrap">{getDestino(p)}</td>
+                      <td className="py-2.5 px-4 text-zinc-500">{ORIGIN_LABEL[p.origin] ?? p.origin}</td>
+                      <td className="py-2.5 px-4 font-semibold text-zinc-800 text-right tabular-nums whitespace-nowrap">{fmt(Number(p.total) || 0)}</td>
+                      <td className="py-2.5 px-4 text-zinc-400 whitespace-nowrap">{hora}</td>
+                      <td className="py-2.5 px-4">
                         <div className="flex items-center gap-1.5">
-                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold whitespace-nowrap ${st}`}>{stLabel}</span>
+                          <span className={`px-2 py-0.5 rounded-md text-[11px] font-semibold whitespace-nowrap ${st}`}>{stLabel}</span>
                           {formaPag && (
                             <span className="hidden lg:inline text-[9px] text-zinc-400 whitespace-nowrap truncate max-w-[80px]">
                               {formaPag}

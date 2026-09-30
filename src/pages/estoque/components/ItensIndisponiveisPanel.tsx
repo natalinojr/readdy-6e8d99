@@ -59,7 +59,7 @@ export default function ItensIndisponiveisPanel({ onEntradaRapida }: Props) {
 
   if (loading) {
     return (
-      <div className="flex items-center gap-2 px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl">
+      <div className="flex items-center gap-2 px-4 py-3 bg-white border border-zinc-200 rounded-2xl">
         <div className="w-4 h-4 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
         <span className="text-xs text-zinc-400">Verificando itens indisponíveis...</span>
       </div>
@@ -69,7 +69,7 @@ export default function ItensIndisponiveisPanel({ onEntradaRapida }: Props) {
   if (totalItensAfetados === 0) return null;
 
   return (
-    <div className="border border-red-200 rounded-xl overflow-hidden">
+    <div className="bg-white border border-red-200 rounded-2xl overflow-hidden">
       {/* Header clicável */}
       <button
         onClick={() => setExpandido((v) => !v)}
@@ -102,7 +102,7 @@ export default function ItensIndisponiveisPanel({ onEntradaRapida }: Props) {
 
       {/* Corpo */}
       {expandido && (
-        <div className="bg-white divide-y divide-zinc-50">
+        <div className="bg-white divide-y divide-zinc-100/80">
           {porInsumo.map(({ insumo, itensAfetados }) => {
             const insumoCompleto = insumos.find((i) => i.id === insumo.id);
             return (
@@ -116,7 +116,7 @@ export default function ItensIndisponiveisPanel({ onEntradaRapida }: Props) {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-1.5 flex-wrap">
                     <span className="text-xs font-bold text-zinc-800">{insumo.nome}</span>
-                    <span className="text-[10px] font-semibold text-red-600 bg-red-50 border border-red-200 px-1.5 py-0.5 rounded-full whitespace-nowrap">
+                    <span className="text-[11px] font-semibold text-red-600 bg-red-50 px-2 py-0.5 rounded-md whitespace-nowrap">
                       {insumo.estoque} {insumo.unidade}
                     </span>
                   </div>
@@ -138,7 +138,7 @@ export default function ItensIndisponiveisPanel({ onEntradaRapida }: Props) {
                 {onEntradaRapida && (
                   <button
                     onClick={() => onEntradaRapida(insumo.id, insumo.nome)}
-                    className="flex items-center gap-1 px-2.5 py-1.5 bg-green-50 hover:bg-green-100 text-green-700 text-[10px] font-bold rounded-lg cursor-pointer whitespace-nowrap transition-colors border border-green-200 flex-shrink-0"
+                    className="flex items-center gap-1 px-3 py-2 bg-white hover:bg-zinc-50 border border-zinc-200 text-zinc-600 text-xs font-semibold rounded-xl cursor-pointer whitespace-nowrap transition-colors shadow-sm flex-shrink-0"
                   >
                     <i className="ri-add-circle-line text-xs" />
                     Repor

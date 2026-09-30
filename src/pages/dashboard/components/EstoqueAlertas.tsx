@@ -1,5 +1,4 @@
 import { memo } from 'react';
-import { AlertTriangle, AlertCircle } from 'lucide-react';
 import type { DashboardAlertaEstoque } from '../../../hooks/useDashboardMetrics';
 
 interface Props {
@@ -8,16 +7,17 @@ interface Props {
 
 const EstoqueAlertas = memo(function EstoqueAlertas({ alertas }: Props) {
   return (
-    <div className="bg-white border border-zinc-100 rounded-xl p-5">
-      <div className="flex items-center justify-between mb-4">
+    <div className="bg-white rounded-2xl border border-zinc-200">
+      <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-100 gap-3 flex-wrap">
         <div>
-          <h3 className="text-sm font-semibold text-zinc-800">Alertas de Estoque</h3>
-          <p className="text-xs text-zinc-400 mt-0.5">Insumos abaixo do mínimo</p>
+          <h3 className="text-sm font-bold text-zinc-800">Alertas de Estoque</h3>
+          <p className="text-xs text-zinc-400">Insumos abaixo do mínimo</p>
         </div>
-        <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${alertas.length > 0 ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-600'}`}>
+        <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-md ${alertas.length > 0 ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-700'}`}>
           {alertas.length > 0 ? `${alertas.length} alertas` : 'OK'}
         </span>
       </div>
+      <div className="p-5">
 
       {alertas.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-6 text-zinc-400">
@@ -32,9 +32,9 @@ const EstoqueAlertas = memo(function EstoqueAlertas({ alertas }: Props) {
           {alertas.map((item) => {
             const isCritico = item.critico;
             return (
-              <div key={item.id} className={`flex items-center gap-3 px-3 py-2.5 rounded-lg ${isCritico ? 'bg-red-50' : 'bg-amber-50'}`}>
+              <div key={item.id} className={`flex items-center gap-3 px-3 py-2.5 rounded-xl ${isCritico ? 'bg-red-50' : 'bg-amber-50'}`}>
                 <div className={`w-5 h-5 flex items-center justify-center flex-shrink-0 ${isCritico ? 'text-red-500' : 'text-amber-500'}`}>
-                  {isCritico ? <AlertCircle size={15} /> : <AlertTriangle size={15} />}
+                  <i className={`${isCritico ? 'ri-error-warning-line' : 'ri-alert-line'} text-base`} />
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className={`text-xs font-semibold truncate ${isCritico ? 'text-red-700' : 'text-amber-700'}`}>{item.nome}</p>
@@ -50,6 +50,7 @@ const EstoqueAlertas = memo(function EstoqueAlertas({ alertas }: Props) {
           })}
         </div>
       )}
+      </div>
     </div>
   );
 });

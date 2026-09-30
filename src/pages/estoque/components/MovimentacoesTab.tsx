@@ -6,6 +6,7 @@ import RegistrarPerdaModal from '../../kds/components/RegistrarPerdaModal';
 import TransferirEstoqueModal from './TransferirEstoqueModal';
 import NovaCompraModal from '../../financeiro/components/NovaCompraModal';
 import RegistrarSaidaModal from './RegistrarSaidaModal';
+import { KpiCard } from '../../financeiro/components/dreUi';
 
 const fmt = (v: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
@@ -111,80 +112,90 @@ export default function MovimentacoesTab() {
   const clearDates = () => { setDateFrom(''); setDateTo(''); };
 
   return (
-    <div className="space-y-4">
+    <div className="p-4 md:p-6 space-y-5 max-w-[1400px] mx-auto">
       {/* Resumo */}
-      <div className="grid grid-cols-3 gap-3">
-        <div className="bg-white border border-zinc-100 rounded-xl p-4">
-          <p className="text-lg font-bold text-emerald-600">{fmt(totalEntradas)}</p>
-          <p className="text-xs text-zinc-500">Custo em entradas{hasDateFilter ? ' (período)' : ' (hoje)'}</p>
-        </div>
-        <div className="bg-white border border-zinc-100 rounded-xl p-4">
-          <p className="text-lg font-bold text-sky-600">{totalSaidasVenda}</p>
-          <p className="text-xs text-zinc-500">Saídas por vendas</p>
-        </div>
-        <div className="bg-white border border-zinc-100 rounded-xl p-4">
-          <p className="text-lg font-bold text-red-500">{totalPerdas}</p>
-          <p className="text-xs text-zinc-500">Registros de perda</p>
-        </div>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <KpiCard
+          label={`Custo em entradas${hasDateFilter ? ' (período)' : ' (hoje)'}`}
+          icon="ri-arrow-up-circle-line"
+          value={fmt(totalEntradas)}
+          valueTone="text-emerald-700"
+          atual={totalEntradas}
+          semVariacao
+        />
+        <KpiCard
+          label="Saídas por vendas"
+          icon="ri-shopping-bag-3-line"
+          value={String(totalSaidasVenda)}
+          atual={totalSaidasVenda}
+          semVariacao
+        />
+        <KpiCard
+          label="Registros de perda"
+          icon="ri-alert-line"
+          value={String(totalPerdas)}
+          valueTone={totalPerdas > 0 ? 'text-red-600' : undefined}
+          atual={totalPerdas}
+          semVariacao
+        />
       </div>
 
-      {/* Toolbar */}
-      <div className="flex flex-col gap-2">
-        <div className="flex items-center gap-1 bg-zinc-100 rounded-lg p-1 overflow-x-auto">
+      {/* Filtros + ações */}
+      <div className="flex flex-wrap items-center gap-2 lg:gap-3">
+        <div className="flex gap-1 overflow-x-auto bg-zinc-100/80 rounded-xl p-1 w-full sm:w-fit max-w-full">
           {(['Todos', 'entrada', 'saida_venda', 'saida_manual', 'perda', 'entrada_producao', 'saida_producao', 'ajuste_inventario'] as const).map((t) => (
             <button key={t} onClick={() => setFiltroTipo(t)}
-              className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap cursor-pointer flex-shrink-0 ${filtroTipo === t ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'}`}>
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap cursor-pointer transition-colors flex-shrink-0 ${filtroTipo === t ? 'bg-white text-amber-600 shadow-sm' : 'text-zinc-500 hover:text-zinc-800'}`}>
               {t === 'Todos' ? 'Todos' : tipoConfig[t].label}
             </button>
           ))}
         </div>
-        <div className="flex items-center gap-1.5 flex-wrap">
+        <div className="ml-auto flex items-center gap-2 overflow-x-auto max-w-full">
           <button onClick={() => setShowTransferModal(true)}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 bg-sky-50 text-sky-600 border border-sky-200 text-xs font-semibold rounded-lg hover:bg-sky-100 transition-colors whitespace-nowrap cursor-pointer">
+            className="flex items-center gap-1.5 px-3 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 rounded-xl text-xs font-semibold text-zinc-600 cursor-pointer transition-colors whitespace-nowrap shadow-sm">
             <i className="ri-truck-line text-sm" />
             <span className="hidden sm:inline">Transferir</span>
           </button>
           <button onClick={() => setShowPerdaModal(true)}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 bg-red-50 text-red-600 border border-red-200 text-xs font-semibold rounded-lg hover:bg-red-100 transition-colors whitespace-nowrap cursor-pointer">
+            className="flex items-center gap-1.5 px-3 py-2 border border-red-200 bg-red-50 hover:bg-red-100 rounded-xl text-xs font-semibold text-red-600 cursor-pointer transition-colors whitespace-nowrap shadow-sm">
             <i className="ri-alert-line text-sm" />
             <span className="hidden sm:inline">Registrar Perda</span>
             <span className="sm:hidden">Perda</span>
           </button>
-          <button onClick={() => handleOpenCompra()}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-semibold rounded-lg hover:bg-emerald-100 transition-colors whitespace-nowrap cursor-pointer">
-            <div className="w-4 h-4 flex items-center justify-center"><ShoppingCart size={13} /></div>
-            <span className="hidden sm:inline">Compra de Fornecedor</span>
-            <span className="sm:hidden">Compra</span>
-          </button>
           <button onClick={() => setShowSaidaModal(true)}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 bg-orange-50 text-orange-600 border border-orange-200 text-xs font-semibold rounded-lg hover:bg-orange-100 transition-colors whitespace-nowrap cursor-pointer">
+            className="flex items-center gap-1.5 px-3 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 rounded-xl text-xs font-semibold text-zinc-600 cursor-pointer transition-colors whitespace-nowrap shadow-sm">
             <i className="ri-arrow-down-circle-line text-sm" />
             <span className="hidden sm:inline">Registrar Saída</span>
             <span className="sm:hidden">Saída</span>
           </button>
-
+          <button onClick={() => handleOpenCompra()}
+            className="flex items-center gap-1.5 bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-xl text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors shadow-sm">
+            <div className="w-4 h-4 flex items-center justify-center"><ShoppingCart size={13} /></div>
+            <span className="hidden sm:inline">Compra de Fornecedor</span>
+            <span className="sm:hidden">Compra</span>
+          </button>
         </div>
       </div>
 
       {/* Busca por insumo */}
-      <div className="flex items-center gap-2 bg-white border border-zinc-100 rounded-xl px-4 py-3">
-        <i className="ri-search-line text-zinc-400 text-sm flex-shrink-0" />
+      <div className="relative">
+        <i className="ri-search-line absolute left-3.5 top-1/2 -translate-y-1/2 text-zinc-400 text-sm pointer-events-none" />
         <input
           type="text"
           value={buscaInsumo}
           onChange={(e) => setBuscaInsumo(e.target.value)}
           placeholder="Filtrar por nome do insumo..."
-          className="flex-1 text-xs bg-transparent text-zinc-700 placeholder-zinc-400 focus:outline-none"
+          className="w-full h-10 rounded-xl border border-zinc-200 shadow-sm pl-9 pr-9 text-xs bg-white text-zinc-700 placeholder-zinc-400 focus:outline-none focus:border-amber-400"
         />
         {buscaInsumo && (
-          <button onClick={() => setBuscaInsumo('')} className="text-zinc-400 hover:text-zinc-600 cursor-pointer">
+          <button onClick={() => setBuscaInsumo('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 cursor-pointer">
             <i className="ri-close-line text-sm" />
           </button>
         )}
       </div>
 
       {/* Filtro de período */}
-      <div className="flex items-center gap-3 flex-wrap bg-white border border-zinc-100 rounded-xl px-4 py-3">
+      <div className="flex items-center gap-3 flex-wrap bg-white border border-zinc-200 rounded-2xl px-4 py-3">
         <div className="w-4 h-4 flex items-center justify-center text-zinc-400 flex-shrink-0">
           <Calendar size={14} />
         </div>
@@ -258,27 +269,27 @@ export default function MovimentacoesTab() {
 
       {/* Lista */}
       {/* Desktop table */}
-      <div className="hidden md:block bg-white border border-zinc-100 rounded-xl overflow-hidden">
+      <div className="hidden md:block bg-white rounded-2xl border border-zinc-200 overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-xs" style={{ minWidth: '700px' }}>
-            <thead className="bg-zinc-50 border-b border-zinc-100">
+            <thead className="border-b border-zinc-200">
               <tr>
-                <th className="px-4 py-3 text-left font-semibold text-zinc-500 whitespace-nowrap">Tipo</th>
-                <th className="px-4 py-3 text-left font-semibold text-zinc-500 whitespace-nowrap">Insumo</th>
-                <th className="px-4 py-3 text-center font-semibold text-zinc-500 whitespace-nowrap">Quantidade</th>
-                <th className="px-4 py-3 text-left font-semibold text-zinc-500 whitespace-nowrap">Lanche / Motivo</th>
-                <th className="px-4 py-3 text-left font-semibold text-zinc-500 whitespace-nowrap">Pedido</th>
-                <th className="px-4 py-3 text-left font-semibold text-zinc-500 whitespace-nowrap">Operador</th>
-                <th className="px-4 py-3 text-right font-semibold text-zinc-500 whitespace-nowrap">Data / Hora</th>
-                <th className="px-4 py-3 text-right font-semibold text-zinc-500 whitespace-nowrap">Custo</th>
+                <th className="pl-5 pr-4 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wide text-zinc-400 whitespace-nowrap">Tipo</th>
+                <th className="px-4 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wide text-zinc-400 whitespace-nowrap">Insumo</th>
+                <th className="px-4 py-2.5 text-center text-[11px] font-semibold uppercase tracking-wide text-zinc-400 whitespace-nowrap">Quantidade</th>
+                <th className="px-4 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wide text-zinc-400 whitespace-nowrap">Lanche / Motivo</th>
+                <th className="px-4 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wide text-zinc-400 whitespace-nowrap">Pedido</th>
+                <th className="px-4 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wide text-zinc-400 whitespace-nowrap">Operador</th>
+                <th className="px-4 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wide text-zinc-400 whitespace-nowrap">Data / Hora</th>
+                <th className="px-4 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wide text-zinc-400 whitespace-nowrap">Custo</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-zinc-50">
+            <tbody className="divide-y divide-zinc-100/80">
               {movs.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="px-4 py-10 text-center text-zinc-400">
-                    <i className="ri-calendar-line text-2xl block mb-2 text-zinc-300" />
-                    <p className="text-xs font-medium">Nenhuma movimentação encontrada</p>
+                  <td colSpan={8} className="py-14 text-center text-zinc-400">
+                    <i className="ri-calendar-line text-4xl block text-zinc-200" />
+                    <p className="text-sm mt-2">Nenhuma movimentação encontrada</p>
                     {hasDateFilter && <p className="text-xs mt-1">Tente outro período ou limpe o filtro</p>}
                   </td>
                 </tr>
@@ -286,8 +297,8 @@ export default function MovimentacoesTab() {
                 const cfg = tipoConfig[mv.tipo];
                 return (
                   <tr key={mv.id} className="hover:bg-zinc-50 transition-colors">
-                    <td className="px-4 py-3">
-                      <span className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full font-semibold w-fit ${cfg.cls}`}>
+                    <td className="pl-5 pr-4 py-3">
+                      <span className={`flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] font-semibold w-fit ${cfg.cls}`}>
                         <div className="w-3 h-3 flex items-center justify-center">{cfg.icon}</div>
                         {cfg.label}
                       </span>
@@ -295,7 +306,7 @@ export default function MovimentacoesTab() {
                     <td className="px-4 py-3 font-medium text-zinc-800 max-w-[180px]">
                       <p className="truncate">{mv.insumoNome}</p>
                     </td>
-                    <td className="px-4 py-3 text-center font-semibold text-zinc-800">
+                    <td className="px-4 py-3 text-center tabular-nums whitespace-nowrap font-semibold text-zinc-800">
                       {['entrada', 'entrada_producao'].includes(mv.tipo) ? '+' : '-'}{mv.quantidade} {mv.unidade}
                     </td>
                     <td className="px-4 py-3 text-zinc-500 max-w-[180px]">
@@ -311,7 +322,7 @@ export default function MovimentacoesTab() {
                     </td>
                     <td className="px-4 py-3">
                       {mv.pedidoNumero ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200 whitespace-nowrap">
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-amber-50 text-amber-700 whitespace-nowrap">
                           <i className="ri-receipt-line text-[10px]" />
                           {mv.pedidoNumero}
                         </span>
@@ -320,8 +331,8 @@ export default function MovimentacoesTab() {
                       )}
                     </td>
                     <td className="px-4 py-3 text-zinc-600">{mv.operador}</td>
-                    <td className="px-4 py-3 text-right text-zinc-500 whitespace-nowrap">{mv.data} {mv.hora}</td>
-                    <td className="px-4 py-3 text-right font-semibold">
+                    <td className="px-4 py-3 text-right tabular-nums text-zinc-500 whitespace-nowrap">{mv.data} {mv.hora}</td>
+                    <td className="px-4 py-3 text-right tabular-nums whitespace-nowrap font-semibold">
                       {mv.custo ? <span className="text-red-500 font-medium">{fmt(mv.custo)}</span> : <span className="text-zinc-300">—</span>}
                     </td>
                   </tr>
@@ -335,17 +346,17 @@ export default function MovimentacoesTab() {
       {/* Mobile cards */}
       <div className="md:hidden space-y-2">
         {movs.length === 0 ? (
-          <div className="bg-white border border-zinc-100 rounded-xl py-10 text-center">
-            <i className="ri-calendar-line text-2xl block mb-2 text-zinc-300" />
-            <p className="text-xs font-medium text-zinc-400">Nenhuma movimentação encontrada</p>
+          <div className="bg-white border border-zinc-200 rounded-2xl py-14 text-center">
+            <i className="ri-calendar-line text-4xl block text-zinc-200" />
+            <p className="text-sm mt-2 text-zinc-400">Nenhuma movimentação encontrada</p>
             {hasDateFilter && <p className="text-xs mt-1 text-zinc-400">Tente outro período ou limpe o filtro</p>}
           </div>
         ) : movs.map((mv) => {
           const cfg = tipoConfig[mv.tipo];
           return (
-            <div key={mv.id} className="bg-white border border-zinc-100 rounded-xl p-3">
+            <div key={mv.id} className="bg-white border border-zinc-200 rounded-2xl p-3">
               <div className="flex items-start justify-between gap-2 mb-2">
-                <span className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-semibold w-fit ${cfg.cls}`}>
+                <span className={`flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] font-semibold w-fit ${cfg.cls}`}>
                   <div className="w-3 h-3 flex items-center justify-center">{cfg.icon}</div>
                   {cfg.label}
                 </span>

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
+import { Segmented } from '../../financeiro/components/dreUi';
 
 interface ExpiryAlert {
   ingredient_id: string;
@@ -43,13 +44,13 @@ function formatQty(qty: number, unit: string) {
 function statusConfig(status: string) {
   switch (status) {
     case 'expired':
-      return { label: 'Vencido', bg: 'bg-red-100', text: 'text-red-700', border: 'border-red-200', dot: 'bg-red-500' };
+      return { label: 'Vencido', bg: 'bg-red-50', text: 'text-red-600', border: 'border-red-200', dot: 'bg-red-500' };
     case 'critical':
-      return { label: 'Crítico', bg: 'bg-orange-100', text: 'text-orange-700', border: 'border-orange-200', dot: 'bg-orange-500' };
+      return { label: 'Crítico', bg: 'bg-orange-50', text: 'text-orange-700', border: 'border-orange-200', dot: 'bg-orange-500' };
     case 'warning':
-      return { label: 'Atenção', bg: 'bg-amber-100', text: 'text-amber-700', border: 'border-amber-200', dot: 'bg-amber-500' };
+      return { label: 'Atenção', bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200', dot: 'bg-amber-500' };
     default:
-      return { label: 'OK', bg: 'bg-green-100', text: 'text-green-700', border: 'border-green-200', dot: 'bg-green-500' };
+      return { label: 'OK', bg: 'bg-emerald-50', text: 'text-emerald-700', border: 'border-green-200', dot: 'bg-green-500' };
   }
 }
 
@@ -141,61 +142,61 @@ export default function ValidadeTab() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-48">
-        <div className="w-6 h-6 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
+      <div className="py-14 text-center">
+        <div className="w-6 h-6 mx-auto border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
       </div>
     );
   }
 
   return (
-    <div className="space-y-4">
+    <div className="p-4 md:p-6 space-y-5 max-w-[1400px] mx-auto">
       {/* Resumo de alertas */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
         {[
-          { key: 'expired', label: 'Vencidos', count: counts.expired, icon: 'ri-error-warning-fill', color: 'text-red-600', bg: 'bg-red-50 border-red-200' },
-          { key: 'critical', label: 'Críticos (≤3d)', count: counts.critical, icon: 'ri-alarm-warning-fill', color: 'text-orange-600', bg: 'bg-orange-50 border-orange-200' },
-          { key: 'warning', label: 'Atenção (≤7d)', count: counts.warning, icon: 'ri-alert-fill', color: 'text-amber-600', bg: 'bg-amber-50 border-amber-200' },
-          { key: 'ok', label: 'OK (>7d)', count: counts.ok, icon: 'ri-checkbox-circle-fill', color: 'text-green-600', bg: 'bg-green-50 border-green-200' },
+          { key: 'expired', label: 'Vencidos', count: counts.expired, icon: 'ri-error-warning-line', color: 'text-red-600', border: 'border-red-200 bg-gradient-to-br from-red-50 to-white' },
+          { key: 'critical', label: 'Críticos (≤3d)', count: counts.critical, icon: 'ri-alarm-warning-line', color: 'text-orange-600', border: 'border-zinc-200 bg-white' },
+          { key: 'warning', label: 'Atenção (≤7d)', count: counts.warning, icon: 'ri-alert-line', color: 'text-amber-700', border: 'border-zinc-200 bg-white' },
+          { key: 'ok', label: 'OK (>7d)', count: counts.ok, icon: 'ri-checkbox-circle-line', color: 'text-emerald-700', border: 'border-zinc-200 bg-white' },
         ].map((s) => (
           <button
             key={s.key}
             onClick={() => { setFilter(s.key as FilterStatus); setViewMode('alerts'); }}
-            className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all hover:scale-[1.02] ${s.bg} ${filter === s.key ? 'ring-2 ring-amber-400' : ''}`}
+            className={`rounded-2xl border p-4 flex flex-col gap-2 text-left cursor-pointer transition-colors hover:border-amber-300 ${s.border} ${filter === s.key ? 'ring-2 ring-amber-400' : ''}`}
           >
-            <div className={`w-8 h-8 flex items-center justify-center ${s.color}`}>
-              <i className={`${s.icon} text-xl`} />
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="w-7 h-7 rounded-lg bg-zinc-100 text-zinc-500 flex items-center justify-center flex-shrink-0">
+                <i className={`${s.icon} text-sm`} />
+              </span>
+              <span className="text-xs font-semibold text-zinc-500 truncate">{s.label}</span>
             </div>
-            <div className="text-left">
-              <p className={`text-xl font-black ${s.color}`}>{s.count}</p>
-              <p className="text-xs text-zinc-500 font-medium">{s.label}</p>
-            </div>
+            <p className={`text-2xl font-bold tabular-nums tracking-tight ${s.color}`}>{s.count}</p>
           </button>
         ))}
       </div>
 
       {/* Controles */}
-      <div className="flex flex-col gap-2">
-        <div className="flex items-center gap-2 flex-wrap">
-          <div className="flex items-center gap-1 bg-zinc-100 rounded-lg p-1">
+      <div className="flex flex-col gap-3">
+        <div className="flex flex-wrap items-center gap-2 lg:gap-3">
+          <div className="flex gap-1 overflow-x-auto bg-zinc-100/80 rounded-xl p-1 w-full sm:w-fit">
             <button
               onClick={() => setViewMode('alerts')}
-              className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap ${viewMode === 'alerts' ? 'bg-white text-zinc-900' : 'text-zinc-500 hover:text-zinc-700'}`}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap cursor-pointer transition-colors ${viewMode === 'alerts' ? 'bg-white text-amber-600 shadow-sm' : 'text-zinc-500 hover:text-zinc-800'}`}
             >
-              <i className="ri-alarm-warning-line mr-1" />
+              <i className="ri-alarm-warning-line" />
               <span className="hidden sm:inline">Alertas de Validade</span>
               <span className="sm:hidden">Alertas</span>
             </button>
             <button
               onClick={() => setViewMode('all')}
-              className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap ${viewMode === 'all' ? 'bg-white text-zinc-900' : 'text-zinc-500 hover:text-zinc-700'}`}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap cursor-pointer transition-colors ${viewMode === 'all' ? 'bg-white text-amber-600 shadow-sm' : 'text-zinc-500 hover:text-zinc-800'}`}
             >
-              <i className="ri-stack-line mr-1" />
+              <i className="ri-stack-line" />
               <span className="hidden sm:inline">Todos os Lotes</span>
               <span className="sm:hidden">Lotes</span>
             </button>
           </div>
 
-          <div className="flex-1 min-w-[160px]">
+          <div className="flex-1 min-w-[200px] max-w-sm">
             <div className="relative">
               <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 text-sm" />
               <input
@@ -203,56 +204,57 @@ export default function ValidadeTab() {
                 placeholder="Buscar ingrediente..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="w-full pl-9 pr-3 py-2 text-sm border border-zinc-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-amber-400"
+                className="w-full h-10 rounded-xl border border-zinc-200 shadow-sm pl-9 pr-3 text-sm bg-white focus:outline-none focus:border-amber-400"
               />
             </div>
           </div>
 
-          <button
-            onClick={loadData}
-            className="w-8 h-8 flex items-center justify-center rounded-lg bg-zinc-100 hover:bg-zinc-200 text-zinc-500 cursor-pointer transition-colors flex-shrink-0"
-            title="Atualizar"
-          >
-            <i className="ri-refresh-line text-sm" />
-          </button>
+          <div className="ml-auto flex items-center gap-2 overflow-x-auto max-w-full">
+            <button
+              onClick={loadData}
+              className="flex items-center gap-1.5 px-3 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 rounded-xl text-xs font-semibold text-zinc-600 cursor-pointer transition-colors whitespace-nowrap shadow-sm"
+              title="Atualizar"
+            >
+              <i className="ri-refresh-line text-sm" /> Atualizar
+            </button>
+          </div>
         </div>
 
         {viewMode === 'alerts' && (
-          <div className="flex items-center gap-1 overflow-x-auto">
-            {(['all', 'expired', 'critical', 'warning', 'ok'] as FilterStatus[]).map((f) => {
-              const labels: Record<FilterStatus, string> = { all: 'Todos', expired: 'Vencidos', critical: 'Críticos', warning: 'Atenção', ok: 'OK' };
-              return (
-                <button
-                  key={f}
-                  onClick={() => setFilter(f)}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-semibold cursor-pointer transition-colors whitespace-nowrap flex-shrink-0 ${filter === f ? 'bg-amber-500 text-white' : 'bg-zinc-100 text-zinc-500 hover:bg-zinc-200'}`}
-                >
-                  {labels[f]}
-                </button>
-              );
-            })}
+          <div className="overflow-x-auto max-w-full">
+            <Segmented<FilterStatus>
+              value={filter}
+              onChange={setFilter}
+              options={[
+                { id: 'all', label: 'Todos', icon: 'ri-list-check' },
+                { id: 'expired', label: 'Vencidos', icon: 'ri-error-warning-line' },
+                { id: 'critical', label: 'Críticos', icon: 'ri-alarm-warning-line' },
+                { id: 'warning', label: 'Atenção', icon: 'ri-alert-line' },
+                { id: 'ok', label: 'OK', icon: 'ri-checkbox-circle-line' },
+              ]}
+            />
           </div>
         )}
       </div>
 
       {/* Tabela de alertas */}
       {viewMode === 'alerts' && (
-        <div className="bg-white rounded-xl border border-zinc-200 overflow-hidden">
+        <div className="bg-white rounded-2xl border border-zinc-200 overflow-hidden">
           {filteredAlerts.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-16 text-zinc-400">
-              <i className="ri-checkbox-circle-line text-4xl mb-2 text-green-400" />
+            <div className="flex flex-col items-center justify-center py-14 text-zinc-400">
+              <i className="ri-checkbox-circle-line text-4xl mb-2 text-zinc-200" />
               <p className="text-sm font-semibold text-zinc-500">Nenhum alerta encontrado</p>
               <p className="text-xs text-zinc-400 mt-1">Todos os ingredientes estão dentro do prazo</p>
             </div>
           ) : (
           <>
           {/* Celular: cartão por alerta (a tabela não cabe em 375px) */}
-          <ul className="md:hidden p-2 space-y-2 bg-zinc-50/60">
+          <ul className="md:hidden p-3 space-y-2">
             {filteredAlerts.map((a) => {
               const cfg = statusConfig(a.alert_level);
               return (
                 <li key={a.id}>
-                  <div className="rounded-xl border bg-white px-3 py-3 border-zinc-200">
+                  <div className="rounded-2xl border bg-white px-3 py-3 border-zinc-200">
                     <div className="flex items-center gap-2">
                       <div className={`w-2 h-2 rounded-full flex-shrink-0 ${cfg.dot}`} />
                       <span className="text-sm font-medium text-zinc-800 break-words line-clamp-2 flex-1">{a.ingredient_name}</span>
@@ -264,10 +266,10 @@ export default function ValidadeTab() {
                       <span className="text-xs text-zinc-500 whitespace-nowrap">Vence {formatDate(a.expiry_date)}</span>
                     </div>
                     <div className="flex items-center gap-1.5 flex-wrap mt-2">
-                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold ${cfg.bg} ${cfg.text}`}>
+                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold ${cfg.bg} ${cfg.text}`}>
                         {cfg.label}
                       </span>
-                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold ${Number(a.days_until_expiry) < 0 ? 'bg-red-50 text-red-600' : Number(a.days_until_expiry) <= 3 ? 'bg-orange-50 text-orange-600' : Number(a.days_until_expiry) <= 7 ? 'bg-amber-50 text-amber-600' : 'bg-green-50 text-green-600'}`}>
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-semibold ${Number(a.days_until_expiry) < 0 ? 'bg-red-50 text-red-600' : Number(a.days_until_expiry) <= 3 ? 'bg-orange-50 text-orange-600' : Number(a.days_until_expiry) <= 7 ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700'}`}>
                         {Number(a.days_until_expiry) < 0 ? `${Math.abs(Number(a.days_until_expiry))}d atrás` : `${a.days_until_expiry}d`}
                       </span>
                     </div>
@@ -279,43 +281,43 @@ export default function ValidadeTab() {
 
           <div className="hidden md:block overflow-x-auto">
             <table className="w-full text-sm" style={{ minWidth: '500px' }}>
-              <thead>
-                <tr className="border-b border-zinc-100 bg-zinc-50">
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-zinc-500">Ingrediente</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-zinc-500 hidden sm:table-cell">Lote</th>
-                  <th className="text-right px-4 py-3 text-xs font-semibold text-zinc-500 hidden sm:table-cell">Quantidade</th>
-                  <th className="text-center px-4 py-3 text-xs font-semibold text-zinc-500">Vencimento</th>
-                  <th className="text-center px-4 py-3 text-xs font-semibold text-zinc-500">Dias</th>
-                  <th className="text-center px-4 py-3 text-xs font-semibold text-zinc-500">Status</th>
+              <thead className="border-b border-zinc-200">
+                <tr>
+                  <th className="text-left pl-5 pr-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Ingrediente</th>
+                  <th className="text-left px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400 hidden sm:table-cell">Lote</th>
+                  <th className="text-right px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400 hidden sm:table-cell">Quantidade</th>
+                  <th className="text-center px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Vencimento</th>
+                  <th className="text-center px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Dias</th>
+                  <th className="text-center px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Status</th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody className="divide-y divide-zinc-100/80">
                 {filteredAlerts.map((a) => {
                   const cfg = statusConfig(a.alert_level);
                   return (
-                    <tr key={a.id} className="border-b border-zinc-50 hover:bg-zinc-50 transition-colors">
-                      <td className="px-4 py-3">
+                    <tr key={a.id} className="hover:bg-zinc-50 transition-colors">
+                      <td className="pl-5 pr-4 py-3">
                         <div className="flex items-center gap-2">
                           <div className={`w-2 h-2 rounded-full flex-shrink-0 ${cfg.dot}`} />
-                          <span className="font-semibold text-zinc-800">{a.ingredient_name}</span>
+                          <span className="font-semibold text-zinc-800 truncate max-w-[240px]" title={a.ingredient_name}>{a.ingredient_name}</span>
                         </div>
                       </td>
                       <td className="px-4 py-3 text-zinc-500 font-mono text-xs hidden sm:table-cell">
                         {a.batch_code ?? <span className="text-zinc-300">—</span>}
                       </td>
-                      <td className="px-4 py-3 text-right font-semibold text-zinc-700 hidden sm:table-cell">
+                      <td className="px-4 py-3 text-right tabular-nums whitespace-nowrap font-semibold text-zinc-700 hidden sm:table-cell">
                         {formatQty(Number(a.quantity_remaining), a.unit)}
                       </td>
-                      <td className="px-4 py-3 text-center text-zinc-600">
+                      <td className="px-4 py-3 text-center tabular-nums whitespace-nowrap text-zinc-600">
                         {formatDate(a.expiry_date)}
                       </td>
                       <td className="px-4 py-3 text-center">
-                        <span className={`font-black text-sm ${Number(a.days_until_expiry) < 0 ? 'text-red-600' : Number(a.days_until_expiry) <= 3 ? 'text-orange-600' : Number(a.days_until_expiry) <= 7 ? 'text-amber-600' : 'text-green-600'}`}>
+                        <span className={`font-bold text-sm tabular-nums ${Number(a.days_until_expiry) < 0 ? 'text-red-600' : Number(a.days_until_expiry) <= 3 ? 'text-orange-600' : Number(a.days_until_expiry) <= 7 ? 'text-amber-700' : 'text-emerald-700'}`}>
                           {Number(a.days_until_expiry) < 0 ? `${Math.abs(Number(a.days_until_expiry))}d atrás` : `${a.days_until_expiry}d`}
                         </span>
                       </td>
                       <td className="px-4 py-3 text-center">
-                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold ${cfg.bg} ${cfg.text}`}>
+                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold ${cfg.bg} ${cfg.text}`}>
                           {cfg.label}
                         </span>
                       </td>
@@ -332,17 +334,17 @@ export default function ValidadeTab() {
 
       {/* Tabela de todos os lotes */}
       {viewMode === 'all' && (
-        <div className="bg-white rounded-xl border border-zinc-200 overflow-hidden">
+        <div className="bg-white rounded-2xl border border-zinc-200 overflow-hidden">
           {filteredBatches.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-16 text-zinc-400">
-              <i className="ri-stack-line text-4xl mb-2" />
+            <div className="flex flex-col items-center justify-center py-14 text-zinc-400">
+              <i className="ri-stack-line text-4xl mb-2 text-zinc-200" />
               <p className="text-sm font-semibold text-zinc-500">Nenhum lote cadastrado</p>
               <p className="text-xs text-zinc-400 mt-1">Lotes são criados ao registrar entradas de estoque</p>
             </div>
           ) : (
           <>
           {/* Celular: cartão por lote (a tabela não cabe em 375px) */}
-          <ul className="md:hidden p-2 space-y-2 bg-zinc-50/60">
+          <ul className="md:hidden p-3 space-y-2">
             {filteredBatches.map((b) => {
               const isExpired = b.expiry_date ? new Date(b.expiry_date) < new Date() : false;
               const daysLeft = b.expiry_date
@@ -351,7 +353,7 @@ export default function ValidadeTab() {
               const isEditing = editingBatchId === b.id;
               return (
                 <li key={b.id}>
-                  <div className={`rounded-xl border bg-white px-3 py-3 ${isExpired ? 'border-red-200 bg-red-50/50' : 'border-zinc-200'}`}>
+                  <div className={`rounded-2xl border bg-white px-3 py-3 ${isExpired ? 'border-red-200 bg-red-50/50' : 'border-zinc-200'}`}>
                     <p className="text-sm font-medium text-zinc-800 break-words line-clamp-2">{b.ingredient_name}</p>
                     <div className="flex items-baseline justify-between gap-2 mt-1.5">
                       <span className="text-xs text-zinc-500">
@@ -389,7 +391,7 @@ export default function ValidadeTab() {
                     ) : (
                       <div className="flex items-center gap-1.5 flex-wrap mt-2">
                         {b.expiry_date ? (
-                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold ${isExpired ? 'bg-red-50 text-red-600' : daysLeft != null && daysLeft <= 3 ? 'bg-orange-50 text-orange-600' : daysLeft != null && daysLeft <= 7 ? 'bg-amber-50 text-amber-600' : 'bg-zinc-100 text-zinc-600'}`}>
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-semibold ${isExpired ? 'bg-red-50 text-red-600' : daysLeft != null && daysLeft <= 3 ? 'bg-orange-50 text-orange-600' : daysLeft != null && daysLeft <= 7 ? 'bg-amber-50 text-amber-600' : 'bg-zinc-100 text-zinc-600'}`}>
                             {formatDate(b.expiry_date)}{daysLeft != null ? ` · ${isExpired ? `vencido há ${Math.abs(daysLeft)}d` : `${daysLeft}d restantes`}` : ''}
                           </span>
                         ) : (
@@ -413,18 +415,18 @@ export default function ValidadeTab() {
 
           <div className="hidden md:block overflow-x-auto">
             <table className="w-full text-sm" style={{ minWidth: '560px' }}>
-              <thead>
-                <tr className="border-b border-zinc-100 bg-zinc-50">
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-zinc-500">Ingrediente</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-zinc-500 hidden sm:table-cell">Código do Lote</th>
-                  <th className="text-right px-4 py-3 text-xs font-semibold text-zinc-500">Quantidade</th>
-                  <th className="text-right px-4 py-3 text-xs font-semibold text-zinc-500 hidden sm:table-cell">Custo/Un</th>
-                  <th className="text-center px-4 py-3 text-xs font-semibold text-zinc-500 hidden sm:table-cell">Recebido em</th>
-                  <th className="text-center px-4 py-3 text-xs font-semibold text-zinc-500">Vencimento</th>
-                  <th className="text-center px-4 py-3 text-xs font-semibold text-zinc-500">Ação</th>
+              <thead className="border-b border-zinc-200">
+                <tr>
+                  <th className="text-left pl-5 pr-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Ingrediente</th>
+                  <th className="text-left px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400 hidden sm:table-cell">Código do Lote</th>
+                  <th className="text-right px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Quantidade</th>
+                  <th className="text-right px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400 hidden sm:table-cell">Custo/Un</th>
+                  <th className="text-center px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400 hidden sm:table-cell">Recebido em</th>
+                  <th className="text-center px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Vencimento</th>
+                  <th className="text-center px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Ação</th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody className="divide-y divide-zinc-100/80">
                 {filteredBatches.map((b) => {
                   const isExpired = b.expiry_date ? new Date(b.expiry_date) < new Date() : false;
                   const daysLeft = b.expiry_date
@@ -432,15 +434,15 @@ export default function ValidadeTab() {
                     : null;
                   const isEditing = editingBatchId === b.id;
                   return (
-                    <tr key={b.id} className={`border-b border-zinc-50 hover:bg-zinc-50 transition-colors ${isExpired ? 'bg-red-50/50' : ''}`}>
-                      <td className="px-4 py-3 font-semibold text-zinc-800">{b.ingredient_name}</td>
+                    <tr key={b.id} className={`hover:bg-zinc-50 transition-colors ${isExpired ? 'bg-red-50/50' : ''}`}>
+                      <td className="pl-5 pr-4 py-3 font-semibold text-zinc-800"><span className="block truncate max-w-[240px]" title={b.ingredient_name}>{b.ingredient_name}</span></td>
                       <td className="px-4 py-3 font-mono text-xs text-zinc-500 hidden sm:table-cell">
                         {b.batch_code ?? <span className="text-zinc-300">—</span>}
                       </td>
-                      <td className="px-4 py-3 text-right font-semibold text-zinc-700">
+                      <td className="px-4 py-3 text-right tabular-nums whitespace-nowrap font-semibold text-zinc-700">
                         {formatQty(Number(b.quantity_remaining), b.unit)}
                       </td>
-                      <td className="px-4 py-3 text-right text-zinc-500 hidden sm:table-cell">
+                      <td className="px-4 py-3 text-right tabular-nums whitespace-nowrap text-zinc-500 hidden sm:table-cell">
                         {b.unit_cost != null
                           ? Number(b.unit_cost).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
                           : <span className="text-zinc-300">—</span>}
@@ -455,12 +457,12 @@ export default function ValidadeTab() {
                               type="date"
                               value={editingExpiry}
                               onChange={(e) => setEditingExpiry(e.target.value)}
-                              className="text-xs border border-amber-300 rounded-lg px-2 py-1 focus:outline-none focus:border-amber-500"
+                              className="text-xs border border-amber-300 rounded-xl px-2 py-1.5 focus:outline-none focus:border-amber-500"
                             />
                             <button
                               onClick={() => handleSaveExpiry(b.id)}
                               disabled={savingExpiry || !editingExpiry}
-                              className="px-2 py-1 bg-amber-500 text-white text-xs rounded-lg hover:bg-amber-600 disabled:opacity-40 cursor-pointer whitespace-nowrap"
+                              className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white text-xs font-semibold rounded-xl shadow-sm disabled:opacity-40 cursor-pointer whitespace-nowrap transition-colors"
                             >
                               {savingExpiry ? <i className="ri-loader-4-line animate-spin" /> : 'Salvar'}
                             </button>

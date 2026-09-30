@@ -25,29 +25,28 @@ const CategoriasChart = memo(function CategoriasChart({ data, loading }: Props) 
   const top = data.slice(0, 7);
 
   return (
-    <div className="bg-white border border-zinc-100 rounded-xl p-5 flex flex-col h-full">
-      <div className="flex items-center justify-between mb-5">
+    <div className="bg-white rounded-2xl border border-zinc-200 flex flex-col h-full">
+      <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-100 gap-3 flex-wrap">
         <div>
-          <h3 className="text-sm font-semibold text-zinc-800">Faturamento por Categoria</h3>
-          <p className="text-xs text-zinc-400 mt-0.5">Hoje</p>
+          <h3 className="text-sm font-bold text-zinc-800">Faturamento por Categoria</h3>
+          <p className="text-xs text-zinc-400">Hoje</p>
         </div>
         {data.length > 0 && (
-          <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-amber-50 text-amber-600">
+          <span className="text-[11px] font-semibold px-2 py-0.5 rounded-md bg-amber-50 text-amber-700 tabular-nums">
             {fmt(total)}
           </span>
         )}
       </div>
+      <div className="p-5 flex-1 flex flex-col">
 
       {loading ? (
-        <div className="flex-1 flex items-center justify-center">
+        <div className="flex-1 flex items-center justify-center py-14">
           <div className="w-5 h-5 border-2 border-amber-400 border-t-transparent rounded-full animate-spin" />
         </div>
       ) : data.length === 0 ? (
-        <div className="flex-1 flex flex-col items-center justify-center text-center">
-          <div className="w-10 h-10 flex items-center justify-center bg-zinc-100 rounded-xl mb-3">
-            <i className="ri-pie-chart-line text-zinc-400 text-lg" />
-          </div>
-          <p className="text-sm text-zinc-400">Sem dados hoje</p>
+        <div className="flex-1 py-14 text-center">
+          <i className="ri-pie-chart-line text-4xl text-zinc-200" />
+          <p className="text-zinc-400 text-sm mt-2">Sem dados hoje</p>
           <p className="text-xs text-zinc-300 mt-1">As categorias aparecerão quando houver vendas</p>
         </div>
       ) : (
@@ -76,7 +75,7 @@ const CategoriasChart = memo(function CategoriasChart({ data, loading }: Props) 
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between mb-0.5">
                     <span className="text-xs font-medium text-zinc-700 truncate">{cat.category_name}</span>
-                    <span className="text-xs font-bold text-zinc-800 ml-2 whitespace-nowrap">{fmt(cat.total_revenue)}</span>
+                    <span className="text-xs font-bold text-zinc-800 ml-2 whitespace-nowrap tabular-nums">{fmt(cat.total_revenue)}</span>
                   </div>
                   <div className="flex items-center gap-2">
                     <div className="flex-1 h-1 bg-zinc-100 rounded-full overflow-hidden">
@@ -93,6 +92,7 @@ const CategoriasChart = memo(function CategoriasChart({ data, loading }: Props) 
           })}
         </div>
       )}
+      </div>
     </div>
   );
 });

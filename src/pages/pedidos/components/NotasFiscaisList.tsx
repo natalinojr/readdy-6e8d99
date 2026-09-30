@@ -5,6 +5,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
 import { STATUS_LABEL, STATUS_CLASS, formatChave, formatCpfCnpj, formatBRL, cancelMinutesLeft, CANCEL_WINDOW_MIN, type FiscalDocumentRow, type FiscalDocStatus } from '@/lib/fiscal';
 import { buildZip, downloadBlob } from '@/lib/zipStore';
+import { KpiCard, MonthNav } from '@/pages/financeiro/components/dreUi';
 
 const LIST_COLS = 'id, tenant_id, model, status, source_type, source_id, order_ids, order_number, environment, total_amount, customer_cpf, customer_name, serie, numero, chave, protocolo, sefaz_status_code, sefaz_message, qr_code, url_chave, error_message, attempts, emitted_at, cancelled_at, cancel_reason, printed_at, created_at, updated_at';
 
@@ -172,7 +173,8 @@ export default function NotasFiscaisList() {
     carregar();
   };
 
-  const inputCls = 'text-sm border border-zinc-200 rounded-lg px-3 py-2 text-zinc-800 focus:outline-none focus:border-amber-400';
+  const inputCls = 'text-sm border border-zinc-200 rounded-xl shadow-sm px-3 h-10 bg-white text-zinc-800 focus:outline-none focus:border-amber-400';
+  const btnSec = 'flex items-center gap-1.5 px-3 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 rounded-xl text-xs font-semibold text-zinc-600 cursor-pointer transition-colors whitespace-nowrap shadow-sm disabled:opacity-40';
 
   // As mesmas ações servem a tabela (computador) e os cartões (celular).
   const acoesDaNota = (d: FiscalDocumentRow, isBusy: boolean, canRetry: boolean) => (
@@ -208,9 +210,9 @@ export default function NotasFiscaisList() {
   );
 
   return (
-    <div className="p-4 md:p-6 space-y-4">
+    <div className="p-4 md:p-6 space-y-5 max-w-[1400px] mx-auto">
       {enabled === false && (
-        <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-xl p-4">
+        <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
           <i className="ri-error-warning-line text-amber-500 text-lg" />
           <div className="flex-1">
             <p className="text-sm font-semibold text-amber-800">Emissão automática desligada</p>
@@ -220,7 +222,7 @@ export default function NotasFiscaisList() {
         </div>
       )}
       {enabled === null && !loading && (
-        <div className="flex items-start gap-3 bg-zinc-50 border border-zinc-200 rounded-xl p-4">
+        <div className="flex items-start gap-3 bg-zinc-50 border border-zinc-200 rounded-xl px-4 py-3">
           <i className="ri-information-line text-zinc-400 text-lg" />
           <div className="flex-1">
             <p className="text-sm font-semibold text-zinc-700">Módulo fiscal ainda não configurado</p>
@@ -231,89 +233,68 @@ export default function NotasFiscaisList() {
       )}
 
       {/* Resumo */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <div className="bg-white rounded-xl border border-zinc-100 p-4">
-          <p className="text-[11px] font-semibold text-zinc-400 uppercase">Autorizadas no mês</p>
-          <p className="text-xl font-bold text-emerald-600 mt-1">{resumo.autorizadas}</p>
-          <p className="text-xs text-zinc-500">{formatBRL(resumo.valor)}</p>
-        </div>
-        <div className="bg-white rounded-xl border border-zinc-100 p-4">
-          <p className="text-[11px] font-semibold text-zinc-400 uppercase">Com problema</p>
-          <p className={`text-xl font-bold mt-1 ${resumo.problemas > 0 ? 'text-red-600' : 'text-zinc-700'}`}>{resumo.problemas}</p>
-          <p className="text-xs text-zinc-500">rejeitadas ou com erro</p>
-        </div>
-        <div className="bg-white rounded-xl border border-zinc-100 p-4">
-          <p className="text-[11px] font-semibold text-zinc-400 uppercase">Pendentes</p>
-          <p className="text-xl font-bold text-zinc-700 mt-1">{resumo.pendentes}</p>
-          <p className="text-xs text-zinc-500">aguardando emissão</p>
-        </div>
-        <div className="bg-white rounded-xl border border-zinc-100 p-4">
-          <p className="text-[11px] font-semibold text-zinc-400 uppercase">Canceladas</p>
-          <p className="text-xl font-bold text-zinc-700 mt-1">{resumo.canceladas}</p>
-          <p className="text-xs text-zinc-500">no mês</p>
-        </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+        <KpiCard semVariacao atual={0} label="Autorizadas no mês" icon="ri-checkbox-circle-line" value={String(resumo.autorizadas)} valueTone="text-emerald-700" sub={formatBRL(resumo.valor)} />
+        <KpiCard semVariacao atual={0} label="Com problema" icon="ri-error-warning-line" value={String(resumo.problemas)} valueTone={resumo.problemas > 0 ? 'text-red-600' : undefined} sub="rejeitadas ou com erro" />
+        <KpiCard semVariacao atual={0} label="Pendentes" icon="ri-time-line" value={String(resumo.pendentes)} valueTone={resumo.pendentes > 0 ? 'text-amber-700' : undefined} sub="aguardando emissão" />
+        <KpiCard semVariacao atual={0} label="Canceladas" icon="ri-close-circle-line" value={String(resumo.canceladas)} sub="no mês" />
       </div>
 
       {/* Filtros e ações */}
-      <div className="bg-white rounded-xl border border-zinc-100 p-4 flex flex-wrap items-end gap-3">
-        <div>
-          <label className="block text-[11px] font-semibold text-zinc-500 mb-1">Mês</label>
-          <input type="month" className={inputCls} value={mes} onChange={e => setMes(e.target.value)} />
+      <div className="flex flex-wrap items-center gap-2 lg:gap-3">
+        <MonthNav mes={mes} onChange={setMes} canGoNext={mes < thisMonth()} />
+        {mes !== thisMonth() && (
+          <button onClick={() => setMes(thisMonth())} className="text-xs font-semibold px-3 py-2 bg-amber-50 text-amber-700 border border-amber-200 rounded-xl hover:bg-amber-100 cursor-pointer">Mês atual</button>
+        )}
+        <select className={`${inputCls} cursor-pointer`} value={statusFiltro} onChange={e => setStatusFiltro(e.target.value as 'all' | FiscalDocStatus)} aria-label="Status">
+          <option value="all">Todos os status</option>
+          {(Object.keys(STATUS_LABEL) as FiscalDocStatus[]).map(s => <option key={s} value={s}>{STATUS_LABEL[s]}</option>)}
+        </select>
+        <div className="relative flex-1 min-w-[200px]">
+          <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 text-sm" />
+          <input className={`${inputCls} w-full pl-9`} placeholder="Buscar: pedido, número, chave, CPF" value={busca} onChange={e => setBusca(e.target.value)} />
         </div>
-        <div>
-          <label className="block text-[11px] font-semibold text-zinc-500 mb-1">Status</label>
-          <select className={`${inputCls} cursor-pointer`} value={statusFiltro} onChange={e => setStatusFiltro(e.target.value as 'all' | FiscalDocStatus)}>
-            <option value="all">Todos</option>
-            {(Object.keys(STATUS_LABEL) as FiscalDocStatus[]).map(s => <option key={s} value={s}>{STATUS_LABEL[s]}</option>)}
-          </select>
-        </div>
-        <div className="flex-1 min-w-[160px]">
-          <label className="block text-[11px] font-semibold text-zinc-500 mb-1">Buscar</label>
-          <input className={`${inputCls} w-full`} placeholder="Pedido, número, chave, CPF" value={busca} onChange={e => setBusca(e.target.value)} />
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <button onClick={reprocessar} disabled={busy !== null || resumo.pendentes + resumo.problemas === 0}
-            className="text-xs font-semibold px-3 py-2 rounded-lg border border-zinc-200 text-zinc-700 hover:bg-zinc-50 disabled:opacity-40 cursor-pointer whitespace-nowrap">
-            <i className="ri-refresh-line mr-1" />{busy === 'pending' ? 'Reprocessando…' : 'Reprocessar pendentes'}
+        <div className="ml-auto flex items-center gap-2 overflow-x-auto max-w-full">
+          <button onClick={reprocessar} disabled={busy !== null || resumo.pendentes + resumo.problemas === 0} className={btnSec}>
+            <i className="ri-refresh-line" />{busy === 'pending' ? 'Reprocessando…' : 'Reprocessar pendentes'}
           </button>
-          <button onClick={baixarXmlsMes} disabled={busy !== null}
-            className="text-xs font-semibold px-3 py-2 rounded-lg border border-zinc-200 text-zinc-700 hover:bg-zinc-50 disabled:opacity-40 cursor-pointer whitespace-nowrap">
-            <i className="ri-download-2-line mr-1" />XMLs do mês (contador)
+          <button onClick={baixarXmlsMes} disabled={busy !== null} className={btnSec}>
+            <i className="ri-download-2-line" />XMLs do mês (contador)
           </button>
         </div>
       </div>
 
       {/* Emissão manual */}
-      <div className="bg-white rounded-xl border border-zinc-100 p-4 flex flex-wrap items-center gap-3">
+      <div className="bg-white rounded-2xl border border-zinc-200 px-5 py-3 flex flex-wrap items-center gap-3">
         <div className="flex-1 min-w-[200px]">
-          <p className="text-xs font-semibold text-zinc-700">Emitir nota de um pedido</p>
-          <p className="text-[11px] text-zinc-400">Para vendas feitas com a emissão desligada ou que ficaram sem nota. A nota é sempre por pedido.</p>
+          <h3 className="text-sm font-bold text-zinc-800">Emitir nota de um pedido</h3>
+          <p className="text-xs text-zinc-400">Para vendas feitas com a emissão desligada ou que ficaram sem nota. A nota é sempre por pedido.</p>
         </div>
         <input className={`${inputCls} w-40`} placeholder="Nº do pedido" value={emitirPedido} onChange={e => setEmitirPedido(e.target.value)} onKeyDown={e => e.key === 'Enter' && emitirManual()} />
         <button onClick={emitirManual} disabled={busy !== null || !emitirPedido.trim()}
-          className="text-xs font-semibold px-3 py-2 rounded-lg bg-amber-500 text-white hover:bg-amber-600 disabled:opacity-40 cursor-pointer whitespace-nowrap">
+          className="flex items-center gap-1.5 bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-xl text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors shadow-sm disabled:opacity-40">
           {busy === 'manual' ? 'Emitindo…' : 'Emitir NFC-e'}
         </button>
       </div>
 
       {/* Lista */}
-      <div className="bg-white rounded-xl border border-zinc-100 overflow-hidden">
+      <div className="bg-white rounded-2xl border border-zinc-200 overflow-hidden">
         {loading ? (
-          <div className="p-8 text-center text-sm text-zinc-400">Carregando…</div>
+          <div className="py-14 text-center text-zinc-400 text-sm"><i className="ri-loader-4-line animate-spin text-4xl text-amber-400 block mb-3" />Carregando…</div>
         ) : filtrados.length === 0 ? (
-          <div className="p-8 text-center text-sm text-zinc-400">Nenhuma nota neste período.</div>
+          <div className="py-14 text-center text-zinc-400 text-sm"><i className="ri-file-shield-2-line text-4xl text-zinc-200 block mb-3" />Nenhuma nota neste período.</div>
         ) : (
           <>
           {/* Celular: um cartão por nota — a tabela de 7 colunas não cabe em 375px. */}
-          <ul className="md:hidden p-2 space-y-2 bg-zinc-50/60">
+          <ul className="md:hidden p-3 space-y-2">
             {filtrados.map(d => {
               const isBusy = busy === d.id;
               const canRetry = d.status === 'rejected' || d.status === 'error' || d.status === 'pending';
               return (
-                <li key={d.id} className="rounded-xl border border-zinc-200 bg-white px-3 py-3">
+                <li key={d.id} className="rounded-2xl border border-zinc-200 bg-white px-3 py-3">
                   <div className="flex items-baseline justify-between gap-2">
                     <span className="text-[11px] text-zinc-400 whitespace-nowrap">{fmtDateTime(d.emitted_at ?? d.created_at)}</span>
-                    <span className="text-base font-bold text-zinc-900 whitespace-nowrap">{formatBRL(d.total_amount)}</span>
+                    <span className="text-base font-bold text-zinc-900 tabular-nums whitespace-nowrap">{formatBRL(d.total_amount)}</span>
                   </div>
                   <p className="text-sm text-zinc-800 mt-0.5">
                     {d.source_type === 'table_session' ? 'mesa' : 'pedido'} {d.order_number ?? '—'}
@@ -321,7 +302,7 @@ export default function NotasFiscaisList() {
                   </p>
                   {d.customer_cpf && <p className="text-[11px] text-zinc-500">CPF {formatCpfCnpj(d.customer_cpf)}</p>}
                   <div className="mt-2 flex items-center gap-1.5 flex-wrap">
-                    <button onClick={() => setDetail(d)} className={`text-[11px] font-semibold px-2 py-1 rounded-full cursor-pointer ${STATUS_CLASS[d.status]}`}>
+                    <button onClick={() => setDetail(d)} className={`text-[11px] font-semibold px-2 py-0.5 rounded-md cursor-pointer ${STATUS_CLASS[d.status]}`}>
                       {STATUS_LABEL[d.status]}
                     </button>
                     {d.environment === 2 && <span className="text-[10px] text-zinc-400">homologação</span>}
@@ -340,8 +321,8 @@ export default function NotasFiscaisList() {
           <div className="hidden md:block overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="text-[11px] uppercase text-zinc-400 border-b border-zinc-100">
-                  <th className="text-left px-4 py-2.5 font-semibold">Data</th>
+                <tr className="text-[11px] uppercase tracking-wide text-zinc-400 border-b border-zinc-200">
+                  <th className="text-left pl-5 pr-4 py-2.5 font-semibold">Data</th>
                   <th className="text-left px-4 py-2.5 font-semibold">Venda</th>
                   <th className="text-left px-4 py-2.5 font-semibold">NFC-e</th>
                   <th className="text-right px-4 py-2.5 font-semibold">Valor</th>
@@ -350,13 +331,13 @@ export default function NotasFiscaisList() {
                   <th className="text-right px-4 py-2.5 font-semibold">Ações</th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody className="divide-y divide-zinc-100/80">
                 {filtrados.map(d => {
                   const isBusy = busy === d.id;
                   const canRetry = d.status === 'rejected' || d.status === 'error' || d.status === 'pending';
                   return (
-                    <tr key={d.id} className="border-b border-zinc-50 hover:bg-zinc-50/60">
-                      <td className="px-4 py-2.5 text-zinc-600 whitespace-nowrap">{fmtDateTime(d.emitted_at ?? d.created_at)}</td>
+                    <tr key={d.id} className="hover:bg-zinc-50">
+                      <td className="pl-5 pr-4 py-2.5 text-zinc-600 whitespace-nowrap">{fmtDateTime(d.emitted_at ?? d.created_at)}</td>
                       <td className="px-4 py-2.5 text-zinc-800 whitespace-nowrap">
                         <span className="font-medium">{d.order_number ?? '—'}</span>
                         <span className="block text-[10px] text-zinc-400">{d.source_type === 'table_session' ? 'mesa' : 'pedido'}{d.environment === 2 ? ' · homologação' : ''}</span>
@@ -365,10 +346,10 @@ export default function NotasFiscaisList() {
                         {d.numero ? <span className="font-mono">{d.numero}{d.serie ? `/${d.serie}` : ''}</span> : <span className="text-zinc-300">—</span>}
                         {d.chave && <span className="block text-[10px] text-zinc-400 font-mono" title={d.chave}>…{d.chave.slice(-8)}</span>}
                       </td>
-                      <td className="px-4 py-2.5 text-right text-zinc-800 font-medium whitespace-nowrap">{formatBRL(d.total_amount)}</td>
+                      <td className="px-4 py-2.5 text-right text-zinc-800 font-medium tabular-nums whitespace-nowrap">{formatBRL(d.total_amount)}</td>
                       <td className="px-4 py-2.5 text-zinc-600 whitespace-nowrap">{d.customer_cpf ? formatCpfCnpj(d.customer_cpf) : <span className="text-zinc-300">—</span>}</td>
                       <td className="px-4 py-2.5 whitespace-nowrap">
-                        <button onClick={() => setDetail(d)} className={`text-[11px] font-semibold px-2 py-1 rounded-full cursor-pointer ${STATUS_CLASS[d.status]}`} title={d.error_message ?? d.sefaz_message ?? ''}>
+                        <button onClick={() => setDetail(d)} className={`text-[11px] font-semibold px-2 py-0.5 rounded-md cursor-pointer ${STATUS_CLASS[d.status]}`} title={d.error_message ?? d.sefaz_message ?? ''}>
                           {STATUS_LABEL[d.status]}
                         </button>
                         {(d.status === 'rejected' || d.status === 'error') && d.error_message && (
@@ -397,7 +378,7 @@ export default function NotasFiscaisList() {
               <button onClick={() => setDetail(null)} className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-zinc-100 cursor-pointer text-zinc-500"><i className="ri-close-line" /></button>
             </div>
             <dl className="text-xs space-y-2">
-              <div className="flex gap-2"><dt className="w-28 text-zinc-400">Status</dt><dd><span className={`px-2 py-0.5 rounded-full font-semibold ${STATUS_CLASS[detail.status]}`}>{STATUS_LABEL[detail.status]}</span></dd></div>
+              <div className="flex gap-2"><dt className="w-28 text-zinc-400">Status</dt><dd><span className={`px-2 py-0.5 rounded-md font-semibold ${STATUS_CLASS[detail.status]}`}>{STATUS_LABEL[detail.status]}</span></dd></div>
               <div className="flex gap-2"><dt className="w-28 text-zinc-400">Valor</dt><dd className="text-zinc-800 font-medium">{formatBRL(detail.total_amount)}</dd></div>
               {detail.chave && <div className="flex gap-2"><dt className="w-28 text-zinc-400">Chave</dt><dd className="font-mono text-zinc-700 break-all">{formatChave(detail.chave)}</dd></div>}
               {detail.protocolo && <div className="flex gap-2"><dt className="w-28 text-zinc-400">Protocolo</dt><dd className="font-mono text-zinc-700">{detail.protocolo}</dd></div>}

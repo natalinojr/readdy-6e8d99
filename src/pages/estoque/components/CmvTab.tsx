@@ -7,6 +7,7 @@ import { formatCurrency, formatPercent } from '@/lib/formatters';
 import { custoLinhaFicha } from '@/lib/unitConversion';
 import { custoOpcoesNoPeriodo } from '@/lib/custoOpcoes';
 import { BotaoFichasVendasPassadas } from './FichasVendasPassadasModal';
+import { KpiCard, Segmented } from '../../financeiro/components/dreUi';
 
 // ── Hook: CMV mensal histórico ────────────────────────────────────────────────
 interface CmvMensalPonto { mes: string; cmv_pct: number; receita: number; custo: number; }
@@ -112,16 +113,16 @@ function GraficoCmvMensal() {
   const { dados, loading } = useCmvMensal();
 
   if (loading) return (
-    <div className="flex items-center justify-center py-8 gap-2 text-zinc-400">
-      <i className="ri-loader-4-line animate-spin" />
-      <span className="text-xs">Carregando histórico...</span>
+    <div className="bg-white rounded-2xl border border-zinc-200 py-14 text-center">
+      <i className="ri-loader-4-line animate-spin text-4xl text-zinc-200 block mb-2" />
+      <span className="text-zinc-400 text-sm">Carregando histórico...</span>
     </div>
   );
 
   if (dados.length === 0) return (
-    <div className="flex flex-col items-center justify-center py-8 text-center">
-      <i className="ri-bar-chart-line text-2xl text-zinc-300 block mb-2" />
-      <p className="text-xs text-zinc-400">Sem dados históricos suficientes para o gráfico.</p>
+    <div className="bg-white rounded-2xl border border-zinc-200 py-14 text-center">
+      <i className="ri-bar-chart-line text-4xl text-zinc-200 block mb-2" />
+      <p className="text-zinc-400 text-sm">Sem dados históricos suficientes para o gráfico.</p>
     </div>
   );
 
@@ -135,11 +136,11 @@ function GraficoCmvMensal() {
   };
 
   return (
-    <div className="bg-white border border-zinc-100 rounded-xl p-5">
-      <div className="flex items-center justify-between mb-4">
+    <div className="bg-white rounded-2xl border border-zinc-200 p-5">
+      <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
         <div>
-          <p className="text-sm font-bold text-zinc-800">Evolução do CMV % — últimos 12 meses</p>
-          <p className="text-xs text-zinc-400 mt-0.5">Custo realizado sobre receita total por mês</p>
+          <h3 className="text-sm font-bold text-zinc-800">Evolução do CMV % — últimos 12 meses</h3>
+          <p className="text-xs text-zinc-400">Custo realizado sobre receita total por mês</p>
         </div>
         <div className="flex items-center gap-3 text-[10px] flex-wrap justify-end">
           <div className="flex items-center gap-1"><div className="w-3 h-1 rounded-full bg-emerald-500" /><span className="text-zinc-500">≤ 30%</span></div>
@@ -357,10 +358,10 @@ function CmvTeorico() {
   const melhorMargem = comFicha.length > 0 ? comFicha.reduce((m, i) => (i.margemPct > m.margemPct ? i : m)) : null;
   const piorCMV = comFicha.length > 0 ? comFicha.reduce((m, i) => (i.cmvPct > m.cmvPct ? i : m)) : null;
 
-  if (loading) return <div className="flex items-center justify-center py-16"><div className="w-6 h-6 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" /></div>;
+  if (loading) return <div className="py-14 text-center"><div className="w-6 h-6 mx-auto border-2 border-amber-500 border-t-transparent rounded-full animate-spin" /></div>;
   if (itensAtivos.length === 0) return (
-    <div className="flex flex-col items-center justify-center py-16 text-center">
-      <i className="ri-pie-chart-2-line text-4xl text-zinc-300 block mb-3" />
+    <div className="py-14 text-center">
+      <i className="ri-pie-chart-2-line text-4xl text-zinc-200 block mb-3" />
       <p className="text-sm font-semibold text-zinc-500 mb-1">Nenhum item no cardápio</p>
       <p className="text-xs text-zinc-400">Cadastre itens no cardápio para calcular CMV.</p>
     </div>
@@ -369,24 +370,29 @@ function CmvTeorico() {
   return (
     <div className="space-y-5">
       {/* Resumo */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="bg-white border border-zinc-100 rounded-xl p-4">
-          <p className="text-xs text-zinc-500 mb-1">CMV Médio Teórico</p>
-          <p className={`text-2xl font-black ${avgCMV <= 30 ? 'text-emerald-600' : avgCMV <= 38 ? 'text-amber-600' : 'text-red-500'}`}>{fmtPct(avgCMV)}</p>
-          <p className="text-[10px] text-zinc-400 mt-1">{comFicha.length} de {itensCMV.length} itens com ficha</p>
-        </div>
-        <div className="bg-white border border-zinc-100 rounded-xl p-4">
-          <p className="text-xs text-zinc-500 mb-1">Melhor Margem</p>
-          {melhorMargem ? (<><p className="text-2xl font-black text-emerald-600">{fmtPct(melhorMargem.margemPct)}</p><p className="text-[10px] text-zinc-500 mt-1 truncate">{melhorMargem.nome}</p></>) : <p className="text-sm text-zinc-400">—</p>}
-        </div>
-        <div className="bg-white border border-zinc-100 rounded-xl p-4">
-          <p className="text-xs text-zinc-500 mb-1">Maior CMV (atenção)</p>
-          {piorCMV ? (<><p className="text-2xl font-black text-red-500">{fmtPct(piorCMV.cmvPct)}</p><p className="text-[10px] text-zinc-500 mt-1 truncate">{piorCMV.nome}</p></>) : <p className="text-sm text-zinc-400">—</p>}
-        </div>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <KpiCard
+          label="CMV Médio Teórico" icon="ri-percent-line" semVariacao atual={avgCMV}
+          value={fmtPct(avgCMV)}
+          valueTone={avgCMV <= 30 ? 'text-emerald-700' : avgCMV <= 38 ? 'text-amber-700' : 'text-red-600'}
+          sub={`${comFicha.length} de ${itensCMV.length} itens com ficha`}
+        />
+        <KpiCard
+          label="Melhor Margem" icon="ri-trophy-line" semVariacao atual={melhorMargem?.margemPct ?? 0}
+          value={melhorMargem ? fmtPct(melhorMargem.margemPct) : '—'}
+          valueTone="text-emerald-700"
+          sub={melhorMargem?.nome}
+        />
+        <KpiCard
+          label="Maior CMV (atenção)" icon="ri-alarm-warning-line" semVariacao atual={piorCMV?.cmvPct ?? 0}
+          value={piorCMV ? fmtPct(piorCMV.cmvPct) : '—'}
+          valueTone="text-red-600"
+          sub={piorCMV?.nome}
+        />
       </div>
 
       {/* Legenda */}
-      <div className="flex items-center gap-4 text-xs flex-wrap">
+      <div className="flex items-center gap-4 text-xs flex-wrap px-1">
         <span className="text-zinc-400 font-semibold">CMV ideal:</span>
         {[['bg-emerald-500', '≤ 25% — Excelente'], ['bg-amber-400', '26–35% — Aceitável'], ['bg-red-500', '> 35% — Revisar']].map(([c, l]) => (
           <div key={l} className="flex items-center gap-1.5"><div className={`w-3 h-3 rounded-full ${c}`} /><span className="text-zinc-500">{l}</span></div>
@@ -394,55 +400,54 @@ function CmvTeorico() {
       </div>
 
       {/* Filtros */}
-      <div className="flex flex-col gap-2">
-        <div className="flex items-center gap-2 bg-white border border-zinc-200 rounded-lg px-3 py-2">
-          <i className="ri-search-line text-zinc-400 text-sm" />
-          <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar item..." className="flex-1 text-xs bg-transparent text-zinc-700 placeholder-zinc-400 focus:outline-none" />
+      <div className="flex flex-wrap items-center gap-2 lg:gap-3">
+        <div className="relative flex-1 min-w-[200px] max-w-sm">
+          <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 text-sm" />
+          <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar item..." className="w-full h-10 rounded-xl border border-zinc-200 shadow-sm pl-9 pr-3 text-sm bg-white text-zinc-700 placeholder-zinc-400 focus:outline-none focus:border-amber-400" />
         </div>
-        <div className="flex items-center gap-1 bg-zinc-100 rounded-lg p-1 overflow-x-auto">
-          {([
-            { id: 'cmv_desc', label: 'Maior CMV' },
-            { id: 'cmv_asc', label: 'Menor CMV' },
-            { id: 'margem_desc', label: 'Maior Margem' },
-            { id: 'nome', label: 'Nome' },
-          ] as { id: Ordenacao; label: string }[]).map((op) => (
-            <button key={op.id} onClick={() => setOrdenacao(op.id)}
-              className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap cursor-pointer flex-shrink-0 ${ordenacao === op.id ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'}`}>
-              {op.label}
-            </button>
-          ))}
+        <div className="overflow-x-auto max-w-full">
+          <Segmented<Ordenacao>
+            value={ordenacao}
+            onChange={setOrdenacao}
+            options={[
+              { id: 'cmv_desc', label: 'Maior CMV', icon: 'ri-sort-desc' },
+              { id: 'cmv_asc', label: 'Menor CMV', icon: 'ri-sort-asc' },
+              { id: 'margem_desc', label: 'Maior Margem', icon: 'ri-money-dollar-circle-line' },
+              { id: 'nome', label: 'Nome', icon: 'ri-sort-alphabet-asc' },
+            ]}
+          />
         </div>
       </div>
 
       {/* Tabela */}
-      <div className="bg-white border border-zinc-100 rounded-xl overflow-hidden">
+      <div className="bg-white rounded-2xl border border-zinc-200 overflow-hidden">
         {/* Desktop */}
         <div className="hidden md:block overflow-x-auto">
           <table className="w-full text-xs">
-            <thead className="bg-zinc-50 border-b border-zinc-100">
+            <thead className="border-b border-zinc-200">
               <tr>
-                <th className="px-4 py-3 text-left font-semibold text-zinc-500">Item</th>
-                <th className="px-4 py-3 text-right font-semibold text-zinc-500">Preço Venda</th>
-                <th className="px-4 py-3 text-right font-semibold text-zinc-500">Custo</th>
-                <th className="px-4 py-3 text-center font-semibold text-zinc-500">CMV %</th>
-                <th className="px-4 py-3 text-right font-semibold text-zinc-500">Margem Bruta</th>
-                <th className="px-4 py-3 text-center font-semibold text-zinc-500">Margem %</th>
-                <th className="px-4 py-3 text-left font-semibold text-zinc-500">Barra CMV</th>
+                <th className="pl-5 pr-4 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Item</th>
+                <th className="px-4 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Preço Venda</th>
+                <th className="px-4 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Custo</th>
+                <th className="px-4 py-2.5 text-center text-[11px] font-semibold uppercase tracking-wide text-zinc-400">CMV %</th>
+                <th className="px-4 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Margem Bruta</th>
+                <th className="px-4 py-2.5 text-center text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Margem %</th>
+                <th className="px-4 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Barra CMV</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-zinc-50">
+            <tbody className="divide-y divide-zinc-100/80">
               {itensFiltrados.map((item) => (
                 <tr key={item.id} className="hover:bg-zinc-50 transition-colors">
-                  <td className="px-4 py-3">
-                    <p className="font-medium text-zinc-800">{item.nome}</p>
+                  <td className="pl-5 pr-4 py-3">
+                    <p className="font-medium text-zinc-800 truncate max-w-[240px]" title={item.nome}>{item.nome}</p>
                     {!item.temFicha && <p className="text-[10px] text-zinc-400 italic">Sem ficha técnica</p>}
                   </td>
-                  <td className="px-4 py-3 text-right font-semibold text-zinc-800">{fmt(item.preco)}</td>
-                  <td className="px-4 py-3 text-right text-zinc-600">{item.temFicha ? fmt(item.custo) : <span className="text-zinc-300">—</span>}</td>
+                  <td className="px-4 py-3 text-right tabular-nums whitespace-nowrap font-semibold text-zinc-800">{fmt(item.preco)}</td>
+                  <td className="px-4 py-3 text-right tabular-nums whitespace-nowrap text-zinc-600">{item.temFicha ? fmt(item.custo) : <span className="text-zinc-300">—</span>}</td>
                   <td className="px-4 py-3 text-center">
-                    {item.temFicha ? <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold ${cmvColor(item.cmvPct)}`}>{fmtPct(item.cmvPct)}</span> : <span className="text-zinc-300">—</span>}
+                    {item.temFicha ? <span className={`inline-block px-2 py-0.5 rounded-md text-[11px] font-semibold ${cmvColor(item.cmvPct)}`}>{fmtPct(item.cmvPct)}</span> : <span className="text-zinc-300">—</span>}
                   </td>
-                  <td className="px-4 py-3 text-right">
+                  <td className="px-4 py-3 text-right tabular-nums whitespace-nowrap">
                     {item.temFicha ? <span className={`font-bold ${item.margemBruta >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{fmt(item.margemBruta)}</span> : <span className="text-zinc-300">—</span>}
                   </td>
                   <td className="px-4 py-3 text-center">
@@ -461,7 +466,7 @@ function CmvTeorico() {
           </table>
         </div>
         {/* Mobile cards */}
-        <div className="md:hidden divide-y divide-zinc-50">
+        <div className="md:hidden divide-y divide-zinc-100/80">
           {itensFiltrados.map((item) => (
             <div key={item.id} className="p-3">
               <div className="flex items-start justify-between gap-2 mb-2">
@@ -470,7 +475,7 @@ function CmvTeorico() {
                   {!item.temFicha && <p className="text-[10px] text-zinc-400 italic">Sem ficha técnica</p>}
                 </div>
                 {item.temFicha ? (
-                  <span className={`flex-shrink-0 px-2 py-0.5 rounded-full text-[10px] font-bold ${cmvColor(item.cmvPct)}`}>{fmtPct(item.cmvPct)}</span>
+                  <span className={`flex-shrink-0 px-2 py-0.5 rounded-md text-[11px] font-semibold ${cmvColor(item.cmvPct)}`}>{fmtPct(item.cmvPct)}</span>
                 ) : <span className="text-zinc-300 text-[10px]">—</span>}
               </div>
               <div className="grid grid-cols-3 gap-2 text-center">
@@ -500,7 +505,7 @@ function CmvTeorico() {
           ))}
         </div>
       </div>
-      {itensFiltrados.length === 0 && <div className="text-center py-10"><i className="ri-search-line text-3xl text-zinc-300 block mb-2" /><p className="text-sm text-zinc-400">Nenhum item encontrado</p></div>}
+      {itensFiltrados.length === 0 && <div className="py-14 text-center"><i className="ri-search-line text-4xl text-zinc-200 block mb-2" /><p className="text-sm text-zinc-400">Nenhum item encontrado</p></div>}
     </div>
   );
 }
@@ -577,84 +582,86 @@ function CmvRealizado() {
   return (
     <div className="space-y-5">
       {/* Seletor de período */}
-      <div className="flex items-center gap-2 flex-wrap">
-        <div className="flex items-center gap-1 bg-zinc-100 rounded-lg p-1">
-          {PERIODOS.map((p) => (
-            <button key={p.key} onClick={() => { setPeriodo(p.key); setShowCustom(false); }}
-              className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap cursor-pointer ${
-                periodo === p.key ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'
+      <div className="flex flex-wrap items-center gap-2 lg:gap-3">
+        <div className="overflow-x-auto max-w-full">
+          <div className="flex bg-zinc-100 p-1 rounded-xl">
+            {PERIODOS.map((p) => (
+              <button key={p.key} onClick={() => { setPeriodo(p.key); setShowCustom(false); }}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-lg cursor-pointer transition-all whitespace-nowrap flex items-center gap-1.5 ${
+                  periodo === p.key ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-800'
+                }`}>
+                {p.label}
+              </button>
+            ))}
+            <button onClick={() => setShowCustom((v) => !v)}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-lg cursor-pointer transition-all whitespace-nowrap flex items-center gap-1.5 ${
+                periodo.startsWith('custom:') ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-800'
               }`}>
-              {p.label}
+              <i className="ri-calendar-line text-sm" /> Período
             </button>
-          ))}
-          <button onClick={() => setShowCustom((v) => !v)}
-            className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap cursor-pointer ${
-              periodo.startsWith('custom:') ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'
-            }`}>
-            <i className="ri-calendar-line" /> Período
-          </button>
+          </div>
         </div>
         {showCustom && (
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <input type="date" value={customDe} onChange={(e) => setCustomDe(e.target.value)}
-              className="text-xs border border-zinc-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-amber-400" />
+              className="h-10 text-xs border border-zinc-200 shadow-sm bg-white rounded-xl px-3 focus:outline-none focus:border-amber-400" />
             <span className="text-xs text-zinc-400">até</span>
             <input type="date" value={customAte} onChange={(e) => setCustomAte(e.target.value)}
-              className="text-xs border border-zinc-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-amber-400" />
+              className="h-10 text-xs border border-zinc-200 shadow-sm bg-white rounded-xl px-3 focus:outline-none focus:border-amber-400" />
             <button onClick={aplicarCustom} disabled={!customDe || !customAte}
-              className="px-3 py-1.5 bg-amber-500 text-white text-xs font-semibold rounded-lg hover:bg-amber-600 disabled:opacity-40 cursor-pointer whitespace-nowrap">
+              className="flex items-center gap-1.5 bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-xl text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors shadow-sm disabled:opacity-40">
               Aplicar
             </button>
           </div>
         )}
-        <button onClick={() => load(periodo)} className="w-7 h-7 flex items-center justify-center text-zinc-400 hover:text-zinc-600 cursor-pointer transition-colors" title="Atualizar">
-          <i className={`ri-refresh-line text-base ${loading ? 'animate-spin' : ''}`} />
-        </button>
-        {data && data.itens.length > 0 && (
-          <button
-            onClick={exportarCSV}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-zinc-100 text-zinc-600 text-xs font-semibold rounded-lg hover:bg-zinc-200 transition-colors cursor-pointer whitespace-nowrap"
-          >
-            <i className="ri-download-line text-sm" /> Exportar CSV
+        <div className="ml-auto flex items-center gap-2 overflow-x-auto max-w-full">
+          <button onClick={() => load(periodo)} className="flex items-center gap-1.5 px-3 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 rounded-xl text-xs font-semibold text-zinc-600 cursor-pointer transition-colors whitespace-nowrap shadow-sm" title="Atualizar">
+            <i className={`ri-refresh-line text-sm ${loading ? 'animate-spin' : ''}`} /> Atualizar
           </button>
-        )}
+          {data && data.itens.length > 0 && (
+            <button
+              onClick={exportarCSV}
+              className="flex items-center gap-1.5 px-3 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 rounded-xl text-xs font-semibold text-zinc-600 cursor-pointer transition-colors whitespace-nowrap shadow-sm"
+            >
+              <i className="ri-download-line text-sm" /> Exportar CSV
+            </button>
+          )}
+        </div>
       </div>
 
       {loading && (
-        <div className="flex items-center justify-center py-16 gap-2 text-zinc-400">
-          <i className="ri-loader-4-line animate-spin text-xl" />
-          <span className="text-sm">Calculando CMV realizado...</span>
+        <div className="py-14 text-center">
+          <i className="ri-loader-4-line animate-spin text-4xl text-zinc-200 block mb-2" />
+          <span className="text-zinc-400 text-sm">Calculando CMV realizado...</span>
         </div>
       )}
 
       {!loading && data && (
         <>
           {/* Cards resumo */}
-          <div className="grid grid-cols-2 gap-3">
-            <div className="bg-white border border-zinc-100 rounded-xl p-4">
-              <p className="text-xs text-zinc-500 mb-1">Receita do Período</p>
-              <p className="text-xl font-black text-zinc-800">{fmt(data.receita_total)}</p>
-              <p className="text-[10px] text-zinc-400 mt-1">{data.itens.length} itens vendidos</p>
-            </div>
-            <div className="bg-white border border-zinc-100 rounded-xl p-4">
-              <p className="text-xs text-zinc-500 mb-1">Custo Total (CMV)</p>
-              <p className="text-xl font-black text-zinc-800">{fmt(data.custo_total)}</p>
-              <p className="text-[10px] text-zinc-400 mt-1">{comFicha.length} itens com ficha técnica</p>
-            </div>
-            <div className="bg-white border border-zinc-100 rounded-xl p-4">
-              <p className="text-xs text-zinc-500 mb-1">CMV % Realizado</p>
-              <p className={`text-xl font-black ${data.cmv_pct_geral <= 30 ? 'text-emerald-600' : data.cmv_pct_geral <= 38 ? 'text-amber-600' : 'text-red-500'}`}>
-                {data.receita_total > 0 ? fmtPct(data.cmv_pct_geral) : '—'}
-              </p>
-              <p className="text-[10px] text-zinc-400 mt-1">custo / receita total</p>
-            </div>
-            <div className="bg-white border border-zinc-100 rounded-xl p-4">
-              <p className="text-xs text-zinc-500 mb-1">Margem Bruta</p>
-              <p className={`text-xl font-black ${data.margem_bruta_total >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
-                {fmt(data.margem_bruta_total)}
-              </p>
-              <p className="text-[10px] text-zinc-400 mt-1">receita − custo direto</p>
-            </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+            <KpiCard
+              label="Receita do Período" icon="ri-money-dollar-circle-line" semVariacao atual={data.receita_total}
+              value={fmt(data.receita_total)}
+              sub={`${data.itens.length} itens vendidos`}
+            />
+            <KpiCard
+              label="Custo Total (CMV)" icon="ri-shopping-basket-2-line" semVariacao atual={data.custo_total}
+              value={fmt(data.custo_total)}
+              sub={`${comFicha.length} itens com ficha técnica`}
+            />
+            <KpiCard
+              label="CMV % Realizado" icon="ri-percent-line" semVariacao atual={data.cmv_pct_geral}
+              value={data.receita_total > 0 ? fmtPct(data.cmv_pct_geral) : '—'}
+              valueTone={data.cmv_pct_geral <= 30 ? 'text-emerald-700' : data.cmv_pct_geral <= 38 ? 'text-amber-700' : 'text-red-600'}
+              sub="custo / receita total"
+            />
+            <KpiCard
+              label="Margem Bruta" icon="ri-line-chart-line" semVariacao atual={data.margem_bruta_total}
+              value={fmt(data.margem_bruta_total)}
+              valueTone={data.margem_bruta_total >= 0 ? 'text-emerald-700' : 'text-red-600'}
+              sub="receita − custo direto"
+            />
           </div>
 
           {/* Gráfico de evolução mensal */}
@@ -671,77 +678,74 @@ function CmvRealizado() {
           )}
 
           {data.itens.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-16 text-center bg-white border border-zinc-100 rounded-xl">
-              <i className="ri-bar-chart-grouped-line text-4xl text-zinc-300 block mb-3" />
+            <div className="py-14 text-center bg-white border border-zinc-200 rounded-2xl">
+              <i className="ri-bar-chart-grouped-line text-4xl text-zinc-200 block mb-3" />
               <p className="text-sm font-semibold text-zinc-500 mb-1">Sem vendas no período</p>
               <p className="text-xs text-zinc-400">Selecione outro período para visualizar o CMV realizado.</p>
             </div>
           ) : (
             <>
               {/* Filtros tabela */}
-              <div className="flex flex-col gap-2">
-                <div className="flex items-center gap-2 bg-white border border-zinc-200 rounded-lg px-3 py-2">
-                  <i className="ri-search-line text-zinc-400 text-sm" />
-                  <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar item vendido..." className="flex-1 text-xs bg-transparent text-zinc-700 placeholder-zinc-400 focus:outline-none" />
+              <div className="flex flex-wrap items-center gap-2 lg:gap-3">
+                <div className="relative flex-1 min-w-[200px] max-w-sm">
+                  <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 text-sm" />
+                  <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar item vendido..." className="w-full h-10 rounded-xl border border-zinc-200 shadow-sm pl-9 pr-3 text-sm bg-white text-zinc-700 placeholder-zinc-400 focus:outline-none focus:border-amber-400" />
                 </div>
-                <div className="flex items-center gap-1 bg-zinc-100 rounded-lg p-1 overflow-x-auto">
-                  {([
-                    { id: 'receita_desc', label: 'Mais Vendidos' },
-                    { id: 'cmv_desc', label: 'Maior CMV' },
-                    { id: 'cmv_asc', label: 'Menor CMV' },
-                    { id: 'margem_desc', label: 'Maior Margem' },
-                    { id: 'nome', label: 'Nome' },
-                  ] as { id: Ordenacao; label: string }[]).map((op) => (
-                    <button key={op.id} onClick={() => setOrdenacao(op.id)}
-                      className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap cursor-pointer flex-shrink-0 ${
-                        ordenacao === op.id ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'
-                      }`}>
-                      {op.label}
-                    </button>
-                  ))}
+                <div className="overflow-x-auto max-w-full">
+                  <Segmented<Ordenacao>
+                    value={ordenacao}
+                    onChange={setOrdenacao}
+                    options={[
+                      { id: 'receita_desc', label: 'Mais Vendidos', icon: 'ri-fire-line' },
+                      { id: 'cmv_desc', label: 'Maior CMV', icon: 'ri-sort-desc' },
+                      { id: 'cmv_asc', label: 'Menor CMV', icon: 'ri-sort-asc' },
+                      { id: 'margem_desc', label: 'Maior Margem', icon: 'ri-money-dollar-circle-line' },
+                      { id: 'nome', label: 'Nome', icon: 'ri-sort-alphabet-asc' },
+                    ]}
+                  />
                 </div>
               </div>
 
               {/* Tabela realizado */}
-              <div className="bg-white border border-zinc-100 rounded-xl overflow-hidden">
+              <div className="bg-white rounded-2xl border border-zinc-200 overflow-hidden">
                 {/* Desktop */}
                 <div className="hidden md:block overflow-x-auto" style={{ WebkitOverflowScrolling: 'touch' }}>
                   <table className="w-full text-xs">
-                    <thead className="bg-zinc-50 border-b border-zinc-100">
+                    <thead className="border-b border-zinc-200">
                       <tr>
-                        <th className="px-4 py-3 text-left font-semibold text-zinc-500">Item</th>
-                        <th className="px-4 py-3 text-center font-semibold text-zinc-500">Qtd Vendida</th>
-                        <th className="px-4 py-3 text-right font-semibold text-zinc-500">Receita</th>
-                        <th className="px-4 py-3 text-right font-semibold text-zinc-500">Custo Total</th>
-                        <th className="px-4 py-3 text-center font-semibold text-zinc-500">CMV %</th>
-                        <th className="px-4 py-3 text-right font-semibold text-zinc-500">Margem R$</th>
-                        <th className="px-4 py-3 text-center font-semibold text-zinc-500">Margem %</th>
-                        <th className="px-4 py-3 text-left font-semibold text-zinc-500 w-28">Barra</th>
+                        <th className="pl-5 pr-4 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Item</th>
+                        <th className="px-4 py-2.5 text-center text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Qtd Vendida</th>
+                        <th className="px-4 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Receita</th>
+                        <th className="px-4 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Custo Total</th>
+                        <th className="px-4 py-2.5 text-center text-[11px] font-semibold uppercase tracking-wide text-zinc-400">CMV %</th>
+                        <th className="px-4 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Margem R$</th>
+                        <th className="px-4 py-2.5 text-center text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Margem %</th>
+                        <th className="px-4 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wide text-zinc-400 w-28">Barra</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-zinc-50">
+                    <tbody className="divide-y divide-zinc-100/80">
                       {itensFiltrados.map((item) => (
                         <tr key={item.item_id || item.item_name} className="hover:bg-zinc-50 transition-colors">
-                          <td className="px-4 py-3">
-                            <p className="font-medium text-zinc-800 truncate max-w-[180px]">{item.item_name}</p>
+                          <td className="pl-5 pr-4 py-3">
+                            <p className="font-medium text-zinc-800 truncate max-w-[240px]" title={item.item_name}>{item.item_name}</p>
                             {item.categoria && <p className="text-[10px] text-zinc-400">{item.categoria}</p>}
                             {!item.tem_ficha && <p className="text-[10px] text-amber-500 italic">Sem ficha técnica</p>}
                           </td>
                           <td className="px-4 py-3 text-center">
                             <span className="font-semibold text-zinc-700">{item.qtd_vendida}</span>
                           </td>
-                          <td className="px-4 py-3 text-right font-semibold text-zinc-800">{fmt(item.receita_total)}</td>
-                          <td className="px-4 py-3 text-right text-zinc-600">
+                          <td className="px-4 py-3 text-right tabular-nums whitespace-nowrap font-semibold text-zinc-800">{fmt(item.receita_total)}</td>
+                          <td className="px-4 py-3 text-right tabular-nums whitespace-nowrap text-zinc-600">
                             {item.tem_ficha ? fmt(item.custo_total) : <span className="text-zinc-300">—</span>}
                           </td>
                           <td className="px-4 py-3 text-center">
                             {item.tem_ficha ? (
-                              <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold ${cmvColor(item.cmv_pct)}`}>
+                              <span className={`inline-block px-2 py-0.5 rounded-md text-[11px] font-semibold ${cmvColor(item.cmv_pct)}`}>
                                 {fmtPct(item.cmv_pct)}
                               </span>
                             ) : <span className="text-zinc-300">—</span>}
                           </td>
-                          <td className="px-4 py-3 text-right">
+                          <td className="px-4 py-3 text-right tabular-nums whitespace-nowrap">
                             {item.tem_ficha ? (
                               <span className={`font-bold ${item.margem_bruta >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
                                 {fmt(item.margem_bruta)}
@@ -764,25 +768,25 @@ function CmvRealizado() {
                     {/* Totais */}
                     {comFicha.length > 0 && (
                       <tfoot>
-                        <tr className="border-t-2 border-zinc-200 bg-amber-50">
-                          <td className="px-4 py-3 font-bold text-zinc-700 text-xs">
+                        <tr className="bg-zinc-50 border-t-2 border-zinc-200">
+                          <td className="pl-5 pr-4 py-3 font-bold text-zinc-900 text-xs">
                             Total ({comFicha.length} itens c/ ficha)
                           </td>
                           <td className="px-4 py-3 text-center font-bold text-zinc-700">
                             {comFicha.reduce((s, i) => s + i.qtd_vendida, 0)}
                           </td>
-                          <td className="px-4 py-3 text-right font-bold text-zinc-800">
+                          <td className="px-4 py-3 text-right tabular-nums whitespace-nowrap font-bold text-zinc-900">
                             {fmt(comFicha.reduce((s, i) => s + i.receita_total, 0))}
                           </td>
-                          <td className="px-4 py-3 text-right font-bold text-zinc-800">
+                          <td className="px-4 py-3 text-right tabular-nums whitespace-nowrap font-bold text-zinc-900">
                             {fmt(comFicha.reduce((s, i) => s + i.custo_total, 0))}
                           </td>
                           <td className="px-4 py-3 text-center">
-                            <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold ${cmvColor(data.cmv_pct_geral)}`}>
+                            <span className={`inline-block px-2 py-0.5 rounded-md text-[11px] font-semibold ${cmvColor(data.cmv_pct_geral)}`}>
                               {fmtPct(data.cmv_pct_geral)}
                             </span>
                           </td>
-                          <td className="px-4 py-3 text-right font-bold text-emerald-700">
+                          <td className="px-4 py-3 text-right tabular-nums whitespace-nowrap font-bold text-emerald-700">
                             {fmt(data.margem_bruta_total)}
                           </td>
                           <td className="px-4 py-3 text-center font-bold text-zinc-700">
@@ -795,7 +799,7 @@ function CmvRealizado() {
                   </table>
                 </div>
                 {/* Mobile cards */}
-                <div className="md:hidden divide-y divide-zinc-50">
+                <div className="md:hidden divide-y divide-zinc-100/80">
                   {itensFiltrados.map((item) => (
                     <div key={item.item_id || item.item_name} className="p-3">
                       <div className="flex items-start justify-between gap-2 mb-2">
@@ -805,7 +809,7 @@ function CmvRealizado() {
                           {!item.tem_ficha && <p className="text-[10px] text-amber-500 italic">Sem ficha técnica</p>}
                         </div>
                         {item.tem_ficha ? (
-                          <span className={`flex-shrink-0 px-2 py-0.5 rounded-full text-[10px] font-bold ${cmvColor(item.cmv_pct)}`}>{fmtPct(item.cmv_pct)}</span>
+                          <span className={`flex-shrink-0 px-2 py-0.5 rounded-md text-[11px] font-semibold ${cmvColor(item.cmv_pct)}`}>{fmtPct(item.cmv_pct)}</span>
                         ) : <span className="text-zinc-300 text-[10px]">—</span>}
                       </div>
                       <div className="grid grid-cols-2 gap-2 mb-2">
@@ -837,7 +841,7 @@ function CmvRealizado() {
                   ))}
                   {/* Mobile total footer */}
                   {comFicha.length > 0 && (
-                    <div className="p-3 bg-amber-50 border-t-2 border-zinc-200">
+                    <div className="p-3 bg-zinc-50 border-t-2 border-zinc-200">
                       <p className="text-xs font-bold text-zinc-700 mb-2">Total — {comFicha.length} itens c/ ficha</p>
                       <div className="grid grid-cols-2 gap-2">
                         <div>
@@ -846,7 +850,7 @@ function CmvRealizado() {
                         </div>
                         <div>
                           <p className="text-[10px] text-zinc-400">CMV geral</p>
-                          <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold ${cmvColor(data.cmv_pct_geral)}`}>
+                          <span className={`inline-block px-2 py-0.5 rounded-md text-[11px] font-semibold ${cmvColor(data.cmv_pct_geral)}`}>
                             {fmtPct(data.cmv_pct_geral)}
                           </span>
                         </div>
@@ -869,8 +873,8 @@ function CmvRealizado() {
       )}
 
       {!loading && !data && (
-        <div className="flex flex-col items-center justify-center py-16 text-center bg-white border border-zinc-100 rounded-xl">
-          <i className="ri-bar-chart-grouped-line text-4xl text-zinc-300 block mb-3" />
+        <div className="py-14 text-center bg-white border border-zinc-200 rounded-2xl">
+          <i className="ri-bar-chart-grouped-line text-4xl text-zinc-200 block mb-3" />
           <p className="text-sm font-semibold text-zinc-500">Selecione um período para calcular o CMV realizado</p>
         </div>
       )}
@@ -884,38 +888,38 @@ export default function CmvTab() {
   const [subTab, setSubTab] = useState<SubTab>('realizado');
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-2 justify-between">
+    <div className="p-4 md:p-6 space-y-5 max-w-[1400px] mx-auto">
+      <div className="flex flex-wrap items-center gap-2 lg:gap-3">
       {/* Sub-tabs */}
-      <div className="flex items-center gap-1 bg-zinc-100 rounded-xl p-1 w-fit">
+      <div className="flex gap-1 overflow-x-auto bg-zinc-100/80 rounded-xl p-1 w-full sm:w-fit">
         <button
           onClick={() => setSubTab('realizado')}
-          className={`px-4 py-2 text-xs font-semibold rounded-lg transition-all cursor-pointer whitespace-nowrap ${
-            subTab === 'realizado' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap cursor-pointer transition-colors ${
+            subTab === 'realizado' ? 'bg-white text-amber-600 shadow-sm' : 'text-zinc-500 hover:text-zinc-800'
           }`}
         >
-          <i className="ri-bar-chart-grouped-line mr-1.5" />
+          <i className="ri-bar-chart-grouped-line" />
           CMV Realizado
         </button>
         <button
           onClick={() => setSubTab('teorico')}
-          className={`px-4 py-2 text-xs font-semibold rounded-lg transition-all cursor-pointer whitespace-nowrap ${
-            subTab === 'teorico' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap cursor-pointer transition-colors ${
+            subTab === 'teorico' ? 'bg-white text-amber-600 shadow-sm' : 'text-zinc-500 hover:text-zinc-800'
           }`}
         >
-          <i className="ri-test-tube-line mr-1.5" />
+          <i className="ri-test-tube-line" />
           CMV Teórico
         </button>
       </div>
-      <BotaoFichasVendasPassadas />
+      <div className="ml-auto flex items-center gap-2 overflow-x-auto max-w-full">
+        <BotaoFichasVendasPassadas />
+      </div>
       </div>
 
       {/* Descrição do modo */}
-      <div className="flex items-start gap-2.5 px-3 py-2 bg-zinc-50 border border-zinc-100 rounded-xl">
-        <div className="w-5 h-5 flex items-center justify-center flex-shrink-0 mt-0.5">
-          <i className={`text-sm ${subTab === 'realizado' ? 'ri-bar-chart-grouped-line text-amber-500' : 'ri-test-tube-line text-zinc-400'}`} />
-        </div>
-        <p className="text-xs text-zinc-500">
+      <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 flex items-start gap-3">
+        <i className="ri-information-line text-base text-amber-500 flex-shrink-0" />
+        <p className="text-xs text-amber-800">
           {subTab === 'realizado'
             ? 'CMV Realizado cruza os pedidos do período com as fichas técnicas — mostra o custo real de tudo que foi vendido.'
             : 'CMV Teórico mostra o custo por unidade de cada item do cardápio, independente do volume vendido.'}

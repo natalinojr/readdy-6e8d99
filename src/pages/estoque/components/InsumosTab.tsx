@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
-import { Search, Plus, Edit2, Trash2, History } from 'lucide-react';
+import { Plus, Edit2, Trash2, History } from 'lucide-react';
 import type { Insumo } from '@/contexts/EstoqueContext';
 import { useEstoque } from '@/contexts/EstoqueContext';
 import { useProducao } from '@/contexts/ProducaoContext';
@@ -17,6 +17,7 @@ import ImportExportTemplatesModal from '@/components/ImportExportTemplatesModal'
 import ItensIndisponiveisPanel from './ItensIndisponiveisPanel';
 import PerguntarAoAssistente from '@/components/feature/PerguntarAoAssistente';
 import { useFocoTela } from '@/lib/assistenteFoco';
+import { KpiCard } from '../../financeiro/components/dreUi';
 
 // Um insumo em uma linha, para o assistente saber de qual o dono está falando (2026-09-16).
 function focoDoInsumo(i: Insumo, esgotado: boolean) {
@@ -48,10 +49,10 @@ function ThOrdenavel({
   const alignText = align === 'right' ? 'text-right' : align === 'center' ? 'text-center' : 'text-left';
   const justify = align === 'right' ? 'justify-end' : align === 'center' ? 'justify-center' : 'justify-start';
   return (
-    <th className={`px-4 py-3 font-semibold text-zinc-500 ${alignText}`}>
+    <th className={`px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400 ${alignText}`}>
       <button
         onClick={() => onSort(sortKey)}
-        className={`flex items-center gap-1 cursor-pointer hover:text-amber-600 w-full ${justify} ${ativo ? 'text-amber-600' : ''}`}
+        className={`flex items-center gap-1 cursor-pointer hover:text-amber-600 w-full uppercase tracking-wide ${justify} ${ativo ? 'text-amber-600' : ''}`}
       >
         {label}
         <i className={`ri-arrow-${ativo && dir === 'desc' ? 'down' : 'up'}-line text-[10px] ${ativo ? 'opacity-100' : 'opacity-0'}`} />
@@ -297,7 +298,7 @@ const STATUS_RANK: Record<string, number> = { Esgotado: 0, 'Crítico': 1, Baixo:
   };
 
   return (
-    <div className="space-y-4">
+    <div className="p-4 md:p-6 space-y-5 max-w-[1400px] mx-auto">
       {/* Painel de itens do cardápio indisponíveis por falta de insumo */}
       <ItensIndisponiveisPanel
         onEntradaRapida={(insumoId, insumoNome) => {
@@ -310,10 +311,10 @@ const STATUS_RANK: Record<string, number> = { Esgotado: 0, 'Crítico': 1, Baixo:
         <div className="flex items-start gap-3 px-4 py-3 bg-red-50 border border-red-200 rounded-xl">
           <i className="ri-forbid-2-fill text-red-500 text-base flex-shrink-0 mt-0.5" />
           <div className="flex-1">
-            <p className="text-xs font-bold text-red-700">
+            <p className="text-xs font-bold text-red-800">
               {qtdEsgotados} insumo{qtdEsgotados > 1 ? 's' : ''} esgotado{qtdEsgotados > 1 ? 's' : ''}
             </p>
-            <p className="text-[10px] text-red-500 mt-0.5">
+            <p className="text-xs text-red-600 mt-0.5">
               Insumos marcados como esgotados — itens do cardápio podem ser afetados.
             </p>
           </div>
@@ -321,7 +322,7 @@ const STATUS_RANK: Record<string, number> = { Esgotado: 0, 'Crítico': 1, Baixo:
       )}
 
       {insumosRuptura.length > 0 && (
-        <div className="border border-orange-200 rounded-xl overflow-hidden">
+        <div className="bg-white border border-orange-200 rounded-2xl overflow-hidden">
           <button
             onClick={() => setShowRuptura((v) => !v)}
             className="w-full flex items-center justify-between px-4 py-3 bg-orange-50 hover:bg-orange-100 transition-colors cursor-pointer"
@@ -340,7 +341,7 @@ const STATUS_RANK: Record<string, number> = { Esgotado: 0, 'Crítico': 1, Baixo:
             <i className={showRuptura ? 'ri-arrow-up-s-line text-orange-400 flex-shrink-0' : 'ri-arrow-down-s-line text-orange-400 flex-shrink-0'} />
           </button>
           {showRuptura && (
-            <div className="bg-white divide-y divide-zinc-50">
+            <div className="bg-white divide-y divide-zinc-100/80">
               {insumosRuptura.map(({ insumo, dias }) => (
                 <div key={insumo.id} className="flex items-center justify-between px-4 py-2.5">
                   <div className="flex items-center gap-2 min-w-0">
@@ -349,7 +350,7 @@ const STATUS_RANK: Record<string, number> = { Esgotado: 0, 'Crítico': 1, Baixo:
                     <span className="text-[10px] text-zinc-400 hidden sm:inline">{insumo.estoqueAtual} {insumo.unidade}</span>
                   </div>
                   <div className="flex items-center gap-2 flex-shrink-0">
-                    <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${dias === 0 ? 'bg-red-100 text-red-700' : dias! <= 3 ? 'bg-orange-100 text-orange-700' : 'bg-amber-100 text-amber-700'}`}>
+                    <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-md ${dias === 0 ? 'bg-red-50 text-red-600' : dias! <= 3 ? 'bg-orange-50 text-orange-700' : 'bg-amber-50 text-amber-700'}`}>
                       {dias === 0 ? 'Esgotado' : `${dias}d`}
                     </span>
                     <button
@@ -367,58 +368,54 @@ const STATUS_RANK: Record<string, number> = { Esgotado: 0, 'Crítico': 1, Baixo:
       )}
 
       {/* Cards de resumo */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <div className="bg-white border border-zinc-100 rounded-xl p-4 text-center">
-          <p className="text-xl font-bold text-zinc-900">{insumos.length}</p>
-          <p className="text-[10px] text-zinc-500 mt-0.5">Total de insumos</p>
-        </div>
-        <div className={`bg-white border rounded-xl p-4 text-center ${criticosResumo > 0 ? 'border-red-200' : 'border-zinc-100'}`}>
-          <p className={`text-xl font-bold ${criticosResumo > 0 ? 'text-red-500' : 'text-zinc-400'}`}>{criticosResumo}</p>
-          <p className="text-[10px] text-zinc-500 mt-0.5">Críticos</p>
-        </div>
-        <div className="bg-white border border-zinc-100 rounded-xl p-4 text-center">
-          <p className="text-xl font-bold text-zinc-700">{inventarioSessions.length}</p>
-          <p className="text-[10px] text-zinc-500 mt-0.5">Contagens</p>
-        </div>
-        <div className="bg-white border border-zinc-100 rounded-xl p-4 text-center">
-          <p className="text-sm font-bold text-zinc-900">{fmtValor(valorTotalEstoque)}</p>
-          <p className="text-[10px] text-zinc-500 mt-0.5">Valor em estoque</p>
-        </div>
+      <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
+        <KpiCard label="Total de insumos" icon="ri-flask-line" value={String(insumos.length)} atual={insumos.length} semVariacao />
+        <KpiCard
+          label="Críticos"
+          icon="ri-error-warning-line"
+          value={String(criticosResumo)}
+          valueTone={criticosResumo > 0 ? 'text-red-600' : 'text-zinc-400'}
+          highlight={criticosResumo > 0 ? 'neg' : undefined}
+          atual={criticosResumo}
+          semVariacao
+        />
+        <KpiCard label="Contagens" icon="ri-clipboard-line" value={String(inventarioSessions.length)} atual={inventarioSessions.length} semVariacao />
+        <KpiCard label="Valor em estoque" icon="ri-money-dollar-circle-line" value={fmtValor(valorTotalEstoque)} atual={valorTotalEstoque} semVariacao />
       </div>
 
       {/* Filtros */}
       <div className="flex flex-col gap-3">
         {/* Linha 1: busca + botões de ação */}
-        <div className="flex items-center gap-2 flex-wrap">
-          <div className="flex items-center gap-2 bg-white border border-zinc-200 rounded-lg px-3 py-2 flex-1 min-w-[160px]">
-            <div className="w-4 h-4 flex items-center justify-center text-zinc-400"><Search size={14} /></div>
-            <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar insumo..." className="flex-1 text-xs bg-transparent text-zinc-700 placeholder-zinc-400 focus:outline-none" />
+        <div className="flex items-center gap-2 lg:gap-3 flex-wrap">
+          <div className="relative flex-1 min-w-[160px]">
+            <i className="ri-search-line absolute left-3.5 top-1/2 -translate-y-1/2 text-zinc-400 text-sm pointer-events-none" />
+            <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar insumo..." className="w-full h-10 rounded-xl border border-zinc-200 shadow-sm pl-9 pr-3 text-xs bg-white text-zinc-700 placeholder-zinc-400 focus:outline-none focus:border-amber-400" />
           </div>
-          <div className="flex items-center gap-1.5 ml-auto">
+          <div className="ml-auto flex items-center gap-2 overflow-x-auto max-w-full">
             <button
               onClick={() => exportarInsumosCSV(insumosVisiveis)}
               disabled={insumosVisiveis.length === 0}
               title="Exportar CSV"
-              className="w-8 h-8 flex items-center justify-center bg-zinc-100 text-zinc-600 rounded-lg hover:bg-zinc-200 transition-colors cursor-pointer disabled:opacity-40"
+              className="flex items-center gap-1.5 px-3 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 rounded-xl text-xs font-semibold text-zinc-600 cursor-pointer transition-colors whitespace-nowrap shadow-sm disabled:opacity-40"
             >
               <i className="ri-download-line text-sm" />
             </button>
             <button
               onClick={() => setShowTemplatesModal(true)}
               title="Importar/Exportar Templates"
-              className="w-8 h-8 flex items-center justify-center bg-zinc-100 text-zinc-600 rounded-lg hover:bg-zinc-200 transition-colors cursor-pointer"
+              className="flex items-center gap-1.5 px-3 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 rounded-xl text-xs font-semibold text-zinc-600 cursor-pointer transition-colors whitespace-nowrap shadow-sm"
             >
               <i className="ri-file-transfer-line text-sm" />
             </button>
             <button
               onClick={() => setCategoriasModal(true)}
               title="Categorias"
-              className="w-8 h-8 flex items-center justify-center bg-zinc-100 text-zinc-600 rounded-lg hover:bg-zinc-200 transition-colors cursor-pointer"
+              className="flex items-center gap-1.5 px-3 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 rounded-xl text-xs font-semibold text-zinc-600 cursor-pointer transition-colors whitespace-nowrap shadow-sm"
             >
               <i className="ri-price-tag-3-line text-sm" />
             </button>
             <button onClick={() => setModal('new')}
-              className="flex items-center gap-1.5 px-3 py-2 bg-amber-500 text-white text-xs font-semibold rounded-lg hover:bg-amber-600 transition-colors whitespace-nowrap cursor-pointer">
+              className="flex items-center gap-1.5 bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-xl text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors shadow-sm">
               <div className="w-4 h-4 flex items-center justify-center"><Plus size={13} /></div>
               <span className="hidden sm:inline">Novo Insumo</span>
               <span className="sm:hidden">Novo</span>
@@ -428,14 +425,10 @@ const STATUS_RANK: Record<string, number> = { Esgotado: 0, 'Crítico': 1, Baixo:
 
         {/* Linha 2: categorias */}
         {todasCategorias.length > 0 && (
-          <div className="flex items-center gap-1 bg-zinc-100 rounded-lg p-1 overflow-x-auto">
-            <button onClick={() => setCategoriaFiltro('Todas')}
-              className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap cursor-pointer flex-shrink-0 ${categoriaFiltro === 'Todas' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'}`}>
-              Todas
-            </button>
-            {todasCategorias.map((c) => (
+          <div className="flex gap-1 overflow-x-auto bg-zinc-100/80 rounded-xl p-1 w-full sm:w-fit max-w-full">
+            {['Todas', ...todasCategorias].map((c) => (
               <button key={c} onClick={() => setCategoriaFiltro(c)}
-                className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap cursor-pointer flex-shrink-0 ${categoriaFiltro === c ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'}`}>
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap cursor-pointer transition-colors flex-shrink-0 ${categoriaFiltro === c ? 'bg-white text-amber-600 shadow-sm' : 'text-zinc-500 hover:text-zinc-800'}`}>
                 {c}
               </button>
             ))}
@@ -443,10 +436,10 @@ const STATUS_RANK: Record<string, number> = { Esgotado: 0, 'Crítico': 1, Baixo:
         )}
 
         {/* Linha 3: status */}
-        <div className="flex items-center gap-1 bg-zinc-100 rounded-lg p-1 overflow-x-auto">
+        <div className="flex gap-1 overflow-x-auto bg-zinc-100/80 rounded-xl p-1 w-full sm:w-fit max-w-full">
           {['Todos', 'Ok', 'Baixo', 'Crítico', 'Esgotado'].map((s) => (
             <button key={s} onClick={() => setFiltroStatus(s)}
-              className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap cursor-pointer flex-shrink-0 ${filtroStatus === s ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500'}`}>
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap cursor-pointer transition-colors flex-shrink-0 ${filtroStatus === s ? 'bg-white text-amber-600 shadow-sm' : 'text-zinc-500 hover:text-zinc-800'}`}>
               {s}
             </button>
           ))}
@@ -455,18 +448,18 @@ const STATUS_RANK: Record<string, number> = { Esgotado: 0, 'Crítico': 1, Baixo:
 
       {/* Tabela — desktop */}
       {insumos.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-16 text-center bg-white border border-zinc-100 rounded-xl">
-          <i className="ri-flask-line text-4xl text-zinc-300 block mb-3" />
+        <div className="flex flex-col items-center justify-center py-14 text-center bg-white border border-zinc-200 rounded-2xl">
+          <i className="ri-flask-line text-4xl text-zinc-200 block mb-2" />
           <p className="text-sm font-semibold text-zinc-500 mb-1">Nenhum insumo cadastrado</p>
           <p className="text-xs text-zinc-400">Clique em "Novo Insumo" para começar.</p>
         </div>
       ) : (
         <>
           {/* Desktop table */}
-          <div className="hidden md:block bg-white border border-zinc-100 rounded-xl overflow-hidden">
+          <div className="hidden md:block bg-white rounded-2xl border border-zinc-200 overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full text-xs">
-                <thead className="bg-zinc-50 border-b border-zinc-100">
+                <thead className="border-b border-zinc-200">
                   <tr>
                     <ThOrdenavel label="Insumo" sortKey="nome" align="left" current={sortKey} dir={sortDir} onSort={toggleSort} />
                     <ThOrdenavel label="Categoria" sortKey="categoria" align="left" current={sortKey} dir={sortDir} onSort={toggleSort} />
@@ -474,10 +467,10 @@ const STATUS_RANK: Record<string, number> = { Esgotado: 0, 'Crítico': 1, Baixo:
                     <ThOrdenavel label="Estoque Atual" sortKey="estoque" align="center" current={sortKey} dir={sortDir} onSort={toggleSort} />
                     <ThOrdenavel label="Valor em Estoque" sortKey="valor" align="center" current={sortKey} dir={sortDir} onSort={toggleSort} />
                     <ThOrdenavel label="Status" sortKey="status" align="center" current={sortKey} dir={sortDir} onSort={toggleSort} />
-                    <th className="px-4 py-3 text-right font-semibold text-zinc-500">Ações</th>
+                    <th className="px-4 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Ações</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-zinc-50">
+                <tbody className="divide-y divide-zinc-100/80">
                   {insumosVisiveis.map((insumo) => {
                     const st = statusEstoque(insumo);
                     const esgotado = insumosEsgotados.includes(insumo.id);
@@ -485,7 +478,7 @@ const STATUS_RANK: Record<string, number> = { Esgotado: 0, 'Crítico': 1, Baixo:
                     const ultimaProd = isProdutoAcabado ? ultimaProducaoPorProduto.get(insumo.nome) : null;
                     return (<>
                       <tr key={insumo.id} className={`transition-colors ${esgotado ? 'bg-red-50/50 hover:bg-red-50' : expandedPriceId === insumo.id ? 'bg-amber-50/20' : 'hover:bg-zinc-50'}`}>
-                        <td className="px-4 py-3">
+                        <td className="pl-5 pr-4 py-3">
                           <div
                             className="flex items-center gap-2 cursor-pointer group"
                             onClick={() => setExpandedPriceId(expandedPriceId === insumo.id ? null : insumo.id)}
@@ -500,17 +493,17 @@ const STATUS_RANK: Record<string, number> = { Esgotado: 0, 'Crítico': 1, Baixo:
                               <div className="flex items-center gap-1.5 flex-wrap">
                                 <p className={`font-medium group-hover:text-amber-600 transition-colors ${esgotado ? 'text-red-700' : 'text-zinc-800'}`}>{insumo.nome}</p>
                                 {isProdutoAcabado && (
-                                  <span className="px-1.5 py-0.5 bg-amber-50 text-amber-700 rounded-full text-[9px] font-bold border border-amber-200 whitespace-nowrap">
+                                  <span className="px-2 py-0.5 bg-amber-50 text-amber-700 rounded-md text-[11px] font-semibold whitespace-nowrap">
                                     PRODUZIDO
                                   </span>
                                 )}
                                 {!insumo.rastrearEstoque && (
-                                  <span className="px-1.5 py-0.5 bg-zinc-100 text-zinc-500 rounded-full text-[9px] font-bold border border-zinc-200 whitespace-nowrap" title="O sistema não avisa nem bloqueia nada por causa deste insumo">
+                                  <span className="px-2 py-0.5 bg-zinc-100 text-zinc-600 rounded-md text-[11px] font-semibold whitespace-nowrap" title="O sistema não avisa nem bloqueia nada por causa deste insumo">
                                     SEM AVISO
                                   </span>
                                 )}
                                 {!insumo.contaInventario && (
-                                  <span className="px-1.5 py-0.5 bg-zinc-100 text-zinc-500 rounded-full text-[9px] font-bold border border-zinc-200 whitespace-nowrap" title="Não aparece na contagem de inventário">
+                                  <span className="px-2 py-0.5 bg-zinc-100 text-zinc-600 rounded-md text-[11px] font-semibold whitespace-nowrap" title="Não aparece na contagem de inventário">
                                     FORA DO INVENTÁRIO
                                   </span>
                                 )}
@@ -529,12 +522,12 @@ const STATUS_RANK: Record<string, number> = { Esgotado: 0, 'Crítico': 1, Baixo:
                         </td>
                         <td className="px-4 py-3">
                           {resolveCategoria(insumo) ? (
-                            <span className="px-2 py-0.5 bg-zinc-100 text-zinc-600 rounded-full text-[10px] font-medium whitespace-nowrap">{resolveCategoria(insumo)}</span>
+                            <span className="px-2 py-0.5 bg-zinc-100 text-zinc-600 rounded-md text-[11px] font-semibold whitespace-nowrap">{resolveCategoria(insumo)}</span>
                           ) : (
                             <span className="text-zinc-300 text-[10px]">—</span>
                           )}
                         </td>
-                        <td className="px-4 py-3 text-right">
+                        <td className="px-4 py-3 text-right whitespace-nowrap tabular-nums">
                           <p className="font-semibold text-zinc-800">{/* insumo em g/ml custa fração de centavo: 4 casas para não virar R$ 0,00 */}
                             {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: insumo.precoUnitario > 0 && insumo.precoUnitario < 1 ? 4 : 2 }).format(insumo.precoUnitario)}/{insumo.unidade}</p>
                           {insumo.priceSource === 'average' && (
@@ -565,13 +558,13 @@ const STATUS_RANK: Record<string, number> = { Esgotado: 0, 'Crítico': 1, Baixo:
                           </div>
                         </td>
                         <td className="px-4 py-3 text-center">
-                          <p className="font-semibold text-zinc-800">{fmtValor(insumo.estoqueAtual * insumo.precoUnitario)}</p>
+                          <p className="font-semibold text-zinc-800 tabular-nums whitespace-nowrap">{fmtValor(insumo.estoqueAtual * insumo.precoUnitario)}</p>
                         </td>
                         <td className="px-4 py-3 text-center">
                           {esgotado ? (
-                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold text-red-700 bg-red-100 border border-red-200 animate-pulse">ESGOTADO</span>
+                            <span className="px-2 py-0.5 rounded-md text-[11px] font-semibold text-red-600 bg-red-50 animate-pulse">ESGOTADO</span>
                           ) : (
-                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${st.cls}`}>{st.label}</span>
+                            <span className={`px-2 py-0.5 rounded-md text-[11px] font-semibold ${st.cls}`}>{st.label}</span>
                           )}
                         </td>
                         <td className="px-4 py-3">
@@ -610,9 +603,9 @@ const STATUS_RANK: Record<string, number> = { Esgotado: 0, 'Crítico': 1, Baixo:
               </table>
             </div>
             {insumosVisiveis.length === 0 && (
-              <div className="text-center py-8">
-                <i className="ri-search-line text-2xl text-zinc-300 block mb-2" />
-                <p className="text-xs text-zinc-400">Nenhum insumo encontrado com esses filtros.</p>
+              <div className="text-center py-14">
+                <i className="ri-search-line text-4xl text-zinc-200 block" />
+                <p className="text-sm text-zinc-400 mt-2">Nenhum insumo encontrado com esses filtros.</p>
               </div>
             )}
           </div>
@@ -620,9 +613,9 @@ const STATUS_RANK: Record<string, number> = { Esgotado: 0, 'Crítico': 1, Baixo:
           {/* Mobile cards */}
           <div className="md:hidden space-y-2">
             {insumosVisiveis.length === 0 ? (
-              <div className="text-center py-8 bg-white border border-zinc-100 rounded-xl">
-                <i className="ri-search-line text-2xl text-zinc-300 block mb-2" />
-                <p className="text-xs text-zinc-400">Nenhum insumo encontrado.</p>
+              <div className="text-center py-14 bg-white border border-zinc-200 rounded-2xl">
+                <i className="ri-search-line text-4xl text-zinc-200 block" />
+                <p className="text-sm text-zinc-400 mt-2">Nenhum insumo encontrado.</p>
               </div>
             ) : insumosVisiveis.map((insumo) => {
               const st = statusEstoque(insumo);
@@ -630,24 +623,24 @@ const STATUS_RANK: Record<string, number> = { Esgotado: 0, 'Crítico': 1, Baixo:
               const isProdutoAcabado = recipeNames.has(insumo.nome);
               const ultimaProd = isProdutoAcabado ? ultimaProducaoPorProduto.get(insumo.nome) : null;
               return (
-                <div key={insumo.id} className={`bg-white border rounded-xl p-3 ${esgotado ? 'border-red-200 bg-red-50/30' : 'border-zinc-100'}`}>
+                <div key={insumo.id} className={`bg-white border rounded-2xl p-3 ${esgotado ? 'border-red-200 bg-red-50/30' : 'border-zinc-200'}`}>
                   <div className="flex items-start justify-between gap-2 mb-2">
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-1.5 flex-wrap">
                         {esgotado && <i className="ri-forbid-2-fill text-red-500 text-xs" />}
                         <p className={`text-sm font-bold truncate ${esgotado ? 'text-red-700' : 'text-zinc-800'}`}>{insumo.nome}</p>
                         {isProdutoAcabado && (
-                          <span className="px-1.5 py-0.5 bg-amber-50 text-amber-700 rounded-full text-[9px] font-bold border border-amber-200 whitespace-nowrap">
+                          <span className="px-2 py-0.5 bg-amber-50 text-amber-700 rounded-md text-[11px] font-semibold whitespace-nowrap">
                             PRODUZIDO
                           </span>
                         )}
                         {!insumo.rastrearEstoque && (
-                          <span className="px-1.5 py-0.5 bg-zinc-100 text-zinc-500 rounded-full text-[9px] font-bold border border-zinc-200 whitespace-nowrap">
+                          <span className="px-2 py-0.5 bg-zinc-100 text-zinc-600 rounded-md text-[11px] font-semibold whitespace-nowrap">
                             SEM AVISO
                           </span>
                         )}
                         {!insumo.contaInventario && (
-                          <span className="px-1.5 py-0.5 bg-zinc-100 text-zinc-500 rounded-full text-[9px] font-bold border border-zinc-200 whitespace-nowrap">
+                          <span className="px-2 py-0.5 bg-zinc-100 text-zinc-600 rounded-md text-[11px] font-semibold whitespace-nowrap">
                             FORA DO INVENTÁRIO
                           </span>
                         )}
@@ -658,14 +651,14 @@ const STATUS_RANK: Record<string, number> = { Esgotado: 0, 'Crítico': 1, Baixo:
                         </p>
                       )}
                       {resolveCategoria(insumo) && (
-                        <span className="text-[10px] text-zinc-500 bg-zinc-100 px-1.5 py-0.5 rounded-full mt-0.5 inline-block">{resolveCategoria(insumo)}</span>
+                        <span className="text-[11px] font-semibold text-zinc-600 bg-zinc-100 px-2 py-0.5 rounded-md mt-0.5 inline-block">{resolveCategoria(insumo)}</span>
                       )}
                     </div>
                     <div className="flex-shrink-0">
                       {esgotado ? (
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold text-red-700 bg-red-100 border border-red-200">ESGOTADO</span>
+                        <span className="px-2 py-0.5 rounded-md text-[11px] font-semibold text-red-600 bg-red-50">ESGOTADO</span>
                       ) : (
-                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${st.cls}`}>{st.label}</span>
+                        <span className={`px-2 py-0.5 rounded-md text-[11px] font-semibold ${st.cls}`}>{st.label}</span>
                       )}
                     </div>
                   </div>
@@ -690,7 +683,7 @@ const STATUS_RANK: Record<string, number> = { Esgotado: 0, 'Crítico': 1, Baixo:
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-1.5 pt-2 border-t border-zinc-50">
+                  <div className="flex items-center gap-1.5 pt-2 border-t border-zinc-100">
                     <button onClick={() => setEntradaRapida(insumo)} className="flex-1 flex items-center justify-center gap-1 py-1.5 bg-green-50 text-green-700 text-xs font-semibold rounded-lg cursor-pointer">
                       <i className="ri-add-circle-line text-sm" /> Entrada
                     </button>

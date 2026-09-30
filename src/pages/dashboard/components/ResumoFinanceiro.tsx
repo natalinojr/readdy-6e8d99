@@ -133,7 +133,7 @@ export default function ResumoFinanceiro({ refreshKey = 0 }: { refreshKey?: numb
 
   if (loading) {
     return (
-      <div className="bg-white border border-zinc-100 rounded-xl p-4 flex items-center justify-center h-28">
+      <div className="bg-white rounded-2xl border border-zinc-200 p-4 flex items-center justify-center h-28">
         <div className="w-4 h-4 border-2 border-amber-400 border-t-transparent rounded-full animate-spin" />
       </div>
     );
@@ -145,27 +145,27 @@ export default function ResumoFinanceiro({ refreshKey = 0 }: { refreshKey?: numb
   const totalContasEmAberto = data.contasEmAberto.reduce((s, c) => s + c.count, 0);
 
   return (
-    <div className="bg-white border border-zinc-100 rounded-xl p-4 space-y-4">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <div className="w-7 h-7 flex items-center justify-center bg-amber-50 rounded-lg">
-            <i className="ri-money-dollar-circle-line text-amber-600 text-sm" />
-          </div>
-          <h3 className="text-xs font-bold text-zinc-700 uppercase tracking-wide">Financeiro Hoje</h3>
+    <div className="bg-white rounded-2xl border border-zinc-200">
+      <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-100 gap-3 flex-wrap">
+        <div>
+          <h3 className="text-sm font-bold text-zinc-800">Financeiro Hoje</h3>
+          <p className="text-xs text-zinc-400">Receita e contas do dia</p>
         </div>
         <button
           onClick={load}
-          className="w-6 h-6 flex items-center justify-center rounded-lg hover:bg-zinc-100 cursor-pointer text-zinc-400"
+          className="w-8 h-8 flex items-center justify-center rounded-xl border border-zinc-200 bg-white hover:bg-zinc-50 cursor-pointer text-zinc-500 shadow-sm"
           title="Atualizar"
         >
-          <i className="ri-refresh-line text-xs" />
+          <i className="ri-refresh-line text-sm" />
         </button>
       </div>
+
+      <div className="p-5 space-y-4">
 
       {/* Total */}
       <div className="text-center py-1">
         <span className="text-[10px] text-zinc-400 font-medium">Receita do dia</span>
-        <div className="text-lg font-black text-zinc-900 mt-0.5">{fmt(data.receitaHoje)}</div>
+        <div className="text-2xl font-bold tabular-nums tracking-tight text-zinc-900 mt-0.5">{fmt(data.receitaHoje)}</div>
       </div>
 
       {/* Barra de progresso */}
@@ -269,6 +269,7 @@ export default function ResumoFinanceiro({ refreshKey = 0 }: { refreshKey?: numb
             <span className="text-xs font-bold text-amber-700">{fmt(data.contasVencer7dias)}</span>
           </div>
         )}
+      </div>
       </div>
     </div>
   );

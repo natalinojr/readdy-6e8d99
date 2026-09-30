@@ -87,18 +87,18 @@ export default function CalendarioSeletorData({ value, onSelect, onClose }: Prop
   const hojeISO = toLocalISODate(hoje);
 
   return (
-    <div className="absolute z-30 mt-1 bg-white border border-zinc-200 rounded-xl shadow-lg p-3 w-72">
+    <div className="absolute right-0 z-30 mt-1 bg-white border border-zinc-200 rounded-2xl shadow-lg p-4 w-72 max-w-[calc(100vw-2rem)]">
       <div className="flex items-center justify-between mb-2">
         <button
           onClick={prevMonth}
-          className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-zinc-100 text-zinc-500 cursor-pointer"
+          className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-zinc-100 text-zinc-500 hover:text-zinc-800 cursor-pointer transition-colors"
         >
           <ChevronLeft size={14} />
         </button>
-        <span className="text-xs font-bold text-zinc-700 capitalize">{monthName}</span>
+        <span className="text-sm font-bold text-zinc-800 capitalize">{monthName}</span>
         <button
           onClick={nextMonth}
-          className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-zinc-100 text-zinc-500 cursor-pointer"
+          className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-zinc-100 text-zinc-500 hover:text-zinc-800 cursor-pointer transition-colors"
         >
           <ChevronRight size={14} />
         </button>
@@ -106,7 +106,7 @@ export default function CalendarioSeletorData({ value, onSelect, onClose }: Prop
 
       <div className="grid grid-cols-7 gap-0.5 mb-1">
         {WEEKDAYS.map((w, i) => (
-          <div key={i} className="text-[10px] font-semibold text-zinc-400 text-center py-1">
+          <div key={i} className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400 text-center py-1">
             {w}
           </div>
         ))}
@@ -124,9 +124,9 @@ export default function CalendarioSeletorData({ value, onSelect, onClose }: Prop
               key={i}
               onClick={() => { onSelect(iso); onClose(); }}
               title={temContagem ? 'Teve contagem de inventário neste dia' : undefined}
-              className={`relative h-8 flex flex-col items-center justify-center rounded-md text-xs cursor-pointer transition-colors ${
+              className={`relative h-8 flex flex-col items-center justify-center rounded-lg text-xs cursor-pointer transition-colors ${
                 isSelected
-                  ? 'bg-amber-500 text-white font-bold'
+                  ? 'bg-amber-500 text-white font-bold shadow-sm'
                   : isHoje
                     ? 'bg-amber-50 text-amber-700 font-semibold hover:bg-amber-100'
                     : 'text-zinc-600 hover:bg-zinc-100'

@@ -88,11 +88,11 @@ export default function MetasDia({ faturamentoHoje, pedidosHoje, ticketMedio }: 
   const atingidas = items.filter(m => m.atual >= m.meta).length;
 
   return (
-    <div className="bg-white border border-zinc-100 rounded-xl p-5">
-      <div className="flex items-center justify-between mb-4">
+    <div className="bg-white rounded-2xl border border-zinc-200">
+      <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-100 gap-3 flex-wrap">
         <div>
           <h3 className="text-sm font-bold text-zinc-800">Metas do Dia</h3>
-          <p className="text-xs text-zinc-400 mt-0.5">
+          <p className="text-xs text-zinc-400">
             {atingidas === 0
               ? 'Nenhuma meta atingida ainda'
               : atingidas === items.length
@@ -102,13 +102,14 @@ export default function MetasDia({ faturamentoHoje, pedidosHoje, ticketMedio }: 
         </div>
         <button
           onClick={() => { setDraft(metas); setEditando(true); }}
-          className="flex items-center gap-1.5 text-xs text-zinc-400 hover:text-zinc-600 transition-colors cursor-pointer px-2.5 py-1.5 rounded-lg hover:bg-zinc-50"
+          className="flex items-center gap-1.5 px-3 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 rounded-xl text-xs font-semibold text-zinc-600 cursor-pointer transition-colors whitespace-nowrap shadow-sm"
         >
           <i className="ri-settings-3-line text-sm" />
           Configurar
         </button>
       </div>
 
+      <div className="p-5">
       <div className="space-y-4">
         {items.map((item) => {
           const pct = item.meta > 0 ? Math.min((item.atual / item.meta) * 100, 100) : 0;
@@ -122,13 +123,13 @@ export default function MetasDia({ faturamentoHoje, pedidosHoje, ticketMedio }: 
                   <i className={`${item.icon} text-sm ${item.cor}`} />
                   <span className="text-xs font-semibold text-zinc-700">{item.label}</span>
                   {atingiu && (
-                    <span className="flex items-center gap-0.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700">
+                    <span className="flex items-center gap-0.5 text-[11px] font-semibold px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700">
                       <i className="ri-check-line text-[9px]" /> Meta!
                     </span>
                   )}
                 </div>
                 <div className="text-right">
-                  <span className="text-xs font-bold text-zinc-800">
+                  <span className="text-xs font-bold text-zinc-800 tabular-nums">
                     {item.formato === 'moeda' ? fmt(item.atual) : item.atual}
                   </span>
                   <span className="text-[10px] text-zinc-400 ml-1">
@@ -170,6 +171,7 @@ export default function MetasDia({ faturamentoHoje, pedidosHoje, ticketMedio }: 
             {atingidas}/{items.length} metas
           </span>
         </div>
+      </div>
       </div>
 
       {/* Modal de configuração */}

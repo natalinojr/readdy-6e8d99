@@ -1,14 +1,12 @@
-import { TrendingUp, TrendingDown } from 'lucide-react';
-import type { ComponentType } from 'react';
-
 interface MetricCardProps {
   label: string;
   value: string;
   trend?: number;
   trendLabel?: string;
-  icon: ComponentType<{ size?: number; className?: string }>;
-  iconBg: string;
-  iconColor: string;
+  /** classe remixicon, ex.: 'ri-money-dollar-circle-line' */
+  icon: string;
+  /** cor do ícone quando precisa sinalizar (ex.: SLA acima do alvo) */
+  alerta?: boolean;
   onClick?: () => void;
 }
 
@@ -17,12 +15,14 @@ export default function MetricCard({
   value,
   trend,
   trendLabel,
-  icon: Icon,
-  iconBg,
-  iconColor,
+  icon,
+  alerta,
   onClick,
 }: MetricCardProps) {
   const isPositive = trend !== undefined && trend >= 0;
+  const subTone = trend !== undefined
+    ? 'text-zinc-400'
+    : trendLabel === 'No prazo' ? 'text-emerald-600' : trendLabel === 'Acima do alvo' ? 'text-red-500' : 'text-zinc-400';
 
   return (
     <div
@@ -30,36 +30,24 @@ export default function MetricCard({
       role={onClick ? 'button' : undefined}
       tabIndex={onClick ? 0 : undefined}
       onKeyDown={onClick ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } } : undefined}
-      className={`bg-white border border-zinc-100 rounded-xl p-5 ${onClick ? 'cursor-pointer hover:border-rose-200 hover:shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-rose-200' : ''}`}
+      className={`rounded-2xl border border-zinc-200 bg-white p-4 flex flex-col gap-2 ${onClick ? 'cursor-pointer hover:border-amber-300 hover:shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-amber-200' : ''}`}
     >
-      <div className="flex items-start justify-between">
-        <div className="flex-1">
-          <p className="text-xs font-medium text-zinc-500 uppercase tracking-wider">{label}</p>
-          <p className="text-2xl font-bold text-zinc-900 mt-1.5">{value}</p>
-          {(trend !== undefined || trendLabel) && (
-            <div className="flex items-center gap-1 mt-1.5">
-              {trend !== undefined && (
-                <div
-                  className={`flex items-center gap-0.5 text-xs font-semibold ${
-                    isPositive ? 'text-emerald-600' : 'text-red-500'
-                  }`}
-                >
-                  {isPositive ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
-                  {Math.abs(trend).toFixed(1)}%
-                </div>
-              )}
-              {trendLabel && (
-                <span className={`text-xs font-medium ${trend !== undefined ? 'text-zinc-400' : trendLabel === 'No prazo' ? 'text-emerald-600' : trendLabel === 'Acima do alvo' ? 'text-red-500' : 'text-zinc-400'}`}>
-                  {trendLabel}
-                </span>
-              )}
-            </div>
-          )}
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className={`w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 ${alerta ? 'bg-red-50 text-red-500' : 'bg-zinc-100 text-zinc-500'}`}>
+            <i className={`${icon} text-sm`} />
+          </span>
+          <span className="text-xs font-semibold text-zinc-500 truncate">{label}</span>
         </div>
-        <div className={`w-11 h-11 flex items-center justify-center rounded-xl ${iconBg}`}>
-          <Icon size={20} className={iconColor} />
-        </div>
+        {trend !== undefined && (
+          <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[11px] font-semibold tabular-nums ${isPositive ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
+            <i className={isPositive ? 'ri-arrow-up-line' : 'ri-arrow-down-line'} />
+            {Math.abs(trend).toFixed(1).replace('.', ',')}%
+          </span>
+        )}
       </div>
+      <p className="text-2xl font-bold tabular-nums tracking-tight text-zinc-900">{value}</p>
+      {trendLabel && <p className={`text-xs ${subTone}`}>{trendLabel}</p>}
     </div>
   );
 }

@@ -10,6 +10,7 @@ import RegistroProducaoModal from './RegistroProducaoModal';
 import DetalheBatchModal from './DetalheBatchModal';
 import ConfirmModal from '@/components/base/ConfirmModal';
 import type { ProductionRecipe, ProductionBatch } from '@/types/estoque';
+import { KpiCard, Segmented } from '../../financeiro/components/dreUi';
 
 const fmt = formatCurrency;
 const fmtPct = formatPercent;
@@ -41,27 +42,23 @@ function ResumoCards({
   const custoTotal = batches.reduce((s, b) => s + b.totalCost, 0);
 
   return (
-    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-      <div className="bg-white border border-zinc-100 rounded-xl p-4">
-        <p className="text-xs text-zinc-500 mb-1">Fichas Ativas</p>
-        <p className="text-2xl font-black text-zinc-800">{activeRecipes}</p>
-        <p className="text-[10px] text-zinc-400 mt-1">cadastradas</p>
-      </div>
-      <div className="bg-white border border-zinc-100 rounded-xl p-4">
-        <p className="text-xs text-zinc-500 mb-1">Produções Registradas</p>
-        <p className="text-2xl font-black text-zinc-800">{totalBatches}</p>
-        <p className="text-[10px] text-zinc-400 mt-1">{hasFilter ? 'no período' : 'no histórico'}</p>
-      </div>
-      <div className="bg-white border border-zinc-100 rounded-xl p-4">
-        <p className="text-xs text-zinc-500 mb-1">Rendimento Médio</p>
-        <p className="text-2xl font-black text-amber-600">{fmtPct(avgYield)}</p>
-        <p className="text-[10px] text-zinc-400 mt-1">entre todas as produções</p>
-      </div>
-      <div className="bg-white border border-zinc-100 rounded-xl p-4">
-        <p className="text-xs text-zinc-500 mb-1">Custo Total Investido</p>
-        <p className="text-2xl font-black text-zinc-800">{fmt(custoTotal)}</p>
-        <p className="text-[10px] text-zinc-400 mt-1">{hasFilter ? 'no período selecionado' : 'em todo o histórico'}</p>
-      </div>
+    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+      <KpiCard
+        label="Fichas Ativas" icon="ri-file-list-3-line" semVariacao atual={activeRecipes}
+        value={String(activeRecipes)} sub="cadastradas"
+      />
+      <KpiCard
+        label="Produções Registradas" icon="ri-archive-drawer-line" semVariacao atual={totalBatches}
+        value={String(totalBatches)} sub={hasFilter ? 'no período' : 'no histórico'}
+      />
+      <KpiCard
+        label="Rendimento Médio" icon="ri-percent-line" semVariacao atual={avgYield}
+        value={fmtPct(avgYield)} valueTone="text-amber-700" sub="entre todas as produções"
+      />
+      <KpiCard
+        label="Custo Total Investido" icon="ri-money-dollar-circle-line" semVariacao atual={custoTotal}
+        value={fmt(custoTotal)} sub={hasFilter ? 'no período selecionado' : 'em todo o histórico'}
+      />
     </div>
   );
 }
@@ -122,7 +119,7 @@ function ListaFichas({
   }, [recipes, insumos]);
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       <ConfirmModal
         isOpen={!!confirmRecipeId}
         title="Excluir ficha de produção?"
@@ -141,41 +138,33 @@ function ListaFichas({
         }}
       />
       {/* Filtros */}
-      <div className="flex flex-col gap-2">
-        <div className="flex items-center gap-2 bg-white border border-zinc-200 rounded-lg px-3 py-2">
-          <i className="ri-search-line text-zinc-400 text-sm" />
+      <div className="flex flex-wrap items-center gap-2 lg:gap-3">
+        <div className="relative flex-1 min-w-[200px] max-w-sm">
+          <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 text-sm" />
           <input
             value={busca}
             onChange={(e) => setBusca(e.target.value)}
             placeholder="Buscar ficha de produção..."
-            className="flex-1 text-xs bg-transparent text-zinc-700 placeholder-zinc-400 focus:outline-none"
+            className="w-full h-10 rounded-xl border border-zinc-200 shadow-sm pl-9 pr-3 text-sm bg-white text-zinc-700 placeholder-zinc-400 focus:outline-none focus:border-amber-400"
           />
         </div>
-        <div className="flex items-center gap-1 bg-zinc-100 rounded-lg p-1 overflow-x-auto">
-          {[
-            { id: 'nome' as OrdenacaoFichas, label: 'Nome' },
-            { id: 'yield_desc' as OrdenacaoFichas, label: 'Mais Insumos' },
-            { id: 'itens' as OrdenacaoFichas, label: 'Mais Insumos' },
-          ].map((op) => (
-            <button
-              key={op.id}
-              onClick={() => setOrdenacao(op.id)}
-              className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap cursor-pointer flex-shrink-0 ${
-                ordenacao === op.id
-                  ? 'bg-white text-zinc-900 shadow-sm'
-                  : 'text-zinc-500 hover:text-zinc-700'
-              }`}
-            >
-              {op.label}
-            </button>
-          ))}
+        <div className="overflow-x-auto max-w-full">
+          <Segmented<OrdenacaoFichas>
+            value={ordenacao}
+            onChange={setOrdenacao}
+            options={[
+              { id: 'nome', label: 'Nome', icon: 'ri-sort-alphabet-asc' },
+              { id: 'yield_desc', label: 'Mais Insumos', icon: 'ri-sort-desc' },
+              { id: 'itens', label: 'Mais Insumos', icon: 'ri-stack-line' },
+            ]}
+          />
         </div>
       </div>
 
       {/* Grid de fichas */}
       {fichasFiltradas.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-16 text-center bg-white border border-zinc-100 rounded-xl">
-          <i className="ri-file-list-3-line text-4xl text-zinc-300 block mb-3" />
+        <div className="flex flex-col items-center justify-center py-14 text-center bg-white border border-zinc-200 rounded-2xl">
+          <i className="ri-file-list-3-line text-4xl text-zinc-200 block mb-3" />
           <p className="text-sm font-semibold text-zinc-500">
             Nenhuma ficha encontrada
           </p>
@@ -184,14 +173,14 @@ function ListaFichas({
           </p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
           {fichasFiltradas.map((recipe) => {
             const custoReceita = custoEstimadoPorReceita.get(recipe.id) ?? 0;
             const batchCount = batchCountForRecipe(recipe.id);
             return (
               <div
                 key={recipe.id}
-                className="bg-white border border-zinc-100 rounded-xl p-4 hover:border-amber-300 transition-colors group"
+                className="bg-white rounded-2xl border border-zinc-200 p-4 hover:border-amber-300 transition-colors group"
               >
                 <div className="flex items-start justify-between gap-2 mb-3">
                   <div className="flex-1 min-w-0">
@@ -203,7 +192,7 @@ function ListaFichas({
                       {recipe.items.length > 1 ? 's' : ''}
                     </p>
                   </div>
-                  <div className="flex items-center gap-1 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <div className="flex items-center gap-1 flex-shrink-0 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
                     <button
                       onClick={() => onEdit(recipe)}
                       className="w-7 h-7 flex items-center justify-center text-zinc-400 hover:text-amber-500 cursor-pointer transition-colors"
@@ -263,7 +252,7 @@ function ListaFichas({
                     )}
                     <button
                       onClick={() => onNovaProducao(recipe.id)}
-                      className="px-3 py-1.5 bg-amber-500 text-white text-[11px] font-semibold rounded-lg hover:bg-amber-600 transition-colors cursor-pointer whitespace-nowrap"
+                      className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white text-[11px] font-semibold rounded-xl shadow-sm transition-colors cursor-pointer whitespace-nowrap"
                     >
                       <i className="ri-add-line mr-1" />
                       Registrar Produção
@@ -335,7 +324,7 @@ function ListaProducoes({
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       <ConfirmModal
         isOpen={!!confirmBatchId}
         title="Excluir registro de produção?"
@@ -354,19 +343,32 @@ function ListaProducoes({
         }}
       />
       {/* Filtros */}
-      <div className="flex flex-col gap-2">
-        <div className="flex items-center gap-2 bg-white border border-zinc-200 rounded-lg px-3 py-2">
-          <i className="ri-search-line text-zinc-400 text-sm" />
-          <input
-            value={busca}
-            onChange={(e) => setBusca(e.target.value)}
-            placeholder="Buscar registro de produção..."
-            className="flex-1 text-xs bg-transparent text-zinc-700 placeholder-zinc-400 focus:outline-none"
-          />
+      <div className="flex flex-col gap-3">
+        <div className="flex flex-wrap items-center gap-2 lg:gap-3">
+          <div className="relative flex-1 min-w-[200px] max-w-sm">
+            <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 text-sm" />
+            <input
+              value={busca}
+              onChange={(e) => setBusca(e.target.value)}
+              placeholder="Buscar registro de produção..."
+              className="w-full h-10 rounded-xl border border-zinc-200 shadow-sm pl-9 pr-3 text-sm bg-white text-zinc-700 placeholder-zinc-400 focus:outline-none focus:border-amber-400"
+            />
+          </div>
+          <div className="overflow-x-auto max-w-full">
+            <Segmented<OrdenacaoProducoes>
+              value={ordenacao}
+              onChange={setOrdenacao}
+              options={[
+                { id: 'data_desc', label: 'Mais recente', icon: 'ri-time-line' },
+                { id: 'custo_desc', label: 'Maior Custo', icon: 'ri-money-dollar-circle-line' },
+                { id: 'receita_desc', label: 'Maior Produção', icon: 'ri-sort-desc' },
+              ]}
+            />
+          </div>
         </div>
 
         {/* Filtro de período */}
-        <div className="flex items-center gap-3 flex-wrap bg-white border border-zinc-100 rounded-xl px-4 py-3">
+        <div className="flex items-center gap-3 flex-wrap bg-white border border-zinc-200 rounded-2xl px-5 py-3">
           <div className="w-4 h-4 flex items-center justify-center text-zinc-400 flex-shrink-0">
             <Calendar size={14} />
           </div>
@@ -378,7 +380,7 @@ function ListaProducoes({
                 type="date"
                 value={dateFrom}
                 onChange={(e) => setDateFrom(e.target.value)}
-                className="text-xs border border-zinc-200 rounded-lg px-2.5 py-1.5 text-zinc-700 focus:outline-none focus:border-amber-400 cursor-pointer"
+                className="h-10 text-xs border border-zinc-200 shadow-sm rounded-xl px-3 text-zinc-700 focus:outline-none focus:border-amber-400 cursor-pointer"
               />
             </div>
             <div className="flex items-center gap-1.5">
@@ -387,7 +389,7 @@ function ListaProducoes({
                 type="date"
                 value={dateTo}
                 onChange={(e) => setDateTo(e.target.value)}
-                className="text-xs border border-zinc-200 rounded-lg px-2.5 py-1.5 text-zinc-700 focus:outline-none focus:border-amber-400 cursor-pointer"
+                className="h-10 text-xs border border-zinc-200 shadow-sm rounded-xl px-3 text-zinc-700 focus:outline-none focus:border-amber-400 cursor-pointer"
               />
             </div>
             <div className="flex items-center gap-1">
@@ -415,7 +417,7 @@ function ListaProducoes({
                       setDateTo(todayStr);
                     }
                   }}
-                  className="px-2 py-1 text-xs font-medium rounded-md bg-zinc-100 text-zinc-500 hover:bg-amber-100 hover:text-amber-700 transition-colors cursor-pointer whitespace-nowrap"
+                  className="px-3 py-2 text-xs font-semibold rounded-xl bg-zinc-100 text-zinc-500 hover:bg-amber-50 hover:text-amber-700 transition-colors cursor-pointer whitespace-nowrap"
                 >
                   {label}
                 </button>
@@ -424,7 +426,7 @@ function ListaProducoes({
             {hasDateFilter && (
               <button
                 onClick={clearDates}
-                className="flex items-center gap-1 px-2 py-1 text-xs font-semibold text-zinc-500 hover:text-red-500 bg-zinc-100 hover:bg-red-50 rounded-lg transition-colors cursor-pointer whitespace-nowrap"
+                className="flex items-center gap-1 px-3 py-2 text-xs font-semibold text-zinc-500 hover:text-red-500 bg-zinc-100 hover:bg-red-50 rounded-xl transition-colors cursor-pointer whitespace-nowrap"
               >
                 <X size={11} /> Limpar
               </button>
@@ -437,31 +439,12 @@ function ListaProducoes({
           )}
         </div>
 
-        <div className="flex items-center gap-1 bg-zinc-100 rounded-lg p-1 overflow-x-auto">
-          {[
-            { id: 'data_desc' as OrdenacaoProducoes, label: 'Mais recente' },
-            { id: 'custo_desc' as OrdenacaoProducoes, label: 'Maior Custo' },
-            { id: 'receita_desc' as OrdenacaoProducoes, label: 'Maior Produção' },
-          ].map((op) => (
-            <button
-              key={op.id}
-              onClick={() => setOrdenacao(op.id)}
-              className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap cursor-pointer flex-shrink-0 ${
-                ordenacao === op.id
-                  ? 'bg-white text-zinc-900 shadow-sm'
-                  : 'text-zinc-500 hover:text-zinc-700'
-              }`}
-            >
-              {op.label}
-            </button>
-          ))}
-        </div>
       </div>
 
       {/* Tabela */}
       {producoesFiltradas.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-16 text-center bg-white border border-zinc-100 rounded-xl">
-          <i className="ri-archive-drawer-line text-4xl text-zinc-300 block mb-3" />
+        <div className="flex flex-col items-center justify-center py-14 text-center bg-white border border-zinc-200 rounded-2xl">
+          <i className="ri-archive-drawer-line text-4xl text-zinc-200 block mb-3" />
           <p className="text-sm font-semibold text-zinc-500">
             Nenhum registro de produção
           </p>
@@ -470,49 +453,49 @@ function ListaProducoes({
           </p>
         </div>
       ) : (
-        <div className="bg-white border border-zinc-100 rounded-xl overflow-hidden">
+        <div className="bg-white rounded-2xl border border-zinc-200 overflow-hidden">
           {/* Desktop */}
           <div className="hidden md:block overflow-x-auto">
             <table className="w-full text-xs">
-              <thead className="bg-zinc-50 border-b border-zinc-100">
+              <thead className="border-b border-zinc-200">
                 <tr>
-                  <th className="px-4 py-3 text-left font-semibold text-zinc-500">
+                  <th className="pl-5 pr-4 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
                     Produto
                   </th>
-                  <th className="px-4 py-3 text-center font-semibold text-zinc-500">
+                  <th className="px-4 py-2.5 text-center text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
                     Data
                   </th>
-                  <th className="px-4 py-3 text-right font-semibold text-zinc-500">
+                  <th className="px-4 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
                     Produzido
                   </th>
-                  <th className="px-4 py-3 text-center font-semibold text-zinc-500">
+                  <th className="px-4 py-2.5 text-center text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
                     Rendimento
                   </th>
-                  <th className="px-4 py-3 text-right font-semibold text-zinc-500">
+                  <th className="px-4 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
                     Perda
                   </th>
-                  <th className="px-4 py-3 text-right font-semibold text-zinc-500">
+                  <th className="px-4 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
                     Custo Total
                   </th>
-                  <th className="px-4 py-3 text-right font-semibold text-zinc-500">
+                  <th className="px-4 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
                     Custo/{' '}
                     <span className="text-[9px]">un</span>
                   </th>
-                  <th className="px-4 py-3 text-center font-semibold text-zinc-500">
+                  <th className="px-4 py-2.5 text-center text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
                     Operador
                   </th>
-                  <th className="px-4 py-3 text-right font-semibold text-zinc-500"></th>
+                  <th className="px-4 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wide text-zinc-400"></th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-zinc-50">
+              <tbody className="divide-y divide-zinc-100/80">
                 {producoesFiltradas.map((batch) => {
                   return (
                     <tr
                       key={batch.id}
                       className="hover:bg-zinc-50 transition-colors"
                     >
-                      <td className="px-4 py-3">
-                        <p className="font-medium text-zinc-800">
+                      <td className="pl-5 pr-4 py-3">
+                        <p className="font-medium text-zinc-800 truncate max-w-[240px]" title={batch.recipeName}>
                           {batch.recipeName}
                         </p>
                         {batch.notes && (
@@ -529,7 +512,7 @@ function ListaProducoes({
                           {formatTime(batch.producedAt)}
                         </p>
                       </td>
-                      <td className="px-4 py-3 text-right">
+                      <td className="px-4 py-3 text-right tabular-nums whitespace-nowrap">
                         <span className="font-semibold text-zinc-800">
                           {batch.producedQuantity.toFixed(2)} {batch.unit}
                         </span>
@@ -538,7 +521,7 @@ function ListaProducoes({
                         <div className="flex flex-col items-center">
                           {batch.yieldPercentActual !== null ? (
                             <span
-                              className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                              className={`inline-block px-2 py-0.5 rounded-md text-[11px] font-semibold ${
                                 (batch.yieldPercentActual ?? 0) >= 70
                                   ? 'text-emerald-700 bg-emerald-50'
                                   : (batch.yieldPercentActual ?? 0) >= 40
@@ -572,10 +555,10 @@ function ListaProducoes({
                           <span className="text-[10px] text-zinc-300">—</span>
                         )}
                       </td>
-                      <td className="px-4 py-3 text-right font-semibold text-zinc-800">
+                      <td className="px-4 py-3 text-right tabular-nums whitespace-nowrap font-semibold text-zinc-800">
                         {fmt(batch.totalCost)}
                       </td>
-                      <td className="px-4 py-3 text-right text-zinc-600">
+                      <td className="px-4 py-3 text-right tabular-nums whitespace-nowrap text-zinc-600">
                         {formatCurrencyPreciso(batch.unitCost)}/{batch.unit}
                       </td>
                       <td className="px-4 py-3 text-center text-zinc-600">
@@ -610,7 +593,7 @@ function ListaProducoes({
           </div>
 
           {/* Mobile cards */}
-          <div className="md:hidden divide-y divide-zinc-50">
+          <div className="md:hidden divide-y divide-zinc-100/80">
             {producoesFiltradas.map((batch) => {
               return (
                 <div key={batch.id} className="p-3">
@@ -625,7 +608,7 @@ function ListaProducoes({
                     </div>
                     {batch.yieldPercentActual !== null ? (
                       <span
-                        className={`flex-shrink-0 px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                        className={`flex-shrink-0 px-2 py-0.5 rounded-md text-[11px] font-semibold ${
                           (batch.yieldPercentActual ?? 0) >= 70
                             ? 'text-emerald-700 bg-emerald-50'
                             : (batch.yieldPercentActual ?? 0) >= 40
@@ -656,7 +639,7 @@ function ListaProducoes({
                   <div className="flex items-center gap-2">
                     <button
                       onClick={() => onVerDetalhe(batch)}
-                      className="flex-1 px-3 py-1.5 bg-zinc-100 text-zinc-600 text-[11px] font-medium rounded-lg hover:bg-zinc-200 transition-colors cursor-pointer"
+                      className="flex-1 px-3 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 rounded-xl text-xs font-semibold text-zinc-600 cursor-pointer transition-colors shadow-sm"
                     >
                       <i className="ri-eye-line mr-1" />
                       Detalhes
@@ -724,56 +707,58 @@ export default function ProducaoTab() {
   };
 
   return (
-    <div className="space-y-5">
+    <div className="p-4 md:p-6 space-y-5 max-w-[1400px] mx-auto">
       {/* Resumo — usa batchesFiltrados para refletir o período */}
       <ResumoCards recipes={recipes} batches={batchesFiltrados} hasFilter={!!(dateFrom || dateTo)} />
 
       {/* Sub-tabs + ação */}
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div className="flex items-center gap-1 bg-zinc-100 rounded-xl p-1">
+      <div className="flex flex-wrap items-center gap-2 lg:gap-3">
+        <div className="flex gap-1 overflow-x-auto bg-zinc-100/80 rounded-xl p-1 w-full sm:w-fit">
           <button
             onClick={() => setSubTab('fichas')}
-            className={`px-4 py-2 text-xs font-semibold rounded-lg transition-all cursor-pointer whitespace-nowrap ${
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap cursor-pointer transition-colors ${
               subTab === 'fichas'
-                ? 'bg-white text-zinc-900 shadow-sm'
-                : 'text-zinc-500 hover:text-zinc-700'
+                ? 'bg-white text-amber-600 shadow-sm'
+                : 'text-zinc-500 hover:text-zinc-800'
             }`}
           >
-            <i className="ri-file-list-3-line mr-1.5" />
+            <i className="ri-file-list-3-line" />
             Fichas de Produção ({recipes.length})
           </button>
           <button
             onClick={() => setSubTab('producoes')}
-            className={`px-4 py-2 text-xs font-semibold rounded-lg transition-all cursor-pointer whitespace-nowrap ${
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap cursor-pointer transition-colors ${
               subTab === 'producoes'
-                ? 'bg-white text-zinc-900 shadow-sm'
-                : 'text-zinc-500 hover:text-zinc-700'
+                ? 'bg-white text-amber-600 shadow-sm'
+                : 'text-zinc-500 hover:text-zinc-800'
             }`}
           >
-            <i className="ri-archive-drawer-line mr-1.5" />
+            <i className="ri-archive-drawer-line" />
             Registros de Produção ({batches.length})
           </button>
         </div>
 
         {subTab === 'fichas' && (
-          <button
-            onClick={() => {
-              setEditingRecipe(null);
-              setShowFichaModal(true);
-            }}
-            className="flex items-center gap-1.5 px-3 py-2 bg-amber-500 text-white text-xs font-semibold rounded-lg hover:bg-amber-600 transition-colors cursor-pointer whitespace-nowrap"
-          >
-            <i className="ri-add-line" />
-            Nova Ficha
-          </button>
+          <div className="ml-auto flex items-center gap-2 overflow-x-auto max-w-full">
+            <button
+              onClick={() => {
+                setEditingRecipe(null);
+                setShowFichaModal(true);
+              }}
+              className="flex items-center gap-1.5 bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-xl text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors shadow-sm"
+            >
+              <i className="ri-add-line" />
+              Nova Ficha
+            </button>
+          </div>
         )}
       </div>
 
       {/* Loading */}
       {loading && (
-        <div className="flex items-center justify-center py-16 gap-2 text-zinc-400">
-          <i className="ri-loader-4-line animate-spin text-xl" />
-          <span className="text-sm">Carregando...</span>
+        <div className="py-14 text-center">
+          <i className="ri-loader-4-line animate-spin text-4xl text-zinc-200 block mb-2" />
+          <span className="text-zinc-400 text-sm">Carregando...</span>
         </div>
       )}
 

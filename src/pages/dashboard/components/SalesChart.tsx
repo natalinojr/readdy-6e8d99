@@ -22,30 +22,29 @@ export default function SalesChart({ data, lastUpdated, comparacoes, diasCompara
   const temIfood = data.some((d) => (d.ifood ?? 0) > 0);
 
   return (
-    <div className="bg-white border border-zinc-100 rounded-xl p-5 flex flex-col">
-      <div className="flex items-center justify-between mb-3">
+    <div className="bg-white rounded-2xl border border-zinc-200 flex flex-col">
+      <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-100 gap-3 flex-wrap">
         <div>
-          <h3 className="text-sm font-semibold text-zinc-800">Vendas por Hora</h3>
-          <p className="text-xs text-zinc-400 mt-0.5">
+          <h3 className="text-sm font-bold text-zinc-800">Vendas por Hora</h3>
+          <p className="text-xs text-zinc-400">
             Movimento do dia de hoje{temIfood && <> · <span className="text-red-500">tracejado = iFood</span></>}
           </p>
         </div>
         {horaAtualizacao && (
-          <span className="flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-600">
+          <span className="flex items-center gap-1.5 text-[11px] font-semibold px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
             Atualizado {horaAtualizacao}
           </span>
         )}
       </div>
 
+      <div className="p-5">
       <ChipsComparacao ligadas={comparacoes} dias={diasComparacao} onAlternar={onAlternarComparacao} className="mb-4" />
 
       {data.length === 0 ? (
-        <div className="h-52 flex flex-col items-center justify-center text-center">
-          <div className="w-10 h-10 flex items-center justify-center bg-zinc-100 rounded-xl mb-3">
-            <i className="ri-bar-chart-line text-zinc-400 text-lg" />
-          </div>
-          <p className="text-sm text-zinc-400">Sem vendas registradas hoje</p>
+        <div className="py-14 text-center">
+          <i className="ri-bar-chart-line text-4xl text-zinc-200" />
+          <p className="text-zinc-400 text-sm mt-2">Sem vendas registradas hoje</p>
           <p className="text-xs text-zinc-300 mt-1">O gráfico aparecerá quando houver movimentação</p>
         </div>
       ) : (
@@ -59,7 +58,7 @@ export default function SalesChart({ data, lastUpdated, comparacoes, diasCompara
                 </linearGradient>
               </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="#f4f4f5" vertical={false} />
-              <XAxis dataKey="hora" tick={{ fontSize: 10, fill: '#a1a1aa' }} axisLine={false} tickLine={false} interval={1} />
+              <XAxis dataKey="hora" tick={{ fontSize: 11, fill: '#71717a' }} axisLine={false} tickLine={false} interval={1} />
               <YAxis tick={{ fontSize: 10, fill: '#a1a1aa' }} axisLine={false} tickLine={false}
                 tickFormatter={(v) => `R$${v >= 1000 ? `${(v / 1000).toFixed(1)}k` : v}`} width={48} />
               <Tooltip
@@ -67,7 +66,7 @@ export default function SalesChart({ data, lastUpdated, comparacoes, diasCompara
                   name === 'ifood' ? 'Só iFood'
                   : name === 'ontem' || name === 'semana' || name === 'mes' ? rotuloComparacao(name, diasComparacao[name])
                   : 'Hoje']}
-                contentStyle={{ borderRadius: 8, border: '1px solid #e4e4e7', fontSize: 12 }}
+                contentStyle={{ borderRadius: 12, border: '1px solid #e4e4e7', fontSize: 12 }}
                 labelStyle={{ fontWeight: 600, color: '#18181b' }}
               />
               <Area type="monotone" dataKey="valor" stroke="#F59E0B" strokeWidth={2}
@@ -84,6 +83,7 @@ export default function SalesChart({ data, lastUpdated, comparacoes, diasCompara
           </ResponsiveContainer>
         </div>
       )}
+      </div>
     </div>
   );
 }

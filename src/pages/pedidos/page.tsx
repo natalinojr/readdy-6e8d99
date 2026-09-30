@@ -972,26 +972,18 @@ export default function PedidosPage() {
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="px-4 md:px-6 py-4 flex-shrink-0" style={{ background: '#ffffff', borderBottom: '1px solid #f4f4f5' }}>
+      <div className="px-4 md:px-6 pt-4 md:pt-5 pb-0 flex-shrink-0" style={{ background: '#ffffff', borderBottom: '1px solid #f4f4f5' }}>
         {/* No celular o cabeçalho quebra em linhas: antes "0 pedidos" e "Exportar CSV" saíam da tela. */}
-        <div className="flex flex-wrap items-center justify-between gap-y-2">
+        <div className="flex flex-wrap items-center justify-between gap-y-2 mb-3 md:mb-4">
           <div className="flex items-center gap-3 min-w-0">
-            <div className="w-8 h-8 flex items-center justify-center bg-zinc-100 rounded-lg flex-shrink-0">
-              <i className={`${abaAtiva === 'notas' ? 'ri-file-shield-2-line' : 'ri-file-list-3-line'} text-zinc-600 text-base`} />
+            <div className="w-8 h-8 md:w-9 md:h-9 flex items-center justify-center rounded-xl flex-shrink-0" style={{ background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)' }}>
+              <i className={`${abaAtiva === 'notas' ? 'ri-file-shield-2-line' : 'ri-file-list-3-line'} text-white text-base md:text-lg`} />
             </div>
-            <div>
-              <h1 className="text-base font-bold text-zinc-900">{abaAtiva === 'notas' ? 'Notas Fiscais' : 'Pedidos'}</h1>
+            <div className="min-w-0">
+              <h1 className="text-base md:text-lg font-bold text-zinc-800">{abaAtiva === 'notas' ? 'Notas Fiscais' : 'Pedidos'}</h1>
               <p className="text-xs text-zinc-400 hidden sm:block">
                 {abaAtiva === 'notas' ? 'NFC-e emitidas por venda: consulta, reimpressão, cancelamento e XMLs' : 'Todos os pedidos com informações completas'}
               </p>
-            </div>
-            <div className="flex items-center bg-zinc-100 rounded-lg p-0.5 ml-0 sm:ml-2 flex-shrink-0">
-              {([['pedidos', 'Pedidos'], ['notas', 'Notas Fiscais']] as const).map(([id, label]) => (
-                <button key={id} onClick={() => setAba(id)}
-                  className={`px-3 py-1.5 text-xs font-semibold rounded-md cursor-pointer whitespace-nowrap transition-colors ${abaAtiva === id ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'}`}>
-                  {label}
-                </button>
-              ))}
             </div>
           </div>
           {abaAtiva === 'pedidos' && (
@@ -1000,25 +992,25 @@ export default function PedidosPage() {
             <button
               onClick={() => reloadOrders(hookDateFrom, hookDateTo, hookSessionId ?? null)}
               disabled={loadingSessaoOrders}
-              className="flex items-center gap-1.5 border border-zinc-200 bg-white hover:bg-zinc-50 text-zinc-500 px-2.5 py-1.5 rounded-lg text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors disabled:opacity-40"
+              className="flex items-center gap-1.5 px-3 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 rounded-xl text-xs font-semibold text-zinc-600 cursor-pointer transition-colors whitespace-nowrap shadow-sm disabled:opacity-40"
               title="Atualizar pedidos"
             >
               <i className={`ri-refresh-line ${loadingSessaoOrders ? 'animate-spin' : ''}`} />
             </button>
-            <span className="text-xs text-zinc-400 bg-zinc-100 px-3 py-1.5 rounded-lg font-medium">
+            <span className="text-[11px] font-semibold px-2 py-1 rounded-md bg-zinc-100 text-zinc-600">
               {pedidosAgrupados.length} pedido{pedidosAgrupados.length !== 1 ? 's' : ''}
             </span>
             <div className="relative" ref={refMenuExport}>
               <button
                 onClick={() => setMostrarMenuExport((v) => !v)}
                 disabled={filtrados.length === 0}
-                className="flex items-center gap-1.5 border border-zinc-200 bg-white hover:bg-zinc-50 text-zinc-600 px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors disabled:opacity-40"
+                className="flex items-center gap-1.5 px-3 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 rounded-xl text-xs font-semibold text-zinc-600 cursor-pointer transition-colors whitespace-nowrap shadow-sm disabled:opacity-40"
               >
                 <i className="ri-download-line" /> Exportar CSV
                 <i className={`${mostrarMenuExport ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-xs transition-transform`} />
               </button>
               {mostrarMenuExport && (
-                <div className="absolute right-0 top-full mt-1.5 w-52 bg-white border border-zinc-100 rounded-xl z-50 overflow-hidden">
+                <div className="absolute right-0 top-full mt-1.5 w-52 bg-white border border-zinc-200 rounded-xl shadow-lg z-50 overflow-hidden">
                   <button onClick={() => exportarCSV('resumo')}
                     className="w-full flex items-start gap-3 px-4 py-3 hover:bg-zinc-50 cursor-pointer transition-colors text-left">
                     <i className="ri-file-list-line text-zinc-500 mt-0.5 flex-shrink-0" />
@@ -1042,6 +1034,14 @@ export default function PedidosPage() {
           </div>
           )}
         </div>
+        <div className="flex gap-0.5 overflow-x-auto scrollbar-hide -mx-4 md:mx-0 px-4 md:px-0" style={{ borderBottom: '1px solid rgba(245,158,11,0.15)' }}>
+          {([['pedidos', 'Pedidos', 'ri-file-list-3-line'], ['notas', 'Notas Fiscais', 'ri-file-shield-2-line']] as const).map(([id, label, icon]) => (
+            <button key={id} onClick={() => setAba(id)}
+              className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-semibold whitespace-nowrap border-b-2 transition-colors cursor-pointer flex-shrink-0 ${abaAtiva === id ? 'border-amber-500 text-amber-600' : 'border-transparent text-zinc-400 hover:text-zinc-700'}`}>
+              <i className={icon} /> {label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {abaAtiva === 'notas' && (
@@ -1051,7 +1051,7 @@ export default function PedidosPage() {
       )}
 
       {abaAtiva === 'pedidos' && (
-      <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-4 md:space-y-5">
+      <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-5 max-w-[1400px] w-full mx-auto">
         {/* Métricas */}
         <PedidosMetricas
           totalPedidos={filtrados.length}
@@ -1103,7 +1103,7 @@ export default function PedidosPage() {
 
         {/* Banner sessão anterior */}
         {modo === 'sessao' && sessaoSelecionadaId && sessaoSelecionada && (
-          <div className="flex items-center gap-3 px-4 py-3 bg-amber-50 border border-amber-100 rounded-xl">
+          <div className="flex items-center gap-3 px-4 py-3 bg-amber-50 border border-amber-200 rounded-xl">
             <div className="w-8 h-8 flex items-center justify-center bg-amber-100 rounded-lg flex-shrink-0">
               <i className="ri-archive-line text-amber-600 text-sm" />
             </div>
@@ -1131,7 +1131,7 @@ export default function PedidosPage() {
 
         {/* Aviso: período estourou o teto de carregamento — números parciais */}
         {ordersTruncated && (
-          <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-xs text-red-700">
+          <div className="flex items-start gap-3 bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-xs text-red-700">
             <i className="ri-error-warning-line flex-shrink-0 text-red-500" />
             <span>
               Este período tem mais pedidos do que o limite de carregamento (5.000) — os totais e a

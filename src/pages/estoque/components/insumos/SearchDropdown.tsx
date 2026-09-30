@@ -55,7 +55,7 @@ export default function SearchDropdown({ value, onChange, options, placeholder, 
           onFocus={() => setOpen(true)}
           onBlur={handleBlur}
           placeholder={placeholder}
-          className="w-full text-sm border border-zinc-200 rounded-lg pl-3 pr-8 py-2 text-zinc-800 focus:outline-none focus:border-amber-400 bg-white"
+          className="w-full h-10 text-sm border border-zinc-200 rounded-xl shadow-sm pl-3 pr-8 text-zinc-800 focus:outline-none focus:border-amber-400 bg-white"
         />
         <button
           type="button"

@@ -1,6 +1,5 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { DollarSign, ShoppingBag, Receipt, LayoutGrid, Timer, Clock } from 'lucide-react';
 import MetricCard from './components/MetricCard';
 import SalesChart from './components/SalesChart';
 import PedidosStatus from './components/PedidosStatus';
@@ -144,34 +143,26 @@ export default function Dashboard() {
       value: fmt(faturamentoHoje),
       trend: hasData && faturamentoOntem > 0 ? pct(faturamentoHoje, faturamentoOntem) : undefined,
       trendLabel: modo === 'sessao' ? undefined : 'vs ontem',
-      icon: DollarSign,
-      iconBg: 'bg-amber-50',
-      iconColor: 'text-amber-500',
+      icon: 'ri-money-dollar-circle-line',
     },
     {
       label: modo === 'sessao' ? 'Pedidos da Sessão' : 'Pedidos do Dia',
       value: String(pedidosHoje),
       trend: hasData && pedidosOntem > 0 ? pct(pedidosHoje, pedidosOntem) : undefined,
       trendLabel: modo === 'sessao' ? undefined : 'vs ontem',
-      icon: ShoppingBag,
-      iconBg: 'bg-emerald-50',
-      iconColor: 'text-emerald-500',
+      icon: 'ri-shopping-bag-line',
     },
     {
       label: 'Ticket Médio',
       value: fmt(ticketMedio),
       trend: hasData && ticketMedioOntem > 0 ? pct(ticketMedio, ticketMedioOntem) : undefined,
       trendLabel: modo === 'sessao' ? undefined : 'vs ontem',
-      icon: Receipt,
-      iconBg: 'bg-zinc-100',
-      iconColor: 'text-zinc-600',
+      icon: 'ri-receipt-line',
     },
     {
       label: 'Pedidos em Aberto',
       value: fmt(pedidosAbertosValor),
-      icon: Clock,
-      iconBg: 'bg-rose-50',
-      iconColor: 'text-rose-500',
+      icon: 'ri-time-line',
       trendLabel: pedidosAbertosCount > 0
         ? `${pedidosAbertosCount} pedido${pedidosAbertosCount !== 1 ? 's' : ''} não pago${pedidosAbertosCount !== 1 ? 's' : ''}`
         : 'Nenhum pedido pendente',
@@ -182,18 +173,15 @@ export default function Dashboard() {
       value: mesasTotal > 0 ? `${mesasOcupadas} / ${mesasTotal}` : '—',
       trend: undefined,
       trendLabel: undefined,
-      icon: LayoutGrid,
-      iconBg: 'bg-orange-50',
-      iconColor: 'text-orange-500',
+      icon: 'ri-layout-grid-line',
     },
     {
       label: 'SLA Médio Cozinha',
       value: slaMediaCozinha !== null ? `${slaMediaCozinha} min` : '—',
       trend: undefined,
       trendLabel: slaMediaCozinha !== null ? (slaMediaCozinha <= 15 ? 'No prazo' : 'Acima do alvo') : undefined,
-      icon: Timer,
-      iconBg: slaMediaCozinha !== null && slaMediaCozinha > 15 ? 'bg-red-50' : 'bg-zinc-100',
-      iconColor: slaMediaCozinha !== null && slaMediaCozinha > 15 ? 'text-red-500' : 'text-zinc-500',
+      icon: 'ri-timer-line',
+      alerta: slaMediaCozinha !== null && slaMediaCozinha > 15,
     },
   ];
 
@@ -201,27 +189,32 @@ export default function Dashboard() {
   const greeting = hour < 12 ? 'Bom dia' : hour < 18 ? 'Boa tarde' : 'Boa noite';
 
   return (
-    <div className="space-y-6">
+    <div className="p-4 md:p-6 space-y-5 max-w-[1400px] mx-auto">
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="text-xl font-bold text-zinc-900">
-            {greeting}, <span className="text-amber-500">{user?.nome?.split(' ')[0] ?? ''}</span>!
-          </h1>
-          <p className="text-sm text-zinc-500 mt-0.5">
-            {isLoading
-              ? 'Carregando dados...'
-              : pedidosHoje > 0
-                ? `${pedidosHoje} pedido${pedidosHoje !== 1 ? 's' : ''} — ${periodoLabel}`
-                : `Nenhum pedido — ${periodoLabel}`}
-          </p>
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-8 h-8 md:w-9 md:h-9 flex items-center justify-center rounded-xl flex-shrink-0" style={{ background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)' }}>
+            <i className="ri-dashboard-line text-white text-base md:text-lg" />
+          </div>
+          <div className="min-w-0">
+            <h1 className="text-base md:text-lg font-bold text-zinc-800">
+              {greeting}, <span className="text-amber-500">{user?.nome?.split(' ')[0] ?? ''}</span>!
+            </h1>
+            <p className="text-xs text-zinc-400">
+              {isLoading
+                ? 'Carregando dados...'
+                : pedidosHoje > 0
+                  ? `${pedidosHoje} pedido${pedidosHoje !== 1 ? 's' : ''} — ${periodoLabel}`
+                  : `Nenhum pedido — ${periodoLabel}`}
+            </p>
+          </div>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 overflow-x-auto max-w-full">
           <DashboardModoToggle />
           <button
             onClick={reloadAll}
             disabled={isLoading}
-            className="flex items-center gap-1.5 text-xs text-zinc-400 hover:text-zinc-600 transition-colors cursor-pointer disabled:opacity-50"
+            className="flex items-center gap-1.5 px-3 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 rounded-xl text-xs font-semibold text-zinc-600 cursor-pointer transition-colors whitespace-nowrap shadow-sm disabled:opacity-50"
           >
             <i className={`ri-refresh-line text-sm ${isLoading ? 'animate-spin' : ''}`} />
             Atualizar
@@ -263,21 +256,21 @@ export default function Dashboard() {
       )}
 
       {/* Metric Cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6 gap-3">
         {metrics.map((metric) => (
           <MetricCard key={metric.label} {...metric} />
         ))}
       </div>
       {ifPed > 0 && (
-        <p className="text-[11px] text-zinc-400 -mt-3">
+        <p className="text-[11px] text-zinc-400 -mt-2">
           <i className="ri-restaurant-2-line text-red-500" /> Inclui iFood: <strong className="text-zinc-600">{fmt(ifTot)}</strong> em {ifPed} pedido{ifPed !== 1 ? 's' : ''}
           {(ifood?.pedidosAoVivo ?? 0) > 0 && ' (valor provisório pela API do iFood até importar a conciliação)'} — detalhes em Relatórios › iFood.
         </p>
       )}
 
       {/* Chart + Status */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <div className="lg:col-span-2">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
+        <div className="lg:col-span-2 min-w-0">
           <SalesChart data={vendasPorHora} lastUpdated={lastUpdated}
             comparacoes={comparacoes} diasComparacao={diasComp} onAlternarComparacao={alternarComparacao} />
         </div>
@@ -297,11 +290,11 @@ export default function Dashboard() {
         <AlertasEstoqueCritico alertas={alertasCriticos} />
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <div className="lg:col-span-2">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
+        <div className="lg:col-span-2 min-w-0">
           <MesasOverview mesas={m?.mesas_mapa ?? []} />
         </div>
-        <div className="space-y-4">
+        <div className="space-y-4 min-w-0">
           <MetasDia
             faturamentoHoje={faturamentoHoje}
             pedidosHoje={pedidosHoje}
@@ -314,8 +307,8 @@ export default function Dashboard() {
       </div>
 
       {/* Últimos Pedidos + Categorias */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <div className="lg:col-span-2">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
+        <div className="lg:col-span-2 min-w-0">
           <UltimosPedidos pedidos={m?.ultimos_pedidos ?? []} />
         </div>
         <div>

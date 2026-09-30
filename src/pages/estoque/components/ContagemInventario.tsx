@@ -273,31 +273,31 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       {/* Header da contagem */}
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
           <div className="flex items-center gap-2">
-            <p className="text-sm font-bold text-zinc-800">Nova Contagem de Inventário</p>
+            <h3 className="text-sm font-bold text-zinc-800">Nova Contagem de Inventário</h3>
             {temRascunhoCarregado && (
-              <span className="text-[10px] font-bold bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">
+              <span className="text-[11px] font-semibold bg-amber-50 text-amber-700 px-2 py-0.5 rounded-md">
                 Rascunho carregado
               </span>
             )}
           </div>
-          <p className="text-xs text-zinc-500">Operador: <span className="font-semibold">{operador}</span> · {insumos.length} insumos a contar</p>
+          <p className="text-xs text-zinc-400">Operador: <span className="font-semibold">{operador}</span> · {insumos.length} insumos a contar</p>
         </div>
         <div className="flex items-center gap-2">
           <button
             onClick={salvarRascunho}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold border border-amber-300 text-amber-700 bg-amber-50 hover:bg-amber-100 rounded-lg cursor-pointer transition-colors whitespace-nowrap"
+            className="flex items-center gap-1.5 px-3 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 rounded-xl text-xs font-semibold text-zinc-600 cursor-pointer transition-colors whitespace-nowrap shadow-sm"
           >
             <i className={`text-sm ${rascunhoSalvo ? 'ri-check-line text-emerald-500' : 'ri-save-line'}`} />
             {rascunhoSalvo ? 'Salvo!' : 'Salvar Rascunho'}
           </button>
           <button
             onClick={handleCancelarContagem}
-            className="flex items-center gap-1.5 text-xs text-zinc-500 hover:text-red-500 cursor-pointer transition-colors whitespace-nowrap"
+            className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-zinc-500 hover:text-red-500 cursor-pointer transition-colors whitespace-nowrap"
           >
             <i className="ri-close-line text-sm" />
             Cancelar contagem
@@ -307,13 +307,13 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
 
       {/* Busca: filtra pelo nome enquanto digita */}
       <div className="relative">
-        <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 text-sm pointer-events-none" />
+        <i className="ri-search-line absolute left-3.5 top-1/2 -translate-y-1/2 text-zinc-400 text-sm pointer-events-none" />
         <input
           type="search"
           value={busca}
           onChange={(e) => setBusca(e.target.value)}
           placeholder="Buscar insumo..."
-          className="w-full h-10 md:h-9 pl-9 pr-9 text-base md:text-sm border border-zinc-200 rounded-lg bg-white text-zinc-800 focus:outline-none focus:border-amber-400"
+          className="w-full h-10 pl-9 pr-9 text-base md:text-sm border border-zinc-200 rounded-xl shadow-sm bg-white text-zinc-800 focus:outline-none focus:border-amber-400"
         />
         {busca && (
           <button
@@ -329,12 +329,12 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
 
       {/* Filtros */}
       <div className="flex items-center gap-3 flex-wrap">
-        <div className="flex items-center gap-1 bg-zinc-100 rounded-lg p-1 overflow-x-auto">
+        <div className="flex gap-1 overflow-x-auto bg-zinc-100/80 rounded-xl p-1 w-full sm:w-fit max-w-full">
           {['Todas', ...categoriasDisponiveis].map((c) => (
             <button
               key={c}
               onClick={() => setCategoriaFiltro(c)}
-              className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap cursor-pointer ${categoriaFiltro === c ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'}`}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap cursor-pointer transition-colors flex-shrink-0 ${categoriaFiltro === c ? 'bg-white text-amber-600 shadow-sm' : 'text-zinc-500 hover:text-zinc-800'}`}
             >
               {c}
             </button>
@@ -342,10 +342,10 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
         </div>
         <button
           onClick={() => setApenasComDiff(!apenasComDiff)}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border cursor-pointer transition-all whitespace-nowrap ${
+          className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold border cursor-pointer transition-colors whitespace-nowrap shadow-sm ${
             apenasComDiff
               ? 'bg-amber-500 border-amber-500 text-white'
-              : 'border-zinc-200 text-zinc-600 hover:border-zinc-300'
+              : 'border-zinc-200 bg-white text-zinc-600 hover:bg-zinc-50'
           }`}
         >
           <i className={`ri-filter-line text-xs`} />
@@ -373,13 +373,13 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
 
           return (
             <li key={insumo.id}>
-              <div className={`rounded-xl border bg-white px-3 py-3 ${temDiff ? 'border-amber-300 bg-amber-50/30' : 'border-zinc-200'}`}>
+              <div className={`rounded-2xl border bg-white px-3 py-3 ${temDiff ? 'border-amber-300 bg-amber-50/30' : 'border-zinc-200'}`}>
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
                     <p className="text-sm font-medium text-zinc-800 break-words line-clamp-2">{insumo.nome}</p>
                     <p className="text-xs text-zinc-400">{insumo.fornecedor}</p>
                   </div>
-                  <span className="px-2 py-0.5 bg-zinc-100 text-zinc-600 rounded-full text-[10px] font-medium whitespace-nowrap flex-shrink-0">
+                  <span className="px-2 py-0.5 bg-zinc-100 text-zinc-600 rounded-md text-[11px] font-semibold whitespace-nowrap flex-shrink-0">
                     {insumo.categoria}
                   </span>
                 </div>
@@ -416,10 +416,10 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
                 </div>
                 {temDiff && (
                   <div className="flex items-center gap-1.5 flex-wrap mt-2">
-                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold ${diff > 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-500'}`}>
+                    <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-semibold ${diff > 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-500'}`}>
                       {diff > 0 ? '+' : ''}{diff} {insumo.unidade}
                     </span>
-                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold ${impacto > 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-500'}`}>
+                    <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-semibold ${impacto > 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-500'}`}>
                       {impacto >= 0 ? '+' : ''}{fmt(impacto)}
                     </span>
                   </div>
@@ -431,31 +431,31 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
           </Fragment>
         ))}
         {insumosFiltrados.length === 0 && (
-          <div className="text-center py-8">
-            <i className="ri-search-line text-2xl text-zinc-300 block mb-1" />
-            <p className="text-xs text-zinc-400">Nenhum insumo neste filtro</p>
+          <div className="text-center py-14">
+            <i className="ri-search-line text-4xl text-zinc-200 block" />
+            <p className="text-sm text-zinc-400 mt-2">Nenhum insumo neste filtro</p>
           </div>
         )}
       </ul>
 
-      <div className="hidden md:block bg-white border border-zinc-100 rounded-xl overflow-hidden">
+      <div className="hidden md:block bg-white rounded-2xl border border-zinc-200 overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
-            <thead className="bg-zinc-50 border-b border-zinc-100">
+            <thead className="border-b border-zinc-200">
               <tr>
-                <th className="px-4 py-3 text-left font-semibold text-zinc-500">Insumo</th>
-                <th className="px-4 py-3 text-center font-semibold text-zinc-500">Categoria</th>
-                <th className="px-4 py-3 text-right font-semibold text-zinc-500">Sistema (teórico)</th>
-                <th className="px-4 py-3 text-center font-semibold text-zinc-500 w-40">Contagem real</th>
-                <th className="px-4 py-3 text-right font-semibold text-zinc-500">Diferença</th>
-                <th className="px-4 py-3 text-right font-semibold text-zinc-500">Impacto (R$)</th>
+                <th className="pl-5 pr-4 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Insumo</th>
+                <th className="px-4 py-2.5 text-center text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Categoria</th>
+                <th className="px-4 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Sistema (teórico)</th>
+                <th className="px-4 py-2.5 text-center text-[11px] font-semibold uppercase tracking-wide text-zinc-400 w-40">Contagem real</th>
+                <th className="px-4 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Diferença</th>
+                <th className="px-4 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Impacto (R$)</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-zinc-50">
+            <tbody className="divide-y divide-zinc-100/80">
               {grupos.map(({ categoria, itens }) => (
                 <Fragment key={categoria}>
                   <tr className="bg-zinc-50/80">
-                    <td colSpan={6} className="px-4 py-2">
+                    <td colSpan={6} className="pl-5 pr-4 py-2">
                       <span className="text-[11px] font-bold uppercase tracking-wide text-zinc-500">{categoria}</span>
                       <span className="ml-1.5 text-[10px] text-zinc-400">({itens.length})</span>
                     </td>
@@ -473,16 +473,16 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
                     key={insumo.id}
                     className={`transition-colors ${temDiff ? 'bg-amber-50/30' : 'hover:bg-zinc-50'}`}
                   >
-                    <td className="px-4 py-3">
+                    <td className="pl-5 pr-4 py-3">
                       <p className="font-medium text-zinc-800">{insumo.nome}</p>
                       <p className="text-[10px] text-zinc-400">{insumo.fornecedor}</p>
                     </td>
                     <td className="px-4 py-3 text-center">
-                      <span className="px-2 py-0.5 bg-zinc-100 text-zinc-600 rounded-full text-[10px] font-medium whitespace-nowrap">
+                      <span className="px-2 py-0.5 bg-zinc-100 text-zinc-600 rounded-md text-[11px] font-semibold whitespace-nowrap">
                         {insumo.categoria}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-right font-semibold text-zinc-600">
+                    <td className="px-4 py-3 text-right tabular-nums whitespace-nowrap font-semibold text-zinc-600">
                       {emOutraUnidade ? (
                         <>
                           {qtdBR(insumo.estoqueAtual / fatorDe(insumo))} {rotuloDe(insumo)}
@@ -500,7 +500,7 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
                           step="0.001"
                           value={rawVal}
                           onChange={(e) => handleChange(insumo.id, e.target.value)}
-                          className={`w-full text-sm text-right border rounded-lg px-2 py-1.5 focus:outline-none transition-colors ${
+                          className={`w-full text-sm text-right border rounded-xl px-2 py-1.5 focus:outline-none transition-colors ${
                             temDiff
                               ? 'border-amber-400 bg-amber-50 text-zinc-800 focus:border-amber-500'
                               : 'border-zinc-200 bg-white text-zinc-700 focus:border-amber-400'
@@ -540,29 +540,29 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
             </tbody>
           </table>
           {insumosFiltrados.length === 0 && (
-            <div className="text-center py-8">
-              <i className="ri-search-line text-2xl text-zinc-300 block mb-1" />
-              <p className="text-xs text-zinc-400">Nenhum insumo neste filtro</p>
+            <div className="text-center py-14">
+              <i className="ri-search-line text-4xl text-zinc-200 block" />
+              <p className="text-sm text-zinc-400 mt-2">Nenhum insumo neste filtro</p>
             </div>
           )}
         </div>
       </div>
 
       {/* Barra inferior de resumo + confirmar */}
-      <div className="sticky bottom-0 bg-white border border-zinc-200 rounded-xl px-5 py-4 flex items-center gap-6 flex-wrap">
+      <div className="sticky bottom-0 bg-white border border-zinc-200 rounded-2xl shadow-sm px-4 md:px-5 py-3 md:py-4 flex items-center gap-4 md:gap-6 flex-wrap">
         <div className="flex items-center gap-6 flex-1 flex-wrap">
           <div>
-            <p className="text-[10px] text-zinc-400">Itens contados</p>
+            <p className="text-[11px] text-zinc-400">Itens contados</p>
             <p className="text-sm font-bold text-zinc-800">{insumos.length}</p>
           </div>
           <div>
-            <p className="text-[10px] text-zinc-400">Com diferença</p>
+            <p className="text-[11px] text-zinc-400">Com diferença</p>
             <p className={`text-sm font-bold ${itensComDiferenca.length > 0 ? 'text-amber-600' : 'text-zinc-400'}`}>
               {itensComDiferenca.length}
             </p>
           </div>
           <div>
-            <p className="text-[10px] text-zinc-400">Impacto financeiro</p>
+            <p className="text-[11px] text-zinc-400">Impacto financeiro</p>
             <p className={`text-sm font-bold ${valorImpacto < 0 ? 'text-red-500' : valorImpacto > 0 ? 'text-emerald-600' : 'text-zinc-400'}`}>
               {valorImpacto >= 0 ? '+' : ''}{fmt(valorImpacto)}
             </p>
@@ -570,7 +570,7 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
         </div>
         <button
           onClick={() => setShowConfirmar(true)}
-          className="px-6 py-2.5 bg-amber-500 hover:bg-amber-600 text-white text-sm font-bold rounded-xl cursor-pointer whitespace-nowrap transition-colors flex items-center gap-2"
+          className="px-5 py-2.5 bg-amber-500 hover:bg-amber-600 text-white text-xs font-semibold rounded-xl cursor-pointer whitespace-nowrap transition-colors flex items-center gap-1.5 shadow-sm"
         >
           <i className="ri-check-double-line" />
           Confirmar Contagem

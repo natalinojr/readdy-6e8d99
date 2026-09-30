@@ -4,6 +4,7 @@ import { usePermissoes } from '@/hooks/usePermissoes';
 import { useEstoque, type InventarioSession } from '../../../contexts/EstoqueContext';
 import ContagemInventario from './ContagemInventario';
 import DetalheInventario from './DetalheInventario';
+import DivergenciaPanel from './DivergenciaPanel';
 
 const fmt = (v: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
@@ -61,12 +62,15 @@ export default function InventarioTab() {
 
   if (view === 'contagem') {
     return (
-      <ContagemInventario
-        operador={user?.nome ?? 'Operador'}
-        onConcluido={() => setView('historico')}
-        onCancelar={() => setView('historico')}
-        startFresh={startFresh}
-      />
+      <div className="p-4 md:p-6 space-y-5 max-w-[1400px] mx-auto">
+        <DivergenciaPanel />
+        <ContagemInventario
+          operador={user?.nome ?? 'Operador'}
+          onConcluido={() => setView('historico')}
+          onCancelar={() => setView('historico')}
+          startFresh={startFresh}
+        />
+      </div>
     );
   }
 
@@ -74,21 +78,26 @@ export default function InventarioTab() {
     // Versão mais recente da contagem (depois de uma edição a lista é recarregada)
     const atual = inventarioSessions.find((s) => s.id === sessionDetalhe.id) ?? sessionDetalhe;
     return (
-      <DetalheInventario
-        session={atual}
-        sessoesMaisNovas={inventarioSessions.filter((s) => s.numero > atual.numero)}
-        podeEditar={podeInventariar}
-        onVoltar={() => { setView('historico'); setSessionDetalhe(null); }}
-      />
+      <div className="p-4 md:p-6 space-y-5 max-w-[1400px] mx-auto">
+        <DivergenciaPanel />
+        <DetalheInventario
+          session={atual}
+          sessoesMaisNovas={inventarioSessions.filter((s) => s.numero > atual.numero)}
+          podeEditar={podeInventariar}
+          onVoltar={() => { setView('historico'); setSessionDetalhe(null); }}
+        />
+      </div>
     );
   }
 
   // View padrão: histórico de contagens
   return (
-    <div className="space-y-5">
+    <div className="p-4 md:p-6 space-y-5 max-w-[1400px] mx-auto">
+      <DivergenciaPanel />
+
       {/* Banner de rascunho pendente */}
       {hasDraft && (
-        <div className="bg-amber-50 border border-amber-200 rounded-xl px-5 py-4 flex items-center gap-4 flex-wrap">
+        <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 flex items-center gap-3 flex-wrap">
           <div className="w-10 h-10 flex items-center justify-center bg-amber-100 rounded-xl flex-shrink-0">
             <i className="ri-draft-line text-amber-600 text-lg" />
           </div>
@@ -99,13 +108,13 @@ export default function InventarioTab() {
           <div className="flex items-center gap-2">
             <button
               onClick={handleNovaContagemLimpa}
-              className="px-4 py-2 text-xs font-semibold text-zinc-600 hover:text-zinc-800 border border-zinc-300 rounded-xl cursor-pointer transition-colors whitespace-nowrap"
+              className="flex items-center gap-1.5 px-3 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 rounded-xl text-xs font-semibold text-zinc-600 cursor-pointer transition-colors whitespace-nowrap shadow-sm"
             >
               Nova contagem
             </button>
             <button
               onClick={handleRetomarRascunho}
-              className="px-5 py-2 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded-xl cursor-pointer whitespace-nowrap transition-colors flex items-center gap-2"
+              className="flex items-center gap-1.5 bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-xl text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors shadow-sm"
             >
               <i className="ri-play-line" />
               Retomar Rascunho
@@ -115,9 +124,9 @@ export default function InventarioTab() {
       )}
 
       {/* Header da lista + botão */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
-          <p className="text-sm font-bold text-zinc-800">Histórico de Contagens</p>
+          <h3 className="text-sm font-bold text-zinc-800">Histórico de Contagens</h3>
           <p className="text-xs text-zinc-400">
             {inventarioSessions.length === 0
               ? 'Nenhuma contagem realizada ainda'
@@ -127,7 +136,7 @@ export default function InventarioTab() {
         {podeInventariar && (
           <button
             onClick={handleNovaContagem}
-            className="flex items-center gap-2 px-4 py-2.5 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded-xl cursor-pointer whitespace-nowrap transition-colors"
+            className="flex items-center gap-1.5 bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-xl text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors shadow-sm"
           >
             <i className="ri-clipboard-line text-sm" />
             Nova Contagem
@@ -137,16 +146,14 @@ export default function InventarioTab() {
 
       {/* Lista de sessões */}
       {inventarioSessions.length === 0 ? (
-        <div className="bg-white border border-dashed border-zinc-200 rounded-xl py-16 text-center">
-          <div className="w-12 h-12 flex items-center justify-center bg-zinc-50 rounded-full mx-auto mb-3">
-            <i className="ri-clipboard-line text-2xl text-zinc-300" />
-          </div>
-          <p className="text-sm font-semibold text-zinc-500 mb-1">Nenhuma contagem ainda</p>
+        <div className="bg-white border border-zinc-200 rounded-2xl py-14 text-center">
+          <i className="ri-clipboard-line text-4xl text-zinc-200" />
+          <p className="text-sm font-semibold text-zinc-500 mt-2 mb-1">Nenhuma contagem ainda</p>
           <p className="text-xs text-zinc-400 mb-4">Clique em "Nova Contagem" para fazer a primeira contagem de inventário</p>
           {podeInventariar ? (
             <button
               onClick={handleNovaContagem}
-              className="px-5 py-2 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded-xl cursor-pointer whitespace-nowrap transition-colors inline-flex items-center gap-2"
+              className="inline-flex items-center gap-1.5 bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-xl text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors shadow-sm"
             >
               <i className="ri-clipboard-line" />
               Iniciar primeira contagem
@@ -163,7 +170,7 @@ export default function InventarioTab() {
               <button
                 key={session.id}
                 onClick={() => { setSessionDetalhe(session); setView('detalhe'); }}
-                className="w-full bg-white border border-zinc-100 hover:border-amber-300 rounded-xl px-5 py-4 text-left cursor-pointer transition-all group"
+                className="w-full bg-white border border-zinc-200 hover:border-amber-300 hover:bg-amber-50/40 rounded-2xl px-4 md:px-5 py-4 text-left cursor-pointer transition-all group"
               >
                 <div className="flex items-center gap-4">
                   {/* Ícone */}
@@ -177,8 +184,8 @@ export default function InventarioTab() {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-sm font-bold text-zinc-800">Contagem #{session.numero}</span>
-                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                        temDiff ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'
+                      <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-md ${
+                        temDiff ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700'
                       }`}>
                         {temDiff ? `${session.itensComDiferenca} diferença${session.itensComDiferenca > 1 ? 's' : ''}` : 'Sem diferenças'}
                       </span>
@@ -194,7 +201,7 @@ export default function InventarioTab() {
                       const valorEstoque = session.itens.reduce((s, i) => s + i.qtdContada * i.precoUnitario, 0);
                       return (
                         <>
-                          <p className="text-sm font-black text-zinc-800">{fmt(valorEstoque)}</p>
+                          <p className="text-sm font-bold tabular-nums text-zinc-800">{fmt(valorEstoque)}</p>
                           <p className="text-[10px] text-zinc-400">valor em estoque</p>
                           {session.valorAjusteLiquido !== 0 && (
                             <p className={`text-[10px] font-bold ${session.valorAjusteLiquido < 0 ? 'text-red-500' : 'text-emerald-600'}`}>

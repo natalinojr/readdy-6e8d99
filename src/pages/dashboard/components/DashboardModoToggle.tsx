@@ -16,18 +16,16 @@ export default function DashboardModoToggle() {
   const sessaoDisabled = !sessao;
 
   return (
-    <div className="flex items-center bg-zinc-100 rounded-xl p-1 gap-1 flex-shrink-0">
+    <div className="flex bg-zinc-100 p-1 rounded-xl flex-shrink-0">
       {/* Hoje */}
       <button
         onClick={() => setModo('calendario')}
-        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer whitespace-nowrap ${
-          isHoje
-            ? 'bg-white text-zinc-800 shadow-sm'
-            : 'text-zinc-500 hover:text-zinc-700'
+        className={`px-3 py-1.5 text-xs font-semibold rounded-lg cursor-pointer transition-all whitespace-nowrap flex items-center gap-1.5 ${
+          isHoje ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-800'
         }`}
         title="Ver dados de hoje"
       >
-        <i className="ri-sun-line text-xs" />
+        <i className="ri-sun-line text-sm" />
         Hoje
       </button>
 
@@ -35,16 +33,16 @@ export default function DashboardModoToggle() {
       <button
         onClick={() => !sessaoDisabled && setModo('sessao')}
         disabled={sessaoDisabled}
-        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap ${
+        className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all whitespace-nowrap flex items-center gap-1.5 ${
           sessaoDisabled
             ? 'text-zinc-300 cursor-not-allowed'
             : isSessao
-              ? 'bg-amber-500 text-white shadow-sm cursor-pointer'
-              : 'text-zinc-500 hover:text-zinc-700 cursor-pointer'
+              ? 'bg-white text-zinc-900 shadow-sm cursor-pointer'
+              : 'text-zinc-500 hover:text-zinc-800 cursor-pointer'
         }`}
         title={sessaoDisabled ? 'Nenhuma sessão aberta' : `Sessão ${sessao?.numero}`}
       >
-        <i className="ri-store-2-line text-xs" />
+        <i className="ri-store-2-line text-sm" />
         <span className="hidden sm:inline">
           {isSessao && sessao ? sessaoLabel : 'Sessão'}
         </span>

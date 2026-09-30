@@ -15,15 +15,15 @@ const STATUS_LABEL: Record<string, string> = {
   aberto: 'Em aberto', pronto: 'Pronto', entregue: 'Entregue', cancelado: 'Cancelado',
 };
 const STATUS_STYLE: Record<string, string> = {
-  aberto: 'bg-amber-100 text-amber-700 border-amber-200',
-  pronto: 'bg-emerald-100 text-emerald-700 border-emerald-200',
-  entregue: 'bg-sky-100 text-sky-700 border-sky-200',
-  cancelado: 'bg-red-100 text-red-700 border-red-200',
-  new: 'bg-zinc-100 text-zinc-600 border-zinc-200',
-  preparing: 'bg-amber-100 text-amber-700 border-amber-200',
-  ready: 'bg-emerald-100 text-emerald-700 border-emerald-200',
-  delivered: 'bg-sky-100 text-sky-700 border-sky-200',
-  cancelled: 'bg-red-100 text-red-700 border-red-200',
+  aberto: 'bg-amber-50 text-amber-700',
+  pronto: 'bg-emerald-50 text-emerald-700',
+  entregue: 'bg-sky-50 text-sky-700',
+  cancelado: 'bg-red-50 text-red-600',
+  new: 'bg-zinc-100 text-zinc-600',
+  preparing: 'bg-amber-50 text-amber-700',
+  ready: 'bg-emerald-50 text-emerald-700',
+  delivered: 'bg-sky-50 text-sky-700',
+  cancelled: 'bg-red-50 text-red-600',
 };
 const STATUS_DOT: Record<string, string> = {
   aberto: 'bg-amber-400', pronto: 'bg-emerald-400', entregue: 'bg-sky-400', cancelado: 'bg-red-400',
@@ -47,10 +47,10 @@ const UNIDADE_STATUS_LABEL: Record<string, string> = {
   entregue: 'Entregue',
 };
 const UNIDADE_STATUS_STYLE: Record<string, string> = {
-  aguardando: 'bg-zinc-100 text-zinc-600 border-zinc-200',
-  preparo: 'bg-amber-100 text-amber-700 border-amber-200',
-  pronto: 'bg-emerald-100 text-emerald-700 border-emerald-200',
-  entregue: 'bg-sky-100 text-sky-700 border-sky-200',
+  aguardando: 'bg-zinc-100 text-zinc-600',
+  preparo: 'bg-amber-50 text-amber-700',
+  pronto: 'bg-emerald-50 text-emerald-700',
+  entregue: 'bg-sky-50 text-sky-700',
 };
 const UNIDADE_STATUS_DOT: Record<string, string> = {
   aguardando: 'bg-zinc-400',
@@ -98,7 +98,7 @@ function StatusBadges({ pedido }: { pedido: PedidoRecente }) {
     return (
       <div className="flex items-center gap-1.5">
         <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-red-400" />
-        <span className="text-xs font-semibold px-2 py-0.5 rounded-full border bg-red-100 text-red-700 border-red-200 whitespace-nowrap">
+        <span className="text-[11px] font-semibold px-2 py-0.5 rounded-md bg-red-50 text-red-600 whitespace-nowrap">
           Cancelado
         </span>
       </div>
@@ -110,7 +110,7 @@ function StatusBadges({ pedido }: { pedido: PedidoRecente }) {
     return (
       <div className="flex items-center gap-1.5">
         <div className="w-1.5 h-1.5 rounded-full flex-shrink-0 bg-zinc-400" />
-        <span className="text-xs font-semibold px-2 py-0.5 rounded-full border bg-zinc-100 text-zinc-600 border-zinc-200 whitespace-nowrap">
+        <span className="text-[11px] font-semibold px-2 py-0.5 rounded-md bg-zinc-100 text-zinc-600 whitespace-nowrap">
           {DB_STATUS_LABEL[pedido.status] ?? STATUS_LABEL[pedido.status] ?? pedido.status}
         </span>
       </div>
@@ -123,7 +123,7 @@ function StatusBadges({ pedido }: { pedido: PedidoRecente }) {
     return (
       <div className="flex items-center gap-1.5">
         <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${UNIDADE_STATUS_DOT[b.status] ?? 'bg-zinc-400'}`} />
-        <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border whitespace-nowrap ${UNIDADE_STATUS_STYLE[b.status] ?? 'bg-zinc-100 text-zinc-600 border-zinc-200'}`}>
+        <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-md whitespace-nowrap ${UNIDADE_STATUS_STYLE[b.status] ?? 'bg-zinc-100 text-zinc-600'}`}>
           {UNIDADE_STATUS_LABEL[b.status] ?? b.status}
           {b.count > 1 && ` (${b.count})`}
         </span>
@@ -137,7 +137,7 @@ function StatusBadges({ pedido }: { pedido: PedidoRecente }) {
       {badges.map((b) => (
         <span
           key={b.status}
-          className={`inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full border whitespace-nowrap ${UNIDADE_STATUS_STYLE[b.status] ?? 'bg-zinc-100 text-zinc-600 border-zinc-200'}`}
+          className={`inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-md whitespace-nowrap ${UNIDADE_STATUS_STYLE[b.status] ?? 'bg-zinc-100 text-zinc-600'}`}
           title={`${b.count} unidade${b.count > 1 ? 's' : ''} ${UNIDADE_STATUS_LABEL[b.status] ?? b.status}`}
         >
           <div className={`w-1 h-1 rounded-full flex-shrink-0 ${UNIDADE_STATUS_DOT[b.status] ?? 'bg-zinc-400'}`} />
@@ -290,10 +290,10 @@ export default function PedidosLista({ pedidos, loading, onSelectPedido }: Pedid
 
   if (loading) {
     return (
-      <div className="bg-white rounded-xl border border-zinc-100 overflow-hidden">
-        <div className="flex flex-col items-center justify-center py-16 text-zinc-400">
-          <i className="ri-loader-4-line animate-spin text-3xl mb-3 text-amber-400" />
-          <p className="text-sm font-semibold">Carregando pedidos da sessão...</p>
+      <div className="bg-white rounded-2xl border border-zinc-200 overflow-hidden">
+        <div className="py-14 text-center text-zinc-400">
+          <i className="ri-loader-4-line animate-spin text-4xl mb-3 text-amber-400 block" />
+          <p className="text-sm">Carregando pedidos da sessão...</p>
         </div>
       </div>
     );
@@ -301,10 +301,10 @@ export default function PedidosLista({ pedidos, loading, onSelectPedido }: Pedid
 
   if (pedidos.length === 0) {
     return (
-      <div className="bg-white rounded-xl border border-zinc-100 overflow-hidden">
-        <div className="flex flex-col items-center justify-center py-16 text-zinc-400">
-          <i className="ri-file-list-3-line text-4xl mb-3" />
-          <p className="text-sm font-semibold">Nenhum pedido encontrado</p>
+      <div className="bg-white rounded-2xl border border-zinc-200 overflow-hidden">
+        <div className="py-14 text-center text-zinc-400">
+          <i className="ri-file-list-3-line text-4xl text-zinc-200 mb-3 block" />
+          <p className="text-sm">Nenhum pedido encontrado</p>
           <p className="text-xs mt-1">Tente ajustar os filtros de busca</p>
         </div>
       </div>
@@ -312,10 +312,10 @@ export default function PedidosLista({ pedidos, loading, onSelectPedido }: Pedid
   }
 
   return (
-    <div className="bg-white rounded-xl border border-zinc-100 overflow-hidden">
+    <div className="bg-white rounded-2xl border border-zinc-200 overflow-hidden">
       {/* Desktop table header */}
       <div
-        className="hidden lg:grid gap-x-2 px-4 py-3 border-b border-zinc-100 bg-zinc-50"
+        className="hidden lg:grid gap-x-2 pl-5 pr-4 py-2.5 border-b border-zinc-200"
         style={{ gridTemplateColumns: '28px 2fr 1.1fr 1.4fr 1.3fr 1.5fr 1.7fr 1.1fr 0.8fr 1.3fr 1fr 1.2fr' }}
       >
         <label className="flex items-center justify-center cursor-pointer" title={elegiveisVisiveis.length === 0 ? 'Nenhum pedido pago sem nota nesta lista' : `Marcar os ${elegiveisVisiveis.length} pedidos pagos sem nota`} onClick={(e) => e.stopPropagation()}>
@@ -326,7 +326,7 @@ export default function PedidosLista({ pedidos, loading, onSelectPedido }: Pedid
             key={key}
             type="button"
             onClick={() => toggleSort(key)}
-            className={`flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide cursor-pointer hover:text-zinc-600 transition-colors ${label === 'Total' ? 'justify-end' : ''} ${sortBy === key ? 'text-amber-600' : 'text-zinc-400'}`}
+            className={`flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wide cursor-pointer hover:text-zinc-600 transition-colors ${label === 'Total' ? 'justify-end' : ''} ${sortBy === key ? 'text-amber-600' : 'text-zinc-400'}`}
             title={`Ordenar por ${label}`}
           >
             {label}
@@ -335,7 +335,7 @@ export default function PedidosLista({ pedidos, loading, onSelectPedido }: Pedid
         ))}
       </div>
 
-      <div className="divide-y divide-zinc-50">
+      <div className="divide-y divide-zinc-100/80">
         {pedidosOrdenados.map((pedido) => {
           const isGrupo = (pedido.pedidoIds ?? []).length > 1;
           const qtdPedidosGrupo = pedido.pedidoIds?.length ?? 1;
@@ -352,12 +352,12 @@ export default function PedidosLista({ pedidos, loading, onSelectPedido }: Pedid
           return (
             <div
               key={pedido.id}
-              className={`cursor-pointer transition-colors ${isAtrasado ? 'hover:bg-red-50 border-l-2 border-red-400' : 'hover:bg-zinc-50'} ${pedido.status === 'cancelado' || pedido.status === 'cancelled' ? 'opacity-60 bg-red-50/30' : ''}`}
+              className={`cursor-pointer transition-colors ${isAtrasado ? 'hover:bg-red-50 border-l-2 border-red-400' : 'hover:bg-amber-50/40'} ${pedido.status === 'cancelado' || pedido.status === 'cancelled' ? 'opacity-60 bg-red-50/30' : ''}`}
               onClick={() => onSelectPedido(pedido.id)}
             >
               {/* Desktop row */}
               <div
-                className="hidden lg:grid gap-x-2 px-4 py-3.5 items-center"
+                className="hidden lg:grid gap-x-2 pl-5 pr-4 py-3 items-center"
                 style={{ gridTemplateColumns: '28px 2fr 1.1fr 1.4fr 1.3fr 1.5fr 1.7fr 1.1fr 0.8fr 1.3fr 1fr 1.2fr' }}
               >
                 {/* Seleção (só pedidos pagos sem nota) */}
@@ -378,7 +378,7 @@ export default function PedidosLista({ pedidos, loading, onSelectPedido }: Pedid
                         : formatOrderNumber(pedido.numeroStr ?? pedido.numeroCodigo, pedido.numero)}
                     </span>
                     {isGrupo && (
-                      <span className="inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-200 whitespace-nowrap">
+                      <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-md bg-amber-50 text-amber-700 whitespace-nowrap">
                         <i className="ri-stack-line text-[9px]" />
                         Unificado
                       </span>
@@ -394,7 +394,7 @@ export default function PedidosLista({ pedidos, loading, onSelectPedido }: Pedid
                 {/* Sessão */}
                 <div>
                   {pedido.session_number ? (
-                    <span className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded bg-zinc-100 text-zinc-600 border border-zinc-200 whitespace-nowrap" title={pedido.session_number}>
+                    <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-md bg-zinc-100 text-zinc-600 whitespace-nowrap" title={pedido.session_number}>
                       <i className="ri-archive-line text-[9px]" />
                       {pedido.session_number}
                     </span>
@@ -413,11 +413,11 @@ export default function PedidosLista({ pedidos, loading, onSelectPedido }: Pedid
                   {pedido.status === 'cancelado' || pedido.status === 'cancelled' ? (
                     <span className="text-xs text-zinc-300">—</span>
                   ) : pedido.pago ? (
-                    <span className="flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 border border-emerald-200 whitespace-nowrap w-fit">
+                    <span className="flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 whitespace-nowrap w-fit">
                       <i className="ri-check-line" />Pago
                     </span>
                   ) : (
-                    <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-amber-50 text-amber-600 border border-amber-200 whitespace-nowrap w-fit">Pendente</span>
+                    <span className="text-[11px] font-semibold px-2 py-0.5 rounded-md bg-amber-50 text-amber-700 whitespace-nowrap w-fit">Pendente</span>
                   )}
                 </div>
 
@@ -475,9 +475,9 @@ export default function PedidosLista({ pedidos, loading, onSelectPedido }: Pedid
                 {/* Total */}
                 <div className="text-right">
                   {pedido.status === 'cancelado' || pedido.status === 'cancelled' ? (
-                    <span className="text-xs font-semibold text-red-400 whitespace-nowrap">Cancelado</span>
+                    <span className="text-xs font-semibold text-red-500 whitespace-nowrap">Cancelado</span>
                   ) : (
-                    <p className="text-sm font-black text-zinc-900 whitespace-nowrap">R$ {pedido.total.toFixed(2)}</p>
+                    <p className="text-sm font-bold text-zinc-900 tabular-nums whitespace-nowrap">R$ {pedido.total.toFixed(2)}</p>
                   )}
                 </div>
               </div>
@@ -492,22 +492,22 @@ export default function PedidosLista({ pedidos, loading, onSelectPedido }: Pedid
                         : formatOrderNumber(pedido.numeroStr ?? pedido.numeroCodigo, pedido.numero)}
                     </span>
                     {isGrupo && (
-                      <span className="inline-flex items-center gap-0.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-200">
+                      <span className="inline-flex items-center gap-0.5 text-[11px] font-semibold px-2 py-0.5 rounded-md bg-amber-50 text-amber-700">
                         <i className="ri-stack-line text-[9px]" />
                         Unificado
                       </span>
                     )}
                     <StatusBadges pedido={pedido} />
                     {pedido.pago && (
-                      <span className="flex items-center gap-0.5 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700 border border-emerald-200">
+                      <span className="flex items-center gap-0.5 text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-emerald-50 text-emerald-700">
                         <i className="ri-check-line text-[9px]" />Pago
                       </span>
                     )}
                   </div>
                   {pedido.status === 'cancelado' || pedido.status === 'cancelled' ? (
-                    <span className="text-xs font-semibold text-red-400 whitespace-nowrap">Cancelado</span>
+                    <span className="text-xs font-semibold text-red-500 whitespace-nowrap">Cancelado</span>
                   ) : (
-                    <p className="text-sm font-black text-zinc-900 whitespace-nowrap">R$ {pedido.total.toFixed(2)}</p>
+                    <p className="text-sm font-bold text-zinc-900 tabular-nums whitespace-nowrap">R$ {pedido.total.toFixed(2)}</p>
                   )}
                 </div>
                 <div className="flex items-center gap-3 text-xs text-zinc-500 flex-wrap">
@@ -517,7 +517,7 @@ export default function PedidosLista({ pedidos, loading, onSelectPedido }: Pedid
                   </span>
                   <span>{destinoLabel(pedido)}</span>
                   {pedido.session_number && (
-                    <span className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded bg-zinc-100 text-zinc-600 border border-zinc-200">
+                    <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-md bg-zinc-100 text-zinc-600">
                       <i className="ri-archive-line text-[9px]" />
                       {pedido.session_number}
                     </span>

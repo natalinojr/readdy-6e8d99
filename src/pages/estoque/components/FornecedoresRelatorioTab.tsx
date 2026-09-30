@@ -3,6 +3,7 @@ import { useEstoque } from '@/contexts/EstoqueContext';
 import { useSuppliers } from '@/hooks/useSuppliers';
 import { Building2, ChevronDown, ChevronUp, Search } from 'lucide-react';
 import type { Insumo } from '@/contexts/EstoqueContext';
+import { KpiCard, Segmented } from '../../financeiro/components/dreUi';
 
 const fmt = (v: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
@@ -125,43 +126,54 @@ export default function FornecedoresRelatorioTab() {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="p-4 md:p-6 space-y-5 max-w-[1400px] mx-auto">
       {/* Cards de resumo */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-        <div className="bg-white border border-zinc-100 rounded-xl p-4">
-          <p className="text-[10px] text-zinc-400 mb-0.5">Fornecedores</p>
-          <p className="text-xl font-bold text-zinc-900">{grupos.filter(g => g.nome !== 'Sem fornecedor').length}</p>
-          <p className="text-[10px] text-zinc-400 mt-0.5">{grupos.find(g => g.nome === 'Sem fornecedor')?.insumos.length ?? 0} sem vínculo</p>
-        </div>
-        <div className="bg-white border border-zinc-100 rounded-xl p-4">
-          <p className="text-[10px] text-zinc-400 mb-0.5">Total Insumos</p>
-          <p className="text-xl font-bold text-zinc-900">{totalInsumos}</p>
-          <p className="text-[10px] text-amber-600 mt-0.5">{totalAlerta} em alerta</p>
-        </div>
-        <div className="bg-white border border-zinc-100 rounded-xl p-4">
-          <p className="text-[10px] text-zinc-400 mb-0.5">Valor em Estoque</p>
-          <p className="text-lg font-bold text-zinc-900">{fmt(totalValor)}</p>
-          <p className="text-[10px] text-zinc-400 mt-0.5">todos os insumos</p>
-        </div>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <KpiCard
+          label="Fornecedores" icon="ri-building-line" semVariacao atual={grupos.filter(g => g.nome !== 'Sem fornecedor').length}
+          value={String(grupos.filter(g => g.nome !== 'Sem fornecedor').length)}
+          sub={`${grupos.find(g => g.nome === 'Sem fornecedor')?.insumos.length ?? 0} sem vínculo`}
+        />
+        <KpiCard
+          label="Total Insumos" icon="ri-stack-line" semVariacao atual={totalInsumos}
+          value={String(totalInsumos)}
+          sub={`${totalAlerta} em alerta`}
+          subTone="text-amber-700"
+        />
+        <KpiCard
+          label="Valor em Estoque" icon="ri-money-dollar-circle-line" semVariacao atual={totalValor}
+          value={fmt(totalValor)}
+          sub="todos os insumos"
+        />
       </div>
 
       {/* Filtros */}
-      <div className="flex flex-col gap-2">
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-          <div className="flex items-center gap-2 bg-white border border-zinc-200 rounded-lg px-3 py-2 flex-1">
-            <Search size={13} className="text-zinc-400 flex-shrink-0" />
-            <input
-              value={busca}
-              onChange={(e) => setBusca(e.target.value)}
-              placeholder="Buscar fornecedor..."
-              className="flex-1 text-xs bg-transparent text-zinc-700 placeholder-zinc-400 focus:outline-none"
-            />
-          </div>
-          <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2 lg:gap-3">
+        <div className="relative flex-1 min-w-[200px] max-w-sm">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
+          <input
+            value={busca}
+            onChange={(e) => setBusca(e.target.value)}
+            placeholder="Buscar fornecedor..."
+            className="w-full h-10 rounded-xl border border-zinc-200 shadow-sm pl-9 pr-3 text-sm bg-white text-zinc-700 placeholder-zinc-400 focus:outline-none focus:border-amber-400"
+          />
+        </div>
+        <div className="overflow-x-auto max-w-full">
+          <Segmented<'nome' | 'valor' | 'alerta'>
+            value={ordenarPor}
+            onChange={setOrdenarPor}
+            options={[
+              { id: 'nome', label: 'Nome A-Z', icon: 'ri-sort-alphabet-asc' },
+              { id: 'valor', label: 'Maior Valor', icon: 'ri-money-dollar-circle-line' },
+              { id: 'alerta', label: 'Mais Alertas', icon: 'ri-alarm-warning-line' },
+            ]}
+          />
+        </div>
+        <div className="ml-auto flex items-center gap-2 max-w-full">
             <select
               value={filtroFornecedor}
               onChange={(e) => setFiltroFornecedor(e.target.value)}
-              className="flex-1 text-xs border border-zinc-200 rounded-lg px-2.5 py-1.5 text-zinc-700 focus:outline-none focus:border-amber-400 bg-white cursor-pointer"
+              className="h-10 min-w-0 max-w-[220px] text-xs font-semibold border border-zinc-200 shadow-sm rounded-xl px-3 text-zinc-700 focus:outline-none focus:border-amber-400 bg-white cursor-pointer"
             >
               <option value="todos">Todos</option>
               {grupos.filter(g => g.nome !== 'Sem fornecedor').map((g) => (
@@ -175,25 +187,11 @@ export default function FornecedoresRelatorioTab() {
             </select>
             <button
               onClick={exportCSV}
-              className="w-8 h-8 flex items-center justify-center bg-zinc-100 text-zinc-600 rounded-lg hover:bg-zinc-200 transition-colors cursor-pointer flex-shrink-0"
+              className="flex items-center gap-1.5 px-3 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 rounded-xl text-xs font-semibold text-zinc-600 cursor-pointer transition-colors whitespace-nowrap shadow-sm"
               title="Exportar CSV"
             >
-              <i className="ri-download-line text-sm" />
+              <i className="ri-download-line text-sm" /> Exportar CSV
             </button>
-          </div>
-        </div>
-        <div className="flex items-center gap-1 bg-zinc-100 rounded-lg p-1 overflow-x-auto">
-          {([['nome', 'Nome A-Z'], ['valor', 'Maior Valor'], ['alerta', 'Mais Alertas']] as const).map(([v, l]) => (
-            <button
-              key={v}
-              onClick={() => setOrdenarPor(v)}
-              className={`px-2.5 py-1 text-xs font-medium rounded-md whitespace-nowrap cursor-pointer transition-colors flex-shrink-0 ${
-                ordenarPor === v ? 'bg-white text-zinc-900' : 'text-zinc-500 hover:text-zinc-700'
-              }`}
-            >
-              {l}
-            </button>
-          ))}
         </div>
       </div>
 
@@ -235,8 +233,8 @@ export default function FornecedoresRelatorioTab() {
       {/* Lista de fornecedores */}
       <div className="space-y-3">
         {gruposFiltrados.length === 0 && (
-          <div className="flex flex-col items-center justify-center py-16 bg-white border border-zinc-100 rounded-xl text-center">
-            <Building2 size={32} className="text-zinc-200 mb-3" />
+          <div className="flex flex-col items-center justify-center py-14 bg-white border border-zinc-200 rounded-2xl text-center">
+            <Building2 size={40} className="text-zinc-200 mb-3" />
             <p className="text-sm font-semibold text-zinc-500">Nenhum fornecedor encontrado</p>
           </div>
         )}
@@ -247,11 +245,11 @@ export default function FornecedoresRelatorioTab() {
           const semFornecedor = grupo.nome === 'Sem fornecedor';
 
           return (
-            <div key={key} className="bg-white border border-zinc-100 rounded-xl overflow-hidden">
+            <div key={key} className="bg-white rounded-2xl border border-zinc-200 overflow-hidden">
               {/* Header do grupo */}
               <button
                 onClick={() => toggleExpand(key)}
-                className="w-full flex items-center gap-3 px-4 py-3.5 hover:bg-zinc-50 transition-colors cursor-pointer text-left"
+                className="w-full flex items-center gap-3 px-5 py-3.5 hover:bg-zinc-50 transition-colors cursor-pointer text-left"
               >
                 <div className={`w-9 h-9 flex items-center justify-center rounded-xl flex-shrink-0 ${semFornecedor ? 'bg-zinc-100' : 'bg-amber-50'}`}>
                   <Building2 size={15} className={semFornecedor ? 'text-zinc-400' : 'text-amber-600'} />
@@ -260,10 +258,10 @@ export default function FornecedoresRelatorioTab() {
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-sm font-bold text-zinc-800">{grupo.nome}</span>
                     {grupo.supplierId && (
-                      <span className="text-[9px] font-bold px-1.5 py-0.5 bg-emerald-100 text-emerald-700 rounded-full">Cadastrado</span>
+                      <span className="text-[11px] font-semibold px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700">Cadastrado</span>
                     )}
                     {grupo.insumosBaixo > 0 && (
-                      <span className="text-[9px] font-bold px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded-full">
+                      <span className="text-[11px] font-semibold px-2 py-0.5 rounded-md bg-amber-50 text-amber-700">
                         {grupo.insumosBaixo} em alerta
                       </span>
                     )}
@@ -282,10 +280,10 @@ export default function FornecedoresRelatorioTab() {
 
               {/* Insumos do grupo */}
               {isOpen && (
-                <div className="border-t border-zinc-50">
+                <div className="border-t border-zinc-100">
                   {/* Info fornecedor cadastrado */}
                   {supplier && (supplier.cnpj || supplier.address || supplier.email) && (
-                    <div className="px-4 py-3 bg-amber-50/60 border-b border-amber-100 flex flex-wrap gap-4">
+                    <div className="px-5 py-3 bg-zinc-50 border-b border-zinc-100 flex flex-wrap gap-4">
                       {supplier.cnpj && (
                         <div>
                           <p className="text-[9px] text-zinc-400 font-medium uppercase tracking-wide">CNPJ</p>
@@ -315,52 +313,52 @@ export default function FornecedoresRelatorioTab() {
 
                   <div className="overflow-x-auto">
                   <table className="w-full text-xs" style={{ minWidth: '480px' }}>
-                    <thead className="bg-zinc-50/80">
+                    <thead className="border-b border-zinc-200">
                       <tr>
-                        <th className="px-4 py-2 text-left font-semibold text-zinc-400">Insumo</th>
-                        <th className="px-4 py-2 text-left font-semibold text-zinc-400 hidden sm:table-cell">Categoria</th>
-                        <th className="px-4 py-2 text-right font-semibold text-zinc-400">Estoque</th>
-                        <th className="px-4 py-2 text-right font-semibold text-zinc-400 hidden sm:table-cell">Preço Unit.</th>
-                        <th className="px-4 py-2 text-right font-semibold text-zinc-400">Valor</th>
-                        <th className="px-4 py-2 text-center font-semibold text-zinc-400">Status</th>
+                        <th className="pl-5 pr-4 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Insumo</th>
+                        <th className="px-4 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wide text-zinc-400 hidden sm:table-cell">Categoria</th>
+                        <th className="px-4 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Estoque</th>
+                        <th className="px-4 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wide text-zinc-400 hidden sm:table-cell">Preço Unit.</th>
+                        <th className="px-4 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Valor</th>
+                        <th className="px-4 py-2.5 text-center text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Status</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-zinc-50">
+                    <tbody className="divide-y divide-zinc-100/80">
                       {grupo.insumos.map((ins) => {
                         const st = statusLabel(ins);
                         return (
-                          <tr key={ins.id} className="hover:bg-zinc-50/50 transition-colors">
-                            <td className="px-4 py-2.5 font-medium text-zinc-800">{ins.nome}</td>
+                          <tr key={ins.id} className="hover:bg-zinc-50 transition-colors">
+                            <td className="pl-5 pr-4 py-2.5 font-medium text-zinc-800"><span className="block truncate max-w-[240px]" title={ins.nome}>{ins.nome}</span></td>
                             <td className="px-4 py-2.5 hidden sm:table-cell">
                               {ins.categoria ? (
-                                <span className="px-2 py-0.5 bg-zinc-100 text-zinc-500 rounded-full text-[10px]">{ins.categoria}</span>
+                                <span className="text-[11px] font-semibold px-2 py-0.5 rounded-md bg-zinc-100 text-zinc-600">{ins.categoria}</span>
                               ) : <span className="text-zinc-300">—</span>}
                             </td>
-                            <td className="px-4 py-2.5 text-right text-zinc-700">
+                            <td className="px-4 py-2.5 text-right tabular-nums whitespace-nowrap text-zinc-700">
                               {ins.estoqueAtual} {ins.unidade}
                               {ins.estoqueMinimo > 0 && (
                                 <span className="block text-[10px] text-zinc-400">mín: {ins.estoqueMinimo}</span>
                               )}
                             </td>
-                            <td className="px-4 py-2.5 text-right font-semibold text-zinc-800 hidden sm:table-cell">{fmt(ins.precoUnitario)}</td>
-                            <td className="px-4 py-2.5 text-right font-semibold text-zinc-700">{fmt(ins.estoqueAtual * ins.precoUnitario)}</td>
+                            <td className="px-4 py-2.5 text-right tabular-nums whitespace-nowrap font-semibold text-zinc-800 hidden sm:table-cell">{fmt(ins.precoUnitario)}</td>
+                            <td className="px-4 py-2.5 text-right tabular-nums whitespace-nowrap font-semibold text-zinc-700">{fmt(ins.estoqueAtual * ins.precoUnitario)}</td>
                             <td className="px-4 py-2.5 text-center">
-                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${st.cls}`}>{st.label}</span>
+                              <span className={`px-2 py-0.5 rounded-md text-[11px] font-semibold ${st.cls}`}>{st.label}</span>
                             </td>
                           </tr>
                         );
                       })}
                     </tbody>
-                    <tfoot className="bg-zinc-50 border-t border-zinc-100">
+                    <tfoot className="bg-zinc-50 border-t-2 border-zinc-200">
                       <tr>
-                        <td colSpan={2} className="px-4 py-2 text-xs font-semibold text-zinc-500 hidden sm:table-cell">
+                        <td colSpan={2} className="pl-5 pr-4 py-2.5 text-xs font-semibold text-zinc-500 hidden sm:table-cell">
                           Total — {grupo.insumos.length} insumo{grupo.insumos.length !== 1 ? 's' : ''}
                         </td>
-                        <td className="px-4 py-2 text-xs font-semibold text-zinc-500 sm:hidden">
+                        <td className="pl-5 pr-4 py-2.5 text-xs font-semibold text-zinc-500 sm:hidden">
                           Total
                         </td>
                         <td className="hidden sm:table-cell" />
-                        <td className="px-4 py-2 text-right text-xs font-bold text-zinc-800">{fmt(grupo.valorEstoque)}</td>
+                        <td className="px-4 py-2.5 text-right tabular-nums whitespace-nowrap text-xs font-bold text-zinc-900">{fmt(grupo.valorEstoque)}</td>
                         <td />
                       </tr>
                     </tfoot>

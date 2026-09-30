@@ -101,7 +101,7 @@ function NotaFiscalCellInner({ pedido, fiscal, onToast, compact }: Props) {
       return (
         <div className="min-w-0" onClick={stop}>
           <div className="flex items-center gap-1">
-            <span className={`inline-flex items-center gap-0.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full border whitespace-nowrap ${cancel ? 'bg-zinc-100 text-zinc-500 border-zinc-200 line-through' : 'bg-emerald-50 text-emerald-700 border-emerald-200'}`}
+            <span className={`inline-flex items-center gap-0.5 text-[11px] font-semibold px-2 py-0.5 rounded-md whitespace-nowrap ${cancel ? 'bg-zinc-100 text-zinc-500 line-through' : 'bg-emerald-50 text-emerald-700'}`}
               title={`${cancel ? 'Cancelada' : 'Autorizada'} ${d.emitted_at ? new Date(d.emitted_at).toLocaleString('pt-BR') : ''}${d.environment === 2 ? ' · homologação' : ''}\nChave ${d.chave ?? ''}`}>
               <i className={`${cancel ? 'ri-close-circle-line' : 'ri-checkbox-circle-line'} text-[10px]`} />
               NFC-e {d.numero ?? ''}
@@ -150,7 +150,7 @@ function NotaFiscalCellInner({ pedido, fiscal, onToast, compact }: Props) {
   const faltam = ids.length - autorizadas;
   if (autorizadas === ids.length) {
     return (
-      <span className="inline-flex items-center gap-0.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 whitespace-nowrap" title={docs.map(d => d ? `NFC-e ${d.numero ?? ''}` : '').filter(Boolean).join(', ')} onClick={stop}>
+      <span className="inline-flex items-center gap-0.5 text-[11px] font-semibold px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 whitespace-nowrap" title={docs.map(d => d ? `NFC-e ${d.numero ?? ''}` : '').filter(Boolean).join(', ')} onClick={stop}>
         <i className="ri-checkbox-circle-line text-[10px]" />{autorizadas} notas
       </span>
     );

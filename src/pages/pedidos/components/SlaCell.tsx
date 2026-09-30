@@ -53,10 +53,10 @@ function EsperaTag({ pedido }: { pedido: PedidoRecente }) {
   const isCritico = mins >= 12;
 
   const colorClass = isCritico
-    ? 'bg-red-50 text-red-600 border border-red-200'
+    ? 'bg-red-50 text-red-600'
     : isAlerta
-    ? 'bg-orange-50 text-orange-600 border border-orange-200'
-    : 'bg-sky-50 text-sky-600 border border-sky-200';
+    ? 'bg-orange-50 text-orange-600'
+    : 'bg-sky-50 text-sky-600';
 
   return (
     <span
@@ -86,10 +86,10 @@ function CozinhaTag({ pedido }: { pedido: PedidoRecente }) {
   const isCritico = mins >= 15;
 
   const colorClass = isCritico
-    ? 'bg-red-50 text-red-600 border border-red-200'
+    ? 'bg-red-50 text-red-600'
     : isAlerta
-    ? 'bg-amber-50 text-amber-600 border border-amber-200'
-    : 'bg-amber-50 text-amber-600 border border-amber-100';
+    ? 'bg-amber-50 text-amber-600'
+    : 'bg-amber-50 text-amber-600';
 
   return (
     <span
@@ -176,10 +176,10 @@ export function TempoCell({ pedido }: { pedido: PedidoRecente }) {
   const isAtivo = !hasEntrega && !!pedido._criadoTs;
 
   const colorClass = isAtrasado
-    ? 'bg-red-50 text-red-600 border border-red-200'
+    ? 'bg-red-50 text-red-600'
     : isNoPrazo
-    ? 'bg-emerald-50 text-emerald-600 border border-emerald-200'
-    : 'bg-amber-50 text-amber-700 border border-amber-200';
+    ? 'bg-emerald-50 text-emerald-600'
+    : 'bg-amber-50 text-amber-700';
 
   return (
     <span

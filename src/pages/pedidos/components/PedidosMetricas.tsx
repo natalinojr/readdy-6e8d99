@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import type { PedidoRecente } from '@/types/pdv';
 import { formatCurrency } from '@/lib/formatters';
+import { KpiCard } from '@/pages/financeiro/components/dreUi';
 
 interface PedidosMetricasProps {
   totalPedidos: number;
@@ -23,28 +24,6 @@ export default function PedidosMetricas({
 }: PedidosMetricasProps) {
   const [mostrarAnalise, setMostrarAnalise] = useState(false);
 
-  const metricCards = [
-    { label: 'Total', value: totalPedidos, icon: 'ri-file-list-3-line', color: 'text-zinc-700', bg: 'bg-white', border: 'border-zinc-100' },
-    { label: 'Faturamento', value: formatCurrency(totalValor), icon: 'ri-money-dollar-circle-line', color: 'text-emerald-700', bg: 'bg-emerald-50', border: 'border-emerald-100' },
-    { label: 'Ticket Médio', value: formatCurrency(ticketMedio), icon: 'ri-receipt-line', color: 'text-amber-700', bg: 'bg-amber-50', border: 'border-amber-100' },
-    { label: 'Em Aberto', value: emAberto, icon: 'ri-time-line', color: 'text-orange-700', bg: 'bg-orange-50', border: 'border-orange-100' },
-    { label: 'Entregues', value: entregues, icon: 'ri-check-double-line', color: 'text-sky-700', bg: 'bg-sky-50', border: 'border-sky-100' },
-    { label: 'Cancelados', value: cancelados, icon: 'ri-close-circle-line', color: 'text-red-700', bg: 'bg-red-50', border: 'border-red-100' },
-  ];
-
-  const pagamentoCards = [
-    { label: 'Pagos', value: pagos, sub: formatCurrency(valorPago), icon: 'ri-check-double-line', color: 'text-emerald-700', bg: 'bg-emerald-50', border: 'border-emerald-100' },
-    ...(slaMedio !== null ? [{
-      label: 'SLA médio cozinha',
-      value: `${slaMedio}min`,
-      sub: slaMedio <= 15 ? 'Dentro do alvo' : 'Acima do alvo',
-      icon: 'ri-fire-line',
-      color: slaMedio <= 15 ? 'text-emerald-700' : 'text-red-700',
-      bg: slaMedio <= 15 ? 'bg-emerald-50' : 'bg-red-50',
-      border: slaMedio <= 15 ? 'border-emerald-100' : 'border-red-100',
-    }] : []),
-  ];
-
   // Calcula horários de pico a partir dos pedidos filtrados
   const horariosData = (() => {
     const map: Record<string, { pedidos: number; valor: number }> = {};
@@ -59,40 +38,40 @@ export default function PedidosMetricas({
       .map(([hora, v]) => ({ hora: `${hora}h`, ...v }));
   })();
 
+  const slaOk = slaMedio !== null && slaMedio <= 15;
+
   return (
     <>
-      {/* Cards de métricas */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 md:gap-3">
-        {metricCards.map((m) => (
-          <div key={m.label} className={`p-3 md:p-3.5 rounded-xl border ${m.bg} ${m.border}`}>
-            <div className="flex items-center gap-1.5 mb-1 md:mb-1.5">
-              <i className={`${m.icon} text-sm ${m.color}`} />
-              <p className="text-[9px] md:text-[10px] font-semibold text-zinc-500 uppercase tracking-wide leading-tight">{m.label}</p>
-            </div>
-            <p className={`text-base md:text-lg font-black ${m.color}`}>{m.value}</p>
-          </div>
-        ))}
+      {/* Cartões de resumo */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6 gap-3">
+        <KpiCard semVariacao atual={0} label="Total" icon="ri-file-list-3-line" value={String(totalPedidos)} />
+        <KpiCard semVariacao atual={0} label="Faturamento" icon="ri-money-dollar-circle-line" value={formatCurrency(totalValor)} valueTone="text-emerald-700" />
+        <KpiCard semVariacao atual={0} label="Ticket Médio" icon="ri-receipt-line" value={formatCurrency(ticketMedio)} valueTone="text-amber-700" />
+        <KpiCard semVariacao atual={0} label="Em Aberto" icon="ri-time-line" value={String(emAberto)} valueTone="text-amber-700" />
+        <KpiCard semVariacao atual={0} label="Entregues" icon="ri-check-double-line" value={String(entregues)} valueTone="text-emerald-700" />
+        <KpiCard semVariacao atual={0} label="Cancelados" icon="ri-close-circle-line" value={String(cancelados)} valueTone="text-red-600" />
       </div>
 
-      {/* Painel pagamentos + horários */}
+      {/* Pagamentos + horários */}
       {totalPedidos > 0 && (
-        <div className="bg-white rounded-xl border border-zinc-100 overflow-hidden">
-          <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-50 flex-wrap gap-2">
-            <div className="flex items-center gap-3 flex-wrap">
-              {pagamentoCards.map((c) => (
-                <div key={c.label} className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border ${c.bg} ${c.border}`}>
-                  <i className={`${c.icon} text-sm ${c.color}`} />
-                  <div>
-                    <p className="text-[9px] font-semibold text-zinc-500 uppercase tracking-wide leading-none">{c.label}</p>
-                    <p className={`text-sm font-black ${c.color} leading-tight`}>{c.value}</p>
-                    <p className="text-[9px] text-zinc-400 leading-none">{c.sub}</p>
-                  </div>
-                </div>
-              ))}
+        <div className="bg-white rounded-2xl border border-zinc-200 overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-100 gap-3 flex-wrap">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-[11px] font-semibold px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 flex items-center gap-1">
+                <i className="ri-check-double-line" /> Pagos: {pagos} · {formatCurrency(valorPago)}
+              </span>
+              <span className="text-[11px] font-semibold px-2 py-0.5 rounded-md bg-amber-50 text-amber-700 flex items-center gap-1">
+                <i className="ri-time-line" /> Pendentes: {pendentes}
+              </span>
+              {slaMedio !== null && (
+                <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-md flex items-center gap-1 ${slaOk ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
+                  <i className="ri-fire-line" /> SLA médio cozinha: {slaMedio}min · {slaOk ? 'Dentro do alvo' : 'Acima do alvo'}
+                </span>
+              )}
             </div>
             <button
               onClick={() => setMostrarAnalise((v) => !v)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-colors whitespace-nowrap ${mostrarAnalise ? 'bg-amber-100 text-amber-700' : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'}`}
+              className="flex items-center gap-1.5 px-3 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 rounded-xl text-xs font-semibold text-zinc-600 cursor-pointer transition-colors whitespace-nowrap shadow-sm"
             >
               <i className="ri-bar-chart-2-line" />
               {mostrarAnalise ? 'Ocultar análise' : 'Horários de pico'}
@@ -100,21 +79,22 @@ export default function PedidosMetricas({
           </div>
 
           {mostrarAnalise && horariosData.length > 0 && (
-            <div className="p-4">
+            <div className="p-5">
               <div className="mb-3">
-                <p className="text-xs font-semibold text-zinc-700">Distribuição de pedidos por hora</p>
-                <p className="text-[10px] text-zinc-400">Identifique os horários de maior movimento no período selecionado</p>
+                <h3 className="text-sm font-bold text-zinc-800">Distribuição de pedidos por hora</h3>
+                <p className="text-xs text-zinc-400">Identifique os horários de maior movimento no período selecionado</p>
               </div>
               <ResponsiveContainer width="100%" height={140}>
                 <BarChart data={horariosData} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f4f4f5" vertical={false} />
-                  <XAxis dataKey="hora" tick={{ fontSize: 10, fill: '#a1a1aa' }} axisLine={false} tickLine={false} />
+                  <XAxis dataKey="hora" tick={{ fontSize: 11, fill: '#71717a' }} axisLine={false} tickLine={false} />
                   <YAxis tick={{ fontSize: 10, fill: '#a1a1aa' }} axisLine={false} tickLine={false} allowDecimals={false} width={24} />
                   <Tooltip
                     formatter={(v: number, name: string) => [
                       name === 'pedidos' ? `${v} pedidos` : `R$ ${v.toFixed(2)}`,
                       name === 'pedidos' ? 'Pedidos' : 'Faturamento',
                     ]}
+                    cursor={{ fill: '#fafafa' }}
                     contentStyle={{ borderRadius: 8, border: '1px solid #e4e4e7', fontSize: 11 }}
                   />
                   <Bar dataKey="pedidos" fill="#f59e0b" radius={[4, 4, 0, 0]} maxBarSize={32} />
@@ -132,7 +112,7 @@ export default function PedidosMetricas({
           )}
 
           {mostrarAnalise && horariosData.length === 0 && (
-            <div className="p-6 text-center text-zinc-400 text-xs">
+            <div className="py-14 text-center text-zinc-400 text-sm">
               Sem dados de horário disponíveis para o período selecionado
             </div>
           )}
