@@ -17,6 +17,8 @@
 //                                            (dá entrada no estoque) e memoriza o vínculo por fornecedor+código
 //   item_links     { document_id }           vínculos já memorizados p/ os itens da nota + lista de insumos
 //   ignore         { document_id, reason? }  /  unignore { document_id }
+//   set_start_date { start_date|null }       só recebe notas emitidas a partir da data; ignora as
+//                                            "A conferir" anteriores (recuar a data devolve)
 //   get_xml        { document_id }           XML completo
 //   get_pdf        { document_id }           DANFE (provedor)
 //
@@ -303,12 +305,32 @@ async function fetchPendingXml(admin: Admin, token: string, tenantId: string, de
   return { stats, pendentes: count ?? 0 };
 }
 
+/** Data de início escolhida pela loja (só recebe notas emitidas a partir dela) — 'YYYY-MM-DD' ou null. */
+async function loadStartDate(admin: Admin, tenantId: string): Promise<string | null> {
+  const { data } = await admin.from('fiscal_settings').select('inbound_start_date').eq('tenant_id', tenantId).maybeSingle();
+  const v = String(data?.inbound_start_date ?? '').slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null;
+}
+/** Início do dia em Brasília, para comparar com emitted_at (timestamptz). */
+const inicioDiaBrt = (d: string) => `${d}T00:00:00-03:00`;
+const antesDoInicio = (emitida: unknown, inicio: string | null) =>
+  Boolean(inicio && emitida && new Date(String(emitida)).getTime() < new Date(inicioDiaBrt(inicio)).getTime());
+const ddmmaaaa = (d: string) => d.split('-').reverse().join('/');
+const MOTIVO_ANTES_INICIO = 'Emitida antes da data de início das notas';
+
 async function syncTenant(admin: Admin, tenantId: string, days: number, budgetMs = XML_BUDGET_MS) {
   const deadline = Date.now() + budgetMs;
   const token = await loadToken(admin, tenantId);
   if (!token) return { tenant_id: tenantId, skipped: 'sem token do provedor' };
+  const inicio = await loadStartDate(admin, tenantId);
   const fim = new Date();
-  const ini = new Date(fim.getTime() - Math.min(90, Math.max(1, days)) * 86_400_000);
+  let ini = new Date(fim.getTime() - Math.min(90, Math.max(1, days)) * 86_400_000);
+  // Loja escolheu uma data de início: não pede à SEFAZ nada antes dela
+  if (inicio && new Date(inicioDiaBrt(inicio)) > ini) ini = new Date(inicioDiaBrt(inicio));
+  if (ini > fim) {
+    await admin.from('fiscal_settings').update({ inbound_last_sync_at: new Date().toISOString(), inbound_last_error: null }).eq('tenant_id', tenantId);
+    return { tenant_id: tenantId, encontradas: 0, novas: 0, pendentes: 0, inicio };
+  }
   const res = await providerPost(token, 'ObterNotasFiscais', {
     TipoAmbiente: 1, TipoDocumentoFiscal: 0, TipoParticipacao: 0, DtInicio: ymd(ini), DtFim: ymd(fim),
   });
@@ -329,7 +351,7 @@ async function syncTenant(admin: Admin, tenantId: string, days: number, budgetMs
   // NF-e (55, chave 44) = mercadoria · NFS-e (10, chave 50) = serviço tomado. CT-e e demais ficam de fora.
   const notas = todos.filter((n) => {
     const m = Number(n.ModeloDocumento); const len = onlyDigits(n.Chave).length;
-    return (m === 55 && len === 44) || (m === 10 && len === 50);
+    return ((m === 55 && len === 44) || (m === 10 && len === 50)) && !antesDoInicio(n.DtEmissao, inicio);
   });
   // Grava em lote: 1ª carga de uma loja pode trazer centenas de notas (1 a 1 estourava o tempo da Edge).
   const existentes = new Map<string, { id: string; sefaz_status: number | null }>();
@@ -378,7 +400,7 @@ async function syncTenant(admin: Admin, tenantId: string, days: number, budgetMs
 
   await admin.from('fiscal_settings').update({ inbound_last_sync_at: now, inbound_last_error: null }).eq('tenant_id', tenantId);
   log('INFO', 'sync', 'ok', { tenantId, encontradas: notas.length, novas, modelos, pendentes, ...xmlStats });
-  return { tenant_id: tenantId, encontradas: notas.length, novas, xml: xmlStats, pendentes, modelos, outros_modelos: outrosModelos };
+  return { tenant_id: tenantId, encontradas: notas.length, novas, xml: xmlStats, pendentes, modelos, outros_modelos: outrosModelos, inicio };
 }
 
 // ── Importação ───────────────────────────────────────────────────────────────
@@ -905,9 +927,12 @@ async function autoLaunchTenant(admin: Admin, supabaseUrl: string, tenantId: str
   const { data: cfg } = await admin.from('fiscal_settings').select('inbound_auto_launch').eq('tenant_id', tenantId).maybeSingle();
   if (cfg && cfg.inbound_auto_launch === false) return { ...stats, desligado: true };
 
-  const { data: pend } = await admin.from('fiscal_inbound_documents').select('*')
+  const inicio = await loadStartDate(admin, tenantId);
+  let q = admin.from('fiscal_inbound_documents').select('*')
     .eq('tenant_id', tenantId).eq('status', 'new').eq('xml_status', 'full').eq('auto_launch_blocked', false)
-    .not('emitente_cnpj', 'is', null).order('emitted_at', { ascending: true }).limit(300);
+    .not('emitente_cnpj', 'is', null);
+  if (inicio) q = q.gte('emitted_at', inicioDiaBrt(inicio));
+  const { data: pend } = await q.order('emitted_at', { ascending: true }).limit(300);
   const docs = (pend ?? []) as any[];
   if (docs.length === 0) return stats;
 
@@ -1079,6 +1104,32 @@ Deno.serve(async (req: Request) => {
         ? null
         : await autoLaunchTenant(admin, supabaseUrl, tenantId, Date.now() + AUTO_BUDGET_SYNC_MS).catch((e) => ({ erro: String(e) }));
       return json({ success: !('error' in r), ...r, auto });
+    }
+
+    // Data de início das notas: antes dela nada entra. As "A conferir" anteriores são ignoradas
+    // com motivo próprio; recuar (ou limpar) a data devolve essas mesmas notas para "A conferir".
+    if (action === 'set_start_date') {
+      if (!isManager) return errResp('Apenas administradores e gerentes', 403);
+      const v = body.start_date == null || body.start_date === '' ? null : String(body.start_date).slice(0, 10);
+      if (v !== null && !/^\d{4}-\d{2}-\d{2}$/.test(v)) return errResp('Data inválida');
+      const { data: fs } = await admin.from('fiscal_settings').select('tenant_id').eq('tenant_id', tenantId).maybeSingle();
+      if (!fs) return errResp('A loja ainda não tem a configuração fiscal (token do provedor)');
+      const { error: e0 } = await admin.from('fiscal_settings').update({ inbound_start_date: v }).eq('tenant_id', tenantId);
+      if (e0) return errResp(e0.message, 500);
+      const now = new Date().toISOString();
+      // Volta para "A conferir" o que foi ignorado só pela data e agora está dentro do período
+      let volta = admin.from('fiscal_inbound_documents').update({ status: 'new', ignore_reason: null, updated_at: now })
+        .eq('tenant_id', tenantId).eq('status', 'ignored').like('ignore_reason', `${MOTIVO_ANTES_INICIO}%`);
+      if (v) volta = volta.gte('emitted_at', inicioDiaBrt(v));
+      const { data: voltaram } = await volta.select('id');
+      let ignoradas = 0;
+      if (v) {
+        const { data: ign } = await admin.from('fiscal_inbound_documents')
+          .update({ status: 'ignored', ignore_reason: `${MOTIVO_ANTES_INICIO} (${ddmmaaaa(v)})`, updated_at: now })
+          .eq('tenant_id', tenantId).eq('status', 'new').lt('emitted_at', inicioDiaBrt(v)).select('id');
+        ignoradas = ign?.length ?? 0;
+      }
+      return json({ success: true, start_date: v, ignoradas, voltaram: voltaram?.length ?? 0 });
     }
 
     // Lança agora as notas paradas de fornecedores já conhecidos (colocar em dia)

@@ -152,6 +152,11 @@ export default function NotasEntradaTab() {
   const [tipoDoc, setTipoDoc] = useState<'all' | 'nfe' | 'nfse'>('all');
   const [sincronizando, setSincronizando] = useState(false);
   const [ultimaSync, setUltimaSync] = useState<{ at: string | null; erro: string | null; temToken: boolean }>({ at: null, erro: null, temToken: false });
+  // Data de início (2026-09-30): nota emitida antes dela não entra
+  const [inicio, setInicio] = useState<string>('');
+  const [editandoInicio, setEditandoInicio] = useState(false);
+  const [novoInicio, setNovoInicio] = useState('');
+  const [salvandoInicio, setSalvandoInicio] = useState(false);
   const [aberto, setAberto] = useState<DocRow | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [ordem, setOrdem] = useState<'emissao' | 'vencimento'>('emissao');
@@ -179,11 +184,12 @@ export default function NotasEntradaTab() {
     if (!tenantId) return;
     const [{ data }, { data: fs }] = await Promise.all([
       supabase.from('fiscal_inbound_documents').select(COLS).eq('tenant_id', tenantId).order('emitted_at', { ascending: false }).limit(1000),
-      supabase.from('fiscal_settings').select('inbound_last_sync_at, inbound_last_error, enabled').eq('tenant_id', tenantId).maybeSingle(),
+      supabase.from('fiscal_settings').select('inbound_last_sync_at, inbound_last_error, enabled, inbound_start_date').eq('tenant_id', tenantId).maybeSingle(),
     ]);
     setDocs((data ?? []) as unknown as DocRow[]);
     setDocsDe(tenantId);
     setUltimaSync({ at: (fs?.inbound_last_sync_at as string) ?? null, erro: (fs?.inbound_last_error as string) ?? null, temToken: Boolean(fs) });
+    setInicio(String(fs?.inbound_start_date ?? '').slice(0, 10));
     setLoading(false);
   }, [tenantId]);
 
@@ -225,6 +231,23 @@ export default function NotasEntradaTab() {
     setSincronizando(false);
     toastOk(`${r.encontradas ?? 0} nota(s) na SEFAZ`,
       `${r.novas ?? 0} nova(s)${aguardandoCiencia ? ` · ${aguardandoCiencia} aguardando ciência` : ''}${pendentes ? ` · ${pendentes} XML(s) ainda a baixar (clique em Buscar de novo)` : ''}`);
+    await carregar();
+  };
+
+  const salvarInicio = async (valor: string | null) => {
+    const antes = valor ? docs.filter((d) => d.status === 'new' && d.emitted_at && new Date(d.emitted_at) < new Date(`${valor}T00:00:00-03:00`)).length : 0;
+    if (antes > 0 && !(await confirmar({
+      titulo: `Receber notas só a partir de ${valor!.split('-').reverse().join('/')}?`,
+      mensagem: `${antes} nota(s) "A conferir" foram emitidas antes dessa data e serão ignoradas (saem da lista, da previsão de caixa e dos avisos). Se você voltar a data para trás, elas voltam.`,
+      confirmarLabel: 'Salvar',
+    }))) return;
+    setSalvandoInicio(true);
+    const r = await call<{ ignoradas?: number; voltaram?: number }>({ action: 'set_start_date', start_date: valor });
+    setSalvandoInicio(false);
+    if (!r.success) { toastErr('Não foi possível salvar a data', r.error ?? ''); return; }
+    setEditandoInicio(false);
+    const extra = [r.ignoradas ? `${r.ignoradas} ignorada(s)` : '', r.voltaram ? `${r.voltaram} voltaram para "A conferir"` : ''].filter(Boolean).join(' · ');
+    toastOk(valor ? `Notas a partir de ${valor.split('-').reverse().join('/')}` : 'Sem data de início', extra);
     await carregar();
   };
 
@@ -437,6 +460,37 @@ export default function NotasEntradaTab() {
             {ultimaSync.at ? `Última busca: ${new Date(ultimaSync.at).toLocaleString('pt-BR')}` : 'Ainda não buscamos notas nesta loja.'}
             {ultimaSync.erro ? <span className="text-red-500"> · Erro: {ultimaSync.erro}</span> : null}
           </p>
+          {ultimaSync.temToken && (
+            <div className="text-[11px] text-zinc-500 mt-1 flex flex-wrap items-center gap-1.5">
+              <i className="ri-calendar-check-line text-zinc-400" />
+              {!editandoInicio ? (
+                <>
+                  <span>{inicio ? <>Recebendo notas emitidas a partir de <b className="text-zinc-700">{inicio.split('-').reverse().join('/')}</b></> : 'Recebendo todas as notas (sem data de início)'}</span>
+                  {podeLancar && (
+                    <button onClick={() => { setNovoInicio(inicio); setEditandoInicio(true); }} className="text-amber-600 hover:text-amber-700 font-semibold cursor-pointer">
+                      {inicio ? 'alterar' : 'definir data de início'}
+                    </button>
+                  )}
+                </>
+              ) : (
+                <>
+                  <span>Receber notas emitidas a partir de</span>
+                  <input type="date" value={novoInicio} onChange={(e) => setNovoInicio(e.target.value)}
+                    className="border border-zinc-200 rounded-lg px-2 py-1 text-[11px] text-zinc-700" />
+                  <button onClick={() => salvarInicio(novoInicio || null)} disabled={salvandoInicio || novoInicio === inicio}
+                    className="px-2.5 py-1 rounded-lg bg-amber-500 hover:bg-amber-600 text-white font-semibold cursor-pointer disabled:opacity-50">
+                    {salvandoInicio ? 'Salvando…' : 'Salvar'}
+                  </button>
+                  {inicio && (
+                    <button onClick={() => salvarInicio(null)} disabled={salvandoInicio} className="text-zinc-500 hover:text-zinc-700 cursor-pointer disabled:opacity-50">
+                      tirar a data
+                    </button>
+                  )}
+                  <button onClick={() => setEditandoInicio(false)} disabled={salvandoInicio} className="text-zinc-400 hover:text-zinc-600 cursor-pointer">cancelar</button>
+                </>
+              )}
+            </div>
+          )}
         </div>
         <div className="ml-auto flex items-center gap-2 overflow-x-auto max-w-full">
           {prePagos.size > 0 && (
