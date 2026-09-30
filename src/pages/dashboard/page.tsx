@@ -144,6 +144,11 @@ export default function Dashboard() {
       trend: hasData && faturamentoOntem > 0 ? pct(faturamentoHoje, faturamentoOntem) : undefined,
       trendLabel: modo === 'sessao' ? undefined : 'vs ontem',
       icon: 'ri-money-dollar-circle-line',
+      ajuda: (modo === 'sessao'
+        ? 'Tudo que a loja VENDEU desde a abertura do caixa: pedidos do sistema (mesa, balcão, delivery, totem) + iFood.\n\n'
+        : 'Tudo que a loja VENDEU hoje: pedidos do sistema (mesa, balcão, delivery, totem) + iFood.\n\n') +
+        'É venda, não dinheiro na conta. O que já entrou (maquininha, Pix no banco, repasse do iFood) aparece em ' +
+        'Financeiro › Visão Geral › "Recebido hoje", que costuma ficar abaixo deste número até as conciliações do dia.',
     },
     {
       label: modo === 'sessao' ? 'Pedidos da Sessão' : 'Pedidos do Dia',

@@ -891,6 +891,7 @@ export function useFinanceiroDashboard(): { dashboard: FinanceiroDashboard | nul
         contasVencendo: (billsVencendo.data ?? []) as BillPayable[],
         receitaDiaria: Object.entries(dailyMap).sort(([a], [b]) => a.localeCompare(b)).map(([date, value]) => ({ date, value })),
         receitaPorPagamento,
+        fontesReceita: sources as string[],
       });
       setLoading(false);
     };

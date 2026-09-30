@@ -20,8 +20,20 @@ function fmtK(v: number) {
   return `R$${v.toFixed(0)}`;
 }
 
-function MetricCard({ label, value, icon, sub, trend, valueTone }: {
-  label: string; value: string; icon: string; sub?: string; trend?: number; valueTone?: string;
+// Nomes curtos das fontes de Financeiro › Receitas › Fontes, para a linha do cartão.
+const FONTE_CURTA: Record<string, string> = {
+  orders: 'pedidos', stone: 'cartão', pix: 'Pix', ifood: 'iFood', cash: 'dinheiro', manual: 'lançamentos manuais',
+};
+
+const AJUDA_RECEBIDO =
+  'Dinheiro que já entrou, pelas fontes ligadas em Financeiro › Receitas › Fontes.\n\n' +
+  'Não é o mesmo que o "Faturamento" do Dashboard: lá aparece o que foi VENDIDO, na hora da venda. ' +
+  'Aqui só aparece o que foi CONFIRMADO: o cartão quando a maquininha informa, o Pix quando o extrato do banco é lido ' +
+  '(07h e ao abrir a Conciliação) e o iFood na data do repasse.\n\n' +
+  'Por isso, durante o dia este número costuma ficar abaixo do Faturamento e vai se aproximando depois das conciliações.';
+
+function MetricCard({ label, value, icon, sub, trend, valueTone, ajuda }: {
+  label: string; value: string; icon: string; sub?: string; trend?: number; valueTone?: string; ajuda?: string;
 }) {
   return (
     <KpiCard
@@ -32,6 +44,7 @@ function MetricCard({ label, value, icon, sub, trend, valueTone }: {
       value={value}
       valueTone={valueTone}
       sub={sub}
+      ajuda={ajuda}
       subTone={trend !== undefined ? (trend >= 0 ? 'text-emerald-600' : 'text-red-500') : undefined}
     />
   );
@@ -447,6 +460,8 @@ export default function VisaoGeralFinTab() {
 
   // ─── MODO CALENDÁRIO (original) ───────────────────────────────────────────
   const crescPos = dashboard.crescimentoMes >= 0;
+  const fontes = (dashboard.fontesReceita ?? []).map(f => FONTE_CURTA[f] ?? f);
+  const fontesTexto = fontes.length > 0 ? `Conta: ${fontes.join(' + ')}` : 'Nenhuma fonte ligada';
 
   // Health score calculation
   const healthAlerts: HealthAlert[] = [];
@@ -543,16 +558,19 @@ export default function VisaoGeralFinTab() {
         {/* KPI Cards */}
         <div className={`grid grid-cols-1 sm:grid-cols-2 gap-3 ${temPdv ? 'lg:grid-cols-3 xl:grid-cols-5' : 'xl:grid-cols-4'}`}>
           <MetricCard
-            label="Receita Hoje (caixa)"
+            label="Recebido hoje"
             value={formatCurrency(dashboard.receitaHoje)}
             icon="ri-sun-line"
+            sub={fontesTexto}
+            ajuda={AJUDA_RECEBIDO}
           />
           <MetricCard
-            label="Receita do Mês (caixa)"
+            label="Recebido no mês"
             value={formatCurrency(dashboard.receitaMes)}
             icon="ri-calendar-line"
             sub={`${crescPos ? '+' : ''}${dashboard.crescimentoMes.toFixed(1)}% vs mês anterior`}
             trend={dashboard.crescimentoMes}
+            ajuda={AJUDA_RECEBIDO}
           />
           {temPdv && (
             <MetricCard

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { todayBrasilia, getTodayBrasiliaRange } from '@/lib/dateUtils';
+import AjudaCartao from '@/components/base/AjudaCartao';
 
 const fmt = (v: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
@@ -22,6 +23,11 @@ interface FinancialSummary {
   contasVencer7dias: number;
   qtdContas7dias: number;
 }
+
+const AJUDA_PEDIDOS =
+  'Pedidos do sistema entregues hoje: os já pagos (em qualquer forma de pagamento) + os que ainda faltam pagar. ' +
+  'Não inclui iFood nem pedidos em preparo, por isso fica diferente do "Faturamento Hoje" lá em cima.\n\n' +
+  'O dinheiro que já entrou de fato fica em Financeiro › Visão Geral › "Recebido hoje".';
 
 const ORIGEM_LABEL: Record<string, string> = {
   table: 'Mesa',
@@ -149,7 +155,7 @@ export default function ResumoFinanceiro({ refreshKey = 0 }: { refreshKey?: numb
       <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-100 gap-3 flex-wrap">
         <div>
           <h3 className="text-sm font-bold text-zinc-800">Financeiro Hoje</h3>
-          <p className="text-xs text-zinc-400">Receita e contas do dia</p>
+          <p className="text-xs text-zinc-400">Pedidos entregues e contas do dia</p>
         </div>
         <button
           onClick={load}
@@ -163,8 +169,11 @@ export default function ResumoFinanceiro({ refreshKey = 0 }: { refreshKey?: numb
       <div className="p-5 space-y-4">
 
       {/* Total */}
-      <div className="text-center py-1">
-        <span className="text-[10px] text-zinc-400 font-medium">Receita do dia</span>
+      <div className="relative text-center py-1">
+        <span className="inline-flex items-center gap-1 text-[10px] text-zinc-400 font-medium">
+          Pedidos entregues hoje
+          <AjudaCartao texto={AJUDA_PEDIDOS} />
+        </span>
         <div className="text-2xl font-bold tabular-nums tracking-tight text-zinc-900 mt-0.5">{fmt(data.receitaHoje)}</div>
       </div>
 
@@ -190,7 +199,7 @@ export default function ResumoFinanceiro({ refreshKey = 0 }: { refreshKey?: numb
             <span className="text-[10px] font-semibold text-emerald-700">Recebido</span>
           </div>
           <div className="text-sm font-black text-emerald-800">{fmt(data.receitaPaga)}</div>
-          <p className="text-[10px] text-emerald-500">Dinheiro no caixa</p>
+          <p className="text-[10px] text-emerald-500">Pago no sistema (qualquer forma)</p>
         </div>
 
         <div className="bg-amber-50 border border-amber-100 rounded-xl p-3 space-y-1">

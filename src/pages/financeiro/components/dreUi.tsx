@@ -4,6 +4,7 @@
  * seção, card de KPI, seletor segmentado e navegação de mês.
  */
 import type { ReactNode } from 'react';
+import AjudaCartao from '@/components/base/AjudaCartao';
 
 export function variacaoPct(atual: number, anterior: number) {
   if (anterior === 0) return null;
@@ -110,7 +111,7 @@ export function Segmented<T extends string>({
 }
 
 export function KpiCard({
-  label, icon, value, valueTone, sub, subTone, atual, anterior, inverse, highlight, semVariacao,
+  label, icon, value, valueTone, sub, subTone, atual, anterior, inverse, highlight, semVariacao, ajuda,
 }: {
   label: string;
   icon: string;
@@ -124,6 +125,8 @@ export function KpiCard({
   highlight?: 'pos' | 'neg';
   /** Cartão sem comparação (esconde o chip de variação em vez de mostrar "—"). */
   semVariacao?: boolean;
+  /** Explicação de onde vem o número (ícone ⓘ ao lado do título). */
+  ajuda?: string;
 }) {
   const ring = highlight === 'pos'
     ? 'border-emerald-200 bg-gradient-to-br from-emerald-50 to-white'
@@ -131,13 +134,14 @@ export function KpiCard({
     ? 'border-red-200 bg-gradient-to-br from-red-50 to-white'
     : 'border-zinc-200 bg-white';
   return (
-    <div className={`rounded-2xl border p-4 flex flex-col gap-2 ${ring}`}>
+    <div className={`relative rounded-2xl border p-4 flex flex-col gap-2 ${ring}`}>
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 min-w-0">
           <span className="w-7 h-7 rounded-lg bg-zinc-100 text-zinc-500 flex items-center justify-center flex-shrink-0">
             <i className={`${icon} text-sm`} />
           </span>
           <span className="text-xs font-semibold text-zinc-500 truncate">{label}</span>
+          {ajuda && <AjudaCartao texto={ajuda} />}
         </div>
         {!semVariacao && <VarChip atual={atual} anterior={anterior} inverse={inverse} />}
       </div>

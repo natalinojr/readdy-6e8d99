@@ -279,4 +279,6 @@ export interface FinanceiroDashboard {
   contasVencendo: BillPayable[];
   receitaDiaria: { date: string; value: number }[];
   receitaPorPagamento: { name: string; value: number; color: string }[];
+  /** Fontes ligadas em Financeiro › Receitas › Fontes (o que compõe receitaHoje/receitaMes). */
+  fontesReceita?: string[];
 }
