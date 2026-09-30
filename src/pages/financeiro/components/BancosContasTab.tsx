@@ -623,6 +623,28 @@ export default function BancosContasTab() {
                           Saldo inicial: {formatCurrency(Number(acc.initial_balance))}
                         </p>
                       )}
+                      {/* Saldo que o banco informa (integração), ao lado do saldo do sistema (2026-09-30).
+                          Antes só aparecia na Conciliação e na Projeção; aqui só havia o do sistema. */}
+                      {acc.synced_balance != null && (() => {
+                        const doBanco = Number(acc.synced_balance);
+                        const dif = doBanco - Number(acc.current_balance);
+                        const quando = acc.synced_balance_at
+                          ? new Date(acc.synced_balance_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' })
+                          : null;
+                        return (
+                          <div className="mt-2 flex flex-col gap-1.5">
+                            <p className="text-xs text-zinc-500">
+                              No banco: <b className={doBanco >= 0 ? 'text-zinc-800' : 'text-red-600'}>{formatCurrency(doBanco)}</b>
+                              {quando && <span className="text-zinc-400"> · atualizado {quando}</span>}
+                            </p>
+                            {Math.abs(dif) > 1 && (
+                              <p className="text-[11px] rounded-lg bg-red-50 text-red-700 px-2.5 py-1.5">
+                                O sistema está {formatCurrency(Math.abs(dif))} {dif > 0 ? 'abaixo' : 'acima'} do banco. Dá para acertar em Conciliação › Reconciliar saldo.
+                              </p>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </div>
 
                     {/* Details */}

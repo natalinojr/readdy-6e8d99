@@ -116,7 +116,7 @@ export default function BuscaFinanceiro({ podeAba, onIr }: { podeAba: (aba: stri
         {q && <button onClick={() => setQ('')} className="text-zinc-400 hover:text-zinc-600 cursor-pointer"><i className="ri-close-line" /></button>}
       </div>
       {aberto && termo.length >= 2 && (
-        <div className="absolute z-40 top-11 right-0 left-0 md:left-auto md:w-[440px] bg-white border border-zinc-200 rounded-xl shadow-lg overflow-hidden">
+        <div className="absolute z-40 top-11 left-0 w-full md:w-[440px] max-w-[calc(100vw-2rem)] bg-white border border-zinc-200 rounded-xl shadow-lg overflow-hidden">
           {carregando && res.length === 0 ? (
             <p className="px-4 py-3 text-sm text-zinc-400">Procurando…</p>
           ) : res.length === 0 ? (

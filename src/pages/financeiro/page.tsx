@@ -203,7 +203,7 @@ export default function FinanceiroPage() {
             <h1 className="text-base md:text-lg font-bold text-zinc-800">Financeiro</h1>
             <p className="text-xs text-zinc-400 hidden sm:block">Gestão financeira completa do restaurante</p>
           </div>
-          <div className="hidden md:block"><BuscaFinanceiro podeAba={podeAbaOuFreela} onIr={irParaResultado} /></div>
+          <div className="hidden xl:block"><BuscaFinanceiro podeAba={podeAbaOuFreela} onIr={irParaResultado} /></div>
           <button
             onClick={() => setLancarAberto(true)}
             className="flex items-center gap-1.5 h-9 px-3 md:px-4 rounded-xl text-white text-sm font-bold shadow-sm cursor-pointer flex-shrink-0"
@@ -212,7 +212,7 @@ export default function FinanceiroPage() {
             <i className="ri-add-line text-base" />Lançar
           </button>
         </div>
-        <div className="md:hidden mb-3"><BuscaFinanceiro podeAba={podeAbaOuFreela} onIr={irParaResultado} /></div>
+        <div className="xl:hidden mb-3 md:max-w-md"><BuscaFinanceiro podeAba={podeAbaOuFreela} onIr={irParaResultado} /></div>
         {/* Grupos — scroll horizontal no mobile (são só 6, cabem numa linha no desktop) */}
         <div className="flex gap-0.5 overflow-x-auto scrollbar-hide -mx-4 md:mx-0 px-4 md:px-0" style={{ borderBottom: '1px solid rgba(245,158,11,0.15)' }}>
           {grupos.map((g) => {

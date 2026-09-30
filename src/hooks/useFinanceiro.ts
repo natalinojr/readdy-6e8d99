@@ -4,6 +4,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { translateSupabaseError } from '@/hooks/useQueryError';
 import { fetchRevenueSources, fetchStoneSales, fetchPixRecebidos, fetchIfoodSales, fetchCashSales } from '@/lib/revenueSources';
 import { empresaTemPdv } from '@/lib/tipoEmpresa';
+import { todayBrasilia } from '@/lib/dateUtils';
 import type {
   CostCenter, BillPayable, CashFlowEntry, Purchase,
   Supplier, FinanceiroDashboard, Anticipation, ReceivableInstallment,
@@ -610,10 +611,10 @@ export function useTopDespesas(monthsBack = 1) {
     if (!user?.tenantId) return;
     setLoading(true);
 
-    const startDate = new Date();
-    startDate.setMonth(startDate.getMonth() - monthsBack);
-    startDate.setDate(1);
-    const startStr = startDate.toISOString().split('T')[0];
+    // Dia 1 do mês de (hoje − (monthsBack − 1)), no dia de Brasília. Antes voltava um mês a mais:
+    // "Este mês" (1) somava o mês passado junto e "3m" pegava 4 meses (2026-09-30).
+    const [anoHoje, mesHoje] = todayBrasilia().split('-').map(Number);
+    const startStr = new Date(Date.UTC(anoHoje, mesHoje - 1 - (monthsBack - 1), 1)).toISOString().slice(0, 10);
 
     // Fonte única de verdade: fin_cash_flow (saídas manuais + automáticas)
     // A folha de pagamento paga agora já está em fin_cash_flow com origin='auto_payroll',
@@ -835,7 +836,8 @@ export function useFinanceiroDashboard(): { dashboard: FinanceiroDashboard | nul
       // A folha de pagamento paga já está em fin_cash_flow com origin='auto_payroll',
       // então não precisamos somar hr_payroll separadamente.
       const despesasTotais = saidas;
-      const lucroEstimado = Math.max(0, receitaMes - despesasTotais);
+      // Sem travar em zero (2026-09-30): o card mostrava R$ 0,00 em verde num mês de prejuízo.
+      const lucroEstimado = receitaMes - despesasTotais;
 
       const totalAPagar = (billsVencendo.data ?? []).reduce((s, b) => s + Number(b.amount), 0);
       const folhaPendente = (payrollPendingMes.data ?? []).reduce((s, p) => s + Number(p.net_salary), 0);
