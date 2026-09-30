@@ -730,7 +730,22 @@ async function pagamentoDaGuia(admin: SupabaseClient, tenantId: string, g: Guia)
     if (cod && linha && (cod === linha || cod === barras)) return e;
   }
   // deno-lint-ignore no-explicit-any
-  return ((data ?? []) as any[]).find((e) => raizes.some((r) => soDigitos(e.counterpart_doc).startsWith(r))) ?? null;
+  const exato = ((data ?? []) as any[]).find((e) => raizes.some((r) => soDigitos(e.counterpart_doc).startsWith(r)));
+  if (exato) return exato;
+  // Paga DEPOIS do vencimento com multa + juros (guia original, dinheiro saiu maior): um único pagamento ao
+  // mesmo recebedor, até 120 dias depois, entre o valor da guia e +25% (multa do DAS/DARF vai a 20% + Selic).
+  // A Conciliação lança o excedente como "Juros e multas". Mais de um candidato → não chuta.
+  const { data: tarde } = await admin.from('fin_bank_statement_imports')
+    .select('id, transaction_date, amount, status, reconciled, match_kind, counterpart_doc, description, raw')
+    .eq('tenant_id', tenantId).eq('transaction_type', 'debit').in('status', ['pending', 'ignored']).eq('reconciled', false)
+    .gt('transaction_date', g.vencimento).lte('transaction_date', addDiasIso(g.vencimento, 120))
+    .gt('amount', g.valor + 0.01).lte('amount', Math.round(g.valor * 125) / 100);
+  // deno-lint-ignore no-explicit-any
+  const cands = ((tarde ?? []) as any[]).filter((e) => {
+    const cod = soDigitos(e.raw?.detalhes?.codBarras);
+    return !cod && raizes.some((r) => soDigitos(e.counterpart_doc).startsWith(r)); // boleto de outro código não é desta guia
+  });
+  return cands.length === 1 ? { ...cands[0], com_juros: true } : null;
 }
 
 type ResultadoGuia = { ok: boolean; texto: string; conta_id?: string; payment_id?: string | null; guardado?: boolean; erro?: string };
@@ -797,7 +812,9 @@ async function processarGuia(admin: SupabaseClient, ownerId: string, chatId: str
       .catch((e) => ({ status: 0, body: { error: errMsg(e) }, ms: 0 }));
     const res = cf.body?.results?.[0];
     if (res?.ok) {
-      linhas.push(`✅ Já estava *paga* em ${ddmm(pago.transaction_date)} (saída de ${brl(Number(pago.amount))} no extrato): registrei a guia e conciliei o pagamento. Nada a fazer.`);
+      linhas.push(pago.com_juros
+        ? `✅ Já estava *paga* em ${ddmm(pago.transaction_date)}, depois do vencimento: saíram ${brl(Number(pago.amount))} (guia ${brl(g.valor)} + ${brl(Math.round((Number(pago.amount) - g.valor!) * 100) / 100)} de multa e juros, lançados em "Juros e multas"). Registrei e conciliei.`
+        : `✅ Já estava *paga* em ${ddmm(pago.transaction_date)} (saída de ${brl(Number(pago.amount))} no extrato): registrei a guia e conciliei o pagamento. Nada a fazer.`);
       log('INFO', 'guia já paga: conciliada', { conta: contaId, extrato: pago.id });
       return { ok: true, conta_id: contaId, payment_id: null, guardado: true, texto: linhas.join('\n') };
     }
