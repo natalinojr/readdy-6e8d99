@@ -26,8 +26,10 @@ import FreelancersTab from './components/FreelancersTab';
 import EntregadoresTab from './components/EntregadoresTab';
 import GuiasTab from './components/GuiasTab';
 import TrilhaTab from './components/TrilhaTab';
+import PainelFinTab from './components/PainelFinTab';
 
 const TABS = [
+  { id: 'painel', label: 'Painel', icon: 'ri-dashboard-3-line' },
   { id: 'visao', label: 'Visão Geral', icon: 'ri-dashboard-line' },
   { id: 'trilha', label: 'Trilha', icon: 'ri-route-line' },
   { id: 'receitas', label: 'Receitas', icon: 'ri-arrow-down-circle-line' },
@@ -54,7 +56,7 @@ const TABS = [
 // As 21 abas em 6 grupos (2026-09-30): em cima o grupo, embaixo as abas dele em pílula.
 // Nenhuma aba sai; ids e links (?tab=) continuam os mesmos.
 const GRUPOS = [
-  { id: 'inicio', label: 'Início', icon: 'ri-home-5-line', abas: ['visao', 'trilha'] },
+  { id: 'inicio', label: 'Início', icon: 'ri-home-5-line', abas: ['painel', 'visao', 'trilha'] },
   { id: 'pagar', label: 'Pagar', icon: 'ri-bill-line', abas: ['pagar', 'contas-vencidas', 'guias', 'rh', 'entregadores'] },
   { id: 'receber', label: 'Receber', icon: 'ri-arrow-down-circle-line', abas: ['receitas', 'receber', 'ifood'] },
   { id: 'bancos', label: 'Bancos', icon: 'ri-bank-line', abas: ['bancos', 'conciliacao', 'fluxo'] },
@@ -69,7 +71,8 @@ export default function FinanceiroPage() {
   const location = useLocation();
   // Abas liberadas para o papel (Configurações › Permissões; admin vê todas).
   const { hasPermissao } = usePermissoes();
-  const podeAba = (t: string) => { const k = finKeyDaAba(t); return !!k && hasPermissao(k); };
+  // O Painel só junta números de outras abas: vê quem vê a Visão Geral.
+  const podeAba = (t: string) => { const k = finKeyDaAba(t === 'painel' ? 'visao' : t); return !!k && hasPermissao(k); };
   // Freelancers virou subaba de RH / Folha (2026-09-28): quem só tem a permissão de Freelancers
   // continua vendo a aba RH, mas só com os freelancers (sem folha nem salários).
   const podeRH = podeAba('rh');
@@ -245,6 +248,7 @@ export default function FinanceiroPage() {
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto">
+        {activeTab === 'painel' && <PainelFinTab onIrAba={setActiveTab} />}
         {activeTab === 'visao' && <VisaoGeralFinTab />}
         {activeTab === 'trilha' && <TrilhaTab />}
         {activeTab === 'receitas' && <ReceitasTab />}
