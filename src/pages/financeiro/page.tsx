@@ -51,6 +51,19 @@ const TABS = [
   { id: 'implantacao', label: 'Implantação', icon: 'ri-building-line' },
 ];
 
+// As 21 abas em 6 grupos (2026-09-30): em cima o grupo, embaixo as abas dele em pílula.
+// Nenhuma aba sai; ids e links (?tab=) continuam os mesmos.
+const GRUPOS = [
+  { id: 'inicio', label: 'Início', icon: 'ri-home-5-line', abas: ['visao', 'trilha'] },
+  { id: 'pagar', label: 'Pagar', icon: 'ri-bill-line', abas: ['pagar', 'contas-vencidas', 'guias', 'rh', 'entregadores'] },
+  { id: 'receber', label: 'Receber', icon: 'ri-arrow-down-circle-line', abas: ['receitas', 'receber', 'ifood'] },
+  { id: 'bancos', label: 'Bancos', icon: 'ri-bank-line', abas: ['bancos', 'conciliacao', 'fluxo'] },
+  { id: 'compras', label: 'Compras', icon: 'ri-shopping-cart-2-line', abas: ['compras', 'notas-entrada', 'itens', 'orcamentos'] },
+  { id: 'resultado', label: 'Resultado', icon: 'ri-file-chart-line', abas: ['dre', 'despesas', 'centros', 'implantacao'] },
+];
+// Ids antigos que ainda chegam por link e abrem dentro de outra aba.
+const ABA_CANONICA: Record<string, string> = { previsao: 'fluxo', 'rh-relatorio': 'rh', freelancers: 'rh' };
+
 export default function FinanceiroPage() {
   const { user } = useAuth();
   const location = useLocation();
@@ -97,6 +110,37 @@ export default function FinanceiroPage() {
     const foco = searchParams.get('foco');
     if (foco) setHighlightPurchaseId(foco);
   }, [searchParams]);
+
+  // Grupos com as abas liberadas para o papel; grupo sem nenhuma aba liberada não aparece.
+  const abaCanonica = ABA_CANONICA[activeTab] ?? activeTab;
+  const grupos = GRUPOS
+    // Na ordem do grupo (a principal primeiro), não na ordem da lista TABS.
+    .map((g) => ({ ...g, abas: g.abas.map((id) => abas.find((t) => t.id === id)).filter((t): t is (typeof abas)[number] => !!t) }))
+    .filter((g) => g.abas.length > 0);
+  const grupoAtivo = grupos.find((g) => g.abas.some((t) => t.id === abaCanonica)) ?? grupos[0];
+  // Voltar a um grupo reabre a última aba usada nele (e não sempre a primeira).
+  const [ultimaDoGrupo, setUltimaDoGrupo] = useState<Record<string, string>>({});
+  const grupoAtivoId = grupoAtivo?.id;
+  useEffect(() => {
+    if (!grupoAtivoId) return;
+    setUltimaDoGrupo((u) => (u[grupoAtivoId] === abaCanonica ? u : { ...u, [grupoAtivoId]: abaCanonica }));
+  }, [grupoAtivoId, abaCanonica]);
+  // No celular as fileiras rolam de lado: traz o grupo e a aba ativos para a vista.
+  useEffect(() => {
+    document.querySelectorAll('[data-fin-ativo]').forEach((el) => el.scrollIntoView({ block: 'nearest', inline: 'nearest' }));
+  }, [abaCanonica]);
+  const abrirGrupo = (g: (typeof grupos)[number]) => {
+    const ultima = ultimaDoGrupo[g.id];
+    setActiveTab(ultima && g.abas.some((t) => t.id === ultima) ? ultima : g.abas[0].id);
+  };
+  // Selo do grupo: o maior aviso entre as abas dele (sem somar, para não contar a mesma conta
+  // duas vezes — Contas a Pagar já inclui as vencidas).
+  const avisoDoGrupo = (g: (typeof grupos)[number]) => {
+    const avisos = g.abas.map((t) => avisoDaAba[t.id]).filter((a): a is (typeof avisoDaAba)[string] => !!a && a.n > 0);
+    if (avisos.length === 0) return null;
+    const maior = avisos.reduce((a, b) => (b.n > a.n ? b : a));
+    return { n: maior.n, cor: avisos.some((a) => a.cor === 'bg-red-500') ? 'bg-red-500' : maior.cor, dica: avisos.map((a) => a.dica).join(' · ') };
+  };
 
   const handleNavigateToCompras = (purchaseId?: string) => {
     setHighlightPurchaseId(purchaseId);
@@ -148,31 +192,55 @@ export default function FinanceiroPage() {
             <p className="text-xs text-zinc-400 hidden sm:block">Gestão financeira completa do restaurante</p>
           </div>
         </div>
-        {/* Tabs — scroll horizontal no mobile; a partir de md quebram em linhas
-            (com a barra de rolagem escondida, as abas da direita ficavam
-            inalcançáveis no desktop quando a janela era estreita) */}
-        <div className="flex md:flex-wrap gap-0.5 overflow-x-auto md:overflow-visible scrollbar-hide -mx-4 md:mx-0 px-4 md:px-0" style={{ borderBottom: '1px solid rgba(245,158,11,0.15)' }}>
-          {abas.map(tab => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`flex items-center gap-1 md:gap-1.5 px-2.5 md:px-3 py-2.5 text-xs font-semibold whitespace-nowrap border-b-2 transition-colors cursor-pointer flex-shrink-0 ${
-                (activeTab === 'rh-relatorio' || activeTab === 'freelancers' ? 'rh' : activeTab) === tab.id
-                  ? 'border-amber-500 text-amber-600'
-                  : 'border-transparent text-zinc-400 hover:text-zinc-700'
-              }`}
-            >
-              <i className={tab.icon} />
-              <span className="hidden sm:inline">{tab.label}</span>
-              <span className="sm:hidden">{tab.label.split(' ')[0]}</span>
-              {(avisoDaAba[tab.id]?.n ?? 0) > 0 && (
-                <span title={avisoDaAba[tab.id].dica} className={`text-[9px] font-black px-1.5 py-0.5 rounded-full text-white ${avisoDaAba[tab.id].cor}`}>
-                  {avisoDaAba[tab.id].n}
-                </span>
-              )}
-            </button>
-          ))}
+        {/* Grupos — scroll horizontal no mobile (são só 6, cabem numa linha no desktop) */}
+        <div className="flex gap-0.5 overflow-x-auto scrollbar-hide -mx-4 md:mx-0 px-4 md:px-0" style={{ borderBottom: '1px solid rgba(245,158,11,0.15)' }}>
+          {grupos.map((g) => {
+            const aviso = avisoDoGrupo(g);
+            return (
+              <button
+                key={g.id}
+                data-fin-ativo={grupoAtivo?.id === g.id ? '' : undefined}
+                onClick={() => abrirGrupo(g)}
+                className={`flex items-center gap-1.5 px-3 md:px-4 py-2.5 text-xs md:text-[13px] font-semibold whitespace-nowrap border-b-2 transition-colors cursor-pointer flex-shrink-0 ${
+                  grupoAtivo?.id === g.id ? 'border-amber-500 text-amber-600' : 'border-transparent text-zinc-400 hover:text-zinc-700'
+                }`}
+              >
+                <i className={g.icon} />
+                {g.label}
+                {aviso && (
+                  <span title={aviso.dica} className={`text-[9px] font-black px-1.5 py-0.5 rounded-full text-white ${aviso.cor}`}>
+                    {aviso.n}
+                  </span>
+                )}
+              </button>
+            );
+          })}
         </div>
+        {/* Abas do grupo em pílula (como as abas internas das outras telas) */}
+        {grupoAtivo && grupoAtivo.abas.length > 1 && (
+          <div className="py-2.5 -mx-4 md:mx-0 px-4 md:px-0 overflow-x-auto scrollbar-hide">
+            <div className="flex bg-zinc-100 p-1 rounded-xl w-max">
+              {grupoAtivo.abas.map((tab) => (
+                <button
+                  key={tab.id}
+                  data-fin-ativo={abaCanonica === tab.id ? '' : undefined}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg cursor-pointer transition-all whitespace-nowrap flex items-center gap-1.5 ${
+                    abaCanonica === tab.id ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-800'
+                  }`}
+                >
+                  <i className={`${tab.icon} text-sm`} />
+                  {tab.label}
+                  {(avisoDaAba[tab.id]?.n ?? 0) > 0 && (
+                    <span title={avisoDaAba[tab.id].dica} className={`text-[9px] font-black px-1.5 py-0.5 rounded-full text-white ${avisoDaAba[tab.id].cor}`}>
+                      {avisoDaAba[tab.id].n}
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Content */}
