@@ -2162,16 +2162,23 @@ documento ou áudio, tirar as informações, preparar o pagamento e avisar*.
     localStorage por registro e reabre onde estava (padrão da aba Entrevistas:
     `contratacao_rascunho_entrevista_<id>` + `contratacao_entrevistas_pos`, válido por 12 h). O
     rascunho some ao salvar.
-- **Contratação › aba Entrevistas (1ª aba, 2026-09-15)**:
-  - `components/EntrevistasDoDia.tsx`: escolhe o dia (setas, calendário e faixa de 7 dias com a
-    contagem) e lista quem está agendado. Ao clicar, abre o `RegistroPainel`: resumo do candidato
-    (aderência, resumo, experiências, pontos fortes/atenção e as perguntas sugeridas pela IA na
-    análise da vaga) e o formulário.
-  - Grava igual ao `EntrevistaModal`: status, respostas, notas, considerações e decisão, que também
-    vai para o candidato. A fase é opcional e passa pela trava dos dados mínimos, com "mover mesmo
-    assim".
-  - Usa os mesmos dados da Agenda (`ivsDaEmpresa`) e o `onInterviewSaved` da página. O histórico
-    sai pelos gatilhos.
+- **Contratação organizada "pelo que fazer" (2026-09-30)** — substitui a aba Entrevistas/Hoje:
+  - Áreas: **Minha fila** (`areas/AreaFila.tsx` + lógica pura `fila.ts`: responder a IA → entrevistas
+    de hoje → registrar as que passaram → decidir → currículos novos), **Vagas** (dentro: Funil = Kanban
+    só de quem está inscrito, Ranking pela nota, Conversas da IA; dados/divulgação/agendamento/excluir em
+    "Configurar vaga") e **Pessoas** (o banco, só cards). Números e Configurações são ícones.
+    `navegacao.ts › destinoDeAbaAntiga` traduz `?aba=` antigos (hoje/entrevistas/agenda → fila, etc.).
+  - **Modo entrevista** (`components/ModoEntrevista.tsx`, tela cheia) é o ÚNICO lugar do registro
+    (respostas, notas, decisão, fase); rascunho em `contratacao_rascunho_entrevista_<id>`. O
+    `EntrevistaModal` só agenda/remarca/cancela e não regrava o registro; remarcar quem faltou volta a
+    "agendada". `?entrevista=<id>` abre o modo entrevista.
+  - **Triagem** (`TriagemCurriculos.tsx`): fila = fase nativa "novo" sem decisão. Chamar = fase
+    'agendar'; Guardar = decisão R; Descartar = fase 'descartado'; Desfazer.
+  - Ficha: fases (livres) como botões, decisão no cabeçalho (vai também para a última entrevista
+    realizada), quadro **Próximo passo** (`ficha/ProximoPasso.tsx`) e 3 abas. Estrelas e calendário
+    mensal saíram.
+  - Camadas: ficha z-56/57 fica acima de modo entrevista/triagem (z-55); modais z-60/70; diálogo z-90.
+    Abrir o modo entrevista a partir da ficha fecha a ficha.
 - **Recrutamento pelo WhatsApp: lições das 1ªs conversas reais (2026-09-15)**:
   - O `hiring-cv-scan` só recusa (422) quando não achou nada. Currículo "desorganizado" é legível e,
     com nome, telefone ou experiência, salva mesmo marcado como ilegível.
@@ -3154,7 +3161,7 @@ Fica em aberto que o `AprovacoesContext` perde as solicitações num F5 — prob
 
 ### Dois relógios do dia: fuso da máquina vs. Brasília (2026-09-20)
 - `dayKey` (`src/pages/contratacao/shared.ts:429`) monta a chave AAAA-MM-DD com `getFullYear/getMonth/getDate` — fuso da MÁQUINA que roda o código. `diaKeyBR` (`src/pages/contratacao/hoje.ts:10`) usa `Intl.DateTimeFormat` com `timeZone: 'America/Sao_Paulo'` fixo, corte sempre em Brasília. Regra do módulo: `AGENTS.md` linha 75 ("Datas em horário de Brasília... em toda exibição e regra de negócio com corte por dia").
-- `EntrevistasDoDia.tsx` e `AgendaEntrevistas.tsx` (sub-aba Calendário de Entrevistas) usavam `dayKey` para agrupar entrevistas por dia e decidir "hoje"; nesta spec os dois passaram a usar `diaKeyBR`, porque a lista "Do dia" e o calendário podiam discordar sobre qual é o dia perto da virada, numa máquina fora de Brasília. `dayKey` em si não foi alterado (outros módulos dependem dele). Testes de regressão forçam `TZ=UTC`: `src/test/components/entrevistasDoDiaFusoBR.test.tsx` e `src/test/components/agendaEntrevistasFusoBR.test.tsx`.
+- `EntrevistasDoDia.tsx` e `AgendaEntrevistas.tsx` (sub-aba Calendário de Entrevistas) usavam `dayKey` para agrupar entrevistas por dia e decidir "hoje"; nesta spec os dois passaram a usar `diaKeyBR`, porque a lista "Do dia" e o calendário podiam discordar sobre qual é o dia perto da virada, numa máquina fora de Brasília. `dayKey` em si não foi alterado (outros módulos dependem dele). Esses dois componentes saíram em 2026-09-30; o corte por dia da Minha fila (`fila.ts`) usa `diaKeyBR` e tem teste em `src/test/lib/contratacaoFila.test.ts`.
 - Dívida aberta, não corrigida nesta spec: `fmtTime`/`fmtDateTime` continuam no fuso do navegador, não em Brasília.
 
 ### Ação em lote precisa repetir a trava da ação individual (2026-09-20)

@@ -206,7 +206,6 @@ export function CandidateCard({ c, companies, stage, empresa, entrevista, onOpen
             <p className={`font-bold text-zinc-900 truncate ${compact ? 'text-sm' : ''}`}>{c.full_name}</p>
             <DecisionBadge c={c} companies={companies} />
             {(() => { const a = avisoIdade(idade); return a ? <span title={a.dica} className={`text-[10px] font-bold px-1.5 py-0.5 rounded border whitespace-nowrap ${a.cls}`}>{a.texto}</span> : null; })()}
-            {c.rating ? <span className="text-amber-500 text-xs whitespace-nowrap">{'★'.repeat(c.rating)}</span> : null}
           </div>
           <p className="text-xs text-zinc-500 truncate">
             {[c.desired_role, idade != null ? `${idade} anos` : null, [c.neighborhood, c.city].filter(Boolean).join(', ') || null].filter(Boolean).join(' · ') || '—'}

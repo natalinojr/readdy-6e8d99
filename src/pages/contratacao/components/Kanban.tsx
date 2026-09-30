@@ -1,4 +1,4 @@
-// Kanban das fases do processo. Arrasta o card para mudar de fase; clique abre a ficha.
+// Kanban das fases do processo (desde 2026-09-30 só dentro da vaga: o funil dela). Arrasta o card para mudar de fase; clique abre a ficha.
 // No celular/tablet (toque não arrasta) cada card tem botões ◀ ▶ para a fase vizinha, e as
 // colunas ocupam quase a tela inteira com rolagem que "encaixa" em cada coluna.
 import { useState } from 'react';
@@ -17,8 +17,9 @@ interface Props {
   faltasDe: (c: Candidate) => number;
   agendamentoIADe: (c: Candidate) => string | null;
   onMove: (candidateId: string, stageId: string) => void;
-  selecionados: Set<string>;
-  onToggleSelecao: (id: string) => void;
+  selecionados?: Set<string>;
+  /** Sem esta função o card não mostra a caixinha de seleção (funil da vaga). */
+  onToggleSelecao?: (id: string) => void;
 }
 
 export default function Kanban({ items, stages, companies, mostrarEmpresa, proximaEntrevista, onOpen, aderenciaDe, faltasDe, agendamentoIADe, onMove, selecionados, onToggleSelecao }: Props) {
@@ -58,7 +59,7 @@ export default function Kanban({ items, stages, companies, mostrarEmpresa, proxi
                   <CandidateCard compact c={c} companies={companies} stage={s} empresa={mostrarEmpresa ? companyName(companies, c.company_id) : null}
                     entrevista={proximaEntrevista.get(c.id) ?? null} onOpen={() => onOpen(c.id)}
                     aderencia={aderenciaDe(c)} faltas={faltasDe(c)} agendamentoIA={agendamentoIADe(c)}
-                    selecionado={selecionados.has(c.id)} onToggleSelecao={() => onToggleSelecao(c.id)} />
+                    selecionado={selecionados?.has(c.id) ?? false} onToggleSelecao={onToggleSelecao ? () => onToggleSelecao(c.id) : undefined} />
                   {(prev || next) && (
                     <div className="lg:hidden flex gap-1 mt-1">
                       {prev && (

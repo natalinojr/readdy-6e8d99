@@ -160,15 +160,19 @@ function passos(s: Sess) {
   ];
 }
 
-interface Props { candidates: Candidate[]; jobs: Job[]; companies: Company[]; stages: Stage[]; mostrarEmpresa: boolean; onOpenCandidate?: (id: string) => void }
+interface Props {
+  candidates: Candidate[]; jobs: Job[]; companies: Company[]; stages: Stage[]; mostrarEmpresa: boolean; onOpenCandidate?: (id: string) => void;
+  /** Dentro de uma vaga: só as conversas dela, sem o seletor de vaga. */
+  jobIdFixo?: string;
+}
 
-export default function AgendamentosPainel({ candidates, jobs, companies, stages, mostrarEmpresa, onOpenCandidate }: Props) {
+export default function AgendamentosPainel({ candidates, jobs, companies, stages, mostrarEmpresa, onOpenCandidate, jobIdFixo }: Props) {
   const [sess, setSess] = useState<Sess[]>([]);
   const [cfgs, setCfgs] = useState<JobScheduling[]>([]);
   const [apps, setApps] = useState<{ candidate_id: string; job_id: string; created_at: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [filtro, setFiltro] = useState<Filtro>('todos');
-  const [vaga, setVaga] = useState('');
+  const [vaga, setVaga] = useState(jobIdFixo ?? '');
   const [aberto, setAberto] = useState<string | null>(null);
 
   const carregar = useCallback(async () => {
@@ -219,9 +223,9 @@ export default function AgendamentosPainel({ candidates, jobs, companies, stages
         else if (hora < 8 || hora >= 20) motivo = 'fora do horário comercial (sai a partir das 8h)';
         else motivo = 'na fila: sai no próximo minuto (até 10 convites por hora)';
       }
-      return { c, motivo, jobId: inscr[0]?.job_id ?? null };
-    });
-  }, [stages, sess, candidates, apps, cfgBy, jobBy]);
+      return { c, motivo, jobId: inscr[0]?.job_id ?? null, jobIds: inscr.map((a) => a.job_id) };
+    }).filter((x) => !jobIdFixo || x.jobIds.includes(jobIdFixo));
+  }, [stages, sess, candidates, apps, cfgBy, jobBy, jobIdFixo]);
 
   const linhas = useMemo(() => sess.filter((s) => !vaga || s.job_id === vaga).map((s) => ({ s, st: statusDe(s) })), [sess, vaga]);
   const cont = useMemo(() => {
@@ -241,10 +245,10 @@ export default function AgendamentosPainel({ candidates, jobs, companies, stages
           <h2 className="text-sm font-black text-zinc-900">Agendamentos pelo assistente</h2>
           <p className="text-[11px] text-zinc-500">Conversas no WhatsApp para marcar entrevista. Atualiza sozinho a cada 30 s.</p>
         </div>
-        <select value={vaga} onChange={(e) => setVaga(e.target.value)} className="ml-auto h-8 px-2 rounded-lg border border-zinc-200 text-xs bg-white">
+        {!jobIdFixo && <select value={vaga} onChange={(e) => setVaga(e.target.value)} className="ml-auto h-8 px-2 rounded-lg border border-zinc-200 text-xs bg-white">
           <option value="">Todas as vagas</option>
           {vagasComAgenda.map((j) => <option key={j.id} value={j.id}>{j.title}{mostrarEmpresa ? ` · ${companyName(companies, j.company_id)}` : ''}</option>)}
-        </select>
+        </select>}
         <button onClick={carregar} className="h-8 px-2 rounded-lg border border-zinc-200 text-xs text-zinc-600 hover:bg-zinc-50 cursor-pointer" title="Atualizar"><i className="ri-refresh-line" /></button>
       </div>
 

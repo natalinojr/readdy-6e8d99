@@ -1,9 +1,10 @@
+// Área "Pessoas" (antes Candidatos): o banco inteiro, para procurar alguém — busca, fases, decisão,
+// filtros e ações em lote. Desde 2026-09-30 só a lista em cards: o kanban mora dentro de cada vaga
+// (o funil dela) e o dia a dia acontece na Minha fila.
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { type Distance, type Candidate, type Company, type Interview, type Job, type Stage, DECISIONS, stageOf, stageByKind, companyName } from '../shared';
 import type { Aderencia } from '../aderencia';
-import type { ModoCandidatos } from '../navegacao';
 import CandidatosLista from '../components/CandidatosLista';
-import Kanban from '../components/Kanban';
 import FiltrosCandidatos, { type FiltrosNovosValor, FILTROS_NOVOS_INICIAL, aplicarFiltrosNovos, ordenarPorAderencia } from '../components/FiltrosCandidatos';
 import AcoesEmLote from '../components/AcoesEmLote';
 import { confirmar } from '../dialog';
@@ -11,7 +12,6 @@ import { confirmar } from '../dialog';
 interface Props {
   busca: string; onBuscaChange: (v: string) => void;
   decisaoFiltro: string; onDecisaoFiltroChange: (v: string) => void;
-  view: ModoCandidatos; onViewChange: (v: ModoCandidatos) => void;
   items: Candidate[]; buscados: Candidate[]; filtrados: Candidate[]; daEmpresa: Candidate[];
   stages: Stage[]; companies: Company[]; mostrarEmpresa: boolean;
   faseFiltro: string; onFaseFiltroChange: (v: string) => void;
@@ -25,7 +25,6 @@ interface Props {
   faltasDe: (c: Candidate) => number;
   agendamentoIADe: (c: Candidate) => string | null;
   onOpen: (id: string) => void;
-  onMove: (candidateId: string, stageId: string) => void;
   onMoverLote: (ids: string[], stageId: string) => Promise<void>;
 }
 
@@ -53,8 +52,6 @@ export default function AreaCandidatos(props: Props) {
     () => aplicarFiltrosNovos(props.buscados, filtrosNovos, props.vagaIdsDe, props.faltasDe),
     [props.buscados, filtrosNovos, props.vagaIdsDe, props.faltasDe],
   );
-  const buscadosParaKanban = filtrosNovos.ordenarPorAderencia
-    ? ordenarPorAderencia(buscadosComFiltrosNovos, props.aderenciaDe) : buscadosComFiltrosNovos;
 
   const filtradosComFiltrosNovos = useMemo(
     () => aplicarFiltrosNovos(props.filtrados, filtrosNovos, props.vagaIdsDe, props.faltasDe),
@@ -76,9 +73,8 @@ export default function AreaCandidatos(props: Props) {
     const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n;
   }), []);
 
-  // Decisão 6 (T17): a seleção é podada (não zerada) para a interseção com o que está visível agora,
-  // seja porque um filtro mudou, seja porque o modo (Cards/Tabela/Kanban) mudou.
-  const visiveis = props.view === 'kanban' ? buscadosParaKanban : filtradosParaLista;
+  // A seleção é podada (não zerada) para a interseção com o que está visível agora (filtro mudou).
+  const visiveis = filtradosParaLista;
   useEffect(() => {
     setSelecionados((prev) => {
       const idsVisiveis = new Set(visiveis.map((c) => c.id));
@@ -122,14 +118,6 @@ export default function AreaCandidatos(props: Props) {
           {DECISIONS.map((d) => <option key={d.id} value={d.id}>{d.sigla} — {d.label.replace(' à {empresa}', '')}</option>)}
           <option value="sem">Sem decisão</option>
         </select>
-        <div className="flex rounded-xl border border-zinc-200 overflow-hidden">
-          {([['cards', 'ri-layout-grid-line', 'Cards'], ['tabela', 'ri-table-line', 'Tabela'], ['kanban', 'ri-layout-column-line', 'Kanban']] as const).map(([v, icon, label]) => (
-            <button key={v} onClick={() => props.onViewChange(v)} title={label}
-              className={`px-3 h-10 text-sm cursor-pointer ${props.view === v ? 'bg-zinc-900 text-white' : 'bg-white text-zinc-500 hover:text-zinc-800'}`}>
-              <i className={icon} />
-            </button>
-          ))}
-        </div>
       </div>
 
       <AcoesEmLote
@@ -145,12 +133,7 @@ export default function AreaCandidatos(props: Props) {
       />
       <FiltrosCandidatos vagas={vagasDisponiveis} valor={filtrosNovos} onChange={setFiltrosNovos} />
 
-      {props.view === 'kanban' ? (
-        <Kanban items={buscadosParaKanban} stages={props.stages} companies={props.companies} mostrarEmpresa={props.mostrarEmpresa}
-          proximaEntrevista={props.proximaEntrevista} onOpen={props.onOpen} onMove={props.onMove}
-          aderenciaDe={props.aderenciaDe} faltasDe={props.faltasDe} agendamentoIADe={props.agendamentoIADe}
-          selecionados={selecionados} onToggleSelecao={toggleSelecao} />
-      ) : (
+      {(
         <>
           <div className="flex gap-1.5 mb-4 overflow-x-auto pb-1">
             {[{ id: 'todas', name: 'Todas' }, ...props.stages].map((s) => (
@@ -167,7 +150,7 @@ export default function AreaCandidatos(props: Props) {
               <p className="text-sm font-semibold mt-2">{props.daEmpresa.length ? 'Nenhum candidato com esses filtros' : 'Nenhum currículo ainda'}</p>
             </div>
           ) : (
-            <CandidatosLista view={props.view} items={filtradosParaLista} companies={props.companies} stages={props.stages} mostrarEmpresa={props.mostrarEmpresa}
+            <CandidatosLista view="cards" items={filtradosParaLista} companies={props.companies} stages={props.stages} mostrarEmpresa={props.mostrarEmpresa}
               distancia={props.distanciaLista} vagasDe={props.vagasDe} proximaEntrevista={props.proximaEntrevista} ultimaAvaliacao={props.ultimaAvaliacao}
               onOpen={props.onOpen} aderenciaDe={props.aderenciaDe} faltasDe={props.faltasDe}
               selecionados={selecionados} onToggleSelecao={toggleSelecao} />

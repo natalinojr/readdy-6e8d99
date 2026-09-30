@@ -4,21 +4,19 @@
 // Contratação, não os de Tarefas (slate/indigo/lucide-react), por causa da Constraint 1/12. Aditiva:
 // a barra de abas de cima (overflow-x-auto, T09) continua visível em todos os tamanhos (edge case
 // "celular sem JavaScript: abas desktop visíveis").
-import { AREAS, AREA_CONFIG, type Area } from '../navegacao';
+import { AREAS, AREA_CONFIG, AREA_NUMEROS, type Area } from '../navegacao';
 
 interface Props { area: Area; onArea: (a: Area) => void }
 
 export default function BarraInferior({ area, onArea }: Props) {
-  const itens = [...AREAS, AREA_CONFIG];
+  const itens = [...AREAS, AREA_NUMEROS, AREA_CONFIG];
   return (
     <nav className="sm:hidden fixed bottom-0 inset-x-0 z-30 bg-white border-t border-zinc-200 pb-[env(safe-area-inset-bottom)]">
       <div className="flex">
         {itens.map((t) => {
           const ativo = area === t.id;
           const config = t.id === 'config';
-          // "Configurações" não cabe em 1/6 da largura em 375px sem quebrar linha (a spec não pede
-          // um nome novo — Regra nº 1); "Config" (abreviação do mesmo nome) cabe, do mesmo jeito que
-          // "Candidatos"/"Entrevistas"/"Relatórios" já cabem nas outras 4 colunas sem truncar.
+          // "Configurações" não cabe em 1/5 da largura em 375px sem quebrar linha: vira "Config".
           return (
             <button key={t.id} onClick={() => onArea(t.id)}
               title={config ? t.label : undefined} aria-label={t.label}

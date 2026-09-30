@@ -1,21 +1,19 @@
-// Aba Entrevistas da ficha do candidato: lista de entrevistas + registro (leitura do que foi
-// respondido no questionário). Bloco movido verbatim de CandidatoDrawer.tsx (pré-Fase 2).
+// Entrevistas da ficha do candidato (Linha do tempo › Entrevistas): lista com o resumo do registro.
+// Clicar abre o modo entrevista (o único lugar de preencher/editar o registro); "Remarcar" abre a
+// janela de data e hora. Reorganizado em 2026-09-30.
 import { useState } from 'react';
-import { type Application, type Candidate, type Company, type Interview, type Job, type Settings, type Stage, decisionOf, withEmpresa, interviewStatusInfo, avgScore, FORMATS, fmtDateTime } from '../../shared';
-import type { CandidatePatch } from '../EntrevistaModal';
-import { RegistroPainel } from '../EntrevistasDoDia';
+import { type Interview, type Settings, decisionOf, withEmpresa, interviewStatusInfo, avgScore, FORMATS, fmtDateTime } from '../../shared';
 
 interface Props {
-  c: Candidate; interviews: Interview[]; settings: Settings; empresa: string;
-  companies: Company[]; stages: Stage[]; applications: Application[]; jobs: Job[];
-  onOpenInterview: (iv: Interview) => void; onAgendar: () => void;
-  onSaved: (iv: Interview, patch?: CandidatePatch) => void;
+  interviews: Interview[]; settings: Settings; empresa: string;
+  onAbrirEntrevista: (iv: Interview) => void; onRemarcar: (iv: Interview) => void; onAgendar: () => void;
 }
 
-export default function FichaEntrevistas({ c, interviews, settings, empresa, companies, stages, applications, jobs, onOpenInterview, onAgendar, onSaved }: Props) {
+export default function FichaEntrevistas({ interviews, settings, empresa, onAbrirEntrevista, onRemarcar, onAgendar }: Props) {
   const minhas = [...interviews].sort((a, b) => b.scheduled_at.localeCompare(a.scheduled_at));
   return (
-    <Section title="Entrevistas">
+    <div>
+      {minhas.length === 0 && <p className="text-sm text-zinc-400 mb-2">Nenhuma entrevista ainda.</p>}
       {minhas.length > 0 && (
         <ul className="space-y-1.5 mb-2">
           {minhas.map((iv) => {
@@ -24,29 +22,29 @@ export default function FichaEntrevistas({ c, interviews, settings, empresa, com
             const rec = decisionOf(iv.recommendation);
             return (
               <li key={iv.id}>
-                <button onClick={() => onOpenInterview(iv)} className="w-full text-left rounded-xl border border-zinc-200 hover:border-violet-300 p-2.5 cursor-pointer">
-                  <div className="flex items-center gap-2">
-                    <i className={`${FORMATS.find((f) => f.id === iv.format)?.icon} text-zinc-400`} />
-                    <span className="text-sm font-semibold text-zinc-800">{fmtDateTime(iv.scheduled_at)}</span>
-                    <span className={`ml-auto text-[10px] font-bold px-2 py-0.5 rounded-full border ${st.cls}`}>{st.label}</span>
+                <div className="rounded-xl border border-zinc-200 hover:border-violet-300 p-2.5">
+                  <button onClick={() => onAbrirEntrevista(iv)} className="w-full text-left cursor-pointer">
+                    <div className="flex items-center gap-2">
+                      <i className={`${FORMATS.find((f) => f.id === iv.format)?.icon} text-zinc-400`} />
+                      <span className="text-sm font-semibold text-zinc-800">{fmtDateTime(iv.scheduled_at)}</span>
+                      <span className={`ml-auto text-[10px] font-bold px-2 py-0.5 rounded-full border ${st.cls}`}>{st.label}</span>
+                    </div>
+                    {(media != null || rec || iv.notes) && (
+                      <p className="text-xs text-zinc-500 mt-1 line-clamp-2">
+                        {media != null && <b className="text-zinc-700">Nota {media.toFixed(1)} · </b>}
+                        {rec && <b className="text-zinc-700">{rec.sigla} · </b>}
+                        {iv.notes}
+                      </p>
+                    )}
+                  </button>
+                  <div className="flex gap-3 mt-1.5 text-[11px] font-bold">
+                    <button onClick={() => onAbrirEntrevista(iv)} className="text-violet-700 cursor-pointer">
+                      {iv.status === 'agendada' ? (new Date(iv.scheduled_at) <= new Date() ? 'Preencher registro' : 'Começar entrevista') : 'Abrir registro'}
+                    </button>
+                    <button onClick={() => onRemarcar(iv)} className="text-zinc-500 hover:text-zinc-800 cursor-pointer">Data e hora</button>
                   </div>
-                  {(media != null || rec || iv.notes) && (
-                    <p className="text-xs text-zinc-500 mt-1 line-clamp-2">
-                      {media != null && <b className="text-zinc-700">Nota {media.toFixed(1)} · </b>}
-                      {rec && <b className="text-zinc-700">{rec.sigla} · </b>}
-                      {iv.notes}
-                    </p>
-                  )}
-                </button>
-                {/* Agendada: o formulário de preenchimento já aparece aberto (mesmo da aba Entrevistas do dia). */}
-                {iv.status === 'agendada' ? (
-                  <div className="mt-1.5">
-                    <RegistroPainel key={iv.id} iv={iv} c={c} companies={companies} stages={stages} settings={settings}
-                      applications={applications} jobs={jobs} onSaved={onSaved} semCabecalho />
-                  </div>
-                ) : (
-                  <RegistroEntrevista iv={iv} settings={settings} empresa={empresa} />
-                )}
+                </div>
+                <RegistroEntrevista iv={iv} settings={settings} empresa={empresa} />
               </li>
             );
           })}
@@ -55,7 +53,7 @@ export default function FichaEntrevistas({ c, interviews, settings, empresa, com
       <button onClick={onAgendar} className="flex items-center gap-1.5 px-3 h-8 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-bold cursor-pointer">
         <i className="ri-calendar-event-line" /> Agendar entrevista
       </button>
-    </Section>
+    </div>
   );
 }
 
@@ -109,16 +107,5 @@ function RegistroEntrevista({ iv, settings, empresa }: { iv: Interview; settings
         </div>
       )}
     </div>
-  );
-}
-
-// Section: mesmo componente de CandidatoDrawer.tsx:702-709 (pré-Fase 2), duplicado para não fechar
-// ciclo de import com o shell (T06) nem criar um 5º arquivo fora do Mapa desta fase.
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <section>
-      <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-400 mb-2">{title}</p>
-      {children}
-    </section>
   );
 }

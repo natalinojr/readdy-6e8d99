@@ -3,9 +3,11 @@
 import { useState } from 'react';
 import { type Application, type Candidate, type Company, type Job, type Stage, type Distance, jobStatusInfo, companyName, fmtDate } from '../shared';
 import type { JobDraft } from './VagaModal';
-import VagaDetalhe from './VagaDetalhe';
+import VagaDetalhe, { type FunilProps } from './VagaDetalhe';
+import AgendamentosPainel from './AgendamentosPainel';
+import type { VisaoVaga } from '../navegacao';
 
-interface Props {
+interface Props extends FunilProps {
   jobs: Job[];
   companies: Company[];
   candidates: Candidate[];
@@ -24,6 +26,8 @@ interface Props {
   onRemoveApplication: (app: Application) => void;
   onOpenCandidate: (id: string) => void;
   onSaveJob: (draft: JobDraft) => Promise<boolean>;
+  /** Link antigo "agendamentos": abre já nas conversas da IA. */
+  visaoInicial?: VisaoVaga | null;
 }
 
 export const appKey = (jobId: string, candId: string) => `${jobId}:${candId}`;
@@ -31,11 +35,14 @@ export const appKey = (jobId: string, candId: string) => `${jobId}:${candId}`;
 export default function Vagas(props: Props) {
   const { jobs, selectedJobId } = props;
   const job = jobs.find((j) => j.id === selectedJobId) ?? null;
-  return job ? <VagaDetalhe {...props} job={job} /> : <ListaVagas {...props} />;
+  return job ? <VagaDetalhe key={job.id} {...props} job={job} /> : <ListaVagas {...props} />;
 }
 
-function ListaVagas({ jobs, companies, applications, mostrarEmpresa, onSelectJob, onNewJob }: Props) {
+function ListaVagas(props: Props) {
+  const { jobs, companies, applications, mostrarEmpresa, onSelectJob, onNewJob } = props;
   const [status, setStatus] = useState<'ativas' | 'todas' | 'fechada'>('ativas');
+  // Conversas da IA de todas as vagas juntas (dentro de cada vaga elas aparecem só daquela vaga).
+  const [conversas, setConversas] = useState(props.visaoInicial === 'conversas');
   const lista = jobs.filter((j) => status === 'todas' || (status === 'fechada' ? j.status === 'fechada' : j.status !== 'fechada'));
 
   return (
@@ -47,12 +54,19 @@ function ListaVagas({ jobs, companies, applications, mostrarEmpresa, onSelectJob
             {label}
           </button>
         ))}
+        <button onClick={() => setConversas((v) => !v)}
+          className={`px-3 h-8 rounded-full text-xs font-bold border cursor-pointer ${conversas ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-violet-700 border-violet-200'}`}>
+          <i className="ri-robot-2-line" /> Conversas da IA
+        </button>
         <button onClick={onNewJob} className="ml-auto flex items-center gap-1.5 px-4 h-9 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-sm font-bold cursor-pointer">
           <i className="ri-add-line" /> Abrir vaga
         </button>
       </div>
 
-      {lista.length === 0 ? (
+      {conversas ? (
+        <AgendamentosPainel candidates={props.candidates} jobs={jobs} companies={companies} stages={props.stages}
+          mostrarEmpresa={mostrarEmpresa} onOpenCandidate={props.onOpenCandidate} />
+      ) : lista.length === 0 ? (
         <div className="py-16 text-center text-zinc-400">
           <i className="ri-briefcase-4-line text-4xl" />
           <p className="text-sm font-semibold mt-2">{jobs.length ? 'Nenhuma vaga neste filtro' : 'Nenhuma vaga aberta ainda'}</p>

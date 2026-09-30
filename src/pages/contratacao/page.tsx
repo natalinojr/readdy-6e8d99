@@ -1,5 +1,6 @@
-// Contratação — banco de currículos por empresa, kanban de fases, agenda de entrevistas,
-// relatórios e configurações. Independente das lojas do ERPOS (empresas próprias em
+// Contratação — organizada pelo que fazer (2026-09-30): Minha fila (o que depende de você), Vagas
+// (o funil de cada vaga) e Pessoas (o banco), mais Números e Configurações. Modo entrevista e
+// triagem abrem em tela cheia por cima. Independente das lojas do ERPOS (empresas próprias em
 // hiring_companies; fases em hiring_stages; configurações em hiring_settings).
 // Leitura híbrida: PDF com texto é lido no navegador de graça (src/lib/curriculoLocal.ts);
 // foto/PDF escaneado vai direto para a IA (Edge hiring-cv-scan); nos demais a IA só
@@ -17,6 +18,7 @@ import {
   BUCKET, norm, safeName, scanWithAi, aiFields, mergeSettings, stageOf, stageByKind, faltasFicha,
 } from './shared';
 import type { CandidatePatch } from './components/EntrevistaModal';
+import type { Decision } from './shared';
 import { type Aderencia, melhorAderencia } from './aderencia';
 import { DialogHost, confirmar, avisar } from './dialog';
 import Vagas, { appKey } from './components/Vagas';
@@ -28,11 +30,13 @@ import BarraInferior from './components/BarraInferior';
 import CandidatoDrawer from './components/CandidatoDrawer';
 import EntrevistaModal from './components/EntrevistaModal';
 import RelatoriosContratacao from './components/RelatoriosContratacao';
-import AreaHoje from './areas/AreaHoje';
+import ModoEntrevista from './components/ModoEntrevista';
+import TriagemCurriculos from './components/TriagemCurriculos';
+import AreaFila from './areas/AreaFila';
 import AreaConfiguracoes from './areas/AreaConfiguracoes';
-import AreaEntrevistas from './areas/AreaEntrevistas';
 import AreaCandidatos from './areas/AreaCandidatos';
-import { type Area, type Destino, type SubAbaEntrevistas, type ModoCandidatos, type SecaoConfig, AREAS, AREA_CONFIG, destinoDeAbaAntiga } from './navegacao';
+import { montarFila } from './fila';
+import { type Area, type Destino, type SecaoConfig, type VisaoVaga, AREAS, AREA_CONFIG, AREA_NUMEROS, destinoDeAbaAntiga } from './navegacao';
 
 export interface QueueItem { key: string; name: string; state: 'lendo' | 'ok' | 'erro'; msg?: string }
 type ModalState = { interview: Interview | null; candidateId?: string | null; date?: string | null } | null;
@@ -40,13 +44,6 @@ type ModalState = { interview: Interview | null; candidateId?: string | null; da
 const lsGet = (k: string) => { try { return localStorage.getItem(k); } catch { return null; } };
 const lsSet = (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* sem storage */ } };
 
-function estadoInicialDeNavegacao(): { area: Area; view: ModoCandidatos } {
-  const dest = destinoDeAbaAntiga(lsGet('contratacao_aba'));
-  return {
-    area: dest.area, // 'hoje' já existe (T14) — é o default real a partir daqui (RF-01)
-    view: dest.modoCandidatos ?? (lsGet('contratacao_view') === 'tabela' ? 'tabela' : lsGet('contratacao_view') === 'kanban' ? 'kanban' : 'cards'),
-  };
-}
 
 export default function ContratacaoPage() {
   const { user } = useAuth();
@@ -76,9 +73,12 @@ export default function ContratacaoPage() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [queue, setQueue] = useState<QueueItem[]>([]);
-  const [area, setArea] = useState<Area>(() => estadoInicialDeNavegacao().area);
-  const [view, setView] = useState<ModoCandidatos>(() => estadoInicialDeNavegacao().view);
-  const [focoSubabaEntrevistas, setFocoSubabaEntrevistas] = useState<SubAbaEntrevistas | null>(null);
+  const [area, setArea] = useState<Area>(() => destinoDeAbaAntiga(lsGet('contratacao_aba')).area);
+  const [visaoVaga, setVisaoVaga] = useState<VisaoVaga | null>(null);
+  // Tela cheia por cima: modo entrevista (registro) e triagem de currículos novos.
+  const [entrevistaAberta, setEntrevistaAberta] = useState<string | null>(null);
+  const [triagemAberta, setTriagemAberta] = useState(false);
+  const [fichaNaConversa, setFichaNaConversa] = useState(false);
   const [focoSecaoConfig, setFocoSecaoConfig] = useState<SecaoConfig | null>(null);
   const [busca, setBusca] = useState('');
   const [faseFiltro, setFaseFiltro] = useState<string>('todas');
@@ -103,23 +103,18 @@ export default function ContratacaoPage() {
     if (!a && !ent && !cand) return;
     const dest: Destino | null = a ? destinoDeAbaAntiga(a) : null;
     if (dest) {
-      setArea(dest.area); // 'hoje' já existe (T14) — RF-01
-      if (dest.subabaEntrevistas) setFocoSubabaEntrevistas(dest.subabaEntrevistas);
-      if (dest.modoCandidatos) setView(dest.modoCandidatos);
+      setArea(dest.area);
+      if (dest.visaoVaga) setVisaoVaga(dest.visaoVaga);
       if (dest.secaoConfig) setFocoSecaoConfig(dest.secaoConfig);
     }
-    if (ent) {
-      setFocoEntrevista(ent);
-      // Com filtro de outra empresa a entrevista não apareceria na lista.
-      setEmpresaFiltro('todas');
-    }
-    // Em Conversas da IA (sub-aba de Entrevistas, antes aba própria "agendamentos") o
-    // candidato só dá contexto; abrir a ficha por cima esconderia o pedido.
-    if (cand && dest?.subabaEntrevistas !== 'conversas') setSelId(cand);
+    // ?entrevista=<id>: abre o modo entrevista dela assim que as entrevistas carregarem.
+    if (ent) setFocoEntrevista(ent);
+    // Nas conversas da IA o candidato só dá contexto; abrir a ficha por cima esconderia o pedido.
+    // Com ?entrevista= o modo entrevista abre por cima de tudo; a ficha não abre junto.
+    if (cand && !ent && dest?.visaoVaga !== 'conversas') setSelId(cand);
     setSearchParams({}, { replace: true });
   }, [searchParams, setSearchParams]);
 
-  useEffect(() => { lsSet('contratacao_view', view); }, [view]);
   useEffect(() => { lsSet('contratacao_aba', area); }, [area]);
   useEffect(() => { lsSet('contratacao_empresa', empresaFiltro); }, [empresaFiltro]);
 
@@ -329,7 +324,8 @@ export default function ContratacaoPage() {
     await Promise.all([worker(), worker()]);
   }, [processFile, empresaUpload, vagaUpload, jobs]);
 
-  const updateCandidate = useCallback(async (id: string, patch: Partial<Candidate>) => {
+  // Devolve false quando nada foi gravado (recusou mover com ficha incompleta ou deu erro).
+  const updateCandidate = useCallback(async (id: string, patch: Partial<Candidate>): Promise<boolean> => {
     // Ficha incompleta não sai de "Novo" (exceto para "Descartado"). O banco também trava.
     if (patch.stage_id) {
       const atual = items.find((x) => x.id === id);
@@ -343,14 +339,14 @@ export default function ContratacaoPage() {
             mensagem: `Faltam: ${faltam.map((f) => f.label.toLowerCase()).join(', ')}. O ideal é completar na ficha antes de tirar ${atual.full_name.split(' ')[0]} de "${de.name}". Quer mover mesmo assim?`,
             confirmarLabel: 'Mover mesmo assim',
           });
-          if (!ok) return;
+          if (!ok) return false;
           patch = { ...patch, required_waived_at: new Date().toISOString() };
         }
       }
     }
     setItems((prev) => prev.map((c) => (c.id === id ? { ...c, ...patch } : c)));
     const { error } = await supabase.from('hiring_candidates').update({ ...patch, updated_at: new Date().toISOString() }).eq('id', id);
-    if (error) { avisar(`Não foi possível salvar: ${error.message}`); carregar(); return; }
+    if (error) { avisar(`Não foi possível salvar: ${error.message}`); carregar(); return false; }
     // Empresa trocada: as entrevistas acompanham o candidato.
     if ('company_id' in patch) {
       await supabase.from('hiring_interviews').update({ company_id: patch.company_id ?? null }).eq('candidate_id', id);
@@ -360,7 +356,17 @@ export default function ContratacaoPage() {
       if (patch.company_id) calcDistances(id).catch(() => {});
       else await supabase.from('hiring_distances').delete().eq('candidate_id', id);
     }
+    return true;
   }, [carregar, calcDistances, items, stages, settings]);
+
+  // Decisão tomada na Minha fila: vai para o candidato e para a entrevista (mesma regra do modo entrevista).
+  const decidir = useCallback(async (candidateId: string, interviewId: string, decision: Decision) => {
+    const ok = await updateCandidate(candidateId, { decision });
+    if (!ok) return;
+    setInterviews((prev) => prev.map((iv) => (iv.id === interviewId ? { ...iv, recommendation: decision } : iv)));
+    const { error } = await supabase.from('hiring_interviews').update({ recommendation: decision, updated_at: new Date().toISOString() }).eq('id', interviewId);
+    if (error) avisar(`A decisão foi para o candidato, mas não para a entrevista: ${error.message}`);
+  }, [updateCandidate]);
 
   // IA sob demanda: baixa o original do bucket e completa a ficha (mantém fase/nota/anotações/empresa).
   const organizarComIA = useCallback(async (c: Candidate) => {
@@ -436,6 +442,7 @@ export default function ContratacaoPage() {
       const { data } = await supabase.from('hiring_candidates').select('*').eq('id', id).maybeSingle();
       if (data) setItems((prev) => [data as Candidate, ...prev]);
     }
+    setFichaNaConversa(true);
     setSelId(id);
   }, [items]);
 
@@ -601,6 +608,29 @@ export default function ContratacaoPage() {
   const agendamentoIADe = useCallback((c: Candidate) => agendamentoIAPorCandidato.get(c.id) ?? null, [agendamentoIAPorCandidato]);
 
   const sel = items.find((c) => c.id === selId) ?? null;
+  const ivAberta = entrevistaAberta ? interviews.find((iv) => iv.id === entrevistaAberta) ?? null : null;
+  const filaTriagem = useMemo(() => montarFila({ interviews, candidates: daEmpresa, stages, agora: new Date() }).triar,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [triagemAberta, daEmpresa, stages]);
+  // Link "Abrir entrevista de Fulana" (?entrevista=): espera a entrevista chegar e abre o modo entrevista.
+  useEffect(() => {
+    if (!focoEntrevista) return;
+    if (interviews.some((iv) => iv.id === focoEntrevista)) { setEntrevistaAberta(focoEntrevista); setFocoEntrevista(null); }
+    else if (!loading) setFocoEntrevista(null);
+  }, [focoEntrevista, interviews, loading]);
+  const abrirFicha = useCallback((id: string, naConversa = false) => { setFichaNaConversa(naConversa); setSelId(id); }, []);
+  const abrirEntrevista = useCallback((iv: Interview) => { setSelId(null); setEntrevistaAberta(iv.id); }, []);
+  const irPara = useCallback((a: Area) => { setArea(a); if (a === 'vagas') setSelectedJobId(null); }, []);
+  // Decisão dada na ficha: vai para o candidato e para a última entrevista realizada (como na fila e no modo entrevista).
+  const atualizarDaFicha = useCallback(async (id: string, patch: Partial<Candidate>) => {
+    const ok = await updateCandidate(id, patch);
+    if (!ok || !('decision' in patch)) return;
+    const ult = interviews.filter((iv) => iv.candidate_id === id && iv.status === 'realizada').sort((a, b) => b.scheduled_at.localeCompare(a.scheduled_at))[0];
+    if (!ult) return;
+    const recommendation = patch.decision ?? null;
+    setInterviews((prev) => prev.map((iv) => (iv.id === ult.id ? { ...iv, recommendation } : iv)));
+    await supabase.from('hiring_interviews').update({ recommendation, updated_at: new Date().toISOString() }).eq('id', ult.id);
+  }, [updateCandidate, interviews]);
   const mostrarEmpresa = empresaFiltro === 'todas' && companies.length > 1;
 
   const onInterviewSaved = (iv: Interview, candidatePatch?: CandidatePatch) => {
@@ -628,7 +658,7 @@ export default function ContratacaoPage() {
         </div>
         <div className="flex-1 min-w-0">
           <h1 className="text-xl font-black text-zinc-900">Contratação</h1>
-          <p className="text-xs text-zinc-400">Currículos, kanban, entrevistas e relatórios por empresa</p>
+          <p className="text-xs text-zinc-400">O que fazer agora, as vagas e o banco de currículos</p>
         </div>
         {area !== 'config' && companies.length > 1 && (
           <select value={empresaFiltro} onChange={(e) => setEmpresaFiltro(e.target.value)}
@@ -638,7 +668,7 @@ export default function ContratacaoPage() {
             <option value="sem">Sem empresa</option>
           </select>
         )}
-        {(area === 'candidatos' || (area === 'vagas' && jobs.some((j) => j.id === selectedJobId))) && (
+        {(area === 'pessoas' || (area === 'vagas' && jobs.some((j) => j.id === selectedJobId))) && (
           <button onClick={() => {
             const job = area === 'vagas' ? jobs.find((j) => j.id === selectedJobId) : null;
             setEmpresaUpload(job ? (job.company_id ?? '') : '');
@@ -653,20 +683,22 @@ export default function ContratacaoPage() {
           onChange={(e) => { if (e.target.files) addFiles(e.target.files); e.target.value = ''; }} />
       </div>
 
-      {/* Áreas */}
+      {/* Áreas: Minha fila · Vagas · Pessoas, e Números/Configurações como ícones */}
       <div className="flex gap-1 mb-4 border-b border-zinc-200 overflow-x-auto">
         {AREAS.map((t) => (
-          <button key={t.id} onClick={() => setArea(t.id)}
+          <button key={t.id} onClick={() => irPara(t.id)}
             className={`flex items-center gap-1.5 px-3 sm:px-4 h-10 text-[13px] sm:text-sm font-bold border-b-2 -mb-px cursor-pointer whitespace-nowrap flex-shrink-0 ${
               area === t.id ? 'border-rose-600 text-rose-700' : 'border-transparent text-zinc-500 hover:text-zinc-800'}`}>
             <i className={t.icon} /> {t.label}
           </button>
         ))}
-        <button onClick={() => setArea('config')} title={AREA_CONFIG.label}
-          className={`flex items-center justify-center w-10 h-10 -mb-px border-b-2 cursor-pointer ml-auto flex-shrink-0 ${
-            area === 'config' ? 'border-rose-600 text-rose-700' : 'border-transparent text-zinc-500 hover:text-zinc-800'}`}>
-          <i className={AREA_CONFIG.icon} />
-        </button>
+        {[AREA_NUMEROS, AREA_CONFIG].map((t, i) => (
+          <button key={t.id} onClick={() => setArea(t.id)} title={t.label}
+            className={`flex items-center justify-center w-10 h-10 -mb-px border-b-2 cursor-pointer flex-shrink-0 ${i === 0 ? 'ml-auto' : ''} ${
+              area === t.id ? 'border-rose-600 text-rose-700' : 'border-transparent text-zinc-500 hover:text-zinc-800'}`}>
+            <i className={t.icon} />
+          </button>
+        ))}
       </div>
 
       {semEmpresas && area !== 'config' && (
@@ -681,12 +713,17 @@ export default function ContratacaoPage() {
         <div className="py-16 flex justify-center"><div className="w-7 h-7 border-2 border-rose-500 border-t-transparent rounded-full animate-spin" /></div>
       ) : loadError ? (
         <p className="py-10 text-center text-sm text-red-600">Erro ao carregar: {loadError}</p>
-      ) : area === 'hoje' ? (
-        <AreaHoje interviews={ivsDaEmpresa} candidates={items} jobs={jobsDaEmpresa} applications={applications} companies={companies}
-          mostrarEmpresa={mostrarEmpresa} schedSessions={schedSessions} tenantId={user?.tenantId}
-          onOpenCandidate={setSelId} onAbrirConversas={() => { setArea('entrevistas'); setFocoSubabaEntrevistas('conversas'); }}
+      ) : area === 'fila' ? (
+        <AreaFila interviews={ivsDaEmpresa} candidates={daEmpresa} todosCandidatos={items} stages={stages} jobs={jobsDaEmpresa}
+          applications={applications} companies={companies} mostrarEmpresa={mostrarEmpresa} schedSessions={schedSessions} tenantId={user?.tenantId}
+          onOpenCandidate={(id) => abrirFicha(id)}
+          onOpenConversa={(id) => abrirFicha(id, true)}
+          onAbrirEntrevista={abrirEntrevista}
+          onTriagem={() => setTriagemAberta(true)}
+          onDecidir={decidir}
           onAbrirVaga={(jobId) => { setArea('vagas'); setSelectedJobId(jobId); }}
-          onNewInterview={(date) => setModal({ interview: null, date })}
+          onAbrirConversasIA={() => { setArea('vagas'); setSelectedJobId(null); setVisaoVaga('conversas'); }}
+          onAgendar={() => setModal({ interview: null })}
           onSessaoAtualizada={() => carregar(true)} />
       ) : area === 'config' ? (
         <AreaConfiguracoes companies={companies} stages={stages} settings={settings} candidates={items}
@@ -707,31 +744,24 @@ export default function ContratacaoPage() {
           onRemoveApplication={removeApplication}
           onOpenCandidate={abrirCandidatoDoBot}
           onSaveJob={saveJob}
+          proximaEntrevista={proximaEntrevista} faltasDe={faltasDe} agendamentoIADe={agendamentoIADe}
+          onMove={(id, stageId) => { const c = items.find((x) => x.id === id); if (c && c.stage_id !== stageId) updateCandidate(id, { stage_id: stageId }); }}
+          visaoInicial={visaoVaga}
         />
-      ) : area === 'entrevistas' ? (
-        <AreaEntrevistas interviews={ivsDaEmpresa} candidates={items} companies={companies} stages={stages} settings={settings}
-          applications={applications} jobs={jobs} mostrarEmpresa={mostrarEmpresa}
-          onSaved={onInterviewSaved} onOpenCandidate={setSelId}
-          onOpenInterview={(iv) => setModal({ interview: iv })}
-          onNewInterview={(date) => setModal({ interview: null, date })}
-          focoId={focoEntrevista} onFocoUsado={() => setFocoEntrevista(null)}
-          subabaInicial={focoSubabaEntrevistas} onSubabaInicialUsada={() => setFocoSubabaEntrevistas(null)} />
-      ) : area === 'relatorios' ? (
+      ) : area === 'numeros' ? (
         <RelatoriosContratacao candidates={daEmpresa} interviews={interviews} companies={companies} stages={stages} settings={settings}
           mostrarEmpresa={mostrarEmpresa} onOpen={setSelId} />
       ) : (
         <AreaCandidatos
           busca={busca} onBuscaChange={setBusca}
           decisaoFiltro={decisaoFiltro} onDecisaoFiltroChange={setDecisaoFiltro}
-          view={view} onViewChange={setView}
           items={items} buscados={buscados} filtrados={filtrados} daEmpresa={daEmpresa}
           stages={stages} companies={companies} mostrarEmpresa={mostrarEmpresa}
           faseFiltro={faseFiltro} onFaseFiltroChange={setFaseFiltro} counts={counts}
           proximaEntrevista={proximaEntrevista} ultimaAvaliacao={ultimaAvaliacao}
           distanciaLista={distanciaLista} vagasDe={vagasDe} vagaIdsDe={vagaIdsDe} jobs={jobs}
           aderenciaDe={aderenciaDe} faltasDe={faltasDe} agendamentoIADe={agendamentoIADe}
-          onOpen={setSelId}
-          onMove={(id, stageId) => { const c = items.find((x) => x.id === id); if (c && c.stage_id !== stageId) updateCandidate(id, { stage_id: stageId }); }}
+          onOpen={(id) => abrirFicha(id)}
           onMoverLote={moveLote}
         />
       )}
@@ -746,18 +776,21 @@ export default function ContratacaoPage() {
           interviews={interviews.filter((iv) => iv.candidate_id === sel.id)}
           jobs={jobs}
           applications={applications.filter((a) => a.candidate_id === sel.id)}
+          sessoes={schedSessions.filter((s) => s.candidate_id === sel.id)}
           analyzing={analyzing}
           onApply={(jobId) => applyToJob(jobId, [sel.id])}
           onOpenJob={(jobId) => { setSelId(null); setSelectedJobId(jobId); setArea('vagas'); }}
           distances={distances.filter((d) => d.candidate_id === sel.id)}
           onCalcDistances={() => calcDistances(sel.id)}
           onClose={() => setSelId(null)}
-          onUpdate={(patch) => updateCandidate(sel.id, patch)}
+          onUpdate={(patch) => { atualizarDaFicha(sel.id, patch); }}
           onDelete={() => deleteCandidate(sel)}
           onOrganizar={() => organizarComIA(sel)}
           onAgendar={() => setModal({ interview: null, candidateId: sel.id })}
-          onOpenInterview={(iv) => setModal({ interview: iv })}
-          onInterviewSaved={onInterviewSaved}
+          onAbrirEntrevista={abrirEntrevista}
+          onRemarcar={(iv) => setModal({ interview: iv })}
+          onSessaoAtualizada={() => carregar(true)}
+          abaInicial={fichaNaConversa ? 'linha' : undefined}
         />
       )}
 
@@ -773,7 +806,22 @@ export default function ContratacaoPage() {
           onClose={() => setModal(null)}
           onSaved={onInterviewSaved}
           onDeleted={(id) => { setInterviews((prev) => prev.filter((x) => x.id !== id)); setModal(null); }}
+          onAbrirRegistro={(iv) => { setModal(null); setEntrevistaAberta(iv.id); }}
         />
+      )}
+
+      {ivAberta && (
+        <ModoEntrevista key={ivAberta.id} iv={ivAberta} c={items.find((c) => c.id === ivAberta.candidate_id) ?? null}
+          companies={companies} stages={stages} settings={settings} applications={applications} jobs={jobs}
+          onSaved={onInterviewSaved} onClose={() => setEntrevistaAberta(null)}
+          onOpenFicha={(id) => abrirFicha(id)} onRemarcar={(iv) => setModal({ interview: iv })} />
+      )}
+
+      {triagemAberta && (
+        <TriagemCurriculos fila={filaTriagem} stages={stages} companies={companies} jobs={jobs} applications={applications} ficha={settings}
+          distancia={distanciaLista} onUpdate={updateCandidate}
+          onAgendar={(id) => setModal({ interview: null, candidateId: id })}
+          onOpenFicha={(id) => abrirFicha(id)} onClose={() => setTriagemAberta(false)} />
       )}
 
       {jobModal && (
@@ -798,7 +846,7 @@ export default function ContratacaoPage() {
         queue={queue} onClearQueue={() => setQueue([])} lendo={lendo}
       />
 
-      <BarraInferior area={area} onArea={setArea} />
+      <BarraInferior area={area} onArea={irPara} />
       <DialogHost />
     </div>
   );

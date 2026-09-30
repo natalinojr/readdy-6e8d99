@@ -1,40 +1,56 @@
-// Vaga por dentro: sub-abas Candidatos (ranking, movido verbatim de Vagas.tsx pré-Fase-4) ·
-// Divulgação (VagaDivulgacao) · Agendamento pela IA (AgendamentoVaga, como já era usado dentro do
-// VagaModal) · Dados da vaga (VagaFormulario, sem invólucro de modal — substitui o toggle "Ver
-// dados da vaga" de hoje por uma versão editável).
+// Vaga por dentro (reorganizada em 2026-09-30): o funil da vaga (as fases, com quem está inscrito
+// nela), o ranking pela nota da IA (com a análise) e as conversas do agendamento pela IA desta vaga.
+// Tudo que é CONFIGURAÇÃO da vaga (dados, link de divulgação, agendamento pela IA, excluir) fica
+// junto em "Configurar vaga".
 import { useMemo, useState } from 'react';
 import {
-  type Application, type Candidate, type Company, type Distance, type Job, type Stage,
+  type Application, type Candidate, type Company, type Distance, type Interview, type Job, type Stage,
   FIT, JOB_STATUS, jobStatusInfo, companyName, fmtDateTime, ageOf, colorOf, stageOf, decisionOf, fitOf, fmtKm, distCls,
 } from '../shared';
+import type { Aderencia } from '../aderencia';
+import type { VisaoVaga } from '../navegacao';
 import { VagaFormulario, type JobDraft } from './VagaModal';
 import AgendamentoVaga from './AgendamentoVaga';
 import VagaDivulgacao from './VagaDivulgacao';
+import AgendamentosPainel from './AgendamentosPainel';
+import Kanban from './Kanban';
 
-interface Props {
+export interface FunilProps {
+  proximaEntrevista: Map<string, Interview>;
+  faltasDe: (c: Candidate) => number;
+  agendamentoIADe: (c: Candidate) => string | null;
+  onMove: (candidateId: string, stageId: string) => void;
+}
+
+interface Props extends FunilProps {
   job: Job; companies: Company[]; candidates: Candidate[]; applications: Application[]; stages: Stage[]; jobs: Job[];
+  mostrarEmpresa: boolean;
   analyzing: Set<string>; distancia: (candidateId: string, companyId: string | null) => Distance | null;
   onSelectJob: (id: string | null) => void; onDeleteJob: (job: Job) => void; onAddFromBank: (job: Job) => void;
   onUploadToJob: (job: Job) => void; onReanalyze: (app: Application) => void; onRemoveApplication: (app: Application) => void;
   onOpenCandidate: (id: string) => void; onSaveJob: (draft: JobDraft) => Promise<boolean>;
+  visaoInicial?: VisaoVaga | null;
 }
 
-type SubAbaVaga = 'candidatos' | 'divulgacao' | 'agendamento' | 'dados';
-// Ícones já usados no módulo: ri-user-search-line (LinksWhatsApp.tsx:482, "Abrir candidato"),
-// ri-whatsapp-line (LinksWhatsApp.tsx, várias), ri-robot-2-line (AgendamentoVaga.tsx:90), ri-file-list-3-line
-// (ConfiguracoesContratacao.tsx, item "Dados mínimos" do menu de T10) — nenhum ícone novo.
-const SUBABAS_VAGA: { id: SubAbaVaga; label: string; icon: string }[] = [
-  { id: 'candidatos', label: 'Candidatos', icon: 'ri-user-search-line' },
-  { id: 'divulgacao', label: 'Divulgação', icon: 'ri-whatsapp-line' },
-  { id: 'agendamento', label: 'Agendamento pela IA', icon: 'ri-robot-2-line' },
-  { id: 'dados', label: 'Dados da vaga', icon: 'ri-file-list-3-line' },
+const VISOES: { id: VisaoVaga; label: string; icon: string }[] = [
+  { id: 'funil', label: 'Funil', icon: 'ri-layout-column-line' },
+  { id: 'ranking', label: 'Ranking', icon: 'ri-bar-chart-horizontal-line' },
+  { id: 'conversas', label: 'Conversas da IA', icon: 'ri-robot-2-line' },
+];
+type AbaConfig = 'dados' | 'divulgacao' | 'agendamento';
+const ABAS_CONFIG: [AbaConfig, string, string][] = [
+  ['dados', 'Dados da vaga', 'ri-file-list-3-line'],
+  ['divulgacao', 'Divulgação', 'ri-whatsapp-line'],
+  ['agendamento', 'Agendamento pela IA', 'ri-robot-2-line'],
 ];
 
 export default function VagaDetalhe({
-  job, companies, candidates, applications, stages, jobs, analyzing, distancia, onSelectJob, onDeleteJob,
+  job, companies, candidates, applications, stages, jobs, mostrarEmpresa, analyzing, distancia, onSelectJob, onDeleteJob,
   onAddFromBank, onUploadToJob, onReanalyze, onRemoveApplication, onOpenCandidate, onSaveJob,
+  proximaEntrevista, faltasDe, agendamentoIADe, onMove, visaoInicial,
 }: Props) {
-  const [subaba, setSubaba] = useState<SubAbaVaga>('candidatos'); // Decisão 8: default = ranking, sem persistir
+  const [visao, setVisao] = useState<VisaoVaga>(visaoInicial ?? 'funil');
+  const [config, setConfig] = useState<AbaConfig | null>(null);
   const [aberto, setAberto] = useState<string | null>(null);
   const byId = useMemo(() => new Map(candidates.map((c) => [c.id, c])), [candidates]);
   const apps = applications
@@ -42,6 +58,10 @@ export default function VagaDetalhe({
     .sort((a, b) => (b.score ?? -1) - (a.score ?? -1));
   const st = jobStatusInfo(job.status);
   const comp = companies.find((c) => c.id === job.company_id) ?? null;
+  const naVaga = apps.map((a) => byId.get(a.candidate_id)!);
+  // No funil, a nota que aparece no card é a DESTA vaga (não a melhor entre todas).
+  const notaNaVaga = new Map<string, Aderencia>();
+  for (const a of apps) if (a.score != null && !a.error) notaNaVaga.set(a.candidate_id, { score: a.score, fit: a.fit ?? fitOf(a.score) ?? 'baixa', jobId: job.id, jobTitle: job.title });
 
   return (
     <div>
@@ -57,34 +77,44 @@ export default function VagaDetalhe({
               <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${st.cls}`}>{st.label}</span>
             </div>
             <p className="text-xs text-zinc-500">
-              {[companyName(companies, job.company_id), job.contract_type, job.openings > 1 ? `${job.openings} vagas` : null, job.salary].filter(Boolean).join(' · ')}
+              {[companyName(companies, job.company_id), job.contract_type, job.openings > 1 ? `${job.openings} vagas` : null, job.salary, `${apps.length} pessoa${apps.length === 1 ? '' : 's'}`].filter(Boolean).join(' · ')}
             </p>
             {job.schedule && <p className="text-xs text-zinc-500"><i className="ri-time-line" /> {job.schedule}</p>}
           </div>
-          {/* Editar vaga (lápis) saiu daqui — a aba "Dados da vaga" abaixo é o único caminho agora (Decisão 10). */}
           <div className="flex flex-wrap gap-2">
             <button onClick={() => onUploadToJob(job)} className="flex items-center gap-1.5 px-3 h-9 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold cursor-pointer">
               <i className="ri-upload-2-line" /> Enviar currículos
             </button>
             <button onClick={() => onAddFromBank(job)} className="flex items-center gap-1.5 px-3 h-9 rounded-lg border border-zinc-200 hover:bg-zinc-50 text-xs font-bold text-zinc-700 cursor-pointer">
-              <i className="ri-database-2-line" /> Do banco de currículos
+              <i className="ri-database-2-line" /> Do banco
             </button>
-            <button onClick={() => onDeleteJob(job)} title="Excluir vaga" className="w-9 h-9 rounded-lg border border-zinc-200 hover:bg-red-50 text-red-500 cursor-pointer"><i className="ri-delete-bin-line" /></button>
+            <button onClick={() => setConfig('dados')} className="flex items-center gap-1.5 px-3 h-9 rounded-lg border border-zinc-200 hover:bg-zinc-50 text-xs font-bold text-zinc-700 cursor-pointer">
+              <i className="ri-settings-3-line" /> Configurar vaga
+            </button>
           </div>
         </div>
       </div>
 
       <div className="flex gap-1 mb-4 border-b border-zinc-200 overflow-x-auto">
-        {SUBABAS_VAGA.map((t) => (
-          <button key={t.id} onClick={() => setSubaba(t.id)}
+        {VISOES.map((t) => (
+          <button key={t.id} onClick={() => setVisao(t.id)}
             className={`flex items-center gap-1.5 px-3 sm:px-4 h-10 text-[13px] sm:text-sm font-bold border-b-2 -mb-px cursor-pointer whitespace-nowrap flex-shrink-0 ${
-              subaba === t.id ? 'border-rose-600 text-rose-700' : 'border-transparent text-zinc-500 hover:text-zinc-800'}`}>
+              visao === t.id ? 'border-rose-600 text-rose-700' : 'border-transparent text-zinc-500 hover:text-zinc-800'}`}>
             <i className={t.icon} /> {t.label}
           </button>
         ))}
       </div>
 
-      {subaba === 'candidatos' ? (
+      {visao === 'funil' ? (
+        apps.length === 0 ? <VagaVazia /> : (
+          <Kanban items={naVaga} stages={stages} companies={companies} mostrarEmpresa={mostrarEmpresa}
+            proximaEntrevista={proximaEntrevista} onOpen={onOpenCandidate} onMove={onMove}
+            aderenciaDe={(c) => notaNaVaga.get(c.id) ?? null} faltasDe={faltasDe} agendamentoIADe={agendamentoIADe} />
+        )
+      ) : visao === 'conversas' ? (
+        <AgendamentosPainel candidates={candidates} jobs={jobs} companies={companies} stages={stages}
+          mostrarEmpresa={mostrarEmpresa} onOpenCandidate={onOpenCandidate} jobIdFixo={job.id} />
+      ) : (
         apps.length === 0 ? (
           <div className="py-14 text-center text-zinc-400 rounded-2xl border border-dashed border-zinc-200">
             <i className="ri-user-add-line text-4xl" />
@@ -168,17 +198,48 @@ export default function VagaDetalhe({
             })}
           </div>
         )
-      ) : subaba === 'divulgacao' ? (
-        <VagaDivulgacao job={job} companies={companies} jobs={jobs} onOpenCandidate={onOpenCandidate} />
-      ) : subaba === 'agendamento' ? (
-        <AgendamentoVaga jobId={job.id} defaultLocation={comp?.address ?? null} />
-      ) : (
-        <div className="max-w-2xl">
-          <AbaDadosVaga job={job} companies={companies} onSave={onSaveJob} />
-        </div>
+      )}
+
+      {config && (
+        <>
+          <div className="fixed inset-0 bg-black/40 z-[60]" onClick={() => setConfig(null)} />
+          <div className="fixed inset-x-0 bottom-0 sm:inset-auto sm:top-1/2 sm:left-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2 z-[70] w-full sm:max-w-2xl max-h-[94vh] bg-white sm:rounded-2xl rounded-t-2xl shadow-2xl flex flex-col">
+            <div className="flex items-center gap-3 px-5 py-4 border-b border-zinc-100">
+              <i className="ri-settings-3-line text-xl text-rose-600" />
+              <h2 className="flex-1 font-black text-zinc-900 truncate">Configurar vaga · {job.title}</h2>
+              <button onClick={() => setConfig(null)} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-zinc-100 text-zinc-500 cursor-pointer"><i className="ri-close-line text-lg" /></button>
+            </div>
+            <div className="flex gap-1 px-5 border-b border-zinc-200 overflow-x-auto">
+              {ABAS_CONFIG.map(([id, label, icon]) => (
+                <button key={id} onClick={() => setConfig(id)}
+                  className={`flex items-center gap-1.5 px-3 h-10 text-[13px] font-bold border-b-2 -mb-px cursor-pointer whitespace-nowrap flex-shrink-0 ${
+                    config === id ? 'border-rose-600 text-rose-700' : 'border-transparent text-zinc-500 hover:text-zinc-800'}`}>
+                  <i className={icon} /> {label}
+                </button>
+              ))}
+            </div>
+            <div className="flex-1 overflow-y-auto px-5 py-4">
+              {config === 'dados' ? (
+                <>
+                  <AbaDadosVaga job={job} companies={companies} onSave={onSaveJob} />
+                  <div className="mt-6 pt-4 border-t border-zinc-100">
+                    <button onClick={() => { setConfig(null); onDeleteJob(job); }} className="flex items-center gap-1.5 px-3 h-9 rounded-lg text-xs font-bold text-red-600 hover:bg-red-50 cursor-pointer">
+                      <i className="ri-delete-bin-line" /> Excluir esta vaga
+                    </button>
+                  </div>
+                </>
+              ) : config === 'divulgacao' ? (
+                <VagaDivulgacao job={job} companies={companies} jobs={jobs} onOpenCandidate={(id) => { setConfig(null); onOpenCandidate(id); }} />
+              ) : (
+                <AgendamentoVaga jobId={job.id} defaultLocation={comp?.address ?? null} />
+              )}
+            </div>
+          </div>
+        </>
       )}
 
       <p className="text-[11px] text-zinc-400 mt-3">
+        {visao === 'funil' && <>O funil mostra as fases de quem está inscrito nesta vaga; arraste (ou use as setas no celular) para mover. </>}
         A nota é uma ajuda para a triagem, calculada só com critérios profissionais (experiência, requisitos, horário, salário, deslocamento).
         Cada análise custa uns centavos. <span className="whitespace-nowrap">Situações: {JOB_STATUS.map((s) => s.label).join(', ')}.</span>
       </p>
@@ -223,6 +284,16 @@ function AbaDadosVaga({ job, companies, onSave }: { job: Job; companies: Company
         </button>
       </div>
     </>
+  );
+}
+
+function VagaVazia() {
+  return (
+    <div className="py-14 text-center text-zinc-400 rounded-2xl border border-dashed border-zinc-200">
+      <i className="ri-user-add-line text-4xl" />
+      <p className="text-sm font-semibold mt-2">Nenhum candidato nesta vaga ainda</p>
+      <p className="text-xs mt-1">Envie currículos novos ou escolha do banco; a IA compara cada um com a vaga.</p>
+    </div>
   );
 }
 

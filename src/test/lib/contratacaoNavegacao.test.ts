@@ -1,51 +1,42 @@
 import { describe, it, expect } from 'vitest';
-import { destinoDeAbaAntiga, AREAS, AREA_CONFIG } from '../../pages/contratacao/navegacao';
+import { destinoDeAbaAntiga, AREAS, AREA_CONFIG, AREA_NUMEROS } from '../../pages/contratacao/navegacao';
 
-describe('destinoDeAbaAntiga — mapa de compatibilidade das 9 abas antigas (RF-01)', () => {
-  it('entrevistas → Entrevistas › Dia', () => {
-    expect(destinoDeAbaAntiga('entrevistas')).toEqual({ area: 'entrevistas', subabaEntrevistas: 'dia' });
-  });
-  it('candidatos → Candidatos SEM forçar modo (o modo vem do localStorage contratacao_view)', () => {
-    // Regressão: se voltar a devolver modoCandidatos aqui, quem tem contratacao_view='tabela'
-    // gravado no aparelho passa a abrir sempre em Cards e perde a preferência em silêncio.
-    expect(destinoDeAbaAntiga('candidatos')).toEqual({ area: 'candidatos' });
-    expect(destinoDeAbaAntiga('candidatos').modoCandidatos).toBeUndefined();
-  });
-  it('vagas → Vagas', () => {
+describe('destinoDeAbaAntiga — valores de ?aba= atuais e antigos', () => {
+  it('as áreas de hoje voltam para elas mesmas', () => {
+    expect(destinoDeAbaAntiga('fila')).toEqual({ area: 'fila' });
     expect(destinoDeAbaAntiga('vagas')).toEqual({ area: 'vagas' });
-  });
-  it('kanban → Candidatos, modo kanban', () => {
-    expect(destinoDeAbaAntiga('kanban')).toEqual({ area: 'candidatos', modoCandidatos: 'kanban' });
-  });
-  it('agenda → Entrevistas › Calendário', () => {
-    expect(destinoDeAbaAntiga('agenda')).toEqual({ area: 'entrevistas', subabaEntrevistas: 'calendario' });
-  });
-  it('agendamentos → Entrevistas › Conversas da IA', () => {
-    expect(destinoDeAbaAntiga('agendamentos')).toEqual({ area: 'entrevistas', subabaEntrevistas: 'conversas' });
-  });
-  it('relatorios → Relatórios', () => {
-    expect(destinoDeAbaAntiga('relatorios')).toEqual({ area: 'relatorios' });
-  });
-  it('links → Configurações › WhatsApp', () => {
-    expect(destinoDeAbaAntiga('links')).toEqual({ area: 'config', secaoConfig: 'whatsapp' });
-  });
-  it('config → Configurações', () => {
+    expect(destinoDeAbaAntiga('pessoas')).toEqual({ area: 'pessoas' });
+    expect(destinoDeAbaAntiga('numeros')).toEqual({ area: 'numeros' });
     expect(destinoDeAbaAntiga('config')).toEqual({ area: 'config' });
   });
-  it('valor inválido cai em Hoje', () => {
-    expect(destinoDeAbaAntiga('nao-existe')).toEqual({ area: 'hoje' });
+  it('hoje, entrevistas e agenda (links do assistente) → Minha fila', () => {
+    expect(destinoDeAbaAntiga('hoje')).toEqual({ area: 'fila' });
+    expect(destinoDeAbaAntiga('entrevistas')).toEqual({ area: 'fila' });
+    expect(destinoDeAbaAntiga('agenda')).toEqual({ area: 'fila' });
   });
-  it('ausente (null) cai em Hoje', () => {
-    expect(destinoDeAbaAntiga(null)).toEqual({ area: 'hoje' });
+  it('candidatos → Pessoas; kanban → Vagas (o funil mora na vaga)', () => {
+    expect(destinoDeAbaAntiga('candidatos')).toEqual({ area: 'pessoas' });
+    expect(destinoDeAbaAntiga('kanban')).toEqual({ area: 'vagas' });
+  });
+  it('agendamentos → Vagas, nas conversas da IA', () => {
+    expect(destinoDeAbaAntiga('agendamentos')).toEqual({ area: 'vagas', visaoVaga: 'conversas' });
+  });
+  it('relatorios → Números; links → Configurações › WhatsApp', () => {
+    expect(destinoDeAbaAntiga('relatorios')).toEqual({ area: 'numeros' });
+    expect(destinoDeAbaAntiga('links')).toEqual({ area: 'config', secaoConfig: 'whatsapp' });
+  });
+  it('valor inválido ou ausente cai na Minha fila', () => {
+    expect(destinoDeAbaAntiga('nao-existe')).toEqual({ area: 'fila' });
+    expect(destinoDeAbaAntiga(null)).toEqual({ area: 'fila' });
   });
 });
 
-describe('AREAS / AREA_CONFIG — a barra de 5 áreas + engrenagem (RF-01)', () => {
-  it('AREAS tem exatamente 5 itens, sem a engrenagem', () => {
-    expect(AREAS).toHaveLength(5);
-    expect(AREAS.map((a) => a.id)).not.toContain('config');
+describe('AREAS — 3 áreas na barra; Números e Configurações à parte', () => {
+  it('AREAS tem exatamente Minha fila, Vagas e Pessoas', () => {
+    expect(AREAS.map((a) => a.id)).toEqual(['fila', 'vagas', 'pessoas']);
   });
-  it('a engrenagem é um item à parte, id "config"', () => {
+  it('Números e Configurações são itens à parte', () => {
+    expect(AREA_NUMEROS.id).toBe('numeros');
     expect(AREA_CONFIG.id).toBe('config');
   });
 });

@@ -1,11 +1,11 @@
-// Agendar uma entrevista e, depois, registrar como foi: questionário (perguntas das
-// Configurações), notas por critério, considerações adicionais e a tomada de decisão
-// (GPC/PC/R/NA, gravada também no candidato). Também move o candidato de fase.
+// Agendar uma entrevista, ou mudar data/hora/formato/local de uma já marcada (e cancelar/excluir).
+// O registro (questionário, notas, decisão) NÃO é aqui desde 2026-09-30: fica só no modo entrevista
+// (ModoEntrevista.tsx) — o botão "Abrir registro" leva para lá. Agendar tira o candidato de "Novo".
 import { useMemo, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import {
   type Candidate, type Company, type Decision, type Interview, type InterviewFormat, type InterviewStatus, type Settings, type Stage,
-  FORMATS, INTERVIEW_STATUS, DECISIONS, whatsLink, firstName, companyName, inviteText, stageOf, stageByKind, withEmpresa,
+  FORMATS, whatsLink, firstName, companyName, inviteText, stageOf, stageByKind,
 } from '../shared';
 import { confirmar, avisar } from '../dialog';
 
@@ -22,6 +22,8 @@ interface Props {
   onClose: () => void;
   onSaved: (iv: Interview, candidatePatch?: CandidatePatch) => void;
   onDeleted: (id: string) => void;
+  /** Entrevista já salva: abre o modo entrevista (registro). */
+  onAbrirRegistro?: (iv: Interview) => void;
 }
 
 const pad = (n: number) => String(n).padStart(2, '0');
@@ -30,7 +32,7 @@ function splitLocal(iso: string) {
   return { date: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`, time: `${pad(d.getHours())}:${pad(d.getMinutes())}` };
 }
 
-export default function EntrevistaModal({ interview, candidates, companies, stages, settings, presetCandidateId, presetDate, onClose, onSaved, onDeleted }: Props) {
+export default function EntrevistaModal({ interview, candidates, companies, stages, settings, presetCandidateId, presetDate, onClose, onSaved, onDeleted, onAbrirRegistro }: Props) {
   const init = interview ? splitLocal(interview.scheduled_at) : { date: presetDate ?? splitLocal(new Date().toISOString()).date, time: '14:00' };
   const [candidateId, setCandidateId] = useState(interview?.candidate_id ?? presetCandidateId ?? '');
   const [date, setDate] = useState(init.date);
@@ -40,20 +42,13 @@ export default function EntrevistaModal({ interview, candidates, companies, stag
   const [location, setLocation] = useState(interview?.location ?? (interview ? '' : settings.default_location));
   const [interviewer, setInterviewer] = useState(interview?.interviewer ?? (interview ? '' : settings.default_interviewer));
   const [status, setStatus] = useState<InterviewStatus>(interview?.status ?? 'agendada');
-  const [scores, setScores] = useState<Record<string, number>>(interview?.scores ?? {});
-  const [answers, setAnswers] = useState<Record<string, string>>(interview?.answers ?? {});
-  const [decision, setDecision] = useState<Decision | null>(interview?.recommendation ?? null);
-  const [notes, setNotes] = useState(interview?.notes ?? '');
   const [busca, setBusca] = useState('');
   const [saving, setSaving] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
-  const [novaFase, setNovaFase] = useState<string>('');
 
   const cand = candidates.find((c) => c.id === candidateId) ?? null;
   const empresa = cand?.company_id ? companyName(companies, cand.company_id) : '';
   const faseAtual = cand ? stageOf(stages, cand.stage_id) : null;
-  const isPast = new Date(`${date}T${time}`) <= new Date();
-  const [showRegistro, setShowRegistro] = useState(!!interview && (interview.status !== 'agendada' || new Date(interview.scheduled_at) <= new Date()));
 
   const descartadoId = stageByKind(stages, 'descartado')?.id;
   const opcoes = useMemo(() => {
@@ -74,16 +69,15 @@ export default function EntrevistaModal({ interview, candidates, companies, stag
     local: location.trim(),
   }));
 
-  const abrirRegistro = () => {
-    setShowRegistro(true);
-    if (status === 'agendada') setStatus('realizada');
-  };
+  // Mudou dia/hora de uma entrevista em que a pessoa faltou (ou foi cancelada): é uma remarcação,
+  // volta a "agendada" para aparecer de novo na Minha fila e na agenda.
+  const remarcou = () => { if (status === 'faltou' || status === 'cancelada') setStatus('agendada'); };
 
   const salvar = async () => {
     if (!candidateId) { setErro('Escolha o candidato.'); return; }
     if (!date || !time) { setErro('Informe data e hora.'); return; }
     setSaving(true); setErro(null);
-    const cleanAnswers = Object.fromEntries(Object.entries(answers).map(([k, v]) => [k, v.trim()]).filter(([, v]) => v));
+    // Só data/hora/formato/local/status: o registro é do modo entrevista e não é regravado daqui.
     const row = {
       candidate_id: candidateId,
       company_id: cand?.company_id ?? null,
@@ -93,10 +87,6 @@ export default function EntrevistaModal({ interview, candidates, companies, stag
       location: location.trim() || null,
       interviewer: interviewer.trim() || null,
       status,
-      scores,
-      answers: cleanAnswers,
-      recommendation: decision,
-      notes: notes.trim() || null,
       updated_at: new Date().toISOString(),
     };
     const q = interview
@@ -105,13 +95,12 @@ export default function EntrevistaModal({ interview, candidates, companies, stag
     const { data, error } = await q;
     if (error || !data) { setSaving(false); setErro(error?.message ?? 'Falha ao salvar'); return; }
 
-    // Candidato: fase escolhida (ou "Novo" → "Entrevista agendada" ao agendar) e a tomada de decisão.
+    // Candidato: ao agendar, sai de "Novo"/"Chamar p/ entrevista" para "Entrevista agendada".
     const patch: CandidatePatch | null = cand ? { id: cand.id } : null;
     if (cand && patch) {
-      let destino: string | null = novaFase || null;
-      if (!destino && !interview && (!faseAtual || faseAtual.native_kind === 'novo')) destino = stageByKind(stages, 'entrevista')?.id ?? null;
+      let destino: string | null = null;
+      if (!interview && (!faseAtual || faseAtual.native_kind === 'novo' || faseAtual.native_kind === 'agendar')) destino = stageByKind(stages, 'entrevista')?.id ?? null;
       if (destino && destino !== cand.stage_id) patch.stage_id = destino;
-      if (decision && decision !== cand.decision) patch.decision = decision;
       const upd: Record<string, unknown> = {};
       if (patch.stage_id) upd.stage_id = patch.stage_id;
       if (patch.decision) upd.decision = patch.decision;
@@ -153,16 +142,6 @@ export default function EntrevistaModal({ interview, candidates, companies, stag
     onDeleted(interview.id);
   };
 
-  // Perguntas/critérios atuais + respostas/notas antigas de itens que foram removidos (continuam visíveis).
-  const perguntas = [
-    ...settings.questions,
-    ...Object.keys(answers).filter((k) => answers[k]?.trim() && !settings.questions.some((q) => q.id === k)).map((k) => ({ id: k, label: `${k} (pergunta removida)` })),
-  ];
-  const criterios = [
-    ...settings.criteria,
-    ...Object.keys(scores).filter((k) => scores[k] > 0 && !settings.criteria.some((c) => c.id === k)).map((k) => ({ id: k, label: `${k} (removido)` })),
-  ];
-
   return (
     <>
       <div className="fixed inset-0 bg-black/40 z-[60]" onClick={onClose} />
@@ -191,8 +170,8 @@ export default function EntrevistaModal({ interview, candidates, companies, stag
           </div>
 
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-            <div className="col-span-2 sm:col-span-1"><Label>Data</Label><input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={inputCls} /></div>
-            <div><Label>Hora</Label><input type="time" value={time} onChange={(e) => setTime(e.target.value)} className={inputCls} /></div>
+            <div className="col-span-2 sm:col-span-1"><Label>Data</Label><input type="date" value={date} onChange={(e) => { setDate(e.target.value); remarcou(); }} className={inputCls} /></div>
+            <div><Label>Hora</Label><input type="time" value={time} onChange={(e) => { setTime(e.target.value); remarcou(); }} className={inputCls} /></div>
             <div><Label>Duração</Label>
               <select value={duration} onChange={(e) => setDuration(Number(e.target.value))} className={inputCls}>
                 {[15, 20, 30, 45, 60, 90].map((m) => <option key={m} value={m}>{m} min</option>)}
@@ -230,91 +209,28 @@ export default function EntrevistaModal({ interview, candidates, companies, stag
             </a>
           )}
 
-          {!showRegistro ? (
-            <button onClick={abrirRegistro} className="w-full h-10 rounded-lg border border-dashed border-violet-300 bg-violet-50/50 text-sm font-bold text-violet-700 cursor-pointer hover:bg-violet-50">
-              <i className="ri-edit-2-line" /> {isPast ? 'Preencher a entrevista' : 'Já preencher a entrevista'}
-            </button>
-          ) : (
-            <div className="rounded-2xl border border-zinc-200 p-4 space-y-4 bg-zinc-50/50">
-              <p className="text-xs font-black uppercase tracking-wider text-zinc-500">Registro da entrevista</p>
-              <div className="flex flex-wrap gap-1.5">
-                {INTERVIEW_STATUS.map((s) => (
-                  <button key={s.id} onClick={() => setStatus(s.id)}
-                    className={`px-3 h-8 rounded-full border text-xs font-bold cursor-pointer ${status === s.id ? s.cls + ' ring-2 ring-offset-1 ring-zinc-300' : 'bg-white text-zinc-500 border-zinc-200'}`}>
-                    {s.label}
-                  </button>
-                ))}
-              </div>
-
-              {status === 'realizada' && (
-                <>
-                  {perguntas.length > 0 && (
-                    <div className="space-y-3">
-                      {perguntas.map((q, i) => (
-                        <div key={q.id}>
-                          <p className="text-sm font-semibold text-zinc-800 mb-1">{i + 1}. {withEmpresa(q.label, empresa)}</p>
-                          <textarea value={answers[q.id] ?? ''} rows={2}
-                            onChange={(e) => setAnswers((a) => ({ ...a, [q.id]: e.target.value }))}
-                            className={`${inputCls} h-auto py-2`} />
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {criterios.length > 0 && (
-                    <div className="space-y-1.5">
-                      <Label>Avaliação (1 a 5)</Label>
-                      {criterios.map((cr) => (
-                        <div key={cr.id} className="flex items-center gap-2">
-                          <span className="flex-1 text-sm text-zinc-700">{cr.label}</span>
-                          {[1, 2, 3, 4, 5].map((n) => (
-                            <button key={n} onClick={() => setScores((s) => ({ ...s, [cr.id]: s[cr.id] === n ? 0 : n }))}
-                              className={`w-7 h-7 rounded-md text-xs font-bold border cursor-pointer ${
-                                (scores[cr.id] ?? 0) >= n ? 'bg-amber-400 border-amber-400 text-white' : 'bg-white border-zinc-200 text-zinc-400'}`}>
-                              {n}
-                            </button>
-                          ))}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </>
+          {interview && (
+            <div className="flex flex-wrap items-center gap-2">
+              {onAbrirRegistro && (
+                <button onClick={() => onAbrirRegistro(interview)}
+                  className="flex-1 h-10 rounded-lg border border-dashed border-violet-300 bg-violet-50/50 text-sm font-bold text-violet-700 cursor-pointer hover:bg-violet-50">
+                  <i className="ri-edit-2-line" /> {interview.status === 'agendada' ? 'Abrir o modo entrevista' : 'Abrir o registro'}
+                </button>
               )}
-
-              <div>
-                <Label>{status === 'realizada' ? 'Considerações adicionais' : 'Observações'}</Label>
-                <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={4}
-                  placeholder={status === 'realizada' ? 'Impressão geral, postura, referências, o que mais chamou atenção…' : 'Ex.: avisou que não viria, remarcar…'}
-                  className={`${inputCls} h-auto py-2`} />
-              </div>
-
-              {status === 'realizada' && (
-                <div>
-                  <Label>Tomada de decisão</Label>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-                    {DECISIONS.map((d) => (
-                      <button key={d.id} onClick={() => setDecision(decision === d.id ? null : d.id)}
-                        className={`flex items-center gap-2 px-3 h-10 rounded-lg border text-left text-xs font-semibold cursor-pointer ${
-                          decision === d.id ? d.cls : 'bg-white text-zinc-700 border-zinc-200 hover:border-zinc-300'}`}>
-                        <span className="font-black text-sm w-9">{d.sigla}</span>
-                        <span className="leading-tight">{withEmpresa(d.label, empresa)}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {cand && (
-                <div>
-                  <Label>Mover o candidato para a fase</Label>
-                  <select value={novaFase} onChange={(e) => setNovaFase(e.target.value)} className={inputCls}>
-                    <option value="">Manter em "{faseAtual?.name ?? '—'}"</option>
-                    {stages.filter((s) => s.id !== faseAtual?.id).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                  </select>
-                </div>
+              {status === 'realizada' || status === 'faltou' ? null : status !== 'cancelada' ? (
+                <button onClick={() => setStatus('cancelada')} className="px-3 h-10 rounded-lg border border-zinc-200 text-xs font-bold text-zinc-600 hover:bg-zinc-50 cursor-pointer">
+                  Marcar como cancelada
+                </button>
+              ) : (
+                <button onClick={() => setStatus(interview.status === 'cancelada' ? 'agendada' : interview.status)} className="px-3 h-10 rounded-lg border border-zinc-200 text-xs font-bold text-zinc-600 hover:bg-zinc-50 cursor-pointer">
+                  Desfazer cancelamento
+                </button>
               )}
             </div>
           )}
+          {status === 'cancelada' && <p className="text-xs text-zinc-500">Vai ficar como <b>cancelada</b> ao salvar.</p>}
+          {interview && interview.status !== 'agendada' && status === 'agendada' && <p className="text-xs text-violet-700">Remarcada: volta a <b>agendada</b> ao salvar.</p>}
+          {interview && status === 'faltou' && <p className="text-xs text-zinc-500">A pessoa faltou. Mude a data ou a hora para remarcar.</p>}
           {erro && <p className="text-xs text-red-600">{erro}</p>}
         </div>
 

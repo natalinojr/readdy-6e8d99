@@ -1,22 +1,20 @@
-// Aba Resumo da ficha do candidato: fase/estrelas/empresa, dados mínimos, decisão, banner IA,
-// vagas com nota, agendamento pela IA, resumo, pontos fortes/atenção, anotações.
-// Blocos movidos verbatim de CandidatoDrawer.tsx (pré-Fase 2) — ver mapa bloco→aba em spec.md §2 RF-04.
+// Aba "Visão geral" da ficha do candidato: empresa, dados mínimos, banner IA, vagas com nota,
+// resumo, pontos fortes/atenção, anotações. Decisão e agendamento pela IA saíram daqui em 2026-09-30:
+// a decisão fica no cabeçalho da ficha e o agendamento no quadro "Próximo passo". Estrelas saíram.
 import { useEffect, useState } from 'react';
-import { supabase } from '@/lib/supabase';
 import {
-  type Application, type Candidate, type Company, type Job, type Stage, DECISIONS, type Decision, FIT, fitOf,
-  decisionOf, withEmpresa, type FichaCfg, fieldsOf, faltasFicha, onlyDigits,
-  type JobScheduling, faltasAgendamento, stageByKind, companyName,
+  type Application, type Candidate, type Company, type Job, type Stage, FIT, fitOf,
+  type FichaCfg, fieldsOf, faltasFicha, onlyDigits, companyName,
 } from '../../shared';
 
 interface Props {
   c: Candidate; companies: Company[]; stages: Stage[]; ficha: FichaCfg; jobs: Job[]; applications: Application[];
-  analyzing: Set<string>; empresa: string;
+  analyzing: Set<string>;
   onApply: (jobId: string) => void; onOpenJob: (jobId: string) => void;
   onUpdate: (patch: Partial<Candidate>) => void; onOrganizar: () => Promise<void>;
 }
 
-export default function FichaResumo({ c, companies, stages, ficha, jobs, applications, analyzing, empresa, onApply, onOpenJob, onUpdate, onOrganizar }: Props) {
+export default function FichaResumo({ c, companies, stages, ficha, jobs, applications, analyzing, onApply, onOpenJob, onUpdate, onOrganizar }: Props) {
   const [notes, setNotes] = useState(c.notes ?? '');
   const [iaBusy, setIaBusy] = useState(false);
   const [iaErro, setIaErro] = useState<string | null>(null);
@@ -30,23 +28,16 @@ export default function FichaResumo({ c, companies, stages, ficha, jobs, applica
     try { await onOrganizar(); } catch (e) { setIaErro((e as Error).message); } finally { setIaBusy(false); }
   };
 
-  const dec = decisionOf(c.decision);
   const faltam = faltasFicha(c, ficha);
   const vagasAbertas = jobs.filter((j) => j.status !== 'fechada' && !applications.some((a) => a.job_id === j.id));
 
   return (
     <>
-      {/* Fase, nota e empresa */}
+      {/* Empresa */}
       <div className="flex flex-wrap items-center gap-2">
-        <div className="flex items-center">
-          {[1, 2, 3, 4, 5].map((n) => (
-            <button key={n} onClick={() => onUpdate({ rating: c.rating === n ? null : n })}
-              className={`text-xl px-0.5 cursor-pointer ${c.rating && n <= c.rating ? 'text-amber-500' : 'text-zinc-300 hover:text-amber-300'}`}
-              title={`${n} estrela${n > 1 ? 's' : ''}`}>★</button>
-          ))}
-        </div>
+        <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-400">Empresa</span>
         <select value={c.company_id ?? ''} onChange={(e) => onUpdate({ company_id: e.target.value || null })}
-          className="w-full sm:w-auto sm:ml-auto sm:max-w-[190px] h-9 px-3 rounded-lg border border-zinc-200 text-sm cursor-pointer" title="Empresa da vaga">
+          className="flex-1 sm:flex-none sm:max-w-[240px] h-9 px-3 rounded-lg border border-zinc-200 text-sm cursor-pointer" title="Empresa da vaga (a distância é calculada até ela)">
           <option value="">Sem empresa</option>
           {companies.filter((x) => x.is_active || x.id === c.company_id).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
         </select>
@@ -70,21 +61,6 @@ export default function FichaResumo({ c, companies, stages, ficha, jobs, applica
           <i className="ri-checkbox-circle-line" /> Dados mínimos completos · editar
         </button>
       )}
-
-      {/* Tomada de decisão */}
-      <div>
-        <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-400 mb-1.5">Tomada de decisão</p>
-        <div className="grid grid-cols-4 gap-1.5">
-          {DECISIONS.map((d) => (
-            <button key={d.id} title={withEmpresa(d.label, empresa)}
-              onClick={() => onUpdate({ decision: c.decision === d.id ? null : (d.id as Decision) })}
-              className={`h-9 rounded-lg border text-xs font-black cursor-pointer ${c.decision === d.id ? d.cls : 'bg-white text-zinc-500 border-zinc-200 hover:border-zinc-300'}`}>
-              {d.sigla}
-            </button>
-          ))}
-        </div>
-        {dec && <p className="text-[11px] text-zinc-500 mt-1">{withEmpresa(dec.label, empresa)}</p>}
-      </div>
 
       {!c.ai_processed && (
         <div className="rounded-xl border border-sky-200 bg-sky-50 p-3">
@@ -135,9 +111,6 @@ export default function FichaResumo({ c, companies, stages, ficha, jobs, applica
         ) : applications.length === 0 && <p className="text-xs text-zinc-400">Nenhuma vaga aberta. Abra na aba Vagas.</p>}
       </Section>
 
-      {/* Agendamento pela IA (só com vaga que tem o agendamento ligado e completo) */}
-      <AgendamentoIA c={c} stages={stages} applications={applications} jobs={jobs}
-        onSend={(stageId) => onUpdate({ stage_id: stageId })} />
 
       {c.summary && <Section title="Resumo"><p className="text-sm text-zinc-700 leading-relaxed">{c.summary}</p></Section>}
 
@@ -167,66 +140,6 @@ export default function FichaResumo({ c, companies, stages, ficha, jobs, applica
     </>
   );
 }
-
-// Atalho para o agendamento pela IA: move o candidato para a fase "Chamar p/ entrevista" (native_kind
-// 'agendar'); o hiring-scheduler convida no próximo ciclo (8h–20h, até 4 por hora). Com convite já
-// enviado, mostra em que pé está a conversa.
-// SESS_LABEL: mesmo mapa de CandidatoDrawer.tsx:584-589 (pré-Fase 2), movido para cá em T05.
-const SESS_LABEL: Record<string, string> = {
-  convidado: 'Convite enviado — aguardando resposta',
-  negociando: 'Conversando sobre o horário',
-  aguardando_gestor: 'Esperando o entrevistador aceitar um horário pedido',
-  agendado: 'Entrevista marcada pela IA',
-};
-function AgendamentoIA({ c, stages, applications, jobs, onSend }: {
-  c: Candidate; stages: Stage[]; applications: Application[]; jobs: Job[]; onSend: (stageId: string) => void;
-}) {
-  const [cfgs, setCfgs] = useState<JobScheduling[] | null>(null);
-  const [sess, setSess] = useState<{ status: string; job_id: string }[]>([]);
-  const jobIds = applications.map((a) => a.job_id);
-  const chave = jobIds.join(',');
-  useEffect(() => {
-    let vivo = true;
-    (async () => {
-      if (!jobIds.length) { if (vivo) setCfgs([]); return; }
-      const [{ data: s }, { data: ss }] = await Promise.all([
-        supabase.from('hiring_job_scheduling').select('*').in('job_id', jobIds),
-        supabase.from('hiring_scheduling_sessions').select('status, job_id').eq('candidate_id', c.id).order('updated_at', { ascending: false }),
-      ]);
-      if (!vivo) return;
-      setCfgs((s ?? []) as JobScheduling[]);
-      setSess((ss ?? []) as { status: string; job_id: string }[]);
-    })();
-    return () => { vivo = false; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [c.id, c.stage_id, chave]);
-
-  const prontas = (cfgs ?? []).filter((x) => x.enabled && faltasAgendamento(x).length === 0);
-  const agendar = stageByKind(stages, 'agendar');
-  if (!cfgs || !prontas.length || !agendar) return null;
-  const ativa = sess.find((s) => SESS_LABEL[s.status]);
-  const naFila = !ativa && c.stage_id === agendar.id;
-  const vagas = prontas.map((p) => jobs.find((j) => j.id === p.job_id)?.title).filter(Boolean).join(', ');
-
-  return (
-    <Section title="Agendamento pela IA">
-      {ativa ? (
-        <p className="flex items-center gap-2 text-sm text-violet-800"><i className="ri-robot-2-line" /> {SESS_LABEL[ativa.status]}</p>
-      ) : naFila ? (
-        <p className="text-xs text-zinc-500"><i className="ri-time-line" /> Na fila: o convite sai no próximo ciclo do assistente (das 8h às 20h, até 4 por hora).</p>
-      ) : (
-        <>
-          <button onClick={() => onSend(agendar.id)}
-            className="flex items-center gap-1.5 px-3 h-8 rounded-lg border border-violet-300 bg-violet-50 hover:bg-violet-100 text-violet-800 text-xs font-bold cursor-pointer">
-            <i className="ri-robot-2-line" /> Enviar para o agendamento da IA
-          </button>
-          <p className="text-[11px] text-zinc-400 mt-1">O assistente chama {firstNameOf(c.full_name)} no WhatsApp com os horários livres{vagas ? ` da vaga ${vagas}` : ''} e marca a entrevista sozinho.</p>
-        </>
-      )}
-    </Section>
-  );
-}
-const firstNameOf = (s: string) => s.trim().split(/\s+/)[0] ?? s;
 
 // Campos dos dados mínimos. Escolaridade e experiências viram um item de texto livre (não apaga
 // os itens lidos do currículo: quando já existem, só mostra quantos são).
