@@ -352,6 +352,8 @@ interface CreateOpts {
   items?: CompraItem[] | null;
   /** compra com itens: "já recebi" → confirma o recebimento na hora (insumos entram no estoque) */
   received?: boolean;
+  /** 2026-09-30: lança sem nota mesmo existindo nota do mesmo CNPJ/valor (quem tem certeza que é outro pagamento) */
+  semNotaMesmoAssim?: boolean;
   /** compra lida da nota (2026-09-29, QR/foto no Lançar): nº da nota e chave da NFC-e */
   invoiceNumber?: string | null;
   accessKey?: string | null;
@@ -409,6 +411,40 @@ async function createOne(ctx: Ctx, rowId: string, o: CreateOpts): Promise<Result
   return withRowClaim(ctx, rowId, () => createOneClaimed(ctx, rowId, o, row));
 }
 
+// Nota fiscal deste pagamento que ainda não foi paga por outra saída do extrato (ver createOneClaimed)
+async function notaDoPagamento(ctx: Ctx, row: Row, raiz: string, valor: number): Promise<Row | null> {
+  const { admin, tenantId } = ctx;
+  const dt = new Date(String(row.transaction_date).slice(0, 10) + 'T12:00:00Z').getTime();
+  const de = new Date(dt - 90 * 86400_000).toISOString().slice(0, 10);
+  const ate = new Date(dt + 16 * 86400_000).toISOString().slice(0, 10);
+  const { data: notas } = await admin.from('fiscal_inbound_documents')
+    .select('id, numero, emitente_nome, valor_total, emitted_at, status, purchase_id, payable_ids, sefaz_status')
+    .eq('tenant_id', tenantId).like('emitente_cnpj', raiz + '%').in('status', ['new', 'imported'])
+    .gte('valor_total', valor - 0.05).lte('valor_total', valor + 0.05)
+    .gte('emitted_at', de).lt('emitted_at', ate);
+  for (const n of (notas ?? []) as Row[]) {
+    if (Number(n.sefaz_status) === 2) continue;
+    if (n.status === 'new') return n;
+    // Lançada: só conta se nenhuma saída do extrato já paga a conta/compra dela
+    const bills = ((n.payable_ids ?? []) as string[]).filter(Boolean);
+    const ligadas: Row[] = [];
+    if (bills.length) {
+      const [a, b] = await Promise.all([
+        admin.from('fin_bank_statement_imports').select('id').eq('tenant_id', tenantId).in('match_ref_id', bills).limit(1),
+        admin.from('fin_bank_statement_imports').select('id').eq('tenant_id', tenantId).in('match_detail->confirmed->>bill_id', bills).limit(1),
+      ]);
+      ligadas.push(...((a.data ?? []) as Row[]), ...((b.data ?? []) as Row[]));
+    }
+    if (n.purchase_id) {
+      const { data: c } = await admin.from('fin_bank_statement_imports').select('id').eq('tenant_id', tenantId)
+        .eq('match_detail->confirmed->>purchase_id', String(n.purchase_id)).limit(1);
+      ligadas.push(...((c ?? []) as Row[]));
+    }
+    if (!ligadas.some((l) => l.id !== row.id)) return n;
+  }
+  return null;
+}
+
 async function createOneClaimed(ctx: Ctx, rowId: string, o: CreateOpts, row: Row): Promise<Result> {
   const { admin, tenantId } = ctx;
   const fail = (msg: string, code?: string): Result => ({ id: rowId, ok: false, msg, ...(code ? { code } : {}) });
@@ -443,6 +479,21 @@ async function createOneClaimed(ctx: Ctx, rowId: string, o: CreateOpts, row: Row
     }).eq('id', row.id).eq('tenant_id', tenantId);
     if (foraErr) return fail('Marcar o pagamento: ' + foraErr.message);
     return { id: row.id, ok: true, msg: 'R$ ' + brl(valor) + ' marcado como "' + rotulo + '": fora do DRE.' };
+  }
+
+  // Já existe NOTA deste pagamento (2026-09-30): lançar "sem nota" duplicava o dinheiro quando a nota
+  // era (ou viria a ser) lançada também (Mercado Pago R$188,91: despesa sem nota + compra da NF 2785015).
+  // Mesmo CNPJ (raiz), valor ±R$0,05, emitida de 90 dias antes a 15 depois, não cancelada e ainda sem
+  // outra saída do extrato ligada. Quem tiver certeza pode forçar (o.semNotaMesmoAssim).
+  if ((o.kind === 'despesa' || o.kind === 'compra') && o.semNotaMesmoAssim !== true && !o.accessKey && doc.length >= 8) {
+    const nota = await notaDoPagamento(ctx, row, doc.slice(0, 8), valor);
+    if (nota) {
+      const dia = String(nota.emitted_at ?? '').slice(0, 10).split('-').reverse().join('/');
+      return fail(`Existe a NF ${nota.numero ?? ''} de ${nota.emitente_nome ?? 'este fornecedor'} de R$ ${brl(Number(nota.valor_total))} (emitida ${dia})`
+        + (nota.status === 'new'
+          ? ': lance a nota em Notas de entrada (ela liga a este pagamento) em vez de lançar sem nota.'
+          : ': ela já foi lançada — vincule este pagamento à conta dela em vez de lançar sem nota.'), 'tem_nota');
+    }
   }
 
   // Prestador MEI: confere o cadastro antes de criar qualquer coisa
@@ -1446,6 +1497,7 @@ Deno.serve(async (req: Request) => {
         received: body.received === true,
         invoiceNumber: kind === 'compra' && body.invoice_number ? String(body.invoice_number).trim().slice(0, 30) : null,
         accessKey: kind === 'compra' && /^\d{44}$/.test(String(body.access_key ?? '')) ? String(body.access_key) : null,
+        semNotaMesmoAssim: body.sem_nota_mesmo_assim === true,
       };
       if (opts.items && ids.length > 1) return errResp('Compra com itens se lança um pagamento por vez');
       const results: Result[] = [];
