@@ -510,6 +510,51 @@ async function compraJaLancada(admin: Admin, tenantId: string, doc: any, supplie
   return [...vistos.values()].sort((a, b) => Math.abs(Number(a.total_amount) - total) - Math.abs(Number(b.total_amount) - total))[0] ?? null;
 }
 
+// Lançamento SEM NOTA do mesmo pagamento, feito antes pelo extrato (2026-09-30): a Conciliação
+// lançou o Pix como "despesa sem nota" (ou "compra sem nota") e depois a nota chegou — criar outra
+// conta duplicava o dinheiro (Mercado Pago R$199,90: despesa paga + conta nova "vencida").
+// Procura a saída do extrato do mesmo CNPJ (raiz, 8 dígitos — o Pix sai por outra filial), mesmo
+// valor (±R$0,05) e até 15 dias da emissão, ligada a conta sem nota ou compra sem número de NF que
+// ainda não tem nota. Devolve o primeiro que achar.
+// deno-lint-ignore no-explicit-any
+async function lancamentoSemNota(admin: Admin, tenantId: string, doc: any): Promise<{ bill?: any; purchase?: any; data: string } | null> {
+  const raiz = String(doc.emitente_cnpj ?? '').replace(/\D/g, '').slice(0, 8);
+  const valor = round2(Number(doc.valor_total ?? 0));
+  if (raiz.length < 8 || !(valor > 0)) return null;
+  const emissao = new Date(String(doc.emitted_at ?? new Date().toISOString()).slice(0, 10) + 'T12:00:00Z');
+  const de = new Date(emissao.getTime() - 15 * 86400_000).toISOString().slice(0, 10);
+  const ate = new Date(emissao.getTime() + 15 * 86400_000).toISOString().slice(0, 10);
+  const { data: saidas } = await admin.from('fin_bank_statement_imports')
+    .select('id, transaction_date, amount, match_kind, match_ref_id, match_detail')
+    .eq('tenant_id', tenantId).eq('transaction_type', 'debit').like('counterpart_doc', `${raiz}%`)
+    .gte('amount', valor - 0.05).lte('amount', valor + 0.05)
+    .gte('transaction_date', de).lte('transaction_date', ate);
+  // deno-lint-ignore no-explicit-any
+  for (const e of (saidas ?? []) as any[]) {
+    const conf = e.match_detail?.confirmed ?? {};
+    const billId = conf.bill_id ?? (e.match_kind === 'payable' ? e.match_ref_id : null);
+    if (billId) {
+      const { data: b } = await admin.from('fin_accounts_payable').select('id, description, notes, reference_type')
+        .eq('tenant_id', tenantId).eq('id', billId).maybeSingle();
+      if (b && ['conciliacao_extrato', 'pedido_pagamento'].includes(String(b.reference_type))) {
+        const { data: outra } = await admin.from('fiscal_inbound_documents').select('id')
+          .eq('tenant_id', tenantId).neq('id', doc.id).contains('payable_ids', [b.id]).limit(1);
+        if (!outra?.length) return { bill: b, data: e.transaction_date };
+      }
+    }
+    if (conf.purchase_id) {
+      const { data: p } = await admin.from('fin_purchases').select('id, invoice_number, notes, supplier_id')
+        .eq('tenant_id', tenantId).eq('id', conf.purchase_id).maybeSingle();
+      if (p && !numeroNfChave(p.invoice_number)) {
+        const { data: outra } = await admin.from('fiscal_inbound_documents').select('id')
+          .eq('tenant_id', tenantId).neq('id', doc.id).eq('purchase_id', p.id).limit(1);
+        if (!outra?.length) return { purchase: p, data: e.transaction_date };
+      }
+    }
+  }
+  return null;
+}
+
 // Compra que já existia antes da nota ser importada (ligada por compraJaLancada): desfazer a
 // importação só solta a nota; a compra é de quem a lançou e não pode ser apagada junto.
 // deno-lint-ignore no-explicit-any
@@ -616,6 +661,47 @@ async function importDocumentLocked(ctx: ImportCtx, doc: any, action: 'import_pu
       const diff = round2(Number(existente.total_amount ?? 0) - Number(doc.valor_total ?? 0));
       log('INFO', 'import_purchase', 'nota ligada à compra já lançada', { tenantId, doc: doc.id, purchase: existente.id, diff });
       return { ok: true, data: { purchase_id: existente.id, parcelas: (bills ?? []).length, supplier: supplier.name, ligada_a_compra_existente: true, diferenca_valor: diff } };
+    }
+  }
+
+  // O mesmo pagamento já foi lançado sem nota pelo extrato: a nota passa a ser dele (não cria outro)
+  if (!bonus && body.criar_mesmo_assim !== true) {
+    const ex = await lancamentoSemNota(admin, tenantId, doc);
+    const dia = ex ? String(ex.data).slice(0, 10).split('-').reverse().join('/') : '';
+    if (ex?.bill && action === 'import_bill') {
+      const b = ex.bill;
+      const desc = String(b.description ?? supplier.name);
+      await admin.from('fin_accounts_payable').update({
+        description: !numeroNf || desc.includes(`NF ${numeroNf}`) ? desc : `${desc} NF ${numeroNf}`,
+        notes: [b.notes, `NF-e de entrada anexada — chave ${doc.chave}`].filter(Boolean).join(' · '),
+        updated_at: now,
+      }).eq('id', b.id).eq('tenant_id', tenantId);
+      await admin.from('fiscal_inbound_documents').update({
+        status: 'imported', import_type: 'bill', supplier_id: supplier.id, payable_ids: [b.id],
+        imported_at: now, imported_by: userId, error_message: null, updated_at: now,
+      }).eq('id', doc.id);
+      log('INFO', 'import_bill', 'nota anexada à despesa sem nota do extrato', { tenantId, doc: doc.id, bill: b.id });
+      return { ok: true, data: { parcelas: 1, supplier: supplier.name, ligada_a_lancamento_existente: true, bill_id: b.id } };
+    }
+    if (ex?.purchase && action === 'import_purchase') {
+      const p = ex.purchase;
+      const { data: bills } = await admin.from('fin_accounts_payable').select('id')
+        .eq('tenant_id', tenantId).eq('reference_id', p.id).eq('reference_type', 'purchase');
+      await admin.from('fin_purchases').update({
+        invoice_number: numeroNf, supplier_id: p.supplier_id ?? supplier.id,
+        notes: [p.notes, `NF-e de entrada — chave ${doc.chave}`].filter(Boolean).join(' · '),
+      }).eq('id', p.id).eq('tenant_id', tenantId);
+      await admin.from('fiscal_inbound_documents').update({
+        status: 'imported', import_type: 'purchase', purchase_id: p.id, supplier_id: supplier.id,
+        // deno-lint-ignore no-explicit-any
+        payable_ids: (bills ?? []).map((x: any) => x.id), imported_at: now, imported_by: userId, error_message: null, updated_at: now,
+      }).eq('id', doc.id);
+      log('INFO', 'import_purchase', 'nota anexada à compra sem nota do extrato', { tenantId, doc: doc.id, purchase: p.id });
+      return { ok: true, data: { purchase_id: p.id, parcelas: (bills ?? []).length, supplier: supplier.name, ligada_a_compra_existente: true } };
+    }
+    if (ex) {
+      return fail(`Este pagamento já foi lançado sem nota pela Conciliação (saída de ${dia}) como ${ex.bill ? 'despesa' : 'compra'}. `
+        + `Para não contar o dinheiro 2×, desfaça aquele lançamento na Conciliação e lance a nota de novo como ${action === 'import_purchase' ? 'compra' : 'despesa'}.`, 409);
     }
   }
 
@@ -768,7 +854,11 @@ async function importDocumentLocked(ctx: ImportCtx, doc: any, action: 'import_pu
 // Mesmas regras de CFOP/pagamento da tela (NotasEntradaTab).
 const CFOP_NAO_VENDA = /^[56](9(0[1-9]|1[0-9]|2[0-4]|49)|55[0-9])$/;
 const TPAG: Record<string, string> = { '01': 'Dinheiro', '02': 'Cheque', '03': 'Cartão de crédito', '04': 'Cartão de débito', '05': 'Crédito loja', '15': 'Boleto', '16': 'Depósito', '17': 'PIX', '18': 'Transferência', '90': 'Sem pagamento', '99': 'Outros' };
-const PAGO_NA_HORA = new Set(['01', '03', '04', '17', '16', '18']);
+// Só DINHEIRO entra pago na hora (2026-09-30). Pix/TED/depósito/cartão passam pelo banco: entram
+// pendentes (vencendo na emissão) e a Conciliação dá a baixa pela saída do extrato — "pago" aqui
+// criava uma saída de caixa sem extrato e o Pix, lançado de novo na Conciliação, contava 2×.
+const PAGO_NA_HORA = new Set(['01']);
+const PELO_BANCO: Record<string, string> = { '17': 'PIX', '16': 'PIX', '18': 'PIX', '03': 'Cartão de crédito', '04': 'PIX' };
 const DESCONTA_NO_REPASSE = /IFOOD|RAPPI|99\s?FOOD|AIQFOME|UBER\s?EATS|KEETA/i;
 // A própria nota diz que o valor saiu do repasse (2026-09-29): Ticket/VR/Alelo ("REEMBOLSO
 // LÍQUIDO"), Goomer/Tuna ("processamento de pagamento online"). Pelo texto, não pelo nome — a
@@ -885,8 +975,10 @@ async function autoLaunchTenant(admin: Admin, supabaseUrl: string, tenantId: str
       r = await importDocument(ctx, doc, 'import_purchase', { bonus: true, notes: 'Lançada automaticamente' });
     } else if (h.import_type === 'purchase') {
       const pago = pagoNaHora(doc);
+      // deno-lint-ignore no-explicit-any
+      const fp = ((doc.pagamento ?? []) as any[]).slice().sort((a, b) => Number(b.valor) - Number(a.valor))[0]?.forma;
       r = await importDocument(ctx, doc, 'import_purchase', {
-        pago, payment_method: pago ? formaPrincipal(doc) : undefined,
+        pago, payment_method: pago ? formaPrincipal(doc) : (doc.parcelas ?? []).length === 0 ? PELO_BANCO[String(fp)] : undefined,
         cost_center_id: purById.get(String(h.purchase_id))?.cost_center_id ?? null,
         notes: AUTO_NOTE,
       });
