@@ -3,6 +3,7 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatCurrency } from '@/lib/formatters';
 import type { BillPayable } from '@/types/financeiro';
+import { rotuloMes } from '@/lib/competenciaConta';
 
 const STATUS_BADGE: Record<string, string> = {
   paid: 'bg-green-100 text-green-700',
@@ -175,6 +176,9 @@ export default function ContasPagarDetalheModal({ bill, onClose, onPay, onNaviga
                 <p className={`text-xs mt-0.5 font-semibold ${daysUntil < 0 ? 'text-red-600' : daysUntil === 0 ? 'text-amber-600' : 'text-zinc-400'}`}>
                   {daysUntil < 0 ? `${Math.abs(daysUntil)}d em atraso` : daysUntil === 0 ? 'Vence hoje' : `Faltam ${daysUntil}d`}
                 </p>
+              )}
+              {bill.competence_month && bill.competence_month.slice(0, 7) !== bill.due_date?.slice(0, 7) && (
+                <p className="text-xs mt-0.5 text-zinc-500">Competência {rotuloMes(bill.competence_month.slice(0, 7))}</p>
               )}
             </div>
             <div className="bg-zinc-50 rounded-xl p-3">

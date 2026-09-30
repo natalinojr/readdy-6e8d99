@@ -77,6 +77,8 @@ export interface BillPayable {
   bank_account_id?: string | null;
   amount: number;
   due_date: string;
+  /** 1º dia do mês a que o gasto pertence; vazio = mês do vencimento (DRE por competência) */
+  competence_month?: string | null;
   paid_date?: string;
   paid_amount?: number;
   payment_method?: string;

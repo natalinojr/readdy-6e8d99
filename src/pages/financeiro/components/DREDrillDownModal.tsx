@@ -3,6 +3,7 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatCurrency } from '@/lib/formatters';
 import { fetchComprasPeriodo, fetchComprasLinhas } from '@/lib/comprasDRE';
+import { orCompetenciaConta, rotuloMes } from '@/lib/competenciaConta';
 
 interface Props {
   type: string;
@@ -320,7 +321,7 @@ export default function DREDrillDownModal({ type, categoryId, categoryName, mont
       // Buscar contas a pagar vinculadas a essa categoria DRE
       const query = supabase
         .from('fin_accounts_payable')
-        .select('id,due_date,description,supplier,amount,paid_amount,paid_date,status,payment_method')
+        .select('id,due_date,competence_month,description,supplier,amount,paid_amount,paid_date,status,payment_method')
         .eq('tenant_id', user.tenantId)
         .eq('dre_category_id', categoryId);
 
@@ -349,11 +350,10 @@ export default function DREDrillDownModal({ type, categoryId, categoryName, mont
           },
         }));
       } else {
-        // Competência: todas as contas com vencimento no período
+        // Competência: contas da competência do período (sem competência gravada, pelo vencimento)
         const { data } = await query
           .in('status', ['pending', 'paid', 'overdue', 'partial'])
-          .gte('due_date', start.slice(0, 10))
-          .lte('due_date', end.slice(0, 10))
+          .or(orCompetenciaConta(start, end))
           .order('due_date', { ascending: false });
         result = (data ?? []).map((b: Record<string, unknown>) => ({
           id: b.id as string,
@@ -363,6 +363,7 @@ export default function DREDrillDownModal({ type, categoryId, categoryName, mont
           source: 'Contas a Pagar',
           ...grupoConta(b),
           extra: {
+            ...(b.competence_month ? { 'Competência': rotuloMes(String(b.competence_month).slice(0, 7)) } : {}),
             'Pago em': b.paid_date ? String(b.paid_date) : '—',
             'Forma Pag.': String(b.payment_method || '—'),
             Status: String(b.status || ''),

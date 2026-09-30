@@ -15,6 +15,7 @@ import DreClassificacaoSelect, { precisaClassificarDRE, useDreEscolha } from '@/
 import PerguntarAoAssistente from '@/components/feature/PerguntarAoAssistente';
 import { useFocoTela } from '@/lib/assistenteFoco';
 import { KpiCard, MonthNav, Segmented } from './dreUi';
+import { rotuloMes } from '@/lib/competenciaConta';
 
 interface Props {
   onNavigateToCompras?: (purchaseId?: string) => void;
@@ -77,10 +78,24 @@ function exportCSV(bills: BillPayable[]) {
   URL.revokeObjectURL(url);
 }
 
+// Meses oferecidos no campo Competência: 12 antes e 2 depois do vencimento (ou de hoje)
+function mesesCompetencia(dueDate: string): string[] {
+  const base = /^\d{4}-\d{2}/.test(dueDate) ? dueDate : new Date().toISOString().slice(0, 10);
+  const [y, m] = base.slice(0, 7).split('-').map(Number);
+  const out: string[] = [];
+  for (let d = 2; d >= -12; d--) {
+    const dt = new Date(y, m - 1 + d, 1);
+    out.push(`${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}`);
+  }
+  return out;
+}
+
 const emptyForm = {
   description: '', supplier: '', category: 'Outros', amount: '', due_date: '',
   is_recurring: false, notes: '', cost_center_id: '', dre_category_id: '',
   bank_account_id: '',
+  competence: '', // 'YYYY-MM'; vazio = mês do vencimento
+
   recurrence_type: 'fixed_value' as 'fixed_value' | 'variable_value',
   recurrence_day: '1',
   recurrence_end_date: '',
@@ -382,6 +397,9 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
       dre_category_id: form.dre_category_id || undefined,
       // "Débitar da Conta": nunca era gravado — a baixa não mexia no saldo de banco nenhum (2026-09-25)
       bank_account_id: form.bank_account_id || undefined,
+      // Competência (2026-09-30): só grava quando difere do mês do vencimento — ex.: vale
+      // alimentação de agosto pago no fim de julho. É ela que põe a conta na DRE por competência.
+      competence_month: form.competence && form.competence !== form.due_date.slice(0, 7) ? form.competence + '-01' : undefined,
       status: 'pending',
     };
     if (form.is_recurring) {
@@ -1226,6 +1244,18 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
                   <input required type="date" value={form.due_date} onChange={e => setForm(f => ({ ...f, due_date: e.target.value }))}
                     className="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400" />
                 </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-zinc-600 block mb-1">
+                  Competência <span className="font-normal text-zinc-400">(mês a que o gasto pertence)</span>
+                </label>
+                <select value={form.competence} onChange={e => setForm(f => ({ ...f, competence: e.target.value }))}
+                  className="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400">
+                  <option value="">{form.due_date ? `Mês do vencimento (${rotuloMes(form.due_date.slice(0, 7))})` : 'Mês do vencimento'}</option>
+                  {mesesCompetencia(form.due_date).map(m => <option key={m} value={m}>{rotuloMes(m)}</option>)}
+                </select>
+                <p className="text-[11px] text-zinc-400 mt-1">Na DRE por competência a conta entra neste mês; no caixa, na data do pagamento.</p>
               </div>
 
               <div className="grid grid-cols-2 gap-3">

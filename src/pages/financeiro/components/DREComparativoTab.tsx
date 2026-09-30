@@ -10,6 +10,7 @@ import { empresaTemPdv } from '@/lib/tipoEmpresa';
 import { formatCurrency } from '@/lib/formatters';
 import { useDreGroups, STANDARD_GROUP_KEYS, ordenarGrupos } from '@/hooks/useDreGroups';
 import { aplicarCategoriasSistema, somaDeducoes, GRUPO_DEDUCOES } from '@/lib/dreSistema';
+import { orCompetenciaConta, SEM_COMPRA_E_FOLHA } from '@/lib/competenciaConta';
 import { MonthNav, SectionHeader, NoteRow, mesExtenso } from './dreUi';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -194,7 +195,7 @@ async function fetchCompetencia(tenantId: string, startDate: string, endDate: st
     supabase.from('fin_receivable_installments').select('amount').eq('tenant_id', tenantId).eq('status', 'pending').gte('due_date', startDate).lte('due_date', endDate),
     supabase.from('orders').select('total_amount').eq('tenant_id', tenantId).eq('is_training', false).eq('is_draft', false).eq('ifood_repasse', false).eq('status', 'cancelled').gte('created_at', startTs).lte('created_at', endDateTime),
     supabase.from('orders').select('discount_amount').eq('tenant_id', tenantId).eq('is_training', false).eq('is_draft', false).eq('ifood_repasse', false).not('status', 'in', '("cancelled","draft")').gte('created_at', startTs).lte('created_at', endDateTime),
-    supabase.from('fin_accounts_payable').select('dre_category_id, amount, status').eq('tenant_id', tenantId).in('status', ['pending', 'paid', 'overdue', 'partial']).or('reference_type.is.null,reference_type.not.in.(purchase,hr_payroll)').gte('due_date', startDate).lte('due_date', endDate),
+    supabase.from('fin_accounts_payable').select('dre_category_id, amount, status').eq('tenant_id', tenantId).in('status', ['pending', 'paid', 'overdue', 'partial']).or(orCompetenciaConta(startDate, endDate, SEM_COMPRA_E_FOLHA)),
     supabase.from('fin_purchases').select('id, total_amount, payment_status').eq('tenant_id', tenantId).gte('purchase_date', startDate).lte('purchase_date', endDate),
     // Competência: folha pelo mês de referência, paga ou não (igual ao DRETab).
     supabase.from('hr_payroll').select('gross_salary, fgts').eq('tenant_id', tenantId).eq('reference_month', monthStr),

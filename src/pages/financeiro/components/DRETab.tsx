@@ -17,6 +17,7 @@ import DREDrillDownModal from './DREDrillDownModal';
 import { VarChip, SectionHeader, NoteRow, Segmented, KpiCard } from './dreUi';
 import { useDreGroups, STANDARD_GROUP_KEYS, ordenarGrupos } from '@/hooks/useDreGroups';
 import { aplicarCategoriasSistema, origemSistema, CHAVES_DO_RAZAO, GRUPO_DEDUCOES, type ChaveSistema } from '@/lib/dreSistema';
+import { orCompetenciaConta, SEM_COMPRA_E_FOLHA } from '@/lib/competenciaConta';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function pct(v: number, total: number) {
@@ -469,9 +470,8 @@ async function fetchDREDataCompetencia(tenantId: string, startDate: string, endD
       // competência inteira (nem pelo valor cheio, que é o que a competência reconhece).
       .in('status', ['pending', 'paid', 'overdue', 'partial'])
       // P1: exclui contas geradas por compras (custo já entra via CMV = fin_purchases).
-      .or('reference_type.is.null,reference_type.not.in.(purchase,hr_payroll)')
-      .gte('due_date', startDate)
-      .lte('due_date', endDate),
+      // Mês pela competência da conta; sem ela, pelo vencimento (2026-09-30).
+      .or(orCompetenciaConta(startDate, endDate, SEM_COMPRA_E_FOLHA)),
 
     supabase
       .from('fin_purchases')
