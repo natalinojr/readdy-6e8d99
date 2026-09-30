@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useBillsPayable } from '@/hooks/useFinanceiro';
@@ -61,6 +62,8 @@ function ageColor(days: number) {
 }
 
 export default function ContasVencidasPanel() {
+  const navigate = useNavigate();
+  const [explicaDre, setExplicaDre] = useState(false);
   const { user } = useAuth();
   const { pay } = useBillsPayable();
   // Data LOCAL: toISOString() é UTC e, após as 21h no horário de Brasília,
@@ -287,7 +290,7 @@ export default function ContasVencidasPanel() {
   const totalGeral = impacto.totalVencido + impacto.totalPendente;
 
   return (
-    <div className="p-4 md:p-6 space-y-5 max-w-[1400px] mx-auto">
+    <div className="p-4 md:p-6 space-y-5 max-w-[1400px] mx-auto w-full">
 
       {contas.length === 0 ? (
         <div className="bg-white rounded-2xl border border-zinc-200 py-14 text-center">
@@ -325,7 +328,7 @@ export default function ContasVencidasPanel() {
           </div>
 
           {/* Impacto por categoria DRE */}
-          {impacto.porCategoria.length > 0 && (
+          {(impacto.porCategoria.length > 0 || impacto.semCategoria > 0) && (
             <div className="bg-white border border-zinc-200 rounded-2xl overflow-hidden">
               <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-100 gap-3 flex-wrap">
                 <div>
@@ -375,6 +378,17 @@ export default function ContasVencidasPanel() {
                     </div>
                   </div>
                 )}
+                {/* Explicação (antes um bloco fixo no fim da tela; agora abre aqui — 2026-09-30) */}
+                <div>
+                  <button onClick={() => setExplicaDre((v) => !v)} className="text-xs font-semibold text-amber-600 hover:underline cursor-pointer">
+                    {explicaDre ? 'Fechar' : 'Como essas contas afetam o DRE de Competência?'}
+                  </button>
+                  {explicaDre && (
+                    <p className="text-xs text-zinc-500 mt-2 max-w-3xl">
+                      No regime de competência, <strong>todas as contas com vencimento no período são contabilizadas</strong> como despesa, independente de terem sido pagas. Isso significa que contas vencidas e não pagas já reduziram o resultado do DRE no mês em que venceram. Quitar essas contas não altera o DRE de competência retroativamente — mas melhora o fluxo de caixa e o DRE de caixa do mês atual.
+                    </p>
+                  )}
+                </div>
               </div>
             </div>
           )}
@@ -420,6 +434,11 @@ export default function ContasVencidasPanel() {
             <span className="text-xs text-zinc-400 ml-auto">
               {filtered.length} de {contas.length} conta{contas.length !== 1 ? 's' : ''}
             </span>
+            {/* Pagar em lote fica em Contas a Pagar (mesma baixa, com a classificação DRE) — abre lá já nas vencidas. */}
+            <button onClick={() => navigate('/financeiro?tab=pagar&aberto=vencidas')}
+              className="h-10 flex items-center gap-1.5 px-3 rounded-xl border border-zinc-200 bg-white hover:bg-zinc-50 text-xs font-semibold text-zinc-700 cursor-pointer whitespace-nowrap shadow-sm">
+              <i className="ri-checkbox-multiple-line" /> Pagar várias de uma vez
+            </button>
           </div>
 
           {/* Celular: cartão por conta (a tabela com 7 colunas não cabe em 375px) */}
@@ -582,16 +601,6 @@ export default function ContasVencidasPanel() {
             </div>
           </div>
 
-          {/* Dica de ação */}
-          <div className="bg-sky-50 border border-sky-200 rounded-xl px-4 py-3 flex items-start gap-3">
-            <i className="ri-lightbulb-line text-sky-500 mt-0.5" />
-            <div>
-              <p className="text-xs font-semibold text-sky-900">Como essas contas afetam o DRE de Competência?</p>
-              <p className="text-xs text-sky-800 mt-0.5">
-                No regime de competência, <strong>todas as contas com vencimento no período são contabilizadas</strong> como despesa, independente de terem sido pagas. Isso significa que contas vencidas e não pagas já reduziram o resultado do DRE no mês em que venceram. Quitar essas contas não altera o DRE de competência retroativamente — mas melhora o fluxo de caixa e o DRE de caixa do mês atual.
-              </p>
-            </div>
-          </div>
         </>
       )}
 

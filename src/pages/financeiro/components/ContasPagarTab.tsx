@@ -146,7 +146,11 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
   const [showAging, setShowAging] = useState(false);
   // "Em aberto agora" (2026-09-30): Vencidas / Próximos 7 dias / Depois, de todas as datas — um clique
   // filtra a lista (como o Aging). Antes, estando em setembro, a vencida de agosto não aparecia.
-  const [emAberto, setEmAberto] = useState<null | 'vencidas' | 'semana' | 'depois'>(null);
+  // ?aberto=vencidas|semana|depois abre já filtrada (atalho "Pagar várias de uma vez" das Contas Vencidas).
+  const [emAberto, setEmAberto] = useState<null | 'vencidas' | 'semana' | 'depois'>(() => {
+    const v = new URLSearchParams(window.location.search).get('aberto');
+    return v === 'vencidas' || v === 'semana' || v === 'depois' ? v : null;
+  });
   useEffect(() => { if (agingBucket) setEmAberto(null); }, [agingBucket]);
   const hojeCP = todayBrasilia();
   const em7CP = somarDias(hojeCP, 7);
