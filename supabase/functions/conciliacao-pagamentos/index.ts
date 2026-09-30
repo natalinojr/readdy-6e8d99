@@ -1426,12 +1426,17 @@ Deno.serve(async (req: Request) => {
       if (error) return errResp('Sugerir vínculos: ' + error.message, 500);
       const { data: folha, error: fe } = await admin.rpc('fn_match_payroll', { p_tenant: tenantId, p_from: from, p_to: to });
       if (fe) log('WARN', 'rematch', 'fn_match_payroll falhou', { tenantId, error: fe.message });
+      // Conta JÁ PAGA sem linha do extrato (ex.: vale alimentação lançado com "Já está pago", 2026-09-30):
+      // liga sozinho quando é inequívoco (mesmo valor/CPF-CNPJ ou nome, até 5 dias). Antes das regras de
+      // lançamento, para o Pix não virar sugestão de despesa nova.
+      const { data: pagas, error: pe } = await admin.rpc('fn_match_paid_links', { p_tenant: tenantId, p_from: from, p_to: to });
+      if (pe) log('WARN', 'rematch', 'fn_match_paid_links falhou', { tenantId, error: pe.message });
       const { data: regras, error: re } = await admin.rpc('fn_match_launch_rules', { p_tenant: tenantId, p_from: from, p_to: to });
       if (re) log('WARN', 'rematch', 'fn_match_launch_rules falhou', { tenantId, error: re.message });
       // Etiquetas por texto nas ENTRADAS já importadas (regra nova pega o histórico todo)
       const { error: le } = await admin.rpc('fn_apply_label_rules', { p_tenant: tenantId, p_from: '2000-01-01', p_to: to });
       if (le) log('WARN', 'rematch', 'fn_apply_label_rules falhou', { tenantId, error: le.message });
-      return json({ success: true, ...(data as Row ?? {}), folha: folha ?? 0, regras_lancamento: regras ?? 0 });
+      return json({ success: true, ...(data as Row ?? {}), folha: folha ?? 0, contas_pagas: pagas ?? 0, regras_lancamento: regras ?? 0 });
     }
 
     if (action === 'alerts') {

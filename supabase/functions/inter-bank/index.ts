@@ -403,6 +403,9 @@ async function syncTenant(admin: Admin, tenantId: string, opts: { days?: number;
       // Pix de salário × folha pendente (2026-09-18): também só sugere.
       const { error: fpErr } = await admin.rpc('fn_match_payroll', { p_tenant: tenantId, p_from: from < addDays(today, -120) ? from : addDays(today, -120), p_to: today });
       if (fpErr) log('WARN', action, 'fn_match_payroll falhou', { tenantId, error: fpErr.message });
+      // Conta JÁ PAGA sem linha do extrato (2026-09-30): liga sozinho quando é inequívoco (fn_match_paid_links)
+      const { error: plErr } = await admin.rpc('fn_match_paid_links', { p_tenant: tenantId, p_from: from < addDays(today, -120) ? from : addDays(today, -120), p_to: today });
+      if (plErr) log('WARN', action, 'fn_match_paid_links falhou', { tenantId, error: plErr.message });
       // Regras de lançamento por CNPJ/chave (2026-09-18): depois de nota, conta e folha; também só sugere.
       const { error: lrErr } = await admin.rpc('fn_match_launch_rules', { p_tenant: tenantId, p_from: from < addDays(today, -120) ? from : addDays(today, -120), p_to: today });
       if (lrErr) log('WARN', action, 'fn_match_launch_rules falhou', { tenantId, error: lrErr.message });
