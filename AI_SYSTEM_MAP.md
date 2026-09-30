@@ -283,6 +283,10 @@ Secao viva: registrar aqui padroes, decisoes e pegadinhas reutilizaveis conforme
 - **Navegação = link de verdade** (`<a href>`/`NavLink`) para rodinha/Ctrl+clique abrirem aba; clique simples intercepta com `cliqueParaNovaAba` (`src/lib/novaJanela.ts`). `abrirNovaJanela` = popup no navegador, janela do app no PWA.
 - Pegadinha de uso: digitar o endereço no Chrome com o ERPOS aberto sugere "Mudar para esta guia" — parece que "as abas ficam no mesmo lugar".
 
+### 2026-09-30 — iFood Analytics (indicadores D-1) — referência viva: `IFOOD-MODULOS-HOMOLOGACAO.md`
+- Edge `ifood-shipping` ação `analytics_kpis` (regras puras em `ifood-shipping/analytics.ts`) + aba **Indicadores** no modal "Loja no iFood" (`src/pages/gestor-entregas/components/IfoodIndicadores.tsx`, admin/gerente).
+- **Pegadinha:** com `x-request-homologation: true` o iFood ignora o corpo e devolve sempre o exemplo da doc (páginas repetidas, `dayOfWeek` em nome) → a tela usa uma consulta `groupBy` somada no servidor e descarta linha de chave repetida. Homologação agora é pelo wizard do Devportal (desde 30/09), com o payload do botão "Gerar payload de homologação".
+
 ### 2026-09-26 — iFood Entrega (Shipping / Sob Demanda) — referência viva: `IFOOD-SHIPPING.md`
 - **Apps do iFood são por CATEGORIA** e a categoria trava os módulos: o app "ERPOS" (Finanças) não aceita Shipping. Criado o app **"ERPOS PDV"** (categoria PDV) com credenciais/autorizações próprias (`ifood_pdv_config`/`ifood_pdv_auths`), separado de `fin_ifood_*`. Order ficou de fora (decisão do dono; exigiria outro app).
 - **Pegadinha:** a loja de teste do iFood NÃO suporta Entrega iFood (FAQ do portal) — regras dos eventos testadas com os exemplos da doc (`supabase/functions/ifood-shipping/core.ts` + `src/test/edge/ifoodShipping.test.ts`).

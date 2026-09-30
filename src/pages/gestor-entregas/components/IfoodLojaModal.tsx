@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useVoltarFecha } from '@/lib/voltarAndroid';
 import { ifoodShipping } from '@/lib/ifoodShipping';
+import IfoodIndicadores from './IfoodIndicadores';
 
 interface Props {
   tenantId: string;
@@ -29,13 +30,13 @@ const TOM_ESTADO: Record<string, string> = { OK: 'bg-emerald-100 text-emerald-80
 const ESTADO: Record<string, string> = { OK: 'Aberta', WARNING: 'Aberta com alerta', CLOSED: 'Fechada', ERROR: 'Com problema' };
 
 /**
- * Loja no iFood (módulos Merchant e Review do app ERPOS PDV): status, pausas, horários e avaliações.
+ * Loja no iFood (módulos Merchant, Review e Analytics do app ERPOS PDV): status, pausas, horários, avaliações e indicadores.
  * Alterar (pausar, horários, responder) = admin/gerente; a edge confere de novo.
  */
 export default function IfoodLojaModal({ tenantId, merchants, podeEditar, onClose }: Props) {
   useVoltarFecha(true, onClose, 'ifood-loja');
   const [loja, setLoja] = useState(merchants[0]?.id ?? '');
-  const [aba, setAba] = useState<'loja' | 'avaliacoes'>('loja');
+  const [aba, setAba] = useState<'loja' | 'avaliacoes' | 'indicadores'>('loja');
   const [msg, setMsg] = useState<{ ok: boolean; t: string } | null>(null);
   const [busy, setBusy] = useState('');
 
@@ -83,7 +84,7 @@ export default function IfoodLojaModal({ tenantId, merchants, podeEditar, onClos
     setResumo(sum.success ? sum.summary : null);
   }, [tenantId, loja, de, ate]);
 
-  useEffect(() => { if (aba === 'loja') carregarLoja(); else carregarAvaliacoes(1); }, [aba, loja]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (aba === 'loja') carregarLoja(); else if (aba === 'avaliacoes') carregarAvaliacoes(1); }, [aba, loja]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const run = async (key: string, action: string, extra: Record<string, unknown>, sucesso: string) => {
     setBusy(key); setMsg(null);
@@ -140,7 +141,7 @@ export default function IfoodLojaModal({ tenantId, merchants, podeEditar, onClos
             <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-100"><i className="ri-close-line text-lg" /></button>
           </div>
           <div className="flex gap-1">
-            {([['loja', 'Status, pausas e horários'], ['avaliacoes', 'Avaliações']] as const).map(([k, t]) => (
+            {([['loja', 'Status, pausas e horários'], ['avaliacoes', 'Avaliações'], ...(podeEditar ? [['indicadores', 'Indicadores']] as const : [])] as const).map(([k, t]) => (
               <button key={k} onClick={() => setAba(k)} className={`px-3 py-1.5 rounded-lg text-xs font-semibold ${aba === k ? 'bg-zinc-800 text-white' : 'bg-zinc-100 text-zinc-600'}`}>{t}</button>
             ))}
           </div>
@@ -149,6 +150,8 @@ export default function IfoodLojaModal({ tenantId, merchants, podeEditar, onClos
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4 text-xs">
           {msg && <p className={`rounded-lg p-2 border ${msg.ok ? 'text-emerald-700 bg-emerald-50 border-emerald-100' : 'text-red-600 bg-red-50 border-red-100'}`}>{msg.t}</p>}
           {carregando && <div className="flex justify-center py-6"><div className="w-5 h-5 border-2 border-red-500 border-t-transparent rounded-full animate-spin" /></div>}
+
+          {aba === 'indicadores' && loja && <IfoodIndicadores key={loja} tenantId={tenantId} merchantId={loja} />}
 
           {aba === 'loja' && !carregando && (
             <>

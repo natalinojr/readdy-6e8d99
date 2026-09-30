@@ -92,7 +92,25 @@ Review; loja de teste 4117700; status "concluí o desenvolvimento".
 Anexos sugeridos (até 5): print do Gestor de Entregas › iFood Entrega (config), modal da entrega com cotação, tela
 "Loja iFood" (status + pausas + horários), aba Avaliações com o link da política, log de eventos (`ifood_pdv_events`).
 
-## Analytics (indicadores) — chamado + formulário (Google Forms) + reunião
+## Analytics (indicadores) — wizard automático do Devportal (desde 2026-09-30)
+- **Mudou em 2026-09-30 (comunicado do iFood):** acabou o chamado/formulário/reunião. Agora é só pelo wizard:
+  Portal do Desenvolvedor › Homologação › Nova homologação (ou link de autenticação). Precisa ter em mãos o **payload
+  devolvido pela API** chamada com `x-request-homologation: true`. Só o **dono do app** (quem criou) inicia.
+  Aprovado → ainda passa por especialistas antes de liberar; reprovado → relatório com os pontos; **1 tentativa por
+  app a cada 4 h**. Mesmo modelo da homologação automática do Order.
+- **FEITO 2026-09-30:** edge `ifood-shipping` ação `analytics_kpis` (regras em `ifood-shipping/analytics.ts`, testes
+  `src/test/edge/ifoodAnalytics.test.ts`) + aba **Indicadores** no modal "Loja no iFood" do Gestor de Entregas
+  (`IfoodIndicadores.tsx`; admin/gerente). Uma consulta agrupada por dayOfWeek × orderStatus × deliveredBy ×
+  paymentMethod × salesChannel, todas as páginas (size 1000, até 20), somada aqui: GMV/GMV sem entrega/ticket só dos
+  concluídos, taxa de cancelamento, distribuições e tabela canal × entrega. Período até ontem (D-1), aviso D-1 e período
+  consultado visíveis; validação local de todos os "motivos de rejeição"; mensagens por HTTP (400/401/403/404/429/5xx).
+  Em modo homologação aparece o botão **"Gerar payload de homologação"** (corpo do exemplo da doc + resposta, com Copiar)
+  — é o payload que o wizard pede.
+- **Pegadinhas do ambiente de teste (2026-09-30):** com `x-request-homologation` o iFood IGNORA o corpo e devolve sempre
+  o exemplo da doc (esse agrupamento, página de 20, totalItems 91, 5 páginas que REPETEM a 1ª) → sem `terms`; por isso a
+  tela usa groupBy e descarta linha com chave já vista. `dayOfWeek` vem em nome (`WEDNESDAY`), não 1–7 como diz a doc.
+  Canais/pagamentos que aparecem além da doc: `EMBEDDED_UBER`, `VOUCHER`, `OTHER_VOUCHER`, `BANK_PAY`. O app C (teste)
+  já tem o escopo analytics.
 - POST analytics/v1.0/merchants/{id}/orders/kpis com `x-request-homologation: true` na loja de teste (payload fixo).
 - Sempre `filter.referenceDate` + ao menos uma agregação (metrics/terms/groupBy/dateIntervals); page 1–1000, size 1–10000;
   funções sum/avg/min/max e count/cardinality; sem duplicados; gte ≤ lte.

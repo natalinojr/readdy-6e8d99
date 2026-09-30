@@ -21,6 +21,7 @@
 //   cancel         { shipping_id, code, reason }
 //   address_change { shipping_id, accept }          aceitar/recusar troca de endereço pedida pelo cliente (15 min)
 //   tracking       { shipping_id }                  posição do entregador + safe delivery score
+//   analytics_kpis { merchant_id, de?, ate?, homologacao? }  indicadores D-1 (módulo Analytics; admin/gerente/contabilidade)
 //   poll                                            busca eventos agora (tela)
 //   poll_all                                        (interno) cron a cada 30 s
 //
@@ -32,6 +33,7 @@ import { isContabilidadeRole, isManagerRole } from '../_shared/tenant-auth.ts';
 import { ACTIVE, buildItems as buildItemsPure, cut, eventName, norm, onlyDigits, parseEnderecoPedido, paymentFromNotes, planEvent, round2, splitPhone, type OrderSignal } from './core.ts';
 import { orderEventName, orderItemsFromDetails, orderRowFromDetails, planOrderEvent } from './order.ts';
 import { montarPedidoErpos, type IfoodLink, type MenuInfo } from './funnel.ts';
+import { consultaKpis, corpoHomologacao, mensagemErroKpis, periodoKpis, resumirLinhas, validarCorpoKpis } from './analytics.ts';
 import { deductStockForOrderItem } from '../_shared/stock.ts';
 
 type Admin = SupabaseClient;
@@ -1237,6 +1239,55 @@ Deno.serve(async (req) => {
       const r = await call(admin, c, 'GET', `${base}/reviews?${q}`);
       if (!r.ok) return errResp(apiError(r, 'Avaliações'));
       return json({ success: true, ...(r.data ?? {}) });
+    }
+
+    // ── Indicadores (módulo Analytics): KPIs D-1 agregados, só leitura. Admin/gerente/contabilidade (faturamento).
+    // POST é leitura → repete com backoff em 429/5xx como os GET. `homologacao` = corpo do exemplo da doc
+    // (o payload devolvido é o que o wizard de homologação do Devportal pede).
+    if (action === 'analytics_kpis') {
+      if (!isManager && !isContabilidadeRole(role)) return errResp('Só admin, gerente ou contabilidade vê os indicadores do iFood.', 403);
+      const c = await merchantCtx();
+      const per = periodoKpis(body.de, body.ate);
+      if ('erro' in per) return errResp(per.erro as string);
+      const path = `/analytics/v1.0/merchants/${c.merchantId}/orders/kpis`;
+      const kpis = async (corpo: any) => {
+        const inval = validarCorpoKpis(corpo);
+        if (inval) throw new Error(inval);
+        const r = await call(admin, c, 'POST', path, corpo, {}, true);
+        log(r.ok ? 'INFO' : 'WARN', 'analytics', 'kpis', { merchant: c.merchantId, status: r.status, tenantId, homolog: c.cfg.homologation_mode === true });
+        if (!r.ok) {
+          const det = r.data?.error?.message ?? r.data?.message ?? (typeof r.data?.error === 'string' ? r.data.error : '') ?? '';
+          throw Object.assign(new Error(mensagemErroKpis(r.status, String(det || '').trim())), { status: r.status });
+        }
+        return r.data ?? {};
+      };
+      const periodo = { de: per.de, ate: per.ate, dias: per.dias, ajustado: per.ajustado, homologacao: c.cfg.homologation_mode === true };
+      try {
+        if (body.homologacao === true) {
+          const corpo = corpoHomologacao(per.gte, per.lte);
+          const resp = await kpis(corpo);
+          return json({ success: true, periodo, request: { method: 'POST', url: 'https://merchant-api.ifood.com.br' + path, headers: c.cfg.homologation_mode === true ? { 'x-request-homologation': 'true' } : {}, body: corpo }, response: resp });
+        }
+        // Todas as páginas (currentPage/totalPages; até 20 × 1000 linhas). Linha com a mesma combinação de chaves
+        // já vista é descartada (proteção contra página repetida — não somar duas vezes).
+        const linhas: any[] = [];
+        const vistas = new Set<string>();
+        let paginas = 1, totalItems: number | null = null;
+        for (let page = 1; page <= 20; page++) {
+          const r = await kpis(consultaKpis(per.gte, per.lte, page));
+          for (const l of Array.isArray(r.data) ? r.data : []) {
+            const chave = JSON.stringify(l?.groupByKey?.value ?? l);
+            if (vistas.has(chave)) continue;
+            vistas.add(chave); linhas.push(l);
+          }
+          paginas = Math.max(1, Number(r.totalPages ?? 1));
+          totalItems = Number.isFinite(Number(r.totalItems)) ? Number(r.totalItems) : totalItems;
+          if (page >= paginas) break;
+        }
+        return json({ success: true, periodo, resumo: resumirLinhas(linhas), linhas: linhas.length, total_items: totalItems, paginas });
+      } catch (e) {
+        return errResp((e as Error).message, 400, { http_status: (e as any).status ?? null });
+      }
     }
 
     if (action === 'review_answer') {
