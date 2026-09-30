@@ -57,6 +57,20 @@ describe('montarTrilha', () => {
     expect(c.tarefas.find((t) => t.grupo === 'estoque')!.urgente).toBe(false);
   });
 
+  it('nota paga por Pix na hora (conta pendente vencendo na emissão): falta o extrato, não é "vencida"', () => {
+    const d = vazio();
+    d.compras = [compra({ payment_method: 'PIX', purchase_date: '2026-09-20' })];
+    d.contas = [conta({ due_date: '2026-09-20', status: 'pending', payment_method: null })];
+    const c = trilha(d)[0];
+    expect(etapa(c, 'pagamento').estado).toBe('pendente');
+    expect(etapa(c, 'pagamento').falta).toBe('ligar a saída do extrato');
+    expect(c.tarefas.find((t) => t.grupo === 'vencidas')).toBeUndefined();
+    expect(c.tarefas.find((t) => t.grupo === 'extrato')).toMatchObject({ urgente: false });
+    // Pix a pagar em outra data (escolhido na tela) segue a regra normal de vencida
+    d.contas = [conta({ due_date: '2026-09-25', status: 'overdue', payment_method: null })];
+    expect(trilha(d)[0].tarefas.find((t) => t.grupo === 'vencidas')).toBeDefined();
+  });
+
   it('conta a pagar dentro do vencimento é "no prazo": não é tarefa nem trava o caso', () => {
     const d = vazio();
     d.compras = [compra({ stock_applied_at: '2026-09-11T12:00:00Z', delivery_confirmed_at: '2026-09-11T12:00:00Z' })];

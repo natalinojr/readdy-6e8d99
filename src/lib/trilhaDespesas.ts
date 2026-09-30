@@ -366,7 +366,17 @@ export function montarCaso(r: Rascunho, hoje: string, temExtrato: boolean): Caso
       const prox = abertas.map((c) => d10(c.due_date)).filter(Boolean).sort()[0];
       const pagas = r.contas.length - abertas.length;
       const falta = round2(abertas.reduce((s, c) => s + Number(c.amount || 0) - Number(c.paid_amount || 0), 0));
-      if (vencidas.length) {
+      // Nota paga por Pix na hora (desde 2026-09-30 entra PENDENTE vencendo na emissão, para a
+      // Conciliação dar a baixa pela saída do extrato): não é "vencida / falta o jeito de pagar"
+      const pixNaHora = !!p && /pix/i.test(String(p.payment_method ?? '')) && abertas.length === 1
+        && !!d10(abertas[0].due_date) && d10(abertas[0].due_date) === d10(p.purchase_date);
+      if (vencidas.length && pixNaHora) {
+        add('pagamento', 'pendente', 'Pago por Pix na compra (diz a nota) — a baixa vem da saída do extrato', {
+          detalhe: `em ${diaBR(p?.purchase_date)} · ${brl(falta)}`, falta: 'ligar a saída do extrato', atalho: { tab: 'conciliacao' },
+        });
+        tarefa('extrato', ['pagamento', 'banco'], false,
+          `A nota diz que foi pago por Pix em ${diaBR(p?.purchase_date)}: falta achar a saída no extrato para dar a baixa.`);
+      } else if (vencidas.length) {
         const maisAntiga = vencidas.map((c) => d10(c.due_date)).filter(Boolean).sort()[0] ?? '';
         const dias = diasEntre(maisAntiga, hoje);
         const diasTxt = `${dias} ${plural(dias, 'dia', 'dias')}`;
