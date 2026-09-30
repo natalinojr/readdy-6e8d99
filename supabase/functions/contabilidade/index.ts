@@ -141,7 +141,13 @@ Deno.serve(async (req) => {
         return data?.id ?? null;
       };
 
-      const texto = await textoDoPdf(b64, 40000);
+      // PDF só-imagem: vale o texto do OCR feito no navegador (guiaOcr.ts — resumo já conferido por
+      // DV/CRC/valor do código de barras). Só quando o PDF não tem texto próprio; o lerGuia abaixo
+      // confere tudo de novo e o pagamento continua dependendo do dono aprovar. (2026-09-30)
+      const textoPdf = await textoDoPdf(b64, 40000);
+      const porOcr = !textoPdf.trim() && typeof body.texto_ocr === 'string' && body.texto_ocr.trim().length > 0;
+      const texto = porOcr ? String(body.texto_ocr).slice(0, 40000) : textoPdf;
+      if (porOcr) log('INFO', 'guia lida por OCR no navegador', { nome });
       if (!texto.trim()) {
         await registrar({ resultado: 'nao_reconhecida', mensagem: 'PDF sem texto (imagem ou escaneado).' });
         return json({ success: false, resultado: 'nao_reconhecida', texto: 'Esse PDF não tem texto (parece imagem ou escaneado). Baixe a guia de novo direto do PGDAS, e-CAC/Sicalc ou FGTS Digital e anexe o arquivo original.' });
@@ -182,7 +188,7 @@ Deno.serve(async (req) => {
       const r = await interno('assistente-brain', { action: 'guia', guia: g, origem: `contabilidade: ${autor}`, chat_id: ownerChat ?? '' });
       const resultado = !r?.ok ? 'erro' : r.payment_id ? 'preparada' : /já está \*paga\*/.test(String(r.texto ?? '')) ? 'ja_paga' : 'guardada';
       const textoLimpo = String(r?.texto ?? '').replace(/\*/g, '');
-      const id = await registrar({ ...base, tenant_id: loja.id, arquivo_path, bill_id: r?.conta_id ?? null, payment_id: r?.payment_id ?? null, resultado, mensagem: textoLimpo.slice(0, 1500) });
+      const id = await registrar({ ...base, tenant_id: loja.id, arquivo_path, bill_id: r?.conta_id ?? null, payment_id: r?.payment_id ?? null, resultado, mensagem: ((porOcr ? '(PDF em imagem, lido por OCR) ' : '') + textoLimpo).slice(0, 1500) });
 
       // Avisa o dono no chat, com o cartão Pagar quando o pagamento já foi preparado.
       if (ownerChat?.startsWith('tg:')) {

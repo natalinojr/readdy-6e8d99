@@ -97,8 +97,18 @@ export default function GuiasTab() {
       else {
         try {
           const b64 = await lerBase64(f);
+          // PDF só-imagem ("Imprimir como PDF", escaneado): OCR grátis no navegador + QR do Pix, conferidos
+          // (DVs, CRC, valor do código de barras). Com texto próprio, o servidor lê direto.
+          let textoOcr: string | undefined;
+          try {
+            const { lerGuiaImagem } = await import('@/lib/guiaOcrBrowser');
+            const lida = await lerGuiaImagem(f, (etapa) => setEnvios((prev) => prev.map((e, j) => (j === i ? { ...e, texto: etapa } : e))));
+            textoOcr = lida?.texto;
+          } catch (e) {
+            console.warn('[Guias] OCR no navegador falhou', e);
+          }
           const { data, error } = await invokeWithAuth<{ success: boolean; resultado: Resultado; texto: string }>('contabilidade', {
-            body: { action: 'enviar_guia', arquivo_base64: b64, arquivo_nome: f.name },
+            body: { action: 'enviar_guia', arquivo_base64: b64, arquivo_nome: f.name, ...(textoOcr ? { texto_ocr: textoOcr } : {}) },
           });
           if (error) novo = { nome: f.name, estado: 'erro', texto: error.message };
           else novo = {
