@@ -43,7 +43,7 @@ export default function PedidosMetricas({
   return (
     <>
       {/* Cartões de resumo */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6 gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6 gap-2 sm:gap-3">
         <KpiCard semVariacao atual={0} label="Total" icon="ri-file-list-3-line" value={String(totalPedidos)} />
         <KpiCard semVariacao atual={0} label="Faturamento" icon="ri-money-dollar-circle-line" value={formatCurrency(totalValor)} valueTone="text-emerald-700" />
         <KpiCard semVariacao atual={0} label="Ticket Médio" icon="ri-receipt-line" value={formatCurrency(ticketMedio)} valueTone="text-amber-700" />

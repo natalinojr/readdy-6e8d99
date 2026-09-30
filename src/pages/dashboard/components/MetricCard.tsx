@@ -46,7 +46,7 @@ export default function MetricCard({
           </span>
         )}
       </div>
-      <p className="text-2xl font-bold tabular-nums tracking-tight text-zinc-900">{value}</p>
+      <p className="text-xl sm:text-2xl font-bold tabular-nums tracking-tight text-zinc-900">{value}</p>
       {trendLabel && <p className={`text-xs ${subTone}`}>{trendLabel}</p>}
     </div>
   );

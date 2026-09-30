@@ -141,7 +141,7 @@ export function KpiCard({
         </div>
         {!semVariacao && <VarChip atual={atual} anterior={anterior} inverse={inverse} />}
       </div>
-      <p className={`text-2xl font-bold tabular-nums tracking-tight ${valueTone ?? 'text-zinc-900'}`}>{value}</p>
+      <p className={`text-xl sm:text-2xl font-bold tabular-nums tracking-tight ${valueTone ?? 'text-zinc-900'}`}>{value}</p>
       {sub && <p className={`text-xs ${subTone ?? 'text-zinc-400'}`}>{sub}</p>}
     </div>
   );

@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import type { PedidoRecente } from '@/types/pdv';
 import { formatOrderNumber } from '@/lib/statusMappers';
+import { formatCurrency } from '@/lib/formatters';
 import { TempoCell } from './SlaCell';
 import { isQRUniversal, clienteNome, origemLabelFor } from './utils';
 import NotaFiscalCell from './NotaFiscalCell';
@@ -477,7 +478,7 @@ export default function PedidosLista({ pedidos, loading, onSelectPedido }: Pedid
                   {pedido.status === 'cancelado' || pedido.status === 'cancelled' ? (
                     <span className="text-xs font-semibold text-red-500 whitespace-nowrap">Cancelado</span>
                   ) : (
-                    <p className="text-sm font-bold text-zinc-900 tabular-nums whitespace-nowrap">R$ {pedido.total.toFixed(2)}</p>
+                    <p className="text-sm font-bold text-zinc-900 tabular-nums whitespace-nowrap">{formatCurrency(pedido.total)}</p>
                   )}
                 </div>
               </div>
@@ -507,7 +508,7 @@ export default function PedidosLista({ pedidos, loading, onSelectPedido }: Pedid
                   {pedido.status === 'cancelado' || pedido.status === 'cancelled' ? (
                     <span className="text-xs font-semibold text-red-500 whitespace-nowrap">Cancelado</span>
                   ) : (
-                    <p className="text-sm font-bold text-zinc-900 tabular-nums whitespace-nowrap">R$ {pedido.total.toFixed(2)}</p>
+                    <p className="text-sm font-bold text-zinc-900 tabular-nums whitespace-nowrap">{formatCurrency(pedido.total)}</p>
                   )}
                 </div>
                 <div className="flex items-center gap-3 text-xs text-zinc-500 flex-wrap">
