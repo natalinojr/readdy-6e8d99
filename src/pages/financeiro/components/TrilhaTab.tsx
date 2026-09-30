@@ -129,13 +129,17 @@ export default function TrilhaTab() {
   }, [user?.tenantId, chaveVencidas]);
 
   // ── filtros ────────────────────────────────────────────────────────────────
-  const q = busca.trim().toLowerCase();
+  const semAcento = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ');
+  const q = semAcento(busca.trim());
   const bate = useCallback((c: CasoTrilha) => !q
-    || `${c.titulo} ${c.subtitulo} ${c.notas.map((n) => n.numero).join(' ')} ${c.compra?.invoice_number ?? ''} ${c.valor.toFixed(2).replace('.', ',')}`.toLowerCase().includes(q), [q]);
+    || semAcento(`${c.titulo} ${c.subtitulo} ${c.notas.map((n) => `${n.numero ?? ''} ${n.emitente_nome ?? ''}`).join(' ')} ${c.compra?.invoice_number ?? ''} ${c.valor.toFixed(2).replace('.', ',')}`).includes(q), [q]);
   const casosFiltrados = useMemo(() => casos.filter((c) =>
     (!soUrg || c.situacao === 'atencao') && (!etapaF || ruim(estadoDa(c, etapaF)) || (etapaF === 'banco' && saidaNaoIdentificada(c))) && bate(c)), [casos, soUrg, etapaF, bate]);
   const tarefasFiltradas = useMemo(() => todasTarefas.filter(({ tarefa, caso }) =>
     (!soUrg || tarefa.urgente) && (!etapaF || tarefa.etapas.includes(etapaF)) && bate(caso)), [todasTarefas, soUrg, etapaF, bate]);
+  // Para a tela vazia: casos que a busca acha (com ou sem tarefa) e tarefas da busca fora da fase/urgentes
+  const casosDaBusca = useMemo(() => (q ? casos.filter(bate) : []), [q, casos, bate]);
+  const tarefasSemFase = useMemo(() => todasTarefas.filter(({ caso }) => bate(caso)).length, [todasTarefas, bate]);
 
   // ── topo ───────────────────────────────────────────────────────────────────
   const completos = casos.filter((c) => c.situacao === 'ok').length;
@@ -410,9 +414,39 @@ export default function TrilhaTab() {
               );
             })}
             {visiveis.length === 0 && (
-              <div className="bg-white rounded-2xl border border-emerald-200 py-16 text-center">
+              <div className="bg-white rounded-2xl border border-emerald-200 py-12 px-4 text-center">
                 <i className="ri-checkbox-circle-fill text-5xl text-emerald-400 block mb-2" />
                 <p className="font-semibold">Nada pendente{etapaF || busca || soUrg ? ' com esses filtros' : ''}</p>
+                {(etapaF || soUrg) && tarefasSemFase > 0 && (
+                  <button onClick={() => { setEtapaF(null); setSoUrg(false); }} className="mt-3 text-xs font-semibold px-3 py-1.5 bg-amber-50 text-amber-700 border border-amber-200 rounded-xl hover:bg-amber-100 cursor-pointer">
+                    Há {tarefasSemFase} {tarefasSemFase === 1 ? 'tarefa' : 'tarefas'} desta busca em outras fases — ver todas
+                  </button>
+                )}
+                {/* Busca achou o caso, mas ele não tem tarefa: mostra onde ele está, senão parecia que a busca não achou nada */}
+                {q && casosDaBusca.length > 0 && (
+                  <div className="mt-5 text-left max-w-2xl mx-auto">
+                    <p className="text-xs text-zinc-500 mb-2">{casosDaBusca.length === 1 ? 'Encontrei 1 caso' : `Encontrei ${casosDaBusca.length} casos`} com “{busca.trim()}” — sem tarefa {etapaF ? `em ${NOMES_ETAPA[etapaF]}` : 'agora'}:</p>
+                    <ul className="space-y-1.5">
+                      {casosDaBusca.slice(0, 20).map((c) => {
+                        const onde = c.etapas.find((e) => ruim(e.estado)) ?? c.etapas.find((e) => e.estado === 'prazo' || e.estado === 'espera' || e.estado === 'pendente');
+                        return (
+                          <li key={c.key}>
+                            <button onClick={() => setGavetaKey(c.key)} className="w-full flex items-center gap-3 px-3 py-2 rounded-xl border border-zinc-200 hover:border-amber-300 hover:bg-amber-50/40 text-left cursor-pointer min-w-0">
+                              <span className="flex-1 min-w-0">
+                                <span className="block text-sm font-semibold text-zinc-800 truncate">{c.titulo}</span>
+                                <span className="block text-[11px] text-zinc-500 truncate">
+                                  {c.subtitulo} · {c.data.slice(8, 10)}/{c.data.slice(5, 7)} · {c.situacao === 'ok' ? 'completo' : onde ? `${onde.nome}: ${onde.resumo}` : 'em andamento'}
+                                </span>
+                              </span>
+                              <span className="text-sm font-semibold tabular-nums text-zinc-700 shrink-0">{fmtBRL(c.valor)}</span>
+                              <i className="ri-arrow-right-s-line text-zinc-400 shrink-0" />
+                            </button>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
+                )}
               </div>
             )}
           </section>
