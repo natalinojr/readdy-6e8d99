@@ -46,6 +46,28 @@ interface ComputedItem {
 // Colunas são listadas explicitamente de propósito: o spread do payload
 // deixava campos que não existem na tabela (ex.: catalog_id) chegarem ao
 // insert e derrubarem a criação da compra inteira (PGRST204).
+// Frete da compra rateado pelo valor de cada item (2026-09-30). Entra no custo do insumo e, pela DRE,
+// no CMV/despesa do item. Se quem chamou já mandou o rateio fechando com o frete, ele vale; senão
+// (ex.: compra lançada pela nota de entrada, que mandava 0 em todos) rateia aqui — antes o frete
+// ficava só no cabeçalho e sumia da DRE.
+function ratearFrete(items: unknown, frete: number): void {
+  const arr = (Array.isArray(items) ? items : []) as Array<Record<string, unknown>>;
+  if (arr.length === 0) return;
+  const informado = arr.reduce((s, it) => s + Number(it.freight_allocated ?? 0), 0);
+  if (Math.abs(informado - (frete > 0 ? frete : 0)) <= 0.01) return;
+  if (!(frete > 0)) { arr.forEach((it) => { it.freight_allocated = 0; }); return; }
+  const bruto = (it: Record<string, unknown>) => Number(it.quantity ?? 0) * Math.max(0, Number(it.unit_price ?? 0) - Number(it.discount_per_unit ?? 0));
+  const base = arr.reduce((s, it) => s + bruto(it), 0);
+  let acc = 0;
+  arr.forEach((it, i) => {
+    const parte = i < arr.length - 1
+      ? Math.round((base > 0 ? frete * bruto(it) / base : frete / arr.length) * 100) / 100
+      : Math.round((frete - acc) * 100) / 100;
+    it.freight_allocated = parte;
+    acc += parte;
+  });
+}
+
 function computePurchaseItems(tenant_id: string, items: unknown): ComputedItem[] {
   return (Array.isArray(items) ? items : []).map((item: Record<string, unknown>) => {
     const quantity = Number(item.quantity ?? 0);
@@ -753,6 +775,7 @@ Deno.serve(async (req) => {
         const freightAmount = Number(purchaseData.freight_amount ?? 0);
         if (!freightAmount) purchaseData.freight_amount = 0;
 
+        ratearFrete(items, freightAmount);
         const computedItems = computePurchaseItems(tenant_id, items);
         const avisosConversao = await applyIngredientConversions(supabase, tenant_id, items, computedItems);
         if (computedItems.length > 0) {
@@ -888,6 +911,7 @@ Deno.serve(async (req) => {
         const freightAmount = Number(purchaseData.freight_amount ?? 0);
         if (!freightAmount) purchaseData.freight_amount = 0;
 
+        ratearFrete(items, freightAmount);
         const computedItems = computePurchaseItems(tenant_id, items);
         const avisosConversao = await applyIngredientConversions(supabase, tenant_id, items, computedItems);
         if (computedItems.length > 0) {
@@ -967,17 +991,8 @@ Deno.serve(async (req) => {
         if (!existing) return new Response(JSON.stringify({ error: 'Compra não encontrada' }), { status: 404, headers: corsHeaders });
 
         // Frete da compra rateado pelo valor de cada item (entra no custo do insumo, como na Nova Compra)
-        const freteCompra = Number(existing.freight_amount ?? 0);
-        if (freteCompra > 0) {
-          const bruto = (it: Record<string, unknown>) => Number(it.quantity ?? 0) * Math.max(0, Number(it.unit_price ?? 0) - Number(it.discount_per_unit ?? 0));
-          const base = (items as Array<Record<string, unknown>>).reduce((s, it) => s + bruto(it), 0);
-          let acc = 0;
-          (items as Array<Record<string, unknown>>).forEach((it, i, arr) => {
-            const parte = i < arr.length - 1 ? Math.round((base > 0 ? freteCompra * bruto(it) / base : 0) * 100) / 100 : Math.round((freteCompra - acc) * 100) / 100;
-            it.freight_allocated = parte;
-            acc += parte;
-          });
-        }
+        (items as Array<Record<string, unknown>>).forEach((it) => { it.freight_allocated = 0; });
+        ratearFrete(items, Number(existing.freight_amount ?? 0));
         const computedItems = computePurchaseItems(tenant_id, items);
         for (const it of computedItems) {
           if (!String(it.description ?? '').trim()) return new Response(JSON.stringify({ error: 'Todo item precisa de descrição' }), { status: 400, headers: corsHeaders });
