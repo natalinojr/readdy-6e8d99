@@ -355,6 +355,8 @@ interface ItemFora {
   purchase_item_id: string; classification_id: string; received_at: string; description: string | null;
   unit_label: string | null; quantidade: number; valor: number; upp: number; insumo: string; insumo_unit: string | null;
   inventario_depois: boolean; inventario_em: string | null;
+  /** quanto esta compra já pôs no mesmo insumo (outra linha da nota, com nome diferente) */
+  ja_entrou: number;
 }
 const num3 = (n: number) => n.toLocaleString('pt-BR', { maximumFractionDigits: 3 });
 const unid = (u: string | null | undefined) => (!u || u === 'unit' ? 'un' : u);
@@ -432,6 +434,11 @@ export function EntrarNoEstoque({ caso, acoes }: { caso: CasoTrilha; acoes: Acoe
                     {num3(Number(r.quantidade))} {r.unit_label || 'un'} · {fmtBRL(Number(r.valor))} →{' '}
                     <span className="text-emerald-700">+{num3(Number(r.quantidade) * Number(r.upp))} {unid(r.insumo_unit)} em {r.insumo}</span>
                   </p>
+                  {Number(r.ja_entrou) > 0 && (
+                    <p className="text-[11px] text-sky-700 mt-0.5">
+                      <i className="ri-information-line" /> Outra linha desta nota já pôs +{num3(Number(r.ja_entrou))} {unid(r.insumo_unit)} em {r.insumo} (é essa que aparece na movimentação). Esta linha é outra quantidade e ainda não entrou.
+                    </p>
+                  )}
                   {r.inventario_depois && (
                     <p className="text-[11px] text-orange-700 mt-0.5">
                       <i className="ri-error-warning-line" /> Teve contagem deste insumo depois{r.inventario_em ? ` (${diaBR(r.inventario_em)})` : ''}: o estoque já foi acertado. Dar entrada agora conta em dobro.

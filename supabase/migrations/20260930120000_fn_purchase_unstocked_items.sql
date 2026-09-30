@@ -25,7 +25,11 @@ begin
              coalesce(nullif(c.units_per_package, 0), 1) as upp,
              g.name as insumo, g.unit as insumo_unit,
              (inv.em is not null) as inventario_depois,
-             inv.em as inventario_em
+             inv.em as inventario_em,
+             -- o que ESTA compra já pôs no mesmo insumo (outra linha da nota com nome diferente)
+             (select coalesce(sum(m.quantity), 0) from public.stock_movements m
+               where m.tenant_id = p_tenant and m.purchase_id = p_purchase and m.ingredient_id = c.ingredient_id
+                 and m.type = 'in') as ja_entrou
         from public.fn_item_unstocked_base(p_tenant) b
         join public.fin_purchase_items i on i.id = b.purchase_item_id
         join public.fin_item_classifications c on c.id = b.classification_id
