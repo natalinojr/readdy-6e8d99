@@ -8,6 +8,7 @@ import {
   type BoletoInfo, type PagamentoInter, type ResultadoLinha,
 } from './api';
 import { fmtBRL, type AcoesTrilha } from './comum';
+import { supabase } from '@/lib/supabase';
 
 const msgErro = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const BTN = 'text-xs px-3 py-1.5 rounded-lg font-semibold cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed';
@@ -343,6 +344,112 @@ export function AcharSaida({ conta, caso, acoes }: { conta: TrConta; caso: CasoT
       ))}
       <Erro msg={erro} />
       <button onClick={() => acoes.rota('/financeiro?tab=conciliacao')} className={BTN_LEVE}>Abrir na Conciliação</button>
+    </Painel>
+  );
+}
+
+// ── 7. Escolher se entra no estoque (compra recebida com itens ligados que não entraram) ──
+// Lista por compra (fn_purchase_unstocked_items); grava por item da Classificação
+// (fn_item_stock_late_entry), igual à janela "Fora do estoque" da Classificação de itens.
+interface ItemFora {
+  purchase_item_id: string; classification_id: string; received_at: string; description: string | null;
+  unit_label: string | null; quantidade: number; valor: number; upp: number; insumo: string; insumo_unit: string | null;
+  inventario_depois: boolean; inventario_em: string | null;
+}
+const num3 = (n: number) => n.toLocaleString('pt-BR', { maximumFractionDigits: 3 });
+const unid = (u: string | null | undefined) => (!u || u === 'unit' ? 'un' : u);
+export function EntrarNoEstoque({ caso, acoes }: { caso: CasoTrilha; acoes: AcoesTrilha }) {
+  const compraId = caso.compra!.id;
+  const [lista, setLista] = useState<ItemFora[] | null>(null);
+  const [sel, setSel] = useState<Set<string>>(new Set());
+  const [ocupado, setOcupado] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+
+  useEffect(() => {
+    let vivo = true;
+    supabase.rpc('fn_purchase_unstocked_items', { p_tenant: acoes.tenantId, p_purchase: compraId }).then(({ data, error }) => {
+      if (!vivo) return;
+      if (error) { setErro(error.message); setLista([]); return; }
+      setLista((data ?? []) as ItemFora[]);
+    });
+    return () => { vivo = false; };
+  }, [acoes.tenantId, compraId]);
+
+  const itens = lista ?? [];
+  const marcados = itens.filter((r) => sel.has(r.purchase_item_id));
+  const todos = itens.length > 0 && marcados.length === itens.length;
+  const toggle = (id: string) => setSel((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+
+  const aplicar = async (modo: 'entrar' | 'ignorar') => {
+    if (marcados.length === 0) return;
+    setOcupado(true); setErro(null);
+    try {
+      // fn_item_stock_late_entry é por item da Classificação: agrupa os marcados
+      const porItem = new Map<string, string[]>();
+      for (const r of marcados) porItem.set(r.classification_id, [...(porItem.get(r.classification_id) ?? []), r.purchase_item_id]);
+      for (const [cid, ids] of porItem) {
+        const { error } = await supabase.rpc('fn_item_stock_late_entry', {
+          p_tenant: acoes.tenantId, p_id: cid,
+          p_entrar: modo === 'entrar' ? ids : [], p_ignorar: modo === 'ignorar' ? ids : [],
+        });
+        if (error) throw new Error(error.message);
+      }
+      const q = marcados.length;
+      const restantes = itens.filter((r) => !sel.has(r.purchase_item_id));
+      setSel(new Set()); setLista(restantes);
+      const rotulo = modo === 'entrar'
+        ? `${q} ${q === 1 ? 'item entrou' : 'itens entraram'} no estoque (${caso.titulo})`
+        : `${q} ${q === 1 ? 'item marcado' : 'itens marcados'} como "não entra" (${caso.titulo})`;
+      if (restantes.length === 0) await acoes.concluir(rotulo);
+      else { await acoes.recarregar(); setOcupado(false); }
+    } catch (e) { setErro(msgErro(e)); setOcupado(false); }
+  };
+
+  return (
+    <Painel titulo="Escolher se entra no estoque" cor="red">
+      <p className="text-[11px] text-zinc-500">
+        Estes itens já estão ligados a um insumo, mas o recebimento foi confirmado antes do vínculo e o estoque não mudou.
+        Marque os que devem entrar agora (na data do recebimento). Se a mercadoria já foi usada ou uma contagem já acertou o estoque, marque e escolha <b>Não entram</b>.
+      </p>
+      {lista === null ? (
+        <p className="text-xs text-zinc-400">Carregando…</p>
+      ) : itens.length === 0 ? (
+        <p className="text-xs text-zinc-500">Nenhum item desta compra está esperando entrada no estoque.</p>
+      ) : (
+        <>
+          <label className="flex items-center gap-2 text-xs text-zinc-600 cursor-pointer">
+            <input type="checkbox" checked={todos} onChange={() => setSel(todos ? new Set() : new Set(itens.map((r) => r.purchase_item_id)))} />
+            Marcar todos ({itens.length})
+          </label>
+          <div className="space-y-1.5 max-h-80 overflow-y-auto">
+            {itens.map((r) => (
+              <label key={r.purchase_item_id}
+                className={`flex items-start gap-2 rounded-lg border px-2.5 py-2 cursor-pointer ${sel.has(r.purchase_item_id) ? 'border-amber-300 bg-amber-50/60' : 'border-zinc-200 hover:border-zinc-300'}`}>
+                <input type="checkbox" className="mt-0.5" checked={sel.has(r.purchase_item_id)} onChange={() => toggle(r.purchase_item_id)} />
+                <div className="min-w-0 flex-1 text-xs">
+                  <p className="text-zinc-800 break-words">{r.description ?? '—'}</p>
+                  <p className="text-zinc-500">
+                    {num3(Number(r.quantidade))} {r.unit_label || 'un'} · {fmtBRL(Number(r.valor))} →{' '}
+                    <span className="text-emerald-700">+{num3(Number(r.quantidade) * Number(r.upp))} {unid(r.insumo_unit)} em {r.insumo}</span>
+                  </p>
+                  {r.inventario_depois && (
+                    <p className="text-[11px] text-orange-700 mt-0.5">
+                      <i className="ri-error-warning-line" /> Teve contagem deste insumo depois{r.inventario_em ? ` (${diaBR(r.inventario_em)})` : ''}: o estoque já foi acertado. Dar entrada agora conta em dobro.
+                    </p>
+                  )}
+                </div>
+              </label>
+            ))}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button onClick={() => void aplicar('entrar')} disabled={ocupado || marcados.length === 0} className={BTN_OK}>
+              {ocupado ? 'Salvando…' : `Dar entrada no estoque${marcados.length ? ` (${marcados.length})` : ''}`}
+            </button>
+            <button onClick={() => void aplicar('ignorar')} disabled={ocupado || marcados.length === 0} className={BTN_LEVE}>Não entram</button>
+          </div>
+        </>
+      )}
+      <Erro msg={erro} />
     </Painel>
   );
 }

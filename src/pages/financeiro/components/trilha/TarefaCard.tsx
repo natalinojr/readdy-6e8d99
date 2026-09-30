@@ -6,7 +6,7 @@ import { FasesLinha } from './Fases';
 import { fmtBRL, type AcoesTrilha } from './comum';
 import { temBoleto } from './api';
 import { diasAtraso } from '@/lib/trilhaAcoes';
-import { AcharSaida, CriarConta, FaltaJeitoDePagar, PagarConta, PedirBoleto, SugestaoExtrato } from './Paineis';
+import { AcharSaida, CriarConta, EntrarNoEstoque, FaltaJeitoDePagar, PagarConta, PedirBoleto, SugestaoExtrato } from './Paineis';
 
 interface Botao { label: string; icone: string; onClick: () => void; /** botão que abre painel inline: mostra ▾/▴ */ painel?: 'aberto' | 'fechado' }
 interface Plano { botoes: Botao[]; ajuda?: string }
@@ -47,13 +47,13 @@ export function planoDaTarefa(t: TarefaTrilha, c: CasoTrilha, a: AcoesTrilha, x:
       };
     case 'estoque': {
       if (!compraId) return { botoes: [] };
-      // Itens já têm insumo, só o recebimento ficou fora: abre a Classificação no filtro "Fora do estoque"
+      // Itens já têm insumo, só o recebimento ficou fora: escolhe ali mesmo, no cartão, quais entram
       const foraEstoque = c.etapas.find((e) => e.id === 'estoque')?.atalho?.valor === 'fora_estoque';
       return t.urgente
         ? {
           botoes: [
             foraEstoque
-              ? { label: 'Escolher se entra no estoque', icone: 'ri-inbox-archive-line', onClick: () => a.rota(qs('itens', '&filtro=fora_estoque')) }
+              ? { label: 'Escolher se entra no estoque', icone: 'ri-inbox-archive-line', painel: x.painel === 'estoque' ? 'aberto' : 'fechado', onClick: () => x.alternar('estoque') }
               : { label: 'Ligar os itens aos insumos', icone: 'ri-links-line', onClick: () => a.rota(qs('itens')) },
             { label: 'Ver a compra', icone: 'ri-shopping-cart-2-line', onClick: () => a.compra(compraId, `Acertou o estoque de ${c.titulo}`) },
           ],
@@ -172,6 +172,7 @@ export default function TarefaCard({ caso, tarefa, expandido, onToggle, acoes }:
         )}
         {plano.ajuda && <p className="mt-1.5 text-[11px] text-zinc-500">{plano.ajuda}</p>}
         {painel === 'criar' && caso.compra && <CriarConta caso={caso} acoes={acoes} />}
+        {painel === 'estoque' && caso.compra && <EntrarNoEstoque caso={caso} acoes={acoes} />}
         {painel === 'achar' && contaPaga && <AcharSaida conta={contaPaga} caso={caso} acoes={acoes} />}
       </div>
       {caso.avisos.length > 0 && (
