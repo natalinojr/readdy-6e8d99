@@ -348,6 +348,23 @@ async function applyStockEntry(
   // deno-lint-ignore no-explicit-any
   user: any,
 ) {
+  // Data do movimento = data do recebimento (compra lançada "já recebida em 21/09" e detalhada
+  // depois entrava com a hora do clique — 2026-09-30). Se o insumo foi contado entre o recebimento
+  // e agora, fica na hora de agora (mesma regra do purchase-confirm-delivery / fn_item_stock_late_entry).
+  const recebidoEm = String(purchase.delivery_confirmed_at ?? purchase.stock_applied_at ?? '');
+  const agora = new Date().toISOString();
+  const datar = recebidoEm && new Date(recebidoEm).getTime() < Date.now() - 60_000;
+  const contadoDepois = async (ing: string) => {
+    const [sess, adj] = await Promise.all([
+      supabase.from('inventory_sessions').select('id').eq('tenant_id', tenant_id).eq('status', 'confirmado')
+        .filter('items', 'cs', JSON.stringify([{ ingredient_id: ing }])).gt('created_at', recebidoEm).lt('created_at', agora).limit(1),
+      supabase.from('inventory_sessions').select('id').eq('tenant_id', tenant_id).eq('status', 'confirmado')
+        .filter('items', 'cs', JSON.stringify([{ insumoId: ing }])).gt('created_at', recebidoEm).lt('created_at', agora).limit(1),
+    ]);
+    const { data: aj } = await supabase.from('stock_movements').select('id').eq('tenant_id', tenant_id).eq('ingredient_id', ing)
+      .eq('type', 'inventory_adjustment').gt('created_at', recebidoEm).lt('created_at', agora).limit(1);
+    return (sess.data?.length ?? 0) + (adj.data?.length ?? 0) + (aj?.length ?? 0) > 0;
+  };
   for (const item of items) {
     if (!item.ingredient_id) continue;
     const qty = item.received_quantity != null ? Number(item.received_quantity) : Number(item.quantity ?? 0);
@@ -363,7 +380,11 @@ async function applyStockEntry(
     });
     if (mvErr) console.error('[purchase-write] fn_add_stock_movement error:', mvErr.message ?? mvErr);
     // Liga o movimento à compra (permite corrigir a data do recebimento depois)
-    else if (mvRes?.movement_id) await supabase.from('stock_movements').update({ purchase_id: purchase.id }).eq('id', mvRes.movement_id).eq('tenant_id', tenant_id);
+    else if (mvRes?.movement_id) {
+      const naData = datar && !(await contadoDepois(String(item.ingredient_id)));
+      await supabase.from('stock_movements').update({ purchase_id: purchase.id, ...(naData ? { created_at: recebidoEm } : {}) })
+        .eq('id', mvRes.movement_id).eq('tenant_id', tenant_id);
+    }
   }
 }
 
