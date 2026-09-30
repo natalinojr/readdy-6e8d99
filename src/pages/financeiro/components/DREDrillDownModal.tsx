@@ -20,8 +20,11 @@ interface DetailItem {
   amount: number;
   extra?: Record<string, string | number>;
   source: string;
-  /** Agrupador opcional (drill-down do CMV: categoria ou fornecedor). */
+  /** Agrupador opcional (drill-down do CMV: categoria, fornecedor ou compra). */
   group?: string;
+  /** Texto do cabeçalho do grupo quando a chave não é legível (aba Compras: chave = id da compra). */
+  groupLabel?: string;
+  groupSub?: string;
 }
 
 function getMonthRange(mes: string) {
@@ -50,6 +53,8 @@ export default function DREDrillDownModal({ type, categoryId, categoryName, mont
   const [loading, setLoading] = useState(true);
   const [total, setTotal] = useState(0);
   const [cmvAgrupar, setCmvAgrupar] = useState<'categoria' | 'fornecedor'>('categoria');
+  // Aba do CMV: itens soltos (agrupados por categoria/fornecedor) ou as compras que formam a linha.
+  const [cmvAba, setCmvAba] = useState<'itens' | 'compras'>('itens');
   const [cmvDespesa, setCmvDespesa] = useState(0);
   const [abertos, setAbertos] = useState<Record<string, boolean>>({});
 
@@ -256,11 +261,19 @@ export default function DREDrillDownModal({ type, categoryId, categoryName, mont
           description: l.descricao,
           amount: l.valor,
           source: l.nota ? `NF ${l.nota}` : 'Compra',
-          group: cmvAgrupar === 'categoria' ? l.categoria : l.fornecedor,
+          group: cmvAba === 'compras' ? l.purchaseId : cmvAgrupar === 'categoria' ? l.categoria : l.fornecedor,
+          ...(cmvAba === 'compras' ? {
+            groupLabel: l.fornecedor,
+            groupSub: [
+              l.data ? new Date(l.data + 'T00:00:00').toLocaleDateString('pt-BR') : null,
+              l.nota ? `NF ${l.nota}` : 'sem nota',
+              l.pago != null ? `${(l.pago * 100).toFixed(0)}% pago no mês` : null,
+            ].filter(Boolean).join(' · '),
+          } : {}),
           extra: {
-            ...(cmvAgrupar === 'categoria' ? { Fornecedor: l.fornecedor } : { Categoria: l.categoria }),
+            ...(cmvAba === 'compras' ? { Categoria: l.categoria } : cmvAgrupar === 'categoria' ? { Fornecedor: l.fornecedor } : { Categoria: l.categoria }),
             ...(l.quantidade != null ? { Qtd: `${l.quantidade.toLocaleString('pt-BR')}${l.unidade ? ` ${l.unidade}` : ''}` } : {}),
-            ...(l.pago != null ? { 'Pago no mês': `${(l.pago * 100).toFixed(0)}% da compra` } : {}),
+            ...(l.pago != null && cmvAba !== 'compras' ? { 'Pago no mês': `${(l.pago * 100).toFixed(0)}% da compra` } : {}),
           },
         }));
       setCmvDespesa(linhas.filter(l => l.destino === 'despesa').reduce((s, l) => s + l.valor, 0));
@@ -349,7 +362,7 @@ export default function DREDrillDownModal({ type, categoryId, categoryName, mont
     setItems(result);
     setTotal(result.reduce((s, i) => s + i.amount, 0));
     setLoading(false);
-  }, [user?.tenantId, type, categoryId, month, mode, cmvAgrupar]);
+  }, [user?.tenantId, type, categoryId, month, mode, cmvAgrupar, cmvAba]);
 
   useEffect(() => { loadDetails(); }, [loadDetails]);
 
@@ -363,7 +376,13 @@ export default function DREDrillDownModal({ type, categoryId, categoryName, mont
         (acc[g] ??= []).push(i);
         return acc;
       }, {} as Record<string, DetailItem[]>))
-        .map(([nome, lista]) => ({ nome, lista, soma: lista.reduce((s, i) => s + i.amount, 0) }))
+        .map(([nome, lista]) => ({
+          nome,
+          titulo: lista[0].groupLabel ?? nome,
+          sub: lista[0].groupSub,
+          lista,
+          soma: lista.reduce((s, i) => s + i.amount, 0),
+        }))
         .sort((a, b) => b.soma - a.soma)
     : [];
 
@@ -403,11 +422,13 @@ export default function DREDrillDownModal({ type, categoryId, categoryName, mont
           <div>
             <h3 className="font-semibold text-zinc-900 text-sm">{label}</h3>
             <p className="text-xs text-zinc-400 mt-0.5">
-              {items.length} registro{items.length !== 1 ? 's' : ''} — Total: {formatCurrency(total)}
+              {type === 'cmv' && cmvAba === 'compras'
+                ? `${grupos.length} compra${grupos.length !== 1 ? 's' : ''} · ${items.length} ite${items.length !== 1 ? 'ns' : 'm'}`
+                : `${items.length} registro${items.length !== 1 ? 's' : ''}`} — Total: {formatCurrency(total)}
             </p>
           </div>
           <div className="flex items-center gap-2">
-            {type === 'cmv' && (
+            {type === 'cmv' && cmvAba === 'itens' && (
               <div className="flex bg-zinc-100 p-0.5 rounded-lg">
                 {(['categoria', 'fornecedor'] as const).map(g => (
                   <button
@@ -425,6 +446,19 @@ export default function DREDrillDownModal({ type, categoryId, categoryName, mont
             </button>
           </div>
         </div>
+        {type === 'cmv' && (
+          <div className="flex gap-1 px-6 border-b border-zinc-100 flex-shrink-0">
+            {([['itens', 'Itens', 'ri-list-check-2'], ['compras', 'Compras', 'ri-shopping-cart-2-line']] as const).map(([k, t, ic]) => (
+              <button
+                key={k}
+                onClick={() => { setCmvAba(k); setAbertos({}); }}
+                className={`flex items-center gap-1.5 px-3 py-2 text-xs font-semibold border-b-2 -mb-px cursor-pointer ${cmvAba === k ? 'border-amber-500 text-zinc-900' : 'border-transparent text-zinc-400 hover:text-zinc-600'}`}
+              >
+                <i className={ic} /> {t}
+              </button>
+            ))}
+          </div>
+        )}
         {type === 'cmv' && !loading && (
           <div className="px-6 py-2 bg-zinc-50 border-b border-zinc-100 text-[11px] text-zinc-500">
             {mode === 'caixa'
@@ -469,7 +503,8 @@ export default function DREDrillDownModal({ type, categoryId, categoryName, mont
                             <td colSpan={3} className="px-5 py-2.5">
                               <div className="flex items-center gap-2">
                                 <i className={`ri-arrow-${aberto ? 'down' : 'right'}-s-line text-zinc-400`} />
-                                <span className="text-xs font-bold text-zinc-800">{g.nome}</span>
+                                <span className="text-xs font-bold text-zinc-800">{g.titulo}</span>
+                                {g.sub && <span className="text-[10px] text-zinc-500">{g.sub}</span>}
                                 <span className="text-[10px] text-zinc-400">{g.lista.length} ite{g.lista.length !== 1 ? 'ns' : 'm'}</span>
                                 <div className="hidden sm:block w-20 h-1.5 rounded-full bg-zinc-200 overflow-hidden ml-2">
                                   <div className="h-full bg-orange-400" style={{ width: `${total > 0 ? (g.soma / total) * 100 : 0}%` }} />
