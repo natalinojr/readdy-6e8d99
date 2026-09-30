@@ -236,7 +236,8 @@ export function montarCaso(r: Rascunho, hoje: string, temExtrato: boolean): Caso
 
   // ── 1. Nota fiscal ───────────────────────────────────────────────────────────
   if (nota) {
-    const servico = Number(nota.modelo) === 10 || nota.import_type === 'bill';
+    // Só NFS-e (modelo 10) é nota de serviço; NF-e de equipamento lançada como despesa continua "Nota"
+    const servico = Number(nota.modelo) === 10;
     add('documento', 'ok', `${servico ? 'Nota de serviço' : 'Nota'} nº ${nota.numero ?? '?'} recebida`, {
       detalhe: `${nota.emitente_nome ?? ''} · emitida ${diaBR(nota.emitted_at)} · ${brl(Number(nota.valor_total))}${nota.auto_imported ? ' · lançada pela conciliação' : ''}`,
       atalho: { tab: 'notas-entrada', param: 'busca', valor: String(nota.numero ?? nota.emitente_nome ?? '') },

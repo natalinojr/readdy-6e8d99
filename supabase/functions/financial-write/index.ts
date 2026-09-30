@@ -16,6 +16,15 @@ function extractErrorMessage(err: unknown): string {
   return String(err);
 }
 
+// Rótulo da categoria de uma compra na lista do extrato: pelos itens (sem categoria de despesa = CMV)
+function rotuloCompra(cats: Array<string | null>, dreNome: Map<string, string>): string {
+  if (!cats.length) return 'Compra (CMV)';
+  const desp = [...new Set(cats.filter(Boolean).map((c) => dreNome.get(String(c)) ?? 'Despesa'))];
+  const temCmv = cats.some((c) => !c);
+  if (!desp.length) return 'Compra (CMV)';
+  return temCmv ? `Compra (CMV + ${desp.join(', ')})` : `Compra · ${desp.join(', ')}`;
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
@@ -1326,14 +1335,28 @@ Deno.serve(async (req) => {
           ?? (r.match_kind === 'payable' && r.reconciled ? r.match_ref_id ?? null : null);
         const billIds = [...new Set((rows as SiRow[]).map(billDe).filter((x): x is string => Boolean(x)))];
         if (billIds.length > 0) {
-          const bills: Array<{ id: string; description: string | null; supplier: string | null; category: string | null; reference_type: string | null; dre_category_id: string | null; cost_center_id: string | null }> = [];
+          const bills: Array<{ id: string; description: string | null; supplier: string | null; category: string | null; reference_type: string | null; reference_id: string | null; dre_category_id: string | null; cost_center_id: string | null }> = [];
           for (let i = 0; i < billIds.length; i += 200) {
             const { data: b } = await supabase.from('fin_accounts_payable')
-              .select('id, description, supplier, category, reference_type, dre_category_id, cost_center_id')
+              .select('id, description, supplier, category, reference_type, reference_id, dre_category_id, cost_center_id')
               .eq('tenant_id', tenant_id).in('id', billIds.slice(i, i + 200));
             bills.push(...(b ?? []));
           }
-          const dreIds = [...new Set(bills.map((b) => b.dre_category_id).filter(Boolean))] as string[];
+          // Compra: a DRE sai dos ITENS (item com categoria de despesa vai para ela; o resto é CMV —
+          // src/lib/comprasDRE.ts). Antes toda compra aparecia "Compra (CMV)", até maquininha em Estrutura.
+          const compraIds = [...new Set(bills.filter((b) => b.reference_type === 'purchase' && b.reference_id).map((b) => b.reference_id as string))];
+          const itensPorCompra = new Map<string, Array<string | null>>();
+          for (let i = 0; i < compraIds.length; i += 200) {
+            const { data: its } = await supabase.from('fin_purchase_items').select('purchase_id, dre_category_id, description')
+              .eq('tenant_id', tenant_id).in('purchase_id', compraIds.slice(i, i + 200));
+            for (const it of (its ?? []) as Array<{ purchase_id: string; dre_category_id: string | null; description: string | null }>) {
+              if (String(it.description ?? '').startsWith('Acréscimos da nota')) continue;
+              const l = itensPorCompra.get(it.purchase_id) ?? [];
+              l.push(it.dre_category_id);
+              itensPorCompra.set(it.purchase_id, l);
+            }
+          }
+          const dreIds = [...new Set([...bills.map((b) => b.dre_category_id), ...[...itensPorCompra.values()].flat()].filter(Boolean))] as string[];
           const ccIds = [...new Set(bills.map((b) => b.cost_center_id).filter(Boolean))] as string[];
           const [{ data: dres }, { data: ccs }] = await Promise.all([
             dreIds.length ? supabase.from('fin_dre_categories').select('id, name').in('id', dreIds) : Promise.resolve({ data: [] as Array<{ id: string; name: string }> }),
@@ -1350,7 +1373,7 @@ Deno.serve(async (req) => {
             r.classificacao = {
               bill_id: b.id,
               tipo: compra ? 'compra' : 'despesa',
-              categoria: compra ? 'Compra (CMV)' : (b.dre_category_id ? dreNome.get(b.dre_category_id) ?? null : null) ?? b.category ?? null,
+              categoria: compra ? rotuloCompra(itensPorCompra.get(String(b.reference_id)) ?? [], dreNome) : (b.dre_category_id ? dreNome.get(b.dre_category_id) ?? null : null) ?? b.category ?? null,
               centro_custo: b.cost_center_id ? ccNome.get(b.cost_center_id) ?? null : null,
               // Descrição do registro do pagamento (a conta que recebeu a baixa): a tela mostra e busca por ela
               descricao: [b.description, b.supplier && !String(b.description ?? '').toLowerCase().includes(String(b.supplier).toLowerCase()) ? b.supplier : null]
