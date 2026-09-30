@@ -17,7 +17,7 @@ function textoModelo(t: string): string {
   return MODELOS[m[1]].replace(/\{\{(\d+)\}\}/g, (_x, n) => params[Number(n) - 1] ?? '');
 }
 // Mesma chave do banco (wa_phone_key): DDD + 8 dígitos, sem 55 e sem o 9 do celular.
-const phoneKey = (p: string) => {
+export const phoneKey = (p: string) => {
   let d = p.replace(/\D/g, '');
   if ((d.length === 12 || d.length === 13) && d.startsWith('55')) d = d.slice(2);
   if (d.length === 11 && d[2] === '9') d = d.slice(0, 2) + d.slice(3);

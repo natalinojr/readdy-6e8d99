@@ -1,6 +1,7 @@
 // Ficha do candidato (reorganizada em 2026-09-30): cabeçalho com a decisão, as fases como botões
 // (fases livres, clicar muda), o quadro "Próximo passo" com a ação que falta agora e 3 abas —
-// Visão geral, Currículo e Linha do tempo (histórico, entrevistas e WhatsApp num lugar só).
+// Visão geral, Currículo, Linha do tempo (histórico e entrevistas) e Conversa IA (o WhatsApp inteiro
+// com a pessoa — a aba só aparece quando há mensagem registrada no wa_log).
 // O corpo das abas mora em ficha/*; este shell mantém o estado do drawer inteiro (distância, abas).
 import { useEffect, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
@@ -20,6 +21,7 @@ import FichaEntrevistas from './ficha/FichaEntrevistas';
 import FichaConversa from './ficha/FichaConversa';
 import FichaHistorico from './ficha/FichaHistorico';
 import ProximoPasso from './ficha/ProximoPasso';
+import { phoneKey } from './ConversaWhatsApp';
 
 interface Props {
   c: Candidate;
@@ -47,12 +49,12 @@ interface Props {
   /** Abre a janela de data/hora da entrevista (remarcar, cancelar, excluir). */
   onRemarcar: (iv: Interview) => void;
   onSessaoAtualizada: () => void;
-  /** Aba ao abrir (ex.: 'linha' quando vem de uma conversa da IA). */
+  /** Aba ao abrir (ex.: 'conversa' quando vem de uma conversa da IA). */
   abaInicial?: Aba;
 }
 
-export type Aba = 'visao' | 'curriculo' | 'linha';
-type Linha = 'tudo' | 'entrevistas' | 'whatsapp';
+export type Aba = 'visao' | 'curriculo' | 'linha' | 'conversa';
+type Linha = 'tudo' | 'entrevistas';
 
 export default function CandidatoDrawer({
   c, companies, stages, ficha, settings, interviews, jobs, applications, sessoes, analyzing, onApply, onOpenJob, distances, onCalcDistances,
@@ -85,11 +87,23 @@ export default function CandidatoDrawer({
   const [editarDados, setEditarDados] = useState(false);
   const [decisaoAberta, setDecisaoAberta] = useState(false);
   const [aba, setAba] = useState<Aba>(abaInicial ?? 'visao');
-  const [linha, setLinha] = useState<Linha>(abaInicial === 'linha' ? 'whatsapp' : 'tudo');
+  const [linha, setLinha] = useState<Linha>('tudo');
   useEffect(() => {
     setEditarDados(false); setDecisaoAberta(false);
-    setAba(abaInicial ?? 'visao'); setLinha(abaInicial === 'linha' ? 'whatsapp' : 'tudo');
+    setAba(abaInicial ?? 'visao'); setLinha('tudo');
   }, [c.id, abaInicial]);
+
+  // Há conversa com a IA? Só conta (head), a conversa em si carrega ao abrir a aba.
+  const fone = c.whatsapp || c.phone;
+  const [temConversa, setTemConversa] = useState(false);
+  useEffect(() => {
+    setTemConversa(false);
+    if (!fone) return;
+    let vivo = true;
+    supabase.from('wa_log').select('id', { count: 'exact', head: true }).eq('phone_key', phoneKey(fone))
+      .then(({ count }) => { if (vivo) setTemConversa((count ?? 0) > 0); });
+    return () => { vivo = false; };
+  }, [fone]);
 
   const abrirArquivo = async () => {
     if (!c.file_path) return;
@@ -109,6 +123,7 @@ export default function CandidatoDrawer({
     { id: 'visao', label: 'Visão geral', icon: 'ri-file-user-line' },
     { id: 'curriculo', label: 'Currículo', icon: 'ri-file-text-line' },
     { id: 'linha', label: 'Linha do tempo', icon: 'ri-history-line' },
+    ...(temConversa || aba === 'conversa' ? [{ id: 'conversa' as Aba, label: 'Conversa IA', icon: 'ri-chat-3-line' }] : []),
   ];
 
   return (
@@ -171,7 +186,7 @@ export default function CandidatoDrawer({
 
         {/* Fases (livres): clicar move a pessoa */}
         <div className="px-5 pb-3">
-          <div className="flex gap-1 overflow-x-auto pb-1">
+          <div className="flex gap-1 overflow-x-auto py-1 px-1 -mx-1">
             {stages.map((s) => {
               const on = faseAtual?.id === s.id;
               return (
@@ -221,7 +236,7 @@ export default function CandidatoDrawer({
         </div>
         <div className={aba === 'linha' ? 'flex-1 overflow-y-auto px-5 py-4 space-y-4' : 'hidden'}>
           <div className="flex gap-1.5">
-            {([['tudo', 'Tudo'], ['entrevistas', `Entrevistas${interviews.length ? ` (${interviews.length})` : ''}`], ['whatsapp', 'WhatsApp']] as const).map(([id, label]) => (
+            {([['tudo', 'Tudo'], ['entrevistas', `Entrevistas${interviews.length ? ` (${interviews.length})` : ''}`]] as const).map(([id, label]) => (
               <button key={id} onClick={() => setLinha(id)}
                 className={`px-3 h-8 rounded-full border text-xs font-bold cursor-pointer ${linha === id ? 'bg-zinc-900 text-white border-zinc-900' : 'bg-white text-zinc-600 border-zinc-200 hover:border-zinc-300'}`}>
                 {label}
@@ -233,7 +248,9 @@ export default function CandidatoDrawer({
             <FichaEntrevistas interviews={interviews} settings={settings} empresa={empresa}
               onAbrirEntrevista={onAbrirEntrevista} onRemarcar={onRemarcar} onAgendar={onAgendar} />
           </div>
-          <div className={linha === 'whatsapp' ? '' : 'hidden'}><FichaConversa c={c} ativa={aba === 'linha' && linha === 'whatsapp'} /></div>
+        </div>
+        <div className={aba === 'conversa' ? 'flex-1 overflow-y-auto px-5 py-4' : 'hidden'}>
+          <FichaConversa c={c} ativa={aba === 'conversa'} />
         </div>
 
         <div className="px-5 py-2 border-t border-zinc-100 flex items-center gap-3">

@@ -21,6 +21,9 @@ export default function FichaResumo({ c, companies, stages, ficha, jobs, applica
   useEffect(() => { setNotes(c.notes ?? ''); }, [c.id, c.notes]);
   useEffect(() => { setIaErro(null); }, [c.id]);
   const [editando, setEditando] = useState(false);
+  // Já inscrita numa vaga: o seletor some atrás de um link discreto (inscrever em outra é raro).
+  const [outraVaga, setOutraVaga] = useState(false);
+  useEffect(() => { setOutraVaga(false); }, [c.id]);
   useEffect(() => { setEditando(false); }, [c.id]);
 
   const organizar = async () => {
@@ -102,7 +105,11 @@ export default function FichaResumo({ c, companies, stages, ficha, jobs, applica
             })}
           </ul>
         )}
-        {vagasAbertas.length > 0 ? (
+        {vagasAbertas.length > 0 && applications.length > 0 && !outraVaga ? (
+          <button onClick={() => setOutraVaga(true)} className="text-xs font-semibold text-zinc-500 hover:text-zinc-800 cursor-pointer">
+            + Inscrever também em outra vaga
+          </button>
+        ) : vagasAbertas.length > 0 ? (
           <select value="" onChange={(e) => { if (e.target.value) onApply(e.target.value); }}
             className="h-8 px-2 rounded-lg border border-zinc-200 text-xs font-semibold text-zinc-700 cursor-pointer">
             <option value="">+ Inscrever em uma vaga…</option>

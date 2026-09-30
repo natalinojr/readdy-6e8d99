@@ -790,7 +790,7 @@ export default function ContratacaoPage() {
           onAbrirEntrevista={abrirEntrevista}
           onRemarcar={(iv) => setModal({ interview: iv })}
           onSessaoAtualizada={() => carregar(true)}
-          abaInicial={fichaNaConversa ? 'linha' : undefined}
+          abaInicial={fichaNaConversa ? 'conversa' : undefined}
         />
       )}
 
