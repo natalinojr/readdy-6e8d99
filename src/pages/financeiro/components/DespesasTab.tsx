@@ -273,89 +273,8 @@ export default function DespesasTab() {
   })) ?? [];
 
   return (
-    <div className="p-4 md:p-6 space-y-5 max-w-[1400px] mx-auto">
-      {/* ── KPIs ── */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
-        <KpiCard
-          label="Total de Despesas"
-          value={formatCurrency(summary?.total ?? 0)}
-          icon="ri-arrow-up-circle-line"
-          sub={`${items.length} lançamento(s)`}
-          atual={summary?.total ?? 0}
-          semVariacao
-        />
-        <KpiCard
-          label="Pago"
-          value={formatCurrency(summary?.paid ?? 0)}
-          valueTone="text-emerald-700"
-          icon="ri-check-double-line"
-          sub={summary && summary.total > 0 ? `${((summary.paid / summary.total) * 100).toFixed(0)}% do total` : ''}
-          atual={summary?.paid ?? 0}
-          semVariacao
-        />
-        {/* Vencido antes de Pendente: vencido = prazo estourado, exige ação */}
-        <KpiCard
-          label="Vencido"
-          value={formatCurrency(summary?.overdue ?? 0)}
-          valueTone={(summary?.overdue ?? 0) > 0 ? 'text-red-600' : undefined}
-          icon="ri-alarm-warning-line"
-          atual={summary?.overdue ?? 0}
-          semVariacao
-        />
-        <KpiCard
-          label="Pendente"
-          value={formatCurrency(summary?.pending ?? 0)}
-          valueTone={(summary?.pending ?? 0) > 0 ? 'text-amber-700' : undefined}
-          icon="ri-time-line"
-          sub="no prazo, a vencer"
-          atual={summary?.pending ?? 0}
-          semVariacao
-        />
-      </div>
-
-      {/* ── Alertas inteligentes ── */}
-      {!loading && summary && items.length > 0 && (
-        <div className="flex gap-3 flex-wrap">
-          {summary.overdue > 0 && (
-            <div className="flex items-start gap-3 bg-red-50 border border-red-200 rounded-xl px-4 py-3 flex-1 min-w-[16rem]">
-              <i className="ri-alarm-warning-line text-red-500 text-lg flex-shrink-0" />
-              <div>
-                <p className="text-xs font-semibold text-red-700">{formatCurrency(summary.overdue)} em despesas vencidas</p>
-                <p className="text-xs text-red-500">{items.filter(d => d.status === 'overdue').length} lançamento(s) precisam de atenção</p>
-              </div>
-            </div>
-          )}
-          {summary.pending > 0 && (
-            <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 flex-1 min-w-[16rem]">
-              <i className="ri-time-line text-amber-600 text-lg flex-shrink-0" />
-              <div>
-                <p className="text-xs font-semibold text-amber-700">{formatCurrency(summary.pending)} pendente de pagamento</p>
-                <p className="text-xs text-amber-600">{items.filter(d => d.status === 'pending').length} lançamento(s) aguardando</p>
-              </div>
-            </div>
-          )}
-          {(() => {
-            const days = Math.max(1, Math.ceil((new Date(filters.endDate).getTime() - new Date(filters.startDate).getTime()) / 86400000));
-            const avgDaily = (summary?.total ?? 0) / days;
-            const prevPeriodAvg = avgDaily * 0.9; // simulação
-            const variation = prevPeriodAvg > 0 ? ((avgDaily - prevPeriodAvg) / prevPeriodAvg) * 100 : 0;
-            if (variation > 20) {
-              return (
-                <div className="flex items-start gap-3 bg-orange-50 border border-orange-200 rounded-xl px-4 py-3 flex-1 min-w-[16rem]">
-                  <i className="ri-arrow-up-line text-orange-500 text-lg flex-shrink-0" />
-                  <div>
-                    <p className="text-xs font-semibold text-orange-700">Despesas {variation.toFixed(0)}% acima da média</p>
-                    <p className="text-xs text-orange-500">Média diária: {formatCurrency(avgDaily)}</p>
-                  </div>
-                </div>
-              );
-            }
-            return null;
-          })()}
-        </div>
-      )}
-
-      {/* ── Controles: filtros + visualização ── */}
+    <div className="p-4 md:p-6 space-y-5 max-w-[1400px] mx-auto w-full">
+      {/* ── Controles: filtros + visualização (no topo: os números abaixo seguem o período — 2026-09-30) ── */}
       <div className="flex flex-col gap-3">
         <div className="flex flex-wrap items-center gap-2 lg:gap-3">
           <div className="flex items-center gap-2 flex-wrap">
@@ -540,6 +459,87 @@ export default function DespesasTab() {
           </div>
         )}
       </div>
+
+      {/* ── KPIs ── */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+        <KpiCard
+          label="Total de Despesas"
+          value={formatCurrency(summary?.total ?? 0)}
+          icon="ri-arrow-up-circle-line"
+          sub={`${items.length} lançamento(s)`}
+          atual={summary?.total ?? 0}
+          semVariacao
+        />
+        <KpiCard
+          label="Pago"
+          value={formatCurrency(summary?.paid ?? 0)}
+          valueTone="text-emerald-700"
+          icon="ri-check-double-line"
+          sub={summary && summary.total > 0 ? `${((summary.paid / summary.total) * 100).toFixed(0)}% do total` : ''}
+          atual={summary?.paid ?? 0}
+          semVariacao
+        />
+        {/* Vencido antes de Pendente: vencido = prazo estourado, exige ação */}
+        <KpiCard
+          label="Vencido"
+          value={formatCurrency(summary?.overdue ?? 0)}
+          valueTone={(summary?.overdue ?? 0) > 0 ? 'text-red-600' : undefined}
+          icon="ri-alarm-warning-line"
+          atual={summary?.overdue ?? 0}
+          semVariacao
+        />
+        <KpiCard
+          label="Pendente"
+          value={formatCurrency(summary?.pending ?? 0)}
+          valueTone={(summary?.pending ?? 0) > 0 ? 'text-amber-700' : undefined}
+          icon="ri-time-line"
+          sub="no prazo, a vencer"
+          atual={summary?.pending ?? 0}
+          semVariacao
+        />
+      </div>
+
+      {/* ── Alertas inteligentes ── */}
+      {!loading && summary && items.length > 0 && (
+        <div className="flex gap-3 flex-wrap">
+          {summary.overdue > 0 && (
+            <div className="flex items-start gap-3 bg-red-50 border border-red-200 rounded-xl px-4 py-3 flex-1 min-w-[16rem]">
+              <i className="ri-alarm-warning-line text-red-500 text-lg flex-shrink-0" />
+              <div>
+                <p className="text-xs font-semibold text-red-700">{formatCurrency(summary.overdue)} em despesas vencidas</p>
+                <p className="text-xs text-red-500">{items.filter(d => d.status === 'overdue').length} lançamento(s) precisam de atenção</p>
+              </div>
+            </div>
+          )}
+          {summary.pending > 0 && (
+            <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 flex-1 min-w-[16rem]">
+              <i className="ri-time-line text-amber-600 text-lg flex-shrink-0" />
+              <div>
+                <p className="text-xs font-semibold text-amber-700">{formatCurrency(summary.pending)} pendente de pagamento</p>
+                <p className="text-xs text-amber-600">{items.filter(d => d.status === 'pending').length} lançamento(s) aguardando</p>
+              </div>
+            </div>
+          )}
+          {(() => {
+            const days = Math.max(1, Math.ceil((new Date(filters.endDate).getTime() - new Date(filters.startDate).getTime()) / 86400000));
+            const avgDaily = (summary?.total ?? 0) / days;
+            const prevPeriodAvg = avgDaily * 0.9; // simulação
+            const variation = prevPeriodAvg > 0 ? ((avgDaily - prevPeriodAvg) / prevPeriodAvg) * 100 : 0;
+            if (variation > 20) {
+              return (
+                <div className="flex items-start gap-3 bg-orange-50 border border-orange-200 rounded-xl px-4 py-3 flex-1 min-w-[16rem]">
+                  <i className="ri-arrow-up-line text-orange-500 text-lg flex-shrink-0" />
+                  <div>
+                    <p className="text-xs font-semibold text-orange-700">Despesas {variation.toFixed(0)}% acima da média</p>
+                    <p className="text-xs text-orange-500">Média diária: {formatCurrency(avgDaily)}</p>
+                  </div>
+                </div>
+              );
+            }
+            return null;
+          })()}
+        </div>
+      )}
 
       {/* ── Loading ── */}
       {loading && (

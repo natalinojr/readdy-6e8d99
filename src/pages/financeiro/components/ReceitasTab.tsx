@@ -385,7 +385,7 @@ export default function ReceitasTab() {
   }));
 
   return (
-    <div className="p-4 md:p-6 space-y-5 max-w-[1400px] mx-auto">
+    <div className="p-4 md:p-6 space-y-5 max-w-[1400px] mx-auto w-full">
 
       {/* Rótulo do que esta aba está somando — depende das fontes da loja */}
       <div className="flex items-start gap-3 rounded-xl bg-blue-50 border border-blue-200 px-4 py-3 text-xs text-blue-800">
@@ -402,96 +402,9 @@ export default function ReceitasTab() {
         </button>
       </div>
 
-      {/* Falha de carga NUNCA pode passar por "não há vendas": sem este bloco a
-          aba mostrava R$ 0,00 e "Nenhuma receita encontrada" mesmo quando a
-          query voltava erro. */}
-      {error && (
-        <div className="flex items-start gap-3 rounded-xl bg-red-50 border border-red-200 px-4 py-3 text-xs text-red-800">
-          <i className="ri-error-warning-line mt-0.5" />
-          <div className="flex-1">
-            <p className="font-semibold">Não foi possível carregar as receitas.</p>
-            <p className="text-red-500 mt-0.5">Os valores abaixo estão zerados por falha de leitura, não por ausência de vendas. Detalhe: {error}</p>
-          </div>
-          <button onClick={refresh} className="px-2 py-1 rounded-md border border-red-300 text-red-700 font-semibold cursor-pointer hover:bg-red-100 whitespace-nowrap">
-            Tentar de novo
-          </button>
-        </div>
-      )}
-
-      {truncated && !error && (
-        <div className="flex items-start gap-3 rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 text-xs text-amber-800">
-          <i className="ri-alert-line mt-0.5" />
-          <span>Período muito grande: a lista foi cortada no limite de segurança e os totais estão <strong>subestimados</strong>. Reduza o intervalo.</span>
-        </div>
-      )}
-
-      {/* ── KPIs ── */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
-        <KpiCard
-          semVariacao atual={0}
-          label="Total de Receitas"
-          value={formatCurrency(summary?.total ?? 0)}
-          icon="ri-arrow-down-circle-line"
-          valueTone="text-emerald-700"
-          sub={`${items.length} lançamento(s)`}
-        />
-        {enabledSources.includes('stone') || enabledSources.includes('pix') || enabledSources.includes('ifood') ? (
-          <KpiCard
-            semVariacao atual={0}
-            label={[
-              enabledSources.includes('stone') ? `Cartão (${flowLbl.card})` : null,
-              enabledSources.includes('pix') ? 'Pix' : null,
-              enabledSources.includes('ifood') ? 'iFood' : null,
-              enabledSources.includes('cash') && !enabledSources.includes('orders') ? 'Dinheiro' : null,
-            ].filter(Boolean).join(' / ')}
-            value={formatCurrency((summary?.fromStone ?? 0) + (summary?.fromPix ?? 0) + (summary?.fromIfood ?? 0) + (summary?.fromDinheiro ?? 0))}
-            icon="ri-bank-card-line"
-            sub={[
-              enabledSources.includes('stone') ? `Cartão ${formatCurrency(summary?.fromStone ?? 0)}` : null,
-              enabledSources.includes('pix') ? `Pix ${formatCurrency(summary?.fromPix ?? 0)}` : null,
-              enabledSources.includes('ifood') ? `iFood ${formatCurrency(summary?.fromIfood ?? 0)}` : null,
-              enabledSources.includes('cash') && !enabledSources.includes('orders') ? `Dinheiro ${formatCurrency(summary?.fromDinheiro ?? 0)}` : null,
-              enabledSources.includes('orders') ? `Pedidos ${formatCurrency(summary?.fromOrders ?? 0)}` : null,
-            ].filter(Boolean).join(' · ')}
-          />
-        ) : (
-          <KpiCard
-            semVariacao atual={0}
-            label="Vendas (Pedidos)"
-            value={formatCurrency(summary?.fromOrders ?? 0)}
-            icon="ri-shopping-bag-3-line"
-            sub={`${items.filter(r => r.source === 'order').length} pedido(s) pago(s)`}
-          />
-        )}
-        <KpiCard
-          semVariacao atual={0}
-          label="Lançamentos Manuais"
-          value={formatCurrency(summary?.fromManual ?? 0)}
-          icon="ri-edit-box-line"
-          sub={`${items.filter(r => r.source === 'manual').length} lançamento(s)`}
-        />
-        <KpiCard
-          semVariacao atual={0}
-          label="Média Diária"
-          value={formatCurrency((() => {
-            // Média diária conta só os dias JÁ DECORRIDOS: com "Este Mês", endDate é o
-              // último dia do mês, então no dia 5 a média dividia por 30 e mostrava 1/6
-              // do real. O +1 inclui o próprio dia inicial (01→31 são 31 dias, não 30).
-              const fimReal = filters.endDate > todayBrasilia() ? todayBrasilia() : filters.endDate;
-              const days = Math.max(1, Math.round((new Date(fimReal + 'T12:00:00').getTime() - new Date(filters.startDate + 'T12:00:00').getTime()) / 86400000) + 1);
-            return (summary?.total ?? 0) / days;
-          })())}
-          icon="ri-line-chart-line"
-          sub="no período selecionado"
-        />
-      </div>
-
-      {/* ── Vendas por forma de pagamento (crédito, débito, voucher, Pix, dinheiro) ── */}
-      <FormasPagamentoPanel startDate={filters.startDate} endDate={filters.endDate} />
-
-      {/* ── Controles ── */}
+      {/* ── Controles (período no topo: os números abaixo seguem ele — 2026-09-30) ── */}
       <div className="flex flex-col gap-3">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2 lg:gap-3 flex-wrap">
             {/* Período */}
             <div className="flex items-center gap-1 bg-white border border-zinc-200 rounded-xl px-3 h-10 shadow-sm">
@@ -543,7 +456,7 @@ export default function ReceitasTab() {
             )}
           </div>
 
-          <div className="flex items-center gap-2 self-start max-w-full">
+          <div className="flex items-center gap-2 flex-wrap max-w-full">
             {/* Toggle visualização */}
             <div className="overflow-x-auto max-w-full">
               <Segmented
@@ -633,6 +546,93 @@ export default function ReceitasTab() {
           </div>
         )}
       </div>
+
+      {/* Falha de carga NUNCA pode passar por "não há vendas": sem este bloco a
+          aba mostrava R$ 0,00 e "Nenhuma receita encontrada" mesmo quando a
+          query voltava erro. */}
+      {error && (
+        <div className="flex items-start gap-3 rounded-xl bg-red-50 border border-red-200 px-4 py-3 text-xs text-red-800">
+          <i className="ri-error-warning-line mt-0.5" />
+          <div className="flex-1">
+            <p className="font-semibold">Não foi possível carregar as receitas.</p>
+            <p className="text-red-500 mt-0.5">Os valores abaixo estão zerados por falha de leitura, não por ausência de vendas. Detalhe: {error}</p>
+          </div>
+          <button onClick={refresh} className="px-2 py-1 rounded-md border border-red-300 text-red-700 font-semibold cursor-pointer hover:bg-red-100 whitespace-nowrap">
+            Tentar de novo
+          </button>
+        </div>
+      )}
+
+      {truncated && !error && (
+        <div className="flex items-start gap-3 rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 text-xs text-amber-800">
+          <i className="ri-alert-line mt-0.5" />
+          <span>Período muito grande: a lista foi cortada no limite de segurança e os totais estão <strong>subestimados</strong>. Reduza o intervalo.</span>
+        </div>
+      )}
+
+      {/* ── KPIs ── */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+        <KpiCard
+          semVariacao atual={0}
+          label="Total de Receitas"
+          value={formatCurrency(summary?.total ?? 0)}
+          icon="ri-arrow-down-circle-line"
+          valueTone="text-emerald-700"
+          sub={`${items.length} lançamento(s)`}
+        />
+        {enabledSources.includes('stone') || enabledSources.includes('pix') || enabledSources.includes('ifood') ? (
+          <KpiCard
+            semVariacao atual={0}
+            label={[
+              enabledSources.includes('stone') ? `Cartão (${flowLbl.card})` : null,
+              enabledSources.includes('pix') ? 'Pix' : null,
+              enabledSources.includes('ifood') ? 'iFood' : null,
+              enabledSources.includes('cash') && !enabledSources.includes('orders') ? 'Dinheiro' : null,
+            ].filter(Boolean).join(' / ')}
+            value={formatCurrency((summary?.fromStone ?? 0) + (summary?.fromPix ?? 0) + (summary?.fromIfood ?? 0) + (summary?.fromDinheiro ?? 0))}
+            icon="ri-bank-card-line"
+            sub={[
+              enabledSources.includes('stone') ? `Cartão ${formatCurrency(summary?.fromStone ?? 0)}` : null,
+              enabledSources.includes('pix') ? `Pix ${formatCurrency(summary?.fromPix ?? 0)}` : null,
+              enabledSources.includes('ifood') ? `iFood ${formatCurrency(summary?.fromIfood ?? 0)}` : null,
+              enabledSources.includes('cash') && !enabledSources.includes('orders') ? `Dinheiro ${formatCurrency(summary?.fromDinheiro ?? 0)}` : null,
+              enabledSources.includes('orders') ? `Pedidos ${formatCurrency(summary?.fromOrders ?? 0)}` : null,
+            ].filter(Boolean).join(' · ')}
+          />
+        ) : (
+          <KpiCard
+            semVariacao atual={0}
+            label="Vendas (Pedidos)"
+            value={formatCurrency(summary?.fromOrders ?? 0)}
+            icon="ri-shopping-bag-3-line"
+            sub={`${items.filter(r => r.source === 'order').length} pedido(s) pago(s)`}
+          />
+        )}
+        <KpiCard
+          semVariacao atual={0}
+          label="Lançamentos Manuais"
+          value={formatCurrency(summary?.fromManual ?? 0)}
+          icon="ri-edit-box-line"
+          sub={`${items.filter(r => r.source === 'manual').length} lançamento(s)`}
+        />
+        <KpiCard
+          semVariacao atual={0}
+          label="Média Diária"
+          value={formatCurrency((() => {
+            // Média diária conta só os dias JÁ DECORRIDOS: com "Este Mês", endDate é o
+              // último dia do mês, então no dia 5 a média dividia por 30 e mostrava 1/6
+              // do real. O +1 inclui o próprio dia inicial (01→31 são 31 dias, não 30).
+              const fimReal = filters.endDate > todayBrasilia() ? todayBrasilia() : filters.endDate;
+              const days = Math.max(1, Math.round((new Date(fimReal + 'T12:00:00').getTime() - new Date(filters.startDate + 'T12:00:00').getTime()) / 86400000) + 1);
+            return (summary?.total ?? 0) / days;
+          })())}
+          icon="ri-line-chart-line"
+          sub="no período selecionado"
+        />
+      </div>
+
+      {/* ── Vendas por forma de pagamento (crédito, débito, voucher, Pix, dinheiro) ── */}
+      <FormasPagamentoPanel startDate={filters.startDate} endDate={filters.endDate} />
 
       {/* ── Loading ── */}
       {loading && (

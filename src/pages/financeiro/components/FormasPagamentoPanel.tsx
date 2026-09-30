@@ -57,6 +57,8 @@ export default function FormasPagamentoPanel({ startDate, endDate }: { startDate
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [aberto, setAberto] = useState<string | null>(null);
+  // Fechado por padrão (2026-09-30): o total fica no cabeçalho; a tabela abre ao clicar.
+  const [mostrar, setMostrar] = useState(false);
 
   useEffect(() => {
     if (!tenantId || !startDate || !endDate) return;
@@ -107,10 +109,14 @@ export default function FormasPagamentoPanel({ startDate, endDate }: { startDate
 
   return (
     <div className="bg-white rounded-2xl border border-zinc-200 overflow-hidden">
-      <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-100 gap-3 flex-wrap">
-        <div>
+      <button type="button" onClick={() => setMostrar((v) => !v)} aria-expanded={mostrar}
+        className={`w-full text-left flex items-center justify-between px-5 py-3 gap-3 flex-wrap cursor-pointer hover:bg-zinc-50/60 ${mostrar ? 'border-b border-zinc-100' : ''}`}>
+        <div className="flex items-start gap-2">
+          <i className={`ri-arrow-${mostrar ? 'down' : 'right'}-s-line text-zinc-400 mt-0.5`} />
+          <div>
           <h3 className="text-sm font-bold text-zinc-800">Vendas por forma de pagamento</h3>
           <p className="text-xs text-zinc-400">Pedidos pagos no período, pela data do pagamento. Taxa estimada pelo cadastro de cada forma.</p>
+          </div>
         </div>
         {total > 0 && (
           <div className="text-right">
@@ -118,9 +124,9 @@ export default function FormasPagamentoPanel({ startDate, endDate }: { startDate
             <p className="text-[11px] text-zinc-400">taxas ≈ {formatCurrency(totalTaxa)} · líquido ≈ {formatCurrency(total - totalTaxa)}</p>
           </div>
         )}
-      </div>
+      </button>
 
-      <div className="p-4 md:p-5">
+      {mostrar && <div className="p-4 md:p-5">
       {error ? (
         <div className="flex items-start gap-3 rounded-xl bg-red-50 border border-red-200 px-4 py-3 text-xs text-red-800">
           <i className="ri-error-warning-line mt-0.5" />
@@ -192,7 +198,7 @@ export default function FormasPagamentoPanel({ startDate, endDate }: { startDate
           </p>
         </div>
       )}
-      </div>
+      </div>}
     </div>
   );
 }
