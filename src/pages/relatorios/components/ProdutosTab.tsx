@@ -7,6 +7,8 @@ import { formatCurrency } from '@/lib/formatters';
 import { getPeriodoAnterior, labelPeriodo } from '@/lib/dateUtils';
 import { useModoFaturamento } from '@/contexts/ModoFaturamentoContext';
 import type { SessionInfo } from '@/hooks/useSessions';
+import { normalizarNomeItem } from './nomeItem';
+import ProdutosPorHora from './ProdutosPorHora';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell,
 } from 'recharts';
@@ -34,14 +36,8 @@ const ABC_STYLE: Record<ClasseABC, { badge: string; label: string; desc: string 
 
 const fmt = formatCurrency;
 
-// ── Normalização de nome de item ──────────────────────────────────────────────
-// Itens com múltiplas unidades rastreadas no KDS são gravados como order_items
-// separados com sufixo " (Un. N)" (ex.: "Hamburguer de Bacon (Un. 1)"). No ranking
-// são o MESMO produto do cardápio — remove o sufixo e faz trim para agrupar/somar
-// (também unifica variações de espaço em branco no fim do nome).
-export function normalizarNomeItem(nome: string): string {
-  return nome.replace(/\s*\(Un\.\s*\d+\)\s*$/i, '').trim();
-}
+// Normalização " (Un. N)" → nome do produto (compartilhada com a aba Por Hora)
+export { normalizarNomeItem };
 
 interface TopItemMerged {
   item_name: string;
@@ -247,7 +243,7 @@ export default function ProdutosTab({ periodo, externalSession }: Props) {
   const [periodoOverride, setPeriodoOverride] = useState<PeriodoRapido | null>(null);
   const [itemSelecionado, setItemSelecionado] = useState<string | null>(null);
   const [modoGrafico, setModoGrafico] = useState<'qtd' | 'receita'>('qtd');
-  const [abaAtiva, setAbaAtiva] = useState<'ranking' | 'abc' | 'categorias' | 'complementos'>('ranking');
+  const [abaAtiva, setAbaAtiva] = useState<'ranking' | 'abc' | 'categorias' | 'complementos' | 'hora'>('ranking');
   const [categoriaFiltro, setCategoriaFiltro] = useState<string>('todas');
 
   const periodoEfetivo = periodoOverride ?? periodo;
@@ -486,9 +482,10 @@ export default function ProdutosTab({ periodo, externalSession }: Props) {
         {([
           { id: 'ranking', label: 'Ranking', icon: 'ri-trophy-line' },
           { id: 'categorias', label: 'Por Categoria', icon: 'ri-folder-chart-line' },
+          { id: 'hora', label: 'Por Hora', icon: 'ri-time-line' },
           { id: 'complementos', label: 'Complementos', icon: 'ri-add-circle-line' },
           { id: 'abc', label: 'Análise ABC', icon: 'ri-pie-chart-line' },
-        ] as { id: 'ranking' | 'abc' | 'categorias' | 'complementos'; label: string; icon: string }[]).map((tab) => (
+        ] as { id: 'ranking' | 'abc' | 'categorias' | 'complementos' | 'hora'; label: string; icon: string }[]).map((tab) => (
           <button
             key={tab.id}
             onClick={() => setAbaAtiva(tab.id)}
@@ -498,10 +495,20 @@ export default function ProdutosTab({ periodo, externalSession }: Props) {
           >
             <i className={`${tab.icon} text-sm`} />
             <span className="hidden sm:inline">{tab.label}</span>
-            <span className="sm:hidden">{tab.id === 'ranking' ? 'Ranking' : tab.id === 'categorias' ? 'Categ.' : tab.id === 'complementos' ? 'Compl.' : 'ABC'}</span>
+            <span className="sm:hidden">{tab.id === 'ranking' ? 'Ranking' : tab.id === 'categorias' ? 'Categ.' : tab.id === 'complementos' ? 'Compl.' : tab.id === 'hora' ? 'Hora' : 'ABC'}</span>
           </button>
         ))}
       </div>
+
+      {/* ── ABA: Por Hora ── */}
+      {abaAtiva === 'hora' && (
+        <ProdutosPorHora
+          periodo={periodoEfetivo}
+          sessionId={selectedSession?.id ?? null}
+          isSessao={isSessao}
+          categorias={categorias}
+        />
+      )}
 
       {/* ── ABA: Por Categoria ── */}
       {abaAtiva === 'categorias' && (
