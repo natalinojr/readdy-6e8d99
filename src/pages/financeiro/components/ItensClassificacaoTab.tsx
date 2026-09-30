@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
@@ -56,6 +57,7 @@ interface Cat { id: string; name: string; group_type: string }
 interface Merc { id: string; name: string }
 interface Insumo { id: string; name: string; unit: string; merchandise_category_id: string | null; category: string | null }
 type Filtro = 'pendentes' | 'estoque' | 'sem_insumo' | 'fora_estoque' | 'cmv' | 'cmv_sem' | 'despesa' | 'servicos' | 'todos';
+const FILTROS_URL: Filtro[] = ['pendentes', 'estoque', 'sem_insumo', 'fora_estoque', 'cmv', 'cmv_sem', 'despesa', 'servicos', 'todos'];
 interface Fora { receipts: number; last: string | null }
 // Produto que deveria estar ligado a insumo e não está (CMV ou ainda sem classificação; serviço e despesa ficam de fora)
 const semInsumo = (r: Row) => !r.ingredient_id && !r.is_service && r.classe !== 'despesa';
@@ -79,7 +81,12 @@ export default function ItensClassificacaoTab() {
   const [mercs, setMercs] = useState<Merc[]>([]);
   const [insumos, setInsumos] = useState<Insumo[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filtro, setFiltro] = useState<Filtro>('pendentes');
+  // ?filtro=fora_estoque abre já filtrado (atalho da Trilha)
+  const [searchParams] = useSearchParams();
+  const [filtro, setFiltro] = useState<Filtro>(() => {
+    const f = searchParams.get('filtro');
+    return f && FILTROS_URL.includes(f as Filtro) ? (f as Filtro) : 'pendentes';
+  });
   const [busca, setBusca] = useState('');
   const [fornecedor, setFornecedor] = useState('');
   const [sel, setSel] = useState<Set<string>>(new Set());

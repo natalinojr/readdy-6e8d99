@@ -9,6 +9,8 @@ export interface TrCompra {
   payment_method: string | null; payment_status: string | null; purchase_date: string | null;
   delivery_confirmed_at: string | null; stock_applied_at: string | null; is_bonus: boolean;
   created_at: string | null; itens: number; itens_estoque: number;
+  /** itens recebidos sem insumo que TÊM vínculo confirmado na Classificação (não entraram no estoque) */
+  itens_sem_entrar?: number;
 }
 export interface TrConta {
   id: string; description: string | null; supplier: string | null; category: string | null;
@@ -299,6 +301,17 @@ export function montarCaso(r: Rascunho, hoje: string, temExtrato: boolean): Caso
     if (aindaNaoLancou) add('estoque', 'espera', 'Espera virar compra ou despesa');
     else if (r.contas.length) add('estoque', 'na', 'Não precisa: despesa não vai ao estoque');
     else add('estoque', 'na', 'Não precisa');
+  } else if (p.delivery_confirmed_at && Number(p.itens_sem_entrar ?? 0) > 0) {
+    // Item recebido sem insumo, mas que tem vínculo confirmado na Classificação: devia ter entrado
+    // (recebimentos antes de 2026-09-23 não aplicavam o vínculo). Não é "não precisa".
+    const k = Number(p.itens_sem_entrar);
+    const quais = k === 1 ? '1 item que tem insumo não entrou' : `${k} itens que têm insumo não entraram`;
+    add('estoque', 'problema', `Chegou em ${diaBR(p.delivery_confirmed_at)}, mas ${quais} no estoque`, {
+      detalhe: 'o item tem insumo na Classificação, mas este recebimento ficou fora do estoque',
+      falta: 'escolher na Classificação de itens se este recebimento entra no estoque',
+      atalho: { tab: 'itens', param: 'filtro', valor: 'fora_estoque' },
+    });
+    tarefa('estoque', ['estoque'], true, `A mercadoria chegou em ${diaBR(p.delivery_confirmed_at)}, mas ${quais} no estoque.`);
   } else if (Number(p.itens_estoque) === 0) {
     add('estoque', 'na', 'Não precisa: nenhum item ligado a insumo', {
       detalhe: Number(p.itens) > 0 ? `${p.itens} ite${Number(p.itens) === 1 ? 'm' : 'ns'} sem insumo — não mexe no estoque` : undefined, atalho: atalhoCompra,

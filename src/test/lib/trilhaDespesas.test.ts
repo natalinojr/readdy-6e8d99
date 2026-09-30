@@ -122,6 +122,19 @@ describe('montarTrilha', () => {
     expect(c.situacao).toBe('ok');
   });
 
+  it('recebida com item que tem vínculo mas não entrou: problema com atalho para a Classificação', () => {
+    const d = vazio();
+    const recebida = '2026-09-22T23:02:56Z';
+    d.compras = [compra({ itens: 7, itens_estoque: 0, itens_sem_entrar: 7, delivery_confirmed_at: recebida, stock_applied_at: recebida })];
+    const e = etapa(trilha(d)[0], 'estoque');
+    expect(e.estado).toBe('problema');
+    expect(e.resumo).toContain('7 itens que têm insumo não entraram');
+    expect(e.atalho).toEqual({ tab: 'itens', param: 'filtro', valor: 'fora_estoque' });
+    // sem vínculo nenhum continua "não precisa"
+    d.compras = [compra({ itens: 7, itens_estoque: 0, itens_sem_entrar: 0, delivery_confirmed_at: recebida, stock_applied_at: recebida })];
+    expect(etapa(trilha(d)[0], 'estoque').estado).toBe('na');
+  });
+
   it('nota que chegou e ninguém lançou vira caso próprio', () => {
     const d = vazio();
     d.notas = [nota({ status: 'new', purchase_id: null })];
