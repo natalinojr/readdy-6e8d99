@@ -984,6 +984,13 @@ export default function NovaCompraModal({
             </div>
           </div>
 
+          {/* Dinheiro "a prazo" quase sempre é engano (30/09: 5 cupons pagos no caixa viraram conta vencida) */}
+          {paymentMode !== 'avista' && form.payment_method === 'Dinheiro' && (
+            <p className="text-xs text-orange-700 bg-orange-50 border border-orange-200 rounded-lg px-3 py-2">
+              <i className="ri-error-warning-line" /> Pago em <b>dinheiro</b>? Escolha <b>À vista</b> — "a prazo" cria uma conta a pagar que vai aparecer como vencida.
+            </p>
+          )}
+
           {/* A Prazo */}
           {paymentMode === 'aprazo' && (
             <div>
