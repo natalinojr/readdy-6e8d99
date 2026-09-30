@@ -50,19 +50,35 @@ interface ComputedItem {
 // no CMV/despesa do item. Se quem chamou já mandou o rateio fechando com o frete, ele vale; senão
 // (ex.: compra lançada pela nota de entrada, que mandava 0 em todos) rateia aqui — antes o frete
 // ficava só no cabeçalho e sumia da DRE.
+//
+// Acréscimos da nota (ICMS-ST, IPI, seguro, outras despesas — linha própria criada pelo fiscal-inbound)
+// também são custo da mercadoria (dono, 2026-09-30): vão rateados junto com o frete no freight_allocated
+// dos PRODUTOS, e a linha de acréscimos fica com freight_allocated = −valor dela (custo líquido 0). Assim
+// Σ freight_allocated continua = frete, o total e a DRE não mudam, e todo cálculo de custo do insumo
+// (total_price + freight_allocated) passa a incluir os impostos sem mexer em cada um.
+const ehAcrescimoNota = (it: Record<string, unknown>) => String(it.description ?? '').startsWith('Acréscimos da nota');
+const r2 = (v: number) => Math.round(v * 100) / 100;
 function ratearFrete(items: unknown, frete: number): void {
   const arr = (Array.isArray(items) ? items : []) as Array<Record<string, unknown>>;
   if (arr.length === 0) return;
-  const informado = arr.reduce((s, it) => s + Number(it.freight_allocated ?? 0), 0);
-  if (Math.abs(informado - (frete > 0 ? frete : 0)) <= 0.01) return;
-  if (!(frete > 0)) { arr.forEach((it) => { it.freight_allocated = 0; }); return; }
+  const fr = frete > 0 ? frete : 0;
   const bruto = (it: Record<string, unknown>) => Number(it.quantity ?? 0) * Math.max(0, Number(it.unit_price ?? 0) - Number(it.discount_per_unit ?? 0));
-  const base = arr.reduce((s, it) => s + bruto(it), 0);
+  let produtos = arr.filter((it) => !ehAcrescimoNota(it));
+  let acrescimos = arr.filter(ehAcrescimoNota);
+  if (produtos.length === 0 || produtos.reduce((s, it) => s + bruto(it), 0) <= 0) { produtos = arr; acrescimos = []; }
+  const informado = arr.reduce((s, it) => s + Number(it.freight_allocated ?? 0), 0);
+  const acrescimosOk = acrescimos.every((it) => Math.abs(Number(it.freight_allocated ?? 0) + r2(bruto(it))) <= 0.01);
+  if (Math.abs(informado - fr) <= 0.01 && acrescimosOk) return;
+  const totalAcrescimos = acrescimos.reduce((s, it) => s + r2(bruto(it)), 0);
+  acrescimos.forEach((it) => { it.freight_allocated = -r2(bruto(it)); });
+  const aRatear = r2(fr + totalAcrescimos);
+  if (!(aRatear > 0)) { produtos.forEach((it) => { it.freight_allocated = 0; }); return; }
+  const base = produtos.reduce((s, it) => s + bruto(it), 0);
   let acc = 0;
-  arr.forEach((it, i) => {
-    const parte = i < arr.length - 1
-      ? Math.round((base > 0 ? frete * bruto(it) / base : frete / arr.length) * 100) / 100
-      : Math.round((frete - acc) * 100) / 100;
+  produtos.forEach((it, i) => {
+    const parte = i < produtos.length - 1
+      ? r2(base > 0 ? aRatear * bruto(it) / base : aRatear / produtos.length)
+      : r2(aRatear - acc);
     it.freight_allocated = parte;
     acc += parte;
   });

@@ -679,7 +679,7 @@ export default function DetalhePurchaseModal({ purchase, installments, loadingIn
                       })}
                       {acrescimos >= 0.01 && (
                         <li className="flex items-center justify-between px-1 text-xs text-zinc-500">
-                          <span>Acréscimos da nota (impostos/despesas, não é produto)</span>
+                          <span>Acréscimos da nota (impostos/despesas, rateados no custo dos itens)</span>
                           <span className="font-semibold">{formatCurrency(acrescimos)}</span>
                         </li>
                       )}
@@ -820,7 +820,7 @@ export default function DetalhePurchaseModal({ purchase, installments, loadingIn
                           {acrescimos >= 0.01 && (
                             <tr>
                               <td colSpan={4} className="px-3 py-2 text-right text-xs text-zinc-500">
-                                Acréscimos da nota (impostos/despesas, não é produto)
+                                Acréscimos da nota (impostos/despesas, rateados no custo dos itens)
                               </td>
                               <td className="px-4 py-2 text-right text-xs font-semibold text-zinc-600 tabular-nums whitespace-nowrap">{formatCurrency(acrescimos)}</td>
                             </tr>
