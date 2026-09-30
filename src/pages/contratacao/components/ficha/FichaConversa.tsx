@@ -11,5 +11,5 @@ export default function FichaConversa({ c, ativa }: Props) {
   useEffect(() => { setVisitou(false); }, [c.id]);
   useEffect(() => { if (ativa) setVisitou(true); }, [ativa]);
   if (!phone) return <p className="text-xs text-zinc-400">Sem histórico.</p>;
-  return <>{visitou && <ConversaWhatsApp phone={phone} />}</>;
+  return <>{visitou && <ConversaWhatsApp phone={phone} livre />}</>;
 }

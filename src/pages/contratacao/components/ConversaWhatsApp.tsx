@@ -1,6 +1,6 @@
 // Bolhas de conversa do WhatsApp (wa_log) + histórico do entrevistador (fora do wa_log). Extraído de
 // AgendamentosPainel.tsx (T04) para ser usado ali e também na aba Conversa da ficha do candidato (T06).
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 
 // Modelos do WhatsApp (mesmo texto de supabase/functions/_shared/wa.ts › TEMPLATES). Registros antigos
@@ -34,9 +34,12 @@ interface Props {
   phone: string | null; // número já resolvido por quem chama; a phoneKey é calculada aqui dentro
   history?: Hist[];      // respostas do entrevistador fora do wa_log (AgendamentosPainel passa `s.history`; a ficha não passa nada)
   refreshKey?: string | number; // muda a cada `carregar()` do painel para reconsultar o wa_log com o accordion aberto; a ficha não passa (busca só uma vez)
+  /** Na ficha: sem caixa de altura fixa (a ficha já rola) e abre no fim, na mensagem mais recente. */
+  livre?: boolean;
 }
 
-export default function ConversaWhatsApp({ phone, history = [], refreshKey }: Props) {
+export default function ConversaWhatsApp({ phone, history = [], refreshKey, livre = false }: Props) {
+  const fim = useRef<HTMLDivElement>(null);
   const [logs, setLogs] = useState<WaLog[] | null>(null);
   useEffect(() => {
     if (!phone) { setLogs([]); return; }
@@ -45,9 +48,10 @@ export default function ConversaWhatsApp({ phone, history = [], refreshKey }: Pr
       .then(({ data }) => { if (vivo) setLogs((data ?? []) as WaLog[]); });
     return () => { vivo = false; };
   }, [phone, refreshKey]);
+  useEffect(() => { if (livre && logs?.length) fim.current?.scrollIntoView({ block: 'end' }); }, [livre, logs]);
 
   return (
-    <div className="space-y-1.5 max-h-80 overflow-y-auto">
+    <div className={`space-y-1.5 ${livre ? '' : 'max-h-80 overflow-y-auto'}`}>
       {(() => {
         // Com registro completo: tudo do número + respostas do entrevistador (vêm de outro número).
         // Enquanto o wa_log ainda não chegou (logs === null), mostra o que já há em history (como
@@ -74,6 +78,7 @@ export default function ConversaWhatsApp({ phone, history = [], refreshKey }: Pr
           );
         });
       })()}
+      <div ref={fim} />
     </div>
   );
 }
