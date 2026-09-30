@@ -125,7 +125,7 @@ export function ConversaoEstoque({ ins, unidade, qtd, total, fator, onFator }: {
       <div className="flex flex-wrap items-center gap-1.5">
         <span>No estoque, 1 {unidade.trim() || 'un'} =</span>
         <input value={fator} onChange={(e) => onFator(e.target.value)} inputMode="decimal" placeholder="?"
-          className="w-20 px-1.5 py-0.5 border border-zinc-300 rounded text-sm text-zinc-800 bg-white" />
+          className="w-20 px-2 py-1.5 sm:px-1.5 sm:py-0.5 border border-zinc-300 rounded text-sm text-zinc-800 bg-white" />
         <span>{un} de {ins.name}</span>
       </div>
       {f > 0
@@ -444,10 +444,10 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
         <button onClick={() => setAberto(false)} className="text-xs text-zinc-500 hover:text-zinc-700 cursor-pointer">Cancelar</button>
       </div>
 
-      <div className="flex flex-wrap bg-white border border-zinc-200 rounded-lg overflow-hidden w-fit max-w-full">
+      <div className="grid grid-cols-2 gap-1.5 sm:flex sm:flex-wrap sm:gap-0 sm:bg-white sm:border sm:border-zinc-200 sm:rounded-lg sm:overflow-hidden sm:w-fit max-w-full">
         {([['despesa', 'Despesa', 'ri-file-list-3-line'], ['compra', 'Compra (CMV)', 'ri-shopping-cart-line'], ['freelancer', 'Freelancer', 'ri-user-star-line'], ['prestador', 'Prestador MEI', 'ri-briefcase-line'], ['fora_dre', 'Não entra no DRE', 'ri-eye-off-line']] as const).map(([k, label, icon]) => (
           <button key={k} onClick={() => setTipo(k)}
-            className={`px-3 py-1.5 text-xs font-semibold cursor-pointer flex items-center gap-1 ${tipo === k ? 'bg-violet-600 text-white' : 'text-zinc-600 hover:bg-zinc-50'}`}>
+            className={`px-3 py-2.5 sm:py-1.5 text-sm sm:text-xs font-semibold cursor-pointer flex items-center justify-center sm:justify-start gap-1 rounded-lg sm:rounded-none border sm:border-0 ${tipo === k ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-zinc-600 border-zinc-200 hover:bg-zinc-50'}`}>
             <i className={icon} /> {label}
           </button>
         ))}
@@ -469,7 +469,7 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
           <div>
             <label className="block text-xs font-medium text-zinc-600 mb-1">Prestador *</label>
             <CategoriaCombobox value={prestadorId} options={prestadorOptions} onChange={setPrestadorId} placeholder="Escolha o prestador…"
-              buttonClassName="w-full px-3 py-2 border border-zinc-200 rounded-lg text-sm bg-white cursor-pointer" />
+              buttonClassName="w-full px-3 py-2.5 sm:py-2 border border-zinc-200 rounded-lg text-sm bg-white cursor-pointer" />
             {prestadores.length === 0 && <p className="text-[11px] text-amber-700 mt-1">Nenhum prestador cadastrado: cadastre em RH / Folha › Prestadores MEI.</p>}
           </div>
           <div className="flex flex-wrap bg-white border border-zinc-200 rounded-lg overflow-hidden w-fit">
@@ -490,7 +490,7 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
               <div>
                 <label className="block text-xs font-medium text-zinc-600 mb-1">Categoria da DRE *</label>
                 <CategoriaCombobox value={dreCat} options={dreOptions} onChange={setDreCat} placeholder="Escolha a categoria…"
-                  buttonClassName="w-full px-3 py-2 border border-zinc-200 rounded-lg text-sm bg-white cursor-pointer" />
+                  buttonClassName="w-full px-3 py-2.5 sm:py-2 border border-zinc-200 rounded-lg text-sm bg-white cursor-pointer" />
               </div>
             </>
           )}
@@ -523,7 +523,7 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
                 onChange={(id) => { setFreelaId(id); const f = freelancers.find((x) => x.id === id); if (f) setDescricao(f.name); }}
                 onCreate={(texto) => { setFreelaId(''); setDescricao(texto || transaction.counterpart_name || ''); }}
                 createLabel={(texto) => (texto ? `Cadastrar “${texto}” como freelancer` : 'Cadastrar um freelancer novo')}
-                buttonClassName="w-full px-3 py-2 border border-zinc-200 rounded-lg text-sm bg-white cursor-pointer" />
+                buttonClassName="w-full px-3 py-2.5 sm:py-2 border border-zinc-200 rounded-lg text-sm bg-white cursor-pointer" />
               {!freelaId && (
                 <input value={descricao} onChange={(e) => setDescricao(e.target.value)} placeholder="Nome de quem trabalhou"
                   className="w-full mt-1.5 px-3 py-2 border border-violet-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-violet-300" />
@@ -599,10 +599,10 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
           <label className="block text-xs font-medium text-zinc-600 mb-1">{tipo === 'despesa' ? 'Categoria da DRE *' : 'Categoria do CMV'}</label>
           {tipo === 'despesa' ? (
             <CategoriaCombobox value={dreCat} options={dreOptions} onChange={setDreCat} placeholder="Escolha a categoria…"
-              buttonClassName="w-full px-3 py-2 border border-zinc-200 rounded-lg text-sm bg-white cursor-pointer" />
+              buttonClassName="w-full px-3 py-2.5 sm:py-2 border border-zinc-200 rounded-lg text-sm bg-white cursor-pointer" />
           ) : (
             <CategoriaCombobox value={merc} options={mercOptions} onChange={setMerc} placeholder="Escolha a categoria…"
-              buttonClassName="w-full px-3 py-2 border border-zinc-200 rounded-lg text-sm bg-white cursor-pointer" />
+              buttonClassName="w-full px-3 py-2.5 sm:py-2 border border-zinc-200 rounded-lg text-sm bg-white cursor-pointer" />
           )}
         </div>
         )}
@@ -614,7 +614,7 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
           <div className="flex items-center justify-between gap-2">
             <label className="text-xs font-medium text-zinc-600">Itens {itens.length === 0 && <span className="text-zinc-400 font-normal">(opcional: sem itens, a compra fica com 1 item e não mexe no estoque)</span>}</label>
             <button type="button" onClick={() => setItens((v) => [...v, novoItem()])}
-              className="px-2 py-1 rounded-lg border border-violet-300 text-violet-700 text-xs font-semibold cursor-pointer hover:bg-violet-50 whitespace-nowrap">
+              className="px-3 py-2 sm:px-2 sm:py-1 rounded-lg border border-violet-300 text-violet-700 text-sm sm:text-xs font-semibold cursor-pointer hover:bg-violet-50 whitespace-nowrap">
               <i className="ri-add-line" /> Adicionar item
             </button>
           </div>
@@ -643,22 +643,22 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
                   <input value={it.descricao} onChange={(e) => mudaItem(it.key, { descricao: e.target.value })} placeholder="Item (ex.: Gelo 5 kg)"
                     className="flex-1 min-w-0 px-2 py-1.5 border border-zinc-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-violet-300" />
                   <button type="button" onClick={() => setItens((v) => v.filter((x) => x.key !== it.key))} aria-label="Tirar item"
-                    className="w-8 h-8 flex items-center justify-center rounded-lg text-zinc-400 hover:text-red-600 hover:bg-red-50 cursor-pointer">
+                    className="w-10 h-10 sm:w-8 sm:h-8 flex-shrink-0 flex items-center justify-center rounded-lg text-zinc-400 hover:text-red-600 hover:bg-red-50 cursor-pointer">
                     <i className="ri-delete-bin-line" />
                   </button>
                 </div>
                 <div className="grid grid-cols-3 gap-1.5">
                   <label className="text-[11px] text-zinc-500">Qtd
                     <input value={it.qtd} onChange={(e) => mudaItem(it.key, { qtd: e.target.value })} inputMode="decimal"
-                      className="w-full px-2 py-1.5 border border-zinc-200 rounded-lg text-sm text-zinc-800" />
+                      className="w-full px-2 py-2 sm:py-1.5 border border-zinc-200 rounded-lg text-sm text-zinc-800" />
                   </label>
                   <label className="text-[11px] text-zinc-500">Unidade
                     <input value={it.unidade} onChange={(e) => mudaItem(it.key, { unidade: e.target.value, fator: null })} maxLength={20}
-                      className="w-full px-2 py-1.5 border border-zinc-200 rounded-lg text-sm text-zinc-800" />
+                      className="w-full px-2 py-2 sm:py-1.5 border border-zinc-200 rounded-lg text-sm text-zinc-800" />
                   </label>
                   <label className="text-[11px] text-zinc-500">Valor total (R$)
                     <input value={it.total} onChange={(e) => mudaItem(it.key, { total: e.target.value })} inputMode="decimal" placeholder="0,00"
-                      className="w-full px-2 py-1.5 border border-zinc-200 rounded-lg text-sm text-zinc-800" />
+                      className="w-full px-2 py-2 sm:py-1.5 border border-zinc-200 rounded-lg text-sm text-zinc-800" />
                   </label>
                 </div>
                 <CategoriaCombobox value={it.insumoId || SEM_INSUMO} options={insumoOptions} placeholder="Insumo do estoque…"
@@ -667,7 +667,7 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
                     // A unidade comprada fica (antes virava a do insumo e "1 un" entrava como 1 g); a conversão é pedida abaixo
                     mudaItem(it.key, { insumoId: id === SEM_INSUMO ? '' : id, fator: null, unidade: unidadeAoLigar(it.unidade, novo), ...(novo && !it.descricao.trim() ? { descricao: novo.name } : {}) });
                   }}
-                  buttonClassName="w-full px-2 py-1.5 border border-zinc-200 rounded-lg text-sm bg-white cursor-pointer" />
+                  buttonClassName="w-full px-2 py-2.5 sm:py-1.5 border border-zinc-200 rounded-lg text-sm bg-white cursor-pointer" />
                 {ins && (
                   <ConversaoEstoque ins={ins} unidade={it.unidade} qtd={it.qtd} total={it.total}
                     fator={it.fator != null ? it.fator : fatorSugerido(it.unidade, ins)} onFator={(v) => mudaItem(it.key, { fator: v })} />
@@ -697,7 +697,7 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
         <div className="flex flex-wrap items-center gap-2">
           {([['same', `Mês do pagamento (${mesPag.slice(5)}/${mesPag.slice(0, 4)})`], ['prev', `Mês anterior (${mesAnt.slice(5)}/${mesAnt.slice(0, 4)})`], ['outro', 'Outro']] as const).map(([k, label]) => (
             <button key={k} type="button" onClick={() => setCompModo(k)}
-              className={`px-2.5 py-1 rounded-lg text-xs font-semibold border cursor-pointer ${compModo === k ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-zinc-600 border-zinc-200 hover:bg-zinc-50'}`}>
+              className={`px-3 py-2 sm:px-2.5 sm:py-1 rounded-lg text-xs font-semibold border cursor-pointer ${compModo === k ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-zinc-600 border-zinc-200 hover:bg-zinc-50'}`}>
               {label}
             </button>
           ))}
@@ -731,12 +731,12 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
       )}
       {erro && <p className="text-xs text-red-600">{erro}</p>}
 
-      <div className="flex items-center gap-2">
+      <div className="flex flex-col sm:flex-row sm:items-center gap-2">
         <button onClick={lancar} disabled={busy || (!!avisoFolha && !permitirFolha) || !itensOk}
-          className="px-4 py-2 bg-violet-600 text-white rounded-lg text-sm font-semibold hover:bg-violet-700 disabled:opacity-50 cursor-pointer">
+          className="w-full sm:w-auto px-4 py-3 sm:py-2 bg-violet-600 text-white rounded-lg text-sm font-semibold hover:bg-violet-700 disabled:opacity-50 cursor-pointer">
           {busy ? 'Lançando...' : tipo === 'despesa' ? 'Lançar despesa paga' : tipo === 'compra' ? 'Lançar compra paga' : tipo === 'freelancer' ? 'Lançar pagamento de freelancer' : tipo === 'prestador' ? (prestadorTipo === 'servico' ? 'Lançar serviço do prestador' : 'Lançar reembolso') : 'Marcar como fora do DRE'}
         </button>
-        <span className="text-[11px] text-zinc-400">Dá para desfazer depois, no próprio pagamento.</span>
+        <span className="text-[11px] text-zinc-400 text-center sm:text-left">Dá para desfazer depois, no próprio pagamento.</span>
       </div>
     </div>
   );

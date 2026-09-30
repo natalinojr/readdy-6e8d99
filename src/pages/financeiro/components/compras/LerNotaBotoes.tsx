@@ -51,7 +51,7 @@ export default function LerNotaBotoes({ onLido, onInicio, disabled }: Props) {
     else setErro('Não achei o QR Code. Tente a foto.');
   };
 
-  const btn = 'flex items-center gap-1 px-2 py-1 rounded-lg border border-violet-300 text-violet-700 text-xs font-semibold cursor-pointer hover:bg-violet-50 whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed';
+  const btn = 'flex items-center gap-1 px-3 py-2 sm:px-2 sm:py-1 rounded-lg border border-violet-300 text-violet-700 text-xs font-semibold cursor-pointer hover:bg-violet-50 whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed';
   return (
     <div className="space-y-1.5">
       <div className="flex flex-wrap items-center gap-1.5">

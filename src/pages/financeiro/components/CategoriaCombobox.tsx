@@ -4,6 +4,8 @@ import { createPortal } from 'react-dom';
 // Seletor de categoria com busca: clica, digita parte do nome (ou do grupo da DRE) e escolhe
 // com clique ou ↑/↓ + Enter. A lista abre em position: fixed (portal) para não ser cortada
 // por tabelas com overflow; fecha ao clicar fora, rolar a página ou apertar Esc.
+// Celular (2026-09-30): abre como painel no topo da tela, com fundo escuro. Antes o teclado que sobe
+// ao focar a busca disparava resize/scroll e a lista fechava na hora — não dava para escolher nada.
 
 export interface ComboOption { id: string; label: string; sub?: string | null }
 
@@ -28,6 +30,7 @@ export default function CategoriaCombobox({ value, options, onChange, placeholde
   const [q, setQ] = useState('');
   const [hi, setHi] = useState(0);
   const [pos, setPos] = useState<{ left: number; top?: number; bottom?: number } | null>(null);
+  const [sheet, setSheet] = useState(false);
   const btnRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
@@ -46,6 +49,7 @@ export default function CategoriaCombobox({ value, options, onChange, placeholde
   const abrir = () => {
     if (disabled || !btnRef.current) return;
     const r = btnRef.current.getBoundingClientRect();
+    setSheet(window.innerWidth < 640 || window.matchMedia?.('(pointer: coarse)').matches === true);
     const left = Math.max(8, Math.min(r.left, window.innerWidth - PANEL_W - 8));
     // Perto do rodapé da tela, abre para cima
     const up = window.innerHeight - r.bottom < 320 && r.top > 320;
@@ -56,7 +60,7 @@ export default function CategoriaCombobox({ value, options, onChange, placeholde
   };
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || sheet) return;
     const onDown = (e: MouseEvent) => {
       const t = e.target as Node;
       if (panelRef.current?.contains(t) || btnRef.current?.contains(t)) return;
@@ -75,7 +79,15 @@ export default function CategoriaCombobox({ value, options, onChange, placeholde
       window.removeEventListener('scroll', onScroll, true);
       window.removeEventListener('resize', onResize);
     };
-  }, [open]);
+  }, [open, sheet]);
+
+  // Painel do celular: trava a rolagem da página por baixo enquanto está aberto
+  useEffect(() => {
+    if (!open || !sheet) return;
+    const antes = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = antes; };
+  }, [open, sheet]);
 
   useEffect(() => {
     if (open) listRef.current?.querySelector(`[data-i="${hi}"]`)?.scrollIntoView({ block: 'nearest' });
@@ -83,7 +95,7 @@ export default function CategoriaCombobox({ value, options, onChange, placeholde
 
   const escolher = (o: ComboOption) => {
     setOpen(false);
-    btnRef.current?.focus();
+    if (!sheet) btnRef.current?.focus();
     if (o.id !== value) onChange(o.id);
   };
 
@@ -104,21 +116,31 @@ export default function CategoriaCombobox({ value, options, onChange, placeholde
         <i className="ri-arrow-down-s-line flex-shrink-0" />
       </button>
       {open && pos && createPortal(
-        <div ref={panelRef} style={{ position: 'fixed', left: pos.left, top: pos.top, bottom: pos.bottom, width: PANEL_W, zIndex: 60 }}
-          className="bg-white border border-zinc-200 rounded-xl shadow-lg overflow-hidden text-zinc-800">
-          <div className="p-2 border-b border-zinc-100">
-            <input autoFocus value={q} onChange={(e) => { setQ(e.target.value); setHi(0); }} onKeyDown={onKey}
-              placeholder="Digite para buscar a categoria…"
-              className="w-full text-sm border border-zinc-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-amber-400" />
+        <div className={sheet ? 'fixed inset-0 z-[70] bg-black/40 flex flex-col p-2 pt-3' : ''}
+          onClick={sheet ? (e) => { if (e.target === e.currentTarget) setOpen(false); } : undefined}>
+        <div ref={panelRef}
+          style={sheet ? undefined : { position: 'fixed', left: pos.left, top: pos.top, bottom: pos.bottom, width: PANEL_W, zIndex: 60 }}
+          className={`bg-white border border-zinc-200 rounded-xl shadow-lg overflow-hidden text-zinc-800 ${sheet ? 'w-full max-h-[75dvh] flex flex-col' : ''}`}>
+          <div className="p-2 border-b border-zinc-100 flex items-center gap-2">
+            <input autoFocus={!sheet} value={q} onChange={(e) => { setQ(e.target.value); setHi(0); }} onKeyDown={onKey}
+              placeholder={sheet ? 'Buscar…' : 'Digite para buscar a categoria…'}
+              className={`w-full border border-zinc-200 rounded-lg focus:outline-none focus:border-amber-400 ${sheet ? 'text-base px-3 py-2' : 'text-sm px-2.5 py-1.5'}`} />
+            {sheet && (
+              <button type="button" onClick={() => setOpen(false)} aria-label="Fechar"
+                className="w-10 h-10 flex-shrink-0 flex items-center justify-center rounded-lg text-zinc-500 hover:bg-zinc-100 cursor-pointer">
+                <i className="ri-close-line text-xl" />
+              </button>
+            )}
           </div>
-          <ul ref={listRef} role="listbox" className="max-h-64 overflow-y-auto py-1">
+          <ul ref={listRef} role="listbox" className={`overflow-y-auto py-1 ${sheet ? 'flex-1 min-h-0' : 'max-h-64'}`}>
             {filtered.length === 0 ? (
               <li className="px-3 py-3 text-xs text-zinc-400 text-center">Nenhuma categoria com “{q}”</li>
             ) : filtered.map((o, i) => (
               <li key={o.id} data-i={i} role="option" aria-selected={o.id === value}
-                onMouseEnter={() => setHi(i)}
-                onMouseDown={(e) => { e.preventDefault(); escolher(o); }}
-                className={`px-3 py-1.5 cursor-pointer ${i === hi ? 'bg-amber-50' : ''}`}>
+                onMouseEnter={sheet ? undefined : () => setHi(i)}
+                onMouseDown={sheet ? undefined : (e) => { e.preventDefault(); escolher(o); }}
+                onClick={sheet ? () => escolher(o) : undefined}
+                className={`cursor-pointer ${sheet ? 'px-4 py-3 border-b border-zinc-50 active:bg-amber-50' : 'px-3 py-1.5'} ${i === hi && !sheet ? 'bg-amber-50' : ''}`}>
                 <span className={`block text-sm ${o.id === value ? 'font-semibold text-violet-700' : ''}`}>{o.label}</span>
                 {o.sub && <span className="block text-[11px] text-zinc-400">{o.sub}</span>}
               </li>
@@ -126,12 +148,14 @@ export default function CategoriaCombobox({ value, options, onChange, placeholde
           </ul>
           {onCreate && (
             <button type="button"
-              onMouseDown={(e) => { e.preventDefault(); const t = q.trim(); setOpen(false); onCreate(t); }}
-              className="w-full flex items-center gap-1.5 px-3 py-2 border-t border-zinc-100 text-left text-sm font-semibold text-emerald-700 hover:bg-emerald-50 cursor-pointer">
+              onMouseDown={sheet ? undefined : (e) => { e.preventDefault(); const t = q.trim(); setOpen(false); onCreate(t); }}
+              onClick={sheet ? () => { const t = q.trim(); setOpen(false); onCreate(t); } : undefined}
+              className={`w-full flex items-center gap-1.5 px-3 ${sheet ? 'py-3' : 'py-2'} border-t border-zinc-100 text-left text-sm font-semibold text-emerald-700 hover:bg-emerald-50 cursor-pointer`}>
               <i className="ri-add-circle-line" />
               <span className="truncate">{createLabel ? createLabel(q.trim()) : (q.trim() ? `Criar “${q.trim()}”` : 'Criar novo')}</span>
             </button>
           )}
+        </div>
         </div>,
         document.body,
       )}
