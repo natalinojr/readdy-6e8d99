@@ -997,11 +997,19 @@ export default function ConciliacaoTab() {
     let result = [...imports];
     if (search.trim()) {
       const q = search.toLowerCase();
+      // Busca por valor: "1214,16", "1.214,16", "1214.16", "R$ 1214", "-1214" (casa pelo começo/trecho do valor)
+      const qValor = /^\s*[-−+]?\s*(r\$)?\s*[\d.,]+\s*$/.test(q) ? q.replace(/[^\d.,]/g, '') : '';
+      const formasValor = (v: number) => {
+        const abs = Math.abs(v);
+        const br = abs.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        return [br, br.replace(/\./g, ''), abs.toFixed(2)];
+      };
       // Busca também na descrição do registro do pagamento (conta paga / vínculo), na contraparte e na observação
       result = result.filter(s => [
         s.description, descricaoPagamento(s), s.category, s.classificacao?.categoria, s.classificacao?.descricao,
         s.match_detail?.label, s.counterpart_name, s.notes,
-      ].some(t => t != null && String(t).toLowerCase().includes(q)));
+      ].some(t => t != null && String(t).toLowerCase().includes(q))
+        || (qValor !== '' && formasValor(Number(s.amount) || 0).some(f => f.includes(qValor))));
     }
     if (filterStatus !== 'all') result = result.filter(s => situacao(s) === filterStatus);
     if (filterType !== 'all') result = result.filter(s => s.transaction_type === filterType);
@@ -1430,7 +1438,7 @@ export default function ConciliacaoTab() {
           <input
             value={search}
             onChange={e => { setSearch(e.target.value); setPage(1); }}
-            placeholder="Buscar na descrição, pagamento ou categoria..."
+            placeholder="Buscar na descrição, pagamento, categoria ou valor..."
             className="w-full pl-9 pr-3 py-2 border border-zinc-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white"
           />
         </div>
