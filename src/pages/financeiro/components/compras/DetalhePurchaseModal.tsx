@@ -278,7 +278,7 @@ export default function DetalhePurchaseModal({ purchase, installments, loadingIn
 
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl w-full max-w-xl max-h-[85vh] overflow-y-auto">
+      <div className={`bg-white rounded-2xl w-full ${showDeliveryForm ? 'max-w-4xl' : 'max-w-xl'} max-h-[85vh] overflow-y-auto`}>
         <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-100 sticky top-0 bg-white z-10">
           <div>
             <h3 className="font-bold text-zinc-900">{purchase.supplier}</h3>
@@ -700,14 +700,21 @@ export default function DetalhePurchaseModal({ purchase, installments, loadingIn
                   {/* Tabela de itens com quantidade recebida */}
                   {produtos.length > 0 && (
                     <div className="hidden md:block rounded-xl border border-green-200 overflow-hidden bg-white">
-                      <table className="w-full text-sm">
-                        <thead className="bg-green-50">
-                          <tr>
-                            <th className="text-left px-3 py-2 text-xs font-semibold text-green-800">Item</th>
-                            <th className="text-center px-3 py-2 text-xs font-semibold text-green-800">Qtd. Pedida</th>
-                            <th className="text-center px-3 py-2 text-xs font-semibold text-green-800">Qtd. Recebida</th>
-                            <th className="text-right px-3 py-2 text-xs font-semibold text-green-800">Preço Unit.</th>
-                            <th className="text-right px-3 py-2 text-xs font-semibold text-green-800">Total</th>
+                      <table className="w-full table-fixed text-sm">
+                        <colgroup>
+                          <col />
+                          <col className="w-20" />
+                          <col className="w-28" />
+                          <col className="w-28" />
+                          <col className="w-28" />
+                        </colgroup>
+                        <thead className="bg-green-50 border-b border-green-200">
+                          <tr className="text-[11px] uppercase tracking-wide text-green-800">
+                            <th className="text-left px-4 py-2.5 font-semibold">Item</th>
+                            <th className="text-center px-2 py-2.5 font-semibold whitespace-nowrap">Pedido</th>
+                            <th className="text-center px-2 py-2.5 font-semibold whitespace-nowrap">Recebido</th>
+                            <th className="text-right px-3 py-2.5 font-semibold whitespace-nowrap">Preço unit.</th>
+                            <th className="text-right px-4 py-2.5 font-semibold whitespace-nowrap">Total</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-green-100">
@@ -720,27 +727,27 @@ export default function DetalhePurchaseModal({ purchase, installments, loadingIn
                             const isChanged = receivedQty !== originalQty;
 
                             return (
-                              <tr key={item.id} className={isChanged ? 'bg-amber-50/50' : ''}>
-                                <td className="px-3 py-2">
-                                  <p className="text-xs font-medium text-zinc-800">{item.description || '—'}</p>
-                                  {item.unit_label && (
-                                    <p className="text-[10px] text-zinc-400">{item.unit_label}</p>
-                                  )}
+                              <tr key={item.id} className={isChanged ? 'bg-amber-50/50' : 'hover:bg-zinc-50/60'}>
+                                <td className="px-4 py-3 align-top">
+                                  <p className="text-xs font-semibold text-zinc-800 break-words">
+                                    {item.description || '—'}
+                                    {item.unit_label && <span className="ml-1.5 text-[10px] font-medium text-zinc-400">{item.unit_label}</span>}
+                                  </p>
                                   {ctxLoaded && (
-                                    <div className="mt-1 flex items-center gap-1 flex-wrap">
+                                    <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
                                       <select
                                         value={links[item.id]?.ingredient_id ?? ''}
                                         onChange={(e) => setLink(item.id, { ingredient_id: e.target.value })}
                                         disabled={stockApplied && !!item.ingredient_id}
                                         title={stockApplied && item.ingredient_id ? 'Compra antiga: o estoque deste item já entrou na criação' : 'Insumo que recebe esta entrada no estoque'}
-                                        className={'text-[11px] border rounded px-1 py-0.5 max-w-[200px] bg-white ' + (links[item.id]?.ingredient_id ? 'border-green-300' : 'border-amber-300')}
+                                        className={'flex-1 min-w-[160px] max-w-[260px] text-xs border rounded-md px-1.5 py-1 bg-white ' + (links[item.id]?.ingredient_id ? 'border-green-300' : 'border-amber-300')}
                                       >
                                         <option value="">Não entra no estoque</option>
                                         {ingredients.map(i => <option key={i.id} value={i.id}>{i.name}{i.unit ? ' (' + i.unit + ')' : ''}</option>)}
                                       </select>
                                       {links[item.id]?.ingredient_id && (
-                                        <>
-                                          <span className="text-[10px] text-zinc-500">1 {item.unit_label || 'un'} =</span>
+                                        <span className="flex items-center gap-1 whitespace-nowrap">
+                                          <span className="text-[11px] text-zinc-500">1 {item.unit_label || 'un'} =</span>
                                           <input
                                             type="number"
                                             min="0"
@@ -748,10 +755,15 @@ export default function DetalhePurchaseModal({ purchase, installments, loadingIn
                                             value={links[item.id].units_per_package}
                                             onChange={(e) => setLink(item.id, { units_per_package: Number(e.target.value) || 0 })}
                                             disabled={stockApplied && !!item.ingredient_id}
-                                            className="w-16 text-[11px] border border-zinc-200 rounded px-1 py-0.5"
+                                            className="w-16 text-xs text-right tabular-nums border border-zinc-200 rounded-md px-1.5 py-1"
                                           />
-                                          <span className="text-[10px] text-zinc-500">{unitOf(links[item.id].ingredient_id)}</span>
-                                        </>
+                                          <span className="text-[11px] text-zinc-500">{unitOf(links[item.id].ingredient_id)}</span>
+                                          {!(stockApplied && item.ingredient_id) && receivedQty * links[item.id].units_per_package > 0 && (
+                                            <span className="ml-1 text-[11px] font-medium text-green-700 tabular-nums">
+                                              → entra {Number((receivedQty * links[item.id].units_per_package).toFixed(3)).toLocaleString('pt-BR')} {unitOf(links[item.id].ingredient_id)}
+                                            </span>
+                                          )}
+                                        </span>
                                       )}
                                     </div>
                                   )}
@@ -762,26 +774,26 @@ export default function DetalhePurchaseModal({ purchase, installments, loadingIn
                                     <p className="text-[10px] text-blue-600 mt-0.5">sugerido pela última compra deste item</p>
                                   )}
                                 </td>
-                                <td className="px-3 py-2 text-center text-xs text-zinc-500">
-                                  {originalQty}
+                                <td className="px-2 py-3 align-top text-center text-xs text-zinc-500 tabular-nums">
+                                  <span className="inline-block pt-1">{originalQty.toLocaleString('pt-BR')}</span>
                                 </td>
-                                <td className="px-3 py-2 text-center">
+                                <td className="px-2 py-3 align-top text-center">
                                   <input
                                     type="number"
                                     min="0"
                                     step="0.001"
                                     value={receivedQty}
                                     onChange={(e) => updateReceivedQuantity(item.id, Number(e.target.value) || 0)}
-                                    className={`w-20 text-center border rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-green-400 ${
+                                    className={`w-20 text-center tabular-nums border rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-green-400 ${
                                       isChanged ? 'border-amber-300 bg-amber-50' : 'border-zinc-200'
                                     }`}
                                   />
                                 </td>
-                                <td className="px-3 py-2 text-right text-xs text-zinc-500">
-                                  {formatCurrency(Number(item.unit_price ?? 0))}
+                                <td className="px-3 py-3 align-top text-right text-xs text-zinc-500 tabular-nums whitespace-nowrap">
+                                  <span className="inline-block pt-1">{formatCurrency(Number(item.unit_price ?? 0))}</span>
                                 </td>
-                                <td className="px-3 py-2 text-right">
-                                  <span className={`text-xs font-semibold ${isChanged ? 'text-amber-700' : 'text-zinc-700'}`}>
+                                <td className="px-4 py-3 align-top text-right whitespace-nowrap">
+                                  <span className={`inline-block pt-1 text-xs font-semibold tabular-nums ${isChanged ? 'text-amber-700' : 'text-zinc-800'}`}>
                                     {formatCurrency(receivedTotal)}
                                   </span>
                                   {isChanged && (
@@ -800,14 +812,14 @@ export default function DetalhePurchaseModal({ purchase, installments, loadingIn
                               <td colSpan={4} className="px-3 py-2 text-right text-xs text-zinc-500">
                                 Acréscimos da nota (impostos/despesas, não é produto)
                               </td>
-                              <td className="px-3 py-2 text-right text-xs font-semibold text-zinc-600">{formatCurrency(acrescimos)}</td>
+                              <td className="px-4 py-2 text-right text-xs font-semibold text-zinc-600 tabular-nums whitespace-nowrap">{formatCurrency(acrescimos)}</td>
                             </tr>
                           )}
                           <tr>
                             <td colSpan={4} className="px-3 py-2 text-right text-xs font-bold text-zinc-600">
                               Total Original
                             </td>
-                            <td className="px-3 py-2 text-right text-xs font-bold text-zinc-500 line-through">
+                            <td className="px-4 py-2 text-right text-xs font-bold text-zinc-500 line-through tabular-nums whitespace-nowrap">
                               {formatCurrency(purchase.total_amount)}
                             </td>
                           </tr>
@@ -815,7 +827,7 @@ export default function DetalhePurchaseModal({ purchase, installments, loadingIn
                             <td colSpan={4} className="px-3 py-2 text-right text-xs font-bold text-green-800">
                               Total Recebido
                             </td>
-                            <td className="px-3 py-2 text-right text-sm font-bold text-green-700">
+                            <td className="px-4 py-2 text-right text-sm font-bold text-green-700 tabular-nums whitespace-nowrap">
                               {formatCurrency(newTotalAmount)}
                             </td>
                           </tr>
