@@ -680,7 +680,10 @@ async function importDocumentLocked(ctx: ImportCtx, doc: any, action: 'import_pu
       supplier: supplier.name,
       invoice_number: numeroNf,
       purchase_date: String(doc.emitted_at ?? now).slice(0, 10),
-      payment_method: bonus ? 'Bonificação' : jaPaga ? String(body.payment_method ?? 'Dinheiro') : 'Boleto',
+      // A pagar: Boleto (padrão), Pix ou Cartão de crédito (parcelas nas faturas) — escolha da tela
+      // Notas de entrada (2026-09-29). Só "Boleto" gera a pendência "falta o boleto".
+      payment_method: bonus ? 'Bonificação' : jaPaga ? String(body.payment_method ?? 'Dinheiro')
+        : ['PIX', 'Cartão de crédito'].includes(String(body.payment_method)) ? String(body.payment_method) : 'Boleto',
       payment_status: jaPaga ? 'paid' : 'pending',
       cost_center_id: body.cost_center_id ?? null,
       bank_account_id: bonus ? null : body.bank_account_id ?? null,

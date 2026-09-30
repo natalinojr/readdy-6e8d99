@@ -6,6 +6,7 @@ import { useToast } from '@/contexts/ToastContext';
 import { confirmar } from '@/components/base/Dialogos';
 import { PrePagoConferir, PrePagoModal, listarPrePagos } from './notas/PrePago';
 import { KpiCard, Segmented } from './dreUi';
+import { parcelasCartao } from '@/lib/faturaCartao';
 
 // ── Notas de entrada (NF-e dos fornecedores contra o CNPJ da loja, via SEFAZ) ──
 // Cada nota é conferida aqui e vira uma COMPRA (mercadoria → CMV, com as parcelas
@@ -81,6 +82,21 @@ const TEXTO_DESCONTADO = /REEMBOLSO\s+L[IÍ]QUIDO|PROCESSAMENTO\s+DE\s+PAGAMENTO
 const descontadoNoRepasse = (d: { natureza: string | null; itens?: { descricao?: string | null }[] | null }) =>
   TEXTO_DESCONTADO.test([d.natureza, ...(d.itens ?? []).map((it) => it?.descricao)].filter(Boolean).join(' '));
 const isServico = (d: { modelo: number }) => Number(d.modelo) === 10;
+type ModoPag = 'boleto' | 'pix' | 'cartao' | 'pago';
+const FORMAS_JA_PAGA = ['PIX', 'Dinheiro', 'Cartão de débito', 'Transferência'];
+// Fechamento/vencimento do cartão ficam lembrados neste navegador, por loja (só conveniência:
+// as datas das parcelas continuam editáveis antes de lançar)
+interface CartaoCfg { parcelas: number; fechamento: number; vencimento: number }
+function lerCartao(tenantId: string | null | undefined): CartaoCfg {
+  try {
+    const c = JSON.parse(localStorage.getItem(`erpos.cartaoCompra.${tenantId}`) ?? 'null');
+    if (c && c.fechamento > 0 && c.vencimento > 0) return { parcelas: 1, fechamento: Number(c.fechamento), vencimento: Number(c.vencimento) };
+  } catch { /* sem storage */ }
+  return { parcelas: 1, fechamento: 25, vencimento: 5 };
+}
+function salvarCartao(tenantId: string | null | undefined, c: CartaoCfg) {
+  try { localStorage.setItem(`erpos.cartaoCompra.${tenantId}`, JSON.stringify({ fechamento: c.fechamento, vencimento: c.vencimento })); } catch { /* sem storage */ }
+}
 function formaResumo(pag: Pag[] | undefined): string {
   return [...new Set((pag ?? []).map((p) => TPAG[p.forma] ?? 'Outros'))].join(', ');
 }
@@ -674,8 +690,24 @@ function ConferirModal({ doc, podeLancar, tenantId, onClose, onLancado, call, on
   }, [servico, doc.id]);
   const semBoleto = (doc.parcelas ?? []).length === 0;
   const pagoNaHora = semBoleto && (doc.pagamento ?? []).some((p) => PAGO_NA_HORA.has(p.forma));
-  const [pago, setPago] = useState<boolean>(pagoNaHora);
   const formaPrincipal = (doc.pagamento ?? []).slice().sort((a, b) => Number(b.valor) - Number(a.valor))[0]?.forma;
+  // Como a compra vai ser paga (2026-09-29): a nota traz boleto, mas o dono pode pagar de outro jeito.
+  // 'boleto'/'pix' = conta a pagar nas parcelas; 'cartao' = parcelas nos vencimentos das faturas;
+  // 'pago' = já paga (saída no Fluxo de Caixa na data da nota).
+  const [modoPag, setModoPag] = useState<ModoPag>(semBoleto && formaPrincipal === '03' ? 'cartao' : pagoNaHora ? 'pago' : 'boleto');
+  const pago = modoPag === 'pago';
+  const [formaPaga, setFormaPaga] = useState<string>(() => {
+    const f = formaPrincipal ? TPAG[formaPrincipal] : '';
+    return FORMAS_JA_PAGA.includes(f) ? f : 'PIX';
+  });
+  const [cartao, setCartao] = useState<CartaoCfg>(() => lerCartao(tenantId));
+  useEffect(() => {
+    if (modoPag === 'cartao') setParcelas(parcelasCartao((doc.emitted_at ?? new Date().toISOString()).slice(0, 10), Number(doc.valor_total ?? 0), cartao.parcelas, cartao.fechamento, cartao.vencimento));
+    else setParcelas(parcelasIniciais);
+    // parcelasIniciais é derivado de doc (fixo enquanto a janela está aberta)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modoPag, cartao, doc.emitted_at, doc.valor_total]);
+  const mudarCartao = (patch: Partial<CartaoCfg>) => setCartao((c) => { const n = { ...c, ...patch }; salvarCartao(tenantId, n); return n; });
   const naoVenda = pareceNaoVenda(doc);
   const [centros, setCentros] = useState<{ id: string; name: string }[]>([]);
   const [dres, setDres] = useState<{ id: string; name: string; group_type: string }[]>([]);
@@ -775,7 +807,8 @@ function ConferirModal({ doc, podeLancar, tenantId, onClose, onLancado, call, on
       parcelas,
       bonus: tipo === 'bonus',
       pago: tipo === 'purchase' && pago,
-      payment_method: formaPrincipal ? (TPAG[formaPrincipal] ?? 'Outros') : undefined,
+      payment_method: tipo !== 'purchase' ? undefined
+        : modoPag === 'pago' ? formaPaga : modoPag === 'cartao' ? 'Cartão de crédito' : modoPag === 'pix' ? 'PIX' : 'Boleto',
       cost_center_id: centro || null,
       dre_category_id: tipo === 'bill' ? (dre || null) : null,
       category: tipo === 'bill' ? (dres.find((d) => d.id === dre)?.name ?? 'Outros') : undefined,
@@ -790,6 +823,8 @@ function ConferirModal({ doc, podeLancar, tenantId, onClose, onLancado, call, on
       ? 'Bonificação lançada · entra no estoque ao confirmar o recebimento, sem custo'
       : tipo === 'purchase' && pago
       ? 'Compra lançada como paga · saída registrada no Fluxo de Caixa'
+      : tipo === 'purchase' && modoPag === 'cartao'
+      ? `Compra no cartão lançada · ${r.parcelas ?? parcelas.length} parcela(s) em Contas a Pagar, nos vencimentos das faturas`
       : `${tipo === 'purchase' ? 'Compra lançada' : 'Despesa lançada'} · ${r.parcelas ?? parcelas.length} parcela(s) em Contas a Pagar`);
   };
 
@@ -969,18 +1004,50 @@ function ConferirModal({ doc, podeLancar, tenantId, onClose, onLancado, call, on
           {tipo === 'purchase' && !usarMensal && (
             <div>
               <p className="text-xs font-bold text-zinc-700 mb-2">Pagamento</p>
-              <div className="grid grid-cols-2 gap-2">
-                <button onClick={() => setPago(false)} className={`text-left p-2.5 rounded-lg border text-xs cursor-pointer ${!pago ? 'border-amber-400 bg-amber-50' : 'border-zinc-200 hover:border-zinc-300'}`}>
-                  <strong className="text-zinc-800">A pagar</strong>
-                  <span className="block text-zinc-500">{semBoleto ? 'Cria conta a pagar no vencimento abaixo' : `Boleto: ${parcelas.length} parcela(s) em Contas a Pagar`}</span>
-                </button>
-                <button onClick={() => setPago(true)} className={`text-left p-2.5 rounded-lg border text-xs cursor-pointer ${pago ? 'border-amber-400 bg-amber-50' : 'border-zinc-200 hover:border-zinc-300'}`}>
-                  <strong className="text-zinc-800">Já paga</strong>
-                  <span className="block text-zinc-500">{formaResumo(doc.pagamento) ? `Na nota: ${formaResumo(doc.pagamento)}` : 'Pago na entrega'}</span>
-                </button>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {([
+                  ['boleto', semBoleto ? 'A pagar' : 'Boleto', semBoleto ? 'Conta a pagar no vencimento abaixo' : `${(doc.parcelas ?? []).length} parcela(s) da nota em Contas a Pagar`],
+                  ['pix', 'Pix a pagar', 'Conta a pagar por Pix no vencimento abaixo'],
+                  ['cartao', 'Cartão de crédito', 'Parcelas nos vencimentos das faturas'],
+                  ['pago', 'Já paga', formaResumo(doc.pagamento) ? `Na nota: ${formaResumo(doc.pagamento)}` : 'Pago na entrega'],
+                ] as [ModoPag, string, string][]).map(([m, titulo, sub]) => (
+                  <button key={m} onClick={() => setModoPag(m)} className={`text-left p-2.5 rounded-lg border text-xs cursor-pointer ${modoPag === m ? 'border-amber-400 bg-amber-50' : 'border-zinc-200 hover:border-zinc-300'}`}>
+                    <strong className="text-zinc-800">{titulo}</strong>
+                    <span className="block text-zinc-500">{sub}</span>
+                  </button>
+                ))}
               </div>
+              {modoPag === 'cartao' && (
+                <div className="mt-2 border border-zinc-100 rounded-lg p-3 space-y-2">
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-zinc-600">
+                    <label className="flex items-center gap-1.5">Parcelas
+                      <select value={cartao.parcelas} onChange={(e) => mudarCartao({ parcelas: Number(e.target.value) })}
+                        className="text-sm border border-zinc-200 rounded-lg px-2 py-1 focus:outline-none focus:border-amber-400 cursor-pointer">
+                        {Array.from({ length: 12 }, (_, i) => <option key={i} value={i + 1}>{i + 1}×</option>)}
+                      </select>
+                    </label>
+                    <label className="flex items-center gap-1.5">Fatura fecha dia
+                      <input type="number" min={1} max={31} value={cartao.fechamento} onChange={(e) => mudarCartao({ fechamento: Math.min(31, Math.max(1, Number(e.target.value) || 1)) })}
+                        className="w-14 text-sm border border-zinc-200 rounded-lg px-2 py-1 text-right focus:outline-none focus:border-amber-400" />
+                    </label>
+                    <label className="flex items-center gap-1.5">vence dia
+                      <input type="number" min={1} max={31} value={cartao.vencimento} onChange={(e) => mudarCartao({ vencimento: Math.min(31, Math.max(1, Number(e.target.value) || 1)) })}
+                        className="w-14 text-sm border border-zinc-200 rounded-lg px-2 py-1 text-right focus:outline-none focus:border-amber-400" />
+                    </label>
+                  </div>
+                  <p className="text-[11px] text-zinc-500">A compra entra no CMV na data da nota ({dataBR(doc.emitted_at)}); cada parcela vira uma conta a pagar no vencimento da fatura em que cai. Quando pagar a fatura, dê baixa nessas contas. O boleto da nota não é usado.</p>
+                </div>
+              )}
               {pago && (
-                <p className="text-[11px] text-amber-700 mt-1.5">A compra entra como paga e a saída é registrada no Fluxo de Caixa na data da nota. Se essa saída já foi lançada em outro lugar (sangria, despesa manual), escolha "A pagar" e dê baixa por lá para não duplicar.</p>
+                <div className="mt-2 space-y-1.5">
+                  <label className="flex items-center gap-2 text-xs text-zinc-600">Pago com
+                    <select value={formaPaga} onChange={(e) => setFormaPaga(e.target.value)}
+                      className="text-sm border border-zinc-200 rounded-lg px-2 py-1 focus:outline-none focus:border-amber-400 cursor-pointer">
+                      {FORMAS_JA_PAGA.map((f) => <option key={f} value={f}>{f}</option>)}
+                    </select>
+                  </label>
+                  <p className="text-[11px] text-amber-700">A compra entra como paga e a saída é registrada no Fluxo de Caixa na data da nota. Se essa saída já foi lançada em outro lugar (sangria, despesa manual, pagamento do extrato), escolha uma opção "a pagar" e dê baixa por lá para não duplicar.</p>
+                </div>
               )}
             </div>
           )}
@@ -990,7 +1057,10 @@ function ConferirModal({ doc, podeLancar, tenantId, onClose, onLancado, call, on
           <div>
             <div className="flex items-center justify-between mb-2">
               <p className="text-xs font-bold text-zinc-700">
-                {servico ? 'Vencimento do pagamento ao prestador' : (doc.parcelas ?? []).length > 0 ? `Boletos da nota (${parcelas.length})` : 'Vencimento (a nota não traz boleto)'}
+                {servico ? 'Vencimento do pagamento ao prestador'
+                  : tipo === 'purchase' && modoPag === 'cartao' ? `Parcelas no cartão (${parcelas.length}) · vencimento da fatura`
+                  : tipo === 'purchase' && modoPag === 'pix' ? 'Vencimento do Pix'
+                  : (doc.parcelas ?? []).length > 0 ? `Boletos da nota (${parcelas.length})` : 'Vencimento (a nota não traz boleto)'}
               </p>
               <button onClick={() => setParcelas((ps) => [...ps, { numero: String(ps.length + 1), vencimento: ps[ps.length - 1]?.vencimento ?? hoje(), valor: 0 }])}
                 className="text-[11px] font-semibold text-amber-600 hover:text-amber-700 cursor-pointer">+ parcela</button>
