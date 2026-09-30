@@ -92,6 +92,8 @@ export default function GuiasTab() {
       const f = pdfs[i];
       let novo: Envio;
       if (f.size > 10 * 1024 * 1024) novo = { nome: f.name, estado: 'erro', texto: 'Arquivo maior que 10 MB.' };
+      // PDF de 0 KB (OneDrive/Drive "só na nuvem" ou download interrompido): o servidor respondia "Anexe o PDF"
+      else if (f.size === 0) novo = { nome: f.name, estado: 'erro', texto: 'Este arquivo está vazio (0 KB) no seu computador. Se ele está no OneDrive/Google Drive, abra ou baixe de novo antes de enviar.' };
       else {
         try {
           const b64 = await lerBase64(f);
