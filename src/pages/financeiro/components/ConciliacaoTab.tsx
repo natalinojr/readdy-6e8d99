@@ -1059,7 +1059,6 @@ export default function ConciliacaoTab() {
     ['taxas_maquininha', 'Taxas da maquininha cobradas acima do contrato', 'red'],
   ];
   const alertasAtivos = alertas ? ALERTAS_DEF.filter(([k]) => Number(alertas[k]?.count ?? 0) > 0) : [];
-  const temPendencias = vinculosPendentes.length > 0 || alertasAtivos.length > 0;
 
   const saldoBanco = selectedAccount?.synced_balance != null ? Number(selectedAccount.synced_balance) : null;
   const saldoErp = selectedAccount ? Number(selectedAccount.current_balance) : null;
@@ -1294,61 +1293,16 @@ export default function ConciliacaoTab() {
         </div>
       </div>
 
-      {/* Pendências */}
-      {temPendencias && (
-        <div className="bg-white rounded-xl border border-zinc-200 divide-y divide-zinc-100">
-          {vinculosPendentes.length > 0 && (
-            <div className="flex items-center gap-3 px-4 py-2.5 flex-wrap">
-              <i className="ri-links-line text-emerald-600" />
-              <p className="flex-1 min-w-0 text-sm text-zinc-800">
-                <span className="font-semibold">{vinculosPendentes.length} pagamento(s)</span> batem com notas, contas a pagar ou folha
-                <span className="text-zinc-400"> · {exatosPendentes.length} exato(s){vinculosPendentes.length > exatosPendentes.length ? `, ${vinculosPendentes.length - exatosPendentes.length} forte(s)` : ''}</span>
-              </p>
-              <button
-                onClick={() => setShowConfirmarVinculos(true)}
-                disabled={confirmando}
-                title="Confirmar dá baixa na conta a pagar, lança juros e importa sozinha a nota que ainda não foi lançada"
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-semibold hover:bg-emerald-700 cursor-pointer whitespace-nowrap disabled:opacity-50"
-              >
-                <i className="ri-list-check-2" /> Revisar e confirmar
-              </button>
-            </div>
-          )}
-          {alertasAtivos.map(([k, title, tom]) => {
-            const a = alertas![k]!;
-            return (
-              <details key={k} className="group px-4 py-2.5">
-                <summary className="cursor-pointer list-none flex items-center gap-3 text-sm">
-                  <span className={`w-2 h-2 rounded-full flex-shrink-0 ${tom === 'red' ? 'bg-red-500' : 'bg-amber-400'}`} />
-                  <span className="flex-1 min-w-0 text-zinc-800">{title}</span>
-                  <span className="whitespace-nowrap text-zinc-500 text-xs"><span className="font-semibold text-zinc-800">{a.count}</span> · {fmtCur(Number(a.total))}</span>
-                  <i className="ri-arrow-down-s-line text-zinc-400 group-open:rotate-180 transition-transform" />
-                </summary>
-                <div className="mt-2 ml-5 space-y-1">
-                  {(k === 'repasses_stone' || k === 'taxas_maquininha') && (
-                    <button onClick={() => setShowRepassesStone(k === 'taxas_maquininha' ? 'taxas' : 'repasses')} className="text-xs font-semibold text-amber-600 hover:text-amber-700 cursor-pointer">
-                      {k === 'taxas_maquininha' ? 'Ver taxas cobradas × contratadas →' : 'Ver repasses dia a dia →'}
-                    </button>
-                  )}
-                  {a.itens.map((it, i) => {
-                    const clicavel = !!it.ref_kind && !!it.ref_id;
-                    return (
-                      <button key={i} onClick={() => clicavel && abrirAlerta(it)} disabled={!clicavel}
-                        title={clicavel ? (it.ref_kind === 'bill' ? 'Abrir em Contas a Pagar' : it.ref_kind === 'doc' ? 'Abrir em Notas de Entrada' : 'Abrir o pagamento') : undefined}
-                        className={`w-full flex justify-between gap-2 text-xs text-zinc-600 text-left rounded px-1 py-0.5 ${clicavel ? 'hover:bg-amber-50 hover:text-zinc-900 cursor-pointer' : 'cursor-default'}`}>
-                        <span className="truncate">
-                          {it.data ? new Date(String(it.data).slice(0, 10) + 'T00:00:00').toLocaleDateString('pt-BR') + ' · ' : ''}{it.label}
-                          {clicavel && <i className="ri-arrow-right-up-line ml-1 text-zinc-300" />}
-                        </span>
-                        <span className="whitespace-nowrap font-semibold">{fmtCur(Number(it.valor))}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </details>
-            );
-          })}
-        </div>
+      {/* Alertas ficam no fim da tela (2026-09-30), para o extrato vir antes; aqui só o aviso. */}
+      {alertasAtivos.length > 0 && (
+        <button
+          onClick={() => document.getElementById('alertas-conciliacao')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+          className="w-full flex items-center gap-2 px-4 py-2 bg-white rounded-xl border border-zinc-200 text-sm text-left hover:bg-zinc-50 cursor-pointer"
+        >
+          <span className={`w-2 h-2 rounded-full ${alertasAtivos.some(([, , tom]) => tom === 'red') ? 'bg-red-500' : 'bg-amber-400'}`} />
+          <span className="flex-1 text-zinc-700"><b>{alertasAtivos.length}</b> {alertasAtivos.length === 1 ? 'alerta' : 'alertas'} para olhar (vencidas, sem nota, juros…)</span>
+          <span className="text-xs font-semibold text-amber-600 whitespace-nowrap">ver abaixo <i className="ri-arrow-down-line" /></span>
+        </button>
       )}
 
       {/* Números */}
@@ -1413,6 +1367,29 @@ export default function ConciliacaoTab() {
         </div>
       )}
 
+      {/* Pagamentos que batem com notas/contas/folha: confirmar em lote */}
+      {vinculosPendentes.length > 0 && (
+        <div className="bg-white rounded-xl border border-emerald-200">
+          {vinculosPendentes.length > 0 && (
+            <div className="flex items-center gap-3 px-4 py-2.5 flex-wrap">
+              <i className="ri-links-line text-emerald-600" />
+              <p className="flex-1 min-w-0 text-sm text-zinc-800">
+                <span className="font-semibold">{vinculosPendentes.length} pagamento(s)</span> batem com notas, contas a pagar ou folha
+                <span className="text-zinc-400"> · {exatosPendentes.length} exato(s){vinculosPendentes.length > exatosPendentes.length ? `, ${vinculosPendentes.length - exatosPendentes.length} forte(s)` : ''}</span>
+              </p>
+              <button
+                onClick={() => setShowConfirmarVinculos(true)}
+                disabled={confirmando}
+                title="Confirmar dá baixa na conta a pagar, lança juros e importa sozinha a nota que ainda não foi lançada"
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-semibold hover:bg-emerald-700 cursor-pointer whitespace-nowrap disabled:opacity-50"
+              >
+                <i className="ri-list-check-2" /> Revisar e confirmar
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Filtros */}
       <div className="flex items-center gap-2 flex-wrap">
         <div className="w-full sm:w-auto flex items-center gap-1 bg-white border border-zinc-200 rounded-lg px-2 py-1.5" title="Período: vale para a tabela, os números e a busca nos bancos">
@@ -1425,6 +1402,26 @@ export default function ConciliacaoTab() {
             onChange={e => { setPeriodTo(e.target.value); setPage(1); }}
             className="border-0 text-xs font-semibold text-zinc-700 focus:outline-none bg-transparent flex-1 sm:flex-none sm:w-28 min-w-0" />
         </div>
+        {/* Atalhos de período (2026-09-30) */}
+        {(() => {
+          const hoje = hojeBR();
+          const d7 = new Date(hoje + 'T12:00:00Z'); d7.setUTCDate(d7.getUTCDate() - 6);
+          const atalhos: [string, string, string][] = [
+            ['Hoje', hoje, hoje],
+            ['7 dias', d7.toISOString().slice(0, 10), hoje],
+            ['Este mês', hoje.slice(0, 8) + '01', hoje],
+          ];
+          return (
+            <div className="flex bg-zinc-100 p-1 rounded-lg">
+              {atalhos.map(([rot, de, ate]) => (
+                <button key={rot} onClick={() => { setPeriodFrom(de); setPeriodTo(ate); setPage(1); }}
+                  className={`px-2.5 py-1 text-xs font-semibold rounded-md cursor-pointer whitespace-nowrap ${periodFrom === de && periodTo === ate ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-800'}`}>
+                  {rot}
+                </button>
+              ))}
+            </div>
+          );
+        })()}
 
         {inicioFin && (
           <span title="O que é anterior a esse mês foi fechado em Conciliação › ⚙ › Meu financeiro começa em…"
@@ -1923,6 +1920,50 @@ export default function ConciliacaoTab() {
         <p className="text-xs text-amber-600 flex items-center gap-1">
           <i className="ri-information-line" /> O período tem mais de {periodoValido ? '10.000' : '500'} lançamentos; só os mais recentes aparecem. Reduza o período para ver todos.
         </p>
+      )}
+
+      {/* Alertas (mesmos de antes), depois do extrato */}
+      {alertasAtivos.length > 0 && (
+        <div id="alertas-conciliacao" className="bg-white rounded-xl border border-zinc-200 divide-y divide-zinc-100 scroll-mt-4">
+          <div className="px-4 py-2.5">
+            <h3 className="text-sm font-bold text-zinc-800">Alertas</h3>
+            <p className="text-xs text-zinc-400">Do mais grave para o mais leve · clique para ver os itens</p>
+          </div>
+          {alertasAtivos.map(([k, title, tom]) => {
+            const a = alertas![k]!;
+            return (
+              <details key={k} className="group px-4 py-2.5">
+                <summary className="cursor-pointer list-none flex items-center gap-3 text-sm">
+                  <span className={`w-2 h-2 rounded-full flex-shrink-0 ${tom === 'red' ? 'bg-red-500' : 'bg-amber-400'}`} />
+                  <span className="flex-1 min-w-0 text-zinc-800">{title}</span>
+                  <span className="whitespace-nowrap text-zinc-500 text-xs"><span className="font-semibold text-zinc-800">{a.count}</span> · {fmtCur(Number(a.total))}</span>
+                  <i className="ri-arrow-down-s-line text-zinc-400 group-open:rotate-180 transition-transform" />
+                </summary>
+                <div className="mt-2 ml-5 space-y-1">
+                  {(k === 'repasses_stone' || k === 'taxas_maquininha') && (
+                    <button onClick={() => setShowRepassesStone(k === 'taxas_maquininha' ? 'taxas' : 'repasses')} className="text-xs font-semibold text-amber-600 hover:text-amber-700 cursor-pointer">
+                      {k === 'taxas_maquininha' ? 'Ver taxas cobradas × contratadas →' : 'Ver repasses dia a dia →'}
+                    </button>
+                  )}
+                  {a.itens.map((it, i) => {
+                    const clicavel = !!it.ref_kind && !!it.ref_id;
+                    return (
+                      <button key={i} onClick={() => clicavel && abrirAlerta(it)} disabled={!clicavel}
+                        title={clicavel ? (it.ref_kind === 'bill' ? 'Abrir em Contas a Pagar' : it.ref_kind === 'doc' ? 'Abrir em Notas de Entrada' : 'Abrir o pagamento') : undefined}
+                        className={`w-full flex justify-between gap-2 text-xs text-zinc-600 text-left rounded px-1 py-0.5 ${clicavel ? 'hover:bg-amber-50 hover:text-zinc-900 cursor-pointer' : 'cursor-default'}`}>
+                        <span className="truncate">
+                          {it.data ? new Date(String(it.data).slice(0, 10) + 'T00:00:00').toLocaleDateString('pt-BR') + ' · ' : ''}{it.label}
+                          {clicavel && <i className="ri-arrow-right-up-line ml-1 text-zinc-300" />}
+                        </span>
+                        <span className="whitespace-nowrap font-semibold">{fmtCur(Number(it.valor))}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </details>
+            );
+          })}
+        </div>
       )}
 
       {/* Import Preview Modal */}
