@@ -682,6 +682,19 @@ async function ligarPagamentoAchado(ctx: Ctx, p: any, billId: string | null, pur
   return `Compra lançada e ligada à saída de ${diaBR(p.ja_pago_em ?? hojeBR())} no extrato — baixa feita.`;
 }
 
+/** Pedido recusado leva junto a compra que o "Paguei do meu bolso" lançou (já conferido: sem estoque nem
+ *  pagamento). O item que só essa compra trouxe some da Classificação; item já visto antes ou classificado fica. */
+async function desfazerCompraDoPedido(admin: any, tenantId: string, purchaseId: string) {
+  await admin.from('fin_accounts_payable').delete().eq('tenant_id', tenantId).eq('reference_id', purchaseId);
+  await admin.from('fin_cash_flow').delete().eq('tenant_id', tenantId).eq('reference_id', purchaseId).eq('origin', 'auto_purchase');
+  const { error } = await admin.from('fin_purchases').delete().eq('id', purchaseId).eq('tenant_id', tenantId);
+  if (error) throw new Error(`Pedido recusado, mas a compra não saiu: ${error.message}`);
+  const { data: itens } = await admin.from('fin_item_classifications').select('id, first_seen_at, last_seen_at')
+    .eq('tenant_id', tenantId).eq('last_ref_id', purchaseId).is('classe', null);
+  const soDessa = (itens ?? []).filter((i: any) => i.first_seen_at === i.last_seen_at).map((i: any) => i.id);
+  if (soDessa.length) await admin.from('fin_item_classifications').delete().in('id', soDessa);
+}
+
 async function carregarPedido(ctx: Ctx, id: string) {
   const { data } = await ctx.admin.from('fin_payment_requests').select(CAMPOS).eq('id', id).eq('tenant_id', ctx.tenantId).maybeSingle();
   return data;
@@ -889,11 +902,33 @@ Deno.serve(async (req) => {
         if (p.status !== 'pendente') return erro(`Esse pedido já foi ${p.status}`);
         const motivo = txt(body.motivo, 300);
         if (motivo.length < 3) return erro('Diga o motivo da recusa (a pessoa vai ver)');
+        // "Paguei do meu bolso" (recebimento) já lançou a compra no CMV. Recusado, ela ficava órfã em Compras
+        // e na Classificação — e o pedido refeito (ex.: como despesa) contava o mesmo gasto 2× (dono, 2026-09-29).
+        // Sem movimento de estoque, a compra sai junto; se já mexeu no estoque, recusa só pela tela de Compras
+        // (a exclusão de lá estorna o estoque).
+        if (p.purchase_id) {
+          const { count: movs, error: movErr } = await admin.from('stock_movements')
+            .select('id', { count: 'exact', head: true }).eq('purchase_id', p.purchase_id).eq('tenant_id', tenantId);
+          if (movErr) throw new Error(movErr.message);
+          if ((movs ?? 0) > 0) {
+            return erro('Essa compra já entrou no estoque. Exclua a compra em Financeiro › Compras (o estoque é estornado) e depois recuse o pedido.', 409);
+          }
+          const [{ data: pagas, error: pagErr }, { count: caixa, error: cxErr }] = await Promise.all([
+            admin.from('fin_accounts_payable').select('id').eq('tenant_id', tenantId).eq('reference_id', p.purchase_id)
+              .or('status.eq.paid,paid_amount.gt.0').limit(1),
+            admin.from('cash_movements').select('id', { count: 'exact', head: true }).eq('tenant_id', tenantId).eq('purchase_id', p.purchase_id),
+          ]);
+          if (pagErr || cxErr) throw new Error((pagErr ?? cxErr)!.message);
+          if ((pagas?.length ?? 0) > 0 || (caixa ?? 0) > 0) {
+            return erro('Essa compra já tem pagamento ligado. Confira em Financeiro › Compras antes de recusar.', 409);
+          }
+        }
         const { data: upd } = await admin.from('fin_payment_requests').update({
           status: 'recusada', motivo_recusa: motivo, decidido_por: caller.userId,
           decidido_por_nome: await nomeDoUsuario(admin, caller.userId, caller.email), decidido_em: new Date().toISOString(), updated_at: new Date().toISOString(),
         }).eq('id', p.id).eq('status', 'pendente').select('id');
         if (!upd?.length) return erro('O pedido mudou enquanto você recusava. Atualize a tela.');
+        if (p.purchase_id) await desfazerCompraDoPedido(admin, tenantId, p.purchase_id);
         await fecharPendencia(admin, tenantId, p.id, caller.userId, 'descartada', `Recusado: ${motivo}`);
         return json({ ok: true });
       }
