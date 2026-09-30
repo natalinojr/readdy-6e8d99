@@ -7,6 +7,8 @@ import CategoriaCombobox from '../CategoriaCombobox';
 import LerNotaBotoes from '../compras/LerNotaBotoes';
 import { linhasParaValor, aprenderVinculos, type ScanResult } from '@/lib/leituraNotinha';
 import type { StatementImport } from '@/hooks/useConciliacao';
+import { linhasDoPrint, type PrintCompraLido } from '@/lib/printCompraOnline';
+import { chamarPedidos, comprovanteParaEnvio } from '@/pages/receber/pedidos/api';
 
 // Pagamento sem nota: lança uma DESPESA (conta a pagar já baixada, com categoria da DRE), uma
 // COMPRA (CMV, categoria de mercadoria) ou um pagamento de FREELANCER (despesa em RH que também
@@ -389,6 +391,36 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
   const [avisoFinal, setAvisoFinal] = useState<string | null>(null);
   // Nota lida (QR/foto/arquivo): preenche fornecedor e itens; nº da nota vai junto na compra
   const [lida, setLida] = useState<ScanResult | null>(null);
+  // Print de compra online (Mercado Livre, Shopee…): compra sem NF, lida pela mesma IA do /receber (2026-09-30)
+  const [printLido, setPrintLido] = useState<{ p: PrintCompraLido; avisos: string[] } | null>(null);
+  const [lendoPrint, setLendoPrint] = useState(false);
+  const lerPrintOnline = async (f: File | undefined) => {
+    if (!f || !user?.tenantId) return;
+    setLendoPrint(true); setErro(null);
+    try {
+      const imagem = await comprovanteParaEnvio(f);
+      const { data, erro: e } = await chamarPedidos<{ lido: PrintCompraLido & { e_compra?: boolean } }>('ler_print', user.tenantId, { imagem });
+      if (e || !data?.lido) { setErro(e ?? 'Não consegui ler o print.'); return; }
+      if (data.lido.e_compra === false) { setErro('Não parece um print de compra online (carrinho, checkout ou resumo do pedido).'); return; }
+      const { linhas, avisos } = linhasDoPrint(data.lido, valorPag);
+      const fmt = (n: number) => String(Math.round(n * 1000) / 1000).replace('.', ',');
+      setItens(linhas.map((l, i): ItemCompra => ({
+        key: Date.now() + i + Math.random(), descricao: l.descricao, qtd: fmt(l.qtd), unidade: 'un',
+        total: l.total > 0 ? l.total.toFixed(2).replace('.', ',') : '', insumoId: '',
+      })));
+      const site = data.lido.site?.trim() || 'Compra online';
+      if (!fornecedor.trim() || fornecedor === (transaction.counterpart_name || '')) setFornecedor(site);
+      if (descricao.trim() === nomePadrao || !descricao.trim()) {
+        setDescricao(`Compra online ${site}${data.lido.numero_pedido ? ' · pedido ' + data.lido.numero_pedido : ''}`.slice(0, 200));
+      }
+      setLida(null);
+      setPrintLido({ p: data.lido, avisos });
+    } catch (e) {
+      setErro((e as Error).message);
+    } finally {
+      setLendoPrint(false);
+    }
+  };
   const valorPag = Math.round(Number(transaction.amount) * 100) / 100;
   const somaItens = Math.round(itens.reduce((s, it) => s + (numBR(it.total) || 0), 0) * 100) / 100;
   const faltaItens = Math.round((valorPag - somaItens) * 100) / 100;
@@ -411,6 +443,7 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
     setItens((v) => [...v.filter((it) => it.descricao.trim() && !it.raw), ...linhas]);
     if (r.supplier_name && (!fornecedor.trim() || fornecedor === (transaction.counterpart_name || ''))) setFornecedor(r.supplier_name);
     setLida(r);
+    setPrintLido(null);
   };
   const mudaItem = (key: number, patch: Partial<ItemCompra>) => setItens((v) => v.map((it) => (it.key === key ? { ...it, ...patch } : it)));
 
@@ -420,7 +453,7 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
     setDias([]); setDiaNovo(transaction.transaction_date); setFuncao(''); setFreelaId(''); setMotivo('');
     setCompModo('same'); setCompOutro(transaction.transaction_date.slice(0, 7));
     setPrestadorId(''); setPrestadorTipo('servico');
-    setItens([]); setRecebido(true); setLida(null);
+    setItens([]); setRecebido(true); setLida(null); setPrintLido(null);
   }, [transaction.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Quem recebeu o Pix já está cadastrado? Então a opção certa vem marcada sozinha.
@@ -721,7 +754,25 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
               <i className="ri-add-line" /> Adicionar item
             </button>
           </div>
-          <LerNotaBotoes onLido={aplicarNota} disabled={busy} />
+          <LerNotaBotoes onLido={aplicarNota} disabled={busy || lendoPrint} />
+          <label className={`w-full flex items-center justify-center gap-1.5 px-3 py-2 sm:py-1.5 rounded-lg border border-dashed border-amber-400 text-amber-800 bg-amber-50/60 text-xs font-semibold ${busy || lendoPrint ? 'opacity-50 pointer-events-none' : 'cursor-pointer hover:bg-amber-50'}`}>
+            <i className={lendoPrint ? 'ri-loader-4-line animate-spin' : 'ri-shopping-bag-3-line'} />
+            {lendoPrint ? 'Lendo o print da compra…' : 'Compra online sem NF (Mercado Livre, Shopee…): ler o print'}
+            <input type="file" accept="image/*" className="hidden" disabled={busy || lendoPrint}
+              onChange={(e) => { lerPrintOnline(e.target.files?.[0]); e.target.value = ''; }} />
+          </label>
+          {printLido && (
+            <div className="rounded-lg bg-amber-50 border border-amber-200 px-2.5 py-2 text-xs text-amber-900 space-y-0.5">
+              <p>
+                <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold mr-1 bg-amber-100 text-amber-700">Print · IA</span>
+                {printLido.p.site ?? 'Compra online'}{printLido.p.numero_pedido ? ' · pedido ' + printLido.p.numero_pedido : ''}
+                {printLido.p.total != null ? ' · total ' + formatCurrency(printLido.p.total) : ''}
+                {printLido.p.frete ? ' · frete ' + formatCurrency(printLido.p.frete) : ''}
+              </p>
+              {printLido.avisos.map((w) => <p key={w} className="text-red-700">{w}</p>)}
+              <p className="text-amber-700">Confira os itens com o print e ligue ao insumo o que for de estoque. Se a NF-e do vendedor chegar depois, ela aparece nos alertas da Conciliação: não importe de novo.</p>
+            </div>
+          )}
           {lida && (
             <div className="rounded-lg bg-violet-50 border border-violet-200 px-2.5 py-2 text-xs text-violet-900 space-y-0.5">
               <p>
