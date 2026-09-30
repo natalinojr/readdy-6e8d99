@@ -64,9 +64,16 @@ export default function MovimentacoesTab() {
     const t = setTimeout(() => setBuscaAplicada(buscaServidor), 400);
     return () => clearTimeout(t);
   }, [buscaServidor]);
+  // Tipo da tela → tipos do banco (produção e perda em produção saem do motivo; o filtro da tela refina)
+  const TIPOS_DB: Record<Movimentacao['tipo'], string[]> = {
+    entrada: ['in', 'transfer_in'], entrada_producao: ['in'], saida_producao: ['manual_out'],
+    saida_venda: ['theoretical_out'], saida_manual: ['manual_out', 'transfer_out'],
+    perda: ['loss', 'manual_out'], ajuste_inventario: ['inventory_adjustment'],
+  };
+  const tiposDb = filtroTipo === 'Todos' ? undefined : TIPOS_DB[filtroTipo];
   const jaFiltrou = useRef(false);
   useEffect(() => {
-    if (!dateFrom && !dateTo && !buscaAplicada) {
+    if (!dateFrom && !dateTo && !buscaAplicada && !tiposDb) {
       // voltou ao padrão depois de um filtro: recarrega a lista normal
       if (jaFiltrou.current) { jaFiltrou.current = false; reloadMovimentacoes(); }
       return;
@@ -74,8 +81,8 @@ export default function MovimentacoesTab() {
     jaFiltrou.current = true;
     const from = dateFrom ? new Date(dateFrom + 'T00:00:00') : undefined;
     const to = dateTo ? new Date(dateTo + 'T23:59:59') : undefined;
-    reloadMovimentacoes(from, to, undefined, buscaAplicada || undefined);
-  }, [dateFrom, dateTo, buscaAplicada, reloadMovimentacoes]);
+    reloadMovimentacoes(from, to, undefined, buscaAplicada || undefined, tiposDb);
+  }, [dateFrom, dateTo, buscaAplicada, filtroTipo, reloadMovimentacoes]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleOpenCompra = (insumoId?: string) => {
     if (insumoId) {
