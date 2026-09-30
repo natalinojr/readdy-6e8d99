@@ -60,7 +60,7 @@ export interface LancarOpcoes {
 }
 
 /** Insumos da loja para ligar os itens da compra (só carrega quando a compra é aberta). */
-type InsumoLista = { id: string; name: string; unit: string | null; purchase_unit: string | null; purchase_factor: number | null };
+export type InsumoLista = { id: string; name: string; unit: string | null; purchase_unit: string | null; purchase_factor: number | null };
 export function useInsumos(ativo: boolean) {
   const { user } = useAuth();
   const [lista, setLista] = useState<{ tenant: string; itens: InsumoLista[] } | null>(null);
@@ -78,7 +78,10 @@ export function useInsumos(ativo: boolean) {
     { id: SEM_INSUMO, label: 'Sem insumo (não entra no estoque)', sub: null },
     ...itens.map((i) => ({ id: i.id, label: i.name, sub: i.unit ?? null })),
   ], [itens]);
-  return { insumos: itens, insumoOptions: options };
+  // Insumo cadastrado aqui mesmo (InsumoDoItem) entra na lista sem recarregar
+  const adicionar = (ins: InsumoLista) => setLista((v) => (v && v.tenant === user?.tenantId
+    ? { tenant: v.tenant, itens: [...v.itens, ins].sort((a, b) => a.name.localeCompare(b.name, 'pt-BR')) } : v));
+  return { insumos: itens, insumoOptions: options, adicionarInsumo: adicionar };
 }
 export const SEM_INSUMO = '__sem_insumo';
 
@@ -132,6 +135,104 @@ export function ConversaoEstoque({ ins, unidade, qtd, total, fator, onFator }: {
         ? Number.isFinite(entra) && <p>Entra {fmtFator(entra)} {un}{t > 0 ? ` · ${formatCurrency(t / entra)}/${un}` : ''}</p>
         : <p>Diga quanto 1 {unidade.trim() || 'un'} vale em {un} (ex.: 1 cx = 12 {un}); sem isso não dá para ligar ao insumo.</p>}
     </div>
+  );
+}
+
+// Unidades de estoque aceitas pelo stock-write (rótulo → código gravado)
+const UNIDADES_ESTOQUE: Array<[string, string]> = [['g', 'g'], ['kg', 'kg'], ['un', 'unit'], ['ml', 'ml'], ['L', 'L']];
+const unidadeEstoquePadrao = (u: string) => {
+  const n = normUnit(u);
+  return n === 'kg' ? 'kg' : n === 'g' ? 'g' : n === 'l' ? 'L' : n === 'ml' ? 'ml' : 'unit';
+};
+
+/**
+ * Insumo de um item de compra: seletor com busca, "Cadastrar insumo novo" ali mesmo (2026-09-30, pedido
+ * do dono) e a conversão para a unidade de estoque. Usado no Lançar do extrato e no Detalhar itens.
+ */
+export function InsumoDoItem({ linha, insumos, insumoOptions, onAdicionado, onChange }: {
+  linha: { descricao: string; unidade: string; qtd: string; total: string; insumoId: string; fator?: string | null };
+  insumos: InsumoLista[];
+  insumoOptions: Array<{ id: string; label: string; sub: string | null }>;
+  onAdicionado: (ins: InsumoLista) => void;
+  onChange: (patch: { insumoId?: string; unidade?: string; fator?: string | null; descricao?: string }) => void;
+}) {
+  const { user } = useAuth();
+  const { mercOptions } = useCategoriasLancamento();
+  const [novo, setNovo] = useState<{ nome: string; unidade: string; categoria: string } | null>(null);
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+  const ins = insumos.find((x) => x.id === linha.insumoId);
+
+  const ligar = (novoIns: InsumoLista | undefined) => onChange({
+    insumoId: novoIns?.id ?? '', fator: null, unidade: unidadeAoLigar(linha.unidade, novoIns),
+    ...(novoIns && !linha.descricao.trim() ? { descricao: novoIns.name } : {}),
+  });
+
+  const cadastrar = async () => {
+    if (!user?.tenantId || !novo) return;
+    const nome = novo.nome.trim().replace(/\s+/g, ' ');
+    if (nome.length < 2) { setErro('Nome muito curto.'); return; }
+    if (insumos.some((x) => x.name.trim().toLowerCase() === nome.toLowerCase())) { setErro(`Já existe o insumo "${nome}": escolha na lista.`); return; }
+    setSalvando(true); setErro(null);
+    const r = await invokeWithAuth<{ data?: { id?: string }; error?: string }>('stock-write', {
+      body: {
+        action: 'upsert_ingredient', tenant_id: user.tenantId, id: null, name: nome, unit: novo.unidade,
+        unit_price: 0, price_source: 'auto', min_stock: 0, current_stock: 0, category: novo.categoria || 'Sem categoria',
+        purchase_unit: null, purchase_factor: 1, usage_type: 'final', dre_category_id: null,
+      },
+    });
+    setSalvando(false);
+    const id = r.data?.data?.id;
+    if (!id) { setErro(r.data?.error ?? r.error?.message ?? 'Não foi possível cadastrar.'); return; }
+    const criado: InsumoLista = { id, name: nome, unit: novo.unidade, purchase_unit: null, purchase_factor: 1 };
+    onAdicionado(criado);
+    setNovo(null);
+    ligar(criado);
+  };
+
+  if (novo) {
+    return (
+      <div className="rounded-lg border border-emerald-200 bg-emerald-50/60 p-2 space-y-2">
+        <p className="text-xs font-semibold text-emerald-800"><i className="ri-add-box-line mr-1" />Cadastrar insumo novo</p>
+        <input value={novo.nome} onChange={(e) => setNovo({ ...novo, nome: e.target.value })} placeholder="Nome do insumo (ex.: Tomate)" maxLength={80}
+          className="w-full px-2 py-2 border border-zinc-200 rounded-lg text-sm bg-white" />
+        <div>
+          <p className="text-[11px] text-zinc-500 mb-1">Unidade de estoque (como ele é controlado e usado na ficha)</p>
+          <div className="grid grid-cols-5 gap-1">
+            {UNIDADES_ESTOQUE.map(([rot, cod]) => (
+              <button key={cod} type="button" onClick={() => setNovo({ ...novo, unidade: cod })}
+                className={`py-2 rounded-lg text-sm font-semibold border cursor-pointer ${novo.unidade === cod ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white text-zinc-700 border-zinc-200'}`}>
+                {rot}
+              </button>
+            ))}
+          </div>
+        </div>
+        <CategoriaCombobox value={mercOptions.find((m) => m.label === novo.categoria)?.id ?? ''} options={mercOptions}
+          onChange={(id) => setNovo({ ...novo, categoria: mercOptions.find((m) => m.id === id)?.label ?? '' })}
+          placeholder="Categoria (opcional)…" buttonClassName="w-full px-2 py-2 border border-zinc-200 rounded-lg text-sm bg-white cursor-pointer" />
+        {erro && <p className="text-xs text-red-600">{erro}</p>}
+        <div className="grid grid-cols-2 gap-1.5">
+          <button type="button" onClick={() => { setNovo(null); setErro(null); }} disabled={salvando}
+            className="py-2 rounded-lg border border-zinc-200 bg-white text-sm text-zinc-600 cursor-pointer">Cancelar</button>
+          <button type="button" onClick={cadastrar} disabled={salvando}
+            className="py-2 rounded-lg bg-emerald-600 text-white text-sm font-semibold cursor-pointer disabled:opacity-50">{salvando ? 'Cadastrando…' : 'Cadastrar e ligar'}</button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <CategoriaCombobox value={linha.insumoId || SEM_INSUMO} options={insumoOptions} placeholder="Insumo do estoque…"
+        onChange={(id) => ligar(id === SEM_INSUMO ? undefined : insumos.find((x) => x.id === id))}
+        onCreate={(texto) => { setErro(null); setNovo({ nome: texto || linha.descricao.trim(), unidade: unidadeEstoquePadrao(linha.unidade), categoria: '' }); }}
+        createLabel={(texto) => (texto ? `Cadastrar "${texto}" como insumo novo` : 'Cadastrar insumo novo')}
+        buttonClassName="w-full px-2 py-2.5 sm:py-1.5 border border-zinc-200 rounded-lg text-sm bg-white cursor-pointer" />
+      {ins && (
+        <ConversaoEstoque ins={ins} unidade={linha.unidade} qtd={linha.qtd} total={linha.total}
+          fator={linha.fator != null ? linha.fator : fatorSugerido(linha.unidade, ins)} onFator={(v) => onChange({ fator: v })} />
+      )}
+    </>
   );
 }
 
@@ -282,7 +383,7 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
   const [erro, setErro] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   // Compra com itens (2026-09-28): cada item pode ser ligado a um insumo; a soma fecha com o pagamento
-  const { insumos, insumoOptions } = useInsumos(aberto && tipo === 'compra');
+  const { insumos, insumoOptions, adicionarInsumo } = useInsumos(aberto && tipo === 'compra');
   const [itens, setItens] = useState<ItemCompra[]>([]);
   const [recebido, setRecebido] = useState(true);
   const [avisoFinal, setAvisoFinal] = useState<string | null>(null);
@@ -304,6 +405,7 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
     const linhas = linhasParaValor(r, valorPag).map((l, i): ItemCompra => ({
       key: Date.now() + i + Math.random(), descricao: l.descricao, qtd: fmt(l.qtd), unidade: l.unidade,
       total: l.total.toFixed(2).replace('.', ','), insumoId: l.insumoId ?? '', raw: l.raw,
+      fator: l.insumoId && l.fator ? fmtFator(l.fator) : null,
     }));
     // Linhas que a pessoa já preencheu ficam; as da nota entram depois
     setItens((v) => [...v.filter((it) => it.descricao.trim() && !it.raw), ...linhas]);
@@ -390,6 +492,7 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
     if (tipo === 'compra' && lida) {
       aprenderVinculos(user.tenantId, lida.supplier_key, itens.filter((it) => it.raw).map((it) => ({
         raw_description: it.raw!, ingredient_id: it.insumoId || null, unit_label: it.unidade.trim() || null,
+        ...(it.insumoId && fatorDaLinha(it, insumos) > 0 ? { pack_count: 1, pack_size: fatorDaLinha(it, insumos) } : {}),
       })));
     }
     // "Fazer sempre assim": regra de LANÇAMENTO para este CPF/CNPJ/chave (2026-09-18). Antes só
@@ -661,17 +764,9 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
                       className="w-full px-2 py-2 sm:py-1.5 border border-zinc-200 rounded-lg text-sm text-zinc-800" />
                   </label>
                 </div>
-                <CategoriaCombobox value={it.insumoId || SEM_INSUMO} options={insumoOptions} placeholder="Insumo do estoque…"
-                  onChange={(id) => {
-                    const novo = insumos.find((x) => x.id === id);
-                    // A unidade comprada fica (antes virava a do insumo e "1 un" entrava como 1 g); a conversão é pedida abaixo
-                    mudaItem(it.key, { insumoId: id === SEM_INSUMO ? '' : id, fator: null, unidade: unidadeAoLigar(it.unidade, novo), ...(novo && !it.descricao.trim() ? { descricao: novo.name } : {}) });
-                  }}
-                  buttonClassName="w-full px-2 py-2.5 sm:py-1.5 border border-zinc-200 rounded-lg text-sm bg-white cursor-pointer" />
-                {ins && (
-                  <ConversaoEstoque ins={ins} unidade={it.unidade} qtd={it.qtd} total={it.total}
-                    fator={it.fator != null ? it.fator : fatorSugerido(it.unidade, ins)} onFator={(v) => mudaItem(it.key, { fator: v })} />
-                )}
+                {/* A unidade comprada fica (antes virava a do insumo e "1 un" entrava como 1 g); a conversão é pedida abaixo */}
+                <InsumoDoItem linha={it} insumos={insumos} insumoOptions={insumoOptions} onAdicionado={adicionarInsumo}
+                  onChange={(patch) => mudaItem(it.key, patch)} />
               </div>
             );
           })}

@@ -5,13 +5,12 @@
 // se a compra já tinha entrado).
 import { useMemo, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { invokeWithAuth } from '@/lib/supabase';
+import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { formatCurrency } from '@/lib/formatters';
 import { avisar } from '@/components/base/Dialogos';
 import type { Purchase, PurchaseItem } from '@/types/financeiro';
-import CategoriaCombobox from '../CategoriaCombobox';
 import LerNotaBotoes from './LerNotaBotoes';
-import { useInsumos, numBR, numBRqtd, SEM_INSUMO, ConversaoEstoque, fatorSugerido, fatorDaLinha, unidadeAoLigar } from '../conciliacao/LancarDoExtrato';
+import { useInsumos, numBR, numBRqtd, fatorDaLinha, InsumoDoItem } from '../conciliacao/LancarDoExtrato';
 import { linhasParaValor, aprenderVinculos, type ScanResult } from '@/lib/leituraNotinha';
 
 // fator = quanto 1 unidade comprada vale na unidade do insumo, quando digitado (null = sugerido / o da linha original)
@@ -27,7 +26,7 @@ interface Props {
 
 export default function DetalharItensModal({ purchase, onClose, onSaved }: Props) {
   const { user } = useAuth();
-  const { insumos, insumoOptions } = useInsumos(true);
+  const { insumos, insumoOptions, adicionarInsumo } = useInsumos(true);
   const frete = Math.round(Number(purchase.freight_amount ?? 0) * 100) / 100;
   const alvo = Math.round((Number(purchase.total_amount) - frete) * 100) / 100;
   const [linhas, setLinhas] = useState<Linha[]>(() => (purchase.items ?? []).map((it, i) => ({
@@ -50,6 +49,7 @@ export default function DetalharItensModal({ purchase, onClose, onSaved }: Props
     const novas = linhasParaValor(r, alvo).map((l, i): Linha => ({
       key: Date.now() + i, descricao: l.descricao, qtd: fmtQtd(l.qtd), unidade: l.unidade,
       total: fmtBRL(l.total), insumoId: l.insumoId ?? '', raw: l.raw,
+      fator: l.insumoId && l.fator ? String(Math.round(l.fator * 1e6) / 1e6).replace('.', ',') : null,
     }));
     // A nota substitui os itens: o item genérico ("Compra", "Pagamento…") sai
     setLinhas(novas);
@@ -93,7 +93,12 @@ export default function DetalharItensModal({ purchase, onClose, onSaved }: Props
     if (lida) {
       aprenderVinculos(user.tenantId, lida.supplier_key, linhas.filter((l) => l.raw).map((l) => ({
         raw_description: l.raw!, ingredient_id: l.insumoId || null, unit_label: l.unidade.trim() || null,
+        ...(l.insumoId && fatorDaLinha(l, insumos) > 0 ? { pack_count: 1, pack_size: fatorDaLinha(l, insumos) } : {}),
       })));
+    }
+    // Item ligado pela pessoa vira vínculo confirmado: a próxima nota do mesmo fornecedor já vem ligada
+    if (linhas.some((l) => l.insumoId)) {
+      await supabase.rpc('fn_item_confirm_links_from_purchase', { p_tenant: user.tenantId, p_purchase: purchase.id });
     }
     if (r.data?.avisos_conversao?.length) await avisar(r.data.avisos_conversao.join(' '), { titulo: 'Itens salvos' });
     onSaved();
@@ -149,16 +154,8 @@ export default function DetalharItensModal({ purchase, onClose, onSaved }: Props
                     <input value={l.total} onChange={(e) => muda(l.key, { total: e.target.value })} inputMode="decimal" placeholder="0,00" className="w-full px-2 py-1.5 border border-zinc-200 rounded-lg text-sm text-zinc-800" />
                   </label>
                 </div>
-                <CategoriaCombobox value={l.insumoId || SEM_INSUMO} options={insumoOptions} placeholder="Insumo do estoque…"
-                  onChange={(id) => {
-                    const novo = insumos.find((x) => x.id === id);
-                    muda(l.key, { insumoId: id === SEM_INSUMO ? '' : id, fator: null, unidade: unidadeAoLigar(l.unidade, novo) });
-                  }}
-                  buttonClassName="w-full px-2 py-1.5 border border-zinc-200 rounded-lg text-sm bg-white cursor-pointer" />
-                {ins && (
-                  <ConversaoEstoque ins={ins} unidade={l.unidade} qtd={l.qtd} total={l.total}
-                    fator={l.fator != null ? l.fator : fatorSugerido(l.unidade, ins)} onFator={(v) => muda(l.key, { fator: v })} />
-                )}
+                <InsumoDoItem linha={l} insumos={insumos} insumoOptions={insumoOptions} onAdicionado={adicionarInsumo}
+                  onChange={(patch) => muda(l.key, patch)} />
               </div>
             );
           })}

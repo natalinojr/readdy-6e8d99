@@ -51,14 +51,17 @@ export default function LerNotaBotoes({ onLido, onInicio, disabled }: Props) {
     else setErro('Não achei o QR Code. Tente a foto.');
   };
 
-  const btn = 'flex items-center gap-1 px-3 py-2 sm:px-2 sm:py-1 rounded-lg border border-violet-300 text-violet-700 text-xs font-semibold cursor-pointer hover:bg-violet-50 whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed';
+  const btn = 'flex items-center justify-center gap-1 px-2 py-2 sm:py-1 rounded-lg border border-violet-300 text-violet-700 text-xs font-semibold cursor-pointer hover:bg-violet-50 whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed';
   return (
     <div className="space-y-1.5">
-      <div className="flex flex-wrap items-center gap-1.5">
+      {/* Celular: rótulo em cima e os 3 botões numa linha só, cada um com 1/3 da largura */}
+      <div className="flex flex-col sm:flex-row sm:items-center gap-1.5">
         <span className="text-[11px] text-zinc-500">Preencher pela nota:</span>
+        <div className="grid grid-cols-3 gap-1.5 sm:flex">
         <button type="button" disabled={disabled || !!lendo} onClick={() => setScanner(true)} className={btn}><i className="ri-qr-scan-2-line" />QR Code</button>
         <button type="button" disabled={disabled || !!lendo} onClick={() => foto.current?.click()} className={btn}><i className="ri-camera-line" />Foto</button>
         <button type="button" disabled={disabled || !!lendo} onClick={() => arquivo.current?.click()} className={btn}><i className="ri-attachment-2" />Arquivo</button>
+        </div>
       </div>
       <input ref={foto} type="file" accept="image/*" capture="environment" className="hidden"
         onChange={(e) => { lerArquivo(e.target.files?.[0]); e.target.value = ''; }} />

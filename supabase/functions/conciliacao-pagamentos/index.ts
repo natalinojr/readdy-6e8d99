@@ -643,6 +643,12 @@ async function createOneClaimed(ctx: Ctx, rowId: string, o: CreateOpts, row: Row
     await admin.from('fin_item_classifications')
       .update({ classe: 'cmv', merchandise_category_id: o.mercCategoryId, classified_by: ctx.userId, classified_at: new Date().toISOString(), auto_classified: false })
       .eq('tenant_id', tenantId).eq('last_ref_id', purchaseId).is('classe', null);
+    // Item que a pessoa ligou ao insumo (com conversão) vira vínculo confirmado: a próxima nota do mesmo
+    // fornecedor já traz o mesmo item ligado (2026-09-30). Só admin/gerente, como na Classificação.
+    if (itens.some((it) => it.ingredient_id)) {
+      const { error: le } = await admin.rpc('fn_item_confirm_links_from_purchase', { p_tenant: tenantId, p_purchase: purchaseId, p_user: ctx.userId });
+      if (le) log('WARN', 'create', 'confirmar vínculos falhou', { tenantId, purchaseId, error: le.message });
+    }
   }
 
   const competencia = o.kind === 'prestador' && o.prestadorTipo === 'servico' ? compPrest : competenciaOk(o.competenceMonth);

@@ -151,7 +151,8 @@ export function aprenderVinculos(tenantId: string | undefined, supplierKey: stri
   }).catch(() => { /* memória é conveniência */ });
 }
 
-export interface LinhaLida { descricao: string; raw: string; qtd: number; unidade: string; total: number; insumoId: string | null }
+/** fator = quanto 1 unidade da nota vale na unidade do insumo (vínculo confirmado); null = a tela sugere/pede */
+export interface LinhaLida { descricao: string; raw: string; qtd: number; unidade: string; total: number; insumoId: string | null; fator: number | null }
 
 /**
  * Linhas da nota para um lançamento que precisa fechar com um valor pago.
@@ -169,6 +170,8 @@ export function linhasParaValor(r: ScanResult, valorPago: number): LinhaLida[] {
       descricao: si.raw_description, raw: si.raw_description, qtd, unidade: si.unit_label || 'un',
       total: total > 0 ? total : Math.round(si.line_total * 100) / 100,
       insumoId: si.match_source === 'memoria' ? si.ingredient_id : null,
+      fator: si.match_source === 'memoria' && si.ingredient_id && Number(si.pack_count) > 0
+        ? Number(si.pack_count) * (Number(si.pack_size) > 0 ? Number(si.pack_size) : 1) : null,
     };
   });
   const soma = Math.round(linhas.reduce((s, l) => s + l.total, 0) * 100) / 100;
