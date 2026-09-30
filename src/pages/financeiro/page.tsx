@@ -27,6 +27,7 @@ import EntregadoresTab from './components/EntregadoresTab';
 import GuiasTab from './components/GuiasTab';
 import TrilhaTab from './components/TrilhaTab';
 import PainelFinTab from './components/PainelFinTab';
+import LancarFinanceiroModal from './components/LancarFinanceiroModal';
 
 const TABS = [
   { id: 'painel', label: 'Painel', icon: 'ri-dashboard-3-line' },
@@ -95,6 +96,9 @@ export default function FinanceiroPage() {
   const valida = (t: string | null | undefined) => (t && (TABS.some((x) => x.id === t) || t === 'previsao' || t === 'rh-relatorio' || t === 'freelancers') && podeAbaOuFreela(t) ? t : null);
   const activeTab = valida(daUrl) ?? valida(doState) ?? abas[0]?.id ?? 'visao';
   const setActiveTab = (t: string) => setSearchParams({ tab: t }, { replace: true });
+  // Abre a aba já pedindo a janela de lançamento (?abrir=), usado pelo botão Lançar.
+  const abrirAba = (t: string, abrir?: string) => setSearchParams(abrir ? { tab: t, abrir } : { tab: t }, { replace: true });
+  const [lancarAberto, setLancarAberto] = useState(false);
   // ?foco=<id da compra> abre a aba Compras já piscando naquela linha — usado pelo Rastreamento
   // da Conciliação (2026-09-20), para o botão cair na compra certa e não só na lista.
   const [highlightPurchaseId, setHighlightPurchaseId] = useState<string | undefined>(
@@ -190,10 +194,17 @@ export default function FinanceiroPage() {
           <div className="w-8 h-8 md:w-9 md:h-9 flex items-center justify-center rounded-xl flex-shrink-0" style={{ background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)' }}>
             <i className="ri-money-dollar-circle-line text-white text-base md:text-lg" />
           </div>
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
             <h1 className="text-base md:text-lg font-bold text-zinc-800">Financeiro</h1>
             <p className="text-xs text-zinc-400 hidden sm:block">Gestão financeira completa do restaurante</p>
           </div>
+          <button
+            onClick={() => setLancarAberto(true)}
+            className="flex items-center gap-1.5 h-9 px-3 md:px-4 rounded-xl text-white text-sm font-bold shadow-sm cursor-pointer flex-shrink-0"
+            style={{ background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)' }}
+          >
+            <i className="ri-add-line text-base" />Lançar
+          </button>
         </div>
         {/* Grupos — scroll horizontal no mobile (são só 6, cabem numa linha no desktop) */}
         <div className="flex gap-0.5 overflow-x-auto scrollbar-hide -mx-4 md:mx-0 px-4 md:px-0" style={{ borderBottom: '1px solid rgba(245,158,11,0.15)' }}>
@@ -245,6 +256,8 @@ export default function FinanceiroPage() {
           </div>
         )}
       </div>
+
+      {lancarAberto && <LancarFinanceiroModal podeAba={podeAbaOuFreela} onIr={abrirAba} onClose={() => setLancarAberto(false)} />}
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto">

@@ -1,4 +1,5 @@
 import { Fragment, useState, useMemo, useEffect, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { usePurchases, useCostCenters, useBankAccounts } from '@/hooks/useFinanceiro';
 import { useSuppliers } from '@/hooks/useSuppliers';
 import { supabase } from '@/lib/supabase';
@@ -62,6 +63,9 @@ export default function ComprasTab({ highlightId, onHighlightConsumed }: Compras
 
   const [activeView, setActiveView] = useState<'lista' | 'relatorios' | 'relatorio' | 'centrocusto'>('lista');
   const [showModal, setShowModal] = useState(false);
+  // Botão "Lançar" do Financeiro (2026-09-30): ?abrir=nova abre a Nova compra (como o botão da aba).
+  const [paramsUrl, setParamsUrl] = useSearchParams();
+  const pedidoAbrir = paramsUrl.get('abrir');
   const [showCatalogo, setShowCatalogo] = useState(false);
   const [showFornecedores, setShowFornecedores] = useState(false);
   const [showCategorias, setShowCategorias] = useState(false);
@@ -168,6 +172,13 @@ export default function ComprasTab({ highlightId, onHighlightConsumed }: Compras
       .order('name');
     setIngredients(data ?? []);
   };
+  useEffect(() => {
+    if (pedidoAbrir !== 'nova') return;
+    setShowModal(true);
+    loadIngredients();
+    setParamsUrl((p) => { p.delete('abrir'); return p; }, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pedidoAbrir]);
 
   const openDetail = async (p: Purchase) => {
     setDetailPurchase(p);

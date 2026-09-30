@@ -1,4 +1,5 @@
 import { useState, useMemo, useCallback, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useBillsPayable, useCostCenters, useBankAccounts } from '@/hooks/useFinanceiro';
 import { useSuppliers } from '@/hooks/useSuppliers';
 import { supabase } from '@/lib/supabase';
@@ -144,6 +145,15 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
   const [showCaixaBoletos, setShowCaixaBoletos] = useState(false);
 
   const [showModal, setShowModal] = useState(false);
+  // Botão "Lançar" do Financeiro (2026-09-30): ?abrir=nova abre a Nova Conta, ?abrir=email a caixa de boletos.
+  const [paramsUrl, setParamsUrl] = useSearchParams();
+  useEffect(() => {
+    const abrir = paramsUrl.get('abrir');
+    if (!abrir) return;
+    if (abrir === 'nova') setShowModal(true);
+    if (abrir === 'email') setShowCaixaBoletos(true);
+    setParamsUrl((p) => { p.delete('abrir'); return p; }, { replace: true });
+  }, [paramsUrl, setParamsUrl]);
   const [payModal, setPayModal] = useState<BillPayable | null>(null);
   const [payDre, setPayDre] = useState('');
   const { toPayload: dreToPayload } = useDreEscolha();
