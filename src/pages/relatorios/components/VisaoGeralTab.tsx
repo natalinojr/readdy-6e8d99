@@ -259,7 +259,7 @@ export default function VisaoGeralTab({ periodo, externalSession, onSessionChang
     const h = Number(hm.slice(0, 2));
     ifoodHora[h] = (ifoodHora[h] ?? 0) + v;
   }
-  const hourlyData = !isSessao ? (() => {
+  const hourlyDataCompleto = !isSessao ? (() => {
     const base = new Map<number, { rev: number; ord: number }>((extras?.by_hour ?? []).map((h) => [h.hour, { rev: h.revenue, ord: h.orders }]));
     for (const h of Object.keys(ifoodHora).map(Number)) if (!base.has(h)) base.set(h, { rev: 0, ord: 0 });
     return [...base.entries()].sort(([a], [b]) => a - b).map(([h, v]) => ({
@@ -272,6 +272,14 @@ export default function VisaoGeralTab({ periodo, externalSession, onSessionChang
     } as { hora: string; valor: number; ifood: number; pedidos: number; ontem?: number; semana?: number; mes?: number }));
   })() : [];
   const linhasComp = diasComp ? COMPARACOES.filter((k) => comparacoes[k] && seriesComp[k]) : [];
+  // Só a faixa de horas com venda (hoje ou nas comparações ligadas), com 1h de folga de cada lado
+  const hourlyData = (() => {
+    const temVenda = (h: (typeof hourlyDataCompleto)[number]) => h.valor > 0 || linhasComp.some((k) => (h[k] ?? 0) > 0);
+    const ini = hourlyDataCompleto.findIndex(temVenda);
+    if (ini < 0) return hourlyDataCompleto;
+    const fim = hourlyDataCompleto.length - 1 - [...hourlyDataCompleto].reverse().findIndex(temVenda);
+    return hourlyDataCompleto.slice(Math.max(0, ini - 1), Math.min(hourlyDataCompleto.length, fim + 2));
+  })();
 
   // Categorias — apenas no modo calendário
   const catData = !isSessao ? (extras?.by_category ?? []) : [];
@@ -457,7 +465,7 @@ export default function VisaoGeralTab({ periodo, externalSession, onSessionChang
                     tick={{ fontSize: 9, fill: '#a1a1aa' }}
                     axisLine={false}
                     tickLine={false}
-                    interval={2}
+                    interval={hourlyData.length > 14 ? 1 : 0}
                   />
                   <YAxis
                     tick={{ fontSize: 10, fill: '#a1a1aa' }}
