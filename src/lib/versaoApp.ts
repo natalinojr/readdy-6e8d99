@@ -42,6 +42,35 @@ export async function haVersaoNova(): Promise<boolean> {
   }
 }
 
+/**
+ * Versão do código do TOTEM: `/kiosk-version.json`, gerado no build (vite.kiosk-version.ts)
+ * só com o que roda no autoatendimento. Pedido do dono (2026-09-29): o tablet só se
+ * atualiza quando muda algo do tablet — naquele dia foram ~70 publicações e só 6 tocavam
+ * nele, mas o Tablet 2 recarregou 22 vezes com a loja aberta.
+ */
+async function lerVersaoTotem(): Promise<string | null> {
+  try {
+    const res = await fetch(`/kiosk-version.json?v=${Date.now()}`, { cache: 'no-store', headers: { Accept: 'application/json' } });
+    if (!res.ok) return null;
+    const v = (await res.json() as { v?: unknown })?.v;
+    return typeof v === 'string' && v ? v : null;
+  } catch {
+    return null; // sem o arquivo o servidor devolve o index.html → não é JSON
+  }
+}
+
+// Versão do totem desta aba: a 1ª leitura (logo ao abrir a tela) vira a referência.
+let versaoTotemDaAba: string | null | undefined;
+
+/** Como `haVersaoNova`, mas só conta mudança no código do totem. Sem o arquivo, cai na regra geral. */
+export async function haVersaoNovaDoTotem(): Promise<boolean> {
+  if (!import.meta.env.PROD) return false;
+  const v = await lerVersaoTotem();
+  if (!v) return haVersaoNova();
+  if (versaoTotemDaAba === undefined) { versaoTotemDaAba = v; return false; }
+  return v !== versaoTotemDaAba;
+}
+
 /** Recarrega buscando tudo de novo na rede (o cache de /assets é por hash, não atrapalha). */
 export function recarregarApp(): void {
   window.location.reload();

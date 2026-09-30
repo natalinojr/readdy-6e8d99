@@ -30,7 +30,7 @@ import { type ItemPedidoCliente } from '../../types/mesaCliente';
 import { useIdiomaCardapio } from '../../hooks/useIdiomaCardapio';
 import { edgeUrl } from '../../lib/idiomaCardapio';
 import SeletorIdioma from '../../components/SeletorIdioma';
-import { haVersaoNova, recarregarAppSozinho } from '../../lib/versaoApp';
+import { haVersaoNovaDoTotem, recarregarAppSozinho } from '../../lib/versaoApp';
 import type { DestinoInfo } from '../../contexts/PDVContext';
 
 // ── ErrorBoundary local para a página de autoatendimento ────────────────────
@@ -256,7 +256,8 @@ function AutoatendimentoPageInner() {
   const [versaoNova, setVersaoNova] = useState(false);
   useEffect(() => {
     let vivo = true;
-    const conferir = () => { void haVersaoNova().then((tem) => { if (vivo && tem) setVersaoNova(true); }); };
+    // Só versão nova DO TOTEM (mudança no resto do sistema não recarrega o tablet).
+    const conferir = () => { void haVersaoNovaDoTotem().then((tem) => { if (vivo && tem) setVersaoNova(true); }); };
     conferir();
     const interval = setInterval(conferir, 5 * 60 * 1000);
     return () => { vivo = false; clearInterval(interval); };
