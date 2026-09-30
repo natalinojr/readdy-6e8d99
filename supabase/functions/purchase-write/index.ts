@@ -58,6 +58,25 @@ interface ComputedItem {
 // (total_price + freight_allocated) passa a incluir os impostos sem mexer em cada um.
 const ehAcrescimoNota = (it: Record<string, unknown>) => String(it.description ?? '').startsWith('Acréscimos da nota');
 const r2 = (v: number) => Math.round(v * 100) / 100;
+
+// Linha de FRETE no meio dos itens (2026-09-30, dono: "o frete tem que ser diluído entre os produtos
+// proporcionalmente ao valor de cada item" — notinha com "TAXA DE ENTREGA", print de compra online,
+// digitação). A linha sai dos itens e soma no frete da compra, que o ratearFrete distribui no
+// freight_allocated dos produtos: o total não muda e o custo de cada insumo passa a levar o frete.
+// Só vale para linha sem insumo e sem categoria de despesa, e só se sobrar algum produto.
+const RE_FRETE = /^\s*(fretes?|taxa\s+de\s+(entrega|envio)|tx\.?\s*(de\s+)?entrega|entrega|envio|custo\s+de\s+envio)\b/i;
+const ehLinhaFrete = (it: Record<string, unknown>) =>
+  RE_FRETE.test(String(it.description ?? '')) && !it.ingredient_id && !it.dre_category_id;
+function absorverLinhasDeFrete(items: unknown): number {
+  if (!Array.isArray(items)) return 0;
+  const arr = items as Array<Record<string, unknown>>;
+  const fretes = arr.filter(ehLinhaFrete);
+  if (fretes.length === 0 || fretes.length === arr.length) return 0;
+  const valor = r2(fretes.reduce((acc, it) =>
+    acc + r2(Number(it.quantity ?? 0) * Math.max(0, Number(it.unit_price ?? 0) - Number(it.discount_per_unit ?? 0))), 0));
+  for (let i = arr.length - 1; i >= 0; i--) if (ehLinhaFrete(arr[i])) arr.splice(i, 1);
+  return valor;
+}
 function ratearFrete(items: unknown, frete: number): void {
   const arr = (Array.isArray(items) ? items : []) as Array<Record<string, unknown>>;
   if (arr.length === 0) return;
@@ -823,8 +842,8 @@ Deno.serve(async (req) => {
         if (!purchaseData.bank_account_id) purchaseData.bank_account_id = null;
         if (!purchaseData.invoice_number) purchaseData.invoice_number = null;
         if (!purchaseData.notes) purchaseData.notes = null;
-        const freightAmount = Number(purchaseData.freight_amount ?? 0);
-        if (!freightAmount) purchaseData.freight_amount = 0;
+        const freightAmount = r2(Number(purchaseData.freight_amount ?? 0) + absorverLinhasDeFrete(items));
+        purchaseData.freight_amount = freightAmount;
 
         ratearFrete(items, freightAmount);
         const computedItems = computePurchaseItems(tenant_id, items);
@@ -960,8 +979,8 @@ Deno.serve(async (req) => {
         if (!purchaseData.bank_account_id) purchaseData.bank_account_id = null;
         if (!purchaseData.invoice_number) purchaseData.invoice_number = null;
         if (!purchaseData.notes) purchaseData.notes = null;
-        const freightAmount = Number(purchaseData.freight_amount ?? 0);
-        if (!freightAmount) purchaseData.freight_amount = 0;
+        const freightAmount = r2(Number(purchaseData.freight_amount ?? 0) + absorverLinhasDeFrete(items));
+        purchaseData.freight_amount = freightAmount;
 
         ratearFrete(items, freightAmount);
         const computedItems = computePurchaseItems(tenant_id, items);
@@ -1042,9 +1061,12 @@ Deno.serve(async (req) => {
         if (fetchErr) throw fetchErr;
         if (!existing) return new Response(JSON.stringify({ error: 'Compra não encontrada' }), { status: 404, headers: corsHeaders });
 
-        // Frete da compra rateado pelo valor de cada item (entra no custo do insumo, como na Nova Compra)
+        // Frete da compra rateado pelo valor de cada item (entra no custo do insumo, como na Nova Compra);
+        // linha "Frete" nos itens novos soma no frete da compra
+        const freteDasLinhas = absorverLinhasDeFrete(items);
+        const freight = r2(Number(existing.freight_amount ?? 0) + freteDasLinhas);
         (items as Array<Record<string, unknown>>).forEach((it) => { it.freight_allocated = 0; });
-        ratearFrete(items, Number(existing.freight_amount ?? 0));
+        ratearFrete(items, freight);
         const computedItems = computePurchaseItems(tenant_id, items);
         for (const it of computedItems) {
           if (!String(it.description ?? '').trim()) return new Response(JSON.stringify({ error: 'Todo item precisa de descrição' }), { status: 400, headers: corsHeaders });
@@ -1058,7 +1080,6 @@ Deno.serve(async (req) => {
           if ((ings ?? []).length !== ingIds.length) return new Response(JSON.stringify({ error: 'Insumo inválido para esta loja' }), { status: 400, headers: corsHeaders });
         }
         const avisosConversao = await applyIngredientConversions(supabase, tenant_id, items, computedItems);
-        const freight = Number(existing.freight_amount ?? 0);
         const soma = Math.round((computedItems.reduce((s, it) => s + Number(it.total_price ?? 0), 0) + freight) * 100) / 100;
         const total = Math.round(Number(existing.total_amount ?? 0) * 100) / 100;
         if (Math.abs(soma - total) > 0.01) {
@@ -1084,8 +1105,11 @@ Deno.serve(async (req) => {
 
         const nf = invoice_number ? String(invoice_number).trim().slice(0, 30) : '';
         let compra = existing;
-        if (nf && !existing.invoice_number) {
-          const { data: updated } = await supabase.from('fin_purchases').update({ invoice_number: nf })
+        const mudaCab: Record<string, unknown> = {};
+        if (nf && !existing.invoice_number) mudaCab.invoice_number = nf;
+        if (freteDasLinhas > 0) mudaCab.freight_amount = freight;
+        if (Object.keys(mudaCab).length) {
+          const { data: updated } = await supabase.from('fin_purchases').update(mudaCab)
             .eq('id', purchase_id).eq('tenant_id', tenant_id).select().single();
           if (updated) compra = updated;
         }
