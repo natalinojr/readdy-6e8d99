@@ -309,9 +309,11 @@ async function syncTenant(admin: Admin, tenantId: string, opts: { days?: number;
         admin.from('fin_bank_statement_imports').select('match_kind, match_ref_id, reconciled, match_detail').eq('tenant_id', tenantId).eq('reconciled', true).not('match_kind', 'is', null).gte('transaction_date', addDays(dFrom, -MATCH_DAYS)).lte('transaction_date', addDays(dTo, MATCH_DAYS)).limit(5000),
       ]);
       const usedIds = new Set((used ?? []).map((u) => u.matched_transaction_id as string));
-      const billsBaixadas = new Set((baixadas ?? []).map((r) =>
-        (r.match_detail as { confirmed?: { bill_id?: string } } | null)?.confirmed?.bill_id
-        ?? (r.match_kind === 'payable' ? r.match_ref_id : null)).filter(Boolean) as string[]);
+      // Pagamento dividido (2026-09-30): a linha baixou várias contas (confirmed.bill_ids) — todas contam
+      const billsBaixadas = new Set((baixadas ?? []).flatMap((r) => {
+        const c = (r.match_detail as { confirmed?: { bill_id?: string; bill_ids?: string[] } } | null)?.confirmed;
+        return [c?.bill_id ?? (r.match_kind === 'payable' ? r.match_ref_id : null), ...(c?.bill_ids ?? [])];
+      }).filter(Boolean) as string[]);
       // Baixa feita na confirmação do Inter (brain › baixa_conciliada, 2026-09-25) ainda sem linha: o débito
       // dela é reservado para a linha do MESMO E2E (o brain liga). Sem isso, outro Pix de mesmo valor
       // (freela com a mesma diária) casava com ele e a conta desse outro ficava aberta.

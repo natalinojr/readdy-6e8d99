@@ -9,6 +9,7 @@ import { linhasParaValor, aprenderVinculos, type ScanResult } from '@/lib/leitur
 import type { StatementImport } from '@/hooks/useConciliacao';
 import { linhasDoPrint, type PrintCompraLido } from '@/lib/printCompraOnline';
 import { chamarPedidos, comprovanteParaEnvio } from '@/pages/receber/pedidos/api';
+import DividirPagamento from './DividirPagamento';
 
 // Pagamento sem nota: lança uma DESPESA (conta a pagar já baixada, com categoria da DRE), uma
 // COMPRA (CMV, categoria de mercadoria) ou um pagamento de FREELANCER (despesa em RH que também
@@ -353,6 +354,8 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
   const nomePadrao = transaction.counterpart_name || transaction.description || '';
   const [aberto, setAberto] = useState(false);
   useEffect(() => { onAbertoChange?.(aberto); }, [aberto, onAbertoChange]);
+  // Dividir (2026-09-30): o mesmo pagamento vira várias partes de tipos diferentes (ex.: despesa + freelancer)
+  const [dividir, setDividir] = useState(false);
   const [tipo, setTipo] = useState<LancarTipo>('despesa');
   const [descricao, setDescricao] = useState(nomePadrao);
   const [fornecedor, setFornecedor] = useState(transaction.counterpart_name || '');
@@ -453,7 +456,7 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
     setDias([]); setDiaNovo(transaction.transaction_date); setFuncao(''); setFreelaId(''); setMotivo('');
     setCompModo('same'); setCompOutro(transaction.transaction_date.slice(0, 7));
     setPrestadorId(''); setPrestadorTipo('servico');
-    setItens([]); setRecebido(true); setLida(null); setPrintLido(null);
+    setItens([]); setRecebido(true); setLida(null); setPrintLido(null); setDividir(false);
   }, [transaction.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Quem recebeu o Pix já está cadastrado? Então a opção certa vem marcada sozinha.
@@ -573,12 +576,45 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
     );
   }
 
+  const blocoCompetencia = (
+    <div>
+      <label className="block text-xs font-medium text-zinc-600 mb-1">Competência (mês a que o gasto pertence)</label>
+      <div className="flex flex-wrap items-center gap-2">
+        {([['same', `Mês do pagamento (${mesPag.slice(5)}/${mesPag.slice(0, 4)})`], ['prev', `Mês anterior (${mesAnt.slice(5)}/${mesAnt.slice(0, 4)})`], ['outro', 'Outro']] as const).map(([k, label]) => (
+          <button key={k} type="button" onClick={() => setCompModo(k)}
+            className={`px-3 py-2 sm:px-2.5 sm:py-1 rounded-lg text-xs font-semibold border cursor-pointer ${compModo === k ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-zinc-600 border-zinc-200 hover:bg-zinc-50'}`}>
+            {label}
+          </button>
+        ))}
+        {compModo === 'outro' && (
+          <input type="month" value={compOutro} onChange={(e) => setCompOutro(e.target.value)}
+            className="px-2 py-1 border border-zinc-200 rounded-lg text-xs bg-white" />
+        )}
+      </div>
+    </div>
+  );
+
+  const cabecalho = (
+    <div className="flex items-center justify-between gap-2">
+      <p className="text-sm font-semibold text-violet-800"><i className="ri-add-circle-line mr-1" />Lançar {formatCurrency(Number(transaction.amount))} de {new Date(transaction.transaction_date + 'T00:00:00').toLocaleDateString('pt-BR')}</p>
+      <button onClick={() => { setAberto(false); setDividir(false); }} className="text-xs text-zinc-500 hover:text-zinc-700 cursor-pointer">Cancelar</button>
+    </div>
+  );
+
+  if (dividir) {
+    return (
+      <div className="border border-violet-200 rounded-xl p-3 space-y-3 bg-violet-50/40">
+        {cabecalho}
+        <p className="text-sm font-semibold text-zinc-700"><i className="ri-scissors-cut-line mr-1 text-violet-600" />Dividir em partes</p>
+        {blocoCompetencia}
+        <DividirPagamento transaction={transaction} competencia={competencia} onDone={onDone} onCancel={() => setDividir(false)} />
+      </div>
+    );
+  }
+
   return (
     <div className="border border-violet-200 rounded-xl p-3 space-y-3 bg-violet-50/40">
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-sm font-semibold text-violet-800"><i className="ri-add-circle-line mr-1" />Lançar {formatCurrency(Number(transaction.amount))} de {new Date(transaction.transaction_date + 'T00:00:00').toLocaleDateString('pt-BR')}</p>
-        <button onClick={() => setAberto(false)} className="text-xs text-zinc-500 hover:text-zinc-700 cursor-pointer">Cancelar</button>
-      </div>
+      {cabecalho}
 
       <div className="grid grid-cols-2 gap-1.5 sm:flex sm:flex-wrap sm:gap-0 sm:bg-white sm:border sm:border-zinc-200 sm:rounded-lg sm:overflow-hidden sm:w-fit max-w-full">
         {([['despesa', 'Despesa', 'ri-file-list-3-line'], ['compra', 'Compra (CMV)', 'ri-shopping-cart-line'], ['freelancer', 'Freelancer', 'ri-user-star-line'], ['prestador', 'Prestador MEI', 'ri-briefcase-line'], ['fora_dre', 'Não entra no DRE', 'ri-eye-off-line']] as const).map(([k, label, icon]) => (
@@ -588,6 +624,10 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
           </button>
         ))}
       </div>
+      <button type="button" onClick={() => setDividir(true)}
+        className="flex items-center gap-1.5 text-xs font-semibold text-violet-700 hover:text-violet-900 cursor-pointer">
+        <i className="ri-scissors-cut-line" /> Dividir em partes (ex.: parte despesa, parte freelancer)
+      </button>
       <p className="text-[11px] text-zinc-500">
         {tipo === 'despesa'
           ? 'Vira uma conta a pagar já baixada nesta data, com a categoria da DRE (limpeza, manutenção, serviço, frete…).'
@@ -837,23 +877,7 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
       )}
 
       {/* Fora do DRE não tem competência nem regra "fazer sempre assim" (a edge não cria nada) */}
-      {tipo !== 'fora_dre' && (
-      <div>
-        <label className="block text-xs font-medium text-zinc-600 mb-1">Competência (mês a que o gasto pertence)</label>
-        <div className="flex flex-wrap items-center gap-2">
-          {([['same', `Mês do pagamento (${mesPag.slice(5)}/${mesPag.slice(0, 4)})`], ['prev', `Mês anterior (${mesAnt.slice(5)}/${mesAnt.slice(0, 4)})`], ['outro', 'Outro']] as const).map(([k, label]) => (
-            <button key={k} type="button" onClick={() => setCompModo(k)}
-              className={`px-3 py-2 sm:px-2.5 sm:py-1 rounded-lg text-xs font-semibold border cursor-pointer ${compModo === k ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-zinc-600 border-zinc-200 hover:bg-zinc-50'}`}>
-              {label}
-            </button>
-          ))}
-          {compModo === 'outro' && (
-            <input type="month" value={compOutro} onChange={(e) => setCompOutro(e.target.value)}
-              className="px-2 py-1 border border-zinc-200 rounded-lg text-xs bg-white" />
-          )}
-        </div>
-      </div>
-      )}
+      {tipo !== 'fora_dre' && blocoCompetencia}
 
       {doc && tipo !== 'fora_dre' && tipo !== 'prestador' && (
         <label className="flex items-start gap-2 text-xs text-zinc-700 cursor-pointer">

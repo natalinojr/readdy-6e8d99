@@ -122,7 +122,7 @@ async function callEdge(ctx: Ctx, fn: string, body: Record<string, unknown>): Pr
 }
 
 // ── Confirmar um vínculo ─────────────────────────────────────────────────────
-type Result = { id: string; ok: boolean; msg: string; auto_imported?: boolean; code?: string; aviso?: string };
+type Result = { id: string; ok: boolean; msg: string; auto_imported?: boolean; code?: string; aviso?: string; parte?: Row };
 
 // Trava atômica na linha do extrato (go-live 09-17): dois cliques/duas abas confirmavam
 // ou lançavam a mesma linha 2× (despesa e débito duplicados). A linha é "reservada" com um
@@ -354,6 +354,9 @@ interface CreateOpts {
   received?: boolean;
   /** 2026-09-30: lança sem nota mesmo existindo nota do mesmo CNPJ/valor (quem tem certeza que é outro pagamento) */
   semNotaMesmoAssim?: boolean;
+  /** Pagamento dividido (2026-09-30): valor DESTA parte. Com ele, createOneClaimed cria e baixa só a parte
+   *  e devolve o que criou (Result.parte) sem marcar a linha do extrato — quem marca é createSplitClaimed. */
+  parteValor?: number | null;
   /** compra lida da nota (2026-09-29, QR/foto no Lançar): nº da nota e chave da NFC-e */
   invoiceNumber?: string | null;
   accessKey?: string | null;
@@ -455,7 +458,7 @@ async function createOneClaimed(ctx: Ctx, rowId: string, o: CreateOpts, row: Row
       ? 'Este pagamento tem vínculo sugerido com nota/conta: confirme o vínculo em vez de lançar de novo'
       : 'Este pagamento já tem destino (transferência entre contas ou repasse)');
   }
-  const valor = round2(Number(row.amount));
+  const valor = round2(o.parteValor ?? Number(row.amount));
   if (!(valor > 0)) return fail('Valor inválido');
   const doc = soDigitos(row.counterpart_doc);
 
@@ -721,6 +724,15 @@ async function createOneClaimed(ctx: Ctx, rowId: string, o: CreateOpts, row: Row
   }
   if (avisosCompra.length) estoqueMsg += '. Atenção: ' + avisosCompra.join(' ');
 
+  if (o.parteValor != null) {
+    const rotulo = (o.kind === 'compra' ? 'Compra' : o.kind === 'freelancer' ? 'Freelancer' : o.kind === 'prestador' ? (o.prestadorTipo === 'servico' ? 'Prestador' : 'Reembolso') : 'Despesa')
+      + ' R$ ' + brl(valor) + ': ' + descricao;
+    return {
+      id: row.id, ok: true, msg: rotulo + freelaMsg + estoqueMsg,
+      parte: { bill_id: billId, purchase_id: purchaseId, created: o.kind, pay_amount: valor, competencia, categoria, label: rotulo },
+    };
+  }
+
   const now = new Date().toISOString();
   const confirmed = { bill_id: billId, juros_bill_id: null, pay_amount: valor, juros: 0, desconto: 0, auto_imported: false, created: o.kind, purchase_id: purchaseId, at: now, by: ctx.userId };
   const { error: upErr } = await admin.from('fin_bank_statement_imports').update({
@@ -734,6 +746,77 @@ async function createOneClaimed(ctx: Ctx, rowId: string, o: CreateOpts, row: Row
   }).eq('id', row.id);
   if (upErr) log('ERROR', 'create', 'marcar extrato falhou', { tenantId, rowId, error: upErr.message });
   return { id: row.id, ok: true, msg: (o.kind === 'compra' ? 'Compra' : o.kind === 'freelancer' ? 'Pagamento de freelancer' : o.kind === 'prestador' ? (o.prestadorTipo === 'servico' ? 'Serviço do prestador' : 'Reembolso do prestador') : 'Despesa') + ' de R$ ' + brl(valor) + ' lançado: "' + descricao + '"' + freelaMsg + estoqueMsg };
+}
+
+// ── Pagamento dividido (2026-09-30, pedido do dono) ─────────────────────────
+// Um pagamento sem nota que cobre coisas diferentes (ex.: despesa + diária de freelancer no mesmo Pix):
+// cada parte vira o lançamento do seu tipo (conta própria baixada pelo valor da parte, na mesma data e
+// conta do extrato), e a linha do extrato fica conciliada uma vez, com a lista das partes. Se uma parte
+// falha, as anteriores são desfeitas. O "Desfazer" do pagamento desfaz todas.
+const KINDS_PARTE = ['despesa', 'compra', 'freelancer', 'prestador'] as const;
+
+async function desfazerParte(ctx: Ctx, row: Row, p: Row) {
+  const { admin, tenantId } = ctx;
+  if (!p.bill_id) return;
+  await reversePayment(ctx, String(p.bill_id), round2(Number(p.pay_amount)), row.bank_account_id ?? null, String(row.transaction_date));
+  if (p.created === 'freelancer') await admin.from('hr_freelancer_shifts').delete().eq('tenant_id', tenantId).eq('bill_id', p.bill_id);
+  if (p.created === 'compra' && p.purchase_id) {
+    const del = await callEdge(ctx, 'purchase-write', { action: 'delete_purchase', tenant_id: tenantId, payload: { id: p.purchase_id } });
+    if (!del.ok) log('WARN', 'split', 'apagar compra da parte falhou', { tenantId, purchaseId: p.purchase_id, error: del.error });
+  } else {
+    // prestador: hr_prestador_pagamentos sai junto (on delete cascade)
+    await admin.from('fin_accounts_payable').delete().eq('id', p.bill_id).eq('tenant_id', tenantId);
+  }
+}
+
+async function createSplit(ctx: Ctx, rowId: string, partes: CreateOpts[]): Promise<Result> {
+  const { admin, tenantId } = ctx;
+  const { data: row } = await admin.from('fin_bank_statement_imports').select('*').eq('id', rowId).eq('tenant_id', tenantId).maybeSingle();
+  if (!row) return { id: rowId, ok: false, msg: 'Lançamento não encontrado' };
+  if (row.transaction_type !== 'debit') return { id: rowId, ok: false, msg: 'Só pagamentos (saídas) podem ser divididos' };
+  if (row.reconciled || row.status !== 'pending') return { id: rowId, ok: false, msg: 'Este pagamento já está conciliado' };
+  const total = round2(Number(row.amount));
+  const soma = round2(partes.reduce((s, p) => s + Number(p.parteValor ?? 0), 0));
+  if (partes.length < 2) return { id: rowId, ok: false, msg: 'Divida em pelo menos 2 partes' };
+  if (partes.some((p) => !(Number(p.parteValor) > 0))) return { id: rowId, ok: false, msg: 'Toda parte precisa de valor' };
+  if (Math.abs(soma - total) > 0.004) return { id: rowId, ok: false, msg: 'As partes somam R$ ' + brl(soma) + ' e o pagamento é R$ ' + brl(total) + ': ajuste até fechar' };
+  return withRowClaim(ctx, rowId, async () => {
+    const feitas: Row[] = [];
+    const msgs: string[] = [];
+    for (const [i, p] of partes.entries()) {
+      let r: Result;
+      try { r = await createOneClaimed(ctx, rowId, p, row); }
+      catch (e) { r = { id: rowId, ok: false, msg: String((e as Error)?.message ?? e) }; }
+      if (!r.ok || !r.parte) {
+        for (const f of [...feitas].reverse()) await desfazerParte(ctx, row, f);
+        return { ...r, ok: false, msg: 'Parte ' + (i + 1) + ': ' + r.msg + (feitas.length ? ' (as partes anteriores foram desfeitas; nada ficou lançado)' : '') };
+      }
+      feitas.push(r.parte);
+      msgs.push(r.msg);
+    }
+    const now = new Date().toISOString();
+    const label = 'Dividido em ' + feitas.length + ': ' + feitas.map((f) => f.label).join(' · ');
+    const confirmed = {
+      bill_id: feitas[0].bill_id, juros_bill_id: null, pay_amount: total, juros: 0, desconto: 0, auto_imported: false,
+      // bill_ids: TODAS as contas da divisão — quem pergunta "esta conta já tem linha?" (contaPagaLigada,
+      // inter-bank › billsBaixadas) olha aqui além do bill_id
+      created: 'dividido', purchase_id: null, partes: feitas, bill_ids: feitas.map((f) => f.bill_id), at: now, by: ctx.userId,
+    };
+    const { error: upErr } = await admin.from('fin_bank_statement_imports').update({
+      status: 'matched', reconciled: true, reconciled_at: now, reconciled_by: ctx.userId, matched_at: now, matched_by: ctx.userId,
+      match_kind: 'payable', match_ref_id: feitas[0].bill_id, match_confidence: 'manual', category: 'Dividido',
+      match_detail: {
+        label: label.slice(0, 500), valor: total, created: 'dividido', partes: feitas,
+        prev_category: row.category ?? null, prev_match_kind: row.match_kind === 'rule' ? null : row.match_kind ?? null, confirmed,
+      },
+    }).eq('id', row.id);
+    if (upErr) {
+      log('ERROR', 'split', 'marcar extrato falhou', { tenantId, rowId, error: upErr.message });
+      for (const f of [...feitas].reverse()) await desfazerParte(ctx, row, f);
+      return { id: rowId, ok: false, msg: 'Marcar o pagamento: ' + upErr.message + ' (nada ficou lançado)' };
+    }
+    return { id: row.id, ok: true, msg: 'Pagamento dividido em ' + feitas.length + ' partes: ' + msgs.join(' · ') };
+  });
 }
 
 // ── Nota do mês: 1 nota ↔ vários pagamentos ─────────────────────────────────
@@ -1075,6 +1158,10 @@ async function contaPagaLigada(ctx: Ctx, billId: string): Promise<Row | null> {
   const { data: a } = await admin.from('fin_bank_statement_imports').select('id, transaction_date, amount')
     .eq('tenant_id', tenantId).eq('match_detail->confirmed->>bill_id', billId).limit(1);
   if (a?.length) return a[0];
+  // Pagamento dividido: a conta pode ser a 2ª, 3ª… parte da linha
+  const { data: d } = await admin.from('fin_bank_statement_imports').select('id, transaction_date, amount')
+    .eq('tenant_id', tenantId).contains('match_detail', { confirmed: { bill_ids: [billId] } }).limit(1);
+  if (d?.length) return d[0];
   const { data: b } = await admin.from('fin_bank_statement_imports').select('id, transaction_date, amount')
     .eq('tenant_id', tenantId).eq('match_kind', 'payable').eq('match_ref_id', billId).neq('status', 'pending').limit(1);
   return b?.length ? b[0] : null;
@@ -1135,6 +1222,15 @@ async function undoOne(ctx: Ctx, rowId: string): Promise<Result> {
     return { id: row.id, ok: true, msg: 'Desfeito: o pagamento voltou a pendente.' };
   }
   if (!c?.bill_id) return { id: rowId, ok: false, msg: 'Não há baixa feita pela conciliação neste lançamento' };
+  if (c.created === 'dividido' && Array.isArray(c.partes)) {
+    const partes = c.partes as Row[];
+    for (const p of [...partes].reverse()) await desfazerParte(ctx, row, p);
+    await admin.from('fin_bank_statement_imports').update({
+      status: 'pending', reconciled: false, reconciled_at: null, reconciled_by: null, matched_at: null, matched_by: null,
+      match_kind: det.prev_match_kind ?? null, match_ref_id: null, match_confidence: null, match_detail: null, category: det.prev_category ?? null,
+    }).eq('id', row.id);
+    return { id: row.id, ok: true, msg: 'Pagamento dividido desfeito (' + partes.length + ' partes): voltou a pendente.' };
+  }
   if (c.monthly_doc_id) return { id: rowId, ok: false, msg: 'Este pagamento faz parte de uma nota do mês: desfaça pela nota em Notas de Entrada (desfaz todos os pagamentos juntos)' };
   const date = String(row.transaction_date);
 
@@ -1516,6 +1612,40 @@ Deno.serve(async (req: Request) => {
       }
       log('INFO', 'create', 'ok', { tenantId, userId, kind, total: results.length, ok: results.filter((r) => r.ok).length });
       return json({ success: true, results });
+    }
+
+    if (action === 'create_split') {
+      if (!isManager) return errResp('Apenas administradores e gerentes podem lançar pelo extrato', 403);
+      const id = String(body.id ?? '');
+      const lista = (Array.isArray(body.partes) ? body.partes : []) as Row[];
+      if (lista.length > 6) return errResp('Divida em no máximo 6 partes');
+      if (!id || lista.length === 0) return errResp('Informe o pagamento e as partes');
+      const partes: CreateOpts[] = [];
+      for (const b of lista) {
+        const kind = KINDS_PARTE.find((k) => k === b.kind) ?? null;
+        if (!kind) return errResp('Cada parte é despesa, compra, freelancer ou prestador MEI');
+        partes.push({
+          kind, parteValor: round2(Number(b.valor)),
+          dreCategoryId: b.dre_category_id ? String(b.dre_category_id) : null,
+          mercCategoryId: b.merchandise_category_id ? String(b.merchandise_category_id) : null,
+          description: b.description ? String(b.description) : null,
+          supplier: b.supplier ? String(b.supplier) : null,
+          costCenterId: null,
+          allowPayroll: body.allow_payroll === true,
+          competenceMonth: competenciaOk(b.competence_month ?? body.competence_month),
+          dias: Array.isArray(b.dias) ? (b.dias as unknown[]).map(String).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)).slice(0, 31) : [],
+          funcao: b.funcao ? String(b.funcao).slice(0, 60) : null,
+          prestadorId: b.prestador_id ? String(b.prestador_id) : null,
+          prestadorTipo: b.prestador_tipo === 'servico' || b.prestador_tipo === 'reembolso' ? b.prestador_tipo : null,
+          items: null,
+          semNotaMesmoAssim: body.sem_nota_mesmo_assim === true,
+        });
+      }
+      let r: Result;
+      try { r = await createSplit(ctx, id, partes); }
+      catch (e) { log('ERROR', 'split', 'falhou', { tenantId, id, error: String(e) }); r = { id, ok: false, msg: String((e as Error)?.message ?? e) }; }
+      log('INFO', 'split', r.ok ? 'ok' : 'recusado', { tenantId, userId, id, partes: partes.length, msg: r.msg });
+      return json({ success: true, results: [r] });
     }
 
     if (action === 'monthly_candidates' || action === 'link_monthly' || action === 'unlink_monthly') {
