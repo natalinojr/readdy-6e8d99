@@ -275,7 +275,7 @@ interface EstoqueContextValue {
   upsertInsumo: (insumo: Partial<Insumo> & { nome: string }) => Promise<string | undefined>;
   setInsumos: React.Dispatch<React.SetStateAction<Insumo[]>>;
   reloadInsumos: () => Promise<void>;
-  reloadMovimentacoes: (dateFrom?: Date, dateTo?: Date, ingredientId?: string) => Promise<void>;
+  reloadMovimentacoes: (dateFrom?: Date, dateTo?: Date, ingredientId?: string, busca?: string) => Promise<void>;
   reloadInventarioSessions: () => Promise<void>;
 }
 
@@ -418,7 +418,7 @@ export function EstoqueProvider({ children }: { children: ReactNode }) {
     }
   }, [user?.tenantId, dispararNotificacao, loadItensDesabilitados]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const loadMovimentacoes = useCallback(async (dateFrom?: Date, dateTo?: Date, ingredientId?: string) => {
+  const loadMovimentacoes = useCallback(async (dateFrom?: Date, dateTo?: Date, ingredientId?: string, busca?: string) => {
     if (!user?.tenantId) return;
     try {
       const tenantId = user.tenantId;
@@ -432,6 +432,8 @@ export function EstoqueProvider({ children }: { children: ReactNode }) {
         p_date_from: fromISO,
         p_date_to: toISO,
         p_ingredient_id: ingredientId ?? null,
+        // busca no banco (insumo, fornecedor/NF do motivo, observação, operador) — não só nas 500 carregadas
+        p_search: busca?.trim() || null,
       });
       if (error) throw error;
       const rows = (data as DBStockMovement[]) ?? [];

@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { ArrowUpCircle, ArrowDownCircle, AlertTriangle, X, ShoppingCart, Calendar } from 'lucide-react';
 import type { Movimentacao } from '@/types/estoque';
 import { useEstoque } from '../../../contexts/EstoqueContext';
@@ -56,13 +56,26 @@ export default function MovimentacoesTab() {
   const { insumos } = useEstoque();
   const [buscaInsumo, setBuscaInsumo] = useState('');
 
-  // Recarrega movimentacoes do servidor quando o filtro de periodo mudar
+  // Recarrega do servidor quando o período ou a busca mudam: a lista padrão só traz as 500 mais
+  // recentes (~2 dias numa loja com vendas), então buscar "Bebidas" ou o nº da nota precisa ir ao banco.
+  const buscaServidor = buscaInsumo.trim().length >= 3 ? buscaInsumo.trim() : '';
+  const [buscaAplicada, setBuscaAplicada] = useState('');
   useEffect(() => {
-    if (!dateFrom && !dateTo) return;
+    const t = setTimeout(() => setBuscaAplicada(buscaServidor), 400);
+    return () => clearTimeout(t);
+  }, [buscaServidor]);
+  const jaFiltrou = useRef(false);
+  useEffect(() => {
+    if (!dateFrom && !dateTo && !buscaAplicada) {
+      // voltou ao padrão depois de um filtro: recarrega a lista normal
+      if (jaFiltrou.current) { jaFiltrou.current = false; reloadMovimentacoes(); }
+      return;
+    }
+    jaFiltrou.current = true;
     const from = dateFrom ? new Date(dateFrom + 'T00:00:00') : undefined;
     const to = dateTo ? new Date(dateTo + 'T23:59:59') : undefined;
-    reloadMovimentacoes(from, to);
-  }, [dateFrom, dateTo, reloadMovimentacoes]);
+    reloadMovimentacoes(from, to, undefined, buscaAplicada || undefined);
+  }, [dateFrom, dateTo, buscaAplicada, reloadMovimentacoes]);
 
   const handleOpenCompra = (insumoId?: string) => {
     if (insumoId) {
@@ -85,8 +98,10 @@ export default function MovimentacoesTab() {
     return movimentacoes.filter((m) => {
       if (filtroTipo !== 'Todos' && m.tipo !== filtroTipo) return false;
       if (buscaInsumo.trim()) {
-        const q = buscaInsumo.toLowerCase();
-        if (!m.insumoNome?.toLowerCase().includes(q)) return false;
+        const sem = (t: string) => t.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+        const q = sem(buscaInsumo.trim());
+        const alvo = sem(`${m.insumoNome ?? ''} ${m.motivo ?? ''} ${m.operador ?? ''} ${m.itemVendidoNome ?? ''}`);
+        if (!alvo.includes(q)) return false;
       }
       if (dateFrom || dateTo) {
         const movDate = parseDataBR(m.data);
@@ -184,7 +199,7 @@ export default function MovimentacoesTab() {
           type="text"
           value={buscaInsumo}
           onChange={(e) => setBuscaInsumo(e.target.value)}
-          placeholder="Filtrar por nome do insumo..."
+          placeholder="Buscar insumo, fornecedor, nº da nota…"
           className="w-full h-10 rounded-xl border border-zinc-200 shadow-sm pl-9 pr-9 text-xs bg-white text-zinc-700 placeholder-zinc-400 focus:outline-none focus:border-amber-400"
         />
         {buscaInsumo && (

@@ -54,6 +54,8 @@ export default function EntradaTardiaModal({ tenantId, item, insumo, upp, onFech
   const toggle = (id: string) => setSel((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const marcados = (lista ?? []).filter((r) => sel.has(r.purchase_item_id));
   const totalEntrada = marcados.reduce((s, r) => s + Number(r.quantidade) * upp, 0);
+  // Contado no inventário depois do recebimento: a contagem já acertou, o banco recusa a entrada
+  const temContado = marcados.some((r) => r.inventario_depois);
 
   const aplicar = async (modo: 'entrar' | 'ignorar') => {
     if (marcados.length === 0) return;
@@ -123,7 +125,7 @@ export default function EntradaTardiaModal({ tenantId, item, insumo, upp, onFech
                 </p>
                 {r.inventario_depois && (
                   <p className="text-[11px] text-orange-700 mt-1">
-                    <i className="ri-error-warning-line" /> Teve contagem deste insumo depois{r.inventario_em ? ` (${dataHora(r.inventario_em)})` : ''}: o estoque já foi acertado. Dar entrada agora conta em dobro.
+                    <i className="ri-error-warning-line" /> Teve contagem deste insumo depois{r.inventario_em ? ` (${dataHora(r.inventario_em)})` : ''}: a contagem já pôs no estoque. Só dá para marcar <b>Não entram</b>.
                   </p>
                 )}
               </div>
@@ -139,7 +141,8 @@ export default function EntradaTardiaModal({ tenantId, item, insumo, upp, onFech
             className="px-3 py-2 rounded-lg bg-zinc-100 text-zinc-700 text-xs font-semibold hover:bg-zinc-200 disabled:opacity-50 cursor-pointer">
             Não entram
           </button>
-          <button disabled={busy || marcados.length === 0 || !insumo} onClick={() => aplicar('entrar')}
+          <button disabled={busy || marcados.length === 0 || !insumo || temContado} onClick={() => aplicar('entrar')}
+            title={temContado ? 'Tem recebimento marcado que já foi contado no inventário: marque-o como "Não entram"' : undefined}
             className="px-3 py-2 rounded-lg bg-emerald-600 text-white text-xs font-semibold hover:bg-emerald-700 disabled:opacity-50 cursor-pointer">
             Dar entrada no estoque
           </button>
