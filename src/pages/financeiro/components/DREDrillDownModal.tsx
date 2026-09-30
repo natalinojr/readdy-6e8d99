@@ -307,6 +307,16 @@ export default function DREDrillDownModal({ type, categoryId, categoryName, mont
 
     // ── DESPESAS / CUSTOS POR CATEGORIA DRE ──
     else if (categoryId) {
+      // Cada conta a pagar é um grupo próprio (fornecedor + data), ao lado das compras
+      const grupoConta = (b: Record<string, unknown>) => ({
+        group: `conta-${b.id}`,
+        groupLabel: String(b.supplier || b.description || 'Conta a pagar'),
+        groupSub: [
+          'Conta a pagar',
+          b.paid_date || b.due_date ? new Date(String(b.paid_date || b.due_date) + 'T00:00:00').toLocaleDateString('pt-BR') : null,
+          `valor da conta ${formatCurrency(Number(b.amount ?? 0))}`,
+        ].filter(Boolean).join(' · '),
+      });
       // Buscar contas a pagar vinculadas a essa categoria DRE
       const query = supabase
         .from('fin_accounts_payable')
@@ -331,6 +341,7 @@ export default function DREDrillDownModal({ type, categoryId, categoryName, mont
             ? Number(b.paid_amount ?? 0)
             : Number(b.paid_amount ?? b.amount),
           source: 'Contas a Pagar',
+          ...grupoConta(b),
           extra: {
             'Data Venc.': String(b.due_date || '—'),
             'Forma Pag.': String(b.payment_method || '—'),
@@ -350,6 +361,7 @@ export default function DREDrillDownModal({ type, categoryId, categoryName, mont
           description: `${b.description}${b.supplier ? ` — ${b.supplier}` : ''}`,
           amount: Number(b.amount),
           source: 'Contas a Pagar',
+          ...grupoConta(b),
           extra: {
             'Pago em': b.paid_date ? String(b.paid_date) : '—',
             'Forma Pag.': String(b.payment_method || '—'),
@@ -362,15 +374,25 @@ export default function DREDrillDownModal({ type, categoryId, categoryName, mont
       // abria vazio enquanto a linha mostrava o valor (2026-09-30).
       const compras = await fetchComprasPeriodo(user.tenantId, start.slice(0, 10), end.slice(0, 10), mode);
       const linhas = await fetchComprasLinhas(user.tenantId, compras);
+      // Agrupado por nota/compra: subtotal da categoria + valor total da nota
+      const totalCompra = new Map(compras.map(c => [c.id, Number(c.total_amount ?? 0)]));
       result = result.concat(linhas
         .filter(l => l.destino === 'despesa' && l.dreCategoryId === categoryId)
         .sort((x, y) => y.valor - x.valor)
         .map(l => ({
           id: l.id,
           date: l.data || start.slice(0, 10),
-          description: `${l.descricao} — ${l.fornecedor}`,
+          description: l.descricao,
           amount: l.valor,
           source: l.nota ? `Compra · NF ${l.nota}` : 'Compra',
+          group: l.purchaseId,
+          groupLabel: l.fornecedor,
+          groupSub: [
+            l.nota ? `NF ${l.nota}` : 'Compra sem nota',
+            l.data ? new Date(l.data + 'T00:00:00').toLocaleDateString('pt-BR') : null,
+            `total da nota ${formatCurrency(totalCompra.get(l.purchaseId) ?? 0)}`,
+            l.pago != null ? `${(l.pago * 100).toFixed(0)}% pago no mês` : null,
+          ].filter(Boolean).join(' · '),
           extra: {
             ...(l.quantidade != null ? { Qtd: `${l.quantidade.toLocaleString('pt-BR')}${l.unidade ? ` ${l.unidade}` : ''}` } : {}),
             ...(l.pago != null ? { 'Pago no mês': `${(l.pago * 100).toFixed(0)}% da compra` } : {}),
@@ -387,7 +409,7 @@ export default function DREDrillDownModal({ type, categoryId, categoryName, mont
 
   const label = categoryName || TYPE_LABELS[type] || type;
 
-  // Grupos (hoje só o CMV usa): ordenados pelo valor, com subtotal e % do total.
+  // Grupos (CMV e categorias de despesa: por nota/compra): ordenados pelo valor, com subtotal e % do total.
   const temGrupos = items.some(i => i.group);
   const grupos = temGrupos
     ? Object.entries(items.reduce((acc, i) => {
@@ -441,8 +463,8 @@ export default function DREDrillDownModal({ type, categoryId, categoryName, mont
           <div>
             <h3 className="font-semibold text-zinc-900 text-sm">{label}</h3>
             <p className="text-xs text-zinc-400 mt-0.5">
-              {type === 'cmv' && cmvAba === 'compras'
-                ? `${grupos.length} compra${grupos.length !== 1 ? 's' : ''} · ${items.length} ite${items.length !== 1 ? 'ns' : 'm'}`
+              {(type === 'cmv' && cmvAba === 'compras') || (type !== 'cmv' && categoryId && temGrupos)
+                ? `${grupos.length} ${type === 'cmv' ? (grupos.length !== 1 ? 'compras' : 'compra') : (grupos.length !== 1 ? 'notas/contas' : 'nota/conta')} · ${items.length} ite${items.length !== 1 ? 'ns' : 'm'}`
                 : `${items.length} registro${items.length !== 1 ? 's' : ''}`} — Total: {formatCurrency(total)}
             </p>
           </div>
