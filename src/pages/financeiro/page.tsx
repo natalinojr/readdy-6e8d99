@@ -28,6 +28,7 @@ import GuiasTab from './components/GuiasTab';
 import TrilhaTab from './components/TrilhaTab';
 import PainelFinTab from './components/PainelFinTab';
 import LancarFinanceiroModal from './components/LancarFinanceiroModal';
+import BuscaFinanceiro from './components/BuscaFinanceiro';
 
 const TABS = [
   { id: 'painel', label: 'Painel', icon: 'ri-dashboard-3-line' },
@@ -99,6 +100,10 @@ export default function FinanceiroPage() {
   // Abre a aba já pedindo a janela de lançamento (?abrir=), usado pelo botão Lançar.
   const abrirAba = (t: string, abrir?: string) => setSearchParams(abrir ? { tab: t, abrir } : { tab: t }, { replace: true });
   const [lancarAberto, setLancarAberto] = useState(false);
+  // Resultado da busca: vai para a aba com o item (?busca=/?foco=/?nota=). A chave recria a aba,
+  // porque algumas só leem esses parâmetros ao abrir (ex.: a busca do Contas a Pagar).
+  const [chaveConteudo, setChaveConteudo] = useState(0);
+  const irParaResultado = (params: Record<string, string>) => { setSearchParams(params, { replace: true }); setChaveConteudo((k) => k + 1); };
   // ?foco=<id da compra> abre a aba Compras já piscando naquela linha — usado pelo Rastreamento
   // da Conciliação (2026-09-20), para o botão cair na compra certa e não só na lista.
   const [highlightPurchaseId, setHighlightPurchaseId] = useState<string | undefined>(
@@ -198,6 +203,7 @@ export default function FinanceiroPage() {
             <h1 className="text-base md:text-lg font-bold text-zinc-800">Financeiro</h1>
             <p className="text-xs text-zinc-400 hidden sm:block">Gestão financeira completa do restaurante</p>
           </div>
+          <div className="hidden md:block"><BuscaFinanceiro podeAba={podeAbaOuFreela} onIr={irParaResultado} /></div>
           <button
             onClick={() => setLancarAberto(true)}
             className="flex items-center gap-1.5 h-9 px-3 md:px-4 rounded-xl text-white text-sm font-bold shadow-sm cursor-pointer flex-shrink-0"
@@ -206,6 +212,7 @@ export default function FinanceiroPage() {
             <i className="ri-add-line text-base" />Lançar
           </button>
         </div>
+        <div className="md:hidden mb-3"><BuscaFinanceiro podeAba={podeAbaOuFreela} onIr={irParaResultado} /></div>
         {/* Grupos — scroll horizontal no mobile (são só 6, cabem numa linha no desktop) */}
         <div className="flex gap-0.5 overflow-x-auto scrollbar-hide -mx-4 md:mx-0 px-4 md:px-0" style={{ borderBottom: '1px solid rgba(245,158,11,0.15)' }}>
           {grupos.map((g) => {
@@ -260,7 +267,7 @@ export default function FinanceiroPage() {
       {lancarAberto && <LancarFinanceiroModal podeAba={podeAbaOuFreela} onIr={abrirAba} onClose={() => setLancarAberto(false)} />}
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto">
+      <div key={chaveConteudo} className="flex-1 overflow-y-auto">
         {activeTab === 'painel' && <PainelFinTab onIrAba={setActiveTab} />}
         {activeTab === 'visao' && <VisaoGeralFinTab />}
         {activeTab === 'trilha' && <TrilhaTab />}

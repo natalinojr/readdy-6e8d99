@@ -96,8 +96,11 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
 
   // ── Navegação por mês ──────────────────────────────────────────────────────
   const nowDate = new Date();
-  const [mesSelecionado, setMesSelecionado] = useState(nowDate.getMonth());
-  const [anoSelecionado, setAnoSelecionado] = useState(nowDate.getFullYear());
+  // ?mes=AAAA-MM (busca do Financeiro, 2026-09-30): abre no mês da conta encontrada — a busca da
+  // aba só olha o mês da tela, e a conta de outubro não aparecia estando em setembro.
+  const mesDaUrl = new URLSearchParams(window.location.search).get('mes')?.match(/^(\d{4})-(\d{2})$/);
+  const [mesSelecionado, setMesSelecionado] = useState(mesDaUrl ? Number(mesDaUrl[2]) - 1 : nowDate.getMonth());
+  const [anoSelecionado, setAnoSelecionado] = useState(mesDaUrl ? Number(mesDaUrl[1]) : nowDate.getFullYear());
 
   const mesAtual = nowDate.getMonth();
   const anoAtual = nowDate.getFullYear();
