@@ -10,7 +10,7 @@ import { formatCurrency } from '@/lib/formatters';
 import { avisar } from '@/components/base/Dialogos';
 import type { Purchase, PurchaseItem } from '@/types/financeiro';
 import LerNotaBotoes from './LerNotaBotoes';
-import { useInsumos, numBR, numBRqtd, fatorDaLinha, InsumoDoItem } from '../conciliacao/LancarDoExtrato';
+import { useInsumos, numBR, numBRqtd, fatorDaLinha, InsumoDoItem, freteDasLinhas } from '../conciliacao/LancarDoExtrato';
 import { linhasParaValor, aprenderVinculos, type ScanResult } from '@/lib/leituraNotinha';
 
 // fator = quanto 1 unidade comprada vale na unidade do insumo, quando digitado (null = sugerido / o da linha original)
@@ -40,6 +40,8 @@ export default function DetalharItensModal({ purchase, onClose, onSaved }: Props
 
   const soma = useMemo(() => Math.round(linhas.reduce((s, l) => s + (numBR(l.total) || 0), 0) * 100) / 100, [linhas]);
   const falta = Math.round((alvo - soma) * 100) / 100;
+  // Frete da compra + linha de frete nova: diluídos nos produtos (purchase-write › replace_items)
+  const freteLinhas = freteDasLinhas(linhas, frete);
   const invalida = linhas.find((l) => !l.descricao.trim() || !(numBRqtd(l.qtd) > 0) || !(numBR(l.total) > 0));
   const semConversao = linhas.find((l) => l.insumoId && !(fatorDaLinha(l, insumos) > 0));
   const fecha = Math.abs(falta) < 0.005;
@@ -133,6 +135,7 @@ export default function DetalharItensModal({ purchase, onClose, onSaved }: Props
 
           {linhas.map((l) => {
             const ins = insumos.find((x) => x.id === l.insumoId);
+            const FR = freteLinhas;
             return (
               <div key={l.key} className="border border-zinc-200 rounded-lg p-2 space-y-1.5">
                 <div className="flex items-center gap-1.5">
@@ -154,8 +157,11 @@ export default function DetalharItensModal({ purchase, onClose, onSaved }: Props
                     <input value={l.total} onChange={(e) => muda(l.key, { total: e.target.value })} inputMode="decimal" placeholder="0,00" className="w-full px-2 py-1.5 border border-zinc-200 rounded-lg text-sm text-zinc-800" />
                   </label>
                 </div>
-                <InsumoDoItem linha={l} insumos={insumos} insumoOptions={insumoOptions} onAdicionado={adicionarInsumo}
-                  onChange={(patch) => muda(l.key, patch)} />
+                {FR.ehFrete(l) ? <p className="text-[11px] rounded-lg bg-sky-50 text-sky-800 px-2 py-1.5"><i className="ri-truck-line mr-1" />Frete de {formatCurrency(FR.frete)}: diluído nos outros itens pelo valor de cada um — entra no custo de cada insumo, não fica como item.</p> : (
+                  <InsumoDoItem linha={l} insumos={insumos} insumoOptions={insumoOptions} onAdicionado={adicionarInsumo}
+                    onChange={(patch) => muda(l.key, patch)} frete={FR.parte(l)} />
+                )}
+                {!l.insumoId && FR.parte(l) > 0 && <p className="text-[11px] text-sky-700">+ {formatCurrency(FR.parte(l))} de frete no custo deste item</p>}
               </div>
             );
           })}

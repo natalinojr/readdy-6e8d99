@@ -117,13 +117,28 @@ export function unidadeAoLigar(unidadeAtual: string, ins: InsumoLista | undefine
   return u || ins.unit || 'un';
 }
 
-/** "1 cx = [12] kg" + quanto entra no estoque e o custo por unidade de estoque. */
-export function ConversaoEstoque({ ins, unidade, qtd, total, fator, onFator }: {
-  ins: InsumoLista; unidade: string; qtd: string; total: string; fator: string; onFator: (v: string) => void;
+// Frete no meio dos itens (2026-09-30): mesma regra do purchase-write (absorverLinhasDeFrete) — a linha
+// "Frete"/"Taxa de entrega"/"Envio" sem insumo vira frete da compra, diluído nos produtos pelo valor de
+// cada um. A tela já mostra o custo de cada insumo com a parte dele no frete.
+const RE_FRETE = /^\s*(fretes?|taxa\s+de\s+(entrega|envio)|tx\.?\s*(de\s+)?entrega|entrega|envio|custo\s+de\s+envio)\b/i;
+export const ehLinhaFrete = (l: { descricao: string; insumoId?: string | null }) => RE_FRETE.test(l.descricao) && !l.insumoId;
+/** Frete total das linhas de frete e a parte de cada produto (0 se só houver frete, como no purchase-write). */
+export function freteDasLinhas<T extends { descricao: string; total: string; insumoId?: string | null }>(linhas: T[], freteCompra = 0) {
+  const v = (l: T) => numBR(l.total) || 0;
+  const produtos = linhas.filter((l) => !ehLinhaFrete(l));
+  const frete = linhas.filter(ehLinhaFrete).reduce((s, l) => s + v(l), 0) + (freteCompra > 0 ? freteCompra : 0);
+  const base = produtos.reduce((s, l) => s + v(l), 0);
+  const ok = frete > 0 && produtos.length > 0 && base > 0;
+  return { frete: ok ? frete : 0, ehFrete: (l: T) => ok && ehLinhaFrete(l), parte: (l: T) => (ok && !ehLinhaFrete(l) ? frete * v(l) / base : 0) };
+}
+
+/** "1 cx = [12] kg" + quanto entra no estoque e o custo por unidade de estoque (com a parte do frete). */
+export function ConversaoEstoque({ ins, unidade, qtd, total, fator, onFator, frete = 0 }: {
+  ins: InsumoLista; unidade: string; qtd: string; total: string; fator: string; onFator: (v: string) => void; frete?: number;
 }) {
   const f = numBRqtd(fator);
   const q = numBRqtd(qtd);
-  const t = numBR(total);
+  const t = numBR(total) + (frete > 0 ? frete : 0);
   const entra = f > 0 && q > 0 ? q * f : NaN;
   const un = ins.unit || 'un';
   return (
@@ -135,7 +150,7 @@ export function ConversaoEstoque({ ins, unidade, qtd, total, fator, onFator }: {
         <span>{un} de {ins.name}</span>
       </div>
       {f > 0
-        ? Number.isFinite(entra) && <p>Entra {fmtFator(entra)} {un}{t > 0 ? ` · ${formatCurrency(t / entra)}/${un}` : ''}</p>
+        ? Number.isFinite(entra) && <p>Entra {fmtFator(entra)} {un}{t > 0 ? ` · ${formatCurrency(t / entra)}/${un}` : ''}{frete > 0 ? ` (com ${formatCurrency(frete)} de frete)` : ''}</p>
         : <p>Diga quanto 1 {unidade.trim() || 'un'} vale em {un} (ex.: 1 cx = 12 {un}); sem isso não dá para ligar ao insumo.</p>}
     </div>
   );
@@ -152,8 +167,10 @@ const unidadeEstoquePadrao = (u: string) => {
  * Insumo de um item de compra: seletor com busca, "Cadastrar insumo novo" ali mesmo (2026-09-30, pedido
  * do dono) e a conversão para a unidade de estoque. Usado no Lançar do extrato e no Detalhar itens.
  */
-export function InsumoDoItem({ linha, insumos, insumoOptions, onAdicionado, onChange }: {
+export function InsumoDoItem({ linha, insumos, insumoOptions, onAdicionado, onChange, frete = 0 }: {
   linha: { descricao: string; unidade: string; qtd: string; total: string; insumoId: string; fator?: string | null };
+  /** parte do frete da compra neste item (entra no custo mostrado) */
+  frete?: number;
   insumos: InsumoLista[];
   insumoOptions: Array<{ id: string; label: string; sub: string | null }>;
   onAdicionado: (ins: InsumoLista) => void;
@@ -232,7 +249,7 @@ export function InsumoDoItem({ linha, insumos, insumoOptions, onAdicionado, onCh
         createLabel={(texto) => (texto ? `Cadastrar "${texto}" como insumo novo` : 'Cadastrar insumo novo')}
         buttonClassName="w-full px-2 py-2.5 sm:py-1.5 border border-zinc-200 rounded-lg text-sm bg-white cursor-pointer" />
       {ins && (
-        <ConversaoEstoque ins={ins} unidade={linha.unidade} qtd={linha.qtd} total={linha.total}
+        <ConversaoEstoque ins={ins} unidade={linha.unidade} qtd={linha.qtd} total={linha.total} frete={frete}
           fator={linha.fator != null ? linha.fator : fatorSugerido(linha.unidade, ins)} onFator={(v) => onChange({ fator: v })} />
       )}
     </>
@@ -426,6 +443,7 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
   };
   const valorPag = Math.round(Number(transaction.amount) * 100) / 100;
   const somaItens = Math.round(itens.reduce((s, it) => s + (numBR(it.total) || 0), 0) * 100) / 100;
+  const freteItens = freteDasLinhas(itens);
   const faltaItens = Math.round((valorPag - somaItens) * 100) / 100;
   const itemInvalido = itens.find((it) => !it.descricao.trim() || !(numBRqtd(it.qtd) > 0) || !(numBR(it.total) > 0));
   const itensComInsumo = itens.some((it) => it.insumoId);
@@ -831,6 +849,7 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
           )}
           {itens.map((it) => {
             const ins = insumos.find((x) => x.id === it.insumoId);
+            const FR = freteItens;
             return (
               <div key={it.key} className="bg-white border border-zinc-200 rounded-lg p-2 space-y-1.5">
                 <div className="flex items-center gap-1.5">
@@ -856,8 +875,11 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
                   </label>
                 </div>
                 {/* A unidade comprada fica (antes virava a do insumo e "1 un" entrava como 1 g); a conversão é pedida abaixo */}
-                <InsumoDoItem linha={it} insumos={insumos} insumoOptions={insumoOptions} onAdicionado={adicionarInsumo}
-                  onChange={(patch) => mudaItem(it.key, patch)} />
+                {FR.ehFrete(it) ? <p className="text-[11px] rounded-lg bg-sky-50 text-sky-800 px-2 py-1.5"><i className="ri-truck-line mr-1" />Frete de {formatCurrency(FR.frete)}: diluído nos outros itens pelo valor de cada um — entra no custo de cada insumo, não fica como item.</p> : (
+                  <InsumoDoItem linha={it} insumos={insumos} insumoOptions={insumoOptions} onAdicionado={adicionarInsumo}
+                    onChange={(patch) => mudaItem(it.key, patch)} frete={FR.parte(it)} />
+                )}
+                {!it.insumoId && FR.parte(it) > 0 && <p className="text-[11px] text-sky-700">+ {formatCurrency(FR.parte(it))} de frete no custo deste item</p>}
               </div>
             );
           })}
