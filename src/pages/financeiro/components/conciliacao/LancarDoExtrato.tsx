@@ -51,7 +51,7 @@ export interface LancarOpcoes {
   prestador_id?: string | null;
   prestador_tipo?: 'servico' | 'reembolso' | null;
   /** compra (2026-09-28): itens com insumo opcional; a soma tem que fechar com o pagamento */
-  items?: Array<{ description: string; quantity: number; total: number; unit_label: string | null; ingredient_id: string | null }> | null;
+  items?: Array<{ description: string; quantity: number; total: number; unit_label: string | null; ingredient_id: string | null; units_per_package?: number | null }> | null;
   /** compra com itens: já recebi → os insumos entram no estoque na hora */
   received?: boolean;
   /** compra lida da nota (2026-09-29): nº da nota e chave da NFC-e vão para a compra */
@@ -60,7 +60,7 @@ export interface LancarOpcoes {
 }
 
 /** Insumos da loja para ligar os itens da compra (só carrega quando a compra é aberta). */
-type InsumoLista = { id: string; name: string; unit: string | null };
+type InsumoLista = { id: string; name: string; unit: string | null; purchase_unit: string | null; purchase_factor: number | null };
 export function useInsumos(ativo: boolean) {
   const { user } = useAuth();
   const [lista, setLista] = useState<{ tenant: string; itens: InsumoLista[] } | null>(null);
@@ -68,7 +68,7 @@ export function useInsumos(ativo: boolean) {
     if (!ativo || !user?.tenantId || lista?.tenant === user.tenantId) return;
     const tenant = user.tenantId;
     let vivo = true;
-    supabase.from('ingredients').select('id, name, unit').eq('tenant_id', tenant).is('deleted_at', null).order('name')
+    supabase.from('ingredients').select('id, name, unit, purchase_unit, purchase_factor').eq('tenant_id', tenant).is('deleted_at', null).order('name')
       .then(({ data }) => { if (vivo) setLista({ tenant, itens: (data ?? []) as InsumoLista[] }); });
     return () => { vivo = false; };
   }, [ativo, user?.tenantId]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -81,8 +81,69 @@ export function useInsumos(ativo: boolean) {
   return { insumos: itens, insumoOptions: options };
 }
 export const SEM_INSUMO = '__sem_insumo';
+
+// Conversão unidade de COMPRA → unidade de ESTOQUE do insumo (2026-09-30). Antes, ligar o insumo
+// trocava a unidade do item pela do insumo: "1 un" de alface por R$ 29,95 virava 1 g no estoque.
+// Agora a unidade comprada fica e a tela pede quanto 1 dela vale na unidade do insumo (mesma regra
+// do purchase-write: igual → 1, kg↔g e L↔ml, embalagem memorizada no insumo; senão a pessoa informa).
+const UNIT_ALIAS: Record<string, string> = {
+  unit: 'un', un: 'un', und: 'un', unid: 'un', unidade: 'un', unidades: 'un', pc: 'un', pca: 'un', 'pç': 'un',
+  kg: 'kg', kgs: 'kg', quilo: 'kg', g: 'g', gr: 'g', grama: 'g', gramas: 'g', l: 'l', lt: 'l', litro: 'l', litros: 'l', ml: 'ml',
+};
+const normUnit = (u: string | null | undefined) => { const s = String(u ?? '').trim().toLowerCase().replace(/\.$/, ''); return UNIT_ALIAS[s] ?? s; };
+const METRIC: Record<string, number> = { 'kg>g': 1000, 'g>kg': 0.001, 'l>ml': 1000, 'ml>l': 0.001 };
+const fmtFator = (n: number) => String(Math.round(n * 1000000) / 1000000).replace('.', ',');
+export function fatorSugerido(unidade: string, ins: InsumoLista | undefined): string {
+  if (!ins) return '';
+  const de = normUnit(unidade);
+  const para = normUnit(ins.unit);
+  if (!de || de === para) return '1';
+  if (METRIC[`${de}>${para}`]) return fmtFator(METRIC[`${de}>${para}`]);
+  const f = Number(ins.purchase_factor);
+  if (f > 0 && normUnit(ins.purchase_unit) === de) return fmtFator(f);
+  return '';
+}
+/** Ao ligar o insumo: item ainda em "un" e o insumo tem embalagem memorizada → sugere a embalagem. */
+export function unidadeAoLigar(unidadeAtual: string, ins: InsumoLista | undefined): string {
+  if (!ins) return unidadeAtual;
+  const u = unidadeAtual.trim();
+  if ((!u || normUnit(u) === 'un') && normUnit(ins.unit) !== 'un' && ins.purchase_unit && Number(ins.purchase_factor) > 0) return ins.purchase_unit;
+  return u || ins.unit || 'un';
+}
+
+/** "1 cx = [12] kg" + quanto entra no estoque e o custo por unidade de estoque. */
+export function ConversaoEstoque({ ins, unidade, qtd, total, fator, onFator }: {
+  ins: InsumoLista; unidade: string; qtd: string; total: string; fator: string; onFator: (v: string) => void;
+}) {
+  const f = numBRqtd(fator);
+  const q = numBRqtd(qtd);
+  const t = numBR(total);
+  const entra = f > 0 && q > 0 ? q * f : NaN;
+  const un = ins.unit || 'un';
+  return (
+    <div className={`rounded-lg px-2 py-1.5 text-[11px] space-y-1 ${f > 0 ? 'bg-emerald-50 text-emerald-800' : 'bg-amber-50 text-amber-800'}`}>
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span>No estoque, 1 {unidade.trim() || 'un'} =</span>
+        <input value={fator} onChange={(e) => onFator(e.target.value)} inputMode="decimal" placeholder="?"
+          className="w-20 px-1.5 py-0.5 border border-zinc-300 rounded text-sm text-zinc-800 bg-white" />
+        <span>{un} de {ins.name}</span>
+      </div>
+      {f > 0
+        ? Number.isFinite(entra) && <p>Entra {fmtFator(entra)} {un}{t > 0 ? ` · ${formatCurrency(t / entra)}/${un}` : ''}</p>
+        : <p>Diga quanto 1 {unidade.trim() || 'un'} vale em {un} (ex.: 1 cx = 12 {un}); sem isso não dá para ligar ao insumo.</p>}
+    </div>
+  );
+}
+
 // raw = descrição como veio na nota (para memorizar o vínculo com o insumo)
-type ItemCompra = { key: number; descricao: string; qtd: string; unidade: string; total: string; insumoId: string; raw?: string };
+// fator = quanto 1 unidade comprada vale na unidade do insumo, quando a pessoa digitou (null = sugerido)
+type ItemCompra = { key: number; descricao: string; qtd: string; unidade: string; total: string; insumoId: string; raw?: string; fator?: string | null };
+/** Fator valendo para a linha: o digitado, senão o sugerido. NaN = falta informar. */
+export const fatorDaLinha = (l: { unidade: string; insumoId: string; fator?: string | null }, insumos: InsumoLista[]) => {
+  const ins = insumos.find((x) => x.id === l.insumoId);
+  if (!ins) return NaN;
+  return numBRqtd(l.fator != null ? l.fator : fatorSugerido(l.unidade, ins));
+};
 // "1.234,56" e "12,50" (vírgula = decimal) ou "12.50" (ponto como decimal, sem vírgula)
 export const numBR = (s: string) => {
   const t = String(s).trim();
@@ -232,7 +293,8 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
   const faltaItens = Math.round((valorPag - somaItens) * 100) / 100;
   const itemInvalido = itens.find((it) => !it.descricao.trim() || !(numBRqtd(it.qtd) > 0) || !(numBR(it.total) > 0));
   const itensComInsumo = itens.some((it) => it.insumoId);
-  const itensOk = tipo !== 'compra' || itens.length === 0 || (!itemInvalido && Math.abs(faltaItens) < 0.005);
+  const semConversao = itens.find((it) => it.insumoId && !(fatorDaLinha(it, insumos) > 0));
+  const itensOk = tipo !== 'compra' || itens.length === 0 || (!itemInvalido && !semConversao && Math.abs(faltaItens) < 0.005);
   const novoItem = (): ItemCompra => ({
     key: Date.now() + Math.random(), descricao: itens.length === 0 ? (descricao.trim() === nomePadrao ? '' : descricao.trim()) : '',
     qtd: '1', unidade: 'un', total: faltaItens > 0 ? faltaItens.toFixed(2).replace('.', ',') : '', insumoId: '',
@@ -290,6 +352,7 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
     if (tipo === 'prestador' && !prestadorId) { setErro('Escolha o prestador.'); return; }
     if (tipo === 'prestador' && prestadorTipo === 'reembolso' && !dreCat) { setErro('Escolha a categoria do que foi reembolsado.'); return; }
     if (tipo === 'compra' && itemInvalido) { setErro('Todo item precisa de descrição, quantidade e valor.'); return; }
+    if (tipo === 'compra' && semConversao) { setErro(`Diga quanto 1 ${semConversao.unidade.trim() || 'un'} de "${semConversao.descricao.trim() || 'item'}" vale na unidade do insumo.`); return; }
     if (!itensOk) { setErro(`Os itens somam ${formatCurrency(somaItens)} e o pagamento é ${formatCurrency(valorPag)}: ajuste até fechar.`); return; }
     setErro(null);
     setBusy(true);
@@ -309,6 +372,7 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
       items: tipo === 'compra' && itens.length ? itens.map((it) => ({
         description: it.descricao.trim(), quantity: numBRqtd(it.qtd), total: Math.round(numBR(it.total) * 100) / 100,
         unit_label: it.unidade.trim() || null, ingredient_id: it.insumoId || null,
+        units_per_package: it.insumoId ? fatorDaLinha(it, insumos) : null,
       })) : null,
       received: tipo === 'compra' && itensComInsumo && recebido,
       invoice_number: tipo === 'compra' ? lida?.invoice_number ?? null : null,
@@ -589,7 +653,7 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
                       className="w-full px-2 py-1.5 border border-zinc-200 rounded-lg text-sm text-zinc-800" />
                   </label>
                   <label className="text-[11px] text-zinc-500">Unidade
-                    <input value={it.unidade} onChange={(e) => mudaItem(it.key, { unidade: e.target.value })} maxLength={20}
+                    <input value={it.unidade} onChange={(e) => mudaItem(it.key, { unidade: e.target.value, fator: null })} maxLength={20}
                       className="w-full px-2 py-1.5 border border-zinc-200 rounded-lg text-sm text-zinc-800" />
                   </label>
                   <label className="text-[11px] text-zinc-500">Valor total (R$)
@@ -600,14 +664,13 @@ export default function LancarDoExtrato({ transaction, onDone, onAbertoChange }:
                 <CategoriaCombobox value={it.insumoId || SEM_INSUMO} options={insumoOptions} placeholder="Insumo do estoque…"
                   onChange={(id) => {
                     const novo = insumos.find((x) => x.id === id);
-                    // Unidade do insumo por padrão: a compra entra 1:1 no estoque sem pedir conversão
-                    mudaItem(it.key, { insumoId: id === SEM_INSUMO ? '' : id, ...(novo?.unit ? { unidade: novo.unit } : {}), ...(novo && !it.descricao.trim() ? { descricao: novo.name } : {}) });
+                    // A unidade comprada fica (antes virava a do insumo e "1 un" entrava como 1 g); a conversão é pedida abaixo
+                    mudaItem(it.key, { insumoId: id === SEM_INSUMO ? '' : id, fator: null, unidade: unidadeAoLigar(it.unidade, novo), ...(novo && !it.descricao.trim() ? { descricao: novo.name } : {}) });
                   }}
                   buttonClassName="w-full px-2 py-1.5 border border-zinc-200 rounded-lg text-sm bg-white cursor-pointer" />
-                {ins && ins.unit && it.unidade.trim() && it.unidade.trim().toLowerCase() !== ins.unit.toLowerCase() && (
-                  <p className="text-[11px] text-amber-700">
-                    O insumo é controlado em "{ins.unit}". Em "{it.unidade.trim()}" o sistema só converte kg↔g e L↔ml; senão o item fica fora do estoque até você informar a conversão na Classificação de itens.
-                  </p>
+                {ins && (
+                  <ConversaoEstoque ins={ins} unidade={it.unidade} qtd={it.qtd} total={it.total}
+                    fator={it.fator != null ? it.fator : fatorSugerido(it.unidade, ins)} onFator={(v) => mudaItem(it.key, { fator: v })} />
                 )}
               </div>
             );

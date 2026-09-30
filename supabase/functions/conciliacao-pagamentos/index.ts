@@ -358,7 +358,8 @@ interface CreateOpts {
   invoiceNumber?: string | null;
   accessKey?: string | null;
 }
-interface CompraItem { description: string; quantity: number; total: number; unit_label: string | null; ingredient_id: string | null }
+// units_per_package (2026-09-30): quanto 1 unidade comprada vale na unidade do insumo, informado na tela
+interface CompraItem { description: string; quantity: number; total: number; unit_label: string | null; ingredient_id: string | null; units_per_package: number | null }
 
 function parseItens(v: unknown): CompraItem[] | null {
   if (!Array.isArray(v) || v.length === 0) return null;
@@ -368,6 +369,7 @@ function parseItens(v: unknown): CompraItem[] | null {
     total: round2(Number(i.total)),
     unit_label: i.unit_label ? String(i.unit_label).trim().slice(0, 20) : null,
     ingredient_id: i.ingredient_id ? String(i.ingredient_id) : null,
+    units_per_package: i.ingredient_id && Number(i.units_per_package) > 0 ? Number(i.units_per_package) : null,
   }));
 }
 
@@ -610,6 +612,7 @@ async function createOneClaimed(ctx: Ctx, rowId: string, o: CreateOpts, row: Row
       itens = o.items.map((it) => ({
         description: it.description, quantity: it.quantity, unit_price: it.total / it.quantity, unit_label: it.unit_label || 'un',
         ingredient_id: it.ingredient_id, merchandise_category_id: o.mercCategoryId,
+        ...(it.units_per_package ? { units_per_package: it.units_per_package } : {}),
       }));
     } else {
       itens = [{ description: descricao, quantity: 1, unit_price: valor, unit_label: 'un', merchandise_category_id: o.mercCategoryId }];

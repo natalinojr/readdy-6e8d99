@@ -11,10 +11,11 @@ import { avisar } from '@/components/base/Dialogos';
 import type { Purchase, PurchaseItem } from '@/types/financeiro';
 import CategoriaCombobox from '../CategoriaCombobox';
 import LerNotaBotoes from './LerNotaBotoes';
-import { useInsumos, numBR, numBRqtd, SEM_INSUMO } from '../conciliacao/LancarDoExtrato';
+import { useInsumos, numBR, numBRqtd, SEM_INSUMO, ConversaoEstoque, fatorSugerido, fatorDaLinha, unidadeAoLigar } from '../conciliacao/LancarDoExtrato';
 import { linhasParaValor, aprenderVinculos, type ScanResult } from '@/lib/leituraNotinha';
 
-type Linha = { key: number; descricao: string; qtd: string; unidade: string; total: string; insumoId: string; raw?: string; orig?: PurchaseItem };
+// fator = quanto 1 unidade comprada vale na unidade do insumo, quando digitado (null = sugerido / o da linha original)
+type Linha = { key: number; descricao: string; qtd: string; unidade: string; total: string; insumoId: string; raw?: string; orig?: PurchaseItem; fator?: string | null };
 const fmtQtd = (n: number) => String(Math.round(n * 1000) / 1000).replace('.', ',');
 const fmtBRL = (n: number) => n.toFixed(2).replace('.', ',');
 
@@ -32,6 +33,7 @@ export default function DetalharItensModal({ purchase, onClose, onSaved }: Props
   const [linhas, setLinhas] = useState<Linha[]>(() => (purchase.items ?? []).map((it, i) => ({
     key: i + 1, descricao: it.description ?? '', qtd: fmtQtd(Number(it.quantity) || 1), unidade: it.unit_label ?? 'un',
     total: fmtBRL(Number(it.total_price) || 0), insumoId: it.ingredient_id ?? '', orig: it,
+    fator: it.ingredient_id && Number(it.units_per_package) > 0 ? String(Math.round(Number(it.units_per_package) * 1e6) / 1e6).replace('.', ',') : null,
   })));
   const [lida, setLida] = useState<ScanResult | null>(null);
   const [salvando, setSalvando] = useState(false);
@@ -40,6 +42,7 @@ export default function DetalharItensModal({ purchase, onClose, onSaved }: Props
   const soma = useMemo(() => Math.round(linhas.reduce((s, l) => s + (numBR(l.total) || 0), 0) * 100) / 100, [linhas]);
   const falta = Math.round((alvo - soma) * 100) / 100;
   const invalida = linhas.find((l) => !l.descricao.trim() || !(numBRqtd(l.qtd) > 0) || !(numBR(l.total) > 0));
+  const semConversao = linhas.find((l) => l.insumoId && !(fatorDaLinha(l, insumos) > 0));
   const fecha = Math.abs(falta) < 0.005;
   const muda = (key: number, p: Partial<Linha>) => setLinhas((v) => v.map((l) => (l.key === key ? { ...l, ...p } : l)));
 
@@ -56,6 +59,7 @@ export default function DetalharItensModal({ purchase, onClose, onSaved }: Props
   const salvar = async () => {
     if (!user?.tenantId) return;
     if (invalida) { setErro('Todo item precisa de descrição, quantidade e valor.'); return; }
+    if (semConversao) { setErro(`Diga quanto 1 ${semConversao.unidade.trim() || 'un'} de "${semConversao.descricao.trim() || 'item'}" vale na unidade do insumo.`); return; }
     if (!fecha) { setErro(`Os itens somam ${formatCurrency(soma)} e precisam fechar ${formatCurrency(alvo)}.`); return; }
     setSalvando(true);
     setErro(null);
@@ -63,17 +67,21 @@ export default function DetalharItensModal({ purchase, onClose, onSaved }: Props
       const qtd = numBRqtd(l.qtd);
       const total = Math.round(numBR(l.total) * 100) / 100;
       const o = l.orig as (PurchaseItem & { dre_category_id?: string | null }) | undefined;
-      // Linha que já existia mantém embalagem, categoria e códigos; mudou o insumo → a conversão é refeita
-      const mesmoInsumo = !!o && (o.ingredient_id ?? '') === l.insumoId;
+      // Linha que já existia mantém embalagem, categoria e códigos; mudou insumo, unidade ou conversão →
+      // vale o fator da tela (units_per_package; pack_count sairia na frente dele no purchase-write)
+      const fator = l.insumoId ? fatorDaLinha(l, insumos) : NaN;
+      const mesmaConversao = !!o && (o.ingredient_id ?? '') === l.insumoId && (o.unit_label ?? 'un') === (l.unidade.trim() || 'un')
+        && Math.abs(fator - Number(o.units_per_package)) < 1e-9;
       return {
         description: l.descricao.trim(), quantity: qtd, unit_price: total / qtd, unit_label: l.unidade.trim() || 'un',
         ingredient_id: l.insumoId || null,
         ...(o ? {
           merchandise_category_id: o.merchandise_category_id ?? null, dre_category_id: o.dre_category_id ?? null,
           supplier_code: o.supplier_code ?? null, ean: o.ean ?? null, cost_center_id: o.cost_center_id ?? null, notes: o.notes ?? null,
-          ...(mesmoInsumo && (o.unit_label ?? 'un') === (l.unidade.trim() || 'un')
-            ? { units_per_package: o.units_per_package, pack_count: o.pack_count, pack_size: o.pack_size } : {}),
         } : {}),
+        ...(mesmaConversao
+          ? { units_per_package: o!.units_per_package, pack_count: o!.pack_count, pack_size: o!.pack_size }
+          : fator > 0 ? { units_per_package: fator } : {}),
       };
     });
     const r = await invokeWithAuth<{ data?: unknown; error?: string; avisos_conversao?: string[] }>('purchase-write', {
@@ -135,7 +143,7 @@ export default function DetalharItensModal({ purchase, onClose, onSaved }: Props
                     <input value={l.qtd} onChange={(e) => muda(l.key, { qtd: e.target.value })} inputMode="decimal" className="w-full px-2 py-1.5 border border-zinc-200 rounded-lg text-sm text-zinc-800" />
                   </label>
                   <label className="text-[11px] text-zinc-500">Unidade
-                    <input value={l.unidade} onChange={(e) => muda(l.key, { unidade: e.target.value })} maxLength={20} className="w-full px-2 py-1.5 border border-zinc-200 rounded-lg text-sm text-zinc-800" />
+                    <input value={l.unidade} onChange={(e) => muda(l.key, { unidade: e.target.value, fator: null })} maxLength={20} className="w-full px-2 py-1.5 border border-zinc-200 rounded-lg text-sm text-zinc-800" />
                   </label>
                   <label className="text-[11px] text-zinc-500">Valor total (R$)
                     <input value={l.total} onChange={(e) => muda(l.key, { total: e.target.value })} inputMode="decimal" placeholder="0,00" className="w-full px-2 py-1.5 border border-zinc-200 rounded-lg text-sm text-zinc-800" />
@@ -144,11 +152,12 @@ export default function DetalharItensModal({ purchase, onClose, onSaved }: Props
                 <CategoriaCombobox value={l.insumoId || SEM_INSUMO} options={insumoOptions} placeholder="Insumo do estoque…"
                   onChange={(id) => {
                     const novo = insumos.find((x) => x.id === id);
-                    muda(l.key, { insumoId: id === SEM_INSUMO ? '' : id, ...(novo?.unit ? { unidade: novo.unit } : {}) });
+                    muda(l.key, { insumoId: id === SEM_INSUMO ? '' : id, fator: null, unidade: unidadeAoLigar(l.unidade, novo) });
                   }}
                   buttonClassName="w-full px-2 py-1.5 border border-zinc-200 rounded-lg text-sm bg-white cursor-pointer" />
-                {ins && ins.unit && l.unidade.trim() && l.unidade.trim().toLowerCase() !== ins.unit.toLowerCase() && (
-                  <p className="text-[11px] text-amber-700">O insumo é controlado em "{ins.unit}". Em "{l.unidade.trim()}" o sistema só converte kg↔g e L↔ml; senão o item fica fora do estoque até você informar a conversão na Classificação de itens.</p>
+                {ins && (
+                  <ConversaoEstoque ins={ins} unidade={l.unidade} qtd={l.qtd} total={l.total}
+                    fator={l.fator != null ? l.fator : fatorSugerido(l.unidade, ins)} onFator={(v) => muda(l.key, { fator: v })} />
                 )}
               </div>
             );
