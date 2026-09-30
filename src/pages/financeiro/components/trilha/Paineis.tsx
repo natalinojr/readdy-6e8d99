@@ -460,3 +460,58 @@ export function EntrarNoEstoque({ caso, acoes }: { caso: CasoTrilha; acoes: Acoe
     </Painel>
   );
 }
+
+// ── 8. Itens da compra (compra lançada, entrega ainda não confirmada) ──────
+interface ItemCompra { id: string; description: string | null; quantity: number; unit_label: string | null; total_price: number; ingredient_id: string | null }
+export function ItensDaCompra({ caso, acoes, onConfirmar }: { caso: CasoTrilha; acoes: AcoesTrilha; onConfirmar: () => void }) {
+  const compraId = caso.compra!.id;
+  const [lista, setLista] = useState<ItemCompra[] | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+  useEffect(() => {
+    let vivo = true;
+    supabase.from('fin_purchase_items').select('id, description, quantity, unit_label, total_price, ingredient_id')
+      .eq('tenant_id', acoes.tenantId).eq('purchase_id', compraId).order('description')
+      .then(({ data, error }) => {
+        if (!vivo) return;
+        if (error) { setErro(error.message); setLista([]); return; }
+        setLista((data ?? []) as ItemCompra[]);
+      });
+    return () => { vivo = false; };
+  }, [acoes.tenantId, compraId]);
+  const itens = lista ?? [];
+  const noEstoque = itens.filter((r) => r.ingredient_id).length;
+  return (
+    <Painel titulo="Itens da compra" cor="amber">
+      {lista === null ? (
+        <p className="text-xs text-zinc-400">Carregando…</p>
+      ) : itens.length === 0 ? (
+        <p className="text-xs text-zinc-500">Esta compra foi lançada sem itens (só o valor).</p>
+      ) : (
+        <>
+          <p className="text-[11px] text-zinc-500">
+            {itens.length} {itens.length === 1 ? 'item' : 'itens'}
+            {noEstoque > 0 ? ` · ${noEstoque} ligado${noEstoque === 1 ? '' : 's'} a insumo (entra${noEstoque === 1 ? '' : 'm'} no estoque ao confirmar a entrega)` : ' · nenhum ligado a insumo'}
+          </p>
+          <div className="divide-y divide-zinc-100 max-h-80 overflow-y-auto">
+            {itens.map((r) => (
+              <div key={r.id} className="flex items-start justify-between gap-2 py-1.5 text-xs">
+                <div className="min-w-0">
+                  <p className="text-zinc-800 break-words">{r.description ?? '—'}</p>
+                  <p className="text-zinc-500">
+                    {num3(Number(r.quantity))} {r.unit_label || 'un'}
+                    {r.ingredient_id
+                      ? <span className="text-emerald-700"> · <i className="ri-archive-2-line" /> entra no estoque</span>
+                      : <span className="text-zinc-400"> · sem insumo</span>}
+                  </p>
+                </div>
+                <span className="tabular-nums text-zinc-700 whitespace-nowrap">{fmtBRL(Number(r.total_price))}</span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+      <Erro msg={erro} />
+      <button onClick={onConfirmar} className={BTN_OK}>Chegou — confirmar a entrega</button>
+    </Painel>
+  );
+}

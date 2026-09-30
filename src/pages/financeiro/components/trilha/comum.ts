@@ -44,7 +44,7 @@ export const GRUPOS: GrupoInfo[] = [
   { id: 'saida_banco', icone: 'ri-bank-line', nome: 'Dizer o que foram as saídas do banco', desc: 'Saiu dinheiro e ninguém disse se foi compra ou despesa', cor: 'red', origem: '/financeiro?tab=conciliacao' },
   { id: 'vencidas', icone: 'ri-alarm-warning-line', nome: 'Pagar contas a pagar vencidas', desc: 'Juros correndo', cor: 'red', origem: '/financeiro?tab=pagar' },
   { id: 'sem_conta', icone: 'ri-bill-line', nome: 'Criar conta a pagar', desc: 'Compra não paga e sem conta a pagar lançada', cor: 'red', origem: '/financeiro?tab=compras' },
-  { id: 'estoque', icone: 'ri-archive-2-line', nome: 'Acertar estoque', desc: 'Mercadoria que chegou e não entrou no estoque', cor: 'amber', origem: '/financeiro?tab=compras' },
+  { id: 'estoque', icone: 'ri-archive-2-line', nome: 'Acertar estoque', desc: 'Entrega não confirmada ou mercadoria que ficou fora do estoque', cor: 'amber', origem: '/financeiro?tab=compras' },
   { id: 'notas', icone: 'ri-file-text-line', nome: 'Lançar notas que chegaram', desc: 'Notas da SEFAZ que ainda não viraram compra nem despesa', cor: 'amber', origem: '/financeiro?tab=notas-entrada' },
   { id: 'pedidos', icone: 'ri-hand-coin-line', nome: 'Aprovar pedidos de pagamento', desc: 'Pedidos esperando aprovação ou lançamento', cor: 'amber', origem: '/receber' },
   { id: 'classificar', icone: 'ri-price-tag-3-line', nome: 'Classificar no DRE', desc: 'Despesa sem categoria', cor: 'amber', origem: '/financeiro?tab=pagar' },

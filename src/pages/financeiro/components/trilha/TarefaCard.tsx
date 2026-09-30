@@ -6,7 +6,7 @@ import { FasesLinha } from './Fases';
 import { fmtBRL, type AcoesTrilha } from './comum';
 import { temBoleto } from './api';
 import { diasAtraso } from '@/lib/trilhaAcoes';
-import { AcharSaida, CriarConta, EntrarNoEstoque, FaltaJeitoDePagar, PagarConta, PedirBoleto, SugestaoExtrato } from './Paineis';
+import { AcharSaida, CriarConta, EntrarNoEstoque, FaltaJeitoDePagar, ItensDaCompra, PagarConta, PedirBoleto, SugestaoExtrato } from './Paineis';
 
 interface Botao { label: string; icone: string; onClick: () => void; /** botão que abre painel inline: mostra ▾/▴ */ painel?: 'aberto' | 'fechado' }
 interface Plano { botoes: Botao[]; ajuda?: string }
@@ -58,7 +58,12 @@ export function planoDaTarefa(t: TarefaTrilha, c: CasoTrilha, a: AcoesTrilha, x:
             { label: 'Ver a compra', icone: 'ri-shopping-cart-2-line', onClick: () => a.compra(compraId, `Acertou o estoque de ${c.titulo}`) },
           ],
         }
-        : { botoes: [{ label: 'Confirmar a entrega', icone: 'ri-check-double-line', onClick: () => a.compra(compraId, `Confirmou a entrega de ${c.titulo}`) }] };
+        : {
+          botoes: [
+            { label: 'Confirmar a entrega', icone: 'ri-check-double-line', onClick: () => a.compra(compraId, `Confirmou a entrega de ${c.titulo}`) },
+            { label: 'Ver os itens', icone: 'ri-list-check', painel: x.painel === 'itens' ? 'aberto' : 'fechado', onClick: () => x.alternar('itens') },
+          ],
+        };
     }
     case 'notas': {
       const n = c.notas[0];
@@ -173,6 +178,9 @@ export default function TarefaCard({ caso, tarefa, expandido, onToggle, acoes }:
         {plano.ajuda && <p className="mt-1.5 text-[11px] text-zinc-500">{plano.ajuda}</p>}
         {painel === 'criar' && caso.compra && <CriarConta caso={caso} acoes={acoes} />}
         {painel === 'estoque' && caso.compra && <EntrarNoEstoque caso={caso} acoes={acoes} />}
+        {painel === 'itens' && caso.compra && (
+          <ItensDaCompra caso={caso} acoes={acoes} onConfirmar={() => acoes.compra(caso.compra!.id, `Confirmou a entrega de ${caso.titulo}`)} />
+        )}
         {painel === 'achar' && contaPaga && <AcharSaida conta={contaPaga} caso={caso} acoes={acoes} />}
       </div>
       {caso.avisos.length > 0 && (
