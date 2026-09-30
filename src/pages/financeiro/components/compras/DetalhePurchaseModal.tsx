@@ -117,13 +117,17 @@ export default function DetalhePurchaseModal({ purchase, installments, loadingIn
   const acrescimos = (purchase.items ?? []).filter(i => ehAcrescimoNota(i.description)).reduce((t, i) => t + Number(i.total_price ?? 0), 0);
   const semInsumo = ctxLoaded ? produtos.filter(i => !links[i.id]?.ingredient_id).length : 0;
 
+  // Frete da nota: não muda com a quantidade recebida (o servidor mantém no total, só aplica a diferença dos itens)
+  const frete = Math.round(Number(purchase.freight_amount ?? 0) * 100) / 100;
+
   // Calcular novo total da compra baseado nas quantidades recebidas
   const newTotalAmount = useMemo(() => {
-    return purchase.items?.reduce((sum, item) => {
+    const itens = purchase.items?.reduce((sum, item) => {
       const received = receivedItems[item.id];
       return sum + (received ? received.total : Number(item.total_price ?? 0));
     }, 0) ?? 0;
-  }, [receivedItems, purchase.items]);
+    return Math.round((itens + frete) * 100) / 100;
+  }, [receivedItems, purchase.items, frete]);
 
   const totalDiff = purchase.total_amount - newTotalAmount;
   const hasChanges = Math.abs(totalDiff) >= 0.01;
@@ -679,6 +683,12 @@ export default function DetalhePurchaseModal({ purchase, installments, loadingIn
                           <span className="font-semibold">{formatCurrency(acrescimos)}</span>
                         </li>
                       )}
+                      {frete >= 0.01 && (
+                        <li className="flex items-center justify-between px-1 text-xs text-zinc-500">
+                          <span>Frete da nota (rateado no custo dos itens)</span>
+                          <span className="font-semibold">{formatCurrency(frete)}</span>
+                        </li>
+                      )}
                       <li className="rounded-xl border border-green-200 bg-green-50/50 px-3 py-2 space-y-1">
                         <div className="flex items-center justify-between text-xs font-bold text-zinc-600">
                           <span>Total Original</span>
@@ -813,6 +823,14 @@ export default function DetalhePurchaseModal({ purchase, installments, loadingIn
                                 Acréscimos da nota (impostos/despesas, não é produto)
                               </td>
                               <td className="px-4 py-2 text-right text-xs font-semibold text-zinc-600 tabular-nums whitespace-nowrap">{formatCurrency(acrescimos)}</td>
+                            </tr>
+                          )}
+                          {frete >= 0.01 && (
+                            <tr>
+                              <td colSpan={4} className="px-3 py-2 text-right text-xs text-zinc-500">
+                                Frete da nota (rateado no custo dos itens)
+                              </td>
+                              <td className="px-4 py-2 text-right text-xs font-semibold text-zinc-600 tabular-nums whitespace-nowrap">{formatCurrency(frete)}</td>
                             </tr>
                           )}
                           <tr>
