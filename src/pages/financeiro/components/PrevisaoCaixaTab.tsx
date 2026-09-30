@@ -335,6 +335,20 @@ export default function PrevisaoCaixaTab() {
   const [showDetail, setShowDetail] = useState(false);
   const [expandedDays, setExpandedDays] = useState<Set<string>>(new Set());
   const [selectedDay, setSelectedDay] = useState<DayPoint | null>(null);
+  // O que JÁ VENCEU (contas, folha de meses anteriores, boletos de notas) caía todo em HOJE,
+  // sem aviso — folha antiga nunca baixada derrubava a projeção inteira. Agora é uma caixinha
+  // (2026-09-30): desligada, a projeção mostra só o que vence daqui para frente e o valor
+  // atrasado fica à vista para ligar. A escolha fica guardada no aparelho.
+  const [comAtrasados, setComAtrasados] = useState(() => {
+    try { return localStorage.getItem('fin_fluxo_com_atrasados') === '1'; } catch { return false; }
+  });
+  const [atrasados, setAtrasados] = useState({ contas: 0, folha: 0, notas: 0, qtdContas: 0, qtdFolha: 0 });
+  const alternarAtrasados = () => {
+    setComAtrasados((v) => {
+      try { localStorage.setItem('fin_fluxo_com_atrasados', v ? '0' : '1'); } catch { /* sem storage */ }
+      return !v;
+    });
+  };
 
   const toggleDay = (date: string) => {
     setExpandedDays((prev) => {
@@ -510,6 +524,7 @@ export default function PrevisaoCaixaTab() {
       const saldoDevedor = Number(p.amount) - Number(p.paid_amount ?? 0);
       if (dayMap[k] && saldoDevedor > 0.005) {
         if (venceu) { totalVencidas += saldoDevedor; countVencidas += 1; }
+        if (venceu && !comAtrasados) return;
         dayMap[k].saidasContas += saldoDevedor;
         const base = p.description ?? 'Conta a pagar';
         const parcial = p.status === 'partial' ? ' (saldo restante)' : '';
@@ -541,6 +556,7 @@ export default function PrevisaoCaixaTab() {
     // ganha linha em fin_accounts_payable) ou ignorada.
     // Vencida cai em HOJE, mesmo tratamento das contas a pagar e da folha.
     let totalProv = 0;
+    let atrasoNotas = 0;
     const notasProv = new Set<string>();
     ((notasRes.data ?? []) as NotaPendente[]).forEach((n) => {
       (n.parcelas ?? []).forEach((p) => {
@@ -552,6 +568,7 @@ export default function PrevisaoCaixaTab() {
         if (!dayMap[k]) return;
         totalProv += valor;
         notasProv.add(n.id);
+        if (venceu) { atrasoNotas += valor; if (!comAtrasados) return; }
         dayMap[k].saidasProvisionadas += valor;
         const fornecedor = (n.emitente_nome ?? 'Fornecedor').slice(0, 40);
         const atraso = venceu
@@ -667,10 +684,16 @@ export default function PrevisaoCaixaTab() {
     // LIMITAÇÃO: `hr_payroll` não tem `paid_amount`; para status 'partial'
     // projetamos o líquido cheio (superestima o que falta pagar) e sinalizamos
     // isso na descrição do detalhe.
+    let atrasoFolha = 0;
+    let qtdFolhaAtraso = 0;
     (payrollRes.data ?? []).forEach((p: PayrollEntry) => {
       const projetada = payrollProjectedDate(p.reference_month);
       if (!projetada) return;
       const k = projetada < todayStr ? todayStr : projetada;
+      if (projetada < todayStr) {
+        atrasoFolha += Number(p.net_salary); qtdFolhaAtraso += 1;
+        if (!comAtrasados) return;
+      }
       if (dayMap[k]) {
         dayMap[k].saidasFolha += Number(p.net_salary);
         const sufixo = projetada < todayStr ? ' — em atraso' : '';
@@ -720,12 +743,13 @@ export default function PrevisaoCaixaTab() {
         });
       });
 
+    setAtrasados({ contas: totalVencidas, folha: atrasoFolha, notas: atrasoNotas, qtdContas: countVencidas, qtdFolha: qtdFolhaAtraso });
     setProjection(points);
     setTotalRecebiveis(sumRecebiveis);
     setTotalSaidas(sumSaidas);
     setTotalEntradas(sumEntradas);
     setLoading(false);
-  }, [user?.tenantId, horizon]);
+  }, [user?.tenantId, horizon, comAtrasados]);
 
   useEffect(() => { buildProjection(); }, [buildProjection]);
 
@@ -747,6 +771,38 @@ export default function PrevisaoCaixaTab() {
     ),
     [projection, saldoAtual],
   );
+
+  // Semana a semana (2026-09-30): hoje + blocos de 7 dias, com o que mais pesa em cada um.
+  const SAIDA_TIPOS = ['conta_pagar', 'folha', 'manual_saida', 'nota_provisionada'];
+  const semanas = useMemo(() => {
+    if (projection.length === 0) return [];
+    const blocos: DayPoint[][] = [[projection[0]]];
+    for (let i = 1; i < projection.length; i += 7) blocos.push(projection.slice(i, i + 7));
+    return blocos.map((dias, idx) => {
+      const itens = dias.flatMap((d) => d.detalhes);
+      const top = (saida: boolean) => {
+        const somas = new Map<string, number>();
+        itens.filter((x) => SAIDA_TIPOS.includes(x.tipo) === saida).forEach((x) => {
+          const nome = x.descricao.split(' — ')[0];
+          somas.set(nome, (somas.get(nome) ?? 0) + x.valor);
+        });
+        return [...somas.entries()].sort((a, b) => b[1] - a[1]);
+      };
+      const ini = dias[0].label;
+      const fim = dias[dias.length - 1].label;
+      return {
+        chave: dias[0].date,
+        rotulo: idx === 0 ? `Hoje (${ini})` : ini === fim ? ini : `${ini} a ${fim}`,
+        entradas: dias.reduce((s, d) => s + d.totalEntradas, 0),
+        saidas: dias.reduce((s, d) => s + d.totalSaidas, 0),
+        saldoFim: dias[dias.length - 1].saldoAcumulado,
+        topEntradas: top(false),
+        topSaidas: top(true),
+      };
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projection]);
+  const totalAtrasado = atrasados.contas + atrasados.folha + atrasados.notas;
 
   const receivablesByMethod = useMemo(() => {
     const map: Record<string, number> = {};
@@ -794,14 +850,14 @@ export default function PrevisaoCaixaTab() {
   };
 
   return (
-    <div className="p-4 md:p-6 space-y-5 max-w-[1400px] mx-auto">
+    <div className="p-4 md:p-6 space-y-5 max-w-[1400px] mx-auto w-full">
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="min-w-0 flex-1 basis-80">
           <h2 className="text-sm font-bold text-zinc-800">Fluxo de Caixa Projetado</h2>
           <p className="text-xs text-zinc-400">
-            Saldo de hoje + o que já vendeu a receber (cartão D+N) − contas a pagar, vencidas, folha
-            e boletos de notas de entrada ainda não lançadas. Vendas futuras não entram.
+            Saldo de hoje + o que já vendeu a receber (cartão D+N) − contas a pagar, folha
+            e boletos de notas de entrada ainda não lançadas. O que já venceu entra se você marcar a caixinha. Vendas futuras não entram.
           </p>
         </div>
         <div className="flex items-center gap-2 overflow-x-auto max-w-full">
@@ -894,7 +950,9 @@ export default function PrevisaoCaixaTab() {
           icon="ri-arrow-up-circle-line"
           value={formatCurrency(totalSaidas)}
           valueTone="text-red-600"
-          sub={countVencidas > 0
+          sub={countVencidas > 0 && !comAtrasados
+            ? `Sem as ${countVencidas} vencida(s) (${formatCurrency(totalVencidas)}) · marque "Incluir o que já venceu"`
+            : countVencidas > 0
             ? `Inclui ${countVencidas} vencida(s): ${formatCurrency(totalVencidas)}${totalProvisionado > 0 ? ` · ${formatCurrency(totalProvisionado)} em notas não lançadas` : ''}`
             : totalProvisionado > 0
               ? `Contas a pagar + folha · inclui ${formatCurrency(totalProvisionado)} em notas não lançadas`
@@ -912,6 +970,29 @@ export default function PrevisaoCaixaTab() {
           semVariacao
         />
       </div>
+
+      {/* O que já venceu: caixinha para entrar ou não na projeção (2026-09-30). */}
+      {totalAtrasado > 0.005 && (
+        <label className={`flex items-start gap-3 rounded-xl border px-4 py-3 cursor-pointer ${comAtrasados ? 'bg-amber-50 border-amber-300' : 'bg-white border-zinc-200 hover:border-amber-300'}`}>
+          <input type="checkbox" checked={comAtrasados} onChange={alternarAtrasados} className="mt-0.5 w-4 h-4 accent-amber-500 cursor-pointer" />
+          <span className="min-w-0">
+            <span className="block text-xs font-semibold text-zinc-800">
+              Incluir o que já venceu ({formatCurrency(totalAtrasado)}) como saída de hoje
+            </span>
+            <span className="block text-xs text-zinc-500 mt-0.5">
+              {[
+                atrasados.contas > 0.005 ? `${atrasados.qtdContas} conta(s) vencida(s) ${formatCurrency(atrasados.contas)}` : null,
+                atrasados.folha > 0.005 ? `folha de meses anteriores sem baixa ${formatCurrency(atrasados.folha)} (${atrasados.qtdFolha} lançamento(s))` : null,
+                atrasados.notas > 0.005 ? `boletos vencidos de notas não lançadas ${formatCurrency(atrasados.notas)}` : null,
+              ].filter(Boolean).join(' · ')}
+              {'. '}
+              {comAtrasados
+                ? 'Está somado em hoje. Se a folha antiga já foi paga, dê baixa em RH / Folha para ela sair daqui.'
+                : 'Fora da projeção agora: o gráfico mostra só o que vence de hoje em diante.'}
+            </span>
+          </span>
+        </label>
+      )}
 
       {/* Notas de entrada que ainda não viraram conta a pagar (2026-09-21).
           Fica ACIMA do alerta de saldo porque é a explicação de por que o número
@@ -1156,6 +1237,49 @@ export default function PrevisaoCaixaTab() {
           </div>
         )}
       </div>
+
+      {/* Semana a semana */}
+      {!loading && semanas.length > 1 && (
+        <div className="bg-white rounded-2xl border border-zinc-200 overflow-hidden">
+          <div className="px-5 py-4 border-b border-zinc-100">
+            <h3 className="text-sm font-bold text-zinc-800">Semana a semana</h3>
+            <p className="text-xs text-zinc-400">O que entra e sai em cada semana e o saldo no fim dela</p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-[11px] uppercase tracking-wide text-zinc-400 bg-zinc-50">
+                  <th className="text-left font-semibold px-5 py-2">Semana</th>
+                  <th className="text-left font-semibold px-3 py-2">O que mais pesa</th>
+                  <th className="text-right font-semibold px-3 py-2">Entra</th>
+                  <th className="text-right font-semibold px-3 py-2">Sai</th>
+                  <th className="text-right font-semibold px-5 py-2">Saldo no fim</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-100">
+                {semanas.map((w) => (
+                  <tr key={w.chave} className="align-top">
+                    <td className="px-5 py-2.5 font-semibold text-zinc-800 whitespace-nowrap">{w.rotulo}</td>
+                    <td className="px-3 py-2.5 text-xs text-zinc-500 min-w-[220px]">
+                      {w.topSaidas.slice(0, 3).map(([n, v]) => (
+                        <span key={n} className="block truncate max-w-[360px]"><span className="text-red-500">−</span> {n} {formatCurrency(v)}</span>
+                      ))}
+                      {w.topEntradas.slice(0, 2).map(([n, v]) => (
+                        <span key={n} className="block truncate max-w-[360px]"><span className="text-emerald-600">+</span> {n} {formatCurrency(v)}</span>
+                      ))}
+                      {w.topSaidas.length > 3 && <span className="block text-zinc-400">+{w.topSaidas.length - 3} saída(s)</span>}
+                      {w.topSaidas.length === 0 && w.topEntradas.length === 0 && '—'}
+                    </td>
+                    <td className="px-3 py-2.5 text-right tabular-nums text-emerald-700 whitespace-nowrap">{formatCurrency(w.entradas)}</td>
+                    <td className="px-3 py-2.5 text-right tabular-nums text-red-600 whitespace-nowrap">{formatCurrency(w.saidas)}</td>
+                    <td className={`px-5 py-2.5 text-right tabular-nums font-bold whitespace-nowrap ${w.saldoFim < 0 ? 'text-red-600' : 'text-zinc-800'}`}>{formatCurrency(w.saldoFim)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {/* Painel de recebíveis por forma de pagamento */}
       {receivablesByMethod.length > 0 && (
