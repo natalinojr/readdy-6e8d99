@@ -22,7 +22,7 @@
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
 import Anthropic from 'npm:@anthropic-ai/sdk@0.125.0';
 import postgres from 'npm:postgres@3.4.5';
-import { acharCopiaECola, acharLinhas, lerGuia, linhaValida, soDigitos, type Guia } from '../_shared/guias.ts';
+import { acharCopiaECola, acharLinhas, barrasDaArrecadacao, lerGuia, linhaValida, soDigitos, type Guia } from '../_shared/guias.ts';
 import { textoDoPdf } from '../_shared/pdf-texto.ts';
 import { registrarUsoIa } from '../_shared/ai-usage.ts';
 
@@ -706,13 +706,40 @@ async function interTenant(ctx: Ctx, loja?: string): Promise<string> {
 //   seria contar duas vezes;
 // - vence até hoje + dias_antes (pay_timing) → prepara o pagamento; vence depois → só guarda (o assistente-cron prepara
 //   no dia, na hora configurada); vencida → não prepara: guia vencida não é aceita, precisa ser gerada de novo.
+// Guia que JÁ FOI PAGA (dono, 2026-09-30): contabilidade manda a guia de meses atrás só para registro —
+// antes o sistema dizia "vencida, gere de novo" e a conta ficava vencida, com o pagamento solto no extrato.
+// Procura a saída no extrato: boleto com o mesmo código de barras, ou Pix do valor EXATO para a Receita
+// Federal (DAS/DARF) ou para a Caixa (FGTS), entre 60 dias antes do vencimento e hoje, ainda sem vínculo.
+const RAIZ_RECEBEDOR_GUIA: Record<string, string[]> = { DAS: ['00394460'], DARF: ['00394460'], FGTS: ['00360305'] };
+// deno-lint-ignore no-explicit-any
+async function pagamentoDaGuia(admin: SupabaseClient, tenantId: string, g: Guia): Promise<any | null> {
+  if (!g.valor || !g.vencimento) return null;
+  const de = addDiasIso(g.vencimento, -60);
+  const { data } = await admin.from('fin_bank_statement_imports')
+    .select('id, transaction_date, amount, status, reconciled, match_kind, counterpart_doc, description, raw')
+    .eq('tenant_id', tenantId).eq('transaction_type', 'debit').in('status', ['pending', 'ignored']).eq('reconciled', false)
+    .gte('transaction_date', de).lte('transaction_date', todayIso())
+    .gte('amount', g.valor - 0.01).lte('amount', g.valor + 0.01)
+    .order('transaction_date', { ascending: true });
+  const linha = soDigitos(g.linha);
+  const barras = linha.length === 48 ? barrasDaArrecadacao(linha) : '';
+  const raizes = RAIZ_RECEBEDOR_GUIA[g.tipo] ?? [];
+  // deno-lint-ignore no-explicit-any
+  for (const e of (data ?? []) as any[]) {
+    const cod = soDigitos(e.raw?.detalhes?.codBarras);
+    if (cod && linha && (cod === linha || cod === barras)) return e;
+  }
+  // deno-lint-ignore no-explicit-any
+  return ((data ?? []) as any[]).find((e) => raizes.some((r) => soDigitos(e.counterpart_doc).startsWith(r))) ?? null;
+}
+
 type ResultadoGuia = { ok: boolean; texto: string; conta_id?: string; payment_id?: string | null; guardado?: boolean; erro?: string };
 async function processarGuia(admin: SupabaseClient, ownerId: string, chatId: string, g: Guia, origem: string, grupoReq: number | null): Promise<ResultadoGuia> {
   const ddmm = (iso: string | null) => (iso ? iso.split('-').reverse().join('/') : '?');
   const comp = g.competencia ? `${g.competencia.slice(5, 7)}/${g.competencia.slice(0, 4)}` : 'sem competência';
   const cab = `🧾 *${g.titulo}* ${comp} — ${brl(g.valor)} · vence ${ddmm(g.vencimento)}`;
   if (!g.completa) {
-    const falta = [!g.cnpj && 'CNPJ', !g.valor && 'valor', !g.vencimento && 'vencimento', g.tipo === 'FGTS' ? !g.copia_e_cola && 'Pix copia e cola' : !g.linha && 'linha digitável (os dígitos não conferem)'].filter(Boolean).join(', ');
+    const falta = [!g.cnpj && 'CNPJ', !g.valor && 'valor', !g.vencimento && 'vencimento', g.tipo === 'FGTS' ? !g.copia_e_cola && 'Pix copia e cola' : !g.linha && !g.copia_e_cola && 'linha digitável (os dígitos não conferem) ou Pix'].filter(Boolean).join(', ');
     return { ok: false, texto: `${cab}\n⚠️ Não consegui ler: ${falta}. Mande a guia de novo em PDF (o arquivo original, não foto).`, erro: `faltou ${falta}` };
   }
   const { data: lojas } = await admin.from('tenants').select('id, name, cnpj');
@@ -759,6 +786,27 @@ async function processarGuia(admin: SupabaseClient, ownerId: string, chatId: str
   }
   const linhas = [cab, `${loja.name} · ${acao}${g.encargo_folha ? ' (encargo da folha — não conta de novo na DRE)' : ' · DRE: Impostos (deduções da receita)'}.`];
   if (g.linha_reparada) linhas.push('A leitura tinha um dígito errado no código de barras; corrigi conferindo com o número do documento.');
+  // Já paga? (guia antiga mandada para registro) → baixa pela Conciliação com a saída do extrato
+  const pago = await pagamentoDaGuia(admin, tenantId, g).catch((e) => { log('WARN', 'guia: procurar pagamento', { error: errMsg(e) }); return null; });
+  if (pago) {
+    await admin.from('fin_bank_statement_imports').update({
+      status: 'pending', match_kind: 'payable', match_ref_id: contaId, match_confidence: 'exato',
+      match_detail: { label: descricao, valor: g.valor, via: 'guia', vencimento: g.vencimento },
+    }).eq('id', pago.id).eq('reconciled', false);
+    const cf = await callEdge({ admin, ownerId } as Ctx, 'conciliacao-pagamentos', 'confirm', { ids: [pago.id] }, tenantId)
+      .catch((e) => ({ status: 0, body: { error: errMsg(e) }, ms: 0 }));
+    const res = cf.body?.results?.[0];
+    if (res?.ok) {
+      linhas.push(`✅ Já estava *paga* em ${ddmm(pago.transaction_date)} (saída de ${brl(Number(pago.amount))} no extrato): registrei a guia e conciliei o pagamento. Nada a fazer.`);
+      log('INFO', 'guia já paga: conciliada', { conta: contaId, extrato: pago.id });
+      return { ok: true, conta_id: contaId, payment_id: null, guardado: true, texto: linhas.join('\n') };
+    }
+    // não conseguiu dar a baixa: devolve a linha como estava e segue o fluxo normal (avisa)
+    await admin.from('fin_bank_statement_imports').update({ status: pago.status, match_kind: pago.match_kind ?? null, match_ref_id: null, match_confidence: null, match_detail: null })
+      .eq('id', pago.id).eq('reconciled', false);
+    log('WARN', 'guia já paga: baixa falhou', { conta: contaId, extrato: pago.id, erro: String(res?.msg ?? cf.body?.error ?? cf.status).slice(0, 200) });
+    linhas.push(`🔎 Achei no extrato uma saída de ${brl(Number(pago.amount))} em ${ddmm(pago.transaction_date)} que parece ser o pagamento desta guia, mas não consegui ligar sozinho: ligue na Conciliação.`);
+  }
   // Prazo de "quando pedir para pagar" (asst_settings.pay_timing): vence depois de hoje + dias_antes → só guarda.
   const prazo = await prazoPagamento(admin);
   if (g.vencimento! > prazo.limite) {

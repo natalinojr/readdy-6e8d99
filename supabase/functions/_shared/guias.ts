@@ -224,7 +224,9 @@ export function lerGuia(textoBruto: string, linhaLida?: string | null): Guia | n
 
   const titulo = tipo === 'DAS' ? 'DAS Simples Nacional' : tipo === 'FGTS' ? 'FGTS Digital (GFD)' : previdencia ? 'DARF INSS (previdência)' : irrfFolha ? 'DARF IRRF (folha)' : 'DARF';
   const fornecedor = tipo === 'FGTS' ? 'Caixa Econômica Federal (FGTS Digital)' : 'Receita Federal';
-  const pagavel = tipo === 'FGTS' ? !!copia : !!linha;
+  // DAS/DARF também trazem o Pix oficial (QR com CRC): se a linha digitável não fechou (OCR de guia em
+  // imagem), paga-se pelo Pix. FGTS Digital só tem Pix. (2026-09-30)
+  const pagavel = tipo === 'FGTS' ? !!copia : !!linha || !!copia;
   return {
     tipo, titulo, fornecedor, encargo_folha: tipo === 'FGTS' || previdencia || irrfFolha,
     competencia, vencimento, valor, cnpj, numero, linha, copia_e_cola: copia,

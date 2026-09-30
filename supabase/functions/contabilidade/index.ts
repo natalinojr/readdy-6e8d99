@@ -179,7 +179,7 @@ Deno.serve(async (req) => {
       const arquivo_path = up.error ? null : path;
 
       if (!g.completa) {
-        const falta = [!g.valor && 'valor', !g.vencimento && 'vencimento', g.tipo === 'FGTS' ? !g.copia_e_cola && 'Pix copia e cola' : !g.linha && 'linha digitável (os dígitos não conferem)'].filter(Boolean).join(', ');
+        const falta = [!g.valor && 'valor', !g.vencimento && 'vencimento', g.tipo === 'FGTS' ? !g.copia_e_cola && 'Pix copia e cola' : !g.linha && !g.copia_e_cola && 'linha digitável (os dígitos não conferem) ou Pix'].filter(Boolean).join(', ');
         await registrar({ ...base, tenant_id: loja.id, arquivo_path, resultado: 'erro', mensagem: `Faltou: ${falta}.` });
         return json({ success: false, resultado: 'erro', guia: base, loja: loja.name, texto: `Li a guia, mas faltou: ${falta}. Mande o PDF original (o que o sistema do governo gera), não foto nem impressão.` });
       }
