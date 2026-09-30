@@ -552,9 +552,10 @@ export default function VisaoGeralFinTab() {
   const scoreBg = healthScore >= 80 ? 'bg-green-50 border-green-200' : healthScore >= 50 ? 'bg-amber-50 border-amber-200' : 'bg-red-50 border-red-200';
 
   return (
-    <div className="p-4 md:p-6 space-y-5 max-w-[1400px] mx-auto">
+    <div className="p-4 md:p-6 space-y-5 max-w-[1400px] mx-auto w-full">
       {headerBar}
       <div className="space-y-5">
+        <p className="text-[11px] font-bold uppercase tracking-wider text-zinc-500 -mb-2">O mês até agora</p>
         {/* KPI Cards */}
         <div className={`grid grid-cols-1 sm:grid-cols-2 gap-3 ${temPdv ? 'lg:grid-cols-3 xl:grid-cols-5' : 'xl:grid-cols-4'}`}>
           <MetricCard
@@ -597,6 +598,7 @@ export default function VisaoGeralFinTab() {
           />
         </div>
 
+        <p className="text-[11px] font-bold uppercase tracking-wider text-zinc-500 -mb-2">Saúde, pagar e receber</p>
         {/* Saúde Financeira + A Pagar/Receber */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           {/* Health Score */}
@@ -760,166 +762,140 @@ export default function VisaoGeralFinTab() {
           </div>
         )}
 
-        {/* ── Top Despesas ─────────────────────────────────────────────────────── */}
-        <div className="bg-white rounded-2xl border border-zinc-200 p-4 md:p-5">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4 md:mb-5">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 flex items-center justify-center rounded-lg bg-red-100">
-                <i className="ri-pie-chart-2-line text-red-500 text-sm" />
-              </div>
-              <div>
-                <h3 className="text-sm font-bold text-zinc-800">Top Despesas</h3>
-                <p className="text-xs text-zinc-400">Total: <span className="font-semibold text-zinc-600">{formatCurrency(totalDespesasFiltradas)}</span></p>
-              </div>
-            </div>
-            <div className="overflow-x-auto max-w-full self-start">
-              <Segmented
-                value={String(despesasPeriod)}
-                onChange={v => setDespesasPeriod(Number(v) as 1 | 3 | 6)}
-                options={[
-                  { id: '1', label: 'Este mês', icon: 'ri-calendar-line' },
-                  { id: '3', label: '3m', icon: 'ri-calendar-2-line' },
-                  { id: '6', label: '6m', icon: 'ri-calendar-event-line' },
-                ]}
-              />
-            </div>
-          </div>
-
-          {despesasLoading ? (
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              {Array.from({ length: 4 }).map((_, i) => (
-                <div key={i} className="h-20 bg-zinc-50 rounded-xl animate-pulse" />
-              ))}
-            </div>
-          ) : despesasFiltradas.length === 0 ? (
-            <div className="py-10 text-center">
-              <i className="ri-pie-chart-2-line text-3xl text-zinc-200 block mb-2" />
-              <p className="text-sm text-zinc-400">Nenhuma despesa registrada no período</p>
-              <p className="text-xs text-zinc-300 mt-1">Registre compras e contas a pagar para visualizar</p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-3">
-              {despesasFiltradas.map((d, i) => {
-                const COLORS = [
-                  '#ef4444', '#f97316', '#f59e0b', '#eab308',
-                  '#84cc16', '#10b981', '#06b6d4', '#8b5cf6',
-                ];
-                const color = COLORS[i % COLORS.length];
-                return (
-                  <div key={d.category}>
-                    <div className="flex items-center justify-between mb-1.5">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />
-                        <span className="text-xs font-medium text-zinc-700 truncate">{d.category}</span>
-                        <span className="text-xs text-zinc-400 whitespace-nowrap flex-shrink-0">
-                          ({d.count} {d.count === 1 ? 'lançamento' : 'lançamentos'})
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-2 flex-shrink-0 ml-2">
-                        <span className="text-xs text-zinc-400">{d.pct.toFixed(1)}%</span>
-                        <span className="text-xs font-bold text-zinc-800 tabular-nums">{formatCurrency(d.total)}</span>
-                      </div>
-                    </div>
-                    <div className="w-full bg-zinc-100 rounded-full h-2">
-                      <div className="h-2 rounded-full transition-all duration-700" style={{ width: `${d.pct}%`, backgroundColor: color }} />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-
-          {despesasFiltradas.length > 0 && (
-            <div className="mt-5 pt-4 border-t border-zinc-100 flex items-center justify-between flex-wrap gap-3">
-              <div className="flex items-center gap-1.5">
-                <i className="ri-information-line text-zinc-400 text-xs" />
-                <span className="text-xs text-zinc-400">Baseado no fluxo de caixa — sem double-count de compras e contas pagas</span>
-              </div>
-              <div className="flex items-center gap-4">
-                <div className="text-right">
-                  <p className="text-xs text-zinc-400">Maior categoria</p>
-                  <p className="text-xs font-bold text-zinc-700">{despesasFiltradas[0]?.category}</p>
+        <p className="text-[11px] font-bold uppercase tracking-wider text-zinc-500 -mb-2">Para onde foi o dinheiro</p>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
+          {/* ── Top Despesas ─────────────────────────────────────────────────────── */}
+          <div className="lg:col-span-2 bg-white rounded-2xl border border-zinc-200 p-4 md:p-5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4 md:mb-5">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 flex items-center justify-center rounded-lg bg-red-100">
+                  <i className="ri-pie-chart-2-line text-red-500 text-sm" />
                 </div>
-                <div className="text-right">
-                  <p className="text-xs text-zinc-400">Representa</p>
-                  <p className="text-xs font-bold text-red-600">{despesasFiltradas[0]?.pct.toFixed(1)}% do total</p>
+                <div>
+                  <h3 className="text-sm font-bold text-zinc-800">Top Despesas</h3>
+                  <p className="text-xs text-zinc-400">Total: <span className="font-semibold text-zinc-600">{formatCurrency(totalDespesasFiltradas)}</span></p>
                 </div>
               </div>
-            </div>
-          )}
-        </div>
-
-        {/* ── Receita vs Despesa Mensal ─────────────────────────────────────────── */}
-        <div className="bg-white rounded-2xl border border-zinc-200 p-4 md:p-5">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4 md:mb-5">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 flex items-center justify-center rounded-lg bg-emerald-100">
-                <i className="ri-bar-chart-grouped-line text-emerald-600 text-sm" />
-              </div>
-              <div>
-                <h3 className="text-sm font-bold text-zinc-800">Receita vs Despesa</h3>
-                <p className="text-xs text-zinc-400">Comparativo mensal com linha de lucro</p>
-              </div>
-            </div>
-            <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-              <div className="flex items-center gap-2 sm:gap-3 text-xs text-zinc-500 flex-wrap">
-                <div className="flex items-center gap-1.5"><div className="w-3 h-3 rounded-sm bg-emerald-500" /><span>Receita</span></div>
-                <div className="flex items-center gap-1.5"><div className="w-3 h-3 rounded-sm bg-red-400" /><span>Despesa</span></div>
-                <div className="flex items-center gap-1.5"><div className="w-3 h-0.5 bg-amber-500" /><span>Lucro</span></div>
-              </div>
-              <div className="overflow-x-auto max-w-full">
+              <div className="overflow-x-auto max-w-full self-start">
                 <Segmented
-                  value={String(rvdMeses)}
-                  onChange={v => setRvdMeses(Number(v) as 3 | 6 | 12)}
+                  value={String(despesasPeriod)}
+                  onChange={v => setDespesasPeriod(Number(v) as 1 | 3 | 6)}
                   options={[
-                    { id: '3', label: '3m', icon: 'ri-calendar-line' },
-                    { id: '6', label: '6m', icon: 'ri-calendar-2-line' },
-                    { id: '12', label: '12m', icon: 'ri-calendar-event-line' },
+                    { id: '1', label: 'Este mês', icon: 'ri-calendar-line' },
+                    { id: '3', label: '3m', icon: 'ri-calendar-2-line' },
+                    { id: '6', label: '6m', icon: 'ri-calendar-event-line' },
                   ]}
                 />
               </div>
             </div>
-          </div>
 
-          {rvdLoading ? (
-            <div className="h-52 flex items-center justify-center">
-              <div className="w-5 h-5 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
-            </div>
-          ) : (
-            <>
-              <ResponsiveContainer width="100%" height={220}>
-                <ComposedChart data={rvdData} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f4f4f5" vertical={false} />
-                  <XAxis dataKey="mes" tick={{ fontSize: 11, fill: '#71717a' }} axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fontSize: 10, fill: '#a1a1aa' }} tickFormatter={v => v >= 1000 ? `R$${(v/1000).toFixed(0)}k` : `R$${v}`} axisLine={false} tickLine={false} width={52} />
-                  <Tooltip content={<RvDTooltip />} cursor={{ fill: '#fafafa' }} />
-                  <Bar dataKey="receita" name="receita" fill="#10b981" radius={[4, 4, 0, 0]} maxBarSize={40} />
-                  <Bar dataKey="despesa" name="despesa" fill="#f87171" radius={[4, 4, 0, 0]} maxBarSize={40} />
-                  <Line type="monotone" dataKey="lucro" name="lucro" stroke="#f59e0b" strokeWidth={2.5} dot={{ r: 3, fill: '#f59e0b', strokeWidth: 0 }} activeDot={{ r: 5 }} />
-                </ComposedChart>
-              </ResponsiveContainer>
-
-              {/* Resumo do período */}
-              <div className="mt-4 pt-4 border-t border-zinc-100 grid grid-cols-3 gap-2 md:gap-4">
-                {[
-                  { label: 'Total Receita', value: rvdData.reduce((s, d) => s + d.receita, 0), color: 'text-emerald-600', icon: 'ri-arrow-down-circle-line' },
-                  { label: 'Total Despesa', value: rvdData.reduce((s, d) => s + d.despesa, 0), color: 'text-red-500', icon: 'ri-arrow-up-circle-line' },
-                  { label: 'Lucro Acumulado', value: rvdData.reduce((s, d) => s + d.lucro, 0), color: rvdData.reduce((s, d) => s + d.lucro, 0) >= 0 ? 'text-amber-600' : 'text-red-600', icon: 'ri-funds-line' },
-                ].map(item => (
-                  <div key={item.label} className="text-center">
-                    <p className="text-xs text-zinc-400 mb-1">{item.label}</p>
-                    <p className={`text-base font-bold ${item.color}`}>{formatCurrency(item.value)}</p>
-                  </div>
+            {despesasLoading ? (
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                {Array.from({ length: 4 }).map((_, i) => (
+                  <div key={i} className="h-20 bg-zinc-50 rounded-xl animate-pulse" />
                 ))}
               </div>
-            </>
-          )}
+            ) : despesasFiltradas.length === 0 ? (
+              <div className="py-10 text-center">
+                <i className="ri-pie-chart-2-line text-3xl text-zinc-200 block mb-2" />
+                <p className="text-sm text-zinc-400">Nenhuma despesa registrada no período</p>
+                <p className="text-xs text-zinc-300 mt-1">Registre compras e contas a pagar para visualizar</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-3">
+                {despesasFiltradas.map((d, i) => {
+                  const COLORS = [
+                    '#ef4444', '#f97316', '#f59e0b', '#eab308',
+                    '#84cc16', '#10b981', '#06b6d4', '#8b5cf6',
+                  ];
+                  const color = COLORS[i % COLORS.length];
+                  return (
+                    <div key={d.category}>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />
+                          <span className="text-xs font-medium text-zinc-700 truncate">{d.category}</span>
+                          <span className="text-xs text-zinc-400 whitespace-nowrap flex-shrink-0">
+                            ({d.count} {d.count === 1 ? 'lançamento' : 'lançamentos'})
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2 flex-shrink-0 ml-2">
+                          <span className="text-xs text-zinc-400">{d.pct.toFixed(1)}%</span>
+                          <span className="text-xs font-bold text-zinc-800 tabular-nums">{formatCurrency(d.total)}</span>
+                        </div>
+                      </div>
+                      <div className="w-full bg-zinc-100 rounded-full h-2">
+                        <div className="h-2 rounded-full transition-all duration-700" style={{ width: `${d.pct}%`, backgroundColor: color }} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {despesasFiltradas.length > 0 && (
+              <div className="mt-5 pt-4 border-t border-zinc-100 flex items-center justify-between flex-wrap gap-3">
+                <div className="flex items-center gap-1.5">
+                  <i className="ri-information-line text-zinc-400 text-xs" />
+                  <span className="text-xs text-zinc-400">Baseado no fluxo de caixa — sem double-count de compras e contas pagas</span>
+                </div>
+                <div className="flex items-center gap-4">
+                  <div className="text-right">
+                    <p className="text-xs text-zinc-400">Maior categoria</p>
+                    <p className="text-xs font-bold text-zinc-700">{despesasFiltradas[0]?.category}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-xs text-zinc-400">Representa</p>
+                    <p className="text-xs font-bold text-red-600">{despesasFiltradas[0]?.pct.toFixed(1)}% do total</p>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+          {/* Horizontal Bar — Forma de Pagamento */}
+          <div className="bg-white rounded-2xl border border-zinc-200 p-5">
+            <h3 className="text-sm font-bold text-zinc-800 mb-4">Por Forma de Pagamento</h3>
+            {dashboard.receitaPorPagamento.length > 0 ? (
+              <div className="space-y-3">
+                {dashboard.receitaPorPagamento
+                  .sort((a, b) => b.value - a.value)
+                  .map((item, i) => {
+                    const pct = ((item.value / maxPayment) * 100).toFixed(0);
+                    const color = PAYMENT_COLORS[i % PAYMENT_COLORS.length];
+                    const total = dashboard.receitaPorPagamento.reduce((s, p) => s + p.value, 0);
+                    const share = total > 0 ? ((item.value / total) * 100).toFixed(1) : '0';
+                    return (
+                      <div key={item.name}>
+                        <div className="flex items-center justify-between mb-1">
+                          <div className="flex items-center gap-2">
+                            <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />
+                            <span className="text-xs font-medium text-zinc-700 truncate max-w-[90px]">{item.name}</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-zinc-400">{share}%</span>
+                            <span className="text-xs font-bold text-zinc-800">{fmtK(item.value)}</span>
+                          </div>
+                        </div>
+                        <div className="w-full bg-zinc-100 rounded-full h-2">
+                          <div
+                            className="h-2 rounded-full transition-all duration-500"
+                            style={{ width: `${pct}%`, backgroundColor: color }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+              </div>
+            ) : (
+              <div className="h-48 flex items-center justify-center text-zinc-400 text-sm">Sem dados</div>
+            )}
+          </div>
         </div>
 
-        {/* Gráficos */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <p className="text-[11px] font-bold uppercase tracking-wider text-zinc-500 -mb-2">Tendência</p>
+        <div className="space-y-4">
           {/* Tendência de Receita */}
-          <div className="lg:col-span-2 bg-white rounded-2xl border border-zinc-200 p-4 md:p-5">
+          <div className="bg-white rounded-2xl border border-zinc-200 p-4 md:p-5">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-sm font-bold text-zinc-800">Tendência de Receita</h3>
               <div className="overflow-x-auto max-w-full">
@@ -970,43 +946,70 @@ export default function VisaoGeralFinTab() {
               </AreaChart>
             </ResponsiveContainer>
           </div>
+          {/* ── Receita vs Despesa Mensal ─────────────────────────────────────────── */}
+          <div className="bg-white rounded-2xl border border-zinc-200 p-4 md:p-5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4 md:mb-5">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 flex items-center justify-center rounded-lg bg-emerald-100">
+                  <i className="ri-bar-chart-grouped-line text-emerald-600 text-sm" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-zinc-800">Receita vs Despesa</h3>
+                  <p className="text-xs text-zinc-400">Comparativo mensal com linha de lucro</p>
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+                <div className="flex items-center gap-2 sm:gap-3 text-xs text-zinc-500 flex-wrap">
+                  <div className="flex items-center gap-1.5"><div className="w-3 h-3 rounded-sm bg-emerald-500" /><span>Receita</span></div>
+                  <div className="flex items-center gap-1.5"><div className="w-3 h-3 rounded-sm bg-red-400" /><span>Despesa</span></div>
+                  <div className="flex items-center gap-1.5"><div className="w-3 h-0.5 bg-amber-500" /><span>Lucro</span></div>
+                </div>
+                <div className="overflow-x-auto max-w-full">
+                  <Segmented
+                    value={String(rvdMeses)}
+                    onChange={v => setRvdMeses(Number(v) as 3 | 6 | 12)}
+                    options={[
+                      { id: '3', label: '3m', icon: 'ri-calendar-line' },
+                      { id: '6', label: '6m', icon: 'ri-calendar-2-line' },
+                      { id: '12', label: '12m', icon: 'ri-calendar-event-line' },
+                    ]}
+                  />
+                </div>
+              </div>
+            </div>
 
-          {/* Horizontal Bar — Forma de Pagamento */}
-          <div className="bg-white rounded-2xl border border-zinc-200 p-5">
-            <h3 className="text-sm font-bold text-zinc-800 mb-4">Por Forma de Pagamento</h3>
-            {dashboard.receitaPorPagamento.length > 0 ? (
-              <div className="space-y-3">
-                {dashboard.receitaPorPagamento
-                  .sort((a, b) => b.value - a.value)
-                  .map((item, i) => {
-                    const pct = ((item.value / maxPayment) * 100).toFixed(0);
-                    const color = PAYMENT_COLORS[i % PAYMENT_COLORS.length];
-                    const total = dashboard.receitaPorPagamento.reduce((s, p) => s + p.value, 0);
-                    const share = total > 0 ? ((item.value / total) * 100).toFixed(1) : '0';
-                    return (
-                      <div key={item.name}>
-                        <div className="flex items-center justify-between mb-1">
-                          <div className="flex items-center gap-2">
-                            <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />
-                            <span className="text-xs font-medium text-zinc-700 truncate max-w-[90px]">{item.name}</span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs text-zinc-400">{share}%</span>
-                            <span className="text-xs font-bold text-zinc-800">{fmtK(item.value)}</span>
-                          </div>
-                        </div>
-                        <div className="w-full bg-zinc-100 rounded-full h-2">
-                          <div
-                            className="h-2 rounded-full transition-all duration-500"
-                            style={{ width: `${pct}%`, backgroundColor: color }}
-                          />
-                        </div>
-                      </div>
-                    );
-                  })}
+            {rvdLoading ? (
+              <div className="h-52 flex items-center justify-center">
+                <div className="w-5 h-5 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
               </div>
             ) : (
-              <div className="h-48 flex items-center justify-center text-zinc-400 text-sm">Sem dados</div>
+              <>
+                <ResponsiveContainer width="100%" height={220}>
+                  <ComposedChart data={rvdData} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f4f4f5" vertical={false} />
+                    <XAxis dataKey="mes" tick={{ fontSize: 11, fill: '#71717a' }} axisLine={false} tickLine={false} />
+                    <YAxis tick={{ fontSize: 10, fill: '#a1a1aa' }} tickFormatter={v => v >= 1000 ? `R$${(v/1000).toFixed(0)}k` : `R$${v}`} axisLine={false} tickLine={false} width={52} />
+                    <Tooltip content={<RvDTooltip />} cursor={{ fill: '#fafafa' }} />
+                    <Bar dataKey="receita" name="receita" fill="#10b981" radius={[4, 4, 0, 0]} maxBarSize={40} />
+                    <Bar dataKey="despesa" name="despesa" fill="#f87171" radius={[4, 4, 0, 0]} maxBarSize={40} />
+                    <Line type="monotone" dataKey="lucro" name="lucro" stroke="#f59e0b" strokeWidth={2.5} dot={{ r: 3, fill: '#f59e0b', strokeWidth: 0 }} activeDot={{ r: 5 }} />
+                  </ComposedChart>
+                </ResponsiveContainer>
+
+                {/* Resumo do período */}
+                <div className="mt-4 pt-4 border-t border-zinc-100 grid grid-cols-3 gap-2 md:gap-4">
+                  {[
+                    { label: 'Total Receita', value: rvdData.reduce((s, d) => s + d.receita, 0), color: 'text-emerald-600', icon: 'ri-arrow-down-circle-line' },
+                    { label: 'Total Despesa', value: rvdData.reduce((s, d) => s + d.despesa, 0), color: 'text-red-500', icon: 'ri-arrow-up-circle-line' },
+                    { label: 'Lucro Acumulado', value: rvdData.reduce((s, d) => s + d.lucro, 0), color: rvdData.reduce((s, d) => s + d.lucro, 0) >= 0 ? 'text-amber-600' : 'text-red-600', icon: 'ri-funds-line' },
+                  ].map(item => (
+                    <div key={item.label} className="text-center">
+                      <p className="text-xs text-zinc-400 mb-1">{item.label}</p>
+                      <p className={`text-base font-bold ${item.color}`}>{formatCurrency(item.value)}</p>
+                    </div>
+                  ))}
+                </div>
+              </>
             )}
           </div>
         </div>
