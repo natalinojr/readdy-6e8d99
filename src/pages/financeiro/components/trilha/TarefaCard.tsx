@@ -45,16 +45,21 @@ export function planoDaTarefa(t: TarefaTrilha, c: CasoTrilha, a: AcoesTrilha, x:
           { label: 'Abrir a compra', icone: 'ri-shopping-cart-2-line', onClick: () => a.rota(qs('compras', '&foco=' + encodeURIComponent(compraId))) },
         ] : [],
       };
-    case 'estoque':
+    case 'estoque': {
       if (!compraId) return { botoes: [] };
+      // Itens já têm insumo, só o recebimento ficou fora: abre a Classificação no filtro "Fora do estoque"
+      const foraEstoque = c.etapas.find((e) => e.id === 'estoque')?.atalho?.valor === 'fora_estoque';
       return t.urgente
         ? {
           botoes: [
-            { label: 'Ligar os itens aos insumos', icone: 'ri-links-line', onClick: () => a.rota(qs('itens')) },
+            foraEstoque
+              ? { label: 'Escolher se entra no estoque', icone: 'ri-inbox-archive-line', onClick: () => a.rota(qs('itens', '&filtro=fora_estoque')) }
+              : { label: 'Ligar os itens aos insumos', icone: 'ri-links-line', onClick: () => a.rota(qs('itens')) },
             { label: 'Ver a compra', icone: 'ri-shopping-cart-2-line', onClick: () => a.compra(compraId, `Acertou o estoque de ${c.titulo}`) },
           ],
         }
         : { botoes: [{ label: 'Confirmar a entrega', icone: 'ri-check-double-line', onClick: () => a.compra(compraId, `Confirmou a entrega de ${c.titulo}`) }] };
+    }
     case 'notas': {
       const n = c.notas[0];
       return { botoes: n ? [{ label: 'Lançar a nota', icone: 'ri-inbox-archive-line', onClick: () => a.rota(qs('notas-entrada', '&nota=' + encodeURIComponent(n.id))) }] : [] };
