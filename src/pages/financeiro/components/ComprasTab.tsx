@@ -377,7 +377,7 @@ export default function ComprasTab({ highlightId, onHighlightConsumed }: Compras
   ] as const;
 
   return (
-    <div className="p-4 md:p-6 space-y-5 max-w-[1400px] mx-auto">
+    <div className="p-4 md:p-6 space-y-5 max-w-[1400px] mx-auto w-full">
       {/* ── Subabas (mesmo padrão da aba iFood) + cadastros e Nova compra ── */}
       <div className="flex flex-wrap items-center gap-2 lg:gap-3">
         <div className="flex gap-1 overflow-x-auto bg-zinc-100/80 rounded-xl p-1 w-full sm:w-fit">
@@ -394,7 +394,7 @@ export default function ComprasTab({ highlightId, onHighlightConsumed }: Compras
             </button>
           ))}
         </div>
-        <div className="ml-auto flex items-center gap-2 overflow-x-auto max-w-full">
+        <div className="ml-auto flex items-center gap-2 flex-wrap max-w-full">
           {[
             { label: 'Catálogo de itens', icon: 'ri-archive-line', onClick: () => setShowCatalogo(true) },
             { label: 'Categorias', icon: 'ri-price-tag-3-line', onClick: () => setShowCategorias(true) },

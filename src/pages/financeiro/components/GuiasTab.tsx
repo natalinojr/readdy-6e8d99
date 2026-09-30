@@ -134,10 +134,10 @@ export default function GuiasTab() {
   };
 
   return (
-    <div className="p-4 md:p-6 space-y-5 max-w-[1400px] mx-auto">
-      <div className="grid gap-4 md:grid-cols-3">
+    <div className="p-4 md:p-6 space-y-5 max-w-[1400px] mx-auto w-full">
+      <div className="grid gap-4 lg:grid-cols-3">
         {/* Envio das guias */}
-        <div className="md:col-span-2 bg-white rounded-2xl border border-zinc-200 p-4 md:p-5">
+        <div className="lg:col-span-2 bg-white rounded-2xl border border-zinc-200 p-4 md:p-5">
           <h3 className="text-sm font-bold text-zinc-800">Enviar guias do mês</h3>
           <p className="text-xs text-zinc-400 mt-1">
             DAS (Simples Nacional), DARF do INSS da folha e guia do FGTS Digital. Anexe o PDF original, como o sistema do governo gera.

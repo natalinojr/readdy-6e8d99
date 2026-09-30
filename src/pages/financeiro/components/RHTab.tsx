@@ -1374,7 +1374,95 @@ export default function RHTab({ inicial }: { inicial?: RHView } = {}) {
   const empWithPending13 = employees.filter(e => e.status === 'active' && (e.thirteenth_status === 'pending' || !e.thirteenth_status));
 
   return (
-    <div className="p-4 md:p-6 space-y-5 max-w-[1400px] mx-auto">
+    <div className="p-4 md:p-6 space-y-5 max-w-[1400px] mx-auto w-full">
+      {/* Subabas + ações (no topo: os números abaixo seguem a subaba e o mês — 2026-09-30) */}
+      <div className="flex flex-wrap items-center gap-2 lg:gap-3">
+        <div className="flex gap-1 overflow-x-auto bg-zinc-100/80 rounded-xl p-1 w-full sm:w-fit max-w-full">
+          <button onClick={() => setActiveView('folha')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap cursor-pointer transition-colors ${activeView === 'folha' ? 'bg-white text-amber-600 shadow-sm' : 'text-zinc-500 hover:text-zinc-800'}`}>
+            <i className="ri-file-list-3-line" /> <span className="sm:hidden">Folha</span><span className="hidden sm:inline">Folha de Pagamento</span>
+          </button>
+          <button onClick={() => setActiveView('funcionarios')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap cursor-pointer transition-colors ${activeView === 'funcionarios' ? 'bg-white text-amber-600 shadow-sm' : 'text-zinc-500 hover:text-zinc-800'}`}>
+            <i className="ri-team-line" /> Funcionários
+          </button>
+          <button onClick={() => setActiveView('freelancers')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap cursor-pointer transition-colors ${activeView === 'freelancers' ? 'bg-white text-amber-600 shadow-sm' : 'text-zinc-500 hover:text-zinc-800'}`}>
+            <i className="ri-user-star-line" /> Freelancers
+          </button>
+          <button onClick={() => setActiveView('prestadores')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap cursor-pointer transition-colors ${activeView === 'prestadores' ? 'bg-white text-amber-600 shadow-sm' : 'text-zinc-500 hover:text-zinc-800'}`}>
+            <i className="ri-briefcase-line" /> <span className="sm:hidden">MEI</span><span className="hidden sm:inline">Prestadores MEI</span>
+          </button>
+          <button onClick={() => setActiveView('relatorio')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap cursor-pointer transition-colors ${activeView === 'relatorio' ? 'bg-white text-amber-600 shadow-sm' : 'text-zinc-500 hover:text-zinc-800'}`}>
+            <i className="ri-bar-chart-2-line" /> Relatórios
+          </button>
+        </div>
+
+        {activeView === 'folha' && (
+          <>
+            <MonthNav mes={selectedMonth} onChange={setSelectedMonth} canGoNext={canGoNext} />
+            {selectedMonth !== currentMonth && (
+              <button onClick={() => setSelectedMonth(currentMonth)}
+                className="text-xs font-semibold px-3 py-2 bg-amber-50 text-amber-700 border border-amber-200 rounded-xl hover:bg-amber-100 cursor-pointer whitespace-nowrap">
+                Mês atual
+              </button>
+            )}
+            <div className="ml-auto flex items-center gap-2 flex-wrap max-w-full">
+              {/* Gerar 13º */}
+              <button onClick={() => setThirteenthModal(true)}
+                className="flex items-center gap-1.5 px-3 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 rounded-xl text-xs font-semibold text-zinc-600 cursor-pointer transition-colors whitespace-nowrap shadow-sm">
+                <i className="ri-gift-line" /> 13º Salário
+              </button>
+              {entries.length === 0 && employees.filter(e => e.status === 'active').length > 0 && (
+                <button onClick={handleGenerateFolha}
+                  className="flex items-center gap-1.5 px-3 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 rounded-xl text-xs font-semibold text-zinc-600 cursor-pointer transition-colors whitespace-nowrap shadow-sm">
+                  <i className="ri-magic-line" /> Gerar do Cadastro
+                </button>
+              )}
+
+              {pendingEntries.length > 0 && (
+                <button onClick={() => setFechamentoModal(true)}
+                  className="flex items-center gap-1.5 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-xl text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors shadow-sm">
+                  <i className="ri-check-double-line" /> Fechar e Pagar ({pendingEntries.length})
+                </button>
+              )}
+              <button onClick={() => setImportarDominio(true)} title="Importar o Extrato Mensal (PDF) do Domínio"
+                className="flex items-center gap-1.5 px-3 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 rounded-xl text-xs font-semibold text-zinc-600 cursor-pointer transition-colors whitespace-nowrap shadow-sm">
+                <i className="ri-file-upload-line" /> Importar do Domínio
+              </button>
+              <button onClick={() => setCamposCustomizadosModal(true)}
+                className="flex items-center gap-1.5 px-3 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 rounded-xl text-xs font-semibold text-zinc-600 cursor-pointer transition-colors whitespace-nowrap shadow-sm">
+                <i className="ri-settings-3-line" /> Campos
+              </button>
+              <button onClick={() => setPayrollModal({})}
+                className="flex items-center gap-1.5 bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-xl text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors shadow-sm">
+                <i className="ri-add-line" /> Adicionar
+              </button>
+            </div>
+          </>
+        )}
+
+        {activeView === 'funcionarios' && (
+          <div className="ml-auto flex items-center gap-2 flex-wrap">
+            <div className="relative">
+              <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 text-sm" />
+              <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Buscar funcionário..."
+                className="h-10 rounded-xl border border-zinc-200 shadow-sm pl-9 pr-3 text-sm focus:outline-none focus:border-amber-400 w-48" />
+            </div>
+            <select value={deptFilter} onChange={e => setDeptFilter(e.target.value)}
+              className="h-10 border border-zinc-200 rounded-xl px-3 text-xs font-semibold text-zinc-600 shadow-sm focus:outline-none focus:border-amber-400 bg-white">
+              {departments.map(d => <option key={d} value={d}>{d}</option>)}
+            </select>
+            <button onClick={() => setEmployeeModal({})}
+              className="flex items-center gap-1.5 bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-xl text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors shadow-sm">
+              <i className="ri-add-line" /> Novo Funcionário
+            </button>
+          </div>
+        )}
+      </div>
+
       {/* KPIs (da folha: não aparecem em Freelancers / Prestadores MEI, que têm os próprios totais) */}
       <div className={`grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 ${activeView === 'freelancers' || activeView === 'prestadores' ? 'hidden' : ''}`}>
         <KpiCard label="Funcionários ativos" icon="ri-team-line" value={String(activeCount)} sub={`${employees.length} no total`} atual={activeCount} semVariacao />
@@ -1432,94 +1520,6 @@ export default function RHTab({ inicial }: { inicial?: RHView } = {}) {
           }}
         />
       )}
-
-      {/* Subabas + ações */}
-      <div className="flex flex-wrap items-center gap-2 lg:gap-3">
-        <div className="flex gap-1 overflow-x-auto bg-zinc-100/80 rounded-xl p-1 w-full sm:w-fit max-w-full">
-          <button onClick={() => setActiveView('folha')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap cursor-pointer transition-colors ${activeView === 'folha' ? 'bg-white text-amber-600 shadow-sm' : 'text-zinc-500 hover:text-zinc-800'}`}>
-            <i className="ri-file-list-3-line" /> <span className="sm:hidden">Folha</span><span className="hidden sm:inline">Folha de Pagamento</span>
-          </button>
-          <button onClick={() => setActiveView('funcionarios')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap cursor-pointer transition-colors ${activeView === 'funcionarios' ? 'bg-white text-amber-600 shadow-sm' : 'text-zinc-500 hover:text-zinc-800'}`}>
-            <i className="ri-team-line" /> Funcionários
-          </button>
-          <button onClick={() => setActiveView('freelancers')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap cursor-pointer transition-colors ${activeView === 'freelancers' ? 'bg-white text-amber-600 shadow-sm' : 'text-zinc-500 hover:text-zinc-800'}`}>
-            <i className="ri-user-star-line" /> Freelancers
-          </button>
-          <button onClick={() => setActiveView('prestadores')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap cursor-pointer transition-colors ${activeView === 'prestadores' ? 'bg-white text-amber-600 shadow-sm' : 'text-zinc-500 hover:text-zinc-800'}`}>
-            <i className="ri-briefcase-line" /> <span className="sm:hidden">MEI</span><span className="hidden sm:inline">Prestadores MEI</span>
-          </button>
-          <button onClick={() => setActiveView('relatorio')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap cursor-pointer transition-colors ${activeView === 'relatorio' ? 'bg-white text-amber-600 shadow-sm' : 'text-zinc-500 hover:text-zinc-800'}`}>
-            <i className="ri-bar-chart-2-line" /> Relatórios
-          </button>
-        </div>
-
-        {activeView === 'folha' && (
-          <>
-            <MonthNav mes={selectedMonth} onChange={setSelectedMonth} canGoNext={canGoNext} />
-            {selectedMonth !== currentMonth && (
-              <button onClick={() => setSelectedMonth(currentMonth)}
-                className="text-xs font-semibold px-3 py-2 bg-amber-50 text-amber-700 border border-amber-200 rounded-xl hover:bg-amber-100 cursor-pointer whitespace-nowrap">
-                Mês atual
-              </button>
-            )}
-            <div className="ml-auto flex items-center gap-2 overflow-x-auto max-w-full">
-              {/* Gerar 13º */}
-              <button onClick={() => setThirteenthModal(true)}
-                className="flex items-center gap-1.5 px-3 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 rounded-xl text-xs font-semibold text-zinc-600 cursor-pointer transition-colors whitespace-nowrap shadow-sm">
-                <i className="ri-gift-line" /> 13º Salário
-              </button>
-              {entries.length === 0 && employees.filter(e => e.status === 'active').length > 0 && (
-                <button onClick={handleGenerateFolha}
-                  className="flex items-center gap-1.5 px-3 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 rounded-xl text-xs font-semibold text-zinc-600 cursor-pointer transition-colors whitespace-nowrap shadow-sm">
-                  <i className="ri-magic-line" /> Gerar do Cadastro
-                </button>
-              )}
-
-              {pendingEntries.length > 0 && (
-                <button onClick={() => setFechamentoModal(true)}
-                  className="flex items-center gap-1.5 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-xl text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors shadow-sm">
-                  <i className="ri-check-double-line" /> Fechar e Pagar ({pendingEntries.length})
-                </button>
-              )}
-              <button onClick={() => setImportarDominio(true)} title="Importar o Extrato Mensal (PDF) do Domínio"
-                className="flex items-center gap-1.5 px-3 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 rounded-xl text-xs font-semibold text-zinc-600 cursor-pointer transition-colors whitespace-nowrap shadow-sm">
-                <i className="ri-file-upload-line" /> Importar do Domínio
-              </button>
-              <button onClick={() => setCamposCustomizadosModal(true)}
-                className="flex items-center gap-1.5 px-3 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 rounded-xl text-xs font-semibold text-zinc-600 cursor-pointer transition-colors whitespace-nowrap shadow-sm">
-                <i className="ri-settings-3-line" /> Campos
-              </button>
-              <button onClick={() => setPayrollModal({})}
-                className="flex items-center gap-1.5 bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-xl text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors shadow-sm">
-                <i className="ri-add-line" /> Adicionar
-              </button>
-            </div>
-          </>
-        )}
-
-        {activeView === 'funcionarios' && (
-          <div className="ml-auto flex items-center gap-2 flex-wrap">
-            <div className="relative">
-              <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 text-sm" />
-              <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Buscar funcionário..."
-                className="h-10 rounded-xl border border-zinc-200 shadow-sm pl-9 pr-3 text-sm focus:outline-none focus:border-amber-400 w-48" />
-            </div>
-            <select value={deptFilter} onChange={e => setDeptFilter(e.target.value)}
-              className="h-10 border border-zinc-200 rounded-xl px-3 text-xs font-semibold text-zinc-600 shadow-sm focus:outline-none focus:border-amber-400 bg-white">
-              {departments.map(d => <option key={d} value={d}>{d}</option>)}
-            </select>
-            <button onClick={() => setEmployeeModal({})}
-              className="flex items-center gap-1.5 bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-xl text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors shadow-sm">
-              <i className="ri-add-line" /> Novo Funcionário
-            </button>
-          </div>
-        )}
-      </div>
 
       {/* ── FOLHA ── */}
       {activeView === 'folha' && (

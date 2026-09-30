@@ -441,10 +441,18 @@ export default function ItensClassificacaoTab() {
         <h2 className="text-sm font-bold text-zinc-800">Classificação de itens</h2>
         <p className="text-xs text-zinc-500 mt-0.5 max-w-3xl">
           Cada produto de cada fornecedor tem uma classificação: <b>CMV</b> com a categoria de mercadoria (a mesma dos insumos: Proteínas, Bebidas, Embalagens…) ou <b>despesa</b> com categoria da DRE (limpeza, papelaria, manutenção…).
+        </p>
+        {/* O resto da explicação fica recolhido (2026-09-30): o texto é o mesmo, só abre ao clicar. */}
+        <details className="mt-1 max-w-3xl group">
+          <summary className="text-xs font-semibold text-amber-600 cursor-pointer hover:underline list-none">
+            <span className="group-open:hidden">Como funciona</span><span className="hidden group-open:inline">Fechar</span>
+          </summary>
+          <p className="text-xs text-zinc-500 mt-1">
           É ela que separa, numa mesma nota, a bebida do produto de limpeza. Toda nota de entrada (produto e serviço) e toda compra lançada entram aqui sozinhas; item novo fica pendente.
           <b> Nota de serviço</b> (NFS-e): despesa para serviço de verdade (sistema, contador, marketing, locação), e a categoria vai para as contas a pagar das notas dele. Se o fornecedor entrega <b>produto</b> mas emite nota de serviço, marque <b>CMV</b>: as próximas notas dele entram como compra.
           <b> Ligado a insumo</b> = o produto dá entrada no estoque daquele insumo; é sempre CMV, na categoria do insumo. Ao classificar ou vincular, as compras já lançadas desse item são corrigidas na DRE.
-        </p>
+          </p>
+        </details>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
