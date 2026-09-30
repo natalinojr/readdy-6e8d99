@@ -357,6 +357,25 @@ export default function DREDrillDownModal({ type, categoryId, categoryName, mont
           },
         }));
       }
+      // A linha da DRE também soma os ITENS DE COMPRA classificados nesta categoria
+      // (ex.: produto de limpeza comprado junto com mercadoria). Sem isto o detalhe
+      // abria vazio enquanto a linha mostrava o valor (2026-09-30).
+      const compras = await fetchComprasPeriodo(user.tenantId, start.slice(0, 10), end.slice(0, 10), mode);
+      const linhas = await fetchComprasLinhas(user.tenantId, compras);
+      result = result.concat(linhas
+        .filter(l => l.destino === 'despesa' && l.dreCategoryId === categoryId)
+        .sort((x, y) => y.valor - x.valor)
+        .map(l => ({
+          id: l.id,
+          date: l.data || start.slice(0, 10),
+          description: `${l.descricao} — ${l.fornecedor}`,
+          amount: l.valor,
+          source: l.nota ? `Compra · NF ${l.nota}` : 'Compra',
+          extra: {
+            ...(l.quantidade != null ? { Qtd: `${l.quantidade.toLocaleString('pt-BR')}${l.unidade ? ` ${l.unidade}` : ''}` } : {}),
+            ...(l.pago != null ? { 'Pago no mês': `${(l.pago * 100).toFixed(0)}% da compra` } : {}),
+          },
+        })));
     }
 
     setItems(result);
