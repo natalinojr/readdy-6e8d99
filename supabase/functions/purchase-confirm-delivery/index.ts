@@ -84,35 +84,16 @@ Deno.serve(async (req) => {
       const d = String(v).slice(0, 10);
       if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return new Response(JSON.stringify({ error: 'Data do recebimento inválida' }), { status: 400, headers: corsHeaders });
       if (d > hojeBR) return new Response(JSON.stringify({ error: 'A data do recebimento não pode ser no futuro' }), { status: 400, headers: corsHeaders });
+      // Hoje = agora (meio-dia de hoje ficava no futuro de manhã e escondia a contagem feita depois)
+      if (d === hojeBR) return new Date().toISOString();
       return new Date(d + 'T12:00:00-03:00').toISOString();
     };
-    // Contagem de estoque (inventário) de algum destes insumos entre duas datas. Entrada não atravessa
-    // contagem: o ajuste da contagem foi calculado com o saldo daquela hora.
-    const contagemEntre = async (ings: string[], de: string, ate: string) => {
-      if (!ings.length || de === ate) return null;
-      const [a, b] = de < ate ? [de, ate] : [ate, de];
-      const { data } = await supabase.from('stock_movements').select('created_at')
-        .eq('tenant_id', tenant_id).in('ingredient_id', ings).eq('type', 'inventory_adjustment')
-        .gt('created_at', a).lt('created_at', b).order('created_at', { ascending: false }).limit(1);
-      return (data?.[0]?.created_at as string | undefined) ?? null;
-    };
-    const diaBR = (iso: string) => new Date(new Date(iso).getTime() - 3 * 3600_000).toISOString().slice(0, 10).split('-').reverse().join('/');
-
     // Primeira contagem do insumo entre duas datas (sessão de inventário, mesmo sem diferença, ou ajuste).
     const primeiraContagemEntre = async (ing: string, de: string, ate: string) => {
       const [a, b] = de < ate ? [de, ate] : [ate, de];
-      const [sess, adj] = await Promise.all([
-        supabase.from('inventory_sessions').select('created_at').eq('tenant_id', tenant_id)
-          // cs com JSON explícito: .contains() com array de objetos monta o filtro errado
-          .filter('items', 'cs', JSON.stringify([{ ingredient_id: ing }])).gt('created_at', a).lt('created_at', b)
-          .order('created_at', { ascending: true }).limit(1),
-        supabase.from('stock_movements').select('created_at').eq('tenant_id', tenant_id).eq('ingredient_id', ing)
-          .eq('type', 'inventory_adjustment').gt('created_at', a).lt('created_at', b)
-          .order('created_at', { ascending: true }).limit(1),
-      ]);
-      if (sess.error || adj.error) console.error('[purchase-confirm-delivery] contagem:', sess.error?.message ?? adj.error?.message);
-      const ts = [sess.data?.[0]?.created_at, adj.data?.[0]?.created_at].filter(Boolean) as string[];
-      return ts.length ? ts.sort()[0] : null;
+      const { data, error } = await supabase.rpc('fn_insumo_contado_entre', { p_tenant: tenant_id, p_ingredient: ing, p_de: a, p_ate: b });
+      if (error) console.error('[purchase-confirm-delivery] contagem:', error.message);
+      return (data as string | null) ?? null;
     };
 
     // Corrigir a data do recebimento já confirmado (2026-09-28): leva junto a data da entrada no
@@ -201,12 +182,22 @@ Deno.serve(async (req) => {
     // Movimento de estoque do recebimento: fica ligado à compra e com a data do recebimento
     // (se não houver contagem do insumo depois dessa data; senão fica na hora de agora).
     const nowIso = new Date().toISOString();
-    const datarMovimento = async (res: unknown, ingredientId: string) => {
+    // Regra única (fn_insumo_contado_entre, 2026-09-30): recebimento com data passada cujo insumo foi
+    // contado depois NÃO entra — a contagem já pôs a mercadoria no estoque (antes somava em dobro).
+    const naoEntram: string[] = [];
+    const contadoDepois = async (ingredientId: string): Promise<boolean> => {
+      if (!(confirmedAt < nowIso)) return false;
+      const { data, error } = await supabase.rpc('fn_insumo_contado_entre', {
+        p_tenant: tenant_id, p_ingredient: ingredientId, p_de: confirmedAt, p_ate: nowIso,
+      });
+      if (error) throw new Error('Não foi possível conferir o inventário: ' + error.message);
+      return !!data;
+    };
+    const datarMovimento = async (res: unknown, _ingredientId: string) => {
       const movId = (res as { movement_id?: string } | null)?.movement_id;
       if (!movId) return;
-      const pulaContagem = confirmedAt < nowIso ? await contagemEntre([ingredientId], confirmedAt, nowIso) : null;
       const { error } = await supabase.from('stock_movements')
-        .update({ purchase_id, ...(pulaContagem ? {} : { created_at: confirmedAt }) })
+        .update({ purchase_id, created_at: confirmedAt })
         .eq('id', movId).eq('tenant_id', tenant_id);
       if (error) console.error('[purchase-confirm-delivery] datar movimento:', error.message);
     };
@@ -340,7 +331,9 @@ Deno.serve(async (req) => {
           const factor = unitsPerPkg > 0 ? unitsPerPkg : 1;
 
           // Entrada inteira: compra nova (estoque só no recebimento) ou item vinculado agora
-          if (!stockAlreadyApplied || newlyLinked.has(itemId)) {
+          const jaContado = await contadoDepois(String(item.ingredient_id));
+          if (jaContado) naoEntram.push(String(item.description ?? itemId));
+          if ((!stockAlreadyApplied || newlyLinked.has(itemId)) && !jaContado) {
             const entrada = receivedQty * factor;
             if (entrada > 0) {
               stockMoved = true; // a partir daqui a trava não é mais desfeita
@@ -362,7 +355,7 @@ Deno.serve(async (req) => {
           }
 
           // Compra antiga: o estoque já entrou por completo na criação; aplica só o DELTA
-          const deltaStock = stockAlreadyApplied && !newlyLinked.has(itemId) ? (receivedQty - originalQty) * factor : 0;
+          const deltaStock = stockAlreadyApplied && !newlyLinked.has(itemId) && !jaContado ? (receivedQty - originalQty) * factor : 0;
           if (deltaStock !== 0) {
             stockMoved = true; // a partir daqui a trava não é mais desfeita
             const { data: mvRes, error: mvErr } = await supabase.rpc('fn_add_stock_movement', {
@@ -506,7 +499,12 @@ Deno.serve(async (req) => {
             purchase_id,
             new_total_amount: newTotalAmount,
             original_total: originalTotal,
-            ...(aviso ? { aviso } : {}),
+            ...(aviso || naoEntram.length ? {
+              aviso: [aviso, naoEntram.length
+                ? `Não entraram no estoque porque foram contados no inventário depois do recebimento (a contagem já os incluiu): ${naoEntram.join(', ')}.`
+                : ''].filter(Boolean).join(' '),
+            } : {}),
+            ...(naoEntram.length ? { nao_entraram_por_contagem: naoEntram } : {}),
           },
         }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },

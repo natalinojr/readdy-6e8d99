@@ -365,28 +365,21 @@ async function applyStockEntry(
   user: any,
 ) {
   // Data do movimento = data do recebimento (compra lançada "já recebida em 21/09" e detalhada
-  // depois entrava com a hora do clique — 2026-09-30). Se o insumo foi contado entre o recebimento
-  // e agora, fica na hora de agora (mesma regra do purchase-confirm-delivery / fn_item_stock_late_entry).
+  // depois entrava com a hora do clique — 2026-09-30). Se o insumo foi contado entre o recebimento e
+  // agora, NÃO entra: a contagem já pôs a mercadoria (regra única fn_insumo_contado_entre).
   const recebidoEm = String(purchase.delivery_confirmed_at ?? purchase.stock_applied_at ?? '');
-  const agora = new Date().toISOString();
-  const datar = recebidoEm && new Date(recebidoEm).getTime() < Date.now() - 60_000;
-  const contadoDepois = async (ing: string) => {
-    const [sess, adj] = await Promise.all([
-      supabase.from('inventory_sessions').select('id').eq('tenant_id', tenant_id).eq('status', 'confirmado')
-        .filter('items', 'cs', JSON.stringify([{ ingredient_id: ing }])).gt('created_at', recebidoEm).lt('created_at', agora).limit(1),
-      supabase.from('inventory_sessions').select('id').eq('tenant_id', tenant_id).eq('status', 'confirmado')
-        .filter('items', 'cs', JSON.stringify([{ insumoId: ing }])).gt('created_at', recebidoEm).lt('created_at', agora).limit(1),
-    ]);
-    const { data: aj } = await supabase.from('stock_movements').select('id').eq('tenant_id', tenant_id).eq('ingredient_id', ing)
-      .eq('type', 'inventory_adjustment').gt('created_at', recebidoEm).lt('created_at', agora).limit(1);
-    return (sess.data?.length ?? 0) + (adj.data?.length ?? 0) + (aj?.length ?? 0) > 0;
-  };
+  const datar = !!recebidoEm && new Date(recebidoEm).getTime() < Date.now() - 60_000;
+  const naoEntram: string[] = [];
   for (const item of items) {
     if (!item.ingredient_id) continue;
     const qty = item.received_quantity != null ? Number(item.received_quantity) : Number(item.quantity ?? 0);
     const upp = Number(item.units_per_package ?? 1) > 0 ? Number(item.units_per_package) : 1;
     const stockQty = qty * upp;
     if (!(stockQty > 0)) continue;
+    if (datar && await contadoEntre(supabase, tenant_id, String(item.ingredient_id), recebidoEm)) {
+      naoEntram.push(String(item.description ?? item.id));
+      continue;
+    }
     // Movimentacao via RPC (insere movimento + atualiza current_stock atomicamente)
     const { data: mvRes, error: mvErr } = await supabase.rpc('fn_add_stock_movement', {
       p_tenant_id: tenant_id, p_ingredient_id: item.ingredient_id,
@@ -397,11 +390,23 @@ async function applyStockEntry(
     if (mvErr) console.error('[purchase-write] fn_add_stock_movement error:', mvErr.message ?? mvErr);
     // Liga o movimento à compra (permite corrigir a data do recebimento depois)
     else if (mvRes?.movement_id) {
-      const naData = datar && !(await contadoDepois(String(item.ingredient_id)));
-      await supabase.from('stock_movements').update({ purchase_id: purchase.id, ...(naData ? { created_at: recebidoEm } : {}) })
+      await supabase.from('stock_movements').update({ purchase_id: purchase.id, ...(datar ? { created_at: recebidoEm } : {}) })
         .eq('id', mvRes.movement_id).eq('tenant_id', tenant_id);
     }
   }
+  return naoEntram;
+}
+
+// O insumo foi contado (inventário ou ajuste) entre `de` e agora? Regra única no banco.
+async function contadoEntre(
+  // deno-lint-ignore no-explicit-any
+  supabase: any, tenant_id: string, ingredientId: string, de: string,
+): Promise<boolean> {
+  const { data, error } = await supabase.rpc('fn_insumo_contado_entre', {
+    p_tenant: tenant_id, p_ingredient: ingredientId, p_de: de, p_ate: new Date().toISOString(),
+  });
+  if (error) throw new Error('Não foi possível conferir o inventário: ' + error.message);
+  return !!data;
 }
 
 // Quanto entrou no estoque, por insumo, pelos movimentos desta compra. O movimento não guarda o id da
@@ -464,10 +469,14 @@ async function reverseStockForItems(
   // (Chilli com Carne −48 kg). Na edição não se passa: lá o estorno é compensado pela entrada nova.
   // deno-lint-ignore no-explicit-any
   soOQueEntrou?: any,
+  // Data do recebimento: insumo contado depois dela não é estornado — a contagem já acertou o saldo
+  // (estornar agora deixava o estoque abaixo do real; e no "Detalhar itens" a entrada nova também pula).
+  recebidoEm?: string | null,
 ) {
   const entrouPorInsumo = soOQueEntrou ? await entradasDaCompra(supabase, tenant_id, soOQueEntrou, items) : null;
   for (const item of items) {
     if (!item.ingredient_id) continue;
+    if (recebidoEm && await contadoEntre(supabase, tenant_id, String(item.ingredient_id), recebidoEm)) continue;
     if (soOQueEntrou && item.stock_skipped_at) continue; // marcado "Não entram": nunca entrou
     // Estorna o que de fato entrou: a quantidade recebida, quando o recebimento ajustou
     const purchaseQty = item.received_quantity != null ? Number(item.received_quantity) : Number(item.quantity ?? 0);
@@ -484,7 +493,7 @@ async function reverseStockForItems(
     // Estorno via RPC. O tipo antigo 'out' nao existe no enum
     // stock_movement_type — o insert falhava silenciosamente e o
     // estorno ficava sem registro de movimento.
-    const { error: mvErr } = await supabase.rpc('fn_add_stock_movement', {
+    const { data: mvRes, error: mvErr } = await supabase.rpc('fn_add_stock_movement', {
       p_tenant_id: tenant_id,
       p_ingredient_id: item.ingredient_id,
       p_type: 'manual_out',
@@ -494,6 +503,11 @@ async function reverseStockForItems(
       p_notes: null, p_order_id: null, p_operator_id: user.id, p_batch_id: null,
     });
     if (mvErr) console.error('[purchase-write] estorno fn_add_stock_movement error:', mvErr.message ?? mvErr);
+    // Estorno ligado à compra: soma com sinal com as entradas dela (Alterar data / entradasDaCompra)
+    else if (mvRes?.movement_id && (soOQueEntrou?.id || item.purchase_id)) {
+      await supabase.from('stock_movements').update({ purchase_id: soOQueEntrou?.id ?? item.purchase_id })
+        .eq('id', mvRes.movement_id).eq('tenant_id', tenant_id);
+    }
   }
 }
 
@@ -925,6 +939,7 @@ Deno.serve(async (req) => {
           await reverseStockForItems(
             supabase, tenant_id, oldItems, user,
             `Ajuste por edição da compra: ${existing.supplier}${existing.invoice_number ? ` NF ${existing.invoice_number}` : ''}`,
+            undefined, existing.delivery_confirmed_at ?? existing.stock_applied_at,
           );
         }
         await supabase.from('fin_accounts_payable').delete().eq('reference_id', id).eq('tenant_id', tenant_id);
@@ -1059,7 +1074,8 @@ Deno.serve(async (req) => {
         const jaNoEstoque = !!existing.stock_applied_at;
         if (jaNoEstoque) {
           // Só o que entrou por esta compra sai (mesma guarda da exclusão)
-          await reverseStockForItems(supabase, tenant_id, oldItems, user, `Detalhamento dos itens da compra: ${rotulo}`, existing);
+          await reverseStockForItems(supabase, tenant_id, oldItems, user, `Detalhamento dos itens da compra: ${rotulo}`, existing,
+            existing.delivery_confirmed_at ?? existing.stock_applied_at);
         }
         await supabase.from('fin_purchase_items').delete().eq('purchase_id', purchase_id).eq('tenant_id', tenant_id);
         const { data: novos, error: itemsError } = await supabase.from('fin_purchase_items')
@@ -1075,10 +1091,13 @@ Deno.serve(async (req) => {
         }
         await applyStockAndPricing(supabase, tenant_id, compra, computedItems, user, existing.supplier_id ?? null);
         await upsertCatalogPresentations(supabase, tenant_id, compra, computedItems, existing.supplier_id ?? null);
-        if (jaNoEstoque) await applyStockEntry(supabase, tenant_id, compra, (novos ?? []) as Array<Record<string, unknown>>, user);
+        const naoEntram = jaNoEstoque ? await applyStockEntry(supabase, tenant_id, compra, (novos ?? []) as Array<Record<string, unknown>>, user) : [];
 
         result = {
-          data: { purchase_id, itens: computedItems.length, estoque: jaNoEstoque ? 'ajustado' : 'entra no recebimento' },
+          data: {
+            purchase_id, itens: computedItems.length, estoque: jaNoEstoque ? 'ajustado' : 'entra no recebimento',
+            ...(naoEntram.length ? { nao_entraram_por_contagem: naoEntram } : {}),
+          },
           ...(avisosConversao.length ? { avisos_conversao: avisosConversao } : {}),
         };
         break;
@@ -1249,7 +1268,7 @@ Deno.serve(async (req) => {
           await reverseStockForItems(
             supabase, tenant_id, purchaseItems, user,
             `Estorno de compra excluída: ${purchase.supplier}${purchase.invoice_number ? ` NF ${purchase.invoice_number}` : ''}`,
-            purchase,
+            purchase, purchase.delivery_confirmed_at ?? purchase.stock_applied_at,
           );
         }
 
