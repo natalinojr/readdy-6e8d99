@@ -16,6 +16,7 @@ import CamposCustomizadosModal from './CamposCustomizadosModal';
 import DetalheFolhaModal from './DetalheFolhaModal';
 import FreelancersTab from './FreelancersTab';
 import PrestadoresTab from './PrestadoresTab';
+import BeneficiosTab from './BeneficiosTab';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 const today = new Date();
@@ -1247,7 +1248,7 @@ function EmployeeRow({
 }
 
 // ─── Main Component ───────────────────────────────────────────────────────────
-export type RHView = 'folha' | 'funcionarios' | 'freelancers' | 'prestadores' | 'relatorio';
+export type RHView = 'folha' | 'funcionarios' | 'beneficios' | 'freelancers' | 'prestadores' | 'relatorio';
 export default function RHTab({ inicial }: { inicial?: RHView } = {}) {
   const [activeView, setActiveView] = useState<RHView>(inicial ?? 'folha');
   // Link para outra subaba com o RH já aberto (ex.: ?tab=freelancers)
@@ -1386,6 +1387,10 @@ export default function RHTab({ inicial }: { inicial?: RHView } = {}) {
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap cursor-pointer transition-colors ${activeView === 'funcionarios' ? 'bg-white text-amber-600 shadow-sm' : 'text-zinc-500 hover:text-zinc-800'}`}>
             <i className="ri-team-line" /> Funcionários
           </button>
+          <button onClick={() => setActiveView('beneficios')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap cursor-pointer transition-colors ${activeView === 'beneficios' ? 'bg-white text-amber-600 shadow-sm' : 'text-zinc-500 hover:text-zinc-800'}`}>
+            <i className="ri-restaurant-line" /> Benefícios
+          </button>
           <button onClick={() => setActiveView('freelancers')}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap cursor-pointer transition-colors ${activeView === 'freelancers' ? 'bg-white text-amber-600 shadow-sm' : 'text-zinc-500 hover:text-zinc-800'}`}>
             <i className="ri-user-star-line" /> Freelancers
@@ -1464,7 +1469,7 @@ export default function RHTab({ inicial }: { inicial?: RHView } = {}) {
       </div>
 
       {/* KPIs (da folha: não aparecem em Freelancers / Prestadores MEI, que têm os próprios totais) */}
-      <div className={`grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 ${activeView === 'freelancers' || activeView === 'prestadores' ? 'hidden' : ''}`}>
+      <div className={`grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 ${activeView === 'freelancers' || activeView === 'prestadores' || activeView === 'beneficios' ? 'hidden' : ''}`}>
         <KpiCard label="Funcionários ativos" icon="ri-team-line" value={String(activeCount)} sub={`${employees.length} no total`} atual={activeCount} semVariacao />
         <KpiCard label="Massa salarial" icon="ri-money-dollar-circle-line" value={formatCurrency(totalSalaryMass)} sub="Salários base ativos" atual={totalSalaryMass} semVariacao />
         <KpiCard label="Folha do mês" icon="ri-file-list-3-line" value={formatCurrency(totalLiquido)} sub={`Líquido — ${monthLabel(selectedMonth)}`} atual={totalLiquido} semVariacao />
@@ -1767,6 +1772,8 @@ export default function RHTab({ inicial }: { inicial?: RHView } = {}) {
       {/* ── FREELANCERS e PRESTADORES MEI (2026-09-28: a aba Freelancers veio para dentro do RH) ── */}
       {activeView === 'freelancers' && <FreelancersTab embutido />}
       {activeView === 'prestadores' && <PrestadoresTab />}
+      {/* Vale alimentação pago pela empresa, por funcionário e com competência (2026-09-30) */}
+      {activeView === 'beneficios' && <BeneficiosTab />}
 
       {/* ── RELATÓRIOS ── */}
       {activeView === 'relatorio' && (
