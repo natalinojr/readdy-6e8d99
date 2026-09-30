@@ -76,6 +76,8 @@ export interface AcoesTrilha {
   concluir: (rotulo: string, desfazer?: () => Promise<void>) => Promise<void>;
   /** recarrega sem registrar nada em "Resolvido agora" */
   recarregar: () => Promise<void>;
+  /** "Ignorar e esquecer": tira a tarefa da lista e guarda em "Ignoradas" (dá para voltar) */
+  ignorar: (tarefa: TarefaTrilha, caso: CasoTrilha) => void;
 }
 
 export interface TarefaComCaso { tarefa: TarefaTrilha; caso: CasoTrilha }

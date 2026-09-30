@@ -6,11 +6,13 @@ import { GRUPO_POR_ID, ROTULO_TIPO, fmtBRL, type AcoesTrilha } from './comum';
 
 interface Props {
   caso: CasoTrilha; expandidos: Set<string>; onToggle: (key: string) => void; acoes: AcoesTrilha; onFechar: () => void;
+  /** tarefas ignoradas ("Ignorar e esquecer") não aparecem aqui */
+  ignoradas?: Set<string>;
 }
 
-export default function Gaveta({ caso, expandidos, onToggle, acoes, onFechar }: Props) {
+export default function Gaveta({ caso, expandidos, onToggle, acoes, onFechar, ignoradas }: Props) {
   const tp = ROTULO_TIPO[caso.tipo];
-  const ts = [...caso.tarefas].sort((a, b) => Number(b.urgente) - Number(a.urgente));
+  const ts = caso.tarefas.filter((t) => !ignoradas?.has(t.key)).sort((a, b) => Number(b.urgente) - Number(a.urgente));
   return (
     <>
       <div className="fixed inset-0 z-40 bg-zinc-900/20" onClick={onFechar} />

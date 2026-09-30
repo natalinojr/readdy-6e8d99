@@ -176,6 +176,12 @@ export default function TarefaCard({ caso, tarefa, expandido, onToggle, acoes }:
           </div>
         )}
         {plano.ajuda && <p className="mt-1.5 text-[11px] text-zinc-500">{plano.ajuda}</p>}
+        <div className="flex justify-end mt-1.5">
+          <button onClick={() => acoes.ignorar(tarefa, caso)} title="Tira esta tarefa da lista. Fica guardada em &quot;Ignoradas&quot; e dá para voltar depois."
+            className="text-[11px] font-semibold text-zinc-400 hover:text-zinc-700 px-1.5 py-0.5 rounded-md hover:bg-white/80 cursor-pointer">
+            <i className="ri-eye-off-line" /> Ignorar e esquecer
+          </button>
+        </div>
         {painel === 'criar' && caso.compra && <CriarConta caso={caso} acoes={acoes} />}
         {painel === 'estoque' && caso.compra && <EntrarNoEstoque caso={caso} acoes={acoes} />}
         {painel === 'itens' && caso.compra && (

@@ -10,7 +10,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useEstoque } from '@/contexts/EstoqueContext';
 import { supabase } from '@/lib/supabase';
 import { todayBrasilia } from '@/lib/dateUtils';
-import { avisar } from '@/components/base/Dialogos';
+import { avisar, perguntar } from '@/components/base/Dialogos';
 import { ASSISTENTE_OWNER_EMAIL } from '@/components/feature/AssistenteChat';
 import type { BillPayable, Purchase } from '@/types/financeiro';
 import { MonthNav, mesExtenso } from './dreUi';
@@ -35,6 +35,7 @@ const limitesMes = (ano: number, mes: number) => {
 };
 
 type Modo = 'tarefas' | 'esteira' | 'matriz';
+interface Ignorada { id: string; tarefa_key: string; grupo: string | null; titulo: string | null; valor: number | null; mes: string | null; motivo: string | null; ignored_by_name: string | null; ignored_at: string }
 interface Resolvido { key: string; titulo: string; grupo: GrupoTarefa; rotulo: string; desfazer?: () => Promise<void> }
 interface CompraAberta { purchase: Purchase; installments: BillInst[]; loading: boolean }
 interface BillInst { id: string; installment_number: number; installments: number; amount: number; due_date: string; status: string; paid_date?: string; paid_amount?: number }
@@ -63,6 +64,9 @@ export default function TrilhaTab() {
   const [gavetaKey, setGavetaKey] = useState<string | null>(null);
   const [limite, setLimite] = useState(LIMITE_TAREFAS);
   const [resolvidos, setResolvidos] = useState<Resolvido[]>([]);
+  // "Ignorar e esquecer" (2026-09-30): guardadas no banco por loja; somem das tarefas, não da esteira/matriz
+  const [ignoradas, setIgnoradas] = useState<Ignorada[]>([]);
+  const [verIgnoradas, setVerIgnoradas] = useState(false);
   // Janelas abertas aqui mesmo
   const [linha, setLinha] = useState<TrExtrato | null>(null);
   const [compra, setCompra] = useState<CompraAberta | null>(null);
@@ -97,12 +101,22 @@ export default function TrilhaTab() {
   }, [user?.tenantId, de, ate]);
 
   useEffect(() => { void carregar(); }, [carregar]);
+  const carregarIgnoradas = useCallback(async () => {
+    if (!user?.tenantId) { setIgnoradas([]); return; }
+    const { data } = await supabase.from('fin_trilha_ignoradas')
+      .select('id, tarefa_key, grupo, titulo, valor, mes, motivo, ignored_by_name, ignored_at')
+      .eq('tenant_id', user.tenantId).order('ignored_at', { ascending: false }).limit(1000);
+    setIgnoradas((data ?? []) as Ignorada[]);
+  }, [user?.tenantId]);
+  useEffect(() => { void carregarIgnoradas(); }, [carregarIgnoradas]);
   // Trocou de mês (ou de loja): recomeça a sessão de "resolvido agora"
   useEffect(() => { setResolvidos([]); antesRef.current = new Map(); setGavetaKey(null); setLimite(LIMITE_TAREFAS); }, [de, user?.tenantId]);
   useEffect(() => { setLimite(LIMITE_TAREFAS); }, [grupo, etapaF, soUrg, busca]);
 
   const casos = useMemo(() => (dados ? montarTrilha(dados, de, ate, hoje) : []), [dados, de, ate, hoje]);
-  const todasTarefas = useMemo<TarefaComCaso[]>(() => casos.flatMap((caso) => caso.tarefas.map((tarefa) => ({ tarefa, caso }))), [casos]);
+  const chavesIgnoradas = useMemo(() => new Set(ignoradas.map((i) => i.tarefa_key)), [ignoradas]);
+  const tarefasDoMes = useMemo<TarefaComCaso[]>(() => casos.flatMap((caso) => caso.tarefas.map((tarefa) => ({ tarefa, caso }))), [casos]);
+  const todasTarefas = useMemo(() => tarefasDoMes.filter((x) => !chavesIgnoradas.has(x.tarefa.key)), [tarefasDoMes, chavesIgnoradas]);
   useEffect(() => {
     antesRef.current = new Map(todasTarefas.map(({ tarefa, caso }) => [tarefa.key, { titulo: caso.titulo, grupo: tarefa.grupo }]));
   }, [todasTarefas]);
@@ -199,6 +213,30 @@ export default function TrilhaTab() {
     navigate('/financeiro?tab=' + a.tab + (a.param && a.valor ? '&' + a.param + '=' + encodeURIComponent(a.valor) : ''));
   }, [navigate]);
 
+  const ignorar = useCallback(async (tarefa: TarefaComCaso['tarefa'], caso: CasoTrilha) => {
+    if (!user?.tenantId) return;
+    const motivo = await perguntar({
+      titulo: 'Ignorar e esquecer esta tarefa?',
+      mensagem: `"${GRUPO_POR_ID[tarefa.grupo].nome}" — ${caso.titulo} (${fmtBRL(caso.valor)}). Ela sai da lista e fica guardada em "Ignoradas"; dá para voltar quando quiser.`,
+      placeholder: 'Por quê? (opcional — ex.: já resolvido por fora)',
+      opcional: true,
+      confirmarLabel: 'Ignorar',
+    });
+    if (motivo === null) return;
+    const { error } = await supabase.from('fin_trilha_ignoradas').insert({
+      tenant_id: user.tenantId, tarefa_key: tarefa.key, grupo: tarefa.grupo, titulo: caso.titulo,
+      valor: caso.valor, mes: mesStr, motivo: motivo.trim() || null, ignored_by_name: user.nome || null,
+    });
+    if (error && error.code !== '23505') { void avisar(error.message, { erro: true, titulo: 'Não deu para ignorar' }); return; }
+    await carregarIgnoradas();
+  }, [user?.tenantId, user?.nome, mesStr, carregarIgnoradas]);
+
+  const voltarIgnorada = async (i: Ignorada) => {
+    const { error } = await supabase.from('fin_trilha_ignoradas').delete().eq('id', i.id);
+    if (error) { void avisar(error.message, { erro: true, titulo: 'Não deu para voltar' }); return; }
+    await carregarIgnoradas();
+  };
+
   const acoes = useMemo<AcoesTrilha>(() => ({
     ir,
     rota: (path) => navigate(path),
@@ -208,7 +246,8 @@ export default function TrilhaTab() {
     dono, tenantId: user?.tenantId ?? '', hoje, boletos,
     concluir: async (rotulo, desfazer) => { rotuloRef.current = rotulo; desfazerRef.current = desfazer; await carregar(true); },
     recarregar: async () => { await carregar(); },
-  }), [ir, navigate, abrirCompra, abrirClassificar, dono, user?.tenantId, hoje, boletos, carregar]);
+    ignorar: (t, c) => { void ignorar(t, c); },
+  }), [ir, navigate, abrirCompra, abrirClassificar, dono, user?.tenantId, hoje, boletos, carregar, ignorar]);
 
   const desfazerResolvido = async (r: Resolvido) => {
     if (!r.desfazer) return;
@@ -249,6 +288,8 @@ export default function TrilhaTab() {
   // mostra todos os grupos, senão a tela dizia "nada pendente" com o funil apontando pendência.
   const grupoAtivo = grupo && listaPorGrupo.some(({ g, ts }) => g.id === grupo && ts.length > 0) ? grupo : null;
   const visiveis = listaPorGrupo.filter(({ g, ts }) => ts.length > 0 && (!grupoAtivo || grupoAtivo === g.id));
+  const chavesDoMes = new Set(tarefasDoMes.map((x) => x.tarefa.key));
+  const ignoradasDoMes = ignoradas.filter((i) => i.mes === mesStr || chavesDoMes.has(i.tarefa_key));
   const resolvidosVisiveis = resolvidos.filter((r) => !todasTarefas.some((x) => x.tarefa.key === r.key));
 
   const MODOS: { id: Modo; label: string; icone: string; n?: number }[] = [
@@ -387,6 +428,32 @@ export default function TrilhaTab() {
                 ))}
               </ul>
             </div>
+            <div className="bg-white rounded-2xl border border-zinc-200 p-4">
+              <button onClick={() => setVerIgnoradas((v) => !v)} className="w-full flex items-center gap-2 text-left cursor-pointer">
+                <i className="ri-eye-off-line text-zinc-400" />
+                <h3 className="flex-1 text-sm font-bold text-zinc-800">Ignoradas <span className="text-zinc-400 font-normal">· {ignoradasDoMes.length}</span></h3>
+                <i className={verIgnoradas ? 'ri-arrow-up-s-line text-zinc-400' : 'ri-arrow-down-s-line text-zinc-400'} />
+              </button>
+              {verIgnoradas && (
+                <ul className="mt-2 space-y-2 text-xs max-h-72 overflow-y-auto">
+                  {ignoradasDoMes.length === 0 && <li className="text-zinc-400">Nenhuma tarefa ignorada neste mês. Use "Ignorar e esquecer" no cartão da tarefa.</li>}
+                  {ignoradasDoMes.map((i) => (
+                    <li key={i.id} className="flex items-start gap-1.5">
+                      <span className="flex-1 min-w-0">
+                        <strong className="text-zinc-700 break-words">{i.titulo ?? '—'}</strong>{i.valor != null && <span className="text-zinc-500"> · {fmtBRL(Number(i.valor))}</span>}
+                        <br /><span className="text-zinc-400">
+                          {i.grupo && GRUPO_POR_ID[i.grupo as GrupoTarefa] ? GRUPO_POR_ID[i.grupo as GrupoTarefa].nome : 'Tarefa'} · {new Date(i.ignored_at).toLocaleDateString('pt-BR')}{i.ignored_by_name ? ` por ${i.ignored_by_name}` : ''}
+                        </span>
+                        {i.motivo && <><br /><span className="text-zinc-500 italic">“{i.motivo}”</span></>}
+                      </span>
+                      <button onClick={() => void voltarIgnorada(i)} className="shrink-0 text-[11px] font-semibold text-zinc-400 hover:text-zinc-800 px-1.5 py-0.5 rounded-md hover:bg-zinc-100 cursor-pointer" title="Voltar esta tarefa para a lista">
+                        <i className="ri-arrow-go-back-line" /> voltar
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
           </div>
           <section className="space-y-3 min-w-0">
             {visiveis.map(({ g, ts }) => {
@@ -457,7 +524,7 @@ export default function TrilhaTab() {
       {dados && modo === 'matriz' && <Matriz casos={casosFiltrados} onAbrir={(c) => setGavetaKey(c.key)} />}
 
       {casoDaGaveta && (
-        <Gaveta caso={casoDaGaveta} expandidos={expandidos} onToggle={alternarFases} acoes={acoes} onFechar={() => setGavetaKey(null)} />
+        <Gaveta caso={casoDaGaveta} expandidos={expandidos} onToggle={alternarFases} acoes={acoes} onFechar={() => setGavetaKey(null)} ignoradas={chavesIgnoradas} />
       )}
 
       {/* ── Janelas que já existem no sistema, abertas aqui mesmo ── */}
