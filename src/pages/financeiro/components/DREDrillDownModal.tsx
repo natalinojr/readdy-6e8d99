@@ -304,6 +304,31 @@ export default function DREDrillDownModal({ type, categoryId, categoryName, mont
           Líquido: formatCurrency(Number(p.net_salary)),
         },
       }));
+      // Contas a pagar na categoria do sistema 'pessoal' (ex.: vale alimentação lançado em RH ›
+      // Benefícios, 2026-09-30): a DRE soma à folha, então o detalhe mostra as duas.
+      const { data: catP } = await supabase.from('fin_dre_categories').select('id')
+        .eq('tenant_id', user.tenantId).eq('system_key', 'pessoal').limit(1).maybeSingle();
+      if (catP?.id) {
+        let qb = supabase.from('fin_accounts_payable')
+          .select('id,due_date,competence_month,description,supplier,amount,paid_amount,paid_date,status')
+          .eq('tenant_id', user.tenantId).eq('dre_category_id', catP.id);
+        qb = mode === 'caixa'
+          ? qb.in('status', ['paid', 'partial']).gte('paid_date', start.slice(0, 10)).lte('paid_date', end.slice(0, 10))
+          : qb.in('status', ['pending', 'paid', 'overdue', 'partial']).or(orCompetenciaConta(start, end));
+        const { data: contas } = await qb;
+        result = result.concat((contas ?? []).map((b: Record<string, unknown>) => ({
+          id: b.id as string,
+          date: (mode === 'caixa' ? (b.paid_date as string) : null) || (b.due_date as string),
+          description: `${b.description}${b.supplier ? ` — ${b.supplier}` : ''}`,
+          amount: mode === 'caixa' && b.status === 'partial' ? Number(b.paid_amount ?? 0) : Number(mode === 'caixa' ? (b.paid_amount ?? b.amount) : b.amount),
+          source: 'Contas a Pagar',
+          extra: {
+            ...(b.competence_month ? { 'Competência': rotuloMes(String(b.competence_month).slice(0, 7)) } : {}),
+            'Pago em': b.paid_date ? String(b.paid_date) : '—',
+            Status: String(b.status || ''),
+          },
+        })));
+      }
     }
 
     // ── DESPESAS / CUSTOS POR CATEGORIA DRE ──
