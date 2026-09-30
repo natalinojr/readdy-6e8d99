@@ -1,4 +1,5 @@
 import { useState, useMemo, useCallback, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useBillsPayable, useCostCenters, useBankAccounts } from '@/hooks/useFinanceiro';
 import { useSuppliers } from '@/hooks/useSuppliers';
 import { supabase } from '@/lib/supabase';
@@ -45,7 +46,7 @@ function focoDaConta(b: BillPayable) {
   return {
     tipo: 'conta_a_pagar',
     id: b.id,
-    titulo: `Conta a pagar: ${b.description}${b.supplier ? ` (${b.supplier})` : ''} — ${formatCurrency(b.amount)}, vence ${vence}, ${STATUS_LABEL[b.status].toLowerCase()}`,
+    titulo: `Conta a pagar: ${b.description}${b.supplier ? ` (${b.supplier})` : ''} — ${formatCurrency(b.amount)}, vence ${vence}, ${(STATUS_LABEL[b.status] ?? b.status ?? '').toLowerCase()}`,
     dados: {
       descricao: b.description, fornecedor: b.supplier, categoria: b.category, valor: b.amount,
       pago: Number(b.paid_amount ?? 0), vencimento: b.due_date, status: b.status,
@@ -62,7 +63,7 @@ function exportCSV(bills: BillPayable[]) {
     b.category ?? '',
     b.due_date ? new Date(b.due_date + 'T00:00:00').toLocaleDateString('pt-BR') : '',
     b.amount.toFixed(2).replace('.', ','),
-    STATUS_LABEL[b.status],
+    STATUS_LABEL[b.status] ?? b.status,
     b.is_recurring ? 'Sim' : 'Não',
     (b.notes ?? '').replace(/\n/g, ' '),
   ]);
@@ -95,8 +96,11 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
 
   // ── Navegação por mês ──────────────────────────────────────────────────────
   const nowDate = new Date();
-  const [mesSelecionado, setMesSelecionado] = useState(nowDate.getMonth());
-  const [anoSelecionado, setAnoSelecionado] = useState(nowDate.getFullYear());
+  // ?mes=AAAA-MM (busca do Financeiro, 2026-09-30): abre no mês da conta encontrada — a busca da
+  // aba só olha o mês da tela, e a conta de outubro não aparecia estando em setembro.
+  const mesDaUrl = new URLSearchParams(window.location.search).get('mes')?.match(/^(\d{4})-(\d{2})$/);
+  const [mesSelecionado, setMesSelecionado] = useState(mesDaUrl ? Number(mesDaUrl[2]) - 1 : nowDate.getMonth());
+  const [anoSelecionado, setAnoSelecionado] = useState(mesDaUrl ? Number(mesDaUrl[1]) : nowDate.getFullYear());
 
   const mesAtual = nowDate.getMonth();
   const anoAtual = nowDate.getFullYear();
@@ -140,10 +144,35 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
 
   const [agingBucket, setAgingBucket] = useState<string | null>(null);
   const [showAging, setShowAging] = useState(false);
+  // "Em aberto agora" (2026-09-30): Vencidas / Próximos 7 dias / Depois, de todas as datas — um clique
+  // filtra a lista (como o Aging). Antes, estando em setembro, a vencida de agosto não aparecia.
+  const [emAberto, setEmAberto] = useState<null | 'vencidas' | 'semana' | 'depois'>(null);
+  useEffect(() => { if (agingBucket) setEmAberto(null); }, [agingBucket]);
+  const hojeCP = todayBrasilia();
+  const em7CP = somarDias(hojeCP, 7);
+  const resumoAberto = useMemo(() => {
+    const r = { vencidas: { n: 0, v: 0 }, semana: { n: 0, v: 0 }, depois: { n: 0, v: 0 } };
+    for (const b of bills) {
+      if (!['pending', 'overdue', 'partial'].includes(b.status) || !b.due_date) continue;
+      const f = b.due_date < hojeCP ? 'vencidas' : b.due_date <= em7CP ? 'semana' : 'depois';
+      r[f].n += 1;
+      r[f].v += Math.max(0, Number(b.amount) - Number(b.paid_amount ?? 0));
+    }
+    return r;
+  }, [bills, hojeCP, em7CP]);
   const [showDREModal, setShowDREModal] = useState(false);
   const [showCaixaBoletos, setShowCaixaBoletos] = useState(false);
 
   const [showModal, setShowModal] = useState(false);
+  // Botão "Lançar" do Financeiro (2026-09-30): ?abrir=nova abre a Nova Conta, ?abrir=email a caixa de boletos.
+  const [paramsUrl, setParamsUrl] = useSearchParams();
+  useEffect(() => {
+    const abrir = paramsUrl.get('abrir');
+    if (!abrir) return;
+    if (abrir === 'nova') setShowModal(true);
+    if (abrir === 'email') setShowCaixaBoletos(true);
+    setParamsUrl((p) => { p.delete('abrir'); return p; }, { replace: true });
+  }, [paramsUrl, setParamsUrl]);
   const [payModal, setPayModal] = useState<BillPayable | null>(null);
   const [payDre, setPayDre] = useState('');
   const { toPayload: dreToPayload } = useDreEscolha();
@@ -240,7 +269,15 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
 
   const filtered = useMemo(() => {
     // Quando há filtro de aging, aplica sobre TODAS as contas (não só do mês)
-    let result = agingBucket ? [...bills.filter(b => b.status !== 'paid')] : [...billsDoMes];
+    // Aging e "em aberto" olham todas as datas, só o que é dívida: conta cancelada (status fora do
+    // tipo) entrava aqui e derrubava a tela no STATUS_LABEL (2026-09-30).
+    let result = (agingBucket || emAberto) ? [...bills.filter(b => ['pending', 'overdue', 'partial'].includes(b.status))] : [...billsDoMes];
+    if (emAberto) {
+      result = result.filter((b) => !!b.due_date && (
+        emAberto === 'vencidas' ? b.due_date < hojeCP
+          : emAberto === 'semana' ? b.due_date >= hojeCP && b.due_date <= em7CP
+            : b.due_date > em7CP));
+    }
 
     if (search.trim()) {
       const q = search.toLowerCase();
@@ -290,7 +327,7 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
       return 0;
     });
     return result;
-  }, [billsDoMes, bills, agingBucket, search, filterStatus, filterCategory, filterDateFrom, filterDateTo, filterRecurring, sortField, sortDir]);
+  }, [billsDoMes, bills, agingBucket, emAberto, hojeCP, em7CP, search, filterStatus, filterCategory, filterDateFrom, filterDateTo, filterRecurring, sortField, sortDir]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
@@ -540,7 +577,38 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
         </div>
       )}
 
-      {/* KPIs */}
+      {/* Em aberto agora — todas as datas; clicar filtra a lista */}
+      <div className="flex flex-col gap-2">
+        <p className="text-[11px] font-bold uppercase tracking-wider text-zinc-500">Em aberto agora · clique para ver na lista</p>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          {([
+            { id: 'vencidas', rotulo: 'Vencidas', cor: 'bg-red-500', tom: 'text-red-600', sub: 'saldo que falta pagar' },
+            { id: 'semana', rotulo: 'Próximos 7 dias', cor: 'bg-amber-500', tom: 'text-amber-700', sub: `até ${em7CP.slice(8, 10)}/${em7CP.slice(5, 7)}` },
+            { id: 'depois', rotulo: 'Depois', cor: 'bg-emerald-500', tom: 'text-zinc-900', sub: 'ainda no prazo' },
+          ] as const).map((c) => {
+            const r = resumoAberto[c.id];
+            const ativo = emAberto === c.id;
+            return (
+              <button
+                key={c.id}
+                onClick={() => { setEmAberto(ativo ? null : c.id); setAgingBucket(null); setPage(1); }}
+                className={`text-left rounded-2xl border p-4 bg-white transition-all cursor-pointer ${ativo ? 'ring-2 ring-amber-400 border-amber-300' : 'border-zinc-200 hover:border-zinc-300'}`}
+              >
+                <div className="flex items-center gap-2">
+                  <span className={`w-2 h-2 rounded-full ${c.cor}`} />
+                  <span className="text-xs font-semibold text-zinc-500">{c.rotulo}</span>
+                  <span className="ml-auto text-xs text-zinc-400">{r.n} {r.n === 1 ? 'conta' : 'contas'}</span>
+                </div>
+                <p className={`text-xl sm:text-2xl font-bold tabular-nums mt-1.5 ${r.n ? c.tom : 'text-zinc-900'}`}>{formatCurrency(r.v)}</p>
+                <p className="text-[11px] text-zinc-400 mt-0.5">{c.sub}</p>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* KPIs do mês selecionado (por vencimento) */}
+      <p className="text-[11px] font-bold uppercase tracking-wider text-zinc-500 -mb-1">Mês selecionado (por vencimento)</p>
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
         <KpiCard label="Total pendente" icon="ri-time-line" value={formatCurrency(totalPendente)} valueTone="text-amber-700" atual={totalPendente} semVariacao />
         <KpiCard label="Total vencido" icon="ri-alarm-warning-line" value={formatCurrency(totalVencido)} valueTone={totalVencido > 0 ? 'text-red-600' : undefined} atual={totalVencido} semVariacao />
@@ -606,6 +674,19 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
           >
             <i className="ri-bar-chart-grouped-line" /> Aging
           </button>
+
+          {emAberto && (
+            <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
+              <i className="ri-filter-line text-amber-600 text-xs" />
+              <span className="text-xs font-semibold text-amber-800">{emAberto === 'vencidas' ? 'Vencidas' : emAberto === 'semana' ? 'Próximos 7 dias' : 'Depois de 7 dias'} · todas as datas</span>
+              <button
+                onClick={() => { setEmAberto(null); setPage(1); }}
+                className="w-4 h-4 flex items-center justify-center rounded-full hover:bg-amber-200 cursor-pointer"
+              >
+                <i className="ri-close-line text-amber-600 text-xs" />
+              </button>
+            </div>
+          )}
 
           {agingBucket && (
             <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-xl px-3 py-2">
@@ -897,7 +978,7 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
                     </td>
                     <td className="px-4 py-3">
                       <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-md ${STATUS_BADGE[b.status]}`}>
-                        {STATUS_LABEL[b.status]}
+                        {STATUS_LABEL[b.status] ?? ((b.status as string) === 'cancelled' ? 'Cancelada' : b.status)}
                       </span>
                     </td>
                     <td className="px-4 py-3">
@@ -979,7 +1060,7 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
                           <p className="text-xs text-sky-600 font-semibold">falta {formatCurrency(saldoRestante(b))}</p>
                         )}
                         <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-md ${STATUS_BADGE[b.status]}`}>
-                          {STATUS_LABEL[b.status]}
+                          {STATUS_LABEL[b.status] ?? ((b.status as string) === 'cancelled' ? 'Cancelada' : b.status)}
                         </span>
                       </div>
                     </div>
