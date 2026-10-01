@@ -314,6 +314,19 @@ function EditorData({ atual, onEscolher, comHorario = false, horaAtual = null }:
 
   return (
     <div>
+      <div className="flex gap-1 px-0.5 pb-1.5 mb-1 border-b border-slate-100">
+        {([['Ontem', -1], ['Hoje', 0], ['Amanhã', 1]] as const).map(([rotulo, dias]) => {
+          const dia = hojeMais(dias);
+          return (
+            <button key={rotulo} type="button" onClick={() => escolher(dia)} aria-pressed={dia === atual}
+              className={`flex-1 px-2 py-1 max-md:py-2 rounded-lg text-xs max-md:text-sm font-medium transition ${
+                dia === atual ? 'bg-indigo-600 text-white' : 'bg-slate-50 text-slate-600 hover:bg-indigo-50 hover:text-indigo-600'
+              }`}>
+              {rotulo}
+            </button>
+          );
+        })}
+      </div>
       <MiniCalendario atual={atual} onEscolher={escolher} />
       {comHorario && (
         <div className="px-1 pt-2 mt-1 border-t border-slate-100">
