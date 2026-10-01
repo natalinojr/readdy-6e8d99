@@ -388,14 +388,16 @@ Deno.serve({ verify_jwt: false }, async (req) => {
     // ("mover pra pasta sem aquele status cai no primeiro status aberto").
     const statusEquivalente = async (
       origemStatusId: unknown,
-      statusesDestino: Array<{ id: string; category: string; sort_order: number }>,
+      statusesDestino: Array<{ id: string; category: string; sort_order: number; keep_visible?: boolean }>,
       statusAbertoDestino: { id: string } | null,
     ): Promise<string | null> => {
       if (origemStatusId) {
         const { data: statusAtual } = await admin.from('task_statuses')
-          .select('category').eq('id', origemStatusId as string).maybeSingle();
+          .select('category, keep_visible').eq('id', origemStatusId as string).maybeSingle();
         if (statusAtual) {
-          const match = statusesDestino.find((s) => s.category === statusAtual.category);
+          // "Feito" (done que fica na tela) prefere o "Feito" da destino; senão qualquer da categoria.
+          const match = statusesDestino.find((s) => s.category === statusAtual.category && !!s.keep_visible === !!statusAtual.keep_visible)
+            ?? statusesDestino.find((s) => s.category === statusAtual.category);
           if (match) return match.id;
         }
       }
@@ -416,9 +418,9 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       await assertListEdit(to_list_id);
 
       const { data: statusesDestinoRaw, error: stErr } = await admin.from('task_statuses')
-        .select('id, category, sort_order').eq('list_id', to_list_id).order('sort_order');
+        .select('id, category, sort_order, keep_visible').eq('list_id', to_list_id).order('sort_order');
       if (stErr) return json({ error: errMsg(stErr) }, 500);
-      const statusesDestino = (statusesDestinoRaw ?? []) as Array<{ id: string; category: string; sort_order: number }>;
+      const statusesDestino = (statusesDestinoRaw ?? []) as Array<{ id: string; category: string; sort_order: number; keep_visible: boolean }>;
       const statusAbertoDestino = statusesDestino.find((s) => s.category !== 'done' && s.category !== 'cancelled')
         ?? statusesDestino[0] ?? null;
       const compat = await camposCompativeis(to_list_id);
@@ -723,11 +725,16 @@ Deno.serve({ verify_jwt: false }, async (req) => {
 
       // ═══ Status ═══
       case 'create_status': {
-        const { list_id, name, color, category, sort_order } = body;
+        const { list_id, name, color, category, sort_order, keep_visible } = body;
         if (!list_id || !name) return json({ error: 'list_id and name are required' }, 400);
         await assertListOwner(list_id);
+        const cat = category ?? 'todo';
         const { data, error } = await admin.from('task_statuses')
-          .insert({ tenant_id: tenantId, list_id, name, color: color ?? '#94a3b8', category: category ?? 'todo', sort_order: sort_order ?? 99 })
+          .insert({
+            tenant_id: tenantId, list_id, name, color: color ?? '#94a3b8', category: cat, sort_order: sort_order ?? 99,
+            // "Feito": concluído que continua na tela — só existe na categoria done.
+            keep_visible: cat === 'done' && keep_visible === true,
+          })
           .select('id').single();
         if (error) return json({ error: errMsg(error) }, 500);
         return json({ success: true, id: data.id });
@@ -740,6 +747,10 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         for (const k of ['name', 'color', 'category', 'sort_order']) {
           if (rest[k] !== undefined) patch[k] = rest[k];
         }
+        if (rest.keep_visible !== undefined) patch.keep_visible = rest.keep_visible === true;
+        // keep_visible só vale em status da categoria done.
+        const catFinal = (patch.category ?? status.category) as string;
+        if (catFinal !== 'done') patch.keep_visible = false;
         const { error } = await admin.from('task_statuses').update(patch).eq('id', status_id);
         if (error) return json({ error: errMsg(error) }, 500);
         return json({ success: true });
@@ -871,9 +882,15 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         // pastas com status_id diferentes por trás do mesmo "Concluído").
         if (patch.status_id === undefined) {
           if (rest.status_category) {
-            const { data: resolvido } = await admin.from('task_statuses')
-              .select('id').eq('list_id', current.list_id).eq('category', rest.status_category)
-              .order('sort_order').limit(1).maybeSingle();
+            // Concluído × Feito: os dois são category done; status_keep_visible=true pede o
+            // "Feito" (fica na tela), sem ele vai pro "Concluído" de verdade. Se a pasta não
+            // tem o tipo pedido, cai em qualquer status da categoria.
+            const querVisivel = rest.status_keep_visible === true;
+            const { data: candidatos } = await admin.from('task_statuses')
+              .select('id, keep_visible').eq('list_id', current.list_id).eq('category', rest.status_category)
+              .order('sort_order');
+            const lista = (candidatos ?? []) as Array<{ id: string; keep_visible: boolean }>;
+            const resolvido = lista.find((s) => !!s.keep_visible === querVisivel) ?? lista[0];
             if (resolvido) patch.status_id = resolvido.id;
           } else if (rest.status_action === 'undone') {
             // "Desmarcar" não tem uma categoria única de destino — pega o
@@ -892,7 +909,17 @@ Deno.serve({ verify_jwt: false }, async (req) => {
             .select('id, name, category').eq('id', patch.status_id).maybeSingle();
           if (!newStatus) return json({ error: 'status inexistente' }, 400);
           await logActivity(task_id, 'status_changed', { to: newStatus.name });
-          if (newStatus.category === 'done') {
+          // Feito → Concluído (ou o contrário) já estava concluída: não refaz a data
+          // nem gera outra ocorrência da recorrência.
+          let jaConcluida = false;
+          if (current.status_id) {
+            const { data: stAtual } = await admin.from('task_statuses')
+              .select('category').eq('id', current.status_id as string).maybeSingle();
+            jaConcluida = stAtual?.category === 'done';
+          }
+          if (newStatus.category === 'done' && jaConcluida) {
+            // mantém completed_at
+          } else if (newStatus.category === 'done') {
             patch.completed_at = new Date().toISOString();
             // Recorrência: cria a próxima ocorrência (modelo Todoist)
             const rec = (patch.recurrence ?? current.recurrence) as Parameters<typeof proximaOcorrencia>[1];

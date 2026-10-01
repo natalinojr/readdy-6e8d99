@@ -219,7 +219,7 @@ export default function VisaoGeralFinTab() {
 
   if (loading) {
     return (
-      <div className="p-4 md:p-6 max-w-[1400px] mx-auto grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3">
+      <div className="p-4 md:p-6 max-w-[1400px] mx-auto grid grid-cols-2 max-sm:[&>*:last-child:nth-child(odd)]:col-span-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3">
         {Array.from({ length: 5 }).map((_, i) => (
           <div key={i} className="bg-white rounded-2xl border border-zinc-200 p-5 animate-pulse h-28" />
         ))}
@@ -285,7 +285,7 @@ export default function VisaoGeralFinTab() {
         {headerBar}
         <div className="space-y-5">
           {sessaoLoading ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+            <div className="grid grid-cols-2 max-sm:[&>*:last-child:nth-child(odd)]:col-span-2 sm:grid-cols-2 xl:grid-cols-4 gap-3">
               {Array.from({ length: 4 }).map((_, i) => (
                 <div key={i} className="bg-white rounded-2xl border border-zinc-200 p-5 animate-pulse h-24" />
               ))}
@@ -307,7 +307,7 @@ export default function VisaoGeralFinTab() {
           ) : (
             <>
               {/* KPIs da sessão */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+              <div className="grid grid-cols-2 max-sm:[&>*:last-child:nth-child(odd)]:col-span-2 sm:grid-cols-2 xl:grid-cols-4 gap-3">
                 <MetricCard
                   label="Faturamento da Sessão"
                   value={formatCurrency(sessaoReport!.total_revenue)}
@@ -557,7 +557,7 @@ export default function VisaoGeralFinTab() {
       <div className="space-y-5">
         <p className="text-[11px] font-bold uppercase tracking-wider text-zinc-500 -mb-2">O mês até agora</p>
         {/* KPI Cards */}
-        <div className={`grid grid-cols-1 sm:grid-cols-2 gap-3 ${temPdv ? 'lg:grid-cols-3 xl:grid-cols-5' : 'xl:grid-cols-4'}`}>
+        <div className={`grid grid-cols-2 max-sm:[&>*:last-child:nth-child(odd)]:col-span-2 sm:grid-cols-2 gap-3 ${temPdv ? 'lg:grid-cols-3 xl:grid-cols-5' : 'xl:grid-cols-4'}`}>
           <MetricCard
             label="Recebido hoje"
             value={formatCurrency(dashboard.receitaHoje)}

@@ -23,6 +23,7 @@ import PainelMensagem, { painelDoTexto } from '@/components/feature/assistente/P
 import PendenciasChat, { type PendenciaChat } from '@/components/feature/assistente/PendenciasChat';
 import HistoricoPagamentos from '@/components/feature/assistente/HistoricoPagamentos';
 import { minhasTarefasPendentes } from '@/components/feature/assistente/TarefasPendencia';
+import { useJanelaAberta } from '@/hooks/useJanelaAberta';
 
 export const ASSISTENTE_OWNER_EMAIL = 'natalinojr.engel@gmail.com';
 
@@ -431,6 +432,8 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
   // Arrastar o botão redondo: só vira arrasto depois de 8 px, senão um toque tremido não abriria.
   const [posFab, setPosFab] = useState<PosFab | null>(() => lerPosFab());
   const [arrastandoFab, setArrastandoFab] = useState<{ x: number; y: number } | null>(null);
+  // Com uma janela aberta o botão some (no celular tampava o "Salvar"; a janela fica numa camada abaixo dele).
+  const janelaAberta = useJanelaAberta();
   const arrastoFab = useRef<{ x0: number; y0: number; moveu: boolean } | null>(null);
   const ignorarCliqueFab = useRef(false);
   const [, setTamanhoTela] = useState(0);
@@ -1943,7 +1946,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
         setModo(temNovidade || irEquipe || irPendencias ? 'full' : 'mini');
       }}
       style={centro ? { left: centro.x - FAB_R, top: centro.y - FAB_R, touchAction: 'none' } : { touchAction: 'none' }}
-      className={`fixed z-[55] ${centro ? '' : 'bottom-5 right-5'} w-14 h-14 rounded-full bg-violet-600 hover:bg-violet-500 text-white shadow-lg flex items-center justify-center ${arrastandoFab ? 'cursor-grabbing scale-110' : 'cursor-pointer'} select-none`}
+      className={`fixed z-[55] ${janelaAberta ? 'invisible' : ''} ${centro ? '' : 'bottom-5 right-5'} w-14 h-14 rounded-full bg-violet-600 hover:bg-violet-500 text-white shadow-lg flex items-center justify-center ${arrastandoFab ? 'cursor-grabbing scale-110' : 'cursor-pointer'} select-none`}
       aria-label={temNovidade ? `Assistente: ${naoLidas.count} ${naoLidas.count === 1 ? 'mensagem nova' : 'mensagens novas'}` : 'Falar com o assistente'}
       title={naoLidas.previa ?? undefined}
     >

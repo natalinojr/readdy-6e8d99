@@ -254,7 +254,7 @@ export default function FluxoCaixaTab() {
       </div>
 
       {/* KPIs */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 max-sm:[&>*:last-child:nth-child(odd)]:col-span-2 sm:grid-cols-3 gap-3">
         <KpiCard label="Total Entradas" icon="ri-arrow-down-circle-line" value={formatCurrency(totalEntradas)} valueTone="text-emerald-700" atual={totalEntradas} semVariacao />
         <KpiCard label="Total Saídas" icon="ri-arrow-up-circle-line" value={formatCurrency(totalSaidas)} valueTone="text-red-600" atual={totalSaidas} semVariacao />
         <KpiCard label="Saldo do Período" icon="ri-scales-line" value={formatCurrency(saldo)} valueTone={saldo >= 0 ? 'text-amber-700' : 'text-red-600'} atual={saldo} semVariacao />

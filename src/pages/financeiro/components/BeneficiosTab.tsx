@@ -116,7 +116,7 @@ export default function BeneficiosTab() {
         </button>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 max-sm:[&>*:last-child:nth-child(odd)]:col-span-2 sm:grid-cols-3 gap-3">
         <KpiCard label="Vale alimentação do mês" icon="ri-restaurant-line" value={formatCurrency(totalMes)} sub={mesExtenso(mes)} atual={totalMes} semVariacao />
         <KpiCard label="Funcionários com VA" icon="ri-team-line" value={String(jaLancados.size)} sub={`${funcs.filter(f => f.status === 'active').length} ativos`} atual={jaLancados.size} semVariacao />
         <KpiCard label="Pago" icon="ri-checkbox-circle-line" value={`${lotes.reduce((s, l) => s + l.pagas, 0)} de ${lotes.reduce((s, l) => s + l.contas.length, 0)}`} sub="contas deste mês" atual={lotes.reduce((s, l) => s + l.pagas, 0)} semVariacao />

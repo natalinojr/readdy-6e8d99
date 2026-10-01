@@ -7,6 +7,7 @@ import type { Purchase } from '@/types/financeiro';
 import { ehAcrescimoNota } from '@/lib/acrescimoNota';
 import { avisar } from '@/components/base/Dialogos';
 import DetalharItensModal from './DetalharItensModal';
+import { un as unLabel } from '@/lib/vinculoConversao';
 
 interface BillInstallment {
   id: string;
@@ -305,29 +306,29 @@ export default function DetalhePurchaseModal({ purchase, installments, loadingIn
           </div>
         </div>
 
-        <div className="p-6 space-y-4">
+        <div className="p-4 sm:p-6 space-y-4">
           {/* KPIs */}
-          <div className="grid grid-cols-3 gap-3">
-            <div className="bg-zinc-50 rounded-xl p-3">
+          <div className="grid grid-cols-3 gap-2 sm:gap-3">
+            <div className="bg-zinc-50 rounded-xl p-2.5 sm:p-3 min-w-0">
               <p className="text-xs text-zinc-500 mb-0.5">Forma de Pagamento</p>
               <p className="text-sm font-semibold text-zinc-800">{purchase.payment_method}</p>
             </div>
-            <div className="bg-zinc-50 rounded-xl p-3">
+            <div className="bg-zinc-50 rounded-xl p-2.5 sm:p-3 min-w-0">
               <p className="text-xs text-zinc-500 mb-0.5">Status</p>
               <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${STATUS_BADGE[purchase.payment_status] ?? 'bg-zinc-100 text-zinc-600'}`}>
                 {STATUS_LABEL[purchase.payment_status] ?? purchase.payment_status}
               </span>
             </div>
-            <div className="bg-zinc-50 rounded-xl p-3">
+            <div className="bg-zinc-50 rounded-xl p-2.5 sm:p-3 min-w-0">
               <p className="text-xs text-zinc-500 mb-0.5">Total</p>
-              <p className="text-sm font-bold text-zinc-900">{formatCurrency(purchase.total_amount)}</p>
+              <p className="text-sm font-bold text-zinc-900 whitespace-nowrap">{formatCurrency(purchase.total_amount)}</p>
             </div>
           </div>
 
           {purchase.notes && (
             <div className="bg-amber-50 border border-amber-200 rounded-xl p-3">
               <p className="text-xs font-semibold text-amber-700 mb-0.5">Observações</p>
-              <p className="text-sm text-amber-800">{purchase.notes}</p>
+              <p className="text-sm text-amber-800 [overflow-wrap:anywhere]">{purchase.notes}</p>
             </div>
           )}
 
@@ -626,7 +627,7 @@ export default function DetalhePurchaseModal({ purchase, installments, loadingIn
                                   className={'text-xs border rounded px-1.5 py-1 max-w-[220px] bg-white ' + (links[item.id]?.ingredient_id ? 'border-green-300' : 'border-amber-300')}
                                 >
                                   <option value="">Não entra no estoque</option>
-                                  {ingredients.map(i => <option key={i.id} value={i.id}>{i.name}{i.unit ? ' (' + i.unit + ')' : ''}</option>)}
+                                  {ingredients.map(i => <option key={i.id} value={i.id}>{i.name}{i.unit ? ' (' + unLabel(i.unit) + ')' : ''}</option>)}
                                 </select>
                                 {links[item.id]?.ingredient_id && (
                                   <>
@@ -753,7 +754,7 @@ export default function DetalhePurchaseModal({ purchase, installments, loadingIn
                                         className={'flex-1 min-w-[160px] max-w-[260px] text-xs border rounded-md px-1.5 py-1 bg-white ' + (links[item.id]?.ingredient_id ? 'border-green-300' : 'border-amber-300')}
                                       >
                                         <option value="">Não entra no estoque</option>
-                                        {ingredients.map(i => <option key={i.id} value={i.id}>{i.name}{i.unit ? ' (' + i.unit + ')' : ''}</option>)}
+                                        {ingredients.map(i => <option key={i.id} value={i.id}>{i.name}{i.unit ? ' (' + unLabel(i.unit) + ')' : ''}</option>)}
                                       </select>
                                       {links[item.id]?.ingredient_id && (
                                         <span className="flex items-center gap-1 whitespace-nowrap">

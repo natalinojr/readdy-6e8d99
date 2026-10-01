@@ -8,11 +8,13 @@ import type {
   ChecklistItem, TaskAnexo, TaskComment, TaskDetail, TaskList, TaskRow, TaskStatus, TaskTag,
 } from '../hooks/useTarefas';
 import { EU_DEMO, USUARIOS_DEMO } from './modoDemo';
+import { statusPorCategoria } from '../lib/statusFeito';
 
 const STATUS = (listId: string): TaskStatus[] => [
   { id: `${listId}-todo`, name: 'A fazer', color: '#94a3b8', category: 'todo', sort_order: 0 },
   { id: `${listId}-doing`, name: 'Em andamento', color: '#3b82f6', category: 'in_progress', sort_order: 1 },
-  { id: `${listId}-done`, name: 'Concluído', color: '#22c55e', category: 'done', sort_order: 2 },
+  { id: `${listId}-feito`, name: 'Feito', color: '#14b8a6', category: 'done', keep_visible: true, sort_order: 2 },
+  { id: `${listId}-done`, name: 'Concluído', color: '#22c55e', category: 'done', sort_order: 3 },
 ];
 
 const LISTAS: TaskList[] = [
@@ -144,9 +146,9 @@ export function useTarefasDemo() {
           const lista = lists.find((l) => l.id === n.list_id)!;
           const st = typeof p.status_id === 'string'
             ? lista.statuses.find((s) => s.id === p.status_id)
-            : typeof p.status_category === 'string' ? lista.statuses.find((s) => s.category === p.status_category)
+            : typeof p.status_category === 'string' ? statusPorCategoria(lista.statuses, p.status_category, p.status_keep_visible === true)
               : p.status_action === 'undone' ? lista.statuses[0] : undefined;
-          if (st) { n.status_id = st.id; n.status_category = st.category; n.completed_at = st.category === 'done' ? new Date().toISOString() : null; }
+          if (st) { n.status_id = st.id; n.status_category = st.category; n.status_keep_visible = !!st.keep_visible; n.completed_at = st.category === 'done' ? new Date().toISOString() : null; }
           if (p.time_plan) n.time_estimate_minutes = Object.values((p.time_plan as { dias: Record<string, number> }).dias).reduce((a, b) => a + b, 0);
           return n;
         });

@@ -10,6 +10,7 @@ import type { CampoCustom, ChecklistTemplate, TaskAnexo, TaskDetail, TaskList, T
 import { PRIORIDADES } from '../hooks/useTarefas';
 import type { UsuarioOption } from '../lib/agrupamento';
 import { CATEGORIAS_GENERICAS, camposDaLista } from '../lib/agrupamento';
+import { GRUPO_FEITO, ehFeito } from '../lib/statusFeito';
 import type { ColunaId } from '../lib/colunas';
 import { useVoltarFecha } from '../lib/mobile';
 import { formatarDuracao, formatarRelogio, segundosRegistrados, useAgora } from '../lib/tempo';
@@ -235,9 +236,9 @@ export default function TaskDrawer({
   // Campos que mudam por aqui vêm sempre do detalhe recém-carregado.
   const atual: TaskRow = { ...linha, assignee_id: detail.assignee_id, assignee_name: detail.assignee_name, assignees: detail.assignees ?? linha.assignees, priority: detail.priority, due_date: detail.due_date, tags: detail.tags };
 
-  const nomeStatus = statusAtual?.name
+  const nomeStatus = statusAtual?.name ?? (ehFeito(linha) ? GRUPO_FEITO.label : undefined)
     ?? CATEGORIAS_GENERICAS.find((c) => c.key === linha.status_category)?.label ?? 'Sem status';
-  const corStatus = statusAtual?.color
+  const corStatus = statusAtual?.color ?? (ehFeito(linha) ? GRUPO_FEITO.color : undefined)
     ?? CATEGORIAS_GENERICAS.find((c) => c.key === linha.status_category)?.color ?? '#94a3b8';
   const prio = PRIORIDADES.find((p) => p.value === detail.priority);
   const due = rotuloVencimento(atual);

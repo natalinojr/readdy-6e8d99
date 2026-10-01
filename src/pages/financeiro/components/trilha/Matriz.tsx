@@ -72,12 +72,42 @@ function Linha({ c, onAbrir }: { c: CasoTrilha; onAbrir: () => void }) {
   );
 }
 
+/** Linha do celular: a tabela tem 1040px e cortava até o valor. Mostra nome, valor, as fases em
+ *  bolinhas e o próximo passo; tocar abre o detalhe com o texto de todas as fases (2026-09-30). */
+function LinhaCelular({ c, onAbrir }: { c: CasoTrilha; onAbrir: () => void }) {
+  const feitas = c.etapas.filter((e) => e.estado === 'ok' || e.estado === 'na').length;
+  const cor = c.situacao === 'atencao' ? 'bg-red-500' : c.situacao === 'ok' ? 'bg-emerald-500' : 'bg-amber-400';
+  const tp = ROTULO_TIPO[c.tipo];
+  const proxima = c.etapas.find((e) => e.estado !== 'ok' && e.estado !== 'na' && e.estado !== 'espera');
+  return (
+    <button onClick={onAbrir} className="w-full text-left flex items-stretch gap-2.5 px-4 py-2.5 active:bg-zinc-50 cursor-pointer">
+      <span className={`w-1 rounded-full shrink-0 ${cor}`} />
+      <span className="min-w-0 flex-1">
+        <span className="flex items-start justify-between gap-2">
+          <span className="text-sm font-semibold text-zinc-800 leading-snug break-words min-w-0">{c.titulo}</span>
+          <span className="text-sm font-bold tabular-nums text-zinc-900 whitespace-nowrap">{fmtBRL(c.valor)}</span>
+        </span>
+        <span className="block text-[11px] text-zinc-400 mt-0.5"><span className={`${tp.cls} px-1.5 py-px rounded font-semibold`}>{tp.t}</span> {diaBR(c.data)} · {c.subtitulo}</span>
+        <span className="mt-1.5 flex items-center gap-1.5">
+          <span className="flex gap-0.5">{c.etapas.map((e) => <span key={e.id} className={`w-3 h-1 rounded-full ${EST[e.estado].cor}`} />)}</span>
+          <span className="text-[10px] text-zinc-400">{feitas} de 6 fases</span>
+        </span>
+        {proxima && (
+          <span className={`block mt-1 text-[11px] leading-snug break-words ${grave(proxima.estado) ? 'text-red-600' : proxima.estado === 'prazo' ? 'text-sky-700' : 'text-amber-700'}`}>
+            <b>{NOMES_ETAPA[proxima.id]}:</b> {proxima.falta ? `Falta: ${proxima.falta}` : semNaoPrecisa(proxima.resumo)}
+          </span>
+        )}
+      </span>
+    </button>
+  );
+}
+
 export default function Matriz({ casos, onAbrir }: { casos: CasoTrilha[]; onAbrir: (c: CasoTrilha) => void }) {
   const [limite, setLimite] = useState(LIMITE_INICIAL);
   let restante = limite;
   return (
     <div className="bg-white rounded-2xl border border-zinc-200 overflow-hidden">
-      <div className="px-5 py-3 border-b border-zinc-100 flex items-center justify-between gap-3 flex-wrap">
+      <div className="px-4 sm:px-5 py-3 border-b border-zinc-100 flex items-center justify-between gap-3 flex-wrap">
         <div className="min-w-0">
           <h3 className="text-sm font-bold text-zinc-800">Todas as despesas do mês, fase a fase</h3>
           <p className="text-xs text-zinc-400">Cada linha é o caminho de uma despesa — o que está feito fica discreto; o que falta aparece em destaque com o próximo passo. Clique na linha para abrir</p>
@@ -90,7 +120,29 @@ export default function Matriz({ casos, onAbrir }: { casos: CasoTrilha[]; onAbri
           <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full border border-dashed border-zinc-400" />não precisa</span>
         </div>
       </div>
-      <div className="overflow-x-auto">
+      <div className="sm:hidden pb-1">
+        {casos.length === 0 && <p className="py-14 text-center text-sm text-zinc-400">Nenhuma despesa com esses filtros</p>}
+        {(() => {
+          let resta = limite;
+          return GRUPOS.map((g) => {
+            const cs = casos.filter((c) => c.situacao === g.id).sort((a, b) => b.valor - a.valor);
+            if (!cs.length) return null;
+            const mostrar = cs.slice(0, Math.max(0, resta));
+            resta -= mostrar.length;
+            return (
+              <div key={g.id}>
+                <div className="px-4 pt-3 pb-1 flex items-center gap-2">
+                  <span className={`w-6 h-6 rounded-md flex items-center justify-center ${g.cor}`}><i className={`${g.icone} text-sm`} /></span>
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-zinc-600">{g.nome}</span>
+                  <span className="text-[11px] text-zinc-400">· {cs.length} · {fmtBRL(cs.reduce((s, c) => s + c.valor, 0))}</span>
+                </div>
+                <div className="divide-y divide-zinc-100">{mostrar.map((c) => <LinhaCelular key={c.key} c={c} onAbrir={() => onAbrir(c)} />)}</div>
+              </div>
+            );
+          });
+        })()}
+      </div>
+      <div className="hidden sm:block overflow-x-auto">
         <div className="min-w-[1040px] pb-2">
           <div className={`grid ${COLS} gap-1.5 items-center px-4 py-2.5 border-b border-zinc-200 bg-white`}>
             <span className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400 pl-3.5">Despesa</span>

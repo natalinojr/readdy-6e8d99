@@ -318,8 +318,10 @@ export default function ViewLista({
     });
   };
 
+  // Ordenação por coluna só vale com a coluna visível (escondida, volta a ordem manual).
+  const ordenacaoAtiva = !!ordenacao && colunasVisiveis.includes(ordenacao.col);
   const ordenar = (lista: TaskRow[]): TaskRow[] => {
-    if (!ordenacao || !colunasVisiveis.includes(ordenacao.col)) return lista;
+    if (!ordenacao || !ordenacaoAtiva) return lista;
     const sinal = ordenacao.dir === 'asc' ? 1 : -1;
     const contagemSub = (id: string) => tasks.filter((t) => t.parent_task_id === id).length;
     const comValor = lista.map((t) => ({ t, v: valorOrdenacao(ordenacao.col, t, contagemSub(t.id), usuarios, campos, efetivas.get(t.id)) }));
@@ -556,8 +558,10 @@ export default function ViewLista({
   // ele começa recolhido — concluídas/canceladas acumulam e só atrapalham.
   const categoriaDoGrupo = (grupo: Grupo): string | null => {
     if (groupBy !== 'status' || !grupo.key) return null;
-    if (!list) return grupo.key; // cross-pasta: a chave já é a categoria
-    return list.statuses.find((s) => s.id === grupo.key)?.category ?? null;
+    if (!list) return grupo.key; // cross-pasta: a chave já é a categoria (ou 'feito')
+    const s = list.statuses.find((x) => x.id === grupo.key);
+    if (s?.category === 'done' && s.keep_visible) return 'feito'; // "Feito" fica aberto
+    return s?.category ?? null;
   };
 
   // Soma do grupo: as tarefas dele + as subtarefas delas (o trabalho da
@@ -630,6 +634,63 @@ export default function ViewLista({
     await gravar('update_task', { task_id: task.id, ...mov.patch, sort_order: novoSort });
   };
 
+  // Arrastar no celular: o arrasto nativo (HTML5) não funciona com o dedo, então a
+  // alça ⋮⋮ do cartão usa pointer events — acha a linha embaixo do dedo pelos
+  // data-attributes e solta com o mesmo `soltar` do computador (2026-09-30).
+  const rolagemToque = useRef<{ el: HTMLElement | Window; vel: number; timer: number | null }>({ el: window, vel: 0, timer: null });
+  const pararRolagemToque = () => {
+    const r = rolagemToque.current;
+    if (r.timer !== null) window.clearInterval(r.timer);
+    r.timer = null;
+    r.vel = 0;
+  };
+  useEffect(() => pararRolagemToque, []);
+  const iniciarArrastoToque = (e: ReactPointerEvent<HTMLElement>, task: TaskRow, grupo: Grupo) => {
+    e.stopPropagation();
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* toque já captura sozinho */ }
+    let el: HTMLElement | null = e.currentTarget.parentElement;
+    while (el && !(el.scrollHeight > el.clientHeight && /(auto|scroll)/.test(getComputedStyle(el).overflowY))) el = el.parentElement;
+    rolagemToque.current.el = el ?? window;
+    setArrasto({ taskId: task.id, grupoKey: grupo.key });
+    setAlvoArrasto(null);
+    navigator.vibrate?.(15);
+  };
+  const moverArrastoToque = (e: ReactPointerEvent<HTMLElement>) => {
+    if (!arrasto) return;
+    const alvo = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
+    const linha = alvo?.closest<HTMLElement>('[data-tarefa-id]');
+    if (linha?.dataset.grupoKey !== undefined) {
+      const r = linha.getBoundingClientRect();
+      const antes = e.clientY < r.top + r.height / 2;
+      const taskId = linha.dataset.tarefaId!;
+      if (alvoArrasto?.taskId !== taskId || alvoArrasto.antes !== antes) setAlvoArrasto({ taskId, grupoKey: linha.dataset.grupoKey || null, antes });
+    } else if (!linha) { // subtarefa não é alvo: fica onde estava
+      const fim = alvo?.closest<HTMLElement>('[data-grupo-fim]');
+      const grupoKey = fim?.dataset.grupoFim || null;
+      if (fim && (alvoArrasto?.taskId !== null || alvoArrasto.grupoKey !== grupoKey)) {
+        setAlvoArrasto({ taskId: null, grupoKey, antes: false });
+      }
+    }
+    // Perto da borda de cima/de baixo a lista rola sozinha (lista maior que a tela).
+    const rol = rolagemToque.current;
+    const caixa = rol.el instanceof Window ? { top: 0, bottom: window.innerHeight } : rol.el.getBoundingClientRect();
+    const margem = 70;
+    rol.vel = e.clientY < caixa.top + margem ? -12 : e.clientY > caixa.bottom - margem ? 12 : 0;
+    if (rol.vel && rol.timer === null) rol.timer = window.setInterval(() => rol.el.scrollBy(0, rol.vel), 16);
+    if (!rol.vel) pararRolagemToque();
+  };
+  const terminarArrastoToque = (cancelado: boolean) => {
+    pararRolagemToque();
+    const alvo = alvoArrasto;
+    const grupo = alvo ? grupos.find((g) => g.key === alvo.grupoKey) : undefined;
+    if (cancelado || !alvo || !grupo) {
+      setArrasto(null);
+      setAlvoArrasto(null);
+      return;
+    }
+    soltar(grupo, alvo.taskId, alvo.antes);
+  };
+
   const renderLinha = (task: TaskRow, nivel: number, grupo?: Grupo) => {
     const concluida = task.status_category === 'done';
     const subtarefas = tasks.filter((t) => t.parent_task_id === task.id);
@@ -644,12 +705,14 @@ export default function ViewLista({
     // Pasta só de leitura (ou tarefa de pasta alheia vista em "Minhas tarefas" — aí o servidor decide).
     const podeRenomear = list?.access !== 'view';
     // Enquanto renomeia, a linha não arrasta (senão selecionar o texto com o mouse puxava a linha).
-    const arrastavel = nivel === 0 && !!grupo && !ordenacao && !renomeando;
+    const arrastavel = nivel === 0 && !!grupo && !ordenacaoAtiva && !renomeando;
     const alvoAqui = alvoArrasto?.taskId === task.id && arrasto?.taskId !== task.id;
 
     return (
       <div key={task.id}>
         <div
+          data-tarefa-id={task.id}
+          data-grupo-key={arrastavel ? (grupo!.key ?? '') : undefined}
           draggable={arrastavel}
           onDragStart={arrastavel ? (e) => {
             e.dataTransfer.effectAllowed = 'move';
@@ -683,9 +746,17 @@ export default function ViewLista({
           {alvoAqui && (
             <span className={`pointer-events-none absolute left-2 right-2 h-0.5 rounded bg-indigo-500 z-10 ${alvoArrasto!.antes ? '-top-px' : '-bottom-px'}`} />
           )}
-          {arrastavel && (
-            <span className="hidden md:block absolute left-0.5 top-1/2 -translate-y-1/2 text-slate-300 opacity-0 group-hover:opacity-100 cursor-grab" title="Arraste para mudar a ordem">
-              <GripVertical size={12} />
+          {/* Alça do computador: aparece no hover, à esquerda da caixinha. Com a lista
+              ordenada por coluna fica apagada e explica por que não arrasta. */}
+          {nivel === 0 && !!grupo && !renomeando && (
+            <span
+              className={`hidden md:flex absolute left-0 top-0 bottom-0 w-4 items-center justify-center opacity-0 group-hover:opacity-100 ${
+                arrastavel ? 'text-slate-400 hover:text-indigo-500 cursor-grab active:cursor-grabbing' : 'text-slate-200 cursor-not-allowed'
+              }`}
+              title={arrastavel ? 'Arraste para mudar a ordem' : 'A lista está ordenada por uma coluna — clique no título da coluna até a seta sumir para voltar à ordem manual e poder arrastar'}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <GripVertical size={15} />
             </span>
           )}
           {/* Seleção — só aparece no hover (ou já com alguma seleção ativa) pra não poluir a linha à toa. */}
@@ -801,6 +872,23 @@ export default function ViewLista({
           {task.recurrence?.freq && (
             <span title={`${rotuloRecorrencia(task.recurrence)}. ${DICA_RECORRENCIA}`} className="shrink-0 text-slate-300">
               <Repeat size={11} />
+            </span>
+          )}
+
+          {arrastavel && (
+            <span
+              role="button"
+              aria-label="Arraste para mudar a ordem"
+              title="Arraste para mudar a ordem"
+              onClick={(e) => e.stopPropagation()}
+              onPointerDown={(e) => iniciarArrastoToque(e, task, grupo!)}
+              onPointerMove={moverArrastoToque}
+              onPointerUp={() => terminarArrastoToque(false)}
+              onPointerCancel={() => terminarArrastoToque(true)}
+              className="md:hidden shrink-0 -my-1 -mr-2 px-2 py-2 text-slate-300 active:text-indigo-500 select-none"
+              style={{ touchAction: 'none' }}
+            >
+              <GripVertical size={18} />
             </span>
           )}
 
@@ -1112,8 +1200,9 @@ export default function ViewLista({
 
             {!recolhido && (
               <div
+                data-grupo-fim={grupo.key ?? ''}
                 onDragOver={(e) => {
-                  if (!arrasto || ordenacao) return;
+                  if (!arrasto || ordenacaoAtiva) return;
                   e.preventDefault();
                   if (alvoArrasto?.taskId !== null || alvoArrasto.grupoKey !== grupo.key) {
                     setAlvoArrasto({ taskId: null, grupoKey: grupo.key, antes: false });
@@ -1121,7 +1210,7 @@ export default function ViewLista({
                 }}
                 onDrop={(e) => {
                   e.preventDefault();
-                  if (arrasto && !ordenacao) soltar(grupo, null, false);
+                  if (arrasto && !ordenacaoAtiva) soltar(grupo, null, false);
                 }}
                 className={`bg-white rounded-xl border divide-y divide-slate-100 overflow-hidden transition ${
                   arrasto && alvoArrasto?.grupoKey === grupo.key && alvoArrasto.taskId === null

@@ -16,6 +16,7 @@ import { useVoltarFecha } from '@/lib/voltarAndroid';
 import { ACOES, GRUPOS } from './acoes';
 import { acaoLiberada, useAcessoAcoes } from './acoes/acesso';
 import { useFabArrastavel } from './useFabArrastavel';
+import { useJanelaAberta } from '@/hooks/useJanelaAberta';
 import { useEquipeNoChat } from '@/components/feature/equipe/useEquipeNoChat';
 import AvisosConversa, { LinhaAvisos, useAvisos } from '@/components/feature/avisos/AvisosConversa';
 import { useAuth } from '@/contexts/AuthContext';
@@ -69,6 +70,8 @@ export default function AcoesRapidasFlutuante({ variant }: { variant: 'floating'
   useVoltarFecha(variant === 'floating' && aberto, () => setAberto(false), 'acoes-rapidas-painel');
   useVoltarFecha(aberto && !!acao, () => setAcao(null), 'acoes-rapidas-acao');
   // O botão fechado anda pela tela como o do assistente do dono (arrasta e ele fica lá).
+  // Com uma janela aberta o botão some (no celular tampava o "Salvar"; a janela fica numa camada abaixo dele).
+  const janelaAberta = useJanelaAberta();
   const fab = useFabArrastavel(() => {
     if (naoLidas) setAba('conversas');
     else if (pend.novas) setPendAberta(true);
@@ -88,7 +91,7 @@ export default function AcoesRapidasFlutuante({ variant }: { variant: 'floating'
   if (!aberto) {
     return (
       <button {...fab.props}
-        className={`fixed z-[55] ${fab.classePosicao} w-14 h-14 rounded-full bg-violet-600 hover:bg-violet-500 text-white shadow-lg flex items-center justify-center ${fab.arrastando ? 'cursor-grabbing scale-110' : 'cursor-pointer'} select-none`}
+        className={`fixed z-[55] ${janelaAberta ? 'invisible' : ''} ${fab.classePosicao} w-14 h-14 rounded-full bg-violet-600 hover:bg-violet-500 text-white shadow-lg flex items-center justify-center ${fab.arrastando ? 'cursor-grabbing scale-110' : 'cursor-pointer'} select-none`}
         aria-label={bolinha ? `Chat: ${bolinha} ${bolinha === 1 ? 'novidade' : 'novidades'}` : 'Chat e ações rápidas'}>
         <i className="ri-chat-3-line text-2xl" />
         {bolinha > 0 && (

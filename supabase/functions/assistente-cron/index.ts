@@ -653,6 +653,56 @@ async function caixasSemJustificativa(admin: SupabaseClient, tenants: Array<{ id
   return faltam.length;
 }
 
+// ── Caixa fechou e o turno ficou aberto (dono, 2026-09-30) ───────────────────
+// O "Fechamento do turno" só sai quando a SESSÃO fecha; a equipe às vezes fecha só o caixa (Vila Leste
+// 29/09) e o turno seguinte junta dois dias. Rodada periódica: sessão aberta (não treino) cujos caixas
+// estão TODOS fechados há TURNO_ESPERA_MIN (o normal é fechar a sessão segundos depois do caixa) →
+// avisa no chat do ERPOS (conversa Financeiro, tipo 'caixa') + celular. Uma vez por "último caixa
+// fechado": abriu outro caixa na mesma sessão e fechou de novo sem fechar o turno → avisa de novo.
+const TURNO_ESPERA_MIN = 20;
+const CHAVE_TURNO_AVISADO = 'session_open_warned';
+
+async function turnosAbertosSemCaixa(admin: SupabaseClient, tenants: Array<{ id: string; name: string }>, ownerChat: string | null, dry: boolean) {
+  const { data: sess } = await admin.from('sessions').select('id, tenant_id, number, opened_at, is_training')
+    .in('tenant_id', tenants.map((t) => t.id)).eq('status', 'open');
+  const abertas = ((sess ?? []) as Array<{ id: string; tenant_id: string; number: string | null; opened_at: string; is_training: boolean | null }>)
+    .filter((s) => !s.is_training);
+  if (!abertas.length) return 'nenhum';
+  const { data: crs } = await admin.from('cash_registers').select('session_id, status, closed_at').in('session_id', abertas.map((s) => s.id));
+  const porSessao = new Map<string, Array<{ status: string; closed_at: string | null }>>();
+  for (const c of (crs ?? []) as Array<{ session_id: string; status: string; closed_at: string | null }>) {
+    porSessao.set(c.session_id, [...(porSessao.get(c.session_id) ?? []), c]);
+  }
+  const { data: marca } = await admin.from('asst_settings').select('value').eq('key', CHAVE_TURNO_AVISADO).maybeSingle();
+  const avisados = (marca?.value ?? {}) as Record<string, string>;
+  const limite = Date.now() - TURNO_ESPERA_MIN * 60_000;
+  const faltam: Array<{ s: typeof abertas[number]; ultimo: string }> = [];
+  for (const s of abertas) {
+    const cx = porSessao.get(s.id) ?? [];
+    if (!cx.length || cx.some((c) => c.status !== 'closed' || !c.closed_at)) continue; // ainda tem caixa aberto
+    const ultimo = cx.map((c) => String(c.closed_at)).sort().pop()!;
+    if (Date.parse(ultimo) > limite || avisados[s.id] === ultimo) continue;
+    faltam.push({ s, ultimo });
+  }
+  if (dry) return faltam.length ? `${faltam.length} turno(s) aberto(s) com o caixa fechado` : 'nenhum';
+  if (!faltam.length || !ownerChat) return faltam.length;
+  const novo = { ...avisados };
+  for (const { s, ultimo } of faltam) {
+    novo[s.id] = ultimo; // antes de mandar: duas rodadas juntas não duplicam
+    await admin.from('asst_settings').upsert({ key: CHAVE_TURNO_AVISADO, value: novo, updated_at: new Date().toISOString() });
+    const nomeLoja = tenants.find((t) => t.id === s.tenant_id)?.name ?? '';
+    const sessao = s.number ? `sessão #${s.number}` : 'sessão';
+    const texto = `⚠️ *Turno ainda aberto — ${nomeLoja}*\nO caixa fechou ${diaHora(ultimo)}, mas a ${sessao} (aberta ${diaHora(s.opened_at)}) continua aberta no PDV.\nFeche o turno no PDV para sair o Fechamento do turno — senão o próximo fechamento junta mais de um dia.`;
+    await admin.from('asst_messages').insert({ channel: 'cron', chat_id: ownerChat, role: 'assistant', topic: 'pagamentos', kind: 'caixa', content: texto });
+    await pushDono(`⚠️ Turno ainda aberto — ${nomeLoja}: caixa fechou ${diaHora(ultimo)}, falta fechar o turno no PDV`);
+  }
+  // Sessões que já fecharam saem da marca.
+  const vivas = new Set(abertas.map((s) => s.id));
+  const limpo = Object.fromEntries(Object.entries(novo).filter(([id]) => vivas.has(id)));
+  await admin.from('asst_settings').upsert({ key: CHAVE_TURNO_AVISADO, value: limpo, updated_at: new Date().toISOString() });
+  return faltam.length;
+}
+
 // iFood no fechamento (dono, 2026-09-25): o iFood não passa pelo PDV, então o faturamento do turno/dia
 // não tem esses pedidos. Antes de somar, pede ao ifood-financial a busca LEVE das vendas de hoje/ontem
 // (a diária das 07h20 ainda não tem a noite). Mesmas contas da tela Financeiro › iFood › Pedidos:
@@ -723,8 +773,13 @@ async function sessaoText(admin: SupabaseClient, sessionId: string): Promise<Avi
   if (!n && !x.cancelados && !ifood) return null; // turno sem venda: não enche o chat
   const lwRev = Number(prev.total_revenue ?? 0);
   const CANAL_NOME: Record<string, string> = { delivery: 'Delivery', table: 'Mesa', qr_universal: 'QR Code', cashier: 'Caixa', immediate: 'Balcão', name: 'Senha', password: 'Senha', self_service: 'Autoatendimento', waiter: 'Garçom' };
+  // Data do turno no título (dono, 2026-09-30): o dia em que abriu; turno que passou da madrugada
+  // (fechou outro dia depois das 06h, ex.: sessão esquecida aberta) mostra o intervalo "29/09 a 30/09".
+  const fimDia = s.closed_at ? new Date(String(s.closed_at)).toLocaleDateString('en-CA', { timeZone: TZ }) : dia;
+  const fimHora = s.closed_at ? Number(new Date(String(s.closed_at)).toLocaleTimeString('en-GB', { timeZone: TZ, hour: '2-digit', hour12: false })) : 0;
+  const dataTurno = fimDia !== dia && fimHora >= 6 ? `${dmy(dia).slice(0, 5)} a ${dmy(fimDia).slice(0, 5)}` : dmy(dia).slice(0, 5);
   const l: string[] = [];
-  l.push(`🌙 *Fechamento do turno — ${String(loja?.name ?? '')}*`);
+  l.push(`🌙 *Fechamento do turno ${dataTurno} — ${String(loja?.name ?? '')}*`);
   l.push(`${s.number ? `Sessão #${s.number} · ` : ''}${diaHora(s.opened_at)} → ${diaHora(s.closed_at)}`);
   l.push('');
   l.push(`*${brl(rev)}* em ${n} pedido${n === 1 ? '' : 's'} · ticket ${brl(r.avg_ticket)}`);
@@ -815,7 +870,7 @@ async function sessaoText(admin: SupabaseClient, sessionId: string): Promise<Avi
   if (x.descontos > 0) alertas.push(`descontos ${brl(x.descontos)}`);
   if (alertas.length) { l.push(''); l.push(`⚠️ ${alertas.join(' · ')}`); }
   const painel = {
-    t: 'Fechamento do turno', s: String(loja?.name ?? ''),
+    t: `Fechamento do turno · ${dataTurno}`, s: String(loja?.name ?? ''),
     r: `${s.number ? `Sessão #${s.number} · ` : ''}${diaHora(s.opened_at)} → ${diaHora(s.closed_at)}`,
     kpi: {
       p: { l: 'Faturamento', v: brl(rev), ...(lwRev > 0 ? { var: { a: rev, b: lwRev, r: `vs ${['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'][weekday(lwDay)]} passada` } } : {}), ...(ifood ? { x: `Total com iFood: ${brl(rev + ifood.vendido)}` } : {}) },
@@ -839,7 +894,7 @@ async function sessaoText(admin: SupabaseClient, sessionId: string): Promise<Avi
   };
   return {
     texto: l.join('\n'),
-    resumo: `🌙 Fechamento do turno — ${String(loja?.name ?? '')}: ${brl(rev)} em ${n} pedido${n === 1 ? '' : 's'}`,
+    resumo: `🌙 Fechamento do turno ${dataTurno} — ${String(loja?.name ?? '')}: ${brl(rev)} em ${n} pedido${n === 1 ? '' : 's'}`,
     painel,
   };
 }
@@ -1564,6 +1619,10 @@ async function proactive(admin: SupabaseClient, cfg: Record<string, any>, ownerC
   // Caixa que fechou com diferença e o operador não justificou: avisa assim mesmo depois da espera.
   if (only ? only === 'caixa_sem_justificativa' : !!ownerChat) {
     res.caixa_sem_justificativa = await caixasSemJustificativa(admin, tenants, ownerChat, dry);
+  }
+  // Caixa fechou e o turno (sessão) ficou aberto: o fechamento do turno não sai até alguém fechar.
+  if (only ? only === 'turno_aberto' : !!ownerChat) {
+    res.turno_aberto = await turnosAbertosSemCaixa(admin, tenants, ownerChat, dry);
   }
   if (want('anomaly')) {
     const lastCheck = state.anomaly_checked_at ? Date.parse(state.anomaly_checked_at) : 0;

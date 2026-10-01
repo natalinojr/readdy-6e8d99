@@ -10,6 +10,7 @@ import type { StatementImport } from '@/hooks/useConciliacao';
 import { linhasDoPrint, type PrintCompraLido } from '@/lib/printCompraOnline';
 import { chamarPedidos, comprovanteParaEnvio } from '@/pages/receber/pedidos/api';
 import DividirPagamento from './DividirPagamento';
+import { un as unLabel } from '@/lib/vinculoConversao';
 
 // Pagamento sem nota: lança uma DESPESA (conta a pagar já baixada, com categoria da DRE), uma
 // COMPRA (CMV, categoria de mercadoria) ou um pagamento de FREELANCER (despesa em RH que também
@@ -79,7 +80,7 @@ export function useInsumos(ativo: boolean) {
   const itens = lista && lista.tenant === user?.tenantId ? lista.itens : [];
   const options = useMemo(() => [
     { id: SEM_INSUMO, label: 'Sem insumo (não entra no estoque)', sub: null },
-    ...itens.map((i) => ({ id: i.id, label: i.name, sub: i.unit ?? null })),
+    ...itens.map((i) => ({ id: i.id, label: i.name, sub: unLabel(i.unit) })),
   ], [itens]);
   // Insumo cadastrado aqui mesmo (InsumoDoItem) entra na lista sem recarregar
   const adicionar = (ins: InsumoLista) => setLista((v) => (v && v.tenant === user?.tenantId
@@ -140,7 +141,7 @@ export function ConversaoEstoque({ ins, unidade, qtd, total, fator, onFator, fre
   const q = numBRqtd(qtd);
   const t = numBR(total) + (frete > 0 ? frete : 0);
   const entra = f > 0 && q > 0 ? q * f : NaN;
-  const un = ins.unit || 'un';
+  const un = unLabel(ins.unit);
   return (
     <div className={`rounded-lg px-2 py-1.5 text-[11px] space-y-1 ${f > 0 ? 'bg-emerald-50 text-emerald-800' : 'bg-amber-50 text-amber-800'}`}>
       <div className="flex flex-wrap items-center gap-1.5">

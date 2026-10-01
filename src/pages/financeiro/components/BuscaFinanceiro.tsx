@@ -21,7 +21,7 @@ function comoValor(q: string): number | null {
 }
 const STATUS_CP: Record<string, string> = { pending: 'pendente', overdue: 'vencida', partial: 'parcial', paid: 'paga' };
 
-export default function BuscaFinanceiro({ podeAba, onIr }: { podeAba: (aba: string) => boolean; onIr: (params: Record<string, string>) => void }) {
+export default function BuscaFinanceiro({ podeAba, onIr, autoFocus }: { podeAba: (aba: string) => boolean; onIr: (params: Record<string, string>) => void; autoFocus?: boolean }) {
   const { user } = useAuth();
   const [q, setQ] = useState('');
   const [aberto, setAberto] = useState(false);
@@ -111,7 +111,9 @@ export default function BuscaFinanceiro({ podeAba, onIr }: { podeAba: (aba: stri
           onFocus={() => setAberto(true)}
           onKeyDown={(e) => { if (e.key === 'Escape') { setAberto(false); (e.target as HTMLInputElement).blur(); } if (e.key === 'Enter' && res[0]) escolher(res[0]); }}
           placeholder="Procurar fornecedor, nota ou valor"
-          className="flex-1 bg-transparent text-sm outline-none min-w-0"
+          autoFocus={autoFocus}
+          // 16px no celular: menor que isso o iPhone dá zoom na tela ao tocar no campo.
+          className="flex-1 bg-transparent text-base md:text-sm outline-none min-w-0"
         />
         {q && <button onClick={() => setQ('')} className="text-zinc-400 hover:text-zinc-600 cursor-pointer"><i className="ri-close-line" /></button>}
       </div>
