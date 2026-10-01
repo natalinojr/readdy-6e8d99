@@ -318,8 +318,10 @@ export default function ViewLista({
     });
   };
 
+  // Ordenação por coluna só vale com a coluna visível (escondida, volta a ordem manual).
+  const ordenacaoAtiva = !!ordenacao && colunasVisiveis.includes(ordenacao.col);
   const ordenar = (lista: TaskRow[]): TaskRow[] => {
-    if (!ordenacao || !colunasVisiveis.includes(ordenacao.col)) return lista;
+    if (!ordenacao || !ordenacaoAtiva) return lista;
     const sinal = ordenacao.dir === 'asc' ? 1 : -1;
     const contagemSub = (id: string) => tasks.filter((t) => t.parent_task_id === id).length;
     const comValor = lista.map((t) => ({ t, v: valorOrdenacao(ordenacao.col, t, contagemSub(t.id), usuarios, campos, efetivas.get(t.id)) }));
@@ -556,8 +558,10 @@ export default function ViewLista({
   // ele começa recolhido — concluídas/canceladas acumulam e só atrapalham.
   const categoriaDoGrupo = (grupo: Grupo): string | null => {
     if (groupBy !== 'status' || !grupo.key) return null;
-    if (!list) return grupo.key; // cross-pasta: a chave já é a categoria
-    return list.statuses.find((s) => s.id === grupo.key)?.category ?? null;
+    if (!list) return grupo.key; // cross-pasta: a chave já é a categoria (ou 'feito')
+    const s = list.statuses.find((x) => x.id === grupo.key);
+    if (s?.category === 'done' && s.keep_visible) return 'feito'; // "Feito" fica aberto
+    return s?.category ?? null;
   };
 
   // Soma do grupo: as tarefas dele + as subtarefas delas (o trabalho da
@@ -701,7 +705,7 @@ export default function ViewLista({
     // Pasta só de leitura (ou tarefa de pasta alheia vista em "Minhas tarefas" — aí o servidor decide).
     const podeRenomear = list?.access !== 'view';
     // Enquanto renomeia, a linha não arrasta (senão selecionar o texto com o mouse puxava a linha).
-    const arrastavel = nivel === 0 && !!grupo && !ordenacao && !renomeando;
+    const arrastavel = nivel === 0 && !!grupo && !ordenacaoAtiva && !renomeando;
     const alvoAqui = alvoArrasto?.taskId === task.id && arrasto?.taskId !== task.id;
 
     return (
@@ -742,9 +746,17 @@ export default function ViewLista({
           {alvoAqui && (
             <span className={`pointer-events-none absolute left-2 right-2 h-0.5 rounded bg-indigo-500 z-10 ${alvoArrasto!.antes ? '-top-px' : '-bottom-px'}`} />
           )}
-          {arrastavel && (
-            <span className="hidden md:block absolute left-0.5 top-1/2 -translate-y-1/2 text-slate-300 opacity-0 group-hover:opacity-100 cursor-grab" title="Arraste para mudar a ordem">
-              <GripVertical size={12} />
+          {/* Alça do computador: aparece no hover, à esquerda da caixinha. Com a lista
+              ordenada por coluna fica apagada e explica por que não arrasta. */}
+          {nivel === 0 && !!grupo && !renomeando && (
+            <span
+              className={`hidden md:flex absolute left-0 top-0 bottom-0 w-4 items-center justify-center opacity-0 group-hover:opacity-100 ${
+                arrastavel ? 'text-slate-400 hover:text-indigo-500 cursor-grab active:cursor-grabbing' : 'text-slate-200 cursor-not-allowed'
+              }`}
+              title={arrastavel ? 'Arraste para mudar a ordem' : 'A lista está ordenada por uma coluna — clique no título da coluna até a seta sumir para voltar à ordem manual e poder arrastar'}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <GripVertical size={15} />
             </span>
           )}
           {/* Seleção — só aparece no hover (ou já com alguma seleção ativa) pra não poluir a linha à toa. */}
@@ -1190,7 +1202,7 @@ export default function ViewLista({
               <div
                 data-grupo-fim={grupo.key ?? ''}
                 onDragOver={(e) => {
-                  if (!arrasto || ordenacao) return;
+                  if (!arrasto || ordenacaoAtiva) return;
                   e.preventDefault();
                   if (alvoArrasto?.taskId !== null || alvoArrasto.grupoKey !== grupo.key) {
                     setAlvoArrasto({ taskId: null, grupoKey: grupo.key, antes: false });
@@ -1198,7 +1210,7 @@ export default function ViewLista({
                 }}
                 onDrop={(e) => {
                   e.preventDefault();
-                  if (arrasto && !ordenacao) soltar(grupo, null, false);
+                  if (arrasto && !ordenacaoAtiva) soltar(grupo, null, false);
                 }}
                 className={`bg-white rounded-xl border divide-y divide-slate-100 overflow-hidden transition ${
                   arrasto && alvoArrasto?.grupoKey === grupo.key && alvoArrasto.taskId === null
