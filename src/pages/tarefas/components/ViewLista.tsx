@@ -630,6 +630,63 @@ export default function ViewLista({
     await gravar('update_task', { task_id: task.id, ...mov.patch, sort_order: novoSort });
   };
 
+  // Arrastar no celular: o arrasto nativo (HTML5) não funciona com o dedo, então a
+  // alça ⋮⋮ do cartão usa pointer events — acha a linha embaixo do dedo pelos
+  // data-attributes e solta com o mesmo `soltar` do computador (2026-09-30).
+  const rolagemToque = useRef<{ el: HTMLElement | Window; vel: number; timer: number | null }>({ el: window, vel: 0, timer: null });
+  const pararRolagemToque = () => {
+    const r = rolagemToque.current;
+    if (r.timer !== null) window.clearInterval(r.timer);
+    r.timer = null;
+    r.vel = 0;
+  };
+  useEffect(() => pararRolagemToque, []);
+  const iniciarArrastoToque = (e: ReactPointerEvent<HTMLElement>, task: TaskRow, grupo: Grupo) => {
+    e.stopPropagation();
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* toque já captura sozinho */ }
+    let el: HTMLElement | null = e.currentTarget.parentElement;
+    while (el && !(el.scrollHeight > el.clientHeight && /(auto|scroll)/.test(getComputedStyle(el).overflowY))) el = el.parentElement;
+    rolagemToque.current.el = el ?? window;
+    setArrasto({ taskId: task.id, grupoKey: grupo.key });
+    setAlvoArrasto(null);
+    navigator.vibrate?.(15);
+  };
+  const moverArrastoToque = (e: ReactPointerEvent<HTMLElement>) => {
+    if (!arrasto) return;
+    const alvo = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
+    const linha = alvo?.closest<HTMLElement>('[data-tarefa-id]');
+    if (linha?.dataset.grupoKey !== undefined) {
+      const r = linha.getBoundingClientRect();
+      const antes = e.clientY < r.top + r.height / 2;
+      const taskId = linha.dataset.tarefaId!;
+      if (alvoArrasto?.taskId !== taskId || alvoArrasto.antes !== antes) setAlvoArrasto({ taskId, grupoKey: linha.dataset.grupoKey || null, antes });
+    } else if (!linha) { // subtarefa não é alvo: fica onde estava
+      const fim = alvo?.closest<HTMLElement>('[data-grupo-fim]');
+      const grupoKey = fim?.dataset.grupoFim || null;
+      if (fim && (alvoArrasto?.taskId !== null || alvoArrasto.grupoKey !== grupoKey)) {
+        setAlvoArrasto({ taskId: null, grupoKey, antes: false });
+      }
+    }
+    // Perto da borda de cima/de baixo a lista rola sozinha (lista maior que a tela).
+    const rol = rolagemToque.current;
+    const caixa = rol.el instanceof Window ? { top: 0, bottom: window.innerHeight } : rol.el.getBoundingClientRect();
+    const margem = 70;
+    rol.vel = e.clientY < caixa.top + margem ? -12 : e.clientY > caixa.bottom - margem ? 12 : 0;
+    if (rol.vel && rol.timer === null) rol.timer = window.setInterval(() => rol.el.scrollBy(0, rol.vel), 16);
+    if (!rol.vel) pararRolagemToque();
+  };
+  const terminarArrastoToque = (cancelado: boolean) => {
+    pararRolagemToque();
+    const alvo = alvoArrasto;
+    const grupo = alvo ? grupos.find((g) => g.key === alvo.grupoKey) : undefined;
+    if (cancelado || !alvo || !grupo) {
+      setArrasto(null);
+      setAlvoArrasto(null);
+      return;
+    }
+    soltar(grupo, alvo.taskId, alvo.antes);
+  };
+
   const renderLinha = (task: TaskRow, nivel: number, grupo?: Grupo) => {
     const concluida = task.status_category === 'done';
     const subtarefas = tasks.filter((t) => t.parent_task_id === task.id);
@@ -650,6 +707,8 @@ export default function ViewLista({
     return (
       <div key={task.id}>
         <div
+          data-tarefa-id={task.id}
+          data-grupo-key={arrastavel ? (grupo!.key ?? '') : undefined}
           draggable={arrastavel}
           onDragStart={arrastavel ? (e) => {
             e.dataTransfer.effectAllowed = 'move';
@@ -801,6 +860,23 @@ export default function ViewLista({
           {task.recurrence?.freq && (
             <span title={`${rotuloRecorrencia(task.recurrence)}. ${DICA_RECORRENCIA}`} className="shrink-0 text-slate-300">
               <Repeat size={11} />
+            </span>
+          )}
+
+          {arrastavel && (
+            <span
+              role="button"
+              aria-label="Arraste para mudar a ordem"
+              title="Arraste para mudar a ordem"
+              onClick={(e) => e.stopPropagation()}
+              onPointerDown={(e) => iniciarArrastoToque(e, task, grupo!)}
+              onPointerMove={moverArrastoToque}
+              onPointerUp={() => terminarArrastoToque(false)}
+              onPointerCancel={() => terminarArrastoToque(true)}
+              className="md:hidden shrink-0 -my-1 -mr-2 px-2 py-2 text-slate-300 active:text-indigo-500 select-none"
+              style={{ touchAction: 'none' }}
+            >
+              <GripVertical size={18} />
             </span>
           )}
 
@@ -1112,6 +1188,7 @@ export default function ViewLista({
 
             {!recolhido && (
               <div
+                data-grupo-fim={grupo.key ?? ''}
                 onDragOver={(e) => {
                   if (!arrasto || ordenacao) return;
                   e.preventDefault();
