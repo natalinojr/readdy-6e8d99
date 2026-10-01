@@ -1,6 +1,7 @@
 import type { CampoCustom, TaskList, TaskRow, TaskStatus } from '../hooks/useTarefas';
 import { PRIORIDADES } from '../hooks/useTarefas';
 import { idsResponsaveis, responsaveis } from './responsaveis';
+import { GRUPO_FEITO, ehFeito, someDaTela } from './statusFeito';
 
 /** Rótulo/cor genéricos por categoria — usados quando as tarefas vêm de mais
  *  de uma pasta (Minhas/Compartilhadas/Todas) e não há um `list.statuses` único
@@ -66,7 +67,7 @@ export function aplicarFiltros(tasks: TaskRow[], f: Filtros): TaskRow[] {
     if (f.assigneeIds.length && !idsResponsaveis(t).some((id) => f.assigneeIds.includes(id))) return false;
     if (f.prioridades.length && !f.prioridades.includes(t.priority)) return false;
     if (f.tagIds.length && !t.tags.some((tag) => f.tagIds.includes(tag.id))) return false;
-    if (f.ocultarConcluidas && (t.status_category === 'done' || t.status_category === 'cancelled')) return false;
+    if (f.ocultarConcluidas && someDaTela(t)) return false; // "Feito" continua na tela
     return true;
   });
 }
@@ -111,15 +112,24 @@ export function agruparTarefas(
     if (!list) {
       // Sem uma pasta única: agrupa pela categoria (mesma em qualquer pasta),
       // não pelo status_id exato (que varia de pasta pra pasta).
+      // "Feito" (done que fica na tela) vira grupo próprio antes do Concluído — só
+      // aparece quando alguma tarefa está nele.
       const principais: Array<TaskStatus['category']> = ['todo', 'in_progress', 'done'];
-      return CATEGORIAS_GENERICAS
-        .filter((c) => principais.includes(c.key) || tasks.some((t) => t.status_category === c.key))
-        .map((c) => ({
+      const grupos: Grupo[] = [];
+      for (const c of CATEGORIAS_GENERICAS) {
+        if (c.key === 'done') {
+          const feitos = tasks.filter(ehFeito);
+          if (feitos.length) grupos.push({ ...GRUPO_FEITO, tasks: ordenar(feitos) });
+        }
+        if (!principais.includes(c.key) && !tasks.some((t) => t.status_category === c.key && !ehFeito(t))) continue;
+        grupos.push({
           key: c.key,
           label: c.label,
           color: c.color,
-          tasks: ordenar(tasks.filter((t) => t.status_category === c.key)),
-        }));
+          tasks: ordenar(tasks.filter((t) => t.status_category === c.key && !ehFeito(t))),
+        });
+      }
+      return grupos;
     }
     const statuses = list.statuses ?? [];
     return statuses.map((s) => ({
@@ -210,7 +220,10 @@ export function payloadMoverGrupo(
 ): { action: 'update_task' | 'set_field_value'; patch: Record<string, unknown> } | null {
   if (groupBy === 'status') {
     if (!destino) return null; // status é obrigatório
-    if (!list) return { action: 'update_task', patch: { status_category: destino } };
+    if (!list) {
+      if (destino === GRUPO_FEITO.key) return { action: 'update_task', patch: { status_category: 'done', status_keep_visible: true } };
+      return { action: 'update_task', patch: { status_category: destino } };
+    }
     return { action: 'update_task', patch: { status_id: destino } };
   }
   if (groupBy === 'priority') {

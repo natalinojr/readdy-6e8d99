@@ -12,13 +12,21 @@ interface StatusManagerProps {
 
 const CORES_STATUS = ['#94a3b8', '#3b82f6', '#22c55e', '#ef4444', '#f59e0b', '#8b5cf6', '#0ea5e9', '#64748b'];
 
-const CATEGORIAS: Array<{ value: TaskStatus['category']; label: string }> = [
+// 'feito' = categoria done com keep_visible: conta como concluída, mas a tarefa
+// continua na tela (só some quando vai pro "Concluído").
+type TipoStatus = TaskStatus['category'] | 'feito';
+const CATEGORIAS: Array<{ value: TipoStatus; label: string }> = [
   { value: 'backlog', label: 'Backlog' },
   { value: 'todo', label: 'A fazer' },
   { value: 'in_progress', label: 'Em andamento' },
-  { value: 'done', label: 'Concluído' },
+  { value: 'feito', label: 'Feito (fica na tela)' },
+  { value: 'done', label: 'Concluído (some)' },
   { value: 'cancelled', label: 'Cancelado' },
 ];
+const tipoDe = (s: TaskStatus): TipoStatus => (s.category === 'done' && s.keep_visible ? 'feito' : s.category);
+const gravarTipo = (t: TipoStatus) => (t === 'feito'
+  ? { category: 'done', keep_visible: true }
+  : { category: t, keep_visible: false });
 
 /**
  * Status é por pasta — cada pasta organiza o próprio fluxo (uma pasta de
@@ -35,7 +43,7 @@ export default function StatusManager({ list, write, onClose }: StatusManagerPro
   const [criando, setCriando] = useState(false);
   const [nome, setNome] = useState('');
   const [cor, setCor] = useState(CORES_STATUS[0]);
-  const [categoria, setCategoria] = useState<TaskStatus['category']>('todo');
+  const [categoria, setCategoria] = useState<TipoStatus>('todo');
   const [salvando, setSalvando] = useState(false);
   const [removendo, setRemovendo] = useState<TaskStatus | null>(null);
   const [reassignTo, setReassignTo] = useState('');
@@ -50,7 +58,7 @@ export default function StatusManager({ list, write, onClose }: StatusManagerPro
       list_id: list.id,
       name: nomeLimpo,
       color: cor,
-      category: categoria,
+      ...gravarTipo(categoria),
       sort_order: (statuses[statuses.length - 1]?.sort_order ?? 0) + 1,
     });
     setSalvando(false);
@@ -185,8 +193,8 @@ export default function StatusManager({ list, write, onClose }: StatusManagerPro
                     className="flex-1 min-w-0 text-sm border-none outline-none focus:bg-slate-50 rounded px-1 py-0.5"
                   />
                   <select
-                    value={s.category}
-                    onChange={(e) => write('update_status', { status_id: s.id, category: e.target.value })}
+                    value={tipoDe(s)}
+                    onChange={(e) => write('update_status', { status_id: s.id, ...gravarTipo(e.target.value as TipoStatus) })}
                     className="text-xs border border-slate-200 rounded-lg px-1.5 py-1 bg-white outline-none shrink-0"
                     title="Categoria (controla o comportamento do status)"
                   >
@@ -230,7 +238,7 @@ export default function StatusManager({ list, write, onClose }: StatusManagerPro
                 </select>
                 <select
                   value={categoria}
-                  onChange={(e) => setCategoria(e.target.value as TaskStatus['category'])}
+                  onChange={(e) => setCategoria(e.target.value as TipoStatus)}
                   className="flex-1 border border-slate-200 rounded-lg px-2 py-2 text-sm bg-white outline-none focus:border-indigo-300"
                 >
                   {CATEGORIAS.map((c) => (
@@ -239,7 +247,7 @@ export default function StatusManager({ list, write, onClose }: StatusManagerPro
                 </select>
               </div>
               <p className="text-[11px] text-slate-400">
-                A categoria decide o comportamento: "Concluído" marca a tarefa como feita (e gera a próxima ocorrência, se for recorrente).
+                A categoria decide o comportamento: "Concluído" marca a tarefa como feita (e gera a próxima ocorrência, se for recorrente) e ela sai da tela; "Feito" também conta como concluída, mas a tarefa continua aparecendo até ir para "Concluído".
               </p>
               <div className="flex justify-end gap-2">
                 <button

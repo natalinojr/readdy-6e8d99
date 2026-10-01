@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import type { TaskList } from '../hooks/useTarefas';
 import { CATEGORIAS_GENERICAS } from '../lib/agrupamento';
+import { GRUPO_FEITO } from '../lib/statusFeito';
 import { useIsMobile, useVoltarFecha } from '../lib/mobile';
 
 interface StatusPickerProps {
@@ -9,7 +10,7 @@ interface StatusPickerProps {
   list: TaskList | null;
   /** `getBoundingClientRect()` do botão que abriu o menu, capturado no clique. */
   anchorRect: DOMRect;
-  onEscolher: (payload: { status_id?: string; status_category?: string }) => void;
+  onEscolher: (payload: { status_id?: string; status_category?: string; status_keep_visible?: boolean }) => void;
   onClose: () => void;
 }
 
@@ -35,7 +36,11 @@ export default function StatusPicker({ list, anchorRect, onEscolher, onClose }: 
     ? [...list.statuses].sort((a, b) => a.sort_order - b.sort_order).map((s) => ({ key: s.id, label: s.name, color: s.color }))
     // Backlog fica fora na visão agregada: é categoria opcional (nem toda pasta
     // tem um status nela) e confundia quem só usa A fazer/Em andamento/Concluído.
-    : CATEGORIAS_GENERICAS.filter((c) => c.key !== 'backlog').map((c) => ({ key: c.key, label: c.label, color: c.color }));
+    // "Feito" entra antes do Concluído: concluída que continua na tela.
+    : CATEGORIAS_GENERICAS.filter((c) => c.key !== 'backlog').flatMap((c) => [
+      ...(c.key === 'done' ? [{ key: GRUPO_FEITO.key as string, label: GRUPO_FEITO.label as string, color: GRUPO_FEITO.color as string }] : []),
+      { key: c.key as string, label: c.label, color: c.color },
+    ]);
 
   const celular = useIsMobile();
 
@@ -53,7 +58,9 @@ export default function StatusPicker({ list, anchorRect, onEscolher, onClose }: 
   }, [onClose, celular]);
 
   const escolher = (key: string) => {
-    onEscolher(list ? { status_id: key } : { status_category: key });
+    if (list) onEscolher({ status_id: key });
+    else if (key === GRUPO_FEITO.key) onEscolher({ status_category: 'done', status_keep_visible: true });
+    else onEscolher({ status_category: key });
     onClose();
   };
 

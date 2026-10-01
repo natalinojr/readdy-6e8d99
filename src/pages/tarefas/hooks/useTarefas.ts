@@ -5,6 +5,7 @@ import { useToast } from '@/contexts/ToastContext';
 import { modoDemo } from '../demo/modoDemo';
 import type { Recorrencia } from '../lib/recorrencia';
 import type { Responsavel } from '../lib/responsaveis';
+import { statusPorCategoria } from '../lib/statusFeito';
 import { useTarefasDemo } from '../demo/useTarefasDemo';
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
@@ -15,6 +16,9 @@ export interface TaskStatus {
   color: string;
   category: 'backlog' | 'todo' | 'in_progress' | 'done' | 'cancelled';
   sort_order: number;
+  /** "Feito": categoria done (conta como concluída) mas a tarefa continua na tela —
+   *  não vai pro grupo recolhido nem some com "ocultar concluídas". */
+  keep_visible?: boolean;
 }
 
 export interface TaskList {
@@ -92,6 +96,8 @@ export interface TaskRow {
   title: string;
   status_id: string | null;
   status_category: TaskStatus['category'] | null;
+  /** Status atual é um "Feito" (done que fica na tela). */
+  status_keep_visible?: boolean;
   priority: number;
   assignee_id: string | null;
   assignee_name: string | null;
@@ -347,9 +353,12 @@ function useTarefasReal() {
     const lista = lists.find((l) => l.id === (p.list_id as string | undefined ?? t.list_id));
     const aplicarStatus = (s: TaskStatus | null | undefined) => {
       if (!s) return;
+      const jaConcluida = t.status_category === 'done';
       n.status_id = s.id;
       n.status_category = s.category;
-      n.completed_at = s.category === 'done' ? new Date().toISOString() : null;
+      n.status_keep_visible = !!s.keep_visible;
+      // Feito → Concluído não refaz a data (igual ao task-write).
+      n.completed_at = s.category === 'done' ? (jaConcluida ? t.completed_at : new Date().toISOString()) : null;
     };
 
     if (typeof p.title === 'string') n.title = p.title;
@@ -398,9 +407,13 @@ function useTarefasReal() {
       aplicarStatus(lista?.statuses.find((s) => s.id === p.status_id));
     } else if (typeof p.status_category === 'string') {
       const cat = p.status_category as TaskStatus['category'];
-      const s = lista?.statuses.find((x) => x.category === cat);
+      const s = lista ? statusPorCategoria(lista.statuses, cat, p.status_keep_visible === true) : undefined;
       if (s) aplicarStatus(s);
-      else { n.status_category = cat; n.completed_at = cat === 'done' ? new Date().toISOString() : null; } // pasta de outra pessoa
+      else { // pasta de outra pessoa
+        n.status_category = cat;
+        n.status_keep_visible = cat === 'done' && p.status_keep_visible === true;
+        n.completed_at = cat === 'done' ? (t.status_category === 'done' ? t.completed_at : new Date().toISOString()) : null;
+      }
     } else if (p.status_action === 'undone') {
       const s = lista?.statuses.find((x) => x.category !== 'done' && x.category !== 'cancelled');
       if (s) aplicarStatus(s);
