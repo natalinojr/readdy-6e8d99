@@ -1469,7 +1469,7 @@ export default function RHTab({ inicial }: { inicial?: RHView } = {}) {
       </div>
 
       {/* KPIs (da folha: não aparecem em Freelancers / Prestadores MEI, que têm os próprios totais) */}
-      <div className={`grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 ${activeView === 'freelancers' || activeView === 'prestadores' || activeView === 'beneficios' ? 'hidden' : ''}`}>
+      <div className={`grid grid-cols-2 max-sm:[&>*:last-child:nth-child(odd)]:col-span-2 sm:grid-cols-2 xl:grid-cols-4 gap-3 ${activeView === 'freelancers' || activeView === 'prestadores' || activeView === 'beneficios' ? 'hidden' : ''}`}>
         <KpiCard label="Funcionários ativos" icon="ri-team-line" value={String(activeCount)} sub={`${employees.length} no total`} atual={activeCount} semVariacao />
         <KpiCard label="Massa salarial" icon="ri-money-dollar-circle-line" value={formatCurrency(totalSalaryMass)} sub="Salários base ativos" atual={totalSalaryMass} semVariacao />
         <KpiCard label="Folha do mês" icon="ri-file-list-3-line" value={formatCurrency(totalLiquido)} sub={`Líquido — ${monthLabel(selectedMonth)}`} atual={totalLiquido} semVariacao />

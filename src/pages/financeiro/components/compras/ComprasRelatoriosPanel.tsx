@@ -608,7 +608,7 @@ export default function ComprasRelatoriosPanel({ purchases, onOpenPurchase }: Pr
       </div>
 
       {/* KPIs */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5 gap-3">
+      <div className="grid grid-cols-2 max-sm:[&>*:last-child:nth-child(odd)]:col-span-2 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5 gap-3">
         <KpiCard
           label="Total comprado"
           icon="ri-shopping-cart-2-line"

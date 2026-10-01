@@ -136,7 +136,7 @@ export default function ComprasCentroCustoPanel({ purchases, centers }: Props) {
         </div>
       ) : (
       <>
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 max-sm:[&>*:last-child:nth-child(odd)]:col-span-2 sm:grid-cols-3 gap-3">
         <KpiCard label="Total no período" icon="ri-shopping-cart-2-line" value={fmt(grandTotal)}
           sub={`${filteredPurchases.length} compra${filteredPurchases.length !== 1 ? 's' : ''}`} atual={grandTotal} semVariacao />
         <KpiCard label="Centros de custo" icon="ri-price-tag-3-line" value={String(comCentro.length)}

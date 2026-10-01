@@ -631,7 +631,7 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
 
       {/* KPIs do mês selecionado (por vencimento) */}
       <p className="text-[11px] font-bold uppercase tracking-wider text-zinc-500 -mb-1">Mês selecionado (por vencimento)</p>
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 max-sm:[&>*:last-child:nth-child(odd)]:col-span-2 sm:grid-cols-2 xl:grid-cols-4 gap-3">
         <KpiCard label="Total pendente" icon="ri-time-line" value={formatCurrency(totalPendente)} valueTone="text-amber-700" atual={totalPendente} semVariacao />
         <KpiCard label="Total vencido" icon="ri-alarm-warning-line" value={formatCurrency(totalVencido)} valueTone={totalVencido > 0 ? 'text-red-600' : undefined} atual={totalVencido} semVariacao />
         <KpiCard label="Total pago" icon="ri-checkbox-circle-line" value={formatCurrency(totalPago)} valueTone="text-emerald-700" atual={totalPago} semVariacao />

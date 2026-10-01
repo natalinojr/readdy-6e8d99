@@ -506,7 +506,7 @@ export default function ContasReceberTab() {
       )}
 
       {/* KPIs do mês */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 max-sm:[&>*:last-child:nth-child(odd)]:col-span-2 sm:grid-cols-2 xl:grid-cols-4 gap-3">
         <KpiCard label="A receber no mês" icon="ri-hand-coin-line" value={formatCurrency(totalPendentesMes)} valueTone="text-amber-700" atual={totalPendentesMes} semVariacao />
         <KpiCard label="Já recebido" icon="ri-checkbox-circle-line" value={formatCurrency(totalRecebidoMes)} valueTone="text-emerald-700" atual={totalRecebidoMes} semVariacao />
         <KpiCard label="Antecipado" icon="ri-flashlight-line" value={formatCurrency(totalAntecipado)} atual={totalAntecipado} semVariacao sub={antecipados.length > 0 ? `${antecipados.length} parcela(s)` : undefined} />

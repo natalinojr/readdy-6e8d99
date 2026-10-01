@@ -136,7 +136,7 @@ export default function ComprasRelatorioPanel({ purchases }: Props) {
       </div>
 
       {/* Summary KPIs */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 max-sm:[&>*:last-child:nth-child(odd)]:col-span-2 sm:grid-cols-3 gap-3">
         <KpiCard label="Total no período" icon="ri-shopping-cart-2-line" value={formatCurrency(totalGeral)}
           sub={`${porFornecedor.length} fornecedor${porFornecedor.length !== 1 ? 'es' : ''}`} atual={totalGeral} semVariacao />
         <KpiCard label="Ticket médio" icon="ri-scales-line" value={formatCurrency(mediaCompra)}
