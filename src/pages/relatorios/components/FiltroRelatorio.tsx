@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { Calendar, CalendarRange, ChevronDown } from 'lucide-react';
 import { todayBrasilia } from '@/lib/dateUtils';
 
@@ -12,6 +12,9 @@ const MESES = [
 interface FiltroRelatorioProps {
   periodo: string;
   onPeriodo: (p: string) => void;
+  /** Elemento à esquerda (ex.: toggle Calendário/Sessão). No celular vai para
+   *  a linha de baixo, junto com Mês e Período; no desktop fica antes dos presets. */
+  prefixo?: ReactNode;
 }
 
 const pad = (n: number) => String(n).padStart(2, '0');
@@ -48,7 +51,7 @@ function labelPeriodo(p: string): string {
   return p;
 }
 
-export default function FiltroRelatorio({ periodo, onPeriodo }: FiltroRelatorioProps) {
+export default function FiltroRelatorio({ periodo, onPeriodo, prefixo }: FiltroRelatorioProps) {
   const [openPanel, setOpenPanel] = useState<null | 'custom' | 'mes'>(null);
   const today = todayBrasilia();
   const [customStart, setCustomStart] = useState(today);
@@ -68,17 +71,20 @@ export default function FiltroRelatorio({ periodo, onPeriodo }: FiltroRelatorioP
   };
 
   return (
-    // flex-wrap: no celular os presets ocupam a linha toda e Mês/Personalizado
-    // descem para a linha de baixo (antes ficavam escondidos com `hidden sm:block`).
-    <div className="flex flex-wrap items-center gap-1.5 md:gap-3 min-w-0">
-      {/* Presets: rolam na horizontal quando não cabem, em vez de vazar por
-          cima dos botões vizinhos (Atualizar/Exportar) no mobile. */}
-      <div className="flex items-center gap-0.5 bg-zinc-100 rounded-lg p-0.5 md:p-1 min-w-0 overflow-x-auto scrollbar-hide">
+    // Celular (< sm): linha 1 = presets em largura total (botões iguais);
+    // linha 2 = prefixo (toggle) + Mês + Período dividindo a largura.
+    // Antes cada bloco quebrava sozinho e ficavam 3 linhas tortas e cortadas.
+    // A partir de sm, `sm:order-none` devolve a ordem do DOM (tudo numa linha).
+    <div className="flex flex-wrap items-center gap-1.5 md:gap-3 min-w-0 w-full sm:w-auto">
+      {prefixo && <div className="order-2 sm:order-none flex-shrink-0">{prefixo}</div>}
+
+      {/* Presets */}
+      <div className="order-1 sm:order-none w-full sm:w-auto flex items-center gap-0.5 bg-zinc-100 rounded-lg p-0.5 md:p-1 min-w-0 overflow-x-auto scrollbar-hide">
         {PRESETS.map((p) => (
           <button
             key={p}
             onClick={() => onPeriodo(p)}
-            className={`px-2 md:px-3 py-1 md:py-1.5 text-[10px] md:text-xs font-semibold rounded-md transition-colors whitespace-nowrap cursor-pointer flex-shrink-0 ${
+            className={`flex-1 sm:flex-none px-2 md:px-3 py-1.5 text-xs font-semibold rounded-md transition-colors whitespace-nowrap cursor-pointer ${
               isPreset(p)
                 ? 'bg-white text-zinc-900 shadow-sm'
                 : 'text-zinc-500 hover:text-zinc-700'
@@ -90,10 +96,10 @@ export default function FiltroRelatorio({ periodo, onPeriodo }: FiltroRelatorioP
       </div>
 
       {/* Seletor de MÊS — mês atual, mês anterior ou qualquer mês */}
-      <div className="relative">
+      <div className="relative order-3 sm:order-none flex-1 sm:flex-none min-w-0">
         <button
           onClick={() => setOpenPanel(openPanel === 'mes' ? null : 'mes')}
-          className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium border rounded-lg transition-colors whitespace-nowrap cursor-pointer ${
+          className={`w-full sm:w-auto justify-center flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium border rounded-lg transition-colors whitespace-nowrap cursor-pointer ${
             isMonth
               ? 'bg-amber-50 border-amber-300 text-amber-700'
               : 'bg-white border-zinc-200 text-zinc-600 hover:border-zinc-300'
@@ -102,7 +108,11 @@ export default function FiltroRelatorio({ periodo, onPeriodo }: FiltroRelatorioP
           <div className="w-3.5 h-3.5 flex items-center justify-center">
             <CalendarRange size={12} />
           </div>
-          <span className="max-w-32 truncate">
+          {/* No celular o mês vai abreviado ("Set 2026") para não cortar. */}
+          <span className="min-w-0 truncate sm:hidden">
+            {isMonth ? `${MESES[mesSelecionado.mes - 1].slice(0, 3)} ${mesSelecionado.ano}` : 'Mês'}
+          </span>
+          <span className="hidden sm:inline max-w-32 truncate">
             {isMonth ? `${MESES[mesSelecionado.mes - 1]} ${mesSelecionado.ano}` : 'Mês'}
           </span>
           <div className="w-3.5 h-3.5 flex items-center justify-center">
@@ -154,10 +164,10 @@ export default function FiltroRelatorio({ periodo, onPeriodo }: FiltroRelatorioP
         )}
       </div>
 
-      <div className="relative">
+      <div className="relative order-4 sm:order-none flex-1 sm:flex-none min-w-0">
         <button
           onClick={() => setOpenPanel(openPanel === 'custom' ? null : 'custom')}
-          className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium border rounded-lg transition-colors whitespace-nowrap cursor-pointer ${
+          className={`w-full sm:w-auto justify-center flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium border rounded-lg transition-colors whitespace-nowrap cursor-pointer ${
             isCustom
               ? 'bg-amber-50 border-amber-300 text-amber-700'
               : 'bg-white border-zinc-200 text-zinc-600 hover:border-zinc-300'
@@ -169,7 +179,7 @@ export default function FiltroRelatorio({ periodo, onPeriodo }: FiltroRelatorioP
           <span className="hidden md:inline max-w-32 truncate">
             {isCustom ? labelPeriodo(periodo) : 'Personalizado'}
           </span>
-          <span className="md:hidden">Custom</span>
+          <span className="md:hidden">Período</span>
           <div className="w-3.5 h-3.5 flex items-center justify-center">
             <ChevronDown size={11} className={`transition-transform ${openPanel === 'custom' ? 'rotate-180' : ''}`} />
           </div>
