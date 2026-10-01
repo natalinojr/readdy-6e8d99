@@ -552,7 +552,7 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
             {/* Conta de boleto sem o boleto (2026-09-28/29): mandar o boleto, dar baixa se já pagou ou dizer que não é boleto. */}
             {p.kind === 'boleto_faltando' && (
               <>
-                <button onClick={() => onPedir(`Boleto da conta "${p.titulo.replace(/^Falta o boleto:s*/, '')}"${p.loja ? ` (${p.loja})` : ''}: `)} disabled={busy}
+                <button onClick={() => onPedir(`Boleto da conta "${p.titulo.replace(/^Falta o boleto:\s*/, '')}"${p.loja ? ` (${p.loja})` : ''}: `)} disabled={busy}
                   className={p.payload?.vencida ? SECUNDARIO : PRINCIPAL}>
                   <i className="ri-barcode-line" /> Mandar o boleto
                 </button>
