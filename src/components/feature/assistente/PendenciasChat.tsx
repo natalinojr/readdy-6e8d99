@@ -532,11 +532,12 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
               </>
             )}
             {/* Saiu do caixa um valor diferente da nota. A compra paga não se edita pela tela (exclui e
-                lança de novo): "Corrigir a compra" abre ela; "A nota está certa" fecha com a diferença anotada. */}
+                lança de novo): "Corrigir a compra" abre ela; "Confirmar saída de R$ X" aceita o valor que saiu
+                do caixa e fecha com a diferença anotada (2026-10-01: antes dizia "A nota está certa" e confundia). */}
             {p.kind === 'sangria_valor_diferente' && (
               <>
-                <button onClick={() => marcar(p, 'resolvida', `nota confere; diferença de ${brl(Math.abs(saiu - nota))} fica no caixa`)} disabled={busy} className={PRINCIPAL}>
-                  <i className="ri-check-line" /> A nota está certa
+                <button onClick={() => marcar(p, 'resolvida', `saída de ${brl(saiu)} confirmada (nota ${brl(nota)}); diferença de ${brl(Math.abs(saiu - nota))} anotada`)} disabled={busy} className={PRINCIPAL}>
+                  <i className="ri-check-line" /> Confirmar saída de {brl(saiu)}
                 </button>
                 {verCompra && <button onClick={verCompra} disabled={busy} className={SECUNDARIO}><i className="ri-edit-line" /> Corrigir a compra</button>}
               </>
