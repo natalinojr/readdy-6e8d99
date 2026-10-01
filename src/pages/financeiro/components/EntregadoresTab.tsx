@@ -146,7 +146,7 @@ export default function EntregadoresTab() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 max-sm:[&>*:last-child:nth-child(odd)]:col-span-2 sm:grid-cols-2 xl:grid-cols-4 gap-3">
         <KpiCard label={`A pagar até ${br(ate)}`} icon="ri-money-dollar-circle-line" value={formatCurrency(totalGeral)} valueTone={totalGeral > 0 ? 'text-amber-700' : undefined} atual={totalGeral} semVariacao />
         <KpiCard label="Entregadores com saldo" icon="ri-motorbike-line" value={String(comSaldo)} sub={`${resumo.length} em aberto no total`} atual={comSaldo} semVariacao />
         <KpiCard label="Entregas em aberto" icon="ri-e-bike-2-line" value={String(totalEntregas)} atual={totalEntregas} semVariacao />

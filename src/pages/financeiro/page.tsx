@@ -100,6 +100,7 @@ export default function FinanceiroPage() {
   // Abre a aba já pedindo a janela de lançamento (?abrir=), usado pelo botão Lançar.
   const abrirAba = (t: string, abrir?: string) => setSearchParams(abrir ? { tab: t, abrir } : { tab: t }, { replace: true });
   const [lancarAberto, setLancarAberto] = useState(false);
+  const [buscaAberta, setBuscaAberta] = useState(false);
   // Resultado da busca: vai para a aba com o item (?busca=/?foco=/?nota=). A chave recria a aba,
   // porque algumas só leem esses parâmetros ao abrir (ex.: a busca do Contas a Pagar).
   const [chaveConteudo, setChaveConteudo] = useState(0);
@@ -194,8 +195,8 @@ export default function FinanceiroPage() {
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="px-4 md:px-6 pt-4 md:pt-5 pb-0" style={{ background: '#ffffff', borderBottom: '1px solid #f4f4f5' }}>
-        <div className="flex items-center gap-3 mb-3 md:mb-4">
+      <div className="px-4 md:px-6 pt-3 md:pt-5 pb-0" style={{ background: '#ffffff', borderBottom: '1px solid #f4f4f5' }}>
+        <div className="flex items-center gap-2 md:gap-3 mb-2 md:mb-4">
           <div className="w-8 h-8 md:w-9 md:h-9 flex items-center justify-center rounded-xl flex-shrink-0" style={{ background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)' }}>
             <i className="ri-money-dollar-circle-line text-white text-base md:text-lg" />
           </div>
@@ -204,6 +205,14 @@ export default function FinanceiroPage() {
             <p className="text-xs text-zinc-400 hidden sm:block">Gestão financeira completa do restaurante</p>
           </div>
           <div className="hidden xl:block"><BuscaFinanceiro podeAba={podeAbaOuFreela} onIr={irParaResultado} /></div>
+          {/* No celular a busca fica atrás da lupa: a linha dela sozinha comia espaço de todas as abas */}
+          <button
+            onClick={() => setBuscaAberta((a) => !a)}
+            className={`md:hidden w-9 h-9 flex items-center justify-center rounded-xl border cursor-pointer flex-shrink-0 ${buscaAberta ? 'bg-amber-50 border-amber-300 text-amber-600' : 'bg-zinc-50 border-zinc-200 text-zinc-500'}`}
+            aria-label="Procurar fornecedor, nota ou valor"
+          >
+            <i className={`${buscaAberta ? 'ri-close-line' : 'ri-search-line'} text-lg`} />
+          </button>
           <button
             onClick={() => setLancarAberto(true)}
             className="flex items-center gap-1.5 h-9 px-3 md:px-4 rounded-xl text-white text-sm font-bold shadow-sm cursor-pointer flex-shrink-0"
@@ -212,9 +221,10 @@ export default function FinanceiroPage() {
             <i className="ri-add-line text-base" />Lançar
           </button>
         </div>
-        <div className="xl:hidden mb-3 md:max-w-md"><BuscaFinanceiro podeAba={podeAbaOuFreela} onIr={irParaResultado} /></div>
-        {/* Grupos — scroll horizontal no mobile (são só 6, cabem numa linha no desktop) */}
-        <div className="flex gap-0.5 overflow-x-auto scrollbar-hide -mx-4 md:mx-0 px-4 md:px-0" style={{ borderBottom: '1px solid rgba(245,158,11,0.15)' }}>
+        <div className="hidden md:block xl:hidden mb-3 md:max-w-md"><BuscaFinanceiro podeAba={podeAbaOuFreela} onIr={irParaResultado} /></div>
+        {buscaAberta && <div className="md:hidden mb-2"><BuscaFinanceiro podeAba={podeAbaOuFreela} onIr={(p) => { setBuscaAberta(false); irParaResultado(p); }} autoFocus /></div>}
+        {/* Grupos — no celular os 6 dividem a largura (ícone em cima, nome embaixo), sem rolar de lado */}
+        <div className="flex md:gap-0.5 overflow-x-auto scrollbar-hide -mx-4 md:mx-0 px-1 md:px-0" style={{ borderBottom: '1px solid rgba(245,158,11,0.15)' }}>
           {grupos.map((g) => {
             const aviso = avisoDoGrupo(g);
             return (
@@ -222,14 +232,14 @@ export default function FinanceiroPage() {
                 key={g.id}
                 data-fin-ativo={grupoAtivo?.id === g.id ? '' : undefined}
                 onClick={() => abrirGrupo(g)}
-                className={`flex items-center gap-1.5 px-3 md:px-4 py-2.5 text-xs md:text-[13px] font-semibold whitespace-nowrap border-b-2 transition-colors cursor-pointer flex-shrink-0 ${
+                className={`relative flex flex-1 md:flex-none flex-col md:flex-row items-center gap-0.5 md:gap-1.5 min-w-[52px] px-1 md:px-4 pt-2 pb-1.5 md:py-2.5 text-[10.5px] md:text-[13px] font-semibold whitespace-nowrap border-b-2 transition-colors cursor-pointer flex-shrink-0 ${
                   grupoAtivo?.id === g.id ? 'border-amber-500 text-amber-600' : 'border-transparent text-zinc-400 hover:text-zinc-700'
                 }`}
               >
-                <i className={g.icon} />
+                <i className={`${g.icon} text-lg leading-none md:text-[13px] md:leading-normal`} />
                 {g.label}
                 {aviso && (
-                  <span title={aviso.dica} className={`text-[9px] font-black px-1.5 py-0.5 rounded-full text-white ${aviso.cor}`}>
+                  <span title={aviso.dica} className={`absolute top-0.5 left-1/2 ml-2 md:static md:ml-0 text-[9px] font-black px-1.5 py-0.5 rounded-full text-white leading-none md:leading-normal ${aviso.cor}`}>
                     {aviso.n}
                   </span>
                 )}
@@ -239,7 +249,7 @@ export default function FinanceiroPage() {
         </div>
         {/* Abas do grupo em pílula (como as abas internas das outras telas) */}
         {grupoAtivo && grupoAtivo.abas.length > 1 && (
-          <div className="py-2.5 -mx-4 md:mx-0 px-4 md:px-0 overflow-x-auto scrollbar-hide">
+          <div className="py-2 md:py-2.5 -mx-4 md:mx-0 px-4 md:px-0 overflow-x-auto scrollbar-hide">
             <div className="flex bg-zinc-100 p-1 rounded-xl w-max">
               {grupoAtivo.abas.map((tab) => (
                 <button

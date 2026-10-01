@@ -117,7 +117,7 @@ export default function PrestadoresTab() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+      <div className="grid grid-cols-2 max-sm:[&>*:last-child:nth-child(odd)]:col-span-2 sm:grid-cols-2 gap-3">
         <KpiCard label="Serviços (RH)" icon="ri-briefcase-line" value={formatCurrency(totalServico)} atual={totalServico} semVariacao />
         <KpiCard label="Reembolsos" icon="ri-refund-2-line" value={formatCurrency(totalReembolso)} valueTone="text-zinc-500" atual={totalReembolso} semVariacao />
       </div>

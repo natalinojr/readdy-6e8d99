@@ -330,7 +330,7 @@ export default function RHRelatorioTab() {
       {reportTab === 'evolucao' && (
         <div className="space-y-5">
           {!loading && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+            <div className="grid grid-cols-2 max-sm:[&>*:last-child:nth-child(odd)]:col-span-2 sm:grid-cols-2 xl:grid-cols-4 gap-3">
               <KpiCard label="Total no período" icon="ri-money-dollar-circle-line" value={formatCurrency(totalPeriod)} sub={`${months.length} meses`} atual={totalPeriod} semVariacao />
               <KpiCard label="Média mensal" icon="ri-line-chart-line" value={formatCurrency(avgMonthly)} sub="por mês" atual={avgMonthly} semVariacao />
               <KpiCard label="Mês mais alto" icon="ri-arrow-up-circle-line" value={formatCurrency(maxMonth?.total ?? 0)} sub={maxMonth ? fullMonthLabel(maxMonth.month) : '—'} atual={maxMonth?.total ?? 0} semVariacao />

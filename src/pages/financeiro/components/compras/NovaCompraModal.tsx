@@ -5,6 +5,7 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { lerNotinhaArquivo, lerNotinhaLink, aprenderVinculos, type ScanResult } from '@/lib/leituraNotinha';
 import { useMerchandiseCategories } from '@/hooks/useMerchandiseCategories';
+import { un as unLabel } from '@/lib/vinculoConversao';
 
 interface IngredientOption {
   id: string;
@@ -1352,7 +1353,7 @@ export default function NovaCompraModal({
                                     )}
                                   </div>
                                   <div className="flex items-center gap-1 flex-shrink-0">
-                                    <span className="text-[9px] bg-zinc-100 text-zinc-500 px-1.5 py-0.5 rounded-full">{u.unit}</span>
+                                    <span className="text-[9px] bg-zinc-100 text-zinc-500 px-1.5 py-0.5 rounded-full">{unLabel(u.unit)}</span>
                                     <span className="text-[9px] bg-violet-100 text-violet-700 px-1.5 py-0.5 rounded-full font-semibold">
                                       {u.dre_category_name ?? 'CMV'}
                                     </span>
@@ -1375,7 +1376,7 @@ export default function NovaCompraModal({
                                 >
                                   <p className="font-semibold text-zinc-800">{u.name}</p>
                                   <div className="flex items-center gap-1 flex-shrink-0">
-                                    <span className="text-[9px] bg-zinc-100 text-zinc-500 px-1.5 py-0.5 rounded-full">{u.unit}</span>
+                                    <span className="text-[9px] bg-zinc-100 text-zinc-500 px-1.5 py-0.5 rounded-full">{unLabel(u.unit)}</span>
                                     <span className="text-[9px] bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded-full font-semibold">CMV</span>
                                   </div>
                                 </button>

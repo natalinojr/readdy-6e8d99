@@ -844,7 +844,7 @@ export default function OrcamentosTab() {
       )}
 
       {/* KPIs */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 max-sm:[&>*:last-child:nth-child(odd)]:col-span-2 sm:grid-cols-2 xl:grid-cols-4 gap-3">
         <KpiCard label="Total de Orçamentos" icon="ri-file-list-3-line" value={String(budgets.length)} atual={budgets.length} semVariacao />
         <KpiCard label="Aprovados" icon="ri-checkbox-circle-line" value={String(budgets.filter(b => b.status === 'aprovado').length)} valueTone="text-emerald-700" atual={0} semVariacao />
         <KpiCard label="Valor Aprovado" icon="ri-money-dollar-circle-line" value={formatCurrency(totalAprovado)} valueTone="text-amber-700" atual={totalAprovado} semVariacao />

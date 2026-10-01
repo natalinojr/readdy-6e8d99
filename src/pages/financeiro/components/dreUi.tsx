@@ -134,19 +134,22 @@ export function KpiCard({
     ? 'border-red-200 bg-gradient-to-br from-red-50 to-white'
     : 'border-zinc-200 bg-white';
   return (
-    <div className={`relative rounded-2xl border p-4 flex flex-col gap-2 ${ring}`}>
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2 min-w-0">
-          <span className="w-7 h-7 rounded-lg bg-zinc-100 text-zinc-500 flex items-center justify-center flex-shrink-0">
+    // No celular os cartões ficam 2 por linha (2026-09-30): sem o ícone, título em até 2 linhas
+    // e o chip de variação embaixo do valor, para caber em meia largura.
+    <div className={`relative rounded-2xl border p-3 sm:p-4 flex flex-col gap-1 sm:gap-2 min-w-0 ${ring}`}>
+      <div className="flex items-start sm:items-center justify-between gap-2">
+        <div className="flex items-start sm:items-center gap-2 min-w-0">
+          <span className="hidden sm:flex w-7 h-7 rounded-lg bg-zinc-100 text-zinc-500 items-center justify-center flex-shrink-0">
             <i className={`${icon} text-sm`} />
           </span>
-          <span className="text-xs font-semibold text-zinc-500 truncate">{label}</span>
+          <span className="text-[11px] sm:text-xs font-semibold text-zinc-500 leading-tight line-clamp-2 sm:line-clamp-none sm:truncate">{label}</span>
           {ajuda && <AjudaCartao texto={ajuda} />}
         </div>
-        {!semVariacao && <VarChip atual={atual} anterior={anterior} inverse={inverse} />}
+        {!semVariacao && <span className="hidden sm:inline-flex"><VarChip atual={atual} anterior={anterior} inverse={inverse} /></span>}
       </div>
-      <p className={`text-xl sm:text-2xl font-bold tabular-nums tracking-tight ${valueTone ?? 'text-zinc-900'}`}>{value}</p>
-      {sub && <p className={`text-xs ${subTone ?? 'text-zinc-400'}`}>{sub}</p>}
+      <p className={`text-[17px] leading-snug sm:text-2xl font-bold tabular-nums tracking-tight break-words ${valueTone ?? 'text-zinc-900'}`}>{value}</p>
+      {!semVariacao && <span className="sm:hidden"><VarChip atual={atual} anterior={anterior} inverse={inverse} /></span>}
+      {sub && <p className={`text-[11px] sm:text-xs leading-snug ${subTone ?? 'text-zinc-400'}`}>{sub}</p>}
     </div>
   );
 }

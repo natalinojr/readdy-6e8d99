@@ -6,6 +6,7 @@ import { useSuppliers } from '@/hooks/useSuppliers';
 import ImportExportTemplatesModal from '@/components/ImportExportTemplatesModal';
 import { useMerchandiseCategories } from '@/hooks/useMerchandiseCategories';
 import { useDreGroups, isGrupoDespesa } from '@/hooks/useDreGroups';
+import { un as unLabel } from '@/lib/vinculoConversao';
 
 /**
  * O catálogo faz DOIS trabalhos diferentes, e antes não dizia qual era qual:
@@ -582,7 +583,7 @@ export default function CatalogoComprasModal({ onClose }: Props) {
                   />
                   {form.ingredient_id && selectedIngredient && (
                     <span className="absolute right-8 top-1/2 -translate-y-1/2 text-[10px] font-semibold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">
-                      estoque em {selectedIngredient.unit}
+                      estoque em {unLabel(selectedIngredient.unit)}
                     </span>
                   )}
                   {form.ingredient_id && (
@@ -612,7 +613,7 @@ export default function CatalogoComprasModal({ onClose }: Props) {
                           className="w-full text-left px-3 py-2 text-sm hover:bg-amber-50 cursor-pointer flex items-center justify-between gap-2"
                         >
                           <span>{ing.name}</span>
-                          <span className="text-[10px] text-zinc-400">{ing.unit}</span>
+                          <span className="text-[10px] text-zinc-400">{unLabel(ing.unit)}</span>
                         </button>
                       ))}
                     </div>
@@ -646,7 +647,7 @@ export default function CatalogoComprasModal({ onClose }: Props) {
                       </div>
                       <div>
                         <label className="text-[10px] font-semibold text-zinc-500 block mb-1">
-                          {selectedIngredient.unit} por unid.
+                          {unLabel(selectedIngredient.unit)} por unid.
                         </label>
                         <input
                           type="number"

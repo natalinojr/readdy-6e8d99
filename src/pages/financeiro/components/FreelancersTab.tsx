@@ -94,7 +94,7 @@ export default function FreelancersTab({ embutido = false }: { embutido?: boolea
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 max-sm:[&>*:last-child:nth-child(odd)]:col-span-2 sm:grid-cols-2 lg:grid-cols-3 gap-3">
         <KpiCard label="Diárias no mês" icon="ri-money-dollar-circle-line" value={formatCurrency(totalMes)} sub={`${diarias.length} dia(s)`} atual={totalMes} semVariacao />
         <KpiCard label="Freelancers ativos" icon="ri-user-star-line" value={String(freelancers.filter((f) => f.is_active).length)} sub={`${freelancers.length} cadastrado(s)`} atual={freelancers.length} semVariacao />
         <KpiCard label="Aguardando os dias" icon="ri-time-line" value={String(pendentes.length)} valueTone={pendentes.length > 0 ? 'text-amber-700' : undefined} sub="pagos sem os dias informados" atual={pendentes.length} semVariacao />
