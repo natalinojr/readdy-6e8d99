@@ -461,7 +461,7 @@ export default function DespesasTab() {
       </div>
 
       {/* ── KPIs ── */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 max-sm:[&>*:last-child:nth-child(odd)]:col-span-2 sm:grid-cols-2 xl:grid-cols-4 gap-3">
         <KpiCard
           label="Total de Despesas"
           value={formatCurrency(summary?.total ?? 0)}

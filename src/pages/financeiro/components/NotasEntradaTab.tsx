@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
@@ -508,7 +508,7 @@ export default function NotasEntradaTab() {
       </div>
 
       {/* Resumo */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 max-sm:[&>*:last-child:nth-child(odd)]:col-span-2 sm:grid-cols-2 xl:grid-cols-4 gap-3">
         <div className="rounded-2xl border border-zinc-200 bg-white p-4 flex flex-col gap-2">
           <div className="flex items-center gap-2 min-w-0">
             <span className="w-7 h-7 rounded-lg bg-zinc-100 text-zinc-500 flex items-center justify-center flex-shrink-0"><i className="ri-inbox-archive-line text-sm" /></span>
@@ -946,12 +946,14 @@ function ConferirModal({ doc, podeLancar, tenantId, onClose, onLancado, call, on
                   <p className="text-[11px] text-zinc-500">{vinculos.filter((v) => v.ingredient_id).length} de {itens.length} vinculado(s) ao estoque</p>
                 )}
               </div>
-              <div className="border border-zinc-100 rounded-lg overflow-auto max-h-72">
+              {/* No celular a coluna do insumo vira uma linha embaixo do produto: na tabela ela ficava
+                  escondida à direita e só aparecia arrastando de lado (2026-09-30). */}
+              <div className="border border-zinc-100 rounded-lg overflow-auto sm:max-h-72">
                 <table className="w-full text-xs">
                   <thead className="bg-zinc-50 text-zinc-400 uppercase text-[10px] sticky top-0 z-10">
                     <tr>
                       <th className="text-left px-3 py-1.5">Produto</th><th className="text-right px-3 py-1.5">Qtd</th><th className="text-right px-3 py-1.5">Total</th>
-                      {comEstoque && <th className="text-left px-3 py-1.5 min-w-[260px]">Insumo do estoque</th>}
+                      {comEstoque && <th className="hidden sm:table-cell text-left px-3 py-1.5 min-w-[260px]">Insumo do estoque</th>}
                     </tr>
                   </thead>
                   <tbody>
@@ -959,13 +961,8 @@ function ConferirModal({ doc, podeLancar, tenantId, onClose, onLancado, call, on
                       const v = vinculos[i];
                       const ing = insumos.find((g) => g.id === v?.ingredient_id);
                       const entra = Number(it.quantidade ?? 0) * (Number(v?.units_per_package) || 1);
-                      return (
-                        <tr key={i} className="border-t border-zinc-50 align-top">
-                          <td className="px-3 py-1.5 text-zinc-700">{it.descricao}<span className="text-zinc-400"> {it.codigo ? `· cód. ${it.codigo}` : ''}</span></td>
-                          <td className="px-3 py-1.5 text-right text-zinc-600 whitespace-nowrap">{Number(it.quantidade ?? 0).toLocaleString('pt-BR')} {it.unidade}<p className="text-[10px] text-zinc-400">{brl(it.valor_unitario)}</p></td>
-                          <td className="px-3 py-1.5 text-right font-medium text-zinc-800 whitespace-nowrap">{brl(it.valor_total)}</td>
-                          {comEstoque && (
-                            <td className="px-3 py-1.5">
+                      const insumoDoItem = (
+                        <>
                               <select value={v?.ingredient_id ?? ''} onChange={(e) => setVinculo(i, { ingredient_id: e.target.value })} disabled={!vinculosCarregados}
                                 className={`w-full text-xs border rounded-lg px-2 py-1 focus:outline-none focus:border-amber-400 cursor-pointer ${v?.ingredient_id ? 'border-emerald-300 bg-emerald-50/50' : 'border-zinc-200'}`}>
                                 <option value="">{vinculosCarregados ? 'Não entra no estoque' : 'Carregando…'}</option>
@@ -981,9 +978,22 @@ function ConferirModal({ doc, podeLancar, tenantId, onClose, onLancado, call, on
                                   <span className="text-emerald-700 font-semibold ml-auto whitespace-nowrap">+{entra.toLocaleString('pt-BR', { maximumFractionDigits: 3 })} {ing.unit ?? 'un'}</span>
                                 </div>
                               )}
-                            </td>
-                          )}
+                        </>
+                      );
+                      return (
+                        <Fragment key={i}>
+                        <tr className="border-t border-zinc-50 align-top">
+                          <td className="px-3 py-1.5 text-zinc-700">{it.descricao}<span className="text-zinc-400"> {it.codigo ? `· cód. ${it.codigo}` : ''}</span></td>
+                          <td className="px-3 py-1.5 text-right text-zinc-600 whitespace-nowrap">{Number(it.quantidade ?? 0).toLocaleString('pt-BR')} {it.unidade}<p className="text-[10px] text-zinc-400">{brl(it.valor_unitario)}</p></td>
+                          <td className="px-3 py-1.5 text-right font-medium text-zinc-800 whitespace-nowrap">{brl(it.valor_total)}</td>
+                          {comEstoque && <td className="hidden sm:table-cell px-3 py-1.5">{insumoDoItem}</td>}
                         </tr>
+                        {comEstoque && (
+                          <tr className="sm:hidden">
+                            <td colSpan={3} className="px-3 pb-2.5">{insumoDoItem}</td>
+                          </tr>
+                        )}
+                        </Fragment>
                       );
                     })}
                   </tbody>

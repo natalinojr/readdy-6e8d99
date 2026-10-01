@@ -314,7 +314,7 @@ export default function ContasVencidasPanel() {
           </div>
 
           {/* KPIs de impacto */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5 gap-3">
+          <div className="grid grid-cols-2 max-sm:[&>*:last-child:nth-child(odd)]:col-span-2 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5 gap-3">
             <KpiCard label="Total em aberto" icon="ri-money-dollar-circle-line" value={formatCurrency(totalGeral)} valueTone="text-red-600" highlight="neg" atual={totalGeral} semVariacao />
             <KpiCard label="Vencidas (overdue)" icon="ri-alarm-warning-line" value={formatCurrency(impacto.totalVencido)} valueTone="text-red-600" sub={`${contas.filter(c => c.status === 'overdue').length} contas`} atual={impacto.totalVencido} semVariacao />
             <KpiCard label="Pendentes vencidas" icon="ri-time-line" value={formatCurrency(impacto.totalPendente)} valueTone="text-amber-700" sub={`${contas.filter(c => c.status === 'pending').length} contas`} atual={impacto.totalPendente} semVariacao />
