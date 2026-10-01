@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { createPortal, flushSync } from 'react-dom';
 
 // Seletor de categoria com busca: clica, digita parte do nome (ou do grupo da DRE) e escolhe
 // com clique ou ↑/↓ + Enter. A lista abre em position: fixed (portal) para não ser cortada
@@ -34,6 +34,7 @@ export default function CategoriaCombobox({ value, options, onChange, placeholde
   const btnRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   const selected = options.find((o) => o.id === value);
 
@@ -49,14 +50,20 @@ export default function CategoriaCombobox({ value, options, onChange, placeholde
   const abrir = () => {
     if (disabled || !btnRef.current) return;
     const r = btnRef.current.getBoundingClientRect();
-    setSheet(window.innerWidth < 640 || window.matchMedia?.('(pointer: coarse)').matches === true);
+    const celular = window.innerWidth < 640 || window.matchMedia?.('(pointer: coarse)').matches === true;
     const left = Math.max(8, Math.min(r.left, window.innerWidth - PANEL_W - 8));
     // Perto do rodapé da tela, abre para cima
     const up = window.innerHeight - r.bottom < 320 && r.top > 320;
-    setPos(up ? { left, bottom: window.innerHeight - r.top + 4 } : { left, top: r.bottom + 4 });
-    setQ('');
-    setHi(Math.max(0, options.findIndex((o) => o.id === value)));
-    setOpen(true);
+    // Desenha a lista ainda dentro do toque e põe o cursor na busca, para já sair digitando
+    // (pedido do dono, 2026-09-30). O celular só abre o teclado se o foco vier no próprio toque.
+    flushSync(() => {
+      setSheet(celular);
+      setPos(up ? { left, bottom: window.innerHeight - r.top + 4 } : { left, top: r.bottom + 4 });
+      setQ('');
+      setHi(Math.max(0, options.findIndex((o) => o.id === value)));
+      setOpen(true);
+    });
+    inputRef.current?.focus();
   };
 
   useEffect(() => {
@@ -122,7 +129,7 @@ export default function CategoriaCombobox({ value, options, onChange, placeholde
           style={sheet ? undefined : { position: 'fixed', left: pos.left, top: pos.top, bottom: pos.bottom, width: PANEL_W, zIndex: 60 }}
           className={`bg-white border border-zinc-200 rounded-xl shadow-lg overflow-hidden text-zinc-800 ${sheet ? 'w-full max-h-[75dvh] flex flex-col' : ''}`}>
           <div className="p-2 border-b border-zinc-100 flex items-center gap-2">
-            <input autoFocus={!sheet} value={q} onChange={(e) => { setQ(e.target.value); setHi(0); }} onKeyDown={onKey}
+            <input ref={inputRef} value={q} onChange={(e) => { setQ(e.target.value); setHi(0); }} onKeyDown={onKey}
               placeholder={sheet ? 'Buscar…' : 'Digite para buscar a categoria…'}
               className={`w-full border border-zinc-200 rounded-lg focus:outline-none focus:border-amber-400 ${sheet ? 'text-base px-3 py-2' : 'text-sm px-2.5 py-1.5'}`} />
             {sheet && (

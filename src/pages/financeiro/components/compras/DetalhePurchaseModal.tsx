@@ -7,6 +7,7 @@ import type { Purchase } from '@/types/financeiro';
 import { ehAcrescimoNota } from '@/lib/acrescimoNota';
 import { avisar } from '@/components/base/Dialogos';
 import DetalharItensModal from './DetalharItensModal';
+import { un as unLabel } from '@/lib/vinculoConversao';
 
 interface BillInstallment {
   id: string;
@@ -626,7 +627,7 @@ export default function DetalhePurchaseModal({ purchase, installments, loadingIn
                                   className={'text-xs border rounded px-1.5 py-1 max-w-[220px] bg-white ' + (links[item.id]?.ingredient_id ? 'border-green-300' : 'border-amber-300')}
                                 >
                                   <option value="">Não entra no estoque</option>
-                                  {ingredients.map(i => <option key={i.id} value={i.id}>{i.name}{i.unit ? ' (' + i.unit + ')' : ''}</option>)}
+                                  {ingredients.map(i => <option key={i.id} value={i.id}>{i.name}{i.unit ? ' (' + unLabel(i.unit) + ')' : ''}</option>)}
                                 </select>
                                 {links[item.id]?.ingredient_id && (
                                   <>
@@ -753,7 +754,7 @@ export default function DetalhePurchaseModal({ purchase, installments, loadingIn
                                         className={'flex-1 min-w-[160px] max-w-[260px] text-xs border rounded-md px-1.5 py-1 bg-white ' + (links[item.id]?.ingredient_id ? 'border-green-300' : 'border-amber-300')}
                                       >
                                         <option value="">Não entra no estoque</option>
-                                        {ingredients.map(i => <option key={i.id} value={i.id}>{i.name}{i.unit ? ' (' + i.unit + ')' : ''}</option>)}
+                                        {ingredients.map(i => <option key={i.id} value={i.id}>{i.name}{i.unit ? ' (' + unLabel(i.unit) + ')' : ''}</option>)}
                                       </select>
                                       {links[item.id]?.ingredient_id && (
                                         <span className="flex items-center gap-1 whitespace-nowrap">

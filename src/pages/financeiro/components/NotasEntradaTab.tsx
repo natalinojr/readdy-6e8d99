@@ -7,6 +7,7 @@ import { confirmar } from '@/components/base/Dialogos';
 import { PrePagoConferir, PrePagoModal, listarPrePagos } from './notas/PrePago';
 import { KpiCard, Segmented } from './dreUi';
 import { parcelasCartao } from '@/lib/faturaCartao';
+import { un as unLabel } from '@/lib/vinculoConversao';
 
 // ── Notas de entrada (NF-e dos fornecedores contra o CNPJ da loja, via SEFAZ) ──
 // Cada nota é conferida aqui e vira uma COMPRA (mercadoria → CMV, com as parcelas
@@ -966,7 +967,7 @@ function ConferirModal({ doc, podeLancar, tenantId, onClose, onLancado, call, on
                               <select value={v?.ingredient_id ?? ''} onChange={(e) => setVinculo(i, { ingredient_id: e.target.value })} disabled={!vinculosCarregados}
                                 className={`w-full text-xs border rounded-lg px-2 py-1 focus:outline-none focus:border-amber-400 cursor-pointer ${v?.ingredient_id ? 'border-emerald-300 bg-emerald-50/50' : 'border-zinc-200'}`}>
                                 <option value="">{vinculosCarregados ? 'Não entra no estoque' : 'Carregando…'}</option>
-                                {insumos.map((g) => <option key={g.id} value={g.id}>{g.name}{g.unit ? ` (${g.unit})` : ''}</option>)}
+                                {insumos.map((g) => <option key={g.id} value={g.id}>{g.name}{g.unit ? ` (${unLabel(g.unit)})` : ''}</option>)}
                               </select>
                               {ing && (
                                 <div className="flex items-center gap-1 mt-1 text-[11px] text-zinc-500">
@@ -974,8 +975,8 @@ function ConferirModal({ doc, podeLancar, tenantId, onClose, onLancado, call, on
                                   <input type="number" min="0" step="any" value={v.units_per_package}
                                     onChange={(e) => setVinculo(i, { units_per_package: Number(e.target.value.replace(',', '.')) || 0 })}
                                     className="w-16 border border-zinc-200 rounded px-1.5 py-0.5 text-right focus:outline-none focus:border-amber-400" />
-                                  <span>{ing.unit ?? 'un'}</span>
-                                  <span className="text-emerald-700 font-semibold ml-auto whitespace-nowrap">+{entra.toLocaleString('pt-BR', { maximumFractionDigits: 3 })} {ing.unit ?? 'un'}</span>
+                                  <span>{unLabel(ing.unit)}</span>
+                                  <span className="text-emerald-700 font-semibold ml-auto whitespace-nowrap">+{entra.toLocaleString('pt-BR', { maximumFractionDigits: 3 })} {unLabel(ing.unit)}</span>
                                 </div>
                               )}
                         </>

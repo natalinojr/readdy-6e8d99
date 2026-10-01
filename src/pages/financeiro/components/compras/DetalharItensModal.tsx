@@ -3,7 +3,7 @@
 // ITENS mudam — à mão ou pela nota (QR, foto, arquivo). A soma tem que fechar com o valor da compra,
 // então contas, pagamento e caixa não mudam. Edge purchase-write › replace_items (acerta o estoque
 // se a compra já tinha entrado).
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { formatCurrency } from '@/lib/formatters';
@@ -12,6 +12,12 @@ import type { Purchase, PurchaseItem } from '@/types/financeiro';
 import LerNotaBotoes from './LerNotaBotoes';
 import { useInsumos, numBR, numBRqtd, fatorDaLinha, InsumoDoItem, freteDasLinhas } from '../conciliacao/LancarDoExtrato';
 import { linhasParaValor, aprenderVinculos, type ScanResult } from '@/lib/leituraNotinha';
+import { un as unLabel } from '@/lib/vinculoConversao';
+
+// Item ligado a insumo SÓ na Classificação de itens (vínculo feito depois da compra) e que não entrou no
+// estoque: a linha da compra fica sem insumo. Mostra o vínculo, mas não preenche — salvar com o insumo
+// acertaria o estoque por fora da escolha "Dar entrada / Não entram" (DLR NF 40868, 2026-09-30).
+type LigadoFora = { purchase_item_id: string; insumo: string; insumo_unit: string | null; upp: number; unit_label: string | null; inventario_depois: boolean };
 
 // fator = quanto 1 unidade comprada vale na unidade do insumo, quando digitado (null = sugerido / o da linha original)
 type Linha = { key: number; descricao: string; qtd: string; unidade: string; total: string; insumoId: string; raw?: string; orig?: PurchaseItem; fator?: string | null };
@@ -37,6 +43,15 @@ export default function DetalharItensModal({ purchase, onClose, onSaved }: Props
   const [lida, setLida] = useState<ScanResult | null>(null);
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
+  const [ligadosFora, setLigadosFora] = useState<Map<string, LigadoFora>>(new Map());
+  useEffect(() => {
+    if (!user?.tenantId || !purchase.stock_applied_at) return;
+    let vivo = true;
+    supabase.rpc('fn_purchase_unstocked_items', { p_tenant: user.tenantId, p_purchase: purchase.id }).then(({ data }) => {
+      if (vivo) setLigadosFora(new Map(((data ?? []) as LigadoFora[]).map((x) => [x.purchase_item_id, x])));
+    });
+    return () => { vivo = false; };
+  }, [user?.tenantId, purchase.id, purchase.stock_applied_at]);
 
   const soma = useMemo(() => Math.round(linhas.reduce((s, l) => s + (numBR(l.total) || 0), 0) * 100) / 100, [linhas]);
   const falta = Math.round((alvo - soma) * 100) / 100;
@@ -120,7 +135,7 @@ export default function DetalharItensModal({ purchase, onClose, onSaved }: Props
         <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2">
           <p className="text-xs text-zinc-500">
             Diga o que veio nesta compra, à mão ou pela nota. O valor da compra não muda (contas e pagamento ficam como estão);
-            {purchase.stock_applied_at ? ' como ela já entrou no estoque, o estoque é acertado com os itens novos.' : ' os itens ligados a insumo entram no estoque quando o recebimento for confirmado.'}
+            {purchase.stock_applied_at ? ' como o recebimento já foi confirmado, o estoque é acertado com os itens novos.' : ' os itens ligados a insumo entram no estoque quando o recebimento for confirmado.'}
           </p>
           <LerNotaBotoes onLido={aplicarNota} disabled={salvando} />
           {lida && (
@@ -161,6 +176,15 @@ export default function DetalharItensModal({ purchase, onClose, onSaved }: Props
                   <InsumoDoItem linha={l} insumos={insumos} insumoOptions={insumoOptions} onAdicionado={adicionarInsumo}
                     onChange={(patch) => muda(l.key, patch)} frete={FR.parte(l)} />
                 )}
+                {!l.insumoId && l.orig?.id && ligadosFora.has(l.orig.id) && (() => {
+                  const x = ligadosFora.get(l.orig!.id)!;
+                  return (
+                    <p className="text-[11px] rounded-lg bg-amber-50 text-amber-800 px-2 py-1.5">
+                      <i className="ri-links-line mr-1" />Na Classificação de itens este produto está ligado a <b>{x.insumo}</b> (1 {x.unit_label || 'un'} = {String(Number(x.upp)).replace('.', ',')} {unLabel(x.insumo_unit)}), mas nesta compra <b>não entrou no estoque</b>.
+                      {x.inventario_depois ? ' O insumo foi contado depois do recebimento, então não dá mais para dar entrada.' : ' Para dar entrada, use "Escolher se entra no estoque" na Trilha ou na Classificação de itens.'}
+                    </p>
+                  );
+                })()}
                 {!l.insumoId && FR.parte(l) > 0 && <p className="text-[11px] text-sky-700">+ {formatCurrency(FR.parte(l))} de frete no custo deste item</p>}
               </div>
             );
