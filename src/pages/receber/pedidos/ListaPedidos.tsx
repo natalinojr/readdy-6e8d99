@@ -131,13 +131,27 @@ function Detalhes({ p }: { p: Pedido }) {
     if (p.valor_pago != null) linhas.push(['Pedido de', brl(p.valor)]);
     if (p.comprado_em) linhas.push(['Comprado', `${dataHora(p.comprado_em)}${p.comprado_por_nome ? ` · ${p.comprado_por_nome}` : ''}`]);
   }
+  if (p.tipo === 'beneficio') {
+    if (p.competencia) linhas.push(['Benefício de', `${p.competencia.slice(5, 7)}/${p.competencia.slice(0, 4)}`]);
+    if (p.beneficio_detalhe?.boleto?.numero_documento) linhas.push(['Nº do documento', p.beneficio_detalhe.boleto.numero_documento]);
+  }
   if (p.obs) linhas.push(['Obs.', p.obs]);
-  if (!linhas.length) return null;
+  // Benefício: para quem é cada parte do boleto (o boleto da operadora não diz)
+  const itens = p.tipo === 'beneficio' ? p.beneficio_detalhe?.itens ?? [] : [];
+  if (!linhas.length && !itens.length) return null;
   return (
     <div className="mt-3 pt-3 border-t border-zinc-100 space-y-1">
       {linhas.map(([r, v]) => (
         <p key={r} className="text-sm flex justify-between gap-3"><span className="text-zinc-500">{r}</span><span className="text-zinc-800 text-right">{v}</span></p>
       ))}
+      {itens.length > 0 && (
+        <div className="pt-1.5">
+          <p className="text-xs font-bold text-zinc-500 uppercase tracking-wide">Para quem é</p>
+          {itens.map((i) => (
+            <p key={i.employee_id} className="text-sm flex justify-between gap-3"><span className="text-zinc-700">{i.nome}</span><span className="text-zinc-800 font-semibold">{brl(Number(i.valor))}</span></p>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -221,13 +235,13 @@ function PagarDeNovo({ p, tenantId, onErro, onJanela }: { p: Pedido; tenantId: s
   );
 }
 
-function Pix({ chave }: { chave: string | null }) {
+function Pix({ chave, rotulo = 'Pix' }: { chave: string | null; rotulo?: string }) {
   const [copiou, setCopiou] = useState(false);
   if (!chave) return null;
   return (
     <div className="mt-3 flex items-center gap-2 bg-zinc-50 rounded-2xl px-3 py-2.5">
       <i className="ri-qr-code-line text-zinc-400" />
-      <p className="flex-1 min-w-0 text-sm text-zinc-700 truncate">Pix: <b>{chave}</b></p>
+      <p className="flex-1 min-w-0 text-sm text-zinc-700 truncate">{rotulo}: <b>{chave}</b></p>
       <button type="button" onClick={() => { navigator.clipboard?.writeText(chave).then(() => { setCopiou(true); setTimeout(() => setCopiou(false), 1500); }).catch(() => {}); }}
         className="text-sm font-semibold text-amber-600 cursor-pointer">{copiou ? 'Copiado' : 'Copiar'}</button>
     </div>
@@ -305,7 +319,8 @@ function CartaoMeu({ p, tenantId, onErro, onFeito, onJanela, mostrarQuem }: { p:
       {p.tipo === 'compra_online' && p.compra_detalhe && mostrarQuem && <div className="mt-3"><ResumoLido l={p.compra_detalhe} /></div>}
       {/* Decididos mostram a que o pedido se refere (dias, função, obs., classificação) e o comprovante,
           não só quem aprovou e quando pagou (dono, 2026-09-28) */}
-      {(mostrarQuem || (p.tipo === 'compra_online' && p.status === 'comprada')) && <Detalhes p={p} />}
+      {(mostrarQuem || (p.tipo === 'compra_online' && p.status === 'comprada') || p.tipo === 'beneficio') && <Detalhes p={p} />}
+      {mostrarQuem && p.tipo === 'beneficio' && p.status === 'aprovada' && !p.pago && <Pix chave={p.linha_digitavel ?? p.pix_copia_e_cola ?? null} rotulo={p.linha_digitavel ? 'Linha digitável' : 'Pix copia e cola'} />}
       {mostrarQuem && p.tem_comprovante && <div className="mt-3 flex"><BotaoComprovante p={p} tenantId={tenantId} onErro={onErro} /></div>}
       {mostrarQuem && onJanela && p.tipo === 'compra_online' && !p.pix_copia_e_cola && !p.ja_pago && p.status === 'aprovada' && <JaComprei p={p} tenantId={tenantId} onErro={onErro} onFeito={onFeito} />}
       {mostrarQuem && onJanela && (p.tipo !== 'compra_online' || (!!p.pix_copia_e_cola && !p.ja_pago)) && p.status === 'aprovada' && !p.pago && (!p.pix_inter || p.pix_inter === 'recusado') && <PagarDeNovo p={p} tenantId={tenantId} onErro={onErro} onJanela={onJanela} />}
@@ -341,7 +356,9 @@ function CartaoAprovar({ p, tenantId, categorias, onErro, onFeito, onJanela }: {
   const mudar = (k: number | 'todos', v: { classe: 'despesa' | 'cmv' | null; cat: string | null }) =>
     setCls((xs) => xs.map((x, i) => (k === 'todos' || k === i ? v : x)));
   const pixDoPedido = comPix ? lerPixCopia(p.pix_copia_e_cola!) : null;
-  const precisaDre = !compra && p.tipo !== 'freelancer' && p.tipo !== 'prestador' && !p.purchase_id;
+  const beneficio = p.tipo === 'beneficio';
+  // Benefício: a categoria é opcional (em branco = Pessoal, a mesma do RH › Benefícios)
+  const precisaDre = !compra && !beneficio && p.tipo !== 'freelancer' && p.tipo !== 'prestador' && !p.purchase_id;
   // Prestador MEI: pedido mensal com o valor combinado; o dono confere e pode mudar antes de aprovar
   const [valorMes, setValorMes] = useState(() => Number(p.valor).toFixed(2).replace('.', ','));
 
@@ -357,7 +374,7 @@ function CartaoAprovar({ p, tenantId, categorias, onErro, onFeito, onJanela }: {
     setGravando(true);
     onErro(null);
     const { data, erro } = await chamarPedidos<{ pagamento?: ResultadoPagamento; aviso?: string }>('aprovar', tenantId, {
-      id: p.id, dre_category_id: precisaDre ? dre : null, ...(valor != null ? { valor } : {}),
+      id: p.id, dre_category_id: precisaDre || beneficio ? dre : null, ...(valor != null ? { valor } : {}),
       ...(nova ? { itens_classe: cls.map((c) => ({ classe: c.classe, categoria_id: c.cat })) } : {}),
     });
     setGravando(false);
@@ -381,6 +398,8 @@ function CartaoAprovar({ p, tenantId, categorias, onErro, onFeito, onJanela }: {
       <Cabecalho p={p} mostrarQuem />
       <Detalhes p={p} />
       {!compra && <Pix chave={p.pix_chave} />}
+      {beneficio && <Pix chave={p.linha_digitavel ?? p.pix_copia_e_cola ?? null} rotulo={p.linha_digitavel ? 'Linha digitável' : 'Pix copia e cola'} />}
+      {beneficio && <p className="mt-3 text-xs text-sky-800 bg-sky-50 rounded-xl px-3 py-2">Aprovar lança em RH › Benefícios: uma conta de {brl(p.valor)} para {p.favorecido_nome} e o valor de cada funcionário.{p.linha_digitavel ? ' O boleto sai pelo Inter com o seu PIN.' : ' Pix de boleto de operadora o Inter não paga por aqui: copie o código acima e pague pelo app do banco — a conciliação dá baixa.'}</p>}
       {p.tipo === 'prestador' && (
         <label className="mt-3 flex items-center gap-2 text-sm text-zinc-700 px-1">
           Valor deste mês
@@ -428,9 +447,9 @@ function CartaoAprovar({ p, tenantId, categorias, onErro, onFeito, onJanela }: {
         </div>
       )}
       {p.purchase_id && <p className="mt-3 text-xs text-violet-700 bg-violet-50 rounded-xl px-3 py-2">Mercadoria: a compra já foi lançada e entrou no estoque, sem conta a pagar. Aprovar cria a conta do reembolso; recusar deixa a compra sem conta (ajuste em Financeiro › Compras se precisar).</p>}
-      {precisaDre && (
+      {(precisaDre || beneficio) && (
         <div className="mt-3">
-          <Categorias categorias={categorias} valor={dre} onValor={setDre} />
+          <Categorias categorias={categorias} valor={dre} onValor={setDre} dica={beneficio ? 'Opcional: em branco vai para Pessoal' : undefined} />
         </div>
       )}
       {recusando ? (

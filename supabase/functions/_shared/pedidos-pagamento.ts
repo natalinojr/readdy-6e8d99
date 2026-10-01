@@ -4,11 +4,12 @@
 // Regra do dono: o pedido só vira conta a pagar depois que ele aprova (fn_pedido_pagamento_aprovar).
 // deno-lint-ignore-file no-explicit-any
 
-export type TipoPedido = 'reembolso' | 'freelancer' | 'fornecedor' | 'compra_online';
-export type PermPedido = 'pag_reembolso' | 'pag_freelancer' | 'pag_fornecedor' | 'pag_compra_online' | 'pag_aprovar';
+// Benefício (2026-09-30): boleto da VR/VA dividido por funcionário → RH › Benefícios ao aprovar.
+export type TipoPedido = 'reembolso' | 'freelancer' | 'fornecedor' | 'compra_online' | 'beneficio';
+export type PermPedido = 'pag_reembolso' | 'pag_freelancer' | 'pag_fornecedor' | 'pag_compra_online' | 'pag_beneficio' | 'pag_aprovar';
 
 export const PERM_DO_TIPO: Record<TipoPedido, PermPedido> = {
-  reembolso: 'pag_reembolso', freelancer: 'pag_freelancer', fornecedor: 'pag_fornecedor', compra_online: 'pag_compra_online',
+  reembolso: 'pag_reembolso', freelancer: 'pag_freelancer', fornecedor: 'pag_fornecedor', compra_online: 'pag_compra_online', beneficio: 'pag_beneficio',
 };
 export const BUCKET_PEDIDOS = 'pedidos-pagamento';
 
@@ -27,7 +28,7 @@ function padrao(role: string, key: PermPedido): boolean {
 
 /** Permissões de pedido de pagamento do papel na loja. Admin tem todas (o dono aprova). */
 export async function permissoesPedido(admin: any, tenantId: string, role: string): Promise<Record<PermPedido, boolean>> {
-  const keys: PermPedido[] = ['pag_reembolso', 'pag_freelancer', 'pag_fornecedor', 'pag_compra_online', 'pag_aprovar'];
+  const keys: PermPedido[] = ['pag_reembolso', 'pag_freelancer', 'pag_fornecedor', 'pag_compra_online', 'pag_beneficio', 'pag_aprovar'];
   const papel = PT_PARA_EN[role] ?? role;
   const out = Object.fromEntries(keys.map((k) => [k, padrao(papel, k)])) as Record<PermPedido, boolean>;
   if (papel === 'admin') return out;
@@ -57,7 +58,7 @@ export async function salvarComprovante(admin: any, tenantId: string, ref: strin
 }
 
 const brl = (n: number) => `R$ ${Number(n).toFixed(2).replace('.', ',').replace(/\B(?=(\d{3})+(?!\d))/g, '.')}`;
-const ROTULO: Record<TipoPedido, string> = { reembolso: 'Reembolso', freelancer: 'Freelancer', fornecedor: 'Fornecedor sem nota', compra_online: 'Compra online' };
+const ROTULO: Record<TipoPedido, string> = { reembolso: 'Reembolso', freelancer: 'Freelancer', fornecedor: 'Fornecedor sem nota', compra_online: 'Compra online', beneficio: 'Benefício (VR/VA)' };
 
 const SEMANA = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
 /** '2026-09-26' → '26/09 (sáb)'. */
@@ -84,8 +85,10 @@ async function nomeDaCategoria(admin: any, id?: string | null): Promise<string |
 }
 
 /** Avisa o dono no 📥 do chat (uma pendência por pedido). */
-export async function pendenciaDoPedido(admin: any, p: { id: string; tenant_id: string; tipo: TipoPedido; valor: number; favorecido_nome: string; descricao: string; solicitado_por_nome: string | null; dias?: string[] | null; valores_dia?: number[] | null; dre_category_id?: string | null; purchase_id?: string | null }) {
-  const dias = p.tipo === 'freelancer' ? textoDias(p.dias, p.valores_dia) : '';
+export async function pendenciaDoPedido(admin: any, p: { id: string; tenant_id: string; tipo: TipoPedido; valor: number; favorecido_nome: string; descricao: string; solicitado_por_nome: string | null; dias?: string[] | null; valores_dia?: number[] | null; dre_category_id?: string | null; purchase_id?: string | null; beneficio_itens?: { nome: string; valor: number }[] | null }) {
+  const dias = p.tipo === 'freelancer' ? textoDias(p.dias, p.valores_dia)
+    // Benefício: para quem é cada parte do boleto (o boleto da operadora não diz)
+    : p.tipo === 'beneficio' && p.beneficio_itens?.length ? `Para: ${p.beneficio_itens.map((i) => `${i.nome} ${brl(i.valor)}`).join(', ')}` : '';
   // Classificação que quem pediu escolheu, para o dono ver no cartão antes de aprovar (dono, 2026-09-29)
   const categoria = await nomeDaCategoria(admin, p.dre_category_id)
     ?? (p.purchase_id ? 'Compra lançada (itens da compra)' : null);

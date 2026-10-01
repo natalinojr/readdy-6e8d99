@@ -44,7 +44,7 @@ export type PermissaoKey =
 /** Pedidos de pagamento no módulo Recebimentos e pagamentos (/receber) — 2026-09-24.
  *  Pedir: qualquer papel pode ter (padrão Admin/Gerente). Aprovar: padrão só Admin.
  *  O servidor confere de novo (Edge pedidos-pagamento, _shared/pedidos-pagamento.ts). */
-export const PEDIDO_KEYS = ['pag_reembolso', 'pag_freelancer', 'pag_fornecedor', 'pag_compra_online', 'pag_aprovar'] as const;
+export const PEDIDO_KEYS = ['pag_reembolso', 'pag_freelancer', 'pag_fornecedor', 'pag_compra_online', 'pag_beneficio', 'pag_aprovar'] as const;
 export type PedidoPermissaoKey = typeof PEDIDO_KEYS[number];
 /** Quem entra no módulo /receber: quem recebe mercadoria ou faz/aprova pedido de pagamento. */
 export const RECEBER_MODULO_KEYS = ['estoque_receber', 'estoque_movimentar', ...PEDIDO_KEYS] as const;
@@ -82,7 +82,7 @@ export const DEFAULT_PERMISSOES: Record<Papel, PermissaoKey[]> = {
     'garcom_fechar_mesa', 'garcom_transferir_mesa', 'cardapio_editar',
     'estoque_movimentar', 'estoque_inventario', 'estoque_receber', 'kds_acessar', 'gestor_pedidos_acessar',
     'gestor_pedidos_entregar', 'gestor_entregas_acessar', 'relatorio_financeiro', 'marketing_estudio', 'relatorio_estoque', 'clientes_ver', 'auditoria_ver',
-    'pag_reembolso', 'pag_freelancer', 'pag_fornecedor', 'pag_compra_online',
+    'pag_reembolso', 'pag_freelancer', 'pag_fornecedor', 'pag_compra_online', 'pag_beneficio',
     // As abas de Configurações só entram em cena se o dono ligar
     // `configuracoes_editar` para o Gerente — a tela inteira depende dela.
     ...FIN_KEYS, ...REL_KEYS, ...CFG_KEYS_GERENTE, CFG_MAQUININHA_KEY, ...GESTAO_KEYS,

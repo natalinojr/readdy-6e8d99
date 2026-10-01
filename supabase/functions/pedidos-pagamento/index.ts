@@ -8,6 +8,8 @@
 // Desde 2026-09-28 (tarde): o pedido traz o Pix copia e cola do checkout; o dono classifica
 // (Despesa/CMV) ao aprovar, nasce a compra com a conta a pagar e o Pix sai pelo Inter com o PIN.
 // A NF-e do vendedor que chegar depois é ignorada (gatilho trg_nota_da_compra_online).
+// Benefício (2026-09-30): boleto da VR/VA lido (ler_boleto) e dividido por funcionário; aprovar vira o
+// lançamento do RH › Benefícios (fn_pedido_beneficio_aprovar) e o boleto/Pix fica guardado na conta.
 // verify_jwt = true.
 // deno-lint-ignore-file no-explicit-any
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
@@ -18,6 +20,8 @@ import {
 } from '../_shared/pedidos-pagamento.ts';
 import { lerPrintCompra } from './print-compra.ts';
 import { acharCopiaECola, lerCopia } from '../_shared/guias.ts';
+import { tryDecodeBoleto } from '../_shared/boleto.ts';
+import { lerBoletoBeneficio } from './boleto-beneficio.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -35,7 +39,7 @@ const somaDias = (iso: string, d: number) => new Date(Date.parse(`${iso}T12:00:0
 const txt = (s: unknown, max = 300) => String(s ?? '').trim().slice(0, max);
 const dataOk = (d: unknown) => typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d) && !Number.isNaN(Date.parse(`${d}T12:00:00Z`));
 
-const CAMPOS = 'id, tipo, status, prestador_id, competencia, descricao, valor, data_gasto, vencimento, favorecido_nome, favorecido_doc, pix_chave, dre_category_id, supplier_id, freelancer_id, freelancer_funcao, dias, valores_dia, comprovante_path, purchase_id, bill_id, obs, solicitado_por, solicitado_por_nome, decidido_por_nome, decidido_em, motivo_recusa, created_at, link_url, anuncio_id, quantidade, pedido_externo, valor_pago, comprado_em, comprado_por_nome, compra_detalhe, pix_copia_e_cola, ja_pago, ja_pago_em, pago_forma, pago_ref_tipo, pago_ref_id';
+const CAMPOS = 'id, tipo, status, prestador_id, competencia, descricao, valor, data_gasto, vencimento, favorecido_nome, favorecido_doc, pix_chave, dre_category_id, supplier_id, freelancer_id, freelancer_funcao, dias, valores_dia, comprovante_path, purchase_id, bill_id, obs, solicitado_por, solicitado_por_nome, decidido_por_nome, decidido_em, motivo_recusa, created_at, link_url, anuncio_id, quantidade, pedido_externo, valor_pago, comprado_em, comprado_por_nome, compra_detalhe, pix_copia_e_cola, ja_pago, ja_pago_em, pago_forma, pago_ref_tipo, pago_ref_id, beneficio_detalhe, linha_digitavel, beneficio_lote_id';
 
 interface Ctx { admin: any; tenantId: string; userId: string; email: string | null; role: string; perms: Record<string, boolean>; token?: string }
 
@@ -192,6 +196,10 @@ async function criar(ctx: Ctx, body: Record<string, any>) {
       linha.valor = round2(Number(pix.valor));
       Object.assign(linha, base, { favorecido_nome: link?.site ?? (txt(det?.site, 60) || txt(pix.nome, 60) || 'Compra online'), pix_copia_e_cola: copia, pix_chave: pix.chave ?? null });
     }
+  } else if (tipo === 'beneficio') {
+    const r = await dadosBeneficio(ctx, body, hoje);
+    if (typeof r === 'string') return erro(r);
+    Object.assign(linha, r);
   } else if (tipo === 'fornecedor') {
     if (!descricao) return erro('Conte o que está sendo pago');
     const supplierId = txt(body.supplier_id, 40) || null;
@@ -261,7 +269,7 @@ async function criar(ctx: Ctx, body: Record<string, any>) {
     }
     return erro(`Não consegui gravar o pedido: ${error.message}`, 500);
   }
-  await pendenciaDoPedido(ctx.admin, { id: novo.id, tenant_id: ctx.tenantId, tipo, valor: linha.valor, favorecido_nome: linha.favorecido_nome, descricao: linha.descricao, solicitado_por_nome: linha.solicitado_por_nome, dias: linha.dias ?? null, valores_dia: linha.valores_dia ?? null, dre_category_id: linha.dre_category_id ?? null, purchase_id: linha.purchase_id ?? null });
+  await pendenciaDoPedido(ctx.admin, { id: novo.id, tenant_id: ctx.tenantId, tipo, valor: linha.valor, favorecido_nome: linha.favorecido_nome, descricao: linha.descricao, solicitado_por_nome: linha.solicitado_por_nome, dias: linha.dias ?? null, valores_dia: linha.valores_dia ?? null, dre_category_id: linha.dre_category_id ?? null, purchase_id: linha.purchase_id ?? null, beneficio_itens: linha.beneficio_detalhe?.itens ?? null });
   return json({ ok: true, id: novo.id });
 }
 
@@ -285,7 +293,7 @@ async function duplicado(ctx: Ctx, tipo: TipoPedido, l: Record<string, any>): Pr
     (!!nome && normNome(r.favorecido_nome) === nome);
 
   let q = ctx.admin.from('fin_payment_requests')
-    .select('id, status, valor, descricao, favorecido_nome, pix_chave, freelancer_id, supplier_id, data_gasto, vencimento, dias, solicitado_por_nome, created_at, link_url, anuncio_id, pix_copia_e_cola')
+    .select('id, status, valor, descricao, favorecido_nome, pix_chave, freelancer_id, supplier_id, data_gasto, vencimento, dias, solicitado_por_nome, created_at, link_url, anuncio_id, pix_copia_e_cola, linha_digitavel, competencia, beneficio_detalhe')
     .eq('tenant_id', ctx.tenantId).eq('tipo', tipo).in('status', ['pendente', 'aprovada']);
   if (tipo === 'compra_online') {
     // Mesmo produto já pedido (esperando ou autorizado, ainda não comprado)
@@ -298,6 +306,29 @@ async function duplicado(ctx: Ctx, tipo: TipoPedido, l: Record<string, any>): Pr
     if (!igual) return null;
     const quem = igual.solicitado_por_nome ? ` por ${igual.solicitado_por_nome}` : '';
     return `Esse produto já foi pedido${quem} e ${igual.status === 'aprovada' ? 'já está autorizado (falta comprar)' : 'está esperando aprovação'}. Veja em "Meus pedidos" ou fale com o financeiro.`;
+  }
+  if (tipo === 'beneficio') {
+    // Aprovado fica 'aprovada' para sempre: olha só os últimos 6 meses, mais novos primeiro
+    const { data: bs, error: eb } = await q.gte('created_at', `${somaDias(hojeBR(), -180)}T00:00:00-03:00`).order('created_at', { ascending: false }).limit(300);
+    if (eb) throw new Error(`Falha ao conferir pedido repetido: ${eb.message}`);
+    const doc = (x: any) => String(x?.beneficio_detalhe?.boleto?.numero_documento ?? '').replace(/\D/g, '');
+    const mesmo: any = (bs ?? []).find((r: any) => (l.linha_digitavel && r.linha_digitavel === l.linha_digitavel)
+      || (l.pix_copia_e_cola && r.pix_copia_e_cola === l.pix_copia_e_cola)
+      || (doc(l) && doc(r) === doc(l) && normNome(r.favorecido_nome) === normNome(l.favorecido_nome))
+      || (Number(r.valor) === Number(l.valor) && r.vencimento === l.vencimento && normNome(r.favorecido_nome) === normNome(l.favorecido_nome)));
+    if (mesmo) {
+      const quem = mesmo.solicitado_por_nome ? ` por ${mesmo.solicitado_por_nome}` : '';
+      return `Esse boleto já foi pedido${quem} e ${mesmo.status === 'aprovada' ? 'já foi aprovado' : 'está esperando aprovação'}. Não dá para pedir de novo.`;
+    }
+    // Funcionário que já está em outro pedido do mesmo mês
+    const ids = new Set(((l.beneficio_detalhe?.itens ?? []) as any[]).map((i) => String(i.employee_id)));
+    const nomes = new Set<string>();
+    for (const r of (bs ?? []) as any[]) {
+      if (r.competencia !== l.competencia) continue;
+      for (const i of (r.beneficio_detalhe?.itens ?? []) as any[]) if (ids.has(String(i.employee_id))) nomes.add(String(i.nome));
+    }
+    if (nomes.size) return `Já existe pedido de benefício de ${diaBR(l.competencia).slice(3)} para: ${[...nomes].join(', ')}. Confira em "Meus pedidos" ou fale com o financeiro.`;
+    return null;
   }
   if (tipo === 'reembolso') q = q.eq('data_gasto', l.data_gasto).eq('valor', l.valor);
   else if (tipo === 'fornecedor') q = q.eq('vencimento', l.vencimento).eq('valor', l.valor);
@@ -343,7 +374,67 @@ function detalheCompra(x: any) {
   return { site: txt(x.site, 60) || null, itens, subtotal: n(x.subtotal), desconto: n(x.desconto), frete: n(x.frete), total: n(x.total), entrega: txt(x.entrega, 200) || null, numero_pedido: txt(x.numero_pedido, 60) || null };
 }
 // 'prestador' (2026-09-28): pedido mensal do prestador MEI, gerado pela recorrência (fn_prestador_gerar_pedidos)
-const ROTULO: Record<string, string> = { reembolso: 'Reembolso', freelancer: 'Freelancer', fornecedor: 'Fornecedor sem nota', compra_online: 'Compra online', prestador: 'Prestador MEI' };
+const ROTULO: Record<string, string> = { reembolso: 'Reembolso', freelancer: 'Freelancer', fornecedor: 'Fornecedor sem nota', compra_online: 'Compra online', prestador: 'Prestador MEI', beneficio: 'Benefício (VR/VA)' };
+
+/**
+ * Boleto de benefício (VR/VA, 2026-09-30): o que foi lido/conferido na tela + a divisão por funcionário.
+ * A soma tem que fechar com o boleto; o valor de dentro da linha/Pix manda (tem DV/CRC). Devolve os
+ * campos do pedido ou o texto do erro.
+ */
+async function dadosBeneficio(ctx: Ctx, body: Record<string, any>, hoje: string): Promise<Record<string, any> | string> {
+  if (!body.comprovante?.base64) return 'Mande o boleto (PDF ou foto)';
+  const b = body.boleto ?? {};
+  const beneficiario = txt(b.beneficiario, 120);
+  if (!beneficiario) return 'Informe quem recebe o boleto (ex.: VR Benefícios)';
+  const valor = round2(Number(body.valor));
+  const linhaRaw = onlyDigits(b.linha_digitavel);
+  const dec = linhaRaw ? tryDecodeBoleto(linhaRaw) : null;
+  if (linhaRaw && !dec) return 'A linha digitável não confere (dígito verificador). Confira os números ou apague o campo.';
+  if (dec?.valor && Math.abs(dec.valor - valor) > 0.009) return `O valor informado (${brl(valor)}) é diferente do valor do boleto (${brl(dec.valor)}).`;
+  const copiaTxt = txt(b.pix_copia_e_cola, 1000);
+  const copia = copiaTxt ? acharCopiaECola(copiaTxt) : null;
+  if (copiaTxt && !copia) return 'O Pix copia e cola está incompleto ou alterado. Apague o campo ou cole de novo.';
+  const valorPix = copia ? lerCopia(copia).valor : null;
+  if (valorPix && Math.abs(valorPix - valor) > 0.009) return `O valor informado (${brl(valor)}) é diferente do valor do Pix do boleto (${brl(valorPix)}).`;
+  const venc = dataOk(body.vencimento) ? String(body.vencimento) : '';
+  if (!venc || venc < somaDias(hoje, -60) || venc > somaDias(hoje, 120)) return 'Informe o vencimento do boleto';
+  const comp = /^\d{4}-(0[1-9]|1[0-2])$/.test(String(body.competencia ?? '')) ? `${body.competencia}-01` : '';
+  if (!comp || comp < `${somaDias(hoje, -120).slice(0, 7)}-01` || comp > `${somaDias(hoje, 120).slice(0, 7)}-01`) return 'Escolha o mês do benefício (competência)';
+
+  const brutos = (Array.isArray(body.itens) ? body.itens : []) as any[];
+  if (!brutos.length) return 'Marque para quem é o benefício';
+  if (brutos.length > 200) return 'Funcionários demais num pedido';
+  const ids = brutos.map((i) => txt(i?.employee_id, 40) ?? '');
+  if (new Set(ids).size !== ids.length || ids.some((i) => !i)) return 'Funcionário repetido na divisão';
+  const { data: emps, error } = await ctx.admin.from('hr_employees').select('id, name').eq('tenant_id', ctx.tenantId).in('id', ids);
+  if (error) throw new Error(error.message);
+  const nomeDe = new Map((emps ?? []).map((e: any) => [e.id, e.name]));
+  const itens: { employee_id: string; nome: string; valor: number }[] = [];
+  for (const [k, i] of brutos.entries()) {
+    const nome = nomeDe.get(ids[k]);
+    if (!nome) return 'Funcionário que não é desta loja';
+    const v = round2(Number(i?.valor));
+    if (!(v > 0)) return `Informe o valor de ${nome}`;
+    itens.push({ employee_id: ids[k], nome, valor: v });
+  }
+  const soma = round2(itens.reduce((t, i) => t + i.valor, 0));
+  if (Math.abs(soma - valor) > 0.009) return `A divisão (${brl(soma)}) não fecha com o boleto (${brl(valor)}). ${soma < valor ? `Faltam ${brl(valor - soma)}` : `Passou ${brl(soma - valor)}`}.`;
+
+  // Já lançado no RH (tela Benefícios ou outro boleto aprovado) no mesmo mês
+  const { data: ja } = await ctx.admin.from('hr_beneficios').select('employee_name').eq('tenant_id', ctx.tenantId).eq('competencia', comp).in('employee_id', ids);
+  if (ja?.length) return `Já tem vale lançado em ${diaBR(comp).slice(3)} para: ${[...new Set(ja.map((x: any) => x.employee_name))].join(', ')}. Confira em Financeiro › RH › Benefícios.`;
+
+  const cnpj = onlyDigits(b.cnpj);
+  const produto = txt(b.produto, 120) || null;
+  const mes = diaBR(comp).slice(3);
+  return {
+    descricao: `${produto ?? 'Benefício'} · ${mes} · ${itens.length} funcionário${itens.length > 1 ? 's' : ''}`,
+    favorecido_nome: beneficiario, favorecido_doc: cnpj.length === 14 ? cnpj : null, pix_chave: null,
+    vencimento: venc, competencia: comp,
+    linha_digitavel: dec ? (dec.digitavel ?? dec.barcode) : null, pix_copia_e_cola: copia,
+    beneficio_detalhe: { boleto: { beneficiario, cnpj: cnpj.length === 14 ? cnpj : null, numero_documento: txt(b.numero_documento, 60) || null, produto }, itens },
+  };
+}
 
 /** Link curto do app do Mercado Livre (mercadolivre.com/sec/…) não tem o nº nem o nome: segue o
  *  redirecionamento (só desses hosts, 4 s) para guardar o endereço do anúncio. Falhou → fica o curto. */
@@ -375,7 +466,7 @@ async function linkCompleto(texto: string): Promise<string> {
  */
 async function prepararPagamento(ctx: Ctx, pedidoId: string): Promise<{ preparado: boolean; motivo?: string; aviso?: string; pendencia_id?: string | null }> {
   const { data: p } = await ctx.admin.from('fin_payment_requests')
-    .select('id, tipo, status, valor, favorecido_nome, pix_chave, pix_copia_e_cola, freelancer_id, prestador_id, bill_id, descricao')
+    .select('id, tipo, status, valor, favorecido_nome, pix_chave, pix_copia_e_cola, linha_digitavel, freelancer_id, prestador_id, bill_id, descricao')
     .eq('id', pedidoId).eq('tenant_id', ctx.tenantId).maybeSingle();
   if (!p || p.status !== 'aprovada' || !p.bill_id) return { preparado: false, motivo: 'pedido sem conta a pagar', aviso: 'Esse pedido não tem conta a pagar.' };
   // O aviso "pague pelo app do banco" (pedido_pagamento_pagar) sai quando o pagamento se resolve
@@ -410,7 +501,10 @@ async function prepararPagamento(ctx: Ctx, pedidoId: string): Promise<{ preparad
     await fecharAvisoPagar('já pago pelo Inter');
     return { preparado: false, motivo: 'já pago pelo Inter', aviso: 'Essa conta já foi paga pelo Inter — falta só a baixa, que sai sozinha pelo extrato.' };
   }
-  const titulo = `${ROTULO[p.tipo] ?? 'Pagamento'} aprovado: Pix de ${brl(valor)} para ${p.favorecido_nome}`;
+  // Benefício: boleto com linha digitável sai como boleto; só com Pix, pelo copia e cola (o Inter só aceita
+  // copia e cola de emissor permitido — o da VR é recusado e cai no aviso de pagar pelo app do banco).
+  const linhaBoleto: string | null = p.tipo === 'beneficio' ? p.linha_digitavel : null;
+  const titulo = `${ROTULO[p.tipo] ?? 'Pagamento'} aprovado: ${linhaBoleto ? 'boleto' : 'Pix'} de ${brl(valor)} para ${p.favorecido_nome}`;
   // Devolve o id da pendência: a tela de aprovar paga ali mesmo (PIN) pelo assistente-app › pendencia_pagar.
   const pendenciaPix = async (payId: string): Promise<string | null> => {
     // Pix recusado no Inter deixa a pendência dele aberta até pagar (20260928130000); o Pix novo ganha a
@@ -435,13 +529,13 @@ async function prepararPagamento(ctx: Ctx, pedidoId: string): Promise<{ preparad
     }))?.data?.id ?? null;
   };
   let motivo = '';
-  const copia: string | null = p.tipo === 'compra_online' ? p.pix_copia_e_cola : null;
-  if (chave || copia) {
+  const copia: string | null = p.tipo === 'compra_online' || p.tipo === 'beneficio' ? p.pix_copia_e_cola : null;
+  if (chave || copia || linhaBoleto) {
     const r = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/inter-bank`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-internal-key': Deno.env.get('FISCAL_INTERNAL_KEY') ?? '' },
       body: JSON.stringify({
-        action: 'prepare_payment', tenant_id: ctx.tenantId, tipo: 'pix', ...(copia ? { copia_e_cola: copia } : { chave }), valor, bill_id: bill.id,
+        action: 'prepare_payment', tenant_id: ctx.tenantId, ...(linhaBoleto ? { tipo: 'boleto', linha: linhaBoleto } : { tipo: 'pix', ...(copia ? { copia_e_cola: copia } : { chave }) }), valor, bill_id: bill.id,
         descricao: `${ROTULO[p.tipo] ?? 'Pedido'} — ${p.descricao}`.slice(0, 140), requested_by: ctx.userId, channel: 'app',
       }),
     }).catch((e) => ({ ok: false, status: 0, json: async () => ({ error: String(e) }) }) as unknown as Response);
@@ -486,7 +580,7 @@ async function prepararPagamento(ctx: Ctx, pedidoId: string): Promise<{ preparad
       return { preparado: false, motivo, aviso: 'Um Pix anterior dessa conta ficou sem resposta do Inter. Confira no app do Inter se saiu antes de pagar de novo.' };
     }
   } else {
-    motivo = 'pedido sem chave Pix';
+    motivo = p.tipo === 'beneficio' ? 'boleto sem linha digitável nem Pix' : 'pedido sem chave Pix';
   }
   // Não deu para preparar (trava do Pix, Inter sem configuração…): avisa para pagar por fora
   await ctx.admin.rpc('fn_pendencia_upsert', {
@@ -496,7 +590,7 @@ async function prepararPagamento(ctx: Ctx, pedidoId: string): Promise<{ preparad
     p_payload: { pedido_id: p.id, bill_id: bill.id, chave }, p_rota: '/receber?aprovar=1',
     p_urgencia: 'alta', p_acao_requerida: true, p_origem: 'app', p_reabrir: true,
   });
-  return { preparado: false, motivo, aviso: `O Pix não foi preparado: ${motivo.replace(/\.+$/, '')}. Pague pelo app do banco — a conciliação dá baixa.` };
+  return { preparado: false, motivo, aviso: `${linhaBoleto ? 'O boleto' : 'O Pix'} não foi preparado: ${motivo.replace(/\.+$/, '')}. Pague pelo app do banco — a conciliação dá baixa.` };
 }
 
 /**
@@ -720,7 +814,7 @@ Deno.serve(async (req) => {
     if (!role) return erro('Sem acesso a esta loja', 403);
     const perms = await permissoesPedido(admin, tenantId, role);
     const ctx: Ctx = { admin, tenantId, userId: caller.userId, email: caller.email, role, perms, token: (req.headers.get('Authorization') ?? '').replace(/^Bearer\s+/i, '') };
-    const podePedir = perms.pag_reembolso || perms.pag_freelancer || perms.pag_fornecedor || perms.pag_compra_online;
+    const podePedir = perms.pag_reembolso || perms.pag_freelancer || perms.pag_fornecedor || perms.pag_compra_online || perms.pag_beneficio;
     const aprovador = perms.pag_aprovar;
 
     switch (action) {
@@ -768,6 +862,27 @@ Deno.serve(async (req) => {
         return json({ fornecedores: (data ?? []).map((f: any) => ({ id: f.id, nome: f.name, cnpj: f.cnpj, tem_pix: !!f.pix_key })) });
       }
       case 'criar': return await criar(ctx, body);
+      case 'ler_boleto': {
+        if (!perms.pag_beneficio && !aprovador) return erro('Seu perfil não pode pedir pagamento de benefício.', 403);
+        const r = await lerBoletoBeneficio(admin, tenantId, caller.userId, body.arquivo ?? {});
+        if (r.erro) return erro(r.erro, r.status ?? 400);
+        return json({ lido: r.lido });
+      }
+      case 'funcionarios': {
+        // Para dividir o boleto de benefício: ativos, com o VA mensal do cadastro e quem já tem no mês
+        if (!perms.pag_beneficio && !aprovador) return erro('Sem permissão', 403);
+        const comp = /^\d{4}-(0[1-9]|1[0-2])$/.test(String(body.competencia ?? '')) ? `${body.competencia}-01` : null;
+        const [{ data, error }, lanc, peds] = await Promise.all([
+          admin.from('hr_employees').select('id, name, role, status, va_valor_mensal').eq('tenant_id', tenantId).order('name').limit(500),
+          comp ? admin.from('hr_beneficios').select('employee_id').eq('tenant_id', tenantId).eq('competencia', comp) : Promise.resolve({ data: [] }),
+          comp ? admin.from('fin_payment_requests').select('beneficio_detalhe').eq('tenant_id', tenantId).eq('tipo', 'beneficio').eq('competencia', comp).in('status', ['pendente', 'aprovada']) : Promise.resolve({ data: [] }),
+        ]);
+        if (error) throw new Error(error.message);
+        const ja = new Set<string>((lanc.data ?? []).map((x: any) => String(x.employee_id)));
+        for (const p of (peds.data ?? []) as any[]) for (const i of (p.beneficio_detalhe?.itens ?? [])) ja.add(String(i.employee_id));
+        return json({ funcionarios: (data ?? []).filter((e: any) => e.status !== 'inactive')
+          .map((e: any) => ({ id: e.id, nome: e.name, funcao: e.role, va_mensal: e.va_valor_mensal == null ? null : Number(e.va_valor_mensal), ja_no_mes: ja.has(e.id) })) });
+      }
       case 'categorias_mercadoria': {
         if (!aprovador) return erro('Sem permissão', 403);
         const { data, error } = await admin.from('fin_merchandise_categories').select('id, name')
@@ -833,6 +948,17 @@ Deno.serve(async (req) => {
         if (!p) return erro('Pedido não encontrado', 404);
         // Ninguém aprova o próprio pedido — só o Admin (o dono)
         if (p.solicitado_por === caller.userId && role !== 'admin') return erro('Você não pode aprovar o seu próprio pedido. Peça ao financeiro.', 403);
+        if (p.tipo === 'beneficio') {
+          // Vira o lançamento do RH › Benefícios (1 conta no total + 1 linha por funcionário)
+          const dre = txt(body.dre_category_id, 40) || null;
+          if (dre && !(await categorias(ctx)).some((c: any) => c.id === dre)) return erro('Classificação inválida');
+          const { data, error } = await admin.rpc('fn_pedido_beneficio_aprovar', {
+            p_id: p.id, p_user: caller.userId, p_user_nome: await nomeDoUsuario(admin, caller.userId, caller.email), p_dre: dre,
+          });
+          if (error) return erro(error.message, 400);
+          const pagamento = await prepararPagamento(ctx, p.id).catch((e) => ({ preparado: false, motivo: String((e as Error)?.message ?? e) }));
+          return json({ ...(data as Record<string, unknown>), pagamento });
+        }
         if (p.tipo === 'compra_online' && (p.pix_copia_e_cola || p.ja_pago)) {
           const r = await aprovarCompraOnline(ctx, p, body);
           if ('erro' in r) return erro(r.erro, r.status ?? 400);

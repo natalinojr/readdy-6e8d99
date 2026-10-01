@@ -7,6 +7,7 @@ import { chamarPedidos, comprovanteParaEnvio, type Categoria, type ContextoPedid
 import { Categorias, Chips, Comprovante, Enviar, Rotulo, Texto, Valor, cls, lerValor } from './ui';
 import { lerLinkCompra } from './linkCompra';
 import { lerPixCopia } from './pixCopia';
+import NovoBeneficio from './NovoBeneficio';
 
 interface CandidatoPagamento { tipo: 'extrato' | 'sangria'; id: string; data: string; valor: number; descricao: string }
 
@@ -26,7 +27,13 @@ const SEMANA = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
 const diaSemana = (iso: string) => SEMANA[new Date(`${iso}T12:00:00Z`).getUTCDay()];
 const novaRef = () => (crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2, 12)}`);
 
-export default function NovoPedido({ tipo, tenantId, contexto, onEnviado, onErro, linkInicial, onCriarTarefa }: Props) {
+export default function NovoPedido(props: Props) {
+  // Boleto de benefício (VR/VA, 2026-09-30): formulário próprio (leitura do boleto + divisão por funcionário)
+  if (props.tipo === 'beneficio') return <NovoBeneficio tenantId={props.tenantId} onEnviado={props.onEnviado} onErro={props.onErro} />;
+  return <NovoPedidoComum {...props} />;
+}
+
+function NovoPedidoComum({ tipo, tenantId, contexto, onEnviado, onErro, linkInicial, onCriarTarefa }: Props) {
   const hoje = hojeISO();
   const [ref] = useState(novaRef);
   const [enviando, setEnviando] = useState(false);

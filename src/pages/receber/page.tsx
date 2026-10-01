@@ -4,7 +4,7 @@
 // Toda a regra fica na Edge receber-mercadoria, que reaproveita as Edges de compra/nota/estoque.
 // Pedir pagamento (2026-09-24): reembolso, freelancer e fornecedor sem nota viram pedido para o dono
 // aprovar (Edge pedidos-pagamento); mercadoria paga do bolso vai pelo recebimento ("Paguei do meu bolso").
-// Links: ?pedido=reembolso|freelancer|fornecedor|compra_online, ?aprovar=1, ?meus=1.
+// Links: ?pedido=reembolso|freelancer|fornecedor|compra_online|beneficio, ?aprovar=1, ?meus=1.
 // ?compartilhado=1: veio do "Compartilhar" do celular com link de loja online (sw.js) — o link já vem colado.
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -98,10 +98,10 @@ export default function ReceberPage() {
   useEffect(() => {
     const pedido = params.get('pedido');
     const alvo: Tela | null = pedido === 'reembolso' ? 'reembolso_o_que'
-      : pedido === 'freelancer' || pedido === 'fornecedor' || pedido === 'compra_online' ? 'pedido'
+      : pedido === 'freelancer' || pedido === 'fornecedor' || pedido === 'compra_online' || pedido === 'beneficio' ? 'pedido'
       : params.get('aprovar') ? 'aprovar' : params.get('meus') ? 'meus' : null;
     if (!alvo) return;
-    if (pedido === 'freelancer' || pedido === 'fornecedor' || pedido === 'compra_online') setTipoPedido(pedido);
+    if (pedido === 'freelancer' || pedido === 'fornecedor' || pedido === 'compra_online' || pedido === 'beneficio') setTipoPedido(pedido);
     if (pedido === 'compra_online' && params.get('compartilhado')) lerTextoCompartilhado().then((t) => setCompartilhado(t ?? ''));
     setErro(null); setR(null); setTela(alvo);
     setParams({}, { replace: true });
@@ -338,7 +338,7 @@ export default function ReceberPage() {
     meus: 'Meus pedidos', aprovar: 'Aprovar pedidos',
   };
   const perms = ctxPed?.perms;
-  const podePedir = !!perms && (perms.pag_reembolso || perms.pag_freelancer || perms.pag_fornecedor || !!perms.pag_compra_online);
+  const podePedir = !!perms && (perms.pag_reembolso || perms.pag_freelancer || perms.pag_fornecedor || !!perms.pag_compra_online || !!perms.pag_beneficio);
 
   const lista = useMemo(() => {
     const q = normalizar(filtro);
@@ -405,6 +405,7 @@ export default function ReceberPage() {
                   {perms!.pag_freelancer && <BotaoPedido icone="ri-user-star-line" titulo="Freelancer" onClick={() => abrirPedido('freelancer')} />}
                   {perms!.pag_fornecedor && <BotaoPedido icone="ri-store-2-line" titulo="Fornecedor sem nota" onClick={() => abrirPedido('fornecedor')} />}
                   {perms!.pag_compra_online && <BotaoPedido icone="ri-shopping-cart-2-line" titulo="Compra online" onClick={() => abrirPedido('compra_online')} />}
+                  {perms!.pag_beneficio && <BotaoPedido icone="ri-restaurant-line" titulo="Benefício (VR/VA)" onClick={() => abrirPedido('beneficio')} />}
                 </div>
                 <div className="mt-2.5 flex gap-2">
                   <button onClick={() => setTela('meus')} className="flex-1 py-3 rounded-2xl bg-white border border-zinc-100 text-sm font-semibold text-zinc-700 cursor-pointer">
