@@ -266,6 +266,21 @@ Quando o usuario pedir "muda X":
 
 Secao viva: registrar aqui padroes, decisoes e pegadinhas reutilizaveis conforme o sistema evolui. Cada entrada com data
 
+### 2026-10-02 — Dashboard reorganizado (atenção no topo, meta com ritmo, pico por dia)
+- `/dashboard` = faixa "Precisa de atenção" (`AtencaoFaixa`: contas vencidas/folha/compras recebidas/orçamentos via
+  `useFinanceiroAlertas`, atrasados, insumo que vai zerar, abaixo do mínimo, validade) → `FaturamentoHero` (meta + ritmo)
+  → cartões → vendas por hora + `PedidosAgora` → `PorCanal` + categorias → mesas + `ResumoFinanceiro` → `HorariosPico` → últimos.
+- Backend (migração `20261002090000_dashboard_painel.sql`): `dashboard_metas` (loja × dia da semana; escrita SÓ pela RPC
+  `fn_salvar_dashboard_metas`, admin/manager; leitura `auth_is_member_of`), `fn_get_dashboard_painel(tenant, desde, completo)`
+  e `fn_get_dashboard_pico(tenant)`. Regra de faturamento = a do `fn_get_dashboard_metrics` (pago, não cancelado, sem treino/rascunho) + iFood no front.
+- **Critérios:** comparar só com o mesmo dia da semana passada ATÉ ESTA HORA (o "vs ontem" comparava dia parcial com dia
+  inteiro). Fila/atrasados só das últimas 12 h (pedido esquecido há meses virava "atrasado 221779 min"). Pico por **dia de
+  operação** (madrugada até 5h59 = dia anterior). A cada pedido só a recarga leve (`p_completo=false`); ritmo/validade/metas,
+  financeiro e pico a cada 15 min e no Atualizar.
+- **Pegadinhas:** `ingredient_expiry_alerts.status` é do lote (`active`); o nível de alerta está em `alert_level` — o bloco
+  antigo filtrava `status in (expired, critical, warning)` e nunca mostrou nada. Hook com `if (document.hidden) return` na
+  PRIMEIRA busca deixa o bloco vazio em aba aberta em segundo plano — só pular as repetições.
+
 ### 2026-09-28 — Sonnet 5 → Sonnet 5.5 em todo o sistema
 - Trocado `claude-sonnet-5` → `claude-sonnet-5-5` (mesmo preço US$ 2/10) em `assistente-brain` (chat + leitura de foto/PDF),
   `atendimento-loja` (atendente + juiz), `contas-email` (2ª leitura de boleto), `pedidos-pagamento/print-compra.ts`,
