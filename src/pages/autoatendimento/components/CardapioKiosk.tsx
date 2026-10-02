@@ -11,6 +11,7 @@ import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../../contexts/AuthContext';
 import { useKioskAuth } from '../../../contexts/KioskAuthContext';
+import { useRegistroItensEscondidos } from '../registroItensEscondidos';
 
 // ── Teclado virtual para observações ──────────────────────────────────────────
 const LETRAS_KB = [
@@ -348,7 +349,7 @@ interface CardapioKioskProps {
 }
 
 export default function CardapioKiosk({ carrinho, onAdicionar, onDiminuir, onVerCarrinho, traduzir }: CardapioKioskProps) {
-  const { itensPublicos, categorias: categoriasCtx, loading, erroCarregamento, recarregar } = useCardapio();
+  const { itensPublicos, itens: itensCardapio, combos: combosCardapio, categorias: categoriasCtx, loading, erroCarregamento, recarregar } = useCardapio();
   const { t } = useTranslation();
   const navigate = useNavigate();
   // Sem usuário e sem sessão de totem o CardapioContext não sabe a loja e zera o cardápio
@@ -376,6 +377,20 @@ export default function CardapioKiosk({ carrinho, onAdicionar, onDiminuir, onVer
     }),
     [itensPublicos, itensDesabilitadosIds, itensSemEstoque],
   );
+
+  // Diagnóstico: grava em dev_error_events o item que some/volta e por quê (chope em Paranaguá, 2026-10-01).
+  useRegistroItensEscondidos({
+    tenantId: user?.tenantId ?? kioskSession?.tenantId ?? null,
+    quem: user?.nome ?? kioskSession?.kioskLabel ?? 'tablet',
+    visiveis: itensDisponiveis,
+    itensPublicos,
+    itens: itensCardapio,
+    categorias: categoriasCtx,
+    combos: combosCardapio,
+    desabilitadosIds: itensDesabilitadosIds,
+    semEstoque: itensSemEstoque,
+    pronto: !loading && !erroCarregamento,
+  });
 
   const temDestaques = useMemo(() => itensDisponiveis.some((i) => i.destaque), [itensDisponiveis]);
   const temPromocoes = useMemo(() => itensDisponiveis.some((i) => i.temPromocao), [itensDisponiveis]);
