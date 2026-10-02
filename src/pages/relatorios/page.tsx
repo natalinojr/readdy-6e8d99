@@ -127,21 +127,27 @@ export default function RelatoriosPage() {
               filtros de data junto. */}
           <div className="flex items-center lg:justify-end gap-1.5 md:gap-2 min-w-0 flex-wrap">
 
-            {/* 1. Toggle Calendário/Sessão — SEMPRE VISÍVEL E FIXO */}
-            <ModoFaturamentoToggle size="sm" showLabel={false} />
-
-            {/* 2. Filtro dinâmico — muda conforme o modo, mas posição é sempre aqui */}
-            <div className="flex-1 sm:flex-none min-w-0">
-              {!isSessao ? (
-                <FiltroRelatorio periodo={periodo} onPeriodo={setPeriodo} />
-              ) : (
-                <SessaoSelector
-                  selectedId={selectedSession?.id ?? null}
-                  onSelect={setSelectedSession}
-                  size="sm"
-                />
-              )}
-            </div>
+            {/* 1+2. Toggle Calendário/Sessão (sempre visível) + filtro do modo.
+                No modo calendário o toggle vai dentro do FiltroRelatorio para,
+                no celular, dividir a 2ª linha com Mês/Período. */}
+            {!isSessao ? (
+              <FiltroRelatorio
+                periodo={periodo}
+                onPeriodo={setPeriodo}
+                prefixo={<ModoFaturamentoToggle size="sm" showLabel={false} />}
+              />
+            ) : (
+              <>
+                <ModoFaturamentoToggle size="sm" showLabel={false} />
+                <div className="flex-1 sm:flex-none min-w-0">
+                  <SessaoSelector
+                    selectedId={selectedSession?.id ?? null}
+                    onSelect={setSelectedSession}
+                    size="sm"
+                  />
+                </div>
+              </>
+            )}
 
             {/* 3. Ações no desktop */}
             <div className="hidden lg:flex items-center gap-1.5 md:gap-2 flex-shrink-0">

@@ -39,8 +39,9 @@ export async function detectorNativo(): Promise<Detector | null> {
   }
 }
 
-/** Lê chave de NF-e (código de barras) ou link de NFC-e (QR) numa foto. */
-export async function lerCodigoDaFoto(file: File): Promise<Lido> {
+/** Lê chave de NF-e (código de barras) ou link de NFC-e (QR) numa foto. `interp` troca o que conta como achado
+ *  (ex.: Pix copia e cola do QR de um boleto — lerPixDaFoto). */
+export async function lerCodigoDaFoto(file: File, interp: (v: string) => Lido | null = interpretar): Promise<Lido> {
   if (!file.type.startsWith('image/')) return { tipo: 'nada' };
   const url = URL.createObjectURL(file);
   try {
@@ -58,7 +59,7 @@ export async function lerCodigoDaFoto(file: File): Promise<Lido> {
         try {
           const achados = await nativo.detect(canvas);
           for (const a of achados) {
-            const r = interpretar(a.rawValue);
+            const r = interp(a.rawValue);
             if (r) return r;
           }
         } catch { /* cai no jsQR */ }
@@ -67,7 +68,7 @@ export async function lerCodigoDaFoto(file: File): Promise<Lido> {
       const px = ctx.getImageData(0, 0, canvas.width, canvas.height);
       const code = jsQR(px.data, px.width, px.height, { inversionAttempts: 'attemptBoth' });
       if (code?.data) {
-        const r = interpretar(code.data);
+        const r = interp(code.data);
         if (r) return r;
       }
       if (scale === 1) break;
@@ -86,7 +87,7 @@ export async function lerCodigoDaFoto(file: File): Promise<Lido> {
       canvas.width = Math.round(sw * scale);
       canvas.height = Math.round(sh * scale);
       ctx.drawImage(img, Math.round(W * x), Math.round(H * y), sw, sh, 0, 0, canvas.width, canvas.height);
-      const r = await lerQrDoCanvas(canvas, nativo, jsQR);
+      const r = await lerQrDoCanvas(canvas, nativo, jsQR, interp);
       if (r) return r;
     }
     return { tipo: 'nada' };
@@ -121,11 +122,11 @@ export async function fotoParaEnvio(file: File): Promise<{ base64: string; media
 }
 
 /** Um quadro (foto recortada ou vídeo da câmera) → código lido, ou null. */
-export async function lerQrDoCanvas(canvas: HTMLCanvasElement, nativo: Detector | null, jsQR: typeof import('jsqr').default): Promise<Lido | null> {
+export async function lerQrDoCanvas(canvas: HTMLCanvasElement, nativo: Detector | null, jsQR: typeof import('jsqr').default, interp: (v: string) => Lido | null = interpretar): Promise<Lido | null> {
   if (nativo) {
     try {
       for (const a of await nativo.detect(canvas)) {
-        const r = interpretar(a.rawValue);
+        const r = interp(a.rawValue);
         if (r) return r;
       }
     } catch { /* cai no jsQR */ }
@@ -133,5 +134,11 @@ export async function lerQrDoCanvas(canvas: HTMLCanvasElement, nativo: Detector 
   const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
   const px = ctx.getImageData(0, 0, canvas.width, canvas.height);
   const code = jsQR(px.data, px.width, px.height, { inversionAttempts: 'attemptBoth' });
-  return code?.data ? interpretar(code.data) : null;
+  return code?.data ? interp(code.data) : null;
+}
+
+/** Pix copia e cola do QR de um boleto fotografado (VR/VA etc., 2026-09-30): o texto exato, sem IA. */
+export async function lerPixDaFoto(file: File): Promise<string | null> {
+  const r = await lerCodigoDaFoto(file, (v) => (v.trim().startsWith('000201') ? { tipo: 'qr', url: v.trim() } : null));
+  return r.tipo === 'qr' ? r.url : null;
 }

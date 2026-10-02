@@ -3,10 +3,11 @@
 import { SUPABASE_URL, SUPABASE_ANON_KEY, ensureFreshSession } from '@/lib/supabase';
 
 // 'prestador' (2026-09-28): pedido mensal do prestador MEI — só nasce pela recorrência, ninguém cria pela tela
-export type TipoPedido = 'reembolso' | 'freelancer' | 'fornecedor' | 'compra_online' | 'prestador';
+// 'beneficio' (2026-09-30): boleto da VR/VA dividido por funcionário → RH › Benefícios ao aprovar
+export type TipoPedido = 'reembolso' | 'freelancer' | 'fornecedor' | 'compra_online' | 'prestador' | 'beneficio';
 export type StatusPedido = 'pendente' | 'aprovada' | 'recusada' | 'cancelada' | 'comprada';
 
-export interface PermsPedido { pag_reembolso: boolean; pag_freelancer: boolean; pag_fornecedor: boolean; pag_compra_online?: boolean; pag_aprovar: boolean }
+export interface PermsPedido { pag_reembolso: boolean; pag_freelancer: boolean; pag_fornecedor: boolean; pag_compra_online?: boolean; pag_beneficio?: boolean; pag_aprovar: boolean }
 
 export interface ContextoPedidos {
   perms: PermsPedido;
@@ -64,7 +65,25 @@ export interface Pedido {
   ja_pago_em?: string | null;
   pago_forma?: 'pix' | 'boleto' | 'dinheiro' | 'cartao' | 'mercado_pago' | null;
   pago_ref_tipo?: 'extrato' | 'sangria' | null;
+  // Benefício (2026-09-30)
+  competencia?: string | null;
+  linha_digitavel?: string | null;
+  beneficio_detalhe?: BeneficioDetalhe | null;
 }
+
+export interface BeneficioDetalhe {
+  boleto: { beneficiario: string; cnpj: string | null; numero_documento: string | null; produto: string | null };
+  itens: { employee_id: string; nome: string; valor: number }[];
+}
+
+/** O que a Edge leu do boleto de benefício (ler_boleto). */
+export interface BoletoLido {
+  beneficiario: string | null; cnpj: string | null; pagador: string | null;
+  valor: number | null; vencimento: string | null; numero_documento: string | null; produto: string | null;
+  linha_digitavel: string | null; pix_copia_e_cola: string | null; valor_confere: boolean | null;
+}
+
+export interface Funcionario { id: string; nome: string; funcao: string | null; va_mensal: number | null; ja_no_mes: boolean }
 
 /** O que a IA leu do print do checkout (Edge pedidos-pagamento › ler_print). */
 export interface PrintLido {
@@ -78,8 +97,8 @@ export interface Categoria { id: string; nome: string }
 export interface Freela { id: string; nome: string; funcao: string | null; diaria: number | null; tem_pix: boolean }
 export interface Fornecedor { id: string; nome: string; cnpj: string | null; tem_pix: boolean }
 
-export const ROTULO_TIPO: Record<TipoPedido, string> = { reembolso: 'Reembolso', freelancer: 'Freelancer', fornecedor: 'Fornecedor sem nota', compra_online: 'Compra online', prestador: 'Prestador MEI' };
-export const ICONE_TIPO: Record<TipoPedido, string> = { reembolso: 'ri-refund-2-line', freelancer: 'ri-user-star-line', fornecedor: 'ri-store-2-line', compra_online: 'ri-shopping-cart-2-line', prestador: 'ri-briefcase-line' };
+export const ROTULO_TIPO: Record<TipoPedido, string> = { reembolso: 'Reembolso', freelancer: 'Freelancer', fornecedor: 'Fornecedor sem nota', compra_online: 'Compra online', prestador: 'Prestador MEI', beneficio: 'Benefício (VR/VA)' };
+export const ICONE_TIPO: Record<TipoPedido, string> = { reembolso: 'ri-refund-2-line', freelancer: 'ri-user-star-line', fornecedor: 'ri-store-2-line', compra_online: 'ri-shopping-cart-2-line', prestador: 'ri-briefcase-line', beneficio: 'ri-restaurant-line' };
 
 export async function chamarPedidos<T>(action: string, tenantId: string, corpo: Record<string, unknown> = {}): Promise<{ data: T | null; erro: string | null }> {
   const sessao = await ensureFreshSession();
