@@ -260,7 +260,8 @@ interface EstoqueContextValue {
     operadorId?: string;
   }) => Promise<void>;
   registrarPerda: (itensPerda: PerdaItem[], motivo: string, operador: string) => Promise<void>;
-  confirmarInventario: (itens: InventarioItemContado[], operador: string) => Promise<void>;
+  /** contadoEm (ISO): horário da contagem; o que entrou/saiu depois dele fica por cima do contado. */
+  confirmarInventario: (itens: InventarioItemContado[], operador: string, contadoEm?: string) => Promise<{ ok: boolean; erro?: string }>;
   /**
    * Corrige quantidades de uma contagem já confirmada (na unidade do estoque). O estoque atual
    * recebe só a diferença. Itens contados de novo numa contagem mais nova voltam em `bloqueados`.
@@ -772,8 +773,8 @@ export function EstoqueProvider({ children }: { children: ReactNode }) {
     }
   }, [user, insumos, dispararNotificacao, registrarEvento, broadcastStockUpdate, loadInsumos]);
 
-  const confirmarInventario = useCallback(async (itens: InventarioItemContado[], _operador: string) => {
-    if (!user?.tenantId) return;
+  const confirmarInventario = useCallback(async (itens: InventarioItemContado[], _operador: string, contadoEm?: string) => {
+    if (!user?.tenantId) return { ok: false, erro: 'Loja não identificada' };
     const valorAjuste = itens.reduce((sum, i) => sum + i.diferenca * (i.precoUnitario ?? 0), 0);
     const comDiferenca = itens.filter((i) => i.diferenca !== 0);
     const { error } = await invokeWithAuth('stock-write', {
@@ -783,9 +784,13 @@ export function EstoqueProvider({ children }: { children: ReactNode }) {
         items: itens,
         operator_name: _operador,
         valor_ajuste_liquido: valorAjuste,
+        counted_at: contadoEm ?? null,
       },
     });
-    if (error) console.error('[EstoqueContext] confirmarInventario error:', error);
+    if (error) {
+      console.error('[EstoqueContext] confirmarInventario error:', error);
+      return { ok: false, erro: error.message };
+    }
 
     broadcastStockUpdate();
     await loadInsumos();
@@ -800,8 +805,9 @@ export function EstoqueProvider({ children }: { children: ReactNode }) {
       descricao: `Inventário confirmado: ${itens.length} insumo(s), ${comDiferenca.length} com diferença, ajuste líquido R$ ${valorAjuste.toFixed(2)}`,
       entidade: 'Inventário',
       entidadeId: `${itens.length} insumos`,
-      depois: { itens_contados: itens.length, divergencias: comDiferenca.length, valor_ajuste: valorAjuste },
+      depois: { itens_contados: itens.length, divergencias: comDiferenca.length, valor_ajuste: valorAjuste, contado_em: contadoEm ?? 'agora' },
     });
+    return { ok: true };
   }, [user?.tenantId, registrarEvento, broadcastStockUpdate, loadInsumos, loadMovimentacoes, loadInventarioSessions]);
 
   const editarInventario = useCallback(async (

@@ -13,6 +13,8 @@ interface InventarioDraft {
   conferidos?: string[];
   /** Insumos mexidos neste aparelho que ainda não chegaram ao banco (ex.: sem internet). */
   pendentes?: string[];
+  /** Horário da contagem (datetime-local); vazio = agora. */
+  contadoEm?: string;
   savedAt: string;
   operador: string;
 }
@@ -42,6 +44,11 @@ const rotuloDe = (i: Insumo) => (fatorDe(i) !== 1 ? (i.unidadeContagem as string
 const arred = (n: number, casas: number) => Math.round(n * 10 ** casas) / 10 ** casas;
 /** Valor inicial do campo: o teórico convertido para a unidade de contagem. */
 const preenchido = (i: Insumo) => String(arred(i.estoqueAtual / fatorDe(i), 3));
+/** Date → valor de <input type="datetime-local"> no horário do aparelho. */
+const paraLocal = (d: Date) => {
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+};
 const qtdBR = (n: number) => n.toLocaleString('pt-BR', { maximumFractionDigits: 3 });
 
 // Busca sem acento e sem diferença de maiúscula ("acucar" acha "Açúcar").
@@ -91,6 +98,7 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
         contagens,
         conferidos: Array.from(conferidos),
         pendentes: Array.from(pendentes.current),
+        contadoEm,
         fatores: Object.fromEntries(insumos.map((i) => [i.id, fatorDe(i)])),
         savedAt: new Date().toISOString(),
         operador,
@@ -262,17 +270,67 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [statusNuvem]);
 
+  // ── "Contado em": horário da contagem ───────────────────────────────────────
+  // Vazio = agora. Com horário no passado, o teórico de cada insumo é o daquele momento
+  // (estoque atual − o que entrou/saiu depois) e o que mexeu depois fica por cima do contado.
+  const [contadoEm, setContadoEm] = useState<string>(() => draftLocal()?.contadoEm ?? '');
+  const [depois, setDepois] = useState<Record<string, number>>({});
+  const [carregandoDepois, setCarregandoDepois] = useState(false);
+  const textoContadoEm = contadoEm
+    ? new Date(contadoEm).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }).replace(',', ' às')
+    : '';
+  const depoisDe = (i: Insumo, mapa: Record<string, number> = depois) => (contadoEm ? mapa[i.id] ?? 0 : 0);
+  const teoricoDe = (i: Insumo) => arred(i.estoqueAtual - depoisDe(i), 4);
+  const preenchidoDe = (i: Insumo) => String(arred(teoricoDe(i) / fatorDe(i), 3));
+
+  const buscarDepois = async (valor: string) => {
+    if (!valor || !tenantId) { setDepois({}); return {}; }
+    setCarregandoDepois(true);
+    const { data, error } = await supabase.rpc('fn_movimentos_depois', { p_tenant_id: tenantId, p_at: new Date(valor).toISOString() });
+    setCarregandoDepois(false);
+    if (error || !Array.isArray(data)) return null;
+    const mapa: Record<string, number> = {};
+    (data as Array<{ ingredient_id: string; soma: number }>).forEach((r) => { mapa[r.ingredient_id] = Number(r.soma) || 0; });
+    return mapa;
+  };
+
+  /** Troca o horário: campos ainda não conferidos passam a mostrar o teórico do novo horário. */
+  const aplicarContadoEm = async (valor: string) => {
+    const antes = Object.fromEntries(insumos.map((i) => [i.id, preenchidoDe(i)]));
+    setContadoEm(valor);
+    setEditado(true);
+    const mapa = valor ? await buscarDepois(valor) : {};
+    if (mapa === null) return;
+    setDepois(mapa);
+    setContagens((prev) => {
+      const novo = { ...prev };
+      for (const i of insumos) {
+        if (conferidosRef.current.has(i.id) || prev[i.id] !== antes[i.id]) continue;
+        const teor = arred(i.estoqueAtual - (valor ? mapa[i.id] ?? 0 : 0), 4);
+        novo[i.id] = String(arred(teor / fatorDe(i), 3));
+      }
+      return novo;
+    });
+  };
+
+  // Rascunho com horário salvo: carrega os movimentos depois dele quando os insumos chegam.
+  useEffect(() => {
+    if (!contadoEm || insumos.length === 0) return;
+    aplicarContadoEm(contadoEm);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [insumos.length > 0]);
+
   /** Contado convertido para a unidade do ESTOQUE (NaN = vazio/inválido). Campo intocado = teórico exato. */
   const contadoEstoque = (i: Insumo): number => {
     const raw = contagens[i.id] ?? '';
     if (raw === '') return NaN;
-    if (raw === preenchido(i)) return i.estoqueAtual;
+    if (raw === preenchidoDe(i)) return teoricoDe(i);
     const n = parseFloat(raw);
     return isNaN(n) ? NaN : arred(n * fatorDe(i), 4);
   };
   const temDiferenca = (i: Insumo) => {
     const c = contadoEstoque(i);
-    return !isNaN(c) && Math.abs(c - i.estoqueAtual) > 0.00005;
+    return !isNaN(c) && Math.abs(c - teoricoDe(i)) > 0.00005;
   };
 
   const [categoriaFiltro, setCategoriaFiltro] = useState('Todas');
@@ -295,7 +353,7 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
     const tBanco = setTimeout(enviarParaBanco, 800);
     return () => { clearTimeout(tLocal); clearTimeout(tBanco); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [contagens, conferidos, editado]);
+  }, [contagens, conferidos, editado, contadoEm]);
 
   const marcarConferido = (id: string) => {
     setEditado(true);
@@ -374,7 +432,7 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
   }, [insumos, contagens]);
 
   const valorImpacto = useMemo(() => {
-    return itensComDiferenca.reduce((s, i) => s + (contadoEstoque(i) - i.estoqueAtual) * i.precoUnitario, 0);
+    return itensComDiferenca.reduce((s, i) => s + (contadoEstoque(i) - teoricoDe(i)) * i.precoUnitario, 0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [itensComDiferenca, contagens]);
 
@@ -382,22 +440,34 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
   const itensParaConfirmar: InventarioItemContado[] = useMemo(() => {
     return insumos.map((i) => {
       const contado = contadoEstoque(i);
-      const qtdContada = isNaN(contado) ? i.estoqueAtual : contado;
+      const qtdContada = isNaN(contado) ? teoricoDe(i) : contado;
       return {
         insumoId: i.id,
         insumoNome: i.nome,
         unidade: i.unidade,
-        qtdTeorica: i.estoqueAtual,
+        qtdTeorica: teoricoDe(i),
         qtdContada,
-        diferenca: parseFloat((qtdContada - i.estoqueAtual).toFixed(4)),
+        diferenca: parseFloat((qtdContada - teoricoDe(i)).toFixed(4)),
         precoUnitario: i.precoUnitario,
       };
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [insumos, contagens]);
 
-  const handleConfirmar = () => {
-    confirmarInventario(itensParaConfirmar, operador);
+  const [confirmando, setConfirmando] = useState(false);
+  const [erroConfirmar, setErroConfirmar] = useState('');
+
+  const handleConfirmar = async () => {
+    if (confirmando) return;
+    setConfirmando(true);
+    setErroConfirmar('');
+    const r = await confirmarInventario(itensParaConfirmar, operador, contadoEm ? new Date(contadoEm).toISOString() : undefined);
+    setConfirmando(false);
+    if (!r.ok) {
+      setShowConfirmar(false);
+      setErroConfirmar(r.erro || 'Não foi possível confirmar a contagem. Ela continua salva; tente de novo.');
+      return;
+    }
     encerrado.current = true;
     limparRascunho();
     apagarDoBanco();
@@ -485,6 +555,46 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
         </div>
       </div>
 
+      {/* Contado em: data e hora da contagem */}
+      <div className={`rounded-2xl border px-3 py-3 md:px-4 ${contadoEm ? 'border-amber-300 bg-amber-50/50' : 'border-zinc-200 bg-white'}`}>
+        <div className="flex items-center gap-2 flex-wrap">
+          <label htmlFor="contado-em" className="text-xs font-semibold text-zinc-700 flex items-center gap-1.5">
+            <i className="ri-time-line text-amber-600" /> Contado em
+          </label>
+          <input
+            id="contado-em"
+            type="datetime-local"
+            value={contadoEm}
+            max={paraLocal(new Date())}
+            onChange={(e) => aplicarContadoEm(e.target.value)}
+            className="h-10 text-base md:text-sm border border-zinc-200 rounded-xl px-3 bg-white text-zinc-800 focus:outline-none focus:border-amber-400 min-w-0 flex-1 sm:flex-none"
+          />
+          {contadoEm ? (
+            <button type="button" onClick={() => aplicarContadoEm('')} className="text-xs font-semibold text-zinc-500 hover:text-zinc-800 px-2 py-2 cursor-pointer">
+              Usar agora
+            </button>
+          ) : (
+            <span className="text-xs text-zinc-400">Vazio = na hora de confirmar</span>
+          )}
+          {carregandoDepois && <i className="ri-loader-4-line animate-spin text-zinc-400" />}
+        </div>
+        {contadoEm && (
+          <p className="text-[11px] text-zinc-600 mt-1.5 leading-snug">
+            O "Sistema (teórico)" é o de {textoContadoEm}. Vendas e entradas depois desse horário entram por cima do que você contar.
+          </p>
+        )}
+      </div>
+
+      {erroConfirmar && (
+        <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-xs text-red-700 flex items-start gap-2">
+          <i className="ri-error-warning-line text-sm mt-px" />
+          <span className="flex-1">{erroConfirmar}</span>
+          <button type="button" onClick={() => setErroConfirmar('')} className="text-red-400 hover:text-red-600 cursor-pointer" aria-label="Fechar aviso">
+            <i className="ri-close-line" />
+          </button>
+        </div>
+      )}
+
       {/* Busca: filtra pelo nome enquanto digita */}
       <div className="relative">
         <i className="ri-search-line absolute left-3.5 top-1/2 -translate-y-1/2 text-zinc-400 text-sm pointer-events-none" />
@@ -546,7 +656,7 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
         {itens.map((insumo) => {
           const rawVal = contagens[insumo.id] ?? '';
           const contado = contadoEstoque(insumo);
-          const diff = isNaN(contado) ? 0 : parseFloat((contado - insumo.estoqueAtual).toFixed(4));
+          const diff = isNaN(contado) ? 0 : parseFloat((contado - teoricoDe(insumo)).toFixed(4));
           const temDiff = temDiferenca(insumo);
           const impacto = temDiff ? diff * insumo.precoUnitario : 0;
           const emOutraUnidade = fatorDe(insumo) !== 1;
@@ -570,8 +680,8 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
                 <p className="text-xs text-zinc-500 mt-1.5">
                   Sistema (teórico): <span className="font-semibold text-zinc-600">
                     {emOutraUnidade
-                      ? `${qtdBR(insumo.estoqueAtual / fatorDe(insumo))} ${rotuloDe(insumo)} (${qtdBR(insumo.estoqueAtual)} ${insumo.unidade})`
-                      : `${insumo.estoqueAtual} ${insumo.unidade}`}
+                      ? `${qtdBR(teoricoDe(insumo) / fatorDe(insumo))} ${rotuloDe(insumo)} (${qtdBR(teoricoDe(insumo))} ${insumo.unidade})`
+                      : `${teoricoDe(insumo)} ${insumo.unidade}`}
                   </span>
                 </p>
                 <div className="mt-2">
@@ -652,7 +762,7 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
               {itens.map((insumo) => {
                 const rawVal = contagens[insumo.id] ?? '';
                 const contado = contadoEstoque(insumo);
-                const diff = isNaN(contado) ? 0 : parseFloat((contado - insumo.estoqueAtual).toFixed(4));
+                const diff = isNaN(contado) ? 0 : parseFloat((contado - teoricoDe(insumo)).toFixed(4));
                 const temDiff = temDiferenca(insumo);
                 const impacto = temDiff ? diff * insumo.precoUnitario : 0;
                 const emOutraUnidade = fatorDe(insumo) !== 1;
@@ -674,11 +784,11 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
                     <td className="px-4 py-3 text-right tabular-nums whitespace-nowrap font-semibold text-zinc-600">
                       {emOutraUnidade ? (
                         <>
-                          {qtdBR(insumo.estoqueAtual / fatorDe(insumo))} {rotuloDe(insumo)}
-                          <p className="text-[10px] font-normal text-zinc-400">{qtdBR(insumo.estoqueAtual)} {insumo.unidade}</p>
+                          {qtdBR(teoricoDe(insumo) / fatorDe(insumo))} {rotuloDe(insumo)}
+                          <p className="text-[10px] font-normal text-zinc-400">{qtdBR(teoricoDe(insumo))} {insumo.unidade}</p>
                         </>
                       ) : (
-                        <>{insumo.estoqueAtual} {insumo.unidade}</>
+                        <>{teoricoDe(insumo)} {insumo.unidade}</>
                       )}
                     </td>
                     <td className="px-4 py-3">
@@ -802,6 +912,8 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
           operador={operador}
           onConfirmar={handleConfirmar}
           onCancelar={() => setShowConfirmar(false)}
+          contadoEmTexto={contadoEm ? textoContadoEm : undefined}
+          confirmando={confirmando}
         />
       )}
 

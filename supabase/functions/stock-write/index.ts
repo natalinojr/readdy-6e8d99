@@ -420,8 +420,10 @@ Deno.serve({ verify_jwt: false }, async (req) => {
     }
 
     if (action === 'confirm_inventory') {
-      const { items, operator_id, operator_name } = body;
+      const { items, operator_id, operator_name, counted_at } = body;
       if (!Array.isArray(items)) throw new Error('items must be array');
+      // "Contado em" (opcional): conta só o que entrou/saiu depois desse horário.
+      const contadoEm = typeof counted_at === 'string' && !isNaN(Date.parse(counted_at)) ? new Date(counted_at).toISOString() : null;
 
       // RPC transacional: recalcula o delta contra o estoque VIVO (FOR UPDATE),
       // grava movimentos + sessao numa unica transacao e numera via MAX+1 sob
@@ -432,11 +434,15 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         p_operator_id: operator_id ?? user.id,
         p_operator_name: operator_name ?? 'Operador',
         p_items: items,
+        p_counted_at: contadoEm,
       });
       if (rpcErr) throw new Error(extractErrorMessage(rpcErr));
       const result = rpcData as Record<string, unknown> | null;
       if (!result || result.success !== true) {
-        throw new Error((result?.error as string) ?? 'Falha ao confirmar inventario');
+        // Recusa da regra (horário inválido etc.): 400 com a mensagem para a tela mostrar.
+        return new Response(JSON.stringify({ error: (result?.error as string) ?? 'Falha ao confirmar inventario' }), {
+          status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
       }
 
       return new Response(JSON.stringify({

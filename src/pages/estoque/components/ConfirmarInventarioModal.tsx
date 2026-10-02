@@ -8,9 +8,12 @@ interface Props {
   operador: string;
   onConfirmar: () => void;
   onCancelar: () => void;
+  /** Texto do horário da contagem ("02/10 às 08:00"); ausente = agora. */
+  contadoEmTexto?: string;
+  confirmando?: boolean;
 }
 
-export default function ConfirmarInventarioModal({ itens, operador, onConfirmar, onCancelar }: Props) {
+export default function ConfirmarInventarioModal({ itens, operador, onConfirmar, onCancelar, contadoEmTexto, confirmando }: Props) {
   const comDiff = itens.filter((i) => i.diferenca !== 0);
   const semDiff = itens.filter((i) => i.diferenca === 0);
   const faltando = comDiff.filter((i) => i.diferenca < 0);
@@ -32,6 +35,12 @@ export default function ConfirmarInventarioModal({ itens, operador, onConfirmar,
               Esta ação <strong>atualizará os valores reais do estoque</strong> de acordo com as quantidades contadas.
               Todas as diferenças serão registradas no histórico de movimentações e não podem ser desfeitas.
             </p>
+            {contadoEmTexto && (
+              <p className="text-xs text-zinc-700 mt-2">
+                <i className="ri-time-line mr-1 text-amber-600" />
+                Contagem de <strong>{contadoEmTexto}</strong>: o que entrou e saiu depois desse horário fica por cima do contado.
+              </p>
+            )}
           </div>
         </div>
 
@@ -148,10 +157,11 @@ export default function ConfirmarInventarioModal({ itens, operador, onConfirmar,
           </button>
           <button
             onClick={onConfirmar}
-            className="px-5 py-2.5 bg-amber-500 hover:bg-amber-600 text-white text-sm font-bold rounded-xl cursor-pointer whitespace-nowrap transition-colors flex items-center gap-2"
+            disabled={confirmando}
+            className="px-5 py-2.5 bg-amber-500 hover:bg-amber-600 disabled:opacity-60 text-white text-sm font-bold rounded-xl cursor-pointer whitespace-nowrap transition-colors flex items-center gap-2"
           >
-            <i className="ri-check-double-line" />
-            Confirmar e Atualizar Estoque
+            <i className={confirmando ? 'ri-loader-4-line animate-spin' : 'ri-check-double-line'} />
+            {confirmando ? 'Confirmando…' : 'Confirmar e Atualizar Estoque'}
           </button>
         </div>
       </div>
