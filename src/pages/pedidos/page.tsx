@@ -77,7 +77,7 @@ function kdsParaRecente(p: KDSPedido): PedidoRecente {
     senha: p.senha,
     participantToken: p.participantToken,
     participantName: p.participantName,
-    status: kdsStatusMap[p.status] ?? 'new',
+    status: p.isCancelled ? 'cancelled' : (kdsStatusMap[p.status] ?? 'new'),
     total: 0, // KDS não tem total — será enriquecido pelo DB quando disponível
     criadoEm: criadoHora,
     dataPedido: datePedido,
@@ -687,7 +687,12 @@ export default function PedidosPage() {
           const kdsStatusMap: Record<string, PedidoRecente['status']> = {
             novo: 'new', preparo: 'preparing', pronto: 'ready', entregue: 'delivered',
           };
-          rec.status = kdsStatusMap[kds.status] ?? rec.status;
+          // Cancelado no banco é definitivo — o KDS pode ainda guardar o pedido como "novo"
+          if (kds.isCancelled) {
+            rec.status = 'cancelled';
+          } else if (rec.status !== 'cancelled' && rec.status !== 'cancelado') {
+            rec.status = kdsStatusMap[kds.status] ?? rec.status;
+          }
 
           // Senha/nome do participante (QR universal) — só o KDS resolve esses campos
           if (kds.participantToken) rec.participantToken = kds.participantToken;
