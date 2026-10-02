@@ -372,7 +372,11 @@ export default function EnvioXmlContabilidade() {
                 </button>
                 <span>
                   <span className="block text-sm font-medium text-zinc-800">Mandar automaticamente todo mês</span>
-                  <span className="block text-xs text-zinc-400">Desligado, nada sai sozinho — dá para mandar pelo “Enviar agora”.</span>
+                  <span className="block text-xs text-zinc-400">
+                    {form.enabled
+                      ? `Todo dia ${form.dia_envio}, às 08h10, sem ninguém precisar abrir o sistema.`
+                      : 'Desligado, nada sai sozinho — dá para mandar pelo “Enviar agora”.'}
+                  </span>
                 </span>
               </label>
               <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:justify-end">
