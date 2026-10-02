@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, type MutableRefObject } from 'react';
+import { useState, useEffect, useRef, useMemo, type MutableRefObject } from 'react';
 import { useMenuPing, comJitter } from '@/hooks/useMenuPing';
 import { clubeLimparReservas, type ClubeSelecao } from '@/components/fidelidade/ClubeCheckout';
 import { supabase } from '@/lib/supabase';
@@ -6,6 +6,8 @@ import { rawPromoAtivaHoje } from '@/lib/promoUtils';
 import { loadCart, saveCart } from '@/lib/cartStorage';
 import { trackPixel } from '@/lib/metaPixel';
 import { formatPhoneBR, readSavedDeliveryPhone, saveDeliveryPhone, clearSavedDeliveryPhone } from '@/lib/deliveryPhone';
+import { idsForaDoHorario, normalizarHorario } from '@/lib/horarioExibicao';
+import { useRelogioMinuto } from '@/hooks/useRelogioMinuto';
 
 // Origem do pedido (campanha): lê utm_source da URL na 1ª visita e persiste na sessão,
 // pois o cliente navega vários passos antes de fechar o pedido (a query pode se perder).
@@ -153,6 +155,7 @@ type CardapioItem = {
   skip_kds: boolean | null;
   station_id: string | null;
   promotions?: Promotion[];
+  availability_schedule?: unknown;
 };
 
 type Promotion = {
@@ -170,6 +173,7 @@ type CardapioCategory = {
   name: string;
   order_index: number | null;
   station_id: string | null;
+  availability_schedule?: unknown;
 };
 
 type OptionGroup = {
@@ -226,6 +230,7 @@ type Highlight = {
   item_station_id: string | null;
   item_skip_kds: boolean | null;
   item_sla_minutes: number | null;
+  availability_schedule?: unknown;
 };
 
 type ProductionPart = {
@@ -272,6 +277,59 @@ function mergeHighlightsIntoCardapio(
     categories: [destaquesCategory].concat(categories),
     items: destaquesItems.concat(items),
   };
+}
+
+// Cardápio como veio do servidor; o que aparece é montado por montarCardapio a cada minuto.
+type CardapioBase = { categories: CardapioCategory[]; items: CardapioItem[]; highlights: Highlight[]; promotions: Promotion[] };
+
+/**
+ * Monta o cardápio que o cliente vê: tira categoria/item/destaque fora do horário de
+ * exibição (`fora` = idsForaDoHorario; o destaque só aparece se o item dele também
+ * estiver no horário), cria as categorias virtuais Destaques e Promoção e esconde a
+ * categoria que ficou vazia só por causa do horário.
+ */
+function montarCardapio(base: CardapioBase, fora: Set<string>): { categories: CardapioCategory[]; items: CardapioItem[] } {
+  const items = base.items.filter(function (it) { return !fora.has(it.id); });
+  const comItemAgora = new Set(items.map(function (it) { return it.category_id; }));
+  const comItemSempre = new Set(base.items.map(function (it) { return it.category_id; }));
+  const categories = base.categories.filter(function (c) {
+    return !fora.has(c.id) && (comItemAgora.has(c.id) || !comItemSempre.has(c.id));
+  });
+  const visiveis = new Set(items.map(function (it) { return it.id; }));
+  const highlights = base.highlights.filter(function (h) {
+    return visiveis.has(h.item_id) && !fora.has('h:' + h.id);
+  });
+
+  const merged = mergeHighlightsIntoCardapio(categories, items, highlights);
+
+  // Merge promotions into items
+  const mergedItemsWithPromos = merged.items.map(function (item) {
+    return Object.assign({}, item, {
+      promotions: base.promotions.filter(function (p) { return p.item_id === item.id; }),
+    });
+  });
+
+  // Categoria virtual "Promoção": itens (não-destaque) com promoção válida HOJE.
+  const promoItems: typeof mergedItemsWithPromos = mergedItemsWithPromos
+    .filter(function (item) {
+      return item.category_id !== DESTAQUES_CATEGORY_ID && rawPromoAtivaHoje(item.promotions) != null;
+    })
+    .map(function (item) { return { ...item, category_id: PROMOCAO_CATEGORY_ID }; });
+
+  let finalCategories = merged.categories;
+  let finalItems = mergedItemsWithPromos;
+  if (promoItems.length > 0) {
+    const promoCategory: CardapioCategory = { id: PROMOCAO_CATEGORY_ID, name: '🔥 Promoção', order_index: -0.5, station_id: null };
+    finalCategories = [promoCategory].concat(merged.categories);
+    finalItems = promoItems.concat(mergedItemsWithPromos);
+  }
+
+  // Não exibir categorias que ficaram sem NENHUM item disponível no delivery.
+  // finalItems já vem filtrado pelo backend (itens "só balcão" / delivery desativado
+  // são removidos), então uma categoria 100% balcão ficaria vazia — não deve aparecer.
+  const catIdsComItens = new Set(finalItems.map(function (it) { return it.category_id; }));
+  finalCategories = finalCategories.filter(function (c) { return catIdsComItens.has(c.id); });
+  return { categories: finalCategories, items: finalItems };
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -398,8 +456,7 @@ async function fetchDeliveryConfig(
     setTenant: (v: TenantInfo) => void;
     setCity: (v: string) => void;
     setNeighborhoods: (v: Neighborhood[]) => void;
-    setCategories: (v: CardapioCategory[]) => void;
-    setItems: (v: CardapioItem[]) => void;
+    setCardapioBase: (v: CardapioBase | null) => void;
     setOptionGroups: (v: OptionGroup[]) => void;
     setOptions: (v: OptionItem[]) => void;
     setObservations: (v: PresetObservation[]) => void;
@@ -480,43 +537,14 @@ async function fetchDeliveryConfig(
     setters.setCity(data.city || '');
     setters.setNeighborhoods(data.neighborhoods || []);
 
-    const merged = mergeHighlightsIntoCardapio(
-      data.categories || [],
-      data.items || [],
-      data.highlights || [],
-    );
-
-    // Merge promotions into items
-    const allPromotions: Promotion[] = data.promotions || [];
-    const mergedItemsWithPromos = merged.items.map(function (item) {
-      return Object.assign({}, item, {
-        promotions: allPromotions.filter(function (p) { return p.item_id === item.id; }),
-      });
-    });
-
-    // Categoria virtual "Promoção": itens (não-destaque) com promoção válida HOJE.
-    const promoItems: typeof mergedItemsWithPromos = mergedItemsWithPromos
-      .filter(function (item) {
-        return item.category_id !== DESTAQUES_CATEGORY_ID && rawPromoAtivaHoje(item.promotions) != null;
-      })
-      .map(function (item) { return { ...item, category_id: PROMOCAO_CATEGORY_ID }; });
-
-    let finalCategories = merged.categories;
-    let finalItems = mergedItemsWithPromos;
-    if (promoItems.length > 0) {
-      const promoCategory: CardapioCategory = { id: PROMOCAO_CATEGORY_ID, name: '🔥 Promoção', order_index: -0.5, station_id: null };
-      finalCategories = [promoCategory].concat(merged.categories);
-      finalItems = promoItems.concat(mergedItemsWithPromos);
-    }
-
-    // Não exibir categorias que ficaram sem NENHUM item disponível no delivery.
-    // finalItems já vem filtrado pelo backend (itens "só balcão" / delivery desativado
-    // são removidos), então uma categoria 100% balcão ficaria vazia — não deve aparecer.
-    const catIdsComItens = new Set(finalItems.map(function (it) { return it.category_id; }));
-    finalCategories = finalCategories.filter(function (c) { return catIdsComItens.has(c.id); });
-
-    setters.setCategories(finalCategories);
-    setters.setItems(finalItems);
+    const base: CardapioBase = {
+      categories: data.categories || [],
+      items: data.items || [],
+      highlights: data.highlights || [],
+      promotions: data.promotions || [],
+    };
+    setters.setCardapioBase(base);
+    const finalCategories = montarCardapio(base, new Set(idsForaDoHorario(base))).categories;
     setters.setLocales(Array.isArray(data.locales) ? data.locales : []);
 
     setters.setOptionGroups(data.option_groups || []);
@@ -644,8 +672,25 @@ export function useDeliveryData(storeSlug?: string) {
   const [selectedAddressId, setSelectedAddressId] = useState<string | null>(null);
 
   // Cardápio
-  const [categories, setCategories] = useState<CardapioCategory[]>([]);
-  const [items, setItems] = useState<CardapioItem[]>([]);
+  const [cardapioBase, setCardapioBase] = useState<CardapioBase | null>(null);
+  // Horário de exibição: o relógio só roda se algo do cardápio tiver horário.
+  const usaHorario = useMemo(function () {
+    if (!cardapioBase) return false;
+    const tem = function (r: { availability_schedule?: unknown }) { return normalizarHorario(r.availability_schedule) != null; };
+    return cardapioBase.categories.some(tem) || cardapioBase.items.some(tem) || cardapioBase.highlights.some(tem);
+  }, [cardapioBase]);
+  const minutoAgora = useRelogioMinuto(usaHorario);
+  // Chave do que está fora do horário: muda só quando algo entra/sai (não a cada minuto).
+  // minutoAgora só dispara o recálculo na virada do minuto; a hora vem de new Date().
+  const chaveForaDoHorario = useMemo(function () {
+    return cardapioBase && usaHorario ? idsForaDoHorario(cardapioBase).join(',') : '';
+  }, [cardapioBase, usaHorario, minutoAgora]);
+  const cardapioAgora = useMemo(function () {
+    if (!cardapioBase) return { categories: [] as CardapioCategory[], items: [] as CardapioItem[] };
+    return montarCardapio(cardapioBase, new Set(chaveForaDoHorario ? chaveForaDoHorario.split(',') : []));
+  }, [cardapioBase, chaveForaDoHorario]);
+  const categories = cardapioAgora.categories;
+  const items = cardapioAgora.items;
   const [optionGroups, setOptionGroups] = useState<OptionGroup[]>([]);
   const [options, setOptions] = useState<OptionItem[]>([]);
   const [observations, setObservations] = useState<PresetObservation[]>([]);
@@ -772,7 +817,7 @@ export function useDeliveryData(storeSlug?: string) {
       setTenant: nada, setCity: nada, setNeighborhoods: nada, setCategoriaAtiva: nada,
       setDeliveryFee: nada, setPaymentMethods: nada, setRetiradaAtivo: nada, setStoreWhatsapp: nada,
       setStoreLocation: nada, setTiers: nada,
-      setCategories, setItems, setOptionGroups, setOptions, setObservations,
+      setCardapioBase, setOptionGroups, setOptions, setObservations,
       setOutOfStockIds, setOpcoesIndisponiveisIds, setLocales,
       setDeliveryOpenNow, setDeliveryClosedReason,
       productionPartsRef,
@@ -798,8 +843,7 @@ export function useDeliveryData(storeSlug?: string) {
     setTenant(null);
     setCity('');
     setNeighborhoods([]);
-    setCategories([]);
-    setItems([]);
+    setCardapioBase(null);
     setOptionGroups([]);
     setOptions([]);
     setObservations([]);
@@ -860,8 +904,7 @@ export function useDeliveryData(storeSlug?: string) {
           setTenant,
           setCity,
           setNeighborhoods,
-          setCategories,
-          setItems,
+          setCardapioBase,
           setOptionGroups,
           setOptions,
           setObservations,

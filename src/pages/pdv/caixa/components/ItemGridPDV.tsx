@@ -81,7 +81,7 @@ function InsumosFaltandoTooltip({ insumos, visible }: { insumos: InsumoFaltando[
 }
 
 export default function ItemGridPDV({ categoriaAtiva, busca, onItemClick, onItemObs }: Props) {
-  const { itensAtivos, categorias, numerosMap: globalNumberMap } = useCardapio();
+  const { itensAtivos, categorias, numerosMap: globalNumberMap, itemNoHorario } = useCardapio();
   const { itensDesabilitadosIds } = useEstoque();
   const { mapaItens: itensSemEstoque } = useItensSemEstoque();
   const [tooltipItemId, setTooltipItemId] = useState<string | null>(null);
@@ -138,6 +138,8 @@ export default function ItemGridPDV({ categoriaAtiva, busca, onItemClick, onItem
           const esgotado = itensDesabilitadosIds.includes(item.id) || semEstoqueInsumo;
           const itemNumber = globalNumberMap.get(item.id) ?? 0;
           const temOpcoes = item.gruposOpcoes.length > 0;
+          // Fora do horário de exibição: some do cardápio do cliente, mas o caixa ainda vende.
+          const foraDoHorario = !itemNoHorario(item);
 
           return (
             <div
@@ -216,6 +218,15 @@ export default function ItemGridPDV({ categoriaAtiva, busca, onItemClick, onItem
                       <div className="opacity-0 group-hover:opacity-100 transition-all duration-200 scale-75 group-hover:scale-100 bg-amber-500 text-white rounded-full w-9 h-9 flex items-center justify-center">
                         <i className="ri-add-line text-lg font-bold" />
                       </div>
+                    </div>
+                  )}
+
+                  {foraDoHorario && !esgotado && (
+                    <div
+                      className="absolute bottom-2 left-2 bg-indigo-600 text-white text-[9px] font-black px-2 py-0.5 rounded-full tracking-wide flex items-center gap-1"
+                      title="Fora do horário do cardápio — o cliente não vê este item agora"
+                    >
+                      <i className="ri-time-line" /> FORA DO HORÁRIO
                     </div>
                   )}
 

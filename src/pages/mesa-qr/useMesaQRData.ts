@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, type MutableRefObject } from 'react';
+import { useState, useEffect, useRef, useMemo, type MutableRefObject } from 'react';
 import { clubeLimparReservas, type ClubeSelecao } from '@/components/fidelidade/ClubeCheckout';
 import { useMenuPing, comJitter } from '@/hooks/useMenuPing';
 import { useParams } from 'react-router-dom';
@@ -6,6 +6,8 @@ import { queueOrderForPrint, type OrderItemForPrint, type OrderPrintDestino } fr
 import { rawPromoAtivaHoje } from '@/lib/promoUtils';
 import { loadCart, saveCart } from '@/lib/cartStorage';
 import { loadPixMemo, clearPixMemo } from './pixMemo';
+import { idsForaDoHorario, normalizarHorario } from '@/lib/horarioExibicao';
+import { useRelogioMinuto } from '@/hooks/useRelogioMinuto';
 
 // ── Tipos ─────────────────────────────────────────────────────────────────────
 
@@ -29,6 +31,7 @@ type CardapioItem = {
   skip_kds: boolean | null;
   station_id: string | null;
   promotions?: Promotion[];
+  availability_schedule?: unknown;
 };
 
 type Promotion = {
@@ -46,6 +49,7 @@ type CardapioCategory = {
   name: string;
   order_index: number | null;
   station_id: string | null;
+  availability_schedule?: unknown;
 };
 
 type OptionGroup = {
@@ -110,6 +114,7 @@ type Highlight = {
   item_station_id: string | null;
   item_skip_kds: boolean | null;
   item_sla_minutes: number | null;
+  availability_schedule?: unknown;
 };
 
 const DESTAQUES_CATEGORY_ID = '__destaques__';
@@ -153,6 +158,50 @@ function mergeHighlightsIntoCardapio(
   };
 }
 
+// Cardápio como veio do servidor; o que aparece é montado por montarCardapio a cada minuto.
+type CardapioBase = { categories: CardapioCategory[]; items: CardapioItem[]; highlights: Highlight[]; promotions: Promotion[] };
+
+/**
+ * Monta o cardápio que o cliente vê: tira categoria/item/destaque fora do horário de
+ * exibição (`fora` = idsForaDoHorario; o destaque só aparece se o item dele também
+ * estiver no horário), cria as categorias virtuais Destaques e Promoção e esconde a
+ * categoria que ficou vazia só por causa do horário.
+ */
+function montarCardapio(base: CardapioBase, fora: Set<string>): { categories: CardapioCategory[]; items: CardapioItem[] } {
+  const items = base.items.filter(function (it) { return !fora.has(it.id); });
+  const comItemAgora = new Set(items.map(function (it) { return it.category_id; }));
+  const comItemSempre = new Set(base.items.map(function (it) { return it.category_id; }));
+  const categories = base.categories.filter(function (c) {
+    return !fora.has(c.id) && (comItemAgora.has(c.id) || !comItemSempre.has(c.id));
+  });
+  const visiveis = new Set(items.map(function (it) { return it.id; }));
+  const highlights = base.highlights.filter(function (h) {
+    return visiveis.has(h.item_id) && !fora.has('h:' + h.id);
+  });
+
+  const merged = mergeHighlightsIntoCardapio(categories, items, highlights);
+
+  // Merge promotions into items
+  const mergedItems = (merged.items).map(function (item) {
+    return Object.assign({}, item, {
+      promotions: base.promotions.filter(function (p) { return p.item_id === item.id; }),
+    });
+  });
+
+  // Categoria virtual "Promoção": itens (não-destaque) com promoção válida HOJE.
+  const promoItems: typeof mergedItems = mergedItems
+    .filter(function (item) {
+      return item.category_id !== DESTAQUES_CATEGORY_ID && rawPromoAtivaHoje(item.promotions) != null;
+    })
+    .map(function (item) { return { ...item, category_id: PROMOCAO_CATEGORY_ID }; });
+
+  if (promoItems.length > 0) {
+    const promoCategory: CardapioCategory = { id: PROMOCAO_CATEGORY_ID, name: '🔥 Promoção', order_index: -0.5, station_id: null };
+    return { categories: [promoCategory].concat(merged.categories), items: promoItems.concat(mergedItems) };
+  }
+  return { categories: merged.categories, items: mergedItems };
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function getMesaWriteUrl(): string {
@@ -161,8 +210,7 @@ function getMesaWriteUrl(): string {
 }
 
 async function fetchCardapioData(tenantId: string, setters: {
-  setCategories: (v: CardapioCategory[]) => void;
-  setItems: (v: CardapioItem[]) => void;
+  setCardapioBase: (v: CardapioBase) => void;
   setOptionGroups: (v: OptionGroup[]) => void;
   setOptions: (v: OptionItem[]) => void;
   setObservations: (v: PresetObservation[]) => void;
@@ -180,12 +228,12 @@ async function fetchCardapioData(tenantId: string, setters: {
     });
     const data = await res.json();
 
-    // Processa highlights e merge no cardápio
-    const merged = mergeHighlightsIntoCardapio(
-      data.categories || [],
-      data.items || [],
-      data.highlights || [],
-    );
+    const base: CardapioBase = {
+      categories: data.categories || [],
+      items: data.items || [],
+      highlights: data.highlights || [],
+      promotions: data.promotions || [],
+    };
 
     setters.setOptionGroups(data.option_groups || []);
     setters.setOptions(data.options || []);
@@ -193,30 +241,8 @@ async function fetchCardapioData(tenantId: string, setters: {
     setters.setOutOfStockIds(data.out_of_stock_ids || []);
     setters.setOpcoesIndisponiveisIds(data.opcoes_indisponiveis_ids || []);
 
-    // Merge promotions into items
-    const allPromotions: Promotion[] = data.promotions || [];
-    const mergedItems = (merged.items).map(function (item) {
-      return Object.assign({}, item, {
-        promotions: allPromotions.filter(function (p) { return p.item_id === item.id; }),
-      });
-    });
-
-    // Categoria virtual "Promoção": itens (não-destaque) com promoção válida HOJE.
-    const promoItems: typeof mergedItems = mergedItems
-      .filter(function (item) {
-        return item.category_id !== DESTAQUES_CATEGORY_ID && rawPromoAtivaHoje(item.promotions) != null;
-      })
-      .map(function (item) { return { ...item, category_id: PROMOCAO_CATEGORY_ID }; });
-
-    let finalCategories = merged.categories;
-    let finalItems = mergedItems;
-    if (promoItems.length > 0) {
-      const promoCategory: CardapioCategory = { id: PROMOCAO_CATEGORY_ID, name: '🔥 Promoção', order_index: -0.5, station_id: null };
-      finalCategories = [promoCategory].concat(merged.categories);
-      finalItems = promoItems.concat(mergedItems);
-    }
-    setters.setCategories(finalCategories);
-    setters.setItems(finalItems);
+    setters.setCardapioBase(base);
+    const finalCategories = montarCardapio(base, new Set(idsForaDoHorario(base))).categories;
 
     if (data.production_parts) {
       setters.productionPartsRef.current = data.production_parts;
@@ -281,8 +307,25 @@ export function useMesaQRData() {
   const [errorMsg, setErrorMsg] = useState('');
 
   // Cardápio
-  const [categories, setCategories] = useState<CardapioCategory[]>([]);
-  const [items, setItems] = useState<CardapioItem[]>([]);
+  const [cardapioBase, setCardapioBase] = useState<CardapioBase | null>(null);
+  // Horário de exibição: o relógio só roda se algo do cardápio tiver horário.
+  const usaHorario = useMemo(function () {
+    if (!cardapioBase) return false;
+    const tem = function (r: { availability_schedule?: unknown }) { return normalizarHorario(r.availability_schedule) != null; };
+    return cardapioBase.categories.some(tem) || cardapioBase.items.some(tem) || cardapioBase.highlights.some(tem);
+  }, [cardapioBase]);
+  const minutoAgora = useRelogioMinuto(usaHorario);
+  // Chave do que está fora do horário: muda só quando algo entra/sai (não a cada minuto).
+  // minutoAgora só dispara o recálculo na virada do minuto; a hora vem de new Date().
+  const chaveForaDoHorario = useMemo(function () {
+    return cardapioBase && usaHorario ? idsForaDoHorario(cardapioBase).join(',') : '';
+  }, [cardapioBase, usaHorario, minutoAgora]);
+  const cardapioAgora = useMemo(function () {
+    if (!cardapioBase) return { categories: [] as CardapioCategory[], items: [] as CardapioItem[] };
+    return montarCardapio(cardapioBase, new Set(chaveForaDoHorario ? chaveForaDoHorario.split(',') : []));
+  }, [cardapioBase, chaveForaDoHorario]);
+  const categories = cardapioAgora.categories;
+  const items = cardapioAgora.items;
   const [optionGroups, setOptionGroups] = useState<OptionGroup[]>([]);
   const [options, setOptions] = useState<OptionItem[]>([]);
   const [observations, setObservations] = useState<PresetObservation[]>([]);
@@ -294,7 +337,7 @@ export function useMesaQRData() {
   // em que o cliente está (setter no-op) e espalha os pedidos no tempo.
   useMenuPing(tenantId, comJitter(function () {
     if (!tenantId) return;
-    fetchCardapioData(tenantId, { setCategories, setItems, setOptionGroups, setOptions, setObservations, setOutOfStockIds, setOpcoesIndisponiveisIds, setCategoriaAtiva: function () {}, productionPartsRef });
+    fetchCardapioData(tenantId, { setCardapioBase, setOptionGroups, setOptions, setObservations, setOutOfStockIds, setOpcoesIndisponiveisIds, setCategoriaAtiva: function () {}, productionPartsRef });
   }));
 
   // Carrinho (persistido em localStorage p/ sobreviver ao refresh/reload)
@@ -429,13 +472,13 @@ export function useMesaQRData() {
                 return;
               }
               setStep('identificacao');
-              await fetchCardapioData(currentTenantId, { setCategories, setItems, setOptionGroups, setOptions, setObservations, setOutOfStockIds, setOpcoesIndisponiveisIds, setCategoriaAtiva, productionPartsRef });
+              await fetchCardapioData(currentTenantId, { setCardapioBase, setOptionGroups, setOptions, setObservations, setOutOfStockIds, setOpcoesIndisponiveisIds, setCategoriaAtiva, productionPartsRef });
               return;
             }
 
             setParticipant(p);
             setStep('cardapio');
-            await fetchCardapioData(currentTenantId, { setCategories, setItems, setOptionGroups, setOptions, setObservations, setOutOfStockIds, setOpcoesIndisponiveisIds, setCategoriaAtiva, productionPartsRef });
+            await fetchCardapioData(currentTenantId, { setCardapioBase, setOptionGroups, setOptions, setObservations, setOutOfStockIds, setOpcoesIndisponiveisIds, setCategoriaAtiva, productionPartsRef });
             return;
           } catch {
             localStorage.removeItem(storageKey);
@@ -451,7 +494,7 @@ export function useMesaQRData() {
         }
 
         setStep('identificacao');
-        await fetchCardapioData(currentTenantId, { setCategories, setItems, setOptionGroups, setOptions, setObservations, setOutOfStockIds, setOpcoesIndisponiveisIds, setCategoriaAtiva, productionPartsRef });
+        await fetchCardapioData(currentTenantId, { setCardapioBase, setOptionGroups, setOptions, setObservations, setOutOfStockIds, setOpcoesIndisponiveisIds, setCategoriaAtiva, productionPartsRef });
       } catch {
         if (!cancelled) {
           setErrorMsg('Erro de conexão. Tente novamente.');

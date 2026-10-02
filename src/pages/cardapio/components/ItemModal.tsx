@@ -13,6 +13,8 @@ import { insumosDaOpcao, comInsumos } from '@/lib/opcaoInsumos';
 import DeliveryTab from './DeliveryTab';
 import FiscalFields from '@/components/feature/FiscalFields';
 import type { ItemFiscal } from '@/lib/fiscal';
+import HorarioExibicaoEditor from '@/components/feature/HorarioExibicaoEditor';
+import { erroHorario, resumoHorario, temHorario, type HorarioExibicao } from '@/lib/horarioExibicao';
 import ItemImage from '@/components/base/ItemImage';
 import { uploadMenuImage } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
@@ -111,6 +113,7 @@ export default function ItemModal({ item, categorias, obsGlobais, estacoes, savi
   const [producaoDividida, setProducaoDividida] = useState((item?.subproducao?.length ?? 0) > 0);
   const [deliveryConfig, setDeliveryConfig] = useState<ConfiguracaoDelivery | undefined>(item?.delivery);
   const [fiscal, setFiscal] = useState<ItemFiscal>(item?.fiscal ?? {});
+  const [horario, setHorario] = useState<HorarioExibicao>(item?.horario ?? null);
   const fotoInputRef = useRef<HTMLInputElement>(null);
   const [uploadingFoto, setUploadingFoto] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -137,11 +140,12 @@ export default function ItemModal({ item, categorias, obsGlobais, estacoes, savi
     setProducaoDividida((item?.subproducao?.length ?? 0) > 0);
     setDeliveryConfig(item?.delivery);
     setFiscal(item?.fiscal ?? {});
+    setHorario(item?.horario ?? null);
     setTab('info');
     setNovaObs('');
     setUploadError(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [item ? JSON.stringify({ id: item.id, subproducao: item.subproducao, nome: item.nome, descricao: item.descricao, preco: item.preco, categoriaId: item.categoriaId, slaMinutos: item.slaMinutos, fotoUrl: item.fotoUrl, status: item.status, semPreparo: item.semPreparo, somenteDelivery: item.somenteDelivery, gruposOpcoes: item.gruposOpcoes, promocoes: item.promocoes, observacoesPadrao: item.observacoesPadrao, fichaTecnica: item.fichaTecnica, delivery: item.delivery, fiscal: item.fiscal }) : 'undefined', categorias]);
+  }, [item ? JSON.stringify({ id: item.id, subproducao: item.subproducao, nome: item.nome, descricao: item.descricao, preco: item.preco, categoriaId: item.categoriaId, slaMinutos: item.slaMinutos, fotoUrl: item.fotoUrl, status: item.status, semPreparo: item.semPreparo, somenteDelivery: item.somenteDelivery, gruposOpcoes: item.gruposOpcoes, promocoes: item.promocoes, observacoesPadrao: item.observacoesPadrao, fichaTecnica: item.fichaTecnica, delivery: item.delivery, fiscal: item.fiscal, horario: item.horario }) : 'undefined', categorias]);
 
   const slaCalculado = producaoDividida && subproducao.length > 0
     ? subproducao.reduce((acc, s) => acc + (s.slaMinutos || 0), 0)
@@ -271,6 +275,12 @@ export default function ItemModal({ item, categorias, obsGlobais, estacoes, savi
   const [erroOpcoes, setErroOpcoes] = useState<string | null>(null);
   const handleSave = () => {
     if (!nome.trim() || !preco) return;
+    if (erroHorario(horario)) {
+      // Horário incompleto: volta pra aba Informações e mostra o aviso (fica embaixo do editor).
+      setTab('info');
+      setTimeout(() => document.getElementById('item-horario-cardapio')?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 50);
+      return;
+    }
     const semQtd = grupos.flatMap(g => g.opcoes.filter(o => insumosDaOpcao(o).some(x => !(Number(x.quantidade) > 0))).map(o => o.nome || 'opção sem nome'));
     if (semQtd.length) {
       setErroOpcoes(`Informe quanto sai do estoque em: ${semQtd.join(', ')}.`);
@@ -296,6 +306,7 @@ export default function ItemModal({ item, categorias, obsGlobais, estacoes, savi
       subproducao: producaoDividida && subproducao.length > 0 ? subproducao : undefined,
       delivery: deliveryConfig,
       fiscal,
+      horario,
     };
     onSave(saved);
   };
@@ -460,6 +471,26 @@ export default function ItemModal({ item, categorias, obsGlobais, estacoes, savi
                       ? 'Aparece só nos canais presenciais (caixa, garçom, mesa, autoatendimento) — oculto no delivery.'
                       : 'Aparece em todos os canais — presencial e delivery.'}
                   </p>
+                </div>
+
+                {/* Horário em que o item aparece no cardápio do cliente */}
+                <div className="col-span-2" id="item-horario-cardapio">
+                  <label className="block text-xs font-medium text-gray-600 mb-1.5">Horário no cardápio</label>
+                  <HorarioExibicaoEditor
+                    value={horario}
+                    onChange={setHorario}
+                    ajuda="Fora desses horários o item some do delivery, da mesa (QR) e do autoatendimento. No caixa e no garçom ele continua, marcado como fora do horário."
+                  />
+                  {(() => {
+                    const cat = categorias.find(c => c.id === categoriaId);
+                    if (!cat || !temHorario(cat.horario)) return null;
+                    return (
+                      <p className="text-[11px] text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-lg px-2.5 py-1.5 mt-2">
+                        <i className="ri-information-line mr-1" />
+                        A categoria "{cat.nome}" só aparece {resumoHorario(cat.horario)}. O item precisa estar no horário dele e no da categoria.
+                      </p>
+                    );
+                  })()}
                 </div>
 
                 <div className="col-span-2">

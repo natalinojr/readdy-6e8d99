@@ -118,3 +118,29 @@ describe('atendimento-loja › links', () => {
     expect(T.idiomaDe(['Hi! Do you deliver to the hotel? What do you recommend?'])).toBe('en');
   });
 });
+
+describe('horário de exibição do cardápio (2026-10-02)', () => {
+  const sexta13h = { dow: 5, iso: '2026-10-02', hhmm: '13:00' };
+  it('noHorario: mesma regra do front (vira o dia, dia todo, sem faixa = sempre)', () => {
+    expect(T.noHorario(null, sexta13h)).toBe(true);
+    expect(T.noHorario([{ start: 'x', end: '10:00' }], sexta13h)).toBe(true);
+    expect(T.noHorario([{ days: [1, 2, 3, 4, 5], start: '11:00', end: '15:00' }], sexta13h)).toBe(true);
+    expect(T.noHorario([{ days: [5], start: '18:00', end: '02:00' }], sexta13h)).toBe(false);
+    expect(T.noHorario([{ days: [5], start: '18:00', end: '02:00' }], { dow: 6, iso: '', hhmm: '01:30' })).toBe(true);
+    expect(T.noHorario([{ days: [5], start: '00:00', end: '00:00' }], sexta13h)).toBe(true);
+  });
+  it('menuItems tira item e categoria fora do horário (agora)', () => {
+    const nunca = [{ days: [], start: '00:00', end: '00:01' }];
+    const agoraNao = T.noHorario(nunca, T.spNow()) ? [] : nunca; // garante "fora" mesmo se o teste rodar 00:00
+    const m = menu({
+      categories: [{ id: 'c1', name: 'Combo' }, { id: 'c2', name: 'Burrito', availability_schedule: agoraNao }, { id: 'c3', name: 'Porções' }, { id: 'c4', name: 'Cervejas' }, { id: 'c5', name: 'Quesadillas' }],
+    });
+    m.items = m.items.map((i: Any) => (i.id === 'ipa-maniacs-lata-1' ? { ...i, availability_schedule: agoraNao } : i));
+    const ids = T.menuItems(m).map((i: Any) => i.id);
+    if (agoraNao.length) {
+      expect(ids).not.toContain('burrito-barbacoa-1');
+      expect(ids).not.toContain('ipa-maniacs-lata-1');
+    }
+    expect(ids).toContain('batata-frita-00001');
+  });
+});
