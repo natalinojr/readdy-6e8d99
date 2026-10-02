@@ -9,6 +9,7 @@ import type {
 } from '../hooks/useTarefas';
 import { EU_DEMO, USUARIOS_DEMO } from './modoDemo';
 import { statusPorCategoria } from '../lib/statusFeito';
+import type { Dependencia } from '../lib/gantt';
 
 const STATUS = (listId: string): TaskStatus[] => [
   { id: `${listId}-todo`, name: 'A fazer', color: '#94a3b8', category: 'todo', sort_order: 0 },
@@ -21,6 +22,9 @@ const LISTAS: TaskList[] = [
   { id: 'cozinha', name: 'Cozinha', color: '#f59e0b', icon: null, sort_order: 0, parent_list_id: null, statuses: STATUS('cozinha'), open_count: 0, access: 'owner', owner_id: EU_DEMO.id, owner_name: EU_DEMO.nome, share_count: 1 },
   { id: 'compras', name: 'Compras da semana', color: '#10b981', icon: null, sort_order: 1, parent_list_id: 'cozinha', statuses: STATUS('compras'), open_count: 0, access: 'owner', owner_id: EU_DEMO.id, owner_name: EU_DEMO.nome, share_count: 0 },
   { id: 'manut', name: 'Manutenção', color: '#6366f1', icon: null, sort_order: 2, parent_list_id: null, statuses: STATUS('manut'), open_count: 0, access: 'owner', owner_id: EU_DEMO.id, owner_name: EU_DEMO.nome, share_count: 0 },
+  // Projeto curto com ligações — é o que dá corpo ao Cronograma no demo.
+  { id: 'reforma', name: 'Reforma do salão', color: '#ec4899', icon: null, sort_order: 3, parent_list_id: null, statuses: STATUS('reforma'), open_count: 0, access: 'owner', owner_id: EU_DEMO.id, owner_name: EU_DEMO.nome, share_count: 0 },
+  { id: 'reforma-compras', name: 'Compras da reforma', color: '#0ea5e9', icon: null, sort_order: 0, parent_list_id: 'reforma', statuses: STATUS('reforma-compras'), open_count: 0, access: 'owner', owner_id: EU_DEMO.id, owner_name: EU_DEMO.nome, share_count: 0 },
 ];
 
 const TAGS: TaskTag[] = [
@@ -69,6 +73,13 @@ function inicial(): TaskRow[] {
     tarefa({ id: 't10', list_id: 'manut', title: 'Revisar extintores (vencimento em novembro)', assignee_id: null, due_date: prazo(10), priority: 2 }),
     tarefa({ id: 't11', list_id: 'manut', title: 'Pintar a parede do banheiro', assignee_id: 'demo-carla' }),
     tarefa({ id: 't12', list_id: 'manut', title: 'Comprar tinta', parent_task_id: 't11', assignee_id: 'demo-carla', due_date: prazo(2) }),
+    tarefa({ id: 'r1', list_id: 'reforma', title: 'Aprovar orçamento da reforma', assignee_id: 'demo-eu', start_date: dia(-6), due_date: prazo(-4), status_id: 'reforma-done', status_category: 'done', completed_at: `${dia(-3)}T15:00:00Z` }),
+    tarefa({ id: 'r2', list_id: 'reforma-compras', title: 'Comprar tinta e material elétrico', assignee_id: 'demo-ana', start_date: dia(-3), due_date: prazo(-1), status_id: 'reforma-compras-doing', status_category: 'in_progress', checklist_total: 4, checklist_done: 2 }),
+    tarefa({ id: 'r3', list_id: 'reforma', title: 'Pintar o salão', assignee_id: 'demo-bruno', start_date: dia(0), due_date: prazo(3), time_estimate_minutes: 960, time_tracked_seconds: 7200 }),
+    tarefa({ id: 'r4', list_id: 'reforma', title: 'Trocar a iluminação', assignee_id: 'demo-carla', start_date: dia(2), due_date: prazo(4), time_estimate_minutes: 600 }),
+    tarefa({ id: 'r5', list_id: 'reforma', title: 'Limpeza pós-obra', assignee_id: 'demo-ana', due_date: prazo(5), time_estimate_minutes: 300 }),
+    tarefa({ id: 'r6', list_id: 'reforma', title: 'Reabrir o salão', assignee_id: 'demo-eu', due_date: prazo(6), priority: 3 }),
+    tarefa({ id: 'r7', list_id: 'reforma', title: 'Fotos novas para o Instagram', assignee_id: 'demo-eu' }),
   ];
 }
 
@@ -82,8 +93,18 @@ const FIXOS = {
 
 interface Extra { description: string | null; checklist: ChecklistItem[]; comments: TaskComment[] }
 
+const DEPENDENCIAS: Dependencia[] = [
+  { predecessor_id: 'r1', successor_id: 'r2' },
+  { predecessor_id: 'r2', successor_id: 'r3' },
+  { predecessor_id: 'r3', successor_id: 'r4' }, // em conflito de propósito (seta vermelha)
+  { predecessor_id: 'r3', successor_id: 'r5' },
+  { predecessor_id: 'r4', successor_id: 'r5' },
+  { predecessor_id: 'r5', successor_id: 'r6' },
+];
+
 export function useTarefasDemo() {
   const [tasks, setTasks] = useState<TaskRow[]>(inicial);
+  const [dependencias, setDependencias] = useState<Dependencia[]>(DEPENDENCIAS);
   const [lists, setLists] = useState<TaskList[]>(LISTAS);
   const [tags, setTags] = useState<TaskTag[]>(TAGS);
   const tagsRef = useRef(tags);
@@ -203,6 +224,13 @@ export function useTarefasDemo() {
         setTags(tagsRef.current);
         return { success: true, id: nova.id };
       }
+      case 'add_dependency':
+      case 'remove_dependency': {
+        const d = { predecessor_id: String(p.predecessor_id), successor_id: String(p.successor_id) };
+        const mesma = (x: Dependencia) => x.predecessor_id === d.predecessor_id && x.successor_id === d.successor_id;
+        setDependencias((prev) => (action === 'add_dependency' ? (prev.some(mesma) ? prev : [...prev, d]) : prev.filter((x) => !mesma(x))));
+        return { success: true };
+      }
       case 'create_list': {
         const novaId = `l${seq++}`;
         setLists((prev) => [...prev, { id: novaId, name: String(p.name), color: String(p.color ?? '#6366f1'), icon: null, sort_order: seq, parent_list_id: (p.parent_list_id as string) ?? null, statuses: STATUS(novaId), open_count: 0, access: 'owner', owner_id: EU_DEMO.id, owner_name: EU_DEMO.nome, share_count: 0 }]);
@@ -258,7 +286,7 @@ export function useTarefasDemo() {
   }, []);
 
   return {
-    lists: listasComContagem, tasks, tags, campos: [], notificacoes: [], views: [], templates: [],
+    lists: listasComContagem, tasks, tags, campos: [], notificacoes: [], views: [], templates: [], dependencias,
     loading: false, error: null as string | null, reload: FIXOS.reload, write, fetchDetail, reordenarPastas, moverPasta,
     fetchAnexos: FIXOS.fetchAnexos, enviarAnexo: FIXOS.enviarAnexo, abrirAnexo: FIXOS.abrirAnexo,
   };

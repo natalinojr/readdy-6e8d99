@@ -92,6 +92,8 @@ const ACTIVITY_LABEL: Record<string, string> = {
   attachment_added: 'anexou um arquivo',
   whatsapp_task: 'criou a partir de uma mensagem do WhatsApp (📌)',
   whatsapp_note: 'anotou uma mensagem do WhatsApp (📌)',
+  dependency_added: 'ligou a uma tarefa anterior no cronograma',
+  dependency_removed: 'desfez uma ligação do cronograma',
 };
 
 function fmtDateTime(iso: string): string {

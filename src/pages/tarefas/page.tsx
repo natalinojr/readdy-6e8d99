@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
-import { Plus, Pin, ListTodo, LayoutGrid, CalendarDays, ClipboardList, UserCheck, Users, Layers, Send, SlidersHorizontal, ListChecks, Waypoints, ArrowLeft, Gauge, Share2, LayoutTemplate, BellRing, FileText, Cloud } from 'lucide-react';
+import { Plus, Pin, ListTodo, LayoutGrid, CalendarDays, ClipboardList, UserCheck, Users, Layers, Send, SlidersHorizontal, ListChecks, Waypoints, ArrowLeft, Gauge, Share2, LayoutTemplate, BellRing, FileText, Cloud, ChartGantt } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
 import { useEuTarefas } from './hooks/useEuTarefas';
 import { useAppMode } from '@/contexts/AppModeContext';
@@ -17,6 +17,7 @@ import type { ClipboardTarefas } from './components/ViewLista';
 import ViewKanban from './components/ViewKanban';
 import ViewCalendario from './components/ViewCalendario';
 import ViewCarga from './components/ViewCarga';
+import ViewGantt from './components/ViewGantt';
 import TaskDrawer from './components/TaskDrawer';
 import CamposCustomManager from './components/CamposCustomManager';
 import TemplatesManager from './components/TemplatesManager';
@@ -66,12 +67,14 @@ const CORES_LISTA = ['#6366f1', '#0ea5e9', '#10b981', '#f59e0b', '#ef4444', '#8b
 type Origem = 'pasta' | 'minhas' | 'compartilhadas' | 'atribuidas' | 'todas';
 /** COMO mostrar essas tarefas — independente da origem (pedido do usuário: a
  *  visualização lista/kanban/calendário deve valer pra qualquer origem). */
-type Display = 'lista' | 'kanban' | 'calendario' | 'carga' | 'relatorios';
+type Display = 'lista' | 'kanban' | 'calendario' | 'gantt' | 'carga' | 'relatorios';
 
 const DISPLAYS: Array<{ id: Display; label: string; icon: typeof ListTodo }> = [
   { id: 'lista', label: 'Lista', icon: ListTodo },
   { id: 'kanban', label: 'Kanban', icon: LayoutGrid },
   { id: 'calendario', label: 'Calendário', icon: CalendarDays },
+  // Gantt: barras numa linha do tempo, com ligações entre tarefas (2026-10-02).
+  { id: 'gantt', label: 'Cronograma', icon: ChartGantt },
   { id: 'carga', label: 'Carga', icon: Gauge },
   // Relatórios são da pasta: a aba só vale com uma pasta aberta.
   { id: 'relatorios', label: 'Relatórios', icon: FileText },
@@ -108,7 +111,7 @@ export default function TarefasPage() {
     navigate('/modulos');
   });
   const {
-    lists, tasks, tags, campos, notificacoes, views, templates,
+    lists, tasks, tags, campos, notificacoes, views, templates, dependencias,
     loading, error, reload, write, fetchDetail, fetchAnexos, enviarAnexo, abrirAnexo, reordenarPastas, moverPasta,
   } = useTarefas();
   const { usuarios: usuariosLoja } = useUsuarios();
@@ -336,6 +339,15 @@ export default function TarefasPage() {
     return aplicarFiltros(base, filtros);
   }, [tasks, origem, selectedList?.id, meuId, filtros]);
 
+  // Cronograma de uma pasta mostra também as subpastas (viram grupos): é assim
+  // que um projeto — "Reforma", com "Compras" e "Obra" dentro — cabe numa tela só.
+  const tarefasCronograma = useMemo(() => {
+    if (origem !== 'pasta' || !selectedList) return tarefasVisiveis;
+    const no = achatarArvore(arvorePastas).find((n) => n.id === selectedList.id);
+    const ids = no ? idsSubarvore(no) : new Set([selectedList.id]);
+    return aplicarFiltros(tasks.filter((t) => ids.has(t.list_id)), filtros);
+  }, [origem, selectedList, tarefasVisiveis, arvorePastas, tasks, filtros]);
+
   // Selo da aba "Minhas": não lidas + atrasadas
   const pendencias = useMemo(() => {
     const naoLidas = notificacoes.filter((n) => !n.is_read).length;
@@ -524,6 +536,35 @@ export default function TarefasPage() {
               lists={lists}
               tasks={tarefasVisiveis}
               usuarios={usuariosAtivos}
+              write={write}
+              onOpenTask={setOpenTaskId}
+              padraoDe={padraoDe}
+            />
+          )}
+          {celular && (display === 'calendario' || display === 'gantt') && (
+            // No celular a barra de baixo tem uma aba só para as duas visões de datas.
+            <div className="flex gap-0.5 bg-slate-200/70 rounded-lg p-0.5 mb-3 text-xs">
+              {([['calendario', 'Agenda'], ['gantt', 'Cronograma']] as const).map(([id, rotulo]) => (
+                <button
+                  key={id}
+                  onClick={() => navegar({ display: id })}
+                  className={`flex-1 py-1.5 rounded-md ${display === id ? 'bg-white text-indigo-600 font-medium shadow-sm' : 'text-slate-500'}`}
+                >
+                  {rotulo}
+                </button>
+              ))}
+            </div>
+          )}
+          {display === 'gantt' && (
+            <ViewGantt
+              list={listParaView}
+              lists={lists}
+              tasks={tarefasCronograma}
+              todas={tasks}
+              dependencias={dependencias}
+              usuarios={usuariosAtivos}
+              meuId={meuId}
+              chave={origem === 'pasta' ? selectedList?.id ?? 'nenhuma' : origem}
               write={write}
               onOpenTask={setOpenTaskId}
               padraoDe={padraoDe}
@@ -876,7 +917,7 @@ export default function TarefasPage() {
 
       {/* ── Navegação inferior (celular) ── */}
       <BottomNav
-        view={origem === 'minhas' && (display === 'lista' || display === 'kanban') ? 'minhas' : display === 'kanban' ? 'lista' : display}
+        view={origem === 'minhas' && (display === 'lista' || display === 'kanban') ? 'minhas' : display === 'kanban' ? 'lista' : display === 'gantt' ? 'calendario' : display}
         onView={(v) => {
           if (v === 'minhas') navegar({ origem: 'minhas', ...(display === 'carga' || display === 'relatorios' ? { display: 'lista' as Display } : {}) });
           else if (v === 'relatorios' && (origem !== 'pasta' || !selectedList)) {
