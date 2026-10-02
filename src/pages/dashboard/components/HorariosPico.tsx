@@ -1,196 +1,124 @@
-import { useMemo, useEffect, useRef } from 'react';
-import { useVisaoGeralExtras } from '@/hooks/useVisaoGeralExtras';
+import { useMemo } from 'react';
+import { useDashboardPico } from '@/hooks/useDashboardPainel';
 
-const DIAS_SEMANA = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
-const HORAS_EXIBIR = [7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23];
+// Mapa de pico: média de pedidos por dia da semana × hora nas últimas 4 semanas (horário de Brasília).
+// Dia de operação: a madrugada (até 5h59) fica na linha do dia anterior — sábado 1h é a noite de sábado.
+// Antes era uma linha só, somando todos os dias, pela hora do aparelho e sem a madrugada.
 
-function intensidade(valor: number, max: number): string {
-  if (max === 0 || valor === 0) return 'bg-zinc-100';
-  const ratio = valor / max;
-  if (ratio >= 0.85) return 'bg-amber-500';
-  if (ratio >= 0.65) return 'bg-amber-400';
-  if (ratio >= 0.45) return 'bg-amber-300';
-  if (ratio >= 0.25) return 'bg-amber-200';
-  if (ratio >= 0.1) return 'bg-amber-100';
-  return 'bg-zinc-100';
+const DIAS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+const ORDEM_DIAS = [1, 2, 3, 4, 5, 6, 0]; // Seg..Dom
+
+function agoraBrasilia() {
+  const partes = (dt: Date) => new Intl.DateTimeFormat('en-US', { timeZone: 'America/Sao_Paulo', weekday: 'short', hour: '2-digit', hour12: false }).formatToParts(dt);
+  const p = partes(new Date());
+  const h = Number(p.find((x) => x.type === 'hour')?.value ?? 0) % 24;
+  // dia de operação = o dia de 6 horas atrás
+  const wd = partes(new Date(Date.now() - 6 * 3600 * 1000)).find((x) => x.type === 'weekday')?.value ?? 'Sun';
+  return { d: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(wd), h };
 }
 
-function textIntensidade(valor: number, max: number): string {
-  if (max === 0 || valor === 0) return 'text-zinc-300';
-  const ratio = valor / max;
-  if (ratio >= 0.65) return 'text-amber-900';
-  return 'text-zinc-500';
+function cor(r: number) {
+  if (r >= 0.85) return 'bg-amber-500 text-amber-950';
+  if (r >= 0.65) return 'bg-amber-400 text-amber-950';
+  if (r >= 0.45) return 'bg-amber-300 text-amber-900';
+  if (r >= 0.25) return 'bg-amber-200 text-amber-800';
+  if (r > 0) return 'bg-amber-100 text-amber-700';
+  return 'bg-zinc-100 text-zinc-300';
 }
+
+const fmtN = (v: number) => (v >= 10 ? v.toFixed(0) : v.toFixed(1).replace('.', ',').replace(',0', ''));
 
 export default function HorariosPico({ refreshKey = 0 }: { refreshKey?: number }) {
-  const { data: extras, loading, reload } = useVisaoGeralExtras('30 dias');
+  const { data, loading } = useDashboardPico(refreshKey);
+  const agora = agoraBrasilia();
 
-  // Recarrega quando o dashboard pede refresh (botão Atualizar / tempo real)
-  const firstRender = useRef(true);
-  useEffect(() => {
-    if (firstRender.current) { firstRender.current = false; return; }
-    reload();
-  }, [refreshKey, reload]);
-
-  const horaAtual = new Date().getHours();
-  const diaAtual = new Date().getDay();
-
-  // Pico mais alto do dia de hoje (baseado nos dados de hora)
-  const picoHoje = useMemo(() => {
-    if (!extras?.by_hour) return null;
-    const comMovimento = extras.by_hour.filter(h => h.orders > 0);
-    if (comMovimento.length === 0) return null;
-    return comMovimento.reduce((max, h) => h.orders > max.orders ? h : max, comMovimento[0]);
-  }, [extras]);
-
-  // Próximo horário de pico (hora com mais pedidos após a hora atual)
-  const proximoPico = useMemo(() => {
-    if (!extras?.by_hour) return null;
-    const proximas = extras.by_hour.filter(h => h.hour > horaAtual && h.orders > 0);
-    if (proximas.length === 0) return null;
-    return proximas.reduce((max, h) => h.orders > max.orders ? h : max, proximas[0]);
-  }, [extras, horaAtual]);
-
-  // Hora atual com dados
-  const dadosHoraAtual = extras?.by_hour.find(h => h.hour === horaAtual);
-
-  // Máximo para normalização
-  const maxOrders = useMemo(() => {
-    if (!extras?.by_hour) return 1;
-    return Math.max(...extras.by_hour.map(h => h.orders), 1);
-  }, [extras]);
-
-  if (loading) {
-    return (
-      <div className="bg-white rounded-2xl border border-zinc-200 p-5 animate-pulse">
-        <div className="h-4 bg-zinc-100 rounded w-32 mb-4" />
-        <div className="grid grid-cols-[repeat(17,minmax(0,1fr))] gap-1">
-          {Array.from({ length: 17 }).map((_, i) => (
-            <div key={i} className="h-8 bg-zinc-100 rounded" />
-          ))}
-        </div>
-      </div>
-    );
-  }
+  const { mapa, horas, max, picoSemana, picoHoje } = useMemo(() => {
+    const mapa = new Map<string, number>();
+    let max = 0;
+    let picoSemana: { d: number; h: number; p: number } | null = null;
+    let picoHoje: { h: number; p: number } | null = null;
+    const hs = new Set<number>();
+    for (const c of data ?? []) {
+      mapa.set(`${c.d}:${c.h}`, c.p);
+      hs.add(c.h);
+      if (c.p > max) max = c.p;
+      if (!picoSemana || c.p > picoSemana.p) picoSemana = c;
+      if (c.d === agora.d && (!picoHoje || c.p > picoHoje.p)) picoHoje = { h: c.h, p: c.p };
+    }
+    // Eixo do dia de operação: começa às 6h e vai até a madrugada; só as horas que tiveram pedido.
+    const op = (h: number) => (h + 24 - 6) % 24;
+    const horas = [...hs].sort((a, b) => op(a) - op(b));
+    if (horas.length > 0) {
+      const ini = op(horas[0]);
+      const fim = op(horas[horas.length - 1]);
+      horas.length = 0;
+      for (let x = ini; x <= fim; x++) horas.push((x + 6) % 24);
+    }
+    return { mapa, horas, max, picoSemana, picoHoje };
+  }, [data, agora.d]);
 
   return (
-    <div className="bg-white rounded-2xl border border-zinc-200">
-      {/* Header */}
+    <section className="bg-white rounded-2xl border border-zinc-200">
       <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-100 gap-3 flex-wrap">
         <div>
-          <h3 className="text-sm font-bold text-zinc-800">Horários de Pico</h3>
-          <p className="text-xs text-zinc-400">Distribuição de pedidos por hora — últimos 30 dias</p>
+          <h3 className="text-sm font-bold text-zinc-800">Horários de pico</h3>
+          <p className="text-xs text-zinc-400">Média de pedidos por hora · últimas 4 semanas</p>
         </div>
-
-        {/* Indicadores rápidos */}
-        <div className="flex items-center gap-3">
-          {dadosHoraAtual && dadosHoraAtual.orders > 0 && (
-            <div className="text-right">
-              <p className="text-[10px] text-zinc-400">Agora ({horaAtual}h)</p>
-              <p className="text-xs font-bold text-amber-600 tabular-nums">{dadosHoraAtual.orders} ped. (30d)</p>
-            </div>
+        <div className="flex items-center gap-2 text-xs flex-wrap">
+          {picoHoje && (
+            <span className="bg-zinc-50 border border-zinc-200 rounded-lg px-2.5 py-1 text-zinc-600">
+              Hoje ({DIAS[agora.d].toLowerCase()}) o pico costuma ser <b className="text-zinc-800">{picoHoje.h}h</b>
+            </span>
           )}
-          {proximoPico && (
-            <div className="text-right border-l border-zinc-100 pl-3">
-              <p className="text-[10px] text-zinc-400">Próximo pico</p>
-              <p className="text-xs font-bold text-zinc-700">{proximoPico.hour}h</p>
-            </div>
+          {picoSemana && (
+            <span className="bg-amber-50 border border-amber-200 text-amber-700 rounded-lg px-2.5 py-1 font-semibold">
+              <i className="ri-fire-fill" /> Semana: {DIAS[picoSemana.d]} {picoSemana.h}h
+            </span>
           )}
         </div>
       </div>
 
-      <div className="p-5">
-      {/* Mapa de calor por hora */}
-      <div>
-        <div>
-          {/* Sparkbar ACIMA — mais espaço e visível antes do heatmap */}
-          <div className="flex items-end gap-1 mb-2 pl-8 h-14">
-            {HORAS_EXIBIR.map(h => {
-              const dado = extras?.by_hour.find(d => d.hour === h);
-              const orders = dado?.orders ?? 0;
-              const pct = maxOrders > 0 ? (orders / maxOrders) * 100 : 0;
-              const isAtual = h === horaAtual;
-              return (
-                <div key={h} className="flex-1 flex items-end justify-center h-full">
-                  <div
-                    className={`w-full rounded-t transition-all duration-500 ${isAtual ? 'bg-amber-500' : 'bg-amber-200'}`}
-                    style={{ height: `${Math.max(pct, orders > 0 ? 6 : 0)}%` }}
-                  />
-                </div>
-              );
-            })}
+      <div className="p-5 overflow-x-auto">
+        {loading && !data ? (
+          <div className="h-48 rounded-xl bg-zinc-50 animate-pulse" />
+        ) : horas.length === 0 ? (
+          <div className="py-10 text-center">
+            <i className="ri-fire-line text-3xl text-zinc-200" />
+            <p className="text-zinc-400 text-sm mt-1">Ainda sem pedidos nas últimas 4 semanas</p>
           </div>
-
-          {/* Labels de hora */}
-          <div className="flex items-center gap-1 mb-1 pl-8">
-            {HORAS_EXIBIR.map(h => (
-              <div
-                key={h}
-                className={`flex-1 text-center text-[9px] font-semibold ${h === horaAtual ? 'text-amber-600' : 'text-zinc-400'}`}
-              >
-                {h}h
+        ) : (
+          <div style={{ minWidth: Math.max(480, horas.length * 30 + 48) }}>
+            <div className="flex gap-1 mb-1 pl-10">
+              {horas.map((h) => (
+                <div key={h} className={`flex-1 text-center text-[9px] font-semibold ${h === agora.h ? 'text-amber-600' : 'text-zinc-400'}`}>{h}h</div>
+              ))}
+            </div>
+            {ORDEM_DIAS.map((d) => (
+              <div key={d} className="flex gap-1 mb-1 items-center">
+                <div className={`w-10 text-[10px] text-right pr-1.5 ${d === agora.d ? 'font-bold text-amber-600' : 'text-zinc-400'}`}>{DIAS[d]}</div>
+                {horas.map((h) => {
+                  const v = mapa.get(`${d}:${h}`) ?? 0;
+                  const ehAgora = d === agora.d && h === agora.h;
+                  return (
+                    <div key={h} title={`${DIAS[d]} ${h}h: em média ${fmtN(v)} pedido${v === 1 ? '' : 's'}`}
+                      className={`flex-1 h-8 rounded-md text-[10px] font-bold flex items-center justify-center tabular-nums ${cor(max > 0 ? v / max : 0)} ${ehAgora ? 'ring-2 ring-zinc-800 ring-offset-1' : ''}`}>
+                      {v > 0 ? fmtN(v) : ''}
+                    </div>
+                  );
+                })}
               </div>
             ))}
-          </div>
-
-          {/* Heatmap de células */}
-          <div className="flex items-center gap-1">
-            <div className="w-8 text-[9px] text-zinc-400 font-medium text-right pr-1 flex-shrink-0">
-              {DIAS_SEMANA[diaAtual]}
+            <div className="flex items-center gap-2 mt-3 pl-10 text-[10px] text-zinc-400 flex-wrap">
+              <span>menos</span>
+              {['bg-zinc-100', 'bg-amber-100', 'bg-amber-200', 'bg-amber-300', 'bg-amber-400', 'bg-amber-500'].map((c) => (
+                <span key={c} className={`w-4 h-3 rounded-sm ${c}`} />
+              ))}
+              <span>mais</span>
+              <span className="ml-3 inline-flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-sm ring-2 ring-zinc-800" /> agora</span>
             </div>
-            {HORAS_EXIBIR.map(h => {
-              const dado = extras?.by_hour.find(d => d.hour === h);
-              const orders = dado?.orders ?? 0;
-              const isAtual = h === horaAtual;
-              return (
-                <div
-                  key={h}
-                  className={`flex-1 h-10 rounded flex items-center justify-center relative group cursor-default transition-all
-                    ${intensidade(orders, maxOrders)}
-                    ${isAtual ? 'ring-2 ring-amber-500 ring-offset-1' : ''}
-                  `}
-                >
-                  {orders > 0 && (
-                    <span className={`text-[9px] font-bold ${textIntensidade(orders, maxOrders)}`}>
-                      {orders}
-                    </span>
-                  )}
-                  {/* Tooltip aparece ABAIXO da célula para não ser cortado */}
-                  <div className="absolute top-full left-1/2 -translate-x-1/2 mt-1.5 hidden group-hover:block z-20 pointer-events-none">
-                    <div className="bg-zinc-900 text-white text-[10px] rounded-lg px-2.5 py-1.5 whitespace-nowrap shadow-lg">
-                      <p className="font-semibold">{h}:00 — {h + 1}:00</p>
-                      <p className="text-zinc-300">{orders} pedido{orders !== 1 ? 's' : ''} em 30 dias</p>
-                    </div>
-                    <div className="absolute -top-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-zinc-900 rotate-45" />
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      </div>
-
-      {/* Legenda + insights */}
-      <div className="mt-4 pt-3 border-t border-zinc-100 flex items-center justify-between flex-wrap gap-3">
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1">
-            {['bg-zinc-100', 'bg-amber-100', 'bg-amber-200', 'bg-amber-300', 'bg-amber-400', 'bg-amber-500'].map((cls, i) => (
-              <div key={i} className={`w-4 h-3 rounded-sm ${cls}`} />
-            ))}
-          </div>
-          <span className="text-[10px] text-zinc-400">Menos → Mais pedidos</span>
-        </div>
-
-        {picoHoje && (
-          <div className="flex items-center gap-1.5 bg-amber-50 border border-amber-200 rounded-xl px-3 py-1.5">
-            <i className="ri-fire-fill text-amber-500 text-xs" />
-            <span className="text-xs font-semibold text-amber-700">
-              Pico: {picoHoje.hour}h ({picoHoje.orders} pedidos em 30 dias)
-            </span>
           </div>
         )}
       </div>
-      </div>
-    </div>
+    </section>
   );
 }

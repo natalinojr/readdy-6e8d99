@@ -20,6 +20,7 @@ export interface FinanceiroAlertasSummary {
   folhaPendente: number;
   totalBadge: number; // número para o badge da sidebar
   loading: boolean;
+  reload: () => void;
 }
 
 
@@ -183,5 +184,6 @@ export function useFinanceiroAlertas(): FinanceiroAlertasSummary {
     folhaPendente: totals.folhaPendente,
     totalBadge,
     loading,
+    reload: load,
   };
 }
