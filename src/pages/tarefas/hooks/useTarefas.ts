@@ -7,6 +7,7 @@ import type { Recorrencia } from '../lib/recorrencia';
 import type { Responsavel } from '../lib/responsaveis';
 import { statusPorCategoria } from '../lib/statusFeito';
 import { useTarefasDemo } from '../demo/useTarefasDemo';
+import type { Dependencia } from '../lib/gantt';
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -195,7 +196,7 @@ export interface TaskViewSalva {
   list_id: string | null;
   user_id: string | null;
   name: string;
-  view_type: 'lista' | 'kanban' | 'calendario' | 'minhas';
+  view_type: 'lista' | 'kanban' | 'calendario' | 'minhas' | 'carga' | 'gantt' | 'linha';
   group_by: string;
   filters: Record<string, unknown>;
   is_shared: boolean;
@@ -254,6 +255,8 @@ function useTarefasReal() {
   const [notificacoes, setNotificacoes] = useState<TaskNotificacao[]>([]);
   const [views, setViews] = useState<TaskViewSalva[]>([]);
   const [templates, setTemplates] = useState<ChecklistTemplate[]>([]);
+  // Ligações do Cronograma (a seguinte só começa depois que a anterior termina).
+  const [dependencias, setDependencias] = useState<Dependencia[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   // Reset na troca de loja: o tenantId em ref garante que respostas antigas não vazem
@@ -264,7 +267,7 @@ function useTarefasReal() {
     if (!pronto) return;
     const requestTenant = chaveEscopo;
     try {
-      const [listsRes, tasksRes, tagsRes, camposRes, notifRes, viewsRes, tplRes] = await Promise.all([
+      const [listsRes, tasksRes, tagsRes, camposRes, notifRes, viewsRes, tplRes, depsRes] = await Promise.all([
         supabase.rpc('fn_get_task_lists', { p_tenant_id: tenantId }),
         supabase.rpc('fn_get_tasks', { p_tenant_id: tenantId }),
         supabase.rpc('fn_get_task_tags', { p_tenant_id: tenantId }),
@@ -272,6 +275,7 @@ function useTarefasReal() {
         supabase.rpc('fn_get_task_notifications', { p_tenant_id: tenantId }),
         supabase.rpc('fn_get_task_views', { p_tenant_id: tenantId }),
         supabase.rpc('fn_get_task_checklist_templates', { p_tenant_id: tenantId }),
+        supabase.rpc('fn_get_task_dependencies', { p_tenant_id: tenantId }),
       ]);
       if (tenantRef.current !== requestTenant) return; // trocou de loja no meio
       if (listsRes.error) throw listsRes.error;
@@ -283,6 +287,8 @@ function useTarefasReal() {
       setNotificacoes((notifRes.data as TaskNotificacao[]) ?? []);
       setViews((viewsRes.data as TaskViewSalva[]) ?? []);
       setTemplates((tplRes.data as ChecklistTemplate[]) ?? []);
+      // Sem a RPC (banco antigo) o cronograma só fica sem ligações.
+      if (!depsRes.error) setDependencias((depsRes.data as Dependencia[]) ?? []);
       setError(null);
     } catch (e) {
       console.error('[useTarefas] reload error:', e);
@@ -301,6 +307,7 @@ function useTarefasReal() {
     setNotificacoes([]);
     setViews([]);
     setTemplates([]);
+    setDependencias([]);
     setLoading(true);
     reload();
   }, [reload]);
@@ -446,6 +453,13 @@ function useTarefasReal() {
           if (action === 'start_timer' && t.id === payload.task_id) n = { ...n, timer_started_at: agora.toISOString() };
           return n;
         }));
+      } else if ((action === 'add_dependency' || action === 'remove_dependency')
+        && typeof payload.predecessor_id === 'string' && typeof payload.successor_id === 'string') {
+        const d = { predecessor_id: payload.predecessor_id, successor_id: payload.successor_id };
+        const mesma = (x: Dependencia) => x.predecessor_id === d.predecessor_id && x.successor_id === d.successor_id;
+        setDependencias((prev) => (action === 'add_dependency'
+          ? (prev.some(mesma) ? prev : [...prev, d])
+          : prev.filter((x) => !mesma(x))));
       }
 
       const { data, error: fnError } = await invokeWithAuth<{ success?: boolean; id?: string; error?: string; next_occurrence_id?: string | null }>('task-write', {
@@ -454,7 +468,7 @@ function useTarefasReal() {
       if (fnError || !data?.success) {
         const msg = data?.error ?? fnError?.message ?? 'Erro desconhecido';
         console.error(`[useTarefas] ${action} falhou:`, msg);
-        if (['update_task', 'delete_task', 'start_timer', 'stop_timer'].includes(action)) reload(); // desfaz o otimista
+        if (['update_task', 'delete_task', 'start_timer', 'stop_timer', 'add_dependency', 'remove_dependency'].includes(action)) reload(); // desfaz o otimista
         return { success: false, error: msg };
       }
 
@@ -617,7 +631,7 @@ function useTarefasReal() {
   );
 
   return {
-    lists, tasks, tags, campos, notificacoes, views, templates,
+    lists, tasks, tags, campos, notificacoes, views, templates, dependencias,
     loading, error, reload, write, fetchDetail, reordenarPastas, moverPasta,
     fetchAnexos, enviarAnexo, abrirAnexo,
   };

@@ -8,6 +8,8 @@ export interface Categoria {
   totalItens: number;
   /** Classificação fiscal padrão dos itens da categoria (NFC-e). */
   fiscal?: import('@/lib/fiscal').CategoriaFiscal;
+  /** Horário em que a categoria aparece no cardápio do cliente (null = sempre). */
+  horario?: import('@/lib/horarioExibicao').HorarioExibicao;
   created_at?: string;
   updated_at?: string;
   deleted_at?: string | null;
@@ -133,6 +135,8 @@ export interface Item {
   delivery?: ConfiguracaoDelivery;
   /** Classificação fiscal do item (NFC-e). Vazio = herda da categoria/loja. */
   fiscal?: import('@/lib/fiscal').ItemFiscal;
+  /** Horário em que o item aparece no cardápio do cliente (null = sempre). */
+  horario?: import('@/lib/horarioExibicao').HorarioExibicao;
   deleted_at?: string | null;
 }
 
@@ -191,6 +195,8 @@ export interface Destaque {
   // Canal onde o destaque aparece: 'casa' (só presencial), 'delivery' (só delivery)
   // ou 'ambos' (padrão). Filtra em itensPublicos (casa) e nas Edge Functions.
   canal: 'casa' | 'ambos' | 'delivery';
+  /** Horário próprio do destaque (null = segue o do item). Vale sempre junto com o do item e o da categoria. */
+  horario?: import('@/lib/horarioExibicao').HorarioExibicao;
 }
 
 // ─── Ficha Técnica de Combos (combo_ingredients) ─────────────────────────────

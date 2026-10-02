@@ -505,6 +505,8 @@ export const NON_IDEMPOTENT_ACTIONS = new Set([
   'add_cash_movement',
   'register_partial_refund',
   'enviar_guia', // contabilidade: repetir pode preparar o pagamento da guia duas vezes
+  'enviar_xml_mes', // contabilidade-xml: repetir manda o e-mail dos XMLs duas vezes
+  'testar_email',
 ]);
 
 /**

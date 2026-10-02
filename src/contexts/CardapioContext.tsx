@@ -13,6 +13,8 @@ import type { Categoria, Item, Combo, ObservacaoGlobal, GrupoOpcoes, OpcaoItem, 
 import type { ItemCardapioPublico } from '@/types/mesaCliente';
 import { saveMenuCache, getMenuCache } from '@/lib/offlineDB';
 import { useMenuPing } from '@/hooks/useMenuPing';
+import { agoraBrasilia, normalizarHorario, temHorario, visivelEm } from '@/lib/horarioExibicao';
+import { useRelogioMinuto } from '@/hooks/useRelogioMinuto';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -109,6 +111,7 @@ interface DBItem {
   origem?: number | null;
   cod_tributacao?: string | null;
   gtin?: string | null;
+  availability_schedule?: unknown;
   option_groups?: DBGrupoOpcoes[];
   promotions?: DBPromocao[];
   preset_observations?: DBPresetObs[];
@@ -128,6 +131,7 @@ interface DBCategoria {
   cfop?: number | null;
   csosn?: string | null;
   cod_tributacao?: string | null;
+  availability_schedule?: unknown;
 }
 
 interface DBObsGlobal {
@@ -162,6 +166,7 @@ interface DBHighlight {
   sort_order?: number | null;
   is_active?: boolean | null;
   channel?: string | null;
+  availability_schedule?: unknown;
   menu_items?: DBItem | null;
 }
 
@@ -179,6 +184,7 @@ function mapCategoria(c: DBCategoria): Categoria {
     id: c.id, nome: c.name, estacao: c.station_name ?? '', estacaoId: c.station_id ?? undefined,
     ordem: c.sort_order ?? 0, ativo: c.is_active ?? true, totalItens: c.item_count ?? 0,
     fiscal: { ncm: c.ncm ?? null, cest: c.cest ?? null, cfop: c.cfop ?? null, csosn: c.csosn ?? null, codTributacao: c.cod_tributacao ?? null },
+    horario: normalizarHorario(c.availability_schedule),
   };
 }
 
@@ -266,6 +272,7 @@ function mapItem(i: DBItem, ingredientNameMap?: Map<string, string>): Item {
       ncm: i.ncm ?? null, cest: i.cest ?? null, cfop: i.cfop ?? null, csosn: i.csosn ?? null,
       origem: i.origem ?? null, codTributacao: i.cod_tributacao ?? null, gtin: i.gtin ?? null,
     },
+    horario: normalizarHorario(i.availability_schedule),
   };
 }
 
@@ -306,6 +313,7 @@ function mapDestaque(h: DBHighlight, categorias: Categoria[]): Destaque {
     ordem: h.sort_order ?? 0,
     ativo: h.is_active ?? true,
     canal: (h.channel === 'casa' || h.channel === 'delivery') ? h.channel : 'ambos',
+    horario: normalizarHorario(h.availability_schedule),
   };
 }
 
@@ -351,8 +359,8 @@ interface CardapioContextValue {
   recarregarEstacoes: () => Promise<void>;
 
   // Category CRUD
-  criarCategoria: (data: { nome: string; estacaoId?: string; fiscal?: import('@/lib/fiscal').CategoriaFiscal }) => Promise<void>;
-  editarCategoria: (id: string, data: { nome?: string; estacaoId?: string; ativo?: boolean; fiscal?: import('@/lib/fiscal').CategoriaFiscal }) => Promise<void>;
+  criarCategoria: (data: { nome: string; estacaoId?: string; fiscal?: import('@/lib/fiscal').CategoriaFiscal; horario?: import('@/lib/horarioExibicao').HorarioExibicao }) => Promise<void>;
+  editarCategoria: (id: string, data: { nome?: string; estacaoId?: string; ativo?: boolean; fiscal?: import('@/lib/fiscal').CategoriaFiscal; horario?: import('@/lib/horarioExibicao').HorarioExibicao }) => Promise<void>;
   excluirCategoria: (id: string) => Promise<void>;
   reordenarCategorias: (items: Array<{ id: string; sortOrder: number }>) => Promise<void>;
 
@@ -375,12 +383,14 @@ interface CardapioContextValue {
   // Destaques CRUD
   destaques: Destaque[];
   adicionarDestaque: (itemId: string, customPrice?: number | null, customDescription?: string | null) => Promise<void>;
-  editarDestaque: (id: string, data: { customPrice?: number | null; customDescription?: string | null; ativo?: boolean; canal?: 'casa' | 'ambos' | 'delivery' }) => Promise<void>;
+  editarDestaque: (id: string, data: { customPrice?: number | null; customDescription?: string | null; ativo?: boolean; canal?: 'casa' | 'ambos' | 'delivery'; horario?: import('@/lib/horarioExibicao').HorarioExibicao }) => Promise<void>;
   removerDestaque: (id: string) => Promise<void>;
   reordenarDestaques: (items: Array<{ id: string; sortOrder: number }>) => Promise<void>;
 
   // Derived
   itensAtivos: Item[];      // itens ativos para canais presenciais (exclui somenteDelivery)
+  /** O item (e a categoria dele) está no horário de exibição agora? Caixa/garçom mostram, mas marcam "fora do horário". */
+  itemNoHorario: (item: Item) => boolean;
   itensDelivery: Item[];    // itens ativos para o canal delivery
   itensPublicos: ItemCardapioPublico[];
   numerosMap: Map<string, number>;
@@ -526,7 +536,7 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
           for (const it of ((data.items ?? []) as DBItem[])) itemsById.set(it.id, it);
           const { data: highlightsData, error: highlightsError } = await supabase
             .from('menu_highlights')
-            .select('id, item_id, custom_price, custom_description, sort_order, is_active, channel')
+            .select('id, item_id, custom_price, custom_description, sort_order, is_active, channel, availability_schedule')
             .eq('tenant_id', effectiveTenantId)
             .eq('is_active', true)
             .order('sort_order', { ascending: true });
@@ -598,7 +608,7 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
     ncm: f.ncm ?? null, cest: f.cest ?? null, cfop: f.cfop ?? null, csosn: f.csosn ?? null, cod_tributacao: f.codTributacao ?? null,
   } : undefined;
 
-  const criarCategoria = async (data: { nome: string; estacaoId?: string; fiscal?: import('@/lib/fiscal').CategoriaFiscal }) => {
+  const criarCategoria = async (data: { nome: string; estacaoId?: string; fiscal?: import('@/lib/fiscal').CategoriaFiscal; horario?: import('@/lib/horarioExibicao').HorarioExibicao }) => {
     setSaving(true);
     const maxOrdem = categorias.length > 0 ? Math.max(...categorias.map(c => c.ordem)) : 0;
     try {
@@ -606,6 +616,7 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
         name: data.nome, station_id: data.estacaoId ?? null,
         sort_order: maxOrdem + 1, is_active: true,
         fiscal: fiscalCatPayload(data.fiscal),
+        availability_schedule: data.horario ?? null,
       }, user?.tenantId);
       if (result?.success) await recarregar({ silent: true });
     } catch (err) {
@@ -615,7 +626,7 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const editarCategoria = async (id: string, data: { nome?: string; estacaoId?: string; ativo?: boolean; fiscal?: import('@/lib/fiscal').CategoriaFiscal }) => {
+  const editarCategoria = async (id: string, data: { nome?: string; estacaoId?: string; ativo?: boolean; fiscal?: import('@/lib/fiscal').CategoriaFiscal; horario?: import('@/lib/horarioExibicao').HorarioExibicao }) => {
     const cat = categorias.find(c => c.id === id);
     if (!cat) return;
     setSaving(true);
@@ -625,6 +636,7 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
         station_id: data.estacaoId ?? cat.estacaoId ?? null,
         sort_order: cat.ordem, is_active: data.ativo ?? cat.ativo,
         fiscal: fiscalCatPayload(data.fiscal),
+        availability_schedule: data.horario !== undefined ? data.horario : (cat.horario ?? null),
       }, user?.tenantId);
       await recarregar({ silent: true });
     } catch (err) {
@@ -740,6 +752,7 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
           csosn: item.fiscal.csosn ?? null, origem: item.fiscal.origem ?? null,
           cod_tributacao: item.fiscal.codTributacao ?? null, gtin: item.fiscal.gtin ?? null,
         } : undefined,
+        availability_schedule: item.horario ?? null,
       }, user?.tenantId);
 
       if (user) {
@@ -954,13 +967,16 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const editarDestaque = async (id: string, data: { customPrice?: number | null; customDescription?: string | null; ativo?: boolean; canal?: 'casa' | 'ambos' | 'delivery' }) => {
+  const editarDestaque = async (id: string, data: { customPrice?: number | null; customDescription?: string | null; ativo?: boolean; canal?: 'casa' | 'ambos' | 'delivery'; horario?: import('@/lib/horarioExibicao').HorarioExibicao }) => {
     const dest = destaques.find(d => d.id === id);
     if (!dest) return;
     setSaving(true);
     // Atualização otimista do canal (feedback imediato no seletor da aba Destaques).
     if (data.canal && data.canal !== dest.canal) {
       setDestaques(prev => prev.map(d => (d.id === id ? { ...d, canal: data.canal! } : d)));
+    }
+    if (data.horario !== undefined) {
+      setDestaques(prev => prev.map(d => (d.id === id ? { ...d, horario: data.horario } : d)));
     }
     try {
       await menuWrite('upsert_highlight', {
@@ -971,10 +987,12 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
         sort_order: dest.ordem,
         is_active: data.ativo ?? dest.ativo,
         channel: data.canal ?? dest.canal,
+        availability_schedule: data.horario !== undefined ? data.horario : (dest.horario ?? null),
       }, user?.tenantId);
       await recarregar({ silent: true });
     } catch (err) {
       addToast({ type: 'error', message: `Erro ao editar destaque: ${err instanceof Error ? err.message : String(err)}` });
+      await recarregar({ silent: true }); // desfaz o canal/horário mostrado antes de gravar
     } finally {
       setSaving(false);
     }
@@ -1028,6 +1046,29 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
     [itensAtivos],
   );
 
+  // Horário de exibição: o relógio só roda se a loja usa horário em algum lugar.
+  const usaHorario = useMemo(
+    () => itens.some(i => temHorario(i.horario)) || categorias.some(c => temHorario(c.horario)) || destaques.some(d => temHorario(d.horario)),
+    [itens, categorias, destaques],
+  );
+  const minutoAgora = useRelogioMinuto(usaHorario);
+  // Ids fora do horário agora (itens; destaques com prefixo "h:"). A chave só muda quando
+  // algo entra/sai: itensPublicos/itemNoHorario ficam iguais e o totem não remonta o cardápio
+  // a cada minuto (o provider em si re-renderiza 1x/min, só nas lojas que usam horário).
+  // minutoAgora só dispara o recálculo na virada do minuto; a hora vem de new Date().
+  const chaveForaDoHorario = useMemo(() => {
+    if (!usaHorario) return '';
+    const { dia, minuto } = agoraBrasilia();
+    const horarioCat = new Map(categorias.map(c => [c.id, c.horario]));
+    const fora = itens
+      .filter(i => !visivelEm(i.horario, dia, minuto) || !visivelEm(horarioCat.get(i.categoriaId), dia, minuto))
+      .map(i => i.id);
+    const destFora = destaques.filter(d => !visivelEm(d.horario, dia, minuto)).map(d => 'h:' + d.id);
+    return [...fora, ...destFora].sort().join(',');
+  }, [usaHorario, itens, categorias, destaques, minutoAgora]);
+  const foraDoHorario = useMemo(() => new Set(chaveForaDoHorario ? chaveForaDoHorario.split(',') : []), [chaveForaDoHorario]);
+  const itemNoHorario = useCallback((item: Item) => !foraDoHorario.has(item.id), [foraDoHorario]);
+
   const itensPublicos = useMemo<ItemCardapioPublico[]>(() => {
     // Só categorias ativas (não deletadas) — categorias deletadas não aparecem no cardápio público
     const categoriasAtivasIds = new Set(categorias.filter(c => c.ativo).map(c => c.id));
@@ -1035,8 +1076,11 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
     // Mapa itemId → ordem do destaque (somente destaques ativos e que valem para a
     // casa — canal 'casa' ou 'ambos'). Destaques exclusivos de delivery não marcam
     // itens como destaque nas telas presenciais (mesa/autoatendimento).
+    // Destaque fora do horário próprio também não marca; item fora do horário já sai abaixo.
     const destaqueOrdemMap = new Map<string, number>();
-    destaques.filter(d => d.ativo && d.canal !== 'delivery').forEach(d => { destaqueOrdemMap.set(d.itemId, d.ordem ?? 0); });
+    destaques
+      .filter(d => d.ativo && d.canal !== 'delivery' && !foraDoHorario.has('h:' + d.id))
+      .forEach(d => { destaqueOrdemMap.set(d.itemId, d.ordem ?? 0); });
 
     // Itens normais ativos que permitem mesa_qr OU self_service (ou sem canais — retrocompatibilidade)
     const itensAtivosMesaQR = itensAtivos.filter(item =>
@@ -1047,7 +1091,7 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
     );
 
     const itensNormais: ItemCardapioPublico[] = itensAtivosMesaQR
-      .filter(item => categoriasAtivasIds.has(item.categoriaId))
+      .filter(item => categoriasAtivasIds.has(item.categoriaId) && itemNoHorario(item))
       .map((item) => {
         const promoAtiva = promoAtivaHoje(item.promocoes);
         const categoriaNome = categorias.find(c => c.id === item.categoriaId)?.nome ?? 'Outros';
@@ -1100,7 +1144,7 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
 
     return [...itensNormais, ...combosAtivos];
   },
-    [itensAtivos, categorias, combos, destaques],
+    [itensAtivos, categorias, combos, destaques, itemNoHorario, foraDoHorario],
   );
 
   return (
@@ -1113,7 +1157,7 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
       criarObsGlobal, editarObsGlobal, excluirObsGlobal,
       salvarCombo, excluirCombo,
       destaques, adicionarDestaque, editarDestaque, removerDestaque, reordenarDestaques,
-      itensAtivos, itensDelivery, itensPublicos, numerosMap,
+      itensAtivos, itensDelivery, itensPublicos, numerosMap, itemNoHorario,
     }}>
       {children}
     </CardapioContext.Provider>

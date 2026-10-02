@@ -5,6 +5,20 @@ import ItemModal from './ItemModal';
 import ItemImage from '@/components/base/ItemImage';
 import ConfirmModal from '@/components/base/ConfirmModal';
 import { confirmar } from '@/components/base/Dialogos';
+import { resumoHorario, temHorario } from '@/lib/horarioExibicao';
+
+// Selo do horário de exibição do item (verde = aparecendo agora; azul = escondido do cliente agora).
+function HorarioSelo({ item, noHorario }: { item: Item; noHorario: boolean }) {
+  if (!temHorario(item.horario)) return null;
+  return (
+    <span
+      title={noHorario ? 'No horário agora — aparecendo no cardápio do cliente' : 'Fora do horário agora — escondido do cardápio do cliente'}
+      className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold whitespace-nowrap flex items-center gap-0.5 ${noHorario ? 'bg-emerald-100 text-emerald-700' : 'bg-indigo-100 text-indigo-700'}`}
+    >
+      <i className="ri-time-line" />{resumoHorario(item.horario)}
+    </span>
+  );
+}
 
 type Disponibilidade = 'ambos' | 'casa' | 'delivery';
 function disponibilidadeDe(item: Item): Disponibilidade {
@@ -42,7 +56,7 @@ function CanalToggle({ item, onChange, disabled }: { item: Item; onChange: (v: D
 }
 
 export default function ItensTab() {
-  const { itens, setItens, categorias, obsGlobais, estacoes, salvarItem, excluirItem, reordenarItens, definirCanalCategoria, saving } = useCardapio();
+  const { itens, setItens, categorias, obsGlobais, estacoes, salvarItem, excluirItem, reordenarItens, definirCanalCategoria, saving, itemNoHorario } = useCardapio();
   const [busca, setBusca] = useState('');
   const [filtroCategoria, setFiltroCategoria] = useState('');
   const [filtroStatus, setFiltroStatus] = useState('');
@@ -396,6 +410,7 @@ export default function ItensTab() {
                   {item.promocoes.some(p => p.ativo) && (
                     <span className="bg-red-500 text-white text-xs px-2 py-0.5 rounded-full font-medium">Promo</span>
                   )}
+                  <HorarioSelo item={item} noHorario={itemNoHorario(item)} />
                   <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${item.status === 'ativo' ? 'bg-green-500 text-white' : 'bg-gray-400 text-white'}`}>
                     {item.status === 'ativo' ? 'Ativo' : 'Inativo'}
                   </span>
@@ -529,6 +544,7 @@ export default function ItensTab() {
                                     Só Delivery
                                   </span>
                                 )}
+                                <HorarioSelo item={item} noHorario={itemNoHorario(item)} />
                               </div>
                               <p className="text-xs text-gray-400 line-clamp-2 max-w-[200px]">{item.descricao}</p>
                             </div>
@@ -654,6 +670,7 @@ export default function ItensTab() {
                         <span className="text-xs text-orange-600 font-bold">R$ {item.preco.toFixed(2).replace('.', ',')}</span>
                         <span className="text-xs text-gray-400">{categoriaMap[item.categoriaId] ?? '—'}</span>
                         <span className="text-xs text-gray-400">{item.slaMinutos}min</span>
+                        <HorarioSelo item={item} noHorario={itemNoHorario(item)} />
                       </div>
                       <div className="mt-1.5">
                         <CanalToggle item={item} disabled={saving} onChange={(v) => setDisponibilidade(item, v)} />

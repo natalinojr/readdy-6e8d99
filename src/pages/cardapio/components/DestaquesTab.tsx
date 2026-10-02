@@ -2,6 +2,10 @@ import { useState, useMemo } from 'react';
 import { useCardapio } from '@/contexts/CardapioContext';
 import ItemImage from '@/components/base/ItemImage';
 import { confirmar } from '@/components/base/Dialogos';
+import HorarioExibicaoEditor from '@/components/feature/HorarioExibicaoEditor';
+import {
+  cruzamNaSemana, erroHorario, resumoHorario, temHorario, visivelAgora, type HorarioExibicao,
+} from '@/lib/horarioExibicao';
 
 type CanalDestaque = 'casa' | 'ambos' | 'delivery';
 const CANAIS_DESTAQUE: { key: CanalDestaque; icon: string; title: string }[] = [
@@ -23,6 +27,7 @@ export default function DestaquesTab() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editPrice, setEditPrice] = useState('');
   const [editDescription, setEditDescription] = useState('');
+  const [editHorario, setEditHorario] = useState<HorarioExibicao>(null);
 
   const destaqueItemIds = new Set(destaques.map(d => d.itemId));
 
@@ -38,6 +43,13 @@ export default function DestaquesTab() {
   }, [itens, destaqueItemIds, buscaAdd, filtroCategoriaAdd]);
 
   const categoriaMap = Object.fromEntries(categorias.map(c => [c.id, c.nome]));
+
+  // O destaque obedece ao horário do item e da categoria dele (além do próprio).
+  const horariosDoItem = (itemId: string): HorarioExibicao[] => {
+    const it = itens.find(i => i.id === itemId);
+    const cat = it ? categorias.find(c => c.id === it.categoriaId) : undefined;
+    return [it?.horario ?? null, cat?.horario ?? null].filter(temHorario);
+  };
   const categoriasAtivas = categorias.filter(c => c.ativo);
 
   const handleAdd = async (itemId: string) => {
@@ -51,20 +63,23 @@ export default function DestaquesTab() {
     setEditingId(d.id);
     setEditPrice(d.customPrice != null ? String(d.customPrice) : '');
     setEditDescription(d.customDescription ?? '');
+    setEditHorario(d.horario ?? null);
   };
 
   const cancelEdit = () => {
     setEditingId(null);
     setEditPrice('');
     setEditDescription('');
+    setEditHorario(null);
   };
 
   const saveEdit = async () => {
-    if (!editingId) return;
+    if (!editingId || erroHorario(editHorario)) return;
     const priceVal = editPrice.trim() ? parseFloat(editPrice.replace(',', '.')) : null;
     await editarDestaque(editingId, {
       customPrice: priceVal,
       customDescription: editDescription.trim() || null,
+      horario: editHorario,
     });
     setEditingId(null);
   };
@@ -183,10 +198,32 @@ export default function DestaquesTab() {
                       onChange={e => setEditDescription(e.target.value)}
                     />
                   </div>
+                  <div className="pt-1">
+                    <span className="block text-xs text-gray-400 mb-1">Horário do destaque:</span>
+                    <HorarioExibicaoEditor
+                      value={editHorario}
+                      onChange={setEditHorario}
+                      labelSempre="Segue o horário do item"
+                    />
+                    {(() => {
+                      const doItem = horariosDoItem(dest.itemId);
+                      if (doItem.length === 0) return null;
+                      const nunca = temHorario(editHorario) && !erroHorario(editHorario) && !cruzamNaSemana([editHorario, ...doItem]);
+                      return (
+                        <p className={`text-[11px] rounded-lg px-2.5 py-1.5 mt-2 border ${nunca ? 'text-red-700 bg-red-50 border-red-100' : 'text-indigo-700 bg-indigo-50 border-indigo-100'}`}>
+                          <i className={`${nunca ? 'ri-error-warning-line' : 'ri-information-line'} mr-1`} />
+                          O item só aparece {doItem.map(h => resumoHorario(h)).join(' e ')}.{' '}
+                          {nunca
+                            ? 'O horário do destaque não cruza com o do item — o destaque nunca vai aparecer.'
+                            : 'O destaque só aparece quando o item também está no horário.'}
+                        </p>
+                      );
+                    })()}
+                  </div>
                   <div className="flex items-center gap-2">
                     <button
                       onClick={saveEdit}
-                      disabled={saving}
+                      disabled={saving || !!erroHorario(editHorario)}
                       className="px-3 py-1 text-xs font-medium bg-orange-500 hover:bg-orange-600 text-white rounded-md transition-colors cursor-pointer whitespace-nowrap disabled:opacity-50"
                     >
                       Salvar
@@ -233,6 +270,20 @@ export default function DestaquesTab() {
                       })}
                     </div>
                   </div>
+                  {(() => {
+                    const todos = [dest.horario ?? null, ...horariosDoItem(dest.itemId)].filter(temHorario);
+                    if (todos.length === 0) return null;
+                    const agora = visivelAgora(todos);
+                    return (
+                      <span
+                        title={agora ? 'No horário agora — aparecendo no cardápio' : 'Fora do horário agora — escondido do cardápio do cliente'}
+                        className={`text-[11px] px-2 py-0.5 rounded-full ${agora ? 'bg-emerald-50 text-emerald-700' : 'bg-indigo-50 text-indigo-700'}`}
+                      >
+                        <i className="ri-time-line mr-1" />
+                        {temHorario(dest.horario) ? resumoHorario(dest.horario) : `segue o item: ${todos.map(h => resumoHorario(h)).join(' e ')}`}
+                      </span>
+                    );
+                  })()}
                 </div>
               )}
             </div>
@@ -245,7 +296,7 @@ export default function DestaquesTab() {
                   disabled={saving}
                   className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-600 hover:text-orange-600 hover:bg-orange-50 border border-gray-200 hover:border-orange-200 rounded-lg transition-colors cursor-pointer whitespace-nowrap"
                 >
-                  <i className="ri-pencil-line text-sm" />Personalizar
+                  <i className="ri-pencil-line text-sm" />Personalizar / horário
                 </button>
               )}
               {editingId !== dest.id && (

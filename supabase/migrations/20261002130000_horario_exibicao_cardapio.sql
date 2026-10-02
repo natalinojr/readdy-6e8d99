@@ -1,66 +1,33 @@
--- Opção do cardápio com VÁRIOS insumos (dono, 2026-09-26). Ex.: "Guacamole + Sour cream + Tortilha de
--- milho" dá baixa nos três. Antes a opção só guardava um insumo (options.ingredient_id).
--- option_ingredients é a fonte da verdade; options.ingredient_id/production_recipe_id/consumption_* passam
--- a espelhar o PRIMEIRO insumo (quem ainda lê as colunas antigas — modelos de opções, exportação — continua
--- funcionando). Quem grava: menu-write (upsert_item, ligar_opcoes_estoque).
+-- Horário de exibição no cardápio do cliente (2026-10-02).
+-- Item, categoria e destaque ganham `availability_schedule` (jsonb): lista de faixas
+-- { "days": [0..6] (0=Dom), "start": "HH:MM", "end": "HH:MM" } no horário de Brasília.
+-- null = aparece sempre. Fim menor que o início = passa da meia-noite.
+-- Quem filtra é o front (src/lib/horarioExibicao.ts), reavaliando a cada minuto: o
+-- servidor só devolve o campo (fn_get_full_menu, mesa-write get_cardapio,
+-- delivery-write get_delivery_config). Destaque: vale o horário dele E o do item E o
+-- da categoria (null no destaque = segue o do item).
 
-create table if not exists public.option_ingredients (
-  id uuid primary key default gen_random_uuid(),
-  tenant_id uuid not null references public.tenants(id) on delete cascade,
-  option_id uuid not null references public.options(id) on delete cascade,
-  ingredient_id uuid not null references public.ingredients(id) on delete cascade,
-  production_recipe_id uuid references public.production_recipes(id) on delete set null,
-  quantity numeric not null check (quantity > 0),
-  unit text not null,
-  sort_order int not null default 0,
-  created_at timestamptz not null default now(),
-  unique (option_id, ingredient_id)
-);
-create index if not exists option_ingredients_option_idx on public.option_ingredients (option_id);
-create index if not exists option_ingredients_tenant_idx on public.option_ingredients (tenant_id);
+alter table public.menu_items add column if not exists availability_schedule jsonb;
+alter table public.menu_categories add column if not exists availability_schedule jsonb;
+alter table public.menu_highlights add column if not exists availability_schedule jsonb;
 
-alter table public.option_ingredients enable row level security;
-revoke all on public.option_ingredients from anon;
-grant select on public.option_ingredients to authenticated;
-grant all on public.option_ingredients to service_role;
-drop policy if exists option_ingredients_select on public.option_ingredients;
-create policy option_ingredients_select on public.option_ingredients for select to authenticated
-  using (exists (select 1 from public.user_tenants ut where ut.user_id = auth.uid() and ut.tenant_id = option_ingredients.tenant_id));
+alter table public.menu_items drop constraint if exists menu_items_availability_schedule_array;
+alter table public.menu_items add constraint menu_items_availability_schedule_array
+  check (availability_schedule is null or jsonb_typeof(availability_schedule) = 'array');
+alter table public.menu_categories drop constraint if exists menu_categories_availability_schedule_array;
+alter table public.menu_categories add constraint menu_categories_availability_schedule_array
+  check (availability_schedule is null or jsonb_typeof(availability_schedule) = 'array');
+alter table public.menu_highlights drop constraint if exists menu_highlights_availability_schedule_array;
+alter table public.menu_highlights add constraint menu_highlights_availability_schedule_array
+  check (availability_schedule is null or jsonb_typeof(availability_schedule) = 'array');
 
--- Vínculos que já existem
-insert into public.option_ingredients (tenant_id, option_id, ingredient_id, production_recipe_id, quantity, unit, sort_order)
-select o.tenant_id, o.id, o.ingredient_id, o.production_recipe_id,
-       coalesce(nullif(o.consumption_quantity, 0), 1),
-       coalesce(nullif(btrim(o.consumption_unit), ''), g.unit::text), 0
-  from public.options o join public.ingredients g on g.id = o.ingredient_id
- where o.ingredient_id is not null
-on conflict (option_id, ingredient_id) do nothing;
+comment on column public.menu_items.availability_schedule is 'Horário em que o item aparece no cardápio do cliente: [{days:[0..6],start:"HH:MM",end:"HH:MM"}], Brasília. null = sempre.';
+comment on column public.menu_categories.availability_schedule is 'Horário em que a categoria aparece no cardápio do cliente (mesmo formato de menu_items). null = sempre.';
+comment on column public.menu_highlights.availability_schedule is 'Horário próprio do destaque (mesmo formato). null = segue o do item; vale sempre junto com o do item e o da categoria.';
 
--- Colunas antigas da opção = primeiro insumo
-create or replace function public.fn_option_ingredients_sync()
-returns trigger
-language plpgsql
-security definer
-set search_path = public
-as $$
-declare
-  v_opt uuid := coalesce(new.option_id, old.option_id);
-  r record;
-begin
-  select * into r from public.option_ingredients where option_id = v_opt order by sort_order, created_at limit 1;
-  update public.options set
-      ingredient_id = r.ingredient_id, production_recipe_id = r.production_recipe_id,
-      consumption_quantity = r.quantity, consumption_unit = r.unit
-   where id = v_opt
-     and (ingredient_id is distinct from r.ingredient_id or production_recipe_id is distinct from r.production_recipe_id
-          or consumption_quantity is distinct from r.quantity or consumption_unit is distinct from r.unit);
-  return null;
-end $$;
-drop trigger if exists trg_option_ingredients_sync on public.option_ingredients;
-create trigger trg_option_ingredients_sync after insert or update or delete on public.option_ingredients
-  for each row execute function public.fn_option_ingredients_sync();
-
--- Cardápio completo: cada opção traz a lista de insumos
+-- Cardápio completo do admin/PDV/totem: devolve o horário de categoria e item.
+-- Base = definição que estava NO AR em 2026-10-02 (sem 'ingredientes' das opções:
+-- a migração 20260926020000_opcao_varios_insumos nunca foi aplicada em produção).
 CREATE OR REPLACE FUNCTION public.fn_get_full_menu(p_tenant_id uuid)
  RETURNS jsonb
  LANGUAGE plpgsql
@@ -87,7 +54,6 @@ begin
         'id', mc.id, 'name', mc.name, 'station_id', mc.station_id,
         'station_name', ks.name, 'sort_order', mc.sort_order, 'is_active', mc.is_active,
         'ncm', mc.ncm, 'cest', mc.cest, 'cfop', mc.cfop, 'csosn', mc.csosn, 'cod_tributacao', mc.cod_tributacao,
-        -- 2026-10-02: horário de exibição (20261002130000) — esta migração ainda não estava aplicada; não perder o campo ao aplicá-la.
         'availability_schedule', mc.availability_schedule,
         'item_count', (
           select count(*) from public.menu_items mi
@@ -122,8 +88,7 @@ begin
                 'production_recipe_id', o.production_recipe_id,
                 'consumption_quantity', o.consumption_quantity,
                 'consumption_unit', o.consumption_unit,
-                'description', o.description,
-                'ingredientes', coalesce((select jsonb_agg(jsonb_build_object('ingredient_id', oi.ingredient_id, 'production_recipe_id', oi.production_recipe_id, 'quantity', oi.quantity, 'unit', oi.unit) order by oi.sort_order, oi.created_at) from public.option_ingredients oi where oi.option_id = o.id), '[]'::jsonb)
+                'description', o.description
               ) order by o.sort_order)
               from public.options o
               where o.group_id = og.id and o.tenant_id = p_tenant_id and o.deleted_at is null
@@ -182,6 +147,4 @@ begin
 
   return v_result;
 end;
-$function$
-
-;
+$function$;

@@ -1002,6 +1002,58 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         return json({ success: true });
       }
 
+      // ═══ Ligações do Cronograma (2026-10-02) ═══
+      // A seguinte só começa depois que a anterior termina. Quem liga precisa
+      // poder EDITAR a seguinte (é a data dela que passa a depender) e ENXERGAR a anterior.
+      case 'add_dependency': {
+        const { predecessor_id, successor_id } = body;
+        if (typeof predecessor_id !== 'string' || typeof successor_id !== 'string' || !predecessor_id || !successor_id) {
+          return json({ error: 'predecessor_id e successor_id são obrigatórios' }, 400);
+        }
+        if (predecessor_id === successor_id) return json({ error: 'Uma tarefa não pode depender dela mesma' }, 400);
+        const seguinte = await assertTaskAccess(successor_id, 'edit');
+        await assertTaskAccess(predecessor_id, 'view');
+        // Ciclo: se a seguinte já vem (direta ou indiretamente) antes da anterior, recusa.
+        const vistos = new Set<string>();
+        let fronteira = [successor_id];
+        for (let nivel = 0; fronteira.length && nivel < 200; nivel++) {
+          if (fronteira.includes(predecessor_id)) {
+            return json({ error: 'Essa ligação fecharia um círculo: uma tarefa acabaria esperando por ela mesma' }, 400);
+          }
+          fronteira.forEach((id) => vistos.add(id));
+          const { data: prox, error: errProx } = await admin.from('task_dependencies')
+            .select('successor_id').in('predecessor_id', fronteira);
+          if (errProx) return json({ error: errMsg(errProx) }, 500);
+          fronteira = [...new Set((prox ?? []).map((r: { successor_id: string }) => r.successor_id))].filter((id) => !vistos.has(id));
+        }
+        const { error } = await admin.from('task_dependencies').upsert({
+          tenant_id: seguinte.tenant_id ?? tenantId,
+          predecessor_id,
+          successor_id,
+          created_by: user.id,
+        }, { onConflict: 'predecessor_id,successor_id', ignoreDuplicates: true });
+        if (error) return json({ error: errMsg(error) }, 500);
+        await logActivity(successor_id, 'dependency_added', { predecessor_id });
+        return json({ success: true });
+      }
+      case 'remove_dependency': {
+        const { predecessor_id, successor_id } = body;
+        if (typeof predecessor_id !== 'string' || typeof successor_id !== 'string') {
+          return json({ error: 'predecessor_id e successor_id são obrigatórios' }, 400);
+        }
+        // Basta poder editar uma das duas pontas.
+        try {
+          await assertTaskAccess(successor_id, 'edit');
+        } catch {
+          await assertTaskAccess(predecessor_id, 'edit');
+        }
+        const { error } = await admin.from('task_dependencies').delete()
+          .eq('predecessor_id', predecessor_id).eq('successor_id', successor_id);
+        if (error) return json({ error: errMsg(error) }, 500);
+        await logActivity(successor_id, 'dependency_removed', { predecessor_id });
+        return json({ success: true });
+      }
+
       // ═══ Cronômetro ═══
       // Um cronômetro rodando por pessoa (índice único parcial no banco):
       // iniciar numa tarefa encerra o que estiver rodando em outra.

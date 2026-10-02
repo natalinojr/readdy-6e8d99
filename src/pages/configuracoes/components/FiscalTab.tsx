@@ -5,6 +5,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
 import { useImpressoras } from '@/contexts/ImpressorasContext';
 import { CSOSN_OPTIONS, CST_ICMS_OPTIONS, CFOP_OPTIONS, NCM_SUGESTOES, type FiscalSettingsRow } from '@/lib/fiscal';
+import EnvioXmlContabilidade from './EnvioXmlContabilidade';
 
 const estadosBR = ['AC','AL','AP','AM','BA','CE','DF','ES','GO','MA','MT','MS','MG','PA','PB','PR','PE','PI','RJ','RN','RS','RO','RR','SC','SP','SE','TO'];
 
@@ -317,6 +318,9 @@ export default function FiscalTab() {
           </button>
         </div>
       )}
+
+      {/* Seção independente, com o próprio botão de salvar (vale também para loja sem NFC-e). */}
+      <EnvioXmlContabilidade />
     </div>
   );
 }

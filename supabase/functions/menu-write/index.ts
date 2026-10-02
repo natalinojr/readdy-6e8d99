@@ -57,6 +57,24 @@ function isValidUuid(v: unknown): boolean {
   return typeof v === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
 }
 
+// Horário de exibição no cardápio (item/categoria/destaque): lista de
+// { days: 0..6, start: "HH:MM", end: "HH:MM" }. Inválido/vazio = null (sempre).
+// undefined = não mexer (payload antigo sem o campo).
+function horarioExibicao(raw: unknown): Array<{ days: number[]; start: string; end: string }> | null | undefined {
+  if (raw === undefined) return undefined;
+  if (!Array.isArray(raw)) return null;
+  const hhmm = /^([01]\d|2[0-3]):[0-5]\d$/;
+  const faixas = raw
+    .filter((f) => f && typeof f === 'object' && hhmm.test(String((f as any).start)) && hhmm.test(String((f as any).end)))
+    .map((f: any) => ({
+      days: [...new Set((Array.isArray(f.days) ? f.days : []).map(Number).filter((d: number) => Number.isInteger(d) && d >= 0 && d <= 6))].sort() as number[],
+      start: String(f.start),
+      end: String(f.end),
+    }))
+    .slice(0, 20);
+  return faixas.length ? faixas : null;
+}
+
 Deno.serve({ verify_jwt: false }, async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
@@ -176,6 +194,8 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
 
     if (action === 'upsert_category') {
       const { id, name, station_id, sort_order, is_active, fiscal } = payload as { id?: string; name: string; station_id?: string | null; sort_order?: number; is_active?: boolean; fiscal?: Record<string, unknown> };
+      const horarioCat = horarioExibicao((payload as Record<string, unknown>).availability_schedule);
+      const horarioCatCampo = horarioCat !== undefined ? { availability_schedule: horarioCat } : {};
       // Campos fiscais da categoria (NCM/CEST/CFOP/CSOSN/grupo tributário) — só quando enviados.
       const fiscalCat: Record<string, unknown> = {};
       if (fiscal && typeof fiscal === 'object') {
@@ -184,14 +204,14 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         }
       }
       if (id) {
-        const { data, error } = await admin.from('menu_categories').update({ name, station_id: station_id ?? null, sort_order, is_active, ...fiscalCat }).eq('id', id).eq('tenant_id', tenantId).is('deleted_at', null).select().maybeSingle();
+        const { data, error } = await admin.from('menu_categories').update({ name, station_id: station_id ?? null, sort_order, is_active, ...fiscalCat, ...horarioCatCampo }).eq('id', id).eq('tenant_id', tenantId).is('deleted_at', null).select().maybeSingle();
         if (error) {
           if (isUniqueViolation(error)) return new Response(JSON.stringify({ error: friendlyUniqueError(error, 'category') }), { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
           throw new Error(`upsert_category update: ${error.message}`);
         }
         result = data;
       } else {
-        const { data, error } = await admin.from('menu_categories').insert({ tenant_id: tenantId, name, station_id: station_id ?? null, sort_order: sort_order ?? 0, is_active: is_active ?? true, ...fiscalCat }).select().maybeSingle();
+        const { data, error } = await admin.from('menu_categories').insert({ tenant_id: tenantId, name, station_id: station_id ?? null, sort_order: sort_order ?? 0, is_active: is_active ?? true, ...fiscalCat, ...horarioCatCampo }).select().maybeSingle();
         if (error) {
           if (isUniqueViolation(error)) return new Response(JSON.stringify({ error: friendlyUniqueError(error, 'category') }), { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
           throw new Error(`upsert_category insert: ${error.message}`);
@@ -274,15 +294,18 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         }
       }
 
+      const horarioItem = horarioExibicao(p.availability_schedule);
+      const horarioItemCampo = horarioItem !== undefined ? { availability_schedule: horarioItem } : {};
+
       let itemId = id;
       if (itemId) {
-        const { error } = await admin.from('menu_items').update({ category_id, name, description, price, photo_url, sla_minutes, is_active, skip_kds, sort_order, channels, delivery_config: delivery_config ?? null, ...fiscalItem, updated_at: now }).eq('id', itemId).eq('tenant_id', tenantId).is('deleted_at', null);
+        const { error } = await admin.from('menu_items').update({ category_id, name, description, price, photo_url, sla_minutes, is_active, skip_kds, sort_order, channels, delivery_config: delivery_config ?? null, ...fiscalItem, ...horarioItemCampo, updated_at: now }).eq('id', itemId).eq('tenant_id', tenantId).is('deleted_at', null);
         if (error) {
           if (isUniqueViolation(error)) return new Response(JSON.stringify({ error: friendlyUniqueError(error, 'item') }), { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
           throw new Error(`upsert_item update: ${error.message}`);
         }
       } else {
-        const { data: newItem, error } = await admin.from('menu_items').insert({ tenant_id: tenantId, category_id, name, description, price, photo_url, sla_minutes: sla_minutes ?? 10, is_active: is_active ?? true, skip_kds: skip_kds ?? false, sort_order: sort_order ?? 0, channels: channels ?? { cashier: true, waiter: true, delivery: true, table_qr: true, self_service: true }, delivery_config: delivery_config ?? null, ...fiscalItem }).select().maybeSingle();
+        const { data: newItem, error } = await admin.from('menu_items').insert({ tenant_id: tenantId, category_id, name, description, price, photo_url, sla_minutes: sla_minutes ?? 10, is_active: is_active ?? true, skip_kds: skip_kds ?? false, sort_order: sort_order ?? 0, channels: channels ?? { cashier: true, waiter: true, delivery: true, table_qr: true, self_service: true }, delivery_config: delivery_config ?? null, ...fiscalItem, ...horarioItemCampo }).select().maybeSingle();
         if (error) {
           if (isUniqueViolation(error)) return new Response(JSON.stringify({ error: friendlyUniqueError(error, 'item') }), { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
           throw new Error(`upsert_item insert: ${error.message}`);
@@ -741,6 +764,14 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         p_channel: safeChannel,
       });
       if (error) throw new Error(`upsert_highlight: ${error.message}`);
+      // Horário próprio do destaque (null = segue o do item) — gravado à parte para não mexer na RPC.
+      const horarioDest = horarioExibicao((payload as Record<string, unknown>).availability_schedule);
+      const destId = id ?? (Array.isArray(data) ? data[0]?.id : (data as { id?: string } | null)?.id);
+      if (horarioDest !== undefined && destId) {
+        const { error: hErr } = await admin.from('menu_highlights')
+          .update({ availability_schedule: horarioDest }).eq('id', destId).eq('tenant_id', tenantId);
+        if (hErr) throw new Error(`upsert_highlight horario: ${hErr.message}`);
+      }
       result = data;
     }
     else if (action === 'delete_highlight') {

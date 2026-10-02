@@ -31,9 +31,29 @@ function promoHoje(promos: Row[], itemId: string, sp: ReturnType<typeof spNow>):
   return Math.min(...validas.map((p) => Number(p.promotional_price)));
 }
 
+// Horário de exibição do cardápio (2026-10-02): item/categoria fora do horário somem para o bot,
+// como somem do link do delivery. Mesma regra de src/lib/horarioExibicao.ts › visivelEm
+// (Brasília; dias 0=Dom; fim < início = vira o dia; início = fim = dia todo; sem faixa válida = sempre).
+export function noHorario(raw: unknown, sp: ReturnType<typeof spNow>): boolean {
+  const min = (t: unknown) => { const m = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(String(t ?? '')); return m ? Number(m[1]) * 60 + Number(m[2]) : null; };
+  const faixas = (Array.isArray(raw) ? raw : [])
+    .map((f: Row) => ({ ini: min(f?.start), fim: min(f?.end), dias: Array.isArray(f?.days) ? (f.days as unknown[]).map(Number) : [] }))
+    .filter((f) => f.ini != null && f.fim != null);
+  if (!faixas.length) return true;
+  const agora = min(sp.hhmm) ?? 0;
+  const ontem = (sp.dow + 6) % 7;
+  return faixas.some(({ ini, fim, dias }) => {
+    const vale = (d: number) => dias.length === 0 || dias.includes(d);
+    if (ini === fim) return vale(sp.dow);
+    if (ini! < fim!) return vale(sp.dow) && agora >= ini! && agora < fim!;
+    return (vale(sp.dow) && agora >= ini!) || (vale(ontem) && agora < fim!);
+  });
+}
+
 export function menuItems(menu: Row): MenuItem[] {
   const sp = spNow();
   const cats = new Map<string, string>((menu.categories ?? []).map((c: Row) => [c.id, String(c.name ?? '')]));
+  const catsForaDoHorario = new Set<string>((menu.categories ?? []).filter((c: Row) => !noHorario(c.availability_schedule, sp)).map((c: Row) => String(c.id)));
   const semEstoque = new Set<string>(menu.out_of_stock_ids ?? []);
   const opsIndisp = new Set<string>(menu.opcoes_indisponiveis_ids ?? []);
   // Opcionais (sabor, tamanho, adicional): o preço de item "a partir de" vem daqui.
@@ -45,7 +65,8 @@ export function menuItems(menu: Row): MenuItem[] {
   }
   const gruposPorItem = new Map<string, Row[]>();
   for (const g of menu.option_groups ?? []) gruposPorItem.set(String(g.item_id), [...(gruposPorItem.get(String(g.item_id)) ?? []), g]);
-  return (menu.items ?? []).filter((i: Row) => cats.has(i.category_id) || !i.category_id).map((i: Row) => {
+  return (menu.items ?? []).filter((i: Row) => (cats.has(i.category_id) || !i.category_id)
+    && !catsForaDoHorario.has(String(i.category_id)) && noHorario(i.availability_schedule, sp)).map((i: Row) => {
     const grupos = gruposPorItem.get(String(i.id)) ?? [];
     let minimo = 0;
     const precosOpcoes: number[] = [];

@@ -164,7 +164,8 @@ Clientes, promocoes e vouchers:
 
 Gestao de tarefas:
 - **Referencia detalhada: `PLANO-MODULO-TAREFAS.md`** (benchmark, modelo de dados, fases).
-- Tela: `src/pages/tarefas` (views Lista, Kanban, Calendario, Minhas Tarefas).
+- Tela: `src/pages/tarefas` (views Lista, Kanban, Calendario, **Cronograma/Gantt** (`components/ViewGantt.tsx` + `GanttPainel.tsx`, contas em `lib/gantt.ts`), Carga, Relatorios; origens Minhas/Compartilhadas/Atribuidas/Todas).
+- **Ligacoes do Cronograma (2026-10-02):** tabela `task_dependencies` (anterior → seguinte, finish-to-start, unica por par, sem ciclo), leitura `fn_get_task_dependencies(p_tenant_id)` (so ligacoes em que eu enxergo as duas tarefas), escrita `task-write` `add_dependency`/`remove_dependency`. Ver historico 2026-10-02.
 - Hook/lib: `src/pages/tarefas/hooks/useTarefas.ts` (sem context global — estado local da pagina, resetado na troca de loja), `src/pages/tarefas/lib/agrupamento.ts`.
 - Tabelas: `task_lists`, `task_statuses`, `tasks`, `task_watchers`, `task_tags`, `task_tag_links`, `task_custom_fields`, `task_field_values`, `task_checklist_items`, `task_comments`, `task_activity`, `task_notifications`, `task_views`, `task_attachments`, `task_checklist_templates`. Em TODAS: RLS ativa, leitura por membership, escrita so pelo `service_role` (o `authenticated` nao tem INSERT/UPDATE/DELETE).
 - RPCs: `fn_get_task_lists`, `fn_get_tasks`, `fn_get_task_detail`, `fn_get_task_custom_fields`, `fn_get_task_tags`, `fn_get_task_notifications`, `fn_get_task_views`, `fn_get_task_checklist_templates`, `fn_get_task_attachments` (todas validam membership via `fn_tasks_assert_member` — NAO usam `auth_tenant_id()`).
@@ -237,6 +238,7 @@ Slugs importantes:
 - Mesa/delivery: `table-write`, `mesa-write`, `delivery-write`, `reservation-write`.
 - Financeiro: `financial-write`, `purchase-write`, `purchase-confirm-delivery`, `stone-conciliation`, `pix-payment`, `implementation-write`.
 - Fiscal: `fiscal-write` (NFC-e via Brasil NFe: emit/retry/cancel/get_pdf/get_xml/print_danfe/test_connection/save_settings).
+- Contabilidade: `contabilidade` (guias enviadas pela contadora), `contabilidade-xml` (envio mensal dos XMLs por e-mail; cron `xml-contabilidade`).
 - Estoque/producao: `stock-write`, `production-write`.
 - Impressao: `printer-ping`, `printer-raw`, `print-queue-write`, `print-queue-agent`.
 - Auditoria/notificacoes: `audit-write`, `weekly-divergence-alert`.
@@ -278,6 +280,28 @@ Secao viva: registrar aqui padroes, decisoes e pegadinhas reutilizaveis conforme
   atalhos para Status, Campos, Compartilhar e Mover. Na árvore a engrenagem ocupa o lugar do ícone "Mover" (5 ícones
   espremiam o nome); mover continua por arrastar e pelo atalho. Atalho de Status/Campos abre a pasta antes (eles valem para a
   pasta aberta). Modo demo (`/dev/tarefas`) ganhou campos e `update_list`.
+
+### 2026-10-02 — Cardápio: horário de exibição (item, categoria e destaque)
+- **Dado:** `availability_schedule jsonb` em `menu_items`, `menu_categories` e `menu_highlights` (migration
+  `20261002130000`): lista `{days:[0..6] (0=Dom), start, end "HH:MM"}`, horário de Brasília; `null` = sempre; fim < início
+  = passa da meia-noite (madrugada conta para o dia em que a faixa começou); início = fim = dia todo.
+- **Regra única:** `src/lib/horarioExibicao.ts` (`visivelAgora`, `idsForaDoHorario`, `resumoHorario`). Relógio SEMPRE
+  `America/Sao_Paulo` (celular de turista pode estar em outro fuso). Destaque aparece só se o horário dele (null = segue o
+  item) E o do item E o da categoria baterem.
+- **Quem filtra é o front, reavaliando a cada minuto** (`useRelogioMinuto`, só liga se a loja usa horário): `CardapioContext`
+  (`itensPublicos` → totem; `itemNoHorario`), `useMesaQRData` e `useDeliveryData` (`montarCardapio(base, fora)`). A chave
+  `idsForaDoHorario(...).join(',')` só muda quando algo entra/sai → a tela não remonta a cada minuto. O servidor
+  (`fn_get_full_menu`, `mesa-write get_cardapio`, `delivery-write get_delivery_config`) só devolve o campo — filtrar no
+  servidor impediria o item de "voltar" sem recarregar.
+- **Caixa/garçom/PDV delivery NÃO escondem:** mostram o selo "FORA DO HORÁRIO" e vendem. Criar pedido não valida horário
+  (carrinho montado 1 min antes passa). O totem não registra item fora do horário como "sumiço" (`registroItensEscondidos`).
+- **Gravação:** `menu-write` (`upsert_item`/`upsert_category`/`upsert_highlight`) só mexe no campo quando ele vem no payload
+  (`undefined` = não mexe) — PausarItem, assistente-brain e reordenar não apagam o horário. O do destaque é um UPDATE à
+  parte depois da RPC `fn_upsert_menu_highlight` (assinatura fixa).
+- **Pegadinha (achada aqui):** `20260926020000_opcao_varios_insumos` (tabela `option_ingredients`) **nunca foi aplicada** e o
+  `menu-write` do ar é o anterior a ela. Publicar `menu-write` do repo quebraria salvar item com opções → em 02/10 publiquei a
+  versão do ar + só o horário (`functions download --use-api` + patch). Ao aplicar aquela migração, ela já devolve
+  `availability_schedule` (acrescentei); sem isso o `fn_get_full_menu` perderia o campo e salvar item zeraria o horário.
 
 ### 2026-10-02 — Dashboard reorganizado (atenção no topo, meta com ritmo, pico por dia)
 - `/dashboard` = faixa "Precisa de atenção" (`AtencaoFaixa`: contas vencidas/folha/compras recebidas/orçamentos via
@@ -3580,6 +3604,28 @@ Sem SW ativo o POST cai no Vercel e falha — por isso o destino só existe no S
 - **Aba Guias e impostos** (`GuiasTab.tsx`, chave `fin_guias`) → Edge `contabilidade` (`enviar_guia`, `listar`, `abrir_arquivo`; `--no-verify-jwt`, checa vínculo dentro). PDF → `textoDoPdf` → `lerGuia` → `assistente-brain` action `guia` (o mesmo `processarGuia` do grupo do WhatsApp) → aviso com cartão Pagar no Telegram do dono. A guia só entra na loja do CNPJ dela e só se quem mandou tem papel financeiro/contabilidade nessa loja (403 antes de gravar qualquer coisa). Protocolo em `fin_guias_enviadas` (só service_role) + PDF original no bucket privado `contabilidade-docs`.
 - **DARF de IRRF da folha (0561) — corrigido 2026-09-25:** `lerGuia` marca como encargo da folha (título "DARF IRRF (folha)", `reference_type hr_payroll`, sem categoria DRE), igual ao INSS descontado: o IRRF já está no bruto da folha. Publicado em assistente-brain, assistente-app e contabilidade; `inter-bank` também importa `guias.ts` mas não usa `encargo_folha` (não precisou republicar).
 
+### Envio automático dos XMLs para a contabilidade (2026-10-02)
+- **Onde:** Configurações › Fiscal, seção "Envio de XML para a contabilidade" (`EnvioXmlContabilidade.tsx`, com o próprio
+  botão de salvar; aparece mesmo em loja sem NFC-e). Edge `contabilidade-xml` (`--no-verify-jwt`; get/previa/baixar para
+  admin/gerente/financeiro/contabilidade, salvar/testar_email/enviar_xml_mes só admin/gerente; `cron` por `x-internal-key`).
+- **O que vai:** ZIP do mês ANTERIOR com `NFC-e/` (só `environment = 1`; canceladas com prefixo `CANCELADA-`),
+  `NFe-entrada/` e `NFSe-tomada/` (`fiscal_inbound_documents` com `xml_status = 'full'`, modelo 10 = NFS-e, `sefaz_status = 2`
+  = cancelada) + `resumo.csv` (`;`, vírgula decimal, BOM). Competência pela data de **emissão** em horário de Brasília.
+- **Como sai:** SMTP da própria loja, **só porta 465 (TLS direto)** — o Supabase bloqueia 25 e 587 nas Edges, então
+  STARTTLS não dá. Cliente próprio em `contabilidade-xml/smtp.ts` (AUTH PLAIN/LOGIN, MIME base64). Gmail = senha de app
+  (com 2 etapas ligada); Outlook/Hotmail não serve (587 + sem senha de app). Senha no Vault (`fn_xml_envio_senha_set/get`,
+  só service_role); a tela só sabe `tem_senha`.
+- **Agendamento:** `pg_cron` `xml-contabilidade` 08h10 BRT → `fn_xml_contabilidade_tick()` (reusa `fiscal_internal_key` e
+  `supabase_anon_key` do Vault). Envia a partir do `dia_envio` (1–28) se o mês não tem envio `enviado`/`vazio`; 1 tentativa
+  automática por dia e no máximo 3 com erro por mês (depois só "Enviar agora"). Mês sem nenhum XML vira `vazio` (não manda).
+- **Arquivo e histórico:** `fiscal_xml_envios` (uma linha por tentativa). O ZIP vai para `contabilidade-docs/xml/<loja>/<mês>/`
+  **depois** do envio (tentativa com erro não deixa arquivo); acima de 18 MB guarda antes e manda link assinado de 30 dias.
+- **Testado 10-02:** harness local (servidor SMTP TLS falso + shim de `Deno.connectTls`): MIME, acentos, ZIP íntegro, senha
+  errada, destinatário recusado, porta 587. Em produção na Testes PDV: cron → Edge → ZIP → TLS em `smtp.gmail.com:465` →
+  535 traduzido para "senha de app". O envio de ponta a ponta com senha real depende da loja cadastrar a dela.
+- Fora daqui: NFS-e **emitidas** pelo módulo `/notas-servico` (são por empresa, não por loja) e eventos de cancelamento
+  (`procEventoNFe`) — a NFC-e cancelada vai com o XML autorizado original, igual ao botão "XMLs do mês (contador)" de Pedidos.
+
 ### Boleto por e-mail vira conta a pagar (2026-09-25)
 - Entrada: Gmail da loja encaminha → CloudMailin → `contas-email?inbound=<segredo>`. O remetente é o `From` do **cabeçalho**; o `envelope.from` do encaminhamento do Gmail é `loja+caf_=...@gmail.com` (com ele nenhum fornecedor casava). "Fwd:" manual só troca o remetente se quem encaminhou é usuário da loja (senão qualquer um forja "De: fornecedor" no corpo).
 - Leitura (`contas-email/leitura.ts`): corpo → texto do PDF (unpdf) → IA só para PDF-imagem (Haiku; DV reprovou → Sonnet). Linha e CNPJ só valem com DV. CNPJ do beneficiário = 1º CNPJ após "Beneficiário/Cedente" sem "Pagador/Sacado" no meio, e nunca a raiz da loja.
@@ -3861,4 +3907,11 @@ Causa: `AprovacoesContext` (e o `NotificacoesContext`) eram só memória do apar
 - **2026-09-30 — Financeiro, conteúdo das abas (1ª leva).** Mesma regra (nada sai, muda o lugar). **Conciliação:** alertas do topo viram 1 botão "N alertas… ver abaixo" (âncora `#alertas-conciliacao` no fim), vínculos pagamento×nota depois dos números, atalhos Hoje/7 dias/Este mês no período. **Fluxo (PrevisaoCaixaTab):** o que já venceu (contas vencidas + folha de competência passada sem baixa + boletos vencidos de notas não lançadas) caía todo em HOJE sem aviso — agora caixinha "Incluir o que já venceu" (padrão desligado, guardada em localStorage `fin_fluxo_com_atrasados`) mostrando cada parte; quadro "Semana a semana" (hoje + blocos de 7 dias, maiores saídas/entradas); raiz com `w-full` (sem ela a tabela diária empurrava a tela na horizontal — o pai é flex-col). **DRE:** já estava no desenho do protótipo, nada mudou. **Receitas/Despesas:** período e visões acima dos KPIs; `FormasPagamentoPanel` recolhido (total no cabeçalho). **Contas Vencidas:** explicação do DRE recolhida no bloco de impacto; "Pagar várias de uma vez" abre Contas a Pagar com `?aberto=vencidas` (o lote e a exigência de DRE continuam só lá — não duplicar pagamento). **Visão Geral:** seções O mês até agora / Saúde, pagar e receber / Para onde foi o dinheiro / Tendência. Pegadinha: nas raízes `max-w-[1400px] mx-auto` dentro de flex-col, faltar `w-full` deixa o conteúdo mais largo que a tela. **2ª leva (mesmo dia):** RH com subabas + mês acima dos KPIs e botões com flex-wrap; Compras com a linha de ações em flex-wrap ("Nova compra" ficava fora da tela); Guias com a coluna da folha só lado a lado a partir de lg; Classificação com a explicação longa em <details> "Como funciona". Entregadores, Contas a Receber, Notas, Orçamentos, Centro de Custos e Implantação já estavam no desenho do protótipo. iFood não mexido (edições não publicadas de outra sessão). Investigado: Vencidas 4 × Fluxo 7 não é regra diferente — as duas leem pending/partial/overdue com vencimento < hoje; a diferença foi baixa de contas entre as duas leituras.
 
 - **2026-09-30 — Relatórios › Produtos › sub-aba "Por Hora"** (`ProdutosPorHora.tsx`): quais produtos saem em cada hora do dia (Brasília). RPC nova `fn_get_items_by_hour(tenant, from, to, session)` (migration `20260930120000_fn_get_items_by_hour.sql`) com **os mesmos filtros e a mesma receita do `top_items`** de `fn_get_sales_report` (pago, não cancelado, sem treino/rascunho/`ifood_repasse`, complementos somados só no delivery) → soma das horas = total do Ranking (conferido: 443 un./R$ 10.538,60 nos dois). Tela: gráfico por hora (clique na barra), matriz produto × hora (cor = volume, top 15 + "ver todos") e ranking da hora selecionada (padrão = hora de pico); filtros categoria/produto e Qtd/R$. `normalizarNomeItem` saiu para `relatorios/components/nomeItem.ts` (re-exportado por `ProdutosTab`). **Atenção:** a versão no ar de `fn_get_sales_report` **não** tem mais o `oi.status <> 'cancelled'` citado acima no histórico (a migration do funil iFood recriou sem ele); a RPC por hora segue a versão no ar para bater com o Ranking.
+
+### 2026-10-02 — Tarefas › Cronograma (Gantt)
+- **Pedido do dono:** aba tipo Gantt, pesquisando o que as ferramentas fazem bem e mal (ClickUp, Asana, monday, Notion, Linear, Jira, Planner, TeamGantt, Trello, Airtable, Smartsheet, Wrike). Reclamações mais comuns: não existe no celular (ClickUp/Trello/Wrike), tarefa sem data some ou fica atrás de um toggle escondido, dependência mexe nas datas sem avisar (Asana), nome ilegível na barra, carga só em plano pago, atraso pouco visível.
+- **O que ficou:** `Display = 'gantt'` ("Cronograma"; no celular fica junto da Agenda com o seletor "Agenda | Cronograma"). Pasta aberta mostra também as subpastas (grupos aninhados; `tarefasCronograma` no `page.tsx`). Agrupar por pasta/pessoa/status/nada, ordem da lista ou por início, zoom dia/semana/mês/trimestre (Ctrl+roda), faixa de datas cresce ao rolar (até 4 anos). Barra = cor do status; progresso (checklist > subtarefas > tempo cronometrado) numa faixa embaixo; atraso = cauda vermelha até hoje (concluída depois do prazo = linha até o dia em que terminou); um dia só em zoom pequeno vira losango; nome dentro se couber, senão ao lado com as iniciais. **Sem data aparece sempre** (pode esconder): clicar num dia marca; arrastar marca o período; "marcar" abre Hoje/Amanhã/Esta semana/Próxima semana. Por pessoa: a linha do grupo mostra a **carga do dia** (mesma conta da Carga, `calcularCarga` + padrão de estimativa; verde/amarelo/vermelho) e muda ao vivo durante o arrasto. Folga/ausência de quem tem horas cadastradas aparece hachurada dentro da barra.
+- **Ligações:** arrastar a bolinha da ponta até outra tarefa (ou o nome dela na coluna) → a outra só começa depois. Mover/esticar empurra as seguintes **só o necessário** (mesmo dia pode), com prévia durante o arrasto; nunca puxa para trás e **nunca move concluída/cancelada**; caixa "Empurrar as seguintes" desliga. Ligar criando conflito NÃO empurra sozinho: avisa e oferece "Empurrar". Toda mudança mostra aviso com **Desfazer (Ctrl+Z)**. Seta vermelha tracejada = fora de ordem; clicar na seta: empurrar ou desfazer a ligação. Chips "N atrasadas" / "N fora de ordem" levam à próxima.
+- **Celular:** sem coluna de nomes (nome ao lado da barra, grupo preso à esquerda); arrastar no toque brigaria com a rolagem, então tocar abre o `GanttPainel` (folha): ±1 dia em mover/início/fim, atalhos de data, ligar ("Esperar outra tarefa terminar…") e desligar. No computador o mesmo painel abre com o botão direito.
+- **Critérios:** (1) `time_plan` tem datas absolutas — ao mover a barra os dias andam junto; ao mudar a duração o que cai fora vai para a ponta (`planoParaPeriodo`), senão a Carga ficava em dias errados (o Calendário ainda não faz isso). (2) Empurrar usa só ligações entre tarefas **da tela** (mexer no que a pessoa não vê seria surpresa); o painel e a dica da barra listam **todas** as ligações. (3) `task-write add_dependency`: editar a seguinte + ver a anterior, recusa ciclo (BFS no banco), `tenant_id` = da seguinte (só para o `tasks-ping`). `remove_dependency`: editar qualquer uma das pontas. (4) `task_views.view_type` aceita `'gantt'`. (5) Demo `/dev/tarefas` tem a pasta "Reforma do salão" com ligações (uma fora de ordem de propósito).
 

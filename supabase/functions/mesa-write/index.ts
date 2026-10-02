@@ -351,8 +351,9 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       if (!tenant_id) return new Response(JSON.stringify({ error: "tenant_id is required" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
       const [catResult, itemResult, ogResult, optResult, obsResult, estoqueResult, opcoesEstoqueResult, partesResult, highlightsResult, promotionsResult, deletedCatsResult] = await Promise.all([
-        admin.from("menu_categories").select("id, name, station_id").eq("tenant_id", tenant_id).eq("is_active", true).is("deleted_at", null).order("sort_order", { ascending: true }),
-        admin.from("menu_items").select("id, name, description, price, photo_url, category_id, sla_minutes, is_active, skip_kds").eq("tenant_id", tenant_id).eq("is_active", true).is("deleted_at", null),
+        // availability_schedule = horário de exibição; o front filtra pelo relógio de Brasília (lib/horarioExibicao).
+        admin.from("menu_categories").select("id, name, station_id, availability_schedule").eq("tenant_id", tenant_id).eq("is_active", true).is("deleted_at", null).order("sort_order", { ascending: true }),
+        admin.from("menu_items").select("id, name, description, price, photo_url, category_id, sla_minutes, is_active, skip_kds, availability_schedule").eq("tenant_id", tenant_id).eq("is_active", true).is("deleted_at", null),
         admin.from("option_groups").select("id, name, item_id, is_required, min_selections, max_selections").eq("tenant_id", tenant_id).is("deleted_at", null),
         // deleted_at: opcao apagada NAO pode aparecer pro cliente (mesma correcao
         // feita em delivery-write). A busca por id la em cima fica sem o filtro
@@ -363,7 +364,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         admin.rpc("fn_get_opcoes_sem_estoque", { p_tenant_id: tenant_id }),
         admin.from("item_production_parts").select("item_id, name, station_id").eq("tenant_id", tenant_id).is("deleted_at", null).order("sort_order"),
         // Destaques da CASA (mesa-qr): canal 'ambos' ou 'casa' (exclui os 'só delivery').
-        admin.from("menu_highlights").select("id, item_id, custom_price, custom_description, sort_order").eq("tenant_id", tenant_id).eq("is_active", true).neq("channel", "delivery").order("sort_order", { ascending: true }),
+        admin.from("menu_highlights").select("id, item_id, custom_price, custom_description, sort_order, availability_schedule").eq("tenant_id", tenant_id).eq("is_active", true).neq("channel", "delivery").order("sort_order", { ascending: true }),
         admin.from("item_promotions").select("id, item_id, promotional_price, days_of_week, is_recurring, specific_date, is_active").eq("tenant_id", tenant_id).eq("is_active", true).is("deleted_at", null),
         // Categorias APAGADAS (soft delete): seus itens somem do cardapio (mesma regra do fn_get_full_menu).
         admin.from("menu_categories").select("id").eq("tenant_id", tenant_id).not("deleted_at", "is", null),
@@ -421,6 +422,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
               custom_price: h.custom_price,
               custom_description: h.custom_description,
               sort_order: h.sort_order,
+              availability_schedule: h.availability_schedule ?? null,
               item_name: item.name,
               item_price: item.price,
               item_photo_url: item.photo_url,
