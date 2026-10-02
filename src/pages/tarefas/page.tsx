@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
-import { Plus, Pin, ListTodo, LayoutGrid, CalendarDays, ClipboardList, UserCheck, Users, Layers, Send, SlidersHorizontal, ListChecks, Waypoints, ArrowLeft, Gauge, Share2, LayoutTemplate, BellRing, FileText, Cloud, ChartGantt, Settings } from 'lucide-react';
+import { Plus, Pin, ListTodo, LayoutGrid, CalendarDays, ClipboardList, UserCheck, Users, Layers, Send, SlidersHorizontal, ListChecks, Waypoints, ArrowLeft, Gauge, Share2, LayoutTemplate, BellRing, FileText, Cloud, ChartGantt, Settings, CalendarRange } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
 import { useEuTarefas } from './hooks/useEuTarefas';
 import { useAppMode } from '@/contexts/AppModeContext';
@@ -18,6 +18,8 @@ import ViewKanban from './components/ViewKanban';
 import ViewCalendario from './components/ViewCalendario';
 import ViewCarga from './components/ViewCarga';
 import ViewGantt from './components/ViewGantt';
+import ViewLinhaTempo from './components/linhaTempo/ViewLinhaTempo';
+import type { AgruparLinha } from './lib/linhaTempo';
 import TaskDrawer from './components/TaskDrawer';
 import CamposCustomManager from './components/CamposCustomManager';
 import TemplatesManager from './components/TemplatesManager';
@@ -68,18 +70,26 @@ const CORES_LISTA = ['#6366f1', '#0ea5e9', '#10b981', '#f59e0b', '#ef4444', '#8b
 type Origem = 'pasta' | 'minhas' | 'compartilhadas' | 'atribuidas' | 'todas';
 /** COMO mostrar essas tarefas — independente da origem (pedido do usuário: a
  *  visualização lista/kanban/calendário deve valer pra qualquer origem). */
-type Display = 'lista' | 'kanban' | 'calendario' | 'gantt' | 'carga' | 'relatorios';
+type Display = 'lista' | 'kanban' | 'calendario' | 'linha' | 'gantt' | 'carga' | 'relatorios';
 
 const DISPLAYS: Array<{ id: Display; label: string; icon: typeof ListTodo }> = [
   { id: 'lista', label: 'Lista', icon: ListTodo },
   { id: 'kanban', label: 'Kanban', icon: LayoutGrid },
   { id: 'calendario', label: 'Calendário', icon: CalendarDays },
+  // Linha do tempo: quem faz o quê e quando, por pessoa/pasta, com a ocupação do dia (2026-10-02).
+  { id: 'linha', label: 'Linha do tempo', icon: CalendarRange },
   // Gantt: barras numa linha do tempo, com ligações entre tarefas (2026-10-02).
   { id: 'gantt', label: 'Cronograma', icon: ChartGantt },
   { id: 'carga', label: 'Carga', icon: Gauge },
   // Relatórios são da pasta: a aba só vale com uma pasta aberta.
   { id: 'relatorios', label: 'Relatórios', icon: FileText },
 ];
+
+/** Linhas da linha do tempo ao abrir: pasta = cronológico; Minhas/Compartilhadas = por pasta;
+ *  Todas/Que atribuí = por pessoa (quem está com o quê, com a ocupação do dia). */
+const AGRUPAR_LINHA_PADRAO: Record<Origem, AgruparLinha> = {
+  pasta: 'nenhum', minhas: 'pasta', compartilhadas: 'pasta', atribuidas: 'pessoa', todas: 'pessoa',
+};
 
 const ORIGEM_INFO: Record<Exclude<Origem, 'pasta'>, { label: string; icon: typeof UserCheck }> = {
   minhas: { label: 'Minhas tarefas', icon: UserCheck },
@@ -544,12 +554,13 @@ export default function TarefasPage() {
               padraoDe={padraoDe}
             />
           )}
-          {celular && (display === 'calendario' || display === 'gantt') && (
-            // No celular a barra de baixo tem uma aba só para as duas visões de datas.
+          {celular && (display === 'calendario' || display === 'linha' || display === 'gantt') && (
+            // No celular a barra de baixo tem uma aba só para as visões de datas.
             <div className="flex gap-0.5 bg-slate-200/70 rounded-lg p-0.5 mb-3 text-xs">
-              {([['calendario', 'Agenda'], ['gantt', 'Cronograma']] as const).map(([id, rotulo]) => (
+              {([['calendario', 'Agenda'], ['linha', 'Linha do tempo'], ['gantt', 'Cronograma']] as const).map(([id, rotulo]) => (
                 <button
                   key={id}
+                  type="button"
                   onClick={() => navegar({ display: id })}
                   className={`flex-1 py-1.5 rounded-md ${display === id ? 'bg-white text-indigo-600 font-medium shadow-sm' : 'text-slate-500'}`}
                 >
@@ -571,6 +582,22 @@ export default function TarefasPage() {
               write={write}
               onOpenTask={setOpenTaskId}
               padraoDe={padraoDe}
+            />
+          )}
+          {display === 'linha' && (
+            <ViewLinhaTempo
+              list={listParaView}
+              lists={lists}
+              tasks={tarefasVisiveis}
+              tarefasCarga={tasks}
+              usuarios={usuariosAtivos}
+              write={write}
+              onOpenTask={setOpenTaskId}
+              chave={origem === 'pasta' ? selectedList?.id ?? 'nenhuma' : origem}
+              agruparPadrao={AGRUPAR_LINHA_PADRAO[origem]}
+              padraoDe={padraoDe}
+              meuId={meuId}
+              criacao={origem === 'minhas' ? 'minhas' : origem === 'atribuidas' ? 'atribuidas' : origem === 'compartilhadas' ? 'nenhuma' : 'normal'}
             />
           )}
           {display === 'calendario' && (
@@ -931,9 +958,10 @@ export default function TarefasPage() {
 
       {/* ── Navegação inferior (celular) ── */}
       <BottomNav
-        view={origem === 'minhas' && (display === 'lista' || display === 'kanban') ? 'minhas' : display === 'kanban' ? 'lista' : display === 'gantt' ? 'calendario' : display}
+        view={origem === 'minhas' && (display === 'lista' || display === 'kanban') ? 'minhas' : display === 'kanban' ? 'lista' : display === 'gantt' || display === 'linha' ? 'calendario' : display}
         onView={(v) => {
           if (v === 'minhas') navegar({ origem: 'minhas', ...(display === 'carga' || display === 'relatorios' ? { display: 'lista' as Display } : {}) });
+          else if (v === 'calendario' && (display === 'linha' || display === 'gantt')) { /* Linha do tempo e Cronograma ficam dentro da aba Agenda */ }
           else if (v === 'relatorios' && (origem !== 'pasta' || !selectedList)) {
             // Relatórios são da pasta: escolhe a pasta e já abre os relatórios dela.
             setRelatoriosAoEscolher(true);

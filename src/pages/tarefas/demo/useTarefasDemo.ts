@@ -87,6 +87,12 @@ function inicial(): TaskRow[] {
     tarefa({ id: 'r5', list_id: 'reforma', title: 'Limpeza pós-obra', assignee_id: 'demo-ana', due_date: prazo(5), time_estimate_minutes: 300 }),
     tarefa({ id: 'r6', list_id: 'reforma', title: 'Reabrir o salão', assignee_id: 'demo-eu', due_date: prazo(6), priority: 3 }),
     tarefa({ id: 'r7', list_id: 'reforma', title: 'Fotos novas para o Instagram', assignee_id: 'demo-eu' }),
+    tarefa({ id: 't13', list_id: 'cozinha', title: 'Inventário do mês', assignee_id: 'demo-ana', start_date: dia(-2), due_date: prazo(6), time_estimate_minutes: 600, checklist_total: 8, checklist_done: 3, status_id: 'cozinha-doing', status_category: 'in_progress' }),
+    tarefa({ id: 't14', list_id: 'cozinha', title: 'Limpar chapa', assignee_id: 'demo-bruno', due_date: prazo(1), recurrence: { freq: 'weekly', interval: 1 }, time_estimate_minutes: 30 }),
+    tarefa({ id: 't15', list_id: 'manut', title: 'Reunião com o contador', assignee_id: 'demo-eu', due_date: `${dia(3)}T17:00:00Z`, due_has_time: true }),
+    tarefa({ id: 't16', list_id: 'manut', title: 'Reforma da fachada', assignee_id: 'demo-carla', start_date: dia(8), due_date: prazo(24), time_estimate_minutes: 1200, priority: 3 }),
+    tarefa({ id: 't17', list_id: 'compras', title: 'Testar novo fornecedor de pães', assignee_id: 'demo-ana', start_date: dia(-1) }),
+    tarefa({ id: 't18', list_id: 'cozinha', title: 'Organizar o estoque seco', assignee_id: 'demo-eu' }),
   ];
 }
 
@@ -148,6 +154,7 @@ export function useTarefasDemo() {
           id: `n${seq}`, list_id: String(p.list_id), title: String(p.title ?? 'Nova tarefa'),
           parent_task_id: (p.parent_task_id as string) ?? null, assignee_id: (p.assignee_id as string) ?? null,
           due_date: (p.due_date as string) ?? null, priority: Number(p.priority ?? 0),
+          start_date: (p.start_date as string) ?? null, due_has_time: Boolean(p.due_has_time),
         });
         if (p.status_id) {
           const st = lists.find((l) => l.id === novo.list_id)?.statuses.find((s) => s.id === p.status_id);
