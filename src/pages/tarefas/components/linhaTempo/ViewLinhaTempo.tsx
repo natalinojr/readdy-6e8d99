@@ -1247,7 +1247,7 @@ export default function ViewLinhaTempo({
         ref={scrollRef}
         data-no-pull
         onScroll={aoRolar}
-        className="relative overflow-auto overscroll-contain bg-white rounded-xl border border-slate-200"
+        className="relative isolate overflow-auto overscroll-contain bg-white rounded-xl border border-slate-200"
         style={{ height: altura, WebkitOverflowScrolling: 'touch' }}
       >
         <div className="relative" style={{ width: col + larguraFaixa, minHeight: '100%' }}>
