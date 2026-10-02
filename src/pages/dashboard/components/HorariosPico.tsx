@@ -29,7 +29,7 @@ function cor(r: number) {
 const fmtN = (v: number) => (v >= 10 ? v.toFixed(0) : v.toFixed(1).replace('.', ',').replace(',0', ''));
 
 export default function HorariosPico({ refreshKey = 0 }: { refreshKey?: number }) {
-  const { data, loading } = useDashboardPico(refreshKey);
+  const { data } = useDashboardPico(refreshKey);
   const agora = agoraBrasilia();
 
   const { mapa, horas, max, picoSemana, picoHoje } = useMemo(() => {
@@ -79,7 +79,7 @@ export default function HorariosPico({ refreshKey = 0 }: { refreshKey?: number }
       </div>
 
       <div className="p-5 overflow-x-auto">
-        {loading && !data ? (
+        {!data ? (
           <div className="h-48 rounded-xl bg-zinc-50 animate-pulse" />
         ) : horas.length === 0 ? (
           <div className="py-10 text-center">

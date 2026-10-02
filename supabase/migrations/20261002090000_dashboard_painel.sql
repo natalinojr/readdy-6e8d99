@@ -5,7 +5,8 @@
 --    Leitura por vínculo real (auth_is_member_of); escrita só pela RPC (admin/gerente), por causa da
 --    pegadinha do auth_tenant_id() em admin multi-loja.
 -- 2) fn_get_dashboard_painel: canais, comparação com o mesmo dia da semana passada ATÉ ESTA HORA,
---    fila da cozinha (mais antigo por status + atrasados), ritmo esperado da meta e validade.
+--    fila da cozinha (mais antigo por status + atrasados; só as últimas 12 h — pedido parado há mais
+--    que isso foi esquecido e não é "agora"), ritmo esperado da meta e validade.
 --    Mesma regra de faturamento do fn_get_dashboard_metrics (pago, não cancelado, sem treino/rascunho).
 -- 3) fn_get_dashboard_pico: média de pedidos por dia da semana × hora nas últimas 4 semanas (Brasília).
 --    O bloco antigo somava todos os dias juntos, pela hora do aparelho, e escondia a madrugada.
@@ -172,6 +173,7 @@ begin
         from orders o
         where o.tenant_id = p_tenant_id and o.status in ('new', 'preparing', 'ready')
           and not o.is_training and not o.is_draft
+          and o.created_at > v_now - interval '12 hours'
           and case when v_sessao is not null then o.session_id = v_sessao
                    else o.created_at >= v_hoje and o.created_at < v_hoje + interval '1 day' end
         group by o.status
@@ -190,6 +192,7 @@ begin
         where o.tenant_id = p_tenant_id and o.status in ('new', 'preparing')
           and not o.is_training and not o.is_draft
           and o.created_at < v_now - make_interval(mins => v_atraso_min)
+          and o.created_at > v_now - interval '12 hours'
           and case when v_sessao is not null then o.session_id = v_sessao
                    else o.created_at >= v_hoje and o.created_at < v_hoje + interval '1 day' end
         order by o.created_at

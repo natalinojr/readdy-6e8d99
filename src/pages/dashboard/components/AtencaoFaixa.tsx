@@ -45,7 +45,8 @@ export default function AtencaoFaixa({ itens, carregando, textoTudoEmDia }: Prop
         <h2 className="text-sm font-bold text-red-800">Precisa de atenção</h2>
         <span className="text-[11px] font-bold bg-red-500 text-white rounded-full px-2 py-0.5 tabular-nums">{itens.length}</span>
       </div>
-      <div className="flex sm:grid sm:grid-cols-2 xl:grid-cols-4 overflow-x-auto snap-x snap-mandatory gap-px bg-zinc-100">
+      <div className="flex sm:grid sm:grid-cols-[repeat(auto-fit,minmax(260px,1fr))] overflow-x-auto snap-x snap-mandatory gap-px bg-zinc-100"
+        style={{ scrollbarWidth: 'none' }}>
         {ordenados.map((it) => {
           const alta = it.nivel === 'alta';
           return (

@@ -90,8 +90,9 @@ export function useDashboardPico(recarregar = 0) {
   useEffect(() => {
     if (!user?.tenantId) return;
     let vivo = true;
-    const buscar = () => {
-      if (document.hidden) return;
+    // A primeira busca sempre roda (aba aberta em segundo plano não pode ficar sem mapa); as repetições pulam se escondida.
+    const buscar = (forcar = false) => {
+      if (!forcar && document.hidden) return;
       setLoading(true);
       supabase.rpc('fn_get_dashboard_pico', { p_tenant_id: user.tenantId }).then(({ data: res, error }) => {
         if (!vivo) return;
@@ -100,8 +101,8 @@ export function useDashboardPico(recarregar = 0) {
         setLoading(false);
       });
     };
-    buscar();
-    const t = setInterval(buscar, 15 * 60 * 1000);
+    buscar(true);
+    const t = setInterval(() => buscar(), 15 * 60 * 1000);
     return () => { vivo = false; clearInterval(t); };
   }, [user?.tenantId, recarregar]);
 

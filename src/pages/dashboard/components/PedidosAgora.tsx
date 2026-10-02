@@ -13,6 +13,9 @@ interface Props {
   rotuloPeriodo: string;
 }
 
+/** 75 → "1h15" */
+export const duracao = (min: number) => (min < 60 ? `${min} min` : `${Math.floor(min / 60)}h${String(min % 60).padStart(2, '0')}`);
+
 const LINHAS = [
   { k: 'new' as const, label: 'Novos', icon: 'ri-time-line', bg: 'bg-zinc-100', text: 'text-zinc-700', iconColor: 'text-zinc-500' },
   { k: 'preparing' as const, label: 'Em preparo', icon: 'ri-fire-line', bg: 'bg-amber-50', text: 'text-amber-800', iconColor: 'text-amber-500' },
@@ -26,7 +29,7 @@ export default function PedidosAgora({ fila, atrasados, atrasoMin, pagosSistema,
       <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-100 gap-3">
         <div>
           <h3 className="text-sm font-bold text-zinc-800">Pedidos agora</h3>
-          <p className="text-xs text-zinc-400">Na cozinha neste momento</p>
+          <p className="text-xs text-zinc-400">Na cozinha nas últimas 12 h</p>
         </div>
         <button onClick={() => navigate('/kds')} className="text-[11px] font-semibold text-amber-600 hover:text-amber-700 cursor-pointer whitespace-nowrap">Abrir KDS →</button>
       </div>
@@ -38,8 +41,8 @@ export default function PedidosAgora({ fila, atrasados, atrasoMin, pagosSistema,
           const atrasou = l.k !== 'ready' && qtd > 0 && antigo >= atrasoMin;
           const dica = qtd === 0 ? null
             : l.k === 'preparing' && atrasados > 0 ? `${atrasados} há +${atrasoMin} min`
-            : l.k === 'ready' ? `esperando há ${antigo} min`
-            : `mais antigo ${antigo} min`;
+            : l.k === 'ready' ? `esperando há ${duracao(antigo)}`
+            : `mais antigo ${duracao(antigo)}`;
           return (
             <div key={l.k} className={`flex items-center gap-3 px-3 py-2.5 rounded-xl ${l.bg}`}>
               <i className={`${l.icon} ${l.iconColor}`} />

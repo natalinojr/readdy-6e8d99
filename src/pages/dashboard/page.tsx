@@ -10,7 +10,7 @@ import DashboardModoToggle from './components/DashboardModoToggle';
 import AtencaoFaixa, { type ItemAtencao } from './components/AtencaoFaixa';
 import FaturamentoHero, { Variacao } from './components/FaturamentoHero';
 import MetasModal from './components/MetasModal';
-import PedidosAgora from './components/PedidosAgora';
+import PedidosAgora, { duracao } from './components/PedidosAgora';
 import PorCanal, { type LinhaCanal } from './components/PorCanal';
 import { useDashboardMetrics } from '../../hooks/useDashboardMetrics';
 import { useDashboardPainel, salvarDashboardMetas } from '../../hooks/useDashboardPainel';
@@ -223,8 +223,10 @@ export default function Dashboard() {
       nivel: a.urgencia === 'alta' ? 'alta' : 'media',
       icone: FIN_ICONE[a.tipo],
       titulo: a.titulo,
-      detalhe: a.tipo === 'conta_vencida' ? 'Saldo em atraso' : a.descricao,
-      valor: a.valor !== undefined ? fmt(a.valor) : undefined,
+      detalhe: a.tipo === 'conta_vencida' ? 'Saldo em atraso'
+        : a.tipo === 'compra_recebida_pendente' ? 'Mercadoria já entregue — libere o pagamento'
+        : a.descricao,
+      valor: a.valor ? fmt(a.valor) : undefined,
       acao: FIN_ACAO[a.tipo],
       ir: { rota: '/financeiro', state: { activeTab: FIN_ABA[a.tipo] } },
     });
@@ -235,7 +237,7 @@ export default function Dashboard() {
       nivel: 'alta',
       icone: 'ri-fire-line',
       titulo: `${atrasados.length} ${plural(atrasados.length, 'pedido')} há +${atrasoMin} min`,
-      detalhe: atrasados.slice(0, 3).map((a) => `${a.destino || ORIGEM_CURTA[a.origem] || 'Pedido'}${a.numero ? ` #${a.numero}` : ''} (${a.minutos} min)`).join(' · '),
+      detalhe: atrasados.slice(0, 3).map((a) => `${a.destino || ORIGEM_CURTA[a.origem] || 'Pedido'}${a.numero ? ` #${a.numero}` : ''} (${duracao(a.minutos)})`).join(' · '),
       acao: 'Abrir KDS',
       ir: { rota: '/kds' },
     });
