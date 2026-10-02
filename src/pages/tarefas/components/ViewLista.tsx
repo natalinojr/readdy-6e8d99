@@ -6,7 +6,7 @@ import { useToast } from '@/contexts/ToastContext';
 import type { CampoCustom, TaskList, TaskRow, TaskTag } from '../hooks/useTarefas';
 import { PRIORIDADES } from '../hooks/useTarefas';
 import type { GroupBy, Grupo, UsuarioOption } from '../lib/agrupamento';
-import { agruparTarefas, calcularSortOrder, payloadMoverGrupo } from '../lib/agrupamento';
+import { agruparTarefas, calcularSortOrder, corDoStatus, payloadMoverGrupo } from '../lib/agrupamento';
 import type { ColunaDef, ColunaId, LargurasColunas } from '../lib/colunas';
 import {
   carregarColunasVisiveis, carregarLarguras, carregarOrdemColunas, colunasDisponiveis, LARGURA_MAX_PX, LARGURA_MIN_PX,
@@ -693,6 +693,7 @@ export default function ViewLista({
 
   const renderLinha = (task: TaskRow, nivel: number, grupo?: Grupo) => {
     const concluida = task.status_category === 'done';
+    const corStatus = corDoStatus(task, [list, ...lists]);
     const subtarefas = tasks.filter((t) => t.parent_task_id === task.id);
     const aberta = expandidas.has(task.id);
     const selecionada = selecionadas.has(task.id);
@@ -801,9 +802,9 @@ export default function ViewLista({
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); setStatusPickerAberto({ taskId: task.id, rect: e.currentTarget.getBoundingClientRect() }); }}
-              className={`w-5 h-5 md:w-4 md:h-4 rounded-full border flex items-center justify-center transition ${
-                concluida ? 'bg-emerald-500 border-emerald-500' : 'border-slate-300 hover:border-emerald-400'
-              }`}
+              className="w-5 h-5 md:w-4 md:h-4 rounded-full border-2 flex items-center justify-center transition hover:brightness-90"
+              // Bolinha na cor do status (concluída = cheia com ✓; demais = contorno + fundo clarinho).
+              style={{ borderColor: corStatus, backgroundColor: concluida ? corStatus : `${corStatus}26` }}
               title="Mudar status"
             >
               {concluida && <Check size={11} className="text-white" />}

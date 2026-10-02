@@ -9,7 +9,7 @@ import { useToast } from '@/contexts/ToastContext';
 import type { CampoCustom, ChecklistTemplate, TaskAnexo, TaskDetail, TaskList, TaskRow, TaskTag } from '../hooks/useTarefas';
 import { PRIORIDADES } from '../hooks/useTarefas';
 import type { UsuarioOption } from '../lib/agrupamento';
-import { CATEGORIAS_GENERICAS, camposDaLista } from '../lib/agrupamento';
+import { CATEGORIAS_GENERICAS, camposDaLista, corDoStatus } from '../lib/agrupamento';
 import { GRUPO_FEITO, ehFeito } from '../lib/statusFeito';
 import type { ColunaId } from '../lib/colunas';
 import { useVoltarFecha } from '../lib/mobile';
@@ -593,15 +593,21 @@ export default function TaskDrawer({
             {!detail.parent_task_id && (
               <Secao icone={<GitBranch size={15} />} titulo="Subtarefas" contador={detail.subtasks.length}>
                 <div className="rounded-xl border border-slate-200 divide-y divide-slate-100 overflow-hidden">
-                  {detail.subtasks.map((sub) => (
+                  {detail.subtasks.map((sub) => {
+                    const cor = corDoStatus(sub, [list]);
+                    return (
                     <button
                       key={sub.id}
                       onClick={() => onOpenTask?.(sub.id)}
                       className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-slate-50 text-left"
                     >
-                      <span className={`w-4 h-4 rounded-full border flex items-center justify-center shrink-0 ${
-                        sub.status_category === 'done' ? 'bg-emerald-500 border-emerald-500' : 'border-slate-300'
-                      }`}>
+                      <span
+                        className="w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0"
+                        style={{
+                          borderColor: cor,
+                          backgroundColor: sub.status_category === 'done' ? cor : `${cor}26`,
+                        }}
+                      >
                         {sub.status_category === 'done' && <Check size={10} className="text-white" />}
                       </span>
                       <span className={`text-sm flex-1 truncate ${sub.status_category === 'done' ? 'line-through text-slate-400' : 'text-slate-700'}`}>
@@ -613,7 +619,8 @@ export default function TaskDrawer({
                         </span>
                       )}
                     </button>
-                  ))}
+                    );
+                  })}
                   <form
                     onSubmit={async (e) => {
                       e.preventDefault();

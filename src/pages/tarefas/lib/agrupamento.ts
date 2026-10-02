@@ -14,6 +14,20 @@ export const CATEGORIAS_GENERICAS: Array<{ key: TaskStatus['category']; label: s
   { key: 'cancelled', label: 'Cancelado', color: '#ef4444' },
 ];
 
+/** Cor do status em que a tarefa está: o status real da pasta quando eu enxergo a
+ *  pasta; senão (tarefa atribuída de pasta alheia) a cor genérica da categoria. */
+export function corDoStatus(
+  t: Pick<TaskRow, 'status_id' | 'status_category' | 'status_keep_visible'>,
+  listas: Array<TaskList | null | undefined>,
+): string {
+  for (const l of listas) {
+    const s = l?.statuses?.find((x) => x.id === t.status_id);
+    if (s) return s.color;
+  }
+  if (ehFeito(t)) return GRUPO_FEITO.color;
+  return CATEGORIAS_GENERICAS.find((c) => c.key === t.status_category)?.color ?? '#94a3b8';
+}
+
 export interface UsuarioOption {
   id: string;
   nome: string;
