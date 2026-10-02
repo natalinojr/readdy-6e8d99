@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../../../contexts/AuthContext';
+import { supabase } from '@/lib/supabase';
 import { usePermissoes } from '@/hooks/usePermissoes';
 import { useEstoque, type InventarioSession } from '../../../contexts/EstoqueContext';
 import ContagemInventario from './ContagemInventario';
@@ -34,7 +35,17 @@ export default function InventarioTab() {
   const [showDraftModal, setShowDraftModal] = useState(false);
 
   const tenantId = user?.tenantId ?? '';
-  const hasDraft = temRascunhoSalvo(tenantId);
+  // Rascunho pode estar neste aparelho ou no banco (começado em outro celular).
+  const [temNoBanco, setTemNoBanco] = useState(false);
+  useEffect(() => {
+    if (!tenantId || view !== 'historico') return;
+    let vivo = true;
+    supabase.rpc('inventario_rascunho_ler', { p_tenant_id: tenantId }).then(({ data, error }) => {
+      if (vivo) setTemNoBanco(!error && Array.isArray(data) && data.length > 0);
+    });
+    return () => { vivo = false; };
+  }, [tenantId, view]);
+  const hasDraft = temRascunhoSalvo(tenantId) || temNoBanco;
 
   const handleNovaContagem = () => {
     if (!podeInventariar) return;

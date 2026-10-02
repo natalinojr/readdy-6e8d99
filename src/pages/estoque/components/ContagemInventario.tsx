@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect, useRef, Fragment } from 'react';
 import { useEstoque, type InventarioItemContado, type Insumo } from '../../../contexts/EstoqueContext';
 import { useAuth } from '../../../contexts/AuthContext';
+import { supabase } from '@/lib/supabase';
 import ConfirmarInventarioModal from './ConfirmarInventarioModal';
 
 interface InventarioDraft {
@@ -10,6 +11,8 @@ interface InventarioDraft {
   fatores?: Record<string, number>;
   /** Insumos que a pessoa já conferiu (digitou ou deu "próximo" no campo). */
   conferidos?: string[];
+  /** Insumos mexidos neste aparelho que ainda não chegaram ao banco (ex.: sem internet). */
+  pendentes?: string[];
   savedAt: string;
   operador: string;
 }
@@ -82,17 +85,17 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
   };
 
   const salvarRascunho = () => {
-    if (!tenantId) return;
+    if (!tenantId || encerrado.current) return;
     try {
       const draft: InventarioDraft = {
         contagens,
         conferidos: Array.from(conferidos),
+        pendentes: Array.from(pendentes.current),
         fatores: Object.fromEntries(insumos.map((i) => [i.id, fatorDe(i)])),
         savedAt: new Date().toISOString(),
         operador,
       };
       localStorage.setItem(getDraftKey(), JSON.stringify(draft));
-      setSalvoEm(new Date());
     } catch {
       // localStorage cheio ou indisponível
     }
@@ -126,18 +129,138 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
   });
 
   // Rascunho que já existia ao abrir a tela (o salvamento automático não conta).
-  const [temRascunhoCarregado] = useState(() => !startFresh && carregarRascunho() !== null);
+  const [temRascunhoCarregado, setTemRascunhoCarregado] = useState(() => !startFresh && carregarRascunho() !== null);
 
-  const [conferidos, setConferidos] = useState<Set<string>>(() => {
-    if (startFresh || !tenantId) return new Set();
+  const draftLocal = (): InventarioDraft | null => {
+    if (startFresh || !tenantId) return null;
     try {
       const raw = localStorage.getItem(getDraftKey());
-      const d = raw ? (JSON.parse(raw) as InventarioDraft) : null;
-      return new Set(d?.conferidos ?? []);
+      return raw ? (JSON.parse(raw) as InventarioDraft) : null;
     } catch {
-      return new Set();
+      return null;
     }
-  });
+  };
+  const [conferidos, setConferidos] = useState<Set<string>>(() => new Set(draftLocal()?.conferidos ?? []));
+  // Mexidos aqui e ainda não gravados no banco; o banco não sobrescreve esses ao carregar.
+  const pendentes = useRef<Set<string>>(new Set(draftLocal()?.pendentes ?? []));
+  const contagensRef = useRef(contagens);
+  contagensRef.current = contagens;
+  const conferidosRef = useRef(conferidos);
+  conferidosRef.current = conferidos;
+  const insumosRef = useRef(insumos);
+  insumosRef.current = insumos;
+  // Depois de confirmar/descartar nada mais é salvo (timer atrasado não ressuscita o rascunho).
+  const encerrado = useRef(false);
+
+  // ── Rascunho no banco: começa num celular e continua em outro ──────────────
+  type LinhaRascunho = { ingredient_id: string; valor: string; fator: number; conferido: boolean };
+  const aplicarDoBanco = (linhas: LinhaRascunho[]) => {
+    const insumos = insumosRef.current;
+    const validas = linhas.filter((l) => !pendentes.current.has(l.ingredient_id) && insumos.some((i) => i.id === l.ingredient_id));
+    if (validas.length === 0) return;
+    setContagens((prev) => {
+      const novo = { ...prev };
+      for (const l of validas) {
+        const ins = insumos.find((i) => i.id === l.ingredient_id)!;
+        const n = parseFloat(l.valor);
+        const fatorAntes = Number(l.fator) || 1;
+        novo[l.ingredient_id] = l.valor === '' || isNaN(n) || fatorAntes === fatorDe(ins)
+          ? l.valor
+          : String(arred((n * fatorAntes) / fatorDe(ins), 3));
+      }
+      return novo;
+    });
+    setConferidos((prev) => {
+      const novo = new Set(prev);
+      validas.forEach((l) => { if (l.conferido) novo.add(l.ingredient_id); });
+      return novo;
+    });
+    setTemRascunhoCarregado(true);
+  };
+
+  const buscarDoBanco = async () => {
+    if (!tenantId) return;
+    const { data, error } = await supabase.rpc('inventario_rascunho_ler', { p_tenant_id: tenantId });
+    if (!error && Array.isArray(data)) aplicarDoBanco(data as LinhaRascunho[]);
+  };
+
+  type StatusNuvem = 'ocioso' | 'salvando' | 'salvo' | 'offline';
+  const [statusNuvem, setStatusNuvem] = useState<StatusNuvem>('ocioso');
+  const enviando = useRef(false);
+
+  const enviarParaBanco = async () => {
+    if (!tenantId || encerrado.current || enviando.current || pendentes.current.size === 0) return;
+    enviando.current = true;
+    setStatusNuvem('salvando');
+    const ids = Array.from(pendentes.current);
+    const enviado = ids.map((id) => {
+      const ins = insumosRef.current.find((i) => i.id === id);
+      return {
+        insumo_id: id,
+        valor: contagensRef.current[id] ?? '',
+        fator: ins ? fatorDe(ins) : 1,
+        conferido: conferidosRef.current.has(id),
+      };
+    });
+    const { error } = await supabase.rpc('inventario_rascunho_salvar', {
+      p_tenant_id: tenantId, p_itens: enviado, p_operador: operador,
+    });
+    enviando.current = false;
+    if (encerrado.current) return;
+    if (error) { setStatusNuvem('offline'); return; }
+    // Só sai da fila o que não mudou enquanto ia para o banco.
+    for (const e of enviado) {
+      if ((contagensRef.current[e.insumo_id] ?? '') === e.valor && conferidosRef.current.has(e.insumo_id) === e.conferido) {
+        pendentes.current.delete(e.insumo_id);
+      }
+    }
+    salvarRascunho();
+    setSalvoEm(new Date());
+    setStatusNuvem('salvo');
+    if (pendentes.current.size > 0) setTimeout(enviarParaBanco, 300);
+  };
+
+  const apagarDoBanco = () => {
+    pendentes.current.clear();
+    if (!tenantId) return;
+    supabase.rpc('inventario_rascunho_apagar', { p_tenant_id: tenantId }).then(() => {}, () => {});
+  };
+
+  // Ao abrir: contagem nova apaga o rascunho do banco; senão traz o que outro aparelho contou.
+  useEffect(() => {
+    if (startFresh) apagarDoBanco();
+    // Voltou para a tela (trocou de app/aparelho): puxa de novo e reenvia o que ficou pendente.
+    const aoVoltar = () => {
+      if (document.visibilityState !== 'visible') return;
+      buscarDoBanco();
+      enviarParaBanco();
+    };
+    const aoReconectar = () => enviarParaBanco();
+    document.addEventListener('visibilitychange', aoVoltar);
+    window.addEventListener('online', aoReconectar);
+    return () => {
+      document.removeEventListener('visibilitychange', aoVoltar);
+      window.removeEventListener('online', aoReconectar);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantId]);
+
+  // Os insumos podem chegar depois da tela abrir: busca o rascunho do banco quando já existem.
+  const buscouInicial = useRef(false);
+  useEffect(() => {
+    if (startFresh || buscouInicial.current || insumos.length === 0) return;
+    buscouInicial.current = true;
+    buscarDoBanco();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [insumos.length]);
+
+  // Sem internet: tenta de novo a cada 20 s.
+  useEffect(() => {
+    if (statusNuvem !== 'offline') return;
+    const t = setInterval(enviarParaBanco, 20000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statusNuvem]);
 
   /** Contado convertido para a unidade do ESTOQUE (NaN = vazio/inválido). Campo intocado = teórico exato. */
   const contadoEstoque = (i: Insumo): number => {
@@ -167,13 +290,16 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
   // Salva sozinho enquanto a pessoa conta (rascunho no aparelho; sobrevive a fechar o app).
   useEffect(() => {
     if (!editado) return;
-    const t = setTimeout(salvarRascunho, 400);
-    return () => clearTimeout(t);
+    // No aparelho na hora; no banco logo depois (junta vários números num envio só).
+    const tLocal = setTimeout(salvarRascunho, 300);
+    const tBanco = setTimeout(enviarParaBanco, 800);
+    return () => { clearTimeout(tLocal); clearTimeout(tBanco); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contagens, conferidos, editado]);
 
   const marcarConferido = (id: string) => {
     setEditado(true);
+    pendentes.current.add(id);
     setConferidos((prev) => (prev.has(id) ? prev : new Set(prev).add(id)));
   };
 
@@ -272,7 +398,9 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
 
   const handleConfirmar = () => {
     confirmarInventario(itensParaConfirmar, operador);
+    encerrado.current = true;
     limparRascunho();
+    apagarDoBanco();
     setShowConfirmar(false);
     setConfirmado(true);
     setTimeout(() => onConcluido(), 2000);
@@ -290,13 +418,16 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
   };
 
   const handleDescartarESair = () => {
+    encerrado.current = true;
     limparRascunho();
+    apagarDoBanco();
     setShowCancelarModal(false);
     onCancelar();
   };
 
   const handleSalvarRascunhoESair = () => {
     salvarRascunho();
+    enviarParaBanco();
     setShowCancelarModal(false);
     onCancelar();
   };
@@ -334,10 +465,15 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
         </div>
         <div className="flex items-center gap-2">
           <span className="flex items-center gap-1.5 px-1 py-2 text-xs font-medium text-zinc-500 whitespace-nowrap">
-            <i className={`text-sm ${salvoEm ? 'ri-check-line text-emerald-500' : 'ri-save-line text-zinc-400'}`} />
-            {salvoEm
-              ? `Salvo às ${salvoEm.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`
-              : 'Salva sozinho enquanto conta'}
+            {statusNuvem === 'offline' ? (
+              <><i className="text-sm ri-wifi-off-line text-amber-500" />Sem internet: guardado no aparelho</>
+            ) : statusNuvem === 'salvando' ? (
+              <><i className="text-sm ri-loader-4-line animate-spin text-zinc-400" />Salvando…</>
+            ) : salvoEm ? (
+              <><i className="text-sm ri-cloud-line text-emerald-500" />Salvo às {salvoEm.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</>
+            ) : (
+              <><i className="text-sm ri-cloud-line text-zinc-400" />Salva sozinho, dá para continuar em outro celular</>
+            )}
           </span>
           <button
             onClick={handleCancelarContagem}
@@ -680,7 +816,7 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
               <div>
                 <h2 className="text-sm font-bold text-zinc-900 mb-1">Cancelar contagem?</h2>
                 <p className="text-xs text-zinc-600 leading-relaxed">
-                  Você tem {itensComDiferenca.length} iten{itensComDiferenca.length !== 1 ? 's' : ''} com diferença na contagem atual. A contagem já está salva neste aparelho: dá para sair e terminar depois, ou descartar tudo.
+                  Você tem {itensComDiferenca.length} iten{itensComDiferenca.length !== 1 ? 's' : ''} com diferença na contagem atual. A contagem já está salva: dá para sair e terminar depois (neste ou em outro celular), ou descartar tudo.
                 </p>
               </div>
             </div>
