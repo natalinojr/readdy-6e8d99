@@ -160,7 +160,7 @@ export default function TrilhaTab() {
   const pct = casos.length ? Math.round((completos / casos.length) * 100) : 0;
   const urgentes = todasTarefas.filter((x) => x.tarefa.urgente).length;
   const funil = useMemo(() => ETAPAS_FUNIL.map((id) => {
-    let ok = 0, amarelo = 0, vermelho = 0, n = 0;
+    let ok = 0, amarelo = 0, vermelho = 0, prazo = 0, n = 0;
     for (const c of casos) {
       const e = estadoDa(c, id);
       // Saída do banco que ninguém identificou: no cartão é uma tarefa só ("Dizer o que foi") e a fase
@@ -169,11 +169,14 @@ export default function TrilhaTab() {
       if (id === 'banco' && saidaNaoIdentificada(c)) { vermelho += c.valor; n++; continue; }
       if (e === 'na' || e === 'espera') continue;
       if (e === 'ok') ok += c.valor;
+      // Conta que ainda não venceu: não passou pela fase, mas não há nada a fazer — fica à parte (azul),
+      // senão no começo do mês o Pagamento aparecia ~0% em amarelo sem nenhuma tarefa na lista.
+      else if (e === 'prazo') prazo += c.valor;
       else if (grave(e)) { vermelho += c.valor; n++; }
       else { amarelo += c.valor; if (ruim(e)) n++; }
     }
-    const tot = ok + amarelo + vermelho;
-    return { id, ok, amarelo, vermelho, tot, n, pct: tot ? Math.round((ok / tot) * 100) : 100, grave: vermelho > 0 };
+    const tot = ok + amarelo + vermelho + prazo;
+    return { id, ok, amarelo, vermelho, prazo, tot, n, pct: tot ? Math.round((ok / tot) * 100) : 100, grave: vermelho > 0 };
   }), [casos]);
 
   const mesStr = `${ano}-${String(mes + 1).padStart(2, '0')}`;
@@ -353,12 +356,14 @@ export default function TrilhaTab() {
                       ? <span className={`text-[10px] font-bold px-1.5 rounded-md ${f.grave ? 'bg-red-50 text-red-600' : 'bg-amber-50 text-amber-700'}`}>{f.n}</span>
                       : <i className="ri-check-double-line text-emerald-500 text-xs" />}
                   </div>
-                  <p className={`text-lg font-bold tabular-nums mt-1 ${f.pct === 100 ? 'text-emerald-700' : ''}`}>{f.pct}%</p>
+                  <p className={`text-lg font-bold tabular-nums mt-1 ${f.pct === 100 ? 'text-emerald-700' : f.n === 0 && f.prazo > 0 ? 'text-sky-700' : ''}`}>{f.pct}%</p>
                   <div className="flex h-1.5 rounded-full overflow-hidden bg-zinc-100 gap-px">
                     <div className="bg-emerald-500" style={{ width: `${f.tot ? (f.ok / f.tot) * 100 : 100}%` }} />
+                    <div className="bg-sky-400" style={{ width: `${f.tot ? (f.prazo / f.tot) * 100 : 0}%` }} />
                     <div className="bg-amber-400" style={{ width: `${f.tot ? (f.amarelo / f.tot) * 100 : 0}%` }} />
                     <div className="bg-red-500" style={{ width: `${f.tot ? (f.vermelho / f.tot) * 100 : 0}%` }} />
                   </div>
+                  {f.prazo > 0 && <p className="text-[10px] text-sky-700 mt-1 truncate" title="Contas que ainda não venceram — nada a fazer até o vencimento">{fmtBRL(f.prazo)} a vencer</p>}
                 </button>
               ))}
             </div>
