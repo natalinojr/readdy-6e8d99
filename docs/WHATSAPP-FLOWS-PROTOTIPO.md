@@ -1,8 +1,8 @@
 # WhatsApp Flows — protótipo do agendamento de entrevista (passagem de sessão)
 
-Começado em 2026-10-02, numa sessão na nuvem, no branch `ccr-6d892c41-zppt7x`. **Nada foi publicado em produção.**
-Não houve deploy de Edge Function, nem mudança no banco, nem configuração na Meta. Este arquivo é o ponto de
-partida para continuar numa sessão local.
+Começado em 2026-10-01 à noite na nuvem (branch `ccr-6d892c41-zppt7x`) e com o código terminado no mesmo dia numa
+sessão local (branch `claude/whatsapp-flows`). **Ainda não foi publicado:** não houve deploy de Edge Function nem
+configuração na Meta, e o segredo da chave não existe. Ver "Falta" abaixo.
 
 ## O que é e por que aqui
 
@@ -59,84 +59,86 @@ da vaga) e confirma. A reserva passa pelo mesmo `fn_hiring_book`, e os avisos s�
 - **Bloqueio deste ambiente:** a sessão na nuvem não acessa `developers.facebook.com`. No PC, vale conferir lá o
   guia "Implement endpoints for Flows", o "Flows API" e o changelog.
 
-## Já feito neste branch
+## Código (feito)
 
-1. `supabase/functions/_shared/wa.ts` → nova `waSendFlow(cfg, to, { flowId, token, cta, body, header?, footer?, draft?, origin? })`.
-   É só um acréscimo: ninguém chama ainda. Registra no `wa_log` com `kind: 'flow'` (a coluna não tem restrição;
-   conferido no banco).
-2. `supabase/functions/whatsapp-flow/cripto.ts` → `importarPrivada`, `decifrar`, `cifrarResposta`,
-   `publicaDaPrivada`, `assinaturaMetaOk` e `FlowHttpError`. Usa WebCrypto puro, então roda no Deno e no Node
-   (vitest). **Ainda sem teste.**
+Começado na nuvem e terminado numa sessão local em 2026-10-01, no branch `claude/whatsapp-flows` (com o
+`main` já mesclado). Conferido com `node scripts/check.mjs`: tsc 287/287, igual à base, e vitest todo verde.
+O bundle das três Edge Functions foi conferido com esbuild.
 
-## Falta fazer (na ordem)
+1. **Chaves:** `scripts/whatsapp-flow/gerar-chaves.mjs <pasta fora do repo>` gera `privada.pem` e `publica.pem`.
+   A privada é PKCS#8 sem senha. O script recusa pasta dentro do repositório.
+2. **`_shared/wa-flow.ts`:**
+   - token `"<session_id>.<hmac16>"` (HMAC com `ASSISTENTE_INTERNAL_KEY`): `tokenDoFlow` e `sessaoDoToken`;
+   - leitura de `asst_settings.wa_flow_agendamento` = `{ flow_id, ativo, numeros[], modo }`: `lerFlowCfg` e
+     `numeroLiberado` (lista vazia = todos; compara com e sem o 55 e o 9).
+3. **`whatsapp-flow/telas.ts`:**
+   - `FLOW_JSON` (7.3 / data_api 3.0): DIA → HORARIO;
+   - `diasDisponiveis` (máximo de 7 dias, 30 min de antecedência, data de São Paulo);
+   - `horariosDoDia` (com o item final "Nenhum horário serve"; o texto antigo passava de 30 caracteres);
+   - `telaHorario`.
+4. **`whatsapp-flow/index.ts`:**
+   - endpoint: 432 / 421 / 427, `ping`, `error`, `INIT`/`BACK` → DIA, DIA → HORARIO, HORARIO → reserva ou
+     "nenhum";
+   - horário preenchido no meio do caminho → volta à HORARIO com o aviso e a lista nova;
+   - dia que lotou → aviso "Volte e escolha outro dia";
+   - ações admin (`x-internal-key`): `chave_publica`, `criar`, `atualizar`, `publicar`, `status`, `testar` e `ligar`.
+5. **`hiring-scheduler`:**
+   - `posReserva` foi separada do `book()`, sem mudar o comportamento;
+   - ações novas: `flow_info`, `flow_book` (a reserva é feita na hora; confirmação e avisos vão em segundo plano)
+     e `flow_nenhum`;
+   - `offerAgain` chama `ofereceFlow` depois da lista. Ele só envia com o Flow ligado, o número liberado, a API
+     oficial e dentro da janela de 24 h;
+   - o formulário **não** entra no `history` da sessão, porque as regras olham a última fala nossa, que tem que
+     continuar sendo a lista. Ele fica registrado no `wa_log` (`kind: 'flow'`).
+6. **`whatsapp-cloud`:** o `nfm_reply` vira "[formulário enviado]" no `wa_log` e para ali.
+7. **Teste:** `src/test/edge/whatsappFlow.test.ts` (14 casos). Cobre:
+   - a criptografia, cifrando como a Meta cifra com `node:crypto`;
+   - a pública derivada da privada e a assinatura;
+   - o token e a lista de números;
+   - os dias e horários, inclusive 22h de SP, que em UTC já é o dia seguinte;
+   - os limites do Flow JSON.
 
-1. **Script de chaves:** `scripts/whatsapp-flow/gerar-chaves.mjs`, com
-   `crypto.generateKeyPairSync('rsa', { modulusLength: 2048, privateKeyEncoding: { type: 'pkcs8', format: 'pem' }, publicKeyEncoding: { type: 'spki', format: 'pem' } })`.
-   A privada é sem senha, porque o WebCrypto não lê PEM com senha. Salvar a privada como segredo
-   `WHATSAPP_FLOW_PRIVATE_KEY`. Nunca commitar a chave.
-2. **`supabase/functions/whatsapp-flow/telas.ts`** (puro, testável):
-   - `FLOW_JSON`: versão `7.3`, `data_api_version` `3.0`, `routing_model { DIA: ['HORARIO'], HORARIO: [] }`.
-   - Tela `DIA`: `TextHeading ${data.vaga}`, `TextBody ${data.local}`, RadioButtonsGroup `dia` com a lista `${data.dias}`,
-     e Footer "Ver horários" → `data_exchange { dia: ${form.dia} }`. Texto: "Se nenhum dia servir, feche e responda na conversa".
-   - Tela `HORARIO` (`terminal: true`): `TextSubheading ${data.dia_label}`, `TextCaption ${data.aviso}` com
-     `visible: ${data.tem_aviso}`, Dropdown `horario` com a lista `${data.horarios}` (o último item é
-     `{ id:'nenhum', title:'Nenhum serve — combinar na conversa' }`), e Footer "Confirmar entrevista" →
-     `data_exchange { dia: ${data.dia}, horario: ${form.horario} }`.
-   - `diasDisponiveis(slots, agora)`: agrupa por data de São Paulo e descarta horários com menos de 30 min de
-     antecedência. Títulos "Hoje · quinta 01/10", "Amanhã · sexta 02/10", "Sábado 03/10", com a descrição
-     "N horários". No máximo 7 dias.
-   - `horariosDoDia(slots, dia)`: `{ id: iso, title: 'HH:MM' }` mais o item "nenhum".
-   - Teste em `src/test/edge/whatsappFlow.test.ts`, no padrão de `atendimentoTravas.test.ts` (import pelo
-     caminho montado em tempo de execução). O teste cobre:
-     - ida e volta da criptografia, gerando o par de chaves com `node:crypto` e cifrando como a Meta cifra;
-     - o vetor invertido;
-     - a assinatura;
-     - o agrupamento de dias e horários.
-3. **`supabase/functions/whatsapp-flow/index.ts`** (deploy com `--no-verify-jwt`):
-   - Ler o corpo cru e conferir a assinatura (`WHATSAPP_APP_SECRET`); se falhar, responder `432`.
-   - Ações admin com o header `x-internal-key` (= `ASSISTENTE_INTERNAL_KEY`): `chave_publica`, `criar`
-     (grava o `flow_id` em `asst_settings.wa_flow_agendamento`), `atualizar`, `publicar`, `status`,
-     `testar { session_id, to }` e `ligar { ativo, numeros, modo:'draft'|'published' }`.
-   - Decifrar; se falhar, responder `421`.
-   - `ping` e erro, conforme a pesquisa acima.
-   - Token = `"<session_id>.<hmac16>"`, com HMAC sobre `ASSISTENTE_INTERNAL_KEY`. A mesma função também é usada
-     pelo scheduler, então vai em `_shared/wa-flow.ts`. Se for inválido, responder `427`.
-   - `INIT`/`BACK` → hiring-scheduler `flow_info` → tela DIA. Se a entrevista já estiver marcada ou aguardando a
-     equipe, responder `427` com a mensagem "Sua entrevista já está marcada…".
-   - DIA → tela HORARIO (com `flow_info` de novo, para a lista estar fresca).
-   - HORARIO com `nenhum` → `flow_nenhum` → SUCCESS.
-   - HORARIO com um horário → `flow_book`. Se der certo, SUCCESS. Se não, volta à HORARIO com
-     `aviso: 'Esse horário acabou de ser preenchido'` e a lista nova.
-4. **`hiring-scheduler/index.ts`** (só acréscimos):
-   - `flow_info { session_id }`:
-     - só aceita sessão com status `convidado` ou `negociando`;
-     - devolve `{ vaga, local: onde(c), slots }`;
-     - os `slots` vêm de `freeSlots`, ou de `pend.slots` com `semConflito` quando o pedido pendente é `janela_gestor`.
-   - `flow_book { session_id, starts_at }`:
-     - chama `fn_hiring_book` direto, com `force` = horário da janela da equipe e ainda sem conflito;
-     - grava no histórico "[escolheu pelo formulário] …";
-     - os avisos rodam em segundo plano (`EdgeRuntime.waitUntil`) para responder em menos de 10 s;
-     - para isso, separar a parte de sucesso do `book()` numa `posReserva(admin, c, startsAt, force)`, reaproveitada pelos dois.
-   - `flow_nenhum`: manda "Sem problema! Me diga o melhor dia e horário pra você…" e volta a sessão para `negociando`.
-   - Em `offerAgain`, depois do texto (que continua igual), chamar `ofereceFlow(admin, c)`. Ele só manda o Flow
-     quando:
-     - `asst_settings.wa_flow_agendamento.ativo` está ligado;
-     - o número está na lista `numeros` (lista vazia = todos);
-     - o transporte é `cloud`.
-     - Corpo: "Prefere escolher tocando? 👇"; botão: "Escolher horário".
-5. **`whatsapp-cloud/index.ts`**: quando chegar `interactive.type === 'nfm_reply'`, registrar
-   "[formulário enviado]" no `wa_log` e parar ali, porque a reserva já foi feita pelo endpoint. Hoje ele cairia
-   com texto vazio no `canal-publico`. Fazer isso depois do `firstTime` e do `wa_last_in` (o envio do formulário
-   abre a janela de 24 h).
-6. **Configuração na Meta (com o dono):**
-   - gerar as chaves → `npx supabase secrets set --project-ref mdghhjemzdmeuqpzuyzx WHATSAPP_FLOW_PRIVATE_KEY="$(cat privada.pem)"`;
-   - deploy de `whatsapp-flow` (`--no-verify-jwt`) e `hiring-scheduler`;
-   - rodar as ações admin `chave_publica` → `criar` → `status` (abrir o `preview_url`) → `testar` em modo draft com
-     uma sessão da vaga de teste;
-   - se o endpoint reclamar de "app não conectado", ligar o app da Meta ao Flow no Flow Builder do WhatsApp Manager;
-   - só depois `publicar` e `ligar`.
-7. **Checagem:** `node scripts/check.mjs` (tsc sem aumentar a base de erros + vitest), registrar o aprendizado em
-   `AI_SYSTEM_MAP.md` › Histórico, e só então subir em `main`.
+8. **Ajustes da revisão (revisor):**
+   - o endpoint recusa com 432 quando falta o `WHATSAPP_APP_SECRET`;
+   - `flow_book` não reserva se o candidato mandou um texto há menos de 20 s: a conversa decide, para não sair
+     reserva e confirmação em dobro;
+   - erro do RPC que não for `horario_indisponivel` fecha o formulário;
+   - `posReserva` avisa a equipe mesmo se a confirmação ao candidato falhar (o dono recebe o alerta);
+   - "Nenhum serve" limpa o `pending_request`;
+   - o título da vaga é cortado em 80 caracteres;
+   - a chave privada com erro não fica guardada em cache.
+
+**Enquanto `wa_flow_agendamento.ativo` não for ligado, nada muda para o candidato.** Sem a configuração,
+`ofereceFlow` sai sem fazer nada.
+
+## Falta (precisa do dono: segredo, Meta e teste com número real)
+
+Nada disso foi feito ainda: o segredo não foi criado, nenhuma função foi publicada e nada foi configurado na
+Meta.
+
+1. Gerar as chaves fora do repo e criar o segredo:
+   - `node scripts/whatsapp-flow/gerar-chaves.mjs C:/temp/flow-chaves`
+   - `npx supabase secrets set --project-ref mdghhjemzdmeuqpzuyzx WHATSAPP_FLOW_PRIVATE_KEY="$(cat C:/temp/flow-chaves/privada.pem)"`
+   - apagar a pasta;
+   - conferir que `WHATSAPP_APP_SECRET` existe (`npx supabase secrets list`). Sem ele o endpoint responde 432 a tudo.
+2. Publicar, um comando por grupo (todas são `verify_jwt: false`; conferir antes com `list_edge_functions`):
+   - `npx supabase functions deploy whatsapp-flow hiring-scheduler whatsapp-cloud --no-verify-jwt --project-ref mdghhjemzdmeuqpzuyzx`;
+   - depois, `curl` em cada uma para confirmar que não volta BOOT_ERROR.
+3. Ações admin, nesta ordem (POST em `/functions/v1/whatsapp-flow` com `x-internal-key`):
+   - `chave_publica`;
+   - `criar`;
+   - `status` (abrir o `preview_url`);
+   - `testar { session_id, to }` em modo draft, com uma sessão da vaga de teste e o celular do dono.
+4. Se a Meta reclamar de "app não conectado", ligar o app ao Flow no Flow Builder do WhatsApp Manager.
+5. Testar o caminho inteiro:
+   - escolher um horário → reserva + confirmação + aviso à equipe;
+   - escolher um horário que outra pessoa pegou → aviso + lista nova;
+   - "Nenhum serve" → mensagem na conversa;
+   - abrir de novo depois de marcado → fecha com "já está marcada".
+6. Ligar só para o número de teste: `ligar { ativo: true, numeros: ['55…'], modo: 'draft' }`. Depois,
+   `publicar` e `ligar { ativo: true, numeros: [], modo: 'published' }`.
+7. Registrar o aprendizado em `AI_SYSTEM_MAP.md` › Histórico.
+
 
 ## Fontes
 

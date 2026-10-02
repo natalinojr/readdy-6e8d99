@@ -18,6 +18,9 @@
 //                                                { handled: true } se era conversa de agendamento ou
 //                                                resposta de entrevistador; senão o webhook segue para o
 //                                                canal-publico.
+//   flow_info / flow_book / flow_nenhum { session_id, starts_at? }
+//                                                endpoint whatsapp-flow (formulário "Escolher horário"
+//                                                dentro da conversa; ver ofereceFlow).
 //
 // Segurança: o texto do candidato é DADO. O modelo (Haiku) só classifica a intenção e responde
 // perguntas com os fatos da vaga listados; não tem ferramenta nenhuma. Quem reserva é o código
@@ -32,7 +35,8 @@
 
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
 import Anthropic from 'npm:@anthropic-ai/sdk@0.125.0';
-import { graph, isOutsideWindow, renderTemplate, TEMPLATES, waConfig, waSendTemplate, waSendText } from '../_shared/wa.ts';
+import { graph, isOutsideWindow, renderTemplate, TEMPLATES, waConfig, waSendFlow, waSendTemplate, waSendText } from '../_shared/wa.ts';
+import { lerFlowCfg, numeroLiberado, tokenDoFlow } from '../_shared/wa-flow.ts';
 import { registrarUsoIa } from '../_shared/ai-usage.ts';
 
 const TZ = 'America/Sao_Paulo';
@@ -408,14 +412,26 @@ async function book(admin: SupabaseClient, c: Ctx, startsAt: string, force: bool
       : 'Esse horário acabou de ser preenchido 😕 Vou ver outras opções com a equipe e te chamo.', { offered: livres, status: 'negociando' });
     return false;
   }
+  await posReserva(admin, c, startsAt, force);
+  return true;
+}
+// O que vem depois de uma reserva feita: confirmação ao candidato + aviso à equipe. Separado do book()
+// para o formulário do WhatsApp (flow_book) reaproveitar, rodando em segundo plano.
+async function posReserva(admin: SupabaseClient, c: Ctx, startsAt: string, force: boolean) {
   // Nova data = nova confirmação de presença
   await admin.from('hiring_scheduling_sessions').update({ confirmed_at: null, confirm_requested_at: null }).eq('id', c.sess.id);
   const quando = fmtSlot(startsAt);
   const notas = String(c.cfg.candidate_notes ?? '').trim();
-  await toCand(admin, c, `✅ Entrevista confirmada: *${quando}*\n${onde(c)}${mapa(c)}${notas ? `\n\n${notas}` : ''}\n\nSe tiver algum imprevisto, é só me avisar por aqui.`);
+  // A reserva já está feita: falha no envio ao candidato não pode impedir o aviso à equipe (pelo
+  // formulário isso roda em segundo plano e o erro não chega a ninguém); o dono fica sabendo.
+  try {
+    await toCand(admin, c, `✅ Entrevista confirmada: *${quando}*\n${onde(c)}${mapa(c)}${notas ? `\n\n${notas}` : ''}\n\nSe tiver algum imprevisto, é só me avisar por aqui.`);
+  } catch (e) {
+    log('ERROR', 'confirmação ao candidato não enviada', { sess: c.sess.id, error: errMsg(e) });
+    await notifyOwner(`⚠️ Entrevista de ${c.cand.full_name} (${c.job.title}) marcada para ${quando}, mas a confirmação não chegou ao candidato: ${errMsg(e).slice(0, 200)}`);
+  }
   await toInterviewers(c, `📅 Entrevista agendada — ${c.job.title}\n${c.cand.full_name} (${digits(c.cand.phone)})\n${quando} · ${onde(c)}${force ? '\n(horário fora da agenda, aceito pela equipe)' : ''}`);
   log('INFO', 'entrevista agendada', { sess: c.sess.id, starts_at: startsAt, force });
-  return true;
 }
 
 // ── pedido fora da agenda → entrevistadores ──
@@ -632,6 +648,88 @@ async function offerAgain(admin: SupabaseClient, c: Ctx, intro: string) {
     ? `${intro}\n${slotsText(livres)}\n\n${comoResponder(livres)} Se nenhum der, me diga o melhor dia e horário pra você.`
     : `${intro} No momento não tenho horários livres na agenda; me diga o melhor dia e horário pra você que eu vejo com a equipe.`,
   { offered: livres, status: 'negociando', pending_request: null });
+  if (livres.length) await ofereceFlow(admin, c);
+}
+
+// ── WhatsApp Flow: formulário "Escolher horário" (2026-10) ──
+// Depois da lista em texto (que continua igual: quem preferir responde escrevendo), vai um botão que abre
+// o formulário dentro da conversa (dia → horário). As telas pedem a agenda ao vivo ao endpoint
+// whatsapp-flow, que chama as ações flow_info / flow_book / flow_nenhum abaixo. Só sai quando:
+// asst_settings.wa_flow_agendamento.ativo, telefone na lista de teste (vazia = todos), API oficial e
+// dentro da janela de 24 h. Não entra no histórico da sessão (as regras olham a última fala nossa, que
+// tem que continuar sendo a lista); fica no wa_log como kind 'flow'.
+async function ofereceFlow(admin: SupabaseClient, c: Ctx) {
+  try {
+    const { data } = await admin.from('asst_settings').select('value').eq('key', 'wa_flow_agendamento').maybeSingle();
+    const f = lerFlowCfg(data?.value);
+    if (!f.ativo || !f.flow_id) return;
+    const cfg = await waConfig(admin);
+    if (cfg.transport !== 'cloud') return;
+    const dest = await destFor(c.sess.phone, c.sess.jid);
+    if (!numeroLiberado(f, dest) || !(await inWindow(dest))) return;
+    await waSendFlow(cfg, dest, {
+      flowId: f.flow_id, token: await tokenDoFlow(internalKey, c.sess.id), cta: 'Escolher horário',
+      body: 'Prefere escolher tocando? 👇', draft: f.modo === 'draft', origin: 'agendamento',
+    });
+  } catch (e) { log('WARN', 'formulário de horário não enviado', { sess: c.sess.id, error: errMsg(e) }); }
+}
+
+// deno-lint-ignore no-explicit-any
+const emSegundoPlano = (p: Promise<unknown>) => (globalThis as any).EdgeRuntime?.waitUntil?.(p);
+async function flowCtx(admin: SupabaseClient, sessionId: string): Promise<{ c?: Ctx; motivo?: string }> {
+  const { data: sess } = await admin.from('hiring_scheduling_sessions').select('*').eq('id', sessionId).maybeSingle();
+  if (!sess) return { motivo: 'nao_encontrada' };
+  if (sess.status === 'agendado') return { motivo: 'agendado' };
+  if (sess.status === 'aguardando_gestor') return { motivo: 'aguardando_gestor' };
+  if (!['convidado', 'negociando'].includes(String(sess.status))) return { motivo: 'encerrada' };
+  const c = await loadCtx(admin, sess as Row);
+  return c ? { c } : { motivo: 'sem_contexto' };
+}
+// Horários do formulário: os que a equipe abriu (proposta em faixa) ou os livres da agenda da vaga.
+async function slotsDoFlow(admin: SupabaseClient, c: Ctx): Promise<string[]> {
+  const pend = (c.sess.pending_request ?? null) as Row | null;
+  if (pend?.kind === 'janela_gestor' && Array.isArray(pend.slots)) return await semConflito(admin, c, pend.slots.map(String));
+  return await freeSlots(admin, c.job.id);
+}
+async function flowInfo(admin: SupabaseClient, sessionId: string): Promise<Row> {
+  const { c, motivo } = await flowCtx(admin, sessionId);
+  if (!c) return { ok: false, motivo };
+  const local = onde(c);
+  // TextHeading do Flow aceita até 80 caracteres.
+  return { ok: true, vaga: `${c.job.title} · ${empresa(c)}`.slice(0, 80), local: `Entrevista ${local}`.slice(0, 4000), slots: await slotsDoFlow(admin, c) };
+}
+// Responde em menos de 10 s (limite da Meta): a reserva é na hora; confirmação e avisos em segundo plano.
+async function flowBook(admin: SupabaseClient, sessionId: string, startsAt: string): Promise<Row> {
+  const { c, motivo } = await flowCtx(admin, sessionId);
+  if (!c) return { ok: false, motivo };
+  if (Number.isNaN(Date.parse(startsAt))) return { ok: false, motivo: 'horario_invalido' };
+  const iso = new Date(startsAt).toISOString();
+  // Mensagem de texto chegando ao mesmo tempo (inbound espera JUNTAR_MS antes de responder): a conversa
+  // decide; senão as duas portas reservariam e o candidato receberia duas confirmações.
+  const ultima = (Array.isArray(c.sess.history) ? c.sess.history as Row[] : []).at(-1);
+  if (ultima?.de === 'candidato' && !String(ultima.texto ?? '').startsWith('[') && Date.now() - Date.parse(String(ultima.at)) < 20_000) {
+    return { ok: false, motivo: 'conversa' };
+  }
+  const pend = (c.sess.pending_request ?? null) as Row | null;
+  const daEquipe = pend?.kind === 'janela_gestor' && Array.isArray(pend.slots) && pend.slots.map(String).includes(iso);
+  const force = daEquipe && (await semConflito(admin, c, [iso])).length > 0;
+  const { data, error } = await admin.rpc('fn_hiring_book', { p_session: c.sess.id, p_start: iso, p_force: force });
+  if (error || !(data as Row)?.ok) {
+    log('WARN', 'reserva pelo formulário recusada', { sess: c.sess.id, error: error?.message ?? (data as Row)?.error });
+    if ((data as Row)?.error !== 'horario_indisponivel') return { ok: false, motivo: 'erro' };
+    return { ok: false, motivo: 'indisponivel', slots: await slotsDoFlow(admin, c) };
+  }
+  await addHist(admin, c.sess.id, 'candidato', `[escolheu pelo formulário] ${fmtSlot(iso)}`, { last_in_at: new Date().toISOString() });
+  emSegundoPlano(posReserva(admin, c, iso, force).catch((e) => log('ERROR', 'pós-reserva do formulário', { sess: c.sess.id, error: errMsg(e) })));
+  return { ok: true, quando: fmtSlot(iso) };
+}
+async function flowNenhum(admin: SupabaseClient, sessionId: string): Promise<Row> {
+  const { c, motivo } = await flowCtx(admin, sessionId);
+  if (!c) return { ok: false, motivo };
+  await addHist(admin, c.sess.id, 'candidato', '[formulário] nenhum horário serve', { last_in_at: new Date().toISOString() });
+  emSegundoPlano(toCand(admin, c, 'Sem problema! Me diga o melhor dia e horário pra você que eu vejo com a equipe 🙂', { status: 'negociando', pending_request: null })
+    .catch((e) => log('ERROR', 'resposta do "nenhum serve"', { sess: c.sess.id, error: errMsg(e) })));
+  return { ok: true };
 }
 
 // Candidato confirmou presença (pedido na véspera e, se faltar, na manhã do dia)
@@ -1231,6 +1329,10 @@ Deno.serve(async (req) => {
     if (body.action === 'inbound') return json({ ok: true, handled: await inbound(admin, body) });
     if (body.action === 'free_slots') return json({ ok: true, slots: await freeSlots(admin, String(body.job_id ?? ''), Number(body.limit ?? OFFER)) });
     if (body.action === 'new_cv') return json({ ok: true, ...(await newCv(admin, String(body.candidate_id ?? ''), String(body.job_id ?? ''))) });
+    // Formulário do WhatsApp (chamadas do endpoint whatsapp-flow)
+    if (body.action === 'flow_info') return json(await flowInfo(admin, String(body.session_id ?? '')));
+    if (body.action === 'flow_book') return json(await flowBook(admin, String(body.session_id ?? ''), String(body.starts_at ?? '')));
+    if (body.action === 'flow_nenhum') return json(await flowNenhum(admin, String(body.session_id ?? '')));
     // Reenviar a lista da agenda a um candidato (correção manual, aprovada pelo dono): limpa o pedido
     // pendente e volta a negociar. Primeiro uso: Syria, 2026-09-19 (lista inventada pela IA).
     if (body.action === 'reoffer') {

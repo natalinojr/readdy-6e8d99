@@ -151,6 +151,12 @@ async function handleMessage(admin: SupabaseClient, cfg: WaConfig, m: any, name:
   try {
     if (type === 'text') { kind = 'text'; text = String(m.text?.body ?? ''); }
     else if (type === 'button') { kind = 'text'; text = String(m.button?.text ?? ''); }
+    // Formulário (WhatsApp Flow) enviado: a reserva já foi feita pelo endpoint whatsapp-flow. Só registra
+    // (sem isso cairia com texto vazio no canal-publico). A janela de 24 h já foi aberta acima.
+    else if (type === 'interactive' && m.interactive?.type === 'nfm_reply') {
+      await waLog({ phone: waId, direction: 'in', origin: 'recebida', kind: 'flow', wa_msg_id: String(m.id), text: '[formulário enviado]' });
+      return;
+    }
     else if (type === 'interactive') { kind = 'text'; text = String(m.interactive?.button_reply?.title ?? m.interactive?.list_reply?.title ?? ''); }
     else if (type === 'audio') {
       kind = 'audio';
