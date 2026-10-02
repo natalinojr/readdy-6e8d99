@@ -6,10 +6,13 @@
  *    (pending/overdue/partial, vencida = vencimento antes de hoje), pelo saldo que falta pagar;
  *  - O mês: dreCaixaDoPeriodo (a mesma função da DRE) — recebido e CMV; o resultado fica na DRE;
  *  - O que falta: a caixa de Pendências (usePendencias), só os tipos de dinheiro, cada um com a rota dele.
+ * Ao abrir (2026-10-01): busca o saldo do Inter na hora (inter-bank › sync, a mesma busca da Conciliação,
+ * pulada se outra busca rodou há menos de 2 min); o botão Atualizar força a busca e recarrega os quatro cartões.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
+import { invokeWithAuth } from '@/lib/supabase';
 import { useBankAccounts, useBillsPayable } from '@/hooks/useFinanceiro';
 import { usePendencias, kindConfig } from '@/contexts/PendenciasContext';
 import { todayBrasilia, somarDias } from '@/lib/dateUtils';
@@ -50,9 +53,33 @@ const Carregando = () => <div className="h-16 rounded-lg bg-zinc-100 animate-pul
 export default function PainelFinTab({ onIrAba }: { onIrAba: (aba: string) => void }) {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const { accounts, loading: carregandoContas } = useBankAccounts();
-  const { bills, loading: carregandoContasPagar } = useBillsPayable();
-  const { abertas } = usePendencias();
+  const { accounts, loading: carregandoContas, refresh: recarregarContas } = useBankAccounts();
+  const { bills, loading: carregandoContasPagar, refresh: recarregarContasPagar } = useBillsPayable();
+  const { abertas, recarregar: recarregarPendencias } = usePendencias();
+
+  // Saldo real do banco: busca no Inter ao abrir (max_age_min evita repetir ao trocar de aba) e no botão (forçado).
+  const [buscandoSaldo, setBuscandoSaldo] = useState(false);
+  const [erroSaldo, setErroSaldo] = useState(false);
+  const [versao, setVersao] = useState(0);
+  const buscarSaldo = useCallback(async (forcar: boolean) => {
+    if (!user?.tenantId) return;
+    setBuscandoSaldo(true); setErroSaldo(false);
+    const r = await invokeWithAuth<{ success?: boolean; error?: string }>('inter-bank', {
+      body: { action: 'sync', tenant_id: user.tenantId, ...(forcar ? {} : { max_age_min: 2 }) },
+    });
+    const err = r.data?.error ?? r.error?.message;
+    // Loja sem Inter integrado não é erro: só não há saldo do banco para buscar.
+    if (err && !/não configurad|desativad|Configure a conta/i.test(err)) setErroSaldo(true);
+    await recarregarContas();
+    setBuscandoSaldo(false);
+  }, [user?.tenantId, recarregarContas]);
+  useEffect(() => { buscarSaldo(false); }, [buscarSaldo]);
+  const atualizarTudo = () => {
+    buscarSaldo(true);
+    recarregarContasPagar();
+    recarregarPendencias();
+    setVersao((v) => v + 1);
+  };
 
   // --- Quanto tenho
   const contas = accounts.filter((a) => a.is_active !== false);
@@ -92,7 +119,7 @@ export default function PainelFinTab({ onIrAba }: { onIrAba: (aba: string) => vo
       .then((r) => { if (vivo) setDre({ receita: r.receita, cmv: r.cmv }); })
       .catch(() => { if (vivo) setErroDre(true); });
     return () => { vivo = false; };
-  }, [user?.tenantId, user?.tenantKind, mes, hoje]);
+  }, [user?.tenantId, user?.tenantKind, mes, hoje, versao]);
 
   // --- O que falta (caixa de Pendências, agrupada por tipo)
   const grupos = useMemo(() => {
@@ -110,6 +137,13 @@ export default function PainelFinTab({ onIrAba }: { onIrAba: (aba: string) => vo
 
   return (
     <div className="p-4 md:p-6 flex flex-col gap-4 max-w-[1400px]">
+      <div className="flex justify-end -mb-1">
+        <button onClick={atualizarTudo} disabled={buscandoSaldo}
+          className="text-xs font-semibold text-zinc-600 hover:text-zinc-900 bg-white border border-zinc-200 rounded-lg px-3 py-1.5 flex items-center gap-1.5 cursor-pointer disabled:opacity-60 disabled:cursor-default">
+          <i className={`ri-refresh-line ${buscandoSaldo ? 'animate-spin' : ''}`} />
+          {buscandoSaldo ? 'Atualizando…' : 'Atualizar'}
+        </button>
+      </div>
       <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-4 gap-4">
         <Pergunta titulo="Quanto tenho?" icone="ri-bank-line" acao="Abrir Bancos e Contas" onAcao={() => onIrAba('bancos')}>
           {carregandoContas ? <Carregando /> : (<>
@@ -118,6 +152,12 @@ export default function PainelFinTab({ onIrAba }: { onIrAba: (aba: string) => vo
               <Linha key={a.id} rotulo={`${a.name}${a.synced_balance != null ? ' (pelo banco)' : ''}`} valor={brl(saldoDe(a))} cor={saldoDe(a) < 0 ? 'text-red-600' : undefined} />
             ))}
             {contas.length === 0 && <p className="text-xs text-zinc-400">Nenhuma conta bancária cadastrada.</p>}
+            {(() => {
+              const quando = contas.map((a) => a.synced_balance_at ?? '').filter(Boolean).sort().pop();
+              if (buscandoSaldo) return <p className="text-[11px] text-zinc-400">Buscando o saldo no banco…</p>;
+              if (erroSaldo) return <p className="text-[11px] text-amber-600">Não deu para buscar o saldo no banco agora{quando ? `; mostrando o de ${new Date(quando).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' })}` : ''}.</p>;
+              return quando ? <p className="text-[11px] text-zinc-400">Saldo do banco às {new Date(quando).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' })} de {new Date(quando).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', timeZone: 'America/Sao_Paulo' })}.</p> : null;
+            })()}
             {divergentes.map((a) => (
               <div key={a.id} className="rounded-lg bg-red-50 text-red-700 text-[11px] px-2.5 py-1.5 flex gap-1.5">
                 <i className="ri-error-warning-line mt-px" />
