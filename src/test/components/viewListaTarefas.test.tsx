@@ -113,10 +113,19 @@ describe('ViewLista (tarefas)', () => {
     expect(write).toHaveBeenCalledWith('update_task', { task_id: 'c', sort_order: -999 });
   });
 
-  it('arrastar desliga com a lista ordenada por coluna', () => {
-    montar();
-    ordenarPeloMenu('Prioridade', /Ordenar crescente/);
-    expect((screen.getByText('Tarefa Alta').closest('.group') as HTMLElement).getAttribute('draggable')).toBe('false');
+  it('arrastar com a lista ordenada por coluna: a ordem da tela vira a manual e a ordenação sai', async () => {
+    const write = montar();
+    ordenarPeloMenu('Prioridade', /Ordenar decrescente/); // Urgente, Alta, Sem
+    const linha = (t: string) => screen.getByText(t).closest('.group') as HTMLElement;
+    expect(linha('Tarefa Alta').getAttribute('draggable')).toBe('true');
+    fireEvent.dragStart(linha('Tarefa Sem'), { dataTransfer: { setData: vi.fn(), effectAllowed: '' } });
+    fireEvent.dragOver(linha('Tarefa Urgente'), { clientY: -1 }); // antes da primeira
+    fireEvent.drop(linha('Tarefa Urgente'), { clientY: -1 });
+    await vi.waitFor(() => expect(write).toHaveBeenCalledTimes(3));
+    expect(write).toHaveBeenCalledWith('update_task', { task_id: 'b', sort_order: 0 });
+    expect(write).toHaveBeenCalledWith('update_task', { task_id: 'c', sort_order: 1000 });
+    expect(write).toHaveBeenCalledWith('update_task', { task_id: 'a', sort_order: 2000 });
+    expect(screen.queryByTitle(/ordenação por coluna sai/)).toBeNull();
   });
 
   it('coluna de comentários aceita digitar direto', async () => {

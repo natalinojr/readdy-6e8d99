@@ -607,6 +607,37 @@ export default function ViewLista({
     const task = tasks.find((t) => t.id === a.taskId);
     if (!task) return;
 
+    // Lista ordenada por coluna: quem arrasta quer a ordem que está vendo. A
+    // ordem da tela vira a ordem manual do grupo (só grava quem mudou de lugar)
+    // e a ordenação sai — senão a tarefa voltaria pro lugar da coluna (2026-10-02).
+    if (ordenacaoAtiva) {
+      const vista = ordenar(grupo.tasks).filter((t) => t.id !== task.id);
+      let p = alvoId ? vista.findIndex((t) => t.id === alvoId) : vista.length;
+      if (p === -1) p = vista.length;
+      else if (alvoId && !antes) p += 1;
+      vista.splice(p, 0, task);
+      const base = Math.min(...vista.map((t) => t.sort_order));
+      const novos = vista.map((t, i) => ({ t, sort: base + i * 1000 }));
+      setOrdenacao(null);
+      if (a.grupoKey !== grupo.key) {
+        const mov = payloadMoverGrupo(groupBy, grupo.key, list);
+        if (!mov) {
+          toast.error('Não dá pra mover para este grupo');
+          return;
+        }
+        const res = mov.action === 'set_field_value'
+          ? await gravar('set_field_value', { task_id: task.id, ...mov.patch })
+          : await gravar('update_task', { task_id: task.id, ...mov.patch });
+        if (!res.success) return;
+      }
+      const mudaram = novos.filter(({ t, sort }) => t.id === task.id || t.sort_order !== sort);
+      const resultados = await Promise.all(mudaram.map(({ t, sort }) => write('update_task', { task_id: t.id, sort_order: sort })));
+      const falhas = resultados.filter((r) => !r.success).length;
+      if (falhas > 0) toast.error(`${falhas} de ${mudaram.length} tarefas não mudaram de lugar`);
+      else toast.success('Ordem manual salva', 'A ordem que estava na tela virou a ordem da lista; a ordenação por coluna foi tirada');
+      return;
+    }
+
     const destino = grupo.tasks.filter((t) => t.id !== task.id);
     let pos = alvoId ? destino.findIndex((t) => t.id === alvoId) : destino.length;
     if (pos === -1) pos = destino.length;
@@ -695,14 +726,14 @@ export default function ViewLista({
     const selecionada = selecionadas.has(task.id);
     const haSelecao = selecionadas.size > 0;
 
-    // Só tarefas-raiz arrastam (subtarefa fica presa na tarefa-pai). Com a
-    // lista ordenada por coluna a ordem manual não aparece — arrastar ali
-    // confundiria, então fica desligado.
+    // Só tarefas-raiz arrastam (subtarefa fica presa na tarefa-pai). Com a lista
+    // ordenada por coluna também arrasta: o `soltar` transforma a ordem da tela em
+    // ordem manual e tira a ordenação.
     const renomeando = editandoTitulo?.taskId === task.id;
     // Pasta só de leitura (ou tarefa de pasta alheia vista em "Minhas tarefas" — aí o servidor decide).
     const podeRenomear = list?.access !== 'view';
     // Enquanto renomeia, a linha não arrasta (senão selecionar o texto com o mouse puxava a linha).
-    const arrastavel = nivel === 0 && !!grupo && !ordenacaoAtiva && !renomeando;
+    const arrastavel = nivel === 0 && !!grupo && !renomeando;
     const alvoAqui = alvoArrasto?.taskId === task.id && arrasto?.taskId !== task.id;
 
     return (
@@ -743,14 +774,13 @@ export default function ViewLista({
           {alvoAqui && (
             <span className={`pointer-events-none absolute left-2 right-2 h-0.5 rounded bg-indigo-500 z-10 ${alvoArrasto!.antes ? '-top-px' : '-bottom-px'}`} />
           )}
-          {/* Alça do computador: aparece no hover, à esquerda da caixinha. Com a lista
-              ordenada por coluna fica apagada e explica por que não arrasta. */}
+          {/* Alça do computador: aparece no hover, à esquerda da caixinha. */}
           {nivel === 0 && !!grupo && !renomeando && (
             <span
               className={`hidden md:flex absolute left-0 top-0 bottom-0 w-4 items-center justify-center opacity-0 group-hover:opacity-100 ${
                 arrastavel ? 'text-slate-400 hover:text-indigo-500 cursor-grab active:cursor-grabbing' : 'text-slate-200 cursor-not-allowed'
               }`}
-              title={arrastavel ? 'Arraste para mudar a ordem' : 'A lista está ordenada por uma coluna — clique no título da coluna até a seta sumir para voltar à ordem manual e poder arrastar'}
+              title={ordenacaoAtiva ? 'Arraste para mudar a ordem (a ordem da tela vira a ordem manual e a ordenação por coluna sai)' : 'Arraste para mudar a ordem'}
               onClick={(e) => e.stopPropagation()}
             >
               <GripVertical size={15} />
@@ -1240,7 +1270,7 @@ export default function ViewLista({
               <div
                 data-grupo-fim={grupo.key ?? ''}
                 onDragOver={(e) => {
-                  if (!arrasto || ordenacaoAtiva) return;
+                  if (!arrasto) return;
                   e.preventDefault();
                   if (alvoArrasto?.taskId !== null || alvoArrasto.grupoKey !== grupo.key) {
                     setAlvoArrasto({ taskId: null, grupoKey: grupo.key, antes: false });
@@ -1248,7 +1278,7 @@ export default function ViewLista({
                 }}
                 onDrop={(e) => {
                   e.preventDefault();
-                  if (arrasto && !ordenacaoAtiva) soltar(grupo, null, false);
+                  if (arrasto) soltar(grupo, null, false);
                 }}
                 className={`bg-white rounded-xl border divide-y divide-slate-100 overflow-hidden transition ${
                   arrasto && alvoArrasto?.grupoKey === grupo.key && alvoArrasto.taskId === null
