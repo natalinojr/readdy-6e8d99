@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, Fragment } from 'react';
+import { useState, useMemo, useEffect, useRef, Fragment } from 'react';
 import { useEstoque, type InventarioItemContado, type Insumo } from '../../../contexts/EstoqueContext';
 import { useAuth } from '../../../contexts/AuthContext';
 import ConfirmarInventarioModal from './ConfirmarInventarioModal';
@@ -8,6 +8,8 @@ interface InventarioDraft {
   contagens: Record<string, string>;
   /** Fator de contagem de cada insumo quando o rascunho foi salvo (ausente = 1, rascunho antigo). */
   fatores?: Record<string, number>;
+  /** Insumos que a pessoa já conferiu (digitou ou deu "próximo" no campo). */
+  conferidos?: string[];
   savedAt: string;
   operador: string;
 }
@@ -84,12 +86,13 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
     try {
       const draft: InventarioDraft = {
         contagens,
+        conferidos: Array.from(conferidos),
         fatores: Object.fromEntries(insumos.map((i) => [i.id, fatorDe(i)])),
         savedAt: new Date().toISOString(),
         operador,
       };
       localStorage.setItem(getDraftKey(), JSON.stringify(draft));
-      setRascunhoSalvo(true);
+      setSalvoEm(new Date());
     } catch {
       // localStorage cheio ou indisponível
     }
@@ -122,6 +125,20 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
     return init;
   });
 
+  // Rascunho que já existia ao abrir a tela (o salvamento automático não conta).
+  const [temRascunhoCarregado] = useState(() => !startFresh && carregarRascunho() !== null);
+
+  const [conferidos, setConferidos] = useState<Set<string>>(() => {
+    if (startFresh || !tenantId) return new Set();
+    try {
+      const raw = localStorage.getItem(getDraftKey());
+      const d = raw ? (JSON.parse(raw) as InventarioDraft) : null;
+      return new Set(d?.conferidos ?? []);
+    } catch {
+      return new Set();
+    }
+  });
+
   /** Contado convertido para a unidade do ESTOQUE (NaN = vazio/inválido). Campo intocado = teórico exato. */
   const contadoEstoque = (i: Insumo): number => {
     const raw = contagens[i.id] ?? '';
@@ -140,26 +157,54 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
   const [apenasComDiff, setApenasComDiff] = useState(false);
   const [showConfirmar, setShowConfirmar] = useState(false);
   const [confirmado, setConfirmado] = useState(false);
-  const [rascunhoSalvo, setRascunhoSalvo] = useState(false);
+  const [salvoEm, setSalvoEm] = useState<Date | null>(null);
+  const [editado, setEditado] = useState(false);
   const [showCancelarModal, setShowCancelarModal] = useState(false);
+  // Celular: com o teclado aberto a barra de baixo some para não cobrir o campo.
+  const [digitando, setDigitando] = useState(false);
+  const blurTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Limpa flag de "salvo" após 2 segundos
+  // Salva sozinho enquanto a pessoa conta (rascunho no aparelho; sobrevive a fechar o app).
   useEffect(() => {
-    if (rascunhoSalvo) {
-      const t = setTimeout(() => setRascunhoSalvo(false), 2000);
-      return () => clearTimeout(t);
-    }
-  }, [rascunhoSalvo]);
-
-  // Verifica se tem rascunho carregado (para mostrar badge)
-  const temRascunhoCarregado = useMemo(() => {
-    const draft = carregarRascunho();
-    return draft !== null && Object.keys(draft).length > 0;
+    if (!editado) return;
+    const t = setTimeout(salvarRascunho, 400);
+    return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [contagens]);
+  }, [contagens, conferidos, editado]);
+
+  const marcarConferido = (id: string) => {
+    setEditado(true);
+    setConferidos((prev) => (prev.has(id) ? prev : new Set(prev).add(id)));
+  };
 
   const handleChange = (id: string, value: string) => {
     setContagens((prev) => ({ ...prev, [id]: value }));
+    marcarConferido(id);
+  };
+
+  const handleFocus = (e: React.FocusEvent<HTMLInputElement>) => {
+    if (blurTimer.current) clearTimeout(blurTimer.current);
+    setDigitando(true);
+    e.target.select();
+  };
+  const handleBlur = () => {
+    blurTimer.current = setTimeout(() => setDigitando(false), 150);
+  };
+
+  /** "Próximo"/Enter no teclado: confere este e pula para o próximo campo da lista. */
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>, id: string) => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    marcarConferido(id);
+    const atual = e.currentTarget;
+    const campos = Array.from(atual.closest('[data-lista-contagem]')?.querySelectorAll<HTMLInputElement>('input[data-contagem]') ?? []);
+    const prox = campos[campos.indexOf(atual) + 1];
+    if (prox) {
+      prox.focus();
+      prox.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    } else {
+      atual.blur();
+    }
   };
 
   const insumosFiltrados = useMemo(() => {
@@ -235,7 +280,7 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
 
   const handleCancelarContagem = () => {
     // Se não tem nada alterado, cancela direto
-    const temAlteracao = itensComDiferenca.length > 0 || temRascunhoCarregado;
+    const temAlteracao = itensComDiferenca.length > 0 || temRascunhoCarregado || editado;
     if (!temAlteracao) {
       limparRascunho();
       onCancelar();
@@ -288,13 +333,12 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
           <p className="text-xs text-zinc-400">Operador: <span className="font-semibold">{operador}</span> · {insumos.length} insumos a contar</p>
         </div>
         <div className="flex items-center gap-2">
-          <button
-            onClick={salvarRascunho}
-            className="flex items-center gap-1.5 px-3 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 rounded-xl text-xs font-semibold text-zinc-600 cursor-pointer transition-colors whitespace-nowrap shadow-sm"
-          >
-            <i className={`text-sm ${rascunhoSalvo ? 'ri-check-line text-emerald-500' : 'ri-save-line'}`} />
-            {rascunhoSalvo ? 'Salvo!' : 'Salvar Rascunho'}
-          </button>
+          <span className="flex items-center gap-1.5 px-1 py-2 text-xs font-medium text-zinc-500 whitespace-nowrap">
+            <i className={`text-sm ${salvoEm ? 'ri-check-line text-emerald-500' : 'ri-save-line text-zinc-400'}`} />
+            {salvoEm
+              ? `Salvo às ${salvoEm.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`
+              : 'Salva sozinho enquanto conta'}
+          </span>
           <button
             onClick={handleCancelarContagem}
             className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-zinc-500 hover:text-red-500 cursor-pointer transition-colors whitespace-nowrap"
@@ -355,7 +399,7 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
 
       {/* Tabela de contagem */}
       {/* Celular: cartão por insumo, com input grande para digitar andando pelo estoque */}
-      <ul className="md:hidden space-y-2">
+      <ul data-lista-contagem className="md:hidden space-y-2">
         {grupos.map(({ categoria, itens }) => (
           <Fragment key={categoria}>
             <li className="pt-2 first:pt-0 flex items-center gap-2">
@@ -370,13 +414,17 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
           const temDiff = temDiferenca(insumo);
           const impacto = temDiff ? diff * insumo.precoUnitario : 0;
           const emOutraUnidade = fatorDe(insumo) !== 1;
+          const conferido = conferidos.has(insumo.id);
 
           return (
             <li key={insumo.id}>
-              <div className={`rounded-2xl border bg-white px-3 py-3 ${temDiff ? 'border-amber-300 bg-amber-50/30' : 'border-zinc-200'}`}>
+              <div className={`rounded-2xl border bg-white px-3 py-3 ${temDiff ? 'border-amber-300 bg-amber-50/30' : conferido ? 'border-emerald-200' : 'border-zinc-200'}`}>
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
-                    <p className="text-sm font-medium text-zinc-800 break-words line-clamp-2">{insumo.nome}</p>
+                    <p className="text-sm font-medium text-zinc-800 break-words line-clamp-2">
+                      {conferido && <i className="ri-checkbox-circle-fill text-emerald-500 mr-1 align-[-2px]" />}
+                      {insumo.nome}
+                    </p>
                     <p className="text-xs text-zinc-400">{insumo.fornecedor}</p>
                   </div>
                   <span className="px-2 py-0.5 bg-zinc-100 text-zinc-600 rounded-md text-[11px] font-semibold whitespace-nowrap flex-shrink-0">
@@ -398,10 +446,15 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
                     <input
                       type="number"
                       inputMode="decimal"
+                      enterKeyHint="next"
+                      data-contagem
                       min="0"
                       step="0.001"
                       value={rawVal}
                       onChange={(e) => handleChange(insumo.id, e.target.value)}
+                      onFocus={handleFocus}
+                      onBlur={handleBlur}
+                      onKeyDown={(e) => handleKeyDown(e, insumo.id)}
                       className={`h-11 text-base w-full text-right border rounded-lg px-3 focus:outline-none transition-colors ${
                         temDiff
                           ? 'border-amber-400 bg-amber-50 text-zinc-800 focus:border-amber-500'
@@ -440,7 +493,7 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
 
       <div className="hidden md:block bg-white rounded-2xl border border-zinc-200 overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full text-xs">
+          <table data-lista-contagem className="w-full text-xs">
             <thead className="border-b border-zinc-200">
               <tr>
                 <th className="pl-5 pr-4 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Insumo</th>
@@ -498,8 +551,11 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
                           type="number"
                           min="0"
                           step="0.001"
+                          data-contagem
                           value={rawVal}
                           onChange={(e) => handleChange(insumo.id, e.target.value)}
+                          onFocus={(e) => e.target.select()}
+                          onKeyDown={(e) => handleKeyDown(e, insumo.id)}
                           className={`w-full text-sm text-right border rounded-xl px-2 py-1.5 focus:outline-none transition-colors ${
                             temDiff
                               ? 'border-amber-400 bg-amber-50 text-zinc-800 focus:border-amber-500'
@@ -549,11 +605,37 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
       </div>
 
       {/* Barra inferior de resumo + confirmar */}
-      <div className="sticky bottom-0 bg-white border border-zinc-200 rounded-2xl shadow-sm px-4 md:px-5 py-3 md:py-4 flex items-center gap-4 md:gap-6 flex-wrap">
+      {/* Celular: faixa fina colada embaixo; some enquanto o teclado está aberto */}
+      <div className={`md:hidden sticky bottom-2 z-10 bg-white border border-zinc-200 rounded-2xl shadow-lg pl-3 pr-1.5 py-1.5 flex items-center gap-2 ${digitando ? 'hidden' : ''}`}>
+        <div className="flex-1 min-w-0 leading-tight">
+          <p className="text-xs font-bold text-zinc-800">
+            {conferidos.size}/{insumos.length} <span className="font-medium text-zinc-500">conferidos</span>
+          </p>
+          <p className="text-[11px] text-zinc-500 truncate">
+            <span className={itensComDiferenca.length > 0 ? 'font-semibold text-amber-600' : ''}>
+              {itensComDiferenca.length} com diferença
+            </span>
+            {itensComDiferenca.length > 0 && (
+              <span className={`font-semibold ${valorImpacto < 0 ? 'text-red-500' : 'text-emerald-600'}`}>
+                {' · '}{valorImpacto >= 0 ? '+' : ''}{fmt(valorImpacto)}
+              </span>
+            )}
+          </p>
+        </div>
+        <button
+          onClick={() => setShowConfirmar(true)}
+          className="h-10 px-4 bg-amber-500 active:bg-amber-600 text-white text-xs font-semibold rounded-xl cursor-pointer whitespace-nowrap flex items-center gap-1.5 flex-shrink-0"
+        >
+          <i className="ri-check-double-line" />
+          Confirmar
+        </button>
+      </div>
+
+      <div className="hidden md:flex sticky bottom-0 bg-white border border-zinc-200 rounded-2xl shadow-sm px-5 py-4 items-center gap-6 flex-wrap">
         <div className="flex items-center gap-6 flex-1 flex-wrap">
           <div>
-            <p className="text-[11px] text-zinc-400">Itens contados</p>
-            <p className="text-sm font-bold text-zinc-800">{insumos.length}</p>
+            <p className="text-[11px] text-zinc-400">Conferidos</p>
+            <p className="text-sm font-bold text-zinc-800">{conferidos.size} de {insumos.length}</p>
           </div>
           <div>
             <p className="text-[11px] text-zinc-400">Com diferença</p>
@@ -598,7 +680,7 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
               <div>
                 <h2 className="text-sm font-bold text-zinc-900 mb-1">Cancelar contagem?</h2>
                 <p className="text-xs text-zinc-600 leading-relaxed">
-                  Você tem {itensComDiferenca.length} iten{itensComDiferenca.length !== 1 ? 's' : ''} com diferença na contagem atual. Deseja salvar o progresso como rascunho para terminar depois ou descartar tudo?
+                  Você tem {itensComDiferenca.length} iten{itensComDiferenca.length !== 1 ? 's' : ''} com diferença na contagem atual. A contagem já está salva neste aparelho: dá para sair e terminar depois, ou descartar tudo.
                 </p>
               </div>
             </div>
@@ -608,7 +690,7 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
                 className="w-full py-3 bg-amber-500 hover:bg-amber-600 text-white text-sm font-bold rounded-xl cursor-pointer whitespace-nowrap transition-colors flex items-center justify-center gap-2"
               >
                 <i className="ri-save-line" />
-                Salvar Rascunho e Sair
+                Sair e terminar depois
               </button>
               <button
                 onClick={handleDescartarESair}
