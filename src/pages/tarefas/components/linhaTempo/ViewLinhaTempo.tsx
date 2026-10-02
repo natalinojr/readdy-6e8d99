@@ -1095,7 +1095,8 @@ export default function ViewLinhaTempo({
       corpo.push(
         <div key={it.key} className="absolute left-0 flex" style={{ top, height: it.altura, width: col + larguraFaixa }}>
           <div className="relative" style={{ width: larguraFaixa }}>
-            {it.barras.map((l) => renderBarra(l, `${it.g.key}:${l.task.id}`, topBarra))}
+            {/* Barra toda à esquerda da tela: o título de fora apareceria cortado na borda. */}
+            {it.barras.map((l) => renderBarra(l, `${it.g.key}:${l.task.id}`, topBarra, foraDaTela(l).esq))}
           </div>
         </div>,
       );
