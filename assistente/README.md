@@ -584,8 +584,10 @@ Correção/"desfaz" = `ajustar_tarefa` (sem id = a última criada pelo assistent
 antiga e a tarefa some da lista (o mapa de ações foi corrigido). No webhook, cada mensagem encaminhada
 leva `[Encaminhada]` **antes** do `debounce` (antes o prefixo do lote vinha da última mensagem e
 "encaminhei 3 + escrevi a pasta" perdia a marca). Teste: conversa `teste:` direto no brain via
-`net.http_post` com a chave do vault `assistente_internal_key`. Enquete do WhatsApp **não** funciona
-nesse repasse (voto grava com `chat_id tg:` e cai fora do `allowed`) — por isso a lista numerada.
+`net.http_post` com a chave do vault `assistente_internal_key`. **Pasta por enquete (10-02, parte 2):** o brain manda
+enquete "Pasta?" (`enviar_enquete`); no repasse ela é gravada com `chat_id tg:…`, `kind = wa_repasse` e
+`ref.wa_number` — antes o voto caía fora do `allowed_chat_ids` e sumia. `votoDoRepasse` devolve o voto ao
+brain nesse chat e responde no WhatsApp. No chat do ERPOS (sem enquete) continua a lista numerada.
 
 **Agendamento de entrevista com o candidato (2026-09-14, Fases 1–2).** Decisões do dono: início
 automático pela etapa "Chamar p/ entrevista" (`hiring_stages.native_kind = 'agendar'`); disponibilidade
