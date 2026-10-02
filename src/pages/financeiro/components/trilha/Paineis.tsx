@@ -57,7 +57,9 @@ export function SugestaoExtrato({ extrato, acoes }: { extrato: TrExtrato; acoes:
 
 // ── 2. Pagar uma conta vencida (conferência + PIN) ──────────────────────────
 type FasePag = 'conferir' | 'preparando' | 'pin' | 'enviando' | 'feito' | 'falhou';
-export function PagarConta({ conta, boleto, acoes, onFechar }: { conta: TrConta; boleto: BoletoInfo | undefined; acoes: AcoesTrilha; onFechar: () => void }) {
+/** Quem já está cadastrado com chave Pix: Fornecedores ou Pix permitidos (conta sem boleto paga na chave). */
+export interface FornecedorPix { tipo: 'fornecedor' | 'permitido'; id: string; nome: string; apelido: string; chave: string }
+export function PagarConta({ conta, boleto, fornecedor, acoes, onFechar }: { conta: TrConta; boleto: BoletoInfo | undefined; fornecedor?: FornecedorPix; acoes: AcoesTrilha; onFechar: () => void }) {
   const [fase, setFase] = useState<FasePag>('conferir');
   const [pay, setPay] = useState<PagamentoInter | null>(null);
   const [pin, setPin] = useState('');
@@ -68,7 +70,7 @@ export function PagarConta({ conta, boleto, acoes, onFechar }: { conta: TrConta;
   const preparar = async () => {
     setErro(null); setFase('preparando');
     try {
-      const out = await assistente<{ payment: PagamentoInter }>('conta_pagar', { bill_id: conta.id });
+      const out = await assistente<{ payment: PagamentoInter }>('conta_pagar', { bill_id: conta.id, ...(fornecedor ? { [fornecedor.tipo === 'fornecedor' ? 'supplier_id' : 'favorecido_id']: fornecedor.id } : {}) });
       setPay(out.payment);
       if (['draft', 'awaiting_pin'].includes(out.payment.status)) setFase('pin');
       else { setErro(out.payment.error ?? out.payment.status_label ?? 'O Inter não deixou preparar esse pagamento.'); setFase('falhou'); }
@@ -101,14 +103,16 @@ export function PagarConta({ conta, boleto, acoes, onFechar }: { conta: TrConta;
         <dt className="text-zinc-400">Conta</dt><dd className="font-semibold text-zinc-800 break-words">{conta.supplier ?? conta.description}</dd>
         <dt className="text-zinc-400">Vencimento</dt><dd>{diaBR(conta.due_date)} · {dias} {dias === 1 ? 'dia' : 'dias'} de atraso</dd>
         <dt className="text-zinc-400">Valor da conta</dt><dd className="font-semibold">{fmtBRL(saldo)}</dd>
-        <dt className="text-zinc-400">Documento</dt><dd>{boleto?.boleto_digitavel || boleto?.boleto_barcode ? 'boleto guardado' : 'Pix copia e cola guardado'}</dd>
+        <dt className="text-zinc-400">Documento</dt><dd className="break-words">{fornecedor ? `Pix na chave de ${fornecedor.nome} (${fornecedor.chave})` : boleto?.boleto_digitavel || boleto?.boleto_barcode ? 'boleto guardado' : 'Pix copia e cola guardado'}</dd>
         <dt className="text-zinc-400">Sai de</dt><dd>conta bancária Inter</dd>
       </dl>
-      <p className="text-[11px] text-zinc-500">Multa e juros são calculados pelo Inter na hora do pagamento — o valor final aparece no próximo passo.</p>
+      <p className="text-[11px] text-zinc-500">{fornecedor
+        ? 'Pix pelo valor que falta da conta (sem multa nem juros). Se o fornecedor cobrar a mais, ajuste o valor da conta antes.'
+        : 'Multa e juros são calculados pelo Inter na hora do pagamento — o valor final aparece no próximo passo.'}</p>
       {fase === 'conferir' && (
         <div className="flex flex-wrap gap-2">
           <button onClick={() => void preparar()} className={BTN_OK}><i className="ri-bank-line" /> Preparar pagamento</button>
-          {boleto?.boleto_origem === 'erpos' && <button onClick={() => void desfazerBoleto()} className={BTN_LEVE}>Tirar o boleto guardado</button>}
+          {!fornecedor && boleto?.boleto_origem === 'erpos' && <button onClick={() => void desfazerBoleto()} className={BTN_LEVE}>Tirar o boleto guardado</button>}
         </div>
       )}
       {fase === 'preparando' && <p className="text-xs text-zinc-500"><i className="ri-loader-4-line animate-spin" /> Preparando no Inter…</p>}
@@ -178,12 +182,80 @@ export function FaltaJeitoDePagar({ conta, acoes, onPedir }: { conta: TrConta; a
       )}
       {avisos.map((a) => <p key={a} className="text-[11px] text-amber-800">{a}</p>)}
       <Erro msg={erro} />
+      <PixDoFornecedor conta={conta} acoes={acoes} />
       <p className="text-[11px] text-zinc-500 border-t border-zinc-100 pt-2">A chave Pix do fornecedor só se cadastra pela tela de Fornecedores (o Inter só paga Pix para quem está lá).</p>
       <div className="flex flex-wrap gap-2">
         <button onClick={() => acoes.rota('/financeiro?tab=compras')} className={BTN_LEVE}><i className="ri-store-2-line" /> Abrir Fornecedores</button>
         <button onClick={onPedir} className={BTN_LEVE}><i className="ri-mail-send-line" /> Pedir o boleto…</button>
       </div>
     </Painel>
+  );
+}
+
+// ── 3b. Pagar no Pix de um fornecedor já cadastrado com chave ───────────────
+// Só escolhe entre fornecedores que JÁ têm chave no cadastro; o pagamento passa pela mesma
+// conferência + PIN e o inter-bank confere a chave de novo contra Fornecedores.
+const normNome = (s: string | null | undefined) => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\b(ltda|me|eireli|epp|s\/?a)\b/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+function PixDoFornecedor({ conta, acoes }: { conta: TrConta; acoes: AcoesTrilha }) {
+  const [lista, setLista] = useState<FornecedorPix[] | null>(null);
+  const [busca, setBusca] = useState('');
+  const [sel, setSel] = useState<FornecedorPix | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+
+  useEffect(() => {
+    let vivo = true;
+    assistente<{ destinos: FornecedorPix[] }>('conta_pix_destinos', { bill_id: conta.id })
+      .then((r) => {
+        if (!vivo) return;
+        const fs = r.destinos ?? [];
+        setLista(fs);
+        // Já sugere quem tem o mesmo nome da conta (só sugere: pagar ainda pede conferência + PIN)
+        const alvo = normNome(conta.supplier);
+        const igual = alvo ? fs.find((f) => normNome(f.nome) === alvo || normNome(f.apelido) === alvo) : undefined;
+        if (igual) setSel(igual);
+        // Nome parecido ("Celina" × "CELINA MILDEMBERG…"): não escolhe sozinho, só já filtra a lista
+        else if (alvo && fs.some((f) => normNome(f.nome).includes(alvo.split(' ')[0]))) setBusca(alvo.split(' ')[0]);
+      })
+      .catch((e) => { if (vivo) { setErro(msgErro(e)); setLista([]); } });
+    return () => { vivo = false; };
+  }, [conta.id, conta.supplier]);
+
+  const q = normNome(busca);
+  const achados = (lista ?? []).filter((f) => !q || normNome(f.nome).includes(q) || f.chave.toLowerCase().includes(busca.trim().toLowerCase())).slice(0, 8);
+
+  return (
+    <div className="border-t border-zinc-100 pt-2 space-y-1.5">
+      <p className="text-[11px] font-semibold text-zinc-600">ou Pix na chave de quem já está cadastrado (Fornecedores ou Pix permitidos)</p>
+      {lista === null && <p className="text-xs text-zinc-400">Carregando cadastros com chave Pix…</p>}
+      {lista?.length === 0 && !erro && <p className="text-xs text-zinc-500">Nenhum fornecedor nem Pix permitido desta loja tem chave cadastrada.</p>}
+      {lista && lista.length > 0 && !sel && (
+        <>
+          <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar fornecedor ou chave…"
+            className="w-full text-xs border border-zinc-200 rounded-lg px-2 py-1.5 focus:outline-none focus:border-amber-400" />
+          <div className="space-y-1 max-h-60 overflow-y-auto">
+            {achados.map((f) => (
+              <button key={f.tipo + f.id} onClick={() => setSel(f)}
+                className="w-full text-left rounded-lg border border-zinc-200 hover:border-emerald-300 hover:bg-emerald-50/40 px-2.5 py-1.5 text-xs cursor-pointer">
+                <span className="font-semibold text-zinc-800 break-words">{f.nome}</span>
+                <span className="text-zinc-500 break-all"> · {f.chave}</span>
+                <span className="ml-1 text-[10px] px-1 py-px rounded bg-zinc-100 text-zinc-500">{f.tipo === 'fornecedor' ? 'fornecedor' : 'Pix permitido'}</span>
+              </button>
+            ))}
+            {achados.length === 0 && <p className="text-xs text-zinc-500">Ninguém com chave Pix bate com a busca.</p>}
+          </div>
+        </>
+      )}
+      {sel && (
+        <>
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="text-zinc-700">{sel.tipo === 'fornecedor' ? 'Fornecedor' : 'Pix permitido'}: <strong className="break-words">{sel.nome}</strong> <span className="text-zinc-500 break-all">· {sel.chave}</span></span>
+            <button onClick={() => setSel(null)} className="text-[11px] font-semibold text-zinc-500 hover:text-zinc-800 underline cursor-pointer">trocar</button>
+          </div>
+          <PagarConta key={sel.tipo + sel.id}conta={conta} boleto={undefined} fornecedor={sel} acoes={acoes} onFechar={() => setSel(null)} />
+        </>
+      )}
+      <Erro msg={erro} />
+    </div>
   );
 }
 
