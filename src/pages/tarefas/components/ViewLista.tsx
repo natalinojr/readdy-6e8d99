@@ -277,7 +277,8 @@ export default function ViewLista({
   const [editandoCampoId, setEditandoCampoId] = useState<string | null>(null);
   // Arrastar pra reordenar: qual tarefa está sendo arrastada (e de qual grupo)
   // e onde ela vai cair (antes/depois de qual linha, ou no fim do grupo).
-  const [arrasto, setArrasto] = useState<{ taskId: string; grupoKey: string | null } | null>(null);
+  // `parentId` = arrastando uma subtarefa: só muda de lugar entre as irmãs (mesma tarefa-pai).
+  const [arrasto, setArrasto] = useState<{ taskId: string; grupoKey: string | null; parentId?: string } | null>(null);
   const [alvoArrasto, setAlvoArrasto] = useState<{ taskId: string | null; grupoKey: string | null; antes: boolean } | null>(null);
   const [editando, setEditando] = useState<{ taskId: string; col: ColunaId; rect: DOMRect } | null>(null);
   const [statusPickerAberto, setStatusPickerAberto] = useState<{ taskId: string; rect: DOMRect } | null>(null);
@@ -661,6 +662,38 @@ export default function ViewLista({
     await gravar('update_task', { task_id: task.id, ...mov.patch, sort_order: novoSort });
   };
 
+  // Subtarefas na ordem manual (sort_order), igual ao detalhe da tarefa.
+  const subtarefasDe = (paiId: string) =>
+    tasks.filter((t) => t.parent_task_id === paiId).sort((a, b) => a.sort_order - b.sort_order);
+
+  // Solta a subtarefa arrastada antes/depois de uma irmã (2026-10-02). Não sai
+  // da tarefa-pai. Irmãs com o mesmo sort_order (empate) → renumera todas.
+  const soltarSub = async (parentId: string, alvoId: string, antes: boolean) => {
+    const a = arrasto;
+    setArrasto(null);
+    setAlvoArrasto(null);
+    if (!a || a.parentId !== parentId || a.taskId === alvoId) return;
+    const irmas = subtarefasDe(parentId);
+    const task = irmas.find((t) => t.id === a.taskId);
+    if (!task) return;
+    const destino = irmas.filter((t) => t.id !== task.id);
+    let pos = destino.findIndex((t) => t.id === alvoId);
+    if (pos === -1) return;
+    if (!antes) pos += 1;
+    const anterior = destino[pos - 1];
+    const proxima = destino[pos];
+    if (anterior && proxima && anterior.sort_order >= proxima.sort_order) {
+      destino.splice(pos, 0, task);
+      const base = Math.min(...irmas.map((t) => t.sort_order));
+      const mudaram = destino.map((t, i) => ({ t, sort: base + i * 1000 })).filter(({ t, sort }) => t.sort_order !== sort);
+      const resultados = await Promise.all(mudaram.map(({ t, sort }) => write('update_task', { task_id: t.id, sort_order: sort })));
+      const falhas = resultados.filter((r) => !r.success).length;
+      if (falhas > 0) toast.error(`${falhas} de ${mudaram.length} subtarefas não mudaram de lugar`);
+      return;
+    }
+    await gravar('update_task', { task_id: task.id, sort_order: calcularSortOrder(anterior, proxima) });
+  };
+
   // Arrastar no celular: o arrasto nativo (HTML5) não funciona com o dedo, então a
   // alça ⋮⋮ do cartão usa pointer events — acha a linha embaixo do dedo pelos
   // data-attributes e solta com o mesmo `soltar` do computador (2026-09-30).
@@ -672,13 +705,14 @@ export default function ViewLista({
     r.vel = 0;
   };
   useEffect(() => pararRolagemToque, []);
-  const iniciarArrastoToque = (e: ReactPointerEvent<HTMLElement>, task: TaskRow, grupo: Grupo) => {
+  /** `grupo` null = subtarefa (só entre as irmãs). */
+  const iniciarArrastoToque = (e: ReactPointerEvent<HTMLElement>, task: TaskRow, grupo: Grupo | null) => {
     e.stopPropagation();
     try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* toque já captura sozinho */ }
     let el: HTMLElement | null = e.currentTarget.parentElement;
     while (el && !(el.scrollHeight > el.clientHeight && /(auto|scroll)/.test(getComputedStyle(el).overflowY))) el = el.parentElement;
     rolagemToque.current.el = el ?? window;
-    setArrasto({ taskId: task.id, grupoKey: grupo.key });
+    setArrasto(grupo ? { taskId: task.id, grupoKey: grupo.key } : { taskId: task.id, grupoKey: null, parentId: task.parent_task_id ?? undefined });
     setAlvoArrasto(null);
     navigator.vibrate?.(15);
   };
@@ -686,7 +720,14 @@ export default function ViewLista({
     if (!arrasto) return;
     const alvo = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
     const linha = alvo?.closest<HTMLElement>('[data-tarefa-id]');
-    if (linha?.dataset.grupoKey !== undefined) {
+    if (arrasto.parentId) {
+      if (linha && linha.dataset.paiId === arrasto.parentId) {
+        const r = linha.getBoundingClientRect();
+        const antes = e.clientY < r.top + r.height / 2;
+        const taskId = linha.dataset.tarefaId!;
+        if (alvoArrasto?.taskId !== taskId || alvoArrasto.antes !== antes) setAlvoArrasto({ taskId, grupoKey: null, antes });
+      }
+    } else if (linha?.dataset.grupoKey !== undefined) {
       const r = linha.getBoundingClientRect();
       const antes = e.clientY < r.top + r.height / 2;
       const taskId = linha.dataset.tarefaId!;
@@ -709,6 +750,15 @@ export default function ViewLista({
   const terminarArrastoToque = (cancelado: boolean) => {
     pararRolagemToque();
     const alvo = alvoArrasto;
+    if (arrasto?.parentId) {
+      if (cancelado || !alvo?.taskId) {
+        setArrasto(null);
+        setAlvoArrasto(null);
+        return;
+      }
+      soltarSub(arrasto.parentId, alvo.taskId, alvo.antes);
+      return;
+    }
     const grupo = alvo ? grupos.find((g) => g.key === alvo.grupoKey) : undefined;
     if (cancelado || !alvo || !grupo) {
       setArrasto(null);
@@ -721,19 +771,21 @@ export default function ViewLista({
   const renderLinha = (task: TaskRow, nivel: number, grupo?: Grupo) => {
     const concluida = task.status_category === 'done';
     const corStatus = corDoStatus(task, [list, ...lists]);
-    const subtarefas = tasks.filter((t) => t.parent_task_id === task.id);
+    const subtarefas = subtarefasDe(task.id);
     const aberta = expandidas.has(task.id);
     const selecionada = selecionadas.has(task.id);
     const haSelecao = selecionadas.size > 0;
 
-    // Só tarefas-raiz arrastam (subtarefa fica presa na tarefa-pai). Com a lista
-    // ordenada por coluna também arrasta: o `soltar` transforma a ordem da tela em
-    // ordem manual e tira a ordenação.
+    // Tarefa-raiz arrasta entre as tarefas do grupo; subtarefa arrasta só entre as
+    // irmãs (não sai da tarefa-pai — 2026-10-02). Com a lista ordenada por coluna a
+    // raiz também arrasta: o `soltar` transforma a ordem da tela em ordem manual.
     const renomeando = editandoTitulo?.taskId === task.id;
     // Pasta só de leitura (ou tarefa de pasta alheia vista em "Minhas tarefas" — aí o servidor decide).
     const podeRenomear = list?.access !== 'view';
     // Enquanto renomeia, a linha não arrasta (senão selecionar o texto com o mouse puxava a linha).
     const arrastavel = nivel === 0 && !!grupo && !renomeando;
+    const paiId = nivel > 0 ? task.parent_task_id : null;
+    const subArrastavel = !!paiId && !renomeando && podeRenomear;
     const alvoAqui = alvoArrasto?.taskId === task.id && arrasto?.taskId !== task.id;
 
     return (
@@ -741,15 +793,17 @@ export default function ViewLista({
         <div
           data-tarefa-id={task.id}
           data-grupo-key={arrastavel ? (grupo!.key ?? '') : undefined}
-          draggable={arrastavel}
-          onDragStart={arrastavel ? (e) => {
+          data-pai-id={paiId ?? undefined}
+          draggable={arrastavel || subArrastavel}
+          onDragStart={arrastavel || subArrastavel ? (e) => {
+            e.stopPropagation();
             e.dataTransfer.effectAllowed = 'move';
             e.dataTransfer.setData('text/plain', task.id); // alguns navegadores exigem
-            setArrasto({ taskId: task.id, grupoKey: grupo!.key });
+            setArrasto(arrastavel ? { taskId: task.id, grupoKey: grupo!.key } : { taskId: task.id, grupoKey: null, parentId: paiId! });
           } : undefined}
           onDragEnd={() => { setArrasto(null); setAlvoArrasto(null); }}
           onDragOver={arrastavel ? (e) => {
-            if (!arrasto) return;
+            if (!arrasto || arrasto.parentId) return;
             e.preventDefault();
             e.stopPropagation();
             const r = e.currentTarget.getBoundingClientRect();
@@ -757,11 +811,26 @@ export default function ViewLista({
             if (alvoArrasto?.taskId !== task.id || alvoArrasto.antes !== antes) {
               setAlvoArrasto({ taskId: task.id, grupoKey: grupo!.key, antes });
             }
+          } : paiId ? (e) => {
+            if (!arrasto || arrasto.parentId !== paiId) return;
+            e.preventDefault();
+            e.stopPropagation();
+            const r = e.currentTarget.getBoundingClientRect();
+            const antes = e.clientY < r.top + r.height / 2;
+            if (alvoArrasto?.taskId !== task.id || alvoArrasto.antes !== antes) {
+              setAlvoArrasto({ taskId: task.id, grupoKey: null, antes });
+            }
           } : undefined}
           onDrop={arrastavel ? (e) => {
             e.preventDefault();
             e.stopPropagation();
+            if (!arrasto || arrasto.parentId) { setArrasto(null); setAlvoArrasto(null); return; }
             soltar(grupo!, task.id, alvoArrasto?.antes ?? true);
+          } : paiId ? (e) => {
+            if (!arrasto || arrasto.parentId !== paiId) return;
+            e.preventDefault();
+            e.stopPropagation();
+            soltarSub(paiId, task.id, alvoArrasto?.antes ?? true);
           } : undefined}
           onClick={() => { if (!renomeando) onOpenTask(task.id); }}
           className={`relative flex items-start md:items-center gap-3 px-4 py-3 md:py-2.5 hover:bg-slate-50 active:bg-slate-100 cursor-pointer group ${
@@ -781,6 +850,16 @@ export default function ViewLista({
                 arrastavel ? 'text-slate-400 hover:text-indigo-500 cursor-grab active:cursor-grabbing' : 'text-slate-200 cursor-not-allowed'
               }`}
               title={ordenacaoAtiva ? 'Arraste para mudar a ordem (a ordem da tela vira a ordem manual e a ordenação por coluna sai)' : 'Arraste para mudar a ordem'}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <GripVertical size={15} />
+            </span>
+          )}
+          {subArrastavel && (
+            <span
+              className="hidden md:flex absolute top-0 bottom-0 w-4 items-center justify-center opacity-0 group-hover:opacity-100 text-slate-400 hover:text-indigo-500 cursor-grab active:cursor-grabbing"
+              style={{ left: `${nivel * RECUO_SUBTAREFA}px` }}
+              title="Arraste para mudar a ordem da subtarefa"
               onClick={(e) => e.stopPropagation()}
             >
               <GripVertical size={15} />
@@ -902,13 +981,13 @@ export default function ViewLista({
             </span>
           )}
 
-          {arrastavel && (
+          {(arrastavel || subArrastavel) && (
             <span
               role="button"
               aria-label="Arraste para mudar a ordem"
               title="Arraste para mudar a ordem"
               onClick={(e) => e.stopPropagation()}
-              onPointerDown={(e) => iniciarArrastoToque(e, task, grupo!)}
+              onPointerDown={(e) => iniciarArrastoToque(e, task, arrastavel ? grupo! : null)}
               onPointerMove={moverArrastoToque}
               onPointerUp={() => terminarArrastoToque(false)}
               onPointerCancel={() => terminarArrastoToque(true)}
@@ -1270,7 +1349,7 @@ export default function ViewLista({
               <div
                 data-grupo-fim={grupo.key ?? ''}
                 onDragOver={(e) => {
-                  if (!arrasto) return;
+                  if (!arrasto || arrasto.parentId) return;
                   e.preventDefault();
                   if (alvoArrasto?.taskId !== null || alvoArrasto.grupoKey !== grupo.key) {
                     setAlvoArrasto({ taskId: null, grupoKey: grupo.key, antes: false });
@@ -1278,7 +1357,7 @@ export default function ViewLista({
                 }}
                 onDrop={(e) => {
                   e.preventDefault();
-                  if (arrasto) soltar(grupo, null, false);
+                  if (arrasto && !arrasto.parentId) soltar(grupo, null, false);
                 }}
                 className={`bg-white rounded-xl border divide-y divide-slate-100 overflow-hidden transition ${
                   arrasto && alvoArrasto?.grupoKey === grupo.key && alvoArrasto.taskId === null
