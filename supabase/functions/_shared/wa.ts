@@ -184,6 +184,33 @@ export async function waSendTemplate(cfg: WaConfig, to: string, name: string, pa
   return id;
 }
 
+/** WhatsApp Flow (formulário dentro da conversa; só API oficial e dentro da janela de 24 h).
+ *  O botão abre a 1ª tela pedindo dados ao endpoint (flow_action data_exchange → whatsapp-flow). */
+export async function waSendFlow(cfg: WaConfig, to: string, f: {
+  flowId: string; token: string; cta: string; body: string; header?: string; footer?: string; draft?: boolean; origin?: string;
+}): Promise<string | null> {
+  if (cfg.transport !== 'cloud') throw new WaError('Flow só existe na API oficial', 400, null);
+  const out = await cloudSend(cfg, {
+    recipient_type: 'individual', to: cloudTo(to), type: 'interactive',
+    interactive: {
+      type: 'flow',
+      ...(f.header ? { header: { type: 'text', text: f.header.slice(0, 60) } } : {}),
+      body: { text: f.body.slice(0, 1024) },
+      ...(f.footer ? { footer: { text: f.footer.slice(0, 60) } } : {}),
+      action: {
+        name: 'flow',
+        parameters: {
+          flow_message_version: '3', flow_token: f.token, flow_id: f.flowId, flow_cta: f.cta.slice(0, 30),
+          flow_action: 'data_exchange', ...(f.draft ? { mode: 'draft' } : {}),
+        },
+      },
+    },
+  });
+  const id = out?.messages?.[0]?.id ?? null;
+  await waLog({ phone: to, direction: 'out', origin: f.origin ?? null, kind: 'flow', text: `${f.body}\n[botão: ${f.cta}]`, wa_msg_id: id });
+  return id;
+}
+
 /** Reação (👀, ✅…). emoji '' tira a reação. */
 export async function waReact(cfg: WaConfig, key: WaKey | null, emoji: string): Promise<void> {
   if (!key?.id) return;
