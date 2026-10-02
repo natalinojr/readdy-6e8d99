@@ -237,6 +237,7 @@ Slugs importantes:
 - Mesa/delivery: `table-write`, `mesa-write`, `delivery-write`, `reservation-write`.
 - Financeiro: `financial-write`, `purchase-write`, `purchase-confirm-delivery`, `stone-conciliation`, `pix-payment`, `implementation-write`.
 - Fiscal: `fiscal-write` (NFC-e via Brasil NFe: emit/retry/cancel/get_pdf/get_xml/print_danfe/test_connection/save_settings).
+- Contabilidade: `contabilidade` (guias enviadas pela contadora), `contabilidade-xml` (envio mensal dos XMLs por e-mail; cron `xml-contabilidade`).
 - Estoque/producao: `stock-write`, `production-write`.
 - Impressao: `printer-ping`, `printer-raw`, `print-queue-write`, `print-queue-agent`.
 - Auditoria/notificacoes: `audit-write`, `weekly-divergence-alert`.
@@ -3566,6 +3567,28 @@ Sem SW ativo o POST cai no Vercel e falha — por isso o destino só existe no S
 - **Servidor:** `isContabilidadeRole` fica FORA de `isFinanceiroRole` de propósito. Em `financial-write` o papel só lê (`list_*`/`get_*`) e grava a folha (`ACOES_CONTABILIDADE`: funcionário, lançamento pendente, férias/13º, campos da folha); nunca marca folha como paga nem mexe em lançamento pago. Pagar/baixar conta, fornecedor, banco e conciliação continuam de admin/gerente/financeiro. Nas outras Edges (purchase-write, fiscal-inbound import, inter-bank...) o papel continua barrado sem mudança.
 - **Aba Guias e impostos** (`GuiasTab.tsx`, chave `fin_guias`) → Edge `contabilidade` (`enviar_guia`, `listar`, `abrir_arquivo`; `--no-verify-jwt`, checa vínculo dentro). PDF → `textoDoPdf` → `lerGuia` → `assistente-brain` action `guia` (o mesmo `processarGuia` do grupo do WhatsApp) → aviso com cartão Pagar no Telegram do dono. A guia só entra na loja do CNPJ dela e só se quem mandou tem papel financeiro/contabilidade nessa loja (403 antes de gravar qualquer coisa). Protocolo em `fin_guias_enviadas` (só service_role) + PDF original no bucket privado `contabilidade-docs`.
 - **DARF de IRRF da folha (0561) — corrigido 2026-09-25:** `lerGuia` marca como encargo da folha (título "DARF IRRF (folha)", `reference_type hr_payroll`, sem categoria DRE), igual ao INSS descontado: o IRRF já está no bruto da folha. Publicado em assistente-brain, assistente-app e contabilidade; `inter-bank` também importa `guias.ts` mas não usa `encargo_folha` (não precisou republicar).
+
+### Envio automático dos XMLs para a contabilidade (2026-10-02)
+- **Onde:** Configurações › Fiscal, seção "Envio de XML para a contabilidade" (`EnvioXmlContabilidade.tsx`, com o próprio
+  botão de salvar; aparece mesmo em loja sem NFC-e). Edge `contabilidade-xml` (`--no-verify-jwt`; get/previa/baixar para
+  admin/gerente/financeiro/contabilidade, salvar/testar_email/enviar_xml_mes só admin/gerente; `cron` por `x-internal-key`).
+- **O que vai:** ZIP do mês ANTERIOR com `NFC-e/` (só `environment = 1`; canceladas com prefixo `CANCELADA-`),
+  `NFe-entrada/` e `NFSe-tomada/` (`fiscal_inbound_documents` com `xml_status = 'full'`, modelo 10 = NFS-e, `sefaz_status = 2`
+  = cancelada) + `resumo.csv` (`;`, vírgula decimal, BOM). Competência pela data de **emissão** em horário de Brasília.
+- **Como sai:** SMTP da própria loja, **só porta 465 (TLS direto)** — o Supabase bloqueia 25 e 587 nas Edges, então
+  STARTTLS não dá. Cliente próprio em `contabilidade-xml/smtp.ts` (AUTH PLAIN/LOGIN, MIME base64). Gmail = senha de app
+  (com 2 etapas ligada); Outlook/Hotmail não serve (587 + sem senha de app). Senha no Vault (`fn_xml_envio_senha_set/get`,
+  só service_role); a tela só sabe `tem_senha`.
+- **Agendamento:** `pg_cron` `xml-contabilidade` 08h10 BRT → `fn_xml_contabilidade_tick()` (reusa `fiscal_internal_key` e
+  `supabase_anon_key` do Vault). Envia a partir do `dia_envio` (1–28) se o mês não tem envio `enviado`/`vazio`; 1 tentativa
+  automática por dia e no máximo 3 com erro por mês (depois só "Enviar agora"). Mês sem nenhum XML vira `vazio` (não manda).
+- **Arquivo e histórico:** `fiscal_xml_envios` (uma linha por tentativa). O ZIP vai para `contabilidade-docs/xml/<loja>/<mês>/`
+  **depois** do envio (tentativa com erro não deixa arquivo); acima de 18 MB guarda antes e manda link assinado de 30 dias.
+- **Testado 10-02:** harness local (servidor SMTP TLS falso + shim de `Deno.connectTls`): MIME, acentos, ZIP íntegro, senha
+  errada, destinatário recusado, porta 587. Em produção na Testes PDV: cron → Edge → ZIP → TLS em `smtp.gmail.com:465` →
+  535 traduzido para "senha de app". O envio de ponta a ponta com senha real depende da loja cadastrar a dela.
+- Fora daqui: NFS-e **emitidas** pelo módulo `/notas-servico` (são por empresa, não por loja) e eventos de cancelamento
+  (`procEventoNFe`) — a NFC-e cancelada vai com o XML autorizado original, igual ao botão "XMLs do mês (contador)" de Pedidos.
 
 ### Boleto por e-mail vira conta a pagar (2026-09-25)
 - Entrada: Gmail da loja encaminha → CloudMailin → `contas-email?inbound=<segredo>`. O remetente é o `From` do **cabeçalho**; o `envelope.from` do encaminhamento do Gmail é `loja+caf_=...@gmail.com` (com ele nenhum fornecedor casava). "Fwd:" manual só troca o remetente se quem encaminhou é usuário da loja (senão qualquer um forja "De: fornecedor" no corpo).
