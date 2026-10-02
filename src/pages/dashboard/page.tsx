@@ -473,7 +473,7 @@ export default function Dashboard() {
       </div>
 
       {/* 5. Mesas + financeiro de hoje */}
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 items-start">
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 items-stretch">
         <div className="xl:col-span-2 min-w-0">
           <MesasOverview mesas={m?.mesas_mapa ?? []} />
         </div>

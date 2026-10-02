@@ -77,7 +77,7 @@ const MesasOverview = memo(function MesasOverview({ mesas }: Props) {
 
   if (mesas.length === 0) {
     return (
-      <div className="bg-white rounded-2xl border border-zinc-200">
+      <div className="bg-white rounded-2xl border border-zinc-200 h-full">
         <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-100 gap-3 flex-wrap">
           <div>
             <h3 className="text-sm font-bold text-zinc-800">Mapa de Mesas</h3>
@@ -95,7 +95,7 @@ const MesasOverview = memo(function MesasOverview({ mesas }: Props) {
 
   return (
     <>
-      <div className="bg-white rounded-2xl border border-zinc-200">
+      <div className="bg-white rounded-2xl border border-zinc-200 h-full">
         <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-100 gap-3 flex-wrap">
           <div>
             <h3 className="text-sm font-bold text-zinc-800">Mapa de Mesas</h3>
