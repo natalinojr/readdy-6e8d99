@@ -18,9 +18,10 @@ export function rotuloComparacao(k: Comparacao, ymd: string, base = 'Ontem'): st
     : `4 semanas atrás (${diaSemana(ymd)} ${ddmm(ymd)})`;
 }
 
-export function useComparacoesLigadas(chave: string) {
+/** `inicial` = o que vem ligado enquanto a pessoa não mexeu nos botões. */
+export function useComparacoesLigadas(chave: string, inicial: Partial<Record<Comparacao, boolean>> = {}) {
   const [ligadas, setLigadas] = useState<Record<Comparacao, boolean>>(() => {
-    const padrao = { ontem: false, semana: false, mes: false };
+    const padrao = { ontem: false, semana: false, mes: false, ...inicial };
     try { return { ...padrao, ...JSON.parse(localStorage.getItem(chave) ?? '{}') }; } catch { return padrao; }
   });
   const alternar = useCallback((k: Comparacao) => {
