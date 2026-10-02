@@ -91,7 +91,10 @@ async function runActions(admin: SupabaseClient, number: string, chatId: string,
       if (a.type === 'poll') {
         const out = await evo(`/message/sendPoll/${evoInstance}`, { number, name: a.question, selectableCount: a.selectable ?? 1, values: a.options });
         const id = out?.key?.id ? String(out.key.id) : null;
-        if (id) await admin.from('asst_polls').insert({ message_id: id, chat_id: chatId, question: String(a.question), options: a.options });
+        // Enquete do repasse (conversa no chat tg:, entrega no WhatsApp): guarda o número para o voto
+        // voltar ao brain nesse chat e a resposta sair no WhatsApp (votoDoRepasse, 2026-10-02).
+        const ref = chatId.startsWith('tg:') ? { wa_number: number } : null;
+        if (id) await admin.from('asst_polls').insert({ message_id: id, chat_id: chatId, question: String(a.question), options: a.options, ...(ref ? { kind: 'wa_repasse', ref } : {}) });
         else log('WARN', 'sendPoll sem key.id', { out: JSON.stringify(out).slice(0, 300) });
       } else if (a.type === 'location') {
         await evo(`/message/sendLocation/${evoInstance}`, { number, name: a.name, address: a.address ?? '', latitude: a.lat, longitude: a.lng });
@@ -985,6 +988,32 @@ async function relayToTelegram(
   }
 }
 
+// Voto numa enquete que o brain mandou pelo repasse (ex.: "Pasta?" da tarefa encaminhada, 2026-10-02).
+// A enquete foi gravada com chat_id tg:… (a conversa é a do Telegram) e o número do WhatsApp em ref;
+// antes o voto caía fora do allowed_chat_ids e sumia. Agora volta ao brain no mesmo chat e a resposta
+// sai no WhatsApp, como no relayToTelegram.
+// deno-lint-ignore no-explicit-any
+async function votoDoRepasse(admin: SupabaseClient, vote: { text: string; chatId: string; ref: any }) {
+  const number = String(vote.ref?.wa_number ?? '').replace(/@.*$/, '');
+  if (!number || !vote.chatId.startsWith('tg:')) return;
+  const { data: st } = await admin.from('asst_settings').select('value').eq('key', 'allowed_chat_ids').maybeSingle();
+  const allowed: string[] = Array.isArray(st?.value) ? st.value.map(String) : [];
+  if (!allowed.some((c) => c.replace(/@.*$/, '') === number)) { log('WARN', 'voto do repasse de número fora da lista', { number }); return; }
+  const r = await fetch(`${supabaseUrl}/functions/v1/assistente-brain`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'x-internal-key': internalKey },
+    body: JSON.stringify({ text: `[Pelo WhatsApp] ${vote.text}`, chat_id: vote.chatId, channel: 'telegram' }),
+  });
+  const out = await r.json().catch(() => ({}));
+  if (!r.ok || !out?.reply) {
+    await sendText(number, 'Não consegui registrar sua escolha. Escreva o nome da pasta.').catch(() => {});
+    throw new Error(`brain ${r.status}: ${JSON.stringify(out).slice(0, 200)}`);
+  }
+  if (String(out.reply) !== 'NO_REPLY') await sendText(number, String(out.reply));
+  const actions = Array.isArray(out.actions) ? out.actions : [];
+  if (actions.length) await runActions(admin, number, vote.chatId, actions);
+  log('INFO', 'voto do repasse respondido no WhatsApp', { vote: vote.text.slice(0, 80) });
+}
+
 // Currículos pelo WhatsApp (2026-09-13): o dono recebe currículos no WhatsApp e só ENCAMINHA para
 // o número do assistente — aqui só RECEBE (hiring-cv-scan › intake) e confirma numa linha; todo o
 // resto (triagem, vaga, conversa) é no Telegram. Se o modo de currículos do Telegram estiver ligado
@@ -1719,6 +1748,7 @@ async function handle(payload: any) {
       if (!it?.pollUpdates && !it?.message?.pollUpdates) continue;
       const vote = await pollVoteText(admin, it);
       if (!vote) { log('INFO', 'pollUpdates sem enquete conhecida', { keys: Object.keys(it ?? {}), id: it?.key?.id ?? it?.keyId }); continue; }
+      if (vote.kind === 'wa_repasse') { await votoDoRepasse(admin, vote).catch((e) => log('ERROR', 'voto do repasse', { error: errMsg(e) })); continue; }
       const jidOk = [vote.chatId, vote.chatId.replace(/@.*$/, '')].some((c) => allowed.includes(c));
       if (!jidOk) continue;
       if (vote.kind === 'dre_category') {
