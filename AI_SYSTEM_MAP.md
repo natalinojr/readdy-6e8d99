@@ -268,6 +268,28 @@ Quando o usuario pedir "muda X":
 
 Secao viva: registrar aqui padroes, decisoes e pegadinhas reutilizaveis conforme o sistema evolui. Cada entrada com data
 
+### 2026-10-02 — Cardápio: horário de exibição (item, categoria e destaque)
+- **Dado:** `availability_schedule jsonb` em `menu_items`, `menu_categories` e `menu_highlights` (migration
+  `20261002130000`): lista `{days:[0..6] (0=Dom), start, end "HH:MM"}`, horário de Brasília; `null` = sempre; fim < início
+  = passa da meia-noite (madrugada conta para o dia em que a faixa começou); início = fim = dia todo.
+- **Regra única:** `src/lib/horarioExibicao.ts` (`visivelAgora`, `idsForaDoHorario`, `resumoHorario`). Relógio SEMPRE
+  `America/Sao_Paulo` (celular de turista pode estar em outro fuso). Destaque aparece só se o horário dele (null = segue o
+  item) E o do item E o da categoria baterem.
+- **Quem filtra é o front, reavaliando a cada minuto** (`useRelogioMinuto`, só liga se a loja usa horário): `CardapioContext`
+  (`itensPublicos` → totem; `itemNoHorario`), `useMesaQRData` e `useDeliveryData` (`montarCardapio(base, fora)`). A chave
+  `idsForaDoHorario(...).join(',')` só muda quando algo entra/sai → a tela não remonta a cada minuto. O servidor
+  (`fn_get_full_menu`, `mesa-write get_cardapio`, `delivery-write get_delivery_config`) só devolve o campo — filtrar no
+  servidor impediria o item de "voltar" sem recarregar.
+- **Caixa/garçom/PDV delivery NÃO escondem:** mostram o selo "FORA DO HORÁRIO" e vendem. Criar pedido não valida horário
+  (carrinho montado 1 min antes passa). O totem não registra item fora do horário como "sumiço" (`registroItensEscondidos`).
+- **Gravação:** `menu-write` (`upsert_item`/`upsert_category`/`upsert_highlight`) só mexe no campo quando ele vem no payload
+  (`undefined` = não mexe) — PausarItem, assistente-brain e reordenar não apagam o horário. O do destaque é um UPDATE à
+  parte depois da RPC `fn_upsert_menu_highlight` (assinatura fixa).
+- **Pegadinha (achada aqui):** `20260926020000_opcao_varios_insumos` (tabela `option_ingredients`) **nunca foi aplicada** e o
+  `menu-write` do ar é o anterior a ela. Publicar `menu-write` do repo quebraria salvar item com opções → em 02/10 publiquei a
+  versão do ar + só o horário (`functions download --use-api` + patch). Ao aplicar aquela migração, ela já devolve
+  `availability_schedule` (acrescentei); sem isso o `fn_get_full_menu` perderia o campo e salvar item zeraria o horário.
+
 ### 2026-10-02 — Dashboard reorganizado (atenção no topo, meta com ritmo, pico por dia)
 - `/dashboard` = faixa "Precisa de atenção" (`AtencaoFaixa`: contas vencidas/folha/compras recebidas/orçamentos via
   `useFinanceiroAlertas`, atrasados, insumo que vai zerar, abaixo do mínimo, validade) → `FaturamentoHero` (meta + ritmo)

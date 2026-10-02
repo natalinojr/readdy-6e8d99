@@ -167,9 +167,11 @@ export default function CardapioPublico({ clienteNome, carrinho, onAdicionar, on
   const [categoriaAtiva, setCategoriaAtiva] = useState('Populares');
   const [itemModal, setItemModal] = useState<ItemCardapioPublico | null>(null);
 
-  const itens = categoriaAtiva === 'Populares'
+  // Categoria que saiu do cardápio (ex.: fora do horário de exibição) volta para Populares.
+  const categoriaEfetiva = categorias.includes(categoriaAtiva) ? categoriaAtiva : 'Populares';
+  const itens = categoriaEfetiva === 'Populares'
     ? itensPublicos.filter((i) => i.popular)
-    : itensPublicos.filter((i) => i.categoria === categoriaAtiva);
+    : itensPublicos.filter((i) => i.categoria === categoriaEfetiva);
 
   const totalCarrinho = carrinho.reduce((s, i) => s + i.preco * i.quantidade, 0);
   const totalItens = carrinho.reduce((s, i) => s + i.quantidade, 0);
@@ -185,7 +187,7 @@ export default function CardapioPublico({ clienteNome, carrinho, onAdicionar, on
             key={cat}
             onClick={() => setCategoriaAtiva(cat)}
             className={`flex-shrink-0 px-3.5 py-1.5 rounded-full text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap ${
-              categoriaAtiva === cat ? 'bg-amber-500 text-white' : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'
+              categoriaEfetiva === cat ? 'bg-amber-500 text-white' : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'
             }`}
           >
             {cat}

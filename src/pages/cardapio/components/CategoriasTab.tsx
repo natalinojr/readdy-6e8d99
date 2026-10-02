@@ -5,6 +5,8 @@ import { useCardapio } from '@/contexts/CardapioContext';
 import ConfirmModal from '@/components/base/ConfirmModal';
 import { confirmar } from '@/components/base/Dialogos';
 import type { Item } from '@/types/cardapio';
+import HorarioExibicaoEditor from '@/components/feature/HorarioExibicaoEditor';
+import { erroHorario, resumoHorario, temHorario, visivelAgora, type HorarioExibicao } from '@/lib/horarioExibicao';
 
 type Canal = 'casa' | 'ambos' | 'delivery';
 const canalLabel = (val: Canal) =>
@@ -26,6 +28,7 @@ interface ModalState {
   estacaoId: string;
   fiscal: CategoriaFiscal;
   showFiscal: boolean;
+  horario: HorarioExibicao;
 }
 
 export default function CategoriasTab() {
@@ -45,23 +48,23 @@ export default function CategoriasTab() {
   }, [itens, categorias]);
 
   const primeiraEstacao = estacoes[0]?.id ?? '';
-  const initialModal: ModalState = { open: false, editId: null, nome: '', estacaoId: primeiraEstacao, fiscal: {}, showFiscal: false };
+  const initialModal: ModalState = { open: false, editId: null, nome: '', estacaoId: primeiraEstacao, fiscal: {}, showFiscal: false, horario: null };
   const [modal, setModal] = useState<ModalState>(initialModal);
 
-  const openCreate = () => setModal({ open: true, editId: null, nome: '', estacaoId: primeiraEstacao, fiscal: {}, showFiscal: false });
+  const openCreate = () => setModal({ open: true, editId: null, nome: '', estacaoId: primeiraEstacao, fiscal: {}, showFiscal: false, horario: null });
   const openEdit = (id: string) => {
     const cat = categorias.find(c => c.id === id);
     if (!cat) return;
     const f = cat.fiscal ?? {};
-    setModal({ open: true, editId: id, nome: cat.nome, estacaoId: cat.estacaoId ?? primeiraEstacao, fiscal: f, showFiscal: Boolean(f.ncm || f.cfop || f.csosn || f.codTributacao) });
+    setModal({ open: true, editId: id, nome: cat.nome, estacaoId: cat.estacaoId ?? primeiraEstacao, fiscal: f, showFiscal: Boolean(f.ncm || f.cfop || f.csosn || f.codTributacao), horario: cat.horario ?? null });
   };
 
   const handleSave = async () => {
-    if (!modal.nome.trim()) return;
+    if (!modal.nome.trim() || erroHorario(modal.horario)) return;
     if (modal.editId) {
-      await editarCategoria(modal.editId, { nome: modal.nome, estacaoId: modal.estacaoId || undefined, fiscal: modal.fiscal });
+      await editarCategoria(modal.editId, { nome: modal.nome, estacaoId: modal.estacaoId || undefined, fiscal: modal.fiscal, horario: modal.horario });
     } else {
-      await criarCategoria({ nome: modal.nome, estacaoId: modal.estacaoId || undefined, fiscal: modal.fiscal });
+      await criarCategoria({ nome: modal.nome, estacaoId: modal.estacaoId || undefined, fiscal: modal.fiscal, horario: modal.horario });
     }
     setModal(initialModal);
   };
@@ -160,6 +163,14 @@ export default function CategoriasTab() {
                 <span className="text-xs text-gray-500">
                   <i className="ri-file-list-3-line mr-1" />{cat.totalItens} itens
                 </span>
+                {temHorario(cat.horario) && (
+                  <span
+                    title={visivelAgora([cat.horario]) ? 'No horário agora — aparecendo no cardápio' : 'Fora do horário agora — escondida do cardápio do cliente'}
+                    className={`text-xs px-2 py-0.5 rounded-full ${visivelAgora([cat.horario]) ? 'bg-emerald-50 text-emerald-700' : 'bg-indigo-50 text-indigo-700'}`}
+                  >
+                    <i className="ri-time-line mr-1" />{resumoHorario(cat.horario)}
+                  </span>
+                )}
               </div>
               {/* Canal: aplica casa/ambos/delivery a todos os itens da categoria.
                   O botão do canal atual fica laranja (null = itens com canais mistos). */}
@@ -234,7 +245,7 @@ export default function CategoriasTab() {
       {/* Modal */}
       {modal.open && (
         <div className="fixed inset-0 bg-black/40 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4">
-          <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full sm:max-w-md p-5 md:p-6">
+          <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full sm:max-w-md p-5 md:p-6 max-h-[90vh] overflow-y-auto">
             <h3 className="text-base font-semibold text-gray-800 mb-5">
               {modal.editId ? 'Editar Categoria' : 'Nova Categoria'}
             </h3>
@@ -264,6 +275,14 @@ export default function CategoriasTab() {
                 </div>
               )}
               <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1.5">Horário no cardápio</label>
+                <HorarioExibicaoEditor
+                  value={modal.horario}
+                  onChange={h => setModal(s => ({ ...s, horario: h }))}
+                  ajuda="Fora desses horários a categoria inteira some do delivery, da mesa (QR) e do autoatendimento."
+                />
+              </div>
+              <div>
                 <button
                   type="button"
                   onClick={() => setModal(s => ({ ...s, showFiscal: !s.showFiscal }))}
@@ -290,7 +309,7 @@ export default function CategoriasTab() {
               </button>
               <button
                 onClick={handleSave}
-                disabled={!modal.nome.trim() || saving}
+                disabled={!modal.nome.trim() || !!erroHorario(modal.horario) || saving}
                 className="flex-1 bg-orange-500 hover:bg-orange-600 disabled:opacity-50 text-white text-sm font-medium py-2.5 rounded-lg transition-colors cursor-pointer whitespace-nowrap flex items-center justify-center gap-2"
               >
                 {saving && <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />}

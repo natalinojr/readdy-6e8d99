@@ -434,8 +434,9 @@ export default function CardapioKiosk({ carrinho, onAdicionar, onDiminuir, onVer
     }
   };
 
-  // Se ainda não tem categoria ativa (inicial ou depois de filtrar tudo), seleciona a primeira
-  const categoriaEfetiva = categoriaAtiva || categorias[0] || '';
+  // Se ainda não tem categoria ativa (inicial ou depois de filtrar tudo), seleciona a primeira.
+  // Categoria que sumiu (saiu do horário de exibição, estoque, publicação) também cai na primeira.
+  const categoriaEfetiva = (categoriaAtiva && categorias.includes(categoriaAtiva)) ? categoriaAtiva : (categorias[0] || '');
 
   const buscaNorm = busca.trim().toLowerCase();
   const itensCategoria = categoriaEfetiva === CAT_DESTAQUES

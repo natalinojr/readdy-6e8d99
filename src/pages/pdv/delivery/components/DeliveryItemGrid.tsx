@@ -265,7 +265,7 @@ function ItemOpcoes({
 }
 
 export default function DeliveryItemGrid({ onAdd }: Props) {
-  const { itensDelivery, categorias } = useCardapio();
+  const { itensDelivery, categorias, itemNoHorario } = useCardapio();
   const [catAtiva, setCatAtiva] = useState('todas');
   const [busca, setBusca] = useState('');
   const [itemModal, setItemModal] = useState<Item | null>(null);
@@ -359,6 +359,8 @@ export default function DeliveryItemGrid({ onAdd }: Props) {
               const preco = promoAtiva ? promoAtiva.precoPromocional : item.preco;
               const insumosFaltando: InsumoFaltando[] = itensSemEstoque.get(item.id) ?? [];
               const semEstoque = insumosFaltando.length > 0;
+              // Fora do horário de exibição: some do cardápio do cliente, mas o caixa ainda lança.
+              const foraDoHorario = !itemNoHorario(item);
 
               return (
                 <div
@@ -403,6 +405,14 @@ export default function DeliveryItemGrid({ onAdd }: Props) {
                       {promoAtiva && !semEstoque && (
                         <div className="absolute top-2 left-2 bg-amber-500 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full">
                           PROMO
+                        </div>
+                      )}
+                      {foraDoHorario && !semEstoque && (
+                        <div
+                          className="absolute bottom-2 left-2 bg-indigo-600 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full tracking-wide flex items-center gap-0.5"
+                          title="Fora do horário do cardápio — o cliente não vê este item agora"
+                        >
+                          <i className="ri-time-line" /> FORA DO HORÁRIO
                         </div>
                       )}
                       {semEstoque && (

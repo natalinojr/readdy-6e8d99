@@ -508,8 +508,9 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         admin.from("system_settings").select("delivery_city, delivery_config").eq("tenant_id", tenantId).maybeSingle(),
         admin.rpc("fn_delivery_get_config", { p_tenant_id: tenantId }),
         admin.from("tenants").select("id, name").eq("id", tenantId).maybeSingle(),
-        admin.from("menu_categories").select("id, name, station_id").eq("tenant_id", tenantId).eq("is_active", true).is("deleted_at", null).order("sort_order", { ascending: true }),
-        admin.from("menu_items").select("id, name, description, price, photo_url, category_id, sla_minutes, is_active, skip_kds, delivery_config").eq("tenant_id", tenantId).eq("is_active", true).is("deleted_at", null),
+        // availability_schedule = horário de exibição; o front filtra pelo relógio de Brasília (lib/horarioExibicao).
+        admin.from("menu_categories").select("id, name, station_id, availability_schedule").eq("tenant_id", tenantId).eq("is_active", true).is("deleted_at", null).order("sort_order", { ascending: true }),
+        admin.from("menu_items").select("id, name, description, price, photo_url, category_id, sla_minutes, is_active, skip_kds, delivery_config, availability_schedule").eq("tenant_id", tenantId).eq("is_active", true).is("deleted_at", null),
         admin.from("option_groups").select("id, name, item_id, is_required, min_selections, max_selections").eq("tenant_id", tenantId).is("deleted_at", null),
         // deleted_at: opcao apagada NAO pode aparecer pro cliente. Faltava esse
         // filtro (itens, categorias e grupos ja tinham) e 41 opcoes apagadas
@@ -522,7 +523,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         admin.rpc("fn_get_opcoes_sem_estoque", { p_tenant_id: tenantId }),
         admin.from("item_production_parts").select("item_id, name, station_id").eq("tenant_id", tenantId).is("deleted_at", null).order("sort_order"),
         // Destaques do DELIVERY: canal 'ambos' ou 'delivery' (exclui os 'só casa').
-        admin.from("menu_highlights").select("id, item_id, custom_price, custom_description, sort_order").eq("tenant_id", tenantId).eq("is_active", true).neq("channel", "casa").order("sort_order", { ascending: true }),
+        admin.from("menu_highlights").select("id, item_id, custom_price, custom_description, sort_order, availability_schedule").eq("tenant_id", tenantId).eq("is_active", true).neq("channel", "casa").order("sort_order", { ascending: true }),
         admin.from("item_promotions").select("id, item_id, promotional_price, days_of_week, is_recurring, specific_date, is_active").eq("tenant_id", tenantId).eq("is_active", true).is("deleted_at", null),
         // Categorias APAGADAS (soft delete): seus itens somem do cardapio (mesma regra do fn_get_full_menu).
         admin.from("menu_categories").select("id").eq("tenant_id", tenantId).not("deleted_at", "is", null),
@@ -565,7 +566,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       const highlights: Array<Record<string, unknown>> = [];
       if (!highlightsResult.error && highlightsResult.data) for (const h of highlightsResult.data as Array<Record<string, unknown>>) {
         const item = itemsMap.get(h.item_id as string);
-        if (item) highlights.push({ id: h.id, item_id: h.item_id, custom_price: h.custom_price, custom_description: h.custom_description, sort_order: h.sort_order, item_name: item.name, item_price: item.price, item_photo_url: item.photo_url, item_description: item.description, item_category_id: item.category_id, item_station_id: item.station_id, item_skip_kids: item.skip_kds, item_sla_minutes: item.sla_minutes });
+        if (item) highlights.push({ id: h.id, item_id: h.item_id, custom_price: h.custom_price, custom_description: h.custom_description, sort_order: h.sort_order, availability_schedule: h.availability_schedule ?? null, item_name: item.name, item_price: item.price, item_photo_url: item.photo_url, item_description: item.description, item_category_id: item.category_id, item_station_id: item.station_id, item_skip_kids: item.skip_kds, item_sla_minutes: item.sla_minutes });
       }
 
       const promotions = (promotionsResult.data ?? []).map((p: Record<string, unknown>) => ({

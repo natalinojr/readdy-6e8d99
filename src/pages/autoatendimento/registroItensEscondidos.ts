@@ -18,8 +18,11 @@ import type { ItemCardapioPublico } from '@/types/mesaCliente';
 import type { Categoria, Combo, Item } from '@/types/cardapio';
 import type { InsumoFaltando } from '@/hooks/useItensSemEstoque';
 import { reportError } from '@/lib/errorReporter';
+import { visivelAgora } from '@/lib/horarioExibicao';
 
 const FN = 'autoatendimento.itemEscondido';
+// Horário de exibição (2026-10-02) esconde de propósito — não é sumiço a investigar.
+const FORA_DO_HORARIO = 'fora do horário de exibição';
 
 interface Estado {
   tenantId: string;
@@ -70,6 +73,7 @@ function motivo(id: string, e: Entrada): { curto: string; detalhe?: unknown } {
   const cat = e.categorias.find((c) => c.id === raw.categoriaId);
   if (!cat) return { curto: 'categoria não veio no cardápio carregado' };
   if (!cat.ativo) return { curto: 'categoria desligada', detalhe: cat.nome };
+  if (!visivelAgora([raw.horario, cat.horario])) return { curto: FORA_DO_HORARIO };
   return { curto: 'fora do cardápio público sem motivo conhecido' };
 }
 
@@ -92,6 +96,7 @@ export function useRegistroItensEscondidos(e: Entrada): void {
         if (atuais.has(raw.id) || raw.status !== 'ativo' || raw.somenteDelivery || !vendeNoTablet(raw)) continue;
         const cat = e.categorias.find((c) => c.id === raw.categoriaId);
         if (cat && !cat.ativo) continue;
+        if (!visivelAgora([raw.horario, cat?.horario])) continue;
         registrarSumico(raw.id, raw.nome, e, agora, true);
       }
       return;
@@ -121,6 +126,7 @@ export function useRegistroItensEscondidos(e: Entrada): void {
 
     function registrarSumico(id: string, nome: string, ent: Entrada, quando: number, naCarga: boolean) {
       const m = motivo(id, ent);
+      if (m.curto === FORA_DO_HORARIO) return;
       estado!.sumidos.set(id, { nome, desde: quando, motivo: m.curto });
       reportError(`Tablet escondeu "${nome}": ${m.curto}`, {
         fn: FN,

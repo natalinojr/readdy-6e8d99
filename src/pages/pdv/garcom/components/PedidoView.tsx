@@ -118,7 +118,7 @@ export default function PedidoView({
   const showCozinhaTab = (mesaNumero && mesaNumero > 0) || isAvulso;
 
   const { pedidos: allKDSPedidos } = useKDS();
-  const { categorias: todasCategorias, itensAtivos: todosItens, obsGlobais } = useCardapio();
+  const { categorias: todasCategorias, itensAtivos: todosItens, obsGlobais, itemNoHorario } = useCardapio();
 
   const pedidosProntos = useMemo(() => {
     if (!mesaNumero) return 0;
@@ -481,6 +481,8 @@ export default function PedidoView({
                 const qtdNoCarrinho = carrinho.filter((c) => c.itemId === item.id).reduce((a, c) => a + c.quantidade, 0);
                 const insumosFaltando: InsumoFaltando[] = itensSemEstoque.get(item.id) ?? [];
                 const semEstoque = insumosFaltando.length > 0;
+                // Fora do horário de exibição: some do cardápio do cliente, mas o garçom ainda lança.
+                const foraDoHorario = !itemNoHorario(item);
 
                 return (
                   <div
@@ -527,6 +529,14 @@ export default function PedidoView({
                           className="w-full h-full"
                           imgClassName={`${semEstoque ? 'grayscale' : 'group-hover:scale-105'} transition-transform duration-300`}
                         />
+                        {foraDoHorario && !semEstoque && (
+                          <div
+                            className="absolute bottom-1.5 left-1.5 bg-indigo-600 text-white text-[8px] font-black px-1.5 py-0.5 rounded-full tracking-wide flex items-center gap-0.5"
+                            title="Fora do horário do cardápio — o cliente não vê este item agora"
+                          >
+                            <i className="ri-time-line" /> FORA DO HORÁRIO
+                          </div>
+                        )}
                         {semEstoque && (
                           <div className="absolute inset-0 bg-zinc-900/50 flex flex-col items-center justify-center gap-1 px-1">
                             <span className="text-white text-[9px] font-black bg-red-600 px-2 py-0.5 rounded-full tracking-wider uppercase">Sem insumo</span>

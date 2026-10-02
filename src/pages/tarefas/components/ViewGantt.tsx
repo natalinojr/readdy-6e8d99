@@ -1113,7 +1113,9 @@ export default function ViewGantt({
         <div
           ref={scrollRef}
           onScroll={aoRolar}
-          className={`relative overflow-auto bg-white rounded-xl border border-slate-200 overscroll-contain ${arrasto ? 'select-none' : ''}`}
+          // isolate: os z-index de dentro (cabeçalho e nomes presos) ficam só aqui dentro —
+          // sem isso o cabeçalho passava por cima do menu de Filtros da barra da página (z-10).
+          className={`relative isolate overflow-auto bg-white rounded-xl border border-slate-200 overscroll-contain ${arrasto ? 'select-none' : ''}`}
           style={{ height: altura }}
         >
           <div style={{ width: esquerda + largura }}>
