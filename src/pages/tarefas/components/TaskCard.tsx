@@ -1,4 +1,4 @@
-import { Flag, MessageSquare, CheckSquare, GitBranch, Repeat } from 'lucide-react';
+import { Flag, MessageSquare, CheckSquare, GitBranch, Repeat, Check } from 'lucide-react';
 import type { CampoCustom, TaskRow } from '../hooks/useTarefas';
 import { responsaveis } from '../lib/responsaveis';
 import AvataresResponsaveis from './AvataresResponsaveis';
@@ -29,6 +29,10 @@ interface TaskCardProps {
   /** Todos os pedaços da mesma tarefa acendem juntos ao passar o mouse. */
   realcado?: boolean;
   onRealcar?: (ligado: boolean) => void;
+  /** Card do Kanban: bolinha na cor do status, ao lado do título. */
+  corStatus?: string;
+  /** Clique na bolinha (abre o seletor de status). Recebe o retângulo dela. */
+  onMudarStatus?: (rect: DOMRect) => void;
 }
 
 /** Ponta da pílula do calendário: arrastar muda o início (esquerda) ou o vencimento (direita). */
@@ -83,7 +87,7 @@ export function rotuloVencimento(task: TaskRow): { text: string; className: stri
 
 export default function TaskCard({
   task, campos, usuarios, onOpen, onDragStart, onDragEnd, arrastando = false, variante = 'card', trecho = null, onRedimensionar,
-  emenda, realcado = false, onRealcar,
+  emenda, realcado = false, onRealcar, corStatus, onMudarStatus,
 }: TaskCardProps) {
   const due = rotuloVencimento(task);
   const prio = PRIORIDADES.find((p) => p.value === task.priority);
@@ -154,9 +158,26 @@ export default function TaskCard({
         </div>
       )}
 
-      <p className={`text-sm leading-snug mb-2 ${concluida ? 'line-through text-slate-400' : 'text-slate-700'}`}>
-        {task.title}
-      </p>
+      <div className="flex items-start gap-2 mb-2">
+        {corStatus && (
+          // Mesma bolinha da Lista: concluída = cheia com ✓; demais = contorno + fundo clarinho.
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onMudarStatus?.(e.currentTarget.getBoundingClientRect());
+            }}
+            title="Mudar status"
+            className="mt-0.5 w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 transition hover:brightness-90"
+            style={{ borderColor: corStatus, backgroundColor: task.status_category === 'done' ? corStatus : `${corStatus}26` }}
+          >
+            {task.status_category === 'done' && <Check size={10} className="text-white" />}
+          </button>
+        )}
+        <p className={`text-sm leading-snug min-w-0 ${concluida ? 'line-through text-slate-400' : 'text-slate-700'}`}>
+          {task.title}
+        </p>
+      </div>
 
       {trecho && (
         <p className="text-[11px] text-indigo-500 -mt-1 mb-2">Dia {trecho.dia} de {trecho.total}</p>

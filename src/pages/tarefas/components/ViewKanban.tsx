@@ -3,7 +3,8 @@ import { Plus } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
 import type { CampoCustom, TaskList, TaskRow } from '../hooks/useTarefas';
 import type { GroupBy, Grupo, UsuarioOption } from '../lib/agrupamento';
-import { agruparTarefas, calcularSortOrder, payloadMoverGrupo } from '../lib/agrupamento';
+import { agruparTarefas, calcularSortOrder, corDoStatus, payloadMoverGrupo } from '../lib/agrupamento';
+import StatusPicker from './StatusPicker';
 import TaskCard from './TaskCard';
 
 interface ViewKanbanProps {
@@ -14,6 +15,8 @@ interface ViewKanbanProps {
   groupBy: GroupBy;
   write: (action: string, payload?: Record<string, unknown>) => Promise<{ success: boolean; id?: string; error?: string }>;
   onOpenTask: (taskId: string) => void;
+  /** Todas as pastas — pra achar a cor do status de cada tarefa nas visões de várias pastas. */
+  lists?: TaskList[];
 }
 
 interface Arrasto {
@@ -22,10 +25,11 @@ interface Arrasto {
 }
 
 export default function ViewKanban({
-  list, tasks, campos, usuarios, groupBy, write, onOpenTask,
+  list, tasks, campos, usuarios, groupBy, write, onOpenTask, lists = [],
 }: ViewKanbanProps) {
   const toast = useToast();
   const [arrasto, setArrasto] = useState<Arrasto | null>(null);
+  const [statusPicker, setStatusPicker] = useState<{ taskId: string; rect: DOMRect } | null>(null);
   const [alvoColuna, setAlvoColuna] = useState<string | null | undefined>(undefined);
   const [quickAdd, setQuickAdd] = useState<Record<string, string>>({});
 
@@ -156,7 +160,20 @@ export default function ViewKanban({
                       setArrasto(null);
                       setAlvoColuna(undefined);
                     }}
+                    corStatus={corDoStatus(task, [list, ...lists])}
+                    onMudarStatus={(rect) => setStatusPicker({ taskId: task.id, rect })}
                   />
+                  {statusPicker?.taskId === task.id && (
+                    <StatusPicker
+                      list={list}
+                      anchorRect={statusPicker.rect}
+                      onEscolher={async (payload) => {
+                        const res = await write('update_task', { task_id: task.id, ...payload });
+                        if (!res.success) toast.error('Erro ao mudar status', res.error);
+                      }}
+                      onClose={() => setStatusPicker(null)}
+                    />
+                  )}
                 </div>
               ))}
 

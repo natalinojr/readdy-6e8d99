@@ -504,6 +504,7 @@ export default function TarefasPage() {
               groupBy={groupBy}
               write={write}
               onOpenTask={setOpenTaskId}
+              lists={lists}
             />
           )}
           {display === 'relatorios' && origem === 'pasta' && selectedList && (
