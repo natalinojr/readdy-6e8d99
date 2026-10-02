@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ChevronRight, ChevronDown, EyeOff, FolderInput, Plus, Trash2, Users, Share2 } from 'lucide-react';
+import { ChevronRight, ChevronDown, EyeOff, FolderInput, Plus, Trash2, Users, Share2, Settings } from 'lucide-react';
 import { idsSubarvore, reordenarIrmas, type NoPasta } from '../lib/pastas';
 
 /** Põe o texto inteiro como dica (title) só quando ele está cortado com "…". */
@@ -25,12 +25,14 @@ interface ArvorePastasProps {
   onMover?: (listId: string, paiId: string | null, ordemIrmas?: string[]) => void;
   /** Botão "Mover para…" (abre o seletor de pasta — quem chama). */
   onPedirMover?: (no: NoPasta) => void;
+  /** Engrenagem: configurações da pasta (nome, cor e atalhos) — só o dono. */
+  onConfigurar?: (no: NoPasta) => void;
 }
 
 type Alvo = { id: string; posicao: 'antes' | 'depois' | 'dentro' };
 
 
-export default function ArvorePastas({ nos, selectedId, onSelecionar, onNovaSubpasta, onExcluir, onCompartilhar, compacto = false, onReordenar, onMover, onPedirMover }: ArvorePastasProps) {
+export default function ArvorePastas({ nos, selectedId, onSelecionar, onNovaSubpasta, onExcluir, onCompartilhar, compacto = false, onReordenar, onMover, onPedirMover, onConfigurar }: ArvorePastasProps) {
   const [recolhidas, setRecolhidas] = useState<Set<string>>(new Set());
   // Arrasto em andamento: a pasta, o pai dela e ela + subpastas (onde não pode cair).
   const [arrasto, setArrasto] = useState<{ id: string; paiId: string | null; bloqueados: Set<string> } | null>(null);
@@ -153,6 +155,16 @@ export default function ArvorePastas({ nos, selectedId, onSelecionar, onNovaSubp
           )}
           {/* No computador as ações só ocupam lugar no hover — escondidas, o nome usa a largura toda. */}
           <div className={`items-center ${compacto ? 'flex mr-2' : 'hidden group-hover:flex group-focus-within:flex'}`}>
+            {onConfigurar && acesso === 'owner' && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onConfigurar(no); }}
+                className={`${acaoCls} hover:text-indigo-500 hover:bg-indigo-50`}
+                title="Configurações da pasta (nome, cor…)"
+                aria-label="Configurações da pasta"
+              >
+                <Settings size={12} />
+              </button>
+            )}
             {onCompartilhar && (
               <button
                 onClick={(e) => { e.stopPropagation(); onCompartilhar(no); }}
@@ -162,7 +174,8 @@ export default function ArvorePastas({ nos, selectedId, onSelecionar, onNovaSubp
                 <Share2 size={12} />
               </button>
             )}
-            {onPedirMover && acesso === 'owner' && (
+            {/* Com a engrenagem, "Mover para…" fica dentro dela: um ícone a mais espremia o nome da pasta. */}
+            {onPedirMover && !onConfigurar && acesso === 'owner' && (
               <button
                 onClick={(e) => { e.stopPropagation(); onPedirMover(no); }}
                 className={`${acaoCls} hover:text-indigo-500 hover:bg-indigo-50`}

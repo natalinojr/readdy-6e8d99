@@ -81,6 +81,8 @@ interface ListasSheetProps {
   onCompartilhar?: (no: NoPasta) => void;
   /** "Mover para…" da pasta (no celular não dá pra arrastar). */
   onPedirMover?: (no: NoPasta) => void;
+  /** Configurações da pasta (nome, cor e atalhos). */
+  onConfigurar?: (no: NoPasta) => void;
   onClose: () => void;
 }
 
@@ -92,7 +94,7 @@ interface ListasSheetProps {
  */
 export function ListasSheet({
   arvorePastas, temPastas, selectedId, onSelecionar, onNovaLista, onNovaSubpasta, onExcluir,
-  onCompartilhadas, onTodas, onAtribuidas, onStatus, onCampos, onTemplates, onModelos, onAvisos, onMicrosoft, onCompartilhar, onPedirMover, onClose,
+  onCompartilhadas, onTodas, onAtribuidas, onStatus, onCampos, onTemplates, onModelos, onAvisos, onMicrosoft, onCompartilhar, onPedirMover, onConfigurar, onClose,
 }: ListasSheetProps) {
   useVoltarFecha(true, onClose);
 
@@ -140,6 +142,7 @@ export function ListasSheet({
             onExcluir={onExcluir}
             onCompartilhar={onCompartilhar ? (no) => { onClose(); onCompartilhar(no); } : undefined}
             onPedirMover={onPedirMover ? (no) => { onClose(); onPedirMover(no); } : undefined}
+            onConfigurar={onConfigurar ? (no) => { onClose(); onConfigurar(no); } : undefined}
             compacto
           />
 

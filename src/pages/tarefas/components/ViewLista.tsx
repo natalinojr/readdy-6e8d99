@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
-import { Plus, Flag, MessageSquare, CheckSquare, GitBranch, Repeat, ChevronDown, ChevronRight, Check, Trash2, X, ArrowUp, ArrowDown, Play, Pause, Timer, GripVertical, FolderInput, Copy, ClipboardPaste, Pencil, ListPlus } from 'lucide-react';
+import { Plus, Flag, MessageSquare, CheckSquare, GitBranch, Repeat, ChevronDown, ChevronRight, Check, Trash2, X, ArrowUp, ArrowDown, Play, Pause, Timer, GripVertical, FolderInput, Copy, ClipboardPaste, Pencil, ListPlus, EyeOff } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
 import type { CampoCustom, TaskList, TaskRow, TaskTag } from '../hooks/useTarefas';
 import { PRIORIDADES } from '../hooks/useTarefas';
@@ -17,7 +17,8 @@ import { estimativasEfetivas, formatarDuracao, formatarRelogio, segundosRegistra
 import CampoBadge from './campos/CampoBadge';
 import ColumnsMenu from './ColumnsMenu';
 import ConfirmDialog from './ConfirmDialog';
-import EditorCelula, { ehEditavel, type MeuPadraoEstimativa } from './EditorCelula';
+import EditorCelula, { ehEditavel, Opcao, Popover, type MeuPadraoEstimativa } from './EditorCelula';
+import { EditarCampoModal } from './campos/CampoForm';
 import StatusPicker from './StatusPicker';
 import { iniciais, rotuloVencimento } from './TaskCard';
 import { responsaveis, rotuloResponsaveis } from '../lib/responsaveis';
@@ -271,6 +272,9 @@ export default function ViewLista({
   const [arrastoColuna, setArrastoColuna] = useState<ColunaId | null>(null);
   const [alvoColuna, setAlvoColuna] = useState<{ id: ColunaId; antes: boolean } | null>(null);
   const [ordenacao, setOrdenacao] = useState<{ col: ColunaId; dir: 'asc' | 'desc' } | null>(null);
+  // Clique no título da coluna: menu (ordenar, editar o campo, ocultar).
+  const [menuColuna, setMenuColuna] = useState<{ id: ColunaId; rect: DOMRect } | null>(null);
+  const [editandoCampoId, setEditandoCampoId] = useState<string | null>(null);
   // Arrastar pra reordenar: qual tarefa está sendo arrastada (e de qual grupo)
   // e onde ela vai cair (antes/depois de qual linha, ou no fim do grupo).
   const [arrasto, setArrasto] = useState<{ taskId: string; grupoKey: string | null } | null>(null);
@@ -308,17 +312,9 @@ export default function ViewLista({
 
   const largura = (c: ColunaDef) => larguras[c.id] ?? c.larguraPx;
 
-  // Clique no título: crescente → decrescente → sem ordenação (volta à ordem
-  // manual). Ordena dentro de cada grupo; vazios sempre no fim.
-  const alternarOrdenacao = (id: ColunaId) => {
-    setOrdenacao((atual) => {
-      if (atual?.col !== id) return { col: id, dir: 'asc' };
-      if (atual.dir === 'asc') return { col: id, dir: 'desc' };
-      return null;
-    });
-  };
-
-  // Ordenação por coluna só vale com a coluna visível (escondida, volta a ordem manual).
+  // Ordenação escolhida no menu do título (crescente/decrescente/tirar → volta à
+  // ordem manual). Ordena dentro de cada grupo; vazios sempre no fim.
+  // Só vale com a coluna visível (escondida, volta a ordem manual).
   const ordenacaoAtiva = !!ordenacao && colunasVisiveis.includes(ordenacao.col);
   const ordenar = (lista: TaskRow[]): TaskRow[] => {
     if (!ordenacao || !ordenacaoAtiva) return lista;
@@ -1158,9 +1154,9 @@ export default function ViewLista({
               </span>
               <button
                 type="button"
-                onClick={() => alternarOrdenacao(c.id)}
-                title="Ordenar por esta coluna"
-                className={`inline-flex items-center gap-0.5 max-w-full hover:text-slate-600 transition ${ordenacao?.col === c.id ? 'text-indigo-600' : ''}`}
+                onClick={(e) => setMenuColuna({ id: c.id, rect: e.currentTarget.getBoundingClientRect() })}
+                title={c.personalizado ? 'Ordenar, editar o campo ou ocultar a coluna' : 'Ordenar ou ocultar a coluna'}
+                className={`inline-flex items-center gap-0.5 max-w-full hover:text-slate-600 transition ${ordenacao?.col === c.id || menuColuna?.id === c.id ? 'text-indigo-600' : ''}`}
               >
                 {ordenacao?.col === c.id && (ordenacao.dir === 'asc' ? <ArrowUp size={10} className="shrink-0" /> : <ArrowDown size={10} className="shrink-0" />)}
                 <span className="truncate">{c.label}</span>
@@ -1171,6 +1167,43 @@ export default function ViewLista({
           <span className="ml-1 w-[21px] shrink-0" />
         </div>
       )}
+
+      {menuColuna && (() => {
+        const id = menuColuna.id;
+        const fechar = () => setMenuColuna(null);
+        const campo = id.startsWith('campo:') ? campos.find((x) => x.id === id.slice('campo:'.length)) : undefined;
+        const dir = ordenacao?.col === id ? ordenacao.dir : null;
+        const ordenarPor = (d: 'asc' | 'desc' | null) => { setOrdenacao(d ? { col: id, dir: d } : null); fechar(); };
+        return (
+          <Popover anchorRect={menuColuna.rect} largura={200} onClose={fechar}>
+            <Opcao ativo={dir === 'asc'} onClick={() => ordenarPor('asc')}>
+              <ArrowUp size={12} className="shrink-0" /> Ordenar crescente
+            </Opcao>
+            <Opcao ativo={dir === 'desc'} onClick={() => ordenarPor('desc')}>
+              <ArrowDown size={12} className="shrink-0" /> Ordenar decrescente
+            </Opcao>
+            {dir && (
+              <Opcao onClick={() => ordenarPor(null)}>
+                <X size={12} className="shrink-0" /> Tirar ordenação
+              </Opcao>
+            )}
+            <div className="my-1 border-t border-slate-100" />
+            {campo && (
+              <Opcao onClick={() => { setEditandoCampoId(campo.id); fechar(); }}>
+                <Pencil size={12} className="shrink-0" /> Editar campo
+              </Opcao>
+            )}
+            <Opcao onClick={() => { alterarColunas(colunasVisiveis.filter((x) => x !== id)); fechar(); }}>
+              <EyeOff size={12} className="shrink-0" /> Ocultar coluna
+            </Opcao>
+          </Popover>
+        );
+      })()}
+
+      {editandoCampoId && (() => {
+        const campo = campos.find((x) => x.id === editandoCampoId);
+        return campo ? <EditarCampoModal campo={campo} write={write} onClose={() => setEditandoCampoId(null)} /> : null;
+      })()}
 
       {grupos.map((grupo) => {
         const chave = grupo.key ?? '__vazio';

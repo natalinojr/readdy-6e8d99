@@ -5,7 +5,7 @@
  */
 import { useCallback, useRef, useState } from 'react';
 import type {
-  ChecklistItem, TaskAnexo, TaskComment, TaskDetail, TaskList, TaskRow, TaskStatus, TaskTag,
+  CampoCustom, ChecklistItem, TaskAnexo, TaskComment, TaskDetail, TaskList, TaskRow, TaskStatus, TaskTag,
 } from '../hooks/useTarefas';
 import { EU_DEMO, USUARIOS_DEMO } from './modoDemo';
 import { statusPorCategoria } from '../lib/statusFeito';
@@ -27,6 +27,13 @@ const TAGS: TaskTag[] = [
   { id: 'tag-urg', name: 'Urgente', color: '#ef4444' },
   { id: 'tag-forn', name: 'Fornecedor', color: '#0ea5e9' },
   { id: 'tag-limp', name: 'Limpeza', color: '#8b5cf6' },
+];
+
+const CAMPOS: CampoCustom[] = [
+  {
+    id: 'campo-setor', list_id: 'cozinha', name: 'Setor', field_type: 'dropdown', show_on_card: false, sort_order: 0,
+    options: [{ id: 'setor-quente', label: 'Quente', color: '#ef4444' }, { id: 'setor-frio', label: 'Frio', color: '#0ea5e9' }],
+  },
 ];
 
 function dia(offset: number): string {
@@ -57,7 +64,7 @@ function tarefa(p: Partial<TaskRow> & { id: string; list_id: string; title: stri
 
 function inicial(): TaskRow[] {
   return [
-    tarefa({ id: 't1', list_id: 'cozinha', title: 'Trocar o óleo da fritadeira', assignee_id: 'demo-eu', due_date: prazo(0), priority: 3, time_estimate_minutes: 45, tags: [TAGS[0]] }),
+    tarefa({ id: 't1', list_id: 'cozinha', title: 'Trocar o óleo da fritadeira', assignee_id: 'demo-eu', due_date: prazo(0), priority: 3, time_estimate_minutes: 45, tags: [TAGS[0]], field_values: { 'campo-setor': 'setor-quente' } }),
     tarefa({ id: 't2', list_id: 'cozinha', title: 'Conferir validade dos molhos', assignee_id: 'demo-ana', due_date: prazo(-1), priority: 2, time_estimate_minutes: 30 }),
     tarefa({ id: 't3', list_id: 'cozinha', title: 'Limpeza pesada da coifa', assignee_id: 'demo-bruno', start_date: dia(1), due_date: prazo(3), time_estimate_minutes: 360, tags: [TAGS[2]], status_id: 'cozinha-doing', status_category: 'in_progress', time_tracked_seconds: 5400 }),
     tarefa({ id: 't4', list_id: 'cozinha', title: 'Treinar equipe no novo prato do cardápio', assignee_id: 'demo-eu', due_date: prazo(5), time_estimate_minutes: 120, priority: 1 }),
@@ -86,6 +93,7 @@ export function useTarefasDemo() {
   const [tasks, setTasks] = useState<TaskRow[]>(inicial);
   const [lists, setLists] = useState<TaskList[]>(LISTAS);
   const [tags, setTags] = useState<TaskTag[]>(TAGS);
+  const [campos, setCampos] = useState<CampoCustom[]>(CAMPOS);
   const tagsRef = useRef(tags);
   tagsRef.current = tags;
   const [extras, setExtras] = useState<Record<string, Extra>>({
@@ -208,6 +216,43 @@ export function useTarefasDemo() {
         setLists((prev) => [...prev, { id: novaId, name: String(p.name), color: String(p.color ?? '#6366f1'), icon: null, sort_order: seq, parent_list_id: (p.parent_list_id as string) ?? null, statuses: STATUS(novaId), open_count: 0, access: 'owner', owner_id: EU_DEMO.id, owner_name: EU_DEMO.nome, share_count: 0 }]);
         return { success: true, id: novaId };
       }
+      case 'update_list': {
+        const patch: Partial<TaskList> = {};
+        if (typeof p.name === 'string') patch.name = p.name;
+        if (typeof p.color === 'string') patch.color = p.color;
+        setLists((prev) => prev.map((l) => (l.id === p.list_id ? { ...l, ...patch } : l)));
+        setTasks((prev) => prev.map((t) => (t.list_id === p.list_id
+          ? { ...t, list_name: patch.name ?? t.list_name, list_color: patch.color ?? t.list_color } : t)));
+        return { success: true };
+      }
+      case 'create_field': {
+        const novo: CampoCustom = {
+          id: `cf${seq++}`, list_id: (p.list_id as string) ?? null, name: String(p.name), field_type: p.field_type as CampoCustom['field_type'],
+          options: (p.options as CampoCustom['options']) ?? [], show_on_card: Boolean(p.show_on_card), sort_order: seq,
+        };
+        setCampos((prev) => [...prev, novo]);
+        return { success: true, id: novo.id };
+      }
+      case 'update_field': {
+        if (p.is_archived) { setCampos((prev) => prev.filter((c) => c.id !== p.field_id)); return { success: true }; }
+        setCampos((prev) => prev.map((c) => {
+          if (c.id !== p.field_id) return c;
+          const n = { ...c };
+          if (typeof p.name === 'string') n.name = p.name;
+          if (Array.isArray(p.options)) n.options = p.options as CampoCustom['options'];
+          if (typeof p.show_on_card === 'boolean') n.show_on_card = p.show_on_card;
+          return n;
+        }));
+        return { success: true };
+      }
+      case 'set_field_value':
+        mudarTarefa(id!, (t) => {
+          const fv = { ...t.field_values };
+          if (p.value === null || p.value === undefined) delete fv[String(p.field_id)];
+          else fv[String(p.field_id)] = p.value;
+          return { ...t, field_values: fv };
+        });
+        return { success: true };
       default:
         return { success: true }; // demais ações: aceitas sem efeito no demo
     }
@@ -258,7 +303,7 @@ export function useTarefasDemo() {
   }, []);
 
   return {
-    lists: listasComContagem, tasks, tags, campos: [], notificacoes: [], views: [], templates: [],
+    lists: listasComContagem, tasks, tags, campos, notificacoes: [], views: [], templates: [],
     loading: false, error: null as string | null, reload: FIXOS.reload, write, fetchDetail, reordenarPastas, moverPasta,
     fetchAnexos: FIXOS.fetchAnexos, enviarAnexo: FIXOS.enviarAnexo, abrirAnexo: FIXOS.abrirAnexo,
   };

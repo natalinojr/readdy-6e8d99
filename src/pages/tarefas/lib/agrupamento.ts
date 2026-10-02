@@ -212,7 +212,8 @@ export function agruparTarefas(
     key: null,
     label: 'Sem valor',
     color: '#94a3b8',
-    tasks: ordenar(tasks.filter((t) => !t.field_values?.[fieldId])),
+    // Inclui quem ficou com uma opção que foi tirada do campo — senão a tarefa sumia da tela.
+    tasks: ordenar(tasks.filter((t) => !campo.options.some((o) => o.id === t.field_values?.[fieldId]))),
   });
   return grupos;
 }

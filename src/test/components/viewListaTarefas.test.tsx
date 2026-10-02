@@ -1,5 +1,5 @@
 // Lista de Tarefas: menus das células abrem direto no clique, comentário pela
-// coluna, ordenação pelo título e largura ajustável da coluna.
+// coluna, menu do título (ordenar/editar campo/ocultar) e largura ajustável da coluna.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/react';
 
@@ -43,6 +43,12 @@ function montar(write = vi.fn().mockResolvedValue({ success: true })) {
 
 const titulos = () => screen.getAllByText(/^Tarefa /).map((el) => el.textContent);
 
+/** Clique no título abre o menu da coluna; escolhe a opção. */
+function ordenarPeloMenu(coluna: string, opcao: RegExp) {
+  fireEvent.click(screen.getByRole('button', { name: coluna }));
+  fireEvent.click(screen.getByRole('button', { name: opcao }));
+}
+
 // jsdom não tem PointerEvent — sem isto o clientX do arraste chega undefined.
 // Idem DragEvent: sem isto o clientY (antes/depois da linha) chega undefined.
 if (!('DragEvent' in window)) (window as unknown as { DragEvent: typeof MouseEvent }).DragEvent = MouseEvent;
@@ -51,16 +57,24 @@ if (!('PointerEvent' in window)) (window as unknown as { PointerEvent: typeof Mo
 describe('ViewLista (tarefas)', () => {
   beforeEach(() => localStorage.clear());
 
-  it('ordena pela coluna ao clicar no título: asc → desc → ordem original', () => {
+  it('ordena pela coluna pelo menu do título: crescente → decrescente → tirar ordenação', () => {
     montar();
     expect(titulos()).toEqual(['Tarefa Alta', 'Tarefa Sem', 'Tarefa Urgente']);
-    const cab = screen.getByRole('button', { name: 'Prioridade' });
-    fireEvent.click(cab);
+    ordenarPeloMenu('Prioridade', /Ordenar crescente/);
     expect(titulos()).toEqual(['Tarefa Alta', 'Tarefa Urgente', 'Tarefa Sem']);
-    fireEvent.click(cab);
+    ordenarPeloMenu('Prioridade', /Ordenar decrescente/);
     expect(titulos()).toEqual(['Tarefa Urgente', 'Tarefa Alta', 'Tarefa Sem']);
-    fireEvent.click(cab);
+    ordenarPeloMenu('Prioridade', /Tirar ordenação/);
     expect(titulos()).toEqual(['Tarefa Alta', 'Tarefa Sem', 'Tarefa Urgente']);
+  });
+
+  it('menu do título: ocultar coluna tira ela da tela e salva', () => {
+    montar();
+    fireEvent.click(screen.getByRole('button', { name: 'Prioridade' }));
+    expect(screen.queryByRole('button', { name: /Editar campo/ })).toBeNull(); // coluna nativa não é campo
+    fireEvent.click(screen.getByRole('button', { name: /Ocultar coluna/ }));
+    expect(screen.queryByRole('button', { name: 'Prioridade' })).toBeNull();
+    expect(JSON.parse(localStorage.getItem('erpos_tarefas_colunas_L1') ?? '[]')).not.toContain('prioridade');
   });
 
   it('clique no responsável abre a lista direto e grava ao escolher', () => {
@@ -101,7 +115,7 @@ describe('ViewLista (tarefas)', () => {
 
   it('arrastar desliga com a lista ordenada por coluna', () => {
     montar();
-    fireEvent.click(screen.getByRole('button', { name: 'Prioridade' }));
+    ordenarPeloMenu('Prioridade', /Ordenar crescente/);
     expect((screen.getByText('Tarefa Alta').closest('.group') as HTMLElement).getAttribute('draggable')).toBe('false');
   });
 
@@ -207,5 +221,52 @@ describe('Menu de colunas: campos personalizados', () => {
     );
     fireEvent.click(screen.getByRole('button', { name: /Colunas/ }));
     expect(screen.getByText('Disciplina · Pasta')).toBeTruthy();
+  });
+
+  const comOpcoes = {
+    ...campo,
+    options: [{ id: 'o1', label: 'Matemática', color: '#6366f1' }, { id: 'o2', label: 'História', color: '#0ea5e9' }],
+  } as typeof campo;
+
+  it('título do campo: "Editar campo" muda nome e opções mantendo o id das opções', async () => {
+    localStorage.setItem('erpos_tarefas_colunas_L1', JSON.stringify(['campo:f1']));
+    const write = vi.fn().mockResolvedValue({ success: true });
+    render(
+      <ViewLista list={lista} tasks={[tarefa('a', 'Tarefa A')]} campos={[comOpcoes]} tags={[]} usuarios={[]}
+        groupBy="status" write={write} onOpenTask={vi.fn()} />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Disciplina' }));
+    fireEvent.click(screen.getByRole('button', { name: /Editar campo/ }));
+    fireEvent.change(screen.getByDisplayValue('Disciplina'), { target: { value: 'Matéria' } });
+    fireEvent.change(screen.getByDisplayValue('História'), { target: { value: 'Geografia' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Salvar' }));
+    await vi.waitFor(() => expect(write).toHaveBeenCalledWith('update_field', {
+      field_id: 'f1',
+      name: 'Matéria',
+      options: [{ id: 'o1', label: 'Matemática', color: '#6366f1' }, { id: 'o2', label: 'Geografia', color: '#0ea5e9' }],
+    }));
+    await vi.waitFor(() => expect(screen.queryByDisplayValue('Matéria')).toBeNull()); // fechou ao salvar
+  });
+
+  it('tirar uma opção que já existia avisa que as tarefas com ela ficam sem valor', () => {
+    localStorage.setItem('erpos_tarefas_colunas_L1', JSON.stringify(['campo:f1']));
+    render(
+      <ViewLista list={lista} tasks={[tarefa('a', 'Tarefa A')]} campos={[comOpcoes]} tags={[]} usuarios={[]}
+        groupBy="status" write={vi.fn()} onOpenTask={vi.fn()} />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Disciplina' }));
+    fireEvent.click(screen.getByRole('button', { name: /Editar campo/ }));
+    expect(screen.queryByText(/ficam sem valor/)).toBeNull();
+    fireEvent.click(screen.getAllByTitle('Tirar opção')[1]);
+    expect(screen.getByText(/"História" ficam sem valor/)).toBeTruthy();
+  });
+
+  it('agrupado pelo campo: tarefa com opção que foi tirada cai em "Sem valor" (não some)', () => {
+    const grupos = agruparTarefas(
+      [tarefa('a', 'Tarefa A', { field_values: { f1: 'o1' } }), tarefa('b', 'Tarefa B', { field_values: { f1: 'apagada' } })],
+      'field:f1', lista, [], [comOpcoes],
+    );
+    expect(grupos.find((g) => g.key === null)?.tasks.map((t) => t.id)).toEqual(['b']);
+    expect(grupos.find((g) => g.key === 'o1')?.tasks.map((t) => t.id)).toEqual(['a']);
   });
 });

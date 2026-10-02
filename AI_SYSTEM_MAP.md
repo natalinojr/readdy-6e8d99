@@ -266,6 +266,19 @@ Quando o usuario pedir "muda X":
 
 Secao viva: registrar aqui padroes, decisoes e pegadinhas reutilizaveis conforme o sistema evolui. Cada entrada com data
 
+### 2026-10-02 — Tarefas: editar campo personalizado e configurações da pasta
+- **Campo:** `campos/CampoForm.tsx` é o formulário único (criar e editar); `EditarCampoModal` abre ele sozinho. Editar muda
+  nome e opções (`task-write › update_field`, só quem criou); o **tipo não muda** (os valores gravados dependem dele) e as
+  opções mantêm o `id` — trocar o nome de uma opção não mexe nas tarefas. Opção tirada: as tarefas ficam com o id antigo no
+  banco; a tela trata como vazio (agrupamento joga em "Sem valor", `CampoInput` de múltipla escolha ignora o id para o
+  servidor não recusar "opção inexistente"). O formulário avisa quais opções vão ficar sem valor.
+- **Título da coluna (Lista):** clique abre menu (`Popover`/`Opcao` do `EditorCelula`): ordenar crescente/decrescente/tirar,
+  "Editar campo" (só coluna `campo:`) e "Ocultar coluna". Antes o clique alternava a ordenação direto.
+- **Pasta:** `ConfigPasta.tsx` (engrenagem no título da pasta e na árvore, só dono) = nome + cor (`update_list`, já existia) +
+  atalhos para Status, Campos, Compartilhar e Mover. Na árvore a engrenagem ocupa o lugar do ícone "Mover" (5 ícones
+  espremiam o nome); mover continua por arrastar e pelo atalho. Atalho de Status/Campos abre a pasta antes (eles valem para a
+  pasta aberta). Modo demo (`/dev/tarefas`) ganhou campos e `update_list`.
+
 ### 2026-10-02 — Dashboard reorganizado (atenção no topo, meta com ritmo, pico por dia)
 - `/dashboard` = faixa "Precisa de atenção" (`AtencaoFaixa`: contas vencidas/folha/compras recebidas/orçamentos via
   `useFinanceiroAlertas`, atrasados, insumo que vai zerar, abaixo do mínimo, validade) → `FaturamentoHero` (meta + ritmo)

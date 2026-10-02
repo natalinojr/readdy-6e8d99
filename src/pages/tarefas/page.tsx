@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
-import { Plus, Pin, ListTodo, LayoutGrid, CalendarDays, ClipboardList, UserCheck, Users, Layers, Send, SlidersHorizontal, ListChecks, Waypoints, ArrowLeft, Gauge, Share2, LayoutTemplate, BellRing, FileText, Cloud } from 'lucide-react';
+import { Plus, Pin, ListTodo, LayoutGrid, CalendarDays, ClipboardList, UserCheck, Users, Layers, Send, SlidersHorizontal, ListChecks, Waypoints, ArrowLeft, Gauge, Share2, LayoutTemplate, BellRing, FileText, Cloud, Settings } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
 import { useEuTarefas } from './hooks/useEuTarefas';
 import { useAppMode } from '@/contexts/AppModeContext';
@@ -32,6 +32,7 @@ import SeletorPasta from './components/SeletorPasta';
 import { useLarguraSidebar } from './hooks/useLarguraSidebar';
 import ConfirmDialog from './components/ConfirmDialog';
 import CompartilharPasta from './components/CompartilharPasta';
+import ConfigPasta from './components/ConfigPasta';
 import ConfigAvisos from './components/ConfigAvisos';
 import ConexaoMicrosoft from './components/ConexaoMicrosoft';
 import { BottomNav, ListasSheet } from './components/MobileNav';
@@ -150,6 +151,8 @@ export default function TarefasPage() {
   const [compartilhando, setCompartilhando] = useState<TaskList | null>(null);
   // "Mover para…" de uma pasta (o arrastar chama moverPasta direto).
   const [movendoPasta, setMovendoPasta] = useState<NoPasta | null>(null);
+  // Engrenagem da pasta: nome, cor e atalhos (só o dono).
+  const [configPastaId, setConfigPastaId] = useState<string | null>(null);
   const [showEscolherPasta, setShowEscolherPasta] = useState(false);
   const [newListName, setNewListName] = useState('');
   const [newListColor, setNewListColor] = useState(CORES_LISTA[0]);
@@ -635,6 +638,7 @@ export default function TarefasPage() {
             onReordenar={reordenarPastas}
             onMover={moverPasta}
             onPedirMover={setMovendoPasta}
+            onConfigurar={(no) => setConfigPastaId(no.id)}
           />
 
           {raizesCompartilhadas.length > 0 && (
@@ -738,6 +742,16 @@ export default function TarefasPage() {
                   >
                     <Share2 size={13} />
                     {(selectedList.share_count ?? 0) > 0 && <span>{selectedList.share_count}</span>}
+                  </button>
+                )}
+                {selectedList && (selectedList.access ?? 'owner') === 'owner' && (
+                  <button
+                    onClick={() => setConfigPastaId(selectedList.id)}
+                    className="shrink-0 flex items-center text-xs font-normal p-2 md:px-2 md:py-1 rounded-lg text-slate-500 hover:bg-slate-200 hover:text-indigo-600 active:bg-slate-200"
+                    title="Configurações da pasta (nome, cor…)"
+                    aria-label="Configurações da pasta"
+                  >
+                    <Settings size={13} />
                   </button>
                 )}
                 {selectedList && (
@@ -911,6 +925,7 @@ export default function TarefasPage() {
           onMicrosoft={() => setShowMicrosoft(true)}
           onCompartilhar={setCompartilhando}
           onPedirMover={setMovendoPasta}
+          onConfigurar={(no) => setConfigPastaId(no.id)}
           onModelos={() => setTelaModelos({ tipo: 'lista' })}
           onClose={() => { setShowListasSheet(false); setRelatoriosAoEscolher(false); }}
         />
@@ -1021,6 +1036,25 @@ export default function TarefasPage() {
           onClose={() => setMovendoPasta(null)}
         />
       )}
+
+      {configPastaId && (() => {
+        const pasta = lists.find((l) => l.id === configPastaId);
+        if (!pasta) return null;
+        return (
+          <ConfigPasta
+            list={pasta}
+            pai={lists.find((l) => l.id === pasta.parent_list_id) ?? null}
+            cores={CORES_LISTA}
+            write={write}
+            onClose={() => setConfigPastaId(null)}
+            // Status e campos valem para a pasta aberta: abre ela antes.
+            onStatus={() => { irParaPasta(pasta.id); setShowStatus(true); }}
+            onCampos={() => { irParaPasta(pasta.id); setShowCampos(true); }}
+            onCompartilhar={() => setCompartilhando(pasta)}
+            onMover={() => setMovendoPasta(achatarArvore(arvorePastas).find((n) => n.id === pasta.id) ?? null)}
+          />
+        );
+      })()}
 
       {compartilhando && (
         <CompartilharPasta

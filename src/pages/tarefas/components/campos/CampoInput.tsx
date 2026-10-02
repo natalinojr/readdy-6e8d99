@@ -135,7 +135,10 @@ export default function CampoInput({ campo, value, usuarios, onChange }: CampoIn
       );
 
     case 'labels': {
-      const selecionados = Array.isArray(value) ? (value as string[]) : [];
+      // Ignora opção que foi tirada do campo: reenviar o id dela faria o servidor recusar ("opção inexistente").
+      const selecionados = Array.isArray(value)
+        ? (value as string[]).filter((id) => campo.options.some((o) => o.id === id))
+        : [];
       return (
         <div className="flex flex-wrap gap-1.5 py-0.5">
           {campo.options.map((o) => {
