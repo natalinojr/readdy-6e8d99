@@ -36,6 +36,8 @@
 //   conta_guardar_boleto  { bill_id, linha? | copia_e_cola?, confirmar_valor? } → guarda o boleto/Pix na conta (DV/CRC conferidos)
 //   conta_desfazer_boleto { bill_id }             → tira o boleto guardado pela tela (desfazer)
 //   conta_pedir_boleto    { bill_id }             → registra o pedido na pendência e devolve o texto p/ o WhatsApp do dono
+//   conta_pix_destinos    { bill_id }             → Fornecedores com chave Pix + Pix permitidos da loja da conta
+//   conta_pagar           { bill_id, supplier_id? | favorecido_id? } → prepara o pagamento (boleto/Pix guardado, ou Pix na chave cadastrada)
 //
 // O PIN é o mesmo do Telegram (asst_settings.pay_pin, hash com o id do chat do Telegram) e nunca
 // vai ao modelo nem ao histórico. Mesmo bloqueio: 3 erros → 15 minutos.
@@ -782,6 +784,26 @@ Deno.serve(async (req) => {
     // Conta atrasada paga pelo cartão da pendência (dono, 2026-09-25): prepara o boleto guardado (o
     // inter-bank recalcula multa e juros do vencido) ou o Pix copia e cola da conta; a tela pede o PIN.
     // Todas as travas do inter-bank valem (já paga, em andamento, incerto, fornecedor/Pix permitido).
+    // Para quem dá para mandar Pix por chave (Fornecedores com chave + Pix permitidos) — a lista do
+    // cartão "Falta o jeito de pagar". fin_pix_favorecidos não tem leitura pela tela, por isso vem daqui.
+    if (action === 'conta_pix_destinos') {
+      const { data: b } = await admin.from('fin_accounts_payable').select('id, tenant_id').eq('id', String(body.bill_id ?? '')).maybeSingle();
+      if (!b) return fail('Conta não encontrada.', 404);
+      const tenant = String(b.tenant_id);
+      if (!(await ehGestor(admin, user.id, tenant))) return fail('Sem acesso a essa loja.', 403);
+      const [{ data: sups }, { data: favs }] = await Promise.all([
+        admin.from('fin_suppliers').select('id, name, legal_name, pix_key, is_active').eq('tenant_id', tenant).is('deleted_at', null).not('pix_key', 'is', null).order('name').limit(2000),
+        admin.from('fin_pix_favorecidos').select('id, name, pix_key').eq('tenant_id', tenant).eq('is_active', true).order('name'),
+      ]);
+      const destinos = [
+        ...(sups ?? []).filter((f) => f.is_active !== false && String(f.pix_key ?? '').trim())
+          .map((f) => ({ tipo: 'fornecedor', id: f.id, nome: String(f.legal_name || f.name), apelido: String(f.name), chave: String(f.pix_key).trim() })),
+        ...(favs ?? []).filter((f) => String(f.pix_key ?? '').trim())
+          .map((f) => ({ tipo: 'permitido', id: f.id, nome: String(f.name), apelido: String(f.name), chave: String(f.pix_key).trim() })),
+      ];
+      return json({ success: true, data: { destinos } });
+    }
+
     if (action === 'conta_pagar') {
       const { data: b } = await admin.from('fin_accounts_payable')
         .select('id, tenant_id, supplier, description, amount, paid_amount, status, boleto_digitavel, boleto_pix_copia')
@@ -789,8 +811,31 @@ Deno.serve(async (req) => {
       if (!b) return fail('Conta não encontrada.', 404);
       if (!(await ehGestor(admin, user.id, String(b.tenant_id)))) return fail('Sem acesso a essa loja.', 403);
       if (['paid', 'cancelled'].includes(String(b.status))) return fail(b.status === 'paid' ? 'Essa conta já está paga.' : 'Essa conta foi cancelada.');
-      if (!b.boleto_digitavel && !b.boleto_pix_copia) return fail('Essa conta não tem boleto nem Pix guardado. Mande o boleto no chat ou dê baixa se já pagou.');
       const saldo = Math.round((Number(b.amount) - Number(b.paid_amount ?? 0)) * 100) / 100;
+      // Sem boleto: Pix na chave de quem JÁ está cadastrado — Fornecedores com chave ou Pix permitidos
+      // (dono, 2026-10-02). Nada é cadastrado aqui; o inter-bank confere a chave de novo (lista branca).
+      if (body.supplier_id || body.favorecido_id) {
+        if (b.boleto_digitavel || b.boleto_pix_copia) return fail('Essa conta já tem boleto ou Pix guardado — pague por ele.');
+        let chave: string | null = null, nome = '';
+        if (body.supplier_id) {
+          const { data: f } = await admin.from('fin_suppliers').select('id, name, legal_name, pix_key, is_active')
+            .eq('id', String(body.supplier_id)).eq('tenant_id', String(b.tenant_id)).maybeSingle();
+          if (!f || f.is_active === false) return fail('Fornecedor não encontrado nesta loja.', 404);
+          chave = f.pix_key; nome = String(f.legal_name || f.name);
+        } else {
+          const { data: f } = await admin.from('fin_pix_favorecidos').select('id, name, pix_key')
+            .eq('id', String(body.favorecido_id)).eq('tenant_id', String(b.tenant_id)).eq('is_active', true).maybeSingle();
+          if (!f) return fail('Esse Pix permitido não existe mais nesta loja.', 404);
+          chave = f.pix_key; nome = String(f.name);
+        }
+        if (!chave) return fail('Esse cadastro não tem chave Pix. Cadastre em Fornecedores.');
+        const out = await callInter('prepare_payment', {
+          tenant_id: b.tenant_id, tipo: 'pix', chave, valor: saldo, bill_id: b.id,
+          descricao: String(b.supplier || b.description || nome).slice(0, 140), requested_by: user.id, channel: 'app', chat_id: chatKey,
+        });
+        return json({ success: true, data: { payment: await payCard1(admin, out.payment) } });
+      }
+      if (!b.boleto_digitavel && !b.boleto_pix_copia) return fail('Essa conta não tem boleto nem Pix guardado. Mande o boleto no chat ou dê baixa se já pagou.');
       const out = await callInter('prepare_payment', {
         tenant_id: b.tenant_id, tipo: b.boleto_digitavel ? 'boleto' : 'pix',
         linha: b.boleto_digitavel ?? undefined, copia_e_cola: b.boleto_digitavel ? undefined : b.boleto_pix_copia,
