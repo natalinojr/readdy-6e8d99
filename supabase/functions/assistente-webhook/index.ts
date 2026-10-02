@@ -949,13 +949,16 @@ async function relayToTelegram(
     text = [text, '(não consegui baixar o anexo)'].filter(Boolean).join('\n');
   }
   if (!text && !attachment) return;
-  // Mensagens seguidas (encaminhar várias de uma vez) viram uma só.
+  // Mensagens seguidas (encaminhar várias de uma vez) viram uma só. Cada encaminhada leva a própria
+  // marca ANTES de juntar (2026-10-02): encaminhar 3 e escrever "pasta obra, sexta 10h" logo depois
+  // vira um lote só, e o prefixo único do lote (decidido pela última mensagem) apagava quais eram de
+  // terceiros — e mensagem encaminhada agora vira tarefa.
   if (!attachment) {
-    const merged = await debounce(admin, waChatId, text, msgKey);
+    const merged = await debounce(admin, waChatId, p.forwarded ? `[Encaminhada] ${text}` : text, msgKey);
     if (merged === null) { if (msgKey) react(msgKey, '✅'); return; }
     text = merged.text;
   }
-  const prefixo = p.forwarded ? '[Encaminhada pelo WhatsApp]' : '[Pelo WhatsApp]';
+  const prefixo = p.forwarded && attachment ? '[Encaminhada pelo WhatsApp]' : '[Pelo WhatsApp]';
   try {
     const r = await fetch(`${supabaseUrl}/functions/v1/assistente-brain`, {
       method: 'POST', headers: { 'Content-Type': 'application/json', 'x-internal-key': internalKey },
@@ -969,7 +972,7 @@ async function relayToTelegram(
     // "falei com o assistente no whats e ele me respondeu no telegram"). A conversa continua sendo a
     // mesma (o brain grava no chat do Telegram/ERPOS), só a entrega muda de canal.
     if (reply !== 'NO_REPLY') {
-      await sendReply(number, reply, msgKey, text.slice(0, 200));
+      await sendReply(number, reply, msgKey, text.replace(/\[Encaminhada\] /g, '').slice(0, 200));
     }
     // Enquete/localização/contato que o modelo pediu saem aqui mesmo, no WhatsApp.
     if (actions.length) await runActions(admin, number, tg, actions).catch((e) => log('WARN', 'ações no WhatsApp', { error: errMsg(e) }));

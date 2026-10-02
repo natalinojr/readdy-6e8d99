@@ -1108,7 +1108,11 @@ export default function ViewLista({
       )}
 
       {colunas.length > 0 && (
-        <div className="hidden md:flex items-center px-4 -mb-4 group/cab">
+        // Títulos das colunas na MESMA linha do nome do 1º grupo (h-5 = altura da etiqueta;
+        // !-mb-11 = essa altura + o space-y-6; o ! porque o space-y zera a margem de baixo),
+        // colados nas linhas — numa linha própria ficavam longe demais das colunas.
+        // O vazio da esquerda deixa o clique passar pro grupo.
+        <div className="hidden md:flex items-center h-5 px-4 !-mb-11 pointer-events-none group/cab">
           <span className="flex-1" />
           {colunas.map((c) => (
             <div
@@ -1135,7 +1139,7 @@ export default function ViewLista({
                 soltarColuna(c.id, alvoColuna?.antes ?? true);
               }}
               title="Arraste para mudar a ordem da coluna"
-              className={`relative px-2 text-[11px] font-medium text-slate-400 text-right truncate shrink-0 cursor-grab active:cursor-grabbing ${
+              className={`relative px-2 text-[11px] font-medium text-slate-400 text-right truncate shrink-0 pointer-events-auto cursor-grab active:cursor-grabbing ${
                 arrastoColuna === c.id ? 'opacity-40' : ''
               }`}
             >

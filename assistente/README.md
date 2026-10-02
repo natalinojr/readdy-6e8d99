@@ -571,6 +571,22 @@ uma). A resposta sai no Telegram (`deliver`, prefixo 📲). No WhatsApp: 👀 re
 ❌ falhou (+ aviso). Exceções que continuam no WhatsApp: janela de currículos (abaixo) e `.txt` de
 exportação de conversa (histórico de grupo). Arquivo sem aviso de currículo também é repassado.
 
+**Mensagem encaminhada vira tarefa (2026-10-02, pedido do dono).** Encaminhar uma mensagem (texto,
+áudio, foto) para o número do assistente = criar tarefa. O brain monta o título e pergunta numa
+mensagem só o que faltar dos **três obrigatórios: pasta, data e hora** (pasta = `listar_pastas`, as
+mais usadas dos últimos 60 dias, numeradas: ele responde "2 sexta 10h" ou por áudio). Responsável é
+sempre o dono. `criar_tarefa` recusa sem pasta/data+hora e não cai mais calada na pasta "Assistente"
+(pasta nova só com `criar_pasta=true`); nome ambíguo devolve as opções (`resolverPasta`: caminho
+exato > nome exato > pedaço do nome > pedaço do caminho). Texto original vai inteiro na descrição;
+foto/PDF vira anexo (`anexar_arquivo`, usa o último arquivo guardado em `assistente-anexos`).
+Correção/"desfaz" = `ajustar_tarefa` (sem id = a última criada pelo assistente em 3 h), que vai pelo
+`task-write` — trocar de pasta é **`move_task`**: `update_task` com `list_id` deixa o status da pasta
+antiga e a tarefa some da lista (o mapa de ações foi corrigido). No webhook, cada mensagem encaminhada
+leva `[Encaminhada]` **antes** do `debounce` (antes o prefixo do lote vinha da última mensagem e
+"encaminhei 3 + escrevi a pasta" perdia a marca). Teste: conversa `teste:` direto no brain via
+`net.http_post` com a chave do vault `assistente_internal_key`. Enquete do WhatsApp **não** funciona
+nesse repasse (voto grava com `chat_id tg:` e cai fora do `allowed`) — por isso a lista numerada.
+
 **Agendamento de entrevista com o candidato (2026-09-14, Fases 1–2).** Decisões do dono: início
 automático pela etapa "Chamar p/ entrevista" (`hiring_stages.native_kind = 'agendar'`); disponibilidade
 e entrevistadores por vaga (`hiring_job_scheduling`, tela Contratação › Vagas › editar › "Entrevistas
