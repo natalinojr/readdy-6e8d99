@@ -17,6 +17,7 @@ import { kindConfig } from '@/contexts/PendenciasContext';
 import { useHoje, type TarefaHoje } from './useHoje';
 import { contarAgoraPorLoja, diasEntre, type ItemHoje } from './organizar';
 import CartaoHoje from './CartaoHoje';
+import AprendiComVoce from './AprendiComVoce';
 import { DinheiroHoje, LojaHoje, VendasHoje } from './ResumoHoje';
 
 const saudacao = () => {
@@ -38,7 +39,7 @@ export default function HojePage() {
   const { user, selectTenant } = useAuth();
   const { hasPermissao } = usePermissoes();
   const { hasModule } = useModuleAccess();
-  const { itens, tarefas, feitas, erro, hoje, recarregar, concluirTarefa, marcar, papelDe, nLojas, dono, carregando } = useHoje();
+  const { itens, tarefas, feitas, erro, hoje, recarregar, concluirTarefa, marcar, papelDe, papeis, nLojas, dono, carregando } = useHoje();
   const [loja, setLoja] = useState('');
   const [verEspera, setVerEspera] = useState(false);
   const [verFeitas, setVerFeitas] = useState(false);
@@ -82,8 +83,10 @@ export default function HojePage() {
   const sozinho = feitas.filter((f) => f.quem === 'sistema').length;
   // Nome da loja nos cartões: quem tem mais de uma loja (mesmo que só uma tenha algo hoje).
   const varias = nLojas > 1 || lojas.length > 1;
+  // Acumulado grande anda em porções: com a porção de hoje feita, o resto não segura o "Tudo em dia".
+  const emDiaHoje = emDia.filter((i) => !i.porcao?.feita);
   // "Tudo em dia" só com certeza: sem erro de leitura, nada para agora, nada acumulado e as tarefas feitas.
-  const tudoEmDia = !carregando && !erro && agora.length === 0 && emDia.length === 0 && tarefasAbertas.length === 0;
+  const tudoEmDia = !carregando && !erro && agora.length === 0 && emDiaHoje.length === 0 && tarefasAbertas.length === 0;
 
   const atalhos: Atalho[] = (() => {
     const receber = admin || RECEBER_MODULO_KEYS.some((k) => hasPermissao(k));
@@ -172,7 +175,7 @@ export default function HojePage() {
         {!carregando && (
           <p className="text-sm text-zinc-500 mt-1">
             {agora.length > 0 ? 'Cada cartão resolve aqui mesmo. O resto fica guardado e volta quando apertar.'
-              : tudoEmDia ? 'Nada precisa de você agora.'
+              : tudoEmDia ? (emDia.length > 0 ? 'Nada precisa de você agora. A porção de hoje do acumulado já foi.' : 'Nada precisa de você agora.')
               : erro ? 'Não consegui conferir tudo — veja o aviso abaixo.'
               : tarefasAbertas.length > 0 ? `Falta${tarefasAbertas.length === 1 ? '' : 'm'} ${tarefasAbertas.length} tarefa${tarefasAbertas.length === 1 ? '' : 's'} de hoje.`
               : 'Sobrou só o trabalho acumulado, para pôr em dia.'}
@@ -236,6 +239,8 @@ export default function HojePage() {
             </section>
           )}
 
+          {gestor && <AprendiComVoce papeis={papeis} mostrarLoja={varias} versao={feitas.length} />}
+
           {emDia.length > 0 && (
             <section>
               <Titulo texto="Para pôr em dia" n={emDia.length} tom="amber" explica="trabalho acumulado" />
@@ -288,6 +293,7 @@ export default function HojePage() {
 
           <p className="text-[12px] text-zinc-400 text-center">
             <button onClick={() => navigate('/pendencias')} className="font-semibold text-zinc-500 underline cursor-pointer">Ver todas as pendências e o histórico</button>
+            {gestor && <> · <button onClick={() => navigate('/hoje/piloto')} className="font-semibold text-violet-600 underline cursor-pointer"><i className="ri-robot-2-line" /> Piloto automático</button></>}
           </p>
 
           {silenciados > 0 && (

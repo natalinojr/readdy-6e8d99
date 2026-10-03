@@ -112,6 +112,6 @@ export function useHoje() {
 
   return {
     itens: store.itens, tarefas, feitas, erro: store.erro ?? erroExtra, hoje: store.hoje, recarregar, concluirTarefa, marcar,
-    papelDe, nLojas, dono, carregando: store.pendencias === null,
+    papelDe, papeis, nLojas, dono, carregando: store.pendencias === null,
   };
 }

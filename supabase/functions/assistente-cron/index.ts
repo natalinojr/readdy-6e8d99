@@ -22,7 +22,11 @@
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
 import postgres from 'npm:postgres@3.4.5';
 import { deveCobrar, mesclarPedidoBoleto } from '../_shared/trilha-acoes.ts';
-import { agoraDaPessoa, pendHojeDaLinha, tituloCurto, COLUNAS_PEND_HOJE } from '../_shared/hoje-organizar.ts';
+import { agoraDaPessoa, pendHojeDaLinha, tituloCurto, visivelNaHoje, diasEntre, COLUNAS_PEND_HOJE, PORCAO_KINDS, fornecedorDoBoleto } from '../_shared/hoje-organizar.ts';
+import {
+  janelaAtual, podeAvisarNoCelular, horaTexto, avaliarRitmo, canalQueMaisCaiu, textoRitmo, caixaDaSemana, textoCaixa,
+  previsaoPico, acabamAntesDoPico, textoPico, diaOperacao, horaOperacao, somarDias, CAIXA_DIAS, type TextoAviso, type PicoCelula,
+} from '../_shared/previsao.ts';
 import { PAPEL_DO_BANCO, DONO_EMAIL } from '../_shared/pendencia-visivel.ts';
 import { situacaoPlano, descreverFrequencia, type PlanoContagem } from '../_shared/estoque-planos.ts';
 
@@ -519,6 +523,13 @@ const PRO_DEFAULTS: Record<string, any> = {
   // nenhuma: só mantém as linhas agregadas em dia. Fica fora das regras de aviso de
   // propósito — desligar um aviso não pode fazer a pendência sumir de vista.
   pendencias: { enabled: true, sync_min: 30 },
+  // Avisos ANTES de virar problema (2026-10-03, regras em _shared/previsao.ts): vendas abaixo do ritmo
+  // (janelas das 15h e 19h), caixa da semana que não cobre (de 30 em 30 min) e insumo que acaba antes do
+  // pico (10h e 16h). Viram pendência — a Hoje, o número do topo e o bom dia mostram sozinhos — e avisam
+  // no celular de quem vê o cartão no máximo uma vez por loja por janela, só de dia. Nasceu DESLIGADO até
+  // o dono aprovar os textos (prévia: { preview: 'previsao' }); ligar = proactive.previsao.enabled = true.
+  // pts_abaixo: corte do aviso de vendas (15 = o vermelho "Abaixo do ritmo" do Dashboard).
+  previsao: { enabled: false, vendas: ['15:00', '19:00'], insumos: ['10:00', '16:00'], pts_abaixo: 15, recheck_min: 30, push_de: '08:00', push_ate: '21:30' },
 };
 let pgc: ReturnType<typeof postgres> | null = null;
 const db = () => (pgc ??= postgres(Deno.env.get('SUPABASE_DB_URL') ?? '', { max: 1, prepare: false, idle_timeout: 20 }));
@@ -1324,6 +1335,61 @@ async function syncPendenciasClassificacao(admin: SupabaseClient, tenants: Array
   }
 }
 
+// ── Piloto automático e porções (2026-10-03, tela Hoje fase 3) ─────────────────────────────────────
+// Roda logo depois da sincronização da caixa de pendências:
+//  1. Porções: guarda o total de cada pendência acumulada na 1ª volta do dia depois das 8h
+//     (pendencias_porcao) — depois das automações da manhã (notas às 6h, conciliação 7h, regras 7h30),
+//     para o "já foram" não contar o que o sistema lançou sozinho de madrugada. A Hoje mostra a
+//     "porção de hoje" e quanto já andou.
+//  2. Regra ensinada "não cobrar boleto deste fornecedor" (automacoes.sem_boleto_fornecedor): fecha
+//     como descartada as "Falta o boleto" dele, com motivo, e anota no diário com desfazer. Não mexe na
+//     que alguém já pediu o boleto (payload.pedido_em): foi decisão de gente. Sem a linha no diário
+//     (sem desfazer), volta as pendências como estavam.
+async function pilotoEPorcoes(admin: SupabaseClient, tenants: Array<{ id: string; name: string }>) {
+  const ids = tenants.map((t) => t.id);
+  if (!ids.length) return;
+  const hoje = localDate();
+  const { data: acum } = localHHMM() < '08:00' ? { data: [] } : await admin.from('pendencias').select('id, payload')
+    .in('tenant_id', ids).in('kind', [...PORCAO_KINDS]).in('status', ['aberta', 'vista']);
+  const linhas = ((acum ?? []) as Array<{ id: string; payload: Record<string, unknown> | null }>)
+    .filter((p) => Number(p.payload?.total ?? 0) > 0)
+    .map((p) => ({ pendencia_id: p.id, dia: hoje, total_inicio: Math.round(Number(p.payload?.total ?? 0)) }));
+  if (linhas.length) {
+    const { error } = await admin.from('pendencias_porcao').upsert(linhas, { onConflict: 'pendencia_id,dia', ignoreDuplicates: true });
+    if (error) log('WARN', 'porções', { error: error.message });
+  }
+
+  const { data: regras } = await admin.from('automacoes').select('id, tenant_id, alvo')
+    .in('tenant_id', ids).eq('chave', 'sem_boleto_fornecedor').eq('ligada', true);
+  for (const r of (regras ?? []) as Array<{ id: string; tenant_id: string; alvo: string }>) {
+    const { data: abertas } = await admin.from('pendencias').select('id, titulo, status, payload')
+      .eq('tenant_id', r.tenant_id).eq('kind', 'boleto_faltando').in('status', ['aberta', 'vista']);
+    const doFornecedor = ((abertas ?? []) as Array<{ id: string; titulo: string; status: string; payload: Record<string, unknown> | null }>)
+      .filter((p) => (fornecedorDoBoleto(p.titulo) ?? '').toUpperCase() === r.alvo && !p.payload?.pedido_em);
+    if (!doFornecedor.length) continue;
+    const { data: fechadas, error } = await admin.from('pendencias').update({
+      status: 'descartada', resolvida_em: new Date().toISOString(), resolvida_por: null,
+      motivo: `pago sem boleto — regra ensinada (${r.alvo})`,
+    }).in('id', doFornecedor.map((p) => p.id)).in('status', ['aberta', 'vista']).select('id');
+    if (error) { log('WARN', 'piloto sem boleto', { error: error.message }); continue; }
+    // Só o que foi fechado de verdade agora (alguém pode ter resolvido uma no mesmo instante).
+    const fechar = ((fechadas ?? []) as Array<{ id: string }>).map((p) => p.id);
+    if (!fechar.length) continue;
+    const { error: erroDiario } = await admin.from('automacoes_diario').insert({
+      tenant_id: r.tenant_id, chave: 'sem_boleto_fornecedor', automacao_id: r.id, pendencia_ids: fechar, desfazer: 'reabrir_descartadas',
+      titulo: `Não cobrei boleto de ${r.alvo} (${fechar.length} conta${fechar.length === 1 ? '' : 's'})`,
+      detalhe: 'você ensinou que ele é pago sem boleto',
+    });
+    if (erroDiario) {
+      // Sem diário não há desfazer: volta como estava e tenta na próxima volta.
+      log('WARN', 'piloto sem boleto: diário', { error: erroDiario.message });
+      for (const p of doFornecedor.filter((x) => fechar.includes(x.id))) {
+        await admin.from('pendencias').update({ status: p.status, resolvida_em: null, resolvida_por: null, motivo: null }).eq('id', p.id).eq('status', 'descartada');
+      }
+    }
+  }
+}
+
 // Estoque crítico e tarefas vencidas também viram linha na caixa (2026-09-18) — não porque
 // os avisos estavam errados, mas porque a caixa só serve se for O lugar de olhar. Se metade
 // do que espera o dono estivesse aqui e a outra metade espalhada em mensagens, ele teria de
@@ -1828,8 +1894,18 @@ async function proactive(admin: SupabaseClient, cfg: Record<string, any>, ownerC
       if (!dry) { state.pend_synced_at = new Date().toISOString(); await saveState(); }
       await syncPendenciasClassificacao(admin, tenants);
       await syncPendenciasOperacao(admin, tenants, String(cfg.owner_user_id ?? ''));
+      if (!dry) await pilotoEPorcoes(admin, tenants).catch((e) => log('WARN', 'piloto/porções', { error: errMsg(e) }));
       if (dry) res.pendencias = 'caixa sincronizada';
     }
+  }
+  // Avisos antes de virar problema (2026-10-03): fora do want(), como a caixa — grava pendência mesmo sem canal do dono.
+  if (only ? only === 'previsao' : pro.previsao.enabled) {
+    const pv = await previsaoRun(admin, pro.previsao, tenants, state, {
+      dry, forcar: dry, avisar: !dry, ownerId: String(cfg.owner_user_id ?? ''),
+      chatDono: ownerChat && pro.anomaly.enabled ? (lojaId, texto) => deliver(`anomaly:${lojaId}`, texto) : undefined,
+    });
+    if (Object.keys(pv).length || dry) res.previsao = pv;
+    await saveState();
   }
   if (want('item_classify')) {
     const c = pro.item_classify;
@@ -1863,6 +1939,329 @@ async function proactive(admin: SupabaseClient, cfg: Record<string, any>, ownerC
       res.dre_classify = await dreClassify(admin, tenants, c, ownerChat, dry); // canal principal (Telegram com botões; WhatsApp em texto)
     }
   }
+  return res;
+}
+
+// ── Avisos antes de virar problema (2026-10-03) ────────────────────────────────────────────────
+// Três pendências (regras puras em _shared/previsao.ts, testadas em src/test/lib/previsao.test.ts). Pendência
+// com ação → bloco "Agora" da Hoje, o número do topo e o bom dia, sem mais nada. Uma linha por loja e dia (ref).
+//   vendas_abaixo_ritmo   gestão (admin/gerente)   janelas 15h/19h; reabre na janela seguinte se continuar abaixo
+//   caixa_nao_cobre       dinheiro                 de 30 em 30 min; uma linha viva por loja; "Ciente" cala até amanhã
+//   insumo_antes_do_pico  operacional              janelas 10h/16h; reabre na janela seguinte só com insumo novo
+// Fecham SOZINHAS (resolvida_por nulo → "fechou sozinha" na Hoje) quando a condição passa: conferidas a cada
+// recheck_min enquanto abertas. Celular: só quando o aviso passa a valer, uma vez por loja por janela, de dia.
+// deno-lint-ignore no-explicit-any
+type PrevCfg = Record<string, any>;
+interface PrevOpts {
+  dry: boolean;      // prévia: calcula e devolve os textos, sem gravar nem avisar
+  forcar: boolean;   // ignora janelas e intervalos (prévia e { run: 'previsao' })
+  avisar: boolean;   // celular e chat do dono (false no { run: 'previsao' } de teste: só diz quem seria avisado)
+  ownerId: string;
+  /** Dono no chat do assistente: o mesmo canal da "anomalia de venda" (vendas). */
+  chatDono?: (lojaId: string, texto: string) => Promise<void>;
+}
+type LinhaAviso = { id: string; ref: string; status: string; resolvida_por: string | null; payload: Record<string, unknown> | null };
+const avisoAberto = (l?: LinhaAviso) => !!l && (l.status === 'aberta' || l.status === 'vista');
+const passou = (iso: unknown, min: number) => Date.now() - (typeof iso === 'string' ? Date.parse(iso) : 0) >= min * 60_000;
+
+/** As abertas (de qualquer dia) e a de hoje, aberta ou não. */
+async function linhasDoAviso(admin: SupabaseClient, lojaId: string, kind: string, hoje: string): Promise<LinhaAviso[]> {
+  const { data, error } = await admin.from('pendencias').select('id, ref, status, resolvida_por, payload')
+    .eq('tenant_id', lojaId).eq('kind', kind).or(`status.in.(aberta,vista),ref.eq.${hoje}`);
+  if (error) throw new Error(error.message);
+  return (data ?? []) as LinhaAviso[];
+}
+
+/** Fecha sozinha (sem pessoa): `motivo` para todas as abertas da lista. */
+async function fecharAvisos(admin: SupabaseClient, lojaId: string, kind: string, linhas: LinhaAviso[], motivo: string, dry: boolean): Promise<string[]> {
+  const fechadas: string[] = [];
+  for (const l of linhas.filter(avisoAberto)) {
+    if (!dry) await admin.rpc('fn_pendencia_resolver_ref', { p_tenant: lojaId, p_kind: kind, p_ref: l.ref, p_motivo: motivo });
+    fechadas.push(`${l.ref}: ${motivo}`);
+  }
+  return fechadas;
+}
+
+/** Grava o aviso (ref). `reabrir`: volta a valer se tinha sido fechado. true = passou a valer agora (aviso novo). */
+async function gravarAviso(admin: SupabaseClient, lojaId: string, kind: string, ref: string, t: TextoAviso, payload: Record<string, unknown>,
+  urgencia: 'alta' | 'normal', rota: string, reabrir: boolean, antes: LinhaAviso | undefined): Promise<boolean> {
+  const { data, error } = await admin.rpc('fn_pendencia_upsert', {
+    p_tenant: lojaId, p_kind: kind, p_ref: ref, p_titulo: t.titulo.slice(0, 200), p_detalhe: t.detalhe, p_payload: payload,
+    p_rota: rota, p_urgencia: urgencia, p_acao_requerida: true, p_origem: 'cron', p_reabrir: reabrir,
+  });
+  if (error) throw new Error(error.message);
+  const st = (data as { status?: string } | null)?.status;
+  return (st === 'aberta' || st === 'vista') && !avisoAberto(antes);
+}
+
+/** Celular de quem vê o cartão na Hoje (mesma regra da tela), só de dia. `papeis` restringe (insumo: quem fica na loja). */
+async function avisarNoCelular(lojaId: string, kind: string, titulo: string, corpo: string, pc: PrevCfg,
+  o: { ownerId: string; dono: boolean; papeis?: string[]; enviar: boolean }): Promise<{ pessoas: number; enviado: boolean; motivo?: string }> {
+  const rows = await db()<Array<{ user_id: string; role: string }>>`
+    select ut.user_id::text, ut.role::text from user_tenants ut
+    join users u on u.id = ut.user_id and u.is_active is not false and u.deleted_at is null
+    where ut.tenant_id = ${lojaId}`;
+  const ids = [...new Set(rows.filter((r) => {
+    const perfil = PAPEL_DO_BANCO[r.role] ?? r.role;
+    if (r.user_id === o.ownerId) return o.dono;
+    if (o.papeis && !o.papeis.includes(perfil)) return false;
+    return visivelNaHoje(kind, perfil, null, false);
+  }).map((r) => r.user_id))];
+  if (!ids.length) return { pessoas: 0, enviado: false };
+  if (!podeAvisarNoCelular(localHHMM(), String(pc.push_de ?? '08:00'), String(pc.push_ate ?? '21:30'))) return { pessoas: ids.length, enviado: false, motivo: 'fora do horário' };
+  if (!o.enviar) return { pessoas: ids.length, enviado: false, motivo: 'teste' };
+  try {
+    await fetch(`${supabaseUrl}/functions/v1/send-push`, {
+      method: 'POST', signal: AbortSignal.timeout(8000),
+      headers: { apikey: serviceRoleKey, Authorization: `Bearer ${serviceRoleKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'send', user_ids: ids, payload: { titulo, corpo: corpo.slice(0, 200), url: '/hoje', tag: `${kind}-${lojaId}` } }),
+    });
+    return { pessoas: ids.length, enviado: true };
+  } catch (e) {
+    log('WARN', 'previsão: push', { kind, loja: lojaId, error: errMsg(e) });
+    return { pessoas: ids.length, enviado: false, motivo: errMsg(e) };
+  }
+}
+
+// Faturamento de hoje = a conta do Dashboard: pedidos pagos do PDV (os canais de fn_get_dashboard_painel, mesmo
+// filtro de fn_get_dashboard_metrics) + iFood (API de Vendas buscada agora + pedidos ao vivo ainda fora dela).
+async function medirVendas(admin: SupabaseClient, lojaId: string) {
+  const { data, error } = await admin.rpc('fn_get_dashboard_painel', { p_tenant_id: lojaId, p_desde: null, p_completo: true });
+  if (error) throw new Error(error.message);
+  const pn = data as {
+    dia_semana: number; canais: Array<{ origem: string; valor: number }> | null; semana_passada: { canais: Record<string, number> | null } | null;
+    ritmo_esperado: number | null; ritmo_dias: number; metas: Array<{ dia_semana: number; faturamento: number }> | null;
+  };
+  const hoje: Record<string, number> = {};
+  for (const c of pn.canais ?? []) hoje[c.origem] = Number(c.valor ?? 0);
+  const antes: Record<string, number> = Object.fromEntries(Object.entries(pn.semana_passada?.canais ?? {}).map(([k, v]) => [k, Number(v ?? 0)]));
+  const inicio = new Date(`${localDate()}T00:00:00-03:00`);
+  const semana = 7 * 86400_000;
+  const ifHoje = await ifoodResumo(lojaId, inicio.toISOString(), new Date().toISOString(), true);
+  const [ifAntes, [vivo], [sess]] = await Promise.all([
+    ifoodResumo(lojaId, new Date(inicio.getTime() - semana).toISOString(), new Date(Date.now() - semana).toISOString(), false),
+    db()<[{ v: number }]>`
+      select coalesce(sum(coalesce((o.total->>'subTotal')::numeric, 0)
+             + case when o.delivered_by = 'MERCHANT' then coalesce((o.total->>'deliveryFee')::numeric, 0) else 0 end), 0)::float v
+        from ifood_orders o
+       where o.tenant_id = ${lojaId} and o.ordered_at >= ${inicio.toISOString()}::timestamptz and o.ordered_at <= now()
+         and o.status <> 'cancelled'
+         and not exists (select 1 from fin_ifood_sales s where s.tenant_id = o.tenant_id and s.sale_id = o.ifood_order_id)`,
+    db()<[{ abriu: boolean }]>`
+      select exists(select 1 from sessions where tenant_id = ${lojaId} and coalesce(is_training, false) = false
+                     and (opened_at >= ${inicio.toISOString()}::timestamptz or status::text = 'open')) as abriu`,
+  ]);
+  const ifood = (ifHoje?.vendido ?? 0) + Number(vivo?.v ?? 0);
+  if (ifood > 0) hoje.ifood = ifood;
+  if ((ifAntes?.vendido ?? 0) > 0) antes.ifood = Number(ifAntes?.vendido);
+  const meta = Number((pn.metas ?? []).find((m) => m.dia_semana === pn.dia_semana && Number(m.faturamento) > 0)?.faturamento ?? 0);
+  const valor = Object.values(hoje).reduce((s, v) => s + v, 0);
+  return { valor, meta, ritmo: pn.ritmo_esperado, ritmoDias: Number(pn.ritmo_dias ?? 0), hoje, antes, abriu: !!sess?.abriu };
+}
+
+// deno-lint-ignore no-explicit-any
+async function previsaoVendas(admin: SupabaseClient, lojas: Array<{ id: string; name: string }>, pc: PrevCfg, state: any, o: PrevOpts) {
+  const KIND = 'vendas_abaixo_ritmo';
+  const hoje = localDate();
+  const agora = localHHMM();
+  const janela = o.forcar ? agora : janelaAtual(pc.vendas ?? [], agora);
+  state.prev_vendas ??= {};
+  state.prev_check ??= {};
+  const out: Record<string, unknown> = {};
+  for (const t of lojas) {
+    try {
+      const linhas = await linhasDoAviso(admin, t.id, KIND, hoje);
+      const deHoje = linhas.find((l) => l.ref === hoje);
+      const velhas = await fecharAvisos(admin, t.id, KIND, linhas.filter((l) => l.ref !== hoje), 'passou o dia', o.dry);
+      // O dia acabou: fecha antes da meia-noite, para não aparecer como "resolvido" no dia seguinte.
+      if (avisoAberto(deHoje) && agora >= '23:30') { out[t.name] = { fechou: await fecharAvisos(admin, t.id, KIND, [deHoje!], 'fim do dia', o.dry) }; continue; }
+      const naJanela = !!janela && (o.forcar || state.prev_vendas[t.id] !== `${hoje}|${janela}`);
+      const conferir = avisoAberto(deHoje) && (o.forcar || passou(state.prev_check[`vendas:${t.id}`], Number(pc.recheck_min ?? 30)));
+      if (!naJanela && !conferir) { if (velhas.length) out[t.name] = { fechou: velhas }; continue; }
+      if (!o.dry && !o.forcar) {
+        state.prev_check[`vendas:${t.id}`] = new Date().toISOString();
+        if (naJanela) state.prev_vendas[t.id] = `${hoje}|${janela}`;
+      }
+      const m = await medirVendas(admin, t.id);
+      const r = avaliarRitmo(m.valor, m.meta, m.ritmo, m.ritmoDias, Number(pc.pts_abaixo ?? 15));
+      const info = { vendido: Math.round(m.valor), meta: m.meta, ritmo: m.ritmo, pts: r ? Math.round(r.pts) : null };
+      if (avisoAberto(deHoje) && (!r || r.noRitmo)) {
+        const motivo = !r ? (m.meta > 0 ? 'sem histórico para comparar' : 'sem meta para comparar') : r.bateu ? 'bateu a meta' : 'as vendas voltaram ao ritmo';
+        out[t.name] = { ...info, fechou: await fecharAvisos(admin, t.id, KIND, [deHoje!], motivo, o.dry) };
+        continue;
+      }
+      // Loja que nem abriu hoje (sem sessão e sem venda) não está "abaixo do ritmo": está fechada.
+      const deveAbrir = !!r?.abaixo && !(m.valor <= 0 && !m.abriu);
+      if (!r || (!deveAbrir && !avisoAberto(deHoje))) {
+        out[t.name] = { ...info, aviso: false, ...(r ? {} : { motivo: m.meta > 0 ? 'pouco histórico ou movimento ainda não começou' : 'sem meta no Dashboard para hoje' }) };
+        continue;
+      }
+      const tx = textoRitmo({ loja: t.name, hora: horaTexto(agora), valor: m.valor, meta: m.meta, hoje, r, canal: canalQueMaisCaiu(m.hoje, m.antes) });
+      if (o.dry) { out[t.name] = { ...info, ...tx }; continue; }
+      const payload = { vendido: Math.round(m.valor * 100) / 100, esperado: Math.round(r.esperado * 100) / 100, meta: m.meta, pts: Math.round(r.pts), janela };
+      const nova = await gravarAviso(admin, t.id, KIND, hoje, tx, payload, r.pts < -30 ? 'alta' : 'normal', '/dashboard', naJanela && deveAbrir, deHoje);
+      let avisados: unknown = null;
+      if (nova) {
+        avisados = await avisarNoCelular(t.id, KIND, 'Vendas abaixo do ritmo', tx.push, pc, { ownerId: o.ownerId, dono: false, enviar: o.avisar });
+        // Dono: pelo canal da "anomalia de venda", e só se ela ainda não falou desta loja hoje (não duplica;
+        // marcar state.anomaly também impede a anomalia de repetir a mesma notícia depois).
+        if (o.avisar && o.chatDono && tx.chat && state.anomaly?.[t.id] !== hoje) {
+          await o.chatDono(t.id, tx.chat);
+          state.anomaly = { ...(state.anomaly ?? {}), [t.id]: hoje };
+        }
+      }
+      out[t.name] = { ...info, aviso: nova ? 'novo' : 'atualizado', avisados };
+    } catch (e) {
+      out[t.name] = { erro: errMsg(e) };
+      log('ERROR', 'previsão: vendas', { loja: t.name, error: errMsg(e) });
+    }
+  }
+  return out;
+}
+
+// deno-lint-ignore no-explicit-any
+async function previsaoCaixa(admin: SupabaseClient, lojas: Array<{ id: string; name: string }>, pc: PrevCfg, state: any, o: PrevOpts) {
+  const KIND = 'caixa_nao_cobre';
+  const hoje = localDate();
+  state.prev_caixa_push ??= {};
+  const out: Record<string, unknown> = {};
+  for (const t of lojas) {
+    try {
+      const linhas = await linhasDoAviso(admin, t.id, KIND, hoje);
+      const deHoje = linhas.find((l) => l.ref === hoje);
+      // Mesmas fontes do Financeiro › Painel: contas ativas (list_bank_accounts) e contas em aberto até hoje + 7.
+      const [[banco], contas] = await Promise.all([
+        db()<[{ saldo: number; n: number }]>`
+          select coalesce(sum(coalesce(synced_balance, current_balance, 0)), 0)::float saldo, count(*)::int n
+            from fin_bank_accounts where tenant_id = ${t.id} and is_active = true`,
+        db()<Array<{ nome: string; valor: number; vencimento: string }>>`
+          select coalesce(nullif(supplier, ''), description, 'Conta') nome, greatest(amount - coalesce(paid_amount, 0), 0)::float valor,
+                 due_date::text vencimento
+            from fin_accounts_payable
+           where tenant_id = ${t.id} and status in ('pending', 'overdue', 'partial') and due_date <= ${somarDias(hoje, CAIXA_DIAS)}::date`,
+      ]);
+      if (!banco.n) {
+        const f = await fecharAvisos(admin, t.id, KIND, linhas, 'sem conta no banco cadastrada', o.dry);
+        if (o.dry || f.length) out[t.name] = { motivo: 'sem conta no banco cadastrada', ...(f.length ? { fechou: f } : {}) };
+        continue;
+      }
+      const c = caixaDaSemana(Number(banco.saldo), contas.map((x) => ({ nome: x.nome, valor: Number(x.valor), vencimento: x.vencimento })), hoje);
+      const info = { no_banco: c.noBanco, vencidas: Math.round(c.vencidas * 100) / 100, semana: Math.round(c.semana * 100) / 100, falta: c.falta };
+      if (c.cobre) {
+        const f = await fecharAvisos(admin, t.id, KIND, linhas, 'o banco voltou a cobrir as contas da semana', o.dry);
+        if (o.dry || f.length) out[t.name] = { ...info, cobre: true, ...(f.length ? { fechou: f } : {}) };
+        continue;
+      }
+      const tx = textoCaixa({ loja: t.name, c, hoje });
+      if (o.dry) { out[t.name] = { ...info, ...tx }; continue; }
+      const faltaEm = c.faltaEm ?? hoje;
+      // vencimento = dia em que o dinheiro deixa de cobrir: a Hoje ordena por ele e o cartão mostra "falta sábado".
+      const payload = { valor: c.falta, vencimento: `${faltaEm.slice(8, 10)}/${faltaEm.slice(5, 7)}`, vencida: false, ...info };
+      const urg = diasEntre(hoje, faltaEm) <= 2 ? 'alta' : 'normal';
+      // Uma linha viva por loja: enquanto não cobre, a aberta (de qualquer dia) só ganha os números novos.
+      const viva = linhas.find(avisoAberto);
+      if (viva) {
+        await gravarAviso(admin, t.id, KIND, viva.ref, tx, payload, urg, '/financeiro?tab=painel', false, viva);
+        if (o.forcar) out[t.name] = { ...info, aviso: 'atualizado' };
+        continue;
+      }
+      // "Ciente" hoje (fechada por uma pessoa): volta amanhã, se ainda não cobrir.
+      if (deHoje?.resolvida_por) { if (o.forcar) out[t.name] = { ...info, aviso: 'ciente hoje — volta amanhã' }; continue; }
+      const nova = await gravarAviso(admin, t.id, KIND, hoje, tx, payload, urg, '/financeiro?tab=painel', true, deHoje);
+      let avisados: { pessoas: number; enviado: boolean; motivo?: string } | null = null;
+      if (nova && state.prev_caixa_push[t.id] !== hoje) {
+        avisados = await avisarNoCelular(t.id, KIND, 'Caixa da semana', tx.push, pc, { ownerId: o.ownerId, dono: true, enviar: o.avisar });
+        if (avisados.enviado && !o.forcar) state.prev_caixa_push[t.id] = hoje;
+      }
+      out[t.name] = { ...info, aviso: nova ? 'novo' : 'sem mudança', avisados };
+    } catch (e) {
+      out[t.name] = { erro: errMsg(e) };
+      log('ERROR', 'previsão: caixa', { loja: t.name, error: errMsg(e) });
+    }
+  }
+  return out;
+}
+
+// deno-lint-ignore no-explicit-any
+async function previsaoInsumos(admin: SupabaseClient, lojas: Array<{ id: string; name: string }>, pc: PrevCfg, state: any, o: PrevOpts) {
+  const KIND = 'insumo_antes_do_pico';
+  const hoje = localDate();
+  const agora = localHHMM();
+  const janela = o.forcar ? agora : janelaAtual(pc.insumos ?? [], agora);
+  state.prev_insumos ??= {};
+  state.prev_check ??= {};
+  const out: Record<string, unknown> = {};
+  for (const t of lojas) {
+    try {
+      const linhas = await linhasDoAviso(admin, t.id, KIND, hoje);
+      const deHoje = linhas.find((l) => l.ref === hoje);
+      const velhas = await fecharAvisos(admin, t.id, KIND, linhas.filter((l) => l.ref !== hoje), 'passou o dia', o.dry);
+      const naJanela = !!janela && (o.forcar || state.prev_insumos[t.id] !== `${hoje}|${janela}`);
+      const conferir = avisoAberto(deHoje) && (o.forcar || passou(state.prev_check[`insumos:${t.id}`], Number(pc.recheck_min ?? 30)));
+      if (!naJanela && !conferir) { if (velhas.length) out[t.name] = { fechou: velhas }; continue; }
+      if (!o.dry && !o.forcar) {
+        state.prev_check[`insumos:${t.id}`] = new Date().toISOString();
+        if (naJanela) state.prev_insumos[t.id] = `${hoje}|${janela}`;
+      }
+      // A regra única do Estoque (uso/dia de 14 dias) e o mapa de pico do Dashboard, as mesmas funções das telas.
+      const [sit, pico] = await Promise.all([
+        admin.rpc('fn_estoque_situacao', { p_tenant_id: t.id }),
+        admin.rpc('fn_get_dashboard_pico', { p_tenant_id: t.id }),
+      ]);
+      if (sit.error || pico.error) throw new Error((sit.error ?? pico.error)!.message);
+      const p = previsaoPico((pico.data ?? []) as PicoCelula[], diaOperacao(new Date()), Number(agora.slice(0, 2)));
+      // deno-lint-ignore no-explicit-any
+      const insumos = (((sit.data as any)?.insumos ?? []) as any[]).map((i) => ({
+        id: String(i.id), nome: String(i.nome), unidade: String(i.unidade), estoque: Number(i.estoque ?? 0),
+        consumoDia: i.consumo_dia == null ? null : Number(i.consumo_dia), acompanha: !!i.acompanha,
+      }));
+      const faltando = p ? acabamAntesDoPico(insumos, p) : [];
+      if (!faltando.length) {
+        const motivo = !p ? 'sem movimento neste dia da semana' : p.pedidosAtePico === 0 ? 'passou o pico' : 'o estoque chega ao pico';
+        const f = avisoAberto(deHoje) ? await fecharAvisos(admin, t.id, KIND, [deHoje!], motivo, o.dry) : [];
+        if (o.dry || f.length) out[t.name] = { pico: p?.horaPico ?? null, faltando: 0, motivo, ...(f.length ? { fechou: f } : {}) };
+        continue;
+      }
+      const tx = textoPico({ loja: t.name, faltando, horaPico: p!.horaPico });
+      if (o.dry) { out[t.name] = { pico: p!.horaPico, faltando: faltando.length, ...tx }; continue; }
+      const ids = faltando.map((f) => f.id);
+      const antes = new Set(Array.isArray(deHoje?.payload?.ids) ? (deHoje!.payload!.ids as string[]) : []);
+      const novos = ids.filter((id) => !antes.has(id));
+      const payload = {
+        ids, hora_pico: p!.horaPico,
+        itens: faltando.slice(0, 20).map((f) => ({ id: f.id, nome: f.nome, unidade: f.unidade, estoque: f.estoque, precisa: Math.round(f.precisa * 1000) / 1000 })),
+      };
+      // Reabre na janela seguinte: fechada sozinha → sim; "Já comprei" de uma pessoa → só com insumo novo.
+      const reabrir = naJanela && !!deHoje && deHoje.status === 'resolvida' && (!deHoje.resolvida_por || novos.length > 0);
+      if (deHoje && !avisoAberto(deHoje) && !reabrir) { out[t.name] = { pico: p!.horaPico, faltando: faltando.length, aviso: 'já resolvido hoje' }; continue; }
+      const faltaH = horaOperacao(p!.horaPico) - horaOperacao(Number(agora.slice(0, 2)));
+      const nova = await gravarAviso(admin, t.id, KIND, hoje, tx, payload, faltaH <= 3 ? 'alta' : 'normal', '/estoque', reabrir, deHoje);
+      let avisados: unknown = null;
+      if (naJanela && (nova || (avisoAberto(deHoje) && novos.length > 0))) {
+        avisados = await avisarNoCelular(t.id, KIND, 'Vai acabar hoje', tx.push, pc, { ownerId: o.ownerId, dono: false, papeis: ['gerente', 'supervisao'], enviar: o.avisar });
+      }
+      out[t.name] = { pico: p!.horaPico, faltando: faltando.length, aviso: nova ? 'novo' : 'atualizado', avisados };
+    } catch (e) {
+      out[t.name] = { erro: errMsg(e) };
+      log('ERROR', 'previsão: insumos', { loja: t.name, error: errMsg(e) });
+    }
+  }
+  return out;
+}
+
+/** Os três avisos. Só devolve o que aconteceu (vazio = nada, para o log do tick não encher). */
+// deno-lint-ignore no-explicit-any
+async function previsaoRun(admin: SupabaseClient, pc: PrevCfg, lojas: Array<{ id: string; name: string }>, state: any, o: PrevOpts): Promise<Record<string, unknown>> {
+  const res: Record<string, unknown> = {};
+  const guarda = (nome: string, r: Record<string, unknown>) => { if (Object.keys(r).length) res[nome] = r; };
+  guarda('vendas', await previsaoVendas(admin, lojas, pc, state, o));
+  // Caixa: de 30 em 30 min (contas e saldo mudam a qualquer hora; o saldo do Inter é buscado de hora em hora).
+  state.prev_check ??= {};
+  if (o.forcar || passou(state.prev_check.caixa, Number(pc.recheck_min ?? 30))) {
+    if (!o.dry) state.prev_check.caixa = new Date().toISOString();
+    guarda('caixa', await previsaoCaixa(admin, lojas, pc, state, o));
+  }
+  guarda('insumos', await previsaoInsumos(admin, lojas, pc, state, o));
   return res;
 }
 
@@ -1958,6 +2357,23 @@ Deno.serve(async (req) => {
   if (body.preview === 'bom_dia_equipe') {
     try { return json({ ok: true, preview: await bomDiaEquipe(admin, cfg, true) }); }
     catch (e) { return json({ error: errMsg(e) }, 500); }
+  }
+  // Avisos antes de virar problema: { preview: 'previsao' } calcula sem gravar; { run: 'previsao' } grava as pendências
+  // sem avisar ninguém (teste). Os dois ignoram janelas; tenant_id opcional (ex.: a loja Testes PDV, fora das vigiadas).
+  if (body.preview === 'previsao' || body.run === 'previsao') {
+    try {
+      const pc = { ...PRO_DEFAULTS.previsao, ...(cfg.proactive?.previsao ?? {}) };
+      let lojas = await getTenants(admin, cfg);
+      if (body.tenant_id) {
+        const { data: t } = await admin.from('tenants').select('id, name').eq('id', String(body.tenant_id)).maybeSingle();
+        if (!t) return json({ error: 'loja não encontrada' }, 404);
+        lojas = [{ id: String(t.id), name: String(t.name) }];
+      }
+      // Estado copiado: teste não mexe nas janelas de verdade.
+      const st = JSON.parse(JSON.stringify(cfg.proactive_state ?? {}));
+      const o = { dry: body.preview === 'previsao', forcar: true, avisar: false, ownerId: String(cfg.owner_user_id ?? '') };
+      return json({ ok: true, previsao: await previsaoRun(admin, pc, lojas, st, o) });
+    } catch (e) { return json({ error: errMsg(e) }, 500); }
   }
   if (typeof body.preview === 'string') {
     try { return json({ ok: true, preview: await proactive(admin, cfg, ownerChat, body.preview) }); }
@@ -2068,6 +2484,7 @@ Deno.serve(async (req) => {
       const tenants = await getTenants(admin, cfg);
       await syncPendenciasClassificacao(admin, tenants);
       await syncPendenciasOperacao(admin, tenants, String(cfg.owner_user_id ?? ''));
+      await pilotoEPorcoes(admin, tenants).catch((e) => log('WARN', 'piloto/porções', { error: errMsg(e) }));
       return json({ ok: true, pendencias: tenants.length });
     } catch (e) { return json({ error: errMsg(e) }, 500); }
   }
