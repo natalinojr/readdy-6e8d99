@@ -84,6 +84,22 @@ export function perguntarAoAssistente(item: FocoAssistente | null, texto?: strin
   window.dispatchEvent(new CustomEvent<PedidoAbrir>(EVENTO_ASSISTENTE, { detail: detalhe }));
 }
 
+/**
+ * Ação com dinheiro pedida por uma tela ao chat do dono (2026-10-03, tela Hoje): pagar com PIN e pedir
+ * o boleto passam pelo mesmo caminho do cartão da caixa de pendências (Inter, PIN, digital, cartão do
+ * pagamento no rodapé). Só o AssistenteChat do dono escuta; para os demais o evento não faz nada.
+ */
+export const EVENTO_ASSISTENTE_ACAO = 'erpos-assistente-acao';
+
+export type PedidoAcaoChat =
+  | { tipo: 'pagar_conta'; billId: string }
+  | { tipo: 'pagar_pendencia'; pendencia: { id: string; tenantId: string; kind: string; titulo: string } }
+  | { tipo: 'pedir'; texto: string };
+
+export function pedirAoChat(p: PedidoAcaoChat): void {
+  window.dispatchEvent(new CustomEvent<PedidoAcaoChat>(EVENTO_ASSISTENTE_ACAO, { detail: p }));
+}
+
 /** Corta o que vai para o modelo: contexto é ajuda, não despejo de banco. */
 export function resumirFoco(f: FocoAssistente | null, max = 700): { titulo: string; tipo: string; id?: string; dados?: string } | null {
   if (!f) return null;

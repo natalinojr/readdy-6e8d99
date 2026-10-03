@@ -66,6 +66,8 @@ Rotas publicas ou fora do layout:
 - `/supabase-debug`: `src/pages/supabase-debug/page.tsx`
 
 Rotas dentro do layout autenticado:
+- `/` (índice): `src/pages/hoje/InicioPorPerfil.tsx` — manda cada perfil para o seu trabalho (2026-10-03)
+- `/hoje`: `src/pages/hoje/page.tsx` — tela inicial que conduz (pendências por bloco, tarefas de hoje, resumo)
 - `/modulos`: `src/pages/modulos/page.tsx`
 - `/dashboard`: `src/pages/dashboard/page.tsx`
 - `/cardapio`: `src/pages/cardapio/page.tsx`
@@ -325,6 +327,47 @@ mínimo caía nela). E estoque negativo (Arroz −2.046 g) aparecia como "ESGOTA
   errada?); dois insumos chamados "Cheddar produzido"; 9 itens da lista sem fornecedor. Hortifrúti com 60 dias de uso
   sugere quantidade grande demais — se incomodar, o próximo passo é dias de compra por categoria/insumo.
 - Protótipo aprovado: `docs/prototipos/estoque-inicio-proposta.html` (não commitado, cópia no checkout principal).
+
+### 2026-10-03 — Tela Hoje (`/hoje`): a porta de entrada que conduz
+- **O que é:** a primeira tela depois do login. Mostra o que precisa da pessoa AGORA, em todas as lojas dela. Cada cartão resolve ali mesmo, e quando tudo acaba aparece "Tudo em dia ✓ / Pode fechar o app". É o pedido do dono de 2026-10-02: economia mental, conduzir, celular. Protótipo aprovado em `docs/prototipos/hoje-proposta.html`. Nenhuma tela saiu; os módulos continuam no menu.
+- **Quem cai onde** (`src/pages/hoje/InicioPorPerfil.tsx`, rota índice `/`; o login sem rota guardada vai para `/`):
+  - admin, gerente e supervisao vão para `/hoje`;
+  - caixa vai para `/pdv/caixa` no computador e para `/hoje` no celular (ou quando a loja não tem o terminal de caixa ligado);
+  - o resto vai para `/modulos`, que já redireciona totem, gestor de entregas e tarefas.
+- **Supervisão × gerente:** supervisão é quem fica na loja. Vê loja aberta/fechada com o botão "Abrir a loja", estoque, receber e aprovar. Gerente fica abaixo do dono e não fica necessariamente na loja: vê o financeiro e a gestão.
+- **Blocos** (`src/pages/hoje/organizar.ts`, função pura, testada em `src/test/lib/hojeOrganizar.test.ts`):
+  - **Agora:** urgente, conta vencida, vence em até 3 dias, ou boleto pedido há 2 dias ou mais (`payload.cobrar`).
+  - **Para pôr em dia:** `item_sem_classe` e `conta_sem_dre`. A `nota_nao_lancada` NÃO entra aqui: o cron só a cria com boleto vencendo, então é "agora".
+  - **Pode esperar:** volta sozinho para "agora" quando aperta.
+  - **Esperando outras pessoas:** boleto já pedido.
+  - **Silenciado:** aviso com "ciente"; volta se piorar.
+- **Junta o que é a mesma coisa:**
+  - `conta_atrasada` (agregada por loja) engole os `boleto_faltando` vencidos da mesma loja;
+  - `conta_vence_hoje` engole os `boleto_faltando` que vencem hoje;
+  - 2 ou mais `boleto_faltando` do mesmo fornecedor no mesmo bloco viram um cartão só, com o nome tirado do título do cron.
+- **Ordem dentro do bloco:**
+  - primeiro quem tem alguém esperando agora (`aprovacao`, `pagamento_*`);
+  - depois o prazo (o vencido mais antigo antes);
+  - depois urgente, depois chegada.
+  - O dono tinha escolhido ordem de chegada na caixa do chat; aqui é pelo prazo.
+- **Dinheiro tem um caminho só:** "Pagar" e "Pedir boleto" na Hoje disparam `pedirAoChat` (evento `EVENTO_ASSISTENTE_ACAO`, `lib/assistenteFoco.ts`). O `AssistenteChat` do dono escuta e roda o MESMO `pagarConta`, `pagarPendencia` e `pedirPendencia` da caixa de pendências: Inter, PIN, digital, cartão no rodapé. "Pedir" só preenche a caixa de texto; nada é enviado sozinho. Baixa, contas atrasadas e DRE reaproveitam `BaixaDaConta`, `ContasAtrasadasInline` e `ContasDreInline` (agora exportados de `PendenciasChat`). O `call` da Edge `assistente-app` mudou para `lib/assistenteApp.ts` (`chamarAssistente`).
+- **Pegadinhas:**
+  - O papel por loja vem de `get_user_tenants`. O `availableTenants` do `AuthContext` zera depois de escolher a loja. Se a leitura falhar, a tela mostra erro e NÃO diz "tudo em dia".
+  - `pagamento_*` só aparece para o dono; para os outros seria cartão sem saída.
+  - Tipos "diretos" do chat (sangria, boleto por e-mail, compra pelo celular…) não ganham "Não vou fazer", porque descartar fecha para sempre.
+  - `sessao.iniciadaEm` já vem formatado ("08:30").
+  - No celular o "Agora" vem antes do resumo. Resumo e atalhos montam num lugar só (`useIsMobile`), para não buscar duas vezes.
+  - A tela confere a cada 60 s com a tela visível; é a tela inicial de todo gestor.
+- **Números iguais às outras telas:**
+  - faturamento = Dashboard (`fn_get_dashboard_metrics` + iFood, cartão `FaturamentoHero`);
+  - "no banco" e "vencidas + 7 dias" = mesma regra do Financeiro › Painel;
+  - loja aberta = `SessaoContext`.
+- **Testado em 2026-10-03:**
+  - logado no localhost no celular (375) e no computador (1366);
+  - El Patron Paranaguá e Vila Leste só leitura;
+  - baixa de verdade numa conta da Testes PDV pelo cartão (conta `paid`, pendência `resolvida` com motivo);
+  - "Pedir o boleto" abriu o chat com o texto; apagado sem enviar.
+- **Sem teste logado:** os perfis supervisão, gerente e caixa (sem senha dos `qa.*`), "Pagar" com PIN pela Hoje e concluir tarefa pela Hoje (mesma Edge `task-write` do módulo).
 
 ### 2026-10-03 — "O que aconteceu?": um começo só para qualquer lançamento
 - **Pedido do dono** (visão de economia mental): havia ~9 portas para lançar despesa/compra (Nova conta, Nova compra, Fluxo, Bancos, Conciliação, Notas, Guias, RH, `/receber`, chat, Sangria). Regra: **nenhum caminho sai, muda só a porta**. Protótipo aprovado: `docs/prototipos/lancar-proposta.html`.

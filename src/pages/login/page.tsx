@@ -53,7 +53,8 @@ export default function Login() {
   // interno (comeca com "/") — nunca redireciona para URL externa.
   const destinoAposLogin = (() => {
     const from = (location.state as { from?: string } | null)?.from;
-    return from && from.startsWith('/') ? from : '/modulos';
+    // Sem rota guardada: "/" decide pelo perfil (InicioPorPerfil, 2026-10-03).
+    return from && from.startsWith('/') ? from : '/';
   })();
   const [mode, setMode] = useState<'email' | 'matricula'>('email');
   const [identifier, setIdentifier] = useState('');
@@ -93,7 +94,7 @@ export default function Login() {
     setLoading(false);
     if (result) {
       salvarLoginRecente(identifier.trim(), mode);
-      if (destinoAposLogin === '/modulos') setAppMode('modulos');
+      if (destinoAposLogin === '/modulos' || destinoAposLogin === '/') setAppMode('modulos');
       navigate(destinoAposLogin, { replace: true });
     } else {
       setError(erroServidor || 'Credenciais inválidas. Verifique e tente novamente.');
