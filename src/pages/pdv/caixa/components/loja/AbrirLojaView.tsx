@@ -232,7 +232,7 @@ export default function AbrirLojaView({ modo, onVoltar, onAberta, onFecharDia }:
             {ultimo === undefined
               ? 'Buscando o último fechamento…'
               : ultimo
-                ? <>No último fechamento ficaram <b className="text-zinc-800">{fmtBRL(ultimo.valor)}</b> ({ultimo.quando}{ultimo.quem ? `, caixa de ${ultimo.quem}` : ''}).</>
+                ? <>No último fechamento ficaram <b className="text-zinc-800">{fmtBRL(ultimo.valor)}</b> ({ultimo.quando}{ultimo.quem ? ` · ${ultimo.quem}` : ''}).</>
                 : 'Ainda não há fechamento anterior nesta loja.'}
           </p>
 
