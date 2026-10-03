@@ -71,7 +71,7 @@ Rotas dentro do layout autenticado:
 - `/modulos`: `src/pages/modulos/page.tsx`
 - `/dashboard`: `src/pages/dashboard/page.tsx`
 - `/cardapio`: `src/pages/cardapio/page.tsx`
-- `/pdv/caixa`: `src/pages/pdv/caixa/page.tsx`
+- `/pdv/caixa`: `src/pages/pdv/caixa/page.tsx` (abrir/fechar a loja: `components/loja/` — `AbrirLojaView`, `FecharLojaModal`, `ContagemGaveta`, `SeloCeu`)
 - `/pdv/garcom`: `src/pages/pdv/garcom/page.tsx`
 - `/pdv/delivery`: `src/pages/pdv/delivery/page.tsx`
 - `/kds`: `src/pages/kds/page.tsx`
@@ -270,6 +270,16 @@ Quando o usuario pedir "muda X":
 ## Historico de solucoes e criterios
 
 Secao viva: registrar aqui padroes, decisoes e pegadinhas reutilizaveis conforme o sistema evolui. Cada entrada com data
+
+### 2026-10-03 — PDV Caixa: "Abrir a loja" e "Fechar a loja" num fluxo só (sessão × caixa escondidos)
+- **O que mudou:** os 4 modais (`IniciarSessaoModal`, `AberturaCaixaModal`, `FechamentoCaixaModal`, `FecharSessaoModal`) foram apagados. No lugar ficaram `src/pages/pdv/caixa/components/loja/`. Protótipo aprovado pelo dono: `docs/prototipos/abrir-fechar-loja.html`. O usuário só vê "loja" e "caixa"; a palavra "sessão" e o número S… saíram da tela (seguem nos relatórios).
+- **Abrir** (`AbrirLojaView`, estados `sem_sessao` e `sessao_aberta`): o operador **conta a gaveta** (cédulas por padrão ou total digitado) e a tela compara na hora com o `closing_value_actual` do último caixa fechado da loja ("Bateu com o fechamento" / "R$ X a menos"). O motivo da diferença é opcional e vai só para a auditoria (não há coluna para isso; `opening_note_breakdown` ficou sem uso). Um botão chama `SessaoContext.abrirLoja`: `fn_open_session` (agora com `p_opening_amount` = troco, para o "Turno aberto" do assistente mostrar o valor) + `fn_open_cash_register`. Antes de abrir, `abrirLoja` relê a sessão ativa e, se outro aparelho já abriu o dia, só abre o caixa nele (`fn_open_session` não impede duas sessões abertas). Com o dia aberto e o caixa fechado, a mesma tela abre só o caixa e oferece "Fechar a loja". Se o dia aberto for de outra data, a tela conduz a "Fechar o dia anterior" primeiro.
+- **Fechar** (`FecharLojaModal`, tipos `loja` | `trocar` | `dia`): checa as travas **antes** de contar: retiradas previstas (`order-write list_sangrias_previstas`, confirma ali), pedidos e mesas (`check-session-pending`) e tablet pago e segurado (`order-write list_held_orders`). Depois vêm contar (cega) → conferir (mesma conta do `fn_close_cash_register_v2`) → motivo obrigatório se houver diferença → **um botão** fecha caixa e dia → resumo **só do dinheiro**. "Trocar de operador" fica no menu ⋯ do topo e fecha só o caixa.
+- **Critério:** o motivo da diferença vai como `p_closing_notes` **no próprio fechamento**. Assim o aviso `closing_cash` do assistente já sai com ele. Se o RPC apurar uma diferença que a tela não viu (pagamento entrou durante a contagem), o motivo é pedido depois via `fn_update_cash_register_notes`, como antes.
+- **Critério:** o modal de fechar fica no `PDVCaixaInner`, não no `PDVOperacional`. O PDV desmonta quando o caixa ou o dia fecha (realtime de `sessions` e poll de 60 s). `fecharCaixa(..., skipLocalUpdate=true)` e refs guardam sessão e caixa para o resumo. Se o dia não fechar depois do caixa fechado (pedido novo), a tela mostra o erro do RPC, oferece "Tentar de novo" sem recontar e "Forçar o fechamento" (mesma permissão de hoje).
+- **Permissões:** abrir exige `pdv_abrir_caixa`; fechar e trocar exigem `pdv_fechar_caixa`. Antes, "Iniciar/Fechar sessão" não conferia nada. A Supervisão já tem as duas nas 3 lojas.
+- **Teclado (computador é o principal):** Enter avança e Esc sai antes de fechar. O modal escuta em captura no `window` e para F-teclas e Espaço quando não se está digitando, senão os atalhos do PDV (F2 pagamento, Espaço busca) disparavam por baixo.
+- **Selo "Céu"** (`SeloCeu` + `selo-ceu.css`): sol nascendo ao abrir, lua ao fechar, tarde na troca de operador. O dono escolheu entre 5 propostas e não quis a bola verde chapada.
 
 ### 2026-10-03 — Tela Hoje (`/hoje`): a porta de entrada que conduz
 - **O que é:** a primeira tela depois do login. Mostra o que precisa da pessoa AGORA, em todas as lojas dela. Cada cartão resolve ali mesmo, e quando tudo acaba aparece "Tudo em dia ✓ / Pode fechar o app". É o pedido do dono de 2026-10-02: economia mental, conduzir, celular. Protótipo aprovado em `docs/prototipos/hoje-proposta.html`. Nenhuma tela saiu; os módulos continuam no menu.

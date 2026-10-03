@@ -1,0 +1,901 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Abrir e fechar a loja</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/remixicon@4.2.0/fonts/remixicon.css" rel="stylesheet">
+<style>
+:root{
+  --bg:#FAF7F2; --card:#fff; --line:#EEE6DA; --ink:#1F1A14; --ink2:#5B5248; --ink3:#9A9086;
+  --or:#F59E0B; --or2:#C2700A; --orbg:#FFF4E0;
+  --red:#DC2626; --redbg:#FEF1F1; --grn:#15803D; --grnbg:#ECFDF3; --blu:#2563EB;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{font-family:'Plus Jakarta Sans',system-ui,sans-serif;background:#E7E1D8;color:var(--ink);-webkit-font-smoothing:antialiased}
+button{font-family:inherit;cursor:pointer;color:inherit}
+input,textarea{font-family:inherit;color:var(--ink)}
+
+/* barra do protótipo (fora do app) */
+.proto{position:sticky;top:0;z-index:90;min-height:46px;background:#1F1A14;color:#fff;display:flex;align-items:center;gap:6px;padding:6px 10px;overflow-x:auto;white-space:nowrap;scrollbar-width:none}
+.proto::-webkit-scrollbar{display:none}
+.proto .lbl{font-size:10px;font-weight:800;letter-spacing:.14em;color:#F5B544;margin:0 2px 0 6px}
+.proto .lbl:first-child{margin-left:0}
+.proto button{border:1px solid #4a4238;background:transparent;color:#E8E2D9;border-radius:999px;padding:6px 11px;font-size:12.5px;font-weight:600;flex:none}
+.proto button.on{background:var(--or);border-color:var(--or);color:#1F1A14}
+.proto .sep{width:1px;height:20px;background:#4a4238;flex:none;margin:0 4px}
+
+.wrap{display:flex;justify-content:center;align-items:flex-start;gap:24px;padding:18px 16px 30px;flex-wrap:wrap}
+.notes{width:370px;max-width:100%;background:#fff;border-radius:22px;padding:22px 22px 10px;box-shadow:0 10px 40px rgba(31,26,20,.10)}
+
+/* ====== moldura: computador ====== */
+.pc{width:100%;max-width:1180px;height:min(760px,calc(100vh - 100px));min-height:600px;background:#F4F4F5;border-radius:14px;border:10px solid #1F1A14;box-shadow:0 24px 70px rgba(31,26,20,.22);position:relative;overflow:hidden;display:flex;flex-direction:column}
+/* ====== moldura: celular ====== */
+.cel{width:100%;max-width:400px;height:min(820px,calc(100vh - 100px));min-height:640px;background:var(--bg);border-radius:30px;border:8px solid #1F1A14;box-shadow:0 24px 70px rgba(31,26,20,.22);position:relative;overflow:hidden;display:flex;flex-direction:column}
+
+/* topo do PDV (imita o PDV de hoje) */
+.tb{display:flex;align-items:center;gap:10px;padding:9px 14px;background:#fff;border-bottom:1px solid #E4E4E7;flex:none}
+.tb .bk{width:32px;height:32px;border-radius:9px;border:1px solid #E4E4E7;background:#FAFAFA;display:grid;place-items:center;color:#71717A;flex:none}
+.st{display:flex;align-items:center;gap:6px;border-radius:999px;padding:5px 11px;font-size:12px;font-weight:800;flex:none}
+.st.off{background:#F4F4F5;color:#52525B;border:1px solid #E4E4E7}
+.st.on{background:var(--grnbg);color:var(--grn);border:1px solid #BBF0CF}
+.st.half{background:var(--orbg);color:var(--or2);border:1px solid #F8DDA8}
+.st .dot{width:8px;height:8px;border-radius:50%;background:currentColor}
+.tb .who{font-size:12px;color:#71717A;font-weight:600;white-space:nowrap}
+.tb .sp{flex:1}
+.tb .clk{text-align:right;line-height:1.15}
+.tb .clk b{font-size:14px}
+.tb .clk span{display:block;font-size:10.5px;color:#A1A1AA}
+.tbb{border:1px solid #E4E4E7;background:#fff;border-radius:9px;padding:7px 11px;font-size:12.5px;font-weight:700;color:#52525B;display:flex;align-items:center;gap:6px;white-space:nowrap}
+.tbb.red{color:#DC2626;background:#FEF2F2;border-color:#FECACA}
+.tbb.grn{color:#059669;background:#ECFDF5;border-color:#A7F3D0}
+.tbb.fech{background:var(--ink);border-color:var(--ink);color:#fff}
+.tbb.fech:hover{background:#3a3128}
+.tbb.ico{padding:7px 9px}
+.menu{position:absolute;right:12px;top:52px;z-index:30;background:#fff;border:1px solid #E4E4E7;border-radius:14px;box-shadow:0 12px 30px rgba(0,0,0,.12);width:230px;overflow:hidden}
+.menu button{width:100%;border:0;background:#fff;text-align:left;padding:12px 14px;font-size:13.5px;font-weight:600;display:flex;gap:10px;align-items:center}
+.menu button:hover{background:#FAFAF9}
+.menu button small{display:block;font-size:11.5px;color:var(--ink3);font-weight:500}
+.menu hr{border:0;border-top:1px solid #F1F1F1;margin:0}
+
+/* PDV aberto (fundo) */
+.pdv{flex:1;display:flex;min-height:0}
+.pdv .left{flex:1;padding:12px 14px;overflow:hidden;display:flex;flex-direction:column;gap:10px}
+.cats{display:flex;gap:6px;flex-wrap:wrap}
+.cats span{background:#fff;border:1px solid #E4E4E7;border-radius:999px;padding:6px 12px;font-size:12px;font-weight:700;color:#52525B}
+.cats span.on{background:#F59E0B;border-color:#F59E0B;color:#fff}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;overflow:hidden}
+.it{background:#fff;border:1px solid #E4E4E7;border-radius:14px;padding:10px;min-height:92px;display:flex;flex-direction:column;justify-content:space-between}
+.it b{font-size:12.5px;line-height:1.3}
+.it span{font-size:13px;font-weight:800;color:#C2700A}
+.pdv .cart{width:300px;background:#fff;border-left:1px solid #E4E4E7;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#A1A1AA;font-size:13px;gap:6px}
+.pdv .cart i{font-size:34px}
+.cel .pdv .cart{display:none}
+.cel .grid{grid-template-columns:1fr 1fr}
+
+/* telas de loja fechada / caixa fechado */
+.porta{flex:1;overflow-y:auto;display:flex;align-items:flex-start;justify-content:center;padding:34px 18px 30px;background:radial-gradient(ellipse at 20% 0%,#FFF8ED 0%,#FAF7F2 45%,#F3EEE6 100%)}
+.cel .porta{padding:20px 16px 24px}
+.porta .box{width:100%;max-width:520px}
+.troco.troco{overflow:visible}
+.troco.troco::before{right:0;top:0;width:150px;height:150px;border-radius:0 24px 0 100%}
+.pc .porta .box{max-width:1000px}
+.pc .abgrid{display:grid;grid-template-columns:1fr 280px;gap:18px;align-items:start}
+.abside{background:#fff}
+.pc .abside{position:sticky;top:0;border:1px solid var(--line);border-radius:18px;padding:14px;background:#FFFCF6}
+.cel .abside{position:sticky;bottom:0;margin:12px -20px -20px;padding:12px 20px 18px;border-top:1px solid #F3EEE6;border-radius:0 0 24px 24px;box-shadow:0 -10px 20px rgba(255,255,255,.9);z-index:2}
+.abtot{display:flex;justify-content:space-between;align-items:baseline;gap:10px;font-weight:800}
+.abtot span{font-size:12.5px;color:var(--ink2)}
+.abtot b{font-size:26px;letter-spacing:-.02em}
+.pc .abtot{flex-direction:column;align-items:flex-start;gap:0}
+.pc .abtot b{font-size:32px}
+.abst{font-size:13px;border-radius:12px;padding:9px 11px;margin:8px 0 10px;background:#F7F3ED;color:var(--ink2);line-height:1.4}
+.abst.g{background:var(--grnbg);color:#166534;font-weight:800}
+.abst.a{background:var(--orbg);color:#8a4b06}
+.abmot{margin:10px 0}
+.abmot label{display:block;font-size:12.5px;font-weight:700;color:var(--ink2);margin-bottom:6px}
+.abmot label span{font-weight:500;color:var(--ink3)}
+.abmot input{width:100%;border:1px solid var(--line);border-radius:10px;padding:9px 10px;font-size:13.5px}
+.dn{padding:4px 10px}
+.ola{font-size:13px;color:var(--ink3);font-weight:600}
+.h1{font-size:30px;line-height:1.1;font-weight:800;letter-spacing:-.02em;margin:6px 0 4px}
+.cel .h1{font-size:25px}
+.sub{font-size:14px;color:var(--ink2);margin:0 0 18px;line-height:1.45}
+.troco{background:#fff;border:1px solid var(--line);border-radius:24px;padding:20px;position:relative;overflow:hidden}
+.troco::before{content:"";position:absolute;right:-50px;top:-50px;width:190px;height:190px;border-radius:50%;background:#FFFBEB}
+.troco>*{position:relative}
+.k{font-size:11.5px;font-weight:800;color:var(--ink3);text-transform:uppercase;letter-spacing:.07em}
+.vbig{font-size:40px;font-weight:800;letter-spacing:-.03em;margin:4px 0 2px}
+.cel .vbig{font-size:34px}
+.mini{font-size:12.5px;color:var(--ink2);line-height:1.45}
+.bt{border:1px solid var(--line);background:#fff;border-radius:14px;padding:12px 16px;font-size:14px;font-weight:700;min-height:48px;display:inline-flex;align-items:center;justify-content:center;gap:8px}
+.bt.p{background:var(--or);border-color:var(--or);color:#1F1A14}
+.bt.dark{background:var(--ink);border-color:var(--ink);color:#fff}
+.bt.redb{background:var(--red);border-color:var(--red);color:#fff}
+.bt.full{width:100%}
+.bt.xl{min-height:60px;font-size:16.5px;border-radius:16px}
+.bt:disabled{opacity:.4;cursor:default}
+kbd{font-family:inherit;font-size:11px;font-weight:800;border-radius:6px;padding:2px 6px;background:rgba(0,0,0,.12);margin-left:4px}
+.bt.dark kbd,.bt.redb kbd{background:rgba(255,255,255,.18)}
+.cel kbd{display:none}
+.lk{border:0;background:none;color:var(--or2);font-weight:700;font-size:13.5px;padding:8px 0}
+.libera{display:flex;flex-wrap:wrap;gap:6px;margin-top:16px}
+.libera span{font-size:12px;font-weight:700;color:var(--ink2);background:#fff;border:1px solid var(--line);border-radius:999px;padding:6px 11px;display:flex;gap:6px;align-items:center}
+.outro{margin-top:14px;padding-top:14px;border-top:1px dashed var(--line)}
+.dif{font-size:12.5px;border-radius:12px;padding:9px 12px;margin-top:10px;line-height:1.4}
+.dif.a{background:var(--orbg);color:#8a4b06}
+.dif.g{background:var(--grnbg);color:#166534}
+.dif.r{background:var(--redbg);color:#991b1b}
+.semperm{background:#F7F3ED;border-radius:14px;padding:14px;font-size:13px;color:var(--ink2);line-height:1.45}
+
+/* campos de dinheiro */
+.money{position:relative;margin-top:8px}
+.money span{position:absolute;left:16px;top:50%;transform:translateY(-50%);font-size:20px;font-weight:800;color:var(--ink3)}
+.money input{width:100%;font-size:30px;font-weight:800;border:2px solid var(--line);border-radius:16px;padding:12px 16px 12px 58px;outline:none}
+.money input:focus{border-color:var(--or)}
+.seg{display:inline-flex;background:#F4EFE7;border-radius:12px;padding:3px;margin:4px 0 4px}
+.seg button{border:0;background:none;border-radius:9px;padding:8px 14px;font-size:12.5px;font-weight:700;color:var(--ink2)}
+.seg button.on{background:#fff;color:var(--ink);box-shadow:0 1px 3px rgba(0,0,0,.08)}
+.ced{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:10px}
+.cel .ced{grid-template-columns:1fr}
+.ced .col{border:1px solid var(--line);border-radius:16px;overflow:hidden;background:#fff}
+.ced .ch{background:#FAF7F2;padding:7px 12px;font-size:11px;font-weight:800;color:var(--ink3);letter-spacing:.07em;text-transform:uppercase}
+.dn{display:flex;align-items:center;gap:8px;padding:6px 10px;border-top:1px solid #F3EEE6}
+.dn b{width:62px;font-size:13px}
+.dn button{width:30px;height:30px;border-radius:9px;border:0;background:#F4EFE7;font-weight:800;font-size:15px}
+.dn input{width:52px;text-align:center;font-size:14px;font-weight:800;border:1px solid var(--line);border-radius:9px;padding:5px 0}
+.dn em{flex:1;text-align:right;font-style:normal;font-size:12.5px;font-weight:700;color:var(--or2)}
+.dn em.z{color:#D6CEC2}
+.tot{display:flex;justify-content:space-between;align-items:center;background:var(--orbg);border-radius:14px;padding:12px 14px;margin-top:12px;font-weight:800}
+.tot b{font-size:22px}
+
+/* fluxo: modal (computador) ou folha (celular) */
+.ov{position:absolute;inset:0;background:rgba(31,26,20,.5);z-index:40;display:flex;align-items:center;justify-content:center;padding:18px}
+.cel .ov{align-items:flex-end;padding:0}
+.fl{background:#fff;border-radius:24px;width:100%;max-width:600px;max-height:100%;display:flex;flex-direction:column;box-shadow:0 30px 80px rgba(0,0,0,.3)}
+.fl.wide{max-width:760px}
+.cel .fl{border-radius:24px 24px 0 0;max-height:92%;max-width:none}
+.fh{padding:18px 22px 10px;position:relative}
+.cel .fh:before{content:"";display:block;width:40px;height:5px;border-radius:3px;background:#E3DBCF;margin:-6px auto 12px}
+.fh .t{font-size:20px;font-weight:800;letter-spacing:-.01em;padding-right:40px}
+.fh .x{position:absolute;right:16px;top:16px;width:36px;height:36px;border-radius:50%;border:0;background:#F4EFE7;font-size:18px}
+.cel .fh .x{top:22px}
+.passos{display:flex;gap:6px;margin-top:12px}
+.passos div{flex:1}
+.passos i{display:block;height:5px;border-radius:5px;background:#F1ECE4}
+.passos div.on i{background:var(--or)}
+.passos div.ok i{background:var(--grn)}
+.passos span{display:block;font-size:11px;font-weight:700;color:var(--ink3);margin-top:5px}
+.passos div.on span{color:var(--ink)}
+.fb{padding:8px 22px 14px;overflow-y:auto;flex:1}
+.ff{padding:14px 22px 18px;border-top:1px solid #F3EEE6;display:flex;gap:10px;align-items:center}
+.ff .bt{flex:1}
+.ff .bt.sec{flex:0 0 auto}
+.q{font-size:19px;font-weight:800;letter-spacing:-.01em;margin:6px 0 2px}
+.qs{font-size:13px;color:var(--ink2);margin:0 0 10px;line-height:1.45}
+.okline{display:flex;gap:8px;align-items:center;background:var(--grnbg);color:#166534;border-radius:12px;padding:9px 12px;font-size:12.5px;font-weight:700;margin-bottom:12px}
+
+.grp{border:1px solid var(--line);border-radius:18px;margin-top:12px;overflow:hidden}
+.grp .gh{display:flex;align-items:center;gap:8px;padding:11px 14px;background:#FAF7F2;font-size:13px;font-weight:800}
+.grp .gh small{font-weight:600;color:var(--ink3);font-size:12px}
+.grp .gh .n{margin-left:auto;font-size:11.5px;font-weight:800;border-radius:999px;padding:2px 9px;background:var(--red);color:#fff}
+.grp .gh .n.ok{background:var(--grn)}
+.pr{display:flex;align-items:center;gap:10px;padding:11px 14px;border-top:1px solid #F3EEE6}
+.pr .tx{flex:1;min-width:0}
+.pr .tx b{display:block;font-size:13.5px}
+.pr .tx span{display:block;font-size:12px;color:var(--ink3);margin-top:1px}
+.pr .v{font-weight:800;font-size:13.5px;white-space:nowrap}
+.pr .sb{display:flex;gap:6px;flex:none}
+.pr .sb .bt{min-height:36px;padding:6px 11px;font-size:12.5px;border-radius:10px}
+.pr .okt{font-size:12.5px;font-weight:800;color:var(--grn);white-space:nowrap}
+.pr .nt{font-size:12.5px;font-weight:800;color:var(--ink3);white-space:nowrap}
+.pr.done{background:#FCFBF8}
+.cel .pr{flex-wrap:wrap}
+.cel .pr .sb{width:100%}
+.cel .pr .sb .bt{flex:1;min-height:42px}
+.cel .grp .gh small{display:none}
+
+.res{border-radius:18px;padding:14px 16px;display:flex;align-items:center;gap:12px;margin:4px 0 12px}
+.res .ic{width:44px;height:44px;border-radius:50%;display:grid;place-items:center;font-size:24px;flex:none;color:#fff}
+.res b{display:block;font-size:20px;font-weight:800;letter-spacing:-.01em}
+.res span{font-size:12.5px}
+.res.g{background:var(--grnbg);color:#14532D}.res.g .ic{background:var(--grn)}
+.res.a{background:var(--orbg);color:#7a4105}.res.a .ic{background:var(--or)}
+.res.r{background:var(--redbg);color:#7f1d1d}.res.r .ic{background:var(--red)}
+.conta{border:1px solid var(--line);border-radius:16px;padding:4px 14px}
+.cr{display:flex;justify-content:space-between;gap:12px;padding:9px 0;border-top:1px solid #F3EEE6;font-size:14px}
+.cr:first-child{border-top:0}
+.cr span{color:var(--ink2)}
+.cr b{white-space:nowrap}
+.cr.tot2{font-weight:800}
+.cr.tot2 span{color:var(--ink)}
+.cr .lk{padding:0;font-size:12.5px;margin-left:6px}
+.sublist{background:#FAF7F2;border-radius:12px;padding:4px 12px;margin:0 0 8px}
+.sublist div{display:flex;justify-content:space-between;gap:10px;font-size:12.5px;padding:6px 0;border-top:1px solid #EFE8DD;color:var(--ink2)}
+.sublist div:first-child{border-top:0}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
+.chips button{border:1px solid var(--line);background:#fff;border-radius:999px;padding:7px 12px;font-size:12.5px;font-weight:700;color:var(--ink2)}
+.chips button.on{background:var(--ink);border-color:var(--ink);color:#fff}
+textarea.just{width:100%;min-height:78px;border:2px solid var(--line);border-radius:14px;padding:10px 12px;font-size:14px;outline:none;resize:vertical}
+textarea.just:focus{border-color:var(--or)}
+.aviso{font-size:12.5px;background:#F7F3ED;border-radius:12px;padding:10px 12px;color:var(--ink2);margin-top:12px;line-height:1.45;display:flex;gap:8px}
+.aviso i{color:var(--or2);font-size:16px}
+
+.prog{padding:10px 0}
+.pg{display:flex;gap:12px;align-items:center;padding:11px 0;font-size:14.5px;font-weight:700}
+.pg .c{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;flex:none;font-size:16px}
+.pg.w .c{border:2px dashed #D9D0C3;color:var(--ink3)}
+.pg.r .c{background:var(--orbg);color:var(--or2)}
+.pg.r .c i{animation:spin 1s linear infinite}
+.pg.k .c{background:var(--grn);color:#fff}
+.pg.e .c{background:var(--red);color:#fff}
+.pg.w{color:var(--ink3)}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+.fim{text-align:center;padding:10px 0 4px}
+.fim .ic{width:64px;height:64px;border-radius:50%;background:var(--grn);color:#fff;display:grid;place-items:center;font-size:36px;margin:0 auto 10px}
+.fim b{display:block;font-size:22px;font-weight:800;letter-spacing:-.01em}
+.fim p{color:var(--ink2);font-size:13.5px;margin:4px 0 0}
+.sum{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px}
+.cel .sum{grid-template-columns:1fr}
+.sc{border:1px solid var(--line);border-radius:18px;padding:14px}
+.sc .big{font-size:24px;font-weight:800;letter-spacing:-.02em;margin:2px 0}
+.fp{display:flex;align-items:center;gap:8px;font-size:12.5px;margin-top:7px}
+.fp span{width:82px;color:var(--ink2);flex:none}
+.fp i{flex:1;height:7px;background:#F1ECE4;border-radius:6px;overflow:hidden;font-style:normal}
+.fp i em{display:block;height:100%;background:var(--or);border-radius:6px}
+.fp b{width:74px;text-align:right;flex:none}
+.sc .cr{font-size:13px;padding:7px 0}
+.gav{display:grid;grid-template-columns:240px 1fr;gap:16px;align-items:start;margin-top:14px;border:1px solid var(--line);border-radius:18px;padding:16px}
+.cel .gav{grid-template-columns:1fr}
+.gav .big{font-size:30px;font-weight:800;letter-spacing:-.02em;margin:2px 0 4px}
+.gav .gr{border:0;padding:0}
+.avisado{display:flex;gap:10px;align-items:flex-start;background:#F7F3ED;border-radius:14px;padding:12px 14px;margin-top:10px;font-size:12.5px;color:var(--ink2);line-height:1.45}
+.avisado i{font-size:18px;color:var(--grn)}
+
+.okscreen{position:absolute;inset:0;z-index:45;background:rgba(250,247,242,.86);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);display:flex;align-items:center;justify-content:center;padding:20px;text-align:center}
+.okscreen .ic{width:76px;height:76px;border-radius:50%;background:var(--grn);color:#fff;display:grid;place-items:center;font-size:44px;margin:0 auto 14px}
+.okscreen b{display:block;font-size:26px;font-weight:800;letter-spacing:-.02em}
+/* ── selos de sucesso (3 propostas; troca na barra do protótipo) ── */
+.selo{--sb:#fff;position:relative;margin:0 auto 16px;display:grid;place-items:center}
+.okscreen .selo{--sb:#FAF7F2}
+.chk{width:30px;height:30px;overflow:visible}
+.chk path{fill:none;stroke:#fff;stroke-width:4.2;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:34;stroke-dashoffset:34;animation:draw .45s .25s ease-out forwards}
+@keyframes draw{to{stroke-dashoffset:0}}
+@keyframes pop{0%{transform:scale(.55);opacity:0}100%{transform:scale(1);opacity:1}}
+@keyframes ring{0%{transform:scale(.7);opacity:0}100%{transform:scale(1);opacity:1}}
+/* A — Loja: placa da loja na cor da marca + selo verde pequeno */
+.seloL{width:88px;height:88px}
+.seloL .tile{width:88px;height:88px;border-radius:28px;display:grid;place-items:center;font-size:42px;color:#fff;
+  background:linear-gradient(155deg,#FCD34D 0%,#F59E0B 52%,#D97706 100%);
+  box-shadow:0 18px 34px -12px rgba(217,119,6,.6),inset 0 1px 0 rgba(255,255,255,.5),inset 0 -6px 14px rgba(180,83,9,.25);
+  animation:pop .45s cubic-bezier(.2,1.5,.4,1) both}
+.seloL.noite .tile{background:linear-gradient(155deg,#4A4036 0%,#2A231C 60%,#1F1A14 100%);color:#FCD34D;
+  box-shadow:0 18px 34px -12px rgba(31,26,20,.55),inset 0 1px 0 rgba(255,255,255,.14)}
+.seloL .badge{position:absolute;right:-9px;bottom:-9px;width:38px;height:38px;border-radius:50%;display:grid;place-items:center;
+  background:linear-gradient(155deg,#34D399,#059669);border:4px solid var(--sb);box-shadow:0 6px 14px -4px rgba(5,150,105,.6);
+  animation:pop .35s .3s cubic-bezier(.2,1.5,.4,1) both}
+.seloL .badge .chk{width:18px;height:18px}
+.seloL .badge .chk path{stroke-width:5;animation-delay:.55s}
+/* B — Halo: check verde em degradê com anéis suaves */
+.seloH{width:116px;height:116px}
+.seloH::before,.seloH::after{content:"";position:absolute;border-radius:50%;animation:ring .6s ease-out both}
+.seloH::before{inset:0;background:radial-gradient(circle,rgba(16,185,129,.0) 40%,rgba(16,185,129,.12) 100%)}
+.seloH::after{inset:16px;background:rgba(16,185,129,.12);animation-delay:.08s}
+.seloH .core{position:relative;z-index:1;width:66px;height:66px;border-radius:50%;display:grid;place-items:center;
+  background:linear-gradient(155deg,#34D399 0%,#10B981 45%,#047857 100%);
+  box-shadow:0 14px 26px -8px rgba(4,120,87,.55),inset 0 1px 0 rgba(255,255,255,.4);
+  animation:pop .45s .1s cubic-bezier(.2,1.5,.4,1) both}
+/* C — Linha: traço fino desenhado, sem preenchimento */
+.seloC{width:88px;height:88px;border-radius:50%;background:radial-gradient(circle at 30% 25%,#F4FFF8,#E3F8EC);
+  box-shadow:inset 0 0 0 1.5px #BDEFD0,0 10px 24px -14px rgba(5,150,105,.45);animation:pop .4s cubic-bezier(.2,1.4,.4,1) both}
+.seloC .chk{width:38px;height:38px}
+.seloC .chk path{stroke:#059669;stroke-width:3}
+/* D — Placa: a plaquinha de porta "ABERTO/FECHADO", pendurada, vira e balança */
+.seloP{width:220px;height:124px;display:block}
+.seloP .prego{position:absolute;left:50%;top:0;width:12px;height:12px;margin-left:-6px;border-radius:50%;z-index:2;
+  background:radial-gradient(circle at 35% 30%,#E9DFD0,#A8998A);box-shadow:0 1px 2px rgba(0,0,0,.25)}
+.seloP .bal{position:absolute;inset:0;transform-origin:50% 6px;animation:balanca 1.7s .25s ease-out both}
+.seloP svg.fio{position:absolute;left:0;top:0;width:220px;height:48px}
+.seloP svg.fio path{fill:none;stroke:#A8998A;stroke-width:1.6;stroke-linecap:round}
+.seloP .placa{position:absolute;left:16px;right:16px;top:40px;height:78px;border-radius:16px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
+  background:linear-gradient(180deg,#FFFFFF,#F2FBF5);border:2px solid #34D399;
+  box-shadow:0 16px 28px -14px rgba(4,120,87,.45),0 2px 0 rgba(255,255,255,.8) inset;animation:vira .55s cubic-bezier(.3,1.4,.5,1) both}
+.seloP .placa::before,.seloP .placa::after{content:"";position:absolute;top:8px;width:7px;height:7px;border-radius:50%;background:#D7CDBF;box-shadow:inset 0 1px 1px rgba(0,0,0,.18)}
+.seloP .placa::before{left:12px}.seloP .placa::after{right:12px}
+.seloP .placa b{font-size:25px;font-weight:800;letter-spacing:.16em;color:#047857;line-height:1;margin:0}
+.seloP .placa small{font-size:11.5px;font-weight:700;color:#5B8A72;letter-spacing:.02em}
+.seloP.cx .placa b{font-size:17px;letter-spacing:.1em}
+.seloP.noite .placa{background:linear-gradient(180deg,#2E2620,#1F1A14);border-color:#F5B544;box-shadow:0 16px 28px -14px rgba(31,26,20,.6)}
+.seloP.noite .placa b{color:#FCD34D}
+.seloP.noite .placa small{color:#C9B48A}
+.seloP.noite .placa::before,.seloP.noite .placa::after{background:#4A4036}
+@keyframes vira{0%{transform:perspective(500px) rotateY(90deg)}100%{transform:perspective(500px) rotateY(0)}}
+@keyframes balanca{0%{transform:rotate(-12deg)}22%{transform:rotate(9deg)}44%{transform:rotate(-5deg)}66%{transform:rotate(2.5deg)}84%{transform:rotate(-1deg)}100%{transform:rotate(0)}}
+/* E — Céu: o sol nasce ao abrir, a lua aparece ao fechar, o sol da tarde na troca de operador */
+.seloS{display:block;width:156px;height:100px}
+.seloS .ceu{position:absolute;inset:0;border-radius:28px;overflow:hidden;
+  background:linear-gradient(180deg,#FFF1DC 0%,#FDD9A0 50%,#F8B35A 100%);
+  box-shadow:0 18px 34px -14px rgba(217,119,6,.55),inset 0 1px 0 rgba(255,255,255,.6);animation:pop .45s cubic-bezier(.2,1.4,.4,1) both}
+.seloS .astro{position:absolute;left:50%;top:26px;width:44px;height:44px;margin-left:-22px;border-radius:50%;
+  background:radial-gradient(circle at 40% 35%,#FFFBEA,#FDE68A 50%,#FBBF24);
+  box-shadow:0 0 0 9px rgba(255,255,255,.22),0 0 30px 10px rgba(253,224,138,.85);animation:nasce 1.2s .2s cubic-bezier(.2,.9,.3,1) both}
+.seloS .morro{position:absolute;left:-12%;right:-12%;bottom:-44px;height:72px;border-radius:50%;background:linear-gradient(180deg,#F59E0B,#C2700A)}
+.seloS .morro.m2{left:38%;right:-30%;bottom:-50px;background:linear-gradient(180deg,#E58A0B,#B45F09);opacity:.9}
+@keyframes nasce{from{transform:translateY(54px)}to{transform:translateY(0)}}
+.seloS.tarde .ceu{background:linear-gradient(180deg,#DCEBFF 0%,#EAF2FF 45%,#FFE7BE 100%);box-shadow:0 18px 34px -14px rgba(37,99,235,.35),inset 0 1px 0 rgba(255,255,255,.7)}
+.seloS.tarde .astro{top:12px;left:68%;width:34px;height:34px;margin-left:-17px;animation:surge .6s .2s ease-out both}
+.seloS.tarde .morro{background:linear-gradient(180deg,#86C8A0,#4F9E70)}
+.seloS.tarde .morro.m2{background:linear-gradient(180deg,#6FB98C,#3F8A5E)}
+@keyframes surge{from{opacity:0;transform:scale(.6)}to{opacity:1;transform:scale(1)}}
+.seloS.noite .ceu{background:linear-gradient(180deg,#141230 0%,#26214D 60%,#3A2F63 100%);box-shadow:0 18px 34px -14px rgba(38,33,77,.6),inset 0 1px 0 rgba(255,255,255,.12)}
+.seloS .lua{position:absolute;left:52%;top:12px;width:42px;height:42px;filter:drop-shadow(0 0 10px rgba(253,230,138,.55));animation:surge .7s .2s ease-out both}
+.seloS.noite .morro{background:linear-gradient(180deg,#1C1838,#110F24)}
+.seloS.noite .morro.m2{background:linear-gradient(180deg,#221D44,#15122C)}
+.seloS .est{position:absolute;width:3px;height:3px;border-radius:50%;background:#fff;opacity:0;animation:pisca 2.4s ease-in-out infinite}
+@keyframes pisca{0%,100%{opacity:.15}50%{opacity:.95}}
+/* ícones pequenos dos avisos: fundo claro em vez de bola chapada */
+.res .ic{color:inherit !important;background:#fff !important}
+.res.g .ic{color:var(--grn) !important;box-shadow:inset 0 0 0 1.5px #BBF0CF}
+.res.a .ic{color:var(--or2) !important;box-shadow:inset 0 0 0 1.5px #F8DDA8}
+.res.r .ic{color:var(--red) !important;box-shadow:inset 0 0 0 1.5px #F8C9C9}
+.pg.k .c{background:var(--grnbg) !important;color:var(--grn) !important}
+
+.okscreen p{font-size:14px;color:var(--ink2);margin:6px 0 16px}
+
+.toast{position:absolute;left:50%;transform:translateX(-50%) translateY(10px);bottom:22px;background:#1F1A14;color:#fff;border-radius:14px;padding:11px 16px;font-size:13px;z-index:60;opacity:0;transition:all .2s;pointer-events:none;max-width:90%;text-align:center}
+.toast.on{opacity:1;transform:translateX(-50%)}
+
+/* notas */
+.notes h3{font-size:18px;margin:0 0 4px;letter-spacing:-.01em}
+.notes .sub2{font-size:12.5px;color:var(--ink3);margin:0 0 14px}
+.nt2{display:flex;gap:10px;margin:0 0 13px}
+.nt2 .n{width:24px;height:24px;border-radius:8px;background:var(--orbg);color:var(--or2);font-weight:800;font-size:12px;display:grid;place-items:center;flex:none}
+.nt2 b{display:block;font-size:13.5px}
+.nt2 p{margin:2px 0 0;font-size:12.5px;line-height:1.5;color:var(--ink2)}
+.nbox{background:#F7F3ED;border-radius:14px;padding:12px 14px;font-size:12.5px;line-height:1.5;color:var(--ink2);margin:6px 0 14px}
+.nbox b{color:var(--ink)}
+.nbox ol,.nbox ul{margin:6px 0 0;padding-left:18px}
+.nbox li{margin:3px 0}
+@media(max-width:760px){.wrap{padding:12px 0 30px}.cel{border-radius:0;border-width:0;height:calc(100dvh - 46px);min-height:0;max-width:none}.pc{border-width:6px}}
+</style>
+</head>
+<body>
+<div class="proto" id="proto"></div>
+<div class="wrap">
+  <div id="dev"></div>
+  <aside class="notes" id="notes"></aside>
+</div>
+
+<script>
+const brl = n => n.toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
+const num = s => { const v = parseFloat(String(s).replace(/\./g,'').replace(',','.')); return isNaN(v) ? NaN : v; };
+const val2txt = v => v.toFixed(2).replace('.',',');
+const NOTAS = [200,100,50,20,10,5,2];
+const MOEDAS = [1,0.5,0.25,0.10,0.05];
+const lbl = v => v >= 1 ? 'R$ ' + v : 'R$ ' + val2txt(v);
+
+/* ── Dados reais de El Patron Paranaguá (fechamento de sex 02/10/2026) ── */
+const DIA = {
+  abertura: 574.25, abriuAs: '11:41',
+  dinheiro: 38.00, nDinheiro: 1,
+  retiradasFeitas: [
+    {n:'Estacionamento (Eduardo)', v:15.00, h:'21:36'},
+    {n:'Freelancer: Marcelle', v:100.00, h:'21:38'},
+  ],
+  previstas: [
+    {id:'p1', n:'Condor Super Center', v:49.04, s:'Foto do cupom tirada no app às 14:20'},
+    {id:'p2', n:'Sacolão Paranaguá', v:79.69, s:'Foto do cupom tirada no app às 17:05'},
+    {id:'p3', n:'Condor Super Center', v:9.79, s:'Foto do cupom tirada no app às 19:48'},
+  ],
+  vendas: 1017.30, pedidos: 25,
+  formas: [['Crédito',431.80],['Pix',341.60],['Débito',136.90],['Vale refeição',69.00],['Dinheiro',38.00]],
+  contadoReal: 359.25,
+};
+const ITENS = [['Burrito Barbacoa',41],['Burrito Al Pastor',38],['Burrito Pollo',35],['Burrito California',42],['Bem Bolado Frango',19.9],['Bem Bolado Classic',19.9],['Combo Burrito + batata + bebida',44.9],['Dupla Quesadilla + batata + bebida',39.9],['Tortilha burguer',29.9],['Hamburguer de Frango + batata',40],['Burrito 4 quesos',38],['Burrito Classic Veggie',35]];
+
+const S = {
+  dev: innerWidth < 760 ? 'cel' : 'pc',
+  cena: 'fechada',        // fechada | aberta | semcaixa
+  pend: true, dif: true, falha: false, quem: 'caixa', perm: true, selo: 'L',
+  menu: false,
+  gaveta: 359.25, gavetaQuando: 'sex 02/10 às 21:41', gavetaQuem: 'Caixa',
+  ab: null,               // estado da tela "Abrir a loja"
+  fl: null,               // fluxo de fechar
+  ok: null,               // tela de sucesso da abertura
+  caixaFechadoAs: null,
+};
+const QUEM = {caixa:'Caixa', sup:'Supervisão'};
+function resetAb(){ S.ab = {modo:'cedulas', valor:'', cont:{}, obs:''}; }
+resetAb();
+
+/* ── barra do protótipo ── */
+function renderProto(){
+  const b = (on, act, txt) => `<button class="${on?'on':''}" data-act="${act}">${txt}</button>`;
+  document.getElementById('proto').innerHTML =
+    `<span class="lbl">TELA</span>${b(S.dev==='pc','dev:pc','Computador')}${b(S.dev==='cel','dev:cel','Celular')}
+     <span class="sep"></span><span class="lbl">MOMENTO</span>
+     ${b(S.cena==='fechada'&&!S.fl,'cena:fechada','Manhã: loja fechada')}
+     ${b(S.cena==='aberta'||!!S.fl,'cena:aberta','Noite: loja aberta')}
+     ${b(S.cena==='semcaixa'&&!S.fl,'cena:semcaixa','Loja aberta, caixa fechado')}
+     <span class="sep"></span><span class="lbl">VARIAÇÕES</span>
+     ${b(S.pend,'tog:pend','Com pendências')}${b(S.dif,'tog:dif','Com diferença')}${b(S.falha,'tog:falha','Dia não fecha')}
+     ${b(S.quem==='sup','tog:quem','Quem: '+QUEM[S.quem])}${b(!S.perm,'tog:perm','Sem permissão')}
+     <span class="sep"></span><span class="lbl">SELO</span>
+     ${b(S.selo==='L','selo:L','Loja')}${b(S.selo==='H','selo:H','Halo')}${b(S.selo==='C','selo:C','Linha')}${b(S.selo==='P','selo:P','Placa')}${b(S.selo==='S','selo:S','Céu')}
+     <button data-act="selo:ver">Ver o selo ▶</button>`;
+}
+
+/* ── topo do PDV ── */
+function topo(){
+  const st = S.cena==='fechada' ? `<span class="st off"><span class="dot"></span>Loja fechada</span>`
+    : S.cena==='semcaixa' ? `<span class="st half"><span class="dot"></span>Loja aberta · caixa fechado</span>`
+    : `<span class="st on"><span class="dot"></span>Loja aberta desde ${DIA.abriuAs}</span>`;
+  const hora = S.cena==='fechada' ? ['11:40','sáb, 3 out'] : ['21:39','sex, 2 out'];
+  const aberta = S.cena==='aberta';
+  if (S.dev==='cel') {
+    return `<div class="tb"><button class="bk"><i class="ri-arrow-left-line"></i></button>${st}<span class="sp"></span>
+      <b style="font-size:14px">${hora[0]}</b>${aberta?`<button class="tbb ico" data-act="menu"><i class="ri-more-2-fill"></i></button>`:''}</div>`;
+  }
+  return `<div class="tb"><button class="bk"><i class="ri-arrow-left-line"></i></button>${st}
+    <span class="who">${QUEM[S.quem]}</span><span class="sp"></span>
+    <div class="clk"><b>${hora[0]}</b><span>${hora[1]}</span></div>
+    ${aberta ? `<button class="tbb"><i class="ri-keyboard-line"></i>Atalhos</button>
+      <button class="tbb red"><i class="ri-arrow-down-circle-line"></i>Sangria</button>
+      <button class="tbb grn"><i class="ri-arrow-up-circle-line"></i>Suprimento</button>
+      <button class="tbb"><i class="ri-motorbike-line"></i>Delivery aberto</button>
+      ${S.perm?`<button class="tbb fech" data-act="fechar"><i class="ri-store-2-line"></i>Fechar a loja</button>`:''}
+      <button class="tbb ico" data-act="menu" title="Mais"><i class="ri-more-2-fill"></i></button>` : ''}
+  </div>`;
+}
+function menu(){
+  if (!S.menu) return '';
+  return `<div class="menu">
+    ${S.dev==='cel'?`<button><i class="ri-arrow-down-circle-line" style="color:#DC2626"></i>Sangria</button><button><i class="ri-arrow-up-circle-line" style="color:#059669"></i>Suprimento</button><hr>`:''}
+    <button data-act="trocar"><i class="ri-user-shared-line"></i><span>Trocar de operador<small>Fecha só o caixa; a loja segue aberta</small></span></button>
+    ${S.dev==='cel'&&S.perm?`<hr><button data-act="fechar"><i class="ri-store-2-line"></i><span><b>Fechar a loja</b><small>Contar, conferir e fechar o dia</small></span></button>`:''}
+  </div>`;
+}
+function pdv(){
+  return `<div class="pdv"><div class="left">
+    <div class="cats"><span class="on">Burrito</span><span>Bem bolado</span><span>Combo</span><span>Hamburguer</span><span>Bebidas</span><span>Sobremesas</span></div>
+    <div class="grid">${ITENS.map(([n,p])=>`<div class="it"><b>${n}</b><span>${brl(p)}</span></div>`).join('')}</div>
+  </div><div class="cart"><i class="ri-shopping-cart-2-line"></i>Carrinho vazio<span style="font-size:11.5px">F2 abre o pagamento</span></div></div>`;
+}
+
+/* ── tela "Abrir a loja" (e "Abrir o caixa" com a loja já aberta) ── */
+function cedulas(cont, pre){
+  const linha = v => { const q = cont[v]||0; return `<div class="dn"><b>${lbl(v)}</b><button data-act="${pre}:q:${v}:-1">−</button><input inputmode="numeric" value="${q||''}" placeholder="0" data-in="${pre}:q:${v}"><button data-act="${pre}:q:${v}:1">+</button><em class="${q?'':'z'}">${q?brl(q*v):'—'}</em></div>`; };
+  return `<div class="ced"><div class="col"><div class="ch">Cédulas</div>${NOTAS.map(linha).join('')}</div><div class="col"><div class="ch">Moedas</div>${MOEDAS.map(linha).join('')}</div></div>`;
+}
+const somaCed = cont => +Object.entries(cont).reduce((a,[k,q])=>a+Number(k)*q,0).toFixed(2);
+// contagem de exemplo que soma R$ 359,25 (só para o protótipo)
+const EXEMPLO_GAVETA = {100:1, 50:3, 20:3, 10:3, 5:2, 2:3, 1:2, 0.5:2, 0.25:1};
+function valorAbertura(){ const o = S.ab; return o.modo==='cedulas' ? somaCed(o.cont) : num(o.valor); }
+function porta(){
+  const o = S.ab, semcaixa = S.cena==='semcaixa';
+  const nome = QUEM[S.quem];
+  if (!S.perm) {
+    return `<div class="porta"><div class="box"><div class="ola">sábado, 3 de outubro</div><div class="h1">A loja está fechada</div>
+      <div class="semperm"><b>Quem abre a loja:</b> Caixa, Supervisão, Gerente ou Admin.<br>O seu perfil não tem a permissão “Abrir caixa”. Peça para alguém da lista abrir — assim que abrir, esta tela vira o PDV sozinha.</div></div></div>`;
+  }
+  const v = valorAbertura();
+  const contou = o.modo==='cedulas' ? Object.values(o.cont).some(q=>q>0) : o.valor.trim()!=='';
+  const valido = contou && !isNaN(v) && v >= 0;
+  const d = valido ? +(v - S.gaveta).toFixed(2) : 0;
+  const titulo = semcaixa ? 'A loja está aberta, mas o caixa está fechado' : 'A loja está fechada';
+  const sub = semcaixa
+    ? `A loja abriu às ${DIA.abriuAs}. O caixa foi fechado às ${S.caixaFechadoAs||'16:02'} (troca de operador). Conte a gaveta e abra o caixa para voltar a vender — ou feche a loja.`
+    : `Bom dia! Conte o troco da gaveta e abra. O caixa, o garçom, o totem e a cozinha começam a funcionar na hora.`;
+  const btnTxt = semcaixa ? 'Abrir o caixa' : 'Abrir a loja';
+  const status = !valido
+    ? `<div class="abst">Conte as cédulas e moedas da gaveta.</div>`
+    : Math.abs(d) < 0.01
+      ? `<div class="abst g"><i class="ri-checkbox-circle-fill"></i> Bateu com o fechamento</div>`
+      : `<div class="abst a"><b>${brl(Math.abs(d))} ${d<0?'a menos':'a mais'}</b> que no fechamento. Confira de novo.</div>`;
+  const motivo = valido && Math.abs(d) >= 0.01
+    ? `<div class="abmot"><label>Se estiver certo, o que aconteceu? <span>(opcional)</span></label>
+        <input data-in="ab:obs" value="${o.obs}" placeholder="Ex.: tirei R$ 7 para o gás"></div>` : '';
+  const pc = S.dev==='pc';
+  return `<div class="porta"><div class="box">
+    <div class="ola">${semcaixa?'sexta, 2 de outubro':'sábado, 3 de outubro'} · ${nome}</div>
+    <div class="h1">${titulo}</div><p class="sub">${sub}</p>
+    <div class="troco">
+      <div class="k">Conte o troco da gaveta</div>
+      <div class="mini" style="margin:4px 0 10px">No último fechamento ficaram <b>${brl(S.gaveta)}</b> (${S.gavetaQuando}, por ${S.gavetaQuem}).</div>
+      <div class="abgrid">
+        <div class="abmain">
+          <div class="seg"><button class="${o.modo==='cedulas'?'on':''}" data-act="ab:modo:cedulas">Contar cédulas</button><button class="${o.modo==='digitar'?'on':''}" data-act="ab:modo:digitar">Digitar o total</button></div>
+          ${o.modo==='cedulas'
+            ? cedulas(o.cont,'ab')
+            : `<div class="money"><span>R$</span><input id="abval" inputmode="decimal" placeholder="0,00" value="${o.valor}" data-in="ab:valor"></div>`}
+          <div style="font-size:12px;color:var(--ink3);margin-top:8px">No protótipo: <button class="lk" style="padding:0;font-size:12px" data-act="ab:ex">preencher uma contagem de exemplo (${brl(somaCed(EXEMPLO_GAVETA))})</button></div>
+          ${pc ? '' : motivo}
+        </div>
+        <div class="abside">
+          <div class="abtot"><span>Total contado</span><b>${valido?brl(v):'—'}</b></div>
+          ${status}
+          ${pc ? motivo : ''}
+          <button class="bt p xl full" data-act="ab:abrir" ${valido?'':'disabled'}>${btnTxt}${valido && !pc?' com '+brl(v):''}<kbd>Enter</kbd></button>
+        </div>
+      </div>
+    </div>
+    ${semcaixa
+      ? `<div style="text-align:center;margin-top:14px"><button class="bt" data-act="fechardia"><i class="ri-store-2-line"></i>Fechar a loja</button></div>`
+      : `<div class="libera"><span><i class="ri-safe-2-line"></i>Caixa</span><span><i class="ri-user-star-line"></i>Garçom e mesas</span><span><i class="ri-tablet-line"></i>Totem e mesa QR</span><span><i class="ri-restaurant-line"></i>Cozinha (KDS)</span></div>`}
+  </div></div>`;
+}
+
+const CHK = '<svg class="chk" viewBox="0 0 30 30"><path d="M7 15.5l5.2 5.2L23 9.8"/></svg>';
+// tipo: 'abrir' (loja aberta), 'caixa' (caixa aberto/fechado na troca), 'fechar' (loja fechada à noite)
+function selo(tipo, hora){
+  if (S.selo === 'S') {
+    const fase = tipo==='fechar' ? 'noite' : tipo.startsWith('caixa') ? 'tarde' : 'dia';
+    const est = fase==='noite' ? [[18,22,0],[34,40,.6],[56,14,1.1],[104,30,.3],[124,18,1.5],[138,46,.9],[86,10,1.9]]
+      .map(([x,y,d])=>`<i class="est" style="left:${x}px;top:${y}px;animation-delay:${d}s"></i>`).join('') : '';
+    const astro = fase==='noite'
+      ? `<svg class="lua" viewBox="0 0 40 40"><defs><mask id="luaM"><rect width="40" height="40" fill="#fff"/><circle cx="27" cy="14" r="12" fill="#000"/></mask></defs><circle cx="19" cy="21" r="14" fill="#FDE68A" mask="url(#luaM)"/></svg>`
+      : `<div class="astro"></div>`;
+    return `<div class="selo seloS ${fase}"><div class="ceu">${est}${astro}<div class="morro"></div><div class="morro m2"></div></div></div>`;
+  }
+  if (S.selo === 'P') {
+    const txt = tipo==='fechar' ? 'FECHADO' : tipo==='caixaFechado' ? 'CAIXA FECHADO' : tipo==='caixa' ? 'CAIXA ABERTO' : 'ABERTO';
+    const sub = tipo==='fechar' ? `boa noite · ${hora||''}` : tipo==='caixaFechado' ? `às ${hora||''}` : `desde ${hora||''}`;
+    return `<div class="selo seloP ${tipo==='fechar'?'noite':''} ${tipo.startsWith('caixa')?'cx':''}"><div class="prego"></div>
+      <div class="bal"><svg class="fio" viewBox="0 0 220 48"><path d="M110 6 L46 46 M110 6 L174 46"/></svg>
+      <div class="placa"><b>${txt}</b><small>${sub}</small></div></div></div>`;
+  }
+  if (tipo === 'caixaFechado') tipo = 'caixa';
+  if (S.selo === 'H') return `<div class="selo seloH"><div class="core">${CHK}</div></div>`;
+  if (S.selo === 'C') return `<div class="selo seloC">${CHK}</div>`;
+  const ic = tipo==='fechar' ? 'ri-moon-clear-fill' : tipo==='caixa' ? 'ri-safe-2-fill' : 'ri-store-2-fill';
+  return `<div class="selo seloL ${tipo==='fechar'?'noite':''}"><div class="tile"><i class="${ic}"></i></div><div class="badge">${CHK}</div></div>`;
+}
+function okscreen(){
+  if (!S.ok) return '';
+  return `<div class="okscreen"><div>${selo(S.ok.caixa?'caixa':'abrir', S.ok.h)}
+    <b>${S.ok.caixa?'Caixa aberto':'Loja aberta'} às ${S.ok.h}</b>
+    <p>Troco: ${brl(S.ok.v)}${S.ok.caixa?'':' · caixa, garçom, totem e cozinha liberados'}</p>
+    <button class="bt p xl" data-act="ok:vender">Começar a vender<kbd>Enter</kbd></button></div></div>`;
+}
+
+/* ── fluxo "Fechar a loja" ── */
+function retiradas(){
+  const fl = S.fl;
+  const conf = DIA.previstas.filter(p => fl.prev[p.id]==='saiu').map(p=>({n:p.n, v:p.v, h:'21:35'}));
+  return [...DIA.retiradasFeitas, ...conf];
+}
+function esperado(){ return +(DIA.abertura + DIA.dinheiro - retiradas().reduce((a,r)=>a+r.v,0)).toFixed(2); }
+function contado(){
+  const fl = S.fl;
+  if (fl.modo==='cedulas') return +Object.entries(fl.cont).reduce((a,[k,q])=>a+Number(k)*q,0).toFixed(2);
+  return num(fl.valor);
+}
+function abrirFluxo(tipo){
+  S.menu = false;
+  const temPend = S.pend;
+  S.fl = {tipo, passo: (temPend ? 'pend' : (tipo==='dia' ? 'confdia' : 'contar')), modo:'digitar', valor:'', cont:{}, just:'', verRet:false,
+          prev:{}, coz:false, tab:false, prog:[], forcar:false};
+  if (!temPend) DIA.previstas.forEach(p => S.fl.prev[p.id]='saiu');
+  render();
+}
+function passosDe(fl){
+  const l = [];
+  if (S.pend) l.push(['pend','Pendências']);
+  if (fl.tipo!=='dia'){ l.push(['contar','Contar']); l.push(['conferir','Conferir']); }
+  else l.push(['confdia','Confirmar']);
+  l.push(['fim', fl.tipo==='trocar' ? 'Pronto' : 'Resumo']);
+  return l;
+}
+function barra(fl){
+  const l = passosDe(fl);
+  const ordem = l.map(x=>x[0]);
+  let atual = fl.passo==='fechando'||fl.passo==='falha' ? ordem.length-2 : fl.passo==='fim' ? ordem.length-1 : ordem.indexOf(fl.passo);
+  return `<div class="passos">${l.map((x,i)=>`<div class="${i<atual?'ok':i===atual?'on':''}"><i></i><span>${x[1]}</span></div>`).join('')}</div>`;
+}
+function shell(titulo, body, foot, wide, semX){
+  const fl = S.fl;
+  return `<div class="ov"><div class="fl ${wide?'wide':''}">
+    <div class="fh"><div class="t">${titulo}</div>${semX?'':`<button class="x" data-act="fl:sair" title="Esc"><i class="ri-close-line"></i></button>`}${barra(fl)}</div>
+    <div class="fb">${body}</div>${foot?`<div class="ff">${foot}</div>`:''}
+  </div></div>`;
+}
+function tituloFluxo(){ return S.fl.tipo==='trocar' ? 'Trocar de operador' : 'Fechar a loja'; }
+
+function passoPend(){
+  const fl = S.fl;
+  const mostraPrev = fl.tipo!=='dia', mostraPed = fl.tipo!=='trocar';
+  const faltam = (mostraPrev ? DIA.previstas.filter(p=>!fl.prev[p.id]).length : 0) + (mostraPed ? (fl.coz?0:1) + (fl.tab?0:1) : 0);
+  const prev = DIA.previstas.map(p => {
+    const st = fl.prev[p.id];
+    return `<div class="pr ${st?'done':''}"><div class="tx"><b>${p.n}</b><span>${p.s}</span></div><span class="v">${brl(p.v)}</span>
+      ${st==='saiu' ? `<span class="okt"><i class="ri-check-line"></i> Saiu</span>`
+        : st==='nao' ? `<span class="nt">Não saiu</span>`
+        : `<div class="sb"><button class="bt" data-act="pv:${p.id}:nao">Não saiu</button><button class="bt dark" data-act="pv:${p.id}:saiu">Saiu do caixa</button></div>`}</div>`;
+  }).join('');
+  const nPrev = DIA.previstas.filter(p=>!fl.prev[p.id]).length;
+  return shell(tituloFluxo(), `
+    <div class="q">Antes de contar o dinheiro</div>
+    <p class="qs">${fl.tipo==='trocar'?'O caixa só fecha com as retiradas confirmadas.':'Estas coisas impedem a loja de fechar.'} Resolvendo agora, a contagem já sai certa e o dia fecha de uma vez.</p>
+    ${mostraPrev?`<div class="grp"><div class="gh"><i class="ri-receipt-line"></i>Retiradas para confirmar <small>· compras pagas com o dinheiro da gaveta</small><span class="n ${nPrev?'':'ok'}">${nPrev||'✓'}</span></div>${prev}</div>`:''}
+    ${mostraPed?`<div class="grp"><div class="gh"><i class="ri-restaurant-line"></i>Cozinha<span class="n ${fl.coz?'ok':''}">${fl.coz?'✓':'1'}</span></div>
+      <div class="pr ${fl.coz?'done':''}"><div class="tx"><b>Pedido 0025 · Burrito Pollo</b><span>Pronto na cozinha, falta entregar ao cliente</span></div>
+      ${fl.coz?`<span class="okt"><i class="ri-check-line"></i> Entregue</span>`:`<div class="sb"><button class="bt dark" data-act="pd:coz">Marcar entregue</button></div>`}</div></div>
+    <div class="grp"><div class="gh"><i class="ri-tablet-line"></i>Tablet<span class="n ${fl.tab?'ok':''}">${fl.tab?'✓':'1'}</span></div>
+      <div class="pr ${fl.tab?'done':''}"><div class="tx"><b>Pedido do tablet já pago · R$ 46,90</b><span>Recebeu o Pix e ainda não foi para a cozinha</span></div>
+      ${fl.tab?`<span class="okt"><i class="ri-check-line"></i> Enviado</span>`:`<div class="sb"><button class="bt dark" data-act="pd:tab">Mandar para a cozinha</button></div>`}</div></div>
+    <div class="grp"><div class="gh"><i class="ri-layout-grid-line"></i>Mesas<span class="n ok">✓</span></div>
+      <div class="pr done"><div class="tx"><b>Nenhuma mesa aberta</b></div></div></div>`:''}`,
+    `<button class="bt sec" data-act="fl:sair">Depois</button>
+     <button class="bt p" data-act="fl:ir:${fl.tipo==='dia'?'confdia':'contar'}" ${faltam?'disabled':''}>${faltam?`Faltam ${faltam}`:(fl.tipo==='dia'?'Continuar':'Contar o dinheiro')}<kbd>Enter</kbd></button>`);
+}
+function passoContar(){
+  const fl = S.fl;
+  const c = contado();
+  const ok = fl.modo==='cedulas' ? c > 0 : (fl.valor.trim()!=='' && !isNaN(c) && c>=0);
+  return shell(tituloFluxo(), `
+    ${S.pend?'':`<div class="okline"><i class="ri-checkbox-circle-fill"></i> Pedidos, mesas e retiradas em dia</div>`}
+    <div class="q">Quanto tem de dinheiro na gaveta?</div>
+    <p class="qs">Conte tudo que está na gaveta, troco incluído. O valor esperado só aparece depois — assim a contagem é de verdade.</p>
+    <div class="seg"><button class="${fl.modo==='digitar'?'on':''}" data-act="fc:modo:digitar">Digitar o total</button><button class="${fl.modo==='cedulas'?'on':''}" data-act="fc:modo:cedulas">Contar cédulas</button></div>
+    ${fl.modo==='digitar'
+      ? `<div class="money"><span>R$</span><input id="fcval" inputmode="decimal" placeholder="0,00" value="${fl.valor}" data-in="fc:valor"></div>
+         <div style="font-size:12px;color:var(--ink3);margin-top:8px">No protótipo: <button class="lk" style="padding:0;font-size:12px" data-act="fc:ex">usar o valor contado em 02/10 (${brl(S.dif?DIA.contadoReal:esperado())})</button></div>`
+      : cedulas(fl.cont,'fc') + `<div class="tot"><span>Total contado</span><b>${brl(c||0)}</b></div>`}`,
+    `<button class="bt sec" data-act="${S.pend?'fl:ir:pend':'fl:sair'}">${S.pend?'Voltar':'Cancelar'}</button>
+     <button class="bt p" data-act="fl:ir:conferir" ${ok?'':'disabled'}>Conferir<kbd>Enter</kbd></button>`, fl.modo==='cedulas');
+}
+function passoConferir(){
+  const fl = S.fl;
+  const esp = esperado(), c = contado(), d = +(c - esp).toFixed(2);
+  const tem = Math.abs(d) >= 0.01;
+  const rets = retiradas(), totRet = rets.reduce((a,r)=>a+r.v,0);
+  const banner = !tem ? `<div class="res g"><div class="ic"><i class="ri-check-line"></i></div><div><b>Bateu certinho</b><span>Contado ${brl(c)} · esperado ${brl(esp)}</span></div></div>`
+    : d > 0 ? `<div class="res a"><div class="ic"><i class="ri-add-line"></i></div><div><b>Sobrou ${brl(d)}</b><span>Contado ${brl(c)} · esperado ${brl(esp)}</span></div></div>`
+    : `<div class="res r"><div class="ic"><i class="ri-subtract-line"></i></div><div><b>Faltou ${brl(-d)}</b><span>Contado ${brl(c)} · esperado ${brl(esp)}</span></div></div>`;
+  const motivos = ['Troco dado errado','Contei errado','Pagamento lançado na forma errada','Não sei'];
+  const justOk = !tem || fl.just.trim().length >= 5;
+  const trocar = fl.tipo==='trocar';
+  return shell(tituloFluxo(), `
+    ${banner}
+    <div class="conta">
+      <div class="cr"><span>Troco da abertura (${DIA.abriuAs})</span><b>${brl(DIA.abertura)}</b></div>
+      <div class="cr"><span>+ Vendas em dinheiro (${DIA.nDinheiro})</span><b>${brl(DIA.dinheiro)}</b></div>
+      <div class="cr"><span>− Retiradas (${rets.length})<button class="lk" data-act="fc:ret">${fl.verRet?'esconder':'ver'}</button></span><b>${brl(totRet)}</b></div>
+      ${fl.verRet?`<div class="sublist">${rets.map(r=>`<div><span>${r.h} · ${r.n}</span><b>${brl(r.v)}</b></div>`).join('')}</div>`:''}
+      <div class="cr tot2"><span>= Devia ter na gaveta</span><b>${brl(esp)}</b></div>
+      <div class="cr tot2"><span>Você contou</span><b>${brl(c)}</b></div>
+    </div>
+    ${tem ? `<div class="q" style="font-size:16px;margin-top:16px">O que aconteceu?</div>
+      <div class="chips">${motivos.map(m=>`<button class="${fl.just===m?'on':''}" data-act="fc:mot:${m}">${m}</button>`).join('')}</div>
+      <textarea class="just" data-in="fc:just" placeholder="Conte em poucas palavras (obrigatório para fechar)">${fl.just}</textarea>
+      <div style="font-size:12px;color:var(--ink3);margin-top:4px">Vai junto com o fechamento para o financeiro. No dia real (02/10) a justificativa foi “sobra de 0,52”.</div>` : ''}
+    <div class="aviso"><i class="ri-information-line"></i><span>${trocar
+      ? 'Fecha só o caixa. A loja continua aberta; o próximo operador conta a gaveta e a tela compara com o valor de agora.'
+      : 'Fecha o caixa e o dia de uma vez. Delivery e totem param de receber pedidos. Não dá para desfazer.'}</span></div>`,
+    `<button class="bt sec" data-act="fl:ir:contar">Recontar</button>
+     <button class="bt ${trocar?'dark':'redb'}" data-act="fl:fechar" ${justOk?'':'disabled'}><i class="ri-${trocar?'safe-2':'store-2'}-line"></i>${trocar?'Fechar o caixa':'Fechar a loja'}<kbd>Enter</kbd></button>`);
+}
+function passoConfDia(){
+  return shell('Fechar a loja', `
+    <div class="okline"><i class="ri-checkbox-circle-fill"></i> O caixa já foi contado e fechado às ${S.caixaFechadoAs||'16:02'}</div>
+    <div class="q">Fechar o dia?</div>
+    <p class="qs">Não precisa contar de novo. Delivery e totem param de receber pedidos e o financeiro recebe o fechamento do turno.</p>`,
+    `<button class="bt sec" data-act="fl:sair">Cancelar</button><button class="bt redb" data-act="fl:fechar"><i class="ri-store-2-line"></i>Fechar a loja<kbd>Enter</kbd></button>`);
+}
+function passoFechando(){
+  const fl = S.fl;
+  const linhas = fl.prog.map(p => `<div class="pg ${p.s}"><div class="c">${p.s==='k'?'<i class="ri-check-line"></i>':p.s==='r'?'<i class="ri-loader-4-line"></i>':p.s==='e'?'<i class="ri-close-line"></i>':''}</div>${p.t}</div>`).join('');
+  return shell(tituloFluxo(), `<div class="prog">${linhas}</div>`, '', false, true);
+}
+function passoFalha(){
+  return shell('Fechar a loja', `
+    <div class="res r"><div class="ic"><i class="ri-error-warning-line"></i></div><div><b>O caixa fechou, a loja ainda não</b><span>Chegou um pedido enquanto você contava.</span></div></div>
+    <div class="grp" style="margin-top:4px"><div class="gh"><i class="ri-motorbike-line"></i>Delivery<span class="n">1</span></div>
+      <div class="pr"><div class="tx"><b>Pedido 0026 · R$ 52,90</b><span>Pago na entrega — ainda não recebido</span></div>
+      <div class="sb"><button class="bt dark" data-act="fa:ver">Receber agora</button></div></div></div>
+    <div class="aviso"><i class="ri-information-line"></i><span>O dinheiro já foi contado e conferido. Resolvendo o pedido, é só tocar em “Tentar de novo” — não precisa contar outra vez.</span></div>
+    <div style="text-align:center;margin-top:6px"><button class="lk" data-act="fa:forcar">${S.fl.forcar?'Esconder':'O pedido já foi resolvido por fora? Forçar o fechamento'}</button></div>
+    ${S.fl.forcar?`<div class="dif r">Forçar ignora pedidos e mesas em aberto e fecha o dia mesmo assim. Fica registrado quem forçou. <button class="bt redb full" style="margin-top:8px" data-act="fa:forcarok">Forçar o fechamento</button></div>`:''}`,
+    `<button class="bt sec" data-act="fl:sair">Fechar depois</button><button class="bt p" data-act="fl:fechar">Tentar de novo<kbd>Enter</kbd></button>`, false, true);
+}
+function passoFim(){
+  const fl = S.fl;
+  if (fl.tipo==='trocar') {
+    return shell('Trocar de operador', `<div class="fim">${selo('caixaFechado','16:02')}<b>Caixa fechado às 16:02</b>
+      <p>Ficaram ${brl(fl.cont_final)} na gaveta. O próximo operador conta a gaveta ao abrir e a tela compara com esse valor.</p></div>`,
+      `<button class="bt p" data-act="fl:fimtrocar">Pronto<kbd>Enter</kbd></button>`, false, true);
+  }
+  const c = fl.cont_final, esp = fl.esp_final, d = +(c-esp).toFixed(2);
+  const rets = retiradas(), totRet = rets.reduce((a,r)=>a+r.v,0);
+  const cor = Math.abs(d)<0.01 ? 'var(--grn)' : d>0 ? 'var(--or2)' : 'var(--red)';
+  return shell('Resumo do dia', `
+    <div class="fim">${selo('fechar','21:41')}<b>Loja fechada às 21:41</b>
+      <p>Sexta, 2 de outubro · aberta das ${DIA.abriuAs} às 21:41 · fechada por ${QUEM[S.quem]}</p></div>
+    <div class="gav">
+      <div class="gl"><div class="k">Ficou na gaveta</div><div class="big">${brl(c)}</div>
+        <div class="mini">É o troco de amanhã. A abertura já mostra esse valor para conferir na contagem.</div></div>
+      <div class="gr conta">
+        <div class="cr"><span>Troco da abertura (${DIA.abriuAs})</span><b>${brl(DIA.abertura)}</b></div>
+        <div class="cr"><span>+ Vendas em dinheiro (${DIA.nDinheiro})</span><b>${brl(DIA.dinheiro)}</b></div>
+        <div class="cr"><span>− Retiradas (${rets.length})<button class="lk" data-act="fc:ret">${fl.verRet?'esconder':'ver'}</button></span><b>${brl(totRet)}</b></div>
+        ${fl.verRet?`<div class="sublist">${rets.map(r=>`<div><span>${r.h} · ${r.n}</span><b>${brl(r.v)}</b></div>`).join('')}</div>`:''}
+        <div class="cr tot2"><span>= Devia ter</span><b>${brl(esp)}</b></div>
+        <div class="cr tot2"><span>Contado</span><b>${brl(c)}</b></div>
+        <div class="cr"><span>Diferença</span><b style="color:${cor}">${Math.abs(d)<0.01?'nenhuma ✓':(d>0?'sobrou ':'faltou ')+brl(Math.abs(d))}</b></div>
+        ${Math.abs(d)>=0.01?`<div class="cr"><span>Motivo</span><b style="font-weight:600;white-space:normal;text-align:right">“${fl.just}”</b></div>`:''}
+      </div>
+    </div>
+    <div class="avisado"><i class="ri-send-plane-fill"></i><span>O <b>fechamento do turno</b> foi para o financeiro, já com a diferença e o motivo.</span></div>`,
+    `<button class="bt p" data-act="fl:fimdia">Pronto<kbd>Enter</kbd></button>`, true, true);
+}
+function fluxo(){
+  if (!S.fl) return '';
+  return ({pend:passoPend, contar:passoContar, conferir:passoConferir, confdia:passoConfDia, fechando:passoFechando, falha:passoFalha, fim:passoFim})[S.fl.passo]();
+}
+
+/* ── executa o fechamento (simulado) ── */
+function executarFechamento(){
+  const fl = S.fl;
+  const trocar = fl.tipo==='trocar', soDia = fl.tipo==='dia';
+  const jaFechouCaixa = fl.prog.some(p=>p.id==='cx' && p.s==='k') || soDia;
+  if (!fl.prog.length || fl.passo==='falha') {
+    fl.cont_final = soDia ? S.gaveta : (fl.cont_final ?? contado());
+    fl.esp_final = soDia ? S.gaveta : (fl.esp_final ?? esperado());
+    fl.prog = [];
+    if (!jaFechouCaixa) fl.prog.push({id:'cx', t:'Fechando o caixa', s:'w'});
+    else fl.prog.push({id:'cx', t:'Caixa fechado', s:'k'});
+    if (!trocar) { fl.prog.push({id:'dia', t:'Fechando o dia (delivery e totem param)', s:'w'}); fl.prog.push({id:'av', t:'Mandando o resumo para o financeiro', s:'w'}); }
+  }
+  fl.passo = 'fechando';
+  const falhar = S.falha && !fl.forcando && !trocar;
+  let i = fl.prog.findIndex(p=>p.s!=='k');
+  const step = () => {
+    if (!S.fl || S.fl.passo!=='fechando') return;
+    if (i < 0 || i >= fl.prog.length) {
+      fl.passo = 'fim';
+      if (!trocar) { S.gaveta = fl.cont_final; S.gavetaQuando = 'sex 02/10 às 21:41'; S.gavetaQuem = QUEM[S.quem]; }
+      else { S.gaveta = fl.cont_final; S.gavetaQuando = 'hoje às 16:02'; S.gavetaQuem = QUEM[S.quem]; }
+      render(); return;
+    }
+    const p = fl.prog[i]; p.s = 'r'; render();
+    setTimeout(() => {
+      if (p.id==='dia' && falhar) { p.s='e'; p.t='O dia não fechou'; fl.jaFalhou = true; render(); setTimeout(()=>{ if(S.fl){ S.fl.passo='falha'; S.fl.prog=fl.prog; render(); } }, 700); return; }
+      p.s = 'k';
+      if (p.id==='cx') p.t = 'Caixa fechado';
+      if (p.id==='dia') p.t = 'Dia fechado';
+      if (p.id==='av') p.t = 'Resumo enviado';
+      i++; step();
+    }, 650);
+  };
+  step();
+}
+
+/* ── render ── */
+function render(){
+  renderProto();
+  const dev = document.getElementById('dev');
+  dev.className = S.dev;
+  let corpo = '';
+  if (S.cena==='aberta') corpo = pdv();
+  else corpo = porta();
+  dev.innerHTML = topo() + corpo + menu() + fluxo() + okscreen() + `<div class="toast" id="toast"></div>`;
+  renderNotes();
+}
+let tt;
+function toast(m){ const t=document.getElementById('toast'); if(!t) return; t.textContent=m; t.classList.add('on'); clearTimeout(tt); tt=setTimeout(()=>t.classList.remove('on'),2600); }
+function focar(id){ setTimeout(()=>{ const e=document.getElementById(id); if(e){ e.focus(); const l=e.value.length; e.setSelectionRange(l,l);} }, 30); }
+
+/* ── ações ── */
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-act]'); if (!b || b.disabled) return;
+  const a = b.dataset.act, p = a.split(':');
+  if (p[0]==='dev'){ S.dev=p[1]; S.menu=false; render(); return; }
+  if (p[0]==='cena'){ S.cena=p[1]; S.fl=null; S.ok=null; S.menu=false; resetAb(); S.gaveta=359.25; S.gavetaQuem=QUEM[S.quem]; S.gavetaQuando = p[1]==='semcaixa' ? 'hoje às 16:02, na troca de operador' : 'sex 02/10 às 21:41'; render(); return; }
+  if (p[0]==='tog'){
+    if (p[1]==='quem') S.quem = S.quem==='caixa'?'sup':'caixa';
+    else if (p[1]==='perm') S.perm = !S.perm;
+    else S[p[1]] = !S[p[1]];
+    if (S.fl && (p[1]==='pend')) S.fl=null;
+    render(); return;
+  }
+  if (p[0]==='selo'){
+    if (p[1]!=='ver') S.selo = p[1];
+    // mostra a tela de “loja aberta” para comparar (a animação roda de novo a cada troca)
+    S.fl = null; S.menu = false; S.cena = 'fechada'; S.ok = {h:'11:41', v:359.25, caixa:false};
+    render(); return;
+  }
+  if (a==='menu'){ S.menu=!S.menu; render(); return; }
+  if (a==='fechar'){ abrirFluxo('loja'); return; }
+  if (a==='trocar'){ abrirFluxo('trocar'); return; }
+  if (a==='fechardia'){ abrirFluxo('dia'); return; }
+
+  if (p[0]==='ab'){
+    const o=S.ab;
+    if (p[1]==='ex'){ o.modo='cedulas'; o.cont={...EXEMPLO_GAVETA}; render(); return; }
+    if (p[1]==='modo'){ o.modo=p[2]; render(); if(p[2]==='digitar') focar('abval'); return; }
+    if (p[1]==='q'){ const v=+p[2]; o.cont[v]=Math.max(0,(o.cont[v]||0)+(+p[3])); render(); return; }
+    if (p[1]==='abrir'){
+      const v = valorAbertura();
+      const caixa = S.cena==='semcaixa';
+      S.ok = {h: caixa?'16:10':'11:41', v, caixa};
+      render(); return;
+    }
+  }
+  if (a==='ok:vender'){ S.ok=null; S.cena='aberta'; resetAb(); render(); return; }
+
+  if (p[0]==='fl'){
+    if (p[1]==='sair'){ if (S.fl && S.fl.passo==='falha'){ S.cena='semcaixa'; S.caixaFechadoAs='21:40'; } S.fl=null; render(); return; }
+    if (p[1]==='ir'){ S.fl.passo=p[2]; render(); if(p[2]==='contar') focar('fcval'); return; }
+    if (p[1]==='fechar'){ executarFechamento(); return; }
+    if (p[1]==='fimdia'){ S.fl=null; S.cena='fechada'; S.gavetaQuando='sex 02/10 às 21:41'; resetAb(); render(); toast('Amanhã, a abertura compara a contagem com '+brl(S.gaveta)+'.'); return; }
+    if (p[1]==='fimtrocar'){ S.fl=null; S.cena='semcaixa'; S.caixaFechadoAs='16:02'; resetAb(); render(); return; }
+  }
+  if (p[0]==='pv'){ S.fl.prev[p[1]]=p[2]; render(); return; }
+  if (p[0]==='pd'){ S.fl[p[1]]=true; render(); toast(p[1]==='coz'?'Na tela real: marca entregue sem sair do fechamento.':'Na tela real: manda o pedido pago para a cozinha.'); return; }
+  if (p[0]==='fc'){
+    const fl=S.fl;
+    if (p[1]==='modo'){ fl.modo=p[2]; render(); if(p[2]==='digitar') focar('fcval'); return; }
+    if (p[1]==='q'){ const v=+p[2]; fl.cont[v]=Math.max(0,(fl.cont[v]||0)+(+p[3])); render(); return; }
+    if (p[1]==='ex'){ fl.valor = val2txt(S.dif?DIA.contadoReal:esperado()); render(); focar('fcval'); return; }
+    if (p[1]==='ret'){ fl.verRet=!fl.verRet; render(); return; }
+    if (p[1]==='mot'){ fl.just=p.slice(2).join(':'); render(); return; }
+  }
+  if (p[0]==='fa'){
+    if (p[1]==='ver'){ S.falha=false; render(); toast('Na tela real: abre o pagamento do pedido e volta para cá. Agora toque em “Tentar de novo”.'); return; }
+    if (p[1]==='forcar'){ S.fl.forcar=!S.fl.forcar; render(); return; }
+    if (p[1]==='forcarok'){ S.fl.forcando=true; executarFechamento(); return; }
+  }
+});
+document.addEventListener('input', e => {
+  const el = e.target.closest('[data-in]'); if (!el) return;
+  const p = el.dataset.in.split(':');
+  const alvo = p[0]==='ab' ? S.ab : S.fl;
+  if (p[1]==='q'){ alvo.cont[+p[2]] = Math.max(0, parseInt(el.value)||0); }
+  else alvo[p[1]] = el.value;
+  // re-render mantendo o MESMO campo (não perde foco, cursor nem o que está sendo digitado)
+  const id = el.id, key = el.dataset.in;
+  render();
+  const n = id ? document.getElementById(id) : document.querySelector(`[data-in="${key}"]`);
+  if (n && n !== el){ n.replaceWith(el); el.focus(); }
+});
+document.addEventListener('keydown', e => {
+  if (e.key==='Escape'){
+    if (S.menu){ S.menu=false; render(); return; }
+    if (S.fl && !['fechando','falha','fim'].includes(S.fl.passo)){ S.fl=null; render(); }
+    return;
+  }
+  if (e.key==='Enter' && !e.shiftKey && !(e.target.tagName==='TEXTAREA')){
+    const sel = S.ok ? '#dev .okscreen .bt' : S.fl ? '#dev .fl .ff .bt:not(.sec)' : '#dev .troco .bt.p';
+    const alvo = [...document.querySelectorAll(sel)].filter(x=>!x.disabled).pop();
+    if (alvo){ e.preventDefault(); alvo.click(); }
+  }
+});
+
+/* ── notas para o dono ── */
+function renderNotes(){
+  document.getElementById('notes').innerHTML = `
+<h3>Abrir e fechar a loja</h3>
+<p class="sub2">Protótipo para aprovar antes de construir. Os números são da Paranaguá: troco, vendas, retiradas e diferença de sex 02/10. Pedidos da cozinha, do tablet e do delivery são exemplos.</p>
+<div class="nt2"><span class="n">1</span><div><b>Abrir = contar e abrir</b><p>Um botão abre o dia e o caixa juntos. Antes, o operador conta a gaveta, cédula por cédula ou pelo total, e a tela compara na hora com o que ficou no último fechamento: “bateu” ou “R$ X a menos”. Nos últimos 10 dias da Paranaguá, a abertura repetiu o fechamento em 6. Nos outros 4 a diferença foi de R$ 0,50 a R$ 7,00 e ninguém registrou o motivo. Agora a tela mostra a diferença e pergunta o motivo, sem obrigar.</p></div></div>
+<div class="nt2"><span class="n">2</span><div><b>Fechar começa pelo que trava</b><p>Retiradas a confirmar, cozinha, tablet pago e mesas aparecem <i>antes</i> da contagem, cada um com o botão que resolve. Hoje a pessoa conta, fecha o caixa e só depois descobre que o dia não fecha. Em 29/09 o caixa fechou e o dia ficou aberto até 30/09, e o painel do turno juntou os dois dias.</p></div></div>
+<div class="nt2"><span class="n">3</span><div><b>Contar → conferir → justificar → fechar</b><p>A contagem é cega: o esperado só aparece depois, com a conta explicada (abertura + dinheiro − retiradas). Se tiver diferença, o motivo é pedido <i>antes</i> de fechar e vai junto, então o aviso do assistente já sai com ele. Hoje o aviso sai primeiro e o motivo chega depois.</p></div></div>
+<div class="nt2"><span class="n">4</span><div><b>Um botão fecha caixa e dia</b><p>Se o dia não fechar, por exemplo porque chegou um pedido enquanto a pessoa contava, a tela diz o que falta. Depois é “Tentar de novo”, sem contar outra vez. Teste com “Dia não fecha”.</p></div></div>
+<div class="nt2"><span class="n">5</span><div><b>Termina no resumo do dinheiro</b><p>Mostra o que ficou na gaveta (o troco de amanhã), a conta da abertura até a contagem, a diferença com o motivo e as retiradas. As vendas ficam de fora: quem fecha só precisa fechar o dinheiro.</p></div></div>
+<div class="nt2"><span class="n">6</span><div><b>Só “loja” e “caixa” na tela</b><p>“Sessão” some da tela. Em 21/09 e 25/09 alguém abriu e fechou um caixa com R$ 0 em 30 segundos, sinal de que os dois conceitos confundiam. O número da sessão (S021026001) continua nos relatórios.</p></div></div>
+<div class="nt2"><span class="n">7</span><div><b>Supervisão abre e fecha</b><p>O perfil Supervisão já tem “Abrir caixa” e “Fechar caixa” ligados nas 3 lojas. O fluxo novo usa essas duas permissões. Hoje “Iniciar/Fechar sessão” não confere permissão nenhuma. Quem não tem a permissão vê quem pode abrir (teste com “Sem permissão”).</p></div></div>
+<div class="nt2"><span class="n">8</span><div><b>Computador primeiro</b><p>Enter avança, Esc sai, e as cédulas ficam em duas colunas (notas e moedas). No celular é a mesma coisa numa folha que sobe de baixo.</p></div></div>
+<div class="nbox"><b>Decidido (03/10):</b> “Trocar de operador” fica no menu ⋯: fecha só o caixa e a loja continua aberta. A abertura exige contar a gaveta. O resumo final mostra só o dinheiro e vai para o financeiro.</div>
+<div class="nbox"><b>Não muda:</b> as regras do banco (abrir dia, abrir caixa, fechar caixa, fechar dia), as travas de pedidos, mesas e retiradas, os relatórios e o aviso do assistente. Só a tela muda.</div>
+<div class="nbox"><b>Preciso que você decida:</b><ol>
+<li><b>Forçar o fechamento</b> só aparece quando o dia não fecha. Deixo para quem pode fechar caixa (como hoje) ou só para Supervisão/Gerente?</li>
+<li><b>Diferença na abertura:</b> o motivo é opcional. Passo a exigir acima de algum valor (ex.: R$ 5)?</li></ol></div>`;
+}
+render();
+</script>
+</body>
+</html>

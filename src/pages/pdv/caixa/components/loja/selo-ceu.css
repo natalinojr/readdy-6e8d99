@@ -1,0 +1,37 @@
+/* Selo "Céu" da abertura/fechamento da loja (escolhido pelo dono em 2026-10-03):
+   o sol nasce ao abrir, a lua aparece ao fechar, sol da tarde na troca de operador. */
+.sc-selo { position: relative; width: 156px; height: 100px; margin: 0 auto 16px; }
+.sc-ceu {
+  position: absolute; inset: 0; border-radius: 28px; overflow: hidden;
+  background: linear-gradient(180deg, #FFF1DC 0%, #FDD9A0 50%, #F8B35A 100%);
+  box-shadow: 0 18px 34px -14px rgba(217, 119, 6, .55), inset 0 1px 0 rgba(255, 255, 255, .6);
+  animation: sc-pop .45s cubic-bezier(.2, 1.4, .4, 1) both;
+}
+.sc-sol {
+  position: absolute; left: 50%; top: 26px; width: 44px; height: 44px; margin-left: -22px; border-radius: 50%;
+  background: radial-gradient(circle at 40% 35%, #FFFBEA, #FDE68A 50%, #FBBF24);
+  box-shadow: 0 0 0 9px rgba(255, 255, 255, .22), 0 0 30px 10px rgba(253, 224, 138, .85);
+  animation: sc-nasce 1.2s .2s cubic-bezier(.2, .9, .3, 1) both;
+}
+.sc-morro { position: absolute; left: -12%; right: -12%; bottom: -44px; height: 72px; border-radius: 50%; background: linear-gradient(180deg, #F59E0B, #C2700A); }
+.sc-morro.sc-m2 { left: 38%; right: -30%; bottom: -50px; background: linear-gradient(180deg, #E58A0B, #B45F09); opacity: .9; }
+
+.sc-tarde .sc-ceu { background: linear-gradient(180deg, #DCEBFF 0%, #EAF2FF 45%, #FFE7BE 100%); box-shadow: 0 18px 34px -14px rgba(37, 99, 235, .35), inset 0 1px 0 rgba(255, 255, 255, .7); }
+.sc-tarde .sc-sol { top: 12px; left: 68%; width: 34px; height: 34px; margin-left: -17px; animation: sc-surge .6s .2s ease-out both; }
+.sc-tarde .sc-morro { background: linear-gradient(180deg, #86C8A0, #4F9E70); }
+.sc-tarde .sc-morro.sc-m2 { background: linear-gradient(180deg, #6FB98C, #3F8A5E); }
+
+.sc-noite .sc-ceu { background: linear-gradient(180deg, #141230 0%, #26214D 60%, #3A2F63 100%); box-shadow: 0 18px 34px -14px rgba(38, 33, 77, .6), inset 0 1px 0 rgba(255, 255, 255, .12); }
+.sc-noite .sc-morro { background: linear-gradient(180deg, #1C1838, #110F24); }
+.sc-noite .sc-morro.sc-m2 { background: linear-gradient(180deg, #221D44, #15122C); }
+.sc-lua { position: absolute; left: 52%; top: 12px; width: 42px; height: 42px; filter: drop-shadow(0 0 10px rgba(253, 230, 138, .55)); animation: sc-surge .7s .2s ease-out both; }
+.sc-estrela { position: absolute; width: 3px; height: 3px; border-radius: 50%; background: #fff; opacity: .15; animation: sc-pisca 2.4s ease-in-out infinite; }
+
+@keyframes sc-pop { 0% { transform: scale(.55); opacity: 0 } 100% { transform: scale(1); opacity: 1 } }
+@keyframes sc-nasce { from { transform: translateY(54px) } to { transform: translateY(0) } }
+@keyframes sc-surge { from { opacity: 0; transform: scale(.6) } to { opacity: 1; transform: scale(1) } }
+@keyframes sc-pisca { 0%, 100% { opacity: .15 } 50% { opacity: .95 } }
+
+@media (prefers-reduced-motion: reduce) {
+  .sc-ceu, .sc-sol, .sc-lua, .sc-estrela { animation: none; }
+}
