@@ -528,7 +528,8 @@ const PRO_DEFAULTS: Record<string, any> = {
   // pico (10h e 16h). Viram pendência — a Hoje, o número do topo e o bom dia mostram sozinhos — e avisam
   // no celular de quem vê o cartão no máximo uma vez por loja por janela, só de dia. Nasceu DESLIGADO até
   // o dono aprovar os textos (prévia: { preview: 'previsao' }); ligar = proactive.previsao.enabled = true.
-  previsao: { enabled: false, vendas: ['15:00', '19:00'], insumos: ['10:00', '16:00'], recheck_min: 30, push_de: '08:00', push_ate: '21:30' },
+  // pts_abaixo: corte do aviso de vendas (15 = o vermelho "Abaixo do ritmo" do Dashboard).
+  previsao: { enabled: false, vendas: ['15:00', '19:00'], insumos: ['10:00', '16:00'], pts_abaixo: 15, recheck_min: 30, push_de: '08:00', push_ate: '21:30' },
 };
 let pgc: ReturnType<typeof postgres> | null = null;
 const db = () => (pgc ??= postgres(Deno.env.get('SUPABASE_DB_URL') ?? '', { max: 1, prepare: false, idle_timeout: 20 }));
@@ -2026,10 +2027,10 @@ async function previsaoVendas(admin: SupabaseClient, lojas: Array<{ id: string; 
         if (naJanela) state.prev_vendas[t.id] = `${hoje}|${janela}`;
       }
       const m = await medirVendas(admin, t.id);
-      const r = avaliarRitmo(m.valor, m.meta, m.ritmo, m.ritmoDias);
+      const r = avaliarRitmo(m.valor, m.meta, m.ritmo, m.ritmoDias, Number(pc.pts_abaixo ?? 15));
       const info = { vendido: Math.round(m.valor), meta: m.meta, ritmo: m.ritmo, pts: r ? Math.round(r.pts) : null };
       if (avisoAberto(deHoje) && (!r || r.noRitmo)) {
-        const motivo = !r ? 'sem meta para comparar' : r.bateu ? 'bateu a meta' : 'as vendas voltaram ao ritmo';
+        const motivo = !r ? (m.meta > 0 ? 'sem histórico para comparar' : 'sem meta para comparar') : r.bateu ? 'bateu a meta' : 'as vendas voltaram ao ritmo';
         out[t.name] = { ...info, fechou: await fecharAvisos(admin, t.id, KIND, [deHoje!], motivo, o.dry) };
         continue;
       }

@@ -37,6 +37,7 @@ describe('avaliarRitmo (mesma régua do Dashboard)', () => {
     expect(r.pts).toBeCloseTo(-24.85, 1);
     expect(r.abaixo).toBe(true);
     expect(r.noRitmo).toBe(false);
+    expect(avaliarRitmo(820, 2333, 0.6, 4, 30)!.abaixo).toBe(false); // corte configurável
   });
   it('entre 5 e 15 pontos abaixo: "um pouco abaixo" — nem abre nem fecha', () => {
     const r = avaliarRitmo(1150, 2333, 0.6, 4)!; // ~49% → −11 pts
@@ -112,13 +113,14 @@ describe('caixaDaSemana (regra do Financeiro › Painel)', () => {
   it('texto: quanto falta, quando e o que vence primeiro', () => {
     const t = textoCaixa({ loja: 'El Patron Paranaguá', c: caixaDaSemana(7297.94, contas, HOJE), hoje: HOJE });
     expect(t.titulo).toBe('O banco não cobre as contas da semana — R$ 1.597,02');
-    expect(t.detalhe).toContain('Faltam R$ 1.597,02, a partir de sábado (10/10).');
-    expect(t.detalhe).toContain('Vence primeiro: OESA R$ 2.450,34 (venceu 30/09)');
+    expect(t.detalhe).toContain('Faltam R$ 1.597,02 a partir de sábado, 10/10.');
+    expect(t.detalhe).toContain('Primeiras a pagar: OESA R$ 2.450,34 (venceu 30/09)');
+    expect(t.push).toBe('El Patron Paranaguá: faltam R$ 1.597,02 para as contas da semana, a partir de sábado, 10/10. No banco R$ 7.297,94; contas R$ 8.894,96.');
   });
   it('quandoFalta', () => {
     expect(quandoFalta(HOJE, HOJE)).toBe('hoje');
     expect(quandoFalta('2026-10-04', HOJE)).toBe('amanhã');
-    expect(quandoFalta('2026-10-06', HOJE)).toBe('terça (06/10)');
+    expect(quandoFalta('2026-10-06', HOJE)).toBe('terça, 06/10');
   });
 });
 
@@ -174,6 +176,7 @@ describe('acabamAntesDoPico (uso real × pico de hoje)', () => {
     expect(t.titulo).toBe('2 insumos acabam antes do pico das 20h');
     expect(t.detalhe).toBe('Guacamole: tem 0,4 kg, precisa de ~1,28 kg; Arroz: tem 900 g, precisa de ~1,8 kg. Pelo uso dos últimos 14 dias. Compre ou produza antes do movimento.');
     expect(textoPico({ loja: 'P', faltando: f.slice(0, 1), horaPico: 20 }).titulo).toBe('Guacamole acaba antes do pico das 20h');
+    expect(t.push).toBe('El Patron Paranaguá: Guacamole e Arroz não chegam ao pico das 20h.');
   });
   it('fmtQtd', () => {
     expect(fmtQtd(1250, 'g')).toBe('1,3 kg');

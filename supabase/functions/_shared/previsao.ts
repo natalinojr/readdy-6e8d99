@@ -48,12 +48,13 @@ export const RITMO_PTS_VOLTOU = 5;
 export interface Ritmo { esperado: number; pts: number; bateu: boolean; abaixo: boolean; noRitmo: boolean }
 
 /** null = sem régua: sem meta do dia, menos de 2 semanas de histórico ou o movimento ainda não começou. */
-export function avaliarRitmo(valor: number, meta: number, ritmo: number | null, ritmoDias: number): Ritmo | null {
+/** `ptsAbaixo`: o corte do aviso (asst_settings.proactive.previsao.pts_abaixo; padrão = o vermelho do Dashboard). */
+export function avaliarRitmo(valor: number, meta: number, ritmo: number | null, ritmoDias: number, ptsAbaixo = RITMO_PTS_ABAIXO): Ritmo | null {
   if (!(meta > 0) || ritmo == null || ritmoDias < 2) return null;
   const bateu = valor >= meta;
   if (!bateu && ritmo < 0.03) return null;
   const pts = (valor / meta - ritmo) * 100;
-  return { esperado: meta * ritmo, pts, bateu, abaixo: !bateu && pts < -RITMO_PTS_ABAIXO, noRitmo: bateu || pts >= -RITMO_PTS_VOLTOU };
+  return { esperado: meta * ritmo, pts, bateu, abaixo: !bateu && pts < -ptsAbaixo, noRitmo: bateu || pts >= -RITMO_PTS_VOLTOU };
 }
 
 /** Nomes dos canais = os do Dashboard (PorCanal). */
@@ -122,12 +123,12 @@ export function caixaDaSemana(noBanco: number, contas: ContaAberta[], hoje: stri
   return { noBanco, vencidas, semana, precisa, falta, cobre: falta <= CAIXA_TOLERANCIA, faltaEm, primeiras: lista.slice(0, 3) };
 }
 
-/** "hoje", "amanhã", "sexta (10/10)". */
+/** "hoje", "amanhã", "segunda, 05/10". */
 export function quandoFalta(dia: string, hoje: string): string {
   const d = diasEntre(hoje, dia);
   if (d <= 0) return 'hoje';
   if (d === 1) return 'amanhã';
-  return `${DIAS[diaDaSemana(dia)]} (${ddmm(dia)})`;
+  return `${DIAS[diaDaSemana(dia)]}, ${ddmm(dia)}`;
 }
 
 export function textoCaixa(o: { loja: string; c: Caixa; hoje: string }): TextoAviso {
@@ -137,8 +138,8 @@ export function textoCaixa(o: { loja: string; c: Caixa; hoje: string }): TextoAv
   const primeiras = c.primeiras.map((x) => `${x.nome} ${brl(x.valor)} (${x.vencimento < o.hoje ? `venceu ${ddmm(x.vencimento)}` : x.vencimento === o.hoje ? 'vence hoje' : `vence ${ddmm(x.vencimento)}`})`).join('; ');
   return {
     titulo: `${nemVencidas ? 'O banco não cobre nem as contas vencidas' : 'O banco não cobre as contas da semana'} — ${brl(c.falta)}`,
-    detalhe: `Faltam ${brl(c.falta)}${quando ? `, a partir de ${quando}` : ''}. No banco: ${brl(c.noBanco)}; vencidas ${brl(c.vencidas)} + próximos 7 dias ${brl(c.semana)}. Vence primeiro: ${primeiras}.`,
-    push: `${o.loja}: faltam ${brl(c.falta)} para as contas ${nemVencidas ? 'vencidas' : 'da semana'}${quando && !nemVencidas ? ` (a partir de ${quando})` : ''}. No banco ${brl(c.noBanco)}, contas ${brl(c.precisa)}.`,
+    detalhe: `Faltam ${brl(c.falta)}${quando ? ` a partir de ${quando}` : ''}. No banco: ${brl(c.noBanco)}; vencidas ${brl(c.vencidas)} + próximos 7 dias ${brl(c.semana)}. Primeiras a pagar: ${primeiras}.`,
+    push: `${o.loja}: faltam ${brl(c.falta)} para as contas ${nemVencidas ? 'vencidas' : 'da semana'}${quando && !nemVencidas ? `, a partir de ${quando}` : ''}. No banco ${brl(c.noBanco)}; contas ${brl(c.precisa)}.`,
   };
 }
 
@@ -194,6 +195,12 @@ export function fmtQtd(q: number, unidade: string): string {
   return `${n(q, 2)} ${unidade}`;
 }
 
+/** "A", "A e B", "A, B e C", "A, B, C e mais 2". */
+function nomesComE(nomes: string[], mais: number): string {
+  if (mais > 0) return `${nomes.join(', ')} e mais ${mais}`;
+  return nomes.length > 1 ? `${nomes.slice(0, -1).join(', ')} e ${nomes[nomes.length - 1]}` : nomes.join('');
+}
+
 export function textoPico(o: { loja: string; faltando: Faltando[]; horaPico: number }): TextoAviso {
   const f = o.faltando;
   const h = `${o.horaPico}h`;
@@ -201,6 +208,6 @@ export function textoPico(o: { loja: string; faltando: Faltando[]; horaPico: num
   return {
     titulo: f.length === 1 ? `${f[0].nome} acaba antes do pico das ${h}` : `${f.length} insumos acabam antes do pico das ${h}`,
     detalhe: `${lista}${f.length > 4 ? `; e mais ${f.length - 4}` : ''}. Pelo uso dos últimos 14 dias. Compre ou produza antes do movimento.`,
-    push: `${o.loja}: ${f.slice(0, 3).map((i) => i.nome).join(', ')}${f.length > 3 ? ` e mais ${f.length - 3}` : ''} não ${f.length === 1 ? 'chega' : 'chegam'} ao pico das ${h}.`,
+    push: `${o.loja}: ${nomesComE(f.slice(0, 3).map((i) => i.nome), f.length - 3)} não ${f.length === 1 ? 'chega' : 'chegam'} ao pico das ${h}.`,
   };
 }
