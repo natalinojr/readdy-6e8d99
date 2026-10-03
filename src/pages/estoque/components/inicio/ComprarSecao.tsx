@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useEstoque } from '@/contexts/EstoqueContext';
@@ -36,6 +36,7 @@ export default function ComprarSecao({ situacao, extras, onReload, onIrContar }:
   const [copiado, setCopiado] = useState(false);
   const [gravando, setGravando] = useState(false);
   const [novoMinimo, setNovoMinimo] = useState('');
+  const caixaTexto = useRef<HTMLTextAreaElement>(null);
 
   const itens = useMemo(() => situacao.insumos.filter((i) => i.abaixoMinimo || extras.has(i.id)), [situacao.insumos, extras]);
   const grupos = useMemo(() => agruparCompras(itens), [itens]);
@@ -100,9 +101,16 @@ export default function ComprarSecao({ situacao, extras, onReload, onIrContar }:
     }
   };
 
+  // Copiar pode ser bloqueado pelo navegador: aí o texto fica selecionado para copiar à mão, e o
+  // "Já mandei" aparece do mesmo jeito (senão não haveria como marcar o pedido).
   const copiar = async () => {
-    try { await navigator.clipboard.writeText(msg); setCopiado(true); toast.success('Copiado', 'É só colar no WhatsApp.'); }
-    catch { toast.error('Não consegui copiar', 'Selecione o texto e copie à mão.'); }
+    try { await navigator.clipboard.writeText(msg); toast.success('Copiado', 'É só colar no WhatsApp.'); }
+    catch {
+      caixaTexto.current?.focus();
+      caixaTexto.current?.select();
+      toast.info('Texto selecionado', 'O navegador não deixou copiar sozinho: segure no texto e copie.');
+    }
+    setCopiado(true);
   };
 
   // window.open / navigator.share precisam acontecer no toque, antes de qualquer await.
@@ -292,6 +300,7 @@ export default function ComprarSecao({ situacao, extras, onReload, onIrContar }:
         )}
       >
         <textarea
+          ref={caixaTexto}
           value={msg}
           onChange={(e) => setMsg(e.target.value)}
           className="w-full min-h-[200px] rounded-2xl border border-zinc-200 p-3 text-[13.5px] leading-relaxed text-zinc-800 focus:outline-none focus:border-amber-400"
