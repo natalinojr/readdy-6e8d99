@@ -90,6 +90,8 @@ function Regra({ rule, onDelete, onChanged }: { rule: ReconciliationRule; onDele
         action: 'launch_rule_save', tenant_id: user.tenantId, counterpart_doc: rule.counterpart_doc, counterpart_label: rule.counterpart_label,
         kind: rule.launch_kind, dre_category_id: compra ? null : cat, merchandise_category_id: compra ? merc || null : null,
         competence_rule: comp, mode: modo, supplier_name: rule.supplier_name, cost_center_id: rule.cost_center_id ?? null,
+        // sem isto a edição apagava o "não é salário" já decidido na regra (o servidor grava false)
+        allow_payroll: rule.allow_payroll === true,
       },
     });
     setBusy(false);

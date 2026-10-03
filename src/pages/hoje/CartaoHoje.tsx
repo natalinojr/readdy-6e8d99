@@ -8,7 +8,7 @@ import { pedirAoChat } from '@/lib/assistenteFoco';
 import { chamarAssistente } from '@/lib/assistenteApp';
 import ItensClassificarCard from '@/components/feature/assistente/ItensClassificarCard';
 import { BaixaDaConta, ContasAtrasadasInline, ContasDreInline } from '@/components/feature/assistente/PendenciasChat';
-import type { ItemHoje, PendHoje } from './organizar';
+import type { ItemHoje, PendHoje, Porcao } from './organizar';
 import { diasEntre } from './organizar';
 
 const brl = (n: number) => Number(n ?? 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -197,6 +197,7 @@ export default function CartaoHoje({ item, hoje, dono, papel, meuNome, mostrarLo
             {item.valor != null && item.valor > 0 && <span className="text-[15px] font-bold text-zinc-900 tabular-nums whitespace-nowrap">{brl(item.valor)}</span>}
           </div>
           {porQue && <p className="text-[13px] text-zinc-500 leading-snug mt-0.5 line-clamp-3">{porQue}</p>}
+          {item.porcao && <LinhaPorcao porcao={item.porcao} hoje={hoje} urgente={item.bloco === 'agora'} />}
         </div>
       </div>
 
@@ -273,3 +274,37 @@ function BaixaJunta({ p, hoje, marcar, onMudou }: { p: PendHoje; hoje: string; m
     </div>
   );
 }
+
+/** Trabalho acumulado em porções (2026-10-03): a de hoje, quanto andou e quando termina nesse ritmo. */
+// urgente = o cartão está em "Agora" (nota com boleto vencido ou vencendo): a porção ajuda a começar,
+// mas o texto não diz que o resto pode esperar.
+function LinhaPorcao({ porcao, hoje, urgente }: { porcao: Porcao; hoje: string; urgente: boolean }) {
+  const faltaHoje = Math.max(0, porcao.meta - porcao.feitos);
+  const depoisDeHoje = Math.max(0, porcao.restante - faltaHoje);
+  const diasDepois = Math.ceil(depoisDeHoje / porcao.meta);
+  const fim = new Date(`${hoje}T12:00:00Z`);
+  fim.setUTCDate(fim.getUTCDate() + diasDepois);
+  const termina = diasDepois === 0 ? 'hoje' : diasDepois === 1 ? 'amanhã' : diasDepois <= 6 ? DIAS[fim.getUTCDay()] : ddmm(fim.toISOString().slice(0, 10));
+  const pct = Math.min(100, Math.round((porcao.feitos / porcao.meta) * 100));
+  return (
+    <div className={`mt-2 rounded-xl px-3 py-2 ${porcao.feita ? 'bg-emerald-50 border border-emerald-100' : 'bg-amber-50/60 border border-amber-100'}`}>
+      {porcao.feita ? (
+        <p className="text-[12px] font-semibold text-emerald-800">
+          <i className="ri-check-line" /> Porção de hoje feita ({porcao.feitos}). {porcao.restante === 0 ? 'Acabou!'
+            : urgente ? `Ainda ${porcao.restante === 1 ? 'falta 1, com boleto vencido ou vencendo' : `faltam ${porcao.restante}, com boleto vencido ou vencendo`} — se der, adiante mais.`
+            : `Faltam ${porcao.restante} — no ritmo, termina ${termina}.`}
+        </p>
+      ) : (
+        <>
+          <div className="flex items-center justify-between gap-2 text-[12px]">
+            <span className="font-semibold text-amber-900">Porção de hoje: {porcao.meta}</span>
+            <span className="text-amber-800 tabular-nums">já foram {porcao.feitos} de {porcao.meta}</span>
+          </div>
+          <div className="mt-1 h-1.5 rounded-full bg-amber-100 overflow-hidden"><div className="h-full bg-amber-500 rounded-full" style={{ width: `${pct}%` }} /></div>
+          <p className="mt-1 text-[11px] text-amber-800">Um pouco por dia: no ritmo, termina {termina}. {urgente ? 'Comece pelas mais antigas.' : 'O resto não precisa ser hoje.'}</p>
+        </>
+      )}
+    </div>
+  );
+}
+
