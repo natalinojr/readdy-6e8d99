@@ -30,6 +30,9 @@ export interface ItemRotina {
   producao: { quem: string | null; quando: string; qtd: number | null; unidade: string | null } | null;
 }
 
+/** Quem fez (pode ser mais de uma pessoa): login, freelancer ou nome digitado. */
+export interface PessoaMarca { tipo: 'user' | 'freelancer' | 'nome'; id?: string; nome: string }
+
 export interface MarcaRotina {
   item_id: string;
   dia: string;
@@ -38,6 +41,8 @@ export interface MarcaRotina {
   registrado_por: string;
   registrado_por_nome: string | null;
   freelancer: boolean;
+  /** null nas marcas antigas (uma pessoa só, em pessoa_nome) */
+  pessoas?: PessoaMarca[] | null;
 }
 
 interface Feito { quem: string | null; quando: string }
@@ -123,6 +128,8 @@ export interface EstadoItem {
   /** marcado por outro login (ex.: o celular da loja marcou por um freelancer) */
   registradoPor?: string | null;
   freelancer?: boolean;
+  /** quem fez, um por um (marca à mão) */
+  pessoas?: PessoaMarca[];
   /** tem horário e ainda não chegou: não segura o "Tudo em dia" */
   maisTarde: boolean;
   /** passou do horário (ou é "só hoje" de outro dia) sem fazer */
@@ -189,7 +196,8 @@ export function estadoDoItem(item: ItemRotina, loja: LojaRotina, ctx: { hoje: st
     // "Só hoje" feito num dia que já passou: sai da lista.
     if (deOntem && marca.dia < hoje) return null;
     const outro = marca.registrado_por_nome && marca.registrado_por_nome !== marca.pessoa_nome ? marca.registrado_por_nome : null;
-    return { ...base, feito: true, origem: 'mao', quem: marca.pessoa_nome, quando: hhmm(marca.feito_em), registradoPor: outro, freelancer: marca.freelancer, maisTarde: false, atrasado: false };
+    return { ...base, feito: true, origem: 'mao', quem: marca.pessoa_nome, quando: hhmm(marca.feito_em), registradoPor: outro, freelancer: marca.freelancer,
+      pessoas: marca.pessoas ?? undefined, maisTarde: false, atrasado: false };
   }
   const maisTarde = !deOntem && !!item.hora && agora < item.hora;
   const atrasado = deOntem || (!!item.hora && agora >= item.hora);
@@ -204,6 +212,17 @@ export function rotinaDeHoje(loja: LojaRotina, papeis: PapelRotina[], ctx: { hoj
     .sort((a, b) => ordemPapel(a.papel) - ordemPapel(b.papel) || Number(!!a.dia) - Number(!!b.dia) || a.ordem - b.ordem || a.criado_em.localeCompare(b.criado_em))
     .map((i) => estadoDoItem(i, loja, ctx))
     .filter((e): e is EstadoItem => !!e);
+}
+
+/** "Só hoje" agendados para um dia à frente, dos papéis pedidos (aparecem em "Próximos dias"). */
+export function agendados(loja: LojaRotina, papeis: PapelRotina[], hoje: string): ItemRotina[] {
+  return loja.itens.filter((i) => !!i.dia && i.dia > hoje && papeis.includes(i.papel))
+    .sort((a, b) => (a.dia as string).localeCompare(b.dia as string) || a.criado_em.localeCompare(b.criado_em));
+}
+
+/** "Ana", "Ana e Rafael", "Ana, Bruno e Rafael" */
+export function juntarNomes(nomes: string[]): string {
+  return nomes.length > 1 ? `${nomes.slice(0, -1).join(', ')} e ${nomes[nomes.length - 1]}` : nomes[0] ?? '';
 }
 
 export interface ResumoRotina { total: number; feitos: number; pendentes: number; maisTarde: EstadoItem[] }

@@ -10,9 +10,10 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useProducao } from '@/contexts/ProducaoContext';
 import Folha from '@/pages/estoque/components/inicio/Folha';
 import RegistroProducaoModal from '@/pages/estoque/components/RegistroProducaoModal';
-import type { EstadoItem, PapelRotina } from '../../../../supabase/functions/_shared/rotina';
-import { desmarcarItem, marcarItem, type QuemFezEscolha, type Rotina, type RotinaDaLoja } from './useRotina';
-import QuemFez from './QuemFez';
+import { juntarNomes, type EstadoItem, type ItemRotina, type PapelRotina } from '../../../../supabase/functions/_shared/rotina';
+import { apagarItem, desmarcarItem, marcarItem, type Rotina, type RotinaDaLoja } from './useRotina';
+import QuemFez, { type Escolhida } from './QuemFez';
+import { confirmar } from '@/components/base/Dialogos';
 import NovaTarefaDia from './NovaTarefaDia';
 import { ATALHOS, TIPOS, rotuloPapel } from './rotulos';
 
@@ -26,10 +27,11 @@ export default function RotinaHoje({ rotina, filtroLoja }: { rotina: Rotina; fil
   const [erro, setErro] = useState<string | null>(null);
   const [ocupado, setOcupado] = useState<string | null>(null);
   const [detalhe, setDetalhe] = useState<Alvo | null>(null);
-  const [quemFez, setQuemFez] = useState<(Alvo & { producao?: boolean }) | null>(null);
+  // producao = "quem vai produzir?" antes do card; mudar = corrigir quem fez num item já marcado
+  const [quemFez, setQuemFez] = useState<(Alvo & { producao?: boolean; mudar?: boolean; inicial?: Escolhida[] }) | null>(null);
   const [nova, setNova] = useState<{ l: RotinaDaLoja; tipo: 'tarefa' | 'producao' } | null>(null);
   const [lojaAberta, setLojaAberta] = useState<{ l: RotinaDaLoja; papel: PapelRotina } | null>(null);
-  const [producao, setProducao] = useState<{ receitaId: string; operador: string } | null>(null);
+  const [producao, setProducao] = useState<{ receitaId: string; operador: string; receitas?: number } | null>(null);
 
   useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(null), 2800); return () => clearTimeout(t); }, [toast]);
 
@@ -42,11 +44,11 @@ export default function RotinaHoje({ rotina, filtroLoja }: { rotina: Rotina; fil
     navigate(rota);
   };
 
-  const gravar = async (a: Alvo, quem?: QuemFezEscolha & { nomeMostrado?: string }) => {
+  const gravar = async (a: Alvo, quem?: Escolhida[]) => {
     setOcupado(a.e.item.id); setErro(null);
     try {
       await marcarItem(a.e.item.id, quem);
-      setToast(`“${a.e.item.titulo}” feito${quem?.nomeMostrado ? ` por ${quem.nomeMostrado}` : ''} ✓`);
+      setToast(`“${a.e.item.titulo}” feito${quem?.length ? ` por ${juntarNomes(quem.map((q) => q.nomeMostrado))}` : ''} ✓`);
       await rotina.recarregar();
     } catch (e) { setErro(e instanceof Error ? e.message : String(e)); }
     finally { setOcupado(null); }
@@ -75,14 +77,32 @@ export default function RotinaHoje({ rotina, filtroLoja }: { rotina: Rotina; fil
 
   const abrirProducao = async (a: Alvo, operador: string) => {
     if (a.l.tenantId !== user?.tenantId) await selectTenant(a.l.tenantId);
-    setProducao({ receitaId: a.e.item.receita_id as string, operador });
+    // O card já abre com o número de receitas pedido ("3" ou o antigo "3 receitas").
+    const n = parseFloat(String(a.e.item.quantidade ?? '').replace(',', '.'));
+    setProducao({ receitaId: a.e.item.receita_id as string, operador, receitas: n > 0 ? n : undefined });
   };
 
-  const escolheuQuem = (q: QuemFezEscolha & { nomeMostrado: string }) => {
+  const escolheuQuem = (lista: Escolhida[]) => {
     const alvo = quemFez; setQuemFez(null);
     if (!alvo) return;
-    if (alvo.producao) { abrirProducao(alvo, q.nomeMostrado); return; }
-    gravar(alvo, q);
+    // Produção feita por mais de uma pessoa: o card registra "Marcos e Josiane" como quem produziu.
+    if (alvo.producao) { abrirProducao(alvo, juntarNomes(lista.map((q) => q.nomeMostrado))); return; }
+    gravar(alvo, lista);
+  };
+
+  /** Corrigir/acrescentar quem fez num item já marcado à mão (ex.: marcou só você, mas foram dois). */
+  const mudarQuem = (a: Alvo) => {
+    const inicial: Escolhida[] = (a.e.pessoas ?? []).map((p) => (p.tipo === 'user' ? { userId: p.id, nomeMostrado: p.nome }
+      : p.tipo === 'freelancer' ? { freelancerId: p.id, nomeMostrado: p.nome } : { nome: p.nome, nomeMostrado: p.nome }));
+    setDetalhe(null);
+    setQuemFez({ ...a, porOutro: true, mudar: true, inicial });
+  };
+
+  const tirarAgendado = async (i: ItemRotina) => {
+    if (!(await confirmar({ titulo: 'Tirar esta tarefa?', mensagem: i.titulo, confirmarLabel: 'Tirar', cancelarLabel: 'Voltar', perigo: true }))) return;
+    setErro(null);
+    try { await apagarItem(i.id); setToast('Tarefa tirada.'); await rotina.recarregar(); }
+    catch (e) { setErro(e instanceof Error ? e.message : String(e)); }
   };
 
   const desmarcar = async (a: Alvo) => {
@@ -170,6 +190,7 @@ export default function RotinaHoje({ rotina, filtroLoja }: { rotina: Rotina; fil
                     </div>
                   ))}
                   <BotoesCriar onTarefa={() => setNova({ l, tipo: 'tarefa' })} onProducao={() => setNova({ l, tipo: 'producao' })} />
+                  <ProximosDias itens={l.agendados} onTirar={tirarAgendado} />
                 </div>
               </>
             );
@@ -206,6 +227,7 @@ export default function RotinaHoje({ rotina, filtroLoja }: { rotina: Rotina; fil
               );
             })}
             <BotoesCriar onTarefa={() => setNova({ l, tipo: 'tarefa' })} onProducao={() => setNova({ l, tipo: 'producao' })} />
+                  <ProximosDias itens={l.agendados} onTirar={tirarAgendado} />
           </div>
         </section>
       ))}
@@ -227,7 +249,7 @@ export default function RotinaHoje({ rotina, filtroLoja }: { rotina: Rotina; fil
         subtitulo={detalhe ? (detalhe.e.feito ? `${detalhe.e.quem ?? 'Alguém'}${detalhe.e.quando ? ` · ${detalhe.e.quando}` : ''} · ${detalhe.e.origem === 'auto' ? 'automático' : 'à mão'}` : 'Esse item marca automático') : ''}
         rodape={detalhe && (detalhe.e.feito ? (
           detalhe.e.origem === 'mao'
-            ? <><button onClick={() => setDetalhe(null)} className="flex-1 h-11 rounded-xl border border-zinc-200 text-sm font-bold cursor-pointer">Manter</button>
+            ? <><button onClick={() => mudarQuem(detalhe)} className="flex-1 h-11 rounded-xl border border-zinc-200 text-sm font-bold cursor-pointer"><i className="ri-group-line" /> Quem fez</button>
                 <button onClick={() => desmarcar(detalhe)} className="flex-1 h-11 rounded-xl bg-zinc-900 text-sm font-bold text-white cursor-pointer">Desmarcar</button></>
             : <button onClick={() => setDetalhe(null)} className="flex-1 h-11 rounded-xl border border-zinc-200 text-sm font-bold cursor-pointer">Entendi</button>
         ) : (
@@ -243,7 +265,7 @@ export default function RotinaHoje({ rotina, filtroLoja }: { rotina: Rotina; fil
           <div className="space-y-2 pb-2 text-[13px] text-zinc-600">
             {detalhe.e.origem === 'auto'
               ? <p className="rounded-xl bg-violet-50 px-3 py-2 text-violet-800"><i className="ri-flashlight-line" /> Marcado automático: {TIPOS[detalhe.e.item.tipo]?.explica}.{detalhe.e.det ? ` ${detalhe.e.det}.` : ''}</p>
-              : <p className="rounded-xl bg-zinc-50 px-3 py-2">Feito por <b>{detalhe.e.quem}</b>{detalhe.e.freelancer ? ' (freelancer)' : ''}{detalhe.e.registradoPor ? `, marcado por ${detalhe.e.registradoPor}` : ''}. Marcou sem querer? Desmarcar volta o item para a lista.</p>}
+              : <p className="rounded-xl bg-zinc-50 px-3 py-2">Feito por <b>{detalhe.e.quem}</b>{detalhe.e.freelancer ? ' (com freelancer)' : ''}{detalhe.e.registradoPor ? `, marcado por ${detalhe.e.registradoPor}` : ''}. Foi mais gente? Toque em “Quem fez”. Marcou sem querer? Desmarcar volta o item para a lista.</p>}
           </div>
         ) : (
           <div className="space-y-2 pb-2 text-[13px] text-zinc-600">
@@ -256,6 +278,8 @@ export default function RotinaHoje({ rotina, filtroLoja }: { rotina: Rotina; fil
       {quemFez && (
         <QuemFez aberta tenantId={quemFez.l.tenantId} titulo={quemFez.e.item.titulo}
           pergunta={quemFez.producao ? 'Quem vai produzir?' : 'Quem fez?'}
+          botao={quemFez.producao ? 'Abrir a produção' : quemFez.mudar ? 'Salvar' : 'Marcar como feito'}
+          inicial={quemFez.inicial}
           eu={quemFez.porOutro && !rotina.compartilhado && user ? { id: user.id, nome: user.nome ?? 'Eu' } : null}
           onEscolher={escolheuQuem} onFechar={() => setQuemFez(null)} />
       )}
@@ -277,7 +301,7 @@ export default function RotinaHoje({ rotina, filtroLoja }: { rotina: Rotina; fil
 }
 
 /** Abre o card de registrar produção da ficha (o mesmo do Estoque › Produção) quando a ficha carregou. */
-function AbrirProducao({ receitaId, operador, onFechar }: { receitaId: string; operador: string; onFechar: () => void }) {
+function AbrirProducao({ receitaId, operador, receitas, onFechar }: { receitaId: string; operador: string; receitas?: number; onFechar: () => void }) {
   const { getRecipeById, reload } = useProducao();
   const [tentou, setTentou] = useState(false);
   const ficha = getRecipeById(receitaId);
@@ -286,7 +310,7 @@ function AbrirProducao({ receitaId, operador, onFechar }: { receitaId: string; o
     setTentou(true);
     reload().catch(() => {});
   }, [ficha, tentou, reload]);
-  if (ficha) return <RegistroProducaoModal recipeId={receitaId} operador={operador} onClose={onFechar} />;
+  if (ficha) return <RegistroProducaoModal recipeId={receitaId} operador={operador} receitasIniciais={receitas} onClose={onFechar} />;
   return (
     <Folha aberta titulo="Abrindo a ficha…" onFechar={onFechar}>
       <div className="my-6 flex flex-col items-center gap-3 text-sm text-zinc-500">
@@ -380,6 +404,33 @@ function LinhaRotina({ e, loja, ocupado, onTocar, onFazer }: { e: EstadoItem; lo
           {botao}
         </button>
       )}
+    </div>
+  );
+}
+
+/** Tarefas do dia agendadas para frente (pedido do dono: escolher qualquer data). Quem criou vê e pode tirar. */
+function ProximosDias({ itens, onTirar }: { itens: ItemRotina[]; onTirar: (i: ItemRotina) => void }) {
+  const [aberto, setAberto] = useState(false);
+  if (!itens.length) return null;
+  const dia = (d: string) => new Date(`${d}T12:00:00Z`).toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit', timeZone: 'UTC' }).replace('.', '');
+  return (
+    <div className="border-t border-zinc-100">
+      <button onClick={() => setAberto((v) => !v)} className="w-full flex items-center gap-2 px-4 py-2.5 text-left text-[13px] font-bold text-zinc-600 hover:bg-zinc-50 cursor-pointer">
+        <i className="ri-calendar-schedule-line text-zinc-400" /> Próximos dias <span className="px-1.5 rounded-full bg-zinc-100 text-[11px] text-zinc-500">{itens.length}</span>
+        <span className="ml-auto text-[12px] text-amber-600">{aberto ? 'Esconder' : 'Ver'}</span>
+      </button>
+      {aberto && itens.map((i) => (
+        <div key={i.id} className="flex items-center gap-3 px-4 py-2 border-t border-zinc-50">
+          <span className="w-16 flex-shrink-0 text-[11.5px] font-bold uppercase text-zinc-400">{dia(i.dia as string)}</span>
+          <span className="flex-1 min-w-0">
+            <span className="block text-[13.5px] font-semibold text-zinc-700 leading-snug">{i.titulo}</span>
+            <span className="block text-[11.5px] text-zinc-400">{rotuloPapel(i.papel)}{i.hora ? ` · até ${i.hora}` : ''}{i.criado_por_nome ? ` · por ${i.criado_por_nome}` : ''}</span>
+          </span>
+          <button onClick={() => onTirar(i)} className="w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-lg text-zinc-400 hover:bg-red-50 hover:text-red-600 cursor-pointer" aria-label="Tirar tarefa">
+            <i className="ri-delete-bin-line" />
+          </button>
+        </div>
+      ))}
     </div>
   );
 }

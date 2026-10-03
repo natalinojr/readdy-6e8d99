@@ -6,8 +6,8 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { usePendenciasHoje } from '../hojeStore';
 import {
-  contagemDaLoja, insumosDaSituacao, papeisAbaixo, papeisDaPessoa, precisaSituacao, resumoRotina, rotinaDeHoje,
-  type ContagemRotina, type DadosRotina, type EstadoItem, type LojaRotina, type PapelRotina, type ResumoRotina,
+  agendados, contagemDaLoja, insumosDaSituacao, papeisAbaixo, papeisDaPessoa, precisaSituacao, resumoRotina, rotinaDeHoje,
+  type ContagemRotina, type DadosRotina, type EstadoItem, type ItemRotina, type LojaRotina, type PapelRotina, type ResumoRotina,
 } from '../../../../supabase/functions/_shared/rotina';
 import type { ItemContavel } from '../../../../supabase/functions/_shared/estoque-planos';
 import { loginCompartilhado } from './loginCompartilhado';
@@ -22,6 +22,8 @@ export interface RotinaDaLoja {
   abaixo: Array<{ papel: PapelRotina; estados: EstadoItem[] }>;
   /** para quem pode criar "tarefa de hoje" */
   podeCriarPara: PapelRotina[];
+  /** tarefas do dia agendadas para frente (de quem está abaixo) */
+  agendados: ItemRotina[];
   /** só o admin configura o que se repete */
   podeConfigurar: boolean;
 }
@@ -100,6 +102,7 @@ export function useRotinaHoje(): Rotina {
         meus: rotinaDeHoje(l, papeisDaPessoa(l.papel, compartilhado), ctx),
         abaixo: abaixo.map((p) => ({ papel: p, estados: rotinaDeHoje(l, [p], ctx) })).filter((g) => g.estados.length > 0),
         podeCriarPara: abaixo,
+        agendados: agendados(l, abaixo, dados.hoje),
         podeConfigurar: l.papel === 'admin',
       };
     });
@@ -124,10 +127,10 @@ export function useRotinaHoje(): Rotina {
 // ── Escritas (todas por RPC; quem marcou é o servidor que grava) ─────────────────────────────────────
 export interface QuemFezEscolha { userId?: string; freelancerId?: string; nome?: string }
 
-export async function marcarItem(itemId: string, quem?: QuemFezEscolha): Promise<void> {
-  const { error } = await supabase.rpc('fn_rotina_marcar', {
-    p_item_id: itemId, p_pessoa_user_id: quem?.userId ?? null, p_freelancer_id: quem?.freelancerId ?? null, p_pessoa_nome: quem?.nome ?? null,
-  });
+/** Marca feito. Sem `quem` = quem tocou; com a lista = quem fez (uma ou mais pessoas). */
+export async function marcarItem(itemId: string, quem?: QuemFezEscolha[]): Promise<void> {
+  const pessoas = (quem ?? []).map((q) => (q.userId ? { user_id: q.userId } : q.freelancerId ? { freelancer_id: q.freelancerId } : { nome: q.nome }));
+  const { error } = await supabase.rpc('fn_rotina_marcar', { p_item_id: itemId, p_pessoas: pessoas.length ? pessoas : null });
   if (error) throw new Error(error.message);
 }
 

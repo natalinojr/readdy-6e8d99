@@ -346,6 +346,14 @@ Secao viva: registrar aqui padroes, decisoes e pegadinhas reutilizaveis conforme
   - confirmação do Aprovar com "Voltar".
   - Permissões testadas no banco numa transação que se desfaz: gerente não cria recorrente nem para gerente; caixa não cria e não marca supervisão; quem não marcou não desmarca; gerente não apaga recorrente.
   - **Sem teste:** login @erpos.local de verdade (não existe na Testes PDV) e o bom dia enviado de verdade (só prévia).
+- **Ajustes do dono no mesmo dia** (migração `20261003260000_rotina_varias_pessoas.sql`):
+  - **Mais de uma pessoa fez:** `rotina_marcas.pessoas` jsonb = `[{tipo: user|freelancer|nome, id, nome}]`; `pessoa_nome` = "Ana, Bruno e Rafael"; `pessoa_user_id`/`freelancer_id` ficam com o 1º de cada tipo.
+    - `fn_rotina_marcar` ganhou `p_pessoas`; a de 4 parâmetros foi DROPADA (duas assinaturas com default deixam o PostgREST em dúvida) e a chamada antiga continua valendo.
+    - `QuemFez` é seleção múltipla. Item já marcado à mão tem "Quem fez" no detalhe, para corrigir ou acrescentar quem fez (abre com quem já estava).
+    - Produção feita por várias pessoas vai como "Marcos e Josiane" no `operador`/`produced_by`.
+  - **Tarefa do dia em qualquer data:** "Hoje / Amanhã / Outro dia" (calendário a partir de hoje). `fn_rotina_dados` devolve os "só hoje" com `dia >= hoje − 7`; o que é de dia à frente não entra na rotina (`estadoDoItem`) e aparece em "Próximos dias" (`agendados`), com "Tirar".
+  - **Pedir produção = número de receitas:** campo livre com − e +; `quantidade` guarda o número. O "Produzir" abre o `RegistroProducaoModal` com `receitasIniciais` (prop nova; vale sobre o rascunho).
+  - **Pegadinha:** `production_recipes` NÃO tem leitura direta pelo app (a lista vinha vazia em todas as lojas). As fichas vêm de `production-write › list_recipes`, como no `ProducaoContext`.
 - **Pegadinhas (revisão de 2026-10-03):**
   - `IF NOT (v_papel = 'admin' OR …)` com `v_papel` nulo (quem não é da loja) vira `NOT NULL` = NULL e o IF não nega. Toda RPC de permissão começa com `v_papel is null or …` ou compara com `is distinct from`.
   - `fn_rotina_pessoas` só para quem faz rotina na loja (nível ≥ 1; totem/contador não). Não lista o dono da plataforma (`is_platform_owner`).
