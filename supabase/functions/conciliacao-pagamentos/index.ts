@@ -2,7 +2,8 @@
 // e às contas a pagar, e dá a baixa quando o usuário confirma.
 //
 // Decisões do dono (2026-09-11):
-//   • vínculo EXATO é confirmado em lote, com um clique; nunca sozinho;
+//   • vínculo EXATO é confirmado em lote, com um clique; nunca sozinho — EXCETO, desde 2026-10-02,
+//     a ligação direta (exato, 1 candidato, conta já existente): dá baixa sozinha (autoConfirmExact);
 //   • pagamento que bate com nota ainda não lançada → a nota é importada AUTOMATICAMENTE no
 //     momento da confirmação (fica marcado em fiscal_inbound_documents.auto_imported);
 //   • Pix para pessoa física: o usuário escolhe a categoria e pode "lembrar" o CPF/chave Pix.
@@ -11,6 +12,8 @@
 //   rematch                {}                    refaz as sugestões (fn_match_payments + fn_match_payroll, últimos 120 dias)
 //                          'payroll' (2026-09-18): Pix ao CPF do funcionário = líquido exato da folha pendente →
 //                          confirmar marca a folha como paga (financial-write pay_payroll) na data do Pix
+//                          admin/gerente: no fim dá a baixa da ligação direta (autoConfirmExact, 2026-10-02)
+//   auto_confirm_exact     {}                    admin/gerente: só a baixa da ligação direta (cron › regras_auto)
 //   alerts                 {}                    fn_conciliacao_alertas
 //   trace                  { id }                rastreio: a que conta a pagar / compra / nota / folha este pagamento levou
 //   confirm                { ids: string[] }     admin/gerente: importa a nota (se preciso), baixa a parcela, lança juros
@@ -285,6 +288,42 @@ async function confirmOneClaimed(ctx: Ctx, rowId: string, row: Row): Promise<Res
   if (desconto > 0) partes.push('desconto R$ ' + brl(desconto));
   if (autoImported) partes.push('nota importada automaticamente');
   return { id: row.id, ok: true, msg: partes.join(' · '), auto_imported: autoImported, ...(jurosErro ? { aviso: 'Juros de R$ ' + brl(juros) + ' não lançados na DRE (' + jurosErro + ')' } : {}) };
+}
+
+// ── Ligação direta dá baixa sozinha (decisão do dono, 2026-10-02) ──────────
+// Revoga o "exato nunca sozinho" de 09-11 SÓ para a ligação direta sem dúvida: confiança 'exato',
+// um único candidato (iguais = null), conta/parcela já existente (sem importar nota). O resto
+// (forte, incerto, nota a importar, várias contas iguais) continua esperando a conferência.
+// Roda no rematch (abrir a Conciliação / Atualizar) e no cron diário (assistente-brain › regras_auto).
+// Falha (ex.: conta sem classificação DRE) só deixa a linha como estava, para confirmar à mão.
+async function autoConfirmExact(ctx: Ctx): Promise<Result[]> {
+  const { admin, tenantId } = ctx;
+  const { data: rows } = await admin.from('fin_bank_statement_imports').select('id, match_kind, match_detail')
+    .eq('tenant_id', tenantId).eq('transaction_type', 'debit').eq('status', 'pending').eq('reconciled', false)
+    .eq('match_confidence', 'exato').in('match_kind', ['payable', 'inbound_doc'])
+    .order('transaction_date', { ascending: true }).limit(MAX_BATCH);
+  const diretos = ((rows ?? []) as Row[]).filter((r) => {
+    const d = (r.match_detail ?? {}) as Row;
+    return d.auto_import !== true && (d.iguais === null || d.iguais === undefined);
+  });
+  const results: Result[] = [];
+  for (const r of diretos) {
+    const id = String(r.id);
+    try {
+      const res = await confirmOne(ctx, id);
+      if (res.ok) {
+        const { data: cur } = await admin.from('fin_bank_statement_imports').select('match_detail').eq('id', id).maybeSingle();
+        const det = (cur?.match_detail ?? {}) as Row;
+        if (det.confirmed) await admin.from('fin_bank_statement_imports').update({ match_detail: { ...det, confirmed: { ...(det.confirmed as Row), auto: true } } }).eq('id', id);
+      }
+      results.push(res);
+    } catch (e) {
+      log('ERROR', 'auto_confirm_exact', 'falhou', { tenantId, id, error: String(e) });
+      results.push({ id, ok: false, msg: String((e as Error)?.message ?? e) });
+    }
+  }
+  if (results.length) log('INFO', 'auto_confirm_exact', 'ok', { tenantId, total: results.length, ok: results.filter((x) => x.ok).length });
+  return results;
 }
 
 // ── Folha paga pelo Pix (2026-09-18) ───────────────────────────────────────
@@ -1436,7 +1475,9 @@ Deno.serve(async (req: Request) => {
       // Etiquetas por texto nas ENTRADAS já importadas (regra nova pega o histórico todo)
       const { error: le } = await admin.rpc('fn_apply_label_rules', { p_tenant: tenantId, p_from: '2000-01-01', p_to: to });
       if (le) log('WARN', 'rematch', 'fn_apply_label_rules falhou', { tenantId, error: le.message });
-      return json({ success: true, ...(data as Row ?? {}), folha: folha ?? 0, contas_pagas: pagas ?? 0, regras_lancamento: regras ?? 0 });
+      // Ligação direta dá baixa sozinha (2026-10-02) — só com quem pode dar baixa (admin/gerente)
+      const auto = isManager ? await autoConfirmExact(ctx) : [];
+      return json({ success: true, ...(data as Row ?? {}), folha: folha ?? 0, contas_pagas: pagas ?? 0, regras_lancamento: regras ?? 0, baixas_automaticas: auto.filter((r) => r.ok).length });
     }
 
     if (action === 'alerts') {
@@ -1903,6 +1944,12 @@ Deno.serve(async (req: Request) => {
       }
       if (feitos.length) log('INFO', 'auto_apply_rules', 'ok', { tenantId, total: feitos.length, ok: feitos.filter((f) => f.ok).length });
       return json({ success: true, lancados: feitos.filter((f) => f.ok), falhas: feitos.filter((f) => !f.ok) });
+    }
+
+    if (action === 'auto_confirm_exact') {
+      if (!isManager) return errResp('Apenas administradores e gerentes', 403);
+      const r = await autoConfirmExact(ctx);
+      return json({ success: true, baixados: r.filter((x) => x.ok), falhas: r.filter((x) => !x.ok) });
     }
 
     // ── Vínculo manual: "este pagamento é de…" ────────────────────────────────
