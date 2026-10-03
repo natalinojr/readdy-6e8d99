@@ -73,7 +73,7 @@ function motivo(id: string, e: Entrada): { curto: string; detalhe?: unknown } {
   const cat = e.categorias.find((c) => c.id === raw.categoriaId);
   if (!cat) return { curto: 'categoria não veio no cardápio carregado' };
   if (!cat.ativo) return { curto: 'categoria desligada', detalhe: cat.nome };
-  if (!visivelAgora([raw.horario, cat.horario])) return { curto: FORA_DO_HORARIO };
+  if (!visivelAgora([raw.horario, cat.horario], 'casa')) return { curto: FORA_DO_HORARIO };
   return { curto: 'fora do cardápio público sem motivo conhecido' };
 }
 
@@ -96,7 +96,7 @@ export function useRegistroItensEscondidos(e: Entrada): void {
         if (atuais.has(raw.id) || raw.status !== 'ativo' || raw.somenteDelivery || !vendeNoTablet(raw)) continue;
         const cat = e.categorias.find((c) => c.id === raw.categoriaId);
         if (cat && !cat.ativo) continue;
-        if (!visivelAgora([raw.horario, cat?.horario])) continue;
+        if (!visivelAgora([raw.horario, cat?.horario], 'casa')) continue;
         registrarSumico(raw.id, raw.nome, e, agora, true);
       }
       return;

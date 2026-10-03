@@ -1,7 +1,11 @@
 import {
-  DIAS_CURTOS, erroHorario, resumoHorario, temHorario,
-  type FaixaHorario, type HorarioExibicao,
+  CANAIS_HORARIO, DIAS_CURTOS, NOME_CANAL, erroHorario, resumoHorario, temHorario, temHorarioPorCanal,
+  type CanalHorario, type FaixaHorario, type HorarioExibicao,
 } from '@/lib/horarioExibicao';
+
+const ICONE_CANAL: Record<CanalHorario | 'ambos', string> = {
+  ambos: 'ri-restaurant-2-line', casa: 'ri-home-4-line', delivery: 'ri-e-bike-2-line',
+};
 
 interface Props {
   value: HorarioExibicao | undefined;
@@ -11,15 +15,18 @@ interface Props {
   /** Texto de ajuda abaixo das opções. */
   ajuda?: string;
   disabled?: boolean;
+  /** Canais em que o item/categoria/destaque aparece. Com um só, não pergunta o canal da faixa. */
+  canais?: CanalHorario[];
 }
 
 const novaFaixa = (): FaixaHorario => ({ days: [0, 1, 2, 3, 4, 5, 6], start: '11:00', end: '15:00' });
 
 /** Editor de horário de exibição no cardápio (item, categoria e destaque). */
-export default function HorarioExibicaoEditor({ value, onChange, labelSempre = 'Sempre', ajuda, disabled }: Props) {
+export default function HorarioExibicaoEditor({ value, onChange, labelSempre = 'Sempre', ajuda, disabled, canais = CANAIS_HORARIO }: Props) {
   const definido = temHorario(value);
   const faixas = value ?? [];
   const erro = erroHorario(value);
+  const escolheCanal = canais.length > 1;
 
   const setFaixa = (idx: number, patch: Partial<FaixaHorario>) =>
     onChange(faixas.map((f, i) => (i === idx ? { ...f, ...patch } : f)));
@@ -119,6 +126,33 @@ export default function HorarioExibicaoEditor({ value, onChange, labelSempre = '
                     <span className="text-[11px] text-gray-600 bg-gray-100 px-2 py-0.5 rounded-full">dia todo</span>
                   )}
                 </div>
+                {escolheCanal && (
+                  <div className="flex items-center gap-2 flex-wrap mt-2">
+                    <span className="text-xs text-gray-500">Vale para</span>
+                    <div className="inline-flex rounded-lg border border-gray-200 overflow-hidden bg-white">
+                      {([
+                        { key: undefined, label: 'Casa e delivery', icon: ICONE_CANAL.ambos },
+                        { key: 'casa' as const, label: 'Só casa', icon: ICONE_CANAL.casa },
+                        { key: 'delivery' as const, label: 'Só delivery', icon: ICONE_CANAL.delivery },
+                      ]).map((op) => {
+                        const sel = (f.channel ?? undefined) === op.key;
+                        return (
+                          <button
+                            key={op.label}
+                            type="button"
+                            disabled={disabled}
+                            onClick={() => setFaixa(idx, { channel: op.key })}
+                            className={`flex items-center gap-1 px-2 py-1 text-[11px] font-semibold transition-colors cursor-pointer disabled:opacity-50 ${
+                              sel ? 'bg-orange-500 text-white' : 'text-gray-500 hover:bg-orange-50 hover:text-orange-600'
+                            }`}
+                          >
+                            <i className={op.icon} />{op.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
             );
           })}
@@ -133,7 +167,7 @@ export default function HorarioExibicaoEditor({ value, onChange, labelSempre = '
             </button>
             {!erro && (
               <span className="text-[11px] text-gray-500">
-                <i className="ri-time-line mr-1" />{resumoHorario(value)} (horário de Brasília)
+                <i className="ri-time-line mr-1" />{resumoHorario(value, canais)} (horário de Brasília)
               </span>
             )}
           </div>
@@ -142,8 +176,44 @@ export default function HorarioExibicaoEditor({ value, onChange, labelSempre = '
               <i className="ri-error-warning-line" />{erro}
             </p>
           )}
+          {escolheCanal && temHorarioPorCanal(value) && (
+            <p className="text-[11px] text-gray-500">
+              Canal sem nenhum horário = aparece sempre nele. Casa = mesa/QR, autoatendimento, caixa e garçom;
+              delivery = link do delivery, atendente do WhatsApp e PDV delivery.
+            </p>
+          )}
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * Selo do horário (listas do admin): verde = aparecendo agora em todos os canais; azul =
+ * escondido em todos; âmbar = aparece agora só num canal.
+ */
+export function SeloHorario({ horario, visivelPorCanal, canais = CANAIS_HORARIO, className = '', texto }: {
+  horario: HorarioExibicao | undefined;
+  visivelPorCanal: Partial<Record<CanalHorario, boolean>>;
+  canais?: CanalHorario[];
+  className?: string;
+  /** Texto no lugar do resumo (ex.: destaque que segue o horário do item). */
+  texto?: string;
+}) {
+  if (!texto && !temHorario(horario)) return null;
+  const estados = canais.map((c) => visivelPorCanal[c] ?? true);
+  const todos = estados.every(Boolean);
+  const nenhum = estados.every((v) => !v);
+  const soEm = canais.filter((c) => visivelPorCanal[c] ?? true).map((c) => NOME_CANAL[c].toLowerCase());
+  const cor = todos ? 'bg-emerald-100 text-emerald-700' : nenhum ? 'bg-indigo-100 text-indigo-700' : 'bg-amber-100 text-amber-800';
+  const titulo = todos
+    ? 'No horário agora — aparecendo no cardápio do cliente'
+    : nenhum
+      ? 'Fora do horário agora — escondido do cardápio do cliente'
+      : `Agora aparece só no ${soEm.join(' e ')}`;
+  return (
+    <span title={titulo} className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold whitespace-nowrap inline-flex items-center gap-0.5 ${cor} ${className}`}>
+      <i className="ri-time-line" />{texto ?? resumoHorario(horario, canais)}
+    </span>
   );
 }

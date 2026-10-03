@@ -13,7 +13,7 @@ import type { Categoria, Item, Combo, ObservacaoGlobal, GrupoOpcoes, OpcaoItem, 
 import type { ItemCardapioPublico } from '@/types/mesaCliente';
 import { saveMenuCache, getMenuCache } from '@/lib/offlineDB';
 import { useMenuPing } from '@/hooks/useMenuPing';
-import { agoraBrasilia, normalizarHorario, temHorario, visivelEm } from '@/lib/horarioExibicao';
+import { CANAIS_HORARIO, agoraBrasilia, horarioDoCanal, normalizarHorario, temHorario, visivelEm, type CanalHorario } from '@/lib/horarioExibicao';
 import { useRelogioMinuto } from '@/hooks/useRelogioMinuto';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -390,7 +390,7 @@ interface CardapioContextValue {
   // Derived
   itensAtivos: Item[];      // itens ativos para canais presenciais (exclui somenteDelivery)
   /** O item (e a categoria dele) está no horário de exibição agora? Caixa/garçom mostram, mas marcam "fora do horário". */
-  itemNoHorario: (item: Item) => boolean;
+  itemNoHorario: (item: Item, canal?: CanalHorario) => boolean;
   itensDelivery: Item[];    // itens ativos para o canal delivery
   itensPublicos: ItemCardapioPublico[];
   numerosMap: Map<string, number>;
@@ -1052,7 +1052,7 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
     [itens, categorias, destaques],
   );
   const minutoAgora = useRelogioMinuto(usaHorario);
-  // Ids fora do horário agora (itens; destaques com prefixo "h:"). A chave só muda quando
+  // Ids fora do horário agora, por canal (ver abaixo). A chave só muda quando
   // algo entra/sai: itensPublicos/itemNoHorario ficam iguais e o totem não remonta o cardápio
   // a cada minuto (o provider em si re-renderiza 1x/min, só nas lojas que usam horário).
   // minutoAgora só dispara o recálculo na virada do minuto; a hora vem de new Date().
@@ -1060,14 +1060,22 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
     if (!usaHorario) return '';
     const { dia, minuto } = agoraBrasilia();
     const horarioCat = new Map(categorias.map(c => [c.id, c.horario]));
-    const fora = itens
-      .filter(i => !visivelEm(i.horario, dia, minuto) || !visivelEm(horarioCat.get(i.categoriaId), dia, minuto))
-      .map(i => i.id);
-    const destFora = destaques.filter(d => !visivelEm(d.horario, dia, minuto)).map(d => 'h:' + d.id);
-    return [...fora, ...destFora].sort().join(',');
+    const fora: string[] = [];
+    // Por canal (casa / delivery): "c:<id>" / "d:<id>"; destaques "hc:<id>" / "hd:<id>".
+    for (const canal of CANAIS_HORARIO) {
+      const p = canal === 'casa' ? 'c' : 'd';
+      const ve = (h: import('@/lib/horarioExibicao').HorarioExibicao | undefined) => visivelEm(horarioDoCanal(h, canal), dia, minuto);
+      for (const i of itens) if (!ve(i.horario) || !ve(horarioCat.get(i.categoriaId))) fora.push(`${p}:${i.id}`);
+      for (const d of destaques) if (!ve(d.horario)) fora.push(`h${p}:${d.id}`);
+    }
+    return fora.sort().join(',');
   }, [usaHorario, itens, categorias, destaques, minutoAgora]);
   const foraDoHorario = useMemo(() => new Set(chaveForaDoHorario ? chaveForaDoHorario.split(',') : []), [chaveForaDoHorario]);
-  const itemNoHorario = useCallback((item: Item) => !foraDoHorario.has(item.id), [foraDoHorario]);
+  // Canal padrão = casa (caixa, garçom, totem); o PDV delivery passa 'delivery'.
+  const itemNoHorario = useCallback(
+    (item: Item, canal: CanalHorario = 'casa') => !foraDoHorario.has(`${canal === 'casa' ? 'c' : 'd'}:${item.id}`),
+    [foraDoHorario],
+  );
 
   const itensPublicos = useMemo<ItemCardapioPublico[]>(() => {
     // Só categorias ativas (não deletadas) — categorias deletadas não aparecem no cardápio público
@@ -1079,7 +1087,7 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
     // Destaque fora do horário próprio também não marca; item fora do horário já sai abaixo.
     const destaqueOrdemMap = new Map<string, number>();
     destaques
-      .filter(d => d.ativo && d.canal !== 'delivery' && !foraDoHorario.has('h:' + d.id))
+      .filter(d => d.ativo && d.canal !== 'delivery' && !foraDoHorario.has('hc:' + d.id))
       .forEach(d => { destaqueOrdemMap.set(d.itemId, d.ordem ?? 0); });
 
     // Itens normais ativos que permitem mesa_qr OU self_service (ou sem canais — retrocompatibilidade)
@@ -1091,7 +1099,7 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
     );
 
     const itensNormais: ItemCardapioPublico[] = itensAtivosMesaQR
-      .filter(item => categoriasAtivasIds.has(item.categoriaId) && itemNoHorario(item))
+      .filter(item => categoriasAtivasIds.has(item.categoriaId) && itemNoHorario(item, 'casa'))
       .map((item) => {
         const promoAtiva = promoAtivaHoje(item.promocoes);
         const categoriaNome = categorias.find(c => c.id === item.categoriaId)?.nome ?? 'Outros';

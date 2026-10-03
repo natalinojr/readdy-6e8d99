@@ -318,6 +318,12 @@ Secao viva: registrar aqui padroes, decisoes e pegadinhas reutilizaveis conforme
   servidor impediria o item de "voltar" sem recarregar.
 - **Caixa/garçom/PDV delivery NÃO escondem:** mostram o selo "FORA DO HORÁRIO" e vendem. Criar pedido não valida horário
   (carrinho montado 1 min antes passa). O totem não registra item fora do horário como "sumiço" (`registroItensEscondidos`).
+- **Por canal (2026-10-03):** a faixa pode ter `channel: 'casa' | 'delivery'` (sem = os dois). Casa = mesa/QR, totem,
+  caixa, garçom; delivery = link do delivery, atendente do WhatsApp (`atendimento-loja/travas.ts › noHorario`) e PDV
+  delivery. **Canal sem nenhuma faixa = aparece sempre nele** (`horarioDoCanal` devolve null). `visivelAgora(horarios,
+  canal)` e `idsForaDoHorario(base, canal)` exigem o canal; `itemNoHorario(item, canal='casa')`. Admin: "Vale para" em
+  cada faixa (some quando o item/destaque só existe num canal), resumo "Casa: … | Delivery: …", `SeloHorario` comum
+  (verde/azul/âmbar = aparece agora só num canal) e o card do item também mostra o horário da CATEGORIA.
 - **Gravação:** `menu-write` (`upsert_item`/`upsert_category`/`upsert_highlight`) só mexe no campo quando ele vem no payload
   (`undefined` = não mexe) — PausarItem, assistente-brain e reordenar não apagam o horário. O do destaque é um UPDATE à
   parte depois da RPC `fn_upsert_menu_highlight` (assinatura fixa).

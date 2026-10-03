@@ -479,7 +479,8 @@ export default function ItemModal({ item, categorias, obsGlobais, estacoes, savi
                   <HorarioExibicaoEditor
                     value={horario}
                     onChange={setHorario}
-                    ajuda="Fora desses horários o item some do delivery, da mesa (QR) e do autoatendimento. No caixa e no garçom ele continua, marcado como fora do horário."
+                    canais={disponibilidade === 'ambos' ? ['casa', 'delivery'] : [disponibilidade]}
+                    ajuda="Fora desses horários o item some do cardápio do cliente (delivery, mesa/QR e autoatendimento). Cada horário pode valer para casa e delivery ou só para um deles. No caixa, garçom e PDV delivery ele continua, marcado como fora do horário."
                   />
                   {(() => {
                     const cat = categorias.find(c => c.id === categoriaId);
@@ -487,7 +488,7 @@ export default function ItemModal({ item, categorias, obsGlobais, estacoes, savi
                     return (
                       <p className="text-[11px] text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-lg px-2.5 py-1.5 mt-2">
                         <i className="ri-information-line mr-1" />
-                        A categoria "{cat.nome}" só aparece {resumoHorario(cat.horario)}. O item precisa estar no horário dele e no da categoria.
+                        A categoria "{cat.nome}" só aparece {resumoHorario(cat.horario, disponibilidade === 'ambos' ? ['casa', 'delivery'] : [disponibilidade])}. O item precisa estar no horário dele e no da categoria.
                       </p>
                     );
                   })()}
