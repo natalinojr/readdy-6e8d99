@@ -592,12 +592,24 @@ Deno.serve(async (req) => {
       }
 
       const updateData: Record<string, unknown> = {}
-      const tenantFields = ['name', 'cnpj', 'address', 'logo_url', 'phone', 'email', 'city', 'state', 'zip_code']
+      const tenantFields = ['name', 'cnpj', 'address', 'logo_url', 'phone', 'email', 'city', 'state', 'zip_code', 'cover_url', 'brand_color']
       for (const field of tenantFields) {
         if (rest[field] !== undefined) {
           updateData[field] = rest[field]
         }
       }
+
+      // Cor da loja nas telas do cliente: #RRGGBB ou vazio (= cor padrão)
+      if (updateData.brand_color !== undefined) {
+        const cor = String(updateData.brand_color ?? '').trim()
+        if (cor && !/^#[0-9A-Fa-f]{6}$/.test(cor)) {
+          return new Response(JSON.stringify({ success: false, error: 'Cor inválida (use #RRGGBB)' }), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400,
+          })
+        }
+        updateData.brand_color = cor || null
+      }
+      if (updateData.cover_url !== undefined) updateData.cover_url = String(updateData.cover_url ?? '').trim() || null
 
       if (Object.keys(updateData).length === 0) {
         return new Response(JSON.stringify({ success: false, error: 'Nenhum campo para atualizar' }), {

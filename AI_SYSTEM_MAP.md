@@ -4106,3 +4106,4097 @@ Causa: `AprovacoesContext` (e o `NotificacoesContext`) eram só memória do apar
 - **Pegadinhas que continuam (decisão do dono, não mexido):** Configurações filtra só aba a aba (`podeAba`), sem exigir `configuracoes_editar` — o gerente entra pela `cfg_maquininha_mp` (padrão dele) e vê as abas `CFG_KEYS_GERENTE` mesmo com "Abrir a tela de Configurações" desmarcado, e a `config-write` aceita o gerente pelo papel. A matriz salva não chega ao vivo nas telas abertas (o canal de `permissions` não disparou no teste): vale no próximo carregamento, e o servidor já recusa antes.
 - **Como testar sem senha:** sessão do usuário `qa.*` por `auth/v1/admin/generate_link` (magiclink) + `auth/v1/verify` com `token_hash` (service role lida da CLI na hora, nunca impressa); chamar a edge com o Bearer e revogar no fim (`auth/v1/logout`). Tela no dev server local: `http://localhost:<porta>/#access_token=…&refresh_token=…&expires_in=3600&token_type=bearer` (fluxo implícito, `detectSessionInUrl`). Lógica SQL e RLS: um `DO` que aplica a migração, troca `request.jwt.claims` + `set local role authenticated` por usuário e termina em `RAISE` (desfaz DDL e dados); escrita direta testada com `with x as (update … returning 1) select count(*)`.
 - **Pegadinha (2026-10-03) — Pix "INCOMPLETE" do Inter:** logo após o envio o extrato traz o Pix com `detalhes.tipoDetalhe='INCOMPLETE'` (sem `endToEndId`/nome); só `numeroDocumento` = 7 últimos caracteres do E2E. O sync gravava com `ignoreDuplicates` e a linha nunca completava → baixa antecipada não ligava. Agora `inter-bank` atualiza raw/descrição das linhas INCOMPLETE quando o Inter manda completo, e o brain (`baixa_conciliada › doE2e`) aceita `numeroDocumento` como final do E2E.
+# ERPOS V2 - mapa do sistema para agentes
+
+Atualizado em: 2026-06-14.
+
+Objetivo: reduzir tempo de busca quando o usuario pedir alteracoes. Antes de mexer em qualquer area, use este arquivo como indice, depois confirme no codigo atual.
+
+## Visao geral
+
+- Frontend: React 19 + Vite + TypeScript.
+- Roteamento: React Router em `src/router/config.tsx`.
+- UI: Tailwind CSS, lucide-react e alguns icones `ri-*`.
+- Backend: Supabase Auth, Postgres, Storage e Edge Functions.
+- Deploy/build: `npm run build` gera `out/`; `vercel.json` aponta `outputDirectory` para `out` e reescreve rotas SPA para `index.html`.
+- Supabase principal: projeto `ERP OS`, ref `mdghhjemzdmeuqpzuyzx`.
+
+## Comandos uteis
+
+- Dev local: `npm run dev`
+- Build: `npm run build`
+- Preview: `npm run preview`
+- Type-check: `npm run type-check`
+- Lint: `npm run lint`
+- Testes: `npx vitest`
+
+Deploy/Vercel (confirmado em 2026-06-14): Vercel CLI instalado e logado como `natalinojr`. Projeto Vercel = `erpos` (https://erpos.vercel.app). O GitHub `main` esta conectado ao Vercel, que builda e publica automaticamente a cada push. Variaveis `VITE_PUBLIC_SUPABASE_URL`, `VITE_PUBLIC_SUPABASE_ANON_KEY` e `VITE_APP_URL` ja estao configuradas (Production+Development; Preview pendente). Ao usar a CLI, definir `VERCEL_TELEMETRY_DISABLED=1`. Lembrete: por ser Vite, variaveis `VITE_*` sao embutidas no build e precisam existir no Vercel no momento do build.
+
+## Arquivos que todo agente deve abrir primeiro
+
+- `src/router/config.tsx`: mapa oficial de rotas/telas.
+- `src/providers/AppProviders.tsx`: ordem dos contexts globais.
+- `src/lib/supabase.ts`: cliente Supabase, refresh de sessao, `invokeWithAuth`, upload de imagens.
+- `src/contexts/AuthContext.tsx`: login, tenant atual, perfil e troca de loja.
+- `src/components/feature/AppLayout`: layout autenticado, menu e estrutura principal.
+- `package.json`: scripts e dependencias.
+- `vercel.json` e `vite.config.ts`: build, base path, aliases e saida.
+
+## Fluxo de aplicacao
+
+`src/main.tsx` carrega i18n, CSS, Supabase e renderiza `App`.
+
+`src/App.tsx` monta:
+- ErrorBoundary global.
+- `AppProviders`.
+- `BrowserRouter` com `basename={__BASE_PATH__}`.
+- `AppRoutes`.
+- `ToastContainer`.
+
+`src/providers/AppProviders.tsx` monta providers nesta ordem:
+- Core: `ToastProvider`, `AppModeProvider`, `KioskAuthProvider`, `AuthProvider`, `SystemSettingsProvider`.
+- Sessao: `SessaoProvider`, `NotificacoesProvider`, `AuditoriaProvider`.
+- Dados: `EstoqueProvider`, `ProducaoProvider`, `CardapioProvider`, `ImpressorasProvider`, `KDSProvider`, `MesasProvider`.
+- Features: `ModoTreinoProvider`, `MesaEdicaoProvider`, `AprovacoesProvider`, `ModoFaturamentoProvider`, `PermissoesProvider`, `OfflineProvider`.
+- UI global: `VirtualKeyboardProvider` e `VirtualKeyboardOverlay`.
+
+## Rotas principais
+
+Rotas publicas ou fora do layout:
+- `/login`: `src/pages/login/page.tsx`
+- `/mesa/:mesaId`: `src/pages/mesa/page.tsx`
+- `/voucher/:token`: `src/pages/voucher-link/page.tsx` (link publico de ativacao de voucher)
+- `/mesa-qr/:qr_token` e variantes `/pedido/...`: `src/pages/mesa-qr/page.tsx`
+- `/delivery` e `/:storeSlug-delivery`: `src/pages/delivery/page.tsx`
+- `/autoatendimento`: `src/pages/autoatendimento/page.tsx`
+- `/totem/:token`: `src/pages/totem/page.tsx`
+- `/selecionar-loja`: `src/pages/selecionar-loja/page.tsx`
+- `/supabase-debug`: `src/pages/supabase-debug/page.tsx`
+
+Rotas dentro do layout autenticado:
+- `/` (índice): `src/pages/hoje/InicioPorPerfil.tsx` — manda cada perfil para o seu trabalho (2026-10-03)
+- `/hoje`: `src/pages/hoje/page.tsx` — tela inicial que conduz (pendências por bloco, tarefas de hoje, resumo)
+- `/modulos`: `src/pages/modulos/page.tsx`
+- `/dashboard`: `src/pages/dashboard/page.tsx`
+- `/cardapio`: `src/pages/cardapio/page.tsx`
+- `/pdv/caixa`: `src/pages/pdv/caixa/page.tsx` (abrir/fechar a loja: `components/loja/` — `AbrirLojaView`, `FecharLojaModal`, `ContagemGaveta`, `SeloCeu`)
+- `/pdv/garcom`: `src/pages/pdv/garcom/page.tsx`
+- `/pdv/delivery`: `src/pages/pdv/delivery/page.tsx`
+- `/kds`: `src/pages/kds/page.tsx`
+- `/gestor-pedidos`: `src/pages/gestor-pedidos/page.tsx`
+- `/gestor-entregas`: `src/pages/gestor-entregas/page.tsx`
+- `/mesas`: `src/pages/mesas/page.tsx`
+- `/relatorios`: `src/pages/relatorios/page.tsx`
+- `/pedidos`: `src/pages/pedidos/page.tsx`
+- `/tarefas`: `src/pages/tarefas/page.tsx` (gestão de tarefas: Lista/Kanban/Calendário/Minhas + campos personalizados — ver PLANO-MODULO-TAREFAS.md)
+- `/estoque`: `src/pages/estoque/page.tsx`
+- `/lancar`: `src/pages/lancar/page.tsx` — **"O que aconteceu?"**, começo único de qualquer lançamento (tela cheia; mesmo componente `src/components/feature/lancar` do botão Lançar do Financeiro, do ⚡ e do "+" da Hoje)
+- `/receber`: `src/pages/receber/page.tsx` — **Recebimentos e pagamentos** (celular da loja: receber mercadoria por etapas — nota, compra lançada, cupom, sem nota; + pedidos de pagamento em `src/pages/receber/pedidos/`: reembolso, freelancer, fornecedor sem nota, aprovação; links `?pedido=`, `?aprovar=1`, `?meus=1`)
+- `/financeiro`: `src/pages/financeiro/page.tsx`
+- `/configuracoes`: `src/pages/configuracoes/page.tsx`
+- `/config-delivery`: `src/pages/config-delivery/page.tsx` (abas Configurações, Gerir entregas, Atendimento WhatsApp → `AtendimentoWhatsAppTab.tsx`)
+- `/usuarios`: `src/pages/usuarios/page.tsx`
+- `/clientes`: `src/pages/clientes/page.tsx` — **Clientes & Marketing** (abas `?aba=clientes|funil|promocoes|vouchers` em `src/pages/clientes/abas/`; cada aba com a sua permissão: `clientes_ver`, `gestao_promocoes`, `gestao_vouchers`)
+- `/auditoria`: `src/pages/auditoria/page.tsx`
+- `/promocoes`: redireciona para `/clientes?aba=promocoes` (modal em `src/pages/promocoes/components/`)
+- `/vouchers`: redireciona para `/clientes?aba=vouchers` (modais em `src/pages/vouchers/components/`)
+- `/imprimir-qrcodes`: `src/pages/imprimir-qrcodes/page.tsx`
+- `/admin-master`: `src/pages/admin-master/page.tsx` (abas Lojas / Usuários / Módulos / Convites; modais em `modals.tsx`, gestão de acesso em `acessos.tsx`)
+- `/contratacao`: `src/pages/contratacao/page.tsx` (banco de currículos; só o e-mail do dono. Leitura híbrida: PDF com texto é lido grátis no navegador por `src/lib/curriculoLocal.ts` (pdf.js + regras: nome, contato, nascimento, cidade/UF, cargo, texto completo pesquisável); foto/PDF escaneado vai direto à IA; nos demais a IA só roda no botão "Organizar com IA". Abas Candidatos (cards/tabela), Kanban, Agenda de entrevistas (`hiring_interviews`, ficha com notas 1–5 por critério), Relatórios e Configurações. **Independente das lojas do ERPOS**: empresas próprias `hiring_companies` (`company_id`), fases editáveis `hiring_stages` (`stage_id`; 4 nativas por `native_kind`, que não podem ser apagadas) e `hiring_settings` (id=1). `tenant_id`/`status` em hiring_candidates são legado. **Vagas** (`hiring_jobs`) + candidaturas (`hiring_applications`: score 0–100, fit, `analysis` jsonb): `hiring-cv-scan › match` compara currículo × vaga × loja (endereço/descrição em `hiring_companies`) sem enviar idade/estado civil/filhos; `› intake` (x-internal-key) é a entrada do assistente no Telegram (`modo_curriculos`/`salvar_curriculo`). A função é publicada com `--no-verify-jwt` e confere o login dentro. **Distância loja × candidato**: pin da loja (`hiring_companies.lat/lng`, `MapaPin` nas Configurações) + geocode ORS do endereço do candidato (`hiring_candidates.lat/lng/geo_precision`) → rota de carro ORS (fallback linha reta × 1,3) em `hiring_distances`; ações `geocode`, `distance`, `distance_company` (lotes de 20, 1,5 s entre rotas). Regra: só existe distância até a loja da ficha do candidato (`company_id`); sem loja, não calcula. Entrevista = questionário (`settings.questions` → `hiring_interviews.answers`) + considerações (`notes`) + tomada de decisão GPC/PC/R/NA (`hiring_interviews.recommendation` e `hiring_candidates.decision`). Structured outputs da Anthropic aceita no máx. 16 campos union/nullable por schema: acima disso dá 400, então use ""/0/enum e normalize na Edge. Edge `hiring-cv-scan` lê PDF/foto com IA → tabela `hiring_candidates` + bucket privado `curriculos`, RLS por `is_hiring_admin()` = e-mail do dono OU usuário liberado em `user_module_access` (Admin Master › Módulos), não por tenant)
+
+## Mapa por dominio
+
+Autenticacao, lojas e permissoes:
+- Telas: `src/pages/login`, `src/pages/selecionar-loja`, `src/pages/admin-master`, `src/pages/usuarios`.
+- Contexts/hooks: `AuthContext`, `PermissoesContext`, `useUsuarios`, `useValidarPIN`, `useKioskTokens`.
+- Supabase RPCs: `get_user_profile_for_tenant`, `get_user_tenants`, `fn_get_users_list`, `fn_update_user`, `fn_toggle_user_active`, `fn_admin_list_users_v4` (Admin Master: vínculos + módulos), `fn_admin_set_user_tenant`, `fn_admin_remove_user_tenant`, `fn_admin_set_module_access`, `fn_my_modules` (hook `useModuleAccess`), `fn_admin_create_store` (Admin Master › Lojas › "Nova loja": loja com PDV sem convite — estações Cozinha+Bar e pagamentos básicos; responsável opcional vira admin), `fn_admin_create_finance_tenant` (empresa só Financeiro).
+- Edge Functions: `login-pin`, `kiosk-auth`, `user-write`, `admin-create-user`, `admin-manage-user`, `setup-tenant`, `bootstrap-admin`.
+
+Cardapio e produtos:
+- Tela: `src/pages/cardapio`.
+- Componentes: categorias, itens, combos, delivery, destaques, ficha tecnica, observacoes globais.
+- Context/hook: `CardapioContext`, `useOptionGroupTemplates`, `useObsParaItem`, `useObsPorItemId`.
+- RPCs/tabelas: `fn_get_full_menu`, `fn_get_item_ingredients`, `menu_categories`, `menu_items`, `combos`, `option_groups`, `options`, `item_ingredients`, `menu_highlights`, `item_promotions`.
+- Edge Functions: `menu-write`, `export-menu-template`, `import-menu-template`.
+
+PDV, pedidos e pagamentos:
+- Telas: `src/pages/pdv/caixa`, `src/pages/pdv/garcom`, `src/pages/pdv/delivery`, `src/pages/pedidos`, `src/pages/gestor-pedidos`.
+- Contexts/hooks: `PDVContext`, `SessaoContext`, `KDSContext`, `useOrderSubmit`, `useOrdersHistory`, `usePedidosAgrupados`, `usePaymentMethods`.
+- RPCs/tabelas: `orders`, `order_items`, `order_item_options`, `order_item_observations`, `payments`, `order_discounts`, `cash_registers`, `cash_movements`, `fn_next_senha`, `fn_peek_senha`, `fn_update_paid_by_pdv`, `fn_cancel_order_item`, `fn_cancel_and_refund_order`, `fn_get_payment_methods`.
+- Edge Functions: `order-write`, `order-edit-lock`, `session-payments`, `voucher-write`, `pix-payment`.
+
+Mesas, QR e atendimento no salao:
+- Telas: `src/pages/mesas`, `src/pages/mesa`, `src/pages/mesa-qr`, `src/pages/pdv/garcom`.
+- Contexts/hooks: `MesasContext`, `MesaEdicaoContext`, `useMesaQRData`, `useMesaKDSNotificacoes`, `useTablesConfig`.
+- Tabelas: `tables`, `table_sessions`, `table_session_participants`, `table_reservations`, `waiter_calls`.
+- Edge Functions: `table-write`, `mesa-write`, `reservation-write`, `verify-manager-credentials`.
+
+KDS, producao e impressao:
+- Telas: `src/pages/kds`, `src/pages/gestor-pedidos`, `src/pages/imprimir-qrcodes`.
+- Contexts/hooks: `KDSContext`, `ProducaoContext`, `ImpressorasContext`, `useKDSTick`, `useKDSSound`, `usePrintQueue`.
+- Libs: `src/lib/printQueue.ts`, `src/lib/printOrderQueue.ts`, `src/lib/printUtils.ts`, `src/pages/kds/lib/autoPrint.ts`.
+- Tabelas: `kitchen_stations`, `station_operators`, `print_queue`, `production_recipes`, `production_batches`, `production_batch_items`.
+- Edge Functions: `production-write`, `print-queue-write`, `print-queue-agent`, `printer-ping`, `printer-raw`.
+
+Estoque, compras e CMV:
+- Tela: `src/pages/estoque`. Abre na aba **Início** (`components/inicio/`: comprar · contar · vai faltar); as outras abas seguem iguais.
+- Componentes: inicio, insumos, inventario, movimentacoes, validade, producao, CMV, fornecedores.
+- **Regra única de "estoque baixo"** (2026-10-03): SQL `insumo_abaixo_minimo` / `insumo_esgotado` + leitura `fn_estoque_situacao(p_tenant_id)`; espelho TS em `src/lib/estoqueRegras.ts`; hook `useEstoqueSituacao` (é o que Dashboard, Início do Estoque e a tela Hoje leem). Ver histórico 2026-10-03.
+- Contexts/hooks: `EstoqueContext`, `ProducaoContext`, `useEstoqueSituacao`, `useCmvReport`, `useCmvRelatorio`, `useItensSemEstoque`, `useStockCriticalAlerts`, `useIngredientCategories`, `useIngredientPriceHistory`, `useSuppliers`.
+- Tabelas: `ingredients`, `ingredient_categories`, `ingredient_batches`, `stock_movements`, `inventory_sessions`, `inventory_count_plans`, `estoque_config`, `estoque_pedidos_enviados`, `fin_suppliers`, `fin_purchases`, `fin_purchase_items`.
+- RPCs: `fn_get_ingredients`, `fn_estoque_situacao`, `fn_get_stock_movements`, `fn_get_items_sem_estoque`, `fn_get_stock_critical_alerts`, `fn_get_cmv_report`, escrita `fn_estoque_salvar_config` / `fn_estoque_salvar_plano` / `fn_estoque_apagar_plano` / `fn_estoque_registrar_pedido` / `fn_estoque_desfazer_pedido`.
+- Edge Functions: `stock-write`, `purchase-write`, `purchase-confirm-delivery`, `receber-mercadoria` (orquestra o recebimento do celular).
+
+Financeiro, RH e conciliacao:
+- **Referencia detalhada: `FINANCEIRO_MAP.md`** (arquitetura, fluxos venda->financeiro e compra->estoque, DRE, problemas conhecidos). Manter atualizado.
+- Tela: `src/pages/financeiro`.
+- Componentes: fluxo de caixa, contas a pagar/receber, DRE, compras, RH, bancos, conciliacao, orcamentos, implantacao.
+- Hooks: `useFinanceiro`, `useDespesas`, `useReceitas`, `useConciliacao`, `useRH`, `usePayrollCustomFields`, `useImplantacao`, `useFinanceiroAlertas`.
+- Tabelas: `fin_cash_flow`, `fin_accounts_payable`, `fin_receivable_installments`, `fin_bank_accounts`, `fin_bank_transactions`, `fin_bank_statements`, `fin_reconciliation_rules`, `fin_cost_centers`, `fin_dre_categories`, `hr_employees`, `hr_payroll`, `hr_payroll_custom_fields`.
+- Edge Functions: `financial-write`, `purchase-write`, `purchase-confirm-delivery`, `stone-conciliation`, `implementation-write`.
+
+Delivery externo e autoatendimento:
+- Telas: `src/pages/delivery`, `src/pages/autoatendimento`, `src/pages/totem`, `src/pages/config-delivery`.
+- Hooks/data: `src/pages/delivery/useDeliveryData.ts`, `KioskAuthContext`.
+- Tabelas: `delivery_customers`, `delivery_customer_addresses`, `delivery_neighborhoods`, `kiosk_tokens`.
+- Edge Functions: `delivery-write`, `kiosk-auth`, `login-pin`, `pix-payment`.
+
+Relatorios, dashboard e auditoria:
+- Telas: `src/pages/dashboard`, `src/pages/relatorios`, `src/pages/auditoria`.
+- Hooks: `useDashboardMetrics`, `useSalesReport`, `useCaixaReport`, `useDeliveryReport`, `useCancelamentosReport`, `useClientesReport`, `useOrigemReport`, `useSLAHistorico`, `useConsumo*`.
+- Context: `AuditoriaContext`.
+- RPCs: `fn_get_dashboard_metrics`, `fn_get_sales_report`, `fn_get_cash_sessions_v2`, `fn_get_cancelamentos_report`, `fn_get_clientes_report`, `fn_get_audit_log_v3`.
+- Edge Functions: `audit-write`, `qa-full-simulation`, `simulate-orders`, `simulate-pdv-orders`, `weekly-divergence-alert`.
+
+Clientes, promocoes e vouchers:
+- Telas: `src/pages/clientes` (tela única Clientes & Marketing: `abas/ClientesAba`, `FunilAba`, `PromocoesAba`, `VouchersAba`), `src/pages/voucher-link` (publica). `src/pages/promocoes` e `src/pages/vouchers` guardam só os modais.
+- Hooks: `useClientes`, `useClientesReport`, `useClientesRetencao`.
+- Tabelas: `customers`, `loyalty_transactions`, `promotion_rules`, `vouchers`, `voucher_transactions`.
+- Edge Functions: `voucher-write`, `voucher-claim` (publica, sem JWT), `menu-write`.
+
+Gestao de tarefas:
+- **Referencia detalhada: `PLANO-MODULO-TAREFAS.md`** (benchmark, modelo de dados, fases).
+- Tela: `src/pages/tarefas` (views Lista, Kanban, Calendario, **Linha do tempo** (`components/linhaTempo/` + `lib/linhaTempo.ts`, ver historico 2026-10-02), **Cronograma/Gantt** (`components/ViewGantt.tsx` + `GanttPainel.tsx`, contas em `lib/gantt.ts`), Carga, Relatorios; origens Minhas/Compartilhadas/Atribuidas/Todas).
+- **Ligacoes do Cronograma (2026-10-02):** tabela `task_dependencies` (anterior → seguinte, finish-to-start, unica por par, sem ciclo), leitura `fn_get_task_dependencies(p_tenant_id)` (so ligacoes em que eu enxergo as duas tarefas), escrita `task-write` `add_dependency`/`remove_dependency`. Ver historico 2026-10-02.
+- Hook/lib: `src/pages/tarefas/hooks/useTarefas.ts` (sem context global — estado local da pagina, resetado na troca de loja), `src/pages/tarefas/lib/agrupamento.ts`.
+- Tabelas: `task_lists`, `task_statuses`, `tasks`, `task_watchers`, `task_tags`, `task_tag_links`, `task_custom_fields`, `task_field_values`, `task_checklist_items`, `task_comments`, `task_activity`, `task_notifications`, `task_views`, `task_attachments`, `task_checklist_templates`. Em TODAS: RLS ativa, leitura por membership, escrita so pelo `service_role` (o `authenticated` nao tem INSERT/UPDATE/DELETE).
+- RPCs: `fn_get_task_lists`, `fn_get_tasks`, `fn_get_task_detail`, `fn_get_task_custom_fields`, `fn_get_task_tags`, `fn_get_task_notifications`, `fn_get_task_views`, `fn_get_task_checklist_templates`, `fn_get_task_attachments` (todas validam membership via `fn_tasks_assert_member` — NAO usam `auth_tenant_id()`).
+- Edge Function: `task-write` (todas as escritas; valida membership e o tipo de cada campo personalizado; cria a proxima ocorrencia de tarefa recorrente ao concluir; gera notificacao ao atribuir/mencionar; recebe upload de anexo por multipart).
+- **Modelos de estrutura de pastas** (2026-09-23): tabelas `task_structure_templates` (+ `task_structure_template_versions`), leitura `fn_get_task_structure_templates()`, acoes do `task-write` em `supabase/functions/task-write/modelos.ts`, logica pura em `supabase/functions/_shared/modelo-estrutura.ts` (a tela importa o mesmo arquivo via `src/pages/tarefas/lib/modeloEstrutura.ts`), telas em `src/pages/tarefas/components/modelos/`. Ver historico 2026-09-23.
+- **OneDrive/SharePoint (2026-09-26, Fase 1 em andamento)**: plano em `BRIEFING-ONEDRIVE-TAREFAS.md`. Tabela `ms_graph_connections` (1 por usuário, tokens só service_role), Edge **`ms-graph`** (verify_jwt=false; ações `config/exchange/status/disconnect/browse`; acesso = loja ou `fn_user_tem_tarefas`), helper `supabase/functions/_shared/ms-graph.ts` (renova o token quando falta < 5 min e guarda o refresh token novo; `invalid_grant` marca `needs_reconnect`). Tela `src/pages/tarefas/components/ConexaoMicrosoft.tsx` (menu da barra lateral e do celular). Login em popup volta em `/tarefas?code=` e o `main.tsx` repassa como mensagem `meta_oauth` (mesmo tipo do Meta). Secrets: `MS_CLIENT_ID`, `MS_CLIENT_SECRET` (+ opcional `MS_AUTH_TENANT`, padrão `organizations`). Redirects aceitos: `https://erpos.vercel.app/tarefas` e `http://localhost:*/tarefas`.
+- Storage: bucket **privado** `task-attachments` (10 MB por arquivo); download por URL assinada via acao `sign_attachment`.
+- Realtime: canal broadcast `tasks-ping:<tenant_id>` (evento `task_change`, trigger `trg_tasks_ping`) e `task-notify:<user_id>` (evento `task_notification`, trigger `trg_task_notification_ping`).
+- Celular: ver `ESTUDO-TAREFAS-MOBILE.md`. O app e um **PWA instalavel** (`public/manifest.webmanifest`, `public/sw.js`, registro em `src/lib/pwa.ts`). O modulo de tarefas tem layout proprio abaixo de `md:`: barra inferior + bottom sheet (`components/MobileNav.tsx`), calendario em modo agenda, botao de camera nos anexos. Utilitarios em `src/pages/tarefas/lib/mobile.ts` (`useIsMobile`, `useVoltarFecha`).
+
+PWA (app instalavel no celular):
+- Arquivos: `public/manifest.webmanifest`, `public/sw.js`, `public/icon-*.png`, `src/lib/pwa.ts`, `src/components/feature/InstallPWA.tsx`.
+- **O service worker e conservador de proposito**: navegacao SEMPRE rede primeiro (cache so como salva-vidas offline) porque o app ja se defende de chunk obsoleto pos-deploy via `vite:preloadError` no `main.tsx` — um SW servindo HTML do cache prenderia o operador numa versao velha. Cache-first apenas em `/assets/*` (nomes com hash = imutaveis). Requisicoes de outra origem (Supabase) passam direto.
+- **Web Push**: tabela `push_subscriptions`, Edge Function `send-push` (acoes `public_key`/`subscribe`/`unsubscribe`/`test`/`send`), cliente em `src/lib/push.ts`, handlers `push`/`notificationclick` no `public/sw.js`. O protocolo (RFC 8291/8292) e implementado a mao sobre Web Crypto em `supabase/functions/send-push/webpush.ts` — NAO usar libs npm de push aqui (compatibilidade instavel no Deno). Secrets: `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT`. O `task-write` chama `send-push` dentro do `notify()`, com falha silenciosa (push nunca derruba a escrita).
+- Selo no icone do app: `atualizarBadge()` em `src/lib/pwa.ts` (Badging API).
+- Testar localmente: o SW so registra em producao — `npm run build` + a config `preview` do `.claude/launch.json` (porta 4173).
+
+## Padroes de acesso ao backend
+
+- Leituras geralmente usam `supabase.rpc(...)` ou `supabase.from(...)` em contexts/hooks.
+- Escritas sensiveis geralmente usam `invokeWithAuth(functionName, { body })` em `src/lib/supabase.ts`.
+- Algumas telas ainda usam `fetch(`${SUPABASE_URL}/functions/v1/...`)` direto; procurar por `functions/v1`.
+- Edge Functions ficam em `supabase/functions/<slug>/index.ts`.
+- Migracoes ficam em `supabase/migrations`.
+
+Ao alterar regra de negocio:
+1. Comece na tela/componente do dominio.
+2. Siga para o hook/context usado.
+3. Confira chamadas RPC/Edge Function.
+4. Se mudar banco, procurar migracao existente ou criar nova migracao.
+5. Rodar `npm run type-check` e, se possivel, `npm run build`. ATENCAO: o type-check ja esta vermelho com ~350 erros pre-existentes (ver "Alertas e cuidado"). Nao tente zera-los; apenas garanta que sua mudanca nao AUMENTOU a contagem.
+
+## Supabase - tabelas principais por grupo
+
+Base/multi-tenant:
+- `tenants`, `users`, `user_tenants`, `permissions`, `system_settings`, `user_preferences`, `store_invites`.
+
+Operacao:
+- `sessions`, `cash_registers`, `cash_movements`, `orders`, `order_items`, `order_item_options`, `order_item_observations`, `order_item_units`, `payments`, `order_discounts`, `refunds`.
+
+Salo/mesa:
+- `tables`, `table_sessions`, `table_session_customers`, `table_session_participants`, `order_item_assignments`, `table_reservations`, `waiter_calls`.
+
+Cardapio:
+- `menu_categories`, `menu_items`, `combos`, `combo_items`, `option_groups`, `options`, `item_preset_observations`, `global_observations`, `item_promotions`, `menu_highlights`.
+
+Estoque/producao:
+- `ingredients`, `ingredient_categories`, `ingredient_batches`, `stock_movements`, `inventory_sessions`, `production_recipes`, `production_recipe_items`, `production_recipe_steps`, `production_batches`, `production_batch_items`, `item_ingredients`, `item_production_parts`, `combo_ingredients`.
+
+Financeiro/RH:
+- `fin_cash_flow`, `fin_accounts_payable`, `fin_receivable_installments`, `fin_purchases`, `fin_purchase_items`, `fin_suppliers`, `fin_cost_centers`, `fin_dre_categories`, `fin_bank_accounts`, `fin_bank_transactions`, `fin_bank_statement_imports`, `fin_reconciliation_rules`, `fin_purchase_catalog`, `fin_stone_config`, `fin_stone_imports`, `fin_pix_payments`, `hr_employees`, `hr_payroll`, `hr_payroll_custom_fields`.
+
+Delivery/kiosk:
+- `delivery_neighborhoods`, `delivery_customers`, `delivery_customer_addresses`, `kiosk_tokens`.
+
+Fiscal (NFC-e):
+- `fiscal_settings` (1 por loja; `provider_token` sem SELECT para `authenticated`), `fiscal_documents` (uma NFC-e por pedido balcao/delivery ou por sessao de mesa). Campos fiscais em `menu_items` (ncm, cest, cfop, csosn, origem, cod_tributacao, gtin), `menu_categories` (ncm, cest, cfop, csosn, cod_tributacao) e `payment_methods.fiscal_code`.
+
+Auditoria/impressao/outros:
+- `audit_log`, `print_queue`, `vouchers`, `voucher_transactions`, `loyalty_transactions`, `senha_counter`, `tenant_day_order_seq`.
+
+## Edge Functions locais
+
+Diretorio: `supabase/functions`.
+
+Slugs importantes:
+- Admin/auth: `bootstrap-admin`, `login-pin`, `setup-tenant`, `kiosk-auth`, `admin-create-user`, `admin-manage-user`, `user-write`.
+- Cardapio: `menu-write`, `export-menu-template`, `import-menu-template`.
+- Pedidos: `order-write`, `order-edit-lock`, `check-session-pending`, `session-payments`.
+- Mesa/delivery: `table-write`, `mesa-write`, `delivery-write`, `reservation-write`.
+- Financeiro: `financial-write`, `purchase-write`, `purchase-confirm-delivery`, `stone-conciliation`, `pix-payment`, `implementation-write`.
+- Fiscal: `fiscal-write` (NFC-e via Brasil NFe: emit/retry/cancel/get_pdf/get_xml/print_danfe/test_connection/save_settings).
+- Contabilidade: `contabilidade` (guias enviadas pela contadora), `contabilidade-xml` (envio mensal dos XMLs por e-mail; cron `xml-contabilidade`).
+- Estoque/producao: `stock-write`, `production-write`.
+- Impressao: `printer-ping`, `printer-raw`, `print-queue-write`, `print-queue-agent`.
+- Auditoria/notificacoes: `audit-write`, `weekly-divergence-alert`.
+- Trafego pago (Meta Ads): `meta-connect` (OAuth/conta/links publicos/previa), `meta-ads-insights` (leitura; aceita `x-internal-key`), `meta-ads-agent` (gestor de trafego IA: regras + Claude; cron `meta-agent-daily` 08h30 BRT; tabelas `meta_agent_settings/runs/actions`).
+
+## Alertas e cuidado
+
+- TYPE-CHECK/LINT JA ESTAO VERMELHOS: `npm run type-check` retorna ~350 erros de TypeScript pre-existentes (herdados do codigo gerado pelo Readdy). O `npm run build` (Vite/esbuild) NAO faz checagem de tipos, por isso o deploy funciona apesar disso. NAO tente consertar os 350 erros — nao e o pedido. Ao mexer no codigo, so confira que sua mudanca nao aumentou a contagem: `npx tsc --noEmit --project tsconfig.app.json 2>&1 | grep -c "error TS"`.
+- ~~Supabase Advisor: `public.tenant_day_order_seq` com RLS desabilitado.~~ **RESOLVIDO 2026-06-23** (migration `enable_rls_tenant_day_order_seq`): `ENABLE ROW LEVEL SECURITY` + `REVOKE SELECT,INSERT,UPDATE FROM authenticated`. Seguro porque a tabela so e escrita pela RPC `fn_next_tenant_order_number` (**SECURITY DEFINER**, ignora RLS) e por Edge Functions (`service_role`, ignora RLS); nenhum codigo do frontend a acessa direto. Antes, `authenticated` tinha grants diretos → qualquer usuario logado podia mexer no contador de numeracao de outra loja. Reversivel: `DISABLE ROW LEVEL SECURITY`.
+- **Criterio geral (RLS em tabela sem policy):** so e seguro ligar se o caminho legitimo NAO depende do RLS — i.e., escrita via RPC `SECURITY DEFINER` (dono postgres, `relforcerowsecurity=false`) ou via `service_role`. Checar antes: (1) frontend acessa a tabela direto? (grep), (2) a funcao de escrita e `prosecdef=true`?, (3) quem tem grants (`role_table_grants`). Se so RPC/service_role escrevem → `ENABLE RLS` sem policy fecha o buraco sem quebrar nada.
+- Muitas Edge Functions no projeto remoto estao com `verify_jwt: false`; antes de mudar seguranca, conferir se a funcao implementa autenticacao propria.
+- Arquivos existentes tem alguns comentarios/textos com encoding quebrado. Evite mexer nisso em alteracoes nao relacionadas.
+- O app depende bastante de tenant atual (`user.tenantId`). Sempre conferir filtros `tenant_id` em leituras/escritas.
+- Para novas telas, adicionar rota em `src/router/config.tsx` e conferir menu/layout em `src/components/feature/AppLayout`.
+
+## Como responder pedidos futuros rapido
+
+Quando o usuario pedir "muda X":
+- Identifique o dominio pelo mapa acima.
+- Abra a rota/tela correspondente em `src/pages/.../page.tsx`.
+- Abra componentes citados pelo nome visivel da UI.
+- Procure chamadas `use...`, `invokeWithAuth`, `supabase.rpc`, `supabase.from`.
+- Se envolver banco, consulte `supabase/migrations` e as tabelas do grupo.
+- Se envolver deploy/build, use `npm run build` e confirme saida em `out/`.
+
+## Historico de solucoes e criterios
+
+Secao viva: registrar aqui padroes, decisoes e pegadinhas reutilizaveis conforme o sistema evolui. Cada entrada com data
+
+### 2026-10-03 — Layout novo do delivery e do QR (mesa e QR universal)
+- **Origem:** proposta aprovada pelo dono (canvas "Delivery e QR — novo layout"). Visual comum nos dois: fundo creme `#FBF8F4`, texto stone, **cor da loja por variável CSS** (`--cor-loja`, `--cor-loja-forte`, `--cor-loja-suave` via `src/lib/corLoja.ts › corLojaVars(cor)`; padrão `#C2410C`). Use `bg-[var(--cor-loja)]` etc. nas telas do cliente, nunca `amber/orange` fixo.
+- **Componentes:** `src/components/cliente/LojaTopo.tsx` (capa, logo, situação, metas tempo/taxa/mínimo, botões da capa `BotaoCapa`) e `BarraSacola.tsx`. `src/lib/situacaoLoja.ts` monta "Aberto · até 23h / Fecha em N min / Fechado · abre às 18h" pelo `delivery_schedule` (só quando o horário está ligado; janela que passa da meia-noite tratada). `SeletorIdioma` ganhou `variante="capa"`.
+- **Cardápio compartilhado (`CardapioMesaQR`)** agora tem a **barra de categorias + busca dentro dele** (as páginas não renderizam mais chips; prop `topoChips` = altura de faixa fixa acima, ex.: senha do QR). Lista compacta (foto à direita, "+"), **destaques em carrossel** (categoria virtual `__destaques__`), **"a partir de"** = preço + o mais barato de cada grupo obrigatório (Duo Mex aparecia R$ 0,00), "+" adiciona direto item **sem grupos**; janela do item com rádio/checkbox, selo Obrigatório/Pronto e botão "Falta escolher: <grupo>".
+- **QR (mesa e universal):** não pede mais o nome antes do cardápio. O participante/senha nasce em `useMesaQRData › garantirParticipante(nome)` no 1º pedido (sacola pergunta "Como chamamos você?", nome lembrado em `localStorage.qr_nome_cliente`) ou ao "Pagar a conta da mesa" sem ter pedido. Logo/capa/cor lidos direto de `tenants` (anon). Depois do pedido: faixa fixa "Senha 313 · Em preparo" e tela da senha com andamento real por `useStatusPedidoQR` (polling de `mesa-write › get_meus_pedidos` a cada 12 s, só troca estado se mudou, para em "entregue"; a confirmação só usa a etapa se `status.numero === numeroPedido`). O pagamento continua como era (Pagar conta / "paga antes" segura o pedido); nenhuma loja usa `qr_universal_pay_before` em 03/10.
+- **Delivery — sacola única (`components/CheckoutDelivery.tsx`):** itens + seus dados + entrega/retirada + endereço + pagamento + clube/cupom + total numa tela. WhatsApp completo dispara `buscarClienteCheckout` (lookup_customer sem trocar de tela). `finalizarCheckout` valida, faz `save_customer` só quando precisa (cliente novo, ou entrega sem endereço salvo) e chama `handleConfirmarPedido(..., clienteSalvo)` — o cliente recém-salvo vai por parâmetro porque o estado ainda não atualizou (dentro da função, `customer` é o local; o estado é `customerState`). Pin/mapa (modo distância) continua na tela `EnderecoPinDelivery` (volta para a sacola porque `showCart` fica true). Lookup/telefone salvo agora levam ao **cardápio** (não mais modo_entrega/endereço). **Pedido mínimo** (`pedido_minimo_ativo/valor`) só é barrado no front — o `delivery-write` não confere.
+- **Pegadinha da taxa por bairro:** `lookup_customer` devolve endereços salvos com `neighborhood_delivery_fee: 0` e nome nulo → a tela mostrava "Grátis". `effectiveDeliveryFee` agora pega a taxa do bairro escolhido na lista `neighborhoods` e `displayAddresses` completa nome/taxa. O servidor sempre recalculou a taxa ao gravar (o valor cobrado nunca esteve errado).
+- **Capa e cor da loja:** colunas `tenants.cover_url` / `tenants.brand_color` (check `#RRGGBB`), **grant de coluna para anon** (como `logo_url`; o resto de `tenants` segue fechado ao anon), migração `20261003120000_tenants_capa_cor.sql`. Gravadas por `config-write › update_tenant` (valida a cor) em Configurações › Loja › "Aparência do cardápio online"; a capa sobe por `uploadMenuImage(file, tenant, 'capa-loja')` (bucket público `menu-images`). Aviso na tela quando a cor tem contraste < 4,5 com branco.
+
+### 2026-10-03 — PDV Caixa: "Abrir a loja" e "Fechar a loja" num fluxo só (sessão × caixa escondidos)
+- **O que mudou:** os 4 modais (`IniciarSessaoModal`, `AberturaCaixaModal`, `FechamentoCaixaModal`, `FecharSessaoModal`) foram apagados. No lugar ficaram `src/pages/pdv/caixa/components/loja/`. Protótipo aprovado pelo dono: `docs/prototipos/abrir-fechar-loja.html`. O usuário só vê "loja" e "caixa"; a palavra "sessão" e o número S… saíram da tela (seguem nos relatórios).
+- **Abrir** (`AbrirLojaView`, estados `sem_sessao` e `sessao_aberta`): o operador **conta a gaveta** (cédulas por padrão ou total digitado) e a tela compara na hora com o `closing_value_actual` do último caixa fechado da loja ("Bateu com o fechamento" / "R$ X a menos"). O motivo da diferença é opcional e vai só para a auditoria (não há coluna para isso; `opening_note_breakdown` ficou sem uso). Um botão chama `SessaoContext.abrirLoja`: `fn_open_session` (agora com `p_opening_amount` = troco, para o "Turno aberto" do assistente mostrar o valor) + `fn_open_cash_register`. Antes de abrir, `abrirLoja` relê a sessão ativa e, se outro aparelho já abriu o dia, só abre o caixa nele (`fn_open_session` não impede duas sessões abertas). Com o dia aberto e o caixa fechado, a mesma tela abre só o caixa e oferece "Fechar a loja". Se o dia aberto for de outra data, a tela conduz a "Fechar o dia anterior" primeiro.
+- **Fechar** (`FecharLojaModal`, tipos `loja` | `trocar` | `dia`): checa as travas **antes** de contar: retiradas previstas (`order-write list_sangrias_previstas`, confirma ali), pedidos e mesas (`check-session-pending`) e tablet pago e segurado (`order-write list_held_orders`). Depois vêm contar (cega) → conferir (mesma conta do `fn_close_cash_register_v2`) → motivo obrigatório se houver diferença → **um botão** fecha caixa e dia → resumo **só do dinheiro**. "Trocar de operador" fica no menu ⋯ do topo e fecha só o caixa.
+- **Critério:** o motivo da diferença vai como `p_closing_notes` **no próprio fechamento**. Assim o aviso `closing_cash` do assistente já sai com ele. Se o RPC apurar uma diferença que a tela não viu (pagamento entrou durante a contagem), o motivo é pedido depois via `fn_update_cash_register_notes`, como antes.
+- **Critério:** o modal de fechar fica no `PDVCaixaInner`, não no `PDVOperacional`. O PDV desmonta quando o caixa ou o dia fecha (realtime de `sessions` e poll de 60 s). `fecharCaixa(..., skipLocalUpdate=true)` e refs guardam sessão e caixa para o resumo. Se o dia não fechar depois do caixa fechado (pedido novo), a tela mostra o erro do RPC, oferece "Tentar de novo" sem recontar e "Forçar o fechamento" (mesma permissão de hoje).
+- **Permissões:** abrir exige `pdv_abrir_caixa`; fechar e trocar exigem `pdv_fechar_caixa`. Antes, "Iniciar/Fechar sessão" não conferia nada. A Supervisão já tem as duas nas 3 lojas.
+- **Teclado (computador é o principal):** Enter avança e Esc sai antes de fechar. O modal escuta em captura no `window` e para F-teclas e Espaço quando não se está digitando, senão os atalhos do PDV (F2 pagamento, Espaço busca) disparavam por baixo.
+- **Selo "Céu"** (`SeloCeu` + `selo-ceu.css`): sol nascendo ao abrir, lua ao fechar, tarde na troca de operador. O dono escolheu entre 5 propostas e não quis a bola verde chapada.
+
+### 2026-10-03 — Estoque abre no Início (comprar · contar · vai faltar) e "estoque baixo" tem UMA regra
+
+**Problema (Paranaguá, 02/10):** "estoque baixo" tinha 6 números ao mesmo tempo: Dashboard 44, pendência 22, topo
+do Estoque 16 críticos / 15 esgotados / 18 em alerta / 18 com ruptura. Causas, uma por tela: o Dashboard
+(`fn_get_dashboard_metrics.alertas_estoque`) contava 22 insumos **excluídos** e os 6 sem aviso; a pendência do
+assistente-cron contava os sem aviso (`track_stock=false`); "em alerta" contava insumo **sem mínimo** só por estar em
+zero; "crítico" = metade do mínimo; "ruptura" usava **mínimo ÷ 7** como se fosse o uso do dia (todo insumo abaixo do
+mínimo caía nela). E estoque negativo (Arroz −2.046 g) aparecia como "ESGOTADO" com preço "R$ 0,00" (preço por grama).
+
+**Regra única** (migração `20261003120000_estoque_situacao.sql`, espelho `src/lib/estoqueRegras.ts`, testes em
+`src/test/lib/estoqueRegras.test.ts`):
+- **abaixo do mínimo** = com aviso (`track_stock`) E mínimo > 0 E estoque <= mínimo (`insumo_abaixo_minimo`).
+- **esgotado** = com aviso E (estoque <= 0 OU `is_depleted`) (`insumo_esgotado`). Negativo = rótulo **"Conferir"**.
+- **vai faltar** = com aviso E uso/dia > 0 E NÃO abaixo do mínimo E estoque ÷ uso/dia <= `dias_previsao` (padrão 7).
+  Uso/dia = saídas de uso (`theoretical_out`, `loss`, `manual_out` que não começa com Estorno/Correção/Ajuste de
+  contagem) dos últimos 14 dias, menos a volta de venda cancelada (`in` com `order_id`), ÷ dias de histórico (desde a
+  1ª saída de uso da loja; < 3 dias = sem previsão).
+- **conferir** = com aviso E entra na contagem E (estoque < 0 OU marcado esgotado com saldo).
+- Quem usa: Dashboard (`AtencaoFaixa` via `useEstoqueSituacao`), topo do Estoque, Início, pendência
+  `estoque_critico` e aviso de estoque do assistente-cron (SQL com `insumo_abaixo_minimo`), `fn_get_stock_critical_alerts`
+  (agora = abaixo do mínimo, `nivel_alerta` 'critico' = esgotado; usada por `useStockCriticalAlerts`, ferramenta
+  `estoque_critico` do assistente-brain e `fn_mkt_fatos_canais`), ação rápida "Estoque crítico" do chat, rótulos da aba
+  Estoque (`InsumosUtils.statusEstoque` + filtros `passaFiltroStatus`), aba Inventário (`DivergenciaPanel`) e Por
+  Fornecedor. Migração `20261003120100_estoque_regra_unica_consumidores.sql` troca por texto
+  só o bloco `alertas_estoque` de `fn_get_dashboard_metrics` (aborta se a função tiver mudado).
+- Paranaguá depois: **16 abaixo do mínimo (13 zerados), 15 esgotados, 2 vão faltar** — em todo lugar.
+
+**Início do Estoque** (`src/pages/estoque/components/inicio/`), feito para a supervisão no celular:
+- **Comprar**: abaixo do mínimo agrupado por fornecedor (`agruparCompras`: `supplier_id` › nome › "Produzir na cozinha"
+  (saída de ficha de produção ou fornecedor "Produção interna") › "Sem fornecedor"). Quantidade sugerida
+  (`sugestaoCompra`) = uso de `estoque_config.dias_compra` dias (padrão **60 = dois meses**, decisão do dono), no mínimo o
+  bastante para ficar com 2× o mínimo, arredondado na embalagem (`purchase_unit`/`purchase_factor`); **produção da
+  cozinha: até 2× o mínimo** (guacamole de 2 meses estraga). Estoque negativo de insumo contável = "conte antes" (fora do
+  pedido). Mandar: WhatsApp do fornecedor (`linkWhatsApp`, fone de `fin_suppliers`) ou compartilhar/copiar (cancelar
+  o compartilhar não marca); a marca "pedido mandado" fica em `estoque_pedidos_enviados` (7 dias, todos os aparelhos;
+  desfazer = `desfeito_em`) e vale **por insumo** (`pedidoDoInsumo`): insumo novo no fornecedor, ou que teve entrada
+  depois do envio (`ultima_entrada` = última `in` sem `order_id` em 30 dias), volta a pedir.
+  Item → mudar mínimo / "Não uso mais" (`stock-write` direto, com erro de volta na tela).
+- **Contar**: planos em `inventory_count_plans` (diária / semanal `dia_semana` 0=dom / mensal `dia_mes` 1–28, 0 = último
+  dia; `todos` = quem tem `count_inventory`, senão lista `itens`). Ocorrência atual = última data agendada <= hoje e >=
+  criação do plano; pendente = item sem contagem confirmada (`inventory_sessions`, data de Brasília) desde a ocorrência.
+  Sem plano: botão "Criar as duas de sempre" (geral no último dia do mês + semanal segunda com os 10 que mais giram em
+  R$/dia). Contagem passo a passo (`ContagemFolha`) grava **só os contados** via `confirmarInventario` → `fn_confirm_inventory`
+  (respeita `count_unit`/`count_factor`); só aparece para quem tem `estoque_inventario` (igual à aba Inventário); o
+  digitado sobrevive a fechar a folha (toque no fundo não fecha com número digitado). Insumo tirado da contagem sai do
+  plano (`fn_confirm_inventory` pula `count_inventory = false`). Configurar: `estoque_pode_configurar` = admin, ou chave `estoque_inventario` da
+  matriz `permissions` (sem linha: só gerente).
+- **Vai faltar**: com "Pôr na lista" (só na sessão) e "Mínimo de X" (uso de `dias_previsao` dias) para quem não tem mínimo.
+- **Pegadinhas:** a contagem cheia da aba Inventário manda TODOS os insumos (os não tocados com o teórico), então ela
+  marca todos como contados — é o comportamento certo para a geral, mas não use para "contar alguns". Preço por grama
+  sai por kg (`fmtPrecoUnit`). `useEstoqueSituacao` recarrega no BroadcastChannel `erpos-estoque-sync`.
+- **Achados (não corrigidos):** Jalapeño da Paranaguá baixa ~3 kg/dia pela ficha (−21,7 kg no sistema: unidade da ficha
+  errada?); dois insumos chamados "Cheddar produzido"; 9 itens da lista sem fornecedor. Hortifrúti com 60 dias de uso
+  sugere quantidade grande demais — se incomodar, o próximo passo é dias de compra por categoria/insumo.
+- Protótipo aprovado: `docs/prototipos/estoque-inicio-proposta.html` (não commitado, cópia no checkout principal).
+
+### 2026-10-03 — Tela Hoje (`/hoje`): a porta de entrada que conduz
+- **O que é:** a primeira tela depois do login. Mostra o que precisa da pessoa AGORA, em todas as lojas dela. Cada cartão resolve ali mesmo, e quando tudo acaba aparece "Tudo em dia ✓ / Pode fechar o app". É o pedido do dono de 2026-10-02: economia mental, conduzir, celular. Protótipo aprovado em `docs/prototipos/hoje-proposta.html`. Nenhuma tela saiu; os módulos continuam no menu.
+- **Quem cai onde** (`src/pages/hoje/InicioPorPerfil.tsx`, rota índice `/`; o login sem rota guardada vai para `/`):
+  - admin, gerente e supervisao vão para `/hoje`;
+  - caixa vai para `/pdv/caixa` no computador e para `/hoje` no celular (ou quando a loja não tem o terminal de caixa ligado);
+  - o resto vai para `/modulos`, que já redireciona totem, gestor de entregas e tarefas.
+- **Supervisão × gerente:** supervisão é quem fica na loja. Vê loja aberta/fechada com o botão "Abrir a loja", estoque, receber e aprovar. Gerente fica abaixo do dono e não fica necessariamente na loja: vê o financeiro e a gestão.
+- **Blocos** (`src/pages/hoje/organizar.ts`, função pura, testada em `src/test/lib/hojeOrganizar.test.ts`):
+  - **Agora:** urgente, conta vencida, vence em até 3 dias, ou boleto pedido há 2 dias ou mais (`payload.cobrar`).
+  - **Para pôr em dia:** `item_sem_classe` e `conta_sem_dre`. A `nota_nao_lancada` NÃO entra aqui: o cron só a cria com boleto vencendo, então é "agora".
+  - **Pode esperar:** volta sozinho para "agora" quando aperta.
+  - **Esperando outras pessoas:** boleto já pedido.
+  - **Silenciado:** aviso com "ciente"; volta se piorar.
+- **Junta o que é a mesma coisa:**
+  - `conta_atrasada` (agregada por loja) engole os `boleto_faltando` vencidos da mesma loja;
+  - `conta_vence_hoje` engole os `boleto_faltando` que vencem hoje;
+  - 2 ou mais `boleto_faltando` do mesmo fornecedor no mesmo bloco viram um cartão só, com o nome tirado do título do cron.
+- **Ordem dentro do bloco:**
+  - primeiro quem tem alguém esperando agora (`aprovacao`, `pagamento_*`);
+  - depois o prazo (o vencido mais antigo antes);
+  - depois urgente, depois chegada.
+  - O dono tinha escolhido ordem de chegada na caixa do chat; aqui é pelo prazo.
+- **Dinheiro tem um caminho só:** "Pagar" e "Pedir boleto" na Hoje disparam `pedirAoChat` (evento `EVENTO_ASSISTENTE_ACAO`, `lib/assistenteFoco.ts`). O `AssistenteChat` do dono escuta e roda o MESMO `pagarConta`, `pagarPendencia` e `pedirPendencia` da caixa de pendências: Inter, PIN, digital, cartão no rodapé. "Pedir" só preenche a caixa de texto; nada é enviado sozinho. Baixa, contas atrasadas e DRE reaproveitam `BaixaDaConta`, `ContasAtrasadasInline` e `ContasDreInline` (agora exportados de `PendenciasChat`). O `call` da Edge `assistente-app` mudou para `lib/assistenteApp.ts` (`chamarAssistente`).
+- **Pegadinhas:**
+  - O papel por loja vem de `get_user_tenants`. O `availableTenants` do `AuthContext` zera depois de escolher a loja. Se a leitura falhar, a tela mostra erro e NÃO diz "tudo em dia".
+  - `pagamento_*` só aparece para o dono; para os outros seria cartão sem saída.
+  - Tipos "diretos" do chat (sangria, boleto por e-mail, compra pelo celular…) não ganham "Não vou fazer", porque descartar fecha para sempre.
+  - `sessao.iniciadaEm` já vem formatado ("08:30").
+  - No celular o "Agora" vem antes do resumo. Resumo e atalhos montam num lugar só (`useIsMobile`), para não buscar duas vezes.
+  - A tela confere a cada 60 s com a tela visível; é a tela inicial de todo gestor.
+- **Números iguais às outras telas:**
+  - faturamento = Dashboard (`fn_get_dashboard_metrics` + iFood, cartão `FaturamentoHero`);
+  - "no banco" e "vencidas + 7 dias" = mesma regra do Financeiro › Painel;
+  - loja aberta = `SessaoContext`.
+- **Testado em 2026-10-03:**
+  - logado no localhost no celular (375) e no computador (1366);
+  - El Patron Paranaguá e Vila Leste só leitura;
+  - baixa de verdade numa conta da Testes PDV pelo cartão (conta `paid`, pendência `resolvida` com motivo);
+  - "Pedir o boleto" abriu o chat com o texto; apagado sem enviar.
+- **Sem teste logado:** os perfis supervisão, gerente e caixa (sem senha dos `qa.*`), "Pagar" com PIN pela Hoje e concluir tarefa pela Hoje (mesma Edge `task-write` do módulo).
+
+### 2026-10-03 — "O que aconteceu?": um começo só para qualquer lançamento
+- **Pedido do dono** (visão de economia mental): havia ~9 portas para lançar despesa/compra (Nova conta, Nova compra, Fluxo, Bancos, Conciliação, Notas, Guias, RH, `/receber`, chat, Sangria). Regra: **nenhum caminho sai, muda só a porta**. Protótipo aprovado: `docs/prototipos/lancar-proposta.html`.
+- **Onde:** `src/components/feature/lancar/` — `opcoes.ts` (árvore + quem vê) e `OQueAconteceu.tsx` (folha no celular / janela no computador; `telaCheia` para `/lancar`). Exportado em `index.ts` para a tela Hoje abrir pelo "+": `<OQueAconteceu onFechar={…} />`. Entradas: botão **Lançar** do Financeiro (a lista antiga `LancarFinanceiroModal` virou "Ver todos os jeitos de lançar (lista completa)" dentro da folha), rota **`/lancar`** (terminal, tela cheia), ação rápida ⚡ **`lancar`** e atalho "Lançar" no `manifest.webmanifest`.
+- **5 respostas em ordem fixa** (decisão do dono: decorar o lugar): Paguei algo · Chegou mercadoria · Recebi uma nota ou boleto · Tenho que pagar alguém · Gastei do meu bolso. Cada folha leva à tela que já existe.
+- **Permissão = a da tela de destino:** os predicados usam `rotaLiberada`/`acaoLiberada` (`assistente/acoes/acesso.ts`), que espelham RotaProtegida, abas do Financeiro (só Admin/Gerente/Financeiro) e `pag_*`. **Variantes:** a mesma resposta leva quem lança direto à tela de lançar e quem não lança ao pedido de pagamento (`/receber?pedido=…`, selo azul "o dono aprova") — vale a 1ª liberada. Pergunta com um caminho só no perfil vai direto (`caminhoUnico`). Contabilidade só vê a guia (tem `fin_pagar`/`fin_notas_entrada`, mas `financial-write`/`fiscal-inbound` recusam o lançamento dela). Supervisão (fica na loja) recebe, faz sangria e pede; gerente segue a matriz (na Paranaguá sem Contas a Pagar → boleto vira pedido). Empresa sem PDV (`tenants.kind='financeiro'`, `ContextoAcesso.temPdv`) não vê Recebimentos nem sangria, nem o Admin (igual ao `/modulos`).
+- **Conta que ainda vai ser paga → Nova conta** (fornecedor, vencimento e competência para a DRE); **despesa já paga da conta/cartão → "Lançar despesa"** do ⚡, embutido na folha (o `Roteiro` do kit ocupa `absolute inset-0` de um pai `relative`).
+- **Links novos:** `/receber?receber=cupom` (abre o leitor quando `podeReceber` chegar — a matriz carrega depois); `/financeiro?tab=conciliacao&abrir=pendentes` (filtro Pendentes + Saídas); `/financeiro?tab=rh&sub=prestadores|freelancers` (subaba do RH; freelancers vai pela aba `rh`, que abre com `fin_rh` OU `fin_freelancers` — `?tab=freelancers` sem `fin_freelancers` cai em outra aba); `/pdv/caixa?abrir=sangria&tipo=freelancer|outro|fornecedor` (`SangriaSuprimentoModal.motivoInicial`). **Caixa fechado (dono): só o aviso "Abra o caixa"**; o link fica na URL e a sangria abre sozinha quando o caixa abrir.
+- **Voltar do celular:** uma camada `useVoltarFecha` por nível (folha, pergunta 1, pergunta 2, passo a passo). Escape/toque fora não fecham durante o "Lançar despesa" (pode estar gravando). Conciliação aplica o `?abrir=pendentes` num efeito: já estando na aba, `irParaResultado` remonta antes de a URL nova chegar (o BrowserRouter troca a URL em transição).
+- **Pegadinha:** a regra do ⚡ `lancar` em `acesso.ts` é escrita à mão (importar `opcoes.ts` lá criaria ciclo). O teste `src/test/lib/lancarOpcoes.test.ts` confere que ela bate com `temAlgumLancamento` em todos os papéis — resposta nova com permissão nova = atualizar os dois. Papel preso (Financeiro/Contabilidade) não vê o ⚡ `lancar`: usa o botão da própria tela.
+
+### 2026-10-03 — Cartão de crédito pelo app (Mercado Pago) no delivery e no QR + QR universal "paga antes"
+- **Decisões do dono:** só **crédito** e só **à vista** (débito = Pix). **Fato medido:** online, as contas MP da Vila Leste e de Paranaguá só têm débito `debelo` (Elo Débito) — Visa/Master débito não existem online no MP Brasil (`GET /v1/payment_methods`, consultado por SQL com a extensão `http`).
+- **Como funciona:** formulário = **Card Payment Brick** (`@mercadopago/sdk-react`, `src/components/feature/CartaoCobrancaPanel.tsx`) com a **Public Key** da loja (`fin_payment_provider_config.public_key`, devolvida em `public_status`/`get_bill` só com `card_enabled`). O token vai para `online-payments › create_card` → **API de Orders** (`POST /v1/orders`, `type: online`, `processing_mode: automatic`, `installments: 1`, 3DS `on_fraud_risk` + `liability_shift: required`, retry sem 3DS só se o MP recusar a requisição por `transaction_security`). O Pix continua na API de Payments. Cobrança = linha em `fin_pix_payments` com `method='credit_card'`, `provider_payment_id` = `ORD…`, `ticket_url` = URL do desafio do banco (iframe no app).
+- **Dinheiro (pegadinhas que a revisão pegou):** (1) a linha do cartão é gravada **antes** do POST (o MP cobra dentro do próprio POST; resposta perdida não pode virar dinheiro sem rastro — webhook acha pelo `external_reference`); (2) cartão aprovado depois de expirar/cancelar/falhar aqui **liquida mesmo assim** (`settlePix(..., fromStatuses)` num único update); (3) `settlePix` **não lança pagamento em pedido já pago/cancelado** — grava `error` "PAGO EM DOBRO … estornar"; (4) antes de cancelar cobrança antiga (troca Pix↔cartão), **reconsulta no MP**; (5) `create_card` recusa com outro cartão pendente do mesmo dono (`card_in_progress`); (6) freio: 5 recusas do cliente/30 min ou 15 da loja/10 min → 429 (endpoint público = teste de cartão roubado); (7) `loadConfig` lança em erro de leitura (webhook 500 → MP reenvia).
+- **Webhook:** tópico **"Order (Mercado Pago)"** precisa ser marcado no painel da aplicação, na MESMA URL do Pix (`online-payments?webhook=1&tenant_id=…`). A order NÃO aceita `notification_url` por cobrança. Rede de segurança: cron **`online-card-sweep`** (10 min, `fn_online_card_sweep` → `sweep_cards` com `x-internal-key`) reconsulta cartão pendente/expirado das últimas 48 h; `confirm_manual` reconsulta cartão expirado/cancelado/recusado.
+- **Financeiro:** venda entra na forma **"Cartão de Crédito" da loja** (tPag 03, relatórios por tipo; não criar forma nova — apareceria nos botões do PDV/tablet), mas com **taxa/prazo do cartão online** (`fin_payment_provider_config.card_fee_percentage/card_days_to_receive`; nulo = os da forma). D+0 credita só em `card_bank_account_id` (conta do MP no financeiro; nulo = não credita banco — nunca a conta da maquininha). D+N grava `fin_receivable_installments.fee_percentage`, que o `financial-write › receive_installment` usa antes da taxa da forma. Operador do pagamento: "Cliente • Cartão online".
+- **Delivery:** forma `cartao_online` ("Cartão de crédito pelo app"); `delivery-write` segura qualquer forma que contenha **"pelo app"** (`/pelo app/i`) e o `release_held_order` reescreve "Pagamento: …" nas notas com o que foi pago de fato (cliente pode trocar cartão↔Pix na tela). Gestor/motoboy/kanban testam `/pelo app/i`. `ifood-shipping › paymentFromNotes` trata "pelo app" como pago.
+- **QR universal "paga antes"** (`system_settings.qr_universal_pay_before`, Configurações › Operação › Autoatendimento; padrão desligado): `mesa-write › create_mesa_order` nasce rascunho (`held: true`), o app não imprime; libera quando o Pix/cartão pelo app confirma (`online-payments` → `mesa-write › release_held_order`, chave interna, **tickets saem do servidor** no formato do `printOrderQueue`, com partes de produção) ou quando o caixa recebe na lista "Autoatendimento — aguardando pagamento" (`PedidosTabletAguardando`, que trava Receber/Cancelar enquanto `order-write › list_held_orders` devolve `online_pending`). `loadBill` inclui o rascunho na conta da SENHA.
+- **Pegadinha do SDK:** o `<CardPayment>` recria o formulário (apaga o que o cliente digitou) a cada mudança de REFERÊNCIA de `initialization`/`customization`/callbacks — manter tudo estável (constante de módulo, `useMemo`, `useCallback` com ref).
+- **PixCobrancaPanel cria Pix ao montar** (e isso cancela cartão pendente): nunca renderizar os dois painéis juntos; trocar é clique explícito.
+- **Taxa do Pix pelo app (10-03):** o Checkout do MP cobra Pix (0,99% na Vila); o Pix direto na conta da loja não. `fin_payment_provider_config.pix_fee_percentage` (modal do MP) substitui a taxa da forma "PIX" só no Pix online; a despesa sai como "Taxa Mercado Pago — PIX (x%)" (`auto_card_fee`). Se um dia ligar a conciliação do MP com `post_to_ledger` na loja, conferir dupla contagem dessa taxa (o trigger `fora_do_caixa` só cobre cartão).
+- **Ligado na Vila Leste em 10-03:** app "Pagamento ERPOS V0" (1169595456983603); evento "Order" marcado no webhook de **produção** (a aba "Modo de teste" do painel é outra lista de eventos); cartão 4,98% na hora (aba Checkout, crédito à vista), Pix 0,99%.
+
+### 2026-10-03 — Admin Master › ações na loja (zerar pedidos/estoque, resetar, deletar)
+- **Pegadinha:** comparar coluna enum com literal que não existe no enum (`role IN ('admin','admin-master')`, `user_role` não tem `admin-master`) derruba a chamada inteira com "invalid input value for enum" — mesmo que o ramo nem fosse usado. As 4 funções `fn_admin_*` nunca funcionaram pela tela por isso. Agora: `fn_assert_platform_admin()` (só o dono) ou service_role.
+- **Deletar loja (refeito 10-03 à tarde, `20261003130000_admin_deletar_loja_generico.sql`):** `fn_admin_delete_tenant` **não chama mais o reset** — a ordem de DELETEs escrita à mão quebrava a cada tabela nova (`menu_highlights` na EP PAR MALL, `order_item_options` na Restaurante Demo). Agora lê tudo do catálogo: (1) linha de **outra loja** apontando para linha desta por FK sem cascade → SET NULL se a coluna aceita nulo (o pedido guarda `item_name`/`option_name`); coluna obrigatória → para com "N registro(s) de X (loja Y) usam Z desta loja" (decisão do dono); (2) DELETE por `tenant_id` em todas as tabelas, em passadas (FK violada fica para a próxima). **Pegadinha:** FK composta `(coluna, tenant_id)` com SET NULL anula também o `tenant_id` da filha (linha órfã; em `ingredients` o gatilho `fn_sync_ingredient_category` tenta recriar a categoria sem loja) — por isso a mãe de FK SET NULL espera a filha sair. Continua ligando `erpos.deleting_tenant` para a trava da DRE; trava nova de DELETE de dado "do sistema" deve respeitar a mesma flag. Testada em transação desfeita na EP PAR MALL, Testes PDV e Demo. **Resetar loja** (`fn_admin_reset_tenant`) ainda é lista manual e quebra nos mesmos casos (ex.: destaque do cardápio).
+
+### 2026-10-02 — Tarefas › Linha do tempo (aba nova; o Cronograma/Gantt é outra aba, de outra sessão)
+- **O que é:** aba "Linha do tempo" (`display = 'linha'`) em qualquer origem (pasta, Minhas, Compartilhadas, Que atribuí, Todas). No celular fica dentro da aba Agenda (seletor "Agenda | Linha do tempo | Cronograma"), porque a barra de baixo já tem 6 botões. O dono decidiu manter **duas abas**: a Linha do tempo (quem faz o quê e quando) e o **Cronograma** (Gantt com ligações entre tarefas, `claude/tarefas-gantt`).
+- **Arquivos:** conta pura em `src/pages/tarefas/lib/linhaTempo.ts` (período de cada tarefa, grupos, atraso, progresso, payloads de mover/esticar/marcar, `empacotar` do modo compacto) — testes em `src/test/lib/tarefasLinhaTempo.test.ts`; tela em `components/linhaTempo/ViewLinhaTempo.tsx` (+ `Barra.tsx`, `Escala.tsx`) — teste em `src/test/components/tarefasLinhaTempoTela.test.tsx`.
+- **Decisões (vieram de pesquisa com Asana, monday, ClickUp, Notion, Linear, Jira, Trello, Airtable):** (1) tarefa sem data **nunca some** — gaveta "N sem data" no fim de cada grupo + contador no topo; marca-se clicando/arrastando no dia, na linha dela (celular: toca no dia e confirma "Marcar"); (2) **nunca bloco mudo** — título dentro da barra quando cabe, senão logo depois; o de dentro gruda na esquerda ao rolar (`position: sticky` dentro de barra com `overflow: clip` — `overflow: hidden` viraria contêiner de rolagem e quebraria o sticky); (3) linhas por **Pessoa** com a **ocupação do dia** (mesma conta da Carga: `calcularCarga` + `fn_get_task_capacities`/`fn_get_task_absences`, cor `corOcupacao`) e aviso "N dias acima" (>110% nas próximas 2 semanas); (4) atraso = rabo hachurado vermelho do vencimento até hoje + "Nd atrasada"; (5) **modo compacto** (várias tarefas por linha, o rótulo de fora conta como ocupado) — padrão no celular; detalhado (uma por linha, coluna de nomes) no computador; (6) mãe sem data herda o período das subtarefas (colchete); (7) próximas repetições tracejadas; (8) setas "fora da tela" com a data (no celular levam o título).
+- **Interação:** arrastar move (mantém duração e hora do vencimento), alças nas pontas esticam (`ajustarPeriodo` do calendário); Ctrl+roda e pinça = zoom com âncora; Hoje/◀▶/Ajustar; faixa de dias cresce sozinha perto da ponta (±2 anos) e não cresce quando a área não tem largura. Pointer events: mouse arrasta na hora (>4 px); toque precisa segurar ~⅓ s (antes disso é rolagem; durante o arrasto um `touchmove` não-passivo bloqueia a rolagem); perto da ponta (¼ da barra) estica. Pasta "só ver" não arrasta. Criar pelo "+" do grupo já leva pasta/responsável/status/prioridade do grupo; em "Minhas" a tarefa nova nasce comigo (senão sumia do filtro); em "Compartilhadas" não há "+".
+- **Banco:** só a trava `task_views_view_type_check` ganhou `'linha'` (migração `20261002131500_task_views_linha_tempo.sql`, aplicada via MCP) — junto com o `'gantt'` do Cronograma. Quem reaplicar qualquer uma das duas migrações precisa levar os dois valores.
+- **Testado:** modo demo `/dev/tarefas` (computador 1366 px e celular 375 px): arrastar, esticar, marcar sem data (clique, arraste e toque+confirmar), criar pelo "+", toque longo/toque rápido/deslizar (eventos de toque sintéticos), zoom. Sem teste logado com dados reais.
+
+### 2026-10-02 — Tarefas: editar campo personalizado e configurações da pasta
+- **Campo:** `campos/CampoForm.tsx` é o formulário único (criar e editar); `EditarCampoModal` abre ele sozinho. Editar muda
+  nome e opções (`task-write › update_field`, só quem criou); o **tipo não muda** (os valores gravados dependem dele) e as
+  opções mantêm o `id` — trocar o nome de uma opção não mexe nas tarefas. Opção tirada: as tarefas ficam com o id antigo no
+  banco; a tela trata como vazio (agrupamento joga em "Sem valor", `CampoInput` de múltipla escolha ignora o id para o
+  servidor não recusar "opção inexistente"). O formulário avisa quais opções vão ficar sem valor.
+- **Título da coluna (Lista):** clique abre menu (`Popover`/`Opcao` do `EditorCelula`): ordenar crescente/decrescente/tirar,
+  "Editar campo" (só coluna `campo:`) e "Ocultar coluna". Antes o clique alternava a ordenação direto.
+- **Pasta:** `ConfigPasta.tsx` (engrenagem no título da pasta e na árvore, só dono) = nome + cor (`update_list`, já existia) +
+  atalhos para Status, Campos, Compartilhar e Mover. Na árvore a engrenagem ocupa o lugar do ícone "Mover" (5 ícones
+  espremiam o nome); mover continua por arrastar e pelo atalho. Atalho de Status/Campos abre a pasta antes (eles valem para a
+  pasta aberta). Modo demo (`/dev/tarefas`) ganhou campos e `update_list`.
+
+### 2026-10-02 — Cardápio: horário de exibição (item, categoria e destaque)
+- **Dado:** `availability_schedule jsonb` em `menu_items`, `menu_categories` e `menu_highlights` (migration
+  `20261002130000`): lista `{days:[0..6] (0=Dom), start, end "HH:MM"}`, horário de Brasília; `null` = sempre; fim < início
+  = passa da meia-noite (madrugada conta para o dia em que a faixa começou); início = fim = dia todo.
+- **Regra única:** `src/lib/horarioExibicao.ts` (`visivelAgora`, `idsForaDoHorario`, `resumoHorario`). Relógio SEMPRE
+  `America/Sao_Paulo` (celular de turista pode estar em outro fuso). Destaque aparece só se o horário dele (null = segue o
+  item) E o do item E o da categoria baterem.
+- **Quem filtra é o front, reavaliando a cada minuto** (`useRelogioMinuto`, só liga se a loja usa horário): `CardapioContext`
+  (`itensPublicos` → totem; `itemNoHorario`), `useMesaQRData` e `useDeliveryData` (`montarCardapio(base, fora)`). A chave
+  `idsForaDoHorario(...).join(',')` só muda quando algo entra/sai → a tela não remonta a cada minuto. O servidor
+  (`fn_get_full_menu`, `mesa-write get_cardapio`, `delivery-write get_delivery_config`) só devolve o campo — filtrar no
+  servidor impediria o item de "voltar" sem recarregar.
+- **Caixa/garçom/PDV delivery NÃO escondem:** mostram o selo "FORA DO HORÁRIO" e vendem. Criar pedido não valida horário
+  (carrinho montado 1 min antes passa). O totem não registra item fora do horário como "sumiço" (`registroItensEscondidos`).
+- **Por canal (2026-10-03):** a faixa pode ter `channel: 'casa' | 'delivery'` (sem = os dois). Casa = mesa/QR, totem,
+  caixa, garçom; delivery = link do delivery, atendente do WhatsApp (`atendimento-loja/travas.ts › noHorario`) e PDV
+  delivery. **Canal sem nenhuma faixa = aparece sempre nele** (`horarioDoCanal` devolve null). `visivelAgora(horarios,
+  canal)` e `idsForaDoHorario(base, canal)` exigem o canal; `itemNoHorario(item, canal='casa')`. Admin: "Vale para" em
+  cada faixa (some quando o item/destaque só existe num canal), resumo "Casa: … | Delivery: …", `SeloHorario` comum
+  (verde/azul/âmbar = aparece agora só num canal) e o card do item também mostra o horário da CATEGORIA.
+- **Gravação:** `menu-write` (`upsert_item`/`upsert_category`/`upsert_highlight`) só mexe no campo quando ele vem no payload
+  (`undefined` = não mexe) — PausarItem, assistente-brain e reordenar não apagam o horário. O do destaque é um UPDATE à
+  parte depois da RPC `fn_upsert_menu_highlight` (assinatura fixa).
+- **Pegadinha (achada aqui):** `20260926020000_opcao_varios_insumos` (tabela `option_ingredients`) **nunca foi aplicada** e o
+  `menu-write` do ar é o anterior a ela. Publicar `menu-write` do repo quebraria salvar item com opções → em 02/10 publiquei a
+  versão do ar + só o horário (`functions download --use-api` + patch). Ao aplicar aquela migração, ela já devolve
+  `availability_schedule` (acrescentei); sem isso o `fn_get_full_menu` perderia o campo e salvar item zeraria o horário.
+
+### 2026-10-02 — Dashboard reorganizado (atenção no topo, meta com ritmo, pico por dia)
+- `/dashboard` = faixa "Precisa de atenção" (`AtencaoFaixa`: contas vencidas/folha/compras recebidas/orçamentos via
+  `useFinanceiroAlertas`, atrasados, insumo que vai zerar, abaixo do mínimo, validade) → `FaturamentoHero` (meta + ritmo)
+  → cartões → vendas por hora + `PedidosAgora` → `PorCanal` + categorias → mesas + `ResumoFinanceiro` → `HorariosPico` → últimos.
+- Backend (migração `20261002090000_dashboard_painel.sql`): `dashboard_metas` (loja × dia da semana; escrita SÓ pela RPC
+  `fn_salvar_dashboard_metas`, admin/manager; leitura `auth_is_member_of`), `fn_get_dashboard_painel(tenant, desde, completo)`
+  e `fn_get_dashboard_pico(tenant)`. Regra de faturamento = a do `fn_get_dashboard_metrics` (pago, não cancelado, sem treino/rascunho) + iFood no front.
+- **Critérios:** comparar só com o mesmo dia da semana passada ATÉ ESTA HORA (o "vs ontem" comparava dia parcial com dia
+  inteiro). Fila/atrasados só das últimas 12 h (pedido esquecido há meses virava "atrasado 221779 min"). Pico por **dia de
+  operação** (madrugada até 5h59 = dia anterior). A cada pedido só a recarga leve (`p_completo=false`); ritmo/validade/metas,
+  financeiro e pico a cada 15 min e no Atualizar.
+- **Pegadinhas:** `ingredient_expiry_alerts.status` é do lote (`active`); o nível de alerta está em `alert_level` — o bloco
+  antigo filtrava `status in (expired, critical, warning)` e nunca mostrou nada. Hook com `if (document.hidden) return` na
+  PRIMEIRA busca deixa o bloco vazio em aba aberta em segundo plano — só pular as repetições.
+
+### 2026-09-28 — Sonnet 5 → Sonnet 5.5 em todo o sistema
+- Trocado `claude-sonnet-5` → `claude-sonnet-5-5` (mesmo preço US$ 2/10) em `assistente-brain` (chat + leitura de foto/PDF),
+  `atendimento-loja` (atendente + juiz), `contas-email` (2ª leitura de boleto), `pedidos-pagamento/print-compra.ts`,
+  `trafego-pesquisador`. `meta-ads-agent` aceita os dois (rodadas antigas) e a sombra das lojas passou para o 5.5
+  (migração `20260928200000_meta_agent_sonnet_5_5.sql`). Nenhuma chamada usava o que o 5.5 recusa (`thinking disabled`,
+  `tool_choice` any/tool, `temperature`).
+- **Pegadinha medida — o esforço foi recalibrado:** no atendente, o 5.5 no esforço padrão (`high`) saiu 48% mais caro
+  (respostas mais longas, mais "chama a equipe"). Bateria de 60 cenários, avaliação às cegas: Sonnet 5 nota 7,97 / 4
+  graves / vendeu 41 / US$ 0,047 × 5.5 high 8,22 / 1 / 37 / US$ 0,069 × **5.5 `low` 8,30 / 1 / 43 / US$ 0,049** → ficou
+  `EFFORT = 'low'` em `atendimento-loja`. A simulação aceita `{"effort": "low|medium|high"}` para comparar.
+- Ao trocar de modelo: não levar o `effort` antigo às cegas — medir de novo. O assistente já usa `asst_settings.effort = low`.
+
+### 2026-09-26 — Várias abas/janelas no computador
+- **Loja ativa é POR ABA:** `src/lib/lojaAtiva.ts` (`getLojaAtiva`/`setLojaAtiva`/`fixarLojaNestaAba`/`limparLojaAtiva`) — sessionStorage da aba primeiro, localStorage só como padrão da aba nova. Nunca ler `erpos_selected_tenant_id` direto do localStorage: o header `x-tenant-id` de uma aba seguia a troca de loja feita em outra.
+- **Navegação = link de verdade** (`<a href>`/`NavLink`) para rodinha/Ctrl+clique abrirem aba; clique simples intercepta com `cliqueParaNovaAba` (`src/lib/novaJanela.ts`). `abrirNovaJanela` = popup no navegador, janela do app no PWA.
+- Pegadinha de uso: digitar o endereço no Chrome com o ERPOS aberto sugere "Mudar para esta guia" — parece que "as abas ficam no mesmo lugar".
+
+### 2026-09-30 — iFood Analytics (indicadores D-1) — referência viva: `IFOOD-MODULOS-HOMOLOGACAO.md`
+- Edge `ifood-shipping` ação `analytics_kpis` (regras puras em `ifood-shipping/analytics.ts`) + aba **Indicadores** no modal "Loja no iFood" (`src/pages/gestor-entregas/components/IfoodIndicadores.tsx`, admin/gerente).
+- **Pegadinha:** com `x-request-homologation: true` o iFood ignora o corpo e devolve sempre o exemplo da doc (páginas repetidas, `dayOfWeek` em nome) → a tela usa uma consulta `groupBy` somada no servidor e descarta linha de chave repetida. Homologação agora é pelo wizard do Devportal (desde 30/09), com o payload do botão "Gerar payload de homologação".
+
+### 2026-09-26 — iFood Entrega (Shipping / Sob Demanda) — referência viva: `IFOOD-SHIPPING.md`
+- **Apps do iFood são por CATEGORIA** e a categoria trava os módulos: o app "ERPOS" (Finanças) não aceita Shipping. Criado o app **"ERPOS PDV"** (categoria PDV) com credenciais/autorizações próprias (`ifood_pdv_config`/`ifood_pdv_auths`), separado de `fin_ifood_*`. Order ficou de fora (decisão do dono; exigiria outro app).
+- **Pegadinha:** a loja de teste do iFood NÃO suporta Entrega iFood (FAQ do portal) — regras dos eventos testadas com os exemplos da doc (`supabase/functions/ifood-shipping/core.ts` + `src/test/edge/ifoodShipping.test.ts`).
+- **POST que gera custo não repete** (5xx pode ter sido aceito): `create` reserva a linha antes (índice único parcial = trava de 2 cliques), resposta incerta → `uncertain` e a tela exige "conferi no iFood". Cron de 30 s (pg_net) só chama a Edge com entrega ativa (<6 h) ou homologação (24 h); job `cron-historico-limpeza` apaga `cron.job_run_details` > 3 dias.
+
+### 2026-09-26 — Fornecedor pré-pago (Facebook/Meta Ads: Pix de recarga × nota do consumo)
+- **Causa:** o Pix ao Facebook é **recarga de crédito**; a NFS-e do dia 03 é o **consumo do mês anterior** (`dCompet` = último dia do mês dos anúncios). "Nota do mês" (1 nota ↔ N pagamentos) nunca fecha e a diferença virava conta a pagar falsa.
+- **Solução:** migração `20260927120000_fornecedor_pre_pago.sql` — `fin_prepaid_suppliers` (CNPJ casado pela raiz, categoria DRE, `start_date`, `opening_balance`) e `fin_prepaid_moves` (topup +, consumption −, adjust ±; saldo = abertura + soma). Só a edge lê/grava (sem grant a authenticated).
+  - **Recarga:** `fn_prepaid_apply_topups(tenant)` pega débito Inter pendente ao CNPJ desde `start_date` → linha `matched/reconciled`, `match_kind='prepaid_topup'`, `fin_cash_flow` origin **`prepaid_topup`** (sai do caixa; o DRE só lê origens específicas de `fin_cash_flow`, então não entra). Roda no `rematch` (antes do `fn_match_payments`), no sync do `inter-bank` e ao abrir/salvar o pré-pago. Undo na Conciliação apaga move + cash flow e marca `match_detail.prepaid_skip` (não volta sozinha).
+  - **Consumo:** `conciliacao-pagamentos › prepaid_consume` chama `fiscal-inbound import_bill` (1 parcela na data de competência) e marca a conta **paga sem banco e sem `fin_cash_flow`** (`payment_method 'Crédito pré-pago'`, `paid_date = due_date = competência`, `competence_month`) → DRE caixa e competência caem no mês do consumo; `fiscal_inbound_documents.settlement='prepaid'`. Consumo com competência antes do `start_date` é recusado (ignorar a nota). `prepaid_unconsume` desfaz.
+  - `fiscal-inbound › autoLaunchTenant` pula fornecedor pré-pago. Tela: `notas/PrePago.tsx` (bloco no Conferir + janela "Crédito pré-pago" com extrato do crédito e "Acertar saldo").
+- **Pegadinha:** não usar `pay_bill` para a baixa do consumo — ele grava `auto_bill_payment` no `fin_cash_flow` e o caixa contaria a saída 2× (recarga + consumo).
+
+### 2026-09-26 — "Tuna e VR não somam na receita" (etiqueta da Conciliação × DRE)
+- **Causa da dúvida:** a etiqueta dada na Conciliação ("Repasse Tuna", "Repasse voucher") nunca cria receita — a receita vem das Fontes da loja (`src/lib/revenueSources.ts`). Tuna e VR pagam por Pix no Inter, então já estavam dentro de "Pix recebido", só não apareciam separados.
+- **Solução (só exibição, total igual):** `fin_pix_recebidos` devolve `category`; `pixEtiqueta()` e `maquininhaDaVenda()` (Stone × Mercado Pago pelo texto que cada conector grava na linha `stone_sale`) alimentam sublinhas no DRE/DRE Comparativo (`linhasDetalhe`, só com 2+ itens) e a categoria em Receitas. Teste: `src/test/lib/revenueDetalhe.test.ts`.
+- **Pegadinha:** mudar o texto da descrição em `stone-conciliation`/`mp-conciliation` quebra a separação por maquininha — manter "Stone" / "Mercado Pago" no texto.
+
+### 2026-09-29 — Nota de taxa descontada no repasse (Ticket, Goomer/Tuna) não vira conta
+- **Problema:** NFS-e da Ticket ("REEMBOLSO LÍQUIDO") e da Goomer ("processamento de pagamento online", repasse pela Tuna) viravam conta a pagar vencida — o emitente já ficou com o valor.
+- **Regra:** o repasse entra LÍQUIDO na receita (Pix recebido), então a taxa já está descontada: a nota é **ignorada**, nem como despesa paga (contaria 2×). `fiscal-inbound › descontadoNoRepasse()` lê natureza+itens (não o nome — a mensalidade da Goomer, mesmo CNPJ, é boleto real); o lançamento automático marca `ignored` com `ignore_reason`. Mesma regex em `NotasEntradaTab` (aviso). Se um dia a receita passar a ser bruta, aí a taxa vira despesa.
+
+### 2026-09-26 — Fornecedor pré-pago (Facebook/Meta Ads: Pix de recarga × nota do consumo)
+- **Causa:** o Pix ao Facebook é **recarga de crédito**; a NFS-e do dia 03 é o **consumo do mês anterior** (`dCompet` = último dia do mês dos anúncios). "Nota do mês" (1 nota ↔ N pagamentos) nunca fecha e a diferença virava conta a pagar falsa.
+- **Solução:** migração `20260927120000_fornecedor_pre_pago.sql` — `fin_prepaid_suppliers` (CNPJ casado pela raiz, categoria DRE, `start_date`, `opening_balance`) e `fin_prepaid_moves` (topup +, consumption −, adjust ±; saldo = abertura + soma). Só a edge lê/grava (sem grant a authenticated).
+  - **Recarga:** `fn_prepaid_apply_topups(tenant)` pega débito Inter pendente ao CNPJ desde `start_date` → linha `matched/reconciled`, `match_kind='prepaid_topup'`, `fin_cash_flow` origin **`prepaid_topup`** (sai do caixa; o DRE só lê origens específicas de `fin_cash_flow`, então não entra). Roda no `rematch` (antes do `fn_match_payments`), no sync do `inter-bank` e ao abrir/salvar o pré-pago. Undo na Conciliação apaga move + cash flow e marca `match_detail.prepaid_skip` (não volta sozinha).
+  - **Consumo:** `conciliacao-pagamentos › prepaid_consume` chama `fiscal-inbound import_bill` (1 parcela na data de competência) e marca a conta **paga sem banco e sem `fin_cash_flow`** (`payment_method 'Crédito pré-pago'`, `paid_date = due_date = competência`, `competence_month`) → DRE caixa e competência caem no mês do consumo; `fiscal_inbound_documents.settlement='prepaid'`. Consumo com competência antes do `start_date` é recusado (ignorar a nota). `prepaid_unconsume` desfaz.
+  - `fiscal-inbound › autoLaunchTenant` pula fornecedor pré-pago. Tela: `notas/PrePago.tsx` (bloco no Conferir + janela "Crédito pré-pago" com extrato do crédito e "Acertar saldo").
+- **Pegadinha:** não usar `pay_bill` para a baixa do consumo — ele grava `auto_bill_payment` no `fin_cash_flow` e o caixa contaria a saída 2× (recarga + consumo).
+
+### 2026-09-25 — "Falha ao carregar: JWT expired" em aba aberta há tempo
+- **Causa:** o cliente Supabase roda com `autoRefreshToken: false`; a renovação depende do ping de 60 s do `AuthContext` (renova só se faltar < 5 min). Aba em segundo plano (timers estrangulados) ou PC que dormiu manda consulta com o token de acesso vencido → PostgREST/edge respondem 401 "JWT expired".
+- **Solução:** `fetchComLoja` (`src/lib/supabase.ts`) chama `retentarSeJwtVencido`: 401 com "JWT expired" em `/rest/v1` ou `/functions/v1`, com token de usuário e corpo string → `refreshSessionWithReason()` UMA vez (promise compartilhada entre consultas simultâneas) e repete com o token novo; refresh recusado devolve o 401 original. Teste: `src/test/lib/jwtExpiradoRetry.test.ts`.
+- **Pegadinha relacionada:** tela que faz `Promise.all` de consulta direta + edge fica vazia quando a edge está lenta — carregue a edge em paralelo sem bloquear (aba iFood, `get_config`).
+
+### 2026-09-25 — "Failed to fetch dynamically imported module" caía na tela de erro
+- **Causa:** o `vite:preloadError` do `main.tsx` só dispara quando falha uma **dependência** da tela; quando o **próprio arquivo da rota** (React.lazy) não baixa (4G oscilando, ou deploy novo com aba antiga), o import rejeita direto no ErrorBoundary. Visto no celular com `page-*.js` de 1,4 MB que existia no servidor.
+- **Solução:** `src/lib/recargaTela.ts` — o ErrorBoundary do `App.tsx` recarrega sozinho quando o erro é de carregar tela, no máximo 1x por minuto (`sessionStorage erpos_chunk_reload_ts`, sem laço offline); se falhar de novo mostra "Não consegui carregar esta tela" em vez do erro técnico. Testado com build de produção apagando o arquivo da rota.
+, contexto e onde foi aplicado.
+
+### 2026-09-25 — Tarefas: relatório compartilhável por link (respostas de quem está fora do sistema)
+- **O que é:** Tarefas › "Relatórios" (barra lateral; no celular, folha de Pastas). O dono monta itens (título, texto, imagens), manda o link `/r/:token` (copiar ou WhatsApp) e acompanha as respostas. Rota pública fora do `AppLayout`, sem login (`src/pages/relatorio-publico/page.tsx`); tela do dono em `src/pages/tarefas/relatorios/` (`Relatorios.tsx`, `ItemRelatorio.tsx` compartilhado pelas duas telas, `api.ts`, `demo.ts` p/ `/dev/tarefas`).
+- **Identificação:** quem abre o link informa nome (+ contato opcional) antes de ver os itens → `task_report_guests` com **hash** de um token aleatório; o token fica no `localStorage` do aparelho (`erpos_relatorio_convidado_<link>`). "Não sou eu" troca de pessoa. Trocar o link invalida o acesso de todos (precisam se identificar de novo); desligar o link bloqueia sem apagar.
+- **Nada se apaga da sequência:** cada resposta, mudança de status (Aguardando/Respondido/Resolvido) e edição de item (texto anterior guardado, quando já tem resposta ou alguém já entrou) é uma linha em `task_report_responses` com `author_name` e `created_at`. Resposta de fora com item em aberto → item vira "Respondido". Excluir item/relatório = `archived_at`.
+- **Backend:** migração `20260925100000_task_reports.sql` (4 tabelas `task_report*`, RLS só leitura do dono, escrita só service_role; bucket privado `task-reports` 10 MB só imagem). Edge **`task-reports`** (verify_jwt=false): ações `public_*` pelo `token` do link e ações do dono com JWT (mesma regra de acesso do task-write: loja ou `fn_user_tem_tarefas`). Imagens: upload multipart pela edge (front comprime p/ 1600px), leitura por URL assinada de 6 h. Resposta de fora dispara push ao dono (`send-push`, `url=/tarefas?relatorio=<id>`) via `EdgeRuntime.waitUntil` — sem isso a resposta demorava.
+- **Relatório dentro de pasta (mesmo dia):** `task_reports.list_id` → quem divide a pasta vê o relatório. `fn_task_report_access` = `creator` | `owner` (dono da pasta) | `edit` | `view` (herda `fn_task_list_access`, vale subárvore); `fn_task_reports_acessiveis` alimenta a lista. Na edge `meuRelatorio(id, mínimo)`: view = ler/responder/enviar imagem; edit = itens, título, link, encerrar; owner = excluir; creator = trocar a pasta (`update` com `list_id`, só p/ pasta onde ele é dono ou edita). "Novidades" por pessoa em `task_report_seen` (`owner_seen_at` ficou sem uso). Resposta da equipe traz `author_is_creator` (selo "autor do relatório" × "equipe") e, só na tela da equipe, `author_user_id` ("você"). Push de resposta de fora continua indo só para quem criou.
+- **Parte 3 (mesmo dia):** (1) **Relatórios é aba da pasta** (`Display = 'relatorios'` ao lado de Carga, só com pasta aberta; no celular um botão no cabeçalho). Saiu da barra lateral e da folha de Pastas. Relatório novo nasce na pasta aberta; `list_id` virou obrigatório na edge (create/update). `?relatorio=<id>` e o clique vindo de uma tarefa chamam `abrirRelatorio` em `tarefas/page.tsx` (busca o `list_id` pelo `get`, abre a pasta na aba). (2) **Campos de resposta por item** (`task_report_items.fields` = `[{id,type,label,options:[{id,label}]}]`, tipos escolha/multipla/sim_nao/texto/numero/data; `task_report_responses.answers` = `{campo_id: valor}` só com o que mudou; valor atual = resposta mais recente) — `CamposResposta.tsx`; valida na edge (`validarCampos`/`validarRespostas`, opção por id). Convidado não cria campos. (3) **Ctrl+V e legenda:** `useAnexos().aoColar` no `onPaste` do bloco do formulário (evento sobe do textarea); `images[].caption` (≤300, validada na edge). (4) **Tarefa ↔ relatório:** `task_report_tasks`; ações `link_task`/`unlink_task` (relatório edit + tarefa visível: responsável ou acesso à pasta) e `task_links` (TaskDrawer › `RelatoriosDaTarefa`). No relatório, tarefa que a pessoa não vê entra só na contagem. (5) **Push para a equipe:** `fn_task_report_membros` (quem criou + donos e compartilhamentos da pasta e das pastas-mãe) com `tenant_id: null` no send-push — com loja, o send-push filtra os aparelhos e quem é de outra loja não recebe.
+- **Parte 4 (mesmo dia):** (1) Campos no item sem repetição: resumo em grade (valor 1x) + "Respondido por…" numa linha quando foi uma pessoa só; na sequência, 1º preenchimento vira "Preencheu X, Y" e mudança vira "antes → depois" (valores anteriores calculados percorrendo as respostas). (2) Caixas de seleção com `min`/`max` no campo (edge valida em `validarCampos`/`validarRespostas`, front trava as caixas no máximo e avisa o mínimo — `erroPreenchimento`). (3) `task_reports.links` = `[{url,title}]` (http/https) — seção "Arquivos" (`LinksRelatorio.tsx`) na equipe e no link público. (4) Modelos pessoais `task_report_templates` (`content` = description, links, items com title/body/fields/images); `save_template` copia as imagens para `modelos/<id>/` e `create` com `template_id` copia de volta para `<report_id>/` (`copiarImagens`, `storage.copy`) — sem isso o `validarImagens` recusaria o caminho de outro relatório. `delete_template` apaga as imagens do modelo.
+- **Parte 5:** link com o nome do relatório — `/r/<nome>/<código>` (rota nova `'/r/:nome/:token'`; `/r/:token` segue valendo). O nome (`slugRelatorio`) é só enfeite: a página corrige o endereço para o título atual com `replaceState`, e o convidado continua identificado pelo código. Código novo com 12 caracteres (`tokenAleatorio(9)`, 72 bits); os antigos de 24 continuam valendo ("Trocar link" gera um curto). Links de nuvem também por item e por resposta (`task_report_items.links`, `task_report_responses.links`; `useLinks`/`ChipsLinks` em `LinksRelatorio.tsx`; resposta só com link é aceita; modelos copiam os links do item).
+- **Parte 6 (2026-09-26) — campos condicionais (briefing):** `fields[].show_if = {field_id, values[]}` = "mostrar só se a pergunta X (escolha/caixas/sim-não, **acima** do campo) for A ou B" (caixas: basta uma marcada; sim/não usa `'sim'`/`'nao'`). `camposVisiveis()` em `CamposResposta.tsx` resolve em cadeia (pai escondido esconde o filho) e é usado no preenchimento e no resumo. Campo que ficou escondido e tinha valor vai `null` na próxima resposta (`respostasMudadas`) — o histórico guarda o valor antigo. Edge valida em `validarCampos` (pai acima, respostas existentes); limite subiu de 20 para 40 campos por item. Tirar o campo-pai ou trocar o tipo solta as condições dos filhos no editor.
+- **Parte 7 (2026-09-26) — resposta de resposta e campos só do criador:** `task_report_responses.parent_id` (migração `20260926100000`), um nível só — a edge achata resposta de resposta para a de cima e confere que é do mesmo item e `kind='reply'`; resposta com `parent_id` não muda campos nem status. Campos do item só mudam por quem responde pelo link ou por quem criou o relatório (`registrar(..., podeAlterarCampos)`; front `podeAlterarCampos={criador}`); o resto da equipe só comenta. Tela: `Conversa` em `ItemRelatorio.tsx` (filhas recuadas + "Responder"). Editor de campos: números, cor por pergunta-pai (`CORES`), faixa "Aparece se…" no topo do filho e "→ mostra 3, 4" na opção do pai.
+- **Parte 8 (2026-09-26) — item condicional:** `task_report_items.show_if = {item_id, field_id, values[]}` (migração `20260926110000`): o item inteiro só aparece no link se a pergunta de escolha de OUTRO item tiver a resposta. Regra em `relatorios/condicaoItem.ts` (`itensVisiveis` em cadeia; condição quebrada = aparece; `candidatosCondicao` evita ciclo). Link público filtra os itens; equipe vê todos com faixa "Aparece só se…" e "escondido agora" (`FaixaItemCondicional` em `Relatorios.tsx`). Editor em `FormItem` (`EditorCondicaoItem`, só com `itens`). Edge: `validarCondicaoItem` (mesmo relatório, pergunta de escolha, sem ciclo); modelos guardam `item_idx` e `create` remapeia para os ids novos.
+- **Parte 9 (2026-09-26) — ao vivo, histórico fechado e "Outro":** (1) toda escrita na edge `task-reports` (respostas, itens, relatório) manda um ping SEM conteúdo por REST do Realtime (`/realtime/v1/api/broadcast`, tópico `report-ping:<id>`, evento `mudou`); `useRelatorioAoVivo` (equipe e link) recarrega pelo caminho autenticado, com 400 ms de folga para juntar pings. Falha na recarga ao vivo da equipe não tira a pessoa da tela. (2) No item fica só a resposta final (resumo dos campos ou, sem campos, a última resposta de 1º nível); a sequência abre em "Ver histórico (N registros)". (3) Lista suspensa com `outro: true` (padrão em campo novo): opção "Outro…" abre texto livre; valor `outro:<texto>`; na condição vale o id `__outro` (`respostaBate`/`idsResposta`).
+- **Parte 10 (2026-09-26) — editar modelo:** Modelos › lápis abre `EditorModelo.tsx` (nome, explicação, links, itens com `FormItem`/`ItemRelatorio`, condição entre itens por id local → `item_idx` ao salvar). Nada grava até "Salvar modelo". Edge: `get_template` (URLs assinadas), `upload_template` (imagem em `modelos/<id>/`), `update_template` (valida itens/campos/condições/ciclo e apaga do armazenamento as imagens que saíram). Pegadinha: a tela carrega só no `modeloId` — `useToast()` muda a cada aviso e, se estivesse na dependência, recarregava e apagava o que foi editado.
+- **Tarefas › barra de pastas (2026-09-26):** largura arrastável na borda direita (`hooks/useLarguraSidebar.ts`, 200–480 px, duplo clique = 240, guardada em `localStorage` `erpos_tarefas_sidebar_largura`). Nome de pasta cortado mostra inteiro ao passar o mouse (`mostrarSeCortado` em `ArvorePastas.tsx` — `title` só quando `scrollWidth > clientWidth`), também no título da pasta no topo.
+- **Link usa `window.location.origin`**, não `getAppBaseUrl()`: o `VITE_APP_URL` do `.env` local ainda aponta para o domínio do Readdy (pausado).
+- **Pegadinha de teste:** módulo importado por `tarefas/page.tsx` não pode ler export de `@/lib/supabase` no topo do arquivo (os testes mockam o módulo sem `SUPABASE_URL`) — por isso `urlFn()` é função.
+
+### 2026-09-24 — Ações rápidas: fechamento do dia = painel do turno; recebimento abre o módulo
+- **Fechamento do dia** (`acoes/financeiro/FechamentoDia.tsx`) monta o MESMO `DadosPainel` do fechamento do turno (`assistente-cron` › `sessaoText`) e desenha com `PainelMensagem` — mesmos blocos e ordem, só números do dia inteiro. Mudou o painel do turno? Mude o do dia junto. Por hora/categoria vêm de `pedidosPagosDoDia`/`porHora`/`porCategoria` de `operacao/vendasDoDia.ts` (compartilhadas com "Vendas do dia").
+- **Mais vendidos por faturamento** (dono): `Ranking por="valor"`; no painel do servidor, `rk.p = 'v'`. Mensagens antigas sem `p` seguem por quantidade.
+- **Ação rápida que repetiria um módulo inteiro só abre o módulo**: "Confirmar recebimento" virou "Receber mercadoria" → `irPara('/receber')`; permissão = `rotaLiberada('/receber')` (`estoque_receber` ou `estoque_movimentar`). Dois caminhos para a mesma entrada de estoque divergem.
+
+### 2026-09-23 — Custo do assistente (Sonnet 5): trabalho repetitivo sai do modelo
+
+Diagnóstico pelo `asst_messages.usage` (7 dias, ~US$ 8/semana, 1 usuário): **cada rodada de ferramenta relê o bloco fixo inteiro** (~31 mil tokens: instruções + mapa do banco + mapa de ações + ferramentas), e o cache de 1 h é **regravado a 2× o preço** toda vez que vence (~35% do gasto). O que mais pesava era o lançamento de cupom do grupo: o modelo casava item por item com `buscar_nome`/`consultar_banco` — **8 a 21 rodadas por cupom**, ~US$ 0,11–0,25 cada.
+- **Regra que ficou:** tarefa com passos fixos vira **uma ferramenta que o código resolve**; o modelo só lê o documento e decide as dúvidas. Exemplo: `lancar_compra` no `assistente-brain` confere duplicidade, casa os itens (memória `purchase_receipt_item_links` → compra anterior com a mesma descrição em `fin_purchase_items` → nome parecido com `word_similarity`, só quando um candidato se destaca), lança, liga à sangria (dinheiro) e dá entrada no estoque. Item em dúvida segura o estoque até a resposta (segunda chamada só com `vinculos`, compra achada pela descrição — o histórico do chat não guarda resultado de ferramenta, então o modelo não tem o `compra_id` na mensagem seguinte).
+- **Resumo da manhã** montado em SQL no `assistente-cron` (`morningBriefText`, `POST {preview:'brief'}` para ver sem enviar) — era ~US$ 0,18/dia no modelo.
+- **Mapa de ações fora do bloco fixo:** fica só o índice; o contrato vem por `ver_mapa_acoes` e junto do erro do `erpos_executar`. Medido: o bloco caiu de ~31,2 mil para ~25,3 mil tokens — o grosso que sobra são as definições das ferramentas.
+- **Fila de documentos de grupo:** `assistente-webhook` põe o pedido em `status='fila'`; `fn_asst_fila_proximo()` (advisory lock) entrega um por vez; `assistente-cron › filaGrupo` acorda fila parada (>2 min) e marca `processando` preso (>10 min) como erro. Antes, 12 cupons postados juntos iam em paralelo, cada um repetindo as buscas do outro.
+- **2026-09-24 — documento de grupo sem modelo:** `assistente-webhook › tentarDireto` chama `assistente-brain` `compra_direta` (cupom de "chegou": leitura com `compra.{fornecedor,cnpj,data_emissao,numero,total}` + itens, soma = total, legenda sem forma de pagamento) ou `pagamento_direto` (boleto com linha conferida e **uma** conta a pagar em aberto do mesmo valor/fornecedor). Qualquer falta → `feito:false` e segue o modelo como antes. Loja vem de `asst_groups.tenant_id` (novo). O aviso é gravado na conversa pelo brain (canal `cron`, marcadores de botão); dúvida de insumo vai como texto ("responda aqui"), porque **enquete de mensagem de grupo não aparece no chat do ERPOS** (só no Telegram, que está desligado — o chat só desenha enquete vinda da resposta ao vivo).
+- **Haiku 4.5 × Sonnet 5 na leitura de foto (10 documentos reais, 09-24):** Haiku errou 6 (itens faltando/soma ≠ total em 3 notas, uma nota não lida, fatura Claro e DAS classificados como não-cobrança). Fica Sonnet (`asst_settings.media_model`, padrão sonnet). Para repetir: `assistente-webhook` `{action:'reler_midia', message_id, comparar:true}` lê com os dois e não grava.
+- **Chat:** histórico 10 (modo de grupo: 2), `asst_settings.effort='low'`, sem `web_search`.
+- **Testar edge interna sem a chave em mãos:** `net.http_post` com `(select decrypted_secret from vault.decrypted_secrets where name='assistente_internal_key')` no header — a chave não passa por você.
+
+### 2026-09-23 — Cardápio: botão "Publicar alterações" (telas abertas recarregam sem F5)
+
+- **Problema:** editar o cardápio grava na hora (menu-write), mas cada tela carrega o cardápio 1x ao abrir — PDV, garçom, totem, mesa, QR universal e delivery só viam depois de recarregar.
+- **Solução:** `src/hooks/useMenuPing.ts` — canal Realtime PÚBLICO `menu-ping:<tenantId>`, evento `menu_published`, payload mínimo. `publicarCardapio()` (botão no header de `pages/cardapio/page.tsx`) envia; se a aba já assina o tópico, manda pelo canal existente e NÃO o remove (`supabase.channel()` devolve o canal já existente — remover derrubaria a assinatura); senão vai pelo REST de broadcast (funciona com a anon key, testado).
+- **Quem escuta (os 3 loaders de cardápio):** `CardapioContext` (PDV caixa/garçom/delivery, totem, mesa, KDS) → `recarregar({silent:true})`; `useMesaQRData` → `fetchCardapioData` com `setCategoriaAtiva` no-op; `useDeliveryData` → `fetchDeliveryConfig` só com os setters do cardápio + aberto/fechado (taxa, endereço, loja, categoria = no-op). Públicas usam `comJitter` (até 4 s).
+- **Reconexão:** ao re-inscrever depois de queda, o hook dispara o recarregamento (broadcast enviado com o aparelho offline se perde).
+- **Critério:** tela nova que monte cardápio próprio precisa assinar `useMenuPing`, senão fica fora do "Publicar".
+
+### 2026-09-24 — Entrada tardia no estoque pela Classificação de itens
+- **Problema:** item recebido sem insumo ligado não entra no estoque, e ligar depois (`fn_item_link_ingredient`) só vale para as próximas entregas. Em 24/09 a Paranaguá tinha 58 recebimentos assim, 41 de itens **já ligados antes da entrega**: os recebimentos confirmados pelo assistente ("nota encaminhada pelo dono no WhatsApp" / "foto da nota no grupo") chamam `purchase-confirm-delivery` sem `ingredient_id` nos itens, e a Edge não aplicava a memória sozinha (só a tela mandava as sugestões). **Causa raiz corrigida no mesmo dia** (abaixo).
+- **Solução:** `fn_item_unstocked_base` (interna) casa item de compra recebido (`delivery_confirmed_at` ou `stock_applied_at`), sem insumo e sem `stock_skipped_at` com a classificação (supplier_key + item_key; despesa, serviço e "Acréscimos da nota" ficam de fora). `fn_item_unstocked_summary` alimenta a aba (filtro "Sem insumo", aviso "chegou N× sem entrar", faixa + filtro "Fora do estoque"); `fn_item_unstocked_receipts` lista e avisa "inventário depois" (sessão `confirmado` com o `insumoId` criada após o recebimento); `fn_item_stock_late_entry` (admin/gerente) dá entrada (qtd recebida × `units_per_package` da classificação, motivo "Compra (entrada tardia)") e grava o insumo no item da compra — é isso que tira o item da lista e impede entrada em dobro; "Não entram" grava `stock_skipped_at`. Nada vem marcado; ao ligar um insumo com pendências a janela abre sozinha.
+- **Não atualiza o preço do insumo** (compra antiga sobrescreveria o custo atual). Testado no banco real em transação desfeita (4 CX × 16 = +64; segunda chamada = 0).
+- **Causa raiz:** `_shared/vinculos-memorizados.ts` (`cnpjDaCompra`, `vinculosMemorizados`, `ligarItem`) é chamado no recebimento por `purchase-write confirm_delivery` (só quando o estoque entra agora, `!stock_applied_at`) e por `purchase-confirm-delivery` (itens que o payload NÃO mencionou; `ingredient_id: null` explícito = "sem insumo" escolhido e é respeitado). Ordem: CNPJ + código → EAN → `fn_item_memo_links` (Classificação de itens por supplier_key + item_key; cobre fornecedor sem CNPJ e item sem código). Fator = o do vínculo da classificação ou o da última compra ligada ao mesmo insumo; **sem fator conhecido não liga** (fator errado = estoque errado). Simulação nas compras reais da Paranaguá: NF 1487/1517/794666/DLR resolveriam 100%.
+
+### 2026-09-23 — Tarefas: modelos de estrutura de pastas (salvar pasta como modelo, aplicar, atualizar, versões)
+- **O modelo guarda a cópia COMPLETA da pasta** (subpastas, status, campos com opções, tarefas com descrição/checklist/subtarefas/etiquetas/estimativa/recorrência/responsável/valores de campo, visões salvas e agrupamento/colunas do navegador de quem gravou) em `content` jsonb. **O que entra ao aplicar é decidido por `options`** (liga/desliga + `excluidos` = refs desmarcadas na árvore). Por isso "editar o que está incluído" não exige regravar a partir da pasta, e marcar de volta funciona. Padrão: sem concluídas, sem responsável, status volta ao 1º, checklist desmarcado.
+- **Refs = ids originais** (pasta/tarefa/status/campo): estáveis entre pré-visualizar e gravar, e servem pra remapear `field:<id>` (agrupamento/visões) e `campo:<id>` (colunas) pro campo novo. Campo global reaproveita o mesmo id se ainda existir; valor de campo de outra pasta fora da árvore é descartado.
+- **Datas relativas**: a data mais antiga (início/vencimento) das tarefas vira o dia 0 e as outras "dia +N" (dia de Brasília, UTC−3 fixo). Vencimento com hora guarda 'HH:MM' de Brasília; sem hora volta como `T12:00:00Z` (igual ao editor da lista). Ao aplicar, a pessoa escolhe a data do dia 0.
+- **Aplicar**: `planejarAplicacao` gera todas as linhas com UUID já definido (pré-ordem: mãe antes das filhas — o FK de `parent_list_id`/`parent_task_id` é checado no fim do INSERT, então vai tudo num insert por tabela). **Pegadinha: o gatilho `trg_task_list_seed_statuses` cria 3 status em toda pasta nova** — para pastas com status no modelo a Edge apaga os semeados e insere os do modelo; o status de cada tarefa é resolvido depois (`resolverStatus`: mesmo status → mesma categoria → 1º aberto). Se algo falha no meio, a Edge apaga as pastas criadas (cascade leva status/campos/tarefas/visões) e as etiquetas novas. Aviso ao responsável: 1 por pessoa, não 1 por tarefa.
+- **Versionamento**: regravar a partir de uma pasta ou restaurar versão guarda o estado anterior em `task_structure_template_versions` (últimas 10). Mudar nome/descrição/opções não gera versão (é reversível na própria tela).
+- **Onde aplicar**: raiz, ou dentro de pasta própria/compartilhada com "editar" (`fn_task_list_access` owner/edit); dentro de pasta de outra pessoa as pastas novas ficam do dono dela (igual `create_list`). Gravar modelo exige qualquer acesso à pasta. Modelo **não** copia compartilhamentos, comentários, anexos nem cronômetro.
+- **Arquitetura anti-conflito**: as ações moram em `task-write/modelos.ts`; o `index.ts` só tem o import e o desvio `if (ACOES_MODELOS.has(action))` antes do switch. A lógica pura fica em `_shared/modelo-estrutura.ts`, importada pela Edge e pela tela (Vitest testa o mesmo código que roda no Deno). Deploy do `task-write` sobe os 3 arquivos.
+- **Realtime**: `trg_tasks_ping` é por linha — aplicar modelo (ou excluir pasta) manda dezenas de broadcasts. `useTarefas` agora junta os avisos em 1 reload (400 ms).
+- **Verificação**: 18 testes da lógica + 2 de tela (`tarefasModelosEstrutura`, `tarefasModelosTela`); as linhas geradas pelo plano foram inseridas no banco real numa transação desfeita (todas as tabelas, subtarefa no mesmo insert, status semeado trocado). Sem teste logado na tela (a sessão não entra com senha).
+
+### 2026-09-22 — Receber mercadoria pelo celular da loja (`/receber`)
+- Tela mobile em tela cheia (rota terminal) com passo a passo: **o que chegou?** → conferir item a item (chegou tudo / chegou diferente + em qual insumo entra) → **como foi pago?** (só se ainda não está lançado) → confirmar. Entradas: lista "Esperando chegar" (NF-e de Notas de entrada ainda não recebidas + compras lançadas sem recebimento), foto do código de barras da DANFE (chave de 44 dígitos via `BarcodeDetector`), foto do cupom (QR da NFC-e → SEFAZ; sem QR → IA do `purchase-receipt-scan`), digitar número, e "chegou sem nota".
+- Edge `receber-mercadoria` **não tem regra de compra própria**: nota nova → `fiscal-inbound import_purchase` (compra sai do XML, nunca da foto); cupom/sem nota → `purchase-write create_purchase`; estoque → `purchase-confirm-delivery` (com o JWT do usuário, grava quem recebeu); pago em dinheiro → `fn_sangria_da_compra` (sangria prevista no PDV). Para as duas primeiras usa a chave interna, porque elas exigem papel de financeiro.
+- **Quem pode:** admin/gerente/financeiro ou papel com `estoque_movimentar` na matriz de permissões (a Edge confere na tabela `permissions`, EN e PT). Para o celular da loja com login de caixa/cozinha, o dono liga "Registrar movimentação de estoque" para o papel.
+- **"Sem nota, mas a nota vem depois"** não lança nada (senão duplica quando a NF-e chegar): cria pendência `recebimento_sem_nota` para o financeiro; o estoque entra quando a nota aparecer na lista e alguém confirmar.
+- Cupom duplicado (o grupo do WhatsApp também lança cupom): barrado pela chave da NFC-e gravada nas notas da compra e por número+fornecedor; compra com o mesmo total (±R$ 0,05) em ±3 dias → a tela pergunta "é a mesma?" antes de lançar (`forcar`).
+- **Pegadinhas resolvidas na revisão (Opus):** (1) a sangria roda LOGO APÓS lançar e antes do recebimento — o "chegou diferente" reduz `total_amount` e a retirada do caixa foi do valor cheio; (2) `lancar` exige `ref` do rascunho (`[ref:…]` em `notes`): reenviar depois de timeout não lança de novo; (3) nota de remessa/devolução ou "nota do mês" (última `settlement='monthly'`) não é lançada pelo celular — vira pendência `recebimento_parado`; (4) quem não é do financeiro não troca o boleto da NF-e por pago/bonificação, e compra a pagar lançada por ele abre pendência `compra_pelo_celular`; (5) "já pago por Pix/cartão" entra PENDENTE (vence hoje) — a conciliação baixa pelo extrato, `paid` aqui contaria a saída duas vezes; (6) número digitado: ponto só é milhar quando também há vírgula (`lerNumeroBR`); (7) cupom sem fator escolhido não manda `units_per_package` — o `purchase-write` converte kg↔g sozinho.
+
+### 2026-09-21 — Mercado Pago vira a maquininha da loja: conciliação (Fase 1) + cobrança pelo Caixa (Fase 2)
+
+Pedido do dono: Paranaguá passa a usar a maquininha do Mercado Pago; "vamos ter a API pra conciliação bancária" + o que mais dá pra fazer. Decisão dele: **mesma conta do MP do autoatendimento** (provider `mp_point`), e fazer as duas fases direto.
+
+**Princípio que organizou tudo:** a origin `stone_sale` do `fin_cash_flow` é **genérica** ("venda no cartão da maquininha configurada"), não é da Stone. Por isso o conector do Mercado Pago grava em `stone_sale` + `auto_card_fee` como a Stone, e **DRE, Receitas, Visão Geral, Fluxo de Caixa e `fn_dre_*` não precisaram de uma linha de mudança**. `CARD_PROVIDERS.mercadopago.conector` virou `true` em `src/lib/revenueSources.ts`.
+
+**Fase 1 — Edge `mp-conciliation`** (verify_jwt=false; JWT da loja ou `x-internal-key`; escrita de config exige admin/gerente/financeiro), migration `20260921120000_mp_conciliation.sql`: `fin_mp_config` (1/loja: conta do extrato, `token_provider`, `auto_sync`, `post_to_ledger`, `release_report`), `fin_mp_imports` (resumo por dia), `fin_mp_reports` (arquivos já baixados), coluna `provider_import_id` em `fin_bank_statement_imports`, `fn_match_mp_payouts` e cron `mp-sync` às **07h20** (depois do Inter das 07h, para o saque já achar o crédito). **Token não é guardado aqui**: sai de `fin_payment_provider_config` (`mp_point` ou `mercadopago`) — a mesma conta que já cobra no autoatendimento.
+- **Duas fontes com papéis separados, para nada contar duas vezes:** (a) `GET /v1/payments/search` por dia de aprovação → 1 linha de extrato por venda (`source='mercadopago'`, `raw.kind='release'`, crédito do LÍQUIDO na data de liberação) + lançamento no financeiro agrupado por dia de liberação; (b) **Relatório de Liberações** (`POST /v1/account/release_report`, `GET .../list`, `GET .../{file}`, `POST|PUT .../config`) → só o que a busca NÃO dá: **saque (payout)**, disputa, reserva, contracargo. Linhas `payment`/`refund` do relatório são ignoradas de propósito.
+- **Diferença estrutural vs. Stone:** a Stone repassa todo dia (casamento grupo-do-dia × crédito-do-dia, `fn_match_card_deposits`); o **Mercado Pago acumula saldo e o dono saca quando quer**, então o casamento é **1 saque × 1 crédito no banco pelo valor exato** (`fn_match_mp_payouts`, ±R$ 0,02, D−1..D+5, `match_kind` `card_payout`/`card_deposit`). Por isso é função própria, não um ramo do `fn_match_card_deposits` — mexer na função da Stone em produção seria risco sem ganho.
+- **Pegadinhas do saque (2026-09-25, `20260925150000_mp_saque_pix_proprio.sql`):** o saque cai no banco como **Pix do próprio CNPJ** ("Pix recebido - <razão social>"); "MERCADO PAGO IP LTDA." só vem em `raw.detalhes.nomeEmpresaPagador` — o texto do repasse é procurado em descrição + `counterpart_name` + esse campo. A regra de "transferência entre contas" (fim de `fn_match_stone_inter`) pega esse Pix antes, e com `card_pix_mode='transfer'` `internal_transfer` **conta como receita de Pix** → o saque somava de novo as vendas no cartão; por isso `fn_match_mp_payouts` retoma crédito `internal_transfer` sem `match_group`. O relatório de liberações traz, por saque, `payout` + par `reserve_for_payout` (−/+), e `reserve_for_refund` (−/+) em vendas: só o `payout` casa; pares que somam zero por `source_id`+descrição viram `match_kind='mp_reserve'`.
+- **Pegadinha grande, conferida na conta real:** `fee_details` volta **vazio** em pagamento novo do MP; a taxa está em **`charges_details`** (`mp_processing_fee`, `ml_sale_fee`, `shp_fulfillment`). Visto: bruto 188,91 → líquido 131,35 com `fee_details: []`. **Regra adotada: taxa = bruto − `transaction_details.net_received_amount`** (e só cai em `charges_details`/`fee_details` se o líquido não vier). Assim bruto − taxa = líquido sempre fecha na DRE.
+- **Pegadinha 2:** a conta do MP de Paranaguá **também recebe vendas do Mercado Livre** (`order.type = 'mercadolibre'`). Elas entram no **extrato** (senão o saldo e o saque não fecham) mas **nunca na receita** — `postLedger` filtra, a linha vai com categoria "Venda Mercado Livre (fora do caixa)" e o painel avisa quantas ficaram de fora. Nunca silenciar isso: seria receita de restaurante inventada.
+- Outras: `money_release_date` pode ser **futuro** (crédito D+30 sem antecipação) — a receita é lançada no dia da liberação, igual à Stone; a busca aceita o **dia de hoje** (a Stone só libera o arquivo no dia seguinte); `release_report/config` responde **404 `config_not_found_for_user`** enquanto não existe (por isso POST e, se falhar, PUT); `release_report/list` devolve **array puro**; as colunas do CSV vão explícitas no `config` e o parser ainda normaliza cabeçalho em PT e fareja o separador.
+- **Front:** `conciliacao/MpConfigModal.tsx` + `conciliacao/MpImportPanel.tsx` (ao lado dos painéis Inter/Stone em Conciliação › Integrações), `runBankSync` do `ConciliacaoTab` chama a `mp-conciliation` **depois** do Inter (mesmo motivo do cron).
+
+**Fase 2 — cobrar cartão na maquininha pelo Caixa.** Migration `mp_point_pdv_terminal`: `fin_payment_provider_config.pdv_terminal_id` (a maquininha do balcão). Sem ela o caixa cairia no `terminal_id` padrão, que é a máquina ao lado de um tablet. `pix-payment`: `terminalForCaller` ganhou `station` (`'pdv'` → `pdv_terminal_id ?? terminal_id`). **`kiosk_card_provider.pdv` só é `true` com `pdv_terminal_id` escolhido** — de propósito NÃO cai no `terminal_id` da loja: em Paranaguá a `mp_point` já estava ativa e o caixa passaria a cobrar na máquina do tablet no primeiro deploy. Enquanto a loja não escolher a maquininha do balcão, o caixa continua exatamente como hoje, `create_card_charge` aceita `station`/`order_id`/`order_number` e manda o **número do pedido como `external_reference`** (é o que deixa a conciliação exata), `kiosk_card_provider` devolve `pdv`, `get/save_point_config` tratam `pdv_terminal_id`.
+- Front: `components/feature/CobrarMaquininhaModal.tsx` (cria a cobrança, faz polling do `check_status` a cada 2 s, trata recusa/expiração, cancela no provedor ao desistir — e **respeita o `code: 'at_terminal'`**, que significa "o cliente já passou o cartão"), plugado no `PagamentoModal` do caixa e no `PagamentoRapidoModal` (mesa, conta, divisão, delivery no caixa).
+- **Correção do fluxo no mesmo dia (dono testou com a maquininha real):** cobrar no botão "+"
+  (ao montar a lista de pagamentos) estava errado — a maquininha já ficava carregada com a tela
+  de pagamento **editável atrás**, dava para mexer ou cancelar com o cliente passando o cartão, e
+  ainda sobrava um segundo clique para fechar o pedido. Agora a maquininha entra **só no botão
+  final**: ele vira **"Cobrar na maquininha · R$ X"** (azul) quando há cartão a cobrar, cobra um
+  cartão por vez (fila, para conta dividida em dois cartões) e **fecha o pedido sozinho** quando o
+  último aprova. `PagamentoItem.cobrancaId` guarda a cobrança que pagou cada linha — é o que
+  impede cobrar duas vezes se a confirmação for repetida, e sobrevive a remover/reordenar
+  pagamentos (índice não serve). O `handleFinalizar` é chamado por um **efeito**, não dentro do
+  callback: ele lê `pagamentos` do estado e o callback ainda veria a lista antes da troca de forma.
+- **Pix do caixa na maquininha (opcional, `fin_payment_provider_config.pdv_pix_terminal`):** ligado,
+  escolher PIX no caixa manda o valor para a Point e o cliente lê o QR na tela dela — o caixa deixa
+  de marcar "recebido" na mão. **O tablet não muda**: lá o QR continua na tela do autoatendimento.
+  É interruptor à parte do cartão de propósito (a loja pode querer cartão na máquina e Pix na mão).
+  **Pix na Point é `default_type: 'qr'`, não `'pix'`** — o MP recusa `'pix'` e o erro
+  `property_value` dele lista os valores aceitos: **`credit_card`, `debit_card`, `qr`,
+  `voucher_card`** (nada disso está na doc; foi a API que contou). `default_type` é opcional, então
+  `createPointOrder` ainda reenvia **sem forma definida** se a forma for recusada — aí a maquininha
+  mostra o próprio menu (foi o que aconteceu no 1º teste, com `'pix'`). Nos dois caminhos o
+  `reconcileRow` grava o que o cliente escolheu de fato (`payment_method.type`; Pix vem como
+  `bank_transfer`). `voucher_card` abre a porta para o Vale Refeição na maquininha, ainda não feito.
+- **Como desligar / saída de emergência.** Desligar de vez: limpar `pdv_terminal_id`
+  (Configurações › Maquininha Point) — o caixa volta a lançar à mão na hora, sem deploy. No meio
+  do atendimento, com o aparelho travado, isso não serve (o operador não vai a Configurações com
+  o cliente na frente), e havia um beco sem saída: cancelar a cobrança FECHAVA o modal, o
+  operador voltava à tela de pagamento e confirmar chamava a maquininha de novo. Agora cancelar
+  **não fecha** — mostra as saídas, e uma delas é **"Cobrar por fora e lançar à mão"**
+  (`cobrancaId = 'manual'`, a linha sai da fila e o valor entra como entrava antes da
+  integração). Ela só aparece quando **não há cobrança viva** (recusado/encerrado/erro): oferecer
+  isso com o cliente passando o cartão cobraria duas vezes.
+  **Atenção operacional:** a Point em modo PDV não aceita cobrança digitada nela; para usar
+  avulsa é preciso "Voltar ao modo normal" (STANDALONE), que também passa pela API — ou seja,
+  depende do ERPOS no ar. Ter uma maquininha fora do modo PDV como reserva é o plano B de verdade.
+- **Regras:** o pagamento **só entra na lista quando o provedor aprova** — não existe confirmar na mão; o auto-add do `handleFinalizar` do `PagamentoRapidoModal` também foi desviado para a maquininha (senão furaria a regra); se o cliente passar débito onde o operador escolheu crédito, **vale o que a maquininha respondeu** (a forma é trocada e o operador é avisado); venda do carrinho vincula a cobrança ao pedido depois, via `attach_order`.
+
+**Ligado em produção (Paranaguá) no mesmo dia.** Conta MP, `card_provider = mercadopago`, `post_to_ledger` e `release_report` ligados. Primeira importação: a venda de teste de R$ 1,00 (débito, taxa R$ 0,01) e o estorno entraram certos, e as 2 vendas do Mercado Livre entraram no extrato **fora da receita** — sem a trava teriam virado R$ 377,82 de venda no cartão do restaurante.
+
+**Programar o Relatório de Liberações — 3 exigências que a doc não diz** (descobertas na conta real; o `POST /config` voltava 400 e o modal avisava):
+1. `execute_after_withdrawal` é **obrigatório** (sem ele: `invalid_execute_after_withdrawal`);
+2. em `frequency.type = 'daily'` o **`value` não pode ir** (com ele: `invalid_frequency`); nos outros tipos vai;
+3. `columns` é **obrigatório** (sem ele: `invalid_columns`).
+
+E, principalmente: **salvar a configuração NÃO liga o agendamento** — ela volta com `scheduled: false`. Quem agenda é um segundo passo, `POST /v1/account/release_report/schedule` (201, já enfileira o primeiro arquivo). Só depois o `GET /config` mostra `scheduled: true`.
+
+**Relatório de Liberações FUNCIONANDO de ponta a ponta (2026-09-22)** — e o caminho até lá tinha dois defeitos meus, os dois silenciosos:
+1. **O cron nunca rodou.** `fn_mp_sync_all` saiu com `search_path = public`, mas a extensão `http` está em `extensions` e os segredos em `vault`: todo dia às 07h20 o job morria com `type "http_request" does not exist` e nada avisava. Stone e Inter já usavam `public, extensions, vault` — copiar esse search_path em TODO cron que chama Edge Function. Diagnóstico: `cron.job_run_details` guarda o erro de cada execução; é o primeiro lugar a olhar quando "o automático não rodou".
+2. **O MP PREFIXA o prefixo.** Pedimos `file_name_prefix = 'erpos-<tenant8>'` e o arquivo nasceu `reserve-erpos-7221d7f3-2026-09-22-054037.csv`. O filtro usava `startsWith(prefixo)` e descartava justamente o arquivo certo — virou `includes`.
+Depois dos dois: arquivo baixado, 20 linhas lidas, **4 movimentos** gravados no extrato (as linhas de `payment`/`refund` são puladas de propósito, porque já entram pela busca de pagamentos). Ainda não houve saque na conta, então o casamento saque × crédito no banco segue sem ser exercitado.
+
+**Não verificado ainda** (precisa da loja): cobrança real na maquininha pelo caixa e o casamento de um saque de verdade.
+
+### 2026-09-28 — Agente Pesquisador mensal do manual do gestor de tráfego
+
+O manual (`MANUAL-GESTOR-TRAFEGO-PAGO.md`) virou dados: **`trafego_manual_itens`** (chave, tema, regra, valor, `confianca` oficial/oficial_a_confirmar/dado_medido/mercado/inferencia, `fonte_url`, `verificado_em`, `status` vigente/a_testar/revogada; global, leitura para logados, escrita só service role), **`trafego_pesquisas`** (rodadas, buscas, custo) e **`trafego_manual_propostas`** (migrations `20260928220000_trafego_pesquisador.sql` e `20260928230000_manual_trafego_confirmado.sql`). Edge **`trafego-pesquisador`** (verify_jwt=false; `x-internal-key` do cron ou JWT; admin da loja do `tenant_id` roda/decide, membro lê): `run` responde na hora e roda em segundo plano (`EdgeRuntime.waitUntil`, ~4 min) → **Sonnet 5 + `web_search_20260209` (máx. 12 buscas)**, com laço de `pause_turn` → texto com fontes → **Haiku 4.5** estrutura em propostas (json_schema) → **o código decide**: só é "oficial" se o host for da Meta (facebook/meta/fb/instagram/whatsapp.com) **e** a URL tiver saído de fato nos resultados/citações da busca; oficial + confirmar/alterar item existente ou regra nova → `aplicada` sozinha (item vira `oficial`); alterar/nova de mercado → `a_testar`; alerta/sem fonte → `pendente`. `list`, `relatorio`, `decide {proposta_id, aplicar|rejeitar}`. Custo registrado em `ai_usage_events` (feature `trafego-pesquisador`). Cron `trafego-pesquisador-mensal` (`0 10 1 * *`, 07h BRT) via `fn_trafego_pesquisador_run()` (mesmo padrão do `meta-agent-daily`, segredos no vault). Tela: seção recolhível **"Manual do gestor de tráfego"** no fim da aba Oportunidades (`components/ManualGestor.tsx`). **1ª rodada (28/09):** 12 buscas, US$ 1,04, aplicou 2 itens sozinho (álcool 18+, 500 impressões) e deixou 5 pendentes. **Pegadinha:** a busca da API não lê a Central de Ajuda da Meta (conteúdo montado por JavaScript) — esses itens ficam pendentes; a confirmação foi feita lendo as páginas pelo Chrome (tabela "Confirmação na fonte — 2026-09-28" no manual): 50 eventos, 500 impressões, álcool, dayparting vitalício, categorias especiais (nada de comida/álcool), CAPI de mensagens e Opportunity Score **confirmados**; **"20% de orçamento" não existe na página oficial** (a Meta diz "depende do tamanho da mudança") e fica como prática de mercado; "até 6 anúncios por conjunto" não achado. Os itens do manual ainda **não** entram no prompt do `meta-ads-agent` (próximo passo: ler `trafego_manual_itens` vigentes no payload, no lugar das frases soltas do `SYSTEM`).
+
+### 2026-09-28 — Tráfego Pago › Oportunidades (F5a do plano): fatos por canal + regras, sem IA
+
+RPC **`fn_mkt_fatos_canais(p_tenant_id, p_dias)`** (migration `20260928210000_mkt_fatos_canais.sql`; security definer, exige membership em `user_tenants` ou service role): canais, `hora_dia` (BRT), itens por canal com `custo`/`receita_com_custo` (só onde `order_items.unit_cost` existe), cardápio com categoria e nota da foto do Estúdio, `ifood_portal` (último período de `fin_ifood_menu_sales`), `estoque_critico` (`fn_get_stock_critical_alerts`, com exception → `[]`), `vindos_da_meta` (utm em `delivery_source`). **Canal é de marketing, não de logística:** pedido ligado a `ifood_orders.order_id` = `ifood` (o funil do iFood grava `delivery_platform='propria'` quando a loja entrega); `ifood_orders` sem `order_id` e fora de teste entram também. Enums (`origin_type`, `delivery_platform`, `status`) precisam de `::text` no CASE. Regras em **`src/lib/mktOportunidades.ts`** (puro, `src/test/lib/mktOportunidades.test.ts`): migrar iFood → próprio, campeão do salão fraco no delivery, horário fraco (só horas com venda em 3+ dias da semana), margem alta com pouca venda (65–90%; > 90% = ficha técnica incompleta, vira aviso), mais vendidos sem foto boa, delivery próprio pequeno, estoque crítico. Bebida/chope/adicional nunca é "prato a anunciar" (`ePrato`, por nome e categoria). Tela: aba **Oportunidades** em `/trafego-pago` (também acessível sem a Meta conectada, pelo link no cartão "Conecte sua conta"), filtro 14/30/60/90 dias, mapa dia × hora, atalho para o Estúdio. Testado no navegador na Testes PDV e lido (só leitura) nas lojas Paranaguá e Vila Leste. **Achado:** `fn_get_cmv_report` está quebrada em produção (`convert_unit(numeric, ingredient_unit, ingredient_unit)` não existe) — virou tarefa separada; a F5a usa `unit_cost` e não depende dela.
+
+### 2026-09-28 — Tráfego Pago → Estúdio: gestor de tráfego pede arte (F3 do plano)
+
+Migration `20260928200000_estudio_trafego.sql` (aplicada): `studio_creatives.status` aceita `publicada` + `meta_image_hash/meta_creative_id/meta_ad_id/published_at`. Edge `estudio`: ação `request_creative {templates[], item_id? | photo_url? , evitar_item_ids?, textos?, origem, request_ref}` (service role ou gerente) → `gerarArte()` por modelo; sem item, `escolherItem()` pega foto com nota ≥ 7 mais vendida em 30 dias; arte `publicada` não volta de status nem é excluída. Edge `meta-ads-agent` + arquivo novo **`meta-ads-agent/estudio.ts`** (deploy manda os dois): na rodada, depois dos guardrails, `prepararArtes()` pede 1 arte feed 4:5 do prato escolhido para `create_campaign` e 2 artes de pratos diferentes para `rotate_creative` (chamada HTTP interna com a service role; falha vira `params.arte_erro`, não derruba a rodada; rodada sombra não gera arte). `params.artes = [{creative_id, template, item_id, item_name}]`; `list_actions` devolve URL assinada + status atual (`urlsDasArtes`). Execução: **Revisor em código** `revisarArte()` (arte existe na loja, não reprovada, item ativo, `textos.preco_usado` = preço atual do cardápio) → PNG do bucket → `POST act_x/adimages` (`bytes` base64) → `image_hash`. `create_campaign` usa `image_hash` no lugar de `picture` (se a arte for barrada, cai na foto crua e grava `arte_recusada`); `rotate_creative` (`trocarCriativo`) copia texto/link/CTA/boas-vindas do anúncio ativo do conjunto e cria 1 anúncio novo ACTIVE por arte (só a imagem muda; os antigos seguem no ar), marca a arte `publicada`. Troca de criativo continua **só por aprovação** (fora do `autoOk`). Tela: card da sugestão mostra as artes; "Trocar criativo" com arte vira "Aprovar e executar". Testes: `src/test/edge/trafegoEstudio.test.ts` (Revisor e troca com banco/Graph simulados); `request_creative` e `list_actions`/`decide` testados contra o banco real na Testes PDV. **Não testado:** subida real na Meta (precisa conta com `ads_management`; lojas conectadas só têm `ads_read` e são reais).
+
+### 2026-09-28 — Estúdio de Criação (`/estudio`): Kit da Marca + Biblioteca + gerador de artes (Fases F1/F2 do plano)
+
+Módulo separado do Tráfego Pago (decisão do dono): gera artes PNG a partir de **modelos em código + foto real do cardápio + Kit da Marca** (modo A do `PLANO-TRAFEGO-PAGO-AGENTES.md` §3.2). Migration `20260928100000_estudio.sql` (aplicada): `brand_kit` (1/loja: cores hex, fonte, tom de voz, CTA, regras, `logo_path`), `studio_assets` (nota 0-10 + análise da IA por foto do cardápio; unique `tenant_id,source,menu_item_id`), `studio_creatives` (arte: template, formato, item, textos, `image_path`, status rascunho/aprovada/reprovada, origem manual/trafego), bucket privado `estudio` (8 MB, png/jpg/webp); RLS padrão (select por membership, escrita só service_role). Edge **`estudio`** (verify_jwt=false; `_shared/tenant-auth.ts`: membro por JWT, escrita = gerente/admin): `get_kit/save_kit/prefill_kit/upload_logo/library/analyze_library/render/list_creatives/decide/delete_creative`. **Render:** `templates.ts` monta a árvore (helper `h()` que força `display:flex` em todo div — exigência do satori — e descarta filhos falsos) → `npm:satori@0.12.2` (SVG) → `npm:@resvg/resvg-wasm@2.6.2` (PNG; wasm baixado do jsDelivr no cold start e cacheado) → upload no bucket → URL assinada 1 h. Fontes: fontsource via jsDelivr (`files/<pkg>-latin-<peso>-normal.woff`), allowlist Inter/Poppins/Montserrat/Roboto/Nunito/Playfair Display/Bebas Neue, cache em memória. Foto e logo entram como data URI (satori não deve buscar URL sozinho). 4 modelos: `feed_foto_faixa` 1080², `feed_4x5_foto_faixa` 1080×1350, `story_foto` 1080×1920 (zona segura 13% topo/base), `item_moldura` 1000². Texto legível por luminância (`contraste()`), fonte reduz com o tamanho do texto (`fit()`), preço só se `mostrar_preco`. IA só em 2 pontos, ambos Haiku 4.5 visão com structured output: nota da foto (`NOTA_SYSTEM`) e sugestão de kit a partir do logo/fotos (`prefill_kit`). Front `src/pages/estudio/` (page + Marca/Biblioteca/Criar/Galeria), permissão nova `marketing_estudio` (Marketing; padrão admin+gerente), item na Sidebar abaixo de Tráfego Pago. **Pegadinhas:** (1) satori exige `display:flex` em div com >1 filho e não aceita `padding: '0 64px 300px'` (3 valores) nem `linear-gradient` em `background` — usar `backgroundImage`; (2) `deno check` aqui só funciona numa pasta temporária com `nodeModulesDir: auto` e o import `esm.sh` mapeado para `npm:` (proxy bloqueia esm.sh e jsDelivr; os nomes dos arquivos de fonte foram conferidos com `npm pack --dry-run`); (3) `FontOptions.data` tem que ser `ArrayBuffer` e `weight` literal 400|700; (4) deploy pelo conector precisa mandar `templates.ts` e `../_shared/tenant-auth.ts` no array `files`. Teste: 4 modelos renderizados em Node e em Deno (<1 s cada, 160-290 KB). **Testado ponta a ponta em 2026-09-28** no navegador (dev local + banco real, logado como admin, loja Testes PDV): Sugerir com IA → Aceitar tudo → Salvar, envio de logo, Avaliar fotos (87 fotos), os 4 modelos (~6 s cada contando a ida e volta) e aprovar/reprovar na Galeria. Correções desse teste: (5) `analyze_library` pegava sempre os mesmos 20 itens e reavaliava — agora só as fotos sem nota ou com foto trocada (`studio_assets.url` ≠ `photo_url`), lote de 12, 4 em paralelo, devolve `restantes`; a tela repete até acabar e mostra o resultado; (6) story: preço em `cor_secundaria` ficava invisível quando a secundária é escura sobre fundo escuro — `destaque()` em `templates.ts` escolhe secundária → primária → preto/branco pela razão de contraste WCAG ≥ 3; (7) Criar herdava o preço do item anterior ao trocar de item (arte com preço errado); (8) `save_kit` recusa cor fora de `#rrggbb` (antes ignorava e dizia "Salvo"); (9) nome de quem gerou/decidiu vem de `public.users.name`; (10) custo da IA registrado em `ai_usage_events` (features `estudio-kit`, `estudio-nota-foto`). Cada arte guarda `textos.preco_usado` (preço que aparece nela) para o Revisor do tráfego conferir com o cardápio.
+
+### 2026-09-27 — Tráfego Pago › Agente: modelo configurável por loja + rodada "sombra" (Fase 0 do plano de agentes)
+
+Contexto: `PLANO-TRAFEGO-PAGO-AGENTES.md` (plano dos agentes de tráfego + Estúdio de Criação) e `MANUAL-GESTOR-TRAFEGO-PAGO.md` (manual v1 por pesquisa, com fontes e grau de confiança; notas em `research_notes/`). Fase 0 = trocar Opus → Sonnet na rodada diária **medindo antes**. Migration `20260927120000_meta_agent_modelo_sombra.sql` (aplicada): `meta_agent_settings.model` e `.shadow_model` (allowlist Opus 5 / Sonnet 5 / Haiku 4.5; null = padrão), `meta_agent_runs.trigger` aceita `'sombra'` e ganha `shadow_of`. Edge `meta-ads-agent`: modelo da rodada = `settings.model` → env `META_AGENT_MODEL` → `claude-opus-5`; guardrails pós-modelo viraram a função `guardrails()` compartilhada; se `shadow_model` ≠ modelo real, `shadowRun()` roda o candidato sobre o **mesmo payload** e mesmos guardrails, grava resumo/saúde/uso e as ações que proporia em `snapshot.sombra_acoes`, **não insere em `meta_agent_actions` nem chama a Meta**; roda em segundo plano via `EdgeRuntime.waitUntil` (a resposta não espera). `list_runs` devolve as sombras junto (`shadow_of`, `sombra_acoes:snapshot->sombra_acoes`, limite dobrado) e `default_model`; `get_settings.last_run` exclui sombra. Front `Agente.tsx`: selects "Modelo da IA" e "Modo sombra" (admin), custo estimado por rodada (tabela `PRECO_USD` com preço de lista, US$; cache lido a 10%), `SombraCard` compara saúde, custo e ações iguais/só-sombra/só-real (`chaveAcao` = tipo + alvo [+ orçamento arredondado]), rodadas anteriores mostram modelo e custo. Checagens: tsc 287 (baseline), vitest 916/916, `deno check` da função OK (com `nodeModulesDir: auto` e mapeando o import `esm.sh` para `npm:` numa pasta temporária, porque o proxy bloqueia esm.sh). **Como usar:** ligar sombra = Sonnet 5 por 1–2 semanas; se saúde ±10 e as mesmas ações, trocar `model` para Sonnet.
+
+### 2026-09-16 — Tráfego Pago › Agente: gestor de tráfego pago com IA (regras de mercado + Claude + escrita na Meta)
+
+Pedido: "um agente gestor de tráfego que faça campanha/anúncio por conta própria, avalie tudo e acompanhe". **Arquitetura:** Edge `meta-ads-agent` (verify_jwt=false; membro da loja por JWT, admin para `save_settings`/`decide`, `x-internal-key` para cron/assistente) + migration `20260916150000_meta_ads_agent.sql` (`meta_agent_settings` 1/loja, `meta_agent_runs`, `meta_agent_actions`; RLS select por membership, escrita só service_role; `fn_meta_agent_run_all()` + `cron.job` `meta-agent-daily` às 11h30 UTC) + aba **Agente IA** em `/trafego-pago` (`components/Agente.tsx`, toggle Painel × Agente ao lado do "Conectado", `#agente` na URL). **Fluxo de uma rodada** (`runForTenant`): expira sugestões > 3 dias → lê `meta-ads-insights` em `last_7d` e `last_30d` (chamada interna com `x-internal-key`, por isso a insights passou a aceitar o header) + contexto do ERPOS (`erposContext`: loja/slug/cidade, `delivery_config.whatsapp_loja` e `store_location`, `app_public_url` → link `/{slug}-delivery`, pedidos de delivery 30d por hora/dia/plataforma, mais vendidos via `order_items`, itens em destaque com `photo_url`) + ações dos últimos 14 dias (cooldown) → **regras determinísticas** (`rules()`): conta desativada/token vencendo; teto mensal (pausa campanhas, trava dura que entra mesmo se a IA descartar) e teto diário (alerta); stop-loss por anúncio (gasto ≥ max(R$30, 3× meta) sem resultado, ou CPR > 2× meta com gasto ≥ 2× meta), CTR no link < 0,8% após 2.000 impressões se houver outro anúncio ativo; fadiga por frequência > `max_frequency` → `rotate_creative`; escalar +20% (limite de mercado para não reiniciar aprendizado) com ≥ 5 resultados e CPR ≤ 0,7× meta ou ROAS ≥ alvo, respeitando o teto diário e 72h de cooldown; desescalar −20% com gasto ≥ R$100 abaixo da meta; **nunca mexe em conjunto em fase de aprendizado** (`learning.status = LEARNING`); sem campanha ativa → `create_campaign` (só se página + pin + WhatsApp/link existirem). Meta de custo por resultado padrão = 30% do ticket médio do delivery (regra prática do setor: custo por pedido R$ 5-20). → **IA** (`claude-opus-5`, structured output `json_schema`, ~35k tokens de entrada, ~50 s, ≈ R$ 1,30/rodada): revisa as candidatas, acrescenta o que os números mostram, escreve o anúncio de `create_campaign` (texto ≤ 125, título ≤ 40, foto do cardápio) e o resumo + nota de saúde 0-100. → **guardrails pós-modelo**: só ids que existem nos dados, orçamento clamp ±20% e ≤ teto, `create_campaign` só se a regra "sem campanha ativa" disparou. → **modo**: `sugerir` grava tudo como `sugerida`; `autonomo` executa pause/resume/set_budget na hora e `create_campaign` só com `autonomia_criar`. **Execução na Meta** (`executeAction`): `POST /{id}` status/daily_budget (centavos); `createCampaign` = campanha (`OUTCOME_ENGAGEMENT` p/ WhatsApp, `OUTCOME_TRAFFIC` p/ link; vendas cai em tráfego enquanto não há pixel) → conjunto (`custom_locations` lat/lng/raio km, 18+, Facebook+Instagram feed/story/reels, `CONVERSATIONS`+`destination_type WHATSAPP`+`promoted_object{page_id, whatsapp_phone_number}` ou `LANDING_PAGE_VIEWS`) → criativo (`object_story_spec.link_data` com `picture` = `photo_url` do item, CTA `WHATSAPP_MESSAGE`/`ORDER_NOW`, `page_welcome_message` com ice breakers; link do delivery com `utm_source=meta` para o ERPOS reconhecer a origem) → anúncio; tudo criado PAUSED e ativado do anúncio pra campanha. Erro em qualquer passo devolve `step` + ids já criados. **Pegadinhas:** (1) structured output da API **não aceita `minimum/maximum` em integer** nem vale a pena `enum` com `null` — clamp e validação ficam no código; (2) o token atual da loja vem da configuração de Login para Empresas só com `ads_read`: `get_settings` devolve `capabilities` (`/me/permissions` + `/me/accounts`) e a aba lista o que falta — para criar anúncio é preciso adicionar `ads_management`, `pages_show_list`, `pages_manage_ads` na configuração do app Meta e **reconectar**; (3) `whatsapp_phone_number` precisa ser um número vinculado à Página (WABA), senão a Meta recusa o conjunto; (4) o pin `store_location` é o da loja no ERPOS — na conta compartilhada Vila Leste/El Patrón a IA apontou que os anúncios (Paranaguá) estão a 17-21 km do pin (Pontal): conferir o pin antes de ligar `autonomia_criar`. Assistente: `meta-ads-agent` no `EDGE_ALLOW` + linha no `EDGE_MAP` (`decide` é sensível). Primeira rodada real em 2026-09-16 na loja do El Patrón: saúde 32/100, 3 sugestões (pausar Topo/Meio, trocar criativo do burrito), diagnóstico correto de segmentação fora da área de entrega.
+
+### 2026-09-16 — Teclado virtual do ERPOS engolia o teclado nativo no celular
+
+- **Sintoma (dono):** em QUALQUER campo do sistema no celular (login, chat do assistente, PDV), o teclado do Android não aparecia; no lugar vinha um QWERTY com barra "Mensagem — ✕ Fechar — OK". Só as telas do cliente (delivery, mesa-qr) tinham o teclado normal. Acontecia no Chrome **e** no app Android.
+- **Causa:** é o **nosso** teclado virtual (`src/components/feature/VirtualKeyboard.tsx` + `src/contexts/VirtualKeyboardContext.tsx`), feito para totem/PDV/tablet sem teclado físico. O listener global de `touchstart` abria ele em **qualquer aparelho de toque** (`isTouchDevice()`), marcando o campo como `readOnly` + `inputmode="none"` para impedir o teclado do sistema. Celular é aparelho de toque → pegava o sistema inteiro; `rotaUsaTecladoNativo()` só livrava as rotas do cliente.
+- **Correção:** `usaTecladoVirtual()` = toque **e** menor lado da tela ≥ 600 px **e** fora do app Capacitor. Celular usa sempre o nativo; totem/PDV/tablet seguem com o virtual. Teste: `src/test/components/virtualKeyboard.test.tsx` (celular, tablet, app, desktop, rota de cliente).
+- **Lição (custou várias rodadas):** o comportamento tinha cara de plataforma e foram investigados em vão o WebView do Capacitor (subclasse `ErposWebView` com `IME_FLAG_NO_EXTRACT_UI`, `windowSoftInputMode=adjustResize`, `targetSdk 35`), `<textarea>` × `<input>` e até configuração do aparelho. **Antes de caçar bug de plataforma, procurar se o próprio sistema implementa aquela função** — aqui bastava um grep por "!@#" (tecla do layout) para achar em 1 minuto. As mudanças nativas ficaram (são corretas), mas não eram a causa.
+
+### 2026-09-14 — Maquininha Mercado Pago Point no autoatendimento (1ª maquininha real)
+
+- **Configuração:** a aplicação do MP tem que ser da **mesma conta em que a maquininha está ativada** (Paranaguá = EP PAR MALL, app "ERPOS Point Paranagua"). Nome de aplicação no MP é **único global**. Token = Credenciais de produção (`APP_USR-`). Modo PDV só liga pela API (`PATCH /terminals/v1/setup`); a N950 não tem menu "Modo de vinculação".
+- **Pegadinhas:** o `setup` deu `404 not_found` com o terminal listado (loja + caixa ok) e passou depois de reiniciar a maquininha e salvar a config. O endpoint legado `/point/integration-api/devices` responde `401 Unauthorized use of live credentials` para app nova (não usar). `POST /v1/orders` exige `amount >= 1.00` (edge `pix-payment` recusa antes com `code: min_amount`). A order pode ficar `created` ~2 min até a maquininha pegar (`at_terminal`) — o pagamento em si leva segundos.
+- **Correções:** o polling de 2 s disparava consultas em paralelo e o `onPago` rodava 2x → "pedido não registrado" falso com o pedido já pago (guards em `TelaCartaoKiosk`, `TelaPix` e `handlePixPago`). O `cancel` só marca `cancelled` se o MP aceitar o `/cancel` (antes marcava sempre → pagamento posterior sem rastro).
+- **Webhook:** `pix-payment?webhook=point&tenant_id=<uuid>`, tópico "Order (Mercado Pago)". Não confia no corpo: acha a linha por `provider_payment_id` e roda `reconcileRow`. Assinatura HMAC com `fin_payment_provider_config.webhook_secret`, se houver. Testar com `curl` no PowerShell 5.1 exige o JSON num arquivo (`--data-binary @arquivo`) — o PowerShell remove as aspas do `-d`.
+- **Vários tablets:** os tablets do autoatendimento **não** usam `kiosk_tokens` (tabela vazia; `useKioskTokens` não é usado em tela nenhuma). Cada tablet é um **usuário com perfil `tablet`** criado em Usuários (`user-write`, e-mail `totem_<crachá>_<tenant8>@totem.erpos.local`). A maquininha de cada tablet fica em `fin_payment_provider_config.tablet_terminals` (`{ user_id: terminal_id }`); a edge escolhe por `terminalForCaller` (mapa → `kiosk_tokens.point_terminal_id` → `terminal_id` padrão). Tela: seção "Maquininha de cada tablet" no `MpPointConfigModal`.
+- **Formas no tablet:** `system_settings.self_service_payment_methods` (`null` = todas as ativas), editado em Operação › Autoatendimento; `config-write` só grava campos da lista `upsert_system_settings` — campo novo tem que entrar lá. O `SystemSettingsContext` monta os campos um a um: campo novo também precisa entrar no mapeamento.
+- **Duplo aviso de pagamento:** `handleAvancarPagamento` (autoatendimento/page.tsx) devolve a criação em andamento (`criacaoEmAndamentoRef`) para quem chegar no meio, em vez de `null`.
+
+### 2026-09-12 — Loja ativa do app vale no banco (RLS multi-loja, correção de raiz)
+
+- **Sintoma:** o dono (vínculos de platform owner com `created_at = 2000-01-01`) via telas vazias na El Patron Paranaguá (Compras com 93 compras no banco). `auth_tenant_id()`/`get_user_tenant_id()` devolviam o vínculo mais recente ("Testes PDV") e `auth_role()` um vínculo qualquer, ignorando a loja escolhida no app (que só existe no `localStorage`).
+- **Correção:** `src/lib/supabase.ts` usa um `global.fetch` que manda o header `x-tenant-id` (= `erpos_selected_tenant_id`) em toda chamada `/rest/v1/` (tabelas e RPC). **Não** manda para `/functions/v1/`: o CORS das Edge Functions não libera o header. No banco, `app_selected_tenant()` lê `request.headers` e só aceita a loja se o usuário for membro; as três funções usam ela primeiro e, sem header ou com loja alheia, voltam ao comportamento antigo. Migração `20260912080000_tenant_selecionado_header.sql`.
+- **Antes disso, no mesmo dia:** policies `fin_*_select_membership` (`auth_is_member_of`) nas 24 tabelas do Financeiro (`20260912070000_fin_select_membership.sql`); continuam valendo.
+- **Pegadinhas:** Realtime (`postgres_changes`) não carrega o header, então continua caindo no vínculo mais recente. Edge Function que lê com o JWT do usuário também não recebe o header (use service role + `user_tenants`). Nenhuma tabela depende só de policy `user_tenants ... LIMIT 1` sem ordem (conferido).
+
+### 2026-09-12 — Notas de entrada lançadas sozinhas (fornecedor já conhecido)
+
+- **Decisão do dono:** nota de fornecedor que JÁ teve nota lançada na loja entra sozinha, do mesmo jeito da última vez. NF-e vira compra, com as parcelas do boleto em Contas a Pagar, ou compra paga se foi paga na entrega (`pagoNaHora` = sem duplicata + forma 01/03/04/16/17/18). NFS-e vira despesa com a mesma `category`/`dre_category_id`/`cost_center_id` da última. **Não** mexe no estoque: continua só no recebimento.
+- **Onde:** `fiscal-inbound` › `autoLaunchTenant()`, chamado depois do `syncTenant` no `sync_all` (cron 06h/12h, 20 s por loja) e no `sync` (botão "Buscar notas", 45 s). Ação `auto_launch` (admin/gerente ou chave interna) coloca em dia o que está parado; o que passar do tempo fica para a próxima busca.
+- **Fica em "A conferir":** fornecedor novo, nota cancelada, remessa/bonificação (mesma regra `pareceNaoVenda`/CFOP da `NotasEntradaTab`), NFS-e de iFood/Rappi/99Food/Keeta (taxa já descontada do repasse), tipo diferente do anterior, valor > 3× o maior já lançado do fornecedor e XML incompleto. Se o lançamento falhar, a nota guarda `error_message` "Lançamento automático: ...".
+- **Refatoração:** o bloco de importação saiu do handler para `importDocument(ctx, doc, action, body)`, usado pela tela, pela conciliação e pelo automático. Sem usuário (`userToken=null`), a `purchase-write` é chamada com `x-internal-key` = `FISCAL_INTERNAL_KEY`. A `purchase-write` passou a aceitar chave interna **só para `create_purchase`** (`created_by` fica null) e segue com `verify_jwt=true`: a chamada interna manda a anon key no Authorization.
+- **Desfazer:** ação `undo_auto_import` (e o botão "Desfazer" na tela) exclui a compra via `delete_purchase` ou as contas da despesa e volta a nota para `new` com `auto_launch_blocked=true`, para não ser relançada. É bloqueado se já houver parcela paga, recebimento no estoque ou se o lançamento veio da conciliação (`auto_import_ref`). Liga/desliga por loja em `fiscal_settings.inbound_auto_launch` (padrão ligado, ainda sem tela). Migration `20260912100000_fiscal_inbound_auto_launch.sql`.
+- **Selo "automática":** `auto_import_ref` preenchido = veio da conciliação; nulo = lançamento automático por fornecedor conhecido.
+- **Bonificação (decisão do dono 2026-09-12: sem custo, mas entra no estoque):** CFOP 5910/6910 vira compra com `fin_purchases.is_bonus=true`, itens a R$ 0, `payment_status='paid'`, forma "Bonificação" e `fiscal_inbound_documents.import_type='bonus'`. A `purchase-write` (`createBillsForPurchase`) não gera conta a pagar nem saída de caixa quando `is_bonus`. `fn_update_ingredient_price_from_purchase` ignora `is_bonus`, senão o custo médio do insumo cairia. O estoque entra no recebimento, como toda compra. O automático lança bonificação **mesmo de fornecedor novo** (não envolve dinheiro); devolução e "outras saídas" continuam para conferir. Na tela, o modal ganha a opção "Bonificação", com vínculo dos itens ao estoque. Migration `20260912110000_purchase_is_bonus.sql`, que também amplia o CHECK `fiscal_inbound_import_type_chk`.
+- **Pegadinha (quase duplicou):** o CHECK de `import_type` só aceitava purchase/bill, e o update da nota não verifica o erro. Resultado: a compra era criada, a nota ficava `new` e seria relançada a cada sync. Antes de gravar valor novo numa coluna de texto, conferir os CHECKs (`pg_constraint`); é o mesmo tipo de erro do "Lançar despesa" em 09-11.
+- **Recebimento pelo grupo do WhatsApp (desenhado, não implementado):** o assistente avisa o dono de cada entrega com o id da mensagem gravado. A resposta citada chega no webhook em `extendedTextMessage.contextInfo.stanzaId`, e o `ctxOf()` já lê o contextInfo, o que liga a resposta à compra certa. A alternativa é uma **enquete** por entrega (o `asst_polls` e o `pollUpdates` já existem). Depende de o número do assistente entrar no grupo da loja (`asst_groups` vazia em 09-12).
+
+### 2026-09-11 — Leitura de cupom/notinha por foto na Nova Compra (IA)
+
+- **Onde:** botão "Ler notinha (foto)" em `src/pages/financeiro/components/compras/NovaCompraModal.tsx` (só compra nova) → Edge `purchase-receipt-scan` (ações `scan` e `learn`, JWT + `user_tenants`). Primeira integração com LLM do projeto: `npm:@anthropic-ai/sdk`, modelo `claude-haiku-4-5`, trocado a pedido do usuário em 2026-09-11 para testar custo. Antes era Sonnet 5, cuja 1ª leitura real custou ~R$ 0,14; se o Haiku errar leitura ou vínculo (letra de mão), voltar para `claude-sonnet-5`. O Haiku às vezes devolve a data como DD/MM/AAAA mesmo com o prompt pedindo AAAA-MM-DD, e `toIsoDate()` na Edge converte, structured outputs (`output_config.format` json_schema). Secret: `ANTHROPIC_API_KEY`; sem ele a Edge responde 503 com mensagem clara.
+- **Vínculo por linha:** a IA só pode usar ids das listas que a Edge manda (catálogo, insumos, categorias de mercadoria, DRE); a Edge revalida os ids depois. A prioridade é **memória > catálogo > insumo > nenhum**. Na dúvida fica "nenhum", porque vínculo errado dá entrada no estoque errado.
+- **Memória:** `purchase_receipt_item_links` (tenant + `supplier_key` [CNPJ ou nome normalizado] + descrição normalizada sem acento). Gravada pela ação `learn` quando a compra é salva (sem await). Na busca, primeiro o mesmo fornecedor, depois o vínculo mais recente da mesma descrição em qualquer fornecedor. Migration `20260911170000_purchase_receipt_item_links.sql`.
+- **QR Code da NFC-e (grátis, sem IA) — ação `qrcode`:** a NFC-e (modelo 65, cupom) **nunca** chega nas Notas de Entrada: a distribuição DF-e da SEFAZ só entrega NF-e modelo 55 ao destinatário, mesmo com o CNPJ do comprador no cupom. Mas o link do QR Code (`fazenda.pr.gov.br/nfce/qrcode?p=chave|2|1|...|hash`) abre uma página HTML pública com todos os itens, sem captcha, e ela responde ao servidor do Supabase (região sa-east-1, ~240 ms). O botão da foto decodifica o QR **no navegador** (`jsqr`, import dinâmico, tenta 1600/2400/1000px). Se achar QR da SEFAZ-PR, chama `qrcode`; se não achar ou a SEFAZ falhar, cai na leitura por IA. Também dá para colar o link (botão de QR ao lado). A Edge só busca host fixo (`www.fazenda.pr.gov.br`), nada de SSRF, e confere que a chave tem 44 dígitos e é modelo 65. Vínculo = memória ou busca por nome (igual = alta; Jaccard ≥ 0,6 = média). Avisa nota repetida (mesmo `invoice_number` + fornecedor na loja) e grava a chave em `notes` ("NFC-e <chave>"). "Crédito Loja" (crediário) vira aviso para mudar a condição para A Prazo. Parser validado contra o HTML real (`id="u20"`, `tr id="Item + N"`, `txtTit2`, `Rqtd`, `RUN`, `RvlUnit`, `valor`). Só PR por enquanto; outros estados têm portais diferentes.
+- **Structured outputs, pegadinha de schema (quebrou a 1ª leitura real, 09-11):** `{ type: ['string','null'], enum: [...] }` é recusado com 400 ("Enum value ... does not match declared type"). Campo opcional se escreve `anyOf: [{ type: 'string', enum: [...] }, { type: 'null' }]`, e o padrão da Edge é anyOf em todos os opcionais. E um 400 da API nunca pode virar "tire outra foto": a Edge só culpa o arquivo quando o erro fala de image/document/pdf/size. Validado com teste temporário usando a cópia exata do schema: Sonnet 5, 6,4 s, 1.735 tokens de entrada e 436 de saída num cupom só texto.
+- **Pegadinhas:** (1) chamar via `supabase.functions.invoke`, não `invokeWithAuth`: este tem timeout de 60s com retry automático e duplicaria uma leitura longa. (2) Foto do celular é reduzida no navegador (2000px JPEG 0.85) antes de subir. (3) Desconto no total do cupom não entra nas linhas; a tela avisa. (4) Item sem insumo ganha seletor "Categoria DRE" (vazio = CMV), que também serve fora da leitura.
+
+### 2026-09-11 — "Lançar despesa" da Nota de Entrada falhava no CHECK de reference_type
+
+`fin_accounts_payable_reference_type_check` só aceitava `purchase/manual/recurring/hr_payroll`; o `fiscal-inbound › import_bill` grava `reference_type='nfe_entrada'` → toda NF/NFS-e lançada como despesa dava "violates check constraint" na 1ª parcela (nada ficava gravado; a nota seguia "A conferir"). Constraint ampliada com `nfe_entrada` (migração `20260911010000_...`). **Pegadinha:** ao criar um `reference_type` novo em contas a pagar, conferir esse CHECK — o código também usa `sale`/`bill_payment` em outras tabelas, não aqui.
+
+### 2026-09-11 — Compra só entra no estoque na CONFIRMAÇÃO DO RECEBIMENTO
+
+Pedido do usuário: *"só entra no estoque na confirmação do recebimento e não antes"* (lançou NF de entrada como compra com insumos vinculados e o estoque subiu antes da mercadoria chegar). Vale para **toda compra** (manual e nota de entrada).
+- Nova coluna **`fin_purchases.stock_applied_at`**: quando a entrada no estoque foi lançada. `purchase-write` › `create_purchase`/`update_purchase` **não movimentam mais estoque** (só custo do insumo, fornecedor e catálogo); `purchase-confirm-delivery` lança a entrada **inteira pela quantidade recebida** (× `units_per_package`) e grava `stock_applied_at`. A ação `confirm_delivery` do `purchase-write` faz o mesmo (`applyStockEntry`).
+- **Compras antigas** (entrada feita na criação): backfill `stock_applied_at = created_at` nas que têm item com insumo → a confirmação delas continua aplicando só o **delta** recebido − pedido; editar/excluir continua estornando. Editar/excluir compra nova sem recebimento **não estorna** nada (não entrou).
+- `reverseStockForItems` agora estorna a **quantidade recebida** quando houver e usa `units_per_package` real (antes ignorava fator < 1).
+- Correção de dado: COPAL NF 1297703 (El Patron) teve o estoque estornado e `stock_applied_at` zerado, para entrar na confirmação.
+
+### 2026-09-11 — Zero grudado na frente dos campos numéricos ("014")
+
+Pedido do usuário: *"sempre que tem campo de colocar número começa com o zero e nunca dá pra colocar o número que a gente quer"* — em todas as telas. Causa: `<input type="number">` controlado com valor `0`; ao digitar "14" o DOM fica "014", `Number("014") === 14` já bate com o estado e o React não reescreve o campo.
+- **Correção global única** em [src/lib/numberInputFix.ts](src/lib/numberInputFix.ts), instalada no `main.tsx`: (1) `focusin` em captura seleciona o conteúdo do campo numérico (digitar substitui o 0); (2) `input` em captura no `document` — roda **antes** do listener do React no `#root` — tira zeros à esquerda (`014→14`, `00→0`, `-05→-5`; `0.5` intacto).
+- **Pegadinha:** a reescrita tem de usar o **setter nativo do protótipo** (`Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(el, v)`). Com `el.value = v` o rastreador de valor do React registra o novo valor como já conhecido e **o `onChange` não dispara** (campo mostrava "14" e o estado ficava no antigo).
+- Não é preciso mexer campo a campo; campos novos já ficam cobertos. Campos `type="text"` com máscara (dinheiro, CPF, telefone) não são afetados.
+
+### 2026-09-09 — Pix pelo app no DELIVERY (pagar na hora do pedido, pelo celular)
+
+Pedido do usuário: *"adicionar a opção de pagamento via pix pelo delivery também"*. Mesma infraestrutura do mesa-qr (`online-payments` + Mercado Pago), agora com um terceiro tipo de cliente.
+- **Identidade do cliente do delivery:** não tem senha nem mesa. A prova de posse do pedido é o **`orders.client_request_id`** — o uuid que o próprio app gera ao criar o pedido (já existia pra idempotência). O app guarda `{orderId, orderToken}` e manda `order_id + order_token`; a Edge (`requireDeliveryOrder`) confere `client_request_id`, `origin_type='delivery'` e não-cancelado. Token errado = 403. **`resolveCustomer`** decide pela presença de `order_token` (senão cai no `requireParticipant`). Todas as consultas em `fin_pix_payments` passam por **`ownerFilter`** (participant_id **ou** order_id) e `loadBill` ganhou o escopo **pedido único** (`orderId`). `get_bill` devolve `mode: "delivery"` e `participant.name` = nome do cliente (do `destination_name`).
+- **Forma de pagamento `pix_online`** ("PIX pelo app"): entra na lista do delivery quando a loja tem o Mercado Pago ativo (`public_status`, mesma regra do mesa-qr) **e** não desligou em Config › Delivery (nova entrada `pix_online` em `METODOS_PREDEFINIDOS`; chave ausente = ligado). Vai `payment_method: "PIX pelo app"` → `notes = "Pagamento: PIX pelo app"` (é isso que o gestor/motoboy leem).
+- **REGRA (usuário, mesmo dia): cozinha só depois do pagamento.** Dinheiro/cartão já eram assim (escolhe a forma → finaliza → cozinha). Para "PIX pelo app" o pedido **nasce como RASCUNHO** (`status='draft'`, `is_draft=true`, com número já atribuído) e **não imprime nem avisa**: fica fora do KDS (`fn_get_kds_orders` filtra `is_draft=false`), do gestor (status new/preparing/ready) e do caixa (`useOrdersHistory` filtra rascunho). O bloco de saídas do `create_delivery_order` (tickets cozinha/bar, comprovante, `notifyDeliveryOrderCreated`) foi **extraído em `emitDeliveryOutputs(admin, ctx)`** e passou a ser chamado só quando não está segurado. Nova ação **`release_held_order`** (delivery-write **v92**, exige header `x-internal-key` = `FISCAL_INTERNAL_KEY`): vira `status='new'`/`is_draft=false`, remonta os itens do banco (`order_items` + opções + observações) e dispara `emitDeliveryOutputs` com `payment_method: "PIX pelo app (PAGO)"` no comprovante. Quem chama é o **`settlePix` do online-payments (v9)** logo depois de marcar `is_paid` — o cliente nunca libera o próprio pedido. Front: a tela do pedido diz "vai para a cozinha assim que o Pix for confirmado" e, pago, "Seu pedido foi para a cozinha"; status `draft` aparece pro cliente como **"Aguardando pagamento"** (Acompanhar/Histórico). **BUG pego no 1º teste real (2026-09-10, pedido P0909260014):** a tela dizia "Pagamento confirmado" sem Pix nenhum. Causa dupla: `loadBill` filtrava `is_draft` também no escopo de pedido único (o pedido segurado é rascunho por desenho) → `create_pix` devolvia `nothing_to_pay` → o `PixCobrancaPanel` tratava `nothing_to_pay` como pago. Fix (online-payments **v10** + painel): rascunho entra na conta quando o escopo é `orderId`; e "nada a pagar" só vira "pago" se `get_bill` mostrar pedido com restante 0 — sem pedido na conta é ERRO, nunca pago. **Critério:** nenhuma tela declara pagamento a partir de ausência de cobrança; só a partir de conta com restante 0 ou Pix `confirmed`. **Desistir do Pix (pedido do usuário, 2026-09-10):** na tela do pedido, abaixo do painel, "Cancelar o Pix e pagar de outra forma" abre a lista das outras formas (dinheiro com troco opcional, cartões…) → `delivery-write › change_held_payment` (público, autenticado por `order_id + order_token`; recusa Pix pelo app, exige rascunho, valida troco ≥ total) grava as `notes` novas e chama **`releaseHeldOrder`** (função extraída da ação `release_held_order`) → pedido vira `new` e imprime com a forma nova. O Pix pendente no MP **não é cancelado de propósito**: se o cliente pagar mesmo assim, o webhook liquida normalmente (o `settlePix` só falharia se a linha tivesse sido cancelada localmente) e o motoboy vê PAGO. Seletor de pagamento: **"PIX pelo app" sempre primeiro, verde, com selo "Recomendado"**. **Rascunho abandonado × fechamento do caixa (2026-09-10):** a edge `check-session-pending` listava os pedidos segurados como "não entregue (cozinha)" e travava o modal Fechar Sessão (o `fn_close_session` já ignorava `is_draft`). Fix: a edge exclui `is_draft`/`status='draft'`, e o **`fn_close_session` passou a CANCELAR os rascunhos de delivery da sessão ao fechar** (`cancel_reason = 'Pix pelo app não pago até o fechamento do caixa'`) — com o caixa fechado não há mais como liberar pra cozinha. Se o Pix cair depois, o `settlePix` ainda grava o pagamento (auditável; a loja estorna). O Pix expira em 15 min e o memo do app em 2 h.
+- **Front (delivery):** `useDeliveryData` — `pixOnlineDisponivel` (public_status por tenant), `pixOnline {orderId, orderToken, number, total}` gravado em `localStorage delivery_pix_<tenant>` (TTL 2 h) e **restaurado no load** (volta do app do banco / reload cai direto na tela do pedido com o Pix); `limparPixOnline` ao confirmar. `page.tsx` monta `metodosDisponiveis` e o `methodMap` ganhou `pix_online`. `ConfirmacaoDelivery` renderiza **`components/feature/PixCobrancaPanel.tsx`** (novo, reutilizável: recebe só `auth` — participante ou pedido — e faz get_bill → já pago? / Pix pendente? / create_pix, com Realtime + polling + volta do app + "Já paguei").
+- **Quem precisa saber que está pago:** `list_delivery_board`/`get_delivery_order` (delivery-write **v91**) e `motoboy-signal` (**v23**) passaram a devolver `pago` (= `orders.is_paid`) e `pagamento` (= notes). Gestor de Entregas: badge **PAGO** (verde) ou **"Pix pelo app · aguardando"** (âmbar) no card e no modal; app do motoboy: "Cobrar do cliente" vira **"Já pago pelo app — não cobrar"**. `get_order_status` (cliente) também devolve `is_paid`.
+- **Deploy pela CLI, direto do arquivo local** (`npx supabase functions deploy <nome> --project-ref … --no-verify-jwt`): a CLI está logada na máquina e isso **acaba com a transcrição** de funções grandes no chat. Antes de publicar, `npx supabase functions download <nome>` num backup + diff confirmou que `delivery-write` e `motoboy-signal` publicadas eram idênticas ao repo. **Pegadinha:** o download sobrescreve o arquivo local — fazer cópia antes e restaurar. A CLI também mexe em `supabase/.temp/cli-latest` (revertido, não commitar).
+- **Verificado:** tsc no baseline (301, erro da linha 157 do `ConfirmacaoDelivery` é pré-existente); módulos transformam no Vite; na edge publicada: `get_bill` com token certo de um pedido pago real → `mode: delivery`, extrato com o pagamento em dinheiro; token errado → 403; `create_pix` em pedido pago → `nothing_to_pay`. **A tela do delivery NÃO foi exercitada ponta a ponta** (QA não tem delivery configurado) — falta um pedido real de R$ 1 na Vila Leste escolhendo "PIX pelo app".
+
+### 2026-09-09 — Autoatendimento MOBILE × TABLET: a cozinha herdou a regra errada
+
+Efeito colateral da mudança de `origin_type` para `self_service`: o pedido do QR universal passou a ser tratado como **totem (tablet)** e herdou a trava *"não pode marcar entregue sem estar pago"*. Errado — no QR do celular o cliente pede e paga **depois** (no caixa ou pelo Pix), então a cozinha ficava travada. **Nome definido pelo usuário: "autoatendimento mobile".**
+- **`src/lib/autoatendimento.ts` (novo):** `isAutoatendimentoMobile` / `isAutoatendimentoTablet` / `bloqueiaEntregaSemPagamento` / `autoatendimentoBadge`. **O que separa os dois é o PARTICIPANTE:** ambos são `self_service`, mas o mobile identifica o cliente por senha (`participantToken`) e o totem não tem participante. Mesmo critério do `isQRUniversal` (pedidos/components/utils.ts) — se um dia mudar, mudar nos dois.
+- **Trava corrigida em 3 pontos** (`KDSCard`, `KDSCardActions`, `GestorKanbanView` — o `KDSCardItemList` recebe por prop): só o **tablet** bloqueia entrega sem pagamento.
+- **Rótulos:** KDS (card, lista, detalhe) e Gestor mostram **"Auto mobile"** com ícone de celular (`ri-smartphone-line`) em vez de "Kiosk"/tablet; o detalhe do item mostra "Autoatendimento mobile". No caixa e na lista de Pedidos o badge "QR CODE" virou **"AUTO MOBILE"**. O totem segue "Kiosk"/"Autoatendimento".
+- Verificado: tsc no baseline (301) e todos os módulos tocados transformam no Vite. **A tela do KDS não foi aberta com pedido real** (exige login/estação) — a regra foi verificada no código.
+
+### 2026-09-09 — QR universal vira FILA POR SENHA de verdade (sem table_session)
+
+Continuação do item abaixo (esconder a mesa 0 era paliativo). Pedido do usuário: *"a ideia é operar por senha, não tem que abrir nada"*. Agora o QR universal **não cria nem usa `table_sessions`** — o pedido nasce igual ao do totem: **destino `password`**.
+- **A descoberta que encolheu a refatoração:** `order_destination` já tinha o valor **`password`** e `fn_get_kds_orders` já busca `participant_token`/`participant_name` **direto por `orders.participant_id`** (não via mesa). Ou seja, o caminho "pedido por senha" existia (é o do totem) e o QR universal é que usava `table` indevidamente. Não foi preciso tabela nova nem mexer no KDS.
+- **Banco (`20260909190000_queue_tickets_sem_mesa.sql`):** `table_session_participants.table_session_id` virou **nullable** e ganhou **`session_id`** (FK `sessions`, backfill dos antigos) — a senha passa a se ancorar na **sessão de caixa**, que já era o escopo real da numeração. Índice único parcial `(session_id, access_token) where table_session_id is null` (o `unique_access_token_per_session` não vale com NULL). Novas RPCs `fn_next_queue_token` (numeração única entre mesas e fila) e `fn_create_queue_ticket`; `fn_create_mesa_participant_auto` reescrita para usar a mesma numeração e gravar `session_id`.
+- **`mesa-write` v76:** `lookup_mesa` com `number = 0` responde `{ mode: "queue", queue: { session_id } }` **sem tocar em table_sessions**; `create_participant` sem `table_session_id` chama `fn_create_queue_ticket`; `create_mesa_order` aceita `table_session_id` nulo e então grava `origin_type='self_service'`, `destination_type='password'`, `destination_name = <senha>`, `table_number = null`. **Ganho de segurança:** o `create_mesa_order` passou a validar o participante (e o `access_token`, quando o app manda) — antes qualquer um com um `participant_id` lançava pedido.
+- **`online-payments` v5:** `requireParticipant` devolve um contexto (`tenantId`/`tableSessionId`/`tableId`) e aceita participante **sem mesa**; `loadBill` agrupa por `table_session_id` (mesa) **ou** por `participant_id` (fila); na fila o escopo é sempre "meus pedidos" (não existe "mesa inteira") e a descrição do Pix vira "Senha 302".
+- **Front:** `useMesaQRData` ganhou `queueMode` — chave de localStorage própria (`mesa_participant_qr_<qr_token>`, validada contra a **sessão de caixa**: caixa novo = senha nova), sem `session_token` na URL, impressão com destino `senha`. `PagarContaModalQR` esconde o seletor de escopo e mostra "Senha X". `IdentificacaoMesaQR` recebe `isUniversal`.
+- **PEGADINHA que quase passou:** o caixa detectava QR universal por `origem === 'mesa' && participantToken` — com `self_service` isso quebraria (perderia o badge "QR CODE" e a senha na tela). `isQRUniversal` (pedidos/components/utils.ts) e os dois pontos do `PedidosRecentesPanel` passaram a usar **senha sem mesa** (`!mesaNumero && participantToken`), que cobre o formato legado E o novo. O totem continua fora (é `self_service` mas **não tem participante**) — esse é o critério que separa os dois.
+- **Compatibilidade:** mesas numeradas seguem idênticas (verificado lado a lado no QA). Pedidos legados do QR universal (com `table_session_id` e origem `table`) continuam funcionando no pagamento e nas telas.
+- **Conta paga vira EXTRATO, não um aviso (pedido do usuário no 1º teste da fila):** a tela mostrava só "Conta toda paga!" e escondia tudo. Agora `get_bill` devolve **`payments_history`** — pagamentos dos pedidos da conta **incluindo o que o caixa recebeu** (dinheiro/cartão), não só os Pix do app; pagamento de vários pedidos de uma vez (`payment_group_id`) vira **uma linha somada** (senão o cliente veria o mesmo Pix repetido por pedido). `BillOrder` ganhou `paid_at` ("Pago às 15:44"). No front: banner verde com o total pago no topo, a lista de pedidos continua visível (expansível nos itens, valor riscado quando pago) e uma seção **Pagamentos** com forma, hora e valor.
+- **Verificado no QA (mesa 0 `qa-mesa-000`):** lookup devolve `mode: queue`; senha 301/302 criadas com `table_session_id: null`; pedido pela tela nasceu `self_service/password/302` sem mesa; `fn_get_kds_orders` mostra `destination_type: password` + `participant_token: 302`; `get_bill` responde `mode: queue` (só os pedidos da senha) e `mode: table` na mesa numerada; **nenhuma `table_session` criada no balcão**. tsc no baseline (301). **Não testado com Pix real neste modo** (o QA não tem provedor).
+
+### 2026-09-09 — QR universal (mesa 0) não é mesa: some do salão e não ocupa nada
+
+Pedido do usuário: *"O QR CODE universal não precisa abrir mesa, a ideia é operar por senha. Não é pra ver como mesa, não tem que abrir nada. Fecha tudo e limpa."*
+- **Como era:** `mesa-write › lookup_mesa` marcava `tables.status='occupied'` para QUALQUER mesa ao criar a sessão, inclusive a 0. E o `MesasContext` considera ocupada toda mesa **com sessão aberta** (`hasSession`, linha do `dbToMesa` — `tables.status` só serve pra detectar `blocked`, é praticamente decorativo). Resultado: a mesa 0 aparecia permanentemente ocupada no salão, no painel do caixa, no DestinoModal e no garçom enquanto houvesse qualquer senha ativa.
+- **Como ficou:** `MESA_QR_UNIVERSAL = 0` + `isMesaDoSalao` no `MesasContext` — a mesa 0 é filtrada de `mesas`, então some dos 4 lugares de uma vez (todos consomem o mesmo contexto). `lookup_mesa` (mesa-write **v75**) só marca `occupied` quando `number !== 0`. A tela **Imprimir QR Codes** usa outro hook (`useTablesConfig`) e continua listando a mesa 0 — o QR universal precisa ser impresso.
+- **A sessão da mesa 0 continua existindo por baixo** (é o container da fila: `table_session_participants` é quem gera a senha 300, 301… e os pedidos precisam de `table_session_id`). Ela só deixou de ser *exibida* como mesa. Tirar a `table_session` do QR universal exigiria remodelar senha/participante/pedido — não feito.
+- **Limpeza executada (produção, a pedido):** **15 sessões de mesa abertas fechadas** e **54 mesas devolvidas para `livre`** (havia lixo de 19/04 na loja El Patron, sessão de 25/08 na mesa 0 de Paranaguá com 2 pedidos nunca pagos, e 8 sessões abertas na mesma mesa do QA criadas por testes). **Pegadinha achada de lambuja:** com N sessões abertas na MESMA mesa, o `.eq('status','open').maybeSingle()` do `lookup_mesa` quebra (múltiplas linhas) — a mesa fica inacessível pelo QR até alguém fechar as duplicadas.
+- **`tables.status` está inconsistente no banco** (`livre`, `free`, `available`, `occupied`, `blocked`); a limpeza padronizou em `livre`. Como o front só compara com `blocked`, nada quebra — mas ao mexer nesse campo, lembrar que **quem manda é a sessão aberta**, não o status.
+
+### 2026-09-09 — Pagamento da conta pelo celular (mesa-qr): Pix dinâmico via Mercado Pago (Fase 1, backend no ar, front pendente de push)
+
+Pedido do usuário: cliente que pede pelo QR da mesa poder **pagar no próprio celular**, sem ir ao caixa e sem depender da operação. **Decisão:** Pix dinâmico via **Mercado Pago** (onboarding em minutos, sem certificado; a Stone que a loja já usa não dá API de cobrança online — o produto deles pra isso é o Pagar.me, cadastro novo com análise). Cartão/Apple Pay/Google Pay ficam pra Fase 3 na mesma integração. **Princípio:** só o provedor marca pago (webhook ou `GET /v1/payments/{id}`); nunca o clique do cliente — o `pix-payment › confirm` antigo (Pix estático, sem auth) continua existindo só pro totem e NÃO é usado aqui.
+- **Backend (no ar):** Edge **`online-payments`** (verify_jwt=false; uma função, três portas). *Cliente* (autentica por `participant_id` + `access_token` da mesa, sessão aberta): `public_status` (loja tem provedor ativo?), `get_bill` (pedidos da sessão com pago/restante por pedido, `locked` quando outro participante tem Pix pendente sobre o pedido), `create_pix` (`scope: mine|all`; valor SEMPRE recalculado no servidor = Σ restante dos pedidos não cancelados/draft/training; cancela Pix pendente anterior do mesmo participante; `X-Idempotency-Key` = id gerado antes; a linha em `fin_pix_payments` só vira `pending` DEPOIS do MP aceitar — recusa grava `failed`, sem Pix fantasma travando pedidos), `get_pix_status` (`reconcile:true` consulta o MP — polling de segurança do celular a cada 6 s), `cancel_pix`. *Staff* (JWT + `user_tenants`): `get_config` (token só os 6 últimos chars), `save_config` (admin/manager; token novo é validado em `GET /users/me`), `test_config`, `list_session_pix`, `confirm_manual` (reconcilia no MP; `force` só admin, auditado em `error`). *Webhook:* `POST …/online-payments?webhook=1&tenant_id=<uuid>` — valida `x-signature` (HMAC-SHA256 do manifesto `id:{data.id};request-id:{x-request-id};ts:{ts};`) quando a loja cadastrou a assinatura, e mesmo assim só liquida depois do GET no provedor.
+- **`settlePix` = o que o caixa faria:** claim atômico `pending → confirmed` (webhook × polling não duplicam); 1 `payments` por pedido via `fn_record_payment_bypass` (método = `payment_methods.type='pix'` ativo, `origin_type='qr_online'`, `operator_name='Cliente • Pix online'`, `payment_group_id = id do pix` quando >1 pedido — cada pedido recebe exatamente seu restante, Σ = recebido); `orders.is_paid/paid_at/paid_by_pdv='qr_online'` pela regra Σ ≥ total; NFC-e por pedido via `fiscal-write emit` com `x-internal-key` (mesma regra dos outros canais); `fin_cash_flow` (`auto_sale`, D+0) + `fin_income_routing`/`fn_bank_credit` espelhando o `order-write`. **Sem caixa aberto** o `fn_record_payment_bypass` devolve null → fica em `fin_pix_payments.error` (dinheiro recebido, não lançado) pro gerente resolver. Não replica fidelidade/promoções (cliente do QR não tem `customer_id`).
+- **Banco (migração `20260909150000_online_payments_mercadopago.sql`, aplicada):** `fin_payment_provider_config` (tenant × provider, token/secret; **sem policies** — só service_role; o token nunca vai ao front), colunas novas em `fin_pix_payments` (`provider`, `provider_payment_id`, `table_session_id`, `participant_id`, `scope`, `allocation` jsonb `[{order_id, amount, number}]`, `qr_code_base64`, `ticket_url`, `payment_ids`, `settled_at`, `raw_provider`, `error`), CHECK de status ganhou `failed`, trigger `trg_pix_payment_ping` → broadcast público `pix-payment:<id>` (evento `pix_change`, payload só id+status) no padrão orders-ping. **Pegadinhas:** (1) `table_session_participants` não tinha GRANT pro service_role → `requireParticipant` devolvia "Identificação inválida" (corrigido na migração). (2) O CHECK antigo de status derrubava o `update … status='failed'` em silêncio (supabase-js não lança) — por isso a criação agora insere depois do provedor.
+- **Front (pendente de push):** `mesa-qr/components/PagarContaModalQR.tsx` (conta → Meus pedidos | Mesa inteira → "Pagar com Pix" → QR + **Copiar código** + passo a passo "Pix Copia e Cola" + contador de expiração (15 min) → Realtime `pix-payment:<id>` + polling `reconcile` → "Pagamento confirmado"); botão **Pagar conta** no cabeçalho do `mesa-qr/page.tsx` só aparece quando `public_status.enabled` (`useMesaQRData`). Configurações › Estações/Pagamentos › card **"Pagamento pelo celular do cliente"** (substituiu o banner fake "PIX Automático via Stone") → `MercadoPagoConfigModal.tsx` (passo a passo no painel do MP, URL do webhook pra copiar, token, assinatura, toggle "Liberar Pagar conta"). Fix de dev: `useMesaQRData` liberava a `initializedRef` só no primeiro efeito → com StrictMode a tela ficava em "Carregando" pra sempre (cleanup agora reseta a ref).
+- **1º Pix real (Vila Leste, 2026-09-09 17:09): o dinheiro entrou certo e a TELA DO CLIENTE quebrou.** Backend impecável (Pix criado 17:09:34 → webhook `payment.updated` 17:10:10 → settle com 1 pagamento, sem erros). Mas às **17:10:12** — 2 s depois — o trigger **`trg_orders_auto_close_table_session`** (`fn_check_table_session_auto_close`, pré-existente: quando um pedido vira pago e não sobra nenhum pendente na sessão, fecha a mesa) **encerrou a sessão**. A partir daí `requireParticipant` devolvia 409 `mesa_encerrada` → o polling do celular morreu calado (a tela ficou em "Aguardando o pagamento…") e o "puxar para atualizar" recriou a sessão pelo `lookup_mesa` → participante salvo inválido → localStorage limpo → tela de nome. **O cliente pagou e viu a conta sumir.** **CRITÉRIO: o pagamento é o evento que ENCERRA a mesa; nenhuma leitura do próprio pagamento pode depender da mesa estar aberta.** Correções: (1) `requireParticipant(admin, body, { allowClosed })` — `get_bill`, `get_pix_status` e `cancel_pix` funcionam com a sessão fechada; só `create_pix` exige mesa aberta. (2) `get_bill` devolve `session_closed` e `last_pix` (último confirmado do participante na última hora). (3) `pixMemo.ts` (localStorage `mesa_pix_<qr_token>`, TTL 1 h) guarda `{pixId, participantId, accessToken, amount}` ao gerar o Pix; o `useMesaQRData` consulta esse memo **antes** de mandar pra tela de nome e, se o Pix estiver confirmado, mostra o step **`comprovante`** ("Pagamento confirmado · R$ X · Fazer um novo pedido"). (4) O celular vai pra segundo plano enquanto o cliente paga no app do banco — **Android congela `setInterval` e derruba o WebSocket**, então além do Realtime + polling de 6 s há gatilho em `visibilitychange`/`focus` e botão **"Já paguei — verificar agora"**. **DECISÃO DO USUÁRIO (mesmo dia): pagar NÃO encerra mais a mesa** — "o cliente pode querer pedir mais coisas mesmo depois de pagar". Migração `20260909180000_no_auto_close_table_session_on_paid.sql` derruba `trg_orders_auto_close_table_session` e `trg_orders_insert_auto_close_table_session` (a função fica no banco, sem gatilho, com comentário). Achado que reforçou a decisão: o trigger fechava a **sessão** mas nunca liberava a **mesa** (`tables.status`, que só `fn_close_table_session` e `close_table_by_customer` atualizam) — havia **169 sessões fechadas com a mesa presa em "occupied"** só na Vila Leste. A mesa passa a ser encerrada apenas por ação humana (caixa/garçom ou o próprio cliente). Verificado no banco: marcar `is_paid=true` deixa a sessão `open`. O step `comprovante` continua como rede de segurança para refresh/aba descartada.
+- **`table-write` v25:** `check_close_conditions` e `close_table_by_customer` liam `payments.table_session_id` (coluna inexistente) → agora somam `payments` pelos `order_id` da sessão (`is_refunded=false`). Pendência antiga fechada.
+- **Verificado:** tenant QA com provedor fake — botão aparece, conta carrega, `create_pix` recusado pelo MP devolve erro amigável sem deixar linha pendente, Pix pendente inserido à mão + `update status='confirmed'` fez o celular trocar pra "Pagamento confirmado" via Realtime em <2 s. **NÃO testado com Mercado Pago real** (falta o Access Token da conta do restaurante) — `settlePix` só foi revisado, não executado. Dados de QA limpos depois.
+- **Próximos passos:** (a) usuário cria conta MP + aplicação, cola token/assinatura em Configurações e faz 1 Pix real de R$ 1 numa mesa de teste; (b) Fase 2: dividir por N, gorjeta (hoje não há — `orders.tip_amount` existe mas o fechamento da nota exige cuidado), comprovante no WhatsApp, estorno pelo gerente (`POST /v1/payments/{id}/refunds`), aviso "Mesa X pagou" no caixa; (c) Fase 3: cartão/wallets e reuso no delivery/totem; (d) OAuth marketplace pra multi-loja (hoje token por tenant).
+
+### 2026-09-10 — Notas de entrada da SEFAZ (NF-e de fornecedores → Compras / Contas a Pagar)
+
+**O que é:** Financeiro › **Notas de Entrada** lista as NF-e emitidas por fornecedores contra o CNPJ da loja (Distribuição DF-e da SEFAZ, via Brasil NFe — mesmo token/certificado da NFC-e). Cada nota é conferida e lançada como **Compra** (padrão) ou **Despesa**, ou ignorada (devolução, bonificação, remessa).
+
+**Decisão importante — lançar como Compra, não como conta a pagar solta:** a regra do CMV exclui da DRE as contas `reference_type='purchase'` porque a compra entra como CMV. Uma NF-e de mercadoria importada como conta a pagar comum seria contada duas vezes. Por isso `import_purchase` chama o **`purchase-write` › `create_purchase`** (fonte única da regra de compra) repassando o JWT do usuário; os boletos `<cobr><dup>` viram `custom_installments` (≥2) ou `due_date` (1 parcela). **Estoque (2026-09-10):** na conferência cada item pode ser vinculado a um insumo + fator de embalagem ("1 CX = 12 un"); o `import_purchase` manda `ingredient_id`/`units_per_package` por item e o `purchase-write` dá a entrada (qtd × fator) e atualiza o custo. Item sem vínculo continua só descrição. O vínculo é **memorizado** em `fiscal_inbound_item_links` (única por `tenant_id + supplier_cnpj + supplier_code` = cProd; `ean` de reserva quando o fornecedor muda o código) e volta sugerido nas próximas notas do fornecedor; tirar o vínculo na conferência apaga o memorizado. Antes disso a nota importada nunca entrava no estoque, e corrigir depois era bloqueado quando a compra já estava paga (o `update_purchase` recusa compra paga). `import_bill` grava parcelas com `reference_type='nfe_entrada'` e categoria DRE (equipamento, uso e consumo).
+
+**Onde:**
+- Tabela `fiscal_inbound_documents` (única por `tenant_id + chave`; `xml_status`: pending/full/summary/error; `status`: new/imported/ignored; `parcelas`, `itens`, `pagamento` em jsonb). Colunas `inbound_last_sync_at`, `inbound_last_error`, `inbound_auto_sync` em `fiscal_settings`.
+- Edge `fiscal-inbound`: `sync` (ObterNotasFiscais `TipoDocumentoFiscal=0`, só modelo 55, até 90 dias; baixa até 40 XML por execução via ObterArquivoNotaFiscal), `sync_all` (cron), `refetch_xml`, `manifest` (ManifestarNotaFiscal; tipo 2 = ciência libera o XML completo), `import_purchase` (aceita `links: [{index, ingredient_id, units_per_package}]`), `item_links` (vínculos memorizados + insumos da loja, pela service role por causa do RLS multi-loja), `import_bill`, `ignore`/`unignore`, `get_xml`, `get_pdf`, `setup_cron`.
+- Fornecedor: casado por **CNPJ**; se existir cadastro com o mesmo nome e sem CNPJ, completa em vez de duplicar; senão cria com razão social, fantasia, telefone e endereço do XML.
+- Parser do XML (`parseNFe`) por regex sobre o layout 4.00 (sem namespace com prefixo) — testado com XML autorizado real (17 itens somando o total, pagamentos), bloco `<cobr>` sintético, `resNFe` e `&amp;`.
+- **Cron:** `fiscal-inbound-sync` às 09h e 15h UTC (06h/12h BRT) → `fn_fiscal_inbound_sync_all()` via extensão **`http`** (não há `pg_net`), timeout 2 min. As chaves (`fiscal_internal_key`, `supabase_anon_key`) ficam no **Vault**, gravadas pela própria função (`setup_cron` → `fn_set_fiscal_cron_secrets`, só service_role): a chave interna nunca passa por SQL, migração ou log. Reutilizar esse padrão para qualquer cron que chame Edge Function.
+
+**Pré-requisito no Brasil NFe (sem isso a busca volta 0 notas):** Configurações › Serviços › NF-e › marcar **"Manifestar ciência da operação automaticamente nas notas fiscais de entrada"** e salvar. Sem a ciência a SEFAZ entrega só o resumo (sem itens nem boletos). A tela tem o botão "Pedir XML" que manifesta a ciência de uma nota avulsa. A SEFAZ só distribui notas dos últimos 90 dias.
+
+**Primeira carga real (2026-09-10):** depois que o suporte do Brasil NFe ativou a sincronização do lado deles (só marcar a ciência automática no painel NÃO bastou), chegaram 39 NF-e desde 15/06, todas com XML completo; 21 com boleto. Ajustes feitos com os dados reais: (1) o `vNF` inclui ICMS-ST/IPI/seguro/outras despesas que não estão em `vProd`/`vFrete` — em 10 das 39 (COPAL, OESA: +R$ 2,43/+2,99, todas de boleto único) a compra seria recalculada menor que o boleto; agora `import_purchase` acrescenta a linha "Acréscimos da nota" (ou desconto no maior item, se negativo) para o total bater com o `vNF`; (2) nota sem boleto e paga na hora (`tPag` 01/03/04/16/17/18) abre com **"Já paga"** marcado → compra `payment_status='paid'` (o `purchase-write` lança a saída no fluxo de caixa; aviso na tela para não duplicar com sangria já lançada); (3) CFOP de remessa/bonificação/outras saídas (5.9xx exceto 5929, 5.55x) ou `tPag` 90 ganha selo "remessa/bonificação?" e aviso no modal. CFOP 5929 (NF-e relativa a cupom) é compra normal.
+
+**NFS-e tomadas (2026-09-10):** o mesmo `ObterNotasFiscais` (entradas) devolve NFS-e do padrão nacional (`ModeloDocumento=10`, **chave de 50 dígitos**, `Serie='SEM'`) — a busca filtrava só modelo 55/44 dígitos e as descartava. Agora aceita os dois; o XML da NFS-e (`NFSe > infNFSe`, com a `DPS > infDPS` embutida) é lido por `parseNFSe`: prestador em `emit`, serviço em `xTribNac` (vira `natureza`) e `serv/cServ/xDescServ`, competência `dCompet`, valores do 1º `<valores>` (`vLiq` = `valor_total`, `vISSQN`, `vTotalRet`) e `vServPrest/vServ`; `tpRetISSQN` 2/3 = ISS retido pela loja. Guardada como 1 item com `competencia`, `v_iss`, `iss_retido`, `v_retencoes`, `v_liquido`. **NFS-e só pode ser lançada como despesa** (`import_purchase` recusa). Na tela: filtro Mercadorias × Serviços, selo NF-e/NFS-e, cartão do serviço na conferência e aviso "descontado no repasse?" para plataformas (iFood, Rappi, 99Food, Aiqfome, Uber Eats, Keeta) cuja NFS-e é a comissão já abatida do repasse. Primeira carga: 16 NFS-e (contadora, MEIs, VR, iFood). O site do Emissor Nacional (nfse.gov.br) tem API própria (Sefin/ADN, certificado A1), mas não é necessária: o Brasil NFe já entrega as NFS-e tomadas.
+
+**Pegadinha de teste no Windows:** `python -c "json.load(sys.stdin)"` lê a entrada como cp1252 e embaralha acentos ("ParanÃ¡"). O dado no banco estava certo; conferir com SQL antes de concluir que é bug de codificação.
+
+### 2026-09-09 — Módulo fiscal: NFC-e por venda via Brasil NFe (backend no ar, front pendente de push)
+
+**Decisões:** provedor Brasil NFe (R$ 49,90/mês ilimitado, API síncrona `/services/fiscal/EnviarNotaFiscal`, header `Token`); empresa/certificado A1/CSC ficam no painel do provedor e o ERPOS guarda só o Token da empresa. **Regra da nota (revista 2026-09-09):** **uma NFC-e por pedido, no momento do pagamento, em TODOS os canais** — balcão, delivery, QR universal ("Mesa 0"/Balcão, sessão compartilhada por vários clientes) e mesa numerada. Não existe mais nota consolidada no fechamento da sessão (o gatilho no `table-write` foi removido); `source_type = 'table_session'` só por emissão manual com `force`. A chave `emit_on_table_close` passou a significar "pedidos de mesa/QR" (origin `table`/`waiter` ou com `table_session_id`). Coluna **Nota Fiscal** na lista de Pedidos (`pedidos/components/NotaFiscalCell.tsx` + `hooks/useFiscalDocs.ts`): status/número por pedido, Emitir/Reemitir manual, ver DANFE, reimprimir; grupos unificados agregam e emitem o que falta. **Pagamento em grupo (2026-09-09, tarde):** pedidos pagos juntos no PDV (`payments.payment_group_id`) geram **UMA** NFC-e — `source_type = 'payment_group'`, `source_id` = id do grupo, `order_ids` = pedidos cobertos (índice GIN). O PDV manda `group_size` no `record_payment`; a `fiscal-write` só emite quando `group_size` pedidos do grupo estão pagos (o PDV registra um a um, ~4s entre eles). Emissão manual por um pedido do grupo é redirecionada para o grupo (resposta traz `source_type`). Validado em homologação: NFC-e nº 3 cobrindo P0709260001+P0709260003. **CPF/CNPJ do consumidor nos 3 canais (2026-09-10):** um só lugar para validar/formatar — `src/lib/cpfCnpj.ts` (`isValidCpfCnpj`, `mascaraCpfCnpj` progressiva CPF→CNPJ, `erroCpfCnpj`) e o campo `components/base/CpfCnpjInput.tsx`. Usado em: **caixa** (`PagamentoModal` e `PagamentoRapidoModal` — antes era `maxLength={14}`, que não cabia CNPJ, sem máscara nem validação), **delivery** (campo novo no modal de forma de pagamento; `useDeliveryData` guarda em `localStorage` e manda `customer_cpf` no `create_delivery_order`; `delivery-write` valida o DV e grava em `orders.customer_cpf` — documento inválido não trava o pedido, a nota só sai sem identificação) e **QR das mesas** (rótulo passou a dizer CPF/CNPJ). Emissão manual (`EmitirNfModal`) e `fiscal-write` já aceitavam os dois. **Pegadinha:** ao gerar código por script Python, `` de backreference vira o byte de controle 0x01 no arquivo — o regex de "dígitos repetidos" virou inofensivo e só apareceu no teste unitário; usar `chr(92)+'1'` ou arquivo de patch. **CPF no pagamento pelo QR — armadilha de deploy (2026-09-10):** o campo já estava no front publicado, mas a `online-payments` em produção ainda era a versão anterior (o Codex publicou o arquivo dele por cima entre o meu deploy e o teste), então o `customer_cpf` chegava e era ignorado — 4 NFC-e saíram sem CPF. Sempre confirmar a função DEPLOYADA (`get_edge_function`), não o arquivo local, ao investigar "o front manda mas não grava". Blindagem: o CPF é validado no início do `create_pix` (antes do `nothing_to_pay`, o que também permite testar sem criar cobrança no Mercado Pago), o UPDATE checa erro e loga, `get_bill` devolve `customer_cpf` para pré-preencher, e a action **`set_cpf`** deixa o cliente informar/corrigir o CPF com o Pix já na tela (bloqueada depois de `settled_at`). **CPF no pagamento pelo QR (Pix online):** `PagarContaModalQR` tem campo "CPF na nota fiscal (opcional)" antes de gerar o Pix; `online-payments` › `create_pix` valida o DV e grava em `orders.customer_cpf` dos pedidos do Pix; ao confirmar, chama a `fiscal-write` com `payment_group` + `group_size` quando o Pix cobre vários pedidos (1 nota). Nome do consumidor no QR vem de `table_session_participants.name` (nunca "Mesa 0"). **CPF na nota na emissão manual:** "Emitir NF" na aba Pedidos abre `EmitirNfModal` (CPF/CNPJ + nome opcionais, ou "Emitir sem identificar"); `fiscal-write` › `emit`/`retry` aceitam `customer_cpf`/`customer_name`, validam o DV e gravam o CPF em `orders.customer_cpf` dos pedidos da nota (prioridade sobre o CPF já gravado). Prazo de cancelamento (30 min, `cancelMinutesLeft` em `lib/fiscal.ts`) visível na lista de notas, na coluna de Pedidos e no modal de cancelar. **Emissão em lote:** checkbox por pedido (só pagos sem nota) + "marcar todos" no cabeçalho + barra flutuante "Emitir NF dos selecionados" com progresso; emite sequencialmente (uma chamada por pedido) e mantém marcados os que falharam. Tributação por item resolve **item → categoria → padrão da loja** (`fiscal_settings`); se houver `cod_tributacao` (grupo tributário do painel), o provedor calcula os impostos.
+
+**Onde:**
+- Migration `20260909010000_fiscal_nfce.sql`: tabelas `fiscal_settings`/`fiscal_documents` (RLS padrão fin_*: select por membership, escrita só service_role), colunas fiscais em `menu_items`/`menu_categories`/`payment_methods`, `fn_get_full_menu` e `fn_get_payment_methods` devolvendo os campos novos. `REVOKE SELECT (provider_token)` — o front **nunca** pode dar `select('*')` em `fiscal_settings` (usar a lista de colunas de `FiscalTab.tsx`).
+- `supabase/functions/fiscal-write/index.ts`: monta a nota (`buildNote`), transmite, grava chave/protocolo/XML/QR, enfileira o DANFE. Ações: `emit`, `retry`, `run_pending`, `cancel`, `get_pdf`, `get_xml`, `print_danfe`, `test_connection`, `get_settings`, `save_settings`.
+- Gatilhos: `order-write` › `record_payment` (quando o pedido vira pago e **não** é de mesa) e `table-write` › `close_table` / `close_table_by_customer`. Ambos só chamam a `fiscal-write` se `fiscal_settings.enabled` (1 select), via `EdgeRuntime.waitUntil` (não atrasam o PDV).
+- **Chamada interna entre Edge Functions:** o gateway do Supabase rejeita a `sb_secret_*` no `Authorization` e "Conflicting API keys" quando `apikey` ≠ `Authorization`. Solução: secret `FISCAL_INTERNAL_KEY` (já setado no projeto) enviado no header `x-internal-key`, com `Authorization`/`apikey` = anon. `fiscal-write` aceita esse header como autenticação de serviço (tenant vem do body). Reutilizar esse padrão para qualquer função que precise chamar outra.
+- DANFE térmico: `print-queue-agent` › `formatDanfe` para `content_type = 'danfe_nfce'` (QR Code nativo ESC/POS `GS ( k`). O agente local não muda (só repassa o base64). Impressora: `fiscal_settings.danfe_printer_id` ou a única/mapeada.
+- Front: `Configurações › Fiscal (NFC-e)` (`FiscalTab.tsx`), aba **Pedidos › Notas Fiscais** (`/pedidos?tab=notas`, toggle no cabeçalho de `src/pages/pedidos/page.tsx` + `pedidos/components/NotasFiscaisList.tsx`; a rota `/notas-fiscais` redireciona para lá: lista do mês, PDF, XML, zip de XMLs para o contador via `src/lib/zipStore.ts`, reimpressão, reemissão, cancelamento com justificativa, emissão manual por nº de pedido), aba **Fiscal** no `ItemModal`, seção fiscal no modal de categoria, "Código na NFC-e" na forma de pagamento. Constantes em `src/lib/fiscal.ts`, campos compartilhados em `components/feature/FiscalFields.tsx`.
+
+**Regras de montagem (buildNote):** `item_price` já inclui as opções; a nota fecha **exatamente** no `total_amount` (diferença vira desconto rateado ou "outras despesas"); taxa de serviço/gorjeta/entrega vão em `ValorOutrasDespesas` do 1º item; pagamentos consolidados por tPag e ajustados na maior linha para Σ(pago − troco) = total; sem pagamento registrado → `99 Outros`; total 0 (cortesia) → `skipped`; CPF só entra se o DV for válido; `IndicadorPresenca = 1` em todos os canais (4 exigiria endereço estruturado). Índice único parcial impede nota duplicada por origem.
+
+**Pendências para ir a produção:** conta no Brasil NFe + certificado A1 + credenciamento NFC-e e CSC na SEFAZ-PR (contador); colar o Token em Configurações › Fiscal, testar em **homologação** (ambiente 2), classificar NCM por categoria, e só então ambiente 1. Provedor testado apenas até "Token inválido" (pipeline completo validado no tenant *Testes PDV*, dados apagados depois).
+
+**Homologação validada em 2026-09-09 (loja VL GASTRONOMIA / El Patron):** certificado A1 e CSC cadastrados no painel Brasil NFe (Configurações › Serviços › NFC-e), token em `fiscal_settings`. NFC-e nº 1 (pedido balcão) e nº 2 (sessão de mesa com 5 pedidos e 4 formas de pagamento) **autorizadas** pela SEFAZ-PR em ambiente 2. Correções que saíram desse teste: (1) `payments` **não tem** `table_session_id` — pagamentos da mesa são lidos pelos `order_id` dos pedidos da sessão (o mesmo erro existe no `table-write` › `close_table_by_customer`, pendente); (2) forma de pagamento sem `fiscal_code` caía em "00" (inválido) em vez do mapeamento por `type`; (3) para NFC-e o `ObterArquivoNotaFiscal` devolve o DANFE em **HTML** base64, não PDF — `get_pdf` devolve `content_type` e a tela abre o blob certo; (4) rótulo da mesa vem de `tables.number/area` (número 0 = balcão); (5) DANFE térmico: avanço de 5 linhas antes do corte (guilhotina fica ~1cm acima da cabeça — sem isso o rodapé/QR saía no cupom seguinte), chave de acesso sempre em 2 linhas (54 colunas não cabem em 48), rótulos internos "Un. N" do KDS filtrados do nome do item. Ainda falta: contadora confirmar CSOSN/ST das bebidas, e virar `environment=1` + `enabled=true` para produção.
+
+### 2026-09-10 — Tráfego Pago: tudo que a Meta entrega (conjuntos, orçamento, aprendizado, segmentação × área de entrega, qualidade, vídeo, peças, aparelho/região/frequência, públicos, conta, prévia, comentários)
+
+Pedido: "me lista o que mais dá pra tirar da Meta" → "pode fazer pra tudo". **Backend** (`meta-ads-insights` v19, `meta-connect` v11, ambos publicados pelo conector): 19 consultas em paralelo + 6 lotes de objetos. Novidades na resposta: `adsets[]` (level=adset; `daily_budget/lifetime_budget/budget_remaining` — objetos vêm em **centavos como string**, helper `centavos()`; `bid_strategy/bid_amount/billing_event`; `learning{status,conversions,last_edit}` de `learning_stage_info`; `targeting` resumido por `summarizeTargeting()` — idade, gênero, pins com raio/lat/lng (milhas → km), cidades/estados/ceps/países, interesses/comportamentos inclusive dentro de `flexible_spec`, públicos incluídos/excluídos, Advantage+; `issues` de `issues_info` e `recommendations` **em lote separado** pra não derrubar o essencial se a Meta recusar o campo); `ads[]` ganhou `creative{title,body,description,cta,link,image_url,video_id,story_id}` de `creative{...object_story_spec}`, `rankings{quality,engagement,conversion}` (só existem no level=ad e só com ≥ 500 impressões — `null` fora disso), `video{plays,p25..p100,thruplay,avg_seconds}` (só quando `video_play_actions` > 0), `issues`, `recommendations`; `metrics()` ganhou `unique_clicks/unique_ctr/cost_per_unique_click/unique_link_clicks/outbound_clicks/outbound_ctr` e `cost_per[]` (`cost_per_action_type`, já calculado pela Meta — o front mostra "R$ X cada" no card de ações); `breakdowns` ganhou `device_platform`, `impression_device`, `region` (`country,region`), `frequency` (`frequency_value` — **precisa de `reach` nos fields**, por isso lista própria `frequencyFields`) e `assets{image,title,body,cta}` (`image_asset/title_asset/body_asset/call_to_action_asset`, rótulo por `text|name|type|hash`); `account` (`/act_X?fields=name,currency,account_status,disable_reason,amount_spent,balance,spend_cap,timezone_name,funding_source_details`); `audiences` (`/act_X/customaudiences`, top 50); `delivery_area` (ERPOS: `system_settings.delivery_config.delivery_fee_tiers[].ate_km` → `max_km`, `store_location` → pin da loja, bairros ativos, e `km_p90/km_max` de `orders.delivery_distance_km`); `comments` (top 8 anúncios por gasto → `/{story_id}/comments`). **Cruzamento raio × entrega** (`area_check[]` por conjunto): distância haversine do pin do anúncio até a loja + raio = `alcance_km`; `excede_km = alcance − max_km` (>0 = anúncio alcança gente que o delivery não atende). **Comentários exigem permissão de PÁGINA** (`pages_show_list` + `pages_read_engagement` na configuração de Login para Empresas) — o token de anúncios normal não tem; erro 10/200/100/190 em TODOS os anúncios → `comments.available=false, reason:'permission'` e a tela explica o que falta (não é bug). Tudo fora do essencial (campanha) é **fail-soft**: `graphRows/graphObject/fetchObjects` logam `warn` e devolvem vazio — ao abrir a página, conferir `function_logs` por `[meta-ads-insights] bd:` / `lookup failed` pra ver o que a Meta recusou. `meta-connect` ganhou `ad_preview` (`/{ad_id}/previews?ad_format=`; formatos permitidos numa allowlist; `ad_id` validado `^\d{5,30}$`; membro da loja; sob demanda, um por vez, porque o HTML é pesado e conta no rate limit). **Front:** `page.tsx` estava em ~1.950 linhas, então os helpers/formatadores/badges foram para `trafego-pago/shared.tsx` e os blocos novos em `trafego-pago/components/` — `ContaEConjuntos.tsx` (`ContaStrip` status/saldo/limite/gasto acumulado; `ConjuntosTable` expansível com orçamento, aprendizado, segmentação e checagem de área; `AreaEntregaCard`), `Criativos.tsx` (`RankingsInline` na tabela de anúncios; `PreviaModal` com iframe da prévia via `dangerouslySetInnerHTML`, botões de formato, KPIs, texto do criativo com checagem de `utm_source` no link, `RetencaoBarras`, avisos e comentários; `RetencaoVideoCard`; `PecasCriativasCard`), `Quebras.tsx` (`AparelhoRegiaoCards`, `FrequenciaCard`, `PublicosCard`, `RecomendacoesCard` + `montarAvisos()` que junta issues/recommendations de campanha/conjunto/anúncio). No link público (`publico`) o botão "Prévia e detalhes" some (exige sessão). Campos novos são todos opcionais no tipo `InsightsResponse`: função antiga no ar não quebra a tela. Type-check do projeto ficou nos mesmos 3 erros de baseline.
+
+### 2026-09-09 — Tráfego Pago: link público somente leitura (/relatorio/:token)
+
+Pedido: mandar o relatório para alguém ver sem login, sem editar nada. Padrao seguido: `/voucher/:token` (rota publica + Edge Function validando token no banco). **Regra de ouro:** o TOKEN define a LOJA e o PERIODO, lidos da linha do banco; `tenant_id`/`date_preset`/`time_range` do body sao IGNORADOS quando ha `share_token` — se viessem do navegador, trocar o tenant_id na URL mostraria outra loja. **Tabela** `trafego_pago_shares` (migration `20260909120000_trafego_pago_shares.sql`): token (32 bytes hex = 64 chars, `crypto.getRandomValues`), periodo congelado (preset OU range), `include_erpos_orders`, `expires_at`, `revoked_at`, `view_count`. RLS padrao fin_*: select por membership, escrita so service_role + GRANTs explicitos. Verificado apos aplicar: `anon` NAO tem select na tabela (o token so e resolvido dentro da Edge Function). **Edge Functions:** `meta-ads-insights` ganhou o caminho `share_token` (valida formato, existencia, revogado, expirado; resolve nome da loja; incrementa `view_count`) — respostas de link morto vem com `ok:false` + `share_invalid|share_revoked|share_expired` e HTTP 200, pra tela mostrar mensagem em vez de erro. `meta-connect` ganhou `create_share`/`list_shares`/`revoke_share`; criar e revogar exigem **admin** da loja (o link abre porta sem login), e o revoke filtra por `tenant_id` alem do id (admin de uma loja nao revoga link de outra). **Front:** a MESMA `trafego-pago/page.tsx` atende as duas rotas — detecta `/relatorio/<token>` pelo pathname (`getShareTokenFromUrl`, mesma abordagem do delivery por causa do basePath) e entra em modo `publico`: pula o `loadStatus`/OAuth, busca via `fetch` sem sessao (funcao com verify_jwt=false nao precisa de header), esconde seletor de periodo, Atualizar, Desconectar, Compartilhar e a barra de conexao. Evitou-se extrair o painel em componente novo — a duplicacao seria de ~400 linhas de JSX. Modal `CompartilharModal` cria/lista/revoga. **Decisao de privacidade:** o card 'Meta x ERPOS' (faturamento real do caixa) e opt-in por link, desmarcado por padrao. **PEGADINHA (crash na 1a abertura do link):** para esconder a barra 'Conectado' no modo publico eu usei `className={publico ? 'hidden' : ''}` — mas classe CSS nao impede o React de AVALIAR o JSX, e `connection` e null no modo publico → `Cannot read properties of null (reading 'available_accounts')` e ErrorBoundary. Em tela de modo duplo, esconder bloco que desreferencia estado ausente tem que ser **renderizacao condicional** (`{!publico && x && (...)}`), nunca classe. Vale para qualquer `hidden`/`display:none` sobre JSX que le dados de um dos modos.
+
+### 2026-09-09 — Tráfego Pago: compras, valor de venda, ROAS, detalhe por anúncio e cruzamento com pedidos do ERPOS
+
+Pedido do usuário: o relatório não mostrava compras nem valor de venda, e não abria por anúncio. Causas: `meta-ads-insights` pedia só `actions` (sem `action_values` = receita) e só `level=campaign`; o front somava TODOS os `action_type` como "Resultados" (clique + engajamento + view + compra → número sem sentido; compra sumia no meio), e o card "Resultados por tipo" cortava no top 7. **Critérios adotados:** (1) a Meta devolve o mesmo evento em vários recortes (`purchase`, `omni_purchase`, `offsite_conversion.fb_pixel_purchase`…) — **nunca somar**, pegar UM por preferência (`pickAction`); `purchase` é o agregado que o Gerenciador chama de "Compras". (2) "Resultado" no padrão do Gerenciador: por `optimization_goal` do conjunto / `objective` da campanha (`resultFor`); pra conversão de site assumimos **compra** (o pixel do delivery dispara Purchase). (3) Função agora faz 3 consultas paralelas (campanha, **anúncio**, dia) + lookup em lote `GET /?ids=...&fields=effective_status,creative{thumbnail_url}` (status/miniatura; tolerante a falha) + consulta `orders` do tenant no mesmo período com `delivery_source` começando com fb/ig/meta/face/insta (pedidos REAIS vindos de link com utm da Meta) → `erpos_orders`. Resposta ganhou `ads[]`, `range`, `erpos_orders`, e cada linha `purchases, purchase_value, roas, cost_per_purchase, landing_page_views, add_to_cart, initiate_checkout, result{type,value}, status`. (4) Front (`trafego-pago/page.tsx`): KPIs de venda (Compras, Valor em vendas, ROAS, ticket), funil do pixel (clique → página → carrinho → checkout → compra, com % por passo), gráfico investimento × receita × compras, tabela de campanhas com objetivo/status/compras/vendas/ROAS, **tabela de anúncios** (miniatura, conjunto, status; clique na campanha filtra), card "Meta × ERPOS". Campos novos são opcionais no tipo: a tela não quebra com a função antiga no ar (mostra aviso na tabela de anúncios). **Deploy das funções pelo Claude:** o ambiente remoto não tem CLI nem rede pro Supabase, MAS com o **conector Supabase** (claude.ai → Conectores) ativo no chat, a ferramenta `deploy_edge_function` publica direto (feito em 2026-09-09: `meta-connect` v9 e `meta-ads-insights` v13, `verify_jwt=false` como antes, entrypoint `index.ts`). Sem o conector: `npx supabase functions deploy <nome> --no-verify-jwt` na máquina do usuário ou pelo Codex. **Terceira rodada — divergencia vs. Reportei (2026-09-09):** o usuario comparou a tela com um relatorio do Reportei (El Patron Paranagua, 01/07 a 31/08/2026: R$2.359,99 investidos, 630.178 impressoes, 124.471 alcance, 3.634 cliques no link, CTR 0,58%, CPC R$0,65, frequencia 5,06, 27 compras, R$1.957,98, ROAS 0,83). Recalculei tudo: **o Reportei estava certo**, batendo ate a 4a casa. Duas causas reais, ambas bug meu, mais uma de periodo. **(a) ALCANCE NAO E SOMAVEL.** Eu somava `reach` das campanhas; alcance e deduplicado DENTRO de cada consulta, entao quem viu duas campanhas era contado duas vezes — total inflado e frequencia (impressoes/alcance) subestimada. Fix: consulta extra no **nivel da conta** (sem `level`, sem `time_increment`) devolvida como `totals`, usada pelo front para alcance/frequencia/gasto/impressoes/cliques/compras; somar campanhas virou so fallback (`totals.reachExato=false` mostra "(aprox.)"). Regra geral: metricas aditivas (gasto, impressoes, cliques, compras, valor) podem ser somadas; **alcance e frequencia, nunca**. **(b) CTR/CPC mediam outra coisa.** Os campos `ctr`/`cpc` da Meta sao sobre TODOS os cliques (curtida, comentario, clique no perfil) — dao CTR maior e CPC menor. O Gerenciador e o Reportei usam **cliques no link**. Fix: pedir `inline_link_click_ctr` e `cost_per_inline_link_click`, expostos como `link_ctr`/`cost_per_link_click`; helpers `linkCtr()`/`linkCpc()` no front, colunas renomeadas para "CTR link"/"CPC link", e nota de rodape mostrando quanto daria pelo criterio antigo. **(c) Periodo:** o relatorio era de 62 dias; nenhum preset cobria isso (motivou o filtro personalizado). **Metodo:** antes de culpar a ferramenta externa, recalcular as metricas derivadas dela (CPM, frequencia, custo por conversao, ROAS) a partir das primarias — se fecham, o erro e do nosso lado. **Pegadinha de deploy:** `deploy_edge_function` falhou uma vez com `Import 'https://esm.sh/...' failed: 521` (CDN fora do ar, transitorio) — a versao anterior continua ATIVA, e so repetir.
+
+**Segunda rodada (mesmo dia):** (5) `requireMember()` em `meta-ads-insights` e `meta-connect` — JWT do header → `admin.auth.getUser` → `user_tenants` (membro; `disconnect` exige admin). Sem isso qualquer um com a anon key lia/desconectava a Meta de qualquer tenant. `exchange` grava `connected_by_user_id` do usuário verificado. (6) `previous`: 2ª consulta com `time_range` do período anterior de mesmo tamanho (não em `maximum`) → setas ▲▼ nos KPIs (`Delta`; custo = invertido, investimento = neutro). (7) `breakdowns`: `publisher_platform,platform_position` (Feed/Stories/Reels…), `age,gender`, `hourly_stats_aggregated_by_advertiser_time_zone` — 6 consultas em paralelo; quebras sem `reach/frequency` (a Meta não aceita em todas as combinações). (8) `erpos_orders.hourly[24]` = todos os pedidos do delivery por hora local (America/Sao_Paulo) → gráfico "hora do dia: compras via anúncio × pedidos do delivery". (9) Alertas no front, dos anúncios ATIVOS: venda sem compra com ≥ R$ 20 gastos; ROAS < 1 com ≥ R$ 50; frequência ≥ 3,5; CTR < 0,5% com ≥ 2 mil impressões; e conta inteira com campanha de venda sem compra (sugere checar o pixel). Pendência que só o usuário resolve: `?utm_source=instagram|facebook` no link de destino dos anúncios (campo "Parâmetros de URL" do anúncio) pra o cruzamento Meta × ERPOS sair do zero.
+
+### 2026-09-08 — Tráfego Pago: "Recurso indisponível / O Login do Facebook está indisponível para este app"
+
+Sintoma: ao clicar "Conectar" em `/trafego-pago`, o popup da Meta mostra "Recurso indisponível" antes de qualquer tela de consentimento. **Resolvido em duas frentes.** Código: `handleConnect` (`src/pages/trafego-pago/page.tsx`) tinha trocado o `config_id` do **Login do Facebook para Empresas** pelo login clássico (`scope=ads_read`) — app Meta do tipo Empresa só aceita o Login para Empresas; voltou a usar `config_id=<META_LOGIN_CONFIG_ID>&override_default_response_type=true&response_type=code` (fallback clássico só sem config_id). Painel Meta: mesmo com o `config_id` certo o erro persistia; o Explorador da Graph API (aba *Configurations*) gerava token normalmente → a configuração estava boa, e a diferença era o **redirect pro site** — resolvido na tela *Login do Facebook para Empresas → Configurações* (Login do OAuth na web + URI `https://erpos.vercel.app/trafego-pago` nos redirecionamentos válidos) e em *Básico* (domínio `erpos.vercel.app`, plataforma Site, ícone 1024×1024 e categoria). O app segue em modo Desenvolvimento e funciona para quem tem papel nele. **Método de diagnóstico reutilizável:** gerar token no Explorador da Graph API com o app + a configuração — se funciona lá e não no site, o problema é redirect/OAuth web, não papel nem publicação. O "filtro por portfólio" que motivou o login clássico não é problema: a conexão é **uma por loja** (`meta_ad_connections.tenant_id`). Não dá pra testar daqui: o proxy do ambiente bloqueia `facebook.com`, `*.supabase.co` e `vercel.app`.
+
+### 2026-08-29 — Pedido de delivery lancado no PDV Caixa (cliente cadastrado + taxa automatica)
+
+Pedido do usuario: no caixa, montar o carrinho no cardapio normal e marcar como **entrega**, escolhendo um cliente ja cadastrado (nome/celular/endereco) ou cadastrando um novo com os mesmos dados do link do delivery; ao selecionar, a taxa aparece; ao confirmar, vai pra cozinha como pedido de delivery.
+
+**Decisao de arquitetura:** reusar o **carrinho do PDV** (`PDVContext` + `submitOrder`/`order-write`) em vez de passar pelo `delivery-write create_delivery_order`. Motivo: o caixa precisa de pagamento no caixa, desconto, cortesia e a fila de impressao do PDV — tudo isso ja existe no caminho do PDV. Do delivery reusamos so o **cadastro** (`delivery_customers`/`delivery_customer_addresses`) e a **regra da taxa**.
+
+Como fica um pedido de delivery do caixa: `origin_type='delivery'` + `delivery_platform='propria'` — e isso (e so isso) que faz o pedido aparecer no **Gestor de Entregas** (`list_delivery_board` filtra por `origin_type='delivery'` e plataforma `propria`/nula).
+
+**Backend**
+- `delivery-write` (3 acoes novas, autenticadas por token do operador + membership, mesmo gate do `list_delivery_orders`):
+  - `pdv_delivery_bootstrap` → bairros ativos, `store_location`, faixas de distancia, `distance_mode`.
+  - `search_customers` → busca por nome OU telefone (3+ digitos casa telefone); sem termo devolve os 20 mais recentes por `last_used_at`. Traz os enderecos de cada cliente; cliente antigo com endereco so nas colunas do proprio cadastro vira um endereco "sintetico" (`id: null`).
+  - `quote_delivery_fee` → cotacao pura (nao grava): rota ORS por faixa quando ha `store_location` + faixas + pin; senao taxa do bairro; senao `mode:'manual'` (o caixa digita). Mesma regra do `create_delivery_order`.
+  - Cadastro reusa as acoes publicas ja existentes `save_customer` e `save_customer_address`.
+- `order-write`: passou a aceitar `delivery_lat/lng/distance_km/route_min/sla_min` (UPDATE apos criar o pedido, espelhando o `create_delivery_order`) — sem isso o pedido nao tem pin no mapa do Gestor nem no link do motoboy.
+
+**PEGADINHA — a conferencia financeira do `order-write` ignorava `delivery_fee`.** A validacao era `subtotal - desconto + service_fee == total_amount`; taxa de entrega no total dava 400. Por isso a tela `/pdv/delivery` (iFood etc.) mandava a taxa **duas vezes** (`service_fee_amount` E `delivery_fee`) — era o unico jeito de passar. Agora a validacao aceita **as duas formas** (com e sem a taxa somada), de proposito: front antigo em cache continua funcionando enquanto o deploy do front nao chega. **Convencao canonica (a do `delivery-write`): `total = subtotal - desconto + servico + entrega`, com `service_fee_amount = 0`.** `/pdv/delivery` foi corrigida pra ela.
+
+**PEGADINHA DE CANAL (ja documentada em 2026-07-12, agora com helper):** `order_items.item_price` em `origin_type='delivery'` grava **so o preco-base** (complementos vivem em `order_item_options`, e `fn_get_sales_report` os soma *apenas* nas linhas de delivery). Nos outros canais o `item_price` ja inclui os complementos. O PDV monta `precoTotal` = base + complementos → gravar isso num pedido de delivery contaria em dobro no `top_items`. Criado `itemPriceDoCanal(ci, isDelivery)` em `PDVContext.tsx`, usado nos 4 pontos de montagem de itens. `/pdv/delivery` tinha esse bug e foi corrigida (passou a mandar `itemPreco`).
+
+**Front**
+- `DestinoInfo` (PDVContext) ganhou `clienteDeliveryId`, `enderecoId`, `bairroId`, `latEntrega`, `lngEntrega`, `distanciaKm`, `rotaMin`, `slaMin`.
+- `PDVContext`: `valorTaxaEntrega` (0 fora do destino delivery) entra no `total`; `finalizarPedido` e `enviarParaCozinha` mandam `origin:'delivery'`, `delivery_platform:'propria'`, geo e `destination_name` no formato `"Nome - Endereco"` (o Gestor separa o nome do cliente por esse hifen). **Cortesia com entrega:** o desconto passou a cobrir `subtotal + taxaEntrega`, senao o total 0 nao fecha com a validacao.
+- Novo `src/pages/pdv/caixa/components/DeliveryClienteCaixaModal.tsx`: busca com debounce, lista com nome/telefone/endereco, escolha de endereco quando ha varios, cotacao da taxa, campo de taxa sempre editavel (pre-preenchido pela cotacao — cobre "fora de area" e endereco sem pin), cadastro de cliente novo e de endereco novo (com `MapaPin` quando a loja usa taxa por distancia).
+- `DestinoModal`: o tipo "Delivery" nao tem mais campos livres de nome/telefone — abre o modal do cliente e mostra o resumo (nome, telefone, endereco, taxa) com "Alterar".
+- `CarrinhoPanel`: linha "Taxa de Entrega" no resumo.
+
+**Ajustes do mesmo dia (apos o 1o teste do usuario):**
+- A busca voltava vazia porque as acoes novas **nao estavam deployadas** (`delivery-write` estava na v86). Conferido no banco: Vila Leste tem 94 `delivery_customers` e **todo cliente da aba Clientes ja existe em `delivery_customers`** (0 orfaos) — nao precisa de fallback na tabela `customers`. Deploy feito: `delivery-write` e `order-write`.
+- `search_customers` passou a buscar tambem por **endereco**: resolve antes os `customer_id` em `delivery_customer_addresses` (`street`/`bairro`/`reference_point`/`complement`) e injeta como `id.in.(...)` no `or` da consulta principal; cobre tambem `delivery_customers.street` (cadastro antigo). **Bairro mora em texto:** 77 de 78 enderecos tem `bairro` preenchido e so 1 tem `neighborhood_id` — por isso a busca olha a coluna de texto, nao a FK. Sanitizacao do termo (`% , ( ) . *`) e obrigatoria: sao sintaxe do filtro `or` do PostgREST.
+- O `MapaPin` no cadastro passou a aparecer **sempre** (antes so em `distance_mode`) — sem `distance_mode` o pin fica opcional e serve pro motoboy achar a casa.
+- A busca agora distingue "nao achei" de "backend falhou" (mensagem de erro no lugar da lista vazia muda).
+
+**Rodada 2 de ajustes (apos o 1o pedido real na EP PAR MALL):**
+- **BUG FINANCEIRO — `enviarParaCozinha(destinoOverride)` calculava o total com o destino ERRADO.** O caixa confirma o destino e chama `enviarParaCozinha(d)` no MESMO tick (`handleDestinoConfirm` em `pdv/caixa/page.tsx`, de proposito, pra nao perder a identificacao pelo state atrasado do React). Mas `total`/`valorTaxaEntrega` sao derivados do **state `destino`**, que ainda esta velho — resultado: `delivery_fee` (lido do override) ia com R$ 7,00 enquanto `total_amount` (lido do render) saia SEM a taxa. Pedido `P2908260002` gravou subtotal 10,00 / taxa 7,00 / total 10,00. Fix: `enviarParaCozinha` recalcula `taxaEntregaAtiva` e `totalAtivo` a partir de `destinoAtivo`. **CRITERIO: quando uma funcao aceita `destinoOverride`, TODO valor derivado do destino tem que ser recalculado dentro dela — nunca reusar os derivados do render.** (A validacao tolerante do `order-write` deixou passar: 10,00 bate com a formula sem a taxa. Tolerancia esconde divergencia — foi decisao consciente pra nao travar front antigo, mas custa deteccao.)
+- **Faltava a 2a via da entrega na impressao.** O `delivery-write` enfileira um ticket extra em `station_key='delivery-receipt'` (label "Comprovante") com cliente/telefone/taxa/totais; o caminho do PDV (`queueOrderForPrint`) so gerava os tickets de estacao. Confirmado na `print_queue`: o pedido do caixa saiu com 1 ticket so, enquanto os do link tem `delivery-receipt`. Fix: `queueOrderForPrint` ganhou o parametro `deliveryReceipt` (tipo `DeliveryReceiptInfo`) e enfileira na MESMA `station_key`, pro agente local tratar igual; `useOrderSubmit.buildDeliveryReceipt()` monta a partir do payload (so quando `origin==='delivery'`, plataforma != retirada e ha endereco). A via do PDV inclui **o endereco** no `observacao_geral` — o comprovante do link nao inclui (o endereco dele so aparece no `destino` dos tickets de cozinha).
+- **`MapaPin`: o botao "Confirmar esta localizacao" sumia ao mexer no mapa.** `confirmed` estava derivado de "ja existe coordenada", e o `dragend` grava a coordenada do centro — ou seja, o primeiro arraste ja marcava como confirmado. Fix na raiz: `onChange` ganhou um 3o argumento `origem: 'arraste' | 'confirmacao'` (retrocompativel — os outros usos ignoram), e quem controla o estado so confirma no `'confirmacao'`. No modal do caixa o pin so e gravado (`address_lat/lng`) depois de confirmado.
+- **Taxa de entrega deixou de ser editavel** no caso normal: vira texto com o valor cotado. So vira campo digitavel quando nao existe cotacao possivel (fora da area de entrega, ou endereco sem pin e sem bairro) — senao o caixa ficaria travado sem saida.
+
+**Rodada 3 — auditoria do multiplo endereco por cliente:**
+Estado real do banco: 3 clientes com 2 enderecos, 1 com 5, e **0 clientes com endereco so nas colunas legadas** de `delivery_customers` (o caminho "endereco sintetico" do `search_customers` e defensivo, nao serve ninguem hoje). Rotulos em uso: Casa, Trabalho, Escritório, Principal, Endereco 3/4/5.
+3 defeitos corrigidos:
+1. **Todo endereco criado pelo caixa saia com o rotulo fixo "Endereço"** — varios enderecos do mesmo cliente ficavam indistinguiveis na lista. Agora o formulario tem seletor (Casa/Trabalho/Escritório/Outro), igual ao link. `save_customer` passou a aceitar `label` opcional (sem ele, segue "Principal"/"Endereco N" — o link nao manda).
+2. **`save_customer_address` nao deduplicava**: dois cliques em Salvar criavam dois enderecos iguais. Dedup agora por `street+number+label` (o rotulo entra na chave de proposito: "Casa" e "Trabalho" no mesmo predio sao enderecos distintos).
+3. **A selecao pos-salvamento adivinhava o endereco por rua+numero** — escolhia o errado quando o cliente tem dois parecidos (mesma rua, complementos diferentes). O backend passou a devolver `saved_address_id` e o front seleciona por ele. Tambem troquei a comparacao de "endereco ativo" na lista (era por referencia de objeto + id) por uma **chave estavel** `chaveEndereco()` — a referencia quebrava depois de recarregar a lista.
+
+Testado end-to-end por HTTP na loja "Testes PDV" (a acao e publica, como no link): criar cliente com "Casa" -> adicionar "Trabalho" -> repetir "Trabalho" identico (dedupou, mesmo id) -> mesma rua com rotulo "Escritório" (criou novo). `saved_address_id` correto nos 3. Dados de teste removidos depois.
+
+**Rodada 4 — forma de pagamento + o "nao salva o cadastro":**
+- **Faltava a forma de pagamento.** Pedido de entrega do caixa e cobrado NA ENTREGA — o modal ganhou seletor de forma (via `usePaymentMethods`, so as ativas) + "Troco para" quando dinheiro/`exigeTroco`. Grava em `orders.notes` no MESMO formato do link (`"Pagamento: X | Troco para R$ Y"`, funcao `notasPagamentoDelivery`) e sai na 2a via impressa (campos `delivery_payment_label`/`delivery_change_for` no payload; nao vao ao banco — o `order-write` faz destructuring explicito e os ignora, a persistencia e via `notes`).
+- **"Aperto Salvar e nao salva o endereco" — nao era bug de gravacao.** Verificado no banco: um cadastro feito pelo caixa gravou rua, bairro E pin corretamente. O que acontecia: o form de cliente novo e alto e **a mensagem de erro ficava no TOPO, fora da area rolada** — com Nome/Celular vazios (como no print), o clique em Salvar so escrevia um aviso invisivel e parecia que o botao nao fazia nada. Fix: erro tambem no **rodape, junto do botao**, e os campos que faltam ficam com borda/fundo vermelho (limpa ao digitar). **CRITERIO: em modal com corpo rolavel, erro de validacao vai junto do botao que disparou, nunca so no topo.**
+- **"Ta pegando por bairro, nada a ver":** no modo distancia (loja com pin + faixas) o `<select>` de bairros aparecia com os precos, competindo com o mapa — e se o operador escolhesse um, a cotacao caia na taxa do bairro. Agora, quando `distance_mode` esta ativo, o bairro vira **campo de texto livre** (compoe o endereco, sem preco); a taxa vem so do pin.
+
+Verificado: `tsc` 301 (identico ao baseline medido com `git stash`), `vite build` OK, app sobe no dev server sem erro de console. **Nao testei o fluxo completo logado** — a loja e de producao e o teste criaria cliente/pedido reais. **Deploy necessario:** `delivery-write` e `order-write` (as acoes novas nao existem em producao) + push do front.
+
+### 2026-08-11 — `NotificacoesContext` NAO serve para avisar uma pessoa especifica
+
+Ao construir as notificacoes do modulo de tarefas, descobri que `src/contexts/NotificacoesContext.tsx` e **estado em memoria** (`useState(gerarMock)`, sem Supabase, sem persistencia) e enderecado por **perfil** (`perfisAlvo: PerfilAlvo[]`), nao por usuario.
+
+Consequencia: disparar `dispararNotificacao` para "avisar o responsavel" so mostra o aviso na SESSAO DE QUEM FEZ A ACAO — o destinatario, que esta em outro navegador, nunca ve nada. A feature pareceria pronta e nao funcionaria.
+
+Criterio adotado: quando o aviso precisa chegar a uma PESSOA, persistir numa tabela propria (`task_notifications`: `user_id` destinatario, RLS `user_id = auth.uid()`) e entregar por broadcast num canal por usuario (`task-notify:<user_id>`). O contexto em memoria continua util so para toast/aviso transitorio dentro da propria sessao. Aplicado em `supabase/functions/task-write` (helper `notify`) e `src/pages/tarefas/components/NotificacoesInbox.tsx`.
+
+Corolario util: alertas derivaveis do dado ja carregado (ex.: "tarefas atrasadas/vencendo hoje") NAO precisam de tabela nem de cron — calcule no cliente a partir da lista que ja esta em memoria; fica sempre correto e sem infraestrutura.
+
+### 2026-08-11 — Upload de arquivo: sempre pela Edge Function, nunca pelo storage do client
+
+Reforcando o que ja estava documentado em `uploadMenuImage`: o client Supabase roda com `autoRefreshToken: false`, entao um access token expirado (~1h) chega ao Storage como `anon` e a policy de INSERT recusa ("new row violates row-level security policy"). Todo upload novo deve seguir o mesmo padrao: `resolveAccessToken()` → `FormData` → `fetch` multipart para a Edge Function → `service_role` grava no Storage. Aplicado em `uploadTaskAttachment` (`src/lib/supabase.ts`) + branch multipart em `task-write`. Bucket `task-attachments` e **privado**: a leitura sai por URL assinada (acao `sign_attachment`, 1h), porque anexo de tarefa pode conter documento sensivel — diferente de `menu-images`, que e publico por ser foto de cardapio.
+
+### 2026-08-11 — Perda de produção nunca aparecia em Movimentações > Perda
+
+Pergunta do usuário (com screenshot): "as perdas de produção não deveriam estar na aba Perda de Movimentações?"
+
+- **CAUSA:** `fn_register_production_and_stock_v2` cria 2 `stock_movements` por batelada (`manual_out` dos insumos brutos, `in` do produto acabado) mas **nunca criava um 3º pra perda**. `loss_quantity_kg`/`loss_value` (calculados no front, `RegistroProducaoModal`) só eram gravados em `production_batches` — invisíveis em Movimentações.
+- **O front já esperava isso — código morto esperando o dado:** `EstoqueContext.detectProducaoTipo()` já tem `if (reason.includes('Perda em produção')) return 'perda'`, e `MovimentacoesTab.getMotivoDisplay()` já tem `if (motivo.startsWith('Perda em produção:'))`. Alguém desenhou a exibição e nunca fechou o backend.
+- **Fix:** RPC agora insere um 3º `stock_movement` (`type: 'loss'`, `reason: 'Perda em produção: ' || recipe_name`) quando `p_loss_quantity_kg > 0`, anexado ao **insumo de saída** (produto acabado) — não aos insumos brutos, porque a perda já sai agregada do front (soma vários insumos em kg-equivalente via `toKgAprox`), sem como atribuir a um insumo bruto específico sem inventar divisão arbitrária.
+- **Por que NÃO subtrai estoque de novo (achado importante, quase virou bug):** confirmado que o trigger `trg_stock_movement_apply` em `stock_movements` é **NO-OP intencional** (comentário no próprio código: atualização de estoque é sempre feita explicitamente pela function chamadora). A perda **já está** refletida na diferença entre o que SAIU de insumo bruto (quantidade usada inteira) e o que ENTROU de produto pronto (só o que foi pesado, já líquido de perda) — inserir a movimentação de perda é **puramente informativo pro relatório**, sem tocar `current_stock`. Contrasta com a perda MANUAL (`RegistrarPerdaModal` → `stock-write` → `fn_add_stock_movement`), que **subtrai estoque de verdade** — semânticas diferentes e ambas corretas para seus casos (perda manual = "jogou fora", perda de produção = "já foi contabilizada na diferença in/out").
+- **Unidade de exibição:** perda vem em kg do front; convertida pra unidade de estoque do produto acabado quando possível (`convert_unit`); se a saída for `un` (kg não converte pra unidade discreta), grava em kg mesmo — melhor que sumir.
+- **Verificação:** round-trip real via `DO`+`RAISE EXCEPTION` (rollback proposital, nada persiste): batelada de teste (2kg tomate → 1,5kg chilli, perda 0,5kg) gerou `movements_count=3`, a 3ª linha exatamente `{type: loss, unit: kg, reason: "Perda em produção: TESTE ROLLBACK PERDA", quantity: 0.5}`. Estoque do produto acabado subiu **exatamente** 1,5kg (não descontado 2x pela perda). Confirmado `count=0` de sobra e estoque de volta ao valor original depois. Assinatura/grants/SECURITY DEFINER preservados (`CREATE OR REPLACE` com defaults idênticos). **Zero mudança de front necessária** — a UI já sabia exibir isso, só faltava o dado.
+
+### 2026-08-11 — Registrar Produção: mesmo bug de "0,05"/zeros na quantidade de insumo
+
+Continuação da entrada anterior — usuário confirmou corrigir também o `RegistroProducaoModal.tsx`, que tinha o mesmo padrão de bug (`value={qty || ''}` com `Number(e.target.value)`) no campo de quantidade usada de cada insumo.
+
+- **Complexidade extra em relação ao `FichaProducaoModal`:** aqui `quantitiesUsed` é um `Record<ingredientId, number>` alimentado por **4 caminhos diferentes** (não só digitação direta): o efeito de auto-cálculo por `receitas`/`fatorEscala` (para itens não-manuais), `updateUnitUsed` (troca de unidade), `reescalarPelaQuantidade` (feature de 2026-08-07) e a digitação manual em si. Precisou de um `quantitiesUsedText: Record<ingredientId, string>` paralelo, sincronizado em **todos** os pontos que escrevem `quantitiesUsed` — não só no `onChange` do campo — senão o texto exibido ficaria dessincronizado do número assim que `receitas` mudasse ou a unidade fosse trocada.
+- `reescalarPelaQuantidade` não precisou de mudança: o item de referência continua marcado `manual` (fora do loop de auto-cálculo), então seu texto digitado permanece intocado — exatamente o comportamento que a correção de 2026-08-07 já garantia pro número.
+- **Verificação:** simulados os 3 caminhos de escrita — digitação "0,05" caractere por caractere (preserva zeros); troca de unidade g→kg recalcula e reformata o texto corretamente (0,00005 arredonda pra "0,0001" via o `.toFixed(4)` que já existia, não é regressão); efeito de auto-cálculo por `receitas` também atualiza o texto exibido pros itens não-manuais. tsc 324 (= baseline). Vite sem erro de console.
+
+### 2026-08-11 — Nova Ficha de Produção: impossível digitar "0,05", "1,50" etc na quantidade de insumo
+
+Sintoma (usuário): na criação de ficha de produção, não dava pra colocar números com um ou mais zeros depois da vírgula na quantidade de insumos.
+
+- **CAUSA (bug clássico de campo controlado):** `value={it.quantity || ''}` com `onChange={(e) => updateItem(..., Number(e.target.value))}` — dois problemas empilhados: (1) `0 || ''` avalia pra `''` em JS, então digitar "0" limpa o campo sozinho (nunca dá pra começar "0,05"); (2) o valor exibido vinha do NUMBER já arredondado, não do texto que a pessoa estava digitando — a cada tecla o React re-renderiza o campo a partir de `it.quantity`, que não guarda zero à direita da vírgula ("1,50" vira "1,5" assim que digitado, "2,00" vira "2").
+- **Fix:** `FormItem` ganhou um campo `quantityText: string` (o texto exato digitado), separado de `quantity: number` (usado em todo o resto — custo, conversão de unidade, validação). Input trocou de `type="number"` pra `type="text" inputMode="decimal"`, com regex (`/^\d*[.,]?\d*$/`) filtrando o que pode ser digitado (aceita vírgula OU ponto). `changeItemUnit` (troca de unidade) recalcula `quantityText` a partir do número convertido, já que ali é um valor definitivo recalculado, não digitação em andamento. Mesmo fix aplicado em "Quantidade mínima de estoque" no mesmo modal (idêntico padrão de bug, campo escalar em vez de lista).
+- **Achado relacionado, NÃO corrigido:** `RegistroProducaoModal.tsx:763` (`value={qty || ''}`) tem exatamente o mesmo padrão de bug no campo de quantidade usada de cada insumo, na tela de Registrar Produção. Usuário não reportou esse especificamente — perguntar antes de mexer.
+- **Verificação:** digitação simulada caractere por caractere — "0,05": campo mostra "0" → "0," → "0,0" → "0,05" em cada tecla (antes, sumia no primeiro "0"); "1,50" e "2,00": zero à direita da vírgula preservado enquanto digitando. tsc 324 (= baseline). Vite sem erro de console.
+
+### 2026-08-11 — Modal (ex: Nova Ficha de Produção) fechava sozinho ao trocar de janela do Windows
+
+Sintoma (usuário): preenchendo "Nova Ficha de Produção", clicou em outro programa do Windows (Alt+Tab), voltou pro navegador, e o modal tinha sumido — voltou pra tela de trás, perdendo o que estava digitando.
+
+- **CAUSA (achada por agente Explore, alta confiança — trecho de `node_modules/@supabase/auth-js`):** o `GoTrueClient` da lib do Supabase tem **seu próprio** listener interno de `visibilitychange` (`_onVisibilityChanged`, registrado uma vez dentro de `_initialize()`, **ativo mesmo com `autoRefreshToken: false`** — a flag do projeto não desliga esse caminho). Toda vez que a janela recupera o foco, ele relê a sessão do `localStorage` e, se ainda for válida (caso comum), reemite `'SIGNED_IN'` pra todos os listeners de `onAuthStateChange` — **mesmo sem nenhum token novo, mesmo sendo o MESMO usuário já logado**. `AuthContext.tsx` tratava `'SIGNED_IN'` igual a um login de verdade: chamava `handleSession()`, que faz `setLoading(true)` síncrono. `AppLayout.tsx:59` (`if (loading) return null` — guard escrito pro bug de F5, 2026-08-06) desmontava **toda a árvore de rotas** enquanto `loading` fica true, e remontava quando volta a false. Qualquer estado local de componente (`showFichaModal` em `ProducaoTab.tsx`, `useState` puro) se perde nesse ciclo — daí o modal "sumir sozinho".
+- **Fix:** `AuthContext.tsx` — antes de chamar `handleSession()`, um novo guard ignora o evento quando `_event === 'SIGNED_IN' && session.user.id === authUserIdRef.current` (mesmo usuário já carregado — `authUserIdRef` já existia, atualizado em `resolveSession`). Login novo ou troca de usuário (`authUserIdRef` nulo ou diferente) continua passando por `handleSession()` normalmente — só a reafirmação redundante do mesmo usuário é descartada.
+- **Descartado durante a investigação (documentado pra não repetir a busca):** `useWakeLock` (só re-adquire wake lock, não mexe em UI), `ProducaoContext`/`EstoqueContext` (sem gate de loading em volta de children), `SystemSettingsContext`/`AuditoriaContext`/`KDSContext` (têm listener de `visibilitychange` próprio, mas só fazem refetch de dados, não desmontam nada), nenhum Error Boundary local entre `EstoquePage` e o modal, nenhum provider com `key` dinâmica em `AppProviders.tsx`.
+- **Verificação:** simulados 5 cenários (volta de foco com mesmo usuário → ignorado; login novo → processa normal; troca de usuário → processa normal; token renovado de verdade → já era ignorado, continua; sessão revogada → logout local intacto). tsc 324 (= baseline). **Não reproduzido no preview real** (exige login) — causa raiz confirmada lendo o código-fonte da lib (`GoTrueClient.js`), não por suposição.
+
+### 2026-08-11 — Aba Estoque (InsumosTab): valor em estoque por linha + ordenação por coluna + tira duplicação de "ESGOTADO"
+
+- **Coluna nova "Valor em Estoque"** (`estoqueAtual × precoUnitario` por insumo) — a tela já tinha o TOTAL agregado no card de resumo (`valorTotalEstoque`), faltava por linha.
+- **Ordenação ao clicar no cabeçalho** — mesmo padrão já confirmado com o usuário na aba Estoque Teórico (clique = ordenar, não abrir filtro de valor). Componente `ThOrdenavel` reutilizável dentro do arquivo. Ordenação por status usa um rank de urgência (Esgotado > Crítico > Baixo > Ok), não alfabético.
+- **Bug de duplicação removido:** a coluna "Ações" mostrava um badge de texto "ESGOTADO" no lugar do botão "marcar como esgotado" quando o insumo já estava esgotado — duplicava a mesma informação que a coluna "Status" já mostra (com o badge correto, colorido). Ações agora só tem os botões; quando esgotado, o botão "marcar como esgotado" simplesmente some (nada substitui).
+- **Verificação:** tsc 324 (= baseline — o único erro em `InsumosTab.tsx` no relatório já existia antes, é sobre tipagem de `dreCategories`, não relacionado a esta mudança). Ordenação simulada em Node (valor, status por urgência, categoria) bateu como esperado. Vite sem erro de console.
+
+### 2026-08-11 — Estoque Teórico: correção de fundo (colapsava com a contagem real no dia do ajuste) + UX
+
+Sintoma (usuário): data 11/08, "Abacate" — teórico mostrou 1, mas devia mostrar 1,2 (a contagem real do próprio dia foi o que deixou em 1).
+
+- **CAUSA CONCEITUAL (não um bug pontual — a fórmula original estava errada em espírito):** `fn_get_theoretical_stock_at_dates` reconstruía "o que o sistema TINHA REGISTRADO no fim do dia X" (current_stock menos tudo que aconteceu depois), o que inclui qualquer ajuste de inventário que tenha acontecido NO PRÓPRIO dia X — porque esse ajuste "aconteceu antes do fim do dia X". Resultado: teórico e contagem real colapsam no mesmo número exatamente no dia em que uma recontagem acontece — apagando o próprio sinal que a funcionalidade existe pra mostrar.
+- **Fix:** fórmula passa a desfazer **dois grupos separados**: (a) qualquer `inventory_adjustment` que tenha acontecido especificamente NO dia X pedido, e (b) tudo (qualquer tipo) que aconteceu depois do fim do dia X (fórmula original, inalterada). Ajustes de dias ANTERIORES a X continuam corretamente "presos" no histórico — só o ajuste do MESMO dia da pergunta é excluído. `unreliable` (sinal desconhecido) recalculado sobre a união exata dessas duas janelas.
+- **Verificação com dado real (não sintético):** Abacate, EP Paranaguá — histórico real: entrada +3,0 (07/08), saída -1,8 pra produção (11/08 00:32 SP), ajuste -0,2 (11/08 00:42 SP, teoria 1,2 → real 1,0). `current_stock` hoje = 1,0. Fórmula nova: teórico(11/08) = 1,0 − (−0,2) − 0 = **1,2** ✓. Sanity-check nas datas sem ajuste no mesmo dia (06/06→0,0, 08/08→3,0) e no caso do Chilli com Carne validado antes (03/06→64,45 inalterado) — a correção só muda o dia EXATO em que há recontagem, resto do histórico intacto.
+- **UX pedida junto:** unidade repetida em cada célula (não só ao lado do nome do insumo); números centralizados; linhas setorizadas por categoria (seção por categoria, "Sem categoria" sempre por último); clique no cabeçalho de uma coluna de data ordena a tabela por aquela data (ordenação acontece DENTRO de cada categoria, não quebra o agrupamento — confirmado com o usuário que era ordenar, não abrir filtro de valor). Simulado em Node antes de aplicar (agrupamento + ordenação bateram como esperado).
+- **Verificação:** tsc 324 (= baseline), Vite sem erro de console.
+
+### 2026-08-11 — Feature: Estoque Teórico por data (aba nova em Estoque)
+
+Pedido do usuário: ver o estoque teórico de todos os insumos em qualquer dia escolhido, comparar várias datas lado a lado, mostrar/ocultar a contagem real de inventário daquele dia quando existir, e marcar no calendário os dias que tiveram contagem.
+
+- **Levantamento antes de codar (agente Explore):** não existia nenhum cálculo de "estoque numa data passada" no sistema — só estoque ao vivo (`current_stock`) e CMV teórico por ficha técnica (coisas diferentes). `stock_movements` tem `created_at` com índice e volume baixo (576 linhas) — dava pra reconstruir andando pra trás, MAS `quantity` é gravado sempre em valor absoluto; o sinal (entrada/saída) é dedutível do `type` pra maioria, exceto `inventory_adjustment` (pode ser + ou −), cujo sinal ficava só como texto em `notes` (`'delta=-2.4'`) — ou nem isso, dependendo do caminho de insert.
+- **Pré-requisito resolvido primeiro (confirmado com o usuário via pergunta): coluna `stock_movements.signed_quantity`.** Migração `stock_movements_signed_quantity.sql` — adiciona a coluna, faz backfill (determinístico por tipo + parse de `notes` + cruzamento com `inventory_sessions.items[].diferenca` pro único caso órfão do banco inteiro, tenant EP PAR MALL 2026-06-04, recuperado como -2.4 e confirmado por batida exata de magnitude) e atualiza as 3 RPCs vivas que gravam `stock_movements` (`fn_add_stock_movement`, `fn_confirm_inventory`, `fn_register_production_and_stock_v2`) mais os 2 inserts diretos em `order-write/index.ts` (`deductStockForOrderItem`/`restockForOrderItem` — MAIOR volume do sistema, insere direto sem RPC).
+- **Achado crítico no meio do caminho:** a movimentação de "perda de produção" (feature de hoje mais cedo) é **informativa** — não mexe em `current_stock` (já refletida na diferença insumo-bruto-saiu vs produto-pronto-entrou). Se tratada como `-quantity` igual perda manual, a reconstrução descontaria a perda 2x. `signed_quantity = 0` pra esse caso específico (`type='loss' AND production_batch_id IS NOT NULL`), diferente da perda manual (`fn_add_stock_movement`), que desconta estoque de verdade.
+- **RPCs novas:** `fn_get_theoretical_stock_at_dates(tenant_id, dates[])` — pra cada insumo ativo × cada data, calcula `current_stock - Σ(signed_quantity das movimentações depois do fim daquele dia, fuso America/Sao_Paulo)`. Se qualquer movimentação somada tiver `signed_quantity NULL`, o resultado vem NULL (nunca soma parcial silenciosa — DIRETRIZES-ANALISE-IA.md). `fn_get_inventory_sessions_range(tenant_id, from, to)` — sessões completas num intervalo (a existente `fn_get_inventory_sessions` só traz as 50 mais recentes, sem filtro de data, não serve pro calendário).
+- **Frontend:** `EstoqueTeoricoTab.tsx` (nova aba, entre Movimentações e Inventário) + `CalendarioSeletorData.tsx` (calendário popover custom, mesmo padrão hand-rolled de `CalendarioFluxoCaixa`/`CalendarioFaturamentoTab` — sem lib de calendário no projeto). Tabela: insumos nas linhas, uma coluna por data selecionada, toggle por coluna pra contagem real (só aparece quando existe sessão EXATAMENTE naquele dia — decisão confirmada com o usuário, sem fallback pra contagem mais próxima). Leitura de `inventory_sessions.items[]` aceita as duas convenções de chave que coexistem no banco (`insumoId`/`qtdContada` de sessões antigas vs `ingredient_id`/`qtd_contada` da RPC atual) — mesmo padrão defensivo já usado em `EstoqueContext.dbToInventarioSession`.
+- **Verificação forte, não só sintética:** validei a RPC de estoque teórico contra dado real de produção (Chilli com Carne, tenant EP PAR MALL) — reconstrução via RPC bateu **exatamente** com uma query SQL manual equivalente rodada em paralelo (64,45 em 03/06, 55,75 em 04/06), incluindo um caso que parecia suspeito (queda de 7,7kg dentro do mesmo dia) e que se confirmou real ao abrir a conta (43 movimentações naquele dia — 41 vendas + 1 ajuste de -2,4). RPCs de escrita testadas com `DO`+`RAISE EXCEPTION` (rollback garantido). tsc 324 (= baseline).
+- **Deploy parcial, decisão deliberada:** RPCs e a migração já estão em produção (aplicadas direto via `apply_migration`/`execute_sql`, mesmo padrão do resto da sessão). Edge Function `stock-write` publicada (v46) — arquivo pequeno o bastante (453 linhas) pra reproduzir com confiança total dentro do proprio contexto. **`order-write` (992 linhas, ~112KB) NÃO foi publicada por mim** — grande demais pra garantir transcrição perfeita sem risco de corromper a função que processa toda venda do sistema. Comparação (diff robusto a CRLF/CR misto) confirmou que o arquivo local só diverge do publicado em 3 pontos: as 2 linhas de `signed_quantity` desta sessão, mais um fix de 17/07 (rateio de pagamento em grupo, cálculo de fechamento de caixa) que **está no repo mas nunca foi publicado** — usuário confirmou publicar os dois juntos; falta rodar `supabase functions deploy order-write --project-ref mdghhjemzdmeuqpzuyzx` (não feito nesta sessão).
+
+### 2026-08-07 — Tela "Algo deu errado" após deploy: chunk antigo não existe mais
+
+Sintoma (usuário, screenshot): `erpos.vercel.app/dashboard` caiu na tela genérica de erro do `ErrorBoundary`, com "Failed to fetch dynamically imported module: .../page-BuXrRAXo.js".
+
+- **CAUSA (não é bug de código, é infra/deploy):** cada push no `main` dispara deploy no Vercel (ver seção "Fatos do projeto" no `CLAUDE.md`), trocando os arquivos JS de cada tela (code-split por rota, nome com hash único por build). Uma aba aberta desde **antes** de um deploy fica com o `index.html`/manifesto antigo; ao navegar pra uma tela ainda não carregada nela, o navegador busca o arquivo antigo, que não existe mais (404). O Vite dispara `window.dispatchEvent(new Event('vite:preloadError', {cancelable:true}))` e, se nada chamar `preventDefault()`, **relança o erro** — confirmado direto no fonte do Vite (`node_modules/vite/dist/node/chunks/node.js`, função `handlePreloadError`) — que é capturado pelo `ErrorBoundary` de `App.tsx` e vira essa tela.
+- **Por que importa pra este app especificamente:** PDV/tablet de loja fica ligado o turno inteiro (`useWakeLock` existe por isso). Deploy no meio de um turno = risco real de um caixa cair nessa tela sem saber o que fazer.
+- **Fix:** listener global em `main.tsx`, registrado ANTES de `createRoot(...).render()` (mesmo padrão já usado ali pros handlers de refresh-token inválido) — escuta `vite:preloadError`, chama `preventDefault()` e recarrega a página uma vez. Guarda via `sessionStorage` (`erpos_chunk_reload_attempted`) evita loop: se o reload não resolver (erro persiste = problema real, não só staleness), a 2ª falha não recarrega de novo, sobe pro `ErrorBoundary` normal — sinal de que precisa de atenção humana. A guarda se libera sozinha 5s depois de um boot bem-sucedido, pra um deploy futuro poder disparar o auto-reload de novo (senão a aba só se recuperaria automaticamente 1x na vida inteira da sessão).
+- **Verificação:** mecanismo confirmado lendo o código-fonte do Vite (não By memória) — nome do evento, payload, `cancelable`. tsc 324 (= baseline). **Não reproduzido em produção real** — o evento só é emitido pelo helper `__vitePreload` gerado no BUILD de produção; o dev server local serve ESM direto sem essa camada, então não dá pra simular localmente sem gerar um build de verdade e forçar um 404 de chunk. Confiança alta pela leitura direta da implementação, não por teste empírico ponta a ponta.
+
+### 2026-08-07 — Registrar Produção travado pra sempre: "14/7 concluidos" com todos os passos marcados
+
+Sintoma (usuário, com screenshot): ficha "Pasta de abacate", 7 passos, todos marcados/riscados na tela — badge mostra **"14/7 concluidos"**, aviso "Complete todos os 7 passos" não some, botão "Registrar produção" fica desabilitado.
+
+- **CAUSA:** `stepsCompleted` (Set) carregava `draft.stepsCompleted` do localStorage **sem filtrar contra os IDs atuais** de `recipe.steps`. Editar os passos de uma ficha faz `fn_production_crud` (`update_recipe`) apagar e reinserir **todas** as linhas de `production_recipe_steps` — IDs novos, mesmo pra passos cujo texto não mudou. Um rascunho salvo antes dessa edição carrega os IDs órfãos junto. `completedCount = stepsCompleted.size` conta o Set inteiro (órfãos + atuais), nunca só os atuais — daí `14/7`: 7 órfãos do draft velho + 7 atuais que o usuário acabou de marcar. `allStepsDone = completedCount === totalSteps` nunca fecha (`14 !== 7`), travando o registro **permanentemente** (até o draft expirar em 24h) mesmo com os 7 passos visíveis 100% marcados.
+- **Achado colateral (mesma causa raiz, não é o que travou o usuário desta vez, mas é risco):** o inverso também é possível — se o número de órfãos coincidir com `totalSteps`, o botão libera com **nada marcado na tela**, porque a contagem nunca olhou pra quais IDs especificamente estão no Set, só pro tamanho.
+- **Fix:** no inicializador de `stepsCompleted` em `RegistroProducaoModal.tsx`, filtra `draft.stepsCompleted` contra `new Set(recipe.steps.map(s => s.id))` antes de usar — só aceita do draft os passos que **ainda existem** na ficha atual. Resolve os dois problemas (contagem inflada E o risco de liberar vazio) porque a validação passa a depender só de interseção com os IDs reais.
+- **Workaround imediato pro usuário (sem esperar deploy):** `Object.keys(localStorage).filter(k => k.startsWith('producao_draft_')).forEach(k => localStorage.removeItem(k))` no console do navegador, depois reabrir o modal e marcar os passos de novo. Limpa só o rascunho local (não mexe em dados do banco).
+- **Verificação:** simulação reproduz exatamente `14/7 → allStepsDone=false` sem fix, `7/7 → allStepsDone=true` com fix. tsc 324 (= baseline), Vite sem erro. **Não reproduzido no preview** (exige login) — mas a simulação usa a mesma lógica linha a linha do componente.
+
+### 2026-08-07 — Aba de Estoque resetava pra "Estoque" ao sair e voltar da pagina
+
+Sintoma (usuário): em qualquer aba de Estoque (Produção, Movimentações, Inventário...) ou com modal aberto, sair pra outro módulo e voltar sempre cai na aba "Estoque" (insumos), nunca onde estava.
+
+- **CAUSA:** `EstoquePage` guardava a aba ativa em `useState<Tab>('insumos')` — estado local do componente. Navegar pra outro módulo desmonta `EstoquePage` (React Router troca a rota), e voltar remonta do zero, resetando pro default. **O mesmo problema já tinha sido resolvido em `ConfiguracoesPage`**, guardando a aba na URL (`?tab=...`) via `useSearchParams` em vez de `useState`.
+- **Fix:** espelhado o padrão exato de `ConfiguracoesPage` em `EstoquePage` — `VALID_TABS` array, `tab` derivado de `searchParams.get('tab')` com fallback pro default, `setTab` chama `setSearchParams({tab}, {replace:true})`. Bônus: como é URL de verdade (`BrowserRouter`, não hash), agora **também sobrevive a F5** — antes só a rota `/estoque` sobrevivia (fix de 2026-08-06), a sub-aba não.
+- **Fora de escopo, deliberado:** modais abertos (`RegistroProducaoModal`, `FichaProducaoModal`) **não reabrem sozinhos** ao voltar — o estado deles é local e é destruído no unmount, igual antes. Persistir "qual modal estava aberto, com qual recipeId, com que dados no formulário" através de navegação pra outro módulo é um problema bem maior (o `RegistroProducaoModal` já tem draft em localStorage pros campos preenchidos — `producedQty`/`receitas`/`notes` — mas isso só ajuda a REABRIR o mesmo, não a decidir sozinho quando reabrir). O pedido do usuário, lido literalmente, era sobre a página/aba errada — resolvido; reabertura automática de modal não foi pedida e não foi feita.
+- **Verificação:** tsc 324 (= baseline), Vite compila sem erro. Padrão já provado em produção via `ConfiguracoesPage` (mesma versão de react-router, mesmo mecanismo) — confiança alta sem precisar reproduzir no preview (exige login).
+
+### 2026-08-07 — Reescalar por insumo mudava o proprio numero editado + moeda escondia custo/g pequeno
+
+Sintoma (usuário, com screenshot): clicou no botão "reescalar" (ver entrada anterior do mesmo dia) tendo acabado de digitar 200 no Cheddar — o campo virou "200,016" sozinho.
+
+- **CAUSA:** `reescalarPelaQuantidade` limpava `manualOverrides` **por inteiro**, inclusive o item usado como referência. Ele virava "automático" e era recalculado por `it.quantity * fatorEscala` — mas `fatorEscala` vem de `receitas`, que é arredondado pra exibição (200/360 = 0,5556). Multiplicar de volta (360 × 0,5556 = 200,016) reintroduz o erro do arredondamento no próprio valor que a pessoa acabou de digitar exato.
+- **Fix:** `setManualOverrides(new Set([ingredientId]))` em vez de `new Set()` — só os OUTROS insumos viram automáticos e recalculam pelo novo fator; o item de referência fica de fora do `useEffect` de auto-cálculo e mantém o valor exato digitado, sem qualquer arredondamento.
+- **Pedido relacionado (mesma mensagem):** custo por g/ml usava `toFixed(2)`/`formatCurrency` fixo em 2 casas — um insumo a R$27/kg tem custo de R$0,027/g, que truncava pra "R$0,00" e desaparecia. **Fix:** `formatCurrencyPreciso()` novo em `lib/formatters.ts` — 2 casas por padrão, só escalona pra mais (até 6) quando 2 casas arredondariam pra exatamente zero; um valor que já aparece em 2 casas (R$0,03) fica como está. Aplicado nos 4 pontos que são genuinamente custo POR unidade (não total): `RegistroProducaoModal` (custo unitário do produto gerado), `ProducaoTab` (histórico, `batch.unitCost`), `FichaProducaoModal` (preço do insumo no picker + custo por unidade do item na ficha). Totais (custo da receita, custo total da batelada) continuam em 2 casas fixas — não é onde o problema aparece.
+- **Verificação:** simulação numérica confirma cheddar continua exatamente 200 após reescalar (antes: 200,016), leite recalcula proporcional (77,784g, bate com o "Precisa 77,784g" do screenshot). `formatCurrencyPreciso` testado em 7 casos (0 → R$0,00; 0,03 → R$0,03 inalterado; 0,027 → R$0,03 arredonda normal; 0,0003 → R$0,0003 escalona). tsc 324 (= baseline), Vite sem erro.
+
+### 2026-08-07 — Produção: card da ficha rotulava custo da receita como "custo por unidade"
+
+Sintoma (usuário, com screenshot): card de "Cheddar produzido" em Estoque > Produção mostrando "Custo estimado: R$ 0,00/g" — o `/g` sugeria custo por grama, mas o valor somado é o custo dos insumos de **uma receita inteira**.
+
+- **CAUSA:** `custoEstimadoPorUnidade` em `ProducaoTab.tsx` soma `quantidade do item × preço do insumo` para todos os itens da ficha (correto — é o custo de uma receita, coerente com o modelo "ficha = insumos de uma receita" de 2026-08-06), mas a exibição concatenava `/{recipe.unit}` como se fosse por unidade de saída. Sem rendimento declarado na ficha (decisão do usuário nessa mesma sessão), não existe denominador pra dividir — o custo por unidade real só nasce depois de uma produção pesada (`RegistroProducaoModal.unitCost`), que é o que de fato alimenta a ficha técnica.
+- **Fix:** renomeado `custoEstimadoPorUnidade` → `custoEstimadoPorReceita` (e `custoUnit` → `custoReceita`), label mudou para "Custo estimado (1 receita)" sem sufixo de unidade. **Não mexido**: `batch.unitCost` na tabela de "Registros de Produção" (histórico) — esse é legítimo, vem de uma produção real pesada, `/{batch.unit}` está certo ali.
+- **Verificação:** tsc 324 (= baseline), grep confirma zero referência residual ao nome antigo, Vite compila sem erro.
+
+### 2026-08-07 — Registrar Produção: reescalar tudo a partir da quantidade editada de um insumo
+
+Pedido do usuário: se o operador edita a quantidade de UM insumo na mão (ex: "só tenho 340g de cheddar, a receita pedia 360g"), poder reescalar automaticamente `receitas` e todos os OUTROS insumos proporcionalmente a esse valor — sem ter que ajustar cada um manualmente.
+
+- **Implementação:** `reescalarPelaQuantidade(ingredientId)` em `RegistroProducaoModal.tsx` — acha `fatorImplicito = quantidade_editada_na_unidade_da_ficha / quantidade_da_ficha`, seta `receitas` para esse fator e **limpa `manualOverrides` inteiro** (inclusive do próprio item editado — o novo fator já o reproduz dentro do arredondamento). O `useEffect` de auto-cálculo (já existente) faz o resto: recalcula todos os itens a partir do novo `fatorEscala`.
+- **UI:** botão com ícone `ri-equalizer-line` ao lado do seletor de unidade, só aparece quando o item está `isManual`. Distinto do botão "voltar automático" (`ri-refresh-line`, já existente) que descarta o ajuste — este aqui faz o oposto: usa o ajuste como nova referência para tudo.
+- **Deliberadamente não mexe em `producedQty`** ("quanto rendeu") — esse é medido (pesado), nunca derivado, mesmo princípio das mudanças de 2026-08-06.
+- **Verificação:** simulação numérica (receitas=2 → cheddar 400g/leite 0,4l automático → edita cheddar pra 340g → reescala → fator implícito 1,7 → leite recalcula para 0,34l). tsc 324 (= baseline), Vite sem erro.
+
+### 2026-08-06 — F5 sempre voltava para /modulos, em qualquer rota
+
+Sintoma (usuário): apertar F5 em qualquer tela do sistema (ex: `/estoque`) sempre devolvia para a página de módulos, nunca para a tela em que estava.
+
+- **CAUSA: corrida entre a checagem de sessão e o redirect, não falta de "lembrar a página".** `AppLayout.tsx` decidia `if (!isAuthenticated) return <Navigate to="/login" replace />` **sem esperar `AuthContext.loading` resolver**. No F5, por uma fração de segundo (até 3s se o `navigator.locks` do Supabase travar — ver comentário em `AuthContext.tsx:298-306`) `isAuthenticated` é `false` antes do `getSession()` responder. Isso mandava para `/login` com `replace` — **destruindo a rota original do histórico**. Quando a sessão terminava de restaurar, `Login` (`login/page.tsx:69` antigo) tinha `if (isAuthenticated) { navigate('/modulos', {replace:true}); return null; }` **hardcoded** — sem noção de onde o usuário estava, sempre mandava para `/modulos`. O overlay "Carregando sessão..." escondia visualmente o pulo `/estoque → /login → /modulos`, por isso parecia instantâneo.
+- **Fix (2 partes):** (1) `AppLayout` agora tem um guard `if (loading) return null` **antes** de checar `isAuthenticated` — não decide nada enquanto a sessão ainda está sendo restaurada (mesmo padrão que `RotaProtegida` já usava pra permissões: "enquanto carrega, não bloqueia"). Elimina o pulo para `/login` no caso comum (sessão válida, só F5). (2) Para o caso genuíno de sessão expirada/deslogado: o `Navigate` para `/login` agora carrega `state={{ from: location.pathname + location.search }}`, e `Login` lê `location.state?.from` (validando que começa com `/`, nunca redireciona pra URL externa) e volta pra lá — tanto no early-return de já-autenticado quanto no `handleSubmit` de login manual. Sem `from`, cai em `/modulos` (comportamento antigo preservado).
+- **PEGADINHA se for mexer de novo:** `AppModeContext.mode` (`localStorage: erpos_app_mode`) parece que poderia estar envolvido (persiste entre reloads) mas **não é lido em nenhuma decisão de rota** — só vira prop visual `gestaoMode` do Sidebar. Não é o mecanismo do bug; não perder tempo ali.
+- **Verificação:** leitura de código completa da cadeia `AppLayout → AuthContext.loading → Login`; os únicos outros `navigate('/login')` do app são logout manual (botão "Sair"), que corretamente não devem preservar rota. tsc 324 (= baseline). Vite compila sem erro, sem novo erro de console (só os 401 esperados de chamada Supabase sem sessão na landing pública). **Não foi possível reproduzir o F5 real no preview** — exige login (não tenho credenciais e não devo adivinhar/inserir senha).
+
+### 2026-08-06 — Ficha de produção: base "1 unidade" + `fn_production_crud` descartando 3 campos
+
+Sintoma (usuário): ao cadastrar "Cheddar produzido" com saída em **g**, a tela mandava lançar a receita "para 1 g de saída" — sem sentido prático (ninguém escreve receita por 1 grama). Ele queria estoque em g (porque o lanche usa g) mas a receita na escala real da batelada.
+
+- **BUG DE DADO ACHADO NO CAMINHO (pior que o relatado):** `fn_production_crud` **ignorava `category`, `min_stock` e `output_quantity`** no `create_recipe` e no `update_recipe` — só gravava `name`/`unit`/`instructions`/`is_active`. `list_recipes`/`get_recipe` também não devolviam esses campos. Ou seja: a categoria e o estoque mínimo digitados no modal eram **descartados em silêncio**. Confirmado no banco: as 2 fichas existentes com `category = null` e `min_stock = 0` apesar de terem sido cadastradas pela tela.
+- **A coluna já existia.** `production_recipes.output_quantity numeric NOT NULL DEFAULT 1` estava na tabela desde antes; o front mandava `output_quantity: 1` **hardcoded** em `ProducaoContext` (create e update) e a RPC nem lia. Não foi preciso migração de schema — só passar a usar.
+- **Modelo final (decidido pelo usuário, e é o certo): a ficha NÃO declara rendimento.** A primeira tentativa foi pedir "esta receita rende X" na ficha — o usuário derrubou com o argumento correto: *"o que rende vai sair na hora de fazer a produção; aqui o que importa é a quantidade dos produtos brutos"*. Rendimento se **mede**, não se declara (é o §1 e o §8.5 do `DIRETRIZES-ANALISE-IA.md`). Ficha = insumos de **uma receita**, ponto.
+- **Consequência no `RegistroProducaoModal`:** sem rendimento declarado não existe denominador para derivar o fator a partir de "quanto produzi". A tela passou a ter **dois campos separados** que antes eram um só: **"Quantas receitas você fez?"** (multiplica os insumos que saem do estoque; `fatorEscala = receitas`, default 1) e **"Quanto rendeu?"** (pesado, entra no estoque, define `unitCost = custo / rendeu` e o rendimento real). A diferença entre os dois é a perda. `outputQuantity` permanece 1 em toda ficha nova — a coluna segue no banco e a RPC a grava, mas o front não deriva mais nada dela.
+- **`yieldExpected` virou média histórica.** Antes saía de um rendimento declarado; agora é a média de `yield_percent_actual` das bateladas anteriores da mesma ficha (via `getBatchesByRecipeId`), com `null` e aviso explícito na tela enquanto não houver histórico. Medido, não afirmado.
+- **PEGADINHA ao dar `CREATE OR REPLACE` em RPC:** a assinatura original tinha `p_payload jsonb DEFAULT '{}'::jsonb`. Omitir o DEFAULT falha com **42P13 "cannot remove parameter defaults from existing function"**. Sempre conferir com `pg_get_function_arguments` (o `pg_get_function_identity_arguments` **não mostra defaults**) antes de reescrever. `CREATE OR REPLACE` preserva grants e `SECURITY DEFINER`/`search_path` — conferido antes e depois.
+- **Verificação:** round-trip real da RPC dentro de um bloco `DO` com `RAISE EXCEPTION` no fim (**rollback proposital** — a mensagem da exceção carrega o resultado, e nada persiste na base da loja): insert grava `out_qty=400 cat=Laticinios min=500`; update parcial só com `name` **preserva** os três (COALESCE); `list_recipes` devolve os três. Confirmado `count=0` de sobra depois. Fluxo novo simulado: 1 receita → baixa 200 g + 0,2 l, rendeu 380 g → custo/g R$ 0,0271, rendimento 95%, perda 20 g; 2 receitas → baixa dobra; 0,5 receita → baixa cai pela metade; média histórica acumulando 95,0 → 96,9 → 97,5%. tsc 324 (= baseline; os 4 erros novos em `src/mocks/producao.ts` foram corrigidos junto), eslint limpo nos 2 modais. **Não dirigido no preview** — a tela exige login.
+
+### 2026-08-03 — Produção: "Rendimento esperado" absurdo em ficha que mistura massa e volume
+
+Sintoma (usuário): ficha "Cheddar produzido" (saída em kg) com 715 g de cheddar + 285 ml de leite exibindo **Rendimento esperado 0,3%**. O usuário leu isso como se o texto "os insumos representam o consumo para produzir 1 kg" estivesse errado — o texto estava certo, o número é que estava.
+
+- **CAUSA:** o padrão `convertUnit(qty, unit, 'kg') ?? qty` **engole a falha de conversão entre grupos** (`ml`→`kg` retorna `null` porque massa e volume são grupos distintos) e soma a quantidade **crua**: `0,715 + 285 = 285,715 kg` → `1 / 285,715 = 0,35%`. Repetido em 4 métricas: `rendimentoEsperado` (FichaProducaoModal), `totalBrutoKg`, `totalEsperadoKg`, `yieldExpected` (RegistroProducaoModal). Afeta **rendimento real, perda em kg e perda em R$** de qualquer ficha com insumo líquido — ou seja, todo molho.
+- **Fix:** `toKgAprox(qty, unit)` em `lib/unitConversion.ts` — converte g/kg e aproxima **1 l = 1 kg** (densidade da água; explícito e documentado, não acidental), e retorna `null` para `un`/desconhecido. Os 4 pontos passaram a **omitir a métrica** quando qualquer parcela dá `null`, em vez de chutar (`totalBrutoKg` virou `number | null`; `yieldActual`/`perdaKg`/`perdaPercent`/`perdaValue` guardam contra isso). A ficha agora mostra também a conta aberta — "entram 1,000 kg de insumos para sair 1 kg" — e avisa quando o rendimento passa de 105% (saída > entrada = quantidade errada).
+- **Semântica confirmada (não é bug):** a ficha de produção é **taxa por 1 unidade de saída**, não batelada. `RegistroProducaoModal` faz `insumo × fatorEscala`, com `fatorEscala` = quantidade produzida normalizada para `recipe.unit`. Os insumos **não precisam somar a saída** (redução: 2 kg de tomate → 1 kg de molho = 1,25 kg/kg). Não existe campo de rendimento/batelada em `ProductionRecipe` — se for preciso "esta panelada rende X", é mudança de modelo (coluna nova), não ajuste de tela.
+- **Verificação:** aritmética simulada em 4 casos (misto g+ml → 100%; redução → 50%; saída em `l` → 100%; insumo em `un` → métrica omitida). Vite serve sem erro de build/console. tsc 324 (= baseline). **Não dirigido no preview** — a tela exige login.
+
+### 2026-07-25 — Totem (autoatendimento) mostrando preços/itens desatualizados
+
+Sintoma (usuário): no tablet de autoatendimento os valores e itens não batiam com o que estava salvo na aba Cardápio (preços errados / R$ 0,00, dados desatualizados). Acesso por matrícula+senha (login normal, sem kiosk token → fonte é `user.tenantId`).
+
+- **CAUSA (não é o dado no banco):** o `CardapioContext` só chama `recarregar()` no **mount** e após mutações feitas **no mesmo dispositivo** (`recarregar` roda no `useEffect` inicial; CRUDs chamam `recarregar({silent:true})`). **Não há assinatura realtime** para `menu_items`/`item_promotions`/`menu_categories` e o `reloadSignal` (`lib/reloadSignal.ts`) é **pub/sub só em memória — não cruza dispositivos**. Como o totem fica aberto o dia todo e os preços são editados no admin (outro PC), o tablet segue exibindo a cópia **antiga em memória** até alguém recarregar/reabrir a página. `fn_get_full_menu` (fonte do totem via RPC) lê **ao vivo** de `menu_items` — a MESMA fonte da aba Cardápio; o banco estava certo.
+- **Fix:** auto-refresh escopado ao totem em `pages/autoatendimento/page.tsx` — `recarregar({silent:true})` (a) toda vez que `etapa === 'welcome'` (entre um cliente e outro) e (b) a cada 3 min como rede de segurança. Silencioso (não aciona o spinner `loading`, então não pisca). Não mexe no comportamento do admin (evita recarregar a tela de edição no meio de um cadastro). O `CardapioProvider` já envolve o totem (o `CardapioKiosk` já usa `useCardapio`), então nenhum provider novo foi necessário.
+- **Achado de DADO (não corrigido — decisão do usuário):** item **"Burritos Duo Mex"** (loja *VILA LESTE / EL PATRON*, tenant `ac66279a-...`) com `menu_items.price = 0.00` no banco → aparece R$ 0,00 em toda tela até definir preço na aba Cardápio.
+- **Pegadinha latente (NÃO corrigida):** o filtro de `itensPublicos` (CardapioContext) testa `item.canais?.mesa_qr` mas o banco/mapper grava a chave `table_qr` — nunca casa. Hoje só funciona porque também testa `self_service === true`. Itens legados com `channels` sem `self_service: true` sumiriam do totem/mesa-qr. Ao mexer em canais, padronizar para `table_qr`.
+- **Verificação:** tsc 324 (= baseline, 0 erros novos; os 7 erros em `autoatendimento/page.tsx` são pré-existentes). Não dirigido no preview (exigiria login no totem + editar preço num 2º dispositivo pra observar o refresh).
+
+### 2026-07-17 — Pagamento em grupo: pedido principal gravava o total do GRUPO em `payments` (dupla contagem)
+
+Sintoma (usuário): card do Maurício (Vila Leste) com 3 pedidos pagos juntos (#0020 R$ 50,80 + #0025 R$ 30 + #0027 R$ 30 = **R$ 110,80**) exibindo "Total pago **R$ 170,80**" — inflado em exatamente R$ 60 (os dois vinculados contados 2x).
+
+- **CAUSA (era o DADO, não a tela):** ao pagar N pedidos juntos (mesmo `payment_group_id`), o pedido **principal** gravava `payments.amount` = **valor cheio recebido (total do grupo)**, enquanto os **vinculados** gravavam a parte proporcional. Somar as linhas conta o grupo em dobro. Confirmado no banco: o pagamento do #0020 tinha `amount = 110.80` (o total dos três) em vez de 50,80. **O caixa físico não tinha furo** — o cliente pagou 110,80; o erro era só de registro.
+- **PEGADINHA — era um bug CONHECIDO e CONTORNADO, nunca corrigido na origem.** Havia workarounds espalhados que assumiam o dado torto e recalculavam a partir de `orders.total_amount` nos grupos: `order-write/index.ts` (`close_cash_register`, comentário explícito "o pagamento principal grava amount = total do GRUPO ... entao somar p.amount conta em dobro"), `fn_get_cash_sessions_v2_agrupar_pagamentos.sql` e `useCaixaReport.ts`. Quem NÃO tinha o desvio (`PedidosRecentesPanel`, que soma `p.amount` cru) mostrava o número inflado. **Ao mexer em pagamento de grupo, conferir esses 3 pontos** — eles compensam algo que agora é gravado certo (em grupo usam `orders.total_amount`, o que despreza pagamento parcial legítimo).
+- **Fix (2 modais, só na gravação):** o principal passou a gravar **o resto** (`valor recebido − Σ partes dos vinculados`) em vez do valor cheio. Absorver o resto (em vez de aplicar a própria proporção) faz a soma fechar **exata** com o recebido mesmo com dízima (3 pedidos de 10/3 → 3,33+3,33+3,34 = 10,00). `PagamentoRapidoModal.tsx` (partes dos vinculados calculadas **antes** do loop do principal) e `PagamentoModal.tsx` do caixa (mesmo bug com o **pedido do carrinho** como principal: `finalizarPedido(pagamentosComTroco)` mandava o valor cheio → agora recebe `pagamentosCarrinho` já com a parte; corrige de uma vez o `record_payment` e o `offlinePayments` do `PDVContext`, sem tocar no contexto). Pedido único (sem grupo) tem comportamento preservado: Σ vinculados = 0 → principal = valor cheio.
+- **Escala do estrago (levantado por SQL):** **78 de 86** grupos do banco inflados, **R$ 9.297,27** a mais em `payments` (EP PAR MALL R$ 6.528,27 / Vila Leste R$ 2.769,00). **Dados históricos NÃO foram corrigidos** — backfill mexe em caixa já fechado (irreversível), ficou como decisão à parte.
+- **Bug vizinho NÃO corrigido (fora de escopo):** em `PagamentoModal`, quando há carrinho + existentes em dinheiro, o **troco é gravado 2x** (o carrinho leva `p.troco` de `pagamentosComTroco` e o primeiro existente em cash também recebe `totalTrocoDistribuido`). Infla o "recebido" do fechamento (`amount + change_amount`), não a receita.
+- **Verificação:** simulação da aritmética nova contra o caso real → #0020 grava 50,80 e o grupo fecha em 110,80 (antes: 170,80); casos de split de métodos, pedido único e dízima todos fechando. Módulos transformam no Vite (HTTP 200) e app carrega sem erro de console. tsc 324 (= baseline, 0 erros novos). **Não testado com pagamento real** — exigiria gravar em produção.
+
+### 2026-07-13 — Relatório/Financeiro: valor dos complementos no Top Itens + nova tabela Top Complementos
+
+Sintoma (usuário): no Top Itens Vendidos e no Financeiro, itens cujo valor vem dos complementos (ex.: "Burritos Duo Mex") apareciam com **R$ 0,00**.
+
+- **PEGADINHA DE DADO (corrige a entrada de 2026-07-12 #262):** `order_items.item_price` **NÃO é uniforme entre canais.** Verificado no banco por `origin_type` (linhas com `additional_price>0`): **`table`/`cashier`/`waiter`/`self_service` gravam `item_price` JÁ INCLUINDO os complementos** (o front soma em `precoTotal` — ver `OpcoesModal` no PDV: `precoTotal = base + Σ additional_price`). **`delivery` grava só o preço-base**; os complementos ficam apenas em `order_item_options.additional_price` (32 de 34 linhas de delivery não-embutidas). O `orders.total_amount` está correto em TODOS os canais (inclui complementos) — por isso `total_revenue` do relatório sempre bateu; só o `top_items` (que somava `item_price×qty`) subcontava delivery. `additional_price` é **por unidade** (multiplica por `quantity`).
+- **Fix (migration `fn_get_sales_report_complementos.sql`, aplicada nos 2 overloads):** `top_items.total_revenue` virou **ORIGIN-AWARE** — soma os complementos **só quando `origin_type='delivery'`** (`item_price + CASE WHEN delivery THEN Σopt ELSE 0`) × qty, para não contar em dobro nos canais que já embutem. `avg_price` passou a ser `receita/qtd`. Correção é no read (RPC), **sem migração de dados históricos**. Todas as telas que consomem `fn_get_sales_report` herdam o conserto: Relatórios (Visão Geral, Produtos, modal do dia) e Financeiro (Visão Geral por sessão).
+- **NOVO agregado `top_options` (Top Complementos):** ranking dos complementos por `Σ(additional_price×qty)` (e qtd), `GROUP BY TRIM(option_name)` (mescla variações com espaço no fim, ex.: "Batata frita"/"Batata frita "). Front: nova tabela "Top Complementos" em `VisaoGeralTab.tsx` (relatório) e `VisaoGeralFinTab.tsx` (financeiro/sessão), filtrando `total_revenue>0` (só complementos com valor), top 8, barra por valor.
+- **Aba Produtos & Ranking (`ProdutosTab.tsx`):** nova sub-aba **"Complementos"** (ao lado de Ranking/Por Categoria/Análise ABC) — tratamento analítico completo dos adicionais: cards (distintos, unidades, receita), busca, toggle receita/qtd, gráfico Top 10 e tabela com % sobre a receita de complementos. Reusa `busca`/`sortBy` da aba. Só `total_revenue>0`.
+- **Verificação:** RPC contra dados reais → "Burritos Duo Mex" agora R$ 60,00; `top_options` preenchido. tsc 324 (= baseline; 0 erros novos nos arquivos). **Não validado no navegador** (tela exige login; entrar senha é ação bloqueada). Front é JSX simples consumindo o campo novo.
+
+### 2026-07-12 — Go-live El Patron Paranaguá: kiosk-auth consertado, dedup de impressão, /pedidos paginado (LIVE)
+
+Varredura pré-go-live da loja de shopping (tenant `7221d7f3-...`). Três fixes publicados:
+
+1. **kiosk-auth NUNCA tinha funcionado (2 bugs, edge v9 no ar):**
+   - **PEGADINHA GLOBAL — bcrypt/GoTrue rejeita senha > 72 bytes com panic 500 "Internal Server Error"** (`unexpected_failure`, sem mensagem útil; nos logs de auth aparece "request panicked" no POST /admin/users). A senha do totem era `kiosk_${token64}_secure` = 77 chars → todo `createUser` do kiosk-auth morria. Fix: `kiosk_${token.slice(0, 40)}_secure` (160 bits, ≤72). Diagnóstico feito com matriz de payloads numa edge temporária (`debug-create-user`, hoje um stub 410). **Qualquer fluxo novo que gerar senha para `admin.createUser`: manter ≤72 bytes.**
+   - `listUsers()` sem paginação (só 1ª página = 50 usuários) para achar o usuário do totem. Fix: lookup por e-mail na tabela espelho `public.users` (upsertada a cada auth) + fallback paginado (`perPage:1000`, até 20 páginas). Sem isso, os totens parariam de autenticar quando o projeto passasse de 50 auth users (hoje: 22).
+   - Validado fim a fim: token de teste → 200 com JWT + tenant; 2ª chamada reutiliza o mesmo usuário (lookup). Artefatos de teste apagados.
+2. **Impressão duplicada — `enqueue_print_ticket` agora tem dedup** (migration `enqueue_print_ticket_dedup.sql`, aplicada): sem `p_force`, se já existe ticket do mesmo (tenant, order, station_key) `pending`/`printing`, ou `printed` há <2 min, devolve o id existente (duplo clique / retry de PartialOrderError / requeue offline não imprimem 2x). `failed` nunca bloqueia (retry legítimo). **Reimpressão manual passa `p_force: true`** — front: `queueOrderForPrint(..., force)` em `printOrderQueue.ts`, chamado com `true` só por `printPedido.ts` (gestor). PEGADINHA: assinatura de função mudou → `DROP FUNCTION` antes do `CREATE` (CREATE OR REPLACE criaria overload e o PostgREST daria erro de ambiguidade). Bônus: índice `idx_print_queue_order` (FK sem índice apontada pelo advisor).
+3. **`/pedidos` modo histórico não corta mais em 500:** `useOrdersHistory.ts` pagina em lotes de 500 via `.range()` até 5.000 pedidos; expõe `truncated` e a página mostra banner vermelho ("totais incompletos, use período menor ou Relatórios") em vez de subestimar faturamento/CSV em silêncio. Erro no meio da paginação = resultado parcial sinalizado.
+
+Verificações da varredura que valem lembrar: todos os RPCs de relatório (`fn_get_dashboard_metrics`, `fn_get_sales_report`, `fn_get_cancelamentos_report`, `fn_get_clientes_report`, `fn_get_cash_sessions_v2`, `fn_get_kds_orders`) usam `p_tenant_id` explícito (nenhum deriva de `auth_tenant_id()`); `fn_next_senha`/`fn_next_tenant_order_number` são atômicos por tenant; canais realtime são por tenant. tsc 324 (= baseline). Pendências da varredura (não corrigidas): modal de config do totem abre com qualquer PIN e expõe vendas; fechamento de caixa lê direto com RLS (errado p/ admin multi-loja); advisors (policies permissivas empilhadas, índices duplicados `idx_orders_status`≡`idx_orders_tenant_status`). Ver memória `project-elpatron-paranagua-golive`.
+
+### 2026-07-12 — Delivery: adicionais por item no acompanhamento + "até" no header
+
+1. **Adicionais no acompanhamento do pedido** (`AcompanharPedido.tsx`): a tela so mostrava nome + preco total do item, sem detalhar o que compoe o valor. Agora lista os adicionais de cada item com seus valores. Backend `delivery-write` / `get_order_status` passou a buscar `order_item_options` (colunas: `order_item_id, option_name, group_name, additional_price`) e retorna `options[]` por item. **Deploy: `delivery-write` v81** (aditivo/retrocompativel — front antigo ignora o campo novo; `verify_jwt` segue `false`, funcao publica anonima). O historico (`HistoricoPedidos.tsx`) e so a lista/resumo — o detalhe abre no `AcompanharPedido`.
+2. **PEGADINHA de dado — `order_items.item_price` JA INCLUI os adicionais.** Verificado no banco: `subtotal do pedido = SUM(item_price × quantity)`; os `additional_price` das opcoes ja estao embutidos no `item_price` (base + opcoes). Ex.: Burrito base 41 + barbacoa 10 + guacamole 5 = `item_price` 56. Logo, ao exibir a quebra dos adicionais, NAO somar de novo ao total do item — o valor do item ja e o composto. No `AcompanharPedido` os adicionais aparecem como sub-linhas informativas (o total da linha continua sendo `item_price × qty`, que fecha com o subtotal).
+3. **Header do delivery: tirado o "até"** antes dos minutos (`delivery/page.tsx`, rodape do card e checkout). No mobile `~1,4 km · até 45 min` truncava e escondia o tempo; agora `~1,4 km · 45 min` cabe. So mudanca de string.
+
+### 2026-07-12 — Performance: bundle inicial cortado (~1,09 MB → ~220 KB gzip) + SPA no motoboy
+
+Diagnostico: o build gerava **um unico `index.js` de 5,0 MB (1,09 MB gzip)** carregado em TODA entrada — inclusive no catalogo publico do cliente (`/loja-delivery`) e no painel do motoboy. Causa: `src/router/config.tsx` importava ~35 telas do ERP de forma **estatica** (so delivery/motoboy/mesa-qr eram `lazy`), e `vite.config.ts` nao tinha code-splitting. Resultado: quem clicava no anuncio baixava o ERP inteiro (recharts + chart.js + leaflet + supabase) so pra ver o cardapio.
+
+Fixes:
+1. **`lazy()` em TODAS as rotas** de `router/config.tsx` (eager so `Login` + `AppLayout`, o shell). Com isso o Vite divide por rota automaticamente e recharts/chart.js/leaflet vao para os chunks das telas que os usam. Caminho inicial do catalogo caiu para ~220 KB gzip (nucleo ~190 + chunk do delivery ~30).
+2. **Suspense dentro do `AppLayout`** (em volta dos dois `<Outlet/>` de conteudo) com um `PageLoader` leve — mantem sidebar/topbar visiveis enquanto o chunk da pagina carrega (o Suspense do topo em `App.tsx` cobre as rotas publicas).
+3. **PEGADINHA — manualChunks manual pode ser pior:** tentei um `manualChunks` agrupando `charts`/`maps`/etc.; o bucket `charts` capturou `react-is` (usado no caminho eager) e virou dependencia ESTATICA do entry → o `index.html` passou a `modulepreload` o chunk de graficos (105 KB gzip) em toda pagina. **Solucao: NAO usar manualChunks aqui** — com todas as rotas lazy, o auto-split do Vite ja isola tudo certo. Se um dia voltar a usar manualChunks, conferir os `modulepreload` do `out/index.html`: nada de graficos/mapas pode aparecer la.
+4. **Motoboy navegava com `<a href>` (reload de pagina cheia)** → trocado por `<Link>` do react-router em `motoboy-lista/page.tsx` (card do pedido) e `motoboy/page.tsx` ("Voltar aos pedidos"). Era a causa da "demoradinha" ao abrir cada pedido / voltar — cada clique rebaixava os 5 MB. Agora e navegacao SPA (instantanea). Importar `Link` **explicitamente** (o auto-import do unplugin nao e visto pelo tsc → gera erro `Cannot find name 'Link'`).
+5. **Delivery: salvar a etapa ("voltar onde parou")** — `useDeliveryData.ts` persiste o `step` em `sessionStorage` (`delivery_step_<slug>`), so para etapas de vitrine (`preview`/`cardapio`, que rodam sem cliente/endereco carregado). Ao voltar do 2o plano do navegador, retoma nessa etapa em vez de recomecar. Limpa a chave ao confirmar o pedido. Carrinho ja era persistido em `localStorage` (`cartStorage`).
+
+Como medir o caminho inicial: `grep modulepreload out/index.html` + somar o gzip do entry `index-*.js` e dos chunks pre-carregados. tsc segue **324** (baseline). Build valido (`npm run build`) e runtime conferido no dev server (rotas lazy montam, catalogo/motoboy sem erro de console).
+
+**Follow-up possivel (nao feito):** `MapaEntregas` (leaflet) e import estatico em `motoboy-lista` → o painel do motoboy baixa o leaflet mesmo com o mapa atras de um botao. Lazy nesse componente economizaria ~45 KB gzip no primeiro load do motoboy.
+
+### 2026-07-11 — Estoque: leva 1 de fixes P0 da auditoria (LIVE: 3 migrations + 3 edges)
+
+Auditoria completa da aba Estoque (4 agentes + verificacao no banco) encontrou bugs de corrupcao silenciosa. Corrigidos e publicados:
+1. **Perda somava estoque**: `fn_add_stock_movement` nao tinha `loss` em `v_is_sub` → delta positivo; e o `stock-write` converte motivo contendo "perda" para tipo `loss`. Migration `fn_add_stock_movement_loss_subtracts.sql`. Verificado com DO-block + rollback (24→22, delta −2).
+2. **Editar insumo ZERAVA o estoque e apagava fornecedor/DRE**: `upsertInsumo` nao enviava `current_stock`/`supplier_id`/`dre_category_id` e `fn_upsert_ingredient` sobrescrevia tudo. Fix em 3 camadas: migration `fn_upsert_ingredient_preserve_stock.sql` (UPDATE nao toca `current_stock`; estoque so muda por movimentacao), `stock-write` (campo ausente no body preserva o valor atual; null explicito limpa) e front (`EstoqueContext.upsertInsumo` so envia o que o chamador passou; `InsumoModal` preserva `dreCategoryId`).
+3. **Compra: entrada dupla + fator de conversao ignorado**: entrada de estoque acontecia na criacao (`purchase-write create_purchase`) E de novo no recebimento (`purchase-confirm-delivery`) — e ambas com a quantidade crua em embalagens. **Criterio adotado: estoque entra 1x na CRIACAO da compra, em `qty × units_per_package` (contrato da UI), via `fn_add_stock_movement`; o recebimento aplica so o DELTA (recebido − pedido)**. Preco por unidade de ESTOQUE = (total+frete)/(qty×upp). Estorno do `delete_purchase` usava `type='out'` (nao existe no enum → falhava mudo); agora `manual_out` via RPC. Ambos os edges agora validam membership do tenant (antes qualquer autenticado escrevia em qualquer tenant).
+4. **Producao ×1000**: `fatorEscala` do `RegistroProducaoModal` nao normalizava a unidade digitada p/ a unidade da ficha (10 kg → g virava fator 10000). Agora `convertUnit(qty, producedUnit, recipe.unit)`.
+5. **Inventario transacional**: nova RPC `fn_confirm_inventory` (migration no repo) — delta recalculado contra o estoque VIVO com `FOR UPDATE` (nao o snapshot/rascunho do front, que apagava vendas concorrentes), sessao numerada por `MAX(numero)+1` sob advisory lock, valor calculado no servidor, sinal do ajuste preservado em `notes` (`delta=x`). `stock-write confirm_inventory` virou uma chamada unica a RPC e agora retorna erro de verdade (antes: console.error + ok:true).
+6. **`fn_production_crud` cross-tenant**: `update_recipe`/`delete_recipe`/`delete_batch` checam posse da recipe/batch no tenant antes de qualquer DELETE (antes os DELETEs internos nao filtravam tenant — qualquer autenticado apagava fichas/batches alheios). Migration `fn_production_crud_tenant_ownership.sql`. Verificado cross-tenant com rollback.
+
+Deploys: `stock-write` v45, `purchase-write` v22, `purchase-confirm-delivery` v7. Front alterado: `EstoqueContext`, `InsumoModal`, `RegistroProducaoModal`, `useConsumoIngredientes` (tipo `loss` classificado como perda). tsc 324 (identico ao baseline pre-mudanca — verificado com git stash).
+**Pendente da auditoria (levas 2-3)**: 3 CMVs divergentes, transferencia entre lojas sem credito no destino, FIFO/lotes nunca consumidos, delete de batch sem estorno de estoque, ficha tecnica em so ~10% do cardapio (22/226), timezone UTC em presets/validade, sucesso falso em varias telas. Ver memoria `estoque-audit-2026-07` do Claude.
+
+### 2026-07-11 — Logo da loja no delivery (vitrine, cardápio, telefone, modo de entrega)
+
+O logo de **Configurações → Dados da Loja** (`tenants.logo_url`, salvo como data-URL base64 pela `LojaTab.tsx`) agora aparece no delivery no lugar das iniciais.
+- A edge `delivery-write get_delivery_config` retorna só `{id, name}` do tenant; pra **não redeployar backend**, o front busca `logo_url` com select anônimo direto na `tenants` (mesma permissão já usada por `resolveTenantIdBySlug`) dentro do `fetchDeliveryConfig` e mescla no `TenantInfo` (`logo_url?: string | null`).
+- Exibição: 4 pontos, todos com fallback nas iniciais — hero da vitrine e header do cardápio (`delivery/page.tsx`, `lojaLogo`), `IdentificacaoDelivery` e `ModoEntregaDelivery` (prop `logoUrl?`). Container com `overflow-hidden` + `img object-cover`.
+- Verificado local: Vila Leste e Testes PDV já tinham logo no banco; screenshot confirmou nos headers. tsc 324.
+- **Pegadinha:** logo é base64 na coluna (Vila Leste = 1,9 MB!) — baixado a cada visita do delivery. **Resolvido no mesmo dia** (entrada abaixo): compressão client-side no upload/salvar da `LojaTab`.
+
+### 2026-07-11 — Cardápio: stepper −/+ no card + observação para todo item (`CardapioMesaQR`)
+
+Duas mudanças no `CardapioMesaQR.tsx` (**compartilhado**: mesa-qr + delivery, inclusive a vitrine):
+- **Fim do auto-add:** item sem opções/observações pré-configuradas agora TAMBÉM abre o modal (o early-return do `abrirModal` foi removido) — o modal sempre teve o campo livre "Outra observação", então todo item passa a aceitar observação (ex.: "sem cebola" num item simples). Deep-link `?item=` já se comportava assim.
+- **Stepper no card:** prop nova `onAlterarQtd?: (cartId, delta)` — quando presente e o item está no carrinho, o badge de quantidade vira stepper `− qtd +` (− com 1 unidade vira ícone de lixeira; ao zerar, a linha sai do carrinho). O − / + atuam na **última linha** do carrinho daquele item (helper `ultimaLinhaDoItem`); + repete a configuração da última linha. Sem a prop, cai no badge antigo.
+- **Pegadinha estrutural:** o card era `<button>`; virou `<div role="button" tabIndex=0>` porque botão dentro de botão é HTML inválido (o stepper aninha `<button>`). Clique no card segue abrindo o modal; stepper usa `stopPropagation`.
+- Wired em: `delivery/page.tsx` (vitrine + cardápio) e `mesa-qr/page.tsx`, ambos com `handleAlterarQtd` já existente. Verificado no dev server (vitrine Vila Leste): item simples abre modal c/ observação; stepper 1→2→1→remove; clique no card ainda abre modal. tsc 324.
+- **Fix (mesmo dia): tocar num item JÁ no carrinho abre o modal em MODO EDIÇÃO** (antes abria em "adicionar" com qtd 1, e confirmar SOMAVA uma nova unidade em vez de editar — bug "quantidade não aparece certo"). Nova prop `onRemover?`; `unidadesFromCart(itemId)` reconstrói as `UnidadeConfig` das linhas do carrinho (expande `quantidade`, remonta `opcoesSelecionadas` via `options[].option_group_id`); `editingCartIds` guarda as linhas em edição; ao confirmar, `handleAdicionar` remove as antigas (`onRemover`) e recria. Botão vira "Atualizar (N)". Deep-link e item novo continuam em modo "adicionar". Wired `onRemover={handleRemover}` nos 3 usos. Verificado: add 3 → reabre em 3 "Atualizar 3 unidades" → reduz p/ 2 + obs → carrinho fica com 2 (não duplica), obs aplicada. `cartStorage` persiste em localStorage `erpos_cart_delivery_<slug>` (lembrar de limpar entre testes).
+
+### 2026-07-11 — "Sair (usar outro número)" com modal próprio (sem window.confirm)
+
+O confirm nativo do navegador ("janela do Chrome/Claude") no menu de perfil do delivery foi trocado por um modal estilizado em `delivery/page.tsx` (`showSairConfirm`): bottom-sheet no mobile / centrado no desktop (mesmo padrão do modal de pagamento: overlay `bg-black/50`, `animate-slide-up`, alcinha), ícone vermelho, botão **Sair** (bg-red-500) + **Cancelar**; menção ao carrinho só quando `cart.length > 0`. Verificado no dev server: Cancelar mantém sessão; Sair limpa e volta pra identificação. Critério: **nunca usar `window.confirm`/`alert` em telas de cliente** — modal do app.
+
+### 2026-07-11 — Compressão do logo da loja (client-side, sem Storage)
+
+Decisão: **manter logo como data-URL em `tenants.logo_url` e comprimir no client** em vez de migrar pra Supabase Storage — todos os consumidores são `<img>` de navegador (delivery, voucher-link, config), e Storage exigiria bucket + policies novas (pegadinhas conhecidas de grants/RLS) + migração dos dados.
+- `LojaTab.tsx`: helper `compressLogoDataUrl` (module-level) — redimensiona pra máx. 512px via canvas e re-encoda `image/webp` q=0.85 (navegador sem encode WebP devolve PNG do `toDataURL`, fallback automático); usa o menor entre comprimido e original; qualquer erro devolve o original (upload nunca trava).
+- Aplicado em 2 pontos: no `onChange` do file input (upload novo) e no `handleSalvar` (**auto-saneamento**: logo `data:` acima de 150 KB é recomprimido ao salvar — logos antigos pesados se corrigem com um simples abrir + "Salvar dados da loja", sem reenviar arquivo).
+- Testado com o logo REAL da Vila Leste no navegador: **1.825 KB → 13 KB** (WebP 512×512), visual idêntico no header. tsc 324.
+- Logos pesados no banco em 2026-07-11: Vila Leste 1,9MB, Testes PDV 1,9MB, EP PAR MALL 312KB — saneiam no próximo "Salvar" de cada loja.
+
+### 2026-07-11 — Delivery: cardápio-primeiro (vitrine) para tráfego de anúncio
+
+Contexto: campanha Meta da Vila Leste tinha ~25 cliques/mês no link mas quase nenhum pedido (só 1-2 no banco). Causa: a 1ª tela era **"Qual o seu celular?"** (`identificacao`) — tráfego frio de anúncio quer ver comida/preço antes de cadastrar, senão abandona.
+- **Novo passo `preview`** (`Step` em `useDeliveryData.ts`): primeira tela para tráfego novo. No `init()`, o fallback de visitante sem telefone salvo passou de `setStep('identificacao')` → `setStep('preview')`. Cliente que já tem telefone salvo (auto-lookup) continua indo direto pra `cardapio`/`modo_entrega` — **não** vê a vitrine.
+- **Render (`delivery/page.tsx`):** bloco `if (step === 'preview')` reusa o **mesmo `CardapioMesaQR`** (autossuficiente — não depende de `customer`) com header enxuto (marca + Aberto/Fechado + botão "Entrar"), chips de categoria (reusa `scrollToCategoria`) e barra "Continuar pedido" quando `cart.length > 0`. Montar carrinho JÁ funciona; o `cart` persiste entre passos (só é resetado em troca de slug). "Continuar"/"ver carrinho"/"Entrar" → `setStep('identificacao')`.
+- **`IdentificacaoDelivery`:** prop opcional `onVoltar?` → link "Voltar ao cardápio" (só aparece vindo da vitrine); page passa `setStep('preview')`.
+- **Checkout intocado:** identificacao → modo_entrega → endereco → cardapio → confirmacao segue igual; `handleConfirmarPedido` ainda exige `customer`. Zero risco ao fluxo pago.
+- tsc 324 (sem aumento). Verificado no dev server (mobile): vitrine renderiza cardápio real com foto/preço; round-trip vitrine→identificação→voltar OK. Loja estava "Fechado" (dado real) → não deu pra dirigir add-to-cart→pedido, mas é código existente do `CardapioMesaQR`. Front-only, entra no ar após push/deploy.
+- **Pendente do usuário (lado Meta, não dá pra fazer em código):** (1) trocar objetivo da campanha de "Cliques no link" → **Vendas/conversão = Compra** (o Pixel já dispara `Purchase`); (2) adicionar `?utm_source=meta` no link do anúncio (hoje chega "sem origem" no banco). **Pixel do site trocado em 2026-07-11 para `1517617819416871`** (ver entrada abaixo).
+
+### 2026-07-11 — Delivery travando: "Carregando sessão..." preso + "Erro ao carregar" permanente
+
+Dois sintomas reportados pelo usuário (produção, ao voltar pro app depois de um pedido):
+- **(imagem 2) "Carregando sessão..." infinito, tela toda branca** — o overlay de loading do `AuthContext` (`z-[9999]`) cobre TUDO, inclusive a página **pública** do delivery, enquanto `loading===true`. `loading` só zera depois de `supabase.auth.getSession()` resolver. **Causa:** o supabase-js usa `navigator.locks` p/ sincronizar sessão entre abas; com **várias abas** (o print tinha 3) ou ao voltar do background no celular, o lock pode não liberar e `getSession()` **nunca resolve** → overlay eterno. **Fix (`AuthContext.tsx`):** timeout de 3s no `getSession()` inicial — se não responder, libera a UI como "sem sessão" (guard `settled`; como o lock travado nunca resolve, não descarta sessão válida). Também blindei o fetch do logo que EU tinha adicionado (`useDeliveryData.ts`, `supabase.from('tenants')` passa pelo mesmo lock) com `Promise.race` + timeout 2s.
+- **(imagem 1) "Erro ao carregar / Erro de conexão" que não sai** — `AcompanharPedido.tsx` faz polling do status a cada 10s, mas ao dar erro (blip de rede) setava `error` e **nunca limpava no sucesso seguinte** → tela presa no erro mesmo com a rede de volta. **Fix:** `setError('')` no path de sucesso do `fetchStatus` — o polling se recupera sozinho.
+- Verificado no dev server: delivery e app operador carregam normal (sem overlay preso), logo aparece, console limpo. tsc 324. **CRITÉRIO:** loading global de auth NUNCA pode depender só de `getSession()` sem timeout (lock trava); telas com polling devem limpar `error` no sucesso.
+
+### 2026-07-11 — Pixel da Meta: site dispara DOIS datasets (conta antiga + El Patron API)
+
+Contexto: o pixel antigo do `index.html` (`1021977890320561`) pertence a **outra conta/Business Manager** e **não aparece** no seletor "Conjunto de dados" ao criar campanha na conta nova (a lista só mostra datasets da conta atual). O usuário criou na conta nova o dataset **"El Patron API" (ID `1517617819416871`)**, mas inativo (site não mandava eventos). **Pegadinha:** a outra conta tem uma **campanha ATIVA** usando o pixel antigo — trocar simplesmente quebraria a otimização dela.
+- Solução: o site inicializa **os dois pixels** — `fbq('init','1021977890320561'); fbq('init','1517617819416871'); fbq('track','PageView')`. `fbq('track', ...)` faz **broadcast p/ todos os pixels inicializados**, então cada dataset recebe PageView/InitiateCheckout/Purchase e cada conta otimiza a SUA campanha, sem conflito. `metaPixel.ts` (`trackPixel`) não muda — já usa `fbq('track')`. `<noscript>` tem 2 `<img>` (um por id).
+- Depois de publicar: o "El Patron API" sai de "inativo" e dá pra otimizar a campanha nova por **Compra**; a campanha antiga segue recebendo eventos normalmente.
+- Alternativa (não feita): **compartilhar** o pixel único entre as duas contas de anúncio (Business Settings) — 1 pixel só, sem duplicar dado, mas exige as contas no mesmo Business Manager + passos manuais na Meta. Ids de pixel são públicos, ok no repo.
+
+### 2026-07-09 — Link de divulgação de item específico no delivery (?item=<id>)
+
+Feature: no admin (**Configurações → Delivery**, `config-delivery/page.tsx`), abaixo do "Link do Delivery", novo bloco **"Divulgar um item específico"**: `<select>` agrupado por categoria (usa `itens`/`categorias` do `useCardapio`, item `id` = `menu_items.id`) que gera `deliveryUrl + '?item=' + id` com botão Copiar + `QrCodeDelivery` (QR/PNG/SVG).
+- **Cliente (`delivery/page.tsx`):** lê `?item=<id>` em `useState` (`deepLinkItemId`) e passa pro `CardapioMesaQR`; ao consumir, limpa o state e remove o param da URL (`history.replaceState`).
+- **`CardapioMesaQR.tsx` (compartilhado com mesa-qr):** props novas `deepLinkItemId?`/`onDeepLinkConsumed?`; `useEffect` (guardado por `deepLinkDoneRef`, roda 1x quando `items` carregou) acha o item por id e **abre o modal SEMPRE** (mesmo item sem opções — diferente do clique normal que auto-adiciona ao carrinho), setando a categoria ativa. Item inexistente/indisponível: ignora silenciosamente.
+- **Fluxo:** o delivery é multi-step (`step`: identificacao → modo_entrega → endereco → cardapio); o `CardapioMesaQR` só monta no passo `cardapio`. Como `deepLinkItemId` é state da página, sobrevive ao onboarding e o item abre assim que chega no cardápio (os `items` já vêm carregados pelo `useDeliveryData`). Ou seja: tão "direto" quanto o link normal da loja — passa pela identificação que todo pedido já exige.
+- tsc 324 (sem aumento). Dev server subiu e a página de delivery carregou sem erro de console; NÃO dirigi o onboarding completo (loja de PRODUÇÃO — criaria cliente/sessão). Front-only: entra no ar após push/deploy.
+
+### 2026-07-09 — Pedidos pagos juntos não agrupavam no histórico + item cancelado como "Na Fila" na lista
+
+Aba **Pedidos**: pedidos pagos juntos (mesmo `payment_group_id`) devem aparecer como **Card Unificado** (função `agruparPedidosUnificados` em `pedidos/page.tsx`, chamada em `pedidosAgrupados`, agrupa por `pagamentos[].payment_group_id`). No filtro **"Ontem"/histórico** não agrupavam.
+- **Causa:** `useOrdersHistory` tem VÁRIOS caminhos de query. O do **modo histórico** (`select` grande a partir de ~linha 305, que alimenta `mapDirectQueryOrders`) tinha o sub-select de `payments` **sem `payment_group_id`** (nasceu assim do Readdy). Os caminhos de "Hoje" (RPC `fn_get_kds_orders` e fallback direto) já traziam o campo → por isso agrupava no mesmo dia mas não em dias passados. **Fix:** adicionar `payment_group_id` ao `payments(...)` daquele select. Ao mexer em pagamentos, conferir TODOS os selects de `payments` do hook (há ~4) — devem incluir `payment_group_id`.
+- **Bônus (mesmo pedido, item cancelado):** na LISTA o pedido 008 mostrava badge "1 Na Fila" e itens "5/6" — a unidade do item cancelado (mapUnitStatus('cancelled') cai em 'aguardando') contava como pendente. **Fix em `PedidosLista.tsx`:** `contarUnidadesPorStatus` e a contagem de itens/progresso pulam `item.cancelado` (campo add nesta data). 
+- tsc 324 (sem aumento). Validado por tsc + confirmação no banco (008 e 010 compartilham payment_group_id `857a3c50-…`). Não dirigido no preview (login).
+
+### 2026-07-09 — Relatórios: item cancelado inflava categoria e unidades "(Un. N)" separadas no ranking
+
+Aba **Relatórios** (mesmo pedido do item abaixo, com 1 item cancelado de R$20). Dois bugs:
+1. **Faturamento por Categoria (611) != Faturamento líquido (591):** `useVisaoGeralExtras` somava `order_items` dos pedidos não-cancelados mas **não filtrava itens cancelados** (`order_items.status='cancelled'`) — o `total_amount` do pedido já exclui cancelados, então divergia em R$20. **Fix:** `.neq('status','cancelled')` nas duas queries (principal e fallback) do hook. Confirmado no banco: 611 (com) → 591 (sem). O **mesmo furo existia na RPC `fn_get_sales_report`** (top_items filtrava só `orders.status`, não `oi.status`) → migration `sales_report_exclude_cancelled_items` adicionou `AND oi.status <> 'cancelled'` no top_items dos **dois overloads** (3 e 4 args; o app chama o de 4). Depois: soma dos top_items = total_revenue = 591.
+2. **"(Un. N)" separados no ranking:** itens com várias unidades rastreadas no KDS são gravados como `order_items` distintos com sufixo `" (Un. 1)"/" (Un. 2)"` no `item_name` (às vezes com espaço duplo). No **Produtos & Ranking** apareciam como produtos diferentes. **Fix (front, `ProdutosTab.tsx`):** helper exportado `normalizarNomeItem(nome)` = `nome.replace(/\s*\(Un\.\s*\d+\)\s*$/i,'').trim()` (o `.trim()` também unifica "Hamburguer de Bacon " vs "...  (Un. 1)"), e `mergeUnidades(top_items)` soma qtd/receita por nome normalizado (avg_price recalculado receita/qtd). Aplicado em `topItens`/`topItensAnt` e usado em `itens`, `categorias`, `itensAntMap`, `dadosPorCategoria`. **`useItemEvolucao`** (mesmo arquivo) buscava por `item_name` exato → passou a `.ilike('item_name', `${itemNome}%`).neq('status','cancelled')` + filtro JS `normalizarNomeItem(...) === itemNome` (evita falso positivo tipo "Coca" x "Coca-Cola").
+- **NÃO é double-count no by_payment da RPC:** `fn_get_sales_report.by_payment` usa `SUM(total_amount * p.amount / soma_pagamentos_do_pedido)` → escala pagamento conjunto pela parte do pedido (102+33=135, correto). Por isso a "Formas de Pagamento" da Visão Geral bate. O double-count segue valendo só p/ `useCaixaReport` (task aberta).
+- tsc 324 (sem aumento). Migration aplicada no Supabase. Não dirigido no preview (login); validado por tsc + reconciliação no banco (591 nos dois lados).
+
+### 2026-07-09 — Detalhe do pedido: pagamento conjunto e item cancelado no resumo
+
+`PedidoDetalheModal` (aba Pedidos): 2 problemas num pedido real (P0807260008, total 102).
+1. **"valor cobrado" != "Total do pedido" (135 vs 102):** o pedido foi **pago junto** com outro (P0807260010, R$33) num unico PIX. **Convencao do banco:** o pedido PRINCIPAL grava no seu `payments.amount` o total do GRUPO inteiro (102+33=135); os vinculados gravam so o deles. Ambos com mesmo `payment_group_id`, `is_refunded=false`. Ao ver 1 pedido so, o `PagamentoDetalhado` mostrava 135. **Fix (display):** quando `!isConsolidated && payment_group_id && amount > pedido.total`, exibir a **parte do pedido** (`pedido.total`) como valor cobrado + nota "Pago em conjunto com outros pedidos — pagamento total R$X". Mesmo clamp no `totalPago`. (No card unificado o `consolidatePayments` ja escalava; o caso do pedido isolado nao era coberto.)
+2. **Item cancelado somia no resumo:** `order_items.status='cancelled'` (Espetinho R$20) era listado como item normal -> soma das linhas (122) != Total (102, que ja exclui cancelados via `total_amount`). **Fix:** novo campo `PedidoItemDetalhe.cancelado` (setado no mapper de `page.tsx`: `item.status === 'cancelled'`); contagens (`itensTotalReal`/prontos) usam `itensAtivos` (exclui cancelado); no resumo os cancelados aparecem em bloco proprio **riscado + badge "Cancelado"** e NAO somam; na lista de itens o card ganha borda vermelha, badge e substitui as unidades por "Item cancelado".
+- **ATENCAO (fora de escopo, task aberta):** o `useCaixaReport` soma `payments.amount` bruto em `por_forma_pagamento`/`cash_transactions` **sem deduplicar `payment_group_id`** -> pagamento conjunto conta em dobro (135+33=168 != 135 recebido). `por_origem` usa `total_amount` e esta certo. Ver task e FINANCEIRO_MAP.md.
+- tsc 324 (sem aumento), sem erro de sintaxe/JSX. Nao dirigido no preview (exige login + pedido historico especifico); validado por tsc + reconciliacao dos numeros com os dados reais no Supabase.
+
+### 2026-07-04 — Mostrar qual cliente USOU o voucher (nao so pra quem foi emitido)
+
+Aba "Vouchers" do perfil do cliente so listava vouchers emitidos PARA ele (`vouchers.customer_id`). Um voucher **generico** (customer_id null) usado por um cliente no delivery nao aparecia — o vinculo do USO fica em `voucher_transactions(redeemed).order_id -> orders.customer_id`, nao no voucher. (Ex.: DC-RJX9-V2YQ, customer_id null, usado pelo "junior" via pedido.)
+- **RPC `fn_get_customer_vouchers(p_tenant_id, p_customer_id)` (migration, SECURITY DEFINER):** `RETURNS SETOF vouchers` = emitidos-para OR resgatados-via-pedido-do-cliente (EXISTS em voucher_transactions redeemed JOIN orders por customer_id).
+- **`voucher-write`:** nova action **`list_customer_vouchers`** (chama a RPC via `admin.rpc`); **`get_voucher_transactions`** passou a **enriquecer os `redeemed` com `customer_name`** (order_id -> orders.customer_id -> customers.name) — mostra QUEM usou. Deploy CLI.
+- **Front:** `ClientePerfil` usa `list_customer_vouchers` e mostra badge **"Enviado"** (v.customer_id === cliente.id) vs **"Usou"** (resgatado num pedido dele); `VoucherDetalheModal` mostra "Uso · por {cliente}" nas transacoes de resgate (tipo `VoucherTransaction.customer_name?` novo). tsc 324, build OK. CRITERIO: "vouchers do cliente" != "emitidos pro cliente" — o uso e por transacao->pedido->cliente, nunca assumir pelo customer_id do voucher (que e so o destinatario pretendido).
+
+### 2026-07-04 — Desconto do cupom na tela de confirmacao do pedido (delivery)
+
+`ConfirmacaoDelivery` mostrava so "Total" (ja liquido) — sem a linha do cupom. Agora exibe **detalhamento** (Subtotal / Cupom -R$X / Taxa / Total) quando houve desconto. Como o carrinho e limpo apos confirmar, capturei o resumo NO MOMENTO da confirmacao: `useDeliveryData` novo state `resumoConfirmacao = { subtotal, desconto, deliveryFee, voucherCodigo }`, setado no `.then()` do create_delivery_order — `desconto = (subtotal + effectiveDeliveryFee) - totalConfirmado` (o backend devolve o total ja com voucher). Passado por `page.tsx` -> `ConfirmacaoDelivery` (prop `resumo`). tsc 324, build OK. Nao testei confirmando pedido no preview (criaria pedido real na loja de producao); validado por tsc+build+revisao (mesmos valores que o carrinho ja exibia certo).
+- **Nota UX (nao-bug):** `EmitirVoucherModal` com "gerar link de ativacao" mantem o modal ABERTO de proposito apos emitir (mostra sucesso + link + botao "Concluir") p/ o usuario copiar o link — usuario achou que "nao salvou/fechou", mas salvou (o voucher e criado no submit). Se pedir, auto-fechar apos copiar.
+
+### 2026-07-03 — Voucher do link nao aplicava no delivery (2 bugs)
+
+Cliente abria o link do voucher -> "Pedir no Delivery" -> nenhum desconto. **2 bugs em `useDeliveryData.ts`:**
+1. **(principal)** o `init` useEffect (reset por storeSlug) fazia `setVoucherInput('')`, **apagando** o codigo que o `useState(() => getUrlVoucher())` tinha pre-preenchido -> campo vazio -> auto-aplicacao nunca rodava (code vazio). Fix: `setVoucherInput(getUrlVoucher() ?? '')` no reset (preserva o cupom do link).
+2. **(min order)** a auto-aplicacao era one-shot (`autoVoucherTried` ref): se a 1a tentativa fosse abaixo do pedido minimo do voucher, travava e nao retentava quando o carrinho crescia. Fix: trocado por `autoVoucherLastSubtotal` ref — retenta sempre que o **subtotal aumenta** (cruza o minimo), sem spammar `validate` (so quando cresce). Para quando aplica (`voucherCodigo`) ou esta carregando.
+- **Testado ponta-a-ponta no preview** (loja VILA LESTE real, voucher DC-U6FN-5RHL fixed R$5 min R$20): 1 item R$15 -> sem desconto; 2o item -> subtotal R$30 -> cupom aplicou sozinho -> Total R$25. tsc 324, build OK. CRITERIO: reset de estado de sessao (por slug) nao pode apagar dado vindo da URL — restaurar da fonte (getUrlVoucher), nunca zerar cego.
+
+### 2026-07-03 — Enviar voucher existente do cliente pelo WhatsApp (mensagem de uso pronta)
+
+`ClientePerfil` aba **Vouchers**: cada voucher **ativo** ganhou botao **"Enviar no WhatsApp"** (+ copiar) que abre `wa.me/55<tel>` com mensagem pronta de USO — helper `mensagemVoucher(v)`: se tem `claim_token` manda o **link de ativacao** (`/voucher/<token>`), senao manda o **codigo**; inclui descricao (%/R$/vale/cashback via `descricaoVoucher`), pedido minimo e validade. Usa `user.loja` como nome da loja. Diferente do botao "Enviar Voucher com link" (que CRIA um voucher novo via `EnviarVoucherModal`) — este reaproveita vouchers JA emitidos pro cliente (lista `list_vouchers` filtrada por `customer_id`). tsc 324, build OK.
+
+### 2026-07-03 — Validade do voucher "antes da emissao" (fuso horario)
+
+`EmitirVoucherModal` mandava `expires_at: form.expires_at` (data pura `YYYY-MM-DD` do input date). Sem hora, o banco guarda como **meia-noite UTC** e, exibido em America/Sao_Paulo (-3h), a validade "volta" pro dia anterior 21:00 — ficava ANTES da emissao (ex.: emitido 03/07 20:04, validade mostrada 02/07 21:00, "Expira em breve"). **Fix:** `expires_at: form.expires_at ? new Date(`${form.expires_at}T23:59:59`).toISOString() : null` (fim do dia no fuso LOCAL) — mesmo padrao que o `EnviarVoucherModal` (perfil do cliente) ja usava. CRITERIO: input `type=date` (data pura) -> SEMPRE anexar hora local (`T23:59:59` p/ fim, `T00:00:00` p/ inicio) antes de `toISOString()`; nunca mandar a data crua p/ coluna timestamptz. Voucher DC-U6FN-5RHL corrigido no banco. tsc 324, build OK.
+
+### 2026-07-03 — Fechar sessao travava com checklist TODO verde (pedido pago mas nao "delivered")
+
+Sintoma: `FecharSessaoModal` mostrava as 3 condicoes VERDES ("Nenhum pedido pendente") mas ao clicar "Fechar Sessao" a RPC recusava com "existem pedidos ainda nao entregues ou nao cancelados". **Causa:** DIVERGENCIA entre a checagem do checklist (Edge `check-session-pending`, que olha ITENS e trata **pago = OK**) e a RPC `fn_close_session` #3 (fallback geral que bloqueava por `orders.status NOT IN ('delivered','cancelled')` **independente de pago**). Na sessao stale do VILA LESTE (aberta 50h) havia **1 pedido pago (R$8, P0207260012) com status 'ready'** — 1 item `skip_kds=true`, unit 'new'; o `orders.status` nunca avancou pra 'delivered'. Checklist ignorava (pago); RPC #3 bloqueava (status).
+- **Fix (migration `fn_close_session_paid_orders_dont_block`, LIVE no banco — sem deploy de front):** a checagem #3 passou a so bloquear pedidos **`is_paid = false`** (`... AND is_paid = false AND status NOT IN ('delivered','cancelled')`). Pago = liquidado, nao trava. Checagens #1 (mesas abertas) e #2 (itens na cozinha, `skip_kds=false`) inalteradas. Havia 2 overloads de `fn_close_session` (4-arg legado e 5-arg com `p_force`); o SessaoContext chama a de 5-arg — recriei essa.
+- **CRITERIO:** validacao de fechamento de sessao deve tratar **pedido pago como liquidado** (nao exigir status delivered). "Forcar Fechamento" (`p_force=true`) ja pulava tudo e era o escape. Follow-up conhecido (nao corrigido): `orders.status` pode ficar 'ready' apesar dos itens entregues (nao sincroniza) — e um problema de higiene separado.
+
+### 2026-07-03 — Desconto + voucher + dados do cliente nas telas de pagamento do PDV Caixa (Fase 1)
+
+Pedido: habilitar desconto, voucher e box de dados do cliente em TODAS as janelas de pagamento do PDV Caixa. Decisoes do usuario: box do cliente = **campos avulsos** (nome/telefone/CPF/email, sem CRM); desconto = **exige autorizacao** (gerente/admin).
+- **Mapa das janelas de PAGAMENTO REAL** (as que cobram): (1) **`PagamentoModal`** (checkout do carrinho; `finalizarPedido`->order-write; persiste `discount_amount`, `customer_cpf/email`, `destination_phone`). (2) **`PagamentoRapidoModal`** (`src/components/feature/`, paga pedido EXISTENTE via `order-write`/`record_payment`; usada em `PedidosRecentesPanel` do caixa e no garcom). (3) **`FecharMesaCaixaModal`** — **NAO persiste**: `handleFechada`/`handlePagamentoConfirmado` so alteram estado LOCAL (Set/Map) em `MesasPainelCaixa`, sem edge/backend (os pedidos ja teriam sido pagos individualmente). As demais (`FecharSessaoModal`, `FechamentoCaixaModal`, `ReembolsoDiferencaModal`, `EtapaSelecionarPedidos`) NAO sao cobranca.
+- **FASE 1 FEITA — `PagamentoModal`:** ja tinha voucher (validate/redeem). Adicionado: **desconto manual** (R$/%) com autorizacao e ao autorizar reduz `totalComDesconto` e guarda autorizador; **box do cliente expandido** de CPF/email para Nome+Telefone+CPF+Email.
+- **AUTORIZACAO DO DESCONTO — pegadinha (2026-07-03):** inicialmente usei `DescontoAutorizacaoModal`, que valida **so PIN** (`login-pin` por badge_number) ou notificacao. MAS os admins/gerentes desta base **nao tem PIN nem badge_number** (`users.pin_hash`/`badge_number` = null) -> PIN sempre falha ("Muitas tentativas"). Troquei nas 2 telas para **`AutorizacaoGerenteModal`** (o mesmo da cortesia): aceita **Matricula+PIN OU E-mail+Senha** (via `verify-manager-credentials`, que usa `>= 40` na service key). Assim admin sem PIN autoriza com email+senha da conta. CRITERIO: para liberar acoes restritas, preferir `AutorizacaoGerenteModal` (tem fallback email+senha) a `DescontoAutorizacaoModal` (so PIN) quando os autorizadores podem nao ter PIN.
+- **Persistencia (sem tocar order-write):** `PDVContext.finalizarPedido` ganhou 2 params opcionais: `customerData.{customerName,customerPhone}` (grava `customer_name`/`destination_phone` no payload — colunas existentes; NAO ha coluna `customer_name` dedicada? o payload ja mandava customer_name antes, submitOrder aceita) e **4o param `extraDiscount:{amount,authorizedBy}`** — soma ao `valorDesconto` do carrinho (`actualDesconto`/`actualTotal`) e audita o autorizador via `notes` (coluna `orders.discount_authorized_by` existe mas nao passamos por ela p/ nao mexer no edge; fica p/ depois). Evita stale-closure passando o desconto explicito em vez de `setDesconto`.
+- tsc 324 (sem aumento), `npm run build` OK.
+- **FASE 2 FEITA — `PagamentoRapidoModal`** (`src/components/feature/`, paga pedido EXISTENTE): add **desconto** (autorizacao via `DescontoAutorizacaoModal`), **voucher** (validate/redeem) e **box do cliente** (nome/tel/cpf/email). Como o pedido ja existe com total fixo, o desconto/voucher **ajustam o pedido no backend** senao ficaria "parcialmente pago": no confirmar chama **`order-write apply_discount`** (`new_discount_amount`/`new_total_amount`/`discount_authorized_by`/`coupon_code`=codigo do voucher) + **`voucher-write redeem_voucher`** (com `order_id`), e **`order-write update_order_customer`** (acao NOVA, aditiva — grava `customer_cpf`/`customer_email`/`destination_phone`; NAO ha coluna `customer_name` em orders, entao Nome fica so na UI). Introduzido `totalAPagar = totalEfetivo - descontoTotal` (liquido) usado em restante/troco/confirmar. **GUARD:** desconto/voucher so aparecem quando cobra **1 pedido por vez** (`semLinkados`) — com pedidos vinculados a distribuicao proporcional do desconto seria erro; mostra aviso. Deploy `order-write` via CLI `--use-api` (`verify_jwt:false`).
+- **PEGADINHA `apply_discount` — `approved_by` e UUID (2026-07-03):** `order_discounts.approved_by` (e `orders.discount_authorized_by`) sao **uuid** (FK users), mas o `AutorizacaoGerenteModal.onAutorizado` devolve o **NOME** (nao o id). Passar o nome dava `invalid input syntax for type uuid: "Caxa"` (500) e travava o pagamento no `PagamentoRapidoModal` (que DEPENDE do apply_discount pra reduzir o total). Fix nos 2 lugares: **`approved_by: null` + `requires_approval: false`** e o nome do autorizador vai em **`approval_notes`/`reason`** (text). Descoberto que o PDVContext (checkout do carrinho) JA passava string `'Gerente'` como approved_by ha tempos — mas ali o try/catch e non-blocking e o total ja fora setado no create_order, entao falhava SILENCIOSO (order_discounts nunca gravava); corrigido junto (agora grava). CRITERIO: nunca mandar nome em coluna `*_by` uuid; validar auth na UI e auditar o nome em campo texto.
+- **`FecharMesaCaixaModal`**: usuario optou por NAO mexer (segue local-only). tsc 324, build OK. **Nao testado em preview** (PDV exige login+sessao+carrinho); validado por tsc+build+revisao — usuario testa logado. Front pendente push.
+
+### 2026-07-03 — Pedido demorava a aparecer nas telas (impressao ja era instantanea): broadcast orders-ping
+
+Sintoma (relato da loja): impressao quase instantanea, mas o pedido demorava a aparecer no gestor de pedidos/PDV Caixa/demais telas. Medido: escrita saudavel (pedido -> print_queue em 0,7-2s); o atraso era 100% no caminho de LEITURA das telas, que dependem de `postgres_changes` — cada linha alterada roda RLS por dispositivo na instancia Nano, e o Realtime do projeto sofre cold start (logs de hoje: varios "Stop tenant ... no connected users"). A impressao nao sofre porque usa OUTRO caminho: trigger no banco -> `realtime.send` em canal publico (`print-jobs:<tenant>`), sem RLS.
+- **Fix principal (mesmo padrao da impressao, LIVE):** migration `orders_realtime_ping_broadcast` — `fn_orders_realtime_ping()` SECURITY DEFINER com `realtime.send(jsonb{table,op,id}, 'order_change', 'orders-ping:<tenant_id>', false)` + triggers AFTER INSERT/UPDATE/DELETE em `orders` E `order_items` (exception-safe: nunca bloqueia a escrita). Payload minimo (ids/enums) porque o canal e PUBLICO — nada sensivel; o front so usa o ping como gatilho de refetch autenticado.
+- **Front (`src/hooks/useOrdersPing.ts`, novo):** assina `orders-ping:<tenant>` com **registry de modulo** — varios consumidores compartilham UMA assinatura por topico (2 joins no mesmo topico no mesmo socket conflitam no Phoenix). Consumidores: `KDSContext` (dispara o `handleRealtimeChange` debounced — cobre KDS, gestor-pedidos, PDV/aba Pedidos do caixa), `useGestorEntregas` (refetch 600ms) e `pedidos/page.tsx` (reload 800ms, so em modo vivo). O `postgres_changes` existente foi MANTIDO (payload do lock de edicao + camada extra).
+- **Descoberta importante (testado empiricamente com supabase-js):** assinar `postgres_changes` de tabela FORA da publicacao `supabase_realtime` **NAO** da CHANNEL_ERROR — o canal assina normal e o binding fica MUDO (silencioso). O KDSContext assinava `order_item_parts` e `order_item_observations` (fora da publicacao) sem receber nada; `MesasContext`/`useTablesConfig` assinavam `tables`/`table_sessions` (idem). Migration `add_missing_tables_supabase_realtime_publication` adicionou as 4. Pendentes conhecidas fora da publicacao: `inventory_sessions` (EstoqueContext) e `production_recipe_steps` (ProducaoContext) — fluxos frios, nao mexi.
+- **Validacao:** listener Node (supabase-js do agente-local) SUBSCRIBED no canal + UPDATE no-op em `orders` -> broadcast RECEBIDO com `{table,op,id}`. tsc 324 (sem aumento), `vite build` ok. **Front PENDENTE de push** (usuario faz via GitHub Desktop); o lado do banco ja esta LIVE (inofensivo antes do deploy do front — so publica num canal que ninguem assina ainda).
+- **CRITERIO:** "tempo real" critico de operacao (pedido aparecer, impressao) NAO deve depender de `postgres_changes` + RLS — usar trigger -> broadcast publico com payload minimo + refetch autenticado no cliente. `postgres_changes` fica para payload rico entre poucos dispositivos. Ver [[project_print_agent_realtime]].
+
+### 2026-07-03 — BUG voucher-write ao emitir voucher: limiar errado da service_role key (novo formato sb_secret)
+
+Emitir voucher dava erro. O `catch` fazia `String(err)` num PostgrestError => UI mostrava **"Error: [object Object]"** (erro real mascarado). Depois de corrigir o catch, apareceu o erro real: **`permission denied for table vouchers (42501)`**. **CAUSA RAIZ (limiar da chave):** o Supabase migrou as chaves para o **novo formato `sb_secret_…` (curto, ~40-60 chars)**, diferente do JWT service_role legado (~200+). O `voucher-write` gateava a chave com `serviceRoleKey.length > 100` — com a chave nova (curta) isso da FALSE e cai na **anon key**; anon so tem SELECT em `vouchers` => INSERT retorna 42501. O `delivery-write` usa `>= 40` (por isso sempre funcionou com a mesma env var). **Fix: trocar o gate de `> 100` para `>= 40`** em `voucher-write`. Redeploy CLI `--use-api`.
+- **MESMO BUG LATENTE em outras 3 funcoes** (ainda `> 100`, silenciosamente na anon): **`reservation-write`, `session-payments`, `table-write`**. Se derem "permission denied", e o mesmo fix. NAO redeployadas (session-payments mexe com pagamento — pedir OK antes).
+- **CRITERIO:** gate de service key deve ser `>= 40`, NUNCA `> 100` — a chave nova do Supabase e curta. Fonte de verdade: espelhar `delivery-write`.
+- **Fix defensivo tambem (issued_by):** ha FK `vouchers.issued_by -> users(id)` e `voucher_transactions.processed_by -> users(id)`; o auth.uid do logado nem sempre existe em `public.users` (dono multi-loja/staff com ids proprios). Agora resolve `issuerId`=user.id so se existir em public.users, senao null. `catch` extrai `.message`/`.code`/`.details`. `EmitirVoucherModal` catch idem. tsc 324.
+- **Fix (voucher-write, redeploy CLI --use-api):** apos resolver o tenant, resolve `issuerId` = `user.id` **somente se** existir em `public.users` (query `users.select(id).eq(id,user.id).maybeSingle()`), senao `null` (campos sao apenas informativos). Todos os `issued_by`/`processed_by` passaram a usar `issuerId`. `catch` agora extrai `.message`/`.code`/`.details` (nunca mais "[object Object]"). CRITERIO reutilizavel: **carimbar `*_by` com auth.uid so apos verificar que existe na tabela de usuarios** — auth.uid != public.users.id em varios cenarios multi-loja.
+- **Front (polish):** `EmitirVoucherModal` catch passou a extrair `.message` (era `String(err)`).
+- Insert reproduzido no SQL: com `issued_by=null` passa; sequencia voucher+transaction OK. tsc 324.
+
+### 2026-07-01 — Delivery: pagina "Como vai receber?" redesenhada + toggle sem voltar + fix da foto do item
+
+Tres melhorias no fluxo do cliente (aprovadas por mockup HTML enviado antes de aplicar — padrao que o usuario gosta):
+- **`ModoEntregaDelivery.tsx` (Opcao 2 do mockup):** hero gradiente igual ao header do cardapio (iniciais + nome da loja + "Ola, {nome}! 👋") + sheet branca `rounded-t-3xl -mt-8`. Grid 2 colunas Delivery/Retirada com selecao (check + borda amber, estado local `modoSel`, default entrega) + botao "Ver o cardapio" (`onSelecionar(modoSel)`). "Falar com a gente" (WhatsApp) virou barra discreta verde — antes era um card gigante com o mesmo peso das opcoes. Campo nome (cliente novo) com nota "(so no primeiro pedido)". Props/logica inalteradas (nome obrigatorio, enviando etc.).
+- **Toggle do cardapio nao volta mais pra tela de modo:** os botoes Entrega/Retirada do card flutuante agora chamam **`handleConfirmarModo(modo)`** (nao `handleAlterarModo`) — retirada troca na hora (cliente ja identificado → `setStep('cardapio')` = no-op visual) e entrega vai DIRETO pra tela de endereco so se nao houver endereco. `handleAlterarModo` ficou sem uso no page.tsx (removido o destructure; segue exportado no hook).
+- **Fix foto do item (modal, `CardapioMesaQR.tsx` — compartilhado delivery + mesa-qr):** antes `h-40 object-cover object-top` cortava fotos de proporcao diferente (faixa preta/escura). Agora: container `h-44` com a **propria foto desfocada de fundo** (`object-cover blur-xl scale-110 opacity-60`) + foto inteira na frente (`object-contain`). Thumbs da lista (72px) continuam object-cover (correto).
+- Verificado no preview (loja real, retirada; toggle Entrega → caiu direto no mapa de endereco). tsc 324 (sem aumento). Pendente push Vercel.
+
+### 2026-07-01 — Redesign do header do delivery (Proposta B: hero + card flutuante)
+
+Header do cardapio do delivery (`src/pages/delivery/page.tsx`) redesenhado — usuario escolheu entre mockups (Proposta B). SO layout; TODA a logica preservada.
+- **Hero gradiente** (amber→orange-600 + brilho radial inline): "logo" com iniciais da loja (`lojaIniciais`), nome da loja como titulo (antes: generico "Cardapio Delivery"), pill Aberto/Fechado (`deliveryOpenNow`), "Ola, {primeiro nome} 👋". Acoes viram 2 icones: **Meus pedidos** (badge = pedidos em andamento; clique → acompanhar se houver ativos, senao historico) e **Perfil** (dropdown: nome/telefone, historico, sair). Botoes grandes "Acompanhar/Historico" e micro-chips (Trocar/Falar com a loja/Sair) absorvidos por esses 2 icones + card.
+- **Card branco flutuante** (`-mt-8 mx-4 z-30`, estilo iFood): toggle Entrega/Retirada (lado inativo chama `handleAlterarModo`), seletor "Entregar em / label · rua" reusando o MESMO dropdown de enderecos (JSX intocado, so re-ancorado), rodape com 3 celulas: taxa (distancia→`deliveryQuote.taxa`; bairro→`deliveryFee`; retirada→"Sem taxa"), regiao (km+tempo | bairro | "Balcao") e WhatsApp da loja.
+- **Badge**: useEffect novo chama `fetchActiveOrders` 1x ao chegar no cardapio (antes so no clique).
+- Verificado no preview com loja real (EP PAR MALL, modo retirada — identificacao e read-only, nao cria dados). tsc 324 (sem aumento). **PEGADINHA de preview:** screenshot da pagina do delivery da timeout (monitor de conectividade do app faz HEAD /rest/v1 em loop → nunca ha network idle); verificar via `preview_snapshot` (a11y).
+
+### 2026-07-01 — Gestor de Entregas: badge/filtro de problema + responsivo mobile
+
+So frontend (sem edge). Em `src/pages/gestor-entregas/`:
+- **Helper `temProblema(o)` em `utils.ts`** (fonte unica): true se `motoboy_status==='problema'` OU `problemas.length>0` (historico `motoboy_problems`) OU algum `delivery_notes` com `kind==='problema'` (observacao-problema lancada no gestor). Cobre as 3 origens — problema so via observacao NAO muda `motoboy_status`, entao filtrar por status sozinho perdia esses.
+- **Card (`EntregaCard.tsx`):** badge vermelho **"⚠ Problema"** no cabecalho (ao lado do nº) quando `temProblema`. Distincao: `problemaAtivo` (= status atual 'problema') controla o botao "marcar problema" (some) e o texto; a **borda/ring vermelha agora usa `problemaRegistrado`** (qualquer problema, inclusive ja resolvido/entregue) p/ o card saltar. Antes o local `temProblema` era so `motoboy_status==='problema'`.
+- **Filtro (`page.tsx`):** botao **"Com problema"** (ambar) ao lado de "Em atraso", com contador `comProblema` (agora via `temProblema`, nao mais so status); soma no `baseFiltrada` e no "Limpar". Header pill "c/ problema" tambem passou a contar via `temProblema`.
+- **Responsivo mobile/tablet:** o kanban (5 colunas, scroll-x) tinha colunas fixas `w-[280px]`. Agora `w-[86vw] max-w-[320px] sm:w-[280px]` + `snap-start`, e o container de scroll ganha `snap-x snap-mandatory` **so no modo multi-coluna** (`!umaFase`) — no celular cada coluna ocupa ~86% da largura com "peek" da proxima e encaixa no swipe. O modo "uma fase" (chip de fase selecionado) ja era full-width `max-w-lg` = ideal no mobile. Header/filtros ja usavam `flex-wrap` + `px-4 md:px-6`; pills de atraso/problema seguem `hidden sm/md:flex` (no mobile os contadores aparecem nos botoes de filtro). tsc 324 (sem aumento). Pendente push Vercel.
+
+### 2026-07-01 — Observacao do gestor + entregues no PORTAL do motoboy (`motoboy-signal`)
+
+Duas faltas no portal publico do motoboy (`motoboy-signal`, `verify_jwt:false`), separado do gestor (`delivery-write`):
+- **Observacao do gestor nao chegava ao motoboy:** a observacao do Gestor de Entregas vive em `orders.delivery_notes` (`{at,kind:'observacao'|'problema',text,autor}`), mas o `get_order` do `motoboy-signal` **nunca selecionava/retornava** esse campo (so lia `notes` [pagamento/obs] e `motoboy_note`/`motoboy_problems` do proprio motoboy). Fix: adicionar `delivery_notes` ao `.select()` e ao payload; o front `src/pages/motoboy/page.tsx` mostra um card "Observacoes da loja" (azul) logo apos os alertas, com icone por kind.
+- **Pedidos concluidos sumiam da lista:** `list_orders` filtrava so `["new","preparing","ready"]`. Fix: incluir `"delivered"` na query + filtro JS "recentes <3h" (mesmo criterio `RECENTE_MS` do `list_delivery_board` do gestor, usando `motoboy_updated_at ?? updated_at`); retorna `motoboy_updated_at` p/ ordenar. Front `src/pages/motoboy-lista/page.tsx`: separa `emAberto` (contadores/filtros/mapa so olham estes) de `concluidos`, e renderiza uma secao "Entregues" (verde) no fim. `renderCard` ganhou `concluido = status==='delivered'` (sem chip de prazo/ring/badge-cozinha). Clicar abre `/motoboy/:id` — que ja funcionava p/ qualquer pedido de delivery independente do status.
+- **CRITERIO/pegadinha:** ao redeployar `motoboy-signal` via MCP `deploy_edge_function`, passar **`verify_jwt:false`** explicito (o default do tool e `true` e quebraria o link publico). Deploy v16 ok. tsc 324 (sem aumento). Front pendente push Vercel; backend ja no ar.
+
+### 2026-07-01 — Voucher-convite com link de ativacao automatica (CRM de clientes)
+
+Feature: enviar voucher a um cliente especifico com **link publico que ativa sozinho** ao ser aberto, com periodo de validade definido na criacao e rastreio completo (aberto quando, usado quantas vezes, por quem processado).
+- **Banco (migration `vouchers_claim_link_and_usage`):** colunas novas em `vouchers` — `claim_token` (unique parcial, 36 hex), `claimed_at` (1ª abertura = "acionado"), `claim_count` (visualizacoes), `valid_from` (inicio de vigencia; null = imediato), `max_uses`/`use_count` (multi-uso p/ discount/free_item).
+- **Edge `voucher-write` v7:** `issue_voucher` aceita `valid_from`, `max_uses`, `generate_claim_link` (gera token via `crypto.getRandomValues`); `validate/redeem` checam `valid_from` (reason `not_yet_valid`); `redeem` de discount/free_item agora consome por uso (`use_count`→`depleted` quando atinge `max_uses`) em vez de zerar sempre; gift_card/cashback tambem incrementam `use_count`.
+- **Edge `voucher-claim` v1 (PUBLICA, verify_jwt false):** recebe `{token}`, valida formato por regex, busca por `claim_token` com join `tenants(name,logo_url,...)`, expira on-the-fly, marca `claimed_at` na 1ª abertura dentro da vigencia, sempre incrementa `claim_count`; retorna payload **sem ids internos/tenant_id**. Smoke-testado via curl (claim idempotente, token invalido 400).
+- **Front:** pagina publica `src/pages/voucher-link/page.tsx` (rota top-level `/voucher/:token`, fora do AppLayout = sem auth; guard `useRef` contra double-invoke do StrictMode inflar claim_count); `clientes/components/EnviarVoucherModal.tsx` (tipo %/R$/vale, periodo, max usos → cria com `customer_id` + link → botao WhatsApp `wa.me` com mensagem pronta usando `user.loja`); ClientePerfil ganhou aba **Vouchers** (status, "link aberto em", usos X/Y); tela `/vouchers` mostra link aberto/nao aberto, usos e botao copiar-link; EmitirVoucherModal ganhou checkbox "gerar link de ativacao" (mantem modal aberto p/ copiar).
+- **CRITERIO:** link publico usa token opaco proprio (`claim_token`), NUNCA o `code` do voucher nem id — o code so aparece DEPOIS do claim. Resgate continua exclusivamente via PDV (`validate/redeem` autenticados). tsc 324 (baseline era 345, sem aumento). Front pendente push Vercel; backend ja no ar.
+- **Voucher no delivery via link (mesma data):** botao "Pedir no Delivery com o voucher" na pagina publica (`/{slug}-delivery?voucher=CODIGO`; so aparece se voucher ativo e tenant tem `slug` — `voucher-claim` passou a retornar `store.slug`). No delivery: `getUrlVoucher()` em `useDeliveryData.ts` le `?voucher=` e persiste em sessionStorage (`erpos_delivery_voucher`, mesmo padrao do utm_source), pre-preenche `voucherInput` e um useEffect **auto-aplica UMA vez** quando o carrinho tem subtotal > 0 (se falhar — ex. pedido minimo — a mensagem explica e o campo continua preenchido); remocao manual limpa o sessionStorage p/ nao ressuscitar. Verificado no preview: pagina → botao → /demo-delivery?voucher= → sessionStorage capturado (o demo nao tem delivery configurado, dai o fluxo completo do carrinho fica p/ validacao em loja real).
+- **Pedido minimo por voucher (mesma data):** coluna `vouchers.min_order_amount` (null = sem minimo; INDEPENDENTE do minimo geral do delivery). Enforce em 3 pontos: `voucher-write` validate (reason `below_min_order` + `min_order_amount` na resposta; redeem tem safety-net se `order_amount` vier no body) e `delivery-write` validate_voucher + create_delivery_order (voucher ignorado se subtotal < minimo). De quebra o `delivery-write` passou a checar `valid_from` (reason `not_yet_valid`) e a respeitar `max_uses`/`use_count` no resgate (antes zerava discount sempre). Deploy dos 3 via CLI `npx supabase functions deploy X --project-ref mdghhjemzdmeuqpzuyzx --no-verify-jwt --use-api` (byte-exato do arquivo local; funcionou com `npm_config_cache` no D:). Front: campo "Pedido minimo (R$)" nos 2 modais de emissao, exibicao na pagina publica/detalhe/perfil, mensagens no PagamentoModal (PDV) e useDeliveryData (delivery, com valor formatado). Smoke: R$30 vs min 50 -> below_min_order; R$60 -> desconto ok.
+
+### 2026-07-01 — Gestor de Entregas: tooltips + modal de detalhes + ocorrencias/observacoes (com autor)
+
+Card do Gestor de Entregas ganhou: **tooltips** (`title`) nos icones de fase (a_caminho_loja/coletou/entregou) e no chip de prazo; card **clicavel** (abre modal) — botoes/links internos com `stopPropagation`; badge de nº de registros. Modal novo `components/EntregaDetalheModal.tsx`: linha do tempo unificada **cozinha + entrega** (Criado→Preparo→Pronto→A caminho→Coletou→Entregue, horario por etapa), itens, financeiro, e log de **Ocorrencias & Observacoes**. Registro de **problema/observacao** que **so loga** (NAO muda fase) com **autor = usuario logado**.
+- **Banco:** coluna nova `orders.delivery_notes jsonb default '[]'` (migration aditiva) — registros do gestor `{at, kind:'problema'|'observacao', text, autor}`. Separada de `motoboy_problems` (fase/motoboy) p/ observacao NAO virar "problema vermelho" no portal do motoboy.
+- **Edge `delivery-write` (`_v` v16):** actions novas **`get_delivery_order`** (detalhe do modal — reusa a agregacao de fases da cozinha do `motoboy-signal` get_order: novo=created_at, preparo=min(started_preparing_at), pronto=max(ready_at) se todos prontos, dos itens nao-skip_kds) e **`add_delivery_note`** (append em delivery_notes, valida kind/text, grava autor; NAO toca motoboy_status). Ambas no guard de auth. `list_delivery_board` passou a retornar `delivery_notes`. `set_motoboy_status` (problema) agora grava `autor` tambem.
+- **Front:** `useGestorEntregas` expoe `fetchDetalhe`/`addNote` (autor de `useAuth().user.nome`) + tipos `EntregaDetalhe`/`NotaEntrega`. Deploy feito; front pendente push Vercel.
+
+### 2026-06-29 — QR Code do delivery (download PNG/SVG) na aba Delivery
+
+No card "Link do Delivery" (`config-delivery/page.tsx`), abaixo do link, novo componente `config-delivery/QrCodeDelivery.tsx`: QR do `deliveryUrl` (lib ja instalada `react-qr-code`, renderiza SVG no DOM) com **Baixar PNG** e **Baixar SVG**. Padrao de download (sem dep nova, reutilizavel p/ QR de mesas/pix): pega o `<svg>` do DOM, `XMLSerializer` → para PNG **clona o svg e fixa width/height grandes (1024)** antes de rasterizar (senao o PNG sai borrado na resolucao do svg exibido), carrega numa `Image`, desenha em `<canvas>` com fundo branco + margem (quiet zone), `canvas.toDataURL('image/png')`; para SVG, `Blob` direto. So frontend.
+
+### 2026-06-29 — Perfil restrito "Gestor de Entregas" (so acessa o modulo de entregas)
+
+Novo papel `gestor_entregas` (PT) ↔ role-EN **`delivery_manager`** (valor add no enum `user_role`). So consegue acessar `/gestor-entregas` — login normal (e-mail+senha). **Espelha o padrao do Totem** (perfil restrito que e redirecionado pro seu unico destino) + um guard de rota.
+- **Como trancar 1 modulo:** (1) `modulos/page.tsx` redireciona `if perfil==='gestor_entregas' → /gestor-entregas` (ao lado do `if ==='totem' → /autoatendimento`); (2) `RotaProtegida.tsx` — no inicio, `if perfil==='gestor_entregas' && !pathname.startsWith('/gestor-entregas') → <Navigate to="/gestor-entregas">`. Como `/gestor-entregas` e terminal e TODAS as rotas internas passam por `RotaProtegida` (via `AppLayout`), qualquer outra URL volta pro kanban. A rota NAO entra em `ROTA_PERMISSAO` (admin/gerente/caixa seguem acessando pelo card).
+- **Mapeamentos a tocar p/ um papel novo (checklist):** enum `user_role` (migration `ALTER TYPE ... ADD VALUE`, isolado, fora de transacao); `AuthContext.DB_TO_FRONTEND_ROLE` + `UserPerfil`; `usePermissoes` (`Papel`, `PermissaoKey` nova `gestor_entregas_acessar`, `PAPEL_TO_DB_ROLE`, `DEFAULT_PERMISSOES`); `useUsuarios` (ROLE_MAP + ROLE_MAP_REVERSE); `constants/usuarios` (`PerfilUsuario` + `perfilConfig`); `usuarios/components/UsuarioModal` (`PERFIS_NORMAIS`); edge **`user-write`** (`roleMap` perfil-PT→role-EN, senao cai em `'waiter'`). **Pegadinha TS (boa):** varios `Record<UserPerfil|Papel|PerfilUsuario, ...>` exigem a key nova — o `tsc` acusa quem faltar (ex.: `invite/page.tsx` tinha 3 mapas ja incompletos de `totem`; completados → baseline 348→345).
+- **Deploy:** enum migrado + `user-write` v23 deployada (CLI preserva `verify_jwt:false`). Front PENDENTE push Vercel. Follow-up: a UI de edicao de permissoes (config-write `get_permissions`) pode nao listar o papel/key novos — default ja garante o comportamento.
+
+### 2026-06-29 — Modulo novo "Gestor de Entregas" (kanban de entregas)
+
+Kanban dedicado ao ciclo de **entrega** (o `gestor-pedidos` e da cozinha; a gestao de entrega vivia so numa LISTA dentro de `config-delivery → GerirEntregasTab`). Rota `/gestor-entregas`. Decisoes do usuario: **botoes no card** (sem drag&drop, nenhuma lib nova), colunas **da cozinha ate entregue**, escopo **so entrega propria** (exclui retirada e iFood). Tratado como **modulo de topo** (card na tela `/modulos`, NAO item do Sidebar de Gestao): usa o `AppMode` ja existente **`gestor_delivery`**, esta em `TERMINAL_ROUTES` (`AppLayout`) → full-screen sem sidebar/topbar, com botao "← Modulos" proprio no header (padrao dos terminais PDV/KDS/gestor-pedidos). Card em `modulos/page.tsx` na secao Cozinha (tag `'Cozinha'`), ao lado do Gestor de Pedidos.
+- **Backend (delivery-write):** nova action **`list_delivery_board`** (espelha `list_delivery_orders` SEM altera-la — a aba antiga continua igual). Diferencas: inclui `status='delivered'` recentes (<3h) p/ a coluna "Entregue"; filtra `delivery_platform in ('propria', null)`; retorna extras `delivery_sla_min`, `motoboy_timeline`, `out_for_delivery_at`, `motoboy_updated_at`. `_v:"v15"`. **IMPORTANTE: precisa ser adicionada ao guard de auth no topo do bloco** (`if (action === "list_delivery_orders" || action === "list_delivery_board" || ...)`), senao a action nao e roteada. Reusa as acoes de escrita ja existentes `set_motoboy_status` (avancar fase, override da loja) e `clear_motoboy_driver`.
+- **Front (novos):** `src/pages/gestor-entregas/` → `page.tsx` (5 colunas: Em preparo / Pronto·aguardando motoboy / Motoboy a caminho / Coletado·em rota / Entregue), `hooks/useGestorEntregas.ts` (fetch via Edge Bearer + Realtime refetch-debounced no padrao do `useMotoboyStatus`, canal `gestor-entregas-<tenant>`, backstop 90s, tick 30s p/ atraso), `components/EntregaCard.tsx` (infos: cliente, endereco, telefone com Ligar/WhatsApp, total+taxa, entregador, chip de prazo created_at+SLA, timeline das fases, problemas, botao da proxima fase), `components/{ProblemaModal,LiberarModal}.tsx` (portados do GerirEntregasTab), `utils.ts` (`colunaDe`, `proximaFase`, `prazoInfo`, helpers de telefone/moeda). `problema` → card com ring vermelho na coluna "Motoboy a caminho".
+- **Filtros + mapa (2026-06-29, mesma sessao):** barra de filtros no header — **entregador** (`<select>` derivado dos `driver_id`/`driver_nome` dos pedidos + opcao "Sem entregador"), **fase** (chips com contador; ao escolher 1 fase mostra SO aquela coluna, ocupando a tela — bom no mobile), **Em atraso** (toggle, usa `prazoInfo().atrasado`). Combinaveis; entregador+atraso filtram a base, fase escolhe as colunas exibidas. Botao **Mapa** abre `components/MapaEntregasGestor.tsx` (leaflet, novo — NAO reusa `motoboy-lista/MapaEntregas.tsx`, que e acoplado ao fluxo do motoboy com botao "estou a caminho"/link `/motoboy/:id`; o do gestor so mostra pin+popup com pedido/status/entregador/Rota). Exigiu o `list_delivery_board` retornar `lat`/`lng` (de `orders.delivery_lat/lng`) → **re-deploy** da edge.
+- **Pegadinha (tipo AppMode):** o card da tela `/modulos` (`modulos/page.tsx`) tem `id: AppMode` (uniao fechada em `AppModeContext`) — NAO da pra inventar id novo. O `gestor_delivery` ja existia na uniao, entao foi reaproveitado para o card. tsc 348 (sem aumento).
+- **Deploy:** Edge `delivery-write` deployada (CLI `--no-verify-jwt`) com `list_delivery_board` (lat/lng incluidos). Front PENDENTE de push pro Vercel (usuario faz pelo GitHub Desktop).
+
+### 2026-07-06 — CRM Clientes: overhaul da aba + edicao/CRM no banco (Fases 1 e 2)
+
+Grande melhoria da aba `src/pages/clientes/page.tsx` (+ `hooks/useClientes.ts`). **Fase 1 (so front, dados que ja existiam):** correcao de logica RFM/tags — cliente com `totalVisitas===0` nao vira mais Perdido/Inativo/Frequente (novo segmento **"Sem compras"**; `computeTags` retorna `['novo']` p/ zero-compras; contador de inativos e `isInativo()` = `visit_count>0 && dias>30`). Mensagem de WhatsApp **contextual** (aniversariante/novo/inativo/vip). **Campanha WhatsApp em massa** (modal percorre 1-a-1; cada `window.open` e por clique do usuario p/ nao ser bloqueado como popup). Segmento RFM **clicavel** filtra a lista; badges de aniversario/inativo viraram botoes-filtro. Ordenacao por **cabecalho de coluna**. Cards do topo mais acionaveis (**Ativos 30d**, **Taxa de retorno**). Aviso de **possiveis duplicados** (mesmo nome/telefone). Export **Meta Ads** (CSV `phone,email,fn,ln,country`, telefone `+55`). Voucher pela linha (reusa `EnviarVoucherModal`).
+
+**Fase 2 (backend, LIVE em producao):**
+- **Migration `crm_add_manual_tags_and_last_contact`:** `customers` += `manual_tags text[] not null default '{}'`, `last_contacted_at timestamptz`. (`notes`, `accepts_marketing`, `gdpr_consent_at` **ja existiam**.) Como sao colunas em tabela **ja existente**, NAO precisou de GRANT pro service_role (aquele problema e so p/ tabela NOVA — ver [[project_service_role_grants]]).
+- **RPC `fn_get_customers_list` atualizada** (migration `fn_get_customers_list_add_favorites_and_crm`): agora retorna `email, cpf, notes, manualTags, aceitaMarketing, ultimoContato` e **`itensFavoritos`** (top-3 por `SUM(quantity)` via subquery em `orders`⋈`order_items`, filtrando `status<>'cancelled' and is_training=false`). Preserva todos os campos antigos.
+- **Edge Function nova `customer-write` (v1, verify_jwt:false, espelha padrao do `voucher-write`):** actions `update_customer` (edita nome/celular/nascimento/genero/email/cpf/notes/manual_tags/accepts_marketing — so os campos enviados; `accepts_marketing=true` grava `gdpr_consent_at`) e `touch_contact` (seta `last_contacted_at` p/ 1 ou N ids — anti-spam). Auth+tenant via `get_tenant_for_user` (multi-loja). Arquivo em `supabase/functions/customer-write/index.ts`.
+- **Front:** `useClientes` expoe `atualizarCliente(id, patch)` e `registrarContato(ids)`; `ClienteCRM` ganhou os campos novos + `ClientePatch`. Novo `components/EditarClienteModal.tsx` (perfil + anotacoes + tags manuais + checkbox opt-in marketing). Tags manuais (chips violeta), favorito e icone de nota aparecem na tabela. WhatsApp (linha e campanha) chama `registrarContato`. Campanha tem toggle "so quem aceita marketing".
+- **Item 4 (voucher de aniversario) FEITO — config por loja + manual + cron:** a loja **configura** (nada chumbado). Migration `birthday_voucher_config_and_generator`: coluna `system_settings.birthday_voucher_config jsonb` (default `enabled:false` → automacao DESLIGADA) com `discount_type` (percent|fixed|gift_card), `discount_value`, `min_order_amount`, `validity_days`, `only_opt_in`, `message`. Funcao `fn_generate_birthday_vouchers(p_tenant_id, p_scope)` SECURITY DEFINER (reusada por manual e cron): `scope='month'` (botao) ou `'today'` (cron); **idempotente** (dedup por `notes='Aniversário <ano>'`); gera codigo `BD-XXXX-XXXX` + `claim_token`; respeita `only_opt_in`; `scope='today'` so roda se `enabled`. Wrapper `fn_generate_birthday_vouchers_all()` itera lojas com `enabled=true`. **`pg_cron` habilitado** (extensao criada) + job `birthday-vouchers-daily` (`0 12 * * *` = ~09h Brasilia) chamando o wrapper — no-op ate uma loja ligar. **Hardening (migration `harden_birthday_functions_grants`):** REVOKE execute das 2 funcoes de `anon/authenticated`, GRANT so `service_role` (edge chama com service key; cron roda como dono) — evita usuario logado chamar a RPC com tenant arbitrario. Edge `voucher-write` v12 += actions `get_birthday_config`/`set_birthday_config`/`generate_birthday_vouchers`. Front: `components/BirthdayVoucherModal.tsx` (config + "Gerar vouchers do mes" + WhatsApp por voucher gerado com codigo), botao "Aniversarios" no header. Testado end-to-end em transacao+rollback (config fixed R$20/min R$50/10 dias → voucher correto). **`pg_net` NAO foi necessario** (cron chama a funcao SQL direto, in-DB).
+- **DEPLOY: `voucher-write` v12 foi via MCP com o conteudo INLINE (sem CLI supabase/config.toml no repo).** Deployei uma versao com **comentarios enxutos** — comportamento identico, mas o arquivo do repo tem comentarios a mais → leve drift de COMENTARIOS entre repo e deployado (codigo igual). `customer-write` v1 idem via MCP.
+- **Pegadinha emoji nas mensagens WhatsApp:** emoji CRU (4 bytes UTF-8) nos templates saia como `�` no WhatsApp — a string chega corrompida (mastigada no build). **Fix reutilizavel: usar escape Unicode `\u{1F381}` (ASCII puro) em vez do literal** — mesmo code point em runtime, mas imune a corrupcao de encoding. Aplicado em `EnviarVoucherModal`, `ClientePerfil` (mensagemVoucher), `page.tsx` (mensagemWhatsApp contextual) e `BirthdayVoucherModal`. Mapa: 🎁=`\u{1F381}` 😊=`\u{1F60A}` 🎂=`\u{1F382}` 💛=`\u{1F49B}` 🙌=`\u{1F64C}` 🥳=`\u{1F973}`.
+- **Rotulo "Enviado" era mentiroso:** no `ClientePerfil` aba Vouchers, todo voucher `customer_id===cliente.id` mostrava "Enviado" so por existir (envio de WhatsApp e `window.open`, nao registrado). Renomeado p/ **"Emitido"**. Sinal real de recebimento = `claimed_at` ("link aberto em X").
+- **Mensagem editavel na emissao:** `EnviarVoucherModal` ganhou textarea (state `mensagemEditada`, `mensagemFinal = editada ?? padrao`) na tela de sucesso; "Restaurar padrao"; WhatsApp/copiar usam o texto final.
+- tsc: **324** (baseline mantido; os 2 erros restantes — `.finally` em `useClientePedidos` e `mesa/page.tsx:783` — sao pre-existentes). Front PENDENTE push Vercel (usuario faz pelo GitHub Desktop).
+
+### 2026-06-29 — Pagina Clientes: "Visitas" = vendas pagas, e `last_visit_at` setado no cadastro
+
+Pagina `src/pages/clientes/page.tsx` puxa da RPC `fn_get_customers_list` (campos denormalizados da tabela `customers`). Pegadinhas:
+- **`visit_count` (exibido como "Visitas") = nº de vendas finalizadas/pagas**, NAO visita no site. Incrementado pela RPC `fn_update_customer_spent(customer_id, amount)` que faz `visit_count += 1`, `total_spent += amount`, `last_visit_at = NOW()` (chamada quando a venda e paga). Renomeei a coluna/card/sort para **"Compras"** p/ nao confundir.
+- **Bug "ultima visita = hoje" com 0 compras:** o cadastro (`upsert_customer`) preenche `last_visit_at`/`first_visit_at` com o momento do cadastro, mesmo sem venda. Fix no front: quando `totalVisitas === 0`, mostrar **"Sem compras"** em vez da data + "hoje". (Nao mexi no trigger p/ nao alterar historico.)
+- Tambem adicionados na tabela: coluna **Aniversario** (de `birth_date`, lida da string `YYYY-MM-DD` p/ evitar shift de fuso) e **botao WhatsApp** por linha (`wa.me/55<digitos>`, mesmo padrao do `ClientePerfil`/gestor).
+- **Exclusao de cliente e destrutiva:** `orders.customer_id` e **NO ACTION** → DELETE do customer falha se houver pedido vinculado. `orders` cascateia `order_items` (e filhas) e `payments`; `stock_movements`/`loyalty_transactions`/`order_discounts`/etc. sao **NO ACTION** (apagar antes). Apagar `payments` de venda paga afeta o total do caixa daquela sessao. Sempre conferir **duplicatas por telefone** antes (havia 3 registros com `41999441497`). Backup do que foi apagado em 2026-06-29: `scratchpad/backup_clientes_excluidos_2026-06-29.json`.
+
+### 2026-06-28 — Impressora "nao imprime" = agente local offline + tickets que somem em `printing`
+
+Sintoma (loja VILA LESTE / EL PATRON, tenant `ac66279a-47b0-469c-8228-4844d87831a6`): impressora parou de imprimir. Diagnostico no banco: ~8-9 tickets acumulados em `print_queue.status='pending'` desde a abertura do dia, **nenhum** avancando para `printing`; zero chamadas a `print-queue-agent` nos logs edge-function; resto do sistema (order-write/delivery-write) 200/saudavel.
+- **Causa raiz:** o **agente local** (`agente-local/index.js`, roda no PC da loja) nao estava puxando da fila — processo parado / PC desligado / sem internet, OU (alternativa sutil) rodando em modo **so-Realtime** (`polling_enabled:false`) com a conexao websocket caida e sem reconectar → como o polling de fallback esta OFF, fica "rodando" sem imprimir nada. Diagnostico chave: ticket parado em **`pending`** = agente nunca pegou (se tivesse pego e a impressora falhasse, cairia em `failed` com `last_error`).
+- **Falha estrutural — tickets fantasma em `printing`:** o `poll` da edge `print-queue-agent` marca o ticket como `printing` **antes** do agente confirmar. Se o agente cair entre o poll e o confirm, o ticket fica preso em `printing` para sempre (o poll so busca `pending`) → perda silenciosa. Havia 2 tickets perdidos assim (13/06, 27/06).
+- **Fix (LIVE, edge `print-queue-agent` v18, deploy via MCP):** no inicio do `poll`, **reclaim** de tickets travados em `printing` ha mais de `RECLAIM_STALE_MS` (2 min) → volta para `pending` (com `retry_count++` p/ nao virar loop infinito de ticket-veneno); o select de `pending` na mesma chamada ja reimprime. Espelhado em `supabase/functions/print-queue-agent/index.ts`.
+- **Atualizacao 2026-09-17 (go-live Paranaguá, regras em `print-queue-agent/regras.ts`, teste `src/test/edge/printQueueRegras.test.ts`):** (1) **backoff por tempo** — falha nao vira `failed` apos 5 tentativas; volta a `pending` e o poll so devolve apos 5s/15s/30s/60s (por `retry_count`, contado de `updated_at`); `failed` so com >=5 tentativas E 15 min desde `created_at` (reclaim segue a mesma regra e recua `updated_at` p/ imprimir no mesmo poll). Poll disparado pelo Realtime respeita o atraso. (2) texto -> CP860 normalizado: travessao/aspas curvas/reticencias/bullet/NBSP viram ASCII, resto fora da tabela vira `?` (nunca byte de controle). (3) **fallback de impressora** p/ `station_key` sem mapa: cozinha (UUID ou contem "cozinha") -> primeira impressora que atende alguma estacao mapeada; demais (`delivery-receipt`, `danfe`, `bar`...) -> `caixa-pdv` > `pedidos` > `gestor-pedidos`; por fim a primeira impressora com IP. (4) reimpressao (`p_force`) grava `payload.reimpressao=true` e sai com "*** REIMPRESSÃO ***". Limpeza de dados: 5 tickets marcados `cancelled` (2 stuck printing antigos + 3 pending >1h); 6 tickets recentes mantidos em `pending` p/ imprimir quando o agente voltar.
+- **CRITERIO / prevencao de recorrencia:** (1) em cada PC ligar **`polling_enabled:true`** no `config.json` — o poll periodico e a rede de seguranca quando o Realtime cai; so-Realtime sem fallback e fragil. (2) Garantir o agente como **Servico Windows** (`npm run install-service`, node-windows) p/ auto-start no boot + auto-restart no crash. (3) Status `pending` parado = agente nao puxou (rede/processo); `failed` com `last_error` = pegou mas impressora/TCP falhou — diagnosticos diferentes. O `config.json` no repo e um TEMPLATE (tenant `7049e90e...`, IP `10.0.0.186`) — NAO e o da Vila Leste; cada PC tem o seu. Ver [[project_print_agent_realtime]] e [[project_delivery_overhaul]].
+
+### 2026-06-28 — Agente local v3.3.0: auto-cura (parou de exigir restart manual diario)
+
+Continuacao da anterior. Relato do usuario: a impressora parava **todo dia** e ele tinha que reiniciar o agente na mao. Causa: agente em **modo so-Realtime** (`polling_enabled:false`) — o websocket do Realtime vira "zumbi" depois que o PC dorme a noite / a rede oscila, e a versao antiga (≤v3.2) nao tinha fallback nem reconexao → ficava "rodando" sem imprimir ate o restart. O `instalar.bat` instala como Servico Windows (node-windows, auto-restart no crash), entao se fosse **crash** o servico ja reergueria — o fato de exigir restart MANUAL confirma que e socket zumbi (processo vivo), nao crash.
+- **Fix no `agente-local/index.js` (v3.3.0, testado com `node --check` + boot real):** (1) **safety-net poll SEMPRE ligado** — mesmo com `polling_enabled:false`, roda um poll lento garantido (`safety_poll_interval_ms`, padrao 60s) → qualquer queda do Realtime imprime em ate 60s sem restart. `startQueuePolling()` passou a ser chamado em todo boot (antes, em modo Realtime, so dava 1 poll e parava). (2) **Watchdog do Realtime** (`realtime_watchdog_ms`, padrao 60s) — checa `channel.state`; se nao estiver `joined`/`joining`, faz `stopRealtime()+startRealtime()` (backoff 30s) e dispara poll. Restaura a impressao instantanea sozinho. (3) **Crash guards** `process.on('uncaughtException'|'unhandledRejection')` — loga e segue vivo (no boot test, capturou um `EADDRINUSE` sem derrubar o processo). `/health` agora expoe `version`, `realtime_healthy`, `realtime_watchdog`, `polling_enabled`.
+- **CRITERIO:** com o safety-net poll, `polling_enabled:false` deixou de ser perigoso (a cota de Edge Function aguenta — 1 poll/min/tenant e desprezivel vs. o estouro de delivery-write). **Rollout exige copiar o `index.js` novo p/ cada PC + reiniciar o servico** (o codigo so ajuda depois de deployado no PC; nao ha auto-update). Validar em `http://localhost:9876/health` -> `"version":"3.3.0"`. Plano de energia do Windows: nunca suspender no expediente.
+
+### 2026-06-28 — Cancelar item do pedido dava "Erro ao cancelar" (coluna inexistente + erro engolido)
+
+Sintoma: ao deletar/cancelar um item do pedido, depois de digitar a senha do gerente e confirmar, aparecia o modal generico "Erro no Cancelamento — Erro ao cancelar", sem detalhe nenhum.
+- **Causa raiz (medida nos logs postgres):** a RPC `fn_cancel_order_item` fazia `UPDATE order_items SET status='cancelled', updated_at=now()`, mas a tabela `order_items` **NAO tem coluna `updated_at`** (so `created_at`). Erro real do banco: `column "updated_at" of relation "order_items" does not exist`. Toda tentativa de cancelar item falhava.
+- **Por que a mensagem era inutil:** em `CancelamentoModal.tsx`, o `catch` fazia `e instanceof Error ? e.message : 'Erro ao cancelar'`. Erros do supabase-js sao **`PostgrestError` — objeto simples, NAO `instanceof Error`** -> caia sempre no fallback generico e jogava fora a mensagem real do banco.
+- **Fix (LIVE no banco, sem redeploy):** recriei `fn_cancel_order_item` removendo `updated_at=now()` do UPDATE em `order_items` (o UPDATE em `orders` manteve `updated_at`/`cancelled_by`/`cancelled_at` — essas colunas existem em `orders`). Migration `fix_cancel_order_item_remove_updated_at`. No frontend (`CancelamentoModal.tsx`), o `catch` passou a extrair `.message` tambem de objetos com `message:string` (cobre PostgrestError) — entra no proximo deploy.
+- **CRITERIO:** (1) erros de RPC do supabase-js sao `PostgrestError` (`{message, code, details, hint}`), **nunca `instanceof Error`** — ao tratar erro de `.rpc()`/`.from()`, extrair `.message` do objeto, senao a mensagem real some. (2) Antes de afirmar que uma RPC esta correta, conferir as colunas reais da tabela (`information_schema.columns`) — varias funcoes herdadas do Readdy referenciam `updated_at` em tabelas que so tem `created_at`.
+- **2a fase — cancelar item NAO ajustava total nem estoque (`fn_cancel_order_item` so trocava o status):** depois do fix acima, o item era cancelado mas o `orders.total_amount`/`subtotal` (que sao ARMAZENADOS, lidos direto pelo KDS/relatorios/faturamento — `KDSContext` le `o.total_amount`) NAO mudavam, e o estoque baixado para o item NAO era estornado. Recriei a RPC (migration `fn_cancel_order_item_delta_safe`, LIVE) para, alem de cancelar o item: (a) **estornar o estoque do item** — reverte os `stock_movements type='theoretical_out'` cujo `reason` termina em `:<order_item_id>` (a baixa so existe se o item chegou a `ready`/`delivered`; `deductStockForOrderItem` em `order-write` so baixa nesses status), com dedup por item (reason do estorno carrega o `order_item_id`, evitando pular itens distintos que dividem ingrediente — bug do `restockForOrderItem` TS original); (b) **ajustar os totais por DELTA** — subtrai SO o `item_price*quantity` do item cancelado de `subtotal` e `total_amount`. Se nao sobra item ativo, cancela o pedido inteiro.
+- **PEGADINHA CRITICA — por que DELTA e nao recalculo `SUM(item_price)`:** (1) pedidos de **delivery** (criados via `delivery-write`, nao `order-write`) embutem a `delivery_fee` no `total_amount` (`total = subtotal + delivery_fee`); recalcular `total = subtotal - desconto + taxa_servico` (formula do `order-write create_order`/`update_order_item`, que NAO soma delivery_fee — a taxa fica em coluna propria) **apagaria a taxa de entrega**. (2) o `item_price` nem sempre inclui adicionais/opcionais (visto: pedido com `subtotal=174` mas `SUM(item_price)=168` — 6,00 de adicionais fora do `item_price`); recalcular do zero perderia esses adicionais. Subtrair so o delta do item cancelado preserva delivery_fee, adicionais, desconto e gorjeta. **OBS:** o `update_order_item` do `order-write` (editar qtd) recalcula com `SUM(item_price)` sem delivery_fee — mesmo risco latente para delivery, nao corrigido aqui (fora de escopo).
+- **GAP conhecido (nao corrigido):** cancelar item de pedido **JA PAGO** abaixa o total abaixo do valor pago e NAO gera estorno de pagamento (diferente do cancelamento de pedido inteiro, que tem `fn_cancel_and_refund_order`). Idealmente bloquear/avisar ao cancelar item de pedido pago. Tambem nao re-deriva o status do pedido quando sobram itens ativos (so cancela o pedido se zerar os itens). Backfill: 1 pedido (P2806260005, delivery) corrigido manualmente (174/182,50 -> 134/142,50, preservando 8,50 de entrega).
+
+### 2026-06-28 — Estouro da cota de Edge Functions: `delivery-write` em poll duplicado 24h
+
+Sintoma: org Supabase estourou no ciclo anterior **Edge Function Invocations** (>500k) e **Cached Egress** (>5GB); grace period ate 15/jul. O ciclo novo (28/jun) reseta e parece "normal" — o alerta e retrospectivo, nao do uso atual.
+- **Causa (medida nos logs edge-function):** `useDeliveryState` polava `get_delivery_state` (via `delivery-write`) a cada **60s**, e o `DeliveryControle` era montado **2× ao mesmo tempo** em `caixa/page.tsx` (variante desktop `hidden md:flex` + mobile `flex md:hidden` — CSS so esconde, React monta as duas e roda os dois effects). Resultado: 2 timers em paralelo, cada chamada = OPTIONS preflight + POST -> ~4 invocacoes/min 24h (~173k/mes) por dispositivo, ×N PCs.
+- **Fix (LIVE no repo, sem redeploy de Edge Function):** (1) **dedup** — `useDeliveryState()` chamado UMA vez em `PDVOperacional` (`caixa/page.tsx`) e passado por prop `ctl` para os dois `<DeliveryControle>`. (2) **modelo hibrido** no hook: Realtime **broadcast** num canal por tenant (`delivery-state:<tenantId>`) — quem muda o estado avisa os outros dispositivos, que dao refresh na hora; poll de fallback alongado **60s -> 5min** so para as viradas de horario programado (que nao geram evento de banco). Reducao ~10× (~173k -> ~17k/mes).
+- **CRITERIO — por que broadcast e nao `postgres_changes`:** o estado fica em `system_settings.delivery_config` (JSON, por tenant), cuja policy SELECT e `tenant_id = auth_tenant_id()`. Como `auth_tenant_id()` = ULTIMA membership, admin multi-loja NAO passa nessa policy para a loja que nao e a "ultima" -> `postgres_changes` entregaria evento vazio/nada justo pra quem mais usa. Broadcast nao depende de RLS de tabela (canal publico, ping sem payload sensivel) -> robusto multi-loja. Ver [[project_rls_multiloja]]. Pegadinha geral: variantes responsivas (`hidden`/`md:hidden`) ficam AS DUAS montadas — nunca colocar poll/subscription direto num componente assim; suba o hook pro pai.
+
+### 2026-06-28 — Cortesia movida para o momento de pagar (com liberacao gerente/admin)
+
+Mudanca de fluxo (a pedido do usuario): a cortesia deixou de ser um botao na barra do PDV Caixa (que pulava o pagamento) e passou a ser acionada **dentro do `PagamentoModal`** — botao "Lancar como Cortesia (R$ 0,00)". Fluxo: botao -> `AutorizacaoGerenteModal` (niveis `['gerente','admin']`, ja existia) -> `CortesiaDetalhesModal` (destinatario+motivo) -> finaliza o pedido do carrinho zerado.
+- **Mecanismo:** `PDVContext.finalizarPedido` ganhou 3o parametro opcional `cortesiaOverride { autorizadoPor, destinatario, motivo }`. Quando presente, ativa cortesia explicitamente (zera total, `is_cortesia`, notes) SEM depender do estado `isCortesia` do contexto — evita stale closure (o problema de chamar setCortesia+finalizar no mesmo tick). PagamentoModal chama `finalizarPedido([], undefined, override)`.
+- **Arquivos:** `PagamentoModal.tsx` (botao no rodape — so quando ha carrinho e nenhum pedido vinculado; modais; tela de sucesso mostra "Cortesia · R$ 0,00"); `CortesiaDetalhesModal.tsx` extraido para componente proprio; `caixa/page.tsx` limpo (removido botao da barra, handlers, estado e o `CortesiaDetalhesModal` local). `CarrinhoPanel` ainda tem UI de cortesia inerte (isCortesia do contexto nunca fica true agora) — dead code inofensivo, nao removido p/ limitar escopo.
+- **2a etapa — cortesia em QUALQUER pagamento (a pedido do usuario):** existem DOIS modais de pagamento — `PagamentoModal` ("Finalizar Pedido", checkout do carrinho) e `PagamentoRapidoModal` ("Registrar Pagamento", paga pedido JA EXISTENTE; compartilhado por Caixa/painel de Pedidos, garcom, delivery). Botao "Lancar como Cortesia" adicionado tambem no `PagamentoRapidoModal` (cobre todos os canais de uma vez). Comp de pedido existente nao cria pedido -> RPC nova `fn_cortesia_marcar_pedido(p_order_id, p_tenant_id, p_autorizado_por, p_destinatario, p_motivo)` SECURITY DEFINER (LIVE, `supabase/migrations/fn_cortesia_marcar_pedido.sql`): zera o pedido (discount=subtotal, total=0, is_cortesia, is_paid, paid_at, notes) e checa que `auth.uid()` pertence ao tenant; GRANT EXECUTE p/ authenticated. Evita redeploy do `order-write` (984 linhas). Comps o pedido principal + os vinculados selecionados no modal.
+- **PEGADINHA:** ha 2 modais de pagamento distintos — qualquer feature de pagamento (cortesia, etc.) precisa ser feita/replicada nos DOIS. `CortesiaDetalhesModal` e `AutorizacaoGerenteModal` sao reusados nos dois. Verificado: tsc sem erro novo (348), modulos transpilam no Vite, RPC executa (id falso -> order_not_found, sem alterar dados). Fluxo E2E (login+PIN gerente) a testar pelo usuario.
+- **Onde fica salvo / relatorio:** cortesia mora na tabela `orders` (`is_cortesia=true`, `total_amount=0` -> NAO entra no faturamento, `discount_amount`/`subtotal`=valor cheio comp'ado, `paid_at`, `notes`="Cortesia | Para: X | Motivo: Y | Autorizado por: Z"). Relatorio = **Relatorios > aba Caixa** (`useCaixaReport`/`CaixaTab`), por sessao: campo "Cortesias" mostra **quantidade + valor** (somado de `orders.subtotal` onde `is_cortesia`). PEGADINHA de relatorio: `total_descontos` vem de `order_discounts.discount_value`, mas `order_discounts.approved_by/applied_by` sao **uuid** e o caminho de desconto/cortesia passa o NOME do gerente -> insert falha (non-blocking) -> cortesia NUNCA caía em `order_discounts`. Por isso o "valor de cortesias" foi somado direto de `orders.subtotal` (filtrando `is_cortesia`), nao de `order_discounts`. Arquivos: `useCaixaReport.ts` (+ campo `valor_cortesias`, select ganhou `subtotal`), `CaixaTab.tsx` (exibe "N · R$ X" na linha Cortesias).
+
+### 2026-06-28 — Pedido de delivery sumia do historico/acompanhamento do cliente (telefone com mascara)
+
+Sintoma: pedido de delivery do cliente (ex.: "Guilherme - Retirada", P2706260026) entrava normal mas sumia do historico e do acompanhamento dele "depois de um tempo". Pedido NUNCA foi cancelado/deletado — so ficou invisivel pro cliente.
+- **Causa:** `orders.destination_phone` foi gravado COM mascara ("(41) 99655-8157"), mas TODA busca por telefone usa digitos limpos: `get_customer_orders` (historico, `delivery-write`), rate-limit, gestor de motoboy. `"(41) 99655-8157" != "41996558157"` -> historico vazio. O acompanhamento mostra no inicio porque rastreia pelo NUMERO (`get_order_status`, cache local); quando o cache se perde (reload/tempo), cai pra busca por telefone -> nao acha -> "sumiu". 14/15 pedidos tinham telefone limpo (cliente normalmente manda limpo); o do Guilherme veio mascarado e expos o bug.
+- **Onde gravava cru:** `create_delivery_order` (delivery-write, `destination_phone: customer_phone`) E `order-write/create_order` (`destination_phone: destination_phone ?? null`). O staff (`DeliveryClienteModal`) manda o telefone sem limpar o input.
+- **Fix (chokepoint unico, LIVE — `supabase/migrations/fix_normalize_destination_phone.sql`):** os 3 caminhos de criacao (delivery-write, order-write, mesa-write) chamam a RPC `fn_create_order_bypass`. Normalizamos `destination_phone` p/ digitos LA: `NULLIF(regexp_replace(COALESCE(...),'[^0-9]','','g'),'')`. Conserta tudo sem redeploy das Edge Functions (que sao gigantes). Backfill normalizou 42 linhas ja gravadas -> pedido do Guilherme reapareceu (verificado no endpoint ao vivo com telefone mascarado). As Edge `delivery-write` e `order-write` tambem foram ajustadas no repo (defesa em profundidade; entram no proximo deploy).
+- **CRITERIO:** telefone SEMPRE normalizado p/ digitos na ESCRITA — nunca confiar na mascara do cliente. Quando readers comparam por valor exato (`.eq`), a unica defesa robusta e normalizar na gravacao (de preferencia no chokepoint compartilhado, nao em cada Edge Function). Edge Functions deste projeto sao deployadas via MCP `deploy_edge_function`/`apply_migration` (nao ha Supabase CLI nem token local); arquivos grandes -> preferir corrigir na RPC compartilhada a colar 1000+ linhas inline.
+
+### 2026-06-27 — Latencia no PDV/Gestor: RLS re-avaliada por linha no Realtime (auth_rls_initplan)
+
+Sintoma: pedidos demorando a aparecer no PDV Caixa/Gestor e a mudar de coluna. Diagnostico (medido, nao chute): banco MINUSCULO (orders 1072 linhas/728kB) — NAO e volume/armazenamento. Instancia e o menor tier (Free/Nano): `max_connections=60` (39 em uso), regiao `us-west-1` (EUA — ~150-200ms fixos Brasil<->EUA). O "instantaneo" depende 100% de **Realtime `postgres_changes`** em 8 tabelas (orders, order_items, order_item_units, order_item_parts, payments, order_discounts, order_item_observations, order_item_observation_checks) no `KDSContext.tsx`; o poll de fallback foi alongado p/ **5min** (economia de quota), entao quando o Realtime atrasa/cai, a UI so se corrige em ate 5min. Logs do Realtime mostravam o tenant reiniciando em loop ("no connected users" -> cold start) — bate com **internet instavel no restaurante** (mesmo motivo do agente de impressao ter ficado offline no mesmo dia).
+- **Causa servidor (advisors):** 109× `auth_rls_initplan` + 604× `multiple_permissive_policies`. Nas tabelas de pedido, `orders` tinha 13 politicas permissivas sobrepostas; varias re-avaliavam `auth_tenant_id()`/`get_user_tenant_id()`/`auth.uid()`/`auth_role()`/`get_participant_id_by_token()` **por linha**. O Realtime roda esse RLS para cada linha alterada × cada dispositivo -> satura a CPU Nano no movimento.
+- **Fix aplicado (LIVE, `supabase/migrations/perf_rls_initplan_order_tables.sql`):** envolveu cada chamada de funcao em `(select fn())` nas 8 tabelas de pedido via `ALTER POLICY` (atomico, sem DROP, dentro de `BEGIN/COMMIT`). Todas as funcoes sao `STABLE` -> resultado IDENTICO, muda so o plano (InitPlan: 1× por query em vez de por linha). Verificado: `auth_rls_initplan` nessas 8 tabelas caiu p/ ZERO (109->105 no total; os 105 restantes sao de financeiro/RH/users/print_queue, fora do caminho quente).
+- **DEIXADO DE FORA (risco real):** consolidar `multiple_permissive_policies` NAO foi feito — as politicas tem semanticas DIFERENTES (`auth_tenant_id()`=loja ativa vs `tenant_id IN (user_tenants)`=todas as lojas vs `get_participant_id_by_token()`=cliente do QR). Fundir errado corta visao de admin multi-loja ou quebra o QR. Ver [[project_rls_multiloja]].
+- **CRITERIO:** em RLS, SEMPRE envolver chamadas de funcao session-scoped em `(select ...)` — barato, sem mudanca de comportamento, e critico quando a tabela e assinada via Realtime. Latencia de "pedido demora a aparecer" comecar pelo Realtime/RLS, nao pelo tamanho do banco. Fix de initplan ajuda mas NAO substitui internet estavel nem upgrade de plano se o movimento crescer.
+
+### 2026-06-27 — Pedido do QR universal/mesa nao imprimia: `station_id` perdido no cardapio
+
+Sintoma: pedido do QR universal (mesa "Luzana", tenant `ac66279a...`) entrou normal mas nao saiu na impressora. Diagnostico: o pedido FOI gravado (`orders`) e os tickets FORAM enfileirados (`print_queue`), mas ficaram presos em `pending` (nunca viraram `printing`) porque **o agente local nao estava consumindo a fila** (sem chamadas a `print-queue-agent` nos logs; agente offline/sem rede). Reiniciar o agente faz um poll no boot que esvazia o backlog. **Causa imediata = operacional (agente), nao codigo.**
+- **Bug latente corrigido junto:** os tickets do mesa-qr saiam com `station_key` generico `"cozinha-padrao"`/`"bar"` em vez do UUID real da estacao. Motivo: a estacao mora em `menu_categories.station_id` (NAO em `menu_items`), e a edge `mesa-write` (`get_cardapio`) devolvia os itens crus, sem herdar o `station_id` da categoria -> item chega com `station_id` nulo -> `queueOrderForPrint` cai nos fallbacks `cozinha-padrao`/`bar`. So imprimia "por sorte" porque a loja tem 1 impressora (a edge `print-queue-agent` usa `defaultPrinterId` quando `printersList.length===1`). Com 2+ impressoras, pedido do QR nao resolveria impressora.
+- **Fix (`supabase/functions/mesa-write/index.ts`, get_cardapio, deploy v65):** monta `categoryStationMap` (category_id -> station_id) e injeta `station_id` em cada item (`itemsWithStation`) e nos `highlights` (`item_station_id`). Verificado via curl: 79/79 itens com `station_id` (Polenta->`f0b30a05`, chope->`92cb3746`). O param `undefined` de `stationToImpressoraId` em `queueOrderForPrint` do mesa-qr esta CORRETO — quem mapeia estacao->impressora e a edge `print-queue-agent` via `mapaEstacoes`; o cliente so precisa gravar o `station_key` (UUID) certo.
+- **CRITERIO:** estacao de producao = atributo da CATEGORIA, nao do item. Qualquer canal que monta cardapio para roteamento de impressao (mesa-qr, delivery, kiosk) precisa propagar `station_id` da categoria pro item. Conferir tambem o modo so-Realtime do agente (`polling_enabled:false`) — sem polling de fallback, queda do Realtime = pedido preso em `pending` sem recuperacao ate reiniciar. Ver [[project_print_agent_realtime]].
+
+### 2026-06-27 — Pin "fantasma" do delivery causava perda silenciosa de pedido
+
+Sintoma real: cliente (Hellen, tenant `ac66279a...`, 26/06) entrou no cardapio 20:19 e so conseguiu pedir 21:05 (apos ligacao). DB confirmou: caixa estava ABERTO o tempo todo, numeracao de pedidos contigua, **nenhum pedido orfao** — ou seja o pedido NUNCA foi inserido (nao "se perdeu"). Causa: na tela de endereco (`EnderecoPinDelivery`), o `MapaPin` desenha o pin SEMPRE no centro (overlay), mas `onChange` (que seta `addressLat/lng` -> `temPin`) so dispara em `dragend`/`zoomend`. Em WebView de WhatsApp/Instagram a geolocalizacao auto (`usarMinhaLocalizacao` no mount) costuma falhar; o cliente VE o pin no mapa e acha que marcou, mas `temPin=false` -> botao "Salvar" bloqueia com "Marque o local no mapa" (mensagem sem sentido pra quem ve o pin). Trava e desiste = pedido perdido sem rastro.
+- **Fix (`MapaPin.tsx`):** prop nova `confirmed?` (default true, retrocompat). Quando `!readOnly && !confirmed`: pin fica cinza/fantasma, mostra dica "Arraste o mapa ate o ponto certo" e **botao "Confirmar esta localizacao"** que le o centro atual via ref do mapa (`GuardaMapa`) e chama `onChange` — funciona mesmo sem geolocalizacao/sem drag. Confirmado: pin laranja solido + pill verde "Localizacao confirmada".
+- **`EnderecoPinDelivery`:** passa `confirmed={temPin}`; texto abaixo do mapa reflete os 3 estados (buscando / marcada / arraste+confirme); mensagens de erro de geoloc agora apontam pro botao Confirmar.
+- **`config-delivery`:** passa `confirmed={storeLat!=null && storeLng!=null}` (mesma UX no pin da loja sem mostrar "confirmada" a toa).
+- **CRITERIO:** pin overlay fixo no centro NUNCA deve parecer "marcado" enquanto a coordenada nao foi registrada; sempre oferecer uma acao explicita (botao) que nao dependa de geolocalizacao, por causa das WebViews de WhatsApp/Instagram. Ver [[project_delivery_overhaul]].
+
+### 2026-06-24 — Portal do motoboy: lista de entregas + login simples + acesso por fase
+
+Objetivo: pagina onde o motoboy entra (sem login do app), ve os pedidos de entrega em aberto da loja e escolhe um pra atualizar status; gestao continua no kanban (gestor-pedidos). Decisoes do usuario: login simples (nome + celular), auto-login no mesmo device, gestao de acesso (liberar/bloquear) dentro da config do Delivery, e manter o link por pedido (WhatsApp).
+- **DB (migration `delivery_drivers`):** tabela `delivery_drivers` (tenant_id, name, phone, is_active, last_login_at; unique(tenant_id, phone)). Coluna nova `orders.motoboy_driver_id` (quem assumiu o pedido — setado no 1o sinal). RLS ON + GRANT explicito pro `service_role` (tabela nova sem grant quebra a edge — ver [[project_service_role_grants]]).
+- **Edge `motoboy-signal` (publica, verify_jwt off):** novas acoes `driver_login` {store_slug|tenant_id, name, phone} (upsert por (tenant,phone); cria com is_active=true; retorna blocked se desativado) e `list_orders` {tenant_id|store_slug, driver_id} (pedidos `origin_type=delivery` e status em new/preparing/ready). `signal` agora grava `motoboy_driver_id` (driver_id no body). O guard `order_id obrigatorio` foi movido pra DEPOIS do roteamento de login/lista (essas acoes nao tem order_id).
+- **Edge `delivery-write` (autenticada):** acoes `list_drivers` / `set_driver_active` / `delete_driver` (token -> getUser -> checa `user_tenants` role=='admin' da loja, mesmo padrao de `save_delivery_settings`).
+- **Front:** pagina nova `/entregas/:storeSlug` (`src/pages/motoboy-lista/page.tsx`) com tela de login + lista (auto-refresh 20s); sessao em `localStorage` chave `erpos_motoboy_session` (exportada de `src/pages/motoboy/page.tsx` junto com `getMotoboySession`). Detalhe `/motoboy/:order_id` agora mostra **so o botao da proxima fase** (`proximoBotao`: null/problema->a_caminho_loja->coletou->entregou) e passa `driver_id` no sinal. Config do Delivery (`config-delivery/page.tsx`) ganhou secao "Entregadores" com o link `/entregas/<slug>` e liberar/bloquear/remover.
+- **CRITERIO:** "Abrir no mapa" do motoboy usa PIN (delivery_lat/lng) e cai pro endereco em texto so como fallback (geocoding de texto erra em cidade pequena — ver [[project_delivery_overhaul]]).
+- **Alerta "Avisar o motoboy" visivel (msg + portal):** o alerta de categoria/item (`delivery_config.motoboy_alertas`) so existia DENTRO do texto do WhatsApp — nao dava pra "ver". Causa do "nao avisa": era invisivel na UI (a logica de match ja funcionava — confirmado: bebida tem `category_name`="Bebidas" no RPC e `pedido.itens` inclui itens `skip_kds`, ex. Coca-Cola skip_kds=true). Agora: (1) **badge ambar no card do gestor** (GestorKanbanView, `alertasMotoboy` memoizado reaproveitado na msg); (2) **backend** `motoboy-signal` computa `alertas` (helper `alertasPorPedido`, casa por id: categoria.id = menu_items.category_id, item.id = order_items.item_id; usa o `nome` salvo no config) e retorna em `get_order` e `list_orders`; (3) **portal**: banner no detalhe `/motoboy/:id` e linha no card da lista `/entregas`. Match do gestor e por NOME (client), do portal e por ID (backend, mais robusto).
+- **Ajustes portal/lista do motoboy (2026-06-24):** (1) lista `/entregas` agora **agrupa por fase** (Em preparo / Prontos para retirar / A caminho da loja / Coletados / Problema) com **cor de fundo leve** por grupo (`FASES` em motoboy-lista). (2) Botao **"Voltar aos pedidos"** no detalhe `/motoboy/:id` aparece mesmo SEM sessao: `get_order` agora retorna `store_slug` (do tenant do pedido) e o botao usa `sessao.store_slug || store_slug`. (3) Aba Delivery → Entregadores ganhou botao **Atualizar** (`carregarMotoboys`) — antes so carregava no mount, entao motoboy que se cadastrava com a tela ja aberta nao aparecia (nao era bug de dados; faltava refetch). (4) **Login/cadastro direto no link do pedido** `/motoboy/:id`: sem sessao valida pra loja do pedido, a area de acoes vira um form nome+celular (`driver_login` com o `store_slug` do `get_order`, que agora tambem retorna `store_name`); apos entrar, grava a sessao (`erpos_motoboy_session`) e libera os botoes. Sessao do device so e reaproveitada se `sess.store_slug === store_slug do pedido` (evita atribuir driver de outra loja — FK cross-tenant).
+- **Poll do KDS trocado por reload-no-reconnect (2026-06-24, quota):** o `loadOrders` (RPC pesada `fn_get_kds_orders`) rodava a cada **30s** em toda tela de KDS/gestor 24/7 — maior ofensor de quota. Como o Realtime nao tem replay (perde eventos durante quedas), o poll existia de fallback. Agora: o callback `.subscribe((status))` faz `loadOrders()` em cada **RECONEXAO** (SUBSCRIBED apos o 1o, controlado por `kdsSubscribedOnceRef`, resetado no cleanup) — cobre exatamente o buraco da oscilacao de internet. O `setInterval` virou **backstop de 5min** (era 30s). Reload ao voltar pra aba (visibilitychange) ja existia. Resultado: conexao estavel parada = ~zero query; oscilou→reconectou = 1 reload. So frontend.
+- **Sinal do motoboy instantaneo no gestor (2026-06-24):** `useMotoboyStatus` so fazia polling de 25s → card demorava segundos pra refletir o que o motoboy mudou. Agora assina **Realtime** (`postgres_changes` UPDATE em `orders` filtrado por tenant, canal `motoboy-status-<tenantId>`) e atualiza **so a entrada daquele pedido a partir do `payload.new`** (sem refetch da lista; unica query extra = nome do entregador quando aparece dono novo, cacheado por id em `nomeCacheRef`). **Sem polling** (so Realtime — `useMotoboyStatus()` nao recebe mais `pollMs`). Motivo: economizar quota do servidor (plano estourado). `orders` ja esta na publicacao `supabase_realtime` (o KDS tambem assina). So frontend.
+- **PDV Caixa → aba Pedidos: cards de delivery (2026-06-24):** (1) badge de origem mostrava "Caixa" no delivery pq `ORIGEM_CONFIG` não tinha `delivery` (caía no fallback) → adicionado `delivery` (rosa). (2) Nome do cliente vinha "Delivery - nome - endereço" → `destinoLabel`/`destinoAgrupadoLabel` no delivery usam `nomeClienteLimpo` (só o nome, corta no 1º " - "; origem já indica Delivery). (3) Card individual (`PedidoCard`) ganhou a linha "Itens X + Entrega Y" (o agrupado já tinha) + **badge de status da entrega** (`ENTREGA_BADGE`, via `motoboyStatus`). (4) Novo filtro **"Em rota"** (chip violeta) = `kdsStatus === 'em_rota'` (out_for_delivery); "Entregues" passou a excluir em_rota. Status da entrega vem do `useMotoboyStatus` (realtime) anexado em `allPedidos` (`motoboyStatus` no tipo PedidoRecente). Só frontend.
+- **Delivery cliente: botão "Ver pedido" sem a taxa (2026-06-24):** o botão flutuante mostrava `totalValor` (= produtos + taxa). Trocado pra `totalItensProdutos` (só produtos); a taxa de entrega só entra no resumo do carrinho (subtotal + taxa + total) após abrir. Só frontend (`src/pages/delivery/page.tsx`).
+- **Bug: preço de delivery não aplicado (2026-06-24):** item com `delivery_config.preco` configurado mostrava/cobrava o preço de BALCÃO no delivery. Causa: tanto `get_delivery_config` (exibição) quanto `create_delivery_order` (total) usavam `mi.price` e só checavam `dc.ativo`, ignorando `dc.preco`. Fix (delivery-write, 2 lugares): `price = dc.preco > 0 ? dc.preco : mi.price`. Testado: Hamburguer balcão 25 → delivery 15. Só backend (deployado).
+- **Cardápio: "onde o item aparece" (casa/delivery/ambos) (2026-06-24):** seletor 3-vias no `ItemModal` (aba Informações) substitui o toggle "Exclusivo PDV Delivery". Mapeia pros flags JÁ existentes (sem mexer em filtros/save/DB): `disponibilidade = somenteDelivery ? 'delivery' : (delivery.ativo===false ? 'casa' : 'ambos')`. 'delivery' → `somenteDelivery=true` (channels presenciais false; oculto no presencial via `itensAtivos = !somenteDelivery`). 'casa' → `delivery.ativo=false` (oculto no link do cliente via `get_delivery_config` filtro `dc.ativo!==false`). 'ambos' → padrão. `salvarItem` já persiste `channels` (de somenteDelivery) e `delivery_config` (de delivery). Obs: o PDV Delivery interno (iFood) lista todos os ativos — o escopo cobre presencial + link do cliente.
+- **Perf: aba Delivery (gestão) lenta (2026-06-24):** `config-delivery` chamava `get_delivery_config` no mount — payload do APP DO CLIENTE (~13 queries: cardápio inteiro, opções, estoque, promoções…), mas a tela só usa `city` + `delivery_config`. Fix: nova action leve **`get_delivery_settings`** (delivery-write, autenticada) que retorna só `{ city, delivery_config, slug, tenant_name }`; a tela passou a usá-la (Bearer token). Bairros são código morto (handlers não chamados, `neighborhoods` não renderizado). CRITÉRIO: telas de gestão não reusam `get_delivery_config` (pesado, é do cliente).
+- **Bug: bebida (skip_kds) não imprimia no delivery (2026-06-24):** itens "sem preparo" (`skip_kds=true`, ex. Coca-Cola) não saíam em ticket no pedido do site de delivery. Causa: `delivery-write` montava só ticket de **cozinha** (`!skip_kds`) + comprovante — faltava o ticket de **BAR** que as outras origens já tinham (client `src/lib/printOrderQueue.ts` separa `itensBar = skip_kds` → estação `station_id || 'bar'`). **Fix (delivery-write):** após o loop de cozinha, novo loop pros `itensBar` agrupados por `station_id` (fallback "bar"), `enqueue_print_ticket` com label "Bar". Só backend (deployado). As OUTRAS origens (PDV/garçom/mesa/kiosk via printOrderQueue) já imprimiam — o gap era exclusivo do delivery.
+- **Mapa + filtro "Meus" + badge de fase colorido na lista (2026-06-24):** filtro **Meus** (pedidos do entregador logado, usa `meu` do list_orders); badge da fase do motoboy agora colorido (`SINAL_BADGE`: a_caminho=azul, coletou=violeta, problema=vermelho); botão **Mapa** abre overlay full-screen `MapaEntregas.tsx` (react-leaflet, já dep) com 1 pin por entrega (cor: vermelho=atrasado, âmbar=seu, azul=demais; nº do pedido no pin; popup com Abrir pedido + Rota Google Maps; `fitBounds` em todos). Os pontos respeitam o filtro ativo. `list_orders` passou a retornar `lat`/`lng` (delivery_lat/lng). Pedidos sem pin não aparecem no mapa (mostra contagem "X sem localização"). **Atualização:** pedidos no MESMO ponto (~1m, key lat/lng.toFixed(5)) viram 1 marcador **círculo com a contagem** (vs teardrop com nº pra 1 só); o popup lista todos os pedidos do ponto. Cada pedido no popup tem botão **"Estou a caminho"** (sinaliza `a_caminho_loja` via `onACaminho` no parent → claim + refresh; respeita a trava: "com Fulano" se de outro) + Abrir + Rota.
+- **Filtros/ordenação + prazo na lista do motoboy (2026-06-24):** `/entregas` ganhou: filtros **Todos / Sem entregador / Em atraso** (com contadores), ordenação **Por fase** (grupos coloridos, default) ou **Por tempo** (lista plana, mais urgente primeiro), e **chip de tempo** por card (`faltam X min` / `atrasado X min`, verde/âmbar/vermelho) + **ring** vermelho/âmbar no card pra atrasado/quase-atrasado (limiar `QUASE_ATRASO_MIN=10`). Prazo = `created_at + delivery_sla_min` (campo novo no retorno do `list_orders`). Contador anda via tick local de 30s (`now`, sem tocar servidor). Header mostra "N em atraso". `renderCard` reutilizado nos dois modos.
+- **Loja gere status da entrega + timeline + fix teclado (2026-06-24):**
+  - **Aba "Gerir entregas"** no Delivery (config-delivery vira 2 abas: Configurações / Gerir entregas; novo `GerirEntregasTab.tsx`). Fallback p/ quando o motoboy não acessa/some: lista pedidos de entrega em aberto e a loja seta o status (override, ignora a trava de dono) ou **libera o entregador**. Edge `delivery-write` (admin valida membership): `list_delivery_orders`, `set_motoboy_status` {order_id, signal, motivo?}, `clear_motoboy_driver` {order_id}.
+  - **Timeline no portal**: coluna `orders.motoboy_timeline jsonb` (migration `orders_motoboy_timeline`) grava o horário da 1ª vez em cada fase do motoboy (no `signal` e no `set_motoboy_status`). `get_order` retorna `motoboy_timeline` + `cozinha` {status, novo_at, preparo_at(min started_preparing_at), pronto_at(max ready_at se todos prontos)} agregado dos `order_items` não-skip_kds. Detalhe `/motoboy/:id` mostra card "Andamento" (cozinha + entregador com horários).
+  - **Fix teclado** no detalhe `/motoboy/:id`: o textarea de "problema" virou **modal ancorado no TOPO** (`fixed inset-0 flex items-start`, `z-100`). O scroll-da-tela (scrollIntoView/kbInset) não era confiável dentro do wrapper PullToRefresh; com o card no topo e o teclado embaixo, o campo nunca é coberto e o texto aparece direto nele. (2026-06-24, 2ª tentativa — a 1ª via scrollIntoView falhou.)
+- **Divulgação no Instagram: título por loja + origem do pedido (2026-06-25):** preparando o link público de delivery (`/{slug}-delivery`) p/ anúncio. (1) **Título da aba** = nome da loja: `DeliveryPage` seta `document.title = tenant.name` (restaura no unmount) — aparece no navegador interno do Instagram/WhatsApp (antes era o global "ERPOS V2 — Sistema PDV" do index.html, que NÃO tem OG tags ainda — preview de compartilhamento orgânico fica sem imagem; pendente se quiserem). (2) **Origem do pedido (UTM):** nova coluna `orders.delivery_source text` (migration `add_orders_delivery_source`; NÃO usar `delivery_platform`, pois o relatório filtra `in ('propria','retirada')` e a origem sumiria). `getOrderSource()` em useDeliveryData lê `?utm_source=` da URL na 1ª visita e persiste em `sessionStorage('erpos_delivery_src')` (cliente navega vários passos antes de fechar); enviado como `order_source` no `create_delivery_order`, que sanitiza (minúsculo, `[a-z0-9._-]`, 40 chars) e grava via update pós-insert. Relatório: `useDeliveryLinkReport` agrega `porOrigem` (label amigável; null=`Direto`) e a aba Delivery (`relatorios/.../DeliveryTab.tsx`) mostra card "Origem dos pedidos" com barra/%/receita. Link do anúncio: `…/{slug}-delivery?utm_source=instagram`.
+- **Retirada fora do fluxo de entrega (2026-06-25):** pedidos de **retirada na loja** entram como `origin_type='delivery'` mas com `delivery_platform='retirada'` (entrega normal = `propria`/`ifood`/`null`; esse valor só vem do site público `create_delivery_order` quando `order_type==='retirada'`). Tanto `list_delivery_orders` (delivery-write / aba Gerir entregas) quanto `list_orders` (motoboy-signal / app do motoboy) agora **filtram fora** as retiradas (`.filter(o => o.delivery_platform !== 'retirada')` no JS — evita o problema de `neq` com null no PostgREST). Filtro server-side, vale imediato (não depende de deploy Vercel).
+- **Telefone do cliente: comprovante + contato no gestor (2026-06-25):** o **comprovante de entrega** (create_delivery_order, station `delivery-receipt`/"COMPROVANTE ENTREGA") agora inclui `Telefone: (DD) 9XXXX-XXXX` no `observacao_geral`, logo abaixo de "Cliente:" (helper `fmtPhone` em delivery-write; usa `cleanPhone`). `list_delivery_orders` passou a retornar `telefone` (só-dígitos de `orders.destination_phone`). Em `GerirEntregasTab`, cada pedido mostra o telefone + botões **Ligar** (`tel:+55…`) e **WhatsApp** (`https://wa.me/55…`, prefixa 55 se vier sem DDI). OBS: o comprovante só é gerado p/ pedidos do **site público** (create_delivery_order); delivery criado pelo PDV imprime só ticket de cozinha (sem telefone) — pendente se quiserem lá também.
+- **Histórico de problemas da entrega (2026-06-25):** o `motoboy_note` (texto único) era sobrescrito a cada novo "Problema" — só sobrava o último. Nova coluna `orders.motoboy_problems jsonb default '[]'` (migration `add_motoboy_problems_history`) **acumula** cada relato: `[{at: iso, text, by: 'motoboy'|'loja'}]`. Append no `signal` (motoboy-signal, `by:'motoboy'`) e no `set_motoboy_status` (delivery-write, `by:'loja'`) quando `signal==='problema'`; `motoboy_note` segue gravando o último p/ retrocompat. `list_delivery_orders` retorna `problemas[]`; `get_order` (motoboy-signal) retorna `motoboy_problems`. `GerirEntregasTab` mostra TODOS os problemas com hora (`HH:MM`), fallback p/ `motoboy_note` em pedidos antigos. **Liberar entregador** (clear_motoboy_driver) NÃO limpa o histórico (vira trilha de auditoria). Edge functions deployadas via `npx supabase functions deploy ... --no-verify-jwt`.
+- **Trava de propriedade do pedido (2026-06-24):** a partir do 1o sinal, o pedido fica preso ao entregador que assumiu — outro entregador NAO pode mudar o status. No `signal` (motoboy-signal): le `motoboy_driver_id` atual; se ja tem dono e e diferente do `driver_id` (ou sem driver_id) → `{ok:false, error:"assumido_por_outro"}` e nao altera nada (checagem-previa + update por id; tentei `.update().or(motoboy_driver_id.is.null,...)` mas deu "column does not exist" no PostgREST em update — por isso guard-select). `get_order` retorna `claimed_by_id`/`claimed_by_name`; `list_orders` retorna `assumido_por` (nome). Front: detalhe `/motoboy/:id` mostra cartao travado "Pedido sendo entregue por X" quando `claimed_by_id !== session.driver_id`, e trata o erro `assumido_por_outro` com aviso + reload; lista mostra "com Fulano" (cadeado) nos pedidos de outro. Testado: signal de outro driver barrado sem alterar o pedido.
+- **Nome do motoboy no card do gestor:** quando o motoboy (logado pela lista) sinaliza, `orders.motoboy_driver_id` aponta pro `delivery_drivers`. `useMotoboyStatus` agora embute `motoboy_driver:delivery_drivers!motoboy_driver_id(name)` e o card mostra o 1o nome ao lado do sinal ("A caminho da loja · João"). Precisou de policy RLS de SELECT em `delivery_drivers` (migration `delivery_drivers_select_policy`, padrao multi-loja `tenant_id in (select tenant_id from user_tenants where user_id = auth.uid())`). So aparece se o motoboy tinha sessao (driver_id) — quem abre so pelo link por pedido, sem login, nao grava driver e nao mostra nome.
+- **Modal "Iniciar preparo" (GestorKanbanView, so delivery proprio `isLinkDelivery`):** ao clicar "Iniciar Preparo" abre modal: operador estima minutos ate ficar pronto (pre-preenchido com o preparo restante do SLA), e escolhe "Avisar motoboy e iniciar" (manda WhatsApp do motoboy com a linha "Fica pronto em ~X min — esteja na loja as HH:MM" e avanca) ou "So iniciar preparo" (so avanca). Se `agora + estimativa > prazoPreparoMs` (limite de preparo = criadoEm + (slaMin − rota − 5)), mostra aviso vermelho mas NAO bloqueia. `handleWhatsAppMotoboy` foi refatorado em `enviarMotoboy(estimateMin, win)` (a janela do WhatsApp e aberta dentro do clique p/ nao ser bloqueada como popup). Retirada/plataformas (iFood) nao abrem o modal — avancam direto.
+- **"Falar com a gente" na 1ª tela do delivery (2026-06-26):** `ModoEntregaDelivery` (escolha entrega/retirada) ganhou 3º card verde que abre o WhatsApp da loja. Reaproveita o `lojaWaUrl` já calculado em `delivery/page.tsx` (de `storeWhatsapp`, prefixa 55); passado como prop `waUrl`. Some se a loja não tem WhatsApp (mesmo critério do botão "Falar com a loja" das telas seguintes).
+- **Botão "Sair" no delivery do cliente (2026-06-26):** o cliente fica auto-logado por `localStorage['delivery_phone']` (lido no init → auto-login). Novo `handleSair()` em `useDeliveryData.ts` apaga `delivery_phone` + `delivery_pin` (PIN_STORAGE_KEY), esvazia carrinho (`setCart([])` → saveCart remove a chave), zera customer/endereços/voucher e volta `setStep('identificacao')`. Botão no cabeçalho do cardápio (`delivery/page.tsx`, ao lado do telefone/"Falar com a loja") com `window.confirm` (avisa que esvazia o carrinho). Pra trocar de número/entrar como outra pessoa no mesmo aparelho.
+- **AddToCart no delivery (2026-09-09):** o delivery so disparava `InitiateCheckout` e `Purchase` — a Meta nao enxergava a etapa do meio do funil, e a linha 'Add. ao carrinho' do Trafego Pago sairia sempre zerada. `handleAdicionar` (`useDeliveryData.ts`) passou a disparar `AddToCart` (value = precoTotal x quantidade, currency BRL, content_ids, content_name, num_items). **A Meta nao preenche retroativo:** so conta a partir do deploy. Etapas cobertas agora: PageView (index.html) -> AddToCart -> InitiateCheckout -> Purchase. Falta `ViewContent` (abrir um item) se um dia quiserem o funil completo.
+- **Pixel da Meta + eventos de conversão no delivery (2026-06-26):** pra tráfego pago no link público. (1) **Código base** do Pixel (id `1021977890320561`, `init`+`PageView`) no `<head>` do `index.html` — vale pro app todo (SPA). Id de Pixel é público, ok no repo. (2) **Helper** `src/lib/metaPixel.ts`: `trackPixel(event, params)` à prova de falha (só dispara se `window.fbq` existir; try/catch — rastreio nunca quebra o pedido; tipa `window.fbq` via `declare global`). (3) **Eventos de conversão** em `useDeliveryData.ts/handleConfirmarPedido`: `InitiateCheckout` (ao confirmar, `value=total`,`currency:'BRL'`,`num_items`) e **`Purchase`** no sucesso do `create_delivery_order` (`value=total confirmado`,`currency:'BRL'`) — esse é o evento que otimiza o anúncio por pedido real. PENDENTE/opções oferecidas: disparar PageView por troca de rota (SPA só dispara na 1ª carga) e/ou restringir o Pixel só às telas de delivery (hoje dispara no uso interno também — ruído inofensivo p/ ads). Base PageView é site-wide; conversões são naturalmente só-delivery (estão no código do delivery).
+- **Cached Egress estourado (Supabase): imagens do cardápio (2026-06-26).** Plano free = 5 GB/mês; estava em ~10 GB. Causa: bucket público `menu-images` com **134 imagens, 155 MB** (média **1,2 MB**, várias PNGs de 2-3,8 MB sem compressão — legado Readdy, caminho `/{tenant}/temp/`), servidas no cardápio público a cada visita (cardápio mostra thumb 72px mas baixava o arquivo full). Agravante: todas com `cacheControl: max-age=3600` → navegador rebaixa a cada 1h (o Smart CDN entrega CDN→cliente e CADA entrega conta como "Cached Egress", HIT ou MISS). **Diagnóstico chave:** mudar `storage.objects.metadata->>cacheControl` via SQL **NÃO** propaga (o Cloudflare/Smart CDN serve a resposta cacheada com o header antigo; ignora query string como cache-key). A ÚNICA via que invalida o CDN é **re-subir pela Storage API**. Fix em 3 frentes: (1) `menu-write` `.upload()` agora grava `cacheControl: '31536000'` (1 ano) — nomes já têm `Date.now()`, então cache eterno é seguro (deploy v52 via MCP); (2) `compressImage` (src/lib/supabase.ts) mais agressivo: `maxSize 1000→700`, `quality 0.7→0.6` (~60-90 KB/foto); (3) **script one-off** (scratchpad `reprocess-menu-images/reprocess.mjs`, Node+sharp, service_role via env) baixou+recomprimiu (700px JPEG q60) + re-subiu no MESMO path (URL não muda → sem tocar DB) com cache de 1 ano: **155 MB → 4,4 MB (−97%), 134/134 ok**. Verificado: header passou a `public, max-age=31536000`, Content-Length 47 KB (era 3,8 MB). CRITÉRIO: imagem servida no tamanho exibido + cache longo no upload; re-set de cache exige re-upload (não SQL).
+
+### 2026-06-23 — Hora errada (+3h/UTC) no ticket de delivery
+
+Sintoma: pedido as 21:11 (BRT) imprimia "24/06 00:11" (UTC). So delivery; PDV/QR/autoatendimento certos.
+- **Causa:** `data_hora` do payload era montado por `new Date().toLocaleString("pt-BR", {...})` **sem `timeZone`**. No navegador (PDV/QR/kiosk) usa o fuso do device (SP) -> certo. Na **edge** `delivery-write` (Deno roda em UTC) -> +3h. Confirmado nos payloads: delivery gravava 00:11, demais 20:3x corretos.
+- **Fix (centralizado, edge `print-queue-agent` v13):** o agente passa a derivar `data_hora` SEMPRE do `ticket.created_at` (timestamptz autoritativo) formatado em `America/Sao_Paulo`, sobrescrevendo o que cada canal mandou. Conserta delivery e padroniza todos. Tambem corrigidos na fonte (belt-and-suspenders, p/ proximo deploy): `delivery-write:~1052`, `print-queue-agent` fallback, `src/lib/printOrderQueue.ts:~114` (todos com `timeZone: 'America/Sao_Paulo'`). `delivery-write` NAO foi redeployado (override do agente ja cobre; evitei transcrever ~1100 linhas).
+- **CRITERIO:** todo `toLocaleString`/formatacao de data que possa rodar no servidor (edge Deno = UTC) DEVE passar `timeZone: 'America/Sao_Paulo'`. Preferir derivar de `created_at` no agente a confiar em string pre-montada por canal.
+
+### 2026-06-23 — Delivery aceitava pedido em dia fechado: `delivery_manual_open` grudado
+
+Sintoma: EP PAR MALL com terca marcada FECHADA no agendamento, mas o pedido de delivery passou. Nao era bug do schedule.
+- **Causa:** `system_settings.delivery_config.delivery_manual_open = true`. O gate `computeDeliveryOpen` (em `delivery-write`): se fora do horario mas `manual_open=true` -> `{open:true, reason:"manual"}` (override do botao "Abrir delivery" do PDV, via `set_delivery_state`). O flag **nao expira** — fica ligado dia apos dia, abrindo dias agendados como fechados. Tambem havia sessao de caixa aberta ha 6 dias (gate exige sessao; `has_session` ficou true).
+- **Gate (ordem):** sem sessao -> `sem_sessao`; pausado -> `pausado`; schedule on + dentro -> `horario`; schedule on + fora -> `manual`(se manual_open) senao `fora_horario`; schedule off -> `manual`/`fechado_manual`. Dia da semana 0=Dom..6=Sab, tz America/Sao_Paulo. O `create_delivery_order` JA valida o gate no servidor (repo + deploy v61 confirmados: com manual_open=false, `get_delivery_config` retorna `delivery_open_now=false/fora_horario`).
+- **Resolvido (estado):** setei `delivery_manual_open=false` para EP PAR MALL -> hoje (terca) bloqueia certo.
+- **Pendente (melhoria proposta):** (1) reset automatico do manual_open (valido so pro dia/sessao atual) p/ nao grudar; (2) front `useDeliveryData.handleConfirmarPedido` NAO checa `deliveryOpenNow` antes de enviar — cliente so leva "fechado" no fim; bloquear no checkout.
+
+### 2026-06-23 — Flicker de status: pedido pronto→preparo→pronto (race de snapshot atrasado)
+
+Sintoma: marcar "Pronto" no gestor → vai pra Prontos → volta pra Em Preparo → volta pra Pronto. Itens 🔥 (preparo) reaparecem.
+- **Causa:** o status do pedido no `KDSContext` e **derivado dos itens**. A anti-reversao (merge do realtime/poll, linhas ~979/1011/1034 dos itens e ~1133 do pedido) so preservava o status local mais avancado **enquanto havia entrada na `pendingStatusQueueRef`**. Quando o `flushPendingStatusQueue` comita e **limpa a fila**, um snapshot atrasado (poll/realtime em voo, buscado ANTES do commit) chega DEPOIS e, sem a guarda, reverte item pronto→preparo → pedido re-deriva pra preparo. Corrida "ABA".
+- **Fix:** janela de tempo. Novo `recentStatusRef` (Map `i:<itemId>` / `o:<orderId>` -> timestamp) setado no inicio de `updateItemStatusRemote`/`updatePartStatusRemote` (todo set local). No merge, `isRecent(key)` = set nos ultimos **15s**. As 4 guardas passam a preservar se `(fila pendente OU isRecent)`. Cobre o intervalo flush-limpa-fila → banco-confirma; apos 15s expira (entrada podada no acesso) e o banco volta a ser fonte de verdade.
+- **Criterio:** status otimista que depende de fila pendente p/ nao regredir precisa TAMBEM de janela de tempo — a fila some no commit e abre janela pra snapshot atrasado. Vale p/ qualquer merge realtime/poll com estado otimista.
+
+### 2026-06-23 — Promocao vencida ainda cobrada no PDV (Caixa/Delivery/Garcom)
+
+Sintoma: promocao 'pontual' (so 19/06) da Vila Leste sumiu certo no QR/autoatendimento mas continuava aparecendo/cobrando no **PDV Caixa**.
+- **Causa:** os PDVs usavam `item.promocoes.find((p) => p.ativo)` — checa SO `ativo`, ignora dia da semana ('semanal') e data ('pontual'). O cardapio do cliente (delivery/mesa-qr/autoatendimento) ja usava `promoAtivaHoje()` (date-aware), por isso filtrava certo. Os PDVs nunca foram migrados.
+- **Fix:** trocar por `promoAtivaHoje(item.promocoes)` de `@/lib/promoUtils` em: `pdv/caixa/page.tsx`, `pdv/caixa/components/ItemGridPDV.tsx`, `pdv/caixa/components/OpcoesModal.tsx`, `pdv/delivery/components/DeliveryItemGrid.tsx`, `pdv/garcom/components/PedidoView.tsx`.
+- **CRITERIO (reutilizavel):** qualquer preco/badge de promocao no app DEVE usar `promoAtivaHoje` (formato interno `PromocaoItem`) ou `rawPromoAtivaHoje` (formato cru `is_active/days_of_week/specific_date`). **NUNCA** `find(p => p.ativo)`/`some(p => p.ativo)` — isso ignora data e cobra promo vencida. Exececao consciente: badges/contagens do EDITOR de cardapio (`cardapio/page.tsx`, `ItensTab.tsx`) usam `.some(p=>p.ativo)` de proposito (mostram "tem promo configurada", nao "ativa hoje").
+
+### 2026-06-23 — Impressao nao saia: `impressora_id` do app nao batia com o `config.json` do agente
+
+Sintoma: pedido entrava na fila, agente recebia via Realtime (provou que funcionou: `print_queue.retry_count` ia pra 1), mas nao imprimia. Erros na coluna `last_error`: ora `Connection timeout`, ora `Impressora "imp-..." nao configurada no agente`.
+- **Arquitetura (pegadinha):** o app define a impressora por estacao em `system_settings.printers_config` (jsonb: `impressoras[{id,ip,nome,paperStyle}]` + `mapaEstacoes`). Ao enfileirar, o ticket leva **so o `impressora_id`** — `print_queue.impressora_ip` fica **null**. O agente (`agente-local`, `findImpressora`: `i.id === id`) resolve `impressora_id -> IP` **exclusivamente pelo `config.json` local de CADA PC**. Logo, o `config.json` precisa ter uma impressora com o MESMO id auto-gerado pelo app (ex.: `imp-1782254581881`).
+- **Causa real:** o app mandava `impressora_id=imp-1782254581881` (IP 10.0.0.186, correto), mas o `config.json` tinha ids genericos `cozinha`/`bar`/`caixa`. Id nao casava -> "nao configurada". (Antes, com mapa apontando p/ `caixa`->10.0.0.188 inexistente -> timeout.) O IP **nunca** foi o problema: 10.0.0.186 e o IP real do EP PAR MALL.
+- **Fix imediato:** por no `config.json` do PC uma impressora com `id` = o id do app (`imp-1782254581881`), ip `10.0.0.186`, 80mm. Com `polling_enabled:false`, o poll de boot (ao reiniciar) pega os pendentes e imprime.
+- **Roteamento por estacao — FEITO 2026-06-23 (edge v12):** PDV grava `print_queue.impressora_id` = id da impressora (`imp-...`), mas os canais do CLIENTE (delivery-write/mesa-write) gravam o `station_key` (UUID) ou `null` — nao aplicam o `mapaEstacoes`. Resultado: PDV imprimia, delivery/QR/autoatendimento nao ("Impressora nao resolvida"). Fix centralizado na edge `print-queue-agent` v12: ao resolver cada ticket, se `impressora_id` ja for uma impressora conhecida usa direto; senao resolve `station_key`/`impressora_id` via `printers_config.mapaEstacoes` -> printerId; e se houver **1 unica impressora**, ela vira default quando nada mapeia. Assim todos os canais (e futuros) funcionam sem tocar nos outros edges. Validado: re-disparei os 3 pedidos travados -> todos `printed`.
+- **Fix arquitetural — FEITO 2026-06-23 (IP viaja no ticket):** edge `print-queue-agent` **v11** no `poll` le `system_settings.printers_config`, resolve `impressora_id -> {ip,porta,paperStyle,nome}` e injeta `impressora_ip`/`impressora_port`/`impressora_nome`/`paper_style` em cada ticket retornado. Agente `index.js` **v3.2**: usa `ticket.impressora_ip` quando presente; so cai no `config.json` (`findImpressora`) como fallback. Resultado: `printers_config` (gerenciado no app) vira **fonte unica**; trocar/criar impressora no app reflete em TODOS os PCs sem editar `config.json`. O `config.json` so precisa de `impressoras` se quiser fallback offline. **Falta:** copiar o `index.js` v3.2 nos 3 PCs (so assim o agente passa a usar o IP do ticket; ate la o agente antigo ignora os campos novos e segue pelo `config.json`, que continua funcionando).
+
+### 2026-06-23 — Estouro de quota Supabase (Free): Edge Function Invocations 134% por polling 24/7
+
+Sintoma: org no Free Plan estourou **Edge Function Invocations (672k/500k)** e **Cached Egress (9/5 GB)** no ciclo, com TODO o resto <15% (Storage 13%, DB 10%, MAU 9). Periodo de graca ate **15/07/2026** (depois 402).
+- **Causa (invocations):** `agente-local` chama a edge `print-queue-agent` em loop continuo (24/7, ate loja fechada), **uma vez por tenant** (`for tenantId of validTenantIds`). Config com 2 tenants (EP PAR MALL + VILA LESTE) multiplicava. ~95% das chamadas retornavam "0 tickets". Logs confirmaram chamadas espacadas ~60s sem parar.
+- **Fix escolhido pelo usuario:** modo **so-Realtime, sem fallback** (comecando no PC do EP PAR MALL). Nova flag `polling_enabled` no `index.js` (default `true` p/ nao afetar outros PCs): `false` => nao chama `startQueuePolling()`, faz so UM poll no boot (limpa backlog) e depois depende exclusivamente do broadcast `new_job`. `config.json` do EP PAR MALL: `tenant_ids:["7049e90e…"]` (so 1 — o PC tem LAN unica 10.0.0.186-188, nem alcancava impressora da VILA LESTE), `realtime_enabled:true`, `polling_enabled:false`.
+- **Cadeia validada no banco:** `trg_print_queue_notify` (ATIVO, AFTER INSERT) -> `fn_print_queue_notify` faz `realtime.send({id,station_key},'new_job','print-jobs:'||tenant_id,false)`. Bate com o subscribe do agente (canal publico, evento `new_job`).
+- **Risco do modo so-Realtime:** se o Realtime nao conectar (sem `npm install` = supabase-js/ws ausentes), NADA imprime (sem rede de seguranca). Por isso o PC PRECISA ter `node_modules` (supabase-js **2.57.4** + ws) antes de ligar `polling_enabled:false`.
+- **Pendente (Cached Egress 9GB):** separado — CDN de Storage (imagens cardapio/produtos servidas repetidas em telas publicas, sem cache de navegador). A investigar.
+
+### 2026-06-18 — Impressao instantanea: agente local escuta a fila via Realtime (antes: polling lento)
+
+Sintoma: pedidos demoravam 40-60s pra imprimir na Vila Leste. Diagnostico por dados (`print_queue`): `app->fila` ~2-3s (ok); `fila->impressao` 6s/39s/56s/59s. Logs da edge `print-queue-agent` mostraram o agente puxando a fila **a cada ~60s** (config dos PCs com `poll_interval_ms` alto, divergente do repo). Polling != "no momento do pedido".
+- **Backend JA estava pronto** (migracao Realtime que ficou pela metade): trigger `trg_print_queue_notify` AFTER INSERT em `print_queue` -> `fn_print_queue_notify()` chama `realtime.send({id,station_key}, 'new_job', 'print-jobs:<tenant_id>', false)` (canal **publico**). Pega QUALQUER caminho de insert (a RPC `enqueue_print_ticket` usada pelo frontend NAO passa pela edge `print-queue-write` — por isso broadcast tem que ser no banco, nao na edge).
+- **Faltava so o lado do agente.** `agente-local/index.js` v3.1: assina `print-jobs:<tenant>` (evento `new_job`) com `@supabase/supabase-js` + `ws`; no aviso chama `processPrintQueue()` (debounce 250ms p/ agrupar os varios tickets de 1 pedido). Polling vira **fallback** (`poll_interval_ms` 15000). Guard `rerunRequested` re-roda se chegar ticket durante uma impressao. Deps carregadas com try/catch (sem `npm install` o servico nao quebra — so fica sem realtime).
+- **Pegadinhas:** (1) usar a MESMA versao do supabase-js do frontend — **2.57.4**; com 2.47.0 o canal dava `TIMED_OUT`. (2) Em Node <22 nao ha `WebSocket` global -> precisa `ws` (seto `globalThis.WebSocket` + passo `realtime:{transport:WS}`). (3) `supabase_anon_key` (a publishable `sb_publishable_...` serve) tem que estar no `config.json` de cada PC senao o realtime nem conecta. (4) canal publico (`private:false`) recebe com anon sem RLS.
+- **Validado** (sem tocar a fila real): subscribe -> `select realtime.send(...,'print-jobs:TEST...',false)` -> RECEIVED. **Falta o usuario:** copiar `index.js`+`package.json` nos 3 PCs, rodar `npm install`/`instalar.bat`, garantir `supabase_anon_key` no config e reiniciar o servico "ERPOS Print Agent". Nada pra deployar no Supabase (backend ja no ar).
+
+### 2026-06-17 — Abrir/fechar delivery (botao no PDV + agendamento) acoplado a sessao
+
+Feature: controlar a abertura do delivery. **Fonte da verdade da abertura = backend** (`delivery-write`), funcao `computeDeliveryOpen(dc, hasSession, now)`:
+  `aberto = sessao_aberta E nao_pausado E (dentro_do_horario OU override_manual)`. Sem sessao -> SEMPRE fechado.
+- **Estado mora em `system_settings.delivery_config` (JSON)**, 3 chaves novas: `delivery_manual_open` (bool, abrir fora do horario), `delivery_paused_until` (ISO, pausa temporaria), `delivery_schedule` `{ enabled, days: {"0".."6": {enabled, open:"HH:MM", close:"HH:MM"}} }` (0=Dom, fuso America/Sao_Paulo; suporta janela que cruza a meia-noite). Helpers no edge: `spNowParts` (Intl tz), `isWithinSchedule`, `minutesUntilWindowClose`.
+- **Acoes novas no `delivery-write`** (auth = QUALQUER membro da loja, nao precisa admin): `get_delivery_state` e `set_delivery_state` (op: open|close|pause|resume|force_off). `close` DENTRO do horario = pausa ate o fim da janela de hoje (decisao do usuario: horario manda, botao/pausa sao overrides temporarios). `pause` recebe `minutes`. `force_off` zera os overrides (chamado ao fechar a sessao).
+- **Gates**: `create_delivery_order` agora usa `computeDeliveryOpen` (antes so checava sessao); `get_delivery_config` devolve `delivery_open_now` + `delivery_closed_reason` pro cliente. **`save_delivery_settings` virou MERGE** (le-mescla-grava) pra nao apagar as chaves de runtime que a tela de config nao conhece. **Deploy: delivery-write byte-exato via `npx supabase functions deploy --use-api` (sintaxe validada pelo bundler).**
+- **Frontend (precisa push)**: hook `src/hooks/useDeliveryState.ts`; botao+modal `src/pages/pdv/caixa/components/DeliveryControle.tsx` (status na barra do caixa aberto, desktop + mobile, com pausas rapidas 30min/1h/2h/4h/resto-do-dia + horas custom); secao "Horario de funcionamento do delivery" em `config-delivery/page.tsx`; `SessaoContext.fecharSessao` chama `set_delivery_state op=force_off` (regra: fechar sessao desliga delivery); banner "loja fechada" em `delivery/page.tsx` + flags expostas via `useDeliveryData` (espelhando `retiradaAtivo`). tsc 348 (nao aumentou).
+- Pegadinha: renderizo `<DeliveryControle/>` 2x (desktop+mobile), cada um com seu poll de 60s — duplicacao aceitavel (so 1 visivel). Se incomodar, subir o estado pra um context.
+
+### 2026-06-17 — Fechamento de caixa: valor esperado inflado por pagamentos agrupados (LIVE)
+
+Bug: caixas com pagamentos AGRUPADOS (mesmo `payment_group_id`, pedidos pagos juntos) fechavam com `closing_value_expected` inflado -> "Diferenca de Caixa" fantasma. Causa raiz: a MESMA duplicacao ja corrigida no relatorio (ver 2026-06-15) ainda existia no FECHAMENTO. `order-write` action `close_cash_register` calculava `cashTotal = SUM(p.amount em dinheiro)` cru; como o pagamento PRINCIPAL grava `amount` = total do GRUPO e os vinculados gravam o deles, somar duplica. Caso real (caixa S120626002): esperado gravado 332,28 vs correto 236,29 = +95,99 fantasma (alem do operador ter declarado 0,00 contado). Fix (`order-write/index.ts` ~L654): agrupa os pagamentos cash por `COALESCE(payment_group_id, id)`; grupo (>1) usa `SUM(o.total_amount)` (venda real), avulso usa `p.amount` (preserva parciais); ignora pedidos `cancelled`/`draft` (igual o relatorio). **Deploy: order-write v126 ACTIVE (byte-exato via `npx supabase functions deploy --use-api`).** Corrige caixas NOVOS; caixas ja fechados mantem o valor antigo gravado. Convencao confirmada de novo: `payments.amount` = venda (fica na gaveta); `change_amount` = troco; recebido = amount+troco.
+
+### 2026-06-17 — Edicao de insumo (preco unitario) quebrada: fn_upsert_ingredient sem p_price_source (LIVE)
+
+Bug: salvar insumo no Estoque dava 500 com "Could not find the function public.fn_upsert_ingredient(...) in the schema cache" -> preco unitario (e qualquer edicao) nao salvava. Causa raiz: `stock-write` action `upsert_ingredient` passou a enviar 15 params nomeados (inclui `p_price_source`, o seletor Manual/Automatico), mas NENHUMA overload de `fn_upsert_ingredient` aceitava `p_price_source` (a maior tinha 14) -> PostgREST nao resolve a chamada por nome de argumento. A coluna `ingredients.price_source` (text, default 'manual') ja existia. Fix: migration `fn_upsert_ingredient_add_price_source.sql` cria a overload de 15 params com `p_price_source text DEFAULT 'manual'`, gravando a coluna no UPDATE e no INSERT; aplicada em prod + `NOTIFY pgrst,'reload schema'`. Pegadinha geral: ao adicionar param novo a uma RPC chamada via PostgREST, a FUNCAO no banco precisa de uma assinatura que contenha exatamente o conjunto de nomes enviados (a migration da funcao costuma viver so no banco — verificar `pg_get_functiondef` antes). Obs.: ha 4+ "Carne moida hamburguer" duplicados no cadastro (preco 0) — nao limpado.
+
+### 2026-06-17 — Permissoes por papel (aba Configuracoes): role EN/PT quebrado + toggles "mortos"
+
+Contexto: auditoria da aba Configuracoes > Permissoes (`PermissoesTab.tsx`) e do enforcement real. Modelo: 23 chaves em `hooks/usePermissoes.ts`; admin sempre `true`; nao-admin carrega da tabela `permissions` via `config-write` (`get_permissions`/`upsert_permissions`).
+
+**BUG CRITICO (corrigido no frontend, precisa push):** a coluna `permissions.role` e enum `user_role` em INGLES (admin/manager/cashier/waiter/kitchen). A aba salva em ingles (`papeisToDbRole`) e `config-write` grava/le sem traduzir. Mas `usePermissoes` filtrava `r.role === papel` com papel em PORTUGUES (gerente/caixa/garcom/cozinha) -> nunca casava. Efeito: assim que um admin SALVA a matriz, todo nao-admin cai em `setPermissoes([])` = SEM nenhuma permissao (rotas bloqueadas, menu some). Antes de usar a aba funciona pelos defaults (`DEFAULT_PERMISSOES`). Fix: `usePermissoes` agora traduz papel->role-EN (`PAPEL_TO_DB_ROLE`) e aceita ambos; se houver linhas no banco mas nenhuma do papel, cai em default (evita lockout por matriz parcial). Provado por SQL: filtro antigo=vazio p/ todos; novo=correto por papel. (`user-write` ja mapeava PT->EN certo na criacao de usuario; `AuthContext.DB_TO_FRONTEND_ROLE` faz EN->PT na leitura — so o filtro de permissao estava errado.)
+
+**Toggles que NAO sao aplicados (enforcement inexistente)** — so existe checagem de ROTA (`RotaProtegida` `ROUTE_PERMISSIONS` + `Sidebar` `item.permissao`) e nas paginas KDS/Gestor (`modulos`). Aplicadas de verdade: `cardapio_editar`(/cardapio,/promocoes), `estoque_movimentar`(/estoque), `relatorio_financeiro`(/relatorios,/financeiro), `usuarios_gerenciar`(/usuarios,/aprovacoes), `configuracoes_editar`(/configuracoes,/config-delivery), `auditoria_ver`(/auditoria,/diagnostico), `clientes_ver`(/clientes), `kds_acessar`, `gestor_pedidos_acessar`. **Toggles "mortos" (nenhum `hasPermissao` os le):** `pdv_abrir_caixa`, `pdv_fechar_caixa`, `pdv_sangria`, `pdv_cancelar_pedido`, `pdv_cancelar_item`, `pdv_editar_item_pos_kds`, `pdv_estornar_pagamento`, `garcom_fechar_mesa`, `garcom_transferir_mesa`, `cardapio_alterar_preco`, `estoque_inventario`, `gestor_pedidos_entregar`, `relatorio_estoque`. Obs.: cancelar/desconto tambem tem o mecanismo de senha de gerente (`cancel_mode`/`discount_profile` na aba Operacao + `AutorizacaoGerenteModal`/`verify-manager-credentials`); os dois coexistem (a permissao decide se o botao APARECE pro papel; a senha de gerente continua valendo por cima).
+
+**Enforcement dos 13 toggles LIGADO (2026-06-17, decisao do usuario "ligar todos" — frontend, precisa push):** cada acao agora checa `hasPermissao` e esconde/bloqueia o gatilho pra quem nao tem (admin sempre passa). Onde foi aplicado: `pdv_abrir_caixa`/`pdv_fechar_caixa`/`pdv_sangria` em `pdv/caixa/page.tsx` (CaixaFechadoView + header desktop/mobile); `pdv_desconto` em `caixa/components/CarrinhoPanel.tsx` (esconde a entrada de desconto, mantem exibicao de desconto ja aplicado); `pdv_cancelar_item`/`pdv_editar_item_pos_kds` em `caixa/components/PedidosRecentesPanel.tsx` (`ItemDetalheRow` flags `podeCancelarItem`/`podeEditar`); `pdv_cancelar_pedido`/`pdv_estornar_pagamento` nos dois cards (`PedidoCardAgrupado` e `PedidoCard`) do mesmo arquivo; `garcom_transferir_mesa` em `garcom/components/IdentificacaoMesaModal.tsx`; `garcom_fechar_mesa` em `garcom/components/PedidoView.tsx` (2 botoes) e `ContaMesaView.tsx`; `cardapio_alterar_preco` em `cardapio/components/ItemModal.tsx` (desabilita o input de preco); `estoque_inventario` em `estoque/components/InventarioTab.tsx` (esconde "Nova Contagem" + guarda nos handlers); `gestor_pedidos_entregar` em `gestor-pedidos/page.tsx` (guarda nos handlers `handleEntregar`/`handleEntregarItem` + inline `onEntregarUnidade`, incluido nos deps dos useCallback p/ evitar closure velho). Padrao: gate no GATILHO (esconde botao) e, onde o botao e complexo/multiplo, guarda tambem no handler. tsc 348 (sem aumento).
+
+### 2026-06-17 — Criacao de loja (onboarding): multi-loja, estacoes duplicadas e perda de itens
+
+Contexto: jornada "criar usuario -> convite -> aceitar -> criar loja -> entrar" testada end-to-end contra o Supabase ao vivo (signup real + chamadas diretas a `setup-tenant`). O fluxo de PRIMEIRA loja de um usuario novo ja funcionava (mInimo e completo). Tres problemas corrigidos:
+
+1. **Multi-loja bloqueado (causa do "sempre da erro" pro dono):** os botoes "Criar nova loja" ([TopBar.tsx], [perfil/page.tsx]) levam um usuario JA logado ao `/onboarding?invite=`, mas `setup-tenant` `checkExistingTenant` bloqueava QUALQUER usuario com loja (409 `already_exists`), ignorando o convite -> o onboarding so jogava de volta pro /modulos sem criar nada. Decisao do usuario (2026-06-17): **liberar multi-loja com convite valido**. Fix (edge `setup-tenant` v24): o bloqueio so roda quando NAO ha convite valido e nao-usado (`!(inviteId && inviteValid)`); com convite valido, usuario existente cria loja adicional normalmente. Sem convite, mantem o anti-abuso de 1 loja. Verificado: 1a loja OK, 2a com novo convite OK (user_tenants=2), 3a sem convite bloqueada.
+2. **Estacoes duplicadas:** `fn_setup_tenant_bypass` criava SEMPRE "Cozinha"+"Bar" E a edge function inseria as estacoes do onboarding -> resultado "Cozinha, Cozinha, Bar, Bar". Fix: migration `fn_setup_tenant_bypass_sem_estacoes_default` (RPC nao cria mais estacoes); a edge function virou dona unica das estacoes — usa as escolhidas no onboarding, ou um par padrao (Cozinha+Bar) se `estacoes` vier vazio.
+3. **Perda silenciosa de itens:** `menu_items.category_id` e NOT NULL; um item com `categoriaId` nao mapeado virava `null` e, como o insert e um LOTE unico (`return=minimal`), o erro derrubava TODOS os itens silenciosamente. Fix: a edge function filtra itens sem categoria mapeada antes de inserir (loga quantos descartou), preservando os validos.
+
+Pegadinhas confirmadas: (a) `users.email` tem UNIQUE (`uq_users_email`), mas `fn_setup_tenant_bypass` so faz `ON CONFLICT (id)` — ok na pratica porque o trigger `handle_new_auth_user` ja cria `public.users` com o mesmo id no signup. (b) `setup-tenant` ignora a identidade do JWT (usa service_role pra tudo; `verify_jwt:false`) — da pra testar via curl com a anon key e qualquer `existingUserId` que exista em `auth.users`. (c) signup do GoTrue rejeita dominios "invalidos" (ex. exemplo-teste.com) e tem rate-limit de email; pra testes em lote, criar usuarios direto em `auth.users` via SQL (com `crypt()`+`gen_salt('bf')`) dispara o trigger e cria `public.users`. Funcao `fn_setup_tenant_bypass` so e chamada pelo `setup-tenant`. As correcoes sao 100% backend (migration + edge function ja LIVE) — nao precisa push de frontend.
+
+### 2026-06-14 — Pedidos de QR code universal ("Mesa 0")
+
+Contexto: o QR code universal (nao amarrado a uma mesa fisica) gera pedidos com `destino = 'mesa'` e `mesaNumero = 0`. A identidade real do cliente fica na SENHA do participante, guardada em `participantToken` (no KDS) — NAO em `p.senha`. O `nomeCliente` desses pedidos costuma vir poluido como `"Mesa 0 - Nome"`.
+
+Criterios definidos:
+- Detectar QR universal por: tem `participantToken` E `mesaNumero` ausente/0 (`!!token && !mesaNumero`).
+- Nesses casos, exibir a SENHA (`Senha {token}`) no lugar de "Mesa 0", e o nome do cliente em UM lugar so.
+- Para limpar o nome, remover o prefixo: `nome.replace(/^Mesa\s*\d*\s*[-–.·]?\s*/i, '').trim()`.
+- `PedidoAgrupado` (em `src/hooks/usePedidosAgrupados.ts`) agora carrega `participantToken` (antes se perdia no mapeamento KDS→Agrupado).
+
+Onde ja foi aplicado:
+- `src/pages/pdv/caixa/components/PedidosRecentesPanel.tsx` (`destinoLabel`): cabecalho e pedido principal do modal de pagamento.
+- `src/components/feature/PagamentoRapidoModal.tsx` (`formatarDestino` + filtro de busca `filtrarPorBusca`): janela "Vincular Pedidos", pedidos vinculados, e busca por senha (agora inclui `participantToken`).
+- `src/pages/gestor-pedidos/components/GestorKanbanView.tsx`: cards do Gestor de Pedidos — esconde a linha de destino duplicada em QR universal, remove o badge "Mesa 0" (so mostra mesa real > 0), nome do cliente fica ao lado do badge da senha.
+
+Pegadinha relacionada (UI): nos cards do Gestor, nomes de item usavam `truncate` e cortavam em telas estreitas. Criterio: preferir `break-words` para o nome do item sempre aparecer inteiro (quebra de linha) em vez de cortar.
+
+### 2026-06-15 — Relatorio de Caixa: agrupar pagamentos conjuntos + canal QR
+
+Bug: pedidos pagos JUNTOS (mesmo `payment_group_id`) apareciam separados e com "Pago"/recebido duplicado. Causa raiz: o pedido PRINCIPAL grava `payments.amount` = total do GRUPO e os vinculados gravam o deles → somar duplica. Solucao (definitiva, na RPC, ja LIVE no banco):
+- `fn_get_cash_sessions_v2` (migration `fn_get_cash_sessions_v2_agrupar_pagamentos.sql`): `cash_transactions` agora AGRUPA por `payment_group_id` no SQL e usa `o.total_amount` (venda real) em vez de `p.amount`. `valor_pago` do grupo = soma(total_amount)+soma(troco). `por_forma_pagamento` usa `CASE WHEN payment_group_id IS NOT NULL THEN o.total_amount ELSE p.amount`. `por_origem` separa canal `qr_universal` (origin_type 'table' + table_number 0/null) de `table` (mesa real).
+- `fn_get_sales_report` (2 overloads, migration `fn_get_sales_report_qr_universal_canal.sql`): `by_destination` faz o mesmo split `qr_universal`.
+- Convencao confirmada: `payments.amount` = valor COBRADO (venda); troco em `change_amount`; valor entregue = amount + troco. O modal `PedidoDetalheModal` (`consolidatePayments`) foi corrigido pra essa convencao (nao subtrair troco; nao escalar troco).
+- Frontend rotula `qr_universal` -> "QR CODE" em: `CaixaTab`, `OrigemTab`, `useOrigemReport`, `VisaoGeralTab`.
+- Deteccao de QR universal foi relaxada para `origem === 'mesa' && !mesaNumero` (funciona em historico sem token). Token (senha) propagado via `fn_get_kds_orders` -> `useOrdersHistory` (DBOrder.participant_token/name) -> `dbParaRecente`.
+
+Pegadinha: a aba Pedidos faz polling? NAO mais — virou realtime puro (Supabase `postgres_changes` em orders/payments, debounce 800ms, sem fallback). RPCs (fn_get_kds_orders) ja retornam `payment_group_id` na versao de 2 args.
+
+### 2026-06-15 — EM ANDAMENTO: Delivery por DISTANCIA (Pin + OpenRouteService)
+
+Objetivo: substituir taxa por BAIRRO (burlavel) por taxa por DISTANCIA REAL de rota. Decisoes do usuario: (a) SUBSTITUIR bairro por distancia (remover bairro do fluxo do cliente); (b) pedido BLOQUEADO se alem da ultima faixa; (c) cidade pequena, CEP unico — entao o cliente marca a casa num PIN no mapa (nao geocodificar texto, que falha em cidade pequena); (d) pedir tambem o endereco em texto pro motoboy; (e) gerar link do Google Maps pro motoboy.
+
+Stack: Leaflet/OSM (pin) + OpenRouteService (rota grátis, ~2k/dia). Componente reutilizavel `src/components/feature/MapaPin.tsx` (ja criado).
+
+Modelo de dados: tudo em `system_settings.delivery_config` (JSON): `store_location {lat,lng}` + `delivery_fee_tiers: [{ate_km, taxa, tempo_max_min}]` (alem de pedido_minimo_*, retirada_ativo, formas_pagamento). Salvar via supabase direto (RLS: policy `public` exige `tenant_id=auth_tenant_id() AND auth_role()='admin'`). ATENCAO: a acao `save_delivery_settings` da Edge Function `delivery-write` (v52) e um STUB (nao salva) — por isso o save da config foi feito direto via supabase.
+
+FASES:
+- [x] Fase 1 (FEITA): Config em `config-delivery/page.tsx` — pin da loja (MapaPin) + editor de faixas + save direto via supabase. Build OK.
+- [x] Fase 2 (FEITA 2026-06-15): Tela do cliente. Arquivos: `useDeliveryData.ts` (le `store_location`+`delivery_fee_tiers` do `delivery_config`; estado do pin `addressLat/Lng` + `setAddressPin` persistido em `localStorage` chave `delivery_pin`; helpers `haversineKm`/`quoteFromTiers`; `ROAD_FACTOR=1.3`; derivados `distanceMode`/`deliveryQuote`/`foraDeArea`/`effectiveDeliveryFee` — `deliveryFee` retornado JA e o efetivo; envia `address_lat/lng`+`distance_km` no payload de `create_delivery_order`); novo `components/EnderecoPinDelivery.tsx` (MapaPin + "usar minha localizacao" via geolocation + endereco texto p/ motoboy + estimativa taxa/tempo ao vivo / aviso fora de area); `page.tsx` (step `endereco` usa EnderecoPinDelivery quando `distanceMode`, senao o EnderecoDelivery de bairro; chip do header e resumo do carrinho mostram km/tempo; botao Confirmar bloqueado se `foraDeArea`). `distanceMode` so liga se a loja configurou `store_location`+`tiers` (senao cai no fluxo de bairro legado — degradacao segura). Build OK, tsc 350 (sem aumento).
+  - Frontend NAO commitado/deployado ainda (usuario faz push GitHub->Vercel). O backend (Fase 3) JA esta no ar e e retrocompativel, entao a ordem de deploy e segura (backend primeiro, frontend depois).
+  - Geocodificacao reversa (2026-06-15): ao soltar o pino, `EnderecoPinDelivery` chama Nominatim/OSM (`nominatim.openstreetmap.org/reverse`, gratis, sem chave, CORS ok) e preenche rua/numero/bairro pro cliente so confirmar. `geoReqRef` evita race entre pinos. Numero raramente vem do OSM em cidade pequena — cliente completa. So frontend (precisa push).
+- [x] Fase 3 (FEITA + DEPLOYADA 2026-06-15, delivery-write **v54**): `create_delivery_order` agora calcula a taxa por DISTANCIA quando ha `store_location`+`tiers` na config E o pedido traz pin (`address_lat/lng`): rota real loja->pin via OpenRouteService (`ORS_API_KEY` secret, endpoint `directions/driving-car`, ordem [lng,lat], timeout 6s), **fallback haversine×1.3** se ORS falhar/sem chave; mapeia km->faixa (`quoteFromTiers`), BLOQUEIA com `{error:"fora_area"}` se alem da ultima faixa; grava `delivery_lat/lng/distance_km` no pedido (UPDATE pos-insert, pois `fn_create_order_bypass` tem lista fixa de colunas) e imprime a distancia no comprovante. **Retrocompativel:** sem pin (frontend de bairro antigo) cai no ramo legado por `neighborhood_id`. Migration `add_delivery_pin_columns_to_orders` aplicada (colunas nullable em `orders`). Deploy incluiu tambem a notificacao WhatsApp que ja estava no arquivo local (inerte sem o secret `WHATSAPP_INTERNAL_TOKEN`). Pegadinha: o `get_edge_function` por MCP retornava v52 (sem o WhatsApp), mas o arquivo local `supabase/functions/delivery-write/index.ts` estava a frente — sempre conferir drift local vs deploy. ORS ainda nao verificado com pedido real (fallback garante que nada quebra); conferir `orders.delivery_distance_km` no primeiro pedido real para confirmar que a rota ORS esta ativa.
+- [x] Fase 4 (FEITA 2026-06-15, precisa push frontend): botao "Rota no Google Maps" no `gestor-pedidos/components/PedidoDetailModal.tsx`. Busca `delivery_lat/lng/address/distance_km` do pedido sob demanda via supabase (RLS `orders_select_by_user_tenant` = `tenant_id IN (user_tenants...)`, cobre multi-loja). Com pin → `maps/dir/?api=1&destination=lat,lng`; sem pin → fallback `maps/search/?api=1&query=<endereco>`. Bloco mostra endereco + distancia + botao rota + WhatsApp do cliente. (NAO mexi na RPC `fn_get_kds_orders` — 8KB, risco; por isso o fetch sob demanda no modal.)
+
+### 2026-06-16 — Delivery por distancia: SLA por horario no Gestor + limpeza dos cards
+
+Pedido do usuario (cards de delivery do LINK no Gestor de Pedidos):
+1. Nao concatenar o endereco no nome do cliente (o endereco ja tem bloco proprio no card).
+2. Remover o botao "Rota" (rota e do motoboy, que nao acessa o Gestor; o link da rota ja vai pro motoboy pelo botao WhatsApp Motoboy).
+3/4. SLA por DISTANCIA com dois horarios-limite por card: **Preparo ate HH:MM** e **Entrega ate HH:MM**.
+   - `tempo total` = `tier.tempo_max_min` da faixa de distancia do pedido (ja existia na config).
+   - `tempo de rota` (moto) = duracao da rota da API ORS (antes so a distancia era usada).
+   - `deslocamento da entrega` = rota + 5 min; `preparo` = total - deslocamento.
+   - Ex.: rota 8 min -> entrega 13 min; total 40 -> preparo 27. Pedido as 20:00 -> Preparo 20:27 / Entrega 20:40.
+
+Implementacao:
+- **Migration `add_delivery_sla_columns_to_orders`** (aplicada): colunas `orders.delivery_route_min` (duracao da rota ORS, min) e `orders.delivery_sla_min` (tempo total da faixa, min). Nullable, retrocompativel.
+- **delivery-write v58** (deployada): `orsRoute()` (antes `orsRouteKm`) agora retorna `{km, durationMin}` lendo `summary.duration` do ORS; fallback de tempo = `km / 25 km/h` (const `MOTO_KMH`). No `create_delivery_order`, grava `delivery_route_min` e `delivery_sla_min` no UPDATE pos-insert (junto de lat/lng/distance_km) e devolve `route_min`/`sla_min` na resposta. **Reconciliacao de drift:** o deploy v57 usava separador ASCII `" - "` no `destination_name`/tickets enquanto o arquivo local usava em-dash `" — "`; alinhei o arquivo local para `" - "` antes do deploy. (Deploy v58 foi a versao minificada — o arquivo local pretty e funcionalmente identico.)
+- **Frontend (precisa push):**
+  - `gestor-pedidos/components/GestorKanbanView.tsx`: helper `nomeClienteDelivery()` remove o sufixo de endereco do `destination_name` ("Nome - Endereco"); item 1. Botao "Rota" e funcao `abrirRotaMaps` removidos; item 2 (mantido `resolverMapsUrl`, usado pelo WhatsApp Motoboy). Badges de SLA: busca em LOTE (uma query, `.in('id', ...)`) os campos `delivery_route_min`/`delivery_sla_min` dos deliveries do link (sem mexer na RPC `fn_get_kds_orders`), guarda em `slaMap` e passa `slaInfo` pro card; so para `deliveryPlatform === 'propria'`. Badge vermelho quando passou do horario.
+  - `gestor-pedidos/components/PedidoDetailModal.tsx`: botao "Rota no Google Maps" removido (mesma logica do item 2); mantem endereco, distancia e WhatsApp do cliente. `mapsUrl` removido.
+
+Pegadinha/decisao: NAO toquei na RPC `fn_get_kds_orders` (8KB, risco). Os tempos chegam ao card por um fetch em lote direto em `orders` (RLS `orders_select_by_user_tenant` cobre multi-loja), no padrao que ja existia no card (resolverMapsUrl). Pedidos antigos (sem as colunas novas) simplesmente nao mostram os badges. tsc 348 (sem aumento), build OK.
+
+### 2026-06-16 — Delivery (cliente): previsão de entrega + WhatsApp da loja
+
+Pedido do usuario (tela do cliente, app de delivery do link):
+1. Em "Acompanhar pedido", mostrar a **hora prevista máxima de entrega**.
+2. Botao "Falar com a loja" via WhatsApp; numero configurado em config-delivery.
+
+Implementacao:
+- **delivery-write v59** (deployada): acao `get_order_status` agora seleciona/retorna `delivery_sla_min`. (O numero do WhatsApp ja vem no `delivery_config` via `get_delivery_config`.)
+- **config-delivery/page.tsx** (precisa push): novo campo "WhatsApp da loja" -> salva `delivery_config.whatsapp_loja` (so digitos). Bloco novo na UI.
+- **delivery/useDeliveryData.ts** (precisa push): le `dc.whatsapp_loja` -> estado `storeWhatsapp`, exposto no retorno do hook (plumbing: interface dos setters, loadConfig, useState, reset, objeto de setters, return).
+- **delivery/page.tsx** (precisa push): botao "Falar com a loja" no header do cardapio (gradiente laranja), link `wa.me/55<digits>` (prefixa 55 se faltar). So aparece se houver numero valido (>=10 digitos).
+- **delivery/components/AcompanharPedido.tsx** (precisa push): tipo `OrderStatusData` + `delivery_sla_min`; card "Previsao de entrega ate HH:MM" = `created_at + delivery_sla_min min` (so quando ha SLA e nao entregue/cancelado).
+
+Convencao do WhatsApp: numero guardado em digitos (sem 55), igual ao `handleWhatsAppCliente` do gestor; link usa `wa.me/55<digits>` (helper prefixa 55 se nao vier com codigo). tsc 348 (sem aumento), build OK.
+
+### 2026-06-16 — Varredura da aba Relatórios (auditoria)
+
+Fontes de dados por aba: Visão Geral/Produtos/Origem → RPC `fn_get_sales_report` (Produtos › **Por Hora** → RPC `fn_get_items_by_hour`); Calendário → `fn_get_sales_report` (modal `DiaDetalheModal`); Caixa → RPC `fn_get_cash_sessions_v2` (+ fallback direto); Cancelamentos → `fn_get_cancelamentos_report`; Clientes → `fn_get_clientes_report`/`fn_get_customers_list`; CMV → `fn_get_cmv_report`; **SLA da Cozinha → lê `order_items`/`users` DIRETO** (sem RPC); **Delivery → lê `orders` direto**; Clientes/Retenção → `orders` direto.
+
+**BUG corrigido (multi-loja, DB imediato — sem push):** `order_items` e `payments` só tinham SELECT por `auth_tenant_id()`/`get_user_tenant_id()` (= última membership), ao contrário de `orders` (que tem `orders_select_by_user_tenant` por `user_tenants`). Logo, para admin de várias lojas na loja NÃO-última, a aba **SLA da Cozinha** (lê order_items direto) e o **fallback do Caixa** (lê payments) vinham VAZIOS. Fix: migration `rls_user_tenants_select_order_items_payments` adicionou policies `*_select_by_user_tenant` (tenant_id IN user_tenants do auth.uid()) iguais à de orders. (Delivery e Clientes/Retenção leem `orders`, que já tinha a policy → OK.)
+
+**Verificado OK:** `fn_get_cash_sessions_v2.por_forma_pagamento` usa `CASE WHEN payment_group_id IS NOT NULL THEN o.total_amount ELSE p.amount` e BATE com a receita da sessão (testado: sessão 40 pedidos, receita 1485 = por_forma 1485). by_destination/top_items usam `o.total_amount`/`item_price*qty` (corretos). RPCs de Cancelamentos/Clientes/CMV são SECURITY DEFINER com `p_tenant_id` (sem o problema multi-loja).
+
+**Follow-ups FEITOS (2026-06-16, DB imediato):** (a) `users` ganhou policy `users_select_by_user_tenant` (id IN usuários que compartilham loja comigo via user_tenants) — corrige nomes de operador no SLA p/ admin multi-loja (migration `rls_user_tenants_select_users`). (b) `fn_get_cash_sessions_v2.por_forma_pagamento` migrado p/ atribuição PROPORCIONAL (`o.total_amount * p.amount / SUM(p.amount do pedido)`, JOIN ops) igual ao Calendário — robusto contra split+grupo (migration `fn_get_cash_sessions_v2_por_forma_proporcional`); verificado: 3 sessões com faturamento = soma das formas (1317/810/143). **Resta menor:** fallback do Caixa lê `order_discounts`/`cash_movements` direto (multi-loja pode ficar incompleto SÓ se a RPC principal falhar — raro; não alterado).
+
+### 2026-06-16 — BUG: "permission denied for table menu_highlights" (Destaques do cardápio)
+
+Sintoma: na aba Cardápio → Destaques, load e adição falhavam; console: `[Cardapio] Destaques load failed: permission denied for table menu_highlights` (401/403). Causa: a tabela `menu_highlights` tinha GRANT só p/ `postgres` — faltava `authenticated` (load direto via `supabase.from('menu_highlights')` no `CardapioContext`) e `service_role` (Edge Functions menu-write `upsert_highlight` e delivery-write/mesa-write que leem highlights). RLS já existia e é correta (`tenant_id IN (user_tenants do auth.uid())`, cobre multi-loja). Fix: migration `grant_menu_highlights_roles` (`GRANT SELECT,INSERT,UPDATE,DELETE TO authenticated, service_role`). **DB grant — efeito imediato, sem deploy/push.** Bônus: como o service_role também estava sem grant, os Destaques do cardápio do cliente (Parte 1 acima) também voltariam vazios via `get_delivery_config`/`get_cardapio` — corrigido junto. **Regra reforçada:** tabela nova precisa de GRANT p/ `authenticated` (se o frontend lê/escreve direto) E `service_role` (se Edge Function acessa) — não só service_role (ver pegadinha 2026-06-15).
+
+### 2026-06-16 — BUG: formas de pagamento do Calendário (modal do dia) não batiam com o faturamento
+
+Sintoma: no Relatórios → Calendário, ao clicar num dia, a soma das "Formas de Pagamento" (ex.: R$ 2.005,02) era MUITO maior que o faturamento do dia (R$ 1.317,00). Fonte: `DiaDetalheModal` → RPC `fn_get_sales_report` campo `by_payment`.
+
+Causa raiz (dupla): o `by_payment` (a) somava `p.amount` por linha de pagamento SEM agrupar `payment_group_id` (pagamento conjunto: pedido principal grava o total do GRUPO em `p.amount` e os vinculados também gravam → duplica) e ainda contava o total do grupo no principal; e (b) filtrava por `p.created_at`, conjunto diferente do faturamento (que usa `o.created_at`). Pegadinha extra: nesses dados há pagamento conjunto cruzando vários pedidos E split (vários métodos no mesmo pedido), então nem `p.amount` puro nem `o.total_amount` puro fecham — o `CASE WHEN payment_group_id IS NOT NULL THEN o.total_amount` (usado no relatório de Caixa `fn_get_cash_sessions_v2`) também SUPERCONTA quando o pedido tem split (conta `o.total_amount` 1x por linha).
+
+Correção (migration `fn_get_sales_report_by_payment_proporcional`, ambos os overloads — LIVE, não precisa push): `by_payment` agora ATRIBUI o `o.total_amount` de cada pedido às suas formas PROPORCIONALMENTE ao `p.amount` de cada pagamento (`o.total_amount * p.amount / SUM(p.amount do pedido)`), sobre o MESMO conjunto de pedidos do faturamento (filtro por `o.created_at`/sessão). Garante que a soma das formas SEMPRE = receita do período. Verificado: 13/06 → receita 1317,00 e soma das formas 1317,00 (Crédito 629 / Débito 374 / Dinheiro 284 / PIX 30). Troco fica naturalmente fora (usa a venda, não o valor recebido em dinheiro). **Pendência:** o relatório de Caixa (`fn_get_cash_sessions_v2.por_forma_pagamento`) ainda usa o `CASE WHEN payment_group_id` e pode superestimar em cenários de split+grupo — não alterado (fora do escopo pedido); avaliar aplicar a mesma atribuição proporcional se o usuário relatar divergência lá.
+
+### 2026-06-16 — Cardápio do cliente (destaques/promoção/busca), nascimento/gênero, vouchers no delivery
+
+Escopo confirmado: itens 1-2 só nas TELAS DO CLIENTE (delivery, mesa-qr/QR, autoatendimento/totem) — NÃO no caixa/garçom.
+
+**Três fontes de dados de cardápio distintas** (importante): `CardapioContext` (totem/kiosk via `itensPublicos`; e caixa/garçom via `itens`), `useMesaQRData` (mesa-qr) e `useDeliveryData` (link /delivery). O link /delivery REUSA o componente `CardapioMesaQR` para renderizar o cardápio.
+
+1. **Promoção válida HOJE (bug corrigido):** os cardápios marcavam promo só por `is_active`, ignorando dia/data. Novo `src/lib/promoUtils.ts`: `promoAtivaHoje(PromocaoItem[])` (formato admin, usado em `CardapioContext.itensPublicos`) e `rawPromoAtivaHoje(RawPromotion[])` (formato cru `is_active`+`days_of_week`+`is_recurring`+`specific_date`, usado em mesa-qr/delivery). Regras: pontual(`specific_date` & !recurring)=só na data; senão semanal por `days_of_week` (vazio=todo dia); escolhe a de menor preço.
+2. **Categorias virtuais Destaques + Promoção (1º lugar):**
+   - kiosk (`CardapioKiosk.tsx`): `itensPublicos` agora expõe `destaque`/`destaqueOrdem` (de `menu_highlights` ativos) e `temPromocao` (promo hoje). Categorias `⭐ Destaques` e `🔥 Promoção` injetadas no início da sidebar; filtro por flag.
+   - mesa-qr e /delivery: `useMesaQRData`/`useDeliveryData` já criavam `__destaques__`; agora também criam `__promocao__` (order_index -0.5, depois de destaques -1) com itens-clone que carregam `promotions`. `CardapioMesaQR` usa `rawPromoAtivaHoje` no preço (corrige bug do dia).
+3. **Busca no cardápio (cliente):** `CardapioMesaQR` (cobre mesa-qr + /delivery) e `CardapioKiosk` ganharam campo de busca; resultado é lista plana por nome/descrição, ignorando categorias virtuais (`id` começa com `__`) p/ não duplicar.
+4. **Nascimento + gênero no cadastro do cliente (delivery):** migration `add_birthdate_gender_to_customers` (`customers.birth_date date`, `customers.gender text` com CHECK masculino|feminino|outro). `fn_get_customers_list` retorna `dataNascimento`/`genero`. delivery-write: `save_customer` e `create_delivery_order` gravam em `customers`; `lookup_customer` retorna os campos p/ pré-preencher. Frontend: `EnderecoPinDelivery` + `EnderecoDelivery` (campos), `useDeliveryData` (estado/plumbing/prefill), `useClientes`+`ClientePerfil` (exibe na aba Clientes).
+5. **Vouchers no delivery + revisão (light):** delivery-write ganhou `validate_voucher` (público, service role, por tenant_id+code; espelha voucher-write: expiry/status/applicable; bloqueia free_item) e, no `create_delivery_order`, aceita `voucher_code`, calcula desconto sobre o subtotal server-side, ajusta total + `discount_amount`, e faz o RESGATE (baixa saldo + `voucher_transactions`) só após criar o pedido (`processed_by: null`). Frontend: input de cupom no rodapé do carrinho (`delivery/page.tsx`) + estado/handlers em `useDeliveryData` (`handleAplicarVoucher`/`handleRemoverVoucher`). **Bug corrigido na aba Vouchers:** `vouchers/page.tsx` lia `vouchers` direto via supabase (RLS `auth_tenant_id()` = última membership → admin multi-loja via lista errada) → agora usa `voucher-write` `list_vouchers` com `active_tenant_id` (mesmo padrão do config-delivery). Emitir/cancelar já passavam `active_tenant_id`.
+
+**delivery-write v60** deployada (inclui Fases 5/6 anteriores + tudo acima); validate_voucher smoke-test OK. tsc 348 (sem aumento), build OK. **TODO o frontend precisa push** (GitHub→Vercel). Migrations + RPC + Edge já no ar.
+
+### 2026-06-15 — PEGADINHA: tabela nova sem GRANT pro service_role (Edge Function da 42501/500)
+
+`delivery_customer_addresses`, `delivery_customers` e `delivery_neighborhoods` NAO tinham GRANT pro papel `service_role` (so as tabelas "antigas" tinham, via default privileges). A Edge Function `delivery-write` usa service_role e escreve/le DIRETO nessas tabelas (acoes de endereco que implementei na v56, e `create_delivery_order` que faz `select` em `delivery_neighborhoods`) → `ERROR 42501: permission denied for table ...` → resposta 500 (que aparecia como `[object Object]` no front porque o erro do PostgREST nao e `Error` e o catch fazia `String(err)`). **O bypass de RLS do service_role NAO substitui o GRANT de tabela.** Fix: `GRANT SELECT, INSERT, UPDATE, DELETE ON <tabela> TO service_role` (migrations `grant_service_role_delivery_*`). **Regra:** ao criar tabela nova que uma Edge Function (service_role) vai escrever DIRETO (sem passar por RPC SECURITY DEFINER), conferir/conceder os grants pro service_role. Catch da `delivery-write` melhorado p/ expor a msg real do Postgres (local, entra no proximo deploy).
+
+### 2026-06-15 — BUG RLS multi-loja: auth_tenant_id() = ultima membership (config-delivery nao salvava)
+
+Sintoma: na loja **EP PAR MALL** o pin/config do delivery nao salvava (mostrava "sucesso" falso); na **VILA LESTE** salvava. Causa raiz: `config-delivery/page.tsx` salvava com `supabase.from('system_settings').update(...).eq('tenant_id', tenantId)` DIRETO, sujeito a RLS. As funcoes `auth_tenant_id()`/`auth_role()`/`get_user_tenant_id()` fazem `SELECT ... FROM user_tenants WHERE user_id=auth.uid() ORDER BY created_at DESC LIMIT 1` — ou seja, para dono de **varias lojas** retornam a membership **criada por ultimo**, IGNORANDO a loja ativa no app (que e so client-side: `localStorage 'erpos_selected_tenant_id'`, sem claim no JWT). O admin da EP PAR MALL (`ecefdcca…`) tem membership mais recente em "Testes PDV", entao `auth_tenant_id()` != EP PAR MALL → UPDATE casa 0 linhas (RLS), sem erro. Vila Leste salvava pq o admin dela so tem 1 loja. (A cidade da EP PAR MALL ficou salva de quando a membership dela ainda era a mais recente.)
+
+**Implicacao geral:** QUALQUER escrita direta via supabase-js para tabela com RLS por `auth_tenant_id()` e nao-confiavel para admins multi-loja. Por isso o resto do app passa por Edge Functions (service role) / RPCs com `p_tenant_id` explicito. Ao criar telas novas que gravam dados de tenant, NAO usar `.update().eq('tenant_id', ...)` direto — rotear por Edge Function que valida o usuario.
+
+**Correcao (FEITA, delivery-write v55):** acao `save_delivery_settings` deixou de ser stub: le o JWT do header Authorization, `admin.auth.getUser(token)`, confere em `user_tenants` que o usuario e `admin` DAQUELE `tenant_id`, e salva `system_settings` com service role. `config-delivery/page.tsx` agora chama essa acao (com `Bearer <access_token>`) em vez do write direto. **Pendente:** push do frontend (config-delivery) pro Vercel — so depois disso o save da config volta a funcionar pela UI nas lojas multi-tenant.
+
+### 2026-06-25 — Cardápio: saves mais rápidos + canal em lote por categoria
+
+Três mudanças em torno de `CardapioContext`/`ItensTab`:
+
+1. **Tabela do cardápio cortando a coluna "Ações"** em monitor estreito/escala diferente do Windows: a `<table className="w-full">` (desktop, `ItensTab.tsx`) não tinha `min-w`, então espremia colunas em vez de rolar. Fix: `min-w-[880px]` no `<table>` → o `overflow-x-auto` do wrapper passa a rolar horizontalmente e todas as colunas ficam acessíveis.
+
+2. **"Carrega bastante" a cada microalteração:** toda mutação do cardápio fazia `await recarregar()`, que setava `setLoading(true)` → a página inteira (`cardapio/page.tsx`) virava spinner e remontava. Fix: `recarregar(opts?: { silent?: boolean })` — todas as mutações chamam `recarregar({ silent: true })` (sem tocar em `loading`; o `saving` já desabilita botões). O load inicial (`useEffect`) continua "loud". **Pegadinha do replace_all:** `await recarregar();` com 8 espaços de indentação contém o padrão de 6 espaços como substring → foi pego; só o `if (result?.success) await recarregar();` (criarCategoria) precisou de edição manual. Além disso, os toggles de status/canal em `ItensTab` ganharam **atualização otimista** (`setItens` na hora, antes do await) pra feedback instantâneo. **Custo remanescente:** o save ainda re-baixa o cardápio inteiro em segundo plano (`fn_get_full_menu` + destaques [+ ingredientes]); só ficou invisível. Próximo passo (não feito): `menu-write` retornar o item atualizado e o front aplicar só ele, sem reload.
+
+3. **Canal (casa/ambos/delivery) por categoria inteira:** nova ação `set_category_channel` na **menu-write v50** (deploy via MCP; v49==repo, acréscimo aditivo, `verify_jwt:false` preservado). Faz UPDATE só em `channels` + `delivery_config.ativo` de todos os itens da categoria (um request; NÃO toca em grupos de opções/promoções/ficha). Mapeamento espelha `salvarItem`: `delivery` → channels só delivery + ativo=true; `ambos` → todos channels + ativo=true; `casa` → todos channels + ativo=false. Front: `definirCanalCategoria(categoriaId, val)` no context (otimista + silent reload) e barra de ação em lote em `ItensTab` que aparece quando há categoria filtrada. **Pendente:** push do frontend pro Vercel (a Edge já está no ar).
+
+
+### 2026-07-11 — BUG: config de impressoras/Configurações "vazando" entre lojas (troca de loja sem reset de estado)
+
+Sintoma: mesmo IP de impressora aparecendo (e ficando SALVO) em várias lojas; mudanças da aba Configurações (ex.: módulos do `pdv_config`) "aparecendo" nas outras lojas. Evidência no banco: EP PAR MALL, Restaurante Demo e VILA LESTE atualizadas com minutos de diferença, todas com `printers_config` = IP 192.168.1.213 (e em 06-15 QA Teste + El Patron Paranaguá com 192.168.0.8/.20).
+
+Causa raiz (combinação de 3 fatores):
+1. **RLS de SELECT em `system_settings`** usava só `auth_tenant_id()`/`get_user_tenant_id()` (= última membership). Admin multi-loja lendo `.eq('tenant_id', lojaAtiva)` recebia **0 linhas** em toda loja que não fosse a última → `carregar()` do `SystemSettingsContext` não sobrescrevia o estado.
+2. **`SystemSettingsContext` não resetava o estado ao trocar de loja** (`if (data) setSettings(...)` — sem `else`): as settings da loja anterior ficavam em memória e eram exibidas como se fossem da loja atual (é o "mudei módulos na Vila Leste e apareceu nas outras").
+3. **Auto-save do `ImpressorasContext`** (debounce 2s) sincronizava do `settings.printers_config` stale e gravava a config da loja anterior no tenant novo via `config-write` (service role, bypassa RLS) → cópia PERMANENTE entre lojas.
+
+Correções:
+- Migration `system_settings_select_any_membership`: função `public.auth_is_member_of(uuid)` (SECURITY DEFINER, membership real em `user_tenants`) + policy permissiva de SELECT em `system_settings`. Escrita continua só via Edge Function.
+- `SystemSettingsContext`: `activeTenantRef` — reseta para `DEFAULT_SETTINGS` na troca de loja, descarta resposta fora de ordem, e `parseRow` agora popula `settings.tenant_id` (quando não há linha no banco, seta `{...DEFAULT_SETTINGS, tenant_id}` para sinalizar "carga concluída").
+- `ImpressorasContext`: sync e auto-save só rodam quando `settings.tenant_id === tenantId` (guard contra estado de outra loja).
+
+**Regra geral:** contexts que carregam dados por tenant DEVEM (a) resetar estado na troca de loja, (b) marcar de qual tenant o dado carregado é e (c) qualquer auto-save deve conferir isso antes de gravar. E SELECTs diretos via supabase-js em tabelas com RLS `auth_tenant_id()` falham para admin multi-loja (mesma família do bug de 06-15, agora no caminho de LEITURA).
+
+**Pendente:** push do front (Vercel) e re-conferir manualmente a config de impressoras/módulos em CADA loja (os dados copiados continuam no banco — o fix impede novos vazamentos, não desfaz os antigos). **Nota de segurança (follow-up):** `config-write` `upsert_system_settings` aceita `tenant_id` do body sem validar membership do JWT — qualquer usuário autenticado poderia escrever settings de outro tenant; endurecer como foi feito no `save_delivery_settings` (delivery-write v55).
+
+### 2026-07-11 — BUG: "á" nas impressões térmicas (ex.: "R$á8,00") — NBSP do toLocaleString
+
+Sintoma: comprovantes saindo com "R$á8,00" em vez de "R$ 8,00" (o "á" aparece entre o "R$" e o valor). Causa: `v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })` separa o símbolo do valor com um **espaço não-quebrável** (NBSP, U+00A0), não um espaço normal. O agente local (`agente-local/index.js`, `utf8ToCp860`) converte o texto para a code page 860 da térmica; o NBSP não estava no mapa de conversão e passava direto → vira o **byte 0xA0**, cujo glifo na CP860 é justamente "á". (Mesma origem afeta qualquer impressão que passe currency formatado pelo `toLocaleString` para a térmica.)
+
+Correções (defesa em profundidade):
+- **Agente** (`utf8ToCp860`): `str = str.replace(/ /g, ' ')` no início da função → normaliza NBSP para espaço ANTES do mapa CP860. Rede de segurança que pega QUALQUER texto impresso via agente. **Precisa atualizar o agente nos PCs** (copiar `index.js` + restart) para valer.
+- **Fontes no front** (deploy via Vercel, valem sem tocar nos PCs): `fmtPreco2` (`CozinhaTicketPrint.ts` — comprovante balcão da foto), `fmtPreco` (`ComprovantePrint.tsx`), `fmt` (`ImprimirPedidoModal.tsx`) ganharam `.replace(/ /g, ' ')`. O `delivery-write` (`fmtPrice`) e o `printPedido.ts` do gestor já usavam `"R$ " + toFixed` (espaço normal), então não tinham o bug.
+
+**Pegadinha de edição:** NBSP é invisível no source; nunca colar o caractere literal — usar sempre o escape ` ` em regex/replace (senão vira no-op silencioso). Teste unitário confirmou: entrada "R$<NBSP>8,00 Guaraná" → byte após "R$" = 0x20 (espaço) e o "á" de Guaraná segue mapeado p/ 0xA0 (correto).
+
+### 2026-08-11 — FEATURE: observação por insumo na Ficha de Produção
+
+Pedido: poder anotar uma observação livre em cada insumo ao adicioná-lo numa ficha de produção (ex: "usar sempre fresco", "cortar em cubos pequenos").
+
+Implementação: coluna `notes text` nova em `production_recipe_items` (não existia nenhum campo de texto livre por item). `fn_production_crud` (`list_recipes`, `get_recipe`, `create_recipe`, `update_recipe`) passou a ler/gravar `notes` nos 4 pontos que lidam com items; `delete_recipe`, `list_batches`, `create_batch`, `delete_batch` ficaram byte-a-byte iguais. Front: `ProductionRecipeItem.notes?`, `NovaFichaProducao.items[].notes?`, `ProducaoContext` (`dbItemToFrontend`, `addRecipe`, `updateRecipe`) threadeando o campo, e em `FichaProducaoModal.tsx` um botão de nota (ícone `ri-sticky-note-line`, fica âmbar quando há texto) por item que abre um textarea inline — aberto por padrão quando o item já tem observação salva (mesmo padrão de "abrir se já tem conteúdo" usado em outros lugares do app, ex. `expandedPriceId` do InsumosTab).
+
+Verificação: round-trip via `DO $$ ... RAISE EXCEPTION` (rollback automático) confirmando que `notes` persiste em create → update → get_recipe; `tsc --noEmit` manteve baseline de 324 erros pré-existentes; build sem erros novos no preview local.
+
+**Follow-up (mesmo dia):** a observação não aparecia na hora de registrar a produção — `RegistroProducaoModal.tsx` (linha ~769) lista `recipe.items` e mostrava só `it.ingredientName`, nunca lia `it.notes` (o dado já vinha certo da RPC, só faltava exibir). Adicionado um parágrafo condicional com ícone `ri-sticky-note-line` logo abaixo da linha de custo/estoque de cada insumo.
+
+### 2026-08-13 — FEATURE: reordenar insumos na lista da Ficha de Produção
+
+Pedido: poder mudar a posição de um insumo na lista de insumos já adicionados, na criação/edição de ficha de produção.
+
+A tabela `production_recipe_items` não tinha nenhuma coluna de ordem — sem isso, reordenar so na tela (`FichaProducaoModal.tsx`) seria cosmético: ao salvar e recarregar, a ordem visual se perderia, porque `list_recipes`/`get_recipe` não tinham `ORDER BY` explícito nos items (dependiam da ordem física das linhas, não garantida). Igual ao padrão já usado em `production_recipe_steps.step_order`.
+
+Implementação: coluna `item_order int NOT NULL DEFAULT 0` (backfill por `created_at` para fichas já cadastradas); `create_recipe`/`update_recipe` gravam `item_order` sequencial na ordem em que o array `items` chega no payload (mesmo loop `v_item_idx` que os `steps` já usavam com `v_step_idx`); `list_recipes`/`get_recipe` passaram a `ORDER BY ri.item_order` no `jsonb_agg` dos items. Front: `moveItem(tempId, dir)` em `FichaProducaoModal.tsx` (idêntico ao `moveStep` que já existia para os passos de preparo) + duas setinhas (`ri-arrow-up-s-line`/`ri-arrow-down-s-line`) por item — como `handleSave` já envia `items` na ordem do array local, a nova ordem persiste automaticamente sem mudança nenhuma no `ProducaoContext`.
+
+Verificação: round-trip via `DO $$ ... RAISE EXCEPTION` — criou ficha de teste com 2 insumos (A, B), confirmou ordem inicial, chamou `update_recipe` com a ordem invertida (B, A) e confirmou que `get_recipe` devolveu na nova ordem; rollback automático não deixou nada no banco. `tsc --noEmit` manteve baseline de 324; build sem erros novos.
+
+### 2026-08-12 — BUG: nome de insumo não atualiza em fichas de produção já cadastradas
+
+Sintoma: editar o nome de um insumo no Estoque não refletia nas fichas de produção que já usam esse insumo. Causa: `production_recipe_items.ingredient_name` é uma cópia gravada no momento em que o item é adicionado (`create_recipe`/`update_recipe` em `fn_production_crud`), e os pontos de LEITURA (`list_recipes`, `get_recipe`) devolviam essa cópia congelada em vez do nome atual.
+
+**Escopo verificado (não é bug em todo lugar que "puxa o nome do insumo"):**
+- **Ficha de Produção** (`production_recipe_items`) — era o bug real. Fix: `list_recipes`/`get_recipe` passaram a `LEFT JOIN ingredients i ON i.id = ri.ingredient_id` e retornar `COALESCE(i.name, ri.ingredient_name)` — nome ao vivo, com fallback pro nome congelado só se o insumo tiver sido apagado. Front não precisou de nenhuma mudança (já consome o campo que a RPC devolve).
+- **Ficha Técnica do cardápio** (`item_ingredients`, RPC `fn_get_item_ingredients`) — **já** fazia `JOIN ingredients i ON i.id = ii.ingredient_id` e devolvia `i.name`; não tinha o bug.
+- **`production_batch_items`** (histórico de produções já realizadas) — mantido intocado de propósito: é um registro histórico (como um item de pedido), faz sentido congelar o nome de quando a produção ocorreu, igual a preço em nota fiscal.
+
+Verificação: round-trip com `DO $$ ... RAISE EXCEPTION` — criou ficha de teste, renomeou o insumo real "Tomate" → "NOME_RENOMEADO_TESTE" DENTRO da transação, confirmou que `get_recipe` e `list_recipes` já devolviam o nome novo, e o rollback do `RAISE EXCEPTION` desfez tanto a ficha de teste quanto o rename — zero efeito permanente no banco.
+
+### 2026-08-13 — FEATURE: Módulo de Tarefas passou a ser por usuário, não por loja
+
+Antes: `task_lists`/`tasks` eram visíveis pra loja toda (RLS por `tenant_id` via membership). Mudança: agora cada lista é pessoal (`task_lists.created_by`); uma tarefa só é visível pra quem criou a lista OU pra quem está marcado como `assignee_id` — é assim que ela "compartilha" com outra pessoa sem expor a lista inteira.
+
+**Banco** (`20260813000000_tasks_scope_per_user.sql`, aplicado via `mcp__supabase__apply_migration`): RLS de `task_lists`/`tasks`/`task_statuses` + tabelas ligadas a `task_id` (`task_watchers`, `task_tag_links`, `task_field_values`, `task_checklist_items`, `task_comments`, `task_activity`, `task_attachments`) trocou de "membro do tenant" pra "dono OU responsável". `task_tags`/`task_custom_fields`/`task_checklist_templates` continuam tenant-wide de propósito (são taxonomia compartilhada, não dado de tarefa). RPCs `fn_get_task_lists` (só listas próprias), `fn_get_tasks`/`fn_get_task_detail`/`fn_get_task_attachments` (dono ou responsável) — `fn_get_tasks` passou a devolver `list_name`/`list_color`/`created_by` embutidos, porque uma tarefa compartilhada vem de uma lista que `fn_get_task_lists` não retorna mais pra quem não é dono.
+
+**Edge Function `task-write`** (v10): `assertOwned` (só tenant) virou dois helpers — `assertListOwner` (listas/status/campos por lista/views: só quem criou) e `assertTaskAccess` (tarefas/checklist/comentários/anexos: dono OU responsável). `delete_task` continua exclusivo do dono (responsável não arquiva tarefa dos outros). Pegadinha corrigida: a próxima ocorrência de uma tarefa recorrente herda `created_by` da tarefa original (dono da lista), não de quem marcou como concluída — senão o dono perde a visão da própria recorrência quando quem completa é o responsável. Novo: `update_task` aceita `mark_done: true` (resolve o status "feito" da lista no servidor) — necessário porque quem só é responsável não enxerga os status da lista de outra pessoa pra escolher manualmente.
+
+**Front**: nova view "Tarefas compartilhadas" (`page.tsx`, ícone `Users`) — reaproveita `MinhasTarefas.tsx` com prop `apenasCompartilhadas` (filtra `assignee_id === meuId && created_by !== meuId`). Acesso: sidebar desktop (botão ao lado de "Minhas tarefas") e `ListasSheet` no celular. `TaskRow` ganhou `list_name`/`list_color`/`created_by`.
+
+Verificação: simulei os dois lados via `set local request.jwt.claims` no SQL editor — criei lista+tarefa como usuário A atribuída ao usuário B, confirmei que `fn_get_task_lists` do B vem vazio mas `fn_get_tasks` do B traz a tarefa com `list_name` embutido. `tsc --noEmit` manteve baseline de 324.
+
+### 2026-08-14 — FEATURE: Tarefas viram Pastas aninhadas + módulo 100% independente de loja
+
+Dois pedidos do usuário resolvidos juntos porque o segundo era, na prática, um bug do primeiro fix (2026-08-13) que eu não tinha percebido:
+
+**1. Bug real: trocar de loja "sumia" com as tarefas.** O fix de 2026-08-13 tornou a leitura por usuário (RPCs já filtravam por `created_by`/`assignee_id`), mas toda a camada de ESCRITA (`assertOwned` no `task-write`) ainda filtrava por `.eq('tenant_id', tenantId)` — a loja ATIVA no momento da chamada, não a loja onde o registro foi criado. Resultado: pasta/tarefa criada com a Loja A ativa ficava impossível de editar depois de trocar pra Loja B (`"registro não encontrado neste tenant"`), mesmo aparecendo na leitura. Fix: `assertOwned` não filtra mais por tenant_id — busca só por `id`, e a autorização de verdade é 100% `created_by`/`assignee_id` (via `assertListOwner`/`assertTaskAccess`). Mesma limpeza em `mark_notification_read`, upload de anexo multipart, resolução de status em `update_task`/`delete_status` (todos tinham o mesmo `.eq('tenant_id', tenantId)` residual). `tenant_id` continua sendo gravado nas linhas (bookkeeping), só não é mais usado pra decidir visibilidade/permissão.
+
+**Foi além do RLS/RPC do dia anterior**: tags (`task_tags`), campos personalizados (`task_custom_fields`) e templates de checklist (`task_checklist_templates`) também eram "da loja inteira" — agora ganharam `created_by` (migração `alter table ... add column`, com backfill do que já existia herdando o dono da lista) e RLS/RPC/`task-write` passaram a tratá-los como pessoais (só o autor edita/exclui/vê). `task_views` (views salvas) perdeu o conceito de "compartilhada com a equipe" (`user_id: null`) — não fazia mais sentido num módulo pessoal; toda view agora é sempre do `created_by`.
+
+**2. FEATURE: Listas → Pastas aninhadas.** `task_lists` ganhou `parent_list_id` (self-reference, `on delete set null`, profundidade ilimitada — sem tabela de fechamento/path, só o ponteiro pro pai; a árvore é montada no client). `fn_get_task_lists` devolve `parent_list_id` no payload. `create_list` no `task-write` aceita `parent_list_id` opcional (valida com `assertListOwner` que a pasta-mãe é sua). **Escopo cortado de propósito**: só dá pra escolher o pai na CRIAÇÃO — mover uma pasta existente pra outro pai (reparenting) não foi implementado, evitaria ter que resolver detecção de ciclo; se pedirem isso depois, é o próximo passo natural.
+
+Front: `lib/pastas.ts` (`montarArvorePastas`, `achatarArvore` — árvore a partir da lista plana, com `profundidade` calculada pra indentação) + `components/ArvorePastas.tsx` (componente recursivo, reutilizado na sidebar desktop de `page.tsx` E no `ListasSheet` do celular — `compacto` só troca o hover do "+" por sempre-visível, já que toque não tem hover). Botão "+" por pasta abre o modal de nova pasta com `parent_list_id` pré-preenchido.
+
+**3. FEATURE: view "Todas as tarefas".** Terceiro item do nav (ao lado de "Minhas"/"Compartilhadas"), reaproveitando `MinhasTarefas.tsx` — o prop booleano `apenasCompartilhadas` virou `modo: 'minhas' | 'compartilhadas' | 'todas'` (`'todas'` = `created_by === meuId || assignee_id === meuId`, agregando tudo que é meu através de qualquer pasta). Escopo cortado: "Todas" usa a mesma UI em baldes por data de vencimento do "Minhas" (não a tabela/Kanban/Calendário, que são por-pasta única e não fazem sentido misturando pastas com status sets diferentes) e não mostra tarefas concluídas.
+
+Verificação: simulei um usuário com 2 lojas (`set local request.jwt.claims`) — criei pasta+subpasta com a Loja A ativa, confirmei via `fn_get_task_lists` chamada com `p_tenant_id` da Loja B que a árvore inteira (pai + filha, `parent_list_id` correto) aparece igual. Testei `ArvorePastas`/`MinhasTarefas` isolados numa rota temporária: expandir/recolher, clicar pra selecionar, e os 3 modos (`minhas`/`compartilhadas`/`todas`) filtrando certo. `tsc --noEmit` manteve baseline de 324.
+
+### 2026-08-15 — FEATURE: Lista/Kanban/Calendário funcionam em qualquer origem (Minhas/Compartilhadas/Todas), + botão "Nova tarefa"
+
+**Supera o item 3 da entrada de 2026-08-14** ("Todas" tinha view própria em baldes, sem tabela/Kanban/Calendário) — `MinhasTarefas.tsx` foi **deletado**. Agora `page.tsx` separa duas dimensões independentes: `origem` (`'pasta' | 'minhas' | 'compartilhadas' | 'todas'` — DE ONDE vêm as tarefas) e `display` (`'lista' | 'kanban' | 'calendario'` — COMO mostrar). O seletor de visualização no topo vale pra qualquer origem — pedido explícito do usuário ("fica normal, só muda as tarefas que mostra").
+
+**`ViewLista`/`ViewKanban` agora aceitam `list: TaskList | null`** (`ViewCalendario` já aceitava desde sempre, não precisou mudar). Com `list === null` (origem cross-pasta):
+- `agruparTarefas` (agrupamento.ts) com `groupBy='status'` agrupa por `status_category` genérica (A fazer/Em andamento/Concluído — sempre visíveis; Backlog/Cancelado só se houver tarefa) em vez de `list.statuses` (que não existe único quando as tarefas são de pastas diferentes).
+- Concluir uma tarefa (checkbox ou arrastar no Kanban) manda `status_category`/`status_action:'undone'` em vez de um `status_id` exato — o backend (`task-write`) resolve o status certo **pela lista de CADA tarefa**, então funciona mesmo com tarefas de pastas com status sets diferentes. Generalização do `mark_done` da entrada de 2026-08-13 (removido, virou este mecanismo mais genérico).
+- Quick-add (criar tarefa direto numa coluna/grupo) fica desabilitado — não dá pra saber em qual pasta criar. Para isso existe o botão **"Nova tarefa"** (cabeçalho principal + topo da sidebar): sem pasta ativa, ele já cria a tarefa (título "Nova tarefa") e abre o `TaskDrawer` na hora pra configurar tudo; com >1 pasta e nenhuma selecionada, primeiro pergunta em qual pasta.
+- `ViewLista` ganhou coluna nativa `'pasta'` (nome+cor, só leitura) — visível por padrão só em modo agregado. Chave do localStorage de colunas visíveis passou a ser `chaveColunas` (a origem: `'minhas'`/`'compartilhadas'`/`'todas'`) em vez de `list.id` quando não há pasta única.
+
+**UI**: botão "+" ao lado da palavra "Pastas" na sidebar/`ListasSheet` cria pasta raiz (era o botão do topo, que virou "Nova tarefa"). `ViewsSalvas.tsx`: removido o checkbox morto "Compartilhar com a equipe" (não fazia mais nada desde que `task_views` virou 100% pessoal em 2026-08-14, `is_shared` era só ignorado pelo backend).
+
+Verificação: rota de teste isolada renderizando `ViewLista`/`ViewKanban` com `list={null}` e tarefas de 2 pastas com status sets diferentes — confirmei agrupamento por categoria genérica, coluna "Pasta" certa por linha, e que marcar concluído dispara `update_task {status_category:'done'}`. `tsc --noEmit` manteve baseline de 324.
+
+### 2026-08-16 — FEATURE: Editor de status por pasta (`StatusManager.tsx`)
+
+O backend (`create_status`/`update_status`/`delete_status` em `task-write`, tabela `task_statuses`) já existia desde a Fase 1 — só nunca teve UI. Cada pasta seguia presa aos 3 status seedados na criação (A fazer/Em andamento/Concluído). Novo componente `components/StatusManager.tsx` (mesmo padrão visual do `CamposCustomManager.tsx`): por pasta, lista os status com reordenar (setas ↑↓ trocando `sort_order` par a par, sem drag&drop — corte de escopo consciente), editar nome (input inline, salva no blur) e cor (select de swatch) direto na linha, trocar a categoria (select com as 5 categorias do enum), excluir (bloqueado se for o único status da pasta; se houver outros, pede pra escolher pra qual as tarefas daquele status vão — manda `reassign_to`, ou "ficam sem status" se não escolher nada) e criar um novo.
+
+**Por que a categoria é obrigatória e não só cosmética**: é ela (não o nome livre) que faz o status se comportar certo no resto do sistema — agrupamento cross-pasta em "Minhas"/"Todas" (`CATEGORIAS_GENERICAS` em `agrupamento.ts`, 2026-08-15), o checkbox de concluir/desmarcar (`status_category`/`status_action` no `update_task`, 2026-08-15), e a criação da próxima ocorrência de recorrência (só dispara quando a categoria vira `done`).
+
+**Acesso**: botão "Status da pasta" na sidebar desktop (mesma área de "Campos personalizados"/"Templates de checklist", `disabled` sem pasta selecionada) e no `ListasSheet` do celular (só aparece com uma pasta selecionada). Segue o padrão já usado por `CamposCustomManager`: recebe `list` como prop, não tem estado próprio de "qual pasta" — sempre a pasta ativa na hora.
+
+Verificação: rota de teste isolada com uma pasta mock de 3 status e um `write()` que aplica as mutações num state local (create/update/delete_status) — testei renomear inline (`update_status {name}`), criar um 4º status (`create_status` com sort_order correto), e excluir com reatribuição (`delete_status {reassign_to}` movendo as tarefas pro status escolhido, não deixando órfã). `tsc --noEmit` manteve baseline de 324.
+
+### 2026-08-19 — FEATURE: novo perfil de usuário "Tarefas" (restrito só ao módulo de Tarefas)
+
+Pedido: criar usuário com acesso inicial só ao módulo de Gestão de Tarefas. Não existia nenhum mecanismo de "atribuir só um módulo a um usuário" — o sistema de permissões inteiro é **por papel** (`role`), não por usuário individual (não há `user_permissions`; só `permissions` chaveada por `(tenant_id, role)`). A solução seguiu o padrão já existente do papel `gestor_entregas` (que já é "só um módulo"), replicado num papel novo: `tarefas` no front / `tasks_only` no enum do banco (`user_role`).
+
+**Banco**: `alter type user_role add value 'tasks_only'` (aplicado via `mcp__supabase__apply_migration` — enums do Postgres não entram no fluxo normal de migração deste repo).
+
+**Front — eram QUATRO cópias duplicadas do mapa PT↔EN de papéis** (nenhuma delas type-safe o bastante pra pegar a falta de uma entrada sem eu adicionar o papel primeiro): `constants/usuarios.ts` (`PerfilUsuario`/`perfilConfig`), `hooks/usePermissoes.ts` (`Papel`/`PAPEL_TO_DB_ROLE`/`DEFAULT_PERMISSOES`), `hooks/useUsuarios.ts` e `hooks/useAcessoMultiLoja.ts` (`ROLE_MAP`/`ROLE_MAP_REVERSE`, literalmente idênticos nos dois arquivos), `contexts/AuthContext.tsx` (`UserPerfil`/`DB_TO_FRONTEND_ROLE` — **esse é o que importa de verdade**, é o que traduz `role` do banco pro `user.perfil` depois do login). Achei essa última via um novo erro de `tsc` que só apareceu depois de alargar `PerfilUsuario` — sem esse fix, um usuário com `role='tasks_only'` cairia no fallback `?? 'caixa'` do `DB_TO_FRONTEND_ROLE[data.role]` e teria acesso total de operador de caixa, o oposto do pedido. `tsc --noEmit` pegou esse bug de graça.
+
+**Hard-lock de rota**: `RotaProtegida.tsx` ganhou o mesmo tipo de bloqueio que `gestor_entregas` já tinha — `perfil === 'tarefas' && !pathname.startsWith('/tarefas')` → redireciona pra `/tarefas`. `modulos/page.tsx`: mesmo auto-navigate no login (`useEffect` que já redirecionava totem→`/autoatendimento` e gestor_entregas→`/gestor-entregas`, ganhou `tarefas`→`/tarefas`) + `tarefas` entrou no `perfis` do `ModuloCard` de Tarefas (senão o próprio usuário restrito nem veria o tile, ainda que fosse redirecionado igual).
+
+**Sem PermissaoKey nenhuma**: o módulo de Tarefas nunca usou o sistema de `PermissaoKey`/`hasPermissao` (não está em `ROTA_PERMISSAO`, não tem item no `Sidebar` — é rota terminal). Então `usePermissoes.ts` trata `tarefas` igual a `totem`/`tablet`/`kiosk`: nunca chama `config-write` (que provavelmente rejeitaria o role mesmo), fica com `permissoes: []`. Isso é seguro porque o bloqueio de verdade é o hard-lock de rota, não uma lista de permissões.
+
+**user-write (`create_user`)**: `roleMap` ganhou `tarefas: 'tasks_only'`. `UsuarioModal.tsx`: `'tarefas'` entrou em `PERFIS_NORMAIS` (perfil normal — email+senha, sem PIN obrigatório como o `totem`). `pages/invite/page.tsx` (fluxo de convite, separado da criação direta) e `AcessoMultiLojaModal.tsx` (conceder acesso a outra loja) também ganharam a entrada — Records exaustivos sobre `UserPerfil`/`PerfilUsuario` acusaram sozinhos via `tsc`.
+
+**Efeito colateral corrigido de graça**: `KDSLogin.tsx` tinha uma comparação morta `op.perfil === 'supervisor'` (perfil que nunca existiu) que só virou erro de `tsc` depois que o union ficou "grande" o bastante pra sair do caso especial do compilador — troquei por `String(op.perfil) === 'supervisor'` pra preservar o comportamento exato (sempre "Operador") sem tentar adivinhar a intenção original. `tsc --noEmit` foi de 324 pra **323** (baixou, não subiu).
+
+Verificação: renderizei `UsuarioModal` isolado numa rota de teste — confirmei que "Tarefas" aparece entre "Gestor de Entregas" e "Totem" na grade de perfis, e que selecioná-lo mostra a descrição "Acesso restrito — só o módulo de Tarefas". Não testei a criação de verdade (criaria um usuário Auth real em produção — fora de escopo pra um teste automatizado).
+
+### 2026-09-07 — Tarefas: "duplicou ao concluir" (era recorrência), excluir na lista, otimista em update/delete
+
+**"Ao marcar concluída, a tarefa replicou e ficou onde estava"** — não era bug, era a **recorrência** (modelo Todoist, Fase 2): ao concluir uma tarefa recorrente, `update_task` cria a próxima ocorrência com o mesmo título, no primeiro status da pasta, com a data avançada. No print do usuário as 4 "teste 3" tinham 🔁 e datas de 2 em 2 semanas (11/ago→25/ago→08/set→22/set). O problema real era **UX**: nada avisava. Fix: (1) `useTarefas.write()` agora devolve `next_occurrence_id` e mostra toast "Tarefa concluída — por ser recorrente, a próxima ocorrência já foi criada"; (2) o ícone 🔁 na lista (`ViewLista`) e no card (`TaskCard`) ganhou tooltip com `rotuloRecorrencia()` ("Repete a cada 2 semanas") + a dica de que concluir cria a próxima (`lib/recorrencia.ts`).
+
+**"Não dá pra excluir na visão da lista"** — de fato só existia no drawer (e lá, se o backend recusasse — ex.: 403 de quem não é dono — fechava sem avisar). Fix: botão de arquivar (lixeira, aparece no hover) no fim de cada linha da `ViewLista` (desktop), com `confirm()`; cabeçalho de colunas ganhou um espaçador da mesma largura pra manter o alinhamento. Drawer passou a mostrar `toast.error` quando falha. **Pegadinha de teste**: botões `opacity-0 group-hover:opacity-100` não aparecem no `read_page filter=interactive` do Browser (só no `filter=all` ou via `find`), e clicar por ref depois de `resize_window` errou a coordenada (escala do pane) — validei disparando o `.click()` via `javascript_tool`.
+
+**Otimista em `update_task`/`delete_task`** (`patchOtimista` em `useTarefas.ts`): aplica o patch no estado local ANTES da chamada (título, prioridade, responsável, datas, tags, `list_id`, `status_id`, `status_category`/`status_action` resolvidos via `lists.statuses`) e remove a tarefa+subtarefas no delete; se o servidor recusar, chama `reload()` e desfaz. Antes o checkbox controlado (`checked={concluida}`) voltava pra desmarcado até o reload completo terminar — parecia que o clique não pegou. Complementa o otimista de `create_task` (2026-08-16).
+
+**Outros ajustes da revisão**: grupos "Concluído"/"Cancelado" começam recolhidos na lista (só agrupando por status; estado guardado como "invertido em relação ao padrão", `alternados`, pra funcionar com chaves diferentes por pasta); toda escrita inline da lista passa por `gravar()` que mostra `toast.error` com o motivo quando falha (antes falhava em silêncio); drawer aberto pelo botão "Nova tarefa" já vem com o título selecionado (`autoFocus` + `select()` quando é "Nova tarefa"; Enter salva). `tsc --noEmit` ficou em 301.
+
+### 2026-09-07 (parte 2) — ConfirmDialog, seletor de status no lugar do toggle direto, seleção múltipla com ações em massa
+
+**`ConfirmDialog.tsx`** (novo, genérico): substitui o `confirm()` nativo do navegador (feio, sem estilo, é o que aparecia no screenshot do usuário) por um modal no padrão visual do módulo (ícone de alerta, título, descrição opcional, botões cancelar/confirmar, `perigo` controla vermelho vs indigo). Usado em `ViewLista` (exclusão individual e em massa) e `TaskDrawer` (arquivar). **Pegadinha**: o backdrop do `ConfirmDialog` precisa de `e.stopPropagation()` — como o `TaskDrawer` também fecha ao clicar no próprio backdrop (`onClick={onClose}` no wrapper `fixed inset-0`), sem isso clicar fora do ConfirmDialog pra cancelar borbulhava e fechava o drawer inteiro junto.
+
+**Checkbox de conclusão virou seletor de status** (`StatusPicker.tsx`, novo): antes, clicar na caixinha ia direto pra "concluído" (ou desfazia pro primeiro status não-terminal) sem deixar escolher outro destino (ex.: "Em andamento"). Agora clicar abre um popover com os status da pasta (ou as categorias genéricas de `agrupamento.ts` — `CATEGORIAS_GENERICAS` virou exportada — nas visões agregadas sem pasta única). O quadradinho virou `<button>` (antes `<input type=checkbox>`) porque precisa interceptar o clique pra abrir o popover em vez de togglar direto.
+
+**Seleção múltipla + ações em massa** (só em `ViewLista`, desktop): cada linha ganhou um segundo quadradinho de seleção (aparece no hover, ou sempre que já há alguma tarefa selecionada) — visualmente distinto do círculo de status, um quadrado à esquerda dele. Com ≥1 selecionada, a barra de "Colunas" vira uma barra de ações roxa (sticky no topo): **Status** (mesmo `StatusPicker`), **Prioridade**, **Responsável** (popovers simples) e **Excluir** (todos via `Promise.all` de `write()` por tarefa — cada `write()` já é otimista, então a lista atualiza tarefa por tarefa conforme cada resposta chega, não tudo de uma vez). `limparSelecao()` fecha a barra.
+
+Verificação: rota de teste isolada com `write()` mockado logando as chamadas — confirmei que clicar no círculo de status abre o popover com os 3 status reais da pasta (não vai direto pra "Concluído"), que selecionar 2 tarefas + mudar prioridade em massa dispara `update_task {priority:4}` pras duas, e que excluir em massa abre o `ConfirmDialog` (não o `confirm()` nativo) e dispara `delete_task` pras duas ao confirmar. `tsc --noEmit` manteve 301.
+
+### 2026-09-07 (parte 3) — StatusPicker cortado: `overflow-hidden` do card clipava popover `absolute`
+
+Usuário reportou (com print) o dropdown do `StatusPicker` (item anterior) cortado pra tarefas perto do fim de um grupo. Causa: o card de cada grupo na `ViewLista` tem `overflow-hidden` (`"bg-white rounded-xl border ... divide-y ... overflow-hidden"`, pra arredondar os cantos das linhas) — qualquer popover `position: absolute` relativo a um ancestral DENTRO desse card é cortado quando ultrapassa a borda inferior dele, o que acontece sempre que a linha está perto do fim do grupo.
+
+Fix: `StatusPicker` passou a usar `position: fixed` com coordenadas calculadas a partir do `getBoundingClientRect()` do botão (capturado no `onClick`, virou prop `anchorRect: DOMRect` em vez do componente ler um ref) — `fixed` não é afetado por `overflow-hidden` de ancestrais (só seria, se algum ancestral tivesse `transform`/`filter`/`will-change`, o que não é o caso aqui). Também abre pra cima quando não há espaço suficiente embaixo (`window.innerHeight - anchorRect.bottom`), e fecha sozinho em scroll/resize da janela (mais simples e robusto do que recalcular a posição a cada scroll, já que o retângulo capturado no clique fica obsoleto assim que a página rola).
+
+Os dois lugares que usam `StatusPicker` (checkbox de cada linha + botão "Status" da barra de ações em massa) precisaram capturar o rect no clique (`e.currentTarget.getBoundingClientRect()`) e guardá-lo no state em vez de só um boolean/string de "está aberto".
+
+**Nota pra próxima vez**: os outros popovers da `ViewLista` (edição de coluna — responsável/vencimento/prioridade/etiquetas —, e os de Prioridade/Responsável da barra de ações em massa) ainda usam `absolute` clássico. Não deram bug reportado ainda porque a maioria abre alinhada à direita/dentro da área visível, mas o de edição de coluna (linhas perto do fim do grupo, coluna à direita) tem o mesmo risco em telas mais estreitas — se reportarem, é o mesmo fix (`fixed` + `getBoundingClientRect`).
+
+Verificação: rota de teste isolada forçando o card a ficar com altura pequena e `overflow: hidden` (reproduz o cenário do print — linha colada na borda) — confirmei visualmente (screenshot) que as 3 opções do dropdown aparecem completas, nada cortado. `tsc --noEmit` manteve 301.
+
+---
+
+### Observação do item no ticket da cozinha (2026-09-09)
+
+Relato: cliente do QR universal põe observação num item, aparece no Gestor de Pedidos mas "não aparece na impressão".
+
+**Auditoria da cadeia (QR → `mesa-write` → `print_queue` → edge `print-queue-agent` → agente local):** a obs está gravada e chega ao ticket. Tag de obs vai pra `order_item_observations`, texto livre vai pro `order_items.notes`; `buildTicketItems` (`src/lib/printOrderQueue.ts`) junta os dois em `itens[].observacoes` (dedup por texto). Varredura de 90 dias em pedidos QR: **todos** os casos com obs têm o texto dentro do `print_queue.payload` — a única exceção foi 22/08, e ali o item INTEIRO sumiu (bug de corrida da dedup por `(order_id, station_key)`, já corrigido pela mescla cozinha+bar num ticket por estação).
+
+**Critério pra diagnosticar esse tipo de queixa:** comparar `order_items` + `order_item_observations` com o `print_queue.payload` do mesmo `order_id` **antes** de mexer em código — separa "não gravou", "não enfileirou" e "enfileirou mas não imprimiu". Lembrar que o ticket é **por estação**: a obs sai só no ticket da estação daquele item; quem olha o ticket de outra estação não vê.
+
+**Mudança feita:** obs do item agora sai em **negrito + caixa alta** (`   ** SEM CEBOLA`) em vez de fonte normal com `*`, na edge `print-queue-agent` (v27 no ar) e no `agente-local/index.js` (caminho de fallback). O ESC/POS que a impressora recebe é gerado **pela edge** desde a v3.2 do agente (`escpos_80mm_base64`/`escpos_58mm_base64`) — mudar layout de ticket = deploy da edge, não precisa tocar nos PCs; o `formatTicket` do agente só vale pro fallback local (`POST 127.0.0.1:9876/print`) e pra PCs com agente antigo.
+
+**Ponta solta conhecida:** obs por unidade gravada no formato `Un.N: texto` (PDV/KDS) é separada em `unitObsMap` no `KDSContext` e **não entra** em `item.observacoes` — logo aparece na tela mas some na reimpressão pelo Gestor (`reprintPedidoGestor`). Não afeta o QR (lá cada unidade vira item "(Un. N)" próprio).
+
+**Senha duplicada no ticket da fila (mesmo dia):** no QR universal o ticket saía com a senha DUAS vezes — uma no bloco grande (`payload.senha`) e outra no destino (`destinoToString` devolve `Senha: X` pro `tipo: 'senha'`), e o nome do cliente não aparecia em lugar nenhum. Regra adotada: **na fila, a senha fica só no bloco grande e o destino leva o NOME** que o cliente digitou ao abrir o QR (`tipo: 'nome'`, fallback `Senha X` se não houver nome). Aplicado nos dois caminhos que imprimem esses pedidos: `useMesaQRData` (impressão na chegada) e `reprintPedidoGestor` (reimpressão pelo Gestor, que usa `pedido.participantName` — em pedido de fila o `destination_name` é a SENHA, não o nome).
+
+---
+
+### Cartão no autoatendimento: sem simulação + plano Point (2026-09-10)
+
+**Fase 1 feita:** o `PagamentoKiosk.tsx` tinha um botão "Simular aprovação" (`handleSimularPagamento`) que, depois de 1,2 s, gravava `record_payment` como **pago** em cartão — e em dinheiro também ("Confirmar pagamento no caixa" era o próprio cliente tocando). Nenhuma maquininha envolvida. Removido: cartão/dinheiro agora levam à tela "Pague no balcão", que cria o pedido **em aberto** (mesmo caminho do "pagar na entrega") e o operador dá baixa no PDV. O Pix do kiosk continua real. Também saiu o fallback de formas de pagamento com ids falsos (`'pix'`, `'credito'` — não são UUID e quebravam o `record_payment`); loja sem formas cadastradas mostra só "Pagar no balcão". O kiosk não estava no ar em nenhuma loja.
+
+**Critério:** o tablet só pode marcar pedido pago com a confirmação de um provedor (webhook/consulta), nunca pelo toque do cliente — mesma regra do `online-payments`.
+
+**Plano do cartão de verdade (Mercado Pago Point em modo PDV, via nuvem):** tablet → edge `online-payments` → API do MP → maquininha. Achados da documentação (MCP `mercadopago`, `search_documentation`):
+- Point Smart 2 e Point Pro 2 são compatíveis; não há habilitação comercial. Precisa criar **loja + caixa** (store/pos) no MP e associar o terminal.
+- Usar a **API de Orders** (a de payment-intents é legada): `GET /terminals/v1/list`, `PATCH /terminals/v1/setup` (`operating_mode` `PDV`/`STANDALONE`), `POST /v1/orders`, `GET /v1/orders/{id}`, `POST /v1/orders/{id}/cancel` e `/refund`. `X-Idempotency-Key` obrigatório em criar/cancelar/estornar.
+- A order chega sozinha no visor; o botão "Atualizar" da maquininha é plano B.
+- Teste sem hardware: terminal virtual `SBX0000001` + simulação de status via API (o "Simulador Point" visual foi descontinuado em 2024-07).
+- Em modo PDV a maquininha não cobra valor digitado — se o ERPOS cair, a loja fica sem cartão. A config precisa de um botão pra voltar a `STANDALONE`.
+- A doc (glossário da API legada) diz que uso em autoatendimento é "desaconselhado e de total responsabilidade do comércio" → preferir kiosk assistido, perto do balcão.
+
+**Fase 2 (código pronto, ainda NÃO deployado):** o `settlePix` da `online-payments` buscava a forma de pagamento com `type = 'pix'` fixo e só lançava D+0, sem taxa. Agora a cobrança tem `fin_pix_payments.method` (`pix`/`credit_card`/`debit_card`, default `pix` — migration `20260910120000_online_payments_method.sql`, ainda não aplicada) e o lançamento saiu pra `postSaleFinance`, que espelha o `order-write › record_payment`: **D+0** = entrada `auto_sale` + `fn_bank_credit` na conta roteada + taxa `auto_card_fee`; **a prazo** = só `fin_receivable_installments` (a entrada e a taxa vêm na baixa, `financial-write › receive_installment`, BUG-43). Se mexer na regra de um lado, mexa no outro — o DRE trata venda do caixa e venda online igual.
+
+**Caixa:** a venda online **já entra no caixa aberto**. O `fn_record_payment_bypass` recebe `cash_register_id` nulo e procura sozinho o caixa aberto da sessão do pedido; sem caixa aberto ele não grava o pagamento e o settle registra o erro na cobrança. Pro kiosk isso é o desejado (a venda do tablet aparece no fechamento do dia).
+
+**Cuidado ao deployar a `online-payments`:** o Pix online está em produção na VILA LESTE / EL PATRON. Loja de testes para a Point: **El Patron Paranaguá** (não tem config do MP, então não conflita com o Pix de produção; formas de pagamento estão com taxa 0% e D+0 — o ramo a prazo do `postSaleFinance` só é exercitado com taxa/prazo reais configurados).
+
+**mTLS (certificado cliente) funciona nas Edge Functions — testado 2026-09-10.** Várias fontes na internet dizem que não; testamos na prática com uma função temporária chamando `https://client.badssl.com/` (só responde 200 se receber certificado cliente): sem certificado → 400; `Deno.createHttpClient({ cert, key })` + `fetch(url, { client })` → **200**. Os nomes de opção do Deno 1 (`certChain`/`privateKey`) são ignorados em silêncio (400). Runtime na época: `supabase-edge-runtime-1.76.0` (Deno 2.1.4). Isso viabiliza API de banco com mTLS (Banco Inter, API Pix do BACEN) direto na edge, sem servidor intermediário.
+
+**Pix do kiosk NÃO é confirmado por banco.** A edge `pix-payment` gera um BR Code estático com a chave da loja (`system_settings.pix_key`) e o `check_status` só lê a tabela — o status só vira `confirmed` pela ação `confirm`, que **não exige autenticação**, e o `TelaPix` do kiosk mostra um botão "Confirmar PIX" na tela do cliente. Resolver junto com o Pix via API do banco (Inter/MP) antes de ligar o kiosk em alguma loja.
+
+### Banco Inter: conciliação automática e saldo real (2026-09-10)
+
+Edge **`inter-bank`** (v2, no ar) + migration `20260910130000_inter_bank.sql` (aplicada: `fin_inter_config`, `fin_bank_accounts.synced_balance/_at/_provider`, `fin_bank_statement_imports.source/raw`). O cron de hora em hora criado nela é **removido** por `20260910150000_conciliacao_sem_cron.sql`: a busca acontece ao abrir a Conciliação ou no botão "Atualizar bancos". Detalhes completos em `FINANCEIRO_MAP.md` §9j. Front (`InterConfigModal`, `InterSyncPanel`, botão na Conciliação, saldo real na Projeção, visão **Realizado × Projetado** no Fluxo de Caixa) **pendente de push**.
+
+- **Segredos do banco ficam em tabela sem policy** (`fin_inter_config`, RLS ligado, só service_role) — o front só recebe client_id mascarado. Padrão pra qualquer integração com certificado/secret por loja.
+- **mTLS na edge**: `Deno.createHttpClient({ cert, key })` e `fetch(url, { client })`. Testado com `probe_mtls` (interno): cert autoassinado → `UnknownCA` do Inter, ou seja, o certificado é apresentado. Sem certificado real ainda não há sync de verdade — o caminho de erro foi exercitado ponta a ponta pelo cron (`fn_inter_bank_sync_all` → `last_sync_error`).
+- **Conciliação bancária é DIÁRIA** (decisão do usuário em 2026-09-13, revogando a de 09-10 "sem cron"): migration `20260913120000_conciliacao_diaria.sql` → `inter-bank-sync` 07h00 e `stone-sync` 07h15 (BRT) chamando `sync_all` com os segredos do Vault do cron fiscal (`fiscal_internal_key`, `supabase_anon_key`). Continua também ao abrir a Conciliação / botão. **Inter atualiza na hora após pagamento:** `execute_payment` e `payment_status` chamam `syncTenant(days: 2)` quando o pagamento passa a `paid` (falha no sync só vai para o log; não afeta o pagamento). A Stone roda depois do Inter e já chama `fn_match_stone_inter` por loja no `sync_all`. Integração nova de banco/adquirente (ex.: iFood) segue o mesmo padrão.
+- tsc: 301 antes e depois (sem aumento).
+
+**Pix do tablet via Banco Inter / Mercado Pago (feito 2026-09-10, edge no ar, front pendente de push).** A edge `pix-payment` passou a gerar a cobrança no provedor da loja: `inter_pix` (API Pix do Inter, `PUT /pix/v2/cob/{txid}`, mTLS, escopo `cob.write cob.read pix.read`) tem prioridade; senão `mercadopago` (mesmo token do pagamento online); sem nenhum dos dois, `kiosk_provider` devolve `null` e o tablet **esconde** o Pix. Ações novas: `kiosk_provider`, `create_charge`, `get_inter_pix_config`, `save_inter_pix_config`, `test_inter_pix_config`. O `check_status` consulta o provedor (no máx. a cada 4 s por cobrança, usando `updated_at` como marca) e só marca `confirmed` se o banco disser pago com valor ≥ cobrado; o `cancel` consulta antes de cancelar (se já pagou, o pedido segue). `confirm` manual exige admin/gerente e, pra cobrança de provedor, pergunta ao provedor antes (só força com `force: true`). O botão "Confirmar PIX (operador)" saiu da tela do cliente. `generate` (BR Code estático) ficou só pra prévia de Configurações › PIX.
+- **Credenciais do Inter pro Pix:** `fin_payment_provider_config` com `provider = 'inter_pix'` (colunas `client_id, client_secret, cert_pem, key_pem, pix_key, environment, conta_corrente, cert_expires_at` — migration `20260910140000_inter_pix_kiosk.sql`, aplicada). Tela: Configurações › Formas de pagamento › "Pix no autoatendimento (Banco Inter)" (`InterPixConfigModal`). Salvar valida pedindo token ao Inter.
+- **São DUAS integrações no Inter, de propósito:** "ERPOS - Pix Autoatendimento" (só API Pix) → aqui; "ERPOS Conciliação" (só extrato) → `fin_inter_config` / edge `inter-bank` / Financeiro › Conciliação. Não misturar: o token em cache da `fin_inter_config` é do escopo de extrato.
+- **Fluxo do pedido no kiosk não mudou:** o pedido só é criado depois do Pix confirmado (`handlePixPago` → `onEntrarPagamento` → `record_payment`), agora com confirmação real do banco. Ponta solta conhecida: se o tablet travar entre a confirmação e a criação do pedido, o dinheiro fica em `fin_pix_payments` (`confirmed`, sem `order_id`) sem pedido — conferir por lá.
+
+### Stone: conciliação reescrita (2026-09-10)
+
+A edge `stone-conciliation` estava morta desde a migração para multi-loja: buscava `users.tenant_id` (a coluna não existe mais) e o parser não seguia o layout da Stone. Reescrita com loja via `user_tenants` e parser do layout 2.2; busca ao abrir a Conciliação, sem cron. Detalhes em `FINANCEIRO_MAP.md` §9k. **No ar (2026-09-10):** `stone-conciliation` v12 e as migrations `20260910140000_stone_conciliation_v2.sql` e `20260910150000_conciliacao_sem_cron.sql`. O cron `inter-bank-sync` foi removido. A `inter-bank` publicada (v2) é funcionalmente igual à do repo, que só mudou comentários. **Pendente:** push do front e primeiro import com arquivo real da Stone.
+
+- **Pegadinha geral:** qualquer edge que leia `users.tenant_id` está quebrada, porque a loja fica em `user_tenants` + `tenant_id` no body. Em 2026-09-10 a Stone era a única: as outras edges que consultam `users` leem só nome/PIN.
+- tsc: 296 (antes 301).
+
+
+**Kiosk: dois defeitos antigos achados no 1º teste real do Pix (2026-09-10).**
+1. **Pagamento pulado em silêncio (callback velha).** `handlePixPago` fazia `await onEntrarPagamento()` (cria o pedido e dá `setPendingOrderId`) e logo `onConcluir(methodId)` — mas o `handleConcluir` chamado ali é o da renderização ANTERIOR, com `pendingOrderId = null`, então o `if (effectiveOrderId && ...)` era falso e o `record_payment` nunca rodava: pedido na cozinha como NÃO pago, sem erro nenhum. (O mesmo valia pra aprovação simulada que saiu na Fase 1.) Fix: `handleAvancarPagamento` devolve o id e ele é passado adiante (`onRegistrarPagamento(methodId, orderId)` / `handleConcluir(methodId?, orderId?)`); o polling da `TelaPix` chama `onPagoRef.current` (ref atualizada a cada render) em vez do `onPago` capturado quando o intervalo foi criado. **Regra geral:** estado recém-setado não aparece na mesma chamada; passe o valor adiante.
+2. **Tela "Pedido confirmado" sumia.** `handleConcluir` grava o pagamento E zera o kiosk (`setEtapa('welcome')`). Chamado logo após o Pix, desmontava o `PagamentoKiosk` antes da confirmação aparecer. Fix: gravar pagamento virou `registrarPagamento` (não zera); `handleConcluir` sem forma de pagamento continua sendo o "novo pedido" da tela de confirmação.
+- **Latência da confirmação do Pix Inter:** no 1º teste, 16 s entre o Pix pago (horário do Inter) e o `confirmed`. Cada consulta levava 1–2,7 s porque abria conexão mTLS nova e às vezes pedia token novo; e a trava de 4 s + polling de 3 s fazia só metade das consultas chegarem ao banco. Ajustes: cliente mTLS reaproveitado por credencial, token guardado em `fin_payment_provider_config.access_token/token_expires_at` (linha `inter_pix`), polling 2 s / trava 1,5 s, `Access-Control-Max-Age` (o navegador repetia o preflight a cada ~5 s). A edge agora loga cada consulta (`reconcile · cob` com `ms` e `lag_ms` quando pago) — é por aí que se mede quanto do atraso é do próprio Inter.
+- **Pegadinha: `supabase.rpc(...)` / `.from(...)...` NÃO têm `.catch`.** O builder do PostgREST é só "thenable" (tem `.then`), então `supabase.rpc(x).catch(fn)` lança `TypeError: ... .catch is not a function` na hora — no kiosk isso estourava logo DEPOIS do `record_payment` gravado, e a tela mostrava erro com o pedido já pago. Use `.then(() => {}, () => {})` (ou `.then(...).catch(...)`, já que o `.then` devolve Promise de verdade). O tsc acusa esses casos (`Property 'catch' does not exist on type 'PostgrestFilterBuilder...'`) — vale varrer a lista de erros do tsc por esse padrão em outras telas.
+
+**Kiosk: pedido nasce pago + cartão na maquininha Mercado Pago Point (2026-09-11).**
+- **Pedido já nasce pago:** o tablet manda `paid_pix_payment_id` no `create_order` (`CreateOrderPayload`). A `order-write`, logo após o `fn_create_order_bypass`, liga a cobrança ao pedido (`fin_pix_payments.order_id`, update condicional `order_id is null` + `status = confirmed` + mesma loja + `amount ≥ total`) e só então marca `is_paid` — o mesmo pagamento nunca paga dois pedidos. O `record_payment` continua gravando pagamento/financeiro/NFC-e em seguida (ele não recusa pedido já pago; o `becamePaid` segue disparando a NFC-e). Vale pra Pix e cartão (qualquer linha confirmada da `fin_pix_payments`).
+- **Maquininha (Point, modo PDV, API de Orders) no `pix-payment`:** provider `mp_point` em `fin_payment_provider_config` (colunas `access_token`, `terminal_id`, `environment`; migration `mp_point_terminal` aplicada) — aplicação "ERPOS Autoatendimento Point" (id 6661373432692104), separada do Pix online. Ações: `kiosk_card_provider`, `create_card_charge` (`POST /v1/orders` type `point`, `payment_method.default_type` crédito/débito, expira em 15 min), `simulate_card` (só `environment = sandbox`: `POST /v1/orders/{id}/events`), `get_point_config`, `save_point_config` (valida listando terminais), `list_point_terminals`, `set_point_mode` (`PATCH /terminals/v1/setup`, PDV/STANDALONE). `check_status`/`cancel` tratam `mp_point` (`GET /v1/orders/{id}`: `processed` → confirmed com `method` crédito/débito; `failed` → status `failed` + motivo em `error`; `canceled/expired` → cancelled). Tablet: `TelaCartaoKiosk` ("Pague na maquininha ao lado", botões de simulação no modo teste). Config: `MpPointConfigModal` (Configurações › Formas de pagamento).
+- **Pegadinha do teste:** a API de Orders do Point **recusa token `TEST-`** ("Test credentials are not supported, use test users with production credentials"). O teste com o terminal virtual `NEWLAND_N950__SBX0000001` exige o **Access Token de produção de uma CONTA VENDEDORA DE TESTE** (criada em Suas integrações › app › Contas de teste; a criação automática falhou com `MP_API_DOWN` quando o app foi criado pelo MCP). `GET /terminals/v1/list` aceita o token `TEST-` (volta vazio) — não serve de prova de que o token funciona pra cobrar.
+
+**Stone × Inter: conciliação do repasse da maquininha (2026-09-11).**
+- **Achado:** a Stone paga por domicílio direto no Inter; as linhas da API da Stone são o detalhe e o dinheiro está no Inter. Somar as duas fontes conta o cartão 2× (o `RealizadoProjetadoTab` fazia isso). Casamento por dia de pagamento + antecipado sim/não bate no centavo (diferença de 1–2 centavos = arredondamento por bandeira no Inter). Função `fn_match_stone_inter`, chamada pelas edges `stone-conciliation` e `inter-bank`; detalhes em `FINANCEIRO_MAP.md` §9l.
+- **Pegadinhas:** (1) endpoint certo da Stone para chave de cliente é `/v2/merchant/{code}/conciliation-file/{AAAAMMDD}`; `/v2/.../file?referenceDate=` não existe e o v1 recusa chave nova. (2) Entre 00h e 04h a Stone devolve 400 "only permitted from 04:00" — não é chave errada. (3) No boleto pago pelo Inter, `detalhes.cpfCnpj` é o CNPJ da própria loja, não do beneficiário.
+- **Critério:** vendas da Stone só entram como receita (`origin='stone_sale'`) com `fin_stone_config.post_to_ledger` ligado e enquanto o PDV do ERP não registra as vendas de cartão.
+
+**Pagamentos × notas de entrada na Conciliação (2026-09-11).**
+- **Padrão "orquestrar com o JWT do usuário":** a edge `conciliacao-pagamentos` não reescreve regra de compra nem de baixa. Ela chama `fiscal-inbound` (que por sua vez chama `purchase-write`) e `financial-write` com o `Authorization` do próprio usuário. Motivo: `import_purchase` recusa chamada interna ("precisa de um usuário logado"), e a regra do CMV e da baixa já está validada nessas edges.
+- **Sugerir no banco, confirmar na edge:** `fn_match_payments` (SQL, idempotente, só sugere) roda no sync do Inter; a baixa só acontece no clique do usuário. Detalhes em `FINANCEIRO_MAP.md` §9m.
+- **Alerta de duplicidade não pode olhar pessoa física:** Pix diário do mesmo valor para freela/motoboy é normal. Só mesmo código de barras ou mesmo CNPJ.
+- **Estoque é físico, pagamento é financeiro (2026-09-11):** o vínculo item da nota → insumo passou para o "Confirmar recebimento" (`purchase-confirm-delivery`, ação `receipt_context` + `received_items[].ingredient_id`). A importação da nota (manual ou automática pela conciliação) só traz os itens com `supplier_code`/`ean`; a memória de vínculos continua em `fiscal_inbound_item_links`. Detalhes em `FINANCEIRO_MAP.md` §9m.
+
+### 2026-09-11 — Folha do Domínio → RH (sem IA)
+- **Domínio (Thomson Reuters) não tem API de saída da folha**: a API pública (api.dominio@tr.com / Onvio BR Accounting API) só RECEBE do ERP (NF-e/NFC-e/NFS-e, baixas, rubricas). O caminho inverso existe só para o Conta Azul (parceria exclusiva).
+- **Importação por PDF**: Financeiro › RH › Folha › "Importar do Domínio" (`ImportarFolhaDominioModal.tsx` + `src/lib/dominioExtrato.ts`, dependência `pdfjs-dist@4.10.38`). Lê o "Extrato Mensal" com pdf.js no navegador (texto + posição), sem IA (decisão do usuário: não pagar IA para isso).
+- **Pegadinha de formato**: o PDF tem que ser salvo pelo Domínio (produtor Amyuni, com texto). "Microsoft Print to PDF" vira desenho (0 caracteres). O `.xls` que o Domínio exporta está corrompido (xlrd e SheetJS não leem as células).
+- **Validação**: por pessoa, a soma das rubricas bate com o total, e proventos − descontos = líquido. No geral, a soma dos líquidos = Líquido Geral. Grava pelo `financial-write` (upsert_employee, delete_payroll dos pendentes do mês, bulk_insert_payroll) como **pendente**. As rubricas completas ficam em `notes`. A folha já paga não é tocada.
+- **Não lançar guias FGTS/INSS em Contas a Pagar** a partir da folha: a DRE (`useDespesas`) já soma bruto + FGTS do `hr_payroll` → duplicaria.
+
+### 2026-09-11 — Assistente pessoal do dono (WhatsApp + Claude) — projeto PESSOAL
+
+Nova Edge Function `assistente-brain` + tabelas `asst_messages`, `asst_memories`,
+`asst_reminders`, `asst_settings` (RLS sem policies = só service role). **Não é
+feature do ERPOS**: nenhuma tela/rota; só o dono usa, via WhatsApp (Evolution API
+numa VPS, pendente). Doc completa e estado em `assistente/README.md`.
+Critérios: escreve tarefas direto nas tabelas como o dono (`task-write` exige JWT);
+auth por `x-internal-key` = `ASSISTENTE_INTERNAL_KEY`; data/hora atual vai na
+mensagem do usuário, não no system, para preservar o cache do prompt.
+- **Folha estratificada por rubrica** (2026-09-11): a coluna `hr_payroll.rubricas` (jsonb `[{codigo, descricao, referencia, valor, tipo P|D, categoria}]`, migração `20260911120000_hr_payroll_rubricas.sql`) é preenchida pela importação do Domínio. As categorias estão em `CATEGORIAS_FOLHA` / `categorizarRubrica` (`src/lib/dominioExtrato.ts`). A aba RH › Relatórios › "Gasto por Item da Folha" soma por categoria, com detalhe por rubrica e por funcionário e uma matriz categoria × mês. Lançamento sem rubricas cai nos campos da folha.
+- **RH × folha do Domínio** (2026-09-11): o lançamento importado (`hr_payroll.rubricas` não vazio) **nunca passa pelo `upsertPayroll`/`recalcPayroll`**, porque isso sobrescreveria os valores da contabilidade. O "Fechar e Pagar" só regrava as linhas com falta lançada no próprio fechamento. O botão de editar de um importado abre o `DetalheFolhaModal.tsx`, só de leitura. Para corrigir um importado, reimporta-se o extrato: os pendentes do mês são substituídos.
+
+### 2026-09-11 — Dono da plataforma com acesso a todas as lojas (`platform_owners`)
+
+Tabela `platform_owners` + função `is_platform_owner(uuid)`. Backfill deu ao dono
+vínculo `admin` em todas as lojas e o gatilho `on_tenant_created_platform_owner`
+(função `fn_platform_owner_membership`) faz o mesmo em toda loja nova.
+**Pegadinha respeitada:** `auth_tenant_id()` = vínculo mais recente (103 policies
+em 37 tabelas). Os vínculos do dono criados assim têm `created_at = 2000-01-01`,
+para nunca virarem o mais recente. O dono não aparece no painel de usuários
+(`fn_get_users_list`) nem no modal multi-loja (`fn_get_users_for_admin_panel`).
+`setup-tenant`/`bootstrap_tenant` usam `ON CONFLICT DO NOTHING`, então o gatilho
+não quebra a criação de loja. Migração em `supabase/migrations/20260911210000_platform_owner_all_stores.sql`.
+Também: módulo **Assistente** (`/assistente`, só o dono) — ver `assistente/README.md`.
+
+### 2026-09-12 — Cache de prompt (Claude): `effort` faz parte da chave
+
+Medido no assistente pessoal (Sonnet 5): uma chamada de aquecimento (`max_tokens: 0`)
+sem `output_config.effort` NÃO reaproveitou o cache gravado pelas chamadas reais
+com `effort: 'medium'` — gravou outra entrada. Ao mandar o mesmo effort, passou a
+ler. Regra: toda chamada que deve compartilhar cache precisa do MESMO modelo,
+ferramentas, bloco de instruções E effort/thinking. Detalhes em `assistente/README.md`.
+
+### 2026-09-12 — Assistente: recursos nativos do WhatsApp (reação, enquete, localização, contato)
+
+Item 1.1 de `assistente/IDEIAS.md` (menos áudio). Edges `assistente-brain` e
+`assistente-webhook` publicadas via CLI; migração `20260912040000_assistente_ux_whatsapp.sql`
+via MCP. **Pegadinhas reutilizáveis:** (1) `chat/sendPresence` da Evolution **segura a
+requisição HTTP pelo `delay` inteiro** — chamar com `await` atrasa a resposta esse tempo;
+disparar sem esperar. (2) `messages.update` chega a cada "entregue/lido" das mensagens
+enviadas; ao assinar esse evento (necessário para voto em enquete, `pollUpdates`),
+descartar cedo os que não interessam, antes de abrir cliente/consultar banco.
+(3) Enquete nativa (`sendPoll`) é o substituto confiável de botões no WhatsApp pessoal
+(`sendButtons`/`sendList` são instáveis fora da Cloud API). (4) Ferramentas do brain que
+só fazem sentido num canal devem checar `ctx.channel` e falhar com mensagem clara, para o
+modelo cair no texto. Detalhes em `assistente/README.md`.
+
+### 2026-09-12 — Relatórios no mobile: `.scrollbar-hide` não existia + header disputando espaço
+
+Dois problemas somados davam a sensação de "informação sobreposta" na tela de Relatórios no celular:
+
+1. **`.scrollbar-hide` era uma classe fantasma.** Usada em ~20 telas (abas de
+   Relatórios, Financeiro, PDV, mesa-QR, gestor-pedidos), mas nunca foi definida
+   no `index.css` e o projeto não tem o plugin `tailwind-scrollbar-hide`. Resultado:
+   o Tailwind ignorava a classe e o Android desenhava a barra de rolagem por cima
+   das abas. Corrigido com um `@layer utilities` no fim de `src/index.css`
+   (`scrollbar-width: none` + `::-webkit-scrollbar { display: none }`).
+   **Critério:** antes de usar uma classe "utilitária" que não é do Tailwind padrão,
+   confirme que ela existe no `index.css` ou em algum plugin.
+
+2. **Header de `relatorios/page.tsx` apertado demais.** Toggle + presets de período
+   + Atualizar + Exportar dividiam uma única linha. O wrapper do filtro tinha
+   `flex-1 min-w-0` e os presets `whitespace-nowrap` sem `flex-shrink-0`: o grupo
+   encolhia para perto de zero e o texto vazava por baixo dos botões ("30 dias"
+   ficava atrás do Exportar). Agora, no mobile, as ações (Atualizar/Exportar) sobem
+   para a linha do título (`acoes` é uma variável JSX renderizada duas vezes,
+   `sm:hidden` / `hidden sm:flex`) e o filtro fica sozinho na segunda linha. Os
+   presets ganharam `overflow-x-auto scrollbar-hide` + `flex-shrink-0` como rede de
+   segurança.
+   **Pegadinha:** não coloque `overflow-x-auto` no wrapper do `FiltroRelatorio`/
+   `SessaoSelector` — os dois têm dropdown `absolute` e o overflow clipa o painel.
+   O scroll vai só no grupo de pills, que não tem popover.
+
+Também: cards de KPI da aba Produtos empilham no mobile (`flex-col sm:flex-row`,
+valor `text-base md:text-xl`) — em 2 colunas de ~135px o layout em linha cortava
+"R$ 10.633,85"; e vários grupos de sub-abas/ordenação (CMV, Cancelamentos,
+Clientes, Produtos) ganharam `flex-shrink-0` nos botões, senão o pill encolhe e o
+texto `whitespace-nowrap` escapa por cima do vizinho.
+
+Verificado com Chromium headless a 320px e 360px sobre o CSS já buildado
+(nenhum par de elementos irmãos com retângulos se cruzando; `scrollWidth` do
+documento = largura do viewport).
+
+### 2026-09-12 — Assistente: Camada 1 completa (BrasilAPI, Open-Meteo, web search, proatividade sem modelo)
+
+`assistente-brain`: ferramentas `dados_publicos`, `previsao_tempo` e busca na web
+nativa (`web_search_20250305`, `max_uses: 3`). `assistente-cron`: avisos proativos
+determinísticos (fechamento 23h, anomalia de venda a cada 30 min, vencimentos 17h,
+estoque crítico só o que mudou 9h, tarefas vencidas 18h) com `preview` para testar
+sem enviar. **Critérios:** (1) aviso recorrente = regra em SQL + texto no código;
+modelo só quando precisa interpretar — custo zero e sem alucinação de número.
+(2) Alerta "só quando muda" guarda o conjunto anterior em `asst_settings` (jsonb)
+e diffa; a 1ª execução é o baseline. (3) Anomalia compara "até a mesma hora" do
+mesmo dia da semana (média de até 4 semanas com venda), nunca dia inteiro × parcial.
+(4) Ferramenta de servidor (web_search) entra no MESMO array de tools do warm-up,
+senão a chave do cache muda e o aquecimento grava entrada que ninguém lê.
+Detalhes em `assistente/README.md`.
+
+### 2026-09-12 — Assistente age no ERPOS como o dono (`erpos_executar`)
+
+Padrão reutilizável para qualquer automação que precise agir "como um usuário":
+**sessão real via `auth.admin.generateLink` (magiclink) + `verifyOtp` com a anon key**
+→ JWT do usuário sem e-mail e sem senha, válido 1 h; chamar as Edge Functions
+existentes com esse JWT em vez de escrever nas tabelas (regra de negócio e auditoria
+preservadas). Body híbrido (`payload` + campos soltos + `tenant_id` e
+`active_tenant_id`) cobre as duas convenções das edges. Ações destrutivas/financeiras
+passam por confirmação explícita (regex de nome + flag `confirmado`). Auditoria em
+`asst_actions`. Levantamento completo dos contratos das 19 edges de escrita virou o
+`EDGE_MAP` no brain — fonte útil também para humanos. Detalhes em `assistente/README.md`.
+
+### 2026-09-12 — Pegadinhas de "agir como o usuário" (generateLink) e de canal Telegram
+
+(1) `auth.admin.generateLink` **invalida o link anterior do mesmo usuário**: gerar
+sessões em paralelo faz a maioria falhar no `verifyOtp` ("Email link is invalid or
+has expired"). Gerar uma por vez (promessa compartilhada) e reaproveitar o JWT até
+perto de vencer, guardado em tabela só do service role. (2) **Nunca**
+`signOut({ scope: 'others' })` numa sessão criada para automação: derruba as sessões
+reais do usuário em todos os aparelhos. (3) Telegram reenvia o update se não recebe
+200 a tempo (502 de cold start): deduplicar por `update_id`. (4) Whisper erra nome
+próprio sem contexto ("Paranaguá" → "parar na água"): passar `initial_prompt` com o
+vocabulário do negócio. Detalhes em `assistente/README.md`.
+
+
+### iFood: conciliação financeira (2026-09-13)
+
+Edge **`ifood-financial`** (no ar) + migration `20260913140000_ifood_financial.sql` (aplicada). Botão **iFood** na Conciliação → `IfoodConfigModal` (front pendente de push).
+
+- **Fonte dos dados = "Relatório de Conciliação" do iFood** (28 colunas: `competencia, fato_gerador, tipo_lancamento, descricao_lancamento, valor, base_calculo, percentual_taxa, pedido_associado_ifood, data_repasse_esperada, valor_transacao, metodo_pagamento, impacto_no_repasse, responsavel_transacao…`). Entra por dois caminhos com o mesmo parser: **API** (`GET financial/v3.0/merchants/{merchantId}/reconciliation?competence=AAAA-MM` → `[{downloadPath, createdAt, metadata.sha256}]`, arquivo CSV `.gz` com `;`) ou **arquivo** baixado no Portal do Parceiro (`.xlsx`, lido com `esm.sh/xlsx`). Uma importação por competência (`fin_ifood_imports`, unique tenant+competence); reimportar substitui as linhas (`fin_ifood_entries`). Pela API, sha256 igual ao anterior = "sem mudança".
+- **Receita × taxas:** linhas com `impacto_no_repasse=SIM`; receita = `Entrada Financeira` + `Subsídio` (promoção paga pelo iFood); taxas = `Cobrança` + `Retenção` (comissão, taxa de entrega, transação, serviço, parcelamento). **receita − taxas = soma dos depósitos** (conferido: set/26 = R$ 4.286,95 − 1.549,98 = 2.736,97 = "Total em repasses" do portal). Linhas `responsavel=LOJA` (recebido direto pela loja) têm impacto NÃO e ficam de fora — já entram por Stone/Pix.
+- **Livro-razão (opcional `post_to_ledger`):** por dia de repasse **já vencido** (os futuros entram quando a data chega, na busca diária): `ifood_sale` (income, "Vendas") e `ifood_fee` (expense, "Taxas iFood"), `reference_id` = import. DRE/Comparativo somam `ifood_fee` junto com `auto_card_fee` na linha "Taxas de cartão, Pix e iFood"; `ifood_sale` vira a linha "Vendas iFood" quando a fonte **`ifood`** está ligada (`fin_revenue_settings`, `revenueSources.ts`, `financial-write` ALLOWED). Visão Geral usa a origin `ifood_sale`; `useFinanceiro` a exclui de "entradas".
+- **Depósitos × Inter:** `fn_match_ifood_inter(tenant, from, to)` casa cada (data_repasse, valor_transacao) com UM crédito Inter do mesmo valor (±0,02) entre D-1 e D+2, preferindo "ifood" na descrição → `match_kind='ifood_deposit'`, `match_group='ifood:<data>:<valor>'`. **`fin_pix_recebidos` exclui `ifood_deposit`** (repasse do iFood que caiu por Pix não é venda de balcão). No Inter os repasses aparecem como TRANSFERENCIA "Ifood.com Agencia…", DOMICILIO_CARTAO "… - Ifood" e às vezes PIX.
+- **Autenticação (app DISTRIBUÍDO):** `save_config` (client_id/secret) → `request_user_code` (`POST authentication/v1.0/oauth/userCode`, form `clientId` → `userCode`, `authorizationCodeVerifier`, `verificationUrlComplete`) → a loja digita o código no Portal do Parceiro e recebe um código de autorização → `confirm_authorization` (`POST oauth/token` grantType `authorization_code` + verifier) → lista `merchant/v1.0/merchants` (1 loja = escolhe sozinho). Renovação por `refresh_token` 5 min antes de expirar (token de 6 h). Segredos em `fin_ifood_config` (sem policy; colunas casam com o bloqueio do leitor do assistente).
+- **Rotina:** `ifood-sync` 07h20 BRT → `fn_ifood_sync_all()` → `sync_all` (lojas com `auto_sync` e refresh_token). O `runBankSync` da Conciliação chama `sync` **depois** do Inter (para o casamento achar o extrato novo); "Importar período" vira lista de competências (máx. 12). Padrão: mês atual + anterior até o dia 15.
+- **Produção (2026-09-25): app ERPOS HOMOLOGADO** (distribuído, Financial + Merchant) e Paranaguá 3189551 autorizada. **Janelas máximas em produção** (a loja de teste aceitava mais): Sales **8 dias** (passou → 400 "maximum allowed search range is 8 days"); Settlements/Anticipations **~32 dias** — passou, devolve `settlements: []` **sem erro** (pegadinha). `syncTenant` consulta em blocos (`inWindows`: 7 e 30 dias). Conferido: REPASSE da API 483,33 (16/09) e 624,26 (23/09) = créditos "Transferência recebida - Ifood.com" do Inter no centavo.
+- **Várias lojas do iFood por loja do ERPOS (2026-09-25, migration `20260925200000_ifood_multi_merchant.sql`):** cada código autorizado no Portal do Parceiro vira uma linha em **`fin_ifood_auths`** (token/refresh próprios + `merchant_ids` que ele enxerga; sem policy, só service_role). `fin_ifood_merchants.api_sync` = lojas do iFood que esta loja do ERPOS busca (+ `last_sync_at/error` por loja); **índice único parcial `(merchant_id) where api_sync`** impede duas lojas do ERPOS de buscarem a mesma loja do iFood (dobraria o consolidado). `merchantContexts()` monta um contexto por loja com o token da autorização mais recente que a lista (`cfg._tok`; `getToken` grava em `fin_ifood_auths`, ou na config se centralizado). Autorizar liga sozinho só lojas já conhecidas do tenant ou quando veio 1 loja; o resto o gerente liga no modal (`set_merchant_api`). `fin_ifood_config.merchant_id/tokens` ficaram legado (get_config devolve `merchant_id` = 1ª loja ligada, por compatibilidade). Hash de eventos/antecipações/liquidações sem id agora inclui o merchant. On-demand exige `merchant_id` quando há mais de uma loja ligada (vem do filtro da aba iFood).
+- **CMV do iFood (2026-09-25, subaba CMV, `IfoodCmv.tsx`, migration `20260927100000_ifood_cmv.sql`):** produto/complemento do relatório de Cardápio (`fin_ifood_menu_sales`, só NOME — sem código nem vínculo com `menu_items`) ↔ composição em `fin_ifood_cmv_items` (chave `tenant+kind+name_key` = nome minúsculo com espaços simples, vale para todas as lojas iFood do tenant) + `fin_ifood_cmv_linhas` (insumo, qtd, unidade do enum `ingredient_unit`: g/kg/ml/L/unit). Grava só pela RPC `fn_ifood_cmv_salvar` (admin/gerente/financeiro; valida insumo do tenant; linhas vazias = remove) — assistente alcança via `erpos_rpc`. Custo = `custoLinhaFicha` com o `unit_price` ATUAL; CMV gerencial, NÃO entra na DRE. "Copiar ficha do cardápio" usa `fn_get_item_ingredients` (ação do usuário; nada é sugerido sozinho).
+- **Relatórios › iFood (2026-09-26, `IfoodTab.tsx` + `src/lib/ifoodDashboard.ts`, permissão `rel_ifood`):** dashboard só leitura. Fonte = `fin_ifood_entries` por pedido (`order_created_at`, `portalBucket`) — conferido ago/26 Paranaguá: 180 pedidos, vendas 11.159,97, líquido 8.099,96, 4 cancelados; loja 3189551 = 9.201,06/6.763,75 (Portal). Loja do pedido = `fin_ifood_imports.merchant_id` do `import_id`. Logística deduzida das linhas (Retenção "Taxa entrega iFood" / comissão "(entrega iFood)" → iFood; "Sob Demanda"/ON_DEMAND → sob demanda; resto → própria). Cancelado = vendas ≤ 0; culpa pelo código (5xx e 902 = loja, 6xx = cliente/entregador). Tempos da operação = eventos de `fin_ifood_sales.raw.orderEvents` (só ~30 dias da API); produtos = `fin_ifood_menu_sales` (se não há relatório no período, mostra o último e avisa). Mensalidade fica fora (sem pedido). "Peso no faturamento" só quando há venda no PDV no período (senão daria 100%). **Horário:** `data_criacao_pedido_associado` é UTC de verdade (importação às 20:31 BRT já tinha pedido das 18:11) — em Paranaguá o pico do iFood é fim de tarde, não erro de fuso.
+- **iFood no chat (2026-09-25):** grupo **iFood** nas ações rápidas (`acoes/ifood/`: Vendas do iFood, Repasses, Custo do iFood no mês, Mais vendidos) + bloco "iFood (fora do PDV)" e "Total c/ iFood" no Fechamento do turno (`assistente-cron › ifoodResumo`), no fechamento diário (texto) e nas ações Vendas do dia / Fechamento do dia. Conta única em `acoes/ifood/comum.ts` (espelhada no cron): vendido = `gross_bag + delivery_fee` dos não cancelados; taxas = lançamentos negativos que não são `SUBSIDY`; líquido = `sale_balance`. Fonte = `fin_ifood_sales` (API Sales, que JÁ tem venda do mesmo dia); a busca diária das 07h20 ainda não tem a noite, então antes de somar hoje/ontem chama `ifood-financial › sync_sales` (busca LEVE só de Sales, `days` 1–7, membro da loja ou x-internal-key). O relatório de conciliação (Relatórios › iFood) não serve para turno/dia: só chega depois.
+- **Ações rápidas 2026-09-26 (iFood + CMV + clientes):** categoria iFood só em loja com iFood ligado na API (`fin_ifood_merchants.api_sync`, `useAcessoAcoes().ifood`; Vila Leste tem iFood só por relatório → escondida). Motivo de cancelamento da API = `metadata.cancelCode` do evento REFUND em `raw.orderEvents` (textos em `acoes/ifood/comum.ts › MOTIVO_CANCELAMENTO`; o relatório de conciliação quase sempre vem sem texto). Tempos e culpa: reaproveitar `montarOperacao`/`mediana`/`culpaCancelamento` de `src/lib/ifoodDashboard.ts`. **Repasse × Inter: o iFood paga um dia em VÁRIAS entradas** (transferência + "crédito domicílio cartão") — conferir pelo TOTAL do dia (soma dos REPASSE de todas as lojas do iFood = soma dos créditos iFood no Inter; bateu ao centavo de 26/08 a 23/09 na Paranaguá). CMV do mês = `DRETab › dreCaixaDoPeriodo` (a própria tabela da DRE usa essa função no modo Caixa; não refazer a conta da receita fora). Clientes que sumiram = `crm-funnel › list_stage` (em_risco/perdido) + `EnviarVoucher` com `clienteInicial`/`aoCriar` → `log_send`.
+- **Portal do desenvolvedor:** conta Profissional da IDEAR PROJETOS COMPLEMENTARES; só há apps de TESTE (loja de teste). App oficial nasce na homologação (reunião + formulário, obrigatória para o módulo financeiro). Docs: guias em `/pt-BR/docs/getting-started`, referência em `/pt-BR/docs/references` (a especificação OpenAPI está em `/page-data/pt-BR/docs/references/page-data.json`; as URLs `/docs/guides/modules/...` indexadas pela busca dão 404).
+- **Revisão 2026-09-13 (tarde) — aba iFood + correções:**
+  - **Aba "iFood" no Financeiro** (`IfoodTab.tsx`, depois de Receitas): mês (competência), vendas, comissões/taxas (% efetivo), líquido, promoções da loja × iFood, tabela de repasses (iFood informa × caiu no Inter, diferença, situação Previsto/Conferido/Com diferença/Não achado, detalhe por clique) e "para onde foi o dinheiro". Lê `fin_ifood_imports`/`fin_ifood_entries` direto (policy de membro) e a RPC **`fin_ifood_repasses(tenant, from, to)`** (security definer; o app não lê o extrato). Botão "Lançar no financeiro" na própria aba.
+  - **PEGADINHA corrigida:** "Lançar no financeiro" ficava no `save_config`, que exige Client ID — quem só importava arquivo nunca conseguia ligar. Agora é a ação **`set_options`** (sem credencial), que também **relança o razão de todas as importações já gravadas** (`repostImports`). O `sync_all` diário relança os 2 últimos meses de quem tem `post_to_ledger` (repasses que venceram entram sozinhos, mesmo sem API).
+  - **Depósito ≠ crédito no Inter:** o `valor_transacao` do relatório NÃO bate 1:1 com o extrato (ex.: 02/09 relatório "Saldo" 880,77 × Inter TRANSFERENCIA 850,79; cartão chega como "Crédito domicílio cartão - Ifood" em valores próprios). `fn_match_ifood_inter` virou **por dia**: todo crédito Inter com "ifood" na descrição/contraparte entre D-1 e D+2 dos repasses → `ifood_deposit` (`match_group='ifood:<data do crédito>'`). A conferência de valores é visual, pelo total do dia na aba. Migration `20260913160000_ifood_repasses_por_dia.sql`.
+  - **App de TESTE não autoriza loja real:** o Portal do Parceiro devolve "não é possível ativar integrações não homologadas". API real só depois da homologação.
+  - Paranaguá ligada em 2026-09-13: ago+set importados, 6 lançamentos (vendas 4.373,78 − taxas 1.641,54 = 2.732,24 = "Valor já recebido" do portal), 12 créditos Inter classificados.
+- **Várias lojas iFood no mesmo tenant (Paranaguá tem DUAS):** `fin_ifood_imports` agora é único por `(tenant_id, merchant_id, competence)` — antes o relatório da 2ª loja substituía o da 1ª. `merchant_id` = coluna `loja_id` (uuid) do relatório; `merchant_short` = `loja_id_curto`. `import_file` agrupa por loja+competência. Aba iFood filtra por loja; a tabela de repasses soma todas (o Inter recebe as duas). Migration `20260913180000_ifood_multi_loja.sql`. **Por isso os créditos "iFood" no Inter davam mais que o repasse de uma loja só.** A API ainda guarda um `merchant_id` por config (a 2ª loja pela API fica para depois da homologação).
+- **Contas a Receber:** bloco `IfoodRecebiveis` (RPC `fin_ifood_repasses` de hoje a +120 dias), só leitura. **NÃO** gravar repasses em `fin_receivable_installments`: `receive_installment` lança `auto_sale` no caixa e a DRE caixa soma parcelas recebidas — com o `ifood_sale` do razão seria receita em dobro.
+- **Homologação do módulo Financial (doc: `/pt-BR/docs/food/guides/modules/financial/homologation`):** obrigatória; conta CNPJ; app completo testado no ambiente de teste com header `x-request-homologation: true`; **todas as APIs Financial integradas** (Sales, Financial Events, Reconciliation, Reconciliation On-Demand, Settlement, Anticipation — "Sales sem Reconciliation" é motivo de reprovação); renovação de token, rate limit com backoff exponencial, filtro `impacto_no_repasse=SIM`, tratamento de todos os HTTP, exportar CSV da conciliação, UI clara de vendas/comissões/taxas/datas. Processo: Portal do Desenvolvedor › Suporte › Chamados › Homologação (Financial em chamado separado) → questionário (respostas com dados do ambiente de teste) → para Food, **vídeos dos cenários gravados** → aprovação → cria app oficial. Hoje o `ifood-financial` só usa Reconciliation: faltam Sales, Financial Events, Settlement, Anticipation e On-Demand + export CSV.
+- **APIs para a homologação (2026-09-13, noite):** migration `20260913200000_ifood_financial_apis.sql` → `fin_ifood_sales` (GET /sales, paginado por `pageCount`), `fin_ifood_events` (GET /financial-events, `page/size=100/hasNextPage`, janela ≤ 33 dias; chave = hash do evento), `fin_ifood_settlements` (GET /settlements; `closingItems` REPASSE/BOLETO/REGISTRO_RECEBIVEIS + `accountDetails`), `fin_ifood_anticipations` (GET /anticipations; original × antecipado, taxa), `fin_ifood_ondemand` (POST/GET /reconciliation/on-demand; 409 → reutiliza `requestId`; pronto → baixa `filePath` e importa pelo mesmo `saveCompetence`) e `fin_ifood_config.homologation_mode` (header `x-request-homologation: true` em TODA chamada, inclusive token). `ifoodFetch` faz backoff exponencial em 429/5xx (Retry-After) e `apiGet/apiPost` renovam o token em 401. `syncTenant` roda conciliação + as 4 APIs (vendas 30 dias, eventos 32, liquidações/antecipações ±35). `set_options` agora só altera os campos enviados. Front: subabas Resumo/Pedidos/Repasses/Eventos (`IfoodApiViews.tsx`), "Exportar CSV" (colunas originais do relatório, `raw`) e "Gerar relatório agora" (polling com backoff, 8 consultas). **Nada disso foi exercitado contra a API** — falta a credencial do app de teste. Contas a Receber: repasses iFood viram linhas SÓ LEITURA na própria tabela (id `ifood:<data>`, ação "Automático"; fora do modal de antecipação).
+- **Divisão igual ao Portal do Parceiro (2026-09-13, `portalBucket` na edge e na `IfoodTab`):** vendas = Entrada Financeira + subsídio iFood/indústria + retenções (taxa de entrega/serviço do cliente, parcelamento) + promoção da loja somada de volta; taxas = cobranças de **comissão, taxa de transação e mensalidade**; serviços = demais cobranças (entrega sob demanda) + promoção custeada pela loja; ajustes = ressarcimento, débito de ocorrência e outros tipos; faturamento = vendas − taxas − serviços + ajustes. **"Recebido direto pela loja" = Entrada com `impacto_no_repasse = NÃO`** — NÃO usar o responsável (jun/26 tem Entrada com responsável LOJA dentro do repasse). Assim repasses = soma das linhas com impacto, sempre (conferido nos 7 meses/loja de Paranaguá; ago/26 bate no centavo com o portal: 9.201,06 / 1.660,03 / 849,50 / 72,22 / 6.763,75 / 1.757,80 / 5.005,95). No razão: `ifood_sale` = vendas − recebido pela loja; `ifood_fee` = taxas + serviços − ajustes.
+- **Repasses × Inter por dia (2026-09-13):** com as DUAS lojas de Paranaguá importadas (3189551 e 3933700), todo repasse de 01/07 a 09/09 bate no centavo com a soma dos créditos "iFood" do Inter no dia (ex.: 26/08 = 1.044,79 + 276,44 = 1.321,23). A diferença que existia era a 2ª loja. `fin_ifood_repasses.esperado` = soma das linhas com impacto no repasse (migration `20260913250000`), não mais a soma de `valor_transacao` (os "depósitos" do relatório não batem com o extrato). Exceções conhecidas: repasses de jun/26 (vendas de maio, não importado) e um débito de ocorrência que o relatório data em 17/06 mas o iFood descontou em 08/07.
+- **Receitas × Visão Geral × Relatórios (2026-09-13, Vila Leste set/26):** Relatórios = VENDA (ERP pela data do pedido via `fn_get_sales_report` + iFood pela data do pedido, valor das vendas inteiro, incl. o pago direto à loja); Financeiro › Receitas e Visão Geral = DINHEIRO QUE ENTROU (regra do dono): ERP pago + iFood pela data do **repasse** (`ifood_sale` = vendas − recebido pela loja). A diferença do iFood entre as duas é esperada (set/26 Vila: 5.250,47 por pedido × 3.104,55 por repasse). **Bug corrigido:** a aba Receitas exigia `status='delivered'` e perdia pedidos pagos presos em 'ready' (4 pedidos, R$ 56,00); agora `is_paid` + não cancelado/rascunho, igual ao razão `auto_sale`.
+- **PEGADINHA — iFood fora de Receitas/DRE (Vila Leste, 2026-09-13):** o razão (`ifood_sale`/`ifood_fee`) só aparece em Receitas, DRE e Visão Geral com a fonte **`ifood`** em `fin_revenue_settings` (Receitas › Fontes). A Vila tinha importado jun–ago com "Lançar no financeiro" ligado, mas sem linha de fontes (padrão orders+manual) → nada aparecia. Corrigido na hora (fontes = orders+manual+ifood; Vila não lança iFood no PDV) e o `set_options` com `post_to_ledger=true` agora **liga a fonte `ifood` sozinho**, exceto se a loja teve pedido com `delivery_platform='ifood'` no PDV nos últimos 90 dias (aí contaria em dobro com "Pedidos do sistema"). Relatórios › Origem/Calendário mostram o iFood independentemente das fontes.
+- **iFood nos Relatórios (2026-09-13):** `src/lib/ifoodVendas.ts` tem o `portalBucket` compartilhado (IfoodTab usa dele) e `fetchIfoodVendas(tenant, from, to)`: valor das vendas (divisão do portal) por PEDIDO, datado por `order_created_at` (Brasília), todas as lojas iFood do tenant, paginado com `fetchAllRows`; pedido que termina com valor ≤ 0 (cancelado) não conta como pedido. Hook `useIfoodVendas(periodo)` (período vazio = desligado). Usado em **Relatórios › Visão Geral** (cartões somam iFood, inclusive no período anterior; barras por dia empilhadas PDV + iFood; linha "só iFood" no gráfico por hora; cartão iFood em Origem; formas de pagamento e cobertura continuam só do ERP, com aviso do iFood; mês só com iFood não cai no "nenhum pedido" — relatório vazio de fallback `rep`), **Relatórios › Origem dos Pedidos** (`useOrigemReport` → origem `ifood`, cor #ea1d2c, também no gráfico por hora; só no modo calendário, não no modo sessão) e **Relatórios › Calendário de Faturamento** (soma no dia + linha "iFood R$" na célula). Não duplica: Paranaguá não lança pedido iFood no PDV (0 pedidos com `delivery_platform='ifood'` desde jun/26) — se uma loja passar a lançar, rever.
+- **Produtos vendidos (aba iFood › Produtos, 2026-09-13):** relatório **Cardápio** do Portal do Parceiro (Relatórios › Cardápio; abas Funil Loja / Itens / Complementos) entra pelo mesmo `import_file` — a edge detecta a aba "Itens" e grava `fin_ifood_menu_sales` (loja pelo código curto da aba Funil, período "dd/mm/aaaa - dd/mm/aaaa", reimportar o mesmo período/loja substitui) e preenche o nome das lojas em `fin_ifood_merchants` quando vazio. A API Financial NÃO traz itens; itens por pedido só pelo módulo Order (homologação separada, exige polling a cada 30 s e fluxo de confirmar/despachar — decisão pendente do dono).
+- **Nome das lojas e app centralizado (2026-09-13):** `fin_ifood_merchants` (tenant + merchant_id → nome; migration `20260913220000_ifood_merchants.sql`) — nome vem da API (`confirm_authorization`/`connect_centralized`) ou do lápis na aba iFood (`set_merchant_name`); 3189551 = "El Patrón - Burritos e Nachos". `fin_ifood_config.app_type` distributed|centralized (migration `20260913230000_ifood_app_type.sql`): **centralizado usa `grantType=client_credentials`** (sem código de vínculo) + `connect_centralized` lista as lojas; `connected(cfg)` vale para os dois. **Loja de teste da conta (Portal Dev › Pedidos de teste):** "Teste - IDEAR PROJETOS COMPLEMENTARES LTDA.", merchant 4117700 / uuid 1fac24ad-b86c-49d6-a8c3-6a60a57294c4; Portal do Parceiro dela = `portal.ifood.com.br/home/?restaurantUUID=<uuid>`; os apps de teste já têm permissão nela. Pedido de teste: botão "Gerar pedido de teste" no mesmo menu (ou compra manual no app com o "Usuário de testes", endereço Ramal Bujari, 100). **Com `homologation_mode` ligado o razão NÃO é lançado** (dados de teste não entram na DRE) — mesmo assim, configure o app de teste num tenant de testes.
+- **Primeiro teste real da API (2026-09-13, loja de teste 4117700 no tenant "Testes PDV", app "Teste (C)" centralizado + modo homologação):** token por client_credentials OK, `connect_centralized` achou a loja, Sales = 1 pedido, Financial Events = 28, Settlements/Anticipations = 0, Reconciliation ago/set = arquivo sem linhas (agora não cria importação vazia), On-Demand = POST 200 com `requestId`, GET devolve `status: "created"` enquanto gera. **Pegadinhas da resposta real:** (1) os dados da loja de teste são de **2025-08** (canned) — as visões da API têm seletor de mês próprio; (2) Financial Events **não traz `dateTime`** — data = `reference.date` (pedido) ou `period.beginDate`; loja em `receiver.merchantId` (não `businessId`); (3) nomes técnicos em inglês (ORDER_COMMISSION, PAYMENT_TRANSACTION_FEE, IFOOD_SUBSIDY, MEAL_VOUCHER...) — traduzidos em `IfoodApiViews` (`NOME_PT`); `fee_percentage` vem em % (12 = 12%). Paranaguá tinha ficado com `homologation_mode` ligado (bloquearia o razão) — desligado.
+- **Testado no ar (2026-09-13):** `import_file` com o relatório real de set/26 (via `x-internal-key`, csv.gz) → 403 linhas, 59 pedidos, números iguais ao portal; 0 depósitos casados (repasses de 30/09 e 07/10 ainda não caíram). A API não foi exercitada (falta credencial e autorização da loja). tsc: 293 antes e depois.
+
+### Conciliação: layout enxuto (2026-09-14)
+
+`ConciliacaoTab.tsx` reorganizada (só front, pendente de push):
+- **Cabeçalho = conta + "Importar ▾" + ⚙.** Importar: atualizar bancos (desde a última busca), buscar o período filtrado (Inter+Stone+iFood via `runBankSync`), arquivo OFX/CSV. ⚙: Regras, Reconciliar saldo, Integrações (modal com `InterSyncPanel` + `StoneImportPanel` = status, erros e histórico por dia da Stone) e a config de Inter/Stone/iFood. Saíram os 3 conjuntos repetidos de De/Até + "Importar período".
+- **Período ÚNICO** (padrão últimos 30 dias) vale para a tabela, os números e a busca nos bancos. `useConciliacao(accountId, { from, to })` passa `date_from/date_to` para `list_statement_imports`. **PEGADINHA:** sem período a edge devolve só as últimas 500 linhas da conta — os KPIs antigos (créditos/débitos/líquido/%) eram dessa janela arbitrária. Aviso na tela se o período bater 500. **Desde 2026-09-14:** com período, a edge pagina de 1000 em 1000 até 10 mil linhas (sem período continua 500); aviso só acima disso.
+- **Um bloco "Pendências"** (vínculos exatos/fortes a confirmar + alertas de `fn_conciliacao_alertas`) e **uma linha de números**: saldo no banco (API), saldo no ERP, diferença (clica → Reconciliar saldo) e % conciliado no período. Saíram os 6 KPIs, a barra de progresso, o resumo por categoria (duplicava o filtro) e o quadro "Formatos suportados".
+- **Status unificado "Conciliado"** = `reconciled` OU `status` matched/manual (`situacao()`); antes o filtro usava `matched` e o selo/KPI usavam `reconciled`. Coluna "Tipo" removida (o sinal/cor do valor já diz).
+
+### Pagamento sem nota → despesa ou compra pelo extrato (2026-09-14)
+
+Edge `conciliacao-pagamentos › create_from_statement` (publicada, verify_jwt=true) + migration `20260914200000_lancar_pelo_extrato.sql` (aplicada) + `conciliacao/LancarDoExtrato.tsx` no detalhe do pagamento e seleção em lote na `ConciliacaoTab` (front pendente de push).
+- **Despesa** = `upsert_bill` (`reference_type='conciliacao_extrato'`, `reference_id` = linha do extrato, `dre_category_id`) + `pay_bill` na data/conta do extrato. **Compra** = `purchase-write › create_purchase` (1 item sem insumo, categoria de mercadoria, `payment_status='pending'`, vencimento = data do pagamento) + `pay_bill` na parcela única → o CMV caixa conta pela `paid_date` (`fetchComprasPeriodo`). Item sem insumo não mexe em estoque nem catálogo; o item novo entra na Classificação de itens já como CMV.
+- A linha do extrato vira `match_kind='payable'`, `match_confidence='manual'`, `match_detail.created='despesa'|'compra'` (+ `prev_category`/`prev_match_kind`). O `undo` estorna a baixa (reversePayment), **apaga** a conta (despesa) ou a compra (`delete_purchase`) e devolve a linha a pendente.
+- Travas: só débito pendente sem destino (vínculo sugerido → "confirme o vínculo"); Pix para CPF de funcionário (`hr_employees.cpf`) recusado com `code:'folha'` sem `allow_payroll`; fornecedor da compra = o cadastrado com o CNPJ, senão só o nome (sem gravar CNPJ: lista branca do Pix). Lote: a edge aceita 30 por chamada e ignora o resto — `lancarDoExtrato` fatia.
+- Alerta novo `notas_de_compra_do_extrato` (`fn_conciliacao_alertas`): nota `new` do mesmo CNPJ raiz e valor (±0,05) de uma compra lançada pelo extrato, emitida entre −15 e +5 dias do pagamento — para não importar a mesma compra 2×.
+- **PEGADINHA corrigida:** o check `fin_accounts_payable_reference_type_check` não aceitava `'conciliacao_juros'` — a conta de juros/multa da confirmação de vínculo falhava em silêncio. Em Paranaguá: 17 pagamentos com juros sem conta (R$ 166,57, 21/07–03/09) ficaram fora da DRE; o check agora aceita e os próximos entram. Os 17 antigos não foram corrigidos. **2026-09-29:** confirmado no banco que as 17 são todas da confirmação em lote de 11/09 (04h22–05h16 UTC), antes da migration de 14/09; as 14 de 16/09 em diante estão certas (paga, `fin_cash_flow` + `fin_bank_transactions`, "Juros e multas"). A falha deixou de ser silenciosa: `confirmed.juros_erro` + `aviso` no resultado (toast da Conciliação e detalhe da linha), e o `undo` só estorna banco/caixa da conta de juros se ela tiver baixa.
+
+### Nota do mês: 1 nota de entrada ↔ vários pagamentos (2026-09-14)
+
+Fornecedor que emite UMA nota no mês cobrindo vários Pix/boletos já pagos ficava eterno em "A conferir": `fn_match_payments` só casa 1 pagamento ↔ 1 parcela. Migration `20260914220000_nota_mensal.sql` (aplicada: `fiscal_inbound_documents.settlement='monthly'` + `settlement_statement_ids uuid[]`), edge `conciliacao-pagamentos` (publicada) e `NotasEntradaTab › Conferir` (front pendente de push).
+- `monthly_candidates`: débitos Inter pendentes de −45 a +20 dias da emissão, do mesmo CNPJ raiz (Pix) ou mesma chave de nome (boleto — o CNPJ no extrato é da própria loja); fora os que já têm outro destino. Sugestão: todos do mês da emissão se somam o total (±1 centavo), senão subset-sum em centavos (40 mais próximos). A tela liga "nota do mês" sozinha quando 2+ pagamentos batem exato.
+- `link_monthly`: importa pelo `fiscal-inbound` (compra ou despesa) com **data = EMISSÃO** (decisão do dono) e **1 parcela por pagamento** (vencimento = data do pagamento) + saldo em aberto (vence hoje) se faltar; soma > nota é recusada. Cada parcela recebe `pay_bill` na data/conta do extrato e a linha vira `match_kind='payable'`, `match_detail.monthly=true`, `confirmed.monthly_doc_id`. Erro no meio → desfaz tudo.
+- `unlink_monthly` (botão Desfazer na lista): estorna todas as baixas, apaga a compra/contas, linhas voltam a pendente, nota volta a conferir com `auto_launch_blocked`. Recusa se o estoque já entrou ou se o saldo foi pago por fora. O `undo` de uma linha só na Conciliação é recusado (tem que ser pela nota).
+- Lançamento automático (`fiscal-inbound › autoLaunchTenant`) **pula** fornecedor cuja última nota foi `monthly` ("nota do mês: vincular aos pagamentos") — senão viraria conta a pagar em dobro com os Pix soltos.
+
+### Classificação de itens: vincular produto a insumo (2026-09-14)
+
+Migration `20260914180000_item_vinculo_insumo.sql` (aplicada) + `ItensClassificacaoTab` (front pendente de push).
+- **"Automáticos" ≠ outra classe:** eram os itens CMV com `auto_classified` porque têm `ingredient_id` (`fn_item_suggest`: insumo ⇒ CMV automático, motivo "ligado a insumo do estoque"). Todos também contam em CMV. Card/filtro virou **"Ligados ao estoque"** (`ingredient_id` não nulo); o selo "automático" só aparece para CMV automático por NCM/descrição sem insumo.
+- **Vínculo pela aba:** coluna "Insumo do estoque" com `CategoriaCombobox` + fator "1 {unidade do item} = N {unidade do insumo}". `fn_item_link_ingredient(tenant, id, insumo|null, fator)` (admin/manager): grava `ingredient_id`/`units_per_package` no cadastro, CMV na categoria do insumo, **memoriza em `fiscal_inbound_item_links`** (a mesma memória de `purchase-confirm-delivery › receipt_context` e `fiscal-inbound › item_links`) quando `supplier_key` é CNPJ e há `supplier_code`, e corrige a categoria das compras já lançadas (sem mexer em `ingredient_id`/estoque delas). Desvincular apaga a memória. Produto sem CNPJ/código: vínculo só no cadastro (o recebimento ainda pergunta).
+- **Criar insumo pelo vínculo (2026-09-14):** o seletor de insumo tem "+ Criar insumo “texto”" (`CategoriaCombobox.onCreate`) → abre o `InsumoModal` do Estoque (prop nova `nomeInicial`) → `EstoqueContext.upsertInsumo` (devolve o id) → recarrega a lista e abre o vínculo com o insumo novo já escolhido. Passa `usageType`, que o `handleSaveInsumo` da InsumosTab não repassa.
+- **Insumos por RPC `fn_item_link_options(tenant)`:** a policy de `ingredients` usa `auth_tenant_id()` (última loja) — admin multi-loja via leitura direta/embed ficava sem nome do insumo. A aba não usa mais o embed `ingredients(...)`.
+
+### Renomear categoria de insumo (2026-09-14)
+
+Estoque › Insumos › Gerenciar Categorias ganhou o lápis (renomear inline, Enter/Esc) — `CategoriasModal.onRename` → `useIngredientCategories.renameCategory` → `financial-write › upsert_merchandise_category` com `id`. A categoria mora em `fin_merchandise_categories` (id), mas o Estoque filtra por TEXTO: `ingredients.category` (acompanhado pelo trigger `trg_propagate_merchandise_category_rename`) e `production_recipes.category`, que ficava com o nome antigo — migration `20260914160000_renomear_categoria_fichas.sql` estende o trigger às fichas (casa pelo nome antigo, sem id). A aba recarrega insumos e fichas (`ProducaoContext.reload`, que também tem cópia em localStorage) depois de renomear. Nome repetido → erro (índice único `lower(name)`); para juntar duas categorias existe `merge_merchandise_category`.
+
+### Classificação de itens: busca na categoria + CMV com categoria (2026-09-14)
+
+- `src/pages/financeiro/components/CategoriaCombobox.tsx`: seletor com busca reutilizável (sem acento, várias palavras, procura no nome e no `sub`; ↑/↓/Enter/Esc; lista em portal `position: fixed` para não ser cortada por `overflow-x-auto`). Usado em `ItensClassificacaoTab` para despesa (categoria DRE + grupo) e CMV.
+- CMV agora tem categoria = **categoria de mercadoria** (`fin_merchandise_categories`, a lista dos insumos desde 2026-08-26; `ingredient_categories` e `ingredients.category` são legado). Coluna `fin_item_classifications.merchandise_category_id`; `fn_item_classify` com 5º parâmetro `p_merchandise_category_id` (a versão de 4 foi removida para não haver sobrecarga ambígua no PostgREST) reaplica em `fin_purchase_items.merchandise_category_id`, que a DRE já usa (`comprasDRE.categoriaDo`: item → insumo → "Sem categoria"). Nenhum item de compra antigo tinha categoria que casasse com o cadastro: os itens de CMV sem insumo são categorizados na tela (filtro "CMV sem categoria"). Front pendente de push.
+
+### "Como o dinheiro entra": banco e maquininha viram configuração (2026-09-14)
+
+Pedido do dono: não ficar preso à Stone e ao Inter. **Conector** (código por empresa, inevitável: cada API é diferente) ≠ **papel** (configuração da loja). Migration `20260914120000_como_o_dinheiro_entra.sql` (aplicada), `financial-write › set_money_flow` (publicada), tela `conciliacao/ComoDinheiroEntraModal.tsx` no ⚙ da Conciliação (front pendente de push).
+- **Colunas novas em `fin_revenue_settings`:** `bank_provider` (inter|ofx|outro), `bank_account_id` (banco principal = onde o Pix conta como receita), `card_provider` (stone|mercadopago|outra|nenhuma), `card_deposit_account_id` + `card_deposit_match` (conta e texto do repasse no extrato), `card_pix_mode` (transfer = Pix da maquininha fica na conta dela e é transferido → a transferência da própria empresa conta como Pix recebido; direct/none = transferência própria NÃO é receita), `ifood_deposit_account_id`.
+- **`fn_money_flow(tenant)`** (service_role) resolve com fallback do comportamento antigo (banco = conta do `fin_inter_config`, maquininha = Stone se houver `fin_stone_config`, pix_mode = transfer). Leem dela: `fin_pix_recebidos` (conta do banco principal; Pix pelo `tipoTransacao` do Inter ou, sem tipo/OFX, pela descrição), **`fn_match_card_deposits`** (lado das vendas = conector, hoje só Stone; lado do depósito = conta+texto configurados, nunca PIX/TRANSFERENCIA), `fn_match_ifood_inter` e `fin_ifood_repasses` (conta do iFood). **`fn_match_stone_inter` virou atalho** para `fn_match_card_deposits` — as edges `stone-conciliation`/`inter-bank` não precisaram de deploy.
+- **Nomes internos mantidos de propósito:** fonte `'stone'` em `sources` (= cartão da maquininha), origin `stone_sale`, `match_kind` `stone_deposit/stone_detail`. Renomear no banco quebraria o front publicado até o push. As telas mostram o nome configurado (`moneyFlowLabels` / `revenueSourceInfo` em `src/lib/revenueSources.ts`, hook `useMoneyFlow`): DRE, DRE Comparativo, Receitas (Fontes, KPI, itens), detalhe da transação.
+- **Continua dependendo do Inter (conector):** `fn_match_payments`, `fn_conciliacao_alertas` e a marcação de transferência entre contas próprias usam o detalhe do extrato do Inter (CNPJ, código de barras). Com banco por OFX esses recursos não existem.
+- **Conferência (Paranaguá):** Pix por mês idêntico antes/depois (jun 5.632,45 · jul 16.758,68 · ago 15.165,10 · set 4.665,20), repasses Stone 256/1.768 linhas (R$ 68.239,48) e créditos iFood 39 (R$ 12.169,94) iguais. A reexecução marcou 5 Pix "Ep Par Mall" de junho como `internal_transfer` (as edges só olham 20 dias) — já contavam como Pix e continuam.
+- **Para plugar uma maquininha nova (ex.: Mercado Pago):** escrever o conector (edge que grava as vendas como linhas de detalhe + `fin_cash_flow` de vendas/taxas) e um ramo em `fn_match_card_deposits` para o lado das vendas; o resto (Pix, DRE, Receitas, tela) já lê a configuração. Se o conector gravar outra origin (ex.: `card_sale`), incluí-la onde hoje se lê `stone_sale` (revenueSources, DRETab, DREComparativoTab, useReceitas, VisaoGeralFinTab, useFinanceiro).
+
+**Duas maquininhas na mesma loja (2026-09-22).** `fin_card_providers` (PK tenant+provider) guarda uma linha por maquininha: conta onde cai o repasse, texto do repasse no extrato e modo do Pix. `fn_card_providers(p_tenant)` devolve as ativas (fallback: a configuração única antiga, para nenhuma loja perder o casamento na virada) e é o que `fn_match_card_deposits` (Stone) e `fn_match_mp_payouts` (Mercado Pago) consultam — as duas casam ao mesmo tempo. `fn_money_flow` manteve a assinatura e passou a derivar `card_provider`/`card_deposit_*` da maquininha principal (Stone > Mercado Pago > outra), com `card_pix_mode='transfer'` se qualquer uma transferir o Pix. Escrita: `financial-write › set_card_providers` (lista inteira, apaga o que saiu); leitura direta do front (policy `auth_is_member_of`). Pegadinha: **o texto do extrato de cada maquininha tem que ser diferente** (ex.: `stone` × `mercado pago`), senão um crédito casa com a maquininha errada.
+
+### Pagamento pelo assistente via Banco Inter (2026-09-12)
+
+Backend no ar; **bloqueado** porque a integração do Inter (client_id final 078f) só tem `extrato.read`. `probe_scopes` confirmou: `pagamento-boleto.read/write` e `pagamento-pix.read/write` voltam 401 "No registered scope value for this client has been requested". O token de extrato continua funcionando.
+
+- **Migration** `20260912060000_inter_pagamentos.sql` (aplicada): `fin_inter_payments` (pedido e status), `fin_inter_config.pay_access_token/pay_token_expires_at/pay_limit_tx (5000)/pay_limit_day (10000)`, `fin_suppliers.pix_key`.
+- **inter-bank** (ações novas): `prepare_payment`, `execute_payment` e `cancel_payment` só aceitam `x-internal-key`, e `payment_status`, `list_payments` e `check_payment_scopes` aceitam admin ou gerente; `probe_scopes` é interno. O boleto é validado pelos dígitos verificadores (47, 48 ou 44 números), e o fator de vencimento trata a virada de 22/02/2025. O Pix só vai para chave ou CNPJ de fornecedor cadastrado. Cada pagamento usa o header `x-id-idempotente` com o `idempotency_key` da linha. Há claim atômico, então dois cliques não enviam duas vezes. Os endpoints são `POST/GET /banking/v2/pagamento`, `DELETE /banking/v2/pagamento/{codigoTransacao}`, `POST /banking/v2/pix` e `GET /banking/v2/pix/{codigoSolicitacao}`.
+- **assistente-brain:** tem as tools `preparar_pagamento` e `status_pagamento`. O modelo só prepara o pagamento; nunca vê o PIN.
+- **assistente-telegram:** mostra o resumo com os botões `p|ok`, `p|no` e `p|st`. Depois de "Pagar", o próximo texto de 4 a 8 dígitos, em até 5 minutos, é o PIN. Esse texto é interceptado antes do brain e do debounce, apagado do chat e conferido contra `asst_settings.pay_pin` (sha256). Três PINs errados bloqueiam por 15 minutos. O comando `/pin` cria ou troca o PIN.
+- **Testado no ar:** o boleto com dígito errado é recusado, o Pix para uma chave que não é de fornecedor é recusado, e `execute_payment` sem a chave interna volta 401. Nenhuma linha é gravada nesses casos. O decodificador passou em round-trip local.
+- **Pegadinhas:**
+  - o Inter limita pedidos de token e devolve 429 depois de cerca de 5 em sequência, então não é bom rodar `probe_scopes` várias vezes;
+  - os nomes exatos dos status do Inter só vão ser confirmados no primeiro pagamento real, e `mapPayStatus` é tolerante enquanto isso;
+  - a CLI do Supabase está logada pelo cofre do Windows, enquanto o `sbtoken.txt` não é um PAT válido.
+- **Várias credenciais (2026-09-12):** o pagamento tenta a integração do extrato (`fin_inter_config`, client_id final 078f) e a do Pix do tablet (`fin_payment_provider_config` com provider `inter_pix`, client_id final 5fb8). Ele guarda a que funcionou em `fin_inter_config.pay_source` (migration `20260912070000_inter_pay_source.sql`). Testado no mesmo dia: a 078f só tem `extrato.read`, e a 5fb8 tem `cob.write`, mas nenhum escopo de pagamento. A primeira que receber os escopos `pagamento-boleto.*` e `pagamento-pix.*` passa a ser usada sozinha, sem cadastrar nada. O extrato continua sincronizando normalmente.
+- **Credencial própria de pagamento (2026-09-12):** o dono criou uma integração nova no Inter só para pagamentos. Ela é cadastrada em Conciliação › Banco Inter › Configurar › "Credencial de pagamento" (`InterConfigModal`). Os campos ficam em `fin_inter_config.pay_client_id/pay_client_secret/pay_cert_pem/pay_key_pem` (migration `20260912080000_inter_pay_credentials.sql`). A ação `save_pay_credentials` só grava depois que o Inter entrega um token com os escopos de pagamento para essa credencial, e `delete_pay_credentials` remove. O `payCandidates` tenta nesta ordem: a de pagamento, a do extrato e a do Pix do tablet, com a última que funcionou (`pay_source`) na frente. O `get_config` devolve só o client_id mascarado da credencial de pagamento, `has_pay_credentials` e os limites.
+- **Escopos de pagamento LIBERADOS (2026-09-12 15:26):** a credencial própria de pagamento (client_id final 3494) foi salva pelo dono na tela. O `check_payment_scopes` usou `source=pagamento` e recebeu 200, com 36 pagamentos listados. Formato confirmado de `GET /banking/v2/pagamento`: devolve um **array**, e cada item tem `codigoTransacao, nsu, codigoBarra, tipo, dataVencimentoDigitada, dataVencimentoTitulo, dataInclusao, dataPagamento, valorPago, valorNominal, statusPagamento (ex.: REALIZADO), cpfCnpjBeneficiario, nomeBeneficiario, autenticacao`. Falta o 1º pagamento real, que depende do `/pin` no Telegram e de um boleto pequeno.
+- **Fornecedor é a lista branca do Pix, e o assistente não mexe nela (decisão do dono, 2026-09-12).** No brain, `erpos_executar` recusa três coisas:
+  - qualquer ação com `supplier` ou `fornecedor` no nome;
+  - qualquer ação cujos dados tragam `pix_key`;
+  - `cnpj` enviado ao `financial-write`.
+
+  O `upsert_supplier` saiu do mapa de ações, e o prompt manda o modelo nunca oferecer cadastro, só orientar o dono a cadastrar na tela. A chave Pix é cadastrada à mão em Financeiro › Compras › Fornecedores (campo "Chave Pix" do `GerenciarFornecedoresModal`, gravado em `fin_suppliers.pix_key` pelo `upsert_supplier` da tela). O `purchase-write` cria fornecedor só pelo nome, sem CNPJ nem chave, então não libera Pix. O `fiscal-inbound` cria fornecedor com o CNPJ vindo da SEFAZ, que é confiável, e o assistente não chama essa função.
+- **Pix permitidos além de fornecedores (2026-09-12):** a tabela `fin_pix_favorecidos` (migration `20260912090000_pix_favorecidos.sql`) guarda, por loja, pessoas que podem receber Pix pelo assistente, como o próprio dono. A chave fica normalizada: CPF e CNPJ só com dígitos, telefone com +55, e-mail e EVP em minúsculas. É gerenciada em Conciliação › Banco Inter › Configurar › Pix permitidos, que só aparece depois que a credencial de pagamento está salva. As ações são `list_pix_favorecidos`, `add_pix_favorecido` e `remove_pix_favorecido` na `inter-bank`, e exigem **usuário logado** admin ou gerente. A `x-internal-key` é recusada, então o assistente não consegue mexer. No `prepare_payment` de Pix, a chave é aceita se for de fornecedor (CNPJ ou `pix_key`) ou de alguém ativo nessa lista, e aí grava `favorecido_id`. O brain também bloqueia ações com `favorecid` ou `allowlist` no nome.
+- **Pix permitidos agora com PIN próprio, na tela Assistente (2026-09-12, substitui o item anterior):** o dono pediu que a lista fique no módulo Assistente e que ver, incluir, editar e remover exija um PIN que só ele sabe. O componente é `src/pages/assistente/PixPermitidosCard.tsx`, no topo da aba Configurações. Na primeira vez que o dono abre a seção, ele mesmo cria o PIN, de 6 a 8 dígitos. O PIN fica só em memória na tela, e a lista tranca sozinha depois de 5 minutos parada. As ações ficam na `assistente-config`, só para o dono: `pix_allow_status`, `pix_allow_set_pin` (trocar exige o atual), `pix_allow_list`, `pix_allow_save` e `pix_allow_remove`, todas conferindo o PIN. O PIN é guardado em `asst_settings.pix_allow_pin` como PBKDF2-SHA256 com sal aleatório e 150 mil iterações, e três erros bloqueiam por 15 minutos. A tabela continua `fin_pix_favorecidos`, na loja que tem o Inter conectado. As ações antigas `list/add/remove_pix_favorecido` da `inter-bank` agora devolvem 403 sempre, e a seção sumiu da tela do Banco Inter. Esse PIN é **diferente** do PIN de pagamento do Telegram (`asst_settings.pay_pin`).
+- **PIN da lista de Pix permitidos é FIXO (2026-09-12):** a pedido do dono, não há troca pela tela. `pix_allow_set_pin` só cria o PIN quando ainda não existe um; se já existir, devolve 403. O botão "Trocar PIN" saiu da tela. Para trocar ou recuperar, o dono pede no Claude Code, e o procedimento é apagar a chave de `asst_settings`, como abaixo. Na próxima abertura, a seção pede um PIN novo. A lista `fin_pix_favorecidos` não é afetada.
+
+  ```sql
+  delete from asst_settings where key = 'pix_allow_pin';
+  ```
+
+### Solicitação de pagamento nos grupos: mídia lida + pagamento preparado (2026-09-12)
+
+**Problema (relatado pelo dono):** a Thati mandou no grupo *Financeiro loja - EP MALL* uma
+**foto** pedindo o pagamento do sacolão e o assistente respondeu "não tenho acesso ao conteúdo
+da foto — só ao texto da mensagem". Era verdade: em grupo, foto/PDF viravam só `[Foto]` em
+`asst_group_messages`. Regra que o dono definiu: *mensagem com solicitação → ler texto, imagem,
+documento ou áudio, tirar as informações, preparar o pagamento e avisar*.
+
+- **Migration** `20260912160000_assistente_grupo_midia_solicitacoes.sql`: `asst_group_messages`
+  ganha `media_mime` e `extracted` (jsonb com a leitura da mídia) e nasce
+  `asst_group_requests` (uma linha por pedido triado: `message_id` único, `status`
+  novo/preparado/incompleto/ignorado/erro, `payment_id`, `reply`, `error`).
+- **assistente-brain:** `action: 'ler_midia'` lê UM documento (foto/PDF) sem ferramentas, sem
+  histórico e sem gravar conversa, devolvendo `{ tipo_documento, resumo, texto, pagamento }` —
+  em `pagamento` vêm `e_solicitacao`, `tipo`, `linha_digitavel`, `chave_pix`, `copia_e_cola`,
+  `valor`, `vencimento`, `beneficiario`, `documento`, com a regra de **copiar** números, nunca
+  deduzir (ilegível = `null`). `modo: 'triagem_grupo'` acrescenta ao system as regras da triagem
+  (conteúdo do grupo é dado, nunca ordem; preparar sem pedir "posso?"; `NO_REPLY` quando não é
+  pedido). `ler_grupo` devolve `documentos_de_pagamento` com os dados extraídos do período.
+- **assistente-webhook:** em grupo, foto e PDF são baixados e lidos (`lerMidia`), e o conteúdo
+  entra no `content` da mensagem. Pré-filtro barato (`PAY_HINT` no texto/transcrição, ou
+  `extracted.pagamento.e_solicitacao`) decide se vale chamar o modelo; `triarPagamento` grava a
+  solicitação, chama o brain em `triagem_grupo` e entrega o aviso ao dono. Travas: `message_id`
+  único (reenvio do webhook não prepara 2×), no máximo `max_per_day` (30) triagens por 24 h e
+  liga/desliga em `asst_settings.group_watch` `{ read_media, pay_requests, max_per_day }`.
+- **assistente-telegram:** entrada interna `{ action: 'deliver', chat_key, text, actions }` com
+  header `x-internal-key` (o webhook chama), que manda o texto e roda as ações — inclusive o
+  cartão de pagamento com os botões Pagar/Cancelar. O fluxo de segurança não mudou: botão → PIN
+  (interceptado, nunca vai ao modelo) → aprovação no app do Inter, e Pix continua só para
+  fornecedor cadastrado ou Pix permitido.
+- **Pegadinhas:** (1) o pedido vem de TERCEIRO — o texto do grupo vai delimitado em
+  `<mensagem_do_grupo>` e o system manda ignorar qualquer instrução lá dentro; preparar é só
+  rascunho, quem paga é o dono. (2) Ler mídia custa tokens: por isso o pré-filtro, o teto diário
+  e `read_media` desligável. (3) Se a migration não estiver aplicada, o webhook regrava a
+  mensagem sem as colunas novas em vez de perder a mensagem do grupo. (4) Pagamento com botões só
+  existe no Telegram: sem `telegram_owner_chat_id`, o aviso vai pelo WhatsApp e o brain explica
+  que precisa ser pelo Telegram.
+
+### Classificação por item: CMV × despesa (2026-09-12)
+
+- **Critério:** classificar pelo ITEM da nota (fornecedor + código), nunca pelo pagamento/CNPJ —
+  a mesma nota mistura bebida (CMV) e limpeza (despesa). Embalagem de delivery = CMV.
+- **Onde:** `fin_item_classifications` + triggers em `fiscal_inbound_documents` (itens da NF-e ao
+  chegar o XML) e em `fin_purchase_items` (BEFORE INSERT, todo caminho de compra: aplica a
+  despesa em `dre_category_id`). Classificação em lote: RPC `fn_item_classify` (admin) — reaplica
+  nas compras já lançadas. Tela: Financeiro › Classificação de Itens (`ItensClassificacaoTab`).
+  Detalhes em `FINANCEIRO_MAP.md` §9f.
+- **Pegadinhas:** (1) item com insumo é sempre CMV (não recebe categoria de despesa). (2) compra
+  antiga de NF-e tem o código só na descrição "X (código)" — `fn_item_key` extrai para não duplicar.
+  (3) a sugestão de despesa só vem com categoria se a loja tiver uma de nome parecido
+  ("Limpeza", "Papelaria"). (4) os triggers nunca derrubam a sync de notas nem o lançamento
+  (erro vira `raise warning`). (5) `fn_item_classify` checa `user_tenants.role` admin/manager
+  por `p_tenant`, não `auth_tenant_id()` (multi-loja).
+- **Serviços também (2026-09-18, decisão do dono: "classificação toda na aba"):** itens de NFS-e
+  (modelo 10, não ignorada) entram com `is_service = true` — sempre despesa, sem insumo; chave =
+  fornecedor + código do serviço (cTribNac). `fn_item_classify` grava a categoria nas contas a
+  pagar das notas lançadas como despesa (`reference_type = 'nfe_entrada'`, item principal = maior
+  valor, `fn_item_doc_principal`), e recusa CMV para serviço. Trigger `fn_item_bill_sync` em
+  `fin_accounts_payable`: conta nova de nota nasce com a categoria do item; conta classificada por
+  fora (chat/enquete/Contas a pagar) ensina o item pendente. Migration
+  `20260918150000_item_classificacao_servicos.sql`.
+
+### Recebimento pela foto da NF-e no grupo (2026-09-18)
+
+- **Fluxo da loja:** fornecedor emite a NF-e para transportar (chega sozinha em Notas de entrada);
+  ao chegar, a loja posta a FOTO da nota no grupo = confirmação de que chegou.
+- **Regra:** foto com chave de acesso (ou "DANFE nº" + "valor total da nota") de uma nota que já está
+  em `fiscal_inbound_documents` → `assistente-webhook` chama `assistente-brain { action:
+  'recebimento_nota' }`, que lança a compra pelo XML (fiscal-inbound import_purchase + vínculos
+  memorizados) e confirma o recebimento (purchase-write confirm_delivery), com o JWT do dono.
+  Nunca relançar a compra lendo a foto (caso B&P: 4 de 5 itens, preços trocados, sem frete/ST).
+- DACTE cujo tomador não é CNPJ de loja (`tenants.cnpj`) = frete pago pelo fornecedor: não vira pagamento.
+
+### Conversão de unidade na compra + deploy de edges com verify_jwt diferente (2026-09-13)
+
+- `purchase-write` converte a unidade comprada para a do insumo quando o item não traz fator
+  (mesma unidade / kg↔g / L↔ml / embalagem do insumo) e devolve `avisos_conversao` se não
+  conseguir. Ver `FINANCEIRO_MAP.md` §9g.
+- `stock-write upsert_ingredient` ignora `current_stock` em edição; saldo só por movimentação.
+- `fn_add_stock_movement` exige `p_operator_id` (NOT NULL em `stock_movements.operator_id`).
+- **Pegadinha de deploy:** `npx supabase functions deploy a b --no-verify-jwt` aplica a flag a
+  TODAS as funções do comando. `purchase-write` é `verify_jwt: true`; as `assistente-*` são
+  `false`. Nunca publicar os dois tipos no mesmo comando — confira em `list_edge_functions`.
+
+### Admin Master: acessos por loja/perfil e módulos sem loja; fim do Diagnóstico (2026-09-14)
+
+- **Diagnóstico de Pedidos removido** (rotas `/diagnostico*`, `src/pages/diagnostico`, item da Sidebar
+  e a edge local `qa-full-simulation`). As edges `simulate-orders`, `simulate-pdv-orders` e
+  `qa-full-simulation` publicadas não têm mais chamador.
+- **Módulos sem loja (Tarefas, Contratação)**: acesso por PESSOA na tabela `user_module_access`
+  (`user_id`, `module`), gerida só pelo Admin Master (`fn_admin_set_module_access`). O front lê
+  `fn_my_modules()` pelo hook `useModuleAccess` (cards de /modulos com campo `modulo`, item
+  "Contratação" da Sidebar e o guard de `/contratacao`). O dono sempre tem todos; o papel
+  `tasks_only` sempre tem Tarefas (senão o hard-lock da `RotaProtegida` entra em loop).
+  Backfill: quem tinha admin/gerente/tarefas em alguma loja ganhou Tarefas.
+- Contratação: `is_hiring_admin()` (RLS de `hiring_*` e do bucket `curriculos`) e a edge
+  `hiring-cv-scan` aceitam o dono OU quem está em `user_module_access`. O banco de candidatos é
+  um só: quem tem acesso vê tudo.
+- **Canais públicos do WhatsApp (2026-09-14)**: links `wa.me` com texto pronto e código `XX-XXXX`
+  (tabelas `bot_channels` / `bot_conversations` / `bot_messages`, aba Contratação › Links WhatsApp).
+  Mesmo número do assistente: o `assistente-webhook` manda toda DM de quem não é o dono para a
+  edge `canal-publico` (Haiku, sem sessão do dono, só ferramentas do canal). Regra: o que o
+  atendente público pode dizer vem SÓ do canal (`share_fields`, `extra_info`); o limite é no
+  servidor, nunca só no prompt. Detalhes em `assistente/README.md` › "Canais públicos".
+- **Dados mínimos da ficha (Contratação, 2026-09-14)**: lista em `hiring_settings.data.required_fields`
+  (Configurações › Dados mínimos). A regra fica em UM lugar, no banco: `hiring_missing_fields(c)`
+  e `hiring_missing_fields_by_id(uuid)`. O trigger `hiring_candidates_stage_guard` barra a saída de
+  "Novo" (menos para "Descartado") com ficha incompleta, seja pela tela, pelo assistente ou por outra
+  edge. A tela espelha a regra em `faltasFicha` (shared.ts) só para avisar antes. No `canal-publico`,
+  o atendente pergunta o que falta e grava pela ferramenta `completar_ficha`. Campo NATIVO novo
+  = mexer nos três: o CASE da função SQL, `REQUIRED_FIELDS` e `FIELD_LABELS`/`FIELD_ASK`. O dono
+  também cria os próprios campos (`custom_fields`, id `x_…`, valor em `hiring_candidates.extra_fields`,
+  sem código novo). "Mover mesmo assim" = a tela grava `required_waived_at` junto com o `stage_id`,
+  e o trigger libera.
+- **Pegadinha do 9 no WhatsApp (2026-09-14)**: número antigo de celular chega no webhook SEM o 9
+  (ex.: 554184098094), mesmo que a ficha tenha 41 98409-8094. Nunca compare telefone por "termina
+  com os últimos 11 dígitos": use a chave DDD + 8 dígitos (`foneKey` no `hiring-scheduler`). Por
+  causa disso, a resposta do candidato ao convite de entrevista caía no canal público e era ignorada.
+- **App no celular (PWA): atualizar e não perder o que foi digitado (2026-09-15)**:
+  - O `TopBar` (todas as telas do `AppLayout`) tem um botão "Atualizar" (`window.location.reload()`).
+    No app instalado não existe o recarregar do navegador. Como o HTML é network-first no service
+    worker, o botão também traz a versão nova depois de um deploy.
+  - O Android costuma recarregar o PWA ao voltar de outro app. Formulário longo guarda rascunho em
+    localStorage por registro e reabre onde estava (padrão da aba Entrevistas:
+    `contratacao_rascunho_entrevista_<id>` + `contratacao_entrevistas_pos`, válido por 12 h). O
+    rascunho some ao salvar.
+- **Contratação organizada "pelo que fazer" (2026-09-30)** — substitui a aba Entrevistas/Hoje:
+  - Áreas: **Minha fila** (`areas/AreaFila.tsx` + lógica pura `fila.ts`: responder a IA → entrevistas
+    de hoje → registrar as que passaram → decidir → currículos novos), **Vagas** (dentro: Funil = Kanban
+    só de quem está inscrito, Ranking pela nota, Conversas da IA; dados/divulgação/agendamento/excluir em
+    "Configurar vaga") e **Pessoas** (o banco, só cards). Números e Configurações são ícones.
+    `navegacao.ts › destinoDeAbaAntiga` traduz `?aba=` antigos (hoje/entrevistas/agenda → fila, etc.).
+  - **Modo entrevista** (`components/ModoEntrevista.tsx`, tela cheia) é o ÚNICO lugar do registro
+    (respostas, notas, decisão, fase); rascunho em `contratacao_rascunho_entrevista_<id>`. O
+    `EntrevistaModal` só agenda/remarca/cancela e não regrava o registro; remarcar quem faltou volta a
+    "agendada". `?entrevista=<id>` abre o modo entrevista.
+  - **Triagem** (`TriagemCurriculos.tsx`): fila = fase nativa "novo" sem decisão. Chamar = fase
+    'agendar'; Guardar = decisão R; Descartar = fase 'descartado'; Desfazer.
+  - Ficha: fases (livres) como botões, decisão no cabeçalho (vai também para a última entrevista
+    realizada), quadro **Próximo passo** (`ficha/ProximoPasso.tsx`) e 3 abas. Estrelas e calendário
+    mensal saíram.
+  - Camadas: ficha z-56/57 fica acima de modo entrevista/triagem (z-55); modais z-60/70; diálogo z-90.
+    Abrir o modo entrevista a partir da ficha fecha a ficha.
+- **Recrutamento pelo WhatsApp: lições das 1ªs conversas reais (2026-09-15)**:
+  - O `hiring-cv-scan` só recusa (422) quando não achou nada. Currículo "desorganizado" é legível e,
+    com nome, telefone ou experiência, salva mesmo marcado como ilegível.
+  - A `whatsapp-cloud` ignora reação, figurinha e mensagem de sistema.
+  - No scheduler, a trava do dia vale: se o candidato cita outro dia ("amanhã"), ganha a data que ele
+    falou, não a opção com o mesmo horário.
+  - Lembrete da véspera: não sai para entrevista marcada há menos de 12 h.
+  - Pedido de confirmação no dia: não sai para entrevista marcada no próprio dia. A saudação vem pela
+    hora.
+  - Salário não liberado no link: a IA diz que a equipe informa e chama `chamar_equipe`.
+  - "Não" com entrevista marcada NÃO é desistência: cancela e oferece novos horários. `recusar` só
+    com desistência explícita (regex `desisteDeVerdade`). A IA não pode pedir confirmação de presença
+    por conta própria.
+  - Sessão encerrada (recusou, cancelado, sem_resposta) nos últimos 7 dias + a pessoa pede
+    "remarcar": o inbound reabre e oferece horários (antes caía no canal-publico). Caso Andressa,
+    2026-09-15.
+  - O agendamento usa `hiring_candidates.whatsapp` (quem mandou pelo link) antes do telefone do
+    currículo.
+- **Contratação: histórico do candidato (2026-09-15)**:
+  - Tabela `hiring_candidate_events`, gravada por GATILHOS: `hiring_candidates_log` (criado, fase,
+    decisão, loja, estrelas, dados mínimos completados, organizado pela IA), `hiring_applications_log`
+    (vaga e aderência), `hiring_interviews_log` (agendada, remarcada, status, registro preenchido,
+    excluída) e `hiring_sessions_log` (convite da IA, marcada, desistiu, sem resposta, presença
+    confirmada).
+  - `actor` = e-mail do JWT, ou 'assistente' (service role).
+  - Pela tela só se cria/apaga `kind='anotacao'` (RLS).
+  - A ficha mostra a linha do tempo (`HistoricoCandidato`) e, em cada entrevista, o "Registro da
+    entrevista" (`RegistroEntrevista`: respostas pelas perguntas das Configurações, notas, considerações
+    e decisão).
+  - Evento novo = só mexer no gatilho, não na tela.
+- **Contratação: fase "Triagem" e atalho para a IA (2026-09-14)**:
+  - Fase comum (não nativa) entre "Novo" e "Chamar p/ entrevista", para separar quem vale chamar.
+  - Na ficha do candidato, o bloco "Agendamento pela IA" (`AgendamentoIA`) só aparece com vaga inscrita
+    cujo `hiring_job_scheduling` está ligado e completo (`faltasAgendamento`). O botão move para a fase
+    `agendar`, que é o gatilho do convite, e passa pela trava dos dados mínimos. Com sessão ativa,
+    mostra o status dela.
+- **Atendimento público pela API oficial (Cloud API), 2026-09-14**:
+  - O webhook da Meta chega na edge `whatsapp-cloud`, sem JWT. A confirmação usa `WHATSAPP_VERIFY_TOKEN`
+    e a assinatura, `WHATSAPP_APP_SECRET`.
+  - Ela baixa a mídia, transcreve áudio, grava `wa_last_in` (janela de 24 h) e `wa_cloud_seen`
+    (mensagem repetida). Depois manda para o `hiring-scheduler` (inbound) e, se ele não tratar, para o
+    `canal-publico` (incoming).
+  - O envio fica todo em `supabase/functions/_shared/wa.ts`. `asst_settings.wa_public` =
+    {transport: 'cloud'|'evolution', phone_id, waba_id}: trocar o número ou voltar para a Evolution é
+    UPDATE no banco, sem deploy.
+  - Convite que falha por MODELO ainda não aprovado (#132001/#132015) volta sozinho para a fila depois
+    de 30 min (a sessão com erro é apagada no tick). Caso Pamella, 2026-09-15: os modelos da conta nova
+    ficaram PENDING e ela não tinha escrito nas últimas 24 h.
+  - Na API oficial, a empresa só manda texto livre dentro de 24 h da última mensagem da pessoa. Fora
+    disso vai modelo: `convite_entrevista`, `lembrete_entrevista` e `aviso_equipe_entrevista`
+    (TEMPLATES em wa.ts, criados pela ação admin `setup_templates`). O `sendSmart` do scheduler decide.
+  - Ações admin (header `x-admin-key` = `WHATSAPP_ADMIN_KEY`): `status`, `setup_templates`,
+    `subscribe_app`, `send_text` (mensagem avulsa, origem 'manual'), `scheduler_force_tick` e
+    `scheduler_inbound` (reprocessa no agendador uma mensagem que o candidato já mandou). Só com
+    pedido do dono.
+  - **Registro único `wa_log`** (desde 2026-09-15), com o que entra e sai por `phone_key`
+    (`wa_phone_key()` = DDD+8, sem 55 e sem o 9):
+    - a `whatsapp-cloud` grava toda mensagem recebida, inclusive reação/figurinha que a IA ignora;
+    - `waSendText`/`waSendTemplate` gravam o que sai, com a `origin` (candidatura | agendamento |
+      manual);
+    - a conversa na tela de Agendamentos lê daqui, e não mais só do `history` da sessão, que continua
+      como contexto da IA;
+    - quem enviar por outro caminho precisa usar o `_shared/wa.ts` para cair no registro.
+  - Token: usuário do sistema `erpos-whatsapp`, segredo `WHATSAPP_CLOUD_TOKEN`.
+  - A `whatsapp-send` antiga (delivery, `META_WHATSAPP_*`) é outra coisa e não é usada.
+  - Número de teste validado de ponta a ponta em 2026-09-15 (candidatura + agendamento). Com ele, só
+    recebe mensagem quem está na lista de destinatários do painel (senão Meta 131030).
+  - Trocar para o número real: dar ao usuário do sistema `erpos-whatsapp` acesso à conta (WABA) do
+    número, UPDATE em `wa_public` (phone_id + waba_id) e rodar as ações `subscribe_app` e `setup_templates`.
+  - Número real em produção desde 2026-09-15: +55 41 98411-0139 (phone_id 1296325650233875, WABA
+    1771200764189437). O número de teste era phone_id 1150549658146093 / WABA 1428578402414522.
+  - Dois números desde 2026-09-15: o da Evolution (`assistente-webhook`) fica só com grupos + dono; o
+    atendimento público (candidatura/agendamento) é só no número oficial (`whatsapp-cloud`). Com
+    `wa_public.transport = 'cloud'`, DM de desconhecido no número da Evolution é IGNORADA
+    (`publicOnEvolution`), com `return` explícito, porque o código seguinte trata a mensagem como do dono.
+    Pegadinha que motivou: `bot_conversations` é por `contact_jid` (telefone), então o mesmo candidato
+    escrevendo nos dois números caía na mesma conversa, e a resposta ia pela API oficial com destino
+    @lid (erro "destino @lid não existe na API oficial").
+  - Nota da vaga refeita quando a ficha fica completa pela conversa (2026-09-15): a nota do `intake`
+    sai logo após ler o currículo, antes do `completar_ficha`. Ao completar, `rematchAndNotify` chama
+    `hiring-cv-scan › match` (x-internal-key) em segundo plano (`EdgeRuntime.waitUntil`, ~12 s) e o
+    aviso "Ficha completada" no Telegram traz a nova nota. Só com `channel.job_id`.
+  - Currículo completo novo avisa os entrevistadores da vaga (2026-09-15): `canal-publico` chama
+    `hiring-scheduler › new_cv` quando o currículo já chega completo e depois da nota refeita
+    (`rematchAndNotify`). Envio por `toInterviewers` (texto na janela de 24 h, senão o modelo
+    `aviso_equipe_entrevista`). Nunca em conversa de teste do dono. Só com `channel.job_id` e
+    entrevistadores configurados na vaga.
+  - Limpeza geral da Contratação em 2026-09-15 (troca de número): currículos, candidaturas, entrevistas,
+    sessões de agendamento e conversas do link apagados; cópia no esquema `backup` (tabelas
+    `*_20260915`, sem acesso por anon/authenticated). Os 34 arquivos do bucket `curriculos` foram apagados.
+  - PEGADINHA: `supabase storage rm -r ss:///BUCKET/` apaga os arquivos E O BUCKET. Recriar com a config
+    original (a de `curriculos` está em `supabase_migrations.schema_migrations`, versão 20260911194833:
+    privado, 10 MB). As policies ficam em `storage.objects` e sobrevivem. Para esvaziar sem apagar o
+    bucket, remover por prefixo (`ss:///curriculos/<pasta>`), não a raiz.
+  - Horários livres da IA (`fn_hiring_free_slots`, 2026-09-15, migração
+    `20260915150000_hiring_bloqueio_por_horario`): pula `blocked_dates` (dia inteiro) e `blocked_slots`
+    ([{date,start,end}], faixa numa data); horário ocupado = entrevista 'agendada' que SE SOBREPÕE a ele,
+    da vaga OU da mesma loja (`company_id`). Entrevista marcada na mão pela Agenda não grava `job_id`,
+    só a loja — antes não bloqueava nada, e só o minuto exato contava.
+  - Contratação em tempo real (2026-09-15, migração `20260915160000_hiring_realtime`): `hiring_candidates`,
+    `hiring_applications`, `hiring_interviews`, `hiring_scheduling_sessions` e `hiring_candidate_events`
+    na publicação `supabase_realtime`. `contratacao/page.tsx` aplica cada evento direto no estado
+    (kanban/lista/vagas/agenda); `AgendamentosPainel` recarrega em lote (300 ms). O polling (60 s / 30 s)
+    ficou de reserva. `hiring_distances` ficou de fora de propósito.
+  - BUG 2026-09-15 (Luciane Paiva): o gatilho `hiring_candidates_log()` (criado direto no banco às 11h25,
+    alterado 12h21, fora do repo) fazia `mudou := mudou || 'escolaridade'` com `mudou text[]` → o
+    Postgres lê o literal como array ("malformed array literal") e CANCELA o UPDATE. Toda alteração de
+    dado da ficha falhava (completar_ficha do robô e edição pela tela). Corrigido com `array_append`
+    (migração `20260915170000_hiring_candidates_log_array_append`). Regra: em PL/pgSQL, nunca
+    `text[] || 'literal'`; usar `array_append(arr, 'x')` ou `|| 'x'::text`.
+  - `canal-publico › birthIso` aceita data só com números ("15032002", "150302") desde 2026-09-15
+    (Alexssandro): antes recusava, o atendente pedia confirmação e seguia para a próxima pergunta sem
+    gravar. Formatos aceitos: AAAA-MM-DD, DD/MM/AAAA (/ . -), DDMMAAAA, DDMMAA; idade 14–80.
+  - `canal-publico`: cada ferramenta vai para o log (`ferramenta`, com o resultado). Gravação que falha
+    → resposta fixa "Não consegui salvar…" (o modelo dizia "anotei" mesmo com erro). Se falta dado e o
+    modelo diz que anotou sem chamar `completar_ficha`, uma chamada com `tool_choice` forçado grava a
+    partir da última mensagem e a resposta sai do que ficou gravado.
+  - `fn_hiring_book` não escreve mais nada em `hiring_interviews.notes` (2026-09-15, migração
+    `20260915140000_hiring_book_sem_nota_automatica`): as considerações são do entrevistador.
+  - `canal-publico`: 409 do `hiring-cv-scan` = currículo repetido (já salvo). Responde "já está com a
+    gente ✅", não "tive um probleminha" (o candidato mandava de novo à toa).
+  - Entrevista excluída/cancelada pela tela encerra a sessão da IA (2026-09-15, migração
+    `20260915130000_hiring_sessao_encerra_com_entrevista`): trigger BEFORE DELETE / AFTER UPDATE OF status
+    em `hiring_interviews` → sessão `agendado` vira `cancelado`. Antes, a FK `interview_id` (ON DELETE
+    SET NULL) deixava a sessão "agendado" sem entrevista e o `hiring-scheduler` seguia respondendo o
+    candidato. O cancelamento feito pelo próprio scheduler grava `negociando` depois e prevalece.
+  - Pegadinha da verificação do número: cada "Adicionar número" pode criar uma WABA nova (ficaram 3
+    "Assistente - ERPOS"), e muitos pedidos/tentativas de código dão bloqueio temporário (136025,
+    2494158). Pedir 1 código por vez; dá para pedir e verificar pelo Graph API Explorer
+    (`{phone_id}/request_code`, `verify_code`, `register` com PIN) quando a tela trava.
+- **Número do assistente BANIDO pelo WhatsApp (2026-09-14, 16:47)**: logout código 403 ("Esta conta
+  não pode usar o WhatsApp") logo depois de ~10 candidatos reais escreverem pelo link em poucos
+  minutos, com respostas automáticas via Evolution (conexão não oficial). O plano é uma linha nova,
+  "aquecida" antes, com ritmo baixo: o `hiring-scheduler` manda 1 convite por rodada e no máximo
+  4 por hora, com "digitando…" antes (`delay`). Desde 2026-09-15 o ritmo depende do transporte
+  (`INVITE_LIMITS`): Evolution continua 1/rodada e 4/h; API oficial era 10/rodada e 100/h e, desde
+  2026-09-28 (pedido do dono), **não tem trava**: todos os candidatos da etapa recebem na rodada seguinte. O horário
+  8h–20h vale para os dois. Caminho definitivo: API oficial (Cloud API) num
+  número só do recrutamento, separado do assistente pessoal.
+- **Link de candidatura = wa.me direto (2026-09-14)**. Tentamos um link curto próprio
+  (`erpos.vercel.app/v/CÓDIGO` → `vercel.json` → `canal-publico?go=` → 302 para wa.me). Tecnicamente
+  funciona, mas dentro do WhatsApp/Instagram só um link `wa.me` abre a conversa na hora; o curto passa
+  pelo navegador e para na página "Continuar para a conversa". A tela copia sempre o `wa.me`; para ficar
+  curto, a mensagem pronta é curta e sem acento ("Quero me candidatar (CV-XXXX)"). O `/v/` ficou no
+  ar só para quem já recebeu.
+- **Agendamento de entrevista: respostas livres (2026-09-14)**. O candidato não precisa responder
+  com número. O `classify` do `hiring-scheduler` recebe as últimas falas e devolve `preferencia`
+  ({data, depois_de, antes_de, periodo}) para pedidos vagos ("segunda depois das 16h"). Aí o
+  scheduler oferece só os horários livres que casam; quando é um só, pergunta "posso marcar?"
+  (`pending_request.kind = 'unico_horario'`) e um "sim" marca. A presença SÓ é confirmada quando
+  foi pedida (véspera e manhã do dia, `confirm_requested_at`). "Obrigado" depois de marcar é
+  `agradecer`, não confirmação.
+- **Loja × perfil pelo Admin Master**: `fn_admin_set_user_tenant` (upsert em `user_tenants`,
+  papéis admin/manager/cashier/waiter/kitchen/delivery_manager/tasks_only) e
+  `fn_admin_remove_user_tenant`. A pessoa só vê a mudança no próximo login/troca de loja
+  (o `AuthContext` guarda os vínculos da sessão).
+- Layout do Admin Master segue a DRE: `Segmented` de `dreUi`, cards `rounded-2xl border-zinc-200`,
+  tabelas com cabeçalho `text-[11px] uppercase text-zinc-400`.
+
+### Verificador determinístico: `scripts/check.mjs` + hooks (2026-09-15)
+
+Fase 0.1 de `ORQUESTRACAO-AGENTES.md`. Antes de qualquer agente "testador", o repo ganhou um
+portão sem IA que acusa **regressão** (não o legado):
+
+- `scripts/baseline.json` guarda a contagem de erros de TS (por arquivo+código) e a lista de
+  testes que falham. Regressão = erro de TS novo, teste que passou a falhar ou suíte que encolheu.
+  Baseline em 2026-09-15: **292 erros de TS** (legado do Readdy, não consertar) e **0 testes falhando**.
+- `npm run check` (tsc + vitest), `npm run check:build` (+ vite build), `npm run check:baseline`
+  (grava novo baseline — decisão humana, o script nunca faz sozinho).
+- Hooks em `.claude/settings.json` (compartilhado no git): a cada `Edit/Write` roda
+  `vitest related` no arquivo (~4 s); ao encerrar o turno roda o check completo (~2 min), **pulado**
+  quando nada mudou em `src/`/`supabase/` desde o último OK (stamp em `node_modules/.tmp`).
+  Exit 2 devolve o motivo ao Claude, que precisa corrigir antes de encerrar; `stop_hook_active`
+  evita loop.
+- Tempos medidos: tsc 60 s (com `--incremental` cai nas rodadas seguintes), vitest completo 66 s
+  (jsdom pesa; testes em si levam 3 s), build 34 s, 1 arquivo de teste 4 s.
+- Os 15 testes que falhavam eram testes velhos (contrato antigo de `getPeriodDates` em UTC/fim
+  exclusivo; relatórios com `created_at` = hoje fora do período fixo; participante "sem token" criado
+  com token). Reescritos para o contrato atual (Brasília, `-03:00`, fim inclusivo, "7 dias" = 7 dias
+  incluindo hoje) e sem depender do fuso da máquina.
+- **Bug real achado pelo teste velho:** `getPeriodoAnterior` formatava com `toISOString()` (UTC), então
+  `23:59:59.999-03:00` virava o dia seguinte e o "período anterior" terminava no mesmo dia em que o
+  atual começa (1 dia contado nos dois lados de toda comparação "vs período anterior"). Corrigido com
+  `dateKeyBrasilia`.
+
+### Checklists de teste por módulo + usuários de teste (2026-09-15)
+
+Fase 0.3 de `ORQUESTRACAO-AGENTES.md`. `TESTES-CHECKLIST.md` = 15 módulos em "Ação → Esperado",
+tabela "arquivo tocado → checklist" e as decisões do dono (loja, impressora, fixtures).
+
+- **Loja de testes = "Testes PDV"** (`db3ca014-6c03-4c2e-97b9-9542cf825da2`): o dono liberou qualquer
+  operação nela. Lojas reais: só leitura; se inevitável, Modo Treino.
+- **Usuários de teste** `qa.admin@erpos-teste.com` (admin), `qa.caixa@…` (cashier, crachá 9002),
+  `qa.garcom@…` (waiter, 9003), crachá do admin 9001. Criados por `scripts/seed-test-users.mjs`
+  (auth admin API + `public.users.pin_hash` = sha256(pin + user.id), a mesma fórmula do `login-pin`;
+  `user_tenants` só na loja de testes). Credenciais em `.test-users.json` (gitignored). Rodar de novo
+  rotaciona senha e PIN. A chave service_role vem de `npx supabase projects api-keys` e não fica em
+  arquivo nenhum do repo.
+- **Fiscal em produção**: a loja Vila Leste já emite NFC-e em **produção** (tpAmb=1, série 2) desde
+  15/09/2026 — a memória "falta virar pra produção" está desatualizada. Homologação foi na série 1.
+- **Bug fiscal (corrigido no código 09-17, edge pendente de deploy)**: pedido delivery com combo →
+  `fiscal-write` mandava o combo com `ValorUnitario = 0` e jogava combo + taxa de entrega em
+  `vOutro` (nota série 2 nº 3, 15/09: `vProd` 38 em vez de 95, `vOutro` 65,50). O remendo de 09-16
+  (somar sempre `order_item_options.additional_price`) passou a contar opcional em DOBRO no totem/caixa
+  e compensar com desconto falso (nota nº 4, 17/09: `vProd` 215,80 + `vDesc` 6 para 209,80).
+  **Pegadinha:** `order_items.item_price` NÃO é igual entre canais — caixa/mesa/QR/totem gravam com os
+  opcionais; delivery grava só a base (combo nasce com 0). Não há subtotal por linha. A regra ficou em
+  `fiscal-write/valores.ts` (`calcularValores`): por pedido, soma opcionais só se `orders.subtotal`
+  bater com a soma com opcionais; sem decisão, delivery soma e o resto não. Taxa de entrega continua em
+  `vOutro` (decisão do dono pendente, item 9.8). Teste: `src/test/edge/fiscalValores.test.ts`.
+
+### Fila de erros `dev_error_events` + Edge `client-errors` (2026-09-16)
+
+Fase 0.2 de `ORQUESTRACAO-AGENTES.md`. Decisão: tabela própria (não Sentry) — o assistente e os
+agentes leem por SQL, sem fornecedor novo.
+
+- **Tabela** `dev_error_events` (migration `20260916000000_dev_error_events.sql`): 1 linha por
+  `fingerprint` (fonte + fn/rota + mensagem sem números/uuids + 1ª linha do stack sem querystring),
+  com `count/first_seen/last_seen`, `status` open/triaged/fixed/ignored (volta a `open` se um
+  "fixed" reaparece), `tenant_id`, `route`, `app_build` (hash do `index-XXXX.js`). RLS ligada sem
+  policy; só `service_role`. View `dev_error_summary` = abertos, mais recentes primeiro.
+- **Escrita**: RPC `fn_dev_error_report(jsonb)` (security definer, só service_role). Fontes:
+  - `front`/`edge`: Edge **`client-errors`** (pública, `--no-verify-jwt`; POST, lote ≤ 20, rate
+    limit 60/min por IP, `user_id` só de JWT válido — nunca do body). Chamada por
+    `src/lib/errorReporter.ts`: `window.onerror`, `unhandledrejection`, `ErrorBoundary`
+    (`App.tsx`) e `invokeWithAuth` quando a Edge responde 4xx/5xx (5xx = error, 4xx = warning,
+    401/403/409 ficam de fora). Lote a cada 4 s, `sendBeacon` no `pagehide`, dedup 1×/min em
+    memória, lista de ruído ignorado (ResizeObserver, refresh token, chunk velho, Script error).
+    Em `npm run dev` só loga no console (`VITE_REPORT_ERRORS=1` para enviar).
+  - `print`/`fiscal`: `fn_dev_error_collect()` no **pg_cron a cada 15 min** (`dev-error-collect`)
+    junta `print_queue.status='failed'` e `fiscal_documents.status in ('error','rejected')` dos
+    últimos 20 min.
+- Ainda não coberto: 5xx que a Edge devolve sem passar por `invokeWithAuth` (`fetch` direto),
+  erros do `assistente-*` e crons (`fn_*_sync_all`), logs do Supabase (`query_logs` é só via MCP).
+- Consumo: por enquanto só SQL (`select * from dev_error_summary`). O workflow `/auditoria-erros`
+  (Fase 1) e uma ferramenta do assistente vêm depois — regra "assistente faz tudo que a tela faz"
+  não se aplica ainda porque não existe tela.
+
+### Fase 1 da orquestração: subagentes, workflows e trava de git (2026-09-16)
+
+- **Subagentes** em `.claude/agents/` (carregados quando a sessão do Claude Code inicia — criar/editar
+  exige reiniciar a sessão para o tipo aparecer no Agent tool): `triador` (só leitura + SQL SELECT,
+  Sonnet → ticket padrão), `executor` (edita o working tree, roda `check.mjs`, nunca commit/push/
+  deploy/migração aplicada), `testador` (Sonnet; `TESTES-CHECKLIST.md` no preview `dev` com
+  `.test-users.json`, evidência por `read_page`/SELECT), `revisor` (Opus; diff adversarial com a lista
+  de onde o ERPOS costuma quebrar). Cada um tem formato de saída fixo.
+- **Workflows salvos** em `.claude/workflows/` (rodam como `/ciclo` e `/auditoria-erros`; só o dono
+  dispara — o Workflow tool exige opt-in):
+  - `/ciclo <pedido|uuid de dev_error_events>`: Triagem → Execução → portão `check.mjs` (se reprova,
+    volta direto ao Executor) → Testador ‖ Revisor → até 2 voltas → relatório. **Entrega = diff no
+    working tree + relatório; commit/push é do dono.** Migração/deploy ficam como pendência.
+  - `/auditoria-erros [horas]`: SELECT em `dev_error_summary` → 1 Triador por erro (máx. 15) → grava
+    `status` (`triaged`/`ignored`) e `ticket` em `dev_error_events` → relatório priorizado com
+    "para corrigir: /ciclo <id>". Única escrita: essas duas colunas.
+- **Trava determinística** `scripts/guard-git.mjs` (hook `PreToolUse` › Bash em `.claude/settings.json`,
+  vale para o Claude principal e todo subagente): bloqueia push para main/master, push sem branch
+  explícito, `--force`, `reset --hard`, `checkout -- .`/`restore .`, `clean -f`, `branch -D` e
+  `supabase db reset/push`. Libera `git push origin claude/<branch>`. Exit 2 devolve o motivo.
+  **Pegadinha:** o hook vê o comando inteiro, inclusive strings; corpo de heredoc é ignorado (senão
+  documentar a trava era bloqueado), mas um literal proibido em `echo "..."`/argumento ainda bloqueia
+  — para testar o guard, escreva os casos em arquivo (`node teste.mjs`), não na linha de comando.
+- Workflow scripts são JS puro com `return` no topo: para checar sintaxe, embrulhar o corpo em
+  `new Function(... "return (async()=>{"+s+"})()")` (o `node --check` reclama do `return`).
+
+### TDZ em componente: `const` usado antes da declaração dentro de callback (2026-09-16)
+
+`/financeiro` quebrava em produção com `ReferenceError: Cannot access 'Ie' before initialization`
+(ErrorBoundary "Algo deu errado"). Causa: em `ContasPagarTab.tsx`, `selectedTotal` era calculado no
+corpo do componente com `Array.from(selectedIds).reduce(...)` e o callback chamava `saldoRestante`,
+uma `const` arrow declarada ~100 linhas **abaixo**, no mesmo escopo. Correção: mover
+`const saldoRestante` para antes do primeiro uso (`handleBulkPay` / `selectedTotal`).
+
+Critérios que ficam:
+
+- **O TypeScript não pega isso.** `TS2448` só vale para referência direta; dentro de uma arrow o
+  compilador aceita. O que pega é o ESLint `no-use-before-define` com `variables: true` — rodável
+  avulso (`new ESLint({ overrideConfigFile: true, overrideConfig: [...] })`) sem mexer no config do
+  projeto. Varredura de 2026-09-16: 113 ocorrências no `src/`, **todas as outras inofensivas**
+  (`const` de escopo de módulo, ou referência dentro de handler/efeito que só roda após o render).
+  O perigoso é só o que é **avaliado durante o render**.
+- **Por que escapou de todo teste:** o callback do `reduce` só roda com array não-vazio. Com
+  `selectedIds` vazio (carga normal) e com a loja de QA **sem nenhuma conta a pagar**, o caminho
+  nunca era exercitado. Bug "dependente de dados" que parece dependente de tenant.
+- **Como diagnosticar rápido:** o stack minificado é inútil, mas `dev_error_events` guarda o stack
+  com o chunk e o offset (`page-XXX.js:22:2401`). O `.map` **não é servido** pela Vercel; baixar o
+  `.js` de produção e fatiar a linha pelo offset (`fs.readFileSync(...).split('\n')[21].slice(2200,2700)`)
+  mostra o trecho minificado, e uma string literal dali (`"conta(s) não foram pagas"`) leva ao
+  arquivo-fonte por `grep`.
+- Para exercitar Contas a Pagar na loja `Testes PDV` existem 2 contas `QA TDZ ...` em
+  `fin_accounts_payable` (uma com pagamento parcial, para cobrir `saldoRestante`).
+
+### Chat do assistente: contexto da tela, botão que navega e badge (2026-09-16)
+
+Cinco frentes para o chat dentro do ERPOS deixar de ser "o Telegram numa janela" (detalhe em
+`assistente/README.md › Chat no ERPOS`):
+
+1. **Contexto do registro** — `src/lib/assistenteFoco.ts`: store em módulo (não é Context; o chat é
+   um só e não precisa re-renderizar a árvore) com dois níveis. `useFocoTela(() => ({...}), [deps])`
+   registra o que a tela mostra e limpa no unmount; `perguntarAoAssistente(item, texto)` marca o
+   registro apontado e dispara o evento `erpos-assistente-abrir`. O item vale para **uma** mensagem
+   (`limparFocoItem` depois do envio) — senão "e essa?" continuaria grudado na conta de ontem.
+2. **Botão na linha** — `PerguntarAoAssistente` (só renderiza para o e-mail do dono, igual ao chat).
+   Instrumentadas: Contas a Pagar, Insumos, Candidatos.
+3. **`abrir_tela` no brain** → action `{ type: 'abrir', rota, label }`. Rota validada contra
+   `TELAS_APP` (lista fechada espelhando `src/router`): sem isso o modelo inventa caminho e o botão
+   cai em "página em construção". Nada de `//` ou `http` — é `navigate()`, não link externo. No
+   Telegram vira botão de URL com `APP_URL`.
+4. **Câmera direta** no chat (`capture="environment"`) para a notinha de balcão.
+5. **Badge do botão fechado** — `unread`/`seen` na `assistente-app`, com o "já vi até aqui" em
+   `asst_settings.app_last_seen`. Conta só `role='assistant'`: novidade é o que ELE falou sozinho.
+   `seen` nunca anda para trás, porque a conversa aberta numa aba manda um id menor.
+
+Pegadinha herdada: com o chat fechado o componente não chamava nada (`if (!open) return` na carga e
+no polling), então qualquer aviso proativo dependia de o dono abrir. O `unread` é o único que roda
+fechado, e é só contagem — nenhuma mensagem trafega.
+
+### Chat: abas viraram lista de conversas (2026-09-16)
+
+Pedido do dono: "os temas têm que aparecer como conversas tipo WhatsApp". A barra de abas saiu; o
+painel abre numa lista (ícone, assunto, última mensagem, hora, badge de não lidas) e a conversa é
+uma tela de dentro, com seta de voltar. Nada mudou no banco — cada linha continua sendo um filtro
+por `asst_messages.topic` sobre a MESMA conversa (a do Telegram).
+
+Duas decisões que valem para o futuro chat entre pessoas (a lista já nasce no formato certo):
+- **"Visto" por assunto.** Um marcador global marcava como lido o que você não abriu: entrar no
+  Financeiro apagava o aviso de currículo que chegou antes. `asst_settings.app_last_seen` virou
+  `{ id, topics: { <assunto>: id } }` — `id` é o piso (formato antigo continua válido), cada
+  assunto anda sozinho, e ler "Todas as mensagens" sobe o piso e limpa as marcas.
+- **Quem já sabe do que se trata não passa pela lista.** Botão das telas, "Compartilhar" do Android
+  e badge de assunto único entram direto na conversa; a lista é só para escolher.
+
+### Instrução nova no prompt do assistente: bloco estável × dinâmico (2026-09-16)
+
+`abrir_tela` foi publicada com a regra ("terminou em 'vá na tela tal'? use a ferramenta") dentro do
+`SYSTEM_STABLE`. Em produção, 3 minutos depois do deploy, o modelo respondeu **"o CMV fica na aba
+DRE do Financeiro"** em texto, com a ferramenta disponível e sem chamá-la. O bloco estável tem
+dezenas de regras e é cacheado por 1 h; uma linha nova ali compete com tudo o que veio antes.
+
+**Critério:** regra que depende de CANAL ou de MODO vai no `systemDynamic`, no fim do prompt e
+condicionada (`channel === 'app' ? …`). O estável fica para o que vale sempre. Barato de verificar
+depois: `select content from asst_messages where role='assistant'` — o `historyContent` registra
+`[Botão enviado: "…" → /rota]` quando a ferramenta rodou, então dá para saber se o modelo usou a
+ferramenta sem depender do relato de quem estava na tela.
+
+### Botão do assistente: dois defeitos que só aparecem em produção (2026-09-16)
+
+O botão `abrir_tela` passou a sair (ver a nota sobre prompt estável × dinâmico) e trouxe dois
+problemas que teste de componente não pegaria:
+
+1. **Aba do Financeiro não estava na URL.** `FinanceiroPage` guardava a aba em `useState` com
+   `location.state`; `/financeiro?tab=dre` caía na Visão Geral, e clicar no botão já estando em
+   `/financeiro` não fazia nada (mesma rota, estado não muda). Passou a ler/escrever `?tab=`, como
+   Estoque e Configurações já faziam. O id antigo `previsao` continua aceito. **Critério:** tela com
+   abas guarda a aba na URL — senão nenhum link (assistente, WhatsApp, favorito) chega na aba certa.
+   O id da aba também não é o rótulo: Contas a Pagar é `pagar`, não `contas`.
+2. **Marcador interno vazando no balão.** O brain grava `[Botão enviado: "…" → /rota]` no histórico
+   para saber o que já mandou; o chat limpava só os marcadores antigos (enquete, localização,
+   contato, pagamento) e o novo apareceu na tela do dono. Ao criar um marcador de histórico, incluir
+   no `replace` do balão — a lista está em `AssistenteChat.tsx`.
+
+### O modelo imita os marcadores do histórico (2026-09-16)
+
+Depois que `abrir_tela` entrou no ar, o dono viu **balão vazio** e o texto `[Botão enviado: "…" →
+/rota]` aparecendo na barra pequena. Causa: o brain grava esse marcador no histórico para saber o
+que já mandou, e o modelo, vendo o padrão nas mensagens anteriores, passou a **escrever o marcador
+como se fosse parte da resposta**. O de verdade era acrescentado embaixo → marcador duplicado,
+botão duplicado e, quando o texto era SÓ o marcador imitado, balão vazio (o chat limpa os dois).
+
+Três defesas, todas necessárias:
+1. **Brain limpa a resposta** (`reply.replace(/^\s*\[(Botão|Enquete|…) enviad[oa]…\]$/gm, '')`) antes
+   de gravar. Regra no prompt não basta: o exemplo no histórico é mais forte que a instrução.
+2. **Brain deduplica** `outbound` do tipo `abrir` por rota+label (o modelo chama a ferramenta 2×).
+3. **Front tem uma função só** (`semMarcadores`) usada no balão E na prévia da barra, e não desenha
+   balão quando sobra texto vazio — a resposta pode ser só a ação.
+
+**Critério:** marcador interno gravado no histórico vaza por dois caminhos (o modelo copia; a tela
+esquece de limpar). Ao criar um, trate os dois.
+
+### "Voltar" do Android com overlays aninhados (2026-09-16)
+
+Com o chat aberto, o voltar nativo SAÍA DO APP: o painel é overlay e não mexia no histórico. O
+padrão já existia em Tarefas (`useVoltarFecha`, pushState + popstate) e virou
+`src/lib/voltarAndroid.ts` (Tarefas reexporta).
+
+**Pegadinha das camadas:** `popstate` é evento do window, então painel e conversa reagiam ao MESMO
+voltar e fechavam juntos. O helper agora mantém uma **pilha de camadas abertas** e só a do topo
+responde — o voltar desfaz uma por vez (conversa → painel → sai da tela). Um `history.back()` em
+teste com dois overlays abertos pega isso.
+
+### Contratação não avisava o dono no chat (2026-09-16)
+
+Dono: "hoje teve confirmação de entrevista e não recebi comunicado". Rastreado no banco: a
+confirmação existia (`hiring_candidate_events` "Presença confirmada pelo WhatsApp", sessão com
+`confirmed_at`), mas nenhuma linha em `asst_messages` desde a véspera — nem as entrevistas marcadas
+pela IA, nem a desistência.
+
+**Causa de desenho:** no `hiring-scheduler`, TODO aviso (agendada, confirmada, cancelada, remarcar,
+desistiu, não respondeu, lembrete da véspera) sai por `toInterviewers` = WhatsApp para os
+entrevistadores da vaga (`hiring_job_scheduling.interviewers`). Nada passava pelo assistente, então
+a aba Currículos do chat ficava vazia. O `canal-publico` já tinha `notifyOwner`; o agendador não.
+
+**Solução:** `toInterviewers` também chama `notifyOwner` → `assistente-telegram › deliver` com
+`save: true, topic: 'curriculos'` (grava na aba, manda no Telegram, dispara o push). Como todo
+evento passa por esse funil, um ponto cobre todos. Exceções: as instruções de resposta por código
+("Responda aqui: #ABC 1") são cortadas para o dono (só servem no WhatsApp do entrevistador), e o
+currículo novo pelo link não repete (`{ dono: false }`) porque o canal-publico já avisa com mais
+detalhe. O gatilho `fn_asst_messages_topic` só reclassifica `topic = 'geral'`, então o assunto
+explícito é respeitado.
+
+### Módulo Notas de Serviço — NFS-e pela API do Emissor Nacional (2026-09-16)
+
+Rota `/notas-servico` (`src/pages/nfse/`), módulo **sem loja**: acesso por pessoa (`user_module_access.module = 'nfse'`,
+Admin Master › Módulos) e por empresa emitente (`nfse_empresa_membros`, papel admin/emissor). Nada a ver com PDV/NFC-e.
+
+- **Tabelas:** `nfse_empresas`, `nfse_empresa_membros`, `nfse_tomadores`, `nfse_servicos`, `nfse_notas` (migração
+  `20260916220000_nfse_modulo.sql`). Tomadores/serviços gravados direto pelo front (RLS `fn_nfse_membro`); empresa,
+  membros e notas só pela Edge. `nfse_empresas` não libera `select *` (ids do Vault): usar `EMPRESA_COLS`.
+- **Certificado A1:** `.pfx` + senha no **Vault** (`fn_nfse_cert_set/get`, só service_role). Numeração da DPS por
+  ambiente em `fn_nfse_reservar_dps` (atômica; número queimado em rejeição é permitido).
+- **Fluxo:** tela → Edge `nfse-write` (auth, regras, monta o XML da DPS v1.01, grava) → **relay Node no Vercel**
+  (`nfse-relay/api/sefin.js`, projeto Vercel separado `erpos-nfse-relay`, região gru1, deploy por CLI dentro da pasta)
+  → Sefin Nacional (mTLS). Segredo compartilhado: `NFSE_RELAY_KEY` (secret do Supabase + env do Vercel) e `NFSE_RELAY_URL`.
+- **Pegadinha:** Edge Function (Deno/rustls) NÃO fala com a Sefin: HTTP/2 é recusado e com HTTP/1.1 a conexão é resetada
+  (renegociação TLS do IIS). Node/OpenSSL funciona. Por isso o relay.
+- **Assinatura aceita:** XMLDSig C14N 1.0 inclusivo, RSA-SHA1/SHA1, transforms enveloped+c14n, `<Signature>` irmã de
+  `infDPS`/`infPedReg`. Envio: `{dpsXmlGZipB64}` em `POST /nfse`; cancelamento `{pedidoRegistroEventoXmlGZipB64}` em
+  `POST /nfse/{chave}/eventos` (Id `PRE{chave}101101`). Homologação: `https://sefin.producaorestrita.nfse.gov.br/API/SefinNacional`.
+- **XSD:** os patterns do governo usam `^...$`; validador libxml trata como literal (falso erro na `serie`). Para validar
+  localmente, tirar `^`/`$` de uma cópia dos XSD. DPS gerada e evento validados contra o XSD v1.01 em 09-16.
+- **DANFSe:** a API oficial acabou em 01/07/2026 (NT 008/2026); o PDF é gerado no navegador (`components/danfse.ts`, imprimir/salvar).
+- **Nunca reenviar emissão automaticamente:** o front chama a Edge sem retry (`nfseCall`); nota sem resposta fica `erro`
+  e o botão "Consultar de novo" procura a DPS (`GET /dps/{id}`) antes de qualquer reemissão.
+- O atalho para o site do governo (coluna `fiscal_settings.nfse_emissor_nacional`) foi abandonado; a coluna pode ser
+  removida depois que o front sem ela estiver publicado.
+
+### Contratação: entrevistador pode ser usuário do ERPOS (2026-09-16)
+
+Pedido do dono: no entrevistador da vaga, escolher entre **WhatsApp de alguém** ou **usuário com
+acesso ao módulo Contratação** — pensando em vender o módulo, quando os usuários vão ser segregados.
+
+- **Formato** (`hiring_job_scheduling.interviewers`, jsonb, sem coluna nova): `{kind:'whatsapp', name,
+  phone, jid?}` (sem `kind` = whatsapp, formato antigo) ou `{kind:'usuario', name, user_id}`.
+- **⚠️ Ponto único de escopo: `fn_hiring_team()`.** As tabelas `hiring_*` NÃO têm dono (nem loja nem
+  cliente): hoje quem tem acesso ao módulo vê tudo. A lista de quem pode ser entrevistador vem só
+  dessa função (`user_module_access.module='contratacao'` + dono). Quando existir organização, é
+  ela que filtra — a tela (`AgendamentoVaga`) e a Edge não montam a lista. Vender o módulo exige
+  também pôr a organização nas próprias tabelas `hiring_*` e no `is_hiring_admin()`.
+- **Aviso** (`hiring-scheduler › toInterviewers`): WhatsApp como antes; usuário recebe **push**
+  (`send-push › send`) e, se for o dono, também o chat do assistente (aba Currículos). A migração pôs o
+  dono como usuário nas vagas já configuradas, para não perder o aviso no chat.
+- **Responder pela tela:** pedido fora da agenda só se respondia por código no WhatsApp (`#ABC 1`);
+  entrevistador-usuário travaria a vaga. Nova ação `decide` (JWT do usuário + `is_hiring_admin`), com
+  a lógica extraída para `decidirPedido` — usada pelo WhatsApp e pela tela, sem duplicar. Recusa se o
+  pedido já foi respondido (409). Botões em Contratação › Agendamentos.
+- **Push sem loja:** `push_subscriptions.tenant_id` virou nulável e `send-push › subscribe` aceita quem
+  só tem módulo liberado. Antes: "sem loja vinculada" → o pai do dono (só Contratação, 0 lojas) nunca
+  recebia nada. Botão "Ativar avisos" virou `BotaoAvisos` e foi para o cabeçalho da Contratação.
+- De quebra: salvar a vaga pela tela descartava o `jid` (@lid) aprendido do WhatsApp; agora preserva.
+
+### "Voltar" com camadas: a limpeza não pode ser tomada como voltar (2026-09-16)
+
+Fechar uma camada PELA TELA (seta ←) chama `history.back()` para limpar a entrada empurrada. Esse back
+dispara `popstate` de verdade, e a camada de baixo — agora no topo — fechava junto: a seta da conversa
+fechava o chat inteiro. `voltarAndroid.ts` conta essas limpezas e um ouvinte único (registrado ao
+carregar o módulo, antes das camadas) marca o evento para ser ignorado. Teste prova: sem a correção
+falha, com ela passa.
+
+### Conciliação: período salvo por conta e "Atualizar bancos" só o que falta (2026-09-16)
+O "De" da aba Conciliação era sempre hoje − 30. Agora fica em `fin_bank_accounts.reconciliation_from`
+(actions `get_reconciliation_period` / `set_reconciliation_period` da `financial-write`). Na primeira
+leitura vale a conciliação mais antiga da conta; depois só muda pelo usuário — exceto se surgir
+conciliação mais antiga que `reconciliation_earliest` (a conhecida quando o "De" foi gravado), aí recua.
+"Atualizar bancos agora" busca só o que falta: Inter desde `last_sync_at`, iFood pelas competências
+padrão e Stone com `sync { date_from }` = dias sem `fin_stone_imports` com sucesso desde o "De"
+(dia já importado não é baixado de novo). "Buscar o período filtrado" continua reimportando tudo.
+Pegadinha da conciliação Stone×Inter: o arquivo v2 da Stone não traz bandeira/tipo e em maio/2026
+veio `advance_fee = 0`, então a separação antecipado × débito não fecha nesses dias (o total do dia fecha).
+
+### Chat: botão redondo arrastável + presença confirmada na aba Entrevistas (2026-09-16)
+
+- **Botão do assistente arrastável.** Era fixo em `bottom-5 right-5`, por isso "voltava para baixo"
+  toda vez. Agora arrasta (pointer events, `touch-action: none`) e a posição fica em
+  `localStorage['erpos-assistente-fab']` como FRAÇÃO da tela (sobrevive a girar o celular), sempre
+  presa dentro da tela. Só vira arrasto depois de 8 px (toque tremido continua abrindo) e o click
+  que o navegador dispara ao soltar é ignorado. A barra pequena de digitar continua embaixo, perto do
+  teclado. Teste: jsdom não tem `PointerEvent` — o teste define um, senão o evento sai sem
+  `clientX` (o código também ignora coordenada inválida).
+- **Entrevistas › "Confirmou".** A confirmação de presença fica em
+  `hiring_scheduling_sessions.confirmed_at`, não na entrevista. A aba busca as sessões do dia aberto
+  (e de minuto em minuto) e mostra "Confirmou" (verde) ou "Aguardando" (pedido enviado sem resposta)
+  ao lado do nome, só enquanto a entrevista está `agendada`.
+
+### Aviso de contratação com botão "Abrir entrevista de Fulana" (2026-09-16)
+
+Pedido do dono: quando alguém confirma presença, o aviso no chat traz um botão que leva à entrevista
+dela. Três ligações que não existiam:
+
+1. **`hiring-scheduler › destinoDoAviso`** escolhe o destino: com entrevista → `/contratacao?aba=
+   entrevistas&entrevista=<id>` (id relido do banco — depois do `book` o contexto em memória tem o
+   anterior); pedido de horário → `?aba=agendamentos`; sem entrevista → ficha (`?candidato=<id>`).
+   Vai como action `abrir` no `deliver` e como `url` do push.
+2. **`assistente-telegram › deliver`** com `save` grava o marcador `[Botão enviado: "…" → /rota]`
+   junto do aviso (Telegram já transformava a action em botão de link).
+3. **O chat desenha botão a partir do marcador do histórico** (`botoesDoTexto`). Antes o botão só
+   existia nas `actions` da resposta da hora e sumia ao recarregar; aviso que chega sozinho nunca
+   passa pelo `send`. Rota só interna (começa com `/`, sem `//`).
+
+A Contratação lê `?aba`, `?entrevista`, `?candidato` (consome o parâmetro; recarregar não reabre) e a
+aba Entrevistas vai para o dia da entrevista e abre o registro — no celular também.
+- **Correção (mesmo dia):** o botão caía só na aba. Na aba Entrevistas, a regra "trocou o dia → abre a 1ª
+  do dia" rodava na MESMA passada do efeito do link, ainda com dia/seleção antigos, e sobrescrevia a
+  escolha (computador: abria a 1ª do dia; celular: fechava o registro). Trava `focoAplicado` até o dia
+  da entrevista estar na tela. Teste `entrevistasDoDia.test.tsx` monta a aba ANTES das entrevistas
+  carregarem (ordem real) — sem a trava, falha nos dois tamanhos de tela.
+
+### Pedido no grupo com vários pagamentos: um comprovante para cada (2026-09-16)
+
+Caso real (grupo "Financeiro loja - EP MALL"): uma mensagem pediu dois Pix de R$ 100 (Marcelle e
+Joziane). O assistente preparou e pagou os dois, mas só o da Marcelle teve comprovante no grupo.
+
+**Causa:** `asst_group_requests` guardava UM `payment_id` e o trinco do comprovante era do PEDIDO
+(`receipt_sent_at`). O brain só ligava pagamento a pedido com `payment_id` vazio → o 2º ficou órfão;
+e mesmo ligado, o 1º comprovante fecharia o pedido.
+
+**Solução:** o pagamento aponta para o pedido (`fin_inter_payments.group_request_id`) e o trinco é por
+pagamento (`group_receipt_sent_at` / `group_receipt_error`). `sendGroupReceipt` lê o vínculo do BANCO
+(o objeto `p` às vezes vem montado da resposta do Inter, sem a coluna) e responde à mensagem do
+pedido; o pedido só vira `pago` quando todos os pagamentos ligados a ele estão pagos. Com
+`solicitacao_grupo_id` informado, o brain liga mesmo que o pedido já tenha pagamento; sem id,
+continua adivinhando pelo valor só entre pedidos sem pagamento. `payment_id`/`receipt_sent_at` do
+pedido seguem gravados (1º pagamento) por compatibilidade; migração copiou os vínculos antigos.
+
+### Freelancers e diárias (2026-09-16)
+
+Pedido do dono: freela pago pelo grupo tem de virar despesa e o sistema tem de saber QUAIS DIAS cada
+um trabalhou; sem os dias na mensagem, o assistente pergunta no grupo. Decisões: cadastro SEPARADO
+(`hr_freelancers`), paga na hora e pergunta depois, uma linha por DIA (`hr_freelancer_shifts`),
+categoria RH existente.
+
+- **Opção A (o dono escolheu depois de ver o conflito):** UMA conta a pagar por Pix
+  (`reference_type='freelancer'`, RH, EM ABERTO — baixa pela conciliação) + diárias por dia. Uma conta
+  por dia não casaria com o débito único do Pix (a baixa casa 1 débito ↔ 1 conta de mesmo valor). No
+  DRE o gasto sai no dia do pagamento; custo por dia trabalhado sai das diárias.
+- **Lógica só no banco:** `fn_freelancer_registrar_pagamento(payment, dias[], funcao)` (idempotente; acha
+  o freelancer pela chave Pix/nome, cria a conta, divide o valor pelos dias — centavos no último),
+  `fn_freelancer_informar_dias`, `fn_freelancer_salvar`. Leitura por RLS `auth_is_member_of`; escrita
+  só pelas funções. Tela: Financeiro › Freelancers.
+- **Assistente:** ferramentas `registrar_freelancer`, `informar_dias_freelancer`, `responder_no_grupo`
+  (único texto do modelo que vai ao grupo: só pedido com diária aguardando os dias, uma vez por pedido).
+  Webhook: triagem manda `solicitacao_grupo_id`; liga TODOS os pagamentos da mensagem ao pedido (antes
+  só o 1º — o 2º ficava sem comprovante); mensagem com cara de data num grupo com diária pendente vai
+  para o brain em modo `dias_freelancer`.
+- **2026-09-28:** a aba Freelancers foi para dentro de **RH / Folha** (subaba; `?tab=freelancers` ainda
+  abre direto; quem só tem `fin_freelancers` vê só os freelancers, sem folha). Cadastro novo pela tela
+  (`fn_freelancer_criar`). Diária "aguardando dias" que veio do extrato (sem `payment_id`, só `bill_id`)
+  recebe os dias por `fn_freelancer_do_extrato` — antes o botão Salvar não fazia nada nesses casos.
+
+### Prestadores MEI (2026-09-28)
+
+Quem trabalha pela loja com CNPJ de MEI (ex.: supervisor), fora da folha do Domínio (sem INSS/FGTS/13º).
+Tela: RH / Folha › **Prestadores MEI** (`PrestadoresTab.tsx`). Tabelas `hr_prestadores` e
+`hr_prestador_pagamentos` (1 linha por conta a pagar, `on delete cascade` — desfazer a conta apaga).
+Leitura por RLS `auth_is_member_of`; escrita só por `fn_prestador_salvar`.
+
+- **Pelo extrato:** Conciliação › Lançar › **Prestador MEI** (`conciliacao-pagamentos`, kind `prestador`):
+  *Serviço do mês* = despesa em RH na competência; *Reembolso* = despesa na categoria da DRE do que ele
+  comprou (não é custo de pessoal). Pix para CPF/CNPJ do prestador abre já nessa opção. Recusa lançar
+  "serviço" se há conta aberta de pedido recorrente dele (é o mesmo Pix: ligar à conta).
+- **Recorrente:** `fn_prestador_gerar_pedidos` (cron `prestador-pedidos-mensais`, 08:10) cria no dia
+  combinado um **pedido de pagamento** (`fin_payment_requests` tipo `prestador`, `solicitado_por` nulo)
+  + cartão no 📥. O dono confere/muda o valor (campo no cartão e em /receber › Aprovar) e aprova →
+  `fn_pedido_pagamento_aprovar` (ramo prestador: conta em RH com `competence_month`) → Pix no Inter com
+  PIN → baixa. Recusar = não paga o mês (o automático não recria). Botão "Pedir pagamento" gera na hora.
+- **Pegadinhas:** `recorrente_desde` — ligar a recorrência depois do dia de pagamento do mês NÃO gera o
+  mês (senão pagaria de novo o que já saiu). Índice único de pedido vivo por prestador+competência.
+  Chave Pix só dos Pix permitidos (`fn_pix_favorecidos_opcoes`, lista branca só se edita no Assistente).
+
+### Baixa pela conciliação casava com o débito ERRADO (2026-09-16)
+
+`brain › baixa_conciliada` aceitava qualquer débito de mesmo valor que a conciliação sugerisse para a
+conta — e a sugestão é por NOME + VALOR. Freela recebe o mesmo valor em dias diferentes: a conta da
+Joziane (Pix de 16/09) foi quitada com o Pix de 11/09, que era OUTRO pagamento (nunca registrado).
+
+**Correção:** o débito é achado pelo **E2E do Pix** (`fin_inter_payments.response.transacaoPix.endToEnd`
+= `raw.detalhes.endToEndId` do extrato); sem E2E, só débito a partir do dia do pagamento. Se a
+sugestão aponta para outro débito, solta a sugestão errada e reaponta antes de confirmar. Nova ação
+interna `desfazer_baixa {statement_id}` (mesmo `undo` da tela, com estorno). Caso real desfeito e
+refeito: conta da Joziane agora paga em 16/09 com o débito de 16/09; o de 11/09 voltou a pendente.
+**Critério:** pagamento feito pelo sistema identifica o extrato pelo E2E, nunca por nome + valor.
+- **Confirmação no grupo (mesmo dia, pedido do dono):** quem responde os dias recebe resposta citando a
+  mensagem dele — "Anotado ✅ Marcelle e Joziane: 15/09. Obrigado!". Texto montado pelo CÓDIGO
+  (`confirmarDiasNoGrupo`, webhook) a partir das diárias GRAVADAS dos pagamentos que estavam pendentes;
+  sem registro, não confirma nada. O modelo continua sem escrever confirmação no grupo.
+
+### Repasses Stone: líquido exato e quadro de diferenças (2026-09-16)
+A regra de casamento que está no ar é `fn_match_card_deposits` (a `fn_match_stone_inter` só a chama).
+Ela somava `amount` (líquido já arredondado venda a venda) e dias com 100+ vendas estouravam a
+tolerância por centavos. Agora soma `raw->>'net'` (todas as casas decimais da Stone) e arredonda uma vez;
+tolerância = R$ 0,01 por crédito do banco (mín. R$ 0,02). `fn_stone_repasses(tenant, de, até)` devolve
+dia × pilha (débito/antecipado) com Stone liquidou × entrou no banco × diferença e `situacao`
+(ok, dia_fecha, faltou, sobrou, sem_deposito, sem_venda, sem_extrato). Usada pela action `stone_repasses`
+e pelo bloco `repasses_stone` dos alertas (`conciliacao-pagamentos`), pelo `RepassesStoneModal` e pela
+caixa "Repasse Stone do dia" no `TransacaoDetalheModal`. Regra de leitura: só `faltou`/`sobrou`/
+`sem_deposito` antigo são diferença real; `dia_fecha` = Stone não informou a antecipação.
+
+### Ações rápidas do chat do assistente (2026-09-16)
+
+Botão ⚡ na caixa do chat (`AssistenteChat.tsx`) → menu por área. São **roteiros fixos sem IA** (custo
+zero): balões e botões que chamam direto o backend das telas. Código em
+`src/components/feature/assistente/acoes/`:
+- `kit.tsx`: Roteiro, Opcao, Campo, EscolhaData, formatação e `invokeUmaVez`.
+- `index.tsx`: registro com `grupo` / `label` / `icone` e o componente carregado sob demanda.
+- Uma pasta por área: financeiro, operacao, estoque, marketing, pessoas, pessoal, atalhos. A NFS-e
+  fica em `assistente/AcaoEmitirNfse.tsx`.
+
+Regras:
+- **Loja:** sempre a loja ATIVA. As leituras diretas vão com o header `x-tenant-id`, então outra loja
+  volta vazia.
+- **Gravação:** sempre por `invokeUmaVez` (ou `gravarNaEdge` do estoque). O `invokeWithAuth` repete o POST
+  em erro de rede e duplicaria despesa, voucher, perda ou tarefa.
+- **Confirmação:** tudo que grava termina em resumo + confirmar.
+- **Caminho:** reaproveitar o caminho da tela. Não criar endpoint novo para ação rápida.
+
+Limitações conhecidas:
+- **Aprovações:** `AprovacoesPendentes` lê do banco (`pdv_approval_requests`) desde 2026-09-27.
+- **Promoções:** só lista. Há suspeita de que a tela nem salva: a action usada não existe no `menu-write`.
+- **Lembrete:** não há ação de criar para o front (`asst_reminders` é só service role).
+- **Registrar produção:** só escolhe a ficha e abre a tela.
+- **Nova ação:** acrescentar no `index.tsx` seguindo o `kit.tsx`.
+
+### Taxas contratadas da maquininha (2026-09-16)
+
+Cadastro em `fin_card_fee_contracts` (editor em Como o dinheiro entra, só Stone; edge `conciliacao-pagamentos` card_fees_list / card_fees_save — substitui a tabela inteira). A conferência `fn_card_fee_check` não sabe bandeira nem débito/crédito (o arquivo da Stone não traz): cada venda casa com a taxa contratada MAIS PRÓXIMA entre as possíveis (parcelada → crédito 2–6/7–12x; com antecipação → crédito à vista; sem antecipação → débito ou crédito à vista), vigente na data da captura. Antecipação medida nos dados: % a.m. sobre (bruto − MDR), pró-rata 30 dias até captura + 30×parcela empurrado para dia útil (sábado +2, domingo +1); feriados não estão no calendário, folga de +5 dias e R$ 0,02 por venda. Resultado na aba Taxas do `RepassesStoneModal` e no alerta `taxas_maquininha`. Limite: se a Stone cobrar uma taxa errada que por acaso é igual a outra taxa contratada possível (ex.: débito cobrado como crédito), não é detectado.
+
+### App Android: voltar saía do app + ações rápidas no chat (2026-09-16)
+
+- **Voltar saía do app sempre.** O app não tem o plugin `@capacitor/app`, que é quem liga o voltar do
+  Android ao histórico do site; sem ele o Android fecha a Activity. `MainActivity` agora registra um
+  `OnBackPressedCallback`: `webView.canGoBack()` → `goBack()` (o site recebe `popstate` e o
+  `voltarAndroid.ts` fecha chat/modais); senão `moveTaskToBack(true)` (vai para segundo plano, não
+  fecha). **Mudança nativa = APK novo** (`npm run apk`; no bash o script não acha `gradlew.bat` — rodar
+  `.\gradlew.bat assembleDebug` pelo PowerShell com `JAVA_HOME` = jbr do Android Studio).
+- **Chat, ações rápidas:** o menu ⚡ vivia dentro da caixa de digitação, escondida na lista de
+  conversas → sumia na tela toda. Virou `menuAcoesPainel`/`botaoAcoes`, também no rodapé da lista.
+- **Rolar o menu abria o chat na tela toda:** o gesto "puxar para cima" da barra pequena valia em
+  qualquer ponto. Agora só conta se o toque começa fora de `[data-sem-arrasto]`, campo ou select.
+- **Aviso de itens a classificar (2026-09-16):** `assistente-cron` › proativo `item_classify` (08-21h,
+  a cada 30 min) avisa itens de `fin_item_classifications` com `classe` null que chegaram desde o
+  último aviso (marca d'água por loja em `proactive_state.item_classify`). Sai pelo
+  `assistente-telegram` `deliver` com `save: true, topic: 'pagamentos'` + ação `abrir`
+  → aba Financeiro do chat com botão "Classificar itens" (`/financeiro?tab=itens`), link no Telegram e push. Janela 07-23h.
+  Mensagem com esse marcador ganha o cartão `ItensClassificarCard` ("Classificar aqui"): carrega os
+  pendentes AO ABRIR (`assistente-app` › `items_pending`, lojas admin/gerente) e classifica CMV/Despesa
+  por `item_classify` → `fn_item_classify` com o JWT do dono (userClient). Vínculo com insumo só pela tela.
+
+### Chat: cada grupo do WhatsApp é uma conversa (2026-09-17)
+
+Dono: "no grupo do financeiro teve atividade, mas só o Telegram viu". A resposta ESTAVA na conversa do
+sistema, mas na aba do ASSUNTO (cupom → "Compras e estoque"); quem procura pelo grupo não acha.
+`asst_messages.group_jid` (migration `20260917000000_asst_messages_grupo`, com backfill pelo
+`grupo="…"` do gatilho) é gravado pelo brain quando o webhook manda `group_jid` (triagem, entrada de
+compra, dias de freelancer). `assistente-app`: `history`/`seen` aceitam `group_jid`; `topics` devolve
+`groups` (última mensagem + não lidas). "Visto" do grupo = chave `g:<jid>` em `app_last_seen.topics`;
+mensagem de grupo conta como lida se vista no assunto OU no grupo. No chat, a conversa aberta é
+`''` | assunto | `grupo:<jid>` (`filtroConversa`), e assunto e grupo usam a mesma linha com o número
+de não lidas (`linhaConversa`).
+
+### "Não vou fazer" numa pendência de pagamento cancela o Pix (2026-09-20)
+
+`fn_pendencia_marcar` só fecha a linha em `pendencias`: os pagamentos preparados continuavam em
+`fin_inter_payments` com status aberto e o rodapé do chat seguia mostrando "aguardando você tocar em
+Pagar". `PendenciasChat.marcar('descartada')` agora chama `pendencia_recusar` (assistente-app), que
+cancela no Inter os pagamentos ligados — `pagamento_grupo` pelo `group_request_id`, `pagamento_pendente`
+pelo `ref` e pelos ids do payload (o preparado pela pendência nasce SEM `group_request_id`) — grava a
+linha "[Pagamento …: cancelado pelo ERPOS]" e marca o pedido do grupo como 'recusado'. `onMudou`
+recarrega os cartões na hora.
+
+### Comprovante no grupo quando o pagamento não nasceu do pedido (2026-09-21)
+
+O DAS de R$ 2.818,72 foi pedido no grupo em 18/09, mas o pedido ficou 'guardado' (DV da linha não
+batia); a conta veio da guia e quem preparou o pagamento foi o cron "vence hoje" — sem
+`group_request_id`, então o comprovante nunca voltou ao grupo. `sendGroupReceipt` ganhou um último
+recurso: pedido do grupo ainda em aberto, mesmo VALOR (±R$ 0,02), últimos 45 dias e **candidato único**
+(dois iguais não linkam, para não responder a mensagem errada). Ação interna
+`{ action: 'send_receipt', payment_id, group_request_id? }` reenvia o comprovante de um pagamento e
+serve para consertar casos antigos — idade da mensagem não importa, o comprovante responde a ela.
+
+### Aviso só no chat: Telegram vira canal desligável (2026-09-21)
+
+`asst_settings.channels.telegram_out = false` (ligado por padrão) desliga a SAÍDA pelo Telegram sem
+mudar a conversa: `assistente-telegram.deliver` e `assistente-cron.sendTelegram` param de mandar lá,
+mas continuam gravando em `asst_messages` (o chat) e disparando o push do app.
+No `payWatch`, a mudança de status grava NA CONVERSA primeiro e cada efeito (cartão do Telegram,
+comprovante no grupo, baixa, push) é isolado em try/catch — antes, um erro no push derrubava o resto e
+o "✅ pago" nunca chegava ao chat (boleto da Receita, 21/09). Pagamento nascido no chat do ERPOS
+(`tg_message_id` nulo) não vira mensagem nova no Telegram; a baixa e o comprovante viram uma linha
+própria, porque o cartão do chat lê só o marcador `[Pagamento …] id <uuid>`.
+
+### WhatsApp do dono: resposta no MESMO canal e citando a mensagem (2026-09-20)
+
+`relayToTelegram` (assistente-webhook) continua mandando a pergunta ao brain no chat do Telegram/ERPOS
+(mesmo histórico), mas a RESPOSTA agora sai no WhatsApp por `sendReply` — antes ela era entregue no
+Telegram e o dono ficava sem retorno onde perguntou. `sendReply` usa `quoted` da Evolution (mesma peça
+do `group_send`) para CITAR a mensagem: com várias notas seguidas, as respostas idênticas não diziam
+a qual nota se referiam. Sem `MsgKey` ou se a citação falhar, cai em `sendText` solto.
+
+### Nota antiga encaminhada pelo dono no WhatsApp (2026-09-20)
+
+O grupo do financeiro só é lido desde que o assistente entrou nele; notas anteriores ficavam de fora.
+Na DM do dono (com `channels.whatsapp_dm=false`, que repassa tudo para o Telegram) existe agora uma
+janela igual à de currículos: "compras" (ou "notas") abre 1 h (`asst_settings.wa_compra_intake`),
+"pronto" encerra, e legenda com compra/nota/cupom dispensa a janela. Cada foto/PDF passa por
+`notaEncaminhada` (assistente-webhook): `lerMidia` → se a chave/número bate com `fiscal_inbound_documents`
+vai para `recebimentoPorNota` (agora aceita grupo nulo: lança a compra pelo XML e confirma o
+recebimento); senão, cupom/nota com itens vai ao brain no modo `entrada_compra_grupo` com a instrução
+de usar a DATA DA NOTA. Sem itens, não lança nada e avisa.
+Antes de lançar (encaminhada E grupo) roda `compraDuplicada`: mesmo `invoice_number` com o mesmo valor,
+ou mesmo valor com `purchase_date` até 3 dias de distância, em `fin_purchases`. Achou → não lança, avisa
+e guarda a nota 1 h em `asst_settings.wa_compra_pendente`; o dono responde "lançar mesmo assim" e aí
+`lancarCompraPendente` segue. No grupo, duplicidade fecha o pedido como 'ignorado' e só avisa.
+
+### Fechamento: uma mensagem do CAIXA e uma da SESSÃO (2026-09-20)
+
+No chat do ERPOS essas duas mensagens aparecem como PAINEL: o `assistente-cron` grava o texto (que é o
+que vai para WhatsApp/Telegram, sem o marcador) mais `[painel]{json}[/painel]`; `PainelMensagem.tsx`
+lê o marcador e desenha com as mesmas peças das ações rápidas (`acoes/painel.tsx`). `semMarcadores`
+tira o marcador da prévia da lista. Marcador inválido = balão de texto normal.
+
+`sessions` = turno da loja; `cash_registers` = gaveta dentro do turno (`session_id`). Gatilhos
+`trg_cash_register_fechou` → `closing_cash` (dinheiro daquele caixa: abertura, entradas/saídas com o
+motivo, esperado × contado, diferença, observação) e `trg_session_fechou` → `closing_session` (turno:
+`fn_get_sales_report` com `p_session_id`, canais, pagamentos, mais vendidos já juntando " (Un. N)",
+nº de caixas e a soma das diferenças, cancelados/descontos da sessão). Ambos em `assistente-cron`
+(`caixaText`/`sessaoText`), chamados por `fn_pdv_avisa_assistente` (pg_net + vault). Turno sem venda
+não manda nada. Migration `20260920050000_fechamento_caixa_e_sessao`.
+
+### Fechamento sai ao fechar o caixa, uma mensagem por loja (2026-09-20)
+
+Gatilho `trg_cash_register_fechou` (migration `20260920040000_fechamento_ao_fechar_o_caixa`) chama
+`assistente-cron` com `run: 'closing_tenant'` (pg_net + `vault.decrypted_secrets.assistente_internal_key`),
+passando a loja e o dia do TURNO (data do `opened_at`). A Edge só manda se não sobrou caixa aberto na
+loja naquele dia e grava `proactive_state.closing_sent[tenant] = dia`. O aviso das 23:00 virou rede de
+segurança: pula as lojas que abriram caixa no dia (essas recebem ao fechar) e as já marcadas.
+Os "mais vendidos" do fechamento agora juntam " (Un. N)" como a aba Produtos e a ação Vendas do dia.
+
+### Vendas do dia × Fechamento: as duas contas do mesmo sábado (2026-09-20)
+
+`fn_get_sales_report` (3 e 4 argumentos) somava `by_payment` pelos pagamentos do período
+(`p.created_at`) e todo o resto pelos pedidos (`o.created_at`): pedido de 19/09 pago 00:08 de 20/09
+entrava no faturamento e sumia das formas de pagamento (R$ 845,30 × R$ 749,30). Agora tudo pela data
+do PEDIDO (migration `20260920030000_sales_report_pagamentos_pela_data_do_pedido`).
+No `closingText` (assistente-cron) a comparação da semana passada ia de `lwDay` até HOJE — a semana
+inteira (R$ 2.292,00, -67%) em vez do mesmo dia (R$ 594,00, +42%).
+Ainda em aberto: o fechamento roda às 23:00 e não vê o que for pago depois (o caixa fecha os pedidos
+de madrugada), então ele é sempre parcial nos dias de turno longo.
+
+### Chat: a resposta fica onde a pergunta foi feita (2026-09-19)
+
+Assunto NÃO é escolhido por IA: são regras — as ferramentas que o assistente usou (brain,
+`porFerramentas`) e palavras-chave no gatilho `fn_asst_messages_topic` (BEFORE INSERT, só quando o
+topic chega 'geral'). O texto do app traz `[Pelo ERPOS · tela: …/contratacao]`, então o gatilho
+confundia a TELA com o assunto. Regra atual: assunto escolhido no app (inclusive 'geral') vale para
+pergunta e resposta (o brain desfaz o gatilho com um update); pergunta dentro da conversa de um grupo
+leva `group_jid` (front → assistente-app → brain); sem assunto (Telegram, "Todas") pergunta e
+resposta ficam no mesmo assunto. Depois de enviar, o front busca o novo só da conversa aberta
+(`filtroConversa`) — sem isso o que chegava em outras conversas aparecia na aberta.
+
+### Chat: abrir a conversa na última mensagem (2026-09-18)
+
+Rolar para o fim uma vez ao abrir não basta: DEPOIS a área das mensagens ENCOLHE (os cartões de
+pagamento em aberto chegam atrasados e ocupam o espaço de baixo, e o teclado do celular diminui a tela),
+e o navegador mantém o `scrollTop` — as últimas mensagens somem por baixo. `AssistenteChat.tsx` observa
+com `ResizeObserver` o conteúdo (`conteudoRef`) E a própria área rolável, mais o `visualViewport`, e
+volta ao fim enquanto `stick` (você não rolou para cima). Medido em Chrome headless com a área
+encolhendo 250 px: sem observar a área faltavam 155 px; com, 0. Pegadinha de teste: a aba do navegador
+embutido fica `hidden` (sem rAF, o ResizeObserver não dispara) — medir com
+`chrome.exe --headless=new --window-size=375,812 --virtual-time-budget=25000 --dump-dom`.
+
+O outro lado (2026-09-19, "subo a conversa pra ler e do nada me leva lá pra baixo"): só rola sozinho
+quem está NO fim (`stick` = a menos de 16 px; com 80 px, subir uma ou duas linhas ainda contava como fim
+e cada atualização dos cartões puxava de volta), nunca com o dedo na tela (`tocando`), e a resposta do
+assistente que chega depois NÃO força o fim — `toBottom()` confere `stick` dentro do quadro. Só o SEU
+envio leva ao fim.
+
+### Repasse Stone creditado em duas datas (2026-09-16)
+
+O banco às vezes credita parte do repasse de um dia (ex.: uma venda de débito) em outra data. `fn_match_card_deposits` tem uma 2ª passada: mesma pilha, dia D que não fechou por falta + dia E entre D+1 e D+5 que não fechou por sobra, com o arquivo da Stone de E já importado; se juntos fecham na tolerância, concilia os dois com `match_group = 'stone:D+E:normal|antecipado'` (o match_group é só um rótulo — `group_detail` busca por igualdade). `fn_stone_repasses` marca os dois dias como `atrasado` e devolve `par_dia`. Sem o arquivo da Stone de E não há como saber a sobra de E, então o par só fecha no dia seguinte ao crédito atrasado.
+
+### Venda cancelada na Stone (2026-09-25)
+
+Venda cancelada depois de capturada **continua na lista de parcelas liquidadas** do arquivo; o desconto vem em `<Transaction><Cancellations><Cancellation><Billing><ChargedAmount>` + `ChargeDate` + `PaymentId` e sai do mesmo pagamento (ex.: 10/09 Paranaguá, venda de R$ 77 cancelada 1 min depois → repasse veio R$ 76,19 menor e o sistema acusava "Faltou no banco"). A edge `stone-conciliation` grava como débito `raw.kind='cancellation'` com `raw.gross/net` **negativos** (−devolvido/−descontado) e `raw.pilha` herdada do pagamento; `fn_stone_repasses`, `fn_match_card_deposits` e `fn_dre_competencia_cartoes` somam installment + cancellation; `postLedger` tira o bruto da receita e devolve a taxa. Pegadinha do mini-parser: `section(tx,'Cancellations')`/`section(xml,'Payments')` pega o **contador** `<Cancellations>0</Cancellations>` de `<Events>`, não o container — usar `children(...).flatMap(w => children(w,'Cancellation'))`. Esse mesmo bug deixava `payments_total` sempre 0 no `fin_stone_imports`. **Chargeback** (mesmo dia, 2º commit): vem em `<Installment><Chargebacks><Chargeback>` com `Amount`, `ChargeDate` e `PaymentId` (pagamento de onde sai o desconto — antes da liquidação é o da própria parcela e os dois se anulam; depois, um pagamento futuro). Grava `kind='chargeback'` (débito, gross = −bruto da parcela, net = −Amount) e `chargeback_refund` (reapresentação, crédito, sinais positivos); pilha = do pagamento do desconto, senão da própria parcela. As 3 funções SQL aceitam `kind in ('cancellation','chargeback','chargeback_refund')`. Testado só com XML simulado pela documentação da Stone (a loja nunca teve chargeback).
+
+**Mercado Pago (mesmo dia)** — `mp-conciliation`:
+- **A busca `/v1/payments/search` do MP volta VAZIA à toa** (21/09: mesma chamada, `total` 0 em 4 de 6 tentativas). O importador gravava "0 vendas" e nunca mais olhava → 52 de 56 dias zerados e R$ 1.221,40 de venda fora do financeiro. Agora `searchPage` repete até 6× e fica com a maior resposta; e o sync reconfere por 7 dias todo dia gravado com 0 vendas. Qualquer outra chamada nova à busca do MP deve passar por `searchPage`.
+- **Estorno**: o MP devolve a taxa proporcional → sai do saldo o LÍQUIDO (`refundNet` = valor × líquido/bruto), no dia do estorno (`p.refunds[].date_created`); a linha `mpref:<id>` é regravada (upsert sem ignore). Receita −bruto estornado e taxa −taxa devolvida no dia do estorno.
+- **Contestação** (`status charged_back`): tira da receita o que sobrou da venda no dia da última alteração. O débito de dinheiro NÃO vira linha pelos pagamentos — vem do Relatório de Liberações (`chargeback`, como `movement`).
+- Venda aprovada num dia e estornada/contestada depois: o sync busca por `date_last_updated` nos últimos 5 dias e reimporta o dia da venda.
+- Dia só com estorno/cancelamento (receita ou taxa negativa): `gross −= taxa` (sinal!) e o que ficar negativo vira despesa. O mesmo ajuste na Stone estava com o sinal trocado (nenhum dia real atingido).
+
+### Hora em toda linha de extrato (2026-09-25)
+
+Regra do dono: todo extrato da conciliação mostra a hora, de qualquer banco ou conta. Padrão único em `fin_bank_statement_imports.raw`: `hora` ('HH:MM', Brasília), `hora_data` (quando a hora é de OUTRO dia que a linha) e `hora_ref` (do que é a hora). `horaTransacao` (useConciliacao.ts) lê `raw.hora` e cai no `raw.dataInclusao` do Inter; hora de outro dia aparece "18:22 · venda 09/09".
+- **Stone**: o arquivo não tem hora do repasse → mostra a hora da VENDA (`CaptureLocalDateTime`, já local) com `hora_data` = dia da venda; cancelamento usa `CancellationDateTime`; chargeback, a hora da venda.
+- **Mercado Pago**: liberação (`money_release_date`, senão `date_approved`), estorno (`refunds[].date_created`), saque/movimento (coluna `DATE` do Relatório de Liberações). `release_fetch { reprocess: true }` rebaixa os relatórios já importados.
+- **Arquivo OFX/CSV** (Itaú e qualquer banco sem API): `DTPOSTED` com hora, convertida do fuso `[-3:BRT]`/`[0:GMT]`; 00:00:00 e 12:00:00 exatos = banco sem hora (não mostra). CSV: célula de data com hora ('10/09/2026 14:32').
+- Linha já importada ganha a hora pelo reimport: `fn_statement_set_hora(tenant, conta, [{external_id, hora, hora_data, hora_ref}])` só completa `raw.hora*` onde falta (o upsert da importação ignora duplicadas e regravar a linha desfaria a conciliação). Integração NOVA de banco/maquininha: gravar `raw.hora` desde o início.
+- Sem como recuperar: linhas de arquivo importadas antes (o arquivo não fica guardado).
+
+### Conciliação: "Reabrir" = undo quando a conciliação criou/baixou algo (2026-09-25)
+- Linha com `match_detail.confirmed` (`bill_id`, `payroll_id` ou `created='fora_dre'`) só se reabre pela edge `conciliacao-pagamentos › undo` (`useConciliacao.unreconcile` já decide). Voltar só `status/reconciled` deixava a conta paga/compra/diária de pé e a linha "pendente" — convite a lançar em dobro. Botão novo que reabra linha da conciliação: usar `unreconcile`, nunca `updateImport` cru.
+- Todo `match_detail.created` novo (`despesa`/`compra`/`freelancer`/`fora_dre`) precisa de quadro no `TransacaoDetalheModal` com o Desfazer — a aba "Não entra no DRE" nasceu sem motivo nem desfazer.
+- Saldo do cartão da conta (`useBankAccounts`) é relido a cada recarga do extrato: lançar/desfazer mexe no saldo via `fn_bank_debit/credit`.
+- `link_manual` aceita `dre_category_id`: conta sem classificação DRE é classificada ali (o `pay_bill` recusa baixa sem DRE).
+
+### Datas no Financeiro: fuso de Brasília (2026-09-25)
+- Coluna `timestamptz` (`created_at`, `received_at`) filtrada por período: SEMPRE `dia + 'T00:00:00-03:00'` / `dia + 'T23:59:59.999-03:00'`. Sem offset o Postgres lê UTC e o mês vira às 21h (a DRE e a DRE comparativa estavam assim; `useReceitas` já fazia certo). Coluna `date` (`paid_date`, `due_date`, `fin_cash_flow.date`) compara com 'YYYY-MM-DD' puro.
+- "Hoje": `todayBrasilia()` e `somarDias(hoje, n)` (`src/lib/dateUtils.ts`), nunca `new Date().toISOString().split('T')[0]` — vira amanhã às 21h (conta de hoje aparecia vencida à noite).
+- Fluxo de caixa × maquininha (2026-09-25): `fin_cash_flow.fora_do_caixa = true` (gatilho `trg_cash_flow_fora_do_caixa`) marca `auto_sale`/`auto_card_fee` de pagamento em cartão (credit/debit/meal_voucher) quando a loja tem Stone ou MP com `post_to_ledger` — o dinheiro entra pelo `stone_sale` na liberação. Toda tela de CAIXA (Fluxo/Calendário/Previsão/Realizado) filtra `fora_do_caixa=false`; a DRE não (segue a regra de fontes). Leitura nova de fin_cash_flow para caixa: filtrar também.
+- Saldo inicial de projeção: com banco configurado (`fin_bank_accounts` synced/current) parte do saldo de HOJE — Previsão e Calendário usam a mesma regra; o razão acumulado só vale para loja sem banco.
+- Agenda de recebíveis (`fin_agenda_recebiveis(p_tenant, p_from, p_to)`, 2026-09-25): Stone = `fin_card_forecast` (gravada pela stone-conciliation a partir de FinancialTransactions › Installment; "paga" = existe linha no extrato com `external_id like external_key || '\_%'`; loja com antecipação automática → dia útil seguinte à venda, porque a Stone informa D+30 no crédito e paga D+1) + iFood = `fin_ifood_repasses` sem recebimento no Inter (depende do relatório importado na aba iFood). Previsão e Calendário pedem de AMANHÃ em diante. Mercado Pago não entra: a venda já vai para o razão na data de liberação.
+- Recorrentes na projeção: a tabela só tem a próxima ocorrência (a edge cria a seguinte na baixa); `ocorrenciasRecorrentes` (`src/lib/recorrencias.ts`) gera as dos meses seguintes só para exibir.
+- Contas a Pagar: `bank_account_id` da conta é o banco que a baixa debita (`pay_bill` usa o do payload ou o da conta; sem nenhum, não mexe em saldo). O modal de pagamento tem "Saiu da conta".
+
+### Operação go-live Paranaguá: carga, segurança e corridas (2026-09-17)
+Agentes (auditor, carga, testadores, revisores, executores) testaram produção na loja Testes PDV; dados de teste apagados ao final.
+- **Latência**: Edge rodava em sa-east-1 e o banco está em us-west-1 (~150 ms por consulta; create_order 4,5 s). `src/lib/supabase.ts` agora anexa `?forceFunctionRegion=us-west-1` (patch global de `fetch`, lista `EDGES_NA_REGIAO_DO_BANCO`) às edges que só falam com o banco; create_order caiu p/ ~1,1 s, record_payment ~0,8 s. Edges que falam com SEFAZ/Inter/Stone/Pix ficam no padrão. Edge nova só de banco → adicionar à lista.
+- **Segurança**: edges sem auth (config-write, import/export-menu-template, print-queue-write, simulate-*) e user-write (qualquer logado resetava senha de qualquer um) agora usam `_shared/tenant-auth.ts` (JWT + `user_tenants` + `platform_owners`). Migrations `20260917140000` e `20260917160000` revogaram EXECUTE de anon/PUBLIC em ~160 funções SECURITY DEFINER (proacl NULL = PUBLIC executa; revogar só de anon não basta). **Função nova no public nasce executável por PUBLIC** — revogar na própria migration.
+- **Corridas**: `pg_advisory_xact_lock` em `fn_next_queue_token`, `enqueue_print_ticket`, `fn_open_table_session` (idempotente); índice único `table_sessions(table_id) where status='open'`.
+- **Canais públicos**: mesa-write recalcula preço no servidor, exige access_token e client_request_id; delivery-write limita por telefone (não pela loja inteira — antes 15 pedidos/10 min de qualquer canal bloqueavam o delivery), exige bairro/pino na entrega, recusa opção inválida, filtra `deleted_at`. Baixa de estoque de itens `skip_kds` extraída p/ `_shared/stock.ts` e usada em order/mesa/delivery-write (deploy das 3 juntas).
+- **KDS** não desliga mais após 5 erros (backoff + faixa "Sem sincronizar"); `fn_cancel_and_refund_order` dava 42703 (order_items não tem updated_at) e nunca estornava.
+- Testar sem senha: JWT de dispositivo via `kiosk-auth` + kiosk token da loja de testes; SQL via `npx supabase db query --linked --project-ref ...` quando o MCP cai.
+
+### Go-live Paranaguá: pico simulado, impressão e estoque comprometido (2026-09-17, parte 2)
+- **Pico de 30 min (113 pedidos, 3 totens + QR + delivery + caixa + cozinha)**: dinheiro fechou (R$ 6.840,70 em pagamentos = relatório), 0 duplicado, 185/185 tickets. Gargalo = banco (plano Micro: `max_connections` 60, `shared_buffers` 224MB): 3 travas de 25–50 s com gravações de 10–17 s; os maiores consumidores em `pg_stat_statements` são o Realtime (WAL) e `fn_get_kds_orders` (manda a sessão inteira, ~3,6 KB/pedido).
+- **Região das edges**: `order-write` chama `fiscal-write?forceFunctionRegion=sa-east-1` — NFC-e tem que sair de IP brasileiro mesmo com a edge chamadora em us-west-1. Vale para qualquer chamada edge→edge que fale com serviço BR.
+- **Impressão**: `enqueue_print_ticket` deduplica por (tenant, order, station_key) — quem enfileira no servidor tem que **juntar** itens de preparo e `skip_kds` da mesma estação num ticket (era o bug da bebida sumindo no delivery); `printOrderQueue.ts` já fazia. Retentativa passou a ser por tempo (5s/15s/30s/60s até 15 min) em vez de 5 tentativas; `regras.ts` (novo) tem CP860 com normalização (travessão/aspas curvas viravam bytes de controle), fallback de impressora e cabeçalho de REIMPRESSÃO.
+- **`fn_get_items_sem_estoque` v2**: comprometido = consumo real (ficha + opcionais com `ingredient_id`, com conversão de unidade) de itens de cozinha `new/preparing` de pedidos **vivos** das últimas 12 h; esconde o item quando falta 1 porção. Antes: só o mesmo item, qualquer idade (pedido abandonado escondia item para sempre) e só com saldo ≤ 0.
+- **login-pin**: limite no servidor (`login_pin_attempts`, 5 falhas/matrícula e 100/IP em 15 min, mensagem única) — o front antigo repetia o 401 e contava 2 falhas por erro, então essa edge só sobe junto com o push.
+- Checklist operacional do dono: `CHECKLIST-GOLIVE-PARANAGUA.md`.
+
+### Backup diário do banco sem Docker (2026-09-17)
+- Plano Free sem backup automático → `scripts/backup-diario.mjs` (+ `scripts/backup/lib/*.mjs`) extrai todo o schema `public` (184 tabelas, `auth` fica fora por causa de hash de senha) via `npx supabase db query --linked --project-ref <ref> -f <arquivo.sql>` (Management API, funciona sem Docker/pg_dump/psql; `db dump` **não** funciona sem Docker — `LegacyDockerRunError`). A query sempre vai por arquivo (`-f`), nunca como argumento de linha de comando — quebra no shell do Windows (mesmo padrão de `scripts/monitor-noite.mjs`).
+- **Pegadinha real encontrada só na execução de verdade**: `array_agg(coluna)::text[]` devolvido pela CLI vem como array literal do Postgres (`"{id}"`), não JSON — `JSON.parse` quebra. Sempre envolver em `to_jsonb(...)` na query quando o resultado precisa ser parseado como JSON no Node.
+- Formato em disco: `{dir}/{AAAA-MM-DD}/tables/{tabela}.json.gz` (gzip por tabela) + `manifest.json` (contagem + checksum sha256). Promoção atômica: monta em `{data}.partial-HHmmss`, só vira `{data}` se todas as tabelas extraíram e a verificação pós-escrita bateu — senão os backups anteriores ficam intactos e a retenção (30 dias) não roda.
+- Restauração (`scripts/restore-from-backup.mjs`) é **dry-run por padrão** (só gera `.sql`) e **recusa escrever no project-ref de produção mesmo com `--apply` e confirmação** — sem flag de escape. A loja "Testes PDV" mora no mesmo projeto de produção, então testar restore de verdade exige um projeto Supabase novo, nunca essa loja.
+- `tsconfig.app.json` só inclui `"src"` — módulos em `scripts/**` nunca são checados pelo `tsc` do projeto. Teste que precisa importar um `.mjs` de fora de `src/` usa `pathToFileURL(...).href` + `import(/* @vite-ignore */ ...)` em vez de import estático (mesmo padrão de `src/test/edge/fiscalValores.test.ts`) — evita `TS7016` sem precisar manter `.d.mts` ao lado.
+- Validado de ponta a ponta contra produção (só leitura): 184/184 tabelas, 7,0 MB, ~27 min (dominado pelo overhead de spawnar `npx supabase` por tabela, não pelo volume de dados). Agendamento (`scripts/backup/registrar-agendamento.ps1`, 03:30 Brasília) é script entregável — **o dono roda, o agente nunca executa**. Detalhes: `specs/2026-09-backup-diario/`.
+
+### 2026-09-18 — Ticket de produção: itens maiores e obs em fundo preto
+- Edge `print-queue-agent` v43 (no ar) + `agente-local/index.js` (fallback): em ticket de produção (estação que não é COMPROVANTE/RETIRADA), nome do item sai em **altura dupla** (`ESC ! 0x10`, mesma largura → não quebra mais linhas) e as observações do item e a OBS geral saem em **impressão reversa** (`GS B 1`, branco no fundo preto) + negrito + altura dupla. Comprovante/retirada ficou como antes.
+- Gestor de Pedidos (kanban): itens do card num bloco `bg-sky-50`, nome/quantidade em `text-sm`; obs do item e obs geral em bloco âmbar `text-xs` negrito.
+
+### Caixa de pendências: o que o sistema detecta não pode morar numa mensagem (2026-09-18)
+
+Dono: "foi solicitado um pagamento às 21h e eu não fiz. E agora? Não era pra sumir essa solicitação".
+E, no mesmo dia: "tem um monte de msg pra atualizar itens, está exagerado".
+
+Os dois são o MESMO defeito com sinais trocados: pendência era tratada como **mensagem**, não como
+registro com estado. Sendo mensagem, só há dois comportamentos possíveis — bombardear ou sumir — e o
+sistema fazia os dois. Sumiam: o rascunho do Inter expira em 30 min (`inter-bank › DRAFT_TTL_MS`) e o
+cartão do Telegram ficava mudo, sem nada em lugar nenhum; e a marca d'água do `item_classify`
+(`assistente-cron › itemClassifyText`) avançava no ENVIO, então item não classificado nunca mais era
+cobrado. Bombardeava: `dre_classify` com `every_min: 2` das 08:00 às 21:00, até ~390 disparos/dia.
+Sintoma disfarçado do mesmo problema: `NotificacoesContext` nascia com 4 notificações de demonstração
+(`gerarMock`) que chegavam a qualquer loja em produção.
+
+Solução: tabela `pendencias` (migration `20260918120000_pendencias`), uma linha por
+`(tenant_id, kind, ref)`, com ciclo de vida `aberta → vista | resolvida | descartada`. Nada sai por
+tempo, só por decisão. `fn_pendencia_upsert` é idempotente e **não ressuscita**: `where x.status in
+('aberta','vista')` no `on conflict`, então o cron pode rodar mil vezes sem reabrir o que já foi
+tratado, e "vista" (o check permanente do dono) nunca regride. `fn_pendencia_marcar` (SECURITY
+DEFINER, a única escrita liberada para `authenticated`) confere `user_tenants` antes de mexer.
+
+Critérios que valem para a próxima pendência que for criada:
+
+- **One-shot × agregada.** Pedido de pagamento é one-shot: `ref` = id do pedido, `p_reabrir` false.
+  "47 itens sem classificação" é agregada: `ref` fixo (`'pendentes'`), contagem no título,
+  `p_reabrir` true — fecha quando zera, volta quando aparece item novo. Uma linha por item seria o
+  mesmo barulho com outra roupa.
+- **`acao_requerida` decide o botão.** false = aviso ("Ciente", check permanente). true = exige ação,
+  e aí NÃO existe "Ciente": ela fecha sozinha na tela certa, ou o dono usa "Não vou fazer", que grava
+  o motivo. Dar check permanente a algo acionável recria o buraco — silenciar sem fazer.
+- **Descartada é intocável.** Nem produtor nem trigger reabrem: ali o dono já decidiu.
+- **Expirar/falhar não fecha.** `trg_pendencia_pagamento_grupo` só fecha com TODOS os pagamentos do
+  pedido em `paid`/`cancelled`. `expired` e `failed` mantêm a pendência aberta — é o ponto inteiro.
+- **Cuidado com `revoke ... from public`**: leva junto o `service_role` (ele não é superusuário). Sem
+  o `grant execute ... to service_role` explícito, os produtores falham CALADOS nas Edge Functions.
+  Este bug foi pego só porque a migration foi rodada num Postgres local antes de ir para produção.
+
+Barulho depois: `dre_classify` 2 min → 120 min (responder ainda puxa a próxima na hora, pelo
+`{ run: 'dre_classify' }` do webhook — engajar puxa a fila, silêncio não é insistido); `item_classify`
+30 min → 1 digest/dia; regra nova `pendencias` sincroniza a caixa em silêncio (fora do `want()`, que
+exige canal do dono — gravar no banco não depende de ter Telegram). De ~420 disparos/dia para ~2.
+
+O que NÃO foi para a caixa, de propósito: `NotificacoesContext` (barramento do turno — chamado de
+garçom, SLA, pedido pronto; some ao recarregar e está certo assim) e `AprovacoesContext` (desconto no
+PDV é um aperto de mão ao vivo, com callbacks em memória; pedido de 3 dias atrás não significa nada).
+Fica em aberto que o `AprovacoesContext` perde as solicitações num F5 — problema real, mas outro.
+
+**A caixa mudou para o chat do assistente (mesmo dia).** No sino ficou ruim: o "Resolver" de pagamento levava a `/assistente` (configuração) e a caixa só mostrava a loja selecionada. Agora `src/components/feature/assistente/PendenciasChat.tsx` abre pelo botão de caixa (com o número de novas) ao lado do ⚡ das ações rápidas no `AssistenteChat` (só o dono), ocupando o painel inteiro como elas — a 1ª versão era uma faixa fixa no topo e tomava a conversa, com as pendências de TODAS as lojas (a RLS de `pendencias` já filtra por `user_tenants`) e ações no próprio cartão: **Pagar** (`assistente-app › pendencia_pagar` prepara de novo o que venceu e o chat já abre o PIN), **Abrir** (troca de loja com `selectTenant` se preciso), **Ciente**, **Não vou fazer** (motivo). O sino não mostra mais pendências. `/pendencias` continua existindo, sem link no menu — admin/gerente que não é o dono ficou sem a caixa (decisão do dono de tirar do sino).
+
+- **Substituto explícito, nunca por coincidência.** `fin_inter_payments.replaced_by` (migration `20260918151000`): "preparar de novo" marca o antigo com UPDATE condicional (`replaced_by is null`) ANTES de preparar — dois toques ao mesmo tempo (chat + Telegram) geravam dois Pix iguais pagáveis. Quem perde a corrida recebe o mesmo substituto. O trigger da pendência ignora pagamento com substituto; sem isso o rascunho expirado segurava a pendência aberta para sempre, mesmo pago o novo. Casar "mesmo valor + mesma chave" confundiria duas parcelas iguais legítimas.
+- **Resolver no próprio cartão** (mesmo dia, pedido do dono: no celular abrir tabela grande é ruim). Conta sem DRE: `assistente-app › contas_sem_dre` / `conta_dre` (grava só se ainda estiver sem categoria, recusa receita/imposto e categoria de outra loja; nunca update direto do front em `fin_accounts_payable` — RLS multi-loja afeta 0 linhas calado). Itens: `ItensClassificarCard` com `tenantId`. Tarefas vencidas: lista via `fn_get_tasks` e abre a própria tarefa em `/tarefas?task=<id>` (o `TaskDrawer` não monta fora do módulo). Pedido do grupo sem dado: `pedido_origem` acha o gatilho em `asst_messages` por `solicitacao_grupo_id = N` e o chat abre a conversa do grupo com `before_id = id+1`, rolando até `[data-msg-id]`. Classificar pelo chat já reconta a pendência agregada (`syncPendenciaContagem`, mesmos textos do cron).
+- **Boleto e pagamentos (mesmo dia).** Boleto encaminhado ao WhatsApp do assistente → `brain › guardar_boleto` guarda em `fin_accounts_payable.boleto_*` (migration `20260918171000`; confere DV por `inter-bank › decode_boleto`), casa conta só com fornecedor compatível e pergunta se ambíguo; responde NO_REPLY e registra na conversa Financeiro. `assistente-cron › due_today` (08:00) prepara o pagamento do que vence hoje com boleto (nunca conta com pagamento parcial: o boleto cobraria o valor cheio) e lista o que não tem. Pagamento preparado e não concluído em 15 min (fora pedido de grupo) vira pendência `pagamento_pendente` (ref = pagamento original), fechada pelo trigger seguindo a cadeia `replaced_by`. Contas atrasadas = pendência `conta_atrasada` por loja. Migrations com a MESMA versão (ex.: duas `20260918170000_*`) colidem no histórico do Supabase — conferir `ls supabase/migrations` antes de nomear.
+
+**Guias do mês — DAS, DARF INSS e FGTS Digital (2026-09-18).** As três chegam todo mês no grupo financeiro e a leitura por IA errava os números (o DAS perdeu um dígito, o DARF perdeu o último — 47 em vez de 48) e jogava tudo em Pendências, até o DAS que só vencia dia 21. Agora quem lê é o código, não o modelo:
+- `supabase/functions/_shared/guias.ts` (`lerGuia`): reconhece a guia, pega competência, vencimento, valor, CNPJ e número do documento, e só aceita linha digitável com os DVs conferidos (arrecadação = 48 dígitos, 4 blocos de 11 + DV). DAS e DARF trazem o **número do documento dentro do código de barras**: com isso `repararArrecadacao` conserta 1 dígito perdido, sobrando ou trocado, mas só quando sobra **um único** candidato. A GFD (FGTS) não tem código de barras, só Pix copia e cola (QR dinâmico `cobv` da Caixa), e o CRC16 do BR Code confere se ele veio inteiro.
+- `_shared/pdf-texto.ts` (`npm:unpdf`): extrai a camada de texto do PDF. DARF e GFD têm texto; o DAS do SENDA é só desenho e volta vazio, então vale a transcrição da IA + a conferência/conserto.
+- `brain › ler_midia` põe `lido.guia` e corrige `pagamento`. `assistente-webhook › triarPagamento` manda a guia **completa** para `brain › action 'guia'` (`processarGuia`), sem modelo. A loja sai do CNPJ (a GFD só traz a raiz de 8 dígitos). A conta a pagar leva a descrição "<guia> — competência MM/AAAA" (guia reemitida atualiza a mesma conta). DAS/DARF comum vão para a DRE "Impostos" (criada se faltar). INSS descontado e FGTS vão com `reference_type 'hr_payroll'`, porque o custo já entra na DRE pela folha (bruto + FGTS); DRETab/DREComparativo agora excluem `hr_payroll` junto com `purchase`. Vence hoje → prepara o pagamento. Vence depois → só guarda (`boleto_digitavel`/`boleto_pix_copia`), sem pendência, e o `assistente-cron due_today` prepara às 08h do dia. Vencida → não prepara (guia vencida precisa ser gerada de novo).
+- Na conversa: ferramenta `lancar_guia`. O PDF anexado que é guia recebe uma dica de sistema.
+- Pix copia e cola no Inter: `destinatario { tipo: 'PIX_COPIA_E_COLA', pixCopiaECola }` (campo confirmado no SDK oficial `inter-co/pj-sdk-*`; o nome do tipo não está documentado, então um 400 tenta uma vez `COPIA_E_COLA`). **Só de emissor permitido** (`PIX_COPIA_HOSTS` = `pix-qrcode.caixa.gov.br`): a regra "Pix só para quem está cadastrado" continua valendo para qualquer outro copia e cola. Colunas novas: migration `20260918230000`.
+- Pegadinha: o FGTS Digital vence **às 21:59:59** do dia (Pix `cobv`), não à meia-noite.
+
+### Cargo nas edges de escrita: Financeiro/Compras só admin/gerente (2026-09-19)
+- Antes, `financial-write`, `purchase-write` e `order-write` só validavam JWT + vínculo com a loja: um operador de caixa chamava `pay_bill`/`upsert_bill`/`create_purchase` pela API (a trava era só de tela).
+- Agora: **`financial-write` inteira** e **`purchase-write` inteira** exigem `user_tenants.role` admin/manager (`isManagerRole` de `_shared/tenant-auth.ts`), senão 403 em pt-BR. A chave interna do purchase-write (`x-internal-key`, fiscal-inbound automático) segue igual. No `order-write` só `create/update/delete_promotion_rule`; PDV (caixa, sangria, `list_freelancers`, pedidos) segue liberado a qualquer membro da loja.
+- Por que pode ser a edge inteira: as telas que chamam essas edges (/financeiro, /estoque, chat do dono) já exigem `relatorio_financeiro`/`estoque_movimentar`, que por padrão só admin/gerente têm; conferido em produção: nenhuma loja concede essas permissões a outro papel. `assistente-brain` usa o JWT do dono (admin nas 10 lojas); `conciliacao-pagamentos` e `fiscal-inbound` repassam o JWT do usuário da tela.
+- Se um dia uma loja liberar Financeiro/Estoque para outro papel na tela de permissões, a edge vai responder 403 — decidir então se a edge passa a respeitar a tabela `permissions`.
+- Em aberto (não mexido para não quebrar o PDV, que usa PIN do gerente na tela): no order-write, `register_partial_refund` grava o `authorized_by` mandado pelo front sem conferir, e `process_refund`/`cancel_order` não conferem cargo no servidor.
+- Teste: `qa.caixa`/`qa.garcom` → 403; `qa.admin` e gerente (qa.garcom promovido temporariamente) → passam.
+
+### iFood: repasse antecipado por loja (2026-09-19)
+- **iFood com repasse antecipado (2026-09-19):** o relatório de conciliação traz a data ORIGINAL
+  (`data_repasse_esperada`) e não traz a "Taxa de antecipação" do Portal. Vila Leste › Pontal (2882833)
+  antecipa 1,59%, pago 21 dias antes (quarta depois da semana de vendas); Paranaguá não antecipa.
+  Config por loja em `fin_ifood_merchants.anticipation_pct/days` (janela do lápis na aba iFood →
+  `ifood-financial` › `set_anticipation`). `fin_ifood_entries.data_repasse` = data efetiva;
+  `data_repasse_original` = a do relatório; `fn_ifood_apply_anticipation` reaplica. Taxa =
+  round(repasse da loja no dia × pct, 2), lançada como `ifood_fee` e descontada do `esperado` em
+  `fin_ifood_repasses` (detalhe.bruto/antecipacao). Portal: cartões de faturamento atrasam (em 19/09
+  faltavam 2 pedidos de 18/09 que já estavam no relatório e no subtotal dos repasses).
+- Loja sem conta de depósito do iFood ("Como o dinheiro entra"; ex.: Vila Leste, Itaú sem API): `fin_ifood_repasses` devolve `detalhe.sem_conta` e a aba mostra "Sem extrato do banco" em vez de "Não achado".
+- Pegadinha: loja só com arquivo (sem API) não relança o razão quando a data do repasse chega — `ifood-sync` só roda para quem tem refresh_token; entra ao reimportar ou salvar opção.
+
+### Permissões por aba: Financeiro e Relatórios (2026-09-19)
+- Configurações › Permissões ganhou uma linha por aba do Financeiro (`fin_*`) e dos Relatórios (`rel_*`). Lista única em `src/constants/permissoesAbas.ts` — aba nova nessas páginas tem que entrar lá, senão some para quem não é admin.
+- Financeiro continua só Admin/Gerente (página + edges): as abas servem para limitar o Gerente; nas colunas Caixa/Garçom/Cozinha a caixa fica travada (—). A trava por aba é só de tela: o gerente sem a aba DRE ainda consegue chamar financial-write pela API (a edge checa cargo, não aba).
+- Relatórios valem para qualquer papel (ex.: Caixa só com "Relatório de Caixa"). /relatorios e /financeiro abrem se o papel tiver ao menos uma aba; aba pedida na URL sem permissão cai na primeira liberada.
+- `relatorio_financeiro` agora só controla o Tráfego Pago (linha "Acessar Tráfego Pago", categoria Marketing). `relatorio_estoque` não controla nada no código.
+- Pegadinha corrigida: o papel usava SÓ as linhas salvas em `permissions` quando havia alguma — permissão nova sumia de quem já tinha salvo a matriz (e uma loja com 1 linha salva deixava o gerente só com ela). Agora é padrão do papel + linhas salvas por cima (`mesclarComPadrao`), no hook e na tela.
+
+### Insumo zerado: pergunta antes de tirar do cardápio (2026-09-20)
+- **Decisão do dono:** quando um insumo zera, ninguém tira item do cardápio sozinho. O aviso aparece
+  ao mesmo tempo no PDV (caixa, garçom, delivery) e no KDS; **o primeiro que responder resolve** para
+  todos, e **enquanto ninguém responde o item continua vendável**.
+- Banco: `ingredient_stockout_alerts` (1 alerta `pending` por insumo, índice único parcial) +
+  trigger `trg_ingredient_stockout` em `ingredients` (só `current_stock` cruzando de >0 para <=0, e só
+  se algum item/opcional ativo usa o insumo). Repor o insumo fecha o alerta sozinho (`resolved_source='auto'`).
+- Leitura: `fn_get_stockout_alerts(tenant)` devolve o alerta com os itens e opcionais que cairiam.
+  Resposta: `fn_resolve_stockout_alert(alert, 'removed'|'kept', 'pdv'|'kds', user)` — service_role,
+  chamada por `stock-write` action `resolve_stockout_alert`. 'removed' desativa `menu_items.is_active`
+  e `options.is_active` e guarda os ids em `removed_item_ids`/`removed_option_ids` (para reverter depois).
+  Segunda resposta de outro terminal devolve `ja_resolvido` sem refazer nada.
+- Front: `useAlertasInsumoZerado(origem)` (realtime na tabela) + `AvisoInsumoZerado` montado em
+  PDV caixa/garçom/delivery (`origem="pdv"`) e KDS (`origem="kds"`, fonte maior). Ao tirar itens,
+  `notifyReload('cardapio')` → `CardapioContext` recarrega em silêncio.
+- `bloquear_item_sem_insumo` (Configurações › Operação & Integrações › Operação do PDV) continua sendo
+  o **modo estrito**: ligado, item e adicional somem na hora sem perguntar. Desligado (padrão) vale o
+  fluxo do aviso. `fn_get_opcoes_sem_estoque` passou a ler a mesma flag — antes ignorava, e o adicional
+  sumia sozinho mesmo com o bloqueio desligado.
+
+### Rastrear estoque por insumo (2026-09-20)
+- `ingredients.track_stock` (default true). **false = o insumo para de gerar QUALQUER aviso ou bloqueio**:
+  estoque mínimo, "acabou o insumo" (PDV/KDS), aviso ao fechar o pedido e bloqueio de item sem insumo.
+  Estoque, entradas/saídas, inventário e **CMV continuam normais** — muda só o sistema opinar.
+- Funções que filtram por `track_stock`: `fn_get_items_sem_estoque`, `fn_get_opcoes_sem_estoque`,
+  `fn_check_stock_alert_for_items`, `fn_ingredient_stockout_trigger`, `fn_get_stockout_alerts`.
+  `fn_get_ingredients` devolve a coluna. Desligar o rastreio fecha o aviso pendente
+  (`trg_ingredient_track_stock_off`).
+- Front: `Insumo.rastrearEstoque` + `useEstoque().setRastrearEstoque(id, bool)` →
+  `stock-write` action `set_track_stock` (`upsert_ingredient` também aceita `track_stock`).
+  Onde mexe: Estoque › Insumos (sino na linha, selo **SEM AVISO**, cards do celular) e o modal do insumo
+  ("Acompanhar o estoque deste insumo", que desabilita o campo de estoque mínimo quando desligado).
+- Os resumos da tela de Estoque (esgotados, em alerta, críticos, ruptura em 7 dias) e os Alertas de
+  reposição ignoram insumo sem rastreio; a lista continua mostrando o insumo, só com o selo.
+
+### `noUnusedLocals: false` mascara código órfão em refactor entre arquivos (2026-09-20)
+- `tsconfig.app.json:20` tem `"noUnusedLocals": false` (herdado do código do Readdy, cheio de sobra) — o `tsc` não acusa variável não usada, então um refactor que move código entre arquivos e esquece de apagar/levar algo não vira erro de compilação. Na extração de `CandidatoDrawer.tsx` em `components/ficha/*` (`FichaResumo.tsx` etc.), a revisão do plano pegou ~271 linhas que ficariam órfãs por falta de um passo que mandasse apagá-las, e uma variável (`vagasAbertas`) que precisava ir para `FichaResumo.tsx` e não estava prevista — nada disso teria dado erro de build.
+- Regra: em refactor que move código entre arquivos neste projeto, conferir manualmente (grep pelas declarações/variáveis movidas nos dois arquivos) em vez de confiar no `tsc` para pegar sobra.
+
+### Dois relógios do dia: fuso da máquina vs. Brasília (2026-09-20)
+- `dayKey` (`src/pages/contratacao/shared.ts:429`) monta a chave AAAA-MM-DD com `getFullYear/getMonth/getDate` — fuso da MÁQUINA que roda o código. `diaKeyBR` (`src/pages/contratacao/hoje.ts:10`) usa `Intl.DateTimeFormat` com `timeZone: 'America/Sao_Paulo'` fixo, corte sempre em Brasília. Regra do módulo: `AGENTS.md` linha 75 ("Datas em horário de Brasília... em toda exibição e regra de negócio com corte por dia").
+- `EntrevistasDoDia.tsx` e `AgendaEntrevistas.tsx` (sub-aba Calendário de Entrevistas) usavam `dayKey` para agrupar entrevistas por dia e decidir "hoje"; nesta spec os dois passaram a usar `diaKeyBR`, porque a lista "Do dia" e o calendário podiam discordar sobre qual é o dia perto da virada, numa máquina fora de Brasília. `dayKey` em si não foi alterado (outros módulos dependem dele). Esses dois componentes saíram em 2026-09-30; o corte por dia da Minha fila (`fila.ts`) usa `diaKeyBR` e tem teste em `src/test/lib/contratacaoFila.test.ts`.
+- Dívida aberta, não corrigida nesta spec: `fmtTime`/`fmtDateTime` continuam no fuso do navegador, não em Brasília.
+
+### Ação em lote precisa repetir a trava da ação individual (2026-09-20)
+- `updateCandidate` (`src/pages/contratacao/page.tsx:332`) e `moveLote` (`page.tsx:559`, usado pelas ações em lote) implementam, cada um por conta própria, a mesma trava: ficha incompleta não sai de "Novo" (exceto indo para "Descartado"). `moveLote` usa o helper `candidatosTravadosNoLote` (`components/AcoesEmLote.tsx:8`). Duplicar em vez de extrair uma função comum foi decisão registrada (evitar acoplar o caminho de N candidatos ao de 1), não esquecimento — mas quem criar uma ação em lote nova precisa replicar a trava, não presumir que existe reaproveitamento.
+- Descartar em lote (`AreaCandidatos.tsx`, `onDescartar`) tem confirmação própria ("Descartar candidatos?") e não passa pela trava de ficha incompleta — ela nunca trava o destino "Descartado", só a saída de "Novo" para outras fases.
+
+### Filtro por entidade compara id, não título (2026-09-20)
+- `FiltrosCandidatos.tsx` filtra vaga por `job_id`, não pelo título: duas vagas com o mesmo título em empresas diferentes comparariam por string e misturariam candidatos de vagas diferentes. `VagaEtiqueta` (`FiltrosCandidatos.tsx:35`) guarda `id` (fonte do filtro) e `label` (só exibição). Teste: `src/test/lib/contratacaoFiltrosCandidatos.test.ts` ("duas vagas com o mesmo título em empresas diferentes não se misturam").
+- Regra: filtro de entidade (vaga, empresa, etc.) sempre compara por id; título/nome é só rótulo de exibição.
+
+### Quem entrou no cardápio e não pediu — `menu_visits` (2026-09-21)
+- Pergunta do dono: dá pra ver quem cadastrou o celular e não pediu, e quem já tinha cadastro, entrou e não pediu? Estado antes: o **primeiro** caso já existia por acidente — no delivery o cadastro é salvo ANTES do pedido (`useDeliveryData.handleSalvarEndereco` → `save_customer`), então quem desiste fica em `customers` com `visit_count=0` (é o segmento **"Sem compras"** da aba Clientes; eram 29 na Vila Leste, todos vindos do delivery). O **segundo** caso não existia: `lookup_customer` é só leitura e não havia nenhum tracking de visita no cardápio.
+- Agora: tabela **`menu_visits`** (uma linha por sessão no aparelho, chave `visit_key` em localStorage renovada após 12h paradas) + `delivery_customers.last_seen_at` (marcado no `lookup_customer` — **não** mexer em `last_used_at`, que é o último uso em PEDIDO e ordena a busca do caixa).
+- Edge `delivery-write`: `track_visit` (pública, upsert por `tenant_id,visit_key`; o front manda com debounce de 2s e só quando step/telefone/carrinho mudam de verdade), `list_abandoned_carts` (autenticada, membro da loja) e `create_delivery_order` fecha a visita (`converted_at` + `order_id`) via `visit_key` no payload.
+- **Pegadinha:** `orders` NÃO tem `customer_phone` — só `customer_id`. O cardápio conhece o id de `delivery_customers`, que **não** é o id de `customers`. Por isso a visita guarda só o telefone e o `list_abandoned_carts` resolve telefone → `customers` no servidor (e é assim que ele derruba quem voltou depois e pediu).
+- `menu_visits` fica com RLS ligado e **sem policy**: telefone de visitante não vai pro PostgREST. Leitura só pela Edge (service_role, com GRANT — ver a regra de grants pra tabela nova).
+- Front: aba Clientes ganhou o botão **"Não pediram"** (`components/NaoPediramPanel.tsx`) com duas listas — montou carrinho × só espiou — e envio manual (WhatsApp/voucher). Config. Delivery ganhou **"Recuperar carrinho abandonado"** (`delivery_config.cart_recovery`), **desligado** por decisão do dono: ligar só faz o ERPOS sugerir o voucher pronto; disparo automático não existe (seria a fase seguinte).
+
+### Funil de CRM do delivery — `crm-funnel` (2026-09-21)
+- **Estágios** (enum `crm_stage`, precedência nessa ordem): `carrinho_abandonado` > `nunca_comprou` > `perdido` (>90d) > `em_risco` > `primeira_compra` > `vip` > `fiel` > `recorrente`. "Sumiu" é relativo AO CLIENTE: 1,5× o ciclo médio dele, piso de 21 dias — quem pede toda semana some em 10 dias, quem pede uma vez por mês não.
+- `crm_customer_stage` é **tabela derivada**: nunca editar na mão, quem manda é `fn_crm_recompute_stages(tenant)` (orders + menu_visits). `entered_at` só reinicia quando o estágio MUDA — é o relógio do `delay_hours` da regra. O `overview` recalcula a cada abertura da tela, então não há cron.
+- `crm_rules` (uma por estágio, criadas na primeira abertura), `crm_settings` (teto semanal, horário, **desconto máximo** que trava o valor da regra ao salvar) e `crm_sends` (log que alimenta cooldown, teto e a medição de retorno: quem recebeu e pediu depois).
+- **Pegadinha (achada na verificação):** criar as regras padrão com `insert` estourava `crm_rules_stage_uk` — a tela chama `overview` duas vezes em paralelo (StrictMode). Tem que ser `upsert ... ignoreDuplicates` + releitura. Mesmo cuidado em `crm_settings`.
+- **Pegadinha (a mais importante):** `customers.accepts_marketing` nasce `false` no cadastro do delivery e nunca é preenchida — usá-la como opt-out bloqueava **a loja inteira** (22 de 22 clientes "não aceita contato"). Recusa é um ato, e mora em `customers.crm_opt_out_at`. `accepts_marketing` continua sendo só informativa.
+- **Auth da edge:** comparar o bearer com `SUPABASE_SERVICE_ROLE_KEY` NÃO basta — o projeto tem chave legada (JWT) e nova (`sb_secret_`), e a que chega na função nem sempre é a mesma da env; além disso o gateway rejeita a `sb_secret_` como apikey. Chamada interna/cron usa `x-internal-key` = `CRM_INTERNAL_KEY` (mesmo padrão do assistente). Usuário logado é validado por `user_tenants`; `save_rules` exige admin.
+- **Envio é sempre humano:** "Chamar" abre o WhatsApp com a mensagem da regra ({nome}/{loja}/{cupom}/{link}); "Voucher" abre o `EnviarVoucherModal` já preenchido com a oferta do estágio (prop `oferta`; o TEXTO continua sendo o do modal, que é o único que conhece o link de ativação) e o `onEnviado` (clique em Enviar/Copiar) devolve o voucher para o `log_send`.
+- **Envio automático (2026-09-27)**: por estágio (`crm_rules.auto_send`, só com a oferta ligada; `auto_ligado_em/por` gravam quem confirmou). Sai pelo **número do assistente** (API oficial, `asst_settings.wa_public`, `WHATSAPP_CLOUD_TOKEN`) — o número de "pedido recebido" (`whatsapp-send`, `META_WHATSAPP_*`) nunca foi configurado. Cron `crm-auto-envio` (min 7 de toda hora) → `fn_crm_auto_tick_all()` → `crm-funnel › auto_tick` por loja com estágio ligado (chave `crm_internal_key` no vault = secret `CRM_INTERNAL_KEY`, gerada de novo em 2026-09-27). `auto_tick` respeita horário da loja (Brasília), `crm_settings.max_auto_por_dia` (padrão 30), a mesma elegibilidade da tela (`avaliarEstagio`: espera, cooldown, teto semanal, opt-out) e **`auto_so_optin`** (padrão true: só `accepts_marketing`; em 2026-09-27 nenhuma loja real tinha opt-in). Com cupom cria o voucher direto (DC-, claim_token, `notes` "Funil automático") e manda o modelo `crm_oferta_cupom`; sem cupom manda `crm_contato` com o link `/<slug>-delivery`. Falha cancela o voucher e grava `crm_sends.status='failed'` (falha não conta para cooldown/teto); erro de modelo/token (1320xx, 190, 131031, 368) para a rodada e aparece em `crm_settings.auto_ultimo_erro`. Admin da loja só chama com `dry_run` (prévia na confirmação da tela).
+- Modelos em `_shared/wa.ts › CRM_TEMPLATES` (categoria MARKETING, cobrados por mensagem); `{{3}}` é frase fixa por estágio (`_shared/crm-auto.ts › FRASE_AUTO`), nunca o texto livre da loja. Submissão: `crm-funnel › submit_templates` (só o e-mail do dono; o `setup_templates` do whatsapp-cloud cria como UTILITY e não inclui estes). Situação: `templates_status`. A chave `WHATSAPP_ADMIN_KEY` não está guardada fora do servidor — por isso o crm-funnel fala com a Graph direto.
+- **Resposta do cliente**: `whatsapp-cloud` chama `crmInbound` (`_shared/crm-auto.ts`) antes do canal-publico quando o telefone recebeu envio automático nos últimos 15 dias e o texto não tem código de vaga válido. "SAIR/PARAR/…" grava `crm_opt_out_at` nas lojas que mandaram; outra mensagem recebe 1 resposta (máx. 1 a cada 6 h) com o link do delivery e o `delivery_config.whatsapp_loja`.
+- **Ajustes da revisão (2026-09-27, antes do 1º envio real):** falha automática nos últimos 7 dias tira o cliente da fila (senão número sem WhatsApp travava o lote e criava/cancelava voucher toda hora); o mesmo celular não recebe automático de duas lojas na mesma semana (o remetente é um só); `crm_sends` é gravado ANTES de mandar e vira `failed` se a Meta recusar (nunca duplica); no máx. 25 por rodada; `hora_inicio = hora_fim` FECHA o automático; erro 131050 (pessoa bloqueou marketing no WhatsApp) vira `crm_opt_out_at`; SAIR vale a qualquer tempo, por áudio e para todas as lojas do telefone; conversa de candidatura aberta (`bot_conversations.status='aberta'`) não é interceptada; `save_rules` recebe `auto_send_antes` e ignora aba desatualizada; cron com `exception` por loja; índice `idx_customers_phone`.
+- **Aceite no checkout do delivery (2026-09-27):** caixinha "Quero receber ofertas e cupons da loja pelo WhatsApp" no modal de pagamento (desmarcada; some se `lookup_customer.aceita_ofertas`). `create_delivery_order` com `accepts_marketing: true` grava `accepts_marketing`, `gdpr_consent_at` e limpa `crm_opt_out_at`; desmarcado nunca apaga aceite. O cadastro do cliente acontece ANTES da checagem de delivery aberto — dá para testar com o delivery fechado sem criar pedido.
+- Tela: painel `src/pages/clientes/components/EnvioAutomatico.tsx` no topo de Ofertas (status dos modelos, botão de submeter, máximo por dia, só opt-in, último erro) + interruptor por estágio na `FunilAba` (travado sem oferta ou sem modelo APPROVED; ligar abre confirmação com a fila real do `dry_run`; vale ao salvar).
+- Front: `src/pages/clientes/abas/FunilAba.tsx` (aba Funil de Clientes & Marketing; era o modal `FunilPanel`) com **exportar Público Meta por estágio** (mesmo formato phone,email,fn,ln,country da exportação da lista).
+
+### Critérios do funil configuráveis por loja — `crm_stage_criteria` (2026-09-21)
+- Os cortes que definiam cada estágio (90 dias = perdido, 1,5× o ciclo = em risco, 6 pedidos = fiel, top 10% = VIP, carrinho quente por 72h, ciclo assumido de 30d para quem só tem 1 pedido) viviam **dentro** da `fn_crm_recompute_stages`. Agora moram em `crm_stage_criteria` (uma linha por loja) e a função os lê com `coalesce` para os mesmos valores de antes — **loja sem linha não muda de comportamento**, e por isso a edge NÃO cria a linha sozinha (só quando o dono salva).
+- A função passou a usar uma **temp table** (`tmp_crm_metrics on commit drop`) em vez de CTE, porque o percentil do VIP virou parâmetro e precisa ser calculado antes do CASE.
+- Validação no servidor **espelha os CHECKs da tabela** e faz clamp em vez de estourar 500 (9999h → 720, percentil 2 → 0.999, fiel 1 → 2). Regra que não é óbvia: `perdido_dias > risco_min_dias` (constraint `crm_criteria_ordem`) — se o dono apertar os dois, **o piso do risco cede** (`risco_min_dias = perdido_dias - 1`), senão "perdido" engoliria "em risco".
+- Salvar critérios **recalcula o funil na hora** (a edge chama a RPC logo após o upsert) e a tela recarrega as contagens em modo **silencioso** (`carregarOverview(true)`): usar o `carregando` normal trocava o formulário que o dono acabou de editar por "Calculando o funil…".
+- A tela devolve o que o SERVIDOR gravou, não o que foi digitado — é assim que o clamp fica visível. Percentil é exibido invertido ("top % que mais gasta" = `(1 - vip_percentil) * 100`), que é como o dono pensa.
+- Abas do painel: **Funil** (quem está onde) · **Ofertas** (o que sugerir, ex-"Regras") · **Critérios** (quem entra em cada estágio + as travas de teto semanal, horário e desconto máximo, que saíram da aba de ofertas).
+
+### Telas do módulo Gestão viram permissão; cozinha tem uma chave só (2026-09-21)
+
+Dois problemas que pareciam um: o Caixa não tinha como receber nenhuma tela do módulo
+Gestão, e o Gestor de Pedidos não podia ser ligado sem o KDS.
+
+- **Gestão por permissão.** O card "Gestão" em `/modulos` era fixo em `perfis: ['admin','gerente']`,
+  e as telas Dashboard, Pedidos, Mesas, Aprovações, Promoções, Vouchers e Delivery não tinham
+  chave nenhuma (quem entrava via todas). Agora existem `gestao_*` em
+  [`src/constants/permissoesGestao.ts`](src/constants/permissoesGestao.ts), listadas na categoria
+  **Gestão** de Configurações › Permissões. Ter **qualquer** uma delas (ou de Cardápio, Estoque,
+  Relatórios, Clientes…) já faz o card aparecer — `GESTAO_ENTRADA_KEYS` — e o módulo abre na
+  primeira tela liberada (`primeiraRotaGestao`), porque `/dashboard` pode não estar.
+  Promoções saiu de `cardapio_editar`, Vouchers de `pdv_desconto` e Aprovações de
+  `usuarios_gerenciar`: a tela agora tem chave própria. Padrão: admin e gerente com tudo.
+- **KDS × Gestor de Pedidos.** Havia DUAS configurações para a mesma coisa: o terminal `kds` em
+  `pdv_config` e a "Visão da Cozinha" (`kitchen_view`). O terminal derrubava as duas telas juntas
+  — era por isso que só dava para ter o Gestor com o KDS ligado. O terminal saiu da tela de
+  Terminais PDV; `kitchen_view` ganhou o valor `'nenhum'` e é a única chave. Quem já tinha o
+  terminal desligado continua com a cozinha desligada: `kitchenViewDe()` em
+  `SystemSettingsContext` traduz `pdv_config.kds === false` para `'nenhum'`, e o save mantém
+  `pdv_config.kds` em sincronia (compatibilidade, ninguém mais lê para decidir visibilidade).
+
+Pegadinha: chave de permissão nova nunca salva fica no padrão do papel (`mesclarComPadrao`) —
+por isso dá para acrescentar linha na matriz sem quebrar quem já salvou.
+
+### Tablet: lock do supabase-js e a regra do usuário de tablet (2026-09-21)
+
+No tablet da Paranaguá o login por matrícula era aceito (o servidor emitia o token: `login-pin`
+gravava `last_access_at` e `auth/v1/verify` voltava 200), mas a tela ficava para sempre em
+"Carregando sessão..." — e, nos logs do Supabase, depois do `verify` **nenhuma** chamada saía do
+aparelho (só o ping de rede de 30s do `useNetworkStatus`).
+
+Causa: toda operação de sessão do supabase-js (`getSession`, `refreshSession`, `verifyOtp`) roda
+dentro de um lock do Navigator LockManager com espera **infinita** (`_acquireLock(-1, …)`). No
+WebView do app Android o lock pode não ser concedido; o `handleSession` disparado pelo `SIGNED_IN`
+travava em `ensureFreshSession()` antes de qualquer rede, com `loading = true`, e o `AppLayout`
+não renderiza nada nesse estado. O caminho do F5 não sofria porque o `getSession()` do boot já
+tinha guarda de 3s — só o caminho do login não tinha.
+
+- `lockResiliente` em `src/lib/supabase.ts` (passado em `auth.lock`): se o LockManager não conceder
+  em 5s, a operação segue **sem** a trava — o mesmo que o supabase-js faz onde a API não existe.
+  Quem chega atrasado devolve um sentinela e é descartado, então `fn` nunca roda duas vezes
+  (refresh duplicado rotacionaria o refresh token e derrubaria a sessão).
+- Watchdog em `AuthContext.handleSession`: 15s sem resposta libera a UI e registra em
+  `dev_error_events` (`fn = AuthContext.handleSession`).
+
+Segundo bug do mesmo dia: o usuário de tablet caía em `/tarefas`. A regra "tablet só usa o
+autoatendimento" era um `useEffect` **dentro da tela de Módulos**, e o login volta para a rota que
+o `AppLayout` guardou (`location.state.from`) — qualquer rota que o aparelho tivesse aberto antes
+pulava a tela de Módulos e, com ela, a regra. Agora é guarda do `AppLayout`: `user.perfil === 'totem'`
+em rota protegida → `Navigate to="/autoatendimento"`.
+### KDS e Gestor de Pedidos: quem vê é a permissão, não o papel (2026-09-21)
+
+Sequência do item anterior. O Caixa da Paranaguá tinha `kds_acessar` e
+`gestor_pedidos_acessar` marcados em `permissions` (`allowed: true`, role `cashier`)
+e mesmo assim não via o card em `/modulos`: os cards `kds` e `gestor_pedidos` tinham
+`perfis: ['admin','gerente','cozinha']`, uma lista fixa avaliada ANTES da permissão —
+`perfilOk && cfgOk`. Marcar na matriz não adiantava.
+
+Os dois cards perderam o `perfis`; sobra a checagem de permissão que já existia logo
+abaixo. `/kds` e `/gestor-pedidos` entraram no `ROTA_PERMISSAO` do `RotaProtegida`,
+para a rota fechar junto com o card.
+
+**Critério:** card de módulo com lista fixa de papéis + checagem de permissão no mesmo
+filtro é bug esperando acontecer — a lista sempre ganha e a matriz vira enfeite. Quando
+a tela tem chave de permissão, ela manda sozinha.
+
+### 2026-09-21 — Cobrança na maquininha continuava viva depois do "Cancelar" (Point)
+
+O cliente ia até "Pague na maquininha ao lado" e desistia pelo botão **Cancelar do topo do
+totem**: o `PagamentoKiosk`/`TelaCartaoKiosk` era desmontado e ninguém avisava o Mercado
+Pago — o valor ficava no visor da Point até expirar (15 min), pronto para alguém pagar um
+pedido que não existe mais. O `handleVoltar` ("Escolher outra forma") cancelava, mas
+soltava a tela na hora e **ignorava a recusa** (`code: 'at_terminal'`), deixando o cliente
+escolher Pix com a cobrança do cartão ainda ativa → risco de pagar duas vezes.
+
+**Critérios adotados:** (1) cobrança de provedor viva é **estado externo** — quem cria
+cancela também no `useEffect` de unmount, não só no botão de voltar (vale pro Pix do
+totem e pro `CobrarMaquininhaModal` do caixa); (2) desistir **durante a criação** também
+cancela: a flag fica num ref e a cobrança é cancelada assim que o id chega; (3) sair da
+tela de cartão **espera** a resposta do cancelamento — se o provedor recusar, a tela volta
+a aguardar a confirmação em vez de liberar outra forma de pagamento.
+
+Na mesma passada: `config.payment_method.default_installments = 1` na Order do Point
+(só com `default_type = credit_card`) — sem isso a maquininha para e pergunta "à vista ou
+parcelado". Se o cartão não aceitar 1x, o terminal volta a mostrar a tela de parcelas.
+
+### 2026-09-21 — Cardapio em outros idiomas (EN/ES) nas telas do cliente
+
+Modulo novo: `menu_translations` + `tenant_locales`, Edge `menu-translate`, aba
+**Cardapio › Traducoes**, seletor de idioma no delivery, no mesa-qr e no totem.
+
+**CRITERIO QUE NAO PODE SER QUEBRADO — o pedido sai em portugues.** A traducao e
+camada SOBREPOSTA: chega em campos novos (`name_i18n`, `description_i18n`,
+`text_i18n`) e o portugues fica intacto em `name`/`description`/`text`. Motivo
+concreto: `order-write` grava `item_name` a partir do que o CLIENTE manda e,
+quando o id nao vem, procura o item por `ilike(name, item_name)`. Se o cardapio
+traduzido sobrescrevesse `name`, o pedido chegaria em ingles no KDS e na
+impressora da cozinha e a busca por nome quebraria. Com campo separado, qualquer
+tela que ainda nao conheca idioma continua em portugues — o padrao seguro.
+Helpers: `supabase/functions/_shared/menu-i18n.ts` (backend) e
+`src/lib/idiomaCardapio.ts` + `src/hooks/useIdiomaCardapio.ts` (front).
+
+**Trocar de idioma nao recarrega o cardapio.** Recarregar zeraria etapa, endereco
+e carrinho do delivery. A acao `get_menu_translations` (em `delivery-write` e
+`mesa-write`) devolve so as traducoes e o front as sobrepoe em memoria.
+
+**Deduplicar por texto antes de chamar a IA.** Na Paranagua eram 933 entidades
+para apenas 290 textos distintos (o mesmo prato e item e tambem opcao em varios
+grupos). Alem de cortar custo e tempo, garante que o prato saia escrito igual em
+todo lugar. A Edge traduz um pedaco por chamada (tempo de parede limitado) e
+devolve `remaining`; a tela repete ate zerar.
+
+**Nome de prato nao se traduz.** O prompt trava Burrito/Quesadilla/Taco/Al Pastor
+/Barbacoa/Pico de Gallo etc. e marcas; so o portugues em volta muda ("Dupla
+Quesadilla Pollo" -> "Double Quesadilla Pollo"). Traducao corrigida a mao vira
+`source='manual'` e a IA nunca mais sobrescreve. `source_text_hash` guarda o hash
+do texto PT de origem: mudou o portugues, a linha aparece como "desatualizada"
+em vez de envelhecer calada.
+
+**Pegadinha do i18next com `supportedLngs`:** declarado o `supportedLngs`, o
+i18next resolve `pt-BR` descendo para a base `pt`. Como so existia o recurso
+`pt-BR`, o portugues caia no vazio e a tela mostrava a CHAVE crua
+("cliente.buscar"); ingles e espanhol, por serem codigos de 2 letras,
+funcionavam. Solucao em `src/i18n/local/index.ts`: registrar `pt` como apelido de
+`pt-BR`. Quem adicionar idioma com regiao (`fr-CA`) precisa do mesmo apelido.
+
+**Bug corrigido junto:** o cardapio publico buscava `options` sem filtrar
+`deleted_at` (itens, categorias e grupos ja filtravam), entao 41 opcoes apagadas
+seguiam a venda para o cliente na Paranagua. As buscas por id continuam sem o
+filtro de proposito — pedido antigo precisa resolver o nome de opcao apagada.
+
+**Pendente:** o totem so recebeu o seletor (barra fixa no topo da janela); a
+traducao dos nomes no `CardapioKiosk.tsx` ficou de fora do commit porque o
+arquivo tinha trabalho nao commitado de outra sessao na mesma linha.
+
+### Configurações liberada aba a aba (2026-09-21)
+- `configuracoes_editar` era tudo ou nada: quem abria a tela via as oito abas, incluindo Fiscal (NFC-e) e a própria matriz de Permissões. Agora existem as chaves `cfg_*` (`CFG_ABAS` em `src/constants/permissoesAbas.ts`), no mesmo padrão de `FIN_ABAS`/`REL_ABAS`: a tela continua exigindo `configuracoes_editar` e cada aba tem a sua chave.
+- **Compatibilidade sem migração de dados:** `mesclarComPadrao` (usePermissoes) faz chave nunca salva cair no padrão do papel — por isso admin recebe `...CFG_KEYS` e gerente `...CFG_KEYS_GERENTE` em `DEFAULT_PERMISSOES`, e ninguém perde acesso ao entrar a novidade. Quem já salvou a matriz antes de hoje continua igual até salvar de novo.
+- **`cfg_permissoes` é só do Admin** (`somenteAdmin` na PermissoesTab, campo novo ao lado de `somenteGerente`): quem tem a aba Permissões pode se dar qualquer outra permissão, então ela não é oferecida nem para o Gerente — daí `CFG_KEYS_GERENTE` excluir essa chave. As demais `cfg_*` são `somenteGerente` (travadas para caixa/garçom/cozinha), como as abas do Financeiro.
+- `ConfiguracoesPage` filtra as abas por `cfgKeyDaAba` + `hasPermissao`, cai na primeira liberada quando o `?tab=` aponta para uma que o papel não tem, e cada aba também é checada na renderização (não basta esconder o botão). Sem nenhuma aba liberada, mostra um aviso em vez de tela vazia — e esse aviso só aparece depois que `usePermissoes` termina de carregar, senão piscaria a cada entrada.
+- Lembrete: os defaults por papel existem em duas cópias (o `DEFAULT_PERMISSOES` do hook e o `defaultPermissoes` local da PermissoesTab). Permissão nova precisa entrar nas duas — ver [[project_perfis_usuario]].
+
+**Medido na maquininha da loja (2026-09-21), não reaprender:**
+- **Cancelar cobrança que o terminal já pegou exige header.** `POST /v1/orders/{id}/cancel`
+  só cancela orders em `created`; a Point pega a cobrança em segundos. Com
+  `x-allow-cancelable-status: at_terminal` o MP responde **202** (assíncrono) e a order vira
+  `canceled` em poucos segundos — **confirmado na loja: o valor sai do visor sozinho**. Sem o
+  header, era recusado em silêncio e só dava pra cancelar apertando no próprio terminal. Quem
+  cancelou fica gravado no pagamento: `canceled_by_api` (nós) × `cancel_by_terminal` (a
+  máquina) — é o jeito de diagnosticar depois sem depender de memória.
+- **Crédito à vista NÃO se resolve pela API.** `config.payment_method.default_installments: 1`
+  o MP aceita e ecoa, mas o terminal **continua perguntando "à vista ou parcelado"** — e
+  `installments_cost` não muda isso ('buyer' e 'seller', os dois testados a R$ 44,00). Tirar a
+  tela é configuração de parcelamento da CONTA do Mercado Pago, não campo da order.
+  `installments_cost` ficou FORA do código de propósito: ele decide quem paga os juros, e isso
+  é decisão do dono, não efeito colateral. Nome errado que a doc induz:
+  `default_installments_cost` é recusado com `unsupported_properties`.
+- **Armadilha do teste:** medir isso com cobrança de R$ 1,00 dá falso positivo — nesse valor a
+  maquininha não oferece parcelamento de jeito nenhum e parece que o campo funcionou. Testar
+  sempre com valor de venda real.
+- **Como testar sem publicar nada:** a extensão `http` do Postgres já está instalada — dá pra
+  criar/cancelar uma order de R$ 1,00 na maquininha direto por SQL, com o token saindo de
+  `fin_payment_provider_config` sem passar pelo chat.
+
+### Configurações: aba por aba para qualquer papel, e a maquininha com chave própria (2026-09-21)
+
+Três travas se somavam quando o dono tentou dar Configurações ao Caixa:
+
+1. **A matriz não deixava marcar.** `configuracoes_editar` e as abas `cfg_*` eram
+   `somenteGerente` — a célula do Caixa vinha travada com "—". Agora qualquer papel pode
+   receber; só `cfg_permissoes` continua `somenteAdmin` (quem tem a matriz se promove).
+2. **A edge recusava a escrita.** `config-write` exigia `isManagerRole`: a tela abria e
+   todo salvamento voltava 403. Passa a aceitar papel não-gerente com
+   `configuracoes_editar = true` em `permissions` — a mesma porta que o front usa para
+   abrir a tela. Só `upsert_permissions` segue de admin/gerente.
+3. **A maquininha vinha junto com tudo.** Ela morava dentro de Estações & Pagamentos
+   (formas de pagamento, taxas, Stone, Inter, Pix). Ganhou chave própria
+   `cfg_maquininha_mp` (`CFG_MAQUININHA_KEY`, fora de `CFG_ABAS`): quem tem só ela entra
+   em `/configuracoes` e vê apenas a aba **Maquininha (Point)** —
+   [`MaquininhaTab.tsx`](src/pages/configuracoes/components/MaquininhaTab.tsx). Quem tem
+   Estações continua configurando lá dentro, onde sempre esteve. Na edge `pix-payment`,
+   `podeMaquininha()` aceita essa chave nas ações de escrita da Point
+   (`save_point_config`, `set_point_mode`, `list_point_terminals`, tablets).
+
+**Limite conhecido:** a aba **Fiscal (NFC-e)** usa `fiscal-write`, que continua exigindo
+admin/gerente — liberar a aba para outro papel mostra a tela, mas salvar dá 403.
+Outro: `config-write` autoriza pela chave da tela (`configuracoes_editar`), não por aba —
+`upsert_system_settings` serve Operação, Impressoras e Mesas ao mesmo tempo, então não dá
+para amarrar ação → aba sem quebrar as três.
+
+### Ações rápidas do assistente para todos os usuários (2026-09-23)
+
+O chat do assistente (`AssistenteChat`) continua só do dono; **quem não é o dono** recebe o
+`AcoesRapidasFlutuante` (botão ⚡ → só a página de ações rápidas, nada do `assistente-app`).
+Quem vê cada ação: `src/components/feature/assistente/acoes/acesso.ts` — a mesma permissão da
+tela de onde a ação copia o caminho (Financeiro = Admin/Gerente/Financeiro + aba; Tarefas,
+Contratação, NFS-e = módulo por usuário; demais = `PermissaoKey`). O filtro vale também para o
+dono. **Pegadinha:** ação nova em `acoes/index.tsx` sem regra em `acesso.ts` não aparece para
+ninguém — o teste `acoesRapidasAcesso.test.ts` falha para lembrar. Os atalhos "Ir para uma tela"
+filtram por `rotaLiberada` (inclui papel preso). A gravação continua conferida na edge/RLS.
+
+### Tarefas sem loja (2026-09-23)
+
+Quem tem o módulo Tarefas liberado no Admin Master (`fn_user_tem_tarefas`) usa Tarefas **sem
+estar em nenhuma loja** — antes caía na tela de código de convite. Tarefas já era por pessoa
+(created_by / responsável / pasta compartilhada); a loja só sobrava como trava. Agora:
+`tenant_id` das tabelas `task*` é anulável (registro de quem não tem loja fica nulo);
+`fn_tasks_assert_member(null)` exige o módulo; o `task-write` aceita quem não tem loja mas tem o
+módulo. No front, `useEuTarefas` dá id/nome da sessão quando o `AuthContext` deixa `user=null`
+(sem loja), `/tarefas` entrou em `NO_TENANT_ROUTES` (tela cheia) e o card aparece em
+`ModulosSemLoja`. **Limites:** sem loja não há canal `tasks-ping` (a tela recarrega depois de
+cada gravação); notificação para quem é de fora da loja só sai se a pessoa for responsável ou
+tiver acesso à pasta — nunca qualquer id vindo do corpo (menção).
+
+- **2026-09-23 — Perfil "Supervisão" + matrícula editável.** Papel novo `supervisao` (front) ↔
+  `supervisor` (enum `user_role`), entre caixa e gerente: nasce com o do caixa + desconto,
+  cancelamento, mesas, cozinha, `rel_caixa`/`rel_cancelamentos`/`rel_sla`, `gestao_pedidos`/`gestao_mesas`
+  (ajustável em Configurações › Permissões). Nas Edges tem rank 1 (igual ao caixa): o que ele
+  "autoriza" é pelo `AutorizacaoGerenteModal` com `niveisPermitidos` incluindo `'supervisao'` —
+  só cancelamento (PDV e Gestor de Pedidos) e desconto; **cortesia continua só gerente/admin**
+  (default do modal). `DescontoAutorizacaoModal` também lista supervisão, salvo `discount_profile='admin'`.
+  **Pegadinha:** além das 4 cópias do mapa PT↔EN, `PermissoesTab.tsx` tem a 5ª (`papeisToDbRole`,
+  `dbRoleToPapel`, `defaultPermissoes`, `papeisSalvar`) e `fn_admin_set_user_tenant` valida a lista
+  de papéis no banco. Matrícula: `fn_set_user_badge(user, tenant, badge)` (mesmas travas de
+  `fn_update_user`, 1–10 dígitos, recusa repetida com mensagem; o índice único global
+  `users_badge_number_unique` é a garantia final). O PIN não depende da matrícula
+  (`sha256(pin + user_id)`), então trocar a matrícula não invalida o PIN.
+
+### Conversa entre pessoas da mesma loja no chat — `chat-equipe` (2026-09-23)
+
+Tabelas `chat_threads` / `chat_participants` / `chat_messages` (migração `20260923200000_chat_equipe`).
+**Uma conversa por par de pessoas** (`direct_key` = os dois user_id em ordem), mesmo que trabalhem
+juntas em várias lojas; só dá para começar com quem está numa loja sua (`user_tenants`), e login de
+`tablet` fica fora da lista. Tudo que grava passa pela Edge `chat-equipe` (verify_jwt false, confere o
+usuário por dentro; `client_id` evita mensagem dupla no reenvio; manda Web Push via `send-push` com
+url `/modulos?conversa=<id>`). O front **lê pelo Realtime** (`chat_messages` na publicação) com RLS
+por participante (`fn_chat_participa`), **nunca por `auth_tenant_id`** (admin com várias lojas quebraria).
+Front: `src/components/feature/equipe/` — `useEquipeNoChat` devolve a seção da lista, a camada por
+cima do painel e as não lidas; ligado no `AssistenteChat` (dono) e no `AcoesRapidasFlutuante` (demais,
+aba Conversas). Teste: `src/test/components/chatEquipe.test.tsx`.
+
+**2026-09-24 — igual ao WhatsApp + por loja.** (1) **Uma conversa por par EM CADA LOJA** (`unique (tenant_id, direct_key)`): antes era uma por par e misturava Vila e Paranaguá; a lista tem uma aba por loja com as não lidas de cada uma e começa na loja aberta. (2) **Vistos**: `chat_participants.last_delivered_id` — `fn_chat_marcar_entregue` roda quando o app da pessoa busca `conversas`/`mensagens` (✓✓ cinza), `lido` (✓✓ azul); `chat_participants` entrou no Realtime para o visto mudar na hora. Limite: com o app FECHADO fica ✓ até a pessoa abrir (o push não confirma entrega). (3) **Responder**: `chat_messages.reply_to_id` (mesma conversa), citação em `resposta`. (4) **Pesquisa**: `fn_chat_buscar` (unaccent + lower, % e _ literais, 50 mais novas); `mensagens.around_id` traz o trecho em volta do resultado e `has_newer` mostra "Mais recentes".
+
+### "Acréscimos da nota" não é produto (2026-09-24)
+O `fiscal-inbound` grava a diferença entre o vNF e os itens (ICMS-ST, IPI, seguro, outras despesas) como
+uma linha `fin_purchase_items` "Acréscimos da nota (...)", sem insumo — ela entra no total/CMV, mas **não
+é produto**. Todo lugar que lista itens para ação (vincular insumo, conferir no recebimento, classificar)
+tem que pular essa linha: front usa `ehAcrescimoNota()` de `src/lib/acrescimoNota.ts`; edges/SQL filtram
+por `description` começando com `'Acréscimos da nota'`. Já filtram: `receber-mercadoria` (lista e contagem),
+`purchase-confirm-delivery` (receipt_context), `DetalhePurchaseModal` (mostra como linha de valor à parte),
+`ConfirmarRecebimento` do assistente, `vinculos-memorizados`, registro de classificação e entrada tardia.
+Relatórios/DRE/detalhe de conta continuam mostrando a linha (é dinheiro gasto).
+
+### Pedidos de pagamento no módulo Recebimentos e pagamentos (2026-09-24)
+- Pedido do dono: pedir **reembolso**, **pagamento de freelancer** e **pagamento de fornecedor sem NF contra o CNPJ da loja** dentro do sistema, com permissão por tipo e ação rápida de reembolso. O `/receber` ("Receber mercadoria") virou **"Recebimentos e pagamentos"** (Sidebar, card de Módulos, título).
+- **Nada vira dívida sem aprovação** (decisão do dono): o pedido fica em `fin_payment_requests` (`pendente`) + pendência `kind='pedido_pagamento'` no 📥 (rota `/receber?aprovar=1`). Aprovar → `fn_pedido_pagamento_aprovar` (service role, uma transação) cria a conta a pagar **em aberto**; o Pix sai pelo caminho de sempre e a conciliação baixa. A trava de Pix (fornecedor cadastrado / Pix permitidos) **não foi mexida** — chave de funcionário/freela nova se paga pelo app do banco.
+- Contas: reembolso e fornecedor → `reference_type='pedido_pagamento'` (novo no CHECK), `reference_id` = pedido, `dre_category_id` obrigatório (reembolso: quem pede escolhe; fornecedor: o dono escolhe ao aprovar se faltar). Freelancer → mesma forma de sempre (`reference_type='freelancer'`, RH, `reference_id` = `hr_freelancers.id`) + diárias em `hr_freelancer_shifts` com `bill_id` e sem `payment_id`.
+- **Freela sem dupla contagem:** `fn_freelancer_registrar_pagamento` agora, quando o Pix não tem conta ligada, **adota** a conta em aberto de um pedido aprovado (mesmo freela, mesmo valor, sem outro Pix) e liga as diárias do pedido ao pagamento (passo 3a) em vez de gravar outras.
+- **Reembolso de mercadoria não é despesa**: "O que você comprou?" → mercadoria vai pelo recebimento (cupom ou sem nota) com a opção **"Paguei do meu bolso"** (`lancar` com `pagamento='reembolso'`): compra A PAGAR (CMV + estoque como sempre, vence hoje) e pedido de reembolso ligado (`purchase_id`, `bill_id` da parcela). Esse pedido não se recusa nem se cancela pelo app (a compra já entrou); aprovar só libera o pagamento. Quem só tem `pag_reembolso` passa no gate da `receber-mercadoria` apenas para `insumos`/`fornecedores`/`lancar` com reembolso.
+- Permissões novas (`PEDIDO_KEYS` em `usePermissoes.ts`): `pag_reembolso`, `pag_freelancer`, `pag_fornecedor` (padrão Admin/Gerente, liberáveis para qualquer papel) e `pag_aprovar` (padrão só Admin; `somenteGerente` na matriz). O servidor repete o padrão sem linha na matriz (`_shared/pedidos-pagamento.ts › permissoesPedido`). Ninguém aprova o próprio pedido, exceto o Admin. Entrada no módulo: `RECEBER_MODULO_KEYS` (RotaProtegida, Sidebar, Módulos, `acesso.ts`).
+- Comprovantes no bucket privado `pedidos-pagamento` (upload/URL assinada só pela Edge). Ações rápidas novas: "Pedir reembolso" (`/receber?pedido=reembolso`) e "Aprovar pedidos de pagamento".
+- Edge `pedidos-pagamento` (verify_jwt true) + `receber-mercadoria` atualizada; migration `20260925200000_pedidos_pagamento.sql`.
+- **Pedido em dobro é recusado (2026-09-25, `criar › duplicado`, HTTP 409 com o texto para quem pede):** mesma pessoa (mesmo cadastro, chave Pix ou nome sem acento/maiúscula) + pedido `pendente`/`aprovada` do mesmo tipo. Reembolso: mesmo valor + mesmo dia do gasto. Fornecedor: mesmo valor + mesmo vencimento. Freelancer: **qualquer dia em comum** (valor não importa) ou diária já em `hr_freelancer_shifts` para o freela cadastrado (paga por Pix do grupo/extrato/dinheiro). Não vale para o "Paguei do meu bolso" da `receber-mercadoria` (o pedido nasce da compra).
+- **Compra online (2026-09-28, tipo `compra_online`, permissão `pag_compra_online`):** a equipe comprava no Mercado Livre pela conta pessoal e pedia Pix no grupo. Agora cola o link (ou o texto do "Compartilhar" do app) e o valor total; `lerLinkCompra` (`_shared/pedidos-pagamento.ts`, cópia em `src/pages/receber/pedidos/linkCompra.ts` só para a prévia) tira site, nº MLB e nome do endereço; link curto `mercadolivre.com/sec/…` a Edge segue o redirecionamento (só hosts do ML). Fluxo `pendente → aprovada (autorizada) → comprada` (ação `comprado`: nº do pedido no site + `valor_pago`). **Nunca gera conta a pagar** (trigger `trg_pedido_compra_online_sem_conta`): o dono compra na conta da loja (ML/MP no CNPJ) e o custo entra pela NF-e do vendedor via SEFAZ. Repetido = mesmo `anuncio_id` (ou link) pendente/autorizado. **API do Mercado Livre (testada 2026-09-28 com o token do Mercado Pago da Paranaguá):** `/users/me` responde (conta EP PAR MALL, CNPJ); `/sites/MLB/search`, `/items`, `/products`, `/highlights` e `/orders/search?buyer=` dão 403 (PolicyAgent) — não dá para buscar, ler anúncio nem comprar pelo sistema. Migration `20260928200000_pedido_compra_online.sql`.
+  - **Print do checkout é o jeito principal (2026-09-28, pedido do dono: "só o link está bem ruim"):** ação `ler_print` (`pedidos-pagamento/print-compra.ts`) lê itens, subtotal, desconto, frete, total e entrega; o resultado conferido vai em `compra_detalhe` (jsonb) e o print vira o `comprovante_path` ("Ver print" para o dono). Link ficou opcional (pedido exige print OU link). **Modelo Sonnet 5**: no print real do ML o Haiku 4.5 errou os centavos sobrescritos do total 3/3; o Sonnet acertou 3/3 (~US$ 0,007/leitura; `ai_usage_events.feature='leitura-print-compra'`; secret `PRINT_COMPRA_MODEL` troca sem deploy). Desconto sai da conta `subtotal + frete − total` (a IA erra os centavos dele). Pegadinha: print de checkout no "Ler nota ou cupom" é recusado pela `purchase-receipt-scan` ("não é comprovante") — o caminho é Compra online.
+  - **Pago por Pix copia e cola (2026-09-28, noite; decisões do dono):** o pedido exige o Pix do checkout (`pix_copia_e_cola`; valor e `pix_chave` saem do código — o valor do pedido é o do Pix; QR dinâmico é recusado porque não traz a chave). Aprovar exige `classe` ('despesa' + categoria do DRE | 'cmv' + `fin_merchandise_categories`): `aprovarCompraOnline` trava o pedido em 'aprovada', cria a compra por `purchase-write` (chave interna; itens do print rateados para somar exatamente o Pix; despesa → `dre_category_id` do item, CMV → `merchandise_category_id`), liga `purchase_id`/`bill_id` e chama `prepararPagamento` com `copia_e_cola`. **`inter-bank` aceita copia e cola ESTÁTICO se a chave do código estiver em `fin_suppliers.pix_key` ou `fin_pix_favorecidos`** (mesma trava do Pix por chave; dinâmico continua só de guia `PIX_COPIA_HOSTS`; valor pedido ≠ valor do código é recusado). A tela avisa `pix_liberado=false` (cadastrar `pix_marketplace@mercadolibre.com` nos Pix permitidos com o PIN). **NF-e do vendedor é ignorada** pelo gatilho `trg_nota_da_compra_online` (fornecedor sem nota lançada antes, emitida −3/+45 dias do pedido, valor a ±R$ 1 do Pix, subtotal ou subtotal−desconto; um pedido ignora uma nota — `nota_ignorada_id`; desfazível pelo "reativar" da nota). Pedido antigo sem Pix segue o fluxo "Autorizar compra / Já comprei". No 📥 do chat o botão vira "Classificar e pagar" (abre o pedido). Migration `20260928220000_compra_online_pix.sql`.
+  - **Já paga + por item (2026-09-28):** `ja_pago`/`ja_pago_em`/`pago_forma` ('pix'|'cartao'|'mercado_pago'; migration `20260928230000`) dispensa o Pix; aprovar lança a compra na data do pagamento sem `prepararPagamento` e, se `pix`, `conciliarJaPaga` procura UMA saída em `fin_bank_statement_imports` (débito pendente, mesmo valor ±0,01, ±3 dias) e chama `conciliacao-pagamentos › link_manual` com o JWT do aprovador (baixa + extrato conciliado); várias/nenhuma → fica para a Conciliação. Aprovar aceita `itens_classe` (um por item do print, na ordem da lista com valor>0) — compra com itens CMV e despesa ao mesmo tempo. Pegadinha: `pago_em` já existe na resposta (data da baixa da conta) — a coluna nova é `ja_pago_em`.
+  - **Pagamento tem que estar no sistema (2026-09-28, regra do dono):** "já foi pago" só aceita `pago_forma` pix | boleto | dinheiro e exige `pagamento_ref` achado por `candidatosPagamento` (ação `buscar_pagamento`; mesmo valor ±0,01, ±3 dias): Pix/boleto = `fin_bank_statement_imports` débito pendente não conciliado (boleto = `raw.tipoTransacao='PAGAMENTO'`); dinheiro = `cash_movements` saída de fornecedor sem `purchase_id`. Sem candidato o pedido é recusado. `pago_ref_tipo/pago_ref_id` com índice único (um pagamento → um pedido). Aprovar: extrato → `link_manual` (baixa); sangria → compra `paid`/Dinheiro (sem conta a pagar!) e a sangria recebe `purchase_id` (tira o `auto_sangria`, como o `fn_sangria_da_compra`). Pegadinha: compra paga não gera conta — `aprovarCompraOnline` aceita conta nula só em dinheiro e, se faltar conta nos outros casos, apaga a compra criada antes de devolver o pedido.
+  - **Compartilhar do app (Android, 2026-09-28):** o manifest só aceita UM `share_target` (`/tarefas/compartilhar`). O `sw.js › receberCompartilhado` escolhe o destino: link de loja online (`LOJA_ONLINE`: ML, Shopee, Amazon, Magalu, AliExpress) **sem anexo** → `/receber?pedido=compra_online&compartilhado=1` (link já colado, `pedidos/compartilhado.ts` lê o cache `erpos-compartilhado`); o resto → Tarefas. Na tela, "Criar tarefa com isso" manda o mesmo conteúdo para `/tarefas?compartilhado=1`; sem `pag_compra_online` vai direto para Tarefas. O cache só é limpo quando o pedido é enviado.
+- **Benefício VR/VA (2026-09-30/10-01, tipo `beneficio`, permissão `pag_beneficio`, padrão Admin/Gerente):** o boleto da VR vem sem os nomes e, com mais de um funcionário, só no total. Em `/receber` › "Benefício (VR/VA)" (`pedidos/NovoBeneficio.tsx`, link `?pedido=beneficio`) a pessoa manda PDF ou foto; a Edge `ler_boleto` (`pedidos-pagamento/boleto-beneficio.ts`) lê: texto do PDF primeiro (linha por DV, Pix por CRC, sem modelo), IA Haiku 4.5 para o resto (Sonnet 5.5 só se o valor não vier; secret `BENEFICIO_MODEL`; `ai_usage_events.feature='leitura-boleto-beneficio'`); em foto o QR do Pix é lido no celular (`leitura.ts › lerPixDaFoto`, jsQR/BarcodeDetector). A pessoa marca funcionários (ação `funcionarios`: ativos, VA do cadastro, `ja_no_mes`) e o valor de cada um — a soma tem que fechar com o boleto (front, `criar › dadosBeneficio` e SQL). Pedido guarda `beneficio_detalhe` {boleto, itens}, `competencia`, `linha_digitavel`, `pix_copia_e_cola`. **Aprovar = `fn_pedido_beneficio_aprovar`** (service role, uma transação): chama `fn_beneficio_lancar` modo operadora → 1 conta `hr_beneficio` no total + `hr_beneficios` por funcionário (aparece em RH › Benefícios — é assim que se sabe para quem foi), guarda o boleto na conta. **Pegadinhas:** (1) o mesmo boleto já em Contas a Pagar (e-mail/WhatsApp) é ADOTADO (não há índice único em `boleto_digitavel`; valor diferente recusa); (2) funcionário com vale no mês recusa (com `pg_advisory_xact_lock` por loja+mês); (3) `fn_beneficio_desfazer` agora cancela o pedido do lote; (4) Pix da VR é QR dinâmico de `qrcode.bancovr.com.br`, fora de `PIX_COPIA_HOSTS` → o Inter recusa e vira "pague pelo app do banco" (a tela mostra o código para copiar); boleto com linha sai pelo Inter. Migration `20260930190000_pedido_beneficio.sql`.
+
+### 📌 no grupo do WhatsApp → caixa da pasta de Tarefas (2026-09-24)
+Grupo do assistente ligado a uma pasta (`asst_groups.task_list_id`, tela Assistente › Grupos). Quem reage
+📌 numa mensagem manda ela para `task_whatsapp_items` (texto/áudio transcrito já gravado em
+`asst_group_messages`; foto/PDF/áudio/vídeo salvos na hora no bucket `task-attachments` em
+`whatsapp/<list_id>/<message_id>.<ext>`, porque o WhatsApp apaga a mídia depois). Sem IA. O assistente reage
+📥; push para `fn_task_list_editores`. Na pasta, `CaixaWhatsApp` (quem tem owner/edit) decide:
+tarefa (`create_task` + `task-write › wa_item_resolve mode:'tarefa'`, ✅ no grupo), anotação
+(`wa_item_resolve mode:'anotacao'` → `task_comments`, 📝) ou descarta (`wa_item_discard`, tira a reação).
+Pegadinhas: a reação chega como `messages.upsert` com `message.reactionMessage` (texto vazio = reação
+removida; só quem marcou tira, e só se o jid dele veio); ao resolver, o arquivo passa a ser do
+`task_attachments` e o item solta `media_path` (apagar o anexo apaga o arquivo). `asst_groups.read_media=false`
+desliga a leitura de foto/PDF com IA só naquele grupo (grupo de obra = muita foto = custo).
+
+### Compartilhar → ERPOS no Android (Web Share Target, 2026-09-24)
+`manifest.webmanifest › share_target` (POST multipart para `/tarefas/compartilhar`, campo de arquivos
+`arquivos`). Quem atende é o `public/sw.js › receberCompartilhado`: guarda texto e arquivos no cache
+`erpos-compartilhado` (um compartilhamento por vez) e redireciona (303) para `/tarefas?compartilhado=1`;
+`CompartilhadoParaTarefa.tsx` lê o cache e cria tarefa (pasta lembrada em localStorage) ou junta a uma
+tarefa (comentário + anexos via upload normal). Só funciona com o app **instalado** no Android (Chrome
+atualiza o manifest do app instalado sozinho, mas pode levar ~1 dia; reinstalar força). iPhone não tem.
+Sem SW ativo o POST cai no Vercel e falha — por isso o destino só existe no SW.
+
+### Preço do insumo pelas notas e identidade do item do fornecedor (2026-09-25)
+- **Preço automático:** `fn_ingredient_cost_from_purchases` = compras ligadas (`ingredient_id`) + compras
+  antigas dos itens vinculados na Classificação (supplier_key + item_key, conversão do vínculo). Só custo,
+  estoque não muda. Vincular chama `fn_ingredient_apply_purchase_cost` (Manual vira automático). O histórico
+  do Estoque (`fn_ingredient_price_history`) usa a mesma base, por unidade do estoque.
+- **Código do fornecedor nem sempre identifica o produto:** a Lapeana manda `CFOP5102` como código de todos os
+  itens. `fn_item_key` ignora código que começa com CFOP (usa a descrição) e o vínculo memorizado com código
+  CFOP é bloqueado por trigger. Código repetido em descrições parecidas (Beemax) é o mesmo produto: não separar.
+- **A unidade escrita na nota pode mentir:** o Sacolão escreve "kg" e vende por pé (alface R$ 1,99 o "kg").
+  Por isso a conversão kg→g **não é travada**: a tela só **avisa** conversão fora do normal ou grande demais.
+- **Entrada tardia:** o aviso "conta em dobro" considera sessão de Inventário **e** ajuste de inventário feito
+  direto no insumo (`stock_movements.type = 'inventory_adjustment'`). "Recebido em" = confirmação do
+  recebimento (pode ser dias depois da nota); a tela mostra as duas datas.
+- **Critério do dono:** toda regra vale para qualquer loja. O caso da loja é só o exemplo. Consultar o banco
+  inteiro antes de decidir (a trava kg→g teria estragado as verduras do sacolão).
+- **Linha órfã na Classificação:** compra apagada (ex.: lida da foto e substituída pela NF-e) deixava a linha
+  "sem CNPJ" na tela. O gatilho `zz_purchase_items_prune_orphans` (após apagar item de compra) chama
+  `fn_item_prune_orphans`, que remove a linha sem compra e passa o vínculo/classe para a gêmea única
+  (fornecedor pelo nome + descrição sem código + unidade normalizada). Sem gêmea segura, a linha ligada fica.
+- **Ficha técnica × unidade:** custo de linha da ficha = `custoLinhaFicha` (src/lib/unitConversion.ts), que converte
+  a unidade da ficha (g) para a do insumo (kg) antes de multiplicar. Usado em CMV/Fichas, CMV mensal, relatório de CMV
+  e consumo por lanche (antes: Burrito R$ 11.626 em vez de R$ 14,30). A baixa de estoque da venda já convertia.
+- **Ficha mudada depois das vendas:** `menu-write` `reaplicar_ficha` (`_shared/ficha-retroativa.ts`) refaz a baixa
+  das vendas processadas desde a data escolhida, com a mesma conta da venda (`buildDeductions`). Antes da última
+  contagem do insumo, a diferença vira ajuste na contagem (o saldo não muda); depois dela, muda o saldo. A tela da
+  ficha pergunta a data após salvar (admin/gerente) e mostra a prévia antes de aplicar.
+- **Excluir compra:** estorna só o que entrou por ela (soma dos movimentos com o motivo "Compra: fornecedor - NF"…).
+- **Custo do produzido:** é o preço de cada ingrediente **no ato da produção** (decisão do dono, 2026-09-25) —
+  não recalcular quando o ingrediente muda de preço.
+
+### Acesso anônimo fechado no RLS (2026-09-25)
+- Checagem pela chave pública achou: `table_session_participants` (nome, telefone, access_token), `table_sessions` (session_token) e `tables` (qr_token) legíveis por qualquer um; `tables` alterável pelo anônimo; e duas políticas "bypass do service_role" criadas no papel `public` (`fin_merchandise_categories`, `delivery_customer_addresses`), o que deixava qualquer usuário logado gravar em qualquer loja.
+- Correção: `supabase/migrations/rls_fechar_acesso_publico.sql` (desfazer em `_rollback_rls_publico_20260925.sql`). O anônimo agora só lê `tenants(id, name, slug, logo_url, is_active)` (grant por coluna) e `kitchen_stations`.
+- **Critério:** tela pública (`/mesa-qr`, delivery, `/r/`) nunca lê tabela direto; passa por Edge Function (`mesa-write`, `delivery-write`...) com service_role. Política de "bypass" sempre `to service_role`, nunca `to public`. Políticas permissivas `using (false)` ("deny_direct_write_*") **não bloqueiam nada**: políticas permissivas somam com OR; para negar, use `as restrictive` ou não crie a política.
+- Ainda sem auditoria: ~70 funções `security definer` executáveis pelo anônimo e as Edge Functions com `verify_jwt=false`.
+- **Auditoria completa (mesmo dia):** 25 funções SECURITY DEFINER passaram a chamar `_assert_tenant_access(tenant)` / `_assert_self_user(user)` no início (libera service_role, cron sem JWT e platform owner). 11 Edge Functions corrigidas (commit 2a80c2f). Removidas de produção: `bootstrap-admin` (segredo+senha fixos), `grant-permissions` (sem auth), `qa-full-simulation` (JWT sem checar assinatura), `debug-create-user`.
+- **Critério:** o cadastro do Supabase Auth está ABERTO (qualquer e-mail cria conta) → "authenticated" = qualquer pessoa. Toda função/edge que recebe `tenant_id` precisa checar vínculo; toda função nova precisa de `revoke ... from public, anon` explícito (o default do Postgres dá EXECUTE a PUBLIC). Deploy de edge com trabalho alheio no working tree: publicar de um worktree limpo no commit.
+
+### Saldo no ERP das contas ligadas ao banco sai do extrato (2026-09-25)
+- Antes: `current_balance` = saldo inicial + `fn_bank_debit/credit` — só pagamentos desciam; repasses Stone/MP, Pix e iFood nunca subiam (Inter Paranaguá: −R$ 72 mil com R$ 2.253,78 no banco).
+- Agora (`20260926220000_saldo_erp_pelo_extrato.sql`), para conta com `synced_balance` e linhas em `fin_bank_statement_imports`: **abertura** = saldo do banco − Σ linhas até o dia do saldo; **saldo no ERP** = abertura + Σ linhas resolvidas (conciliadas/ignoradas) + Σ lançamentos do razão que nenhuma linha resolvida explica (`match_ref_id`, uuids do `match_detail` ou `matched_transaction_id`). Vendas roteadas (`reference_type='sale'`) ficam fora do "sem linha" (recebimento só vale pelo extrato). **Diferença banco − ERP = linhas a conciliar − pagos no ERP sem linha no extrato.**
+- `fn_bank_recalc_balance(conta)` recalcula a conta inteira (idempotente); gatilhos por comando no extrato e no razão + gatilho no `synced_balance`. `fn_bank_balance_breakdown(conta)` (checa loja) alimenta a explicação na Conciliação. Contas sem saldo do banco (Stone, MP, manuais) seguem no razão antigo; conta por OFX sem API ainda não tem abertura automática.
+- `balance_after` do `fn_bank_debit` fica com o valor antigo (só histórico).
+
+### Perfil Contabilidade + Guias e impostos (2026-09-25)
+- Papel novo `contabilidade` (banco `accountant`, enum `user_role`). Preso a `/financeiro` (`PAPEIS_PRESOS`), abas de fábrica em `FIN_KEYS_CONTABILIDADE` (Guias, RH/Folha, Relatório RH, DRE, Receitas, Despesas, Contas a pagar, Vencidas, Notas de entrada); o dono ajusta na coluna "Contabilidade" de Configurações › Permissões (só a categoria Financeiro fica editável). Criado pela tela Usuários, pelo acesso multi-loja ou pelo Admin Master.
+- **Servidor:** `isContabilidadeRole` fica FORA de `isFinanceiroRole` de propósito. Em `financial-write` o papel só lê (`list_*`/`get_*`) e grava a folha (`ACOES_CONTABILIDADE`: funcionário, lançamento pendente, férias/13º, campos da folha); nunca marca folha como paga nem mexe em lançamento pago. Pagar/baixar conta, fornecedor, banco e conciliação continuam de admin/gerente/financeiro. Nas outras Edges (purchase-write, fiscal-inbound import, inter-bank...) o papel continua barrado sem mudança.
+- **Aba Guias e impostos** (`GuiasTab.tsx`, chave `fin_guias`) → Edge `contabilidade` (`enviar_guia`, `listar`, `abrir_arquivo`; `--no-verify-jwt`, checa vínculo dentro). PDF → `textoDoPdf` → `lerGuia` → `assistente-brain` action `guia` (o mesmo `processarGuia` do grupo do WhatsApp) → aviso com cartão Pagar no Telegram do dono. A guia só entra na loja do CNPJ dela e só se quem mandou tem papel financeiro/contabilidade nessa loja (403 antes de gravar qualquer coisa). Protocolo em `fin_guias_enviadas` (só service_role) + PDF original no bucket privado `contabilidade-docs`.
+- **DARF de IRRF da folha (0561) — corrigido 2026-09-25:** `lerGuia` marca como encargo da folha (título "DARF IRRF (folha)", `reference_type hr_payroll`, sem categoria DRE), igual ao INSS descontado: o IRRF já está no bruto da folha. Publicado em assistente-brain, assistente-app e contabilidade; `inter-bank` também importa `guias.ts` mas não usa `encargo_folha` (não precisou republicar).
+
+### Envio automático dos XMLs para a contabilidade (2026-10-02)
+- **Onde:** Configurações › Fiscal, seção "Envio de XML para a contabilidade" (`EnvioXmlContabilidade.tsx`, com o próprio
+  botão de salvar; aparece mesmo em loja sem NFC-e). Edge `contabilidade-xml` (`--no-verify-jwt`; get/previa/baixar para
+  admin/gerente/financeiro/contabilidade, salvar/testar_email/enviar_xml_mes só admin/gerente; `cron` por `x-internal-key`).
+- **O que vai:** ZIP do mês ANTERIOR com `NFC-e/` (só `environment = 1`; canceladas com prefixo `CANCELADA-`),
+  `NFe-entrada/` e `NFSe-tomada/` (`fiscal_inbound_documents` com `xml_status = 'full'`, modelo 10 = NFS-e, `sefaz_status = 2`
+  = cancelada) + `resumo.csv` (`;`, vírgula decimal, BOM). Competência pela data de **emissão** em horário de Brasília.
+- **Como sai:** SMTP da própria loja, **só porta 465 (TLS direto)** — o Supabase bloqueia 25 e 587 nas Edges, então
+  STARTTLS não dá. Cliente próprio em `contabilidade-xml/smtp.ts` (AUTH PLAIN/LOGIN, MIME base64). Gmail = senha de app
+  (com 2 etapas ligada); Outlook/Hotmail não serve (587 + sem senha de app). Senha no Vault (`fn_xml_envio_senha_set/get`,
+  só service_role); a tela só sabe `tem_senha`.
+- **Agendamento:** `pg_cron` `xml-contabilidade` 08h10 BRT → `fn_xml_contabilidade_tick()` (reusa `fiscal_internal_key` e
+  `supabase_anon_key` do Vault). Envia a partir do `dia_envio` (1–28) se o mês não tem envio `enviado`/`vazio`; 1 tentativa
+  automática por dia e no máximo 3 com erro por mês (depois só "Enviar agora"). Mês sem nenhum XML vira `vazio` (não manda).
+- **Arquivo e histórico:** `fiscal_xml_envios` (uma linha por tentativa). O ZIP vai para `contabilidade-docs/xml/<loja>/<mês>/`
+  **depois** do envio (tentativa com erro não deixa arquivo); acima de 18 MB guarda antes e manda link assinado de 30 dias.
+- **Testado 10-02:** harness local (servidor SMTP TLS falso + shim de `Deno.connectTls`): MIME, acentos, ZIP íntegro, senha
+  errada, destinatário recusado, porta 587. Em produção na Testes PDV: cron → Edge → ZIP → TLS em `smtp.gmail.com:465` →
+  535 traduzido para "senha de app". O envio de ponta a ponta com senha real depende da loja cadastrar a dela.
+- Fora daqui: NFS-e **emitidas** pelo módulo `/notas-servico` (são por empresa, não por loja) e eventos de cancelamento
+  (`procEventoNFe`) — a NFC-e cancelada vai com o XML autorizado original, igual ao botão "XMLs do mês (contador)" de Pedidos.
+
+### Boleto por e-mail vira conta a pagar (2026-09-25)
+- Entrada: Gmail da loja encaminha → CloudMailin → `contas-email?inbound=<segredo>`. O remetente é o `From` do **cabeçalho**; o `envelope.from` do encaminhamento do Gmail é `loja+caf_=...@gmail.com` (com ele nenhum fornecedor casava). "Fwd:" manual só troca o remetente se quem encaminhou é usuário da loja (senão qualquer um forja "De: fornecedor" no corpo).
+- Leitura (`contas-email/leitura.ts`): corpo → texto do PDF (unpdf) → IA só para PDF-imagem (Haiku; DV reprovou → Sonnet). Linha e CNPJ só valem com DV. CNPJ do beneficiário = 1º CNPJ após "Beneficiário/Cedente" sem "Pagador/Sacado" no meio, e nunca a raiz da loja.
+- Pegadinha: código de barras de 44 dígitos tem UM DV — varrer texto com janela deslizante acha ~1 falso a cada 10 janelas ("boleto de R$ 76 mil de 2019"). `findBoletos` só aceita 44 como sequência exata e quando não há linha 47/48.
+- Regra: fornecedor (e-mail em `fin_suppliers`) + raiz do CNPJ do beneficiário igual → lança direto (`boleto_origem='email'`, sem DRE). Senão pendência `boleto_email` (alerta = CNPJ divergente). Anexos em `fin-mail-anexos` (privado). Nunca paga.
+- **Opções/complementos × estoque:** baixa das opções já existia (`buildOptionDeductions`). O custo delas entra no CMV
+  por `src/lib/custoOpcoes.ts` (receita do adicional já vem no `item_price`). Cardápio › **Opções × Estoque** liga as
+  opções de mesmo nome em lote (`menu-write` `ligar_opcoes_estoque`); vínculo novo nasce em g/mL sem quantidade.
+- **Aprovar pedido de pagamento já paga (2026-09-25):** `/receber` › Aprovar pedidos → "Aprovar e pagar" abre
+  `JanelaPagamento.tsx` (PIN ali mesmo; mesmo caminho do 📥: `assistente-app` `pendencia_pagar` + `pay`). `pedidos-pagamento`
+  devolve `pendencia_id` ao preparar e `pix_inter` ('aguardando'|'pago') na lista — conta só vira "paga" na baixa do extrato,
+  então Pix já enviado mostra "Pix enviado · …" e esconde o "Pagar agora". Lista recarrega ao voltar ao app e a cada 30 s
+  (aprovou no PC, celular mostrava "Esperando aprovação"). Aprovar 2× já era barrado no banco (`fn_pedido_pagamento_aprovar`).
+- **Conversa da IA com candidatos (2026-09-25, 487d915):** revisada lendo as conversas reais (`bot_messages` +
+  `hiring_scheduling_sessions.history`). Agendador (`hiring-scheduler`) agora recebe os mesmos fatos que o link da vaga libera
+  (`bot_channels.share_fields`/`extra_info`) e tem regra de "fatos literais" (6x1 não diz quais dias); entrevista já passada
+  (`jaFoi`) → nada de "te esperamos"/remarcar pela IA, recado vai à equipe 1×; lista de horários espalhada em até 3 dias
+  (`espalhar`); aviso `unconfirmed_alert_at` 3 h antes; retorno opcional para NA (`hiring_job_scheduling.feedback_message`,
+  modelo Meta `retorno_processo_seletivo`, pendente `aguardando_retorno`). `canal-publico`: arquivo >10 min depois da ficha
+  vira anexo (`hiring_candidate_events` kind `anexo`, `meta.path` em `curriculos/anexos/<cand>/…`), `sayOnce` contra aviso
+  repetido, nome grudado corrigido pelo perfil do WhatsApp (grafia diferente só avisa), menor de idade avisado.
+- **Avisos para todas as pessoas (2026-09-25).** A conversa "Avisos" do chat, que era só do dono (`asst_messages` topic
+  `avisos`), agora existe para todo mundo no painel `AcoesRapidasFlutuante` (linha fixa no topo de Conversas →
+  `src/components/feature/avisos/AvisosConversa.tsx`, cada aviso desenhado com `PainelMensagem`). Tabela `avisos` (uma
+  linha por pessoa, `unique(user_id, kind, ref)`, RLS só `user_id = auth.uid()`, authenticated só lê e grava `lido_em`).
+  **Quem recebe é decidido ao gravar**, pela permissão do papel na loja: `assistente-cron` › `avisarEquipe` (admin sempre;
+  senão `permissions` e, sem linha, `PADRAO_PERM` — espelho de DEFAULT_PERMISSOES; dono fica de fora, já recebe pelo
+  assistente): vencimentos de amanhã → `fin_pagar`; estoque crítico → `estoque_movimentar`, por loja. Gatilhos SQL:
+  pedido de pagamento **pago** (Pix `paid` no `fin_inter_payments` ou conta `paid`, o primeiro que chegar) e **recusado**
+  → quem pediu (`fn_aviso_pedido_pagamento`; erro vira warning, nunca derruba a baixa). Push: `pushAvisos` a cada tick
+  (marca `push_em` antes, sem filtro de loja, url `/modulos?avisos=1` abre a conversa). Aviso novo = gravar em `avisos`
+  com `painel` no formato do `[painel]`.
+- **Casamento automático do Inter × baixa pelo extrato (2026-09-25):** a baixa feita pela conciliação (fn_match_payments,
+  `match_detail.confirmed.bill_id`) cria um `fin_bank_transactions` (`bill_payment`, `reference_id` = conta) mas NÃO grava
+  `matched_transaction_id` na linha. O casamento legado do `inter-bank` (valor ± 3 dias) achava esse movimento "livre" e
+  casava o Pix seguinte de mesmo valor (freela semanal) → linha `matched` sem baixa. Agora movimento de conta já baixada
+  pelo extrato conta como usado. Descrição do pagamento na tela: `descricaoPagamento()` (raw.detalhes.descricaoPix / raw.description).
+- **Abertura da Conciliação sem ir aos bancos à toa (2026-09-26):** a busca real custa ~50 s (iFood ~41 s, MP ~12 s,
+  Inter ~8 s, Stone ~4 s). A abertura da tela manda `max_age_min: 15` no `sync` das 4 Edges (`inter-bank`,
+  `stone-conciliation`, `mp-conciliation`, `ifood-financial`): com `last_sync_at` recente e sem `last_sync_error` a Edge
+  responde `{ fresh: true, last_sync_at }` sem chamar o provedor (~1–2 s). Menu "Atualizar bancos agora"/"Buscar o período"
+  não mandam o parâmetro e vão sempre. Depois da busca a lista é relida com `refresh(true)` (silenciosa, sem "Carregando...").
+  Nova busca automática em tela = sempre com `max_age_min`; o cron nunca manda.
+  **2026-09-28:** mesmo assim, passados 15 min a tela esperava o iFood (33–58 s, refaz relatórios + 30 dias de vendas +
+  repasses por loja do iFood, tudo em sequência) para reler a lista. Decisão do dono: a Conciliação NÃO chama mais o
+  `ifood-financial` (nem ao abrir, nem em "Atualizar bancos agora"/"Buscar o período"). Ela só usa o repasse esperado
+  (`fin_ifood_entries`), que o cron diário grava; o depósito é casado por `fn_match_ifood_inter` no `inter-bank` e no
+  `rematch` do `conciliacao-pagamentos`. Busca manual do iFood: Configurar › iFood › Buscar agora.
+  A lista em si (`list_statement_imports`) leva < 1 s.
+  Inter, Stone e MP rodam em paralelo; o casamento saque do MP × crédito no Inter (`fn_match_mp_payouts`) roda também
+  no `rematch` do `conciliacao-pagamentos` (antes das sugestões), que a tela chama depois dos três.
+- **Ordem da DRE (2026-09-26)**: grupos que subtraem do resultado (`expense` + grupos da loja) e categorias (entre irmãs)
+  têm ↑↓ em Categorias DRE. Posição em `fin_dre_groups.sort_order` (o `expense` ganha linha própria só para guardar a posição —
+  não é "apelido": apelido = nome/ícone diferente do de fábrica) e `fin_dre_categories.sort_order`. Toda tela que lista grupos
+  usa `ordenarGrupos()` de `useDreGroups` (sem posição: `expense` primeiro, resto na ordem de chegada). "Receitas" fica fixo no topo.
+- **Tipo da mensagem no chat do assistente (2026-09-26)**: `asst_messages.kind` (conversa | pagamento | caixa | grupo |
+  automatico) nasce no gatilho `fn_asst_messages_kind` (independente do `topic`); `assistente-app history` aceita `kind` e o
+  AssistenteChat separa a conversa em **Chegada | Tipo** igual às pendências (localStorage `erpos.chat.agrupar`, começa em Tipo):
+  em Tipo a conversa abre nos grupos fechados (`assistente-app kinds` → total, não lidas, última) e abre um por vez
+  (`TIPOS_DA_CONVERSA` define quais existem em cada conversa; a lista de grupos não marca visto; `seen` nunca leva o tipo). Aviso de **turno aberto**: `trg_session_abriu` (sessão não treino) →
+  `assistente-cron { run: 'opening_session' }` → conversa Financeiro, tipo `caixa`, + push; não vai para WhatsApp/Telegram.
+  PEGADINHA: `run` desconhecido no assistente-cron cai na rotina geral — publicar a edge ANTES do gatilho que chama um run novo.
+- **Vendas do iFood nos Relatórios (2026-09-26)**: `fetchIfoodVendas` (`src/lib/ifoodVendas.ts`) = conciliação importada
+  (`fin_ifood_entries`, valor como no Portal) + API de Vendas (`fin_ifood_sales` via `fetchComplementoApi`, igual à aba iFood)
+  + pedidos ao vivo de `ifood_orders` ainda não conciliados (mesmo id do pedido;
+  cancelado não entra; valor ≈ `subTotal` + taxa de entrega só se `delivered_by = MERCHANT`). A Visão Geral mostra iFood também
+  no modo sessão (pedidos entre `opened_at` e `closed_at`/agora — `useIfoodVendas(periodo, intervalo)`).
+  PEGADINHA: intervalo com `new Date()` precisa de `useMemo`, senão o efeito refaz a busca a cada render.
+- **iFood Merchant — horário da pausa sem fuso (2026-09-26)**: `POST /merchants/{id}/interruptions` aceita ISO com fuso
+  (enviamos UTC com `Z`), mas a resposta e o `GET` devolvem **UTC sem o `Z`** (`"2026-09-26T19:01:09"`). `new Date()` no
+  navegador leria como hora local (3 h adiantado) → `IfoodLojaModal` acrescenta `Z` antes de formatar. Na loja de teste o
+  `/status` continua "Loja aberta" com pausa ativa e o iFood **não** recusou pausa sobreposta (sem 409); a lista de pausas
+  aparece com alguns segundos de atraso. Review: `/summary` responde **404 "Summary not found"** em loja sem avaliação
+  (a edge devolve resumo zerado). Teste da edge sem login: `net.http_post` no SQL com `x-internal-key` lido do vault.
+- **"Vendido no iFood" único em todas as telas (regra do dono, 2026-09-26)**: itens + taxa de entrega só quando a entrega
+  NÃO é do iFood (entrega própria/sob demanda); entregue pelo iFood (billing `DELIVERY_FEE_IFOOD`) a entrega é do iFood e
+  fica fora — é o mesmo valor do Portal do Parceiro. Taxas não contam `DELIVERY_FEE_IFOOD`. Onde está: `acoes/ifood/comum.ts`
+  (`vendidoDoPedido`), `IfoodApiViews` (Pedidos), `assistente-cron › ifoodResumo`, e a conta do Portal (`ifoodVendas`/`ifoodDashboard`).
+- **Atendimento de clientes da loja pelo WhatsApp (2026-09-26)**: Delivery › aba "Atendimento WhatsApp"
+  (`AtendimentoWhatsAppTab.tsx`) + edge `atendimento-loja` (Haiku 4.5, `--no-verify-jwt`) + tabelas `wa_loja_bots`
+  (1/loja, código `PD-XXXX`), `wa_loja_conversas`, `wa_loja_mensagens` (RLS `fn_is_tenant_admin`; migração
+  `20260926120000_atendimento_whatsapp_loja.sql`). Roteamento na `whatsapp-cloud`: número próprio da loja
+  (`wa_loja_bots.phone_id`) → tudo para a loja; no número compartilhado, depois do `hiring-scheduler`, o código PD-
+  no texto ou conversa da loja aberta (3 dias, mais recente que a de candidatura) → `atendimento-loja`; só depois o
+  funil de CRM (`crmInbound`, que responde qualquer mensagem de quem recebeu oferta em 15 dias — por isso vem depois;
+  "SAIR"/"parar" sozinho continua indo para o descadastro); o resto segue para o `canal-publico`. **Regra:** o robô NUNCA cria pedido nem recebe pagamento — vende mandando o link do delivery
+  (`?utm_source=whatsapp_bot`, `&item=` para abrir o item, `&voucher=` quando oferece o cupom configurado). Cardápio,
+  promoções do dia, horário, taxa e estoque vêm do `delivery-write › get_delivery_config` (o mesmo do link público).
+  Pedidos do cliente: só os do telefone que está falando. Foto/arquivo (comprovante), reclamação ou pedido de humano →
+  `needs_human` + aviso no Telegram; a equipe responde pela aba (`action: 'reply'`), o que pausa o robô por 2 h.
+  **Número próprio pelo ERPOS (2026-09-27)** — card "Número próprio da loja" (`NumeroProprio.tsx`), ações
+  `numero_*`/`conectar_meta` da `atendimento-loja` (`numero.ts`): (1) **chip novo** criado na WABA do número
+  compartilhado (Graph `phone_numbers` → `request_code` → `verify_code` → `register`, PIN = HMAC do segredo interno
+  pelo phone_id); o dono do chip (`wa_loja_numeros`) só é gravado depois do código confirmado, e outra loja nunca
+  reaproveita número com dono (revisão de segurança: antes dava para tomar o chip desligado de outra loja);
+  (2) **Conectar pela Meta** (Embedded Signup) — escondido até existirem `META_ES_APP_ID/SECRET/CONFIG_ID` (e o
+  segredo tem que ser o do app do webhook); token do cliente em `wa_loja_credenciais` (só service_role) e
+  `WaConfig.token` em `_shared/wa.ts` para enviar/baixar mídia por aquele número; coexistência: eco
+  `smb_message_echoes` pausa o assistente 2 h. `phone_id/waba_id` de `wa_loja_bots` só o servidor grava
+  (privilégio de coluna). O que o dono faz na Meta: `WHATSAPP-CONECTAR-META.md`.
+  **Treino (2026-09-27, v4→v12):** modelo = **Sonnet 5** (60 cenários, mesmas travas: Haiku 4.5 nota 7,3 / 18 erros
+  graves / US$ 0,023 por conversa × Sonnet 5 nota 8,6 / 1 erro grave / US$ 0,044 — `MODEL` em `index.ts`).
+  **Desde 2026-09-28: Sonnet 5.5 com `effort: low`** (ver histórico de 09-28). As travas
+  ficam em `atendimento-loja/travas.ts` (código puro, sem imports): `conferir()` gera a volta de correção,
+  `linkQueFalta()` anexa o link quando o modelo ignora a correção, `arrumarLinks()` troca link inventado. Testes em
+  `src/test/edge/atendimentoTravas.test.ts`. System em 2 partes: estável com `cache_control` (regras + cardápio
+  inteiro; no Haiku o cache só vale com 4096+ tokens e a leitura não conta no limite de tokens/min) + volátil (hora,
+  promo, esgotados). **Pegadinhas:** (1) o link geral é PREFIXO do link de item — comparar URLs inteiras, nunca
+  `includes`/`replace` de texto (colava `&item` em cima de outro); (2) regex de texto roda com os links tirados
+  (`\bapp\b` casava `erpos.vercel.app` e mandava corrigir 1 de cada 3 respostas); (3) com o delivery fechado a
+  `delivery-write` RECUSA pedido — o robô não pode dizer "pede agora que sai quando abrir"; (4) menor de idade +
+  álcool = trava. **Como treinar sem gastar:** `simulate` com `avaliar:false` (atendente + cliente simulado pela API,
+  ~US$ 0,02–0,04 por conversa) e a avaliação feita no Claude Code por subagentes Sonnet lendo as conversas + os
+  fatos (`simulate` com `so_fatos:true`; passar as condições de cada cenário — fechado, esgotado, cupom — senão o
+  avaliador acusa invenção); `simulate` aceita `modelo` para comparar antes de trocar o de produção. Replay: rodar
+  `conferir()` no node sobre as respostas gravadas mede falso positivo/negativo de cada trava sem API.
+- **Clientes & Marketing numa tela só (2026-09-26)**: Clientes, Funil (antes modal), Promoções e Vouchers viraram abas
+  de `/clientes` (`?aba=`); `/promocoes` e `/vouchers` redirecionam. Sidebar tem 1 item; `RotaProtegida` libera
+  `/clientes` com qualquer das 3 chaves e a tela esconde a aba sem permissão. **Achado:** `promotion_rules` (regras
+  de desconto/cupom) **não são aplicadas em venda nenhuma** — o motor `order-write › apply_promotions` existe mas
+  nenhuma tela chama (1 regra ativa, 0 usos em 2026-09-26). O que vale no caixa/delivery é o preço promocional do item
+  (`item_promotions`, `promoAtivaHoje`); a aba Promoções mostra os dois e avisa. Ligar o motor no PDV/delivery é
+  decisão do dono (mexe no valor cobrado). Outros critérios: a "Segmentação RFM" com cortes fixos saiu da aba Clientes
+  (contradizia o Funil, que tem critérios por loja); a descrição dos estágios do funil é montada no front a partir de
+  `crm_stage_criteria` (a do servidor tem "90 dias"/"6 pedidos" fixos no texto); Vouchers carrega tudo e filtra na
+  tela (filtro no servidor zerava os números do topo) e trata `active` com `expires_at` passado como expirado;
+  `create_promotion_rule` aceita `is_active` desde 2026-09-27 (antes ignorava e o modal desligava numa 2ª chamada).
+  **Validação logada (2026-09-27, Testes PDV):** `delete_promotion_rule` só desligava (a regra ficava na lista) → agora
+  grava `deleted_at` (exclusão lógica; `list_promotion_rules`, `apply_promotions` e a aba filtram `deleted_at is null`).
+  `EnviarVoucherModal` ganhou `onEnviado` (dispara 1x no "Enviar WhatsApp"/"Copiar mensagem"): o Funil registra o
+  `log_send` ali, não mais ao criar o voucher (criar e fechar sem mandar marcava o cliente como abordado, com mensagem
+  vazia). `onSent` segue sendo "voucher criado" (o perfil usa para recarregar). No Funil, oferta desligada na aba
+  Ofertas também esconde o botão de voucher da linha (mesmo critério `resumoOferta` do cabeçalho).
+- **Delivery Fase 1 — GPS do motoboy + rastreio do cliente (2026-09-26)**: tabelas `delivery_driver_positions` (1 linha
+  por motoboy, última posição) e `delivery_driver_position_history` (histórico; cron `driver-positions-limpeza` apaga > 7 dias,
+  06h40 UTC). RLS: SELECT só `authenticated` com `auth_is_member_of(tenant_id)`; anon sem acesso; escrita só `service_role`.
+  Escrita pela RPC `fn_driver_ping` (security definer, só service_role): valida motoboy (loja + ativo), limita 1 gravação a
+  cada 10 s por motoboy, faz upsert + histórico e manda broadcast público `drivers-ping:<tenant>` (evento `driver_position`,
+  payload só `{ driver_id }` — a posição NUNCA trafega no canal público). Edge `motoboy-signal` (verify_jwt false) ganhou
+  `ping_position` e `track_order` (cliente: `tenant_id` + `order_number`, igual ao `get_order_status`; devolve a posição do
+  motoboy só desse pedido e só em rota: `out_for_delivery_at` + `motoboy_status='coletou'` + não entregue/cancelado/retirada;
+  posição > 15 min não sai). Previsão recalculada sem API externa: linha reta × 1,3 na velocidade da rota ORS do pedido
+  (`delivery_distance_km / delivery_route_min`, limitada a 12–45 km/h; sem rota = 25 km/h).
+  Front: `src/pages/motoboy/useMotoboyGps.ts` (watchPosition só com pedido dele `a_caminho_loja`/`coletou` ou **turno ligado**
+  — chave `erpos_motoboy_turno` no aparelho; envia com ≥15 s **e** ≥30 m, ou a cada 3 min parado; descarta precisão > 300 m;
+  Wake Lock para a tela não apagar) usado na lista `/entregas/:slug` e em `/motoboy/:id`; Gestor: `useDriverPositions`
+  (carga 1x + refetch com debounce 4 s no broadcast, só com o mapa aberto) e motos no `MapaEntregasGestor` (cinza > 10 min);
+  cliente: `RastreioMapa` (lazy, leaflet fora do bundle do cardápio) no `AcompanharPedido`, com `track_order` a cada 15 s só em rota.
+  **Limitação:** navegador só manda GPS com a tela aberta (o aviso "mantenha esta tela aberta" aparece para o motoboy).
+  **Decisão:** o rastreio foi para a `motoboy-signal` e não para o `get_order_status` da `delivery-write` porque a sessão só
+  tinha deploy por MCP (arquivo inline) e a `delivery-write` tem 137 KB — transcrever tudo é arriscado.
+  PEGADINHAS: (1) leaflet dentro de `Suspense`/lazy precisa de `map.invalidateSize()` antes do `fitBounds`, senão o ponto sai
+  cortado; (2) teste de edge sem curl (proxy bloqueia supabase.co no ambiente de nuvem): `net.http_post` no SQL e ler
+  `net._http_response` — a resposta chega assíncrona, e um MCP instável pode deixar a posição "velha" (> 15 min) entre chamadas.
+- **Delivery Fase 2 — acerto financeiro dos entregadores (2026-09-27)**: regra por loja em
+  `system_settings.delivery_config.acerto_motoboy` ({ativo, modo: por_entrega|faixa_km|diaria_mais_entrega|percentual_taxa,
+  valor_entrega, faixas[{ate_km,valor}], diaria, percentual}), editada em Config. do Delivery › "Pagamento dos entregadores"
+  (`AcertoRegraCard` + `acertoCfg.ts`; salva junto com o resto, só admin). Lançamentos em `delivery_driver_ledger`
+  (entrega | diaria | adiantamento | estorno; aberto | fechado | estornado) nascem pelo gatilho `trg_delivery_driver_ledger`
+  em `orders` (AFTER UPDATE OF status, motoboy_driver_id, WHEN entra/sai de 'delivered'; + AFTER INSERT já entregue) —
+  um lugar só pega todos os caminhos que gravam "entregue". Valor CONGELADO na entrega (`regra` = snapshot). Idempotente por
+  pedido (índices únicos parciais). Saiu de "entregue": aberto → estornado; já acertado → linha `estorno` negativa.
+  Falha do gatilho nunca bloqueia o pedido: vai para `fn_dev_error_report` (source 'other').
+  Financeiro › **Entregadores** (`EntregadoresTab`, permissão `fin_entregadores`): resumo (`fn_acerto_motoboy_resumo`),
+  adiantamento, chave Pix do motoboy (`delivery_drivers.pix_key/pix_key_kind`), "Fechar acerto" (`fn_acerto_motoboy_fechar`)
+  → UMA conta em `fin_accounts_payable` pendente, Pix, com DRE (escolhida ou "Entregadores" criada), `reference_type =
+  'delivery_driver_settlement'`, `reference_id` = acerto; "Desfazer" (`fn_acerto_motoboy_desfazer`) só com a conta pendente e
+  sem Pix ativo; ranking (`fn_delivery_ranking_entregadores`: entregas, tempo total/em rota, atrasos pelo SLA, km, custo).
+  CRITÉRIOS: (1) o acerto fecha TUDO em aberto até a data final (nada fica esquecido antes do período); (2) totais saem do
+  próprio `UPDATE ... RETURNING` e o gatilho trava a linha (`FOR UPDATE`) + guarda de status — sem corrida fechar × entregar/
+  cancelar; (3) diárias nascem no fechamento, só de dias com entrega fechada nele, uma por (motoboy, dia); (4) saldo ≤ 0 não
+  fecha (exceção desfaz tudo); (5) conta a pagar de acerto só some pelo "Desfazer" (gatilho `trg_payable_acerto_guard`,
+  liberado por `set_config('erpos.desfazendo_acerto')`); (6) permissão por LOJA EXPLÍCITA (`_acerto_motoboy_pode`: admin, ou
+  gerente/financeiro sem `fin_entregadores` negado) — NÃO usar `has_permission`, que pega a última loja (LIMIT 1);
+  (7) motoboy com lançamento não pode ser apagado (FK restrict) — a tela manda "Bloquear".
+  PEGADINHAS: a regra `fin_accounts_payable_reference_type_check` lista as origens aceitas — origem nova exige drop+add;
+  `dev_error_events.source` só aceita front|edge|print|fiscal|cron|sw|other — usar `fn_dev_error_report`.
+  Revisão: 2 rodadas com Opus (1ª reprovou: reference_type, corrida, linhas órfãs; 2ª aprovou).
+- **Validação das Fases 1-2 na nuvem (2026-09-27, Testes PDV)**: portal do motoboy no celular (GPS simulado), Mapa do
+  Gestor, "chega em ~X min" do cliente e acerto (fechar → conta em Contas a Pagar → desfazer) passaram. Achados:
+  (1) `list_delivery_board` só aceitava `delivery_platform` nulo/'propria' — pedido do PDV Delivery com canal
+  WhatsApp/Instagram/Telefone/Site/Presencial (entrega própria) sumia do Gestor; agora fica fora só retirada e
+  `PLATAFORMAS_EXTERNAS` (ifood/rappi/uber_eats/99food — mesma lista de `externo` em `src/constants/delivery.ts`).
+  (2) `order-write`: pedido de origem delivery com TODOS os itens `skip_kds` nascia `delivered` e nunca chegava ao
+  motoboy (na Testes PDV todo o cardápio é skip_kds). Decisão do dono (09-27): só entrega do APP (ifood/rappi/uber_eats/
+  99food) continua nascendo entregue; entrega PRÓPRIA nasce `ready` → "Pronto · aguardando motoboy" no Gestor. (3) Sem `delivery_lat/lng` (loja por bairro)
+  não há ETA para o cliente — só a moto. (4) Teste de "Desfazer": o painel do navegador responde "Cancelar" ao
+  `window.confirm`; sobrescrever `window.confirm` na aba para testar.
+- **Pedido do iFood com motoboy da loja (2026-09-27):** uma versão separada (sem virar `orders`, d95420e) foi publicada e
+  DESFEITA no mesmo dia — o dono escolheu o desenho `IFOOD-PEDIDOS-FUNIL.md` (pedido do iFood vira pedido do ERPOS).
+  Ficou no ar: `ifood-shipping` op `verify_code` (código de entrega; só `valid === true` explícito) e
+  `ifood_orders.delivery_lat/lng/fee/delivery_code_ok/delivery_code_fails`. O que o motoboy precisa no desenho novo
+  está na seção "Motoboy da loja" do IFOOD-PEDIDOS-FUNIL.md.
+
+- **Delivery Fase 3 — "Montar saída" no Gestor de Entregas (2026-09-27)**: botão violeta no cabeçalho (conta os prontos
+  sem entregador) abre `MontarSaidaModal`. SEMPRE sugestão — nada muda até "Confirmar saída". Algoritmo puro em
+  `src/lib/montarSaida.ts` (testes em `src/test/lib/montarSaida.test.ts`): candidatos = `ready` sem entregador e sem fase,
+  com coordenada; semente = o mais urgente (criação + SLA); junta o vizinho mais perto da última parada até 2,5 km,
+  máx. 3 paradas, e só se não fizer outro pedido estourar o prazo; ordem = vizinho mais próximo a partir da loja
+  (linha reta × 1,3, 25 km/h, 5 min para sair, 3 min por parada — sem ORS, custo zero); motoboy sugerido = ativo, GPS
+  ≤ 10 min, sem entrega em andamento, mais perto da loja (um por saída). Link do Google Maps com as paradas. Loja sem
+  pin (`delivery_config.store_location`) → rota começa na 1ª parada. `list_delivery_board` devolve `loja` + `motoboys`.
+  `delivery-write › montar_saida` valida (entrega própria em aberto, sem outro entregador; UPDATE condicional contra
+  corrida) e só grava `orders.motoboy_driver_id` (não mexe na fase) + linha em **`delivery_saidas`** (pedidos na ordem,
+  motoboy, km/min, `sugerido` jsonb e `seguiu_sugestao` — base para medir a sugestão). Portal do motoboy:
+  `list_orders` devolve `rota` (última saída dele nas últimas 6 h, só paradas pendentes) → cartão "Sua rota" + "Abrir
+  rota no Maps" (sem origem: o Maps usa onde o motoboy está). PEGADINHA: a posição dos motoboys chega depois de abrir
+  a janela — a `key` do cartão inclui o motoboy sugerido, senão o select fica em "Escolha…".
+- **GPS do motoboy com a tela apagada (app Android, 2026-09-27 — código pronto, APK não gerado)**: plugin
+  `@capacitor-community/background-geolocation` no `android-app` (serviço em primeiro plano com aviso fixo);
+  `useMotoboyGps` usa o plugin quando `window.Capacitor.isNativePlatform()` (estado `ativo_fundo`), mesmas regras de
+  envio; permissão negada → aviso abre `openSettings`. Testes em `src/test/unit/useMotoboyGps.test.ts` (plugin simulado +
+  navegador). PEGADINHA: o Android SDK sumiu do PC (build falha em "SDK location not found") — ver android-app/README.md.
+
+
+### Jogos enquanto espera + ranking semanal (2026-09-28)
+- **Onde aparece:** cartão "Jogue enquanto espera" (`src/components/jogos/JogosEspera.tsx`) na confirmação da mesa QR (`ConfirmacaoMesaQR`) e no acompanhamento do delivery (`AcompanharPedido`, com aviso "saiu para entrega/pronto/entregue" por cima do jogo). Abre em tela cheia por **portal no body** — o `PullToRefresh` tem `transform` e prenderia o `position: fixed`; o overlay tem `data-no-pull`. Demo sem pedido: `/dev/jogos` (só `npm run dev`).
+- **Jogos:** Voa Voa (toque = impulso, colunas) e Corre Corre (corredor de plataforma; segurar = pulo mais alto). Motores em `src/lib/jogos/{rng,voa,corre}.ts`: passos fixos de 60/s, sorteio só pela semente (mulberry32), sem relógio ⇒ **semente + quadros com entrada = sempre a mesma partida**. Desenho em canvas (`desenhoVoa/desenhoCorre.ts`), laço em `JogoCanvas.tsx` (grava os quadros). Fase gerada com folga de aterrissagem proporcional à velocidade (teste do robô em `src/test/lib/jogos.test.ts` prova que é passável).
+- **Cópia do motor na Edge:** `supabase/functions/_shared/jogos/*.ts` tem que ser **idêntica** a `src/lib/jogos/` (imports com `.ts`; teste falha se divergir). Mudou o motor ⇒ copie e republique a Edge `jogos`.
+- **Ranking (opcional por loja, desligado por padrão):** tabelas `game_settings` (ligado, jogos, prêmios 1º–3º, regras), `game_sessions` (semente do servidor), `game_scores` (1 por partida, `week_start` = segunda em Brasília), `game_awards` (prêmio entregue). RLS sem policy, só service_role. Edge **`jogos`** (verify_jwt=false): públicas `config`/`start`/`submit`/`ranking`; loja `admin_get`/`admin_save`/`admin_award`/`admin_unaward` (admin/gerente ou `gestao_promocoes`).
+- **Anti-trapaça:** `start` só com pedido real nas últimas 12h (mesa: `participant_id` + `access_token`; delivery: nº do pedido + celular = `destination_phone`), máx. 60 partidas/pedido e 150/dia/celular. `submit` **refaz a partida** com a semente guardada e ignora o número do celular; recusa se a partida não termina dentro de (tempo real decorrido + 10 s). Bot jogando em tempo real ainda passa — por isso a tela manda conferir o 1º lugar antes de entregar.
+- **Só com pedido em andamento (regra do dono, 2026-09-27):** entregou (`status='delivered'`), o jogo para na hora e mostra "Seu pedido chegou! Faça um novo pedido para continuar jogando" + botão Novo pedido. Delivery usa o status que `AcompanharPedido` já consulta (`pedidoEntregue`); mesa pergunta à Edge `jogos › direito` a cada 30 s com a tela visível. `start` também recusa (`code: entregue`); partida já começada ainda pode ser enviada.
+- **Só membro do clube (regra do dono, 2026-09-27):** loja sem clube ligado não mostra os jogos; sem cartão do clube no aparelho (`clubeTokenSalvo`) o cartão vira "Jogos do Clube" com login CPF + 4 últimos do celular (`clube-publico › entrar`) e link para `/clube/<slug>`. A Edge `jogos` recebe `clube_token` em `direito`/`start`/`ranking` e usa nome/celular do cadastro (`customers`); `game_sessions/game_scores.customer_id` e o ranking contam por cliente. Não pede mais nome/WhatsApp. PEGADINHA: publicar a Edge antes do front quebra a tela no ar (o front antigo tratou `sem_clube` como pedido entregue).
+- **Tela da loja:** `/clientes?aba=jogos` (`src/pages/clientes/abas/JogosAba.tsx`): liga/desliga, prêmios, top 10 da semana com celular, semanas fechadas com botão WhatsApp e "Marcar entregue".
+- **Pegadinha:** a sessão fica no estado depois do fim — limpar trocava a `semente` do canvas e reiniciava o jogo por trás do cartão de fim. Respostas atrasadas são descartadas pelo nº da partida (`partidaRef`).
+
+### Programa de fidelidade — aba Fidelidade + clube no tablet (2026-09-27)
+- **Liga só com a loja confirmando** (regra do dono): `loyalty_programs.enabled` nasce false; a chave na aba pede confirmação. Ligar grava `started_at` — pontos só de pedidos pagos a partir daí (não retroativo); o NÍVEL conta o histórico da janela. Em 2026-09-27 só a **Testes PDV** foi ligada (teste).
+- **Tela da loja:** `src/pages/clientes/abas/FidelidadeAba.tsx` (`/clientes?aba=fidelidade`, permissão `gestao_promocoes`): Resumo (simulação com pedidos reais), Pontos, Recompensas (ligadas a `menu_items`), Trilha de níveis, Roleta (custo por giro), **Membros** (`fn_fidelidade_membros`). Roleta desenhada por `src/components/fidelidade/RoletaSvg.tsx` (mesmo componente no tablet).
+- **Formato + contas num arquivo só:** `supabase/functions/_shared/fidelidade.ts` (front importa via `src/lib/fidelidade.ts`): `normalizarConfig`, simulação, `cpfValido`, `descontoDasReservas` (produto grátis só se estiver no carrinho, desconta 1 unidade pelo preço de CARDÁPIO; nunca passa do subtotal). Testes: `src/test/lib/fidelidade.test.ts`.
+- **Motor no banco** (`20260927150000_fidelidade_motor.sql`): o gatilho `trg_orders_customer_counters` (agora também em `is_paid`/`is_cortesia`) chama `fn_sync_customer_loyalty` → loja desligada = cálculo legado idêntico (`fn_sync_customer_loyalty_legado`, 1 pt/R$); ligada = `fn_fidelidade_sync`: `earned` derivado dos pedidos PAGOS (não cortesia, canal ligado via `fn_fidelidade_canal`; iFood fora) × multiplicador do nível daquele pedido, com validade; presentes ao subir de nível (1×/nível, ref única), giros (a cada N compras, pedido acima de X, aniversário), bônus de cadastro/aniversário. Erro no sync só vira WARNING (nunca trava pagamento). `loyalty_transactions` ganhou `ref/meta/expires_at/hold_until` e o tipo `bonus`; saldo = `fn_fidelidade_saldo` (FIFO, ignora vencido; reserva ativa conta como gasta). Tabelas novas `loyalty_spins`, `loyalty_benefits`. `customers.loyalty_tier` tem CHECK antigo (bronze/prata/ouro/vip) — o motor novo NÃO grava nele; nível sai de `fn_fidelidade_resumo`.
+- **Resgate:** `fn_fidelidade_reservar`/`_reservar_beneficio` (2 h, lock no cliente; a order-write confere `fn_fidelidade_holds_validos` antes de criar e recusa com 409 `loyalty_hold_expired`) → `order-write create_order` recebe `loyalty_customer_id` + `loyalty_hold_ids` e chama `fn_fidelidade_vincular`. Pedido cancelado ou reserva vencida = pontos/prêmio voltam no próximo sync. Roleta sorteada no banco (`fn_fidelidade_girar`, limite por dia por prêmio).
+- **Edge `fidelidade`** (verify_jwt=false; JWT + vínculo): loja `get/save/membros` (save = admin/gerente ou `gestao_promocoes`; recalcula a loja com `fn_fidelidade_sync_loja`); tablet `clube_status/clube_buscar/clube_cadastrar/clube_reservar/clube_liberar/clube_girar/clube_resumo` (qualquer membro da loja; `customer_id` sempre validado na loja; gastar exige os 4 últimos dígitos do celular). Cadastro com celular já existente (ex.: delivery) junta o CPF nesse cliente. No `EDGE_ALLOW` do assistente (get/membros/save(S)).
+- **Tablet** (`src/pages/autoatendimento/page.tsx` + `components/ClubeKiosk.tsx`): etapa `clube` depois de tocar na tela (só com programa ligado; `clube_status` a cada volta ao início). Painel: nível, pontos, progresso, "use hoje", roleta. Desconto dos resgates vai em `discount_amount`; Carrinho/Pagamento/record_payment usam `totalComClube`. Pedido zerado pelos resgates → `PedidoGratisKiosk` (cria + `mark_order_paid`, sem Pix de R$0). CPF do clube vem preenchido no "CPF na nota". Cancelar/voltar ao início chama `clube_liberar`.
+- **order-write record_payment:** o bloco antigo que somava pontos/visitas à mão foi removido (dobrava o saldo; o gatilho já faz).
+- **Pegadinhas:** (1) StrictMode monta 2× — ref de "ainda aberto" tem que voltar a true no mount (roleta travava em "Girando…"); (2) `jsonb_array_elements(x) t` sem `t(col)` dá registro, não jsonb; (3) no painel do navegador `window.confirm` responde Cancelar — sobrescrever para testar.
+- **Dado-chave:** em 2026-09-27 só 13% dos pedidos da Vila Leste e 0% da Paranaguá tinham cliente; o tablet (maior canal) nenhum. O clube no tablet é o que identifica.
+- **Todos os canais + página do cliente (2026-09-28):**
+  - **Sessão do cliente** (`20260928090000_fidelidade_sessoes.sql`): `loyalty_sessions` (token de 90 dias no aparelho; no banco só o sha-256) e `loyalty_login_links` (QR do tablet, uso único, 10 min). Peças comuns em `supabase/functions/_shared/clube-servidor.ts` (sessão, `conferirCelularFinal` com trava 5 erros/15 min, `cadastrarNoClube`, `descontoClubeServidor`, `vincularClube`).
+  - **Edge `clube-publico`** (pública, verify_jwt=false): `programa`, `entrar` (CPF + 4 últimos do celular), `entrar_link` (QR), `cadastrar` (CPF já membro é recusado → tem que Entrar; CPF conhecido com celular gravado só entra com o MESMO celular), `eu`, `reservar`, `girar`, `liberar`, `sair`. Cartão salvo por loja em `localStorage['clube:<tenant_id>']` (`src/lib/clubePublico.ts`).
+  - **Página `/clube/:storeSlug`** (`src/pages/clube/page.tsx`): como funciona, entrar/cadastrar, cartão com nível/pontos/progresso, prêmios, catálogo com "faltam X", roleta pelo celular, extrato. Tablet: botão "Ver meu clube no celular" → 4 dígitos → `fidelidade › clube_link` → QR (`react-qr-code`).
+  - **Delivery próprio e mesa/QR universal:** `src/components/fidelidade/ClubeCheckout.tsx` no carrinho (entrar, usar prêmio; reservas guardadas em `sessionStorage` para não "esquecer" ao fechar o carrinho; `clubeLimparReservas` no sucesso). `delivery-write create_delivery_order` e `mesa-write create_mesa_order` recebem `loyalty_token` + `loyalty_hold_ids`, calculam o desconto com os PRÓPRIOS preços (produto grátis = preço de cardápio de 1 unidade), gravam `customer_id` do membro (no delivery pula o upsert por telefone) e cancelam o pedido se o `vincular` não ligar todas as reservas. Pix online lê `orders.total_amount` → já cobra com desconto.
+  - **Caixa:** `ClubeCaixa.tsx` dentro do `PagamentoRapidoModal` (só com 1 pedido, como o voucher). Busca CPF (`clube_buscar`), usa prêmio (`clube_reservar` com os 4 dígitos), valor do desconto vem de `fidelidade › clube_aplicar_pedido` com `simular:true`; ao confirmar, a mesma ação grava cliente + desconto ANTES dos pagamentos; o `aplicarDescontoEmPedidoExistente` depois só aplica o resto (lê o total já reduzido). Só identificar o CPF já liga o pedido ao cliente (pontos ao pagar).
+- **Funil do iFood (2026-09-27)** — ver `IFOOD-PEDIDOS-FUNIL.md`. `ifood_pdv_config.order_mode='funnel'`: pedido do
+  iFood vira `orders` (preço do iFood, `orders.ifood_order_id`, vínculos de `ifood_item_links`), nasce rascunho e é
+  liberado pelo `delivery-write › release_held_order`; status volta ao iFood pela fila `ifood_order_outbox` (gatilho
+  `trg_ifood_outbox` em `orders`, enviada pelo polling de 30 s da edge `ifood-shipping`). PEGADINHAS: todo relatório que
+  soma venda por `orders`/`payments` precisa de `ifood_order_id IS NULL` (a venda é contada pelo iFood); pedido do iFood
+  não cancela direto (gatilho `trg_ifood_block_cancel`; o ERPOS cancela via `fn_ifood_cancel_erpos_order` quando o iFood
+  confirma); plataforma = 'propria' (motoboy da loja), 'ifood' (entregador iFood) ou 'retirada'.
+- **App "ERPOS Entregas" (2026-09-27)**: app Android separado para motoboys (`android-entregas/`, pacote
+  `app.erpos.entregas`, abre `/app-entregas`). O GPS em segundo plano saiu do app ERPOS (`android-app`) e ficou só nele.
+  Lojas ligadas por **código de uso único (24 h)** gerado em Config. do Delivery › Entregadores (`delivery-write ›
+  gerar_codigo_motoboy`, tabela `delivery_driver_codes`; `motoboy-signal › vincular_codigo` acha/cria o entregador pelo
+  celular). Perfil e lojas ficam no aparelho (`src/lib/motoboyApp.ts`, chaves `erpos_motoboy_perfil`/`_lojas`); entrar
+  numa loja grava a sessão de sempre (`erpos_motoboy_session`) e abre `/entregas/<slug>`, que mostra "Minhas lojas".
+  O link aberto `/entregas/<slug>` com nome + celular continua funcionando no navegador.
+
+### Aprovações do PDV no banco (2026-09-27)
+Sintoma (Vila Leste): caixa tocava "Solicitar aprovação ao gerente" no cancelamento e nada aparecia para admin/gerente.
+Causa: `AprovacoesContext` (e o `NotificacoesContext`) eram só memória do aparelho de quem pedia.
+- Migração `20260928140000_pdv_approval_requests.sql`: tabela por loja (`tipo` cancelamento/desconto/problema_item, `payload` jsonb, `status` pendente/aprovado/rejeitado/cancelado). RLS: membro da loja lê e insere (sempre pendente, em nome próprio); sem UPDATE direto. Decidir só por `fn_pdv_approval_decide` (admin/manager/supervisor da loja, só pendente); desistir por `fn_pdv_approval_cancel` (quem pediu). Trigger manda broadcast `approvals-ping:<tenant>` (payload mínimo, padrão orders-ping).
+- Front: o contexto lê as últimas 24 h da loja ativa, ouve o ping + polling (30 s; 5 s enquanto o aparelho espera resposta). Os callbacks (executar cancelamento/aplicar desconto) continuam no aparelho de quem pediu e disparam uma vez quando a linha aparece decidida. Pedido novo de outro aparelho toca o sino/bipe para admin/gerente/supervisão.
+- Fechar a tela "Aguardando aprovação" cancela a solicitação. Se o aparelho que pediu recarregar antes da resposta, a aprovação fica registrada mas a ação não roda (refazer o cancelamento).
+
+### 2026-09-27 — Pagamentos: histórico no Financeiro, contadores no Aprovar, pendência só fecha quando paga
+- **Histórico de solicitações** (chat › Financeiro › botão Histórico): `assistente-app › payments_history` — uma linha por `fin_inter_payments` do chat, com loja, datas e linha do tempo montada das mensagens `[Pagamento …] id <uuid>`. Tela: `src/components/feature/assistente/HistoricoPagamentos.tsx`.
+- **Botão Aprovar** (/receber): `pedidos-pagamento › contexto` devolve `aprovados_nao_pagos` (aprovado, conta não paga, sem Pix já pago no Inter). `pix_inter` ganhou `'recusado'` (Pix cancelado/recusado no Inter, pedido ainda a pagar).
+- **Pendência `pagamento_pendente` só fecha quando PAGA** (migração `20260928130000`): Pix recusado no app do Inter (vira `cancelled`/`CANCELADO`) com a conta ainda em aberto mantém a pendência aberta, com detalhe da recusa; o Pagar dela (`pendencia_pagar`) prepara Pix novo (`reprepare_payment` aceita `cancelled`). Pago fecha também as pendências da mesma conta (`payload->>bill_id`).
+- **Critério — publicar Edge grande pelo MCP com conferência:** `get_edge_function` de função grande salva o JSON num arquivo local (resultado acima do limite) → dá para comparar byte a byte com o repositório em Python antes de publicar (descobre se outra sessão já publicou). Depois de publicar, teste de "sobe sem erro" de dentro do banco com a extensão `http`: `extensions.http(('POST', '<url>/functions/v1/<fn>', array[extensions.http_header('apikey','<publishable>')], 'application/json', '{...}')::extensions.http_request)` — a resposta da própria função (ex.: 401 "Sessão expirada") prova que carregou. A rede do container de nuvem não alcança `*.supabase.co` direto.
+- **2026-09-28 — sino removido, Pendências para todos (decisão do dono).** `CentralNotificacoes` apagado; no topo ficou `BotaoPendencias` (contador do que não foi tocado → `/pendencias`). A caixa vale para todos os papéis, filtrada no `PendenciasContext › pendenciaVisivelPara`: `aprovacao` só admin/gerente/supervisão; `tarefa_vencida`, `estoque_critico`, `recebimento_*` todos; o resto (dinheiro) admin/gerente/financeiro. Migração `20260928150000_pendencia_aprovacao_pdv.sql`: cada linha de `pdv_approval_requests` abre pendência `kind='aprovacao'` (`ref` = id da solicitação, cancelamento = urgência alta) e o gatilho a resolve quando sai de pendente. O cartão de aprovação em `/pendencias` tem Aprovar/Recusar (mesma RPC `fn_pdv_approval_decide`), sem "Não vou fazer". Pedido novo de outro aparelho: bipe + toast para quem aprova. O `NotificacoesContext` continua existindo (bipes do turno), só não tem mais tela.
+- **2026-09-28 — Pendências no chat de todos os usuários.** O chat de quem não é o dono (`AcoesRapidasFlutuante`) ganhou o botão de caixa ao lado do X (número entra também na bolinha do botão fechado) → `assistente/PendenciasEquipe.tsx`: pendências de TODAS as lojas em que a pessoa está (RLS), filtradas pelo papel dela em cada loja (`pendenciaVisivelPara` + `availableTenants[].role`), mais aba "Minhas tarefas" (`TarefasPendencia` sem loja). Ações sem assistente-app: aprovação → `fn_pdv_approval_decide`; OK/"Não vou fazer" → `fn_pendencia_marcar`; resto → troca de loja + rota. Sem realtime de propósito (o botão está em todo PDV/KDS): polling 45 s + recarga ao abrir.
+- **2026-09-28 — Custos da IA num lugar só (Assistente › Custos da IA).** Tabela `ai_usage_events` (migração `20260928170000`; RLS sem policy, só service_role) + helper `_shared/ai-usage.ts` (`registrarUsoIa(admin, {feature, model, usage, tenantId?, userId?, ref?})`, preço de lista por modelo, cache 0,1×/1,25×/2×, web search US$ 0,01; nunca lança erro). Toda Edge que chama a Anthropic registra **cada** resposta: assistente-brain (`assistente`, `assistente-grupo`, `assistente-midia`, `assistente-aquecimento`), atendimento-loja (`atendimento-whatsapp`, `atendimento-simulacao`), canal-publico, contas-email, hiring-cv-scan (`curriculos`), hiring-scheduler (`agendamento-entrevista`), meta-ads-agent (`trafego-meta-ads`), purchase-receipt-scan (`leitura-notinha`), menu-translate (`traducao-cardapio`). **Critério:** Edge nova com IA tem que chamar `registrarUsoIa`, senão o gasto some da tela. Relatório: `assistente-config` action `ai_usage {de, ate}` → por loja/pessoa/uso/modelo/dia. Histórico até 28/09 veio de `asst_messages.usage`, `wa_loja_conversas.cost_usd`, `bot_conversations.cost_usd`, `meta_agent_runs.usage` (`backfill=true`, estimado). **Treino/avaliação de prompt roda no Claude Code, nunca pela API** (27/09 as baterias do atendimento custaram ~US$ 39 e não foram gravadas).
+- **2026-09-28 — `fn_get_cmv_report` (aba Relatórios › CMV & Margem) destravada** (migração `20260928120000`). Nunca tinha funcionado: foi criada fora das migrações (Readdy) chamando `convert_unit(ii.quantity, ii.unit, ing.unit)` com colunas do enum `ingredient_unit`, e só existe `convert_unit(numeric, text, text)` → 42883; atrás disso, `tem_ficha_tecnica` fora do GROUP BY (42803, virou `bool_or`). O `useCmvRelatorio` engole o erro e mostra tudo zerado. **Critério:** `ingredients.unit`/`item_ingredients.unit` são enum → sempre `::text` ao passar para `convert_unit` (`combo_ingredients.unit` e `options.consumption_unit` já são text). Função que só existe no banco pode nunca ter rodado: chamar de verdade antes de confiar. `convert_unit` devolve NULL em unidade incompatível e o SUM ignora (custo sai menor sem aviso) — hoje só 1 linha, na loja QA.
+- **2026-09-28 — Folha do Domínio: "LIQUIDO RESCISAO" não é desconto.** O extrato mensal traz essa rubrica como desconto e zera o líquido do mês (o valor foi pago no TRCT). O importador (`ImportarFolhaDominioModal › mapearFolha`) devolve ao líquido e tira dos descontos; detalhe e relatório de RH não mostram como desconto. Sem isso o Pix da rescisão não tinha com o que casar na conciliação.
+- **2026-09-28 — Data do recebimento = data da entrada no estoque.** `stock_movements.purchase_id` liga a entrada do recebimento à compra (antes só o texto do motivo). `purchase-confirm-delivery` data o movimento no dia escolhido (meio-dia BR), salvo se houver contagem (`inventory_adjustment`) do insumo depois dessa data; `action: change_received_at` corrige a data depois (compra + contas a pagar + movimentos, saldo não muda) e recusa mudar atravessando uma contagem. `entradasDaCompra` (exclusão) soma também por `purchase_id`, porque a entrada pode ficar datada antes da criação da compra. Pegadinha: plano free da Vercel tem limite de 100 deploys/dia; estourado, o push vai ao GitHub mas não publica.
+- **2026-09-29 — Nota de entrada liga na compra já lançada à mão.** Boleto vencido "que não baixava" era compra em dobro: compra manual + mesma nota importada da SEFAZ → duas contas; o boleto baixava uma e a outra ficava vencida (e o CMV contava 2×). `fiscal-inbound › importDocumentLocked` agora procura, antes de criar, compra do mesmo fornecedor (cadastro ou nome) com o mesmo número de NF (sem zeros à esquerda), até 60 dias da emissão, não bonificação e sem nota ligada (`compraJaLancada`); achou → só liga a nota (`purchase_id`, `payable_ids` = contas dela) e devolve `ligada_a_compra_existente`. Desfazer (`undo_auto_import` e `unlinkMonthly` da conciliação) não apaga compra criada ANTES da importação da nota (`purchase.created_at < doc.imported_at`), só solta a nota. Sinal para caçar duplicata: `fin_purchases` com mesmo fornecedor + NF normalizada. Dados corrigidos em 09-29: Bebidas 795801, Hortifruti 34837, T Y 15-006 e a baixa perdida da NF 781 (limpeza de 19/09).
+- **2026-09-30 — Financeiro reorganizado sem tirar nada (grupos, Painel, Lançar, busca).** Pedido do dono: sistema "simples e óbvio" mudando o *caminho*, não a informação. `pages/financeiro/page.tsx`: as 21 abas em 6 grupos (`GRUPOS`: Início = painel/visao/trilha · Pagar = pagar/contas-vencidas/guias/rh/entregadores · Receber = receitas/receber/ifood · Bancos = bancos/conciliacao/fluxo · Compras = compras/notas-entrada/itens/orcamentos · Resultado = dre/despesas/centros/implantacao); pílulas na ordem do grupo; ids e `?tab=` iguais (`ABA_CANONICA` p/ previsao/rh-relatorio/freelancers); voltar ao grupo reabre a última aba; selo do grupo = maior aviso das abas (sem somar). **Painel** (`PainelFinTab`, 1ª aba, vê quem vê a Visão Geral) sem cálculo próprio: `useBankAccounts` (synced ?? current), `useBillsPayable` (mesma regra do selo, saldo restante), `dreCaixaDoPeriodo` (recebido + CMV; o resultado líquido só existe dentro do `DRETab`), `usePendencias` agrupado por `kind` navegando pela `rota`. **Lançar** (`LancarFinanceiroModal`): 13 caminhos que já existiam; `ContasPagarTab` e `ComprasTab` aceitam `?abrir=nova` (e `?abrir=email`). **Busca** (`BuscaFinanceiro`): contas/compras/notas por texto, nº ou valor; resultado usa `?busca=`+`?mes=` (ContasPagarTab abre no mês pedido — a busca da aba só olha o mês da tela), `?foco=`, `?nota=`; a página recria o conteúdo (`key`) porque abas leem esses parâmetros só ao montar; extrato fora (sem GRANT direto). Correções: `lucroEstimado` sem `Math.max(0)`; `useTopDespesas(1)` somava o mês anterior (início agora = dia 1 do mês de hoje − (n−1), em Brasília); cartão de conta em Bancos mostra o saldo do banco e a diferença. **Não mexer na Trilha** (dono refez do zero em 09-30). Protótipo completo das 20 abas (filtros, sub-visões, janelas) foi mostrado e aprovado como direção; o conteúdo das abas ainda é o de antes — próximas etapas: aba a aba, começando pelas menos disputadas por outras sessões (Conciliação, Notas, Compras e iFood estavam em edição).
+- **2026-09-30 — Financeiro, conteúdo das abas (1ª leva).** Mesma regra (nada sai, muda o lugar). **Conciliação:** alertas do topo viram 1 botão "N alertas… ver abaixo" (âncora `#alertas-conciliacao` no fim), vínculos pagamento×nota depois dos números, atalhos Hoje/7 dias/Este mês no período. **Fluxo (PrevisaoCaixaTab):** o que já venceu (contas vencidas + folha de competência passada sem baixa + boletos vencidos de notas não lançadas) caía todo em HOJE sem aviso — agora caixinha "Incluir o que já venceu" (padrão desligado, guardada em localStorage `fin_fluxo_com_atrasados`) mostrando cada parte; quadro "Semana a semana" (hoje + blocos de 7 dias, maiores saídas/entradas); raiz com `w-full` (sem ela a tabela diária empurrava a tela na horizontal — o pai é flex-col). **DRE:** já estava no desenho do protótipo, nada mudou. **Receitas/Despesas:** período e visões acima dos KPIs; `FormasPagamentoPanel` recolhido (total no cabeçalho). **Contas Vencidas:** explicação do DRE recolhida no bloco de impacto; "Pagar várias de uma vez" abre Contas a Pagar com `?aberto=vencidas` (o lote e a exigência de DRE continuam só lá — não duplicar pagamento). **Visão Geral:** seções O mês até agora / Saúde, pagar e receber / Para onde foi o dinheiro / Tendência. Pegadinha: nas raízes `max-w-[1400px] mx-auto` dentro de flex-col, faltar `w-full` deixa o conteúdo mais largo que a tela. **2ª leva (mesmo dia):** RH com subabas + mês acima dos KPIs e botões com flex-wrap; Compras com a linha de ações em flex-wrap ("Nova compra" ficava fora da tela); Guias com a coluna da folha só lado a lado a partir de lg; Classificação com a explicação longa em <details> "Como funciona". Entregadores, Contas a Receber, Notas, Orçamentos, Centro de Custos e Implantação já estavam no desenho do protótipo. iFood não mexido (edições não publicadas de outra sessão). Investigado: Vencidas 4 × Fluxo 7 não é regra diferente — as duas leem pending/partial/overdue com vencimento < hoje; a diferença foi baixa de contas entre as duas leituras.
+
+- **2026-09-30 — Relatórios › Produtos › sub-aba "Por Hora"** (`ProdutosPorHora.tsx`): quais produtos saem em cada hora do dia (Brasília). RPC nova `fn_get_items_by_hour(tenant, from, to, session)` (migration `20260930120000_fn_get_items_by_hour.sql`) com **os mesmos filtros e a mesma receita do `top_items`** de `fn_get_sales_report` (pago, não cancelado, sem treino/rascunho/`ifood_repasse`, complementos somados só no delivery) → soma das horas = total do Ranking (conferido: 443 un./R$ 10.538,60 nos dois). Tela: gráfico por hora (clique na barra), matriz produto × hora (cor = volume, top 15 + "ver todos") e ranking da hora selecionada (padrão = hora de pico); filtros categoria/produto e Qtd/R$. `normalizarNomeItem` saiu para `relatorios/components/nomeItem.ts` (re-exportado por `ProdutosTab`). **Atenção:** a versão no ar de `fn_get_sales_report` **não** tem mais o `oi.status <> 'cancelled'` citado acima no histórico (a migration do funil iFood recriou sem ele); a RPC por hora segue a versão no ar para bater com o Ranking.
+
+### 2026-10-02 — Tarefas › Cronograma (Gantt)
+- **Pedido do dono:** aba tipo Gantt, pesquisando o que as ferramentas fazem bem e mal (ClickUp, Asana, monday, Notion, Linear, Jira, Planner, TeamGantt, Trello, Airtable, Smartsheet, Wrike). Reclamações mais comuns: não existe no celular (ClickUp/Trello/Wrike), tarefa sem data some ou fica atrás de um toggle escondido, dependência mexe nas datas sem avisar (Asana), nome ilegível na barra, carga só em plano pago, atraso pouco visível.
+- **O que ficou:** `Display = 'gantt'` ("Cronograma"; no celular fica junto da Agenda com o seletor "Agenda | Cronograma"). Pasta aberta mostra também as subpastas (grupos aninhados; `tarefasCronograma` no `page.tsx`). Agrupar por pasta/pessoa/status/nada, ordem da lista ou por início, zoom dia/semana/mês/trimestre (Ctrl+roda), faixa de datas cresce ao rolar (até 4 anos). Barra = cor do status; progresso (checklist > subtarefas > tempo cronometrado) numa faixa embaixo; atraso = cauda vermelha até hoje (concluída depois do prazo = linha até o dia em que terminou); um dia só em zoom pequeno vira losango; nome dentro se couber, senão ao lado com as iniciais. **Sem data aparece sempre** (pode esconder): clicar num dia marca; arrastar marca o período; "marcar" abre Hoje/Amanhã/Esta semana/Próxima semana. Por pessoa: a linha do grupo mostra a **carga do dia** (mesma conta da Carga, `calcularCarga` + padrão de estimativa; verde/amarelo/vermelho) e muda ao vivo durante o arrasto. Folga/ausência de quem tem horas cadastradas aparece hachurada dentro da barra.
+- **Ligações:** arrastar a bolinha da ponta até outra tarefa (ou o nome dela na coluna) → a outra só começa depois. Mover/esticar empurra as seguintes **só o necessário** (mesmo dia pode), com prévia durante o arrasto; nunca puxa para trás e **nunca move concluída/cancelada**; caixa "Empurrar as seguintes" desliga. Ligar criando conflito NÃO empurra sozinho: avisa e oferece "Empurrar". Toda mudança mostra aviso com **Desfazer (Ctrl+Z)**. Seta vermelha tracejada = fora de ordem; clicar na seta: empurrar ou desfazer a ligação. Chips "N atrasadas" / "N fora de ordem" levam à próxima.
+- **Celular:** sem coluna de nomes (nome ao lado da barra, grupo preso à esquerda); arrastar no toque brigaria com a rolagem, então tocar abre o `GanttPainel` (folha): ±1 dia em mover/início/fim, atalhos de data, ligar ("Esperar outra tarefa terminar…") e desligar. No computador o mesmo painel abre com o botão direito.
+- **Critérios:** (1) `time_plan` tem datas absolutas — ao mover a barra os dias andam junto; ao mudar a duração o que cai fora vai para a ponta (`planoParaPeriodo`), senão a Carga ficava em dias errados (o Calendário ainda não faz isso). (2) Empurrar usa só ligações entre tarefas **da tela** (mexer no que a pessoa não vê seria surpresa); o painel e a dica da barra listam **todas** as ligações. (3) `task-write add_dependency`: editar a seguinte + ver a anterior, recusa ciclo (BFS no banco), `tenant_id` = da seguinte (só para o `tasks-ping`). `remove_dependency`: editar qualquer uma das pontas. (4) `task_views.view_type` aceita `'gantt'`. (5) Demo `/dev/tarefas` tem a pasta "Reforma do salão" com ligações (uma fora de ordem de propósito).
+
+
+### Conciliação: ligação direta dá baixa sozinha (2026-10-02)
+- **Antes:** decisão de 09-11 — vínculo exato só com clique em "Revisar e confirmar". Boleto pago fora do ERPOS (app do Inter) ficava esperando.
+- **Agora:** `conciliacao-pagamentos › autoConfirmExact` confirma sozinho só a **ligação direta**: `match_confidence='exato'`, `match_detail.iguais` nulo (1 candidato) e `auto_import≠true` (conta/parcela já existe; nota a importar continua manual). Mesmo `confirmOne` do clique (trava da linha, juros/desconto, Desfazer igual); grava `confirmed.auto=true`.
+- **Quando roda:** fim do `rematch` (abrir a Conciliação / Atualizar, só se o usuário é admin/gerente) e no cron `regras-auto` 07h30 BRT (`fn_regras_auto_all` → brain `regras_auto` → action `auto_confirm_exact` por loja com exato pendente; registra na conversa Financeiro). Falha (ex.: conta sem DRE) deixa a linha pendente para o clique.
+
+### Gerente segue a matriz; a matriz é só do Admin; `user_tenants` sem escrita direta (2026-10-03)
+- **Achados (varredura 10-02, confirmados 10-03 com `qa.gerente` na Testes PDV):** (1) `config-write › upsert_permissions` aceitava gerente (`isManagerRole`): chamando a edge direto, o gerente marcou para si `cfg_permissoes` (aba Permissões), que na tela é `somenteAdmin`. (2) `RotaProtegida` deixava admin **e gerente** passarem direto em qualquer rota — o menu escondia /usuarios sem `usuarios_gerenciar`, mas a URL abria; `user-write` deixava o gerente criar usuário e trocar senha/PIN/apagar papéis abaixo dele sem olhar a matriz; e a lista (`fn_get_users_list`) era só do Admin, então a tela abria quebrada até onde o dono tinha liberado (Paranaguá). (3) **Mais grave, achado no caminho:** a policy permissiva `user_tenants_update` (`auth_role() in (admin, manager)` na loja ativa) deixava o gerente se promover a admin com um PATCH direto no PostgREST; `user_tenants_insert` idem para criar vínculo. A `deny_direct_write_user_tenants` existia, mas **PERMISSIVE com USING false não nega nada** — policies permissivas só somam; negar exige `AS RESTRICTIVE` (e por comando: RESTRICTIVE `FOR ALL` com `false` também derruba o SELECT).
+- **Regra (decisão do dono):** o Gerente **segue a matriz** como os outros papéis; só o Admin passa direto (`PAPEIS_ADMIN = ['admin']` na `RotaProtegida` e na tela de Clientes & Marketing, que copiava a regra). Gravar a matriz (`upsert_permissions`) é só do Admin (`roleRank(role) < 3` → 403).
+- **Usuários:** o gerente gerencia usuários só onde o Admin marcou "Gerenciar usuários" para o Gerente (`permissions` manager/`usuarios_gerenciar` = true; sem linha = desmarcado, igual ao padrão do front) e só quem está abaixo dele (nem admin, nem gerente) em **todas** as lojas do alvo (nome, ativo, matrícula, senha e PIN são globais). Mesma regra na `user-write` (`gerenteGerenciaUsuarios`) e no banco: `fn_gerencia_usuarios(tenant)` + `fn_pode_alterar_usuario(user)` (EXECUTE revogado de public/anon/authenticated — só as funções SECURITY DEFINER chamam), usadas por `fn_get_users_list`, `fn_update_user` (gerente não dá perfil admin/manager), `fn_toggle_user_active` e `fn_set_user_badge`. `UsuarioModal` esconde Admin/Gerente para quem não é admin; ativar/desativar recusado mostra o erro (antes a linha ficava "inativa" sem estar). Acesso multi-loja (`fn_grant/revoke_tenant_access`) continua só do Admin.
+- **Quem tem acesso a módulo fora da loja** (`user_module_access`: Contratação/Tarefas, dado pelo Admin Master) vê dados de todas as lojas: senha/PIN/exclusão dessa pessoa pela `user-write` só o dono (antes o admin/gerente da loja trocava a senha e entrava como ela).
+- **`user_tenants`:** migração `20261003060000` tira as policies de escrita de authenticated e cria três RESTRICTIVE (insert/update/delete) para authenticated/anon. Toda escrita legítima já era por função SECURITY DEFINER (dono `postgres`) ou edge com service role; o front não grava direto. Leitura não muda.
+- **Impacto nas lojas:** com os padrões, a rota só fecha /usuarios onde "Gerenciar usuários" está desmarcado para o Gerente (Vila Leste, Testes PDV). Na Paranaguá está marcado: o gerente abre e agora a lista funciona.
+- **Pegadinhas que continuam (decisão do dono, não mexido):** Configurações filtra só aba a aba (`podeAba`), sem exigir `configuracoes_editar` — o gerente entra pela `cfg_maquininha_mp` (padrão dele) e vê as abas `CFG_KEYS_GERENTE` mesmo com "Abrir a tela de Configurações" desmarcado, e a `config-write` aceita o gerente pelo papel. A matriz salva não chega ao vivo nas telas abertas (o canal de `permissions` não disparou no teste): vale no próximo carregamento, e o servidor já recusa antes.
+- **Como testar sem senha:** sessão do usuário `qa.*` por `auth/v1/admin/generate_link` (magiclink) + `auth/v1/verify` com `token_hash` (service role lida da CLI na hora, nunca impressa); chamar a edge com o Bearer e revogar no fim (`auth/v1/logout`). Tela no dev server local: `http://localhost:<porta>/#access_token=…&refresh_token=…&expires_in=3600&token_type=bearer` (fluxo implícito, `detectSessionInUrl`). Lógica SQL e RLS: um `DO` que aplica a migração, troca `request.jwt.claims` + `set local role authenticated` por usuário e termina em `RAISE` (desfaz DDL e dados); escrita direta testada com `with x as (update … returning 1) select count(*)`.
+- **Pegadinha (2026-10-03) — Pix "INCOMPLETE" do Inter:** logo após o envio o extrato traz o Pix com `detalhes.tipoDetalhe='INCOMPLETE'` (sem `endToEndId`/nome); só `numeroDocumento` = 7 últimos caracteres do E2E. O sync gravava com `ignoreDuplicates` e a linha nunca completava → baixa antecipada não ligava. Agora `inter-bank` atualiza raw/descrição das linhas INCOMPLETE quando o Inter manda completo, e o brain (`baixa_conciliada › doE2e`) aceita `numeroDocumento` como final do E2E.
