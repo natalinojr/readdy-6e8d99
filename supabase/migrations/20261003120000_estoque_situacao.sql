@@ -10,8 +10,9 @@
 --   vai faltar       = acompanha E uso/dia > 0 E NÃO abaixo do mínimo E estoque ÷ uso/dia <= dias_previsao
 --
 -- Uso/dia = saídas de uso (venda pela ficha, perda, saída manual que não é estorno/correção) dos
--- últimos 14 dias ÷ dias com histórico (desde a 1ª saída de uso da loja, no máx. 14; menos de 3 dias
--- de histórico = sem previsão). O espelho em TypeScript é src/lib/estoqueRegras.ts.
+-- últimos 14 dias, menos o que voltou por venda cancelada (entrada ligada a pedido), ÷ dias com
+-- histórico (desde a 1ª saída de uso da loja, no máx. 14; menos de 3 dias = sem previsão).
+-- O espelho em TypeScript é src/lib/estoqueRegras.ts.
 --
 -- Também: config da loja (quanto pedir = dias de uso, padrão 60; horizonte do "vai faltar", padrão 7),
 -- planos de contagem (geral mensal, semanal dos estratégicos...) e a marca de "pedido mandado".
@@ -245,19 +246,33 @@ begin
   if v_janela is null or v_janela < 3 then v_janela := null; end if;
 
   with uso as (
+    -- saídas de uso (negativas) + volta de venda cancelada (entrada com order_id, positiva)
     select m.ingredient_id, -sum(m.signed_quantity) as q
       from public.stock_movements m
      where v_janela is not null
        and m.tenant_id = p_tenant_id
        and m.created_at > now() - interval '14 days'
        and (m.type in ('theoretical_out', 'loss')
-            or (m.type = 'manual_out' and coalesce(m.reason, '') !~* '^(estorno|corre|ajuste de contagem)'))
+            or (m.type = 'manual_out' and coalesce(m.reason, '') !~* '^(estorno|corre|ajuste de contagem)')
+            or (m.type = 'in' and m.order_id is not null))
      group by m.ingredient_id
   ),
+  -- Última chegada de mercadoria/produção (o "pedido mandado" antes dela já foi atendido).
+  entrada as (
+    select m.ingredient_id, max(m.created_at) as ultima
+      from public.stock_movements m
+     where m.tenant_id = p_tenant_id and m.type = 'in' and m.order_id is null
+       and m.created_at > now() - interval '30 days'
+       and coalesce(m.reason, '') !~* '^corre'
+     group by m.ingredient_id
+  ),
+  -- Contagens confirmadas dos últimos 400 dias (planos olham no máx. o mês; o resto é só "última contagem").
   contagem as (
     select coalesce(it->>'ingredient_id', it->>'insumoId')::uuid as ingredient_id, max(s.created_at) as ultima
-      from public.inventory_sessions s, jsonb_array_elements(s.items) it
+      from public.inventory_sessions s
+      cross join lateral jsonb_array_elements(case when jsonb_typeof(s.items) = 'array' then s.items else '[]'::jsonb end) it
      where s.tenant_id = p_tenant_id and s.status = 'confirmado'
+       and s.created_at > now() - interval '400 days'
        and coalesce(it->>'ingredient_id', it->>'insumoId') ~ '^[0-9a-f-]{36}$'
      group by 1
   ),
@@ -266,12 +281,14 @@ begin
            coalesce(i.track_stock, true) as acompanha,
            case when v_janela is not null then greatest(coalesce(u.q, 0), 0) / v_janela end as consumo_dia,
            c.ultima,
+           e.ultima as ultima_entrada,
            fs.name as fs_nome, fs.phone as fs_fone,
            exists (select 1 from public.production_recipes r
                     where r.tenant_id = p_tenant_id and r.output_ingredient_id = i.id) as produzido
       from public.ingredients i
       left join uso u on u.ingredient_id = i.id
       left join contagem c on c.ingredient_id = i.id
+      left join entrada e on e.ingredient_id = i.id
       left join public.fin_suppliers fs on fs.id = i.supplier_id
      where i.tenant_id = p_tenant_id and i.deleted_at is null
   ),
@@ -304,6 +321,7 @@ begin
            'consumo_dia', round(c.consumo_dia, 6),
            'dias_restantes', round(c.dias_rest, 2),
            'ultima_contagem', c.ultima,
+           'ultima_entrada', c.ultima_entrada,
            'abaixo_minimo', c.abaixo,
            'esgotado', c.esgot,
            'vai_faltar', (c.acompanha and coalesce(c.consumo_dia, 0) > 0 and not c.abaixo and c.dias_rest <= v_dias_previsao)

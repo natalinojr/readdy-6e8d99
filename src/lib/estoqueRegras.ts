@@ -37,6 +37,8 @@ export interface InsumoSituacao {
   consumoDia: number | null;
   diasRestantes: number | null;
   ultimaContagem: string | null;
+  /** Última entrada de mercadoria (30 dias) — pedido mandado antes dela já chegou */
+  ultimaEntrada: string | null;
   abaixoMinimo: boolean;
   esgotado: boolean;
   vaiFaltar: boolean;
@@ -154,6 +156,19 @@ export interface GrupoCompra {
   itens: InsumoSituacao[];
 }
 
+/** Pedido mandado (últimos 7 dias) que ainda vale para o insumo: o insumo estava no pedido e não teve
+ *  entrada de mercadoria depois do envio. Insumo novo no fornecedor, ou que chegou e baixou de novo, volta a pedir. */
+export function pedidoDoInsumo(i: InsumoSituacao, pedidos: PedidoMandado[]): PedidoMandado | null {
+  const chave = chaveFornecedor(i);
+  for (const p of pedidos) {
+    if (p.fornecedor !== chave) continue;
+    if (!p.itens.some((x) => x.id === i.id)) continue;
+    if (i.ultimaEntrada && i.ultimaEntrada > p.enviadoEm) continue;
+    return p;
+  }
+  return null;
+}
+
 const urgencia = (i: InsumoSituacao) => (i.esgotado ? -1 : i.diasRestantes ?? 1e9);
 
 export function agruparCompras(itens: InsumoSituacao[]): GrupoCompra[] {
@@ -222,10 +237,11 @@ export function ocorrenciaAtual(p: PlanoContagem, hoje: string): string | null {
   return ag >= criado ? ag : null;
 }
 
+/** Insumo tirado da contagem (count_inventory = false) sai do plano: o inventário não grava ele. */
 export function itensDoPlano(p: PlanoContagem, insumos: InsumoSituacao[]): InsumoSituacao[] {
   if (p.todos) return insumos.filter((i) => i.contaInventario);
   const ids = new Set(p.itens);
-  return insumos.filter((i) => ids.has(i.id));
+  return insumos.filter((i) => i.contaInventario && ids.has(i.id));
 }
 
 export interface SituacaoPlano {
@@ -356,6 +372,7 @@ export function mapearSituacao(raw: Record<string, any>): SituacaoEstoque {
       consumoDia: num(r.consumo_dia),
       diasRestantes: num(r.dias_restantes),
       ultimaContagem: r.ultima_contagem ? String(r.ultima_contagem) : null,
+      ultimaEntrada: r.ultima_entrada ? new Date(String(r.ultima_entrada)).toISOString() : null,
       abaixoMinimo: !!r.abaixo_minimo,
       esgotado: !!r.esgotado,
       vaiFaltar: !!r.vai_faltar,
@@ -375,7 +392,7 @@ export function mapearSituacao(raw: Record<string, any>): SituacaoEstoque {
       fornecedor: String(e.fornecedor ?? ''),
       fornecedorNome: e.fornecedor_nome ? String(e.fornecedor_nome) : null,
       itens: Array.isArray(e.itens) ? e.itens : [],
-      enviadoEm: String(e.enviado_em ?? ''),
+      enviadoEm: e.enviado_em ? new Date(String(e.enviado_em)).toISOString() : '',
       enviadoPorNome: e.enviado_por_nome ? String(e.enviado_por_nome) : null,
     })),
     totais: {

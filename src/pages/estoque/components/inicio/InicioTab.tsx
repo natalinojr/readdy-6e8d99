@@ -4,8 +4,9 @@ import { somarDias } from '@/lib/dateUtils';
 import { useAuth } from '@/contexts/AuthContext';
 import { useEstoque } from '@/contexts/EstoqueContext';
 import { useToast } from '@/contexts/ToastContext';
+import { usePermissoes } from '@/hooks/usePermissoes';
 import {
-  contagemDeHoje, fmtQtd, quandoFica,
+  contagemDeHoje, fmtQtd, pedidoDoInsumo, quandoFica,
   type InsumoSituacao, type SituacaoEstoque,
 } from '@/lib/estoqueRegras';
 import ComprarSecao from './ComprarSecao';
@@ -24,6 +25,8 @@ export default function InicioTab({ situacao, carregando, erro, onReload }: {
   const [extras, setExtras] = useState<Set<string>>(new Set());
   const [contagem, setContagem] = useState<{ titulo: string; itens: InsumoSituacao[] } | null>(null);
   const [config, setConfig] = useState(false);
+  const { hasPermissao } = usePermissoes();
+  const podeContar = hasPermissao('estoque_inventario');
 
   const hoje = useMemo(() => (situacao ? contagemDeHoje(situacao) : null), [situacao]);
 
@@ -48,16 +51,18 @@ export default function InicioTab({ situacao, carregando, erro, onReload }: {
   }
 
   const { totais, config: cfg } = situacao;
-  const comprarIds = new Set(situacao.insumos.filter((i) => i.abaixoMinimo || extras.has(i.id)).map((i) => i.id));
+  const listaCompra = situacao.insumos.filter((i) => i.abaixoMinimo || extras.has(i.id));
+  const comprarIds = new Set(listaCompra.map((i) => i.id));
+  const nPorPedir = listaCompra.filter((i) => !pedidoDoInsumo(i, situacao.pedidos)).length;
   const vaiFaltar = situacao.insumos.filter((i) => i.vaiFaltar && !extras.has(i.id));
   const nComprar = comprarIds.size;
-  const nContar = hoje.itens.length;
+  const nContar = podeContar ? hoje.itens.length : 0;
 
   const ir = (id: string) => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   const partes: string[] = [];
-  if (nComprar) partes.push(`comprar ${nComprar} ${nComprar === 1 ? 'insumo' : 'insumos'}`);
+  if (nPorPedir) partes.push(`pedir ${nPorPedir} ${nPorPedir === 1 ? 'insumo' : 'insumos'}`);
   if (nContar) partes.push(`contar ${nContar}`);
-  const emDia = !nComprar && !nContar && !vaiFaltar.length;
+  const emDia = !nPorPedir && !nContar && !vaiFaltar.length;
 
   return (
     <div className="p-4 md:p-6 max-w-2xl mx-auto pb-16">
@@ -74,8 +79,9 @@ export default function InicioTab({ situacao, carregando, erro, onReload }: {
       </p>
 
       <div className="grid grid-cols-3 gap-2 mb-5">
-        <Bloco icone="ri-shopping-cart-2-line" n={nComprar} rotulo="Comprar" detalhe={`abaixo do mínimo${totais.zeradosAbaixo ? ` · ${totais.zeradosAbaixo} zerados` : ''}`}
-          tom={nComprar ? 'red' : 'ok'} onClick={() => ir('inicio-comprar')} />
+        <Bloco icone="ri-shopping-cart-2-line" n={nComprar} rotulo="Comprar"
+          detalhe={nComprar && !nPorPedir ? 'pedidos mandados' : `abaixo do mínimo${totais.zeradosAbaixo ? ` · ${totais.zeradosAbaixo} zerados` : ''}`}
+          tom={nPorPedir ? 'red' : 'ok'} onClick={() => ir('inicio-comprar')} />
         <Bloco icone="ri-scales-3-line" n={nContar} rotulo="Contar" detalhe={nContar ? (hoje.devidos.length ? 'contagem do dia' : 'conferir') : 'em dia'}
           tom={nContar ? 'dark' : 'ok'} onClick={() => ir('inicio-contar')} />
         <Bloco icone="ri-hourglass-line" n={vaiFaltar.length} rotulo="Vai faltar" detalhe={`em até ${cfg.diasPrevisao} dias`}
@@ -84,9 +90,9 @@ export default function InicioTab({ situacao, carregando, erro, onReload }: {
 
       <div className="space-y-6">
         <ComprarSecao situacao={situacao} extras={extras} onReload={onReload}
-          onIrContar={() => setContagem({ titulo: 'Conferir', itens: hoje.conferir.length ? hoje.conferir : hoje.itens })} />
+          onIrContar={podeContar ? () => setContagem({ titulo: 'Conferir', itens: hoje.conferir.length ? hoje.conferir : hoje.itens }) : () => ir('inicio-contar')} />
 
-        <ContarSecao situacao={situacao} contagem={hoje} onReload={onReload}
+        <ContarSecao situacao={situacao} contagem={hoje} podeContar={podeContar} onReload={onReload}
           onContar={(itens, titulo) => setContagem({ titulo, itens })} onConfigurar={() => setConfig(true)} />
 
         <VaiFaltarSecao situacao={situacao} itens={vaiFaltar}

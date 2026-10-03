@@ -1,5 +1,7 @@
 import { useEstoque } from '../../../contexts/EstoqueContext';
 import { KpiCard } from '../../financeiro/components/dreUi';
+import { abaixoDoMinimo, estaEsgotado } from '@/lib/estoqueRegras';
+import { regraDoInsumo } from './insumos/InsumosUtils';
 
 const fmt = (v: number, digits = 2) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: digits }).format(v);
@@ -9,9 +11,10 @@ export default function DivergenciaPanel() {
 
   const ultimaContagem = inventarioSessions[0] ?? null;
   const valorTotal = insumos.reduce((s, i) => s + i.estoqueAtual * i.precoUnitario, 0);
-  const esgotados = insumos.filter((i) => i.estoqueAtual <= 0);
-  const criticos = insumos.filter((i) => i.estoqueAtual > 0 && i.estoqueAtual <= i.estoqueMinimo * 0.5);
-  const alertas = insumos.filter((i) => i.estoqueAtual > i.estoqueMinimo * 0.5 && i.estoqueAtual <= i.estoqueMinimo);
+  // Regra única do estoque (2026-10-03): os mesmos números do Início e do Dashboard.
+  const esgotados = insumos.filter((i) => estaEsgotado(regraDoInsumo(i)));
+  const alertas = insumos.filter((i) => abaixoDoMinimo(regraDoInsumo(i)));
+  const conferir = insumos.filter((i) => i.rastrearEstoque !== false && i.estoqueAtual < 0);
 
   // Comparação entre estoque atual e última contagem
   const divergencias = ultimaContagem
@@ -52,21 +55,21 @@ export default function DivergenciaPanel() {
           semVariacao
         />
         <KpiCard
-          label="Críticos (<50% mín)"
-          icon="ri-error-warning-line"
-          value={String(criticos.length)}
-          valueTone={criticos.length > 0 ? 'text-red-600' : 'text-zinc-400'}
-          sub={criticos.length > 0 ? 'Ação urgente' : 'Sem críticos'}
-          atual={criticos.length}
-          semVariacao
-        />
-        <KpiCard
-          label="Em Alerta"
+          label="Abaixo do mínimo"
           icon="ri-alert-line"
           value={String(alertas.length)}
           valueTone={alertas.length > 0 ? 'text-amber-700' : 'text-zinc-400'}
-          sub={alertas.length > 0 ? 'Abaixo do mínimo' : 'Todos ok'}
+          sub={alertas.length > 0 ? 'Lista de compras no Início' : 'Todos ok'}
           atual={alertas.length}
+          semVariacao
+        />
+        <KpiCard
+          label="Para conferir"
+          icon="ri-error-warning-line"
+          value={String(conferir.length)}
+          valueTone={conferir.length > 0 ? 'text-red-600' : 'text-zinc-400'}
+          sub={conferir.length > 0 ? 'Estoque negativo no sistema' : 'Nenhum negativo'}
+          atual={conferir.length}
           semVariacao
         />
       </div>

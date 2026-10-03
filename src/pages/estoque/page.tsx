@@ -13,6 +13,7 @@ import ConsumoIngredientesTab from '../relatorios/components/ConsumoIngredientes
 import { useEstoque } from '../../contexts/EstoqueContext';
 import { useEstoqueSituacao } from '../../hooks/useEstoqueSituacao';
 import { contagemDeHoje } from '../../lib/estoqueRegras';
+import { usePermissoes } from '../../hooks/usePermissoes';
 import CardapioExportImportModal from '../../components/feature/CardapioExportImportModal';
 
 type Tab = 'inicio' | 'insumos' | 'movimentacoes' | 'teorico' | 'inventario' | 'cmv' | 'producao' | 'fornecedores' | 'validade' | 'consumo';
@@ -50,7 +51,9 @@ export default function EstoquePage() {
   // Números do topo pela regra única (a mesma do Início, do Dashboard e do assistente).
   const situacao = useEstoqueSituacao();
   const nComprar = situacao.data?.totais.abaixoMinimo ?? 0;
-  const nContar = useMemo(() => (situacao.data ? contagemDeHoje(situacao.data).itens.length : 0), [situacao.data]);
+  const { hasPermissao } = usePermissoes();
+  const podeContar = hasPermissao('estoque_inventario');
+  const nContar = useMemo(() => (situacao.data && podeContar ? contagemDeHoje(situacao.data).itens.length : 0), [situacao.data, podeContar]);
 
   return (
     <div className="flex flex-col h-full">

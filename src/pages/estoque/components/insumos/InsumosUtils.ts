@@ -1,10 +1,22 @@
 import type { Insumo } from '@/contexts/EstoqueContext';
-import { fmtPrecoUnit } from '@/lib/estoqueRegras';
+import { abaixoDoMinimo, estaEsgotado, fmtPrecoUnit } from '@/lib/estoqueRegras';
 
-// Rótulos pela regra única do estoque (src/lib/estoqueRegras.ts, 2026-10-03): estoque negativo é
-// "Conferir" (o número está errado, não é esgotado de verdade); sem a antiga faixa "Crítico ≤ 50%".
+/** Insumo do EstoqueContext no formato das regras únicas (src/lib/estoqueRegras.ts). */
+export const regraDoInsumo = (i: Insumo) => ({
+  acompanha: i.rastrearEstoque !== false, minimo: i.estoqueMinimo, estoque: i.estoqueAtual, marcadoEsgotado: i.esgotado,
+});
+/** Filtro de situação da lista = os mesmos números do topo e do Início (insumo sem aviso não entra). */
+export const passaFiltroStatus = (i: Insumo, filtro: string) => {
+  if (filtro === 'Todos') return true;
+  if (filtro === 'Abaixo do mínimo') return abaixoDoMinimo(regraDoInsumo(i));
+  if (filtro === 'Esgotado') return estaEsgotado(regraDoInsumo(i));
+  return statusEstoque(i).label === filtro;
+};
+
+// Rótulos pela regra única do estoque (src/lib/estoqueRegras.ts, 2026-10-03): estoque negativo (ou marcado
+// esgotado com saldo) é "Conferir" — o número está errado; sem a antiga faixa "Crítico ≤ 50%".
 export const statusEstoque = (i: Insumo) => {
-  if (i.estoqueAtual < 0) return { label: 'Conferir', cls: 'text-red-700 bg-red-50' };
+  if (i.estoqueAtual < 0 || (i.esgotado && i.estoqueAtual > 0)) return { label: 'Conferir', cls: 'text-red-700 bg-red-50' };
   if (i.estoqueAtual <= 0 || i.esgotado) return { label: 'Esgotado', cls: 'text-red-600 bg-red-50' };
   if (i.estoqueMinimo > 0 && i.estoqueAtual <= i.estoqueMinimo) return { label: 'Abaixo do mínimo', cls: 'text-amber-700 bg-amber-50' };
   return { label: 'Ok', cls: 'text-emerald-600 bg-emerald-50' };

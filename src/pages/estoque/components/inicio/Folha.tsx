@@ -2,8 +2,10 @@ import type { ReactNode } from 'react';
 import { useVoltarFecha } from '@/lib/voltarAndroid';
 
 // Folha que sobe de baixo no celular (janela no centro a partir de sm). Voltar do Android fecha.
-export default function Folha({ aberta, titulo, subtitulo, onFechar, children, rodape }: {
+export default function Folha({ aberta, titulo, subtitulo, onFechar, children, rodape, fecharNoFundo = true }: {
   aberta: boolean;
+  /** false = toque no fundo escuro não fecha (ex.: contagem com números digitados) */
+  fecharNoFundo?: boolean;
   titulo: string;
   subtitulo?: string;
   onFechar: () => void;
@@ -13,7 +15,7 @@ export default function Folha({ aberta, titulo, subtitulo, onFechar, children, r
   useVoltarFecha(aberta, onFechar, 'estoque-folha');
   if (!aberta) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/45" onClick={onFechar}>
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/45" onClick={fecharNoFundo ? onFechar : undefined}>
       <div
         className="bg-white w-full sm:max-w-lg rounded-t-3xl sm:rounded-3xl max-h-[90dvh] flex flex-col shadow-2xl"
         onClick={(e) => e.stopPropagation()}

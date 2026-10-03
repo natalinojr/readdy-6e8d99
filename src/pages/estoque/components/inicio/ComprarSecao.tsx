@@ -5,7 +5,7 @@ import { useEstoque } from '@/contexts/EstoqueContext';
 import { useToast } from '@/contexts/ToastContext';
 import { linkWhatsApp } from '@/lib/trilhaAcoes';
 import {
-  agruparCompras, sugestaoCompra, fmtQtd, fmtPrecoUnit, fmtSugestao, dataBrasilia, rotuloUnidade,
+  agruparCompras, pedidoDoInsumo, sugestaoCompra, fmtQtd, fmtPrecoUnit, fmtSugestao, dataBrasilia, rotuloUnidade,
   CHAVE_PRODUZIR, CHAVE_SEM_FORNECEDOR,
   type GrupoCompra, type InsumoSituacao, type SituacaoEstoque, type Sugestao,
 } from '@/lib/estoqueRegras';
@@ -39,7 +39,11 @@ export default function ComprarSecao({ situacao, extras, onReload, onIrContar }:
 
   const itens = useMemo(() => situacao.insumos.filter((i) => i.abaixoMinimo || extras.has(i.id)), [situacao.insumos, extras]);
   const grupos = useMemo(() => agruparCompras(itens), [itens]);
-  const pedidoDe = (chave: string) => situacao.pedidos.find((p) => p.fornecedor === chave) ?? null;
+  // Pedido mandado vale por insumo: novo no fornecedor (ou que chegou e baixou de novo) volta a pedir.
+  const pedidoDe = (i: InsumoSituacao) => pedidoDoInsumo(i, situacao.pedidos);
+  const porMandar = (g: GrupoCompra) => g.itens.filter((i) => !pedidoDe(i));
+  const ultimoPedido = (g: GrupoCompra) => g.itens.map(pedidoDe).filter(Boolean)
+    .sort((a, b) => b!.enviadoEm.localeCompare(a!.enviadoEm))[0] ?? null;
 
   const sugestaoDe = (i: InsumoSituacao): Sugestao => {
     const s = sugestaoCompra(i, diasCompra);
@@ -49,7 +53,7 @@ export default function ComprarSecao({ situacao, extras, onReload, onIrContar }:
       ? { ...s, embalagens: v, qtd: v * i.fatorCompra }
       : { ...s, qtd: v };
   };
-  const ativos = (g: GrupoCompra) => g.itens.filter((i) => !fora[i.id] && !conteAntes(i));
+  const ativos = (g: GrupoCompra) => porMandar(g).filter((i) => !fora[i.id] && !conteAntes(i) && sugestaoDe(i).qtd > 0);
   const totalDe = (g: GrupoCompra) => ativos(g).reduce((s, i) => s + (i.preco ? sugestaoDe(i).qtd * i.preco : 0), 0);
 
   const mudarQtd = (i: InsumoSituacao, sinal: 1 | -1) => {
@@ -67,8 +71,8 @@ export default function ComprarSecao({ situacao, extras, onReload, onIrContar }:
     return `Olá! Pedido da ${user?.loja ?? 'loja'} (${dataHoje}):\n\n${linhas}\n\nPode confirmar o valor e a entrega? Obrigado!`;
   };
   const mensagemTudo = () => `Lista de compras — ${user?.loja ?? ''} (${dataHoje})\n\n` + grupos
-    .filter((g) => !pedidoDe(g.chave))
-    .map((g) => `*${g.nome}*\n${g.itens.filter((i) => !fora[i.id]).map((i) => (conteAntes(i) ? `• ${i.nome} — contar antes` : linhaPedido(i))).join('\n')}`)
+    .filter((g) => porMandar(g).length > 0)
+    .map((g) => `*${g.nome}*\n${porMandar(g).filter((i) => !fora[i.id]).map((i) => (conteAntes(i) ? `• ${i.nome} — contar antes` : linhaPedido(i))).join('\n')}`)
     .join('\n\n');
 
   const abrirMandar = (g: GrupoCompra) => { setMsg(mensagemDe(g)); setCopiado(false); setFolha({ tipo: 'mandar', chave: g.chave }); };
@@ -104,10 +108,10 @@ export default function ComprarSecao({ situacao, extras, onReload, onIrContar }:
   // window.open / navigator.share precisam acontecer no toque, antes de qualquer await.
   const enviar = (lista: GrupoCompra[], fone: string | null) => {
     const link = fone ? linkWhatsApp(fone, msg) : null;
-    if (link) window.open(link, '_blank');
-    else if (typeof navigator.share === 'function') navigator.share({ text: msg }).catch(() => undefined);
-    else { void copiar(); return; }
-    void registrar(lista);
+    if (link) { window.open(link, '_blank'); void registrar(lista); return; }
+    // Compartilhar: só marca "mandado" se a pessoa de fato compartilhou (cancelar não conta).
+    if (typeof navigator.share === 'function') { navigator.share({ text: msg }).then(() => registrar(lista)).catch(() => undefined); return; }
+    void copiar();
   };
 
   // Mesmas ações do stock-write que a aba Estoque usa (campo ausente = preservado), mas com o erro
@@ -124,7 +128,7 @@ export default function ComprarSecao({ situacao, extras, onReload, onIrContar }:
   };
 
   const nomeTotal = itens.length;
-  const pendentesGrupos = grupos.filter((g) => !pedidoDe(g.chave));
+  const pendentesGrupos = grupos.filter((g) => porMandar(g).length > 0);
   const grupoAberto = folha?.tipo === 'mandar' ? grupos.find((g) => g.chave === folha.chave) ?? null : null;
   const itemAberto = folha?.tipo === 'item' ? situacao.insumos.find((i) => i.id === folha.id) ?? null : null;
 
@@ -149,8 +153,10 @@ export default function ComprarSecao({ situacao, extras, onReload, onIrContar }:
 
       <div className="space-y-2.5">
         {grupos.map((g) => {
-          const pedido = pedidoDe(g.chave);
-          const temZerado = g.itens.some((i) => i.esgotado);
+          const abertos = porMandar(g);
+          const pedido = abertos.length === 0 ? ultimoPedido(g) : null;
+          const jaPedidos = g.itens.filter((i) => pedidoDe(i));
+          const temZerado = abertos.some((i) => i.esgotado);
           const total = totalDe(g);
           const produzir = g.chave === CHAVE_PRODUZIR;
           const barra = pedido ? 'bg-emerald-500' : temZerado ? 'bg-red-500' : 'bg-amber-400';
@@ -182,8 +188,13 @@ export default function ComprarSecao({ situacao, extras, onReload, onIrContar }:
                 </div>
               ) : (
                 <>
+                  {jaPedidos.length > 0 && (
+                    <p className="text-[11px] font-semibold text-emerald-700 mt-0.5 mb-1 leading-snug">
+                      <i className="ri-check-double-line" /> Já pedido: {jaPedidos.map((i) => i.nome).join(', ')}. Abaixo, o que ainda falta pedir.
+                    </p>
+                  )}
                   <div className="divide-y divide-zinc-100">
-                    {g.itens.map((i) => {
+                    {abertos.map((i) => {
                       const off = !!fora[i.id];
                       const s = sugestaoDe(i);
                       const tags: Array<{ t: string; c?: string }> = [];
@@ -234,12 +245,12 @@ export default function ComprarSecao({ situacao, extras, onReload, onIrContar }:
                     className={`mt-2 w-full min-h-[44px] rounded-xl text-sm font-bold flex items-center justify-center gap-2 cursor-pointer disabled:opacity-40 ${g.fone ? 'bg-[#1FA855] hover:bg-[#1a9049] text-white' : 'bg-amber-500 hover:bg-amber-600 text-zinc-900'}`}
                   >
                     <i className={produzir ? 'ri-restaurant-line' : g.fone ? 'ri-whatsapp-line' : 'ri-share-forward-line'} />
-                    {produzir ? 'Avisar a cozinha' : g.fone ? 'Mandar pelo WhatsApp' : 'Compartilhar pedido'}
+                    {produzir ? 'Avisar a cozinha' : g.fone ? 'Mandar pelo WhatsApp' : 'Compartilhar pedido'}{jaPedidos.length > 0 ? ` (${ativos(g).length})` : ''}
                   </button>
                   {g.chave === CHAVE_SEM_FORNECEDOR && (
                     <p className="text-[11px] text-zinc-400 mt-2 leading-snug">Sem fornecedor no cadastro o pedido não vai direto para ninguém. Defina o fornecedor na aba Estoque.</p>
                   )}
-                  {g.itens.some(conteAntes) && (
+                  {abertos.some(conteAntes) && (
                     <p className="text-[11px] text-zinc-400 mt-2 leading-snug">“Conte antes”: o sistema mostra um número negativo, então não dá para saber quanto pedir. Fica de fora do pedido até a contagem.</p>
                   )}
                 </>
@@ -285,7 +296,7 @@ export default function ComprarSecao({ situacao, extras, onReload, onIrContar }:
           onChange={(e) => setMsg(e.target.value)}
           className="w-full min-h-[200px] rounded-2xl border border-zinc-200 p-3 text-[13.5px] leading-relaxed text-zinc-800 focus:outline-none focus:border-amber-400"
         />
-        {folha?.tipo === 'mandar' && grupoAberto?.itens.some(conteAntes) && (
+        {folha?.tipo === 'mandar' && grupoAberto && porMandar(grupoAberto).some(conteAntes) && (
           <p className="text-xs bg-red-50 text-red-800 rounded-xl px-3 py-2 mt-2">Os itens com “conte antes” ficaram de fora. Depois da contagem eles voltam com a quantidade certa.</p>
         )}
         <p className="text-xs bg-zinc-50 text-zinc-600 rounded-xl px-3 py-2 mt-2 mb-1">Depois de mandar, o cartão fica como “pedido mandado” para todo mundo da loja, até a mercadoria chegar.</p>

@@ -12,7 +12,7 @@ import CategoriasModal from './insumos/CategoriasModal';
 import InsumoModal from './insumos/InsumoModal';
 import EntradaRapidaModal from './insumos/EntradaRapidaModal';
 import MiniPriceHistory from './insumos/MiniPriceHistory';
-import { statusEstoque, barColor, barWidth, precoLegivel, exportarInsumosCSV } from './insumos/InsumosUtils';
+import { statusEstoque, barColor, barWidth, precoLegivel, passaFiltroStatus, exportarInsumosCSV } from './insumos/InsumosUtils';
 import ImportExportTemplatesModal from '@/components/ImportExportTemplatesModal';
 import ItensIndisponiveisPanel from './ItensIndisponiveisPanel';
 import PerguntarAoAssistente from '@/components/feature/PerguntarAoAssistente';
@@ -153,9 +153,7 @@ export default function InsumosTab() {
   const insumosFiltrados = useMemo(() => insumos.filter((i) => {
     const matchBusca = i.nome.toLowerCase().includes(busca.toLowerCase());
     const matchCat = categoriaFiltro === 'Todas' || i.categoria === categoriaFiltro;
-    const st = statusEstoque(i).label;
-    const esgotado = insumosEsgotados.includes(i.id);
-    const matchStatus = filtroStatus === 'Todos' || st === filtroStatus || (filtroStatus === 'Esgotado' && esgotado);
+    const matchStatus = passaFiltroStatus(i, filtroStatus);
     return matchBusca && matchCat && matchStatus;
   }), [insumos, busca, categoriaFiltro, filtroStatus, insumosEsgotados]);
 

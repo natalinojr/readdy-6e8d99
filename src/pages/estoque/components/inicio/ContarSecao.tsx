@@ -21,9 +21,11 @@ export function maisGiram(insumos: InsumoSituacao[], n = 10): InsumoSituacao[] {
     .slice(0, n);
 }
 
-export default function ContarSecao({ situacao, contagem, onContar, onConfigurar, onReload }: {
+export default function ContarSecao({ situacao, contagem, podeContar, onContar, onConfigurar, onReload }: {
   situacao: SituacaoEstoque;
   contagem: ContagemDeHoje;
+  /** Permissão estoque_inventario (a mesma da aba Inventário) */
+  podeContar: boolean;
   onContar: (itens: InsumoSituacao[], titulo: string) => void;
   onConfigurar: () => void;
   onReload: () => void;
@@ -54,6 +56,7 @@ export default function ContarSecao({ situacao, contagem, onContar, onConfigurar
       onReload();
     } catch (e) {
       toast.error('Não programei as contagens', (e as { message?: string })?.message ?? String(e));
+      onReload(); // se a 1ª foi gravada, o cartão some e não duplica ao tentar de novo
     } finally {
       setCriando(false);
     }
@@ -86,9 +89,11 @@ export default function ContarSecao({ situacao, contagem, onContar, onConfigurar
               {conferir.slice(0, 4).map((i) => `${i.nome} (${i.estoque < 0 ? fmtQtd(i.estoque, i.unidade) : 'marcado esgotado com saldo'})`).join(', ')}
               {conferir.length > 4 ? ` e mais ${conferir.length - 4}` : ''}. Sem contar, não dá para saber se precisa comprar.
             </p>
-            <button onClick={() => onContar(conferir, 'Conferir')} className="mt-2 w-full min-h-[42px] rounded-xl bg-zinc-900 text-white text-sm font-bold cursor-pointer">
-              Conferir agora ({conferir.length})
-            </button>
+            {podeContar ? (
+              <button onClick={() => onContar(conferir, 'Conferir')} className="mt-2 w-full min-h-[42px] rounded-xl bg-zinc-900 text-white text-sm font-bold cursor-pointer">
+                Conferir agora ({conferir.length})
+              </button>
+            ) : <SemPermissao />}
           </div>
         )}
 
@@ -109,9 +114,11 @@ export default function ContarSecao({ situacao, contagem, onContar, onConfigurar
                 {d.contados.length ? ` · ${d.contados.length} já contados` : ''}
               </p>
               <p className="text-[11.5px] text-zinc-400 mt-1 truncate">{d.pendentes.slice(0, 6).map((i) => i.nome).join(', ')}{d.pendentes.length > 6 ? '…' : ''}</p>
-              <button onClick={() => onContar(d.pendentes, d.plano.nome)} className="mt-2 w-full min-h-[42px] rounded-xl bg-zinc-900 text-white text-sm font-bold cursor-pointer flex items-center justify-center gap-2">
-                <i className="ri-scales-3-line" />Começar ({d.pendentes.length} · ~{Math.max(1, Math.round(d.pendentes.length * 0.7))} min)
-              </button>
+              {podeContar ? (
+                <button onClick={() => onContar(d.pendentes, d.plano.nome)} className="mt-2 w-full min-h-[42px] rounded-xl bg-zinc-900 text-white text-sm font-bold cursor-pointer flex items-center justify-center gap-2">
+                  <i className="ri-scales-3-line" />Começar ({d.pendentes.length} · ~{Math.max(1, Math.round(d.pendentes.length * 0.7))} min)
+                </button>
+              ) : <SemPermissao />}
             </div>
           );
         })}
@@ -155,7 +162,12 @@ export default function ContarSecao({ situacao, contagem, onContar, onConfigurar
   );
 }
 
-/** Contagem passo a passo pelo celular. Grava só os itens contados (os pulados não mudam). */
+function SemPermissao() {
+  return <p className="text-[11.5px] text-zinc-400 mt-2">Contar é com quem tem a permissão de inventário (a mesma da aba Inventário).</p>;
+}
+
+/** Contagem passo a passo pelo celular. Grava só os itens contados (os pulados não mudam).
+ *  O que foi digitado fica guardado se a folha fechar sem querer; só limpa depois de gravar. */
 export function ContagemFolha({ aberta, titulo, itens, onFechar, onConcluida }: {
   aberta: boolean;
   titulo: string;
@@ -168,10 +180,17 @@ export function ContagemFolha({ aberta, titulo, itens, onFechar, onConcluida }: 
   const { confirmarInventario } = useEstoque();
   const [passo, setPasso] = useState(0);
   const [valores, setValores] = useState<Record<string, string>>({});
+  const valoresRef = useRef(valores);
+  valoresRef.current = valores;
   const [gravando, setGravando] = useState(false);
   const campo = useRef<HTMLInputElement>(null);
 
-  useEffect(() => { if (aberta) { setPasso(0); setValores({}); } }, [aberta, itens]);
+  // Reabrindo, volta para o primeiro item ainda sem número (o digitado continua).
+  useEffect(() => {
+    if (!aberta) return;
+    const k = itens.findIndex((i) => (valoresRef.current[i.id] ?? '').trim() === '');
+    setPasso(k < 0 ? itens.length : k);
+  }, [aberta, itens]);
   useEffect(() => { if (aberta) campo.current?.focus(); }, [aberta, passo]);
 
   const fator = (i: InsumoSituacao) => (i.unidadeContagem && i.fatorContagem ? i.fatorContagem : 1);
@@ -188,7 +207,7 @@ export function ContagemFolha({ aberta, titulo, itens, onFechar, onConcluida }: 
 
   const confirmar = async () => {
     setGravando(true);
-    const lista = contados.map((i) => {
+    const lista = contados.filter((i) => i.contaInventario).map((i) => {
       const q = lido(i)!;
       return {
         insumoId: i.id, insumoNome: i.nome, unidade: UNIDADE_FRONT[i.unidade] ?? 'un',
@@ -199,6 +218,7 @@ export function ContagemFolha({ aberta, titulo, itens, onFechar, onConcluida }: 
     setGravando(false);
     if (!r.ok) { toast.error('A contagem não foi gravada', r.erro ?? 'Tente de novo.'); return; }
     const acertos = lista.filter((l) => Math.abs(l.diferenca) > 0.00005).length;
+    setValores((v) => { const n = { ...v }; for (const l of lista) delete n[l.insumoId]; return n; });
     toast.success('Contagem gravada', `${lista.length} ${lista.length === 1 ? 'item contado' : 'itens contados'}, ${acertos} ${acertos === 1 ? 'acerto' : 'acertos'} no estoque.`);
     onConcluida();
   };
@@ -208,6 +228,7 @@ export function ContagemFolha({ aberta, titulo, itens, onFechar, onConcluida }: 
   return (
     <Folha
       aberta={aberta}
+      fecharNoFundo={contados.length === 0}
       titulo={naRevisao ? 'Revisar a contagem' : titulo}
       subtitulo={naRevisao ? `${contados.length} de ${itens.length} contados` : `${itens.length} ${itens.length === 1 ? 'item' : 'itens'} · o que você pular fica como está`}
       onFechar={onFechar}

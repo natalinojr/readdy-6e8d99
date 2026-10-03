@@ -129,11 +129,12 @@ KDS, producao e impressao:
 - Edge Functions: `production-write`, `print-queue-write`, `print-queue-agent`, `printer-ping`, `printer-raw`.
 
 Estoque, compras e CMV:
-- Tela: `src/pages/estoque`.
-- Componentes: insumos, inventario, movimentacoes, validade, producao, CMV, fornecedores.
-- Contexts/hooks: `EstoqueContext`, `ProducaoContext`, `useCmvReport`, `useCmvRelatorio`, `useItensSemEstoque`, `useStockCriticalAlerts`, `useIngredientCategories`, `useIngredientPriceHistory`, `useSuppliers`.
-- Tabelas: `ingredients`, `ingredient_categories`, `ingredient_batches`, `stock_movements`, `inventory_sessions`, `fin_suppliers`, `fin_purchases`, `fin_purchase_items`.
-- RPCs: `fn_get_ingredients`, `fn_get_stock_movements`, `fn_get_items_sem_estoque`, `fn_get_stock_critical_alerts`, `fn_get_cmv_report`.
+- Tela: `src/pages/estoque`. Abre na aba **Início** (`components/inicio/`: comprar · contar · vai faltar); as outras abas seguem iguais.
+- Componentes: inicio, insumos, inventario, movimentacoes, validade, producao, CMV, fornecedores.
+- **Regra única de "estoque baixo"** (2026-10-03): SQL `insumo_abaixo_minimo` / `insumo_esgotado` + leitura `fn_estoque_situacao(p_tenant_id)`; espelho TS em `src/lib/estoqueRegras.ts`; hook `useEstoqueSituacao` (é o que Dashboard, Início do Estoque e a tela Hoje leem). Ver histórico 2026-10-03.
+- Contexts/hooks: `EstoqueContext`, `ProducaoContext`, `useEstoqueSituacao`, `useCmvReport`, `useCmvRelatorio`, `useItensSemEstoque`, `useStockCriticalAlerts`, `useIngredientCategories`, `useIngredientPriceHistory`, `useSuppliers`.
+- Tabelas: `ingredients`, `ingredient_categories`, `ingredient_batches`, `stock_movements`, `inventory_sessions`, `inventory_count_plans`, `estoque_config`, `estoque_pedidos_enviados`, `fin_suppliers`, `fin_purchases`, `fin_purchase_items`.
+- RPCs: `fn_get_ingredients`, `fn_estoque_situacao`, `fn_get_stock_movements`, `fn_get_items_sem_estoque`, `fn_get_stock_critical_alerts`, `fn_get_cmv_report`, escrita `fn_estoque_salvar_config` / `fn_estoque_salvar_plano` / `fn_estoque_apagar_plano` / `fn_estoque_registrar_pedido` / `fn_estoque_desfazer_pedido`.
 - Edge Functions: `stock-write`, `purchase-write`, `purchase-confirm-delivery`, `receber-mercadoria` (orquestra o recebimento do celular).
 
 Financeiro, RH e conciliacao:
@@ -268,6 +269,62 @@ Quando o usuario pedir "muda X":
 ## Historico de solucoes e criterios
 
 Secao viva: registrar aqui padroes, decisoes e pegadinhas reutilizaveis conforme o sistema evolui. Cada entrada com data
+
+### 2026-10-03 — Estoque abre no Início (comprar · contar · vai faltar) e "estoque baixo" tem UMA regra
+
+**Problema (Paranaguá, 02/10):** "estoque baixo" tinha 6 números ao mesmo tempo: Dashboard 44, pendência 22, topo
+do Estoque 16 críticos / 15 esgotados / 18 em alerta / 18 com ruptura. Causas, uma por tela: o Dashboard
+(`fn_get_dashboard_metrics.alertas_estoque`) contava 22 insumos **excluídos** e os 6 sem aviso; a pendência do
+assistente-cron contava os sem aviso (`track_stock=false`); "em alerta" contava insumo **sem mínimo** só por estar em
+zero; "crítico" = metade do mínimo; "ruptura" usava **mínimo ÷ 7** como se fosse o uso do dia (todo insumo abaixo do
+mínimo caía nela). E estoque negativo (Arroz −2.046 g) aparecia como "ESGOTADO" com preço "R$ 0,00" (preço por grama).
+
+**Regra única** (migração `20261003120000_estoque_situacao.sql`, espelho `src/lib/estoqueRegras.ts`, testes em
+`src/test/lib/estoqueRegras.test.ts`):
+- **abaixo do mínimo** = com aviso (`track_stock`) E mínimo > 0 E estoque <= mínimo (`insumo_abaixo_minimo`).
+- **esgotado** = com aviso E (estoque <= 0 OU `is_depleted`) (`insumo_esgotado`). Negativo = rótulo **"Conferir"**.
+- **vai faltar** = com aviso E uso/dia > 0 E NÃO abaixo do mínimo E estoque ÷ uso/dia <= `dias_previsao` (padrão 7).
+  Uso/dia = saídas de uso (`theoretical_out`, `loss`, `manual_out` que não começa com Estorno/Correção/Ajuste de
+  contagem) dos últimos 14 dias, menos a volta de venda cancelada (`in` com `order_id`), ÷ dias de histórico (desde a
+  1ª saída de uso da loja; < 3 dias = sem previsão).
+- **conferir** = com aviso E entra na contagem E (estoque < 0 OU marcado esgotado com saldo).
+- Quem usa: Dashboard (`AtencaoFaixa` via `useEstoqueSituacao`), topo do Estoque, Início, pendência
+  `estoque_critico` e aviso de estoque do assistente-cron (SQL com `insumo_abaixo_minimo`), `fn_get_stock_critical_alerts`
+  (agora = abaixo do mínimo, `nivel_alerta` 'critico' = esgotado; usada por `useStockCriticalAlerts`, ferramenta
+  `estoque_critico` do assistente-brain e `fn_mkt_fatos_canais`), ação rápida "Estoque crítico" do chat, rótulos da aba
+  Estoque (`InsumosUtils.statusEstoque` + filtros `passaFiltroStatus`), aba Inventário (`DivergenciaPanel`) e Por
+  Fornecedor. Migração `20261003120100_estoque_regra_unica_consumidores.sql` troca por texto
+  só o bloco `alertas_estoque` de `fn_get_dashboard_metrics` (aborta se a função tiver mudado).
+- Paranaguá depois: **16 abaixo do mínimo (13 zerados), 15 esgotados, 2 vão faltar** — em todo lugar.
+
+**Início do Estoque** (`src/pages/estoque/components/inicio/`), feito para a supervisão no celular:
+- **Comprar**: abaixo do mínimo agrupado por fornecedor (`agruparCompras`: `supplier_id` › nome › "Produzir na cozinha"
+  (saída de ficha de produção ou fornecedor "Produção interna") › "Sem fornecedor"). Quantidade sugerida
+  (`sugestaoCompra`) = uso de `estoque_config.dias_compra` dias (padrão **60 = dois meses**, decisão do dono), no mínimo o
+  bastante para ficar com 2× o mínimo, arredondado na embalagem (`purchase_unit`/`purchase_factor`); **produção da
+  cozinha: até 2× o mínimo** (guacamole de 2 meses estraga). Estoque negativo de insumo contável = "conte antes" (fora do
+  pedido). Mandar: WhatsApp do fornecedor (`linkWhatsApp`, fone de `fin_suppliers`) ou compartilhar/copiar (cancelar
+  o compartilhar não marca); a marca "pedido mandado" fica em `estoque_pedidos_enviados` (7 dias, todos os aparelhos;
+  desfazer = `desfeito_em`) e vale **por insumo** (`pedidoDoInsumo`): insumo novo no fornecedor, ou que teve entrada
+  depois do envio (`ultima_entrada` = última `in` sem `order_id` em 30 dias), volta a pedir.
+  Item → mudar mínimo / "Não uso mais" (`stock-write` direto, com erro de volta na tela).
+- **Contar**: planos em `inventory_count_plans` (diária / semanal `dia_semana` 0=dom / mensal `dia_mes` 1–28, 0 = último
+  dia; `todos` = quem tem `count_inventory`, senão lista `itens`). Ocorrência atual = última data agendada <= hoje e >=
+  criação do plano; pendente = item sem contagem confirmada (`inventory_sessions`, data de Brasília) desde a ocorrência.
+  Sem plano: botão "Criar as duas de sempre" (geral no último dia do mês + semanal segunda com os 10 que mais giram em
+  R$/dia). Contagem passo a passo (`ContagemFolha`) grava **só os contados** via `confirmarInventario` → `fn_confirm_inventory`
+  (respeita `count_unit`/`count_factor`); só aparece para quem tem `estoque_inventario` (igual à aba Inventário); o
+  digitado sobrevive a fechar a folha (toque no fundo não fecha com número digitado). Insumo tirado da contagem sai do
+  plano (`fn_confirm_inventory` pula `count_inventory = false`). Configurar: `estoque_pode_configurar` = admin, ou chave `estoque_inventario` da
+  matriz `permissions` (sem linha: só gerente).
+- **Vai faltar**: com "Pôr na lista" (só na sessão) e "Mínimo de X" (uso de `dias_previsao` dias) para quem não tem mínimo.
+- **Pegadinhas:** a contagem cheia da aba Inventário manda TODOS os insumos (os não tocados com o teórico), então ela
+  marca todos como contados — é o comportamento certo para a geral, mas não use para "contar alguns". Preço por grama
+  sai por kg (`fmtPrecoUnit`). `useEstoqueSituacao` recarrega no BroadcastChannel `erpos-estoque-sync`.
+- **Achados (não corrigidos):** Jalapeño da Paranaguá baixa ~3 kg/dia pela ficha (−21,7 kg no sistema: unidade da ficha
+  errada?); dois insumos chamados "Cheddar produzido"; 9 itens da lista sem fornecedor. Hortifrúti com 60 dias de uso
+  sugere quantidade grande demais — se incomodar, o próximo passo é dias de compra por categoria/insumo.
+- Protótipo aprovado: `docs/prototipos/estoque-inicio-proposta.html` (não commitado, cópia no checkout principal).
 
 ### 2026-10-03 — "O que aconteceu?": um começo só para qualquer lançamento
 - **Pedido do dono** (visão de economia mental): havia ~9 portas para lançar despesa/compra (Nova conta, Nova compra, Fluxo, Bancos, Conciliação, Notas, Guias, RH, `/receber`, chat, Sangria). Regra: **nenhum caminho sai, muda só a porta**. Protótipo aprovado: `docs/prototipos/lancar-proposta.html`.

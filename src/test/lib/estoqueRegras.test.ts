@@ -5,7 +5,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   abaixoDoMinimo, estaEsgotado, vaiFaltarEm, precisaConferir, ehProduzido, sugestaoCompra,
-  agruparCompras, situacaoPlano, ocorrenciaAtual, proximaOcorrencia, descreverFrequencia, quandoFica,
+  agruparCompras, pedidoDoInsumo, situacaoPlano, ocorrenciaAtual, proximaOcorrencia, descreverFrequencia, quandoFica,
   fmtQtd, fmtPrecoUnit, fmtSugestao, CHAVE_PRODUZIR, CHAVE_SEM_FORNECEDOR,
   type InsumoSituacao, type PlanoContagem,
 } from '@/lib/estoqueRegras';
@@ -15,7 +15,7 @@ function insumo(p: Partial<InsumoSituacao>): InsumoSituacao {
     id: 'x', nome: 'Insumo', unidade: 'kg', categoria: null, fornecedorId: null, fornecedor: null, fornecedorFone: null,
     produzido: false, estoque: 10, minimo: 0, marcadoEsgotado: false, acompanha: true, contaInventario: true,
     unidadeContagem: null, fatorContagem: null, preco: 0, unidadeCompra: null, fatorCompra: 1, consumoDia: null,
-    diasRestantes: null, ultimaContagem: null, abaixoMinimo: false, esgotado: false, vaiFaltar: false,
+    diasRestantes: null, ultimaContagem: null, ultimaEntrada: null, abaixoMinimo: false, esgotado: false, vaiFaltar: false,
   };
   return { ...base, ...p };
 }
@@ -106,6 +106,16 @@ describe('lista por fornecedor', () => {
   });
 });
 
+describe('pedido mandado', () => {
+  const ped = { id: 'p', fornecedor: 'f1', fornecedorNome: 'X', itens: [{ id: 'a', nome: 'A', texto: '1 CX' }], enviadoEm: '2026-10-01T13:00:00.000Z', enviadoPorNome: null };
+  it('vale só para o insumo que estava no pedido e ainda não chegou', () => {
+    expect(pedidoDoInsumo(insumo({ id: 'a', fornecedorId: 'f1' }), [ped])).toBe(ped);
+    expect(pedidoDoInsumo(insumo({ id: 'c', fornecedorId: 'f1' }), [ped])).toBeNull(); // novo no mesmo fornecedor
+    expect(pedidoDoInsumo(insumo({ id: 'a', fornecedorId: 'f1', ultimaEntrada: '2026-10-02T10:00:00.000Z' }), [ped])).toBeNull(); // chegou e baixou de novo
+    expect(pedidoDoInsumo(insumo({ id: 'a', fornecedorId: 'f2' }), [ped])).toBeNull();
+  });
+});
+
 describe('planos de contagem', () => {
   const semanal: PlanoContagem = { id: 'p1', nome: 'Semanal', frequencia: 'semanal', diaSemana: 1, diaMes: null, todos: false, itens: ['a', 'b'], criadoEm: '2026-09-01T12:00:00Z' };
   const mensal: PlanoContagem = { id: 'p2', nome: 'Geral', frequencia: 'mensal', diaSemana: null, diaMes: 1, todos: true, itens: [], criadoEm: '2026-09-01T12:00:00Z' };
@@ -134,6 +144,8 @@ describe('planos de contagem', () => {
     expect(s.atraso).toBe(5);
     const g = situacaoPlano(mensal, ins, '2026-10-03');
     expect(g.pendentes.map((i) => i.id)).toEqual(['a', 'b']); // c fora da contagem
+    const lista = situacaoPlano({ ...semanal, itens: ['b', 'c'] }, ins, '2026-10-03');
+    expect(lista.pendentes.map((i) => i.id)).toEqual(['b']); // c saiu da contagem: sai do plano
   });
 
   it('contagem às 22h de Brasília conta no dia certo', () => {
