@@ -10,6 +10,9 @@
 // Regra de lançamento (dono, 2026-09-22) — caixa de e-mail que vira conta a pagar é o vetor do
 // golpe do boleto falso, então:
 //   • remetente é fornecedor cadastrado E o CNPJ do beneficiário é o dele → lança direto;
+//   • boleto que bate com a conta de uma nota fiscal (mesma empresa do CNPJ, mesmo valor, mesmo
+//     vencimento, uma conta só) → guarda nessa conta, venha de quem vier (dono, 2026-10-03;
+//     contaDaNota). Exceção: o aviso de CNPJ diferente do remetente continua parando;
 //   • qualquer outra coisa (remetente novo, CNPJ diferente, CNPJ não achado) → pendência no 📥;
 //   • nada daqui paga: a conta entra com o boleto guardado e o pagamento segue o caminho de
 //     sempre (preparado no dia, aprovado pelo dono).
@@ -74,12 +77,29 @@ function cnpjBeneficiarioDoTexto(texto: string, cnpjLoja: string | null): string
   }
   return perto.size === 1 ? [...perto][0] : null;
 }
-/** Nome depois de "Beneficiário"/"Cedente", até o CNPJ ou o fim da linha. */
-function beneficiarioDoTexto(texto: string): string | null {
+/** Rótulo do formulário do boleto lido como se fosse nome. O texto do PDF do Itaú sai como
+ *  "Beneficiário\nPagador\nRecebi(emos)…" (2026-10-03: o boleto da Nova Geração apareceu como
+ *  beneficiário "Pagador" — e o botão "Lançar conta" procurava a conta por esse nome). */
+const ROTULO_BOLETO = /^(pagador|sacado|sacador|recebi|vencimento|ag[eê]ncia|c[oó]digo|data|n[°ºo.]|nosso|n[uú]mero|local|uso do banco|carteira|esp[eé]cie|quantidade|valor|aceite|instru|autentica|ficha|recibo|cortar|endere|final|cpf|cnpj)/i;
+export function nomeBeneficiario(v: unknown): string | null {
+  const nome = String(v ?? '').replace(/[\s\-–:.]+$/, '').trim();
+  return nome.length >= 3 && /[a-z]/i.test(nome) && !ROTULO_BOLETO.test(nome) ? nome.slice(0, 80) : null;
+}
+/** Nome do beneficiário: o que vem antes do CNPJ dele na mesma linha ("BEBIDAS NOVA GERACAO LTDA -
+ *  CNPJ.: 00.328.924/0006-26"); senão, o que vem depois de "Beneficiário"/"Cedente". */
+function beneficiarioDoTexto(texto: string, cnpj: string | null): string | null {
+  if (cnpj) {
+    const re = new RegExp(`${cnpj.slice(0, 2)}\\.?${cnpj.slice(2, 5)}\\.?${cnpj.slice(5, 8)}\\/?${cnpj.slice(8, 12)}-?${cnpj.slice(12)}`);
+    for (const linha of texto.split('\n')) {
+      const i = linha.search(re);
+      if (i < 0) continue;
+      const nome = nomeBeneficiario(linha.slice(0, i).replace(/(?:CNPJ|CPF|C\.N\.P\.J)\.?\s*:?\s*$/i, '').replace(/^.*(?:benefici[aá]rio|cedente)(?:\s*final)?\s*:?/i, ''));
+      if (nome) return nome;
+    }
+  }
   const m = texto.match(/(?:benefici[aá]rio|cedente)(?:\s*final)?\s*:?[ \t]*([^\n]{3,120})/i);
   if (!m) return null;
-  const nome = m[1].split(/\s*(?:CNPJ|CPF|C\.N\.P\.J|\d{2}\.\d{3}\.\d{3})/i)[0].replace(/[\s\-–:]+$/, '').trim();
-  return nome.length >= 3 && /[a-z]/i.test(nome) ? nome.slice(0, 80) : null;
+  return nomeBeneficiario(m[1].split(/\s*(?:CNPJ|CPF|C\.N\.P\.J|\d{2}\.\d{3}\.\d{3})/i)[0]);
 }
 function vencimentoDoTexto(texto: string): string | null {
   const m = texto.match(/vencimento[^\d]{0,30}(\d{2})\/(\d{2})\/(\d{4})/i);
@@ -181,7 +201,7 @@ export async function lerBoletos(email: { subject: string; texto: string; anexos
   for (const d of findBoletos(corpo)) {
     const b = deDecoded(d, { origem: 'corpo' });
     b.cnpj = cnpjBeneficiarioDoTexto(corpo, cnpjLoja);
-    b.beneficiario = beneficiarioDoTexto(corpo);
+    b.beneficiario = beneficiarioDoTexto(corpo, b.cnpj);
     b.vencimento ??= vencimentoDoTexto(corpo);
     vistos.set(b.barcode, b);
   }
@@ -195,7 +215,7 @@ export async function lerBoletos(email: { subject: string; texto: string; anexos
       if (vistos.has(d.barcode)) continue;
       const b = deDecoded(d, { origem: 'pdf_texto', anexo: a.nome });
       b.cnpj = cnpjBeneficiarioDoTexto(txt, cnpjLoja);
-      b.beneficiario = beneficiarioDoTexto(txt);
+      b.beneficiario = beneficiarioDoTexto(txt, b.cnpj);
       b.vencimento ??= vencimentoDoTexto(txt);
       vistos.set(b.barcode, b);
     }
@@ -225,7 +245,7 @@ export async function lerBoletos(email: { subject: string; texto: string; anexos
         // Valor e vencimento do código mandam; o que a IA leu só completa o convênio (que não traz vencimento).
         valor: d.valor ?? (Number(l.valor) > 0 ? round2(Number(l.valor)) : null),
         vencimento: d.vencimento ?? (/^\d{4}-\d{2}-\d{2}$/.test(String(l.vencimento)) ? l.vencimento : null),
-        beneficiario: String(l.beneficiario ?? '').trim() || null,
+        beneficiario: nomeBeneficiario(l.beneficiario),
         cnpj: cnpjValido(cnpj) && !mesmaEmpresa(cnpj, cnpjLoja) ? cnpj : null,
       }));
     }
@@ -256,33 +276,70 @@ type Conta = { id: string; description: string; supplier: string | null; due_dat
 export type ResultadoLancar =
   | { ok: true; conta_id: string; acao: string }
   | { ok: false; ambiguo: Conta[] };
+/** Para onde o boleto vai. O mesmo cálculo lança e deixa o cartão dizer antes o que vai acontecer. */
+export type Destino =
+  | { tipo: 'ja' | 'nota' | 'existente'; conta: Conta; acao: string }
+  | { tipo: 'ambiguo'; lista: Conta[] }
+  | { tipo: 'nova' };
+type DestinoConta = Extract<Destino, { conta: Conta }>;
+const COLS_CONTA = 'id, description, supplier, due_date';
 
-/** Guarda o boleto na conta a pagar: mesmo desenho do guardar_boleto do assistente (boleto pelo
- *  WhatsApp) — acha a conta em aberto do mesmo valor e fornecedor e grava o boleto nela; se não
- *  existe, cria. Mais de uma candidata → não chuta. */
-export async function lancarBoleto(admin: Admin, tenantId: string, b: BoletoLido, info: {
-  fornecedor: string | null; remetente: string; assunto: string; contaId?: string | null;
-}): Promise<ResultadoLancar> {
+/** Conta da nota fiscal deste boleto (dono, 2026-10-03): o CNPJ do beneficiário é da mesma empresa
+ *  que emitiu a nota que veio da SEFAZ, e a parcela em aberto tem o mesmo valor e o mesmo vencimento,
+ *  ainda sem boleto. Três fatos de fontes diferentes batendo valem mais que quem mandou o e-mail —
+ *  o caso real foi o boleto da Nova Geração mandado pelo Gmail da própria loja, parado como
+ *  "remetente não cadastrado" enquanto a conta da NF pedia o boleto. Só vale se for UMA conta:
+ *  duas parcelas iguais não se chuta. Guardar o boleto não paga nada. */
+async function contaDaNota(admin: Admin, tenantId: string, b: BoletoLido): Promise<{ conta: Conta; nota: string } | null> {
   const valor = Number(b.valor ?? 0);
-  if (!(valor > 0)) throw new Error('O boleto não traz valor.');
-  const hoje = hojeSP();
-  const campos = { boleto_digitavel: b.digitavel, boleto_barcode: b.barcode, boleto_recebido_em: new Date().toISOString(), boleto_origem: 'email' };
+  if (!b.cnpj || !(valor > 0) || !b.vencimento) return null;
+  const { data: cands } = await admin.from('fin_accounts_payable').select(`${COLS_CONTA}, reference_type, reference_id`)
+    .eq('tenant_id', tenantId).not('status', 'in', '(paid,cancelled)').is('boleto_digitavel', null)
+    .eq('due_date', b.vencimento).gte('amount', valor - 0.01).lte('amount', valor + 0.01).limit(20);
+  if (!cands?.length) return null;
+  const compras = cands.filter((c: any) => c.reference_type === 'purchase' && c.reference_id).map((c: any) => c.reference_id);
+  const filtro = [`payable_ids.ov.{${cands.map((c: any) => c.id).join(',')}}`, compras.length ? `purchase_id.in.(${compras.join(',')})` : null]
+    .filter(Boolean).join(',');
+  const { data: notas, error } = await admin.from('fiscal_inbound_documents').select('numero, modelo, purchase_id, payable_ids')
+    .eq('tenant_id', tenantId).eq('status', 'imported').like('emitente_cnpj', `${b.cnpj.slice(0, 8)}%`).or(filtro);
+  if (error) { log('WARN', 'nota', 'busca da nota falhou', { error: error.message }); return null; }
+  const achadas = cands.flatMap((c: any) => {
+    const n = (notas ?? []).find((x: any) => (x.payable_ids ?? []).includes(c.id) || (c.reference_type === 'purchase' && x.purchase_id === c.reference_id));
+    return n ? [{ conta: { id: c.id, description: c.description, supplier: c.supplier, due_date: c.due_date }, nota: `${n.modelo === 10 ? 'NFS-e' : 'NF'} ${n.numero}` }] : [];
+  });
+  return achadas.length === 1 ? achadas[0] : null;
+}
 
-  const { data: ja } = await admin.from('fin_accounts_payable').select('id')
+/** O que dá para fazer sem perguntar a ninguém, venha o e-mail de quem vier: o boleto já está
+ *  guardado numa conta, ou é da conta de uma nota fiscal (contaDaNota). */
+export async function destinoCerto(admin: Admin, tenantId: string, b: BoletoLido): Promise<DestinoConta | null> {
+  const { data: ja } = await admin.from('fin_accounts_payable').select(COLS_CONTA)
     .eq('tenant_id', tenantId).eq('boleto_digitavel', b.digitavel).neq('status', 'cancelled').limit(1);
-  if (ja?.length) return { ok: true, conta_id: ja[0].id, acao: 'já estava guardado' };
+  if (ja?.length) return { tipo: 'ja', conta: ja[0] as Conta, acao: 'já estava guardado' };
+  const n = await contaDaNota(admin, tenantId, b);
+  return n ? { tipo: 'nota', conta: n.conta, acao: `guardado na conta da ${n.nota}` } : null;
+}
 
-  if (info.contaId) {
-    const { data: esc, error } = await admin.from('fin_accounts_payable').update(campos)
-      .eq('id', info.contaId).eq('tenant_id', tenantId).not('status', 'in', '(paid,cancelled)').is('boleto_digitavel', null)
-      .select('id').maybeSingle();
-    if (error) throw new Error(error.message);
-    if (!esc) throw new Error('Essa conta não está mais em aberto ou já tem boleto.');
-    return { ok: true, conta_id: esc.id, acao: 'guardado na conta escolhida' };
-  }
+/** Grava o boleto na conta e fecha na hora o "Falta o boleto" dela (o cron fecharia só na próxima volta). */
+export async function guardarBoleto(admin: Admin, tenantId: string, contaId: string, b: BoletoLido): Promise<boolean> {
+  const { data, error } = await admin.from('fin_accounts_payable')
+    .update({ boleto_digitavel: b.digitavel, boleto_barcode: b.barcode, boleto_recebido_em: new Date().toISOString(), boleto_origem: 'email' })
+    .eq('id', contaId).eq('tenant_id', tenantId).not('status', 'in', '(paid,cancelled)').is('boleto_digitavel', null)
+    .select('id').maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data) return false;
+  const { error: e2 } = await admin.rpc('fn_pendencia_resolver_ref', { p_tenant: tenantId, p_kind: 'boleto_faltando', p_ref: contaId, p_motivo: 'boleto chegou por e-mail' });
+  if (e2) log('WARN', 'guardar', 'pendência boleto_faltando não fechou', { contaId, error: e2.message });
+  return true;
+}
 
-  const quem = info.fornecedor ?? b.beneficiario;
-  const { data: cands } = await admin.from('fin_accounts_payable').select('id, description, supplier, due_date')
+/** Mesmo desenho do guardar_boleto do assistente (boleto pelo WhatsApp): conta da nota; senão a
+ *  conta em aberto do mesmo valor e fornecedor (pelo nome); mais de uma candidata → não chuta. */
+export async function acharDestino(admin: Admin, tenantId: string, b: BoletoLido, quem: string | null): Promise<Destino> {
+  const certo = await destinoCerto(admin, tenantId, b);
+  if (certo) return certo;
+  const valor = Number(b.valor ?? 0);
+  const { data: cands } = await admin.from('fin_accounts_payable').select(COLS_CONTA)
     .eq('tenant_id', tenantId).not('status', 'in', '(paid,cancelled)').is('boleto_digitavel', null)
     .gte('amount', valor - 0.01).lte('amount', valor + 0.01).order('due_date').limit(10);
   const palavras = (x: unknown) => new Set(String(x ?? '').normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase()
@@ -296,11 +353,32 @@ export async function lancarBoleto(admin: Admin, tenantId: string, b: BoletoLido
   const lista = ((cands ?? []) as Conta[]).filter(compat);
   const mesmoDia = b.vencimento ? lista.filter((c) => c.due_date === b.vencimento) : [];
   const alvo = lista.length === 1 ? lista[0] : mesmoDia.length === 1 ? mesmoDia[0] : null;
-  if (!alvo && lista.length > 1) return { ok: false, ambiguo: lista };
-  if (alvo) {
-    const { error } = await admin.from('fin_accounts_payable').update(campos).eq('id', alvo.id).eq('tenant_id', tenantId).is('boleto_digitavel', null);
-    if (error) throw new Error(error.message);
-    return { ok: true, conta_id: alvo.id, acao: 'guardado na conta que já existia' };
+  if (alvo) return { tipo: 'existente', conta: alvo, acao: 'guardado na conta que já existia' };
+  return lista.length > 1 ? { tipo: 'ambiguo', lista } : { tipo: 'nova' };
+}
+
+/** Guarda o boleto na conta a pagar (acharDestino); se não existe, cria. */
+export async function lancarBoleto(admin: Admin, tenantId: string, b: BoletoLido, info: {
+  fornecedor: string | null; remetente: string; assunto: string; contaId?: string | null;
+}): Promise<ResultadoLancar> {
+  const valor = Number(b.valor ?? 0);
+  if (!(valor > 0)) throw new Error('O boleto não traz valor.');
+  const hoje = hojeSP();
+
+  if (info.contaId) {
+    const ja = await destinoCerto(admin, tenantId, b);
+    if (ja?.tipo === 'ja') return { ok: true, conta_id: ja.conta.id, acao: ja.acao };
+    if (!(await guardarBoleto(admin, tenantId, info.contaId, b))) throw new Error('Essa conta não está mais em aberto ou já tem boleto.');
+    return { ok: true, conta_id: info.contaId, acao: 'guardado na conta escolhida' };
+  }
+
+  const quem = info.fornecedor ?? b.beneficiario;
+  const d = await acharDestino(admin, tenantId, b, quem);
+  if (d.tipo === 'ambiguo') return { ok: false, ambiguo: d.lista };
+  if (d.tipo === 'ja') return { ok: true, conta_id: d.conta.id, acao: d.acao };
+  if (d.tipo !== 'nova') {
+    if (!(await guardarBoleto(admin, tenantId, d.conta.id, b))) throw new Error('Essa conta acabou de mudar (paga ou com outro boleto). Tente de novo.');
+    return { ok: true, conta_id: d.conta.id, acao: d.acao };
   }
   const dia = b.vencimento ?? hoje;
   const { data: nova, error } = await admin.from('fin_accounts_payable').insert({
@@ -308,7 +386,7 @@ export async function lancarBoleto(admin: Admin, tenantId: string, b: BoletoLido
     description: `Boleto ${quem ?? ''}`.trim() + (info.assunto ? ` — ${info.assunto.slice(0, 80)}` : ''),
     supplier: quem, amount: valor, due_date: dia, status: dia < hoje ? 'overdue' : 'pending',
     notes: [`Veio por e-mail de ${info.remetente}`, b.cnpj ? `CNPJ do beneficiário: ${fmtCnpj(b.cnpj)}` : null].filter(Boolean).join(' · '),
-    ...campos,
+    boleto_digitavel: b.digitavel, boleto_barcode: b.barcode, boleto_recebido_em: new Date().toISOString(), boleto_origem: 'email',
   }).select('id').single();
   if (error) throw new Error(error.message);
   return { ok: true, conta_id: nova.id, acao: 'conta a pagar criada (sem categoria DRE: aparece nas pendências para classificar)' };
