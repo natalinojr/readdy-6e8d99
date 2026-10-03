@@ -268,6 +268,10 @@ Quando o usuario pedir "muda X":
 
 Secao viva: registrar aqui padroes, decisoes e pegadinhas reutilizaveis conforme o sistema evolui. Cada entrada com data
 
+### 2026-10-03 — Admin Master › ações na loja (zerar pedidos/estoque, resetar, deletar)
+- **Pegadinha:** comparar coluna enum com literal que não existe no enum (`role IN ('admin','admin-master')`, `user_role` não tem `admin-master`) derruba a chamada inteira com "invalid input value for enum" — mesmo que o ramo nem fosse usado. As 4 funções `fn_admin_*` nunca funcionaram pela tela por isso. Agora: `fn_assert_platform_admin()` (só o dono) ou service_role.
+- **Deletar loja:** `fn_admin_delete_tenant` liga `erpos.deleting_tenant` (só na transação) para a trava das categorias do sistema da DRE deixar apagar, e antes do `DELETE FROM tenants` limpa a loja em **todas as tabelas com FK não-cascade para tenants, lidas do catálogo** (não precisa atualizar lista ao criar tabela nova). Trava nova que impeça DELETE de dado "do sistema" deve respeitar a mesma flag. Migração `20261003120000_admin_master_acoes_loja.sql`; testada em transação desfeita (loja e empresa financeiro).
+
 ### 2026-10-02 — Tarefas › Linha do tempo (aba nova; o Cronograma/Gantt é outra aba, de outra sessão)
 - **O que é:** aba "Linha do tempo" (`display = 'linha'`) em qualquer origem (pasta, Minhas, Compartilhadas, Que atribuí, Todas). No celular fica dentro da aba Agenda (seletor "Agenda | Linha do tempo | Cronograma"), porque a barra de baixo já tem 6 botões. O dono decidiu manter **duas abas**: a Linha do tempo (quem faz o quê e quando) e o **Cronograma** (Gantt com ligações entre tarefas, `claude/tarefas-gantt`).
 - **Arquivos:** conta pura em `src/pages/tarefas/lib/linhaTempo.ts` (período de cada tarefa, grupos, atraso, progresso, payloads de mover/esticar/marcar, `empacotar` do modo compacto) — testes em `src/test/lib/tarefasLinhaTempo.test.ts`; tela em `components/linhaTempo/ViewLinhaTempo.tsx` (+ `Barra.tsx`, `Escala.tsx`) — teste em `src/test/components/tarefasLinhaTempoTela.test.tsx`.
