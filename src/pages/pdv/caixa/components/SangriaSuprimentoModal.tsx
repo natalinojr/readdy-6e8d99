@@ -66,6 +66,11 @@ export default function SangriaSuprimentoModal({
   const [freelaId, setFreelaId] = useState<string>('');
   const [freelaNovo, setFreelaNovo] = useState(false);
   const [telefoneFreela, setTelefoneFreela] = useState('');
+  // Dia trabalhado (obrigatório, dono 2026-10-03): vai no motivo ("· diária de DD/MM/AAAA") e a função do
+  // banco grava a diária nesse dia — a conta continua paga hoje, quando o dinheiro saiu.
+  const [diaFreela, setDiaFreela] = useState('');
+  const hojeSP = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+  const minDiaFreela = new Date(Date.now() - 60 * 86400000).toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
   useEffect(() => {
     if (!user?.tenantId) return;
     // Pelo order-write: a leitura direta falhava na sessão do PDV (lista vazia em Paranaguá, 2026-09-19).
@@ -124,7 +129,8 @@ export default function SangriaSuprimentoModal({
     if (motivoRetirada === 'Fornecedor') return nomeFornecedor ? `Fornecedor: ${nomeFornecedor}` : '';
     if (motivoRetirada === 'Freelancer') {
       const nome = freelaNovo || !freelaId ? nomeFreelancer : (freelas.find((f) => f.id === freelaId)?.name ?? '');
-      return nome ? `Freelancer: ${nome}` : '';
+      if (!nome) return '';
+      return diaFreela ? `Freelancer: ${nome} · diária de ${diaFreela.split('-').reverse().join('/')}` : `Freelancer: ${nome}`;
     }
     if (motivoRetirada === 'Outro') return motivoOutro;
     return motivoRetirada;
@@ -137,6 +143,8 @@ export default function SangriaSuprimentoModal({
     if (!mf.trim()) { setErro('Informe o motivo da movimentação.'); return; }
     if (motivoRetirada === 'Fornecedor' && !nomeFornecedor.trim()) { setErro('Informe o nome do fornecedor.'); return; }
     if (motivoRetirada === 'Freelancer' && !(freelaId && !freelaNovo) && !nomeFreelancer.trim()) { setErro('Escolha o freelancer ou cadastre o nome.'); return; }
+    if (motivoRetirada === 'Freelancer' && !diaFreela) { setErro('Informe o dia que o freelancer trabalhou.'); return; }
+    if (motivoRetirada === 'Freelancer' && (diaFreela > hojeSP || diaFreela < minDiaFreela)) { setErro('O dia trabalhado não pode ser no futuro nem de mais de 60 dias atrás.'); return; }
     if (tipo === 'suprimento' && motivoAdicao === 'Outros' && !motivoOutro.trim()) { setErro('Descreva o motivo da movimentação.'); return; }
 
     setSalvando(true);
@@ -194,6 +202,7 @@ export default function SangriaSuprimentoModal({
     setMotivoAdicao('');
     setNomeFornecedor('');
     setNomeFreelancer('');
+    setDiaFreela('');
     setMotivoOutro('');
     setErro('');
   };
@@ -429,7 +438,13 @@ export default function SangriaSuprimentoModal({
                         )}
                       </>
                     )}
-                    <p className="text-[11px] text-zinc-500">Registra a diária de hoje paga em dinheiro (aparece em Financeiro › Freelancers).</p>
+                    <label className="block">
+                      <span className="block text-xs font-semibold text-zinc-600 mb-1">Dia que trabalhou <span className="text-red-400">*</span></span>
+                      <input type="date" value={diaFreela} min={minDiaFreela} max={hojeSP} required
+                        onChange={(e) => { setDiaFreela(e.target.value); setErro(''); }}
+                        className={`w-full text-sm border rounded-xl px-3 py-2.5 text-zinc-800 bg-white focus:outline-none focus:border-amber-400 ${diaFreela ? 'border-zinc-200' : 'border-amber-300'}`} />
+                    </label>
+                    <p className="text-[11px] text-zinc-500">Registra a diária desse dia paga em dinheiro hoje (aparece em Financeiro › RH / Folha).</p>
                   </div>
                 )}
                 {motivoRetirada === 'Outro' && (
