@@ -392,7 +392,12 @@ mínimo caía nela). E estoque negativo (Arroz −2.046 g) aparecia como "ESGOTA
   digitado sobrevive a fechar a folha (toque no fundo não fecha com número digitado). Insumo tirado da contagem sai do
   plano (`fn_confirm_inventory` pula `count_inventory = false`). Configurar: `estoque_pode_configurar` = admin, ou chave `estoque_inventario` da
   matriz `permissions` (sem linha: só gerente).
-- **Vai faltar**: com "Pôr na lista" (só na sessão) e "Mínimo de X" (uso de `dias_previsao` dias) para quem não tem mínimo.
+- **Vai faltar**: com "Pôr na lista de compras" e "Mínimo de X" (uso de `dias_previsao` dias) para quem não tem mínimo.
+  "Pôr na lista" é gravado em `estoque_lista_extras` (RPC `fn_estoque_lista_extra`, qualquer pessoa da loja; migração
+  `20261003230000`): `fn_estoque_situacao.na_lista` vale até chegar mercadoria depois de posto, e `vai_faltar` não conta
+  quem já está na lista. Ao pôr, a tela rola até a linha em "Comprar" e acende; "na lista ✕" tira.
+- **Ajuda "?"** (`inicio/Ajuda.tsx`): balão por portal (não é cortado pelos cartões), abre no mouse e no toque; nos três
+  números, títulos das seções, colunas da tabela de compras, "Já pedido" e "Conferir".
 - **Aviso no dia da contagem** (dono, 2026-10-03): `assistente-cron` › `contagensDeHoje` + bloco `contagem` (PRO_DEFAULTS
   `contagem.time` 08:00, uma vez no dia por `state.contagem_date`). Plano cujo dia é HOJE e com itens por contar →
   aviso `kind='contagem_estoque'` (conversa Avisos + push) para quem tem `estoque_movimentar` OU `estoque_inventario`
