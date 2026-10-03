@@ -1,5 +1,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
 import { authenticate, isPlatformOwner, roleRank, userMemberships } from '../_shared/tenant-auth.ts';
+import { ajusteDaPessoaNaLoja } from '../_shared/ajuste-pessoa.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -26,7 +27,11 @@ function errResp(message: string) {
  * dele (Configurações › Permissões). Sem linha na matriz = desmarcado, igual ao padrão do
  * Gerente no front (2026-10-03: antes o gerente passava sempre, mesmo com a tela escondida).
  */
-async function gerenteGerenciaUsuarios(db: ReturnType<typeof createClient>, tenantId: string, role: string): Promise<boolean> {
+async function gerenteGerenciaUsuarios(db: ReturnType<typeof createClient>, tenantId: string, role: string, userId: string): Promise<boolean> {
+  // O dono pode dar (ou tirar) "Cadastra pessoas da equipe" só para este gerente, em Usuários ›
+  // Acesso (2026-10-03): o ajuste da pessoa vale por cima da matriz do cargo — igual fn_gerencia_usuarios.
+  const daPessoa = await ajusteDaPessoaNaLoja(db, tenantId, userId, ['usuarios_gerenciar']);
+  if (daPessoa.has('usuarios_gerenciar')) return daPessoa.get('usuarios_gerenciar') === true;
   const { data } = await db.from('permissions').select('allowed')
     .eq('tenant_id', tenantId).eq('role', role).eq('permission_key', 'usuarios_gerenciar')
     .limit(1).maybeSingle();
@@ -88,7 +93,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         const callerRole = callerTenants.get(String(tenant_id));
         const callerRank = callerIsOwner ? 3 : roleRank(callerRole);
         if (callerRank < 2) return errResp('Apenas administrador ou gerente desta loja pode criar usuários');
-        if (callerRank === 2 && !(await gerenteGerenciaUsuarios(db, String(tenant_id), callerRole!))) {
+        if (callerRank === 2 && !(await gerenteGerenciaUsuarios(db, String(tenant_id), callerRole!, callerId))) {
           return errResp('Seu perfil não tem "Gerenciar usuários" nesta loja');
         }
         const newRole = ({ admin: 'admin', gerente: 'manager', financeiro: 'financeiro' } as Record<string, string>)[String(perfil)] ?? 'staff';
@@ -122,7 +127,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
               const callerRole = callerTenants.get(tid);
               const callerRank = roleRank(callerRole);
               const allowed = callerRank >= 3 || (callerRank === 2 && roleRank(targetRole) < 2
-                && await gerenteGerenciaUsuarios(db, tid, callerRole!));
+                && await gerenteGerenciaUsuarios(db, tid, callerRole!, callerId));
               if (!allowed) return errResp('Sem permissão para alterar este usuário');
             }
           }

@@ -3,6 +3,7 @@
 // Usado pela Edge pedidos-pagamento e pela receber-mercadoria ("Paguei do meu bolso" no recebimento).
 // Regra do dono: o pedido só vira conta a pagar depois que ele aprova (fn_pedido_pagamento_aprovar).
 // deno-lint-ignore-file no-explicit-any
+import { ajusteDaPessoaNaLoja } from './ajuste-pessoa.ts';
 
 // Benefício (2026-09-30): boleto da VR/VA dividido por funcionário → RH › Benefícios ao aprovar.
 export type TipoPedido = 'reembolso' | 'freelancer' | 'fornecedor' | 'compra_online' | 'beneficio';
@@ -26,8 +27,9 @@ function padrao(role: string, key: PermPedido): boolean {
   return role === 'manager';
 }
 
-/** Permissões de pedido de pagamento do papel na loja. Admin tem todas (o dono aprova). */
-export async function permissoesPedido(admin: any, tenantId: string, role: string): Promise<Record<PermPedido, boolean>> {
+/** Permissões de pedido de pagamento do papel na loja (+ o ajuste da pessoa, Usuários › Acesso,
+ *  2026-10-03, quando `userId` vem). Admin tem todas (o dono aprova). */
+export async function permissoesPedido(admin: any, tenantId: string, role: string, userId?: string | null): Promise<Record<PermPedido, boolean>> {
   const keys: PermPedido[] = ['pag_reembolso', 'pag_freelancer', 'pag_fornecedor', 'pag_compra_online', 'pag_beneficio', 'pag_aprovar'];
   const papel = PT_PARA_EN[role] ?? role;
   const out = Object.fromEntries(keys.map((k) => [k, padrao(papel, k)])) as Record<PermPedido, boolean>;
@@ -36,6 +38,7 @@ export async function permissoesPedido(admin: any, tenantId: string, role: strin
     .eq('tenant_id', tenantId).eq('role', papel).in('permission_key', keys);
   if (error) throw new Error(`Falha ao ler permissões: ${error.message}`);
   for (const r of data ?? []) out[r.permission_key as PermPedido] = r.allowed === true;
+  for (const [k, v] of await ajusteDaPessoaNaLoja(admin, tenantId, userId, keys)) out[k as PermPedido] = v;
   return out;
 }
 

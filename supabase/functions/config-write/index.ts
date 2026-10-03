@@ -1,12 +1,16 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.0'
 import { authenticate, isManagerRole, roleRank, tenantRole } from '../_shared/tenant-auth.ts'
+import { ajusteDaPessoaNaLoja } from '../_shared/ajuste-pessoa.ts'
 
 // Ações só de leitura: qualquer membro da loja pode chamar.
 const CONFIG_READ_ACTIONS = new Set(['list_ingredient_categories', 'get_kitchen_stations', 'get_permissions'])
 
-/** Papel não-gerente com 'configuracoes_editar' marcado na matriz da loja. */
-async function podeConfigurar(admin: ReturnType<typeof createClient>, tenantId: string, role: string) {
+/** Papel não-gerente com 'configuracoes_editar' marcado na matriz da loja — ou dado à própria pessoa
+ *  (Usuários › Acesso, 2026-10-03: o ajuste da pessoa vale por cima do cargo). */
+async function podeConfigurar(admin: ReturnType<typeof createClient>, tenantId: string, role: string, userId?: string | null) {
   if (!role || !tenantId) return false
+  const daPessoa = await ajusteDaPessoaNaLoja(admin, tenantId, userId, ['configuracoes_editar'])
+  if (daPessoa.has('configuracoes_editar')) return daPessoa.get('configuracoes_editar') === true
   const { data } = await admin.from('permissions').select('allowed')
     .eq('tenant_id', tenantId).eq('role', role).eq('permission_key', 'configuracoes_editar')
     .limit(1).maybeSingle()
@@ -72,7 +76,7 @@ Deno.serve(async (req) => {
         })
       }
       if (!CONFIG_READ_ACTIONS.has(action) && !isManagerRole(role)) {
-        const liberado = await podeConfigurar(supabaseAdmin, String(tId), role)
+        const liberado = await podeConfigurar(supabaseAdmin, String(tId), role, caller.userId)
         if (!liberado) {
           return new Response(JSON.stringify({ success: false, error: 'Seu perfil não pode alterar estas configurações' }), {
             headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 403,

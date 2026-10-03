@@ -812,7 +812,7 @@ Deno.serve(async (req) => {
     if (!tenantId) return erro('tenant_id obrigatório');
     const role = await tenantRole(admin, caller.userId, tenantId);
     if (!role) return erro('Sem acesso a esta loja', 403);
-    const perms = await permissoesPedido(admin, tenantId, role);
+    const perms = await permissoesPedido(admin, tenantId, role, caller.userId);
     const ctx: Ctx = { admin, tenantId, userId: caller.userId, email: caller.email, role, perms, token: (req.headers.get('Authorization') ?? '').replace(/^Bearer\s+/i, '') };
     const podePedir = perms.pag_reembolso || perms.pag_freelancer || perms.pag_fornecedor || perms.pag_compra_online || perms.pag_beneficio;
     const aprovador = perms.pag_aprovar;

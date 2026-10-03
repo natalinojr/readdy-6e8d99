@@ -29,6 +29,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { authenticate, bearerToken, isFinanceiroRole, tenantRole } from '../_shared/tenant-auth.ts';
 import { PT_PARA_EN, nomeDoUsuario, pendenciaDoPedido, permissoesPedido, salvarComprovante } from '../_shared/pedidos-pagamento.ts';
+import { ajusteDaPessoaNaLoja } from '../_shared/ajuste-pessoa.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -52,14 +53,17 @@ const hojeBR = () => new Date(Date.now() - 3 * 3600_000).toISOString().slice(0, 
 const diasAtras = (d: number) => new Date(Date.now() - d * 86400_000).toISOString().slice(0, 10);
 const normKey = (s: unknown) => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
 
-async function podeReceber(admin: Admin, tenantId: string, role: string): Promise<boolean> {
+async function podeReceber(admin: Admin, tenantId: string, role: string, userId: string): Promise<boolean> {
   if (isFinanceiroRole(role)) return true;
+  // Ajuste da pessoa (Usuários › Acesso, 2026-10-03) vale por cima do cargo, chave a chave.
+  const daPessoa = await ajusteDaPessoaNaLoja(admin, tenantId, userId, ['estoque_receber', 'estoque_movimentar']);
   // permissions.role é enum (só EN): 'caixa' no filtro derrubava a consulta e o Caixa nunca recebia
-  const { data, error } = await admin.from('permissions').select('allowed')
+  const { data, error } = await admin.from('permissions').select('permission_key, allowed')
     // estoque_receber (só esta tela, liberável para o Caixa) ou estoque_movimentar (legado)
     .eq('tenant_id', tenantId).eq('role', PT_PARA_EN[role] ?? role).in('permission_key', ['estoque_receber', 'estoque_movimentar']);
   if (error) throw new Error(`Falha ao ler permissões: ${error.message}`);
-  return (data ?? []).some((r: any) => r.allowed === true);
+  const doCargo = new Map<string, boolean>((data ?? []).map((r: any) => [String(r.permission_key), r.allowed === true]));
+  return ['estoque_receber', 'estoque_movimentar'].some((k) => (daPessoa.has(k) ? daPessoa.get(k) : doCargo.get(k)) === true);
 }
 
 // ── Chamadas às Edges que já têm a regra ────────────────────────────────────
@@ -468,7 +472,7 @@ async function lancar(ctx: Ctx, body: Record<string, any>) {
     comprovante: body.reembolso?.comprovante ?? null,
   } : null;
   if (reemb) {
-    if (!(await permissoesPedido(admin, tenantId, ctx.role)).pag_reembolso) {
+    if (!(await permissoesPedido(admin, tenantId, ctx.role, ctx.userId)).pag_reembolso) {
       return erro('Seu perfil não pode pedir reembolso. Peça ao administrador para liberar "Pedir reembolso" em Configurações › Permissões.', 403);
     }
     if (!reemb.nome) return erro('Informe quem pagou (quem recebe o reembolso)');
@@ -713,7 +717,7 @@ Deno.serve(async (req) => {
     if (!role) return erro('Sem acesso a esta loja', 403);
     // Quem só pode pedir reembolso lança a mercadoria que pagou do bolso (cupom/sem nota) e nada mais
     const soReembolso = ['insumos', 'fornecedores'].includes(action) || (action === 'lancar' && body.pagamento === 'reembolso');
-    if (!(await podeReceber(admin, tenantId, role)) && !(soReembolso && (await permissoesPedido(admin, tenantId, role)).pag_reembolso)) {
+    if (!(await podeReceber(admin, tenantId, role, caller.userId)) && !(soReembolso && (await permissoesPedido(admin, tenantId, role, caller.userId)).pag_reembolso)) {
       return erro('Seu perfil não pode receber mercadoria. Peça ao administrador para liberar "Receber mercadoria" em Configurações › Permissões.', 403);
     }
     const ctx: Ctx = { admin, url, tenantId, userToken: bearerToken(req), email: caller.email, financeiro: isFinanceiroRole(role), userId: caller.userId, role };
