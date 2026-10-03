@@ -174,7 +174,7 @@ export default function HojePage() {
         </p>
         {!carregando && (
           <p className="text-sm text-zinc-500 mt-1">
-            {agora.length > 0 ? 'Cada cartão resolve aqui mesmo. O resto fica guardado e volta quando apertar.'
+            {agora.length > 0 ? 'Cada cartão resolve aqui mesmo. O que vence mais para frente fica em “Pode esperar” e sobe para cá 3 dias antes.'
               : tudoEmDia ? (emDia.length > 0 ? 'Nada precisa de você agora. A porção de hoje do acumulado já foi.' : 'Nada precisa de você agora.')
               : erro ? 'Não consegui conferir tudo — veja o aviso abaixo.'
               : tarefasAbertas.length > 0 ? `Falta${tarefasAbertas.length === 1 ? '' : 'm'} ${tarefasAbertas.length} tarefa${tarefasAbertas.length === 1 ? '' : 's'} de hoje.`
@@ -258,7 +258,8 @@ export default function HojePage() {
           {espera.length > 0 && (
             <section>
               <button onClick={() => setVerEspera((v) => !v)} className="w-full text-left cursor-pointer">
-                <Titulo texto="Pode esperar" n={espera.length} tom="zinc" explica="volta para “Agora” quando apertar" acao={verEspera ? 'Esconder' : 'Ver'} />
+                {/* 3 dias = DIAS_ANTES de supabase/functions/_shared/hoje-organizar.ts */}
+                <Titulo texto="Pode esperar" n={espera.length} tom="zinc" explica="ainda não vence; sobe para “Agora” 3 dias antes" acao={verEspera ? 'Esconder' : 'Ver'} />
               </button>
               {verEspera && <div className="space-y-2.5">{espera.map((i) => cartao(i, true))}</div>}
             </section>
