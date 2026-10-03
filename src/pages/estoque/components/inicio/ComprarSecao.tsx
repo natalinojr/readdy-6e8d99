@@ -199,6 +199,7 @@ export default function ComprarSecao({ situacao, extras, onReload, onIrContar }:
                   {jaPedidos.length > 0 && (
                     <p className="text-[11px] font-semibold text-emerald-700 mt-0.5 mb-1 leading-snug">
                       <i className="ri-check-double-line" /> Já pedido: {jaPedidos.map((i) => i.nome).join(', ')}. Abaixo, o que ainda falta pedir.
+                      {(() => { const p = ultimoPedido(g); return p ? <button onClick={() => desfazer(p.id)} className="ml-1.5 font-semibold text-zinc-400 underline cursor-pointer">desfazer</button> : null; })()}
                     </p>
                   )}
                   <div className="divide-y divide-zinc-100">
