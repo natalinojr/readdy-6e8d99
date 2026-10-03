@@ -353,6 +353,11 @@ mínimo caía nela). E estoque negativo (Arroz −2.046 g) aparecia como "ESGOTA
   plano (`fn_confirm_inventory` pula `count_inventory = false`). Configurar: `estoque_pode_configurar` = admin, ou chave `estoque_inventario` da
   matriz `permissions` (sem linha: só gerente).
 - **Vai faltar**: com "Pôr na lista" (só na sessão) e "Mínimo de X" (uso de `dias_previsao` dias) para quem não tem mínimo.
+- **Aviso no dia da contagem** (dono, 2026-10-03): `assistente-cron` › `contagensDeHoje` + bloco `contagem` (PRO_DEFAULTS
+  `contagem.time` 08:00, uma vez no dia por `state.contagem_date`). Plano cujo dia é HOJE e com itens por contar →
+  aviso `kind='contagem_estoque'` (conversa Avisos + push) para quem tem `estoque_movimentar` OU `estoque_inventario`
+  na loja (`avisarEquipe` aceita lista de permissões) e mensagem para o dono pelo assistente. A conta de "qual plano é
+  hoje" mora em **`supabase/functions/_shared/estoque-planos.ts`** (a tela reexporta por `src/lib/estoqueRegras.ts`).
 - **Pegadinhas:** a contagem cheia da aba Inventário manda TODOS os insumos (os não tocados com o teórico), então ela
   marca todos como contados — é o comportamento certo para a geral, mas não use para "contar alguns". Preço por grama
   sai por kg (`fmtPrecoUnit`). `useEstoqueSituacao` recarrega no BroadcastChannel `erpos-estoque-sync`.
