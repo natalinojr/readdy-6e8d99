@@ -272,6 +272,30 @@ Quando o usuario pedir "muda X":
 
 Secao viva: registrar aqui padroes, decisoes e pegadinhas reutilizaveis conforme o sistema evolui. Cada entrada com data
 
+### 2026-10-03 — Avisos antes de virar problema (vendas abaixo do ritmo, caixa da semana, insumo antes do pico)
+- **O que é:** item 3 da visão "sistema ativo e proativo". Três pendências novas, criadas pelo `assistente-cron` (`previsaoRun`). Pendência com ação cai no "Agora" da Hoje, no número do topo e no Bom dia sem mais nada. Regras puras em `supabase/functions/_shared/previsao.ts`, testadas em `src/test/lib/previsao.test.ts`. Prévia aprovável: `docs/prototipos/avisos-antes-proposta.html` (não commitado).
+- **`vendas_abaixo_ritmo`** (janelas 15h e 19h; quem vê: admin e gerente = quem vê o Dashboard, `KINDS_GESTAO` em `_shared/pendencia-visivel.ts`):
+  - régua do Dashboard (`FaturamentoHero`): % da meta do dia (`dashboard_metas`) × `ritmo_esperado` de `fn_get_dashboard_painel` (precisa `ritmo_dias >= 2` e ritmo >= 3%). Abre abaixo de `pts_abaixo` (15 = o vermelho); fecha em "no ritmo" (até 5 pts abaixo) ou meta batida; às 23h30 fecha "fim do dia";
+  - faturamento = canais do painel (PDV pago) + iFood (`ifoodResumo` com busca leve + `ifood_orders` ao vivo fora da API) — a soma do Dashboard;
+  - loja sem sessão e sem venda no dia não avisa (fechada);
+  - **não duplica a "anomalia de venda":** o dono recebe pelo mesmo `deliver('anomaly:<loja>')` só se `state.anomaly[loja] !== hoje`, e o aviso marca `state.anomaly` (a anomalia não repete no dia). Gestão (não dono) recebe push;
+  - sem meta para o dia = sem aviso (Vila Leste hoje).
+- **`caixa_nao_cobre`** (de 30 em 30 min; dinheiro: admin, gerente, financeiro):
+  - regra do Financeiro › Painel: `fin_bank_accounts.is_active = true` (`synced_balance ?? current_balance`) × contas `pending/overdue/partial` vencidas + até hoje+7, pelo que falta pagar. Loja sem conta de banco = não avisa;
+  - `payload.vencimento` = dia em que o saldo acaba pagando na ordem do vencimento (a Hoje ordena por ele; o cartão troca "vence" por "falta"); `payload.valor` = quanto falta;
+  - **uma linha viva por loja:** enquanto não cobre, a aberta (de qualquer dia) só ganha os números novos. "Ciente" (resolvida por pessoa) cala até o dia seguinte; fechada sozinha e voltou a faltar no mesmo dia → reabre. Push 1×/dia por loja (`state.prev_caixa_push`).
+- **`insumo_antes_do_pico`** (janelas 10h e 16h; operacional, em `KINDS_OPERACIONAIS`; push só gerente e supervisão):
+  - uso/dia = `consumo_dia` de `fn_estoque_situacao` (regra única do Estoque). Pico = hora com mais pedidos no dia da semana (`fn_get_dashboard_pico`, dia de operação a partir das 6h; empate = mais tarde);
+  - precisa = uso/dia × pedidos esperados de agora até o fim da hora do pico ÷ pedidos de um dia médio (sábado cheio pede mais);
+  - só insumo com saldo > 0 (zerado/negativo é "esgotado/conferir", já está no `estoque_critico`);
+  - fecha sozinho quando o estoque passa a chegar ao pico ou o pico passa. "Já comprei / produzi" (pessoa) só reabre na janela seguinte com insumo NOVO (`payload.ids`).
+- **Uma linha por loja e dia** (`ref` = YYYY-MM-DD). Fecham sozinhas com `resolvida_por` nulo ("fechou sozinha" na Hoje). Conferidas a cada `recheck_min` enquanto abertas. Celular: `avisarNoCelular` usa a MESMA regra da tela (`visivelNaHoje`), só quando o aviso passa a valer, uma vez por loja por janela, entre `push_de` e `push_ate` (08:00–21:30); fora disso a pendência nasce quieta e o Bom dia leva.
+- **Liga/desliga:** `asst_settings.proactive.previsao = { enabled, vendas: ['15:00','19:00'], insumos: ['10:00','16:00'], pts_abaixo, recheck_min, push_de, push_ate }`. Publicado DESLIGADO (assistente-cron v85) até o dono aprovar a prévia.
+- **Testar sem esperar a janela:** `{ preview: 'previsao', tenant_id? }` calcula sem gravar; `{ run: 'previsao', tenant_id }` grava sem avisar ninguém (devolve quem seria avisado). Chamar com a chave interna pelo próprio banco: `net.http_post(..., 'x-internal-key', (select decrypted_secret from vault.decrypted_secrets where name = 'assistente_internal_key'))` e ler `net._http_response`.
+- **Cartão da Hoje** (`CartaoHoje.tsx`, só acréscimos): vendas → "Ver as vendas" (/dashboard) + "Ciente"; caixa → "Ver o que vence" (/financeiro?tab=painel) + "Ciente — me lembre amanhã"; insumo → "Ver o que comprar" (/estoque) + "Já comprei / produzi". Os três estão no `SEM_DESCARTE`. `vendas_abaixo_ritmo` e `insumo_antes_do_pico` estão no `HOJE_MESMO` de `hoje-organizar.ts` (ordenam como "hoje"). Vendas e insumo ficam fora do "O que falta" do Painel do Financeiro (`FORA_DO_PAINEL`).
+- **Testado 2026-10-03:** prévia real na função publicada (Paranaguá: caixa falta R$ 1.597,02 a partir de 05/10; vendas sem régua às 10h50; nenhum insumo); Testes PDV logado como `qa.gerente` no celular (3 cartões no Agora, "Ciente" e "Já comprei" resolvem, "Ver o que vence" abre o Painel); `run: 'previsao'` na Testes PDV: atualiza no lugar, fecha sozinho quando o saldo cobre e reabre quando volta a faltar. **Sem teste de escrita:** vendas e insumo (a Testes PDV não tem histórico de vendas nem uso) — cobertos pelos testes da regra e pela prévia.
+- **Pegadinha (deploy):** a v84 da fase 3 da Hoje estava no ar sem estar no main; publiquei a v85 juntando em 3 vias (base origin/main × meu × `functions download` do ar) num diretório à parte, sem levar o código da outra sessão para o main.
+
 ### 2026-10-03 — Hoje fase 2: "o sistema chama você" (um número só, bom dia, aviso de aprovação)
 - **Um número só.**
   - As regras da Hoje moram em `supabase/functions/_shared/hoje-organizar.ts`: `organizarHoje`, `visivelNaHoje`, `agoraDaPessoa`, `pendHojeDaLinha`, `tituloCurto` e `COLUNAS_PEND_HOJE`. O front reexporta em `src/pages/hoje/organizar.ts`, como em `lib/fidelidade.ts`.
