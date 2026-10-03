@@ -104,6 +104,7 @@ type TenantInfo = {
   logo_url?: string | null;
   cover_url?: string | null;
   brand_color?: string | null;
+  cover_position?: string | null;
 };
 
 type Neighborhood = {
@@ -533,15 +534,15 @@ async function fetchDeliveryConfig(
       // Junto com a logo: capa e cor do cardápio online (Configurações › Loja)
       const logoPromise = supabase
         .from('tenants')
-        .select('logo_url, cover_url, brand_color')
+        .select('logo_url, cover_url, brand_color, cover_position')
         .eq('id', data.tenant.id)
         .maybeSingle()
         .then(function (r) { return r.data || null; });
       const timeoutPromise = new Promise<null>(function (resolve) {
         setTimeout(function () { resolve(null); }, 2000);
       });
-      const marca = await Promise.race([logoPromise, timeoutPromise]) as { logo_url?: string | null; cover_url?: string | null; brand_color?: string | null } | null;
-      tenantInfo = { ...data.tenant, logo_url: marca?.logo_url || null, cover_url: marca?.cover_url || null, brand_color: marca?.brand_color || null };
+      const marca = await Promise.race([logoPromise, timeoutPromise]) as { logo_url?: string | null; cover_url?: string | null; brand_color?: string | null; cover_position?: string | null } | null;
+      tenantInfo = { ...data.tenant, logo_url: marca?.logo_url || null, cover_url: marca?.cover_url || null, brand_color: marca?.brand_color || null, cover_position: marca?.cover_position || null };
     } catch (_e) { /* segue sem logo */ }
 
     setters.setTenant(tenantInfo);

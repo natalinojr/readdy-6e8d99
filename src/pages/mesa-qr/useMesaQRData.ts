@@ -315,6 +315,7 @@ export function useMesaQRData() {
   // Capa e cor do cardápio online (Configurações › Loja)
   const [capaUrl, setCapaUrl] = useState<string | null>(null);
   const [corLoja, setCorLoja] = useState<string | null>(null);
+  const [capaPosicao, setCapaPosicao] = useState<string | null>(null);
   const [participant, setParticipant] = useState<Participant | null>(null);
   const [errorMsg, setErrorMsg] = useState('');
 
@@ -500,15 +501,16 @@ export function useMesaQRData() {
 
         // Logo: secundário — com timeout, porque o supabase-js pode travar no lock de sessão
         Promise.race([
-          supabase.from('tenants').select('logo_url, cover_url, brand_color').eq('id', currentTenantId).maybeSingle()
+          supabase.from('tenants').select('logo_url, cover_url, brand_color, cover_position').eq('id', currentTenantId).maybeSingle()
             .then(function (r) { return r.data || null; }),
           new Promise<null>(function (resolve) { setTimeout(function () { resolve(null); }, 2500); }),
         ]).then(function (m) {
-          const marca = m as { logo_url?: string | null; cover_url?: string | null; brand_color?: string | null } | null;
+          const marca = m as { logo_url?: string | null; cover_url?: string | null; brand_color?: string | null; cover_position?: string | null } | null;
           if (cancelled || !marca) return;
           if (marca.logo_url) setLogoUrl(marca.logo_url);
           if (marca.cover_url) setCapaUrl(marca.cover_url);
           if (marca.brand_color) setCorLoja(marca.brand_color);
+          if (marca.cover_position) setCapaPosicao(marca.cover_position);
         }).catch(function () { /* segue sem logo */ });
 
         if (!isFila && currentSessionToken && !urlSessionToken) {
@@ -919,6 +921,7 @@ export function useMesaQRData() {
     logoUrl: logoUrl,
     capaUrl: capaUrl,
     corLoja: corLoja,
+    capaPosicao: capaPosicao,
     nomeSalvo: lerNomeSalvo(),
     garantirParticipante: garantirParticipante,
     categories: categories,

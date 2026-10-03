@@ -16,6 +16,8 @@ interface Props {
   logoUrl?: string | null;
   /** Foto de capa da loja. Sem capa, a faixa usa a cor da loja. */
   capaUrl?: string | null;
+  /** Parte da capa que aparece ("X% Y%", Configurações › Loja). Vazio = centro. */
+  capaPosicao?: string | null;
   situacao?: { tipo: LojaTopoSituacao; texto: string } | null;
   /** Texto curto ao lado da situação (ex.: cidade). */
   subtitulo?: string | null;
@@ -53,7 +55,12 @@ export default function LojaTopo(props: Props) {
         className={'relative ' + (props.capaUrl ? 'h-36 bg-zinc-800' : 'h-24 bg-[var(--cor-loja)]')}
       >
         {props.capaUrl ? (
-          <img src={props.capaUrl} alt="" className="absolute inset-0 w-full h-full object-cover" />
+          <img
+            src={props.capaUrl}
+            alt=""
+            className="absolute inset-0 w-full h-full object-cover"
+            style={props.capaPosicao ? { objectPosition: props.capaPosicao } : undefined}
+          />
         ) : null}
         {props.acoes ? (
           <div className="absolute top-3 right-3 flex items-center gap-2">{props.acoes}</div>

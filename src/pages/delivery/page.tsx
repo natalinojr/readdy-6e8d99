@@ -541,6 +541,7 @@ export default function DeliveryPage() {
               nome={tenant?.name || 'Delivery'}
               logoUrl={lojaLogo}
               capaUrl={capaLoja}
+              capaPosicao={data.tenant?.cover_position || null}
               situacao={situacao}
               subtitulo={city || null}
               metas={metasLoja}
@@ -651,6 +652,7 @@ export default function DeliveryPage() {
               nome={tenant?.name || 'Delivery'}
               logoUrl={lojaLogo}
               capaUrl={capaLoja}
+              capaPosicao={data.tenant?.cover_position || null}
               situacao={situacao}
               subtitulo={customerName ? 'Olá, ' + (customerName || '').split(' ')[0] : (city || null)}
               metas={metasLoja}
