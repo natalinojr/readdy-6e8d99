@@ -4,6 +4,7 @@ import SalesChart from './components/SalesChart';
 import MesasOverview from './components/MesasOverview';
 import UltimosPedidos from './components/UltimosPedidos';
 import CategoriasChart from './components/CategoriasChart';
+import MaisVendidos from './components/MaisVendidos';
 import HorariosPico from './components/HorariosPico';
 import ResumoFinanceiro from './components/ResumoFinanceiro';
 import DashboardModoToggle from './components/DashboardModoToggle';
@@ -28,6 +29,7 @@ import { useVendasHoraComparativo } from '@/hooks/useVendasHoraComparativo';
 import { todayBrasilia } from '@/lib/dateUtils';
 import { diasComparacao, montarVendasHora } from '@/lib/vendasHoraComparativo';
 import { useComparacoesLigadas } from '@/components/feature/ComparacaoVendasHora';
+import { supabase, invokeWithAuth } from '@/lib/supabase';
 
 const fmt = (v: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
@@ -125,13 +127,34 @@ export default function Dashboard() {
     return Math.round(tempos.reduce((a, b) => a + b, 0) / tempos.length);
   })();
 
+  // iFood ao vivo: a API de Vendas (fin_ifood_sales) só é atualizada quando alguém pede. Ao entrar no
+  // Dashboard (e no Atualizar / a cada 15 min) busca os últimos 2 dias na API — a mesma busca leve da aba
+  // Relatórios › iFood — e relê os totais. Loja sem iFood configurado não chama a API.
+  const [ifoodSync, setIfoodSync] = useState(0);
+  const temIfoodRef = useRef<{ tenantId: string; tem: boolean } | null>(null);
+  useEffect(() => {
+    const tenantId = user?.tenantId;
+    if (!tenantId) return;
+    let vivo = true;
+    (async () => {
+      if (temIfoodRef.current?.tenantId !== tenantId) {
+        const { data } = await supabase.from('fin_ifood_merchants').select('merchant_id').eq('tenant_id', tenantId).limit(1);
+        temIfoodRef.current = { tenantId, tem: (data ?? []).length > 0 };
+      }
+      if (!temIfoodRef.current.tem || !vivo) return;
+      await invokeWithAuth('ifood-financial', { body: { action: 'sync_sales', tenant_id: tenantId, days: 2 } }).catch(() => null);
+      if (vivo) setIfoodSync((k) => k + 1);
+    })();
+    return () => { vivo = false; };
+  }, [user?.tenantId, refreshLento]);
+
   // iFood (conciliação + API do iFood, mesma conta da Visão Geral dos Relatórios): não passa pelo PDV,
   // então soma aos totais. Hoje/ontem no modo calendário; no modo sessão, os pedidos feitos desde a abertura.
   const sessaoIntervalo = useMemo(() => (modo === 'sessao' && sessao
     ? { from: sessao.dataRef.toISOString(), to: new Date().toISOString() }
-    : null), [modo, sessao?.dataRef.getTime(), refreshKey]); // eslint-disable-line react-hooks/exhaustive-deps
-  const { data: ifDia } = useIfoodVendas('Hoje', null, refreshKey);
-  const { data: ifSessao } = useIfoodVendas('', sessaoIntervalo, refreshKey);
+    : null), [modo, sessao?.dataRef.getTime(), refreshKey, ifoodSync]); // eslint-disable-line react-hooks/exhaustive-deps
+  const { data: ifDia } = useIfoodVendas('Hoje', null, refreshKey + ifoodSync);
+  const { data: ifSessao } = useIfoodVendas('', sessaoIntervalo, refreshKey + ifoodSync);
   // Mesmo período da semana passada, até esta hora (janela devolvida pelo painel). Só no modo "Hoje":
   // a sessão conta pedidos não pagos e não fecha com a regra do painel. O fim é arredondado em 5 min
   // para não buscar o iFood da semana de novo a cada pedido.
@@ -466,10 +489,13 @@ export default function Dashboard() {
         />
       </div>
 
-      {/* 4. Por canal + categorias */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-stretch">
+      {/* 4. Por canal + categorias + mais vendidos */}
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 items-stretch">
         <PorCanal linhas={canais} rotuloSemana={sp ? rotuloSemana : null} />
         <CategoriasChart data={extras?.by_category ?? []} loading={extrasLoading} />
+        <div className="md:col-span-2 xl:col-span-1 min-w-0">
+          <MaisVendidos data={extras?.by_item ?? []} loading={extrasLoading} />
+        </div>
       </div>
 
       {/* 5. Mesas + financeiro de hoje */}

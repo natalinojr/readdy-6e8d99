@@ -15,9 +15,31 @@ export interface HourlyRevenue {
   orders: number;
 }
 
+export interface ItemRevenue {
+  item_name: string;
+  total_qty: number;
+  total_revenue: number;
+}
+
 export interface VisaoGeralExtrasData {
   by_category: CategoryRevenue[];
   by_hour: HourlyRevenue[];
+  /** Itens mais vendidos (por quantidade) — pedidos do sistema; o iFood não traz os itens. */
+  by_item: ItemRevenue[];
+}
+
+// Soma por nome do item (o mesmo produto vendido em pedidos diferentes vira uma linha).
+function porItem(items: { item_name: string | null; item_price: number | null; quantity: number | null }[]): ItemRevenue[] {
+  const m = new Map<string, ItemRevenue>();
+  for (const oi of items) {
+    const nome = (oi.item_name ?? '').trim() || 'Sem nome';
+    const k = nome.toLowerCase();
+    const g = m.get(k) ?? { item_name: nome, total_qty: 0, total_revenue: 0 };
+    g.total_qty += oi.quantity ?? 1;
+    g.total_revenue += Number(oi.item_price ?? 0) * (oi.quantity ?? 1);
+    m.set(k, g);
+  }
+  return [...m.values()].sort((a, b) => b.total_qty - a.total_qty || b.total_revenue - a.total_revenue);
 }
 
 export function useVisaoGeralExtras(periodo: string) {
@@ -61,6 +83,7 @@ export function useVisaoGeralExtras(periodo: string) {
 
       // Vendas por categoria
       let byCategory: CategoryRevenue[] = [];
+      let byItem: ItemRevenue[] = [];
       if (orderIds.length > 0) {
         const { data: items, error: itemsErr } = await supabase
           .from('order_items')
@@ -88,6 +111,7 @@ export function useVisaoGeralExtras(periodo: string) {
             catMap[catName].total_revenue += Number(oi.item_price ?? 0) * (oi.quantity ?? 1);
           });
           byCategory = Object.values(catMap).sort((a, b) => b.total_revenue - a.total_revenue);
+          byItem = porItem(itemsFallback ?? []);
         } else {
           const catMap: Record<string, CategoryRevenue> = {};
           (items ?? []).forEach((oi: any) => {
@@ -98,10 +122,11 @@ export function useVisaoGeralExtras(periodo: string) {
             catMap[catName].total_revenue += Number(oi.item_price ?? 0) * (oi.quantity ?? 1);
           });
           byCategory = Object.values(catMap).sort((a, b) => b.total_revenue - a.total_revenue);
+          byItem = porItem(items ?? []);
         }
       }
 
-      setData({ by_category: byCategory, by_hour: byHour });
+      setData({ by_category: byCategory, by_hour: byHour, by_item: byItem });
     } catch (e) {
       console.error('[useVisaoGeralExtras]', e);
       setData(null);
