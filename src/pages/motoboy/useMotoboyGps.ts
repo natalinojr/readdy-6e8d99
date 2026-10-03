@@ -11,9 +11,9 @@ export type GpsEstado = 'desligado' | 'pedindo' | 'ativo' | 'ativo_fundo' | 'neg
 // com aviso fixo na barra, continua mandando com a tela apagada. O site chama pelo window.Capacitor (sem import).
 interface LocalNativo { latitude: number; longitude: number; accuracy: number | null; bearing: number | null; speed: number | null }
 interface GpsNativo {
-  addWatcher(o: Record<string, unknown>, cb: (l?: LocalNativo, e?: { code?: string }) => void): Promise<string>;
-  removeWatcher(o: { id: string }): Promise<void>;
-  openSettings(): Promise<void>;
+  addWatcher(o: Record<string, unknown>, cb: (l?: LocalNativo, e?: { code?: string }) => void): Promise<string> | string;
+  removeWatcher(o: { id: string }): Promise<void> | void;
+  openSettings(): Promise<void> | void;
 }
 function gpsNativo(): GpsNativo | null {
   const c = (window as unknown as { Capacitor?: { isNativePlatform?: () => boolean; Plugins?: Record<string, unknown> } }).Capacitor;
@@ -21,7 +21,11 @@ function gpsNativo(): GpsNativo | null {
   return (c.Plugins?.BackgroundGeolocation as GpsNativo | undefined) ?? null;
 }
 /** No app: abre as configurações do ERPOS no Android (permissão de localização). */
-export function abrirConfigGps(): void { gpsNativo()?.openSettings().catch(() => {}); }
+export function abrirConfigGps(): void {
+  const n = gpsNativo();
+  if (!n) return;
+  try { void Promise.resolve(n.openSettings()).catch(() => {}); } catch { /* sem a tela de ajustes */ }
+}
 
 // Limites de envio (o Supabase já travou por IO: nada de ping sem necessidade).
 const MIN_INTERVALO_MS = 15000;   // no mínimo 15 s entre envios
@@ -88,22 +92,29 @@ export function useMotoboyGps(tenantId: string | null | undefined, driverId: str
     if (nativo) {
       let watcherId: string | null = null;
       let encerrado = false;
-      nativo.addWatcher({
-        backgroundTitle: 'ERPOS — entrega em andamento',
-        backgroundMessage: 'A loja vê onde você está até terminar as entregas.',
-        requestPermissions: true,
-        stale: false,
-        distanceFilter: 10,
-      }, (l, e) => {
-        if (e) { setEstado(e.code === 'NOT_AUTHORIZED' ? 'negado' : 'indisponivel'); return; }
-        if (!l) return;
-        setEstado('ativo_fundo');
-        void enviar({ lat: l.latitude, lng: l.longitude, accuracy: l.accuracy ?? null, heading: l.bearing ?? null, speed: l.speed ?? null });
-      }).then((id) => { if (encerrado) nativo.removeWatcher({ id }).catch(() => {}); else watcherId = id; })
-        .catch(() => setEstado('indisponivel'));
+      const remover = (id: string) => { try { void Promise.resolve(nativo.removeWatcher({ id })).catch(() => {}); } catch { /* já parou */ } };
+      // Pelo window.Capacitor.Plugins (sem registerPlugin) o addWatcher devolve o id DIRETO, não uma
+      // Promise — o `.then` derrubava a tela no celular (2026-10-02). Promise.resolve aceita os dois.
+      try {
+        Promise.resolve(nativo.addWatcher({
+          backgroundTitle: 'ERPOS — entrega em andamento',
+          backgroundMessage: 'A loja vê onde você está até terminar as entregas.',
+          requestPermissions: true,
+          stale: false,
+          distanceFilter: 10,
+        }, (l, e) => {
+          if (e) { setEstado(e.code === 'NOT_AUTHORIZED' ? 'negado' : 'indisponivel'); return; }
+          if (!l) return;
+          setEstado('ativo_fundo');
+          void enviar({ lat: l.latitude, lng: l.longitude, accuracy: l.accuracy ?? null, heading: l.bearing ?? null, speed: l.speed ?? null });
+        })).then((id) => { if (encerrado) remover(String(id)); else watcherId = String(id); })
+          .catch(() => setEstado('indisponivel'));
+      } catch {
+        setEstado('indisponivel');
+      }
       return () => {
         encerrado = true;
-        if (watcherId) nativo.removeWatcher({ id: watcherId }).catch(() => {});
+        if (watcherId) remover(watcherId);
       };
     }
 
