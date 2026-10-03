@@ -4,17 +4,14 @@ import { useSuppliers } from '@/hooks/useSuppliers';
 import { Building2, ChevronDown, ChevronUp, Search } from 'lucide-react';
 import type { Insumo } from '@/contexts/EstoqueContext';
 import { KpiCard, Segmented } from '../../financeiro/components/dreUi';
+import { abaixoDoMinimo } from '@/lib/estoqueRegras';
+import { regraDoInsumo, statusEstoque } from './insumos/InsumosUtils';
 
 const fmt = (v: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
 
-function statusLabel(i: Insumo) {
-  if (i.esgotado || i.estoqueAtual <= 0) return { label: 'Esgotado', cls: 'text-red-600 bg-red-50' };
-  const ratio = i.estoqueAtual / Math.max(i.estoqueMinimo, 0.001);
-  if (ratio <= 0.5) return { label: 'Crítico', cls: 'text-red-600 bg-red-50' };
-  if (ratio <= 1) return { label: 'Baixo', cls: 'text-amber-600 bg-amber-50' };
-  return { label: 'Ok', cls: 'text-emerald-600 bg-emerald-50' };
-}
+// Mesmos rótulos e mesma regra de "abaixo do mínimo" do resto do Estoque (2026-10-03).
+const statusLabel = statusEstoque;
 
 interface FornecedorGrupo {
   nome: string;
@@ -60,8 +57,7 @@ export default function FornecedoresRelatorioTab() {
       const g = map.get(chave)!;
       g.insumos.push(ins);
       g.valorEstoque += ins.estoqueAtual * ins.precoUnitario;
-      const ratio = ins.estoqueMinimo > 0 ? ins.estoqueAtual / ins.estoqueMinimo : 2;
-      if (ins.esgotado || ins.estoqueAtual <= 0 || ratio <= 1) g.insumosBaixo++;
+      if (abaixoDoMinimo(regraDoInsumo(ins))) g.insumosBaixo++;
     }
 
     return Array.from(map.values()).sort((a, b) => {
@@ -101,10 +97,7 @@ export default function FornecedoresRelatorioTab() {
 
   const totalInsumos = insumos.length;
   const totalValor = insumos.reduce((s, i) => s + i.estoqueAtual * i.precoUnitario, 0);
-  const totalAlerta = insumos.filter((i) => {
-    const ratio = i.estoqueMinimo > 0 ? i.estoqueAtual / i.estoqueMinimo : 2;
-    return i.esgotado || i.estoqueAtual <= 0 || ratio <= 1;
-  }).length;
+  const totalAlerta = insumos.filter((i) => abaixoDoMinimo(regraDoInsumo(i))).length;
 
   function exportCSV() {
     const header = ['Fornecedor', 'Insumo', 'Categoria', 'Unidade', 'Estoque Atual', 'Estoque Mín', 'Preço Unit.', 'Valor Estoque', 'Status'];
@@ -137,7 +130,7 @@ export default function FornecedoresRelatorioTab() {
         <KpiCard
           label="Total Insumos" icon="ri-stack-line" semVariacao atual={totalInsumos}
           value={String(totalInsumos)}
-          sub={`${totalAlerta} em alerta`}
+          sub={`${totalAlerta} abaixo do mínimo`}
           subTone="text-amber-700"
         />
         <KpiCard
@@ -222,7 +215,7 @@ export default function FornecedoresRelatorioTab() {
               </div>
               {grupo.insumosBaixo > 0 && (
                 <div className="px-2.5 py-1 bg-orange-100 rounded-lg">
-                  <p className="text-xs font-bold text-orange-700">{grupo.insumosBaixo} em alerta</p>
+                  <p className="text-xs font-bold text-orange-700">{grupo.insumosBaixo} abaixo do mínimo</p>
                 </div>
               )}
             </div>
@@ -262,7 +255,7 @@ export default function FornecedoresRelatorioTab() {
                     )}
                     {grupo.insumosBaixo > 0 && (
                       <span className="text-[11px] font-semibold px-2 py-0.5 rounded-md bg-amber-50 text-amber-700">
-                        {grupo.insumosBaixo} em alerta
+                        {grupo.insumosBaixo} abaixo do mínimo
                       </span>
                     )}
                   </div>
