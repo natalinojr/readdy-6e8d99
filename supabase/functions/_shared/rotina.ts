@@ -1,6 +1,6 @@
 // Rotina do dia por loja e por papel (2026-10-03). Lógica pura, usada pela tela Hoje
 // (src/pages/hoje/rotina/*) e pelo assistente-cron (bom dia da equipe) — mudou aqui, muda nos dois.
-// Os dados vêm de fn_rotina_dados (supabase/migrations/20261003240000_rotina_do_dia.sql): itens, marcas e
+// Os dados vêm de fn_rotina_dados (supabase/migrations/20261003250000_rotina_do_dia.sql): itens, marcas e
 // os FATOS que fazem um item marcar automático (loja aberta/fechada, recebimento, contagem, produção).
 // Sem import de fora de _shared: roda no Deno e no Vite.
 import { situacaoPlano, type PlanoContagem, type ItemContavel } from './estoque-planos.ts';

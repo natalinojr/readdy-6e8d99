@@ -280,7 +280,7 @@ Secao viva: registrar aqui padroes, decisoes e pegadinhas reutilizaveis conforme
   - a próxima repetição só nasce quando alguém conclui a anterior (dia esquecido = não nasce a de hoje);
   - o checklist não guarda quem marcou nem quando, e não é copiado na repetição.
   - Por isso a rotina tem tabela própria. O módulo Tarefas segue igual em "Suas tarefas".
-- **Banco** (`20261003240000_rotina_do_dia.sql`):
+- **Banco** (`20261003250000_rotina_do_dia.sql`):
   - `rotina_itens`: `tenant_id`, `papel` (gerente | supervisao | equipe | caixa | cozinha), `tipo` (manual | abrir | fechar | contagem | receber | producao), `dias` smallint[] (0 = dom) ou `dias_plano` (contagem nos dias dos planos do Estoque), `dia` ("só hoje", criado por quem está acima), `hora`, `atalho`, `receita_id`/`quantidade` (produção), `ordem`, `ativo` (apagar = desativar; o histórico fica).
   - `rotina_marcas`: uma por item e dia, com `registrado_por` (auth.uid, gravado no servidor), quem FEZ (`pessoa_user_id` OU `freelancer_id` + `pessoa_nome`) e `aparelho_id` reservado para o celular da loja.
   - RLS: select por `auth_is_member_of`; sem grant de escrita para authenticated. Escrita só pelas RPCs security definer.
