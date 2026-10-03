@@ -286,13 +286,23 @@ function LinhaPorcao({ porcao, hoje, urgente }: { porcao: Porcao; hoje: string; 
   fim.setUTCDate(fim.getUTCDate() + diasDepois);
   const termina = diasDepois === 0 ? 'hoje' : diasDepois === 1 ? 'amanhã' : diasDepois <= 6 ? DIAS[fim.getUTCDay()] : ddmm(fim.toISOString().slice(0, 10));
   const pct = Math.min(100, Math.round((porcao.feitos / porcao.meta) * 100));
+  // Textos revistos com o dono (03/10): "Porção de hoje feita (13). Faltam 1 — termina amanhã" não dizia
+  // o que é porção, errava o plural e mandava 1 item para amanhã. Sobrou pouco (até uma porção) = dá
+  // para terminar agora; fez mais que a porção = diz quanto fez e qual era a porção.
+  const resto = porcao.restante;
+  const faltam = (n: number) => (n === 1 ? 'Falta 1' : `Faltam ${n}`);
+  const feito = porcao.feitos > porcao.meta
+    ? `Hoje já foram ${porcao.feitos} (a porção do dia era ${porcao.meta}).`
+    : `Porção de hoje feita: ${porcao.meta} de ${porcao.meta}.`;
+  const depois = resto === 0 ? 'Acabou!'
+    : urgente ? `${faltam(resto)}, com boleto vencido ou vencendo — se der, adiante mais.`
+    : resto <= porcao.meta ? `${resto === 1 ? 'Falta só 1' : `Faltam só ${resto}`} — dá para terminar agora.`
+    : `${faltam(resto)} — ${porcao.meta} por dia, termina ${termina}.`;
   return (
     <div className={`mt-2 rounded-xl px-3 py-2 ${porcao.feita ? 'bg-emerald-50 border border-emerald-100' : 'bg-amber-50/60 border border-amber-100'}`}>
       {porcao.feita ? (
         <p className="text-[12px] font-semibold text-emerald-800">
-          <i className="ri-check-line" /> Porção de hoje feita ({porcao.feitos}). {porcao.restante === 0 ? 'Acabou!'
-            : urgente ? `Ainda ${porcao.restante === 1 ? 'falta 1, com boleto vencido ou vencendo' : `faltam ${porcao.restante}, com boleto vencido ou vencendo`} — se der, adiante mais.`
-            : `Faltam ${porcao.restante} — no ritmo, termina ${termina}.`}
+          <i className="ri-check-line" /> {feito} {depois}
         </p>
       ) : (
         <>
@@ -301,7 +311,7 @@ function LinhaPorcao({ porcao, hoje, urgente }: { porcao: Porcao; hoje: string; 
             <span className="text-amber-800 tabular-nums">já foram {porcao.feitos} de {porcao.meta}</span>
           </div>
           <div className="mt-1 h-1.5 rounded-full bg-amber-100 overflow-hidden"><div className="h-full bg-amber-500 rounded-full" style={{ width: `${pct}%` }} /></div>
-          <p className="mt-1 text-[11px] text-amber-800">Um pouco por dia: no ritmo, termina {termina}. {urgente ? 'Comece pelas mais antigas.' : 'O resto não precisa ser hoje.'}</p>
+          <p className="mt-1 text-[11px] text-amber-800">Em vez de tudo de uma vez: {porcao.meta} por dia, termina {termina}. {urgente ? 'Comece pelas mais antigas.' : 'O resto não precisa ser hoje.'}</p>
         </>
       )}
     </div>
