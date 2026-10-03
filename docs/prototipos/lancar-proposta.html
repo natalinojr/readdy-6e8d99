@@ -1,0 +1,535 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>O que aconteceu? — protótipo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/remixicon@4.2.0/fonts/remixicon.css" rel="stylesheet">
+<style>
+:root{
+  --bg:#FAF7F2; --card:#fff; --line:#EEE6DA; --ink:#1F1A14; --ink2:#5B5248; --ink3:#9A9086;
+  --or:#F59E0B; --or2:#C2700A; --orbg:#FFF4E0;
+  --red:#DC2626; --redbg:#FEF1F1; --grn:#15803D; --grnbg:#ECFDF3; --blu:#2563EB; --blubg:#EEF4FF;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{font-family:'Plus Jakarta Sans',system-ui,sans-serif;background:#E7E1D8;color:var(--ink);-webkit-font-smoothing:antialiased}
+button{font-family:inherit;cursor:pointer;color:inherit}
+
+/* barra do protótipo (fora do app) */
+.proto{position:sticky;top:0;z-index:60;min-height:46px;background:#1F1A14;color:#fff;display:flex;align-items:center;gap:6px;padding:6px 10px;overflow-x:auto;white-space:nowrap;scrollbar-width:none}
+.proto::-webkit-scrollbar{display:none}
+.proto .lbl{font-size:10px;font-weight:800;letter-spacing:.14em;color:#F5B544;margin:0 2px 0 6px}
+.proto .lbl:first-child{margin-left:0}
+.proto button{border:1px solid #4a4238;background:transparent;color:#E8E2D9;border-radius:999px;padding:6px 11px;font-size:12.5px;font-weight:600;flex:none}
+.proto button.on{background:var(--or);border-color:var(--or);color:#1F1A14}
+.proto .sep{width:1px;height:22px;background:#4a4238;margin:0 4px;flex:none}
+.proto .sp{flex:1;min-width:6px}
+
+.wrap{display:flex;justify-content:center;gap:28px}
+.app{width:100%;max-width:430px;height:calc(100dvh - 46px);background:var(--bg);position:relative;overflow:hidden;display:flex;flex-direction:column}
+.notes{display:none}
+@media(min-width:1000px){
+  .wrap{padding:22px 24px}
+  .app{height:min(880px,calc(100vh - 90px));border-radius:30px;box-shadow:0 24px 70px rgba(31,26,20,.22);border:8px solid #1F1A14}
+  .app.pc{max-width:980px;border-radius:14px;border-width:6px}
+  .notes{display:block;width:390px;max-height:calc(100vh - 90px);overflow:auto;background:#fff;border-radius:22px;padding:22px 22px 10px;box-shadow:0 10px 40px rgba(31,26,20,.10)}
+  .proto .bt-notas{display:none}
+}
+
+/* ===== fundo: Hoje (celular) ===== */
+.scr{flex:1;overflow-y:auto;padding:0 16px 110px}
+.top{padding:16px 0 6px;display:flex;align-items:center;gap:12px}
+.av{width:42px;height:42px;border-radius:14px;background:var(--or);color:#1F1A14;font-weight:800;display:grid;place-items:center;font-size:17px;flex:none}
+.hi{flex:1;min-width:0}
+.hi b{display:block;font-size:17px;font-weight:800;letter-spacing:-.01em}
+.hi span{font-size:12.5px;color:var(--ink3);font-weight:500}
+.manchete{font-size:26px;line-height:1.15;font-weight:800;letter-spacing:-.02em;margin:10px 0 4px}
+.subm{font-size:13px;color:var(--ink2);margin:0 0 14px}
+.ghost{background:#fff;border:1px solid var(--line);border-radius:20px;padding:14px;margin-bottom:10px}
+.ghost .l1{height:11px;width:40%;background:#F1ECE4;border-radius:6px}
+.ghost .l2{height:15px;width:75%;background:#EAE3D8;border-radius:6px;margin-top:9px}
+.ghost .l3{height:11px;width:90%;background:#F4EFE7;border-radius:6px;margin-top:9px}
+.dica{display:flex;gap:10px;align-items:center;background:var(--orbg);border:1px dashed #F3C77B;border-radius:16px;padding:12px 14px;font-size:13px;color:#7A4A06;margin:6px 0 14px}
+.dica i{font-size:22px;color:var(--or2)}
+.nav{position:absolute;left:0;right:0;bottom:0;height:74px;background:rgba(255,255,255,.96);backdrop-filter:blur(8px);border-top:1px solid var(--line);display:grid;grid-template-columns:repeat(5,1fr);align-items:center;padding-bottom:6px;z-index:20}
+.nv{border:0;background:none;display:flex;flex-direction:column;align-items:center;gap:2px;font-size:11px;font-weight:700;color:var(--ink3)}
+.nv i{font-size:22px;font-style:normal}
+.nv.on{color:var(--ink)}
+.mais{width:54px;height:54px;border-radius:18px;background:var(--or);border:0;display:grid;place-items:center;font-size:28px;margin:-22px auto 0;box-shadow:0 8px 20px rgba(245,158,11,.45)}
+.mais.pulse{animation:pulse 1.6s ease-in-out 3}
+@keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.12)}}
+
+/* ===== fundo: Financeiro (computador) ===== */
+.fin{flex:1;overflow:auto;background:#F4F4F5}
+.fin-h{background:#fff;border-bottom:1px solid #E4E4E7;padding:14px 22px;display:flex;align-items:center;gap:12px}
+.fin-h .ic{width:38px;height:38px;border-radius:12px;background:linear-gradient(135deg,#f59e0b,#d97706);display:grid;place-items:center;color:#fff;font-size:20px}
+.fin-h b{font-size:18px}
+.fin-h span{font-size:12px;color:#A1A1AA;display:block}
+.fin-h .sp{flex:1}
+.bt-lancar{border:0;background:var(--or);color:#1F1A14;font-weight:800;border-radius:12px;padding:10px 16px;font-size:14px;display:flex;align-items:center;gap:6px;box-shadow:0 6px 16px rgba(245,158,11,.35)}
+.bt-busca{border:1px solid #E4E4E7;background:#fff;border-radius:12px;padding:9px 14px;font-size:13px;color:#71717A;min-width:220px;text-align:left}
+.fin-g{display:flex;gap:6px;padding:12px 22px 0}
+.fin-g span{font-size:12.5px;font-weight:700;color:#71717A;background:#fff;border:1px solid #E4E4E7;border-radius:999px;padding:6px 12px}
+.fin-g span.on{background:#18181B;color:#fff;border-color:#18181B}
+.fin-b{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;padding:16px 22px}
+.fin-b .ghost{border-radius:16px;border-color:#E4E4E7}
+
+/* ===== folha "O que aconteceu?" ===== */
+.ov{position:absolute;inset:0;background:rgba(31,26,20,.45);z-index:40;opacity:0;pointer-events:none;transition:opacity .2s}
+.ov.on{opacity:1;pointer-events:auto}
+.sheet{position:absolute;left:0;right:0;bottom:0;max-height:92%;background:var(--bg);border-radius:24px 24px 0 0;z-index:41;transform:translateY(105%);transition:transform .25s ease;display:flex;flex-direction:column}
+.sheet.on{transform:none}
+.app.pc .sheet{left:50%;right:auto;bottom:auto;top:50%;width:520px;max-height:86%;border-radius:22px;transform:translate(-50%,-46%) scale(.98);opacity:0;pointer-events:none;transition:all .18s}
+.app.pc .sheet.on{transform:translate(-50%,-50%);opacity:1;pointer-events:auto}
+.sh-h{padding:10px 16px 6px;position:relative;display:flex;align-items:flex-start;gap:6px}
+.sh-h:before{content:"";position:absolute;left:50%;top:8px;width:40px;height:5px;border-radius:3px;background:#E3DBCF;transform:translateX(-50%)}
+.app.pc .sh-h:before{display:none}
+.sh-h .tx{flex:1;min-width:0;padding-top:14px}
+.sh-h .passo{font-size:11px;font-weight:800;color:var(--or2);text-transform:uppercase;letter-spacing:.08em}
+.sh-h b{font-size:21px;font-weight:800;letter-spacing:-.02em;display:block;line-height:1.2}
+.sh-h span.s{font-size:13px;color:var(--ink3);display:block;margin-top:3px}
+.sh-x,.sh-v{width:38px;height:38px;border-radius:50%;border:0;background:#EFE8DD;font-size:19px;flex:none;margin-top:12px;display:grid;place-items:center}
+.sh-b{padding:8px 16px 18px;overflow-y:auto;flex:1}
+.ops{display:flex;flex-direction:column;gap:10px}
+.op{width:100%;border:1px solid var(--line);background:#fff;border-radius:22px;padding:14px;display:flex;align-items:center;gap:14px;text-align:left;min-height:76px;transition:transform .08s}
+.op:active{transform:scale(.985)}
+.op .oi{width:46px;height:46px;border-radius:15px;background:var(--orbg);color:var(--or2);display:grid;place-items:center;font-size:24px;flex:none}
+.op .ot{flex:1;min-width:0}
+.op .ot b{display:block;font-size:16px;font-weight:800;letter-spacing:-.01em}
+.op .ot span{display:block;font-size:12.5px;color:var(--ink3);margin-top:2px;line-height:1.35}
+.op .ot em{display:inline-flex;align-items:center;gap:4px;font-style:normal;font-size:11px;font-weight:700;color:var(--ink2);background:#F4EFE7;border-radius:7px;padding:2px 7px;margin-top:6px}
+.op .ot em.ap{background:#EEF4FF;color:#1D4ED8}
+.op .oa{color:#CFC6B8;font-size:22px;flex:none}
+.op.dest{border-color:#F3C77B;box-shadow:0 6px 18px rgba(245,158,11,.18)}
+.op.dest .oi{background:var(--or);color:#1F1A14}
+.grp{font-size:11px;font-weight:800;color:var(--ink3);text-transform:uppercase;letter-spacing:.08em;margin:16px 4px 8px}
+.rodape{margin-top:14px;text-align:center}
+.lk{border:0;background:none;color:var(--or2);font-weight:700;font-size:13px;padding:6px}
+.aviso{font-size:12.5px;background:#F1EBE1;border-radius:14px;padding:10px 12px;color:var(--ink2);margin-top:12px;line-height:1.45}
+.aviso.b{background:#EEF4FF;color:#1E3A8A}
+.vazio{text-align:center;color:var(--ink3);font-size:13.5px;padding:30px 10px}
+
+/* ===== tela de destino (a que já existe) ===== */
+.dst{position:absolute;inset:0;background:#FAFAFA;z-index:45;display:flex;flex-direction:column;transform:translateX(100%);transition:transform .22s ease}
+.dst.on{transform:none}
+.dst-top{background:linear-gradient(135deg,#F59E0B,#F97316);color:#fff;display:flex;align-items:center;gap:6px;padding:8px 8px;min-height:56px}
+.dst-top.fin{background:#fff;color:var(--ink);border-bottom:1px solid #E4E4E7}
+.dst-top.pdv{background:#18181B}
+.dst-top.chat{background:#1F1A14}
+.dst-top button{width:44px;height:44px;border-radius:50%;border:0;background:transparent;color:inherit;font-size:24px;display:grid;place-items:center}
+.dst-top b{display:block;font-size:16px;line-height:1.2}
+.dst-top span{font-size:12px;opacity:.85}
+.fita{background:#1F1A14;color:#F5E6C8;font-size:12px;line-height:1.45;padding:9px 14px;display:flex;gap:8px;align-items:flex-start}
+.fita i{color:#F5B544;font-size:16px}
+.dst-b{flex:1;overflow:auto;padding:16px}
+.bg{border-radius:24px;padding:16px;border:1px solid #F1F1F1;background:#fff;display:flex;gap:14px;align-items:center;margin-bottom:10px}
+.bg i{font-size:30px;color:var(--or)}
+.bg b{display:block;font-size:15px}
+.bg span{display:block;font-size:12px;color:#71717A;margin-top:2px}
+.bg.d{background:var(--or);color:#fff;border-color:transparent;box-shadow:0 10px 24px rgba(245,158,11,.3)}
+.bg.d i{color:#fff}.bg.d span{color:rgba(255,255,255,.85)}
+.frm{background:#fff;border:1px solid #E4E4E7;border-radius:16px;padding:14px;margin-bottom:10px}
+.frm label{display:block;font-size:12px;font-weight:700;color:#52525B;margin:10px 0 5px}
+.frm label:first-child{margin-top:0}
+.frm .in{height:40px;border:1px solid #E4E4E7;border-radius:10px;background:#FAFAFA;font-size:13px;color:#A1A1AA;display:flex;align-items:center;padding:0 12px}
+.frm .in.v{color:#18181B;font-weight:600}
+.pre{font-size:11px;font-weight:800;color:#15803D;background:#ECFDF3;border-radius:6px;padding:1px 6px;margin-left:6px}
+.dst-q{font-size:20px;font-weight:800;letter-spacing:-.01em;margin:4px 2px 4px}
+.dst-s{font-size:13px;color:#71717A;margin:0 2px 14px}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin:4px 0 0}
+.chips span{font-size:12.5px;font-weight:700;border:1px solid #E4E4E7;border-radius:10px;padding:7px 11px;background:#fff}
+.chips span.on{background:var(--or);border-color:var(--or);color:#fff}
+
+.toast{position:absolute;left:16px;right:16px;bottom:88px;background:#1F1A14;color:#fff;border-radius:14px;padding:12px 14px;font-size:13px;line-height:1.4;z-index:70;opacity:0;transform:translateY(10px);transition:all .2s;pointer-events:none}
+.toast.on{opacity:1;transform:none}
+
+/* notas */
+.notes h3{font-size:18px;margin:0 0 4px;letter-spacing:-.01em}
+.notes .sub{font-size:12.5px;color:var(--ink3);margin:0 0 14px}
+.nt{display:flex;gap:10px;margin:0 0 13px}
+.nt .n{width:24px;height:24px;border-radius:8px;background:var(--orbg);color:var(--or2);font-weight:800;font-size:12px;display:grid;place-items:center;flex:none}
+.nt b{display:block;font-size:13.5px}
+.nt p{margin:2px 0 0;font-size:12.5px;line-height:1.5;color:var(--ink2)}
+.nbox{background:#F7F3ED;border-radius:14px;padding:12px 14px;font-size:12.5px;line-height:1.5;color:var(--ink2);margin:6px 0 14px}
+.nbox b{color:var(--ink)}
+.tab{width:100%;border-collapse:collapse;font-size:11.5px;margin:4px 0 14px}
+.tab th,.tab td{border-bottom:1px solid #F1ECE4;padding:5px 4px;text-align:left;vertical-align:top}
+.tab th{color:var(--ink3);font-weight:700}
+.tab td.c{text-align:center}
+.notesov{position:fixed;inset:46px 0 0 0;background:#fff;z-index:70;overflow:auto;padding:18px 18px 40px;display:none}
+.notesov.on{display:block}
+.notesov .fx{position:sticky;top:0;display:flex;justify-content:flex-end}
+</style>
+</head>
+<body>
+<div class="proto" id="proto"></div>
+<div class="wrap">
+  <div class="app" id="app">
+    <div id="fundo" style="flex:1;display:flex;flex-direction:column;min-height:0"></div>
+    <div class="ov" id="ov" data-act="fechar"></div>
+    <div class="sheet" id="sheet"></div>
+    <div class="dst" id="dst"></div>
+    <div class="toast" id="toast"></div>
+  </div>
+  <aside class="notes" id="notes"></aside>
+</div>
+<div class="notesov" id="notesov"></div>
+
+<script>
+/* Opções, perfis e destinos do protótipo "O que aconteceu?".
+   Perfis = matriz REAL da El Patron Paranaguá em 03/10 (tabela permissions + padrão do papel). */
+
+const TODAS = ['receber','pag_reembolso','pag_fornecedor','pag_freelancer','pag_compra_online','pag_beneficio','pag_aprovar','pdv_sangria',
+  'fin:pagar','fin:despesas','fin:compras','fin:notas','fin:guias','fin:rh','fin:freelancers','fin:entregadores','fin:conciliacao','fin:fluxo','fin:bancos','fin:orcamentos'];
+
+const PERS = {
+  dono:      {botao:'Dono', nome:'Natalino', av:'N', papel:'Dono · todas as lojas', perms:TODAS},
+  gerente:   {botao:'Gerente', nome:'Juliana', av:'J', papel:'Gerente · nem sempre está na loja',
+              perms:['receber','pag_reembolso','pag_fornecedor','pag_freelancer','pag_compra_online','pag_beneficio','pag_aprovar','pdv_sangria','fin:compras','fin:notas','fin:guias','fin:freelancers'],
+              nota:'na Paranaguá o gerente tem Compras, Notas de Entrada, Guias e Freelancers, mas não Contas a Pagar. Por isso “fornecedor ou serviço” vira pedido para aprovar.'},
+  supervisao:{botao:'Supervisão', nome:'Marcos', av:'M', papel:'Supervisão · fica na loja',
+              perms:['receber','pag_reembolso','pag_fornecedor','pag_freelancer','pdv_sangria'],
+              nota:'não entra no Financeiro. Tudo o que é pagar vira pedido para o dono aprovar. Dinheiro do caixa vai para a sangria do PDV.'},
+  caixa:     {botao:'Caixa', nome:'Ana', av:'A', papel:'Caixa · Paranaguá',
+              perms:['receber','pag_fornecedor','pdv_sangria'],
+              nota:'na Paranaguá o caixa recebe mercadoria, pede pagamento de fornecedor e faz sangria. Não tem reembolso, então “Gastei do meu bolso” não aparece.'},
+  financeiro:{botao:'Financeiro', nome:'Paula', av:'P', papel:'Financeiro · preso ao Financeiro',
+              perms:['fin:pagar','fin:despesas','fin:compras','fin:notas','fin:guias','fin:rh','fin:freelancers','fin:entregadores','fin:conciliacao','fin:fluxo','fin:bancos','fin:orcamentos'],
+              nota:'não é da loja: não recebe mercadoria nem pede reembolso. Lança direto em todas as abas.'},
+};
+
+const AP = 'o dono aprova';
+const ARVORE = [
+  {id:'paguei', ic:'ri-hand-coin-line', t:'Paguei algo', s:'O dinheiro já saiu: Pix, dinheiro ou cartão',
+   q:'O que você pagou?', qs:'Do jeito que vier à cabeça. O resto eu pergunto depois.',
+   filhos:[
+    {id:'p-merc', ic:'ri-shopping-basket-2-line', t:'Mercadoria', s:'Insumo, bebida, embalagem. Com cupom, nota ou sem nada.',
+     vars:[{req:['receber'], destino:'receber_inicio', em:'Recebimentos › Chegou mercadoria'},
+           {req:['fin:compras'], destino:'fin_compras_nova', em:'Compras › Nova compra'}]},
+    {id:'p-desp', ic:'ri-tools-line', t:'Uma despesa', s:'Conta, serviço, conserto, material de limpeza…',
+     q:'Saiu de onde o dinheiro?', qs:'Cada jeito tem o seu lugar certo.',
+     filhos:[
+      {id:'pd-conta', ic:'ri-bank-card-line', t:'Da conta ou do cartão da loja', s:'Pix, boleto, débito ou cartão',
+       vars:[{req:['fin:despesas','fin:pagar'], destino:'fin_lancar_despesa', em:'Lançar despesa (passo a passo)'}]},
+      {id:'pd-caixa', ic:'ri-safe-2-line', t:'Do caixa, em dinheiro', s:'Saiu da gaveta do PDV',
+       vars:[{req:['pdv_sangria'], destino:'pdv_sangria_outro', em:'Caixa (PDV) › Sangria'}]},
+      {id:'pd-bolso', ic:'ri-wallet-3-line', t:'Do meu bolso', s:'Quero o dinheiro de volta',
+       vars:[{req:['pag_reembolso'], destino:'receber_reembolso', em:AP, ap:true}]},
+     ]},
+    {id:'p-freela', ic:'ri-user-star-line', t:'Freelancer ou diária', s:'Quem trabalhou e já recebeu',
+     q:'Saiu de onde o dinheiro?', qs:'',
+     filhos:[
+      {id:'pf-caixa', ic:'ri-safe-2-line', t:'Do caixa, em dinheiro', s:'Um ou vários dias, cada um com o seu valor',
+       vars:[{req:['pdv_sangria'], destino:'pdv_sangria_freela', em:'Caixa (PDV) › Sangria › Freelancer'}]},
+      {id:'pf-pix', ic:'ri-bank-line', t:'Pix da conta da loja', s:'Já está no extrato',
+       vars:[{req:['fin:conciliacao'], destino:'fin_conc_extrato', em:'Conciliação › explicar a saída (Freelancer)'}]},
+     ]},
+    {id:'p-extrato', ic:'ri-question-line', t:'Saiu do banco e ninguém lançou', s:'Pix ou boleto no extrato sem explicação',
+     vars:[{req:['fin:conciliacao'], destino:'fin_conc_extrato', em:'Conciliação › explicar a saída'}]},
+    {id:'p-online', ic:'ri-shopping-cart-2-line', t:'Compra pela internet', s:'Mercado Livre, Shopee… já paga',
+     vars:[{req:['pag_compra_online'], destino:'receber_pedido_online', em:'Pedido · Compra online (“já paguei”)', ap:true}]},
+   ]},
+
+  {id:'chegou', ic:'ri-truck-line', t:'Chegou mercadoria', s:'Confere o que chegou e dá entrada no estoque',
+   vars:[{req:['receber'], destino:'receber_inicio', em:'Recebimentos › Chegou mercadoria'}]},
+
+  {id:'nota', ic:'ri-file-text-line', t:'Recebi uma nota ou boleto', s:'Ainda não está pago: foto, PDF, e-mail ou código',
+   q:'O que chegou?', qs:'',
+   filhos:[
+    {id:'n-boleto', ic:'ri-barcode-line', t:'Boleto ou conta', s:'Luz, aluguel, internet, fornecedor',
+     vars:[{req:['fin:pagar'], destino:'fin_pagar_nova', em:'Contas a Pagar › Nova conta'},
+           {req:['pag_fornecedor'], destino:'receber_pedido_fornecedor', em:AP, ap:true, s:'Vira pedido de pagamento; o financeiro paga depois de aprovado'}]},
+    {id:'n-email', ic:'ri-mail-download-line', t:'Boletos que chegaram por e-mail', s:'A caixa de boletos lidos do e-mail',
+     vars:[{req:['fin:pagar'], destino:'fin_pagar_email', em:'Contas a Pagar › E-mail'}]},
+    {id:'n-nfe', ic:'ri-file-list-3-line', t:'Nota fiscal de mercadoria', s:'A DANFE do fornecedor',
+     vars:[{req:['fin:notas'], destino:'fin_notas', em:'Notas de Entrada (já vem da SEFAZ)'},
+           {req:['receber'], destino:'receber_inicio', em:'Recebimentos › ler o código da nota', s:'Lê o código de barras quando a mercadoria chegar'}]},
+    {id:'n-cupom', ic:'ri-receipt-line', t:'Cupom de mercado', s:'NFC-e: QR Code ou foto da notinha',
+     vars:[{req:['receber'], destino:'receber_scanner', em:'Recebimentos › Ler nota ou cupom'},
+           {req:['fin:compras'], destino:'fin_compras_nova', em:'Compras › Nova compra'}]},
+    {id:'n-guia', ic:'ri-government-line', t:'Guia de imposto', s:'DAS, DARF ou FGTS em PDF',
+     vars:[{req:['fin:guias'], destino:'fin_guias', em:'Guias e impostos'}]},
+    {id:'n-vale', ic:'ri-restaurant-line', t:'Boleto do vale (VR/VA)', s:'Divide por funcionário',
+     vars:[{req:['pag_beneficio'], destino:'receber_pedido_beneficio', em:'Pedido · Benefício', ap:true}]},
+   ]},
+
+  {id:'pagar', ic:'ri-calendar-todo-line', t:'Tenho que pagar alguém', s:'Vira conta com data, ou pedido para o dono aprovar',
+   q:'Quem você tem que pagar?', qs:'',
+   filhos:[
+    {id:'g-forn', ic:'ri-store-2-line', t:'Fornecedor ou serviço', s:'Com boleto, Pix ou nota',
+     vars:[{req:['fin:pagar'], destino:'fin_pagar_nova', em:'Contas a Pagar › Nova conta'},
+           {req:['pag_fornecedor'], destino:'receber_pedido_fornecedor', em:AP, ap:true}]},
+    {id:'g-freela', ic:'ri-user-star-line', t:'Freelancer ou diária', s:'Dias trabalhados que ainda não foram pagos',
+     vars:[{req:['pag_freelancer'], destino:'receber_pedido_freelancer', em:AP, ap:true},
+           {req:['fin:freelancers','fin:rh'], destino:'fin_rh_freela', em:'RH › Freelancers'}]},
+    {id:'g-mei', ic:'ri-briefcase-4-line', t:'Prestador MEI', s:'Pagamento mensal do prestador',
+     vars:[{req:['fin:rh'], destino:'fin_rh_mei', em:'RH › Prestadores MEI'}]},
+    {id:'g-moto', ic:'ri-e-bike-2-line', t:'Entregadores', s:'Acerto dos motoboys do período',
+     vars:[{req:['fin:entregadores'], destino:'fin_entregadores', em:'Entregadores'}]},
+    {id:'g-imp', ic:'ri-government-line', t:'Imposto', s:'DAS, DARF ou FGTS',
+     vars:[{req:['fin:guias'], destino:'fin_guias', em:'Guias e impostos'}]},
+    {id:'g-online', ic:'ri-shopping-cart-2-line', t:'Quero comprar algo pela internet', s:'Mando o link, o dono aprova e paga',
+     vars:[{req:['pag_compra_online'], destino:'receber_pedido_online', em:AP, ap:true}]},
+   ]},
+
+  {id:'bolso', ic:'ri-wallet-3-line', t:'Gastei do meu bolso', s:'Pede o reembolso, com a foto do comprovante',
+   vars:[{req:['pag_reembolso'], destino:'receber_reembolso', em:'Pedir reembolso', ap:true}]},
+];
+
+/* O botão Lançar de hoje (13 caminhos) continua, como "lista completa" */
+const LISTA = [
+  {t:'Chegou nota, cupom ou boleto', ops:[
+    {ic:'ri-camera-line', t:'Ler nota ou cupom', s:'Compras › Nova compra', req:['fin:compras'], destino:'fin_compras_nova'},
+    {ic:'ri-inbox-archive-line', t:'Notas que chegaram pela SEFAZ', s:'Notas de Entrada', req:['fin:notas'], destino:'fin_notas'},
+    {ic:'ri-mail-download-line', t:'Boletos que chegaram por e-mail', s:'Contas a Pagar › E-mail', req:['fin:pagar'], destino:'fin_pagar_email'}]},
+  {t:'Tenho que pagar', ops:[
+    {ic:'ri-bill-line', t:'Nova conta a pagar', s:'Contas a Pagar › Nova conta', req:['fin:pagar'], destino:'fin_pagar_nova'},
+    {ic:'ri-file-upload-line', t:'Guia de imposto', s:'Guias e impostos', req:['fin:guias'], destino:'fin_guias'},
+    {ic:'ri-team-line', t:'Folha, freela ou prestador', s:'RH / Folha', req:['fin:rh','fin:freelancers'], destino:'fin_rh_freela'},
+    {ic:'ri-e-bike-2-line', t:'Acerto de entregador', s:'Entregadores', req:['fin:entregadores'], destino:'fin_entregadores'},
+    {ic:'ri-hand-coin-line', t:'Pedir para pagar', s:'Recebimentos e pagamentos', req:['pag_reembolso','pag_fornecedor','pag_freelancer','pag_compra_online','pag_beneficio'], destino:'receber_inicio'}]},
+  {t:'Mexeu no dinheiro', ops:[
+    {ic:'ri-bank-line', t:'Explicar uma saída do extrato', s:'Conciliação', req:['fin:conciliacao'], destino:'fin_conc_extrato'},
+    {ic:'ri-exchange-dollar-line', t:'Nova movimentação', s:'Fluxo de Caixa', req:['fin:fluxo'], destino:'fin_fluxo'},
+    {ic:'ri-bank-card-line', t:'Lançamento manual no banco', s:'Bancos e Contas', req:['fin:bancos'], destino:'fin_bancos'}]},
+  {t:'Vou comprar', ops:[
+    {ic:'ri-shopping-cart-2-line', t:'Nova compra digitada', s:'Compras › Nova compra', req:['fin:compras'], destino:'fin_compras_nova'},
+    {ic:'ri-file-list-3-line', t:'Orçamento', s:'Orçamentos', req:['fin:orcamentos'], destino:'fin_orcamentos'}]},
+];
+
+/* ---------- telas de destino (as que já existem; aqui só um esboço do 1º passo) ---------- */
+const bg = (ic,t,s,d) => `<div class="bg ${d?'d':''}"><i class="${ic}"></i><div><b>${t}</b><span>${s}</span></div></div>`;
+const campo = (l,v,pre) => `<label>${l}${pre?'<span class="pre">já vem preenchido</span>':''}</label><div class="in ${v&&!v.startsWith('—')?'v':''}">${v||'—'}</div>`;
+const DESTINOS = {
+  receber_inicio:{titulo:'Recebimentos e pagamentos', onde:'/receber, início do recebimento', html:() =>
+    bg('ri-qr-scan-2-line','Ler nota ou cupom','QR do cupom ou código de barras da nota, ou foto da notinha',1)
+    + `<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">${bg('ri-inbox-unarchive-line','Chegou sem nota','Lançar ou avisar o financeiro')}${bg('ri-keyboard-line','Digitar nº da nota','Se o código não ler')}</div>`
+    + `<div class="frm"><b style="font-size:13px">Esperando chegar (3)</b><div style="font-size:12.5px;color:#71717A;margin-top:6px">Bebidas Nova Geração · NF 3902 · R$ 738,96<br>Distribuidora de frios · compra lançada · R$ 486,20</div></div>`
+    + `<div class="aviso">Depois de conferir os itens, o passo “Pagamento” pergunta como foi pago: boleto, dinheiro do caixa (vira sangria prevista no PDV), Pix ou cartão, ou “Paguei do meu bolso”.</div>`},
+  receber_scanner:{titulo:'Ler nota ou cupom', onde:'/receber › leitor do cupom', novo:'abrir já com a câmera ligada (link novo ?receber=cupom).', html:() =>
+    `<div style="background:#111;border-radius:22px;height:300px;display:grid;place-items:center;color:#fff;text-align:center"><div><div style="width:180px;height:180px;border:3px solid #F59E0B;border-radius:18px;margin:0 auto 12px"></div><b>Aponte para o QR Code do cupom</b></div></div>
+     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px">${bg('ri-camera-line','Tirar foto','da notinha')}${bg('ri-image-line','Galeria','foto, print ou PDF')}</div>`},
+  receber_reembolso:{titulo:'Pedir reembolso', onde:'/receber?pedido=reembolso', html:() =>
+    `<div class="dst-q">O que você comprou?</div><div class="dst-s">Mercadoria entra no estoque e no custo (CMV); o resto vira despesa.</div>`
+    + bg('ri-receipt-line','Mercadoria com cupom','Insumo, bebida, embalagem: foto do cupom do mercado')
+    + bg('ri-inbox-unarchive-line','Mercadoria sem cupom','Digito o que comprei e anexo a foto do recibo')
+    + bg('ri-tools-line','Outra coisa','Limpeza, manutenção, material, transporte…')},
+  receber_pedido_fornecedor:{titulo:'Pedir pagamento · Fornecedor sem nota', onde:'/receber?pedido=fornecedor', html:() =>
+    `<div class="frm">${campo('Fornecedor','—')}${campo('Valor','—')}${campo('Vencimento','—')}${campo('Chave Pix ou boleto','—')}${campo('Foto do boleto, nota ou orçamento','—')}${campo('Classificação (DRE)','—')}</div><div class="aviso">O pedido vai para o dono aprovar. Aprovado, vira conta a pagar.</div>`},
+  receber_pedido_freelancer:{titulo:'Pedir pagamento · Freelancer', onde:'/receber?pedido=freelancer', html:() =>
+    `<div class="frm">${campo('Freelancer','—')}${campo('Função','—')}${campo('Dias trabalhados e valor de cada dia','—')}${campo('Chave Pix','—')}</div><div class="aviso">O dono aprova; o pagamento sai por Pix e as diárias entram no RH.</div>`},
+  receber_pedido_online:{titulo:'Pedir compra online', onde:'/receber?pedido=compra_online', html:() =>
+    `<div class="frm">${campo('Link do produto','—')}${campo('Print do carrinho ou do checkout','—')}${campo('Quantidade','—')}${campo('Já paguei? (sim / não)','—')}</div><div class="aviso">O print é lido pela IA. Se já foi pago, avisa como foi pago; senão o dono aprova e paga.</div>`},
+  receber_pedido_beneficio:{titulo:'Pedir pagamento · Benefício (VR/VA)', onde:'/receber?pedido=beneficio', html:() =>
+    `<div class="frm">${campo('Boleto do vale (PDF ou foto)','—')}${campo('Competência','—')}${campo('Valor por funcionário','—')}</div>`},
+  fin_pagar_nova:{titulo:'Nova conta a pagar', tipo:'fin', sub:'Financeiro › Contas a Pagar', onde:'Financeiro › Contas a Pagar › Nova conta (?tab=pagar&abrir=nova)', html:() =>
+    `<div class="frm">${campo('Descrição','—')}${campo('Fornecedor','—')}${campo('Categoria (DRE)','—')}${campo('Valor','—')}${campo('Vencimento','—')}${campo('Competência','—')}${campo('Centro de custo','—')}${campo('Debitar da conta','—')}${campo('Despesa fixa? Observações','—')}</div><div class="aviso">É a janela de sempre, um formulário só (no celular fica apertada: campos em 2 colunas).</div>`},
+  fin_lancar_despesa:{titulo:'Lançar despesa', tipo:'chat', sub:'Ação rápida ⚡ (a mesma do chat do assistente)', onde:'⚡ Ações rápidas › Lançar despesa (grava igual a Contas a Pagar: conta + baixa)', novo:'abrir essa ação direto, fora do chat.', html:() =>
+    `<div class="dst-q">Qual o valor da despesa?</div><div class="frm"><div class="in v" style="font-size:22px;height:52px">R$ 150,00</div></div>
+     <div class="aviso">Depois, um passo por vez: categoria no DRE → data → forma de pagamento (ou “ainda vou pagar”) → descrição → confirmar.</div>`},
+  fin_pagar_email:{titulo:'Boletos por e-mail', tipo:'fin', sub:'Financeiro › Contas a Pagar', onde:'Financeiro › Contas a Pagar › E-mail (?tab=pagar&abrir=email)', html:() =>
+    `<div class="frm"><b style="font-size:13px">Chegaram por e-mail (2)</b><div style="font-size:12.5px;color:#71717A;margin-top:6px">COPEL · vence 10/10 · R$ 1.284,55 · <b style="color:#C2700A">Lançar</b><br>Internet · vence 12/10 · R$ 149,90 · <b style="color:#C2700A">Lançar</b></div></div>`},
+  fin_compras_nova:{titulo:'Nova compra', tipo:'fin', sub:'Financeiro › Compras', onde:'Financeiro › Compras › Nova compra (?tab=compras&abrir=nova)', html:() =>
+    `<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">${bg('ri-camera-line','Ler notinha (foto)','foto ou PDF')}${bg('ri-qr-code-line','Colar o link','do QR da NFC-e')}</div><div class="frm">${campo('Fornecedor, NF e data','—')}${campo('Forma de pagamento e condição','—')}${campo('Frete, conta, centro de custo','—')}${campo('Itens (insumo, quantidade, preço)','—')}</div><div class="aviso">É a janela de sempre, feita para computador.</div>`},
+  fin_notas:{titulo:'Notas de Entrada', tipo:'fin', sub:'Financeiro › Compras', onde:'Financeiro › Notas de Entrada (?tab=notas-entrada)', html:() =>
+    `<div class="frm"><b style="font-size:13px">Chegaram da SEFAZ e falta lançar (5)</b><div style="font-size:12.5px;color:#71717A;margin-top:6px">Distribuidora de bebidas · NF 1290 · R$ 1.290,00 · <b style="color:#C2700A">Lançar como compra</b><br>Atacado de embalagens · NF 212 · R$ 212,90 · <b style="color:#C2700A">Lançar</b></div></div>`},
+  fin_guias:{titulo:'Guias e impostos', tipo:'fin', sub:'Financeiro › Pagar', onde:'Financeiro › Guias (?tab=guias)', html:() =>
+    bg('ri-file-upload-line','Enviar o PDF da guia','DAS, DARF ou FGTS: o sistema lê o código e o vencimento',1)},
+  fin_rh_freela:{titulo:'Freelancers', tipo:'fin', sub:'Financeiro › RH', onde:'Financeiro › RH › Freelancers (?tab=freelancers)', html:() =>
+    `<div class="frm"><b style="font-size:13px">Diárias a pagar</b><div style="font-size:12.5px;color:#71717A;margin-top:6px">João · 2 dias · R$ 240,00 · <b style="color:#C2700A">Pagar por Pix</b></div></div>`},
+  fin_rh_mei:{titulo:'Prestadores MEI', tipo:'fin', sub:'Financeiro › RH', onde:'Financeiro › RH › Prestadores MEI', html:() =>
+    `<div class="frm"><b style="font-size:13px">Prestadores</b><div style="font-size:12.5px;color:#71717A;margin-top:6px">Contador · mensal · R$ 650,00</div></div>`},
+  fin_entregadores:{titulo:'Entregadores', tipo:'fin', sub:'Financeiro › Pagar', onde:'Financeiro › Entregadores (?tab=entregadores)', html:() =>
+    `<div class="frm"><b style="font-size:13px">Acerto do período</b><div style="font-size:12.5px;color:#71717A;margin-top:6px">Motoboy 1 · 38 entregas · R$ 266,00</div></div>`},
+  fin_conc_extrato:{titulo:'Conciliação', tipo:'fin', sub:'Financeiro › Bancos', onde:'Financeiro › Conciliação (?tab=conciliacao)', novo:'abrir já nas saídas que faltam explicar.', html:() =>
+    `<div class="frm"><b style="font-size:13px">Saídas do extrato sem lançamento (4)</b><div style="font-size:12.5px;color:#71717A;margin-top:6px">02/10 · Pix para JOAO SILVA · R$ 240,00 · <b style="color:#C2700A">Explicar</b><br>01/10 · Pagamento boleto · R$ 389,90 · <b style="color:#C2700A">Explicar</b></div></div><div class="aviso">“Lançar a partir deste pagamento”: despesa, compra, freelancer, prestador MEI ou fora do DRE, na data e conta do extrato. Lê a nota pelo QR, foto ou arquivo.</div>`},
+  fin_fluxo:{titulo:'Fluxo de Caixa', tipo:'fin', sub:'Financeiro › Bancos', onde:'Financeiro › Fluxo › Nova movimentação', html:() => `<div class="frm">${campo('Entrada ou saída','—')}${campo('Valor','—')}${campo('Data','—')}${campo('Categoria','—')}</div>`},
+  fin_bancos:{titulo:'Bancos e Contas', tipo:'fin', sub:'Financeiro › Bancos', onde:'Financeiro › Bancos › lançamento manual', html:() => `<div class="frm">${campo('Conta','—')}${campo('Valor','—')}${campo('Motivo','—')}</div>`},
+  fin_orcamentos:{titulo:'Orçamentos', tipo:'fin', sub:'Financeiro › Compras', onde:'Financeiro › Orçamentos', html:() => `<div class="frm">${campo('Fornecedores','—')}${campo('Itens','—')}</div>`},
+  pdv_sangria_outro:{titulo:'Sangria', tipo:'pdv', sub:'Caixa (PDV) · precisa do caixa aberto', onde:'Caixa (PDV) › Sangria', novo:'abrir o PDV já com a janela de sangria (link novo ?abrir=sangria).', html:() =>
+    `<div class="frm"><label>Tipo</label><div class="chips"><span>Sangria (dono)</span><span>Fornecedor</span><span>Freelancer</span><span>Troco</span><span class="on">Outro</span></div>${campo('Valor','—')}${campo('Motivo','—')}</div>`},
+  pdv_sangria_freela:{titulo:'Sangria', tipo:'pdv', sub:'Caixa (PDV) · precisa do caixa aberto', onde:'Caixa (PDV) › Sangria › Freelancer', novo:'abrir o PDV já com a sangria de Freelancer (link novo).', html:() =>
+    `<div class="frm"><label>Tipo</label><div class="chips"><span>Sangria (dono)</span><span>Fornecedor</span><span class="on">Freelancer</span><span>Troco</span><span>Outro</span></div>${campo('Freelancer','—')}${campo('Dias e valor de cada dia','—')}</div><div class="aviso">Vira conta de RH já paga em dinheiro + uma diária por dia.</div>`},
+};
+
+const NOTAS_HTML = () => `<h3>Uma porta só para lançar</h3><p class="sub">Troque o perfil lá em cima e toque no + (ou em Lançar, no Financeiro).</p>
+<div class="nt"><span class="n">1</span><div><b>Uma pergunta: “O que aconteceu?”</b><p>Cinco respostas do dia a dia. Ninguém precisa saber em que aba fica cada coisa.</p></div></div>
+<div class="nt"><span class="n">2</span><div><b>Leva à tela que já existe</b><p>Cada resposta abre o passo a passo de hoje (Recebimentos, Nova conta, Sangria…). Nenhum caminho saiu: a lista completa continua no fim da folha.</p></div></div>
+<div class="nt"><span class="n">3</span><div><b>Respeita o perfil</b><p>Só aparece o que o perfil pode fazer, pela matriz de permissões da loja. A mesma pergunta leva quem pode lançar à tela de lançar, e quem não pode ao pedido para o dono aprovar (selo azul).</p></div></div>
+<div class="nt"><span class="n">4</span><div><b>Pula pergunta à toa</b><p>Se só sobra um caminho, vai direto. Ex.: Caixa em “Paguei algo › Freelancer” vai direto para a sangria.</p></div></div>
+<div class="nt"><span class="n">5</span><div><b>Mesmo começo em todo lugar</b><p>O + do celular (tela Hoje), o botão Lançar do Financeiro e a ação rápida ⚡ abrem a mesma folha.</p></div></div>
+<div class="nbox"><b>Perfis do “Ver como”:</b> a matriz real da Paranaguá hoje (03/10). Gerente: Compras, Notas, Guias e Freelancers, sem Contas a Pagar. Supervisão: recebe mercadoria e pede reembolso, freela e fornecedor. Caixa: recebe mercadoria e pede fornecedor.</div>
+<div class="nbox"><b>Precisa de pouca coisa nova:</b> links para abrir já no passo certo: câmera do cupom no Recebimentos, janela de sangria no PDV, saídas pendentes na Conciliação e a ação “Lançar despesa” fora do chat. Contas a Pagar e Compras já aceitam link hoje.</div>
+<div class="nbox"><b>Onde fica no celular:</b> no + da tela Hoje (quando ela entrar), numa tela própria “Lançar” (atalho do app) e no ⚡ das ações rápidas.</div>
+<div class="nbox"><b>Decisões suas:</b><br>• Ordem fixa das 5 opções para todos, para decorar o lugar, ou cada perfil vê primeiro o que mais usa?<br>• “Boleto ou conta” e “Fornecedor ou serviço”, para quem lança direto: abre a janela Nova conta (formulário único, apertada no celular) ou o “Lançar despesa” passo a passo do ⚡ (sem fornecedor nem competência)?<br>• Sangria precisa do caixa aberto no PDV. Com o caixa fechado, só aviso “abra o caixa” ou deixo registrar como sangria prevista?</div>`;
+
+/* Motor do protótipo "O que aconteceu?" — as opções e destinos ficam em arvore.js */
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+const S = {persona:'dono', onde:'cel', pilha:[], aberto:false, dst:null};
+
+function pode(req){
+  if (!req) return true;
+  const P = PERS[S.persona].perms;
+  return req.some(k => P.includes(k));
+}
+/* Uma opção-folha pode ter variantes por permissão (lança direto × pede aprovação): vale a 1ª liberada. */
+function variante(n){
+  if (n.vars) return n.vars.find(v => pode(v.req)) || null;
+  if (n.destino) return pode(n.req) ? n : null;
+  return null;
+}
+function filhosVisiveis(n){ return (n.filhos||[]).filter(visivel); }
+function visivel(n){
+  if (n.filhos) return filhosVisiveis(n).length > 0;
+  return !!variante(n);
+}
+
+/* ---------- barra do protótipo ---------- */
+function renderProto(){
+  const b = (k,t) => `<button class="${S.persona===k?'on':''}" data-act="persona:${k}">${t}</button>`;
+  const o = (k,t) => `<button class="${S.onde===k?'on':''}" data-act="onde:${k}">${t}</button>`;
+  $('proto').innerHTML = `<span class="lbl">VER COMO</span>${Object.keys(PERS).map(k=>b(k,PERS[k].botao)).join('')}
+    <span class="sep"></span><span class="lbl">ABRE NO</span>${o('cel','Celular (+)')}${o('pc','Financeiro (Lançar)')}
+    <span class="sp"></span><button data-act="reset">↺ Recomeçar</button><button class="bt-notas" data-act="notas">O que muda?</button>`;
+}
+
+/* ---------- fundo ---------- */
+function renderFundo(){
+  const P = PERS[S.persona];
+  $('app').classList.toggle('pc', S.onde==='pc');
+  if (S.onde==='pc'){
+    const temFin = P.perms.some(k => k.startsWith('fin:'));
+    $('fundo').innerHTML = `<div class="fin">
+      <div class="fin-h"><div class="ic"><i class="ri-money-dollar-circle-line"></i></div><div><b>Financeiro</b><span>El Patron Paranaguá · ${esc(P.papel)}</span></div><span class="sp"></span>
+        <button class="bt-busca"><i class="ri-search-line"></i> Buscar fornecedor, nota ou valor</button>
+        <button class="bt-lancar" data-act="abrir"><i class="ri-add-line"></i> Lançar</button></div>
+      <div class="fin-g"><span class="on">Início</span><span>Pagar</span><span>Receber</span><span>Bancos</span><span>Compras</span><span>Resultado</span></div>
+      <div class="fin-b">${'<div class="ghost"><div class="l1"></div><div class="l2"></div><div class="l3"></div></div>'.repeat(6)}</div>
+      ${temFin?'':`<div class="aviso" style="margin:0 22px">Neste perfil o Financeiro não abre (sem nenhuma aba liberada). O mesmo começo fica no celular, pelo “+”.</div>`}
+    </div>`;
+  } else {
+    $('fundo').innerHTML = `<div class="scr">
+      <div class="top"><div class="av">${P.av}</div><div class="hi"><b>Bom dia, ${esc(P.nome)}</b><span>Sábado, 3 de outubro · ${esc(P.papel)}</span></div></div>
+      <div class="manchete">Tela Hoje</div><p class="subm">(a outra sessão está fazendo esta tela; aqui ela é só o fundo)</p>
+      <div class="dica"><i class="ri-arrow-down-line"></i><span>Toque no <b>+</b> laranja embaixo: é a porta única para qualquer lançamento.</span></div>
+      ${'<div class="ghost"><div class="l1"></div><div class="l2"></div><div class="l3"></div></div>'.repeat(4)}
+    </div>
+    <nav class="nav">
+      <button class="nv on"><i class="ri-sun-line"></i>Hoje</button>
+      <button class="nv"><i class="ri-line-chart-line"></i>Loja</button>
+      <div><button class="mais pulse" data-act="abrir"><i class="ri-add-line"></i></button></div>
+      <button class="nv"><i class="ri-chat-3-line"></i>Conversas</button>
+      <button class="nv"><i class="ri-menu-line"></i>Menu</button>
+    </nav>`;
+  }
+}
+
+/* ---------- folha ---------- */
+function abrir(){ S.pilha=[]; S.aberto=true; renderSheet(); $('ov').classList.add('on'); $('sheet').classList.add('on'); }
+function fechar(){ S.aberto=false; $('ov').classList.remove('on'); $('sheet').classList.remove('on'); }
+
+function noAtual(){
+  let n = {filhos:ARVORE};
+  for (const id of S.pilha) n = id==='__lista' ? {lista:true} : filhosVisiveis(n).find(f => f.id===id);
+  return n;
+}
+
+function opHTML(n, nivel){
+  const v = n.filhos ? null : variante(n);
+  const em = nivel && v && v.em ? `<em class="${v.ap?'ap':''}"><i class="${v.ap?'ri-shield-check-line':'ri-arrow-right-up-line'}"></i>${esc(v.em)}</em>` : '';
+  const sub = (v && v.s) || n.s || '';
+  return `<button class="op" data-act="ir:${n.id}"><span class="oi"><i class="${n.ic}"></i></span>
+    <span class="ot"><b>${esc((v && v.t) || n.t)}</b>${sub?`<span>${esc(sub)}</span>`:''}${em}</span><i class="ri-arrow-right-s-line oa"></i></button>`;
+}
+
+function renderSheet(){
+  const n = noAtual();
+  const nivel = S.pilha.length;
+  const voltar = nivel ? `<button class="sh-v" data-act="voltar" aria-label="Voltar"><i class="ri-arrow-left-line"></i></button>` : '';
+  const x = `<button class="sh-x" data-act="fechar" aria-label="Fechar"><i class="ri-close-line"></i></button>`;
+  let titulo, sub, corpo;
+  if (n.lista){
+    titulo = 'Todos os jeitos de lançar'; sub = 'A lista completa de hoje (o botão Lançar antigo). Nada saiu.';
+    corpo = LISTA.map(g => {
+      const ops = g.ops.filter(o => pode(o.req));
+      if (!ops.length) return '';
+      return `<div class="grp">${esc(g.t)}</div><div class="ops">${ops.map(o => `<button class="op" data-act="dst:${o.destino}"><span class="oi"><i class="${o.ic}"></i></span><span class="ot"><b>${esc(o.t)}</b><span>${esc(o.s)}</span></span><i class="ri-arrow-right-s-line oa"></i></button>`).join('')}</div>`;
+    }).join('');
+  } else {
+    const fs = filhosVisiveis(n);
+    titulo = nivel ? n.q : 'O que aconteceu?';
+    sub = nivel ? (n.qs||'') : 'Escolha e eu levo você ao passo a passo certo.';
+    corpo = fs.length ? `<div class="ops">${fs.map(f => opHTML(f, nivel)).join('')}</div>` : `<div class="vazio">Nada liberado para o seu perfil aqui.</div>`;
+    if (!nivel){
+      const temLista = LISTA.some(g => g.ops.some(o => pode(o.req)));
+      if (temLista) corpo += `<div class="rodape"><button class="lk" data-act="lista">Ver todos os jeitos de lançar (lista completa)</button></div>`;
+      if (PERS[S.persona].nota) corpo += `<div class="aviso b"><b>${esc(PERS[S.persona].botao)}:</b> ${PERS[S.persona].nota}</div>`;
+    } else if (n.rodape) corpo += `<div class="aviso">${n.rodape}</div>`;
+  }
+  const passo = nivel && !n.lista ? `<div class="passo">${esc(n.t)}</div>` : '';
+  $('sheet').innerHTML = `<div class="sh-h">${voltar}<div class="tx">${passo}<b>${esc(titulo)}</b>${sub?`<span class="s">${esc(sub)}</span>`:''}</div>${x}</div><div class="sh-b">${corpo}</div>`;
+}
+
+function ir(id){
+  const pai = noAtual();
+  const n = filhosVisiveis(pai).find(f => f.id===id);
+  if (!n) return;
+  if (n.filhos){
+    const fs = filhosVisiveis(n);
+    // Só um caminho liberado: não pergunta, vai direto
+    if (fs.length===1 && !fs[0].filhos){ abrirDestino(variante(fs[0]).destino, `“${n.t}” → só tem um caminho no seu perfil, então foi direto.`); return; }
+    S.pilha.push(id); renderSheet(); $('sheet').querySelector('.sh-b').scrollTop=0; return;
+  }
+  abrirDestino(variante(n).destino);
+}
+
+/* ---------- destino (tela que já existe) ---------- */
+function abrirDestino(id, extra){
+  const d = DESTINOS[id]; if(!d) return;
+  S.dst = id;
+  const cls = d.tipo || '';
+  $('dst').innerHTML = `<div class="dst-top ${cls}"><button data-act="dstvoltar" aria-label="Voltar"><i class="ri-arrow-left-line"></i></button><div><b>${esc(d.titulo)}</b><span>${esc(d.sub||'El Patron Paranaguá')}</span></div></div>
+    <div class="fita"><i class="ri-information-line"></i><span><b>Tela que já existe, sem mudança:</b> ${esc(d.onde)}.${d.novo?` <b>Novo:</b> ${esc(d.novo)}`:''}${extra?' '+esc(extra):''}</span></div>
+    <div class="dst-b">${d.html()}</div>`;
+  $('dst').classList.add('on');
+}
+function fecharDestino(){ $('dst').classList.remove('on'); S.dst=null; }
+
+/* ---------- eventos ---------- */
+function toast(msg){ const t=$('toast'); t.textContent=msg; t.classList.add('on'); clearTimeout(toast._t); toast._t=setTimeout(()=>t.classList.remove('on'), 3400); }
+
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-act]'); if(!b) return;
+  const act = b.dataset.act, p = act.indexOf(':');
+  const a = p<0 ? act : act.slice(0,p), x = p<0 ? '' : act.slice(p+1);
+  if (a==='persona'){ S.persona=x; fecharDestino(); renderProto(); renderFundo(); if (S.aberto){ S.pilha=[]; renderSheet(); } }
+  else if (a==='onde'){ S.onde=x; fecharDestino(); fechar(); renderProto(); renderFundo(); }
+  else if (a==='abrir') abrir();
+  else if (a==='fechar') fechar();
+  else if (a==='voltar'){ S.pilha.pop(); renderSheet(); }
+  else if (a==='ir') ir(x);
+  else if (a==='lista'){ S.pilha=['__lista']; renderSheet(); }
+  else if (a==='dst') abrirDestino(x);
+  else if (a==='dstvoltar') fecharDestino();
+  else if (a==='toast') toast(x);
+  else if (a==='reset'){ S.pilha=[]; fecharDestino(); fechar(); renderFundo(); toast('Protótipo recomeçado.'); }
+  else if (a==='notas') $('notesov').classList.add('on');
+  else if (a==='fecharnotas') $('notesov').classList.remove('on');
+});
+
+function iniciar(){
+  $('notes').innerHTML = NOTAS_HTML();
+  $('notesov').innerHTML = `<div class="fx"><button class="sh-x" style="position:static" data-act="fecharnotas"><i class="ri-close-line"></i></button></div>` + NOTAS_HTML();
+  renderProto(); renderFundo();
+}
+
+</script>
+<script>iniciar();</script>
+</body>
+</html>
