@@ -7,6 +7,9 @@
 // (fn_freelancer_informar_dias, fn_freelancer_salvar) — a mesma regra do assistente.
 // 2026-09-28: fica dentro de RH / Folha (embutido); cadastro novo pela tela (fn_freelancer_criar);
 // pagamento lançado pelo extrato (sem payment_id, com bill_id) recebe os dias por fn_freelancer_do_extrato.
+// 2026-10-03: cada diária mostra a origem (sangria no PDV, pedido pelo app, grupo, extrato), a forma de
+// pagamento e quem pediu/aprovou/fez a sangria (fn_freelancer_diarias_origem); a data do trabalho muda
+// clicando no dia (fn_freelancer_mudar_data — valor, conta e caixa ficam como estão).
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
@@ -22,6 +25,31 @@ interface Diaria {
   payment_id: string | null; bill_id: string | null; created_at: string;
   hr_freelancers: { name: string; role: string | null } | null;
 }
+// De onde veio a diária (fn_freelancer_diarias_origem, 2026-10-03): forma de pagamento, quem pediu/aprovou/fez a sangria.
+interface Origem {
+  shift_id: string; origem: 'sangria_pdv' | 'pedido_app' | 'grupo' | 'assistente' | 'extrato' | 'manual';
+  forma: string | null; solicitado_por: string | null; aprovado_por: string | null; registrado_por: string | null;
+  registrado_em: string | null; pago_em: string | null; conta_status: string | null; observacao: string | null;
+}
+const ORIGEM_LABEL: Record<Origem['origem'], { txt: string; icon: string }> = {
+  sangria_pdv: { txt: 'Sangria no PDV', icon: 'ri-safe-2-line' },
+  pedido_app: { txt: 'Pedido pelo app', icon: 'ri-smartphone-line' },
+  grupo: { txt: 'Pedido no grupo', icon: 'ri-whatsapp-line' },
+  assistente: { txt: 'Pago pelo assistente', icon: 'ri-robot-2-line' },
+  extrato: { txt: 'Lançado pelo extrato', icon: 'ri-bank-line' },
+  manual: { txt: 'Lançado à mão', icon: 'ri-edit-line' },
+};
+const fmtHora = (iso: string) => new Date(iso).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+function origemTexto(o: Origem): string {
+  const partes: (string | null)[] = [o.forma];
+  if (o.origem === 'sangria_pdv') partes.push(o.registrado_por ? `sangria feita por ${o.registrado_por}` : null, o.registrado_em ? fmtHora(o.registrado_em) : null);
+  else {
+    partes.push(o.solicitado_por ? `pedido por ${o.solicitado_por}` : null, o.aprovado_por ? `aprovado por ${o.aprovado_por}` : null, o.observacao);
+    if (o.conta_status && o.conta_status !== 'paid') partes.push('ainda não pago');
+    else if (o.pago_em) partes.push(`pago ${new Date(`${o.pago_em}T12:00:00`).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}`);
+  }
+  return partes.filter(Boolean).join(' · ');
+}
 
 const hojeSP = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
 const fmtDia = (iso: string) => new Date(`${iso}T12:00:00`).toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' });
@@ -34,10 +62,12 @@ export default function FreelancersTab({ embutido = false }: { embutido?: boolea
   const [freelancers, setFreelancers] = useState<Freelancer[]>([]);
   const [diarias, setDiarias] = useState<Diaria[]>([]);
   const [pendentes, setPendentes] = useState<Diaria[]>([]);
+  const [origens, setOrigens] = useState<Map<string, Origem>>(new Map());
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
   const [editando, setEditando] = useState<Freelancer | null>(null);
   const [novo, setNovo] = useState(false);
+  const [mudandoData, setMudandoData] = useState<Diaria | null>(null);
 
   const carregar = useCallback(async () => {
     if (!tenantId) return;
@@ -58,6 +88,12 @@ export default function FreelancersTab({ embutido = false }: { embutido?: boolea
     setDiarias((d.data ?? []) as unknown as Diaria[]);
     setPendentes((p.data ?? []) as unknown as Diaria[]);
     setCarregando(false);
+    // Origem é detalhe: se falhar, a lista continua (só some a linha de origem).
+    const ids = (d.data ?? []).map((x: { id: string }) => x.id);
+    if (ids.length) {
+      const { data: o } = await supabase.rpc('fn_freelancer_diarias_origem', { p_tenant: tenantId, p_ids: ids });
+      setOrigens(new Map(((o ?? []) as Origem[]).map((x) => [x.shift_id, x])));
+    } else setOrigens(new Map());
   }, [tenantId, mes]);
   useEffect(() => { carregar(); }, [carregar]);
 
@@ -171,13 +207,28 @@ export default function FreelancersTab({ embutido = false }: { embutido?: boolea
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-100/80">
-              {diarias.map((d) => (
-                <tr key={d.id} className="hover:bg-zinc-50">
-                  <td className="pl-5 pr-4 py-2.5 text-zinc-600 whitespace-nowrap capitalize">{d.work_date ? fmtDia(d.work_date) : '—'}</td>
-                  <td className="px-4 py-2.5 text-zinc-800">{d.hr_freelancers?.name ?? 'Freelancer'}{d.hr_freelancers?.role ? <span className="text-zinc-400"> · {d.hr_freelancers.role}</span> : null}</td>
-                  <td className="px-4 py-2.5 text-right tabular-nums font-semibold text-zinc-900 whitespace-nowrap">{formatCurrency(Number(d.amount))}</td>
-                </tr>
-              ))}
+              {diarias.map((d) => {
+                const o = origens.get(d.id);
+                return (
+                  <tr key={d.id} className="hover:bg-zinc-50 align-top">
+                    <td className="pl-5 pr-4 py-2.5 text-zinc-600 whitespace-nowrap capitalize">
+                      <button onClick={() => setMudandoData(d)} className="inline-flex items-center gap-1 hover:text-amber-700 cursor-pointer capitalize" aria-label="Mudar a data da diária">
+                        {d.work_date ? fmtDia(d.work_date) : '—'}<i className="ri-edit-line text-zinc-300" />
+                      </button>
+                    </td>
+                    <td className="px-4 py-2.5 text-zinc-800">
+                      {d.hr_freelancers?.name ?? 'Freelancer'}{d.hr_freelancers?.role ? <span className="text-zinc-400"> · {d.hr_freelancers.role}</span> : null}
+                      {o && (
+                        <p className="text-[11px] text-zinc-500 mt-0.5 leading-snug">
+                          <span className="font-semibold text-zinc-600"><i className={`${ORIGEM_LABEL[o.origem].icon} mr-0.5`} />{ORIGEM_LABEL[o.origem].txt}</span>
+                          {origemTexto(o) ? ` · ${origemTexto(o)}` : ''}
+                        </p>
+                      )}
+                    </td>
+                    <td className="px-4 py-2.5 text-right tabular-nums font-semibold text-zinc-900 whitespace-nowrap">{formatCurrency(Number(d.amount))}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
           </div>
@@ -185,6 +236,7 @@ export default function FreelancersTab({ embutido = false }: { embutido?: boolea
       )}
 
       {editando && <EditarFreelancer f={editando} onFechar={() => setEditando(null)} onSalvo={() => { setEditando(null); carregar(); }} />}
+      {mudandoData && <MudarDataDiaria diaria={mudandoData} onFechar={() => setMudandoData(null)} onSalvo={() => { setMudandoData(null); carregar(); }} />}
       {novo && tenantId && <NovoFreelancer tenantId={tenantId} onFechar={() => setNovo(false)} onSalvo={() => { setNovo(false); carregar(); }} />}
     </div>
   );
@@ -231,6 +283,40 @@ function InformarDias({ diaria, onFeito }: { diaria: Diaria; onFeito: () => void
         </button>
       </div>
       {erro && <p className="text-xs text-red-600 mt-1">{erro}</p>}
+    </div>
+  );
+}
+
+// Mudar o dia trabalhado de uma diária (2026-10-03). Só a data do trabalho: valor, conta e caixa não mudam.
+function MudarDataDiaria({ diaria, onFechar, onSalvo }: { diaria: Diaria; onFechar: () => void; onSalvo: () => void }) {
+  const [data, setData] = useState(diaria.work_date ?? '');
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+  const salvar = async () => {
+    if (!data) { setErro('Escolha a data.'); return; }
+    setSalvando(true); setErro(null);
+    const { error } = await supabase.rpc('fn_freelancer_mudar_data', { p_shift: diaria.id, p_data: data });
+    setSalvando(false);
+    if (error) { setErro(error.message); return; }
+    onSalvo();
+  };
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 p-3" onClick={onFechar}>
+      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-sm rounded-2xl bg-white p-5 space-y-3">
+        <div>
+          <p className="text-base font-black text-zinc-900">Mudar a data da diária</p>
+          <p className="text-xs text-zinc-500 mt-0.5">{diaria.hr_freelancers?.name ?? 'Freelancer'} · {formatCurrency(Number(diaria.amount))}{diaria.work_date ? <> · hoje em <span className="capitalize">{fmtDia(diaria.work_date)}</span></> : null}</p>
+        </div>
+        <label className="block"><span className="text-xs font-semibold text-zinc-500">Dia trabalhado</span>
+          <input type="date" value={data} max={hojeSP()} onChange={(e) => setData(e.target.value)} className="w-full h-10 px-3 rounded-lg border border-zinc-200 text-sm focus:outline-none focus:border-amber-300" />
+        </label>
+        <p className="text-[11px] text-zinc-400">Muda só o dia em que trabalhou. O valor e o pagamento (data em que saiu o dinheiro/Pix) continuam iguais.</p>
+        {erro && <p className="text-xs text-red-600">{erro}</p>}
+        <div className="flex gap-2 pt-1">
+          <button onClick={onFechar} className="flex-1 h-10 rounded-xl border border-zinc-200 text-sm font-bold text-zinc-600 cursor-pointer">Cancelar</button>
+          <button onClick={salvar} disabled={salvando || !data || data === diaria.work_date} className="flex-1 h-10 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-sm font-bold disabled:opacity-40 cursor-pointer">{salvando ? 'Salvando…' : 'Salvar'}</button>
+        </div>
+      </div>
     </div>
   );
 }
