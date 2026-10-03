@@ -76,7 +76,19 @@ export default function MontarSaidaModal({ tenantId, orders, loja, motoboys, onC
           {sugestoes.length === 0 ? (
             <div className="text-center py-10">
               <i className="ri-inbox-line text-3xl text-zinc-300" />
-              <p className="text-sm font-semibold text-zinc-600 mt-1">Nenhum pedido pronto esperando motoboy.</p>
+              {/* A coluna "Pronto · aguardando motoboy" também tem pedido JÁ com entregador (dono, 2026-10-02:
+                  "tem bastante pedido pronto") — a sugestão só usa os sem entregador; diz isso na tela. */}
+              {(() => {
+                const semLocalTxt = semLocal.length ? ` ${semLocal.length === 1 ? 'O outro está' : 'Os outros estão'} sem localização no mapa.` : '';
+                if (!prontos.length) return <p className="text-sm font-semibold text-zinc-600 mt-1">Nenhum pedido pronto sem entregador.</p>;
+                return <p className="text-sm font-semibold text-zinc-600 mt-1">Nenhum pedido pronto com localização para montar saída.{semLocalTxt}</p>;
+              })()}
+              {orders.some((o) => o.status === 'ready' && o.driver_id && !o.motoboy_status) && (
+                <p className="text-xs text-zinc-500 mt-1.5 max-w-sm mx-auto">
+                  Já têm entregador: {orders.filter((o) => o.status === 'ready' && o.driver_id && !o.motoboy_status).map((o) => numCurto(o.number)).join(', ')}.
+                  A sugestão só monta saída com pedido sem entregador — para mudar, tire o entregador no cartão do pedido.
+                </p>
+              )}
             </div>
           ) : sugestoes.map((s, i) => (
             // (a posição dos motoboys chega depois de abrir: o cartão recomeça quando muda o motoboy sugerido)
