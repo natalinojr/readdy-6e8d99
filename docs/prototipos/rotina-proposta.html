@@ -1,0 +1,709 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Rotina do dia — protótipo v2</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/remixicon@4.2.0/fonts/remixicon.css" rel="stylesheet">
+<style>
+:root{
+  --bg:#FAF7F2; --line:#EEE6DA; --ink:#1F1A14; --ink2:#5B5248; --ink3:#9A9086;
+  --or:#F59E0B; --or2:#C2700A; --orbg:#FFF4E0;
+  --red:#DC2626; --redbg:#FEF1F1; --grn:#15803D; --grnbg:#ECFDF3; --pur:#7C3AED; --purbg:#F3EEFF; --blu:#2563EB; --blubg:#EEF4FF;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{font-family:'Plus Jakarta Sans',system-ui,sans-serif;background:#E7E1D8;color:var(--ink);-webkit-font-smoothing:antialiased}
+button{font-family:inherit;cursor:pointer;color:inherit}
+input,select{font-family:inherit}
+
+.proto{position:sticky;top:0;z-index:60;min-height:46px;background:#1F1A14;color:#fff;display:flex;align-items:center;gap:6px;padding:6px 10px;overflow-x:auto;white-space:nowrap;scrollbar-width:none}
+.proto::-webkit-scrollbar{display:none}
+.proto .lbl{font-size:10px;font-weight:800;letter-spacing:.14em;color:#F5B544;margin:0 2px 0 4px}
+.proto button{border:1px solid #4a4238;background:transparent;color:#E8E2D9;border-radius:999px;padding:6px 11px;font-size:12.5px;font-weight:600;flex:none}
+.proto button.on{background:var(--or);border-color:var(--or);color:#1F1A14}
+.proto .sep{width:1px;height:22px;background:#4a4238;margin:0 4px;flex:none}
+
+.wrap{display:flex;justify-content:center;gap:28px}
+.app{width:100%;max-width:430px;height:calc(100dvh - 46px);background:var(--bg);position:relative;overflow:hidden;display:flex;flex-direction:column}
+.scr{flex:1;overflow-y:auto;padding:0 16px 40px}
+.notes{display:none}
+@media(min-width:1000px){
+  .wrap{padding:22px 24px}
+  .app{height:min(880px,calc(100vh - 90px));border-radius:30px;box-shadow:0 24px 70px rgba(31,26,20,.22);border:8px solid #1F1A14}
+  .notes{display:block;width:410px;max-height:calc(100vh - 90px);overflow:auto;background:#fff;border-radius:22px;padding:22px 22px 10px;box-shadow:0 10px 40px rgba(31,26,20,.10)}
+  .proto .bt-notas{display:none}
+}
+
+.top{padding:16px 0 4px}
+.top .dt{font-size:12.5px;color:var(--ink3);font-weight:500}
+.top h1{font-size:18px;font-weight:800;margin:2px 0 0;letter-spacing:-.01em}
+.top h1 em{font-style:normal;color:var(--or)}
+.devbar{margin-top:10px;display:flex;align-items:center;gap:8px;background:#1F1A14;color:#fff;border-radius:14px;padding:9px 12px;font-size:12.5px}
+.devbar i{color:#F5B544;font-size:16px}
+.manchete{font-size:26px;line-height:1.15;font-weight:800;letter-spacing:-.02em;margin:12px 0 4px}
+.manchete .n{color:var(--red)}
+.manchete.ok{color:var(--grn)}
+.manchete small{font-size:17px;color:#3F8F5C;font-weight:700}
+.subm{font-size:13px;color:var(--ink2);margin:0 0 16px}
+
+.tudo{position:relative;overflow:hidden;background:#F4FDF7;border:1px solid #BBF0CF;border-radius:22px;padding:18px;margin-bottom:18px;text-align:center}
+.tudo::before{content:"";position:absolute;right:-40px;top:-40px;width:160px;height:160px;border-radius:50%;background:#DCFCE7;pointer-events:none}
+.tudo>*{position:relative}
+.tudo .ic{width:54px;height:54px;border-radius:50%;background:var(--grn);color:#fff;display:grid;place-items:center;font-size:30px;margin:0 auto 8px}
+.tudo b{display:block;font-size:19px;font-weight:800;color:#14532D}
+.tudo p{margin:6px 0 0;font-size:13px;color:#166534}
+.tudo .depois{margin-top:10px;display:inline-flex;align-items:center;gap:6px;background:#fff;border:1px solid #BBF0CF;border-radius:999px;padding:5px 11px;font-size:12.5px;font-weight:700;color:#166534}
+
+.bloco{margin:0 0 22px}
+.bh{display:flex;align-items:baseline;gap:8px;margin:0 2px 8px}
+.bh h2{font-size:15px;font-weight:800;margin:0;letter-spacing:-.01em;white-space:nowrap}
+.bh .cnt{font-size:11.5px;font-weight:800;color:#fff;background:var(--red);border-radius:999px;padding:1px 8px}
+.bh .cnt.g{background:#D9D2C7;color:var(--ink2)}
+.bh .cnt.ok{background:var(--grn)}
+.bh .exp{font-size:12px;color:var(--ink3);font-weight:500;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bh .cfg{border:0;background:none;color:var(--ink3);font-size:18px;padding:0 2px;line-height:1}
+
+.card{background:#fff;border:1px solid var(--line);border-radius:20px;padding:14px;margin-bottom:10px;position:relative;overflow:hidden}
+.card:before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px;background:var(--or)}
+.meta{display:flex;gap:6px;margin-bottom:6px}
+.tag{font-size:10.5px;font-weight:800;border-radius:6px;padding:2px 7px;text-transform:uppercase;letter-spacing:.05em;background:var(--orbg);color:var(--or2)}
+.card b.t{font-size:15.5px;font-weight:800;letter-spacing:-.01em;display:block}
+.card p{margin:4px 0 0;font-size:13px;line-height:1.45;color:var(--ink2)}
+.bts{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+.bt{border:1px solid var(--line);background:#fff;border-radius:12px;padding:10px 13px;font-size:13.5px;font-weight:700;min-height:42px}
+.bt.p{background:var(--or);border-color:var(--or);color:#1F1A14}
+.bt.dk{background:var(--ink);border-color:var(--ink);color:#fff}
+.bt.sm{min-height:34px;padding:6px 11px;font-size:12.5px;border-radius:10px}
+
+.rot{background:#fff;border:1px solid var(--line);border-radius:20px;overflow:hidden}
+.rhead{display:flex;align-items:center;gap:10px;padding:12px 14px 10px}
+.rhead .pc{font-size:13px;font-weight:800}
+.rbar{flex:1;height:7px;background:#F1ECE4;border-radius:9px;overflow:hidden}
+.rbar>div{height:100%;background:var(--grn);border-radius:9px;transition:width .4s}
+.grp{padding:8px 14px 4px;font-size:11px;font-weight:800;color:var(--ink3);text-transform:uppercase;letter-spacing:.08em;border-top:1px solid #F3EEE6;background:#FCFAF6}
+.ri{display:flex;gap:12px;align-items:flex-start;padding:12px 14px;border-top:1px solid #F3EEE6}
+.ck{width:30px;height:30px;border-radius:50%;border:2px solid #D9D0C3;flex:none;display:grid;place-items:center;background:#fff;color:transparent;font-size:18px;padding:0}
+.ck:hover{border-color:var(--grn);color:#86C29B}
+.ri.ok .ck{background:var(--grn);border-color:var(--grn);color:#fff}
+.ri.auto:not(.ok) .ck{border-style:dashed}
+.ri.tarde .ck{border-color:#E8E1D6;background:#F7F3ED}
+.ri.ro .ck{pointer-events:none}
+.ri .tx{flex:1;min-width:0}
+.ri .tx b{display:block;font-size:14.5px;font-weight:700;line-height:1.3}
+.ri.ok .tx b{color:var(--ink3);text-decoration:line-through;text-decoration-color:#C9C0B3}
+.ri.tarde .tx b{color:var(--ink2)}
+.ri .tx .s{display:block;font-size:12.5px;color:var(--ink3);margin-top:3px;line-height:1.4}
+.ri .tx .quem{display:inline-flex;align-items:center;gap:4px;font-size:11.5px;font-weight:700;margin-top:4px;padding:2px 7px;border-radius:6px;background:#F4EFE7;color:var(--ink2)}
+.ri .tx .quem.auto{background:var(--purbg);color:var(--pur)}
+.pill{display:inline-flex;align-items:center;gap:3px;font-size:10.5px;font-weight:800;border-radius:6px;padding:1px 6px;text-transform:uppercase;letter-spacing:.04em;margin-left:6px;vertical-align:2px}
+.pill.h{background:#F4EFE7;color:var(--ink2)}
+.pill.late{background:var(--redbg);color:var(--red)}
+.pill.novo{background:var(--blubg);color:var(--blu)}
+.ri .go{border:0;background:var(--ink);color:#fff;border-radius:10px;padding:8px 12px;font-size:12.5px;font-weight:700;flex:none;align-self:center;white-space:nowrap}
+.ri .go.lt{background:#F4EFE7;color:var(--ink)}
+.rfoot{border-top:1px solid #F3EEE6;padding:9px 14px;font-size:12px;color:var(--ink3);display:flex;justify-content:space-between;align-items:center;gap:8px}
+.rfoot button{border:0;background:none;color:var(--or2);font-weight:700;font-size:12px;padding:0}
+.addrow{display:flex;gap:8px;padding:10px 14px 12px;border-top:1px solid #F3EEE6}
+.addrow button{flex:1;border:1.5px dashed #D9D0C3;background:#fff;border-radius:12px;padding:10px 8px;font-size:13px;font-weight:700;color:var(--or2)}
+
+.lojas{background:#fff;border:1px solid var(--line);border-radius:18px;padding:2px 14px}
+.lj{display:flex;align-items:center;gap:10px;padding:11px 0;border-top:1px solid #F3EEE6;width:100%;background:none;border-left:0;border-right:0;border-bottom:0;text-align:left}
+.lj:first-child{border-top:0}
+.lj .tx{flex:1;min-width:0}
+.lj .tx b{display:block;font-size:13.5px;font-weight:700}
+.lj .tx span{display:block;font-size:12px;color:var(--ink3);margin-top:2px}
+.lj .mini{width:64px;height:6px;background:#F1ECE4;border-radius:6px;overflow:hidden;flex:none}
+.lj .mini>div{height:100%;background:var(--grn)}
+.lj .nn{font-size:12.5px;font-weight:800;min-width:34px;text-align:right}
+
+.atalhos{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.at{background:#fff;border:1px solid var(--line);border-radius:16px;padding:12px;display:flex;align-items:center;gap:10px;font-size:13.5px;font-weight:700;text-align:left;min-height:56px}
+.at i{width:34px;height:34px;border-radius:11px;background:var(--orbg);color:var(--or2);display:grid;place-items:center;font-size:18px;flex:none;font-style:normal}
+
+.cfgtop{padding:14px 0 6px;display:flex;align-items:center;gap:10px}
+.cfgtop .bk{width:36px;height:36px;border-radius:12px;border:1px solid var(--line);background:#fff;font-size:18px;display:grid;place-items:center}
+.cfgtop b{font-size:18px;font-weight:800;letter-spacing:-.01em}
+.cfgsub{font-size:12.5px;color:var(--ink3);margin:0 0 12px;line-height:1.45}
+.sel{display:flex;align-items:center;gap:8px;background:#fff;border:1px solid var(--line);border-radius:14px;padding:10px 12px;font-size:14px;font-weight:700;width:100%;text-align:left;margin-bottom:10px}
+.sel i{color:var(--ink3)}
+.sel span{flex:1}
+.seg{display:flex;background:#F1ECE4;border-radius:12px;padding:3px;margin:0 0 12px;overflow-x:auto;scrollbar-width:none}
+.seg button{flex:1 0 auto;border:0;background:none;border-radius:9px;padding:9px 8px;font-size:12.5px;font-weight:700;color:var(--ink2);white-space:nowrap}
+.seg button.on{background:#fff;color:var(--ink);box-shadow:0 1px 3px rgba(0,0,0,.08)}
+.ci{display:flex;align-items:center;gap:10px;background:#fff;border:1px solid var(--line);border-radius:16px;padding:11px 10px 11px 12px;margin-bottom:8px}
+.ci .ico{width:32px;height:32px;border-radius:10px;display:grid;place-items:center;font-size:16px;flex:none;background:#F4EFE7;color:var(--ink2)}
+.ci .ico.auto{background:var(--purbg);color:var(--pur)}
+.ci .tx{flex:1;min-width:0}
+.ci .tx b{display:block;font-size:14px;font-weight:700}
+.ci .tx span{display:block;font-size:12px;color:var(--ink3);margin-top:2px}
+.ci .ord{display:flex;flex-direction:column;gap:2px}
+.ci .ord button,.ci .ed{border:0;background:#F7F3ED;border-radius:8px;width:30px;height:24px;font-size:14px;color:var(--ink2);display:grid;place-items:center}
+.ci .ed{height:34px;width:34px}
+.add{width:100%;border:1.5px dashed #D9D0C3;background:transparent;border-radius:16px;padding:13px;font-size:14px;font-weight:700;color:var(--or2);margin-top:2px}
+.vazio{background:#fff;border:1px solid var(--line);border-radius:18px;padding:18px;text-align:center}
+.vazio p{font-size:13px;color:var(--ink2);margin:0 0 12px;line-height:1.45}
+
+.ov{position:absolute;inset:0;background:rgba(31,26,20,.45);z-index:40;opacity:0;pointer-events:none;transition:opacity .2s}
+.ov.on{opacity:1;pointer-events:auto}
+.sheet{position:absolute;left:0;right:0;bottom:0;max-height:92%;background:#fff;border-radius:24px 24px 0 0;z-index:41;transform:translateY(105%);transition:transform .25s ease;display:flex;flex-direction:column}
+.sheet.on{transform:none}
+.sh-h{padding:10px 18px 4px;position:relative}
+.sh-h:before{content:"";display:block;width:40px;height:5px;border-radius:3px;background:#E3DBCF;margin:0 auto 12px}
+.sh-h b{font-size:18px;font-weight:800;letter-spacing:-.01em;display:block;padding-right:36px}
+.sh-h span{font-size:12.5px;color:var(--ink3)}
+.sh-x{position:absolute;right:12px;top:18px;width:34px;height:34px;border-radius:50%;border:0;background:#F4EFE7;font-size:18px}
+.sh-b{padding:10px 18px;overflow-y:auto;flex:1}
+.sh-f{padding:12px 18px 18px;border-top:1px solid #F3EEE6;display:flex;gap:8px}
+.sh-f .bt{flex:1}
+.aviso{font-size:12.5px;background:#F7F3ED;border-radius:12px;padding:10px 12px;color:var(--ink2);margin-top:10px;line-height:1.45}
+.aviso.p{background:var(--purbg);color:#5B21B6}
+.lbl2{font-size:12px;font-weight:800;color:var(--ink2);margin:14px 0 6px;text-transform:uppercase;letter-spacing:.05em}
+.lbl2 small{text-transform:none;font-weight:600;color:var(--ink3);letter-spacing:0}
+.inp{width:100%;font-size:16px;border:1px solid var(--line);border-radius:12px;padding:11px 12px;color:var(--ink);background:#fff}
+.dias{display:flex;gap:6px}
+.dias button{flex:1;height:40px;border-radius:11px;border:1px solid var(--line);background:#fff;font-weight:800;font-size:13px;color:var(--ink2)}
+.dias button.on{background:var(--ink);border-color:var(--ink);color:#fff}
+.chips{display:flex;gap:6px;margin-top:6px;flex-wrap:wrap}
+.chips button{border:1px solid var(--line);background:#fff;border-radius:999px;padding:8px 12px;font-size:13px;font-weight:700;color:var(--ink2)}
+.chips button.on{background:var(--ink);border-color:var(--ink);color:#fff}
+.chips.mini button{border:0;background:#F4EFE7;padding:5px 10px;font-size:12px}
+.como{display:flex;flex-direction:column;gap:6px}
+.como button{display:flex;align-items:center;gap:10px;border:1px solid var(--line);background:#fff;border-radius:13px;padding:10px 12px;text-align:left;font-size:13.5px;font-weight:700}
+.como button i{width:28px;height:28px;border-radius:9px;display:grid;place-items:center;background:#F4EFE7;color:var(--ink2);font-style:normal;flex:none}
+.como button.on{border-color:var(--ink);box-shadow:0 0 0 1px var(--ink)}
+.como button.on i{background:var(--ink);color:#fff}
+.como button small{display:block;font-size:11.5px;color:var(--ink3);font-weight:500;margin-top:1px}
+.horas{display:flex;gap:8px;align-items:center}
+.horas .inp{width:130px}
+.horas button{border:0;background:none;color:var(--or2);font-weight:700;font-size:13px}
+.row{display:flex;justify-content:space-between;gap:12px;padding:10px 0;border-top:1px solid #F3EEE6;font-size:14px;align-items:center}
+.row:first-child{border-top:0}
+.row span{color:var(--ink3)}
+.num{width:84px;font-size:18px;font-weight:800;border:1px solid var(--line);border-radius:10px;padding:8px;text-align:right}
+.pessoas{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.pessoas button{border:1px solid var(--line);background:#fff;border-radius:14px;padding:12px 10px;font-size:14px;font-weight:700;text-align:left;display:flex;align-items:center;gap:8px}
+.pessoas button .av{width:30px;height:30px;border-radius:10px;background:var(--orbg);color:var(--or2);display:grid;place-items:center;font-weight:800;font-size:13px;flex:none}
+.pessoas button .av.fl{background:var(--blubg);color:var(--blu)}
+.pessoas button small{display:block;font-size:11px;color:var(--ink3);font-weight:600}
+.passo{display:flex;gap:10px;align-items:center;padding:9px 0;border-top:1px solid #F3EEE6;font-size:13.5px}
+.passo:first-child{border-top:0}
+.chk{width:24px;height:24px;border-radius:7px;border:2px solid #D9D0C3;display:grid;place-items:center;color:#fff;flex:none;background:#fff}
+.chk.on{background:var(--grn);border-color:var(--grn)}
+
+.lock{position:absolute;inset:0;background:linear-gradient(160deg,#3B2F22,#1F1A14 60%);color:#fff;padding:60px 14px 20px;z-index:30}
+.lock .hr{text-align:center;font-size:64px;font-weight:300;letter-spacing:-.02em}
+.lock .dd{text-align:center;font-size:15px;opacity:.8;margin-bottom:28px}
+.noti{background:rgba(255,255,255,.14);backdrop-filter:blur(12px);border-radius:18px;padding:12px 14px;margin-bottom:10px;display:flex;gap:10px;align-items:flex-start;cursor:pointer}
+.noti .ap{width:34px;height:34px;border-radius:9px;background:var(--or);color:#1F1A14;font-weight:800;display:grid;place-items:center;flex:none}
+.noti .tx{flex:1;font-size:13.5px;line-height:1.4}
+.noti .tx b{display:flex;justify-content:space-between;font-size:13px}
+.noti .tx b span{font-weight:500;opacity:.7}
+.lock .ex{font-size:12px;opacity:.65;text-align:center;margin-top:18px;line-height:1.5}
+
+.toast{position:absolute;left:16px;right:16px;bottom:20px;background:#1F1A14;color:#fff;border-radius:14px;padding:12px 14px;font-size:13px;line-height:1.4;z-index:50;opacity:0;transform:translateY(10px);transition:all .2s;pointer-events:none}
+.toast.on{opacity:1;transform:none}
+
+.notes h3{font-size:18px;margin:0 0 4px;letter-spacing:-.01em}
+.notes .sub{font-size:12.5px;color:var(--ink3);margin:0 0 14px}
+.nt{display:flex;gap:10px;margin:0 0 13px}
+.nt .n{width:24px;height:24px;border-radius:8px;background:var(--orbg);color:var(--or2);font-weight:800;font-size:12px;display:grid;place-items:center;flex:none}
+.nt .n.nv{background:var(--blubg);color:var(--blu)}
+.nt b{display:block;font-size:13.5px}
+.nt p{margin:2px 0 0;font-size:12.5px;line-height:1.5;color:var(--ink2)}
+.nbox{background:#F7F3ED;border-radius:14px;padding:12px 14px;font-size:12.5px;line-height:1.5;color:var(--ink2);margin:6px 0 14px}
+.nbox b{color:var(--ink)}
+.nbox.q{background:var(--orbg)}
+.notesov{position:fixed;inset:46px 0 0 0;background:#fff;z-index:70;overflow:auto;padding:18px 18px 40px;display:none}
+.notesov.on{display:block}
+</style>
+</head>
+<body>
+<div class="proto" id="proto"></div>
+<div class="wrap">
+  <div class="app" id="app">
+    <div class="scr" id="scr"></div>
+    <div class="ov" id="ov" data-act="fechar"></div>
+    <div class="sheet" id="sheet"></div>
+    <div class="toast" id="toast"></div>
+  </div>
+  <aside class="notes" id="notes"></aside>
+</div>
+<div class="notesov" id="notesov"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const DIAS = ['D','S','T','Q','Q','S','S'];
+const DIAS_N = ['dom','seg','ter','qua','qui','sex','sáb'];
+const HOJE_DOW = 6; // sábado, 3 de outubro
+const LOJAS = {par:'El Patron Paranaguá', vila:'Vila Leste'};
+const PAPEIS = {supervisao:'Supervisão', gerente:'Gerente', equipe:'Equipe da loja', cozinha:'Cozinha', caixa:'Caixa'};
+const HORAS = {manha:'08:40', tarde:'15:10', noite:'23:20'};
+
+// Tipos que se marcam automaticamente — o sistema vê que foi feito.
+const AUTO = {
+  abrir:   {ic:'ri-door-open-line',   nome:'Quando a loja abrir',         explica:'abre o dia e o caixa no PDV',                acao:'Abrir a loja'},
+  fechar:  {ic:'ri-door-closed-line', nome:'Quando a loja fechar',        explica:'fecha o caixa e o dia no PDV',               acao:'Fechar a loja'},
+  contagem:{ic:'ri-scales-3-line',    nome:'Quando a contagem terminar',  explica:'confirma a contagem programada do Estoque',  acao:'Contar'},
+  receber: {ic:'ri-truck-line',       nome:'Quando receber mercadoria',   explica:'alguém registra um recebimento hoje',         acao:'Receber'},
+  producao:{ic:'ri-restaurant-2-line',nome:'Quando registrar a produção', explica:'alguém registra a produção dessa ficha',     acao:'Produzir'},
+};
+const ATALHOS = {
+  fechamento:{label:'Ver o fechamento', rota:'o relatório do fechamento de ontem'},
+  pagamentos:{label:'Ver os pedidos',   rota:'os pedidos de pagamento'},
+  meta:{label:'Ver a meta', rota:'a meta do dia no Dashboard'},
+  validade:{label:'Abrir a lista', rota:'Estoque › Validade'},
+};
+const FICHAS = ['Guacamole','Pico de gallo','Cheddar da casa','Chilli','Feijão refrito'];
+const PESSOAS = [
+  {n:'Thati', s:'supervisão'}, {n:'Ana', s:'caixa'}, {n:'Marcos', s:'cozinha'},
+  {n:'Josiane', s:'freelancer · turno hoje', fl:true}, {n:'Rafael', s:'freelancer · turno hoje', fl:true}, {n:'Bruna', s:'freelancer', fl:true},
+];
+
+function modelo(){ return {
+  par:{
+    supervisao:[
+      {id:'s1', titulo:'Abrir a loja', auto:'abrir', dias:[0,1,2,3,4,5,6], hora:'10:00'},
+      {id:'s2', titulo:'Conferir as entregas do dia', auto:'receber', dias:[1,2,3,4,5,6], hora:null},
+      {id:'s3', titulo:'Contagem semanal do estoque', auto:'contagem', dias:'plano', hora:null},
+      {id:'s4', titulo:'Conferir a validade', auto:null, dias:[0,1,2,3,4,5,6], hora:'12:00', atalho:'validade'},
+      {id:'s5', titulo:'Fechar a loja', auto:'fechar', dias:[0,1,2,3,4,5,6], hora:'23:00'},
+    ],
+    gerente:[
+      {id:'g1', titulo:'Conferir o fechamento de ontem', auto:null, dias:[0,1,2,3,4,5,6], hora:'10:00', atalho:'fechamento'},
+      {id:'g2', titulo:'Aprovar os pedidos de pagamento', auto:null, dias:[1,2,3,4,5,6], hora:null, atalho:'pagamentos'},
+      {id:'g3', titulo:'Olhar a meta', auto:null, dias:[0,1,2,3,4,5,6], hora:'16:00', atalho:'meta'},
+    ],
+    equipe:[
+      {id:'e1', titulo:'Limpar a coifa', auto:null, dias:[6], hora:null},
+      {id:'e2', titulo:'Repor os guardanapos e molhos do salão', auto:null, dias:[0,1,2,3,4,5,6], hora:'11:00'},
+      {id:'e3', titulo:'Produzir Guacamole — 2 receitas', auto:'producao', ficha:'Guacamole', qtd:'2 receitas', hoje:true, por:'Thati', hora:null},
+    ],
+    cozinha:[], caixa:[],
+  },
+  vila:{
+    supervisao:[
+      {id:'v1', titulo:'Abrir a loja', auto:'abrir', dias:[0,1,2,3,4,5,6], hora:'11:00'},
+      {id:'v2', titulo:'Conferir a validade', auto:null, dias:[0,1,2,3,4,5,6], hora:null},
+      {id:'v3', titulo:'Fechar a loja', auto:'fechar', dias:[0,1,2,3,4,5,6], hora:'23:30'},
+    ],
+    gerente:[], equipe:[], cozinha:[], caixa:[],
+  },
+}}
+
+// O que o sistema "viu" em cada hora do protótipo (sessões, recebimentos, contagens, produção).
+function eventos(hora){
+  const e = {par:{}, vila:{}};
+  if (hora !== 'manha'){
+    e.par.abrir = {quem:'Thati', quando:'09:42'};
+    e.vila.abrir = {quem:'Marcos', quando:'10:51'};
+    e.par.receber = {quem:'Thati', quando:'11:20', det:'Sequoia Alimentos'};
+  }
+  if (hora === 'noite'){
+    e.par.contagem = {quem:'Thati', quando:'16:05', det:'6 itens'};
+    e.par.producao = {quem:'Marcos', quando:'17:30', det:'2,4 kg'};
+    e.par.fechar = {quem:'Thati', quando:'23:12'};
+  }
+  return e;
+}
+
+const PERS = {
+  sup:{nome:'Thati', papel:'supervisao', loja:'par', rot:'Supervisão · El Patron Paranaguá'},
+  ger:{nome:'Eduardo', papel:'gerente', loja:'par', rot:'Gerente · El Patron Paranaguá'},
+  cel:{nome:'Loja', papel:'loja', loja:'par', rot:'Celular da loja · El Patron Paranaguá', compartilhado:true},
+  dono:{nome:'Natalino', papel:'admin', loja:null, rot:'Administrador · todas as lojas'},
+};
+
+const S = {tela:'sup', hora:'manha', cfg:modelo(), mao:{}, auto:{}, cfgLoja:'par', cfgPapel:'supervisao', edit:null, pendente:null, nova:null};
+
+/* ---------- regras (as mesmas que o código vai usar) ---------- */
+const min = h => { const [a,b] = h.split(':').map(Number); return a*60+b; };
+const agoraMin = () => min(HORAS[S.hora]);
+const venceHoje = i => i.hoje || i.dias === 'plano' || (Array.isArray(i.dias) && i.dias.includes(HOJE_DOW));
+function estado(loja, item){
+  const k = loja+':'+item.id;
+  const ev = item.auto ? (S.auto[k] || (item.auto !== 'producao' || item.id === 'e3' ? eventos(S.hora)[loja][item.auto] : null)) : null;
+  if (ev) return {feito:true, quem:ev.quem, quando:ev.quando, origem:'auto', det:ev.det};
+  const mao = S.mao[k];
+  if (mao) return {feito:true, quem:mao.quem, quando:mao.quando, origem:'mao', via:mao.via};
+  if (item.hora && agoraMin() < min(item.hora)) return {feito:false, tarde:true};
+  if (item.hora) return {feito:false, atrasado:true};
+  return {feito:false};
+}
+const rotinaDe = (loja, papel) => (S.cfg[loja]?.[papel] ?? []).filter(venceHoje).map(i => ({...i, papel, st:estado(loja, i)}));
+// "Tudo em dia" só com o que já chegou a hora: o que tem horário mais tarde não segura.
+const pendentes = itens => itens.filter(i => !i.st.feito && !i.st.tarde);
+// O que cada um precisa fazer (conta para o "Tudo em dia") e o que só acompanha.
+function daPessoa(p){
+  if (p.papel === 'loja') return ['equipe','cozinha','caixa'];
+  if (p.papel === 'admin') return [];
+  return [p.papel];
+}
+function acompanha(p){
+  if (p.papel === 'supervisao') return ['equipe','cozinha','caixa'];
+  if (p.papel === 'gerente') return ['supervisao','equipe'];
+  if (p.papel === 'admin') return ['supervisao','gerente','equipe'];
+  return [];
+}
+
+/* ---------- render ---------- */
+function renderProto(){
+  const b = (k,t,grp='tela') => `<button class="${S[grp]===k?'on':''}" data-act="${grp}:${k}">${t}</button>`;
+  $('proto').innerHTML = `<span class="lbl">VER COMO</span>${b('sup','Supervisão')}${b('cel','📱 Celular da loja')}${b('ger','Gerente')}${b('dono','Dono')}${b('cfg','⚙ Configurar')}${b('bomdia','🔔 Bom dia')}
+    <span class="sep"></span><span class="lbl">HORA</span>${b('manha','08:40','hora')}${b('tarde','15:10','hora')}${b('noite','23:20','hora')}
+    <span class="sep"></span><button data-act="reset">Recomeçar</button><button class="bt-notas" data-act="notas">Notas</button>`;
+}
+function render(){
+  renderProto();
+  const t = S.tela;
+  $('scr').innerHTML = t === 'cfg' ? telaConfig() : t === 'bomdia' ? telaBomDia() : telaHoje(PERS[t]);
+}
+
+function telaHoje(p){
+  const agoraCards = p.papel==='supervisao' && S.hora!=='noite' && !S.mao['card:apr'] ? [1] : [];
+  const meus = daPessoa(p).flatMap(papel => rotinaDe(p.loja, papel));
+  const pend = pendentes(meus);
+  const tarde = meus.filter(i => i.st.tarde);
+  const tudo = agoraCards.length===0 && pend.length===0;
+
+  let manchete, sub;
+  if (agoraCards.length) { manchete = `<span class="n">1</span> coisa precisa de você`; sub = pend.length ? `E falta${pend.length===1?'':'m'} ${pend.length} ${pend.length===1?'item':'itens'} da rotina de hoje.` : 'Cada cartão resolve aqui mesmo.'; }
+  else if (pend.length) { manchete = `Falta${pend.length===1?'':'m'} ${pend.length} ${pend.length===1?'item':'itens'} da rotina`; sub = 'Nada urgente. A rotina conduz o resto do dia.'; }
+  else if (tarde.length) { manchete = `Tudo em dia <small>até agora</small> ✓`; sub = `Ainda hoje: ${tarde.map(i => `${i.titulo.toLowerCase()} às ${i.hora}`).join(' e ')}.`; }
+  else { manchete = 'Tudo em dia ✓'; sub = 'Nada precisa de você agora.'; }
+
+  let h = `<div class="top"><div class="dt">Sábado, 3 de outubro · ${esc(p.rot)}</div>
+    <h1>${S.hora==='manha'?'Bom dia':S.hora==='tarde'?'Boa tarde':'Boa noite'}${p.compartilhado?'':`, <em>${esc(p.nome)}</em>`}</h1>
+    ${p.compartilhado?`<div class="devbar"><i class="ri-smartphone-line"></i><span>Celular da loja. Ao marcar algo, pergunto <b>quem fez</b>.</span></div>`:''}</div>
+    <div class="manchete ${tudo?'ok':''}">${manchete}</div><p class="subm">${sub}</p>`;
+  if (tudo) h += `<div class="tudo"><div class="ic"><i class="ri-check-line"></i></div><b>${tarde.length?'Pode fechar o app por enquanto.':'Pode fechar o app.'}</b>
+    <p>${tarde.length?'Tem coisa mais tarde. Na hora, ela volta para cá.':'Se aparecer algo novo, ele volta aqui.'}</p>
+    ${tarde.length?`<span class="depois"><i class="ri-time-line"></i> ${esc(tarde[0].titulo)} às ${tarde[0].hora}${tarde.length>1?` e mais ${tarde.length-1}`:''}</span>`:''}</div>`;
+
+  if (agoraCards.length) h += `<section class="bloco"><div class="bh"><h2>Agora</h2><span class="cnt">1</span><span class="exp">precisa de você hoje</span></div>
+    <div class="card"><div class="meta"><span class="tag">Esperando você</span></div><b class="t">Cancelar item da mesa 4</b><p>Ana (caixa) pediu para tirar 1 Burrito Classic. Motivo: cliente desistiu.</p>
+    <div class="bts"><button class="bt p" data-act="card">Aprovar</button><button class="bt" data-act="card">Recusar</button></div></div></section>`;
+
+  if (p.papel !== 'admin') h += blocoRotina(p, meus);
+  const ac = acompanha(p);
+  if (ac.length) h += blocoAcompanha(p, ac);
+
+  if (p.papel === 'gerente') h += `<section class="bloco"><div class="bh"><h2>Suas tarefas de hoje</h2><span class="cnt g">1</span><span class="exp">vencidas ou para hoje</span></div>
+    <div class="rot"><div class="ri" style="border-top:0"><button class="ck" data-act="toast:Concluída pelo módulo Tarefas (igual hoje).">✓</button><div class="tx"><b>Escala de outubro</b><span class="s">hoje · exemplo</span></div></div></div></section>`;
+
+  const at = p.papel==='loja' ? [['ri-truck-line','Receber mercadoria'],['ri-scales-3-line','Contar estoque'],['ri-restaurant-2-line','Registrar produção'],['ri-computer-line','Ir para o caixa']]
+    : p.papel==='supervisao' ? [['ri-computer-line','Ir para o caixa'],['ri-truck-line','Receber mercadoria'],['ri-scales-3-line','Contar estoque'],['ri-add-circle-line','Lançar']]
+    : [['ri-add-circle-line','Lançar'],['ri-money-dollar-circle-line','Financeiro'],['ri-line-chart-line','Loja ao vivo'],['ri-truck-line','Receber mercadoria']];
+  h += `<section class="bloco"><div class="bh"><h2>Fazer outra coisa</h2></div><div class="atalhos">
+    ${at.map(([i,t]) => `<button class="at" data-act="toast:Atalho da tela Hoje (já existe).">${`<i class="${i}"></i>`}${t}</button>`).join('')}</div></section>`;
+  return h;
+}
+
+function blocoRotina(p, itens){
+  const podeCriar = ['supervisao','gerente'].includes(p.papel);
+  if (!itens.length) return `<section class="bloco"><div class="bh"><h2>Rotina de hoje</h2><span class="exp">nada para hoje</span></div>
+    <div class="vazio"><p>Ainda não tem rotina para ${p.papel==='loja'?'a equipe':PAPEIS[p.papel].toLowerCase()} desta loja.</p></div></section>`;
+  const total = itens.length, feitos = itens.filter(i => i.st.feito).length, pend = pendentes(itens).length;
+  const grupos = p.papel==='loja' ? daPessoa(p).filter(pp => itens.some(i => i.papel===pp)) : [p.papel];
+  return `<section class="bloco">
+    <div class="bh"><h2>Rotina de hoje</h2><span class="cnt ${pend?'g':'ok'}">${feitos} de ${total}</span><span class="exp">${pend ? `falta${pend===1?'':'m'} ${pend}` : feitos===total ? 'tudo feito' : 'em dia até agora'}</span>
+      ${p.papel!=='loja'?`<button class="cfg" data-act="tela:cfg" title="Configurar (dono e admin)"><i class="ri-settings-3-line"></i></button>`:''}</div>
+    <div class="rot">
+      <div class="rhead"><div class="rbar"><div style="width:${Math.round(feitos/total*100)}%"></div></div><div class="pc">${Math.round(feitos/total*100)}%</div></div>
+      ${grupos.map(g => `${grupos.length>1?`<div class="grp">${PAPEIS[g]}</div>`:''}${itens.filter(i => i.papel===g).map(i => linha(p, i)).join('')}`).join('')}
+      <div class="rfoot"><span><i class="ri-flashlight-line" style="color:var(--pur)"></i> tracejado = marca automático</span><button data-act="sheet:historico">Quem fez o quê</button></div>
+    </div></section>`;
+}
+
+function linha(p, i, ro=false){
+  const st = i.st, loja = p.loja;
+  const cls = ['ri', i.auto?'auto':'', st.feito?'ok':'', st.tarde?'tarde':'', ro?'ro':''].join(' ');
+  let s = '';
+  if (st.feito) s = `<span class="quem ${st.origem==='auto'?'auto':''}">${st.origem==='auto'?'<i class="ri-flashlight-fill"></i> automático · ':''}${esc(st.quem)} · ${st.quando}${st.det?` · ${esc(st.det)}`:''}${st.via?` · ${esc(st.via)}`:''}</span>`;
+  else if (i.auto==='receber') s = `<span class="s">Marca automático quando alguém receber pelo celular. Não veio nada? “Não veio entrega”.</span>`;
+  else if (i.auto==='contagem') s = `<span class="s">Hoje tem contagem: 6 itens (hortifrúti e proteínas). Uns 4 minutos.</span>`;
+  else if (i.auto==='abrir') s = `<span class="s">Contar a gaveta e abrir o caixa. Marca automático.</span>`;
+  else if (i.auto==='fechar') s = `<span class="s">Marca automático quando fechar o caixa e o dia.</span>`;
+  else if (i.auto==='producao') s = `<span class="s">Pedido por ${esc(i.por)} hoje. Marca automático quando registrar a produção.</span>`;
+  else if (i.hoje) s = `<span class="s">Pedido por ${esc(i.por)} hoje.</span>`;
+  else s = `<span class="s">Um toque no círculo quando fizer.</span>`;
+  const pill = (i.hoje ? `<span class="pill novo">só hoje</span>` : '') + (!st.feito && i.hora ? (st.atrasado ? `<span class="pill late">passou das ${i.hora}</span>` : `<span class="pill h">às ${i.hora}</span>`) : '');
+  let go = '';
+  if (!ro && !st.feito && i.auto) go = `<button class="go ${st.tarde?'lt':''}" data-act="fazer:${loja}:${i.id}">${AUTO[i.auto].acao}</button>`;
+  else if (!ro && !st.feito && i.atalho) go = `<button class="go lt" data-act="toast:Abre ${esc(ATALHOS[i.atalho].rota)}. Ao voltar, um toque no círculo marca.">${ATALHOS[i.atalho].label}</button>`;
+  return `<div class="${cls}"><button class="ck" data-act="marcar:${loja}:${i.id}" aria-label="Marcar"><i class="ri-check-line"></i></button>
+    <div class="tx"><b>${esc(i.titulo)}${pill}</b>${s}</div>${go}</div>`;
+}
+
+function blocoAcompanha(p, papeis){
+  if (p.papel === 'supervisao') {
+    // A supervisão cria e acompanha as tarefas da equipe (e pode marcar por alguém).
+    const itens = papeis.flatMap(pp => rotinaDe(p.loja, pp));
+    const f = itens.filter(i => i.st.feito).length;
+    return `<section class="bloco"><div class="bh"><h2>Equipe hoje</h2><span class="cnt ${pendentes(itens).length?'g':'ok'}">${f} de ${itens.length}</span><span class="exp">o celular da loja vê esta lista</span></div>
+      <div class="rot">${itens.length ? itens.map(i => linha(p, i)).join('') : '<div class="ri" style="border-top:0"><div class="tx"><span class="s">Nada para a equipe hoje.</span></div></div>'}
+      <div class="addrow"><button data-act="nova:tarefa"><i class="ri-add-line"></i> Tarefa de hoje</button><button data-act="nova:producao"><i class="ri-restaurant-2-line"></i> Pedir produção</button></div></div></section>`;
+  }
+  const lojas = p.papel==='admin' ? ['par','vila'] : [p.loja];
+  const linhas = [];
+  for (const l of lojas) for (const papel of papeis) {
+    const r = rotinaDe(l, papel); if (!r.length) continue;
+    const f = r.filter(i => i.st.feito).length, pend = pendentes(r);
+    const falta = pend.length ? `falta: ${pend.map(i => i.titulo.toLowerCase()).slice(0,2).join(', ')}${pend.length>2?'…':''}` : f===r.length ? 'tudo feito' : 'em dia até agora';
+    linhas.push(`<button class="lj" data-act="sheet:loja:${l}:${papel}"><div class="tx"><b>${p.papel==='admin'?`${LOJAS[l].replace('El Patron ','')} · `:''}${PAPEIS[papel]}</b><span>${falta}</span></div>
+      <div class="mini"><div style="width:${Math.round(f/r.length*100)}%"></div></div><span class="nn">${f}/${r.length}</span></button>`);
+  }
+  if (!linhas.length) return '';
+  return `<section class="bloco"><div class="bh"><h2>Rotina na loja</h2><span class="exp">só acompanha — não conta para o seu “tudo em dia”</span></div>
+    <div class="lojas">${linhas.join('')}</div></section>`;
+}
+
+/* ---------- configurar ---------- */
+function diasTxt(i){
+  if (i.hoje) return 'só hoje';
+  const d = i.dias;
+  if (d==='plano') return 'nos dias dos planos de contagem';
+  if (d.length===7) return 'todo dia';
+  if (d.length===6 && !d.includes(0)) return 'seg a sáb';
+  if (d.length===5 && !d.includes(0) && !d.includes(6)) return 'seg a sex';
+  return d.map(x => DIAS_N[x]).join(', ');
+}
+function telaConfig(){
+  const itens = (S.cfg[S.cfgLoja][S.cfgPapel] ?? []).filter(i => !i.hoje);
+  let h = `<div class="cfgtop"><button class="bk" data-act="tela:sup"><i class="ri-arrow-left-line"></i></button><b>Rotina da loja</b></div>
+    <p class="cfgsub">O que se repete toda semana, por papel. Aparece na tela Hoje de quem tem esse papel nesta loja. “Equipe da loja” aparece no celular da loja. Só o dono e o admin mudam. As tarefas de um dia só, a supervisão cria na própria Hoje.</p>
+    <button class="sel" data-act="toast:Escolhe a loja (todas em que você é admin)."><i class="ri-store-2-line"></i><span>${LOJAS[S.cfgLoja]}</span><i class="ri-arrow-down-s-line"></i></button>
+    <div class="seg">${Object.entries(PAPEIS).map(([k,v]) => `<button class="${S.cfgPapel===k?'on':''}" data-act="cfgPapel:${k}">${v}</button>`).join('')}</div>`;
+  if (!itens.length) {
+    h += `<div class="vazio"><p>Nenhum item para ${PAPEIS[S.cfgPapel].toLowerCase()} nesta loja.</p>
+      <button class="bt p" data-act="modelo">Começar com o modelo</button><div style="height:8px"></div><button class="bt" data-act="novo">Adicionar um item</button></div>`;
+  } else {
+    h += itens.map((i, k) => `<div class="ci">
+      <span class="ico ${i.auto?'auto':''}"><i class="${i.auto?AUTO[i.auto].ic:'ri-hand-coin-line'}"></i></span>
+      <div class="tx"><b>${esc(i.titulo)}</b><span>${diasTxt(i)}${i.hora?` · às ${i.hora}`:''} · ${i.auto?'<span style="color:var(--pur);font-weight:700">automático</span>':'um toque'}</span></div>
+      <div class="ord"><button data-act="mover:${k}:-1" ${k===0?'disabled style="opacity:.3"':''}><i class="ri-arrow-up-s-line"></i></button><button data-act="mover:${k}:1" ${k===itens.length-1?'disabled style="opacity:.3"':''}><i class="ri-arrow-down-s-line"></i></button></div>
+      <button class="ed" data-act="editar:${i.id}"><i class="ri-pencil-line"></i></button></div>`).join('')
+      + `<button class="add" data-act="novo"><i class="ri-add-line"></i> Adicionar item</button>
+      <p class="cfgsub" style="margin-top:14px;text-align:center"><button class="bt sm" data-act="toast:Escolhe as lojas e copia os itens (cada loja fica com a sua cópia).">Copiar para outra loja</button></p>`;
+  }
+  return h;
+}
+
+function sheetEditar(){
+  const e = S.edit;
+  const tipos = Object.entries(AUTO).filter(([k]) => k!=='producao');
+  const como = [['',{ic:'ri-hand-coin-line',nome:'À mão (um toque)',explica:'a pessoa marca quando fizer'}], ...tipos];
+  return `<div class="sh-h"><b>${e.id?'Editar item':'Novo item'}</b><span>${PAPEIS[S.cfgPapel]} · ${LOJAS[S.cfgLoja]}</span><button class="sh-x" data-act="fechar">✕</button></div>
+  <div class="sh-b">
+    <div class="lbl2">O que fazer</div>
+    <input class="inp" id="f-tit" value="${esc(e.titulo)}" placeholder="Ex.: Conferir a validade">
+    <div class="lbl2">Como marca</div>
+    <div class="como">${como.map(([k,a]) => `<button class="${(e.auto||'')===k?'on':''}" data-act="como:${k}"><i class="${a.ic}"></i><span>${a.nome}<small>${k?`automático: ${a.explica}`:a.explica}</small></span></button>`).join('')}</div>
+    <div class="lbl2">Em que dias</div>
+    ${e.auto==='contagem' ? `<div class="como"><button class="${e.dias==='plano'?'on':''}" data-act="diasplano:1"><i class="ri-calendar-check-line"></i><span>Nos dias dos planos de contagem<small>o Estoque já sabe quando tem contagem</small></span></button>
+      <button class="${e.dias!=='plano'?'on':''}" data-act="diasplano:0"><i class="ri-calendar-line"></i><span>Escolher os dias</span></button></div>` : ''}
+    ${e.dias!=='plano' ? `<div class="dias" style="margin-top:6px">${DIAS.map((d,k) => `<button class="${e.dias.includes(k)?'on':''}" data-act="dia:${k}">${d}</button>`).join('')}</div>
+      <div class="chips mini"><button data-act="diasset:all">Todo dia</button><button data-act="diasset:segsab">Seg a sáb</button><button data-act="diasset:segsex">Seg a sex</button></div>` : ''}
+    <div class="lbl2">Horário <small>(opcional)</small></div>
+    <div class="horas"><input class="inp" id="f-hora" type="time" value="${e.hora??''}"><button data-act="semhora">Sem horário</button></div>
+    <div class="aviso">Com horário, antes dele o item fica “às 10:00” e a Hoje diz “Tudo em dia até agora”. Passou da hora sem marcar, fica vermelho.</div>
+    ${!e.auto ? `<div class="lbl2">Botão de atalho <small>(opcional)</small></div>
+      <select class="inp" id="f-at"><option value="">Nenhum</option>${Object.entries(ATALHOS).map(([k,a]) => `<option value="${k}" ${e.atalho===k?'selected':''}>${a.label} — ${a.rota}</option>`).join('')}</select>` : ''}
+  </div>
+  <div class="sh-f">${e.id?`<button class="bt" data-act="apagar" style="flex:0 0 auto;color:var(--red)"><i class="ri-delete-bin-line"></i></button>`:''}<button class="bt p" data-act="salvar">Salvar</button></div>`;
+}
+
+/* tarefa de hoje / pedir produção (supervisão) */
+function sheetNova(){
+  const n = S.nova;
+  const quem = ['equipe','cozinha','caixa'];
+  return `<div class="sh-h"><b>${n.tipo==='producao'?'Pedir produção':'Tarefa de hoje'}</b><span>Aparece hoje para quem faz — no celular da loja também</span><button class="sh-x" data-act="fechar">✕</button></div>
+  <div class="sh-b">
+    <div class="seg"><button class="${n.tipo==='tarefa'?'on':''}" data-act="novatipo:tarefa">Tarefa</button><button class="${n.tipo==='producao'?'on':''}" data-act="novatipo:producao">Produção</button></div>
+    ${n.tipo==='producao' ? `
+      <div class="lbl2">O que produzir <small>(fichas de produção)</small></div>
+      <div class="chips">${FICHAS.map(f => `<button class="${n.ficha===f?'on':''}" data-act="ficha:${f}">${f}</button>`).join('')}</div>
+      <div class="lbl2">Quanto</div>
+      <div class="chips">${['1 receita','2 receitas','3 receitas','até 2 kg'].map(q => `<button class="${n.qtd===q?'on':''}" data-act="qtd:${q}">${q}</button>`).join('')}</div>
+      <div class="aviso p"><i class="ri-flashlight-line"></i> O “Produzir” abre o card da produção dessa ficha (o mesmo do Estoque › Produção). Quando registrarem, o item marca automático com quem produziu.</div>`
+    : `<div class="lbl2">O que fazer</div><input class="inp" id="n-tit" value="${esc(n.titulo)}" placeholder="Ex.: Lavar as caixas de hortifrúti">`}
+    <div class="lbl2">Quem faz</div>
+    <div class="chips">${quem.map(q => `<button class="${n.papel===q?'on':''}" data-act="npapel:${q}">${PAPEIS[q]}</button>`).join('')}</div>
+    <div class="lbl2">Até que horas <small>(opcional)</small></div>
+    <div class="horas"><input class="inp" id="n-hora" type="time" value="${n.hora??''}"></div>
+    <div class="aviso">Não feita hoje, amanhã aparece como “de ontem” até alguém fazer ou você tirar.</div>
+  </div>
+  <div class="sh-f"><button class="bt p" data-act="criarNova">${n.tipo==='producao'?'Pedir a produção':'Pôr na lista de hoje'}</button></div>`;
+}
+
+/* quem fez? (login compartilhado) */
+function sheetQuemFez(){
+  const pd = S.pendente; const i = achar(pd.loja, pd.id);
+  return `<div class="sh-h"><b>Quem fez?</b><span>${esc(i.titulo)}</span><button class="sh-x" data-act="fechar">✕</button></div>
+  <div class="sh-b"><div class="pessoas">${PESSOAS.map(x => `<button data-act="quem:${x.n}"><span class="av ${x.fl?'fl':''}">${x.n[0]}</span><span>${x.n}<small>${x.s}</small></span></button>`).join('')}</div>
+    <div class="lbl2">Outra pessoa</div><div class="horas"><input class="inp" id="q-outro" placeholder="Nome" style="width:100%"><button data-act="quemOutro">Ok</button></div>
+    <div class="aviso">Freelancer não precisa de login: só o nome fica guardado. A lista é a equipe da loja e os freelancers com turno hoje.</div></div>`;
+}
+
+function sheetFazer(loja, id){
+  const i = achar(loja, id); const a = AUTO[i.auto];
+  if (i.auto==='producao') return `<div class="sh-h"><b>Produção · ${esc(i.ficha)}</b><span>O card da produção (Estoque › Produção) · pedido: ${esc(i.qtd)}</span><button class="sh-x" data-act="fechar">✕</button></div>
+    <div class="sh-b"><div class="lbl2">Passos da ficha</div>
+      ${['Separar abacate, cebola, coentro e limão','Amassar e misturar','Temperar e provar','Porcionar e etiquetar'].map((t,k) => `<div class="passo"><span class="chk on"><i class="ri-check-line"></i></span>${t}</div>`).join('')}
+      <div class="lbl2">Quanto rendeu</div><div class="row" style="border:0"><span>Peso final</span><input class="num" value="2,4" inputmode="decimal"> kg</div>
+      <div class="aviso p"><i class="ri-flashlight-line"></i> Registrar a produção dá entrada no estoque (igual hoje) e marca o item da rotina automático.</div></div>
+    <div class="sh-f"><button class="bt p" data-act="auto:${loja}:${id}:2,4 kg">Registrar produção</button></div>`;
+  if (i.auto==='receber') {
+    const ent = [['Sequoia Alimentos','12 itens · compra de quinta'],['Bebidas Nova Geração','4 itens · compra de sexta']];
+    return `<div class="sh-h"><b>Receber mercadoria</b><span>A tela de /receber que já existe</span><button class="sh-x" data-act="fechar">✕</button></div>
+      <div class="sh-b">${ent.map(([n,d]) => `<div class="row"><span style="color:var(--ink)"><b>${n}</b><br><small style="color:var(--ink3)">${d}</small></span><button class="bt sm p" data-act="auto:${loja}:${id}:${n}">Recebi</button></div>`).join('')}
+      <div class="row"><span style="color:var(--ink)"><b>Não veio entrega hoje</b><br><small style="color:var(--ink3)">marca o item sem receber nada</small></span><button class="bt sm" data-act="marcarForcar:${loja}:${id}">Não veio</button></div>
+      <div class="aviso p"><i class="ri-flashlight-line"></i> Marca automático no primeiro recebimento de hoje. O sistema não sabe que entrega vem em cada dia (a compra não tem “data prevista”), por isso não espera todas.</div></div>`;
+  }
+  if (i.auto==='contagem') {
+    const it = ['Coentro (maço)','Tomate (kg)','Cebola roxa (kg)','Frango desfiado (kg)','Carne moída (kg)','Bacon (kg)'];
+    return `<div class="sh-h"><b>Contagem semanal</b><span>Plano “Semanal de sábado” · 6 itens</span><button class="sh-x" data-act="fechar">✕</button></div>
+      <div class="sh-b">${it.map(n => `<div class="row"><b style="font-size:14px">${n}</b><input class="num" inputmode="decimal" placeholder="0"></div>`).join('')}
+      <div class="aviso p"><i class="ri-flashlight-line"></i> É a contagem do Estoque › Início (mesmo plano, mesma regra). Ao confirmar, o item marca automático.</div></div>
+      <div class="sh-f"><button class="bt p" data-act="auto:${loja}:${id}:6 itens">Confirmar a contagem</button></div>`;
+  }
+  return `<div class="sh-h"><b>${a.acao}</b><span>O “${a.acao}” do PDV Caixa (já existe)</span><button class="sh-x" data-act="fechar">✕</button></div>
+    <div class="sh-b"><div class="aviso">${i.auto==='abrir'?'Contar a gaveta, comparar com o fechamento de ontem e abrir.':'Contar a gaveta, conferir e fechar o caixa e o dia.'}</div>
+    <div class="aviso p"><i class="ri-flashlight-line"></i> Quando a loja ${i.auto==='abrir'?'abre':'fecha'}, o item marca automático — em qualquer aparelho.</div></div>
+    <div class="sh-f"><button class="bt p" data-act="auto:${loja}:${id}">${a.acao} (simular)</button></div>`;
+}
+
+function sheetMarcarAuto(loja, i){
+  const a = AUTO[i.auto];
+  return `<div class="sh-h"><b>${esc(i.titulo)}</b><span>Esse item marca automático</span><button class="sh-x" data-act="fechar">✕</button></div>
+    <div class="sh-b"><div class="aviso p"><i class="ri-flashlight-line"></i> Marca automático ${a.nome.toLowerCase()} (${a.explica}).</div>
+    <div class="aviso">Fez de outro jeito (no papel, sem o sistema)? Dá para marcar à mão — fica registrado que foi à mão, com o nome e a hora.</div></div>
+    <div class="sh-f"><button class="bt" data-act="marcarForcar:${loja}:${i.id}">Marcar à mão</button><button class="bt p" data-act="fazer:${loja}:${i.id}">${a.acao}</button></div>`;
+}
+function sheetDesmarcar(loja, i){
+  const st = i.st;
+  return `<div class="sh-h"><b>${esc(i.titulo)}</b><span>${esc(st.quem)} · ${st.quando}${st.origem==='auto'?' (automático)':' (à mão)'}${st.via?` · ${esc(st.via)}`:''}</span><button class="sh-x" data-act="fechar">✕</button></div>
+    <div class="sh-b">${st.origem==='auto' ? `<div class="aviso p"><i class="ri-flashlight-line"></i> Marcado automático: ${AUTO[i.auto].explica}.</div>`
+      : `<div class="aviso">Marcou sem querer? Desmarcar volta o item para a lista.</div>`}</div>
+    <div class="sh-f">${st.origem==='auto'?`<button class="bt" data-act="fechar">Entendi</button>`:`<button class="bt" data-act="fechar">Manter</button><button class="bt dk" data-act="desmarcar:${loja}:${i.id}">Desmarcar</button>`}</div>`;
+}
+function sheetLoja(loja, papel){
+  const r = rotinaDe(loja, papel);
+  return `<div class="sh-h"><b>${PAPEIS[papel]} · ${LOJAS[loja]}</b><span>Rotina de hoje · quem fez e quando</span><button class="sh-x" data-act="fechar">✕</button></div>
+    <div class="sh-b">${r.map(i => `<div class="row"><span style="color:var(--ink)"><b>${esc(i.titulo)}</b></span><span>${i.st.feito?`${i.st.origem==='auto'?'⚡ ':''}${esc(i.st.quem)} · ${i.st.quando}`:i.st.tarde?`às ${i.hora}`:i.st.atrasado?`<b style="color:var(--red)">passou das ${i.hora}</b>`:'ainda não'}</span></div>`).join('')}
+    <div class="aviso">Só acompanha. Quem marca é quem está na loja.</div></div>`;
+}
+function sheetHistorico(){
+  const p = PERS[S.tela]; const r = daPessoa(p).flatMap(pp => rotinaDe(p.loja, pp)).filter(i => i.st.feito);
+  return `<div class="sh-h"><b>Quem fez o quê</b><span>Rotina de hoje</span><button class="sh-x" data-act="fechar">✕</button></div>
+    <div class="sh-b">${r.length ? r.map(i => `<div class="row"><b style="font-size:14px">${esc(i.titulo)}</b><span>${i.st.origem==='auto'?'⚡ ':''}${esc(i.st.quem)} · ${i.st.quando}</span></div>`).join('') : '<p style="color:var(--ink3);font-size:13px">Nada marcado ainda hoje.</p>'}
+    <div class="aviso">Os dias anteriores ficam guardados: quem marcou, quando, em que aparelho e se foi automático ou à mão.</div></div>`;
+}
+
+function telaBomDia(){
+  const sup = rotinaDe('par','supervisao').filter(i => !i.st.feito).length;
+  const ger = rotinaDe('par','gerente').filter(i => !i.st.feito).length;
+  return `<div class="lock"><div class="hr">08:30</div><div class="dd">sábado, 3 de outubro</div>
+    <div class="noti" data-act="tela:sup"><span class="ap">E</span><div class="tx"><b>ERPOS <span>agora</span></b>Bom dia, Thati! 1 coisa precisa de você hoje e ${sup} itens da rotina.</div></div>
+    <div class="noti" data-act="tela:ger"><span class="ap">E</span><div class="tx"><b>ERPOS <span>agora</span></b>Bom dia, Eduardo! ${ger} itens da rotina de hoje.</div></div>
+    <p class="ex">É o “Bom dia da equipe” que já existe (08:30, gerente e supervisão).<br>Agora ele conta a rotina junto. Quem não tem nada, não recebe nada.<br>Toque num aviso para abrir a Hoje daquela pessoa.</p></div>`;
+}
+
+/* ---------- folhas e ações ---------- */
+function abrirSheet(html){ $('sheet').innerHTML = html; $('sheet').classList.add('on'); $('ov').classList.add('on'); }
+function fechar(){ $('sheet').classList.remove('on'); $('ov').classList.remove('on'); }
+let toastT;
+function toast(m){ const t=$('toast'); t.textContent=m; t.classList.add('on'); clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove('on'),2600); }
+const agoraTxt = () => HORAS[S.hora];
+function achar(loja, id){ for (const p of Object.keys(S.cfg[loja])) { const i = S.cfg[loja][p].find(x => x.id===id); if (i) return {...i, papel:p, st:estado(loja,i)}; } }
+const pessoa = () => PERS[S.tela];
+
+// Marca à mão: login pessoal = um toque; login compartilhado (celular da loja) = pergunta quem fez.
+function marcarMao(loja, id, depois){
+  if (pessoa()?.compartilhado) { S.pendente = {loja, id, depois}; abrirSheet(sheetQuemFez()); return false; }
+  S.mao[loja+':'+id] = {quem:'você', quando:agoraTxt()}; return true;
+}
+
+document.addEventListener('click', ev => {
+  const el = ev.target.closest('[data-act]'); if (!el) return;
+  const [a, ...r] = el.dataset.act.split(':');
+  switch (a) {
+    case 'tela': S.tela = r[0]; fechar(); break;
+    case 'hora': S.hora = r[0]; break;
+    case 'reset': Object.assign(S, {cfg:modelo(), mao:{}, auto:{}, edit:null, pendente:null, nova:null}); fechar(); break;
+    case 'notas': $('notesov').innerHTML = `<div style="text-align:right"><button class="bt sm" data-act="fecharNotas">Fechar</button></div>` + notas(); $('notesov').classList.add('on'); return;
+    case 'fecharNotas': $('notesov').classList.remove('on'); return;
+    case 'fechar': fechar(); break;
+    case 'toast': toast(r.join(':')); return;
+    case 'card': S.mao['card:apr'] = true; toast('Feito. O caixa já pode seguir.'); break;
+    case 'marcar': {
+      const [loja, id] = r; const i = achar(loja, id);
+      if (i.st.feito) { abrirSheet(sheetDesmarcar(loja, i)); return; }
+      if (i.auto) { abrirSheet(sheetMarcarAuto(loja, i)); return; }
+      if (!marcarMao(loja, id)) return;
+      toast(`“${i.titulo}” feito ✓`); break;
+    }
+    case 'marcarForcar': { const [loja,id]=r; fechar(); if (!marcarMao(loja, id)) return; toast('Marcado à mão.'); break; }
+    case 'quem': case 'quemOutro': {
+      const nome = a==='quem' ? r[0] : ($('q-outro').value.trim() || 'Outra pessoa');
+      const pd = S.pendente; S.mao[pd.loja+':'+pd.id] = {quem:nome, quando:agoraTxt(), via:'celular da loja'}; S.pendente=null; fechar(); toast(`Feito por ${nome} ✓`); break;
+    }
+    case 'desmarcar': { const [loja,id]=r; delete S.mao[loja+':'+id]; fechar(); toast('Desmarcado.'); break; }
+    case 'fazer': { const [loja,id]=r; abrirSheet(sheetFazer(loja,id)); return; }
+    case 'auto': { const [loja,id,det]=r; const quem = pessoa()?.compartilhado ? (r[1]==='e3'?'Marcos':'Ana') : pessoa().nome;
+      S.auto[loja+':'+id] = {quem, quando:agoraTxt(), det}; fechar(); toast('Feito. O item da rotina marcou automático ⚡'); break; }
+    case 'sheet': if (r[0]==='historico') abrirSheet(sheetHistorico()); if (r[0]==='loja') abrirSheet(sheetLoja(r[1], r[2])); return;
+    case 'nova': S.nova = {tipo:r[0], titulo:'', papel:r[0]==='producao'?'cozinha':'equipe', ficha:'Pico de gallo', qtd:'2 receitas', hora:null}; abrirSheet(sheetNova()); return;
+    case 'novatipo': guardarNova(); S.nova.tipo = r[0]; abrirSheet(sheetNova()); return;
+    case 'ficha': guardarNova(); S.nova.ficha = r[0]; abrirSheet(sheetNova()); return;
+    case 'qtd': guardarNova(); S.nova.qtd = r[0]; abrirSheet(sheetNova()); return;
+    case 'npapel': guardarNova(); S.nova.papel = r[0]; abrirSheet(sheetNova()); return;
+    case 'criarNova': { guardarNova(); const n = S.nova;
+      if (n.tipo==='tarefa' && !n.titulo.trim()) { toast('Escreva o que fazer.'); return; }
+      const item = n.tipo==='producao' ? {id:'n'+Date.now(), titulo:`Produzir ${n.ficha} — ${n.qtd}`, auto:'producao', ficha:n.ficha, qtd:n.qtd, hoje:true, por:'Thati', hora:n.hora}
+        : {id:'n'+Date.now(), titulo:n.titulo.trim(), auto:null, hoje:true, por:'Thati', hora:n.hora};
+      S.cfg.par[n.papel].push(item); fechar(); toast(n.tipo==='producao'?'Produção pedida. Já aparece no celular da loja.':'Na lista de hoje. Já aparece no celular da loja.'); break; }
+    case 'cfgPapel': S.cfgPapel = r[0]; break;
+    case 'modelo': S.cfg[S.cfgLoja][S.cfgPapel] = (modelo().par[S.cfgPapel] ?? []).filter(x => !x.hoje).map((x,k) => ({...x, id:S.cfgPapel[0]+'n'+k+Date.now()})); toast('Modelo aplicado. Ajuste o que quiser.'); break;
+    case 'mover': { const [k,d]=r.map(Number); const l=S.cfg[S.cfgLoja][S.cfgPapel].filter(i => !i.hoje); const j=k+d; [l[k],l[j]]=[l[j],l[k]]; S.cfg[S.cfgLoja][S.cfgPapel] = [...l, ...S.cfg[S.cfgLoja][S.cfgPapel].filter(i => i.hoje)]; break; }
+    case 'novo': S.edit = {id:null, titulo:'', auto:'', dias:[0,1,2,3,4,5,6], hora:null, atalho:''}; abrirSheet(sheetEditar()); return;
+    case 'editar': { const i=S.cfg[S.cfgLoja][S.cfgPapel].find(x => x.id===r[0]); S.edit = {...i, auto:i.auto||'', dias: i.dias==='plano'?'plano':[...i.dias]}; abrirSheet(sheetEditar()); return; }
+    case 'como': guardarCampos(); S.edit.auto = r[0]; if (r[0]==='contagem' && !S.edit.titulo) S.edit.titulo='Contagem do estoque'; if (r[0]!=='contagem' && S.edit.dias==='plano') S.edit.dias=[0,1,2,3,4,5,6]; abrirSheet(sheetEditar()); return;
+    case 'diasplano': guardarCampos(); S.edit.dias = r[0]==='1' ? 'plano' : [6]; abrirSheet(sheetEditar()); return;
+    case 'dia': { guardarCampos(); const k=Number(r[0]); const d=S.edit.dias; S.edit.dias = d.includes(k)? d.filter(x=>x!==k) : [...d,k].sort(); abrirSheet(sheetEditar()); return; }
+    case 'diasset': guardarCampos(); S.edit.dias = r[0]==='all'?[0,1,2,3,4,5,6]:r[0]==='segsab'?[1,2,3,4,5,6]:[1,2,3,4,5]; abrirSheet(sheetEditar()); return;
+    case 'semhora': guardarCampos(); S.edit.hora = null; abrirSheet(sheetEditar()); return;
+    case 'salvar': { guardarCampos(); const e=S.edit; if (!e.titulo.trim()) { toast('Escreva o que fazer.'); return; }
+      if (Array.isArray(e.dias) && !e.dias.length) { toast('Escolha pelo menos um dia.'); return; }
+      const l=S.cfg[S.cfgLoja][S.cfgPapel]; const novo={id:e.id||('x'+Date.now()), titulo:e.titulo.trim(), auto:e.auto||null, dias:e.dias, hora:e.hora||null, atalho:e.atalho||null};
+      const k = l.findIndex(x => x.id===e.id); if (k<0) l.push(novo); else l[k]=novo; fechar(); toast('Salvo. Já vale para hoje.'); break; }
+    case 'apagar': { const l=S.cfg[S.cfgLoja][S.cfgPapel]; l.splice(l.findIndex(x => x.id===S.edit.id),1); fechar(); toast('Tirado da rotina. O que já foi feito fica no histórico.'); break; }
+  }
+  render();
+});
+function guardarCampos(){ if (!S.edit) return; const t=$('f-tit'), h=$('f-hora'), at=$('f-at'); if (t) S.edit.titulo=t.value; if (h) S.edit.hora=h.value||null; if (at) S.edit.atalho=at.value; }
+function guardarNova(){ if (!S.nova) return; const t=$('n-tit'), h=$('n-hora'); if (t) S.nova.titulo=t.value; if (h) S.nova.hora=h.value||null; }
+
+function notas(){ return `
+  <h3>Rotina do dia — versão 2</h3>
+  <p class="sub">Com o que você pediu ao aprovar (3/10). O novo está com número azul.</p>
+  <div class="nt"><span class="n">1</span><div><b>Rotina por loja e por papel</b><p>O dono (ou admin) monta o que se repete: itens, dias da semana e horário opcional. Papéis: Supervisão, Gerente, <b>Equipe da loja</b> (qualquer pessoa), Cozinha e Caixa.</p></div></div>
+  <div class="nt"><span class="n nv">2</span><div><b>A supervisão põe as tarefas do dia</b><p>Na própria Hoje: “Tarefa de hoje” ou “Pedir produção”, escolhendo quem faz. Não feita, amanhã aparece como “de ontem” até alguém fazer.</p></div></div>
+  <div class="nt"><span class="n nv">3</span><div><b>Pedir produção abre o card da produção</b><p>Escolhe a ficha e quanto. O botão “Produzir” abre o card de registrar produção daquela ficha (o mesmo do Estoque › Produção). Registrou, o item marca automático com quem produziu.</p></div></div>
+  <div class="nt"><span class="n nv">4</span><div><b>Celular da loja pergunta “quem fez?”</b><p>No login da loja (hoje o “Caixa” do celular), marcar abre a lista: equipe da loja e freelancers com turno hoje (do RH). Freelancer não ganha login; fica só o nome. No login pessoal continua um toque.</p></div></div>
+  <div class="nt"><span class="n">5</span><div><b>Automático = o sistema viu</b><p>Abrir e fechar a loja (PDV), contagem (os planos do Estoque, mesma regra), mercadoria recebida (/receber) e produção registrada. Fica guardado quem, quando e se foi automático ou à mão.</p></div></div>
+  <div class="nt"><span class="n nv">6</span><div><b>“Tudo em dia até agora”</b><p>Quando o que falta é mais tarde (“fechar a loja às 23:00”), a Hoje diz “Tudo em dia até agora ✓” e mostra o que vem depois. Passou da hora sem marcar, fica vermelho.</p></div></div>
+  <div class="nt"><span class="n">7</span><div><b>Gerente e dono acompanham</b><p>“Rotina na loja”: andamento de cada papel, o que falta e quem fez. Não conta para o “Tudo em dia” deles. O bom dia das 08:30 cita a rotina.</p></div></div>
+  <div class="nbox"><b>Por que não usei “tarefas que se repetem”.</b> Tarefa é de uma <b>pessoa</b>, não de um papel; só o dono tem o módulo Tarefas; a repetição só nasce quando alguém conclui a anterior; e o checklist não guarda quem marcou. A rotina tem tabela própria e pequena. O módulo Tarefas segue igual.</div>
+  <div class="nbox"><b>Alinhado com a sessão do “Celular da loja”</b> (que ainda é só proposta): o “quem fez?” é sem PIN e serve para rotina e tarefa do dia. O que mexe em dinheiro e estoque com PIN fica com aquela sessão, quando você aprovar.</div>
+  <p class="sub">Use a barra de cima: Supervisão (crie uma tarefa e peça produção), depois “Celular da loja” (marque e veja o “quem fez?”), troque a hora do dia.</p>`; }
+
+$('notes').innerHTML = notas();
+render();
+</script>
+</body>
+</html>

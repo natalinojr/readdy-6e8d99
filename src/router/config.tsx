@@ -53,6 +53,7 @@ const AssistentePage = lazy(() => import('@/pages/assistente/page'));
 const ReceberPage = lazy(() => import('@/pages/receber/page'));
 const HojePage = lazy(() => import('@/pages/hoje/page'));
 const PilotoPage = lazy(() => import('@/pages/hoje/piloto'));
+const RotinaConfigPage = lazy(() => import('@/pages/hoje/rotina/ConfigRotina'));
 const InicioPorPerfil = lazy(() => import('@/pages/hoje/InicioPorPerfil'));
 const LancarPage = lazy(() => import('@/pages/lancar/page'));
 
@@ -100,6 +101,7 @@ const routes: RouteObject[] = [
       { index: true, element: <InicioPorPerfil /> },
       { path: 'hoje', element: <HojePage /> },
       { path: 'hoje/piloto', element: <PilotoPage /> },
+      { path: 'hoje/rotina', element: <RotinaConfigPage /> },
       { path: 'modulos', element: <ModulosPage /> },
       { path: 'onboarding', element: <OnboardingPage /> },
       { path: 'invite', element: <InvitePage /> },
