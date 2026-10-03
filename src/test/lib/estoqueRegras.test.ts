@@ -15,7 +15,7 @@ function insumo(p: Partial<InsumoSituacao>): InsumoSituacao {
     id: 'x', nome: 'Insumo', unidade: 'kg', categoria: null, fornecedorId: null, fornecedor: null, fornecedorFone: null,
     produzido: false, estoque: 10, minimo: 0, marcadoEsgotado: false, acompanha: true, contaInventario: true,
     unidadeContagem: null, fatorContagem: null, preco: 0, unidadeCompra: null, fatorCompra: 1, consumoDia: null,
-    diasRestantes: null, ultimaContagem: null, ultimaEntrada: null, abaixoMinimo: false, esgotado: false, vaiFaltar: false,
+    diasRestantes: null, ultimaContagem: null, ultimaEntrada: null, abaixoMinimo: false, esgotado: false, vaiFaltar: false, naLista: false,
   };
   return { ...base, ...p };
 }

@@ -89,6 +89,8 @@ export default function CartaoCobrancaPanel(props: Props) {
   const [mensagem, setMensagem] = useState('');
   const [formKey, setFormKey] = useState(0);
   const [verificando, setVerificando] = useState(false);
+  // "Tentar de novo" na tela de erro: refaz a leitura da conta
+  const [tentativa, setTentativa] = useState(0);
 
   const onPagoRef = useRef(onPago);
   onPagoRef.current = onPago;
@@ -135,8 +137,15 @@ export default function CartaoCobrancaPanel(props: Props) {
         const meu = bill.mode !== 'table' || scope === 'all'
           ? orders
           : orders.filter(function (o) { return !bill.participant || o.participant_id === bill.participant.id; });
-        setValor(Math.round(meu.filter(function (o) { return !o.locked; }).reduce(function (s, o) { return s + o.remaining; }, 0) * 100) / 100);
+        const aPagar = Math.round(meu.filter(function (o) { return !o.locked; }).reduce(function (s, o) { return s + o.remaining; }, 0) * 100) / 100;
+        setValor(aPagar);
         if (bill.pending_card) { aplicar(bill.pending_card); return; }
+        // Tudo travado por outra cobrança em andamento: o formulário com R$ 0,00 nunca carrega
+        if (aPagar < 0.01) {
+          setMensagem('Já tem um pagamento desta conta em andamento. Espere um instante e toque em "Tentar de novo".');
+          setFase('erro');
+          return;
+        }
         garantirMercadoPago(publicKey);
         setFase('form');
       } catch {
@@ -145,7 +154,7 @@ export default function CartaoCobrancaPanel(props: Props) {
     })();
     return function () { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authKey, scope, publicKey]);
+  }, [authKey, scope, publicKey, tentativa]);
 
   // Acompanha a cobrança pendente (desafio do banco ou processamento): Realtime + polling
   // que reconcilia no MP + volta para a aba. O iframe só avisa "terminei" — quem decide é o MP.
@@ -294,6 +303,10 @@ export default function CartaoCobrancaPanel(props: Props) {
           <i className="ri-error-warning-line text-red-500 text-sm mt-0.5" />
           <p className="text-[11px] text-red-600 flex-1">{mensagem || 'Não foi possível preparar o pagamento.'}</p>
         </div>
+        <button type="button" onClick={function () { setMensagem(''); setFase('carregando'); setTentativa(function (t) { return t + 1; }); }}
+          className="mt-2 w-full py-2.5 bg-white border border-red-200 hover:bg-red-50 text-red-700 text-xs font-bold rounded-xl cursor-pointer whitespace-nowrap">
+          Tentar de novo
+        </button>
       </div>
     );
   }

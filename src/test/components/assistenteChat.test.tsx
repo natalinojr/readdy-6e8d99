@@ -10,6 +10,8 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 const h = vi.hoisted(() => ({
   invoke: vi.fn(),
   auth: { user: null as null | Record<string, unknown> },
+  // Número da Hoje (pages/hoje/hojeStore): a linha "N coisas precisam de você" do balão lê daqui.
+  hoje: { itens: null as null | unknown[], erro: null as null | string, agora: 0 },
 }));
 
 vi.mock('@/lib/supabase', () => ({
@@ -33,6 +35,10 @@ vi.mock('@/lib/supabase', () => ({
   SUPABASE_URL: 'http://localhost',
 }));
 vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => h.auth }));
+vi.mock('@/pages/hoje/hojeStore', () => ({
+  usePendenciasHoje: () => ({ itens: h.hoje.itens, erro: h.hoje.erro, recarregar: () => undefined }),
+  useContagemHoje: () => ({ agora: h.hoje.agora, urgente: false }),
+}));
 // Ações rápidas filtradas pelo acesso (2026-09-23): sem provider de permissões o contexto libera
 // tudo; os módulos por usuário vêm daqui.
 vi.mock('@/hooks/useModuleAccess', () => ({
@@ -40,7 +46,8 @@ vi.mock('@/hooks/useModuleAccess', () => ({
 }));
 
 import AssistenteChat from '@/components/feature/AssistenteChat';
-import { getFoco, perguntarAoAssistente, setFocoTela } from '@/lib/assistenteFoco';
+import { getFoco, pedirAoChat, perguntarAoAssistente, setFocoTela } from '@/lib/assistenteFoco';
+import { useLocation } from 'react-router-dom';
 
 // ── Servidor falso ──────────────────────────────────────────────────────────
 type Msg = { id: number; role: 'user' | 'assistant'; content: string; channel: string; created_at: string; topic: string; group_jid?: string | null; kind?: string };
@@ -129,6 +136,11 @@ function fakeServer(fn: string, opts: { body: Body }) {
       return Promise.resolve(ok({ last_seen_id: srv.visto }));
     }
     case 'payments': return Promise.resolve(ok({ payments: srv.pays.map((p) => ({ ...p })) }));
+    case 'conta_pagar': {
+      const p: Pay = { id: `c-${String(b.bill_id)}`, kind: 'boleto', amount: 812.4, beneficiary_name: 'Copel', pix_key: null, due_date: null, description: 'Energia', status: 'draft', status_label: 'aguardando você tocar em Pagar', error: null, created_at: new Date().toISOString() };
+      srv.pays.push(p);
+      return Promise.resolve(ok({ payment: { ...p } }));
+    }
     case 'pay': {
       const p = srv.pays.find((x) => x.id === b.id);
       if (!p) return Promise.resolve(erro('Pagamento não encontrado.'));
@@ -152,15 +164,21 @@ const renderChat = (variant: 'embedded' | 'floating' = 'embedded') =>
   render(<MemoryRouter initialEntries={['/financeiro?tab=contas']}><AssistenteChat variant={variant} /></MemoryRouter>);
 // Desde 2026-09-16 o painel abre na LISTA de conversas (estilo WhatsApp). Quem quer testar a
 // conversa entra por uma linha da lista — "Todas as mensagens" é a conversa inteira, sem filtro.
+// Desde 2026-10-03 a lista fica dentro da abertura do balão, depois de "Novidades" (que repete as
+// conversas com mensagem nova): a linha certa é a da lista.
+const lista = async () => screen.findByLabelText('Lista de conversas');
 const entrarNaConversa = async (user: ReturnType<typeof userEvent.setup>, assunto = 'Todas as mensagens') => {
-  await user.click(await screen.findByRole('button', { name: new RegExp(assunto) }));
+  await user.click(await within(await lista()).findByRole('button', { name: new RegExp(assunto) }));
 };
+// Mostra a rota atual (para conferir para onde um botão levou).
+function Rota() { const l = useLocation(); return <span data-testid="rota">{l.pathname}</span>; }
 const setCapacitor = (plugins: Record<string, unknown>) => { (window as unknown as { Capacitor?: unknown }).Capacitor = { Plugins: plugins }; };
 
 beforeEach(() => {
   setFocoTela(null);
   srv.msgs = []; srv.pays = []; srv.nextActions = []; srv.seq = 100; srv.visto = 0;
   h.auth.user = OWNER;
+  h.hoje = { itens: null, erro: null, agora: 0 };
   h.invoke.mockReset();
   h.invoke.mockImplementation(fakeServer);
   // Os testes antigos leem a conversa em ordem de chegada; "Tipo" tem os testes próprios.
@@ -173,9 +191,10 @@ describe('AssistenteChat — conversa', () => {
   it('quem não é o dono vê só as ações rápidas, sem a conversa', async () => {
     h.auth.user = { ...OWNER, email: 'gerente@loja.com', perfil: 'gerente' };
     renderChat();
-    // Abre nas conversas com a equipe (2026-09-23); as ações ficam na outra aba.
-    expect(await screen.findByRole('tab', { name: /Conversas/ })).toBeInTheDocument();
-    await userEvent.setup().click(screen.getByRole('tab', { name: /Ações rápidas/ }));
+    // Uma tela só desde 2026-10-03: Fazer rápido (as mais usadas) + Todas as ações + Conversas, sem abas.
+    expect(await screen.findByText('Conversas e ações')).toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: /Ações rápidas/ })).toBeNull();
+    await userEvent.setup().click(await screen.findByRole('button', { name: /Todas as ações/ }));
     expect(await screen.findByRole('button', { name: /Vendas do dia/ })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Todas as mensagens/ })).not.toBeInTheDocument();
     // Aprovar sugestão do tráfego é só do Admin.
@@ -246,59 +265,201 @@ describe('AssistenteChat — conversa', () => {
   });
 });
 
-describe('AssistenteChat — três estágios no flutuante', () => {
-  // Pedido do dono (2026-09-16): o botão abre só uma barra para digitar; a conversa inteira
-  // aparece ao arrastar para cima. Antes o botão abria a tela toda.
-  const ehConversaInteira = () => screen.queryByRole('button', { name: 'Recolher a conversa' }) !== null;
+describe('AssistenteChat — abertura e barra pequena no flutuante', () => {
+  // 2026-10-03: o botão abre sempre a abertura do balão (novidades, fazer rápido, conversas e a caixa
+  // "Pergunte ou peça…"). A barra pequena (2026-09-16) continua: "Recolher" leva a ela, e arrastar a
+  // barra para cima (ou tocar na alça) volta para a tela toda.
+  const ehTelaToda = () => screen.queryByRole('button', { name: 'Recolher a conversa' }) !== null;
+  const abrirERecolher = async (user: ReturnType<typeof userEvent.setup>) => {
+    await user.click(screen.getByRole('button', { name: 'Falar com o assistente' }));
+    await user.click(await screen.findByRole('button', { name: 'Recolher a conversa' }));
+    await waitFor(() => expect(ehTelaToda()).toBe(false));
+  };
 
-  it('o botão abre a barra pequena (com campo), não a conversa inteira', async () => {
+  it('o botão abre a abertura do balão, com a caixa para perguntar', async () => {
     const user = userEvent.setup();
     renderChat('floating');
     await user.click(screen.getByRole('button', { name: 'Falar com o assistente' }));
-    expect(await screen.findByPlaceholderText('Mensagem')).toBeInTheDocument();
-    expect(ehConversaInteira()).toBe(false);
+    expect(await screen.findByPlaceholderText('Pergunte ou peça…')).toBeInTheDocument();
+    expect(ehTelaToda()).toBe(true);
+    expect(screen.getByRole('button', { name: /Todas as ações/ })).toBeInTheDocument();
+    expect(await screen.findByLabelText('Lista de conversas')).toBeInTheDocument();
   });
 
-  it('arrastar a barra para cima abre a conversa inteira', async () => {
+  it('arrastar a barra pequena para cima volta para a tela toda', async () => {
     const user = userEvent.setup();
-    add('assistant', 'Tudo certo por aqui');
     renderChat('floating');
-    await user.click(screen.getByRole('button', { name: 'Falar com o assistente' }));
-    const barra = (await screen.findByPlaceholderText('Mensagem')).closest('div.fixed') as HTMLElement;
+    await abrirERecolher(user);
+    const barra = (await screen.findByPlaceholderText('Pergunte ou peça…')).closest('div.fixed') as HTMLElement;
     fireEvent.touchStart(barra, { touches: [{ clientY: 600 }] });
     fireEvent.touchMove(barra, { touches: [{ clientY: 500 }] });
-    await waitFor(() => expect(ehConversaInteira()).toBe(true));
-    expect(await screen.findByText('Tudo certo por aqui')).toBeInTheDocument();
+    await waitFor(() => expect(ehTelaToda()).toBe(true));
   });
 
   it('tocar na alça também abre, e recolher volta para a barra', async () => {
     const user = userEvent.setup();
     renderChat('floating');
-    await user.click(screen.getByRole('button', { name: 'Falar com o assistente' }));
+    await abrirERecolher(user);
     await user.click(await screen.findByRole('button', { name: 'Abrir a conversa' }));
-    await waitFor(() => expect(ehConversaInteira()).toBe(true));
+    await waitFor(() => expect(ehTelaToda()).toBe(true));
     await user.click(screen.getByRole('button', { name: 'Recolher a conversa' }));
-    await waitFor(() => expect(ehConversaInteira()).toBe(false));
-    expect(screen.getByPlaceholderText('Mensagem')).toBeInTheDocument(); // continua dando para digitar
+    await waitFor(() => expect(ehTelaToda()).toBe(false));
+    expect(screen.getByPlaceholderText('Pergunte ou peça…')).toBeInTheDocument(); // continua dando para digitar
   });
 
   it('na barra pequena, depois de enviar aparecem a pergunta e a resposta', async () => {
     const user = userEvent.setup();
     renderChat('floating');
-    await user.click(screen.getByRole('button', { name: 'Falar com o assistente' }));
-    await user.type(await screen.findByPlaceholderText('Mensagem'), 'quanto vendi hoje?');
+    await abrirERecolher(user);
+    await user.type(await screen.findByPlaceholderText('Pergunte ou peça…'), 'quanto vendi hoje?');
     await user.click(screen.getByRole('button', { name: 'Enviar' }));
     expect(await screen.findByText('Você: quanto vendi hoje?')).toBeInTheDocument();
     expect(await screen.findByText('Resposta para: quanto vendi hoje?')).toBeInTheDocument();
-    expect(ehConversaInteira()).toBe(false); // continua na barra, sem cobrir a tela
+    expect(ehTelaToda()).toBe(false); // continua na barra, sem cobrir a tela
   });
 
-  it('a barra avisa quando há pagamento esperando', async () => {
+  it('a barra avisa quando há pagamento esperando (e não fala mais de pendências)', async () => {
     const user = userEvent.setup();
     srv.pays = [pixEduardo()];
     renderChat('floating');
-    await user.click(screen.getByRole('button', { name: 'Falar com o assistente' }));
+    await abrirERecolher(user);
     expect(await screen.findByText('1 pagamento esperando você')).toBeInTheDocument();
+    expect(screen.queryByText(/pendências? esperando você/)).toBeNull();
+  });
+});
+
+describe('AssistenteChat — abertura do balão (2026-10-03)', () => {
+  it('pergunta feita na abertura vai sem assunto e a resposta aparece ali mesmo', async () => {
+    const user = userEvent.setup();
+    renderChat('floating');
+    await user.click(screen.getByRole('button', { name: 'Falar com o assistente' }));
+    await user.type(await screen.findByPlaceholderText('Pergunte ou peça…'), 'quanto vendi ontem?');
+    await user.click(screen.getByRole('button', { name: 'Enviar' }));
+    const troca = (await screen.findByText('Você: quanto vendi ontem?')).parentElement as HTMLElement;
+    expect(await within(troca).findByText('Resposta para: quanto vendi ontem?')).toBeInTheDocument();
+    expect(calls('send')[0].topic).toBeUndefined();
+    expect(calls('send')[0].group_jid).toBeUndefined();
+    // A resposta já lida na troca não vira "novidade" (visto na conversa onde o banco a pôs).
+    await waitFor(() => expect(calls('seen').at(-1)).toMatchObject({ topic: 'geral' }));
+    expect(screen.queryByLabelText('Novidades para você')).toBeNull();
+    // "Ver na conversa" abre a conversa inteira com a troca.
+    await user.click(screen.getByRole('button', { name: /Ver na conversa/ }));
+    expect(await screen.findByText('quanto vendi ontem?')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('Mensagem')).toBeInTheDocument();
+  });
+
+  it('enquete respondida na própria abertura (as opções não ficam no histórico)', async () => {
+    const user = userEvent.setup();
+    srv.nextActions = [{ type: 'poll', question: 'Qual loja?', options: ['Paranaguá', 'Vila Leste'] }];
+    renderChat('floating');
+    await user.click(screen.getByRole('button', { name: 'Falar com o assistente' }));
+    await user.type(await screen.findByPlaceholderText('Pergunte ou peça…'), 'vendas');
+    await user.click(screen.getByRole('button', { name: 'Enviar' }));
+    await user.click(await screen.findByRole('button', { name: 'Vila Leste' }));
+    await waitFor(() => expect(calls('send').at(-1)?.text).toBe('[Botão "Qual loja?"] Resposta: Vila Leste'));
+    expect(calls('send').at(-1)?.topic).toBeUndefined();
+  });
+
+  it('não marca visto quando a conversa já tinha outra mensagem nova (não esconde aviso não lido)', async () => {
+    const user = userEvent.setup();
+    add('assistant', 'Aviso que você ainda não leu', 'geral', 'cron');
+    renderChat('floating');
+    await user.click(await screen.findByRole('button', { name: 'Assistente: tem novidade para você' }));
+    await user.type(await screen.findByPlaceholderText('Pergunte ou peça…'), 'oi');
+    await user.click(screen.getByRole('button', { name: 'Enviar' }));
+    const troca = (await screen.findByText('Você: oi')).parentElement as HTMLElement;
+    await within(troca).findByText('Resposta para: oi');
+    await waitFor(() => expect(calls('topics').length).toBeGreaterThan(1));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(calls('seen')).toHaveLength(0);
+  });
+
+  it('a linha do número da Hoje: o mesmo número, leva à Hoje e fecha o balão', async () => {
+    const user = userEvent.setup();
+    h.hoje = { itens: [{}, {}, {}], erro: null, agora: 3 };
+    render(<MemoryRouter initialEntries={['/financeiro']}><AssistenteChat variant="floating" /><Rota /></MemoryRouter>);
+    await user.click(screen.getByRole('button', { name: 'Falar com o assistente' }));
+    await user.click(await screen.findByRole('button', { name: /3 coisas precisam de você/ }));
+    expect(screen.getByTestId('rota')).toHaveTextContent('/hoje');
+    expect(await screen.findByRole('button', { name: 'Falar com o assistente' })).toBeInTheDocument();
+  });
+
+  it('sem leitura da Hoje (ou erro com zero) a linha não aparece; zero lido = Tudo em dia', async () => {
+    const user = userEvent.setup();
+    const { unmount } = renderChat('floating');
+    await user.click(screen.getByRole('button', { name: 'Falar com o assistente' }));
+    await screen.findByPlaceholderText('Pergunte ou peça…');
+    expect(screen.queryByRole('button', { name: /precisa|Tudo em dia/ })).toBeNull();
+    unmount();
+    h.hoje = { itens: [], erro: 'falhou', agora: 0 };
+    const r2 = renderChat('floating');
+    await user.click(screen.getByRole('button', { name: 'Falar com o assistente' }));
+    await screen.findByPlaceholderText('Pergunte ou peça…');
+    expect(screen.queryByRole('button', { name: /Tudo em dia/ })).toBeNull();
+    r2.unmount();
+    h.hoje = { itens: [], erro: null, agora: 0 };
+    renderChat('floating');
+    await user.click(screen.getByRole('button', { name: 'Falar com o assistente' }));
+    expect(await screen.findByRole('button', { name: /Tudo em dia/ })).toBeInTheDocument();
+  });
+
+  it('na própria Hoje a linha some (o número já está na tela)', async () => {
+    const user = userEvent.setup();
+    h.hoje = { itens: [{}], erro: null, agora: 1 };
+    render(<MemoryRouter initialEntries={['/hoje']}><AssistenteChat variant="floating" /></MemoryRouter>);
+    await user.click(screen.getByRole('button', { name: 'Falar com o assistente' }));
+    await screen.findByPlaceholderText('Pergunte ou peça…');
+    expect(screen.queryByRole('button', { name: /coisa precisa de você/ })).toBeNull();
+  });
+
+  it('📥 e 🔒 saíram da barra de digitação; ficam no ⋯ e abrem a mesma caixa e o mesmo PIN', async () => {
+    const user = userEvent.setup();
+    renderChat();
+    await entrarNaConversa(user);
+    await screen.findByPlaceholderText('Mensagem');
+    expect(screen.queryByRole('button', { name: /^Pendências/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'PIN de pagamento' })).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Mais opções' }));
+    await user.click(await screen.findByRole('menuitem', { name: /Caixa de pendências/ }));
+    expect(await screen.findByText('Pendências')).toBeInTheDocument();
+    await user.click(screen.getAllByRole('button', { name: /Fechar|Voltar/ })[0]);
+    await user.click(screen.getByRole('button', { name: 'Mais opções' }));
+    await user.click(await screen.findByRole('menuitem', { name: /PIN de pagamento/ }));
+    expect(await screen.findByText(/o PIN de pagamento/)).toBeInTheDocument();
+  });
+});
+
+describe('AssistenteChat — pedidos da tela Hoje (caminho único do dinheiro)', () => {
+  it('"Pagar" na Hoje abre o chat no Financeiro, prepara no Inter e pede o PIN', async () => {
+    const user = userEvent.setup();
+    renderChat('floating');
+    await waitFor(() => expect(calls('unread').length).toBe(1));
+    pedirAoChat({ tipo: 'pagar_conta', billId: 'b1' });
+    await waitFor(() => expect(calls('conta_pagar')[0]).toMatchObject({ bill_id: 'b1' }));
+    const pin = await screen.findByPlaceholderText('PIN');
+    await user.type(pin, '1234');
+    await user.click(within(pin.closest('form') as HTMLElement).getByRole('button', { name: 'Pagar' }));
+    await waitFor(() => expect(calls('pay').at(-1)).toMatchObject({ id: 'c-b1', op: 'ok', pin: '1234' }));
+    expect(calls('history').at(-1)?.topic).toBe('pagamentos');
+  });
+
+  it('menu ⋯ aberto não fica por cima do PIN quando a Hoje pede um pagamento', async () => {
+    const user = userEvent.setup();
+    renderChat('floating');
+    await user.click(screen.getByRole('button', { name: 'Falar com o assistente' }));
+    await user.click(await screen.findByRole('button', { name: 'Mais opções' }));
+    expect(await screen.findByRole('menu')).toBeInTheDocument();
+    pedirAoChat({ tipo: 'pagar_conta', billId: 'b2' });
+    expect(await screen.findByPlaceholderText('PIN')).toBeInTheDocument();
+    expect(screen.queryByRole('menu')).toBeNull();
+  });
+
+  it('"Pedir o boleto" na Hoje só escreve o texto na conversa Financeiro (nada é enviado)', async () => {
+    renderChat('floating');
+    pedirAoChat({ tipo: 'pedir', texto: 'Pode mandar o boleto da Copel?' });
+    expect(await screen.findByDisplayValue('Pode mandar o boleto da Copel?')).toBeInTheDocument();
+    await waitFor(() => expect(calls('history').at(-1)?.topic).toBe('pagamentos'));
+    expect(calls('send')).toHaveLength(0);
   });
 });
 
@@ -309,11 +470,17 @@ describe('AssistenteChat — lista de conversas', () => {
     add('assistant', 'Aviso de estoque', 'avisos');
     add('assistant', 'Pix preparado', 'pagamentos');
     renderChat();
-    const financeiro = await screen.findByRole('button', { name: /Financeiro/ });
+    const l = await lista();
+    const financeiro = await within(l).findByRole('button', { name: /Financeiro/ });
     expect(within(financeiro).getByText('Pix preparado')).toBeInTheDocument();
     expect(within(financeiro).getByText('1')).toBeInTheDocument(); // não lida
-    expect(within(await screen.findByRole('button', { name: /Avisos/ })).getByText('Aviso de estoque')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Geral/ })).toHaveTextContent('Nada por aqui ainda');
+    expect(within(within(l).getByRole('button', { name: /Avisos/ })).getByText('Aviso de estoque')).toBeInTheDocument();
+    expect(within(l).getByRole('button', { name: /Geral/ })).toHaveTextContent('Nada por aqui ainda');
+    // As duas com mensagem nova também sobem para "Novidades para você".
+    const novidades = screen.getByLabelText('Novidades para você');
+    expect(within(novidades).getByRole('button', { name: /Financeiro/ })).toBeInTheDocument();
+    expect(within(novidades).getByRole('button', { name: /Avisos/ })).toBeInTheDocument();
+    expect(within(novidades).queryByRole('button', { name: /Geral/ })).toBeNull();
     expect(calls('history')).toHaveLength(0); // a lista não carrega conversa nenhuma
   });
 
@@ -340,8 +507,8 @@ describe('AssistenteChat — lista de conversas', () => {
     add('assistant', 'Pix preparado', 'pagamentos');
     add('assistant', 'Currículo novo', 'curriculos'); // assuntos diferentes: o badge abre a LISTA
     renderChat('floating');
-    await user.click(await screen.findByRole('button', { name: /mensagens novas/ }));
-    await user.click(await screen.findByRole('button', { name: /Financeiro/ }));
+    await user.click(await screen.findByRole('button', { name: /tem novidade/ }));
+    await entrarNaConversa(user, 'Financeiro');
     expect(await screen.findByText('Pix preparado')).toBeInTheDocument();
 
     window.history.back(); // 1º voltar: sai da conversa, fica na lista
@@ -357,8 +524,8 @@ describe('AssistenteChat — lista de conversas', () => {
     add('assistant', 'Pix preparado', 'pagamentos');
     add('assistant', 'Currículo novo', 'curriculos');
     renderChat('floating');
-    await user.click(await screen.findByRole('button', { name: /mensagens novas/ }));
-    await user.click(await screen.findByRole('button', { name: /Financeiro/ }));
+    await user.click(await screen.findByRole('button', { name: /tem novidade/ }));
+    await entrarNaConversa(user, 'Financeiro');
     expect(await screen.findByText('Pix preparado')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Voltar para as conversas' }));
@@ -385,7 +552,7 @@ describe('AssistenteChat — lista de conversas', () => {
 
     // Grupos têm aba própria na lista (2026-09-24).
     await user.click(await screen.findByRole('tab', { name: /Grupos/ }));
-    const linha = await screen.findByRole('button', { name: /Financeiro loja - EP MALL/ });
+    const linha = await within(await lista()).findByRole('button', { name: /Financeiro loja - EP MALL/ });
     expect(within(linha).getByLabelText('1 não lida(s)')).toBeInTheDocument();
     expect(within(linha).getByText(/compra lançada/)).toBeInTheDocument();
 
@@ -712,7 +879,7 @@ describe('AssistenteChat — botão redondo arrastável', () => {
     arrastar(fab, [990, 740], [200, 300]);
 
     // Soltar não abriu nada e o botão foi para onde o dedo parou (centro - 28 px).
-    expect(screen.queryByPlaceholderText('Mensagem')).toBeNull();
+    expect(screen.queryByPlaceholderText('Pergunte ou peça…')).toBeNull();
     expect(fab.style.left).toBe('172px');
     expect(fab.style.top).toBe('272px');
     expect(JSON.parse(localStorage.getItem('erpos-assistente-fab') ?? 'null')).toMatchObject({ fx: 200 / window.innerWidth });
@@ -732,7 +899,7 @@ describe('AssistenteChat — botão redondo arrastável', () => {
     fireEvent.pointerMove(fab, { clientX: 503, clientY: 502, pointerId: 1 });
     fireEvent.pointerUp(fab, { clientX: 503, clientY: 502, pointerId: 1 });
     fireEvent.click(fab);
-    expect(await screen.findByPlaceholderText('Mensagem')).toBeInTheDocument();
+    expect(await screen.findByPlaceholderText('Pergunte ou peça…')).toBeInTheDocument();
   });
 });
 
@@ -976,6 +1143,18 @@ describe('AssistenteChat — divisão por dias', () => {
 });
 
 describe('AssistenteChat — ações rápidas', () => {
+  it('"Fazer rápido" mostra as mais usadas neste aparelho; a ação aberta da abertura volta para ela', async () => {
+    Element.prototype.scrollIntoView ??= vi.fn();
+    localStorage.setItem('erpos.acoes.uso', JSON.stringify({ clima: { n: 5, em: 1 } }));
+    const user = userEvent.setup();
+    renderChat('floating');
+    await user.click(screen.getByRole('button', { name: 'Falar com o assistente' }));
+    const tiles = await screen.findByRole('button', { name: /Previsão do tempo/ });
+    await user.click(tiles);
+    expect(await screen.findByText('Ação rápida · sem custo de IA')).toBeInTheDocument();
+    expect(JSON.parse(localStorage.getItem('erpos.acoes.uso') ?? '{}').clima.n).toBe(6);
+  });
+
   it('com o chat na tela toda, o ⚡ abre as ações ocupando o painel e o X fecha', async () => {
     const user = userEvent.setup();
     renderChat();
@@ -1007,13 +1186,14 @@ describe('AssistenteChat — ações rápidas', () => {
     }
     expect(screen.queryByText('Ação rápida · sem custo de IA')).toBeNull();
     expect(screen.queryByRole('button', { name: /Falar com o assistente/ })).toBeNull();
-    expect(screen.getByPlaceholderText('Mensagem')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('Pergunte ou peça…')).toBeInTheDocument();
   });
 
   it('na barra pequena continua o cartão compacto (sem ocupar a tela)', async () => {
     const user = userEvent.setup();
     renderChat('floating');
     await user.click(await screen.findByRole('button', { name: 'Falar com o assistente' }));
+    await user.click(await screen.findByRole('button', { name: 'Recolher a conversa' }));
     await user.click(await screen.findByRole('button', { name: 'Ações rápidas' }));
     expect(await screen.findByText(/Ações rápidas · sem custo de IA/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Fechar ações rápidas' })).toBeNull();
@@ -1058,28 +1238,33 @@ describe('AssistenteChat — responder e copiar', () => {
   });
 });
 
-describe('AssistenteChat — badge do botão fechado', () => {
-  it('conta o que ele falou sozinho e abre a conversa no assunto', async () => {
+describe('AssistenteChat — bolinha do botão fechado', () => {
+  // 2026-10-03 ("um número só"): o botão fechado não tem número — o único número é o da Hoje.
+  it('mensagem que ele mandou sozinho põe a bolinha; o toque abre a abertura com a novidade no topo', async () => {
     const user = userEvent.setup();
     add('assistant', 'Stone e Inter com R$ 340 de diferença ontem', 'pagamentos', 'cron');
     add('assistant', 'A conta da Ambev vence amanhã', 'pagamentos', 'cron');
     renderChat('floating');
     // Fechado o chat NÃO carrega histórico: só o contador.
-    expect(await screen.findByRole('button', { name: 'Assistente: 2 mensagens novas' })).toBeInTheDocument();
+    const fab = await screen.findByRole('button', { name: 'Assistente: tem novidade para você' });
+    expect(fab).not.toHaveTextContent(/\d/);
     expect(calls('history')).toHaveLength(0);
 
-    await user.click(screen.getByRole('button', { name: 'Assistente: 2 mensagens novas' }));
-    expect(await screen.findByRole('button', { name: 'Recolher a conversa' })).toBeInTheDocument(); // conversa inteira, para ler
-    await waitFor(() => expect(calls('history')[0]?.topic).toBe('pagamentos')); // já na aba do assunto
-    await waitFor(() => expect(calls('seen').length).toBeGreaterThan(0)); // visto: some o badge
+    await user.click(fab);
+    const novidades = await screen.findByLabelText('Novidades para você');
+    const linha = await within(novidades).findByRole('button', { name: /Financeiro/ });
+    expect(within(linha).getByText('2')).toBeInTheDocument();
+    await user.click(linha);
+    await waitFor(() => expect(calls('history')[0]?.topic).toBe('pagamentos'));
+    await waitFor(() => expect(calls('seen').length).toBeGreaterThan(0)); // visto: some a bolinha
   });
 
-  it('sem novidade o botão só abre a barra pequena', async () => {
+  it('sem novidade o botão abre a mesma abertura, sem bolinha', async () => {
     const user = userEvent.setup();
     renderChat('floating');
     await waitFor(() => expect(calls('unread').length).toBe(1));
     await user.click(screen.getByRole('button', { name: 'Falar com o assistente' }));
-    expect(await screen.findByPlaceholderText('Mensagem')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Recolher a conversa' })).toBeNull();
+    expect(await screen.findByPlaceholderText('Pergunte ou peça…')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Novidades para você')).toBeNull();
   });
 });

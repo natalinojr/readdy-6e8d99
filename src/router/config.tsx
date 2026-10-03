@@ -52,6 +52,7 @@ const NfsePage = lazy(() => import('@/pages/nfse/page'));
 const AssistentePage = lazy(() => import('@/pages/assistente/page'));
 const ReceberPage = lazy(() => import('@/pages/receber/page'));
 const HojePage = lazy(() => import('@/pages/hoje/page'));
+const PilotoPage = lazy(() => import('@/pages/hoje/piloto'));
 const InicioPorPerfil = lazy(() => import('@/pages/hoje/InicioPorPerfil'));
 const LancarPage = lazy(() => import('@/pages/lancar/page'));
 
@@ -98,6 +99,7 @@ const routes: RouteObject[] = [
       // Cada perfil cai no seu trabalho (2026-10-03): dono/gerente/supervisão → Hoje; caixa → PDV.
       { index: true, element: <InicioPorPerfil /> },
       { path: 'hoje', element: <HojePage /> },
+      { path: 'hoje/piloto', element: <PilotoPage /> },
       { path: 'modulos', element: <ModulosPage /> },
       { path: 'onboarding', element: <OnboardingPage /> },
       { path: 'invite', element: <InvitePage /> },

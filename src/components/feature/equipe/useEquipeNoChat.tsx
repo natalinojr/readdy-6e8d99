@@ -8,7 +8,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { useModuleAccess } from '@/hooks/useModuleAccess';
 import { useEuTarefas } from '@/pages/tarefas/hooks/useEuTarefas';
-import { ESCOPO_TAREFAS } from './api';
+import { ESCOPO_TAREFAS, type ConversaResumo } from './api';
 import ConversaEquipe from './ConversaEquipe';
 import { ListaEquipe, NovaConversaEquipe, type ConversaAberta, type LojaEquipe } from './ListaEquipe';
 import { useConversasEquipe } from './useConversasEquipe';
@@ -111,5 +111,12 @@ export function useEquipeNoChat({ ativo = true, abrirPainel, fecharPainel, semTi
     />
   ) : null;
 
-  return { secao, camada, naoLidas, recarregar };
+  // Conversas com mensagem nova (todas as lojas) — a abertura do balão mostra em "Novidades" (2026-10-03).
+  const novas = conversas.filter((c) => c.nao_lidas > 0);
+  const abrir = (c: ConversaResumo) => {
+    if (c.tenant_id) setLojaSel(c.tenant_id);
+    setAberta({ threadId: c.thread_id, pessoa: c.pessoa, loja: c.loja });
+  };
+
+  return { secao, camada, naoLidas, recarregar, novas, abrir };
 }

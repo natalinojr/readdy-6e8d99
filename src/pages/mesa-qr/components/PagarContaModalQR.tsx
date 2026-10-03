@@ -372,21 +372,21 @@ export default function PagarContaModalQR(props: Props) {
     if (!enabled) {
       return (
         <div className="flex flex-col items-center py-10 text-center px-4">
-          <div className="w-14 h-14 flex items-center justify-center bg-zinc-100 rounded-2xl mb-4">
-            <i className="ri-bank-card-line text-zinc-400 text-xl" />
+          <div className="w-14 h-14 flex items-center justify-center bg-stone-100 rounded-2xl mb-4">
+            <i className="ri-bank-card-line text-stone-400 text-xl" />
           </div>
-          <p className="text-sm font-semibold text-zinc-700">Pagamento pelo celular indisponível</p>
-          <p className="text-xs text-zinc-400 mt-1">Por favor, pague no caixa ou chame um atendente.</p>
+          <p className="text-sm font-semibold text-stone-700">Pagamento pelo celular indisponível</p>
+          <p className="text-xs text-stone-400 mt-1">Por favor, pague no caixa ou chame um atendente.</p>
         </div>
       );
     }
     if (orders.length === 0) {
       return (
         <div className="flex flex-col items-center py-10 text-center px-4">
-          <div className="w-14 h-14 flex items-center justify-center bg-zinc-100 rounded-2xl mb-4">
-            <i className="ri-receipt-line text-zinc-300 text-xl" />
+          <div className="w-14 h-14 flex items-center justify-center bg-stone-100 rounded-2xl mb-4">
+            <i className="ri-receipt-line text-stone-300 text-xl" />
           </div>
-          <p className="text-sm font-semibold text-zinc-600">Nenhum pedido na mesa ainda</p>
+          <p className="text-sm font-semibold text-stone-600">Nenhum pedido na mesa ainda</p>
         </div>
       );
     }
@@ -408,11 +408,11 @@ export default function PagarContaModalQR(props: Props) {
         ) : null}
 
         {/* Escopo — só faz sentido quando há mesa compartilhada e ainda há o que pagar */}
-        <div className={'grid grid-cols-2 gap-2 p-1 bg-zinc-100 rounded-xl' + (queueMode || tudoPago ? ' hidden' : '')}>
+        <div className={'grid grid-cols-2 gap-2 p-1 bg-stone-100 rounded-xl' + (queueMode || tudoPago ? ' hidden' : '')}>
           <button
             type="button"
             onClick={function () { setScope('mine'); }}
-            className={'py-2.5 rounded-lg text-xs font-bold cursor-pointer transition-all whitespace-nowrap ' + (scope === 'mine' ? 'bg-white text-amber-600 shadow-sm' : 'text-zinc-500')}
+            className={'py-2.5 rounded-lg text-xs font-bold cursor-pointer transition-all whitespace-nowrap ' + (scope === 'mine' ? 'bg-white text-[var(--cor-loja,#C2410C)] shadow-sm' : 'text-stone-500')}
           >
             Meus pedidos
             <span className="block text-[10px] font-semibold opacity-80">{formatMoney(totalMeus)}</span>
@@ -420,7 +420,7 @@ export default function PagarContaModalQR(props: Props) {
           <button
             type="button"
             onClick={function () { setScope('all'); }}
-            className={'py-2.5 rounded-lg text-xs font-bold cursor-pointer transition-all whitespace-nowrap ' + (scope === 'all' ? 'bg-white text-amber-600 shadow-sm' : 'text-zinc-500')}
+            className={'py-2.5 rounded-lg text-xs font-bold cursor-pointer transition-all whitespace-nowrap ' + (scope === 'all' ? 'bg-white text-[var(--cor-loja,#C2410C)] shadow-sm' : 'text-stone-500')}
           >
             Mesa inteira
             <span className="block text-[10px] font-semibold opacity-80">{formatMoney(totalTodos)}</span>
@@ -433,44 +433,44 @@ export default function PagarContaModalQR(props: Props) {
             const aberto = expandido === o.id;
             const pago = o.remaining <= 0;
             return (
-              <div key={o.id} className={'border rounded-2xl overflow-hidden ' + (pago ? 'border-emerald-100 bg-emerald-50/40' : o.locked ? 'border-amber-200 bg-amber-50/40' : 'border-zinc-200/80 bg-white')}>
+              <div key={o.id} className={'border rounded-2xl overflow-hidden ' + (pago ? 'border-emerald-100 bg-emerald-50/40' : o.locked ? 'border-stone-200 bg-[var(--cor-loja-suave,#F9ECE7)]' : 'border-stone-200/80 bg-white')}>
                 <button
                   type="button"
                   onClick={function () { setExpandido(aberto ? null : o.id); }}
                   className="w-full flex items-center justify-between px-3.5 py-3 text-left cursor-pointer"
                 >
                   <div className="flex items-center gap-2.5 min-w-0">
-                    <div className="min-w-9 h-9 flex items-center justify-center bg-amber-50 rounded-xl px-2">
-                      <span className="text-xs font-black text-amber-600">{shortNumber(o.number, o.id)}</span>
+                    <div className="min-w-9 h-9 flex items-center justify-center bg-[var(--cor-loja-suave,#F9ECE7)] rounded-xl px-2">
+                      <span className="text-xs font-black text-[var(--cor-loja,#C2410C)]">{shortNumber(o.number, o.id)}</span>
                     </div>
                     <div className="min-w-0">
-                      <p className="text-xs font-bold text-zinc-800 truncate">
+                      <p className="text-xs font-bold text-stone-800 truncate">
                         {o.participant_name || 'Mesa'}
-                        <span className="text-zinc-400 font-medium"> · {o.items.length} {o.items.length === 1 ? 'item' : 'itens'}</span>
+                        <span className="text-stone-400 font-medium"> · {o.items.length} {o.items.length === 1 ? 'item' : 'itens'}</span>
                       </p>
                       {pago ? (
                         <p className="text-[10px] font-semibold text-emerald-600">
                           Pago{o.paid_at ? ' às ' + new Date(o.paid_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : ''}
                         </p>
                       ) : o.locked ? (
-                        <p className="text-[10px] font-semibold text-amber-600">Alguém está pagando…</p>
+                        <p className="text-[10px] font-semibold text-[var(--cor-loja,#C2410C)]">Alguém está pagando…</p>
                       ) : o.paid_amount > 0 ? (
-                        <p className="text-[10px] text-zinc-400">Falta {formatMoney(o.remaining)}</p>
+                        <p className="text-[10px] text-stone-400">Falta {formatMoney(o.remaining)}</p>
                       ) : null}
                     </div>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
-                    <span className={'text-sm font-bold ' + (pago ? 'text-emerald-600 line-through opacity-60' : 'text-zinc-900')}>{formatMoney(o.total_amount)}</span>
-                    <i className={'text-zinc-400 text-sm ' + (aberto ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line')} />
+                    <span className={'text-sm font-bold ' + (pago ? 'text-emerald-600 line-through opacity-60' : 'text-stone-900')}>{formatMoney(o.total_amount)}</span>
+                    <i className={'text-stone-400 text-sm ' + (aberto ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line')} />
                   </div>
                 </button>
                 {aberto ? (
-                  <div className="border-t border-zinc-100 px-3.5 py-2 divide-y divide-zinc-50">
+                  <div className="border-t border-stone-100 px-3.5 py-2 divide-y divide-stone-50">
                     {o.items.map(function (it, i) {
                       return (
                         <div key={i} className="flex items-center justify-between py-1.5">
-                          <p className="text-[11px] text-zinc-700"><span className="text-zinc-400">{it.quantity}x</span> {it.name}</p>
-                          <p className="text-[11px] font-semibold text-zinc-700">{formatMoney(it.price * it.quantity)}</p>
+                          <p className="text-[11px] text-stone-700"><span className="text-stone-400">{it.quantity}x</span> {it.name}</p>
+                          <p className="text-[11px] font-semibold text-stone-700">{formatMoney(it.price * it.quantity)}</p>
                         </div>
                       );
                     })}
@@ -482,13 +482,13 @@ export default function PagarContaModalQR(props: Props) {
         </div>
 
         {!queueMode && scope === 'mine' && meus.length === 0 ? (
-          <p className="text-[11px] text-zinc-400 text-center">Você ainda não fez pedidos. Use "Mesa inteira" para pagar pelos outros.</p>
+          <p className="text-[11px] text-stone-400 text-center">Você ainda não fez pedidos. Use "Mesa inteira" para pagar pelos outros.</p>
         ) : null}
 
         {/* Extrato: o que já foi pago (Pix pelo app ou recebido no caixa) */}
         {pagamentos.length > 0 ? (
           <div>
-            <p className="text-[10px] uppercase tracking-wider font-bold text-zinc-400 mb-2">Pagamentos</p>
+            <p className="text-[10px] uppercase tracking-wider font-bold text-stone-400 mb-2">Pagamentos</p>
             <div className="space-y-1.5">
               {pagamentos.map(function (pg) {
                 const hora = new Date(pg.at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
@@ -499,8 +499,8 @@ export default function PagarContaModalQR(props: Props) {
                         <i className="ri-check-line text-emerald-600 text-sm" />
                       </div>
                       <div className="min-w-0">
-                        <p className="text-xs font-bold text-zinc-800 truncate">{pg.method}</p>
-                        <p className="text-[10px] text-zinc-400">
+                        <p className="text-xs font-bold text-stone-800 truncate">{pg.method}</p>
+                        <p className="text-[10px] text-stone-400">
                           {hora}
                           {pg.orders.length > 0 ? ' · pedido' + (pg.orders.length > 1 ? 's ' : ' ') + pg.orders.map(function (n) { return n.slice(-3); }).join(', ') : ''}
                         </p>
@@ -525,16 +525,16 @@ export default function PagarContaModalQR(props: Props) {
           <div className="w-20 h-20 flex items-center justify-center bg-emerald-100 rounded-full mb-4">
             <i className="ri-checkbox-circle-fill text-emerald-500 text-4xl" />
           </div>
-          <p className="text-lg font-black text-zinc-800">Pagamento confirmado!</p>
+          <p className="text-lg font-black text-stone-800">Pagamento confirmado!</p>
           <p className="text-2xl font-black text-emerald-600 mt-1">{formatMoney(pix.amount)}</p>
-          <p className="text-xs text-zinc-500 mt-3">
+          <p className="text-xs text-stone-500 mt-3">
             {pix.allocation ? pix.allocation.length : 1} {pix.allocation && pix.allocation.length > 1 ? 'pedidos pagos' : 'pedido pago'} {pix.method === 'credit_card' ? 'no cartão' : 'via Pix'}. Obrigado!
           </p>
           {textoPago ? <p className="text-xs font-bold text-emerald-700 mt-2">{textoPago}</p> : null}
           <button
             type="button"
             onClick={function () { setPix(null); carregarConta(); }}
-            className="mt-6 px-5 py-2.5 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 text-xs font-bold rounded-xl cursor-pointer whitespace-nowrap"
+            className="mt-6 px-5 py-2.5 bg-stone-100 hover:bg-stone-200 text-stone-700 text-xs font-bold rounded-xl cursor-pointer whitespace-nowrap"
           >
             Ver a conta
           </button>
@@ -545,15 +545,15 @@ export default function PagarContaModalQR(props: Props) {
       const msg = pix.status === 'expired' ? 'Este Pix expirou.' : pix.status === 'cancelled' ? 'Este Pix foi cancelado.' : 'Não foi possível gerar o Pix.';
       return (
         <div className="flex flex-col items-center py-8 text-center px-4">
-          <div className="w-14 h-14 flex items-center justify-center bg-zinc-100 rounded-2xl mb-4">
-            <i className="ri-time-line text-zinc-400 text-2xl" />
+          <div className="w-14 h-14 flex items-center justify-center bg-stone-100 rounded-2xl mb-4">
+            <i className="ri-time-line text-stone-400 text-2xl" />
           </div>
-          <p className="text-sm font-bold text-zinc-700">{msg}</p>
-          <p className="text-xs text-zinc-400 mt-1">Se você já pagou, aguarde: a confirmação pode levar alguns segundos.</p>
+          <p className="text-sm font-bold text-stone-700">{msg}</p>
+          <p className="text-xs text-stone-400 mt-1">Se você já pagou, aguarde: a confirmação pode levar alguns segundos.</p>
           <button
             type="button"
             onClick={function () { setPix(null); clearPixMemo(qrToken); carregarConta(); }}
-            className="mt-5 px-5 py-2.5 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded-xl cursor-pointer whitespace-nowrap"
+            className="mt-5 px-5 py-2.5 bg-[var(--cor-loja,#C2410C)] hover:bg-[var(--cor-loja-forte,#A5380A)] text-white text-xs font-bold rounded-xl cursor-pointer whitespace-nowrap"
           >
             Gerar um novo Pix
           </button>
@@ -562,14 +562,14 @@ export default function PagarContaModalQR(props: Props) {
     }
     return (
       <div className="flex flex-col items-center px-2">
-        <p className="text-[10px] uppercase tracking-wider font-bold text-zinc-400">Valor a pagar</p>
-        <p className="text-3xl font-black text-zinc-900 mt-0.5">{formatMoney(pix.amount)}</p>
-        <p className="text-[11px] text-zinc-400 mt-1">
-          {pix.scope === 'all' ? 'Mesa inteira' : 'Meus pedidos'} · expira em <span className={'font-bold tabular-nums ' + (segundos < 60 ? 'text-red-500' : 'text-zinc-600')}>{mm}:{ss}</span>
+        <p className="text-[10px] uppercase tracking-wider font-bold text-stone-400">Valor a pagar</p>
+        <p className="text-3xl font-black text-stone-900 mt-0.5">{formatMoney(pix.amount)}</p>
+        <p className="text-[11px] text-stone-400 mt-1">
+          {pix.scope === 'all' ? 'Mesa inteira' : 'Meus pedidos'} · expira em <span className={'font-bold tabular-nums ' + (segundos < 60 ? 'text-red-500' : 'text-stone-600')}>{mm}:{ss}</span>
         </p>
 
         {pix.qr_code_base64 ? (
-          <div className="mt-4 p-3 bg-white border border-zinc-200 rounded-2xl">
+          <div className="mt-4 p-3 bg-white border border-stone-200 rounded-2xl">
             <img src={'data:image/png;base64,' + pix.qr_code_base64} alt="QR Code Pix" className="w-44 h-44" />
           </div>
         ) : null}
@@ -584,13 +584,13 @@ export default function PagarContaModalQR(props: Props) {
                 value={formatCpfCnpjQR(cpfDigits) || cpfNota}
                 onChange={function (e) { setCpfNota(e.target.value.replace(/\D/g, '').slice(0, 14)); }}
                 placeholder="CPF/CNPJ na nota (opcional)"
-                className={'flex-1 text-sm border rounded-xl px-3 py-2 text-zinc-800 focus:outline-none ' + (cpfDigits && !cpfValido ? 'border-red-300' : 'border-zinc-200 focus:border-emerald-400')}
+                className={'flex-1 text-sm border rounded-xl px-3 py-2 text-stone-800 focus:outline-none ' + (cpfDigits && !cpfValido ? 'border-red-300' : 'border-stone-200 focus:border-emerald-400')}
               />
               <button
                 type="button"
                 disabled={salvandoCpf || (cpfDigits.length > 0 && !cpfValido)}
                 onClick={salvarCpfDoPix}
-                className="px-3 py-2 text-xs font-bold bg-zinc-900 text-white rounded-xl disabled:opacity-40 cursor-pointer whitespace-nowrap"
+                className="px-3 py-2 text-xs font-bold bg-stone-900 text-white rounded-xl disabled:opacity-40 cursor-pointer whitespace-nowrap"
               >
                 {salvandoCpf ? 'Salvando…' : 'Salvar'}
               </button>
@@ -599,7 +599,7 @@ export default function PagarContaModalQR(props: Props) {
             <button
               type="button"
               onClick={function () { setEditandoCpf(true); }}
-              className="w-full flex items-center justify-center gap-1.5 text-[11px] text-zinc-500 py-1.5 cursor-pointer"
+              className="w-full flex items-center justify-center gap-1.5 text-[11px] text-stone-500 py-1.5 cursor-pointer"
             >
               <i className="ri-file-shield-2-line" />
               {cpfDigits && cpfValido ? 'Na nota: ' + formatCpfCnpjQR(cpfDigits) + ' · alterar' : 'Quer CPF/CNPJ na nota fiscal?'}
@@ -611,22 +611,22 @@ export default function PagarContaModalQR(props: Props) {
           <button
             type="button"
             onClick={copiarCodigo}
-            className={'w-full flex items-center justify-center gap-2 py-3.5 rounded-xl text-sm font-bold cursor-pointer transition-colors whitespace-nowrap ' + (copiado ? 'bg-emerald-500 text-white' : 'bg-gradient-to-br from-amber-500 to-orange-500 text-white shadow-sm')}
+            className={'w-full flex items-center justify-center gap-2 py-3.5 rounded-xl text-sm font-bold cursor-pointer transition-colors whitespace-nowrap ' + (copiado ? 'bg-emerald-500 text-white' : 'bg-[var(--cor-loja,#C2410C)] text-white shadow-sm')}
           >
             <i className={copiado ? 'ri-check-line' : 'ri-file-copy-line'} />
             {copiado ? 'Código copiado!' : 'Copiar código Pix'}
           </button>
-          <input id="pix-copia-cola" readOnly value={pix.qr_code} className="w-full text-[10px] text-zinc-500 bg-zinc-50 border border-zinc-200 rounded-lg px-2 py-1.5 truncate" />
+          <input id="pix-copia-cola" readOnly value={pix.qr_code} className="w-full text-[10px] text-stone-500 bg-stone-50 border border-stone-200 rounded-lg px-2 py-1.5 truncate" />
         </div>
 
-        <ol className="w-full mt-4 space-y-1.5 text-[11px] text-zinc-600">
-          <li className="flex gap-2"><span className="w-4 h-4 flex items-center justify-center bg-amber-100 text-amber-700 rounded-full text-[9px] font-bold shrink-0">1</span><span className="flex-1 min-w-0">Copie o código acima</span></li>
-          <li className="flex gap-2"><span className="w-4 h-4 flex items-center justify-center bg-amber-100 text-amber-700 rounded-full text-[9px] font-bold shrink-0">2</span><span className="flex-1 min-w-0">Abra o app do seu banco em <strong>Pix › Pix Copia e Cola</strong></span></li>
-          <li className="flex gap-2"><span className="w-4 h-4 flex items-center justify-center bg-amber-100 text-amber-700 rounded-full text-[9px] font-bold shrink-0">3</span><span className="flex-1 min-w-0">Cole, confirme e <strong>volte para esta tela</strong> — a confirmação aparece sozinha</span></li>
+        <ol className="w-full mt-4 space-y-1.5 text-[11px] text-stone-600">
+          <li className="flex gap-2"><span className="w-4 h-4 flex items-center justify-center bg-[var(--cor-loja-suave,#F9ECE7)] text-[var(--cor-loja,#C2410C)] rounded-full text-[9px] font-bold shrink-0">1</span><span className="flex-1 min-w-0">Copie o código acima</span></li>
+          <li className="flex gap-2"><span className="w-4 h-4 flex items-center justify-center bg-[var(--cor-loja-suave,#F9ECE7)] text-[var(--cor-loja,#C2410C)] rounded-full text-[9px] font-bold shrink-0">2</span><span className="flex-1 min-w-0">Abra o app do seu banco em <strong>Pix › Pix Copia e Cola</strong></span></li>
+          <li className="flex gap-2"><span className="w-4 h-4 flex items-center justify-center bg-[var(--cor-loja-suave,#F9ECE7)] text-[var(--cor-loja,#C2410C)] rounded-full text-[9px] font-bold shrink-0">3</span><span className="flex-1 min-w-0">Cole, confirme e <strong>volte para esta tela</strong> — a confirmação aparece sozinha</span></li>
         </ol>
 
-        <div className="flex items-center gap-2 mt-4 text-[11px] text-zinc-400">
-          <i className="ri-loader-4-line animate-spin text-amber-500" />
+        <div className="flex items-center gap-2 mt-4 text-[11px] text-stone-400">
+          <i className="ri-loader-4-line animate-spin text-[var(--cor-loja,#C2410C)]" />
           Aguardando o pagamento…
         </div>
 
@@ -634,7 +634,7 @@ export default function PagarContaModalQR(props: Props) {
           type="button"
           onClick={verificarAgora}
           disabled={verificando}
-          className="mt-3 w-full flex items-center justify-center gap-2 py-2.5 bg-zinc-100 hover:bg-zinc-200 disabled:opacity-50 text-zinc-700 text-xs font-bold rounded-xl cursor-pointer whitespace-nowrap"
+          className="mt-3 w-full flex items-center justify-center gap-2 py-2.5 bg-stone-100 hover:bg-stone-200 disabled:opacity-50 text-stone-700 text-xs font-bold rounded-xl cursor-pointer whitespace-nowrap"
         >
           <i className={verificando ? 'ri-loader-4-line animate-spin' : 'ri-refresh-line'} />
           {verificando ? 'Verificando…' : 'Já paguei — verificar agora'}
@@ -643,7 +643,7 @@ export default function PagarContaModalQR(props: Props) {
         <button
           type="button"
           onClick={cancelarPix}
-          className="mt-3 text-[11px] text-zinc-400 underline cursor-pointer"
+          className="mt-3 text-[11px] text-stone-400 underline cursor-pointer"
         >
           Cancelar este Pix
         </button>
@@ -659,16 +659,16 @@ export default function PagarContaModalQR(props: Props) {
             <button
               type="button"
               onClick={voltarDoCartao}
-              className="flex items-center gap-1 text-[11px] font-semibold text-zinc-500 hover:text-zinc-700 cursor-pointer whitespace-nowrap"
+              className="flex items-center gap-1 text-[11px] font-semibold text-stone-500 hover:text-stone-700 cursor-pointer whitespace-nowrap"
             >
               <i className="ri-arrow-left-s-line text-sm" />
               Voltar para a conta
             </button>
-            {!queueMode ? <span className="text-[11px] text-zinc-400">{scope === 'all' ? 'Mesa inteira' : 'Meus pedidos'}</span> : null}
+            {!queueMode ? <span className="text-[11px] text-stone-400">{scope === 'all' ? 'Mesa inteira' : 'Meus pedidos'}</span> : null}
           </div>
         ) : null}
         {!cartaoPago && cpfDigits && cpfValido ? (
-          <p className="flex items-center justify-center gap-1.5 text-[11px] text-zinc-500">
+          <p className="flex items-center justify-center gap-1.5 text-[11px] text-stone-500">
             <i className="ri-file-shield-2-line" />
             CPF/CNPJ na nota: {formatCpfCnpjQR(cpfDigits)}
           </p>
@@ -685,7 +685,7 @@ export default function PagarContaModalQR(props: Props) {
           <button
             type="button"
             onClick={voltarDoCartao}
-            className="w-full py-2.5 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 text-xs font-bold rounded-xl cursor-pointer whitespace-nowrap"
+            className="w-full py-2.5 bg-stone-100 hover:bg-stone-200 text-stone-700 text-xs font-bold rounded-xl cursor-pointer whitespace-nowrap"
           >
             Ver a conta
           </button>
@@ -700,20 +700,20 @@ export default function PagarContaModalQR(props: Props) {
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50">
       <div className="bg-white w-full max-w-sm rounded-t-3xl sm:rounded-2xl max-h-[92vh] flex flex-col">
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-100 flex-shrink-0">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-stone-100 flex-shrink-0">
           <div className="flex items-center gap-2.5">
             <div className="w-9 h-9 flex items-center justify-center bg-emerald-100 rounded-xl">
               <i className={(!mostrandoPix && pagandoCartao ? 'ri-bank-card-line' : 'ri-qr-code-line') + ' text-emerald-600 text-base'} />
             </div>
             <div>
-              <h2 className="text-base font-bold text-zinc-900">{mostrandoPix ? 'Pagar com Pix' : pagandoCartao ? 'Pagar com cartão' : 'Pagar a conta'}</h2>
-              <p className="text-[10px] text-zinc-400">{queueMode ? 'Senha ' + accessToken + ' · ' : (tableNumber != null ? 'Mesa ' + tableNumber + ' · ' : '')}{participantName}</p>
+              <h2 className="text-base font-bold text-stone-900">{mostrandoPix ? 'Pagar com Pix' : pagandoCartao ? 'Pagar com cartão' : 'Pagar a conta'}</h2>
+              <p className="text-[10px] text-stone-400">{queueMode ? 'Senha ' + accessToken + ' · ' : (tableNumber != null ? 'Mesa ' + tableNumber + ' · ' : '')}{participantName}</p>
             </div>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="w-8 h-8 flex items-center justify-center rounded-lg bg-zinc-100 hover:bg-zinc-200 text-zinc-500 cursor-pointer transition-colors"
+            className="w-8 h-8 flex items-center justify-center rounded-lg bg-stone-100 hover:bg-stone-200 text-stone-500 cursor-pointer transition-colors"
           >
             <i className="ri-close-line text-base" />
           </button>
@@ -723,8 +723,8 @@ export default function PagarContaModalQR(props: Props) {
         <div className="flex-1 overflow-y-auto px-4 py-4">
           {carregando ? (
             <div className="flex flex-col items-center py-12">
-              <i className="ri-loader-4-line text-2xl text-amber-500 animate-spin" />
-              <p className="text-xs text-zinc-400 mt-3">Buscando sua conta...</p>
+              <i className="ri-loader-4-line text-2xl text-[var(--cor-loja,#C2410C)] animate-spin" />
+              <p className="text-xs text-stone-400 mt-3">Buscando sua conta...</p>
             </div>
           ) : mostrandoPix ? renderPix() : pagandoCartao ? renderCartao() : renderConta()}
 
@@ -738,11 +738,11 @@ export default function PagarContaModalQR(props: Props) {
 
         {/* Footer: só na tela da conta, com algo a pagar */}
         {!carregando && !mostrandoPix && !pagandoCartao && enabled && !tudoPago && orders.length > 0 ? (
-          <div className="border-t border-zinc-100 bg-white px-5 py-4 flex-shrink-0 rounded-b-2xl">
+          <div className="border-t border-stone-100 bg-white px-5 py-4 flex-shrink-0 rounded-b-2xl">
             {/* CPF na nota (opcional) — vai para a NFC-e emitida quando o Pix confirmar */}
             <div className="mb-3">
-              <label className="flex items-center justify-between text-[11px] font-semibold text-zinc-600 mb-1">
-                <span><i className="ri-file-shield-2-line text-zinc-400 mr-1" />CPF/CNPJ na nota fiscal <span className="font-normal text-zinc-400">(opcional)</span></span>
+              <label className="flex items-center justify-between text-[11px] font-semibold text-stone-600 mb-1">
+                <span><i className="ri-file-shield-2-line text-stone-400 mr-1" />CPF/CNPJ na nota fiscal <span className="font-normal text-stone-400">(opcional)</span></span>
                 {cpfDigits && cpfValido ? <span className="text-emerald-600 font-bold">vai na nota</span> : null}
               </label>
               <input
@@ -751,7 +751,7 @@ export default function PagarContaModalQR(props: Props) {
                 value={formatCpfCnpjQR(cpfDigits) || cpfNota}
                 onChange={function (e) { setCpfNota(e.target.value.replace(/\D/g, '').slice(0, 14)); }}
                 placeholder="000.000.000-00"
-                className={'w-full text-sm border rounded-xl px-3 py-2.5 text-zinc-800 focus:outline-none ' + (cpfDigits && !cpfValido ? 'border-red-300 focus:border-red-400' : 'border-zinc-200 focus:border-emerald-400')}
+                className={'w-full text-sm border rounded-xl px-3 py-2.5 text-stone-800 focus:outline-none ' + (cpfDigits && !cpfValido ? 'border-red-300 focus:border-red-400' : 'border-stone-200 focus:border-emerald-400')}
               />
               {cpfDigits && !cpfValido ? <p className="text-[10px] text-red-500 mt-1">{cpfDigits.length < 11 ? 'Faltam dígitos' : 'Documento inválido'}</p> : null}
             </div>
@@ -759,7 +759,7 @@ export default function PagarContaModalQR(props: Props) {
               type="button"
               disabled={gerando || alvo.length === 0 || temTravado || (cpfDigits.length > 0 && !cpfValido)}
               onClick={gerarPix}
-              className="w-full flex items-center justify-between bg-gradient-to-br from-emerald-500 to-emerald-600 disabled:from-zinc-300 disabled:to-zinc-300 text-white px-5 py-3.5 rounded-xl cursor-pointer disabled:cursor-not-allowed transition-colors shadow-sm"
+              className="w-full flex items-center justify-between bg-gradient-to-br from-emerald-500 to-emerald-600 disabled:from-stone-300 disabled:to-stone-300 text-white px-5 py-3.5 rounded-xl cursor-pointer disabled:cursor-not-allowed transition-colors shadow-sm"
             >
               <span className="flex items-center gap-2 text-sm font-bold">
                 {gerando ? <i className="ri-loader-4-line animate-spin" /> : <i className="ri-qr-code-line" />}
@@ -772,7 +772,7 @@ export default function PagarContaModalQR(props: Props) {
                 type="button"
                 disabled={gerando || alvo.length === 0 || temTravado || (cpfDigits.length > 0 && !cpfValido)}
                 onClick={abrirCartao}
-                className="mt-2 w-full flex items-center justify-between gap-2 bg-gradient-to-br from-amber-500 to-orange-500 disabled:from-zinc-300 disabled:to-zinc-300 text-white px-4 py-3.5 rounded-xl cursor-pointer disabled:cursor-not-allowed transition-colors shadow-sm"
+                className="mt-2 w-full flex items-center justify-between gap-2 bg-[var(--cor-loja,#C2410C)] disabled:from-stone-300 disabled:to-stone-300 text-white px-4 py-3.5 rounded-xl cursor-pointer disabled:cursor-not-allowed transition-colors shadow-sm"
               >
                 <span className="flex items-center gap-2 text-[13px] font-bold text-left leading-tight min-w-0">
                   <i className="ri-bank-card-line shrink-0" />
@@ -782,7 +782,7 @@ export default function PagarContaModalQR(props: Props) {
               </button>
             ) : null}
             {temTravado ? (
-              <p className="text-[10px] text-amber-600 text-center mt-2">Outra pessoa está pagando parte desses pedidos. Aguarde um instante.</p>
+              <p className="text-[10px] text-[var(--cor-loja,#C2410C)] text-center mt-2">Outra pessoa está pagando parte desses pedidos. Aguarde um instante.</p>
             ) : null}
           </div>
         ) : null}

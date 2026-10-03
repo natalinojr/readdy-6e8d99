@@ -66,6 +66,10 @@ export const KIND_CONFIG: Record<string, { label: string; icone: string; corBg: 
   boleto_email: { label: 'Boleto por e-mail', icone: 'ri-mail-download-line', corBg: 'bg-amber-100', corTexto: 'text-amber-800' },
   // Conta de boleto lançada pela nota, sem o código do boleto (2026-09-28): o dono vai atrás.
   boleto_faltando: { label: 'Falta o boleto', icone: 'ri-barcode-line', corBg: 'bg-amber-100', corTexto: 'text-amber-800' },
+  // Avisos antes de virar problema (2026-10-03): assistente-cron + regras em supabase/functions/_shared/previsao.ts.
+  vendas_abaixo_ritmo: { label: 'Vendas abaixo do ritmo', icone: 'ri-line-chart-line', corBg: 'bg-rose-100', corTexto: 'text-rose-700' },
+  caixa_nao_cobre: { label: 'Caixa da semana', icone: 'ri-safe-2-line', corBg: 'bg-red-100', corTexto: 'text-red-700' },
+  insumo_antes_do_pico: { label: 'Vai acabar hoje', icone: 'ri-timer-flash-line', corBg: 'bg-orange-100', corTexto: 'text-orange-700' },
 };
 // Quem vê o quê: a regra mora em supabase/functions/_shared/pendencia-visivel.ts (a tela Hoje e o
 // servidor usam a mesma).

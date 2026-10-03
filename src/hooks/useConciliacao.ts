@@ -28,6 +28,8 @@ export interface ReconciliationRule {
   competence_rule?: 'same' | 'prev';
   /** 'auto' = lança sozinho quando não há dúvida (cron diário); 'suggest' = espera confirmação */
   mode?: 'suggest' | 'auto';
+  /** o dono já disse "não é salário" (CPF de ex-funcionário que virou freela) — precisa voltar em todo salvamento */
+  allow_payroll?: boolean | null;
   supplier_name?: string | null;
   last_applied_at?: string | null;
 }

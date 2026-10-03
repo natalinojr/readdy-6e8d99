@@ -10,6 +10,7 @@ import { useTranslation } from 'react-i18next';
 import { formatCurrency } from '@/lib/formatters';
 import { formatPhoneBR } from '@/lib/deliveryPhone';
 import { isValidCpfCnpj } from '@/lib/cpfCnpj';
+import BotaoEsvaziarSacola from '@/components/cliente/BotaoEsvaziarSacola';
 import ClubeCheckout from '@/components/fidelidade/ClubeCheckout';
 import CpfCnpjInput from '@/components/base/CpfCnpjInput';
 import type { useDeliveryData } from '../useDeliveryData';
@@ -156,6 +157,7 @@ export default function CheckoutDelivery(props: Props) {
           <h2 className="text-[17px] font-extrabold text-stone-900">Sua sacola</h2>
           <p className="text-xs text-stone-500 truncate">{props.nomeLoja}</p>
         </div>
+        {cart.length > 0 ? <BotaoEsvaziarSacola onEsvaziar={data.handleEsvaziarSacola} /> : null}
       </div>
 
       {cart.length === 0 ? (

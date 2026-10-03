@@ -21,6 +21,7 @@
 //          EVOLUTION_INSTANCE (padrão "assistente"), WHISPER_URL, WHISPER_API_KEY.
 
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
+import { pastasMaisUsadas } from '../_shared/pastas-dono.ts';
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
@@ -1102,7 +1103,7 @@ async function publicOnEvolution(admin: SupabaseClient): Promise<boolean> {
 // Dono testando um link: mensagem com o código de um canal existente, ou teste aberto (< 30 min).
 // deno-lint-ignore no-explicit-any
 async function ownerTestingPublic(admin: SupabaseClient, chatId: string, data: any): Promise<boolean> {
-  const p = parseMessage(data.message);
+  const p = parseMessage(data.message, data.contextInfo);
   const code = String(p.text ?? '').match(PUBLIC_CODE_RE)?.[1]?.toUpperCase();
   if (code) {
     const { data: ch } = await admin.from('bot_channels').select('id').eq('code', code).maybeSingle();
@@ -1137,7 +1138,7 @@ async function hiringReceipts(items: any[]) {
 // hiring-scheduler; devolve true se era conversa de agendamento ou resposta de entrevistador.
 // deno-lint-ignore no-explicit-any
 async function toHiringScheduler(number: string, data: any, replyTo?: string): Promise<boolean> {
-  const p = parseMessage(data.message);
+  const p = parseMessage(data.message, data.contextInfo);
   if (p.inner?.pollUpdateMessage || p.inner?.reactionMessage || p.inner?.protocolMessage) return false;
   let text = String(p.text ?? '').trim();
   if (p.kind === 'audio') {
@@ -1186,7 +1187,7 @@ async function resolveLid(admin: SupabaseClient, key: any, number: string): Prom
 // deno-lint-ignore no-explicit-any
 async function toPublicChannel(chatId: string, number: string, msgKey: MsgKey | null, data: any, isOwner: boolean, replyTo?: string) {
   const dest = replyTo || number; // responder no JID de origem (@lid), ver handle()
-  const p = parseMessage(data.message);
+  const p = parseMessage(data.message, data.contextInfo);
   if (p.inner?.pollUpdateMessage || p.inner?.reactionMessage || p.inner?.protocolMessage) return;
   let text = String(p.text ?? '').trim();
   let file: { base64: string; mime: string; name: string | null } | null = null;
@@ -1220,6 +1221,124 @@ async function toPublicChannel(chatId: string, number: string, msgKey: MsgKey | 
   if (r && !r.ok) log('ERROR', 'canal-publico recusou', { status: r.status, body: (await r.text()).slice(0, 200) });
 }
 
+// ── Grupo novo: pergunta a pasta e o resumo diário ao dono (2026-10-03) ──
+// Chamado quando o número do assistente entra num grupo (evento GROUPS_UPSERT da Evolution) ou na
+// primeira mensagem de um grupo que o dono ainda não configurou (config_asked_at nulo — inclui grupo só
+// listado pelo "Buscar grupos" da tela). A leitura só liga se o dono estiver no grupo (qualquer pessoa
+// pode pôr o número do assistente num grupo). Pergunta UMA vez: config_asked_at marcado com update
+// condicional, e a tela (configurar lá) também marca. Respostas: votoConfigGrupo.
+type GrupoRow = { group_jid: string; name: string | null; is_enabled: boolean; task_list_id: string | null; read_media: boolean | null; config_asked_at: string | null };
+// deno-lint-ignore no-explicit-any
+async function grupoNovo(admin: SupabaseClient, allowed: string[], cfg: Record<string, any>, groupJid: string, meta?: any): Promise<GrupoRow> {
+  const ownerNums = allowed.map((a) => a.replace(/@.*$/, ''));
+  let name = String(meta?.subject ?? '').trim() || groupJid;
+  // deno-lint-ignore no-explicit-any
+  let parts: any[] = Array.isArray(meta?.participants) ? meta.participants : [];
+  let infoOk = parts.length > 0;
+  if (!infoOk) {
+    try {
+      const info = await evoGet(`/group/findGroupInfos/${evoInstance}?groupJid=${encodeURIComponent(groupJid)}`);
+      name = String(info?.subject ?? name);
+      parts = Array.isArray(info?.participants) ? info.participants : [];
+      infoOk = parts.length > 0;
+    } catch (e) {
+      log('WARN', 'findGroupInfos falhou', { groupJid, error: errMsg(e) });
+    }
+  }
+  if (meta?.isCommunityAnnounce === true && !name.includes('(avisos da comunidade)')) name = `${name} (avisos da comunidade)`;
+  const ownerIn = parts.some((p) => [p.id, p.phoneNumber, p.jid].filter(Boolean)
+    .map((x) => String(x).replace(/@.*$/, '')).some((n) => ownerNums.includes(n)));
+  const { data: atual } = await admin.from('asst_groups').select('group_jid, name, is_enabled, task_list_id, read_media, config_asked_at').eq('group_jid', groupJid).maybeSingle();
+  let row: GrupoRow;
+  if (!atual) {
+    await admin.from('asst_groups').upsert({ group_jid: groupJid, name, is_enabled: ownerIn }, { onConflict: 'group_jid', ignoreDuplicates: true });
+    row = { group_jid: groupJid, name, is_enabled: ownerIn, task_list_id: null, read_media: true, config_asked_at: null };
+    log('INFO', 'grupo novo', { groupJid, name, is_enabled: ownerIn });
+  } else {
+    row = atual as GrupoRow;
+    if (row.config_asked_at) return row;
+    if (!row.is_enabled && ownerIn) {
+      await admin.from('asst_groups').update({ is_enabled: true, name, updated_at: new Date().toISOString() }).eq('group_jid', groupJid);
+      row.is_enabled = true;
+    }
+  }
+  const agora = new Date().toISOString();
+  const { data: marcou } = await admin.from('asst_groups').update({ config_asked_at: agora }).eq('group_jid', groupJid).is('config_asked_at', null).select('group_jid');
+  if (marcou?.length) {
+    row.config_asked_at = agora;
+    await perguntarConfigGrupo(admin, cfg, row, infoOk).catch((e) => log('ERROR', 'perguntar config do grupo', { groupJid, error: errMsg(e) }));
+  }
+  return row;
+}
+
+// Enquete do sistema (respondida sem modelo): grava em asst_polls com kind/ref para o voto achar o grupo.
+async function enqueteDoSistema(admin: SupabaseClient, number: string, chatId: string, question: string, options: string[], kind: string, ref: Record<string, unknown>) {
+  const out = await evo(`/message/sendPoll/${evoInstance}`, { number, name: question, selectableCount: 1, values: options });
+  const id = out?.key?.id ? String(out.key.id) : null;
+  if (!id) { log('WARN', 'sendPoll sem key.id', { kind, out: JSON.stringify(out).slice(0, 300) }); return; }
+  await admin.from('asst_polls').insert({ message_id: id, chat_id: chatId, question, options, kind, ref });
+}
+
+// deno-lint-ignore no-explicit-any
+async function perguntarConfigGrupo(admin: SupabaseClient, cfg: Record<string, any>, row: GrupoRow, infoOk: boolean) {
+  const ownerJid = String(cfg.owner_chat_id ?? '');
+  const number = ownerJid.replace(/@.*$/, '');
+  if (!number) return;
+  const tg = cfg.telegram_owner_chat_id ? `tg:${cfg.telegram_owner_chat_id}` : ownerJid;
+  const nome = (row.name || 'sem nome').slice(0, 60);
+  const registrar = (content: string) => admin.from('asst_messages').insert({ channel: 'cron', chat_id: tg, role: 'assistant', content, topic: 'avisos', kind: 'automatico' });
+  if (!row.is_enabled) {
+    const txt = infoOk
+      ? `👥 Me colocaram no grupo *${nome}*, mas você não está nele — por segurança ficou desligado. Se for para eu ler, ligue em Assistente › Grupos ou me diga aqui.`
+      : `👥 Entrei no grupo *${nome}*, mas não consegui conferir quem está nele — ficou desligado. Se for para eu ler, ligue em Assistente › Grupos ou me diga aqui.`;
+    await sendText(number, txt);
+    await registrar(txt);
+    return;
+  }
+  const { data: st } = await admin.from('asst_settings').select('key, value').in('key', ['owner_user_id', 'group_summary']);
+  // deno-lint-ignore no-explicit-any
+  const conf: Record<string, any> = Object.fromEntries((st ?? []).map((s) => [s.key, s.value]));
+  const ownerId = String(conf.owner_user_id ?? '');
+  const hora = String(conf.group_summary?.time ?? '19:00');
+  const opcoes: Record<string, string | null> = {};
+  for (const p of ownerId ? (await pastasMaisUsadas(admin, ownerId)).slice(0, 11) : []) {
+    const t = p.caminho.length > 100 ? `…${p.caminho.slice(-99)}` : p.caminho;
+    if (!(t in opcoes)) opcoes[t] = p.id;
+  }
+  opcoes['Nenhuma pasta'] = null;
+  const intro = `👥 Entrei no grupo *${nome}* e já estou lendo.\nEscolha abaixo a pasta de Tarefas do grupo (o 📌 e as tarefas que nascem do grupo vão para ela) e se quer o resumo do dia às ${hora}. Dá para mudar depois em Assistente › Grupos ou me dizendo aqui.`;
+  await sendText(number, intro);
+  await enqueteDoSistema(admin, number, ownerJid, `Pasta do grupo "${nome}"?`.slice(0, 100), Object.keys(opcoes), 'grupo_pasta', { group_jid: row.group_jid, opcoes });
+  await enqueteDoSistema(admin, number, ownerJid, `Resumo diário do "${nome}" às ${hora}?`.slice(0, 100), ['Sim, todo dia', 'Não'], 'grupo_resumo', { group_jid: row.group_jid });
+  await registrar(`${intro}\n[Enquetes enviadas no WhatsApp: pasta do grupo e resumo diário]`);
+}
+
+// Voto nas enquetes do grupo novo: grava direto, sem modelo.
+// deno-lint-ignore no-explicit-any
+async function votoConfigGrupo(admin: SupabaseClient, vote: { kind: string | null; ref: any; chosen: string[] }): Promise<string> {
+  const jid = String(vote.ref?.group_jid ?? '');
+  const { data: g } = await admin.from('asst_groups').select('name').eq('group_jid', jid).maybeSingle();
+  if (!g) return 'Não achei mais esse grupo.';
+  const escolha = String(vote.chosen[0] ?? '');
+  const agora = new Date().toISOString();
+  if (vote.kind === 'grupo_resumo') {
+    const sim = /^sim/i.test(escolha);
+    const { error } = await admin.from('asst_groups').update({ daily_summary: sim, updated_at: agora }).eq('group_jid', jid);
+    if (error) throw new Error(error.message);
+    return sim ? `✅ Resumo diário do *${g.name}* ligado.` : `Combinado: sem resumo diário do *${g.name}*.`;
+  }
+  const opcoes = (vote.ref?.opcoes ?? {}) as Record<string, string | null>;
+  if (!(escolha in opcoes)) return 'Não reconheci a opção. Escolha a pasta em Assistente › Grupos ou me diga aqui.';
+  const lid = opcoes[escolha];
+  if (lid) {
+    const { data: l } = await admin.from('task_lists').select('id').eq('id', lid).eq('is_archived', false).maybeSingle();
+    if (!l) return `A pasta *${escolha}* não existe mais. Escolha outra em Assistente › Grupos.`;
+  }
+  const { error } = await admin.from('asst_groups').update({ task_list_id: lid, updated_at: agora }).eq('group_jid', jid);
+  if (error) throw new Error(error.message);
+  return lid ? `✅ Grupo *${g.name}* → pasta *${escolha}*.` : `Grupo *${g.name}* ficou sem pasta.`;
+}
+
 // Grupos: o assistente SÓ LÊ — guarda a mensagem em asst_group_messages e nunca
 // responde no grupo. Na primeira mensagem de um grupo busca nome e participantes;
 // a leitura só liga sozinha se o dono estiver no grupo (qualquer pessoa pode
@@ -1227,30 +1346,15 @@ async function toPublicChannel(chatId: string, number: string, msgKey: MsgKey | 
 // deno-lint-ignore no-explicit-any
 async function handleGroup(admin: SupabaseClient, data: any, allowed: string[], cfg: Record<string, any> = {}) {
   const groupJid = String(data.key.remoteJid);
-  const ownerNums = allowed.map((a) => a.replace(/@.*$/, ''));
-  let { data: g } = await admin.from('asst_groups').select('group_jid, name, is_enabled, task_list_id, read_media').eq('group_jid', groupJid).maybeSingle();
-  if (!g) {
-    let name: string = groupJid;
-    let ownerIn = false;
-    try {
-      const info = await evoGet(`/group/findGroupInfos/${evoInstance}?groupJid=${encodeURIComponent(groupJid)}`);
-      name = String(info?.subject ?? groupJid);
-      // deno-lint-ignore no-explicit-any
-      const parts: any[] = Array.isArray(info?.participants) ? info.participants : [];
-      ownerIn = parts.some((p) => [p.id, p.phoneNumber, p.jid].filter(Boolean)
-        .map((x) => String(x).replace(/@.*$/, '')).some((n) => ownerNums.includes(n)));
-    } catch (e) {
-      log('WARN', 'findGroupInfos falhou', { groupJid, error: errMsg(e) });
-    }
-    await admin.from('asst_groups').upsert({ group_jid: groupJid, name, is_enabled: ownerIn }, { onConflict: 'group_jid', ignoreDuplicates: true });
-    g = { group_jid: groupJid, name, is_enabled: ownerIn, task_list_id: null, read_media: true };
-    log('INFO', 'grupo novo', { groupJid, name, is_enabled: ownerIn });
-  }
+  let { data: g } = await admin.from('asst_groups').select('group_jid, name, is_enabled, task_list_id, read_media, config_asked_at').eq('group_jid', groupJid).maybeSingle();
+  // Grupo que o dono ainda não configurou (novo, ou só listado pelo "Buscar grupos" da tela): confere se
+  // ele está no grupo, liga a leitura e pergunta a pasta e o resumo diário no WhatsApp (2026-10-03).
+  if (!g || !g.config_asked_at) g = await grupoNovo(admin, allowed, cfg, groupJid);
   if (!g.is_enabled) return;
 
   const conf = { ...GROUP_WATCH_DEFAULTS, ...(cfg.group_watch && typeof cfg.group_watch === 'object' ? cfg.group_watch : {}) };
   if (g.read_media === false) conf.read_media = false; // grupo de obra: foto/PDF sem IA (custo)
-  const p = parseMessage(data.message);
+  const p = parseMessage(data.message, data.contextInfo);
   // Reação: só o 📌 interessa (vira item na caixa da pasta de tarefas do grupo). O resto é ignorado.
   if (p.inner?.reactionMessage) {
     if (g.task_list_id) await pinParaTarefa(admin, g, data).catch((e) => log('ERROR', '📌 para tarefa', { groupJid, error: errMsg(e) }));
@@ -1375,7 +1479,7 @@ const reagirNoGrupo = (key: Record<string, unknown>, emoji: string) =>
 
 // deno-lint-ignore no-explicit-any
 async function pinParaTarefa(admin: SupabaseClient, g: { group_jid: string; name: string | null; task_list_id: string | null }, data: any) {
-  const reacao = parseMessage(data.message).inner?.reactionMessage ?? {};
+  const reacao = parseMessage(data.message, data.contextInfo).inner?.reactionMessage ?? {};
   const emoji = String(reacao.text ?? '').replace(/️/g, '').trim();
   const alvo = reacao.key ?? {};
   const alvoId = String(alvo.id ?? '');
@@ -1417,7 +1521,7 @@ async function pinParaTarefa(admin: SupabaseClient, g: { group_jid: string; name
     bruta = out?.messages?.records?.[0] ?? null;
     if (!bruta) { log('WARN', '📌 em mensagem que não achei', { group: g.name, message_id: alvoId }); return; }
   }
-  const pb = bruta ? parseMessage(bruta.message) : null;
+  const pb = bruta ? parseMessage(bruta.message, bruta.contextInfo) : null;
   const kind = String(gravada?.kind ?? pb?.kind ?? 'other');
   let content: string = String(gravada?.content ?? pb?.text ?? '').trim();
   const mime = String(gravada?.media_mime ?? pb?.mime ?? '').split(';')[0].toLowerCase() || null;
@@ -1508,8 +1612,11 @@ type Parsed = { kind: 'text' | 'audio' | 'image' | 'document' | 'video' | 'other
 
 // Desembrulha as mensagens do Baileys (efêmera / visualização única) e
 // classifica. O texto útil é a mensagem ou a legenda da mídia.
+// ctxTopo = data.contextInfo: a Evolution 2.x troca extendedTextMessage por conversation e tira o
+// contextInfo de dentro da mensagem (vai para data.contextInfo). Sem ele, TEXTO encaminhado nunca era
+// reconhecido ("[Encaminhada]" sumia e a mensagem virava pergunta do dono — caso real 2026-10-02).
 // deno-lint-ignore no-explicit-any
-function parseMessage(msg: any): Parsed {
+function parseMessage(msg: any, ctxTopo?: any): Parsed {
   let m = msg ?? {};
   for (let i = 0; i < 3; i++) {
     const inner = m.ephemeralMessage?.message ?? m.viewOnceMessage?.message ?? m.viewOnceMessageV2?.message ?? m.documentWithCaptionMessage?.message;
@@ -1518,12 +1625,13 @@ function parseMessage(msg: any): Parsed {
   }
   // deno-lint-ignore no-explicit-any
   const ctxOf = (x: any) => x?.contextInfo ?? {};
-  if (typeof m.conversation === 'string' && m.conversation.trim()) return { kind: 'text', text: m.conversation, mime: null, forwarded: false, inner: m };
-  if (m.extendedTextMessage?.text) return { kind: 'text', text: m.extendedTextMessage.text, mime: null, forwarded: !!ctxOf(m.extendedTextMessage).isForwarded, inner: m };
-  if (m.audioMessage) return { kind: 'audio', text: null, mime: m.audioMessage.mimetype ?? 'audio/ogg', forwarded: !!ctxOf(m.audioMessage).isForwarded, inner: m };
-  if (m.imageMessage) return { kind: 'image', text: m.imageMessage.caption || null, mime: m.imageMessage.mimetype ?? 'image/jpeg', forwarded: !!ctxOf(m.imageMessage).isForwarded, inner: m };
-  if (m.documentMessage) return { kind: 'document', text: m.documentMessage.caption || null, mime: m.documentMessage.mimetype ?? null, forwarded: !!ctxOf(m.documentMessage).isForwarded, inner: m };
-  if (m.videoMessage) return { kind: 'video', text: m.videoMessage.caption || null, mime: null, forwarded: false, inner: m };
+  const fwdTopo = !!ctxTopo?.isForwarded;
+  if (typeof m.conversation === 'string' && m.conversation.trim()) return { kind: 'text', text: m.conversation, mime: null, forwarded: fwdTopo, inner: m };
+  if (m.extendedTextMessage?.text) return { kind: 'text', text: m.extendedTextMessage.text, mime: null, forwarded: !!ctxOf(m.extendedTextMessage).isForwarded || fwdTopo, inner: m };
+  if (m.audioMessage) return { kind: 'audio', text: null, mime: m.audioMessage.mimetype ?? 'audio/ogg', forwarded: !!ctxOf(m.audioMessage).isForwarded || fwdTopo, inner: m };
+  if (m.imageMessage) return { kind: 'image', text: m.imageMessage.caption || null, mime: m.imageMessage.mimetype ?? 'image/jpeg', forwarded: !!ctxOf(m.imageMessage).isForwarded || fwdTopo, inner: m };
+  if (m.documentMessage) return { kind: 'document', text: m.documentMessage.caption || null, mime: m.documentMessage.mimetype ?? null, forwarded: !!ctxOf(m.documentMessage).isForwarded || fwdTopo, inner: m };
+  if (m.videoMessage) return { kind: 'video', text: m.videoMessage.caption || null, mime: null, forwarded: !!ctxOf(m.videoMessage).isForwarded || fwdTopo, inner: m };
   return { kind: 'other', text: null, mime: null, forwarded: false, inner: m };
 }
 
@@ -1724,7 +1832,7 @@ async function processOwner(admin: SupabaseClient, ui: Record<string, unknown>, 
 // deno-lint-ignore no-explicit-any
 async function handle(payload: any) {
   const event = String(payload?.event ?? '').toLowerCase().replace('_', '.');
-  if (event !== 'messages.upsert' && event !== 'messages.update') return;
+  if (event !== 'messages.upsert' && event !== 'messages.update' && event !== 'groups.upsert') return;
   const data = payload?.data ?? {};
   // messages.update chega a cada "entregue/lido" das nossas mensagens: interessa o voto em enquete e,
   // desde 2026-09-14, o recibo (entregue/lida) das mensagens do agendamento de entrevista.
@@ -1741,6 +1849,17 @@ async function handle(payload: any) {
   // channels.whatsapp_dm = false → o WhatsApp só lê grupos (conversa é no Telegram desde 2026-09-12)
   const dmEnabled = cfg.channels?.whatsapp_dm !== false;
 
+  // O número do assistente entrou num grupo (GROUPS_UPSERT, assinado em 2026-10-03 pela ação
+  // evo_eventos): pergunta a pasta e o resumo diário na hora, sem esperar a primeira mensagem.
+  if (event === 'groups.upsert') {
+    for (const meta of Array.isArray(data) ? data : [data]) {
+      const jid = String(meta?.id ?? '');
+      if (!jid.endsWith('@g.us') || meta?.isCommunity === true) continue; // pai de comunidade não tem conversa
+      await grupoNovo(admin, allowed, cfg, jid, meta).catch((e) => log('ERROR', 'grupo novo (groups.upsert)', { jid, error: errMsg(e) }));
+    }
+    return;
+  }
+
   // Voto em enquete (chega como atualização, não como mensagem nova).
   if (event === 'messages.update') {
     const items = Array.isArray(data) ? data : [data];
@@ -1755,6 +1874,13 @@ async function handle(payload: any) {
         const reply = await handleDreVote(admin, vote.ref, vote.chosen).catch((e) => { log('ERROR', 'voto DRE', { error: errMsg(e) }); return 'Deu erro ao gravar a classificação; tenta no sistema.'; });
         await sendText(vote.chatId.replace(/@.*$/, ''), reply).catch(() => {});
         await admin.from('asst_messages').insert({ channel: 'cron', chat_id: vote.chatId, role: 'assistant', content: `${vote.text}\n${reply}` });
+        continue;
+      }
+      if (vote.kind === 'grupo_pasta' || vote.kind === 'grupo_resumo') {
+        const reply = await votoConfigGrupo(admin, vote).catch((e) => { log('ERROR', 'voto config do grupo', { error: errMsg(e) }); return 'Deu erro ao gravar; configure em Assistente › Grupos.'; });
+        await sendText(vote.chatId.replace(/@.*$/, ''), reply).catch(() => {});
+        const tg = cfg.telegram_owner_chat_id ? `tg:${cfg.telegram_owner_chat_id}` : vote.chatId;
+        await admin.from('asst_messages').insert({ channel: 'cron', chat_id: tg, role: 'assistant', content: `${vote.text}\n${reply}`, topic: 'avisos', kind: 'automatico' });
         continue;
       }
       await processOwner(admin, ui, { chatId: vote.chatId, kind: 'poll', text: vote.text, attachment: null, key: null, forwarded: false });
@@ -1803,7 +1929,7 @@ async function handle(payload: any) {
     // Exceção: recebimento de currículos. Só vale quando o dono AVISA antes ("vou mandar currículos"
     // abre 1 h de recebimento; "pronto" encerra) ou põe "currículo" na legenda do arquivo. Arquivo sem
     // aviso não é tratado como currículo (decisão do dono, 2026-09-13).
-    const p0 = parseMessage(data.message);
+    const p0 = parseMessage(data.message, data.contextInfo);
     const txt0 = String(p0.text ?? '').trim();
     const isTxt = p0.kind === 'document' && ((p0.mime ?? '').startsWith('text/plain') || /\.txt$/i.test(String(p0.inner?.documentMessage?.fileName ?? '')));
     const arquivo = (p0.kind === 'document' && !isTxt) || p0.kind === 'image';
@@ -1873,7 +1999,7 @@ async function handle(payload: any) {
     return;
   }
 
-  const p = parseMessage(data.message);
+  const p = parseMessage(data.message, data.contextInfo);
   if (p.inner?.pollUpdateMessage) return; // voto cifrado: o decifrado vem em messages.update
   let text = p.text ? p.text.trim() : '';
   // deno-lint-ignore no-explicit-any
@@ -1916,7 +2042,7 @@ async function handle(payload: any) {
   }
   // Resposta a uma pergunta do sistema (classificação DRE): gravada direto, sem modelo.
   if (!attachment && !p.forwarded && (p.kind === 'text' || p.kind === 'audio')) {
-    const stanza = p.inner?.extendedTextMessage?.contextInfo?.stanzaId;
+    const stanza = p.inner?.extendedTextMessage?.contextInfo?.stanzaId ?? data.contextInfo?.stanzaId; // texto: contextInfo vem fora (Evolution 2.x)
     const answered = await tryDreAnswer(admin, number, chatId, text.replace(/^\[Áudio\]\s*/, '').replace(/[.!]+$/, ''), stanza ? String(stanza) : null, msgKey)
       .catch((e) => { log('ERROR', 'tryDreAnswer', { error: errMsg(e) }); return false; });
     if (answered) return;
@@ -1942,6 +2068,21 @@ Deno.serve(async (req) => {
   // aceita pedido com diária aguardando os dias e pergunta uma vez por pedido).
   // deno-lint-ignore no-explicit-any
   const gs = payload as any;
+  // Manutenção (2026-10-03): assina GROUPS_UPSERT no webhook da Evolution, para o aviso de grupo novo
+  // sair na hora em que o número do assistente entra no grupo. Mantém url, headers e os outros eventos
+  // como estão; { dry_run: true } só mostra o que está assinado. Nunca devolve os headers (têm a chave).
+  if (gs?.action === 'evo_eventos') {
+    const atual = await evoGet(`/webhook/find/${evoInstance}`);
+    const eventos: string[] = Array.isArray(atual?.events) ? atual.events.map(String) : [];
+    const resumo = { enabled: atual?.enabled ?? null, tem_url: !!atual?.url, eventos, byEvents: atual?.webhookByEvents ?? null, base64: atual?.webhookBase64 ?? null };
+    if (gs.dry_run === true || eventos.includes('GROUPS_UPSERT')) return json({ ok: true, mudou: false, ...resumo });
+    if (atual?.enabled !== true || !atual?.url || !eventos.length) return json({ error: 'Webhook da Evolution desligado, sem url ou sem eventos: não mexo.', ...resumo }, 409);
+    await evo(`/webhook/set/${evoInstance}`, {
+      webhook: { enabled: true, url: atual.url, headers: atual.headers ?? {}, byEvents: !!atual.webhookByEvents, base64: !!atual.webhookBase64, events: [...eventos, 'GROUPS_UPSERT'] },
+    });
+    const depois = await evoGet(`/webhook/find/${evoInstance}`);
+    return json({ ok: true, mudou: true, eventos: depois?.events ?? null, mesma_url: depois?.url === atual.url, ligado: depois?.enabled ?? null });
+  }
   if (gs?.action === 'group_send') {
     const jid = String(gs.group_jid ?? '');
     const text = String(gs.text ?? '').slice(0, 3000);

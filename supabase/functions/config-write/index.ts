@@ -592,7 +592,7 @@ Deno.serve(async (req) => {
       }
 
       const updateData: Record<string, unknown> = {}
-      const tenantFields = ['name', 'cnpj', 'address', 'logo_url', 'phone', 'email', 'city', 'state', 'zip_code', 'cover_url', 'brand_color']
+      const tenantFields = ['name', 'cnpj', 'address', 'logo_url', 'phone', 'email', 'city', 'state', 'zip_code', 'cover_url', 'brand_color', 'cover_position']
       for (const field of tenantFields) {
         if (rest[field] !== undefined) {
           updateData[field] = rest[field]
@@ -610,6 +610,16 @@ Deno.serve(async (req) => {
         updateData.brand_color = cor || null
       }
       if (updateData.cover_url !== undefined) updateData.cover_url = String(updateData.cover_url ?? '').trim() || null
+      // Parte da capa que aparece (object-position "X% Y%"); vazio = centro
+      if (updateData.cover_position !== undefined) {
+        const pos = String(updateData.cover_position ?? '').trim()
+        if (pos && !/^(100|[0-9]{1,2})(\.[0-9]+)?% (100|[0-9]{1,2})(\.[0-9]+)?%$/.test(pos)) {
+          return new Response(JSON.stringify({ success: false, error: 'Posição da capa inválida' }), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400,
+          })
+        }
+        updateData.cover_position = pos || null
+      }
 
       if (Object.keys(updateData).length === 0) {
         return new Response(JSON.stringify({ success: false, error: 'Nenhum campo para atualizar' }), {

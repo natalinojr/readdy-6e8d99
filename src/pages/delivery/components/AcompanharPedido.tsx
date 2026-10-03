@@ -3,6 +3,7 @@ import type { Rastreio } from './RastreioMapa';
 import { formatCurrency } from '@/lib/formatters';
 import TrocarPagamentoDelivery, { type MetodoAlternativo } from './TrocarPagamentoDelivery';
 import JogosEspera from '@/components/jogos/JogosEspera';
+import CancelarPedidoNaoPago from './CancelarPedidoNaoPago';
 
 type OrderStatusData = {
   id: string;
@@ -40,6 +41,10 @@ interface Props {
   /** Trocar a forma de pagamento do pedido segurado (libera pra cozinha) */
   metodosAlternativos?: MetodoAlternativo[];
   onTrocarPagamento?: (orderId: string, metodoKey: string, cashAmount?: string) => Promise<boolean>;
+  /** Cancelar o pedido que ainda espera o pagamento pelo app (null = cancelou; texto = motivo de não ter cancelado) */
+  onCancelarPedido?: (orderId: string) => Promise<string | null>;
+  /** O cliente cancelou este pedido na tela de cima (confirmação): muda o texto do aviso de cancelado */
+  canceladoPeloCliente?: boolean;
   modoEntrega?: 'entrega' | 'retirada';
 }
 
@@ -110,6 +115,8 @@ export default function AcompanharPedido(props: Props) {
   const [verItens, setVerItens] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  // Este aparelho acabou de cancelar o pedido não pago (muda o texto do aviso de cancelado)
+  const [canceleiAgora, setCanceleiAgora] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   function fetchStatus() {
@@ -192,8 +199,8 @@ export default function AcompanharPedido(props: Props) {
         <div className="w-12 h-12 flex items-center justify-center mx-auto mb-4 bg-red-50 rounded-2xl border border-red-100">
           <i className="ri-error-warning-line text-xl text-red-500" />
         </div>
-        <p className="text-sm font-bold text-zinc-700 mb-2">Erro ao carregar</p>
-        <p className="text-xs text-zinc-500 mb-4">{error}</p>
+        <p className="text-sm font-bold text-stone-700 mb-2">Erro ao carregar</p>
+        <p className="text-xs text-stone-500 mb-4">{error}</p>
         <button
           type="button"
           onClick={fetchStatus}
@@ -208,7 +215,7 @@ export default function AcompanharPedido(props: Props) {
   if (!orderData) {
     return (
       <div className="text-center py-12">
-        <p className="text-sm text-zinc-500">Pedido não encontrado</p>
+        <p className="text-sm text-stone-500">Pedido não encontrado</p>
       </div>
     );
   }
@@ -291,14 +298,14 @@ export default function AcompanharPedido(props: Props) {
         ) : null}
         {isCancelled ? (
           <p className="mt-3 text-[13px] text-red-800 bg-red-50 rounded-xl px-3 py-2.5">
-            Seu pedido foi cancelado. Fale com a loja para saber mais.
+            {canceleiAgora || props.canceladoPeloCliente ? 'Você cancelou este pedido. Nada foi cobrado.' : 'Seu pedido foi cancelado. Fale com a loja para saber mais.'}
           </p>
         ) : null}
       </section>
 
       {/* Pedido segurado esperando o pagamento pelo app */}
       {isAguardandoPix ? (
-        <section className="p-4 bg-white border-2 border-amber-300 rounded-[18px]">
+        <section className="p-4 bg-white border-2 border-stone-200 rounded-[18px]">
           <p className="text-base font-extrabold text-stone-900">Este pedido ainda não foi pago</p>
           <p className="text-[13px] text-stone-600 mt-1 leading-snug">
             {podePagarPix
@@ -326,6 +333,15 @@ export default function AcompanharPedido(props: Props) {
                   if (ok) fetchStatus();
                   return ok;
                 }}
+              />
+            </div>
+          ) : null}
+          {props.onCancelarPedido ? (
+            <div className="mt-1">
+              <CancelarPedidoNaoPago
+                numero={orderData.number}
+                onCancelar={function () { return props.onCancelarPedido!(orderData.id); }}
+                onCancelado={function () { setCanceleiAgora(true); fetchStatus(); }}
               />
             </div>
           ) : null}

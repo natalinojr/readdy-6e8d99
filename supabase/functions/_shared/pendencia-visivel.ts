@@ -4,7 +4,11 @@
 // o resto é dinheiro e continua com a turma do Financeiro.
 export const PERFIS_APROVAM = ['admin', 'gerente', 'supervisao'];
 export const PERFIS_FINANCEIRO = ['admin', 'gerente', 'financeiro'];
-const KINDS_OPERACIONAIS = new Set(['estoque_critico', 'recebimento_sem_nota', 'recebimento_parado']);
+// insumo_antes_do_pico (2026-10-03): insumo que não chega ao pico de hoje — é de quem está na loja.
+const KINDS_OPERACIONAIS = new Set(['estoque_critico', 'recebimento_sem_nota', 'recebimento_parado', 'insumo_antes_do_pico']);
+// Vendas × meta (2026-10-03): o que o Dashboard mostra é de quem vê o Dashboard (gestao_dashboard: admin e gerente).
+export const PERFIS_GESTAO = ['admin', 'gerente'];
+const KINDS_GESTAO = new Set(['vendas_abaixo_ritmo']);
 // "N tarefas vencidas" (2026-09-29, caso Thatiele): o cron conta as tarefas DO DONO na loja
 // (criadas por ele ou dele), então a linha é só dele.
 export const DONO_EMAIL = 'natalinojr.engel@gmail.com';
@@ -19,5 +23,6 @@ export function pendenciaVisivelPara(kind: string, perfil: string | undefined, e
   if (!perfil) return false;
   if (kind === 'aprovacao') return PERFIS_APROVAM.includes(perfil);
   if (KINDS_OPERACIONAIS.has(kind)) return true;
+  if (KINDS_GESTAO.has(kind)) return PERFIS_GESTAO.includes(perfil);
   return PERFIS_FINANCEIRO.includes(perfil);
 }

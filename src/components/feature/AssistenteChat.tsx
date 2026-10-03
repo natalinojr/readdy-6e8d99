@@ -8,7 +8,6 @@ import { Fragment, Suspense, useCallback, useEffect, useLayoutEffect, useRef, us
 import type { ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
-import { supabase } from '@/lib/supabase';
 import { SHARE_KEY, type SharePayload } from '@/lib/shareIntake';
 import { EVENTO_ASSISTENTE, EVENTO_ASSISTENTE_ACAO, getFoco, limparFocoItem, resumirFoco, setFocoItem, type PedidoAbrir, type PedidoAcaoChat } from '@/lib/assistenteFoco';
 import { chamarAssistente } from '@/lib/assistenteApp';
@@ -23,8 +22,11 @@ import ItensClassificarCard from '@/components/feature/assistente/ItensClassific
 import PainelMensagem, { painelDoTexto } from '@/components/feature/assistente/PainelMensagem';
 import PendenciasChat, { type PendenciaChat } from '@/components/feature/assistente/PendenciasChat';
 import HistoricoPagamentos from '@/components/feature/assistente/HistoricoPagamentos';
-import { minhasTarefasPendentes } from '@/components/feature/assistente/TarefasPendencia';
-import { useJanelaAberta } from '@/hooks/useJanelaAberta';
+import { useBalaoEscondido } from '@/components/feature/assistente/useBalaoEscondido';
+import { FazerRapido, LinhaNovidade, LinhaNumeroHoje, MenuMais, Novidades, TituloBloco } from '@/components/feature/assistente/CasaBalao';
+import { maisUsadas, PADRAO_DONO, registrarUsoAcao } from '@/components/feature/assistente/acoes/maisUsadas';
+import { AvatarPessoa } from '@/components/feature/equipe/ConversaEquipe';
+import { horaCurta } from '@/components/feature/equipe/api';
 
 export const ASSISTENTE_OWNER_EMAIL = 'natalinojr.engel@gmail.com';
 
@@ -421,8 +423,9 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
   // Arrastar o botão redondo: só vira arrasto depois de 8 px, senão um toque tremido não abriria.
   const [posFab, setPosFab] = useState<PosFab | null>(() => lerPosFab());
   const [arrastandoFab, setArrastandoFab] = useState<{ x: number; y: number } | null>(null);
-  // Com uma janela aberta o botão some (no celular tampava o "Salvar"; a janela fica numa camada abaixo dele).
-  const janelaAberta = useJanelaAberta();
+  // Sai do caminho com janela aberta, rolando a página para baixo ou com o teclado aberto fora do chat
+  // (no celular tampava o "Salvar" — useBalaoEscondido, 2026-10-03).
+  const escondido = useBalaoEscondido(modo !== 'fab');
   const arrastoFab = useRef<{ x0: number; y0: number; moveu: boolean } | null>(null);
   const ignorarCliqueFab = useRef(false);
   const [, setTamanhoTela] = useState(0);
@@ -437,8 +440,9 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
   const [subindo, setSubindo] = useState(false);
   // Barra pequena: depois de enviar, mostra a pergunta e a resposta ali mesmo (dono, 2026-09-16).
   // Some ao fechar (volta ao botão); na conversa inteira não é usada.
-  const [troca, setTroca] = useState<{ pergunta: string; resposta?: string } | null>(null);
-  useEffect(() => { if (modo === 'fab') setTroca(null); }, [modo]);
+  // Na abertura do balão (2026-10-03) a mesma troca aparece no topo: pergunta → resposta, com os botões.
+  const [troca, setTroca] = useState<{ pergunta: string; resposta?: string; botoes?: Abrir[]; enquetes?: Poll[] } | null>(null);
+  useEffect(() => { if (modo === 'fab') { setTroca(null); setMenuMais(false); } }, [modo]);
   useEffect(() => {
     if (modo !== 'full') { setSubindo(false); return; }
     setSubindo(false); // começa embaixo…
@@ -502,10 +506,17 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
   const [filtroAcoes, setFiltroAcoes] = useState('');
   useEffect(() => { if (!menuAcoes) setFiltroAcoes(''); }, [menuAcoes]);
   const [acao, setAcao] = useState<string | null>(null);
-  const abrirAcao = (id: string) => { setMenuAcoes(false); setAcao(id); setVista('conversa'); setModo('full'); };
+  // Aberta da abertura do balão, fechar a ação volta para ela; aberta numa conversa, volta à conversa.
+  const abrirAcao = (id: string) => { registrarUsoAcao(id); setMenuAcoes(false); setAcao(id); setModo('full'); };
+  // Menu ⋯ (2026-10-03): PIN, caixa de pendências completa, todas as mensagens, avisos bloqueados.
+  const [menuMais, setMenuMais] = useState(false);
+  // Estado dos avisos neste aparelho (BotaoAvisos): 'inativo' vira faixa na abertura; 'negado' vai para o ⋯.
+  const [estadoAvisos, setEstadoAvisos] = useState<string | null>(null);
   // Lista de conversas (2026-09-16): o painel abre na LISTA de assuntos, com cara de WhatsApp —
   // última mensagem, hora e não lidas por assunto. Toca num, entra na conversa; a seta volta.
   const [vista, setVista] = useState<'lista' | 'conversa'>('lista');
+  const vistaRef = useRef(vista);
+  vistaRef.current = vista;
   // Separado por tipo e nenhum grupo aberto: a conversa mostra os grupos, não as mensagens.
   const separaTipos = vista === 'conversa' && agrupar === 'tipo' && !!TIPOS_DA_CONVERSA[aba];
   const listaTipos = separaTipos && !tipo;
@@ -519,7 +530,6 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
   // recarrega a caixa depois de um pagamento (o trigger fecha a pendência quando o Inter confirma).
   const [pendAberta, setPendAberta] = useState(false);
   const [pendVersao, setPendVersao] = useState(0);
-  const [pendNovas, setPendNovas] = useState(0);
   // "Ver a mensagem" do pedido do grupo: a conversa do grupo abre NESSA mensagem (não no fim) e ela
   // pisca destacada. focoMsg vale para a próxima carga da conversa; destaque some sozinho.
   const focoMsg = useRef<number | null>(null);
@@ -663,20 +673,8 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
     } catch { /* contador é extra: nunca atrapalha o chat */ }
   }, []);
 
-  // Número no botão de pendências (e bolinha do botão fechado): só as que ninguém tocou ainda.
-  // Roda aberto ou fechado — na barra pequena o botão também aparece.
-  const meuIdRef = useRef<string | null>(null);
-  meuIdRef.current = user?.id ?? null;
-  const contarPendencias = useCallback(async () => {
-    try {
-      // Tarefas contam pela aba própria (minhas, de qualquer loja), não pela linha por loja do cron.
-      const [{ count }, tarefas] = await Promise.all([
-        supabase.from('pendencias').select('id', { count: 'exact', head: true }).eq('status', 'aberta').neq('kind', 'tarefa_vencida'),
-        minhasTarefasPendentes(meuIdRef.current).catch(() => []),
-      ]);
-      setPendNovas((count ?? 0) + tarefas.length);
-    } catch { /* contador é extra */ }
-  }, []);
+  // O número de pendências do botão e do 📥 saiu (2026-10-03, "um número só"): o que precisa do dono
+  // é o número da Hoje (pages/hoje/hojeStore), mostrado na abertura do balão e no topo.
 
   useEffect(() => {
     if (!isOwner || open) return;
@@ -746,18 +744,13 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
   // Ação rápida aberta (Vendas do dia, Contas vencendo…) é mais uma camada: o voltar fecha só ela
   // e volta ao chat. Sem isso o voltar do Android fechava o chat inteiro (dono, 2026-09-19).
   useVoltarFecha(open && !!acao, () => setAcao(null), 'assistente-acao');
-  useEffect(() => {
-    if (!isOwner) return;
-    contarPendencias();
-    const t = setInterval(() => { if (!document.hidden) contarPendencias(); }, 45000);
-    return () => clearInterval(t);
-  }, [isOwner, contarPendencias, pendVersao]);
-
+  useVoltarFecha(open && menuMais, () => setMenuMais(false), 'assistente-menu-mais');
   // Telas pedindo o chat: botão "perguntar ao assistente" (PerguntarAoAssistente) e atalhos.
   useEffect(() => {
     if (!isOwner) return;
     const abrir = (e: Event) => {
       const p = (e as CustomEvent<PedidoAbrir>).detail;
+      setMenuMais(false);
       setFocoItem(p?.item ?? null);
       // Veio de uma tela: é para falar, não para escolher assunto — cai direto na conversa.
       setVista('conversa');
@@ -845,6 +838,10 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
     if ((!t && !attach && !audio) || sending) return;
     // Escreveu com os grupos na tela: mostra a conversa (as mensagens de "Tudo" já estão carregadas).
     if (listaTipos) setAgrupar('chegada');
+    // Da abertura do balão (2026-10-03): vai sem assunto (o banco classifica, como na barra pequena sem
+    // conversa aberta) e a resposta aparece ali mesmo, na troca do topo — nada entra na conversa que
+    // estava carregada por trás.
+    const daCasa = vistaRef.current === 'lista';
     const foco = getFoco();
     // Responder a uma mensagem: o trecho vai no texto, então o assistente entende igual no
     // Telegram e a citação continua no histórico (sem coluna nova no banco).
@@ -855,14 +852,14 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
       id: -Date.now(), role: 'user', channel: 'app', created_at: new Date().toISOString(), temp: true,
       content: audio ? '[Áudio] (transcrevendo…)' : `${prefixoCit}${attach ? `[${attach.media_type === 'application/pdf' ? 'PDF' : 'Foto'}] ` : ''}${t}`,
     };
-    setMsgs((p) => [...p, temp]); stick.current = true; toBottom();
+    if (!daCasa) { setMsgs((p) => [...p, temp]); stick.current = true; toBottom(); }
     const anexo = attach; setText(''); setAttach(null); setCitacao(null); setSending(true); setErro(null);
     setTroca({ pergunta: t || (audio ? 'Áudio' : anexo?.media_type === 'application/pdf' ? 'PDF' : 'Foto') });
     try {
       const out = await call<{ reply: string; actions: Array<{ type: string } & Record<string, unknown>>; transcricao?: string | null }>('send', {
         text: `${prefixoCit}${t}`,
-        topic: abaRef.current && !abaRef.current.startsWith(PREFIXO_GRUPO) ? abaRef.current : undefined,
-        group_jid: abaRef.current.startsWith(PREFIXO_GRUPO) ? abaRef.current.slice(PREFIXO_GRUPO.length) : undefined,
+        topic: !daCasa && abaRef.current && !abaRef.current.startsWith(PREFIXO_GRUPO) ? abaRef.current : undefined,
+        group_jid: !daCasa && abaRef.current.startsWith(PREFIXO_GRUPO) ? abaRef.current.slice(PREFIXO_GRUPO.length) : undefined,
         ...(anexo ? { attachment: { base64: anexo.base64, media_type: anexo.media_type } } : {}),
         ...(audio ? { audio } : {}),
         // A tela vai junto em três níveis: a rota, o que a tela mostra (filtros, totais) e o
@@ -875,13 +872,37 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
       limparFocoItem(); // o item apontado vale para UMA mensagem
       // Mostra a resposta na hora: esperar a ida extra ao servidor (history) para acertar os ids
       // atrasava a resposta em ~1 s no celular. O merge() descarta os provisórios logo depois.
-      setMsgs((p) => [...p, { id: -Date.now(), role: 'assistant', channel: 'app', created_at: new Date().toISOString(), content: out.reply, temp: true }]);
-      // Barra pequena: a troca (pergunta + resposta). No áudio, a pergunta vira a transcrição.
-      setTroca({ pergunta: out.transcricao || t || (audio ? 'Áudio' : anexo?.media_type === 'application/pdf' ? 'PDF' : 'Foto'), resposta: semMarcadores(out.reply) });
+      if (!daCasa) setMsgs((p) => [...p, { id: -Date.now(), role: 'assistant', channel: 'app', created_at: new Date().toISOString(), content: out.reply, temp: true }]);
+      // Barra pequena e abertura do balão: a troca (pergunta + resposta). No áudio, a pergunta vira a transcrição.
+      const botoesResp = [...(out.actions.filter((a) => a.type === 'abrir') as unknown as Abrir[]), ...botoesDoTexto(out.reply)]
+        .filter((b, i, todos) => todos.findIndex((x) => x.rota === b.rota) === i);
+      setTroca({
+        pergunta: out.transcricao || t || (audio ? 'Áudio' : anexo?.media_type === 'application/pdf' ? 'PDF' : 'Foto'),
+        resposta: semMarcadores(out.reply), botoes: botoesResp, enquetes: out.actions.filter((a) => a.type === 'poll') as unknown as Poll[],
+      });
       // A resposta demora: se você subiu para ler enquanto isso, fica onde está (como no WhatsApp).
       toBottom();
       // O assistente pode ter classificado itens pela conversa: a tela de Classificação, se aberta, recarrega
       window.dispatchEvent(new CustomEvent('itens-classificados', { detail: {} }));
+      if (daCasa) {
+        if (out.actions.some((a) => a.type === 'payment')) carregarPagamentos();
+        // A resposta que você acabou de ler na troca não volta como "novidade": marca vista na conversa em
+        // que o banco a pôs. Só quando é ELA (mesmo texto) e é a única nova ali — o visto é por assunto e
+        // não pode apagar um aviso que chegou nesse meio-tempo. Em segundo plano: não segura o "pensando…".
+        void (async () => {
+          try {
+            const ult = (await call<{ messages: Array<Msg & { topic?: string | null; group_jid?: string | null }> }>('history', {})).messages;
+            const resp = [...ult].reverse().find((m) => m.role === 'assistant');
+            const tp = resp?.topic;
+            if (resp && tp && !resp.group_jid && semMarcadores(resp.content) === semMarcadores(out.reply)) {
+              const r = await call<{ topics: TopicoResumo[] }>('topics');
+              if ((r.topics.find((c) => c.topic === tp)?.unread ?? 0) <= 1) await call('seen', { id: resp.id, topic: tp });
+            }
+          } catch { /* fica como novidade; não atrapalha */ }
+          carregarConversas();
+        })();
+        return;
+      }
       const antes = lastId.current;
       // Só a conversa aberta: sem o filtro, o que chegou em OUTRAS conversas enquanto a resposta vinha
       // (grupos, avisos, Financeiro) caía aqui dentro — a "replicação" que o dono via (2026-09-19).
@@ -896,6 +917,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
       if (out.actions.some((a) => a.type === 'payment')) carregarPagamentos();
     } catch (e) {
       setMsgs((p) => p.filter((m) => m.id !== temp.id));
+      if (daCasa) setTroca(null);
       if (!override && !audio) { setText(t); setAttach(anexo); setCitacao(cit); }
       setErro(e instanceof Error ? e.message : String(e));
     } finally { setSending(false); }
@@ -1124,6 +1146,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
     const ouvir = (e: Event) => {
       const d = (e as CustomEvent<PedidoAcaoChat>).detail;
       if (!d) return;
+      setMenuMais(false); // nada por cima do PIN e do cartão do pagamento
       if (variant === 'floating') setModo('full');
       const a = acoesHoje.current;
       if (d.tipo === 'pedir') { a.pedirPendencia(d.texto); return; }
@@ -1229,23 +1252,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
         <button onClick={() => setMenuAcoes((v) => !v)} disabled={sending || !!recording} className={`w-10 h-10 flex-shrink-0 flex items-center justify-center rounded-xl disabled:opacity-40 cursor-pointer ${menuAcoes ? 'bg-violet-100 text-violet-700' : 'text-violet-600 hover:bg-violet-50'}`} aria-label="Ações rápidas">
           <i className="ri-flashlight-line text-xl" />
         </button>
-        {/* Pendências (2026-09-18): o que ficou para trás, ao lado das ações rápidas. */}
-        <button onClick={() => { setMenuAcoes(false); setPendAberta(true); if (modo === 'mini') setModo('full'); }} disabled={sending || !!recording}
-          className={`relative w-10 h-10 flex-shrink-0 flex items-center justify-center rounded-xl disabled:opacity-40 cursor-pointer ${pendAberta ? 'bg-indigo-100 text-indigo-700' : 'text-indigo-600 hover:bg-indigo-50'}`}
-          aria-label={pendNovas ? `Pendências: ${pendNovas} nova${pendNovas > 1 ? 's' : ''}` : 'Pendências'}>
-          <i className="ri-inbox-archive-line text-xl" />
-          {pendNovas > 0 && (
-            <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full bg-red-500 text-white text-[10px] font-black border-2 border-white">
-              {pendNovas > 9 ? '9+' : pendNovas}
-            </span>
-          )}
-        </button>
-        {/* PIN de pagamento (2026-09-26): criar/trocar aqui — o /pin do Telegram saiu. */}
-        <button onClick={abrirPinCfg} disabled={sending || !!recording}
-          className="w-10 h-10 flex-shrink-0 flex items-center justify-center rounded-xl disabled:opacity-40 cursor-pointer text-zinc-500 hover:bg-zinc-100"
-          aria-label="PIN de pagamento" title="PIN de pagamento">
-          <i className="ri-lock-password-line text-xl" />
-        </button>
+        {/* Pendências (📥) e PIN de pagamento (🔒) moram no menu ⋯ desde 2026-10-03 (a barra tinha 7 botões). */}
     </>
   );
   // O último enviado entra na MESMA faixa dos em aberto (antes aparecia duas vezes); concluído, fica
@@ -1293,7 +1300,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); enviar(); } }}
-          placeholder={recording ? 'Gravando… toque no microfone para enviar' : 'Mensagem'}
+          placeholder={recording ? 'Gravando… toque no microfone para enviar' : vista === 'lista' ? 'Pergunte ou peça…' : 'Mensagem'}
           disabled={!!recording}
           lang="pt-BR"
           inputMode="text"
@@ -1359,7 +1366,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
 
   const listaConversas = (
     <>
-      <div className="flex gap-1 p-1 mx-3 mt-2 mb-1 rounded-xl bg-zinc-100 flex-shrink-0" role="tablist" aria-label="Conversas">
+      <div className="flex gap-1 p-1 mx-3 mb-2 rounded-xl bg-zinc-100 flex-shrink-0" role="tablist" aria-label="Conversas">
         {abasLista.map((t) => {
           const ativa = t.id === secaoVisivel;
           return (
@@ -1376,7 +1383,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
           );
         })}
       </div>
-      <div className="flex-1 overflow-y-auto bg-white">
+      <div className="mx-3 rounded-2xl border border-zinc-200 bg-white overflow-hidden" aria-label="Lista de conversas">
         {secaoVisivel === 'assistente' && (
           <>
             {ASSUNTOS.map((a) => {
@@ -1400,6 +1407,76 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
         }))}
       </div>
     </>
+  );
+
+  // Abertura do balão (2026-10-03, pedido do dono: conversar, perguntar e agir rápido — o balão não é
+  // uma segunda caixa de pendências). De cima para baixo: a troca da última pergunta feita aqui, o
+  // número da Hoje (uma linha que leva à Hoje), Novidades, Fazer rápido e as Conversas. A caixa de
+  // digitação fica embaixo ("Pergunte ou peça…"). Protótipo: docs/prototipos/balao-assistente-proposta.html.
+  const rapidas = maisUsadas(acoesLiberadas, PADRAO_DONO);
+  const icNovidade = (icone: string, cor: string) => (
+    <span className={`w-9 h-9 flex-shrink-0 flex items-center justify-center rounded-full ${cor}`}><i className={`${icone} text-lg`} /></span>
+  );
+  const novidadesItens = [
+    ...ASSUNTOS.flatMap((a) => {
+      const c = conversas.find((x) => x.topic === a.id);
+      return c && c.unread > 0 ? [
+        <LinhaNovidade key={a.id} icone={icNovidade(a.icon, a.cor)} titulo={a.label} hora={c.last ? hora(c.last.created_at) : null}
+          previa={c.last ? previaDe(c.last) : 'Mensagem nova'} n={c.unread} onClick={() => abrirConversa(a.id)} />,
+      ] : [];
+    }),
+    ...equipe.novas.map((c) => (
+      <LinhaNovidade key={c.thread_id} icone={<AvatarPessoa pessoa={c.pessoa} tamanho="w-9 h-9" />}
+        titulo={`${c.pessoa?.nome ?? 'Conversa'}${new Set(equipe.novas.map((x) => x.tenant_id)).size > 1 && c.loja ? ` · ${c.loja}` : ''}`}
+        hora={c.ultima ? horaCurta(c.ultima.created_at) : null} previa={c.ultima?.texto ?? 'Mensagem nova'} n={c.nao_lidas} onClick={() => equipe.abrir(c)} />
+    )),
+    ...grupos.filter((g) => g.unread > 0).map((g) => (
+      <LinhaNovidade key={g.group_jid} icone={icNovidade('ri-whatsapp-line', 'bg-emerald-50 text-emerald-600')} titulo={g.name}
+        hora={g.last ? hora(g.last.created_at) : null} previa={g.last ? previaDe(g.last) : 'Mensagem nova'} n={g.unread}
+        onClick={() => abrirConversa(`${PREFIXO_GRUPO}${g.group_jid}`)} />
+    )),
+  ].slice(0, 4);
+  const casa = (
+    <div className="flex-1 overflow-y-auto bg-zinc-50 pb-4">
+      {troca && (
+        <div className="px-3 pt-3">
+          <div className="rounded-2xl border border-violet-200 bg-white px-3.5 py-3">
+            <p className="text-xs text-zinc-500 truncate">Você: {troca.pergunta}</p>
+            {sending && !troca.resposta
+              ? <p className="mt-1 text-xs text-zinc-400">pensando…</p>
+              : troca.resposta && <p className="mt-1 text-sm text-zinc-800 whitespace-pre-wrap break-words line-clamp-[8]">{formatar(troca.resposta)}</p>}
+            {troca.botoes?.map((lk) => (
+              <button key={lk.rota} onClick={() => { navigate(lk.rota); if (variant === 'floating') setModo('mini'); }}
+                className="mt-1.5 flex items-center gap-1.5 px-3 py-2 rounded-xl border border-violet-200 bg-white text-sm text-violet-700 font-semibold hover:bg-violet-50 cursor-pointer">
+                <i className="ri-arrow-right-up-line" /> {lk.label}
+              </button>
+            ))}
+            {/* Enquete respondida aqui mesmo: as opções não ficam no histórico, só na resposta. */}
+            {(troca.enquetes ?? []).map((pl, i) => (
+              <div key={i} className="mt-1.5 space-y-1.5">
+                <p className="text-xs font-bold text-zinc-600">{pl.question}</p>
+                {pl.options.map((o) => (
+                  <button key={o} disabled={sending} onClick={() => enviar(`[Botão "${pl.question}"] Resposta: ${o}`)}
+                    className="block w-full text-left px-3 py-2 rounded-xl border border-violet-200 bg-white text-sm text-violet-700 font-semibold hover:bg-violet-50 disabled:opacity-50 cursor-pointer">{o}</button>
+                ))}
+              </div>
+            ))}
+            {!sending && (
+              <button onClick={() => { setTroca(null); abrirConversa(''); sincronizar(); }} className="mt-2 text-xs font-bold text-violet-700 cursor-pointer">
+                Ver na conversa ›
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+      <LinhaNumeroHoje onAbrir={() => { if (variant === 'floating') setModo('fab'); navigate('/hoje'); }} />
+      <Novidades>{novidadesItens}</Novidades>
+      <FazerRapido acoes={rapidas} total={acoesLiberadas.length} onAbrir={abrirAcao} onTodas={() => setMenuAcoes(true)} />
+      <div className="pt-4">
+        <div className="px-3"><TituloBloco texto="Conversas" /></div>
+        {listaConversas}
+      </div>
+    </div>
   );
 
   // Grupos por tipo (fechados): ícone, nome, a última mensagem, não lidas e o total. Tocar abre o grupo.
@@ -1438,7 +1515,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
 
   const painel = (
     // data-no-pull: puxar para baixo dentro do chat não recarrega a tela de trás.
-    <div data-no-pull className={variant === 'floating'
+    <div data-no-pull data-balao className={variant === 'floating'
       ? `fixed z-[60] inset-0 sm:inset-auto sm:bottom-5 sm:right-5 sm:w-[420px] sm:h-[min(720px,calc(100vh-40px))] flex flex-col bg-white sm:rounded-2xl sm:border sm:border-zinc-200 shadow-2xl overflow-hidden
          transition-transform duration-200 ease-out sm:translate-y-0 ${subindo ? 'translate-y-0' : 'translate-y-full'}`
       : 'relative flex flex-col h-[70vh] rounded-2xl border border-zinc-200 bg-white overflow-hidden'}>
@@ -1456,9 +1533,14 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
         <div className="flex-1 min-w-0">
           <p className="text-sm font-black text-zinc-900 leading-tight">{vista === 'conversa' ? (aba.startsWith(PREFIXO_GRUPO) ? (grupos.find((g) => `${PREFIXO_GRUPO}${g.group_jid}` === aba)?.name ?? 'Grupo do WhatsApp') : rotuloAssunto(aba)) : 'Assistente'}</p>
           {/* Subtítulo só enquanto responde: "Mesma conversa do Telegram" saiu a pedido do dono (2026-09-16). */}
-          {sending && <p className="text-[11px] text-zinc-400 leading-tight truncate">pensando…</p>}
+          {sending ? <p className="text-[11px] text-zinc-400 leading-tight truncate">pensando…</p>
+            : vista === 'lista' && <p className="text-[11px] text-zinc-400 leading-tight truncate">Pergunte, peça ou converse</p>}
         </div>
-        <BotaoAvisos tenantId={user?.tenantId} />
+        {/* O selo "Ativar avisos/Bloqueadas" saiu daqui (2026-10-03): "Ativar" é faixa na abertura e
+            "bloqueados" fica no ⋯ com a explicação. */}
+        <button onClick={() => setMenuMais(true)} className="w-9 h-9 flex items-center justify-center rounded-xl text-zinc-500 hover:bg-zinc-100 cursor-pointer" aria-label="Mais opções">
+          <i className="ri-more-2-fill text-xl" />
+        </button>
         {variant === 'floating' && (
           <>
             <button onClick={() => setModo('mini')} className="w-9 h-9 flex items-center justify-center rounded-xl text-zinc-400 hover:bg-zinc-100 cursor-pointer" aria-label="Recolher a conversa">
@@ -1501,10 +1583,21 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
         </div>
       )}
 
+      {/* Avisos no celular: o BotaoAvisos fica montado enquanto o painel está aberto (no app Android ele
+          registra o toque no aviso — antes morava no cabeçalho) e a faixa só aparece na abertura, quando dá
+          para ligar. Bloqueado = item no ⋯. */}
+      <div className={vista === 'lista' && (estadoAvisos === 'inativo' || estadoAvisos === 'precisa-instalar') ? 'px-3 pt-3 bg-zinc-50 flex-shrink-0' : 'hidden'}>
+        <div className="flex items-center gap-2.5 rounded-2xl border border-indigo-200 bg-indigo-50 px-3 py-2">
+          <i className="ri-notification-3-line text-indigo-600" />
+          <span className="flex-1 min-w-0 text-xs font-semibold text-indigo-900">Receba os avisos do assistente neste aparelho</span>
+          <BotaoAvisos tenantId={user?.tenantId} onEstado={setEstadoAvisos} />
+        </div>
+      </div>
+
       {/* Lista de conversas ou a conversa aberta */}
       {/* Financeiro › Pagamentos (dono, 2026-09-29): as mensagens de status eram só histórico, repetindo
           o mesmo Pix a cada mudança — o grupo abre direto o histórico, uma linha por solicitação. */}
-      {vista === 'lista' ? listaConversas : listaTipos ? gruposTipo : separaTipos && tipo === 'pagamento' && aba === 'pagamentos' ? (
+      {vista === 'lista' ? casa : listaTipos ? gruposTipo : separaTipos && tipo === 'pagamento' && aba === 'pagamentos' ? (
         <HistoricoPagamentos embutido call={call} onAcao={(p, op) => acaoPagamento(p as unknown as Payment, op)} versao={pendVersao} />
       ) : (
       <div
@@ -1679,26 +1772,8 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
       {/* Pagamentos esperando decisão */}
       <BarraPagamentos lista={pagamentosFaixa} onAction={acaoPagamento} onDispensar={() => setPagFixo(null)} />
 
-      {vista === 'conversa' && entrada}
-      {/* Na lista não há caixa de digitação, mas as ações rápidas continuam à mão (pedido do dono). */}
-      {vista === 'lista' && (
-        <div className="border-t border-zinc-100 p-2.5 bg-white flex-shrink-0">
-          {menuAcoes && !acoesTelaCheia && menuAcoesPainel}
-          <div className="flex items-center gap-2">
-            <button onClick={() => setMenuAcoes((v) => !v)} className={`flex-1 h-10 flex items-center justify-center gap-1.5 rounded-xl text-sm font-semibold cursor-pointer ${menuAcoes ? 'bg-violet-100 text-violet-700' : 'text-violet-700 hover:bg-violet-50'}`}>
-              <i className="ri-flashlight-line text-lg" /> Ações rápidas
-            </button>
-            <button onClick={() => { setMenuAcoes(false); setPendAberta(true); }} className={`relative flex-1 h-10 flex items-center justify-center gap-1.5 rounded-xl text-sm font-semibold cursor-pointer ${pendAberta ? 'bg-indigo-100 text-indigo-700' : 'text-indigo-700 hover:bg-indigo-50'}`}>
-              <i className="ri-inbox-archive-line text-lg" /> Pendências
-              {pendNovas > 0 && (
-                <span className="min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full bg-red-500 text-white text-[10px] font-black">
-                  {pendNovas > 9 ? '9+' : pendNovas}
-                </span>
-              )}
-            </button>
-          </div>
-        </div>
-      )}
+      {/* A caixa de digitação também na abertura (2026-10-03): perguntar é a primeira coisa do balão. */}
+      {entrada}
 
       {equipe.camada}
 
@@ -1750,12 +1825,22 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
           onAbrirTarefa={abrirTarefaPendencia}
           onFechar={() => setPendAberta(false)}
           versao={pendVersao}
-          onMudou={() => { contarPendencias(); carregarPagamentos(); }}
+          onMudou={() => carregarPagamentos()}
           onPagar={pagarPendencia}
           onPagarConta={pagarConta}
           onAbrir={abrirPendencia}
           onPedir={pedirPendencia}
         />
+      )}
+
+      {menuMais && (
+        <MenuMais onFechar={() => setMenuMais(false)} itens={[
+          ...(estadoAvisos === 'negado' ? [{ icone: 'ri-notification-off-line', cor: 'bg-zinc-100 text-zinc-500', titulo: 'Avisos no celular: bloqueados', detalhe: 'Libere as notificações do ERPOS nas configurações do navegador ou do celular', onClick: () => undefined }] : []),
+          { icone: 'ri-lock-password-line', cor: 'bg-violet-50 text-violet-600', titulo: 'PIN de pagamento', detalhe: 'Criar ou trocar', onClick: abrirPinCfg },
+          { icone: 'ri-inbox-archive-line', cor: 'bg-indigo-50 text-indigo-600', titulo: 'Caixa de pendências (lista completa)', detalhe: 'Chegada/Tipo, loja, Pagar e "Ver a mensagem" do grupo', onClick: () => { setMenuAcoes(false); setPendAberta(true); if (modo === 'mini') setModo('full'); } },
+          { icone: 'ri-flashlight-line', cor: 'bg-violet-50 text-violet-600', titulo: 'Todas as ações rápidas', detalhe: `${acoesLiberadas.length} roteiros, sem custo de IA`, onClick: () => setMenuAcoes(true) },
+          { icone: 'ri-chat-3-line', cor: 'bg-zinc-100 text-zinc-600', titulo: 'Ver todas as mensagens juntas', detalhe: 'A sequência inteira, de todos os assuntos', onClick: () => abrirConversa('') },
+        ]} />
       )}
 
       {bioEnviando && (
@@ -1869,6 +1954,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
     return (
       <div
         data-no-pull
+        data-balao
         className="fixed z-[60] bottom-3 left-3 right-3 sm:left-auto sm:right-5 sm:w-[420px] rounded-2xl border border-zinc-200 bg-white shadow-2xl overflow-hidden"
         // Puxar para cima abre a conversa — mas só quando o toque começa FORA de área rolável ou de
         // controle. Rolar o menu de ações rápidas abria o chat na tela toda (visto em 2026-09-16).
@@ -1895,11 +1981,6 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
               : troca?.resposta && <span className="block text-sm text-zinc-800 line-clamp-3 whitespace-pre-wrap">{troca.resposta}</span>}
           </button>
         )}
-        {pendNovas > 0 && (
-          <button onClick={() => { setPendAberta(true); setModo('full'); }} className="block w-full text-left px-3.5 py-1.5 text-xs font-bold text-indigo-700 cursor-pointer" aria-label="Ver pendências">
-            <i className="ri-inbox-archive-line" /> {pendNovas === 1 ? '1 pendência esperando você' : `${pendNovas} pendências esperando você`}
-          </button>
-        )}
         {pagamentosVisiveis.length > 0 && (
           <button onClick={() => setModo('full')} className="block w-full text-left px-3.5 py-1.5 text-xs font-bold text-violet-700 cursor-pointer" aria-label="Ver pagamentos">
             <i className="ri-money-dollar-circle-line" /> {pagamentosVisiveis.length === 1 ? '1 pagamento esperando você' : `${pagamentosVisiveis.length} pagamentos esperando você`}
@@ -1910,9 +1991,12 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
     );
   }
 
-  // Botão fechado. Com mensagem nova ele abre a CONVERSA (você vai ler) e já na aba do assunto;
-  // sem novidade abre a barra pequena (você vai escrever), que é o de sempre.
+  // Botão fechado (2026-10-03): abre sempre a mesma tela — a abertura do balão, com as novidades no topo
+  // (antes dependia: conversa do assunto, equipe, caixa de pendências ou barra pequena). Sem número: um
+  // número só no app, o da Hoje. A bolinha = mensagem nova para você (assistente ou equipe) ou um
+  // pagamento esperando o seu PIN.
   const temNovidade = naoLidas.count > 0;
+  const bolinha = temNovidade || equipe.naoLidas > 0 || pagamentosVisiveis.some((p) => p.status === 'draft');
   // Onde desenhar: durante o arrasto segue o dedo; depois, a posição salva; sem nada, o canto.
   const centro = arrastandoFab
     ? centroFab(arrastandoFab.x, arrastandoFab.y)
@@ -1946,33 +2030,18 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
       onPointerCancel={() => { arrastoFab.current = null; setArrastandoFab(null); }}
       onClick={() => {
         if (ignorarCliqueFab.current) { ignorarCliqueFab.current = false; return; }
-        if (temNovidade && naoLidas.topic) { setAba(naoLidas.topic); setTipo(''); setVista('conversa'); }
-        else if (temNovidade) { setVista('lista'); setSecaoLista('assistente'); } // veio de assuntos diferentes: escolha na lista
-        // Mensagem de alguém da equipe: abre na lista, onde está a conversa com a pessoa.
-        const irEquipe = !temNovidade && equipe.naoLidas > 0;
-        if (irEquipe) { setVista('lista'); setSecaoLista('equipe'); }
-        // Pendência esperando: abre na lista, com a caixa aberta no topo.
-        const irPendencias = !temNovidade && !irEquipe && pendNovas > 0;
-        if (irPendencias) setPendAberta(true);
-        setModo(temNovidade || irEquipe || irPendencias ? 'full' : 'mini');
+        setVista('lista');
+        setModo('full');
       }}
       style={centro ? { left: centro.x - FAB_R, top: centro.y - FAB_R, touchAction: 'none' } : { touchAction: 'none' }}
-      className={`fixed z-[55] ${janelaAberta ? 'invisible' : ''} ${centro ? '' : 'bottom-5 right-5'} w-14 h-14 rounded-full bg-violet-600 hover:bg-violet-500 text-white shadow-lg flex items-center justify-center ${arrastandoFab ? 'cursor-grabbing scale-110' : 'cursor-pointer'} select-none`}
-      aria-label={temNovidade ? `Assistente: ${naoLidas.count} ${naoLidas.count === 1 ? 'mensagem nova' : 'mensagens novas'}` : 'Falar com o assistente'}
+      className={`fixed z-[55] ${centro ? '' : 'bottom-5 right-5'} w-14 h-14 rounded-full bg-violet-600 hover:bg-violet-500 text-white shadow-lg flex items-center justify-center transition-[opacity,transform] duration-200 ${escondido ? 'opacity-0 scale-50 pointer-events-none' : ''} ${arrastandoFab ? 'cursor-grabbing scale-110' : 'cursor-pointer'} select-none`}
+      aria-hidden={escondido || undefined}
+      tabIndex={escondido ? -1 : undefined}
+      aria-label={bolinha ? 'Assistente: tem novidade para você' : 'Falar com o assistente'}
       title={naoLidas.previa ?? undefined}
     >
       <i className="ri-robot-2-line text-2xl" />
-      {temNovidade && (
-        <span className="absolute -top-1 -right-1 min-w-[22px] h-[22px] px-1 flex items-center justify-center rounded-full bg-red-500 text-white text-xs font-black border-2 border-white">
-          {naoLidas.count > 9 ? '9+' : naoLidas.count}
-        </span>
-      )}
-      {!temNovidade && equipe.naoLidas > 0 && (
-        <span className="absolute -top-1 -right-1 min-w-[22px] h-[22px] px-1 flex items-center justify-center rounded-full bg-sky-600 text-white text-xs font-black border-2 border-white" aria-label={`${equipe.naoLidas} de pessoas da equipe`}>
-          {equipe.naoLidas > 9 ? '9+' : equipe.naoLidas}
-        </span>
-      )}
-      {!temNovidade && !equipe.naoLidas && (pendNovas > 0 || pagamentosVisiveis.some((p) => p.status === 'draft')) && <span className="absolute top-1 right-1 w-3 h-3 rounded-full bg-red-500 border-2 border-white" />}
+      {bolinha && <span className="absolute top-0.5 right-0.5 w-3.5 h-3.5 rounded-full bg-emerald-400 border-2 border-white" />}
     </button>
   );
 }

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { formatCurrency } from '@/lib/formatters';
 import ClubeCheckout, { type ClubeSelecao } from '@/components/fidelidade/ClubeCheckout';
+import BotaoEsvaziarSacola from '@/components/cliente/BotaoEsvaziarSacola';
 
 interface CartItem {
   cartId: string;
@@ -21,6 +22,8 @@ interface Props {
   cart: CartItem[];
   onAlterarQtd: (cartId: string, delta: number) => void;
   onRemover: (cartId: string) => void;
+  /** "Esvaziar" no cabeçalho (sem a prop, o botão não aparece) */
+  onEsvaziar?: () => void;
   onEditar: (cartId: string) => void;
   /** Envia o pedido com o nome digitado (cria a senha no 1º pedido). */
   onConfirmar: (nome: string) => void;
@@ -89,6 +92,7 @@ export default function CarrinhoMesaQR(props: Props) {
           <h2 className="text-[17px] font-extrabold text-stone-900">Sua sacola</h2>
           {props.subtitulo ? <p className="text-xs text-stone-500 truncate">{props.subtitulo}</p> : null}
         </div>
+        {cart.length > 0 && props.onEsvaziar ? <BotaoEsvaziarSacola onEsvaziar={props.onEsvaziar} /> : null}
       </div>
 
       {cart.length === 0 ? (

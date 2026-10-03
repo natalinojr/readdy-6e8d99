@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Store, Camera, Save } from 'lucide-react';
 import { supabase, invokeWithAuth, uploadMenuImage } from '@/lib/supabase';
 import { COR_LOJA_PADRAO } from '@/lib/corLoja';
+import EditorPosicaoCapa from './EditorPosicaoCapa';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
 import { avisar } from '@/components/base/Dialogos';
@@ -18,12 +19,14 @@ interface ConfigLoja {
   logoUrl: string;
   /** Capa e cor do cardápio online (delivery e QR) */
   capaUrl: string;
+  /** Parte da capa que aparece ("X% Y%"; vazio = centro) */
+  capaPosicao: string;
   corLoja: string;
 }
 
 const estadosBR = ['AC','AL','AP','AM','BA','CE','DF','ES','GO','MA','MT','MS','MG','PA','PB','PR','PE','PI','RJ','RN','RS','RO','RR','SC','SP','SE','TO'];
 
-const EMPTY: ConfigLoja = { nome: '', cnpj: '', telefone: '', email: '', endereco: '', cidade: '', estado: 'SP', cep: '', logoUrl: '', capaUrl: '', corLoja: '' };
+const EMPTY: ConfigLoja = { nome: '', cnpj: '', telefone: '', email: '', endereco: '', cidade: '', estado: 'SP', cep: '', logoUrl: '', capaUrl: '', capaPosicao: '', corLoja: '' };
 
 // Cores sugeridas para o cardápio online — todas passam no contraste com texto branco
 const CORES_SUGERIDAS = [
@@ -91,7 +94,7 @@ export default function LojaTab() {
     if (!user?.tenantId) { setLoading(false); return; }
     supabase
       .from('tenants')
-      .select('name, cnpj, address, logo_url, phone, email, city, state, zip_code, cover_url, brand_color')
+      .select('name, cnpj, address, logo_url, phone, email, city, state, zip_code, cover_url, brand_color, cover_position')
       .eq('id', user.tenantId)
       .maybeSingle()
       .then(({ data }) => {
@@ -107,6 +110,7 @@ export default function LojaTab() {
             cep: data.zip_code ?? '',
             logoUrl: data.logo_url ?? '',
             capaUrl: (data as { cover_url?: string | null }).cover_url ?? '',
+            capaPosicao: (data as { cover_position?: string | null }).cover_position ?? '',
             corLoja: (data as { brand_color?: string | null }).brand_color ?? '',
           });
         }
@@ -145,6 +149,7 @@ export default function LojaTab() {
         state: form.estado,
         zip_code: form.cep,
         cover_url: form.capaUrl,
+        cover_position: form.capaUrl ? form.capaPosicao : '',
         brand_color: /^#[0-9A-Fa-f]{6}$/.test(form.corLoja) ? form.corLoja : '',
       },
     });
@@ -267,18 +272,18 @@ export default function LojaTab() {
           {/* Capa */}
           <div>
             <p className="text-xs font-semibold text-zinc-600 mb-2">Foto de capa</p>
-            <div className="relative h-28 rounded-xl overflow-hidden border border-zinc-200 bg-zinc-100 flex items-center justify-center" style={{ background: form.capaUrl ? undefined : (corValida ? form.corLoja : COR_LOJA_PADRAO) }}>
-              {form.capaUrl ? (
-                <img src={form.capaUrl} alt="Capa" className="w-full h-full object-cover" />
-              ) : (
+            {form.capaUrl && !enviandoCapa ? (
+              <EditorPosicaoCapa url={form.capaUrl} posicao={form.capaPosicao} onChange={(v) => set('capaPosicao', v)} />
+            ) : (
+              <div className="relative h-28 rounded-xl overflow-hidden border border-zinc-200 bg-zinc-100 flex items-center justify-center" style={{ background: corValida ? form.corLoja : COR_LOJA_PADRAO }}>
                 <span className="text-[11px] font-semibold text-white/90">Sem capa — usa a cor da loja</span>
-              )}
-              {enviandoCapa ? (
-                <div className="absolute inset-0 bg-white/70 flex items-center justify-center">
-                  <i className="ri-loader-4-line animate-spin text-zinc-600 text-lg" />
-                </div>
-              ) : null}
-            </div>
+                {enviandoCapa ? (
+                  <div className="absolute inset-0 bg-white/70 flex items-center justify-center">
+                    <i className="ri-loader-4-line animate-spin text-zinc-600 text-lg" />
+                  </div>
+                ) : null}
+              </div>
+            )}
             <div className="flex items-center gap-2 mt-2">
               <label className="flex items-center gap-2 px-3 py-2 bg-zinc-100 text-zinc-700 text-xs font-semibold rounded-lg hover:bg-zinc-200 cursor-pointer transition-colors whitespace-nowrap">
                 <Camera size={13} />
@@ -297,6 +302,7 @@ export default function LojaTab() {
                     setEnviandoCapa(false);
                     if (error || !url) { toastError('Não foi possível enviar a capa', error?.message || 'Tente de novo.'); return; }
                     set('capaUrl', url);
+                    set('capaPosicao', '');
                   }}
                 />
               </label>

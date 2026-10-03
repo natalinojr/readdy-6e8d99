@@ -343,28 +343,28 @@ export default function EditarItemMesaQRModal(props: Props) {
         onFocus={scrollFocusedFieldIntoView}
       >
         {/* Header sticky */}
-        <div className="sticky top-0 bg-white/95 backdrop-blur-sm border-b border-zinc-100 px-5 py-3 flex items-center justify-between z-10">
+        <div className="sticky top-0 bg-white/95 backdrop-blur-sm border-b border-stone-100 px-5 py-3 flex items-center justify-between z-10">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-100">
+              <span className="text-[10px] font-bold text-[var(--cor-loja,#C2410C)] bg-[var(--cor-loja-suave,#F9ECE7)] px-2 py-0.5 rounded-full border border-stone-200">
                 Editando
               </span>
             </div>
-            <h3 className="text-base font-bold text-zinc-800 truncate mt-1">{itemOriginal.name}</h3>
+            <h3 className="text-base font-bold text-stone-800 truncate mt-1">{itemOriginal.name}</h3>
             {getPrecoEfetivo() < itemOriginal.price ? (
-              <p className="text-xs text-zinc-500 mt-0.5">
-                <span className="line-through text-zinc-300">{formatCurrency(itemOriginal.price)}</span>
+              <p className="text-xs text-stone-500 mt-0.5">
+                <span className="line-through text-stone-300">{formatCurrency(itemOriginal.price)}</span>
                 {' '}
                 <span className="text-red-500 font-bold">{formatCurrency(getPrecoEfetivo())}</span>
               </p>
             ) : (
-              <p className="text-xs text-zinc-500 mt-0.5">{formatCurrency(itemOriginal.price)}</p>
+              <p className="text-xs text-stone-500 mt-0.5">{formatCurrency(itemOriginal.price)}</p>
             )}
           </div>
           <button
             type="button"
             onClick={fechar}
-            className="w-9 h-9 flex items-center justify-center bg-zinc-100 rounded-full text-zinc-500 hover:text-zinc-700 hover:bg-zinc-200 transition-colors cursor-pointer shrink-0 ml-3"
+            className="w-9 h-9 flex items-center justify-center bg-stone-100 rounded-full text-stone-500 hover:text-stone-700 hover:bg-stone-200 transition-colors cursor-pointer shrink-0 ml-3"
           >
             <i className="ri-close-line text-lg" />
           </button>
@@ -373,7 +373,7 @@ export default function EditarItemMesaQRModal(props: Props) {
         {/* Imagem */}
         {(itemOriginal.photo_url && !imgErro) ? (
           <div className="px-5 pt-4">
-            <div className="w-full h-40 rounded-xl overflow-hidden bg-zinc-100">
+            <div className="w-full h-40 rounded-xl overflow-hidden bg-stone-100">
               <img
                 src={itemOriginal.photo_url}
                 alt={itemOriginal.name}
@@ -386,25 +386,25 @@ export default function EditarItemMesaQRModal(props: Props) {
 
         <div className="px-5 py-4 space-y-5">
           {itemOriginal.description ? (
-            <p className="text-sm text-zinc-600 leading-relaxed">{itemOriginal.description}</p>
+            <p className="text-sm text-stone-600 leading-relaxed">{itemOriginal.description}</p>
           ) : null}
 
           {/* Quantidade */}
-          <div className="flex items-center justify-between bg-zinc-50 rounded-xl px-4 py-3">
-            <span className="text-sm font-bold text-zinc-800">Quantidade</span>
+          <div className="flex items-center justify-between bg-stone-50 rounded-xl px-4 py-3">
+            <span className="text-sm font-bold text-stone-800">Quantidade</span>
             <div className="flex items-center gap-3">
               <button
                 type="button"
                 onClick={function () { ajustarQtd(qtd - 1); }}
-                className="w-9 h-9 flex items-center justify-center bg-white rounded-full text-zinc-600 cursor-pointer hover:bg-zinc-200 transition-colors border border-zinc-100"
+                className="w-9 h-9 flex items-center justify-center bg-white rounded-full text-stone-600 cursor-pointer hover:bg-stone-200 transition-colors border border-stone-100"
               >
                 <i className="ri-subtract-line" />
               </button>
-              <span className="text-sm font-bold text-zinc-800 w-5 text-center">{qtd}</span>
+              <span className="text-sm font-bold text-stone-800 w-5 text-center">{qtd}</span>
               <button
                 type="button"
                 onClick={function () { ajustarQtd(qtd + 1); }}
-                className="w-9 h-9 flex items-center justify-center bg-zinc-900 rounded-full text-white cursor-pointer hover:bg-zinc-800 transition-colors"
+                className="w-9 h-9 flex items-center justify-center bg-stone-900 rounded-full text-white cursor-pointer hover:bg-stone-800 transition-colors"
               >
                 <i className="ri-add-line" />
               </button>
@@ -414,7 +414,7 @@ export default function EditarItemMesaQRModal(props: Props) {
           {/* Seletor de unidade (quando qtd > 1) */}
           {qtd > 1 ? (
             <div>
-              <span className="text-sm font-bold text-zinc-800 block mb-2">Personalizar por unidade</span>
+              <span className="text-sm font-bold text-stone-800 block mb-2">Personalizar por unidade</span>
               <div className="flex gap-1.5 overflow-x-auto pb-1 scrollbar-hide">
                 {unidades.map(function (_, idx) {
                   const hasCustom = Object.keys(unidades[idx].opcoesSelecionadas).length > 0 ||
@@ -427,20 +427,20 @@ export default function EditarItemMesaQRModal(props: Props) {
                       onClick={function () { setUnidadeAtiva(idx); }}
                       className={'shrink-0 px-3 py-1.5 rounded-full text-xs font-bold cursor-pointer whitespace-nowrap transition-colors border ' +
                         (unidadeAtiva === idx
-                          ? 'bg-amber-500 text-white border-amber-500'
-                          : 'bg-zinc-100 text-zinc-600 border-zinc-200 hover:bg-zinc-200')
+                          ? 'bg-[var(--cor-loja,#C2410C)] text-white border-[var(--cor-loja,#C2410C)]'
+                          : 'bg-stone-100 text-stone-600 border-stone-200 hover:bg-stone-200')
                       }
                     >
                       Un. {idx + 1}
                       {hasCustom ? (
-                        <span className="ml-1 inline-block w-1.5 h-1.5 rounded-full bg-amber-300 align-middle" />
+                        <span className="ml-1 inline-block w-1.5 h-1.5 rounded-full bg-[var(--cor-loja-suave,#F9ECE7)] align-middle" />
                       ) : null}
                     </button>
                   );
                 })}
               </div>
               {unidadeAtiva >= 0 ? (
-                <p className="text-[10px] text-amber-600 mt-1.5 font-medium">
+                <p className="text-[10px] text-[var(--cor-loja,#C2410C)] mt-1.5 font-medium">
                   Editando unidade {unidadeAtiva + 1} de {qtd}
                 </p>
               ) : null}
@@ -457,7 +457,7 @@ export default function EditarItemMesaQRModal(props: Props) {
                 return (
                   <div key={grupo.id}>
                     <div className="flex items-center gap-2 mb-3">
-                      <span className="text-sm font-bold text-zinc-800">{grupo.name}</span>
+                      <span className="text-sm font-bold text-stone-800">{grupo.name}</span>
                       {grupo.is_required ? (
                         <span className={'text-[10px] font-bold px-1.5 py-0.5 rounded-md border ' +
                           (faltando
@@ -467,7 +467,7 @@ export default function EditarItemMesaQRModal(props: Props) {
                         </span>
                       ) : null}
                       {(grupo.max_selections && grupo.max_selections > 1) ? (
-                        <span className="text-[10px] text-zinc-400">Máx {grupo.max_selections}</span>
+                        <span className="text-[10px] text-stone-400">Máx {grupo.max_selections}</span>
                       ) : null}
                     </div>
                     {faltando ? (
@@ -485,10 +485,10 @@ export default function EditarItemMesaQRModal(props: Props) {
                             key={op.id}
                             className={'flex items-center gap-3 px-3.5 py-3 rounded-xl transition-colors border ' +
                               (esgotada
-                                ? 'opacity-50 cursor-not-allowed bg-zinc-50 border-zinc-100'
+                                ? 'opacity-50 cursor-not-allowed bg-stone-50 border-stone-100'
                                 : checked
-                                  ? 'bg-amber-50 border-amber-200 cursor-pointer'
-                                  : 'bg-zinc-50 border-transparent hover:bg-zinc-100 cursor-pointer')
+                                  ? 'bg-[var(--cor-loja-suave,#F9ECE7)] border-stone-200 cursor-pointer'
+                                  : 'bg-stone-50 border-transparent hover:bg-stone-100 cursor-pointer')
                             }
                           >
                             <div className="relative flex items-center justify-center">
@@ -497,16 +497,16 @@ export default function EditarItemMesaQRModal(props: Props) {
                                 checked={checked}
                                 disabled={esgotada}
                                 onChange={esgotada ? undefined : function () { toggleOpcao(unidadeAtiva, grupo.id, op.id, grupo.max_selections); }}
-                                className="w-5 h-5 accent-amber-500 rounded disabled:cursor-not-allowed"
+                                className="w-5 h-5 accent-[color:var(--cor-loja,#C2410C)] rounded disabled:cursor-not-allowed"
                               />
                             </div>
-                            <span className={'flex-1 text-sm ' + (esgotada ? 'text-zinc-400 line-through' : 'text-zinc-700')}>{op.name}</span>
+                            <span className={'flex-1 text-sm ' + (esgotada ? 'text-stone-400 line-through' : 'text-stone-700')}>{op.name}</span>
                             {esgotada ? (
                               <span className="text-[10px] font-bold text-red-500 bg-red-50 border border-red-200 px-1.5 py-0.5 rounded-full whitespace-nowrap">
                                 Esgotado
                               </span>
                             ) : op.additional_price > 0 ? (
-                              <span className="text-xs font-bold text-amber-600">
+                              <span className="text-xs font-bold text-[var(--cor-loja,#C2410C)]">
                                 + {formatCurrency(op.additional_price)}
                               </span>
                             ) : null}
@@ -523,7 +523,7 @@ export default function EditarItemMesaQRModal(props: Props) {
           {/* Observações predefinidas */}
           {hasObservations ? (
             <div>
-              <span className="text-sm font-bold text-zinc-800 block mb-3">Observações</span>
+              <span className="text-sm font-bold text-stone-800 block mb-3">Observações</span>
               <div className="flex flex-wrap gap-2">
                 {obsDoItem(cartItem.itemId).map(function (obs) {
                   const checked = cfgAtual.obsSelecionadas.includes(obs.text);
@@ -534,8 +534,8 @@ export default function EditarItemMesaQRModal(props: Props) {
                       onClick={function () { toggleObs(unidadeAtiva, obs.text); }}
                       className={'px-3.5 py-2 rounded-full text-xs font-bold cursor-pointer transition-colors border ' +
                         (checked
-                          ? 'bg-zinc-900 text-white border-zinc-900'
-                          : 'bg-zinc-100 text-zinc-600 border-zinc-100 hover:bg-zinc-200')
+                          ? 'bg-stone-900 text-white border-stone-900'
+                          : 'bg-stone-100 text-stone-600 border-stone-100 hover:bg-stone-200')
                       }
                     >
                       {obs.text}
@@ -548,34 +548,34 @@ export default function EditarItemMesaQRModal(props: Props) {
 
           {/* Observação livre */}
           <div>
-            <span className="text-sm font-bold text-zinc-800 block mb-2">
+            <span className="text-sm font-bold text-stone-800 block mb-2">
               {qtd > 1 ? 'Outra observação (Un. ' + (unidadeAtiva + 1) + ')' : 'Outra observação'}
             </span>
             <textarea
               value={cfgAtual.obsLivre}
               onChange={function (e) { setObsLivre(unidadeAtiva, e.target.value.slice(0, 150)); }}
               placeholder="Ex: sem cebola, bem passado..."
-              className="w-full px-3.5 py-3 border border-zinc-100 rounded-xl text-sm text-zinc-800 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-amber-400/50 focus:border-amber-400 resize-none bg-zinc-50"
+              className="w-full px-3.5 py-3 border border-stone-100 rounded-xl text-sm text-stone-800 placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-[color:var(--cor-loja-suave,#F9ECE7)] focus:border-[var(--cor-loja,#C2410C)] resize-none bg-stone-50"
               rows={2}
               maxLength={150}
             />
-            <p className="text-[10px] text-zinc-400 text-right mt-1">{cfgAtual.obsLivre.length}/150</p>
+            <p className="text-[10px] text-stone-400 text-right mt-1">{cfgAtual.obsLivre.length}/150</p>
           </div>
         </div>
 
         {/* Footer sticky */}
-        <div className="sticky bottom-0 bg-white/95 backdrop-blur-sm border-t border-zinc-100 px-5 py-3 flex gap-3">
+        <div className="sticky bottom-0 bg-white/95 backdrop-blur-sm border-t border-stone-100 px-5 py-3 flex gap-3">
           <button
             type="button"
             onClick={fechar}
-            className="flex-1 py-3.5 bg-zinc-100 text-zinc-600 text-sm font-bold rounded-xl hover:bg-zinc-200 transition-colors cursor-pointer whitespace-nowrap"
+            className="flex-1 py-3.5 bg-stone-100 text-stone-600 text-sm font-bold rounded-xl hover:bg-stone-200 transition-colors cursor-pointer whitespace-nowrap"
           >
             Cancelar
           </button>
           <button
             type="button"
             onClick={handleSalvar}
-            className="flex-[2] flex items-center justify-center gap-2 bg-gradient-to-br from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white px-5 py-3.5 rounded-xl cursor-pointer transition-all text-sm font-bold whitespace-nowrap"
+            className="flex-[2] flex items-center justify-center gap-2 bg-[var(--cor-loja,#C2410C)] hover:bg-[var(--cor-loja-forte,#A5380A)] text-white px-5 py-3.5 rounded-xl cursor-pointer transition-all text-sm font-bold whitespace-nowrap"
           >
             <i className="ri-save-line" />
             Salvar • {formatCurrency(calcularPrecoTotal())}

@@ -104,6 +104,7 @@ type TenantInfo = {
   logo_url?: string | null;
   cover_url?: string | null;
   brand_color?: string | null;
+  cover_position?: string | null;
 };
 
 type Neighborhood = {
@@ -533,15 +534,15 @@ async function fetchDeliveryConfig(
       // Junto com a logo: capa e cor do cardápio online (Configurações › Loja)
       const logoPromise = supabase
         .from('tenants')
-        .select('logo_url, cover_url, brand_color')
+        .select('logo_url, cover_url, brand_color, cover_position')
         .eq('id', data.tenant.id)
         .maybeSingle()
         .then(function (r) { return r.data || null; });
       const timeoutPromise = new Promise<null>(function (resolve) {
         setTimeout(function () { resolve(null); }, 2000);
       });
-      const marca = await Promise.race([logoPromise, timeoutPromise]) as { logo_url?: string | null; cover_url?: string | null; brand_color?: string | null } | null;
-      tenantInfo = { ...data.tenant, logo_url: marca?.logo_url || null, cover_url: marca?.cover_url || null, brand_color: marca?.brand_color || null };
+      const marca = await Promise.race([logoPromise, timeoutPromise]) as { logo_url?: string | null; cover_url?: string | null; brand_color?: string | null; cover_position?: string | null } | null;
+      tenantInfo = { ...data.tenant, logo_url: marca?.logo_url || null, cover_url: marca?.cover_url || null, brand_color: marca?.brand_color || null, cover_position: marca?.cover_position || null };
     } catch (_e) { /* segue sem logo */ }
 
     setters.setTenant(tenantInfo);
@@ -1553,6 +1554,11 @@ export function useDeliveryData(storeSlug?: string) {
     setCart(function (prev) { return prev.filter(function (c) { return c.cartId !== cartId; }); });
   }
 
+  // "Esvaziar" da sacola (já confirmado pelo cliente)
+  function handleEsvaziarSacola() {
+    setCart([]);
+  }
+
   function handleAbrirEdicao(cartId: string) {
     const item = cart.find(function (c) { return c.cartId === cartId; });
     if (item) setEditingItem(item);
@@ -2008,6 +2014,31 @@ export function useDeliveryData(storeSlug?: string) {
     return trocarPagamentoPedidoSegurado(pixOnline.orderId, metodoKey, cashAmount);
   }
 
+  // Cliente desistiu do pedido que ainda espera o pagamento pelo app. O servidor confere no
+  // Mercado Pago antes de cancelar. Devolve null quando cancelou; senão, o motivo para mostrar.
+  async function cancelarPedidoSegurado(orderId: string): Promise<string | null> {
+    if (!tenant?.id) return 'Não deu para cancelar agora. Tente de novo.';
+    const token = pixOnline && pixOnline.orderId === orderId ? pixOnline.orderToken : '';
+    if (!token && !phone) return 'Abra o cardápio com o telefone que fez o pedido para cancelar.';
+    const base = (import.meta.env.VITE_PUBLIC_SUPABASE_URL as string || '').replace(/\/$/, '');
+    try {
+      const res = await fetch(base + '/functions/v1/online-payments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(Object.assign(
+          { action: 'cancel_held_order', tenant_id: tenant.id, order_id: orderId },
+          token ? { order_token: token } : { order_phone: phone },
+        )),
+      });
+      const d = await res.json().catch(function () { return {}; });
+      if (!res.ok || d.error) return d.message || d.error || 'Não deu para cancelar agora. Tente de novo.';
+      if (pixOnline && pixOnline.orderId === orderId) limparPixOnline();
+      return null;
+    } catch {
+      return 'Erro de conexão. Tente novamente.';
+    }
+  }
+
   function limparPixOnline() {
     // Chamado quando o pagamento confirma (ou o cliente troca a forma): o pedido deixa de estar pendente
     try { if (tenant?.id) localStorage.removeItem('delivery_pix_' + tenant.id); } catch { /* ignore */ }
@@ -2409,6 +2440,8 @@ export function useDeliveryData(storeSlug?: string) {
     handleAdicionar,
     handleAlterarQtd,
     handleRemover,
+    handleEsvaziarSacola,
+    cancelarPedidoSegurado,
     handleAbrirEdicao,
     handleSalvarEdicao,
     handleFecharEdicao,

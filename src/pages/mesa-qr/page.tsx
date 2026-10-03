@@ -102,34 +102,32 @@ export default function MesaQRPage() {
 
   if (step === 'loading') {
     return (
-      <div className="min-h-screen bg-white flex items-center justify-center">
+      <div className="min-h-screen bg-[#FBF8F4] flex items-center justify-center" style={estiloLoja}>
         <div className="text-center">
-          <div className="w-16 h-16 flex items-center justify-center mx-auto mb-5 bg-amber-50 rounded-2xl border border-amber-100">
-            <i className="ri-loader-4-line text-2xl text-amber-500 animate-spin" />
-          </div>
-          <p className="text-sm font-bold text-zinc-800">Carregando seu cardápio</p>
-          <p className="text-xs text-zinc-500 mt-1">Aguarde um momento</p>
+          <i className="ri-loader-4-line text-3xl text-[var(--cor-loja)] animate-spin" />
+          <p className="text-sm font-bold text-stone-800 mt-3">Carregando o cardápio</p>
+          <p className="text-xs text-stone-500 mt-1">Aguarde um momento</p>
         </div>
       </div>
     );
   }
 
   if (step === 'encerrada') {
+    const lojaFechada = /fechad/i.test(error || '');
     return (
-      <div className="min-h-screen bg-white flex items-center justify-center px-4">
+      <div className="min-h-screen bg-[#FBF8F4] flex items-center justify-center px-5" style={estiloLoja}>
         <div className="text-center max-w-xs">
-          <div className="w-20 h-20 flex items-center justify-center mx-auto mb-6 bg-amber-50 rounded-2xl border border-amber-100">
-            <i className="ri-door-closed-line text-4xl text-amber-500" />
+          <div className="w-16 h-16 flex items-center justify-center mx-auto mb-5 bg-stone-100 rounded-2xl">
+            <i className="ri-door-closed-line text-3xl text-stone-500" />
           </div>
-          <h2 className="text-xl font-black text-zinc-800 mb-2">Mesa Encerrada</h2>
-          <p className="text-sm text-zinc-500 leading-relaxed">
-            {error || 'Esta mesa foi encerrada. Se precisar de ajuda, chame um garçom.'}
+          <h2 className="text-xl font-extrabold text-stone-900 mb-2">{lojaFechada ? 'Fechado agora' : 'Mesa encerrada'}</h2>
+          <p className="text-sm text-stone-600 leading-relaxed">
+            {lojaFechada
+              ? 'A loja não está recebendo pedidos por aqui agora. Tente de novo mais tarde.'
+              : (error || 'Esta mesa foi encerrada. Se precisar de ajuda, chame um garçom.')}
           </p>
           {table && (
-            <div className="mt-6 flex items-center justify-center gap-2 px-4 py-2 bg-zinc-100 rounded-full">
-              <div className="w-2 h-2 rounded-full bg-amber-500" />
-              <span className="text-zinc-600 text-xs font-semibold">{tenantName || 'Estabelecimento'}</span>
-            </div>
+            <p className="mt-6 text-xs font-semibold text-stone-500">{tenantName || 'Estabelecimento'}</p>
           )}
         </div>
       </div>
@@ -138,29 +136,27 @@ export default function MesaQRPage() {
 
   if (step === 'comprovante' && data.comprovante) {
     return (
-      <div className="min-h-screen bg-white flex items-center justify-center px-4">
-        <div className="text-center max-w-xs">
-          <div className="w-20 h-20 flex items-center justify-center mx-auto mb-6 bg-emerald-100 rounded-full">
-            <i className="ri-checkbox-circle-fill text-4xl text-emerald-500" />
+      <div className="min-h-screen bg-[#FBF8F4] flex items-center justify-center px-5" style={estiloLoja}>
+        <div className="text-center max-w-xs w-full">
+          <div className="w-16 h-16 flex items-center justify-center mx-auto mb-5 bg-emerald-50 rounded-full">
+            <i className="ri-check-line text-3xl text-emerald-700" />
           </div>
-          <h2 className="text-xl font-black text-zinc-800 mb-1">Pagamento confirmado</h2>
-          <p className="text-3xl font-black text-emerald-600 mb-3">
+          <h2 className="text-xl font-extrabold text-stone-900 mb-1">Pagamento confirmado</h2>
+          <p className="text-3xl font-extrabold text-stone-900 mb-3">
             {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(data.comprovante.amount)}
           </p>
-          <p className="text-sm text-zinc-500 leading-relaxed">
+          <p className="text-sm text-stone-600 leading-relaxed">
             {data.comprovante.method && data.comprovante.method !== 'pix' ? 'Recebemos seu pagamento. Obrigado!' : 'Recebemos seu Pix. Obrigado!'}
           </p>
-          <p className="text-xs text-zinc-400 mt-2">
-            Quer pedir mais alguma coisa? É só continuar.
-          </p>
+          <p className="text-xs text-stone-500 mt-2">Quer pedir mais alguma coisa? É só continuar.</p>
           <button
             type="button"
             onClick={data.handleFecharComprovante}
-            className="mt-6 w-full py-3 bg-gradient-to-br from-amber-500 to-orange-500 text-white text-sm font-bold rounded-xl cursor-pointer whitespace-nowrap"
+            className="mt-6 w-full h-14 rounded-2xl bg-[var(--cor-loja)] hover:bg-[var(--cor-loja-forte)] text-white text-base font-bold cursor-pointer transition-colors"
           >
             Voltar ao cardápio
           </button>
-          <p className="text-[11px] text-zinc-400 mt-3">{tenantName || 'Estabelecimento'}</p>
+          <p className="text-xs text-stone-500 mt-3">{tenantName || 'Estabelecimento'}</p>
         </div>
       </div>
     );
@@ -292,6 +288,7 @@ export default function MesaQRPage() {
               cart={cart}
               onAlterarQtd={handleAlterarQtd}
               onRemover={handleRemover}
+              onEsvaziar={data.handleEsvaziarSacola}
               onEditar={handleAbrirEdicao}
               onConfirmar={function (nome: string) { handleConfirmarPedido(nome); }}
               enviando={enviando}
@@ -312,6 +309,7 @@ export default function MesaQRPage() {
                 nome={tenantName || 'Estabelecimento'}
                 logoUrl={data.logoUrl}
                 capaUrl={data.capaUrl}
+                capaPosicao={data.capaPosicao}
                 situacao={{ tipo: 'aberto', texto: t('cliente.aberto') }}
                 subtitulo={!data.queueMode && table ? t('cliente.mesaN', { n: table.number }) : null}
                 acoes={seletorIdiomaCapa}
