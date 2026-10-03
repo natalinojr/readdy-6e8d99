@@ -58,9 +58,9 @@ function isValidUuid(v: unknown): boolean {
 }
 
 // Horário de exibição no cardápio (item/categoria/destaque): lista de
-// { days: 0..6, start: "HH:MM", end: "HH:MM" }. Inválido/vazio = null (sempre).
-// undefined = não mexer (payload antigo sem o campo).
-function horarioExibicao(raw: unknown): Array<{ days: number[]; start: string; end: string }> | null | undefined {
+// { days: 0..6, start: "HH:MM", end: "HH:MM", channel?: "casa"|"delivery" } (sem channel = os dois).
+// Inválido/vazio = null (sempre). undefined = não mexer (payload antigo sem o campo).
+function horarioExibicao(raw: unknown): Array<{ days: number[]; start: string; end: string; channel?: string }> | null | undefined {
   if (raw === undefined) return undefined;
   if (!Array.isArray(raw)) return null;
   const hhmm = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -70,6 +70,7 @@ function horarioExibicao(raw: unknown): Array<{ days: number[]; start: string; e
       days: [...new Set((Array.isArray(f.days) ? f.days : []).map(Number).filter((d: number) => Number.isInteger(d) && d >= 0 && d <= 6))].sort() as number[],
       start: String(f.start),
       end: String(f.end),
+      ...(f.channel === 'casa' || f.channel === 'delivery' ? { channel: f.channel } : {}),
     }))
     .slice(0, 20);
   return faixas.length ? faixas : null;

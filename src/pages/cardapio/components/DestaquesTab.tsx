@@ -2,9 +2,10 @@ import { useState, useMemo } from 'react';
 import { useCardapio } from '@/contexts/CardapioContext';
 import ItemImage from '@/components/base/ItemImage';
 import { confirmar } from '@/components/base/Dialogos';
-import HorarioExibicaoEditor from '@/components/feature/HorarioExibicaoEditor';
+import HorarioExibicaoEditor, { SeloHorario } from '@/components/feature/HorarioExibicaoEditor';
 import {
-  cruzamNaSemana, erroHorario, resumoHorario, temHorario, visivelAgora, type HorarioExibicao,
+  NOME_CANAL, cruzamNaSemana, erroHorario, horarioDoCanal, resumoHorario, temHorario, visivelAgora,
+  type CanalHorario, type HorarioExibicao,
 } from '@/lib/horarioExibicao';
 
 type CanalDestaque = 'casa' | 'ambos' | 'delivery';
@@ -49,6 +50,14 @@ export default function DestaquesTab() {
     const it = itens.find(i => i.id === itemId);
     const cat = it ? categorias.find(c => c.id === it.categoriaId) : undefined;
     return [it?.horario ?? null, cat?.horario ?? null].filter(temHorario);
+  };
+  // Canais em que o destaque aparece: o dele ("Aparece em") cruzado com onde o item é vendido.
+  const canaisDoDestaque = (d: typeof destaques[0]): CanalHorario[] => {
+    const doDestaque: CanalHorario[] = d.canal === 'ambos' ? ['casa', 'delivery'] : [d.canal];
+    const it = itens.find(i => i.id === d.itemId);
+    const doItem: CanalHorario[] = it?.somenteDelivery ? ['delivery'] : it?.delivery?.ativo === false ? ['casa'] : ['casa', 'delivery'];
+    const ambos = doDestaque.filter(c => doItem.includes(c));
+    return ambos.length ? ambos : doDestaque;
   };
   const categoriasAtivas = categorias.filter(c => c.ativo);
 
@@ -204,18 +213,28 @@ export default function DestaquesTab() {
                       value={editHorario}
                       onChange={setEditHorario}
                       labelSempre="Segue o horário do item"
+                      canais={canaisDoDestaque(dest)}
                     />
                     {(() => {
                       const doItem = horariosDoItem(dest.itemId);
                       if (doItem.length === 0) return null;
-                      const nunca = temHorario(editHorario) && !erroHorario(editHorario) && !cruzamNaSemana([editHorario, ...doItem]);
+                      const canais = canaisDoDestaque(dest);
+                      // Canal em que o horário do destaque nunca cruza com o do item (e da categoria).
+                      const nuncaEm = temHorario(editHorario) && !erroHorario(editHorario)
+                        ? canais.filter(c => !cruzamNaSemana([horarioDoCanal(editHorario, c), ...doItem.map(h => horarioDoCanal(h, c))]))
+                        : [];
+                      const nunca = nuncaEm.length > 0 && nuncaEm.length === canais.length;
+                      const parcial = nuncaEm.length > 0 && !nunca;
+                      const cor = nunca ? 'text-red-700 bg-red-50 border-red-100' : parcial ? 'text-amber-800 bg-amber-50 border-amber-100' : 'text-indigo-700 bg-indigo-50 border-indigo-100';
                       return (
-                        <p className={`text-[11px] rounded-lg px-2.5 py-1.5 mt-2 border ${nunca ? 'text-red-700 bg-red-50 border-red-100' : 'text-indigo-700 bg-indigo-50 border-indigo-100'}`}>
-                          <i className={`${nunca ? 'ri-error-warning-line' : 'ri-information-line'} mr-1`} />
-                          O item só aparece {doItem.map(h => resumoHorario(h)).join(' e ')}.{' '}
+                        <p className={`text-[11px] rounded-lg px-2.5 py-1.5 mt-2 border ${cor}`}>
+                          <i className={`${nunca || parcial ? 'ri-error-warning-line' : 'ri-information-line'} mr-1`} />
+                          O item só aparece {doItem.map(h => resumoHorario(h, canais)).join(' e ')}.{' '}
                           {nunca
                             ? 'O horário do destaque não cruza com o do item — o destaque nunca vai aparecer.'
-                            : 'O destaque só aparece quando o item também está no horário.'}
+                            : parcial
+                              ? `No ${nuncaEm.map(c => NOME_CANAL[c].toLowerCase()).join(' e ')} o horário do destaque não cruza com o do item — lá ele nunca aparece.`
+                              : 'O destaque só aparece quando o item também está no horário.'}
                         </p>
                       );
                     })()}
@@ -273,15 +292,14 @@ export default function DestaquesTab() {
                   {(() => {
                     const todos = [dest.horario ?? null, ...horariosDoItem(dest.itemId)].filter(temHorario);
                     if (todos.length === 0) return null;
-                    const agora = visivelAgora(todos);
+                    const canais = canaisDoDestaque(dest);
                     return (
-                      <span
-                        title={agora ? 'No horário agora — aparecendo no cardápio' : 'Fora do horário agora — escondido do cardápio do cliente'}
-                        className={`text-[11px] px-2 py-0.5 rounded-full ${agora ? 'bg-emerald-50 text-emerald-700' : 'bg-indigo-50 text-indigo-700'}`}
-                      >
-                        <i className="ri-time-line mr-1" />
-                        {temHorario(dest.horario) ? resumoHorario(dest.horario) : `segue o item: ${todos.map(h => resumoHorario(h)).join(' e ')}`}
-                      </span>
+                      <SeloHorario
+                        horario={dest.horario}
+                        canais={canais}
+                        visivelPorCanal={{ casa: visivelAgora(todos, 'casa'), delivery: visivelAgora(todos, 'delivery') }}
+                        texto={temHorario(dest.horario) ? undefined : `segue o item: ${todos.map(h => resumoHorario(h, canais)).join(' e ')}`}
+                      />
                     );
                   })()}
                 </div>

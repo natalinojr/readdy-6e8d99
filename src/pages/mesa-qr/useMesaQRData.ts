@@ -242,7 +242,7 @@ async function fetchCardapioData(tenantId: string, setters: {
     setters.setOpcoesIndisponiveisIds(data.opcoes_indisponiveis_ids || []);
 
     setters.setCardapioBase(base);
-    const finalCategories = montarCardapio(base, new Set(idsForaDoHorario(base))).categories;
+    const finalCategories = montarCardapio(base, new Set(idsForaDoHorario(base, 'casa'))).categories;
 
     if (data.production_parts) {
       setters.productionPartsRef.current = data.production_parts;
@@ -318,7 +318,7 @@ export function useMesaQRData() {
   // Chave do que está fora do horário: muda só quando algo entra/sai (não a cada minuto).
   // minutoAgora só dispara o recálculo na virada do minuto; a hora vem de new Date().
   const chaveForaDoHorario = useMemo(function () {
-    return cardapioBase && usaHorario ? idsForaDoHorario(cardapioBase).join(',') : '';
+    return cardapioBase && usaHorario ? idsForaDoHorario(cardapioBase, 'casa').join(',') : '';
   }, [cardapioBase, usaHorario, minutoAgora]);
   const cardapioAgora = useMemo(function () {
     if (!cardapioBase) return { categories: [] as CardapioCategory[], items: [] as CardapioItem[] };

@@ -34,9 +34,11 @@ function promoHoje(promos: Row[], itemId: string, sp: ReturnType<typeof spNow>):
 // Horário de exibição do cardápio (2026-10-02): item/categoria fora do horário somem para o bot,
 // como somem do link do delivery. Mesma regra de src/lib/horarioExibicao.ts › visivelEm
 // (Brasília; dias 0=Dom; fim < início = vira o dia; início = fim = dia todo; sem faixa válida = sempre).
+// O bot vende delivery: faixa "só casa" não vale aqui (2026-10-03).
 export function noHorario(raw: unknown, sp: ReturnType<typeof spNow>): boolean {
   const min = (t: unknown) => { const m = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(String(t ?? '')); return m ? Number(m[1]) * 60 + Number(m[2]) : null; };
   const faixas = (Array.isArray(raw) ? raw : [])
+    .filter((f: Row) => f?.channel !== 'casa')
     .map((f: Row) => ({ ini: min(f?.start), fim: min(f?.end), dias: Array.isArray(f?.days) ? (f.days as unknown[]).map(Number) : [] }))
     .filter((f) => f.ini != null && f.fim != null);
   if (!faixas.length) return true;

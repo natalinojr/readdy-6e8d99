@@ -544,7 +544,7 @@ async function fetchDeliveryConfig(
       promotions: data.promotions || [],
     };
     setters.setCardapioBase(base);
-    const finalCategories = montarCardapio(base, new Set(idsForaDoHorario(base))).categories;
+    const finalCategories = montarCardapio(base, new Set(idsForaDoHorario(base, 'delivery'))).categories;
     setters.setLocales(Array.isArray(data.locales) ? data.locales : []);
 
     setters.setOptionGroups(data.option_groups || []);
@@ -683,7 +683,7 @@ export function useDeliveryData(storeSlug?: string) {
   // Chave do que está fora do horário: muda só quando algo entra/sai (não a cada minuto).
   // minutoAgora só dispara o recálculo na virada do minuto; a hora vem de new Date().
   const chaveForaDoHorario = useMemo(function () {
-    return cardapioBase && usaHorario ? idsForaDoHorario(cardapioBase).join(',') : '';
+    return cardapioBase && usaHorario ? idsForaDoHorario(cardapioBase, 'delivery').join(',') : '';
   }, [cardapioBase, usaHorario, minutoAgora]);
   const cardapioAgora = useMemo(function () {
     if (!cardapioBase) return { categories: [] as CardapioCategory[], items: [] as CardapioItem[] };

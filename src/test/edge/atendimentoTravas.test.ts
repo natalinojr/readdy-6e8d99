@@ -128,6 +128,9 @@ describe('horário de exibição do cardápio (2026-10-02)', () => {
     expect(T.noHorario([{ days: [5], start: '18:00', end: '02:00' }], sexta13h)).toBe(false);
     expect(T.noHorario([{ days: [5], start: '18:00', end: '02:00' }], { dow: 6, iso: '', hhmm: '01:30' })).toBe(true);
     expect(T.noHorario([{ days: [5], start: '00:00', end: '00:00' }], sexta13h)).toBe(true);
+    // faixa só da casa não vale para o bot (delivery): sem faixa de delivery = sempre
+    expect(T.noHorario([{ days: [1], start: '11:00', end: '12:00', channel: 'casa' }], sexta13h)).toBe(true);
+    expect(T.noHorario([{ days: [1], start: '11:00', end: '12:00', channel: 'delivery' }], sexta13h)).toBe(false);
   });
   it('menuItems tira item e categoria fora do horário (agora)', () => {
     const nunca = [{ days: [], start: '00:00', end: '00:01' }];

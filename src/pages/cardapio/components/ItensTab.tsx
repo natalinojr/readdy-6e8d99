@@ -5,20 +5,8 @@ import ItemModal from './ItemModal';
 import ItemImage from '@/components/base/ItemImage';
 import ConfirmModal from '@/components/base/ConfirmModal';
 import { confirmar } from '@/components/base/Dialogos';
-import { resumoHorario, temHorario } from '@/lib/horarioExibicao';
-
-// Selo do horário de exibição do item (verde = aparecendo agora; azul = escondido do cliente agora).
-function HorarioSelo({ item, noHorario }: { item: Item; noHorario: boolean }) {
-  if (!temHorario(item.horario)) return null;
-  return (
-    <span
-      title={noHorario ? 'No horário agora — aparecendo no cardápio do cliente' : 'Fora do horário agora — escondido do cardápio do cliente'}
-      className={`text-[10px] px-1.5 py-0.5 rounded-full font-semibold whitespace-nowrap flex items-center gap-0.5 ${noHorario ? 'bg-emerald-100 text-emerald-700' : 'bg-indigo-100 text-indigo-700'}`}
-    >
-      <i className="ri-time-line" />{resumoHorario(item.horario)}
-    </span>
-  );
-}
+import { SeloHorario } from '@/components/feature/HorarioExibicaoEditor';
+import { resumoHorario, temHorario, type CanalHorario } from '@/lib/horarioExibicao';
 
 type Disponibilidade = 'ambos' | 'casa' | 'delivery';
 function disponibilidadeDe(item: Item): Disponibilidade {
@@ -26,6 +14,10 @@ function disponibilidadeDe(item: Item): Disponibilidade {
   if (item.delivery?.ativo === false) return 'casa';
   return 'ambos';
 }
+const canaisDe = (item: Item): CanalHorario[] => {
+  const d = disponibilidadeDe(item);
+  return d === 'ambos' ? ['casa', 'delivery'] : [d];
+};
 
 // Seletor compacto de onde o item aparece (casa / ambos / delivery), pra usar na tabela.
 function CanalToggle({ item, onChange, disabled }: { item: Item; onChange: (v: Disponibilidade) => void; disabled?: boolean }) {
@@ -77,6 +69,27 @@ export default function ItensTab() {
   }, [itens, modalItem?.id]);
 
   const categoriaMap = Object.fromEntries(categorias.map(c => [c.id, c.nome]));
+
+  // Selos do horário no card: o do item e, se a categoria tiver horário, o dela também
+  // (a cor diz se o item está aparecendo agora — vale o horário do item E o da categoria).
+  const selosHorario = (item: Item) => {
+    const canais = canaisDe(item);
+    const visivel = { casa: itemNoHorario(item, 'casa'), delivery: itemNoHorario(item, 'delivery') };
+    const cat = categorias.find(c => c.id === item.categoriaId);
+    return (
+      <>
+        <SeloHorario horario={item.horario} canais={canais} visivelPorCanal={visivel} />
+        {cat && temHorario(cat.horario) && (
+          <SeloHorario
+            horario={cat.horario}
+            canais={canais}
+            visivelPorCanal={visivel}
+            texto={`Categoria: ${resumoHorario(cat.horario, canais)}`}
+          />
+        )}
+      </>
+    );
+  };
 
   // Contagem de itens por categoria
   const contagemPorCategoria = useMemo(() => {
@@ -410,7 +423,7 @@ export default function ItensTab() {
                   {item.promocoes.some(p => p.ativo) && (
                     <span className="bg-red-500 text-white text-xs px-2 py-0.5 rounded-full font-medium">Promo</span>
                   )}
-                  <HorarioSelo item={item} noHorario={itemNoHorario(item)} />
+                  {selosHorario(item)}
                   <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${item.status === 'ativo' ? 'bg-green-500 text-white' : 'bg-gray-400 text-white'}`}>
                     {item.status === 'ativo' ? 'Ativo' : 'Inativo'}
                   </span>
@@ -544,7 +557,7 @@ export default function ItensTab() {
                                     Só Delivery
                                   </span>
                                 )}
-                                <HorarioSelo item={item} noHorario={itemNoHorario(item)} />
+                                {selosHorario(item)}
                               </div>
                               <p className="text-xs text-gray-400 line-clamp-2 max-w-[200px]">{item.descricao}</p>
                             </div>
@@ -670,7 +683,7 @@ export default function ItensTab() {
                         <span className="text-xs text-orange-600 font-bold">R$ {item.preco.toFixed(2).replace('.', ',')}</span>
                         <span className="text-xs text-gray-400">{categoriaMap[item.categoriaId] ?? '—'}</span>
                         <span className="text-xs text-gray-400">{item.slaMinutos}min</span>
-                        <HorarioSelo item={item} noHorario={itemNoHorario(item)} />
+                        {selosHorario(item)}
                       </div>
                       <div className="mt-1.5">
                         <CanalToggle item={item} disabled={saving} onChange={(v) => setDisponibilidade(item, v)} />
