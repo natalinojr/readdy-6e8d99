@@ -1,30 +1,31 @@
 import { useNavigate } from 'react-router-dom';
-import { usePendencias } from '@/contexts/PendenciasContext';
+import { useContagemHoje } from '@/pages/hoje/hojeStore';
 
 /**
- * Botão da caixa de Pendências no topo (2026-09-28) — ocupa o lugar do sino, que saiu para
- * todo mundo. O número é o que ainda não foi tocado na loja ativa (a caixa já filtra o que
- * cada papel vê: pedido de cancelamento só para quem aprova, dinheiro só para o Financeiro).
+ * Número do topo (2026-09-28: ocupou o lugar do sino). Desde 2026-10-03 é o MESMO número da tela
+ * Hoje — "Agora: o que precisa de você" em todas as lojas da pessoa, pelo papel dela em cada loja — e
+ * abre a Hoje. Antes contava as "não vistas" da loja ativa e dava outro número (dono: "um número só").
+ * A caixa completa (vistas, resolvidas, histórico) continua em /pendencias, com link na Hoje.
  */
 export default function BotaoPendencias() {
   const navigate = useNavigate();
-  const { naoVistas, naoVistasAltas } = usePendencias();
+  const { agora, urgente } = useContagemHoje();
 
   return (
     <button
-      onClick={() => navigate('/pendencias')}
-      title="Pendências"
-      aria-label={naoVistas > 0 ? `Pendências: ${naoVistas} em aberto` : 'Pendências'}
+      onClick={() => navigate('/hoje')}
+      title="Hoje — o que precisa de você"
+      aria-label={agora > 0 ? `Hoje: ${agora} ${agora === 1 ? 'coisa precisa' : 'coisas precisam'} de você` : 'Hoje: nada urgente'}
       className="relative w-9 h-9 flex items-center justify-center rounded-lg hover:bg-zinc-100 text-zinc-600 cursor-pointer transition-colors"
     >
       <i className="ri-inbox-line text-lg" />
-      {naoVistas > 0 && (
+      {agora > 0 && (
         <span
           className={`absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full text-[10px] font-bold text-white ${
-            naoVistasAltas > 0 ? 'bg-red-500 animate-pulse' : 'bg-amber-500'
+            urgente ? 'bg-red-500' : 'bg-amber-500'
           }`}
         >
-          {naoVistas > 99 ? '99+' : naoVistas}
+          {agora > 99 ? '99+' : agora}
         </span>
       )}
     </button>

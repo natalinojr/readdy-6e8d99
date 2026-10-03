@@ -1,8 +1,5 @@
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { formatCurrency } from '@/lib/formatters';
-import ClubeCheckout from '@/components/fidelidade/ClubeCheckout';
-import CpfCnpjInput from '@/components/base/CpfCnpjInput';
-import { isValidCpfCnpj } from '@/lib/cpfCnpj';
 import { useDeliveryData, getOrderSource, getDeliveryWriteUrl } from './useDeliveryData';
 import IdentificacaoDelivery from './components/IdentificacaoDelivery';
 import EnderecoDelivery from './components/EnderecoDelivery';
@@ -11,14 +8,18 @@ import ConfirmacaoDelivery from './components/ConfirmacaoDelivery';
 import AcompanharPedido from './components/AcompanharPedido';
 import HistoricoPedidos from './components/HistoricoPedidos';
 import CardapioMesaQR from '../mesa-qr/components/CardapioMesaQR';
-import CarrinhoDelivery from './components/CarrinhoDelivery';
+import CheckoutDelivery from './components/CheckoutDelivery';
 import EditarItemMesaQRModal from '../mesa-qr/components/EditarItemMesaQRModal';
 import ModoEntregaDelivery from './components/ModoEntregaDelivery';
-import { scrollFocusedFieldIntoView } from '@/lib/scrollFocusIntoView';
 import { useKeyboardInset } from '@/hooks/useKeyboardInset';
 import { useIdiomaCardapio } from '@/hooks/useIdiomaCardapio';
 import { tx } from '@/lib/idiomaCardapio';
 import SeletorIdioma from '@/components/SeletorIdioma';
+import LojaTopo, { BotaoCapa, type LojaTopoMeta } from '@/components/cliente/LojaTopo';
+import BarraSacola from '@/components/cliente/BarraSacola';
+import { corLojaVars } from '@/lib/corLoja';
+import { situacaoLoja } from '@/lib/situacaoLoja';
+import { useTranslation } from 'react-i18next';
 
 // ── Helpers de ícones de tipo de endereço ─────────────────────────────────────
 
@@ -58,6 +59,7 @@ function getStoreSlugFromUrl(): string | undefined {
 }
 
 export default function DeliveryPage() {
+  const { t } = useTranslation();
   const storeSlug = getStoreSlugFromUrl();
   const data = useDeliveryData(storeSlug);
 
@@ -101,6 +103,15 @@ export default function DeliveryPage() {
       disponiveis={data.locales}
       idioma={idiomaCardapio.idioma}
       onTrocar={idiomaCardapio.trocarIdioma}
+    />
+  ) : null;
+
+  const seletorIdiomaCapa = idiomaCardapio.temSeletor ? (
+    <SeletorIdioma
+      disponiveis={data.locales}
+      idioma={idiomaCardapio.idioma}
+      onTrocar={idiomaCardapio.trocarIdioma}
+      variante="capa"
     />
   ) : null;
 
@@ -162,6 +173,40 @@ export default function DeliveryPage() {
     .join('')
     .toUpperCase();
 
+  function fotoDoItem(itemId: string): string | null {
+    const it = items.find(function (x) { return x.id === itemId; });
+    return it ? it.photo_url : null;
+  }
+
+  // Capa e cor da loja (Configurações); sem elas, faixa e botões na cor padrão
+  const capaLoja = data.tenant?.cover_url || null;
+  const estiloLoja = corLojaVars(data.tenant?.brand_color || null);
+
+  // Topo da loja: situação (aberto/fechado + horário) e o que decide a compra
+  const situacao = situacaoLoja(data.deliveryOpenNow, data.deliveryClosedReason, data.infoLoja.horario, t);
+  const metasLoja: LojaTopoMeta[] = [];
+  if (data.distanceMode && data.tiers.length > 0) {
+    const tempos = data.tiers.map(function (f) { return f.tempo_max_min; }).filter(function (n) { return n > 0; });
+    if (tempos.length > 0) metasLoja.push({ icone: 'ri-time-line', rotulo: t('cliente.entrega'), valor: t('cliente.ateMin', { n: Math.min.apply(null, tempos) }) });
+    const taxaMin = Math.min.apply(null, data.tiers.map(function (f) { return f.taxa; }));
+    metasLoja.push({ icone: 'ri-e-bike-2-line', rotulo: t('cliente.taxaDesde'), valor: taxaMin > 0 ? formatCurrency(taxaMin) : t('cliente.gratis') });
+  } else if (data.neighborhoods.length > 0) {
+    const taxaMin = Math.min.apply(null, data.neighborhoods.map(function (n) { return Number(n.delivery_fee) || 0; }));
+    metasLoja.push({ icone: 'ri-e-bike-2-line', rotulo: t('cliente.taxaDesde'), valor: taxaMin > 0 ? formatCurrency(taxaMin) : t('cliente.gratis') });
+  }
+  const pedidoMinimo = data.infoLoja.pedidoMinimo;
+  if (pedidoMinimo > 0) metasLoja.push({ icone: 'ri-shopping-bag-3-line', rotulo: t('cliente.minimo'), valor: formatCurrency(pedidoMinimo) });
+
+  const avisoFechado = !data.deliveryOpenNow ? (
+    <div className="mx-5 mt-3.5 px-4 py-3.5 rounded-2xl bg-red-50 text-red-900 flex gap-3 items-start">
+      <i className="ri-time-line text-lg leading-none mt-0.5" />
+      <div>
+        <p className="text-sm font-bold">{situacao.abreAs ? t('cliente.fechadoAbrimos', { h: situacao.abreAs }) : t('cliente.fechadoAgora')}</p>
+        <p className="text-[13px] mt-0.5 leading-snug">{data.deliveryClosedReason === 'pausado' ? t('cliente.pausadoTexto') : t('cliente.montarSacola')}</p>
+      </div>
+    </div>
+  ) : null;
+
   // Entrega por distância (pin)
   const distanceMode = data.distanceMode;
   const deliveryQuote = data.deliveryQuote;
@@ -184,9 +229,6 @@ export default function DeliveryPage() {
   const handleSalvarEdicao = data.handleSalvarEdicao;
   const handleFecharEdicao = data.handleFecharEdicao;
   const handleConfirmarPedido = data.handleConfirmarPedido;
-  // Documento incompleto/errado trava a confirmação (o backend recusaria depois).
-  const cpfNotaDigitos = (data.cpfNota || '').replace(/\D/g, '');
-  const cpfNotaInvalido = cpfNotaDigitos.length > 0 && !isValidCpfCnpj(cpfNotaDigitos);
   const handleNovoPedido = data.handleNovoPedido;
   const handleChangeNeighborhood = data.handleChangeNeighborhood;
 
@@ -194,12 +236,6 @@ export default function DeliveryPage() {
   const [subView, setSubView] = useState<'cardapio' | 'acompanhar' | 'acompanhar_input' | 'historico'>('cardapio');
   const [previousSubView, setPreviousSubView] = useState<'acompanhar_input' | 'historico'>('acompanhar_input');
   const [trackingNumero, setTrackingNumero] = useState('');
-
-  // Modal de pagamento
-  const [showPagamentoModal, setShowPagamentoModal] = useState(false);
-  const [metodoPagamento, setMetodoPagamento] = useState('');
-  const [valorDinheiro, setValorDinheiro] = useState('');
-  const [erroValorDinheiro, setErroValorDinheiro] = useState('');
 
   // Dropdown de endereço
   const [showAddressDropdown, setShowAddressDropdown] = useState(false);
@@ -227,42 +263,11 @@ export default function DeliveryPage() {
   // Altura do teclado virtual (para levantar modais/campos acima dele)
   const kbInset = useKeyboardInset();
 
-  // Controle de clique vs scroll
-  const categoriaClickRef = useRef(false);
-  const categoriaClickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  function scrollToCategoria(catId: string) {
-    if (categoriaClickTimerRef.current) clearTimeout(categoriaClickTimerRef.current);
-    categoriaClickRef.current = true;
-    categoriaClickTimerRef.current = setTimeout(function () {
-      categoriaClickRef.current = false;
-    }, 800);
-
-    data.setCategoriaAtiva(catId);
-
-    // Se o carrinho estiver aberto, fecha primeiro e espera o cardápio renderizar
-    if (showCart) {
-      data.setShowCart(false);
-      requestAnimationFrame(function () {
-        requestAnimationFrame(function () {
-          const el = document.getElementById('scroll-cat-' + catId);
-          if (el) {
-            el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-          }
-        });
-      });
-    } else {
-      const el = document.getElementById('scroll-cat-' + catId);
-      if (el) {
-        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      }
-    }
-  }
-
-  function handleCategoriaAtivaChange(catId: string) {
-    if (categoriaClickRef.current) return;
-    data.setCategoriaAtiva(catId);
-  }
+  // Estável: o scroll spy do cardápio recria o observador quando esta função muda
+  const setCategoriaAtivaDelivery = data.setCategoriaAtiva;
+  const handleCategoriaAtivaChange = useCallback(function (catId: string) {
+    setCategoriaAtivaDelivery(catId);
+  }, [setCategoriaAtivaDelivery]);
 
   // Pedidos ativos
   const [activeOrders, setActiveOrders] = useState<Array<{ id: string; number: string; status: string; created_at: string; total_amount: number; delivery_fee: number }>>([]);
@@ -499,6 +504,8 @@ export default function DeliveryPage() {
 
   if (step === 'confirmacao' && pedidoConfirmado) {
     return (
+      <div className="min-h-screen bg-[#FBF8F4]" style={estiloLoja}>
+      <div className="max-w-lg mx-auto">
       <ConfirmacaoDelivery
         numeroPedido={numeroPedido}
         orderTotal={orderTotal}
@@ -517,6 +524,8 @@ export default function DeliveryPage() {
         metodosAlternativos={metodosAlternativos}
         onTrocarPagamento={data.handleTrocarPagamentoPixOnline}
       />
+      </div>
+      </div>
     );
   }
 
@@ -527,141 +536,72 @@ export default function DeliveryPage() {
   if (step === 'preview') {
     const subtotalPreview = cart.reduce(function (s: number, i: typeof cart[0]) { return s + i.precoTotal * i.quantidade; }, 0);
     return (
-      <div className="min-h-screen bg-white flex justify-center">
-        <div className="w-full max-w-lg h-dvh flex flex-col bg-white relative">
-          {/* Banner: delivery fechado */}
-          {!data.deliveryOpenNow && (
-            <div className="shrink-0 bg-red-500 text-white px-4 py-2.5 flex items-center justify-center gap-2 text-sm font-semibold text-center">
-              <i className="ri-store-2-line text-base shrink-0" />
-              <span>{
-                data.deliveryClosedReason === 'fora_horario' ? 'Estamos fora do horário de funcionamento. Volte mais tarde!'
-                : data.deliveryClosedReason === 'pausado' ? 'A loja está temporariamente pausada. Volte em instantes!'
-                : 'A loja está fechada para pedidos no momento.'
-              }</span>
-            </div>
-          )}
-
-          {/* Header enxuto: marca da loja + status + entrar */}
-          <div className="shrink-0">
-            <div className="relative bg-gradient-to-br from-amber-500 via-orange-500 to-orange-600 px-4 pt-5 pb-5">
-              <div
-                className="absolute inset-0 pointer-events-none"
-                style={{ background: 'radial-gradient(circle at 85% -20%, rgba(255,255,255,.25), transparent 45%)' }}
-              />
-              <div className="relative flex items-center gap-3">
-                <div className="w-11 h-11 flex items-center justify-center bg-white rounded-2xl shadow-md shrink-0 overflow-hidden">
-                  {lojaLogo ? (
-                    <img src={lojaLogo} alt={tenant?.name || 'Logo'} className="w-full h-full object-cover" />
-                  ) : (
-                    <span className="text-orange-600 font-black text-base">{lojaIniciais}</span>
-                  )}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <h1 className="text-white text-base font-black leading-tight truncate">{tenant?.name || 'Delivery'}</h1>
-                  <p className="text-white/85 text-[11px] mt-0.5 flex items-center gap-1.5 min-w-0">
-                    {data.deliveryOpenNow ? (
-                      <span className="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 bg-white/20 rounded-full font-bold text-[10px] text-white">
-                        <span className="w-1.5 h-1.5 bg-green-300 rounded-full" />
-                        Aberto
-                      </span>
-                    ) : (
-                      <span className="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 bg-black/20 rounded-full font-bold text-[10px] text-white">
-                        <span className="w-1.5 h-1.5 bg-red-400 rounded-full" />
-                        Fechado
-                      </span>
-                    )}
-                    <span className="truncate">Cardápio · peça em minutos</span>
-                  </p>
-                </div>
-                {seletorIdioma}
-                <button
-                  type="button"
-                  onClick={function () { data.setStep('identificacao'); }}
-                  className="shrink-0 inline-flex items-center gap-1 px-3 h-9 bg-white/20 hover:bg-white/30 border border-white/25 rounded-xl text-white text-xs font-bold cursor-pointer transition-colors"
-                  title="Já sou cliente"
-                >
-                  <i className="ri-user-3-line text-[15px]" />
-                  Entrar
-                </button>
-              </div>
-            </div>
-          </div>
-
-          {/* Categorias sticky */}
-          <div className="sticky top-0 z-20 bg-white/95 backdrop-blur-sm border-b border-zinc-100 shrink-0">
-            <div className="flex items-center gap-2 px-4 py-3 overflow-x-auto scrollbar-hide">
-              {categories.map(function (cat) {
-                return (
-                  <button
-                    key={cat.id}
-                    type="button"
-                    onClick={function () { scrollToCategoria(cat.id); }}
-                    className={'shrink-0 px-4 py-2 rounded-full text-xs font-bold whitespace-nowrap cursor-pointer transition-all duration-200 ' +
-                      (categoriaAtiva === cat.id
-                        ? 'bg-gradient-to-br from-amber-500 to-orange-500 text-white shadow-sm'
-                        : 'bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200/60')
-                    }
-                  >
-                    {tx(cat)}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Cardápio (montar carrinho já funciona) */}
+      <div className="min-h-screen bg-[#FBF8F4] flex justify-center" style={estiloLoja}>
+        <div className="w-full max-w-lg h-dvh flex flex-col bg-[#FBF8F4] relative">
           <div className="flex-1 overflow-y-auto">
-            <CardapioMesaQR
-              categoriaAtiva={categoriaAtiva}
-              categories={categories}
-              items={items}
-              optionGroups={optionGroups}
-              options={options}
-              observations={observations}
-              outOfStockIds={outOfStockIds}
-              opcoesIndisponiveisIds={opcoesIndisponiveisIds}
-              onAdicionar={handleAdicionar}
-              onAlterarQtd={handleAlterarQtd}
-              onRemover={handleRemover}
-              onVerCarrinho={function () { data.setStep('identificacao'); }}
-              cart={cart}
-              onCategoriaAtivaChange={handleCategoriaAtivaChange}
-              deepLinkItemId={deepLinkItemId}
-              onDeepLinkConsumed={handleDeepLinkConsumed}
-            />
-          </div>
-
-          {/* Barra de continuar / dica */}
-          {cart.length > 0 ? (
-            <div className="shrink-0 bg-white border-t border-zinc-100 px-4 py-3 z-30">
+            <LojaTopo
+              nome={tenant?.name || 'Delivery'}
+              logoUrl={lojaLogo}
+              capaUrl={capaLoja}
+              situacao={situacao}
+              subtitulo={city || null}
+              metas={metasLoja}
+              acoes={
+                <>
+                  {seletorIdiomaCapa}
+                  <BotaoCapa icone="ri-user-3-line" texto={t('cliente.entrar')} onClick={function () { data.setStep('identificacao'); }} />
+                </>
+              }
+            >
+              {avisoFechado}
               <button
                 type="button"
                 onClick={function () { data.setStep('identificacao'); }}
-                className="w-full flex items-center justify-between gap-2 px-4 py-3 bg-amber-500 hover:bg-amber-600 text-zinc-950 font-bold rounded-xl cursor-pointer transition-colors"
+                className="mx-5 mt-3.5 w-[calc(100%-2.5rem)] flex items-center gap-3 bg-white border border-stone-200/70 rounded-[18px] px-3.5 py-3 text-left cursor-pointer hover:bg-stone-50"
               >
-                <span className="flex items-center gap-2 text-sm">
-                  <span className="inline-flex items-center justify-center min-w-[22px] h-[22px] px-1 bg-zinc-900 text-white text-xs font-black rounded-full">
-                    {totalItens}
-                  </span>
-                  Continuar pedido
+                <span className="w-10 h-10 rounded-xl bg-[var(--cor-loja-suave)] text-[var(--cor-loja)] flex items-center justify-center shrink-0">
+                  <i className="ri-map-pin-2-line text-lg" />
                 </span>
-                <span className="flex items-center gap-1 text-sm">
-                  {formatCurrency(subtotalPreview)}
-                  <i className="ri-arrow-right-line text-base" />
+                <span className="flex-1 min-w-0">
+                  <span className="block text-sm font-bold text-stone-900">{t('cliente.ondeEntregar')}</span>
+                  <span className="block text-[13px] text-stone-600 mt-0.5">{t('cliente.vejaTaxa')}</span>
                 </span>
+                <i className="ri-arrow-right-s-line text-xl text-stone-400" />
               </button>
-              <p className="text-center text-[10px] text-zinc-400 mt-1.5">
-                Você informa telefone e endereço no próximo passo.
-              </p>
+            </LojaTopo>
+
+            {/* Cardápio (montar a sacola já funciona) */}
+            <div className="mt-3">
+              <CardapioMesaQR
+                categoriaAtiva={categoriaAtiva}
+                categories={categories}
+                items={items}
+                optionGroups={optionGroups}
+                options={options}
+                observations={observations}
+                outOfStockIds={outOfStockIds}
+                opcoesIndisponiveisIds={opcoesIndisponiveisIds}
+                onAdicionar={handleAdicionar}
+                onAlterarQtd={handleAlterarQtd}
+                onRemover={handleRemover}
+                onVerCarrinho={function () { data.setStep('identificacao'); }}
+                cart={cart}
+                onCategoriaAtivaChange={handleCategoriaAtivaChange}
+                deepLinkItemId={deepLinkItemId}
+                onDeepLinkConsumed={handleDeepLinkConsumed}
+              />
             </div>
-          ) : (
-            <div className="shrink-0 bg-white border-t border-zinc-100 px-4 py-3 text-center z-30">
-              <p className="text-xs text-zinc-400 flex items-center justify-center gap-1.5">
-                <i className="ri-hand-heart-line text-amber-500" />
-                Toque num item para começar seu pedido
-              </p>
-            </div>
-          )}
+          </div>
+
+          {cart.length > 0 ? (
+            <BarraSacola
+              quantidade={totalItens}
+              texto={t('cliente.verSacola')}
+              total={data.deliveryOpenNow ? formatCurrency(subtotalPreview) : t('cliente.envioQuandoAbrir')}
+              apagada={!data.deliveryOpenNow}
+              onClick={function () { data.setStep('cardapio'); data.setShowCart(true); }}
+            />
+          ) : null}
         </div>
       </div>
     );
@@ -681,17 +621,13 @@ export default function DeliveryPage() {
   const hasAnyAddresses = displayAddresses.length > 0;
 
   return (
-    <div className="min-h-screen bg-white flex justify-center">
-      <div className="w-full max-w-lg h-dvh flex flex-col bg-white relative">
-        {/* Banner: delivery fechado (fora do horário / pausado / sem sessão) */}
-        {!data.deliveryOpenNow && (
-          <div className="shrink-0 bg-red-500 text-white px-4 py-2.5 flex items-center justify-center gap-2 text-sm font-semibold text-center">
+    <div className="min-h-screen bg-[#FBF8F4] flex justify-center" style={estiloLoja}>
+      <div className="w-full max-w-lg h-dvh flex flex-col bg-[#FBF8F4] relative">
+        {/* Banner: delivery fechado — no cardápio o aviso fica no topo da loja; aqui só na sacola */}
+        {!data.deliveryOpenNow && showCart && (
+          <div className="shrink-0 bg-red-600 text-white px-4 py-2.5 flex items-center justify-center gap-2 text-sm font-semibold text-center">
             <i className="ri-store-2-line text-base shrink-0" />
-            <span>{
-              data.deliveryClosedReason === 'fora_horario' ? 'Estamos fora do horário de funcionamento. Volte mais tarde!'
-              : data.deliveryClosedReason === 'pausado' ? 'A loja está temporariamente pausada. Volte em instantes!'
-              : 'A loja está fechada para pedidos no momento.'
-            }</span>
+            <span>{situacao.abreAs ? t('cliente.fechadoAbrimos', { h: situacao.abreAs }) : t('cliente.fechadoAgora')}</span>
           </div>
         )}
         {/* Banner: pedido segurado esperando o pagamento pelo app — Pix ou cartão (cliente saiu antes de pagar) */}
@@ -710,315 +646,238 @@ export default function DeliveryPage() {
             <span className="shrink-0 text-[11px] font-black bg-white/20 px-2.5 py-1 rounded-full whitespace-nowrap">Pagar agora →</span>
           </button>
         ) : null}
-        {/* Header (oculto ao ver o pedido, p/ dar mais espaço à lista de itens) */}
-        <div className={"shrink-0" + (showCart ? " hidden" : "")}>
-          {/* Hero: marca da loja + status + ações */}
-          <div className="relative bg-gradient-to-br from-amber-500 via-orange-500 to-orange-600 px-4 pt-5 pb-12">
-            <div
-              className="absolute inset-0 pointer-events-none"
-              style={{ background: 'radial-gradient(circle at 85% -20%, rgba(255,255,255,.25), transparent 45%)' }}
-            />
-            <div className="relative flex items-center gap-3">
-              <div className="w-11 h-11 flex items-center justify-center bg-white rounded-2xl shadow-md shrink-0 overflow-hidden">
-                {lojaLogo ? (
-                  <img src={lojaLogo} alt={tenant?.name || 'Logo'} className="w-full h-full object-cover" />
-                ) : (
-                  <span className="text-orange-600 font-black text-base">{lojaIniciais}</span>
-                )}
-              </div>
-              <div className="flex-1 min-w-0">
-                <h1 className="text-white text-base font-black leading-tight truncate">{tenant?.name || 'Delivery'}</h1>
-                <p className="text-white/85 text-[11px] mt-0.5 flex items-center gap-1.5 min-w-0">
-                  {data.deliveryOpenNow ? (
-                    <span className="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 bg-white/20 rounded-full font-bold text-[10px] text-white">
-                      <span className="w-1.5 h-1.5 bg-green-300 rounded-full" />
-                      Aberto
-                    </span>
-                  ) : (
-                    <span className="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 bg-black/20 rounded-full font-bold text-[10px] text-white">
-                      <span className="w-1.5 h-1.5 bg-red-400 rounded-full" />
-                      Fechado
-                    </span>
-                  )}
-                  <span className="truncate">Olá, {(customerName || '').split(' ')[0]} 👋</span>
-                </p>
-              </div>
-
-              {seletorIdioma}
-
-              {/* Meus pedidos (badge = pedidos em andamento) */}
-              {customerId ? (
-                <button
-                  type="button"
-                  onClick={function () {
-                    setSubView(activeOrders.length > 0 ? 'acompanhar_input' : 'historico');
-                    fetchActiveOrders();
-                  }}
-                  className="relative w-9 h-9 flex items-center justify-center bg-white/20 hover:bg-white/30 border border-white/25 rounded-xl text-white cursor-pointer transition-colors shrink-0"
-                  title="Meus pedidos"
-                >
-                  <i className="ri-file-list-3-line text-[15px]" />
-                  {activeOrders.length > 0 ? (
-                    <span className="absolute -top-1 -right-1 min-w-[15px] h-[15px] px-0.5 flex items-center justify-center bg-white text-orange-600 text-[9px] font-black rounded-full">
-                      {activeOrders.length}
-                    </span>
-                  ) : null}
-                </button>
-              ) : null}
-
-              {/* Perfil: telefone, histórico, sair */}
-              <div className="relative shrink-0">
-                <button
-                  type="button"
-                  onClick={function () { setShowProfileMenu(!showProfileMenu); }}
-                  className="w-9 h-9 flex items-center justify-center bg-white/20 hover:bg-white/30 border border-white/25 rounded-xl text-white cursor-pointer transition-colors"
-                  title="Meu perfil"
-                >
-                  <i className="ri-user-3-line text-[15px]" />
-                </button>
-                {showProfileMenu ? (
-                  <>
-                    <div className="fixed inset-0 z-[40]" onClick={function () { setShowProfileMenu(false); }} />
-                    <div className="absolute right-0 top-full mt-2 w-56 bg-white rounded-xl shadow-lg border border-zinc-100 z-[50] overflow-hidden">
-                      <div className="px-3 py-2.5 border-b border-zinc-100">
-                        <p className="text-xs font-bold text-zinc-800 truncate">{customerName}</p>
-                        <p className="text-[10px] text-zinc-400"><i className="ri-phone-line mr-1" />{phone}</p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={function () { setShowProfileMenu(false); setSubView('historico'); }}
-                        className="w-full flex items-center gap-2 px-3 py-2.5 text-xs font-semibold text-zinc-600 hover:bg-zinc-50 cursor-pointer transition-colors"
-                      >
-                        <i className="ri-history-line text-sm text-zinc-400" />
-                        Histórico de pedidos
-                      </button>
-                      {/* Sair: encerra a sessão neste aparelho p/ entrar com outro número */}
-                      <button
-                        type="button"
-                        onClick={function () {
-                          setShowProfileMenu(false);
-                          setShowSairConfirm(true);
-                        }}
-                        className="w-full flex items-center gap-2 px-3 py-2.5 text-xs font-semibold text-red-600 hover:bg-red-50 cursor-pointer transition-colors border-t border-zinc-100"
-                      >
-                        <i className="ri-logout-box-r-line text-sm" />
-                        Sair (usar outro número)
-                      </button>
-                    </div>
-                  </>
-                ) : null}
-              </div>
-            </div>
-          </div>
-
-          {/* Card flutuante: modo de entrega + endereço + taxa/região/loja */}
-          <div className="relative z-30 -mt-8 mx-4 mb-2 bg-white rounded-2xl shadow-lg border border-zinc-100">
-            <div className="flex items-center gap-2 px-2.5 py-2.5">
-              {/* Toggle Entrega/Retirada — troca direto, sem voltar à tela de modo:
-                  retirada é instantânea; entrega só abre a tela de endereço se não houver um */}
-              <div className="flex bg-zinc-100 rounded-xl p-0.5 shrink-0">
-                <button
-                  type="button"
-                  onClick={function () { if (modoEntrega === 'retirada') handleConfirmarModo('entrega'); }}
-                  className={'flex items-center gap-1 px-2.5 py-1.5 rounded-[10px] text-[11px] font-bold cursor-pointer transition-colors ' +
-                    (modoEntrega !== 'retirada' ? 'bg-zinc-900 text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-700')}
-                >
-                  <i className="ri-e-bike-2-line text-xs" />
-                  Entrega
-                </button>
-                <button
-                  type="button"
-                  onClick={function () { if (modoEntrega !== 'retirada') handleConfirmarModo('retirada'); }}
-                  className={'flex items-center gap-1 px-2.5 py-1.5 rounded-[10px] text-[11px] font-bold cursor-pointer transition-colors ' +
-                    (modoEntrega === 'retirada' ? 'bg-zinc-900 text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-700')}
-                >
-                  <i className="ri-store-2-line text-xs" />
-                  Retirada
-                </button>
-              </div>
-
-            {modoEntrega !== 'retirada' ? (
-              <div className="relative flex-1 min-w-0">
-                <button
-                  type="button"
-                  onClick={function () {
-                    if (hasAnyAddresses) {
-                      setShowAddressDropdown(!showAddressDropdown);
-                    } else {
-                      handleIrParaEnderecos();
-                    }
-                  }}
-                  className="w-full flex items-center gap-1.5 px-1.5 py-1 rounded-lg hover:bg-zinc-50 cursor-pointer transition-colors text-left min-w-0"
-                >
-                  <i className="ri-map-pin-2-fill text-amber-500 text-sm shrink-0" />
-                  <span className="min-w-0 flex-1">
-                    <span className="block text-[9px] font-bold uppercase tracking-wider text-zinc-400">Entregar em</span>
-                    <span className="block text-xs font-bold text-zinc-800 truncate">
-                      {enderecoAtual ? enderecoAtual.label + ' · ' + enderecoDisplay : enderecoDisplay}
-                    </span>
-                  </span>
-                  <i className={'ri-arrow-down-s-line text-zinc-400 shrink-0 transition-transform ' + (showAddressDropdown ? 'rotate-180' : '')} />
-                </button>
-
-                {/* Dropdown de endereços */}
-                {showAddressDropdown && hasAnyAddresses ? (
-                  <>
-                    <div
-                      className="fixed inset-0 z-[40]"
-                      onClick={function () { setShowAddressDropdown(false); }}
-                    />
-                    <div className="absolute right-0 top-full mt-2 w-64 bg-white rounded-xl shadow-lg border border-zinc-100 z-[50] overflow-hidden">
-                      <div className="px-3 py-2 border-b border-zinc-100">
-                        <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">Seus endereços</p>
-                      </div>
-                      <div className="max-h-64 overflow-y-auto py-1">
-                        {displayAddresses.map(function (addr) {
-                          const isSelected = addr.id === selectedAddressId;
-                          const addrLine: string[] = [];
-                          if (addr.street) addrLine.push(addr.street);
-                          if (addr.number) addrLine.push(addr.number);
-                          const line = addrLine.join(', ') || 'Endereço incompleto';
-
-                          return (
-                            <button
-                              key={addr.id}
-                              type="button"
-                              onClick={function () {
-                                handleSelecionarEndereco(addr.id);
-                                setShowAddressDropdown(false);
-                              }}
-                              className={'w-full text-left px-3 py-2.5 hover:bg-amber-50 transition-colors cursor-pointer ' +
-                                (isSelected ? 'bg-amber-50' : '')
-                              }
-                            >
-                              <div className="flex items-center gap-2">
-                                <div className={'w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ' +
-                                  (isSelected ? 'bg-amber-500 border-amber-500' : 'border-zinc-300')
-                                }>
-                                  {isSelected ? <i className="ri-check-line text-white text-[8px]" /> : null}
-                                </div>
-                                <div className="min-w-0 flex-1">
-                                  <div className="flex items-center gap-1.5">
-                                    <div className="w-5 h-5 flex items-center justify-center bg-zinc-100 rounded-md shrink-0 mr-1">
-                                    <i className={getAddressDropdownIcon(addr.label) + ' text-zinc-400 text-[10px]'} />
-                                  </div>
-                                  <span className="text-xs font-bold text-zinc-800 truncate">{addr.label}</span>
-                                    {addr.is_default ? (
-                                      <span className="shrink-0 inline-flex items-center gap-0.5 px-1 py-0.5 bg-amber-100 text-amber-700 text-[9px] font-bold rounded-full">
-                                        <i className="ri-star-fill text-[7px]" />
-                                      </span>
-                                    ) : null}
-                                  </div>
-                                  <p className="text-[10px] text-zinc-500 truncate">{line}</p>
-                                  <p className="text-[10px] text-zinc-400">
-                                    {addr.neighborhood_name || 'Sem bairro'}
-                                    {addr.neighborhood_delivery_fee > 0 ? ' • ' + formatCurrency(addr.neighborhood_delivery_fee) : ' • Grátis'}
-                                  </p>
-                                </div>
-                              </div>
-                            </button>
-                          );
-                        })}
-                      </div>
-                      <div className="border-t border-zinc-100 p-2">
-                        <button
-                          type="button"
-                          onClick={function () {
-                            setShowAddressDropdown(false);
-                            handleIrParaEnderecos();
-                          }}
-                          className="w-full flex items-center justify-center gap-1.5 px-3 py-2 bg-amber-50 hover:bg-amber-100 text-amber-700 text-[11px] font-bold rounded-lg cursor-pointer transition-colors whitespace-nowrap"
-                        >
-                          <i className="ri-settings-3-line text-xs" />
-                          Gerenciar endereços
-                        </button>
-                      </div>
-                    </div>
-                  </>
-                ) : null}
-              </div>
-            ) : (
-              <div className="flex-1 min-w-0 px-1.5">
-                <p className="text-[9px] font-bold uppercase tracking-wider text-zinc-400">Retirar na loja</p>
-                <p className="text-xs font-bold text-zinc-800 truncate">{tenant?.name || 'Balcão da loja'}</p>
-              </div>
-            )}
-            </div>
-
-            {/* Rodapé do card: taxa / região / falar com a loja */}
-            <div className="flex items-stretch border-t border-zinc-100">
-              <div className="flex-1 flex items-center justify-center gap-1.5 px-2 py-2 text-[11px] font-semibold text-zinc-500">
-                <i className="ri-truck-line text-amber-500 text-[13px]" />
-                {modoEntrega === 'retirada'
-                  ? 'Sem taxa'
-                  : (distanceMode
-                      ? (deliveryQuote ? (deliveryQuote.taxa > 0 ? formatCurrency(deliveryQuote.taxa) : 'Grátis') : 'A calcular')
-                      : (deliveryFee > 0 ? formatCurrency(deliveryFee) : 'Grátis'))}
-              </div>
-              <div className="flex-1 flex items-center justify-center gap-1.5 px-2 py-2 text-[11px] font-semibold text-zinc-500 border-l border-zinc-100 min-w-0">
-                {modoEntrega === 'retirada' ? (
-                  <>
-                    <i className="ri-store-2-line text-amber-500 text-[13px]" />
-                    <span className="truncate">Balcão</span>
-                  </>
-                ) : distanceMode ? (
-                  <>
-                    <i className="ri-route-line text-amber-500 text-[13px]" />
-                    <span className="truncate">
-                      {deliveryQuote
-                        ? '~' + deliveryQuote.km.toFixed(1) + ' km' + (deliveryQuote.tempoMax > 0 ? ' · ' + deliveryQuote.tempoMax + ' min' : '')
-                        : 'Marcar no mapa'}
-                    </span>
-                  </>
-                ) : (
-                  <>
-                    <i className="ri-map-pin-line text-amber-500 text-[13px]" />
-                    <span className="truncate">{bairroAtual ? bairroAtual.name : 'Sem bairro'}</span>
-                  </>
-                )}
-              </div>
-              {lojaWaUrl ? (
-                <a
-                  href={lojaWaUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex-1 flex items-center justify-center gap-1.5 px-2 py-2 text-[11px] font-bold text-green-600 hover:bg-green-50 border-l border-zinc-100 transition-colors"
-                  title="Falar com a loja no WhatsApp"
-                >
-                  <i className="ri-whatsapp-line text-[13px]" />
-                  Loja
-                </a>
-              ) : null}
-            </div>
-          </div>
-        </div>
-
-        {/* Categorias sticky */}
-        {subView === 'cardapio' && !showCart ? (
-        <div className="sticky top-0 z-20 bg-white/95 backdrop-blur-sm border-b border-zinc-100 shrink-0">
-          <div className="flex items-center gap-2 px-4 py-3 overflow-x-auto scrollbar-hide">
-            {categories.map(function (cat) {
-              return (
-                <button
-                  key={cat.id}
-                  type="button"
-                  onClick={function () { scrollToCategoria(cat.id); }}
-                  className={'shrink-0 px-4 py-2 rounded-full text-xs font-bold whitespace-nowrap cursor-pointer transition-all duration-200 ' +
-                    (categoriaAtiva === cat.id
-                      ? 'bg-gradient-to-br from-amber-500 to-orange-500 text-white shadow-sm'
-                      : 'bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200/60')
-                  }
-                >
-                  {tx(cat)}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-        ) : null}
-
         {/* Conteúdo scrollable */}
         <div className="flex-1 overflow-y-auto">
+          {subView === 'cardapio' && !showCart ? (
+            <LojaTopo
+              nome={tenant?.name || 'Delivery'}
+              logoUrl={lojaLogo}
+              capaUrl={capaLoja}
+              situacao={situacao}
+              subtitulo={customerName ? 'Olá, ' + (customerName || '').split(' ')[0] : (city || null)}
+              metas={metasLoja}
+              acoes={
+                <>
+                  {seletorIdiomaCapa}
+                  {customerId ? (
+                    <BotaoCapa
+                      icone="ri-file-list-3-line"
+                      rotulo={t('cliente.meusPedidos')}
+                      badge={activeOrders.length}
+                      onClick={function () {
+                        setSubView(activeOrders.length > 0 ? 'acompanhar_input' : 'historico');
+                        fetchActiveOrders();
+                      }}
+                    />
+                  ) : null}
+                  {!customerId ? (
+                    <BotaoCapa icone="ri-user-3-line" texto={t('cliente.entrar')} onClick={function () { data.setStep('identificacao'); }} />
+                  ) : null}
+                  {/* Perfil: telefone, histórico, sair */}
+                  {customerId ? (
+                  <div className="relative">
+                    <BotaoCapa icone="ri-user-3-line" rotulo="Meu perfil" onClick={function () { setShowProfileMenu(!showProfileMenu); }} />
+                    {showProfileMenu ? (
+                      <>
+                        <div className="fixed inset-0 z-[40]" onClick={function () { setShowProfileMenu(false); }} />
+                        <div className="absolute right-0 top-full mt-2 w-56 bg-white rounded-xl shadow-lg border border-stone-100 z-[50] overflow-hidden">
+                          <div className="px-3 py-2.5 border-b border-stone-100">
+                            <p className="text-xs font-bold text-stone-800 truncate">{customerName}</p>
+                            <p className="text-[11px] text-stone-500"><i className="ri-phone-line mr-1" />{phone}</p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={function () { setShowProfileMenu(false); setSubView('historico'); }}
+                            className="w-full flex items-center gap-2 px-3 py-3 text-sm font-semibold text-stone-700 hover:bg-stone-50 cursor-pointer transition-colors"
+                          >
+                            <i className="ri-history-line text-base text-stone-400" />
+                            Histórico de pedidos
+                          </button>
+                          {/* Sair: encerra a sessão neste aparelho p/ entrar com outro número */}
+                          <button
+                            type="button"
+                            onClick={function () {
+                              setShowProfileMenu(false);
+                              setShowSairConfirm(true);
+                            }}
+                            className="w-full flex items-center gap-2 px-3 py-3 text-sm font-semibold text-red-700 hover:bg-red-50 cursor-pointer transition-colors border-t border-stone-100"
+                          >
+                            <i className="ri-logout-box-r-line text-base" />
+                            Sair (usar outro número)
+                          </button>
+                        </div>
+                      </>
+                    ) : null}
+                  </div>
+                  ) : null}
+                </>
+              }
+            >
+              {avisoFechado}
+
+              {/* Entrega ou retirada + endereço + taxa */}
+              <div className="relative z-30 mx-5 mt-3.5 bg-white border border-stone-200/70 rounded-[18px] p-1.5">
+                {data.retiradaAtivo ? (
+                  <div className="grid grid-cols-2 gap-1 bg-stone-100 rounded-[13px] p-1">
+                    <button
+                      type="button"
+                      aria-pressed={modoEntrega !== 'retirada'}
+                      onClick={function () {
+                        if (modoEntrega !== 'retirada') return;
+                        // Sem cadastro ainda: só troca o modo (nome e endereço ficam na sacola)
+                        if (!customer) { data.setModoEntrega('entrega'); if (selectedNeighborhoodId) handleChangeNeighborhood(selectedNeighborhoodId); return; }
+                        handleConfirmarModo('entrega');
+                      }}
+                      className={'h-11 rounded-[10px] text-sm cursor-pointer transition-colors ' +
+                        (modoEntrega !== 'retirada' ? 'bg-white shadow-sm font-bold text-stone-900' : 'font-semibold text-stone-600')}
+                    >
+                      {t('cliente.entrega')}
+                    </button>
+                    <button
+                      type="button"
+                      aria-pressed={modoEntrega === 'retirada'}
+                      onClick={function () {
+                        if (modoEntrega === 'retirada') return;
+                        if (!customer) { data.setModoEntrega('retirada'); return; }
+                        handleConfirmarModo('retirada');
+                      }}
+                      className={'h-11 rounded-[10px] text-sm cursor-pointer transition-colors ' +
+                        (modoEntrega === 'retirada' ? 'bg-white shadow-sm font-bold text-stone-900' : 'font-semibold text-stone-600')}
+                    >
+                      {t('cliente.retirada')}
+                    </button>
+                  </div>
+                ) : null}
+
+                {modoEntrega !== 'retirada' ? (
+                  <div className="relative">
+                    <button
+                      type="button"
+                      onClick={function () {
+                        if (hasAnyAddresses) {
+                          setShowAddressDropdown(!showAddressDropdown);
+                        } else {
+                          handleIrParaEnderecos();
+                        }
+                      }}
+                      className="w-full flex items-center gap-3 px-2 pt-3 pb-2 text-left cursor-pointer"
+                    >
+                      <span className="w-10 h-10 rounded-xl bg-[var(--cor-loja-suave)] text-[var(--cor-loja)] flex items-center justify-center shrink-0">
+                        <i className="ri-map-pin-2-line text-lg" />
+                      </span>
+                      <span className="flex-1 min-w-0">
+                        <span className="block text-xs text-stone-500">{t('cliente.entregarEm')}</span>
+                        <span className="block text-sm font-bold text-stone-900 truncate">
+                          {enderecoAtual ? enderecoAtual.label + ' · ' + enderecoDisplay : enderecoDisplay}
+                        </span>
+                      </span>
+                      <span className="shrink-0 text-right">
+                        <span className="block text-xs text-stone-500">
+                          {distanceMode && deliveryQuote
+                            ? '~' + deliveryQuote.km.toFixed(1) + ' km' + (deliveryQuote.tempoMax > 0 ? ' · ' + deliveryQuote.tempoMax + ' min' : '')
+                            : (!distanceMode && bairroAtual ? bairroAtual.name : t('cliente.taxaEntrega'))}
+                        </span>
+                        <span className="block text-sm font-bold text-stone-900">
+                          {distanceMode
+                            ? (deliveryQuote ? (deliveryQuote.taxa > 0 ? formatCurrency(deliveryQuote.taxa) : t('cliente.gratis')) : 'A calcular')
+                            : (data.effectiveDeliveryFee > 0 ? formatCurrency(data.effectiveDeliveryFee) : t('cliente.gratis'))}
+                        </span>
+                      </span>
+                      <i className={'ri-arrow-down-s-line text-lg text-stone-400 shrink-0 transition-transform ' + (showAddressDropdown ? 'rotate-180' : '')} />
+                    </button>
+
+                    {/* Lista de endereços salvos */}
+                    {showAddressDropdown && hasAnyAddresses ? (
+                      <>
+                        <div
+                          className="fixed inset-0 z-[40]"
+                          onClick={function () { setShowAddressDropdown(false); }}
+                        />
+                        <div className="absolute left-0 right-0 top-full mt-2 bg-white rounded-2xl shadow-lg border border-stone-100 z-[50] overflow-hidden">
+                          <div className="px-3.5 py-2 border-b border-stone-100">
+                            <p className="text-[11px] font-bold text-stone-500 uppercase tracking-wider">Seus endereços</p>
+                          </div>
+                          <div className="max-h-64 overflow-y-auto py-1">
+                            {displayAddresses.map(function (addr) {
+                              const isSelected = addr.id === selectedAddressId;
+                              const addrLine: string[] = [];
+                              if (addr.street) addrLine.push(addr.street);
+                              if (addr.number) addrLine.push(addr.number);
+                              const line = addrLine.join(', ') || 'Endereço incompleto';
+                              return (
+                                <button
+                                  key={addr.id}
+                                  type="button"
+                                  onClick={function () {
+                                    handleSelecionarEndereco(addr.id);
+                                    setShowAddressDropdown(false);
+                                  }}
+                                  className={'w-full text-left px-3.5 py-3 hover:bg-stone-50 transition-colors cursor-pointer flex items-center gap-3 ' + (isSelected ? 'bg-stone-50' : '')}
+                                >
+                                  <span className={'w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 ' +
+                                    (isSelected ? 'border-[var(--cor-loja)]' : 'border-stone-300')}>
+                                    {isSelected ? <span className="w-2.5 h-2.5 rounded-full bg-[var(--cor-loja)]" /> : null}
+                                  </span>
+                                  <i className={getAddressDropdownIcon(addr.label) + ' text-stone-400 text-base shrink-0'} />
+                                  <span className="min-w-0 flex-1">
+                                    <span className="flex items-center gap-1.5">
+                                      <span className="text-sm font-bold text-stone-900 truncate">{addr.label}</span>
+                                      {addr.is_default ? <i className="ri-star-fill text-[11px] text-amber-500" /> : null}
+                                    </span>
+                                    <span className="block text-xs text-stone-500 truncate">{line}</span>
+                                    <span className="block text-xs text-stone-400">
+                                      {addr.neighborhood_name || 'Sem bairro'}
+                                      {addr.neighborhood_delivery_fee > 0 ? ' · ' + formatCurrency(addr.neighborhood_delivery_fee) : ' · ' + t('cliente.gratis')}
+                                    </span>
+                                  </span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                          <div className="border-t border-stone-100 p-2">
+                            <button
+                              type="button"
+                              onClick={function () {
+                                setShowAddressDropdown(false);
+                                handleIrParaEnderecos();
+                              }}
+                              className="w-full h-11 flex items-center justify-center gap-1.5 bg-stone-100 hover:bg-stone-200 text-stone-800 text-sm font-bold rounded-xl cursor-pointer transition-colors whitespace-nowrap"
+                            >
+                              <i className="ri-settings-3-line" />
+                              Gerenciar endereços
+                            </button>
+                          </div>
+                        </div>
+                      </>
+                    ) : null}
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-3 px-2 pt-3 pb-2">
+                    <span className="w-10 h-10 rounded-xl bg-[var(--cor-loja-suave)] text-[var(--cor-loja)] flex items-center justify-center shrink-0">
+                      <i className="ri-store-2-line text-lg" />
+                    </span>
+                    <span className="flex-1 min-w-0">
+                      <span className="block text-xs text-stone-500">{t('cliente.retirarNaLoja')}</span>
+                      <span className="block text-sm font-bold text-stone-900 truncate">{tenant?.name || 'Balcão da loja'}</span>
+                    </span>
+                    <span className="shrink-0 text-sm font-bold text-emerald-700">{t('cliente.gratis')}</span>
+                  </div>
+                )}
+
+                {lojaWaUrl ? (
+                  <a
+                    href={lojaWaUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center justify-center gap-1.5 h-10 mt-1 border-t border-stone-100 text-[13px] font-bold text-emerald-700 hover:bg-emerald-50 rounded-b-[14px] transition-colors"
+                  >
+                    <i className="ri-whatsapp-line text-base" />
+                    Falar com a loja
+                  </a>
+                ) : null}
+              </div>
+            </LojaTopo>
+          ) : null}
           {subView === 'acompanhar_input' ? (
             <div className="px-4 py-4">
               <button
@@ -1187,21 +1046,16 @@ export default function DeliveryPage() {
           ) : (
             <>
               {showCart ? (
-                <CarrinhoDelivery
-                  cart={cart}
-                  neighborhoods={neighborhoods}
-                  selectedNeighborhoodId={selectedNeighborhoodId}
-                  deliveryFee={deliveryFee}
-                  onChangeNeighborhood={handleChangeNeighborhood}
-                  onAlterarQtd={handleAlterarQtd}
-                  onRemover={handleRemover}
-                  onEditar={handleAbrirEdicao}
-                  error={error}
-                  onVoltar={function () { data.setShowCart(false); }}
-                  city={city}
-                  modoEntrega={modoEntrega}
+                <CheckoutDelivery
+                  data={data}
+                  metodosDisponiveis={metodosDisponiveis}
+                  onVoltar={function () { data.setShowCart(false); data.setError(''); }}
+                  fotoDe={fotoDoItem}
+                  lojaFechadaTexto={data.deliveryOpenNow ? null : (situacao.abreAs ? t('cliente.fechadoAbreAs', { h: situacao.abreAs }) : t('cliente.fechadoAgora'))}
+                  nomeLoja={tenant?.name || ''}
                 />
               ) : (
+                <div className="mt-3">
                 <CardapioMesaQR
                   categoriaAtiva={categoriaAtiva}
                   categories={categories}
@@ -1220,197 +1074,22 @@ export default function DeliveryPage() {
                   deepLinkItemId={deepLinkItemId}
                   onDeepLinkConsumed={handleDeepLinkConsumed}
                 />
+                </div>
               )}
             </>
           )}
         </div>
 
-        {/* Footer do carrinho - sempre visível */}
-        {showCart && cart.length > 0 ? (() => {
-          const subtotalFooter = cart.reduce(function (s: number, i: typeof cart[0]) { return s + i.precoTotal * i.quantidade; }, 0);
-          const voucherDescFooter = Math.min(data.voucherDesconto || 0, subtotalFooter);
-          const clubeDescFooter = Math.min(data.clubeSel.desconto || 0, Math.max(0, subtotalFooter - voucherDescFooter));
-          const totalFooter = Math.max(0, subtotalFooter + deliveryFee - voucherDescFooter - clubeDescFooter);
-          return (
-            <div className="shrink-0 bg-white border-t border-zinc-100 px-4 py-3 space-y-3 z-30">
-              {/* Resumo de totais */}
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-zinc-500">Subtotal ({totalItens} {totalItens === 1 ? 'item' : 'itens'})</span>
-                  <span className="text-zinc-800 font-bold">{formatCurrency(subtotalFooter)}</span>
-                </div>
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-zinc-500">
-                    {modoEntrega === 'retirada' ? 'Retirada na loja' : 'Taxa de entrega'}
-                  </span>
-                  <span className={modoEntrega === 'retirada' || deliveryFee === 0 ? 'text-green-600 font-bold' : 'text-zinc-800 font-bold'}>
-                    {modoEntrega === 'retirada' ? 'Grátis' : (deliveryFee > 0 ? formatCurrency(deliveryFee) : 'Grátis')}
-                  </span>
-                </div>
-                {modoEntrega !== 'retirada' && bairroAtual && deliveryFee > 0 ? (
-                  <div className="flex items-center justify-end">
-                    <span className="text-[10px] text-zinc-400 flex items-center gap-1">
-                      <i className="ri-map-pin-line text-[9px]" />
-                      {bairroAtual.name}
-                    </span>
-                  </div>
-                ) : null}
-                {modoEntrega !== 'retirada' && distanceMode && deliveryQuote && deliveryQuote.dentroArea ? (
-                  <div className="flex items-center justify-end">
-                    <span className="text-[10px] text-zinc-400 flex items-center gap-1">
-                      <i className="ri-route-line text-[9px]" />
-                      ~{deliveryQuote.km.toFixed(1)} km
-                      {deliveryQuote.tempoMax > 0 ? ' • ' + deliveryQuote.tempoMax + ' min' : ''}
-                    </span>
-                  </div>
-                ) : null}
-                {voucherDescFooter > 0 ? (
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="text-green-600 flex items-center gap-1">
-                      <i className="ri-coupon-3-line text-[11px]" />Cupom {data.voucherCodigo}
-                    </span>
-                    <span className="text-green-600 font-bold">- {formatCurrency(voucherDescFooter)}</span>
-                  </div>
-                ) : null}
-
-                {clubeDescFooter > 0 ? (
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="text-green-600 flex items-center gap-1 min-w-0 truncate">🎁 Clube: {data.clubeSel.nomes.join(', ')}</span>
-                    <span className="text-green-600 font-bold whitespace-nowrap">- {formatCurrency(clubeDescFooter)}</span>
-                  </div>
-                ) : null}
-
-                {/* Clube de fidelidade: pontos neste pedido + prêmios */}
-                <ClubeCheckout
-                  tenantId={data.tenantId}
-                  itens={cart.map(function (i: typeof cart[0]) { return { id: i.itemId, preco: i.precoBase, qtd: i.quantidade }; })}
-                  subtotal={Math.max(0, subtotalFooter - voucherDescFooter)}
-                  onChange={data.setClubeSel}
-                />
-
-                {/* Cupom / Voucher */}
-                <div className="pt-1">
-                  {data.voucherCodigo ? (
-                    <button
-                      type="button"
-                      onClick={data.handleRemoverVoucher}
-                      className="text-[11px] text-zinc-500 hover:text-red-600 cursor-pointer flex items-center gap-1"
-                    >
-                      <i className="ri-close-circle-line text-xs" />
-                      Remover cupom
-                    </button>
-                  ) : (
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="text"
-                        value={data.voucherInput}
-                        onChange={function (e) { data.setVoucherInput(e.target.value.toUpperCase()); }}
-                        placeholder="Cupom / voucher"
-                        className="flex-1 min-w-0 px-3 py-2 text-xs border border-zinc-200 rounded-lg uppercase focus:outline-none focus:ring-2 focus:ring-amber-400/50 focus:border-amber-400"
-                      />
-                      <button
-                        type="button"
-                        onClick={data.handleAplicarVoucher}
-                        disabled={!data.voucherInput.trim() || data.voucherLoading}
-                        className="px-3 py-2 bg-zinc-800 hover:bg-zinc-900 disabled:opacity-50 text-white text-xs font-bold rounded-lg cursor-pointer whitespace-nowrap transition-colors flex items-center gap-1"
-                      >
-                        {data.voucherLoading ? <i className="ri-loader-4-line animate-spin" /> : <i className="ri-coupon-3-line" />}
-                        Aplicar
-                      </button>
-                    </div>
-                  )}
-                  {data.voucherMsg ? (
-                    <p className="text-[11px] text-red-600 mt-1.5">{data.voucherMsg}</p>
-                  ) : null}
-                </div>
-
-                <div className="h-px bg-zinc-100" />
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-bold text-zinc-800">Total</span>
-                  <span className="text-sm font-bold text-amber-600">{formatCurrency(totalFooter)}</span>
-                </div>
-              </div>
-
-              {/* Aviso de fora da área de entrega (modo distância) */}
-              {foraDeArea ? (
-                <div className="flex items-start gap-2 px-3 py-2.5 bg-red-50 border border-red-100 rounded-xl">
-                  <i className="ri-map-pin-off-line text-red-500 text-sm mt-0.5" />
-                  <div>
-                    <p className="text-xs font-bold text-red-700">Fora da área de entrega</p>
-                    <button
-                      type="button"
-                      onClick={function () { data.handleIrParaEnderecos(); }}
-                      className="text-[11px] text-red-600 underline cursor-pointer"
-                    >
-                      Ajustar localização no mapa
-                    </button>
-                  </div>
-                </div>
-              ) : null}
-
-              {/* Botões de ação */}
-              <button
-                type="button"
-                onClick={function () {
-                  if (foraDeArea) { data.handleIrParaEnderecos(); return; }
-                  const activeMethods = Object.entries(metodosDisponiveis).filter(function (entry) { return entry[1] === true; });
-                  if (activeMethods.length > 0) {
-                    setMetodoPagamento('');
-                    setValorDinheiro('');
-                    setErroValorDinheiro('');
-                    setShowPagamentoModal(true);
-                  } else {
-                    handleConfirmarPedido();
-                  }
-                }}
-                disabled={enviando || foraDeArea}
-                className="w-full bg-gradient-to-br from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 disabled:opacity-60 disabled:hover:from-amber-500 disabled:hover:to-orange-500 text-white text-sm font-bold py-3.5 rounded-xl cursor-pointer transition-all whitespace-nowrap flex items-center justify-center gap-2"
-              >
-                {enviando ? (
-                  <>
-                    <i className="ri-loader-4-line animate-spin" />
-                    Enviando pedido...
-                  </>
-                ) : (
-                  <>
-                    <i className="ri-check-line" />
-                    Confirmar pedido — {formatCurrency(totalFooter)}
-                  </>
-                )}
-              </button>
-              <button
-                type="button"
-                onClick={function () { data.setShowCart(false); }}
-                disabled={enviando}
-                className="w-full text-sm text-zinc-500 font-bold py-3 cursor-pointer hover:text-zinc-700 transition-colors bg-zinc-100 rounded-xl hover:bg-zinc-200 disabled:opacity-50 whitespace-nowrap flex items-center justify-center gap-2"
-              >
-                <i className="ri-add-line" />
-                Adicionar mais itens
-              </button>
-            </div>
-          );
-        })() : null}
-
-        {/* Footer carrinho fixo */}
+        {/* Barra da sacola */}
         {(!showCart && totalItens > 0 && subView === 'cardapio') ? (
-          <div className="sticky bottom-0 left-0 right-0 bg-white/95 backdrop-blur-sm border-t border-zinc-100 px-4 py-3 z-30">
-            <button
-              type="button"
-              onClick={function () { data.setShowCart(true); }}
-              className="w-full flex items-center justify-between bg-gradient-to-br from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white px-5 py-3.5 rounded-xl cursor-pointer transition-colors shadow-sm"
-            >
-              <div className="flex items-center gap-3">
-                <div className="w-7 h-7 flex items-center justify-center bg-white/20 rounded-full">
-                  <span className="text-xs font-bold text-white">{totalItens}</span>
-                </div>
-                <span className="text-sm font-bold">Ver pedido</span>
-              </div>
-              {/* Só o valor dos produtos — a taxa de entrega entra ao abrir o pedido */}
-              <span className="text-sm font-bold">
-                {formatCurrency(totalItensProdutos)}
-              </span>
-            </button>
-          </div>
+          <BarraSacola
+            quantidade={totalItens}
+            texto={t('cliente.verSacola')}
+            /* Só o valor dos produtos — a taxa de entrega entra ao abrir a sacola */
+            total={data.deliveryOpenNow ? formatCurrency(totalItensProdutos) : t('cliente.envioQuandoAbrir')}
+            apagada={!data.deliveryOpenNow}
+            onClick={function () { data.setShowCart(true); }}
+          />
         ) : null}
 
         {/* Modal Editar Item */}
@@ -1469,253 +1148,6 @@ export default function DeliveryPage() {
             </div>
           </div>
         ) : null}
-
-        {showPagamentoModal ? (() => {
-          const subtotalModal = cart.reduce(function (s: number, i: typeof cart[0]) { return s + i.precoTotal * i.quantidade; }, 0);
-          const voucherDescModal = Math.min(data.voucherDesconto || 0, subtotalModal);
-          const clubeDescModal = Math.min(data.clubeSel.desconto || 0, Math.max(0, subtotalModal - voucherDescModal));
-          const totalModal = Math.max(0, subtotalModal + deliveryFee - voucherDescModal - clubeDescModal);
-          return (
-            <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center" style={{ paddingBottom: kbInset }}>
-              <div
-                className="absolute inset-0 bg-black/50 backdrop-blur-sm"
-                onClick={function () { if (!enviando) { setShowPagamentoModal(false); setValorDinheiro(''); setErroValorDinheiro(''); } }}
-              />
-              <div className="relative w-full sm:max-w-md bg-white rounded-t-3xl sm:rounded-2xl p-6 pb-8 z-10 animate-slide-up max-h-[90vh] overflow-y-auto" onFocus={scrollFocusedFieldIntoView}>
-                <div className="w-10 h-1.5 bg-zinc-200 rounded-full mx-auto mb-5 sm:hidden" />
-
-                {/* Voltar */}
-                <button
-                  type="button"
-                  disabled={enviando}
-                  onClick={function () { setShowPagamentoModal(false); setValorDinheiro(''); setErroValorDinheiro(''); }}
-                  className="inline-flex items-center gap-1 text-sm font-bold text-zinc-500 hover:text-zinc-700 cursor-pointer mb-2 -mt-1 disabled:opacity-50 whitespace-nowrap"
-                >
-                  <i className="ri-arrow-left-s-line text-lg" />
-                  Voltar
-                </button>
-
-                <div className="text-center mb-6">
-                  <div className="w-14 h-14 flex items-center justify-center mx-auto mb-3 bg-amber-50 rounded-2xl border border-amber-100">
-                    <i className="ri-wallet-3-line text-2xl text-amber-600" />
-                  </div>
-                  <h3 className="text-lg font-black text-zinc-800 mb-1">Forma de pagamento</h3>
-                  <p className="text-xs text-zinc-500">
-                    {modoEntrega === 'retirada'
-                      ? 'Escolha como vai pagar na retirada'
-                      : 'Escolha como vai pagar para o motoboy já se preparar'}
-                  </p>
-                </div>
-
-                <div className="space-y-2 mb-6">
-                  {Object.entries(metodosDisponiveis).filter(function (entry) { return entry[1] === true; })
-                    // "PIX pelo app" sempre primeiro (é o caminho que a loja quer empurrar), depois o cartão pelo app
-                    .sort(function (a, b) {
-                      const ordem = function (k: string) { return k === 'pix_online' ? 0 : k === 'cartao_online' ? 1 : 2; };
-                      return ordem(a[0]) - ordem(b[0]);
-                    })
-                    .map(function (entry) {
-                    const key = entry[0];
-                    const destaque = key === 'pix_online';
-                    const methodMap: Record<string, { label: string; icon: string; description: string }> = modoEntrega === 'retirada' ? {
-                      dinheiro: { label: 'Dinheiro', icon: 'ri-money-dollar-circle-line', description: 'Informe o valor para calcular o troco' },
-                      cartao_credito: { label: 'Cartão de Crédito', icon: 'ri-bank-card-line', description: 'Pague com cartão na retirada' },
-                      cartao_debito: { label: 'Cartão de Débito', icon: 'ri-bank-card-2-line', description: 'Pague com cartão na retirada' },
-                      pix: { label: 'PIX', icon: 'ri-qr-code-line', description: 'Faça o PIX na retirada' },
-                      vale_refeicao: { label: 'Vale Refeição', icon: 'ri-coupon-line', description: 'Use seu vale na retirada' },
-                      pix_online: { label: 'PIX pelo app', icon: 'ri-smartphone-line', description: 'Pague agora pelo celular — confirmação automática' },
-                      cartao_online: { label: 'Cartão de crédito pelo app', icon: 'ri-bank-card-line', description: 'Pague agora no celular — crédito, à vista' },
-                    } : {
-                      dinheiro: { label: 'Dinheiro', icon: 'ri-money-dollar-circle-line', description: 'Informe o valor para calcular o troco' },
-                      cartao_credito: { label: 'Cartão de Crédito', icon: 'ri-bank-card-line', description: 'O motoboy levará a maquininha' },
-                      cartao_debito: { label: 'Cartão de Débito', icon: 'ri-bank-card-2-line', description: 'O motoboy levará a maquininha' },
-                      pix: { label: 'PIX', icon: 'ri-qr-code-line', description: 'O motoboy levará a maquininha' },
-                      vale_refeicao: { label: 'Vale Refeição', icon: 'ri-coupon-line', description: 'O motoboy levará a maquininha' },
-                      pix_online: { label: 'PIX pelo app', icon: 'ri-smartphone-line', description: 'Pague agora pelo celular — o motoboy não cobra nada' },
-                      cartao_online: { label: 'Cartão de crédito pelo app', icon: 'ri-bank-card-line', description: 'Pague agora no celular — crédito, à vista' },
-                    };
-                    const info = methodMap[key] || { label: key, icon: 'ri-wallet-line', description: '' };
-                    const selected = metodoPagamento === key;
-
-                    return (
-                      <button
-                        key={key}
-                        type="button"
-                        onClick={function () {
-                          setMetodoPagamento(key);
-                          setValorDinheiro('');
-                          setErroValorDinheiro('');
-                        }}
-                        className={'w-full flex items-center gap-4 px-4 py-3.5 rounded-xl border cursor-pointer transition-all duration-200 ' +
-                          (selected
-                            ? (destaque ? 'bg-emerald-50 border-emerald-400 ring-2 ring-emerald-200/60' : 'bg-amber-50 border-amber-300 ring-2 ring-amber-200/50')
-                            : (destaque ? 'bg-emerald-50/60 border-emerald-300 hover:border-emerald-400 shadow-sm' : 'bg-white border-zinc-100 hover:border-zinc-200'))
-                        }
-                      >
-                        <div className={'w-10 h-10 flex items-center justify-center rounded-xl shrink-0 ' +
-                          (selected ? (destaque ? 'bg-emerald-500 text-white' : 'bg-amber-500 text-white') : (destaque ? 'bg-emerald-500 text-white' : 'bg-zinc-100 text-zinc-400'))
-                        }>
-                          <i className={info.icon + ' text-lg'} />
-                        </div>
-                        <div className="flex-1 text-left">
-                          <span className={'text-sm font-bold ' + (selected ? 'text-zinc-800' : 'text-zinc-700')}>
-                            {info.label}
-                            {destaque ? (
-                              <span className="ml-2 inline-flex items-center gap-0.5 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-500 text-white align-middle">
-                                <i className="ri-flashlight-fill" /> Recomendado
-                              </span>
-                            ) : null}
-                          </span>
-                          <p className={'text-[11px] mt-0.5 ' + (destaque ? 'text-emerald-700' : 'text-zinc-400')}>{info.description}</p>
-                        </div>
-                        <div className={'w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 ' +
-                          (selected ? (destaque ? 'bg-emerald-500 border-emerald-500' : 'bg-amber-500 border-amber-500') : (destaque ? 'border-emerald-300' : 'border-zinc-200'))
-                        }>
-                          {selected ? <i className="ri-check-line text-white text-[10px]" /> : null}
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-
-                {/* Campo de valor em dinheiro + troco */}
-                {metodoPagamento === 'dinheiro' ? (
-                  <div className="mb-6 bg-amber-50 rounded-xl p-4 border border-amber-200/60">
-                    <label className="block text-xs font-bold text-zinc-700 mb-2">
-                      <i className="ri-money-dollar-circle-line text-amber-600 mr-1" />
-                      Qual valor você vai entregar?
-                    </label>
-                    <div className="relative">
-                      <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
-                        <span className="text-sm font-bold text-zinc-400">R$</span>
-                      </div>
-                      <input
-                        type="number"
-                        inputMode="decimal"
-                        step="0.01"
-                        min="0"
-                        value={valorDinheiro}
-                        onChange={function (e) {
-                          const raw = e.target.value;
-                          setValorDinheiro(raw);
-                          const num = parseFloat(raw);
-                          if (raw === '') {
-                            setErroValorDinheiro('');
-                          } else if (isNaN(num) || num < totalModal) {
-                            setErroValorDinheiro('O valor não pode ser menor que o total do pedido');
-                          } else {
-                            setErroValorDinheiro('');
-                          }
-                        }}
-                        placeholder={'0,00'}
-                        className="w-full pl-10 pr-4 py-3 bg-white border border-zinc-200 rounded-xl text-sm font-bold text-zinc-800 placeholder-zinc-300 focus:outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-200/50 transition-all"
-                      />
-                    </div>
-                    {erroValorDinheiro ? (
-                      <p className="text-xs text-red-500 mt-1.5 flex items-center gap-1">
-                        <i className="ri-error-warning-line text-xs" />
-                        {erroValorDinheiro}
-                      </p>
-                    ) : null}
-
-                    {valorDinheiro !== '' && !erroValorDinheiro ? (() => {
-                      const valorNum = parseFloat(valorDinheiro) || 0;
-                      const troco = valorNum - totalModal;
-                      return (
-                        <div className="mt-3 pt-3 border-t border-amber-200/60">
-                          <div className="flex items-center justify-between">
-                            <span className="text-xs text-zinc-600 font-medium">Total do pedido</span>
-                            <span className="text-xs font-bold text-zinc-800">{formatCurrency(totalModal)}</span>
-                          </div>
-                          <div className="flex items-center justify-between mt-1.5">
-                            <span className="text-xs text-zinc-600 font-medium">Valor entregue</span>
-                            <span className="text-xs font-bold text-zinc-800">{formatCurrency(valorNum)}</span>
-                          </div>
-                          <div className="flex items-center justify-between mt-2 pt-2 border-t border-amber-200/60">
-                            <span className="text-sm font-bold text-green-700 flex items-center gap-1">
-                              <i className="ri-arrow-go-back-line text-sm" />
-                              Troco
-                            </span>
-                            <span className="text-sm font-black text-green-700">{formatCurrency(troco)}</span>
-                          </div>
-                          <p className="text-[10px] text-green-600/70 mt-1.5">
-                            {modoEntrega === 'retirada'
-                              ? 'Apresente o valor na retirada e receba o troco de '
-                              : 'O motoboy já levará o troco de '}
-                            <strong>{formatCurrency(troco)}</strong>
-                          </p>
-                        </div>
-                      );
-                    })() : null}
-                  </div>
-                ) : null}
-
-                {/* CPF/CNPJ na nota fiscal (opcional) */}
-                <div className="mb-3">
-                  <CpfCnpjInput
-                    label="CPF/CNPJ na nota fiscal (opcional)"
-                    value={data.cpfNota}
-                    onChange={data.setCpfNota}
-                    hint="Deixe em branco se não quiser o documento na nota."
-                  />
-                </div>
-
-                {/* Aceite de ofertas pelo WhatsApp (opt-in da Meta/LGPD): desmarcado por padrão. */}
-                {!data.jaAceitaOfertas && (
-                  <label className="mb-3 flex items-start gap-2.5 px-3 py-2.5 bg-zinc-50 border border-zinc-100 rounded-xl cursor-pointer">
-                    <input
-                      type="checkbox"
-                      className="mt-0.5 w-4 h-4 accent-amber-500 cursor-pointer"
-                      checked={data.aceitaOfertas}
-                      onChange={function (e) { data.setAceitaOfertas(e.target.checked); }}
-                    />
-                    <span className="text-xs text-zinc-600 leading-snug">
-                      Quero receber ofertas e cupons da loja pelo WhatsApp.
-                      <span className="block text-[11px] text-zinc-400">Dá para sair quando quiser respondendo SAIR.</span>
-                    </span>
-                  </label>
-                )}
-
-                {error ? (
-                  <div className="mb-3 flex items-start gap-2 bg-red-50 border border-red-100 rounded-xl px-3 py-2.5">
-                    <i className="ri-error-warning-line text-red-500 text-sm mt-0.5" />
-                    <p className="text-xs font-bold text-red-700">{error}</p>
-                  </div>
-                ) : null}
-
-                <button
-                  type="button"
-                  disabled={!metodoPagamento || enviando || (metodoPagamento === 'dinheiro' && (valorDinheiro === '' || !!erroValorDinheiro)) || cpfNotaInvalido}
-                  onClick={function () {
-                    if (metodoPagamento) {
-                      if (metodoPagamento === 'dinheiro' && valorDinheiro !== '') {
-                        const valorNum = parseFloat(valorDinheiro) || 0;
-                        if (valorNum < totalModal) return;
-                      }
-                      // Só fecha após o pedido ser criado: em erro o modal fica com a forma escolhida.
-                      handleConfirmarPedido(metodoPagamento, valorDinheiro).then(function (ok) {
-                        if (ok) setShowPagamentoModal(false);
-                      });
-                    }
-                  }}
-                  className="w-full bg-gradient-to-br from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 disabled:opacity-40 disabled:hover:from-amber-500 disabled:hover:to-orange-500 text-white text-sm font-bold py-3.5 rounded-xl cursor-pointer transition-all whitespace-nowrap flex items-center justify-center gap-2"
-                >
-                  {enviando ? (
-                    <>
-                      <i className="ri-loader-4-line animate-spin" />
-                      Enviando...
-                    </>
-                  ) : (
-                    <>
-                      <i className="ri-check-line" />
-                      Confirmar pedido — {formatCurrency(totalModal)}
-                    </>
-                  )}
-                </button>
-              </div>
-            </div>
-          );
-        })() : null}
 
         {/* Animação slide-up */}
         <style>{`

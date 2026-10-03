@@ -107,6 +107,7 @@ export default function AcompanharPedido(props: Props) {
   const onNovoPedido = props.onNovoPedido;
 
   const [orderData, setOrderData] = useState<OrderStatusData | null>(null);
+  const [verItens, setVerItens] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -179,10 +180,8 @@ export default function AcompanharPedido(props: Props) {
   if (loading) {
     return (
       <div className="text-center py-12">
-        <div className="w-12 h-12 flex items-center justify-center mx-auto mb-4 bg-amber-50 rounded-2xl border border-amber-100">
-          <i className="ri-loader-4-line text-xl text-amber-500 animate-spin" />
-        </div>
-        <p className="text-sm font-bold text-zinc-700">Buscando pedido...</p>
+        <i className="ri-loader-4-line text-2xl text-[var(--cor-loja)] animate-spin" />
+        <p className="text-sm font-bold text-stone-700 mt-3">Buscando pedido...</p>
       </div>
     );
   }
@@ -198,7 +197,7 @@ export default function AcompanharPedido(props: Props) {
         <button
           type="button"
           onClick={fetchStatus}
-          className="px-4 py-2 bg-amber-50 text-amber-700 text-sm font-bold rounded-xl cursor-pointer hover:bg-amber-100 transition-colors whitespace-nowrap"
+          className="h-11 px-4 bg-stone-900 text-white text-sm font-bold rounded-xl cursor-pointer whitespace-nowrap"
         >
           Tentar novamente
         </button>
@@ -242,21 +241,75 @@ export default function AcompanharPedido(props: Props) {
     : null;
   const mostrarPrevisao = previsaoEntregaMs != null && !isCancelled && !isDelivered;
 
+  // Cabeçalho do andamento: título, ícone e linha de baixo (previsão ou horário)
+  const titulo = isCancelled ? 'Pedido cancelado'
+    : isDelivered ? (isRetirada ? 'Pedido retirado' : 'Pedido entregue')
+    : isAguardandoPix ? 'Aguardando pagamento'
+    : status === 'em_rota' ? 'Saiu para entrega'
+    : status === 'ready' ? (isRetirada ? 'Pronto! Pode retirar' : 'Pronto, saindo já já')
+    : status === 'preparing' ? 'Em preparo'
+    : 'Pedido recebido';
+  const icone = isCancelled ? 'ri-close-circle-line'
+    : isDelivered ? 'ri-check-double-line'
+    : isAguardandoPix ? (ehCartaoApp ? 'ri-bank-card-line' : 'ri-qr-code-line')
+    : status === 'em_rota' ? 'ri-e-bike-2-line'
+    : status === 'ready' ? (isRetirada ? 'ri-store-2-line' : 'ri-checkbox-circle-line')
+    : status === 'preparing' ? 'ri-fire-line'
+    : 'ri-time-line';
+  const linhaDeBaixo = mostrarPrevisao
+    ? (isRetirada ? 'Pronto até ' : 'Chega até ') + formatTime(new Date(previsaoEntregaMs!).toISOString())
+    : 'Feito em ' + formatDate(orderData.created_at) + ' às ' + formatTime(orderData.created_at);
+  const qtdItens = orderData.items.reduce(function (s, i) { return s + (i.quantity || 1); }, 0);
+
   return (
-    <div>
+    <div className="space-y-3">
+      {/* Andamento */}
+      <section className="bg-white border border-stone-200/70 rounded-[20px] p-5">
+        <div className="flex items-center gap-3.5">
+          <span className={'w-[52px] h-[52px] rounded-2xl flex items-center justify-center shrink-0 ' +
+            (isCancelled ? 'bg-red-50 text-red-700' : isDelivered ? 'bg-emerald-50 text-emerald-700' : 'bg-[var(--cor-loja-suave)] text-[var(--cor-loja)]')}>
+            <i className={icone + ' text-[26px]' + (!isCancelled && !isDelivered && !isAguardandoPix ? ' animate-pulse' : '')} />
+          </span>
+          <div className="min-w-0">
+            <p className="text-[22px] leading-tight font-extrabold tracking-tight text-stone-900">{titulo}</p>
+            <p className="text-sm font-bold text-stone-700 mt-1">{linhaDeBaixo}</p>
+          </div>
+        </div>
+        {!isCancelled && !isAguardandoPix ? (
+          <div className="mt-4 grid gap-1.5" style={{ gridTemplateColumns: 'repeat(' + STATUS_STEPS.length + ', minmax(0, 1fr))' }}>
+            {STATUS_STEPS.map(function (step, idx) {
+              const feito = idx <= currentStep;
+              const atual = idx === currentStep && !isDelivered;
+              return (
+                <div key={step.key} className="min-w-0">
+                  <div className={'h-1.5 rounded-full ' + (feito ? 'bg-[var(--cor-loja)]' : 'bg-stone-200') + (atual ? ' animate-pulse' : '')} />
+                  <p className={'text-[11px] mt-1.5 truncate ' + (atual ? 'font-extrabold text-stone-900' : feito ? 'font-semibold text-stone-700' : 'font-semibold text-stone-400')}>{step.label}</p>
+                </div>
+              );
+            })}
+          </div>
+        ) : null}
+        {isCancelled ? (
+          <p className="mt-3 text-[13px] text-red-800 bg-red-50 rounded-xl px-3 py-2.5">
+            Seu pedido foi cancelado. Fale com a loja para saber mais.
+          </p>
+        ) : null}
+      </section>
+
+      {/* Pedido segurado esperando o pagamento pelo app */}
       {isAguardandoPix ? (
-        <div className="mb-5 p-4 bg-emerald-50 border border-emerald-200 rounded-2xl">
-          <p className="text-sm font-black text-emerald-800">Este pedido ainda não foi pago</p>
-          <p className="text-xs text-emerald-700 mt-1">
+        <section className="p-4 bg-white border-2 border-amber-300 rounded-[18px]">
+          <p className="text-base font-extrabold text-stone-900">Este pedido ainda não foi pago</p>
+          <p className="text-[13px] text-stone-600 mt-1 leading-snug">
             {podePagarPix
-              ? 'Ele só vai para a cozinha depois do pagamento pelo app. Pague agora pelo celular.'
+              ? 'Ele só vai para a cozinha depois do pagamento pelo app.'
               : 'Ele só vai para a cozinha depois do pagamento pelo app. Abra o cardápio com o telefone que fez o pedido para pagar.'}
           </p>
           {podePagarPix ? (
             <button
               type="button"
               onClick={pagarPix}
-              className="mt-3 w-full flex items-center justify-center gap-2 py-3 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold rounded-xl cursor-pointer whitespace-nowrap"
+              className="mt-3 w-full h-14 flex items-center justify-center gap-2 rounded-2xl bg-[var(--cor-loja)] hover:bg-[var(--cor-loja-forte)] text-white text-base font-bold cursor-pointer"
             >
               <i className={ehCartaoApp ? 'ri-bank-card-line' : 'ri-qr-code-line'} /> {ehCartaoApp ? 'Pagar com cartão agora' : 'Pagar com Pix agora'}
             </button>
@@ -276,246 +329,115 @@ export default function AcompanharPedido(props: Props) {
               />
             </div>
           ) : null}
-        </div>
-      ) : null}
-      {/* Status principal */}
-      <div className="mb-6">
-        <div className="flex items-center gap-3 mb-2">
-          {isCancelled ? (
-            <div className="w-10 h-10 flex items-center justify-center bg-red-100 rounded-xl">
-              <i className="ri-close-circle-line text-red-500 text-lg" />
-            </div>
-          ) : isDelivered ? (
-            <div className="w-10 h-10 flex items-center justify-center bg-green-100 rounded-xl">
-              <i className="ri-check-double-line text-green-500 text-lg" />
-            </div>
-          ) : (
-            <div className="w-10 h-10 flex items-center justify-center bg-amber-100 rounded-xl">
-              <i className="ri-time-line text-amber-500 text-lg animate-pulse" />
-            </div>
-          )}
-          <div>
-            <p className="text-sm font-bold text-zinc-800">
-              {isCancelled ? 'Pedido Cancelado' : isDelivered ? 'Pedido Entregue' : isAguardandoPix ? 'Aguardando pagamento' : 'Pedido em andamento'}
-            </p>
-            <p className="text-xs text-zinc-500">
-              {formatDate(orderData.created_at)} às {formatTime(orderData.created_at)}
-            </p>
-          </div>
-        </div>
-
-        {!isCancelled ? (
-          <div className="mt-1 flex items-center gap-1">
-            <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-50 text-amber-700 text-[10px] font-bold rounded-full border border-amber-200/60">
-              <i className="ri-hashtag text-[9px]" />
-              {orderData.number}
-            </span>
-            <span className="text-[10px] font-medium text-zinc-400">
-              {getStatusLabel(status)}
-            </span>
-          </div>
-        ) : (
-          <div className="mt-2 px-3 py-2 bg-red-50 border border-red-100 rounded-xl">
-            <p className="text-xs text-red-600 font-medium flex items-center gap-1.5">
-              <i className="ri-information-line text-sm" />
-              Seu pedido foi cancelado. Entre em contato com o estabelecimento para mais informações.
-            </p>
-          </div>
-        )}
-      </div>
-
-      {/* Previsão máxima de entrega */}
-      {mostrarPrevisao ? (
-        <div className="mb-6 flex items-center gap-3 px-4 py-3 bg-amber-50 border border-amber-100 rounded-2xl">
-          <div className="w-10 h-10 flex items-center justify-center bg-amber-100 rounded-xl shrink-0">
-            <i className="ri-time-line text-amber-600 text-lg" />
-          </div>
-          <div>
-            <p className="text-[10px] font-bold text-amber-700 uppercase tracking-wider">Previsão de entrega até</p>
-            <p className="text-lg font-black text-zinc-800 leading-tight">{formatTime(new Date(previsaoEntregaMs!).toISOString())}</p>
-          </div>
-        </div>
-      ) : null}
-
-      {/* Joguinhos enquanto espera: aviso por cima do jogo quando o pedido anda; entregue = pausa até o próximo pedido */}
-      {!isCancelled && !isAguardandoPix ? (
-        <div className="mb-6">
-          <JogosEspera
-            pedidoEntregue={isDelivered}
-            onNovoPedido={props.onNovoPedido}
-            tenantId={tenantId}
-            credencial={{ tipo: 'delivery', order_number: orderData.number }}
-            aviso={status === 'em_rota' ? 'Seu pedido saiu para entrega!'
-              : (status === 'ready' && isRetirada) ? 'Seu pedido está pronto! Pode retirar no balcão.'
-              : null}
-          />
-        </div>
+        </section>
       ) : null}
 
       {/* Rastreio ao vivo: a moto até a casa do cliente + previsão recalculada */}
       {status === 'em_rota' && rastreio && (rastreio.motoboy || rastreio.destino) ? (
-        <div className="mb-6">
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-[10px] font-bold text-amber-700 uppercase tracking-wider flex items-center gap-1">
-              <i className="ri-motorbike-line" /> Seu pedido está a caminho
+        <section className="bg-white border border-stone-200/70 rounded-[18px] p-4">
+          <div className="flex items-center justify-between mb-2 gap-2">
+            <p className="text-sm font-extrabold text-stone-900 flex items-center gap-1.5">
+              <i className="ri-e-bike-2-line text-[var(--cor-loja)]" /> A caminho
             </p>
             {rastreio.eta_min != null ? (
-              <p className="text-xs font-black text-zinc-800">
-                chega em ~{rastreio.eta_min} min <span className="font-medium text-zinc-400">({formatTime(new Date(Date.now() + rastreio.eta_min * 60000).toISOString())})</span>
+              <p className="text-[13px] font-bold text-stone-900">
+                chega em ~{rastreio.eta_min} min <span className="font-medium text-stone-500">({formatTime(new Date(Date.now() + rastreio.eta_min * 60000).toISOString())})</span>
               </p>
             ) : null}
           </div>
           {rastreio.motoboy ? (
-            <Suspense fallback={<div className="h-52 w-full rounded-2xl bg-zinc-100 animate-pulse" />}>
+            <Suspense fallback={<div className="h-52 w-full rounded-2xl bg-stone-100 animate-pulse" />}>
               <RastreioMapa rastreio={rastreio} />
             </Suspense>
           ) : (
-            <p className="text-xs text-zinc-500 px-3 py-2 bg-zinc-50 rounded-xl border border-zinc-100">
+            <p className="text-[13px] text-stone-600 px-3 py-2.5 bg-stone-100 rounded-xl">
               O entregador saiu com seu pedido. A localização dele aparece aqui assim que o GPS do celular dele atualizar.
             </p>
           )}
           {rastreio.motoboy ? (
-            <p className="text-[10px] text-zinc-400 mt-1">
+            <p className="text-xs text-stone-500 mt-1.5">
               Localização atualizada às {formatTime(rastreio.motoboy.atualizado_em)}
               {rastreio.distancia_km != null ? ` · cerca de ${rastreio.distancia_km.toLocaleString('pt-BR')} km` : ''}
             </p>
           ) : null}
-        </div>
+        </section>
       ) : null}
 
-      {/* Tracker visual */}
-      {!isCancelled ? (
-        <div className="mb-6">
-          <div className="relative">
-            {STATUS_STEPS.map(function (step, idx) {
-              const isComplete = idx <= currentStep;
-              const isCurrent = idx === currentStep;
+      {/* Joguinhos enquanto espera: aviso por cima do jogo quando o pedido anda; entregue = pausa até o próximo pedido */}
+      {!isCancelled && !isAguardandoPix ? (
+        <JogosEspera
+          pedidoEntregue={isDelivered}
+          onNovoPedido={props.onNovoPedido}
+          tenantId={tenantId}
+          credencial={{ tipo: 'delivery', order_number: orderData.number }}
+          aviso={status === 'em_rota' ? 'Seu pedido saiu para entrega!'
+            : (status === 'ready' && isRetirada) ? 'Seu pedido está pronto! Pode retirar no balcão.'
+            : null}
+        />
+      ) : null}
 
+      {/* Itens do pedido (fechado por padrão) */}
+      <section className="bg-white border border-stone-200/70 rounded-[18px] overflow-hidden">
+        <button
+          type="button"
+          onClick={function () { setVerItens(!verItens); }}
+          aria-expanded={verItens}
+          className="w-full flex items-center justify-between gap-3 px-4 h-14 text-left cursor-pointer"
+        >
+          <span className="text-sm font-bold text-stone-900">
+            {qtdItens} {qtdItens === 1 ? 'item' : 'itens'} · {formatCurrency(orderData.total_amount)}
+          </span>
+          <span className="text-[13px] font-bold text-[var(--cor-loja)] flex items-center gap-1">
+            {verItens ? 'Esconder' : 'Ver itens'}
+            <i className={'ri-arrow-down-s-line text-lg transition-transform ' + (verItens ? 'rotate-180' : '')} />
+          </span>
+        </button>
+        {verItens ? (
+          <div className="border-t border-stone-100 px-4 py-3 space-y-2.5">
+            {orderData.items.map(function (item) {
+              const opcoes = item.options ?? [];
               return (
-                <div key={step.key} className="flex items-start gap-4 mb-0 relative">
-                  {/* Linha conectando */}
-                  {idx < STATUS_STEPS.length - 1 ? (
-                    <div className="absolute left-[19px] top-10 bottom-0 w-0.5 z-0">
-                      <div
-                        className={'w-full h-full rounded-full transition-all duration-500 ' +
-                          (idx < currentStep ? 'bg-amber-400' : 'bg-zinc-200')
-                        }
-                      />
+                <div key={item.id}>
+                  <div className="flex items-start justify-between gap-3">
+                    <span className="text-sm text-stone-800 break-words"><strong>{item.quantity}×</strong> {item.item_name}</span>
+                    <span className="text-sm font-bold text-stone-900 shrink-0">{formatCurrency(item.item_price * item.quantity)}</span>
+                  </div>
+                  {/* Adicionais/opções: o valor do item já os inclui; aqui detalhamos cada um */}
+                  {opcoes.length > 0 ? (
+                    <div className="ml-6 mt-0.5 space-y-0.5">
+                      {opcoes.map(function (op, i) {
+                        return (
+                          <div key={i} className="flex items-start justify-between gap-2 text-xs text-stone-500">
+                            <span className="break-words">+ {op.option_name}</span>
+                            {op.additional_price > 0 ? <span className="shrink-0">{formatCurrency(op.additional_price)}</span> : null}
+                          </div>
+                        );
+                      })}
                     </div>
                   ) : null}
-
-                  {/* Círculo do step */}
-                  <div className="relative z-10 shrink-0">
-                    <div
-                      className={'w-[38px] h-[38px] flex items-center justify-center rounded-full border-2 transition-all duration-300 ' +
-                        (isComplete
-                          ? 'bg-amber-500 border-amber-500'
-                          : 'bg-white border-zinc-200')
-                      }
-                    >
-                      {isComplete ? (
-                        <i className="ri-check-line text-white text-sm" />
-                      ) : (
-                        <span className="text-zinc-300 text-xs font-bold">{idx + 1}</span>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Conteúdo do step */}
-                  <div className={'pb-6 ' + (idx === STATUS_STEPS.length - 1 ? 'pb-0' : '')}>
-                    <p
-                      className={'text-sm font-bold transition-colors duration-300 ' +
-                        (isComplete ? 'text-zinc-800' : 'text-zinc-400')
-                      }
-                    >
-                      {step.label}
-                    </p>
-                    <p className="text-xs text-zinc-400 mt-0.5">{step.description}</p>
-                    {isCurrent && !isDelivered ? (
-                      <span className="inline-flex items-center gap-1 mt-1.5 text-[10px] font-medium text-amber-600">
-                        <span className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-pulse" />
-                        Agora
-                      </span>
-                    ) : null}
-                  </div>
                 </div>
               );
             })}
-          </div>
-        </div>
-      ) : null}
-
-      {/* Itens do pedido */}
-      <div className="bg-zinc-50 rounded-2xl p-4 mb-4">
-        <h4 className="text-xs font-bold text-zinc-500 uppercase tracking-wider mb-3">Itens do pedido</h4>
-        <div className="space-y-2">
-          {orderData.items.map(function (item) {
-            const opcoes = item.options ?? [];
-            return (
-              <div key={item.id}>
-                <div className="flex items-start justify-between">
-                  <div className="flex items-start gap-2 min-w-0">
-                    <span className="text-xs font-bold text-zinc-800 w-5 text-center shrink-0">{item.quantity}x</span>
-                    <span className="text-xs text-zinc-700 break-words">{item.item_name}</span>
-                  </div>
-                  <span className="text-xs font-bold text-zinc-800 shrink-0 ml-3">
-                    {formatCurrency((item.item_price * item.quantity))}
-                  </span>
+            <div className="border-t border-stone-100 pt-2.5 space-y-1">
+              <div className="flex justify-between text-[13px] text-stone-600"><span>Subtotal</span><span>{formatCurrency(orderData.subtotal || 0)}</span></div>
+              {/* Retirada não tem entrega: não exibe "Taxa de entrega: Grátis" */}
+              {!isRetirada ? (
+                <div className="flex justify-between text-[13px] text-stone-600">
+                  <span>Taxa de entrega</span><span>{orderData.delivery_fee > 0 ? formatCurrency(orderData.delivery_fee) : 'Grátis'}</span>
                 </div>
-                {/* Adicionais/opções: o que compõe o valor do item. O valor exibido no
-                    item já os inclui; aqui detalhamos cada um. */}
-                {opcoes.length > 0 ? (
-                  <div className="ml-7 mt-1 space-y-0.5">
-                    {opcoes.map(function (op, i) {
-                      return (
-                        <div key={i} className="flex items-start justify-between gap-2">
-                          <span className="text-[11px] text-zinc-500 break-words">
-                            + {op.option_name}
-                          </span>
-                          {op.additional_price > 0 ? (
-                            <span className="text-[11px] font-medium text-zinc-500 shrink-0">
-                              {formatCurrency(op.additional_price)}
-                            </span>
-                          ) : null}
-                        </div>
-                      );
-                    })}
-                  </div>
-                ) : null}
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Resumo financeiro */}
-      <div className="bg-white rounded-2xl border border-zinc-100 p-4 space-y-2 mb-6">
-        <div className="flex items-center justify-between text-xs">
-          <span className="text-zinc-500">Subtotal</span>
-          <span className="font-bold text-zinc-800">{formatCurrency((orderData.subtotal || 0))}</span>
-        </div>
-        {/* Retirada não tem entrega: não exibe "Taxa de entrega: Grátis" */}
-        {!isRetirada ? (
-          <div className="flex items-center justify-between text-xs">
-            <span className="text-zinc-500">Taxa de entrega</span>
-            <span className="font-bold text-zinc-800">
-              {orderData.delivery_fee > 0 ? formatCurrency(orderData.delivery_fee) : 'Grátis'}
-            </span>
+              ) : null}
+              <div className="flex justify-between text-sm font-extrabold text-stone-900 pt-1"><span>Total</span><span>{formatCurrency(orderData.total_amount)}</span></div>
+            </div>
           </div>
         ) : null}
-        <div className="h-px bg-zinc-100" />
-        <div className="flex items-center justify-between">
-          <span className="text-sm font-bold text-zinc-800">Total</span>
-          <span className="text-sm font-bold text-amber-600">{formatCurrency(orderData.total_amount)}</span>
-        </div>
-      </div>
+      </section>
 
       <button
         type="button"
         onClick={onNovoPedido}
-        className="w-full bg-gradient-to-br from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white font-bold py-3.5 rounded-xl cursor-pointer transition-all whitespace-nowrap text-sm flex items-center justify-center gap-2"
+        className="w-full h-[52px] rounded-2xl border border-stone-300 bg-white text-stone-900 flex items-center justify-center gap-2 text-[15px] font-bold cursor-pointer hover:bg-stone-50"
       >
-        <i className="ri-add-line text-sm" />
+        <i className="ri-add-line text-lg" />
         Fazer novo pedido
       </button>
     </div>

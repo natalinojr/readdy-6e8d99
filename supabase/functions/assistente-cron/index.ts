@@ -22,6 +22,8 @@
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
 import postgres from 'npm:postgres@3.4.5';
 import { deveCobrar, mesclarPedidoBoleto } from '../_shared/trilha-acoes.ts';
+import { agoraDaPessoa, pendHojeDaLinha, tituloCurto, COLUNAS_PEND_HOJE } from '../_shared/hoje-organizar.ts';
+import { PAPEL_DO_BANCO, DONO_EMAIL } from '../_shared/pendencia-visivel.ts';
 
 const TZ = 'America/Sao_Paulo';
 const json = (body: unknown, status = 200) =>
@@ -67,8 +69,8 @@ async function tgLigado(): Promise<boolean> {
   }
   return tgOutCache;
 }
-async function sendTelegram(chatKey: string, text: string, extra: Record<string, unknown> = {}): Promise<any> {
-  if (!await tgLigado()) { await pushDono(text); return null; }
+async function sendTelegram(chatKey: string, text: string, extra: Record<string, unknown> = {}, pushUrl?: string): Promise<any> {
+  if (!await tgLigado()) { await pushDono(text, pushUrl); return null; }
   if (!tgToken) throw new Error('TELEGRAM_BOT_TOKEN não configurado');
   const esc = (x: string) => x.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const html = esc(text).replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s).,;:!?]|$)/g, '$1<b>$2</b>');
@@ -80,12 +82,12 @@ async function sendTelegram(chatKey: string, text: string, extra: Record<string,
   };
   let res;
   try { res = await send({ text: html, parse_mode: 'HTML', ...extra }); } catch { res = await send({ text, ...extra }); }
-  await pushDono(text);
+  await pushDono(text, pushUrl);
   return res;
 }
 // Notificação no celular pelo app/PWA do ERPOS (2026-09-15): tudo que o cron manda ao dono no
 // Telegram (lembrete, resumo, pergunta de DRE, alertas) também vira Web Push e abre o chat do ERPOS.
-async function pushDono(corpo: string) {
+async function pushDono(corpo: string, destino = '/assistente') {
   try {
     const url = Deno.env.get('SUPABASE_URL') ?? '';
     const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
@@ -97,13 +99,13 @@ async function pushDono(corpo: string) {
     if (!owner) return;
     await fetch(`${url}/functions/v1/send-push`, {
       method: 'POST', headers: { ...h, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'send', user_ids: [String(owner)], payload: { titulo: 'Assistente', corpo: texto.slice(0, 200), url: '/assistente', tag: 'assistente' } }),
+      body: JSON.stringify({ action: 'send', user_ids: [String(owner)], payload: { titulo: 'Assistente', corpo: texto.slice(0, 200), url: destino, tag: 'assistente' } }),
     });
   } catch (e) { console.warn(JSON.stringify({ fn: 'assistente-cron', level: 'WARN', msg: 'push', error: String(e) })); }
 }
 // Entrega para qualquer destino: JID do WhatsApp ou "tg:<id>" do Telegram.
-async function deliver(target: string, text: string) {
-  if (isTg(target)) return sendTelegram(target, text);
+async function deliver(target: string, text: string, pushUrl?: string) {
+  if (isTg(target)) return sendTelegram(target, text, {}, pushUrl);
   return sendText(toNumber(target), text);
 }
 // Pagamento preparado e não concluído em 15 min vira pendência (dono, 2026-09-18) — qualquer origem:
@@ -295,7 +297,7 @@ async function morningBrief(admin: SupabaseClient, cfg: Record<string, any>, own
     await admin.from('asst_settings').upsert({ key: 'last_brief_date', value: null, updated_at: new Date().toISOString() });
     throw e;
   }
-  await deliver(ownerChat, texto);
+  await deliver(ownerChat, texto, '/hoje');
   await admin.from('asst_messages').insert({ channel: 'cron', chat_id: ownerChat, role: 'assistant', content: comPainel(resumo, painel), topic: 'avisos' });
   return true;
 }
@@ -310,8 +312,18 @@ async function morningBriefText(admin: SupabaseClient, cfg: Record<string, any>,
   const ownerId = String(cfg.owner_user_id ?? '');
   const ddmm = (iso: string) => iso.slice(0, 10).split('-').reverse().slice(0, 2).join('/');
   const ate3 = addDays(today, 3);
+  // "Agora" da tela Hoje (2026-10-03, "um número só"): mesmas lojas que o dono vê ao abrir o app
+  // (todas em que ele está) e a mesma conta (_shared/hoje-organizar.ts).
+  // Só lojas ativas — o get_user_tenants da tela também só devolve as ativas.
+  const { data: vincDono } = ownerId
+    ? await admin.from('user_tenants').select('tenant_id, role, tenants!inner(is_active)').eq('user_id', ownerId).eq('tenants.is_active', true)
+    : { data: [] };
+  const papeisDono = new Map<string, string>(((vincDono ?? []) as Array<{ tenant_id: string; role: string }>)
+    .map((v) => [String(v.tenant_id), PAPEL_DO_BANCO[v.role] ?? v.role]));
   const [pend, contas, tarefas, lembretes] = await Promise.all([
-    admin.from('pendencias').select('titulo, urgencia, acao_requerida, snooze_until').in('tenant_id', ids).eq('status', 'aberta'),
+    papeisDono.size
+      ? admin.from('pendencias').select(COLUNAS_PEND_HOJE).in('tenant_id', [...papeisDono.keys()]).in('status', ['aberta', 'vista']).limit(2000)
+      : Promise.resolve({ data: [] }),
     admin.from('fin_accounts_payable').select('tenant_id, supplier, description, amount, due_date')
       .in('tenant_id', ids).in('status', ['pending', 'overdue', 'partial']).lte('due_date', ate3).limit(500),
     ownerId
@@ -325,14 +337,16 @@ async function morningBriefText(admin: SupabaseClient, cfg: Record<string, any>,
   const pn: Painel = { t: 'Bom dia!', s: diaSemana(today), lin: [], bt: [] };
   const lin = pn.lin as NonNullable<Painel['lin']>;
 
-  // Pendências: quantas e quais pedem dinheiro/ação urgente, em uma linha — a lista está na caixa.
-  const abertas = (pend.data ?? []).filter((p) => !p.snooze_until || Date.parse(String(p.snooze_until)) < Date.now());
-  if (abertas.length) {
-    const urgentes = abertas.filter((p) => p.urgencia === 'alta');
-    const quais = urgentes.slice(0, 3).map((p) => String(p.titulo ?? '').trim()).filter(Boolean).join('; ');
-    linhas.push(`*${abertas.length} pendência${abertas.length === 1 ? '' : 's'}* em aberto${urgentes.length ? ` — urgentes: ${quais}${urgentes.length > 3 ? ` e mais ${urgentes.length - 3}` : ''}` : ''}. Lista completa em Pendências.`);
-    if (urgentes.length) lin.push({ t: `Urgentes (${urgentes.length})`, i: urgentes.slice(0, 4).map((p) => ({ l: String(p.titulo ?? '').trim(), st: 'perigo' as St })) });
-    pn.bt!.push({ l: `Pendências (${abertas.length})`, r: '#pendencias', i: 'ri-inbox-archive-line' });
+  // O que precisa de você hoje: o "Agora" da tela Hoje, com o mesmo número e na mesma ordem.
+  const agora = agoraDaPessoa(((pend.data ?? []) as unknown[]).map(pendHojeDaLinha), papeisDono, DONO_EMAIL, true, today);
+  if (agora.length) {
+    const varias = new Set(agora.map((i) => i.tenantId)).size > 1;
+    const quais = agora.slice(0, 3).map((i) => tituloCurto(i.titulo)).join('; ');
+    linhas.push(`*${agora.length} ${agora.length === 1 ? 'coisa precisa' : 'coisas precisam'} de você hoje:* ${quais}${agora.length > 3 ? ` e mais ${agora.length - 3}` : ''}. Está tudo na tela Hoje do ERPOS, com o botão que resolve.`);
+    lin.push({ t: `Agora (${agora.length})`, i: agora.slice(0, 5).map((i) => ({
+      l: tituloCurto(i.titulo), v: i.valor ? brl(i.valor) : undefined, d: varias ? i.loja : undefined, st: (i.urgente ? 'perigo' : 'alerta') as St,
+    })) });
+    pn.bt!.push({ l: `Abrir o Hoje (${agora.length})`, r: '/hoje', i: 'ri-sun-line' });
   }
   const kpiO: Array<{ l: string; v: string }> = [];
 
@@ -392,11 +406,11 @@ async function morningBriefText(admin: SupabaseClient, cfg: Record<string, any>,
   }
 
   if (linhas.length === 1) linhas.push('Nada pedindo atenção hoje.');
-  // Número grande = pendências (o que pede ação); ao lado, o dinheiro atrasado e o que vence.
-  pn.kpi = { p: { l: 'Pendências em aberto', v: String(abertas.length) }, o: kpiO };
-  if (!lin.length && !abertas.length) pn.r = 'Nada pedindo atenção hoje.';
+  // Número grande = o "Agora" da tela Hoje; ao lado, o dinheiro atrasado e o que vence.
+  pn.kpi = { p: { l: 'Precisam de você hoje', v: String(agora.length) }, o: kpiO };
+  if (!lin.length && !agora.length) pn.r = 'Nada pedindo atenção hoje.';
   if (!pn.bt!.length) delete pn.bt;
-  const resumo = `Bom dia! ${abertas.length} pendência${abertas.length === 1 ? '' : 's'} em aberto${atrasadas.length ? `, ${atrasadas.length} conta${atrasadas.length === 1 ? '' : 's'} atrasada${atrasadas.length === 1 ? '' : 's'}` : ''}${deHoje.length ? `, ${deHoje.length} tarefa${deHoje.length === 1 ? '' : 's'} para hoje` : ''}.`;
+  const resumo = `Bom dia! ${agora.length} ${agora.length === 1 ? 'coisa precisa' : 'coisas precisam'} de você hoje${atrasadas.length ? `, ${atrasadas.length} conta${atrasadas.length === 1 ? '' : 's'} atrasada${atrasadas.length === 1 ? '' : 's'}` : ''}${deHoje.length ? `, ${deHoje.length} tarefa${deHoje.length === 1 ? '' : 's'} para hoje` : ''}.`;
   return { texto: linhas.join('\n\n'), painel: pn, resumo };
 }
 
@@ -1771,6 +1785,76 @@ async function proactive(admin: SupabaseClient, cfg: Record<string, any>, ownerC
   return res;
 }
 
+// ── Bom dia da equipe (2026-10-03, tela Hoje) ──────────────────────────────────────────────────
+// Gerente e supervisão recebem no celular, às 08:30, quantas coisas precisam deles hoje — o MESMO
+// "Agora" da tela Hoje deles (_shared/hoje-organizar.ts) — e quantas tarefas; tocar abre a Hoje. Só
+// quem tem o aviso ligado no aparelho e só quando há algo (nada pendente = nenhum aviso). O dono tem o
+// resumo da manhã dele. Liga/desliga e horário: asst_settings.bom_dia_equipe = { enabled, time }.
+// deno-lint-ignore no-explicit-any
+async function bomDiaEquipe(admin: SupabaseClient, cfg: Record<string, any>, previa = false): Promise<unknown> {
+  const conf = { enabled: true, time: '08:30', ...(cfg.bom_dia_equipe ?? {}) };
+  const today = localDate();
+  if (!previa) {
+    if (!conf.enabled || cfg.last_bom_dia_equipe === today) return null;
+    const now = localHHMM();
+    const time = String(conf.time);
+    const [h, m] = time.split(':').map(Number);
+    const limite = `${String(Math.min(h + 3, 23)).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+    if (now < time || now > limite) return null;
+    // Marca antes de mandar: um bom dia por dia, mesmo se demorar mais que um minuto.
+    await admin.from('asst_settings').upsert({ key: 'last_bom_dia_equipe', value: today, updated_at: new Date().toISOString() });
+  }
+  const ownerId = String(cfg.owner_user_id ?? '');
+  const { data: subs } = await admin.from('push_subscriptions').select('user_id');
+  const comAviso = new Set(((subs ?? []) as Array<{ user_id: string }>).map((x) => String(x.user_id)));
+  const { data: gest } = await admin.from('user_tenants').select('user_id').in('role', ['manager', 'supervisor']);
+  const pessoas = [...new Set(((gest ?? []) as Array<{ user_id: string }>).map((g) => String(g.user_id)))]
+    .filter((u) => u !== ownerId && (previa || comAviso.has(u)));
+  if (!pessoas.length) return previa ? [] : 'ninguém com aviso ligado';
+  // Só lojas ativas — o get_user_tenants da tela também só devolve as ativas.
+  const { data: vinc } = await admin.from('user_tenants').select('user_id, tenant_id, role, tenants!inner(is_active)')
+    .in('user_id', pessoas).eq('tenants.is_active', true);
+  const papeis = new Map<string, Map<string, string>>();
+  for (const v of (vinc ?? []) as Array<{ user_id: string; tenant_id: string; role: string }>) {
+    const mp = papeis.get(String(v.user_id)) ?? new Map<string, string>();
+    mp.set(String(v.tenant_id), PAPEL_DO_BANCO[v.role] ?? v.role);
+    papeis.set(String(v.user_id), mp);
+  }
+  const lojas = [...new Set(((vinc ?? []) as Array<{ tenant_id: string }>).map((v) => String(v.tenant_id)))];
+  const [{ data: pr }, { data: ts }] = await Promise.all([
+    admin.from('pendencias').select(COLUNAS_PEND_HOJE).in('tenant_id', lojas).in('status', ['aberta', 'vista']).limit(3000),
+    admin.from('tasks').select('created_by, assignee_id').is('completed_at', null).eq('is_archived', false)
+      .not('due_date', 'is', null).lte('due_date', `${today}T23:59:59-03:00`)
+      .or(pessoas.map((u) => `created_by.eq.${u},assignee_id.eq.${u}`).join(',')).limit(5000),
+  ]);
+  const pends = ((pr ?? []) as unknown[]).map(pendHojeDaLinha);
+  const tarefas = (ts ?? []) as Array<{ created_by: string | null; assignee_id: string | null }>;
+  const saida: Array<Record<string, unknown>> = [];
+  for (const u of pessoas) {
+    const agora = agoraDaPessoa(pends, papeis.get(u) ?? new Map(), null, false, today);
+    const nTarefas = tarefas.filter((t) => t.created_by === u || t.assignee_id === u).length;
+    if (!agora.length && !nTarefas) { saida.push({ user_id: u, agora: 0, tarefas: 0 }); continue; }
+    const partes: string[] = [];
+    if (agora.length) partes.push(`${agora.length} ${agora.length === 1 ? 'coisa precisa' : 'coisas precisam'} de você hoje`);
+    if (nTarefas) partes.push(`${nTarefas} tarefa${nTarefas === 1 ? '' : 's'} vencida${nTarefas === 1 ? '' : 's'} ou para hoje`);
+    const quais = agora.slice(0, 2).map((i) => tituloCurto(i.titulo)).join('; ');
+    const corpo = `${partes.join(' e ')}${quais ? `: ${quais}` : ''}.`;
+    let enviado: unknown = null;
+    if (!previa) {
+      try {
+        const r = await fetch(`${supabaseUrl}/functions/v1/send-push`, {
+          method: 'POST', signal: AbortSignal.timeout(8000),
+          headers: { apikey: serviceRoleKey, Authorization: `Bearer ${serviceRoleKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'send', user_ids: [u], payload: { titulo: 'Bom dia!', corpo: corpo.slice(0, 200), url: '/hoje', tag: 'bom-dia' } }),
+        });
+        enviado = await r.json().catch(() => null);
+      } catch (e) { enviado = { erro: errMsg(e) }; }
+    }
+    saida.push({ user_id: u, agora: agora.length, tarefas: nTarefas, corpo, ...(previa ? {} : { enviado }) });
+  }
+  return saida;
+}
+
 Deno.serve(async (req) => {
   if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
   if (internalKey.length < 20 || req.headers.get('x-internal-key') !== internalKey) return json({ error: 'Unauthorized' }, 401);
@@ -1786,6 +1870,10 @@ Deno.serve(async (req) => {
   const body: any = await req.json().catch(() => ({}));
   if (body.preview === 'brief') {
     try { const b = await morningBriefText(admin, cfg, localDate()); return json({ ok: true, preview: b.texto, painel: b.painel }); }
+    catch (e) { return json({ error: errMsg(e) }, 500); }
+  }
+  if (body.preview === 'bom_dia_equipe') {
+    try { return json({ ok: true, preview: await bomDiaEquipe(admin, cfg, true) }); }
     catch (e) { return json({ error: errMsg(e) }, 500); }
   }
   if (typeof body.preview === 'string') {
@@ -1909,6 +1997,7 @@ Deno.serve(async (req) => {
   const aCada5 = minuto % 5 === 0;
   try { result.reminders_sent = await sendReminders(admin, ownerChat); } catch (e) { result.reminders_error = errMsg(e); log('ERROR', 'reminders', { error: errMsg(e) }); }
   try { result.brief_sent = await morningBrief(admin, cfg, ownerChat); } catch (e) { result.brief_error = errMsg(e); log('ERROR', 'brief', { error: errMsg(e) }); }
+  try { const bd = await bomDiaEquipe(admin, cfg); if (bd) { result.bom_dia_equipe = bd; log('INFO', 'bom dia equipe', { bd }); } } catch (e) { result.bom_dia_equipe_error = errMsg(e); log('ERROR', 'bom_dia_equipe', { error: errMsg(e) }); }
   try { result.warmed = await keepWarm(admin, cfg); } catch (e) { result.warm_error = errMsg(e); log('ERROR', 'warm', { error: errMsg(e) }); }
   if (aCada5) try { const pr = await proactive(admin, cfg, ownerChat); if (Object.keys(pr).length) result.proactive = pr; } catch (e) { result.proactive_error = errMsg(e); log('ERROR', 'proactive', { error: errMsg(e) }); }
   try { const pw = await payWatch(admin); if (pw) result.pay_watch = pw; } catch (e) { result.pay_watch_error = errMsg(e); log('ERROR', 'pay_watch', { error: errMsg(e) }); }

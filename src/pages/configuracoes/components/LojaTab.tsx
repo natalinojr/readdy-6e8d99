@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Store, Camera, Save } from 'lucide-react';
-import { supabase, invokeWithAuth } from '@/lib/supabase';
+import { supabase, invokeWithAuth, uploadMenuImage } from '@/lib/supabase';
+import { COR_LOJA_PADRAO } from '@/lib/corLoja';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
 import { avisar } from '@/components/base/Dialogos';
@@ -15,11 +16,33 @@ interface ConfigLoja {
   estado: string;
   cep: string;
   logoUrl: string;
+  /** Capa e cor do cardápio online (delivery e QR) */
+  capaUrl: string;
+  corLoja: string;
 }
 
 const estadosBR = ['AC','AL','AP','AM','BA','CE','DF','ES','GO','MA','MT','MS','MG','PA','PB','PR','PE','PI','RJ','RN','RS','RO','RR','SC','SP','SE','TO'];
 
-const EMPTY: ConfigLoja = { nome: '', cnpj: '', telefone: '', email: '', endereco: '', cidade: '', estado: 'SP', cep: '', logoUrl: '' };
+const EMPTY: ConfigLoja = { nome: '', cnpj: '', telefone: '', email: '', endereco: '', cidade: '', estado: 'SP', cep: '', logoUrl: '', capaUrl: '', corLoja: '' };
+
+// Cores sugeridas para o cardápio online — todas passam no contraste com texto branco
+const CORES_SUGERIDAS = [
+  { nome: 'Laranja (padrão)', cor: COR_LOJA_PADRAO },
+  { nome: 'Vermelho', cor: '#B91C1C' },
+  { nome: 'Vinho', cor: '#9F1239' },
+  { nome: 'Verde', cor: '#15803D' },
+  { nome: 'Azul', cor: '#1D4ED8' },
+  { nome: 'Roxo', cor: '#6D28D9' },
+  { nome: 'Preto', cor: '#1C1917' },
+];
+
+// Contraste do texto branco sobre a cor (WCAG): abaixo de 4,5 o botão fica difícil de ler
+function contrasteBranco(hex: string): number {
+  const n = parseInt(hex.replace('#', ''), 16);
+  const canal = (v: number) => { const c = v / 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
+  const l = 0.2126 * canal((n >> 16) & 255) + 0.7152 * canal((n >> 8) & 255) + 0.0722 * canal(n & 255);
+  return 1.05 / (l + 0.05);
+}
 
 // ── Compressão do logo ────────────────────────────────────────────────────────
 // O logo vai pro banco como data-URL (tenants.logo_url) e é baixado a cada visita
@@ -68,7 +91,7 @@ export default function LojaTab() {
     if (!user?.tenantId) { setLoading(false); return; }
     supabase
       .from('tenants')
-      .select('name, cnpj, address, logo_url, phone, email, city, state, zip_code')
+      .select('name, cnpj, address, logo_url, phone, email, city, state, zip_code, cover_url, brand_color')
       .eq('id', user.tenantId)
       .maybeSingle()
       .then(({ data }) => {
@@ -83,6 +106,8 @@ export default function LojaTab() {
             estado: data.state ?? 'SP',
             cep: data.zip_code ?? '',
             logoUrl: data.logo_url ?? '',
+            capaUrl: (data as { cover_url?: string | null }).cover_url ?? '',
+            corLoja: (data as { brand_color?: string | null }).brand_color ?? '',
           });
         }
         setLoading(false);
@@ -90,6 +115,8 @@ export default function LojaTab() {
   }, [user?.tenantId]);
 
   const set = (k: keyof ConfigLoja, v: string) => setForm((f) => ({ ...f, [k]: v }));
+  const [enviandoCapa, setEnviandoCapa] = useState(false);
+  const corValida = /^#[0-9A-Fa-f]{6}$/.test(form.corLoja);
 
   const handleSalvar = async () => {
     if (!user?.tenantId) return;
@@ -117,6 +144,8 @@ export default function LojaTab() {
         city: form.cidade,
         state: form.estado,
         zip_code: form.cep,
+        cover_url: form.capaUrl,
+        brand_color: /^#[0-9A-Fa-f]{6}$/.test(form.corLoja) ? form.corLoja : '',
       },
     });
 
@@ -225,6 +254,102 @@ export default function LojaTab() {
               )}
               <p className="text-[10px] text-zinc-400">PNG, JPG ou WebP, máx. 2MB — otimizado automaticamente para 512px</p>
             </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Aparência do cardápio online (delivery e QR) */}
+      <div className="bg-white border border-zinc-100 rounded-xl p-5">
+        <h3 className="text-sm font-bold text-zinc-800">Aparência do cardápio online</h3>
+        <p className="text-xs text-zinc-500 mt-1 mb-4">Capa e cor que o cliente vê no delivery e no QR Code da mesa/balcão.</p>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+          {/* Capa */}
+          <div>
+            <p className="text-xs font-semibold text-zinc-600 mb-2">Foto de capa</p>
+            <div className="relative h-28 rounded-xl overflow-hidden border border-zinc-200 bg-zinc-100 flex items-center justify-center" style={{ background: form.capaUrl ? undefined : (corValida ? form.corLoja : COR_LOJA_PADRAO) }}>
+              {form.capaUrl ? (
+                <img src={form.capaUrl} alt="Capa" className="w-full h-full object-cover" />
+              ) : (
+                <span className="text-[11px] font-semibold text-white/90">Sem capa — usa a cor da loja</span>
+              )}
+              {enviandoCapa ? (
+                <div className="absolute inset-0 bg-white/70 flex items-center justify-center">
+                  <i className="ri-loader-4-line animate-spin text-zinc-600 text-lg" />
+                </div>
+              ) : null}
+            </div>
+            <div className="flex items-center gap-2 mt-2">
+              <label className="flex items-center gap-2 px-3 py-2 bg-zinc-100 text-zinc-700 text-xs font-semibold rounded-lg hover:bg-zinc-200 cursor-pointer transition-colors whitespace-nowrap">
+                <Camera size={13} />
+                {form.capaUrl ? 'Trocar capa' : 'Enviar capa'}
+                <input
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  className="hidden"
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    e.target.value = '';
+                    if (!file || !user?.tenantId) return;
+                    if (file.size > 8 * 1024 * 1024) { void avisar('Arquivo muito grande. Máx. 8MB.'); return; }
+                    setEnviandoCapa(true);
+                    const { url, error } = await uploadMenuImage(file, user.tenantId, 'capa-loja');
+                    setEnviandoCapa(false);
+                    if (error || !url) { toastError('Não foi possível enviar a capa', error?.message || 'Tente de novo.'); return; }
+                    set('capaUrl', url);
+                  }}
+                />
+              </label>
+              {form.capaUrl ? (
+                <button type="button" onClick={() => set('capaUrl', '')} className="px-2 py-2 text-xs text-red-500 hover:text-red-700 cursor-pointer">
+                  Remover
+                </button>
+              ) : null}
+            </div>
+            <p className="text-[10px] text-zinc-400 mt-1">Foto larga de um prato ou do salão. Fica no topo, atrás da logo.</p>
+          </div>
+
+          {/* Cor */}
+          <div>
+            <p className="text-xs font-semibold text-zinc-600 mb-2">Cor da loja</p>
+            <div className="flex flex-wrap gap-2">
+              {CORES_SUGERIDAS.map((c) => {
+                const ativa = (form.corLoja || COR_LOJA_PADRAO).toLowerCase() === c.cor.toLowerCase();
+                return (
+                  <button
+                    key={c.cor}
+                    type="button"
+                    title={c.nome}
+                    aria-label={c.nome}
+                    aria-pressed={ativa}
+                    onClick={() => set('corLoja', c.cor === COR_LOJA_PADRAO ? '' : c.cor)}
+                    className={'w-9 h-9 rounded-full border-2 cursor-pointer flex items-center justify-center ' + (ativa ? 'border-zinc-900' : 'border-white shadow')}
+                    style={{ background: c.cor }}
+                  >
+                    {ativa ? <i className="ri-check-line text-white text-base" /> : null}
+                  </button>
+                );
+              })}
+              <label className="w-9 h-9 rounded-full border-2 border-dashed border-zinc-300 flex items-center justify-center cursor-pointer relative overflow-hidden" title="Outra cor">
+                <i className="ri-palette-line text-zinc-500" />
+                <input
+                  type="color"
+                  value={corValida ? form.corLoja : COR_LOJA_PADRAO}
+                  onChange={(e) => set('corLoja', e.target.value.toUpperCase())}
+                  className="absolute inset-0 opacity-0 cursor-pointer"
+                  aria-label="Escolher outra cor"
+                />
+              </label>
+            </div>
+            {/* Prévia do botão do cliente */}
+            <div className="mt-3 h-11 rounded-xl text-white text-sm font-bold flex items-center justify-between px-4" style={{ background: corValida ? form.corLoja : COR_LOJA_PADRAO }}>
+              <span>Ver sacola</span><span>R$ 57,00</span>
+            </div>
+            {corValida && contrasteBranco(form.corLoja) < 4.5 ? (
+              <p className="text-[11px] text-amber-700 mt-1.5">Cor clara: o texto branco dos botões fica difícil de ler. Prefira um tom mais escuro.</p>
+            ) : (
+              <p className="text-[10px] text-zinc-400 mt-1.5">Usada nos botões, no "+" dos itens e nos destaques.</p>
+            )}
           </div>
         </div>
       </div>

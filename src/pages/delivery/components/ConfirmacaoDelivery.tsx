@@ -73,76 +73,60 @@ export default function ConfirmacaoDelivery(props: Props) {
   }
 
   return (
-    <div className="px-4 py-4">
+    <div className="px-4 py-5">
       {/* Cabeçalho de confirmação */}
-      <div className="text-center mb-1">
-        <div className="w-16 h-16 flex items-center justify-center mx-auto mb-3 bg-green-50 rounded-2xl border border-green-100 relative">
-          <div className="absolute -top-1.5 -right-1.5 w-7 h-7 flex items-center justify-center bg-green-500 rounded-full">
-            <i className="ri-check-line text-white text-xs" />
-          </div>
-          <i className={modoEntrega === 'retirada' ? 'ri-store-2-line text-green-600 text-2xl' : 'ri-motorbike-line text-green-600 text-2xl'} />
-        </div>
-
-        <h2 className="text-lg font-black text-zinc-800 mb-1">Pedido #{trackingNumero}</h2>
+      <div className="mb-3">
         {!vendoOriginal ? (
           <button
             type="button"
             onClick={function () { setTrackingNumero(numeroPedido); setAbaAtiva('acompanhar'); }}
-            className="mb-3 inline-flex items-center gap-1 text-xs font-bold text-amber-600 hover:text-amber-700 cursor-pointer whitespace-nowrap"
+            className="mb-2 h-11 inline-flex items-center gap-1 text-sm font-bold text-[var(--cor-loja)] cursor-pointer whitespace-nowrap"
           >
-            <i className="ri-arrow-left-s-line" /> Voltar ao pedido #{numeroPedido}
+            <i className="ri-arrow-left-s-line text-lg" /> Voltar ao pedido #{numeroPedido.slice(-4)}
           </button>
         ) : null}
-        <p className="text-xs text-zinc-500 mb-3">
-          {!vendoOriginal
-            ? 'Você está vendo um pedido do seu histórico'
-            : pixOnline && !pixPago
-            ? 'Seu pedido vai para a cozinha assim que o pagamento for confirmado'
-            : (phone ? 'Acompanhe abaixo o status do seu pedido' : 'Seu pedido foi enviado para a cozinha')}
-        </p>
+        <div className="flex items-center gap-3">
+          <span className="w-11 h-11 rounded-full bg-emerald-50 text-emerald-700 flex items-center justify-center shrink-0">
+            <i className="ri-check-line text-2xl" />
+          </span>
+          <div className="min-w-0">
+            <h2 className="text-xl font-extrabold tracking-tight text-stone-900">
+              {vendoOriginal ? 'Pedido enviado!' : 'Pedido'} <span className="text-stone-500 font-bold">#{trackingNumero.slice(-4)}</span>
+            </h2>
+            <p className="text-[13px] text-stone-600">
+              {!vendoOriginal
+                ? 'Você está vendo um pedido do seu histórico'
+                : pixOnline && !pixPago
+                ? 'Ele vai para a cozinha assim que o pagamento for confirmado'
+                : (modoEntrega === 'retirada' ? 'Retirada na loja' : 'Entrega') + ' · ' + formatCurrency(orderTotal)
+                  + (paymentMethod && !pixOnline
+                    ? ' · ' + paymentMethod + (/pelo app/i.test(paymentMethod) ? '' : (modoEntrega === 'retirada' ? ' na retirada' : ' na entrega'))
+                    : '')}
+            </p>
+          </div>
+        </div>
 
-        {!vendoOriginal ? null : resumo && resumo.desconto > 0 ? (
-          /* Detalhamento com desconto do cupom */
-          <div className="mx-auto max-w-[260px] mb-4 bg-zinc-50 border border-zinc-200 rounded-xl px-4 py-3 text-left space-y-1.5">
-            <div className="flex justify-between text-xs">
-              <span className="text-zinc-500">Subtotal</span>
-              <span className="font-semibold text-zinc-700">{formatCurrency(resumo.subtotal)}</span>
+        {vendoOriginal && resumo && resumo.desconto > 0 ? (
+          /* Detalhamento com desconto (cupom/clube) */
+          <div className="mt-3 bg-white border border-stone-200/70 rounded-2xl px-4 py-3 space-y-1.5">
+            <div className="flex justify-between text-[13px]">
+              <span className="text-stone-600">Subtotal</span>
+              <span className="font-semibold text-stone-800">{formatCurrency(resumo.subtotal)}</span>
             </div>
-            <div className="flex justify-between text-xs text-emerald-600">
+            <div className="flex justify-between text-[13px] text-emerald-700">
               <span className="flex items-center gap-1"><i className="ri-coupon-3-line" />{rotuloDesconto(resumo.voucherCodigo)}</span>
               <span className="font-bold">- {formatCurrency(resumo.desconto)}</span>
             </div>
-            {resumo.deliveryFee > 0 ? (
-              <div className="flex justify-between text-xs">
-                <span className="text-zinc-500">Taxa de entrega</span>
-                <span className="font-semibold text-zinc-700">{formatCurrency(resumo.deliveryFee)}</span>
+            {taxaExibida > 0 ? (
+              <div className="flex justify-between text-[13px]">
+                <span className="text-stone-600">Taxa de entrega</span>
+                <span className="font-semibold text-stone-800">{formatCurrency(taxaExibida)}</span>
               </div>
             ) : null}
-            <div className="flex justify-between text-sm font-black pt-1.5 border-t border-zinc-200">
-              <span className="text-zinc-800">Total</span>
-              <span className="text-amber-600">{formatCurrency(orderTotal)}</span>
+            <div className="flex justify-between text-sm font-extrabold pt-1.5 border-t border-stone-100">
+              <span className="text-stone-900">Total</span>
+              <span className="text-stone-900">{formatCurrency(orderTotal)}</span>
             </div>
-          </div>
-        ) : (
-          <div className="inline-flex items-center gap-1 px-3 py-1.5 bg-amber-50 rounded-full border border-amber-200/60 mb-4">
-            <span className="text-xs font-bold text-amber-700">
-              Total: {formatCurrency(orderTotal)}
-            </span>
-            {taxaExibida > 0 ? (
-              <span className="text-[10px] text-amber-500">
-                (inclui taxa {formatCurrency(taxaExibida)})
-              </span>
-            ) : null}
-          </div>
-        )}
-
-        {vendoOriginal && paymentMethod && !pixOnline ? (
-          <div className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-green-50 rounded-full border border-green-200/60 mb-4 mx-2">
-            <i className="ri-wallet-3-line text-green-600 text-sm" />
-            <span className="text-xs font-bold text-green-700">{paymentMethod}</span>
-            <span className="text-[10px] text-green-500">
-              {modoEntrega === 'retirada' ? '— Na retirada!' : '— Motoboy já sabe!'}
-            </span>
           </div>
         ) : null}
       </div>
@@ -154,7 +138,7 @@ export default function ConfirmacaoDelivery(props: Props) {
           {metodoApp === 'cartao' ? (
             cartaoOnline && !cartaoOnline.pronto ? (
               <div className="flex items-center justify-center gap-2 py-6 text-xs text-zinc-400">
-                <i className="ri-loader-4-line animate-spin text-amber-500" />
+                <i className="ri-loader-4-line animate-spin text-[var(--cor-loja)]" />
                 Preparando o pagamento com cartão…
               </div>
             ) : cartaoPodeUsar ? (
@@ -184,7 +168,7 @@ export default function ConfirmacaoDelivery(props: Props) {
               <button
                 type="button"
                 onClick={function () { props.onTrocarMetodoApp!(metodoApp === 'cartao' ? 'pix' : 'cartao'); }}
-                className="py-2 text-xs font-bold text-amber-600 hover:text-amber-700 cursor-pointer whitespace-nowrap"
+                className="h-11 text-[13px] font-bold text-[var(--cor-loja)] cursor-pointer whitespace-nowrap"
               >
                 {metodoApp === 'cartao'
                   ? <>Prefere Pix? <span className="underline">Pagar com Pix</span></>
@@ -208,30 +192,22 @@ export default function ConfirmacaoDelivery(props: Props) {
       ) : null}
 
       {/* Abas */}
-      <div className="flex gap-1 bg-zinc-100 rounded-xl p-1 mb-5">
+      <div className="grid grid-cols-2 gap-1 bg-stone-100 rounded-[13px] p-1 mb-3">
         <button
           type="button"
+          aria-pressed={abaAtiva === 'acompanhar'}
           onClick={function () { setAbaAtiva('acompanhar'); }}
-          className={'flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg text-xs font-bold cursor-pointer transition-all duration-200 whitespace-nowrap ' +
-            (abaAtiva === 'acompanhar'
-              ? 'bg-white text-zinc-800 shadow-sm'
-              : 'text-zinc-500 hover:text-zinc-700')
-          }
+          className={'h-11 rounded-[10px] text-sm cursor-pointer whitespace-nowrap ' + (abaAtiva === 'acompanhar' ? 'bg-white shadow-sm font-bold text-stone-900' : 'font-semibold text-stone-600')}
         >
-          <i className="ri-time-line text-sm" />
           Acompanhar
         </button>
         <button
           type="button"
+          aria-pressed={abaAtiva === 'historico'}
           onClick={function () { setAbaAtiva('historico'); }}
-          className={'flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg text-xs font-bold cursor-pointer transition-all duration-200 whitespace-nowrap ' +
-            (abaAtiva === 'historico'
-              ? 'bg-white text-zinc-800 shadow-sm'
-              : 'text-zinc-500 hover:text-zinc-700')
-          }
+          className={'h-11 rounded-[10px] text-sm cursor-pointer whitespace-nowrap ' + (abaAtiva === 'historico' ? 'bg-white shadow-sm font-bold text-stone-900' : 'font-semibold text-stone-600')}
         >
-          <i className="ri-history-line text-sm" />
-          Histórico
+          Meus pedidos
         </button>
       </div>
 

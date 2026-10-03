@@ -99,6 +99,8 @@ interface Props {
   deepLinkItemId?: string | null;
   /** Chamado assim que o deep link foi processado (para o pai limpar o estado/URL). */
   onDeepLinkConsumed?: () => void;
+  /** Altura (px) de uma faixa fixa acima da barra de categorias (ex.: senha do QR). */
+  topoChips?: number;
 }
 
 export default function CardapioMesaQR(props: Props) {
@@ -127,6 +129,12 @@ export default function CardapioMesaQR(props: Props) {
   // Ao confirmar em modo edição, essas linhas são removidas e recriadas.
   const [editingCartIds, setEditingCartIds] = useState<string[]>([]);
   const kbInset = useKeyboardInset();
+  // Busca abre pela lupa da barra de categorias (a barra vira o campo de busca)
+  const [buscaAberta, setBuscaAberta] = useState(false);
+  const chipsRef = useRef<HTMLDivElement | null>(null);
+  // Toque numa categoria rola a lista; enquanto rola, o scroll spy não mexe na categoria ativa
+  const cliqueCategoriaRef = useRef(false);
+  const cliqueTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ── Mapa de quantidades no carrinho por itemId ──────────────────────────────
 
@@ -172,6 +180,7 @@ export default function CardapioMesaQR(props: Props) {
 
   const handleScrollSpy = useCallback(function (catId: string) {
     if (!scrollSpyEnabledRef.current) return;
+    if (cliqueCategoriaRef.current) return;
     if (onCategoriaAtivaChange) {
       onCategoriaAtivaChange(catId);
     }
@@ -200,7 +209,7 @@ export default function CardapioMesaQR(props: Props) {
       {
         // Considera a seção visível quando seu topo cruza a linha ~80px do topo
         // e ainda está nos primeiros 40% da tela
-        rootMargin: '-80px 0px -60% 0px',
+        rootMargin: '-' + (80 + (props.topoChips || 0)) + 'px 0px -60% 0px',
         threshold: 0,
       }
     );
@@ -229,7 +238,7 @@ export default function CardapioMesaQR(props: Props) {
         observerRef.current.disconnect();
       }
     };
-  }, [categoriasOrdenadas, handleScrollSpy]);
+  }, [categoriasOrdenadas, handleScrollSpy, props.topoChips]);
 
   function gruposDoItem(itemId: string) {
     return optionGroups.filter(function (g) { return g.item_id === itemId; });
@@ -543,13 +552,156 @@ export default function CardapioMesaQR(props: Props) {
     return null;
   }
 
+  // ── Preço "a partir de" ──────────────────────────────────────────────────────
+  // Item cujo preço vem das opções obrigatórias (ex.: Duo Mex custa R$ 0 e o preço
+  // está nos burritos escolhidos) aparecia como "R$ 0,00". Soma o mais barato de
+  // cada grupo obrigatório para mostrar o menor valor possível.
+  function extraMinimo(item: CardapioItem) {
+    let extra = 0;
+    gruposDoItem(item.id).forEach(function (g) {
+      const min = minExigido(g);
+      if (min <= 0) return;
+      const precos = opcoesDoGrupo(g.id)
+        .filter(function (o) { return o.is_active !== false && !opcoesIndisponiveisIds.includes(o.id); })
+        .map(function (o) { return o.additional_price || 0; })
+        .sort(function (a, b) { return a - b; });
+      for (let k = 0; k < min && k < precos.length; k++) extra += precos[k];
+    });
+    return extra;
+  }
+
+  function rotuloCategoria(cat: CardapioCategory) {
+    if (cat.id === '__destaques__') return t('cliente.destaques');
+    // Tira emoji/símbolo do começo do nome ("⭐ Destaques", "🔥 Promoção")
+    const nome = tx(cat);
+    return nome.replace(/^[^\p{L}\p{N}+]+/u, '') || nome;
+  }
+
+  function irParaCategoria(catId: string) {
+    if (cliqueTimerRef.current) clearTimeout(cliqueTimerRef.current);
+    cliqueCategoriaRef.current = true;
+    cliqueTimerRef.current = setTimeout(function () { cliqueCategoriaRef.current = false; }, 900);
+    if (onCategoriaAtivaChange) onCategoriaAtivaChange(catId);
+    requestAnimationFrame(function () {
+      const el = document.getElementById('scroll-cat-' + catId);
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  }
+
+  // Mantém a categoria ativa visível na barra (rola a barra na horizontal)
+  useEffect(function () {
+    const box = chipsRef.current;
+    if (!box || !categoriaAtiva) return;
+    const chip = box.querySelector('[data-cat="' + categoriaAtiva + '"]') as HTMLElement | null;
+    if (!chip) return;
+    const alvo = chip.offsetLeft - box.clientWidth / 2 + chip.clientWidth / 2;
+    box.scrollTo({ left: Math.max(0, alvo), behavior: 'smooth' });
+  }, [categoriaAtiva]);
+
+  // Item sem nenhum grupo de opção: o "+" já põe 1 unidade na sacola (sem abrir a janela).
+  // Tocar no item continua abrindo a janela (foto, descrição, observação).
+  function adicionarRapido(item: CardapioItem) {
+    const precoEfetivo = getPrecoEfetivo(item);
+    onAdicionar({
+      cartId: 'cart-' + item.id + '-' + Date.now() + '-0',
+      itemId: item.id,
+      name: item.name,
+      precoBase: precoEfetivo,
+      precoTotal: precoEfetivo,
+      quantidade: 1,
+      opcoes: [],
+      observacoes: [],
+      observacaoLivre: '',
+      skipKds: item.skip_kds !== null ? item.skip_kds : false,
+      stationId: item.station_id,
+    });
+  }
+
+  function tocarMais(item: CardapioItem) {
+    if (gruposDoItem(item.id).length === 0) adicionarRapido(item);
+    else abrirModal(item);
+  }
+
+  function renderPreco(item: CardapioItem, tamanho: 'normal' | 'pequeno') {
+    const promoAtiva = rawPromoAtivaHoje(item.promotions);
+    const extra = extraMinimo(item);
+    const base = getPrecoEfetivo(item);
+    const cls = tamanho === 'normal' ? 'text-[15px]' : 'text-sm';
+    if (extra > 0) {
+      return (
+        <span className={cls + ' font-bold text-stone-900'}>
+          <span className="font-semibold text-stone-500">{t('cliente.aPartirDe')} </span>
+          {formatCurrency(base + extra)}
+        </span>
+      );
+    }
+    if (promoAtiva) {
+      return (
+        <span className="flex items-baseline gap-1.5">
+          <span className="text-xs text-stone-400 line-through">{formatCurrency(item.price)}</span>
+          <span className={cls + ' font-bold text-red-700'}>{formatCurrency(base)}</span>
+        </span>
+      );
+    }
+    return <span className={cls + ' font-bold text-stone-900'}>{formatCurrency(item.price)}</span>;
+  }
+
+  // Stepper −/+ de um item já na sacola
+  function renderStepper(item: CardapioItem, qtyInCart: number) {
+    const onAlterarQtd = props.onAlterarQtd;
+    return (
+      <div className="flex items-center bg-white border border-stone-200 rounded-full shadow-sm h-10">
+        <button
+          type="button"
+          aria-label={'Tirar 1 ' + tx(item)}
+          onClick={function (e) {
+            e.stopPropagation();
+            const linha = ultimaLinhaDoItem(item.id);
+            if (linha && onAlterarQtd) onAlterarQtd(linha.cartId, -1);
+          }}
+          className="w-9 h-10 flex items-center justify-center rounded-full text-[var(--cor-loja)] cursor-pointer"
+        >
+          <i className={qtyInCart === 1 ? 'ri-delete-bin-line text-[15px]' : 'ri-subtract-line text-base'} />
+        </button>
+        <span className="min-w-[18px] text-center text-sm font-black text-stone-900">{qtyInCart}</span>
+        <button
+          type="button"
+          aria-label={'Adicionar mais 1 ' + tx(item)}
+          onClick={function (e) {
+            e.stopPropagation();
+            const linha = ultimaLinhaDoItem(item.id);
+            if (linha && onAlterarQtd) onAlterarQtd(linha.cartId, 1); // repete a última configuração
+          }}
+          className="w-9 h-10 flex items-center justify-center rounded-full text-[var(--cor-loja)] cursor-pointer"
+        >
+          <i className="ri-add-line text-base" />
+        </button>
+      </div>
+    );
+  }
+
+  function renderBotaoMais(item: CardapioItem) {
+    return (
+      <button
+        type="button"
+        aria-label={'Adicionar ' + tx(item)}
+        onClick={function (e) { e.stopPropagation(); tocarMais(item); }}
+        className="w-9 h-9 rounded-full bg-white border border-stone-200 shadow-md flex items-center justify-center text-[var(--cor-loja)] cursor-pointer hover:bg-stone-50"
+      >
+        <i className="ri-add-line text-xl font-bold" />
+      </button>
+    );
+  }
+
+  // Linha da lista: texto à esquerda, foto à direita com o "+"
   function renderItemCard(item: CardapioItem) {
     const qtyInCart = cartQtyMap[item.id] || 0;
     const promoAtiva = rawPromoAtivaHoje(item.promotions);
-    const precoFinal = promoAtiva ? promoAtiva.promotional_price : item.price;
-    const onAlterarQtd = props.onAlterarQtd;
+    const temFoto = !!item.photo_url && !imgErros.has(item.id);
+    const comStepper = qtyInCart > 0 && !!props.onAlterarQtd;
+    const desc = tx(item, 'description');
 
-    // Card é <div role="button"> (não <button>) porque o stepper −/+ aninha
+    // Card é <div role="button"> (não <button>) porque o "+" e o stepper −/+ são
     // botões dentro dele — botão dentro de botão é HTML inválido.
     return (
       <div
@@ -558,155 +710,219 @@ export default function CardapioMesaQR(props: Props) {
         tabIndex={0}
         onClick={function () { abrirModal(item); }}
         onKeyDown={function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); abrirModal(item); } }}
-        className="text-left bg-white rounded-2xl border border-zinc-100 p-3 flex gap-3 hover:border-zinc-200 transition-all duration-200 cursor-pointer group relative"
+        className="flex gap-3.5 py-4 border-b border-stone-200/70 cursor-pointer text-left"
       >
-        {/* Stepper −/+ quando o item já está no carrinho; senão badge de PROMO */}
-        {qtyInCart > 0 && onAlterarQtd ? (
-          <div className="absolute top-2 right-2 z-10 flex items-center gap-0.5 bg-white border border-amber-200 rounded-full shadow-sm px-0.5 py-0.5">
-            <button
-              type="button"
-              aria-label={'Tirar 1 ' + tx(item)}
-              onClick={function (e) {
-                e.stopPropagation();
-                const linha = ultimaLinhaDoItem(item.id);
-                if (linha) onAlterarQtd(linha.cartId, -1);
-              }}
-              className="w-6 h-6 flex items-center justify-center rounded-full text-amber-600 hover:bg-amber-50 cursor-pointer transition-colors"
-            >
-              <i className={(qtyInCart === 1 ? 'ri-delete-bin-line text-[13px]' : 'ri-subtract-line text-sm')} />
-            </button>
-            <span className="min-w-[16px] text-center text-xs font-black text-zinc-800">{qtyInCart}</span>
-            <button
-              type="button"
-              aria-label={'Adicionar mais 1 ' + tx(item)}
-              onClick={function (e) {
-                e.stopPropagation();
-                const linha = ultimaLinhaDoItem(item.id);
-                if (linha) onAlterarQtd(linha.cartId, 1); // repete a última configuração
-              }}
-              className="w-6 h-6 flex items-center justify-center rounded-full text-amber-600 hover:bg-amber-50 cursor-pointer transition-colors"
-            >
-              <i className="ri-add-line text-sm" />
-            </button>
-          </div>
-        ) : qtyInCart > 0 ? (
-          <div className="absolute top-2 right-2 z-10 w-5 h-5 flex items-center justify-center bg-amber-500 text-white text-[10px] font-black rounded-full">
-            {qtyInCart}
-          </div>
-        ) : promoAtiva ? (
-          <div className="absolute top-2 right-2 z-10 bg-red-500 text-white text-[9px] font-black px-2 py-0.5 rounded-full tracking-wide">
-            PROMO
-          </div>
-        ) : null}
-
-        <div className="shrink-0 w-[72px] h-[72px] rounded-xl overflow-hidden bg-zinc-100 flex items-center justify-center">
-          {(item.photo_url && !imgErros.has(item.id)) ? (
+        <div className="flex-1 min-w-0">
+          {promoAtiva ? (
+            <span className="inline-block mb-1.5 px-2 py-0.5 rounded-md bg-amber-50 text-amber-800 text-xs font-bold">
+              {t('cliente.promocao')}
+            </span>
+          ) : null}
+          <h3 className="text-[15px] font-bold leading-snug text-stone-900 break-words">{tx(item)}</h3>
+          {desc ? (
+            <p className="mt-1 text-[13px] leading-[1.45] text-stone-600 line-clamp-2 break-words">{desc}</p>
+          ) : null}
+          <div className="mt-2">{renderPreco(item, 'normal')}</div>
+          {!temFoto && comStepper ? <div className="mt-2 inline-flex">{renderStepper(item, qtyInCart)}</div> : null}
+        </div>
+        {temFoto ? (
+          <div className="relative shrink-0 w-[100px] h-[100px]">
             <img
-              src={item.photo_url}
+              src={item.photo_url as string}
               alt={tx(item)}
               loading="lazy"
               decoding="async"
-              className="w-full h-full object-cover object-top group-hover:scale-105 transition-transform duration-300"
+              className="w-full h-full rounded-2xl object-cover bg-stone-100"
               onError={function () { handleImgError(item.id); }}
             />
-          ) : (
-            <div className="w-full h-full flex items-center justify-center bg-zinc-100">
-              <i className="ri-restaurant-2-line text-zinc-300 text-xl" />
-            </div>
-          )}
-        </div>
-        <div className="flex-1 min-w-0 flex flex-col justify-between">
-          <div>
-            <h3 className="text-sm font-bold text-zinc-800 break-words">{tx(item)}</h3>
-            {tx(item, 'description') ? (
-              <p className="text-[11px] text-zinc-500 mt-0.5 leading-relaxed break-words">
-                {tx(item, 'description')}
-              </p>
-            ) : null}
+            {comStepper ? (
+              <div className="absolute -bottom-3 left-1/2 -translate-x-1/2">{renderStepper(item, qtyInCart)}</div>
+            ) : (
+              <div className="absolute -bottom-1.5 -right-1.5">{renderBotaoMais(item)}</div>
+            )}
           </div>
-          <div className="flex items-center justify-between mt-1.5">
-            <div className="flex items-baseline gap-1.5">
-              {promoAtiva ? (
-                <>
-                  <span className="text-[11px] text-zinc-300 line-through">{formatCurrency(item.price)}</span>
-                  <span className="text-sm font-bold text-red-500">{formatCurrency(precoFinal)}</span>
-                </>
-              ) : (
-                <span className="text-sm font-bold text-amber-600">{formatCurrency(item.price)}</span>
-              )}
-            </div>
-          </div>
-        </div>
+        ) : !comStepper ? (
+          <div className="shrink-0 self-center">{renderBotaoMais(item)}</div>
+        ) : null}
       </div>
     );
   }
 
+  // Cartão do carrossel de destaques
+  function renderDestaqueCard(item: CardapioItem) {
+    const qtyInCart = cartQtyMap[item.id] || 0;
+    const temFoto = !!item.photo_url && !imgErros.has(item.id);
+    return (
+      <div
+        key={'dest-' + item.id}
+        role="button"
+        tabIndex={0}
+        onClick={function () { abrirModal(item); }}
+        onKeyDown={function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); abrirModal(item); } }}
+        className="shrink-0 w-[152px] cursor-pointer text-left"
+      >
+        <div className="relative w-[152px] h-[116px] rounded-2xl bg-stone-100 overflow-hidden">
+          {temFoto ? (
+            <img
+              src={item.photo_url as string}
+              alt={tx(item)}
+              loading="lazy"
+              decoding="async"
+              className="w-full h-full object-cover"
+              onError={function () { handleImgError(item.id); }}
+            />
+          ) : (
+            <div className="w-full h-full flex items-center justify-center">
+              <i className="ri-restaurant-2-line text-stone-300 text-2xl" />
+            </div>
+          )}
+          <div className="absolute right-2 bottom-2">
+            {qtyInCart > 0 ? (
+              <span className="min-w-[36px] h-9 px-2 rounded-full bg-[var(--cor-loja)] text-white text-sm font-black flex items-center justify-center shadow-md">
+                {qtyInCart}
+              </span>
+            ) : renderBotaoMais(item)}
+          </div>
+        </div>
+        <p className="mt-2 text-sm font-bold leading-snug text-stone-900 line-clamp-2 break-words">{tx(item)}</p>
+        <div className="mt-0.5">{renderPreco(item, 'pequeno')}</div>
+      </div>
+    );
+  }
+
+  // Texto da regra do grupo ("Escolha 1", "Escolha até 3"…)
+  function regraGrupo(g: OptionGroup) {
+    const min = minExigido(g);
+    const max = g.max_selections != null ? g.max_selections : 1;
+    if (max <= 1) return t('cliente.escolha1');
+    if (min > 0 && min === max) return t('cliente.escolhaN', { n: max });
+    if (min > 0) return t('cliente.escolhaDeAte', { min: min, max: max });
+    return t('cliente.escolhaAte', { max: max });
+  }
+
   const cfgAtual = itemSelecionado ? unidades[unidadeAtiva] : null;
-  const hasOptions = itemSelecionado ? gruposDoItem(itemSelecionado.id).length > 0 : false;
   const hasObservations = itemSelecionado ? obsDoItem(itemSelecionado.id).length > 0 : false;
+
+  // Primeira escolha obrigatória que falta (em qualquer unidade) — o botão diz qual é
+  let faltaUnidade = -1;
+  let faltaGrupo: OptionGroup | null = null;
+  if (itemSelecionado) {
+    for (let i = 0; i < unidades.length && !faltaGrupo; i++) {
+      const f = gruposFaltando(unidades[i]);
+      if (f.length > 0) { faltaUnidade = i; faltaGrupo = f[0]; }
+    }
+  }
+
+  function irParaFaltando() {
+    if (!faltaGrupo) return;
+    setTentouAdicionar(true);
+    if (faltaUnidade >= 0) setUnidadeAtiva(faltaUnidade);
+    const id = 'grupo-' + faltaGrupo.id;
+    requestAnimationFrame(function () {
+      const el = document.getElementById(id);
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  }
+
+  const destaquesCat = categoriasOrdenadas.find(function (c) { return c.id === '__destaques__'; }) || null;
 
   // ── Render ──────────────────────────────────────────────────────────────────
 
   return (
-    <div className="px-4 py-4">
-      {/* Busca */}
-      <div className="relative mb-5">
-        <i className="ri-search-line absolute left-3.5 top-1/2 -translate-y-1/2 text-zinc-400 text-sm pointer-events-none" />
-        <input
-          type="text"
-          value={busca}
-          onChange={function (e) { setBusca(e.target.value); }}
-          placeholder={t('cliente.buscar')}
-          className="w-full pl-10 pr-9 py-2.5 text-sm border border-zinc-200 rounded-xl bg-white text-zinc-800 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-amber-400/50 focus:border-amber-400"
-        />
-        {busca ? (
-          <button
-            type="button"
-            onClick={function () { setBusca(''); }}
-            className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 cursor-pointer"
-          >
-            <i className="ri-close-line text-sm" />
-          </button>
-        ) : null}
+    <div>
+      {/* Barra de categorias (presa no topo) — a lupa troca a barra pelo campo de busca */}
+      <div className="sticky top-0 z-20 bg-[#FBF8F4] border-b border-stone-200/70" style={props.topoChips ? { top: props.topoChips } : undefined}>
+        {buscaAberta ? (
+          <div className="flex items-center gap-2 px-4 py-2.5">
+            <div className="relative flex-1">
+              <i className="ri-search-line absolute left-3.5 top-1/2 -translate-y-1/2 text-stone-400 text-base pointer-events-none" />
+              <input
+                type="search"
+                autoFocus
+                value={busca}
+                onChange={function (e) { setBusca(e.target.value); }}
+                placeholder={t('cliente.buscar')}
+                className="w-full h-11 pl-10 pr-3 text-[15px] border border-stone-300 rounded-full bg-white text-stone-900 placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-[color:var(--cor-loja-suave)] focus:border-[var(--cor-loja)]"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={function () { setBusca(''); setBuscaAberta(false); }}
+              className="h-11 px-2 text-sm font-bold text-stone-700 cursor-pointer"
+            >
+              {t('cliente.cancelar')}
+            </button>
+          </div>
+        ) : (
+          <div ref={chipsRef} className="flex items-center gap-2 px-4 py-2.5 overflow-x-auto scrollbar-hide">
+            <button
+              type="button"
+              aria-label={t('cliente.buscar')}
+              onClick={function () { setBuscaAberta(true); }}
+              className="shrink-0 w-11 h-11 rounded-full border border-stone-300 bg-white text-stone-900 flex items-center justify-center cursor-pointer"
+            >
+              <i className="ri-search-line text-lg" />
+            </button>
+            {categoriasOrdenadas.map(function (cat) {
+              const ativa = categoriaAtiva === cat.id;
+              return (
+                <button
+                  key={cat.id}
+                  type="button"
+                  data-cat={cat.id}
+                  aria-pressed={ativa}
+                  onClick={function () { irParaCategoria(cat.id); }}
+                  className={'shrink-0 h-11 px-4 rounded-full text-sm whitespace-nowrap cursor-pointer transition-colors ' +
+                    (ativa
+                      ? 'bg-stone-900 text-white font-bold'
+                      : 'bg-white text-stone-900 font-semibold border border-stone-300 hover:bg-stone-50')}
+                >
+                  {rotuloCategoria(cat)}
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* Resultados da busca (lista plana) */}
       {buscaNorm ? (
         resultadosBusca.length > 0 ? (
-          <div>
-            <p className="text-xs font-bold text-zinc-500 mb-3">
-              {resultadosBusca.length} resultado{resultadosBusca.length > 1 ? 's' : ''} para “{busca.trim()}”
+          <div className="px-5 pt-4">
+            <p className="text-xs font-bold text-stone-500">
+              {t('cliente.resultadosPara', { n: resultadosBusca.length, q: busca.trim() })}
             </p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {resultadosBusca.map(function (item) { return renderItemCard(item); })}
-            </div>
+            {resultadosBusca.map(function (item) { return renderItemCard(item); })}
           </div>
         ) : (
           <div className="text-center py-16 flex flex-col items-center">
-            <div className="w-16 h-16 flex items-center justify-center bg-zinc-100 rounded-2xl mb-4">
-              <i className="ri-search-line text-2xl text-zinc-300" />
+            <div className="w-16 h-16 flex items-center justify-center bg-stone-100 rounded-2xl mb-4">
+              <i className="ri-search-line text-2xl text-stone-300" />
             </div>
-            <p className="text-sm font-bold text-zinc-700">Nada encontrado</p>
-            <p className="text-xs text-zinc-500 mt-1">Tente outro termo</p>
+            <p className="text-sm font-bold text-stone-700">{t('cliente.semResultado')}</p>
+            <p className="text-xs text-stone-500 mt-1">{t('cliente.tenteOutro')}</p>
           </div>
         )
       ) : (
       /* Rolagem contínua - todas as categorias em sequência */
-      <div className="space-y-8">
+      <div className="pb-6">
         {categoriasOrdenadas.map(function (cat) {
           const catItems = todosItensDisponiveis.filter(function (i) { return i.category_id === cat.id; });
           if (catItems.length === 0) return null;
+          if (destaquesCat && cat.id === destaquesCat.id) {
+            return (
+              <section key={cat.id} id={'scroll-cat-' + cat.id} className="pt-5" style={{ scrollMarginTop: 68 + (props.topoChips || 0) }}>
+                <h2 className="px-5 text-lg font-extrabold tracking-tight text-stone-900">{rotuloCategoria(cat)}</h2>
+                <div className="flex gap-3 overflow-x-auto scrollbar-hide px-5 pt-3 pb-1">
+                  {catItems.map(function (item) { return renderDestaqueCard(item); })}
+                </div>
+              </section>
+            );
+          }
           return (
-            <section key={cat.id} id={'scroll-cat-' + cat.id} className="scroll-mt-14">
-              {/* Cabeçalho da categoria */}
-              <div className="flex items-center gap-3 mb-4">
-                <h3 className="text-base font-black text-zinc-800">{tx(cat)}</h3>
-                <div className="h-px flex-1 bg-zinc-100" />
-                <span className="text-[10px] font-bold text-zinc-400">{catItems.length} ite{catItems.length > 1 ? 'ns' : 'm'}</span>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {catItems.map(function (item) { return renderItemCard(item); })}
-              </div>
+            <section key={cat.id} id={'scroll-cat-' + cat.id} className="px-5 pt-6" style={{ scrollMarginTop: 68 + (props.topoChips || 0) }}>
+              <h2 className="text-lg font-extrabold tracking-tight text-stone-900">{rotuloCategoria(cat)}</h2>
+              {catItems.map(function (item) { return renderItemCard(item); })}
             </section>
           );
         })}
@@ -715,15 +931,14 @@ export default function CardapioMesaQR(props: Props) {
 
       {!buscaNorm && todosItensDisponiveis.length === 0 ? (
         <div className="text-center py-16 flex flex-col items-center">
-          <div className="w-16 h-16 flex items-center justify-center bg-zinc-100 rounded-2xl mb-4">
-            <i className="ri-inbox-line text-2xl text-zinc-300" />
+          <div className="w-16 h-16 flex items-center justify-center bg-stone-100 rounded-2xl mb-4">
+            <i className="ri-inbox-line text-2xl text-stone-300" />
           </div>
-          <p className="text-sm font-bold text-zinc-700">Nenhum item disponível</p>
-          <p className="text-xs text-zinc-500 mt-1">Tente novamente mais tarde</p>
+          <p className="text-sm font-bold text-stone-700">{t('cliente.nenhumItem')}</p>
         </div>
       ) : null}
 
-      {/* Modal de montagem do item */}
+      {/* Janela do item */}
       {itemSelecionado && cfgAtual ? (
         <div
           className={'fixed inset-0 z-50 flex items-end justify-center transition-opacity duration-300 ' +
@@ -736,254 +951,243 @@ export default function CardapioMesaQR(props: Props) {
           />
 
           <div
-            className={'relative w-full max-w-lg bg-white rounded-t-3xl max-h-[85vh] overflow-y-auto transition-transform duration-300 ' +
+            className={'relative w-full max-w-lg bg-[#FBF8F4] rounded-t-3xl max-h-[92vh] overflow-y-auto overflow-x-hidden transition-transform duration-300 ' +
               (modalVisible ? 'translate-y-0' : 'translate-y-full')}
             style={{ scrollbarWidth: 'thin' }}
             onFocus={scrollFocusedFieldIntoView}
           >
-            <div className="sticky top-0 bg-white/95 backdrop-blur-sm border-b border-zinc-100 px-5 py-3 flex items-center justify-between z-10">
-              <div className="min-w-0">
-                <h3 className="text-base font-bold text-zinc-800 break-words">{tx(itemSelecionado)}</h3>
-                {getPrecoEfetivo(itemSelecionado) < itemSelecionado.price ? (
-                  <p className="text-xs text-zinc-500 mt-0.5">
-                    <span className="line-through text-zinc-300">{formatCurrency(itemSelecionado.price)}</span>
-                    {' '}
-                    <span className="text-red-500 font-bold">{formatCurrency(getPrecoEfetivo(itemSelecionado))}</span>
-                  </p>
-                ) : (
-                  <p className="text-xs text-zinc-500 mt-0.5">{formatCurrency(itemSelecionado.price)}</p>
-                )}
+            {(itemSelecionado.photo_url && !imgErros.has(itemSelecionado.id)) ? (
+              <div className="relative h-60 bg-stone-200">
+                <img
+                  src={itemSelecionado.photo_url}
+                  alt={tx(itemSelecionado)}
+                  className="w-full h-full object-cover"
+                  onError={function () { handleImgError(itemSelecionado.id); }}
+                />
+                <button
+                  type="button"
+                  onClick={fecharModal}
+                  aria-label={t('cliente.fechar')}
+                  className="absolute top-3 left-3 w-11 h-11 rounded-full bg-white/95 text-stone-900 flex items-center justify-center shadow-sm cursor-pointer"
+                >
+                  <i className="ri-close-line text-xl" />
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={fecharModal}
-                className="w-9 h-9 flex items-center justify-center bg-zinc-100 rounded-full text-zinc-500 hover:text-zinc-700 hover:bg-zinc-200 transition-colors cursor-pointer shrink-0 ml-3"
-              >
-                <i className="ri-close-line text-lg" />
-              </button>
+            ) : (
+              <div className="sticky top-0 z-10 flex justify-end px-3 pt-3 bg-[#FBF8F4]">
+                <button
+                  type="button"
+                  onClick={fecharModal}
+                  aria-label={t('cliente.fechar')}
+                  className="w-11 h-11 rounded-full bg-stone-200 text-stone-900 flex items-center justify-center cursor-pointer"
+                >
+                  <i className="ri-close-line text-xl" />
+                </button>
+              </div>
+            )}
+
+            <div className="px-5 pt-4 pb-1">
+              {rawPromoAtivaHoje(itemSelecionado.promotions) ? (
+                <span className="inline-block mb-2 px-2 py-0.5 rounded-md bg-amber-50 text-amber-800 text-xs font-bold">
+                  {t('cliente.promocao')}
+                </span>
+              ) : null}
+              <h2 className="text-[22px] leading-tight font-extrabold tracking-tight text-stone-900 break-words">{tx(itemSelecionado)}</h2>
+              {tx(itemSelecionado, 'description') ? (
+                <p className="mt-2 text-sm leading-relaxed text-stone-600">{tx(itemSelecionado, 'description')}</p>
+              ) : null}
+              <div className="mt-2.5 text-base">{renderPreco(itemSelecionado, 'normal')}</div>
             </div>
 
-            {(itemSelecionado.photo_url && !imgErros.has(itemSelecionado.id)) ? (
+            {/* Seletor de unidade (quando qtd > 1) */}
+            {qtd > 1 ? (
               <div className="px-5 pt-4">
-                {/* Foto inteira (object-contain) sobre a própria foto desfocada de fundo —
-                    nenhuma proporção de imagem fica cortada nem com faixas pretas/escuras */}
-                <div className="relative w-full h-44 rounded-xl overflow-hidden bg-zinc-100">
-                  <img
-                    src={itemSelecionado.photo_url}
-                    alt=""
-                    aria-hidden="true"
-                    className="absolute inset-0 w-full h-full object-cover blur-xl scale-110 opacity-60"
-                  />
-                  <img
-                    src={itemSelecionado.photo_url}
-                    alt={tx(itemSelecionado)}
-                    className="relative w-full h-full object-contain"
-                    onError={function () { handleImgError(itemSelecionado.id); }}
-                  />
+                <p className="text-sm font-bold text-stone-900 mb-2">{t('cliente.porUnidade')}</p>
+                <div className="flex gap-1.5 overflow-x-auto pb-1 scrollbar-hide">
+                  {unidades.map(function (_, idx) {
+                    const hasCustom = Object.keys(unidades[idx].opcoesSelecionadas).length > 0 ||
+                      unidades[idx].obsSelecionadas.length > 0 ||
+                      unidades[idx].obsLivre.trim().length > 0;
+                    return (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={function () { setUnidadeAtiva(idx); }}
+                        className={'shrink-0 h-9 px-3.5 rounded-full text-xs font-bold cursor-pointer whitespace-nowrap transition-colors border ' +
+                          (unidadeAtiva === idx
+                            ? 'bg-stone-900 text-white border-stone-900'
+                            : 'bg-white text-stone-700 border-stone-300')
+                        }
+                      >
+                        {t('cliente.unidadeN', { n: idx + 1 })}
+                        {hasCustom ? (
+                          <span className="ml-1 inline-block w-1.5 h-1.5 rounded-full bg-[var(--cor-loja)] align-middle" />
+                        ) : null}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             ) : null}
 
-            <div className="px-5 py-4 space-y-5">
-              {itemSelecionado.description ? (
-                <p className="text-sm text-zinc-600 leading-relaxed">{tx(itemSelecionado, 'description')}</p>
-              ) : null}
-
-              {/* Quantidade */}
-              <div className="flex items-center justify-between bg-zinc-50 rounded-xl px-4 py-3">
-                <span className="text-sm font-bold text-zinc-800">{t('cliente.quantidade')}</span>
-                <div className="flex items-center gap-3">
-                  <button
-                    type="button"
-                    onClick={function () { ajustarQtd(qtd - 1); }}
-                    className="w-9 h-9 flex items-center justify-center bg-white rounded-full text-zinc-600 cursor-pointer hover:bg-zinc-200 transition-colors border border-zinc-100"
-                  >
-                    <i className="ri-subtract-line" />
-                  </button>
-                  <span className="text-sm font-bold text-zinc-800 w-5 text-center">{qtd}</span>
-                  <button
-                    type="button"
-                    onClick={function () { ajustarQtd(qtd + 1); }}
-                    className="w-9 h-9 flex items-center justify-center bg-zinc-900 rounded-full text-white cursor-pointer hover:bg-zinc-800 transition-colors"
-                  >
-                    <i className="ri-add-line" />
-                  </button>
-                </div>
-              </div>
-
-              {/* Seletor de unidade (quando qtd > 1) */}
-              {qtd > 1 ? (
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-sm font-bold text-zinc-800">Personalizar por unidade</span>
+            {/* Grupos de opção */}
+            {gruposDoItem(itemSelecionado.id).map(function (grupo) {
+              const minGrupo = minExigido(grupo);
+              const maxGrupo = grupo.max_selections != null ? grupo.max_selections : 1;
+              const unica = maxGrupo <= 1;
+              const selGrupo = cfgAtual.opcoesSelecionadas[grupo.id] || [];
+              const completo = minGrupo > 0 && selGrupo.length >= minGrupo;
+              const faltando = tentouAdicionar && minGrupo > 0 && selGrupo.length < minGrupo;
+              return (
+                <div key={grupo.id} id={'grupo-' + grupo.id} className="scroll-mt-2 mt-4">
+                  <div className="bg-stone-100 px-5 py-3 flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-base font-extrabold text-stone-900 break-words">{tx(grupo)}</p>
+                      <p className="text-[13px] text-stone-600 mt-0.5">{regraGrupo(grupo)}</p>
+                    </div>
+                    {minGrupo > 0 ? (
+                      <span className={'shrink-0 px-2.5 py-1 rounded-full text-xs font-bold ' +
+                        (completo ? 'bg-emerald-50 text-emerald-700' : faltando ? 'bg-red-600 text-white' : 'bg-amber-50 text-amber-800')}>
+                        {completo ? t('cliente.pronto') : t('cliente.obrigatorio')}
+                      </span>
+                    ) : (
+                      <span className="shrink-0 px-2.5 py-1 rounded-full text-xs font-bold bg-stone-200 text-stone-600">
+                        {t('cliente.opcional')}
+                      </span>
+                    )}
                   </div>
-                  <div className="flex gap-1.5 overflow-x-auto pb-1 scrollbar-hide">
-                    {unidades.map(function (_, idx) {
-                      const hasCustom = Object.keys(unidades[idx].opcoesSelecionadas).length > 0 ||
-                        unidades[idx].obsSelecionadas.length > 0 ||
-                        unidades[idx].obsLivre.trim().length > 0;
+                  <div className="px-5">
+                    {opcoesDoGrupo(grupo.id).map(function (op) {
+                      const checked = selGrupo.includes(op.id);
+                      const esgotada = opcoesIndisponiveisIds.includes(op.id);
                       return (
-                        <button
-                          key={idx}
-                          type="button"
-                          onClick={function () { setUnidadeAtiva(idx); }}
-                          className={'shrink-0 px-3 py-1.5 rounded-full text-xs font-bold cursor-pointer whitespace-nowrap transition-colors border ' +
-                            (unidadeAtiva === idx
-                              ? 'bg-amber-500 text-white border-amber-500'
-                              : 'bg-zinc-100 text-zinc-600 border-zinc-200 hover:bg-zinc-200')
-                          }
+                        <label
+                          key={op.id}
+                          className={'flex items-center gap-3 min-h-[56px] border-b border-stone-200/70 ' +
+                            (esgotada ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer')}
                         >
-                          Un. {idx + 1}
-                          {hasCustom ? (
-                            <span className="ml-1 inline-block w-1.5 h-1.5 rounded-full bg-amber-300 align-middle" />
+                          <span className={'flex-1 text-[15px] font-semibold break-words ' + (esgotada ? 'text-stone-400 line-through' : 'text-stone-900')}>{tx(op)}</span>
+                          {esgotada ? (
+                            <span className="text-[11px] font-bold text-red-700 bg-red-50 px-2 py-0.5 rounded-full whitespace-nowrap">
+                              {t('cliente.esgotado')}
+                            </span>
+                          ) : op.additional_price > 0 ? (
+                            <span className="text-sm font-semibold text-stone-700 whitespace-nowrap">+ {formatCurrency(op.additional_price)}</span>
                           ) : null}
-                        </button>
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            disabled={esgotada}
+                            onChange={esgotada ? undefined : function () { toggleOpcao(unidadeAtiva, grupo.id, op.id, grupo.max_selections); }}
+                            className="sr-only"
+                          />
+                          <span
+                            aria-hidden="true"
+                            className={'shrink-0 w-[22px] h-[22px] flex items-center justify-center border-2 transition-colors ' +
+                              (unica ? 'rounded-full ' : 'rounded-md ') +
+                              (checked ? 'border-[var(--cor-loja)] ' + (unica ? 'bg-white' : 'bg-[var(--cor-loja)]') : 'border-stone-300 bg-white')}
+                          >
+                            {checked ? (
+                              unica
+                                ? <span className="w-2.5 h-2.5 rounded-full bg-[var(--cor-loja)]" />
+                                : <i className="ri-check-line text-white text-sm" />
+                            ) : null}
+                          </span>
+                        </label>
                       );
                     })}
                   </div>
-                  {unidadeAtiva >= 0 ? (
-                    <p className="text-[10px] text-amber-600 mt-1.5 font-medium">
-                      Editando unidade {unidadeAtiva + 1} de {qtd}
-                    </p>
-                  ) : null}
                 </div>
-              ) : null}
+              );
+            })}
 
-              {/* Opções */}
-              {hasOptions ? (
-                <div className="space-y-4">
-                  {gruposDoItem(itemSelecionado.id).map(function (grupo) {
-                    const minGrupo = minExigido(grupo);
-                    const selGrupo = cfgAtual.opcoesSelecionadas[grupo.id] || [];
-                    const faltando = tentouAdicionar && selGrupo.length < minGrupo;
+            {/* Observações predefinidas */}
+            {hasObservations ? (
+              <div className="px-5 pt-5">
+                <p className="text-base font-extrabold text-stone-900 mb-3">{t('cliente.observacoes')}</p>
+                <div className="flex flex-wrap gap-2">
+                  {obsDoItem(itemSelecionado.id).map(function (obs) {
+                    const checked = cfgAtual.obsSelecionadas.includes(obs.text);
                     return (
-                      <div key={grupo.id}>
-                        <div className="flex items-center gap-2 mb-3">
-                          <span className="text-sm font-bold text-zinc-800">{tx(grupo)}</span>
-                          {grupo.is_required ? (
-                            <span className={'text-[10px] font-bold px-1.5 py-0.5 rounded-md border ' +
-                              (faltando
-                                ? 'text-white bg-red-600 border-red-600'
-                                : 'text-red-600 bg-red-50 border-red-100')}>
-                              {t('cliente.obrigatorio')}
-                            </span>
-                          ) : null}
-                          {(grupo.max_selections && grupo.max_selections > 1) ? (
-                            <span className="text-[10px] text-zinc-400">Máx {grupo.max_selections}</span>
-                          ) : null}
-                        </div>
-                        {faltando ? (
-                          <p className="text-[11px] font-semibold text-red-600 -mt-2 mb-2">
-                            {minGrupo > 1 ? 'Selecione ao menos ' + minGrupo + ' opções' : 'Selecione 1 opção'}
-                          </p>
-                        ) : null}
-                        <div className="space-y-1.5">
-                          {opcoesDoGrupo(grupo.id).map(function (op) {
-                            const sel = cfgAtual.opcoesSelecionadas[grupo.id] || [];
-                            const checked = sel.includes(op.id);
-                            const esgotada = opcoesIndisponiveisIds.includes(op.id);
-                            return (
-                              <label
-                                key={op.id}
-                                className={'flex items-center gap-3 px-3.5 py-3 rounded-xl transition-colors border ' +
-                                  (esgotada
-                                    ? 'opacity-50 cursor-not-allowed bg-zinc-50 border-zinc-100'
-                                    : checked
-                                      ? 'bg-amber-50 border-amber-200 cursor-pointer'
-                                      : 'bg-zinc-50 border-transparent hover:bg-zinc-100 cursor-pointer')
-                                }
-                              >
-                                <div className="relative flex items-center justify-center">
-                                  <input
-                                    type="checkbox"
-                                    checked={checked}
-                                    disabled={esgotada}
-                                    onChange={esgotada ? undefined : function () { toggleOpcao(unidadeAtiva, grupo.id, op.id, grupo.max_selections); }}
-                                    className="w-5 h-5 accent-amber-500 rounded disabled:cursor-not-allowed"
-                                  />
-                                </div>
-                                <span className={'flex-1 text-sm ' + (esgotada ? 'text-zinc-400 line-through' : 'text-zinc-700')}>{tx(op)}</span>
-                                {esgotada ? (
-                                  <span className="text-[10px] font-bold text-red-500 bg-red-50 border border-red-200 px-1.5 py-0.5 rounded-full whitespace-nowrap">
-                                    {t('cliente.esgotado')}
-                                  </span>
-                                ) : op.additional_price > 0 ? (
-                                  <span className="text-xs font-bold text-amber-600">
-                                    + {formatCurrency(op.additional_price)}
-                                  </span>
-                                ) : null}
-                              </label>
-                            );
-                          })}
-                        </div>
-                      </div>
+                      <button
+                        key={obs.id}
+                        type="button"
+                        aria-pressed={checked}
+                        onClick={function () { toggleObs(unidadeAtiva, obs.text); }}
+                        className={'h-10 px-4 rounded-full text-sm font-semibold cursor-pointer transition-colors border ' +
+                          (checked
+                            ? 'bg-stone-900 text-white border-stone-900'
+                            : 'bg-white text-stone-700 border-stone-300')
+                        }
+                      >
+                        {tx(obs, 'text')}
+                      </button>
                     );
                   })}
                 </div>
-              ) : null}
-
-              {/* Observações predefinidas */}
-              {hasObservations ? (
-                <div>
-                  <span className="text-sm font-bold text-zinc-800 block mb-3">{t('cliente.observacoes')}</span>
-                  <div className="flex flex-wrap gap-2">
-                    {obsDoItem(itemSelecionado.id).map(function (obs) {
-                      const checked = cfgAtual.obsSelecionadas.includes(obs.text);
-                      return (
-                        <button
-                          key={obs.id}
-                          type="button"
-                          onClick={function () { toggleObs(unidadeAtiva, obs.text); }}
-                          className={'px-3.5 py-2 rounded-full text-xs font-bold cursor-pointer transition-colors border ' +
-                            (checked
-                              ? 'bg-zinc-900 text-white border-zinc-900'
-                              : 'bg-zinc-100 text-zinc-600 border-zinc-100 hover:bg-zinc-200')
-                          }
-                        >
-                          {tx(obs, 'text')}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              ) : null}
-
-              {/* Observação livre */}
-              <div>
-                <span className="text-sm font-bold text-zinc-800 block mb-2">
-                  {qtd > 1 ? 'Outra observação (Un. ' + (unidadeAtiva + 1) + ')' : 'Outra observação'}
-                </span>
-                <textarea
-                  value={cfgAtual.obsLivre}
-                  onChange={function (e) { setObsLivre(unidadeAtiva, e.target.value.slice(0, 150)); }}
-                  placeholder="Ex: sem cebola, bem passado..."
-                  className="w-full px-3.5 py-3 border border-zinc-100 rounded-xl text-sm text-zinc-800 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-amber-400/50 focus:border-amber-400 resize-none bg-zinc-50"
-                  rows={2}
-                  maxLength={150}
-                />
-                <p className="text-[10px] text-zinc-400 text-right mt-1">{cfgAtual.obsLivre.length}/150</p>
               </div>
+            ) : null}
+
+            {/* Observação livre */}
+            <div className="px-5 pt-5 pb-6">
+              <label htmlFor="obs-livre-item" className="block text-[15px] font-bold text-stone-900">
+                {t('cliente.algumaObs')}{qtd > 1 ? ' (' + t('cliente.unidadeN', { n: unidadeAtiva + 1 }) + ')' : ''}
+              </label>
+              <textarea
+                id="obs-livre-item"
+                value={cfgAtual.obsLivre}
+                onChange={function (e) { setObsLivre(unidadeAtiva, e.target.value.slice(0, 150)); }}
+                placeholder={t('cliente.exemploObs')}
+                className="mt-2 w-full px-3.5 py-3 border border-stone-300 rounded-2xl text-sm text-stone-900 placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-[color:var(--cor-loja-suave)] focus:border-[var(--cor-loja)] resize-none bg-white"
+                rows={2}
+                maxLength={150}
+              />
             </div>
 
-            {/* Sticky footer */}
-            <div className="sticky bottom-0 bg-white/95 backdrop-blur-sm border-t border-zinc-100 px-5 py-3">
-              <button
-                type="button"
-                onClick={handleAdicionar}
-                className="w-full flex items-center justify-between bg-gradient-to-br from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white px-5 py-3.5 rounded-xl cursor-pointer transition-all"
-              >
-                <div className="flex items-center gap-2">
-                  <i className={(editingCartIds.length > 0 ? 'ri-check-line' : 'ri-add-line') + ' text-sm'} />
-                  <span className="text-sm font-bold">{
-                    editingCartIds.length > 0
-                      ? (qtd > 1 ? 'Atualizar ' + qtd + ' unidades' : 'Atualizar item')
-                      : (qtd > 1 ? t('cliente.adicionar') + ' ' + qtd : t('cliente.adicionarAoCarrinho'))
-                  }</span>
-                </div>
-                <span className="text-sm font-bold">
-                  {formatCurrency(calcularPrecoTotal())}
-                </span>
-              </button>
+            {/* Rodapé: quantidade + adicionar (ou o que falta escolher) */}
+            <div className="sticky bottom-0 bg-[#FBF8F4] border-t border-stone-200/70 px-4 pt-2.5 pb-4 flex items-center gap-2.5">
+              <div className="shrink-0 flex items-center h-14 rounded-2xl border border-stone-300 bg-white">
+                <button
+                  type="button"
+                  aria-label="Diminuir quantidade"
+                  onClick={function () { ajustarQtd(qtd - 1); }}
+                  className="w-11 h-14 flex items-center justify-center text-stone-900 cursor-pointer"
+                >
+                  <i className="ri-subtract-line text-lg" />
+                </button>
+                <span className="min-w-[22px] text-center text-base font-bold text-stone-900">{qtd}</span>
+                <button
+                  type="button"
+                  aria-label="Aumentar quantidade"
+                  onClick={function () { ajustarQtd(qtd + 1); }}
+                  className="w-11 h-14 flex items-center justify-center text-stone-900 cursor-pointer"
+                >
+                  <i className="ri-add-line text-lg" />
+                </button>
+              </div>
+              {faltaGrupo ? (
+                <button
+                  type="button"
+                  onClick={irParaFaltando}
+                  className="flex-1 min-w-0 h-14 rounded-2xl bg-stone-200 text-stone-800 px-3 cursor-pointer text-left"
+                >
+                  <span className="block text-xs font-semibold text-stone-600">{t('cliente.faltaEscolherTitulo')}</span>
+                  <span className="block text-sm font-bold truncate">{tx(faltaGrupo)}</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleAdicionar}
+                  className="flex-1 min-w-0 h-14 rounded-2xl bg-[var(--cor-loja)] hover:bg-[var(--cor-loja-forte)] text-white flex items-center justify-between px-4 cursor-pointer transition-colors"
+                >
+                  <span className="text-[15px] font-bold truncate">
+                    {editingCartIds.length > 0
+                      ? t('cliente.atualizar')
+                      : (qtd > 1 ? t('cliente.adicionar') + ' ' + qtd : t('cliente.adicionar'))}
+                  </span>
+                  <span className="text-[15px] font-bold">{formatCurrency(calcularPrecoTotal())}</span>
+                </button>
+              )}
             </div>
           </div>
         </div>

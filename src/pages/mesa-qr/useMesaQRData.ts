@@ -8,6 +8,13 @@ import { loadCart, saveCart } from '@/lib/cartStorage';
 import { loadPixMemo, clearPixMemo } from './pixMemo';
 import { idsForaDoHorario, normalizarHorario } from '@/lib/horarioExibicao';
 import { useRelogioMinuto } from '@/hooks/useRelogioMinuto';
+import { supabase } from '@/lib/supabase';
+
+// Nome que o cliente usou da última vez neste aparelho (preenche "Como chamamos você?")
+const NOME_CLIENTE_KEY = 'qr_nome_cliente';
+function lerNomeSalvo(): string {
+  try { return localStorage.getItem(NOME_CLIENTE_KEY) || ''; } catch { return ''; }
+}
 
 // ── Tipos ─────────────────────────────────────────────────────────────────────
 
@@ -303,6 +310,11 @@ export function useMesaQRData() {
   const [sessionToken, setSessionToken] = useState('');
   const [tenantId, setTenantId] = useState('');
   const [tenantName, setTenantName] = useState('');
+  // Logo da loja (tenants.logo_url) — a mesa-write não devolve; leitura pública direta
+  const [logoUrl, setLogoUrl] = useState<string | null>(null);
+  // Capa e cor do cardápio online (Configurações › Loja)
+  const [capaUrl, setCapaUrl] = useState<string | null>(null);
+  const [corLoja, setCorLoja] = useState<string | null>(null);
   const [participant, setParticipant] = useState<Participant | null>(null);
   const [errorMsg, setErrorMsg] = useState('');
 
@@ -484,6 +496,19 @@ export function useMesaQRData() {
         setTenantId(currentTenantId);
         setTenantName(currentTenantName);
 
+        // Logo: secundário — com timeout, porque o supabase-js pode travar no lock de sessão
+        Promise.race([
+          supabase.from('tenants').select('logo_url, cover_url, brand_color').eq('id', currentTenantId).maybeSingle()
+            .then(function (r) { return r.data || null; }),
+          new Promise<null>(function (resolve) { setTimeout(function () { resolve(null); }, 2500); }),
+        ]).then(function (m) {
+          const marca = m as { logo_url?: string | null; cover_url?: string | null; brand_color?: string | null } | null;
+          if (cancelled || !marca) return;
+          if (marca.logo_url) setLogoUrl(marca.logo_url);
+          if (marca.cover_url) setCapaUrl(marca.cover_url);
+          if (marca.brand_color) setCorLoja(marca.brand_color);
+        }).catch(function () { /* segue sem logo */ });
+
         if (!isFila && currentSessionToken && !urlSessionToken) {
           window.history.replaceState(null, '', '/mesa-qr/' + qrToken + '/' + currentSessionToken);
         }
@@ -511,7 +536,7 @@ export function useMesaQRData() {
                 setStep('comprovante');
                 return;
               }
-              setStep('identificacao');
+              setStep('cardapio');
               await fetchCardapioData(currentTenantId, { setCardapioBase, setOptionGroups, setOptions, setObservations, setOutOfStockIds, setOpcoesIndisponiveisIds, setCategoriaAtiva, productionPartsRef });
               return;
             }
@@ -533,7 +558,7 @@ export function useMesaQRData() {
           return;
         }
 
-        setStep('identificacao');
+        setStep('cardapio');
         await fetchCardapioData(currentTenantId, { setCardapioBase, setOptionGroups, setOptions, setObservations, setOutOfStockIds, setOpcoesIndisponiveisIds, setCategoriaAtiva, productionPartsRef });
       } catch {
         if (!cancelled) {
@@ -553,6 +578,40 @@ export function useMesaQRData() {
   }, [qrToken, urlSessionToken]);
 
   // ── Criar participante ──────────────────────────────────────────────────────
+
+  // O cliente olha o cardápio sem se identificar; a senha (participante) nasce quando ele
+  // finaliza o primeiro pedido — ou quando abre "Meus pedidos"/"Pagar conta" sem ter pedido.
+  async function garantirParticipante(nome: string): Promise<Participant | null> {
+    if (participant) return participant;
+    if (!table) return null;
+    if (queueMode ? !caixaSessionId : !tableSessionId) return null;
+    const nomeLimpo = (nome || '').trim();
+    if (!nomeLimpo) { setErrorMsg('Digite seu nome'); return null; }
+    try {
+      const res = await fetch(getMesaWriteUrl(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(queueMode
+          ? { action: 'create_participant', session_id: caixaSessionId, name: nomeLimpo, tenant_id: table.tenant_id }
+          : { action: 'create_participant', table_session_id: tableSessionId, name: nomeLimpo, tenant_id: table.tenant_id, session_token: sessionToken }),
+      });
+      const data = await res.json();
+      if (data.error || !data.participant) {
+        setErrorMsg(data.message || data.error || 'Não foi possível registrar seu nome');
+        return null;
+      }
+      setParticipant(data.participant);
+      localStorage.setItem(
+        queueMode ? 'mesa_participant_qr_' + (qrToken || '') : 'mesa_participant_' + tableSessionId,
+        JSON.stringify(Object.assign({}, data.participant, queueMode ? { caixa_session_id: caixaSessionId } : { session_token: sessionToken }))
+      );
+      try { localStorage.setItem(NOME_CLIENTE_KEY, nomeLimpo); } catch { /* ignora */ }
+      return data.participant as Participant;
+    } catch {
+      setErrorMsg('Erro de conexão. Tente novamente.');
+      return null;
+    }
+  }
 
   function handleIdentificar(nome: string) {
     if (!table) return;
@@ -634,13 +693,15 @@ export function useMesaQRData() {
 
   // ── Confirmar pedido ────────────────────────────────────────────────────────
 
-  function handleConfirmarPedido() {
-    if (!table || !participant) return;
+  async function handleConfirmarPedido(nome?: string) {
+    if (!table) return;
     if (queueMode ? !caixaSessionId : !tableSessionId) return;
     if (cart.length === 0) return;
 
     setEnviando(true);
     setErrorMsg('');
+    const participant = await garantirParticipante(nome || '');
+    if (!participant) { setEnviando(false); return; }
     const url = getMesaWriteUrl();
 
     const subtotal = cart.reduce(function (s, i) { return s + i.precoTotal * i.quantidade; }, 0);
@@ -853,6 +914,11 @@ export function useMesaQRData() {
     participant: participant,
     error: errorMsg,
     tenantName: tenantName,
+    logoUrl: logoUrl,
+    capaUrl: capaUrl,
+    corLoja: corLoja,
+    nomeSalvo: lerNomeSalvo(),
+    garantirParticipante: garantirParticipante,
     categories: categories,
     items: items,
     optionGroups: optionGroups,

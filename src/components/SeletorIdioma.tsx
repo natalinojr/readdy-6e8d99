@@ -22,7 +22,8 @@ interface Props {
   disponiveis: string[];
   idioma: Idioma;
   onTrocar: (idioma: Idioma) => void;
-  variante?: 'inline' | 'fixo';
+  /** 'capa': botão branco sobre a foto de capa da loja (delivery e QR). */
+  variante?: 'inline' | 'fixo' | 'capa';
 }
 
 export default function SeletorIdioma({ disponiveis, idioma, onTrocar, variante = 'inline' }: Props) {
@@ -86,7 +87,9 @@ export default function SeletorIdioma({ disponiveis, idioma, onTrocar, variante 
         aria-haspopup="listbox"
         aria-expanded={aberto}
         aria-label={NOME_IDIOMA[idioma]}
-        className="flex items-center gap-1.5 rounded-full bg-white/15 px-3 py-1.5 text-sm font-semibold text-white backdrop-blur transition-colors hover:bg-white/25"
+        className={variante === 'capa'
+          ? 'flex h-11 items-center gap-1.5 rounded-full bg-white/95 px-3.5 text-sm font-bold text-stone-900 shadow-sm transition-colors hover:bg-white'
+          : 'flex items-center gap-1.5 rounded-full bg-white/15 px-3 py-1.5 text-sm font-semibold text-white backdrop-blur transition-colors hover:bg-white/25'}
       >
         <span aria-hidden="true">{BANDEIRA[idioma]}</span>
         <span className="uppercase">{idioma === 'pt-BR' ? 'PT' : idioma.toUpperCase()}</span>
