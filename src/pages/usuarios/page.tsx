@@ -171,6 +171,11 @@ export default function UsuariosPage() {
     setTimeout(() => setToast(null), 3000);
   };
 
+  const alternarAtivo = async (userId: string) => {
+    const res = await toggleAtivo(userId);
+    if (!res.success) showToast(res.error ?? 'Não foi possível alterar o usuário', 'erro');
+  };
+
   useEffect(() => {
     supabase.rpc('fn_get_my_admin_tenants').then(({ data }) => {
       const lojas = (data as unknown[]) ?? [];
@@ -407,7 +412,7 @@ export default function UsuariosPage() {
                             })()}
                           </td>
                           <td className="px-4 py-3 text-center">
-                            <button onClick={() => toggleAtivo(u.id)}
+                            <button onClick={() => alternarAtivo(u.id)}
                               className={`relative w-10 h-5 rounded-full transition-colors cursor-pointer ${u.ativo ? 'bg-emerald-500' : 'bg-zinc-200'}`}>
                               <div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-all ${u.ativo ? 'left-5' : 'left-0.5'}`} />
                             </button>
@@ -418,7 +423,7 @@ export default function UsuariosPage() {
                                 className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-amber-50 text-zinc-400 hover:text-amber-600 cursor-pointer transition-colors">
                                 <Edit2 size={12} />
                               </button>
-                              <AcoesMenu usuario={u} onEditar={() => setModal({ tipo: 'editar', usuario: u })} onToggleAtivo={() => toggleAtivo(u.id)} onRedefinirSenha={() => setModal({ tipo: 'senha', usuario: u })} onExcluir={() => setModal({ tipo: 'excluir', usuario: u })} />
+                              <AcoesMenu usuario={u} onEditar={() => setModal({ tipo: 'editar', usuario: u })} onToggleAtivo={() => alternarAtivo(u.id)} onRedefinirSenha={() => setModal({ tipo: 'senha', usuario: u })} onExcluir={() => setModal({ tipo: 'excluir', usuario: u })} />
                             </div>
                           </td>
                         </tr>
@@ -443,11 +448,11 @@ export default function UsuariosPage() {
                         <p className="text-xs text-zinc-400 truncate">{emailDisplay(u.email) || 'Matrícula + PIN'}</p>
                       </div>
                       <div className="flex items-center gap-2 flex-shrink-0">
-                        <button onClick={() => toggleAtivo(u.id)}
+                        <button onClick={() => alternarAtivo(u.id)}
                           className={`relative w-9 h-5 rounded-full transition-colors cursor-pointer ${u.ativo ? 'bg-emerald-500' : 'bg-zinc-200'}`}>
                           <div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-all ${u.ativo ? 'left-4' : 'left-0.5'}`} />
                         </button>
-                        <AcoesMenu usuario={u} onEditar={() => setModal({ tipo: 'editar', usuario: u })} onToggleAtivo={() => toggleAtivo(u.id)} onRedefinirSenha={() => setModal({ tipo: 'senha', usuario: u })} onExcluir={() => setModal({ tipo: 'excluir', usuario: u })} />
+                        <AcoesMenu usuario={u} onEditar={() => setModal({ tipo: 'editar', usuario: u })} onToggleAtivo={() => alternarAtivo(u.id)} onRedefinirSenha={() => setModal({ tipo: 'senha', usuario: u })} onExcluir={() => setModal({ tipo: 'excluir', usuario: u })} />
                       </div>
                     </div>
                   );
