@@ -16,7 +16,7 @@ import PorCanal, { type LinhaCanal } from './components/PorCanal';
 import { useDashboardMetrics } from '../../hooks/useDashboardMetrics';
 import { useDashboardPainel, salvarDashboardMetas } from '../../hooks/useDashboardPainel';
 import { useVisaoGeralExtras } from '../../hooks/useVisaoGeralExtras';
-import { useStockCriticalAlerts } from '../../hooks/useStockCriticalAlerts';
+import { useEstoqueSituacao } from '../../hooks/useEstoqueSituacao';
 import { useFinanceiroAlertas } from '../../hooks/useFinanceiroAlertas';
 import { useOrdersPing } from '../../hooks/useOrdersPing';
 import { useAuth } from '../../contexts/AuthContext';
@@ -63,7 +63,7 @@ export default function Dashboard() {
   const { user } = useAuth();
   const { data: m, loading, error: metricsError, reload } = useDashboardMetrics();
   const { data: extras, loading: extrasLoading, reload: reloadExtras } = useVisaoGeralExtras('Hoje');
-  const { alertas: alertasCriticos, reload: reloadAlertas } = useStockCriticalAlerts();
+  const { data: situacaoEstoque, reload: reloadAlertas } = useEstoqueSituacao();
   const fin = useFinanceiroAlertas();
   const { pedidos: kdsPedidos } = useKDS();
   const { modo } = useModoFaturamento();
@@ -265,36 +265,40 @@ export default function Dashboard() {
       ir: { rota: '/kds' },
     });
   }
-  if (alertasCriticos.length > 0) {
-    const criticos = alertasCriticos.filter((a) => a.nivelAlerta === 'critico').length;
+  // Estoque pela regra única (fn_estoque_situacao): os mesmos números do Início do Estoque e da pendência.
+  const estoque = situacaoEstoque?.insumos ?? [];
+  const vaiFaltar = estoque.filter((i) => i.vaiFaltar).sort((a, b) => (a.diasRestantes ?? 0) - (b.diasRestantes ?? 0));
+  if (vaiFaltar.length > 0) {
+    const diasPrev = situacaoEstoque?.config.diasPrevisao ?? 7;
+    const dias = (d: number | null) => (d == null || d < 0.5 ? 'acabou' : `~${Math.max(1, Math.round(d))}d`);
     itensAtencao.push({
-      id: 'vai-zerar',
-      nivel: criticos > 0 ? 'alta' : 'media',
-      icone: 'ri-drop-line',
-      titulo: alertasCriticos.length === 1 ? `${alertasCriticos[0].nome} vai zerar` : `${alertasCriticos.length} insumos vão zerar`,
-      detalhe: alertasCriticos.length === 1
-        ? `Com os pedidos em preparo, sobra ${Math.max(0, alertasCriticos[0].estoqueProjetado).toLocaleString('pt-BR', { maximumFractionDigits: 2 })} ${alertasCriticos[0].unidade}`
-        : alertasCriticos.slice(0, 3).map((a) => a.nome).join(', '),
-      acao: 'Ver estoque',
+      id: 'vai-faltar',
+      nivel: vaiFaltar.some((i) => (i.diasRestantes ?? 0) <= 2) ? 'alta' : 'media',
+      icone: 'ri-hourglass-line',
+      titulo: vaiFaltar.length === 1 ? `${vaiFaltar[0].nome} vai faltar` : `${vaiFaltar.length} insumos vão faltar em até ${diasPrev} dias`,
+      detalhe: vaiFaltar.slice(0, 3).map((i) => `${i.nome} (${dias(i.diasRestantes)})`).join(', '),
+      acao: 'Ver no Estoque',
       ir: { rota: '/estoque' },
     });
   }
-  const abaixoMinimo = m?.alertas_estoque ?? [];
+  const abaixoMinimo = estoque.filter((i) => i.abaixoMinimo);
   const validade = painel?.validade ?? null;
   if (abaixoMinimo.length > 0 || (validade && validade.vencidos + validade.vencendo > 0)) {
     const partes: string[] = [];
     if (validade?.vencidos) partes.push(`${validade.vencidos} ${plural(validade.vencidos, 'lote vencido', 'lotes vencidos')}`);
     if (validade?.vencendo) partes.push(`${validade.vencendo} ${plural(validade.vencendo, 'lote vencendo', 'lotes vencendo')}`);
-    if (abaixoMinimo.length) partes.push(`${abaixoMinimo.length} abaixo do mínimo`);
-    const zerados = abaixoMinimo.filter((a) => a.critico).length;
+    const zerados = abaixoMinimo.filter((i) => i.esgotado).length;
+    if (abaixoMinimo.length) partes.push(`${abaixoMinimo.length} abaixo do mínimo${zerados ? ` (${zerados} ${plural(zerados, 'zerado', 'zerados')})` : ''}`);
     itensAtencao.push({
       id: 'estoque',
       nivel: validade?.vencidos || zerados ? 'alta' : 'media',
       icone: 'ri-archive-line',
       titulo: partes.join(' · '),
-      detalhe: abaixoMinimo.length ? abaixoMinimo.slice(0, 3).map((a) => a.nome).join(', ') : 'Confira os lotes na tela de estoque',
-      acao: 'Ver estoque',
-      ir: { rota: '/estoque' },
+      detalhe: abaixoMinimo.length
+        ? [...abaixoMinimo].sort((a, b) => Number(b.esgotado) - Number(a.esgotado)).slice(0, 3).map((i) => i.nome).join(', ')
+        : 'Confira os lotes na tela de estoque',
+      acao: abaixoMinimo.length ? 'Ver lista de compras' : 'Ver estoque',
+      ir: { rota: abaixoMinimo.length ? '/estoque' : '/estoque?tab=validade' },
     });
   }
 
@@ -392,7 +396,7 @@ export default function Dashboard() {
       )}
 
       {/* 1. Precisa de atenção */}
-      <AtencaoFaixa itens={itensAtencao} carregando={!painel || !m || fin.loading}
+      <AtencaoFaixa itens={itensAtencao} carregando={!painel || !m || !situacaoEstoque || fin.loading}
         textoTudoEmDia={veFinanceiro ? undefined : 'Tudo em dia: estoque ok e cozinha no prazo.'} />
 
       {/* 2. Faturamento (com a meta) + cartões */}

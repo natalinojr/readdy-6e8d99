@@ -98,7 +98,7 @@ async function hmacSha256Hex(secret: string, data: string): Promise<string> {
 // ── Config da loja ───────────────────────────────────────────────────────────
 async function loadConfig(admin: Admin, tenantId: string) {
   const { data, error } = await admin.from("fin_payment_provider_config")
-    .select("id, access_token, public_key, webhook_secret, is_active, account_id, account_label, last_test_at, updated_at, card_enabled, card_fee_percentage, card_days_to_receive, card_bank_account_id")
+    .select("id, access_token, public_key, webhook_secret, is_active, account_id, account_label, last_test_at, updated_at, card_enabled, card_fee_percentage, card_days_to_receive, card_bank_account_id, pix_fee_percentage")
     .eq("tenant_id", tenantId).eq("provider", "mercadopago").maybeSingle();
   // Erro de leitura NÃO pode virar "loja sem config": o webhook responderia 200 e o MP não reenviaria.
   if (error) throw new Error(`fin_payment_provider_config: ${error.message}`);
@@ -106,6 +106,7 @@ async function loadConfig(admin: Admin, tenantId: string) {
     id: string; access_token: string | null; public_key: string | null; webhook_secret: string | null; is_active: boolean;
     account_id: string | null; account_label: string | null; last_test_at: string | null; updated_at: string;
     card_enabled: boolean | null; card_fee_percentage: number | null; card_days_to_receive: number | null; card_bank_account_id: string | null;
+    pix_fee_percentage: number | null;
   } | null;
 }
 const isEnabled = (cfg: Awaited<ReturnType<typeof loadConfig>>) => Boolean(cfg && cfg.is_active && cfg.access_token);
@@ -291,6 +292,8 @@ async function postSaleFinance(admin: Admin, s: {
   // undefined = roteamento da forma de pagamento (Pix/maquininha, como sempre); null = não credita
   // banco nenhum; uuid = credita nessa conta. `receivableFee` grava a taxa no próprio recebível.
   bankAccountId?: string | null; receivableFee?: number | null;
+  // Rótulo da despesa de taxa (maquininha × Mercado Pago online).
+  feeLabel?: string;
 }) {
   const ref = s.orderNumber ?? s.orderId.slice(0, 8);
   const desc = `Venda ${ref} (${s.pm.name} ${s.channel})`;
@@ -324,7 +327,7 @@ async function postSaleFinance(admin: Admin, s: {
   if (fee > 0) {
     const { data: feeExists } = await admin.from("fin_cash_flow").select("id").eq("tenant_id", s.tenantId).eq("reference_id", s.paymentId).eq("origin", "auto_card_fee").maybeSingle();
     if (!feeExists) {
-      await admin.from("fin_cash_flow").insert({ tenant_id: s.tenantId, type: "expense", amount: fee, description: `Taxa maquininha — ${s.pm.name} (${feePercent}%) — Venda ${ref}`, category: "Taxas de Cartao", origin: "auto_card_fee", reference_id: s.paymentId, date: s.todayBR });
+      await admin.from("fin_cash_flow").insert({ tenant_id: s.tenantId, type: "expense", amount: fee, description: `${s.feeLabel ?? "Taxa maquininha"} — ${s.pm.name} (${feePercent}%) — Venda ${ref}`, category: "Taxas de Cartao", origin: "auto_card_fee", reference_id: s.paymentId, date: s.todayBR });
     }
   }
 }
@@ -368,8 +371,9 @@ async function settlePix(admin: Admin, pixId: string, providerPayload: unknown, 
   const { data: pre } = await admin.from("fin_pix_payments").select("tenant_id, provider, method").eq("id", pixId).maybeSingle();
   if (!pre) { log("WARN", "settle", "cobrança não encontrada", { pixId }); return { already: true }; }
   const method = String(pre.method ?? "pix");
-  const isOnlineCard = method !== "pix" && pre.provider === "mercadopago";
-  const cfgCard = isOnlineCard ? await loadConfig(admin, String(pre.tenant_id)) : null;
+  const isOnlineMp = pre.provider === "mercadopago";
+  const isOnlineCard = method !== "pix" && isOnlineMp;
+  const cfgMp = isOnlineMp ? await loadConfig(admin, String(pre.tenant_id)) : null;
 
   const { data: claimed } = await admin.from("fin_pix_payments")
     .update({ status: "confirmed", confirmed_at: now, updated_at: now, raw_provider: providerPayload ?? null, ...(note ? { error: note } : {}) })
@@ -399,10 +403,13 @@ async function settlePix(admin: Admin, pixId: string, providerPayload: unknown, 
   if (isOnlineCard) {
     pm = {
       ...pmBase,
-      fee_percentage: cfgCard?.card_fee_percentage != null ? Number(cfgCard.card_fee_percentage) : pmBase.fee_percentage,
-      days_to_receive: cfgCard?.card_days_to_receive != null ? Number(cfgCard.card_days_to_receive) : pmBase.days_to_receive,
+      fee_percentage: cfgMp?.card_fee_percentage != null ? Number(cfgMp.card_fee_percentage) : pmBase.fee_percentage,
+      days_to_receive: cfgMp?.card_days_to_receive != null ? Number(cfgMp.card_days_to_receive) : pmBase.days_to_receive,
     };
-    cardBank = cfgCard?.card_bank_account_id ?? null;
+    cardBank = cfgMp?.card_bank_account_id ?? null;
+  } else if (method === "pix" && isOnlineMp && cfgMp?.pix_fee_percentage != null) {
+    // Pix pelo app (Checkout do MP) tem taxa; o Pix direto na conta da loja, não. Mesma forma "PIX".
+    pm = { ...pmBase, fee_percentage: Number(cfgMp.pix_fee_percentage) };
   }
   const operatorName = method === "pix" ? "Cliente • Pix online" : isOnlineCard ? "Cliente • Cartão online" : "Cliente • Cartão na maquininha";
   const releaseLabel = method === "pix" ? "PIX pelo app (PAGO)" : "Cartão de crédito pelo app (PAGO)";
@@ -493,6 +500,7 @@ async function settlePix(admin: Admin, pixId: string, providerPayload: unknown, 
         tenantId, pm, paymentId: String(paymentId), orderId: a.order_id, orderNumber: (o?.number as string) ?? null,
         amount, todayBR, channel: method === "pix" || isOnlineCard ? "online" : "maquininha",
         ...(isOnlineCard ? { bankAccountId: cardBank, receivableFee: pm.fee_percentage } : {}),
+        ...(isOnlineMp ? { feeLabel: "Taxa Mercado Pago" } : {}),
       });
     } catch (e) { log("WARN", "settle", "financeiro da venda falhou (non-blocking)", { error: String(e) }); }
   }
@@ -1103,7 +1111,7 @@ Deno.serve(async (req: Request) => {
         access_token_hint: cfg?.access_token ? `…${cfg.access_token.slice(-6)}` : null, public_key: cfg?.public_key ?? null,
         account_id: cfg?.account_id ?? null, account_label: cfg?.account_label ?? null, last_test_at: cfg?.last_test_at ?? null, webhook_url: webhookUrl,
         card_enabled: Boolean(cfg?.card_enabled), card_fee_percentage: cfg?.card_fee_percentage ?? null, card_days_to_receive: cfg?.card_days_to_receive ?? null,
-        card_bank_account_id: cfg?.card_bank_account_id ?? null,
+        card_bank_account_id: cfg?.card_bank_account_id ?? null, pix_fee_percentage: cfg?.pix_fee_percentage ?? null,
       });
     }
 
@@ -1122,11 +1130,16 @@ Deno.serve(async (req: Request) => {
       }
       if (typeof body.is_active === "boolean") patch.is_active = body.is_active;
       if (typeof body.card_enabled === "boolean") patch.card_enabled = body.card_enabled;
-      for (const [k, max] of [["card_fee_percentage", 20], ["card_days_to_receive", 60]] as const) {
+      const LIMITE_MSG: Record<string, string> = {
+        card_fee_percentage: "Taxa do cartão deve ficar entre 0 e 20%",
+        card_days_to_receive: "Prazo do cartão deve ficar entre 0 e 60 dias",
+        pix_fee_percentage: "Taxa do Pix deve ficar entre 0 e 10%",
+      };
+      for (const [k, max] of [["card_fee_percentage", 20], ["card_days_to_receive", 60], ["pix_fee_percentage", 10]] as const) {
         if (body[k] === null || body[k] === "") patch[k] = null;
         else if (body[k] !== undefined) {
           const n = Number(body[k]);
-          if (!Number.isFinite(n) || n < 0 || n > max) return json({ error: k === "card_fee_percentage" ? "Taxa do cartão deve ficar entre 0 e 20%" : "Prazo do cartão deve ficar entre 0 e 60 dias" }, 422);
+          if (!Number.isFinite(n) || n < 0 || n > max) return json({ error: LIMITE_MSG[k] }, 422);
           patch[k] = k === "card_days_to_receive" ? Math.round(n) : n;
         }
       }

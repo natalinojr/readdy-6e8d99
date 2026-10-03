@@ -51,6 +51,9 @@ interface SessaoContextData {
   estacoesAbertas: EstacaoAbertaInfo[];
   loadingSession: boolean;
   iniciarSessao: () => Promise<void>;
+  /** "Abrir a loja" (2026-10-03): abre o dia (sessão) e o caixa de uma vez com o troco contado.
+   *  Se o dia já estiver aberto (outro aparelho abriu), só abre o caixa nele. */
+  abrirLoja: (valorAbertura: number, operadorNome: string) => Promise<void>;
   fecharSessao: (valorFechamento?: number, notas?: string, force?: boolean) => Promise<void>;
   abrirCaixa: (valorAbertura: number, operadorNome: string, observacao?: string) => Promise<void>;
   fecharCaixa: (valorFechamento?: number, closingNotes?: string, skipLocalUpdate?: boolean) => Promise<void>;
@@ -242,9 +245,15 @@ export function SessaoProvider({ children }: { children: ReactNode }) {
   // ── abrirCaixa ─────────────────────────────────────────────────────────────
   const abrirCaixa = useCallback(async (valorAbertura: number, operadorNome: string, observacao?: string) => {
     if (!sessao || !user) throw new Error('Sessão não iniciada');
+    // fn_open_cash_register não impede dois caixas abertos: relê o banco antes (outro aparelho pode
+    // ter aberto o caixa ou fechado o dia; a tela só sabe disso no próximo poll de 60 s).
+    const atual = await restoreSession();
+    if (atual === null) throw new Error('Sem conexão com o sistema. Tente de novo.');
+    if (!atual.sessao) throw new Error('A loja foi fechada em outro aparelho. A tela vai atualizar.');
+    if (atual.caixa) throw new Error('O caixa já foi aberto em outro aparelho. A tela vai atualizar.');
 
     const { data, error } = await supabase.rpc('fn_open_cash_register', {
-      p_session_id: sessao.id,
+      p_session_id: atual.sessao.id,
       p_tenant_id: user.tenantId,
       p_operator_id: user.id,
       p_opening_value: valorAbertura,
@@ -270,11 +279,12 @@ export function SessaoProvider({ children }: { children: ReactNode }) {
       abertaEm: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' }),
     });
     setEstado('caixa_aberto');
-  }, [sessao, user]);
+  }, [sessao, user, restoreSession]);
 
   // ── fecharCaixa ────────────────────────────────────────────────────────────
   const fecharCaixa = useCallback(async (valorFechamento?: number, closingNotes?: string, skipLocalUpdate?: boolean) => {
-    if (!caixa) return;
+    // Sem caixa aqui = já fechou (outro aparelho/poll). Antes voltava calado e a tela dizia "fechado".
+    if (!caixa) throw new Error('Este caixa já foi fechado. A tela vai atualizar.');
     const { error } = await supabase.rpc('fn_close_cash_register_v2', {
       p_cash_register_id: caixa.id,
       p_closing_value: valorFechamento ?? 0,
@@ -293,6 +303,56 @@ export function SessaoProvider({ children }: { children: ReactNode }) {
       setEstado('sessao_aberta');
     }
   }, [caixa]);
+
+  // ── abrirLoja: sessão + caixa num passo só ────────────────────────────────
+  // As regras continuam nas mesmas RPCs (fn_open_session / fn_open_cash_register). A sessão nasce
+  // com o troco em opening_amount para o aviso "Turno aberto" do assistente mostrar o valor.
+  const abrirLoja = useCallback(async (valorAbertura: number, operadorNome: string) => {
+    if (!user) throw new Error('Faça login para abrir a loja.');
+    let sess: SessaoInfo | null = null;
+    // Outro aparelho pode ter aberto o dia agora: não abre um segundo, usa o que está aberto.
+    const atual = await restoreSession();
+    // Erro de leitura não é "sem sessão": não arrisca abrir um segundo dia.
+    if (atual === null) throw new Error('Sem conexão com o sistema. Tente de novo.');
+    if (atual.caixa) throw new Error('O caixa já foi aberto em outro aparelho. A tela vai atualizar.');
+    if (atual.sessao) sess = atual.sessao;
+    if (!sess) {
+      const { data, error } = await supabase.rpc('fn_open_session', {
+        p_tenant_id: user.tenantId,
+        p_opened_by: user.id,
+        p_opening_amount: valorAbertura,
+        p_is_training: user.modoTreino,
+      });
+      if (error || !data?.[0]) throw new Error(`Não consegui abrir a loja: ${error?.message ?? 'resposta vazia'}`);
+      const now = new Date();
+      sess = {
+        id: data[0].id,
+        numero: data[0].number,
+        iniciadaEm: now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' }),
+        dataRef: now,
+        mesAno: `${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getFullYear()).slice(2)}`,
+      };
+      setSessao(sess);
+      setCaixa(null);
+      setEstacoesAbertas([]);
+      setEstado('sessao_aberta');
+    }
+    const { data: reg, error: regErr } = await supabase.rpc('fn_open_cash_register', {
+      p_session_id: sess.id,
+      p_tenant_id: user.tenantId,
+      p_operator_id: user.id,
+      p_opening_value: valorAbertura,
+      p_opening_method: 'total',
+    });
+    if (regErr || !reg?.[0]) throw new Error(`A loja abriu, mas o caixa não: ${regErr?.message ?? 'resposta vazia'}`);
+    setCaixa({
+      id: reg[0].id,
+      valorAbertura,
+      operadorNome,
+      abertaEm: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' }),
+    });
+    setEstado('caixa_aberto');
+  }, [user, restoreSession]);
 
   const sinalizarCaixaFechadoLocalmente = useCallback(() => {
     setCaixa(null);
@@ -323,7 +383,7 @@ export function SessaoProvider({ children }: { children: ReactNode }) {
   return (
     <SessaoContext.Provider value={{
       estado, sessao, caixa, estacoesAbertas, loadingSession,
-      iniciarSessao, fecharSessao, abrirCaixa, fecharCaixa,
+      iniciarSessao, abrirLoja, fecharSessao, abrirCaixa, fecharCaixa,
       abrirEstacao, fecharEstacao, gerarProximoNumeroPedido,
       sincronizarSessao: restoreSession,
       sinalizarCaixaFechadoLocalmente,

@@ -847,7 +847,7 @@ interface CategoriaDre { id: string; name: string; group_type: string }
 
 // Contas sem categoria na DRE: escolhe a categoria e grava, uma por uma (assistente-app › conta_dre,
 // mesma regra da enquete: só grava se a conta ainda estiver sem categoria).
-function ContasDreInline({ call, tenantId, onFeito, onTudo }: { call: Call; tenantId: string; onFeito: () => void; onTudo: () => void }) {
+export function ContasDreInline({ call, tenantId, onFeito, onTudo }: { call: Call; tenantId: string; onFeito: () => void; onTudo: () => void }) {
   const [contas, setContas] = useState<ContaSemDre[] | null>(null);
   const [cats, setCats] = useState<CategoriaDre[]>([]);
   const [escolha, setEscolha] = useState<Record<string, string>>({});
@@ -918,7 +918,7 @@ interface ContaAtrasada {
 // Ação em cada conta (dono, 2026-09-25): Pagar (boleto/Pix guardado → Inter → PIN), Dar baixa (já pagou
 // por fora — mesmo pay_bill da aba Contas Vencidas) e Abrir (a conta em Contas Vencidas).
 // soHoje (2026-10-02): mesma lista para a pendência "Vence hoje" — só as que vencem hoje.
-function ContasAtrasadasInline({ tenantId, soHoje = false, onPagarConta, onAbrir, onMudou }: {
+export function ContasAtrasadasInline({ tenantId, soHoje = false, onPagarConta, onAbrir, onMudou }: {
   tenantId: string;
   soHoje?: boolean;
   onPagarConta?: (billId: string) => Promise<void>;
@@ -995,7 +995,7 @@ function ContasAtrasadasInline({ tenantId, soHoje = false, onPagarConta, onAbrir
 }
 
 // Baixa de uma conta só, a partir da pendência "Falta o boleto" (2026-09-29): mesmo formulário das atrasadas.
-function BaixaDaConta({ tenantId, billId, onCancelar, onFeito }: { tenantId: string; billId: string; onCancelar: () => void; onFeito: () => void }) {
+export function BaixaDaConta({ tenantId, billId, onCancelar, onFeito }: { tenantId: string; billId: string; onCancelar: () => void; onFeito: () => void }) {
   const [conta, setConta] = useState<ContaAtrasada | null | undefined>(undefined);
   const hoje = new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' });
   useEffect(() => {

@@ -66,10 +66,12 @@ Rotas publicas ou fora do layout:
 - `/supabase-debug`: `src/pages/supabase-debug/page.tsx`
 
 Rotas dentro do layout autenticado:
+- `/` (índice): `src/pages/hoje/InicioPorPerfil.tsx` — manda cada perfil para o seu trabalho (2026-10-03)
+- `/hoje`: `src/pages/hoje/page.tsx` — tela inicial que conduz (pendências por bloco, tarefas de hoje, resumo)
 - `/modulos`: `src/pages/modulos/page.tsx`
 - `/dashboard`: `src/pages/dashboard/page.tsx`
 - `/cardapio`: `src/pages/cardapio/page.tsx`
-- `/pdv/caixa`: `src/pages/pdv/caixa/page.tsx`
+- `/pdv/caixa`: `src/pages/pdv/caixa/page.tsx` (abrir/fechar a loja: `components/loja/` — `AbrirLojaView`, `FecharLojaModal`, `ContagemGaveta`, `SeloCeu`)
 - `/pdv/garcom`: `src/pages/pdv/garcom/page.tsx`
 - `/pdv/delivery`: `src/pages/pdv/delivery/page.tsx`
 - `/kds`: `src/pages/kds/page.tsx`
@@ -80,6 +82,7 @@ Rotas dentro do layout autenticado:
 - `/pedidos`: `src/pages/pedidos/page.tsx`
 - `/tarefas`: `src/pages/tarefas/page.tsx` (gestão de tarefas: Lista/Kanban/Calendário/Minhas + campos personalizados — ver PLANO-MODULO-TAREFAS.md)
 - `/estoque`: `src/pages/estoque/page.tsx`
+- `/lancar`: `src/pages/lancar/page.tsx` — **"O que aconteceu?"**, começo único de qualquer lançamento (tela cheia; mesmo componente `src/components/feature/lancar` do botão Lançar do Financeiro, do ⚡ e do "+" da Hoje)
 - `/receber`: `src/pages/receber/page.tsx` — **Recebimentos e pagamentos** (celular da loja: receber mercadoria por etapas — nota, compra lançada, cupom, sem nota; + pedidos de pagamento em `src/pages/receber/pedidos/`: reembolso, freelancer, fornecedor sem nota, aprovação; links `?pedido=`, `?aprovar=1`, `?meus=1`)
 - `/financeiro`: `src/pages/financeiro/page.tsx`
 - `/configuracoes`: `src/pages/configuracoes/page.tsx`
@@ -128,11 +131,12 @@ KDS, producao e impressao:
 - Edge Functions: `production-write`, `print-queue-write`, `print-queue-agent`, `printer-ping`, `printer-raw`.
 
 Estoque, compras e CMV:
-- Tela: `src/pages/estoque`.
-- Componentes: insumos, inventario, movimentacoes, validade, producao, CMV, fornecedores.
-- Contexts/hooks: `EstoqueContext`, `ProducaoContext`, `useCmvReport`, `useCmvRelatorio`, `useItensSemEstoque`, `useStockCriticalAlerts`, `useIngredientCategories`, `useIngredientPriceHistory`, `useSuppliers`.
-- Tabelas: `ingredients`, `ingredient_categories`, `ingredient_batches`, `stock_movements`, `inventory_sessions`, `fin_suppliers`, `fin_purchases`, `fin_purchase_items`.
-- RPCs: `fn_get_ingredients`, `fn_get_stock_movements`, `fn_get_items_sem_estoque`, `fn_get_stock_critical_alerts`, `fn_get_cmv_report`.
+- Tela: `src/pages/estoque`. Abre na aba **Início** (`components/inicio/`: comprar · contar · vai faltar); as outras abas seguem iguais.
+- Componentes: inicio, insumos, inventario, movimentacoes, validade, producao, CMV, fornecedores.
+- **Regra única de "estoque baixo"** (2026-10-03): SQL `insumo_abaixo_minimo` / `insumo_esgotado` + leitura `fn_estoque_situacao(p_tenant_id)`; espelho TS em `src/lib/estoqueRegras.ts`; hook `useEstoqueSituacao` (é o que Dashboard, Início do Estoque e a tela Hoje leem). Ver histórico 2026-10-03.
+- Contexts/hooks: `EstoqueContext`, `ProducaoContext`, `useEstoqueSituacao`, `useCmvReport`, `useCmvRelatorio`, `useItensSemEstoque`, `useStockCriticalAlerts`, `useIngredientCategories`, `useIngredientPriceHistory`, `useSuppliers`.
+- Tabelas: `ingredients`, `ingredient_categories`, `ingredient_batches`, `stock_movements`, `inventory_sessions`, `inventory_count_plans`, `estoque_config`, `estoque_pedidos_enviados`, `fin_suppliers`, `fin_purchases`, `fin_purchase_items`.
+- RPCs: `fn_get_ingredients`, `fn_estoque_situacao`, `fn_get_stock_movements`, `fn_get_items_sem_estoque`, `fn_get_stock_critical_alerts`, `fn_get_cmv_report`, escrita `fn_estoque_salvar_config` / `fn_estoque_salvar_plano` / `fn_estoque_apagar_plano` / `fn_estoque_registrar_pedido` / `fn_estoque_desfazer_pedido`.
 - Edge Functions: `stock-write`, `purchase-write`, `purchase-confirm-delivery`, `receber-mercadoria` (orquestra o recebimento do celular).
 
 Financeiro, RH e conciliacao:
@@ -275,7 +279,124 @@ Secao viva: registrar aqui padroes, decisoes e pegadinhas reutilizaveis conforme
 - **QR (mesa e universal):** não pede mais o nome antes do cardápio. O participante/senha nasce em `useMesaQRData › garantirParticipante(nome)` no 1º pedido (sacola pergunta "Como chamamos você?", nome lembrado em `localStorage.qr_nome_cliente`) ou ao "Pagar a conta da mesa" sem ter pedido. Logo/capa/cor lidos direto de `tenants` (anon). Depois do pedido: faixa fixa "Senha 313 · Em preparo" e tela da senha com andamento real por `useStatusPedidoQR` (polling de `mesa-write › get_meus_pedidos` a cada 12 s, só troca estado se mudou, para em "entregue"; a confirmação só usa a etapa se `status.numero === numeroPedido`). O pagamento continua como era (Pagar conta / "paga antes" segura o pedido); nenhuma loja usa `qr_universal_pay_before` em 03/10.
 - **Delivery — sacola única (`components/CheckoutDelivery.tsx`):** itens + seus dados + entrega/retirada + endereço + pagamento + clube/cupom + total numa tela. WhatsApp completo dispara `buscarClienteCheckout` (lookup_customer sem trocar de tela). `finalizarCheckout` valida, faz `save_customer` só quando precisa (cliente novo, ou entrega sem endereço salvo) e chama `handleConfirmarPedido(..., clienteSalvo)` — o cliente recém-salvo vai por parâmetro porque o estado ainda não atualizou (dentro da função, `customer` é o local; o estado é `customerState`). Pin/mapa (modo distância) continua na tela `EnderecoPinDelivery` (volta para a sacola porque `showCart` fica true). Lookup/telefone salvo agora levam ao **cardápio** (não mais modo_entrega/endereço). **Pedido mínimo** (`pedido_minimo_ativo/valor`) só é barrado no front — o `delivery-write` não confere.
 - **Pegadinha da taxa por bairro:** `lookup_customer` devolve endereços salvos com `neighborhood_delivery_fee: 0` e nome nulo → a tela mostrava "Grátis". `effectiveDeliveryFee` agora pega a taxa do bairro escolhido na lista `neighborhoods` e `displayAddresses` completa nome/taxa. O servidor sempre recalculou a taxa ao gravar (o valor cobrado nunca esteve errado).
-- **Capa e cor da loja:** colunas `tenants.cover_url` / `tenants.brand_color` (check `#RRGGBB`), **grant de coluna para anon** (como `logo_url`; o resto de `tenants` segue fechado ao anon), migração `20261003120000_tenants_capa_cor.sql`. Gravadas por `config-write › update_tenant` (valida a cor) em Configurações › Loja › "Aparência do cardápio online"; a capa sobe por `uploadMenuImage(file, tenant, 'capa-loja')` (bucket público `menu-images`). Aviso na tela quando a cor tem contraste < 4,5 com branco.
+- **Capa e cor da loja:** colunas `tenants.cover_url` / `tenants.brand_color` (check `#RRGGBB`), **grant de coluna para anon** (como `logo_url`; o resto de `tenants` segue fechado ao anon), migração `20261003120000_tenants_capa_cor.sql`. Gravadas por `config-write › update_tenant` (valida a cor) em Configurações › Loja › "Aparência do cardápio online"; a capa sobe por `uploadMenuImage(file, tenant, 'capa-loja')` (bucket público `menu-images`). Aviso na tela quando a cor tem contraste < 4,5 com branco.
+
+### 2026-10-03 — PDV Caixa: "Abrir a loja" e "Fechar a loja" num fluxo só (sessão × caixa escondidos)
+- **O que mudou:** os 4 modais (`IniciarSessaoModal`, `AberturaCaixaModal`, `FechamentoCaixaModal`, `FecharSessaoModal`) foram apagados. No lugar ficaram `src/pages/pdv/caixa/components/loja/`. Protótipo aprovado pelo dono: `docs/prototipos/abrir-fechar-loja.html`. O usuário só vê "loja" e "caixa"; a palavra "sessão" e o número S… saíram da tela (seguem nos relatórios).
+- **Abrir** (`AbrirLojaView`, estados `sem_sessao` e `sessao_aberta`): o operador **conta a gaveta** (cédulas por padrão ou total digitado) e a tela compara na hora com o `closing_value_actual` do último caixa fechado da loja ("Bateu com o fechamento" / "R$ X a menos"). O motivo da diferença é opcional e vai só para a auditoria (não há coluna para isso; `opening_note_breakdown` ficou sem uso). Um botão chama `SessaoContext.abrirLoja`: `fn_open_session` (agora com `p_opening_amount` = troco, para o "Turno aberto" do assistente mostrar o valor) + `fn_open_cash_register`. Antes de abrir, `abrirLoja` relê a sessão ativa e, se outro aparelho já abriu o dia, só abre o caixa nele (`fn_open_session` não impede duas sessões abertas). Com o dia aberto e o caixa fechado, a mesma tela abre só o caixa e oferece "Fechar a loja". Se o dia aberto for de outra data, a tela conduz a "Fechar o dia anterior" primeiro.
+- **Fechar** (`FecharLojaModal`, tipos `loja` | `trocar` | `dia`): checa as travas **antes** de contar: retiradas previstas (`order-write list_sangrias_previstas`, confirma ali), pedidos e mesas (`check-session-pending`) e tablet pago e segurado (`order-write list_held_orders`). Depois vêm contar (cega) → conferir (mesma conta do `fn_close_cash_register_v2`) → motivo obrigatório se houver diferença → **um botão** fecha caixa e dia → resumo **só do dinheiro**. "Trocar de operador" fica no menu ⋯ do topo e fecha só o caixa.
+- **Critério:** o motivo da diferença vai como `p_closing_notes` **no próprio fechamento**. Assim o aviso `closing_cash` do assistente já sai com ele. Se o RPC apurar uma diferença que a tela não viu (pagamento entrou durante a contagem), o motivo é pedido depois via `fn_update_cash_register_notes`, como antes.
+- **Critério:** o modal de fechar fica no `PDVCaixaInner`, não no `PDVOperacional`. O PDV desmonta quando o caixa ou o dia fecha (realtime de `sessions` e poll de 60 s). `fecharCaixa(..., skipLocalUpdate=true)` e refs guardam sessão e caixa para o resumo. Se o dia não fechar depois do caixa fechado (pedido novo), a tela mostra o erro do RPC, oferece "Tentar de novo" sem recontar e "Forçar o fechamento" (mesma permissão de hoje).
+- **Permissões:** abrir exige `pdv_abrir_caixa`; fechar e trocar exigem `pdv_fechar_caixa`. Antes, "Iniciar/Fechar sessão" não conferia nada. A Supervisão já tem as duas nas 3 lojas.
+- **Teclado (computador é o principal):** Enter avança e Esc sai antes de fechar. O modal escuta em captura no `window` e para F-teclas e Espaço quando não se está digitando, senão os atalhos do PDV (F2 pagamento, Espaço busca) disparavam por baixo.
+- **Selo "Céu"** (`SeloCeu` + `selo-ceu.css`): sol nascendo ao abrir, lua ao fechar, tarde na troca de operador. O dono escolheu entre 5 propostas e não quis a bola verde chapada.
+
+### 2026-10-03 — Estoque abre no Início (comprar · contar · vai faltar) e "estoque baixo" tem UMA regra
+
+**Problema (Paranaguá, 02/10):** "estoque baixo" tinha 6 números ao mesmo tempo: Dashboard 44, pendência 22, topo
+do Estoque 16 críticos / 15 esgotados / 18 em alerta / 18 com ruptura. Causas, uma por tela: o Dashboard
+(`fn_get_dashboard_metrics.alertas_estoque`) contava 22 insumos **excluídos** e os 6 sem aviso; a pendência do
+assistente-cron contava os sem aviso (`track_stock=false`); "em alerta" contava insumo **sem mínimo** só por estar em
+zero; "crítico" = metade do mínimo; "ruptura" usava **mínimo ÷ 7** como se fosse o uso do dia (todo insumo abaixo do
+mínimo caía nela). E estoque negativo (Arroz −2.046 g) aparecia como "ESGOTADO" com preço "R$ 0,00" (preço por grama).
+
+**Regra única** (migração `20261003120000_estoque_situacao.sql`, espelho `src/lib/estoqueRegras.ts`, testes em
+`src/test/lib/estoqueRegras.test.ts`):
+- **abaixo do mínimo** = com aviso (`track_stock`) E mínimo > 0 E estoque <= mínimo (`insumo_abaixo_minimo`).
+- **esgotado** = com aviso E (estoque <= 0 OU `is_depleted`) (`insumo_esgotado`). Negativo = rótulo **"Conferir"**.
+- **vai faltar** = com aviso E uso/dia > 0 E NÃO abaixo do mínimo E estoque ÷ uso/dia <= `dias_previsao` (padrão 7).
+  Uso/dia = saídas de uso (`theoretical_out`, `loss`, `manual_out` que não começa com Estorno/Correção/Ajuste de
+  contagem) dos últimos 14 dias, menos a volta de venda cancelada (`in` com `order_id`), ÷ dias de histórico (desde a
+  1ª saída de uso da loja; < 3 dias = sem previsão).
+- **conferir** = com aviso E entra na contagem E (estoque < 0 OU marcado esgotado com saldo).
+- Quem usa: Dashboard (`AtencaoFaixa` via `useEstoqueSituacao`), topo do Estoque, Início, pendência
+  `estoque_critico` e aviso de estoque do assistente-cron (SQL com `insumo_abaixo_minimo`), `fn_get_stock_critical_alerts`
+  (agora = abaixo do mínimo, `nivel_alerta` 'critico' = esgotado; usada por `useStockCriticalAlerts`, ferramenta
+  `estoque_critico` do assistente-brain e `fn_mkt_fatos_canais`), ação rápida "Estoque crítico" do chat, rótulos da aba
+  Estoque (`InsumosUtils.statusEstoque` + filtros `passaFiltroStatus`), aba Inventário (`DivergenciaPanel`) e Por
+  Fornecedor. Migração `20261003120100_estoque_regra_unica_consumidores.sql` troca por texto
+  só o bloco `alertas_estoque` de `fn_get_dashboard_metrics` (aborta se a função tiver mudado).
+- Paranaguá depois: **16 abaixo do mínimo (13 zerados), 15 esgotados, 2 vão faltar** — em todo lugar.
+
+**Início do Estoque** (`src/pages/estoque/components/inicio/`), feito para a supervisão no celular:
+- **Comprar**: abaixo do mínimo agrupado por fornecedor (`agruparCompras`: `supplier_id` › nome › "Produzir na cozinha"
+  (saída de ficha de produção ou fornecedor "Produção interna") › "Sem fornecedor"). Quantidade sugerida
+  (`sugestaoCompra`) = uso de `estoque_config.dias_compra` dias (padrão **60 = dois meses**, decisão do dono), no mínimo o
+  bastante para ficar com 2× o mínimo, arredondado na embalagem (`purchase_unit`/`purchase_factor`); **produção da
+  cozinha: até 2× o mínimo** (guacamole de 2 meses estraga). Estoque negativo de insumo contável = "conte antes" (fora do
+  pedido). Mandar: WhatsApp do fornecedor (`linkWhatsApp`, fone de `fin_suppliers`) ou compartilhar/copiar (cancelar
+  o compartilhar não marca); a marca "pedido mandado" fica em `estoque_pedidos_enviados` (7 dias, todos os aparelhos;
+  desfazer = `desfeito_em`) e vale **por insumo** (`pedidoDoInsumo`): insumo novo no fornecedor, ou que teve entrada
+  depois do envio (`ultima_entrada` = última `in` sem `order_id` em 30 dias), volta a pedir.
+  Item → mudar mínimo / "Não uso mais" (`stock-write` direto, com erro de volta na tela).
+- **Contar**: planos em `inventory_count_plans` (diária / semanal `dia_semana` 0=dom / mensal `dia_mes` 1–28, 0 = último
+  dia; `todos` = quem tem `count_inventory`, senão lista `itens`). Ocorrência atual = última data agendada <= hoje e >=
+  criação do plano; pendente = item sem contagem confirmada (`inventory_sessions`, data de Brasília) desde a ocorrência.
+  Sem plano: botão "Criar as duas de sempre" (geral no último dia do mês + semanal segunda com os 10 que mais giram em
+  R$/dia). Contagem passo a passo (`ContagemFolha`) grava **só os contados** via `confirmarInventario` → `fn_confirm_inventory`
+  (respeita `count_unit`/`count_factor`); só aparece para quem tem `estoque_inventario` (igual à aba Inventário); o
+  digitado sobrevive a fechar a folha (toque no fundo não fecha com número digitado). Insumo tirado da contagem sai do
+  plano (`fn_confirm_inventory` pula `count_inventory = false`). Configurar: `estoque_pode_configurar` = admin, ou chave `estoque_inventario` da
+  matriz `permissions` (sem linha: só gerente).
+- **Vai faltar**: com "Pôr na lista" (só na sessão) e "Mínimo de X" (uso de `dias_previsao` dias) para quem não tem mínimo.
+- **Pegadinhas:** a contagem cheia da aba Inventário manda TODOS os insumos (os não tocados com o teórico), então ela
+  marca todos como contados — é o comportamento certo para a geral, mas não use para "contar alguns". Preço por grama
+  sai por kg (`fmtPrecoUnit`). `useEstoqueSituacao` recarrega no BroadcastChannel `erpos-estoque-sync`.
+- **Achados (não corrigidos):** Jalapeño da Paranaguá baixa ~3 kg/dia pela ficha (−21,7 kg no sistema: unidade da ficha
+  errada?); dois insumos chamados "Cheddar produzido"; 9 itens da lista sem fornecedor. Hortifrúti com 60 dias de uso
+  sugere quantidade grande demais — se incomodar, o próximo passo é dias de compra por categoria/insumo.
+- Protótipo aprovado: `docs/prototipos/estoque-inicio-proposta.html` (não commitado, cópia no checkout principal).
+
+### 2026-10-03 — Tela Hoje (`/hoje`): a porta de entrada que conduz
+- **O que é:** a primeira tela depois do login. Mostra o que precisa da pessoa AGORA, em todas as lojas dela. Cada cartão resolve ali mesmo, e quando tudo acaba aparece "Tudo em dia ✓ / Pode fechar o app". É o pedido do dono de 2026-10-02: economia mental, conduzir, celular. Protótipo aprovado em `docs/prototipos/hoje-proposta.html`. Nenhuma tela saiu; os módulos continuam no menu.
+- **Quem cai onde** (`src/pages/hoje/InicioPorPerfil.tsx`, rota índice `/`; o login sem rota guardada vai para `/`):
+  - admin, gerente e supervisao vão para `/hoje`;
+  - caixa vai para `/pdv/caixa` no computador e para `/hoje` no celular (ou quando a loja não tem o terminal de caixa ligado);
+  - o resto vai para `/modulos`, que já redireciona totem, gestor de entregas e tarefas.
+- **Supervisão × gerente:** supervisão é quem fica na loja. Vê loja aberta/fechada com o botão "Abrir a loja", estoque, receber e aprovar. Gerente fica abaixo do dono e não fica necessariamente na loja: vê o financeiro e a gestão.
+- **Blocos** (`src/pages/hoje/organizar.ts`, função pura, testada em `src/test/lib/hojeOrganizar.test.ts`):
+  - **Agora:** urgente, conta vencida, vence em até 3 dias, ou boleto pedido há 2 dias ou mais (`payload.cobrar`).
+  - **Para pôr em dia:** `item_sem_classe` e `conta_sem_dre`. A `nota_nao_lancada` NÃO entra aqui: o cron só a cria com boleto vencendo, então é "agora".
+  - **Pode esperar:** volta sozinho para "agora" quando aperta.
+  - **Esperando outras pessoas:** boleto já pedido.
+  - **Silenciado:** aviso com "ciente"; volta se piorar.
+- **Junta o que é a mesma coisa:**
+  - `conta_atrasada` (agregada por loja) engole os `boleto_faltando` vencidos da mesma loja;
+  - `conta_vence_hoje` engole os `boleto_faltando` que vencem hoje;
+  - 2 ou mais `boleto_faltando` do mesmo fornecedor no mesmo bloco viram um cartão só, com o nome tirado do título do cron.
+- **Ordem dentro do bloco:**
+  - primeiro quem tem alguém esperando agora (`aprovacao`, `pagamento_*`);
+  - depois o prazo (o vencido mais antigo antes);
+  - depois urgente, depois chegada.
+  - O dono tinha escolhido ordem de chegada na caixa do chat; aqui é pelo prazo.
+- **Dinheiro tem um caminho só:** "Pagar" e "Pedir boleto" na Hoje disparam `pedirAoChat` (evento `EVENTO_ASSISTENTE_ACAO`, `lib/assistenteFoco.ts`). O `AssistenteChat` do dono escuta e roda o MESMO `pagarConta`, `pagarPendencia` e `pedirPendencia` da caixa de pendências: Inter, PIN, digital, cartão no rodapé. "Pedir" só preenche a caixa de texto; nada é enviado sozinho. Baixa, contas atrasadas e DRE reaproveitam `BaixaDaConta`, `ContasAtrasadasInline` e `ContasDreInline` (agora exportados de `PendenciasChat`). O `call` da Edge `assistente-app` mudou para `lib/assistenteApp.ts` (`chamarAssistente`).
+- **Pegadinhas:**
+  - O papel por loja vem de `get_user_tenants`. O `availableTenants` do `AuthContext` zera depois de escolher a loja. Se a leitura falhar, a tela mostra erro e NÃO diz "tudo em dia".
+  - `pagamento_*` só aparece para o dono; para os outros seria cartão sem saída.
+  - Tipos "diretos" do chat (sangria, boleto por e-mail, compra pelo celular…) não ganham "Não vou fazer", porque descartar fecha para sempre.
+  - `sessao.iniciadaEm` já vem formatado ("08:30").
+  - No celular o "Agora" vem antes do resumo. Resumo e atalhos montam num lugar só (`useIsMobile`), para não buscar duas vezes.
+  - A tela confere a cada 60 s com a tela visível; é a tela inicial de todo gestor.
+- **Números iguais às outras telas:**
+  - faturamento = Dashboard (`fn_get_dashboard_metrics` + iFood, cartão `FaturamentoHero`);
+  - "no banco" e "vencidas + 7 dias" = mesma regra do Financeiro › Painel;
+  - loja aberta = `SessaoContext`.
+- **Testado em 2026-10-03:**
+  - logado no localhost no celular (375) e no computador (1366);
+  - El Patron Paranaguá e Vila Leste só leitura;
+  - baixa de verdade numa conta da Testes PDV pelo cartão (conta `paid`, pendência `resolvida` com motivo);
+  - "Pedir o boleto" abriu o chat com o texto; apagado sem enviar.
+- **Sem teste logado:** os perfis supervisão, gerente e caixa (sem senha dos `qa.*`), "Pagar" com PIN pela Hoje e concluir tarefa pela Hoje (mesma Edge `task-write` do módulo).
+
+### 2026-10-03 — "O que aconteceu?": um começo só para qualquer lançamento
+- **Pedido do dono** (visão de economia mental): havia ~9 portas para lançar despesa/compra (Nova conta, Nova compra, Fluxo, Bancos, Conciliação, Notas, Guias, RH, `/receber`, chat, Sangria). Regra: **nenhum caminho sai, muda só a porta**. Protótipo aprovado: `docs/prototipos/lancar-proposta.html`.
+- **Onde:** `src/components/feature/lancar/` — `opcoes.ts` (árvore + quem vê) e `OQueAconteceu.tsx` (folha no celular / janela no computador; `telaCheia` para `/lancar`). Exportado em `index.ts` para a tela Hoje abrir pelo "+": `<OQueAconteceu onFechar={…} />`. Entradas: botão **Lançar** do Financeiro (a lista antiga `LancarFinanceiroModal` virou "Ver todos os jeitos de lançar (lista completa)" dentro da folha), rota **`/lancar`** (terminal, tela cheia), ação rápida ⚡ **`lancar`** e atalho "Lançar" no `manifest.webmanifest`.
+- **5 respostas em ordem fixa** (decisão do dono: decorar o lugar): Paguei algo · Chegou mercadoria · Recebi uma nota ou boleto · Tenho que pagar alguém · Gastei do meu bolso. Cada folha leva à tela que já existe.
+- **Permissão = a da tela de destino:** os predicados usam `rotaLiberada`/`acaoLiberada` (`assistente/acoes/acesso.ts`), que espelham RotaProtegida, abas do Financeiro (só Admin/Gerente/Financeiro) e `pag_*`. **Variantes:** a mesma resposta leva quem lança direto à tela de lançar e quem não lança ao pedido de pagamento (`/receber?pedido=…`, selo azul "o dono aprova") — vale a 1ª liberada. Pergunta com um caminho só no perfil vai direto (`caminhoUnico`). Contabilidade só vê a guia (tem `fin_pagar`/`fin_notas_entrada`, mas `financial-write`/`fiscal-inbound` recusam o lançamento dela). Supervisão (fica na loja) recebe, faz sangria e pede; gerente segue a matriz (na Paranaguá sem Contas a Pagar → boleto vira pedido). Empresa sem PDV (`tenants.kind='financeiro'`, `ContextoAcesso.temPdv`) não vê Recebimentos nem sangria, nem o Admin (igual ao `/modulos`).
+- **Conta que ainda vai ser paga → Nova conta** (fornecedor, vencimento e competência para a DRE); **despesa já paga da conta/cartão → "Lançar despesa"** do ⚡, embutido na folha (o `Roteiro` do kit ocupa `absolute inset-0` de um pai `relative`).
+- **Links novos:** `/receber?receber=cupom` (abre o leitor quando `podeReceber` chegar — a matriz carrega depois); `/financeiro?tab=conciliacao&abrir=pendentes` (filtro Pendentes + Saídas); `/financeiro?tab=rh&sub=prestadores|freelancers` (subaba do RH; freelancers vai pela aba `rh`, que abre com `fin_rh` OU `fin_freelancers` — `?tab=freelancers` sem `fin_freelancers` cai em outra aba); `/pdv/caixa?abrir=sangria&tipo=freelancer|outro|fornecedor` (`SangriaSuprimentoModal.motivoInicial`). **Caixa fechado (dono): só o aviso "Abra o caixa"**; o link fica na URL e a sangria abre sozinha quando o caixa abrir.
+- **Voltar do celular:** uma camada `useVoltarFecha` por nível (folha, pergunta 1, pergunta 2, passo a passo). Escape/toque fora não fecham durante o "Lançar despesa" (pode estar gravando). Conciliação aplica o `?abrir=pendentes` num efeito: já estando na aba, `irParaResultado` remonta antes de a URL nova chegar (o BrowserRouter troca a URL em transição).
+- **Pegadinha:** a regra do ⚡ `lancar` em `acesso.ts` é escrita à mão (importar `opcoes.ts` lá criaria ciclo). O teste `src/test/lib/lancarOpcoes.test.ts` confere que ela bate com `temAlgumLancamento` em todos os papéis — resposta nova com permissão nova = atualizar os dois. Papel preso (Financeiro/Contabilidade) não vê o ⚡ `lancar`: usa o botão da própria tela.
 
 ### 2026-10-03 — Cartão de crédito pelo app (Mercado Pago) no delivery e no QR + QR universal "paga antes"
 - **Decisões do dono:** só **crédito** e só **à vista** (débito = Pix). **Fato medido:** online, as contas MP da Vila Leste e de Paranaguá só têm débito `debelo` (Elo Débito) — Visa/Master débito não existem online no MP Brasil (`GET /v1/payment_methods`, consultado por SQL com a extensão `http`).
@@ -287,6 +408,8 @@ Secao viva: registrar aqui padroes, decisoes e pegadinhas reutilizaveis conforme
 - **QR universal "paga antes"** (`system_settings.qr_universal_pay_before`, Configurações › Operação › Autoatendimento; padrão desligado): `mesa-write › create_mesa_order` nasce rascunho (`held: true`), o app não imprime; libera quando o Pix/cartão pelo app confirma (`online-payments` → `mesa-write › release_held_order`, chave interna, **tickets saem do servidor** no formato do `printOrderQueue`, com partes de produção) ou quando o caixa recebe na lista "Autoatendimento — aguardando pagamento" (`PedidosTabletAguardando`, que trava Receber/Cancelar enquanto `order-write › list_held_orders` devolve `online_pending`). `loadBill` inclui o rascunho na conta da SENHA.
 - **Pegadinha do SDK:** o `<CardPayment>` recria o formulário (apaga o que o cliente digitou) a cada mudança de REFERÊNCIA de `initialization`/`customization`/callbacks — manter tudo estável (constante de módulo, `useMemo`, `useCallback` com ref).
 - **PixCobrancaPanel cria Pix ao montar** (e isso cancela cartão pendente): nunca renderizar os dois painéis juntos; trocar é clique explícito.
+- **Taxa do Pix pelo app (10-03):** o Checkout do MP cobra Pix (0,99% na Vila); o Pix direto na conta da loja não. `fin_payment_provider_config.pix_fee_percentage` (modal do MP) substitui a taxa da forma "PIX" só no Pix online; a despesa sai como "Taxa Mercado Pago — PIX (x%)" (`auto_card_fee`). Se um dia ligar a conciliação do MP com `post_to_ledger` na loja, conferir dupla contagem dessa taxa (o trigger `fora_do_caixa` só cobre cartão).
+- **Ligado na Vila Leste em 10-03:** app "Pagamento ERPOS V0" (1169595456983603); evento "Order" marcado no webhook de **produção** (a aba "Modo de teste" do painel é outra lista de eventos); cartão 4,98% na hora (aba Checkout, crédito à vista), Pix 0,99%.
 
 ### 2026-10-03 — Admin Master › ações na loja (zerar pedidos/estoque, resetar, deletar)
 - **Pegadinha:** comparar coluna enum com literal que não existe no enum (`role IN ('admin','admin-master')`, `user_role` não tem `admin-master`) derruba a chamada inteira com "invalid input value for enum" — mesmo que o ramo nem fosse usado. As 4 funções `fn_admin_*` nunca funcionaram pela tela por isso. Agora: `fn_assert_platform_admin()` (só o dono) ou service_role.
