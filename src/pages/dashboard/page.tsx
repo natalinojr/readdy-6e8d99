@@ -507,7 +507,7 @@ export default function Dashboard() {
         <div className="xl:col-span-2 min-w-0">
           <MesasOverview mesas={m?.mesas_mapa ?? []} />
         </div>
-        <ResumoFinanceiro refreshKey={refreshLento} />
+        {veFinanceiro && <ResumoFinanceiro refreshKey={refreshLento} />}
       </div>
 
       {/* 6. Horários de pico */}
