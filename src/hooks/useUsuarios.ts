@@ -101,12 +101,16 @@ export function useUsuarios() {
   }, [carregar]);
 
   const toggleAtivo = useCallback(
-    async (userId: string) => {
-      const { data } = await supabase.rpc('fn_toggle_user_active', { p_user_id: userId });
-      const novoEstado = data as boolean;
+    async (userId: string): Promise<{ success: boolean; error?: string }> => {
+      const { data, error: rpcError } = await supabase.rpc('fn_toggle_user_active', { p_user_id: userId });
+      // Recusa do servidor não mexe na linha (antes ela ficava "inativa" na tela sem estar).
+      if (rpcError || typeof data !== 'boolean') {
+        return { success: false, error: rpcError?.message ?? 'Não foi possível alterar o usuário' };
+      }
       setUsuarios((prev) =>
-        prev.map((u) => (u.id === userId ? { ...u, ativo: novoEstado } : u)),
+        prev.map((u) => (u.id === userId ? { ...u, ativo: data } : u)),
       );
+      return { success: true };
     },
     [],
   );

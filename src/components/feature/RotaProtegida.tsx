@@ -39,8 +39,10 @@ const ROTA_PERMISSAO: Record<string, PermissaoKey | readonly PermissaoKey[]> = {
 
 /**
  * Papéis que têm acesso irrestrito a todas as rotas.
+ * O Gerente segue a matriz como os outros papéis (dono, 2026-10-03): antes ele passava direto
+ * e abria pela URL telas que o menu escondia (ex.: /usuarios sem "Gerenciar usuários").
  */
-const PAPEIS_ADMIN = ['admin', 'gerente'];
+const PAPEIS_ADMIN = ['admin'];
 
 interface Props {
   children: ReactNode;
@@ -63,7 +65,7 @@ export default function RotaProtegida({ children }: Props) {
   // Enquanto carrega permissões, não bloqueia (evita flash de redirect)
   if (loading) return <>{children}</>;
 
-  // Papéis admin/gerente têm acesso total
+  // Admin tem acesso total
   if (!user || PAPEIS_ADMIN.includes(user.perfil)) return <>{children}</>;
 
   // Verifica se a rota atual exige alguma permissão
