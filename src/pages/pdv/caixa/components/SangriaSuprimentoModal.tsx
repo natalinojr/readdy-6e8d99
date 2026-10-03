@@ -66,9 +66,15 @@ export default function SangriaSuprimentoModal({
   const [freelaId, setFreelaId] = useState<string>('');
   const [freelaNovo, setFreelaNovo] = useState(false);
   const [telefoneFreela, setTelefoneFreela] = useState('');
-  // Dia trabalhado (obrigatório, dono 2026-10-03): vai no motivo ("· diária de DD/MM/AAAA") e a função do
-  // banco grava a diária nesse dia — a conta continua paga hoje, quando o dinheiro saiu.
-  const [diaFreela, setDiaFreela] = useState('');
+  // Dias trabalhados (obrigatório, dono 2026-10-03): vão no motivo e a função do banco grava uma diária por dia
+  // — a conta continua paga hoje, quando o dinheiro saiu. 1 dia: "· diária de DD/MM/AAAA" (valor = total);
+  // vários: "· diárias de DD/MM/AAAA (R$ 40,00), …" com o valor de cada dia, e o total é a soma.
+  const [diasFreela, setDiasFreela] = useState<{ data: string; valor: string }[]>([{ data: '', valor: '' }]);
+  const variosDias = diasFreela.length > 1;
+  const numDia = (x: string) => { const n = Number(x.replace(',', '.')); return Number.isFinite(n) ? Math.round(n * 100) / 100 : NaN; };
+  const somaDias = Math.round(diasFreela.reduce((t, d) => t + (numDia(d.valor) || 0), 0) * 100) / 100;
+  const setDia = (i: number, campo: 'data' | 'valor', v: string) => { setDiasFreela((ds) => ds.map((d, j) => (j === i ? { ...d, [campo]: v } : d))); setErro(''); };
+  const diariaPadrao = () => { const f = freelas.find((x) => x.id === freelaId); return f?.daily_rate && !freelaNovo ? String(f.daily_rate) : ''; };
   const hojeSP = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
   const minDiaFreela = new Date(Date.now() - 60 * 86400000).toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
   useEffect(() => {
@@ -130,21 +136,30 @@ export default function SangriaSuprimentoModal({
     if (motivoRetirada === 'Freelancer') {
       const nome = freelaNovo || !freelaId ? nomeFreelancer : (freelas.find((f) => f.id === freelaId)?.name ?? '');
       if (!nome) return '';
-      return diaFreela ? `Freelancer: ${nome} · diária de ${diaFreela.split('-').reverse().join('/')}` : `Freelancer: ${nome}`;
+      const br = (iso: string) => iso.split('-').reverse().join('/');
+      const ds = [...diasFreela].filter((d) => d.data).sort((a, b) => a.data.localeCompare(b.data));
+      if (!ds.length) return `Freelancer: ${nome}`;
+      if (!variosDias) return `Freelancer: ${nome} · diária de ${br(ds[0].data)}`;
+      return `Freelancer: ${nome} · diárias de ${ds.map((d) => `${br(d.data)} (R$ ${numDia(d.valor).toFixed(2).replace('.', ',')})`).join(', ')}`;
     }
     if (motivoRetirada === 'Outro') return motivoOutro;
     return motivoRetirada;
   };
 
   const handleRegistrar = async () => {
-    const v = parseFloat(valor.replace(',', '.'));
+    const freela = tipo === 'sangria' && motivoRetirada === 'Freelancer';
+    const v = freela && variosDias ? somaDias : parseFloat(valor.replace(',', '.'));
     if (isNaN(v) || v <= 0) { setErro('Informe um valor válido.'); return; }
     const mf = motivoFinal();
     if (!mf.trim()) { setErro('Informe o motivo da movimentação.'); return; }
     if (motivoRetirada === 'Fornecedor' && !nomeFornecedor.trim()) { setErro('Informe o nome do fornecedor.'); return; }
     if (motivoRetirada === 'Freelancer' && !(freelaId && !freelaNovo) && !nomeFreelancer.trim()) { setErro('Escolha o freelancer ou cadastre o nome.'); return; }
-    if (motivoRetirada === 'Freelancer' && !diaFreela) { setErro('Informe o dia que o freelancer trabalhou.'); return; }
-    if (motivoRetirada === 'Freelancer' && (diaFreela > hojeSP || diaFreela < minDiaFreela)) { setErro('O dia trabalhado não pode ser no futuro nem de mais de 60 dias atrás.'); return; }
+    if (freela) {
+      if (diasFreela.some((d) => !d.data)) { setErro('Informe o dia que o freelancer trabalhou.'); return; }
+      if (diasFreela.some((d) => d.data > hojeSP || d.data < minDiaFreela)) { setErro('O dia trabalhado não pode ser no futuro nem de mais de 60 dias atrás.'); return; }
+      if (new Set(diasFreela.map((d) => d.data)).size !== diasFreela.length) { setErro('Tem dia repetido.'); return; }
+      if (variosDias && diasFreela.some((d) => !(numDia(d.valor) > 0))) { setErro('Informe o valor de cada dia.'); return; }
+    }
     if (tipo === 'suprimento' && motivoAdicao === 'Outros' && !motivoOutro.trim()) { setErro('Descreva o motivo da movimentação.'); return; }
 
     setSalvando(true);
@@ -202,16 +217,18 @@ export default function SangriaSuprimentoModal({
     setMotivoAdicao('');
     setNomeFornecedor('');
     setNomeFreelancer('');
-    setDiaFreela('');
+    setDiasFreela([{ data: '', valor: '' }]);
     setMotivoOutro('');
     setErro('');
   };
 
+  // Freelancer com vários dias: o total é a soma dos dias (não se digita).
+  const totalTravado = tipo === 'sangria' && motivoRetirada === 'Freelancer' && variosDias;
   const totalRetiradas = historico.filter((m) => m.tipo === 'sangria').reduce((s, m) => s + m.valor, 0);
   const totalAdicoes = historico.filter((m) => m.tipo === 'suprimento').reduce((s, m) => s + m.valor, 0);
 
   if (confirmado) {
-    const v = parseFloat(valor.replace(',', '.')) || 0;
+    const v = totalTravado ? somaDias : parseFloat(valor.replace(',', '.')) || 0;
     return (
       <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
         <div className="bg-white rounded-2xl p-8 w-full max-w-xs flex flex-col items-center gap-4 text-center">
@@ -369,16 +386,17 @@ export default function SangriaSuprimentoModal({
             <div className="relative">
               <span className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 text-sm font-semibold">R$</span>
               <input
-                type="number" min="0.01" step="0.01" value={valor}
+                type="number" min="0.01" step="0.01" value={totalTravado ? somaDias.toFixed(2) : valor} readOnly={totalTravado}
+                title={totalTravado ? 'Soma dos valores de cada dia' : undefined}
                 onChange={(e) => { setValor(e.target.value); setErro(''); }}
                 placeholder="0,00"
-                className="w-full pl-9 pr-4 py-3 text-lg font-bold border border-zinc-200 rounded-xl text-zinc-800 focus:outline-none focus:border-amber-400"
+                className={`w-full pl-9 pr-4 py-3 text-lg font-bold border border-zinc-200 rounded-xl text-zinc-800 focus:outline-none focus:border-amber-400 ${totalTravado ? 'bg-zinc-50' : ''}`}
               />
             </div>
             <div className="flex gap-2 mt-2">
               {[50, 100, 200, 500].map((v) => (
-                <button key={v} onClick={() => setValor(String(v))}
-                  className="flex-1 py-1.5 text-xs font-semibold bg-zinc-100 text-zinc-600 rounded-lg hover:bg-zinc-200 cursor-pointer transition-colors whitespace-nowrap">
+                <button key={v} onClick={() => setValor(String(v))} disabled={totalTravado}
+                  className="flex-1 py-1.5 text-xs font-semibold bg-zinc-100 text-zinc-600 rounded-lg hover:bg-zinc-200 cursor-pointer transition-colors whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed">
                   R$ {v}
                 </button>
               ))}
@@ -438,13 +456,49 @@ export default function SangriaSuprimentoModal({
                         )}
                       </>
                     )}
-                    <label className="block">
-                      <span className="block text-xs font-semibold text-zinc-600 mb-1">Dia que trabalhou <span className="text-red-400">*</span></span>
-                      <input type="date" value={diaFreela} min={minDiaFreela} max={hojeSP} required
-                        onChange={(e) => { setDiaFreela(e.target.value); setErro(''); }}
-                        className={`w-full text-sm border rounded-xl px-3 py-2.5 text-zinc-800 bg-white focus:outline-none focus:border-amber-400 ${diaFreela ? 'border-zinc-200' : 'border-amber-300'}`} />
-                    </label>
-                    <p className="text-[11px] text-zinc-500">Registra a diária desse dia paga em dinheiro hoje (aparece em Financeiro › RH / Folha).</p>
+                    <div>
+                      <span className="block text-xs font-semibold text-zinc-600 mb-1">{variosDias ? 'Dias que trabalhou e valor de cada um' : 'Dia que trabalhou'} <span className="text-red-400">*</span></span>
+                      <div className="space-y-1.5">
+                        {diasFreela.map((d, i) => (
+                          <div key={i} className="flex items-center gap-1.5">
+                            <input type="date" value={d.data} min={minDiaFreela} max={hojeSP} required aria-label={`Dia ${i + 1}`}
+                              onChange={(e) => setDia(i, 'data', e.target.value)}
+                              className={`flex-1 min-w-0 text-sm border rounded-xl px-3 py-2.5 text-zinc-800 bg-white focus:outline-none focus:border-amber-400 ${d.data ? 'border-zinc-200' : 'border-amber-300'}`} />
+                            {variosDias && (
+                              <>
+                                <div className="relative w-28 shrink-0">
+                                  <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400 text-xs font-semibold">R$</span>
+                                  <input type="number" min="0.01" step="0.01" inputMode="decimal" value={d.valor} placeholder="0,00" aria-label={`Valor do dia ${i + 1}`}
+                                    onChange={(e) => setDia(i, 'valor', e.target.value)}
+                                    className={`w-full pl-8 pr-2 text-sm border rounded-xl py-2.5 text-zinc-800 bg-white focus:outline-none focus:border-amber-400 ${numDia(d.valor) > 0 ? 'border-zinc-200' : 'border-amber-300'}`} />
+                                </div>
+                                <button type="button" onClick={() => {
+                                    const resto = diasFreela.filter((_, j) => j !== i);
+                                    if (resto.length === 1 && resto[0].valor) setValor(resto[0].valor); // volta a 1 dia: o total é o valor dele
+                                    setDiasFreela(resto);
+                                  }} aria-label={`Tirar o dia ${i + 1}`}
+                                  className="w-8 h-8 shrink-0 flex items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-100 hover:text-red-500 cursor-pointer">
+                                  <i className="ri-close-line" />
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                      <button type="button"
+                        onClick={() => setDiasFreela((ds) => {
+                          // Ao virar "vários dias", o 1º dia herda o valor digitado; os novos, a diária do cadastro.
+                          const base = ds.length === 1 ? [{ ...ds[0], valor: ds[0].valor || valor || diariaPadrao() }] : ds;
+                          return [...base, { data: '', valor: diariaPadrao() }];
+                        })}
+                        className="mt-1.5 text-xs font-semibold text-amber-700 hover:text-amber-800 cursor-pointer">
+                        <i className="ri-add-line" /> Adicionar outro dia
+                      </button>
+                      {variosDias && (
+                        <p className="text-xs text-zinc-600 mt-1">Total da retirada: <span className="font-bold text-zinc-900">{fmt(somaDias)}</span> ({diasFreela.length} dias)</p>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-zinc-500">Registra a diária de cada dia, paga em dinheiro hoje (aparece em Financeiro › RH / Folha).</p>
                   </div>
                 )}
                 {motivoRetirada === 'Outro' && (
