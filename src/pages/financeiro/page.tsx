@@ -186,7 +186,7 @@ export default function FinanceiroPage() {
             <i className="ri-lock-line text-red-500 text-2xl" />
           </div>
           <h2 className="text-lg font-semibold text-zinc-800">Acesso Restrito</h2>
-          <p className="text-zinc-500 text-sm mt-1">Apenas administradores e gerentes podem acessar o módulo financeiro.</p>
+          <p className="text-zinc-500 text-sm mt-1">Apenas administradores e supervisores podem acessar o módulo financeiro.</p>
         </div>
       </div>
     );

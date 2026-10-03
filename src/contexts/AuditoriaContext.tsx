@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useNotificacoes } from '@/contexts/NotificacoesContext';
+import { perfilConfig, type PerfilUsuario } from '@/constants/usuarios';
 import {
   type EventoAuditoria,
   type TipoAcao,
@@ -83,7 +84,9 @@ function dbRowToEvento(row: DBAuditRow): EventoAuditoria {
 
   const usuario: string =
     row.user_name ?? d.user_name ?? (row.user_id ? row.user_id.slice(0, 8) : 'Sistema');
-  const perfil: string = row.user_role ?? d.user_role ?? d.perfil ?? '—';
+  const perfilBruto: string = row.user_role ?? d.user_role ?? d.perfil ?? '—';
+  // Grava a chave (gerente, supervisao…); mostra o nome da tela (Supervisor, Líder…).
+  const perfil: string = perfilConfig[perfilBruto as PerfilUsuario]?.label ?? perfilBruto;
   const descricao: string =
     d.description ?? d.descricao ?? `${tipo} — ${row.entity_type ?? ''}`;
 

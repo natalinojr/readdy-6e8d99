@@ -272,6 +272,30 @@ Quando o usuario pedir "muda X":
 
 Secao viva: registrar aqui padroes, decisoes e pegadinhas reutilizaveis conforme o sistema evolui. Cada entrada com data
 
+### 2026-10-03 — Hierarquia na tela: Dono > Supervisor > Líder (só os nomes)
+- **Pedido do dono:** o papel `gerente` (banco `manager`) aparece como **Supervisor**; o `supervisao` (banco
+  `supervisor`) aparece como **Líder**. Enum `user_role`, chaves do front (`gerente`/`supervisao`), matriz
+  `permissions`, RLS, Edges e as cópias do mapa PT↔EN ficam iguais. **Pegadinha ao ler código:** `'supervisor'`
+  no banco é o **Líder** da tela; o Supervisor da tela é `manager`/`gerente`.
+- **Front:** rótulo central `perfilConfig` (a rotina do dia e quem lê dele seguem sozinhos) + os mapas soltos:
+  `ListaEquipe` (ganhou a chave de banco `supervisor`, que aparecia crua), Sidebar/TopBar/`modulos`/`perfil`/
+  `selecionar-loja` (ganharam `supervisao`, que aparecia vazio ou cru), `invite`, Hoje, Admin Master,
+  `PermissoesTab`, `DescontoAutorizacaoModal` (selos LÍD/SUP). A Auditoria mostra o rótulo em vez da chave
+  gravada (`AuditoriaContext`). Textos do PDV (autorização, cancelamento, desconto, cortesia, PIN do totem),
+  Ajuda, Configurações e avisos "só admin ou gerente" → "supervisor"; "supervisão, gerente ou admin" →
+  "líder, supervisor ou admin".
+- **Edges:** 21 mensagens de erro "admin/gerente" → "admin/supervisor"; o prompt do `assistente-brain`
+  (create_user) diz como cada chave se chama na tela. `login-pin` devolve "Apenas supervisor ou
+  administrador" e `kioskManagerPin.ts` aceita as duas formas. Antes de publicar, cada Edge no ar foi baixada
+  (`functions download --use-api --workdir <pasta>`, uma pasta por função) e comparada com o `main`.
+- **Banco:** migração `rotulos_supervisor_lider.sql` refaz 10 funções a partir do próprio `pg_get_functiondef`
+  trocando só o texto (mensagens de `fn_update_user`, `fn_set_user_badge`, `fn_toggle_user_active`,
+  `fn_get_users_list`, `fn_pdv_approval_decide`, `fn_automacao_*`, `fn_salvar_dashboard_metas`; autor padrão
+  "Supervisor" em `fn_cortesia_marcar_pedido`; "aprovado por supervisor" em `fn_pendencia_aprovacao_pdv_sync`).
+- **Não mexido (é dado):** o login "Gerente" @erpos.local da Paranaguá, nomes como "QA Gerente", pendências e
+  notas já gravadas, comentários e nomes de código (`AutorizacaoGerenteModal`, `senha_gerente`, `CFG_KEYS_GERENTE`).
+- **Regra:** nome de papel na tela sai de `perfilConfig[p].label`; não escrever "Gerente"/"Supervisão" à mão.
+
 ### 2026-10-03 — Classificação de itens: nota de serviço ignorada sai da fila + criar insumo no cartão
 - **Taxa de plataforma não é despesa a classificar.** Mensalidade e Top Placement do iFood e a taxa da
   Goomer pediam CMV × despesa em Paranaguá, mas são descontadas do repasse (o repasse do iFood entra no

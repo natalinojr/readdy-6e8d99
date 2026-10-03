@@ -118,7 +118,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
     tenantInfo = (tenantRows ?? []).find((t: { tenant_id: string }) => t.tenant_id === requestedTenantId) ?? null;
     if (!tenantInfo) return new Response(JSON.stringify({ error: 'Usuário sem acesso a esta loja' }), { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     if (require_manager && tenantInfo.role !== 'admin' && tenantInfo.role !== 'manager') {
-      return new Response(JSON.stringify({ error: 'Apenas gerente ou administrador' }), { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      return new Response(JSON.stringify({ error: 'Apenas supervisor ou administrador' }), { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
   } else {
     // Sem loja: comportamento antigo — primeiro tenant com role admin/manager, ou o primeiro no geral

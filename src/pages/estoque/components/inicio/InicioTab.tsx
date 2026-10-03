@@ -111,7 +111,7 @@ export default function InicioTab({ situacao, carregando, erro, onReload }: {
           ajuda={<>É a <b>lista de compras</b>. Entra sozinho todo insumo com estoque igual ou abaixo do mínimo, e entra também o que você puser na lista. Fica separada por fornecedor, com a quantidade já sugerida, para mandar o pedido.</>} />
         <Bloco icone="ri-scales-3-line" n={nContar} rotulo="Contar" detalhe={nContar ? (hoje.devidos.length ? 'contagem do dia' : 'conferir') : 'em dia'}
           tom={nContar ? 'dark' : 'ok'} onClick={() => ir('inicio-contar')}
-          ajuda={<>O que contar agora: os itens da <b>contagem programada</b> de hoje (geral do mês, semanal…) e os insumos com <b>número impossível</b> no sistema (estoque negativo). Quem programa as contagens é o gerente ou o dono.</>} />
+          ajuda={<>O que contar agora: os itens da <b>contagem programada</b> de hoje (geral do mês, semanal…) e os insumos com <b>número impossível</b> no sistema (estoque negativo). Quem programa as contagens é o supervisor ou o dono.</>} />
         <Bloco icone="ri-hourglass-line" n={vaiFaltar.length} rotulo="Vai faltar" detalhe={`em até ${cfg.diasPrevisao} dias`}
           tom={vaiFaltar.length ? 'amber' : 'ok'} onClick={() => ir('inicio-faltar')}
           ajuda={<>Pelo ritmo de uso dos últimos 14 dias, estes insumos <b>acabam em até {cfg.diasPrevisao} dias</b>, mas ainda não chegaram no mínimo, por isso não estão na lista de compras. Dá para pôr na lista para pedir junto.</>} />

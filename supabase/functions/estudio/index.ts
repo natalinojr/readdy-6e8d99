@@ -257,7 +257,7 @@ Deno.serve(async (req: Request) => {
       if (u?.name) userName = String(u.name);
     }
     const podeEscrever = caller.isServiceRole || isManagerRole(role);
-    const soGerente = () => json({ success: false, error: 'Só gerente ou admin da loja pode fazer isso' }, 403);
+    const soGerente = () => json({ success: false, error: 'Só supervisor ou admin da loja pode fazer isso' }, 403);
 
     if (action === 'get_kit') {
       const kit = await loadKit(admin, tenantId);

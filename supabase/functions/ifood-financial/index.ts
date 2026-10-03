@@ -928,7 +928,7 @@ Deno.serve(async (req) => {
     }
 
     if (action === 'import_file') {
-      if (!isManager) return errResp('Apenas admin/gerente', 403);
+      if (!isManager) return errResp('Apenas admin/supervisor', 403);
       const b64 = String(body.file_b64 ?? '');
       if (!b64) return errResp('Envie o arquivo do relatório de conciliação.');
       if (b64.length > 14_000_000) return errResp('Arquivo muito grande (máx. 10 MB).');
@@ -970,7 +970,7 @@ Deno.serve(async (req) => {
     }
 
     // ── Configuração ──
-    if (!isManager) return errResp('Apenas admin/gerente', 403);
+    if (!isManager) return errResp('Apenas admin/supervisor', 403);
 
     // Opções que não dependem da API (vale para quem só importa o arquivo do portal).
     if (action === 'set_options') {
@@ -1016,7 +1016,7 @@ Deno.serve(async (req) => {
     // Repasse antecipado da loja iFood (2026-09-19): pct null/0 desliga. Reaplica a data efetiva nas linhas
     // já importadas da loja, relança o razão (se ligado) e casa de novo com o banco.
     if (action === 'set_anticipation') {
-      if (!isManager) return errResp('Apenas admin/gerente', 403);
+      if (!isManager) return errResp('Apenas admin/supervisor', 403);
       const merchantId = String(body.merchant_id ?? '').trim();
       if (!merchantId) return errResp('Loja não informada.');
       const pctIn = body.pct === null || body.pct === '' || body.pct === undefined ? null : Number(String(body.pct).replace(',', '.'));

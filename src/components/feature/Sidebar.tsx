@@ -98,7 +98,8 @@ const navSections: NavSection[] = [
 
 const perfilLabel: Record<string, string> = {
   admin: 'Administrador',
-  gerente: 'Gerente',
+  gerente: 'Supervisor',
+  supervisao: 'Líder',
   caixa: 'Operador de Caixa',
   garcom: 'Garçom',
   cozinha: 'Operador de Cozinha',

@@ -116,7 +116,7 @@ export default function PendenciasEquipe({ dados, onFechar, onAbrirRota, naoLida
   };
 
   const decidir = (p: Item, aprovar: boolean) => rodar(p.id, async () =>
-    supabase.rpc('fn_pdv_approval_decide', { p_id: p.ref, p_aprovar: aprovar, p_nome: user?.nome ?? 'Gerente' }));
+    supabase.rpc('fn_pdv_approval_decide', { p_id: p.ref, p_aprovar: aprovar, p_nome: user?.nome ?? 'Supervisor' }));
   const marcar = (p: Item, acao: 'vista' | 'descartada', motivo?: string) => rodar(p.id, async () =>
     supabase.rpc('fn_pendencia_marcar', { p_id: p.id, p_acao: acao, p_motivo: motivo ?? null }));
   const naoVouFazer = async (p: Item) => {

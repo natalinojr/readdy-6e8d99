@@ -254,7 +254,7 @@ export default function ItensClassificarCard({ call, tenantId, abertoInicial = f
       const todas = (await call<{ tenants: Loja[] }>('items_pending')).tenants;
       // items_pending só traz lojas onde você é admin/gerente: loja que não veio não é "nada
       // pendente", é sem permissão (senão a pendência mostraria tudo certo com itens em aberto).
-      if (tenantId && !todas.some((l) => l.id === tenantId)) throw new Error('Você precisa ser admin ou gerente dessa loja para classificar os itens. Abra a tela com a loja certa.');
+      if (tenantId && !todas.some((l) => l.id === tenantId)) throw new Error('Você precisa ser admin ou supervisor dessa loja para classificar os itens. Abra a tela com a loja certa.');
       setLojas(tenantId ? todas.filter((l) => l.id === tenantId) : todas);
     }
     catch (e) { setErro(e instanceof Error ? e.message : 'Não foi possível carregar os itens'); }

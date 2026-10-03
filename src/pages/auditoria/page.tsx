@@ -41,7 +41,7 @@ function AccessDenied() {
       </div>
       <h2 className="text-lg font-bold text-zinc-800 mb-1">Acesso Restrito</h2>
       <p className="text-sm text-zinc-500 text-center max-w-xs">
-        O Log de Auditoria é acessível apenas para <strong>Admin</strong> e <strong>Gerente</strong>.
+        O Log de Auditoria é acessível apenas para <strong>Admin</strong> e <strong>Supervisor</strong>.
         Entre em contato com seu administrador.
       </p>
     </div>

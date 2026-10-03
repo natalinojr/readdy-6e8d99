@@ -22,12 +22,12 @@ const MODULOS: Modulo[] = [
     cor: 'text-amber-600 bg-amber-50 border-amber-100',
     descricao: 'Painel central com visão em tempo real de toda a operação.',
     funcionalidades: [
-      { nome: 'Métricas em tempo real', descricao: 'Faturamento do dia, ticket médio, total de pedidos e mesas ocupadas atualizando ao vivo.', perfis: ['Admin', 'Gerente'] },
-      { nome: 'Gráfico de vendas', descricao: 'Evolução das vendas por hora do dia com comparativo do dia anterior.', perfis: ['Admin', 'Gerente'] },
-      { nome: 'Status dos pedidos', descricao: 'Contagem por status: aguardando, em preparo, prontos e entregues.', perfis: ['Admin', 'Gerente'] },
-      { nome: 'Alertas de estoque', descricao: 'Lista de insumos abaixo do estoque mínimo com acesso rápido.', perfis: ['Admin', 'Gerente'] },
-      { nome: 'Visão geral das mesas', descricao: 'Grid com status de cada mesa (livre, ocupada, aguardando) e tempo de ocupação.', perfis: ['Admin', 'Gerente'] },
-      { nome: 'Últimos pedidos', descricao: 'Feed dos pedidos mais recentes com nome do cliente, valor e canal de origem.', perfis: ['Admin', 'Gerente'] },
+      { nome: 'Métricas em tempo real', descricao: 'Faturamento do dia, ticket médio, total de pedidos e mesas ocupadas atualizando ao vivo.', perfis: ['Admin', 'Supervisor'] },
+      { nome: 'Gráfico de vendas', descricao: 'Evolução das vendas por hora do dia com comparativo do dia anterior.', perfis: ['Admin', 'Supervisor'] },
+      { nome: 'Status dos pedidos', descricao: 'Contagem por status: aguardando, em preparo, prontos e entregues.', perfis: ['Admin', 'Supervisor'] },
+      { nome: 'Alertas de estoque', descricao: 'Lista de insumos abaixo do estoque mínimo com acesso rápido.', perfis: ['Admin', 'Supervisor'] },
+      { nome: 'Visão geral das mesas', descricao: 'Grid com status de cada mesa (livre, ocupada, aguardando) e tempo de ocupação.', perfis: ['Admin', 'Supervisor'] },
+      { nome: 'Últimos pedidos', descricao: 'Feed dos pedidos mais recentes com nome do cliente, valor e canal de origem.', perfis: ['Admin', 'Supervisor'] },
     ],
   },
   {
@@ -37,13 +37,13 @@ const MODULOS: Modulo[] = [
     cor: 'text-emerald-600 bg-emerald-50 border-emerald-100',
     descricao: 'Terminal de ponto de venda para operadores de caixa. Gerencia sessões, pedidos, pagamentos e sangrias.',
     funcionalidades: [
-      { nome: 'Sessão de caixa', descricao: 'Abertura e fechamento com valor inicial. Relatório automático de sangrias, suprimentos e totais por forma de pagamento.', perfis: ['Caixa', 'Gerente', 'Admin'] },
+      { nome: 'Sessão de caixa', descricao: 'Abertura e fechamento com valor inicial. Relatório automático de sangrias, suprimentos e totais por forma de pagamento.', perfis: ['Caixa', 'Supervisor', 'Admin'] },
       { nome: 'Criação de pedidos', descricao: 'Selecione itens do cardápio por categoria. Pedido para mesa, delivery ou consumo no local (avulso).', perfis: ['Caixa'] },
       { nome: 'Painel de mesas', descricao: 'Visualização e abertura de mesas diretamente pelo caixa, com status em tempo real.', perfis: ['Caixa'] },
       { nome: 'Pagamento multiformas', descricao: 'Divida o pagamento entre dinheiro, cartão, PIX e mais. Cálculo automático de troco.', perfis: ['Caixa'] },
-      { nome: 'Desconto com autorização', descricao: 'Aplicar desconto requer senha do gerente. Tudo registrado no log de auditoria.', perfis: ['Caixa', 'Gerente'] },
-      { nome: 'Estorno', descricao: 'Cancelar um pagamento já processado com motivo obrigatório. Registrado na auditoria.', perfis: ['Gerente', 'Admin'] },
-      { nome: 'Sangria e suprimento', descricao: 'Retirada e entrada de dinheiro no caixa com registro de motivo e responsável.', perfis: ['Caixa', 'Gerente'] },
+      { nome: 'Desconto com autorização', descricao: 'Aplicar desconto requer senha do supervisor. Tudo registrado no log de auditoria.', perfis: ['Caixa', 'Supervisor'] },
+      { nome: 'Estorno', descricao: 'Cancelar um pagamento já processado com motivo obrigatório. Registrado na auditoria.', perfis: ['Supervisor', 'Admin'] },
+      { nome: 'Sangria e suprimento', descricao: 'Retirada e entrada de dinheiro no caixa com registro de motivo e responsável.', perfis: ['Caixa', 'Supervisor'] },
       { nome: 'Painel KDS (cozinha)', descricao: 'Visualização dos pedidos em preparo diretamente no caixa, sem precisar ir até a cozinha.', perfis: ['Caixa'] },
     ],
     dicas: ['Abra sempre a sessão de caixa antes de criar pedidos.', 'O fechamento de caixa gera um relatório completo para conferência.'],
@@ -76,7 +76,7 @@ const MODULOS: Modulo[] = [
       { nome: 'Filtro por estação', descricao: 'Cada estação (Grelha, Frituras, etc.) pode visualizar apenas seus próprios pedidos.', perfis: ['Cozinha'] },
       { nome: 'Temporizador', descricao: 'Cada card mostra o tempo desde a entrada. Fica vermelho quando ultrapassa o SLA do item.', perfis: ['Cozinha'] },
       { nome: 'Ficha técnica no KDS', descricao: 'Acesso rápido à ficha técnica de cada item diretamente no card do pedido.', perfis: ['Cozinha'] },
-      { nome: 'Registrar perda', descricao: 'Informar que um item foi descartado. Atualiza o estoque automaticamente.', perfis: ['Cozinha', 'Gerente'] },
+      { nome: 'Registrar perda', descricao: 'Informar que um item foi descartado. Atualiza o estoque automaticamente.', perfis: ['Cozinha', 'Supervisor'] },
       { nome: 'Som de novo pedido', descricao: 'Alerta sonoro quando chega um novo item na estação. Configurável por dispositivo.', perfis: ['Cozinha'] },
       { nome: 'Login por operador', descricao: 'Cada KDS pede a identificação do operador por matrícula ao ligar.', perfis: ['Cozinha'] },
     ],
@@ -89,13 +89,13 @@ const MODULOS: Modulo[] = [
     cor: 'text-rose-600 bg-rose-50 border-rose-100',
     descricao: 'Gerencie toda a estrutura de categorias, itens, combos e observações globais.',
     funcionalidades: [
-      { nome: 'Categorias', descricao: 'Crie e organize categorias vinculadas a estações de cozinha. Defina a ordem de exibição no cardápio.', perfis: ['Admin', 'Gerente'] },
-      { nome: 'Itens', descricao: 'Nome, descrição, preço, foto, SLA de preparo, status ativo/inativo e código interno.', perfis: ['Admin', 'Gerente'] },
-      { nome: 'Grupos de opções', descricao: 'Opções obrigatórias ou opcionais (ex: Ponto da carne, Adicionais). Controle de mínimo e máximo.', perfis: ['Admin', 'Gerente'] },
-      { nome: 'Promoções', descricao: 'Preço promocional por dias da semana ou data específica. Ativação e desativação individual.', perfis: ['Admin', 'Gerente'] },
-      { nome: 'Ficha técnica', descricao: 'Relacione insumos do estoque com gramagem por item para cálculo automático de CMV.', perfis: ['Admin', 'Gerente'] },
-      { nome: 'Combos', descricao: 'Monte combos com itens do cardápio e defina preço de conjunto.', perfis: ['Admin', 'Gerente'] },
-      { nome: 'Observações globais', descricao: 'Lista padrão de observações que aparecem disponíveis para todos os itens.', perfis: ['Admin', 'Gerente'] },
+      { nome: 'Categorias', descricao: 'Crie e organize categorias vinculadas a estações de cozinha. Defina a ordem de exibição no cardápio.', perfis: ['Admin', 'Supervisor'] },
+      { nome: 'Itens', descricao: 'Nome, descrição, preço, foto, SLA de preparo, status ativo/inativo e código interno.', perfis: ['Admin', 'Supervisor'] },
+      { nome: 'Grupos de opções', descricao: 'Opções obrigatórias ou opcionais (ex: Ponto da carne, Adicionais). Controle de mínimo e máximo.', perfis: ['Admin', 'Supervisor'] },
+      { nome: 'Promoções', descricao: 'Preço promocional por dias da semana ou data específica. Ativação e desativação individual.', perfis: ['Admin', 'Supervisor'] },
+      { nome: 'Ficha técnica', descricao: 'Relacione insumos do estoque com gramagem por item para cálculo automático de CMV.', perfis: ['Admin', 'Supervisor'] },
+      { nome: 'Combos', descricao: 'Monte combos com itens do cardápio e defina preço de conjunto.', perfis: ['Admin', 'Supervisor'] },
+      { nome: 'Observações globais', descricao: 'Lista padrão de observações que aparecem disponíveis para todos os itens.', perfis: ['Admin', 'Supervisor'] },
     ],
   },
   {
@@ -105,10 +105,10 @@ const MODULOS: Modulo[] = [
     cor: 'text-teal-600 bg-teal-50 border-teal-100',
     descricao: 'Mapa visual do salão com status em tempo real de cada mesa.',
     funcionalidades: [
-      { nome: 'Mapa do salão', descricao: 'Visualização gráfica de todas as mesas por setor com status: livre, ocupada, aguardando pagamento.', perfis: ['Gerente', 'Admin'] },
-      { nome: 'Detalhes da mesa', descricao: 'Clique em qualquer mesa para ver pedidos ativos, total da conta e tempo de ocupação.', perfis: ['Gerente', 'Admin'] },
-      { nome: 'Juntar mesas', descricao: 'Unir duas ou mais mesas para grupos grandes. Os pedidos são consolidados.', perfis: ['Gerente', 'Admin', 'Garçom'] },
-      { nome: 'Nova mesa rápida', descricao: 'Adicionar uma mesa temporária ao mapa sem precisar ir às configurações.', perfis: ['Gerente', 'Admin'] },
+      { nome: 'Mapa do salão', descricao: 'Visualização gráfica de todas as mesas por setor com status: livre, ocupada, aguardando pagamento.', perfis: ['Supervisor', 'Admin'] },
+      { nome: 'Detalhes da mesa', descricao: 'Clique em qualquer mesa para ver pedidos ativos, total da conta e tempo de ocupação.', perfis: ['Supervisor', 'Admin'] },
+      { nome: 'Juntar mesas', descricao: 'Unir duas ou mais mesas para grupos grandes. Os pedidos são consolidados.', perfis: ['Supervisor', 'Admin', 'Garçom'] },
+      { nome: 'Nova mesa rápida', descricao: 'Adicionar uma mesa temporária ao mapa sem precisar ir às configurações.', perfis: ['Supervisor', 'Admin'] },
     ],
   },
   {
@@ -118,11 +118,11 @@ const MODULOS: Modulo[] = [
     cor: 'text-violet-600 bg-violet-50 border-violet-100',
     descricao: 'Controle completo de insumos, movimentações, inventário e CMV.',
     funcionalidades: [
-      { nome: 'Insumos', descricao: 'Cadastro com unidade, estoque atual, mínimo e custo. Alertas automáticos de criticidade.', perfis: ['Admin', 'Gerente'] },
-      { nome: 'Movimentações', descricao: 'Histórico de entradas (NF), baixas automáticas por pedido, perdas e transferências entre estações.', perfis: ['Admin', 'Gerente'] },
-      { nome: 'Inventário', descricao: 'Processo guiado de contagem física com divergências destacadas antes da confirmação.', perfis: ['Admin', 'Gerente'] },
-      { nome: 'CMV (Custo de Mercadoria Vendida)', descricao: 'Calculado automaticamente a partir das fichas técnicas. Exibição por item e por período.', perfis: ['Admin', 'Gerente'] },
-      { nome: 'Transferência entre estações', descricao: 'Mover insumos de uma estação para outra com registro de responsável.', perfis: ['Admin', 'Gerente'] },
+      { nome: 'Insumos', descricao: 'Cadastro com unidade, estoque atual, mínimo e custo. Alertas automáticos de criticidade.', perfis: ['Admin', 'Supervisor'] },
+      { nome: 'Movimentações', descricao: 'Histórico de entradas (NF), baixas automáticas por pedido, perdas e transferências entre estações.', perfis: ['Admin', 'Supervisor'] },
+      { nome: 'Inventário', descricao: 'Processo guiado de contagem física com divergências destacadas antes da confirmação.', perfis: ['Admin', 'Supervisor'] },
+      { nome: 'CMV (Custo de Mercadoria Vendida)', descricao: 'Calculado automaticamente a partir das fichas técnicas. Exibição por item e por período.', perfis: ['Admin', 'Supervisor'] },
+      { nome: 'Transferência entre estações', descricao: 'Mover insumos de uma estação para outra com registro de responsável.', perfis: ['Admin', 'Supervisor'] },
     ],
   },
   {
@@ -132,10 +132,10 @@ const MODULOS: Modulo[] = [
     cor: 'text-pink-600 bg-pink-50 border-pink-100',
     descricao: 'CRM básico com histórico de visitas, preferências e perfil de consumo.',
     funcionalidades: [
-      { nome: 'Perfil do cliente', descricao: 'Nome, contato, data da primeira e última visita, ticket médio e total de visitas.', perfis: ['Admin', 'Gerente'] },
-      { nome: 'Histórico de pedidos', descricao: 'Todos os pedidos anteriores com itens, valores e data.', perfis: ['Admin', 'Gerente'] },
-      { nome: 'Itens favoritos', descricao: 'Itens mais pedidos pelo cliente calculados automaticamente.', perfis: ['Admin', 'Gerente'] },
-      { nome: 'Segmentação', descricao: 'Filtros por frequência, ticket médio, período e canal de acesso (mesa, autoatendimento, caixa).', perfis: ['Admin', 'Gerente'] },
+      { nome: 'Perfil do cliente', descricao: 'Nome, contato, data da primeira e última visita, ticket médio e total de visitas.', perfis: ['Admin', 'Supervisor'] },
+      { nome: 'Histórico de pedidos', descricao: 'Todos os pedidos anteriores com itens, valores e data.', perfis: ['Admin', 'Supervisor'] },
+      { nome: 'Itens favoritos', descricao: 'Itens mais pedidos pelo cliente calculados automaticamente.', perfis: ['Admin', 'Supervisor'] },
+      { nome: 'Segmentação', descricao: 'Filtros por frequência, ticket médio, período e canal de acesso (mesa, autoatendimento, caixa).', perfis: ['Admin', 'Supervisor'] },
     ],
   },
   {
@@ -145,13 +145,13 @@ const MODULOS: Modulo[] = [
     cor: 'text-indigo-600 bg-indigo-50 border-indigo-100',
     descricao: 'Análises de vendas, produtos, caixa, cancelamentos, SLA e origem dos pedidos.',
     funcionalidades: [
-      { nome: 'Visão Geral', descricao: 'Faturamento bruto, líquido, cancelamentos e variação em relação ao período anterior.', perfis: ['Admin', 'Gerente'] },
-      { nome: 'Produtos', descricao: 'Ranking de itens mais vendidos por quantidade e faturamento. CMV e margem.', perfis: ['Admin', 'Gerente'] },
-      { nome: 'Caixa', descricao: 'Detalhamento de sessões abertas e fechadas com totais por forma de pagamento.', perfis: ['Admin', 'Gerente'] },
-      { nome: 'SLA da Cozinha', descricao: 'Tempo médio de preparo por item e por estação. Pedidos fora do SLA.', perfis: ['Admin', 'Gerente'] },
-      { nome: 'Cancelamentos', descricao: 'Relatório de cancelamentos por motivo, valor e operador responsável.', perfis: ['Admin', 'Gerente'] },
-      { nome: 'Origem dos pedidos', descricao: 'Volume e faturamento por canal: PDV Caixa, Garçom, Autoatendimento, Mesa do cliente.', perfis: ['Admin', 'Gerente'] },
-      { nome: 'Clientes', descricao: 'Novos clientes, recorrentes, churn e ticket médio por período.', perfis: ['Admin', 'Gerente'] },
+      { nome: 'Visão Geral', descricao: 'Faturamento bruto, líquido, cancelamentos e variação em relação ao período anterior.', perfis: ['Admin', 'Supervisor'] },
+      { nome: 'Produtos', descricao: 'Ranking de itens mais vendidos por quantidade e faturamento. CMV e margem.', perfis: ['Admin', 'Supervisor'] },
+      { nome: 'Caixa', descricao: 'Detalhamento de sessões abertas e fechadas com totais por forma de pagamento.', perfis: ['Admin', 'Supervisor'] },
+      { nome: 'SLA da Cozinha', descricao: 'Tempo médio de preparo por item e por estação. Pedidos fora do SLA.', perfis: ['Admin', 'Supervisor'] },
+      { nome: 'Cancelamentos', descricao: 'Relatório de cancelamentos por motivo, valor e operador responsável.', perfis: ['Admin', 'Supervisor'] },
+      { nome: 'Origem dos pedidos', descricao: 'Volume e faturamento por canal: PDV Caixa, Garçom, Autoatendimento, Mesa do cliente.', perfis: ['Admin', 'Supervisor'] },
+      { nome: 'Clientes', descricao: 'Novos clientes, recorrentes, churn e ticket médio por período.', perfis: ['Admin', 'Supervisor'] },
     ],
   },
   {
@@ -192,10 +192,10 @@ const MODULOS: Modulo[] = [
     cor: 'text-zinc-600 bg-zinc-50 border-zinc-100',
     descricao: 'Cadastro de todos os operadores do sistema com perfis, matrícula e link de convite.',
     funcionalidades: [
-      { nome: 'Criação de usuário', descricao: 'Nome, e-mail, matrícula, senha e perfil de acesso. Dados para credencial de login.', perfis: ['Admin', 'Gerente'] },
-      { nome: 'Link de convite', descricao: 'Ao criar o usuário, gera um link único. O operador acessa pelo link e entra direto no setor certo.', perfis: ['Admin', 'Gerente'] },
-      { nome: 'Perfis de acesso', descricao: 'Admin, Gerente, Caixa, Garçom e Cozinha. Cada um acessa apenas as áreas permitidas.', perfis: ['Admin'] },
-      { nome: 'Modo treino', descricao: 'Ativa o modo treino para um usuário específico. Pedidos e ações não afetam dados reais.', perfis: ['Admin', 'Gerente'] },
+      { nome: 'Criação de usuário', descricao: 'Nome, e-mail, matrícula, senha e perfil de acesso. Dados para credencial de login.', perfis: ['Admin', 'Supervisor'] },
+      { nome: 'Link de convite', descricao: 'Ao criar o usuário, gera um link único. O operador acessa pelo link e entra direto no setor certo.', perfis: ['Admin', 'Supervisor'] },
+      { nome: 'Perfis de acesso', descricao: 'Admin, Supervisor, Caixa, Garçom e Cozinha. Cada um acessa apenas as áreas permitidas.', perfis: ['Admin'] },
+      { nome: 'Modo treino', descricao: 'Ativa o modo treino para um usuário específico. Pedidos e ações não afetam dados reais.', perfis: ['Admin', 'Supervisor'] },
     ],
   },
   {
@@ -213,7 +213,7 @@ const MODULOS: Modulo[] = [
       { nome: 'Operação', descricao: 'Impressão automática, autoatendimento, cronômetro de mesas, mensagens de boas-vindas e retorno.', perfis: ['Admin'] },
       { nome: 'Permissões por perfil', descricao: 'Customizar quais ações cada perfil pode realizar (ex: garçom pode aplicar desconto?).', perfis: ['Admin'] },
       { nome: 'Credenciais Stone (PIX)', descricao: 'Configurar chaves de API para o gateway de pagamento PIX via Stone.', perfis: ['Admin'] },
-      { nome: 'Modo treino por usuário', descricao: 'Ativar ou desativar o modo treino para cada operador individualmente.', perfis: ['Admin', 'Gerente'] },
+      { nome: 'Modo treino por usuário', descricao: 'Ativar ou desativar o modo treino para cada operador individualmente.', perfis: ['Admin', 'Supervisor'] },
     ],
   },
   {
@@ -223,12 +223,12 @@ const MODULOS: Modulo[] = [
     cor: 'text-red-600 bg-red-50 border-red-100',
     descricao: 'Registro imutável de todas as ações relevantes. Quem fez o quê, quando e o que mudou.',
     funcionalidades: [
-      { nome: 'Eventos registrados', descricao: 'Abertura/fechamento de caixa, descontos, estornos, edições no KDS, mudanças de preço, permissões e estoque.', perfis: ['Admin', 'Gerente'] },
-      { nome: 'Filtros avançados', descricao: 'Por tipo de evento, usuário, período (hoje, ontem, semana, mês ou personalizado).', perfis: ['Admin', 'Gerente'] },
-      { nome: 'Exportar CSV', descricao: 'Baixe todos os registros filtrados em CSV para análise externa ou auditoria contábil.', perfis: ['Admin', 'Gerente'] },
-      { nome: 'Detalhe do evento', descricao: 'Clique em qualquer registro para ver o antes e o depois, quem autorizou e o motivo.', perfis: ['Admin', 'Gerente'] },
+      { nome: 'Eventos registrados', descricao: 'Abertura/fechamento de caixa, descontos, estornos, edições no KDS, mudanças de preço, permissões e estoque.', perfis: ['Admin', 'Supervisor'] },
+      { nome: 'Filtros avançados', descricao: 'Por tipo de evento, usuário, período (hoje, ontem, semana, mês ou personalizado).', perfis: ['Admin', 'Supervisor'] },
+      { nome: 'Exportar CSV', descricao: 'Baixe todos os registros filtrados em CSV para análise externa ou auditoria contábil.', perfis: ['Admin', 'Supervisor'] },
+      { nome: 'Detalhe do evento', descricao: 'Clique em qualquer registro para ver o antes e o depois, quem autorizou e o motivo.', perfis: ['Admin', 'Supervisor'] },
     ],
-    dicas: ['Apenas Admin e Gerente têm acesso ao Log de Auditoria.'],
+    dicas: ['Apenas Admin e Supervisor têm acesso ao Log de Auditoria.'],
   },
   {
     id: 'modo-treino',
@@ -237,7 +237,7 @@ const MODULOS: Modulo[] = [
     cor: 'text-amber-700 bg-amber-50 border-amber-100',
     descricao: 'Ambiente isolado para treinar novos operadores sem afetar nenhum dado real.',
     funcionalidades: [
-      { nome: 'Ativação por usuário', descricao: 'Admin ou Gerente ativa o modo treino para um usuário específico em Configurações ou na página de Usuários.', perfis: ['Admin', 'Gerente'] },
+      { nome: 'Ativação por usuário', descricao: 'Admin ou Supervisor ativa o modo treino para um usuário específico em Configurações ou na página de Usuários.', perfis: ['Admin', 'Supervisor'] },
       { nome: 'Identificação visual', descricao: 'Banner laranja no topo, borda âmbar na tela inteira e marca d\'água TREINO. Impossível confundir.', perfis: ['Todos'] },
       { nome: 'Dados isolados', descricao: 'Pedidos, pagamentos e movimentações feitas em modo treino não aparecem nos relatórios nem no estoque.', perfis: ['Todos'] },
       { nome: 'Funcionalidades completas', descricao: 'O operador em treino pode usar todas as funcionalidades normalmente, inclusive KDS, caixa e cardápio.', perfis: ['Todos'] },
@@ -261,7 +261,7 @@ const MODULOS: Modulo[] = [
   },
 ];
 
-const PERFIL_LEVELS = ['Todos', 'Admin', 'Gerente', 'Caixa', 'Garçom', 'Cozinha', 'Clientes'];
+const PERFIL_LEVELS = ['Todos', 'Admin', 'Supervisor', 'Caixa', 'Garçom', 'Cozinha', 'Clientes'];
 
 export default function AjudaPage() {
   const [moduloAberto, setModuloAberto] = useState<string | null>('pdv-caixa');

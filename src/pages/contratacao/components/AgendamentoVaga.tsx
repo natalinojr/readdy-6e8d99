@@ -165,7 +165,7 @@ export default function AgendamentoVaga({ jobId, defaultLocation }: { jobId: str
         </label>
         <label className="block sm:col-span-2">
           <span className={lbl}>{s.format === 'video' ? 'Link da reunião' : s.format === 'telefone' ? 'Observação' : 'Local (endereço)'}</span>
-          <input value={s.location ?? ''} onChange={(e) => set('location', e.target.value)} placeholder={s.format === 'presencial' ? 'Ex.: Rua João Eugênio, 711 — falar com a gerente' : ''} className={inp} />
+          <input value={s.location ?? ''} onChange={(e) => set('location', e.target.value)} placeholder={s.format === 'presencial' ? 'Ex.: Rua João Eugênio, 711 — falar com a supervisora' : ''} className={inp} />
         </label>
       </div>
 

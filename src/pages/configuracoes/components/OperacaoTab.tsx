@@ -578,7 +578,7 @@ export default function OperacaoTab() {
               {(['gerente', 'admin'] as const).map((p) => (
                 <button key={p} onClick={() => set('senhaDescontoPerfil', p)}
                   className={`px-3 py-1.5 text-xs font-semibold rounded-lg cursor-pointer transition-colors capitalize whitespace-nowrap ${cfg.senhaDescontoPerfil === p ? 'bg-amber-500 text-white' : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'}`}>
-                  {p === 'gerente' ? 'Gerente ou Admin' : 'Somente Admin'}
+                  {p === 'gerente' ? 'Supervisor ou Admin' : 'Somente Admin'}
                 </button>
               ))}
             </div>
@@ -588,7 +588,7 @@ export default function OperacaoTab() {
             <div className="flex flex-col gap-1.5">
               {[
                 { v: 'livre', label: 'Livre — qualquer operador pode cancelar' },
-                { v: 'senha_gerente', label: 'Requer senha do gerente' },
+                { v: 'senha_gerente', label: 'Requer senha do supervisor' },
                 { v: 'proibido', label: 'Proibido após envio ao KDS' },
               ].map(({ v, label }) => (
                 <button key={v} onClick={() => set('modoCancelamento', v as ConfigOperacao['modoCancelamento'])}

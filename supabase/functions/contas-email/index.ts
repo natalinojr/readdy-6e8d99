@@ -423,7 +423,7 @@ Deno.serve(async (req: Request) => {
     if (action === 'get_config') return json({ success: true, config: safeConfig(cfg) });
 
     if (action === 'save_config') {
-      if (!canWrite) return errResp('Só administrador, gerente ou financeiro pode configurar', 403);
+      if (!canWrite) return errResp('Só administrador, supervisor ou financeiro pode configurar', 403);
       const endereco = String(body.inbound_address ?? '').trim().toLowerCase();
       if (endereco && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(endereco)) return errResp('Endereço de recebimento inválido.');
       const { error } = await admin.from('fin_mail_config').upsert({
@@ -439,7 +439,7 @@ Deno.serve(async (req: Request) => {
     }
 
     if (action === 'rotate_token') {
-      if (!canWrite) return errResp('Só administrador, gerente ou financeiro pode trocar o segredo', 403);
+      if (!canWrite) return errResp('Só administrador, supervisor ou financeiro pode trocar o segredo', 403);
       const { error } = await admin.from('fin_mail_config')
         .update({ inbound_token: newToken(), updated_at: new Date().toISOString() })
         .eq('tenant_id', tenantId);
@@ -486,7 +486,7 @@ Deno.serve(async (req: Request) => {
     if (action === 'lancar') {
       // Decisão de uma pessoa (pendência): lança mesmo com remetente novo/CNPJ diferente. O
       // cartão mostrou o motivo e o boleto antes; o pagamento continua exigindo aprovação.
-      if (!canWrite) return errResp('Só administrador, gerente ou financeiro pode lançar', 403);
+      if (!canWrite) return errResp('Só administrador, supervisor ou financeiro pode lançar', 403);
       const m = await carregar();
       if (!m) return errResp('E-mail não encontrado.', 404);
       const boletos = (m.raw?.boletos ?? []) as BoletoRaw[];
@@ -522,7 +522,7 @@ Deno.serve(async (req: Request) => {
     }
 
     if (action === 'ignorar') {
-      if (!canWrite) return errResp('Só administrador, gerente ou financeiro pode descartar', 403);
+      if (!canWrite) return errResp('Só administrador, supervisor ou financeiro pode descartar', 403);
       const m = await carregar();
       if (!m) return errResp('E-mail não encontrado.', 404);
       if (m.status === 'bill') return errResp('Esse boleto já virou conta a pagar. Cancele a conta pela tela, se for o caso.');
@@ -535,7 +535,7 @@ Deno.serve(async (req: Request) => {
     if (action === 'reprocessar') {
       // Lê de novo com o que ficou guardado (texto + anexos no bucket). Útil quando a leitura
       // falhou ou quando o fornecedor foi cadastrado depois.
-      if (!canWrite) return errResp('Só administrador, gerente ou financeiro pode reprocessar', 403);
+      if (!canWrite) return errResp('Só administrador, supervisor ou financeiro pode reprocessar', 403);
       const m = await carregar();
       if (!m) return errResp('E-mail não encontrado.', 404);
       if (m.status === 'bill') return errResp('Esse e-mail já virou conta a pagar.');
@@ -558,7 +558,7 @@ Deno.serve(async (req: Request) => {
     }
 
     if (action === 'disconnect') {
-      if (!canWrite) return errResp('Só administrador, gerente ou financeiro pode desligar', 403);
+      if (!canWrite) return errResp('Só administrador, supervisor ou financeiro pode desligar', 403);
       // Desliga a entrada sem apagar o histórico do que já chegou.
       const { error } = await admin.from('fin_mail_config')
         .update({ is_active: false, updated_at: new Date().toISOString() }).eq('tenant_id', tenantId);

@@ -102,7 +102,7 @@ export default function FaturamentoHero({
               <i className="ri-flag-line" /> Definir a meta de {DIAS[diaSemana]} — mostra se a loja está no ritmo
             </button>
           ) : (
-            <p className="text-[11px] text-zinc-400">Sem meta para {DIAS[diaSemana]}. O gerente pode definir aqui.</p>
+            <p className="text-[11px] text-zinc-400">Sem meta para {DIAS[diaSemana]}. O supervisor pode definir aqui.</p>
           )}
         </div>
       </div>

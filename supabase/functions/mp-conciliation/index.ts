@@ -891,7 +891,7 @@ Deno.serve(async (req: Request) => {
     if (action === 'get_config') return json({ success: true, config: safeConfig(cfg, tk) });
 
     if (action === 'save_config') {
-      if (!canWrite) return errResp('Só administrador, gerente ou financeiro pode configurar', 403);
+      if (!canWrite) return errResp('Só administrador, supervisor ou financeiro pode configurar', 403);
       const bankAccountId = String(body.bank_account_id ?? '');
       if (!bankAccountId) return errResp('Escolha a conta "Mercado Pago" onde o extrato será gravado');
       const { data: acc } = await admin.from('fin_bank_accounts').select('id')
@@ -937,7 +937,7 @@ Deno.serve(async (req: Request) => {
     }
 
     if (action === 'delete_config') {
-      if (!canWrite) return errResp('Só administrador, gerente ou financeiro pode configurar', 403);
+      if (!canWrite) return errResp('Só administrador, supervisor ou financeiro pode configurar', 403);
       const { error } = await admin.from('fin_mp_config').delete().eq('tenant_id', tenantId);
       if (error) return errResp(error.message);
       return json({ success: true });
@@ -978,7 +978,7 @@ Deno.serve(async (req: Request) => {
     }
 
     if (action === 'release_request') {
-      if (!canWrite) return errResp('Só administrador, gerente ou financeiro pode pedir o relatório', 403);
+      if (!canWrite) return errResp('Só administrador, supervisor ou financeiro pode pedir o relatório', 403);
       const df = String(body.date_from ?? '');
       const dt = String(body.date_to ?? '');
       if (!isoDate(df) || !isoDate(dt)) return errResp('date_from/date_to inválidas (AAAA-MM-DD)');
@@ -988,7 +988,7 @@ Deno.serve(async (req: Request) => {
     }
 
     if (action === 'release_schedule') {
-      if (!canWrite) return errResp('Só administrador, gerente ou financeiro pode programar o relatório', 403);
+      if (!canWrite) return errResp('Só administrador, supervisor ou financeiro pode programar o relatório', 403);
       const freq = ['daily', 'weekly', 'monthly'].includes(String(body.frequency)) ? String(body.frequency) : 'daily';
       const prefix = String(cfg.release_prefix ?? `erpos-${tenantId.slice(0, 8)}`);
       const r = await scheduleReport(tk.token, prefix, freq as 'daily');

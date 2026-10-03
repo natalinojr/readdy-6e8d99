@@ -74,7 +74,8 @@ import { abrirNovaJanela } from '@/lib/novaJanela';
 
 const perfilLabel: Record<string, string> = {
   admin: 'Administrador',
-  gerente: 'Gerente',
+  gerente: 'Supervisor',
+  supervisao: 'Líder',
   caixa: 'Operador de Caixa',
   garcom: 'Garçom',
   cozinha: 'Op. Cozinha',

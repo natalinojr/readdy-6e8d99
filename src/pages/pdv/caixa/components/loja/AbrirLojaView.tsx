@@ -200,7 +200,7 @@ export default function AbrirLojaView({ modo, onVoltar, onAberta, onFecharDia }:
           </button>
           <h1 className="text-3xl font-black text-zinc-900 tracking-tight">{modo === 'caixa' ? 'O caixa está fechado' : 'A loja está fechada'}</h1>
           <div className="mt-4 bg-white border border-stone-200 rounded-2xl p-5 text-sm text-zinc-600 leading-relaxed">
-            <b className="text-zinc-800">Quem abre:</b> Caixa, Supervisão, Gerente ou Admin.<br />
+            <b className="text-zinc-800">Quem abre:</b> Caixa, Líder, Supervisor ou Admin.<br />
             O seu perfil não tem a permissão “Abrir caixa”. Peça para alguém da lista — assim que abrir, esta tela vira o PDV sozinha.
           </div>
           {modo === 'caixa' && podeFechar && (

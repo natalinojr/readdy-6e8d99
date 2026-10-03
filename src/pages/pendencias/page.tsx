@@ -187,7 +187,7 @@ export default function PendenciasPage() {
   };
 
   const handleDecidir = async (p: Pendencia, sim: boolean) => {
-    const nome = user?.nome ?? 'Gerente';
+    const nome = user?.nome ?? 'Supervisor';
     try {
       await (sim ? aprovar(p.ref, nome) : rejeitar(p.ref, nome));
       toast.success(sim ? 'Aprovado' : 'Recusado', 'O caixa recebe a resposta na hora.');

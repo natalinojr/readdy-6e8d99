@@ -232,7 +232,7 @@ export default function FecharLojaModal({ tipo, onClose, onIrPara }: Props) {
   };
   const naoSaiu = async (pv: Prevista) => {
     if (ocupado) return;
-    if (!(await confirmar({ titulo: `O dinheiro da compra ${pv.supplier ?? ''} (${fmtBRL(pv.amount)}) NÃO saiu deste caixa?`, mensagem: 'O gerente vai ser avisado para conferir.', confirmarLabel: 'Não saiu', perigo: true }))) return;
+    if (!(await confirmar({ titulo: `O dinheiro da compra ${pv.supplier ?? ''} (${fmtBRL(pv.amount)}) NÃO saiu deste caixa?`, mensagem: 'O supervisor vai ser avisado para conferir.', confirmarLabel: 'Não saiu', perigo: true }))) return;
     setOcupado(pv.id);
     await invokeWithAuth('order-write', { body: { action: 'sangria_prevista_nao_saiu', tenant_id: tenantId, previsao_id: pv.id, motivo: 'informado no fechamento do PDV' } }).catch(() => null);
     setOcupado(null);

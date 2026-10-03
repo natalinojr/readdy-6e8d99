@@ -169,7 +169,7 @@ export default function OpcoesEstoqueTab() {
         </div>
       </div>
 
-      {!pode && <p className="text-xs text-gray-500">Só administrador ou gerente pode ligar opções ao estoque.</p>}
+      {!pode && <p className="text-xs text-gray-500">Só administrador ou supervisor pode ligar opções ao estoque.</p>}
 
       {visiveis.length === 0 ? (
         <p className="text-sm text-gray-400 text-center py-8">{filtro === 'ignoradas' ? 'Nenhuma opção marcada como fora do estoque.' : 'Nada por aqui.'}</p>

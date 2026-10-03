@@ -29,7 +29,7 @@ const dataLonga = () => {
   return s.charAt(0).toUpperCase() + s.slice(1);
 };
 const PAPEL: Record<string, string> = {
-  admin: 'Administrador', gerente: 'Gerente', supervisao: 'Supervisão', caixa: 'Caixa', garcom: 'Garçom', cozinha: 'Cozinha', financeiro: 'Financeiro',
+  admin: 'Administrador', gerente: 'Supervisor', supervisao: 'Líder', caixa: 'Caixa', garcom: 'Garçom', cozinha: 'Cozinha', financeiro: 'Financeiro',
 };
 
 interface Atalho { icone: string; label: string; rota: string }
@@ -108,7 +108,7 @@ export default function HojePage() {
   })();
 
   const cartao = (i: ItemHoje, compacto = false) => (
-    <CartaoHoje key={i.chave} item={i} hoje={hoje} dono={dono} papel={papelDe(i.tenantId)} meuNome={user?.nome ?? 'Gerente'}
+    <CartaoHoje key={i.chave} item={i} hoje={hoje} dono={dono} papel={papelDe(i.tenantId)} meuNome={user?.nome ?? 'Supervisor'}
       mostrarLoja={varias && !filtro} abrir={abrir} marcar={marcar} onMudou={recarregar} compacto={compacto} />
   );
 

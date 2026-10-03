@@ -147,7 +147,7 @@ export default function ContarSecao({ situacao, contagem, podeContar, onContar, 
                 <button onClick={onConfigurar} className="min-h-[42px] px-3 rounded-xl border border-zinc-200 text-sm font-bold text-zinc-700 cursor-pointer">Do meu jeito</button>
               </div>
             ) : (
-              <p className="text-[11.5px] text-zinc-400 mt-2">Quem programa é o gerente ou o dono.</p>
+              <p className="text-[11.5px] text-zinc-400 mt-2">Quem programa é o supervisor ou o dono.</p>
             )}
             {pode && (
               <p className="text-[11px] text-zinc-400 mt-2 leading-snug">

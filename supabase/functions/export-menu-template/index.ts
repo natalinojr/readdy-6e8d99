@@ -38,7 +38,7 @@ serve(async (req) => {
       const role = await tenantRole(supabase, caller.userId!, String(tenant_id));
       if (!role || !isManagerRole(role)) {
         return new Response(
-          JSON.stringify({ error: role ? "Apenas administrador ou gerente da loja pode exportar o cardápio" : "Usuário não pertence a esta loja" }),
+          JSON.stringify({ error: role ? "Apenas administrador ou supervisor da loja pode exportar o cardápio" : "Usuário não pertence a esta loja" }),
           { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }

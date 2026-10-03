@@ -190,7 +190,7 @@ export default function EntrevistaModal({ interview, candidates, companies, stag
             </div>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            <div><Label>Local / link</Label><input value={location} onChange={(e) => setLocation(e.target.value)} placeholder="Ex.: na loja, com o gerente" className={inputCls} /></div>
+            <div><Label>Local / link</Label><input value={location} onChange={(e) => setLocation(e.target.value)} placeholder="Ex.: na loja, com o supervisor" className={inputCls} /></div>
             <div><Label>Quem entrevista</Label><input value={interviewer} onChange={(e) => setInterviewer(e.target.value)} placeholder="Ex.: Natalino" className={inputCls} /></div>
           </div>
 

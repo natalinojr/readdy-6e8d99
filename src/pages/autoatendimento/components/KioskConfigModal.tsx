@@ -229,11 +229,11 @@ export default function KioskConfigModal({ onClose }: KioskConfigModalProps) {
             </div>
             <div className="text-center">
               <p className="text-white font-bold text-lg">
-                {campo === 'matricula' ? 'Matrícula do gerente' : matriculaUsuario ? 'PIN do tablet' : 'PIN do gerente'}
+                {campo === 'matricula' ? 'Matrícula do supervisor' : matriculaUsuario ? 'PIN do tablet' : 'PIN do supervisor'}
               </p>
               <p className="text-zinc-500 text-sm mt-1">
                 {!matriculaUsuario
-                  ? 'Apenas gerente ou administrador da loja'
+                  ? 'Apenas supervisor ou administrador da loja'
                   : 'O mesmo PIN usado para entrar neste tablet'}
               </p>
             </div>

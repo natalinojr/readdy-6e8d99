@@ -917,7 +917,7 @@ export default function FidelidadeAba() {
           </div>
         </div>
       ) : (
-        <p className="text-xs text-zinc-400 text-center">Só leitura: quem altera o programa é admin, gerente ou quem tem a permissão de Promoções.</p>
+        <p className="text-xs text-zinc-400 text-center">Só leitura: quem altera o programa é admin, supervisor ou quem tem a permissão de Promoções.</p>
       )}
     </div>
   );

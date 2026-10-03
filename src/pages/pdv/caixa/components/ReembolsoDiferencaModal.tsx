@@ -184,7 +184,7 @@ export default function ReembolsoDiferencaModal({ orderId, orderNumber, valorRee
           <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-xl">
             <i className="ri-shield-keyhole-line text-amber-500 text-sm flex-shrink-0 mt-0.5" />
             <p className="text-xs text-amber-700 font-medium leading-snug">
-              Será necessário a autorização de um gerente para prosseguir.
+              Será necessário a autorização de um supervisor para prosseguir.
             </p>
           </div>
 

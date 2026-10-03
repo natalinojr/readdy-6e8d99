@@ -1109,7 +1109,7 @@ Deno.serve(async (req: Request) => {
     // Data de início das notas: antes dela nada entra. As "A conferir" anteriores são ignoradas
     // com motivo próprio; recuar (ou limpar) a data devolve essas mesmas notas para "A conferir".
     if (action === 'set_start_date') {
-      if (!isManager) return errResp('Apenas administradores e gerentes', 403);
+      if (!isManager) return errResp('Apenas administradores e supervisores', 403);
       const v = body.start_date == null || body.start_date === '' ? null : String(body.start_date).slice(0, 10);
       if (v !== null && !/^\d{4}-\d{2}-\d{2}$/.test(v)) return errResp('Data inválida');
       const { data: fs } = await admin.from('fiscal_settings').select('tenant_id').eq('tenant_id', tenantId).maybeSingle();
@@ -1134,7 +1134,7 @@ Deno.serve(async (req: Request) => {
 
     // Lança agora as notas paradas de fornecedores já conhecidos (colocar em dia)
     if (action === 'auto_launch') {
-      if (!isManager) return errResp('Apenas administradores e gerentes', 403);
+      if (!isManager) return errResp('Apenas administradores e supervisores', 403);
       const r = await autoLaunchTenant(admin, supabaseUrl, tenantId, Date.now() + 100_000);
       return json({ success: true, ...r });
     }
@@ -1189,7 +1189,7 @@ Deno.serve(async (req: Request) => {
     }
 
     if (action === 'manifest') {
-      if (!isManager) return errResp('Apenas administradores e gerentes', 403);
+      if (!isManager) return errResp('Apenas administradores e supervisores', 403);
       const tipo = Number(body.tipo ?? 2); // 2 = ciência (libera o XML completo)
       if (![1, 2, 3, 4].includes(tipo)) return errResp('Tipo de manifestação inválido');
       const t = await loadToken(admin, tenantId);
@@ -1230,7 +1230,7 @@ Deno.serve(async (req: Request) => {
     // Exclui a compra (ou as contas a pagar da despesa) e devolve a nota para "A conferir",
     // travada para não ser relançada sozinha. Bloqueia se já houve pagamento ou recebimento.
     if (action === 'undo_auto_import') {
-      if (!isManager) return errResp('Apenas administradores e gerentes', 403);
+      if (!isManager) return errResp('Apenas administradores e supervisores', 403);
       if (internal || !token) return errResp('Desfazer precisa de um usuário logado');
       if (doc.status !== 'imported' || !doc.auto_imported) return errResp('Só dá para desfazer um lançamento automático');
       if (doc.auto_import_ref) return errResp('Esta nota foi lançada pela conciliação: desfaça pelo vínculo na Conciliação');
@@ -1273,7 +1273,7 @@ Deno.serve(async (req: Request) => {
 
     // ── Importar ──
     if (action === 'import_purchase' || action === 'import_bill') {
-      if (!isManager) return errResp('Apenas administradores e gerentes podem lançar', 403);
+      if (!isManager) return errResp('Apenas administradores e supervisores podem lançar', 403);
       const r = await importDocument({ admin, supabaseUrl, tenantId, userId, userToken: internal ? null : token }, doc, action, body);
       return r.ok ? json({ success: true, ...r.data }) : errResp(r.error, r.status);
     }

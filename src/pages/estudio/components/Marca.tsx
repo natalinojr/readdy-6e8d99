@@ -102,7 +102,7 @@ export default function MarcaTab({ tenantId, kit, logoUrl, fontes, isManager, on
 
       {somenteLeitura && (
         <div className="flex items-start gap-2 text-xs rounded-lg px-3 py-2 border bg-zinc-50 border-zinc-200 text-zinc-500">
-          <ShieldAlert size={14} className="mt-0.5 flex-shrink-0" /> Só admin/gerente altera o Kit da Marca. Você está vendo em modo leitura.
+          <ShieldAlert size={14} className="mt-0.5 flex-shrink-0" /> Só admin/supervisor altera o Kit da Marca. Você está vendo em modo leitura.
         </div>
       )}
 

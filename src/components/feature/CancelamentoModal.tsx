@@ -191,13 +191,13 @@ export default function CancelamentoModal({
         }
       },
       onDenied: () => {
-        setErro('Aprovação rejeitada pelo gerente');
+        setErro('Aprovação rejeitada pelo supervisor');
         setEtapa('erro');
       },
     });
 
     if (!id) {
-      setErro('Não foi possível enviar a solicitação ao gerente. Verifique a conexão ou use a senha do gerente.');
+      setErro('Não foi possível enviar a solicitação ao supervisor. Verifique a conexão ou use a senha do supervisor.');
       setEtapa('erro');
       return;
     }
@@ -237,7 +237,7 @@ export default function CancelamentoModal({
     return (
       <AutorizacaoGerenteModal
         titulo={tipo === 'pedido' ? 'Autorizar Cancelamento de Pedido' : 'Autorizar Cancelamento de Item'}
-        descricao={`Este cancelamento requer autorização da supervisão, de um gerente ou administrador.`}
+        descricao={`Este cancelamento requer autorização de um líder, supervisor ou administrador.`}
         niveisPermitidos={['supervisao', 'gerente', 'admin']}
         tenantId={tenantId}
         onAutorizado={handleSenhaAprovada}
@@ -336,7 +336,7 @@ export default function CancelamentoModal({
             </div>
             <div className="flex-1 min-w-0">
               <h2 className="text-sm font-black text-amber-800 leading-none">Aguardando Aprovação</h2>
-              <p className="text-xs text-amber-600 mt-0.5 leading-snug">Solicitação enviada ao gerente</p>
+              <p className="text-xs text-amber-600 mt-0.5 leading-snug">Solicitação enviada ao supervisor</p>
             </div>
             <button
               onClick={handleFecharAguardando}
@@ -350,7 +350,7 @@ export default function CancelamentoModal({
               <div className="w-12 h-12 flex items-center justify-center">
                 <i className="ri-loader-4-line animate-spin text-amber-500 text-3xl" />
               </div>
-              <p className="text-sm font-semibold text-zinc-700 text-center">Aguardando aprovação do gerente...</p>
+              <p className="text-sm font-semibold text-zinc-700 text-center">Aguardando aprovação do supervisor...</p>
               <p className="text-xs text-zinc-400 text-center">{tipo === 'pedido' ? `Pedido #${orderNumber}` : `Item "${itemNome}"`}</p>
               <p className="text-xs text-zinc-400 text-center">Motivo: {motivoFinal}</p>
             </div>
@@ -579,7 +579,7 @@ export default function CancelamentoModal({
                 <i className="ri-shield-keyhole-line text-amber-600" />
               </div>
               <div className="flex-1 text-left">
-                <p className="text-sm font-bold">Inserir senha do gerente agora</p>
+                <p className="text-sm font-bold">Inserir senha do supervisor agora</p>
                 <p className="text-[10px] text-amber-600 font-medium">Cancelamento imediato após aprovação</p>
               </div>
               <i className="ri-arrow-right-s-line text-amber-400" />
@@ -601,7 +601,7 @@ export default function CancelamentoModal({
                 <i className="ri-send-plane-line text-zinc-500" />
               </div>
               <div className="flex-1 text-left">
-                <p className="text-sm font-bold">Solicitar aprovação ao gerente</p>
+                <p className="text-sm font-bold">Solicitar aprovação ao supervisor</p>
                 <p className="text-[10px] text-zinc-400 font-medium">Aguarde aprovação remota</p>
               </div>
               <i className="ri-arrow-right-s-line text-zinc-300" />

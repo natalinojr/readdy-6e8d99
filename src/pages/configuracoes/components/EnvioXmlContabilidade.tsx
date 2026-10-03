@@ -257,7 +257,7 @@ export default function EnvioXmlContabilidade() {
           </div>
 
           {!podeEditar && (
-            <p className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg p-3">Só administradores e gerentes alteram o envio.</p>
+            <p className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg p-3">Só administradores e supervisores alteram o envio.</p>
           )}
 
           {/* Para quem */}

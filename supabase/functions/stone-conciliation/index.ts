@@ -740,7 +740,7 @@ Deno.serve(async (req: Request) => {
     }
 
     if (action === 'save_config') {
-      if (!isManager) return errResp('Apenas admin/gerente', 403);
+      if (!isManager) return errResp('Apenas admin/supervisor', 403);
       const stoneCode = String(body.stone_code ?? '').replace(/\D/g, '');
       const apiKey = String(body.api_key ?? '').trim() || (cfg?.api_key_b64 ? atob(cfg.api_key_b64) : '');
       const bankAccountId = String(body.bank_account_id ?? cfg?.bank_account_id ?? '');
@@ -777,7 +777,7 @@ Deno.serve(async (req: Request) => {
     }
 
     if (action === 'delete_config') {
-      if (!isManager) return errResp('Apenas admin/gerente', 403);
+      if (!isManager) return errResp('Apenas admin/supervisor', 403);
       await admin.from('fin_stone_config').delete().eq('tenant_id', tenantId);
       return json({ success: true });
     }

@@ -147,7 +147,7 @@ export function AprovacoesProvider({ children }: { children: React.ReactNode }) 
       if (!cb || r.status === 'pendente') continue;
       callbacksRef.current.delete(r.id);
       try {
-        if (r.status === 'aprovado') cb.onApproved?.(r.resolved_by_name ?? 'Gerente');
+        if (r.status === 'aprovado') cb.onApproved?.(r.resolved_by_name ?? 'Supervisor');
         else if (r.status === 'rejeitado') cb.onDenied?.();
       } catch (e) { console.warn('[Aprovacoes] callback:', e); }
     }

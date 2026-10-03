@@ -404,16 +404,16 @@ export default function CarrinhoPanel({ onDestino, onPagar, onEnviarEntrega, onL
         severidade: 'aviso',
         usuario: operador,
         perfil: user?.perfil ?? 'caixa',
-        descricao: `Desconto de ${formatPrice(realVal)} negado pelo gerente/admin`,
+        descricao: `Desconto de ${formatPrice(realVal)} negado pelo supervisor/admin`,
         entidade: 'Pedido',
         entidadeId: localDestino?.tipo === 'mesa' ? `Mesa ${localDestino.mesaNumero}` : 'PDV',
-        detalhes: 'Gerente/Admin recusou a solicitação.',
+        detalhes: 'Supervisor/Admin recusou a solicitação.',
       });
 
       dispararNotificacao({
         tipo: 'aprovacao_resposta',
         titulo: 'Desconto negado',
-        mensagem: `O gerente/admin não autorizou o desconto de ${formatPrice(realVal)}.`,
+        mensagem: `O supervisor/admin não autorizou o desconto de ${formatPrice(realVal)}.`,
         urgente: false,
         perfisAlvo: ['caixa'],
         icone: 'ri-close-circle-line',
@@ -491,7 +491,7 @@ export default function CarrinhoPanel({ onDestino, onPagar, onEnviarEntrega, onL
         descricao: `Solicitação de desconto de ${formatPrice(descontoModalValor)} cancelada pelo operador`,
         entidade: 'Pedido',
         entidadeId: destino?.tipo === 'mesa' ? `Mesa ${destino.mesaNumero}` : 'PDV',
-        detalhes: 'Operador cancelou a solicitação antes da resposta do gerente.',
+        detalhes: 'Operador cancelou a solicitação antes da resposta do supervisor.',
       });
       cancelPending(pendingApprovalId);
       cancelarSolicitacao(pendingApprovalId);
@@ -687,7 +687,7 @@ export default function CarrinhoPanel({ onDestino, onPagar, onEnviarEntrega, onL
                   <div className="flex-1 flex items-center justify-between">
                     <div className="flex items-center gap-1.5">
                       <div className="w-3 h-3 rounded-full border-2 border-orange-400 border-t-transparent animate-spin" />
-                      <span className="text-xs font-semibold text-orange-600">Aguardando gerente...</span>
+                      <span className="text-xs font-semibold text-orange-600">Aguardando supervisor...</span>
                     </div>
                     <button
                       onClick={handleCancelarSolicitacao}
@@ -747,7 +747,7 @@ export default function CarrinhoPanel({ onDestino, onPagar, onEnviarEntrega, onL
               )}
               {pendingApprovalId && (
                 <p className="text-[10px] text-orange-500 pl-5">
-                  Notificação enviada para Gerente / Admin
+                  Notificação enviada para Supervisor / Admin
                 </p>
               )}
             </div>

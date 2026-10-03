@@ -87,7 +87,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         if (!tenant_id) return errResp('tenant_id obrigatório');
         const callerRole = callerTenants.get(String(tenant_id));
         const callerRank = callerIsOwner ? 3 : roleRank(callerRole);
-        if (callerRank < 2) return errResp('Apenas administrador ou gerente desta loja pode criar usuários');
+        if (callerRank < 2) return errResp('Apenas administrador ou supervisor desta loja pode criar usuários');
         if (callerRank === 2 && !(await gerenteGerenciaUsuarios(db, String(tenant_id), callerRole!))) {
           return errResp('Seu perfil não tem "Gerenciar usuários" nesta loja');
         }

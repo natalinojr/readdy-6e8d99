@@ -96,7 +96,7 @@ export default function IfoodEntregaConfigModal({ tenantId, onClose, onChanged }
             <div className="flex justify-center py-10"><div className="w-6 h-6 border-2 border-red-500 border-t-transparent rounded-full animate-spin" /></div>
           ) : !podeEditar ? (
             <p className="text-sm text-zinc-600">
-              {cfg?.shipping_enabled ? `Ligado — despacha pela loja "${cfg.shipping_merchant_name ?? 'iFood'}".` : 'Desligado.'} Só admin ou gerente altera esta configuração.
+              {cfg?.shipping_enabled ? `Ligado — despacha pela loja "${cfg.shipping_merchant_name ?? 'iFood'}".` : 'Desligado.'} Só admin ou supervisor altera esta configuração.
             </p>
           ) : (
             <>

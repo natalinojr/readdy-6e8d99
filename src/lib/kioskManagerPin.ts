@@ -50,8 +50,8 @@ export async function validarPinGerente(
   if (/muitas tentativas/i.test(msgErro)) {
     return { ok: false, erro: msgErro, contaTentativa: false };
   }
-  if (/apenas gerente/i.test(msgErro)) {
-    return { ok: false, erro: 'Apenas gerente ou administrador', contaTentativa: true };
+  if (/apenas (gerente|supervisor)/i.test(msgErro)) {
+    return { ok: false, erro: 'Apenas supervisor ou administrador', contaTentativa: true };
   }
 
   // Confere de novo no cliente (edge antiga ignorava tenant_id e devolvia o 1º vínculo).
@@ -60,7 +60,7 @@ export async function validarPinGerente(
   if (mesmaLoja && (data!.role === 'admin' || data!.role === 'manager')) return { ok: true };
   return {
     ok: false,
-    erro: mesmaLoja ? 'Apenas gerente ou administrador' : 'Matrícula ou PIN incorretos',
+    erro: mesmaLoja ? 'Apenas supervisor ou administrador' : 'Matrícula ou PIN incorretos',
     contaTentativa: true,
   };
 }

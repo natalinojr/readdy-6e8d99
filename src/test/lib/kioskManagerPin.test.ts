@@ -15,9 +15,14 @@ describe('validarPinGerente', () => {
     });
   });
 
-  it('recusa com "Apenas gerente" quando a edge nega o papel naquela loja', async () => {
+  it('recusa com "Apenas supervisor" quando a edge nega o papel naquela loja', async () => {
+    const r = await validarPinGerente(inv(null, new Error('Apenas supervisor ou administrador')), { matricula: '1', pin: '1111', tenantId: TENANT });
+    expect(r).toEqual({ ok: false, erro: 'Apenas supervisor ou administrador', contaTentativa: true });
+  });
+
+  it('entende também a mensagem antiga da edge ("Apenas gerente")', async () => {
     const r = await validarPinGerente(inv(null, new Error('Apenas gerente ou administrador')), { matricula: '1', pin: '1111', tenantId: TENANT });
-    expect(r).toEqual({ ok: false, erro: 'Apenas gerente ou administrador', contaTentativa: true });
+    expect(r).toEqual({ ok: false, erro: 'Apenas supervisor ou administrador', contaTentativa: true });
   });
 
   it('recusa sem vínculo na loja do totem (403 da edge)', async () => {
@@ -32,7 +37,7 @@ describe('validarPinGerente', () => {
 
   it('recusa operador da mesma loja e conta tentativa', async () => {
     const r = await validarPinGerente(inv({ role: 'cashier', tenant_id: TENANT }), { matricula: '1', pin: '1111', tenantId: TENANT });
-    expect(r).toEqual({ ok: false, erro: 'Apenas gerente ou administrador', contaTentativa: true });
+    expect(r).toEqual({ ok: false, erro: 'Apenas supervisor ou administrador', contaTentativa: true });
   });
 
   it('recusa gerente de outra loja', async () => {

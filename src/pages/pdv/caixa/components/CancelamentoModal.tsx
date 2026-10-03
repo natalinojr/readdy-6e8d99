@@ -55,11 +55,11 @@ const FASE_CONFIG: Record<Fase, {
   },
   preparo: {
     titulo: 'Cancelar Pedido em Preparo',
-    subtitulo: 'Itens já em preparo — requer autorização do Gerente',
+    subtitulo: 'Itens já em preparo — requer autorização do Supervisor',
     icon: 'ri-alert-line',
     iconBg: 'bg-amber-100',
     iconColor: 'text-amber-600',
-    aviso: 'Itens já estão sendo preparados. Confirme o cancelamento com o Gerente. A cozinha será notificada.',
+    aviso: 'Itens já estão sendo preparados. Confirme o cancelamento com o Supervisor. A cozinha será notificada.',
     avisoColor: 'bg-amber-50 border-amber-200 text-amber-700',
   },
   pronto_entregue: {
@@ -68,7 +68,7 @@ const FASE_CONFIG: Record<Fase, {
     icon: 'ri-information-line',
     iconBg: 'bg-zinc-100',
     iconColor: 'text-zinc-500',
-    aviso: 'Pedidos prontos ou entregues não podem ser cancelados. Use o botão "Estornar" para realizar um estorno financeiro com autorização do Gerente.',
+    aviso: 'Pedidos prontos ou entregues não podem ser cancelados. Use o botão "Estornar" para realizar um estorno financeiro com autorização do Supervisor.',
     avisoColor: 'bg-zinc-50 border-zinc-200 text-zinc-600',
   },
 };
@@ -135,7 +135,7 @@ export default function CancelamentoModal({ pedido, onClose, onConfirmar }: Prop
 
     const autorizador = autorizadorSelecionado;
     if (!autorizador) {
-      setSenhaErro('Nenhum gerente selecionado');
+      setSenhaErro('Nenhum supervisor selecionado');
       return;
     }
 
@@ -232,7 +232,7 @@ export default function CancelamentoModal({ pedido, onClose, onConfirmar }: Prop
           {cancelamentoBloqueado && (
             <div className="p-3 rounded-xl border bg-red-50 border-red-200 text-xs text-red-700">
               <i className="ri-lock-line mr-1" />
-              <strong>Cancelamento bloqueado.</strong> A configuração do sistema não permite cancelar pedidos após envio ao KDS. Contate o gerente para estorno manual.
+              <strong>Cancelamento bloqueado.</strong> A configuração do sistema não permite cancelar pedidos após envio ao KDS. Contate o supervisor para estorno manual.
             </div>
           )}
 
@@ -315,7 +315,7 @@ export default function CancelamentoModal({ pedido, onClose, onConfirmar }: Prop
                   <i className="ri-shield-keyhole-line text-amber-600" />
                 </div>
                 <div>
-                  <p className="text-xs font-bold text-amber-800">Autorização do Gerente</p>
+                  <p className="text-xs font-bold text-amber-800">Autorização do Supervisor</p>
                   <p className="text-[10px] text-amber-600 mt-0.5">Selecione o autorizador e insira o PIN</p>
                 </div>
               </div>
@@ -354,7 +354,7 @@ export default function CancelamentoModal({ pedido, onClose, onConfirmar }: Prop
               )}
 
               {autorizadores.length === 0 && (
-                <p className="text-xs text-red-500 italic">Nenhum gerente/admin ativo cadastrado</p>
+                <p className="text-xs text-red-500 italic">Nenhum supervisor/admin ativo cadastrado</p>
               )}
 
               <div>

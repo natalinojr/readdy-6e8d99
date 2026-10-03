@@ -72,7 +72,7 @@ Deno.serve(async (req) => {
         return new Response(JSON.stringify({ error: 'Sem permissão: o perfil Contabilidade confere e envia documentos (folha e guias), mas não paga nem altera contas.' }), { status: 403, headers: corsHeaders });
       }
     } else if (!isFinanceiroRole(tenantCheck.role)) {
-      return new Response(JSON.stringify({ error: 'Sem permissão: o Financeiro é só para administrador ou gerente da loja.' }), { status: 403, headers: corsHeaders });
+      return new Response(JSON.stringify({ error: 'Sem permissão: o Financeiro é só para administrador ou supervisor da loja.' }), { status: 403, headers: corsHeaders });
     }
     // Folha paga é do dono: a contabilidade não marca como paga nem mexe/apaga o que já foi pago.
     if (isContabilidadeRole(tenantCheck.role) && ['upsert_payroll', 'delete_payroll', 'bulk_insert_payroll'].includes(action)) {
