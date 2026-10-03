@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  contagemDaLoja, estadoDoItem, papeisAbaixo, papeisDaPessoa, resumoRotina, rotinaDeHoje,
+  agendados, contagemDaLoja, estadoDoItem, juntarNomes, papeisAbaixo, papeisDaPessoa, resumoRotina, rotinaDeHoje,
   type ItemRotina, type LojaRotina,
 } from '../../../supabase/functions/_shared/rotina';
 import { loginCompartilhado } from '../../pages/hoje/rotina/loginCompartilhado';
@@ -117,5 +117,27 @@ describe('rotina — contagem pelos planos do Estoque', () => {
     const i = item({ tipo: 'contagem', dias: null, dias_plano: true });
     expect(estadoDoItem(i, loja([i]), ctx('09:00', { contagem: { aplica: false, feito: false, pendentes: 0, planos: [], atrasoDias: 0 } }))).toBeNull();
     expect(estadoDoItem(i, loja([i]), ctx('09:00', { contagem: { aplica: true, feito: false, pendentes: 2, planos: ['Semanal'], atrasoDias: 0 } }))!.feito).toBe(false);
+  });
+});
+
+describe('rotina — mais de uma pessoa e dias à frente', () => {
+  it('junta os nomes como se fala', () => {
+    expect(juntarNomes(['Ana'])).toBe('Ana');
+    expect(juntarNomes(['Ana', 'Rafael'])).toBe('Ana e Rafael');
+    expect(juntarNomes(['Ana', 'Bruno', 'Rafael'])).toBe('Ana, Bruno e Rafael');
+  });
+  it('marca com várias pessoas devolve a lista (para "quem fez" já vir marcado)', () => {
+    const i = item({});
+    const pessoas = [{ tipo: 'freelancer' as const, id: 'f1', nome: 'Josiane' }, { tipo: 'user' as const, id: 'u1', nome: 'Ana' }];
+    const l = loja([i], { marcas: [{ item_id: 'i1', dia: HOJE, feito_em: '2026-10-03T18:10:00Z', pessoa_nome: 'Josiane e Ana', registrado_por: 'u', registrado_por_nome: 'Caixa', freelancer: true, pessoas }] });
+    expect(estadoDoItem(i, l, ctx())).toMatchObject({ feito: true, quem: 'Josiane e Ana', pessoas });
+  });
+  it('tarefa agendada para frente não entra na rotina de hoje, só em "Próximos dias"', () => {
+    const futura = item({ id: 'f', papel: 'equipe', dias: null, dia: '2026-10-10' });
+    const hoje = item({ id: 'h', papel: 'equipe', dias: null, dia: HOJE });
+    const l = loja([futura, hoje]);
+    expect(rotinaDeHoje(l, ['equipe'], ctx()).map((e) => e.item.id)).toEqual(['h']);
+    expect(agendados(l, ['equipe'], HOJE).map((i) => i.id)).toEqual(['f']);
+    expect(agendados(l, ['supervisao'], HOJE)).toEqual([]);
   });
 });

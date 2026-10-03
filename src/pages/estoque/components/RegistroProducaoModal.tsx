@@ -9,6 +9,8 @@ import type { NovaBateladaComEstoque } from '@/contexts/ProducaoContext';
 
 interface Props {
   recipeId: string;
+  /** Pedido de produção da rotina do dia: já abre com este número de receitas. */
+  receitasIniciais?: number;
   onClose: () => void;
   operador: string;
 }
@@ -71,7 +73,7 @@ function clearDraft(recipeId: string) {
   localStorage.removeItem(getDraftKey(recipeId));
 }
 
-export default function RegistroProducaoModal({ recipeId, onClose, operador }: Props) {
+export default function RegistroProducaoModal({ recipeId, onClose, operador, receitasIniciais }: Props) {
   const { getRecipeById, addBatchWithStock, getBatchesByRecipeId } = useProducao();
   const { insumos, upsertInsumo, reloadInsumos, reloadMovimentacoes } = useEstoque();
   const { user } = useAuth();
@@ -81,7 +83,7 @@ export default function RegistroProducaoModal({ recipeId, onClose, operador }: P
 
   const [producedQty, setProducedQty] = useState(draft?.producedQty ?? '');
   const [producedUnit, setProducedUnit] = useState(draft?.producedUnit ?? recipe?.unit ?? 'kg');
-  const [receitas, setReceitas] = useState(draft?.receitas ?? '1');
+  const [receitas, setReceitas] = useState(receitasIniciais ? String(receitasIniciais) : draft?.receitas ?? '1');
   const [notes, setNotes] = useState(draft?.notes ?? '');
   const [saving, setSaving] = useState(false);
   const [saveErrors, setSaveErrors] = useState<string[]>([]);
