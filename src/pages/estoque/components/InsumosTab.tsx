@@ -12,7 +12,7 @@ import CategoriasModal from './insumos/CategoriasModal';
 import InsumoModal from './insumos/InsumoModal';
 import EntradaRapidaModal from './insumos/EntradaRapidaModal';
 import MiniPriceHistory from './insumos/MiniPriceHistory';
-import { statusEstoque, barColor, barWidth, diasParaRuptura, exportarInsumosCSV } from './insumos/InsumosUtils';
+import { statusEstoque, barColor, barWidth, precoLegivel, passaFiltroStatus, exportarInsumosCSV } from './insumos/InsumosUtils';
 import ImportExportTemplatesModal from '@/components/ImportExportTemplatesModal';
 import ItensIndisponiveisPanel from './ItensIndisponiveisPanel';
 import PerguntarAoAssistente from '@/components/feature/PerguntarAoAssistente';
@@ -74,7 +74,6 @@ export default function InsumosTab() {
   const [categoriasModal, setCategoriasModal] = useState(false);
   const [entradaRapida, setEntradaRapida] = useState<Insumo | null>(null);
   const [confirmExcluir, setConfirmExcluir] = useState<Insumo | null>(null);
-  const [showRuptura, setShowRuptura] = useState(false);
   const [compraModal, setCompraModal] = useState<{ id: string; nome: string; unidade: string } | null>(null);
   const [historicoModal, setHistoricoModal] = useState<Insumo | null>(null);
   const [expandedPriceId, setExpandedPriceId] = useState<string | null>(null);
@@ -154,16 +153,14 @@ export default function InsumosTab() {
   const insumosFiltrados = useMemo(() => insumos.filter((i) => {
     const matchBusca = i.nome.toLowerCase().includes(busca.toLowerCase());
     const matchCat = categoriaFiltro === 'Todas' || i.categoria === categoriaFiltro;
-    const st = statusEstoque(i).label;
-    const esgotado = insumosEsgotados.includes(i.id);
-    const matchStatus = filtroStatus === 'Todos' || st === filtroStatus || (filtroStatus === 'Esgotado' && esgotado);
+    const matchStatus = passaFiltroStatus(i, filtroStatus);
     return matchBusca && matchCat && matchStatus;
   }), [insumos, busca, categoriaFiltro, filtroStatus, insumosEsgotados]);
 
   // Ordenacao ao clicar no cabecalho de uma coluna
   const [sortKey, setSortKey] = useState<SortKey | null>(null);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
-const STATUS_RANK: Record<string, number> = { Esgotado: 0, 'Crítico': 1, Baixo: 2, Ok: 3 };
+const STATUS_RANK: Record<string, number> = { Conferir: 0, Esgotado: 1, 'Abaixo do mínimo': 2, Ok: 3 };
 
   const toggleSort = (key: SortKey) => {
     if (sortKey === key) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
@@ -187,8 +184,8 @@ const STATUS_RANK: Record<string, number> = { Esgotado: 0, 'Crítico': 1, Baixo:
         case 'valor':
           return dir * (a.estoqueAtual * a.precoUnitario - b.estoqueAtual * b.precoUnitario);
         case 'status': {
-          const sa = insumosEsgotados.includes(a.id) ? 'Esgotado' : statusEstoque(a).label;
-          const sb = insumosEsgotados.includes(b.id) ? 'Esgotado' : statusEstoque(b).label;
+          const sa = statusEstoque(a).label;
+          const sb = statusEstoque(b).label;
           return dir * ((STATUS_RANK[sa] ?? 9) - (STATUS_RANK[sb] ?? 9));
         }
         default:
@@ -202,7 +199,6 @@ const STATUS_RANK: Record<string, number> = { Esgotado: 0, 'Crítico': 1, Baixo:
   const insumosComAviso = useMemo(() => insumos.filter((i) => i.rastrearEstoque), [insumos]);
   const alertas = insumosComAviso.filter((i) => i.estoqueAtual <= i.estoqueMinimo && i.estoqueMinimo > 0).length;
   const qtdEsgotados = insumosEsgotados.filter((id) => insumos.find((i) => i.id === id)?.rastrearEstoque !== false).length;
-  const criticosResumo = insumosComAviso.filter((i) => i.estoqueAtual <= i.estoqueMinimo * 0.5).length;
   const valorTotalEstoque = insumos.reduce((s, i) => s + i.estoqueAtual * i.precoUnitario, 0);
   const fmtValor = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
 
@@ -215,17 +211,12 @@ const STATUS_RANK: Record<string, number> = { Esgotado: 0, 'Crítico': 1, Baixo:
       filtros: { busca: busca || null, categoria: categoriaFiltro, status: filtroStatus },
       total_cadastrados: insumos.length,
       apos_filtros: insumosVisiveis.length,
-      abaixo_do_minimo: alertas, esgotados: qtdEsgotados, criticos: criticosResumo,
+      abaixo_do_minimo: alertas, esgotados: qtdEsgotados,
       valor_total_estoque: valorTotalEstoque,
       visiveis: insumosVisiveis.slice(0, 20).map((i) => ({ id: i.id, nome: i.nome, estoque: i.estoqueAtual, unidade: i.unidade, minimo: i.estoqueMinimo, preco: i.precoUnitario })),
     },
-  }), [busca, categoriaFiltro, filtroStatus, insumos.length, insumosVisiveis, alertas, qtdEsgotados, criticosResumo, valorTotalEstoque]);
+  }), [busca, categoriaFiltro, filtroStatus, insumos.length, insumosVisiveis, alertas, qtdEsgotados, valorTotalEstoque]);
 
-  const insumosRuptura = useMemo(() => insumosComAviso
-    .map((i) => ({ insumo: i, dias: diasParaRuptura(i) }))
-    .filter((x) => x.dias !== null && x.dias <= 7)
-    .sort((a, b) => (a.dias ?? 99) - (b.dias ?? 99))
-  , [insumosComAviso]);
 
   const handleSaveInsumo = async (data: Omit<Insumo, 'estoqueAtual' | 'ultimaEntrada' | 'fichaTecnica' | 'esgotado'> & { id?: string }) => {
     if (data.categoria && data.categoria !== 'Sem categoria' && !categoriasDB.includes(data.categoria)) {
@@ -321,62 +312,16 @@ const STATUS_RANK: Record<string, number> = { Esgotado: 0, 'Crítico': 1, Baixo:
         </div>
       )}
 
-      {insumosRuptura.length > 0 && (
-        <div className="bg-white border border-orange-200 rounded-2xl overflow-hidden">
-          <button
-            onClick={() => setShowRuptura((v) => !v)}
-            className="w-full flex items-center justify-between px-4 py-3 bg-orange-50 hover:bg-orange-100 transition-colors cursor-pointer"
-          >
-            <div className="flex items-center gap-3">
-              <i className="ri-time-line text-orange-500 text-base flex-shrink-0" />
-              <div className="text-left">
-                <p className="text-xs font-bold text-orange-700">
-                  {insumosRuptura.length} insumo{insumosRuptura.length > 1 ? 's' : ''} com previsão de ruptura em até 7 dias
-                </p>
-                <p className="text-[10px] text-orange-500 hidden sm:block">
-                  Baseado no consumo estimado por estoque mínimo — clique para ver detalhes
-                </p>
-              </div>
-            </div>
-            <i className={showRuptura ? 'ri-arrow-up-s-line text-orange-400 flex-shrink-0' : 'ri-arrow-down-s-line text-orange-400 flex-shrink-0'} />
-          </button>
-          {showRuptura && (
-            <div className="bg-white divide-y divide-zinc-100/80">
-              {insumosRuptura.map(({ insumo, dias }) => (
-                <div key={insumo.id} className="flex items-center justify-between px-4 py-2.5">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <div className={`w-2 h-2 rounded-full flex-shrink-0 ${dias === 0 ? 'bg-red-500' : dias! <= 3 ? 'bg-orange-500' : 'bg-amber-400'}`} />
-                    <span className="text-xs font-medium text-zinc-800 truncate">{insumo.nome}</span>
-                    <span className="text-[10px] text-zinc-400 hidden sm:inline">{insumo.estoqueAtual} {insumo.unidade}</span>
-                  </div>
-                  <div className="flex items-center gap-2 flex-shrink-0">
-                    <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-md ${dias === 0 ? 'bg-red-50 text-red-600' : dias! <= 3 ? 'bg-orange-50 text-orange-700' : 'bg-amber-50 text-amber-700'}`}>
-                      {dias === 0 ? 'Esgotado' : `${dias}d`}
-                    </span>
-                    <button
-                      onClick={() => setEntradaRapida(insumo)}
-                      className="flex items-center gap-1 text-[10px] font-semibold text-green-600 hover:text-green-700 cursor-pointer whitespace-nowrap"
-                    >
-                      <i className="ri-add-circle-line text-sm" /> Repor
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
       {/* Cards de resumo */}
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
         <KpiCard label="Total de insumos" icon="ri-flask-line" value={String(insumos.length)} atual={insumos.length} semVariacao />
         <KpiCard
-          label="Críticos"
+          label="Abaixo do mínimo"
           icon="ri-error-warning-line"
-          value={String(criticosResumo)}
-          valueTone={criticosResumo > 0 ? 'text-red-600' : 'text-zinc-400'}
-          highlight={criticosResumo > 0 ? 'neg' : undefined}
-          atual={criticosResumo}
+          value={String(alertas)}
+          valueTone={alertas > 0 ? 'text-red-600' : 'text-zinc-400'}
+          highlight={alertas > 0 ? 'neg' : undefined}
+          atual={alertas}
           semVariacao
         />
         <KpiCard label="Contagens" icon="ri-clipboard-line" value={String(inventarioSessions.length)} atual={inventarioSessions.length} semVariacao />
@@ -437,7 +382,7 @@ const STATUS_RANK: Record<string, number> = { Esgotado: 0, 'Crítico': 1, Baixo:
 
         {/* Linha 3: status */}
         <div className="flex gap-1 overflow-x-auto bg-zinc-100/80 rounded-xl p-1 w-full sm:w-fit max-w-full">
-          {['Todos', 'Ok', 'Baixo', 'Crítico', 'Esgotado'].map((s) => (
+          {['Todos', 'Ok', 'Abaixo do mínimo', 'Esgotado', 'Conferir'].map((s) => (
             <button key={s} onClick={() => setFiltroStatus(s)}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap cursor-pointer transition-colors flex-shrink-0 ${filtroStatus === s ? 'bg-white text-amber-600 shadow-sm' : 'text-zinc-500 hover:text-zinc-800'}`}>
               {s}
@@ -528,8 +473,8 @@ const STATUS_RANK: Record<string, number> = { Esgotado: 0, 'Crítico': 1, Baixo:
                           )}
                         </td>
                         <td className="px-4 py-3 text-right whitespace-nowrap tabular-nums">
-                          <p className="font-semibold text-zinc-800">{/* insumo em g/ml custa fração de centavo: 4 casas para não virar R$ 0,00 */}
-                            {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: insumo.precoUnitario > 0 && insumo.precoUnitario < 1 ? 4 : 2 }).format(insumo.precoUnitario)}/{insumo.unidade}</p>
+                          <p className="font-semibold text-zinc-800">{/* insumo em g/ml sai por kg/L: por grama virava R$ 0,00 */}
+                            {precoLegivel(insumo)}</p>
                           {insumo.priceSource === 'average' && (
                             <span className="text-[10px] text-sky-600 font-medium flex items-center justify-end gap-0.5 mt-0.5">
                               <i className="ri-bar-chart-line" /> Média 3 meses
@@ -561,11 +506,7 @@ const STATUS_RANK: Record<string, number> = { Esgotado: 0, 'Crítico': 1, Baixo:
                           <p className="font-semibold text-zinc-800 tabular-nums whitespace-nowrap">{fmtValor(insumo.estoqueAtual * insumo.precoUnitario)}</p>
                         </td>
                         <td className="px-4 py-3 text-center">
-                          {esgotado ? (
-                            <span className="px-2 py-0.5 rounded-md text-[11px] font-semibold text-red-600 bg-red-50 animate-pulse">ESGOTADO</span>
-                          ) : (
-                            <span className={`px-2 py-0.5 rounded-md text-[11px] font-semibold ${st.cls}`}>{st.label}</span>
-                          )}
+                          <span className={`px-2 py-0.5 rounded-md text-[11px] font-semibold whitespace-nowrap ${st.cls}`}>{st.label}</span>
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex items-center justify-end gap-1">
@@ -655,11 +596,7 @@ const STATUS_RANK: Record<string, number> = { Esgotado: 0, 'Crítico': 1, Baixo:
                       )}
                     </div>
                     <div className="flex-shrink-0">
-                      {esgotado ? (
-                        <span className="px-2 py-0.5 rounded-md text-[11px] font-semibold text-red-600 bg-red-50">ESGOTADO</span>
-                      ) : (
-                        <span className={`px-2 py-0.5 rounded-md text-[11px] font-semibold ${st.cls}`}>{st.label}</span>
-                      )}
+                      <span className={`px-2 py-0.5 rounded-md text-[11px] font-semibold whitespace-nowrap ${st.cls}`}>{st.label}</span>
                     </div>
                   </div>
 
@@ -674,8 +611,7 @@ const STATUS_RANK: Record<string, number> = { Esgotado: 0, 'Crítico': 1, Baixo:
                     </div>
                     <div className="text-right">
                       <p className="text-[10px] text-zinc-400">Preço</p>
-                      <p className="text-sm font-bold text-zinc-800">{new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(insumo.precoUnitario)}</p>
-                      <p className="text-[10px] text-zinc-400">/{insumo.unidade}</p>
+                      <p className="text-sm font-bold text-zinc-800">{precoLegivel(insumo)}</p>
                     </div>
                     <div className="text-right">
                       <p className="text-[10px] text-zinc-400">Valor em estoque</p>

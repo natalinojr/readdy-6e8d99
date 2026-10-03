@@ -1118,7 +1118,7 @@ async function stockText(tenants: Array<{ id: string; name: string }>, state: an
   for (const t of tenants) {
     const rows = await db()<Array<{ id: string; name: string; current_stock: number; min_stock: number; unit: string }>>`
       select id::text, name, current_stock::float, min_stock::float, unit::text from ingredients
-      where tenant_id = ${t.id} and deleted_at is null and min_stock > 0 and current_stock <= min_stock order by name`;
+      where tenant_id = ${t.id} and deleted_at is null and insumo_abaixo_minimo(track_stock, min_stock, current_stock) order by name`;
     next[t.id] = rows.map((r) => r.id);
     const before = new Set(prev[t.id] ?? []);
     const novos = rows.filter((r) => !before.has(r.id));
@@ -1127,20 +1127,20 @@ async function stockText(tenants: Array<{ id: string; name: string }>, state: an
     const l = [`*${t.name}*`];
     if (novos.length) l.push(...novos.slice(0, 15).map((r) => `• ${r.name}: ${r.current_stock} ${r.unit} (mín. ${r.min_stock})`));
     if (novos.length > 15) l.push(`… e mais ${novos.length - 15}`);
-    if (resolvidos) l.push(`✔️ ${resolvidos} item(ns) saíram do crítico`);
-    if (rows.length) l.push(`Total em crítico agora: ${rows.length}`);
+    if (resolvidos) l.push(`✔️ ${resolvidos} item(ns) saíram de abaixo do mínimo`);
+    if (rows.length) l.push(`Total abaixo do mínimo agora: ${rows.length}`);
     parts.push(l.join('\n'));
     totalCritico += rows.length;
-    pLin.push({ t: tenants.length > 1 ? t.name : 'Entraram em crítico', i: [
+    pLin.push({ t: tenants.length > 1 ? t.name : 'Ficaram abaixo do mínimo', i: [
       ...novos.slice(0, 15).map((r) => ({ l: r.name, v: `${r.current_stock} ${r.unit}`, d: `mín. ${r.min_stock}`, st: (r.current_stock <= 0 ? 'perigo' : 'alerta') as St })),
-      ...(resolvidos ? [{ l: `${resolvidos} item(ns) saíram do crítico`, st: 'ok' as St }] : []),
+      ...(resolvidos ? [{ l: `${resolvidos} item(ns) saíram de abaixo do mínimo`, st: 'ok' as St }] : []),
     ] });
   }
   const painel: Painel | undefined = parts.length ? {
-    t: 'Estoque crítico', s: 'O que mudou', kpi: { p: { l: 'Itens em crítico agora', v: String(totalCritico) } }, lin: pLin,
+    t: 'Abaixo do mínimo', s: 'O que mudou', kpi: { p: { l: 'Abaixo do mínimo agora', v: String(totalCritico) } }, lin: pLin,
     bt: [{ l: 'Estoque', r: '/estoque', i: 'ri-archive-line' }],
   } : undefined;
-  return { text: parts.length ? `📦 *Estoque crítico — o que mudou*\n\n${parts.join('\n\n')}` : null, newState: next, painel };
+  return { text: parts.length ? `📦 *Abaixo do mínimo — o que mudou*\n\n${parts.join('\n\n')}` : null, newState: next, painel };
 }
 
 // ── Avisos da equipe (2026-09-25) ───────────────────────────────────────────
@@ -1280,10 +1280,12 @@ async function syncPendenciasClassificacao(admin: SupabaseClient, tenants: Array
 async function syncPendenciasOperacao(admin: SupabaseClient, tenants: Array<{ id: string; name: string }>, ownerId: string) {
   for (const t of tenants) {
     try {
-      // Mesmo critério do aviso de estoque: abaixo ou igual ao mínimo, ignorando excluídos.
+      // Regra única do estoque (2026-10-03, insumo_abaixo_minimo): com aviso ligado, mínimo > 0 e
+      // estoque <= mínimo, sem excluídos — o mesmo número do Início do Estoque e do Dashboard. Antes
+      // contava também os insumos em que o dono desligou os avisos (22 × 16 na Paranaguá em 02/10).
       const [est] = await db()<Array<{ n: number }>>`
         select count(*)::int n from ingredients
-         where tenant_id = ${t.id} and deleted_at is null and min_stock > 0 and current_stock <= min_stock`;
+         where tenant_id = ${t.id} and deleted_at is null and insumo_abaixo_minimo(track_stock, min_stock, current_stock)`;
       if (est.n > 0) {
         // Aviso, não tarefa (dono, 2026-09-18): botões Abrir e OK. OK marca "vista" e tira da lista;
         // se MAIS insumos ficarem críticos depois disso, o aviso volta (compara com a contagem do
@@ -1292,8 +1294,8 @@ async function syncPendenciasOperacao(admin: SupabaseClient, tenants: Array<{ id
           .eq('tenant_id', t.id).eq('kind', 'estoque_critico').eq('ref', 'pendentes').maybeSingle();
         await admin.rpc('fn_pendencia_upsert', {
           p_tenant: t.id, p_kind: 'estoque_critico', p_ref: 'pendentes',
-          p_titulo: `${est.n} ${est.n === 1 ? 'insumo' : 'insumos'} no estoque crítico`,
-          p_detalhe: 'Estão no mínimo ou abaixo dele.',
+          p_titulo: `${est.n} ${est.n === 1 ? 'insumo abaixo' : 'insumos abaixo'} do mínimo`,
+          p_detalhe: 'A lista de compras está no Início do Estoque, por fornecedor.',
           p_payload: { total: est.n }, p_rota: '/estoque',
           p_urgencia: 'normal', p_acao_requerida: false, p_origem: 'cron', p_reabrir: true,
         });
