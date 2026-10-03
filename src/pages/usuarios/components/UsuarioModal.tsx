@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { X, Eye, EyeOff, ShieldCheck, Check, Hash } from 'lucide-react';
 import { perfilConfig, type PerfilUsuario } from '@/constants/usuarios';
 import type { UsuarioReal } from '@/hooks/useUsuarios';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface Props {
   modo: 'novo' | 'editar' | 'senha';
@@ -16,6 +17,11 @@ const PERFIS_NORMAIS: PerfilUsuario[] = ['admin', 'gerente', 'supervisao', 'caix
 const PERFIS_TODOS: PerfilUsuario[] = [...PERFIS_NORMAIS, 'totem'];
 
 export default function UsuarioModal({ modo, usuario, onClose, onSalvar, onDefinirPIN, onLimparPIN }: Props) {
+  const { user } = useAuth();
+  // Gerente (com "Gerenciar usuários") só dá papéis abaixo do seu — o servidor recusa
+  // Admin/Gerente vindos dele (user-write, fn_update_user).
+  const perfisDaLista = (modo === 'novo' ? PERFIS_TODOS : PERFIS_NORMAIS)
+    .filter((p) => user?.perfil === 'admin' || (p !== 'admin' && p !== 'gerente'));
   const [nome, setNome] = useState(usuario?.nome ?? '');
   const [email, setEmail] = useState(usuario?.email?.includes('@totem.erpos.local') ? '' : (usuario?.email ?? ''));
   const [matricula, setMatricula] = useState(modo === 'editar' ? (usuario?.matricula ?? '') : '');
@@ -325,7 +331,7 @@ export default function UsuarioModal({ modo, usuario, onClose, onSalvar, onDefin
               <div>
                 <p className="text-xs font-bold text-zinc-500 uppercase tracking-wide mb-3">Perfil e acesso</p>
                 <div className="grid grid-cols-3 gap-2 mb-3">
-                  {(modo === 'novo' ? PERFIS_TODOS : PERFIS_NORMAIS).map((p) => {
+                  {perfisDaLista.map((p) => {
                     const c = perfilConfig[p];
                     return (
                       <button key={p} onClick={() => setPerfil(p)}
