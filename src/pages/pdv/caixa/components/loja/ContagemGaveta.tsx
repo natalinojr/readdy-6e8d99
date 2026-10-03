@@ -1,6 +1,10 @@
 // Contagem do dinheiro da gaveta — a mesma na abertura e no fechamento da loja (2026-10-03).
 // "Contar cédulas" é o padrão (o dono quer que o operador conte de verdade); "Digitar o total"
 // fica ao lado para quem conta na mão.
+// Teclado (pedido da loja, 2026-10-03): Enter num campo desce para a próxima cédula/moeda — é o
+// costume de quem conta. Só o Enter no ÚLTIMO campo (ou no total digitado) chama onEnterNoFim,
+// e quem usa decide o que fazer (abrir pede confirmação; fechar vai para a conferência).
+import { useEffect, useRef, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 
 export const NOTAS = [200, 100, 50, 20, 10, 5, 2];
 export const MOEDAS = [1, 0.5, 0.25, 0.1, 0.05];
@@ -45,9 +49,33 @@ interface Props {
   onChange: (v: ValorContado) => void;
   /** Foca o campo de valor ao trocar para "Digitar o total". */
   idCampo?: string;
+  /** Enter no último campo da contagem ou no total digitado. */
+  onEnterNoFim?: () => void;
+  /** Já começa com o cursor na primeira cédula (computador). */
+  focarPrimeiro?: boolean;
 }
 
-export default function ContagemGaveta({ estado, onChange, idCampo = 'gaveta-total' }: Props) {
+const ORDEM = [...NOTAS, ...MOEDAS];
+
+export default function ContagemGaveta({ estado, onChange, idCampo = 'gaveta-total', onEnterNoFim, focarPrimeiro }: Props) {
+  const caixa = useRef<HTMLDivElement>(null);
+  const campo = (i: number) => caixa.current?.querySelector<HTMLInputElement>(`input[data-contagem="${i}"]`) ?? null;
+
+  useEffect(() => {
+    if (focarPrimeiro && estado.modo === 'cedulas') campo(0)?.focus();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const aoEnter = (e: ReactKeyboardEvent<HTMLInputElement>, i: number | null) => {
+    if (e.key !== 'Enter' || e.shiftKey) return;
+    e.preventDefault();
+    e.stopPropagation(); // o Enter é daqui: não chega aos atalhos do PDV nem ao "abrir" da tela
+    if (e.repeat) return; // tecla segurada não atravessa a contagem inteira
+    const prox = i == null ? null : campo(i + 1);
+    if (prox) { prox.focus(); prox.select(); return; }
+    onEnterNoFim?.();
+  };
+
   const setQtd = (den: number, qtd: number) => {
     onChange({ ...estado, contagem: { ...estado.contagem, [den]: Math.max(0, Math.floor(qtd) || 0) } });
   };
@@ -68,6 +96,9 @@ export default function ContagemGaveta({ estado, onChange, idCampo = 'gaveta-tot
         <input
           type="text"
           inputMode="numeric"
+          enterKeyHint={ORDEM.indexOf(den) === ORDEM.length - 1 ? 'done' : 'next'}
+          data-contagem={ORDEM.indexOf(den)}
+          onKeyDown={(e) => aoEnter(e, ORDEM.indexOf(den))}
           value={q || ''}
           placeholder="0"
           onFocus={(e) => e.currentTarget.select()}
@@ -91,7 +122,7 @@ export default function ContagemGaveta({ estado, onChange, idCampo = 'gaveta-tot
   };
 
   return (
-    <div>
+    <div ref={caixa}>
       <div className="inline-flex bg-stone-100 rounded-xl p-1 mb-3">
         {([['cedulas', 'Contar cédulas'], ['digitar', 'Digitar o total']] as const).map(([m, txt]) => (
           <button
@@ -122,6 +153,9 @@ export default function ContagemGaveta({ estado, onChange, idCampo = 'gaveta-tot
           <input
             id={idCampo}
             autoFocus
+            data-contagem="total"
+            enterKeyHint="done"
+            onKeyDown={(e) => aoEnter(e, null)}
             type="text"
             inputMode="decimal"
             autoComplete="off"

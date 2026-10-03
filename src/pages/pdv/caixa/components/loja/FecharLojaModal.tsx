@@ -19,6 +19,7 @@ import { confirmar } from '@/components/base/Dialogos';
 import { dateKeyBrasilia, todayBrasilia } from '@/lib/dateUtils';
 import ContagemGaveta, { contagemVazia, fmtBRL, valorDe, type ValorContado } from './ContagemGaveta';
 import SeloCeu from './SeloCeu';
+import ConfirmaEnter from './ConfirmaEnter';
 
 export type TipoFechamento = 'loja' | 'trocar' | 'dia';
 export type DestinoPDV = 'mesas' | 'pedidos' | 'sangria';
@@ -85,6 +86,9 @@ export default function FecharLojaModal({ tipo, onClose, onIrPara }: Props) {
   const [contagem, setContagem] = useState<ValorContado>(contagemVazia);
   const [justificativa, setJustificativa] = useState('');
   const [verRetiradas, setVerRetiradas] = useState(false);
+  // Pelo teclado, fechar sempre pergunta antes (o Enter da contagem é costume e não pode fechar sem querer).
+  const [confirmando, setConfirmando] = useState(false);
+  const [computador] = useState(() => typeof window !== 'undefined' && window.matchMedia('(min-width: 768px)').matches);
 
   // Execução
   const [etapas, setEtapas] = useState<Etapa[]>([]);
@@ -383,6 +387,7 @@ export default function FecharLojaModal({ tipo, onClose, onIrPara }: Props) {
       // Diálogo do sistema aberto por cima (ex.: "Não saiu?"): as teclas são dele.
       const outroDialogo = [...document.querySelectorAll('[aria-modal="true"]')].some((d) => d !== raiz.current);
       if (outroDialogo || (alvo && alvo !== document.body && !raiz.current?.contains(alvo))) return;
+      if (e.key === 'Enter' && alvo?.dataset?.contagem != null) return;
       // F-teclas: os atalhos do PDV não rodam por baixo e o F5 não recarrega no meio do fechamento.
       if (/^F\d{1,2}$/.test(e.key)) { e.preventDefault(); e.stopPropagation(); return; }
       if (e.key === 'Escape') {
@@ -557,7 +562,8 @@ export default function FecharLojaModal({ tipo, onClose, onIrPara }: Props) {
         )}
         <p className="text-lg font-black text-zinc-900">Quanto tem de dinheiro na gaveta?</p>
         <p className="text-[13px] text-zinc-500 mt-0.5 mb-3">Conte tudo que está na gaveta, troco incluído. O valor esperado só aparece depois — assim a contagem é de verdade.</p>
-        <ContagemGaveta estado={contagem} onChange={setContagem} idCampo="fechar-total" />
+        <ContagemGaveta estado={contagem} onChange={setContagem} idCampo="fechar-total" focarPrimeiro={computador}
+          onEnterNoFim={() => acaoPrincipal.current?.()} />
       </>
     );
     rodape = (
@@ -575,7 +581,7 @@ export default function FecharLojaModal({ tipo, onClose, onIrPara }: Props) {
   }
 
   if (passo === 'conferir') {
-    if (justOk && dinheiro) acaoPrincipal.current = () => { executar(); };
+    if (justOk && dinheiro) acaoPrincipal.current = () => setConfirmando(true);
     const c = contado ?? 0;
     const banner = !temDiferenca
       ? { cls: 'bg-emerald-50 text-emerald-900', icone: 'ri-check-line', cor: 'text-emerald-600 ring-emerald-200', t: 'Bateu certinho' }
@@ -635,7 +641,7 @@ export default function FecharLojaModal({ tipo, onClose, onIrPara }: Props) {
   }
 
   if (passo === 'confdia') {
-    acaoPrincipal.current = () => { executar(); };
+    acaoPrincipal.current = () => setConfirmando(true);
     corpo = (
       <>
         <p className="mb-3 flex items-center gap-2 text-[12.5px] font-bold text-emerald-700 bg-emerald-50 rounded-xl px-3 py-2">
@@ -816,6 +822,18 @@ export default function FecharLojaModal({ tipo, onClose, onIrPara }: Props) {
         <div className="px-5 md:px-6 pb-4 overflow-y-auto flex-1">{corpo}</div>
         {rodape && <div className="px-5 md:px-6 py-4 border-t border-stone-100 flex items-center gap-2.5 flex-shrink-0">{rodape}</div>}
       </div>
+      {confirmando && (passo === 'conferir' || passo === 'confdia') && (
+        <ConfirmaEnter
+          titulo={tipo === 'trocar' ? `Fechar o caixa com ${fmtBRL(contado ?? 0)}?` : 'Fechar a loja agora?'}
+          detalhe={passo === 'confdia' ? 'Delivery e totem param de receber pedidos.'
+            : !temDiferenca ? <span className="font-bold text-emerald-700">Bateu certinho: {fmtBRL(contado ?? 0)}</span>
+            : <span className={diferenca < 0 ? 'text-red-700' : 'text-amber-800'}><b>{diferenca < 0 ? 'Faltou' : 'Sobrou'} {fmtBRL(Math.abs(diferenca))}</b> — “{justificativa.trim()}”</span>}
+          botao={tipo === 'trocar' ? 'Fechar o caixa' : 'Fechar a loja'}
+          perigo={tipo !== 'trocar'}
+          onConfirmar={() => { setConfirmando(false); executar(); }}
+          onCancelar={() => setConfirmando(false)}
+        />
+      )}
     </div>
   );
 }
