@@ -538,7 +538,7 @@ function PDVOperacional({ onAbrirFechamento }: PDVOperacionalProps) {
         .then((result) => {
           const numStr = result?.number || `P${Date.now()}`;
           const printOk = result?.printEnqueued;
-          toastSuccess('Pedido enviado para cozinha!', `#${numStr} — pague depois${printOk ? ' · Ticket na fila de impressão' : ''}`);
+          avisoEnviado(numStr, printOk);
         })
         .catch((err) => {
           const msg = err instanceof Error ? err.message : String(err);
@@ -548,13 +548,25 @@ function PDVOperacional({ onAbrirFechamento }: PDVOperacionalProps) {
     }
   }, [mesaParaAbrir, pendingAction, setDestino, enviarParaCozinha]);
 
+  // Toast do pedido enviado sem pagamento: entrega diz que recebe na entrega (e como).
+  const avisoEnviado = (numStr: string, printOk?: boolean, d: DestinoInfo | null = destino) => {
+    const impressao = printOk ? ' · Ticket na fila de impressão' : '';
+    if (d?.tipo === 'delivery') {
+      toastSuccess('Pedido enviado para entrega!', `#${numStr} — receber na entrega${d.formaPagamento ? ` (${d.formaPagamento})` : ''}${impressao}`);
+    } else {
+      toastSuccess('Pedido enviado para cozinha!', `#${numStr} — pague depois${impressao}`);
+    }
+  };
+
   const handleDestinoConfirm = useCallback((d: DestinoInfo) => {
     setDestino(d);
     setModal('none');
-    if (pendingAction === 'pagamento') {
+    // Entrega (dono, 2026-10-02): o pagamento é recebido NA ENTREGA — "Finalizar" com destino delivery
+    // manda o pedido sem cobrar (igual "Enviar para Cozinha"); quem já pagou usa "Já pagou? Receber agora".
+    if (pendingAction === 'pagamento' && d.tipo !== 'delivery') {
       setPendingAction(null);
       setTimeout(() => setModal('pagamento'), 50);
-    } else if (pendingAction === 'cozinha') {
+    } else if (pendingAction === 'cozinha' || pendingAction === 'pagamento') {
       setPendingAction(null);
       setIsEnviandoCozinha(true);
       // Passa o destino confirmado diretamente para o enviarParaCozinha
@@ -563,7 +575,7 @@ function PDVOperacional({ onAbrirFechamento }: PDVOperacionalProps) {
         .then((result) => {
           const numStr = result?.number || `P${Date.now()}`;
           const printOk = result?.printEnqueued;
-          toastSuccess('Pedido enviado para cozinha!', `#${numStr} — pague depois${printOk ? ' · Ticket na fila de impressão' : ''}`);
+          avisoEnviado(numStr, printOk, d);
         })
         .catch((err) => {
           const msg = err instanceof Error ? err.message : String(err);
@@ -688,7 +700,7 @@ function PDVOperacional({ onAbrirFechamento }: PDVOperacionalProps) {
         const result = await enviarParaCozinha();
         const numStr = result?.number || `P${Date.now()}`;
         const printOk = result?.printEnqueued;
-        toastSuccess('Pedido enviado para cozinha!', `#${numStr} — pague depois${printOk ? ' · Ticket na fila de impressão' : ''}`);
+        avisoEnviado(numStr, printOk);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         toastError('Erro ao enviar para cozinha', msg);
@@ -917,6 +929,7 @@ function PDVOperacional({ onAbrirFechamento }: PDVOperacionalProps) {
               <CarrinhoPanel
                 onDestino={() => setModal('destino')}
                 onPagar={handlePagar}
+                onEnviarEntrega={handleEnviarCozinha}
                 onLimpar={handleLimpar}
                 onEditItem={handleEditItem}
                 onEnviarCozinha={enviarCozinhaAtivo ? handleEnviarCozinha : undefined}
@@ -971,6 +984,7 @@ function PDVOperacional({ onAbrirFechamento }: PDVOperacionalProps) {
             <CarrinhoPanel
               onDestino={() => setModal('destino')}
               onPagar={handlePagar}
+              onEnviarEntrega={handleEnviarCozinha}
               onLimpar={handleLimpar}
               onEditItem={handleEditItem}
               onEnviarCozinha={enviarCozinhaAtivo ? handleEnviarCozinha : undefined}

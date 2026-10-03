@@ -13,6 +13,8 @@ import { usePedidosAgrupados } from '@/hooks/usePedidosAgrupados';
 interface Props {
   onDestino: () => void;
   onPagar: () => void;
+  /** Entrega: manda o pedido sem cobrar — o pagamento é recebido na entrega. */
+  onEnviarEntrega?: () => void;
   onLimpar: () => void;
   onEditItem: (cartId: string) => void;
   onEnviarCozinha?: () => void;
@@ -113,7 +115,7 @@ function ConfirmDialog({
   );
 }
 
-export default function CarrinhoPanel({ onDestino, onPagar, onLimpar, onEditItem, onEnviarCozinha, onVincularPedidos }: Props) {
+export default function CarrinhoPanel({ onDestino, onPagar, onEnviarEntrega, onLimpar, onEditItem, onEnviarCozinha, onVincularPedidos }: Props) {
   const {
     carrinho, destino, taxaServico,
     subtotal, valorDesconto, valorTaxaServico, valorTaxaEntrega, total,
@@ -767,7 +769,22 @@ export default function CarrinhoPanel({ onDestino, onPagar, onLimpar, onEditItem
 
           {/* Totais */}
           <div className="px-3 md:px-4 py-2.5 md:py-3 space-y-1">
-            {isCortesia ? (
+            {/* Entrega (dono, 2026-10-02): finaliza na entrega, com o pagamento recebido — aqui só manda. */}
+            {!isCortesia && destino?.tipo === 'delivery' && onEnviarEntrega ? (
+              <>
+                <button
+                  onClick={onEnviarEntrega}
+                  className="w-full py-3 bg-amber-500 hover:bg-amber-600 text-white font-bold text-sm rounded-lg transition-colors cursor-pointer whitespace-nowrap flex items-center justify-center gap-2"
+                >
+                  <i className="ri-e-bike-2-line text-base" />
+                  Enviar para entrega
+                </button>
+                <p className="text-[11px] text-zinc-500 text-center leading-snug">
+                  Recebe na entrega{destino.formaPagamento ? ` (${destino.formaPagamento})` : ''}: o pedido fica em aberto em Pedidos até pagar.{' '}
+                  <button type="button" onClick={onPagar} className="font-semibold text-amber-700 underline cursor-pointer">Já pagou? Receber agora</button>
+                </p>
+              </>
+            ) : isCortesia ? (
               <>
                 <div className="flex justify-between text-xs text-zinc-400">
                   <span>Subtotal</span>
@@ -846,7 +863,7 @@ export default function CarrinhoPanel({ onDestino, onPagar, onLimpar, onEditItem
               <i className="ri-draft-line text-sm" />
               Salvar como rascunho
             </button>
-            {onEnviarCozinha && (
+            {onEnviarCozinha && !(destino?.tipo === 'delivery' && onEnviarEntrega) && (
               <button
                 onClick={onEnviarCozinha}
                 className="w-full py-3 bg-stone-600 hover:bg-stone-700 text-white font-bold text-sm rounded-lg transition-colors cursor-pointer whitespace-nowrap flex items-center justify-center gap-2"

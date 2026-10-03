@@ -517,6 +517,12 @@ function dbOrderToKDS(o: DBOrder, stationMap: StationMap): KDSPedido {
       if (paymentMethodName) break;
     }
   }
+  // Entrega lançada no caixa sem cobrar (2026-10-02): a forma combinada vem em notes ("Pagamento: X | Troco…")
+  // e já fica selecionada quando o caixa recebe o pagamento na volta do motoboy.
+  if (!paymentMethodName && o.origin_type === 'delivery' && o.notes) {
+    const m = String(o.notes).match(/(?:^|\|)\s*Pagamento:\s*([^|]+)/i);
+    if (m) paymentMethodName = m[1].trim();
+  }
 
   // BUG 3.5 FIX: Nunca deixar totalAmount = 0 quando o banco tem valor real.
   const totalAmount = typeof o.total_amount === 'number'
