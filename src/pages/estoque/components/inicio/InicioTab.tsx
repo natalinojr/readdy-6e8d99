@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { invokeWithAuth } from '@/lib/supabase';
+import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { somarDias } from '@/lib/dateUtils';
 import { useAuth } from '@/contexts/AuthContext';
 import { useEstoque } from '@/contexts/EstoqueContext';
@@ -12,6 +12,7 @@ import {
 import ComprarSecao from './ComprarSecao';
 import ContarSecao, { ContagemFolha } from './ContarSecao';
 import ConfigFolha from './ConfigFolha';
+import Ajuda from './Ajuda';
 
 // Início do Estoque (2026-10-03): abre respondendo "o que comprar", "o que contar" e "o que vai faltar",
 // pela regra única (fn_estoque_situacao / src/lib/estoqueRegras.ts). As outras abas continuam iguais.
@@ -20,9 +21,11 @@ export default function InicioTab({ situacao, carregando, erro, onReload }: {
   situacao: SituacaoEstoque | null;
   carregando: boolean;
   erro: string | null;
-  onReload: () => void;
+  onReload: () => void | Promise<void>;
 }) {
-  const [extras, setExtras] = useState<Set<string>>(new Set());
+  const { user } = useAuth();
+  const toast = useToast();
+  const [destaque, setDestaque] = useState<string | null>(null);
   const [contagem, setContagem] = useState<{ titulo: string; itens: InsumoSituacao[] } | null>(null);
   const [config, setConfig] = useState(false);
   const { hasPermissao } = usePermissoes();
@@ -51,21 +54,43 @@ export default function InicioTab({ situacao, carregando, erro, onReload }: {
   }
 
   const { totais, config: cfg } = situacao;
+  // "Na lista" à mão (Vai faltar › Pôr na lista) vem do banco: vale para todos os aparelhos.
+  const extras = new Set(situacao.insumos.filter((i) => i.naLista).map((i) => i.id));
   const listaCompra = situacao.insumos.filter((i) => i.abaixoMinimo || extras.has(i.id));
   const comprarIds = new Set(listaCompra.map((i) => i.id));
   const nPorPedir = listaCompra.filter((i) => !pedidoDoInsumo(i, situacao.pedidos)).length;
-  const vaiFaltar = situacao.insumos.filter((i) => i.vaiFaltar && !extras.has(i.id));
+  const vaiFaltar = situacao.insumos.filter((i) => i.vaiFaltar);
   const nComprar = comprarIds.size;
   const nContar = podeContar ? hoje.itens.length : 0;
 
   const ir = (id: string) => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  // Leva até a linha do insumo na lista de compras e acende ela por uns segundos.
+  const mostrarNaLista = (id: string) => {
+    setDestaque(id);
+    setTimeout(() => {
+      const linhas = Array.from(document.querySelectorAll<HTMLElement>(`[data-item="${id}"]`));
+      (linhas.find((el) => el.offsetParent !== null) ?? document.getElementById('inicio-comprar'))?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 80);
+    setTimeout(() => setDestaque((d) => (d === id ? null : d)), 4000);
+  };
+  const porNaLista = async (i: InsumoSituacao, incluir = true) => {
+    const { error } = await supabase.rpc('fn_estoque_lista_extra', { p_tenant_id: user!.tenantId, p_ingredient_id: i.id, p_incluir: incluir });
+    if (error) { toast.error(incluir ? 'Não pus na lista' : 'Não tirei da lista', error.message); return; }
+    await onReload();
+    if (incluir) {
+      toast.success(`${i.nome} entrou na lista de compras`, `Está em “Comprar”, no cartão ${i.fornecedor ? `de ${i.fornecedor}` : 'Sem fornecedor'}. Sai sozinho quando a mercadoria chegar.`);
+      mostrarNaLista(i.id);
+    } else toast.success(`${i.nome} saiu da lista de compras`);
+  };
   const partes: string[] = [];
   if (nPorPedir) partes.push(`pedir ${nPorPedir} ${nPorPedir === 1 ? 'insumo' : 'insumos'}`);
   if (nContar) partes.push(`contar ${nContar}`);
   const emDia = !nPorPedir && !nContar && !vaiFaltar.length;
 
   return (
-    <div className="p-4 md:p-6 max-w-2xl mx-auto pb-16">
+    <div className="p-4 md:p-6 max-w-2xl lg:max-w-[1400px] mx-auto pb-16">
+      <div className="lg:flex lg:items-end lg:justify-between lg:gap-6 lg:mb-5">
+      <div className="min-w-0">
       {emDia ? (
         <h2 className="text-2xl font-extrabold text-emerald-700 tracking-tight">Estoque em dia ✓</h2>
       ) : (
@@ -73,36 +98,45 @@ export default function InicioTab({ situacao, carregando, erro, onReload }: {
           {partes.length ? `Hoje: ${partes.join(' e ')}` : 'Hoje: ver o que vai faltar'}
         </h2>
       )}
-      <p className="text-xs text-zinc-500 mt-1 mb-3">
+      <p className="text-xs text-zinc-500 mt-1 mb-3 lg:mb-0">
         Números de agora, pela mesma regra do Dashboard e do assistente.
         {carregando && <i className="ri-loader-4-line animate-spin ml-1 align-middle" />}
       </p>
-
-      <div className="grid grid-cols-3 gap-2 mb-5">
-        <Bloco icone="ri-shopping-cart-2-line" n={nComprar} rotulo="Comprar"
-          detalhe={nComprar && !nPorPedir ? 'pedidos mandados' : `abaixo do mínimo${totais.zeradosAbaixo ? ` · ${totais.zeradosAbaixo} zerados` : ''}`}
-          tom={nPorPedir ? 'red' : 'ok'} onClick={() => ir('inicio-comprar')} />
-        <Bloco icone="ri-scales-3-line" n={nContar} rotulo="Contar" detalhe={nContar ? (hoje.devidos.length ? 'contagem do dia' : 'conferir') : 'em dia'}
-          tom={nContar ? 'dark' : 'ok'} onClick={() => ir('inicio-contar')} />
-        <Bloco icone="ri-hourglass-line" n={vaiFaltar.length} rotulo="Vai faltar" detalhe={`em até ${cfg.diasPrevisao} dias`}
-          tom={vaiFaltar.length ? 'amber' : 'ok'} onClick={() => ir('inicio-faltar')} />
       </div>
 
-      <div className="space-y-6">
-        <ComprarSecao situacao={situacao} extras={extras} onReload={onReload}
+      <div className="grid grid-cols-3 gap-2 mb-5 lg:mb-0 lg:w-[560px] lg:flex-shrink-0">
+        <Bloco icone="ri-shopping-cart-2-line" n={nComprar} rotulo="Comprar"
+          detalhe={nComprar && !nPorPedir ? 'pedidos mandados' : `abaixo do mínimo${totais.zeradosAbaixo ? ` · ${totais.zeradosAbaixo} zerados` : ''}${totais.naLista ? ` · ${totais.naLista} posto${totais.naLista > 1 ? 's' : ''} na lista` : ''}`}
+          tom={nPorPedir ? 'red' : 'ok'} onClick={() => ir('inicio-comprar')}
+          ajuda={<>É a <b>lista de compras</b>. Entra sozinho todo insumo com estoque igual ou abaixo do mínimo, e entra também o que você puser na lista. Fica separada por fornecedor, com a quantidade já sugerida, para mandar o pedido.</>} />
+        <Bloco icone="ri-scales-3-line" n={nContar} rotulo="Contar" detalhe={nContar ? (hoje.devidos.length ? 'contagem do dia' : 'conferir') : 'em dia'}
+          tom={nContar ? 'dark' : 'ok'} onClick={() => ir('inicio-contar')}
+          ajuda={<>O que contar agora: os itens da <b>contagem programada</b> de hoje (geral do mês, semanal…) e os insumos com <b>número impossível</b> no sistema (estoque negativo). Quem programa as contagens é o gerente ou o dono.</>} />
+        <Bloco icone="ri-hourglass-line" n={vaiFaltar.length} rotulo="Vai faltar" detalhe={`em até ${cfg.diasPrevisao} dias`}
+          tom={vaiFaltar.length ? 'amber' : 'ok'} onClick={() => ir('inicio-faltar')}
+          ajuda={<>Pelo ritmo de uso dos últimos 14 dias, estes insumos <b>acabam em até {cfg.diasPrevisao} dias</b>, mas ainda não chegaram no mínimo, por isso não estão na lista de compras. Dá para pôr na lista para pedir junto.</>} />
+      </div>
+      </div>
+
+      {/* Celular: uma coluna. Notebook: comprar em largura cheia e contar | vai faltar lado a lado embaixo.
+          Monitor grande (2xl): comprar à esquerda, contar e vai faltar numa coluna à direita. */}
+      <div className="space-y-6 2xl:space-y-0 2xl:grid 2xl:grid-cols-[minmax(0,1fr)_420px] 2xl:gap-6 2xl:items-start">
+        <ComprarSecao situacao={situacao} extras={extras} onReload={onReload} destaque={destaque} onTirarDaLista={(i) => porNaLista(i, false)}
           onIrContar={podeContar ? () => setContagem({ titulo: 'Conferir', itens: hoje.conferir.length ? hoje.conferir : hoje.itens }) : () => ir('inicio-contar')} />
 
-        <ContarSecao situacao={situacao} contagem={hoje} podeContar={podeContar} onReload={onReload}
-          onContar={(itens, titulo) => setContagem({ titulo, itens })} onConfigurar={() => setConfig(true)} />
+        <aside className="space-y-6 lg:space-y-0 lg:grid lg:grid-cols-2 lg:gap-6 lg:items-start 2xl:block 2xl:space-y-6 2xl:sticky 2xl:top-4">
+          <ContarSecao situacao={situacao} contagem={hoje} podeContar={podeContar} onReload={onReload}
+            onContar={(itens, titulo) => setContagem({ titulo, itens })} onConfigurar={() => setConfig(true)} />
 
-        <VaiFaltarSecao situacao={situacao} itens={vaiFaltar}
-          onPorNaLista={(id) => { setExtras((s) => new Set(s).add(id)); ir('inicio-comprar'); }} onReload={onReload} />
+          <VaiFaltarSecao situacao={situacao} itens={vaiFaltar} postosNaLista={totais.naLista}
+            onPorNaLista={(i) => porNaLista(i)} onVerNaLista={mostrarNaLista} onReload={onReload} />
 
-        {cfg.podeConfigurar && (
-          <button onClick={() => setConfig(true)} className="w-full flex items-center justify-center gap-2 text-xs font-bold text-zinc-500 hover:text-zinc-700 py-2 cursor-pointer">
-            <i className="ri-settings-3-line" />Quanto pedir ({cfg.diasCompra} dias de uso) e contagens programadas
-          </button>
-        )}
+          {cfg.podeConfigurar && (
+            <button onClick={() => setConfig(true)} className="w-full flex items-center justify-center gap-2 text-xs font-bold text-zinc-500 hover:text-zinc-700 py-2 cursor-pointer lg:col-span-2 lg:border lg:border-dashed lg:border-zinc-300 lg:rounded-xl lg:hover:bg-white">
+              <i className="ri-settings-3-line" />Quanto pedir ({cfg.diasCompra} dias de uso) e contagens programadas
+            </button>
+          )}
+        </aside>
       </div>
 
       <ContagemFolha
@@ -117,32 +151,35 @@ export default function InicioTab({ situacao, carregando, erro, onReload }: {
   );
 }
 
-function Bloco({ icone, n, rotulo, detalhe, tom, onClick }: {
-  icone: string; n: number; rotulo: string; detalhe: string; tom: 'red' | 'dark' | 'amber' | 'ok'; onClick: () => void;
+function Bloco({ icone, n, rotulo, detalhe, tom, onClick, ajuda }: {
+  icone: string; n: number; rotulo: string; detalhe: string; tom: 'red' | 'dark' | 'amber' | 'ok'; onClick: () => void; ajuda: React.ReactNode;
 }) {
   const cor = tom === 'red' ? 'text-red-600' : tom === 'amber' ? 'text-amber-600' : tom === 'ok' ? 'text-emerald-600' : 'text-zinc-900';
   return (
-    <button onClick={onClick} className="relative text-left bg-white border border-zinc-200 rounded-2xl px-3 py-2.5 hover:border-amber-300 cursor-pointer">
+    <div onClick={onClick} role="button" className="relative text-left bg-white border border-zinc-200 rounded-2xl px-3 py-2.5 hover:border-amber-300 cursor-pointer">
       <i className={`${icone} text-lg text-amber-600`} />
       {tom === 'ok' && <i className="ri-check-line absolute right-2.5 top-2 text-emerald-600 font-bold" />}
       <p className={`text-[26px] font-extrabold leading-none mt-1 tabular-nums ${cor}`}>{n}</p>
-      <p className="text-[12.5px] font-extrabold text-zinc-800 mt-1">{rotulo}</p>
+      <p className="text-[12.5px] font-extrabold text-zinc-800 mt-1 flex items-center gap-1">{rotulo}<Ajuda titulo={rotulo}>{ajuda}</Ajuda></p>
       <p className="text-[10.5px] text-zinc-400 leading-tight mt-0.5">{detalhe}</p>
-    </button>
+    </div>
   );
 }
 
-function VaiFaltarSecao({ situacao, itens, onPorNaLista, onReload }: {
+function VaiFaltarSecao({ situacao, itens, postosNaLista, onPorNaLista, onVerNaLista, onReload }: {
   situacao: SituacaoEstoque;
   itens: InsumoSituacao[];
-  onPorNaLista: (id: string) => void;
-  onReload: () => void;
+  postosNaLista: number;
+  onPorNaLista: (i: InsumoSituacao) => Promise<void>;
+  onVerNaLista: (id: string) => void;
+  onReload: () => void | Promise<void>;
 }) {
   const { user } = useAuth();
   const toast = useToast();
   const { reloadInsumos } = useEstoque();
   const [salvando, setSalvando] = useState<string | null>(null);
   const { diasPrevisao } = situacao.config;
+  const postos = situacao.insumos.filter((i) => i.naLista && !i.abaixoMinimo);
   const comUso = situacao.insumos.filter((i) => i.acompanha && (i.consumoDia ?? 0) > 0).length;
   const acompanhados = situacao.insumos.filter((i) => i.acompanha).length;
 
@@ -164,17 +201,27 @@ function VaiFaltarSecao({ situacao, itens, onPorNaLista, onReload }: {
   return (
     <section id="inicio-faltar" className="scroll-mt-4">
       <div className="flex items-baseline gap-2 mb-2 px-0.5">
-        <h2 className="text-base font-extrabold text-zinc-900">Vai faltar</h2>
+        <h2 className="text-base lg:text-lg font-extrabold text-zinc-900 flex items-center gap-1.5">Vai faltar
+          <Ajuda titulo="Vai faltar">
+            Pelo uso real dos últimos 14 dias (vendas que baixam pela ficha técnica, perdas e produção), estes insumos acabam em até {diasPrevisao} dias, mas o estoque ainda está acima do mínimo, então eles <b>não estão na lista de compras</b>.
+            <br /><br /><b>Pôr na lista</b>: leva o insumo para “Comprar”, para pedir junto. Ele sai sozinho de lá quando a mercadoria chegar.
+            <br /><b>Mínimo de X</b>: grava um estoque mínimo, e daqui para frente ele avisa sozinho.
+          </Ajuda>
+        </h2>
         <span className={`text-xs font-bold rounded-full px-2 py-0.5 ${itens.length ? 'bg-amber-500 text-white' : 'bg-emerald-600 text-white'}`}>{itens.length}</span>
-        <span className="text-xs text-zinc-400 flex-1">em até {diasPrevisao} dias, fora da lista</span>
+        <span className="text-xs text-zinc-400 flex-1">acaba em até {diasPrevisao} dias e ainda não está na lista de compras</span>
       </div>
       <div className="space-y-2.5">
         {itens.length === 0 && (
           <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 flex items-start gap-3">
             <i className="ri-checkbox-circle-fill text-xl text-emerald-600 mt-0.5" />
             <div>
-              <p className="text-sm font-bold text-emerald-800">Nada vai faltar fora da lista</p>
-              <p className="text-xs text-emerald-700 mt-0.5">Pelo ritmo de uso, o que não está em “Comprar” dura mais de {diasPrevisao} dias.</p>
+              <p className="text-sm font-bold text-emerald-800">{postosNaLista ? 'O que ia faltar já está na lista de compras' : 'Nada mais vai faltar'}</p>
+              <p className="text-xs text-emerald-700 mt-0.5">
+                {postosNaLista
+                  ? <>Está em “Comprar”: {postos.map((i, k) => <span key={i.id}>{k > 0 && ', '}<button onClick={() => onVerNaLista(i.id)} className="font-bold underline cursor-pointer">{i.nome}</button></span>)}. O resto dura mais de {diasPrevisao} dias pelo ritmo de uso.</>
+                  : <>Pelo ritmo de uso, o que não está em “Comprar” dura mais de {diasPrevisao} dias.</>}
+              </p>
             </div>
           </div>
         )}
@@ -197,8 +244,13 @@ function VaiFaltarSecao({ situacao, itens, onPorNaLista, onReload }: {
                 {' · '}usa ~{fmtQtd(i.consumoDia ?? 0, i.unidade)} por dia · {i.minimo > 0 ? `mínimo ${fmtQtd(i.minimo, i.unidade)} (ainda não avisou)` : <b>sem estoque mínimo</b>}
               </p>
               <div className="flex gap-2 mt-2 flex-wrap">
-                <button onClick={() => onPorNaLista(i.id)} className="min-h-[36px] px-3 rounded-xl bg-amber-500 text-zinc-900 text-[12.5px] font-bold cursor-pointer flex items-center gap-1">
-                  <i className="ri-add-line" />Pôr na lista
+                <button
+                  disabled={salvando === i.id}
+                  onClick={async () => { setSalvando(i.id); await onPorNaLista(i); setSalvando(null); }}
+                  title="Leva para a lista de compras (Comprar), no cartão do fornecedor dele"
+                  className="min-h-[36px] px-3 rounded-xl bg-amber-500 text-zinc-900 text-[12.5px] font-bold cursor-pointer flex items-center gap-1 disabled:opacity-50"
+                >
+                  <i className="ri-add-line" />Pôr na lista de compras
                 </button>
                 {i.minimo === 0 && (
                   <button disabled={salvando === i.id} onClick={() => definirMinimo(i, sug)} className="min-h-[36px] px-3 rounded-xl border border-zinc-200 text-[12.5px] font-bold text-zinc-700 cursor-pointer disabled:opacity-50">

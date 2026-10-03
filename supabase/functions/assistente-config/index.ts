@@ -97,6 +97,11 @@ async function setSetting(admin: SupabaseClient, key: string, value: unknown) {
   if (error) throw new Error(error.message);
 }
 
+// Grupo configurado na tela: o assistente não pergunta mais pasta/resumo no WhatsApp (webhook › grupoNovo).
+async function marcarGrupoConfigurado(admin: SupabaseClient, jid: string) {
+  await admin.from('asst_groups').update({ config_asked_at: new Date().toISOString() }).eq('group_jid', jid).is('config_asked_at', null);
+}
+
 // Cotação do dólar (venda, comercial — sem IOF do cartão) para mostrar o custo da IA
 // em reais. AwesomeAPI (atualiza ao longo do dia); se falhar, PTAX do Banco Central.
 // Guardada 1 h em asst_settings.usd_brl; sem nenhuma fonte, usa a última conhecida.
@@ -234,7 +239,7 @@ Deno.serve(async (req) => {
           if ((data ?? []).length < 1000) break;
         }
         const fx = await usdBrl(admin, cfg);
-        const { data: gs } = await admin.from('asst_groups').select('group_jid, name, is_enabled, task_list_id, read_media').order('name');
+        const { data: gs } = await admin.from('asst_groups').select('group_jid, name, is_enabled, task_list_id, read_media, daily_summary').order('name');
         const groups = [];
         for (const g of gs ?? []) {
           const { data: last } = await admin.from('asst_group_messages').select('sent_at').eq('group_jid', g.group_jid).order('sent_at', { ascending: false }).limit(1).maybeSingle();
@@ -247,6 +252,7 @@ Deno.serve(async (req) => {
             default_tenant_id: cfg.default_tenant_id ?? null,
             morning_brief: cfg.morning_brief ?? { enabled: true, time: '07:30' },
             pay_timing: { modo: 'vencimento', dias_antes: 0, hora: '08:00', ...(cfg.pay_timing ?? {}) },
+            group_summary: { time: '19:00', ...(cfg.group_summary ?? {}) },
           },
           tenants: tenants.data ?? [],
           memories: memories.data ?? [],
@@ -409,6 +415,7 @@ Deno.serve(async (req) => {
           .eq('group_jid', String(body.group_jid ?? '')).select('group_jid');
         if (error) throw new Error(error.message);
         if (!data?.length) return fail('Grupo não encontrado.');
+        await marcarGrupoConfigurado(admin, String(body.group_jid ?? ''));
         return ok();
       }
 
@@ -427,9 +434,19 @@ Deno.serve(async (req) => {
           patch.task_list_id = lid;
         }
         if ('read_media' in body) patch.read_media = !!body.read_media;
+        if ('daily_summary' in body) patch.daily_summary = !!body.daily_summary;
         const { data, error } = await admin.from('asst_groups').update(patch).eq('group_jid', jid).select('group_jid');
         if (error) throw new Error(error.message);
         if (!data?.length) return fail('Grupo não encontrado.');
+        await marcarGrupoConfigurado(admin, jid);
+        return ok();
+      }
+
+      // Horário do resumo diário dos grupos (2026-10-03): um só para todos os grupos com resumo ligado.
+      case 'set_group_summary_time': {
+        const time = String(body.time ?? '');
+        if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) return fail('Horário inválido (use HH:MM).');
+        await setSetting(admin, 'group_summary', { ...(cfg.group_summary ?? {}), time });
         return ok();
       }
 

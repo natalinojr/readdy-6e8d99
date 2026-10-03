@@ -12,6 +12,7 @@ import { dateKeyBrasilia, todayBrasilia } from '@/lib/dateUtils';
 import { confirmar } from '@/components/base/Dialogos';
 import ContagemGaveta, { contagemVazia, fmtBRL, valorDe, type ValorContado } from './ContagemGaveta';
 import SeloCeu from './SeloCeu';
+import ConfirmaEnter from './ConfirmaEnter';
 
 export interface AberturaFeita { hora: string; valor: number; modo: 'loja' | 'caixa' }
 
@@ -47,6 +48,9 @@ export default function AbrirLojaView({ modo, onVoltar, onAberta, onFecharDia }:
   const [ultimo, setUltimo] = useState<UltimoFechamento | null | undefined>(undefined);
   const [abrindo, setAbrindo] = useState(false);
   const [erro, setErro] = useState('');
+  const [confirmando, setConfirmando] = useState(false);
+  // Computador: o cursor já começa na primeira cédula (no celular abriria o teclado sem pedir).
+  const [computador] = useState(() => typeof window !== 'undefined' && window.matchMedia('(min-width: 768px)').matches);
 
   const nome = user?.nome ?? 'Operador';
   const podeAbrir = hasPermissao('pdv_abrir_caixa');
@@ -134,18 +138,23 @@ export default function AbrirLojaView({ modo, onVoltar, onAberta, onFecharDia }:
     }
   }, [valor, podeAbrir, diaAnterior, modo, abrirLoja, abrirCaixa, nome, ultimo, temDiferenca, diferenca, motivo, registrarEvento, user?.perfil, user?.tenantId, contagem.modo, onAberta]);
 
-  // Enter abre (computador). Dentro de botão o Enter faz o clique normal do botão.
+  // Enter NUNCA abre direto (loja, 2026-10-03: o Enter da contagem abria o caixa sem querer).
+  // Pelo teclado sempre passa pela confirmação; o clique no botão continua abrindo de uma vez.
+  const pedirConfirmacao = useCallback(() => {
+    if (valor == null || abrindoRef.current || !podeAbrir) return;
+    setConfirmando(true);
+  }, [valor, podeAbrir]);
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
-      if (e.key !== 'Enter' || e.shiftKey) return;
+      if (e.key !== 'Enter' || e.shiftKey || e.repeat) return;
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === 'BUTTON' || tag === 'TEXTAREA') return;
       e.preventDefault();
-      abrir();
+      pedirConfirmacao();
     };
     window.addEventListener('keydown', h);
     return () => window.removeEventListener('keydown', h);
-  }, [abrir]);
+  }, [pedirConfirmacao]);
 
   const titulo = modo === 'caixa'
     ? (diaAnterior ? 'O dia anterior ficou aberto' : 'A loja está aberta, mas o caixa está fechado')
@@ -206,6 +215,17 @@ export default function AbrirLojaView({ modo, onVoltar, onAberta, onFecharDia }:
 
   return (
     <div className="flex flex-col h-full overflow-y-auto" style={fundo}>
+      {confirmando && valor != null && (
+        <ConfirmaEnter
+          titulo={`${btnTxt} com ${fmtBRL(valor)}?`}
+          detalhe={!ultimo ? null : !temDiferenca
+            ? <span className="font-bold text-emerald-700">Bateu com o fechamento</span>
+            : <span className="text-amber-800"><b>{fmtBRL(Math.abs(diferenca))} {diferenca < 0 ? 'a menos' : 'a mais'}</b> que no fechamento ({fmtBRL(ultimo.valor)})</span>}
+          botao={btnTxt}
+          onConfirmar={() => { setConfirmando(false); abrir(); }}
+          onCancelar={() => setConfirmando(false)}
+        />
+      )}
       <div className="w-full max-w-5xl mx-auto px-4 md:px-8 pt-5 md:pt-8 pb-6">
         <button onClick={onVoltar} className="flex items-center gap-1.5 text-xs font-semibold text-stone-400 hover:text-stone-600 mb-3 cursor-pointer">
           <i className="ri-arrow-left-line" /> Voltar aos módulos
@@ -238,7 +258,7 @@ export default function AbrirLojaView({ modo, onVoltar, onAberta, onFecharDia }:
 
           <div className="md:grid md:grid-cols-[1fr_280px] md:gap-6 md:items-start">
             <div>
-              <ContagemGaveta estado={contagem} onChange={setContagem} />
+              <ContagemGaveta estado={contagem} onChange={setContagem} onEnterNoFim={pedirConfirmacao} focarPrimeiro={computador} />
               <div className="md:hidden">{campoMotivo}</div>
             </div>
 

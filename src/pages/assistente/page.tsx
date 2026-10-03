@@ -22,15 +22,15 @@ interface MorningBrief { enabled: boolean; time: string }
 // Quando o assistente pede para pagar um boleto pedido no grupo (asst_settings.pay_timing).
 interface PayTiming { modo: 'na_hora' | 'vencimento'; dias_antes: number; hora: string }
 interface Overview {
-  settings: { watched_tenant_ids: string[]; default_tenant_id: string | null; morning_brief: MorningBrief; pay_timing: PayTiming };
+  settings: { watched_tenant_ids: string[]; default_tenant_id: string | null; morning_brief: MorningBrief; pay_timing: PayTiming; group_summary?: { time: string } };
   tenants: Tenant[];
   memories: Memory[];
   reminders: { pending: Reminder[]; sent: Reminder[] };
   messages: Message[];
   whatsapp: { state: string | null; error?: string; owner_chat_id: string | null };
   usage30d: { replies: number; usd: number; brl: number | null; rate: number | null; rate_source: string | null; rate_at: string | null };
-  groups: { group_jid: string; name: string | null; is_enabled: boolean; last_at: string | null; task_list_id: string | null; read_media: boolean }[];
-  /** Pastas de tarefas que posso editar: destino do 📌 marcado num grupo. */
+  groups: { group_jid: string; name: string | null; is_enabled: boolean; last_at: string | null; task_list_id: string | null; read_media: boolean; daily_summary?: boolean }[];
+  /** Pastas de tarefas que posso editar: pasta do grupo (destino do 📌 e das tarefas que nascem do grupo). */
   task_lists?: { id: string; path: string }[];
 }
 
@@ -472,6 +472,21 @@ export default function AssistentePage() {
                     <i className={`ri-refresh-line ${buscandoGrupos ? 'animate-spin' : ''}`} /> {buscandoGrupos ? 'Buscando…' : 'Buscar grupos'}
                   </button>
                 </div>
+                <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-zinc-600">
+                  <i className="ri-newspaper-line text-violet-500" />
+                  <span>Resumo diário dos grupos (os marcados abaixo) às</span>
+                  <input
+                    type="time"
+                    key={ov.settings.group_summary?.time ?? '19:00'}
+                    defaultValue={ov.settings.group_summary?.time ?? '19:00'}
+                    onBlur={(e) => {
+                      const v = e.target.value;
+                      if (v && v !== (ov.settings.group_summary?.time ?? '19:00')) acao(() => call('set_group_summary_time', { time: v }), `Resumo dos grupos às ${v}.`);
+                    }}
+                    className="h-8 px-2 rounded-lg border border-zinc-200 bg-white text-sm text-zinc-800"
+                  />
+                  <span className="text-zinc-400">— chega no chat do assistente, com o que precisa de você numerado.</span>
+                </div>
                 <details className="mt-3 mb-3 rounded-xl bg-violet-50/60 border border-violet-100 px-3 py-2 text-xs text-zinc-600">
                   <summary className="font-semibold text-violet-800 cursor-pointer">Como liberar um grupo novo</summary>
                   <ol className="list-decimal pl-4 mt-2 space-y-1.5">
@@ -480,15 +495,15 @@ export default function AssistentePage() {
                       {ov.whatsapp.state === 'open' ? '' : ' (hoje ele aparece desconectado: conecte pelo QR Code primeiro)'}.
                       O número da API oficial (canais públicos) não entra em grupos.
                     </li>
-                    <li>Volte aqui e toque em <b>Buscar grupos</b>. O grupo aparece na lista, <b>desligado</b>.</li>
-                    <li>Ligue o botão ao lado do nome do grupo. A partir daí o assistente lê tudo que chegar: texto, áudio (transcrito), foto e PDF.</li>
-                    <li>Teste no Telegram: <i>"o que falaram no grupo X hoje?"</i>.</li>
+                    <li>Se você estiver no grupo, a leitura liga sozinha e o assistente te pergunta <b>no WhatsApp</b>, com duas enquetes: <b>a pasta do grupo</b> e se você quer o <b>resumo diário</b>. É só tocar.</li>
+                    <li>Também dá para escolher aqui (o grupo aparece na lista; se não aparecer, toque em <b>Buscar grupos</b>) ou dizer ao assistente: <i>"o grupo X é da pasta Y, com resumo"</i>.</li>
+                    <li>A partir daí ele lê tudo que chegar: texto, áudio (transcrito), foto e PDF. Teste: <i>"o que falaram no grupo X hoje?"</i>.</li>
                   </ol>
                   <p className="mt-2">
                     <b>Mensagens de antes:</b> o assistente só vê o que chega depois de ligado. Para ele conhecer o passado, no celular abra o grupo › ⋮ › Mais › <b>Exportar conversa</b> › <b>Sem mídia</b> e mande o arquivo <b>.txt</b> para o assistente <b>pelo WhatsApp</b>, com o nome do grupo na legenda.
                   </p>
                   <p className="mt-1.5">
-                    <b>Grupo de obra → Tarefas:</b> escolha a pasta em <i>"📌 vira tarefa em"</i>. No grupo, quem reagir com 📌 numa mensagem manda ela (texto, áudio transcrito, foto ou PDF) para a caixa dessa pasta no módulo Tarefas; o assistente reage 📥. Lá, quem edita a pasta decide: vira tarefa (✅ no grupo), anotação de uma tarefa (📝) ou descarta. Tirar o 📌 antes disso tira da caixa. Em grupo de obra, desmarque <i>"Ler fotos e PDFs com IA"</i>: cada foto lida custa.
+                    <b>Pasta do grupo → Tarefas:</b> escolha a pasta em <i>"Pasta do grupo"</i>. No grupo, quem reagir com 📌 numa mensagem manda ela (texto, áudio transcrito, foto ou PDF) para a caixa dessa pasta no módulo Tarefas; o assistente reage 📥. Lá, quem edita a pasta decide: vira tarefa (✅ no grupo), anotação de uma tarefa (📝) ou descarta. Tirar o 📌 antes disso tira da caixa. Em grupo de obra, desmarque <i>"Ler fotos e PDFs com IA"</i>: cada foto lida custa.
                   </p>
                   <p className="mt-1.5">
                     Por segurança, qualquer pessoa pode pôr o número do assistente num grupo, mas grupo novo só liga sozinho se você também estiver nele. Para parar de ler, é só desligar o botão.
@@ -504,11 +519,11 @@ export default function AssistentePage() {
                         <p className="text-[11px] text-zinc-400">{g.last_at ? `Última mensagem ${fmt(g.last_at)}` : 'Sem mensagens guardadas'}</p>
                         {g.is_enabled && (
                           <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[11px] text-zinc-500">
-                            <label className="flex items-center gap-1.5 min-w-0">
-                              <span className="shrink-0">📌 vira tarefa em</span>
+                            <label className="flex items-center gap-1.5 min-w-0" title="O 📌 numa mensagem do grupo e as tarefas que nascem do grupo vão para esta pasta">
+                              <span className="shrink-0">Pasta do grupo</span>
                               <select
                                 value={g.task_list_id ?? ''}
-                                onChange={(e) => acao(() => call('set_group_options', { group_jid: g.group_jid, task_list_id: e.target.value || null }), e.target.value ? 'Pasta do grupo salva: quem reagir 📌 manda a mensagem para a caixa dela.' : '📌 desligado neste grupo.')}
+                                onChange={(e) => acao(() => call('set_group_options', { group_jid: g.group_jid, task_list_id: e.target.value || null }), e.target.value ? 'Pasta do grupo salva: o 📌 e as tarefas do grupo vão para ela.' : 'Grupo sem pasta (📌 desligado neste grupo).')}
                                 className="min-w-0 max-w-[14rem] h-7 px-1.5 rounded-lg border border-zinc-200 bg-white text-[11px] text-zinc-700"
                               >
                                 <option value="">(nenhuma pasta)</option>
@@ -523,6 +538,15 @@ export default function AssistentePage() {
                                 className="accent-violet-600"
                               />
                               Ler fotos e PDFs com IA
+                            </label>
+                            <label className="flex items-center gap-1.5 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={!!g.daily_summary}
+                                onChange={(e) => acao(() => call('set_group_options', { group_jid: g.group_jid, daily_summary: e.target.checked }), e.target.checked ? `Resumo diário deste grupo ligado (às ${ov.settings.group_summary?.time ?? '19:00'}).` : 'Resumo diário deste grupo desligado.')}
+                                className="accent-violet-600"
+                              />
+                              Resumo diário
                             </label>
                           </div>
                         )}

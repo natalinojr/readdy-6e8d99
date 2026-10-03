@@ -8,7 +8,7 @@ import { pedirAoChat } from '@/lib/assistenteFoco';
 import { chamarAssistente } from '@/lib/assistenteApp';
 import ItensClassificarCard from '@/components/feature/assistente/ItensClassificarCard';
 import { BaixaDaConta, ContasAtrasadasInline, ContasDreInline } from '@/components/feature/assistente/PendenciasChat';
-import type { ItemHoje, PendHoje } from './organizar';
+import type { ItemHoje, PendHoje, Porcao } from './organizar';
 import { diasEntre } from './organizar';
 
 const brl = (n: number) => Number(n ?? 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -29,7 +29,9 @@ export function rotuloPrazo(prazo: string | null, hoje: string): { texto: string
 const semPrefixo = (t: string) => t.replace(/^Falta o boleto:\s*/, '');
 /** Sem "Não vou fazer" genérico: têm saída própria (aqui ou na tela que o cartão abre). */
 const SEM_DESCARTE = new Set(['boleto_faltando', 'aprovacao', 'pedido_pagamento', 'pedido_pagamento_pagar', 'pagamento_grupo', 'pagamento_pendente',
-  'compra_pelo_celular', 'sangria_sem_cupom', 'sangria_nao_saiu', 'sangria_valor_diferente', 'recebimento_sem_nota', 'boleto_email']);
+  'compra_pelo_celular', 'sangria_sem_cupom', 'sangria_nao_saiu', 'sangria_valor_diferente', 'recebimento_sem_nota', 'boleto_email',
+  // Avisos antes de virar problema (2026-10-03): saem por "Ciente"/"Já comprei" ou fecham sozinhos.
+  'vendas_abaixo_ritmo', 'caixa_nao_cobre', 'insumo_antes_do_pico']);
 
 /** Texto do pedido de boleto que vai para a caixa de digitação do chat (o dono revisa e envia). */
 function textoPedirBoletos(item: ItemHoje, ps: PendHoje[]): string {
@@ -67,6 +69,8 @@ export default function CartaoHoje({ item, hoje, dono, papel, meuNome, mostrarLo
   const [erro, setErro] = useState<string | null>(null);
   // "N contas atrasadas": a data das contas juntadas não é a mais antiga de todas (a agregada não diz) — só o selo.
   const prazo = item.tipo === 'contas_vencidas' && p.kind === 'conta_atrasada' ? { texto: 'atrasadas', tom: 'red' as const } : rotuloPrazo(item.prazo, hoje);
+  // Caixa da semana: o "prazo" é o dia em que o dinheiro deixa de cobrir ("falta sábado"), não um vencimento.
+  if (prazo && p.kind === 'caixa_nao_cobre') prazo.texto = prazo.texto.replace(/^vence/, 'falta');
   const t = item.tenantId;
   const financeiro = dono || papel === 'admin' || papel === 'gerente' || papel === 'financeiro';
 
@@ -139,6 +143,18 @@ export default function CartaoHoje({ item, hoje, dono, papel, meuNome, mostrarLo
     </button>);
   } else if (p.kind === 'estoque_critico') {
     if (p.rota) add('ver', <button onClick={() => abrir(t, p.rota as string)} className={PRINCIPAL}><i className="ri-archive-line" /> Ver o estoque</button>);
+  } else if (p.kind === 'vendas_abaixo_ritmo') {
+    // Fecha sozinho quando as vendas voltam ao ritmo; "Ciente" tira daqui até a próxima janela (19h).
+    add('ver', <button onClick={() => abrir(t, '/dashboard')} className={PRINCIPAL}><i className="ri-line-chart-line" /> Ver as vendas</button>);
+    add('ok', <button disabled={ocupado} onClick={() => rodar(() => marcar(p.id, 'resolvida', 'ciente pela tela Hoje'))} className={LINK}>Ciente</button>);
+  } else if (p.kind === 'caixa_nao_cobre') {
+    // Fecha sozinho quando o saldo volta a cobrir; "Ciente" tira daqui até amanhã (se ainda não cobrir).
+    add('ver', <button onClick={() => abrir(t, '/financeiro?tab=painel')} className={PRINCIPAL}><i className="ri-calendar-check-line" /> Ver o que vence</button>);
+    add('ok', <button disabled={ocupado} onClick={() => rodar(() => marcar(p.id, 'resolvida', 'ciente pela tela Hoje'))} className={LINK}>Ciente — me lembre amanhã</button>);
+  } else if (p.kind === 'insumo_antes_do_pico') {
+    // Fecha sozinho quando a entrada é registrada (o estoque passa a chegar ao pico) ou o pico passa.
+    add('ver', <button onClick={() => abrir(t, '/estoque')} className={PRINCIPAL}><i className="ri-shopping-cart-2-line" /> Ver o que comprar</button>);
+    add('feito', <button disabled={ocupado} onClick={() => rodar(() => marcar(p.id, 'resolvida', 'comprou ou produziu (tela Hoje)'))} className={SECUNDARIO}><i className="ri-check-line" /> Já comprei / produzi</button>);
   } else if (p.rota) {
     add('abrir', <button onClick={() => abrir(t, p.kind === 'conta_atrasada' ? '/financeiro?tab=contas-vencidas' : p.rota as string)} className={PRINCIPAL}>
       <i className="ri-arrow-right-up-line" /> Abrir e resolver
@@ -181,6 +197,7 @@ export default function CartaoHoje({ item, hoje, dono, papel, meuNome, mostrarLo
             {item.valor != null && item.valor > 0 && <span className="text-[15px] font-bold text-zinc-900 tabular-nums whitespace-nowrap">{brl(item.valor)}</span>}
           </div>
           {porQue && <p className="text-[13px] text-zinc-500 leading-snug mt-0.5 line-clamp-3">{porQue}</p>}
+          {item.porcao && <LinhaPorcao porcao={item.porcao} hoje={hoje} urgente={item.bloco === 'agora'} />}
         </div>
       </div>
 
@@ -257,3 +274,37 @@ function BaixaJunta({ p, hoje, marcar, onMudou }: { p: PendHoje; hoje: string; m
     </div>
   );
 }
+
+/** Trabalho acumulado em porções (2026-10-03): a de hoje, quanto andou e quando termina nesse ritmo. */
+// urgente = o cartão está em "Agora" (nota com boleto vencido ou vencendo): a porção ajuda a começar,
+// mas o texto não diz que o resto pode esperar.
+function LinhaPorcao({ porcao, hoje, urgente }: { porcao: Porcao; hoje: string; urgente: boolean }) {
+  const faltaHoje = Math.max(0, porcao.meta - porcao.feitos);
+  const depoisDeHoje = Math.max(0, porcao.restante - faltaHoje);
+  const diasDepois = Math.ceil(depoisDeHoje / porcao.meta);
+  const fim = new Date(`${hoje}T12:00:00Z`);
+  fim.setUTCDate(fim.getUTCDate() + diasDepois);
+  const termina = diasDepois === 0 ? 'hoje' : diasDepois === 1 ? 'amanhã' : diasDepois <= 6 ? DIAS[fim.getUTCDay()] : ddmm(fim.toISOString().slice(0, 10));
+  const pct = Math.min(100, Math.round((porcao.feitos / porcao.meta) * 100));
+  return (
+    <div className={`mt-2 rounded-xl px-3 py-2 ${porcao.feita ? 'bg-emerald-50 border border-emerald-100' : 'bg-amber-50/60 border border-amber-100'}`}>
+      {porcao.feita ? (
+        <p className="text-[12px] font-semibold text-emerald-800">
+          <i className="ri-check-line" /> Porção de hoje feita ({porcao.feitos}). {porcao.restante === 0 ? 'Acabou!'
+            : urgente ? `Ainda ${porcao.restante === 1 ? 'falta 1, com boleto vencido ou vencendo' : `faltam ${porcao.restante}, com boleto vencido ou vencendo`} — se der, adiante mais.`
+            : `Faltam ${porcao.restante} — no ritmo, termina ${termina}.`}
+        </p>
+      ) : (
+        <>
+          <div className="flex items-center justify-between gap-2 text-[12px]">
+            <span className="font-semibold text-amber-900">Porção de hoje: {porcao.meta}</span>
+            <span className="text-amber-800 tabular-nums">já foram {porcao.feitos} de {porcao.meta}</span>
+          </div>
+          <div className="mt-1 h-1.5 rounded-full bg-amber-100 overflow-hidden"><div className="h-full bg-amber-500 rounded-full" style={{ width: `${pct}%` }} /></div>
+          <p className="mt-1 text-[11px] text-amber-800">Um pouco por dia: no ritmo, termina {termina}. {urgente ? 'Comece pelas mais antigas.' : 'O resto não precisa ser hoje.'}</p>
+        </>
+      )}
+    </div>
+  );
+}
+

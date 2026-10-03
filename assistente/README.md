@@ -587,7 +587,28 @@ leva `[Encaminhada]` **antes** do `debounce` (antes o prefixo do lote vinha da �
 `net.http_post` com a chave do vault `assistente_internal_key`. **Pasta por enquete (10-02, parte 2):** o brain manda
 enquete "Pasta?" (`enviar_enquete`); no repasse ela é gravada com `chat_id tg:…`, `kind = wa_repasse` e
 `ref.wa_number` — antes o voto caía fora do `allowed_chat_ids` e sumia. `votoDoRepasse` devolve o voto ao
-brain nesse chat e responde no WhatsApp. No chat do ERPOS (sem enquete) continua a lista numerada.
+brain nesse chat e responde no WhatsApp. No chat do ERPOS (sem enquete) continua a lista numerada. **Texto encaminhado (10-03):** a Evolution 2.x troca
+`extendedTextMessage` por `conversation` e põe o `contextInfo` em `data.contextInfo` — `parseMessage` só
+olhava dentro da mensagem, então TEXTO encaminhado nunca ganhava `[Encaminhada]` (áudio/foto sim). Agora
+recebe `data.contextInfo` (`isForwarded`, e o `stanzaId` da resposta citada da DRE).
+
+**Grupo novo: pasta + resumo diário (2026-10-03, pedido do dono).** Colunas novas em `asst_groups`:
+`daily_summary`, `summary_sent_on` (trava do dia) e `config_asked_at` (perguntado/configurado; os 4 grupos
+antigos foram marcados). A Evolution passou a assinar **`GROUPS_UPSERT`** (ação de manutenção do webhook
+`{ action: 'evo_eventos', dry_run? }`, chamada via `net.http_post` + vault; mantém url/headers/eventos e
+nunca devolve os headers). Quando o número entra num grupo (`groups.upsert`) — ou na 1ª mensagem de um
+grupo com `config_asked_at` nulo (ex.: só listado pelo "Buscar grupos") — `grupoNovo` confere se o dono
+está no grupo: se está, liga a leitura e manda no WhatsApp do dono o aviso + **duas enquetes do sistema**
+(`asst_polls.kind` `grupo_pasta` com `ref.opcoes {texto→list_id}` das 11 pastas mais usadas + "Nenhuma
+pasta", e `grupo_resumo` Sim/Não), respondidas por `votoConfigGrupo` sem modelo; se não está, só avisa que
+ficou desligado. Pergunta uma vez (update condicional em `config_asked_at`); configurar na tela
+(`set_group_options`/`toggle_group`) também marca. Pastas: `_shared/pastas-dono.ts` (brain + webhook).
+**Resumo diário** (`assistente-cron` › `resumoGrupos`): no horário `asst_settings.group_summary.time`
+(padrão 19:00, janela 3 h; tela Assistente › Grupos ou ação `set_group_summary_time`), cada grupo ligado
+com resumo e mensagem no dia vira "O que rolou" + "Precisa de você" numerado (Haiku 4.5, feature
+`resumo-grupos` em Custos da IA), tudo numa mensagem no chat do assistente + push. Teste sem enviar:
+`{ preview: 'grupos', dia?, todos? }`. No brain: `configurar_grupo` (pasta/resumo/ligar) e `listar_grupos`
+mostra pasta e resumo; "o 1 do grupo X vira tarefa" = `criar_tarefa` na pasta do grupo.
 
 **Agendamento de entrevista com o candidato (2026-09-14, Fases 1–2).** Decisões do dono: início
 automático pela etapa "Chamar p/ entrevista" (`hiring_stages.native_kind = 'agendar'`); disponibilidade

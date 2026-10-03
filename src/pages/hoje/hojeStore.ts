@@ -8,7 +8,7 @@ import { useAuth, DB_TO_FRONTEND_ROLE } from '@/contexts/AuthContext';
 import { usePendencias } from '@/contexts/PendenciasContext';
 import { todayBrasilia } from '@/lib/dateUtils';
 import { DONO_EMAIL } from '../../../supabase/functions/_shared/pendencia-visivel';
-import { organizarHoje, visivelNaHoje, pendHojeDaLinha, COLUNAS_PEND_HOJE, type ItemHoje, type PendHoje } from './organizar';
+import { organizarHoje, visivelNaHoje, pendHojeDaLinha, COLUNAS_PEND_HOJE, PORCAO_KINDS, type ItemHoje, type PendHoje } from './organizar';
 
 interface Estado {
   pendencias: PendHoje[] | null;
@@ -67,9 +67,16 @@ export async function recarregarHoje(quem: Quem | null, idadeMax = 0): Promise<v
       const pendencias: PendHoje[] = (data ?? [])
         .filter((r) => visivelNaHoje(r.kind, mapa.get(r.tenant_id), quem.email, ehDono))
         .map(pendHojeDaLinha);
+      // Porções do dia: total de cada trabalho acumulado guardado pelo cron na 1ª volta do dia.
+      const idsPorcao = pendencias.filter((p) => PORCAO_KINDS.has(p.kind)).map((p) => p.id);
+      const porcoes = new Map<string, number>();
+      if (idsPorcao.length) {
+        const { data: pc } = await supabase.from('pendencias_porcao').select('pendencia_id, total_inicio').eq('dia', dia).in('pendencia_id', idsPorcao);
+        for (const r of (pc ?? []) as Array<{ pendencia_id: string; total_inicio: number }>) porcoes.set(r.pendencia_id, Number(r.total_inicio));
+      }
       // Trocou de usuário no meio da leitura (sair e entrar com outra pessoa): descarta.
       if (dono !== eu) return;
-      estado = { pendencias, itens: organizarHoje(pendencias, dia), erro: null, hoje: dia, papeis, quando: Date.now() };
+      estado = { pendencias, itens: organizarHoje(pendencias, dia, porcoes), erro: null, hoje: dia, papeis, quando: Date.now() };
     } catch (e) {
       if (dono !== eu) return;
       // Mantém o que já estava; a próxima volta tenta de novo.

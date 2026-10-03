@@ -47,6 +47,8 @@ export interface InsumoSituacao {
   abaixoMinimo: boolean;
   esgotado: boolean;
   vaiFaltar: boolean;
+  /** Posto na lista de compras à mão (Vai faltar › Pôr na lista); sai sozinho quando a mercadoria chega */
+  naLista: boolean;
 }
 
 export interface PedidoMandado {
@@ -73,7 +75,7 @@ export interface SituacaoEstoque {
   insumos: InsumoSituacao[];
   planos: PlanoContagem[];
   pedidos: PedidoMandado[];
-  totais: { abaixoMinimo: number; esgotados: number; zeradosAbaixo: number; vaiFaltar: number };
+  totais: { abaixoMinimo: number; esgotados: number; zeradosAbaixo: number; vaiFaltar: number; naLista: number };
 }
 
 export const DIAS_COMPRA_PADRAO = 60;
@@ -275,6 +277,7 @@ export function mapearSituacao(raw: Record<string, any>): SituacaoEstoque {
       abaixoMinimo: !!r.abaixo_minimo,
       esgotado: !!r.esgotado,
       vaiFaltar: !!r.vai_faltar,
+      naLista: !!r.na_lista,
     })),
     planos: ((raw?.planos ?? []) as Array<Record<string, any>>).map((p) => ({
       id: String(p.id),
@@ -299,6 +302,7 @@ export function mapearSituacao(raw: Record<string, any>): SituacaoEstoque {
       esgotados: Number(t.esgotados ?? 0),
       zeradosAbaixo: Number(t.zerados_abaixo ?? 0),
       vaiFaltar: Number(t.vai_faltar ?? 0),
+      naLista: Number(t.na_lista ?? 0),
     },
   };
 }
