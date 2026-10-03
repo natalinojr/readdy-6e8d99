@@ -587,7 +587,10 @@ leva `[Encaminhada]` **antes** do `debounce` (antes o prefixo do lote vinha da �
 `net.http_post` com a chave do vault `assistente_internal_key`. **Pasta por enquete (10-02, parte 2):** o brain manda
 enquete "Pasta?" (`enviar_enquete`); no repasse ela é gravada com `chat_id tg:…`, `kind = wa_repasse` e
 `ref.wa_number` — antes o voto caía fora do `allowed_chat_ids` e sumia. `votoDoRepasse` devolve o voto ao
-brain nesse chat e responde no WhatsApp. No chat do ERPOS (sem enquete) continua a lista numerada.
+brain nesse chat e responde no WhatsApp. No chat do ERPOS (sem enquete) continua a lista numerada. **Texto encaminhado (10-03):** a Evolution 2.x troca
+`extendedTextMessage` por `conversation` e põe o `contextInfo` em `data.contextInfo` — `parseMessage` só
+olhava dentro da mensagem, então TEXTO encaminhado nunca ganhava `[Encaminhada]` (áudio/foto sim). Agora
+recebe `data.contextInfo` (`isForwarded`, e o `stanzaId` da resposta citada da DRE).
 
 **Agendamento de entrevista com o candidato (2026-09-14, Fases 1–2).** Decisões do dono: início
 automático pela etapa "Chamar p/ entrevista" (`hiring_stages.native_kind = 'agendar'`); disponibilidade

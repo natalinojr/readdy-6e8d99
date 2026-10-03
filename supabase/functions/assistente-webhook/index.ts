@@ -1102,7 +1102,7 @@ async function publicOnEvolution(admin: SupabaseClient): Promise<boolean> {
 // Dono testando um link: mensagem com o código de um canal existente, ou teste aberto (< 30 min).
 // deno-lint-ignore no-explicit-any
 async function ownerTestingPublic(admin: SupabaseClient, chatId: string, data: any): Promise<boolean> {
-  const p = parseMessage(data.message);
+  const p = parseMessage(data.message, data.contextInfo);
   const code = String(p.text ?? '').match(PUBLIC_CODE_RE)?.[1]?.toUpperCase();
   if (code) {
     const { data: ch } = await admin.from('bot_channels').select('id').eq('code', code).maybeSingle();
@@ -1137,7 +1137,7 @@ async function hiringReceipts(items: any[]) {
 // hiring-scheduler; devolve true se era conversa de agendamento ou resposta de entrevistador.
 // deno-lint-ignore no-explicit-any
 async function toHiringScheduler(number: string, data: any, replyTo?: string): Promise<boolean> {
-  const p = parseMessage(data.message);
+  const p = parseMessage(data.message, data.contextInfo);
   if (p.inner?.pollUpdateMessage || p.inner?.reactionMessage || p.inner?.protocolMessage) return false;
   let text = String(p.text ?? '').trim();
   if (p.kind === 'audio') {
@@ -1186,7 +1186,7 @@ async function resolveLid(admin: SupabaseClient, key: any, number: string): Prom
 // deno-lint-ignore no-explicit-any
 async function toPublicChannel(chatId: string, number: string, msgKey: MsgKey | null, data: any, isOwner: boolean, replyTo?: string) {
   const dest = replyTo || number; // responder no JID de origem (@lid), ver handle()
-  const p = parseMessage(data.message);
+  const p = parseMessage(data.message, data.contextInfo);
   if (p.inner?.pollUpdateMessage || p.inner?.reactionMessage || p.inner?.protocolMessage) return;
   let text = String(p.text ?? '').trim();
   let file: { base64: string; mime: string; name: string | null } | null = null;
@@ -1250,7 +1250,7 @@ async function handleGroup(admin: SupabaseClient, data: any, allowed: string[], 
 
   const conf = { ...GROUP_WATCH_DEFAULTS, ...(cfg.group_watch && typeof cfg.group_watch === 'object' ? cfg.group_watch : {}) };
   if (g.read_media === false) conf.read_media = false; // grupo de obra: foto/PDF sem IA (custo)
-  const p = parseMessage(data.message);
+  const p = parseMessage(data.message, data.contextInfo);
   // Reação: só o 📌 interessa (vira item na caixa da pasta de tarefas do grupo). O resto é ignorado.
   if (p.inner?.reactionMessage) {
     if (g.task_list_id) await pinParaTarefa(admin, g, data).catch((e) => log('ERROR', '📌 para tarefa', { groupJid, error: errMsg(e) }));
@@ -1375,7 +1375,7 @@ const reagirNoGrupo = (key: Record<string, unknown>, emoji: string) =>
 
 // deno-lint-ignore no-explicit-any
 async function pinParaTarefa(admin: SupabaseClient, g: { group_jid: string; name: string | null; task_list_id: string | null }, data: any) {
-  const reacao = parseMessage(data.message).inner?.reactionMessage ?? {};
+  const reacao = parseMessage(data.message, data.contextInfo).inner?.reactionMessage ?? {};
   const emoji = String(reacao.text ?? '').replace(/️/g, '').trim();
   const alvo = reacao.key ?? {};
   const alvoId = String(alvo.id ?? '');
@@ -1417,7 +1417,7 @@ async function pinParaTarefa(admin: SupabaseClient, g: { group_jid: string; name
     bruta = out?.messages?.records?.[0] ?? null;
     if (!bruta) { log('WARN', '📌 em mensagem que não achei', { group: g.name, message_id: alvoId }); return; }
   }
-  const pb = bruta ? parseMessage(bruta.message) : null;
+  const pb = bruta ? parseMessage(bruta.message, bruta.contextInfo) : null;
   const kind = String(gravada?.kind ?? pb?.kind ?? 'other');
   let content: string = String(gravada?.content ?? pb?.text ?? '').trim();
   const mime = String(gravada?.media_mime ?? pb?.mime ?? '').split(';')[0].toLowerCase() || null;
@@ -1508,8 +1508,11 @@ type Parsed = { kind: 'text' | 'audio' | 'image' | 'document' | 'video' | 'other
 
 // Desembrulha as mensagens do Baileys (efêmera / visualização única) e
 // classifica. O texto útil é a mensagem ou a legenda da mídia.
+// ctxTopo = data.contextInfo: a Evolution 2.x troca extendedTextMessage por conversation e tira o
+// contextInfo de dentro da mensagem (vai para data.contextInfo). Sem ele, TEXTO encaminhado nunca era
+// reconhecido ("[Encaminhada]" sumia e a mensagem virava pergunta do dono — caso real 2026-10-02).
 // deno-lint-ignore no-explicit-any
-function parseMessage(msg: any): Parsed {
+function parseMessage(msg: any, ctxTopo?: any): Parsed {
   let m = msg ?? {};
   for (let i = 0; i < 3; i++) {
     const inner = m.ephemeralMessage?.message ?? m.viewOnceMessage?.message ?? m.viewOnceMessageV2?.message ?? m.documentWithCaptionMessage?.message;
@@ -1518,12 +1521,13 @@ function parseMessage(msg: any): Parsed {
   }
   // deno-lint-ignore no-explicit-any
   const ctxOf = (x: any) => x?.contextInfo ?? {};
-  if (typeof m.conversation === 'string' && m.conversation.trim()) return { kind: 'text', text: m.conversation, mime: null, forwarded: false, inner: m };
-  if (m.extendedTextMessage?.text) return { kind: 'text', text: m.extendedTextMessage.text, mime: null, forwarded: !!ctxOf(m.extendedTextMessage).isForwarded, inner: m };
-  if (m.audioMessage) return { kind: 'audio', text: null, mime: m.audioMessage.mimetype ?? 'audio/ogg', forwarded: !!ctxOf(m.audioMessage).isForwarded, inner: m };
-  if (m.imageMessage) return { kind: 'image', text: m.imageMessage.caption || null, mime: m.imageMessage.mimetype ?? 'image/jpeg', forwarded: !!ctxOf(m.imageMessage).isForwarded, inner: m };
-  if (m.documentMessage) return { kind: 'document', text: m.documentMessage.caption || null, mime: m.documentMessage.mimetype ?? null, forwarded: !!ctxOf(m.documentMessage).isForwarded, inner: m };
-  if (m.videoMessage) return { kind: 'video', text: m.videoMessage.caption || null, mime: null, forwarded: false, inner: m };
+  const fwdTopo = !!ctxTopo?.isForwarded;
+  if (typeof m.conversation === 'string' && m.conversation.trim()) return { kind: 'text', text: m.conversation, mime: null, forwarded: fwdTopo, inner: m };
+  if (m.extendedTextMessage?.text) return { kind: 'text', text: m.extendedTextMessage.text, mime: null, forwarded: !!ctxOf(m.extendedTextMessage).isForwarded || fwdTopo, inner: m };
+  if (m.audioMessage) return { kind: 'audio', text: null, mime: m.audioMessage.mimetype ?? 'audio/ogg', forwarded: !!ctxOf(m.audioMessage).isForwarded || fwdTopo, inner: m };
+  if (m.imageMessage) return { kind: 'image', text: m.imageMessage.caption || null, mime: m.imageMessage.mimetype ?? 'image/jpeg', forwarded: !!ctxOf(m.imageMessage).isForwarded || fwdTopo, inner: m };
+  if (m.documentMessage) return { kind: 'document', text: m.documentMessage.caption || null, mime: m.documentMessage.mimetype ?? null, forwarded: !!ctxOf(m.documentMessage).isForwarded || fwdTopo, inner: m };
+  if (m.videoMessage) return { kind: 'video', text: m.videoMessage.caption || null, mime: null, forwarded: !!ctxOf(m.videoMessage).isForwarded || fwdTopo, inner: m };
   return { kind: 'other', text: null, mime: null, forwarded: false, inner: m };
 }
 
@@ -1803,7 +1807,7 @@ async function handle(payload: any) {
     // Exceção: recebimento de currículos. Só vale quando o dono AVISA antes ("vou mandar currículos"
     // abre 1 h de recebimento; "pronto" encerra) ou põe "currículo" na legenda do arquivo. Arquivo sem
     // aviso não é tratado como currículo (decisão do dono, 2026-09-13).
-    const p0 = parseMessage(data.message);
+    const p0 = parseMessage(data.message, data.contextInfo);
     const txt0 = String(p0.text ?? '').trim();
     const isTxt = p0.kind === 'document' && ((p0.mime ?? '').startsWith('text/plain') || /\.txt$/i.test(String(p0.inner?.documentMessage?.fileName ?? '')));
     const arquivo = (p0.kind === 'document' && !isTxt) || p0.kind === 'image';
@@ -1873,7 +1877,7 @@ async function handle(payload: any) {
     return;
   }
 
-  const p = parseMessage(data.message);
+  const p = parseMessage(data.message, data.contextInfo);
   if (p.inner?.pollUpdateMessage) return; // voto cifrado: o decifrado vem em messages.update
   let text = p.text ? p.text.trim() : '';
   // deno-lint-ignore no-explicit-any
@@ -1916,7 +1920,7 @@ async function handle(payload: any) {
   }
   // Resposta a uma pergunta do sistema (classificação DRE): gravada direto, sem modelo.
   if (!attachment && !p.forwarded && (p.kind === 'text' || p.kind === 'audio')) {
-    const stanza = p.inner?.extendedTextMessage?.contextInfo?.stanzaId;
+    const stanza = p.inner?.extendedTextMessage?.contextInfo?.stanzaId ?? data.contextInfo?.stanzaId; // texto: contextInfo vem fora (Evolution 2.x)
     const answered = await tryDreAnswer(admin, number, chatId, text.replace(/^\[Áudio\]\s*/, '').replace(/[.!]+$/, ''), stanza ? String(stanza) : null, msgKey)
       .catch((e) => { log('ERROR', 'tryDreAnswer', { error: errMsg(e) }); return false; });
     if (answered) return;
