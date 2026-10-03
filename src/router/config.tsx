@@ -51,6 +51,8 @@ const ContratacaoPage = lazy(() => import('@/pages/contratacao/page'));
 const NfsePage = lazy(() => import('@/pages/nfse/page'));
 const AssistentePage = lazy(() => import('@/pages/assistente/page'));
 const ReceberPage = lazy(() => import('@/pages/receber/page'));
+const HojePage = lazy(() => import('@/pages/hoje/page'));
+const InicioPorPerfil = lazy(() => import('@/pages/hoje/InicioPorPerfil'));
 
 const MesaQRPage = lazy(() => import('../pages/mesa-qr/page'));
 const JogosDemoPage = lazy(() => import('../components/jogos/JogosDemo'));
@@ -92,7 +94,9 @@ const routes: RouteObject[] = [
     path: '/',
     element: <AppLayout />,
     children: [
-      { index: true, element: <Navigate to="/modulos" replace /> },
+      // Cada perfil cai no seu trabalho (2026-10-03): dono/gerente/supervisão → Hoje; caixa → PDV.
+      { index: true, element: <InicioPorPerfil /> },
+      { path: 'hoje', element: <HojePage /> },
       { path: 'modulos', element: <ModulosPage /> },
       { path: 'onboarding', element: <OnboardingPage /> },
       { path: 'invite', element: <InvitePage /> },

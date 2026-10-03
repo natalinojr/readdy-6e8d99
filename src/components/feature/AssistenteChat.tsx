@@ -10,7 +10,8 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
 import { SHARE_KEY, type SharePayload } from '@/lib/shareIntake';
-import { EVENTO_ASSISTENTE, getFoco, limparFocoItem, resumirFoco, setFocoItem, type PedidoAbrir } from '@/lib/assistenteFoco';
+import { EVENTO_ASSISTENTE, EVENTO_ASSISTENTE_ACAO, getFoco, limparFocoItem, resumirFoco, setFocoItem, type PedidoAbrir, type PedidoAcaoChat } from '@/lib/assistenteFoco';
+import { chamarAssistente } from '@/lib/assistenteApp';
 import { useVoltarFecha } from '@/lib/voltarAndroid';
 import { confirmar } from '@/components/base/Dialogos';
 import BotaoAvisos from '@/components/feature/BotaoAvisos';
@@ -81,20 +82,8 @@ interface Payment {
 }
 interface Attach { base64: string; media_type: string; name: string; preview: string | null }
 
-async function call<T>(action: string, extra: Record<string, unknown> = {}): Promise<T> {
-  const { data, error } = await supabase.functions.invoke('assistente-app', { body: { action, ...extra } });
-  if (error) {
-    let msg = error.message;
-    const ctx = (error as { context?: Response }).context;
-    if (ctx && typeof ctx.json === 'function') {
-      try { const b = await ctx.json(); if (b?.error) msg = String(b.error); } catch { /* corpo não-JSON */ }
-    }
-    throw new Error(msg);
-  }
-  const resp = data as { success?: boolean; error?: string; data?: T } | null;
-  if (!resp?.success) throw new Error(resp?.error || 'Falha na operação');
-  return resp.data as T;
-}
+// Edge assistente-app: a função mora em lib/assistenteApp (a tela Hoje usa a mesma).
+const call = chamarAssistente;
 
 const blobToBase64 = (b: Blob) => new Promise<string>((resolve, reject) => {
   const r = new FileReader();
@@ -1124,6 +1113,28 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
     if (!pinFor || !/^\d{4,8}$/.test(pin) || paying) return;
     await pagarComPin(pinFor, pin, false);
   };
+
+  // Tela Hoje (2026-10-03): "Pagar" e "Mandar o boleto" nos cartões de lá passam pelo MESMO caminho
+  // da caixa de pendências — abre o chat na conversa Pagamentos, prepara no Inter e pede o PIN (ou a
+  // digital) aqui. O dinheiro continua tendo um caminho só.
+  const acoesHoje = useRef({ pagarConta, pagarPendencia, pedirPendencia, abrirConversa });
+  acoesHoje.current = { pagarConta, pagarPendencia, pedirPendencia, abrirConversa };
+  useEffect(() => {
+    if (!isOwner) return;
+    const ouvir = (e: Event) => {
+      const d = (e as CustomEvent<PedidoAcaoChat>).detail;
+      if (!d) return;
+      if (variant === 'floating') setModo('full');
+      const a = acoesHoje.current;
+      if (d.tipo === 'pedir') { a.pedirPendencia(d.texto); return; }
+      setErro(null);
+      a.abrirConversa('pagamentos');
+      const feito = d.tipo === 'pagar_conta' ? a.pagarConta(d.billId) : a.pagarPendencia(d.pendencia as PendenciaChat);
+      feito.catch((err) => setErro(err instanceof Error ? err.message : String(err)));
+    };
+    window.addEventListener(EVENTO_ASSISTENTE_ACAO, ouvir);
+    return () => window.removeEventListener(EVENTO_ASSISTENTE_ACAO, ouvir);
+  }, [isOwner, variant]);
 
   // Os demais usuários (2026-09-23): só a página de ações rápidas, com o que o acesso deles permite.
   // Sem loja (só o módulo Tarefas, 2026-09-24): o AuthContext deixa user nulo — o painel aparece

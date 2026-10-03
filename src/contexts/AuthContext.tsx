@@ -68,7 +68,7 @@ interface AuthContextType {
 
 // ─── Role mapping ─────────────────────────────────────────────────────────────
 
-const DB_TO_FRONTEND_ROLE: Record<string, UserPerfil> = {
+export const DB_TO_FRONTEND_ROLE: Record<string, UserPerfil> = {
   admin: 'admin',
   manager: 'gerente',
   supervisor: 'supervisao',

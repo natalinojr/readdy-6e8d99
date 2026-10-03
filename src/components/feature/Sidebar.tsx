@@ -3,7 +3,7 @@ import {
   LayoutDashboard, ShoppingCart, Coffee, Tablet, Monitor, UtensilsCrossed,
   LayoutGrid, Package, BarChart3, Users, Settings, LogOut, ChefHat,
   Shield, Heart, HelpCircle, ClipboardList, Bell, Truck, ArrowLeft, DollarSign,
-  ShieldCheck, Megaphone, UserSearch, Bot, FileText, Palette,
+  ShieldCheck, Megaphone, UserSearch, Bot, FileText, Palette, Sun,
 } from 'lucide-react';
 import { useModuleAccess, type ModuloLivre } from '@/hooks/useModuleAccess';
 import { useAuth } from '../../contexts/AuthContext';
@@ -37,7 +37,11 @@ interface NavSection {
 
 const navSections: NavSection[] = [
   {
-    items: [{ label: 'Dashboard', icon: LayoutDashboard, path: '/dashboard', permissao: 'gestao_dashboard' }],
+    items: [
+      // Porta de entrada que conduz (2026-10-03): o que precisa de você hoje, em todas as lojas.
+      { label: 'Hoje', icon: Sun, path: '/hoje' },
+      { label: 'Dashboard', icon: LayoutDashboard, path: '/dashboard', permissao: 'gestao_dashboard' },
+    ],
   },
   {
     title: 'Terminais PDV',
