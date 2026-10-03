@@ -271,6 +271,30 @@ Quando o usuario pedir "muda X":
 
 Secao viva: registrar aqui padroes, decisoes e pegadinhas reutilizaveis conforme o sistema evolui. Cada entrada com data
 
+### 2026-10-03 — Hoje fase 2: "o sistema chama você" (um número só, bom dia, aviso de aprovação)
+- **Um número só.**
+  - As regras da Hoje moram em `supabase/functions/_shared/hoje-organizar.ts`: `organizarHoje`, `visivelNaHoje`, `agoraDaPessoa`, `pendHojeDaLinha`, `tituloCurto` e `COLUNAS_PEND_HOJE`. O front reexporta em `src/pages/hoje/organizar.ts`, como em `lib/fidelidade.ts`.
+  - "Quem vê o quê" mora em `_shared/pendencia-visivel.ts`; o `PendenciasContext` reexporta `pendenciaVisivelPara`.
+  - A tela, o número do topo e o servidor contam igual.
+- **Leitura compartilhada.** `src/pages/hoje/hojeStore.ts` (`useSyncExternalStore`) faz uma leitura de pendências a cada 60 s, com a tela visível, para todos que olham. `useContagemHoje()` dá `{ agora, urgente }`.
+- **Número do topo.** `BotaoPendencias` mostra o "Agora" da Hoje (todas as lojas, pelo papel) e abre /hoje. Antes eram as "não vistas" da loja ativa. A caixa completa continua em /pendencias, com link na Hoje.
+- **Resolvido hoje** mostra quem resolveu, por `resolvida_por`: "você", "equipe" ou "sozinho". `null` quer dizer que o sistema fechou (boleto chegou, pagamento concluído…). Isso deixa visível o que o sistema faz sem ninguém.
+- **Resumo da manhã do dono** (`assistente-cron › morningBriefText`):
+  - o número grande é o "Agora" da Hoje, de todas as lojas do dono, com papel por loja;
+  - o botão é "Abrir o Hoje" (/hoje), e o push do resumo abre /hoje (`pushDono(corpo, url)`, `deliver(..., pushUrl)`).
+  - Antes dizia "N pendências em aberto", outro número.
+- **Bom dia da equipe** (`assistente-cron › bomDiaEquipe`):
+  - às 08:30 (janela de 3 h, uma vez por dia, `asst_settings.last_bom_dia_equipe`), gerente e supervisão com aviso ligado recebem "N coisas precisam de você hoje e M tarefas", que abre /hoje;
+  - quem não tem nada não recebe nada;
+  - liga, desliga e muda o horário em `asst_settings.bom_dia_equipe = { enabled, time }`;
+  - prévia sem enviar: `{ preview: 'bom_dia_equipe' }` com `x-internal-key`.
+- **Aviso de aprovação do PDV** (`send-push › aprovacao_pdv`):
+  - o `AprovacoesContext.addSolicitacao` chama sem esperar e sem travar o caixa;
+  - vai para supervisão e gerente da loja; o admin só recebe se nenhum deles tem aviso ligado;
+  - só quem é da loja dispara, e só para pedido `pendente` de até 10 min;
+  - o texto é o título da pendência `aprovacao` e o aviso abre /hoje.
+  - Antes só apitava para quem estava com o app aberto.
+
 ### 2026-10-03 — Tela Hoje (`/hoje`): a porta de entrada que conduz
 - **O que é:** a primeira tela depois do login. Mostra o que precisa da pessoa AGORA, em todas as lojas dela. Cada cartão resolve ali mesmo, e quando tudo acaba aparece "Tudo em dia ✓ / Pode fechar o app". É o pedido do dono de 2026-10-02: economia mental, conduzir, celular. Protótipo aprovado em `docs/prototipos/hoje-proposta.html`. Nenhuma tela saiu; os módulos continuam no menu.
 - **Quem cai onde** (`src/pages/hoje/InicioPorPerfil.tsx`, rota índice `/`; o login sem rota guardada vai para `/`):

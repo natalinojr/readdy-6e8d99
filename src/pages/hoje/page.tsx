@@ -77,6 +77,9 @@ export default function HojePage() {
   const silenciados = vis.filter((i) => i.bloco === 'silenciado').length;
   const lista = tarefas ?? [];
   const tarefasAbertas = lista.filter((t) => !t.feita);
+  // O que o sistema fechou sozinho hoje (boleto chegou, pagamento concluído, nota conferida…): a parte
+  // "ativa" do sistema fica visível — dá confiança de que ele trabalha mesmo sem ninguém olhar.
+  const sozinho = feitas.filter((f) => f.quem === 'sistema').length;
   // Nome da loja nos cartões: quem tem mais de uma loja (mesmo que só uma tenha algo hoje).
   const varias = nLojas > 1 || lojas.length > 1;
   // "Tudo em dia" só com certeza: sem erro de leitura, nada para agora, nada acumulado e as tarefas feitas.
@@ -259,7 +262,8 @@ export default function HojePage() {
           {feitas.length > 0 && (
             <section>
               <button onClick={() => setVerFeitas((v) => !v)} className="w-full text-left cursor-pointer">
-                <Titulo texto="Resolvido hoje" n={feitas.length} tom="green" explica="" acao={verFeitas ? 'Esconder' : 'Ver'} />
+                <Titulo texto="Resolvido hoje" n={feitas.length} tom="green"
+                  explica={sozinho > 0 ? `${sozinho} ${sozinho === 1 ? 'fechou sozinha' : 'fecharam sozinhas'}, pelo sistema` : ''} acao={verFeitas ? 'Esconder' : 'Ver'} />
               </button>
               {verFeitas && (
                 <div className="rounded-2xl border border-zinc-200 bg-white divide-y divide-zinc-100">
@@ -272,12 +276,19 @@ export default function HojePage() {
                         <p className="text-[13px] font-semibold text-zinc-700 leading-snug">{f.titulo}</p>
                         <p className="text-[11px] text-zinc-400">{f.status === 'descartada' ? 'Não vai fazer' : kindConfig(f.kind).label}{varias && f.loja ? ` · ${f.loja}` : ''}{f.motivo ? ` · ${f.motivo}` : ''}</p>
                       </div>
+                      <span className={`flex-shrink-0 mt-0.5 px-1.5 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wide ${f.quem === 'sistema' ? 'bg-violet-50 text-violet-700' : 'bg-zinc-100 text-zinc-500'}`}>
+                        {f.quem === 'sistema' ? 'fechou sozinha' : f.quem === 'eu' ? 'você' : 'equipe'}
+                      </span>
                     </div>
                   ))}
                 </div>
               )}
             </section>
           )}
+
+          <p className="text-[12px] text-zinc-400 text-center">
+            <button onClick={() => navigate('/pendencias')} className="font-semibold text-zinc-500 underline cursor-pointer">Ver todas as pendências e o histórico</button>
+          </p>
 
           {silenciados > 0 && (
             <p className="text-[12px] text-zinc-400 text-center"><i className="ri-notification-off-line" /> {silenciados} {silenciados === 1 ? 'aviso com “ciente”' : 'avisos com “ciente”'} — {silenciados === 1 ? 'volta' : 'voltam'} sozinho{silenciados === 1 ? '' : 's'} se piorar.</p>

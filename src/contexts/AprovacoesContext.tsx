@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
 import type { RealtimeChannel } from '@supabase/supabase-js';
-import { supabase } from '@/lib/supabase';
+import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useNotificacoes } from '@/contexts/NotificacoesContext';
 import { useToast } from '@/contexts/ToastContext';
@@ -228,6 +228,9 @@ export function AprovacoesProvider({ children }: { children: React.ReactNode }) 
     }
     const id = (data as { id: string }).id;
     vistosRef.current?.add(id);
+    // Avisa no celular quem aprova nesta loja (2026-10-03): sem isso só apitava para quem estava com o
+    // app aberto. Não espera nem trava o caixa — falhou, segue o fluxo de sempre.
+    try { Promise.resolve(invokeWithAuth('send-push', { body: { action: 'aprovacao_pdv', approval_id: id, active_tenant_id: tenantId } })).catch(() => {}); } catch { /* o aviso é extra */ }
     if (onApproved || onDenied) {
       callbacksRef.current.set(id, { onApproved, onDenied });
       setEsperando(callbacksRef.current.size);
