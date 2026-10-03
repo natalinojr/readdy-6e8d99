@@ -137,7 +137,7 @@ export default function ConfirmacaoDelivery(props: Props) {
         <div className="mb-5">
           {metodoApp === 'cartao' ? (
             cartaoOnline && !cartaoOnline.pronto ? (
-              <div className="flex items-center justify-center gap-2 py-6 text-xs text-zinc-400">
+              <div className="flex items-center justify-center gap-2 py-6 text-xs text-stone-400">
                 <i className="ri-loader-4-line animate-spin text-[var(--cor-loja)]" />
                 Preparando o pagamento com cartão…
               </div>
@@ -149,8 +149,8 @@ export default function ConfirmacaoDelivery(props: Props) {
                 textoPago="Seu pedido foi para a cozinha"
               />
             ) : (
-              <div className="px-4 py-3 bg-amber-50 border border-amber-200 rounded-2xl">
-                <p className="text-xs text-amber-800">O pagamento com cartão não está disponível agora. Você pode pagar com Pix.</p>
+              <div className="px-4 py-3 bg-[var(--cor-loja-suave,#F9ECE7)] border border-stone-200 rounded-2xl">
+                <p className="text-xs text-[var(--cor-loja,#C2410C)]">O pagamento com cartão não está disponível agora. Você pode pagar com Pix.</p>
               </div>
             )
           ) : (

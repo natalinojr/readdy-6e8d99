@@ -52,12 +52,12 @@ function getStatusLabel(status: string): string {
 
 function getStatusStyle(status: string): { bg: string; text: string; border: string; icon: string } {
   const map: Record<string, { bg: string; text: string; border: string; icon: string }> = {
-    new: { bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200/60', icon: 'ri-check-double-line' },
-    preparing: { bg: 'bg-orange-50', text: 'text-orange-700', border: 'border-orange-200/60', icon: 'ri-restaurant-2-line' },
+    new: { bg: 'bg-stone-100', text: 'text-stone-700', border: 'border-stone-200', icon: 'ri-check-double-line' },
+    preparing: { bg: 'bg-amber-50', text: 'text-amber-800', border: 'border-amber-200/60', icon: 'ri-fire-line' },
     ready: { bg: 'bg-green-50', text: 'text-green-700', border: 'border-green-200/60', icon: 'ri-checkbox-circle-line' },
     delivered: { bg: 'bg-emerald-50', text: 'text-emerald-700', border: 'border-emerald-200/60', icon: 'ri-motorbike-line' },
     cancelled: { bg: 'bg-red-50', text: 'text-red-600', border: 'border-red-200/60', icon: 'ri-close-circle-line' },
-    draft: { bg: 'bg-zinc-50', text: 'text-zinc-600', border: 'border-zinc-200/60', icon: 'ri-draft-line' },
+    draft: { bg: 'bg-stone-50', text: 'text-stone-600', border: 'border-stone-200/60', icon: 'ri-draft-line' },
   };
   return map[status] || map.draft;
 }
@@ -106,10 +106,10 @@ export default function HistoricoPedidos(props: Props) {
   if (loading) {
     return (
       <div className="text-center py-10">
-        <div className="w-10 h-10 flex items-center justify-center mx-auto mb-3 bg-amber-50 rounded-2xl border border-amber-100">
-          <i className="ri-loader-4-line text-lg text-amber-500 animate-spin" />
+        <div className="w-10 h-10 flex items-center justify-center mx-auto mb-3 bg-[var(--cor-loja-suave,#F9ECE7)] rounded-2xl border border-stone-200">
+          <i className="ri-loader-4-line text-lg text-[var(--cor-loja,#C2410C)] animate-spin" />
         </div>
-        <p className="text-xs text-zinc-500">Carregando histórico...</p>
+        <p className="text-xs text-stone-500">Carregando histórico...</p>
       </div>
     );
   }
@@ -120,11 +120,11 @@ export default function HistoricoPedidos(props: Props) {
         <div className="w-10 h-10 flex items-center justify-center mx-auto mb-3 bg-red-50 rounded-2xl border border-red-100">
           <i className="ri-error-warning-line text-lg text-red-500" />
         </div>
-        <p className="text-xs text-zinc-500 mb-3">{error}</p>
+        <p className="text-xs text-stone-500 mb-3">{error}</p>
         <button
           type="button"
           onClick={fetchHistory}
-          className="px-4 py-2 bg-amber-50 text-amber-700 text-xs font-bold rounded-xl cursor-pointer hover:bg-amber-100 transition-colors whitespace-nowrap"
+          className="px-4 py-2 bg-[var(--cor-loja-suave,#F9ECE7)] text-[var(--cor-loja,#C2410C)] text-xs font-bold rounded-xl cursor-pointer hover:bg-[var(--cor-loja-suave,#F9ECE7)] transition-colors whitespace-nowrap"
         >
           Tentar novamente
         </button>
@@ -135,11 +135,11 @@ export default function HistoricoPedidos(props: Props) {
   if (orders.length === 0) {
     return (
       <div className="text-center py-12 flex flex-col items-center">
-        <div className="w-14 h-14 flex items-center justify-center bg-zinc-100 rounded-2xl mb-4">
-          <i className="ri-history-line text-2xl text-zinc-300" />
+        <div className="w-14 h-14 flex items-center justify-center bg-stone-100 rounded-2xl mb-4">
+          <i className="ri-history-line text-2xl text-stone-300" />
         </div>
-        <p className="text-sm font-bold text-zinc-700 mb-1">Nenhum pedido ainda</p>
-        <p className="text-xs text-zinc-500">Seus pedidos de delivery aparecerão aqui</p>
+        <p className="text-sm font-bold text-stone-700 mb-1">Nenhum pedido ainda</p>
+        <p className="text-xs text-stone-500">Seus pedidos de delivery aparecerão aqui</p>
       </div>
     );
   }
@@ -153,8 +153,8 @@ export default function HistoricoPedidos(props: Props) {
         return (
           <div
             key={order.id}
-            className={'bg-white rounded-2xl border p-4 transition-all cursor-pointer hover:border-amber-200/60 ' +
-              (isCurrentOrder ? 'border-amber-300 ring-1 ring-amber-100' : 'border-zinc-100')
+            className={'bg-white rounded-2xl border p-4 transition-all cursor-pointer hover:border-stone-300 ' +
+              (isCurrentOrder ? 'border-stone-200 ring-1 ring-[color:var(--cor-loja-suave,#F9ECE7)]' : 'border-stone-100')
             }
             onClick={function () {
               if (onVerPedido) onVerPedido(order.number);
@@ -163,7 +163,7 @@ export default function HistoricoPedidos(props: Props) {
             <div className="flex items-start justify-between mb-3">
               <div>
                 <div className="flex items-center gap-2">
-                  <span className="text-sm font-bold text-zinc-800">#{order.number}</span>
+                  <span className="text-sm font-bold text-stone-800">#{order.number}</span>
                   <span
                     className={'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border ' +
                       style.bg + ' ' + style.text + ' ' + style.border
@@ -173,26 +173,26 @@ export default function HistoricoPedidos(props: Props) {
                     {getStatusLabel(order.status)}
                   </span>
                 </div>
-                <p className="text-[10px] text-zinc-400 mt-1">{formatDate(order.created_at)}</p>
+                <p className="text-[10px] text-stone-400 mt-1">{formatDate(order.created_at)}</p>
               </div>
               <div className="text-right">
-                <p className="text-sm font-bold text-amber-600">Total {formatCurrency(order.total_amount)}</p>
+                <p className="text-sm font-bold text-[var(--cor-loja,#C2410C)]">Total {formatCurrency(order.total_amount)}</p>
                 {order.delivery_fee > 0 ? (
-                  <p className="text-[10px] text-zinc-400">inclui taxa {formatCurrency(order.delivery_fee)}</p>
+                  <p className="text-[10px] text-stone-400">inclui taxa {formatCurrency(order.delivery_fee)}</p>
                 ) : null}
               </div>
             </div>
 
             <div className="flex items-center justify-between">
               {isCurrentOrder ? (
-                <span className="text-[10px] font-bold text-amber-600 flex items-center gap-1">
-                  <span className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-pulse" />
+                <span className="text-[10px] font-bold text-[var(--cor-loja,#C2410C)] flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 bg-[var(--cor-loja,#C2410C)] rounded-full animate-pulse" />
                   Pedido atual
                 </span>
               ) : (
                 <span />
               )}
-              <span className="text-[11px] text-amber-600 font-bold flex items-center gap-1 hover:text-amber-700 transition-colors">
+              <span className="text-[11px] text-[var(--cor-loja,#C2410C)] font-bold flex items-center gap-1 hover:text-[var(--cor-loja-forte,#A5380A)] transition-colors">
                 Ver detalhes
                 <i className="ri-arrow-right-s-line text-xs" />
               </span>

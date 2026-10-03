@@ -464,6 +464,8 @@ export function useMesaQRData() {
         if (cancelled) return;
 
         if (data.error === 'mesa_encerrada') {
+          // "Estabelecimento fechado." (caixa fechado) × mesa encerrada: a tela diz qual
+          setErrorMsg(data.message || '');
           Object.keys(localStorage)
             .filter(function (k) { return k.startsWith('mesa_participant_'); })
             .forEach(function (k) { localStorage.removeItem(k); });

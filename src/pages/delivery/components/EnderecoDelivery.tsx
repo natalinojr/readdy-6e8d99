@@ -216,37 +216,37 @@ export default function EnderecoDelivery(props: Props) {
   // ── Modo: novo cliente (formulário simples) ──
   if (!isExistingCustomer && formMode === 'add') {
     return (
-      <div className="min-h-screen flex flex-col bg-white">
+      <div className="min-h-screen flex flex-col bg-[#FBF8F4]">
         {/* Header */}
-        <div className="bg-gradient-to-br from-amber-500 to-orange-500 px-4 pt-6 pb-4 shrink-0">
+        <div className="px-3 py-2.5 border-b border-stone-200/70 bg-[#FBF8F4] shrink-0">
           <div className="flex items-center gap-3">
             <button
               type="button"
               onClick={onVoltar}
-              className="w-9 h-9 flex items-center justify-center bg-white/20 rounded-xl text-white hover:bg-white/30 cursor-pointer transition-colors"
+              className="w-11 h-11 flex items-center justify-center rounded-full text-stone-900 hover:bg-stone-100 cursor-pointer transition-colors"
             >
               <i className="ri-arrow-left-line" />
             </button>
             <div>
-              <h1 className="text-white text-lg font-black leading-tight">Seu endereço</h1>
-              <p className="text-white/80 text-xs">{city || 'Complete para continuar'}</p>
+              <h1 className="text-stone-900 text-[17px] font-extrabold leading-tight">Seu endereço</h1>
+              <p className="text-stone-500 text-xs">{city || 'Complete para continuar'}</p>
             </div>
           </div>
         </div>
 
         <div className="flex-1 px-4 py-5 max-w-lg mx-auto w-full space-y-5">
           <div>
-            <label className="block text-xs font-semibold text-zinc-600 mb-1.5">Celular</label>
+            <label className="block text-xs font-semibold text-stone-600 mb-1.5">Celular</label>
             <input
               type="tel"
               value={phone}
               readOnly
-              className="w-full px-3.5 py-2.5 text-sm border border-zinc-200 rounded-lg bg-zinc-50 text-zinc-600"
+              className="w-full px-3.5 py-2.5 text-sm border border-stone-200 rounded-lg bg-stone-50 text-stone-600"
             />
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-zinc-600 mb-1.5">
+            <label className="block text-xs font-semibold text-stone-600 mb-1.5">
               Seu nome <span className="text-red-500">*</span>
             </label>
             <input
@@ -254,7 +254,7 @@ export default function EnderecoDelivery(props: Props) {
               value={nome}
               onChange={function (e) { onNomeChange(e.target.value); }}
               placeholder="Ex: João Silva"
-              className="w-full px-3.5 py-2.5 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent transition-all"
+              className="w-full px-3.5 py-2.5 text-sm border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[color:var(--cor-loja-suave,#F9ECE7)] focus:border-transparent transition-all"
               maxLength={60}
             />
           </div>
@@ -262,15 +262,15 @@ export default function EnderecoDelivery(props: Props) {
           <div className="space-y-3">
             {/* Data ocupa a linha inteira — em meia largura o ano ficava cortado. */}
             <div>
-              <label className="block text-xs font-semibold text-zinc-600 mb-1.5">Nascimento</label>
+              <label className="block text-xs font-semibold text-stone-600 mb-1.5">Nascimento</label>
               <SeletorDataNascimento value={nascimento} onChange={onNascimentoChange} />
             </div>
             <div>
-              <label className="block text-xs font-semibold text-zinc-600 mb-1.5">Gênero</label>
+              <label className="block text-xs font-semibold text-stone-600 mb-1.5">Gênero</label>
               <select
                 value={genero}
                 onChange={function (e) { onGeneroChange(e.target.value); }}
-                className="w-full px-3.5 py-2.5 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent transition-all bg-white"
+                className="w-full px-3.5 py-2.5 text-sm border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[color:var(--cor-loja-suave,#F9ECE7)] focus:border-transparent transition-all bg-white"
               >
                 <option value="">Prefiro não dizer</option>
                 <option value="masculino">Masculino</option>
@@ -281,14 +281,14 @@ export default function EnderecoDelivery(props: Props) {
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-zinc-600 mb-1.5">
+            <label className="block text-xs font-semibold text-stone-600 mb-1.5">
               Bairro <span className="text-red-500">*</span>
             </label>
             <select
               value={bairroId}
               onChange={function (e) { onBairroChange(e.target.value); }}
-              className={'w-full px-3.5 py-2.5 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent transition-all bg-white cursor-pointer ' +
-                (!bairroId ? 'border-red-200 bg-red-50/30' : 'border-zinc-200')
+              className={'w-full px-3.5 py-2.5 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-[color:var(--cor-loja-suave,#F9ECE7)] focus:border-transparent transition-all bg-white cursor-pointer ' +
+                (!bairroId ? 'border-red-200 bg-red-50/30' : 'border-stone-200')
               }
             >
               <option value="">Selecione um bairro</option>
@@ -299,7 +299,7 @@ export default function EnderecoDelivery(props: Props) {
               })}
             </select>
             {bairroId ? (
-              <p className="text-[10px] text-amber-600 mt-1 font-medium">
+              <p className="text-[10px] text-[var(--cor-loja,#C2410C)] mt-1 font-medium">
                 {(() => {
                   const nb = neighborhoods.find(function (n) { return n.id === bairroId; });
                   return nb ? 'Taxa de entrega: ' + (nb.delivery_fee > 0 ? formatCurrency(nb.delivery_fee) : 'Grátis') : '';
@@ -312,7 +312,7 @@ export default function EnderecoDelivery(props: Props) {
 
           <div className="grid grid-cols-3 gap-3">
             <div className="col-span-2">
-              <label className="block text-xs font-semibold text-zinc-600 mb-1.5">
+              <label className="block text-xs font-semibold text-stone-600 mb-1.5">
                 Rua <span className="text-red-500">*</span>
               </label>
               <input
@@ -320,14 +320,14 @@ export default function EnderecoDelivery(props: Props) {
                 value={rua}
                 onChange={function (e) { onRuaChange(e.target.value); }}
                 placeholder="Ex: Rua das Flores"
-                className={'w-full px-3.5 py-2.5 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent transition-all ' +
-                  (!rua.trim() ? 'border-red-200 bg-red-50/30' : 'border-zinc-200')
+                className={'w-full px-3.5 py-2.5 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-[color:var(--cor-loja-suave,#F9ECE7)] focus:border-transparent transition-all ' +
+                  (!rua.trim() ? 'border-red-200 bg-red-50/30' : 'border-stone-200')
                 }
                 maxLength={100}
               />
             </div>
             <div>
-              <label className="block text-xs font-semibold text-zinc-600 mb-1.5">
+              <label className="block text-xs font-semibold text-stone-600 mb-1.5">
                 Número <span className="text-red-500">*</span>
               </label>
               <input
@@ -335,8 +335,8 @@ export default function EnderecoDelivery(props: Props) {
                 value={numero}
                 onChange={function (e) { onNumeroChange(e.target.value); }}
                 placeholder="123"
-                className={'w-full px-3.5 py-2.5 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent transition-all ' +
-                  (!numero.trim() ? 'border-red-200 bg-red-50/30' : 'border-zinc-200')
+                className={'w-full px-3.5 py-2.5 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-[color:var(--cor-loja-suave,#F9ECE7)] focus:border-transparent transition-all ' +
+                  (!numero.trim() ? 'border-red-200 bg-red-50/30' : 'border-stone-200')
                 }
                 maxLength={10}
               />
@@ -344,25 +344,25 @@ export default function EnderecoDelivery(props: Props) {
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-zinc-600 mb-1.5">Complemento</label>
+            <label className="block text-xs font-semibold text-stone-600 mb-1.5">Complemento</label>
             <input
               type="text"
               value={complemento}
               onChange={function (e) { onComplementoChange(e.target.value); }}
               placeholder="Ex: Apto 42, Bloco B"
-              className="w-full px-3.5 py-2.5 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent transition-all"
+              className="w-full px-3.5 py-2.5 text-sm border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[color:var(--cor-loja-suave,#F9ECE7)] focus:border-transparent transition-all"
               maxLength={60}
             />
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-zinc-600 mb-1.5">Ponto de referência</label>
+            <label className="block text-xs font-semibold text-stone-600 mb-1.5">Ponto de referência</label>
             <input
               type="text"
               value={referencia}
               onChange={function (e) { onReferenciaChange(e.target.value); }}
               placeholder="Ex: Próximo ao mercado"
-              className="w-full px-3.5 py-2.5 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent transition-all"
+              className="w-full px-3.5 py-2.5 text-sm border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[color:var(--cor-loja-suave,#F9ECE7)] focus:border-transparent transition-all"
               maxLength={100}
             />
           </div>
@@ -379,7 +379,7 @@ export default function EnderecoDelivery(props: Props) {
               type="button"
               onClick={handleSalvarNovoCliente}
               disabled={!isNewCustomerFormValid || enviando}
-              className="w-full bg-gradient-to-br from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 disabled:opacity-60 disabled:hover:from-amber-500 disabled:hover:to-orange-500 text-white text-sm font-bold py-3.5 rounded-xl cursor-pointer transition-all whitespace-nowrap flex items-center justify-center gap-2"
+              className="w-full bg-[var(--cor-loja,#C2410C)] hover:bg-[var(--cor-loja-forte,#A5380A)] disabled:opacity-60  text-white text-sm font-bold py-3.5 rounded-xl cursor-pointer transition-all whitespace-nowrap flex items-center justify-center gap-2"
             >
               {enviando ? (
                 <>
@@ -389,7 +389,7 @@ export default function EnderecoDelivery(props: Props) {
               ) : (
                 <>
                   <i className="ri-map-pin-line text-sm" />
-                  Salvar e ver cardápio
+                  Salvar endereço
                 </>
               )}
             </button>
@@ -401,7 +401,7 @@ export default function EnderecoDelivery(props: Props) {
             <button
               type="button"
               onClick={onVoltar}
-              className="w-full text-sm text-zinc-500 font-bold py-3 cursor-pointer hover:text-zinc-700 transition-colors bg-zinc-100 rounded-xl hover:bg-zinc-200"
+              className="w-full text-sm text-stone-500 font-bold py-3 cursor-pointer hover:text-stone-700 transition-colors bg-stone-100 rounded-xl hover:bg-stone-200"
             >
               Voltar
             </button>
@@ -413,9 +413,9 @@ export default function EnderecoDelivery(props: Props) {
 
   // ── Modo: lista de endereços salvos ──
   return (
-    <div className="min-h-screen flex flex-col bg-white">
+    <div className="min-h-screen flex flex-col bg-[#FBF8F4]">
       {/* Header */}
-      <div className="bg-gradient-to-br from-amber-500 to-orange-500 px-4 pt-6 pb-4 shrink-0">
+      <div className="px-3 py-2.5 border-b border-stone-200/70 bg-[#FBF8F4] shrink-0">
         <div className="flex items-center gap-3">
           <button
             type="button"
@@ -426,15 +426,15 @@ export default function EnderecoDelivery(props: Props) {
                 onVoltar();
               }
             }}
-            className="w-9 h-9 flex items-center justify-center bg-white/20 rounded-xl text-white hover:bg-white/30 cursor-pointer transition-colors"
+            className="w-11 h-11 flex items-center justify-center rounded-full text-stone-900 hover:bg-stone-100 cursor-pointer transition-colors"
           >
             <i className="ri-arrow-left-line" />
           </button>
           <div>
-            <h1 className="text-white text-lg font-black leading-tight">
+            <h1 className="text-stone-900 text-[17px] font-extrabold leading-tight">
               {formMode === 'list' ? 'Seus endereços' : formMode === 'edit' ? 'Editar endereço' : 'Novo endereço'}
             </h1>
-            <p className="text-white/80 text-xs">{city || 'Escolha ou adicione um endereço'}</p>
+            <p className="text-stone-500 text-xs">{city || 'Escolha ou adicione um endereço'}</p>
           </div>
         </div>
       </div>
@@ -445,11 +445,11 @@ export default function EnderecoDelivery(props: Props) {
           <>
             {savedAddresses.length === 0 ? (
               <div className="text-center py-12">
-                <div className="w-16 h-16 flex items-center justify-center mx-auto mb-4 bg-amber-50 rounded-2xl border border-amber-100">
-                  <i className="ri-map-pin-line text-2xl text-amber-400" />
+                <div className="w-16 h-16 flex items-center justify-center mx-auto mb-4 bg-[var(--cor-loja-suave,#F9ECE7)] rounded-2xl border border-stone-200">
+                  <i className="ri-map-pin-line text-2xl text-stone-400" />
                 </div>
-                <p className="text-sm font-bold text-zinc-700 mb-2">Nenhum endereço salvo</p>
-                <p className="text-xs text-zinc-500 mb-5">Adicione seu primeiro endereço de entrega</p>
+                <p className="text-sm font-bold text-stone-700 mb-2">Nenhum endereço salvo</p>
+                <p className="text-xs text-stone-500 mb-5">Adicione seu primeiro endereço de entrega</p>
               </div>
             ) : (
               <div className="space-y-3">
@@ -464,8 +464,8 @@ export default function EnderecoDelivery(props: Props) {
                         onClick={function () { onSelecionarEndereco(addr.id); }}
                         className={'relative bg-white rounded-xl border-2 cursor-pointer transition-all duration-200 overflow-hidden ' +
                           (isSelected
-                            ? 'border-amber-400 bg-amber-50/50 ring-2 ring-amber-200/50'
-                            : 'border-zinc-100 hover:border-amber-200/60')
+                            ? 'border-[var(--cor-loja,#C2410C)] bg-[var(--cor-loja-suave,#F9ECE7)] ring-2 ring-[color:var(--cor-loja-suave,#F9ECE7)]'
+                            : 'border-stone-100 hover:border-stone-300')
                         }
                       >
                         <div className="p-4">
@@ -473,18 +473,18 @@ export default function EnderecoDelivery(props: Props) {
                             <div className="flex items-center gap-2">
                               {/* Radio visual */}
                               <div className={'w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 ' +
-                                (isSelected ? 'bg-amber-500 border-amber-500' : 'border-zinc-300')
+                                (isSelected ? 'bg-[var(--cor-loja,#C2410C)] border-[var(--cor-loja,#C2410C)]' : 'border-stone-300')
                               }>
                                 {isSelected ? <i className="ri-check-line text-white text-[10px]" /> : null}
                               </div>
                               <div className="flex items-center gap-1.5">
-                                <div className="w-6 h-6 flex items-center justify-center bg-zinc-100 rounded-lg">
-                                  <i className={addrIcon + ' text-zinc-500 text-xs'} />
+                                <div className="w-6 h-6 flex items-center justify-center bg-stone-100 rounded-lg">
+                                  <i className={addrIcon + ' text-stone-500 text-xs'} />
                                 </div>
-                                <span className="text-sm font-bold text-zinc-800">{addr.label}</span>
+                                <span className="text-sm font-bold text-stone-800">{addr.label}</span>
                               </div>
                               {addr.is_default ? (
-                                <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-amber-500 text-white text-[10px] font-bold rounded-full shadow-sm">
+                                <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-[var(--cor-loja,#C2410C)] text-white text-[10px] font-bold rounded-full shadow-sm">
                                   <i className="ri-star-fill text-[10px]" />
                                   Principal
                                 </span>
@@ -496,7 +496,7 @@ export default function EnderecoDelivery(props: Props) {
                                     onSetDefaultAddress(addr.id);
                                   }}
                                   disabled={enviando}
-                                  className="inline-flex items-center gap-1 px-2 py-0.5 bg-zinc-100 hover:bg-amber-100 text-zinc-400 hover:text-amber-600 text-[10px] font-bold rounded-full border border-zinc-200 hover:border-amber-300 cursor-pointer transition-all whitespace-nowrap"
+                                  className="inline-flex items-center gap-1 px-2 py-0.5 bg-stone-100 hover:bg-[var(--cor-loja-suave,#F9ECE7)] text-stone-400 hover:text-[var(--cor-loja-forte,#A5380A)] text-[10px] font-bold rounded-full border border-stone-200 hover:border-stone-300 cursor-pointer transition-all whitespace-nowrap"
                                   title="Tornar endereço principal"
                                 >
                                   <i className="ri-star-line text-[9px]" />
@@ -508,7 +508,7 @@ export default function EnderecoDelivery(props: Props) {
                               <button
                                 type="button"
                                 onClick={function (e) { e.stopPropagation(); openEditForm(addr); }}
-                                className="w-7 h-7 flex items-center justify-center bg-zinc-100 hover:bg-zinc-200 rounded-lg text-zinc-400 hover:text-zinc-600 cursor-pointer transition-colors"
+                                className="w-7 h-7 flex items-center justify-center bg-stone-100 hover:bg-stone-200 rounded-lg text-stone-400 hover:text-stone-600 cursor-pointer transition-colors"
                                 title="Editar endereço"
                               >
                                 <i className="ri-pencil-line text-xs" />
@@ -528,7 +528,7 @@ export default function EnderecoDelivery(props: Props) {
                                   className={'w-7 h-7 flex items-center justify-center rounded-lg cursor-pointer transition-colors ' +
                                     (showDeleteConfirm
                                       ? 'bg-red-500 text-white hover:bg-red-600'
-                                      : 'bg-zinc-100 hover:bg-red-100 text-zinc-400 hover:text-red-500')
+                                      : 'bg-stone-100 hover:bg-red-100 text-stone-400 hover:text-red-500')
                                   }
                                   title={showDeleteConfirm ? 'Confirmar exclusão' : 'Excluir endereço'}
                                 >
@@ -539,15 +539,15 @@ export default function EnderecoDelivery(props: Props) {
                           </div>
 
                           <div className="ml-7 space-y-1">
-                            <p className="text-sm text-zinc-700">
-                              <i className="ri-road-map-line text-zinc-400 text-xs mr-1.5" />
+                            <p className="text-sm text-stone-700">
+                              <i className="ri-road-map-line text-stone-400 text-xs mr-1.5" />
                               {formatAddressLine(addr)}
                             </p>
-                            <p className="text-xs text-zinc-500">
-                              <i className="ri-map-pin-2-line text-zinc-400 text-[10px] mr-1.5" />
+                            <p className="text-xs text-stone-500">
+                              <i className="ri-map-pin-2-line text-stone-400 text-[10px] mr-1.5" />
                               {addr.neighborhood_name || getNeighborhoodName(addr.neighborhood_id)}
                             </p>
-                            <p className="text-[11px] font-medium text-amber-600">
+                            <p className="text-[11px] font-medium text-[var(--cor-loja,#C2410C)]">
                               {addr.neighborhood_delivery_fee > 0
                                 ? 'Taxa de entrega: ' + formatCurrency(addr.neighborhood_delivery_fee)
                                 : 'Entrega grátis'}
@@ -580,7 +580,7 @@ export default function EnderecoDelivery(props: Props) {
             <button
               type="button"
               onClick={openAddForm}
-              className="w-full flex items-center justify-center gap-2 px-4 py-3.5 border-2 border-dashed border-amber-300 rounded-xl text-amber-600 hover:border-amber-400 hover:bg-amber-50/50 text-sm font-bold cursor-pointer transition-all whitespace-nowrap"
+              className="w-full flex items-center justify-center gap-2 px-4 py-3.5 border-2 border-dashed border-stone-200 rounded-xl text-[var(--cor-loja,#C2410C)] hover:border-stone-300 hover:bg-[var(--cor-loja-suave,#F9ECE7)]/50 text-sm font-bold cursor-pointer transition-all whitespace-nowrap"
             >
               <i className="ri-add-line text-lg" />
               Adicionar novo endereço
@@ -599,7 +599,7 @@ export default function EnderecoDelivery(props: Props) {
                 type="button"
                 onClick={onIrParaCardapio}
                 disabled={!selectedAddressId || enviando}
-                className="w-full bg-gradient-to-br from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 disabled:opacity-60 disabled:hover:from-amber-500 disabled:hover:to-orange-500 text-white text-sm font-bold py-3.5 rounded-xl cursor-pointer transition-all whitespace-nowrap flex items-center justify-center gap-2"
+                className="w-full bg-[var(--cor-loja,#C2410C)] hover:bg-[var(--cor-loja-forte,#A5380A)] disabled:opacity-60  text-white text-sm font-bold py-3.5 rounded-xl cursor-pointer transition-all whitespace-nowrap flex items-center justify-center gap-2"
               >
                 {enviando ? (
                   <>
@@ -609,7 +609,7 @@ export default function EnderecoDelivery(props: Props) {
                 ) : (
                   <>
                     <i className="ri-arrow-right-line text-sm" />
-                    {selectedAddr ? 'Usar "' + selectedAddr.label + '" e ver cardápio' : 'Selecione um endereço'}
+                    {selectedAddr ? 'Usar "' + selectedAddr.label + '"' : 'Selecione um endereço'}
                   </>
                 )}
               </button>
@@ -620,7 +620,7 @@ export default function EnderecoDelivery(props: Props) {
           <div className="space-y-4">
             {/* Tipo de endereço */}
             <div>
-              <label className="block text-xs font-semibold text-zinc-600 mb-2">
+              <label className="block text-xs font-semibold text-stone-600 mb-2">
                 Tipo de endereço <span className="text-red-500">*</span>
               </label>
               <div className="grid grid-cols-3 gap-2">
@@ -639,17 +639,17 @@ export default function EnderecoDelivery(props: Props) {
                       }}
                       className={'flex flex-col items-center gap-1 px-3 py-2.5 rounded-xl border-2 cursor-pointer transition-all duration-200 ' +
                         (isSelected
-                          ? 'border-amber-400 bg-amber-50 ring-2 ring-amber-200/50'
-                          : 'border-zinc-100 hover:border-amber-200/60 bg-white')
+                          ? 'border-[var(--cor-loja,#C2410C)] bg-[var(--cor-loja-suave,#F9ECE7)] ring-2 ring-[color:var(--cor-loja-suave,#F9ECE7)]'
+                          : 'border-stone-100 hover:border-stone-300 bg-white')
                       }
                     >
                       <div className={'w-8 h-8 flex items-center justify-center rounded-lg ' +
-                        (isSelected ? 'bg-amber-500 text-white' : 'bg-zinc-100 text-zinc-400')
+                        (isSelected ? 'bg-[var(--cor-loja,#C2410C)] text-white' : 'bg-stone-100 text-stone-400')
                       }>
                         <i className={type.icon + ' text-sm'} />
                       </div>
                       <span className={'text-[11px] font-bold whitespace-nowrap ' +
-                        (isSelected ? 'text-amber-700' : 'text-zinc-600')
+                        (isSelected ? 'text-[var(--cor-loja,#C2410C)]' : 'text-stone-600')
                       }>
                         {type.label}
                       </span>
@@ -669,8 +669,8 @@ export default function EnderecoDelivery(props: Props) {
                       }
                     }}
                     placeholder="Digite um nome para este endereço"
-                    className={'w-full px-3.5 py-2.5 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent transition-all ' +
-                      (formErrors.label ? 'border-red-200 bg-red-50/30' : 'border-zinc-200')
+                    className={'w-full px-3.5 py-2.5 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-[color:var(--cor-loja-suave,#F9ECE7)] focus:border-transparent transition-all ' +
+                      (formErrors.label ? 'border-red-200 bg-red-50/30' : 'border-stone-200')
                     }
                     maxLength={40}
                   />
@@ -683,7 +683,7 @@ export default function EnderecoDelivery(props: Props) {
 
             {/* Bairro */}
             <div>
-              <label className="block text-xs font-semibold text-zinc-600 mb-1.5">
+              <label className="block text-xs font-semibold text-stone-600 mb-1.5">
                 Bairro <span className="text-red-500">*</span>
               </label>
               <select
@@ -694,8 +694,8 @@ export default function EnderecoDelivery(props: Props) {
                     setFormErrors(function (prev) { return { ...prev, bairro: false }; });
                   }
                 }}
-                className={'w-full px-3.5 py-2.5 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent transition-all bg-white cursor-pointer ' +
-                  (formErrors.bairro ? 'border-red-200 bg-red-50/30' : 'border-zinc-200')
+                className={'w-full px-3.5 py-2.5 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-[color:var(--cor-loja-suave,#F9ECE7)] focus:border-transparent transition-all bg-white cursor-pointer ' +
+                  (formErrors.bairro ? 'border-red-200 bg-red-50/30' : 'border-stone-200')
                 }
               >
                 <option value="">Selecione um bairro</option>
@@ -706,7 +706,7 @@ export default function EnderecoDelivery(props: Props) {
                 })}
               </select>
               {formBairroId ? (
-                <p className="text-[10px] text-amber-600 mt-1 font-medium">
+                <p className="text-[10px] text-[var(--cor-loja,#C2410C)] mt-1 font-medium">
                   {(() => {
                     const nb = neighborhoods.find(function (n) { return n.id === formBairroId; });
                     return nb ? 'Taxa de entrega: ' + (nb.delivery_fee > 0 ? formatCurrency(nb.delivery_fee) : 'Grátis') : '';
@@ -720,7 +720,7 @@ export default function EnderecoDelivery(props: Props) {
             {/* Rua + Número */}
             <div className="grid grid-cols-3 gap-3">
               <div className="col-span-2">
-                <label className="block text-xs font-semibold text-zinc-600 mb-1.5">
+                <label className="block text-xs font-semibold text-stone-600 mb-1.5">
                   Rua <span className="text-red-500">*</span>
                 </label>
                 <input
@@ -733,15 +733,15 @@ export default function EnderecoDelivery(props: Props) {
                     }
                   }}
                   placeholder="Ex: Rua das Flores"
-                  className={'w-full px-3.5 py-2.5 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent transition-all ' +
-                    (formErrors.rua ? 'border-red-200 bg-red-50/30' : 'border-zinc-200')
+                  className={'w-full px-3.5 py-2.5 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-[color:var(--cor-loja-suave,#F9ECE7)] focus:border-transparent transition-all ' +
+                    (formErrors.rua ? 'border-red-200 bg-red-50/30' : 'border-stone-200')
                   }
                   maxLength={100}
                 />
                 {formErrors.rua ? <p className="text-[10px] text-red-500 mt-1 font-medium">Obrigatório</p> : null}
               </div>
               <div>
-                <label className="block text-xs font-semibold text-zinc-600 mb-1.5">
+                <label className="block text-xs font-semibold text-stone-600 mb-1.5">
                   Número <span className="text-red-500">*</span>
                 </label>
                 <input
@@ -754,8 +754,8 @@ export default function EnderecoDelivery(props: Props) {
                     }
                   }}
                   placeholder="123"
-                  className={'w-full px-3.5 py-2.5 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent transition-all ' +
-                    (formErrors.numero ? 'border-red-200 bg-red-50/30' : 'border-zinc-200')
+                  className={'w-full px-3.5 py-2.5 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-[color:var(--cor-loja-suave,#F9ECE7)] focus:border-transparent transition-all ' +
+                    (formErrors.numero ? 'border-red-200 bg-red-50/30' : 'border-stone-200')
                   }
                   maxLength={10}
                 />
@@ -764,25 +764,25 @@ export default function EnderecoDelivery(props: Props) {
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-zinc-600 mb-1.5">Complemento</label>
+              <label className="block text-xs font-semibold text-stone-600 mb-1.5">Complemento</label>
               <input
                 type="text"
                 value={formComplemento}
                 onChange={function (e) { setFormComplemento(e.target.value); }}
                 placeholder="Ex: Apto 42, Bloco B"
-                className="w-full px-3.5 py-2.5 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent transition-all"
+                className="w-full px-3.5 py-2.5 text-sm border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[color:var(--cor-loja-suave,#F9ECE7)] focus:border-transparent transition-all"
                 maxLength={60}
               />
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-zinc-600 mb-1.5">Ponto de referência</label>
+              <label className="block text-xs font-semibold text-stone-600 mb-1.5">Ponto de referência</label>
               <input
                 type="text"
                 value={formReferencia}
                 onChange={function (e) { setFormReferencia(e.target.value); }}
                 placeholder="Ex: Próximo ao mercado"
-                className="w-full px-3.5 py-2.5 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent transition-all"
+                className="w-full px-3.5 py-2.5 text-sm border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[color:var(--cor-loja-suave,#F9ECE7)] focus:border-transparent transition-all"
                 maxLength={100}
               />
             </div>
@@ -799,7 +799,7 @@ export default function EnderecoDelivery(props: Props) {
                 type="button"
                 onClick={handleSaveForm}
                 disabled={enviando}
-                className="w-full bg-gradient-to-br from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 disabled:opacity-60 disabled:hover:from-amber-500 disabled:hover:to-orange-500 text-white text-sm font-bold py-3.5 rounded-xl cursor-pointer transition-all whitespace-nowrap flex items-center justify-center gap-2"
+                className="w-full bg-[var(--cor-loja,#C2410C)] hover:bg-[var(--cor-loja-forte,#A5380A)] disabled:opacity-60  text-white text-sm font-bold py-3.5 rounded-xl cursor-pointer transition-all whitespace-nowrap flex items-center justify-center gap-2"
               >
                 {enviando ? (
                   <>
@@ -816,7 +816,7 @@ export default function EnderecoDelivery(props: Props) {
               <button
                 type="button"
                 onClick={cancelForm}
-                className="w-full text-sm text-zinc-500 font-bold py-3 cursor-pointer hover:text-zinc-700 transition-colors bg-zinc-100 rounded-xl hover:bg-zinc-200"
+                className="w-full text-sm text-stone-500 font-bold py-3 cursor-pointer hover:text-stone-700 transition-colors bg-stone-100 rounded-xl hover:bg-stone-200"
               >
                 Cancelar
               </button>

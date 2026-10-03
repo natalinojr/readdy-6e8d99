@@ -326,13 +326,11 @@ export default function DeliveryPage() {
 
   if (step === 'loading') {
     return (
-      <div className="min-h-screen bg-white flex items-center justify-center">
+      <div className="min-h-screen bg-[#FBF8F4] flex items-center justify-center" style={estiloLoja}>
         <div className="text-center">
-          <div className="w-16 h-16 flex items-center justify-center mx-auto mb-5 bg-amber-50 rounded-2xl border border-amber-100">
-            <i className="ri-loader-4-line text-2xl text-amber-500 animate-spin" />
-          </div>
-          <p className="text-sm font-bold text-zinc-800">Carregando delivery</p>
-          <p className="text-xs text-zinc-500 mt-1">Aguarde um momento</p>
+          <i className="ri-loader-4-line text-3xl text-[var(--cor-loja)] animate-spin" />
+          <p className="text-sm font-bold text-stone-800 mt-3">Carregando o cardápio</p>
+          <p className="text-xs text-stone-500 mt-1">Aguarde um momento</p>
         </div>
       </div>
     );
@@ -340,19 +338,19 @@ export default function DeliveryPage() {
 
   if (step === 'erro_config') {
     return (
-      <div className="min-h-screen bg-white flex items-center justify-center px-4">
+      <div className="min-h-screen bg-[#FBF8F4] flex items-center justify-center px-5" style={estiloLoja}>
         <div className="text-center max-w-sm">
-          <div className="w-16 h-16 flex items-center justify-center mx-auto mb-5 bg-red-50 rounded-2xl border border-red-100">
-            <i className="ri-error-warning-line text-2xl text-red-500" />
+          <div className="w-14 h-14 flex items-center justify-center mx-auto mb-4 bg-red-50 rounded-2xl">
+            <i className="ri-error-warning-line text-2xl text-red-600" />
           </div>
-          <p className="text-sm font-bold text-zinc-800">Erro ao carregar</p>
-          <p className="text-xs text-zinc-500 mt-2 mb-5">{error || 'Não foi possível carregar o delivery. Verifique sua conexão.'}</p>
+          <p className="text-base font-extrabold text-stone-900">Não deu para abrir o cardápio</p>
+          <p className="text-sm text-stone-600 mt-2 mb-5">{error || 'Verifique sua conexão e tente de novo.'}</p>
           <button
             type="button"
             onClick={function () { window.location.reload(); }}
-            className="inline-flex items-center gap-2 px-5 py-2.5 bg-amber-500 hover:bg-amber-600 text-white text-sm font-bold rounded-xl cursor-pointer transition-colors whitespace-nowrap"
+            className="inline-flex items-center gap-2 h-12 px-5 bg-[var(--cor-loja)] hover:bg-[var(--cor-loja-forte)] text-white text-sm font-bold rounded-2xl cursor-pointer transition-colors whitespace-nowrap"
           >
-            <i className="ri-refresh-line text-sm" />
+            <i className="ri-refresh-line" />
             Tentar novamente
           </button>
         </div>
@@ -362,6 +360,7 @@ export default function DeliveryPage() {
 
   if (step === 'identificacao') {
     return (
+      <div style={estiloLoja}>
       <IdentificacaoDelivery
         phone={phone}
         onPhoneChange={data.setPhone}
@@ -374,6 +373,7 @@ export default function DeliveryPage() {
         onVoltar={function () { data.setStep('preview'); }}
         seletorIdioma={seletorIdioma}
       />
+      </div>
     );
   }
 
@@ -396,6 +396,7 @@ export default function DeliveryPage() {
 
   if (step === 'endereco' && distanceMode) {
     return (
+      <div style={estiloLoja}>
       <EnderecoPinDelivery
         phone={phone}
         nome={customerName}
@@ -422,7 +423,7 @@ export default function DeliveryPage() {
         deliveryQuote={deliveryQuote}
         foraDeArea={foraDeArea}
         isExistingCustomer={!!customer}
-        savedAddresses={savedAddresses}
+        savedAddresses={data.displayAddresses.filter(function (a) { return a.id !== '__legacy__'; })}
         selectedAddressId={selectedAddressId}
         onSalvar={handleSalvarEndereco}
         onSelecionarEndereco={handleSelecionarEndereco}
@@ -437,22 +438,21 @@ export default function DeliveryPage() {
             data.setError('');
             return;
           }
-          if (customer) {
-            data.setStep('modo_entrega');
-          } else {
-            data.setStep('identificacao' as any);
-          }
+          // Sem tela de modo de entrega: entrega/retirada fica no cardápio e na sacola
+          data.setStep(customer ? 'cardapio' : 'preview');
           data.setError('');
         }}
         enviando={enviando}
         error={error}
         city={city}
       />
+      </div>
     );
   }
 
   if (step === 'endereco') {
     return (
+      <div style={estiloLoja}>
       <EnderecoDelivery
         phone={phone}
         nome={customerName}
@@ -472,7 +472,7 @@ export default function DeliveryPage() {
         referencia={referencePoint}
         onReferenciaChange={data.setReferencePoint}
         neighborhoods={neighborhoods}
-        savedAddresses={savedAddresses}
+        savedAddresses={data.displayAddresses.filter(function (a) { return a.id !== '__legacy__'; })}
         selectedAddressId={selectedAddressId}
         isExistingCustomer={!!customer}
         onSalvar={handleSalvarEndereco}
@@ -488,17 +488,15 @@ export default function DeliveryPage() {
             data.setError('');
             return;
           }
-          if (customer) {
-            data.setStep('modo_entrega');
-          } else {
-            data.setStep('identificacao' as any);
-          }
+          // Sem tela de modo de entrega: entrega/retirada fica no cardápio e na sacola
+          data.setStep(customer ? 'cardapio' : 'preview');
           data.setError('');
         }}
         enviando={enviando}
         error={error}
         city={city}
       />
+      </div>
     );
   }
 
@@ -822,7 +820,7 @@ export default function DeliveryPage() {
                                   <span className="min-w-0 flex-1">
                                     <span className="flex items-center gap-1.5">
                                       <span className="text-sm font-bold text-stone-900 truncate">{addr.label}</span>
-                                      {addr.is_default ? <i className="ri-star-fill text-[11px] text-amber-500" /> : null}
+                                      {addr.is_default ? <i className="ri-star-fill text-[11px] text-[var(--cor-loja,#C2410C)]" /> : null}
                                     </span>
                                     <span className="block text-xs text-stone-500 truncate">{line}</span>
                                     <span className="block text-xs text-stone-400">
@@ -883,49 +881,49 @@ export default function DeliveryPage() {
               <button
                 type="button"
                 onClick={function () { setSubView('cardapio'); }}
-                className="inline-flex items-center gap-1 text-sm font-bold text-zinc-500 hover:text-zinc-700 cursor-pointer mb-5 transition-colors whitespace-nowrap"
+                className="inline-flex items-center gap-1 text-sm font-bold text-stone-500 hover:text-stone-700 cursor-pointer mb-5 transition-colors whitespace-nowrap"
               >
                 <i className="ri-arrow-left-s-line text-lg" />
                 Voltar ao cardápio
               </button>
 
               <div className="mb-5">
-                <h3 className="text-base font-black text-zinc-800 mb-1">Acompanhar pedido</h3>
-                <p className="text-xs text-zinc-500">Seus pedidos em andamento</p>
+                <h3 className="text-base font-black text-stone-800 mb-1">Acompanhar pedido</h3>
+                <p className="text-xs text-stone-500">Seus pedidos em andamento</p>
               </div>
 
               {activeOrdersLoading ? (
                 <div className="text-center py-8">
-                  <div className="w-10 h-10 flex items-center justify-center mx-auto mb-3 bg-amber-50 rounded-2xl border border-amber-100">
-                    <i className="ri-loader-4-line text-lg text-amber-500 animate-spin" />
+                  <div className="w-10 h-10 flex items-center justify-center mx-auto mb-3 bg-[var(--cor-loja-suave,#F9ECE7)] rounded-2xl border border-stone-200">
+                    <i className="ri-loader-4-line text-lg text-[var(--cor-loja,#C2410C)] animate-spin" />
                   </div>
-                  <p className="text-xs text-zinc-500">Buscando seus pedidos...</p>
+                  <p className="text-xs text-stone-500">Buscando seus pedidos...</p>
                 </div>
               ) : activeOrdersError ? (
                 <div className="text-center py-8">
                   <div className="w-10 h-10 flex items-center justify-center mx-auto mb-3 bg-red-50 rounded-2xl border border-red-100">
                     <i className="ri-error-warning-line text-lg text-red-500" />
                   </div>
-                  <p className="text-xs text-zinc-500 mb-3">{activeOrdersError}</p>
+                  <p className="text-xs text-stone-500 mb-3">{activeOrdersError}</p>
                   <button
                     type="button"
                     onClick={fetchActiveOrders}
-                    className="px-4 py-2 bg-amber-50 text-amber-700 text-xs font-bold rounded-xl cursor-pointer hover:bg-amber-100 transition-colors whitespace-nowrap"
+                    className="px-4 py-2 bg-[var(--cor-loja-suave,#F9ECE7)] text-[var(--cor-loja,#C2410C)] text-xs font-bold rounded-xl cursor-pointer hover:bg-[var(--cor-loja-suave,#F9ECE7)] transition-colors whitespace-nowrap"
                   >
                     Tentar novamente
                   </button>
                 </div>
               ) : activeOrders.length === 0 ? (
                 <div className="text-center py-10 mb-6 flex flex-col items-center">
-                  <div className="w-14 h-14 flex items-center justify-center bg-zinc-100 rounded-2xl mb-3">
-                    <i className="ri-time-line text-2xl text-zinc-300" />
+                  <div className="w-14 h-14 flex items-center justify-center bg-stone-100 rounded-2xl mb-3">
+                    <i className="ri-time-line text-2xl text-stone-300" />
                   </div>
-                  <p className="text-sm font-bold text-zinc-700 mb-1">Nenhum pedido em andamento</p>
-                  <p className="text-xs text-zinc-500">Seus pedidos ativos aparecerão aqui</p>
+                  <p className="text-sm font-bold text-stone-700 mb-1">Nenhum pedido em andamento</p>
+                  <p className="text-xs text-stone-500">Seus pedidos ativos aparecerão aqui</p>
                   <button
                     type="button"
                     onClick={function () { setSubView('historico'); }}
-                    className="mt-4 inline-flex items-center gap-1.5 px-4 py-2 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 text-xs font-bold rounded-xl cursor-pointer whitespace-nowrap"
+                    className="mt-4 inline-flex items-center gap-1.5 px-4 py-2 bg-stone-100 hover:bg-stone-200 text-stone-700 text-xs font-bold rounded-xl cursor-pointer whitespace-nowrap"
                   >
                     <i className="ri-history-line" /> Ver histórico de pedidos
                   </button>
@@ -935,8 +933,8 @@ export default function DeliveryPage() {
                   {activeOrders.map(function (order) {
                     const statusMap: Record<string, { bg: string; text: string; border: string; icon: string; label: string }> = {
                       draft: { bg: 'bg-emerald-50', text: 'text-emerald-700', border: 'border-emerald-200/60', icon: 'ri-qr-code-line', label: 'Aguardando pagamento' },
-                      new: { bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200/60', icon: 'ri-check-double-line', label: 'Recebido' },
-                      preparing: { bg: 'bg-orange-50', text: 'text-orange-700', border: 'border-orange-200/60', icon: 'ri-restaurant-2-line', label: 'Em preparo' },
+                      new: { bg: 'bg-stone-100', text: 'text-stone-700', border: 'border-stone-200', icon: 'ri-check-double-line', label: 'Recebido' },
+                      preparing: { bg: 'bg-amber-50', text: 'text-amber-800', border: 'border-amber-200/60', icon: 'ri-fire-line', label: 'Em preparo' },
                       ready: { bg: 'bg-green-50', text: 'text-green-700', border: 'border-green-200/60', icon: 'ri-checkbox-circle-line', label: 'Pronto' },
                     };
                     const style = statusMap[order.status] || statusMap.new;
@@ -955,28 +953,28 @@ export default function DeliveryPage() {
                           setPreviousSubView('acompanhar_input');
                           setSubView('acompanhar');
                         }}
-                        className="bg-white rounded-2xl border border-zinc-100 p-4 cursor-pointer hover:border-amber-200/60 transition-all active:scale-[0.98]"
+                        className="bg-white rounded-2xl border border-stone-100 p-4 cursor-pointer hover:border-stone-300 transition-all active:scale-[0.98]"
                       >
                         <div className="flex items-start justify-between mb-2">
                           <div>
                             <div className="flex items-center gap-2">
-                              <span className="text-sm font-bold text-zinc-800">#{order.number}</span>
+                              <span className="text-sm font-bold text-stone-800">#{order.number}</span>
                               <span className={'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border ' + style.bg + ' ' + style.text + ' ' + style.border}>
                                 <i className={style.icon + ' text-[9px]'} />
                                 {style.label}
                               </span>
                             </div>
-                            <p className="text-[10px] text-zinc-400 mt-1">{timeStr}</p>
+                            <p className="text-[10px] text-stone-400 mt-1">{timeStr}</p>
                           </div>
                           <div className="text-right">
-                            <p className="text-sm font-bold text-amber-600">Total {formatCurrency(order.total_amount)}</p>
+                            <p className="text-sm font-bold text-[var(--cor-loja,#C2410C)]">Total {formatCurrency(order.total_amount)}</p>
                             {order.delivery_fee > 0 ? (
-                              <p className="text-[10px] text-zinc-400">inclui taxa {formatCurrency(order.delivery_fee)}</p>
+                              <p className="text-[10px] text-stone-400">inclui taxa {formatCurrency(order.delivery_fee)}</p>
                             ) : null}
                           </div>
                         </div>
                         <div className="flex items-center justify-end">
-                          <span className="text-[11px] text-amber-600 font-bold flex items-center gap-1">
+                          <span className="text-[11px] text-[var(--cor-loja,#C2410C)] font-bold flex items-center gap-1">
                             Acompanhar
                             <i className="ri-arrow-right-s-line text-xs" />
                           </span>
@@ -991,7 +989,7 @@ export default function DeliveryPage() {
                 <button
                   type="button"
                   onClick={function () { setSubView('historico'); }}
-                  className="w-full flex items-center justify-center gap-1.5 py-3 mb-6 bg-white border border-zinc-200 hover:bg-zinc-50 text-zinc-700 text-xs font-bold rounded-xl cursor-pointer whitespace-nowrap"
+                  className="w-full flex items-center justify-center gap-1.5 py-3 mb-6 bg-white border border-stone-200 hover:bg-stone-50 text-stone-700 text-xs font-bold rounded-xl cursor-pointer whitespace-nowrap"
                 >
                   <i className="ri-history-line" /> Ver histórico completo (entregues e cancelados)
                 </button>
@@ -1002,7 +1000,7 @@ export default function DeliveryPage() {
               <button
                 type="button"
                 onClick={function () { setSubView(previousSubView); }}
-                className="inline-flex items-center gap-1 text-sm font-bold text-zinc-500 hover:text-zinc-700 cursor-pointer mb-5 transition-colors whitespace-nowrap"
+                className="inline-flex items-center gap-1 text-sm font-bold text-stone-500 hover:text-stone-700 cursor-pointer mb-5 transition-colors whitespace-nowrap"
               >
                 <i className="ri-arrow-left-s-line text-lg" />
                 {previousSubView === 'historico' ? 'Histórico' : 'Meus pedidos'}
@@ -1024,14 +1022,14 @@ export default function DeliveryPage() {
               <button
                 type="button"
                 onClick={function () { setSubView('cardapio'); }}
-                className="inline-flex items-center gap-1 text-sm font-bold text-zinc-500 hover:text-zinc-700 cursor-pointer mb-5 transition-colors whitespace-nowrap"
+                className="inline-flex items-center gap-1 text-sm font-bold text-stone-500 hover:text-stone-700 cursor-pointer mb-5 transition-colors whitespace-nowrap"
               >
                 <i className="ri-arrow-left-s-line text-lg" />
                 Voltar ao cardápio
               </button>
               <div className="mb-4">
-                <h3 className="text-base font-black text-zinc-800 mb-1">Meus pedidos</h3>
-                <p className="text-xs text-zinc-500">Histórico de delivery</p>
+                <h3 className="text-base font-black text-stone-800 mb-1">Meus pedidos</h3>
+                <p className="text-xs text-stone-500">Histórico de delivery</p>
               </div>
               <HistoricoPedidos
                 tenantId={tenantId}
@@ -1115,14 +1113,14 @@ export default function DeliveryPage() {
               onClick={function () { setShowSairConfirm(false); }}
             />
             <div className="relative w-full sm:max-w-sm bg-white rounded-t-3xl sm:rounded-2xl p-6 pb-8 z-10 animate-slide-up">
-              <div className="w-10 h-1.5 bg-zinc-200 rounded-full mx-auto mb-5 sm:hidden" />
+              <div className="w-10 h-1.5 bg-stone-200 rounded-full mx-auto mb-5 sm:hidden" />
 
               <div className="text-center mb-6">
                 <div className="w-14 h-14 flex items-center justify-center mx-auto mb-3 bg-red-50 rounded-2xl border border-red-100">
                   <i className="ri-logout-box-r-line text-2xl text-red-500" />
                 </div>
-                <h3 className="text-base font-black text-zinc-800 mb-1">Sair e usar outro número?</h3>
-                <p className="text-xs text-zinc-500 leading-relaxed">
+                <h3 className="text-base font-black text-stone-800 mb-1">Sair e usar outro número?</h3>
+                <p className="text-xs text-stone-500 leading-relaxed">
                   Seus dados deixam de ficar salvos neste aparelho
                   {cart.length > 0 ? ' e o carrinho atual será esvaziado' : ''}.
                 </p>
@@ -1140,7 +1138,7 @@ export default function DeliveryPage() {
                 <button
                   type="button"
                   onClick={function () { setShowSairConfirm(false); }}
-                  className="w-full py-3 rounded-2xl bg-zinc-100 hover:bg-zinc-200 text-zinc-700 text-sm font-bold cursor-pointer transition-colors"
+                  className="w-full py-3 rounded-2xl bg-stone-100 hover:bg-stone-200 text-stone-700 text-sm font-bold cursor-pointer transition-colors"
                 >
                   Cancelar
                 </button>

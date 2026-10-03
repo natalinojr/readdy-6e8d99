@@ -302,14 +302,14 @@ export default function EnderecoPinDelivery(props: Props) {
       <>
         <div>
           <div className="flex items-center justify-between mb-2">
-            <label className="block text-xs font-semibold text-zinc-600">
+            <label className="block text-xs font-semibold text-stone-600">
               Sua localização <span className="text-red-500">*</span>
             </label>
             <button
               type="button"
               onClick={usarMinhaLocalizacao}
               disabled={geoLoading}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-700 text-[11px] font-bold rounded-lg cursor-pointer transition-colors whitespace-nowrap disabled:opacity-60"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[var(--cor-loja-suave,#F9ECE7)] hover:bg-[var(--cor-loja-suave,#F9ECE7)] text-[var(--cor-loja,#C2410C)] text-[11px] font-bold rounded-lg cursor-pointer transition-colors whitespace-nowrap disabled:opacity-60"
             >
               {geoLoading ? (
                 <><i className="ri-loader-4-line animate-spin text-xs" />Localizando...</>
@@ -329,14 +329,14 @@ export default function EnderecoPinDelivery(props: Props) {
             onToggleLock={function (n) { setPosLocked(n); }}
           />
           {autoEndereco ? (
-            <p className="text-[11px] text-amber-600 mt-2 flex items-center gap-1 font-medium">
+            <p className="text-[11px] text-[var(--cor-loja,#C2410C)] mt-2 flex items-center gap-1 font-medium">
               <i className="ri-loader-4-line animate-spin text-xs" />
               Buscando o endereço deste ponto...
             </p>
           ) : !temPin ? (
-            <p className="text-[11px] text-zinc-500 mt-2 flex items-center gap-1">
-              <i className="ri-information-line text-zinc-400 text-xs" />
-              Arraste o mapa até a sua casa e toque em <span className="font-semibold text-amber-600">Confirmar esta localização</span>.
+            <p className="text-[11px] text-stone-500 mt-2 flex items-center gap-1">
+              <i className="ri-information-line text-stone-400 text-xs" />
+              Arraste o mapa até a sua casa e toque em <span className="font-semibold text-[var(--cor-loja,#C2410C)]">Confirmar esta localização</span>.
             </p>
           ) : posLocked ? (
             <p className="text-[11px] text-green-600 mt-2 flex items-center gap-1 font-medium">
@@ -344,13 +344,13 @@ export default function EnderecoPinDelivery(props: Props) {
               Localização salva. Confira o endereço preenchido abaixo.
             </p>
           ) : (
-            <p className="text-[11px] text-zinc-500 mt-2 flex items-center gap-1">
-              <i className="ri-information-line text-zinc-400 text-xs" />
+            <p className="text-[11px] text-stone-500 mt-2 flex items-center gap-1">
+              <i className="ri-information-line text-stone-400 text-xs" />
               Confira o endereço e toque em <span className="font-semibold text-green-600">Salvar posição</span> no mapa.
             </p>
           )}
           {geoError ? (
-            <p className="text-[11px] text-amber-600 mt-1.5 flex items-center gap-1">
+            <p className="text-[11px] text-[var(--cor-loja,#C2410C)] mt-1.5 flex items-center gap-1">
               <i className="ri-error-warning-line text-xs" />{geoError}
             </p>
           ) : null}
@@ -363,20 +363,20 @@ export default function EnderecoPinDelivery(props: Props) {
 
         {temPin ? (
           deliveryQuote && deliveryQuote.dentroArea ? (
-            <div className="bg-amber-50 border border-amber-200/60 rounded-xl p-4">
+            <div className="bg-[var(--cor-loja-suave,#F9ECE7)] border border-stone-200 rounded-xl p-4">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <div className="w-9 h-9 flex items-center justify-center bg-amber-500 rounded-xl text-white">
+                  <div className="w-9 h-9 flex items-center justify-center bg-[var(--cor-loja,#C2410C)] rounded-xl text-white">
                     <i className="ri-motorbike-line text-sm" />
                   </div>
                   <div>
-                    <p className="text-xs font-bold text-zinc-800">Taxa de entrega estimada</p>
-                    <p className="text-[10px] text-zinc-500">
+                    <p className="text-xs font-bold text-stone-800">Taxa de entrega estimada</p>
+                    <p className="text-[10px] text-stone-500">
                       ~{deliveryQuote.km.toFixed(1)} km{deliveryQuote.tempoMax > 0 ? ' • até ' + deliveryQuote.tempoMax + ' min' : ''}
                     </p>
                   </div>
                 </div>
-                <span className="text-base font-black text-amber-600">
+                <span className="text-base font-black text-[var(--cor-loja,#C2410C)]">
                   {deliveryQuote.taxa > 0 ? formatCurrency(deliveryQuote.taxa) : 'Grátis'}
                 </span>
               </div>
@@ -405,28 +405,28 @@ export default function EnderecoPinDelivery(props: Props) {
     return (
       <>
         <div>
-          <label className="block text-xs font-semibold text-zinc-600 mb-1.5">
+          <label className="block text-xs font-semibold text-stone-600 mb-1.5">
             Seu nome <span className="text-red-500">*</span>
           </label>
           <input
             type="text" value={nome} onChange={function (e) { onNomeChange(e.target.value); }}
             placeholder="Ex: João Silva" maxLength={60}
-            className={'w-full px-3.5 py-2.5 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent transition-all ' +
-              (showErrors && !nomeOk ? 'border-red-200 bg-red-50/30' : 'border-zinc-200')}
+            className={'w-full px-3.5 py-2.5 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-[color:var(--cor-loja-suave,#F9ECE7)] focus:border-transparent transition-all ' +
+              (showErrors && !nomeOk ? 'border-red-200 bg-red-50/30' : 'border-stone-200')}
           />
         </div>
 
         <div className="space-y-3">
           {/* Data ocupa a linha inteira — em meia largura o ano ficava cortado. */}
           <div>
-            <label className="block text-xs font-semibold text-zinc-600 mb-1.5">Nascimento</label>
+            <label className="block text-xs font-semibold text-stone-600 mb-1.5">Nascimento</label>
             <SeletorDataNascimento value={nascimento} onChange={onNascimentoChange} />
           </div>
           <div>
-            <label className="block text-xs font-semibold text-zinc-600 mb-1.5">Gênero</label>
+            <label className="block text-xs font-semibold text-stone-600 mb-1.5">Gênero</label>
             <select
               value={genero} onChange={function (e) { onGeneroChange(e.target.value); }}
-              className="w-full px-3.5 py-2.5 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent transition-all bg-white"
+              className="w-full px-3.5 py-2.5 text-sm border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[color:var(--cor-loja-suave,#F9ECE7)] focus:border-transparent transition-all bg-white"
             >
               <option value="">Prefiro não dizer</option>
               <option value="masculino">Masculino</option>
@@ -445,52 +445,52 @@ export default function EnderecoPinDelivery(props: Props) {
       <>
         <div className="grid grid-cols-3 gap-3">
           <div className="col-span-2">
-            <label className="block text-xs font-semibold text-zinc-600 mb-1.5">Rua <span className="text-red-500">*</span></label>
+            <label className="block text-xs font-semibold text-stone-600 mb-1.5">Rua <span className="text-red-500">*</span></label>
             <input
               type="text" value={rua} onChange={function (e) { onRuaChange(e.target.value); }}
               placeholder="Ex: Rua das Flores" maxLength={100}
-              className={'w-full px-3.5 py-2.5 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent transition-all ' +
-                (showErrors && !ruaOk ? 'border-red-200 bg-red-50/30' : 'border-zinc-200')}
+              className={'w-full px-3.5 py-2.5 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-[color:var(--cor-loja-suave,#F9ECE7)] focus:border-transparent transition-all ' +
+                (showErrors && !ruaOk ? 'border-red-200 bg-red-50/30' : 'border-stone-200')}
             />
           </div>
           <div>
-            <label className="block text-xs font-semibold text-zinc-600 mb-1.5">Número <span className="text-red-500">*</span></label>
+            <label className="block text-xs font-semibold text-stone-600 mb-1.5">Número <span className="text-red-500">*</span></label>
             <input
               type="text" inputMode="numeric" pattern="[0-9]*"
               value={numero} onChange={function (e) { onNumeroChange(e.target.value.replace(/\D/g, '')); }}
               placeholder="123" maxLength={10}
-              className={'w-full px-3.5 py-2.5 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent transition-all ' +
-                (showErrors && !numeroOk ? 'border-red-200 bg-red-50/30' : 'border-zinc-200')}
+              className={'w-full px-3.5 py-2.5 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-[color:var(--cor-loja-suave,#F9ECE7)] focus:border-transparent transition-all ' +
+                (showErrors && !numeroOk ? 'border-red-200 bg-red-50/30' : 'border-stone-200')}
             />
           </div>
         </div>
 
         <div>
-          <label className="block text-xs font-semibold text-zinc-600 mb-1.5">Bairro</label>
+          <label className="block text-xs font-semibold text-stone-600 mb-1.5">Bairro</label>
           <input
             type="text" value={bairro} onChange={function (e) { onBairroChange(e.target.value); }}
             placeholder="Ex: Centro" maxLength={60}
-            className="w-full px-3.5 py-2.5 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent transition-all"
+            className="w-full px-3.5 py-2.5 text-sm border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[color:var(--cor-loja-suave,#F9ECE7)] focus:border-transparent transition-all"
           />
         </div>
 
         <div>
-          <label className="block text-xs font-semibold text-zinc-600 mb-1.5">Complemento</label>
+          <label className="block text-xs font-semibold text-stone-600 mb-1.5">Complemento</label>
           <input
             type="text" value={complemento} onChange={function (e) { onComplementoChange(e.target.value); }}
             placeholder="Ex: Apto 42, Bloco B" maxLength={60}
-            className="w-full px-3.5 py-2.5 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent transition-all"
+            className="w-full px-3.5 py-2.5 text-sm border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[color:var(--cor-loja-suave,#F9ECE7)] focus:border-transparent transition-all"
           />
         </div>
 
         <div>
-          <label className="block text-xs font-semibold text-zinc-600 mb-1.5">
-            Ponto de referência <span className="text-zinc-400 font-normal">— ajuda o motoboy</span>
+          <label className="block text-xs font-semibold text-stone-600 mb-1.5">
+            Ponto de referência <span className="text-stone-400 font-normal">— ajuda o motoboy</span>
           </label>
           <input
             type="text" value={referencia} onChange={function (e) { onReferenciaChange(e.target.value); }}
             placeholder="Ex: Casa azul, em frente ao mercado" maxLength={100}
-            className="w-full px-3.5 py-2.5 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent transition-all"
+            className="w-full px-3.5 py-2.5 text-sm border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[color:var(--cor-loja-suave,#F9ECE7)] focus:border-transparent transition-all"
           />
         </div>
       </>
@@ -504,18 +504,18 @@ export default function EnderecoPinDelivery(props: Props) {
     // fallback. O conteúdo rola internamente (min-h-0 + overflow-y-auto) para o campo
     // focado conseguir subir acima do teclado virtual.
     <div className="h-screen flex flex-col bg-white" style={{ height: viewportH ? `${viewportH}px` : '100dvh' }}>
-      <div className="bg-gradient-to-br from-amber-500 to-orange-500 px-4 pt-6 pb-4 shrink-0">
+      <div className="px-3 py-2.5 border-b border-stone-200/70 bg-[#FBF8F4] shrink-0">
         <div className="flex items-center gap-3">
           <button
             type="button"
             onClick={function () { if (formMode !== 'list' && temListaSalva) cancelarForm(); else onVoltar(); }}
-            className="w-9 h-9 flex items-center justify-center bg-white/20 rounded-xl text-white hover:bg-white/30 cursor-pointer transition-colors"
+            className="w-11 h-11 flex items-center justify-center rounded-full text-stone-900 hover:bg-stone-100 cursor-pointer transition-colors"
           >
             <i className="ri-arrow-left-line" />
           </button>
           <div>
-            <h1 className="text-white text-lg font-black leading-tight">{headerTitulo}</h1>
-            <p className="text-white/80 text-xs">{city || 'Marque sua casa no mapa'}</p>
+            <h1 className="text-stone-900 text-[17px] font-extrabold leading-tight">{headerTitulo}</h1>
+            <p className="text-stone-500 text-xs">{city || 'Marque sua casa no mapa'}</p>
           </div>
         </div>
       </div>
@@ -540,20 +540,20 @@ export default function EnderecoPinDelivery(props: Props) {
                     <div
                       onClick={function () { onSelecionarEndereco(addr.id); }}
                       className={'relative bg-white rounded-xl border-2 cursor-pointer transition-all p-4 ' +
-                        (isSelected ? 'border-amber-400 bg-amber-50/50 ring-2 ring-amber-200/50' : 'border-zinc-100 hover:border-amber-200/60')}
+                        (isSelected ? 'border-[var(--cor-loja,#C2410C)] bg-[var(--cor-loja-suave,#F9ECE7)] ring-2 ring-[color:var(--cor-loja-suave,#F9ECE7)]' : 'border-stone-100 hover:border-stone-300')}
                     >
                       <div className="flex items-start justify-between mb-2">
                         <div className="flex items-center gap-2">
                           <div className={'w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 ' +
-                            (isSelected ? 'bg-amber-500 border-amber-500' : 'border-zinc-300')}>
+                            (isSelected ? 'bg-[var(--cor-loja,#C2410C)] border-[var(--cor-loja,#C2410C)]' : 'border-stone-300')}>
                             {isSelected ? <i className="ri-check-line text-white text-[10px]" /> : null}
                           </div>
-                          <div className="w-6 h-6 flex items-center justify-center bg-zinc-100 rounded-lg">
-                            <i className={t.icon + ' text-zinc-500 text-xs'} />
+                          <div className="w-6 h-6 flex items-center justify-center bg-stone-100 rounded-lg">
+                            <i className={t.icon + ' text-stone-500 text-xs'} />
                           </div>
-                          <span className="text-sm font-bold text-zinc-800">{addr.label}</span>
+                          <span className="text-sm font-bold text-stone-800">{addr.label}</span>
                           {addr.is_default ? (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-500 text-white text-[10px] font-bold rounded-full">
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-[var(--cor-loja,#C2410C)] text-white text-[10px] font-bold rounded-full">
                               <i className="ri-star-fill text-[9px]" />Principal
                             </span>
                           ) : (
@@ -561,7 +561,7 @@ export default function EnderecoPinDelivery(props: Props) {
                               type="button"
                               onClick={function (e) { e.stopPropagation(); onSetDefaultAddress(addr.id); }}
                               disabled={enviando}
-                              className="inline-flex items-center gap-1 px-2 py-0.5 bg-zinc-100 hover:bg-amber-100 text-zinc-400 hover:text-amber-600 text-[10px] font-bold rounded-full border border-zinc-200 cursor-pointer transition-all whitespace-nowrap"
+                              className="inline-flex items-center gap-1 px-2 py-0.5 bg-stone-100 hover:bg-[var(--cor-loja-suave,#F9ECE7)] text-stone-400 hover:text-[var(--cor-loja-forte,#A5380A)] text-[10px] font-bold rounded-full border border-stone-200 cursor-pointer transition-all whitespace-nowrap"
                             >
                               <i className="ri-star-line text-[9px]" />Principal
                             </button>
@@ -571,7 +571,7 @@ export default function EnderecoPinDelivery(props: Props) {
                           <button
                             type="button"
                             onClick={function (e) { e.stopPropagation(); abrirEdicao(addr); }}
-                            className="w-7 h-7 flex items-center justify-center bg-zinc-100 hover:bg-zinc-200 rounded-lg text-zinc-400 hover:text-zinc-600 cursor-pointer transition-colors"
+                            className="w-7 h-7 flex items-center justify-center bg-stone-100 hover:bg-stone-200 rounded-lg text-stone-400 hover:text-stone-600 cursor-pointer transition-colors"
                           >
                             <i className="ri-pencil-line text-xs" />
                           </button>
@@ -584,7 +584,7 @@ export default function EnderecoPinDelivery(props: Props) {
                                 else setDeleteConfirmId(addr.id);
                               }}
                               className={'w-7 h-7 flex items-center justify-center rounded-lg cursor-pointer transition-colors ' +
-                                (showDel ? 'bg-red-500 text-white hover:bg-red-600' : 'bg-zinc-100 hover:bg-red-100 text-zinc-400 hover:text-red-500')}
+                                (showDel ? 'bg-red-500 text-white hover:bg-red-600' : 'bg-stone-100 hover:bg-red-100 text-stone-400 hover:text-red-500')}
                             >
                               <i className={(showDel ? 'ri-check-line' : 'ri-delete-bin-line') + ' text-xs'} />
                             </button>
@@ -592,10 +592,10 @@ export default function EnderecoPinDelivery(props: Props) {
                         </div>
                       </div>
                       <div className="ml-7 space-y-1">
-                        <p className="text-sm text-zinc-700">
-                          <i className="ri-road-map-line text-zinc-400 text-xs mr-1.5" />{formatAddressLine(addr)}
+                        <p className="text-sm text-stone-700">
+                          <i className="ri-road-map-line text-stone-400 text-xs mr-1.5" />{formatAddressLine(addr)}
                         </p>
-                        <p className={'text-[11px] font-medium flex items-center gap-1 ' + (temPinAddr ? 'text-green-600' : 'text-amber-600')}>
+                        <p className={'text-[11px] font-medium flex items-center gap-1 ' + (temPinAddr ? 'text-green-600' : 'text-[var(--cor-loja,#C2410C)]')}>
                           <i className={(temPinAddr ? 'ri-map-pin-fill' : 'ri-error-warning-line') + ' text-[10px]'} />
                           {temPinAddr ? 'Localização no mapa salva' : 'Sem localização — toque em editar para marcar'}
                         </p>
@@ -609,7 +609,7 @@ export default function EnderecoPinDelivery(props: Props) {
             <button
               type="button"
               onClick={abrirNovo}
-              className="w-full flex items-center justify-center gap-2 px-4 py-3.5 border-2 border-dashed border-amber-300 rounded-xl text-amber-600 hover:border-amber-400 hover:bg-amber-50/50 text-sm font-bold cursor-pointer transition-all whitespace-nowrap"
+              className="w-full flex items-center justify-center gap-2 px-4 py-3.5 border-2 border-dashed border-stone-200 rounded-xl text-[var(--cor-loja,#C2410C)] hover:border-stone-300 hover:bg-[var(--cor-loja-suave,#F9ECE7)]/50 text-sm font-bold cursor-pointer transition-all whitespace-nowrap"
             >
               <i className="ri-add-line text-lg" />Adicionar novo endereço
             </button>
@@ -625,9 +625,9 @@ export default function EnderecoPinDelivery(props: Props) {
                 type="button"
                 onClick={onIrParaCardapio}
                 disabled={!selectedAddressId || enviando || foraDeArea}
-                className="w-full bg-gradient-to-br from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 disabled:opacity-60 text-white text-sm font-bold py-3.5 rounded-xl cursor-pointer transition-all whitespace-nowrap flex items-center justify-center gap-2"
+                className="w-full bg-[var(--cor-loja,#C2410C)] hover:bg-[var(--cor-loja-forte,#A5380A)] disabled:opacity-60 text-white text-sm font-bold py-3.5 rounded-xl cursor-pointer transition-all whitespace-nowrap flex items-center justify-center gap-2"
               >
-                <i className="ri-arrow-right-line text-sm" />Usar este endereço e ver cardápio
+                <i className="ri-arrow-right-line text-sm" />Usar este endereço
               </button>
               {foraDeArea ? (
                 <p className="text-center text-[11px] text-red-500 font-medium mt-2">O endereço selecionado está fora da área de entrega.</p>
@@ -638,8 +638,8 @@ export default function EnderecoPinDelivery(props: Props) {
           /* ── FORM (novo cliente / add / edit) ── */
           <>
             <div>
-              <label className="block text-xs font-semibold text-zinc-600 mb-1.5">Celular</label>
-              <input type="tel" value={phone} readOnly className="w-full px-3.5 py-2.5 text-sm border border-zinc-200 rounded-lg bg-zinc-50 text-zinc-600" />
+              <label className="block text-xs font-semibold text-stone-600 mb-1.5">Celular</label>
+              <input type="tel" value={phone} readOnly className="w-full px-3.5 py-2.5 text-sm border border-stone-200 rounded-lg bg-stone-50 text-stone-600" />
             </div>
 
             {/* Dados pessoais (novo cliente) — antes do mapa */}
@@ -648,7 +648,7 @@ export default function EnderecoPinDelivery(props: Props) {
             {/* Tipo de endereço (só para clientes existentes na lista) */}
             {temListaSalva || formMode === 'edit' ? (
               <div>
-                <label className="block text-xs font-semibold text-zinc-600 mb-2">Tipo de endereço</label>
+                <label className="block text-xs font-semibold text-stone-600 mb-2">Tipo de endereço</label>
                 <div className="grid grid-cols-3 gap-2">
                   {ADDRESS_TYPES.map(function (type) {
                     const sel = formAddressType === type.id;
@@ -657,12 +657,12 @@ export default function EnderecoPinDelivery(props: Props) {
                         key={type.id} type="button"
                         onClick={function () { setFormAddressType(type.id); }}
                         className={'flex flex-col items-center gap-1 px-3 py-2.5 rounded-xl border-2 cursor-pointer transition-all ' +
-                          (sel ? 'border-amber-400 bg-amber-50 ring-2 ring-amber-200/50' : 'border-zinc-100 hover:border-amber-200/60 bg-white')}
+                          (sel ? 'border-[var(--cor-loja,#C2410C)] bg-[var(--cor-loja-suave,#F9ECE7)] ring-2 ring-[color:var(--cor-loja-suave,#F9ECE7)]' : 'border-stone-100 hover:border-stone-300 bg-white')}
                       >
-                        <div className={'w-8 h-8 flex items-center justify-center rounded-lg ' + (sel ? 'bg-amber-500 text-white' : 'bg-zinc-100 text-zinc-400')}>
+                        <div className={'w-8 h-8 flex items-center justify-center rounded-lg ' + (sel ? 'bg-[var(--cor-loja,#C2410C)] text-white' : 'bg-stone-100 text-stone-400')}>
                           <i className={type.icon + ' text-sm'} />
                         </div>
-                        <span className={'text-[11px] font-bold whitespace-nowrap ' + (sel ? 'text-amber-700' : 'text-zinc-600')}>{type.label}</span>
+                        <span className={'text-[11px] font-bold whitespace-nowrap ' + (sel ? 'text-[var(--cor-loja,#C2410C)]' : 'text-stone-600')}>{type.label}</span>
                       </button>
                     );
                   })}
@@ -671,7 +671,7 @@ export default function EnderecoPinDelivery(props: Props) {
                   <input
                     type="text" value={formCustomLabel} onChange={function (e) { setFormCustomLabel(e.target.value); }}
                     placeholder="Digite um nome para este endereço" maxLength={40}
-                    className="mt-2 w-full px-3.5 py-2.5 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent transition-all"
+                    className="mt-2 w-full px-3.5 py-2.5 text-sm border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[color:var(--cor-loja-suave,#F9ECE7)] focus:border-transparent transition-all"
                   />
                 ) : null}
               </div>
@@ -694,12 +694,12 @@ export default function EnderecoPinDelivery(props: Props) {
                 type="button"
                 onClick={isExistingCustomer ? salvarEndereco : salvarNovoCliente}
                 disabled={enviando || (showErrors && !podeAvancar)}
-                className="w-full bg-gradient-to-br from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 disabled:opacity-60 text-white text-sm font-bold py-3.5 rounded-xl cursor-pointer transition-all whitespace-nowrap flex items-center justify-center gap-2"
+                className="w-full bg-[var(--cor-loja,#C2410C)] hover:bg-[var(--cor-loja-forte,#A5380A)] disabled:opacity-60 text-white text-sm font-bold py-3.5 rounded-xl cursor-pointer transition-all whitespace-nowrap flex items-center justify-center gap-2"
               >
                 {enviando ? (
                   <><i className="ri-loader-4-line animate-spin" />Salvando...</>
                 ) : (
-                  <><i className="ri-arrow-right-line text-sm" />{isExistingCustomer ? 'Salvar endereço' : 'Salvar e ver cardápio'}</>
+                  <><i className="ri-arrow-right-line text-sm" />{'Salvar endereço'}</>
                 )}
               </button>
               {showErrors && !podeAvancar && !enviando ? (
@@ -714,7 +714,7 @@ export default function EnderecoPinDelivery(props: Props) {
               <button
                 type="button"
                 onClick={cancelarForm}
-                className="w-full text-sm text-zinc-500 font-bold py-3 cursor-pointer hover:text-zinc-700 transition-colors bg-zinc-100 rounded-xl hover:bg-zinc-200"
+                className="w-full text-sm text-stone-500 font-bold py-3 cursor-pointer hover:text-stone-700 transition-colors bg-stone-100 rounded-xl hover:bg-stone-200"
               >
                 {temListaSalva ? 'Cancelar' : 'Voltar'}
               </button>
