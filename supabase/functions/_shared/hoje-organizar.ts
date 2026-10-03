@@ -73,7 +73,8 @@ export const DIAS_SEM_RESPOSTA = 2;
 /** Alguém esperando AGORA (operador no PDV, Pix pedido no grupo): topo da lista. */
 const JA = new Set(['aprovacao', 'pagamento_grupo', 'pagamento_pendente']);
 /** É para hoje mesmo sem vencimento no payload. */
-const HOJE_MESMO = new Set(['conta_vence_hoje', 'pedido_pagamento', 'pedido_pagamento_pagar']);
+// vendas_abaixo_ritmo e insumo_antes_do_pico (2026-10-03, avisos antes de virar problema) são do dia.
+const HOJE_MESMO = new Set(['conta_vence_hoje', 'pedido_pagamento', 'pedido_pagamento_pagar', 'vendas_abaixo_ritmo', 'insumo_antes_do_pico']);
 
 const num = (v: unknown): number | null => (v == null || v === '' || Number.isNaN(Number(v)) ? null : Number(v));
 

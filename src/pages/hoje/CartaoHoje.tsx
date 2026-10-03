@@ -29,7 +29,9 @@ export function rotuloPrazo(prazo: string | null, hoje: string): { texto: string
 const semPrefixo = (t: string) => t.replace(/^Falta o boleto:\s*/, '');
 /** Sem "Não vou fazer" genérico: têm saída própria (aqui ou na tela que o cartão abre). */
 const SEM_DESCARTE = new Set(['boleto_faltando', 'aprovacao', 'pedido_pagamento', 'pedido_pagamento_pagar', 'pagamento_grupo', 'pagamento_pendente',
-  'compra_pelo_celular', 'sangria_sem_cupom', 'sangria_nao_saiu', 'sangria_valor_diferente', 'recebimento_sem_nota', 'boleto_email']);
+  'compra_pelo_celular', 'sangria_sem_cupom', 'sangria_nao_saiu', 'sangria_valor_diferente', 'recebimento_sem_nota', 'boleto_email',
+  // Avisos antes de virar problema (2026-10-03): saem por "Ciente"/"Já comprei" ou fecham sozinhos.
+  'vendas_abaixo_ritmo', 'caixa_nao_cobre', 'insumo_antes_do_pico']);
 
 /** Texto do pedido de boleto que vai para a caixa de digitação do chat (o dono revisa e envia). */
 function textoPedirBoletos(item: ItemHoje, ps: PendHoje[]): string {
@@ -67,6 +69,8 @@ export default function CartaoHoje({ item, hoje, dono, papel, meuNome, mostrarLo
   const [erro, setErro] = useState<string | null>(null);
   // "N contas atrasadas": a data das contas juntadas não é a mais antiga de todas (a agregada não diz) — só o selo.
   const prazo = item.tipo === 'contas_vencidas' && p.kind === 'conta_atrasada' ? { texto: 'atrasadas', tom: 'red' as const } : rotuloPrazo(item.prazo, hoje);
+  // Caixa da semana: o "prazo" é o dia em que o dinheiro deixa de cobrir ("falta sábado"), não um vencimento.
+  if (prazo && p.kind === 'caixa_nao_cobre') prazo.texto = prazo.texto.replace(/^vence/, 'falta');
   const t = item.tenantId;
   const financeiro = dono || papel === 'admin' || papel === 'gerente' || papel === 'financeiro';
 
@@ -139,6 +143,18 @@ export default function CartaoHoje({ item, hoje, dono, papel, meuNome, mostrarLo
     </button>);
   } else if (p.kind === 'estoque_critico') {
     if (p.rota) add('ver', <button onClick={() => abrir(t, p.rota as string)} className={PRINCIPAL}><i className="ri-archive-line" /> Ver o estoque</button>);
+  } else if (p.kind === 'vendas_abaixo_ritmo') {
+    // Fecha sozinho quando as vendas voltam ao ritmo; "Ciente" tira daqui até a próxima janela (19h).
+    add('ver', <button onClick={() => abrir(t, '/dashboard')} className={PRINCIPAL}><i className="ri-line-chart-line" /> Ver as vendas</button>);
+    add('ok', <button disabled={ocupado} onClick={() => rodar(() => marcar(p.id, 'resolvida', 'ciente pela tela Hoje'))} className={LINK}>Ciente</button>);
+  } else if (p.kind === 'caixa_nao_cobre') {
+    // Fecha sozinho quando o saldo volta a cobrir; "Ciente" tira daqui até amanhã (se ainda não cobrir).
+    add('ver', <button onClick={() => abrir(t, '/financeiro?tab=painel')} className={PRINCIPAL}><i className="ri-calendar-check-line" /> Ver o que vence</button>);
+    add('ok', <button disabled={ocupado} onClick={() => rodar(() => marcar(p.id, 'resolvida', 'ciente pela tela Hoje'))} className={LINK}>Ciente — me lembre amanhã</button>);
+  } else if (p.kind === 'insumo_antes_do_pico') {
+    // Fecha sozinho quando a entrada é registrada (o estoque passa a chegar ao pico) ou o pico passa.
+    add('ver', <button onClick={() => abrir(t, '/estoque')} className={PRINCIPAL}><i className="ri-shopping-cart-2-line" /> Ver o que comprar</button>);
+    add('feito', <button disabled={ocupado} onClick={() => rodar(() => marcar(p.id, 'resolvida', 'comprou ou produziu (tela Hoje)'))} className={SECUNDARIO}><i className="ri-check-line" /> Já comprei / produzi</button>);
   } else if (p.rota) {
     add('abrir', <button onClick={() => abrir(t, p.kind === 'conta_atrasada' ? '/financeiro?tab=contas-vencidas' : p.rota as string)} className={PRINCIPAL}>
       <i className="ri-arrow-right-up-line" /> Abrir e resolver
