@@ -97,6 +97,16 @@ export default function ComprasTab({ highlightId, onHighlightConsumed }: Compras
   useEffect(() => {
     if (!highlightId || loading) return;
     setFlashId(highlightId);
+    // "Ver Compra" (Contas a Pagar): a compra costuma ser de outro mês que o da
+    // lista — vai para o mês dela e já abre o detalhe, senão só trocava de aba.
+    const alvo = purchases.find((p) => p.id === highlightId);
+    if (alvo) {
+      if (alvo.purchase_date) {
+        const [a, m] = alvo.purchase_date.split('-').map(Number);
+        setAnoSelecionado(a); setMesSelecionado(m - 1); setPage(1);
+      }
+      openDetail(alvo);
+    }
     const timer = setTimeout(() => {
       setFlashId(undefined);
       onHighlightConsumed?.();

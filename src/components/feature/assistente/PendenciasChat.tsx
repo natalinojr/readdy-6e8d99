@@ -613,6 +613,11 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
         {expandida === p.id && p.kind === 'item_sem_classe' && (
           <ItensClassificarCard call={call} tenantId={p.tenantId} abertoInicial onFeito={() => onMudou?.()} onTudo={() => { setExpandida(null); recarregar(); onMudou?.(); }} />
         )}
+        {expandida === p.id && p.kind === 'conta_vence_hoje' && (
+          <ContasAtrasadasInline tenantId={p.tenantId} soHoje onPagarConta={onPagarConta}
+            onAbrir={() => onAbrir({ ...p, rota: '/financeiro?tab=pagar' })}
+            onMudou={() => { recarregar(); onMudou?.(); }} />
+        )}
         {expandida === p.id && p.kind === 'conta_atrasada' && (
           <ContasAtrasadasInline tenantId={p.tenantId} onPagarConta={onPagarConta}
             onAbrir={(billId) => onAbrir({ ...p, rota: `/financeiro?tab=contas-vencidas&foco=${encodeURIComponent(billId)}` })}
@@ -831,6 +836,7 @@ const RESOLVE_AQUI: Record<string, { label: string; icone: string }> = {
   item_sem_classe: { label: 'Classificar aqui', icone: 'ri-price-tag-3-line' },
   tarefa_vencida: { label: 'Ver tarefas', icone: 'ri-task-line' },
   conta_atrasada: { label: 'Ver contas', icone: 'ri-file-list-3-line' },
+  conta_vence_hoje: { label: 'Ver contas', icone: 'ri-file-list-3-line' },
 };
 
 const brl = (n: number) => Number(n ?? 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -911,8 +917,10 @@ interface ContaAtrasada {
 // de fin_accounts_payable libera SELECT a membro da loja (20260912070000_fin_select_membership).
 // Ação em cada conta (dono, 2026-09-25): Pagar (boleto/Pix guardado → Inter → PIN), Dar baixa (já pagou
 // por fora — mesmo pay_bill da aba Contas Vencidas) e Abrir (a conta em Contas Vencidas).
-function ContasAtrasadasInline({ tenantId, onPagarConta, onAbrir, onMudou }: {
+// soHoje (2026-10-02): mesma lista para a pendência "Vence hoje" — só as que vencem hoje.
+function ContasAtrasadasInline({ tenantId, soHoje = false, onPagarConta, onAbrir, onMudou }: {
   tenantId: string;
+  soHoje?: boolean;
   onPagarConta?: (billId: string) => Promise<void>;
   onAbrir: (billId: string) => void;
   onMudou: () => void;
@@ -925,10 +933,10 @@ function ContasAtrasadasInline({ tenantId, onPagarConta, onAbrir, onMudou }: {
   const hoje = new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' });
   const carregar = useCallback(() => {
     supabase.from('fin_accounts_payable').select('id, description, supplier, amount, paid_amount, due_date, dre_category_id, reference_type, boleto_digitavel, boleto_pix_copia')
-      .eq('tenant_id', tenantId).not('status', 'in', '(paid,cancelled)').lt('due_date', hoje)
+      .eq('tenant_id', tenantId).not('status', 'in', '(paid,cancelled)')[soHoje ? 'eq' : 'lt']('due_date', hoje)
       .order('due_date', { ascending: true }).limit(100)
       .then(({ data: d, error }) => { if (error) setErro(error.message); setContas((d as ContaAtrasada[]) ?? []); });
-  }, [tenantId, hoje]);
+  }, [tenantId, hoje, soHoje]);
   useEffect(() => { carregar(); }, [carregar]);
 
   const pagar = async (c: ContaAtrasada) => {
@@ -944,7 +952,7 @@ function ContasAtrasadasInline({ tenantId, onPagarConta, onAbrir, onMudou }: {
   return (
     <div className="mt-2.5 space-y-1.5">
       {erro && <p className="text-xs text-red-600">{erro}</p>}
-      {!contas.length && !erro && <p className="text-xs font-semibold text-emerald-700"><i className="ri-check-line" /> Nenhuma conta atrasada.</p>}
+      {!contas.length && !erro && <p className="text-xs font-semibold text-emerald-700"><i className="ri-check-line" /> {soHoje ? 'Nenhuma conta vence hoje.' : 'Nenhuma conta atrasada.'}</p>}
       {contas.map((c) => {
         const dias = Math.max(1, Math.floor((agora - new Date(`${c.due_date}T12:00:00-03:00`).getTime()) / 86400000));
         const saldo = Number(c.amount) - Number(c.paid_amount ?? 0);
@@ -955,7 +963,9 @@ function ContasAtrasadasInline({ tenantId, onPagarConta, onAbrir, onMudou }: {
               <div className="flex-1 min-w-0">
                 <p className="text-[13px] font-semibold text-zinc-800 break-words leading-snug">{c.supplier || c.description}</p>
                 {c.supplier && c.description && c.description !== c.supplier && <p className="text-[11px] text-zinc-500 break-words">{c.description}</p>}
-                <p className="text-[11px] text-red-600 mt-0.5">venceu {data(c.due_date)} · {dias} dia{dias > 1 ? 's' : ''}</p>
+                {soHoje
+                  ? <p className="text-[11px] text-amber-700 font-semibold mt-0.5">vence hoje</p>
+                  : <p className="text-[11px] text-red-600 mt-0.5">venceu {data(c.due_date)} · {dias} dia{dias > 1 ? 's' : ''}</p>}
               </div>
               <span className="text-[13px] font-bold text-zinc-900 tabular-nums whitespace-nowrap">{brl(saldo)}</span>
             </div>

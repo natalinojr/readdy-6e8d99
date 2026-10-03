@@ -1313,6 +1313,35 @@ async function syncPendenciasOperacao(admin: SupabaseClient, tenants: Array<{ id
         });
       }
 
+      // Contas que vencem HOJE (dono, 2026-10-02): o sistema sabia e não avisava — só a atrasada
+      // virava pendência, no dia seguinte. Uma por loja; fecha quando todas forem pagas e, virando
+      // o dia, as que sobrarem passam para "Conta atrasada".
+      const [hj] = await db()<Array<{ n: number; total: number }>>`
+        select count(*)::int n, coalesce(sum(amount - coalesce(paid_amount, 0)), 0)::float total
+          from fin_accounts_payable
+         where tenant_id = ${t.id} and status not in ('paid', 'cancelled')
+           and due_date = (now() at time zone 'America/Sao_Paulo')::date`;
+      const refHoje = new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' });
+      if (hj.n > 0) {
+        await admin.rpc('fn_pendencia_upsert', {
+          p_tenant: t.id, p_kind: 'conta_vence_hoje', p_ref: refHoje,
+          p_titulo: `${hj.n} ${hj.n === 1 ? 'conta vence' : 'contas vencem'} hoje — ${brl(hj.total)}`,
+          p_detalhe: 'Pague hoje (ou dê a baixa, se já pagou) para não atrasar.',
+          p_payload: { total: hj.n, valor: hj.total }, p_rota: '/financeiro?tab=pagar',
+          p_urgencia: 'alta', p_acao_requerida: true, p_origem: 'cron', p_reabrir: true,
+        });
+      }
+      // Fecha a de hoje sem contas e as de dias anteriores (viraram "Conta atrasada").
+      const { data: velhasHoje } = await admin.from('pendencias').select('ref')
+        .eq('tenant_id', t.id).eq('kind', 'conta_vence_hoje').in('status', ['aberta', 'vista']);
+      for (const v of velhasHoje ?? []) {
+        if (v.ref === refHoje && hj.n > 0) continue;
+        await admin.rpc('fn_pendencia_resolver_ref', {
+          p_tenant: t.id, p_kind: 'conta_vence_hoje', p_ref: v.ref,
+          p_motivo: v.ref === refHoje ? 'contas de hoje pagas' : 'passou o dia',
+        });
+      }
+
       // Conta de boleto sem o boleto (dono, 2026-09-28): a NF-e traz vencimento e valor da
       // duplicata, mas não o código — sem ele não há como pagar pelo Inter. Uma pendência POR
       // CONTA (o dono vai atrás de cada fornecedor). Vencidas entram também (dono, 2026-09-29):
