@@ -2586,8 +2586,28 @@ Deno.serve(async (req) => {
           }).then(({ error }) => { if (error) log('WARN', 'registro das regras automáticas', { error: error.message }); });
         }
       }
-      log('INFO', 'regras_auto', 'ok', { lojas: lojas.length, saida });
-      return json({ success: true, lojas: lojas.length, saida });
+      // Ligação direta do extrato dá baixa sozinha (2026-10-02): o cron das 07h30 roda depois da busca
+      // do Inter das 07h, então o pagamento de ontem amanhece baixado mesmo sem ninguém abrir a Conciliação.
+      const { data: exatas } = await admin.from('fin_bank_statement_imports').select('tenant_id')
+        .eq('transaction_type', 'debit').eq('status', 'pending').eq('reconciled', false).eq('match_confidence', 'exato').limit(500);
+      const lojasExato = [...new Set(((exatas ?? []) as Array<{ tenant_id: string }>).map((r) => r.tenant_id))];
+      const baixas: Array<{ loja: string; baixados: number; falhas: number }> = [];
+      for (const tenantId of lojasExato) {
+        const r = await callEdge(ctx, 'conciliacao-pagamentos', 'auto_confirm_exact', {}, tenantId).catch((e) => ({ status: 0, body: { error: errMsg(e) }, ms: 0 }));
+        // deno-lint-ignore no-explicit-any
+        const ok = ((r.body?.baixados ?? []) as any[]);
+        baixas.push({ loja: tenantId, baixados: ok.length, falhas: ((r.body?.falhas ?? []) as unknown[]).length });
+        if (ok.length) {
+          const { data: t } = await admin.from('tenants').select('name').eq('id', tenantId).maybeSingle();
+          const { data: ch } = await admin.from('asst_settings').select('value').eq('key', 'owner_chat').maybeSingle();
+          await admin.from('asst_messages').insert({
+            channel: 'cron', chat_id: String(ch?.value ?? 'cron').replace(/"/g, ''), role: 'assistant', topic: 'pagamentos',
+            content: `✅ ${ok.length} pagamento(s) do extrato baixado(s) pela ligação direta em ${t?.name ?? 'loja'}: ${ok.slice(0, 3).map((x) => x.msg).join(' · ')}`,
+          }).then(({ error }) => { if (error) log('WARN', 'registro das baixas automáticas', { error: error.message }); });
+        }
+      }
+      log('INFO', 'regras_auto', 'ok', { lojas: lojas.length, saida, baixas });
+      return json({ success: true, lojas: lojas.length, saida, baixas });
     }
 
     if (body.action === 'baixa_conciliada') {
