@@ -64,6 +64,45 @@ export default function ComprarSecao({ situacao, extras, onReload, onIrContar }:
     setQtd((q) => ({ ...q, [i.id]: Math.max(0, Math.round((atual + sinal * passo) * 1000) / 1000) }));
   };
 
+  // Situação do insumo em palavras (celular: linha de etiquetas; computador: coluna "Situação").
+  const situacaoTxt = (i: InsumoSituacao): { t: string; c?: string } => {
+    if (i.estoque < 0) return { t: `sistema ${fmtQtd(i.estoque, i.unidade)}`, c: 'text-red-600 font-bold' };
+    if (i.esgotado) return { t: 'zerado', c: 'text-red-600 font-bold' };
+    if (i.diasRestantes != null) return { t: `acaba em ~${Math.max(1, Math.round(i.diasRestantes))} ${Math.round(i.diasRestantes) <= 1 ? 'dia' : 'dias'}`, c: 'text-amber-700 font-bold' };
+    return { t: 'abaixo do mínimo', c: 'text-amber-700 font-semibold' };
+  };
+  const abrirItem = (i: InsumoSituacao) => { setNovoMinimo(String(i.minimo || '')); setFolha({ tipo: 'item', id: i.id }); };
+  const marcar = (i: InsumoSituacao) => {
+    const off = !!fora[i.id];
+    return (
+      <button
+        onClick={() => setFora((f) => ({ ...f, [i.id]: !f[i.id] }))}
+        className={`w-[22px] h-[22px] rounded-md border-2 flex items-center justify-center flex-shrink-0 cursor-pointer ${off ? 'border-zinc-300 bg-white' : 'border-emerald-600 bg-emerald-600 text-white'}`}
+        aria-label={off ? 'Incluir no pedido' : 'Tirar do pedido'}
+      >
+        {!off && <i className="ri-check-line text-sm" />}
+      </button>
+    );
+  };
+  const quantidade = (i: InsumoSituacao) => {
+    if (conteAntes(i)) return <button onClick={onIrContar} className="text-[11px] font-bold text-red-600 bg-red-50 border border-dashed border-red-300 rounded-lg px-2 py-1.5 flex-shrink-0 cursor-pointer whitespace-nowrap">conte antes</button>;
+    const s = sugestaoDe(i);
+    return (
+      <div className={`flex items-center gap-1 flex-shrink-0 ${fora[i.id] ? 'opacity-40' : ''}`}>
+        <button onClick={() => mudarQtd(i, -1)} className="w-7 h-7 rounded-lg border border-zinc-200 hover:bg-zinc-50 text-sm font-bold text-zinc-600 cursor-pointer" aria-label="Menos">−</button>
+        <div className="min-w-[64px] text-center leading-tight">
+          {s.embalagens != null ? (
+            <>
+              <p className="text-[12.5px] font-extrabold text-zinc-800">{s.embalagens} {s.unidadeCompra}</p>
+              <p className="text-[10.5px] text-zinc-400">{fmtQtd(s.qtd, i.unidade)}</p>
+            </>
+          ) : <p className="text-[12.5px] font-extrabold text-zinc-800">{fmtQtd(s.qtd, i.unidade)}</p>}
+        </div>
+        <button onClick={() => mudarQtd(i, 1)} className="w-7 h-7 rounded-lg border border-zinc-200 hover:bg-zinc-50 text-sm font-bold text-zinc-600 cursor-pointer" aria-label="Mais">+</button>
+      </div>
+    );
+  };
+
   const linhaPedido = (i: InsumoSituacao) => `• ${i.nome} — ${fmtSugestao(sugestaoDe(i), i.unidade)}`;
   const dataHoje = `${situacao.hoje.slice(8, 10)}/${situacao.hoje.slice(5, 7)}`;
   const mensagemDe = (g: GrupoCompra) => {
@@ -143,7 +182,7 @@ export default function ComprarSecao({ situacao, extras, onReload, onIrContar }:
   return (
     <section id="inicio-comprar" className="scroll-mt-4">
       <div className="flex items-baseline gap-2 mb-2 px-0.5">
-        <h2 className="text-base font-extrabold text-zinc-900">Comprar</h2>
+        <h2 className="text-base lg:text-lg font-extrabold text-zinc-900">Comprar</h2>
         <span className={`text-xs font-bold rounded-full px-2 py-0.5 ${nomeTotal ? (pendentesGrupos.length ? 'bg-red-500 text-white' : 'bg-emerald-600 text-white') : 'bg-emerald-600 text-white'}`}>{nomeTotal}</span>
         <span className="text-xs text-zinc-400 flex-1">abaixo do mínimo</span>
         {pendentesGrupos.length > 1 && (
@@ -169,7 +208,7 @@ export default function ComprarSecao({ situacao, extras, onReload, onIrContar }:
           const produzir = g.chave === CHAVE_PRODUZIR;
           const barra = pedido ? 'bg-emerald-500' : temZerado ? 'bg-red-500' : 'bg-amber-400';
           return (
-            <div key={g.chave} className="relative bg-white border border-zinc-200 rounded-2xl pl-4 pr-3 py-3 overflow-hidden">
+            <div key={g.chave} className="relative bg-white border border-zinc-200 rounded-2xl pl-4 pr-3 py-3 lg:pl-5 lg:pr-4 lg:py-3.5 overflow-hidden">
               <span className={`absolute left-0 top-0 bottom-0 w-1 ${barra}`} />
               <div className="flex items-center gap-2 mb-1">
                 <p className="text-sm font-extrabold text-zinc-900 truncate flex-1 min-w-0">{g.nome}</p>
@@ -177,6 +216,16 @@ export default function ComprarSecao({ situacao, extras, onReload, onIrContar }:
                   : g.fone ? <span className="text-[10px] font-bold uppercase tracking-wide bg-emerald-50 text-emerald-700 rounded-md px-1.5 py-0.5">WhatsApp</span>
                   : g.chave !== CHAVE_SEM_FORNECEDOR ? <span className="text-[10px] font-bold uppercase tracking-wide bg-zinc-100 text-zinc-500 rounded-md px-1.5 py-0.5">sem telefone</span> : null}
                 {total > 0 && !pedido && <span className="text-sm font-extrabold text-zinc-800 tabular-nums whitespace-nowrap">{brl(total)}</span>}
+                {!pedido && (
+                  <button
+                    onClick={() => abrirMandar(g)}
+                    disabled={ativos(g).length === 0}
+                    className={`hidden lg:flex ml-2 h-9 px-3.5 rounded-xl text-[13px] font-bold items-center gap-1.5 cursor-pointer disabled:opacity-40 whitespace-nowrap ${g.fone ? 'bg-[#1FA855] hover:bg-[#1a9049] text-white' : 'bg-amber-500 hover:bg-amber-600 text-zinc-900'}`}
+                  >
+                    <i className={produzir ? 'ri-restaurant-line' : g.fone ? 'ri-whatsapp-line' : 'ri-share-forward-line'} />
+                    {produzir ? 'Avisar a cozinha' : g.fone ? 'Mandar pelo WhatsApp' : 'Compartilhar pedido'}{jaPedidos.length > 0 ? ` (${ativos(g).length})` : ''}
+                  </button>
+                )}
               </div>
 
               {pedido ? (
@@ -202,56 +251,74 @@ export default function ComprarSecao({ situacao, extras, onReload, onIrContar }:
                       {(() => { const p = ultimoPedido(g); return p ? <button onClick={() => desfazer(p.id)} className="ml-1.5 font-semibold text-zinc-400 underline cursor-pointer">desfazer</button> : null; })()}
                     </p>
                   )}
-                  <div className="divide-y divide-zinc-100">
+                  {/* Celular: uma linha por insumo */}
+                  <div className="divide-y divide-zinc-100 lg:hidden">
                     {abertos.map((i) => {
                       const off = !!fora[i.id];
-                      const s = sugestaoDe(i);
-                      const tags: Array<{ t: string; c?: string }> = [];
-                      if (i.estoque < 0) tags.push({ t: `sistema ${fmtQtd(i.estoque, i.unidade)}`, c: 'text-red-600 font-bold' });
-                      else if (i.esgotado) tags.push({ t: 'zerado', c: 'text-red-600 font-bold' });
-                      else if (i.diasRestantes != null) tags.push({ t: `acaba em ~${Math.max(1, Math.round(i.diasRestantes))} ${Math.round(i.diasRestantes) <= 1 ? 'dia' : 'dias'}`, c: 'text-amber-700 font-bold' });
-                      else tags.push({ t: `tem ${fmtQtd(i.estoque, i.unidade)}` });
+                      const tags: Array<{ t: string; c?: string }> = [situacaoTxt(i)];
+                      if (!(i.estoque < 0) && !i.esgotado && i.diasRestantes == null) tags[0] = { t: `tem ${fmtQtd(i.estoque, i.unidade)}` };
                       if (i.minimo > 0) tags.push({ t: `mín. ${fmtQtd(i.minimo, i.unidade)}` });
                       if (!i.abaixoMinimo) tags.push({ t: 'posto por você' });
                       return (
                         <div key={i.id} className="flex items-center gap-2.5 py-2">
-                          <button
-                            onClick={() => setFora((f) => ({ ...f, [i.id]: !f[i.id] }))}
-                            className={`w-[22px] h-[22px] rounded-md border-2 flex items-center justify-center flex-shrink-0 cursor-pointer ${off ? 'border-zinc-300 bg-white' : 'border-emerald-600 bg-emerald-600 text-white'}`}
-                            aria-label={off ? 'Incluir no pedido' : 'Tirar do pedido'}
-                          >
-                            {!off && <i className="ri-check-line text-sm" />}
-                          </button>
-                          <button onClick={() => { setNovoMinimo(String(i.minimo || '')); setFolha({ tipo: 'item', id: i.id }); }} className="flex-1 min-w-0 text-left cursor-pointer">
+                          {marcar(i)}
+                          <button onClick={() => abrirItem(i)} className="flex-1 min-w-0 text-left cursor-pointer">
                             <p className={`text-[13.5px] font-bold truncate ${off ? 'text-zinc-400 line-through' : 'text-zinc-800'}`}>{i.nome}</p>
                             <p className="text-[11.5px] text-zinc-400 leading-snug">
                               {tags.map((t, k) => <span key={k}>{k > 0 && ' · '}<span className={t.c}>{t.t}</span></span>)}
                             </p>
                           </button>
-                          {conteAntes(i) ? (
-                            <button onClick={onIrContar} className="text-[11px] font-bold text-red-600 bg-red-50 border border-dashed border-red-300 rounded-lg px-2 py-1.5 flex-shrink-0 cursor-pointer">conte antes</button>
-                          ) : (
-                            <div className={`flex items-center gap-1 flex-shrink-0 ${off ? 'opacity-40' : ''}`}>
-                              <button onClick={() => mudarQtd(i, -1)} className="w-7 h-7 rounded-lg border border-zinc-200 text-sm font-bold text-zinc-600 cursor-pointer" aria-label="Menos">−</button>
-                              <div className="min-w-[64px] text-center leading-tight">
-                                {s.embalagens != null ? (
-                                  <>
-                                    <p className="text-[12.5px] font-extrabold text-zinc-800">{s.embalagens} {s.unidadeCompra}</p>
-                                    <p className="text-[10.5px] text-zinc-400">{fmtQtd(s.qtd, i.unidade)}</p>
-                                  </>
-                                ) : <p className="text-[12.5px] font-extrabold text-zinc-800">{fmtQtd(s.qtd, i.unidade)}</p>}
-                              </div>
-                              <button onClick={() => mudarQtd(i, 1)} className="w-7 h-7 rounded-lg border border-zinc-200 text-sm font-bold text-zinc-600 cursor-pointer" aria-label="Mais">+</button>
-                            </div>
-                          )}
+                          {quantidade(i)}
                         </div>
                       );
                     })}
                   </div>
+                  {/* Computador: tabela */}
+                  <table className="hidden lg:table table-fixed w-full text-[13px] mt-1">
+                    {/* Larguras fixas: as colunas ficam alinhadas de um fornecedor para o outro. */}
+                    <colgroup>
+                      <col className="w-8" /><col /><col className="w-[140px]" /><col className="w-[95px]" />
+                      <col className="w-[80px] hidden xl:table-column" /><col className="w-[80px] hidden xl:table-column" /><col className="w-[165px]" /><col className="w-[90px]" />
+                    </colgroup>
+                    <thead>
+                      <tr className="text-[10.5px] uppercase tracking-wide text-zinc-400 border-b border-zinc-100">
+                        <th className="w-8 py-2" />
+                        <th className="text-left font-semibold py-2">Insumo</th>
+                        <th className="text-left font-semibold py-2">Situação</th>
+                        <th className="text-right font-semibold py-2">No sistema</th>
+                        <th className="text-right font-semibold py-2 hidden xl:table-cell">Mínimo</th>
+                        <th className="text-right font-semibold py-2 hidden xl:table-cell">Uso/dia</th>
+                        <th className="text-center font-semibold py-2">Pedir</th>
+                        <th className="text-right font-semibold py-2">Valor</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-zinc-50">
+                      {abertos.map((i) => {
+                        const off = !!fora[i.id];
+                        const st = situacaoTxt(i);
+                        const valor = !conteAntes(i) && i.preco ? sugestaoDe(i).qtd * i.preco : 0;
+                        return (
+                          <tr key={i.id} className={`hover:bg-zinc-50/70 ${off ? 'opacity-60' : ''}`}>
+                            <td className="py-1.5">{marcar(i)}</td>
+                            <td className="py-1.5 pr-3">
+                              <button onClick={() => abrirItem(i)} title={i.nome} className={`max-w-full truncate align-middle text-left font-bold hover:text-amber-700 cursor-pointer ${off ? 'text-zinc-400 line-through' : 'text-zinc-800'}`}>{i.nome}</button>
+                              {!i.abaixoMinimo && <span className="ml-1.5 text-[10.5px] text-zinc-400">posto por você</span>}
+                            </td>
+                            <td className={`py-1.5 pr-3 text-[12px] whitespace-nowrap ${st.c ?? 'text-zinc-500'}`}>{st.t}</td>
+                            <td className={`py-1.5 pr-3 text-right tabular-nums whitespace-nowrap ${i.estoque < 0 ? 'text-red-600 font-semibold' : 'text-zinc-700'}`}>{fmtQtd(i.estoque, i.unidade)}</td>
+                            <td className="py-1.5 pr-3 text-right tabular-nums whitespace-nowrap text-zinc-500 hidden xl:table-cell">{i.minimo > 0 ? fmtQtd(i.minimo, i.unidade) : '—'}</td>
+                            <td className="py-1.5 pr-3 text-right tabular-nums whitespace-nowrap text-zinc-500 hidden xl:table-cell">{i.consumoDia ? fmtQtd(i.consumoDia, i.unidade) : '—'}</td>
+                            <td className="py-1.5"><div className="flex justify-center">{quantidade(i)}</div></td>
+                            <td className="py-1.5 text-right tabular-nums whitespace-nowrap font-semibold text-zinc-700">{valor ? brl(valor) : <span className="text-zinc-300 font-normal">—</span>}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                   <button
                     onClick={() => abrirMandar(g)}
                     disabled={ativos(g).length === 0}
-                    className={`mt-2 w-full min-h-[44px] rounded-xl text-sm font-bold flex items-center justify-center gap-2 cursor-pointer disabled:opacity-40 ${g.fone ? 'bg-[#1FA855] hover:bg-[#1a9049] text-white' : 'bg-amber-500 hover:bg-amber-600 text-zinc-900'}`}
+                    className={`lg:hidden mt-2 w-full min-h-[44px] rounded-xl text-sm font-bold flex items-center justify-center gap-2 cursor-pointer disabled:opacity-40 ${g.fone ? 'bg-[#1FA855] hover:bg-[#1a9049] text-white' : 'bg-amber-500 hover:bg-amber-600 text-zinc-900'}`}
                   >
                     <i className={produzir ? 'ri-restaurant-line' : g.fone ? 'ri-whatsapp-line' : 'ri-share-forward-line'} />
                     {produzir ? 'Avisar a cozinha' : g.fone ? 'Mandar pelo WhatsApp' : 'Compartilhar pedido'}{jaPedidos.length > 0 ? ` (${ativos(g).length})` : ''}

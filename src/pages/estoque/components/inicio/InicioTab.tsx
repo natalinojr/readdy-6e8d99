@@ -65,7 +65,9 @@ export default function InicioTab({ situacao, carregando, erro, onReload }: {
   const emDia = !nPorPedir && !nContar && !vaiFaltar.length;
 
   return (
-    <div className="p-4 md:p-6 max-w-2xl mx-auto pb-16">
+    <div className="p-4 md:p-6 max-w-2xl lg:max-w-[1400px] mx-auto pb-16">
+      <div className="lg:flex lg:items-end lg:justify-between lg:gap-6 lg:mb-5">
+      <div className="min-w-0">
       {emDia ? (
         <h2 className="text-2xl font-extrabold text-emerald-700 tracking-tight">Estoque em dia ✓</h2>
       ) : (
@@ -73,12 +75,13 @@ export default function InicioTab({ situacao, carregando, erro, onReload }: {
           {partes.length ? `Hoje: ${partes.join(' e ')}` : 'Hoje: ver o que vai faltar'}
         </h2>
       )}
-      <p className="text-xs text-zinc-500 mt-1 mb-3">
+      <p className="text-xs text-zinc-500 mt-1 mb-3 lg:mb-0">
         Números de agora, pela mesma regra do Dashboard e do assistente.
         {carregando && <i className="ri-loader-4-line animate-spin ml-1 align-middle" />}
       </p>
+      </div>
 
-      <div className="grid grid-cols-3 gap-2 mb-5">
+      <div className="grid grid-cols-3 gap-2 mb-5 lg:mb-0 lg:w-[560px] lg:flex-shrink-0">
         <Bloco icone="ri-shopping-cart-2-line" n={nComprar} rotulo="Comprar"
           detalhe={nComprar && !nPorPedir ? 'pedidos mandados' : `abaixo do mínimo${totais.zeradosAbaixo ? ` · ${totais.zeradosAbaixo} zerados` : ''}`}
           tom={nPorPedir ? 'red' : 'ok'} onClick={() => ir('inicio-comprar')} />
@@ -87,22 +90,27 @@ export default function InicioTab({ situacao, carregando, erro, onReload }: {
         <Bloco icone="ri-hourglass-line" n={vaiFaltar.length} rotulo="Vai faltar" detalhe={`em até ${cfg.diasPrevisao} dias`}
           tom={vaiFaltar.length ? 'amber' : 'ok'} onClick={() => ir('inicio-faltar')} />
       </div>
+      </div>
 
-      <div className="space-y-6">
+      {/* Celular: uma coluna. Notebook: comprar em largura cheia e contar | vai faltar lado a lado embaixo.
+          Monitor grande (2xl): comprar à esquerda, contar e vai faltar numa coluna à direita. */}
+      <div className="space-y-6 2xl:space-y-0 2xl:grid 2xl:grid-cols-[minmax(0,1fr)_420px] 2xl:gap-6 2xl:items-start">
         <ComprarSecao situacao={situacao} extras={extras} onReload={onReload}
           onIrContar={podeContar ? () => setContagem({ titulo: 'Conferir', itens: hoje.conferir.length ? hoje.conferir : hoje.itens }) : () => ir('inicio-contar')} />
 
-        <ContarSecao situacao={situacao} contagem={hoje} podeContar={podeContar} onReload={onReload}
-          onContar={(itens, titulo) => setContagem({ titulo, itens })} onConfigurar={() => setConfig(true)} />
+        <aside className="space-y-6 lg:space-y-0 lg:grid lg:grid-cols-2 lg:gap-6 lg:items-start 2xl:block 2xl:space-y-6 2xl:sticky 2xl:top-4">
+          <ContarSecao situacao={situacao} contagem={hoje} podeContar={podeContar} onReload={onReload}
+            onContar={(itens, titulo) => setContagem({ titulo, itens })} onConfigurar={() => setConfig(true)} />
 
-        <VaiFaltarSecao situacao={situacao} itens={vaiFaltar}
-          onPorNaLista={(id) => { setExtras((s) => new Set(s).add(id)); ir('inicio-comprar'); }} onReload={onReload} />
+          <VaiFaltarSecao situacao={situacao} itens={vaiFaltar}
+            onPorNaLista={(id) => { setExtras((s) => new Set(s).add(id)); ir('inicio-comprar'); }} onReload={onReload} />
 
-        {cfg.podeConfigurar && (
-          <button onClick={() => setConfig(true)} className="w-full flex items-center justify-center gap-2 text-xs font-bold text-zinc-500 hover:text-zinc-700 py-2 cursor-pointer">
-            <i className="ri-settings-3-line" />Quanto pedir ({cfg.diasCompra} dias de uso) e contagens programadas
-          </button>
-        )}
+          {cfg.podeConfigurar && (
+            <button onClick={() => setConfig(true)} className="w-full flex items-center justify-center gap-2 text-xs font-bold text-zinc-500 hover:text-zinc-700 py-2 cursor-pointer lg:col-span-2 lg:border lg:border-dashed lg:border-zinc-300 lg:rounded-xl lg:hover:bg-white">
+              <i className="ri-settings-3-line" />Quanto pedir ({cfg.diasCompra} dias de uso) e contagens programadas
+            </button>
+          )}
+        </aside>
       </div>
 
       <ContagemFolha
@@ -164,7 +172,7 @@ function VaiFaltarSecao({ situacao, itens, onPorNaLista, onReload }: {
   return (
     <section id="inicio-faltar" className="scroll-mt-4">
       <div className="flex items-baseline gap-2 mb-2 px-0.5">
-        <h2 className="text-base font-extrabold text-zinc-900">Vai faltar</h2>
+        <h2 className="text-base lg:text-lg font-extrabold text-zinc-900">Vai faltar</h2>
         <span className={`text-xs font-bold rounded-full px-2 py-0.5 ${itens.length ? 'bg-amber-500 text-white' : 'bg-emerald-600 text-white'}`}>{itens.length}</span>
         <span className="text-xs text-zinc-400 flex-1">em até {diasPrevisao} dias, fora da lista</span>
       </div>

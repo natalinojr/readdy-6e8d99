@@ -69,7 +69,7 @@ export default function ContarSecao({ situacao, contagem, podeContar, onContar, 
   return (
     <section id="inicio-contar" className="scroll-mt-4">
       <div className="flex items-baseline gap-2 mb-2 px-0.5">
-        <h2 className="text-base font-extrabold text-zinc-900">Contar</h2>
+        <h2 className="text-base lg:text-lg font-extrabold text-zinc-900">Contar</h2>
         <span className={`text-xs font-bold rounded-full px-2 py-0.5 ${itens.length ? 'bg-zinc-800 text-white' : 'bg-emerald-600 text-white'}`}>{itens.length}</span>
         <span className="text-xs text-zinc-400 flex-1">{itens.length ? 'para contar agora' : 'em dia'}</span>
         {pode && planos.length > 0 && (
