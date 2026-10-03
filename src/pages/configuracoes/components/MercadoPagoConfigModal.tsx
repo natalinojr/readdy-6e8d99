@@ -21,6 +21,7 @@ interface ConfigInfo {
   public_key?: string | null;
   card_enabled?: boolean;
   card_fee_percentage?: number | null;
+  pix_fee_percentage?: number | null;
   card_days_to_receive?: number | null;
   card_bank_account_id?: string | null;
 }
@@ -43,6 +44,7 @@ export default function MercadoPagoConfigModal({ onClose, onSaved }: Props) {
   const [publicKey, setPublicKey] = useState('');
   const [cardEnabled, setCardEnabled] = useState(false);
   const [cardFee, setCardFee] = useState('');
+  const [pixFee, setPixFee] = useState('');
   const [cardDays, setCardDays] = useState('');
   const [cardBank, setCardBank] = useState('');
   const [contas, setContas] = useState<{ id: string; name: string; bank_name: string | null }[]>([]);
@@ -64,6 +66,7 @@ export default function MercadoPagoConfigModal({ onClose, onSaved }: Props) {
         setPublicKey(data.public_key ?? '');
         setCardEnabled(Boolean(data.card_enabled && data.public_key));
         setCardFee(data.card_fee_percentage != null ? String(data.card_fee_percentage).replace('.', ',') : '');
+        setPixFee(data.pix_fee_percentage != null ? String(data.pix_fee_percentage).replace('.', ',') : '');
         setCardDays(data.card_days_to_receive != null ? String(data.card_days_to_receive) : '');
         setCardBank(data.card_bank_account_id ?? '');
       })
@@ -85,6 +88,10 @@ export default function MercadoPagoConfigModal({ onClose, onSaved }: Props) {
     const daysNum = daysTxt === '' ? null : Number(daysTxt);
     if (feeNum !== null && (!Number.isFinite(feeNum) || feeNum < 0 || feeNum > 20)) { setErro('Taxa do cartão deve ficar entre 0 e 20%'); return; }
     if (daysNum !== null && (!Number.isInteger(daysNum) || daysNum < 0 || daysNum > 60)) { setErro('Prazo do cartão deve ser um número inteiro de 0 a 60 dias'); return; }
+    // Pix pelo app: taxa do Checkout do MP (vazio = a da forma "PIX" da loja, que é a do Pix direto na conta).
+    const pixFeeTxt = pixFee.trim().replace(',', '.');
+    const pixFeeNum = pixFeeTxt === '' ? null : Number(pixFeeTxt);
+    if (pixFeeNum !== null && (!Number.isFinite(pixFeeNum) || pixFeeNum < 0 || pixFeeNum > 10)) { setErro('Taxa do Pix deve ficar entre 0 e 10%'); return; }
     setSaving(true);
     const body: Record<string, unknown> = {
       action: 'save_config', tenant_id: tenantId, is_active: ativo,
@@ -93,6 +100,7 @@ export default function MercadoPagoConfigModal({ onClose, onSaved }: Props) {
       card_fee_percentage: feeNum,
       card_days_to_receive: daysNum,
       card_bank_account_id: cardBank || null,
+      pix_fee_percentage: pixFeeNum,
     };
     if (token.trim()) body.access_token = token.trim();
     if (secret.trim()) body.webhook_secret = secret.trim();
@@ -222,6 +230,21 @@ export default function MercadoPagoConfigModal({ onClose, onSaved }: Props) {
                   className="w-full text-sm border border-zinc-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-400"
                 />
                 <p className="text-[10px] text-zinc-400 mt-1">Sem ela o sistema ainda confere cada pagamento direto na API do Mercado Pago; com ela, notificações falsas são descartadas antes.</p>
+              </div>
+
+              {/* Pix pelo app: o Checkout do MP cobra taxa (o Pix direto na conta da loja, não) */}
+              <div>
+                <label className="block text-xs font-semibold text-zinc-700 mb-1">Taxa do Pix pelo app (%)</label>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={pixFee}
+                  onChange={e => setPixFee(e.target.value)}
+                  placeholder="Ex.: 0,99"
+                  autoComplete="off"
+                  className="w-full text-sm border border-zinc-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-400"
+                />
+                <p className="text-[10px] text-zinc-400 mt-1">No Mercado Pago: Seu negócio › Custos › aba <strong>Checkout</strong> › Pix. Em branco, usa a taxa da forma "PIX" da loja.</p>
               </div>
 
               {/* Cartão de crédito (Card Payment Brick): só crédito e à vista */}
