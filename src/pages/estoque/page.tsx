@@ -42,7 +42,11 @@ export default function EstoquePage() {
   // usado em ConfiguracoesPage.
   const [searchParams, setSearchParams] = useSearchParams();
   const rawTab = searchParams.get('tab') as Tab | null;
-  const tab: Tab = rawTab && VALID_TABS.includes(rawTab) ? rawTab : 'inicio';
+  // Quem só conta o estoque (estoque_inventario sem estoque_movimentar — "Conta o estoque" dado por
+  // pessoa, 2026-10-03) vê só o Inventário.
+  const { hasPermissao } = usePermissoes();
+  const soContar = !hasPermissao('estoque_movimentar') && hasPermissao('estoque_inventario');
+  const tab: Tab = soContar ? 'inventario' : rawTab && VALID_TABS.includes(rawTab) ? rawTab : 'inicio';
   const setTab = (t: Tab) => setSearchParams({ tab: t }, { replace: true });
 
   const [showExportImport, setShowExportImport] = useState(false);
@@ -51,7 +55,6 @@ export default function EstoquePage() {
   // Números do topo pela regra única (a mesma do Início, do Dashboard e do assistente).
   const situacao = useEstoqueSituacao();
   const nComprar = situacao.data?.totais.abaixoMinimo ?? 0;
-  const { hasPermissao } = usePermissoes();
   const podeContar = hasPermissao('estoque_inventario');
   const nContar = useMemo(() => (situacao.data && podeContar ? contagemDeHoje(situacao.data).itens.length : 0), [situacao.data, podeContar]);
 
@@ -71,31 +74,31 @@ export default function EstoquePage() {
           </div>
 
           <div className="flex items-center gap-2 flex-wrap">
-            {tab !== 'inicio' && nComprar > 0 && (
+            {!soContar && tab !== 'inicio' && nComprar > 0 && (
               <button onClick={() => setTab('inicio')} className="flex items-center gap-1.5 px-3 py-2 bg-red-50 border border-red-200 rounded-xl text-xs font-semibold text-red-700 cursor-pointer">
                 <i className="ri-shopping-cart-2-line text-sm" />
                 {nComprar} abaixo do mínimo
               </button>
             )}
-            {tab !== 'inicio' && nContar > 0 && (
+            {!soContar && tab !== 'inicio' && nContar > 0 && (
               <button onClick={() => setTab('inicio')} className="flex items-center gap-1.5 px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl text-xs font-semibold text-zinc-700 cursor-pointer">
                 <i className="ri-scales-3-line text-sm" />
                 {nContar} para contar
               </button>
             )}
-            <button
+            {!soContar && <button
               onClick={() => setShowExportImport(true)}
               className={`${tab === 'inicio' ? 'hidden md:flex' : 'flex'} items-center gap-1.5 px-3 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 rounded-xl text-xs font-semibold text-zinc-600 cursor-pointer transition-colors whitespace-nowrap shadow-sm`}
             >
               <i className="ri-exchange-line" />
               Exportar / Importar
-            </button>
+            </button>}
           </div>
         </div>
 
         {/* Tabs — scroll horizontal no mobile; a partir de md quebram em linhas */}
         <div className="flex md:flex-wrap gap-0.5 overflow-x-auto md:overflow-visible scrollbar-hide -mx-4 md:mx-0 px-4 md:px-0" style={{ borderBottom: '1px solid rgba(245,158,11,0.15)' }}>
-          {tabs.map((t) => (
+          {tabs.filter((t) => !soContar || t.id === 'inventario').map((t) => (
             <button
               key={t.id}
               onClick={() => setTab(t.id)}

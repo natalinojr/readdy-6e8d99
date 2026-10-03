@@ -2,9 +2,12 @@ import { useState, useRef, useEffect } from 'react';
 import { Plus, Search, Edit2, ShieldCheck, MoreVertical, KeyRound, UserX, UserCheck, Trash2, Building2 } from 'lucide-react';
 import { perfilConfig, type PerfilUsuario } from '@/constants/usuarios';
 import { useUsuarios, type UsuarioReal } from '@/hooks/useUsuarios';
-import { supabase } from '@/lib/supabase';
+import { supabase, invokeWithAuth } from '@/lib/supabase';
 import UsuarioModal from './components/UsuarioModal';
 import AcessoMultiLojaModal from './components/AcessoMultiLojaModal';
+import AcessoPessoa from './components/AcessoPessoa';
+import { useAuth } from '@/contexts/AuthContext';
+import { TRABALHOS, estadoTrabalho } from '@/constants/trabalhos';
 
 function fmtData(d: string | null) {
   if (!d) return 'Nunca';
@@ -29,8 +32,9 @@ interface AcoesMenuProps {
   onToggleAtivo: () => void;
   onRedefinirSenha: () => void;
   onExcluir: () => void;
+  onAcesso?: () => void;
 }
-function AcoesMenu({ usuario, onEditar, onToggleAtivo, onRedefinirSenha, onExcluir }: AcoesMenuProps) {
+function AcoesMenu({ usuario, onEditar, onToggleAtivo, onRedefinirSenha, onExcluir, onAcesso }: AcoesMenuProps) {
   const [open, setOpen] = useState(false);
   const [menuPos, setMenuPos] = useState({ top: 0, right: 0 });
   const btnRef = useRef<HTMLButtonElement>(null);
@@ -66,6 +70,13 @@ function AcoesMenu({ usuario, onEditar, onToggleAtivo, onRedefinirSenha, onExclu
               <div className="w-4 h-4 flex items-center justify-center"><Edit2 size={12} /></div>
               Editar dados
             </button>
+            {onAcesso && (
+              <button onClick={() => { onAcesso(); setOpen(false); }}
+                className="flex items-center gap-2.5 w-full px-3 py-2 text-xs font-medium text-zinc-700 hover:bg-zinc-50 cursor-pointer">
+                <div className="w-4 h-4 flex items-center justify-center"><i className="ri-key-2-line text-[13px]" /></div>
+                O que faz (acesso)
+              </button>
+            )}
             {usuario.perfil !== 'totem' && (
               <button onClick={() => { onRedefinirSenha(); setOpen(false); }}
                 className="flex items-center gap-2.5 w-full px-3 py-2 text-xs font-medium text-zinc-700 hover:bg-zinc-50 cursor-pointer">
@@ -165,6 +176,34 @@ export default function UsuariosPage() {
   const [toast, setToast] = useState<{ msg: string; tipo: 'ok' | 'erro' } | null>(null);
   const [multiLojaDisponivel, setMultiLojaDisponivel] = useState(false);
   const [mostrarMultiLoja, setMostrarMultiLoja] = useState(false);
+  // Acesso por pessoa (2026-10-03): "o que essa pessoa faz?" em cada loja.
+  const { user } = useAuth();
+  const [acessoDe, setAcessoDe] = useState<{ id: string; nome: string } | null>(null);
+  const [fazem, setFazem] = useState<Map<string, { titulos: string[]; ajustes: number }>>(new Map());
+  const carregarFazem = async () => {
+    if (!user?.tenantId) return;
+    const { data } = await invokeWithAuth<{ pessoas?: Array<{ user_id: string; papel: string; keys: string[]; ajustes: number }> }>('acesso-pessoa', {
+      body: { action: 'equipe', tenant_id: user.tenantId },
+    });
+    const m = new Map<string, { titulos: string[]; ajustes: number }>();
+    for (const p of data?.pessoas ?? []) {
+      if (p.papel === 'admin') continue;
+      const ks = new Set(p.keys);
+      m.set(p.user_id, { titulos: TRABALHOS.filter((t) => estadoTrabalho(t, ks) === 'on').map((t) => t.titulo), ajustes: p.ajustes });
+    }
+    setFazem(m);
+  };
+  useEffect(() => { carregarFazem(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [user?.tenantId]);
+  const resumoFaz = (id: string) => {
+    const f = fazem.get(id);
+    if (!f) return null;
+    return (
+      <p className="mt-1 text-[10.5px] text-zinc-500 leading-snug max-w-[260px]">
+        {f.titulos.slice(0, 3).join(' · ')}{f.titulos.length > 3 ? ` · +${f.titulos.length - 3}` : ''}
+        {f.ajustes > 0 && <span className="ml-1.5 px-1.5 py-0.5 rounded bg-violet-50 text-violet-700 font-bold">{f.ajustes} ajuste{f.ajustes > 1 ? 's' : ''}</span>}
+      </p>
+    );
+  };
 
   const showToast = (msg: string, tipo: 'ok' | 'erro') => {
     setToast({ msg, tipo });
@@ -396,6 +435,7 @@ export default function UsuariosPage() {
                             <span className={`flex items-center gap-1.5 w-fit px-2 py-1 rounded-full font-semibold ${cfg.bg} ${cfg.cor}`}>
                               <ShieldCheck size={10} />{cfg.label}
                             </span>
+                            {resumoFaz(u.id)}
                           </td>
                           <td className="px-4 py-3 text-zinc-500 max-w-[140px] hidden lg:table-cell">
                             <p className="truncate">{u.loja}</p>
@@ -419,11 +459,18 @@ export default function UsuariosPage() {
                           </td>
                           <td className="px-4 py-3 text-right">
                             <div className="flex items-center justify-end gap-1">
+                              {u.perfil !== 'admin' && u.perfil !== 'totem' && (
+                                <button onClick={() => setAcessoDe({ id: u.id, nome: u.nome })} title="O que faz (acesso)"
+                                  className="h-7 px-2 flex items-center gap-1 rounded-lg hover:bg-amber-50 text-zinc-500 hover:text-amber-700 cursor-pointer transition-colors text-[11px] font-bold">
+                                  <i className="ri-key-2-line" />O que faz
+                                </button>
+                              )}
                               <button onClick={() => setModal({ tipo: 'editar', usuario: u })}
                                 className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-amber-50 text-zinc-400 hover:text-amber-600 cursor-pointer transition-colors">
                                 <Edit2 size={12} />
                               </button>
-                              <AcoesMenu usuario={u} onEditar={() => setModal({ tipo: 'editar', usuario: u })} onToggleAtivo={() => alternarAtivo(u.id)} onRedefinirSenha={() => setModal({ tipo: 'senha', usuario: u })} onExcluir={() => setModal({ tipo: 'excluir', usuario: u })} />
+                              <AcoesMenu usuario={u} onEditar={() => setModal({ tipo: 'editar', usuario: u })} onToggleAtivo={() => alternarAtivo(u.id)} onRedefinirSenha={() => setModal({ tipo: 'senha', usuario: u })} onExcluir={() => setModal({ tipo: 'excluir', usuario: u })}
+                                onAcesso={u.perfil !== 'admin' && u.perfil !== 'totem' ? () => setAcessoDe({ id: u.id, nome: u.nome }) : undefined} />
                             </div>
                           </td>
                         </tr>
@@ -446,13 +493,15 @@ export default function UsuariosPage() {
                           <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${cfg.bg} ${cfg.cor}`}>{cfg.label}</span>
                         </div>
                         <p className="text-xs text-zinc-400 truncate">{emailDisplay(u.email) || 'Matrícula + PIN'}</p>
+                        {resumoFaz(u.id)}
                       </div>
                       <div className="flex items-center gap-2 flex-shrink-0">
                         <button onClick={() => alternarAtivo(u.id)}
                           className={`relative w-9 h-5 rounded-full transition-colors cursor-pointer ${u.ativo ? 'bg-emerald-500' : 'bg-zinc-200'}`}>
                           <div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-all ${u.ativo ? 'left-4' : 'left-0.5'}`} />
                         </button>
-                        <AcoesMenu usuario={u} onEditar={() => setModal({ tipo: 'editar', usuario: u })} onToggleAtivo={() => alternarAtivo(u.id)} onRedefinirSenha={() => setModal({ tipo: 'senha', usuario: u })} onExcluir={() => setModal({ tipo: 'excluir', usuario: u })} />
+                        <AcoesMenu usuario={u} onEditar={() => setModal({ tipo: 'editar', usuario: u })} onToggleAtivo={() => alternarAtivo(u.id)} onRedefinirSenha={() => setModal({ tipo: 'senha', usuario: u })} onExcluir={() => setModal({ tipo: 'excluir', usuario: u })}
+                          onAcesso={u.perfil !== 'admin' && u.perfil !== 'totem' ? () => setAcessoDe({ id: u.id, nome: u.nome }) : undefined} />
                       </div>
                     </div>
                   );
@@ -544,6 +593,10 @@ export default function UsuariosPage() {
       )}
 
       {mostrarMultiLoja && <AcessoMultiLojaModal onClose={() => setMostrarMultiLoja(false)} />}
+      {acessoDe && (
+        <AcessoPessoa userId={acessoDe.id} nome={acessoDe.nome} onClose={() => { setAcessoDe(null); carregarFazem(); }}
+          onSalvo={(msg) => { showToast(msg, 'ok'); carregarFazem(); }} />
+      )}
     </div>
   );
 }

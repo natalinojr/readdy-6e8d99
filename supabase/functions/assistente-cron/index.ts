@@ -1256,13 +1256,16 @@ const PADRAO_PERM: Record<string, string[]> = {
   estoque_movimentar: ['manager'],
   estoque_inventario: ['manager'],
 };
+// O ajuste da pessoa (Usuários › O que faz, 2026-10-03) vale por cima da matriz do cargo: quem ganhou
+// "Conta o estoque" recebe o aviso da contagem, e quem perdeu deixa de receber.
 async function quemTem(tenantId: string, key: string): Promise<string[]> {
-  const rows = await db()<Array<{ user_id: string; role: string; allowed: boolean | null }>>`
-    select ut.user_id::text, ut.role::text, p.allowed from user_tenants ut
+  const rows = await db()<Array<{ user_id: string; role: string; allowed: boolean | null; pessoa: boolean | null }>>`
+    select ut.user_id::text, ut.role::text, p.allowed, up.allowed as pessoa from user_tenants ut
     join users u on u.id = ut.user_id and u.is_active is not false and u.deleted_at is null
     left join permissions p on p.tenant_id = ut.tenant_id and p.role = ut.role and p.permission_key = ${key}
+    left join user_permissions up on up.tenant_id = ut.tenant_id and up.user_id = ut.user_id and up.permission_key = ${key}
     where ut.tenant_id = ${tenantId}`;
-  return rows.filter((r) => r.role === 'admin' || (r.allowed ?? (PADRAO_PERM[key] ?? []).includes(r.role))).map((r) => r.user_id);
+  return rows.filter((r) => r.role === 'admin' || (r.pessoa ?? r.allowed ?? (PADRAO_PERM[key] ?? []).includes(r.role))).map((r) => r.user_id);
 }
 async function avisarEquipe(admin: SupabaseClient, loja: { id: string }, perm: string | string[], kind: string, dia: string, resumo: string, painel: Painel, ownerId: unknown) {
   const perms = Array.isArray(perm) ? perm : [perm];

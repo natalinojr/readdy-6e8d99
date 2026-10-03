@@ -13,7 +13,9 @@ import { rotaForcada } from '@/lib/acessoRota';
  */
 const ROTA_PERMISSAO: Record<string, PermissaoKey | readonly PermissaoKey[]> = {
   '/cardapio': 'cardapio_editar',
-  '/estoque': 'estoque_movimentar',
+  // Quem só conta (estoque_inventario, "Conta o estoque" em Usuários › O que faz) entra e vê só o
+  // Inventário — a página esconde as outras abas (2026-10-03).
+  '/estoque': ['estoque_movimentar', 'estoque_inventario'],
   // Recebimentos e pagamentos: quem recebe mercadoria (estoque_receber abre só esta tela; quem
   // movimenta estoque continua entrando) ou quem faz/aprova pedido de pagamento
   '/receber': RECEBER_MODULO_KEYS,

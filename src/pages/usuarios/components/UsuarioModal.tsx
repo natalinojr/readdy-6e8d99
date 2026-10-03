@@ -18,10 +18,10 @@ const PERFIS_TODOS: PerfilUsuario[] = [...PERFIS_NORMAIS, 'totem'];
 
 export default function UsuarioModal({ modo, usuario, onClose, onSalvar, onDefinirPIN, onLimparPIN }: Props) {
   const { user } = useAuth();
-  // Gerente (com "Gerenciar usuários") só dá papéis abaixo do seu — o servidor recusa
-  // Admin/Gerente vindos dele (user-write, fn_update_user).
+  // Supervisor (gerente, com "Gerenciar usuários") só dá os cargos de baixo — o servidor recusa os
+  // outros (user-write, fn_update_user). Financeiro, Contabilidade e Tarefas são só do dono (2026-10-03).
   const perfisDaLista = (modo === 'novo' ? PERFIS_TODOS : PERFIS_NORMAIS)
-    .filter((p) => user?.perfil === 'admin' || (p !== 'admin' && p !== 'gerente'));
+    .filter((p) => user?.perfil === 'admin' || !['admin', 'gerente', 'contabilidade', 'tarefas', 'financeiro'].includes(p));
   const [nome, setNome] = useState(usuario?.nome ?? '');
   const [email, setEmail] = useState(usuario?.email?.includes('@totem.erpos.local') ? '' : (usuario?.email ?? ''));
   const [matricula, setMatricula] = useState(modo === 'editar' ? (usuario?.matricula ?? '') : '');

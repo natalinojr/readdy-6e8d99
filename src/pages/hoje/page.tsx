@@ -104,7 +104,7 @@ export default function HojePage() {
       dashboard: verVendas ? { icone: 'ri-line-chart-line', label: 'Loja ao vivo', rota: '/dashboard' } : null,
       caixa: perfil === 'caixa' || perfil === 'supervisao' || gestor ? { icone: 'ri-computer-line', label: 'Ir para o caixa', rota: '/pdv/caixa' } : null,
       receber: receber ? { icone: 'ri-truck-line', label: 'Receber mercadoria', rota: '/receber' } : null,
-      contar: admin || hasPermissao('estoque_movimentar') ? { icone: 'ri-scales-3-line', label: 'Contar estoque', rota: '/estoque?tab=inventario' } : null,
+      contar: admin || hasPermissao('estoque_movimentar') || hasPermissao('estoque_inventario') ? { icone: 'ri-scales-3-line', label: 'Contar estoque', rota: '/estoque?tab=inventario' } : null,
       tarefas: hasModule('tarefas') ? { icone: 'ri-task-line', label: 'Tarefas', rota: '/tarefas' } : null,
     };
     const ordem = gestor ? ['lancar', 'financeiro', 'dashboard', 'receber', 'contar', 'tarefas']

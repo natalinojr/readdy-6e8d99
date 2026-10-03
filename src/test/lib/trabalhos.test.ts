@@ -48,7 +48,6 @@ describe('ligar, desligar e ajuste da pessoa', () => {
       { permission_key: 'estoque_receber', allowed: true },
       { permission_key: 'garcom_fechar_mesa', allowed: false },
       { permission_key: 'garcom_transferir_mesa', allowed: false },
-      { permission_key: 'gestao_mesas', allowed: false },
     ]);
     expect(ajustesDaPessoa(padrao, padrao)).toEqual([]);
   });
@@ -67,14 +66,15 @@ describe('quem pode dar o quê (conferirAcesso)', () => {
   it('gerente dá a supervisora o que ele tem (receber mercadoria)', () => {
     expect(conferirAcesso(base({ keys: [...sup, 'estoque_receber'] }))).toBeNull();
   });
-  it('gerente não dá financeiro nem cadastro de pessoas', () => {
-    expect(conferirAcesso(base({ keys: [...sup, 'fin_visao'] }))).toMatch(/só o dono/);
+  it('gerente não dá aprovar pagamento nem cadastro de pessoas', () => {
+    expect(conferirAcesso(base({ keys: [...sup, 'pag_aprovar'] }))).toMatch(/só o dono/);
+    expect(conferirAcesso(base({ keys: [...sup, 'usuarios_gerenciar'] }))).toMatch(/só para Supervisor/);
   });
   it('gerente não dá o que ele mesmo não tem', () => {
     expect(conferirAcesso(base({ keys: [...sup, 'cardapio_alterar_preco'] }))).toMatch(/ele mesmo tem/);
   });
   it('o que a pessoa já tinha (dado pelo dono) pode ficar quando o gerente salva', () => {
-    expect(conferirAcesso(base({ keysAtuais: new Set([...sup, 'fin_visao']), keys: [...sup, 'fin_visao'] }))).toBeNull();
+    expect(conferirAcesso(base({ keysAtuais: new Set([...sup, 'pag_aprovar']), keys: [...sup, 'pag_aprovar'] }))).toBeNull();
   });
   it('gerente não mexe em outro gerente nem promove a gerente', () => {
     expect(conferirAcesso(base({ papelAtual: 'gerente' }))).toMatch(/abaixo dele/);
@@ -85,8 +85,32 @@ describe('quem pode dar o quê (conferirAcesso)', () => {
     expect(conferirAcesso(base({ editor: 'admin', papelAtual: 'admin' }))).toMatch(/tem tudo/);
     expect(conferirAcesso(base({ editor: 'admin', keys: ['inventada'] }))).toMatch(/desconhecida/);
   });
-  it('o dono dá qualquer coisa, inclusive financeiro', () => {
-    expect(conferirAcesso(base({ editor: 'admin', keys: [...sup, 'fin_visao', 'pag_aprovar'] }))).toBeNull();
-    expect(conferirAcesso(base({ editor: 'supervisao' }))).toMatch(/Só o dono ou o gerente/);
+  it('o dono dá o que é só dele (aprovar pagamento) a quem quiser', () => {
+    expect(conferirAcesso(base({ editor: 'admin', keys: [...sup, 'pag_aprovar'] }))).toBeNull();
+    expect(conferirAcesso(base({ editor: 'supervisao' }))).toMatch(/Só o dono ou o supervisor/);
+  });
+});
+
+describe('o que vai além do cargo tem que funcionar no cargo (revisão)', () => {
+  const sup = [...DEFAULT_PERMISSOES.supervisao];
+  const doDono = (o: Partial<PedidoDeAcesso>): PedidoDeAcesso => ({
+    editor: 'admin', propria: false, keysDoEditor: new Set(DEFAULT_PERMISSOES.admin), papelAtual: 'supervisao', papelNovo: 'supervisao',
+    keysAtuais: new Set(sup), keys: sup, padraoDoCargoNovo: sup, ...o,
+  });
+  it('financeiro só para Supervisor, Financeiro ou Contabilidade (nem o dono liga para a Líder)', () => {
+    expect(conferirAcesso(doDono({ keys: [...sup, 'fin_entregadores'] }))).toMatch(/financeiro só funciona/);
+    const ger = [...DEFAULT_PERMISSOES.gerente];
+    expect(conferirAcesso(doDono({ papelAtual: 'gerente', papelNovo: 'gerente', keysAtuais: new Set(ger), padraoDoCargoNovo: ger, keys: [...ger, 'fin_visao'] }))).toBeNull();
+  });
+  it('a aba Permissões nunca se dá por pessoa', () => {
+    const ger = [...DEFAULT_PERMISSOES.gerente];
+    expect(conferirAcesso(doDono({ papelAtual: 'gerente', papelNovo: 'gerente', padraoDoCargoNovo: ger, keys: [...ger, 'cfg_permissoes'] }))).toMatch(/Permissões/);
+  });
+  it('cargo preso à área: entregas não ganha receber; financeiro só ajusta abas', () => {
+    const ent = [...DEFAULT_PERMISSOES.gestor_entregas];
+    expect(conferirAcesso(doDono({ papelAtual: 'gestor_entregas', papelNovo: 'gestor_entregas', padraoDoCargoNovo: ent, keys: [...ent, 'estoque_receber'] }))).toMatch(/preso/);
+    const fin = [...DEFAULT_PERMISSOES.contabilidade];
+    expect(conferirAcesso(doDono({ papelAtual: 'contabilidade', papelNovo: 'contabilidade', padraoDoCargoNovo: fin, keys: [...fin, 'fin_bancos'] }))).toBeNull();
+    expect(conferirAcesso(doDono({ papelAtual: 'contabilidade', papelNovo: 'contabilidade', padraoDoCargoNovo: fin, keys: [...fin, 'estoque_receber'] }))).toMatch(/preso/);
   });
 });

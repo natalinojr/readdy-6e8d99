@@ -17,6 +17,27 @@ export const PAPEIS_DO_GERENTE: readonly string[] = ['supervisao', 'caixa', 'gar
 /** Cargos que o dono escolhe nesta tela (admin continua só pelo "Editar" do usuário). */
 export const PAPEIS_DO_DONO: readonly string[] = ['gerente', 'supervisao', 'caixa', 'garcom', 'cozinha', 'gestor_entregas', 'financeiro', 'contabilidade', 'tarefas'];
 
+/** Cargos que mexem no financeiro pelo cargo (financial-write e a RLS conferem o cargo, não a chave):
+ *  só neles uma aba fin_* pode ser ligada. Em outro cargo ela mostraria a tela e o servidor recusaria. */
+export const PAPEIS_DO_FINANCEIRO: readonly string[] = ['gerente', 'financeiro', 'contabilidade'];
+
+/** Cargos presos a uma área (src/lib/acessoRota.ts): o que fazem vem do cargo. Financeiro e
+ *  Contabilidade ajustam só as abas do Financeiro. */
+export const PAPEIS_PRESOS: readonly string[] = ['gestor_entregas', 'tarefas', 'financeiro', 'contabilidade'];
+
+/** Esta chave pode ser LIGADA (além do padrão do cargo) para alguém deste cargo? null = pode. */
+export function chaveForaDoCargo(papel: string, k: string): string | null {
+  if (k === 'cfg_permissoes') return 'A aba Permissões é só do administrador.';
+  // fn_gerencia_usuarios / user-write só deixam o supervisor (manager) cadastrar pessoas
+  if (k === 'usuarios_gerenciar' && papel !== 'gerente') return 'Cadastrar pessoas é só para Supervisor.';
+  const fin = k.startsWith('fin_');
+  if (fin && !PAPEIS_DO_FINANCEIRO.includes(papel)) return 'O financeiro só funciona para Supervisor, Financeiro ou Contabilidade — o servidor confere o cargo.';
+  if (PAPEIS_PRESOS.includes(papel) && !(fin && (papel === 'financeiro' || papel === 'contabilidade'))) {
+    return 'Este cargo fica preso à área dele: o que ele faz vem do cargo.';
+  }
+  return null;
+}
+
 /** Todas as chaves que existem (as do admin). Chave fora daqui é recusada. */
 export const TODAS_AS_KEYS: ReadonlySet<string> = new Set<string>(DEFAULT_PERMISSOES.admin);
 
@@ -53,22 +74,29 @@ export interface PedidoDeAcesso {
 /** Confere se pode gravar. Devolve a mensagem para a pessoa, ou null quando pode. */
 export function conferirAcesso(p: PedidoDeAcesso): string | null {
   if (p.propria) return 'Ninguém muda o próprio acesso — peça a outra pessoa (o dono).';
-  if (p.editor !== 'admin' && p.editor !== 'gerente') return 'Só o dono ou o gerente da loja mudam o acesso das pessoas.';
+  if (p.editor !== 'admin' && p.editor !== 'gerente') return 'Só o dono ou o supervisor da loja mudam o acesso das pessoas.';
   if (p.papelAtual === 'admin') return 'Administrador tem tudo — não tem ajuste. O cargo dele muda em "Editar".';
   const desconhecida = p.keys.find((k) => !TODAS_AS_KEYS.has(k));
   if (desconhecida) return `Permissão desconhecida: ${desconhecida}`;
+  // O que vai além do padrão do cargo tem que funcionar de verdade para esse cargo (revisão 2026-10-03).
+  const padraoCargo = new Set(p.padraoDoCargoNovo);
+  for (const k of p.keys) {
+    if (padraoCargo.has(k)) continue;
+    const fora = chaveForaDoCargo(p.papelNovo, k);
+    if (fora) return fora;
+  }
   if (p.editor === 'admin') {
     return PAPEIS_DO_DONO.includes(p.papelNovo) ? null : 'Cargo inválido para esta tela.';
   }
   // Gerente
-  if (!PAPEIS_DO_GERENTE.includes(p.papelAtual)) return 'O gerente só muda o acesso de quem está abaixo dele na loja.';
-  if (!PAPEIS_DO_GERENTE.includes(p.papelNovo)) return 'O gerente não dá esse cargo — só o dono.';
+  if (!PAPEIS_DO_GERENTE.includes(p.papelAtual)) return 'O supervisor só muda o acesso de quem está abaixo dele na loja.';
+  if (!PAPEIS_DO_GERENTE.includes(p.papelNovo)) return 'O supervisor não dá esse cargo — só o dono.';
   const padrao = new Set(p.padraoDoCargoNovo);
   for (const k of p.keys) {
     // vem do cargo ou a pessoa já tinha (o dono deu): não é o gerente que está dando
     if (padrao.has(k) || p.keysAtuais.has(k)) continue;
     if (KEYS_SO_DONO.includes(k)) return 'Dinheiro e cadastro de pessoas, só o dono libera.';
-    if (!p.keysDoEditor.has(k)) return 'O gerente só libera o que ele mesmo tem.';
+    if (!p.keysDoEditor.has(k)) return 'O supervisor só libera o que ele mesmo tem.';
   }
   return null;
 }

@@ -3,7 +3,7 @@ import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useKioskAuth } from '@/contexts/KioskAuthContext';
 import {
-  DEFAULT_PERMISSOES, PAPEL_TO_DB_ROLE, permissoesDaPessoa,
+  DEFAULT_PERMISSOES, PAPEL_TO_DB_ROLE, DB_ROLE_TO_PAPEL, permissoesDaPessoa,
   type Papel, type PermissaoKey,
 } from '../../supabase/functions/_shared/permissoes-padrao';
 // Papéis, chaves e padrão por cargo moram em supabase/functions/_shared/permissoes-padrao.ts (2026-10-03):
@@ -77,10 +77,18 @@ export function usePermissoesState(): PermissoesContextValue {
       if (erroPessoa) { console.error('[usePermissoes] ajuste da pessoa:', erroPessoa.message); return []; }
       return (linhas ?? []) as { permission_key: string; allowed: boolean }[];
     };
+    // O ajuste foi calculado contra o cargo ATUAL da loja; se o dono trocou o cargo na tela de acesso,
+    // user.perfil só muda quando a pessoa entra de novo — aqui usamos o cargo do banco.
+    const lerCargoAtual = async (): Promise<Papel> => {
+      if (!user?.id) return papel;
+      const { data: v } = await supabase.from('user_tenants').select('role').eq('tenant_id', user.tenantId).eq('user_id', user.id).maybeSingle();
+      const pt = v?.role ? (DB_ROLE_TO_PAPEL[String(v.role)] ?? String(v.role)) : papel;
+      return (pt in DEFAULT_PERMISSOES ? pt : papel) as Papel;
+    };
     try {
       // Usa o token do kiosk quando disponível para evitar Unauthorized
       const externalToken = kioskSession?.accessToken;
-      const [{ data, error }, linhasDaPessoa] = await Promise.all([
+      const [{ data, error }, linhasDaPessoa, cargo] = await Promise.all([
         invokeWithAuth<{
           success: boolean;
           data?: { role: string; permission_key: string; allowed: boolean }[];
@@ -89,21 +97,24 @@ export function usePermissoesState(): PermissoesContextValue {
           externalToken,
         }),
         lerAjustesDaPessoa(),
+        lerCargoAtual(),
       ]);
+      // Admin pelo banco (promovido agora) tem tudo, como no começo desta função.
+      if (cargo === 'admin') { setPermissoes(DEFAULT_PERMISSOES.admin); return; }
 
       if (!error && data?.success && data.data && data.data.length > 0) {
         // A tabela `permissions` grava o role em INGLÊS (enum user_role).
         // Aceitamos tanto o role-EN quanto o papel-PT, para ser robusto a
         // qualquer tradução futura na edge function.
-        const dbRole = PAPEL_TO_DB_ROLE[papel] ?? papel;
-        const linhasDoPapel = data.data.filter((r) => r.role === papel || r.role === dbRole);
+        const dbRole = PAPEL_TO_DB_ROLE[cargo] ?? cargo;
+        const linhasDoPapel = data.data.filter((r) => r.role === cargo || r.role === dbRole);
         // Padrão do papel + o que foi salvo por cima (cargo na loja, depois a pessoa). Chave que nunca
         // foi salva (ex.: as abas do Financeiro/Relatórios, criadas em 2026-09-19) fica no padrão —
         // antes, só as linhas salvas valiam e uma permissão nova sumia de quem já tinha salvo a matriz.
-        setPermissoes(permissoesDaPessoa(papel, linhasDoPapel, linhasDaPessoa));
+        setPermissoes(permissoesDaPessoa(cargo, linhasDoPapel, linhasDaPessoa));
       } else {
         // Sem dados do cargo no banco → padrão do cargo (+ ajuste da pessoa, se houver)
-        setPermissoes(permissoesDaPessoa(papel, [], linhasDaPessoa));
+        setPermissoes(permissoesDaPessoa(cargo, [], linhasDaPessoa));
       }
     } catch (e) {
       console.error('[usePermissoes] load error:', e);
@@ -130,19 +141,20 @@ export function usePermissoesState(): PermissoesContextValue {
     return () => { supabase.removeChannel(channel); };
   }, [user?.tenantId, papel, carregar]);
 
-  // Realtime: o dono mudou o acesso desta pessoa → vale na hora, sem sair e entrar.
+  // O dono mudou o acesso desta pessoa → vale quando ela volta para a tela (sem sair e entrar).
+  // Sem realtime em user_permissions de propósito: o DELETE não passa pela RLS e mandaria as chaves
+  // apagadas a qualquer assinante (revisão 2026-10-03). No máximo uma leitura a cada 30 s.
   useEffect(() => {
     if (!user?.id || !user?.tenantId || papel === 'admin') return;
-    const channel = supabase
-      .channel(`user_permissions:${user.id}`)
-      .on('postgres_changes', {
-        event: '*',
-        schema: 'public',
-        table: 'user_permissions',
-        filter: `user_id=eq.${user.id}`,
-      }, () => { carregar(); })
-      .subscribe();
-    return () => { supabase.removeChannel(channel); };
+    let ultima = Date.now();
+    const voltar = () => {
+      if (document.hidden || Date.now() - ultima < 30000) return;
+      ultima = Date.now();
+      carregar();
+    };
+    document.addEventListener('visibilitychange', voltar);
+    window.addEventListener('focus', voltar);
+    return () => { document.removeEventListener('visibilitychange', voltar); window.removeEventListener('focus', voltar); };
   }, [user?.id, user?.tenantId, papel, carregar]);
 
   const hasPermissao = useCallback(

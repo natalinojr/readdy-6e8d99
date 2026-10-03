@@ -12,6 +12,7 @@
 // deno-lint-ignore-file no-explicit-any
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
 import { authenticate, isPlatformOwner } from '../_shared/tenant-auth.ts';
+import { ajusteDaPessoaNaLoja } from '../_shared/ajuste-pessoa.ts';
 import { DB_ROLE_TO_PAPEL, PAPEL_TO_DB_ROLE, DEFAULT_PERMISSOES, permissoesDaPessoa } from '../_shared/permissoes-padrao.ts';
 import {
   ajustesDaPessoa, conferirAcesso, padraoDoCargo, PAPEIS_DO_DONO, PAPEIS_DO_GERENTE, KEYS_SO_DONO, type Linha,
@@ -27,7 +28,23 @@ const json = (b: unknown, status = 200) =>
 const erro = (msg: string, status = 400) => json({ error: msg }, status);
 
 const pt = (role: string) => DB_ROLE_TO_PAPEL[role] ?? role;
-const gestor = (role: string | undefined) => role === 'admin' || role === 'manager';
+
+/**
+ * Quem pode mexer no acesso da equipe nesta loja: o dono (admin) e o supervisor (manager) que tem
+ * "Cadastra pessoas da equipe" (usuarios_gerenciar) — a MESMA regra de /usuarios (fn_gerencia_usuarios,
+ * user-write): ajuste da pessoa por cima da matriz do cargo. Revisão 2026-10-03: sem isto o supervisor
+ * sem a chave mudava o acesso de todos pela Edge.
+ */
+async function gerencia(admin: any, tenantId: string, role: string | undefined, userId: string): Promise<boolean> {
+  if (role === 'admin') return true;
+  if (role !== 'manager') return false;
+  const daPessoa = await ajusteDaPessoaNaLoja(admin, tenantId, userId, ['usuarios_gerenciar']);
+  if (daPessoa.has('usuarios_gerenciar')) return daPessoa.get('usuarios_gerenciar') === true;
+  const { data, error } = await admin.from('permissions').select('allowed')
+    .eq('tenant_id', tenantId).eq('role', 'manager').eq('permission_key', 'usuarios_gerenciar').limit(1).maybeSingle();
+  if (error) throw new Error(`Falha ao ler as permissões da loja: ${error.message}`);
+  return data?.allowed === true;
+}
 
 /** Linhas de Configurações › Permissões da loja, por role do banco (EN). */
 async function linhasDosCargos(admin: any, tenantId: string): Promise<Map<string, Linha[]>> {
@@ -70,7 +87,7 @@ async function contextoDaLoja(admin: any, tenantId: string, alvo: { id: string; 
   let motivo: string | null = null;
   if (alvo.id === editor.id) motivo = 'Ninguém muda o próprio acesso — peça a outra pessoa (o dono).';
   else if (papel === 'admin') motivo = 'Administrador tem tudo. O cargo dele muda em "Editar".';
-  else if (editorPapel !== 'admin' && !PAPEIS_DO_GERENTE.includes(papel)) motivo = 'Só o dono muda o acesso de gerente, financeiro e contabilidade.';
+  else if (editorPapel !== 'admin' && !PAPEIS_DO_GERENTE.includes(papel)) motivo = 'Só o dono muda o acesso de supervisor, financeiro e contabilidade.';
   else if (!PAPEIS_DO_DONO.includes(papel)) motivo = 'Este tipo de usuário (totem, tablet) não tem ajuste por pessoa.';
   return {
     papel,
@@ -100,10 +117,15 @@ Deno.serve(async (req) => {
     const { data: minhas, error: errMinhas } = await admin.from('user_tenants').select('tenant_id, role').eq('user_id', eu);
     if (errMinhas) throw new Error(errMinhas.message);
     const meuPapel = new Map<string, string>(((minhas ?? []) as Array<{ tenant_id: string; role: string }>).map((r) => [String(r.tenant_id), String(r.role)]));
+    const gerenciaCache = new Map<string, boolean>();
+    const gestor = async (tenantId: string) => {
+      if (!gerenciaCache.has(tenantId)) gerenciaCache.set(tenantId, await gerencia(admin, tenantId, meuPapel.get(tenantId), eu));
+      return gerenciaCache.get(tenantId)!;
+    };
 
     if (action === 'equipe') {
       const tenantId = String(body.tenant_id ?? '');
-      if (!gestor(meuPapel.get(tenantId))) return erro('Só o dono ou o gerente da loja veem o acesso da equipe.', 403);
+      if (!(await gestor(tenantId))) return erro('Só o dono, ou o supervisor com "Cadastra pessoas da equipe", vê o acesso da equipe.', 403);
       const { data: membros, error } = await admin.from('user_tenants').select('user_id, role').eq('tenant_id', tenantId);
       if (error) throw new Error(error.message);
       const lista = (membros ?? []) as Array<{ user_id: string; role: string }>;
@@ -122,9 +144,11 @@ Deno.serve(async (req) => {
     if (!/^[0-9a-f-]{36}$/i.test(alvoId)) return erro('Pessoa inválida.');
     const { data: dele, error: errDele } = await admin.from('user_tenants').select('tenant_id, role, tenants(name)').eq('user_id', alvoId);
     if (errDele) throw new Error(errDele.message);
-    const lojasDele = ((dele ?? []) as Array<{ tenant_id: string; role: string; tenants: { name?: string } | null }>)
-      .filter((r) => gestor(meuPapel.get(String(r.tenant_id))));
-    if (!lojasDele.length) return erro('Você não é dono nem gerente de nenhuma loja desta pessoa.', 403);
+    const lojasDele = [];
+    for (const r of (dele ?? []) as Array<{ tenant_id: string; role: string; tenants: { name?: string } | null }>) {
+      if (await gestor(String(r.tenant_id))) lojasDele.push(r);
+    }
+    if (!lojasDele.length) return erro('Você não é dono, nem supervisor com "Cadastra pessoas da equipe", em nenhuma loja desta pessoa.', 403);
 
     if (action === 'ler') {
       const { data: u } = await admin.from('users').select('name, email').eq('id', alvoId).maybeSingle();
@@ -140,11 +164,12 @@ Deno.serve(async (req) => {
     if (action === 'salvar') {
       const tenantId = String(body.tenant_id ?? '');
       const r = lojasDele.find((x) => String(x.tenant_id) === tenantId);
-      if (!r) return erro('Você não é dono nem gerente desta loja da pessoa.', 403);
+      if (!r) return erro('Você não é dono, nem supervisor com "Cadastra pessoas da equipe", nesta loja da pessoa.', 403);
       if (alvoId !== eu && await isPlatformOwner(admin, alvoId)) return erro('Este usuário só pode ser alterado por ele mesmo.', 403);
       const papelNovo = String(body.papel ?? '');
       const keys = [...new Set((Array.isArray(body.keys) ? body.keys : []).map((k: unknown) => String(k)))] as string[];
       const ctx = await contextoDaLoja(admin, tenantId, { id: alvoId, role: String(r.role) }, { id: eu, role: meuPapel.get(tenantId)! });
+      if (!ctx.podeEditar) return erro(ctx.motivo ?? 'Sem permissão.', 403);
       const padraoNovo = ctx.padroes[papelNovo] ?? [];
       const motivo = conferirAcesso({
         editor: ctx.editor, propria: alvoId === eu, keysDoEditor: new Set(ctx.keysDoEditor),
@@ -153,8 +178,9 @@ Deno.serve(async (req) => {
       if (motivo) return erro(motivo, 403);
       const linhas = ajustesDaPessoa(padraoNovo, keys);
       const roleNovo = PAPEL_TO_DB_ROLE[papelNovo] ?? papelNovo;
+      // p_role_atual: grava só se o cargo ainda é o que foi conferido (outra pessoa pode ter mudado no meio)
       const { error } = await admin.rpc('fn_acesso_pessoa_gravar', {
-        p_tenant: tenantId, p_user: alvoId, p_role: roleNovo !== r.role ? roleNovo : null, p_linhas: linhas, p_por: eu,
+        p_tenant: tenantId, p_user: alvoId, p_role_atual: r.role, p_role: roleNovo !== r.role ? roleNovo : null, p_linhas: linhas, p_por: eu,
       });
       if (error) throw new Error(error.message);
       console.log(JSON.stringify({ evt: 'acesso_pessoa_salvo', tenantId, alvoId, por: eu, papel: papelNovo, ajustes: linhas.length }));

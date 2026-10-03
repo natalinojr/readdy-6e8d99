@@ -6,7 +6,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { invokeWithAuth } from '@/lib/supabase';
 import { perfilConfig, type PerfilUsuario } from '@/constants/usuarios';
 import { PERMISSOES_CATALOGO } from '@/constants/permissoesCatalogo';
-import { TRABALHOS, GRUPOS_TRABALHO, estadoTrabalho, alternarTrabalho, ajustesDaPessoa, type Trabalho } from '@/constants/trabalhos';
+import { TRABALHOS, GRUPOS_TRABALHO, estadoTrabalho, alternarTrabalho, ajustesDaPessoa, trabalhoDoCargo, trabalhoFixoNoCargo, chaveForaDoCargo, PAPEIS_PRESOS, type Trabalho } from '@/constants/trabalhos';
 
 interface LojaAcesso {
   tenant_id: string;
@@ -39,13 +39,17 @@ export default function AcessoPessoa({ userId, nome, onClose, onSalvo }: { userI
   const [trocaPara, setTrocaPara] = useState<string | null>(null);
   const [salvando, setSalvando] = useState(false);
 
-  const carregar = async () => {
+  /** Relê do servidor. `so` = recomeça o rascunho só desta loja (acabou de salvar) — o das outras fica. */
+  const carregar = async (so?: string) => {
     setErro(null);
     const { data, error } = await invokeWithAuth<Leitura & { error?: string }>('acesso-pessoa', { body: { action: 'ler', user_id: userId } });
     const falha = data?.error ?? error?.message;
     if (falha || !data) { setErro(falha ?? 'Não consegui ler o acesso.'); return; }
     setDados(data);
-    setRascunhos(Object.fromEntries(data.lojas.map((l) => [l.tenant_id, { papel: l.papel, keys: new Set(l.keys) }])));
+    setRascunhos((antes) => Object.fromEntries(data.lojas.map((l) => [
+      l.tenant_id,
+      so && so !== l.tenant_id && antes[l.tenant_id] ? antes[l.tenant_id] : { papel: l.papel, keys: new Set(l.keys) },
+    ])));
     setLojaId((atual) => (data.lojas.some((l) => l.tenant_id === atual) ? atual : data.lojas[0]?.tenant_id ?? ''));
   };
   useEffect(() => { carregar(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [userId]);
@@ -60,8 +64,10 @@ export default function AcessoPessoa({ userId, nome, onClose, onSalvo }: { userI
   const soDono = useMemo(() => new Set(dados?.soDono ?? []), [dados]);
   const dono = loja?.editor === 'admin';
 
-  /** O gerente só liga o que vem do cargo, o que a pessoa já tinha ou o que ele mesmo tem (e nunca dinheiro). */
-  const podeDar = (k: string) => dono || padrao.has(k) || atuais.has(k) || (doEditor.has(k) && !soDono.has(k));
+  /** Liga só o que vem do cargo, ou o que funciona para esse cargo (chaveForaDoCargo) e — se quem edita é o
+   *  supervisor — o que a pessoa já tinha ou o que ele mesmo tem (nunca dinheiro). Mesma regra do servidor. */
+  const podeDar = (k: string) => padrao.has(k)
+    || (!chaveForaDoCargo(r?.papel ?? '', k) && (dono || atuais.has(k) || (doEditor.has(k) && !soDono.has(k))));
   const mudou = (id: string) => {
     const l = dados?.lojas.find((x) => x.tenant_id === id); const d = rascunhos[id];
     if (!l || !d) return false;
@@ -96,17 +102,23 @@ export default function AcessoPessoa({ userId, nome, onClose, onSalvo }: { userI
     const falha = data?.error ?? error?.message;
     if (falha) { setErro(falha); return; }
     const n = data?.ajustes ?? 0;
-    onSalvo?.(`Acesso de ${primeiro} em ${loja.loja} salvo${n ? ` — ${n} ajuste${n > 1 ? 's' : ''} só dela(e)` : ' — igual ao padrão do cargo'}.`);
-    await carregar();
+    onSalvo?.(`Acesso de ${primeiro} em ${loja.loja} salvo${n ? ` — ${n} ajuste${n > 1 ? 's' : ''} só para essa pessoa` : ' — igual ao padrão do cargo'}.`);
+    await carregar(loja.tenant_id);
   };
 
   const ajustes = loja && r ? ajustesDaPessoa(padrao, r.keys) : [];
+  /** Fechar com mudança não salva pergunta antes (a bolinha da loja promete guardar). */
+  const fechar = () => {
+    const pendentes = (dados?.lojas ?? []).filter((l) => mudou(l.tenant_id)).map((l) => l.loja);
+    if (pendentes.length && !window.confirm(`Sair sem salvar? Mudou e não salvou: ${pendentes.join(', ')}.`)) return;
+    onClose();
+  };
   const mais = ajustes.filter((a) => a.allowed).length;
   const menos = ajustes.length - mais;
   const editavel = !!loja?.podeEditar;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/40" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/40" onClick={fechar}>
       <div className="w-full md:max-w-2xl max-h-[94vh] md:max-h-[90vh] bg-[#FAF7F2] rounded-t-3xl md:rounded-3xl flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
         {/* Topo */}
         <div className="px-5 pt-4 pb-3 flex items-center gap-3 border-b border-zinc-200/70 bg-white/60">
@@ -114,7 +126,7 @@ export default function AcessoPessoa({ userId, nome, onClose, onSalvo }: { userI
             <p className="text-[11px] font-bold uppercase tracking-wider text-zinc-400">Acesso</p>
             <h2 className="text-lg font-extrabold text-zinc-900 truncate">O que {primeiro} faz?</h2>
           </div>
-          <button onClick={onClose} aria-label="Fechar" className="w-9 h-9 rounded-xl border border-zinc-200 bg-white flex items-center justify-center text-zinc-500 cursor-pointer"><i className="ri-close-line text-lg" /></button>
+          <button onClick={fechar} aria-label="Fechar" className="w-9 h-9 rounded-xl border border-zinc-200 bg-white flex items-center justify-center text-zinc-500 cursor-pointer"><i className="ri-close-line text-lg" /></button>
         </div>
 
         <div className="flex-1 overflow-y-auto px-5 pb-6">
@@ -171,16 +183,18 @@ export default function AcessoPessoa({ userId, nome, onClose, onSalvo }: { userI
               <section className="mt-5">
                 <div className="flex items-baseline gap-2 mb-1"><h3 className="text-[15px] font-extrabold text-zinc-900">O que {primeiro} faz em {loja.loja}</h3></div>
                 {GRUPOS_TRABALHO.map((g) => {
-                  const itens = TRABALHOS.filter((t) => t.grupo === g && (t.id !== 'equipe' || r.papel === 'gerente'));
+                  const itens = TRABALHOS.filter((t) => t.grupo === g && trabalhoDoCargo(t, r.papel));
+                  if (!itens.length && g !== 'Dinheiro') return null;
                   return (
                     <div key={g} className="mt-3">
                       <p className="text-[11px] font-extrabold uppercase tracking-widest text-zinc-400 mb-1.5 px-1">{g}</p>
                       <div className="rounded-2xl border border-zinc-200 bg-white divide-y divide-zinc-100 overflow-hidden">
                         {itens.map((t) => {
+                          const fixo = trabalhoFixoNoCargo(t, r.papel);
                           const est = estadoTrabalho(t, r.keys);
                           const estPadrao = estadoTrabalho(t, padrao);
-                          const pode = editavel && (est !== 'off' || t.keys.every(podeDar));
-                          const bloqueado = editavel && !pode;
+                          const pode = editavel && !fixo && (est !== 'off' || t.keys.every(podeDar));
+                          const bloqueado = editavel && !fixo && !pode;
                           return (
                             <button key={t.id} disabled={!pode} onClick={() => alternar(t)}
                               className={`w-full flex items-start gap-3 px-3.5 py-3 text-left ${pode ? 'cursor-pointer hover:bg-zinc-50' : 'cursor-default'}`}>
@@ -191,7 +205,9 @@ export default function AcessoPessoa({ userId, nome, onClose, onSalvo }: { userI
                                 {est === 'parcial' && <span className="inline-block mt-1 text-[10.5px] font-bold text-zinc-500 bg-zinc-100 rounded-md px-1.5">em parte — veja no Avançado</span>}
                                 {est !== estPadrao && editavel && <span className="inline-block mt-1 ml-1 text-[10.5px] font-bold text-violet-700 bg-violet-50 rounded-md px-1.5">{est === 'off' ? 'tirado do' : 'a mais que o'} padrão de {nomeCargo(r.papel)}</span>}
                               </span>
-                              {bloqueado
+                              {fixo
+                                ? <span className="flex-shrink-0 mt-1.5 text-[11px] font-bold text-zinc-400 inline-flex items-center gap-1" title="O servidor confere o cargo: não muda por pessoa"><i className="ri-shield-user-line" />vem do cargo</span>
+                                : bloqueado
                                 ? <span className="flex-shrink-0 mt-1.5 text-[11px] font-bold text-zinc-400 inline-flex items-center gap-1"><i className="ri-lock-2-line" />só o dono</span>
                                 : <span className={`relative flex-shrink-0 mt-1.5 w-11 h-6 rounded-full transition-colors ${est === 'on' ? 'bg-emerald-600' : est === 'parcial' ? 'bg-emerald-300' : 'bg-zinc-300'}`}>
                                     <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${est === 'off' ? 'left-0.5' : 'left-[22px]'}`} />
@@ -213,6 +229,9 @@ export default function AcessoPessoa({ userId, nome, onClose, onSalvo }: { userI
                     </div>
                   );
                 })}
+                {PAPEIS_PRESOS.includes(r.papel)
+                  ? <p className="mt-2 px-1 text-[11px] text-zinc-500">{nomeCargo(r.papel)} fica preso à área dele: o que faz vem do cargo.{r.papel === 'financeiro' || r.papel === 'contabilidade' ? ' As abas do Financeiro se ajustam no Avançado.' : ''}</p>
+                  : <p className="mt-2 px-1 text-[11px] text-zinc-400">Dinheiro, configurar a loja, clientes e cadastro de pessoas aparecem só para Supervisor. "Vem do cargo" é conferido pelo servidor pelo cargo — muda trocando o cargo.</p>}
               </section>
 
               {/* Prévia */}

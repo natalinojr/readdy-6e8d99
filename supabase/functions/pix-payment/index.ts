@@ -12,6 +12,7 @@
 // de EXTRATO do Inter (Financeiro › Conciliação, edge inter-bank, fin_inter_config) é OUTRA
 // integração no Internet Banking — separadas de propósito, cada uma só com o próprio escopo.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
+import { ajusteDaPessoaNaLoja } from '../_shared/ajuste-pessoa.ts';
 
 type Admin = ReturnType<typeof createClient>;
 
@@ -125,9 +126,12 @@ const isManager = (role: string) => role === 'admin' || role === 'manager';
 // em Configurações › Permissões ("Maquininha do balcão"). É a única config que a
 // loja mexe sozinha — trocou de máquina, aponta a nova. Vale só para a maquininha:
 // as outras ações de escrita continuam de admin/gerente.
-async function podeMaquininha(admin: Admin, tenantId: string, role: string) {
+async function podeMaquininha(admin: Admin, tenantId: string, role: string, userId?: string | null) {
   if (isManager(role)) return true;
   if (!role) return false;
+  // Ajuste da pessoa (Usuários › O que faz, 2026-10-03) vale por cima da matriz do cargo.
+  const daPessoa = await ajusteDaPessoaNaLoja(admin, tenantId, userId, ['cfg_maquininha_mp']);
+  if (daPessoa.has('cfg_maquininha_mp')) return daPessoa.get('cfg_maquininha_mp') === true;
   const { data } = await admin.from('permissions').select('allowed')
     .eq('tenant_id', tenantId).eq('role', role).eq('permission_key', 'cfg_maquininha_mp')
     .limit(1).maybeSingle();
@@ -1009,7 +1013,7 @@ Deno.serve(async (req: Request) => {
       const tenantId = String(body.tenant_id ?? '');
       const auth = await requireMember(req, supabase, tenantId);
       if (auth.error) return auth.error;
-      if (!await podeMaquininha(supabase, tenantId, auth.role)) return json({ error: 'Sem permissão para configurar a maquininha' }, 403);
+      if (!await podeMaquininha(supabase, tenantId, auth.role, auth.userId)) return json({ error: 'Sem permissão para configurar a maquininha' }, 403);
       const { point } = await loadProviderCfgs(supabase, tenantId);
       if (action === 'set_tablet_terminal') {
         const tabletUserId = String(body.tablet_user_id ?? '');
@@ -1045,7 +1049,7 @@ Deno.serve(async (req: Request) => {
       const tenantId = String(body.tenant_id ?? '');
       const auth = await requireMember(req, supabase, tenantId);
       if (auth.error) return auth.error;
-      if (!await podeMaquininha(supabase, tenantId, auth.role)) return json({ error: 'Sem permissão para configurar a maquininha' }, 403);
+      if (!await podeMaquininha(supabase, tenantId, auth.role, auth.userId)) return json({ error: 'Sem permissão para configurar a maquininha' }, 403);
       const { point } = await loadProviderCfgs(supabase, tenantId);
       const token = String(body.access_token ?? '').trim() || String(point?.access_token ?? '');
       if (!token) return json({ error: 'Informe o Access Token da aplicação Point' }, 422);

@@ -17,6 +17,7 @@
 // deno-lint-ignore-file no-explicit-any
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.4";
 import { authenticate, isManagerRole, tenantRole } from "../_shared/tenant-auth.ts";
+import { ajusteDaPessoaNaLoja } from "../_shared/ajuste-pessoa.ts";
 import { refazerVoa } from "../_shared/jogos/voa.ts";
 import { programaLigado, sessaoDoClube } from "../_shared/clube-servidor.ts";
 import { refazerCorre } from "../_shared/jogos/corre.ts";
@@ -169,8 +170,11 @@ async function pedidoEmAndamento(admin: any, tenantId: string, cred: any, fone: 
   return { orderId: ativo.id };
 }
 
-async function podeEditar(admin: any, tenantId: string, role: string): Promise<boolean> {
+async function podeEditar(admin: any, tenantId: string, role: string, userId?: string | null): Promise<boolean> {
   if (isManagerRole(role)) return true;
+  // Ajuste da pessoa (Usuários › O que faz, 2026-10-03) vale por cima da matriz do cargo.
+  const daPessoa = await ajusteDaPessoaNaLoja(admin, tenantId, userId, ["gestao_promocoes"]);
+  if (daPessoa.has("gestao_promocoes")) return daPessoa.get("gestao_promocoes") === true;
   const { data } = await admin.from("permissions").select("allowed")
     .eq("tenant_id", tenantId).eq("role", role).eq("permission_key", "gestao_promocoes")
     .limit(1).maybeSingle();
@@ -307,7 +311,7 @@ Deno.serve(async (req: Request) => {
     if (!caller.isServiceRole) {
       const role = await tenantRole(admin, caller.userId!, tenantId);
       if (!role) return jsonErr("Sem acesso a esta loja.", 403);
-      if (!(await podeEditar(admin, tenantId, role))) return jsonErr("Sem permissão (Promoções).", 403);
+      if (!(await podeEditar(admin, tenantId, role, caller.userId))) return jsonErr("Sem permissão (Promoções).", 403);
     }
 
     if (action === "admin_get") {

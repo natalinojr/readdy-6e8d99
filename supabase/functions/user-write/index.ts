@@ -39,6 +39,15 @@ async function gerenteGerenciaUsuarios(db: ReturnType<typeof createClient>, tena
 }
 
 /**
+ * Cargos que o supervisor (manager) cria e altera: só os de baixo dele (2026-10-03, revisão do acesso
+ * por pessoa). Antes valia "rank < 2", e Financeiro/Contabilidade/Tarefas têm rank 1 — o supervisor
+ * criava alguém do financeiro ou trocava a senha de quem é e entrava como essa pessoa. Mesma lista de
+ * fn_update_user / fn_pode_alterar_usuario e de _shared/acesso-pessoa.ts (PAPEIS_DO_GERENTE + totem).
+ */
+const PERFIS_DO_SUPERVISOR = new Set(['supervisao', 'caixa', 'garcom', 'cozinha', 'gestor_entregas', 'totem']);
+const ROLES_ABAIXO_DO_SUPERVISOR = new Set(['supervisor', 'cashier', 'waiter', 'kitchen', 'delivery_manager', 'tablet']);
+
+/**
  * Gera a próxima matrícula sequencial no formato 0001, 0002, ...
  * Busca o maior badge_number numérico existente e incrementa.
  */
@@ -101,6 +110,9 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         if (callerRank < 3 && roleRank(newRole) >= callerRank) {
           return errResp('Sem permissão para criar usuário com este perfil');
         }
+        if (callerRank < 3 && !PERFIS_DO_SUPERVISOR.has(String(perfil))) {
+          return errResp('O supervisor só cria Líder, Caixa, Garçom, Cozinha, Gestor de Entregas ou Totem — os outros cargos, só o dono.');
+        }
       } else if (TARGET_ACTIONS.has(action)) {
         const targetId = body.user_id ? String(body.user_id) : '';
         if (!targetId) return errResp('user_id obrigatório');
@@ -126,7 +138,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
             for (const [tid, targetRole] of targetTenants) {
               const callerRole = callerTenants.get(tid);
               const callerRank = roleRank(callerRole);
-              const allowed = callerRank >= 3 || (callerRank === 2 && roleRank(targetRole) < 2
+              const allowed = callerRank >= 3 || (callerRank === 2 && ROLES_ABAIXO_DO_SUPERVISOR.has(String(targetRole))
                 && await gerenteGerenciaUsuarios(db, tid, callerRole!, callerId));
               if (!allowed) return errResp('Sem permissão para alterar este usuário');
             }
