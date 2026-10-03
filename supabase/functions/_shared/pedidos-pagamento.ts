@@ -99,7 +99,24 @@ export async function pendenciaDoPedido(admin: any, p: { id: string; tenant_id: 
     p_payload: { pedido_id: p.id, tipo: p.tipo, valor: p.valor, ...(p.dias?.length ? { dias: p.dias } : {}), ...(categoria ? { categoria } : {}) },
     p_rota: '/receber?aprovar=1', p_urgencia: 'normal', p_acao_requerida: true, p_origem: 'app', p_reabrir: false,
   });
-  if (error) console.error('[pedidos-pagamento] pendência', error.message);
+  if (error) { console.error('[pedidos-pagamento] pendência', error.message); return; }
+  // Push no celular do dono (2026-10-02): o pedido só ia para o 📥, sem notificação nenhuma.
+  try {
+    const url = Deno.env.get('SUPABASE_URL') ?? '';
+    const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
+    const { data: st } = await admin.from('asst_settings').select('value').eq('key', 'owner_user_id').maybeSingle();
+    const owner = st?.value ? String(st.value) : '';
+    if (url && key && owner) {
+      await fetch(`${url}/functions/v1/send-push`, {
+        method: 'POST', headers: { apikey: key, Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'send', user_ids: [owner], payload: {
+          titulo: `Pedido de pagamento — ${ROTULO[p.tipo]}`,
+          corpo: `${p.solicitado_por_nome ?? 'Alguém da loja'} pediu ${brl(p.valor)} para ${p.favorecido_nome}${dias ? ` · ${dias}` : ''}`.slice(0, 200),
+          url: '/receber?aprovar=1', tag: `pedido-${p.id}`,
+        } }),
+      });
+    }
+  } catch (e) { console.warn('[pedidos-pagamento] push', String(e)); }
 }
 
 export async function fecharPendencia(admin: any, tenantId: string, pedidoId: string, userId: string, status: 'resolvida' | 'descartada', motivo?: string) {
