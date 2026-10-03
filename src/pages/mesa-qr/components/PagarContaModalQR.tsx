@@ -1,6 +1,7 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo, memo } from 'react';
 import { isValidCpfCnpj as validaCpfCnpj, mascaraCpfCnpj as formatCpfCnpjQR } from '@/lib/cpfCnpj';
 import { supabase } from '@/lib/supabase';
+import CartaoCobrancaPanel from '@/components/feature/CartaoCobrancaPanel';
 import { savePixMemo, loadPixMemo, clearPixMemo } from '../pixMemo';
 
 // ── Pagar a conta no celular (Pix dinâmico via Mercado Pago) ─────────────────
@@ -11,10 +12,19 @@ import { savePixMemo, loadPixMemo, clearPixMemo } from '../pixMemo';
 // A volta do app do banco é o ponto delicado: o Android congela timers e derruba
 // o WebSocket da aba em segundo plano, então além do Realtime + polling temos um
 // gatilho em `visibilitychange`/`focus` e um botão manual de verificação.
+//
+// Cartão de crédito (quando a loja liga): o cliente escolhe Pix OU cartão na conta. O cartão
+// usa o CartaoCobrancaPanel (Card Payment Brick do Mercado Pago, só crédito à vista). Gerar um
+// Pix cancela o cartão pendente no servidor e vice-versa — por isso as duas cobranças nunca
+// aparecem juntas e trocar de forma de pagamento é sempre um clique do cliente.
 
 function formatMoney(v: number) {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
 }
+
+// O Brick do cartão é recriado a cada render do painel (apaga o que o cliente digitou):
+// memo + props estáveis impedem que um re-render deste modal reinicie o formulário.
+const PainelCartao = memo(CartaoCobrancaPanel);
 
 interface PagamentoFeito {
   id: string;
@@ -50,6 +60,8 @@ interface PixInfo {
   expires_at: string;
   allocation: { order_id: string; amount: number; number: string | null }[] | null;
   error: string | null;
+  method?: string;
+  card_last4?: string | null;
 }
 
 interface Props {
@@ -59,6 +71,10 @@ interface Props {
   participantName: string;
   accessToken: string;
   onClose: () => void;
+  /** Chamado quando um pagamento (Pix ou cartão) é confirmado. */
+  onPago?: () => void;
+  /** Linha extra no aviso de pago (ex.: "Seu pedido foi para a cozinha"). */
+  textoPago?: string;
 }
 
 type Scope = 'mine' | 'all';
@@ -81,8 +97,11 @@ function shortNumber(n: string | null, id: string) {
 }
 
 export default function PagarContaModalQR(props: Props) {
-  const { qrToken, participantId, participantName, accessToken, onClose } = props;
-  const auth = { participant_id: participantId, access_token: accessToken };
+  const { qrToken, participantId, participantName, accessToken, onClose, textoPago } = props;
+  // Estável: vai como prop do painel do cartão (memo).
+  const auth = useMemo(function () { return { participant_id: participantId, access_token: accessToken }; }, [participantId, accessToken]);
+  const onPagoRef = useRef(props.onPago);
+  onPagoRef.current = props.onPago;
 
   const [carregando, setCarregando] = useState(true);
   const [enabled, setEnabled] = useState(true);
@@ -105,6 +124,12 @@ export default function PagarContaModalQR(props: Props) {
   });
   const [editandoCpf, setEditandoCpf] = useState(false);
   const [salvandoCpf, setSalvandoCpf] = useState(false);
+  // Cartão de crédito (Mercado Pago): disponível quando a loja ligou; `pagandoCartao` troca a conta pelo formulário.
+  const [cardEnabled, setCardEnabled] = useState(false);
+  const [publicKey, setPublicKey] = useState('');
+  const [pagandoCartao, setPagandoCartao] = useState(false);
+  const [cartaoPago, setCartaoPago] = useState(false);
+  const cargaInicialRef = useRef(true);
   const cpfDigits = cpfNota.replace(/\D/g, '');
   const cpfValido = cpfDigits.length === 0 || validaCpfCnpj(cpfDigits);
 
@@ -117,6 +142,7 @@ export default function PagarContaModalQR(props: Props) {
         enabled: boolean; table_number: number | null; orders: BillOrder[]; customer_cpf?: string | null;
         pending_pix: PixInfo | null; last_pix: PixInfo | null; session_closed: boolean; mode?: string;
         payments_history?: PagamentoFeito[];
+        card_enabled?: boolean; public_key?: string | null; pending_card?: PixInfo | null;
       }>({ action: 'get_bill', ...auth });
 
       if (data.error) {
@@ -129,12 +155,24 @@ export default function PagarContaModalQR(props: Props) {
       setTableNumber(data.table_number ?? null);
       setPagamentos(data.payments_history || []);
       if (data.mode === 'queue') { setQueueMode(true); setScope('mine'); }
+      const cartaoLigado = Boolean(data.card_enabled && data.public_key);
+      setCardEnabled(cartaoLigado);
+      setPublicKey(data.public_key || '');
 
       if (data.pending_pix && !pixRef.current) {
+        cargaInicialRef.current = false;
         setPix(data.pending_pix);
         setScope(data.pending_pix.scope || 'mine');
         return;
       }
+      // Desafio do banco (3DS) em andamento: ao abrir, retoma direto no cartão.
+      if (cargaInicialRef.current && cartaoLigado && data.pending_card && data.pending_card.status === 'pending') {
+        cargaInicialRef.current = false;
+        setScope(data.mode === 'queue' ? 'mine' : (data.pending_card.scope || 'mine'));
+        setPagandoCartao(true);
+        return;
+      }
+      cargaInicialRef.current = false;
       // Voltou do app do banco depois de a tela ter sido recarregada: mostra o comprovante
       // do Pix que ESTE aparelho gerou (o memo local evita exibir cobrança de outra pessoa).
       const memo = loadPixMemo(qrToken);
@@ -169,6 +207,7 @@ export default function PagarContaModalQR(props: Props) {
           if (data.pix.status === 'confirmed') {
             clearPixMemo(qrToken);
             carregarConta();
+            onPagoRef.current?.();
           }
         }
       } catch { /* tenta de novo no próximo ciclo */ }
@@ -257,7 +296,7 @@ export default function PagarContaModalQR(props: Props) {
       const data = await callOnlinePayments<{ pix: PixInfo }>({ action: 'get_pix_status', pix_payment_id: pix.id, reconcile: true, ...auth });
       if (data.pix) {
         setPix(data.pix);
-        if (data.pix.status === 'confirmed') { clearPixMemo(qrToken); carregarConta(); }
+        if (data.pix.status === 'confirmed') { clearPixMemo(qrToken); carregarConta(); onPagoRef.current?.(); }
         else if (data.pix.status === 'pending') setErro('O banco ainda não avisou o pagamento. Se você acabou de pagar, aguarde alguns segundos.');
       }
     } catch {
@@ -275,6 +314,30 @@ export default function PagarContaModalQR(props: Props) {
     try { await callOnlinePayments({ action: 'cancel_pix', pix_payment_id: id, ...auth }); } catch { /* silencioso */ }
     carregarConta();
   }
+
+  // Cartão: o CPF já foi digitado na conta; no formulário ele só é lido (o painel guarda o valor do envio).
+  function abrirCartao() {
+    if (cpfDigits && !cpfValido) { setErro('CPF/CNPJ inválido. Confira os dígitos ou deixe em branco.'); return; }
+    try { if (cpfDigits) sessionStorage.setItem('erpos_qr_cpf_nota', cpfDigits); else sessionStorage.removeItem('erpos_qr_cpf_nota'); } catch { /* sem storage */ }
+    setErro('');
+    setCartaoPago(false);
+    setPagandoCartao(true);
+  }
+
+  function voltarDoCartao() {
+    setPagandoCartao(false);
+    setCartaoPago(false);
+    setErro('');
+    carregarConta(); // se o banco aprovou enquanto o cliente voltava, a conta já aparece paga
+  }
+
+  // Estável (o painel é memo): atualiza a conta/extrato e avisa quem abriu o modal.
+  const aoCartaoPago = useCallback(function () {
+    setCartaoPago(true);
+    clearPixMemo(qrToken);
+    carregarConta();
+    onPagoRef.current?.();
+  }, [qrToken, carregarConta]);
 
   async function copiarCodigo() {
     if (!pix?.qr_code) return;
@@ -465,8 +528,9 @@ export default function PagarContaModalQR(props: Props) {
           <p className="text-lg font-black text-zinc-800">Pagamento confirmado!</p>
           <p className="text-2xl font-black text-emerald-600 mt-1">{formatMoney(pix.amount)}</p>
           <p className="text-xs text-zinc-500 mt-3">
-            {pix.allocation ? pix.allocation.length : 1} {pix.allocation && pix.allocation.length > 1 ? 'pedidos pagos' : 'pedido pago'} via Pix. Obrigado!
+            {pix.allocation ? pix.allocation.length : 1} {pix.allocation && pix.allocation.length > 1 ? 'pedidos pagos' : 'pedido pago'} {pix.method === 'credit_card' ? 'no cartão' : 'via Pix'}. Obrigado!
           </p>
+          {textoPago ? <p className="text-xs font-bold text-emerald-700 mt-2">{textoPago}</p> : null}
           <button
             type="button"
             onClick={function () { setPix(null); carregarConta(); }}
@@ -587,6 +651,49 @@ export default function PagarContaModalQR(props: Props) {
     );
   }
 
+  function renderCartao() {
+    return (
+      <div className="space-y-3">
+        {!cartaoPago ? (
+          <div className="flex items-center justify-between gap-2">
+            <button
+              type="button"
+              onClick={voltarDoCartao}
+              className="flex items-center gap-1 text-[11px] font-semibold text-zinc-500 hover:text-zinc-700 cursor-pointer whitespace-nowrap"
+            >
+              <i className="ri-arrow-left-s-line text-sm" />
+              Voltar para a conta
+            </button>
+            {!queueMode ? <span className="text-[11px] text-zinc-400">{scope === 'all' ? 'Mesa inteira' : 'Meus pedidos'}</span> : null}
+          </div>
+        ) : null}
+        {!cartaoPago && cpfDigits && cpfValido ? (
+          <p className="flex items-center justify-center gap-1.5 text-[11px] text-zinc-500">
+            <i className="ri-file-shield-2-line" />
+            CPF/CNPJ na nota: {formatCpfCnpjQR(cpfDigits)}
+          </p>
+        ) : null}
+        <PainelCartao
+          auth={auth}
+          publicKey={publicKey}
+          scope={scope}
+          customerCpf={cpfDigits && cpfValido ? cpfDigits : undefined}
+          onPago={aoCartaoPago}
+          textoPago={textoPago}
+        />
+        {cartaoPago ? (
+          <button
+            type="button"
+            onClick={voltarDoCartao}
+            className="w-full py-2.5 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 text-xs font-bold rounded-xl cursor-pointer whitespace-nowrap"
+          >
+            Ver a conta
+          </button>
+        ) : null}
+      </div>
+    );
+  }
+
   const mostrandoPix = pix !== null;
 
   return (
@@ -596,10 +703,10 @@ export default function PagarContaModalQR(props: Props) {
         <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-100 flex-shrink-0">
           <div className="flex items-center gap-2.5">
             <div className="w-9 h-9 flex items-center justify-center bg-emerald-100 rounded-xl">
-              <i className="ri-qr-code-line text-emerald-600 text-base" />
+              <i className={(!mostrandoPix && pagandoCartao ? 'ri-bank-card-line' : 'ri-qr-code-line') + ' text-emerald-600 text-base'} />
             </div>
             <div>
-              <h2 className="text-base font-bold text-zinc-900">{mostrandoPix ? 'Pagar com Pix' : 'Pagar a conta'}</h2>
+              <h2 className="text-base font-bold text-zinc-900">{mostrandoPix ? 'Pagar com Pix' : pagandoCartao ? 'Pagar com cartão' : 'Pagar a conta'}</h2>
               <p className="text-[10px] text-zinc-400">{queueMode ? 'Senha ' + accessToken + ' · ' : (tableNumber != null ? 'Mesa ' + tableNumber + ' · ' : '')}{participantName}</p>
             </div>
           </div>
@@ -619,7 +726,7 @@ export default function PagarContaModalQR(props: Props) {
               <i className="ri-loader-4-line text-2xl text-amber-500 animate-spin" />
               <p className="text-xs text-zinc-400 mt-3">Buscando sua conta...</p>
             </div>
-          ) : mostrandoPix ? renderPix() : renderConta()}
+          ) : mostrandoPix ? renderPix() : pagandoCartao ? renderCartao() : renderConta()}
 
           {erro ? (
             <div className="mt-3 flex items-start gap-2 px-3 py-2.5 bg-red-50 border border-red-100 rounded-xl">
@@ -630,7 +737,7 @@ export default function PagarContaModalQR(props: Props) {
         </div>
 
         {/* Footer: só na tela da conta, com algo a pagar */}
-        {!carregando && !mostrandoPix && enabled && !tudoPago && orders.length > 0 ? (
+        {!carregando && !mostrandoPix && !pagandoCartao && enabled && !tudoPago && orders.length > 0 ? (
           <div className="border-t border-zinc-100 bg-white px-5 py-4 flex-shrink-0 rounded-b-2xl">
             {/* CPF na nota (opcional) — vai para a NFC-e emitida quando o Pix confirmar */}
             <div className="mb-3">
@@ -660,6 +767,20 @@ export default function PagarContaModalQR(props: Props) {
               </span>
               <span className="text-sm font-black">{formatMoney(totalAlvo)}</span>
             </button>
+            {cardEnabled ? (
+              <button
+                type="button"
+                disabled={gerando || alvo.length === 0 || temTravado || (cpfDigits.length > 0 && !cpfValido)}
+                onClick={abrirCartao}
+                className="mt-2 w-full flex items-center justify-between gap-2 bg-gradient-to-br from-amber-500 to-orange-500 disabled:from-zinc-300 disabled:to-zinc-300 text-white px-4 py-3.5 rounded-xl cursor-pointer disabled:cursor-not-allowed transition-colors shadow-sm"
+              >
+                <span className="flex items-center gap-2 text-[13px] font-bold text-left leading-tight min-w-0">
+                  <i className="ri-bank-card-line shrink-0" />
+                  Pagar com cartão de crédito
+                </span>
+                <span className="text-sm font-black shrink-0">{formatMoney(totalAlvo)}</span>
+              </button>
+            ) : null}
             {temTravado ? (
               <p className="text-[10px] text-amber-600 text-center mt-2">Outra pessoa está pagando parte desses pedidos. Aguarde um instante.</p>
             ) : null}

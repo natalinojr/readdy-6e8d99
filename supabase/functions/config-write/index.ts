@@ -732,6 +732,7 @@ Deno.serve(async (req) => {
         delivery_commission_rates: 'delivery_commission_rates',
         delivery_payment_methods: 'delivery_payment_methods',
         self_service_payment_methods: 'self_service_payment_methods',
+        qr_universal_pay_before: 'qr_universal_pay_before',
         delivery_print_enabled: 'delivery_print_enabled',
         bloquear_item_sem_insumo: 'bloquear_item_sem_insumo',
         bloquear_item_sem_insumo_reserva: 'bloquear_item_sem_insumo_reserva',

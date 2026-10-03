@@ -125,7 +125,7 @@ export default function MesaQRPage() {
             {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(data.comprovante.amount)}
           </p>
           <p className="text-sm text-zinc-500 leading-relaxed">
-            Recebemos seu Pix. Obrigado!
+            {data.comprovante.method && data.comprovante.method !== 'pix' ? 'Recebemos seu pagamento. Obrigado!' : 'Recebemos seu Pix. Obrigado!'}
           </p>
           <p className="text-xs text-zinc-400 mt-2">
             Quer pedir mais alguma coisa? É só continuar.
@@ -155,18 +155,39 @@ export default function MesaQRPage() {
     );
   }
 
+  // Modal de pagar a conta (Pix/cartão). Pedido segurado (QR universal "paga antes"): quando o
+  // pagamento confirma, a confirmação passa a dizer que o pedido foi para a cozinha.
+  const aguardando = data.pedidoAguardandoPagamento;
+  const modalPagarConta = data.showPagarConta && participant ? (
+    <PagarContaModalQR
+      qrToken={data.qrToken}
+      tenantId={participant.tenant_id}
+      participantId={participant.id}
+      participantName={participant.name}
+      accessToken={participant.access_token}
+      onClose={function () { data.setShowPagarConta(false); }}
+      onPago={data.handlePagamentoConfirmado}
+      textoPago={aguardando ? 'Seu pedido foi para a cozinha' : undefined}
+    />
+  ) : null;
+
   if (step === 'confirmacao' && participant) {
     return (
-      <ConfirmacaoMesaQR
-        accessToken={participant.access_token}
-        numeroPedido={numeroPedido}
-        onNovoPedido={handleNovoPedido}
-        confirmedCartItems={data.confirmedCartItems}
-        cardapioItems={items}
-        tenantId={participant.tenant_id}
-        participantId={participant.id}
-        descontoClube={data.descontoConfirmado}
-      />
+      <>
+        <ConfirmacaoMesaQR
+          accessToken={participant.access_token}
+          numeroPedido={numeroPedido}
+          onNovoPedido={handleNovoPedido}
+          confirmedCartItems={data.confirmedCartItems}
+          cardapioItems={items}
+          tenantId={participant.tenant_id}
+          participantId={participant.id}
+          descontoClube={data.descontoConfirmado}
+          aguardandoPagamento={aguardando}
+          onPagarAgora={data.onlinePayEnabled ? function () { data.setShowPagarConta(true); } : undefined}
+        />
+        {modalPagarConta}
+      </>
     );
   }
 
@@ -332,17 +353,8 @@ export default function MesaQRPage() {
           />
         ) : null}
 
-        {/* Modal Pagar a conta (Pix online) */}
-        {data.showPagarConta && participant ? (
-          <PagarContaModalQR
-            qrToken={data.qrToken}
-            tenantId={participant.tenant_id}
-            participantId={participant.id}
-            participantName={participant.name}
-            accessToken={participant.access_token}
-            onClose={function () { data.setShowPagarConta(false); }}
-          />
-        ) : null}
+        {/* Modal Pagar a conta (Pix ou cartão online) */}
+        {modalPagarConta}
 
         {/* Modal Editar Item */}
         {editingItem ? (

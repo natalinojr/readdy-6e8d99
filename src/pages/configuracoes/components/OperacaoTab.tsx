@@ -94,6 +94,8 @@ export default function OperacaoTab() {
   const [deliveryPaymentMethods, setDeliveryPaymentMethods] = useState<string[] | null>(null);
   // Formas de pagamento exibidas no tablet do autoatendimento (null = todas as ativas)
   const [kioskPaymentMethods, setKioskPaymentMethods] = useState<string[] | null>(null);
+  // QR universal: só vai para a cozinha depois de pago (system_settings.qr_universal_pay_before)
+  const [qrPagaAntes, setQrPagaAntes] = useState(false);
   const [showSecret, setShowSecret] = useState(false);
   const [salvando, setSalvando] = useState(false);
   const [salvo, setSalvo] = useState(false);
@@ -184,6 +186,7 @@ export default function OperacaoTab() {
     }
     const savedKioskMethods = settings.self_service_payment_methods;
     setKioskPaymentMethods(Array.isArray(savedKioskMethods) ? savedKioskMethods : null);
+    setQrPagaAntes(settings.qr_universal_pay_before === true);
   }, [settings, settingsLoading]);
 
   const set = <K extends keyof ConfigOperacao>(k: K, v: ConfigOperacao[K]) =>
@@ -228,6 +231,7 @@ export default function OperacaoTab() {
       delivery_commission_rates: deliveryCommissionRates,
       delivery_payment_methods: deliveryPaymentMethods,
       self_service_payment_methods: kioskPaymentMethods,
+      qr_universal_pay_before: qrPagaAntes,
       pdv_config: {
         // Mantém valores do banco como base e aplica as seleções da tela
         ...(settings.pdv_config ?? {}),
@@ -249,7 +253,7 @@ export default function OperacaoTab() {
     setTimeout(() => setSalvo(false), 2500);
   // pdvTerminais DEVE estar nas deps — sem isso o React reutiliza o closure antigo
   // e qualquer toggle feito pelo usuário é ignorado no save (stale closure bug)
-  }, [cfg, pixCfg, salvar, pdvTerminais, settings.pdv_config, deliveryCommissionRates, deliveryPaymentMethods, kioskPaymentMethods, toastSuccess, toastError]);
+  }, [cfg, pixCfg, salvar, pdvTerminais, settings.pdv_config, deliveryCommissionRates, deliveryPaymentMethods, kioskPaymentMethods, qrPagaAntes, toastSuccess, toastError]);
 
   const handleToggleTreino = useCallback(
     async (userId: string) => {
@@ -776,6 +780,18 @@ export default function OperacaoTab() {
               </div>
             </div>
           )}
+          <div className="border-t border-zinc-50 pt-4 flex items-center justify-between gap-4">
+            <div>
+              <p className="text-sm font-semibold text-zinc-700 flex items-center gap-1.5">
+                <i className="ri-qr-code-line text-zinc-400 text-sm" />
+                QR code universal: só vai para a cozinha depois de pago
+              </p>
+              <p className="text-xs text-zinc-400 max-w-md mt-0.5">
+                Desligado (padrão): o cliente pede e paga depois, no caixa ou pelo celular. Ligado: o pedido fica aguardando até ser pago pelo celular (Pix/cartão) ou no caixa — no caixa ele aparece em "Tablet — aguardando pagamento no caixa".
+              </p>
+            </div>
+            <Toggle checked={qrPagaAntes} onChange={setQrPagaAntes} />
+          </div>
           <div className="border-t border-zinc-50 pt-4">
             <label className="block text-xs font-semibold text-zinc-600 mb-1.5 flex items-center gap-1">
               <div className="w-3 h-3 flex items-center justify-center"><MessageSquare size={11} /></div>

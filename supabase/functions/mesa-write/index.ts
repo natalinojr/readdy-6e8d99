@@ -9,6 +9,100 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+// ── QR universal "paga antes de ir pra cozinha": libera o pedido segurado ────
+// Chamado pelo online-payments quando o Pix/cartão pelo app confirma (o cliente pode ter fechado
+// o celular — por isso os tickets saem daqui, não do aparelho). No caixa o caminho é outro:
+// order-write › record_payment libera e o PDV (PedidosTabletAguardando) imprime.
+// Tickets no mesmo formato do src/lib/printOrderQueue.ts (QR universal): destino = nome do
+// cliente (ou "Senha X"), senha no bloco grande, cozinha + bar da mesma estação num ticket só,
+// partes de produção destacadas por estação. Idempotente: só quem tira do rascunho imprime.
+// deno-lint-ignore no-explicit-any
+async function releaseHeldQueueOrder(admin: any, tenantId: string, orderId: string): Promise<{ error?: string; code?: number; already?: boolean }> {
+  const { data: o } = await admin.from("orders").select("id, number, status, is_draft, origin_type, destination_name, participant_id, total_amount")
+    .eq("id", orderId).eq("tenant_id", tenantId).maybeSingle();
+  if (!o) return { error: "Pedido não encontrado", code: 404 };
+  if (o.origin_type !== "self_service") return { error: "Não é pedido de autoatendimento", code: 400 };
+  if (o.status !== "draft" && !o.is_draft) return { already: true };
+  const { data: itemsRaw } = await admin.from("order_items").select("id, item_id, item_name, quantity, notes, skip_kds, station_id, status")
+    .eq("order_id", orderId).eq("tenant_id", tenantId).neq("status", "cancelled");
+  const items = (itemsRaw ?? []) as Array<Record<string, unknown>>;
+  const allSkip = items.length > 0 && items.every((i) => i.skip_kds === true);
+  const { data: liberou, error: upErr } = await admin.from("orders")
+    .update({ status: allSkip ? "ready" : "new", is_draft: false, updated_at: new Date().toISOString() })
+    .eq("id", orderId).eq("tenant_id", tenantId).eq("is_draft", true).select("id");
+  if (upErr) throw upErr;
+  if (!liberou?.length) return { already: true };
+  runStockInBackground(deductStockForSkipKdsItems(admin, tenantId, orderId).catch((e) => console.warn("[mesa-write] baixa de estoque falhou", orderId, String(e))));
+
+  const itemIds = items.map((i) => String(i.id));
+  const kitchenMenuIds = [...new Set(items.filter((i) => !i.skip_kds && i.item_id).map((i) => String(i.item_id)))];
+  const empty = Promise.resolve({ data: [] as Array<Record<string, unknown>> });
+  const [{ data: optRows }, { data: obsRows }, { data: partRows }, { data: part }] = await Promise.all([
+    itemIds.length ? admin.from("order_item_options").select("order_item_id, option_name").in("order_item_id", itemIds) : empty,
+    itemIds.length ? admin.from("order_item_observations").select("order_item_id, text").in("order_item_id", itemIds) : empty,
+    kitchenMenuIds.length ? admin.from("item_production_parts").select("item_id, name, station_id, sort_order").eq("tenant_id", tenantId).in("item_id", kitchenMenuIds).is("deleted_at", null).order("sort_order") : empty,
+    o.participant_id ? admin.from("table_session_participants").select("name, access_token").eq("id", o.participant_id).maybeSingle() : Promise.resolve({ data: null }),
+  ]);
+  const senha = String(part?.access_token ?? o.destination_name ?? "").trim();
+  const destinoStr = String(part?.name ?? "").trim() || (senha ? `Senha ${senha}` : "Cliente");
+  const ticketItem = (it: Record<string, unknown>, destaque?: string[]) => {
+    const opcoes = ((optRows ?? []) as Array<Record<string, unknown>>).filter((r) => r.order_item_id === it.id && r.option_name).map((r) => ({ nome: String(r.option_name) }));
+    const obs: string[] = [];
+    for (const t of [it.notes, ...((obsRows ?? []) as Array<Record<string, unknown>>).filter((r) => r.order_item_id === it.id).map((r) => r.text)]) {
+      const s = typeof t === "string" ? t.trim() : "";
+      if (s && !obs.includes(s)) obs.push(s);
+    }
+    return {
+      quantidade: Number(it.quantity ?? 1), nome: String(it.item_name ?? ""),
+      ...(opcoes.length ? { opcoes } : {}), ...(obs.length ? { observacoes: obs } : {}),
+      ...(destaque && destaque.length ? { partes_destaque: destaque } : {}),
+    };
+  };
+  const partesPorItem = new Map<string, Array<{ name: string; station_id: string }>>();
+  for (const p of (partRows ?? []) as Array<Record<string, unknown>>) {
+    const k = String(p.item_id);
+    if (!partesPorItem.has(k)) partesPorItem.set(k, []);
+    partesPorItem.get(k)!.push({ name: String(p.name ?? ""), station_id: String(p.station_id ?? "") });
+  }
+  const groups = new Map<string, { itens: Array<Record<string, unknown>>; hasBar: boolean }>();
+  const add = (key: string, t: Record<string, unknown>, bar: boolean) => {
+    if (!groups.has(key)) groups.set(key, { itens: [], hasBar: false });
+    const g = groups.get(key)!; g.itens.push(t); if (bar) g.hasBar = true;
+  };
+  for (const it of items) {
+    if (it.skip_kds) { add(String(it.station_id || "bar"), ticketItem(it), true); continue; }
+    const partes = it.item_id ? partesPorItem.get(String(it.item_id)) : undefined;
+    if (!partes || partes.length === 0) { add(String(it.station_id || "cozinha-padrao"), ticketItem(it), false); continue; }
+    for (const st of new Set(partes.map((p) => p.station_id))) {
+      add(st, ticketItem(it, partes.filter((p) => p.station_id === st).map((p) => p.name)), false);
+    }
+  }
+  const stationIds = [...groups.keys()].filter((k) => k !== "cozinha-padrao" && k !== "bar");
+  const { data: ksRows } = stationIds.length ? await admin.from("kitchen_stations").select("id, name").eq("tenant_id", tenantId).in("id", stationIds) : { data: [] };
+  const stationName = new Map<string, string>(((ksRows ?? []) as Array<{ id: string; name: string | null }>).filter((k) => k.name).map((k) => [k.id, String(k.name)]));
+  const numero = parseInt(String(o.number ?? "").replace(/\D/g, "").slice(-4), 10) || 1;
+  const dataHora = new Date().toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  for (const [key, g] of groups) {
+    const estacao = stationName.get(key);
+    const extra = g.hasBar ? (estacao || "BAR") : undefined;
+    try {
+      const { data: queueId } = await admin.rpc("enqueue_print_ticket", {
+        p_tenant_id: tenantId, p_order_id: orderId, p_order_number: String(o.number ?? ""),
+        p_station_key: key, p_station_label: g.hasBar ? `${destinoStr} — ${extra}` : (estacao || destinoStr),
+        p_content_type: "ticket_json",
+        p_payload: {
+          numero, destino: extra ? `${destinoStr} — ${extra}` : destinoStr, origem: "Autoatendimento", impressora_id: key,
+          itens: g.itens, data_hora: dataHora, ...(senha ? { senha } : {}), ...(estacao ? { estacao } : {}), total: Number(o.total_amount ?? 0),
+        },
+        p_paper_style: "80mm",
+      });
+      // Mesmo passo do front: o agente local procura a impressora pela coluna.
+      if (queueId) await admin.from("print_queue").update({ impressora_id: key }).eq("id", queueId);
+    } catch (e) { console.warn("[mesa-write] ticket do pedido liberado falhou", orderId, key, String(e)); }
+  }
+  return {};
+}
+
 Deno.serve({ verify_jwt: false }, async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
@@ -20,6 +114,17 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
     const body = await req.json();
     const { action } = body;
     if (!action) return new Response(JSON.stringify({ error: "action is required" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+
+    if (action === "release_held_order") {
+      // Pagamento pelo app confirmado: só o online-payments chama isto, com a chave interna.
+      const internalKey = Deno.env.get("FISCAL_INTERNAL_KEY") ?? "";
+      if (!internalKey || req.headers.get("x-internal-key") !== internalKey) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      const { tenant_id, order_id } = body;
+      if (!tenant_id || !order_id) return new Response(JSON.stringify({ error: "tenant_id e order_id obrigatorios" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      const r = await releaseHeldQueueOrder(admin, String(tenant_id), String(order_id));
+      if (r.error) return new Response(JSON.stringify({ error: r.error }), { status: r.code ?? 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      return new Response(JSON.stringify({ ok: true, released: !r.already, already: !!r.already }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
 
     if (action === "lookup_mesa") {
       const { qr_token } = body;
@@ -114,10 +219,10 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
       const clientRequestId: string | null = typeof client_request_id === "string" && uuidRe.test(client_request_id.trim()) ? client_request_id.trim() : null;
       const replyExisting = async (existingId: string) => {
-        const { data: ex } = await admin.from("orders").select("id, number, status, tenant_id, participant_id").eq("id", existingId).maybeSingle();
+        const { data: ex } = await admin.from("orders").select("id, number, status, tenant_id, participant_id, total_amount").eq("id", existingId).maybeSingle();
         if (!ex || String(ex.tenant_id) !== String(tenant_id) || String(ex.participant_id) !== String(participant_id)) return json({ error: "Requisição inválida", code: "request_conflict" }, 409);
         if (ex.status === "cancelled") return json({ error: "Este pedido foi cancelado. Revise o carrinho e envie novamente.", code: "order_cancelled" }, 409);
-        return json({ data: { id: ex.id, number: ex.number }, idempotent: true });
+        return json({ data: { id: ex.id, number: ex.number, total_amount: Number(ex.total_amount ?? 0), held: ex.status === "draft" }, idempotent: true });
       };
       if (clientRequestId) {
         const { data: existing } = await admin.from("orders").select("id").eq("client_request_id", clientRequestId).maybeSingle();
@@ -290,6 +395,15 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       }
       const totalPedido = cents(Math.max(0, serverSubtotal - clubeDiscount));
 
+      // QR universal com "só vai pra cozinha depois de pago" (Configurações › Operação): o pedido nasce
+      // RASCUNHO, fora do KDS e sem ticket. Libera quando o Pix/cartão pelo app confirma
+      // (online-payments → release_held_order) ou quando o caixa recebe (PedidosTabletAguardando).
+      let holdUntilPaid = false;
+      if (isFila && totalPedido > 0) {
+        const { data: ss } = await admin.from("system_settings").select("qr_universal_pay_before").eq("tenant_id", tenant_id).maybeSingle();
+        holdUntilPaid = ss?.qr_universal_pay_before === true;
+      }
+
       const { data: numData, error: numErr } = await admin.rpc("fn_next_tenant_order_number", { p_tenant_id: tenant_id });
       if (numErr) throw numErr;
       const orderNumber = numData?.[0]?.number ?? "P" + Date.now();
@@ -303,7 +417,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         : (mesaNumber != null
           ? (participantName ? `Mesa ${mesaNumber} - ${participantName}` : `Mesa ${mesaNumber}`)
           : null);
-      const { data: order, error: orderErr } = await admin.rpc("fn_create_order_bypass", { order_data: { tenant_id, session_id, table_session_id: isFila ? null : table_session_id, participant_id, number: orderNumber, status: "new", origin_type: isFila ? "self_service" : "table", destination_type: isFila ? "password" : "table", destination_name: tableDestName, discount_amount: clubeDiscount, service_fee_amount: 0, subtotal: serverSubtotal, total_amount: totalPedido, customer_id: clubeCustomerId, is_training: false, is_draft: false, table_number: isFila ? null : mesaNumber, client_request_id: clientRequestId } });
+      const { data: order, error: orderErr } = await admin.rpc("fn_create_order_bypass", { order_data: { tenant_id, session_id, table_session_id: isFila ? null : table_session_id, participant_id, number: orderNumber, status: holdUntilPaid ? "draft" : "new", origin_type: isFila ? "self_service" : "table", destination_type: isFila ? "password" : "table", destination_name: tableDestName, discount_amount: clubeDiscount, service_fee_amount: 0, subtotal: serverSubtotal, total_amount: totalPedido, customer_id: clubeCustomerId, is_training: false, is_draft: holdUntilPaid, table_number: isFila ? null : mesaNumber, client_request_id: clientRequestId } });
       if (orderErr) throw orderErr;
       const orderRow = Array.isArray(order) ? order[0] : order;
       const orderId = orderRow?.id;
@@ -333,9 +447,10 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
           return json({ error: "O prêmio do clube não está mais disponível. Envie o pedido de novo.", code: "loyalty_hold_expired", cancelled: true }, 409);
         }
       }
-      // Itens sem preparo (skip_kds, ex.: refrigerante) não passam pelo KDS: baixa o estoque agora.
-      runStockInBackground(deductStockForSkipKdsItems(admin, String(tenant_id), String(orderId)).catch((e) => console.warn("[mesa-write] baixa de estoque falhou", orderId, String(e))));
-      return json({ data: { id: orderId, number: orderNumber, subtotal: serverSubtotal, discount_amount: clubeDiscount, total_amount: totalPedido } });
+      // Itens sem preparo (skip_kds, ex.: refrigerante) não passam pelo KDS: baixa o estoque agora
+      // (pedido segurado baixa quando for liberado).
+      if (!holdUntilPaid) runStockInBackground(deductStockForSkipKdsItems(admin, String(tenant_id), String(orderId)).catch((e) => console.warn("[mesa-write] baixa de estoque falhou", orderId, String(e))));
+      return json({ data: { id: orderId, number: orderNumber, subtotal: serverSubtotal, discount_amount: clubeDiscount, total_amount: totalPedido, held: holdUntilPaid } });
     }
 
     // Troca de idioma sem recarregar o cardapio (ver delivery-write).

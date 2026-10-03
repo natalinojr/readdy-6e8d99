@@ -24,7 +24,8 @@ export function paymentFromNotes(notes: string | null, isPaid: boolean, total: n
   if (isPaid) return { kind: 'paid' as const };
   const n = norm(notes ?? '');
   const m = /pagamento:\s*([^|]+)/.exec(n)?.[1]?.trim() ?? '';
-  if (/pix|online|pago/.test(m)) return { kind: 'paid' as const };
+  // "Cartão de crédito pelo app" é pago online — não pode virar "cobrar crédito na entrega".
+  if (/pix|online|pago|pelo app/.test(m)) return { kind: 'paid' as const };
   if (/dinheiro/.test(m)) {
     const t = /troco para r?\$?\s*([\d.,]+)/.exec(n)?.[1];
     const changeFor = t ? Number(t.replace(/\./g, '').replace(',', '.')) : null;

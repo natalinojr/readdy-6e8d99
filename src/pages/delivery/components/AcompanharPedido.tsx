@@ -13,6 +13,8 @@ type OrderStatusData = {
   out_for_delivery_at: string | null;
   delivery_sla_min: number | null;
   is_retirada?: boolean;
+  /** Notas do pedido ("Pagamento: ...") — diz se o pedido segurado é de Pix ou de cartão pelo app */
+  pagamento?: string | null;
   total_amount: number;
   delivery_fee: number;
   subtotal: number;
@@ -30,11 +32,11 @@ interface Props {
   numeroPedido: string;
   tenantId: string;
   onNovoPedido: () => void;
-  /** Número do pedido que este aparelho deixou esperando o Pix pelo app */
+  /** Número do pedido que este aparelho deixou esperando o pagamento pelo app (Pix ou cartão) */
   pixPendenteNumero?: string;
   onPagarPix?: () => void;
   /** Sem a chave no aparelho: retoma pelo telefone do cliente (só se o app souber o telefone) */
-  onPagarPixSemChave?: (orderId: string, number: string, total: number, fee?: number, isRetirada?: boolean) => void;
+  onPagarPixSemChave?: (orderId: string, number: string, total: number, fee?: number, isRetirada?: boolean, metodo?: 'pix' | 'cartao') => void;
   /** Trocar a forma de pagamento do pedido segurado (libera pra cozinha) */
   metodosAlternativos?: MetodoAlternativo[];
   onTrocarPagamento?: (orderId: string, metodoKey: string, cashAmount?: string) => Promise<boolean>;
@@ -222,14 +224,16 @@ export default function AcompanharPedido(props: Props) {
   const currentStep = getStepIndex(status);
   const isCancelled = status === 'cancelled';
   const isDelivered = status === 'delivered';
-  // Segurado esperando o Pix pelo app: só este aparelho (que criou o pedido) consegue pagar
+  // Segurado esperando o pagamento pelo app (Pix ou cartão): só este aparelho (que criou o pedido) consegue pagar
   const isAguardandoPix = status === 'draft';
   const temChave = !!props.onPagarPix && !!props.pixPendenteNumero && props.pixPendenteNumero === orderData.number;
   const podePagarPix = isAguardandoPix && (temChave || !!props.onPagarPixSemChave);
+  // As notas dizem "Pagamento: Cartão de crédito pelo app" quando o cliente escolheu cartão
+  const ehCartaoApp = /cart/i.test(orderData.pagamento || '');
   function pagarPix() {
     if (!orderData) return;
     if (temChave && props.onPagarPix) props.onPagarPix();
-    else if (props.onPagarPixSemChave) props.onPagarPixSemChave(orderData.id, orderData.number, orderData.total_amount, orderData.delivery_fee, !!orderData.is_retirada);
+    else if (props.onPagarPixSemChave) props.onPagarPixSemChave(orderData.id, orderData.number, orderData.total_amount, orderData.delivery_fee, !!orderData.is_retirada, ehCartaoApp ? 'cartao' : 'pix');
   }
 
   // Previsão máxima de entrega = horário do pedido + tempo total da faixa de distância (SLA).
@@ -245,8 +249,8 @@ export default function AcompanharPedido(props: Props) {
           <p className="text-sm font-black text-emerald-800">Este pedido ainda não foi pago</p>
           <p className="text-xs text-emerald-700 mt-1">
             {podePagarPix
-              ? 'Ele só vai para a cozinha depois do Pix. Pague agora pelo celular.'
-              : 'Ele só vai para a cozinha depois do Pix pelo app. Abra o cardápio com o telefone que fez o pedido para pagar.'}
+              ? 'Ele só vai para a cozinha depois do pagamento pelo app. Pague agora pelo celular.'
+              : 'Ele só vai para a cozinha depois do pagamento pelo app. Abra o cardápio com o telefone que fez o pedido para pagar.'}
           </p>
           {podePagarPix ? (
             <button
@@ -254,7 +258,7 @@ export default function AcompanharPedido(props: Props) {
               onClick={pagarPix}
               className="mt-3 w-full flex items-center justify-center gap-2 py-3 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold rounded-xl cursor-pointer whitespace-nowrap"
             >
-              <i className="ri-qr-code-line" /> Pagar com Pix agora
+              <i className={ehCartaoApp ? 'ri-bank-card-line' : 'ri-qr-code-line'} /> {ehCartaoApp ? 'Pagar com cartão agora' : 'Pagar com Pix agora'}
             </button>
           ) : null}
           {props.onTrocarPagamento && (props.metodosAlternativos || []).length > 0 ? (

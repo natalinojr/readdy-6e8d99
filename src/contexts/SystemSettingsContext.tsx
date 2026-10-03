@@ -83,6 +83,8 @@ export interface SystemSettings {
   self_service_payment_type: 'hora' | 'entrega' | 'ambos';
   /** Formas de pagamento exibidas no tablet (ids de payment_methods); null = todas as ativas. */
   self_service_payment_methods?: string[] | null;
+  /** QR universal (fila por senha): o pedido só vai para a cozinha depois de pago (pelo app ou no caixa). */
+  qr_universal_pay_before: boolean;
   welcome_message_new: string;
   welcome_message_returning: string;
   stone_client_id: string;
@@ -150,6 +152,7 @@ export const DEFAULT_SETTINGS: SystemSettings = {
   kitchen_close_time: '23:00',
   self_service_id_type: 'nome',
   self_service_payment_type: 'hora',
+  qr_universal_pay_before: false,
   welcome_message_new: 'Bem-vindo! Faça seu pedido e aproveite!',
   welcome_message_returning: 'Que bom te ver de volta!',
   stone_client_id: '',
@@ -228,6 +231,7 @@ function parseRow(data: Record<string, unknown>): SystemSettings {
     self_service_id_type: normalizeIdType(data.self_service_id_type as string),
     self_service_payment_type: normalizePaymentType(data.self_service_payment_type as string),
     self_service_payment_methods: Array.isArray(data.self_service_payment_methods) ? (data.self_service_payment_methods as string[]) : null,
+    qr_universal_pay_before: data.qr_universal_pay_before === true,
     welcome_message_new: (data.welcome_message_new as string) ?? DEFAULT_SETTINGS.welcome_message_new,
     welcome_message_returning: (data.welcome_message_returning as string) ?? DEFAULT_SETTINGS.welcome_message_returning,
     stone_client_id: (data.stone_client_id as string) ?? '',

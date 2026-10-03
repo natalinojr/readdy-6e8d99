@@ -773,9 +773,21 @@ export function useDeliveryData(storeSlug?: string) {
   // Disponível quando a loja tem o provedor ativo (mesma regra do mesa-qr). O pedido
   // recém-criado guarda {orderId, orderToken} — o token é o client_request_id que
   // este aparelho gerou: é a prova de posse do pedido para a Edge online-payments.
+  // `metodo` diz qual painel a tela do pedido mostra: Pix ou cartão de crédito (Mercado Pago).
+  // Memo antigo (sem o campo) = Pix. Nunca renderizar os dois painéis juntos: cada um cancela
+  // a cobrança pendente do outro, então a troca é sempre um clique explícito do cliente.
   const [pixOnlineDisponivel, setPixOnlineDisponivel] = useState(false);
-  const [pixOnline, setPixOnline] = useState<{ orderId: string; orderToken: string; number: string; total: number } | null>(null);
+  const [cartaoOnlineDisponivel, setCartaoOnlineDisponivel] = useState(false);
+  const [mpPublicKey, setMpPublicKey] = useState('');
+  // public_status já respondeu (ou falhou)? Enquanto não, a tela do cartão espera — nunca cai no Pix sozinha.
+  const [pagamentoAppPronto, setPagamentoAppPronto] = useState(false);
+  const [pixOnline, setPixOnline] = useState<{ orderId: string; orderToken: string; number: string; total: number; metodo: 'pix' | 'cartao' } | null>(null);
   useEffect(function () {
+    // Troca de loja: não herda o que a loja anterior tinha ligado
+    setPixOnlineDisponivel(false);
+    setCartaoOnlineDisponivel(false);
+    setMpPublicKey('');
+    setPagamentoAppPronto(false);
     if (!tenant?.id) return;
     let cancelled = false;
     const base = (import.meta.env.VITE_PUBLIC_SUPABASE_URL as string || '').replace(/\/$/, '');
@@ -785,8 +797,15 @@ export function useDeliveryData(storeSlug?: string) {
       body: JSON.stringify({ action: 'public_status', tenant_id: tenant.id }),
     })
       .then(function (r) { return r.json(); })
-      .then(function (d) { if (!cancelled) setPixOnlineDisponivel(Boolean(d && d.enabled)); })
-      .catch(function () { /* fica desligado */ });
+      .then(function (d) {
+        if (cancelled) return;
+        const chave = d && typeof d.public_key === 'string' ? d.public_key : '';
+        setPixOnlineDisponivel(Boolean(d && d.enabled));
+        setCartaoOnlineDisponivel(Boolean(d && d.enabled && d.card_enabled && chave));
+        setMpPublicKey(chave);
+        setPagamentoAppPronto(true);
+      })
+      .catch(function () { if (!cancelled) setPagamentoAppPronto(true); /* fica desligado */ });
     return function () { cancelled = true; };
   }, [tenant?.id]);
   const [paymentMethods, setPaymentMethods] = useState<Record<string, boolean>>({});
@@ -977,19 +996,20 @@ export function useDeliveryData(storeSlug?: string) {
 
               saveDeliveryPhone(localStorage, configResult.tenant.id, c.phone);
 
-              // Pix pelo app em andamento (voltou do banco / recarregou): reabre a tela do pedido
+              // Pagamento pelo app (Pix ou cartão) em andamento (voltou do banco / recarregou): reabre a tela do pedido
               try {
                 const rawPix = localStorage.getItem('delivery_pix_' + configResult.tenant.id);
                 const memo = rawPix ? JSON.parse(rawPix) : null;
                 if (memo && memo.orderId && Date.now() - Number(memo.at || 0) < 2 * 60 * 60 * 1000) {
-                  setPixOnline({ orderId: memo.orderId, orderToken: memo.orderToken || '', number: memo.number || '', total: Number(memo.total || 0) });
+                  const metodoMemo: 'pix' | 'cartao' = memo.metodo === 'cartao' ? 'cartao' : 'pix';
+                  setPixOnline({ orderId: memo.orderId, orderToken: memo.orderToken || '', number: memo.number || '', total: Number(memo.total || 0), metodo: metodoMemo });
                   setNumeroPedido(memo.number || '');
                   setOrderTotal(Number(memo.total || 0));
                   // Reconstrói o que a tela mostra (taxa 0 na retirada) — sem isso ela usaria a taxa do endereço atual
                   if (memo.modo === 'retirada' || memo.modo === 'entrega') setModoEntrega(memo.modo);
                   const feeMemo = Number(memo.fee || 0);
                   setResumoConfirmacao({ subtotal: Math.max(0, Number(memo.total || 0) - feeMemo), desconto: 0, deliveryFee: feeMemo, voucherCodigo: '' });
-                  setPagamentoSelecionado('PIX pelo app');
+                  setPagamentoSelecionado(metodoMemo === 'cartao' ? 'Cartão de crédito pelo app' : 'PIX pelo app');
                   setPedidoConfirmado(true);
                   setStep('confirmacao');
                   return;
@@ -1574,8 +1594,11 @@ export function useDeliveryData(storeSlug?: string) {
       pix: 'PIX',
       vale_refeicao: 'Vale Refeição',
       pix_online: 'PIX pelo app',
+      cartao_online: 'Cartão de crédito pelo app',
     };
+    // Pix ou cartão pelo app: o servidor segura o pedido (held) até o pagamento confirmar
     const isPixOnline = methodLabel === 'pix_online';
+    const isCartaoOnline = methodLabel === 'cartao_online';
     const methodName = methodMap[methodLabel] || methodLabel;
     setPagamentoSelecionado(methodName);
 
@@ -1723,9 +1746,9 @@ export function useDeliveryData(storeSlug?: string) {
         const totalConfirmado = data.data?.total || total;
         setNumeroPedido(data.data?.number || '');
         setOrderTotal(totalConfirmado);
-        // Pix pelo app: guarda o pedido + token no aparelho para cobrar (e sobreviver a reload)
-        if (isPixOnline && data.data?.id) {
-          const memo = { orderId: String(data.data.id), orderToken: clientRequestId, number: String(data.data.number || ''), total: Number(totalConfirmado), fee: Number(data.data.delivery_fee ?? effectiveDeliveryFee ?? 0), modo: modoEntrega, at: Date.now() };
+        // Pix/cartão pelo app: guarda o pedido + token no aparelho para cobrar (e sobreviver a reload)
+        if ((isPixOnline || isCartaoOnline) && data.data?.id) {
+          const memo = { orderId: String(data.data.id), orderToken: clientRequestId, number: String(data.data.number || ''), total: Number(totalConfirmado), fee: Number(data.data.delivery_fee ?? effectiveDeliveryFee ?? 0), modo: modoEntrega, metodo: (isCartaoOnline ? 'cartao' : 'pix') as 'pix' | 'cartao', at: Date.now() };
           setPixOnline(memo);
           try { localStorage.setItem('delivery_pix_' + tenant.id, JSON.stringify(memo)); } catch { /* sem storage */ }
         } else {
@@ -1755,7 +1778,7 @@ export function useDeliveryData(storeSlug?: string) {
 
   // ── Novo pedido ─────────────────────────────────────────────────────────────
 
-  // Cliente desistiu do Pix pelo app: escolhe outra forma e o pedido segurado vai pra cozinha.
+  // Cliente desistiu do pagamento pelo app (Pix ou cartão): escolhe outra forma e o pedido segurado vai pra cozinha.
   // Autentica pela chave do aparelho (se for o pedido pendente daqui) ou pelo telefone.
   async function trocarPagamentoPedidoSegurado(orderId: string, metodoKey: string, cashAmount?: string): Promise<boolean> {
     if (!tenant) return false;
@@ -1791,25 +1814,43 @@ export function useDeliveryData(storeSlug?: string) {
   }
 
   function limparPixOnline() {
-    // Chamado quando o Pix confirma (ou o cliente troca a forma): o pedido deixa de estar pendente
+    // Chamado quando o pagamento confirma (ou o cliente troca a forma): o pedido deixa de estar pendente
     try { if (tenant?.id) localStorage.removeItem('delivery_pix_' + tenant.id); } catch { /* ignore */ }
     setPixOnline(null);
   }
 
+  // Cliente tocou em "Pagar com Pix" / "Pagar com cartão": só troca qual painel aparece
+  // (o painel novo cria a cobrança dele e cancela a pendente do outro).
+  function trocarMetodoPagamentoApp(metodo: 'pix' | 'cartao') {
+    if (!pixOnline || pixOnline.metodo === metodo) return;
+    try {
+      if (tenant?.id) {
+        const chave = 'delivery_pix_' + tenant.id;
+        const raw = localStorage.getItem(chave);
+        const memo = raw ? JSON.parse(raw) : null;
+        if (memo && memo.orderId === pixOnline.orderId) localStorage.setItem(chave, JSON.stringify({ ...memo, metodo }));
+      }
+    } catch { /* sem storage */ }
+    setPixOnline({ ...pixOnline, metodo });
+    setPagamentoSelecionado(metodo === 'cartao' ? 'Cartão de crédito pelo app' : 'PIX pelo app');
+  }
+
   // Aparelho perdeu a chave (ou nunca teve): retoma o pedido segurado pelo TELEFONE do
   // cliente. `orderToken` vazio faz a tela autenticar por `order_phone`.
-  function voltarParaPagamentoPixPorTelefone(orderId: string, number: string, total: number, fee?: number, isRetirada?: boolean) {
+  // `metodo` vem das notas do pedido ("Cartão de crédito pelo app" → cartão); sem isso, Pix.
+  function voltarParaPagamentoPixPorTelefone(orderId: string, number: string, total: number, fee?: number, isRetirada?: boolean, metodo?: 'pix' | 'cartao') {
     if (!tenant?.id) return;
     const feeNum = Number(fee || 0);
     const modo: 'entrega' | 'retirada' = isRetirada ? 'retirada' : 'entrega';
-    const memo = { orderId, orderToken: '', number, total, fee: feeNum, modo, at: Date.now() };
+    const metodoApp: 'pix' | 'cartao' = metodo === 'cartao' ? 'cartao' : 'pix';
+    const memo = { orderId, orderToken: '', number, total, fee: feeNum, modo, metodo: metodoApp, at: Date.now() };
     setPixOnline(memo);
     try { localStorage.setItem('delivery_pix_' + tenant.id, JSON.stringify(memo)); } catch { /* sem storage */ }
     setNumeroPedido(number);
     setOrderTotal(total);
     setModoEntrega(modo);
     setResumoConfirmacao({ subtotal: Math.max(0, total - feeNum), desconto: 0, deliveryFee: feeNum, voucherCodigo: '' });
-    setPagamentoSelecionado('PIX pelo app');
+    setPagamentoSelecionado(metodoApp === 'cartao' ? 'Cartão de crédito pelo app' : 'PIX pelo app');
     setPedidoConfirmado(true);
     setErrorMsg('');
     setStep('confirmacao');
@@ -1843,12 +1884,12 @@ export function useDeliveryData(storeSlug?: string) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pixOnline?.orderId, tenant?.id]);
 
-  // Cliente saiu pro cardápio antes de pagar: volta pra tela do pedido com o Pix.
+  // Cliente saiu pro cardápio antes de pagar: volta pra tela do pedido com o Pix (ou o cartão).
   function voltarParaPagamentoPix() {
     if (!pixOnline) return;
     setNumeroPedido(pixOnline.number);
     setOrderTotal(pixOnline.total);
-    setPagamentoSelecionado('PIX pelo app');
+    setPagamentoSelecionado(pixOnline.metodo === 'cartao' ? 'Cartão de crédito pelo app' : 'PIX pelo app');
     setPedidoConfirmado(true);
     setErrorMsg('');
     setStep('confirmacao');
@@ -2118,8 +2159,12 @@ export function useDeliveryData(storeSlug?: string) {
     paymentMethods,
     pagamentoSelecionado,
     pixOnlineDisponivel,
+    cartaoOnlineDisponivel,
+    mpPublicKey,
+    pagamentoAppPronto,
     pixOnline,
     limparPixOnline,
+    trocarMetodoPagamentoApp,
     handleTrocarPagamentoPixOnline,
     trocarPagamentoPedidoSegurado,
     voltarParaPagamentoPix,
