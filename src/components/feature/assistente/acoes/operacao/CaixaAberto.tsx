@@ -1,7 +1,7 @@
 // Ação rápida: caixa aberto agora (só leitura).
 // Caixa/sessão: SessaoContext (RPCs fn_get_active_session + fn_get_active_cash_register, as mesmas
 // do PDV Caixa). Movimentos: cash_movements do caixa (PDV caixa/page.tsx › loadMovimentacoes).
-// Saldo esperado em dinheiro: MESMA fórmula do FechamentoCaixaModal —
+// Saldo esperado em dinheiro: a fórmula do fechamento (pdv/caixa/components/loja/FecharLojaModal) — aqui só formas ativas;
 //   abertura + Σ payments.amount em formas tipo 'cash' ativas (não estornados) − sangrias + suprimentos
 // (amount já é líquido do troco). "Entradas por forma" soma payments do caixa por forma de pagamento.
 // Resposta em PAINEL (2026-09-18): números em destaque, barra por forma de pagamento e listas de

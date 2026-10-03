@@ -102,6 +102,8 @@ type TenantInfo = {
   name: string;
   /** Logo da loja (Configurações → Dados da Loja). Ausente = mostrar iniciais. */
   logo_url?: string | null;
+  cover_url?: string | null;
+  brand_color?: string | null;
 };
 
 type Neighborhood = {
@@ -241,6 +243,12 @@ type ProductionPart = {
 type ProductionPartsMap = Record<string, ProductionPart[]>;
 
 const DESTAQUES_CATEGORY_ID = '__destaques__';
+
+/** Horário de funcionamento do delivery (Config › Delivery) e pedido mínimo (0 = sem). */
+export interface InfoLoja {
+  horario: { enabled?: boolean; days?: Record<string, { open?: string; close?: string; enabled?: boolean }> } | null;
+  pedidoMinimo: number;
+}
 const PROMOCAO_CATEGORY_ID = '__promocao__';
 
 function mergeHighlightsIntoCardapio(
@@ -472,6 +480,8 @@ async function fetchDeliveryConfig(
     setStoreLocation: (v: StoreLocation | null) => void;
     setTiers: (v: FaixaEntrega[]) => void;
     setLocales: (v: string[]) => void;
+    /** Horário e pedido mínimo — só para mostrar no topo da loja. */
+    setInfoLoja?: (v: InfoLoja) => void;
     productionPartsRef: MutableRefObject<ProductionPartsMap | undefined>;
   },
 ) {
@@ -520,17 +530,18 @@ async function fetchDeliveryConfig(
     // isso prenderia o carregamento do delivery inteiro. Logo é secundário: se demorar, segue sem.
     let tenantInfo: TenantInfo = data.tenant;
     try {
+      // Junto com a logo: capa e cor do cardápio online (Configurações › Loja)
       const logoPromise = supabase
         .from('tenants')
-        .select('logo_url')
+        .select('logo_url, cover_url, brand_color')
         .eq('id', data.tenant.id)
         .maybeSingle()
-        .then(function (r) { return r.data?.logo_url || null; });
+        .then(function (r) { return r.data || null; });
       const timeoutPromise = new Promise<null>(function (resolve) {
         setTimeout(function () { resolve(null); }, 2000);
       });
-      const logoUrl = await Promise.race([logoPromise, timeoutPromise]);
-      tenantInfo = { ...data.tenant, logo_url: logoUrl };
+      const marca = await Promise.race([logoPromise, timeoutPromise]) as { logo_url?: string | null; cover_url?: string | null; brand_color?: string | null } | null;
+      tenantInfo = { ...data.tenant, logo_url: marca?.logo_url || null, cover_url: marca?.cover_url || null, brand_color: marca?.brand_color || null };
     } catch (_e) { /* segue sem logo */ }
 
     setters.setTenant(tenantInfo);
@@ -569,6 +580,13 @@ async function fetchDeliveryConfig(
     // Estado de abertura do delivery (sessão + pausa + agenda + manual), calculado no backend.
     setters.setDeliveryOpenNow(data.delivery_open_now !== false);
     setters.setDeliveryClosedReason(data.delivery_closed_reason ?? null);
+
+    if (setters.setInfoLoja) {
+      setters.setInfoLoja({
+        horario: (dc.delivery_schedule && typeof dc.delivery_schedule === 'object') ? dc.delivery_schedule : null,
+        pedidoMinimo: dc.pedido_minimo_ativo ? (Number(dc.pedido_minimo_valor) || 0) : 0,
+      });
+    }
 
     const ws = dc.whatsapp_loja;
     setters.setStoreWhatsapp((typeof ws === 'string' || typeof ws === 'number') ? String(ws) : '');
@@ -641,6 +659,8 @@ export function useDeliveryData(storeSlug?: string) {
 
   // Cliente
   const [customer, setCustomer] = useState<DeliveryCustomer | null>(null);
+  // Apelido do estado: handleConfirmarPedido recebe o cliente recém-salvo e usa o nome `customer` localmente
+  const customerState = customer;
   const [phone, setPhone] = useState('');
   const [customerName, setCustomerName] = useState('');
   const [dataNascimento, setDataNascimento] = useState('');
@@ -814,6 +834,7 @@ export function useDeliveryData(storeSlug?: string) {
   const [deliveryOpenNow, setDeliveryOpenNow] = useState(true);
   const [deliveryClosedReason, setDeliveryClosedReason] = useState<string | null>(null);
   const [storeWhatsapp, setStoreWhatsapp] = useState('');
+  const [infoLoja, setInfoLoja] = useState<InfoLoja>({ horario: null, pedidoMinimo: 0 });
 
   // Entrega por distância (pin do cliente + faixas configuradas pela loja)
   const [storeLocation, setStoreLocation] = useState<StoreLocation | null>(null);
@@ -939,6 +960,7 @@ export function useDeliveryData(storeSlug?: string) {
           setStoreLocation,
           setTiers,
           setLocales,
+          setInfoLoja,
           productionPartsRef,
         });
 
@@ -1019,23 +1041,9 @@ export function useDeliveryData(storeSlug?: string) {
               // Cliente estava navegando o cardápio e voltou do 2º plano: retoma lá.
               if (savedStep === 'cardapio') { setStep('cardapio'); return; }
 
-              const temEndereco = addresses.length > 0 || (c.neighborhood_id && c.street);
-
-              if (temEndereco) {
-                // Já tem endereço — vai direto pro cardápio ou modo de entrega
-                if (!configResult.retiradaAtivo) {
-                  setStep('cardapio');
-                } else {
-                  setStep('modo_entrega');
-                }
-              } else {
-                // Não tem endereço nenhum — vai pro preenchimento
-                if (!configResult.retiradaAtivo) {
-                  setStep('endereco');
-                } else {
-                  setStep('modo_entrega');
-                }
-              }
+              // Entrega/retirada e endereço ficam no cartão do cardápio e na sacola
+              setBuscaCliente('encontrado');
+              setStep('cardapio');
               return;
             }
           } catch (_err) {
@@ -1063,6 +1071,45 @@ export function useDeliveryData(storeSlug?: string) {
 
   // ── Buscar cliente por telefone ──────────────────────────────────────────────
 
+  // Situação do WhatsApp digitado na sacola: ainda não buscado, buscando, cliente novo ou já cadastrado
+  const [buscaCliente, setBuscaCliente] = useState<'nao' | 'buscando' | 'novo' | 'encontrado'>('nao');
+  // Telefone da última busca da sacola: resposta de um número que o cliente já mudou é descartada
+  const ultimaBuscaRef = useRef('');
+
+  // Cliente achado pelo telefone: preenche nome, endereços (o principal já selecionado) e guarda o telefone no aparelho
+  function aplicarClienteEncontrado(c: DeliveryCustomer, addresses: SavedAddress[]) {
+    setCustomer(c);
+    setCustomerName(c.name);
+    if (c.birth_date) setDataNascimento(String(c.birth_date).slice(0, 10));
+    if (c.gender) setGenero(c.gender);
+    setPhone(formatPhoneBR(c.phone));
+    setSavedAddresses(addresses);
+    if (addresses.length > 0) {
+      const defaultAddr = addresses.find(function (a) { return a.is_default; }) || addresses[0];
+      setSelectedAddressId(defaultAddr.id);
+      applyAddressToFields(defaultAddr, {
+        setSelectedNeighborhoodId,
+        setStreet,
+        setAddressNumber,
+        setComplement,
+        setReferencePoint,
+        setDeliveryFee,
+      });
+    } else {
+      setSelectedAddressId(null);
+      if (c.neighborhood_id) setSelectedNeighborhoodId(c.neighborhood_id);
+      if (c.street) setStreet(c.street);
+      if (c.number) setAddressNumber(c.number);
+      if (c.complement) setComplement(c.complement);
+      if (c.reference_point) setReferencePoint(c.reference_point);
+      if (c.delivery_neighborhoods) {
+        setDeliveryFee(c.delivery_neighborhoods.delivery_fee);
+      }
+    }
+    if (tenant) saveDeliveryPhone(localStorage, tenant.id, c.phone);
+    setBuscaCliente('encontrado');
+  }
+
   function handleLookupCustomer(p: string) {
     if (!tenant) return;
     const url = getDeliveryWriteUrl();
@@ -1083,47 +1130,8 @@ export function useDeliveryData(storeSlug?: string) {
           return;
         }
         if (data.customer) {
-          const c: DeliveryCustomer = data.customer;
-          setCustomer(c);
-          setCustomerName(c.name);
-          if (c.birth_date) setDataNascimento(String(c.birth_date).slice(0, 10));
-          if (c.gender) setGenero(c.gender);
-          setPhone(formatPhoneBR(c.phone));
-
-          // Carrega endereços salvos
-          const addresses: SavedAddress[] = data.addresses || [];
-          setSavedAddresses(addresses);
-
-          if (addresses.length > 0) {
-            // Seleciona o default ou o primeiro
-            const defaultAddr = addresses.find(function (a) { return a.is_default; }) || addresses[0];
-            setSelectedAddressId(defaultAddr.id);
-            applyAddressToFields(defaultAddr, {
-              setSelectedNeighborhoodId,
-              setStreet,
-              setAddressNumber,
-              setComplement,
-              setReferencePoint,
-              setDeliveryFee,
-            });
-          } else {
-            setSelectedAddressId(null);
-            if (c.neighborhood_id) setSelectedNeighborhoodId(c.neighborhood_id);
-            if (c.street) setStreet(c.street);
-            if (c.number) setAddressNumber(c.number);
-            if (c.complement) setComplement(c.complement);
-            if (c.reference_point) setReferencePoint(c.reference_point);
-            if (c.delivery_neighborhoods) {
-              setDeliveryFee(c.delivery_neighborhoods.delivery_fee);
-            }
-          }
-
-          saveDeliveryPhone(localStorage, tenant.id, c.phone);
-          if (!retiradaAtivo) {
-            setStep('cardapio');
-          } else {
-            setStep('modo_entrega');
-          }
+          aplicarClienteEncontrado(data.customer as DeliveryCustomer, (data.addresses || []) as SavedAddress[]);
+          setStep('cardapio');
         } else {
           setCustomer(null);
           setCustomerName('');
@@ -1135,11 +1143,9 @@ export function useDeliveryData(storeSlug?: string) {
           setSavedAddresses([]);
           setSelectedAddressId(null);
           setPhone(p);
-          if (!retiradaAtivo) {
-            setStep('endereco');
-          } else {
-            setStep('modo_entrega');
-          }
+          setBuscaCliente('novo');
+          // Cliente novo: nome e endereço são pedidos na sacola, junto com o pagamento
+          setStep('cardapio');
         }
       })
       .catch(function () {
@@ -1570,7 +1576,8 @@ export function useDeliveryData(storeSlug?: string) {
 
   // Resolve true quando o pedido foi criado (a tela fecha o modal de pagamento);
   // false em erro — o modal fica aberto com a forma escolhida.
-  function handleConfirmarPedido(paymentMethod?: string, cashAmount?: string): Promise<boolean> {
+  function handleConfirmarPedido(paymentMethod?: string, cashAmount?: string, clienteSalvo?: DeliveryCustomer | null): Promise<boolean> {
+    const customer = clienteSalvo || customerState;
     if (!tenant) { setErrorMsg('Erro ao carregar a loja. Recarregue a página.'); return Promise.resolve(false); }
     if (!customer) { setErrorMsg('Não identificamos seu cadastro. Toque em "Trocar" e confirme seu telefone novamente.'); return Promise.resolve(false); }
     if (cart.length === 0) return Promise.resolve(false);
@@ -1777,6 +1784,194 @@ export function useDeliveryData(storeSlug?: string) {
   }
 
   // ── Novo pedido ─────────────────────────────────────────────────────────────
+
+  // ── Sacola única (dados + entrega + pagamento numa tela) ─────────────────────
+
+  // WhatsApp digitado na sacola: busca o cadastro sem trocar de tela
+  async function buscarClienteCheckout(p: string): Promise<void> {
+    if (!tenant) return;
+    const dig = p.replace(/\D/g, '');
+    if (dig.length < 10) return;
+    ultimaBuscaRef.current = dig;
+    setBuscaCliente('buscando');
+    setErrorMsg('');
+    try {
+      const res = await fetch(getDeliveryWriteUrl(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'lookup_customer', phone: dig, tenant_id: tenant.id }),
+      });
+      const data = await res.json();
+      if (ultimaBuscaRef.current !== dig) return; // o cliente já mudou o número
+      if (data.error) {
+        setBuscaCliente('nao');
+        setErrorMsg(data.message || data.error);
+        return;
+      }
+      if (data.customer) {
+        aplicarClienteEncontrado(data.customer as DeliveryCustomer, (data.addresses || []) as SavedAddress[]);
+      } else {
+        setCustomer(null);
+        setSavedAddresses([]);
+        setSelectedAddressId(null);
+        setBuscaCliente('novo');
+      }
+    } catch {
+      if (ultimaBuscaRef.current !== dig) return;
+      setBuscaCliente('nao');
+      setErrorMsg('Erro de conexão. Tente novamente.');
+    }
+  }
+
+  // Número mudou na sacola: a busca anterior deixa de valer
+  function reiniciarBuscaCliente() {
+    ultimaBuscaRef.current = '';
+    setBuscaCliente(function (b) { return b === 'encontrado' ? b : 'nao'; });
+  }
+
+  // "Não é você?": esquece o cliente deste aparelho sem esvaziar a sacola
+  function trocarCliente() {
+    try {
+      clearSavedDeliveryPhone(localStorage, tenant?.id);
+      localStorage.removeItem(PIN_STORAGE_KEY);
+    } catch { /* sem storage */ }
+    setAddressLat(null);
+    setAddressLng(null);
+    ultimaBuscaRef.current = '';
+    setCustomer(null);
+    setPhone('');
+    setCustomerName('');
+    setDataNascimento('');
+    setGenero('');
+    setSavedAddresses([]);
+    setSelectedAddressId(null);
+    setStreet('');
+    setAddressNumber('');
+    setComplement('');
+    setReferencePoint('');
+    setBairro('');
+    setSelectedNeighborhoodId('');
+    setBuscaCliente('nao');
+    setErrorMsg('');
+  }
+
+  // Botão "Fazer pedido" da sacola: valida, salva o cadastro quando precisa (cliente novo ou
+  // endereço digitado agora) e só então cria o pedido — com o cliente que acabou de voltar do servidor.
+  // Um envio por vez: dois toques rápidos não criam dois cadastros/pedidos
+  const finalizandoRef = useRef(false);
+  async function finalizarCheckout(paymentMethod?: string, cashAmount?: string): Promise<boolean> {
+    if (finalizandoRef.current) return false;
+    finalizandoRef.current = true;
+    try {
+      return await finalizarCheckoutInterno(paymentMethod, cashAmount);
+    } finally {
+      finalizandoRef.current = false;
+    }
+  }
+
+  async function finalizarCheckoutInterno(paymentMethod?: string, cashAmount?: string): Promise<boolean> {
+    if (!tenant) { setErrorMsg('Erro ao carregar a loja. Recarregue a página.'); return false; }
+    const dig = phone.replace(/\D/g, '');
+    if (dig.length < 10) { setErrorMsg('Digite seu WhatsApp com DDD.'); return false; }
+    if (!customerName.trim()) { setErrorMsg('Digite seu nome.'); return false; }
+    const subtotal = cart.reduce(function (acc, i) { return acc + i.precoTotal * i.quantidade; }, 0);
+    if (modoEntrega !== 'retirada' && infoLoja.pedidoMinimo > 0 && subtotal < infoLoja.pedidoMinimo) {
+      setErrorMsg('O pedido mínimo é de R$ ' + infoLoja.pedidoMinimo.toFixed(2).replace('.', ',') + '.');
+      return false;
+    }
+
+    const entrega = modoEntrega !== 'retirada';
+    const enderecoPronto = entrega && (
+      distanceMode
+        ? (addressLat != null && addressLng != null && !!street.trim() && !!addressNumber.trim())
+        : (!!selectedNeighborhoodId && !!street.trim() && !!addressNumber.trim())
+    );
+    if (entrega && !enderecoPronto) {
+      setErrorMsg(distanceMode
+        ? (addressLat == null ? 'Marque o endereço no mapa para calcular a entrega.' : 'Preencha rua e número.')
+        : (!selectedNeighborhoodId ? 'Escolha o bairro.' : 'Preencha rua e número.'));
+      return false;
+    }
+    const temEnderecoSalvo = !!customer && (
+      (selectedAddressId != null && selectedAddressId !== '') ||
+      (!!customer.street && (distanceMode ? addressLat != null : !!customer.neighborhood_id))
+    );
+    const precisaSalvar = !customer || (entrega && !temEnderecoSalvo);
+
+    let cli: DeliveryCustomer | null = customer;
+    // Sem cadastro carregado: confere pelo telefone antes de salvar. save_customer SOBRESCREVE nome e
+    // endereço de quem já existe — se achar o cliente, carrega os dados e pede para conferir.
+    if (!cli) {
+      setEnviando(true);
+      try {
+        const resBusca = await fetch(getDeliveryWriteUrl(), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'lookup_customer', phone: dig, tenant_id: tenant.id }),
+        });
+        const achado = await resBusca.json();
+        if (achado && achado.customer) {
+          aplicarClienteEncontrado(achado.customer as DeliveryCustomer, (achado.addresses || []) as SavedAddress[]);
+          setEnviando(false);
+          setErrorMsg('Achamos seu cadastro. Confira o endereço e toque em "Fazer pedido" de novo.');
+          return false;
+        }
+      } catch {
+        setEnviando(false);
+        setErrorMsg('Erro de conexão. Tente novamente.');
+        return false;
+      }
+    }
+    if (precisaSalvar) {
+      setEnviando(true);
+      setErrorMsg('');
+      try {
+        const res = await fetch(getDeliveryWriteUrl(), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(Object.assign({
+            action: 'save_customer',
+            tenant_id: tenant.id,
+            phone: dig,
+            name: customerName.trim(),
+            birth_date: dataNascimento || null,
+            gender: genero || null,
+          }, entrega ? {
+            neighborhood_id: selectedNeighborhoodId || null,
+            street: street.trim() || null,
+            number: addressNumber.trim() || null,
+            complement: complement.trim() || null,
+            reference_point: referencePoint.trim() || null,
+            bairro: bairro.trim() || null,
+            address_lat: addressLat,
+            address_lng: addressLng,
+          } : {
+            neighborhood_id: null, street: null, number: null, complement: null, reference_point: null,
+          })),
+        });
+        const data = await res.json();
+        if (data.error || !data.customer) {
+          setEnviando(false);
+          setErrorMsg(data.message || data.error || 'Não foi possível salvar seus dados.');
+          return false;
+        }
+        cli = data.customer as DeliveryCustomer;
+        setCustomer(cli);
+        const addresses: SavedAddress[] = data.addresses || [];
+        setSavedAddresses(addresses);
+        if (entrega && addresses.length > 0) setSelectedAddressId(addresses[addresses.length - 1].id);
+        saveDeliveryPhone(localStorage, tenant.id, cli.phone);
+        setBuscaCliente('encontrado');
+      } catch {
+        setEnviando(false);
+        setErrorMsg('Erro de conexão. Tente novamente.');
+        return false;
+      }
+    }
+    const ok = await handleConfirmarPedido(paymentMethod, cashAmount, cli);
+    if (!ok) setEnviando(false);
+    return ok;
+  }
 
   // Cliente desistiu do pagamento pelo app (Pix ou cartão): escolhe outra forma e o pedido segurado vai pra cozinha.
   // Autentica pela chave do aparelho (se for o pedido pendente daqui) ou pelo telefone.
@@ -2050,11 +2245,14 @@ export function useDeliveryData(storeSlug?: string) {
     && (deliveryQuote == null || !deliveryQuote.dentroArea);
 
   // Taxa efetiva: no modo distância vem da faixa do pin; senão, do bairro (estado deliveryFee)
+  // Por bairro, a taxa vem do bairro escolhido (o endereço salvo chega do servidor com taxa 0;
+  // o servidor recalcula ao gravar o pedido, mas a tela mostrava "Grátis").
+  const bairroEscolhido = neighborhoods.find(function (n) { return n.id === selectedNeighborhoodId; });
   const effectiveDeliveryFee = modoEntrega === 'retirada'
     ? 0
     : distanceMode
       ? (deliveryQuote && deliveryQuote.dentroArea ? deliveryQuote.taxa : 0)
-      : deliveryFee;
+      : (bairroEscolhido ? (Number(bairroEscolhido.delivery_fee) || 0) : deliveryFee);
 
   // Modo distância: ao (re)selecionar um endereço salvo, restaura o pin dele e recalcula a taxa.
   useEffect(function () {
@@ -2064,6 +2262,10 @@ export function useDeliveryData(storeSlug?: string) {
     if (typeof addr.lat === 'number' && typeof addr.lng === 'number') {
       setAddressLat(addr.lat);
       setAddressLng(addr.lng);
+    } else {
+      // Sem pin salvo: precisa marcar no mapa (senão a taxa sairia do endereço anterior)
+      setAddressLat(null);
+      setAddressLng(null);
     }
     setBairro(addr.bairro || '');
   }, [selectedAddressId, savedAddresses, distanceMode]);
@@ -2076,8 +2278,13 @@ export function useDeliveryData(storeSlug?: string) {
   const customerId = customer?.id || '';
 
   // Lista unificada: endereços salvos + legado (se não houver salvos)
+  // Endereços salvos chegam sem nome/taxa do bairro: completa pela lista de bairros da loja
   const displayAddresses: SavedAddress[] = savedAddresses.length > 0
-    ? savedAddresses
+    ? savedAddresses.map(function (a) {
+        if (a.neighborhood_name || !a.neighborhood_id) return a;
+        const nb = neighborhoods.find(function (n) { return n.id === a.neighborhood_id; });
+        return nb ? Object.assign({}, a, { neighborhood_name: nb.name, neighborhood_delivery_fee: Number(nb.delivery_fee) || 0 }) : a;
+      })
     : (customer && customer.neighborhood_id && customer.street)
       ? [{
           id: '__legacy__',
@@ -2175,6 +2382,7 @@ export function useDeliveryData(storeSlug?: string) {
     deliveryOpenNow,
     deliveryClosedReason,
     storeWhatsapp,
+    infoLoja,
     setPhone,
     setCustomerName,
     setDataNascimento,
@@ -2205,6 +2413,12 @@ export function useDeliveryData(storeSlug?: string) {
     handleSalvarEdicao,
     handleFecharEdicao,
     handleConfirmarPedido,
+    buscaCliente,
+    buscarClienteCheckout,
+    reiniciarBuscaCliente,
+    trocarCliente,
+    finalizarCheckout,
+    effectiveDeliveryFee,
     cpfNota,
     setCpfNota,
     aceitaOfertas,

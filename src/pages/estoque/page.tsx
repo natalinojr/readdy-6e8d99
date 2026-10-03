@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import InicioTab from './components/inicio/InicioTab';
 import InsumosTab from './components/InsumosTab';
 import MovimentacoesTab from './components/MovimentacoesTab';
 import EstoqueTeoricoTab from './components/EstoqueTeoricoTab';
@@ -10,13 +11,19 @@ import FornecedoresRelatorioTab from './components/FornecedoresRelatorioTab';
 import ValidadeTab from './components/ValidadeTab';
 import ConsumoIngredientesTab from '../relatorios/components/ConsumoIngredientesTab';
 import { useEstoque } from '../../contexts/EstoqueContext';
+import { useEstoqueSituacao } from '../../hooks/useEstoqueSituacao';
+import { contagemDeHoje } from '../../lib/estoqueRegras';
+import { usePermissoes } from '../../hooks/usePermissoes';
 import CardapioExportImportModal from '../../components/feature/CardapioExportImportModal';
 
-type Tab = 'insumos' | 'movimentacoes' | 'teorico' | 'inventario' | 'cmv' | 'producao' | 'fornecedores' | 'validade' | 'consumo';
+type Tab = 'inicio' | 'insumos' | 'movimentacoes' | 'teorico' | 'inventario' | 'cmv' | 'producao' | 'fornecedores' | 'validade' | 'consumo';
 
-const VALID_TABS: Tab[] = ['insumos', 'movimentacoes', 'teorico', 'inventario', 'cmv', 'producao', 'fornecedores', 'validade', 'consumo'];
+const VALID_TABS: Tab[] = ['inicio', 'insumos', 'movimentacoes', 'teorico', 'inventario', 'cmv', 'producao', 'fornecedores', 'validade', 'consumo'];
 
+// Início (2026-10-03) é a primeira aba e a padrão: o que comprar, contar e o que vai faltar.
+// Nenhuma aba saiu (regra do dono); a lista de insumos ("Estoque") passou a ser a segunda.
 const tabs: { id: Tab; label: string; icon: string }[] = [
+  { id: 'inicio', label: 'Início', icon: 'ri-home-5-line' },
   { id: 'insumos', label: 'Estoque', icon: 'ri-archive-line' },
   { id: 'movimentacoes', label: 'Movimentações', icon: 'ri-arrow-left-right-line' },
   { id: 'teorico', label: 'Estoque Teórico', icon: 'ri-calculator-line' },
@@ -35,17 +42,18 @@ export default function EstoquePage() {
   // usado em ConfiguracoesPage.
   const [searchParams, setSearchParams] = useSearchParams();
   const rawTab = searchParams.get('tab') as Tab | null;
-  const tab: Tab = rawTab && VALID_TABS.includes(rawTab) ? rawTab : 'insumos';
+  const tab: Tab = rawTab && VALID_TABS.includes(rawTab) ? rawTab : 'inicio';
   const setTab = (t: Tab) => setSearchParams({ tab: t }, { replace: true });
 
   const [showExportImport, setShowExportImport] = useState(false);
-  const { insumos, insumosEsgotados, reloadInsumos } = useEstoque();
+  const { reloadInsumos } = useEstoque();
 
-  // Contadores do topo são AVISO: insumo sem acompanhamento não entra (dono, 2026-09-20).
-  const alertas = insumos.filter((i) => i.rastrearEstoque && i.estoqueAtual <= i.estoqueMinimo).length;
-  const esgotadosComAviso = insumosEsgotados.filter((id) =>
-    insumos.find((i) => i.id === id)?.rastrearEstoque !== false,
-  );
+  // Números do topo pela regra única (a mesma do Início, do Dashboard e do assistente).
+  const situacao = useEstoqueSituacao();
+  const nComprar = situacao.data?.totais.abaixoMinimo ?? 0;
+  const { hasPermissao } = usePermissoes();
+  const podeContar = hasPermissao('estoque_inventario');
+  const nContar = useMemo(() => (situacao.data && podeContar ? contagemDeHoje(situacao.data).itens.length : 0), [situacao.data, podeContar]);
 
   return (
     <div className="flex flex-col h-full">
@@ -58,30 +66,26 @@ export default function EstoquePage() {
             </div>
             <div className="min-w-0">
               <h1 className="text-base md:text-lg font-bold text-zinc-800">Estoque</h1>
-              <p className="text-xs text-zinc-400 hidden sm:block">Insumos, movimentações e inventário</p>
+              <p className="text-xs text-zinc-400 hidden sm:block">Comprar, contar e o que vai faltar</p>
             </div>
           </div>
 
           <div className="flex items-center gap-2 flex-wrap">
-            {esgotadosComAviso.length > 0 && (
-              <div className="flex items-center gap-2 px-3 py-2 bg-red-50 border border-red-200 rounded-xl">
-                <i className="ri-forbid-2-fill text-red-500 text-sm" />
-                <p className="text-xs font-semibold text-red-700">
-                  {esgotadosComAviso.length} esgotado{esgotadosComAviso.length > 1 ? 's' : ''}
-                </p>
-              </div>
+            {tab !== 'inicio' && nComprar > 0 && (
+              <button onClick={() => setTab('inicio')} className="flex items-center gap-1.5 px-3 py-2 bg-red-50 border border-red-200 rounded-xl text-xs font-semibold text-red-700 cursor-pointer">
+                <i className="ri-shopping-cart-2-line text-sm" />
+                {nComprar} abaixo do mínimo
+              </button>
             )}
-            {alertas > 0 && (
-              <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-xl">
-                <i className="ri-alert-line text-amber-500 text-sm" />
-                <p className="text-xs font-semibold text-amber-700">
-                  {alertas} em alerta
-                </p>
-              </div>
+            {tab !== 'inicio' && nContar > 0 && (
+              <button onClick={() => setTab('inicio')} className="flex items-center gap-1.5 px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-xl text-xs font-semibold text-zinc-700 cursor-pointer">
+                <i className="ri-scales-3-line text-sm" />
+                {nContar} para contar
+              </button>
             )}
             <button
               onClick={() => setShowExportImport(true)}
-              className="flex items-center gap-1.5 px-3 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 rounded-xl text-xs font-semibold text-zinc-600 cursor-pointer transition-colors whitespace-nowrap shadow-sm"
+              className={`${tab === 'inicio' ? 'hidden md:flex' : 'flex'} items-center gap-1.5 px-3 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 rounded-xl text-xs font-semibold text-zinc-600 cursor-pointer transition-colors whitespace-nowrap shadow-sm`}
             >
               <i className="ri-exchange-line" />
               Exportar / Importar
@@ -113,6 +117,7 @@ export default function EstoquePage() {
 
       {/* Content — cada aba cuida do próprio container (p-4 md:p-6 max-w-[1400px]) */}
       <div className="flex-1 overflow-y-auto">
+        {tab === 'inicio' && <InicioTab situacao={situacao.data} carregando={situacao.loading} erro={situacao.error} onReload={situacao.reload} />}
         {tab === 'insumos' && <InsumosTab />}
         {tab === 'movimentacoes' && <MovimentacoesTab />}
         {tab === 'teorico' && <EstoqueTeoricoTab />}
@@ -134,6 +139,7 @@ export default function EstoquePage() {
         onClose={() => setShowExportImport(false)}
         onSuccess={() => {
           reloadInsumos();
+          situacao.reload();
         }}
       />
     </div>

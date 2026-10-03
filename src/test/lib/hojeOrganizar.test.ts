@@ -2,7 +2,7 @@
 // Esperando outros, juntando o que é a mesma conta. Casos tirados das pendências reais de 03/10
 // (Paranaguá e Vila Leste) — sem banco.
 import { describe, it, expect } from 'vitest';
-import { organizarHoje, prazoDe, fornecedorDoBoleto, contarAgoraPorLoja, type PendHoje } from '@/pages/hoje/organizar';
+import { organizarHoje, prazoDe, fornecedorDoBoleto, contarAgoraPorLoja, agoraDaPessoa, visivelNaHoje, tituloCurto, pendHojeDaLinha, type PendHoje } from '@/pages/hoje/organizar';
 
 const HOJE = '2026-10-03';
 let seq = 0;
@@ -160,3 +160,40 @@ describe('organizarHoje', () => {
     expect(m.get('vila')).toBe(1);
   });
 });
+
+describe('servidor: o mesmo "Agora" da tela (bom dia e aviso no celular)', () => {
+  it('título curto tira o "Falta o boleto:", o valor e o vencimento', () => {
+    expect(tituloCurto('Falta o boleto: OESA — R$ 318,39, VENCIDA em 30/09')).toBe('Boleto: OESA');
+    expect(tituloCurto('Falta o boleto: BEBIDAS NOVA GERACAO LTDA — R$ 738,96, vence 05/10')).toBe('Boleto: BEBIDAS NOVA GERACAO LTDA');
+    expect(tituloCurto('22 notas de entrada não lançadas — R$ 10.659,21 vencendo')).toBe('22 notas de entrada não lançadas');
+    expect(tituloCurto('4 contas atrasadas — R$ 2.450,34')).toBe('4 contas atrasadas');
+    expect(tituloCurto('Falta o boleto: OESA — R$ 188,49, vence HOJE')).toBe('Boleto: OESA');
+    expect(tituloCurto('Falta o boleto: OESA — R$ 188,49, vence amanhã')).toBe('Boleto: OESA');
+  });
+
+  it('Pix do grupo só para o dono; dinheiro só para quem é do financeiro; aprovação para supervisão', () => {
+    expect(visivelNaHoje('pagamento_grupo', 'admin', 'x@y.com', false)).toBe(false);
+    expect(visivelNaHoje('pagamento_grupo', 'admin', 'x@y.com', true)).toBe(true);
+    expect(visivelNaHoje('conta_atrasada', 'supervisao', null, false)).toBe(false);
+    expect(visivelNaHoje('conta_atrasada', 'gerente', null, false)).toBe(true);
+    expect(visivelNaHoje('aprovacao', 'supervisao', null, false)).toBe(true);
+    expect(visivelNaHoje('estoque_critico', 'caixa', null, false)).toBe(true);
+  });
+
+  it('agoraDaPessoa só conta as lojas da pessoa e o que ela vê, e bate com a tela', () => {
+    const linha = (o: Record<string, unknown>) => pendHojeDaLinha({ id: `l${++seq}`, tenant_id: 'par', kind: 'aprovacao', ref: null, titulo: 'x', detalhe: null,
+      rota: null, urgencia: 'alta', acao_requerida: true, status: 'aberta', criada_em: '2026-10-03T10:00:00Z', payload: null, tenants: { name: 'Paranaguá' }, ...o });
+    const pends = [
+      linha({ kind: 'aprovacao' }),
+      linha({ kind: 'conta_atrasada', payload: { valor: 10 } }),
+      linha({ kind: 'aprovacao', tenant_id: 'outra' }),
+      linha({ kind: 'estoque_critico', acao_requerida: false, urgencia: 'normal' }),
+    ];
+    const supervisao = agoraDaPessoa(pends, new Map([['par', 'supervisao']]), null, false, HOJE);
+    expect(supervisao.map((i) => i.kind)).toEqual(['aprovacao']);
+    const gerente = agoraDaPessoa(pends, new Map([['par', 'gerente']]), null, false, HOJE);
+    expect(gerente.map((i) => i.kind).sort()).toEqual(['aprovacao', 'conta_atrasada']);
+    expect(pends[0].loja).toBe('Paranaguá');
+  });
+});
+

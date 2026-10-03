@@ -1,6 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import AvisoImpressao from '@/components/feature/AvisoImpressao';
-import { Clock, Lock } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAppMode } from '@/contexts/AppModeContext';
 import { useAuth } from '@/contexts/AuthContext';
@@ -27,10 +26,8 @@ import MesasPainelCaixa from './components/MesasPainelCaixa';
 import CozinhaPainelCaixa from './components/CozinhaPainelCaixa';
 import SangriaSuprimentoModal from './components/SangriaSuprimentoModal';
 import DeliveryControle from './components/DeliveryControle';
-import AberturaCaixaModal from './components/AberturaCaixaModal';
-import FechamentoCaixaModal from './components/FechamentoCaixaModal';
-import IniciarSessaoModal from './components/IniciarSessaoModal';
-import FecharSessaoModal from './components/FecharSessaoModal';
+import AbrirLojaView, { AberturaFeitaOverlay, type AberturaFeita } from './components/loja/AbrirLojaView';
+import FecharLojaModal, { type TipoFechamento, type DestinoPDV } from './components/loja/FecharLojaModal';
 import AbrirMesaCaixaModal from './components/AbrirMesaCaixaModal';
 import OfflineStatusBar from '@/components/feature/OfflineStatusBar';
 import AlertaSessaoEsquecida from '@/components/feature/AlertaSessaoEsquecida';
@@ -51,12 +48,6 @@ interface MovimentoCaixa {
   hora: string;
 }
 
-interface FechamentoData {
-  caixaId: string;
-  historico: MovimentoCaixa[];
-  numPedidos: number;
-  totalVendas: number;
-}
 
 /* ─── Tela: Carregando sessão ─── */
 function CarregandoSessaoView() {
@@ -70,183 +61,6 @@ function CarregandoSessaoView() {
         </div>
         <p className="text-sm font-bold text-zinc-600">Verificando sessão...</p>
         <p className="text-xs text-zinc-400 mt-1">Aguarde um momento</p>
-      </div>
-    </div>
-  );
-}
-
-/* ─── Tela: Sem Sessão ─── */
-function SemSessaoView({ onIniciar, onVoltar }: { onIniciar: () => void; onVoltar: () => void }) {
-  return (
-    <div className="flex flex-col h-full items-center justify-center p-8 text-center relative overflow-hidden"
-      style={{ background: 'radial-gradient(ellipse at 20% 0%, #fff8ed 0%, #fafaf9 40%, #f5f5f4 100%)' }}
-    >
-      {/* Orbs decorativos */}
-      <div className="pointer-events-none absolute inset-0 overflow-hidden">
-        <div className="absolute -top-24 -left-24 w-72 h-72 rounded-full opacity-30"
-          style={{ background: 'radial-gradient(circle, #fbbf24 0%, transparent 70%)' }} />
-        <div className="absolute bottom-0 right-0 w-96 h-96 rounded-full opacity-15"
-          style={{ background: 'radial-gradient(circle, #f97316 0%, transparent 70%)' }} />
-        <div className="absolute inset-0 opacity-[0.04]"
-          style={{
-            backgroundImage: 'linear-gradient(rgba(0,0,0,0.4) 1px, transparent 1px), linear-gradient(90deg, rgba(0,0,0,0.4) 1px, transparent 1px)',
-            backgroundSize: '40px 40px'
-          }} />
-      </div>
-
-      <div className="relative z-10 flex flex-col items-center">
-        <div className="w-24 h-24 flex items-center justify-center bg-white/70 backdrop-blur-sm rounded-3xl mb-6 border border-zinc-200">
-          <i className="ri-lock-2-line text-5xl text-zinc-300" />
-        </div>
-        <h2 className="text-2xl font-black text-zinc-800 mb-2">Nenhuma sessão ativa</h2>
-        <p className="text-zinc-500 text-sm max-w-xs mb-8">
-          Inicie uma sessão para liberar o caixa, a cozinha e o atendimento.
-        </p>
-        <div className="flex items-center gap-3">
-          <button
-            onClick={onVoltar}
-            className="flex items-center gap-2 bg-white hover:bg-zinc-100 text-zinc-600 border border-zinc-200 font-bold px-6 py-3.5 rounded-2xl text-sm transition-colors cursor-pointer whitespace-nowrap"
-          >
-            <i className="ri-arrow-left-line text-base" />
-            Voltar
-          </button>
-          <button
-            onClick={onIniciar}
-            className="flex items-center gap-2 bg-amber-500 hover:bg-amber-600 text-white font-bold px-8 py-4 rounded-2xl text-base transition-colors cursor-pointer whitespace-nowrap"
-          >
-            <i className="ri-play-circle-line text-xl" />
-            Iniciar Sessão
-          </button>
-        </div>
-        <p className="text-zinc-400 text-xs mt-4">
-          O dia de operação começa com uma sessão aberta
-        </p>
-      </div>
-    </div>
-  );
-}
-
-/* ─── Tela: Sessão Aberta / Caixa Fechado ─── */
-function CaixaFechadoView({
-  onAbrirCaixa,
-  onFecharSessao,
-  onVoltar,
-}: {
-  onAbrirCaixa: () => void;
-  onFecharSessao: () => void;
-  onVoltar: () => void;
-}) {
-  const { sessao, estacoesAbertas } = useSessao();
-  const { hasPermissao } = usePermissoes();
-
-  return (
-    <div className="flex flex-col h-full items-center justify-center p-8 relative overflow-hidden"
-      style={{ background: 'radial-gradient(ellipse at 20% 0%, #fff8ed 0%, #fafaf9 40%, #f5f5f4 100%)' }}
-    >
-      {/* Orbs decorativos */}
-      <div className="pointer-events-none absolute inset-0 overflow-hidden">
-        <div className="absolute -top-24 -left-24 w-72 h-72 rounded-full opacity-30"
-          style={{ background: 'radial-gradient(circle, #fbbf24 0%, transparent 70%)' }} />
-        <div className="absolute top-1/2 -right-32 w-80 h-80 rounded-full opacity-15"
-          style={{ background: 'radial-gradient(circle, #f97316 0%, transparent 70%)' }} />
-        <div className="absolute -bottom-20 left-1/3 w-64 h-64 rounded-full opacity-15"
-          style={{ background: 'radial-gradient(circle, #fbbf24 0%, transparent 70%)' }} />
-        <div className="absolute inset-0 opacity-[0.04]"
-          style={{
-            backgroundImage: 'linear-gradient(rgba(0,0,0,0.4) 1px, transparent 1px), linear-gradient(90deg, rgba(0,0,0,0.4) 1px, transparent 1px)',
-            backgroundSize: '40px 40px'
-          }} />
-      </div>
-
-      <div className="relative z-10 bg-white/60 backdrop-blur-sm rounded-3xl w-full max-w-md p-8 border border-zinc-200">
-        {/* Voltar */}
-        <div className="mb-4">
-          <button
-            onClick={onVoltar}
-            className="flex items-center gap-1.5 text-xs font-semibold text-zinc-400 hover:text-zinc-600 transition-colors cursor-pointer whitespace-nowrap"
-          >
-            <div className="w-5 h-5 flex items-center justify-center">
-              <i className="ri-arrow-left-line text-sm" />
-            </div>
-            Voltar aos Módulos
-          </button>
-        </div>
-
-        {/* Sessão info */}
-        <div className="text-center mb-7">
-          <div className="w-16 h-16 flex items-center justify-center bg-amber-50 border border-amber-200 rounded-2xl mx-auto mb-3">
-            <Clock size={30} className="text-amber-500" />
-          </div>
-          <p className="text-xs text-zinc-400 font-medium mb-1">Sessão Ativa</p>
-          <p className="text-3xl font-black text-zinc-800 tracking-wider">{sessao?.numero}</p>
-          <p className="text-sm text-zinc-500 mt-1">Iniciada às {sessao?.iniciadaEm}</p>
-        </div>
-
-        {/* Status do caixa */}
-        <div className="bg-white/70 backdrop-blur-sm rounded-2xl p-4 mb-6 border border-zinc-200">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 flex items-center justify-center bg-zinc-100 border border-zinc-200 rounded-xl">
-              <Lock size={18} className="text-zinc-500" />
-            </div>
-            <div>
-              <p className="text-sm font-bold text-zinc-700">Caixa Fechado</p>
-              <p className="text-xs text-zinc-500">Abra o caixa para iniciar as vendas</p>
-            </div>
-            <div className="ml-auto w-3 h-3 rounded-full bg-zinc-300" />
-          </div>
-        </div>
-
-        {/* Estações KDS */}
-        {estacoesAbertas.length > 0 && (
-          <div className="mb-6">
-            <p className="text-xs font-bold text-zinc-500 uppercase tracking-wider mb-2">
-              Estações da Cozinha Abertas
-            </p>
-            <div className="space-y-2">
-              {estacoesAbertas.map((e) => (
-                <div key={e.estacaoId} className="flex items-center gap-3 px-3 py-2.5 bg-emerald-50 rounded-xl border border-emerald-100">
-                  <div className="w-2 h-2 rounded-full bg-emerald-500" />
-                  <span className="text-xs font-semibold text-emerald-800">{e.estacaoNome}</span>
-                  <span className="text-xs text-emerald-600 ml-auto">{e.operadorNome}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {estacoesAbertas.length === 0 && (
-          <div className="flex items-center gap-3 px-3 py-2.5 bg-amber-50 rounded-xl border border-amber-200 mb-6">
-            <i className="ri-alert-line text-amber-500 text-sm" />
-            <p className="text-xs text-amber-700">
-              Nenhuma estação da cozinha aberta ainda — acesse o KDS para liberar a produção.
-            </p>
-          </div>
-        )}
-
-        {/* Ações */}
-        <div className="space-y-3">
-          {hasPermissao('pdv_abrir_caixa') ? (
-            <button
-              onClick={onAbrirCaixa}
-              className="w-full flex items-center justify-center gap-2 bg-amber-500 hover:bg-amber-600 text-white font-bold py-3.5 rounded-xl transition-colors cursor-pointer whitespace-nowrap text-sm"
-            >
-              <i className="ri-safe-2-line text-lg" />
-              Abrir Caixa
-            </button>
-          ) : (
-            <div className="flex items-center gap-2 px-3 py-2.5 bg-zinc-50 rounded-xl border border-zinc-200 text-xs text-zinc-500">
-              <i className="ri-lock-line text-sm" />
-              Você não tem permissão para abrir o caixa.
-            </div>
-          )}
-          <button
-            onClick={onFecharSessao}
-            className="w-full flex items-center justify-center gap-2 bg-white/70 hover:bg-white border border-zinc-200 text-zinc-600 font-semibold py-3 rounded-xl transition-colors cursor-pointer whitespace-nowrap text-sm"
-          >
-            <i className="ri-stop-circle-line text-base" />
-            Fechar Sessão
-          </button>
-        </div>
       </div>
     </div>
   );
@@ -315,10 +129,13 @@ function AtalhosTeclado() {
 
 /* ─── PDV Operacional (caixa aberto) ─── */
 interface PDVOperacionalProps {
-  onAbrirFechamento: (data: FechamentoData) => void;
+  /** "Fechar a loja" (fim do dia) ou "Trocar de operador" (fecha só o caixa). */
+  onFechar: (tipo: Exclude<TipoFechamento, 'dia'>) => void;
+  /** Pedido do fluxo de fechamento para mostrar onde resolver a pendência (n muda a cada pedido). */
+  irPara?: { destino: DestinoPDV; n: number } | null;
 }
 
-function PDVOperacional({ onAbrirFechamento }: PDVOperacionalProps) {
+function PDVOperacional({ onFechar, irPara }: PDVOperacionalProps) {
   const { sessao, caixa } = useSessao();
   const navigate = useNavigate();
   const { setMode } = useAppMode();
@@ -739,15 +556,21 @@ function PDVOperacional({ onAbrirFechamento }: PDVOperacionalProps) {
     loadMovimentacoes();
   };
 
-  const handleFecharCaixa = () => {
-    if (!caixa?.id) return;
-    onAbrirFechamento({
-      caixaId: caixa.id,
-      historico: historicoCaixa,
-      numPedidos: numeroPedidos,
-      totalVendas: totalVendasSessao,
-    });
-  };
+  // O fechamento veio daqui e pediu para mostrar onde resolver (pedidos, mesas ou a sangria).
+  const irParaVisto = useRef(irPara?.n ?? 0);
+  useEffect(() => {
+    if (!irPara || irPara.n === irParaVisto.current) return;
+    irParaVisto.current = irPara.n;
+    if (irPara.destino === 'sangria') {
+      if (hasPermissao('pdv_sangria')) { setTipoMovimento('sangria'); setModal('sangria'); }
+      return;
+    }
+    const aba = irPara.destino === 'mesas' && !temMesas ? 'pedidos' : irPara.destino;
+    setTabRight(aba);
+    setMobileTab(aba);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [irPara?.n]);
+  const [menuMais, setMenuMais] = useState(false);
 
   const now = new Date();
   const timeStr = now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
@@ -771,15 +594,10 @@ function PDVOperacional({ onAbrirFechamento }: PDVOperacionalProps) {
 
           <div className="w-px h-4 bg-zinc-200 flex-shrink-0" />
 
-          <div className="flex items-center gap-1.5 text-amber-600 bg-amber-50 border border-amber-200 px-2 py-1 rounded-full flex-shrink-0">
-            <div className="w-4 h-4 flex items-center justify-center">
-              <i className="ri-safe-2-line text-sm" />
-            </div>
-            <span className="text-xs font-bold hidden sm:inline">Caixa Aberto</span>
+          <div className="flex items-center gap-1.5 text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-full flex-shrink-0">
+            <span className="w-2 h-2 rounded-full bg-emerald-500" />
+            <span className="text-xs font-bold hidden sm:inline">Loja aberta{sessao?.iniciadaEm ? ` desde ${sessao.iniciadaEm}` : ''}</span>
           </div>
-          {sessao && (
-            <span className="text-xs text-zinc-500 font-medium hidden sm:inline">{sessao.numero}</span>
-          )}
           {historicoCaixa.length > 0 && (
             <span className="text-xs text-zinc-400 border-l border-zinc-200 pl-3 hidden md:inline">
               {historicoCaixa.filter((m) => m.tipo === 'sangria').length} retirada(s) ·{' '}
@@ -817,13 +635,41 @@ function PDVOperacional({ onAbrirFechamento }: PDVOperacionalProps) {
             <div className="w-px h-5 bg-zinc-200" />
             <DeliveryControle ctl={deliveryCtl} />
             {hasPermissao('pdv_fechar_caixa') && (
-              <button
-                onClick={handleFecharCaixa}
-                className="flex items-center gap-1.5 text-xs font-semibold text-zinc-500 hover:text-red-600 border border-zinc-200 hover:border-red-300 px-3 py-1.5 rounded-lg transition-colors cursor-pointer whitespace-nowrap"
-              >
-                <i className="ri-door-lock-line text-sm" />
-                Fechar Caixa
-              </button>
+              <>
+                <button
+                  onClick={() => onFechar('loja')}
+                  className="flex items-center gap-1.5 text-xs font-bold text-white bg-zinc-900 hover:bg-zinc-700 border border-zinc-900 px-3 py-1.5 rounded-lg transition-colors cursor-pointer whitespace-nowrap"
+                >
+                  <i className="ri-store-2-line text-sm" />
+                  Fechar a loja
+                </button>
+                <div className="relative">
+                  <button
+                    onClick={() => setMenuMais((v) => !v)}
+                    title="Mais opções"
+                    className="w-8 h-8 flex items-center justify-center rounded-lg border border-zinc-200 bg-white hover:bg-zinc-50 text-zinc-600 cursor-pointer"
+                  >
+                    <i className="ri-more-2-fill" />
+                  </button>
+                  {menuMais && (
+                    <>
+                      <div className="fixed inset-0 z-40" onClick={() => setMenuMais(false)} />
+                      <div className="absolute right-0 top-full mt-1 z-50 bg-white border border-zinc-200 rounded-xl shadow-lg w-60 overflow-hidden">
+                        <button
+                          onClick={() => { setMenuMais(false); onFechar('trocar'); }}
+                          className="w-full flex items-start gap-2.5 px-3 py-2.5 text-left hover:bg-zinc-50 cursor-pointer"
+                        >
+                          <i className="ri-user-shared-line text-base text-zinc-500 mt-0.5" />
+                          <span>
+                            <span className="block text-sm font-semibold text-zinc-800">Trocar de operador</span>
+                            <span className="block text-[11px] text-zinc-400">Fecha só o caixa; a loja segue aberta</span>
+                          </span>
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </>
             )}
           </div>
         </div>
@@ -861,12 +707,20 @@ function PDVOperacional({ onAbrirFechamento }: PDVOperacionalProps) {
                   )}
                   <div className="h-px bg-zinc-100" />
                   {hasPermissao('pdv_fechar_caixa') && (
-                    <button
-                      onClick={() => { handleFecharCaixa(); setShowMobileMenu(false); }}
-                      className="w-full flex items-center gap-2.5 px-3 py-2.5 text-sm text-zinc-600 hover:bg-zinc-50 cursor-pointer transition-colors"
-                    >
-                      <i className="ri-door-lock-line" /> Fechar Caixa
-                    </button>
+                    <>
+                      <button
+                        onClick={() => { setShowMobileMenu(false); onFechar('trocar'); }}
+                        className="w-full flex items-center gap-2.5 px-3 py-2.5 text-sm text-zinc-600 hover:bg-zinc-50 cursor-pointer transition-colors"
+                      >
+                        <i className="ri-user-shared-line" /> Trocar de operador
+                      </button>
+                      <button
+                        onClick={() => { setShowMobileMenu(false); onFechar('loja'); }}
+                        className="w-full flex items-center gap-2.5 px-3 py-2.5 text-sm font-bold text-zinc-900 hover:bg-zinc-50 cursor-pointer transition-colors"
+                      >
+                        <i className="ri-store-2-line" /> Fechar a loja
+                      </button>
+                    </>
                   )}
                 </div>
               </>
@@ -880,7 +734,7 @@ function PDVOperacional({ onAbrirFechamento }: PDVOperacionalProps) {
 
       {/* ── Alerta de sessão esquecida ── */}
       <div className="px-4 pt-2">
-        <AlertaSessaoEsquecida />
+        <AlertaSessaoEsquecida onFecharLoja={() => onFechar('loja')} />
       </div>
 
       {/* ── Insumo zerou: tira ou não os itens do cardápio? (também aparece no KDS) ── */}
@@ -1137,12 +991,18 @@ function PDVOperacional({ onAbrirFechamento }: PDVOperacionalProps) {
 }
 
 /* ─── Controlador principal ─── */
+// "Abrir a loja" / "Fechar a loja" (2026-10-03): o usuário não vê mais "sessão" × "caixa".
+//   sem_sessao    → AbrirLojaView modo 'loja' (abre dia + caixa)
+//   sessao_aberta → AbrirLojaView modo 'caixa' (troca de operador ou dia que ficou aberto)
+//   caixa_aberto  → PDV
+// O FecharLojaModal fica AQUI (não no PDVOperacional) porque o PDV desmonta quando o caixa/dia fecha.
 function PDVCaixaInner() {
   const { estado, loadingSession, sincronizarSessao } = useSessao();
   const navigate = useNavigate();
   const { setMode } = useAppMode();
-  const [modal, setModal] = useState<'none' | 'iniciar_sessao' | 'abertura_caixa' | 'fechar_sessao'>('none');
-  const [fechamento, setFechamento] = useState<FechamentoData | null>(null);
+  const [fechar, setFechar] = useState<TipoFechamento | null>(null);
+  const [aberta, setAberta] = useState<AberturaFeita | null>(null);
+  const [irPara, setIrPara] = useState<{ destino: DestinoPDV; n: number } | null>(null);
   // Link de sangria com o caixa fechado (dono, 2026-10-03): só avisa; o link fica e a sangria abre quando o caixa abrir.
   const [paramsUrl, setParamsUrl] = useSearchParams();
   const pedeSangria = paramsUrl.get('abrir') === 'sangria';
@@ -1167,42 +1027,28 @@ function PDVCaixaInner() {
           </button>
         </div>
       )}
-      {estado === 'sem_sessao' && (
-        <SemSessaoView
-          onIniciar={() => setModal('iniciar_sessao')}
+      {/* Uma instância só: se a loja abrir e o caixa falhar, a tela vira 'caixa' sem perder a contagem nem o erro. */}
+      {estado !== 'caixa_aberto' && (
+        <AbrirLojaView
+          modo={estado === 'sem_sessao' ? 'loja' : 'caixa'}
           onVoltar={handleVoltar}
-        />
-      )}
-      {estado === 'sessao_aberta' && (
-        <CaixaFechadoView
-          onAbrirCaixa={() => setModal('abertura_caixa')}
-          onFecharSessao={() => setModal('fechar_sessao')}
-          onVoltar={handleVoltar}
+          onAberta={setAberta}
+          onFecharDia={() => setFechar('dia')}
         />
       )}
       {estado === 'caixa_aberto' && (
-        <PDVOperacional
-          onAbrirFechamento={(data) => setFechamento(data)}
-        />
+        <PDVOperacional onFechar={(t) => setFechar(t)} irPara={irPara} />
       )}
 
-      {modal === 'iniciar_sessao' && (
-        <IniciarSessaoModal onClose={() => setModal('none')} />
-      )}
-      {modal === 'abertura_caixa' && (
-        <AberturaCaixaModal onClose={() => setModal('none')} />
-      )}
-      {modal === 'fechar_sessao' && (
-        <FecharSessaoModal onClose={() => setModal('none')} />
-      )}
+      {aberta && <AberturaFeitaOverlay info={aberta} onFechar={() => setAberta(null)} />}
 
-      {fechamento && (
-        <FechamentoCaixaModal
-          caixaId={fechamento.caixaId}
-          historico={fechamento.historico}
-          numPedidos={fechamento.numPedidos}
-          totalVendas={fechamento.totalVendas}
-          onClose={() => { setFechamento(null); sincronizarSessao(); }}
+      {fechar && (
+        <FecharLojaModal
+          tipo={fechar}
+          onClose={() => { setFechar(null); sincronizarSessao(); }}
+          onIrPara={estado === 'caixa_aberto'
+            ? (destino) => { setFechar(null); setIrPara((v) => ({ destino, n: (v?.n ?? 0) + 1 })); }
+            : undefined}
         />
       )}
     </>

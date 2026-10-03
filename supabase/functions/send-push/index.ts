@@ -175,6 +175,40 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       return json({ success: true });
     }
 
+    // Caixa pediu aprovação (desconto/cancelamento) no PDV (2026-10-03, tela Hoje): avisa no celular
+    // quem aprova NAQUELA loja — antes só apitava para quem estava com o app aberto. Vai para a
+    // supervisão e o gerente; o admin só recebe se nenhum deles tem o aviso ligado no aparelho.
+    // Quem chama precisa ser quem pediu, da loja do pedido, e só vale para pedido pendente de até 2 minutos.
+    case 'aprovacao_pdv': {
+      const id = String(body.approval_id ?? '');
+      if (!id) return json({ error: 'approval_id é obrigatório' }, 400);
+      const { data: req } = await admin.from('pdv_approval_requests')
+        .select('id, tenant_id, tipo, status, payload, requested_by, requested_by_name, created_at').eq('id', id).maybeSingle();
+      if (!req) return json({ error: 'pedido não encontrado' }, 404);
+      if (!(tenantRows ?? []).some((r: { tenant_id: string }) => r.tenant_id === req.tenant_id)) return json({ error: 'sem acesso' }, 403);
+      // Só quem fez o pedido avisa, e uma vez (logo depois de pedir) — ninguém repete o toque nos gerentes.
+      if (req.requested_by && req.requested_by !== user.id) return json({ error: 'sem acesso' }, 403);
+      if (req.status !== 'pendente' || Date.now() - Date.parse(String(req.created_at)) > 2 * 60_000) {
+        return json({ success: true, enviados: 0, motivo: 'pedido já decidido ou antigo' });
+      }
+      const { data: equipe } = await admin.from('user_tenants').select('user_id, role')
+        .eq('tenant_id', req.tenant_id).in('role', ['admin', 'manager', 'supervisor']);
+      const membros = ((equipe ?? []) as Array<{ user_id: string; role: string }>).filter((m) => m.user_id !== user.id);
+      const perto = membros.filter((m) => m.role !== 'admin').map((m) => m.user_id);
+      const { data: comAviso } = perto.length
+        ? await admin.from('push_subscriptions').select('user_id').in('user_id', perto).limit(1)
+        : { data: [] as Array<{ user_id: string }> };
+      const destino = comAviso?.length ? perto : membros.map((m) => m.user_id);
+      if (!destino.length) return json({ success: true, enviados: 0 });
+      // O texto é o mesmo do cartão da Hoje (pendência 'aprovacao' criada pelo gatilho do pedido).
+      const { data: pend } = await admin.from('pendencias').select('titulo').eq('kind', 'aprovacao').eq('ref', id).maybeSingle();
+      const p = (req.payload ?? {}) as Record<string, unknown>;
+      const tipo = req.tipo === 'cancelamento' ? 'Cancelamento' : req.tipo === 'desconto' ? 'Desconto' : 'Problema no item';
+      const corpo = String(pend?.titulo ?? `${tipo}: ${String(p.itemNome ?? p.mesaNome ?? '')} — ${String(req.requested_by_name ?? 'caixa')} pede aprovação`);
+      const r = await despachar(destino, null, { titulo: 'Pedido de aprovação no caixa', corpo: corpo.slice(0, 200), url: '/hoje', tag: `aprovacao-${id}` });
+      return json({ success: true, ...r });
+    }
+
     case 'test': {
       const r = await despachar([user.id], tenantId, {
         titulo: 'Notificações ativadas',

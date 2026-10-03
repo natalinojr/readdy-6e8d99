@@ -67,23 +67,10 @@ export const KIND_CONFIG: Record<string, { label: string; icone: string; corBg: 
   // Conta de boleto lançada pela nota, sem o código do boleto (2026-09-28): o dono vai atrás.
   boleto_faltando: { label: 'Falta o boleto', icone: 'ri-barcode-line', corBg: 'bg-amber-100', corTexto: 'text-amber-800' },
 };
-// Quem vê o quê (2026-09-28): a caixa passou a existir para TODOS os usuários (o sino saiu).
-// Aprovação (cancelamento/desconto do PDV) é de quem pode aprovar; o operacional é de todos;
-// o resto é dinheiro e continua com a turma do Financeiro, como antes.
-const PERFIS_APROVAM = ['admin', 'gerente', 'supervisao'];
-const PERFIS_FINANCEIRO = ['admin', 'gerente', 'financeiro'];
-const KINDS_OPERACIONAIS = new Set(['estoque_critico', 'recebimento_sem_nota', 'recebimento_parado']);
-// "N tarefas vencidas" (2026-09-29, caso Thatiele): o cron conta as tarefas DO DONO na loja
-// (criadas por ele ou dele), então a linha é só dele. As tarefas vencidas de cada pessoa estão em
-// "Minhas tarefas" no chat. Antes era operacional e todo mundo da loja via as 8 do dono.
-const DONO_EMAIL = 'natalinojr.engel@gmail.com';
-export function pendenciaVisivelPara(kind: string, perfil: string | undefined, email?: string | null): boolean {
-  if (kind === 'tarefa_vencida') return email?.toLowerCase() === DONO_EMAIL;
-  if (!perfil) return false;
-  if (kind === 'aprovacao') return PERFIS_APROVAM.includes(perfil);
-  if (KINDS_OPERACIONAIS.has(kind)) return true;
-  return PERFIS_FINANCEIRO.includes(perfil);
-}
+// Quem vê o quê: a regra mora em supabase/functions/_shared/pendencia-visivel.ts (a tela Hoje e o
+// servidor usam a mesma).
+import { pendenciaVisivelPara } from '../../supabase/functions/_shared/pendencia-visivel';
+export { pendenciaVisivelPara };
 
 export const KIND_FALLBACK = { label: 'Pendência', icone: 'ri-inbox-line', corBg: 'bg-zinc-100', corTexto: 'text-zinc-700' };
 export const kindConfig = (kind: string) => KIND_CONFIG[kind] ?? KIND_FALLBACK;
