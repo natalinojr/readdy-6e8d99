@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { confirmar } from '@/components/base/Dialogos';
 import { invokeWithAuth } from '@/lib/supabase';
 import { un, normUn, mesmaUnidade, uppInicial, avisoConversao } from '@/lib/vinculoConversao';
@@ -247,14 +247,25 @@ export default function ItensClassificarCard({ call, tenantId, abertoInicial = f
   const [loading, setLoading] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [feitos, setFeitos] = useState(0);
+  // Quem usa passa onTudo como arrow inline: numa ref, para o carregar não mudar a cada render (e não recarregar em laço).
+  const onTudoRef = useRef(onTudo);
+  onTudoRef.current = onTudo;
 
   const carregar = useCallback(async () => {
     setLoading(true); setErro(null);
     try {
-      const todas = (await call<{ tenants: Loja[] }>('items_pending')).tenants;
-      // items_pending só traz lojas onde você é admin/gerente: loja que não veio não é "nada
-      // pendente", é sem permissão (senão a pendência mostraria tudo certo com itens em aberto).
-      if (tenantId && !todas.some((l) => l.id === tenantId)) throw new Error('Você precisa ser admin ou supervisor dessa loja para classificar os itens. Abra a tela com a loja certa.');
+      const r = await call<{ tenants: Loja[]; gestor?: string[] }>('items_pending');
+      const todas = r.tenants;
+      // items_pending só traz lojas COM item pendente onde você é admin/gerente; `gestor` lista todas as
+      // lojas em que você classifica. Loja fora de `tenants`: se você é gestor dela, não sobrou nada
+      // (2026-10-03: antes dizia "precisa ser admin ou gerente" para o dono com tudo classificado).
+      if (tenantId && !todas.some((l) => l.id === tenantId)) {
+        if (r.gestor && !r.gestor.includes(tenantId)) throw new Error('Só admin ou supervisor dessa loja classifica os itens.');
+        setLojas([]);
+        setTimeout(() => onTudoRef.current?.(), 0); // a pendência some da caixa/Hoje
+        setLoading(false);
+        return;
+      }
       setLojas(tenantId ? todas.filter((l) => l.id === tenantId) : todas);
     }
     catch (e) { setErro(e instanceof Error ? e.message : 'Não foi possível carregar os itens'); }
