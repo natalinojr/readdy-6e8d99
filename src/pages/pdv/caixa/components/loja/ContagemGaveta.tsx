@@ -60,6 +60,7 @@ export default function ContagemGaveta({ estado, onChange, idCampo = 'gaveta-tot
         <button
           type="button"
           tabIndex={-1}
+          onMouseDown={(e) => e.preventDefault()}
           onClick={() => setQtd(den, q - 1)}
           className="w-8 h-8 rounded-lg bg-stone-100 hover:bg-stone-200 text-zinc-700 font-black cursor-pointer"
           aria-label={`Menos uma de ${rotulo(den)}`}
@@ -77,6 +78,7 @@ export default function ContagemGaveta({ estado, onChange, idCampo = 'gaveta-tot
         <button
           type="button"
           tabIndex={-1}
+          onMouseDown={(e) => e.preventDefault()}
           onClick={() => setQtd(den, q + 1)}
           className="w-8 h-8 rounded-lg bg-stone-100 hover:bg-stone-200 text-zinc-700 font-black cursor-pointer"
           aria-label={`Mais uma de ${rotulo(den)}`}
@@ -95,10 +97,7 @@ export default function ContagemGaveta({ estado, onChange, idCampo = 'gaveta-tot
           <button
             key={m}
             type="button"
-            onClick={() => {
-              onChange({ ...estado, modo: m });
-              if (m === 'digitar') setTimeout(() => document.getElementById(idCampo)?.focus(), 30);
-            }}
+            onClick={() => onChange({ ...estado, modo: m })}
             className={`px-4 py-2 rounded-lg text-[13px] font-bold cursor-pointer transition-colors ${
               estado.modo === m ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'
             }`}
@@ -122,6 +121,7 @@ export default function ContagemGaveta({ estado, onChange, idCampo = 'gaveta-tot
           <span className="absolute left-4 top-1/2 -translate-y-1/2 text-xl font-black text-stone-400">R$</span>
           <input
             id={idCampo}
+            autoFocus
             type="text"
             inputMode="decimal"
             autoComplete="off"

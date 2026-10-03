@@ -16,6 +16,7 @@ import { useNotificacoes } from '@/contexts/NotificacoesContext';
 import { useCaixaPing } from '@/hooks/useCaixaPing';
 import { usePermissoes } from '@/hooks/usePermissoes';
 import { confirmar } from '@/components/base/Dialogos';
+import { dateKeyBrasilia, todayBrasilia } from '@/lib/dateUtils';
 import ContagemGaveta, { contagemVazia, fmtBRL, valorDe, type ValorContado } from './ContagemGaveta';
 import SeloCeu from './SeloCeu';
 
@@ -57,7 +58,13 @@ export default function FecharLojaModal({ tipo, onClose, onIrPara }: Props) {
   const tenantId = user?.tenantId ?? '';
 
   // O que precisa sobreviver ao fechamento (o contexto zera sessão/caixa quando fecham).
-  const sessaoRef = useRef({ id: sessao?.id ?? '', numero: sessao?.numero ?? '', abriu: sessao?.iniciadaEm ?? '' });
+  const sessaoRef = useRef({
+    id: sessao?.id ?? '', numero: sessao?.numero ?? '',
+    // Dia que atravessou a data (ex.: aberto em 30/04) mostra a data junto da hora.
+    abriu: sessao?.dataRef && dateKeyBrasilia(sessao.dataRef) !== todayBrasilia()
+      ? `${sessao.dataRef.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', timeZone: 'America/Sao_Paulo' })} às ${sessao.iniciadaEm}`
+      : (sessao?.iniciadaEm ?? ''),
+  });
   const caixaRef = useRef({ id: caixa?.id ?? '', abertura: Number(caixa?.valorAbertura ?? 0) });
 
   const [passo, setPasso] = useState<Passo>('carregando');
@@ -248,7 +255,8 @@ export default function FecharLojaModal({ tipo, onClose, onIrPara }: Props) {
       await fecharSessao(undefined, undefined, forcar);
     } catch (e) {
       marcar('dia', 'e', 'O dia não fechou');
-      setErroDia(e instanceof Error ? e.message : String(e));
+      // A mensagem vem do banco ("fechar a sessão"); na tela o nome é "loja".
+      setErroDia((e instanceof Error ? e.message : String(e)).replace(/a sessão/gi, 'a loja'));
       setPasso('falha');
       return;
     }
@@ -418,7 +426,7 @@ export default function FecharLojaModal({ tipo, onClose, onIrPara }: Props) {
     corpo = (
       <div className="py-14 flex flex-col items-center gap-3 text-stone-400">
         <i className="ri-loader-4-line animate-spin text-3xl" />
-        <p className="text-sm font-semibold">Conferindo pedidos, mesas e retiradas…</p>
+        <p className="text-sm font-semibold">{tipo === 'trocar' ? 'Conferindo as retiradas…' : 'Conferindo pedidos, mesas e retiradas…'}</p>
       </div>
     );
   }
@@ -542,7 +550,7 @@ export default function FecharLojaModal({ tipo, onClose, onIrPara }: Props) {
     if (contado != null) acaoPrincipal.current = () => { carregarDinheiro(); setPasso('conferir'); };
     corpo = (
       <>
-        {nPend === 0 && (
+        {nPend === 0 && !seguirMesmoAssim && (
           <p className="mb-3 flex items-center gap-2 text-[12.5px] font-bold text-emerald-700 bg-emerald-50 rounded-xl px-3 py-2">
             <i className="ri-checkbox-circle-fill" /> {tipo === 'trocar' ? 'Retiradas em dia' : 'Pedidos, mesas e retiradas em dia'}
           </p>
@@ -747,7 +755,7 @@ export default function FecharLojaModal({ tipo, onClose, onIrPara }: Props) {
             <SeloCeu fase="noite" />
             <p className="text-[22px] font-black text-zinc-900">Loja fechada às {fechadoAs}</p>
             <p className="text-[13px] text-zinc-500 mt-1">
-              {sessaoRef.current.abriu ? `Aberta às ${sessaoRef.current.abriu} · ` : ''}fechada por {nome}
+              {sessaoRef.current.abriu ? `Aberta ${sessaoRef.current.abriu.includes('/') ? 'em' : 'às'} ${sessaoRef.current.abriu} · ` : ''}fechada por {nome}
             </p>
           </div>
           {a && (

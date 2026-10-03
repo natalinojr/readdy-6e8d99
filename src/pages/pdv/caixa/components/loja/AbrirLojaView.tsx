@@ -232,7 +232,7 @@ export default function AbrirLojaView({ modo, onVoltar, onAberta, onFecharDia }:
             {ultimo === undefined
               ? 'Buscando o último fechamento…'
               : ultimo
-                ? <>No último fechamento ficaram <b className="text-zinc-800">{fmtBRL(ultimo.valor)}</b> ({ultimo.quando}{ultimo.quem ? `, por ${ultimo.quem}` : ''}).</>
+                ? <>No último fechamento ficaram <b className="text-zinc-800">{fmtBRL(ultimo.valor)}</b> ({ultimo.quando}{ultimo.quem ? `, caixa de ${ultimo.quem}` : ''}).</>
                 : 'Ainda não há fechamento anterior nesta loja.'}
           </p>
 
@@ -258,7 +258,7 @@ export default function AbrirLojaView({ modo, onVoltar, onAberta, onFecharDia }:
               >
                 {abrindo
                   ? <><i className="ri-loader-4-line animate-spin" /> Abrindo…</>
-                  : <>{btnTxt}{valor != null ? ` com ${fmtBRL(valor)}` : ''}<kbd className="hidden md:inline text-[11px] font-black bg-black/10 rounded-md px-1.5 py-0.5 ml-1">Enter</kbd></>}
+                  : <>{btnTxt}{valor != null && <span className="md:hidden">&nbsp;com {fmtBRL(valor)}</span>}<kbd className="hidden md:inline text-[11px] font-black bg-black/10 rounded-md px-1.5 py-0.5 ml-1">Enter</kbd></>}
               </button>
             </div>
           </div>
