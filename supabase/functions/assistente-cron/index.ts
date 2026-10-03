@@ -24,6 +24,7 @@ import postgres from 'npm:postgres@3.4.5';
 import { deveCobrar, mesclarPedidoBoleto } from '../_shared/trilha-acoes.ts';
 import { agoraDaPessoa, pendHojeDaLinha, tituloCurto, COLUNAS_PEND_HOJE } from '../_shared/hoje-organizar.ts';
 import { PAPEL_DO_BANCO, DONO_EMAIL } from '../_shared/pendencia-visivel.ts';
+import { situacaoPlano, descreverFrequencia, type PlanoContagem } from '../_shared/estoque-planos.ts';
 
 const TZ = 'America/Sao_Paulo';
 const json = (body: unknown, status = 200) =>
@@ -498,6 +499,9 @@ const PRO_DEFAULTS: Record<string, any> = {
   due_today: { enabled: true, time: '08:00' },
   anomaly: { enabled: true, from: '11:30', to: '22:30', every_min: 30, drop_pct: 30, spike_pct: 50, min_base: 300 },
   stock: { enabled: true, time: '09:00' },              // estoque crítico: só o que MUDOU
+  // Dia de contagem de estoque (dono, 2026-10-03): planos de Estoque › Início › Programar. Aviso para
+  // todo mundo com acesso ao estoque da loja (conversa Avisos + push) e para o dono, uma vez no dia.
+  contagem: { enabled: true, time: '08:00' },
   tasks_overdue: { enabled: true, time: '18:00' },      // tarefas vencidas do dono
   // conta a pagar sem classificação DRE → pergunta em texto, UMA por vez (a resposta é
   // gravada pelo webhook, sem modelo, e ele já pede a próxima).
@@ -1151,6 +1155,7 @@ async function stockText(tenants: Array<{ id: string; name: string }>, state: an
 const PADRAO_PERM: Record<string, string[]> = {
   fin_pagar: ['manager', 'financeiro', 'accountant'],
   estoque_movimentar: ['manager'],
+  estoque_inventario: ['manager'],
 };
 async function quemTem(tenantId: string, key: string): Promise<string[]> {
   const rows = await db()<Array<{ user_id: string; role: string; allowed: boolean | null }>>`
@@ -1160,8 +1165,10 @@ async function quemTem(tenantId: string, key: string): Promise<string[]> {
     where ut.tenant_id = ${tenantId}`;
   return rows.filter((r) => r.role === 'admin' || (r.allowed ?? (PADRAO_PERM[key] ?? []).includes(r.role))).map((r) => r.user_id);
 }
-async function avisarEquipe(admin: SupabaseClient, loja: { id: string }, perm: string, kind: string, dia: string, resumo: string, painel: Painel, ownerId: unknown) {
-  const quem = (await quemTem(loja.id, perm)).filter((id) => id !== String(ownerId ?? ''));
+async function avisarEquipe(admin: SupabaseClient, loja: { id: string }, perm: string | string[], kind: string, dia: string, resumo: string, painel: Painel, ownerId: unknown) {
+  const perms = Array.isArray(perm) ? perm : [perm];
+  const todos = (await Promise.all(perms.map((k) => quemTem(loja.id, k)))).flat();
+  const quem = [...new Set(todos)].filter((id) => id !== String(ownerId ?? ''));
   if (!quem.length) return;
   const { error } = await admin.from('avisos').upsert(
     quem.map((user_id) => ({ user_id, tenant_id: loja.id, kind, ref: `${loja.id}:${dia}`, resumo, painel })),
@@ -1191,6 +1198,55 @@ async function pushAvisos(admin: SupabaseClient): Promise<number> {
     } catch (e) { log('WARN', 'push aviso', { id: a.id, error: errMsg(e) }); }
   }
   return n;
+}
+
+// ── Dia de contagem de estoque (2026-10-03) ─────────────────────────────────
+// Planos da loja (inventory_count_plans) cujo dia é HOJE e que ainda têm itens por contar. A conta é a
+// mesma da tela (_shared/estoque-planos.ts) e a última contagem de cada insumo vem de fn_estoque_situacao.
+type ContagemHoje = { loja: { id: string; name: string }; planos: Array<{ nome: string; freq: string; itens: string[] }>; total: number };
+async function contagensDeHoje(admin: SupabaseClient, tenants: Array<{ id: string; name: string }>): Promise<ContagemHoje[]> {
+  const out: ContagemHoje[] = [];
+  for (const t of tenants) {
+    const rows = await db()<Array<{ id: string; nome: string; frequencia: string; dia_semana: number | null; dia_mes: number | null; todos: boolean; itens: string[] | null; created_at: Date }>>`
+      select id::text, nome, frequencia, dia_semana, dia_mes, todos, itens::text[] as itens, created_at
+        from inventory_count_plans where tenant_id = ${t.id} order by created_at`;
+    if (!rows.length) continue;
+    const { data, error } = await admin.rpc('fn_estoque_situacao', { p_tenant_id: t.id });
+    if (error) { log('WARN', 'contagem: fn_estoque_situacao', { tenant: t.id, error: error.message }); continue; }
+    // deno-lint-ignore no-explicit-any
+    const sit = data as any;
+    const hoje = String(sit?.hoje ?? localDate());
+    // deno-lint-ignore no-explicit-any
+    const itens = ((sit?.insumos ?? []) as any[]).map((r) => ({
+      id: String(r.id), nome: String(r.nome ?? ''), contaInventario: r.conta_inventario !== false,
+      ultimaContagem: r.ultima_contagem ? String(r.ultima_contagem) : null,
+    }));
+    const planos: ContagemHoje['planos'] = [];
+    const vistos = new Set<string>();
+    for (const r of rows) {
+      const plano: PlanoContagem = {
+        id: r.id, nome: r.nome, frequencia: r.frequencia as PlanoContagem['frequencia'], diaSemana: r.dia_semana,
+        diaMes: r.dia_mes, todos: r.todos, itens: r.itens ?? [], criadoEm: new Date(r.created_at).toISOString(),
+      };
+      const sp = situacaoPlano(plano, itens, hoje);
+      if (sp.ocorrencia !== hoje || !sp.pendentes.length) continue;
+      planos.push({ nome: plano.nome, freq: descreverFrequencia(plano), itens: sp.pendentes.map((i) => i.nome) });
+      sp.pendentes.forEach((i) => vistos.add(i.id));
+    }
+    if (planos.length) out.push({ loja: t, planos, total: vistos.size });
+  }
+  return out;
+}
+function painelContagem(c: ContagemHoje): Painel {
+  return {
+    t: 'Contagem de estoque hoje', s: c.loja.name,
+    kpi: { p: { l: 'Itens para contar', v: String(c.total) } },
+    lin: c.planos.map((p) => ({
+      t: `${p.nome} · ${p.freq}`,
+      i: [...p.itens.slice(0, 12).map((l) => ({ l })), ...(p.itens.length > 12 ? [{ l: `… e mais ${p.itens.length - 12}` }] : [])],
+    })),
+    bt: [{ l: 'Contar agora', r: '/estoque', i: 'ri-scales-3-line' }],
+  };
 }
 
 async function tasksOverdueText(ownerId: string): Promise<{ text: string; painel: Painel; resumo: string } | null> {
@@ -1644,7 +1700,7 @@ async function proactive(admin: SupabaseClient, cfg: Record<string, any>, ownerC
     await (isTg(ownerChat) ? sendTelegram(ownerChat, text) : sendText(toNumber(ownerChat), text));
     // Assunto pelo TIPO do aviso, não pelas palavras (2026-09-18: "Tarefas vencidas" com "API do iFood"
     // caiu no Financeiro pelo gatilho de texto). Tipo sem assunto fixo segue o gatilho.
-    const topic = ({ tasks_overdue: 'avisos', closing: 'pagamentos', due_tomorrow: 'pagamentos', stock: 'compras' } as Record<string, string>)[kind];
+    const topic = ({ tasks_overdue: 'avisos', closing: 'pagamentos', due_tomorrow: 'pagamentos', stock: 'compras', contagem: 'compras' } as Record<string, string>)[kind];
     await admin.from('asst_messages').insert({ channel: 'cron', chat_id: ownerChat, role: 'assistant', content: painel ? comPainel(painel.resumo, painel.painel) : text, ...(topic ? { topic } : {}) });
   };
   const want = (k: string) => (only ? only === k : pro[k].enabled && !!ownerChat);
@@ -1731,6 +1787,31 @@ async function proactive(admin: SupabaseClient, cfg: Record<string, any>, ownerC
     }
     if (!dry) { state.stock_date = today; state.stock = newState; await saveState(); }
     if (text) await deliver('stock', text, pnStock ? { painel: pnStock, resumo: text.split('\n')[0].replace(/\*/g, '') } : undefined); else res.stock = 'sem mudança';
+  }
+  // Dia de contagem: a equipe recebe mesmo sem canal do dono configurado (fora do want() de propósito).
+  if ((only ? only === 'contagem' : pro.contagem.enabled) && (dry || (inWindow(pro.contagem.time, now) && state.contagem_date !== today))) {
+    if (!dry) { state.contagem_date = today; await saveState(); }
+    const lista = await contagensDeHoje(admin, tenants);
+    if (!lista.length) res.contagem = 'nenhuma contagem hoje';
+    else {
+      const resumoDe = (c: ContagemHoje) => `Hoje tem ${c.planos.map((p) => p.nome).join(' e ')}: ${c.total} ${c.total === 1 ? 'item' : 'itens'} para contar — ${c.loja.name}`;
+      if (dry) res.contagem = lista.map((c) => ({ resumo: resumoDe(c), painel: painelContagem(c) }));
+      else {
+        for (const c of lista) {
+          try {
+            await avisarEquipe(admin, c.loja, ['estoque_movimentar', 'estoque_inventario'], 'contagem_estoque', today, resumoDe(c), painelContagem(c), cfg.owner_user_id);
+          } catch (e) { log('ERROR', 'avisos equipe contagem', { tenant: c.loja.id, error: errMsg(e) }); }
+        }
+        const texto = `🧮 *Contagem de estoque hoje*\n\n${lista.map((c) => `*${c.loja.name}*: ${c.planos.map((p) => p.nome).join(' e ')} — ${c.total} ${c.total === 1 ? 'item' : 'itens'}`).join('\n')}`;
+        const painel: Painel = {
+          t: 'Contagem de estoque hoje', s: lista.length > 1 ? `${lista.length} lojas` : lista[0].loja.name,
+          kpi: { p: { l: 'Itens para contar', v: String(lista.reduce((n, c) => n + c.total, 0)) } },
+          lin: lista.flatMap((c) => (painelContagem(c).lin ?? []).map((l) => (lista.length > 1 ? { ...l, t: `${c.loja.name} · ${l.t}` } : l))),
+          bt: [{ l: 'Contar agora', r: '/estoque', i: 'ri-scales-3-line' }],
+        };
+        await deliver('contagem', texto, { painel, resumo: texto.split('\n')[0].replace(/\*/g, '') });
+      }
+    }
   }
   if (want('tasks_overdue') && (dry || (inWindow(pro.tasks_overdue.time, now) && state.tasks_date !== today))) {
     if (!dry) { state.tasks_date = today; await saveState(); }
