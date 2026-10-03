@@ -9,6 +9,7 @@ import {
 } from '@/lib/estoqueRegras';
 import type { UnidadeEstoque } from '@/types/estoque';
 import Folha from './Folha';
+import Ajuda from './Ajuda';
 
 const brl = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const UNIDADE_FRONT: Record<string, UnidadeEstoque> = { g: 'g', kg: 'kg', ml: 'ml', L: 'l', unit: 'un' };
@@ -69,7 +70,13 @@ export default function ContarSecao({ situacao, contagem, podeContar, onContar, 
   return (
     <section id="inicio-contar" className="scroll-mt-4">
       <div className="flex items-baseline gap-2 mb-2 px-0.5">
-        <h2 className="text-base lg:text-lg font-extrabold text-zinc-900">Contar</h2>
+        <h2 className="text-base lg:text-lg font-extrabold text-zinc-900 flex items-center gap-1.5">Contar
+          <Ajuda titulo="Contar">
+            Aparece aqui o que precisa contar <b>agora</b>: os itens da contagem programada do dia (o normal é uma geral por mês e uma semanal dos que mais giram) e os insumos com número impossível.
+            <br /><br />A contagem é um item por vez. Só os itens que você contar mudam no estoque; os pulados ficam como estão.
+            <br /><b>Programar</b>: escolhe os dias e os insumos de cada contagem. No dia, quem cuida do estoque recebe aviso no celular.
+          </Ajuda>
+        </h2>
         <span className={`text-xs font-bold rounded-full px-2 py-0.5 ${itens.length ? 'bg-zinc-800 text-white' : 'bg-emerald-600 text-white'}`}>{itens.length}</span>
         <span className="text-xs text-zinc-400 flex-1">{itens.length ? 'para contar agora' : 'em dia'}</span>
         {pode && planos.length > 0 && (
@@ -82,7 +89,9 @@ export default function ContarSecao({ situacao, contagem, podeContar, onContar, 
           <div className="relative bg-white border border-zinc-200 rounded-2xl pl-4 pr-3 py-3 overflow-hidden">
             <span className="absolute left-0 top-0 bottom-0 w-1 bg-red-500" />
             <div className="flex items-center gap-2">
-              <p className="text-sm font-extrabold text-zinc-900 flex-1">Conferir: número impossível</p>
+              <p className="text-sm font-extrabold text-zinc-900 flex-1 flex items-center gap-1.5">Conferir: número impossível
+                <Ajuda titulo="Número impossível">Estoque negativo não existe na prateleira: o sistema baixou mais do que entrou (ficha técnica errada, entrada que faltou lançar). Contar acerta o número, e daí dá para saber se precisa comprar.</Ajuda>
+              </p>
               <span className="text-[10px] font-bold uppercase tracking-wide bg-red-50 text-red-600 rounded-md px-1.5 py-0.5">fora da rotina</span>
             </div>
             <p className="text-[12px] text-zinc-500 mt-1 leading-snug">
