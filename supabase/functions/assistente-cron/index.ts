@@ -29,6 +29,7 @@ import {
 } from '../_shared/previsao.ts';
 import { PAPEL_DO_BANCO, DONO_EMAIL } from '../_shared/pendencia-visivel.ts';
 import { situacaoPlano, descreverFrequencia, type PlanoContagem } from '../_shared/estoque-planos.ts';
+import { contagemDaLoja, insumosDaSituacao, papeisDaPessoa, precisaSituacao, rotinaDeHoje, type DadosRotina, type EstadoItem } from '../_shared/rotina.ts';
 import Anthropic from 'npm:@anthropic-ai/sdk@0.125.0';
 import { registrarUsoIa } from '../_shared/ai-usage.ts';
 
@@ -2396,18 +2397,46 @@ async function bomDiaEquipe(admin: SupabaseClient, cfg: Record<string, any>, pre
   ]);
   const pends = ((pr ?? []) as unknown[]).map(pendHojeDaLinha);
   const tarefas = (ts ?? []) as Array<{ created_by: string | null; assignee_id: string | null }>;
+  // Rotina do dia (2026-10-03): a mesma conta da tela Hoje (_shared/rotina.ts) — o que falta fazer hoje
+  // no papel da pessoa, em cada loja (inclui o que tem horário mais tarde: é a lista do dia).
+  const rotinaPorLoja = new Map<string, (papel: string) => EstadoItem[]>();
+  try {
+    const { data: rd, error: re } = await admin.rpc('fn_rotina_dados', { p_tenant_ids: lojas });
+    if (re) throw new Error(re.message);
+    const dados = rd as DadosRotina;
+    for (const l of dados.lojas ?? []) {
+      if (!l.itens.length) continue;
+      let contagem: ReturnType<typeof contagemDaLoja> | undefined;
+      if (precisaSituacao(l)) {
+        // Sem a situação do estoque a contagem pelos planos fica de fora (não conta como feita nem como falta).
+        const { data: sit, error: se } = await admin.rpc('fn_estoque_situacao', { p_tenant_id: l.tenant_id });
+        if (!se && sit) contagem = contagemDaLoja(l.fatos.planos, insumosDaSituacao(sit), dados.hoje);
+        else log('WARN', 'bom dia: situação do estoque', { tenant: l.tenant_id, error: se?.message });
+      }
+      const ctx = { hoje: dados.hoje, agora: dados.agora, dow: dados.dow, contagem };
+      rotinaPorLoja.set(l.tenant_id, (papel: string) => {
+        try { return rotinaDeHoje(l, papeisDaPessoa(papel), ctx).filter((e) => !e.feito); }
+        catch (e) { log('WARN', 'bom dia: rotina da loja', { tenant: l.tenant_id, error: errMsg(e) }); return []; }
+      });
+    }
+  } catch (e) { log('WARN', 'bom dia: rotina', { error: errMsg(e) }); }
   const saida: Array<Record<string, unknown>> = [];
   for (const u of pessoas) {
     const agora = agoraDaPessoa(pends, papeis.get(u) ?? new Map(), null, false, today);
     const nTarefas = tarefas.filter((t) => t.created_by === u || t.assignee_id === u).length;
-    if (!agora.length && !nTarefas) { saida.push({ user_id: u, agora: 0, tarefas: 0 }); continue; }
+    const rotina = [...(papeis.get(u) ?? new Map<string, string>()).entries()].flatMap(([t, papel]) => rotinaPorLoja.get(t)?.(papel) ?? []);
+    if (!agora.length && !nTarefas && !rotina.length) { saida.push({ user_id: u, agora: 0, tarefas: 0, rotina: 0 }); continue; }
     const partes: string[] = [];
     if (agora.length) partes.push(`${agora.length} ${agora.length === 1 ? 'coisa precisa' : 'coisas precisam'} de você hoje`);
+    if (rotina.length) partes.push(`${rotina.length} ${rotina.length === 1 ? 'item' : 'itens'} da rotina${agora.length ? '' : ' de hoje'}`);
     if (nTarefas) partes.push(`${nTarefas} tarefa${nTarefas === 1 ? '' : 's'} vencida${nTarefas === 1 ? '' : 's'} ou para hoje`);
     // Mais de uma loja no "Agora": diz de qual é (sem isso saía "5 contas atrasadas; 4 contas atrasadas").
     const variasLojas = new Set(agora.map((i) => i.tenantId)).size > 1;
-    const quais = agora.slice(0, 2).map((i) => `${tituloCurto(i.titulo)}${variasLojas && i.loja ? ` (${i.loja})` : ''}`).join('; ');
-    const corpo = `${partes.join(' e ')}${quais ? `: ${quais}` : ''}.`;
+    const quais = agora.length
+      ? agora.slice(0, 2).map((i) => `${tituloCurto(i.titulo)}${variasLojas && i.loja ? ` (${i.loja})` : ''}`).join('; ')
+      : rotina.slice(0, 2).map((e) => e.item.titulo).join('; ');
+    const juntar = (l: string[]) => (l.length > 1 ? `${l.slice(0, -1).join(', ')} e ${l[l.length - 1]}` : l[0] ?? '');
+    const corpo = `${juntar(partes)}${quais ? `: ${quais}` : ''}.`;
     let enviado: unknown = null;
     if (!previa) {
       try {
@@ -2419,7 +2448,7 @@ async function bomDiaEquipe(admin: SupabaseClient, cfg: Record<string, any>, pre
         enviado = await r.json().catch(() => null);
       } catch (e) { enviado = { erro: errMsg(e) }; }
     }
-    saida.push({ user_id: u, agora: agora.length, tarefas: nTarefas, corpo, ...(previa ? {} : { enviado }) });
+    saida.push({ user_id: u, agora: agora.length, tarefas: nTarefas, rotina: rotina.length, corpo, ...(previa ? {} : { enviado }) });
   }
   return saida;
 }

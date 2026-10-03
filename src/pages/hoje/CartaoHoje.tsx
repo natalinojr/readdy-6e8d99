@@ -3,6 +3,7 @@
 // para dinheiro do dono (pagar com PIN, pedir boleto), pede ao chat — o mesmo caminho de sempre.
 import { useState, type ReactElement } from 'react';
 import { supabase } from '@/lib/supabase';
+import { confirmar } from '@/components/base/Dialogos';
 import { kindConfig } from '@/contexts/PendenciasContext';
 import { pedirAoChat } from '@/lib/assistenteFoco';
 import { chamarAssistente } from '@/lib/assistenteApp';
@@ -121,14 +122,21 @@ export default function CartaoHoje({ item, hoje, dono, papel, meuNome, mostrarLo
     // Aprovar + Pix + PIN já existem na tela de pedidos: o cartão leva direto à lista de aprovar.
     add('decidir', <button onClick={() => abrir(t, '/receber?aprovar=1')} className={PRINCIPAL}><i className="ri-checkbox-circle-line" /> Decidir o pedido</button>);
   } else if (p.kind === 'aprovacao' && p.ref) {
-    add('sim', <button disabled={ocupado} onClick={() => rodar(async () => {
-      const { error } = await supabase.rpc('fn_pdv_approval_decide', { p_id: p.ref, p_aprovar: true, p_nome: meuNome });
+    // Uma janela a mais antes de decidir (pedido do dono, 2026-10-03): evita aprovar/recusar sem querer.
+    const decidir = (aprovar: boolean) => rodar(async () => {
+      const ok = await confirmar({
+        titulo: aprovar ? 'Aprovar este pedido?' : 'Recusar este pedido?',
+        mensagem: p.titulo,
+        confirmarLabel: aprovar ? 'Sim, aprovar' : 'Sim, recusar',
+        cancelarLabel: 'Voltar',
+        perigo: !aprovar,
+      });
+      if (!ok) return;
+      const { error } = await supabase.rpc('fn_pdv_approval_decide', { p_id: p.ref, p_aprovar: aprovar, p_nome: meuNome });
       if (error) throw new Error(error.message);
-    })} className={PRINCIPAL}><i className="ri-check-line" /> Aprovar</button>);
-    add('nao', <button disabled={ocupado} onClick={() => rodar(async () => {
-      const { error } = await supabase.rpc('fn_pdv_approval_decide', { p_id: p.ref, p_aprovar: false, p_nome: meuNome });
-      if (error) throw new Error(error.message);
-    })} className={SECUNDARIO}><i className="ri-close-line" /> Recusar</button>);
+    });
+    add('sim', <button disabled={ocupado} onClick={() => decidir(true)} className={PRINCIPAL}><i className="ri-check-line" /> Aprovar</button>);
+    add('nao', <button disabled={ocupado} onClick={() => decidir(false)} className={SECUNDARIO}><i className="ri-close-line" /> Recusar</button>);
   } else if (p.kind === 'item_sem_classe' && dono) {
     add('class', <button onClick={() => alternar('itens')} className={aberto === 'itens' ? SECUNDARIO : PRINCIPAL}>
       <i className="ri-price-tag-3-line" /> {aberto === 'itens' ? 'Fechar' : 'Classificar aqui'}
