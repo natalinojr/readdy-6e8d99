@@ -1103,7 +1103,10 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
             </p>
             {formaInicialNome && (
               <p className="text-xs font-semibold text-teal-700 mt-1">
-                <i className="ri-tablet-line mr-1" />Cliente escolheu no tablet: {formaInicialNome}
+                {/* Entrega lançada no caixa (2026-10-02): a forma foi combinada com o cliente, não escolhida no tablet. */}
+                {destino?.tipo === 'delivery'
+                  ? <><i className="ri-e-bike-2-line mr-1" />Combinado na entrega: {formaInicialNome}</>
+                  : <><i className="ri-tablet-line mr-1" />Cliente escolheu no tablet: {formaInicialNome}</>}
               </p>
             )}
           </div>

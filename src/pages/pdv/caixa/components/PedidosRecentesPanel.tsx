@@ -1673,7 +1673,9 @@ function PedidoCard({ pedido, onEntregarRemote, onEditarItem, onRecarregar }: Pe
           <div className={`mt-2 flex items-center ${pedido.formaAPagar ? 'justify-between' : 'justify-end'}`}>
             {pedido.formaAPagar && (
               <span className="flex items-center gap-1 text-[10px] font-bold text-teal-700 bg-teal-50 border border-teal-200 px-2 py-0.5 rounded-full whitespace-nowrap">
-                <i className="ri-tablet-line text-[10px]" />Paga no caixa: {pedido.formaAPagar}
+                {pedido.destino === 'delivery'
+                  ? <><i className="ri-e-bike-2-line text-[10px]" />Recebe na entrega: {pedido.formaAPagar}</>
+                  : <><i className="ri-tablet-line text-[10px]" />Paga no caixa: {pedido.formaAPagar}</>}
               </span>
             )}
             <button
