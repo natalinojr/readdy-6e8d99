@@ -341,7 +341,7 @@ async function morningBriefText(admin: SupabaseClient, cfg: Record<string, any>,
   const agora = agoraDaPessoa(((pend.data ?? []) as unknown[]).map(pendHojeDaLinha), papeisDono, DONO_EMAIL, true, today);
   if (agora.length) {
     const varias = new Set(agora.map((i) => i.tenantId)).size > 1;
-    const quais = agora.slice(0, 3).map((i) => tituloCurto(i.titulo)).join('; ');
+    const quais = agora.slice(0, 3).map((i) => `${tituloCurto(i.titulo)}${varias && i.loja ? ` (${i.loja})` : ''}`).join('; ');
     linhas.push(`*${agora.length} ${agora.length === 1 ? 'coisa precisa' : 'coisas precisam'} de você hoje:* ${quais}${agora.length > 3 ? ` e mais ${agora.length - 3}` : ''}. Está tudo na tela Hoje do ERPOS, com o botão que resolve.`);
     lin.push({ t: `Agora (${agora.length})`, i: agora.slice(0, 5).map((i) => ({
       l: tituloCurto(i.titulo), v: i.valor ? brl(i.valor) : undefined, d: varias ? i.loja : undefined, st: (i.urgente ? 'perigo' : 'alerta') as St,
@@ -1837,7 +1837,9 @@ async function bomDiaEquipe(admin: SupabaseClient, cfg: Record<string, any>, pre
     const partes: string[] = [];
     if (agora.length) partes.push(`${agora.length} ${agora.length === 1 ? 'coisa precisa' : 'coisas precisam'} de você hoje`);
     if (nTarefas) partes.push(`${nTarefas} tarefa${nTarefas === 1 ? '' : 's'} vencida${nTarefas === 1 ? '' : 's'} ou para hoje`);
-    const quais = agora.slice(0, 2).map((i) => tituloCurto(i.titulo)).join('; ');
+    // Mais de uma loja no "Agora": diz de qual é (sem isso saía "5 contas atrasadas; 4 contas atrasadas").
+    const variasLojas = new Set(agora.map((i) => i.tenantId)).size > 1;
+    const quais = agora.slice(0, 2).map((i) => `${tituloCurto(i.titulo)}${variasLojas && i.loja ? ` (${i.loja})` : ''}`).join('; ');
     const corpo = `${partes.join(' e ')}${quais ? `: ${quais}` : ''}.`;
     let enviado: unknown = null;
     if (!previa) {
