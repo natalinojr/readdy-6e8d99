@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { confirmar } from '@/components/base/Dialogos';
-import { un, mesmaUnidade, uppInicial, avisoConversao } from '@/lib/vinculoConversao';
+import { invokeWithAuth } from '@/lib/supabase';
+import { un, normUn, mesmaUnidade, uppInicial, avisoConversao } from '@/lib/vinculoConversao';
 
 // Classificar itens de fornecedor (CMV × despesa) DENTRO do chat do assistente (2026-09-16).
 // Aparece embaixo do aviso "Itens novos para classificar" do assistente-cron. Carrega os pendentes
@@ -8,7 +9,9 @@ import { un, mesmaUnidade, uppInicial, avisoConversao } from '@/lib/vinculoConve
 // Mesma regra da tela Financeiro › Classificação de Itens (fn_item_classify, via assistente-app):
 // despesa exige categoria DRE; CMV aceita categoria de mercadoria opcional. Desde 2026-09-27 o CMV
 // também liga a um insumo do estoque já existente (fn_item_link_ingredient, via assistente-app
-// item_link — vira CMV na categoria do insumo); criar insumo novo continua só pela tela.
+// item_link — vira CMV na categoria do insumo). Desde 2026-10-03 cria o insumo que falta ali mesmo
+// (nome, unidade, categoria; stock-write com o tenant_id da loja do item, não a do login) e já o
+// escolhe para o vínculo — o preço sai das notas ao vincular (fn_item_link_ingredient).
 
 interface Item {
   id: string; description: string; supplier_name: string | null; unit_label: string | null;
@@ -25,6 +28,9 @@ interface Loja {
 type Call = <T>(action: string, extra?: Record<string, unknown>) => Promise<T>;
 
 const brl = (n: number) => n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+// Unidades do insumo novo (as mesmas da janela de insumo do Estoque); a da nota vem marcada se for uma delas
+const UNIDADES = ['kg', 'g', 'l', 'ml', 'un'] as const;
+const norm = (t: string) => t.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
 const GRUPO: Record<string, string> = { expense: 'Despesas', personnel: 'Pessoal', admin: 'Administrativo', financial: 'Financeiro', other: 'Outros' };
 
 function Linha({ loja, item, call, onFeito }: { loja: Loja; item: Item; call: Call; onFeito: (id: string) => void }) {
@@ -35,10 +41,11 @@ function Linha({ loja, item, call, onFeito }: { loja: Loja; item: Item; call: Ca
   const [busca, setBusca] = useState('');
   const [ingId, setIngId] = useState<string | null>(null);
   const [upp, setUpp] = useState('');
-  const insumos = loja.ingredients ?? [];
+  // Insumos criados aqui entram na lista sem recarregar o cartão
+  const [novos, setNovos] = useState<Array<{ id: string; name: string; unit: string | null }>>([]);
+  const insumos = useMemo(() => [...(loja.ingredients ?? []), ...novos], [loja.ingredients, novos]);
   const ing = ingId ? insumos.find((g) => g.id === ingId) : undefined;
   const achados = useMemo(() => {
-    const norm = (t: string) => t.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
     const q = norm(busca.trim());
     if (!q) return [];
     return insumos.filter((g) => norm(g.name).includes(q)).slice(0, 6);
@@ -46,6 +53,40 @@ function Linha({ loja, item, call, onFeito }: { loja: Loja; item: Item; call: Ca
   const itemUn = item.unit_label === 'unit' ? 'un' : item.unit_label;
   const [busy, setBusy] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
+  // Insumo que não está na lista: nome, unidade e categoria (opcional)
+  const [novo, setNovo] = useState<{ nome: string; unidade: string; cat: string } | null>(null);
+
+  const escolher = (g: { id: string; unit: string | null }) => { setIngId(g.id); setUpp(uppInicial(item.unit_label, g.unit)); setErro(null); };
+
+  const abrirNovo = () => {
+    const u = normUn(item.unit_label);
+    setNovo({ nome: busca.trim() || item.description, unidade: (UNIDADES as readonly string[]).includes(u) ? u : 'kg', cat: '' });
+    setErro(null);
+  };
+
+  const criarInsumo = async () => {
+    if (!novo) return;
+    const nome = novo.nome.trim();
+    if (!nome) { setErro('Dê um nome ao insumo'); return; }
+    const igual = insumos.find((g) => norm(g.name) === norm(nome));
+    if (igual) { escolher(igual); setNovo(null); setBusca(''); return; }
+    setBusy(true); setErro(null);
+    // Loja do item (não a do login): stock-write confere que você é dessa loja
+    const { data, error } = await invokeWithAuth<{ data?: { id?: string } }>('stock-write', {
+      body: {
+        action: 'upsert_ingredient', tenant_id: loja.id, id: null, name: nome, unit: novo.unidade,
+        unit_price: 0, price_source: 'auto', min_stock: 0, current_stock: 0, usage_type: 'final',
+        category: loja.merchandise_categories.find((m) => m.id === novo.cat)?.name ?? '',
+        purchase_unit: null, purchase_factor: 1, track_stock: true, count_inventory: true,
+      },
+    });
+    setBusy(false);
+    const id = data?.data?.id;
+    if (error || !id) { setErro(error?.message ?? 'Não foi possível criar o insumo'); return; }
+    const criado = { id: String(id), name: nome, unit: novo.unidade === 'l' ? 'L' : novo.unidade === 'un' ? 'unit' : novo.unidade };
+    setNovos((l) => [...l, criado]);
+    escolher(criado); setNovo(null); setBusca('');
+  };
 
   const vincular = async () => {
     if (!ing) return;
@@ -117,36 +158,64 @@ function Linha({ loja, item, call, onFeito }: { loja: Loja; item: Item; call: Ca
               </label>
               <p className="text-[11px] text-zinc-500">Quanto do insumo entra no estoque a cada {itemUn || 'unidade'} comprada. O item vira CMV na categoria do insumo.</p>
             </div>
-          ) : insumos.length > 0 && (
+          ) : novo ? (
+            <div className="rounded-lg border border-emerald-200 bg-emerald-50/60 p-2 space-y-1.5">
+              <p className="text-[11px] font-bold text-emerald-800">Novo insumo do estoque</p>
+              <input autoFocus value={novo.nome} onChange={(e) => setNovo({ ...novo, nome: e.target.value })} placeholder="Nome do insumo" className={sel} />
+              <div className="flex gap-1">
+                {UNIDADES.map((u) => (
+                  <button key={u} type="button" disabled={busy} onClick={() => setNovo({ ...novo, unidade: u })}
+                    className={`flex-1 h-8 rounded-lg border text-sm font-semibold cursor-pointer ${novo.unidade === u ? 'bg-emerald-600 border-emerald-600 text-white' : 'bg-white border-zinc-200 text-zinc-600'}`}>
+                    {u === 'l' ? 'L' : u}
+                  </button>
+                ))}
+              </div>
+              <select value={novo.cat} onChange={(e) => setNovo({ ...novo, cat: e.target.value })} className={sel}>
+                <option value="">Categoria do insumo (opcional)</option>
+                {loja.merchandise_categories.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+              </select>
+              <p className="text-[11px] text-zinc-500">A unidade é a do estoque e da ficha técnica. O preço vem das notas quando você ligar o item.</p>
+              <div className="flex gap-2">
+                <button disabled={busy} onClick={() => { setNovo(null); setErro(null); }} className="h-9 px-3 rounded-lg border border-zinc-200 bg-white text-sm text-zinc-600 cursor-pointer">Cancelar</button>
+                <button disabled={busy || !novo.nome.trim()} onClick={criarInsumo} className="flex-1 h-9 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold cursor-pointer disabled:opacity-50">{busy ? 'Criando…' : 'Criar insumo'}</button>
+              </div>
+            </div>
+          ) : (
             <div>
               <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Ligar a insumo do estoque (buscar)…" className={sel} />
               {achados.length > 0 && (
                 <div className="mt-1 rounded-lg border border-zinc-200 bg-white divide-y divide-zinc-100 overflow-hidden">
                   {achados.map((g) => (
-                    <button key={g.id} onClick={() => { setIngId(g.id); setUpp(uppInicial(item.unit_label, g.unit)); setErro(null); }}
+                    <button key={g.id} onClick={() => escolher(g)}
                       className="w-full flex items-center justify-between gap-2 px-2.5 py-2 text-left text-sm text-zinc-800 hover:bg-emerald-50 cursor-pointer">
                       <span className="truncate">{g.name}</span><span className="text-[11px] text-zinc-400 shrink-0">{un(g.unit)}</span>
                     </button>
                   ))}
                 </div>
               )}
-              {busca.trim() && !achados.length && <p className="text-[11px] text-zinc-500 mt-1">Nenhum insumo com esse nome. Para criar um novo, abra a tela.</p>}
+              {busca.trim() && !achados.length && <p className="text-[11px] text-zinc-500 mt-1">Nenhum insumo com esse nome.</p>}
+              <button disabled={busy} onClick={abrirNovo}
+                className="mt-1 w-full flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-dashed border-emerald-300 text-left text-sm font-semibold text-emerald-700 hover:bg-emerald-50 cursor-pointer">
+                <i className="ri-add-line" /><span className="truncate">{busca.trim() ? `Criar insumo “${busca.trim()}”` : 'Não está na lista? Criar insumo'}</span>
+              </button>
             </div>
           ))}
-          {!ing && (
+          {!ing && !novo && (
             <select value={merc} onChange={(e) => setMerc(e.target.value)} className={sel}>
               <option value="">Categoria de mercadoria (opcional)</option>
               {loja.merchandise_categories.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
             </select>
           )}
-          <div className="flex gap-2">
-            <button disabled={busy} onClick={() => { setModo(null); setIngId(null); setBusca(''); setUpp(''); }} className="h-9 px-3 rounded-lg border border-zinc-200 text-sm text-zinc-600 cursor-pointer">Voltar</button>
-            {ing ? (
-              <button disabled={busy} onClick={vincular} className="flex-1 h-9 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold cursor-pointer disabled:opacity-50">{busy ? 'Salvando…' : 'Vincular e salvar CMV'}</button>
-            ) : (
-              <button disabled={busy} onClick={() => salvar('cmv')} className="flex-1 h-9 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold cursor-pointer disabled:opacity-50">{busy ? 'Salvando…' : 'Salvar como CMV'}</button>
-            )}
-          </div>
+          {!novo && (
+            <div className="flex gap-2">
+              <button disabled={busy} onClick={() => { setModo(null); setIngId(null); setBusca(''); setUpp(''); }} className="h-9 px-3 rounded-lg border border-zinc-200 text-sm text-zinc-600 cursor-pointer">Voltar</button>
+              {ing ? (
+                <button disabled={busy} onClick={vincular} className="flex-1 h-9 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold cursor-pointer disabled:opacity-50">{busy ? 'Salvando…' : 'Vincular e salvar CMV'}</button>
+              ) : (
+                <button disabled={busy} onClick={() => salvar('cmv')} className="flex-1 h-9 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold cursor-pointer disabled:opacity-50">{busy ? 'Salvando…' : 'Salvar como CMV'}</button>
+              )}
+            </div>
+          )}
         </div>
       )}
       {modo === 'despesa' && (

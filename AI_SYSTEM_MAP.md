@@ -272,6 +272,24 @@ Quando o usuario pedir "muda X":
 
 Secao viva: registrar aqui padroes, decisoes e pegadinhas reutilizaveis conforme o sistema evolui. Cada entrada com data
 
+### 2026-10-03 — Classificação de itens: nota de serviço ignorada sai da fila + criar insumo no cartão
+- **Taxa de plataforma não é despesa a classificar.** Mensalidade e Top Placement do iFood e a taxa da
+  Goomer pediam CMV × despesa em Paranaguá, mas são descontadas do repasse (o repasse do iFood entra no
+  razão como "Taxas iFood"; anúncio = "Ocorrência" → ajustes em `portalBucket`) e as notas já estavam
+  ignoradas. Causa: o item entrou na base quando a nota ainda estava `new`; `fn_item_registry_ingest_doc`
+  só pula NFS-e que já chega ignorada. Regra nova (migration `20261003160000_item_servico_nota_ignorada.sql`):
+  trigger `trg_item_registry_doc_status` em `fiscal_inbound_documents` — NFS-e vira `ignored` → apaga o item
+  de serviço AINDA PENDENTE (classe nula, sem insumo) sem nenhuma outra NFS-e viva (`fn_item_servico_sem_nota`);
+  deixa de ser ignorada → volta pelo ingest. Item já classificado fica. Contagens ("N itens sem classificação")
+  não mudam porque todas são `classe is null`.
+- **Criar insumo no cartão** (`ItensClassificarCard`, Hoje/chat): busca sem resultado → "Criar insumo" (nome,
+  unidade kg/g/L/ml/un, categoria de mercadoria opcional) via `stock-write › upsert_ingredient` com o
+  `tenant_id` da LOJA DO ITEM (não a do login; stock-write recusa loja de que você não é membro); o insumo
+  nasce com `price_source 'auto'` e já fica escolhido para a conversão — o preço sai das notas ao vincular.
+- **Testar o cartão como qa.admin:** o "Classificar aqui" do Hoje e o `assistente-app` são só do dono. Teste
+  feito simulando só `items_pending` no `fetch` da página (o cliente chama o `fetch` global na hora) e
+  mandando `item_link` direto para a RPC `fn_item_link_ingredient` com o Bearer do qa.admin.
+
 ### 2026-10-03 — Hoje fase 2: "o sistema chama você" (um número só, bom dia, aviso de aprovação)
 - **Um número só.**
   - As regras da Hoje moram em `supabase/functions/_shared/hoje-organizar.ts`: `organizarHoje`, `visivelNaHoje`, `agoraDaPessoa`, `pendHojeDaLinha`, `tituloCurto` e `COLUNAS_PEND_HOJE`. O front reexporta em `src/pages/hoje/organizar.ts`, como em `lib/fidelidade.ts`.
