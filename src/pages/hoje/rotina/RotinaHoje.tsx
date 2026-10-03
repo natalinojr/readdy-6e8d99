@@ -179,7 +179,8 @@ export default function RotinaHoje({ rotina, filtroLoja }: { rotina: Rotina; fil
         // Gerente e dono: o andamento de cada papel abaixo (toque abre a lista com quem fez).
         <section key={`ac-${l.tenantId}`}>
           <Cabeca titulo={`Rotina na loja${varias ? ` · ${l.loja}` : ''}`}
-            explica="só acompanha — não conta para o seu “tudo em dia”. Toque para ver quem fez." />
+            explica="só acompanha — não conta para o seu “tudo em dia”. Toque para ver quem fez."
+            config={l.podeConfigurar ? () => navigate('/hoje/rotina') : undefined} />
           <div className="rounded-2xl border border-zinc-200 bg-white overflow-hidden">
             {l.abaixo.length === 0 && (
               <p className="px-4 py-3 text-[13px] text-zinc-500">
