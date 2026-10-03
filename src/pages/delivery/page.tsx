@@ -521,6 +521,7 @@ export default function DeliveryPage() {
         onPixPago={data.limparPixOnline}
         metodosAlternativos={metodosAlternativos}
         onTrocarPagamento={data.handleTrocarPagamentoPixOnline}
+        onCancelarPedido={data.pixOnline ? function () { return data.cancelarPedidoSegurado(data.pixOnline!.orderId); } : undefined}
       />
       </div>
       </div>
@@ -1016,6 +1017,7 @@ export default function DeliveryPage() {
                 onPagarPixSemChave={phone ? data.voltarParaPagamentoPixPorTelefone : undefined}
                 metodosAlternativos={metodosAlternativos}
                 onTrocarPagamento={phone ? data.trocarPagamentoPedidoSegurado : undefined}
+                onCancelarPedido={phone || data.pixOnline ? data.cancelarPedidoSegurado : undefined}
                 modoEntrega={modoEntrega}
               />
             </div>

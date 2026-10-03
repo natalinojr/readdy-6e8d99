@@ -672,6 +672,11 @@ export function useMesaQRData() {
     setCart(function (prev) { return prev.filter(function (c) { return c.cartId !== cartId; }); });
   }
 
+  // "Esvaziar" da sacola (já confirmado pelo cliente)
+  function handleEsvaziarSacola() {
+    setCart([]);
+  }
+
   // ── Editar item do carrinho ─────────────────────────────────────────────
 
   function handleAbrirEdicao(cartId: string) {
@@ -958,6 +963,7 @@ export function useMesaQRData() {
     handleAdicionar: handleAdicionar,
     handleAlterarQtd: handleAlterarQtd,
     handleRemover: handleRemover,
+    handleEsvaziarSacola: handleEsvaziarSacola,
     handleAbrirEdicao: handleAbrirEdicao,
     handleSalvarEdicao: handleSalvarEdicao,
     handleFecharEdicao: handleFecharEdicao,

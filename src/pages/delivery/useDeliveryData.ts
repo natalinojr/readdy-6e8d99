@@ -1554,6 +1554,11 @@ export function useDeliveryData(storeSlug?: string) {
     setCart(function (prev) { return prev.filter(function (c) { return c.cartId !== cartId; }); });
   }
 
+  // "Esvaziar" da sacola (já confirmado pelo cliente)
+  function handleEsvaziarSacola() {
+    setCart([]);
+  }
+
   function handleAbrirEdicao(cartId: string) {
     const item = cart.find(function (c) { return c.cartId === cartId; });
     if (item) setEditingItem(item);
@@ -2009,6 +2014,31 @@ export function useDeliveryData(storeSlug?: string) {
     return trocarPagamentoPedidoSegurado(pixOnline.orderId, metodoKey, cashAmount);
   }
 
+  // Cliente desistiu do pedido que ainda espera o pagamento pelo app. O servidor confere no
+  // Mercado Pago antes de cancelar. Devolve null quando cancelou; senão, o motivo para mostrar.
+  async function cancelarPedidoSegurado(orderId: string): Promise<string | null> {
+    if (!tenant?.id) return 'Não deu para cancelar agora. Tente de novo.';
+    const token = pixOnline && pixOnline.orderId === orderId ? pixOnline.orderToken : '';
+    if (!token && !phone) return 'Abra o cardápio com o telefone que fez o pedido para cancelar.';
+    const base = (import.meta.env.VITE_PUBLIC_SUPABASE_URL as string || '').replace(/\/$/, '');
+    try {
+      const res = await fetch(base + '/functions/v1/online-payments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(Object.assign(
+          { action: 'cancel_held_order', tenant_id: tenant.id, order_id: orderId },
+          token ? { order_token: token } : { order_phone: phone },
+        )),
+      });
+      const d = await res.json().catch(function () { return {}; });
+      if (!res.ok || d.error) return d.message || d.error || 'Não deu para cancelar agora. Tente de novo.';
+      if (pixOnline && pixOnline.orderId === orderId) limparPixOnline();
+      return null;
+    } catch {
+      return 'Erro de conexão. Tente novamente.';
+    }
+  }
+
   function limparPixOnline() {
     // Chamado quando o pagamento confirma (ou o cliente troca a forma): o pedido deixa de estar pendente
     try { if (tenant?.id) localStorage.removeItem('delivery_pix_' + tenant.id); } catch { /* ignore */ }
@@ -2410,6 +2440,8 @@ export function useDeliveryData(storeSlug?: string) {
     handleAdicionar,
     handleAlterarQtd,
     handleRemover,
+    handleEsvaziarSacola,
+    cancelarPedidoSegurado,
     handleAbrirEdicao,
     handleSalvarEdicao,
     handleFecharEdicao,

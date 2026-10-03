@@ -288,6 +288,7 @@ export default function MesaQRPage() {
               cart={cart}
               onAlterarQtd={handleAlterarQtd}
               onRemover={handleRemover}
+              onEsvaziar={data.handleEsvaziarSacola}
               onEditar={handleAbrirEdicao}
               onConfirmar={function (nome: string) { handleConfirmarPedido(nome); }}
               enviando={enviando}

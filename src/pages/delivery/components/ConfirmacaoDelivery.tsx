@@ -5,6 +5,7 @@ import HistoricoPedidos from './HistoricoPedidos';
 import PixCobrancaPanel from '@/components/feature/PixCobrancaPanel';
 import CartaoCobrancaPanel from '@/components/feature/CartaoCobrancaPanel';
 import TrocarPagamentoDelivery from './TrocarPagamentoDelivery';
+import CancelarPedidoNaoPago from './CancelarPedidoNaoPago';
 
 type TabOption = 'acompanhar' | 'historico';
 
@@ -30,6 +31,8 @@ interface Props {
   /** Outras formas (cobrança na entrega/retirada) para quem desistir do pagamento pelo app */
   metodosAlternativos?: { key: string; label: string; icon: string }[];
   onTrocarPagamento?: (metodoKey: string, cashAmount?: string) => Promise<boolean>;
+  /** Cancelar o pedido que ainda espera o pagamento pelo app (null = cancelou; texto = motivo de não ter cancelado) */
+  onCancelarPedido?: () => Promise<string | null>;
 }
 
 // "ABC" → Cupom ABC · "Clube" → Prêmio do clube · "ABC + Clube" → Cupom ABC + prêmio do clube
@@ -61,6 +64,8 @@ export default function ConfirmacaoDelivery(props: Props) {
   const [abaAtiva, setAbaAtiva] = useState<TabOption>('acompanhar');
   // Pix/cartão pelo app: o pedido só vai pra cozinha depois do pagamento confirmar
   const [pixPago, setPixPago] = useState(false);
+  // Cliente cancelou aqui o pedido que ainda não tinha pago
+  const [cancelado, setCancelado] = useState(false);
   const metodosAlternativos = props.metodosAlternativos || [];
   const [trackingNumero, setTrackingNumero] = useState(numeroPedido);
   // Pelo histórico dá pra abrir OUTRO pedido: aí o cabeçalho, os totais e o painel do Pix
@@ -86,16 +91,18 @@ export default function ConfirmacaoDelivery(props: Props) {
           </button>
         ) : null}
         <div className="flex items-center gap-3">
-          <span className="w-11 h-11 rounded-full bg-emerald-50 text-emerald-700 flex items-center justify-center shrink-0">
-            <i className="ri-check-line text-2xl" />
+          <span className={'w-11 h-11 rounded-full flex items-center justify-center shrink-0 ' + (cancelado && vendoOriginal ? 'bg-red-50 text-red-700' : 'bg-emerald-50 text-emerald-700')}>
+            <i className={(cancelado && vendoOriginal ? 'ri-close-line' : 'ri-check-line') + ' text-2xl'} />
           </span>
           <div className="min-w-0">
             <h2 className="text-xl font-extrabold tracking-tight text-stone-900">
-              {vendoOriginal ? 'Pedido enviado!' : 'Pedido'} <span className="text-stone-500 font-bold">#{trackingNumero.slice(-4)}</span>
+              {!vendoOriginal ? 'Pedido' : cancelado ? 'Pedido cancelado' : 'Pedido enviado!'} <span className="text-stone-500 font-bold">#{trackingNumero.slice(-4)}</span>
             </h2>
             <p className="text-[13px] text-stone-600">
               {!vendoOriginal
                 ? 'Você está vendo um pedido do seu histórico'
+                : cancelado
+                ? 'Nada foi cobrado e o pedido não foi para a cozinha'
                 : pixOnline && !pixPago
                 ? 'Ele vai para a cozinha assim que o pagamento for confirmado'
                 : (modoEntrega === 'retirada' ? 'Retirada na loja' : 'Entrega') + ' · ' + formatCurrency(orderTotal)
@@ -188,6 +195,16 @@ export default function ConfirmacaoDelivery(props: Props) {
               />
             </div>
           ) : null}
+
+          {!pixPago && props.onCancelarPedido ? (
+            <div className="mt-1">
+              <CancelarPedidoNaoPago
+                numero={numeroPedido}
+                onCancelar={props.onCancelarPedido}
+                onCancelado={function () { setCancelado(true); }}
+              />
+            </div>
+          ) : null}
         </div>
       ) : null}
 
@@ -214,7 +231,9 @@ export default function ConfirmacaoDelivery(props: Props) {
       {/* Conteúdo da aba */}
       {abaAtiva === 'acompanhar' ? (
         <AcompanharPedido
+          key={trackingNumero + (cancelado ? '-cancelado' : '')}
           numeroPedido={trackingNumero}
+          canceladoPeloCliente={cancelado && vendoOriginal}
           tenantId={tenantId}
           onNovoPedido={onNovoPedido}
         />

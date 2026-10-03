@@ -247,6 +247,10 @@ async function loadBill(admin: Admin, scopeRef: { tableSessionId: string | null;
   const locked = new Set<string>();
   for (const px of pendingPix ?? []) {
     if (viewerParticipantId && px.participant_id === viewerParticipantId) continue;
+    // Delivery: a conta é UM pedido de UM cliente — a cobrança pendente é dele mesmo (ex.: abriu o Pix
+    // e trocou para o cartão). Travar aqui zerava o valor do cartão ("R$ 0,00") e o create_card
+    // recusava com "outra pessoa da mesa está pagando". A cobrança antiga é cancelada no create_*.
+    if (scopeRef.orderId && !tableSessionId) continue;
     for (const a of (px.allocation as { order_id: string }[] | null) ?? []) locked.add(a.order_id);
   }
 
@@ -1046,6 +1050,47 @@ Deno.serve(async (req: Request) => {
         }
       }
       return json({ ok: true, status: "cancelled" });
+    }
+
+    // ── Cliente desiste do pedido que ainda não pagou (delivery, pedido segurado) ──
+    // Só rascunho (fora da cozinha) e sem pagamento lançado. Antes, confere no MP as cobranças
+    // pendentes: se alguma acabou de ser paga, liquida e o pedido NÃO é cancelado.
+    if (action === "cancel_held_order") {
+      const auth = await resolveCustomer(admin, body, { allowClosed: true });
+      if (auth.error) return auth.error;
+      if (!auth.orderId) return json({ error: "so_delivery", message: "Só dá para cancelar assim um pedido do delivery." }, 400);
+      const tenantId = auth.tenantId!;
+      const { data: o } = await admin.from("orders").select("id, status, is_draft, is_paid")
+        .eq("id", auth.orderId).eq("tenant_id", tenantId).maybeSingle();
+      if (!o) return json({ error: "Pedido não encontrado" }, 404);
+      if (o.status !== "draft" && !o.is_draft) {
+        return json({ error: "ja_na_cozinha", message: "Este pedido já foi para a cozinha. Para cancelar, fale com a loja." }, 409);
+      }
+      const { data: pagos } = await admin.from("payments").select("id").eq("order_id", o.id).eq("is_refunded", false).limit(1);
+      if (o.is_paid || (pagos ?? []).length > 0) return json({ error: "pedido_pago", message: "Este pedido já foi pago. Fale com a loja." }, 409);
+
+      const { data: pend } = await ownerFilter(admin.from("fin_pix_payments").select("*"), auth).eq("status", "pending");
+      if ((pend ?? []).length > 0) {
+        const cfg = await loadConfig(admin, tenantId);
+        let pago = false;
+        if (cfg?.access_token) pago = await cancelChargesChecking(admin, cfg.access_token, pend ?? []);
+        else for (const r of pend ?? []) await admin.from("fin_pix_payments").update({ status: "cancelled", updated_at: new Date().toISOString() }).eq("id", r.id).eq("status", "pending");
+        if (pago) return json({ error: "pedido_pago", message: "Seu pagamento acabou de ser confirmado — o pedido foi para a cozinha." }, 409);
+      }
+
+      const agora = new Date().toISOString();
+      // Só cancela se continuar segurado (o pagamento pode ter liberado o pedido neste meio-tempo)
+      const { data: cancelados, error: upErr } = await admin.from("orders")
+        .update({ status: "cancelled", cancel_reason: "Cancelado pelo cliente antes de pagar (app)", cancelled_at: agora, updated_at: agora })
+        .eq("id", o.id).eq("tenant_id", tenantId).or("status.eq.draft,is_draft.eq.true").eq("is_paid", false)
+        .select("id");
+      if (upErr) throw upErr;
+      if (!cancelados || cancelados.length === 0) {
+        return json({ error: "pedido_pago", message: "Seu pagamento acabou de ser confirmado — o pedido foi para a cozinha." }, 409);
+      }
+      await admin.from("order_items").update({ status: "cancelled" }).eq("order_id", o.id).neq("status", "cancelled");
+      log("INFO", "cancel_held_order", "pedido segurado cancelado pelo cliente", { orderId: o.id, cobrancas: (pend ?? []).length });
+      return json({ ok: true });
     }
 
     // ── Varredura (cron fn_online_card_sweep, chave interna) ──────────────────
