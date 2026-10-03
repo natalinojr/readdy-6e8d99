@@ -311,6 +311,43 @@ Secao viva: registrar aqui padroes, decisoes e pegadinhas reutilizaveis conforme
   - baixa de verdade numa conta da Testes PDV pelo cartão (conta `paid`, pendência `resolvida` com motivo);
   - "Pedir o boleto" abriu o chat com o texto; apagado sem enviar.
 - **Sem teste logado:** os perfis supervisão, gerente e caixa (sem senha dos `qa.*`), "Pagar" com PIN pela Hoje e concluir tarefa pela Hoje (mesma Edge `task-write` do módulo).
+### 2026-10-03 — Balão do assistente reformulado: conversar e agir rápido, um número só
+- **Pedido do dono:** o balão (roxo, no canto) virou uma segunda caixa de pendências, com números que não batiam com a Hoje nem com o topo. Regra: **nada some, muda o lugar e a ordem**. Protótipo antes × depois (dono/funcionário, celular/computador) em `docs/prototipos/balao-assistente-proposta.html`.
+- **Um número só:** o botão fechado **não tem número**. A bolinha verde quer dizer que tem mensagem nova para você (do assistente ou da equipe) ou um Pix esperando o PIN. O "o que precisa de você" é UMA linha na abertura do balão, "N coisas precisam de você → Abrir Hoje" (`CasaBalao.tsx › LinhaNumeroHoje`), com N = `useContagemHoje().agora` de `pages/hoje/hojeStore.ts`. É a mesma leitura da tela Hoje e do botão do topo (fase 2 da Hoje, outra sessão); **nunca uma terceira contagem**. Regras da linha:
+  - não aparece sem leitura (`usePendenciasHoje().itens === null`) nem com erro e zero, para nunca dizer "tudo em dia" sem certeza;
+  - some na própria `/hoje` e para papel preso (`rotaForcada`);
+  - zero lido = "Tudo em dia ✓".
+- **Abertura do balão** (vista `lista` do `AssistenteChat`; tela única no `AcoesRapidasFlutuante`), de cima para baixo:
+  1. a troca da última pergunta feita ali;
+  2. a linha do número;
+  3. a faixa "Ativar avisos", só quando dá para ligar;
+  4. **Novidades** (conversas com mensagem nova: assuntos, equipe via `useEquipeNoChat().novas/abrir`, grupos);
+  5. **Fazer rápido** (as 6 ações mais usadas neste aparelho + "Todas as ações (N)");
+  6. **Conversas** (as mesmas abas Assistente/Equipe/Grupos).
+  - A caixa "Pergunte ou peça…" fica embaixo. Dentro do chat, o número de mensagens por conversa continua como no WhatsApp (mensagem não é tarefa); fora do chat não aparece número de mensagem.
+- **Onde foi cada botão:**
+  - 📥 Caixa de pendências (`PendenciasChat`/`PendenciasEquipe`, inteira) e 🔒 PIN de pagamento → menu **⋯**;
+  - o selo "Bloqueadas" → item do ⋯ com a explicação. O `BotaoAvisos` fica montado (escondido) na abertura, porque no Android ele registra o toque no aviso;
+  - "Ver todas as mensagens juntas" → ⋯ e o fim da lista;
+  - a barra de digitação ficou ⚡ 📷 📎 campo 🎤;
+  - a barra pequena perdeu a linha "N pendências esperando você" (ficou só "N pagamentos esperando você");
+  - funcionário: sem abas, e a caixa só busca enquanto está aberta (`CaixaPendencias`; antes contava de 45 em 45 s).
+- **Tocar no balão** abre sempre a abertura (antes dependia: conversa do assunto, equipe, caixa ou barra pequena). "Recolher" continua levando à barra pequena; arrastar para cima volta.
+- **Pergunta feita na abertura** vai **sem assunto** (o banco classifica, como na barra pequena sem conversa) e a resposta aparece na troca, ali mesmo. Pegadinhas:
+  - não cria balões provisórios na conversa carregada por trás;
+  - marca vista a resposta na conversa em que o banco a pôs (`history` sem filtro → `seen` com o `topic`), mas só se ali não havia outra mensagem nova (o visto é por assunto).
+  - "Ver na conversa ›" abre "Todas as mensagens".
+- **Para de cobrir o Salvar** (`assistente/useBalaoEscondido.ts`, nos dois balões):
+  - some com janela aberta (como antes, `useJanelaAberta`);
+  - some **rolando para baixo** (escuta `scroll` em captura em qualquer elemento; volta ao rolar para cima, no topo ou ao trocar de tela);
+  - some com o **teclado aberto num campo fora do chat** (só `pointer: coarse`).
+  - Rolar ou digitar dentro de `[data-balao]` não conta.
+- **Ações mais usadas:** `assistente/acoes/maisUsadas.ts`, localStorage `erpos.acoes.uso`, padrão por perfil `PADRAO_DONO`/`PADRAO_EQUIPE`. Ação aberta da abertura volta para ela ao fechar (`abrirAcao` não muda mais a vista para a conversa).
+- **Dinheiro intocado:** o evento `EVENTO_ASSISTENTE_ACAO` e `pagarConta`/`pagarPendencia`/`pedirPendencia` não mudaram. Testes novos em `assistenteChat.test.tsx`:
+  - "Pagar" da Hoje → `conta_pagar` → PIN → `pay`;
+  - "Pedir" só preenche o texto.
+  - Testado no dev local com sessão QA pelo link mágico. O dono foi simulado trocando o e-mail só no dev, e o servidor respondeu "Acesso restrito ao dono" no `conta_pagar`, o que prova a ligação e a trava.
+
 ### 2026-10-03 — "O que aconteceu?": um começo só para qualquer lançamento
 - **Pedido do dono** (visão de economia mental): havia ~9 portas para lançar despesa/compra (Nova conta, Nova compra, Fluxo, Bancos, Conciliação, Notas, Guias, RH, `/receber`, chat, Sangria). Regra: **nenhum caminho sai, muda só a porta**. Protótipo aprovado: `docs/prototipos/lancar-proposta.html`.
 - **Onde:** `src/components/feature/lancar/` — `opcoes.ts` (árvore + quem vê) e `OQueAconteceu.tsx` (folha no celular / janela no computador; `telaCheia` para `/lancar`). Exportado em `index.ts` para a tela Hoje abrir pelo "+": `<OQueAconteceu onFechar={…} />`. Entradas: botão **Lançar** do Financeiro (a lista antiga `LancarFinanceiroModal` virou "Ver todos os jeitos de lançar (lista completa)" dentro da folha), rota **`/lancar`** (terminal, tela cheia), ação rápida ⚡ **`lancar`** e atalho "Lançar" no `manifest.webmanifest`.
