@@ -129,12 +129,16 @@ export default function DeliveryPage() {
   const ICONE_METODO: Record<string, string> = { dinheiro: 'ri-money-dollar-circle-line', cartao_credito: 'ri-bank-card-line', cartao_debito: 'ri-bank-card-2-line', pix: 'ri-qr-code-line', vale_refeicao: 'ri-coupon-line' };
   // "PIX pelo app" entra na lista quando a loja tem o Mercado Pago ativo, a menos
   // que a loja tenha desligado essa forma em Config › Delivery (pix_online: false).
+  // "Cartão de crédito pelo app" idem, mas só com o cartão ligado no Mercado Pago (card_enabled).
   const metodosDisponiveis: Record<string, boolean> = Object.assign({}, paymentMethods || {}, {
     pix_online: data.pixOnlineDisponivel && (paymentMethods || {}).pix_online !== false,
+    cartao_online: data.cartaoOnlineDisponivel && (paymentMethods || {}).cartao_online !== false,
   });
-  // Formas cobradas na entrega/retirada — pra quem desistir do Pix pelo app
+  // Pagas no app (a loja segura o pedido até confirmar) — não são opção "na entrega"
+  const FORMAS_PELO_APP = ['pix_online', 'cartao_online'];
+  // Formas cobradas na entrega/retirada — pra quem desistir do pagamento pelo app
   const metodosAlternativos = Object.entries(metodosDisponiveis)
-    .filter(function (e) { return e[1] === true && e[0] !== 'pix_online'; })
+    .filter(function (e) { return e[1] === true && FORMAS_PELO_APP.indexOf(e[0]) < 0; })
     .map(function (e) { return { key: e[0], label: LABEL_METODO[e[0]] || e[0], icon: ICONE_METODO[e[0]] || 'ri-wallet-line' }; });
   const pagamentoSelecionado = data.pagamentoSelecionado;
   const modoEntrega = data.modoEntrega;
@@ -507,6 +511,8 @@ export default function DeliveryPage() {
         modoEntrega={modoEntrega}
         resumo={data.resumoConfirmacao}
         pixOnline={data.pixOnline}
+        cartaoOnline={{ pronto: data.pagamentoAppPronto, ativo: data.cartaoOnlineDisponivel, publicKey: data.mpPublicKey }}
+        onTrocarMetodoApp={data.trocarMetodoPagamentoApp}
         onPixPago={data.limparPixOnline}
         metodosAlternativos={metodosAlternativos}
         onTrocarPagamento={data.handleTrocarPagamentoPixOnline}
@@ -688,7 +694,7 @@ export default function DeliveryPage() {
             }</span>
           </div>
         )}
-        {/* Banner: pedido segurado esperando o Pix pelo app (cliente saiu antes de pagar) */}
+        {/* Banner: pedido segurado esperando o pagamento pelo app — Pix ou cartão (cliente saiu antes de pagar) */}
         {data.pixOnline && !showCart ? (
           <button
             type="button"
@@ -696,9 +702,9 @@ export default function DeliveryPage() {
             className="shrink-0 w-full bg-emerald-600 text-white px-4 py-2.5 flex items-center justify-between gap-3 text-left cursor-pointer hover:bg-emerald-700 transition-colors"
           >
             <span className="flex items-center gap-2 min-w-0">
-              <i className="ri-qr-code-line text-base shrink-0" />
+              <i className={(data.pixOnline.metodo === 'cartao' ? 'ri-bank-card-line' : 'ri-qr-code-line') + ' text-base shrink-0'} />
               <span className="text-xs font-semibold truncate">
-                Pedido #{data.pixOnline.number.slice(-4)} aguardando o Pix — {formatCurrency(data.pixOnline.total)}
+                Pedido #{data.pixOnline.number.slice(-4)} aguardando o pagamento — {formatCurrency(data.pixOnline.total)}
               </span>
             </span>
             <span className="shrink-0 text-[11px] font-black bg-white/20 px-2.5 py-1 rounded-full whitespace-nowrap">Pagar agora →</span>
@@ -1503,8 +1509,11 @@ export default function DeliveryPage() {
 
                 <div className="space-y-2 mb-6">
                   {Object.entries(metodosDisponiveis).filter(function (entry) { return entry[1] === true; })
-                    // "PIX pelo app" sempre primeiro: é o caminho que a loja quer empurrar
-                    .sort(function (a, b) { return (a[0] === 'pix_online' ? -1 : 0) - (b[0] === 'pix_online' ? -1 : 0); })
+                    // "PIX pelo app" sempre primeiro (é o caminho que a loja quer empurrar), depois o cartão pelo app
+                    .sort(function (a, b) {
+                      const ordem = function (k: string) { return k === 'pix_online' ? 0 : k === 'cartao_online' ? 1 : 2; };
+                      return ordem(a[0]) - ordem(b[0]);
+                    })
                     .map(function (entry) {
                     const key = entry[0];
                     const destaque = key === 'pix_online';
@@ -1515,6 +1524,7 @@ export default function DeliveryPage() {
                       pix: { label: 'PIX', icon: 'ri-qr-code-line', description: 'Faça o PIX na retirada' },
                       vale_refeicao: { label: 'Vale Refeição', icon: 'ri-coupon-line', description: 'Use seu vale na retirada' },
                       pix_online: { label: 'PIX pelo app', icon: 'ri-smartphone-line', description: 'Pague agora pelo celular — confirmação automática' },
+                      cartao_online: { label: 'Cartão de crédito pelo app', icon: 'ri-bank-card-line', description: 'Pague agora no celular — crédito, à vista' },
                     } : {
                       dinheiro: { label: 'Dinheiro', icon: 'ri-money-dollar-circle-line', description: 'Informe o valor para calcular o troco' },
                       cartao_credito: { label: 'Cartão de Crédito', icon: 'ri-bank-card-line', description: 'O motoboy levará a maquininha' },
@@ -1522,6 +1532,7 @@ export default function DeliveryPage() {
                       pix: { label: 'PIX', icon: 'ri-qr-code-line', description: 'O motoboy levará a maquininha' },
                       vale_refeicao: { label: 'Vale Refeição', icon: 'ri-coupon-line', description: 'O motoboy levará a maquininha' },
                       pix_online: { label: 'PIX pelo app', icon: 'ri-smartphone-line', description: 'Pague agora pelo celular — o motoboy não cobra nada' },
+                      cartao_online: { label: 'Cartão de crédito pelo app', icon: 'ri-bank-card-line', description: 'Pague agora no celular — crédito, à vista' },
                     };
                     const info = methodMap[key] || { label: key, icon: 'ri-wallet-line', description: '' };
                     const selected = metodoPagamento === key;

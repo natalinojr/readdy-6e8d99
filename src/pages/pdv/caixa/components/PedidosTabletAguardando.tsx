@@ -38,6 +38,8 @@ interface HeldOrder {
   is_paid: boolean | null;
   payments?: Array<{ amount: number; is_refunded: boolean | null }>;
   order_items: HeldItem[];
+  /** QR universal "paga antes": o cliente está pagando pelo celular agora (Pix ou cartão pelo app) */
+  online_pending?: 'pix' | 'cartao' | null;
 }
 
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -134,6 +136,22 @@ export default function PedidosTabletAguardando() {
     }
   };
 
+  // Trava "pagando pelo celular": o cliente desistiu e veio ao balcão. Cancela a cobrança online antes
+  // (o servidor confere no Mercado Pago se ela já foi paga) e só então abre o recebimento.
+  const receberMesmoAssim = async (o: HeldOrder) => {
+    setLiberando(o.id);
+    try {
+      const { data, error } = await invokeWithAuth<{ ok?: boolean; paid?: boolean; error?: string }>('online-payments', {
+        body: { action: 'cancel_order_charges', tenant_id: tenantId, order_id: o.id },
+      });
+      if (error || !data?.ok) { toastError(data?.error ?? 'Não foi possível conferir o pagamento pelo celular. Tente de novo.'); return; }
+      if (data.paid) { toastError('O cliente acabou de pagar pelo celular — não receba de novo.'); await carregar(); reloadOrders?.(); return; }
+      setPagando({ ...o, online_pending: null });
+    } finally {
+      setLiberando(null);
+    }
+  };
+
   if (pedidos.length === 0 && !pagando && !cancelando) return null;
 
   return (
@@ -141,7 +159,7 @@ export default function PedidosTabletAguardando() {
       <div className="flex items-center gap-1.5 px-1">
         <i className="ri-tablet-line text-teal-700 text-sm" />
         <p className="text-xs font-black text-teal-800 flex-1">
-          Tablet — aguardando pagamento no caixa ({pedidos.length})
+          Autoatendimento — aguardando pagamento ({pedidos.length})
         </p>
         <span className="text-[10px] text-teal-700">Só vai pra cozinha depois de receber</span>
       </div>
@@ -169,6 +187,23 @@ export default function PedidosTabletAguardando() {
                 <i className={liberando === o.id ? 'ri-loader-4-line animate-spin' : 'ri-restaurant-2-line'} />
                 Já pago — mandar pra cozinha
               </button>
+            ) : o.online_pending ? (
+              // Cliente pagando pelo celular: receber ou cancelar agora daria pagamento em dobro
+              // (ou cobraria um pedido cancelado). Some sozinho quando o pagamento confirma.
+              <div className="mt-1.5 space-y-1">
+                <div className="flex items-center justify-center gap-1.5 py-1.5 bg-amber-50 border border-amber-200 rounded-lg text-[11px] font-bold text-amber-700">
+                  <i className="ri-smartphone-line" />
+                  Cliente pagando pelo celular ({o.online_pending === 'cartao' ? 'cartão' : 'Pix'}) — aguarde
+                </div>
+                {/* Cliente desistiu do celular e veio ao balcão: cancela a cobrança online (conferindo se já pagou) e recebe aqui. */}
+                <button
+                  onClick={() => receberMesmoAssim(o)}
+                  disabled={liberando === o.id}
+                  className="w-full py-1 text-[11px] font-bold text-zinc-600 border border-zinc-200 hover:bg-zinc-50 disabled:opacity-60 rounded-lg cursor-pointer whitespace-nowrap"
+                >
+                  {liberando === o.id ? 'Conferindo…' : 'Cliente veio ao caixa — receber aqui'}
+                </button>
+              </div>
             ) : (
             <div className="flex items-center gap-2 mt-1.5">
               {/* Só antes de receber qualquer valor. Qualquer operador vê: o modal pede o motivo e a senha/aprovação do gerente. */}

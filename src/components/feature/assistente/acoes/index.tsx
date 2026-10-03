@@ -31,6 +31,7 @@ const NfseAdaptada = lazy(async () => {
 export const ACOES: AcaoDef[] = [
   { id: 'atalhos', grupo: 'Atalhos', label: 'Ir para uma tela', icone: 'ri-compass-3-line', cor: 'bg-violet-50 text-violet-600', Componente: lazy(() => import('./atalhos/AtalhosTelas')) },
   { id: 'nfse', grupo: 'Financeiro', label: 'Emitir nota de serviço', icone: 'ri-file-text-line', cor: 'bg-sky-50 text-sky-600', Componente: NfseAdaptada },
+  { id: 'lancar', grupo: 'Financeiro', label: 'Lançar (o que aconteceu?)', icone: 'ri-add-circle-line', cor: 'bg-amber-50 text-amber-600', Componente: lazy(() => import('./financeiro/LancarAlgo')) },
   { id: 'lancar-despesa', grupo: 'Financeiro', label: 'Lançar despesa', icone: 'ri-money-dollar-box-line', cor: 'bg-emerald-50 text-emerald-600', Componente: lazy(() => import('./financeiro/LancarDespesa')) },
   { id: 'contas-vencendo', grupo: 'Financeiro', label: 'Contas vencendo', icone: 'ri-calendar-todo-line', cor: 'bg-emerald-50 text-emerald-600', Componente: lazy(() => import('./financeiro/ContasVencendo')) },
   { id: 'classificar-dre', grupo: 'Financeiro', label: 'Classificar no DRE', icone: 'ri-price-tag-2-line', cor: 'bg-emerald-50 text-emerald-600', Componente: lazy(() => import('./financeiro/ClassificarDre')) },

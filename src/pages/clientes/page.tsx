@@ -32,8 +32,8 @@ const ABAS: { id: Aba; label: string; icon: string; permissao: PermissaoKey; des
   { id: 'vouchers', label: 'Vouchers', icon: 'ri-gift-line', permissao: 'gestao_vouchers', desc: 'Vouchers, gift cards e links enviados' },
 ];
 
-// Mesmo critério da RotaProtegida: admin e gerente veem tudo.
-const PAPEIS_ADMIN = ['admin', 'gerente'];
+// Mesmo critério da RotaProtegida: só o admin vê tudo; o gerente segue a matriz (2026-10-03).
+const PAPEIS_ADMIN = ['admin'];
 
 interface VoucherAlvo {
   cliente: ClienteCRM;

@@ -107,7 +107,12 @@ export default function ConfigDeliveryPage() {
     { key: 'vale_refeicao', label: 'Vale Refeição', icon: 'ri-coupon-line' },
     // Só aparece pro cliente se a loja tiver o Mercado Pago ativo (Configurações › Pagamentos)
     { key: 'pix_online', label: 'PIX pelo app (pagamento online)', icon: 'ri-smartphone-line' },
+    // Idem, mas só com o cartão ligado no Mercado Pago (Public Key + "Aceitar cartão de crédito pelo app")
+    { key: 'cartao_online', label: 'Cartão de crédito pelo app (pagamento online)', icon: 'ri-bank-card-line' },
   ];
+  // Formas "pelo app": no cardápio do cliente valem como LIGADAS quando a chave não existe
+  // (só `false` desliga) — o toggle mostra o mesmo, senão a tela diz "desligado" e a loja oferece.
+  const FORMAS_PELO_APP = ['pix_online', 'cartao_online'];
 
   const [formasPagamento, setFormasPagamento] = useState<Record<string, boolean>>({});
 
@@ -1370,7 +1375,9 @@ export default function ConfigDeliveryPage() {
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               {METODOS_PREDEFINIDOS.map(function (metodo) {
-                const ativo = formasPagamento[metodo.key] === true;
+                const ativo = FORMAS_PELO_APP.indexOf(metodo.key) >= 0
+                  ? formasPagamento[metodo.key] !== false
+                  : formasPagamento[metodo.key] === true;
                 const temAlgumAtivo = Object.values(formasPagamento).some(function (v) { return v === true; });
 
                 function toggle() {

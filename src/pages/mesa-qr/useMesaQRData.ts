@@ -242,7 +242,7 @@ async function fetchCardapioData(tenantId: string, setters: {
     setters.setOpcoesIndisponiveisIds(data.opcoes_indisponiveis_ids || []);
 
     setters.setCardapioBase(base);
-    const finalCategories = montarCardapio(base, new Set(idsForaDoHorario(base))).categories;
+    const finalCategories = montarCardapio(base, new Set(idsForaDoHorario(base, 'casa'))).categories;
 
     if (data.production_parts) {
       setters.productionPartsRef.current = data.production_parts;
@@ -263,7 +263,7 @@ async function fetchCardapioData(tenantId: string, setters: {
 // mesa fechou sozinha porque a conta zerou — nos dois casos o participante salvo já
 // não vale e o cliente cairia na tela de nome achando que perdeu o pagamento.
 // Antes disso, conferimos o Pix que ESTE aparelho gerou e mostramos o comprovante.
-async function buscarComprovantePix(qrToken: string): Promise<{ amount: number } | null> {
+async function buscarComprovantePix(qrToken: string): Promise<{ amount: number; method?: string } | null> {
   const memo = loadPixMemo(qrToken);
   if (!memo) return null;
   const base = (import.meta.env.VITE_PUBLIC_SUPABASE_URL as string || '').replace(/\/$/, '');
@@ -280,7 +280,7 @@ async function buscarComprovantePix(qrToken: string): Promise<{ amount: number }
       }),
     });
     const data = await res.json();
-    if (data?.pix?.status === 'confirmed') return { amount: Number(data.pix.amount ?? memo.amount) };
+    if (data?.pix?.status === 'confirmed') return { amount: Number(data.pix.amount ?? memo.amount), method: data.pix.method || 'pix' };
     if (data?.pix && data.pix.status !== 'pending') clearPixMemo(qrToken);
   } catch { /* sem rede: segue o fluxo normal */ }
   return null;
@@ -318,7 +318,7 @@ export function useMesaQRData() {
   // Chave do que está fora do horário: muda só quando algo entra/sai (não a cada minuto).
   // minutoAgora só dispara o recálculo na virada do minuto; a hora vem de new Date().
   const chaveForaDoHorario = useMemo(function () {
-    return cardapioBase && usaHorario ? idsForaDoHorario(cardapioBase).join(',') : '';
+    return cardapioBase && usaHorario ? idsForaDoHorario(cardapioBase, 'casa').join(',') : '';
   }, [cardapioBase, usaHorario, minutoAgora]);
   const cardapioAgora = useMemo(function () {
     if (!cardapioBase) return { categories: [] as CardapioCategory[], items: [] as CardapioItem[] };
@@ -359,8 +359,12 @@ export function useMesaQRData() {
   // Meus Pedidos
   const [showMeusPedidos, setShowMeusPedidos] = useState(false);
 
-  // Comprovante de Pix (quando a identificação se perdeu depois do pagamento)
-  const [comprovante, setComprovante] = useState<{ amount: number } | null>(null);
+  // Comprovante de pagamento (quando a identificação se perdeu depois de pagar)
+  const [comprovante, setComprovante] = useState<{ amount: number; method?: string } | null>(null);
+
+  // QR universal em "só vai pra cozinha depois de pago": pedido segurado (rascunho) esperando o
+  // pagamento. `pago` vira true quando o Pix/cartão confirma ou o caixa recebe.
+  const [pedidoAguardandoPagamento, setPedidoAguardandoPagamento] = useState<{ id: string; numero: string; total: number; pago: boolean } | null>(null);
 
   // Pagar a conta (Pix online) — botão só aparece se a loja tem provedor ativo
   const [showPagarConta, setShowPagarConta] = useState(false);
@@ -379,6 +383,42 @@ export function useMesaQRData() {
       .catch(function () { /* fica desligado */ });
     return function () { cancelled = true; };
   }, [tenantId]);
+
+  // Pedido segurado: enquanto a confirmação espera o pagamento, confere a conta de tempos em tempos.
+  // Cobre o caixa recebendo pela senha e o Pix pago com o modal já fechado.
+  useEffect(function () {
+    if (step !== 'confirmacao' || !pedidoAguardandoPagamento || pedidoAguardandoPagamento.pago || !participant) return;
+    const pedidoId = pedidoAguardandoPagamento.id;
+    const credencial = { participant_id: participant.id, access_token: participant.access_token };
+    const base = (import.meta.env.VITE_PUBLIC_SUPABASE_URL as string || '').replace(/\/$/, '');
+    let cancelled = false;
+
+    async function checar() {
+      try {
+        const res = await fetch(base + '/functions/v1/online-payments', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'get_bill', ...credencial }),
+        });
+        const d = await res.json();
+        if (cancelled || !d || d.error || !Array.isArray(d.orders)) return;
+        const meu = d.orders.find(function (o: { id: string }) { return o.id === pedidoId; });
+        if (meu && (meu.is_paid || Number(meu.remaining) <= 0)) {
+          setPedidoAguardandoPagamento(function (p) { return p && p.id === pedidoId ? Object.assign({}, p, { pago: true }) : p; });
+        }
+      } catch { /* próximo ciclo */ }
+    }
+
+    const timer = setInterval(checar, 8000);
+    function aoVoltar() { if (document.visibilityState === 'visible') checar(); }
+    document.addEventListener('visibilitychange', aoVoltar);
+    return function () {
+      cancelled = true;
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', aoVoltar);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, pedidoAguardandoPagamento?.id, pedidoAguardandoPagamento?.pago, participant?.id, participant?.access_token]);
 
   // Ref para evitar dupla chamada
   const initializedRef = useRef(false);
@@ -708,10 +748,26 @@ export function useMesaQRData() {
         setEnviando(false);
         setStep('confirmacao');
 
+        // "Só vai pra cozinha depois de pago": o pedido nasceu rascunho, fora do KDS. O servidor imprime
+        // os tickets quando o pagamento confirma (Pix/cartão pelo app) ou o caixa recebe — por isso
+        // aqui NÃO enfileiramos impressão. Abre o pagamento logo de cara (se a loja tem pagamento online).
+        const held = data.data?.held === true;
+        if (held) {
+          setPedidoAguardandoPagamento({
+            id: data.data?.id || '',
+            numero: data.data?.number || '',
+            total: typeof data.data?.total_amount === 'number' ? data.data.total_amount : subtotal,
+            pago: false,
+          });
+          if (onlinePayEnabled) setShowPagarConta(true);
+        } else {
+          setPedidoAguardandoPagamento(null);
+        }
+
         // ── Impressão via fila centralizada (BUG-43: mesa QR não enfileirava impressão) ──
         const orderId = data.data?.id;
         const orderNumber = data.data?.number;
-        if (orderId && orderNumber) {
+        if (!held && orderId && orderNumber) {
           const printItems: OrderItemForPrint[] = itemsPayload.map(function (item) {
             return {
               item_name: item.item_name,
@@ -761,7 +817,13 @@ export function useMesaQRData() {
 
   // ── Novo pedido ─────────────────────────────────────────────────────────────
 
+  // Um pagamento (Pix ou cartão) foi confirmado no modal: se havia pedido segurado, ele já foi pra cozinha.
+  function handlePagamentoConfirmado() {
+    setPedidoAguardandoPagamento(function (p) { return p && !p.pago ? Object.assign({}, p, { pago: true }) : p; });
+  }
+
   function handleNovoPedido() {
+    setPedidoAguardandoPagamento(null);
     setPedidoConfirmado(false);
     setNumeroPedido('');
     setConfirmedCartItems([]);
@@ -808,6 +870,8 @@ export function useMesaQRData() {
     showMeusPedidos: showMeusPedidos,
     showPagarConta: showPagarConta,
     comprovante: comprovante,
+    pedidoAguardandoPagamento: pedidoAguardandoPagamento,
+    handlePagamentoConfirmado: handlePagamentoConfirmado,
     queueMode: queueMode,
     qrToken: qrToken || '',
     handleFecharComprovante: handleFecharComprovante,

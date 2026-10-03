@@ -1614,18 +1614,23 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       if (!tenant_id || !order_id) return jsonErr("tenant_id e order_id obrigatorios", 400);
       // payment_label: o funil do iFood (ifood-shipping) libera o pedido do iFood com a forma dele.
       const label = typeof body.payment_label === "string" && body.payment_label.trim() ? body.payment_label.trim().slice(0, 80) : "PIX pelo app (PAGO)";
-      const r = await releaseHeldOrder(admin, String(tenant_id), String(order_id), label, null);
+      // Pago pelo app: as notas passam a dizer COMO foi pago (o cliente pode ter escolhido cartão e
+      // pago com Pix, ou o contrário). Só mexe em pedido "pelo app" — o iFood usa esta ação com a forma dele.
+      const { data: cur } = await admin.from("orders").select("notes").eq("id", order_id).eq("tenant_id", tenant_id).maybeSingle();
+      const curNotes = String(cur?.notes ?? "");
+      const newNotes = /pelo app/i.test(curNotes) ? curNotes.replace(/Pagamento:\s*[^|]*?(\s*\||$)/i, `Pagamento: ${label}$1`) : null;
+      const r = await releaseHeldOrder(admin, String(tenant_id), String(order_id), label, newNotes);
       if (r.error) return jsonErr(r.error, r.code ?? 400);
       return new Response(JSON.stringify({ _v: "v14", ok: true, released: !r.already, already: !!r.already }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
     if (action === "change_held_payment") {
-      // Cliente desistiu do Pix pelo app: escolhe outra forma (cobra na entrega/retirada) e o
-      // pedido segurado vai pra cozinha agora. Prova de posse = client_request_id do aparelho.
+      // Cliente desistiu de pagar pelo app (Pix ou cartão): escolhe outra forma (cobra na entrega/retirada)
+      // e o pedido segurado vai pra cozinha agora. Prova de posse = client_request_id do aparelho.
       const { tenant_id, order_id, order_token, order_phone, payment_method, cash_amount } = body;
       if (!tenant_id || !order_id || (!order_token && !order_phone) || !payment_method) return jsonErr("Dados incompletos", 400);
       const label = String(payment_method).trim().slice(0, 40);
-      if (/pix pelo app/i.test(label)) return jsonErr("Escolha uma forma diferente do Pix pelo app", 400);
+      if (/pelo app/i.test(label)) return jsonErr("Escolha uma forma de pagar na entrega ou na retirada", 400);
       const { data: o } = await admin.from("orders").select("id, status, is_draft, origin_type, client_request_id, destination_phone, delivery_platform, total_amount")
         .eq("id", order_id).eq("tenant_id", tenant_id).maybeSingle();
       const phoneDigits = String(order_phone ?? "").replace(/\D/g, "");
@@ -2070,9 +2075,9 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       }
       const notesCombined = paymentParts.join(" | ");
 
-      // "PIX pelo app": segura o pedido como RASCUNHO até o pagamento confirmar. Só então
-      // ele entra na cozinha (release_held_order). Dinheiro/cartão seguem direto.
-      const holdUntilPaid = typeof payment_method === "string" && /pix pelo app/i.test(payment_method);
+      // "PIX pelo app" / "Cartão de crédito pelo app": segura o pedido como RASCUNHO até o pagamento
+      // confirmar. Só então ele entra na cozinha (release_held_order). Pagar na entrega segue direto.
+      const holdUntilPaid = typeof payment_method === "string" && /pelo app/i.test(payment_method);
 
       const { data: order, error: orderErr } = await admin.rpc("fn_create_order_bypass", {
         order_data: {

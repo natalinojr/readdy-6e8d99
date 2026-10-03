@@ -31,6 +31,18 @@ describe('HorarioExibicaoEditor', () => {
     expect(spy).toHaveBeenLastCalledWith(null);
   });
 
+  it('escolhe o canal da faixa e some o seletor quando só há um canal', () => {
+    const spy = vi.fn();
+    const { unmount } = render(<Controlado inicial={[{ days: [1], start: '08:00', end: '10:00' }]} onChange={spy} />);
+    fireEvent.click(screen.getByText('Só delivery'));
+    expect(spy).toHaveBeenLastCalledWith([{ days: [1], start: '08:00', end: '10:00', channel: 'delivery' }]);
+    expect(screen.getByText(/Delivery: Seg 08:00–10:00/)).toBeInTheDocument();
+    expect(screen.getByText(/Casa: sempre/)).toBeInTheDocument();
+    unmount();
+    render(<HorarioExibicaoEditor value={[{ days: [1], start: '08:00', end: '10:00' }]} onChange={() => {}} canais={['casa']} />);
+    expect(screen.queryByText('Só delivery')).toBeNull();
+  });
+
   it('remover a última faixa volta para sempre', () => {
     const spy = vi.fn();
     render(<Controlado inicial={[{ days: [1], start: '08:00', end: '10:00' }]} onChange={spy} />);

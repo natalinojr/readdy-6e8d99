@@ -360,7 +360,7 @@ export default function DeliveryItemGrid({ onAdd }: Props) {
               const insumosFaltando: InsumoFaltando[] = itensSemEstoque.get(item.id) ?? [];
               const semEstoque = insumosFaltando.length > 0;
               // Fora do horário de exibição: some do cardápio do cliente, mas o caixa ainda lança.
-              const foraDoHorario = !itemNoHorario(item);
+              const foraDoHorario = !itemNoHorario(item, 'delivery');
 
               return (
                 <div
@@ -410,7 +410,7 @@ export default function DeliveryItemGrid({ onAdd }: Props) {
                       {foraDoHorario && !semEstoque && (
                         <div
                           className="absolute bottom-2 left-2 bg-indigo-600 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full tracking-wide flex items-center gap-0.5"
-                          title="Fora do horário do cardápio — o cliente não vê este item agora"
+                          title="Fora do horário do delivery — o cliente do delivery não vê este item agora"
                         >
                           <i className="ri-time-line" /> FORA DO HORÁRIO
                         </div>

@@ -6,6 +6,7 @@
 // aprovar (Edge pedidos-pagamento); mercadoria paga do bolso vai pelo recebimento ("Paguei do meu bolso").
 // Links: ?pedido=reembolso|freelancer|fornecedor|compra_online|beneficio, ?aprovar=1, ?meus=1.
 // ?compartilhado=1: veio do "Compartilhar" do celular com link de loja online (sw.js) — o link já vem colado.
+// ?receber=cupom (2026-10-03, "O que aconteceu?" › Cupom de mercado): abre já com o leitor do cupom.
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
@@ -94,8 +95,15 @@ export default function ReceberPage() {
   // Voltou ao início por qualquer caminho (erro de leitura inclusive): próximo recebimento é normal
   useEffect(() => { if (tela === 'inicio') modoReembolso.current = false; }, [tela]);
 
+  // ?receber=cupom: abre o leitor quando a permissão de receber chegar (a matriz da loja carrega depois)
+  const [pedeLeitor, setPedeLeitor] = useState(false);
+  useEffect(() => {
+    if (pedeLeitor && podeReceber) { setPedeLeitor(false); setErro(null); setScanner(true); }
+  }, [pedeLeitor, podeReceber]);
+
   // Atalhos por link (ação rápida, pendência do 📥): abre direto no pedido/lista e limpa o link
   useEffect(() => {
+    if (params.get('receber') === 'cupom') { setPedeLeitor(true); setParams({}, { replace: true }); return; }
     const pedido = params.get('pedido');
     const alvo: Tela | null = pedido === 'reembolso' ? 'reembolso_o_que'
       : pedido === 'freelancer' || pedido === 'fornecedor' || pedido === 'compra_online' || pedido === 'beneficio' ? 'pedido'

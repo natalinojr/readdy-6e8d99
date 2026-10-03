@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { formatCurrency } from '@/lib/formatters';
 
-// ── "Pagar de outra forma" para um pedido segurado (Pix pelo app) ────────────
-// Usado na tela do pedido (abaixo do painel do Pix) e no acompanhamento. O cliente
+// ── "Pagar de outra forma" para um pedido segurado (pagamento pelo app: Pix ou cartão) ──
+// Usado na tela do pedido (abaixo do painel de pagamento) e no acompanhamento. O cliente
 // escolhe dinheiro (troco opcional) ou cartão; quem libera o pedido pra cozinha é
 // `delivery-write › change_held_payment`, chamado por `onConfirmar`.
 

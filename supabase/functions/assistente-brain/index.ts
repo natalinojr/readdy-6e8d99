@@ -2618,6 +2618,17 @@ Deno.serve(async (req) => {
       if (p.status !== 'paid') return json({ ok: false, pendente: 'o Inter ainda não confirmou o pagamento' });
       if (!p.bill_id && !p.dre_category_id) return json({ ok: false, sem_conta: true });
       const agora = new Date().toISOString();
+      // A linha do extrato é deste Pix? Pelo E2E. Logo depois do envio o Inter devolve o Pix com
+      // detalhes.tipoDetalhe='INCOMPLETE' (sem endToEndId); aí só vem numeroDocumento = os 7 últimos
+      // caracteres do E2E (Marcelle, 02/10: "NCcCZLv" de "…xTOINCcCZLv"). Sem isso a linha nunca ligava.
+      // deno-lint-ignore no-explicit-any
+      const doE2e = (r: any, e2e: string) => {
+        if (!e2e) return false;
+        const id = String(r.raw?.detalhes?.endToEndId ?? '').trim();
+        if (id) return id === e2e;
+        const nd = String(r.raw?.numeroDocumento ?? '').trim();
+        return nd.length >= 6 && e2e.endsWith(nd);
+      };
       // Avulso (sem conta, com categoria da DRE): lança a despesa pelo extrato — o mesmo "Lançar pelo
       // extrato" da Conciliação — e liga o pagamento à conta criada (2026-09-18, fatura Claro).
       if (!p.bill_id) {
@@ -2638,7 +2649,7 @@ Deno.serve(async (req) => {
         const nsu = String(p.response?.nsu ?? '').trim();
         // Qual débito: E2E do Pix; boleto → NSU do Inter no id do extrato; senão, o único de mesmo valor.
         // deno-lint-ignore no-explicit-any
-        const row: any = (e2e && mesmo.find((r: any) => String(r.raw?.detalhes?.endToEndId ?? '').trim() === e2e))
+        const row: any = (e2e && mesmo.find((r: any) => doE2e(r, e2e)))
           // deno-lint-ignore no-explicit-any
           || (nsu && mesmo.find((r: any) => { try { return atob(String(r.external_id ?? '').replace(/^inter_/, '')).endsWith(`_${nsu}`); } catch { return false; } }))
           || (!e2e && mesmo.length === 1 ? mesmo[0] : null);
@@ -2698,7 +2709,7 @@ Deno.serve(async (req) => {
       // deno-lint-ignore no-explicit-any
       const mesmoValor = (cands ?? []).filter((r: any) => Math.abs(Math.abs(Number(r.amount)) - Number(p.amount)) < 0.01);
       // deno-lint-ignore no-explicit-any
-      let row: any = e2e ? mesmoValor.find((r: any) => String(r.raw?.detalhes?.endToEndId ?? '').trim() === e2e) : undefined;
+      let row: any = e2e ? mesmoValor.find((r: any) => doE2e(r, e2e)) : undefined;
       // deno-lint-ignore no-explicit-any
       if (!row && !e2e) row = mesmoValor.filter((r: any) => r.status === 'pending').find((r: any) => r.match_kind === 'payable' && r.match_ref_id === p.bill_id)
         // deno-lint-ignore no-explicit-any
@@ -2709,7 +2720,8 @@ Deno.serve(async (req) => {
         if (e2e && !row) {
           // A linha deste E2E já foi conciliada (tela ou outra rodada): se foi com OUTRA conta, é baixa em dobro.
           const { data: jaConc } = await admin.from('fin_bank_statement_imports').select('id, match_detail')
-            .eq('tenant_id', p.tenant_id).eq('reconciled', true).eq('raw->detalhes->>endToEndId', e2e).limit(1);
+            .eq('tenant_id', p.tenant_id).eq('reconciled', true).gte('transaction_date', desde).lte('transaction_date', ateIso)
+            .or(`raw->detalhes->>endToEndId.eq.${e2e},raw->>numeroDocumento.eq.${e2e.slice(-7)}`).limit(1);
           if (jaConc?.length) {
             const outra = (jaConc[0].match_detail as { confirmed?: { bill_id?: string } } | null)?.confirmed?.bill_id;
             if (outra && outra !== bill.id) {

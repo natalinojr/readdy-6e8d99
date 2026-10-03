@@ -1,5 +1,6 @@
 {
   "dependencies": {
+    "@mercadopago/sdk-react": "^1.0.7",
     "@stripe/react-stripe-js": "4.0.2",
     "@supabase/supabase-js": "2.57.4",
     "@testing-library/jest-dom": "6.6.3",

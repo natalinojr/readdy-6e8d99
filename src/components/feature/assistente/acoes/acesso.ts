@@ -10,6 +10,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { usePermissoes, RECEBER_MODULO_KEYS, type PermissaoKey } from '@/hooks/usePermissoes';
 import { useModuleAccess, type ModuloLivre } from '@/hooks/useModuleAccess';
 import { rotaForcada } from '@/lib/acessoRota';
+import { empresaTemPdv } from '@/lib/tipoEmpresa';
 import { FIN_ABAS, REL_KEYS } from '@/constants/permissoesAbas';
 
 export interface ContextoAcesso {
@@ -19,6 +20,8 @@ export interface ContextoAcesso {
   /** A loja ativa tem iFood ligado na API (alguma loja do iFood com api_sync)? Sem isso a categoria iFood some:
    *  as ações leem vendas/repasses da API e ficariam vazias (ex.: Vila Leste, só com relatório importado). */
   ifood?: boolean;
+  /** A empresa tem PDV (tenants.kind ≠ 'financeiro')? Sem PDV, Recebimentos e Caixa nem aparecem (/modulos). Ausente = tem. */
+  temPdv?: boolean;
 }
 
 // O Financeiro (tela e edges financial-write/purchase-write) é só Admin/Gerente/Financeiro; as
@@ -60,6 +63,13 @@ const REGRAS: Record<string, (c: ContextoAcesso) => boolean> = {
     .some((r) => rotaLiberada(r, c)),
   nfse: (c) => c.modulo('nfse'),
   'lancar-despesa': (c) => fin(c, 'fin_despesas', 'fin_pagar'),
+  // "O que aconteceu?" (/lancar, 2026-10-03): aparece se ao menos uma resposta abre para o perfil — as
+  // mesmas regras de src/components/feature/lancar/opcoes.ts (o teste lancarOpcoes confere que batem).
+  // Papel preso (Financeiro, Contabilidade) usa o botão Lançar da própria tela.
+  lancar: (c) => !!c.perfil && !rotaForcada(c.perfil, '/lancar') && (
+    (c.temPdv !== false && rotaLiberada('/receber', c) && algum(c, 'estoque_receber', 'estoque_movimentar', 'pag_reembolso', 'pag_freelancer', 'pag_fornecedor', 'pag_compra_online', 'pag_beneficio'))
+    || (c.temPdv !== false && !rotaForcada(c.perfil, '/pdv/caixa') && c.pode('pdv_sangria'))
+    || fin(c, 'fin_despesas', 'fin_pagar', 'fin_compras', 'fin_notas_entrada', 'fin_guias', 'fin_freelancers', 'fin_rh', 'fin_entregadores', 'fin_conciliacao')),
   'contas-vencendo': (c) => fin(c, 'fin_pagar', 'fin_contas_vencidas'),
   'classificar-dre': (c) => fin(c, 'fin_pagar'),
   'saldo-extrato': (c) => fin(c, 'fin_bancos', 'fin_conciliacao'),
@@ -155,5 +165,5 @@ export function useAcessoAcoes(): ContextoAcesso & { carregando: boolean } {
   // Sem loja (só módulo, 2026-09-24): nenhuma permissão de loja. Sem isto o usePermissoes cai no
   // padrão do papel "caixa" e mostraria ações de caixa/cozinha para quem só tem Tarefas.
   if (!user && hasNoTenants) return { perfil: null, pode: () => false, modulo: hasModule, carregando: carregandoModulos };
-  return { perfil: user?.perfil ?? null, pode: hasPermissao, modulo: hasModule, ifood: ifood === true, carregando: loading || carregandoModulos || ifood === null };
+  return { perfil: user?.perfil ?? null, pode: hasPermissao, modulo: hasModule, ifood: ifood === true, temPdv: empresaTemPdv(user?.tenantKind), carregando: loading || carregandoModulos || ifood === null };
 }

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useLocation, useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { usePermissoes } from '@/hooks/usePermissoes';
 import { finKeyDaAba } from '@/constants/permissoesAbas';
@@ -15,7 +15,7 @@ import ImplantacaoTab from './components/ImplantacaoTab';
 import OrcamentosTab from './components/OrcamentosTab';
 import ConciliacaoTab from './components/ConciliacaoTab';
 import BancosContasTab from './components/BancosContasTab';
-import RHTab from './components/RHTab';
+import RHTab, { type RHView } from './components/RHTab';
 import ContasVencidasPanel from './components/ContasVencidasPanel';
 import DespesasTab from './components/DespesasTab';
 import ReceitasTab from './components/ReceitasTab';
@@ -28,6 +28,7 @@ import GuiasTab from './components/GuiasTab';
 import TrilhaTab from './components/TrilhaTab';
 import PainelFinTab from './components/PainelFinTab';
 import LancarFinanceiroModal from './components/LancarFinanceiroModal';
+import { OQueAconteceu } from '@/components/feature/lancar';
 import BuscaFinanceiro from './components/BuscaFinanceiro';
 
 const TABS = [
@@ -67,6 +68,8 @@ const GRUPOS = [
 ];
 // Ids antigos que ainda chegam por link e abrem dentro de outra aba.
 const ABA_CANONICA: Record<string, string> = { previsao: 'fluxo', 'rh-relatorio': 'rh', freelancers: 'rh' };
+// ?tab=rh&sub=prestadores abre o RH já na subaba (usado pelo "O que aconteceu?").
+const SUBABAS_RH: RHView[] = ['folha', 'funcionarios', 'beneficios', 'freelancers', 'prestadores', 'relatorio'];
 
 export default function FinanceiroPage() {
   const { user } = useAuth();
@@ -99,12 +102,23 @@ export default function FinanceiroPage() {
   const setActiveTab = (t: string) => setSearchParams({ tab: t }, { replace: true });
   // Abre a aba já pedindo a janela de lançamento (?abrir=), usado pelo botão Lançar.
   const abrirAba = (t: string, abrir?: string) => setSearchParams(abrir ? { tab: t, abrir } : { tab: t }, { replace: true });
+  // Lançar (2026-10-03): abre o "O que aconteceu?"; a lista antiga com os 13 caminhos continua como
+  // "lista completa" dentro dele.
   const [lancarAberto, setLancarAberto] = useState(false);
+  const [listaLancarAberta, setListaLancarAberta] = useState(false);
+  const navigate = useNavigate();
   const [buscaAberta, setBuscaAberta] = useState(false);
   // Resultado da busca: vai para a aba com o item (?busca=/?foco=/?nota=). A chave recria a aba,
   // porque algumas só leem esses parâmetros ao abrir (ex.: a busca do Contas a Pagar).
   const [chaveConteudo, setChaveConteudo] = useState(0);
   const irParaResultado = (params: Record<string, string>) => { setSearchParams(params, { replace: true }); setChaveConteudo((k) => k + 1); };
+  // Destino do "O que aconteceu?": aba do Financeiro troca aqui mesmo (recriando a aba, que lê ?abrir= ao montar);
+  // o resto (Recebimentos, PDV) navega.
+  const navegarLancar = (rota: string) => {
+    if (rota.startsWith('/financeiro?')) irParaResultado(Object.fromEntries(new URLSearchParams(rota.split('?')[1])));
+    else navigate(rota);
+  };
+  const subRH = SUBABAS_RH.find((s) => s === searchParams.get('sub'));
   // ?foco=<id da compra> abre a aba Compras já piscando naquela linha — usado pelo Rastreamento
   // da Conciliação (2026-09-20), para o botão cair na compra certa e não só na lista.
   const [highlightPurchaseId, setHighlightPurchaseId] = useState<string | undefined>(
@@ -274,7 +288,8 @@ export default function FinanceiroPage() {
         )}
       </div>
 
-      {lancarAberto && <LancarFinanceiroModal podeAba={podeAbaOuFreela} onIr={abrirAba} onClose={() => setLancarAberto(false)} />}
+      {lancarAberto && <OQueAconteceu onFechar={() => setLancarAberto(false)} onNavegar={navegarLancar} onListaCompleta={() => setListaLancarAberta(true)} />}
+      {listaLancarAberta && <LancarFinanceiroModal podeAba={podeAbaOuFreela} onIr={abrirAba} onClose={() => setListaLancarAberta(false)} />}
 
       {/* Content */}
       <div key={chaveConteudo} className="flex-1 overflow-y-auto">
@@ -296,7 +311,7 @@ export default function FinanceiroPage() {
         {activeTab === 'compras' && <ComprasTab highlightId={highlightPurchaseId} onHighlightConsumed={handleClearHighlight} />}
         {/* 'rh-relatorio' e 'freelancers' (abas antigas, links salvos e o assistente) abrem RH já na subaba */}
         {(activeTab === 'rh' || activeTab === 'rh-relatorio' || activeTab === 'freelancers') && (podeRH
-          ? <RHTab inicial={activeTab === 'rh-relatorio' ? 'relatorio' : activeTab === 'freelancers' ? 'freelancers' : undefined} />
+          ? <RHTab inicial={activeTab === 'rh-relatorio' ? 'relatorio' : activeTab === 'freelancers' ? 'freelancers' : subRH} />
           : <FreelancersTab />)}
         {activeTab === 'guias' && <GuiasTab />}
         {activeTab === 'entregadores' && <EntregadoresTab />}

@@ -9,14 +9,25 @@
  * para o dia em que a faixa começou (sexta 18:00–02:00 vale até sábado 01:59).
  * Início igual ao fim = o dia inteiro.
  *
+ * Canal (2026-10-03): a faixa pode valer só para a CASA (mesa/QR, totem, caixa, garçom)
+ * ou só para o DELIVERY (link, atendente do WhatsApp, PDV delivery); sem `channel` vale
+ * para os dois. Num canal sem nenhuma faixa o item aparece sempre — por isso quem decide
+ * se aparece SEMPRE filtra antes com `horarioDoCanal`.
+ *
  * O relógio é SEMPRE o de Brasília (America/Sao_Paulo), não o do aparelho: o celular
  * de um turista pode estar em outro fuso.
  */
+
+export type CanalHorario = 'casa' | 'delivery';
+export const CANAIS_HORARIO: CanalHorario[] = ['casa', 'delivery'];
+export const NOME_CANAL: Record<CanalHorario, string> = { casa: 'Casa', delivery: 'Delivery' };
 
 export interface FaixaHorario {
   days: number[];
   start: string; // "HH:MM"
   end: string;   // "HH:MM"
+  /** Só um canal; ausente = casa e delivery. */
+  channel?: CanalHorario;
 }
 
 export type HorarioExibicao = FaixaHorario[] | null;
@@ -36,18 +47,32 @@ export function normalizarHorario(raw: unknown): HorarioExibicao {
   const faixas: FaixaHorario[] = [];
   for (const f of raw) {
     if (!f || typeof f !== 'object') continue;
-    const { days, start, end } = f as Record<string, unknown>;
+    const { days, start, end, channel } = f as Record<string, unknown>;
     if (minutos(String(start)) == null || minutos(String(end)) == null) continue;
     const dias = Array.isArray(days)
       ? [...new Set(days.map(Number).filter((d) => Number.isInteger(d) && d >= 0 && d <= 6))].sort()
       : [];
-    faixas.push({ days: dias, start: String(start), end: String(end) });
+    const faixa: FaixaHorario = { days: dias, start: String(start), end: String(end) };
+    if (channel === 'casa' || channel === 'delivery') faixa.channel = channel;
+    faixas.push(faixa);
   }
   return faixas.length ? faixas : null;
 }
 
 export function temHorario(h: HorarioExibicao | undefined): boolean {
   return !!h && h.length > 0;
+}
+
+/** Faixas que valem no canal (as sem canal valem nos dois). Nenhuma = aparece sempre nesse canal. */
+export function horarioDoCanal(h: HorarioExibicao | undefined, canal: CanalHorario): HorarioExibicao {
+  if (!temHorario(h)) return null;
+  const faixas = h!.filter((f) => !f.channel || f.channel === canal);
+  return faixas.length ? faixas : null;
+}
+
+/** Tem faixa só de um canal? (aí o resumo mostra casa e delivery separados) */
+export function temHorarioPorCanal(h: HorarioExibicao | undefined): boolean {
+  return !!h && h.some((f) => !!f.channel);
 }
 
 let fmtBrasilia: Intl.DateTimeFormat | null = null;
@@ -65,7 +90,7 @@ export function agoraBrasilia(agora: Date = new Date()): { dia: number; minuto: 
 
 const valeNoDia = (f: FaixaHorario, dia: number) => f.days.length === 0 || f.days.includes(dia);
 
-/** Regra pura: a faixa cobre (dia, minuto)? */
+/** Regra pura: alguma faixa cobre (dia, minuto)? Não olha canal — filtre antes com horarioDoCanal. */
 export function visivelEm(h: HorarioExibicao | undefined, dia: number, minuto: number): boolean {
   if (!temHorario(h)) return true;
   return h!.some((f) => {
@@ -79,26 +104,29 @@ export function visivelEm(h: HorarioExibicao | undefined, dia: number, minuto: n
   });
 }
 
-/** Aparece agora? Todos os horários passados precisam bater (ex.: item E categoria). */
-export function visivelAgora(horarios: Array<HorarioExibicao | undefined>, agora: Date = new Date()): boolean {
-  if (!horarios.some(temHorario)) return true;
+/** Aparece agora no canal? Todos os horários passados precisam bater (ex.: item E categoria). */
+export function visivelAgora(horarios: Array<HorarioExibicao | undefined>, canal: CanalHorario, agora: Date = new Date()): boolean {
+  const doCanal = horarios.map((h) => horarioDoCanal(h, canal));
+  if (!doCanal.some(temHorario)) return true;
   const { dia, minuto } = agoraBrasilia(agora);
-  return horarios.every((h) => visivelEm(h, dia, minuto));
+  return doCanal.every((h) => visivelEm(h, dia, minuto));
 }
 
 interface LinhaComHorario { id: string; availability_schedule?: unknown }
 
 /**
- * Cardápio cru do cliente (mesa-qr/delivery): ids fora do horário agora — categoria, item
- * (o dele E o da categoria) e destaque (prefixo "h:"; o do item é checado à parte).
- * Ordenado, para virar chave estável: a tela só remonta quando algo entra ou sai.
+ * Cardápio cru do cliente (mesa-qr = casa, delivery = delivery): ids fora do horário agora
+ * no canal — categoria, item (o dele E o da categoria) e destaque (prefixo "h:"; o do item
+ * é checado à parte). Ordenado, para virar chave estável: a tela só remonta quando algo
+ * entra ou sai.
  */
 export function idsForaDoHorario(
   base: { categories: LinhaComHorario[]; items: Array<LinhaComHorario & { category_id: string | null }>; highlights: LinhaComHorario[] },
+  canal: CanalHorario,
   agora: Date = new Date(),
 ): string[] {
   const { dia, minuto } = agoraBrasilia(agora);
-  const ve = (h: HorarioExibicao | undefined) => visivelEm(h, dia, minuto);
+  const ve = (h: HorarioExibicao | undefined) => visivelEm(horarioDoCanal(h, canal), dia, minuto);
   const horarioCat = new Map(base.categories.map((c) => [c.id, normalizarHorario(c.availability_schedule)] as const));
   const fora: string[] = [];
   for (const c of base.categories) if (!ve(horarioCat.get(c.id))) fora.push(c.id);
@@ -137,15 +165,29 @@ export function resumoDias(days: number[]): string {
   return ordem.map(nome).join(', ');
 }
 
-/** Texto curto para badge/lista: "Seg a Sex 11:00–15:00 · Sáb 18:00–02:00". */
-export function resumoHorario(h: HorarioExibicao | undefined): string {
-  if (!temHorario(h)) return 'Sempre';
-  return h!
+function resumoFaixas(faixas: FaixaHorario[]): string {
+  return faixas
     .map((f) => {
       const horas = f.start === f.end ? 'dia todo' : `${f.start}–${f.end}`;
       return `${resumoDias(f.days)} ${horas}`;
     })
     .join(' · ');
+}
+
+/**
+ * Texto curto para badge/lista: "Seg a Sex 11:00–15:00 · Sáb 18:00–02:00".
+ * Com faixa só de um canal: "Casa: Seg a Sex 11:00–15:00 | Delivery: sempre".
+ * `canais` = onde o item é vendido (item "só delivery" não mostra a casa).
+ */
+export function resumoHorario(h: HorarioExibicao | undefined, canais: CanalHorario[] = CANAIS_HORARIO): string {
+  if (!temHorario(h)) return 'Sempre';
+  if (!temHorarioPorCanal(h)) return resumoFaixas(h!);
+  return canais
+    .map((c) => {
+      const doCanal = horarioDoCanal(h, c);
+      return `${NOME_CANAL[c]}: ${doCanal ? resumoFaixas(doCanal) : 'sempre'}`;
+    })
+    .join(' | ');
 }
 
 /** Problema de preenchimento para mostrar no formulário (null = ok). */
